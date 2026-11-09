@@ -98,3 +98,39 @@ slabs count samplers). Gauges `statics/*` (materials, classes, keys, pipelines, 
   visual check **SS-matclass** (`visual-checks/rendering.md`, Balmora and Seyda Neen 14:00).
 - Handoff: `bevyrrowind/docs/test-pass-handoffs/s2-material-classes.md` (written before the build; its "Build status at
   stop" section is superseded by the 2026-11-09 result above, its "APIs I was unsure of" list is still worth reading).
+
+## Format notes moved out of the spec (2026-11-09, correction pass)
+
+The spec's §2 keeps the live contract in short form; the detail settled in S1a/S1b and in format v2 lives here and,
+authoritatively, in the `sf_scene::table` and `sf_scene::chain` module docs.
+
+- **Settled in S1a (2026-11-08).** `INACTIVE` is a runtime-only flag bit (promotion, spec §1); a baked table that sets
+  it is rejected on read. A cell with a hole or no land reports a land minimum of negative infinity, so it never hides
+  anything behind it.
+- **Settled in S1b (2026-11-08).** One instance per (placement, material part), sorted by (placement, part); siblings
+  share the placement id. A chain is one (model, part): its levels concatenated finest first, a level without the part
+  repeating the finer one (`chain_layout`, also used by the runtime). Mesh key = hash(`mesh.cook` key, material index).
+  **Placement id** = the placement's index in its world-index cell (the 128-bit `sf_world` id does not fit a u32), so
+  promotion and picking carry (cell, placement). **Land minimum** = level-0 terrain block minima over the cell; no
+  terrain tile or no grid → negative infinity.
+- **Format v2 (S1c, 2026-11-09)**, superseding S1a's global chain id and S1b's xor-folded id, which collided silently
+  across cells and could not index a GPU table. Chains are cell-local: an instance's chain field is a dense index into
+  its table's chains (sorted by mesh key, each used), and each table carries copies of its chains so a cell loads on
+  its own; stream-in maps each cell-local index to a global dense chain slot keyed by mesh key (`chain_index`,
+  `write_remapped` copies the instance section with the slots) and the GPU chain table is indexed by slot. Chain
+  record 32 B: level range, material class (moved off the instance — a pure function of the chain), mesh key, and a
+  64-bit material key, a content hash of the cooked material (`sf_bake::Digest`; the name is not hashed). Instance
+  record 80 B, 16-aligned: transform, the part's own sphere, placement, chain index, `material_override` (0 = the
+  chain's material, other values reserved for a later per-placement material table and rejected by the v2 reader),
+  flags. Layers moved to the 80 B header. Per-part bounds: each instance's sphere bounds its part's LOD0 vertices
+  (coarser levels use a subset of them), so a small part culls as itself and not as its building.
+
+## S3a as built (2026-11-09): the #25978 port shape
+
+Moved out of the spec's §6 in the same pass. Commit `36e79e21` of bevyengine/bevy#25978, `bevy_pbr`/`bevy_render`
+hunks only, applied by context (our 0.20 files had not diverged there). One deviation: no `Mesh3dVisibility` class (it
+lives in `bevy_mesh`, would need `bevy_mesh`/`bevy_camera`/`bevy_light` vendored, and breaks our crates that key lists
+by `Mesh3d`) — the batch pushes the `Mesh3d` class in an `on_add` hook and a `bevy_pbr` system adds batches to light
+shadow lists by the rules `bevy_light` applies to a `NoFrustumCulling` mesh. `GpuInstanceBatchPlugin` is opt-in; the
+shared-path changes are always on. Full detail: `superfargoth/vendor/README.md` "The GPU-batched mesh port
+(#25978, static-scene S3a)"; handoff `bevyrrowind/docs/test-pass-handoffs/s3a-gpu-batch.md`.

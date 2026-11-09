@@ -8,7 +8,7 @@ comment; `grep -rn "superfargoth patch" vendor/<crate>` lists them.
 | Crate(s) | Base | Patch | Drop when |
 |---|---|---|---|
 | `big_space` | crates.io release | dirty-tree pruning in low-precision propagation (`docs/research/perf/README.md` item 2) | upstream has it |
-| `bevy_core_pipeline`, `bevy_pbr`, `bevy_render` | 0.20.0 (crates.io) | bevyengine/bevy [#26149](https://github.com/bevyengine/bevy/pull/26149) + [#26161](https://github.com/bevyengine/bevy/pull/26161) (`patches/bevy-26149-26161.diff`, both PRs' stacked diff at head `4e718df0`) | the Bevy release that ships both PRs |
+| `bevy_core_pipeline`, `bevy_pbr`, `bevy_render` | 0.20.0 (crates.io) | bevyengine/bevy [#26149](https://github.com/bevyengine/bevy/pull/26149) + [#26161](https://github.com/bevyengine/bevy/pull/26161) (`patches/bevy-26149-26161.diff`, both PRs' stacked diff at head `4e718df0`). **Own fork since 2026-10-30**: both PRs were closed unmerged (below) | when upstream solves per-face shadow scheduling and per-view skipping, by any means |
 | `dlss_wgpu` | 6.0.0 (crates.io) | NVIDIA-free facade: same API, NGX calls moved to the runtime-loaded `plugins/sf_dlss` DLL through `src/abi.rs` (GPL game exe holds no NVIDIA code) | never while the game is GPL; re-port on each dlss_wgpu bump that Bevy needs |
 | `bevy_pbr` (own, on top of the row above) | same | `superfargoth patch (own: shadow early-out)` + `(own: lamp shadow filter)` (`patches/superfargoth-shadow-early-out-lamp-filter.diff`, 44+/9- lines, shadow reset B2) | early-out: Bevy skips the point/spot shadow fetch where the light contributes nothing; filter: Bevy gets a per-light-type (or per-light) shadow filter |
 | `bevy_core_pipeline`, `bevy_pbr` | same | bevyengine/bevy [#26235](https://github.com/bevyengine/bevy/pull/26235), [#26236](https://github.com/bevyengine/bevy/pull/26236), [#26237](https://github.com/bevyengine/bevy/pull/26237) (LT-4 DLSS cluster lookup, transmission UV, and OIT indexing with `MainPassResolutionOverride`) | upstream Bevy release |
@@ -27,10 +27,17 @@ comment; `grep -rn "superfargoth patch" vendor/<crate>` lists them.
 | `bevy_pbr` (own) | same | `superfargoth patch (own, N2: sky glow)`: `AtmosphereSettings::{airglow, airglow_horizon}` (zenith radiance cd/m², horizon/zenith ratio; default zero = stock) copied into `GpuAtmosphereSettings` (`atmosphere/mod.rs`) and the WGSL `AtmosphereSettings` (`types.wesl`); `functions.wesl` `airglow(r, mu)` (van Rhijn profile; ground hits see albedo x the sky's irradiance) added in `sky_view_lut.wesl` and the ray-marched branch of `render_sky.wesl`, so the sky, the atmosphere environment map, fog and clouds (all read the LUT) see it. No diff file; grep the marker. ~35 lines in 5 files | upstream: a sky emission / airglow term in `Atmosphere` |
 | `bevy_render` (own) | same | `superfargoth patch (own)`: incremental `extract_visibility_ranges` (`view/visibility/range.rs`: `O(changed + removed)` instead of clearing and re-hashing all ~28k `VisibilityRange` entities on `ExtractSchedule`) | upstream makes `extract_visibility_ranges` incremental |
 | `bevy_render` (own) | same | `superfargoth patch (own: shared image samplers)`, static-scene S2: opt-in render-world resource `SharedImageSamplers` (`texture/gpu_image.rs`: struct + `get_or_create` at the top, `Option<SRes<SharedImageSamplers>>` in `GpuImage::Param`, used in `prepare_asset` for `ImageSampler::Descriptor`): images with equal `ImageSamplerDescriptor`s share one `Sampler` (linear scan, never evicted), so a bindless material slab counts one sampler, not one per texture. Absent = stock (one sampler per image). Inserted by `sf_world_bevy` unless `material_classes` is off (`--off matclass`). No diff file; grep the marker. ~55 lines in 1 file | upstream dedups image samplers (a sampler cache in `GpuImage` preparation) |
-| `bevy_render`, `bevy_pbr` | same | bevyengine/bevy [#25978](https://github.com/bevyengine/bevy/pull/25978) (`GpuBatchedMesh3d`: GPU-authored mesh instances drawn through the mesh-material pipeline; upstream PR **open**, ported from commit `36e79e21` against Bevy main; `patches/bevyengine-bevy-25978-gpu-batched-mesh.diff`; marker `superfargoth patch (bevyengine/bevy#25978)`; static-scene.md S3a). Port shape in "The GPU-batched mesh port" below | the Bevy release that ships #25978 (then drop the light-visibility shim too) |
+| `bevy_render`, `bevy_pbr` | same | bevyengine/bevy [#25978](https://github.com/bevyengine/bevy/pull/25978) (`GpuBatchedMesh3d`: GPU-authored mesh instances drawn through the mesh-material pipeline; upstream PR **open**, ported from commit `36e79e21` against Bevy main; `patches/bevyengine-bevy-25978-gpu-batched-mesh.diff`; marker `superfargoth patch (bevyengine/bevy#25978)`; static-scene.md S3a). Port shape in "The GPU-batched mesh port" below. Our additions on top ("patch GS") are planned as an **own fork**: offered upstream, never waited on | the Bevy release that ships GPU-authored instance batching with per-batch geometry ranges (then drop the light-visibility shim too) |
 | `bevy_render`, `bevy_pbr` (own) | same | `superfargoth patch (own: phase counts)` + `(own: preprocess bind group count)`, static-scene S0: read-only `BinnedRenderPhase::{bin_count, batch_set_count}` (`render_phase/mod.rs` ~1444-1480) and the `PreprocessBindGroupCount` render-world resource (`render/gpu_preprocess.rs`: struct and `bind_group_count` helpers ~326-358, `init_resource` ~550, set in `prepare_preprocess_bind_groups` ~2273-2447, `create_build_indirect_parameters_bind_groups` returns its count ~3394). Counters only, no behaviour change; read by `sf_diag_bevy::RenderViewsPlugin`. No diff file; grep the markers. ~95 lines in 2 files | upstream exposes phase bin/batch-set counts and a preprocess bind-group count (or stops rebuilding them every frame, bevy #26257) |
 
-## The Bevy shadow patch (#26149, #26161)
+## The Bevy shadow patch (#26149, #26161) — own fork
+
+**Both PRs were closed unmerged upstream on 2026-10-30**: self-closed by their author, branches deleted, zero reviews
+between them (the underlying bevy issue #25576 is still open). This row is therefore not "a vendored patch carrying an
+upstream PR" (CONTRIBUTING rule 4) but an **own fork we maintain**, and its "Drop when" can only be met by upstream
+solving the same problem by some other means. Nothing in `docs/specs/static-scene.md` plans around these PRs merging
+(`docs/research/static-scene-architecture-review-2026-11-09.md` B4).
+
 
 - **#26149** (`Core3dShadows`): point and spot shadow views run a slim schedule (GPU mesh
   preprocessing + the two shadow passes) instead of the whole `Core3d` camera schedule
@@ -62,6 +69,13 @@ comment; `grep -rn "superfargoth patch" vendor/<crate>` lists them.
 - **Opt-in**: `GpuInstanceBatchPlugin` is not part of `PbrPlugin`; the shared-path changes (`MeshCullingData::is_active`,
   `RenderMeshDraws`, merged sorted-phase items get an empty `batch_range`, range unpacking) are always on.
 - Tests: `sf_world_bevy` `src/gpu_batch_tests.rs` (shaders link + validate, Rust/WGSL layouts, headless app).
+- **"Patch GS" (our additions) is planned as an own fork.** #25978 itself has been `mergeable_state: dirty` /
+  `S-Merge-Conflicts` since 2026-10-17, has no milestone, has had one cosmetic review ever, and is tested only on
+  macOS/Metal — no occlusion-culling example, no shadow scene, no Vulkan or DX12 run. Our additions (N geometry ranges
+  per batch sharing one batch set, `unpack_ranges` in the shadow-view schedules, instance batches in the phase
+  counters, per-view level selection) stay in new files under `bevy_pbr/src/gpu_instance_batch/` and separate WGSL
+  modules so they remain offerable upstream, but no slice waits on a merge (`docs/specs/static-scene.md` §6,
+  `docs/specs/gs-patch-plan.md`).
 
 ## Upstream PR fixes
 

@@ -54,6 +54,13 @@ Paste the entry plus this:
   that table (per-cell POD reference arrays, CPU cull + px-error LOD, a counting sort into one multi-draw-indirect
   per pipeline state, cascades on the same path; no GPU culling) and a 30-line terrain horizon cull. Statics never
   become per-view entities, which needs an owner call against CONTRIBUTING rule 4.
+- **Corrected 2026-11-09** by the static-scene architecture review (`superfargoth/docs/research/static-scene-architecture-review-2026-11-09.md`
+  M11, B4): the "~41 % fps in dense areas" above is **not** a horizon-only measurement — the Greatness7 fork publishes
+  its numbers bundled over LOD simplification, atlasing, per-cell merging and occlusion culling together, and no
+  horizon-only figure exists, so do not quote it in a budget. Its horizon data is also a max-height grid plus per-subset
+  convex footprints, a different algorithm from `sf_scene`'s sight-line-vs-land-minimum march (ours is the more
+  conservative). And the lamp-cache Bevy PRs credited under "Done" (#26149, #26161) were closed unmerged upstream on
+  2026-10-30: that work is an own fork we maintain, not upstream-bound.
 - **Done when:** every `benchmarks/exterior_*.json` median gate passes at the target setup, x3 runs.
 
 ## H2. Shadow quality (ROADMAP 1.4, 1.12) — open
