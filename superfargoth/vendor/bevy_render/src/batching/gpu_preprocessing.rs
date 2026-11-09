@@ -2036,7 +2036,7 @@ pub fn batch_and_prepare_sorted_render_phase<I, GFBD>(
 
             // A GPU-authored instance batch is one sorted item. It's depth-sorted
             // as a whole and never merges with neighboring items.
-            if let Some(input_range) = GFBD::get_instance_batch(&system_param_item, entity) {
+            if let Some(spans) = GFBD::get_instance_batch(&system_param_item, entity) {
                 if let Some(batch_set) = batch_set.take() {
                     batch_set.flush(
                         data_buffer.len() as u32,
@@ -2045,12 +2045,20 @@ pub fn batch_and_prepare_sorted_render_phase<I, GFBD>(
                     );
                 }
 
-                if no_indirect_drawing || input_range.is_empty() {
+                if no_indirect_drawing || spans.is_empty() {
                     *phase.items[current_index].batch_range_mut() = 0..0;
                     continue;
                 }
-                let base_input_index = input_range.start;
-                let count = input_range.end - input_range.start;
+                // superfargoth patch (own, GS: ranges): the spans tile the
+                // batch's slots in order, so the batch still reserves exactly
+                // what #25978 reserved - one work-item range over all of them,
+                // one indirect parameters slot, one batch set. Giving each
+                // span its own sub-draw is `gs-patch-plan.md` step 2e, which
+                // also needs the batch-set merging of that step; until then a
+                // batch with several ranges draws the first range's geometry
+                // for all of them, exactly as it did before this slice.
+                let base_input_index = spans[0].base_input_index;
+                let count: u32 = spans.iter().map(|span| span.count).sum();
                 let output_base = data_buffer.add_multiple(count as usize) as u32;
 
                 let (indirect_parameters_index, extra_index) =
@@ -2574,15 +2582,18 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
                 if no_indirect_drawing {
                     continue;
                 }
-                let Some(input_range) = GFBD::get_instance_batch(&system_param_item, main_entity)
-                else {
+                let Some(spans) = GFBD::get_instance_batch(&system_param_item, main_entity) else {
                     continue;
                 };
-                if input_range.is_empty() {
+                if spans.is_empty() {
                     continue;
                 }
-                let input_uniform_index = crate::render_phase::InputUniformIndex(input_range.start);
-                let count_u32 = input_range.end - input_range.start;
+                // superfargoth patch (own, GS: ranges): as in the sorted
+                // caller above - the spans tile the batch's slots, so this
+                // reserves exactly what #25978 reserved. One sub-draw per span
+                // is `gs-patch-plan.md` step 2e.
+                let base_input_index = spans[0].base_input_index;
+                let count_u32: u32 = spans.iter().map(|span| span.count).sum();
 
                 let output_base = data_buffer.add_multiple(count_u32 as usize) as u32;
 
@@ -2595,7 +2606,7 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
                     );
                 work_item_buffer.push_range(
                     indexed,
-                    input_uniform_index.0,
+                    base_input_index,
                     indirect_parameters_index,
                     count_u32,
                 );
