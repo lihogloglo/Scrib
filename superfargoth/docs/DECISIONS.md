@@ -1633,3 +1633,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-08 (delirium-repin): delirium-physics pinned to `f4ff84d` (0.7.0) after upstream rewrote history and dropped
   `91ee246`; new 0.7.0 fields take delirium's serde defaults in `mw_delirium`. Delirium stays a default feature (owner).
   A project-owned fork pin is the open follow-up.
+- 2026-11-09 (owner, AI2b): HTN planner uses full backtracking, bounded by try/depth limits (owner, 2026-11-09):
+  chronological (SHOP/Humphreys/Decima), not Fluid's method-local; `SEARCH_TRIES`/`SEARCH_DEPTH` cut it off identically on
+  every CPU tier (`RejectReason::Limit`); a method opts out with `cut: true` (ai-as-built.md, AI2).

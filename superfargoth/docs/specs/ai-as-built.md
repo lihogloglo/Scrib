@@ -17,9 +17,14 @@ digit. `decompose` / `resume` / `replan` take `Option<&mut TraceEntry>` (identic
 Deviations from the spec's illustrative data model, and why:
 - **Effects on primitive tasks, not methods** (Humphreys, Fluid, SHOP): a method effect has no defined time in a
   total-order plan with pause markers. Effects are planning-only (Fluid `PlanOnly`); executors write real state.
-- **Method-local backtracking** (Fluid's sequence/selector): a method whose subtask can't plan is rejected
-  (`SubtaskFailed`) and its task's next method tried; planned siblings' alternatives are not re-tried
-  (Humphreys' chronological restore / Decima's Prolog-style search would). Linear cost, readable traces.
+- **Full chronological backtracking** (owner 2026-11-09, slice AI2b; SHOP/pyhop depth-first, Humphreys'
+  decomposition history, Decima's Prolog-style search; was Fluid's method-local in AI2): every method choice is a
+  choice point; a task that can't plan reopens the most recent one with untried methods, even inside an earlier,
+  fully planned sibling, restoring world state, plan and method stack through one undo journal. Trace: unwound
+  methods `SubtaskFailed(t)`, a reopened planned choice `Backtracked(t)` (`back t` in `format_trace`), one entry
+  each. First plan found = best MTR. Worst case exponential: `SEARCH_TRIES` (every backtrack costs a try) cuts it
+  off deterministically, tier-invariantly (`Limit`). Opt-out: `MethodDef::cut` (Prolog cut at the method's end;
+  `cut` everywhere = method-local). No nogood memo of failed (agenda, state) yet: AIM measures first.
 - **MTR rule:** a replan wins only if lexicographically better on the common prefix (equal, or a prefix, is not
   better); the search stops at the first method that can't win (`RejectReason::NotBetter`, Fluid's
   `BeatsLastMTR`). The AI1 open item ("replan discarded") is `TraceEntry::outcome = kept_not_better`, plus

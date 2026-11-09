@@ -7,12 +7,21 @@
 //! effects applied to that copy as the plan grows. Design (not code) from Fluid HTN (MIT,
 //! github.com/ptrefall/fluid-hierarchical-task-network, `Selector.cs`/`Sequence.cs`/`Domain.cs`):
 //!
-//! - **Backtracking is method-local** (Fluid's sequence/selector semantics): a method whose
-//!   subtask can't be planned is rejected ([`RejectReason::SubtaskFailed`]), its effects are
-//!   undone, and the same task's next method is tried. Alternatives of sibling subtasks already
-//!   planned are not re-tried (Humphreys' chronological restore and Decima's Prolog-style search
-//!   would): one pass per method keeps the cost linear in the library and the trace readable;
-//!   designers order methods instead.
+//! - **Full chronological backtracking** (owner 2026-11-09; SHOP/pyhop depth-first search,
+//!   Humphreys' decomposition history, Decima's Prolog-style backtracking): every method choice
+//!   is a choice point on a trail. When a task can't be planned, the search returns to the most
+//!   recent choice point whose task has untried methods, wherever it is (an enclosing method, or
+//!   an earlier sibling subtask already fully planned, at any depth), restores the world state,
+//!   the plan and the agenda (method stack) to just before that choice through one undo journal,
+//!   and tries the next method from there. Unwound methods still being decomposed are traced
+//!   [`RejectReason::SubtaskFailed`]; a reopened, already planned choice
+//!   [`RejectReason::Backtracked`] with the task that failed after it. The first plan found is
+//!   therefore the one with the lexicographically best MTR. Worst case is exponential in the
+//!   number of choice points: [`SEARCH_TRIES`] bounds it deterministically (same content, same
+//!   state, same cut-off on every CPU tier), traced [`RejectReason::Limit`]. Opt-out per method:
+//!   [`MethodDef::cut`] (a Prolog cut at the method's end) closes its own choice and every choice
+//!   made inside it once its subtasks are planned; `cut` on every method is Fluid HTN's
+//!   method-local backtracking.
 //! - **Partial plans:** a [`Subtask::Pause`] marker in a method stops decomposition once the plan
 //!   has at least one step; [`resume`] decomposes the rest later from the then-current state.
 //!   Paused work is committed: if the rest can't be planned, [`resume`] fails and the caller
@@ -52,7 +61,8 @@ pub const METHOD_KIND: &str = "sf.ai.method";
 /// Deepest decomposition (nested compound tasks) before a branch is cut ([`RejectReason::Limit`]).
 pub const SEARCH_DEPTH: usize = 64;
 /// Most method tries per decomposition before it gives up ([`NoPlan::Limit`]): a guard against
-/// content whose search explodes, far above what a sane library needs (tens).
+/// content whose search explodes, far above what a sane library needs (tens). Every backtrack
+/// tries at least one method, so this also bounds backtracking (exponential in the worst case).
 pub const SEARCH_TRIES: u32 = 4096;
 
 /// Registers [`TASK_KIND`] and [`METHOD_KIND`]. Call once before loading mods.
@@ -148,6 +158,11 @@ pub struct MethodDef {
     #[serde(default)]
     pub pre: Vec<PredicateDef>,
     pub subtasks: Vec<SubtaskDef>,
+    /// Commit once planned (a Prolog cut at the method's end): when its subtasks are all planned,
+    /// a later failure never reopens this choice or any choice made inside it; the search
+    /// backtracks to choices made before it instead. Default `false`: full backtracking.
+    #[serde(default)]
+    pub cut: bool,
 }
 
 // --- Vocabulary ------------------------------------------------------------------------------
@@ -274,6 +289,8 @@ pub struct Method {
     pub rank: u16,
     pub pre: Vec<Predicate>,
     pub subtasks: Vec<Subtask>,
+    /// [`MethodDef::cut`].
+    pub cut: bool,
 }
 
 /// The one shared method library every NPC plans with (ai.md "Behaviours").
@@ -488,6 +505,7 @@ impl Library {
                 rank: 0,
                 pre,
                 subtasks,
+                cut: def.cut,
             });
         }
         if !errors.is_empty() {
@@ -765,20 +783,32 @@ impl From<Stop> for NoPlan {
     }
 }
 
-/// The value an effect overwrote, to undo it on backtrack.
+
+/// One journalled change, undone in reverse order on backtrack: the value an effect overwrote,
+/// or a change to the method stack (the agenda), so restoring a choice point restores both.
 #[derive(Clone, Copy, Debug)]
 enum Undo {
     Bit(BitKey, bool),
     Int(IntKey, i32),
     Ref(RefKey, Option<Target>),
+    /// A frame was pushed (undo: pop it).
+    Pushed,
+    /// The top frame moved to its next subtask (undo: step it back).
+    Advanced,
+    /// A finished frame was popped (undo: push it back).
+    Popped(Frame),
 }
 
-/// Lengths to restore when a method is rejected.
+/// A choice point: one method choice, parallel to `Search::methods` (its task, method and MTR
+/// rank live there), and what to restore to reopen it.
 #[derive(Clone, Copy, Debug)]
-struct Marks {
+struct Choice {
+    /// Still reopenable: `false` once cut ([`MethodDef::cut`]) or inherited from a paused plan.
+    open: bool,
+    /// Journal length just before the choice.
     journal: usize,
+    /// Plan length just before the choice.
     steps: usize,
-    methods: usize,
 }
 
 /// A method being decomposed.
@@ -787,17 +817,18 @@ struct Frame {
     method: MethodId,
     /// Next subtask index.
     next: u16,
-    /// Resumed after a pause: no alternatives.
-    committed: bool,
-    marks: Marks,
+    /// Its choice point; `None` when resumed after a pause (committed: no alternatives).
+    choice: Option<usize>,
 }
 
-/// One decomposition: the working state, the method stack and the plan so far.
+/// One decomposition: the working state, the method stack, the choice trail and the plan so far.
 struct Search<'a, 't> {
     lib: &'a Library,
     ws: WorldState,
     journal: Vec<Undo>,
     stack: Vec<Frame>,
+    /// Parallel to `methods`.
+    choices: Vec<Choice>,
     steps: Vec<PlanStep>,
     methods: Vec<MethodChoice>,
     mtr: Vec<u16>,
@@ -815,6 +846,7 @@ impl<'a, 't> Search<'a, 't> {
             ws: ws.clone(),
             journal: Vec::new(),
             stack: Vec::new(),
+            choices: Vec::new(),
             steps: Vec::new(),
             methods: Vec::new(),
             mtr: Vec::new(),
@@ -850,8 +882,9 @@ impl<'a, 't> Search<'a, 't> {
         self.methods.clone_from(&plan.methods);
         self.mtr.clone_from(&plan.mtr);
         self.reads.clone_from(&plan.reads);
-        let marks = self.marks();
-        self.stack.extend(plan.rest.iter().map(|r| Frame { method: r.method, next: r.next, committed: true, marks }));
+        // The earlier segment already ran: its choices are closed.
+        self.choices.resize(plan.methods.len(), Choice { open: false, journal: 0, steps: 0 });
+        self.stack.extend(plan.rest.iter().map(|r| Frame { method: r.method, next: r.next, choice: None }));
         self.run()?;
         Ok(self.finish(plan.root))
     }
@@ -859,10 +892,6 @@ impl<'a, 't> Search<'a, 't> {
     fn finish(self, root: TaskId) -> Decomposition {
         let rest = self.stack.iter().map(|f| Resume { method: f.method, next: f.next }).collect();
         Decomposition { root, steps: self.steps, methods: self.methods, mtr: self.mtr, reads: self.reads, rest }
-    }
-
-    fn marks(&self) -> Marks {
-        Marks { journal: self.journal.len(), steps: self.steps.len(), methods: self.methods.len() }
     }
 
     /// Processes subtasks until the stack empties (done) or a pause stops it (the stack is the
@@ -874,10 +903,21 @@ impl<'a, 't> Search<'a, 't> {
                 return Err(Stop::No(NoPlan::UnknownTask));
             };
             let Some(&sub) = method.subtasks.get(usize::from(top.next)) else {
+                let done = *top;
                 self.stack.pop();
+                self.journal.push(Undo::Popped(done));
+                if method.cut
+                    && let Some(c) = done.choice
+                {
+                    // Everything after its choice was chosen inside it.
+                    for choice in &mut self.choices[c..] {
+                        choice.open = false;
+                    }
+                }
                 continue;
             };
             top.next += 1;
+            self.journal.push(Undo::Advanced);
             match sub {
                 // Nothing planned yet in this segment: there is nothing to run first, so go on.
                 Subtask::Pause if self.steps.is_empty() => {}
@@ -888,22 +928,23 @@ impl<'a, 't> Search<'a, 't> {
                             self.apply(&p.effects);
                             self.steps.push(PlanStep { task: t, operator: p.operator });
                         } else {
-                            self.fail(RejectReason::SubtaskFailed(t))?;
+                            self.fail(t)?;
                         }
                     }
                     Some(Task::Compound(_)) => {
                         if !self.expand(t, 0)? {
-                            self.fail(RejectReason::SubtaskFailed(t))?;
+                            self.fail(t)?;
                         }
                     }
-                    None => self.fail(RejectReason::SubtaskFailed(t))?,
+                    None => self.fail(t)?,
                 },
             }
         }
         Ok(())
     }
 
-    /// Pushes the first applicable method of compound `task` from rank `from`; `false` if none.
+    /// Pushes the first applicable method of compound `task` from rank `from` (a new choice
+    /// point); `false` if none.
     fn expand(&mut self, task: TaskId, from: usize) -> Result<bool, Stop> {
         let lib = self.lib;
         let list = lib.methods_of(task);
@@ -921,6 +962,8 @@ impl<'a, 't> Search<'a, 't> {
                 return Err(Stop::No(NoPlan::Limit));
             }
             if let Some(old) = self.against {
+                // Choices are tried in MTR order (backtracking only raises ranks), so nothing
+                // found from here can beat the running plan.
                 let layer = self.mtr.len();
                 if layer < old.len() && rank > usize::from(old[layer]) && self.mtr[..] == old[..layer] {
                     self.reject(task, mid, RejectReason::NotBetter);
@@ -932,8 +975,10 @@ impl<'a, 't> Search<'a, 't> {
                 self.reject(task, mid, RejectReason::Precondition(i));
                 continue;
             }
-            let marks = self.marks();
-            self.stack.push(Frame { method: mid, next: 0, committed: false, marks });
+            let choice = Choice { open: true, journal: self.journal.len(), steps: self.steps.len() };
+            self.stack.push(Frame { method: mid, next: 0, choice: Some(self.choices.len()) });
+            self.journal.push(Undo::Pushed);
+            self.choices.push(choice);
             self.methods.push(MethodChoice { task, method: mid });
             self.mtr.push(method.rank);
             return Ok(true);
@@ -941,28 +986,86 @@ impl<'a, 't> Search<'a, 't> {
         Ok(false)
     }
 
-    /// Rejects the method on top of the stack for `reason`, undoes it and tries its task's next
-    /// method, failing upward until one applies (`Ok`) or the root runs out (`Err`).
-    fn fail(&mut self, mut reason: RejectReason) -> Result<(), Stop> {
+    /// `failed`, the top frame's current subtask, can't be planned: backtracks to the most
+    /// recent open choice point whose task has untried methods, rejecting each method being
+    /// decomposed above it (innermost first, [`RejectReason::SubtaskFailed`]) and the reopened
+    /// method itself (`SubtaskFailed` if it was still being decomposed, else
+    /// [`RejectReason::Backtracked`]), restores the state to just before that choice and tries
+    /// the task's next method; repeats until one applies (`Ok`) or no choice is left (`Err`).
+    fn fail(&mut self, mut failed: TaskId) -> Result<(), Stop> {
         let lib = self.lib;
         loop {
-            let Some(frame) = self.stack.pop() else {
-                return Err(Stop::No(NoPlan::Failed));
-            };
-            let Some(method) = lib.method(frame.method) else {
-                return Err(Stop::No(NoPlan::UnknownTask));
-            };
-            let task = method.task;
-            self.reject(task, frame.method, reason);
-            self.undo(frame.marks);
-            if frame.committed {
-                return Err(Stop::No(NoPlan::Failed));
+            let target = (0..self.choices.len()).rev().find(|&j| self.reopenable(j));
+            let mut inside = false;
+            for i in (0..self.stack.len()).rev() {
+                let frame = self.stack[i];
+                match (frame.choice, target) {
+                    (Some(c), Some(t)) if c == t => {
+                        inside = true;
+                        break;
+                    }
+                    // Below the target: the target was planned inside this frame.
+                    (Some(c), Some(t)) if c < t => break,
+                    (None, Some(_)) => break,
+                    (Some(c), _) => {
+                        let task = self.methods[c].task;
+                        self.reject(task, frame.method, RejectReason::SubtaskFailed(failed));
+                        failed = task;
+                    }
+                    // A committed (resumed) method can't be replaced: the caller replans.
+                    (None, None) => {
+                        let Some(method) = lib.method(frame.method) else {
+                            return Err(Stop::No(NoPlan::UnknownTask));
+                        };
+                        self.reject(method.task, frame.method, RejectReason::SubtaskFailed(failed));
+                        return Err(Stop::No(NoPlan::Failed));
+                    }
+                }
             }
-            if self.expand(task, usize::from(method.rank) + 1)? {
+            let Some(t) = target else {
+                return Err(Stop::No(NoPlan::Failed));
+            };
+            let MethodChoice { task, method } = self.methods[t];
+            let reason = if inside { RejectReason::SubtaskFailed(failed) } else { RejectReason::Backtracked(failed) };
+            self.reject(task, method, reason);
+            let rank = self.mtr[t];
+            self.restore(t);
+            if self.expand(task, usize::from(rank) + 1)? {
                 return Ok(());
             }
-            reason = RejectReason::SubtaskFailed(task);
+            failed = task;
         }
+    }
+
+    /// Whether choice `j` can be reopened: open, and its task has a method after the chosen one.
+    fn reopenable(&self, j: usize) -> bool {
+        self.choices[j].open && usize::from(self.mtr[j]) + 1 < self.lib.methods_of(self.methods[j].task).len()
+    }
+
+    /// Restores the world state, the stack and the plan to just before choice `j`.
+    fn restore(&mut self, j: usize) {
+        let mark = self.choices[j];
+        while self.journal.len() > mark.journal {
+            match self.journal.pop() {
+                Some(Undo::Bit(k, v)) => self.ws.set_bit(k, v),
+                Some(Undo::Int(k, v)) => self.ws.set_int(k, v),
+                Some(Undo::Ref(k, v)) => self.ws.set_target(k, v),
+                Some(Undo::Pushed) => {
+                    self.stack.pop();
+                }
+                Some(Undo::Advanced) => {
+                    if let Some(top) = self.stack.last_mut() {
+                        top.next -= 1;
+                    }
+                }
+                Some(Undo::Popped(frame)) => self.stack.push(frame),
+                None => break,
+            }
+        }
+        self.steps.truncate(mark.steps);
+        self.choices.truncate(j);
+        self.methods.truncate(j);
+        self.mtr.truncate(j);
     }
 
     /// The index of the first false precondition (reading keys up to it), or `None`.
@@ -1003,20 +1106,6 @@ impl<'a, 't> Search<'a, 't> {
                 }
             }
         }
-    }
-
-    fn undo(&mut self, marks: Marks) {
-        while self.journal.len() > marks.journal {
-            match self.journal.pop() {
-                Some(Undo::Bit(k, v)) => self.ws.set_bit(k, v),
-                Some(Undo::Int(k, v)) => self.ws.set_int(k, v),
-                Some(Undo::Ref(k, v)) => self.ws.set_target(k, v),
-                None => break,
-            }
-        }
-        self.steps.truncate(marks.steps);
-        self.methods.truncate(marks.methods);
-        self.mtr.truncate(marks.methods);
     }
 
     fn reject(&mut self, task: TaskId, method: MethodId, reason: RejectReason) {

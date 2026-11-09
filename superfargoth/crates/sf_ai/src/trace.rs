@@ -83,8 +83,13 @@ pub enum RejectReason {
     /// Its precondition at this index (into the method's `pre` list) was false; the first false
     /// one, as preconditions are checked in order.
     Precondition(u16),
-    /// Its preconditions held but this subtask found no applicable method (backtracked).
+    /// Its preconditions held, but this subtask of its own (directly, or as the task that failed
+    /// inside it) could not be planned, so the search backtracked out of it.
     SubtaskFailed(TaskId),
+    /// It had been planned in full, but this later task could not be planned after it, so the
+    /// search reopened this choice point (full chronological backtracking, `AI2b`): state, plan and
+    /// agenda restored to just before the method was chosen, the task's next method tried.
+    Backtracked(TaskId),
     /// A replan reached it with every earlier choice equal to the running plan's, and it ranks
     /// below the running plan's method here: no plan from here on can beat the running one, so
     /// the search stopped (Fluid HTN's MTR early-out; the entry's `outcome` is `kept_not_better`).
@@ -622,6 +627,10 @@ pub fn format_trace_with(trace: &Trace, n: usize, names: &dyn TraceNames) -> Str
                     }
                     RejectReason::SubtaskFailed(t) => {
                         out.push_str("sub ");
+                        names.task(&mut out, t);
+                    }
+                    RejectReason::Backtracked(t) => {
+                        out.push_str("back ");
                         names.task(&mut out, t);
                     }
                     RejectReason::NotBetter => out.push_str("not_better"),

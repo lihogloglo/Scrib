@@ -61,14 +61,14 @@ struct Fixture {
 
 fn vocabulary() -> (StateKeys, Operators) {
     let mut keys = StateKeys::new();
-    for bit in ["enemy_visible", "armed", "hungry", "has_food"] {
+    for bit in ["enemy_visible", "armed", "hungry", "has_food", "ready", "scouted"] {
         keys.add_bit(bit).unwrap();
     }
     keys.add_int("health").unwrap();
     keys.add_int("gold").unwrap();
     keys.add_ref("threat").unwrap();
     let mut ops = Operators::new();
-    for op in ["MoveTo", "Attack", "Draw", "Flee", "Buy", "Unpack", "Eat", "Wander", "Wait"] {
+    for op in ["MoveTo", "Attack", "Draw", "Flee", "Buy", "Unpack", "Eat", "Wander", "Wait", "Spend", "Ready", "Use", "Step"] {
         ops.add(op);
     }
     (keys, ops)
@@ -439,4 +439,219 @@ fn state_keys_fold_names_share_same_kind_and_reject_clashes() {
     assert!(ws.bit(far) && !ws.bit(a));
     let json = serde_json::to_string(&ws).unwrap();
     assert_eq!(serde_json::from_str::<WorldState>(&json).unwrap(), ws);
+}
+
+// --- Full backtracking (AI2b, owner 2026-11-09) -------------------------------------------------
+
+/// `job` needs `p_use` (ready, 5 gold) after `outer`, which plans `inner` and then `p_x`. Inner's
+/// first method spends the gold and doesn't make ready; only its second one enables `p_use`: a
+/// choice inside an earlier, already planned sibling. `shift` is the same work after a pause.
+const BACKTRACK: &str = r#"[
+  define(kind: "sf.ai.task", id: "job", value: Compound),
+  define(kind: "sf.ai.task", id: "shift", value: Compound),
+  define(kind: "sf.ai.task", id: "outer", value: Compound),
+  define(kind: "sf.ai.task", id: "inner", value: Compound),
+  define(kind: "sf.ai.task", id: "p_spend", value: Primitive(operator: "Spend",
+    effects: [AddInt(key: "gold", by: -5), SetBit(key: "scouted", value: true)])),
+  define(kind: "sf.ai.task", id: "p_ready", value: Primitive(operator: "Ready",
+    effects: [SetBit(key: "ready", value: true)])),
+  define(kind: "sf.ai.task", id: "p_use", value: Primitive(operator: "Use",
+    pre: [Bit(key: "ready", value: true), Int(key: "gold", op: Ge, value: 5)])),
+  define(kind: "sf.ai.task", id: "p_x", value: Primitive(operator: "Step")),
+  define(kind: "sf.ai.method", id: "job_do", value: (task: "job", subtasks: [Task("outer"), Task("p_use")])),
+  define(kind: "sf.ai.method", id: "shift_do", value: (task: "shift",
+    subtasks: [Task("p_x"), Pause, Task("outer"), Task("p_use")])),
+  define(kind: "sf.ai.method", id: "outer_only", value: (task: "outer", subtasks: [Task("inner"), Task("p_x")])),
+  define(kind: "sf.ai.method", id: "inner_spend", value: (task: "inner", priority: 10, subtasks: [Task("p_spend")])),
+  define(kind: "sf.ai.method", id: "inner_ready", value: (task: "inner", priority: 5, subtasks: [Task("p_ready")])),
+]"#;
+
+/// [`Fixture`] over `text` (only the names it uses are looked up).
+fn fixture_of(text: &str, root: &str) -> Fixture {
+    let mut f = fixture();
+    f.lib = load(text).unwrap();
+    f.root = f.lib.task_id(root).unwrap();
+    f
+}
+
+impl Fixture {
+    /// `gold` and `ready` as given, nothing else set.
+    fn job(&self, gold: i32, ready: bool) -> WorldState {
+        let mut ws = self.ws();
+        ws.set_int(self.gold, gold);
+        let Some(StateKey::Bit(k)) = self.lib.keys().get("ready") else { panic!("ready") };
+        ws.set_bit(k, ready);
+        ws
+    }
+}
+
+#[test]
+fn full_backtracking_reopens_an_earlier_siblings_choice() {
+    let f = fixture_of(BACKTRACK, "job");
+    let ws = f.job(5, false);
+    let before = ws.clone();
+    let (plan, e) = f.plan(&ws);
+    let plan = plan.unwrap();
+    assert_eq!(ws, before);
+    // p_spend's step is gone and its effects undone: p_use sees the 5 gold again. The restored
+    // stack resumes `outer` after `inner`, so p_x is planned once.
+    assert_eq!(f.steps(&plan.steps), ["p_ready", "p_x", "p_use"]);
+    assert_eq!(
+        plan.methods,
+        [f.choice("job", "job_do"), f.choice("outer", "outer_only"), f.choice("inner", "inner_ready")]
+    );
+    // The MTR describes the plan actually chosen.
+    assert_eq!(plan.mtr, [0, 0, 1]);
+    assert_eq!(e.mtr, plan.mtr);
+    assert_eq!(e.methods, plan.methods);
+    assert_eq!(e.rejected, [f.rej("inner", "inner_spend", RejectReason::Backtracked(f.t("p_use")))]);
+    assert_eq!(e.outcome, Some(PlanOutcome::Planned));
+    let mut trace = Trace::new();
+    trace.push(e.clone());
+    assert_eq!(
+        format_trace_with(&trace, 1, &f.lib),
+        "#1 t2 scheduled drive - via job:job_do>outer:outer_only>inner:inner_ready \
+         rej inner:inner_spend back p_use plan planned op - path -\n"
+    );
+    let json = serde_json::to_string(&e.rejected[0].reason).unwrap();
+    assert_eq!(json, format!("{{\"backtracked\":{}}}", f.t("p_use").0));
+    assert_eq!(serde_json::from_str::<RejectReason>(&json).unwrap(), e.rejected[0].reason);
+    // Keys read in the abandoned branch count (re-validation).
+    assert!(plan.reads.contains(StateKey::Int(f.gold)));
+}
+
+#[test]
+fn a_cut_method_falls_back_to_method_local_backtracking() {
+    // Method-local (Fluid): once inner_spend is planned its choice is closed, so p_use's failure
+    // rejects job_do, and job has no other method.
+    let text = BACKTRACK.replace(r#"subtasks: [Task("p_spend")])"#, r#"subtasks: [Task("p_spend")], cut: true)"#);
+    let f = fixture_of(&text, "job");
+    assert!(f.lib.method(f.m("inner_spend")).unwrap().cut);
+    let (plan, e) = f.plan(&f.job(5, false));
+    assert_eq!(plan, Err(NoPlan::Failed));
+    assert_eq!(e.rejected, [f.rej("job", "job_do", RejectReason::SubtaskFailed(f.t("p_use")))]);
+    assert_eq!(e.outcome, Some(PlanOutcome::NoPlan));
+}
+
+#[test]
+fn an_exhausted_choice_point_backtracks_further() {
+    // 4 gold: p_use fails under both inner methods; then only job_do is left, and it has no
+    // alternative.
+    let f = fixture_of(BACKTRACK, "job");
+    let (plan, e) = f.plan(&f.job(4, false));
+    assert_eq!(plan, Err(NoPlan::Failed));
+    assert_eq!(
+        e.rejected,
+        [
+            f.rej("inner", "inner_spend", RejectReason::Backtracked(f.t("p_use"))),
+            f.rej("job", "job_do", RejectReason::SubtaskFailed(f.t("p_use"))),
+        ]
+    );
+}
+
+#[test]
+fn replans_compare_the_mtr_of_the_backtracked_plan() {
+    let f = fixture_of(BACKTRACK, "job");
+    let running = decompose(&f.job(5, false), f.root, &f.lib, None).unwrap();
+    assert_eq!(running.mtr, [0, 0, 1]);
+
+    // Same state: the search backtracks to the same plan; equal is not better.
+    let mut e = TraceEntry::new(2, 2);
+    assert_eq!(replan(&f.job(5, false), f.root, &f.lib, &running, Some(&mut e)), Replan::KeepNotBetter);
+    assert_eq!(e.rejected, [f.rej("inner", "inner_spend", RejectReason::Backtracked(f.t("p_use")))]);
+    assert_eq!((e.outcome, &e.mtr), (Some(PlanOutcome::KeptNotBetter), &running.mtr));
+
+    // Already ready: inner's first method now works, MTR [0, 0, 0] wins.
+    let mut e = TraceEntry::new(3, 2);
+    let Replan::Replace(better) = replan(&f.job(10, true), f.root, &f.lib, &running, Some(&mut e)) else {
+        panic!("expected a replacement");
+    };
+    assert_eq!(f.steps(&better.steps), ["p_spend", "p_x", "p_use"]);
+    assert_eq!(better.mtr, [0, 0, 0]);
+    assert_eq!(e.mtr, [0, 0, 0]);
+    assert_eq!(e.rejected, []);
+
+    // Against [0, 0, 0], reopening inner at rank 1 can't win: the search stops there.
+    let mut e = TraceEntry::new(4, 2);
+    assert_eq!(replan(&f.job(5, false), f.root, &f.lib, &better, Some(&mut e)), Replan::KeepNotBetter);
+    assert_eq!(
+        e.rejected,
+        [
+            f.rej("inner", "inner_spend", RejectReason::Backtracked(f.t("p_use"))),
+            f.rej("inner", "inner_ready", RejectReason::NotBetter),
+        ]
+    );
+
+    // No plan at all.
+    assert_eq!(replan(&f.job(4, false), f.root, &f.lib, &running, None), Replan::KeepNoPlan(NoPlan::Failed));
+}
+
+#[test]
+fn resume_backtracks_inside_its_segment_but_never_reopens_committed_work() {
+    let f = fixture_of(BACKTRACK, "shift");
+    let (plan, _) = f.plan(&f.job(5, false));
+    let plan = plan.unwrap();
+    assert_eq!(f.steps(&plan.steps), ["p_x"]);
+    assert_eq!(plan.rest, [Resume { method: f.m("shift_do"), next: 2 }]);
+
+    let mut e = TraceEntry::new(2, 2);
+    let rest = resume(&f.job(5, false), &plan, &f.lib, Some(&mut e)).unwrap();
+    assert_eq!(resume(&f.job(5, false), &plan, &f.lib, None).as_ref(), Ok(&rest));
+    assert_eq!(f.steps(&rest.steps), ["p_ready", "p_x", "p_use"]);
+    assert_eq!(
+        rest.methods,
+        [f.choice("shift", "shift_do"), f.choice("outer", "outer_only"), f.choice("inner", "inner_ready")]
+    );
+    assert_eq!(rest.mtr, [0, 0, 1]);
+    assert_eq!(e.rejected, [f.rej("inner", "inner_spend", RejectReason::Backtracked(f.t("p_use")))]);
+    assert_eq!(e.outcome, Some(PlanOutcome::Continued));
+
+    // Nothing in the new segment works: the committed shift_do is rejected, not replaced.
+    let mut e = TraceEntry::new(3, 2);
+    assert_eq!(resume(&f.job(4, false), &plan, &f.lib, Some(&mut e)), Err(NoPlan::Failed));
+    assert_eq!(
+        e.rejected,
+        [
+            f.rej("inner", "inner_spend", RejectReason::Backtracked(f.t("p_use"))),
+            f.rej("shift", "shift_do", RejectReason::SubtaskFailed(f.t("p_use"))),
+        ]
+    );
+}
+
+#[test]
+fn the_try_limit_stops_an_exponential_search_deterministically() {
+    // 13 two-way choices before a task that never plans: 2^13 orderings, 16383 tries to exhaust.
+    let mut subtasks = "Task(\"c\"), ".repeat(13);
+    subtasks.push_str("Task(\"p_never\")");
+    let text = format!(
+        r#"[
+      define(kind: "sf.ai.task", id: "root", value: Compound),
+      define(kind: "sf.ai.task", id: "c", value: Compound),
+      define(kind: "sf.ai.task", id: "p_ok", value: Primitive(operator: "Step")),
+      define(kind: "sf.ai.task", id: "p_never", value: Primitive(operator: "Use", pre: [Bit(key: "ready", value: true)])),
+      define(kind: "sf.ai.method", id: "root_m", value: (task: "root", subtasks: [{subtasks}])),
+      define(kind: "sf.ai.method", id: "c_a", value: (task: "c", priority: 10, subtasks: [Task("p_ok")])),
+      define(kind: "sf.ai.method", id: "c_b", value: (task: "c", priority: 5, subtasks: [Task("p_ok")])),
+    ]"#
+    );
+    let f = fixture_of(&text, "root");
+    let (plan, e) = f.plan(&f.ws());
+    assert_eq!(plan, Err(NoPlan::Limit));
+    assert_eq!(e.outcome, Some(PlanOutcome::NoPlan));
+    assert_eq!(e.rejected.iter().filter(|r| r.reason == RejectReason::Limit).count(), 1);
+    assert_eq!(e.rejected.last().map(|r| (r.task, r.reason)), Some((f.t("c"), RejectReason::Limit)));
+    // One rejection per reopened choice (each costs a try) plus the unwound ones: the entry's
+    // size is bounded by SEARCH_TRIES too.
+    assert!(e.rejected.len() < 2 * SEARCH_TRIES as usize);
+    // Same cut-off at any tier and on every run.
+    let mut low = TraceEntry::new(1, 0);
+    assert_eq!(decompose(&f.ws(), f.root, &f.lib, Some(&mut low)), Err(NoPlan::Limit));
+    assert_eq!(low.rejected, e.rejected);
+
+    // With every method of c cut (method-local), the same content fails at once.
+    let cut = text.replace(r#"subtasks: [Task("p_ok")])"#, r#"subtasks: [Task("p_ok")], cut: true)"#);
+    let f = fixture_of(&cut, "root");
+    let (plan, e) = f.plan(&f.ws());
+    assert_eq!(plan, Err(NoPlan::Failed));
+    assert_eq!(e.rejected, [f.rej("root", "root_m", RejectReason::SubtaskFailed(f.t("p_never")))]);
 }

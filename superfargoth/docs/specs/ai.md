@@ -120,7 +120,7 @@ Flee and Alarm rules are adapter considerations.
 - **Smart objects** add method fragments through their slots, so ambient life doesn't grow the library.
 
 **As built (AI2).** `sf_ai::{state, htn}`: records `sf.ai.task`/`sf.ai.method`, `StateKeys` + `WorldState`, `Library`,
-`decompose`/`resume`/`replan`. Effects on primitive tasks; method-local backtracking (Fluid); a replan wins only on a
+`decompose`/`resume`/`replan`. Effects on primitive tasks; full backtracking (AI2b, `cut` opts out); a replan wins only on a
 better MTR prefix (trace `outcome` `kept_not_better`, `mtr`). Why: [ai-as-built.md](ai-as-built.md).
 
 ## Executors (operators)

@@ -6,7 +6,8 @@
 //!   per-actor decision trace ([`Trace`], [`TraceStore`], JSON dumps, [`format_trace`]).
 //! - AI2 (HTN core): [`state`], the typed world state ([`StateKeys`], [`WorldState`]), and
 //!   [`htn`], the record-built method [`Library`] and its planner ([`decompose`], [`resume`],
-//!   [`replan`] with MTR comparison), every rejected method traced.
+//!   [`replan`] with MTR comparison), every rejected method traced. `AI2b`: full chronological
+//!   backtracking, bounded by [`SEARCH_TRIES`].
 //!
 //! The console command `ai.trace` and BRP live in `sf_ai_bevy` (AI3): actor references and the
 //! console context are the shell's.
