@@ -40,6 +40,8 @@ pub mod deferred;
 pub mod diagnostic;
 mod extended_material;
 mod fog;
+// superfargoth patch (bevyengine/bevy#25978)
+pub mod gpu_instance_batch;
 mod light_probe;
 mod lightmap;
 mod material;

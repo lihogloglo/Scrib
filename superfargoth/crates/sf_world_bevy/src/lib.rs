@@ -170,3 +170,6 @@ fn report_propagation(stats: Option<Res<PropagationStats>>, counters: Option<Res
 
 #[cfg(test)]
 mod tests;
+// Sanity checks for the vendored bevyengine/bevy#25978 port (static-scene.md S3a).
+#[cfg(test)]
+mod gpu_batch_tests;

@@ -62,6 +62,10 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+# Shader compile checks for the vendored bevy#25978 port (no GPU, no picture): wesl links the
+# vendored bevy_pbr/bevy_render modules as Bevy's shader cache does; naga validates (as sf_sky_bevy's).
+naga = { workspace = true, features = ["wgsl-in"] }
+wesl = { workspace = true, features = ["naga-ext"] }
 postcard.workspace = true
 sf_bake.workspace = true
 sf_world = { workspace = true, features = ["bake"] }

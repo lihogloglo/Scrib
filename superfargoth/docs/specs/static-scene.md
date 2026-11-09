@@ -213,6 +213,12 @@ reaching into private render-world state from our crates. Not chosen: a public-A
 `custom_phase_item`): it forks material specialisation, prepass and motion vectors, and breaks on every Bevy upgrade;
 our own renderer (SPUD-style): loses Solari, DLSS, GI and upstream work.
 
+**Port shape (S3a, 2026-11-09).** Commit `36e79e21` of #25978, `bevy_pbr`/`bevy_render` hunks only, applied by context
+(our 0.20 files had not diverged there). One deviation: no `Mesh3dVisibility` class (it lives in `bevy_mesh`, would
+need `bevy_mesh`/`bevy_camera`/`bevy_light` vendored and breaks our crates that key lists by `Mesh3d`): the batch
+pushes the `Mesh3d` class and a `bevy_pbr` system adds it to light shadow lists. `GpuInstanceBatchPlugin` is opt-in.
+Detail: `superfargoth/vendor/README.md` "The GPU-batched mesh port".
+
 ### 7. Motion vectors (DLSS)
 
 #25978 has none. For statics, `MeshInputUniform::previous_input_index` points at the instance itself (previous transform
@@ -294,7 +300,8 @@ RT-only proxy set as entities near the camera (as today's `RayTracingMesh` level
 | S1b | `scene.cells` bake + adapter eligibility hook and material class map | Vvardenfell tables baked, tests pass, bake time within bake.md gates. **[~] 2026-11-08:** `sf_scene::bake` (`CellsStep`, `SceneBake`, `SceneSource`, pure `build_cell_table`, `land_min`), `sf_scene::chain_layout`, `mw_bake::scene` (`MwSceneSource`, `scene_material`, `bake_scene`); compiled and tested with S1c (format v2); next: owner runs `scene_cells_real_install` (measurement), then one `bake_scene` line in `mw_boot_bevy::bake` |
 | S1c | Table format v2 (review fixes before any bake) | **[x] 2026-11-09:** §2 "Format v2 (S1c)": cell-local dense chain indices + `chain_index` / `write_remapped` for stream-in, chain record with mesh key, material key (`bake::material_key`) and class, `material_override` per instance, layers in the header, per-part spheres (`bake::part_spheres`), scale-aware LOD in the CPU twin (§4 step 5), `scene.cells` step version 2; compiled on the laptop: `sf_scene` 41 tests, 50 with `bake`, `mw_bake` 48 lib tests (4 scene); clippy pedantic clean (`sf_scene` both ways, `mw_bake`); next: as S1b (the Vvardenfell measurement) |
 | S2 | Material classes + bindless material table for statics (on the current entity path first) | batch sets per view measured down; look unchanged (owner). **[~] 2026-11-08:** `sf_world_bevy::matclass` folds every static template material into its class (traits from alpha mode + culling, wind off; unused UV channels, parallax and sub-unit depth bias canonical); today's mapper already keys on the class except leaf transmission, which stays split (one key for all masked would light non-leaves with a second lobe and render them forward under `--rt`), as would normal maps, depth bias and other UV sets (none on statics today); vendored `bevy_render` `SharedImageSamplers` (one sampler per descriptor: bindless slabs count samplers); gauges `statics/*` (materials, classes, keys, pipelines, bind groups, bindless); `--off matclass` A/B, default on; next: owner runs perf.md "Static material classes (S2)" and visual check SS-matclass |
-| S3 | Patch "GS": #25978 rebased, main view only, opaque class, no LOD | one town's opaque statics drawn from the table; numbers |
+| S3a | Patch "GS" base: #25978 ported into vendored `bevy_pbr`/`bevy_render` 0.20 (§6 "Port shape"), with its sanity test | **[~] 2026-11-09:** ported (branch `static-scene/s3a`), `sf_world_bevy` `gpu_batch_tests.rs` (WGSL links + validates, layouts, headless app); handoff `bevyrrowind/docs/test-pass-handoffs/s3a-gpu-batch.md` |
+| S3b | Scrib runtime on the port: batch entities fed from the baked tables, main view only, opaque class, no LOD | one town’s opaque statics drawn from the table; numbers |
 | S4 | All classes, LOD ranges, pixel-error presets, motion vectors | statics fully on the table in the main view |
 | S5 | Shadow views (cascades, lamp faces, #26161 count) + far shadows | shadows from the table; per-view cost flat |
 | S6 | Horizon + Hi-Z occlusion; Solari decision (§10) | numbers; decision logged |

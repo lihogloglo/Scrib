@@ -38,7 +38,8 @@ pub use draw::*;
 pub use draw_state::*;
 use encase::ShaderType;
 use encase::{internal::WriteInto, ShaderSize};
-use indexmap::IndexMap;
+// superfargoth patch (bevyengine/bevy#25978)
+use indexmap::{IndexMap, IndexSet};
 use nonmax::NonMaxU32;
 pub use rangefinder::*;
 use wgpu::{BufferUsages, Features};
@@ -145,6 +146,12 @@ where
     /// See the `custom_phase_item` example for an example of how to use this.
     pub non_mesh_items: IndexMap<(BPI::BatchSetKey, BPI::BinKey), NonMeshEntities>,
 
+    // superfargoth patch (bevyengine/bevy#25978)
+    /// GPU-authored instance batches. Each entry is already an N-instance
+    /// batch, in contrast to [`Self::batchable_meshes`] where entities are
+    /// grouped at batch-and-prepare time.
+    pub instance_batches: IndexMap<(BPI::BatchSetKey, BPI::BinKey), RenderInstanceBatchBin>,
+
     /// Information on each batch set.
     ///
     /// A *batch set* is a set of entities that will be batched together unless
@@ -156,6 +163,10 @@ where
     /// Multidrawable entities come first, then batchable entities, then
     /// unbatchable entities.
     pub(crate) batch_sets: BinnedRenderPhaseBatchSets<BPI::BinKey>,
+
+    // superfargoth patch (bevyengine/bevy#25978)
+    /// Pre-computed draw records for [`Self::instance_batches`].
+    pub(crate) instance_batch_draws: Vec<InstanceBatchDraw<BPI>>,
 
     /// The batch and bin key for each entity.
     ///
@@ -177,6 +188,11 @@ pub struct RenderBin {
     /// [`InputUniformIndex`].
     entities: IndexMap<MainEntity, InputUniformIndex, EntityHash>,
 }
+
+// superfargoth patch (bevyengine/bevy#25978)
+/// The GPU-authored instance batches in a bin. Their input ranges are resolved
+/// during batch preparation rather than cached in the bin.
+pub type RenderInstanceBatchBin = IndexSet<MainEntity, EntityHash>;
 
 /// Information about each bin that the [`RenderMultidrawableBatchSet`]
 /// maintains on the CPU.
@@ -913,6 +929,17 @@ pub struct BinnedRenderPhaseBatch {
     pub extra_index: PhaseItemExtraIndex,
 }
 
+// superfargoth patch (bevyengine/bevy#25978)
+/// A pre-computed draw record for one GPU-authored instance batch.
+pub(crate) struct InstanceBatchDraw<BPI>
+where
+    BPI: BinnedPhaseItem,
+{
+    pub(crate) batch_set_key: BPI::BatchSetKey,
+    pub(crate) bin_key: BPI::BinKey,
+    pub(crate) batch: BinnedRenderPhaseBatch,
+}
+
 /// Information about the unbatchable entities in a bin.
 pub struct UnbatchableBinnedEntities {
     /// The entities.
@@ -997,6 +1024,11 @@ pub enum BinnedRenderPhaseType {
     /// The engine itself doesn't enqueue any items of this type, but it's
     /// available for use in your application and/or plugins.
     NonMesh,
+    // superfargoth patch (bevyengine/bevy#25978)
+
+    /// A GPU-authored batch rendered as one indirect draw. Its current input
+    /// range is resolved through `GetFullBatchData::get_instance_batch`.
+    InstanceBatch,
 }
 
 impl<T> From<GpuArrayBufferIndex<T>> for UnbatchableBinnedEntityIndices
@@ -1141,6 +1173,14 @@ where
                     }
                 }
             }
+            // superfargoth patch (bevyengine/bevy#25978)
+
+            BinnedRenderPhaseType::InstanceBatch => {
+                self.instance_batches
+                    .entry((batch_set_key.clone(), bin_key.clone()))
+                    .or_default()
+                    .insert(main_entity);
+            }
         }
 
         // Update the cache.
@@ -1183,6 +1223,41 @@ where
         self.render_batchable_meshes(render_pass, world, view)?;
         self.render_unbatchable_meshes(render_pass, world, view)?;
         self.render_non_meshes(render_pass, world, view)?;
+        // superfargoth patch (bevyengine/bevy#25978)
+        self.render_instance_batches(render_pass, world, view)?;
+
+        Ok(())
+    }
+
+    fn render_instance_batches<'w>(
+        &self,
+        render_pass: &mut TrackedRenderPass<'w>,
+        world: &'w World,
+        view: Entity,
+    ) -> Result<(), DrawError> {
+        if self.instance_batch_draws.is_empty() {
+            return Ok(());
+        }
+
+        let draw_functions = world.resource::<DrawFunctions<BPI>>();
+        let mut draw_functions = draw_functions.write();
+
+        for draw in &self.instance_batch_draws {
+            let binned_phase_item = BPI::new(
+                draw.batch_set_key.clone(),
+                draw.bin_key.clone(),
+                draw.batch.representative_entity,
+                draw.batch.instance_range.clone(),
+                draw.batch.extra_index.clone(),
+            );
+
+            let Some(draw_function) = draw_functions.get_mut(binned_phase_item.draw_function())
+            else {
+                continue;
+            };
+
+            draw_function.draw(world, render_pass, view, &binned_phase_item)?;
+        }
 
         Ok(())
     }
@@ -1414,12 +1489,16 @@ where
             && self.batchable_meshes.is_empty()
             && self.unbatchable_meshes.is_empty()
             && self.non_mesh_items.is_empty()
+            // superfargoth patch (bevyengine/bevy#25978)
+            && self.instance_batches.is_empty()
     }
 
     // superfargoth patch (#26161)
     /// The number of entities queued in this phase, across all of its bins.
     pub fn entity_count(&self) -> usize {
-        self.multidrawable_meshes
+        // superfargoth patch (bevyengine/bevy#25978): GPU-authored batches count one entity each.
+        self.instance_batches.values().map(IndexSet::len).sum::<usize>()
+            + self.multidrawable_meshes
             .values()
             .flat_map(|batch_set| batch_set.bins.iter().flatten())
             .map(|bin| bin.entity_to_binned_mesh_instance_index.len())
@@ -1453,6 +1532,8 @@ where
             + self.batchable_meshes.len()
             + self.unbatchable_meshes.len()
             + self.non_mesh_items.len()
+            // superfargoth patch (bevyengine/bevy#25978)
+            + self.instance_batches.len()
     }
 
     // superfargoth patch (own: phase counts)
@@ -1469,6 +1550,7 @@ where
 
     pub fn prepare_for_new_frame(&mut self) {
         self.batch_sets.clear();
+        self.instance_batch_draws.clear();
 
         for unbatchable_bin in self.unbatchable_meshes.values_mut() {
             unbatchable_bin.buffer_indices.clear();
@@ -1491,6 +1573,8 @@ where
                 &mut self.batchable_meshes,
                 &mut self.unbatchable_meshes,
                 &mut self.non_mesh_items,
+                // superfargoth patch (bevyengine/bevy#25978)
+                &mut self.instance_batches,
             );
         }
     }
@@ -1509,6 +1593,8 @@ fn remove_entity_from_bin<BPI>(
     batchable_meshes: &mut IndexMap<(BPI::BatchSetKey, BPI::BinKey), RenderBin>,
     unbatchable_meshes: &mut IndexMap<(BPI::BatchSetKey, BPI::BinKey), UnbatchableBinnedEntities>,
     non_mesh_items: &mut IndexMap<(BPI::BatchSetKey, BPI::BinKey), NonMeshEntities>,
+    // superfargoth patch (bevyengine/bevy#25978)
+    instance_batches: &mut IndexMap<(BPI::BatchSetKey, BPI::BinKey), RenderInstanceBatchBin>,
 ) where
     BPI: BinnedPhaseItem,
 {
@@ -1571,6 +1657,21 @@ fn remove_entity_from_bin<BPI>(
                 }
             }
         }
+        // superfargoth patch (bevyengine/bevy#25978)
+
+        BinnedRenderPhaseType::InstanceBatch => {
+            if let indexmap::map::Entry::Occupied(mut bin_entry) = instance_batches.entry((
+                entity_bin_key.batch_set_key.clone(),
+                entity_bin_key.bin_key.clone(),
+            )) {
+                bin_entry.get_mut().swap_remove(&entity);
+
+                // If the bin is now empty, remove the bin.
+                if bin_entry.get_mut().is_empty() {
+                    bin_entry.swap_remove();
+                }
+            }
+        }
     }
 }
 
@@ -1584,6 +1685,8 @@ where
             batchable_meshes: IndexMap::default(),
             unbatchable_meshes: IndexMap::default(),
             non_mesh_items: IndexMap::default(),
+            // superfargoth patch (bevyengine/bevy#25978)
+            instance_batches: IndexMap::default(),
             batch_sets: match gpu_preprocessing {
                 GpuPreprocessingMode::Culling => {
                     BinnedRenderPhaseBatchSets::MultidrawIndirect(vec![])
@@ -1593,6 +1696,8 @@ where
                 }
                 GpuPreprocessingMode::None => BinnedRenderPhaseBatchSets::DynamicUniforms(vec![]),
             },
+            // superfargoth patch (bevyengine/bevy#25978)
+            instance_batch_draws: Vec::new(),
             cached_entity_bin_keys: MainEntityHashMap::default(),
             gpu_preprocessing_mode: gpu_preprocessing,
         }
@@ -2053,7 +2158,8 @@ where
             } else {
                 let draw_function = draw_functions.get_mut(item.draw_function()).unwrap();
                 draw_function.draw(world, render_pass, view, item)?;
-                index += batch_range.len();
+                // superfargoth patch (bevyengine/bevy#25978)
+                index += 1;
             }
         }
         Ok(())
@@ -2099,9 +2205,9 @@ pub trait PhaseItem: Sized + Send + Sync + 'static {
     /// Specifies the [`Draw`] function used to render the item.
     fn draw_function(&self) -> DrawFunctionId;
 
-    /// The range of instances that the batch covers. After doing a batched draw, batch range
-    /// length phase items will be skipped. This design is to avoid having to restructure the
-    /// render phase unnecessarily.
+    // superfargoth patch (bevyengine/bevy#25978)
+    /// The range of instances that the batch covers. Items merged into an earlier item's batch
+    /// have an empty range and are skipped when rendering.
     fn batch_range(&self) -> &Range<u32>;
     fn batch_range_mut(&mut self) -> &mut Range<u32>;
 

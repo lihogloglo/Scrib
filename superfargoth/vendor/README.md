@@ -27,6 +27,7 @@ comment; `grep -rn "superfargoth patch" vendor/<crate>` lists them.
 | `bevy_pbr` (own) | same | `superfargoth patch (own, N2: sky glow)`: `AtmosphereSettings::{airglow, airglow_horizon}` (zenith radiance cd/m², horizon/zenith ratio; default zero = stock) copied into `GpuAtmosphereSettings` (`atmosphere/mod.rs`) and the WGSL `AtmosphereSettings` (`types.wesl`); `functions.wesl` `airglow(r, mu)` (van Rhijn profile; ground hits see albedo x the sky's irradiance) added in `sky_view_lut.wesl` and the ray-marched branch of `render_sky.wesl`, so the sky, the atmosphere environment map, fog and clouds (all read the LUT) see it. No diff file; grep the marker. ~35 lines in 5 files | upstream: a sky emission / airglow term in `Atmosphere` |
 | `bevy_render` (own) | same | `superfargoth patch (own)`: incremental `extract_visibility_ranges` (`view/visibility/range.rs`: `O(changed + removed)` instead of clearing and re-hashing all ~28k `VisibilityRange` entities on `ExtractSchedule`) | upstream makes `extract_visibility_ranges` incremental |
 | `bevy_render` (own) | same | `superfargoth patch (own: shared image samplers)`, static-scene S2: opt-in render-world resource `SharedImageSamplers` (`texture/gpu_image.rs`: struct + `get_or_create` at the top, `Option<SRes<SharedImageSamplers>>` in `GpuImage::Param`, used in `prepare_asset` for `ImageSampler::Descriptor`): images with equal `ImageSamplerDescriptor`s share one `Sampler` (linear scan, never evicted), so a bindless material slab counts one sampler, not one per texture. Absent = stock (one sampler per image). Inserted by `sf_world_bevy` unless `material_classes` is off (`--off matclass`). No diff file; grep the marker. ~55 lines in 1 file | upstream dedups image samplers (a sampler cache in `GpuImage` preparation) |
+| `bevy_render`, `bevy_pbr` | same | bevyengine/bevy [#25978](https://github.com/bevyengine/bevy/pull/25978) (`GpuBatchedMesh3d`: GPU-authored mesh instances drawn through the mesh-material pipeline; upstream PR **open**, ported from commit `36e79e21` against Bevy main; `patches/bevyengine-bevy-25978-gpu-batched-mesh.diff`; marker `superfargoth patch (bevyengine/bevy#25978)`; static-scene.md S3a). Port shape in "The GPU-batched mesh port" below | the Bevy release that ships #25978 (then drop the light-visibility shim too) |
 | `bevy_render`, `bevy_pbr` (own) | same | `superfargoth patch (own: phase counts)` + `(own: preprocess bind group count)`, static-scene S0: read-only `BinnedRenderPhase::{bin_count, batch_set_count}` (`render_phase/mod.rs` ~1444-1480) and the `PreprocessBindGroupCount` render-world resource (`render/gpu_preprocess.rs`: struct and `bind_group_count` helpers ~326-358, `init_resource` ~550, set in `prepare_preprocess_bind_groups` ~2273-2447, `create_build_indirect_parameters_bind_groups` returns its count ~3394). Counters only, no behaviour change; read by `sf_diag_bevy::RenderViewsPlugin`. No diff file; grep the markers. ~95 lines in 2 files | upstream exposes phase bin/batch-set counts and a preprocess bind-group count (or stops rebuilding them every frame, bevy #26257) |
 
 ## The Bevy shadow patch (#26149, #26161)
@@ -39,6 +40,28 @@ comment; `grep -rn "superfargoth patch" vendor/<crate>` lists them.
   are unchanged (no caster moved, deforms, or changed mesh; no pipeline still compiling)
   is skipped by the camera driver and keeps last frame's map. Directional lights are not
   covered. `bevy_render` only gains `BinnedRenderPhase::entity_count`.
+
+## The GPU-batched mesh port (#25978, static-scene S3a)
+
+- **Source**: commit `36e79e21` (PR head `917cd5fb` is a merge of main), +2,314/-291 over 28 files against Bevy
+  main. Only the `bevy_pbr`/`bevy_render` hunks are carried; no example, migration guides or `assets/` shader.
+- **Mapping**: our 0.20 files had not diverged in these areas: every hunk applied by context (offsets only)
+  except two. `prepass/mod.rs` imports (our SW patch rewrote the list) were redone by hand; one
+  `render_phase/mod.rs` hunk (`is_empty` gains `instance_batches`) fuzzed into our S0 `batch_set_count` and was
+  moved back. Our S0 counters, #26095 and #26149/#26161 code are kept; `BinnedRenderPhase::{bin_count, entity_count}`
+  (S0, #26161) also count instance batches (one bin / one entity per batch).
+- **Deviation, no `Mesh3dVisibility`**: upstream adds a `Mesh3dVisibility` class in `bevy_mesh` (required by `Mesh3d`)
+  and switches `bevy_camera`/`bevy_light`/`bevy_pbr` lookups to it. We keep `Mesh3d` as the class key so nothing
+  else is vendored and our crates that key lists by `TypeId::of::<Mesh3d>()` (`sf_shadow_cache_bevy`, `sf_sky_bevy`
+  sun view, `mw_devtools_bevy`) keep working: the 14 hunks that only renamed the key are dropped, `GpuBatchedMesh3d`
+  requires `Visibility` + `VisibilityClass` and pushes the `Mesh3d` class in an `on_add` hook,
+  `late_sweep_material_instances` also sweeps removed `GpuBatchedMesh3d`, and
+  `gpu_instance_batch::add_gpu_batched_meshes_to_light_visibility` (PostUpdate, after `CheckLightVisibility`) adds
+  batches to directional cascades and point/spot shadow lists by the rules `bevy_light` applies to a
+  `NoFrustumCulling` mesh (shadow maps on, render layers, `NotShadowCaster`, `VisibilityRange`).
+- **Opt-in**: `GpuInstanceBatchPlugin` is not part of `PbrPlugin`; the shared-path changes (`MeshCullingData::is_active`,
+  `RenderMeshDraws`, merged sorted-phase items get an empty `batch_range`, range unpacking) are always on.
+- Tests: `sf_world_bevy` `src/gpu_batch_tests.rs` (shaders link + validate, Rust/WGSL layouts, headless app).
 
 ## Upstream PR fixes
 
