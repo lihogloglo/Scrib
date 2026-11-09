@@ -19,7 +19,22 @@ Agent session 2026-11-09, static-scene.md slice S3a. Branch `static-scene/s3a`. 
 - Tests: `superfargoth/crates/sf_world_bevy/src/gpu_batch_tests.rs` (dev-deps `naga`, `wesl`).
 
 ## Build / test status
-(filled at the end of the session)
+All through `cargo_turn.sh`, shared target dir, default features (Delirium on):
+- `check --workspace --all-targets --locked`: passed (`Finished`, no warnings).
+- `test -p sf_world_bevy -p sf_diag_bevy --features sf_diag_bevy/views --locked`: sf_diag_bevy 11 passed; sf_world_bevy
+  18 passed (incl. the 3 `gpu_batch_tests`; the first run failed only on the WGSL struct-name lookup, fixed, rerun).
+- `clippy -p sf_world_bevy --all-targets --no-deps -- -D warnings`: clean (vendored crates not linted, by rule).
+- Sanity tests: (1) `materialize`, `unpack_ranges`, `unpack_bins`, `allocate_uniforms`, `reset_indirect_batch_sets`,
+  `mesh_preprocess` x 4 def sets (direct, frustum, occlusion early/late), `build_indirect_params` x 5 link (wesl) and
+  validate (naga); (2) `GpuMeshInstance` / `MeshCullingData`: Rust `ShaderType` size = WGSL size = `size_of`, default
+  culling data active, zeroed instance inactive; (3) `MinimalPlugins` + assets + `GpuInstanceBatchPlugin` (no render
+  app, no GPU), 3 updates: the batch carries the `Mesh3d` class and no `Mesh3d`, sits once in every cascade of a
+  shadow-mapped sun, not in a shadows-off sun; a `NotShadowCaster` batch is excluded. Point/spot path not unit-tested.
+- **Shared target dir hazard (found here):** cargo hashes path crates relative to the workspace root, so the vendored
+  `bevy_render`/`bevy_pbr` of this worktree and of `repo` (main) share artifact names in `repo/target`; a build from
+  the other tree can leave an artifact that this tree's mtime fingerprint treats as fresh (the first test build here
+  linked an unpatched `bevy_render`). Fixed by touching the vendored sources; until this merges, sessions on main
+  building into the same dir may see the reverse (touch their `superfargoth/vendor/bevy_{render,pbr}/src` files).
 
 ## For S3b (APIs, limits)
 - Main world: spawn `GpuBatchedMesh3d { mesh, max_capacity }` + `MeshMaterial3d<M>` (never `Mesh3d`), add

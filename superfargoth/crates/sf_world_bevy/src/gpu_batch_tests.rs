@@ -117,7 +117,7 @@ fn compile(module: &str, defs: &[&str]) -> Result<naga::Module, String> {
     Ok(parsed)
 }
 
-/// The def sets `PreprocessPipeline::specialize` (gpu_preprocess.rs) builds: direct, frustum
+/// The def sets `PreprocessPipeline::specialize` (`gpu_preprocess.rs`) builds: direct, frustum
 /// culled, and the two occlusion-culling phases.
 const PREPROCESS: [&[&str]; 4] = [
     &["WRITE_INDIRECT_PARAMETERS_METADATA"],
@@ -151,11 +151,12 @@ fn port_shaders_link_and_validate() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
-/// Size of the WGSL struct `name` as naga lays it out (storage/uniform buffer rules).
+/// Size of the WGSL struct `name` as naga lays it out (storage/uniform buffer rules). Imported
+/// structs keep their name as a suffix of the module-mangled one.
 fn wgsl_size(module: &naga::Module, name: &str) -> u32 {
     let mut layouter = naga::proc::Layouter::default();
     layouter.update(module.to_ctx()).expect("layout");
-    let (handle, _) = module.types.iter().find(|(_, t)| t.name.as_deref() == Some(name)).unwrap_or_else(|| panic!("no struct {name}"));
+    let (handle, _) = module.types.iter().find(|(_, t)| t.name.as_deref().is_some_and(|n| n == name || n.ends_with(&format!("_{name}")) || n.ends_with(name))).unwrap_or_else(|| panic!("no struct {name}"));
     layouter[handle].size
 }
 

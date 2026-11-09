@@ -1,0 +1,3415 @@
+diff --git a/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/gpu_instance.wesl b/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/gpu_instance.wesl
+new file mode 100644
+index 0000000..6f1c19a
+--- /dev/null
++++ b/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/gpu_instance.wesl
+@@ -0,0 +1,8 @@
++// superfargoth patch (bevyengine/bevy#25978): new file.
++// One instance slot published by a GPU producer. Zeroed slots are inactive.
++struct GpuMeshInstance {
++    world_from_local: mat3x4<f32>,
++    is_active: u32,
++    tag: u32,
++    pad: vec2<u32>,
++}
+diff --git a/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/materialize.rs b/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/materialize.rs
+new file mode 100644
+index 0000000..fcee170
+--- /dev/null
++++ b/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/materialize.rs
+@@ -0,0 +1,213 @@
++// superfargoth patch (bevyengine/bevy#25978): new file.
++use bevy_app::App;
++use bevy_asset::{embedded_asset, load_embedded_asset};
++use bevy_ecs::prelude::*;
++use bevy_math::UVec2;
++use bevy_render::{
++    batching::gpu_preprocessing::BatchedInstanceBuffers,
++    diagnostic::RecordDiagnostics as _,
++    render_resource::{
++        binding_types::{storage_buffer, storage_buffer_read_only, uniform_buffer},
++        BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BufferId,
++        CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache,
++        ShaderStages, ShaderType, UniformBuffer,
++    },
++    renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue},
++    sync_world::MainEntityHashMap,
++    GpuResourceAppExt, Render, RenderApp, RenderStartup, RenderSystems,
++};
++
++use super::{
++    GpuInstanceBatchReservation, GpuInstanceBatchReservations, GpuInstanceBatchSystems,
++    GpuMeshInstance,
++};
++use crate::{MeshCullingData, MeshCullingDataBuffer, MeshInputUniform, MeshUniform};
++
++#[derive(Clone, Copy, Default, ShaderType)]
++struct MaterializationMetadata {
++    template: MeshInputUniform,
++    bounds: MeshCullingData,
++    input_base: u32,
++    capacity: u32,
++    pad: UVec2,
++}
++
++#[derive(Default)]
++pub(super) struct MaterializationJob {
++    metadata: UniformBuffer<MaterializationMetadata>,
++    bind_group: Option<BindGroup>,
++    bound_buffers: Option<[BufferId; 3]>,
++    pub(super) active: bool,
++}
++
++impl MaterializationJob {
++    pub fn update(
++        &mut self,
++        template: MeshInputUniform,
++        bounds: MeshCullingData,
++        input_base: u32,
++        capacity: u32,
++    ) {
++        self.metadata.set(MaterializationMetadata {
++            template,
++            bounds,
++            input_base,
++            capacity,
++            pad: UVec2::ZERO,
++        });
++        self.active = true;
++    }
++}
++
++#[derive(Resource, Default)]
++pub(crate) struct GpuInstanceMaterialization {
++    pub(super) jobs: MainEntityHashMap<MaterializationJob>,
++}
++
++#[derive(Resource)]
++pub(crate) struct MaterializationPipeline {
++    layout: BindGroupLayoutDescriptor,
++    pipeline: CachedComputePipelineId,
++}
++
++pub(super) fn build(app: &mut App) {
++    embedded_asset!(app, "materialize.wesl");
++    let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
++        return;
++    };
++    render_app
++        .init_gpu_resource::<GpuInstanceMaterialization>()
++        .add_systems(RenderStartup, init_pipeline)
++        .add_systems(
++            Render,
++            prepare_bind_groups
++                .in_set(RenderSystems::PrepareBindGroups)
++                .run_if(resource_exists::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>)
++                .run_if(resource_exists::<MaterializationPipeline>),
++        )
++        .add_systems(
++            RenderGraph,
++            materialize
++                .in_set(GpuInstanceBatchSystems::Materialize)
++                .run_if(resource_exists::<MaterializationPipeline>),
++        );
++}
++
++fn init_pipeline(
++    mut commands: Commands,
++    cache: Res<PipelineCache>,
++    assets: Res<bevy_asset::AssetServer>,
++    support: Res<bevy_render::batching::gpu_preprocessing::GpuPreprocessingSupport>,
++) {
++    if !support.is_culling_supported() {
++        return;
++    }
++    let layout = BindGroupLayoutDescriptor::new(
++        "GPU instance materialization",
++        &BindGroupLayoutEntries::sequential(
++            ShaderStages::COMPUTE,
++            (
++                uniform_buffer::<MaterializationMetadata>(false),
++                storage_buffer_read_only::<GpuMeshInstance>(false),
++                storage_buffer::<MeshInputUniform>(false),
++                storage_buffer::<MeshCullingData>(false),
++            ),
++        ),
++    );
++    let pipeline = cache.queue_compute_pipeline(ComputePipelineDescriptor {
++        label: Some("GPU instance materialization".into()),
++        layout: vec![layout.clone()],
++        shader: load_embedded_asset!(assets.as_ref(), "materialize.wesl"),
++        ..Default::default()
++    });
++    commands.insert_resource(MaterializationPipeline { layout, pipeline });
++}
++
++pub(super) fn pipelines_ready(
++    pipeline: Option<&MaterializationPipeline>,
++    range_pipeline: Option<CachedComputePipelineId>,
++    cache: &PipelineCache,
++) -> bool {
++    pipeline.is_some_and(|pipeline| cache.get_compute_pipeline(pipeline.pipeline).is_some())
++        && range_pipeline.is_some_and(|id| cache.get_compute_pipeline(id).is_some())
++}
++
++fn prepare_bind_groups(
++    mut materialization: ResMut<GpuInstanceMaterialization>,
++    reservations: Res<GpuInstanceBatchReservations>,
++    buffers: Res<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
++    culling: Res<MeshCullingDataBuffer>,
++    pipeline: Res<MaterializationPipeline>,
++    cache: Res<PipelineCache>,
++    device: Res<RenderDevice>,
++    queue: Res<RenderQueue>,
++) {
++    let (Some(input), Some(culling)) = (
++        buffers.current_input_buffer.buffer().buffer(),
++        culling.buffer(),
++    ) else {
++        return;
++    };
++    for (entity, job) in &mut materialization.jobs {
++        if !job.active {
++            continue;
++        }
++        let Some(output) = reservations
++            .get(*entity)
++            .map(GpuInstanceBatchReservation::output_buffer)
++        else {
++            continue;
++        };
++        job.metadata.write_buffer(&device, &queue);
++        let buffers = [output.id(), input.id(), culling.id()];
++        if job.bound_buffers == Some(buffers) {
++            continue;
++        }
++        job.bound_buffers = Some(buffers);
++        job.bind_group = Some(device.create_bind_group(
++            "GPU instance materialization",
++            &cache.get_bind_group_layout(&pipeline.layout),
++            &BindGroupEntries::sequential((
++                job.metadata.binding().unwrap(),
++                output.as_entire_binding(),
++                input.as_entire_binding(),
++                culling.as_entire_binding(),
++            )),
++        ));
++    }
++}
++
++fn materialize(
++    mut render_context: RenderContext,
++    materialization: Res<GpuInstanceMaterialization>,
++    pipeline: Res<MaterializationPipeline>,
++    cache: Res<PipelineCache>,
++) {
++    if !materialization.jobs.values().any(|job| job.active) {
++        return;
++    }
++    let Some(pipeline) = cache.get_compute_pipeline(pipeline.pipeline) else {
++        return;
++    };
++    let diagnostics = render_context.diagnostic_recorder();
++    let diagnostics = diagnostics.as_deref();
++    let mut pass = render_context
++        .command_encoder()
++        .begin_compute_pass(&ComputePassDescriptor {
++            label: Some("GPU instance materialization"),
++            timestamp_writes: None,
++        });
++    let pass_span = diagnostics.pass_span(&mut pass, "gpu_instance_materialization");
++    pass.set_pipeline(pipeline);
++    for job in materialization.jobs.values() {
++        if !job.active {
++            continue;
++        }
++        let Some(bind_group) = &job.bind_group else {
++            continue;
++        };
++        pass.set_bind_group(0, bind_group, &[]);
++        pass.dispatch_workgroups(job.metadata.get().capacity.div_ceil(64), 1, 1);
++    }
++    pass_span.end(&mut pass);
++}
+diff --git a/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/materialize.wesl b/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/materialize.wesl
+new file mode 100644
+index 0000000..8c79d01
+--- /dev/null
++++ b/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/materialize.wesl
+@@ -0,0 +1,35 @@
++// superfargoth patch (bevyengine/bevy#25978): new file.
++import bevy_render::occlusion_culling::mesh_preprocess_types::{MeshInput, MeshCullingData};
++import package::gpu_instance_batch::gpu_instance::GpuMeshInstance;
++import package::render::mesh_types::MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT;
++
++struct Metadata {
++    mesh_input: MeshInput,
++    bounds: MeshCullingData,
++    input_base: u32,
++    capacity: u32,
++    pad: vec2<u32>,
++}
++@group(0) @binding(0) var<uniform> metadata: Metadata;
++@group(0) @binding(1) var<storage> instances: array<GpuMeshInstance>;
++@group(0) @binding(2) var<storage, read_write> inputs: array<MeshInput>;
++@group(0) @binding(3) var<storage, read_write> bounds: array<MeshCullingData>;
++
++@compute @workgroup_size(64)
++fn main(@builtin(global_invocation_id) id: vec3<u32>) {
++    if id.x >= metadata.capacity { return; }
++    let output = metadata.input_base + id.x;
++    let instance = instances[id.x];
++    var input = metadata.mesh_input;
++    input.world_from_local = instance.world_from_local;
++    // The affine transpose stores the linear matrix in the first three lanes.
++    let linear = mat3x3<f32>(instance.world_from_local[0].xyz,
++        instance.world_from_local[1].xyz, instance.world_from_local[2].xyz);
++    input.flags = (input.flags & ~MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT)
++        | select(0u, MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT, determinant(linear) >= 0.0);
++    input.tag = instance.tag;
++    inputs[output] = input;
++    var culling = metadata.bounds;
++    culling.is_active = instance.is_active;
++    bounds[output] = culling;
++}
+diff --git a/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/mod.rs b/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/mod.rs
+new file mode 100644
+index 0000000..af9f008
+--- /dev/null
++++ b/superfargoth/vendor/bevy_pbr/src/gpu_instance_batch/mod.rs
+@@ -0,0 +1,630 @@
++// superfargoth patch (bevyengine/bevy#25978): new file.
++//! GPU-authored mesh instances.
++//!
++//! A [`GpuBatchedMesh3d`] reserves an output buffer of `max_capacity`
++//! [`GpuMeshInstance`]s that a compute shader fills in
++//! [`GpuInstanceBatchSystems::Publish`]. The batch then draws through the
++//! standard mesh pipeline as a single indirect draw.
++
++mod materialize;
++
++use bevy_app::{App, Plugin, PostUpdate};
++use bevy_asset::{AssetEvent, AssetEventSystems, AssetId, Assets};
++use bevy_camera::{
++    primitives::{Aabb, MeshAabb},
++    visibility::{
++        add_visibility_class, NoCpuCulling, NoFrustumCulling, Visibility, VisibilityClass,
++    },
++};
++use bevy_core_pipeline::core_3d::{Transparent3d, TransparentSortingInfo3d};
++use bevy_diagnostic::FrameCount;
++use bevy_ecs::prelude::*;
++use bevy_light::{NotShadowReceiver, TransmittedShadowReceiver};
++// superfargoth patch (bevyengine/bevy#25978): light visibility for batches.
++use bevy_camera::{
++    visibility::{
++        CascadesVisibleEntities, CubemapVisibleEntities, InheritedVisibility, RenderLayers,
++        SetViewVisibility, ViewVisibility, VisibilityRange, VisibilitySystems, VisibleEntities,
++        VisibleEntityRanges,
++        VisibleMeshEntities,
++    },
++    Camera, RenderTarget, ShadowLodOrigin,
++};
++use bevy_ecs::entity::EntityHashSet;
++use bevy_light::{
++    cluster::ClusterVisibilityClass, get_shadow_lod_origin, DirectionalLight, NotShadowCaster,
++    PointLight, SimulationLightSystems, SpotLight,
++};
++use core::any::TypeId;
++use bevy_log::{warn, warn_once};
++use bevy_math::{Vec3, Vec4};
++use bevy_mesh::{Mesh, Mesh3d};
++use bevy_platform::collections::{HashMap, HashSet};
++use bevy_render::{
++    batching::gpu_preprocessing::{BatchedInstanceBuffers, GpuPreprocessingSupport},
++    material_bind_groups::RenderMaterialBindings,
++    mesh::allocator::MeshAllocator,
++    render_phase::{sort_phase_system, ViewSortedRenderPhases},
++    render_resource::{Buffer, BufferDescriptor, BufferUsages, PipelineCache, ShaderType},
++    renderer::{RenderDevice, RenderGraph, RenderGraphSystems, RenderQueue},
++    sync_world::{MainEntity, MainEntityHashMap},
++    Extract, ExtractSchedule, Render, RenderApp, RenderSystems,
++};
++use bevy_transform::components::{GlobalTransform, Transform};
++use bytemuck::{Pod, Zeroable};
++
++use crate::{
++    collect_gpu_culled_meshes, collect_meshes_for_gpu_building, MeshCullingData,
++    MeshCullingDataBuffer, MeshInputUniform, MeshUniform, RenderMaterialInstances,
++    RenderMeshInstanceBatch, RenderMeshInstanceBatches,
++};
++use crate::{
++    early_gpu_preprocess, prepare_preprocess_pipelines, prepare_range_unpacking_bind_groups,
++    prepare_range_unpacking_pipeline, unpack_bins, unpack_ranges, RangeUnpackingPipeline,
++};
++use bevy_render::{render_resource::SpecializedComputePipelines, GpuResourceAppExt};
++use materialize::GpuInstanceMaterialization;
++
++/// One instance slot published by a GPU producer. Zeroed slots are inactive.
++#[derive(Clone, Copy, Default, Pod, Zeroable, ShaderType)]
++#[repr(C)]
++pub struct GpuMeshInstance {
++    pub world_from_local: [Vec4; 3],
++    pub is_active: u32,
++    pub tag: u32,
++    pub pad: [u32; 2],
++}
++
++#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
++pub enum GpuInstanceBatchSystems {
++    /// Producer work. Commands recorded through `RenderContext` here are
++    /// submitted before materialization.
++    Publish,
++    /// The renderer's copy of active slots into mesh inputs, before any view
++    /// renders.
++    Materialize,
++}
++
++/// Up to `max_capacity` GPU-authored instances of a mesh, drawn as one indirect
++/// draw. Pair with `MeshMaterial3d<M>`, not [`Mesh3d`].
++///
++/// superfargoth: upstream gives this (and `Mesh3d`) a new `Mesh3dVisibility`
++/// class in `bevy_mesh`; this port keeps `Mesh3d` as the class key (no
++/// vendored `bevy_mesh`/`bevy_camera`/`bevy_light`): the batch pushes the
++/// `Mesh3d` class in an `on_add` hook and joins light visibility in
++/// [`add_gpu_batched_meshes_to_light_visibility`].
++#[derive(Component, Clone)]
++#[require(Transform, NoFrustumCulling, Visibility, VisibilityClass)]
++#[component(on_add = add_visibility_class::<Mesh3d>)]
++pub struct GpuBatchedMesh3d {
++    pub mesh: bevy_asset::Handle<Mesh>,
++    pub max_capacity: u32,
++}
++
++#[derive(Clone)]
++pub(crate) struct ExtractedGpuBatchedMesh {
++    pub mesh_asset_id: AssetId<Mesh>,
++    pub max_capacity: u32,
++    pub local_bounds: Option<Aabb>,
++    pub flags: u32,
++    pub world_center: Vec3,
++}
++
++#[derive(Resource, Default)]
++pub(crate) struct ExtractedGpuBatchedMeshes(pub(crate) MainEntityHashMap<ExtractedGpuBatchedMesh>);
++
++/// Persistent published output for one draw. The producer owns the contents.
++#[derive(Clone)]
++pub struct GpuInstanceBatchReservation {
++    output_buffer: Buffer,
++    max_capacity: u32,
++}
++
++impl GpuInstanceBatchReservation {
++    /// The buffer of [`max_capacity`](Self::max_capacity) [`GpuMeshInstance`]s.
++    /// Its identity changes when the capacity changes
++    pub fn output_buffer(&self) -> &Buffer {
++        &self.output_buffer
++    }
++
++    /// The number of instance slots in the output buffer.
++    pub fn max_capacity(&self) -> u32 {
++        self.max_capacity
++    }
++}
++
++/// Every live [`GpuBatchedMesh3d`]'s output, keyed by main-world entity.
++#[derive(Resource, Default)]
++pub struct GpuInstanceBatchReservations {
++    by_entity: MainEntityHashMap<GpuInstanceBatchReservation>,
++}
++
++impl GpuInstanceBatchReservations {
++    pub fn get(&self, entity: MainEntity) -> Option<&GpuInstanceBatchReservation> {
++        self.by_entity.get(&entity)
++    }
++
++    pub fn iter(&self) -> impl Iterator<Item = (MainEntity, &GpuInstanceBatchReservation)> {
++        self.by_entity
++            .iter()
++            .map(|(entity, output)| (*entity, output))
++    }
++}
++
++pub struct GpuInstanceBatchPlugin;
++
++impl Plugin for GpuInstanceBatchPlugin {
++    fn build(&self, app: &mut App) {
++        app.add_systems(
++            PostUpdate,
++            mark_gpu_batched_meshes_as_changed_if_their_assets_changed.after(AssetEventSystems),
++        );
++        // superfargoth patch (bevyengine/bevy#25978): see `add_gpu_batched_meshes_to_light_visibility`.
++        app.add_systems(
++            PostUpdate,
++            add_gpu_batched_meshes_to_light_visibility
++                .after(SimulationLightSystems::CheckLightVisibility)
++                .before(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
++        );
++        bevy_shader::load_shader_library!(app, "gpu_instance.wesl");
++        materialize::build(app);
++        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
++            return;
++        };
++        render_app
++            .init_gpu_resource::<SpecializedComputePipelines<RangeUnpackingPipeline>>()
++            .add_systems(
++                Render,
++                prepare_range_unpacking_pipeline
++                    .in_set(RenderSystems::PrepareMeshes)
++                    .before(prepare_gpu_batched_mesh_draws)
++                    .run_if(
++                        resource_exists::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
++                    ),
++            )
++            .add_systems(
++                Render,
++                prepare_range_unpacking_bind_groups
++                    .in_set(RenderSystems::PrepareBindGroups)
++                    .after(prepare_preprocess_pipelines)
++                    .run_if(
++                        resource_exists::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
++                    ),
++            )
++            .add_systems(
++                bevy_core_pipeline::Core3d,
++                unpack_ranges
++                    .after(unpack_bins)
++                    .before(early_gpu_preprocess)
++                    .run_if(
++                        resource_exists::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
++                    ),
++            )
++            .init_resource::<ExtractedGpuBatchedMeshes>()
++            .init_gpu_resource::<GpuInstanceBatchReservations>()
++            .add_systems(ExtractSchedule, extract_gpu_batched_meshes)
++            .add_systems(
++                Render,
++                (
++                    prepare_gpu_batched_mesh_reservations,
++                    prepare_gpu_batched_mesh_draws
++                        .after(collect_meshes_for_gpu_building)
++                        .after(collect_gpu_culled_meshes)
++                        .before(crate::prepass::specialize_prepass_material_meshes),
++                )
++                    .in_set(RenderSystems::PrepareMeshes)
++                    .run_if(
++                        resource_exists::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
++                    ),
++            )
++            .add_systems(
++                Render,
++                refresh_gpu_batched_mesh_sort_centers
++                    .in_set(RenderSystems::PhaseSort)
++                    .before(sort_phase_system::<Transparent3d>),
++            )
++            .configure_sets(
++                RenderGraph,
++                (
++                    GpuInstanceBatchSystems::Publish,
++                    GpuInstanceBatchSystems::Materialize,
++                )
++                    .chain()
++                    .after(RenderGraphSystems::Begin)
++                    .before(RenderGraphSystems::Render),
++            );
++    }
++
++    fn finish(&self, app: &mut App) {
++        if let Some(render_app) = app.get_sub_app(RenderApp)
++            && !matches!(
++                render_app
++                    .world()
++                    .get_resource::<crate::RenderMeshInstances>(),
++                Some(crate::RenderMeshInstances::GpuBuilding(_))
++            )
++        {
++            warn!("GpuInstanceBatchPlugin requires GPU instance buffer building");
++        }
++    }
++}
++
++pub(crate) fn mark_gpu_batched_meshes_as_changed_if_their_assets_changed(
++    mut batches: Query<&mut GpuBatchedMesh3d>,
++    mut events: MessageReader<AssetEvent<Mesh>>,
++) {
++    let changed: HashSet<_> = events
++        .read()
++        .filter_map(|event| match event {
++            AssetEvent::Modified { id } => Some(*id),
++            _ => None,
++        })
++        .collect();
++    if changed.is_empty() {
++        return;
++    }
++    for mut batch in &mut batches {
++        if changed.contains(&batch.mesh.id()) {
++            batch.set_changed();
++        }
++    }
++}
++
++pub(crate) fn extract_gpu_batched_meshes(
++    mut extracted: ResMut<ExtractedGpuBatchedMeshes>,
++    meshes: Extract<Res<Assets<Mesh>>>,
++    query: Extract<
++        Query<(
++            Entity,
++            &GpuBatchedMesh3d,
++            Option<&Aabb>,
++            &GlobalTransform,
++            Has<NotShadowReceiver>,
++            Has<TransmittedShadowReceiver>,
++            Has<Mesh3d>,
++            Has<NoCpuCulling>,
++        )>,
++    >,
++    mut events: Extract<MessageReader<AssetEvent<Mesh>>>,
++    mut mesh_bounds: Local<HashMap<AssetId<Mesh>, Option<Aabb>>>,
++) {
++    for event in events.read() {
++        match event {
++            AssetEvent::Added { id } | AssetEvent::Modified { id } | AssetEvent::Removed { id } => {
++                mesh_bounds.remove(id);
++            }
++            _ => {}
++        }
++    }
++    extracted.0.clear();
++    for (
++        entity,
++        batch,
++        bounds,
++        transform,
++        not_receiver,
++        transmitted_receiver,
++        has_mesh,
++        no_cpu_culling,
++    ) in &query
++    {
++        if has_mesh {
++            warn_once!("GpuBatchedMesh3d and Mesh3d must not coexist on {entity:?}");
++        }
++        if no_cpu_culling {
++            warn_once!("NoCpuCulling removes GpuBatchedMesh3d {entity:?} from every view");
++        }
++        if batch.max_capacity == 0 {
++            continue;
++        }
++        extracted.0.insert(
++            entity.into(),
++            ExtractedGpuBatchedMesh {
++                mesh_asset_id: batch.mesh.id(),
++                max_capacity: batch.max_capacity,
++                local_bounds: *mesh_bounds
++                    .entry(batch.mesh.id())
++                    .or_insert_with(|| meshes.get(&batch.mesh).and_then(Mesh::get_aabb)),
++                flags: u16::MAX as u32
++                    | if not_receiver {
++                        0
++                    } else {
++                        crate::MeshFlags::SHADOW_RECEIVER.bits()
++                    }
++                    | if transmitted_receiver {
++                        crate::MeshFlags::TRANSMITTED_SHADOW_RECEIVER.bits()
++                    } else {
++                        0
++                    },
++                world_center: transform
++                    .transform_point(bounds.map_or(Vec3::ZERO, |b| b.center.into())),
++            },
++        );
++    }
++}
++
++fn prepare_gpu_batched_mesh_reservations(
++    extracted: Res<ExtractedGpuBatchedMeshes>,
++    mut reservations: ResMut<GpuInstanceBatchReservations>,
++    support: Res<GpuPreprocessingSupport>,
++    device: Res<RenderDevice>,
++    queue: Res<RenderQueue>,
++) {
++    reservations
++        .by_entity
++        .retain(|entity, _| extracted.0.contains_key(entity));
++    if !support.is_culling_supported() {
++        if !extracted.0.is_empty() {
++            warn_once!("GpuBatchedMesh3d requires GPU culling support; nothing will be drawn");
++        }
++        return;
++    }
++    for (&entity, draw) in &extracted.0 {
++        reservations
++            .by_entity
++            .entry(entity)
++            .or_insert_with(|| GpuInstanceBatchReservation::new(draw.max_capacity, &device))
++            .resize(draw.max_capacity, &device, &queue);
++    }
++}
++
++fn prepare_gpu_batched_mesh_draws(
++    extracted: Res<ExtractedGpuBatchedMeshes>,
++    mut buffers: ResMut<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
++    mut culling: ResMut<MeshCullingDataBuffer>,
++    mut batches: ResMut<RenderMeshInstanceBatches>,
++    mut materialization: ResMut<GpuInstanceMaterialization>,
++    allocator: Res<MeshAllocator>,
++    materials: Res<RenderMaterialInstances>,
++    bindings: Res<RenderMaterialBindings>,
++    frame: Res<FrameCount>,
++    support: Res<GpuPreprocessingSupport>,
++    device: Res<RenderDevice>,
++    cache: Res<PipelineCache>,
++    pipeline: Option<Res<materialize::MaterializationPipeline>>,
++    preprocess: Res<crate::PreprocessPipelines>,
++) {
++    batches.clear();
++    materialization
++        .jobs
++        .retain(|entity, _| extracted.0.contains_key(entity));
++    for job in materialization.jobs.values_mut() {
++        job.active = false;
++    }
++    if !support.is_culling_supported() || extracted.0.is_empty() {
++        return;
++    }
++
++    let writers_ready = materialize::pipelines_ready(
++        pipeline.as_deref(),
++        preprocess.range_unpacking.pipeline_id,
++        &cache,
++    );
++    let input = &mut buffers.current_input_buffer;
++    input.ensure_nonempty();
++    let mut scratch_end = input.len().max(culling.len() as usize) as u32;
++    for (&entity, draw) in &extracted.0 {
++        let batch = batches.entry(entity).or_insert(RenderMeshInstanceBatch {
++            asset_id: draw.mesh_asset_id,
++            input_range: 0..0,
++            world_center: draw.world_center,
++        });
++        if !writers_ready {
++            continue;
++        }
++        let Some(material) = materials.instances.get(&entity) else {
++            continue;
++        };
++        let Some(binding) = bindings.get(&material.asset_id) else {
++            continue;
++        };
++        let Some(mut template) =
++            MeshInputUniform::for_mesh(&allocator, draw.mesh_asset_id, *binding, u16::MAX)
++        else {
++            continue;
++        };
++        template.flags = draw.flags;
++        template.timestamp = frame.0;
++        let base = scratch_end;
++        scratch_end = scratch_end
++            .checked_add(draw.max_capacity)
++            .expect("GPU mesh input range overflow");
++        materialization.jobs.entry(entity).or_default().update(
++            template,
++            MeshCullingData::new(draw.local_bounds.as_ref()),
++            base,
++            draw.max_capacity,
++        );
++        batch.input_range = base..scratch_end;
++    }
++    if !materialization.jobs.is_empty() {
++        input.reserve_gpu(scratch_end, &device);
++        culling.reserve_amortized(scratch_end as usize, &device);
++    }
++}
++
++fn refresh_gpu_batched_mesh_sort_centers(
++    batches: Res<RenderMeshInstanceBatches>,
++    mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
++) {
++    if batches.is_empty() {
++        return;
++    }
++    for phase in phases.0.values_mut() {
++        for (entity, batch) in batches.iter() {
++            // `queue_material_meshes` keys mesh items by main entity only.
++            let Some(item) = phase.items.get_mut(&(Entity::PLACEHOLDER, *entity)) else {
++                continue;
++            };
++            if let TransparentSortingInfo3d::Sorted { mesh_center, .. } = &mut item.sorting_info {
++                *mesh_center = batch.world_center;
++            }
++        }
++    }
++}
++
++impl GpuInstanceBatchReservation {
++    fn new(capacity: u32, device: &RenderDevice) -> Self {
++        Self {
++            output_buffer: device.create_buffer(&BufferDescriptor {
++                label: Some("persistent GPU mesh instances"),
++                size: u64::from(capacity) * size_of::<GpuMeshInstance>() as u64,
++                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
++                mapped_at_creation: false,
++            }),
++            max_capacity: capacity,
++        }
++    }
++
++    fn resize(&mut self, capacity: u32, device: &RenderDevice, queue: &RenderQueue) {
++        if self.max_capacity == capacity {
++            return;
++        }
++        let replacement = Self::new(capacity, device);
++        let mut encoder = device.create_command_encoder(&Default::default());
++        encoder.copy_buffer_to_buffer(
++            &self.output_buffer,
++            0,
++            &replacement.output_buffer,
++            0,
++            u64::from(capacity.min(self.max_capacity)) * size_of::<GpuMeshInstance>() as u64,
++        );
++        queue.submit([encoder.finish()]);
++        *self = replacement;
++    }
++}
++
++// superfargoth patch (bevyengine/bevy#25978): upstream's light visibility
++// checks (`bevy_light::check_*_light_mesh_visibility`) query
++// `With<Mesh3dVisibility>`, which the batch shares with `Mesh3d`. Our 0.20
++// `bevy_light` queries `With<Mesh3d>` and is not vendored, so this adds each
++// batch to the light lists afterwards with the same rules those checks apply
++// to a `NoFrustumCulling` entity: every cascade of every view of a visible,
++// shadow-mapped directional light; every face of a shadow-mapped point light
++// and every shadow-mapped spot light that a camera's clusters see. Render
++// layers, `InheritedVisibility`, `NotShadowCaster` and `VisibilityRange` are
++// honoured as there.
++#[allow(clippy::type_complexity)]
++pub(crate) fn add_gpu_batched_meshes_to_light_visibility(
++    mut batches: Query<
++        (
++            Entity,
++            &InheritedVisibility,
++            &mut ViewVisibility,
++            Option<&RenderLayers>,
++            Has<VisibilityRange>,
++        ),
++        (
++            With<GpuBatchedMesh3d>,
++            Without<NotShadowCaster>,
++            Without<NoCpuCulling>,
++            Without<Mesh3d>,
++        ),
++    >,
++    mut directional_lights: Query<
++        (
++            &DirectionalLight,
++            &mut CascadesVisibleEntities,
++            Option<&RenderLayers>,
++            &ViewVisibility,
++        ),
++        (Without<SpotLight>, Without<GpuBatchedMesh3d>),
++    >,
++    camera_visible_lights: Query<&VisibleEntities>,
++    mut point_lights: Query<
++        (&PointLight, &mut CubemapVisibleEntities, Option<&RenderLayers>),
++        Without<GpuBatchedMesh3d>,
++    >,
++    mut spot_lights: Query<
++        (&SpotLight, &mut VisibleMeshEntities, Option<&RenderLayers>),
++        Without<GpuBatchedMesh3d>,
++    >,
++    mut camera_query: Query<(Entity, &RenderTarget), With<Camera>>,
++    mut shadow_lod_origin_query: Query<Entity, With<ShadowLodOrigin>>,
++    mut point_and_spot_light_query: Query<Entity, Or<(With<PointLight>, With<SpotLight>)>>,
++    visible_entity_ranges: Option<Res<VisibleEntityRanges>>,
++    mut checked_lights: Local<EntityHashSet>,
++) {
++    if batches.is_empty() {
++        return;
++    }
++    let ranges = visible_entity_ranges.as_deref();
++    let in_range = |entity: Entity, has_range: bool, view: Option<Entity>| {
++        !has_range
++            || ranges.is_none_or(|ranges| {
++                view.is_some_and(|view| ranges.entity_is_in_range_of_view(entity, view))
++            })
++    };
++    fn insert_sorted(list: &mut VisibleMeshEntities, entity: Entity) {
++        if let Err(index) = list.entities.binary_search(&entity) {
++            list.entities.insert(index, entity);
++        }
++    }
++
++    for (light, mut cascades, light_layers, light_visibility) in &mut directional_lights {
++        if !light.shadow_maps_enabled || !light_visibility.get() {
++            continue;
++        }
++        let light_layers = light_layers.unwrap_or_default();
++        for (view, cascade_lists) in cascades.entities.iter_mut() {
++            for (entity, inherited, mut view_visibility, layers, has_range) in &mut batches {
++                if !inherited.get()
++                    || !light_layers.intersects(layers.unwrap_or_default())
++                    || !in_range(entity, has_range, Some(*view))
++                {
++                    continue;
++                }
++                for list in cascade_lists.iter_mut() {
++                    insert_sorted(list, entity);
++                }
++                if !cascade_lists.is_empty() {
++                    view_visibility.set_visible();
++                }
++            }
++        }
++    }
++
++    let shadow_lod_origin = get_shadow_lod_origin(
++        camera_query.transmute_lens_filtered(),
++        shadow_lod_origin_query.transmute_lens_filtered(),
++        point_and_spot_light_query.transmute_lens_filtered(),
++    );
++    checked_lights.clear();
++    for visible in &camera_visible_lights {
++        for &light_entity in visible.get(TypeId::of::<ClusterVisibilityClass>()) {
++            if !checked_lights.insert(light_entity) {
++                continue;
++            }
++            if let Ok((light, mut faces, light_layers)) = point_lights.get_mut(light_entity)
++                && light.shadow_maps_enabled
++            {
++                let light_layers = light_layers.unwrap_or_default();
++                for (entity, inherited, mut view_visibility, layers, has_range) in &mut batches {
++                    if inherited.get()
++                        && light_layers.intersects(layers.unwrap_or_default())
++                        && in_range(entity, has_range, shadow_lod_origin)
++                    {
++                        view_visibility.set_visible();
++                        for face in faces.iter_mut() {
++                            insert_sorted(face, entity);
++                        }
++                    }
++                }
++            }
++            if let Ok((light, mut list, light_layers)) = spot_lights.get_mut(light_entity)
++                && light.shadow_maps_enabled
++            {
++                let light_layers = light_layers.unwrap_or_default();
++                for (entity, inherited, mut view_visibility, layers, has_range) in &mut batches {
++                    if inherited.get()
++                        && light_layers.intersects(layers.unwrap_or_default())
++                        && in_range(entity, has_range, shadow_lod_origin)
++                    {
++                        view_visibility.set_visible();
++                        insert_sorted(&mut list, entity);
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/superfargoth/vendor/bevy_pbr/src/lib.rs b/superfargoth/vendor/bevy_pbr/src/lib.rs
+index 10309e0..07d87fb 100644
+--- a/superfargoth/vendor/bevy_pbr/src/lib.rs
++++ b/superfargoth/vendor/bevy_pbr/src/lib.rs
+@@ -40,6 +40,8 @@ pub mod deferred;
+ pub mod diagnostic;
+ mod extended_material;
+ mod fog;
++// superfargoth patch (bevyengine/bevy#25978)
++pub mod gpu_instance_batch;
+ mod light_probe;
+ mod lightmap;
+ mod material;
+diff --git a/superfargoth/vendor/bevy_pbr/src/material.rs b/superfargoth/vendor/bevy_pbr/src/material.rs
+index 201b9a9..7666a44 100644
+--- a/superfargoth/vendor/bevy_pbr/src/material.rs
++++ b/superfargoth/vendor/bevy_pbr/src/material.rs
+@@ -21,6 +21,8 @@ use bevy_ecs::{
+         SystemParamItem, SystemState,
+     },
+ };
++// superfargoth patch (bevyengine/bevy#25978)
++use bevy_log::warn_once;
+ use bevy_material::{
+     key::{ErasedMaterialKey, ErasedMaterialPipelineKey, ErasedMeshPipelineKey},
+     labels::{DrawFunctionLabel, InternedShaderLabel, ShaderLabel},
+@@ -28,7 +30,9 @@ use bevy_material::{
+ };
+ use bevy_math::{Affine3, Affine3Ext as _};
+ use bevy_mesh::{
+-    mark_3d_meshes_as_changed_if_their_assets_changed, Mesh3d, MeshVertexBufferLayoutRef,
++    // superfargoth patch (bevyengine/bevy#25978)
++    mark_3d_meshes_as_changed_if_their_assets_changed, Mesh3d,
++    MeshVertexBufferLayoutRef,
+ };
+ use bevy_platform::collections::hash_map::Entry;
+ use bevy_platform::collections::{HashMap, HashSet};
+@@ -454,7 +458,11 @@ where
+                     mark_meshes_as_changed_if_their_materials_changed::<M>.ambiguous_with_all(),
+                     check_entities_needing_specialization::<M>.after(AssetEventSystems),
+                 )
+-                    .after(mark_3d_meshes_as_changed_if_their_assets_changed),
++                    // superfargoth patch (bevyengine/bevy#25978)
++                    .after(mark_3d_meshes_as_changed_if_their_assets_changed)
++                    .after(
++                        gpu_instance_batch::mark_gpu_batched_meshes_as_changed_if_their_assets_changed,
++                    ),
+             );
+ 
+         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+@@ -737,12 +745,22 @@ fn mark_meshes_as_changed_if_their_materials_changed<M>(
+         &mut Mesh3d,
+         Or<(Changed<MeshMaterial3d<M>>, AssetChanged<MeshMaterial3d<M>>)>,
+     >,
++    // superfargoth patch (bevyengine/bevy#25978)
++    mut changed_batched_meshes_query: Query<
++        &mut gpu_instance_batch::GpuBatchedMesh3d,
++        Or<(Changed<MeshMaterial3d<M>>, AssetChanged<MeshMaterial3d<M>>)>,
++    >,
+ ) where
+     M: Material,
+ {
+     changed_meshes_query.par_iter_mut().for_each(|mut mesh| {
+         mesh.set_changed();
+     });
++    changed_batched_meshes_query
++        .par_iter_mut()
++        .for_each(|mut batched_mesh| {
++            batched_mesh.set_changed();
++        });
+ }
+ 
+ /// Fills the [`RenderMaterialInstances`] resources from the meshes in the
+@@ -816,10 +834,17 @@ fn early_sweep_material_instances<M>(
+ pub fn late_sweep_material_instances(
+     mut material_instances: ResMut<RenderMaterialInstances>,
+     mut removed_meshes_query: Extract<RemovedComponents<Mesh3d>>,
++    // superfargoth patch (bevyengine/bevy#25978): batches draw without `Mesh3d` (upstream sweeps `Mesh3dVisibility`).
++    mut removed_batches_query: Extract<
++        RemovedComponents<gpu_instance_batch::GpuBatchedMesh3d>,
++    >,
+ ) {
+     let last_change_tick = material_instances.current_change_tick;
+ 
+-    for entity in removed_meshes_query.read() {
++    for entity in removed_meshes_query
++        .read()
++        .chain(removed_batches_query.read())
++    {
+         if let Entry::Occupied(occupied_entry) = material_instances.instances.entry(entity.into()) {
+             // Only sweep the entry if it wasn't updated this frame. It's
+             // possible that a `ViewVisibility` component was removed and
+@@ -916,6 +941,8 @@ pub fn check_entities_needing_specialization<M>(
+             Or<(
+                 Changed<Mesh3d>,
+                 AssetChanged<Mesh3d>,
++                // superfargoth patch (bevyengine/bevy#25978)
++                Changed<gpu_instance_batch::GpuBatchedMesh3d>,
+                 Changed<MeshMaterial3d<M>>,
+                 AssetChanged<MeshMaterial3d<M>>,
+             )>,
+@@ -925,6 +952,8 @@ pub fn check_entities_needing_specialization<M>(
+     mut par_local: Local<Parallel<Vec<Entity>>>,
+     mut entities_needing_specialization: ResMut<EntitiesNeedingSpecialization<M>>,
+     mut removed_mesh_3d_components: RemovedComponents<Mesh3d>,
++    // superfargoth patch (bevyengine/bevy#25978)
++    mut removed_batched_mesh_3d_components: RemovedComponents<gpu_instance_batch::GpuBatchedMesh3d>,
+     mut removed_mesh_material_3d_components: RemovedComponents<MeshMaterial3d<M>>,
+ ) where
+     M: Material,
+@@ -948,6 +977,8 @@ pub fn check_entities_needing_specialization<M>(
+     // it'll just be immediately re-added again, which is harmless.
+     for entity in removed_mesh_3d_components
+         .read()
++        // superfargoth patch (bevyengine/bevy#25978)
++        .chain(removed_batched_mesh_3d_components.read())
+         .chain(removed_mesh_material_3d_components.read())
+     {
+         entities_needing_specialization.removed.push(entity);
+@@ -974,7 +1005,8 @@ pub struct PendingMeshMaterialQueues(pub PendingQueues);
+ pub(crate) struct SpecializeMaterialMeshesSystemParam<'w, 's> {
+     render_meshes: Res<'w, RenderAssets<RenderMesh>>,
+     render_materials: Res<'w, ErasedRenderAssets<PreparedMaterial>>,
+-    render_mesh_instances: Res<'w, RenderMeshInstances>,
++    // superfargoth patch (bevyengine/bevy#25978)
++    mesh_draws: RenderMeshDraws<'w>,
+     render_material_instances: Res<'w, RenderMaterialInstances>,
+     render_lightmaps: Res<'w, RenderLightmaps>,
+     render_visibility_ranges: Res<'w, RenderVisibilityRanges>,
+@@ -1002,7 +1034,8 @@ pub(crate) fn specialize_material_meshes(
+         let SpecializeMaterialMeshesSystemParam {
+             render_meshes,
+             render_materials,
+-            render_mesh_instances,
++            // superfargoth patch (bevyengine/bevy#25978)
++            mesh_draws,
+             render_material_instances,
+             render_lightmaps,
+             render_visibility_ranges,
+@@ -1086,15 +1119,14 @@ pub(crate) fn specialize_material_meshes(
+                         .insert((*render_entity, *visible_entity));
+                     continue;
+                 };
+-                let Some(mesh_instance) =
+-                    render_mesh_instances.render_mesh_queue_data(*visible_entity)
+-                else {
++                // superfargoth patch (bevyengine/bevy#25978)
++                let Some(draw) = mesh_draws.get(*visible_entity) else {
+                     view_pending_mesh_material_queues
+                         .current_frame
+                         .insert((*render_entity, *visible_entity));
+                     continue;
+                 };
+-                let Some(mesh) = render_meshes.get(mesh_instance.mesh_asset_id()) else {
++                let Some(mesh) = render_meshes.get(draw.mesh_asset_id()) else {
+                     continue;
+                 };
+                 let Some(material) = render_materials.get(material_instance.asset_id) else {
+@@ -1114,32 +1146,35 @@ pub(crate) fn specialize_material_meshes(
+                     | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits())
+                     | mesh_pipeline_key_bits;
+ 
+-                if let Some(lightmap) = render_lightmaps.render_lightmaps.get(visible_entity) {
+-                    mesh_key |= MeshPipelineKey::LIGHTMAPPED;
++                // superfargoth patch (bevyengine/bevy#25978)
++                if let RenderMeshDraw::Extracted(_) = draw {
++                    if let Some(lightmap) = render_lightmaps.render_lightmaps.get(visible_entity) {
++                        mesh_key |= MeshPipelineKey::LIGHTMAPPED;
+ 
+-                    if lightmap.bicubic_sampling {
+-                        mesh_key |= MeshPipelineKey::LIGHTMAP_BICUBIC_SAMPLING;
++                        if lightmap.bicubic_sampling {
++                            mesh_key |= MeshPipelineKey::LIGHTMAP_BICUBIC_SAMPLING;
++                        }
+                     }
+-                }
+ 
+-                if render_visibility_ranges
+-                    .entity_has_crossfading_visibility_ranges(*visible_entity)
+-                {
+-                    mesh_key |= MeshPipelineKey::VISIBILITY_RANGE_DITHER;
+-                }
+-
+-                if view_key.contains(MeshPipelineKey::MOTION_VECTOR_PREPASS) {
+-                    if mesh_instance
+-                        .flags()
+-                        .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_SKIN)
++                    if render_visibility_ranges
++                        .entity_has_crossfading_visibility_ranges(*visible_entity)
+                     {
+-                        mesh_key |= MeshPipelineKey::HAS_PREVIOUS_SKIN;
++                        mesh_key |= MeshPipelineKey::VISIBILITY_RANGE_DITHER;
+                     }
+-                    if mesh_instance
+-                        .flags()
+-                        .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_MORPH)
+-                    {
+-                        mesh_key |= MeshPipelineKey::HAS_PREVIOUS_MORPH;
++
++                    if view_key.contains(MeshPipelineKey::MOTION_VECTOR_PREPASS) {
++                        if draw
++                            .flags()
++                            .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_SKIN)
++                        {
++                            mesh_key |= MeshPipelineKey::HAS_PREVIOUS_SKIN;
++                        }
++                        if draw
++                            .flags()
++                            .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_MORPH)
++                        {
++                            mesh_key |= MeshPipelineKey::HAS_PREVIOUS_MORPH;
++                        }
+                     }
+                 }
+ 
+@@ -1188,7 +1223,8 @@ pub(crate) fn specialize_material_meshes(
+ /// them to [`BinnedRenderPhase`]s or [`SortedRenderPhase`]s as appropriate.
+ pub fn queue_material_meshes(
+     render_materials: Res<ErasedRenderAssets<PreparedMaterial>>,
+-    render_mesh_instances: Res<RenderMeshInstances>,
++    // superfargoth patch (bevyengine/bevy#25978)
++    mesh_draws: RenderMeshDraws,
+     render_material_instances: Res<RenderMaterialInstances>,
+     mesh_assets: Res<RenderAssets<RenderMesh>>,
+     mesh_allocator: Res<MeshAllocator>,
+@@ -1279,8 +1315,8 @@ pub fn queue_material_meshes(
+                     .insert((*render_entity, *visible_entity));
+                 continue;
+             };
+-            let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(*visible_entity)
+-            else {
++            // superfargoth patch (bevyengine/bevy#25978)
++            let Some(draw) = mesh_draws.get(*visible_entity) else {
+                 view_pending_mesh_material_queues
+                     .current_frame
+                     .insert((*render_entity, *visible_entity));
+@@ -1292,9 +1328,14 @@ pub fn queue_material_meshes(
+                     .insert((*render_entity, *visible_entity));
+                 continue;
+             };
++            // superfargoth patch (bevyengine/bevy#25978)
++            let mesh_asset_id = draw.mesh_asset_id();
++            let uniform_index = draw.input_uniform_index();
++            let phase_type = draw.phase_type(&gpu_preprocessing_support);
++            let lightmap_slab = draw.lightmap_slab();
+ 
+             // Fetch the slabs that this mesh resides in.
+-            let Some(mesh_slabs) = mesh_allocator.mesh_slabs(&mesh_instance.mesh_asset_id()) else {
++            let Some(mesh_slabs) = mesh_allocator.mesh_slabs(&mesh_asset_id) else {
+                 continue;
+             };
+ 
+@@ -1314,6 +1355,14 @@ pub fn queue_material_meshes(
+ 
+             match render_phase_type {
+                 RenderPhaseType::Transmissive => {
++                    // superfargoth patch (bevyengine/bevy#25978)
++                    if let RenderMeshDraw::Gpu(_) = draw {
++                        warn_once!(
++                            "GpuBatchedMesh3d doesn't support transmissive materials; \
++                             {visible_entity:?} won't be drawn"
++                        );
++                        continue;
++                    }
+                     let Some(draw_function) = material
+                         .properties
+                         .get_draw_function(MainPassTransmissiveDrawFunction)
+@@ -1322,17 +1371,12 @@ pub fn queue_material_meshes(
+                     };
+                     transmissive_phase.add_retained(Transmissive3d {
+                         sorting_info: TransparentSortingInfo3d::Sorted {
+-                            mesh_center: get_mesh_instance_world_from_local(
++                            // superfargoth patch (bevyengine/bevy#25978)
++                            mesh_center: mesh_draws.mesh_center(
++                                &draw,
+                                 *visible_entity,
+-                                mesh_instance.current_uniform_index,
+-                                &render_mesh_instances,
++                                &mesh_assets,
+                                 maybe_batched_instance_buffers.as_deref(),
+-                            )
+-                            .transform_point3(
+-                                mesh_assets
+-                                    .get(mesh_instance.mesh_asset_id())
+-                                    .unwrap()
+-                                    .aabb_center,
+                             ),
+                             depth_bias: material.properties.depth_bias,
+                         },
+@@ -1366,23 +1410,18 @@ pub fn queue_material_meshes(
+                         draw_function,
+                         material_bind_group_index: Some(material.binding.group.0),
+                         slabs: mesh_slabs,
+-                        lightmap_slab: mesh_instance
+-                            .shared
+-                            .lightmap_slab_index()
+-                            .map(|index| *index),
++                        // superfargoth patch (bevyengine/bevy#25978)
++                        lightmap_slab,
+                     };
+                     let bin_key = Opaque3dBinKey {
+-                        asset_id: mesh_instance.mesh_asset_id().into(),
++                        asset_id: mesh_asset_id.into(),
+                     };
+                     opaque_phase.add(
+                         batch_set_key,
+                         bin_key,
+                         (Entity::PLACEHOLDER, *visible_entity),
+-                        mesh_instance.current_uniform_index,
+-                        BinnedRenderPhaseType::mesh(
+-                            mesh_instance.should_batch(),
+-                            &gpu_preprocessing_support,
+-                        ),
++                        uniform_index,
++                        phase_type,
+                     );
+                 }
+                 // Alpha mask
+@@ -1408,17 +1447,15 @@ pub fn queue_material_meshes(
+                         slabs: mesh_slabs,
+                     };
+                     let bin_key = OpaqueNoLightmap3dBinKey {
+-                        asset_id: mesh_instance.mesh_asset_id().into(),
++                        // superfargoth patch (bevyengine/bevy#25978)
++                        asset_id: mesh_asset_id.into(),
+                     };
+                     alpha_mask_phase.add(
+                         batch_set_key,
+                         bin_key,
+                         (Entity::PLACEHOLDER, *visible_entity),
+-                        mesh_instance.current_uniform_index,
+-                        BinnedRenderPhaseType::mesh(
+-                            mesh_instance.should_batch(),
+-                            &gpu_preprocessing_support,
+-                        ),
++                        uniform_index,
++                        phase_type,
+                     );
+                 }
+                 RenderPhaseType::Transparent => {
+@@ -1430,17 +1467,12 @@ pub fn queue_material_meshes(
+                     };
+                     transparent_phase.add_retained(Transparent3d {
+                         sorting_info: TransparentSortingInfo3d::Sorted {
+-                            mesh_center: get_mesh_instance_world_from_local(
++                            // superfargoth patch (bevyengine/bevy#25978)
++                            mesh_center: mesh_draws.mesh_center(
++                                &draw,
+                                 *visible_entity,
+-                                mesh_instance.current_uniform_index,
+-                                &render_mesh_instances,
++                                &mesh_assets,
+                                 maybe_batched_instance_buffers.as_deref(),
+-                            )
+-                            .transform_point3(
+-                                mesh_assets
+-                                    .get(mesh_instance.mesh_asset_id())
+-                                    .unwrap()
+-                                    .aabb_center,
+                             ),
+                             depth_bias: material.properties.depth_bias,
+                         },
+diff --git a/superfargoth/vendor/bevy_pbr/src/prepass/mod.rs b/superfargoth/vendor/bevy_pbr/src/prepass/mod.rs
+index 7d9405c..1393d6f 100644
+--- a/superfargoth/vendor/bevy_pbr/src/prepass/mod.rs
++++ b/superfargoth/vendor/bevy_pbr/src/prepass/mod.rs
+@@ -8,8 +8,9 @@ use crate::{
+     MaterialPropertiesExt, MeshLayouts, MeshPipeline, MeshPipelineKey, PreparedMaterial,
+     PrepassAlphaMaskDrawFunction, PrepassFragmentShader, PrepassOpaqueDepthOnlyDrawFunction,
+     PrepassOpaqueDrawFunction, PrepassVertexShader, RenderLightmaps, RenderMaterialInstances,
+-    RenderMeshInstanceFlags, RenderMeshInstances, SetMaterialBindGroup, SetMeshBindGroup,
++    RenderMeshInstanceFlags, SetMaterialBindGroup, SetMeshBindGroup,
+     ShadowView,
++    RenderMeshDraws, // superfargoth patch (bevyengine/bevy#25978): replaces `RenderMeshInstances`
+     surface_weather_bind_entries, surface_weather_layout_entries, SurfaceWeatherPrepassBindGroups,
+     SurfaceWeatherView, // superfargoth patch (own, SW)
+ };
+@@ -1048,7 +1049,8 @@ pub struct PendingPrepassMeshMaterialQueues(pub PendingQueues);
+ pub(crate) struct SpecializePrepassSystemParam<'w, 's> {
+     render_meshes: Res<'w, RenderAssets<RenderMesh>>,
+     render_materials: Res<'w, ErasedRenderAssets<PreparedMaterial>>,
+-    render_mesh_instances: Res<'w, RenderMeshInstances>,
++    // superfargoth patch (bevyengine/bevy#25978)
++    mesh_draws: RenderMeshDraws<'w>,
+     render_material_instances: Res<'w, RenderMaterialInstances>,
+     render_lightmaps: Res<'w, RenderLightmaps>,
+     render_visibility_ranges: Res<'w, RenderVisibilityRanges>,
+@@ -1092,7 +1094,8 @@ pub(crate) fn specialize_prepass_material_meshes(
+         let SpecializePrepassSystemParam {
+             render_meshes,
+             render_materials,
+-            render_mesh_instances,
++            // superfargoth patch (bevyengine/bevy#25978)
++            mesh_draws,
+             render_material_instances,
+             render_lightmaps,
+             render_visibility_ranges,
+@@ -1185,9 +1188,8 @@ pub(crate) fn specialize_prepass_material_meshes(
+                         .insert((*render_entity, *visible_entity));
+                     continue;
+                 };
+-                let Some(mesh_instance) =
+-                    render_mesh_instances.render_mesh_queue_data(*visible_entity)
+-                else {
++                // superfargoth patch (bevyengine/bevy#25978)
++                let Some(draw) = mesh_draws.get(*visible_entity) else {
+                     view_pending_prepass_mesh_material_queues
+                         .current_frame
+                         .insert((*render_entity, *visible_entity));
+@@ -1204,7 +1206,8 @@ pub(crate) fn specialize_prepass_material_meshes(
+                     removals.push((extracted_view.retained_view_entity, *visible_entity));
+                     continue;
+                 }
+-                let Some(mesh) = render_meshes.get(mesh_instance.mesh_asset_id()) else {
++                // superfargoth patch (bevyengine/bevy#25978)
++                let Some(mesh) = render_meshes.get(draw.mesh_asset_id()) else {
+                     continue;
+                 };
+ 
+@@ -1246,45 +1249,48 @@ pub(crate) fn specialize_prepass_material_meshes(
+                     mesh_key |= MeshPipelineKey::DEFERRED_PREPASS;
+                 }
+ 
+-                if let Some(lightmap) = render_lightmaps.render_lightmaps.get(visible_entity) {
+-                    // Even though we don't use the lightmap in the forward prepass, the
+-                    // `SetMeshBindGroup` render command will bind the data for it. So
+-                    // we need to include the appropriate flag in the mesh pipeline key
+-                    // to ensure that the necessary bind group layout entries are
+-                    // present.
+-                    mesh_key |= MeshPipelineKey::LIGHTMAPPED;
++                // superfargoth patch (bevyengine/bevy#25978)
++                if let crate::RenderMeshDraw::Extracted(_) = draw {
++                    if let Some(lightmap) = render_lightmaps.render_lightmaps.get(visible_entity) {
++                        // Even though we don't use the lightmap in the forward prepass, the
++                        // `SetMeshBindGroup` render command will bind the data for it. So
++                        // we need to include the appropriate flag in the mesh pipeline key
++                        // to ensure that the necessary bind group layout entries are
++                        // present.
++                        mesh_key |= MeshPipelineKey::LIGHTMAPPED;
++
++                        if lightmap.bicubic_sampling && deferred {
++                            mesh_key |= MeshPipelineKey::LIGHTMAP_BICUBIC_SAMPLING;
++                        }
++                    }
+ 
+-                    if lightmap.bicubic_sampling && deferred {
+-                        mesh_key |= MeshPipelineKey::LIGHTMAP_BICUBIC_SAMPLING;
++                    if render_visibility_ranges
++                        .entity_has_crossfading_visibility_ranges(*visible_entity)
++                    {
++                        mesh_key |= MeshPipelineKey::VISIBILITY_RANGE_DITHER;
+                     }
+-                }
+ 
+-                if render_visibility_ranges
+-                    .entity_has_crossfading_visibility_ranges(*visible_entity)
+-                {
+-                    mesh_key |= MeshPipelineKey::VISIBILITY_RANGE_DITHER;
++                    // If the previous frame has skins or morph targets, note that.
++                    if motion_vector_prepass.is_some() {
++                        if draw
++                            .flags()
++                            .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_SKIN)
++                        {
++                            mesh_key |= MeshPipelineKey::HAS_PREVIOUS_SKIN;
++                        }
++                        if draw
++                            .flags()
++                            .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_MORPH)
++                        {
++                            mesh_key |= MeshPipelineKey::HAS_PREVIOUS_MORPH;
++                        }
++                    }
+                 }
+ 
+                 if material.properties.prepass_reads_material() {
+                     mesh_key |= MeshPipelineKey::PREPASS_READS_MATERIAL;
+                 }
+ 
+-                // If the previous frame has skins or morph targets, note that.
+-                if motion_vector_prepass.is_some() {
+-                    if mesh_instance
+-                        .flags()
+-                        .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_SKIN)
+-                    {
+-                        mesh_key |= MeshPipelineKey::HAS_PREVIOUS_SKIN;
+-                    }
+-                    if mesh_instance
+-                        .flags()
+-                        .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_MORPH)
+-                    {
+-                        mesh_key |= MeshPipelineKey::HAS_PREVIOUS_MORPH;
+-                    }
+-                }
+-
+                 work_items.push(PrepassSpecializationWorkItem {
+                     visible_entity: *visible_entity,
+                     retained_view_entity: extracted_view.retained_view_entity,
+@@ -1374,7 +1380,8 @@ pub(crate) fn specialize_prepass_material_meshes(
+ }
+ 
+ pub fn queue_prepass_material_meshes(
+-    render_mesh_instances: Res<RenderMeshInstances>,
++    // superfargoth patch (bevyengine/bevy#25978)
++    mesh_draws: RenderMeshDraws,
+     render_materials: Res<ErasedRenderAssets<PreparedMaterial>>,
+     render_material_instances: Res<RenderMaterialInstances>,
+     mesh_allocator: Res<MeshAllocator>,
+@@ -1472,8 +1479,8 @@ pub fn queue_prepass_material_meshes(
+                     .insert((*render_entity, *visible_entity));
+                 continue;
+             };
+-            let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(*visible_entity)
+-            else {
++            // superfargoth patch (bevyengine/bevy#25978)
++            let Some(draw) = mesh_draws.get(*visible_entity) else {
+                 view_pending_prepass_mesh_material_queues
+                     .current_frame
+                     .insert((*render_entity, *visible_entity));
+@@ -1485,7 +1492,11 @@ pub fn queue_prepass_material_meshes(
+                     .insert((*render_entity, *visible_entity));
+                 continue;
+             };
+-            let Some(mesh_slabs) = mesh_allocator.mesh_slabs(&mesh_instance.mesh_asset_id()) else {
++            // superfargoth patch (bevyengine/bevy#25978)
++            let mesh_asset_id = draw.mesh_asset_id();
++            let uniform_index = draw.input_uniform_index();
++            let phase_type = draw.phase_type(&gpu_preprocessing_support);
++            let Some(mesh_slabs) = mesh_allocator.mesh_slabs(&mesh_asset_id) else {
+                 continue;
+             };
+ 
+@@ -1506,14 +1517,12 @@ pub fn queue_prepass_material_meshes(
+                                 slabs: mesh_slabs,
+                             },
+                             OpaqueNoLightmap3dBinKey {
+-                                asset_id: mesh_instance.mesh_asset_id().into(),
++                                // superfargoth patch (bevyengine/bevy#25978)
++                                asset_id: mesh_asset_id.into(),
+                             },
+                             (*render_entity, *visible_entity),
+-                            mesh_instance.current_uniform_index,
+-                            BinnedRenderPhaseType::mesh(
+-                                mesh_instance.should_batch(),
+-                                &gpu_preprocessing_support,
+-                            ),
++                            uniform_index,
++                            phase_type,
+                         );
+                     } else if let Some(opaque_phase) = opaque_phase.as_mut() {
+                         let depth_only_draw_function = material
+@@ -1533,14 +1542,12 @@ pub fn queue_prepass_material_meshes(
+                                 slabs: mesh_slabs,
+                             },
+                             OpaqueNoLightmap3dBinKey {
+-                                asset_id: mesh_instance.mesh_asset_id().into(),
++                                // superfargoth patch (bevyengine/bevy#25978)
++                                asset_id: mesh_asset_id.into(),
+                             },
+                             (*render_entity, *visible_entity),
+-                            mesh_instance.current_uniform_index,
+-                            BinnedRenderPhaseType::mesh(
+-                                mesh_instance.should_batch(),
+-                                &gpu_preprocessing_support,
+-                            ),
++                            uniform_index,
++                            phase_type,
+                         );
+                     }
+                 }
+@@ -1554,14 +1561,12 @@ pub fn queue_prepass_material_meshes(
+                                 slabs: mesh_slabs,
+                             },
+                             OpaqueNoLightmap3dBinKey {
+-                                asset_id: mesh_instance.mesh_asset_id().into(),
++                                // superfargoth patch (bevyengine/bevy#25978)
++                                asset_id: mesh_asset_id.into(),
+                             },
+                             (*render_entity, *visible_entity),
+-                            mesh_instance.current_uniform_index,
+-                            BinnedRenderPhaseType::mesh(
+-                                mesh_instance.should_batch(),
+-                                &gpu_preprocessing_support,
+-                            ),
++                            uniform_index,
++                            phase_type,
+                         );
+                     } else if let Some(alpha_mask_phase) = alpha_mask_phase.as_mut() {
+                         alpha_mask_phase.add(
+@@ -1572,14 +1577,12 @@ pub fn queue_prepass_material_meshes(
+                                 slabs: mesh_slabs,
+                             },
+                             OpaqueNoLightmap3dBinKey {
+-                                asset_id: mesh_instance.mesh_asset_id().into(),
++                                // superfargoth patch (bevyengine/bevy#25978)
++                                asset_id: mesh_asset_id.into(),
+                             },
+                             (*render_entity, *visible_entity),
+-                            mesh_instance.current_uniform_index,
+-                            BinnedRenderPhaseType::mesh(
+-                                mesh_instance.should_batch(),
+-                                &gpu_preprocessing_support,
+-                            ),
++                            uniform_index,
++                            phase_type,
+                         );
+                     }
+                 }
+diff --git a/superfargoth/vendor/bevy_pbr/src/render/gpu_preprocess.rs b/superfargoth/vendor/bevy_pbr/src/render/gpu_preprocess.rs
+index 746f267..ec4cb4a 100644
+--- a/superfargoth/vendor/bevy_pbr/src/render/gpu_preprocess.rs
++++ b/superfargoth/vendor/bevy_pbr/src/render/gpu_preprocess.rs
+@@ -40,11 +40,12 @@ use bevy_render::{
+         clear_scene_unpacking_buffers, BatchedInstanceBuffers, BinUnpackingMetadataIndex,
+         BuildIndirectParametersMetadata, GpuBinMetadata, GpuBinUnpackingMetadata,
+         GpuOcclusionCullingWorkItemBuffers, GpuPreprocessingMode, GpuPreprocessingSupport,
+-        GpuUniformAllocationMetadata, IndirectBatchSet, IndirectParametersBuffers,
+-        IndirectParametersBuildJob, IndirectParametersBuildJobs, IndirectParametersIndexed,
+-        IndirectParametersMetadata, IndirectParametersNonIndexed,
++        // superfargoth patch (bevyengine/bevy#25978)
++        GpuRangeUnpackingMetadata, GpuUniformAllocationMetadata, IndirectBatchSet,
++        IndirectParametersBuffers, IndirectParametersBuildJob, IndirectParametersBuildJobs,
++        IndirectParametersIndexed, IndirectParametersMetadata, IndirectParametersNonIndexed,
+         LatePreprocessWorkItemIndirectParameters, PreprocessWorkItem, PreprocessWorkItemBuffers,
+-        SceneUnpackingBuffers, SceneUnpackingBuffersKey, SceneUnpackingJob,
++        RangeWorkItem, SceneUnpackingBuffers, SceneUnpackingBuffersKey, SceneUnpackingJob,
+         UniformAllocationMetadataIndex, UntypedPhaseBatchedInstanceBuffers,
+         UntypedPhaseIndirectParametersBuffers,
+     },
+@@ -139,6 +140,10 @@ pub struct PreprocessPipelines {
+     pub bin_unpacking: BinUnpackingPipeline,
+     /// Compute shader pipelines for the uniform allocation step.
+     pub uniform_allocation: UniformAllocationPipelines,
++    // superfargoth patch (bevyengine/bevy#25978)
++    /// Compute shader pipeline for expanding GPU instance-batch range
++    /// entries into preprocess work items.
++    pub range_unpacking: RangeUnpackingPipeline,
+ }
+ 
+ /// Compute shader pipelines for a specific phase: early, late, or main.
+@@ -215,6 +220,15 @@ pub struct BinUnpackingPipeline {
+     pub pipeline_id: Option<CachedComputePipelineId>,
+ }
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++/// The pipeline for the `unpack_ranges` compute shader.
++#[derive(Clone)]
++pub struct RangeUnpackingPipeline {
++    pub bind_group_layout: BindGroupLayoutDescriptor,
++    pub shader: Handle<Shader>,
++    pub pipeline_id: Option<CachedComputePipelineId>,
++}
++
+ /// Pipelines for the `allocate_uniforms` compute shader.
+ ///
+ /// This shader has three steps, so we have three pipelines.
+@@ -532,6 +546,8 @@ impl Plugin for GpuMeshPreprocessPlugin {
+         embedded_asset!(app, "build_indirect_params.wesl");
+         embedded_asset!(app, "unpack_bins.wesl");
+         embedded_asset!(app, "allocate_uniforms.wesl");
++        // superfargoth patch (bevyengine/bevy#25978)
++        embedded_asset!(app, "unpack_ranges.wesl");
+     }
+ 
+     fn finish(&self, app: &mut App) {
+@@ -854,6 +870,139 @@ pub fn unpack_bins(
+     pass_span.end(&mut compute_pass);
+ }
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++pub fn prepare_range_unpacking_bind_groups(
++    pipeline_cache: Res<PipelineCache>,
++    preprocess_pipelines: Res<PreprocessPipelines>,
++    render_device: Res<RenderDevice>,
++    render_queue: Res<RenderQueue>,
++    mut batched_instance_buffers: ResMut<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
++) {
++    if preprocess_pipelines.range_unpacking.pipeline_id.is_none() {
++        return;
++    }
++    let bind_group_layout = pipeline_cache
++        .get_bind_group_layout(&preprocess_pipelines.range_unpacking.bind_group_layout);
++
++    for phase_buffers in batched_instance_buffers.phase_instance_buffers.values_mut() {
++        for work_item_buffers in phase_buffers.work_item_buffers.values_mut() {
++            let PreprocessWorkItemBuffers::Indirect {
++                ref indexed,
++                ref non_indexed,
++                ref mut ranges_indexed,
++                ref mut ranges_non_indexed,
++                ..
++            } = *work_item_buffers
++            else {
++                continue;
++            };
++
++            for (ranges, work_buf) in [
++                (&mut *ranges_indexed, indexed),
++                (&mut *ranges_non_indexed, non_indexed),
++            ] {
++                if ranges.buffer.is_empty() {
++                    ranges.bind_group = None;
++                    continue;
++                }
++                let (Some(work_storage), Some(range_storage)) =
++                    (work_buf.buffer(), ranges.buffer.buffer())
++                else {
++                    ranges.bind_group = None;
++                    continue;
++                };
++
++                ranges.metadata.set(GpuRangeUnpackingMetadata {
++                    range_count: ranges.buffer.len() as u32,
++                    total_instance_count: ranges.total_instance_count,
++                    pad: bevy_math::UVec2::ZERO,
++                });
++                ranges.metadata.write_buffer(&render_device, &render_queue);
++                let metadata_binding = ranges.metadata.binding().unwrap();
++
++                ranges.bind_group = Some(render_device.create_bind_group(
++                    Some("range unpacking bind group"),
++                    &bind_group_layout,
++                    &BindGroupEntries::sequential((
++                        metadata_binding,
++                        range_storage.as_entire_binding(),
++                        work_storage.as_entire_binding(),
++                    )),
++                ));
++            }
++        }
++    }
++}
++
++pub fn unpack_ranges(
++    current_view: ViewQuery<Option<&ViewLightEntities>, Without<SkipGpuPreprocess>>,
++    view_query: Query<&ExtractedView, Without<SkipGpuPreprocess>>,
++    light_query: Query<&LightEntity>,
++    batched_instance_buffers: Res<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
++    pipeline_cache: Res<PipelineCache>,
++    preprocess_pipelines: Res<PreprocessPipelines>,
++    mut render_context: RenderContext,
++) {
++    let Some(pipeline_id) = preprocess_pipelines.range_unpacking.pipeline_id else {
++        return;
++    };
++    let Some(pipeline) = pipeline_cache.get_compute_pipeline(pipeline_id) else {
++        return;
++    };
++
++    let view_entity = current_view.entity();
++    let shadow_cascade_views = current_view.into_inner();
++    let all_views =
++        gather_shadow_cascades_for_view(view_entity, shadow_cascade_views, &light_query);
++
++    let diagnostics = render_context.diagnostic_recorder();
++    let diagnostics = diagnostics.as_deref();
++    let command_encoder = render_context.command_encoder();
++    let mut compute_pass = command_encoder.begin_compute_pass(&ComputePassDescriptor {
++        label: Some("range unpacking"),
++        timestamp_writes: None,
++    });
++    let pass_span = diagnostics.pass_span(&mut compute_pass, "range_unpacking");
++    compute_pass.set_pipeline(pipeline);
++
++    for view_entity in all_views {
++        let Ok(view) = view_query.get(view_entity) else {
++            continue;
++        };
++        for phase_buffers in batched_instance_buffers.phase_instance_buffers.values() {
++            let Some(work_item_buffers) = phase_buffers
++                .work_item_buffers
++                .get(&view.retained_view_entity)
++            else {
++                continue;
++            };
++            let PreprocessWorkItemBuffers::Indirect {
++                ref ranges_indexed,
++                ref ranges_non_indexed,
++                ..
++            } = *work_item_buffers
++            else {
++                continue;
++            };
++
++            for ranges in [ranges_indexed, ranges_non_indexed] {
++                let Some(bind_group) = &ranges.bind_group else {
++                    continue;
++                };
++                if ranges.total_instance_count == 0 {
++                    continue;
++                }
++                let workgroup_count =
++                    (ranges.total_instance_count as usize).div_ceil(WORKGROUP_SIZE) as u32;
++                compute_pass.set_bind_group(0, bind_group, &[]);
++                compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
++            }
++        }
++    }
++
++    pass_span.end(&mut compute_pass);
++}
++
+ pub fn early_gpu_preprocess(
+     current_view: ViewQuery<Option<&ViewLightEntities>, Without<SkipGpuPreprocess>>,
+     view_query: Query<
+@@ -1490,6 +1639,15 @@ impl PreprocessPhasePipelines {
+     }
+ }
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++pub fn prepare_range_unpacking_pipeline(
++    cache: Res<PipelineCache>,
++    mut pipelines: ResMut<PreprocessPipelines>,
++    mut specialized: ResMut<SpecializedComputePipelines<RangeUnpackingPipeline>>,
++) {
++    pipelines.range_unpacking.prepare(&cache, &mut specialized);
++}
++
+ impl PreprocessPipeline {
+     fn is_loaded(&self, pipeline_cache: &PipelineCache) -> bool {
+         self.pipeline_id
+@@ -1608,6 +1766,8 @@ impl FromWorld for PreprocessPipelines {
+         let bin_unpacking_bind_group_layout_entries = bin_unpacking_bind_group_layout_entries();
+         let uniform_allocation_bind_group_layout_entries =
+             uniform_allocation_bind_group_layout_entries();
++        // superfargoth patch (bevyengine/bevy#25978)
++        let range_unpacking_bind_group_layout_entries = range_unpacking_bind_group_layout_entries();
+ 
+         // Create the bind group layouts.
+         let direct_bind_group_layout = BindGroupLayoutDescriptor::new(
+@@ -1646,6 +1806,11 @@ impl FromWorld for PreprocessPipelines {
+             "uniform allocation bind group layout",
+             &uniform_allocation_bind_group_layout_entries,
+         );
++        // superfargoth patch (bevyengine/bevy#25978)
++        let range_unpacking_bind_group_layout = BindGroupLayoutDescriptor::new(
++            "range unpacking bind group layout",
++            &range_unpacking_bind_group_layout_entries,
++        );
+ 
+         let preprocess_shader = load_embedded_asset!(world, "mesh_preprocess.wesl");
+         let reset_indirect_batch_sets_shader =
+@@ -1654,6 +1819,8 @@ impl FromWorld for PreprocessPipelines {
+             load_embedded_asset!(world, "build_indirect_params.wesl");
+         let bin_unpacking_shader = load_embedded_asset!(world, "unpack_bins.wesl");
+         let uniform_allocation_shader = load_embedded_asset!(world, "allocate_uniforms.wesl");
++        // superfargoth patch (bevyengine/bevy#25978)
++        let range_unpacking_shader = load_embedded_asset!(world, "unpack_ranges.wesl");
+ 
+         let preprocess_phase_pipelines = PreprocessPhasePipelines {
+             reset_indirect_batch_sets: ResetIndirectBatchSetsPipeline {
+@@ -1731,6 +1898,12 @@ impl FromWorld for PreprocessPipelines {
+                     pipeline_id_fan: None,
+                 },
+             },
++            // superfargoth patch (bevyengine/bevy#25978)
++            range_unpacking: RangeUnpackingPipeline {
++                bind_group_layout: range_unpacking_bind_group_layout,
++                shader: range_unpacking_shader,
++                pipeline_id: None,
++            },
+         }
+     }
+ }
+@@ -1868,6 +2041,23 @@ fn uniform_allocation_bind_group_layout_entries() -> BindGroupLayoutEntries<4> {
+     )
+ }
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++/// Bind group layout for the `unpack_ranges` compute shader.
++fn range_unpacking_bind_group_layout_entries() -> BindGroupLayoutEntries<3> {
++    BindGroupLayoutEntries::sequential(
++        ShaderStages::COMPUTE,
++        (
++            // @group(0) @binding(0) var<uniform> metadata: RangeUnpackingMetadata;
++            uniform_buffer::<GpuRangeUnpackingMetadata>(false),
++            // @group(0) @binding(1) var<storage> ranges: array<RangeWorkItem>;
++            storage_buffer_read_only::<RangeWorkItem>(false),
++            // @group(0) @binding(2) var<storage, read_write>
++            // preprocess_work_items: array<PreprocessWorkItem>;
++            storage_buffer::<PreprocessWorkItem>(false),
++        ),
++    )
++}
++
+ /// A system that specializes the pipelines relating to mesh preprocessing if
+ /// necessary.
+ ///
+@@ -2246,6 +2436,34 @@ impl UniformAllocationPipelines {
+     }
+ }
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++impl SpecializedComputePipeline for RangeUnpackingPipeline {
++    type Key = ();
++
++    fn specialize(&self, _: Self::Key) -> ComputePipelineDescriptor {
++        ComputePipelineDescriptor {
++            label: Some("range unpacking".into()),
++            layout: vec![self.bind_group_layout.clone()],
++            shader: self.shader.clone(),
++            shader_defs: vec![],
++            ..default()
++        }
++    }
++}
++
++impl RangeUnpackingPipeline {
++    fn prepare(
++        &mut self,
++        pipeline_cache: &PipelineCache,
++        pipelines: &mut SpecializedComputePipelines<RangeUnpackingPipeline>,
++    ) {
++        if self.pipeline_id.is_some() {
++            return;
++        }
++        self.pipeline_id = Some(pipelines.specialize(pipeline_cache, self, ()));
++    }
++}
++
+ /// A system that attaches buffers to bind groups for the variants of the
+ /// compute shaders relating to mesh preprocessing.
+ #[expect(
+@@ -2359,6 +2577,8 @@ pub fn prepare_preprocess_bind_groups(
+                     indexed: ref indexed_work_item_buffer,
+                     non_indexed: ref non_indexed_work_item_buffer,
+                     gpu_occlusion_culling: Some(ref gpu_occlusion_culling_work_item_buffers),
++                    // superfargoth patch (bevyengine/bevy#25978)
++                    ..
+                 } => (
+                     true,
+                     preprocess_bind_group_builder
+@@ -2374,6 +2594,8 @@ pub fn prepare_preprocess_bind_groups(
+                     indexed: ref indexed_work_item_buffer,
+                     non_indexed: ref non_indexed_work_item_buffer,
+                     gpu_occlusion_culling: None,
++                    // superfargoth patch (bevyengine/bevy#25978)
++                    ..
+                 } => (
+                     true,
+                     preprocess_bind_group_builder
+diff --git a/superfargoth/vendor/bevy_pbr/src/render/light.rs b/superfargoth/vendor/bevy_pbr/src/render/light.rs
+index 8c601bd..d895034 100644
+--- a/superfargoth/vendor/bevy_pbr/src/render/light.rs
++++ b/superfargoth/vendor/bevy_pbr/src/render/light.rs
+@@ -3167,7 +3167,8 @@ pub struct PendingShadowQueues(pub PendingQueues);
+ #[derive(SystemParam)]
+ pub(crate) struct SpecializeShadowsSystemParam<'w, 's> {
+     render_meshes: Res<'w, RenderAssets<RenderMesh>>,
+-    render_mesh_instances: Res<'w, RenderMeshInstances>,
++    // superfargoth patch (bevyengine/bevy#25978)
++    mesh_draws: RenderMeshDraws<'w>,
+     render_materials: Res<'w, ErasedRenderAssets<PreparedMaterial>>,
+     render_material_instances: Res<'w, RenderMaterialInstances>,
+     shadow_render_phases: Res<'w, ViewBinnedRenderPhases<Shadow>>,
+@@ -3192,7 +3193,8 @@ pub(crate) fn specialize_shadows(
+     {
+         let SpecializeShadowsSystemParam {
+             render_meshes,
+-            render_mesh_instances,
++            // superfargoth patch (bevyengine/bevy#25978)
++            mesh_draws,
+             render_materials,
+             render_material_instances,
+             shadow_render_phases,
+@@ -3280,9 +3282,8 @@ pub(crate) fn specialize_shadows(
+                         .insert((*render_entity, *visible_entity));
+                     continue;
+                 };
+-                let Some(mesh_instance) =
+-                    render_mesh_instances.render_mesh_queue_data(*visible_entity)
+-                else {
++                // superfargoth patch (bevyengine/bevy#25978)
++                let Some(draw) = mesh_draws.get(*visible_entity) else {
+                     view_pending_shadow_queues
+                         .current_frame
+                         .insert((*render_entity, *visible_entity));
+@@ -3299,13 +3300,14 @@ pub(crate) fn specialize_shadows(
+                     // If the material is not a shadow caster, we don't need to specialize it.
+                     continue;
+                 }
+-                if !mesh_instance
++                // superfargoth patch (bevyengine/bevy#25978)
++                if !draw
+                     .flags()
+                     .contains(RenderMeshInstanceFlags::SHADOW_CASTER)
+                 {
+                     continue;
+                 }
+-                let Some(mesh) = render_meshes.get(mesh_instance.mesh_asset_id()) else {
++                let Some(mesh) = render_meshes.get(draw.mesh_asset_id()) else {
+                     continue;
+                 };
+ 
+@@ -3317,9 +3319,11 @@ pub(crate) fn specialize_shadows(
+                 // we need to include the appropriate flag in the mesh pipeline key
+                 // to ensure that the necessary bind group layout entries are
+                 // present.
+-                if render_lightmaps
+-                    .render_lightmaps
+-                    .contains_key(visible_entity)
++                // superfargoth patch (bevyengine/bevy#25978)
++                if matches!(draw, RenderMeshDraw::Extracted(_))
++                    && render_lightmaps
++                        .render_lightmaps
++                        .contains_key(visible_entity)
+                 {
+                     mesh_key |= MeshPipelineKey::LIGHTMAPPED;
+                 }
+@@ -3410,7 +3414,8 @@ pub(crate) fn specialize_shadows(
+ /// adds them to [`BinnedRenderPhase`]s or [`SortedRenderPhase`]s as
+ /// appropriate.
+ pub fn queue_shadows(
+-    render_mesh_instances: Res<RenderMeshInstances>,
++    // superfargoth patch (bevyengine/bevy#25978)
++    mesh_draws: RenderMeshDraws,
+     render_materials: Res<ErasedRenderAssets<PreparedMaterial>>,
+     render_material_instances: Res<RenderMaterialInstances>,
+     mut shadow_render_phases: ResMut<ViewBinnedRenderPhases<Shadow>>,
+@@ -3471,8 +3476,8 @@ pub fn queue_shadows(
+                 continue;
+             };
+ 
+-            let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(*main_entity)
+-            else {
++            // superfargoth patch (bevyengine/bevy#25978)
++            let Some(draw) = mesh_draws.get(*main_entity) else {
+                 // We couldn't fetch the mesh, probably because it hasn't
+                 // loaded yet. Add the entity to the list of pending shadows
+                 // and bail.
+@@ -3481,17 +3486,17 @@ pub fn queue_shadows(
+                     .insert((*render_entity, *main_entity));
+                 continue;
+             };
+-            if !mesh_instance
++            // superfargoth patch (bevyengine/bevy#25978)
++            if !draw
+                 .flags()
+                 .contains(RenderMeshInstanceFlags::SHADOW_CASTER)
++                || !draw.matches_layers(view_light_render_layers)
+             {
+                 continue;
+             }
+-
+-            let mesh_layers = mesh_instance.render_layers.as_ref().unwrap_or_default();
+-            if !view_light_render_layers.intersects(mesh_layers) {
+-                continue;
+-            }
++            let mesh_asset_id = draw.mesh_asset_id();
++            let uniform_index = draw.input_uniform_index();
++            let phase_type = draw.phase_type(&gpu_preprocessing_support);
+ 
+             let material_bind_group_index = if is_depth_only_opaque {
+                 None
+@@ -3512,7 +3517,8 @@ pub fn queue_shadows(
+                 Some(material.binding.group.0)
+             };
+ 
+-            let Some(mesh_slabs) = mesh_allocator.mesh_slabs(&mesh_instance.mesh_asset_id()) else {
++            // superfargoth patch (bevyengine/bevy#25978)
++            let Some(mesh_slabs) = mesh_allocator.mesh_slabs(&mesh_asset_id) else {
+                 continue;
+             };
+ 
+@@ -3526,14 +3532,12 @@ pub fn queue_shadows(
+             shadow_phase.add(
+                 batch_set_key,
+                 ShadowBinKey {
+-                    asset_id: mesh_instance.mesh_asset_id().into(),
++                    // superfargoth patch (bevyengine/bevy#25978)
++                    asset_id: mesh_asset_id.into(),
+                 },
+                 (*render_entity, *main_entity),
+-                mesh_instance.current_uniform_index,
+-                BinnedRenderPhaseType::mesh(
+-                    mesh_instance.should_batch(),
+-                    &gpu_preprocessing_support,
+-                ),
++                uniform_index,
++                phase_type,
+             );
+         }
+     }
+diff --git a/superfargoth/vendor/bevy_pbr/src/render/mesh.rs b/superfargoth/vendor/bevy_pbr/src/render/mesh.rs
+index e164af0..f0db2b0 100644
+--- a/superfargoth/vendor/bevy_pbr/src/render/mesh.rs
++++ b/superfargoth/vendor/bevy_pbr/src/render/mesh.rs
+@@ -23,7 +23,8 @@ use bevy_ecs::{
+     prelude::*,
+     query::{QueryData, ROQueryItem},
+     relationship::RelationshipSourceCollection,
+-    system::{lifetimeless::*, SystemParamItem},
++    // superfargoth patch (bevyengine/bevy#25978)
++    system::{lifetimeless::*, SystemParam, SystemParamItem},
+ };
+ use bevy_image::TextureFormatPixelInfo;
+ use bevy_light::{
+@@ -32,8 +33,9 @@ use bevy_light::{
+ };
+ use bevy_math::{Affine3, Affine3Ext, Rect, UVec2, Vec3, Vec4};
+ use bevy_mesh::{
+-    skinning::SkinnedMesh, BaseMeshPipelineKey, Mesh, Mesh3d, MeshAttributeCompressionFlags,
+-    MeshTag, MeshVertexBufferLayoutRef, VertexAttributeDescriptor,
++    // superfargoth patch (bevyengine/bevy#25978)
++    skinning::SkinnedMesh, BaseMeshPipelineKey, Mesh, Mesh3d,
++    MeshAttributeCompressionFlags, MeshTag, MeshVertexBufferLayoutRef, VertexAttributeDescriptor,
+ };
+ use bevy_platform::collections::HashSet;
+ use bevy_platform::collections::{hash_map::Entry, HashMap};
+@@ -61,8 +63,10 @@ use bevy_render::{
+     mesh::{allocator::MeshAllocator, RenderMesh, RenderMeshBufferInfo},
+     render_asset::RenderAssets,
+     render_phase::{
+-        BinnedRenderPhasePlugin, InputUniformIndex, PhaseItem, PhaseItemExtraIndex, RenderCommand,
+-        RenderCommandResult, SortedRenderPhasePlugin, TrackedRenderPass,
++        // superfargoth patch (bevyengine/bevy#25978)
++        BinnedRenderPhasePlugin, BinnedRenderPhaseType, InputUniformIndex, PhaseItem,
++        PhaseItemExtraIndex, RenderCommand, RenderCommandResult, SortedRenderPhasePlugin,
++        TrackedRenderPass,
+     },
+     render_resource::*,
+     renderer::{RenderAdapter, RenderDevice, RenderQueue},
+@@ -77,6 +81,8 @@ use bevy_utils::{default, Parallel, TypeIdHashMap};
+ use core::any::TypeId;
+ use core::iter;
+ use core::mem::size_of;
++// superfargoth patch (bevyengine/bevy#25978)
++use core::ops::Range;
+ use core::sync::atomic::{AtomicU64, Ordering};
+ use indexmap::IndexSet;
+ use static_assertions::const_assert_eq;
+@@ -238,6 +244,8 @@ impl Plugin for MeshRenderPlugin {
+                 .init_gpu_resource::<ViewKeyCache>()
+                 .init_resource::<GpuPreprocessingSupport>()
+                 .init_resource::<RenderGpuCulledEntities>()
++                // superfargoth patch (bevyengine/bevy#25978)
++                .init_resource::<RenderMeshInstanceBatches>()
+                 .add_systems(RenderStartup, skin_uniforms_from_world)
+                 .add_systems(
+                     Render,
+@@ -668,6 +676,75 @@ pub struct MeshInputUniform {
+     pub pad3: u32,
+ }
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++impl MeshInputUniform {
++    /// Builds the fields that depend only on the mesh and its material binding.
++    /// Callers fill in the per-instance fields.
++    pub(crate) fn for_mesh(
++        allocator: &MeshAllocator,
++        mesh: AssetId<Mesh>,
++        material: MaterialBindingId,
++        lightmap_slot: u16,
++    ) -> Option<Self> {
++        let geometry = MeshInputGeometry::new(allocator, mesh)?;
++        Some(Self {
++            first_vertex_index: geometry.first_vertex_index,
++            first_index_index: geometry.first_index_index,
++            index_count: geometry.index_count,
++            metadata_index: geometry.metadata_index,
++            material_and_lightmap_bind_group_slot: material_and_lightmap_bind_group_slot(
++                material,
++                lightmap_slot,
++            ),
++            previous_input_index: u32::MAX,
++            current_skin_index: u32::MAX,
++            morph_descriptor_index: u32::MAX,
++            ..Default::default()
++        })
++    }
++}
++
++/// The [`MeshInputUniform`] fields that locate a mesh's data in the
++/// [`MeshAllocator`] slabs.
++#[derive(Clone, Copy, Default)]
++struct MeshInputGeometry {
++    first_vertex_index: u32,
++    first_index_index: u32,
++    /// The vertex count for non-indexed meshes.
++    index_count: u32,
++    metadata_index: u32,
++}
++
++impl MeshInputGeometry {
++    /// Returns `None` until the mesh's vertex data has been allocated.
++    fn new(allocator: &MeshAllocator, mesh: AssetId<Mesh>) -> Option<Self> {
++        let vertices = allocator.mesh_vertex_slice(&mesh)?;
++        let (first_index_index, index_count) = match allocator.mesh_index_slice(&mesh) {
++            Some(indices) => (indices.range.start, indices.range.len() as u32),
++            None => (0, vertices.range.len() as u32),
++        };
++        Some(Self {
++            first_vertex_index: vertices.range.start,
++            first_index_index,
++            index_count,
++            metadata_index: allocator
++                .mesh_metadata_slice(&mesh)
++                .map_or(0, |slice| slice.range.start),
++        })
++    }
++}
++
++/// Packs a material bind group slot and a lightmap slot into
++/// [`MeshInputUniform::material_and_lightmap_bind_group_slot`].
++fn material_and_lightmap_bind_group_slot(material: MaterialBindingId, lightmap_slot: u16) -> u32 {
++    let material_slot = u32::from(material.slot);
++    debug_assert!(
++        material_slot <= 0xFFFF,
++        "Material bind group slot {material_slot} overflowed"
++    );
++    material_slot | ((lightmap_slot as u32) << 16)
++}
++
+ /// Per-mesh-instance data that we retain from the previous frame.
+ #[derive(ShaderType, Pod, Zeroable, Clone, Copy, Default, Debug)]
+ #[repr(C)]
+@@ -685,17 +762,31 @@ impl_atomic_pod!(MeshInputUniform, MeshInputUniformBlob);
+ impl_atomic_pod!(PreviousMeshInputUniform, PreviousMeshInputUniformBlob);
+ 
+ /// Information about each mesh instance needed to cull it on GPU.
+-///
+-/// This consists of its axis-aligned bounding box (AABB).
+-#[derive(ShaderType, Pod, Zeroable, Clone, Copy, Default)]
++// superfargoth patch (bevyengine/bevy#25978)
++#[derive(ShaderType, Pod, Zeroable, Clone, Copy)]
+ #[repr(C)]
+ pub struct MeshCullingData {
+-    /// The 3D center of the AABB in model space, padded with an extra unused
+-    /// float value.
+-    pub aabb_center: Vec4,
+-    /// The 3D extents of the AABB in model space, divided by two, padded with
+-    /// an extra unused float value.
+-    pub aabb_half_extents: Vec4,
++    /// The 3D center of the AABB in model space.
++    pub aabb_center: Vec3,
++    _pad: f32,
++    /// The 3D extents of the AABB in model space, divided by two.
++    pub aabb_half_extents: Vec3,
++    /// Nonzero renders; zero is skipped in preprocessing. Ordinary meshes use 1.
++    /// GPU-authored batches set it from `GpuMeshInstance::is_active`.
++    pub is_active: u32,
++}
++
++impl Default for MeshCullingData {
++    /// Zeroed culling data is culled, so the default sets `is_active` rather
++    /// than deriving it from [`Zeroable`].
++    fn default() -> Self {
++        Self {
++            aabb_center: Vec3::ZERO,
++            _pad: 0.0,
++            aabb_half_extents: Vec3::ZERO,
++            is_active: 1,
++        }
++    }
+ }
+ 
+ /// A GPU buffer that holds the information needed to cull meshes on GPU.
+@@ -1250,6 +1341,120 @@ pub struct RenderMeshInstancesCpu(MainEntityHashMap<RenderMeshInstanceCpu>);
+ #[derive(Default, Deref, DerefMut)]
+ pub struct RenderMeshInstancesGpu(MainEntityHashMap<RenderMeshInstanceGpu>);
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++/// A batch of GPU-authored mesh instances rendered as a single
++/// indirect draw.
++#[derive(Clone, Debug)]
++pub struct RenderMeshInstanceBatch {
++    pub asset_id: AssetId<Mesh>,
++    /// Empty until the renderer can initialize this frame's inputs.
++    pub input_range: Range<u32>,
++    pub world_center: Vec3,
++}
++
++#[derive(Resource, Default, Deref, DerefMut)]
++pub struct RenderMeshInstanceBatches(pub MainEntityHashMap<RenderMeshInstanceBatch>);
++
++/// Looks up mesh draws whether their instances come from
++/// [`RenderMeshInstances`] or from [`RenderMeshInstanceBatches`].
++#[derive(SystemParam)]
++pub struct RenderMeshDraws<'w> {
++    instances: Res<'w, RenderMeshInstances>,
++    batches: Res<'w, RenderMeshInstanceBatches>,
++}
++
++/// The source of a mesh draw's instances.
++pub enum RenderMeshDraw<'a> {
++    Extracted(RenderMeshQueueData<'a>),
++    Gpu(&'a RenderMeshInstanceBatch),
++}
++
++impl RenderMeshDraws<'_> {
++    pub fn get(&self, entity: MainEntity) -> Option<RenderMeshDraw<'_>> {
++        if let Some(instance) = self.instances.render_mesh_queue_data(entity) {
++            Some(RenderMeshDraw::Extracted(instance))
++        } else {
++            self.batches.get(&entity).map(RenderMeshDraw::Gpu)
++        }
++    }
++
++    pub fn mesh_asset_id(&self, entity: MainEntity) -> Option<AssetId<Mesh>> {
++        self.instances
++            .mesh_asset_id(entity)
++            .or_else(|| self.batches.get(&entity).map(|batch| batch.asset_id))
++    }
++
++    pub(crate) fn mesh_center(
++        &self,
++        draw: &RenderMeshDraw,
++        entity: MainEntity,
++        meshes: &RenderAssets<RenderMesh>,
++        buffers: Option<&gpu_preprocessing::BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
++    ) -> Vec3 {
++        match draw {
++            RenderMeshDraw::Extracted(instance) => get_mesh_instance_world_from_local(
++                entity,
++                instance.current_uniform_index,
++                &self.instances,
++                buffers,
++            )
++            .transform_point3(meshes.get(instance.mesh_asset_id()).unwrap().aabb_center),
++            // A GPU batch is sorted as a whole around its extracted center.
++            RenderMeshDraw::Gpu(batch) => batch.world_center,
++        }
++    }
++}
++
++impl RenderMeshDraw<'_> {
++    pub fn mesh_asset_id(&self) -> AssetId<Mesh> {
++        match self {
++            Self::Extracted(instance) => instance.mesh_asset_id(),
++            Self::Gpu(batch) => batch.asset_id,
++        }
++    }
++
++    pub fn input_uniform_index(&self) -> InputUniformIndex {
++        match self {
++            Self::Extracted(instance) => instance.current_uniform_index,
++            Self::Gpu(batch) => InputUniformIndex(batch.input_range.start),
++        }
++    }
++
++    pub fn phase_type(&self, support: &GpuPreprocessingSupport) -> BinnedRenderPhaseType {
++        match self {
++            Self::Extracted(instance) => {
++                BinnedRenderPhaseType::mesh(instance.should_batch(), support)
++            }
++            Self::Gpu(_) => BinnedRenderPhaseType::InstanceBatch,
++        }
++    }
++
++    pub fn lightmap_slab(&self) -> Option<NonMaxU32> {
++        match self {
++            Self::Extracted(instance) => instance.shared.lightmap_slab_index().map(|index| *index),
++            Self::Gpu(_) => None,
++        }
++    }
++
++    pub fn flags(&self) -> RenderMeshInstanceFlags {
++        match self {
++            Self::Extracted(instance) => instance.flags(),
++            // `NotShadowCaster` is applied by the main-world visibility checks.
++            Self::Gpu(_) => RenderMeshInstanceFlags::SHADOW_CASTER,
++        }
++    }
++
++    pub fn matches_layers(&self, layers: &RenderLayers) -> bool {
++        match self {
++            Self::Extracted(instance) => {
++                layers.intersects(instance.render_layers.as_ref().unwrap_or_default())
++            }
++            // Layers are applied by the main-world visibility checks.
++            Self::Gpu(_) => true,
++        }
++    }
++}
++
+ impl RenderMeshInstances {
+     /// Creates a new [`RenderMeshInstances`] instance.
+     fn new(use_gpu_instance_buffer_builder: bool) -> RenderMeshInstances {
+@@ -1503,23 +1708,9 @@ impl RenderMeshInstanceGpuBuilder {
+         };
+         self.shared.material_bindings_index = mesh_material_binding_id;
+ 
+-        let (first_vertex_index, vertex_count) =
+-            match mesh_allocator.mesh_vertex_slice(&self.shared.asset_id.into()) {
+-                Some(mesh_vertex_slice) => (
+-                    mesh_vertex_slice.range.start,
+-                    mesh_vertex_slice.range.end - mesh_vertex_slice.range.start,
+-                ),
+-                None => (0, 0),
+-            };
+-        let (mesh_is_indexed, first_index_index, index_count) =
+-            match mesh_allocator.mesh_index_slice(&self.shared.asset_id.into()) {
+-                Some(mesh_index_slice) => (
+-                    true,
+-                    mesh_index_slice.range.start,
+-                    mesh_index_slice.range.end - mesh_index_slice.range.start,
+-                ),
+-                None => (false, 0, 0),
+-            };
++        // superfargoth patch (bevyengine/bevy#25978)
++        let geometry =
++            MeshInputGeometry::new(mesh_allocator, self.shared.asset_id.into()).unwrap_or_default();
+         let current_skin_index = match skin_uniforms.skin_byte_offset(entity) {
+             Some(skin_index) => skin_index.index(),
+             None => u32::MAX,
+@@ -1540,37 +1731,25 @@ impl RenderMeshInstanceGpuBuilder {
+             None => u32::MAX,
+         };
+ 
+-        let metadata_index = mesh_allocator
+-            .mesh_metadata_slice(&self.shared.asset_id.into())
+-            .map(|mesh_metadata_slice| mesh_metadata_slice.range.start)
+-            .unwrap_or(0);
+-
++            // superfargoth patch (bevyengine/bevy#25978)
+         // Create the mesh input uniform.
+-        let material_slot = u32::from(self.shared.material_bindings_index.slot);
+-        debug_assert!(
+-            material_slot <= 0xFFFF,
+-            "Material bind group slot {material_slot} overflowed"
+-        );
+-        let material_and_lightmap_bind_group_slot = material_slot | ((lightmap_slot as u32) << 16);
+-
+         let mesh_input_uniform = MeshInputUniform {
+             world_from_local: self.world_from_local.to_transpose(),
+             lightmap_uv_rect: self.lightmap_uv_rect,
+             flags: self.mesh_flags.bits(),
+             previous_input_index: u32::MAX,
+             timestamp: timestamp.0,
+-            first_vertex_index,
+-            first_index_index,
+-            index_count: if mesh_is_indexed {
+-                index_count
+-            } else {
+-                vertex_count
+-            },
++            first_vertex_index: geometry.first_vertex_index,
++            first_index_index: geometry.first_index_index,
++            index_count: geometry.index_count,
+             current_skin_index,
+-            material_and_lightmap_bind_group_slot,
++            material_and_lightmap_bind_group_slot: material_and_lightmap_bind_group_slot(
++                self.shared.material_bindings_index,
++                lightmap_slot,
++            ),
+             tag: self.shared.tag,
+             morph_descriptor_index,
+-            metadata_index,
++            metadata_index: geometry.metadata_index,
+             ..Default::default()
+         };
+ 
+@@ -1679,15 +1858,20 @@ impl MeshCullingData {
+     ///
+     /// If no AABB is provided, an infinitely-large one is conservatively
+     /// chosen.
+-    fn new(aabb: Option<&Aabb>) -> Self {
++    // superfargoth patch (bevyengine/bevy#25978)
++    pub(crate) fn new(aabb: Option<&Aabb>) -> Self {
+         match aabb {
+             Some(aabb) => MeshCullingData {
+-                aabb_center: aabb.center.extend(0.0),
+-                aabb_half_extents: aabb.half_extents.extend(0.0),
++                aabb_center: aabb.center.into(),
++                _pad: 0.0,
++                aabb_half_extents: aabb.half_extents.into(),
++                is_active: 1,
+             },
+             None => MeshCullingData {
+-                aabb_center: Vec3::ZERO.extend(0.0),
+-                aabb_half_extents: Vec3::INFINITY.extend(0.0),
++                aabb_center: Vec3::ZERO,
++                _pad: 0.0,
++                aabb_half_extents: Vec3::INFINITY,
++                is_active: 1,
+             },
+         }
+     }
+@@ -2926,6 +3110,8 @@ impl GetBatchData for MeshPipeline {
+         SRes<MeshAllocator>,
+         SRes<SkinUniforms>,
+         SRes<MorphIndices>,
++        // superfargoth patch (bevyengine/bevy#25978)
++        SRes<RenderMeshInstanceBatches>,
+     );
+     type BatchSetCompareData = MeshBatchSetCompareData;
+     type BatchCompareData = AssetId<Mesh>;
+@@ -2933,7 +3119,8 @@ impl GetBatchData for MeshPipeline {
+     type BufferData = MeshUniform;
+ 
+     fn get_batch_data(
+-        (mesh_instances, lightmaps, mesh_allocator, skin_uniforms, morph_indices): &SystemParamItem<
++        // superfargoth patch (bevyengine/bevy#25978)
++        (mesh_instances, lightmaps, mesh_allocator, skin_uniforms, morph_indices, _): &SystemParamItem<
+             Self::Param,
+         >,
+         (_entity, main_entity): (Entity, MainEntity),
+@@ -2992,7 +3179,8 @@ impl GetFullBatchData for MeshPipeline {
+     type BufferInputData = MeshInputUniform;
+ 
+     fn get_index_and_compare_data(
+-        (mesh_instances, lightmaps, mesh_allocator, _, _): &SystemParamItem<Self::Param>,
++        // superfargoth patch (bevyengine/bevy#25978)
++        (mesh_instances, lightmaps, mesh_allocator, _, _, _): &SystemParamItem<Self::Param>,
+         main_entity: MainEntity,
+     ) -> Option<(
+         NonMaxU32,
+@@ -3026,7 +3214,8 @@ impl GetFullBatchData for MeshPipeline {
+     }
+ 
+     fn get_binned_batch_data(
+-        (mesh_instances, lightmaps, mesh_allocator, skin_uniforms, morph_indices): &SystemParamItem<
++        // superfargoth patch (bevyengine/bevy#25978)
++        (mesh_instances, lightmaps, mesh_allocator, skin_uniforms, morph_indices, _): &SystemParamItem<
+             Self::Param,
+         >,
+         main_entity: MainEntity,
+@@ -3065,7 +3254,8 @@ impl GetFullBatchData for MeshPipeline {
+     }
+ 
+     fn get_binned_index(
+-        (mesh_instances, _, _, _, _): &SystemParamItem<Self::Param>,
++        // superfargoth patch (bevyengine/bevy#25978)
++        (mesh_instances, _, _, _, _, _): &SystemParamItem<Self::Param>,
+         main_entity: MainEntity,
+     ) -> Option<NonMaxU32> {
+         // This should only be called during GPU building.
+@@ -3111,6 +3301,16 @@ impl GetFullBatchData for MeshPipeline {
+                 .set(indirect_parameters_offset, indirect_parameters);
+         }
+     }
++    // superfargoth patch (bevyengine/bevy#25978)
++
++    fn get_instance_batch(
++        (_, _, _, _, _, instance_batches): &SystemParamItem<Self::Param>,
++        main_entity: MainEntity,
++    ) -> Option<Range<u32>> {
++        instance_batches
++            .get(&main_entity)
++            .map(|batch| batch.input_range.clone())
++    }
+ }
+ 
+ bitflags::bitflags! {
+@@ -4542,7 +4742,8 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMeshBindGroup<I> {
+     type Param = (
+         SRes<RenderDevice>,
+         SRes<MeshBindGroups>,
+-        SRes<RenderMeshInstances>,
++        // superfargoth patch (bevyengine/bevy#25978)
++        RenderMeshDraws<'static>,
+         SRes<SkinUniforms>,
+         SRes<MorphIndices>,
+         SRes<MeshAllocator>,
+@@ -4560,7 +4761,8 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMeshBindGroup<I> {
+         (
+             render_device,
+             bind_groups,
+-            mesh_instances,
++            // superfargoth patch (bevyengine/bevy#25978)
++            mesh_draws,
+             skin_uniforms,
+             morph_indices,
+             mesh_allocator,
+@@ -4570,13 +4772,13 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMeshBindGroup<I> {
+         pass: &mut TrackedRenderPass<'w>,
+     ) -> RenderCommandResult {
+         let bind_groups = bind_groups.into_inner();
+-        let mesh_instances = mesh_instances.into_inner();
++        // superfargoth patch (bevyengine/bevy#25978)
+         let skin_uniforms = skin_uniforms.into_inner();
+         let morph_indices = morph_indices.into_inner();
+ 
+         let entity = &item.main_entity();
+ 
+-        let Some(mesh_asset_id) = mesh_instances.mesh_asset_id(*entity) else {
++        let Some(mesh_asset_id) = mesh_draws.mesh_asset_id(*entity) else {
+             return RenderCommandResult::Success;
+         };
+ 
+@@ -4702,7 +4904,8 @@ pub struct DrawMesh;
+ impl<P: PhaseItem> RenderCommand<P> for DrawMesh {
+     type Param = (
+         SRes<RenderAssets<RenderMesh>>,
+-        SRes<RenderMeshInstances>,
++        // superfargoth patch (bevyengine/bevy#25978)
++        RenderMeshDraws<'static>,
+         SRes<IndirectParametersBuffers>,
+         SRes<PipelineCache>,
+         SRes<MeshAllocator>,
+@@ -4718,7 +4921,8 @@ impl<P: PhaseItem> RenderCommand<P> for DrawMesh {
+         _item_query: Option<()>,
+         (
+             meshes,
+-            mesh_instances,
++            // superfargoth patch (bevyengine/bevy#25978)
++            mesh_draws,
+             indirect_parameters_buffer,
+             pipeline_cache,
+             mesh_allocator,
+@@ -4739,11 +4943,11 @@ impl<P: PhaseItem> RenderCommand<P> for DrawMesh {
+         }
+ 
+         let meshes = meshes.into_inner();
+-        let mesh_instances = mesh_instances.into_inner();
++        // superfargoth patch (bevyengine/bevy#25978)
+         let indirect_parameters_buffer = indirect_parameters_buffer.into_inner();
+         let mesh_allocator = mesh_allocator.into_inner();
+ 
+-        let Some(mesh_asset_id) = mesh_instances.mesh_asset_id(item.main_entity()) else {
++        let Some(mesh_asset_id) = mesh_draws.mesh_asset_id(item.main_entity()) else {
+             return RenderCommandResult::Skip;
+         };
+         let Some(gpu_mesh) = meshes.get(mesh_asset_id) else {
+diff --git a/superfargoth/vendor/bevy_pbr/src/render/mesh_preprocess.wesl b/superfargoth/vendor/bevy_pbr/src/render/mesh_preprocess.wesl
+index 15991bc..a732fdb 100644
+--- a/superfargoth/vendor/bevy_pbr/src/render/mesh_preprocess.wesl
++++ b/superfargoth/vendor/bevy_pbr/src/render/mesh_preprocess.wesl
+@@ -15,7 +15,9 @@
+ //! respectively.
+ 
+ import bevy_render::occlusion_culling::mesh_preprocess_types::{
+-    IndirectParametersMetadata, MeshInput, PreviousMeshInput, PreprocessWorkItem
++    // superfargoth patch (bevyengine/bevy#25978)
++    IndirectParametersMetadata, MeshCullingData, MeshInput, PreviousMeshInput,
++    PreprocessWorkItem
+ };
+ import package::render::mesh_types::{
+     Mesh, MESH_FLAGS_AABB_BASED_VISIBILITY_RANGE_BIT, MESH_FLAGS_NO_FRUSTUM_CULLING_BIT,
+@@ -31,18 +33,7 @@ import package::render::view_transformations::{
+ import bevy_render::maths;
+ import bevy_render::view::View;
+ 
+-/// Information about each mesh instance needed to cull it on GPU.
+-///
+-/// At the moment, this just consists of its axis-aligned bounding box (AABB).
+-struct MeshCullingData {
+-    /// The 3D center of the AABB in model space, padded with an extra unused
+-    /// float value.
+-    aabb_center: vec4<f32>,
+-    /// The 3D extents of the AABB in model space, divided by two, padded with
+-    /// an extra unused float value.
+-    aabb_half_extents: vec4<f32>,
+-}
+-
++// superfargoth patch (bevyengine/bevy#25978)
+ /// The parameters for the indirect compute dispatch for the late mesh
+ /// preprocessing phase.
+ struct LatePreprocessWorkItemIndirectParameters {
+@@ -197,10 +188,15 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
+     let world_from_local = maths::affine3_to_square(world_from_local_affine_transpose);
+ 
+ @if(FRUSTUM_CULLING) {
++    // superfargoth patch (bevyengine/bevy#25978)
++    if (mesh_culling_data[input_index].is_active == 0u) {
++        return;
++    }
++
+     // Frustum cull if necessary.
+     if ((current_input[input_index].flags & MESH_FLAGS_NO_FRUSTUM_CULLING_BIT) == 0u) {
+-        let aabb_center = mesh_culling_data[input_index].aabb_center.xyz;
+-        let aabb_half_extents = mesh_culling_data[input_index].aabb_half_extents.xyz;
++        let aabb_center = mesh_culling_data[input_index].aabb_center;
++        let aabb_half_extents = mesh_culling_data[input_index].aabb_half_extents;
+ 
+         // Do an OBB-based frustum cull.
+         let model_center = world_from_local * vec4(aabb_center, 1.0);
+@@ -220,7 +216,8 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
+         // Otherwise, just use the center of the transform.
+         var world_pos: vec3<f32>;
+         if ((current_input[input_index].flags & MESH_FLAGS_AABB_BASED_VISIBILITY_RANGE_BIT) != 0u) {
+-            let aabb_center = mesh_culling_data[input_index].aabb_center.xyz;
++            // superfargoth patch (bevyengine/bevy#25978)
++            let aabb_center = mesh_culling_data[input_index].aabb_center;
+             world_pos = (world_from_local * vec4(aabb_center, 1.0)).xyz;
+         } else {
+             world_pos = world_from_local[3].xyz;
+@@ -261,8 +258,9 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
+     // hierarchical Z-buffer, then this mesh must be occluded, and we can skip
+     // rendering it.
+ @if(OCCLUSION_CULLING) {
+-    let aabb_center = mesh_culling_data[input_index].aabb_center.xyz;
+-    let aabb_half_extents = mesh_culling_data[input_index].aabb_half_extents.xyz;
++    // superfargoth patch (bevyengine/bevy#25978)
++    let aabb_center = mesh_culling_data[input_index].aabb_center;
++    let aabb_half_extents = mesh_culling_data[input_index].aabb_half_extents;
+ 
+     // Initialize the AABB and the maximum depth.
+     let infinity = bitcast<f32>(0x7f800000u);
+diff --git a/superfargoth/vendor/bevy_pbr/src/render/unpack_ranges.wesl b/superfargoth/vendor/bevy_pbr/src/render/unpack_ranges.wesl
+new file mode 100644
+index 0000000..85931d4
+--- /dev/null
++++ b/superfargoth/vendor/bevy_pbr/src/render/unpack_ranges.wesl
+@@ -0,0 +1,54 @@
++// superfargoth patch (bevyengine/bevy#25978): new file.
++// Expands GPU-authored instance-batch range entries into PreprocessWorkItems.
++
++import bevy_render::occlusion_culling::mesh_preprocess_types::PreprocessWorkItem;
++
++struct RangeUnpackingMetadata {
++    range_count: u32,
++    total_instance_count: u32,
++    pad: vec2<u32>,
++}
++
++struct RangeWorkItem {
++    base_input_index: u32,
++    base_output_or_indirect_parameters_index: u32,
++    count: u32,
++    cumulative_offset: u32,
++    // Base index in the GPU-initialized tail of the work item buffer.
++    work_item_base: u32,
++}
++
++@group(0) @binding(0) var<uniform> metadata: RangeUnpackingMetadata;
++@group(0) @binding(1) var<storage> ranges: array<RangeWorkItem>;
++@group(0) @binding(2) var<storage, read_write> preprocess_work_items: array<PreprocessWorkItem>;
++
++@compute
++@workgroup_size(64)
++fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
++    let global_id = global_invocation_id.x;
++    if (global_id >= metadata.total_instance_count) {
++        return;
++    }
++
++    // Prefix offsets are sorted, so binary search for the range containing
++    // this instance.
++    var low = 0u;
++    var high = metadata.range_count;
++    while (low + 1u < high) {
++        let mid = low + (high - low) / 2u;
++        if (ranges[mid].cumulative_offset <= global_id) {
++            low = mid;
++        } else {
++            high = mid;
++        }
++    }
++
++    let range = ranges[low];
++    let i_in_range = global_id - range.cumulative_offset;
++    let work_item_idx = range.work_item_base + i_in_range;
++
++    preprocess_work_items[work_item_idx].input_index =
++        range.base_input_index + i_in_range;
++    preprocess_work_items[work_item_idx].output_or_indirect_parameters_index =
++        range.base_output_or_indirect_parameters_index;
++}
+diff --git a/superfargoth/vendor/bevy_pbr/src/wireframe.rs b/superfargoth/vendor/bevy_pbr/src/wireframe.rs
+index 79cb08f..21a0591 100644
+--- a/superfargoth/vendor/bevy_pbr/src/wireframe.rs
++++ b/superfargoth/vendor/bevy_pbr/src/wireframe.rs
+@@ -19,6 +19,7 @@ use bevy_ecs::{
+     query::ROQueryItem,
+     system::{lifetimeless::SRes, SystemParamItem},
+ };
++// superfargoth patch (bevyengine/bevy#25978)
+ use bevy_mesh::{Mesh, Mesh3d, MeshVertexBufferLayoutRef};
+ use bevy_platform::{
+     collections::{HashMap, HashSet},
+diff --git a/superfargoth/vendor/bevy_render/src/batching/gpu_preprocessing.rs b/superfargoth/vendor/bevy_render/src/batching/gpu_preprocessing.rs
+index 9971898..402ec99 100644
+--- a/superfargoth/vendor/bevy_render/src/batching/gpu_preprocessing.rs
++++ b/superfargoth/vendor/bevy_render/src/batching/gpu_preprocessing.rs
+@@ -21,7 +21,8 @@ use bevy_ecs::{
+ };
+ use bevy_encase_derive::ShaderType;
+ use bevy_log::{error, info_once};
+-use bevy_math::UVec4;
++// superfargoth patch (bevyengine/bevy#25978)
++use bevy_math::{UVec2, UVec4};
+ use bevy_platform::collections::{hash_map::Entry, HashMap, HashSet};
+ use bevy_tasks::ComputeTaskPool;
+ use bevy_utils::{default, TypeIdHashMap};
+@@ -35,15 +36,17 @@ use crate::{
+     occlusion_culling::OcclusionCulling,
+     render_phase::{
+         BinnedPhaseItem, BinnedRenderPhaseBatch, BinnedRenderPhaseBatchSet,
+-        BinnedRenderPhaseBatchSets, CachedRenderPipelinePhaseItem, PhaseItem,
++        // superfargoth patch (bevyengine/bevy#25978)
++        BinnedRenderPhaseBatchSets, CachedRenderPipelinePhaseItem, InstanceBatchDraw, PhaseItem,
+         PhaseItemBatchSetKey as _, PhaseItemExtraIndex, RenderMultidrawableBatchSet,
+         SortedPhaseItem, SortedRenderPhase, UnbatchableBinnedEntityIndices, ViewBinnedRenderPhases,
+         ViewSortedRenderPhases,
+     },
+     render_resource::{
+-        AtomicPod, AtomicRawBufferVec, AtomicSparseBufferVec, Buffer, GpuArrayBufferable,
+-        PartialBufferVec, PipelineCache, RawBufferVec, SparseBufferUpdateBindGroups,
+-        SparseBufferUpdateJobs, SparseBufferUpdatePipelines, UninitBufferVec,
++        AtomicPod, AtomicRawBufferVec, AtomicSparseBufferVec, BindGroup, Buffer,
++        GpuArrayBufferable, PartialBufferVec, PipelineCache, RawBufferVec,
++        SparseBufferUpdateBindGroups, SparseBufferUpdateJobs, SparseBufferUpdatePipelines,
++        UniformBuffer, UninitBufferVec,
+     },
+     renderer::{RenderAdapter, RenderAdapterInfo, RenderDevice, RenderQueue},
+     sync_world::{MainEntity, MainEntityHashMap},
+@@ -373,6 +376,13 @@ where
+         self.free_uniform_indices.push(uniform_index);
+     }
+ 
++    // superfargoth patch (bevyengine/bevy#25978)
++    /// Reserves GPU capacity beyond the CPU shadow. The tail is uninitialized
++    /// until written on GPU.
++    pub fn reserve_gpu(&mut self, capacity: u32, device: &RenderDevice) {
++        self.buffer.reserve_amortized(capacity as usize, device);
++    }
++
+     /// Returns the piece of buffered data at the given index.
+     ///
+     /// Returns [`None`] if the index is out of bounds or the data is removed.
+@@ -560,6 +570,11 @@ pub enum PreprocessWorkItemBuffers {
+         indexed: PartialBufferVec<PreprocessWorkItem>,
+         /// The buffer of work items corresponding to non-indexed meshes.
+         non_indexed: PartialBufferVec<PreprocessWorkItem>,
++        // superfargoth patch (bevyengine/bevy#25978)
++        /// Range entries for indexed GPU-authored instance batches.
++        ranges_indexed: RangeWorkItemBuffer,
++        /// Range entries for non-indexed GPU-authored instance batches.
++        ranges_non_indexed: RangeWorkItemBuffer,
+         /// The work item buffers we use when GPU occlusion culling is in use.
+         gpu_occlusion_culling: Option<GpuOcclusionCullingWorkItemBuffers>,
+     },
+@@ -655,6 +670,11 @@ where
+                         BufferUsages::STORAGE,
+                         "non-indexed preprocess work item buffer".to_owned(),
+                     ),
++                    // superfargoth patch (bevyengine/bevy#25978)
++                    ranges_indexed: RangeWorkItemBuffer::new("indexed instance batch ranges"),
++                    ranges_non_indexed: RangeWorkItemBuffer::new(
++                        "non-indexed instance batch ranges",
++                    ),
+                     // We fill this in below if `enable_gpu_occlusion_culling`
+                     // is set.
+                     gpu_occlusion_culling: None,
+@@ -736,6 +756,8 @@ impl PreprocessWorkItemBuffers {
+                 indexed: ref mut indexed_buffer,
+                 non_indexed: ref mut non_indexed_buffer,
+                 ref mut gpu_occlusion_culling,
++                // superfargoth patch (bevyengine/bevy#25978)
++                ..
+             } => {
+                 if indexed {
+                     indexed_buffer.push_init(preprocess_work_item);
+@@ -754,6 +776,57 @@ impl PreprocessWorkItemBuffers {
+         }
+     }
+ 
++    // superfargoth patch (bevyengine/bevy#25978)
++    /// Pushes a range entry for a GPU-authored instance batch and reserves
++    /// `count` uninitialized work-item slots for `unpack_ranges` to fill.
++    /// Returns the base index of the reserved slots, or `None` in direct mode.
++    pub fn push_range(
++        &mut self,
++        indexed: bool,
++        base_input_index: u32,
++        base_output_or_indirect_parameters_index: u32,
++        count: u32,
++    ) -> Option<u32> {
++        let PreprocessWorkItemBuffers::Indirect {
++            indexed: ref mut indexed_buffer,
++            non_indexed: ref mut non_indexed_buffer,
++            ref mut ranges_indexed,
++            ref mut ranges_non_indexed,
++            ref mut gpu_occlusion_culling,
++        } = *self
++        else {
++            return None;
++        };
++
++        let (work_buf, ranges) = if indexed {
++            (indexed_buffer, ranges_indexed)
++        } else {
++            (non_indexed_buffer, ranges_non_indexed)
++        };
++
++        let work_item_base = work_buf.push_multiple_uninit(count as usize) as u32;
++        let cumulative_offset = ranges.total_instance_count;
++        ranges.buffer.push(RangeWorkItem {
++            base_input_index,
++            base_output_or_indirect_parameters_index,
++            count,
++            cumulative_offset,
++            work_item_base,
++        });
++        ranges.total_instance_count += count;
++
++        if let Some(occ) = gpu_occlusion_culling {
++            let late = if indexed {
++                &mut occ.late_indexed
++            } else {
++                &mut occ.late_non_indexed
++            };
++            late.add_multiple(count as usize);
++        }
++
++        Some(work_item_base)
++    }
++
+     /// Clears out the GPU work item buffers in preparation for a new frame.
+     pub fn clear(&mut self) {
+         match *self {
+@@ -763,10 +836,15 @@ impl PreprocessWorkItemBuffers {
+             PreprocessWorkItemBuffers::Indirect {
+                 indexed: ref mut indexed_buffer,
+                 non_indexed: ref mut non_indexed_buffer,
++                // superfargoth patch (bevyengine/bevy#25978)
++                ref mut ranges_indexed,
++                ref mut ranges_non_indexed,
+                 ref mut gpu_occlusion_culling,
+             } => {
+                 indexed_buffer.clear();
+                 non_indexed_buffer.clear();
++                ranges_indexed.clear();
++                ranges_non_indexed.clear();
+ 
+                 if let Some(ref mut gpu_occlusion_culling) = *gpu_occlusion_culling {
+                     gpu_occlusion_culling.late_indexed.clear();
+@@ -798,6 +876,60 @@ pub struct PreprocessWorkItem {
+     pub output_or_indirect_parameters_index: u32,
+ }
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++/// Per-dispatch metadata for the `unpack_ranges` shader.
++#[derive(Clone, Copy, Default, Pod, Zeroable, ShaderType)]
++#[repr(C)]
++pub struct GpuRangeUnpackingMetadata {
++    pub range_count: u32,
++    pub total_instance_count: u32,
++    pub pad: UVec2,
++}
++
++/// One GPU-authored instance batch in a [`RangeWorkItemBuffer`]. Expanded
++/// by `unpack_ranges.wesl` into `count` individual [`PreprocessWorkItem`]s.
++#[derive(Clone, Copy, Default, Pod, Zeroable, ShaderType)]
++#[repr(C)]
++pub struct RangeWorkItem {
++    pub base_input_index: u32,
++    pub base_output_or_indirect_parameters_index: u32,
++    pub count: u32,
++    /// Sum of `count` for all earlier ranges in the same buffer.
++    pub cumulative_offset: u32,
++    /// Where this range's reserved work-item slots start. Each range records
++    /// its own base in the GPU-initialized tail, after the ordinary
++    /// CPU-authored work items.
++    pub work_item_base: u32,
++}
++
++/// Per-(view, phase, indexed-ness) range entries plus bookkeeping for the
++/// work items they expand into.
++pub struct RangeWorkItemBuffer {
++    pub buffer: RawBufferVec<RangeWorkItem>,
++    pub metadata: UniformBuffer<GpuRangeUnpackingMetadata>,
++    pub bind_group: Option<BindGroup>,
++    pub total_instance_count: u32,
++}
++
++impl RangeWorkItemBuffer {
++    pub fn new(label: &str) -> Self {
++        let mut buffer = RawBufferVec::new(BufferUsages::STORAGE);
++        buffer.set_label(Some(label));
++        Self {
++            buffer,
++            metadata: UniformBuffer::default(),
++            bind_group: None,
++            total_instance_count: 0,
++        }
++    }
++
++    pub fn clear(&mut self) {
++        self.buffer.clear();
++        self.bind_group = None;
++        self.total_instance_count = 0;
++    }
++}
++
+ /// The `wgpu` indirect parameters structure that specifies a GPU draw command.
+ ///
+ /// This is the variant for indexed meshes. We generate the instances of this
+@@ -1891,6 +2023,8 @@ pub fn batch_and_prepare_sorted_render_phase<I, GFBD>(
+ 
+         // Walk through the list of phase items, building up batches as we go.
+         let mut batch_set: Option<SortedRenderBatchSet<GFBD>> = None;
++        // superfargoth patch (bevyengine/bevy#25978)
++        let mut pending_ranges = Vec::new();
+ 
+         for current_index in 0..phase.items.len() {
+             // Get the index of the input data, and comparison metadata, for
+@@ -1898,6 +2032,49 @@ pub fn batch_and_prepare_sorted_render_phase<I, GFBD>(
+             let item = &phase.items[current_index];
+             let entity = item.main_entity();
+             let item_is_indexed = item.indexed();
++            // superfargoth patch (bevyengine/bevy#25978)
++
++            // A GPU-authored instance batch is one sorted item. It's depth-sorted
++            // as a whole and never merges with neighboring items.
++            if let Some(input_range) = GFBD::get_instance_batch(&system_param_item, entity) {
++                if let Some(batch_set) = batch_set.take() {
++                    batch_set.flush(
++                        data_buffer.len() as u32,
++                        phase,
++                        &mut phase_indirect_parameters_buffers.buffers,
++                    );
++                }
++
++                if no_indirect_drawing || input_range.is_empty() {
++                    *phase.items[current_index].batch_range_mut() = 0..0;
++                    continue;
++                }
++                let base_input_index = input_range.start;
++                let count = input_range.end - input_range.start;
++                let output_base = data_buffer.add_multiple(count as usize) as u32;
++
++                let (indirect_parameters_index, extra_index) =
++                    prepare_instance_batch_indirect::<GFBD>(
++                        &mut phase_indirect_parameters_buffers.buffers,
++                        extracted_view.retained_view_entity,
++                        item_is_indexed,
++                        output_base,
++                    );
++                // CPU work items must precede the GPU-initialized tail.
++                pending_ranges.push((
++                    item_is_indexed,
++                    base_input_index,
++                    indirect_parameters_index,
++                    count,
++                ));
++
++                let (batch_range, batch_extra_index) =
++                    phase.items[current_index].batch_range_and_extra_index_mut();
++                *batch_range = output_base..(output_base + count);
++                *batch_extra_index = extra_index;
++                continue;
++            }
++
+             let current_batch_input_index =
+                 GFBD::get_index_and_compare_data(&system_param_item, entity);
+ 
+@@ -2031,6 +2208,10 @@ pub fn batch_and_prepare_sorted_render_phase<I, GFBD>(
+             // Add a new preprocessing work item so that the preprocessing
+             // shader will copy the per-instance data over.
+             if let Some(batch_set) = batch_set.as_ref() {
++                // superfargoth patch (bevyengine/bevy#25978)
++                if batch_set.phase_item_start_index != current_index as u32 {
++                    *phase.items[current_index].batch_range_mut() = 0..0;
++                }
+                 work_item_buffer.push(
+                     item_is_indexed,
+                     PreprocessWorkItem {
+@@ -2050,6 +2231,11 @@ pub fn batch_and_prepare_sorted_render_phase<I, GFBD>(
+             }
+         }
+ 
++        // superfargoth patch (bevyengine/bevy#25978)
++        for (indexed, input, indirect, count) in pending_ranges {
++            work_item_buffer.push_range(indexed, input, indirect, count);
++        }
++
+         // Flush the final batch set if necessary.
+         if let Some(batch_set) = batch_set.take() {
+             batch_set.flush(
+@@ -2061,6 +2247,28 @@ pub fn batch_and_prepare_sorted_render_phase<I, GFBD>(
+     }
+ }
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++/// Allocates the single indirect draw command for a GPU-authored instance
++/// batch and registers it as its own batch set.
++fn prepare_instance_batch_indirect<GFBD: GetFullBatchData>(
++    buffers: &mut UntypedPhaseIndirectParametersBuffers,
++    view: RetainedViewEntity,
++    indexed: bool,
++    output_base: u32,
++) -> (u32, PhaseItemExtraIndex) {
++    let index = buffers.allocate(indexed, 1);
++    GFBD::write_batch_indirect_parameters_metadata(indexed, output_base, None, buffers, index);
++    let range = index..index + 1;
++    buffers.add_batch_set(indexed, &view, range.clone());
++    (
++        index,
++        PhaseItemExtraIndex::IndirectParametersIndex {
++            range,
++            batch_set_index: None,
++        },
++    )
++}
++
+ /// How a single sorted phase item can be batched with the previous phase item.
+ #[derive(Clone, Copy, PartialEq)]
+ enum SortedPhaseItemBatchability {
+@@ -2357,6 +2565,52 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
+                 }
+             }
+         }
++        // superfargoth patch (bevyengine/bevy#25978)
++
++        for (key, bin) in &phase.instance_batches {
++            let indexed = key.0.indexed();
++
++            for &main_entity in bin.iter() {
++                if no_indirect_drawing {
++                    continue;
++                }
++                let Some(input_range) = GFBD::get_instance_batch(&system_param_item, main_entity)
++                else {
++                    continue;
++                };
++                if input_range.is_empty() {
++                    continue;
++                }
++                let input_uniform_index = crate::render_phase::InputUniformIndex(input_range.start);
++                let count_u32 = input_range.end - input_range.start;
++
++                let output_base = data_buffer.add_multiple(count_u32 as usize) as u32;
++
++                let (indirect_parameters_index, extra_index) =
++                    prepare_instance_batch_indirect::<GFBD>(
++                        &mut phase_indirect_parameters_buffers.buffers,
++                        extracted_view.retained_view_entity,
++                        indexed,
++                        output_base,
++                    );
++                work_item_buffer.push_range(
++                    indexed,
++                    input_uniform_index.0,
++                    indirect_parameters_index,
++                    count_u32,
++                );
++
++                phase.instance_batch_draws.push(InstanceBatchDraw {
++                    batch_set_key: key.0.clone(),
++                    bin_key: key.1.clone(),
++                    batch: BinnedRenderPhaseBatch {
++                        representative_entity: (Entity::PLACEHOLDER, main_entity),
++                        instance_range: output_base..(output_base + count_u32),
++                        extra_index,
++                    },
++                });
++            }
++        }
+     }
+ 
+     // Prepare multidrawables.
+@@ -2379,6 +2633,8 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
+                 indexed: ref mut indexed_work_item_buffer,
+                 non_indexed: ref mut non_indexed_work_item_buffer,
+                 gpu_occlusion_culling: ref mut gpu_occlusion_culling_buffers,
++                // superfargoth patch (bevyengine/bevy#25978)
++                ..
+             },
+         ) = (&mut phase.batch_sets, &mut *work_item_buffer)
+         else {
+@@ -2786,10 +3042,19 @@ pub fn write_batched_instance_buffers<GFBD>(
+                         PreprocessWorkItemBuffers::Indirect {
+                             ref mut indexed,
+                             ref mut non_indexed,
++                            // superfargoth patch (bevyengine/bevy#25978)
++                            ref mut ranges_indexed,
++                            ref mut ranges_non_indexed,
+                             ref mut gpu_occlusion_culling,
+                         } => {
+                             indexed.write_buffer(render_device, render_queue);
+                             non_indexed.write_buffer(render_device, render_queue);
++                            ranges_indexed
++                                .buffer
++                                .write_buffer(render_device, render_queue);
++                            ranges_non_indexed
++                                .buffer
++                                .write_buffer(render_device, render_queue);
+ 
+                             if let Some(GpuOcclusionCullingWorkItemBuffers {
+                                 ref mut late_indexed,
+diff --git a/superfargoth/vendor/bevy_render/src/batching/mod.rs b/superfargoth/vendor/bevy_render/src/batching/mod.rs
+index b2a942f..5ab596a 100644
+--- a/superfargoth/vendor/bevy_render/src/batching/mod.rs
++++ b/superfargoth/vendor/bevy_render/src/batching/mod.rs
+@@ -193,6 +193,21 @@ pub trait GetFullBatchData: GetBatchData {
+         indirect_parameters_buffers: &mut UntypedPhaseIndirectParametersBuffers,
+         indirect_parameters_offset: u32,
+     );
++    // superfargoth patch (bevyengine/bevy#25978)
++
++    /// Returns the input range for a GPU-authored instance batch, or `None`
++    /// for entities handled by ordinary batching or a custom draw command.
++    /// An empty range identifies a GPU batch whose inputs are unavailable;
++    /// it must not draw or allocate work items this frame.
++    ///
++    /// Sorted phases treat each batch as one item, and GPU compaction does not
++    /// preserve instance order.
++    fn get_instance_batch(
++        _param: &SystemParamItem<Self::Param>,
++        _query_item: MainEntity,
++    ) -> Option<core::ops::Range<u32>> {
++        None
++    }
+ }
+ 
+ /// Sorts a render phase that uses bins.
+@@ -236,6 +251,8 @@ fn batch_and_prepare_sorted_render_phase<I, GBD>(
+     items.reduce(|(start_range, prev_batch_meta), (range, batch_meta)| {
+         if batch_meta.is_some() && prev_batch_meta == batch_meta {
+             start_range.end = range.end;
++            // superfargoth patch (bevyengine/bevy#25978)
++            *range = range.end..range.end;
+             (start_range, prev_batch_meta)
+         } else {
+             (range, batch_meta)
+diff --git a/superfargoth/vendor/bevy_render/src/occlusion_culling/mesh_preprocess_types.wesl b/superfargoth/vendor/bevy_render/src/occlusion_culling/mesh_preprocess_types.wesl
+index eea29e4..9e4d9a2 100644
+--- a/superfargoth/vendor/bevy_render/src/occlusion_culling/mesh_preprocess_types.wesl
++++ b/superfargoth/vendor/bevy_render/src/occlusion_culling/mesh_preprocess_types.wesl
+@@ -35,6 +35,18 @@ struct PreviousMeshInput {
+     world_from_local: mat3x4<f32>,
+ };
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++/// Information about each mesh instance needed to cull it on GPU.
++struct MeshCullingData {
++    /// The 3D center of the AABB in model space.
++    aabb_center: vec3<f32>,
++    _pad: f32,
++    /// The 3D extents of the AABB in model space, divided by two.
++    aabb_half_extents: vec3<f32>,
++    /// Nonzero renders; zero is skipped in preprocessing.
++    is_active: u32,
++}
++
+ /// The `wgpu` indirect parameters structure. This is a union of two structures.
+ /// For more information, see the corresponding comment in
+ /// `gpu_preprocessing.rs`.
+diff --git a/superfargoth/vendor/bevy_render/src/render_phase/mod.rs b/superfargoth/vendor/bevy_render/src/render_phase/mod.rs
+index 9b1964f..95f4d0d 100644
+--- a/superfargoth/vendor/bevy_render/src/render_phase/mod.rs
++++ b/superfargoth/vendor/bevy_render/src/render_phase/mod.rs
+@@ -38,7 +38,8 @@ pub use draw::*;
+ pub use draw_state::*;
+ use encase::ShaderType;
+ use encase::{internal::WriteInto, ShaderSize};
+-use indexmap::IndexMap;
++// superfargoth patch (bevyengine/bevy#25978)
++use indexmap::{IndexMap, IndexSet};
+ use nonmax::NonMaxU32;
+ pub use rangefinder::*;
+ use wgpu::{BufferUsages, Features};
+@@ -145,6 +146,12 @@ where
+     /// See the `custom_phase_item` example for an example of how to use this.
+     pub non_mesh_items: IndexMap<(BPI::BatchSetKey, BPI::BinKey), NonMeshEntities>,
+ 
++    // superfargoth patch (bevyengine/bevy#25978)
++    /// GPU-authored instance batches. Each entry is already an N-instance
++    /// batch, in contrast to [`Self::batchable_meshes`] where entities are
++    /// grouped at batch-and-prepare time.
++    pub instance_batches: IndexMap<(BPI::BatchSetKey, BPI::BinKey), RenderInstanceBatchBin>,
++
+     /// Information on each batch set.
+     ///
+     /// A *batch set* is a set of entities that will be batched together unless
+@@ -157,6 +164,10 @@ where
+     /// unbatchable entities.
+     pub(crate) batch_sets: BinnedRenderPhaseBatchSets<BPI::BinKey>,
+ 
++    // superfargoth patch (bevyengine/bevy#25978)
++    /// Pre-computed draw records for [`Self::instance_batches`].
++    pub(crate) instance_batch_draws: Vec<InstanceBatchDraw<BPI>>,
++
+     /// The batch and bin key for each entity.
+     ///
+     /// We retain these so that, when the entity changes, the methods that
+@@ -178,6 +189,11 @@ pub struct RenderBin {
+     entities: IndexMap<MainEntity, InputUniformIndex, EntityHash>,
+ }
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++/// The GPU-authored instance batches in a bin. Their input ranges are resolved
++/// during batch preparation rather than cached in the bin.
++pub type RenderInstanceBatchBin = IndexSet<MainEntity, EntityHash>;
++
+ /// Information about each bin that the [`RenderMultidrawableBatchSet`]
+ /// maintains on the CPU.
+ #[derive(Default)]
+@@ -913,6 +929,17 @@ pub struct BinnedRenderPhaseBatch {
+     pub extra_index: PhaseItemExtraIndex,
+ }
+ 
++// superfargoth patch (bevyengine/bevy#25978)
++/// A pre-computed draw record for one GPU-authored instance batch.
++pub(crate) struct InstanceBatchDraw<BPI>
++where
++    BPI: BinnedPhaseItem,
++{
++    pub(crate) batch_set_key: BPI::BatchSetKey,
++    pub(crate) bin_key: BPI::BinKey,
++    pub(crate) batch: BinnedRenderPhaseBatch,
++}
++
+ /// Information about the unbatchable entities in a bin.
+ pub struct UnbatchableBinnedEntities {
+     /// The entities.
+@@ -997,6 +1024,11 @@ pub enum BinnedRenderPhaseType {
+     /// The engine itself doesn't enqueue any items of this type, but it's
+     /// available for use in your application and/or plugins.
+     NonMesh,
++    // superfargoth patch (bevyengine/bevy#25978)
++
++    /// A GPU-authored batch rendered as one indirect draw. Its current input
++    /// range is resolved through `GetFullBatchData::get_instance_batch`.
++    InstanceBatch,
+ }
+ 
+ impl<T> From<GpuArrayBufferIndex<T>> for UnbatchableBinnedEntityIndices
+@@ -1141,6 +1173,14 @@ where
+                     }
+                 }
+             }
++            // superfargoth patch (bevyengine/bevy#25978)
++
++            BinnedRenderPhaseType::InstanceBatch => {
++                self.instance_batches
++                    .entry((batch_set_key.clone(), bin_key.clone()))
++                    .or_default()
++                    .insert(main_entity);
++            }
+         }
+ 
+         // Update the cache.
+@@ -1183,6 +1223,41 @@ where
+         self.render_batchable_meshes(render_pass, world, view)?;
+         self.render_unbatchable_meshes(render_pass, world, view)?;
+         self.render_non_meshes(render_pass, world, view)?;
++        // superfargoth patch (bevyengine/bevy#25978)
++        self.render_instance_batches(render_pass, world, view)?;
++
++        Ok(())
++    }
++
++    fn render_instance_batches<'w>(
++        &self,
++        render_pass: &mut TrackedRenderPass<'w>,
++        world: &'w World,
++        view: Entity,
++    ) -> Result<(), DrawError> {
++        if self.instance_batch_draws.is_empty() {
++            return Ok(());
++        }
++
++        let draw_functions = world.resource::<DrawFunctions<BPI>>();
++        let mut draw_functions = draw_functions.write();
++
++        for draw in &self.instance_batch_draws {
++            let binned_phase_item = BPI::new(
++                draw.batch_set_key.clone(),
++                draw.bin_key.clone(),
++                draw.batch.representative_entity,
++                draw.batch.instance_range.clone(),
++                draw.batch.extra_index.clone(),
++            );
++
++            let Some(draw_function) = draw_functions.get_mut(binned_phase_item.draw_function())
++            else {
++                continue;
++            };
++
++            draw_function.draw(world, render_pass, view, &binned_phase_item)?;
++        }
+ 
+         Ok(())
+     }
+@@ -1414,12 +1489,16 @@ where
+             && self.batchable_meshes.is_empty()
+             && self.unbatchable_meshes.is_empty()
+             && self.non_mesh_items.is_empty()
++            // superfargoth patch (bevyengine/bevy#25978)
++            && self.instance_batches.is_empty()
+     }
+ 
+     // superfargoth patch (#26161)
+     /// The number of entities queued in this phase, across all of its bins.
+     pub fn entity_count(&self) -> usize {
+-        self.multidrawable_meshes
++        // superfargoth patch (bevyengine/bevy#25978): GPU-authored batches count one entity each.
++        self.instance_batches.values().map(IndexSet::len).sum::<usize>()
++            + self.multidrawable_meshes
+             .values()
+             .flat_map(|batch_set| batch_set.bins.iter().flatten())
+             .map(|bin| bin.entity_to_binned_mesh_instance_index.len())
+@@ -1453,6 +1532,8 @@ where
+             + self.batchable_meshes.len()
+             + self.unbatchable_meshes.len()
+             + self.non_mesh_items.len()
++            // superfargoth patch (bevyengine/bevy#25978)
++            + self.instance_batches.len()
+     }
+ 
+     // superfargoth patch (own: phase counts)
+@@ -1469,6 +1550,7 @@ where
+ 
+     pub fn prepare_for_new_frame(&mut self) {
+         self.batch_sets.clear();
++        self.instance_batch_draws.clear();
+ 
+         for unbatchable_bin in self.unbatchable_meshes.values_mut() {
+             unbatchable_bin.buffer_indices.clear();
+@@ -1491,6 +1573,8 @@ where
+                 &mut self.batchable_meshes,
+                 &mut self.unbatchable_meshes,
+                 &mut self.non_mesh_items,
++                // superfargoth patch (bevyengine/bevy#25978)
++                &mut self.instance_batches,
+             );
+         }
+     }
+@@ -1509,6 +1593,8 @@ fn remove_entity_from_bin<BPI>(
+     batchable_meshes: &mut IndexMap<(BPI::BatchSetKey, BPI::BinKey), RenderBin>,
+     unbatchable_meshes: &mut IndexMap<(BPI::BatchSetKey, BPI::BinKey), UnbatchableBinnedEntities>,
+     non_mesh_items: &mut IndexMap<(BPI::BatchSetKey, BPI::BinKey), NonMeshEntities>,
++    // superfargoth patch (bevyengine/bevy#25978)
++    instance_batches: &mut IndexMap<(BPI::BatchSetKey, BPI::BinKey), RenderInstanceBatchBin>,
+ ) where
+     BPI: BinnedPhaseItem,
+ {
+@@ -1571,6 +1657,21 @@ fn remove_entity_from_bin<BPI>(
+                 }
+             }
+         }
++        // superfargoth patch (bevyengine/bevy#25978)
++
++        BinnedRenderPhaseType::InstanceBatch => {
++            if let indexmap::map::Entry::Occupied(mut bin_entry) = instance_batches.entry((
++                entity_bin_key.batch_set_key.clone(),
++                entity_bin_key.bin_key.clone(),
++            )) {
++                bin_entry.get_mut().swap_remove(&entity);
++
++                // If the bin is now empty, remove the bin.
++                if bin_entry.get_mut().is_empty() {
++                    bin_entry.swap_remove();
++                }
++            }
++        }
+     }
+ }
+ 
+@@ -1584,6 +1685,8 @@ where
+             batchable_meshes: IndexMap::default(),
+             unbatchable_meshes: IndexMap::default(),
+             non_mesh_items: IndexMap::default(),
++            // superfargoth patch (bevyengine/bevy#25978)
++            instance_batches: IndexMap::default(),
+             batch_sets: match gpu_preprocessing {
+                 GpuPreprocessingMode::Culling => {
+                     BinnedRenderPhaseBatchSets::MultidrawIndirect(vec![])
+@@ -1593,6 +1696,8 @@ where
+                 }
+                 GpuPreprocessingMode::None => BinnedRenderPhaseBatchSets::DynamicUniforms(vec![]),
+             },
++            // superfargoth patch (bevyengine/bevy#25978)
++            instance_batch_draws: Vec::new(),
+             cached_entity_bin_keys: MainEntityHashMap::default(),
+             gpu_preprocessing_mode: gpu_preprocessing,
+         }
+@@ -2053,7 +2158,8 @@ where
+             } else {
+                 let draw_function = draw_functions.get_mut(item.draw_function()).unwrap();
+                 draw_function.draw(world, render_pass, view, item)?;
+-                index += batch_range.len();
++                // superfargoth patch (bevyengine/bevy#25978)
++                index += 1;
+             }
+         }
+         Ok(())
+@@ -2099,9 +2205,9 @@ pub trait PhaseItem: Sized + Send + Sync + 'static {
+     /// Specifies the [`Draw`] function used to render the item.
+     fn draw_function(&self) -> DrawFunctionId;
+ 
+-    /// The range of instances that the batch covers. After doing a batched draw, batch range
+-    /// length phase items will be skipped. This design is to avoid having to restructure the
+-    /// render phase unnecessarily.
++    // superfargoth patch (bevyengine/bevy#25978)
++    /// The range of instances that the batch covers. Items merged into an earlier item's batch
++    /// have an empty range and are skipped when rendering.
+     fn batch_range(&self) -> &Range<u32>;
+     fn batch_range_mut(&mut self) -> &mut Range<u32>;
+ 
+diff --git a/superfargoth/vendor/bevy_render/src/render_resource/sparse_buffer_vec.rs b/superfargoth/vendor/bevy_render/src/render_resource/sparse_buffer_vec.rs
+index 810deb0..f6efdb7 100644
+--- a/superfargoth/vendor/bevy_render/src/render_resource/sparse_buffer_vec.rs
++++ b/superfargoth/vendor/bevy_render/src/render_resource/sparse_buffer_vec.rs
+@@ -591,6 +591,17 @@ where
+         );
+     }
+ 
++    // superfargoth patch (bevyengine/bevy#25978)
++    /// Reserves at least `min_capacity` elements, rounded up with the growth
++    /// policy that [`Self::write_buffers`] uses, so that repeated small
++    /// increases don't reallocate the buffer every time.
++    pub fn reserve_amortized(&mut self, min_capacity: usize, render_device: &RenderDevice) {
++        if min_capacity == 0 {
++            return;
++        }
++        self.reserve(calculate_allocation_size(min_capacity), render_device);
++    }
++
+     /// Grows the buffer by adding default values so that it's at least the
+     /// given size.
+     ///
