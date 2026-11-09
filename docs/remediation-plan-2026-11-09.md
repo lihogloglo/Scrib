@@ -768,9 +768,13 @@ They are ordered by "cheap now, expensive later", not by size.
    green before more is built on top of it.
 5. **F2 ordering.** `sf_scalability` is a precondition for the Steam Deck floor tier you accepted, but it is
    also a refactor across five preset enums. Before or after the Morrowind vertical slice?
-6. **Install-gated tests (§6a).** Can CI hold a licensed Morrowind install? If it cannot, the install-gated
-   suite never runs anywhere, and every OpenMW-port claim stays unverified by any test. Only you can make
-   this call, and it decides how much D1 is actually worth.
+6. **Install-gated tests (§6a) — two separate questions, please answer them separately.**
+   (i) The ~100 non-ignored gated tests that pass having asserted nothing: may we make them fail loudly or
+   report as skipped? This needs no licence decision and no CI, it is a local change, and until it lands
+   every green test run you see is partly fiction. The only reason it is a question at all is that
+   `census_real_install.rs`'s own doc says skipping-as-passing is intended, so it is your design call.
+   (ii) Can CI hold a licensed Morrowind install? If not, the install-gated suite never runs anywhere, and
+   every OpenMW-port claim stays unverified by test — which changes how much D1 is worth.
 
 ## 6a. The strongest finding in this document: "green tests" currently prove very little
 
@@ -779,9 +783,33 @@ confirmed directly by the owner: `BEVYRROWIND_MORROWIND` is unset, no install in
 Bethesda location, no `Morrowind.esm` anywhere under the user folder. The game cannot be launched here; the
 machine can compile, slowly, and that is all.
 
-Consequence: **47 files in `bevyrrowind/crates` carry install-gated tests that skip and pass without an
-install.** `cargo test -p mw_stats --test real_install -- --ignored --nocapture` prints "no Morrowind
-install detected; skipping" and passes in 0.01 s. On this machine those tests are green and assert nothing.
+Consequence: install-gated tests **skip and report success**, and this happens on *both* paths.
+
+**Certain (verified directly at `80c9a2c`):**
+
+- `bevyrrowind/crates/mw_bake/tests/census_real_install.rs` is a plain `#[test]` at line 10 with **no
+  `#[ignore]` anywhere in the file**, which early-returns at lines 12-14 after printing "no Morrowind
+  install detected; skipping". It therefore runs and passes in an ordinary `cargo test --workspace`, having
+  asserted nothing. Its own module doc says "Skips (passes) without a Morrowind install" — so this is a
+  **documented design choice**, not an oversight, which is why it needs an owner ruling rather than a fix.
+- The deliberate verification path is no better: `coordinator-mechanics` ran
+  `cargo test -p mw_stats --test real_install -- --ignored --nocapture` and got **1 passed, 0 failed,
+  0.01 s, nothing asserted**. So someone running `--ignored` specifically to check Morrowind behaviour is
+  told "pass".
+- Scale: 45 files under `bevyrrowind/crates` contain the skip-and-return pattern.
+
+**Not yet pinned down — do not quote a single number until one careful pass settles it.** Two independent
+counts disagree because they count different things: `coordinator-mechanics` measured **106 non-ignored
+install-gated tests across 37 files**; this session's broader pattern (any `MorrowindInstall::detect` use,
+counting every non-ignored `#[test]` in a gated file, which overcounts because a file may hold both gated
+and ungated tests) gave **122 across 46 files**. The order of magnitude — **on the order of 100 tests** —
+is agreed and is what matters. Anyone citing an exact figure must first count only tests whose own body
+contains the gate.
+
+**Related correction for anyone citing the static-scene lane:** `coordinator-mechanics` reports that at
+least 20 of those non-ignored gated tests are in `mw_bake`, and so fall inside the "191 tests pass" figure
+quoted for the static-scene lane. Cite that as "191 passed, of which at least 20 asserted nothing without
+an install".
 
 Put together with §6 (four tests that assert their own bug), the honest reading is:
 
@@ -792,12 +820,20 @@ This is the single strongest argument in this document for **D1 (CI)**, and it c
 with a licensed Morrowind install is the only way the install-gated suite ever actually runs. Until then,
 every "ported from OpenMW, tests pass" claim in the repo rests on tests written from the implementation.
 
-**Do:** (a) make install-gated tests **report as skipped in a way a human sees**, or fail loudly, rather
-than passing silently — a passing test that asserted nothing is worse than no test; (b) in D1, decide
-whether CI can hold a licensed install (the owner's own copy cannot be redistributed — see the clean-room
-and "Morrowind's data is never redistributed" rules), and if it cannot, say so plainly in the CI docs so
-nobody mistakes a green CI for verified Morrowind behaviour; (c) treat every OpenMW port's expected values
-as source-derived (§6), since that is the only verification available without an install.
+**Do — and note (a) needs no decision from anyone:**
+
+- **(a) Fix the silent pass now. This is a local change and is not blocked on the licence question.** The
+  ~100 non-ignored gated tests should either fail loudly without an install, or report as skipped somewhere
+  a human sees it. Until then they silently corrupt every green run the owner looks at, including runs used
+  to decide whether a slice is done. Cheapest honest form: keep the gate, but make the absence of an install
+  a hard error unless an explicit opt-out env var is set, and `#[ignore]` everything that genuinely needs
+  the data. This is the highest value-per-effort item in the whole document.
+- **(b)** In D1, decide whether CI can hold a licensed install (the owner's own copy cannot be
+  redistributed — see the clean-room rule and "Morrowind's own data is never redistributed"). If it cannot,
+  say so plainly in the CI docs so nobody mistakes a green CI for verified Morrowind behaviour.
+- **(c)** Treat every OpenMW port's expected values as source-derived (§6) — without an install that is the
+  only verification available. `coordinator-mechanics` has OpenMW cloned locally (`Dev/openmw`, commit
+  `c0790fc`) and is settling E3 from source, which is the pattern to copy.
 
 ## 6. One process finding, not a code finding
 
