@@ -59,8 +59,11 @@ use crate::{
     RenderMeshInstanceBatch, RenderMeshInstanceBatches,
 };
 use crate::{
-    early_gpu_preprocess, prepare_preprocess_pipelines, prepare_range_unpacking_bind_groups,
-    prepare_range_unpacking_pipeline, unpack_bins, unpack_ranges, RangeUnpackingPipeline,
+    // superfargoth patch (own, GS: range unpack in preprocess): the range dispatch moved inside
+    // `early_gpu_preprocess`, so this plugin no longer registers a system into any schedule
+    // (`unpack_ranges`, `unpack_bins` and `early_gpu_preprocess` are no longer named here).
+    prepare_preprocess_pipelines, prepare_range_unpacking_bind_groups,
+    prepare_range_unpacking_pipeline, RangeUnpackingPipeline,
 };
 use bevy_render::{render_resource::SpecializedComputePipelines, GpuResourceAppExt};
 use materialize::GpuInstanceMaterialization;
@@ -87,6 +90,22 @@ pub enum GpuInstanceBatchSystems {
 
 /// Up to `max_capacity` GPU-authored instances of a mesh, drawn as one indirect
 /// draw. Pair with `MeshMaterial3d<M>`, not [`Mesh3d`].
+///
+/// # Hardware floor
+///
+/// superfargoth patch (own, GS: guards). **GPU instance batches require
+/// `GpuPreprocessingMode::Culling`: an adapter limited to `PreprocessingOnly`,
+/// and a camera (or an inherited view) carrying `NoIndirectDrawing`, draw
+/// none.**
+///
+/// This is a floor, not a fallback. `batch_and_prepare_binned_render_phase`
+/// and its sorted twin skip every instance batch of a `no_indirect_drawing`
+/// view, and `PreprocessWorkItemBuffers::push_range` returns `None` on a
+/// `Direct` work-item buffer, so such a view reserves nothing, queues no draw
+/// record and shows no batch - the statics are simply **absent** there, not
+/// drawn without culling. `prepare_gpu_batched_mesh_reservations` warns once
+/// for the adapter case. A producer that must still show something on such an
+/// adapter has to fall back to ordinary [`Mesh3d`] entities itself.
 ///
 /// superfargoth: upstream gives this (and `Mesh3d`) a new `Mesh3dVisibility`
 /// class in `bevy_mesh`; this port keeps `Mesh3d` as the class key (no
@@ -191,15 +210,14 @@ impl Plugin for GpuInstanceBatchPlugin {
                         resource_exists::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
                     ),
             )
-            .add_systems(
-                bevy_core_pipeline::Core3d,
-                unpack_ranges
-                    .after(unpack_bins)
-                    .before(early_gpu_preprocess)
-                    .run_if(
-                        resource_exists::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
-                    ),
-            )
+            // superfargoth patch (own, GS: range unpack in preprocess): #25978 registered
+            // `unpack_ranges` here, into `bevy_core_pipeline::Core3d` only, so the point/spot
+            // shadow schedule (`Core3dShadows`, patch #26149) and `sf_shadow_cache_bevy`'s
+            // `LampShadowView` never unpacked and read uninitialised work items. The dispatch
+            // now lives inside `early_gpu_preprocess`, which every such schedule runs, so there
+            // is nothing to register per schedule. `prepare_range_unpacking_pipeline` and
+            // `prepare_range_unpacking_bind_groups` stay here: with this plugin absent the
+            // pipeline id stays `None` and the dispatch is skipped, so the port stays opt-in.
             .init_resource::<ExtractedGpuBatchedMeshes>()
             .init_gpu_resource::<GpuInstanceBatchReservations>()
             .add_systems(ExtractSchedule, extract_gpu_batched_meshes)
@@ -212,6 +230,13 @@ impl Plugin for GpuInstanceBatchPlugin {
                         .after(collect_gpu_culled_meshes)
                         .before(crate::prepass::specialize_prepass_material_meshes),
                 )
+                    // superfargoth patch (own, GS: guards): #25978 left these two in a bare
+                    // tuple, i.e. unordered. `prepare_gpu_batched_mesh_draws` does not read
+                    // `GpuInstanceBatchReservations` today, so nothing is wrong yet - but it
+                    // resolves the batch that `prepare_gpu_batched_mesh_reservations` sized, and
+                    // step 2's per-range validation will read the reservation, so pin the order
+                    // now rather than find out as a frame-order bug.
+                    .chain()
                     .in_set(RenderSystems::PrepareMeshes)
                     .run_if(
                         resource_exists::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,

@@ -21,7 +21,11 @@ use super::{
     GpuInstanceBatchReservation, GpuInstanceBatchReservations, GpuInstanceBatchSystems,
     GpuMeshInstance,
 };
-use crate::{MeshCullingData, MeshCullingDataBuffer, MeshInputUniform, MeshUniform};
+use crate::{
+    MeshCullingData, MeshCullingDataBuffer, MeshInputUniform, MeshUniform,
+    // superfargoth patch (own, GS: counters)
+    PreprocessBindGroupCount,
+};
 
 #[derive(Clone, Copy, Default, ShaderType)]
 struct MaterializationMetadata {
@@ -141,7 +145,13 @@ fn prepare_bind_groups(
     cache: Res<PipelineCache>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
+    // superfargoth patch (own, GS: counters)
+    mut bind_group_count: ResMut<PreprocessBindGroupCount>,
 ) {
+    // superfargoth patch (own, GS: counters): assigned, not accumulated, so
+    // the ordering against the other `RenderSystems::PrepareBindGroups`
+    // systems that write their own field does not matter.
+    bind_group_count.materialize = 0;
     let (Some(input), Some(culling)) = (
         buffers.current_input_buffer.buffer().buffer(),
         culling.buffer(),
@@ -164,6 +174,8 @@ fn prepare_bind_groups(
             continue;
         }
         job.bound_buffers = Some(buffers);
+        // superfargoth patch (own, GS: counters)
+        bind_group_count.materialize = bind_group_count.materialize.saturating_add(1);
         job.bind_group = Some(device.create_bind_group(
             "GPU instance materialization",
             &cache.get_bind_group_layout(&pipeline.layout),

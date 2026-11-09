@@ -49,14 +49,18 @@ use bevy_render::{
         UniformAllocationMetadataIndex, UntypedPhaseBatchedInstanceBuffers,
         UntypedPhaseIndirectParametersBuffers,
     },
-    diagnostic::RecordDiagnostics as _,
+    // superfargoth patch (own, GS: range unpack in preprocess): `DiagnosticsRecorder` is named
+    // so `dispatch_range_unpacking` can take the recorder as a parameter.
+    diagnostic::{DiagnosticsRecorder, RecordDiagnostics as _},
     occlusion_culling::OcclusionCulling,
     render_phase::{GpuRenderBinnedMeshInstance, UNIFORM_ALLOCATION_WORKGROUP_SIZE},
     render_resource::{
         binding_types::{storage_buffer, storage_buffer_read_only, texture_2d, uniform_buffer},
         BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
         BindingResource, Buffer, BufferBinding, BufferVec, CachedComputePipelineId,
-        ComputePassDescriptor, ComputePipelineDescriptor, DynamicBindGroupLayoutEntries,
+        // superfargoth patch (own, GS: range unpack in preprocess)
+        CommandEncoder, ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor,
+        DynamicBindGroupLayoutEntries,
         PartialBufferVec, PipelineCache, RawBufferVec, ShaderStages, ShaderType,
         SparseBufferUpdateBindGroups, SparseBufferUpdateJobs, SparseBufferUpdatePipelines,
         SpecializedComputePipeline, SpecializedComputePipelines, TextureSampleType,
@@ -338,13 +342,33 @@ bitflags! {
 }
 
 // superfargoth patch (own: preprocess bind group count)
-/// The number of bind groups [`prepare_preprocess_bind_groups`] created this
-/// frame (mesh preprocessing, indirect parameter building, bin unpacking and
-/// uniform allocation), for diagnostics. It rebuilds all of them every frame.
+/// The bind groups the GPU preprocessing stages created this frame, for
+/// diagnostics, by owner: [`prepare_preprocess_bind_groups`] (mesh
+/// preprocessing, indirect parameter building, bin unpacking and uniform
+/// allocation - it rebuilds all of them every frame) and, since patch GS,
+/// instance-batch range unpacking and materialization.
+///
+/// Each field is set by its own system; they are never summed here, so
+/// `sf_diag` can report the parts as well as the total and the slice S0
+/// baseline (where both GS fields are 0) stays comparable.
 #[derive(Resource, Clone, Copy, Default, Debug)]
 pub struct PreprocessBindGroupCount {
     /// Bind groups created by the last run of [`prepare_preprocess_bind_groups`].
     pub created: u32,
+    // superfargoth patch (own, GS: counters)
+    /// Bind groups created by the last run of
+    /// [`prepare_range_unpacking_bind_groups`]: one per view, phase and
+    /// indexed/non-indexed work-item buffer that has instance-batch ranges.
+    /// Rebuilt every frame like [`Self::created`]. Stays 0 without
+    /// `GpuInstanceBatchPlugin` (that system is then never registered).
+    pub ranges: u32,
+    // superfargoth patch (own, GS: counters)
+    /// Bind groups created by the last run of
+    /// `gpu_instance_batch::materialize::prepare_bind_groups`: one per live
+    /// GPU instance batch, but **cached** on the buffers it binds, so normally
+    /// 0 after a batch's first frame and non-zero again when its output buffer
+    /// is resized. Stays 0 without `GpuInstanceBatchPlugin`.
+    pub materialize: u32,
 }
 
 // superfargoth patch (own: preprocess bind group count)
@@ -877,7 +901,13 @@ pub fn prepare_range_unpacking_bind_groups(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut batched_instance_buffers: ResMut<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
+    // superfargoth patch (own, GS: counters)
+    mut bind_group_count: ResMut<PreprocessBindGroupCount>,
 ) {
+    // superfargoth patch (own, GS: counters): assigned, not accumulated, so
+    // the ordering against `prepare_preprocess_bind_groups` (which owns
+    // `created`) inside `RenderSystems::PrepareBindGroups` does not matter.
+    bind_group_count.ranges = 0;
     if preprocess_pipelines.range_unpacking.pipeline_id.is_none() {
         return;
     }
@@ -929,35 +959,52 @@ pub fn prepare_range_unpacking_bind_groups(
                         work_storage.as_entire_binding(),
                     )),
                 ));
+                // superfargoth patch (own, GS: counters)
+                bind_group_count.ranges = bind_group_count.ranges.saturating_add(1);
             }
         }
     }
 }
 
-pub fn unpack_ranges(
-    current_view: ViewQuery<Option<&ViewLightEntities>, Without<SkipGpuPreprocess>>,
-    view_query: Query<&ExtractedView, Without<SkipGpuPreprocess>>,
-    light_query: Query<&LightEntity>,
-    batched_instance_buffers: Res<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
-    pipeline_cache: Res<PipelineCache>,
-    preprocess_pipelines: Res<PreprocessPipelines>,
-    mut render_context: RenderContext,
+// superfargoth patch (own, GS: range unpack in preprocess)
+/// Expands every view's GPU-authored instance-batch range entries
+/// ([`RangeWorkItem`]) into individual [`PreprocessWorkItem`]s, in its own
+/// compute pass.
+///
+/// Called from [`early_gpu_preprocess`] rather than registered as a system of
+/// its own, so that **every** schedule that preprocesses also unpacks:
+/// `Core3d`, `Core3dShadows` (point and spot shadow faces, patch #26149) and
+/// `sf_shadow_cache_bevy`'s `LampShadowView`. Registered per schedule - as
+/// #25978 does - it only ever ran in `Core3d`, so the other two read the slots
+/// `PreprocessWorkItemBuffers::push_range` reserves with
+/// `push_multiple_uninit` as **uninitialised** GPU memory: `mesh_preprocess`
+/// dispatches over `arrayLength(&work_items)`, which covers the whole reserved
+/// tail.
+///
+/// A separate compute pass is deliberate: `wgpu` inserts the write-read
+/// barrier between passes, as `unpack_bins` already relies on.
+///
+/// A no-op while `GpuInstanceBatchPlugin` is absent - the range-unpacking
+/// pipeline is only queued by `prepare_range_unpacking_pipeline`, which that
+/// plugin registers, so its `pipeline_id` stays `None` and the caller never
+/// reaches here.
+fn dispatch_range_unpacking(
+    command_encoder: &mut CommandEncoder,
+    diagnostics: Option<&DiagnosticsRecorder>,
+    pipeline: &ComputePipeline,
+    batched_instance_buffers: &BatchedInstanceBuffers<MeshUniform, MeshInputUniform>,
+    views: &[Entity],
+    view_query: &Query<
+        (
+            &ExtractedView,
+            Option<&PreprocessBindGroups>,
+            Option<&ViewUniformOffset>,
+            Has<NoIndirectDrawing>,
+            Has<OcclusionCulling>,
+        ),
+        Without<SkipGpuPreprocess>,
+    >,
 ) {
-    let Some(pipeline_id) = preprocess_pipelines.range_unpacking.pipeline_id else {
-        return;
-    };
-    let Some(pipeline) = pipeline_cache.get_compute_pipeline(pipeline_id) else {
-        return;
-    };
-
-    let view_entity = current_view.entity();
-    let shadow_cascade_views = current_view.into_inner();
-    let all_views =
-        gather_shadow_cascades_for_view(view_entity, shadow_cascade_views, &light_query);
-
-    let diagnostics = render_context.diagnostic_recorder();
-    let diagnostics = diagnostics.as_deref();
-    let command_encoder = render_context.command_encoder();
     let mut compute_pass = command_encoder.begin_compute_pass(&ComputePassDescriptor {
         label: Some("range unpacking"),
         timestamp_writes: None,
@@ -965,8 +1012,8 @@ pub fn unpack_ranges(
     let pass_span = diagnostics.pass_span(&mut compute_pass, "range_unpacking");
     compute_pass.set_pipeline(pipeline);
 
-    for view_entity in all_views {
-        let Ok(view) = view_query.get(view_entity) else {
+    for &view_entity in views {
+        let Ok((view, ..)) = view_query.get(view_entity) else {
             continue;
         };
         for phase_buffers in batched_instance_buffers.phase_instance_buffers.values() {
@@ -1024,6 +1071,32 @@ pub fn early_gpu_preprocess(
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
 
+    let view_entity = current_view.entity();
+    let shadow_cascade_views = current_view.into_inner();
+    let all_views =
+        gather_shadow_cascades_for_view(view_entity, shadow_cascade_views, &light_query);
+
+    // superfargoth patch (own, GS: range unpack in preprocess)
+    // Expand the GPU-authored instance batches' ranges into work items before
+    // this schedule's preprocessing reads them, so that every schedule running
+    // `early_gpu_preprocess` unpacks: `Core3d`, `Core3dShadows` and
+    // `sf_shadow_cache_bevy`'s `LampShadowView`. See
+    // `dispatch_range_unpacking`; a no-op without `GpuInstanceBatchPlugin`.
+    if let Some(range_unpacking_pipeline) = preprocess_pipelines
+        .range_unpacking
+        .pipeline_id
+        .and_then(|pipeline_id| pipeline_cache.get_compute_pipeline(pipeline_id))
+    {
+        dispatch_range_unpacking(
+            ctx.command_encoder(),
+            diagnostics,
+            range_unpacking_pipeline,
+            &batched_instance_buffers,
+            &all_views,
+            &view_query,
+        );
+    }
+
     let command_encoder = ctx.command_encoder();
 
     let mut compute_pass = command_encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -1032,11 +1105,6 @@ pub fn early_gpu_preprocess(
     });
 
     let pass_span = diagnostics.pass_span(&mut compute_pass, "early_mesh_preprocessing");
-
-    let view_entity = current_view.entity();
-    let shadow_cascade_views = current_view.into_inner();
-    let all_views =
-        gather_shadow_cascades_for_view(view_entity, shadow_cascade_views, &light_query);
 
     // Run the compute passes.
     for view_entity in all_views {

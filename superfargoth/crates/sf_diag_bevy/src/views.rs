@@ -7,11 +7,18 @@
 //!   `AlphaMask3d`, `Shadow` and the prepass and deferred phases): queued
 //!   entities, bins, batch sets built this frame, and distinct pipelines
 //!   among the batch-set keys;
+//! - of those batch sets, the GPU-authored instance batches (static-scene.md
+//!   S3a2): their draw records, the indirect sub-draws inside them, and the
+//!   output instance slots they reserved (vendored patch "own, GS: counters").
+//!   The instance batches' bins also join the distinct-pipeline sets, so a
+//!   pipeline used only by statics is counted;
 //! - the mesh preprocessing work items per view
-//!   (`BatchedInstanceBuffers::phase_instance_buffers[*].work_item_buffers`);
+//!   (`BatchedInstanceBuffers::phase_instance_buffers[*].work_item_buffers`):
+//!   reserved, not surviving - an instance batch reserves a work item per
+//!   capacity slot and the GPU fills them in;
 //! - the preprocessing bind groups created this frame
-//!   (`PreprocessBindGroupCount`, vendored patch "own: preprocess bind group
-//!   count").
+//!   (`PreprocessBindGroupCount`, vendored patches "own: preprocess bind group
+//!   count" and "own, GS: counters": range unpacking and materialization).
 //!
 //! Views are classified by their render-world components: the
 //! lowest-order `ExtractedCamera` is `main` (label `main`), other cameras
@@ -36,7 +43,7 @@ use bevy_render::render_resource::CachedRenderPipelineId;
 use bevy_render::renderer::render_system;
 use bevy_render::view::{ExtractedView, RetainedViewEntity};
 use bevy_render::{Render, RenderApp, RenderSystems};
-use sf_diag::views::{PhaseCounts, ViewCounts, ViewFrame, ViewKind};
+use sf_diag::views::{BindGroups, PhaseCounts, ViewCounts, ViewFrame, ViewKind};
 
 use crate::{DiagCounters, DiagViews};
 
@@ -124,7 +131,10 @@ where
         .keys()
         .chain(phase.batchable_meshes.keys().map(|(k, _)| k))
         .chain(phase.unbatchable_meshes.keys().map(|(k, _)| k))
-        .chain(phase.non_mesh_items.keys().map(|(k, _)| k));
+        .chain(phase.non_mesh_items.keys().map(|(k, _)| k))
+        // static-scene.md S3a2: without this a pipeline used only by the
+        // GPU-authored instance batches vanishes from `views/*/pipelines`.
+        .chain(phase.instance_batches.keys().map(|(k, _)| k));
     let mut pipelines: HashSet<CachedRenderPipelineId> = HashSet::default();
     for key in keys {
         pipelines.insert(key.pipeline());
@@ -138,11 +148,21 @@ where
         bins: small(phase.bin_count()),
         batch_sets: small(phase.batch_set_count()),
         pipelines: small(pipelines.len()),
+        instance_batches: small(phase.instance_batch_draw_count()),
+        instance_draws: small(phase.instance_batch_indirect_draw_count()),
+        instance_slots: phase.instance_batch_slot_count(),
     })
 }
 
 /// Mesh preprocessing work items written for one view, all phases: the
 /// early (or only) pass; the late occlusion pass re-reads the same items.
+///
+/// **Reserved, not surviving.** `PartialBufferVec::len` includes the
+/// uninitialised tail, which is exactly what a GPU-authored instance batch
+/// reserves (one slot per capacity slot, filled in by the range-unpacking
+/// dispatch), so a view with statics reports the dispatch width, not the
+/// instances the cull let through. That number is GPU-side only
+/// (`early_instance_count`).
 fn work_items(buffers: &BatchedInstanceBuffers<MeshUniform, MeshInputUniform>, view: &RetainedViewEntity) -> u32 {
     let n: usize = buffers
         .phase_instance_buffers
@@ -178,7 +198,11 @@ fn count_views(
     let main_order = views.iter().filter(|(_, _, light)| light.is_none()).filter_map(|(_, camera, _)| camera.map(|c| c.order)).min();
     let mut frame_set: HashSet<CachedRenderPipelineId> = HashSet::default();
     let mut frame = ViewFrame {
-        bind_groups: bind_groups.map(|b| b.created),
+        bind_groups: bind_groups.map(|b| BindGroups {
+            created: b.created,
+            ranges: b.ranges,
+            materialize: b.materialize,
+        }),
         ..ViewFrame::default()
     };
     for (view, camera, light) in &views {

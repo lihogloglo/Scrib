@@ -13,11 +13,15 @@
 //! - `views/<kind>/items|bins|batch_sets|work_items|pipelines`: summed over
 //!   the kind's views and their phases. `pipelines` sums each view's distinct
 //!   pipelines (a pipeline used by two views counts twice).
+//! - `views/<kind>/instance_batches|instance_draws|instance_slots`: the
+//!   GPU-authored instance batches (static-scene.md S3a2) inside those sums.
 //! - `views/all/pipelines_distinct`: distinct pipelines across all views.
-//! - `phases/<phase>/items|bins|batch_sets|pipelines`: one phase summed over
-//!   all views.
-//! - `preprocess/bind_groups`: bind groups the mesh preprocessing step
-//!   created this frame, when the renderer reports it.
+//! - `phases/<phase>/<metric>` for every metric in [`PHASE_METRICS`]: one
+//!   phase summed over all views.
+//! - `preprocess/bind_groups`: every preprocessing bind group created this
+//!   frame, when the renderer reports it, with
+//!   `preprocess/bind_groups_created|_ranges|_materialize` as its parts
+//!   ([`BindGroups`]).
 //!
 //! Static materials (slice S2, [`StaticMaterials`], [`StaticBindGroups`]; names in [`statics`]),
 //! over the live static mesh parts, every frame while the engine counts them:
@@ -61,6 +65,21 @@ impl ViewKind {
     }
 }
 
+/// Metrics reported per phase: the length of [`PHASE_METRICS`].
+pub const PHASE_METRIC_COUNT: usize = 7;
+
+/// Metric names of [`PhaseCounts`], in the order of [`PhaseCounts::values`]
+/// and of the arrays [`ViewFrame::phase_totals`] returns.
+pub const PHASE_METRICS: [&str; PHASE_METRIC_COUNT] = [
+    "items",
+    "bins",
+    "batch_sets",
+    "pipelines",
+    "instance_batches",
+    "instance_draws",
+    "instance_slots",
+];
+
 /// One binned phase of one view.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PhaseCounts {
@@ -70,10 +89,41 @@ pub struct PhaseCounts {
     pub items: u32,
     /// Bins (one per mesh/material key within a batch set).
     pub bins: u32,
-    /// Batch sets built this frame: one (multi-)draw each.
+    /// Batch sets built this frame: one (multi-)draw each. Includes the
+    /// GPU-authored instance batches ([`Self::instance_batches`]), which draw
+    /// from their own list and register their batch sets straight on the
+    /// indirect buffers.
     pub batch_sets: u32,
     /// Distinct render pipelines among the phase's batch sets.
     pub pipelines: u32,
+    /// GPU-authored instance batches drawn in the phase this frame
+    /// (static-scene.md S3a; one draw record per batch entity). A subset of
+    /// [`Self::batch_sets`]: subtract it for the entity path alone.
+    pub instance_batches: u32,
+    /// Indirect sub-draws inside those batches' batch sets: one per geometry
+    /// range a batch draws. Equals [`Self::instance_batches`] until a batch
+    /// can carry more than one range (S3a2 step 2).
+    pub instance_draws: u32,
+    /// Instance slots those batches reserved in the view's output
+    /// (`MeshUniform`) buffer. **Reserved, pre-cull**: the number that
+    /// survived the GPU cull exists only in `early_instance_count` on the GPU
+    /// and is not reported.
+    pub instance_slots: u32,
+}
+
+impl PhaseCounts {
+    /// The phase's metrics in [`PHASE_METRICS`] order.
+    pub fn values(&self) -> [u32; PHASE_METRIC_COUNT] {
+        [
+            self.items,
+            self.bins,
+            self.batch_sets,
+            self.pipelines,
+            self.instance_batches,
+            self.instance_draws,
+            self.instance_slots,
+        ]
+    }
 }
 
 /// One view in one frame.
@@ -84,7 +134,10 @@ pub struct ViewCounts {
     pub label: String,
     pub kind: ViewKind,
     pub phases: Vec<PhaseCounts>,
-    /// Mesh preprocessing work items written for the view, all phases.
+    /// Mesh preprocessing work items written for the view, all phases:
+    /// **reserved, not surviving**. A GPU-authored instance batch reserves one
+    /// slot per instance slot of its capacity (the GPU fills them in), so this
+    /// counts the dispatch width, not what the cull let through.
     pub work_items: u32,
     /// Distinct render pipelines across the view's phases.
     pub pipelines: u32,
@@ -96,26 +149,53 @@ impl ViewCounts {
     }
 
     /// The view's metrics by name: `items`, `bins`, `batch_sets`,
-    /// `work_items`, `pipelines`, then `<phase>/<metric>` per phase.
+    /// `instance_batches`, `instance_draws`, `instance_slots`, `work_items`,
+    /// `pipelines`, then `<phase>/<metric>` per phase (every name in
+    /// [`PHASE_METRICS`]).
     pub fn metrics(&self) -> Vec<(String, u64)> {
         let mut out = vec![
             ("items".to_owned(), self.phase_sum(|p| p.items)),
             ("bins".to_owned(), self.phase_sum(|p| p.bins)),
             ("batch_sets".to_owned(), self.phase_sum(|p| p.batch_sets)),
+            ("instance_batches".to_owned(), self.phase_sum(|p| p.instance_batches)),
+            ("instance_draws".to_owned(), self.phase_sum(|p| p.instance_draws)),
+            ("instance_slots".to_owned(), self.phase_sum(|p| p.instance_slots)),
             ("work_items".to_owned(), u64::from(self.work_items)),
             ("pipelines".to_owned(), u64::from(self.pipelines)),
         ];
         for p in &self.phases {
-            for (metric, v) in [
-                ("items", p.items),
-                ("bins", p.bins),
-                ("batch_sets", p.batch_sets),
-                ("pipelines", p.pipelines),
-            ] {
+            for (metric, v) in PHASE_METRICS.into_iter().zip(p.values()) {
                 out.push((format!("{}/{metric}", p.phase), u64::from(v)));
             }
         }
         out
+    }
+}
+
+/// Preprocessing bind groups created in one render frame, by owner. Summed
+/// into `preprocess/bind_groups`, and each is its own gauge as well. Without
+/// GPU-authored instance batches `ranges` and `materialize` are 0 and the
+/// total equals `created`, so the S0 baseline stays comparable.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BindGroups {
+    /// Mesh preprocessing, indirect-parameter building, bin unpacking and
+    /// uniform allocation (the renderer rebuilds all of them every frame).
+    pub created: u32,
+    /// Range unpacking for the instance batches: one per view, phase and
+    /// indexed/non-indexed buffer that has ranges. Rebuilt every frame.
+    pub ranges: u32,
+    /// Instance-batch materialization: one per live batch, but cached on the
+    /// buffers it binds, so normally 0 after a batch's first frame and
+    /// non-zero again when its output buffer is resized.
+    pub materialize: u32,
+}
+
+impl BindGroups {
+    /// Every preprocessing bind group created this frame.
+    pub fn total(self) -> u32 {
+        self.created
+            .saturating_add(self.ranges)
+            .saturating_add(self.materialize)
     }
 }
 
@@ -126,7 +206,7 @@ pub struct ViewFrame {
     /// Distinct render pipelines across all views.
     pub distinct_pipelines: u32,
     /// Preprocessing bind groups created this frame, if known.
-    pub bind_groups: Option<u32>,
+    pub bind_groups: Option<BindGroups>,
 }
 
 /// Per-kind (or total) sums of one frame.
@@ -138,6 +218,13 @@ pub struct KindTotals {
     pub batch_sets: u64,
     pub work_items: u64,
     pub pipelines: u64,
+    /// GPU-authored instance batches drawn, summed over the kind's views and
+    /// phases (static-scene.md S3a2); a subset of `batch_sets`.
+    pub instance_batches: u64,
+    /// Indirect sub-draws inside those batches.
+    pub instance_draws: u64,
+    /// Output-buffer instance slots those batches reserved (pre-cull).
+    pub instance_slots: u64,
 }
 
 impl KindTotals {
@@ -148,9 +235,12 @@ impl KindTotals {
         self.batch_sets += v.phase_sum(|p| p.batch_sets);
         self.work_items += u64::from(v.work_items);
         self.pipelines += u64::from(v.pipelines);
+        self.instance_batches += v.phase_sum(|p| p.instance_batches);
+        self.instance_draws += v.phase_sum(|p| p.instance_draws);
+        self.instance_slots += v.phase_sum(|p| p.instance_slots);
     }
 
-    fn fields(&self) -> [(&'static str, u64); 6] {
+    fn fields(&self) -> [(&'static str, u64); 9] {
         [
             ("count", self.count),
             ("items", self.items),
@@ -158,6 +248,9 @@ impl KindTotals {
             ("batch_sets", self.batch_sets),
             ("work_items", self.work_items),
             ("pipelines", self.pipelines),
+            ("instance_batches", self.instance_batches),
+            ("instance_draws", self.instance_draws),
+            ("instance_slots", self.instance_slots),
         ]
     }
 }
@@ -177,20 +270,20 @@ impl ViewFrame {
         t
     }
 
-    /// One phase summed over every view: `[items, bins, batch_sets, pipelines]`,
-    /// phases in first-seen order.
-    pub fn phase_totals(&self) -> Vec<(&'static str, [u64; 4])> {
-        let mut out: Vec<(&'static str, [u64; 4])> = Vec::new();
+    /// One phase summed over every view, the metrics in [`PHASE_METRICS`]
+    /// order; phases in first-seen order.
+    pub fn phase_totals(&self) -> Vec<(&'static str, [u64; PHASE_METRIC_COUNT])> {
+        let mut out: Vec<(&'static str, [u64; PHASE_METRIC_COUNT])> = Vec::new();
         for p in self.views.iter().flat_map(|v| &v.phases) {
             let found = out.iter().position(|(n, _)| *n == p.phase);
             let i = if let Some(i) = found {
                 i
             } else {
-                out.push((p.phase, [0; 4]));
+                out.push((p.phase, [0; PHASE_METRIC_COUNT]));
                 out.len() - 1
             };
             let sums = &mut out[i].1;
-            for (s, v) in sums.iter_mut().zip([p.items, p.bins, p.batch_sets, p.pipelines]) {
+            for (s, v) in sums.iter_mut().zip(p.values()) {
                 *s += u64::from(v);
             }
         }
@@ -212,12 +305,19 @@ impl ViewFrame {
             f(u64::from(self.distinct_pipelines)),
         );
         for (phase, sums) in self.phase_totals() {
-            for (metric, v) in ["items", "bins", "batch_sets", "pipelines"].into_iter().zip(sums) {
+            for (metric, v) in PHASE_METRICS.into_iter().zip(sums) {
                 counters.set_named(&format!("phases/{phase}/{metric}"), unit::COUNT, f(v));
             }
         }
-        if let Some(n) = self.bind_groups {
-            counters.set_named("preprocess/bind_groups", unit::COUNT, f(u64::from(n)));
+        if let Some(b) = self.bind_groups {
+            for (name, v) in [
+                ("preprocess/bind_groups", b.total()),
+                ("preprocess/bind_groups_created", b.created),
+                ("preprocess/bind_groups_ranges", b.ranges),
+                ("preprocess/bind_groups_materialize", b.materialize),
+            ] {
+                counters.set_named(name, unit::COUNT, f(u64::from(v)));
+            }
         }
     }
 }
@@ -385,11 +485,28 @@ mod tests {
     use super::*;
 
     fn phase(phase: &'static str, items: u32, bins: u32, batch_sets: u32, pipelines: u32) -> PhaseCounts {
-        PhaseCounts { phase, items, bins, batch_sets, pipelines }
+        PhaseCounts { phase, items, bins, batch_sets, pipelines, ..PhaseCounts::default() }
+    }
+
+    /// A phase whose counts include `batches` GPU-authored instance batches
+    /// (`draws` indirect sub-draws over `slots` reserved instance slots).
+    fn phase_with_batches(
+        phase: &'static str,
+        items: u32,
+        bins: u32,
+        batch_sets: u32,
+        pipelines: u32,
+        (instance_batches, instance_draws, instance_slots): (u32, u32, u32),
+    ) -> PhaseCounts {
+        PhaseCounts { phase, items, bins, batch_sets, pipelines, instance_batches, instance_draws, instance_slots }
     }
 
     fn view(label: &str, kind: ViewKind, phases: Vec<PhaseCounts>, work_items: u32, pipelines: u32) -> ViewCounts {
         ViewCounts { label: label.to_owned(), kind, phases, work_items, pipelines }
+    }
+
+    fn bind_groups(created: u32, ranges: u32, materialize: u32) -> BindGroups {
+        BindGroups { created, ranges, materialize }
     }
 
     /// Main view with two phases, two cascades, two faces of two lamps
@@ -404,7 +521,31 @@ mod tests {
                 view("lamp.face0", ViewKind::LampFace, vec![phase("shadow", 3, 2, 1, 1)], 3, 1),
             ],
             distinct_pipelines: 5,
-            bind_groups: Some(12),
+            bind_groups: Some(bind_groups(12, 0, 0)),
+        }
+    }
+
+    /// The same frame once the static scene draws: the main view's opaque
+    /// phase gained 3 instance batches (4 sub-draws, 9000 reserved slots) on
+    /// top of its 10 entity-path batch sets, and every lamp face one batch.
+    fn frame_with_statics() -> ViewFrame {
+        ViewFrame {
+            views: vec![
+                view(
+                    "main",
+                    ViewKind::Main,
+                    vec![
+                        phase_with_batches("opaque3d", 103, 43, 13, 3, (3, 4, 9000)),
+                        phase("alpha_mask3d", 20, 8, 2, 1),
+                    ],
+                    9130,
+                    4,
+                ),
+                view("lamp.face0", ViewKind::LampFace, vec![phase_with_batches("shadow", 8, 6, 3, 1, (1, 1, 3000))], 3007, 1),
+                view("lamp.face0", ViewKind::LampFace, vec![phase_with_batches("shadow", 4, 3, 2, 1, (1, 1, 3000))], 3003, 1),
+            ],
+            distinct_pipelines: 5,
+            bind_groups: Some(bind_groups(12, 4, 3)),
         }
     }
 
@@ -412,7 +553,10 @@ mod tests {
     fn totals_per_kind_and_all() {
         let f = frame();
         let main = f.totals(Some(ViewKind::Main));
-        assert_eq!(main, KindTotals { count: 1, items: 120, bins: 48, batch_sets: 12, work_items: 130, pipelines: 4 });
+        assert_eq!(
+            main,
+            KindTotals { count: 1, items: 120, bins: 48, batch_sets: 12, work_items: 130, pipelines: 4, ..KindTotals::default() }
+        );
         let cascades = f.totals(Some(ViewKind::Cascade));
         assert_eq!((cascades.count, cascades.items, cascades.batch_sets), (2, 120, 11));
         let lamps = f.totals(Some(ViewKind::LampFace));
@@ -422,13 +566,72 @@ mod tests {
         assert_eq!((all.count, all.items, all.bins, all.batch_sets, all.pipelines), (5, 250, 120, 26, 10));
     }
 
+    /// static-scene.md S3a2 (`gs-patch-plan.md` step 3): the instance-batch
+    /// counts reach the per-kind sums, and `batch_sets` keeps counting them
+    /// too (it is the budget metric, so it must see the statics).
+    #[test]
+    fn instance_batch_totals_per_kind_and_all() {
+        let f = frame_with_statics();
+        let main = f.totals(Some(ViewKind::Main));
+        assert_eq!(
+            (main.instance_batches, main.instance_draws, main.instance_slots),
+            (3, 4, 9000),
+            "one view, one phase with batches"
+        );
+        assert_eq!(main.batch_sets, 15, "13 opaque (10 entity path + 3 batches) + 2 alpha mask");
+        let lamps = f.totals(Some(ViewKind::LampFace));
+        assert_eq!((lamps.instance_batches, lamps.instance_draws, lamps.instance_slots), (2, 2, 6000));
+        let all = f.totals(None);
+        assert_eq!((all.instance_batches, all.instance_draws, all.instance_slots), (5, 6, 15000));
+        // Without statics every instance counter is zero, so an S0 baseline
+        // taken before S3b stays a valid "before" measurement.
+        let before = frame().totals(None);
+        assert_eq!((before.instance_batches, before.instance_draws, before.instance_slots), (0, 0, 0));
+    }
+
     #[test]
     fn phase_totals_sum_over_views() {
         let totals = frame().phase_totals();
         assert_eq!(
             totals,
-            vec![("opaque3d", [100, 40, 10, 3]), ("alpha_mask3d", [20, 8, 2, 1]), ("shadow", [130, 72, 14, 6])]
+            vec![
+                ("opaque3d", [100, 40, 10, 3, 0, 0, 0]),
+                ("alpha_mask3d", [20, 8, 2, 1, 0, 0, 0]),
+                ("shadow", [130, 72, 14, 6, 0, 0, 0]),
+            ]
         );
+        let statics = frame_with_statics().phase_totals();
+        assert_eq!(
+            statics,
+            vec![
+                ("opaque3d", [103, 43, 13, 3, 3, 4, 9000]),
+                ("alpha_mask3d", [20, 8, 2, 1, 0, 0, 0]),
+                ("shadow", [12, 9, 5, 2, 2, 2, 6000]),
+            ]
+        );
+    }
+
+    /// `PHASE_METRICS` and [`PhaseCounts::values`] stay in lockstep: the
+    /// gauge names and the arrays `phase_totals` returns are zipped.
+    #[test]
+    fn phase_metric_names_match_the_values() {
+        let p = phase_with_batches("opaque3d", 1, 2, 3, 4, (5, 6, 7));
+        assert_eq!(p.values(), [1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(PHASE_METRICS.len(), p.values().len());
+        let by_name: BTreeMap<&str, u32> = PHASE_METRICS.into_iter().zip(p.values()).collect();
+        assert_eq!(by_name["batch_sets"], 3);
+        assert_eq!(by_name["instance_batches"], 5);
+        assert_eq!(by_name["instance_draws"], 6);
+        assert_eq!(by_name["instance_slots"], 7);
+    }
+
+    #[test]
+    fn bind_group_parts_sum_to_the_total() {
+        assert_eq!(bind_groups(12, 4, 3).total(), 19);
+        assert_eq!(BindGroups::default().total(), 0);
+        // No instance batches: the total is exactly the S0 number.
+        assert_eq!(bind_groups(12, 0, 0).total(), 12);
+        assert_eq!(bind_groups(u32::MAX, 1, 1).total(), u32::MAX, "saturating, never a panic");
     }
 
     #[test]
@@ -447,6 +650,33 @@ mod tests {
         assert_eq!(get("views/all/pipelines_distinct"), Some(5.0));
         assert_eq!(get("phases/shadow/items"), Some(130.0));
         assert_eq!(get("preprocess/bind_groups"), Some(12.0));
+        // Written every frame, zero without statics, so the columns are continuous.
+        assert_eq!(get("views/all/instance_batches"), Some(0.0));
+        assert_eq!(get("phases/opaque3d/instance_slots"), Some(0.0));
+        assert_eq!(get("preprocess/bind_groups_ranges"), Some(0.0));
+    }
+
+    #[test]
+    fn record_sets_the_instance_batch_gauges() {
+        let counters = Counters::new();
+        frame_with_statics().record(&counters);
+        let mut values = BTreeMap::new();
+        counters.drain(|_, def, v| {
+            values.insert(def.name.clone(), v);
+        });
+        let get = |n: &str| values.get(n).copied().flatten();
+        assert_eq!(get("views/main/instance_batches"), Some(3.0));
+        assert_eq!(get("views/main/instance_draws"), Some(4.0));
+        assert_eq!(get("views/main/instance_slots"), Some(9000.0));
+        assert_eq!(get("views/lamp_face/instance_batches"), Some(2.0));
+        assert_eq!(get("views/all/instance_slots"), Some(15000.0));
+        assert_eq!(get("phases/opaque3d/instance_draws"), Some(4.0));
+        assert_eq!(get("phases/shadow/instance_slots"), Some(6000.0));
+        assert_eq!(get("views/all/batch_sets"), Some(20.0), "15 main + 3 + 2 lamp faces");
+        assert_eq!(get("preprocess/bind_groups"), Some(19.0));
+        assert_eq!(get("preprocess/bind_groups_created"), Some(12.0));
+        assert_eq!(get("preprocess/bind_groups_ranges"), Some(4.0));
+        assert_eq!(get("preprocess/bind_groups_materialize"), Some(3.0));
     }
 
     #[test]

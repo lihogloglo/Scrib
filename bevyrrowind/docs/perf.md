@@ -79,6 +79,15 @@ Per-view render counters (static-scene.md S0; superfargoth `diag.md` "Render vie
 (`main`, `cascade`, `lamp_face`, `other`, `all`), `phases/<phase>/...`, `preprocess/bind_groups` in each run's `.md`
 gauges table and `.csv`, a per-view breakdown under `views` in the `.json`, and five summary columns.
 
+Since static-scene S3a2 (patch GS, vendored `own, GS: counters`) the same runs also carry the GPU-authored instance
+batches, in the `.md` gauges table and the `.csv` (not in the five summary columns): `views/<kind>/instance_batches`
+(one draw record per batch entity), `.../instance_draws` (indirect sub-draws inside those batch sets, one per geometry
+range), `.../instance_slots` (output-buffer instance slots reserved) and the same three on `phases/<phase>/`, plus
+`preprocess/bind_groups_{created,ranges,materialize}` whose sum is now `preprocess/bind_groups`. **Every one of them is
+0 in a run without statics**, and `views/*/batch_sets` and `preprocess/bind_groups` keep their old values there, so the
+S0 baseline below stays valid as the "before" of the S3b A/B - which is the whole point: before this, `batch_set_count`
+read only `self.batch_sets` and reported 0 extra draws for all statics.
+
 Scenarios: the five daytime benches **plus `balmora_night` and `balmora_walk_night`**. Lamp cube-face views exist
 only in the night scenarios (`perf/cli.rs`: both set `--hour 22`), so a daytime-only suite returns empty
 `views/lamp_face/*` columns — the kind the S0 baseline most needs. Owner, `dlss` build
@@ -123,6 +132,10 @@ design intent; none of them is a reason to re-plan the slices.
 - **Per-label "mean" is a per-label sum.** In the JSON `views` map a label's metrics are summed over every view
   sharing that label in the frame before the mean over frames; divide by that label's `views_per_frame` for a
   per-view figure.
+- **`work_items` and `instance_slots` are reserved, not surviving** (and this is by design, not a defect): a
+  GPU-authored instance batch reserves one preprocessing work item and one output-buffer slot per capacity slot, which
+  the GPU fills in, so both columns read the dispatch width rather than the instances the cull let through. The
+  surviving count exists only in `early_instance_count` on the GPU. Read them as cost, never as "visible statics".
 
 ### Static material classes (S2)
 

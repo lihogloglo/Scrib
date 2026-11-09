@@ -76,6 +76,42 @@ solving the same problem by some other means. Nothing in `docs/specs/static-scen
   counters, per-view level selection) stay in new files under `bevy_pbr/src/gpu_instance_batch/` and separate WGSL
   modules so they remain offerable upstream, but no slice waits on a merge (`docs/specs/static-scene.md` §6,
   `docs/specs/gs-patch-plan.md`).
+- **Patch GS as built**, marker `// superfargoth patch (own, GS: <tag>)`, `grep -rn "own, GS:" vendor` lists them.
+  Tag `range unpack in preprocess` (slice A, `docs/specs/gs-patch-plan.md` step 1): the range-unpacking dispatch
+  moved out of `GpuInstanceBatchPlugin`'s `Core3d` system registration and into `early_gpu_preprocess`
+  (`bevy_pbr/src/render/gpu_preprocess.rs`, private `dispatch_range_unpacking`, its own compute pass before
+  `early_mesh_preprocessing`), so **every** schedule that preprocesses also unpacks: `Core3d`, `Core3dShadows`
+  (#26149) and `sf_shadow_cache_bevy`'s `LampShadowView`. #25978 registered it in `Core3d` only, so the two shadow
+  schedules read `push_range`'s `push_multiple_uninit` reservations as uninitialised GPU memory. Offerable to
+  #25978 as a review fix. Still a no-op without the plugin (the pipeline id stays `None`).
+- Tag `counters` (slice A, plan step 3), **Scrib-specific**, kept separable from the `own: phase counts` /
+  `own: preprocess bind group count` bodies of work: `BinnedRenderPhase::batch_set_count` adds
+  `instance_batch_draws.len()` (it read only `self.batch_sets`, while instance batches draw from
+  `instance_batch_draws` and register their batch sets straight on the indirect buffers, so the one number
+  static-scene.md's "batch sets per view" budget gates on reported **zero** extra draws for every static), plus
+  read-only `instance_batch_draw_count`, `instance_batch_indirect_draw_count` and `instance_batch_slot_count`
+  (reserved, pre-cull: the surviving count is GPU-only). `PreprocessBindGroupCount` gains `ranges` and `materialize`,
+  set by `prepare_range_unpacking_bind_groups` and `gpu_instance_batch::materialize::prepare_bind_groups` - both were
+  uncounted. Counters only, no behaviour change; read by `sf_diag_bevy::RenderViewsPlugin`, summed in Bevy-free
+  `sf_diag::views` (`PhaseCounts::{instance_batches, instance_draws, instance_slots}`, `BindGroups`).
+- Tag `guards` (slice A, plan step 4), three of them, **no behaviour change in any view**:
+  (a) `mesh_preprocess.wesl`'s `is_active` gate gets its own `@if(FRUSTUM_CULLING)` statement instead of sitting
+  inside the frustum-cull block, so the two independent tests stop reading as one. **Defence in depth, not a bug
+  fix:** `mesh_culling_data` is bound only under that def, so the gate is unreachable - not bypassed - in a view
+  without it, and such a view (`direct_preprocess` ⇔ `NoIndirectDrawing`) gets no instance-batch work items and no
+  draw record at all. The real hardware floor below is what statics hit there; the gate becomes def-independent only
+  when `is_active` moves into `MeshInput.flags`.
+  (b) `GpuInstanceBatchPlugin` `.chain()`s `prepare_gpu_batched_mesh_reservations` before
+  `prepare_gpu_batched_mesh_draws` (#25978 left them unordered in a tuple; harmless today, and step 2's per-range
+  validation will read the reservation).
+  (c) **Hardware floor, documented** on `GpuBatchedMesh3d` and here: GPU instance batches require
+  `GpuPreprocessingMode::Culling`. An adapter limited to `PreprocessingOnly`, and a camera or inherited view with
+  `NoIndirectDrawing`, draw **none** - `batch_and_prepare_binned_render_phase` and its sorted twin `continue` on
+  `no_indirect_drawing` and `push_range` returns `None` on a `Direct` work-item buffer, so the statics are absent
+  there, never drawn un-culled. A producer needing something on such an adapter falls back to `Mesh3d` entities
+  itself. Our own inherited shadow views (`sf_sky_bevy::sun_view`, `sf_shadow_cache_bevy::render`) only take
+  `NoIndirectDrawing` from the camera or from the adapter clamp, so they never individually lose indirect drawing.
+  (a) and (c) are offerable to #25978 as review suggestions.
 
 ## Upstream PR fixes
 
