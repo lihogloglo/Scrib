@@ -662,6 +662,8 @@ fn prepare_gpu_batched_mesh_draws(
             MeshCullingData::new(draw.local_bounds.as_ref()),
             base,
             draw.max_capacity,
+            // superfargoth patch (own, GS: ranges)
+            &gpu_ranges,
         );
         batch.input_range = base..scratch_end;
         // superfargoth patch (own, GS: ranges): one span per range, in slot
@@ -681,7 +683,6 @@ fn prepare_gpu_batched_mesh_draws(
                 })
                 .collect()
         };
-        let _ = gpu_ranges;
     }
     if !materialization.jobs.is_empty() {
         input.reserve_gpu(scratch_end, &device);

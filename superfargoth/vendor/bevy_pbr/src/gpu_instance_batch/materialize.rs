@@ -3,7 +3,7 @@ use bevy_app::App;
 use bevy_asset::{embedded_asset, load_embedded_asset};
 use bevy_ecs::prelude::*;
 // superfargoth patch (own, GS: ranges): `Vec3` and `Pod` for the range record.
-use bevy_math::{UVec2, Vec3};
+use bevy_math::Vec3;
 use bytemuck::{Pod, Zeroable};
 use bevy_render::{
     batching::gpu_preprocessing::BatchedInstanceBuffers,
@@ -11,8 +11,8 @@ use bevy_render::{
     render_resource::{
         binding_types::{storage_buffer, storage_buffer_read_only, uniform_buffer},
         BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BufferId,
-        CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache,
-        ShaderStages, ShaderType, UniformBuffer,
+        BufferUsages, CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor,
+        PipelineCache, RawBufferVec, ShaderStages, ShaderType, UniformBuffer,
     },
     renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue},
     sync_world::MainEntityHashMap,
@@ -65,15 +65,46 @@ struct MaterializationMetadata {
     bounds: MeshCullingData,
     input_base: u32,
     capacity: u32,
-    pad: UVec2,
+    // superfargoth patch (own, GS: ranges): in place of one `pad` word, so the
+    // struct stays 16-aligned. 0 = no range table: the shader then takes
+    // exactly the path it took before this patch.
+    range_count: u32,
+    pad: u32,
 }
 
-#[derive(Default)]
 pub(super) struct MaterializationJob {
     metadata: UniformBuffer<MaterializationMetadata>,
     bind_group: Option<BindGroup>,
-    bound_buffers: Option<[BufferId; 3]>,
+    // superfargoth patch (own, GS: ranges): four ids now - the range buffer's
+    // identity changes when it grows, and a stale bind group would then point
+    // at the freed buffer.
+    bound_buffers: Option<[BufferId; 4]>,
+    // superfargoth patch (own, GS: ranges)
+    /// This batch's geometry ranges, in slot order. Always holds at least one
+    /// record (a storage binding cannot be empty); `range_count` says how many
+    /// of them the shader may read.
+    ranges: RawBufferVec<GpuBatchGeometryRange>,
+    range_count: u32,
+    /// Set when `ranges` changed, cleared once it has been uploaded:
+    /// `RawBufferVec::write_buffer` re-uploads unconditionally, and the table
+    /// only changes when a producer republishes or a slab moves.
+    ranges_dirty: bool,
     pub(super) active: bool,
+}
+
+// superfargoth patch (own, GS: ranges): `RawBufferVec` has no `Default`.
+impl Default for MaterializationJob {
+    fn default() -> Self {
+        Self {
+            metadata: UniformBuffer::default(),
+            bind_group: None,
+            bound_buffers: None,
+            ranges: RawBufferVec::new(BufferUsages::STORAGE),
+            range_count: 0,
+            ranges_dirty: false,
+            active: false,
+        }
+    }
 }
 
 impl MaterializationJob {
@@ -83,14 +114,34 @@ impl MaterializationJob {
         bounds: MeshCullingData,
         input_base: u32,
         capacity: u32,
+        // superfargoth patch (own, GS: ranges): empty = draw the batch's own
+        // mesh over every slot, which is upstream #25978.
+        ranges: &[GpuBatchGeometryRange],
     ) {
         self.metadata.set(MaterializationMetadata {
             template,
             bounds,
             input_base,
             capacity,
-            pad: UVec2::ZERO,
+            range_count: ranges.len() as u32,
+            pad: 0,
         });
+        // superfargoth patch (own, GS: ranges): compare the records rather
+        // than hash them - the table is short, the comparison is exact, and
+        // `ranges` empty on the first update must still upload the one record
+        // that keeps the binding non-empty.
+        let unchanged = !self.ranges.is_empty()
+            && self.range_count == ranges.len() as u32
+            && self.ranges.values()[..ranges.len()] == *ranges;
+        if !unchanged {
+            self.range_count = ranges.len() as u32;
+            self.ranges.clear();
+            self.ranges.values_mut().extend_from_slice(ranges);
+            if self.ranges.is_empty() {
+                self.ranges.push(GpuBatchGeometryRange::default());
+            }
+            self.ranges_dirty = true;
+        }
         self.active = true;
     }
 }
@@ -147,6 +198,8 @@ fn init_pipeline(
                 storage_buffer_read_only::<GpuMeshInstance>(false),
                 storage_buffer::<MeshInputUniform>(false),
                 storage_buffer::<MeshCullingData>(false),
+                // superfargoth patch (own, GS: ranges): the range table.
+                storage_buffer_read_only::<GpuBatchGeometryRange>(false),
             ),
         ),
     );
@@ -201,7 +254,17 @@ fn prepare_bind_groups(
             continue;
         };
         job.metadata.write_buffer(&device, &queue);
-        let buffers = [output.id(), input.id(), culling.id()];
+        // superfargoth patch (own, GS: ranges): upload the range table before
+        // anything can bind it. `write_buffer` reserves, so the buffer's
+        // identity can change here, which is why it joins `bound_buffers`.
+        if job.ranges_dirty {
+            job.ranges.write_buffer(&device, &queue);
+            job.ranges_dirty = false;
+        }
+        let Some(ranges) = job.ranges.buffer() else {
+            continue;
+        };
+        let buffers = [output.id(), input.id(), culling.id(), ranges.id()];
         if job.bound_buffers == Some(buffers) {
             continue;
         }
@@ -216,6 +279,8 @@ fn prepare_bind_groups(
                 output.as_entire_binding(),
                 input.as_entire_binding(),
                 culling.as_entire_binding(),
+                // superfargoth patch (own, GS: ranges)
+                ranges.as_entire_binding(),
             )),
         ));
     }
