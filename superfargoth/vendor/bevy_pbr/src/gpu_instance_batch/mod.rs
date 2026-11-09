@@ -59,8 +59,11 @@ use crate::{
     RenderMeshInstanceBatch, RenderMeshInstanceBatches,
 };
 use crate::{
-    early_gpu_preprocess, prepare_preprocess_pipelines, prepare_range_unpacking_bind_groups,
-    prepare_range_unpacking_pipeline, unpack_bins, unpack_ranges, RangeUnpackingPipeline,
+    // superfargoth patch (own, GS: range unpack in preprocess): the range dispatch moved inside
+    // `early_gpu_preprocess`, so this plugin no longer registers a system into any schedule
+    // (`unpack_ranges`, `unpack_bins` and `early_gpu_preprocess` are no longer named here).
+    prepare_preprocess_pipelines, prepare_range_unpacking_bind_groups,
+    prepare_range_unpacking_pipeline, RangeUnpackingPipeline,
 };
 use bevy_render::{render_resource::SpecializedComputePipelines, GpuResourceAppExt};
 use materialize::GpuInstanceMaterialization;
@@ -191,15 +194,14 @@ impl Plugin for GpuInstanceBatchPlugin {
                         resource_exists::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
                     ),
             )
-            .add_systems(
-                bevy_core_pipeline::Core3d,
-                unpack_ranges
-                    .after(unpack_bins)
-                    .before(early_gpu_preprocess)
-                    .run_if(
-                        resource_exists::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
-                    ),
-            )
+            // superfargoth patch (own, GS: range unpack in preprocess): #25978 registered
+            // `unpack_ranges` here, into `bevy_core_pipeline::Core3d` only, so the point/spot
+            // shadow schedule (`Core3dShadows`, patch #26149) and `sf_shadow_cache_bevy`'s
+            // `LampShadowView` never unpacked and read uninitialised work items. The dispatch
+            // now lives inside `early_gpu_preprocess`, which every such schedule runs, so there
+            // is nothing to register per schedule. `prepare_range_unpacking_pipeline` and
+            // `prepare_range_unpacking_bind_groups` stay here: with this plugin absent the
+            // pipeline id stays `None` and the dispatch is skipped, so the port stays opt-in.
             .init_resource::<ExtractedGpuBatchedMeshes>()
             .init_gpu_resource::<GpuInstanceBatchReservations>()
             .add_systems(ExtractSchedule, extract_gpu_batched_meshes)

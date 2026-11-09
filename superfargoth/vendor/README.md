@@ -76,6 +76,14 @@ solving the same problem by some other means. Nothing in `docs/specs/static-scen
   counters, per-view level selection) stay in new files under `bevy_pbr/src/gpu_instance_batch/` and separate WGSL
   modules so they remain offerable upstream, but no slice waits on a merge (`docs/specs/static-scene.md` §6,
   `docs/specs/gs-patch-plan.md`).
+- **Patch GS as built**, marker `// superfargoth patch (own, GS: <tag>)`, `grep -rn "own, GS:" vendor` lists them.
+  Tag `range unpack in preprocess` (slice A, `docs/specs/gs-patch-plan.md` step 1): the range-unpacking dispatch
+  moved out of `GpuInstanceBatchPlugin`'s `Core3d` system registration and into `early_gpu_preprocess`
+  (`bevy_pbr/src/render/gpu_preprocess.rs`, private `dispatch_range_unpacking`, its own compute pass before
+  `early_mesh_preprocessing`), so **every** schedule that preprocesses also unpacks: `Core3d`, `Core3dShadows`
+  (#26149) and `sf_shadow_cache_bevy`'s `LampShadowView`. #25978 registered it in `Core3d` only, so the two shadow
+  schedules read `push_range`'s `push_multiple_uninit` reservations as uninitialised GPU memory. Offerable to
+  #25978 as a review fix. Still a no-op without the plugin (the pipeline id stays `None`).
 
 ## Upstream PR fixes
 
