@@ -209,7 +209,9 @@ impl Frustum {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneView {
     /// Where the view is seen from. An orthographic view has no eye point: its LOD and
-    /// sub-pixel tests ignore this, and only the horizon pre-cull (main views) reads it.
+    /// sub-pixel tests ignore this, and only the horizon pre-cull (main views) reads it — which
+    /// is why `horizon` and [`SceneProjection::Orthographic`] together are a caller bug
+    /// ([`cull_cell`] asserts it in debug builds).
     pub eye: Vec3,
     pub frustum: Frustum,
     /// Drawn layers; a table needs one in common ([`crate::StaticCellTable::layers`]).
@@ -222,7 +224,8 @@ pub struct SceneView {
     /// the sub-pixel cull off**, and that is the default for shadow views
     /// ([`ScenePreset::size_cull_px`]).
     pub size_cull_px: f32,
-    /// Apply the terrain horizon (exterior main views).
+    /// Apply the terrain horizon (exterior main views). Never on an orthographic view: it has no
+    /// eye point and the test marches from `eye` ([`cull_cell`], [`HorizonGrid::land_hides`]).
     pub horizon: bool,
 }
 
@@ -381,6 +384,15 @@ pub fn cull_instance(view: &SceneView, instance: &StaticInstance, offset: Vec3, 
 /// The whole cell: pre-cull (the table's layers, the AABB against the frustum, then the horizon
 /// when `view.horizon` and a grid are given), then every instance; promoted placements count as
 /// inactive. Work items are appended to `out` in table order.
+///
+/// # Panics
+///
+/// Debug builds only: `view.horizon` on an orthographic view. The horizon test marches from
+/// `view.eye` ([`HorizonGrid::land_hides`]) and an orthographic view has no eye point, so the
+/// combination has no meaning and the result would depend on whatever was left in `eye`. Both
+/// fields document it; the assert is so the slices that build shadow views (S5) cannot get it
+/// wrong silently. Not an error in release: a release build culls one cell too few or too many,
+/// which must never take the game down.
 pub fn cull_cell(
     view: &SceneView,
     cell: u32,
@@ -390,6 +402,11 @@ pub fn cull_cell(
     promotions: &Promotions,
     out: &mut Vec<WorkItem>,
 ) -> CullStats {
+    debug_assert!(
+        !(view.horizon && matches!(view.projection, SceneProjection::Orthographic { .. })),
+        "SceneView::horizon on an orthographic view: it has no eye point, and the horizon test \
+         marches from SceneView::eye (HorizonGrid::land_hides). Shadow views set horizon: false."
+    );
     let mut stats = CullStats::default();
     let n = u32::try_from(table.len()).unwrap_or(u32::MAX);
     if table.layers() & view.layers == 0 {

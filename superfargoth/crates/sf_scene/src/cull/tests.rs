@@ -503,3 +503,29 @@ fn ortho_sub_pixel_cull_is_in_map_texels() {
     let every = SceneView { size_cull_px: 0.0, ..v };
     assert_eq!(cull_instance(&every, &inst(1, Vec3::new(0.0, 0.0, -10.0), 1e-4), Vec3::ZERO, [0.0]), Verdict::Draw { level: 0 });
 }
+
+/// An orthographic view has no eye point, so `horizon` on one cannot mean anything: the test
+/// marches from `SceneView::eye`. A debug build says so instead of culling cells off a
+/// meaningless value (release builds carry on: this must never take the game down).
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "orthographic view")]
+fn the_horizon_on_an_orthographic_view_is_a_caller_bug() {
+    let bytes = cell_table().write().unwrap();
+    let table = StaticCellTableView::parse(&bytes).unwrap();
+    let v = SceneView { horizon: true, ..ortho_view(Vec3::ZERO, 2048.0, 64.0) };
+    cull_cell(&v, 0, &table, Vec3::ZERO, None, &Promotions::new(), &mut Vec::new());
+}
+
+/// The same view without the horizon is fine, and so is a perspective view with it: the assert
+/// is about the pair, not about either field.
+#[test]
+fn an_orthographic_view_culls_without_the_horizon() {
+    let bytes = cell_table().write().unwrap();
+    let table = StaticCellTableView::parse(&bytes).unwrap();
+    let ortho = ortho_view(Vec3::new(0.0, 0.0, -256.0), 2048.0, 256.0);
+    assert!(!ortho.horizon);
+    let mut out = Vec::new();
+    let stats = cull_cell(&ortho, 0, &table, Vec3::new(0.0, 0.0, -256.0), None, &Promotions::new(), &mut out);
+    assert_eq!(stats.drawn + stats.frustum + stats.sub_pixel + stats.inactive, 5);
+}
