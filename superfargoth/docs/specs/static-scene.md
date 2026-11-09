@@ -10,6 +10,12 @@ Corrected 2026-11-09 against three documents that hold the evidence for every ci
 [gs-patch-plan.md](gs-patch-plan.md). Both audits' verdict: the architecture is right, the spec was wrong about what the
 ported upstream PR can express.
 
+**Doc budget: an accepted exception, revisit at S9.** The house budget is 25 KB; this spec is over it and the overage is
+normative — the contract for a nine-slice system carrying a vendored renderer fork, with §4's cull and LOD math the one
+rule a CPU twin and a GPU pass must both be held to. Mechanism lives where it has an authoritative home instead (§2 →
+the `sf_scene::table`/`::chain` module docs, §3 → [scene-runtime-plan.md](scene-runtime-plan.md), §6 →
+[gs-patch-plan.md](gs-patch-plan.md), history → [archive/static-scene-s0-s2.md](archive/static-scene-s0-s2.md)).
+
 Replaces, once complete, per-entity statics (`sf_world_bevy` `spawn_template_ranges`) and the near-cell
 precombine ([precombine.md](precombine.md)); absorbs far-field selection ([far-field.md](far-field.md)). Hard problem H1
 (`bevyrrowind/docs/hard-problems.md`). Research: [spud-code-2026-11-08](../research/spud-code-2026-11-08.md).
@@ -47,24 +53,18 @@ renderer, a CPU-side cull.
 
 ## Industry comparison
 
-| Engine | Static placements are | Cull | Shadows |
-|---|---|---|---|
-| UE5 | packed per-instance data in GPU Scene (ISM/HISM, Nanite), uploaded on change | GPU compute per view, two-pass Hi-Z; non-Nanite occlusion cull opt-in | same instance cull per shadow view, per VSM mip/clipmap level |
-| Unity 6 | MeshRenderers auto-converted to BatchRendererGroup instances (GPU Resident Drawer), persistent on the GPU | GPU; occlusion cull off by default | one view per cascade or shadow map; small-mesh thresholds per cascade |
-| Ubisoft Montreal + RedLynx (SIGGRAPH 2015) | persistent GPU scene, 64-triangle clusters | GPU: frustum, baked per-cluster visibility mask, two-phase Hi-Z | same pipeline, per cascade |
-| id Tech 7 (Doom Eternal) | bindless; surviving triangles merged into one indirect index buffer per Geometry Set | GPU triangle cull on top of CPU culling; **LOD is CPU-side** | cached atlas per light, not the same buffer |
-| SPUD (Skyrim, C++) | per-cell POD arrays, persistent instance table | **CPU** per view, counting sort to MDI | same path |
-| Creation Engine, OpenMW | scene-graph nodes, offline merge (precombines, object paging) | CPU | per node |
+**Canonical technique:** the retained GPU scene with per-view GPU instance culling and indirect draws. UE5 (ISM/HISM,
+Nanite), Unity 6's GPU Resident Drawer, Ubisoft Montreal + RedLynx (SIGGRAPH 2015), id Tech 7 and SPUD (Skyrim) all
+keep static placements as packed per-instance data uploaded on change and cull per view — on the GPU everywhere but
+SPUD, whose cull is CPU. Creation Engine and OpenMW keep scene-graph nodes with an offline merge: **that is our row
+today, and precombine was its merge step.** The sourced table, with the one row it could not source, is the
+architecture review §0 (which corrected four of our rows on 2026-11-09).
 
-Rows verified 2026-11-09 by the architecture review §0 (sources, quotes, and the Decima row it could not source, which
-was dropped). **Canonical technique:** the retained GPU scene with per-view GPU instance culling and indirect draws;
-our row today is the Creation Engine row and precombine was its merge step. We take the GPU variant of SPUD's data
-model because what scales with views on the CPU is the number of **phase items**, which this design makes
-O(batch sets) rather than O(entities) — Haar & Aaltonen measured exactly that ("CPU: 1-2 orders of magnitude less
-drawcalls… GPU: 20-40 % triangles culled… only small overall gain"). The fallback if the patch proves too large is SPUD
-as-is: a CPU cull feeding `multi_draw_indirect` through a bypass phase. Nothing does this for Bevy 0.20 (survey
-2026-11-08: meshlets opaque-only and Vulkan/Metal-only, `bevy_feronia`/`bevy_eidolon` foliage scatter,
-`nightshade-renderer` read-for-ideas), so the base is upstream **bevyengine/bevy#25978** (§6).
+We take the GPU variant of SPUD's data model because what scales with views on the CPU is the number of **phase
+items**, which this design makes O(batch sets) rather than O(entities) — Haar & Aaltonen measured exactly that ("CPU:
+1-2 orders of magnitude less drawcalls… GPU: 20-40 % triangles culled… only small overall gain"). The fallback if the
+patch proves too large is SPUD as-is: a CPU cull feeding `multi_draw_indirect` through a bypass phase. Nothing does
+this for Bevy 0.20 (survey 2026-11-08), so the base is upstream **bevyengine/bevy#25978** (§6).
 
 ## Design
 
@@ -87,19 +87,41 @@ place with the same placement id. Promotion is one-way for the life of the cell 
 cell unloads. Promotions are not saved: they are a consequence of gameplay state that is (record overlay, physics).
 
 **Risk, and S3a2 scope.** `is_active` is read inside `@if(FRUSTUM_CULLING)` (`mesh_preprocess.wesl:190-194`), a def set
-only for the indirect pipelines, so wherever a view preprocesses without GPU frustum culling a promoted placement draws
-**twice** — entity plus stale instance — as does everything the cull rejected (architecture review S0). Moving the test
-out of that block is one upstreamable line; until it lands, statics rest on the `Culling` hardware floor below.
+only for the indirect pipelines, so a view that preprocesses without GPU frustum culling never tests it. **What such a
+view shows is under investigation 2026-11-09**: the architecture review (S0) reads it as a promoted placement drawn
+**twice**, entity plus stale instance; the port audit (A9) holds the path unreachable today because those views are
+`no_indirect_drawing` and **drop instance batches entirely**, so the statics go **missing** instead. Either way the two
+guards are independent and should not be: moving the test out of that block is one upstreamable line, and until it
+lands statics rest on the `Culling` hardware floor below.
 
 ### 2. Data model (bake output, `sf_scene`, Bevy-free)
 
 Per streaming cell, a `StaticCellTable`, baked by a new `scene.cells` step keyed by the cell's records + mod-set hash
-([bake.md](bake.md)), versioned, **read as an owned buffer and parsed in place** by `StaticCellTableView` (§3). Per
-instance (80 B, 16-aligned, GPU layout): the cell-local **placement id** (so promotion and picking carry
-(cell, placement)), a cell-relative 3×4 transform, the part's own **bounding sphere**, a cell-local **LOD chain**
-index, `material_override` and flags (casts shadow, alpha-masked, wind). Per cell: the layer mask, an AABB, the land's
-minimum height (§4) and the cell's range in the GPU table. Byte layout and the S1a-S1c history: the `sf_scene::table`
-and `::chain` module docs and [archive/static-scene-s0-s2.md](archive/static-scene-s0-s2.md).
+([bake.md](bake.md)), versioned, **read as an owned buffer and parsed in place** by `StaticCellTableView` (§3).
+**Every field, the byte layout and the S1a-S1c history are in the `sf_scene::table` and `sf_scene::chain` module
+docs** — authoritative, and where an implementer looks — and in
+[archive/static-scene-s0-s2.md](archive/static-scene-s0-s2.md). The decisions they implement:
+
+- **One instance per (placement, material part)**, sorted by (placement, part), and the 80 B record *is* the GPU
+  layout: stream-in uploads it rather than re-packing it. It names its placement by a **cell-local id** (so promotion
+  and picking carry (cell, placement)) and its transform is **cell-relative**, so an origin shift rewrites nothing (§3).
+- **Chains are cell-local** since format v2 — a dense index into the table's own chains — so **a cell loads on its
+  own**; a global chain id collided silently across cells and could not index a GPU table. Stream-in maps each to a
+  global dense **chain slot** keyed by mesh key. A chain record carries the material class (a pure function of the
+  chain, so it moved off the instance) and a 64-bit **material key**, a content hash of the cooked material, so models
+  sharing a material share one bindless slot (§5). A chain is one (model, part), levels finest first, a level without
+  the part repeating the finer one.
+- **Format v3 and a new `scene.chains` bake step, approved 2026-11-09.** A chain's `mesh_key` is a blake3 hash and so
+  not invertible: a v2 table cannot tell the runtime which model a chain came from, and there is no path from a baked
+  table to a mesh without a format change. v3 spends reserved bytes on a model index and material index per chain plus
+  a model-subject section, and `scene.chains` bakes each chain's geometry so the runtime loads a handle instead of
+  concatenating at stream-in. Safe to take now and **never again**: nothing has ever been baked — `bake_scene` is still
+  not called by `bevyrrowind bake`. Format, bake step and costs: scene-runtime-plan.md §3.
+- **Reserved means rejected on read**: `material_override` ≠ 0, `FAR_ONLY` (S7) and `OCCLUDER` (S6) make a baked table
+  an error (`InstanceFlags::NOT_BAKED`, `sf_scene/src/table.rs:102,427`); `INACTIVE` is runtime-only (§1), likewise.
+- **Per-part bounds**: an instance's sphere bounds its *part's* LOD0 vertices, so a small part culls as itself, not as
+  its building. A cell with a hole or no land reports a land minimum of **negative infinity** and hides nothing
+  behind it.
 
 A `LodChain` is **one allocation** in Bevy's mesh allocator, its levels **concatenated, not vertex-shared**:
 `sf_model::cook` ends each level with `optimize_vertex_fetch` (`sf_model/src/cook.rs:449-455`), so `chain_layout`
@@ -109,51 +131,39 @@ change.** Per-level vertex-fetch optimisation is a real GPU win, each level keep
 `draw_indexed_indirect` so selecting a level is still selecting an index range, and the property the design needs — a
 chain is one allocation, so **LOD never changes the instance or its batch** — holds either way. (SPUD shares vertices
 because meshoptimizer's `simplify` returns indices into the original array; we traded that for fetch locality. The cost
-is in the Memory risk, not in a re-cook.)
-
-The rest of the live contract (full detail in the archive):
-
-- **One instance per (placement, material part)**, sorted by (placement, part). A chain is one (model, part), levels
-  finest first, a level without the part repeating the finer one; mesh key = hash(`mesh.cook` key, material index).
-- **Chains are cell-local** since v2 (a dense index into the table's own chains), so a cell loads on its own.
-  Stream-in maps each to a **global dense chain slot** keyed by mesh key (`chain_index`, `write_remapped`); the GPU
-  chain table is indexed by slot. The 32 B chain record carries the level range, the material class (a pure function
-  of the chain) and a 64-bit **material key** (content hash of the cooked material), so models sharing a material
-  share one bindless slot (§5).
-- `material_override`, `FAR_ONLY` (S7) and `OCCLUDER` (S6) are reserved and the v2 reader **rejects** a table that sets
-  them (`InstanceFlags::NOT_BAKED`, `sf_scene/src/table.rs:102,427`); `INACTIVE` is runtime-only (§1), likewise
-  rejected on read.
-- **Per-part bounds:** an instance's sphere bounds its part's LOD0 vertices (coarser levels use a subset), so a small
-  part culls as itself, not as its building. A cell with a hole or no land reports a land minimum of **negative
-  infinity** and hides nothing behind it.
+is in the Memory risk, not a re-cook.)
 
 ### 3. The GPU scene (`sf_scene_bevy`)
 
-- One `StaticScene` per loaded space (worldspace or interior), owning a persistent instance buffer, a free-list slot
-  allocator and `cell → slot range`.
+The CPU half's work order is [scene-runtime-plan.md](scene-runtime-plan.md); the decisions:
+
+- One `StaticScene` per loaded space (worldspace or interior), owning a persistent instance buffer, a slot allocator
+  and `cell → slot range`.
 - **Stream-in:** the streaming scheduler ([streaming.md](streaming.md) "Scheduler and budgets") uploads a cell's table
-  into a contiguous range within the per-frame upload budget. No *placement* entity spawns; the chain mesh build below
+  into a contiguous range within the per-frame upload budget. No *placement* entity spawns; the chain geometry it needs
   is work the budget must still carry. **Stream-out:** the range is released after the frames in flight are done.
-- **No in-place read.** `sf_bake::Store::get` returns an owned `Vec<u8>` and decompresses (`sf_bake/src/store.rs:76`);
-  there is no borrowing or mmap read, so a table is read as an **owned buffer** that `StaticCellTableView` parses in
-  place (the view borrows its bytes, so the asset owns the `Vec`). `CellsStep::compress() -> false`
-  (`sf_scene/src/bake.rs:617`) is the prerequisite and is already in place; a borrowing or mmap `Store` API is a
-  separate `sf_bake` slice that **nobody owns yet**.
+- **No in-place read:** `sf_bake::Store::get` returns an owned, decompressed `Vec<u8>` (`sf_bake/src/store.rs:76`), so a
+  table is read as an **owned buffer** that `StaticCellTableView` parses in place. `CellsStep::compress() -> false`
+  (`sf_scene/src/bake.rs:617`) is the prerequisite and is in place; a borrowing or mmap `Store` API would be its own
+  `sf_bake` slice and **nobody owns one**.
 - **Mesh allocator slabs can move** (`meshes_displaced_by_slab_growth`, `bevy_render/src/mesh/allocator.rs:285-296`,
   documented as *not* the full set of changed buffers): instances store a chain **slot**, **never a raw mesh-allocator
-  offset**, and offsets are resolved per frame from the allocator through a small chain table. The old
-  bevyengine/bevy#26456 citation is withdrawn — closed as a duplicate 2026-11-08, diagnosis retracted; the real bug was
-  #25595, fixed by #26095, which we already vendor. The rule rests on the allocator's own contract, not on that bug:
-  **resolve per frame, never cache an offset. Do not "simplify" this later.**
-- **The global chain table is missing, and is S3b scope**: who allocates and frees a global chain slot; who holds the
-  `Handle<Mesh>` and refcounts chain mesh **residency across cells** (a chain outlives any one cell that referenced
-  it); what the cull does with an instance whose chain mesh is not yet in `MeshAllocator` (today, a garbage index
-  range); and who runs the per-chain **concatenate-and-rebase** that `sf_scene/src/chain.rs:13-14` assigns to "the
-  runtime" — stream-in CPU work in no budget and no streaming stage (architecture review B3).
-- **Fragmentation has no end state.** `sf_scene::alloc` is first-fit, never compacts, `high_water` only grows
-  (`sf_scene/src/alloc.rs:1-8,86-110`), and every cell needs a *contiguous* range, so a long session fragments and the
-  buffer creeps; `SlotStats::fragmentation` reports it and nothing acts. Compaction, per-cell size classes, or dropping
-  contiguity for a per-cell range list the dispatch reads: an **open S3b design item** (architecture review S10).
+  offset**, and offsets are resolved per frame from the allocator through a small chain table. The rule rests on the
+  allocator's own contract, not on any one bug (the withdrawn #26456 citation: archive): **resolve per frame, never
+  cache an offset. Do not "simplify" this later.**
+- **A global chain table is S3b scope** and the spec does not yet name its owner: who allocates and frees a global
+  chain slot, who holds the `Handle<Mesh>` and refcounts chain mesh **residency across cells** (a chain outlives any
+  one cell that referenced it), and what the cull does with an instance whose chain mesh is not yet in `MeshAllocator`
+  (today, a garbage index range) (architecture review B3). The per-chain **concatenate-and-rebase** that
+  `sf_scene/src/chain.rs:13-14` assigns to "the runtime" is **no longer runtime work**: it moves into the `scene.chains`
+  bake step below, because at stream-in it has no budget and no streaming stage.
+- **Instance-slot fragmentation is bounded by construction, not by compaction.** `sf_scene::alloc` is first-fit, never
+  compacts and `high_water` only grows (`sf_scene/src/alloc.rs:1-8,86-110`), which creeps over a long session
+  (architecture review S10). **Decision 2026-11-09: a segregated size-class allocator per batch** (blocks never split
+  or merged, so the high-water mark converges on the ring configuration) and **batch capacity fixed at config, never
+  grown at stream-in** — growing it reallocates the output buffer and rebuilds a bind group, which "stream-in ≤ 0.2 ms,
+  zero spawns" cannot pay. Overflow leaves those placements out of the table, to spawn as entities. Bound and proof:
+  scene-runtime-plan.md §4.4.
 - **Origin shifts** (`big_space`): instance transforms are cell-relative; the per-view pass adds the camera-relative
   cell offset, so an origin shift rewrites nothing.
 
@@ -220,69 +230,60 @@ Our statics today carry the union of NIF materials (`CookedMaterials` dedups ide
   `sf_scene::MaterialClass` already key on (`sf_scene/src/material.rs:53`, bit-packed `two_sided | masked<<1 |
   wind<<2`). **GI (`1<<26`) and surface weather (`1<<27`) are not class axes**: they are **view** pipeline-key bits
   (`vendor/bevy_pbr/src/render/mesh.rs:485-493`), set per view and not per material, so they multiply pipelines within
-  a view and can never split a material class (port audit SERIOUS 11). Target ≤ ~16 classes for all statics; leaf
+  a view and can never split a material class (port audit B2). Target ≤ ~16 classes for all statics; leaf
   diffuse transmission is the one split S2 could not fold (`bevyrrowind/docs/perf.md:302`) and needs its own class in
   that count.
 - **Per-instance material data** lives in a bindless material table (Bevy's `MaterialBindGroupAllocators`,
   `bevy_render/src/material_bind_groups.rs:82`), indexed per instance: textures by bindless index, tint, flags. The
   upstream route is bevy#24922 (merged 2026-08-19), per-instance component data keyed by `MeshTag`, which #25978's
-  materialize already writes (`materialize.wesl:28`) — no format v3 field needed.
+  materialize already writes — so it costs the table format nothing.
 - **Textures** stay individual (bindless) first; arrays or atlases only if measured binding limits demand it.
 - Measured in S0: distinct batch sets per view today; target after S2 ≤ 2× the class count. Batch sets are **not** the
   same number as bins or draws; this spec means batch sets wherever it says so.
 
 ### 6. Drawing through Bevy (vendored patch "GS")
 
-Built on #25978's model, rebased onto our vendored `bevy_render`/`bevy_pbr` (0.20.0 + patches, `superfargoth/vendor/README.md`):
+Built on #25978's model, rebased onto our vendored `bevy_render`/`bevy_pbr` (0.20.0 + patches,
+`superfargoth/vendor/README.md`). **This section is the decisions; the mechanism — hunks, shaders, sizes and every
+`file:line` — is [gs-patch-plan.md](gs-patch-plan.md)**, its work order. Spec: what and why. Patch plan: how.
 
-- a batch entity per **(space, material class, vertex slab, index slab, material bind group)** carrying
-  `GpuBatchedMesh3d`-like data: capacity, the template (class material, flags) and the persistent instance buffer. One
-  indirect draw binds one vertex buffer, one index buffer and one material bind group
-  (`vendor/bevy_render/src/render/mesh.rs:4949-4978`) and every per-range offset is slab-relative
-  (`MeshInputGeometry::new`), so the slab pair is part of the key — §5's "pipeline × bind group × mesh slab", not
-  (space, class) alone (gs-patch-plan C1);
-- a renderer-owned pass materialises the culled work items into the tail of the preprocessing input and culling buffers
-  (`MeshInputUniform`, `bevy_pbr/src/render/mesh.rs:604`; `MeshCullingData` gains `is_active`), so Bevy's prepass,
-  deferred/forward, shadow and indirect paths draw them unchanged. The cull AABB is **per batch** today — the batch
-  mesh's AABB is written into every instance slot (`gpu_instance_batch/mod.rs:433-437`) — so Bevy's frustum cull is
-  wrong for a multi-chain batch until S3a2 makes the AABB per range (gs-patch-plan C3);
-- one `multi_draw_indirect_count` per batch set where the adapter supports it (`gpu_preprocessing.rs:940`), else
-  `multi_draw_indirect`; one draw per batch on DX12, where our vendored Bevy disables the count path regardless of
-  adapter support (`render_phase/mod.rs:1278-1282`, wgpu#7974).
+- **A batch entity per (space, material class, vertex slab, index slab, material bind group)**, because one indirect
+  draw binds one vertex buffer, one index buffer and one material bind group and every per-range offset is
+  slab-relative: §5's "pipeline × bind group × mesh slab", not (space, class) alone (gs-patch-plan C1). Slabs per class
+  is a **measured** quantity in S3b, never an assumption.
+- **We feed Bevy's own input buffers and never bypass its phases.** A renderer-owned pass materialises the culled work
+  items into the tail of the preprocessing input and culling buffers, so prepass, deferred/forward, shadow and indirect
+  paths draw them unchanged.
+- **The cull AABB is per range**, not per batch as the port leaves it, or Bevy's own frustum cull is wrong for a
+  multi-chain batch (gs-patch-plan C3). S3a2.
+- **Two draw paths, both measured:** `multi_draw_indirect_count` per batch set where the adapter supports it; one draw
+  per batch on DX12, where our vendored Bevy disables the count path whatever the adapter reports (wgpu#7974).
 
-**S3a2 — the GS extension is a PREREQUISITE, not a follow-up** (both audits, independently). The port gives one mesh
-and one index range **per batch entity**: a single `Handle<Mesh>` (`gpu_instance_batch/mod.rs:100`), the indirect
-command's range taken from the batch's **first** work item (`mesh_preprocess.wesl:178-181`,
-`build_indirect_params.wesl:133-144`), one indirect parameter per batch with `batch_set_index: None`
-(`gpu_preprocessing.rs:2250-2270`). Per-instance LOD index ranges are therefore **silently ignored** — wrong geometry,
-not a compile error. S3a2 is the minimum that makes S3b correct: **N geometry ranges per batch sharing one batch set**
-(a range = a contiguous span of the batch's instance slots plus the index range it draws: no sorting, no per-instance
-geometry field), with the AABB per range; **`unpack_ranges` in the shadow-view schedules** (`Core3dShadows` and
-`sf_shadow_cache_bevy`'s, which otherwise read **uninitialized** work-item slots, port audit A4); **the counters seeing
-instance batches** (`batch_set_count` reads only `self.batch_sets`, port audit A5); and the `is_active` gate (§1).
-**Per-view per-instance level selection is a second slice, S3a3** — per-range survivor counts are view-dependent and
-GPU-only, so it needs a GPU count → atomic bump-allocate → scatter stage with its own pipeline (gs-patch-plan C2); S4's
-LOD depends on it, S3b does not. Mechanism, hunks and sizes: [gs-patch-plan.md](gs-patch-plan.md).
+**S3a2 is a PREREQUISITE, not a follow-up** (both audits, independently). The port expresses one mesh and one index
+range **per batch entity**, so per-instance LOD ranges are **silently ignored** — wrong geometry, not a compile error
+(port audit BLOCKER 1). Its four items are the S3a2 row of Slices; the one that makes S3b *correct* is **N geometry
+ranges per batch sharing one batch set** — a range = a contiguous span of the batch's instance slots plus the index
+range it draws, so no sorting and no per-instance geometry field. **Per-view level selection is a second slice, S3a3**:
+its per-range survivor counts are view-dependent and GPU-only, so it needs its own GPU count → atomic bump-allocate →
+scatter pass (gs-patch-plan C2). S4's LOD depends on it; S3b does not. **Rejected 2026-11-09: per-(cell, chain) LOD
+quantisation**, which would make every per-range count CPU-known and delete that pass — it breaks §4 step 5's
+per-instance pixel rule (gs-patch-plan O6; owner may overrule).
 
-**Both patches are own forks.** #25978 has been dirty / `S-Merge-Conflicts` since 2026-10-17, has no milestone, has had
-one cosmetic review ever, and is untested with shadows, occlusion culling, Vulkan or DX12 (architecture review
-S9/S14). bevy **#26149** (`Core3dShadows`) and **#26161** (`SkipRootViewRendering`) were **closed unmerged on
-2026-10-30** — self-closed, branches deleted, zero reviews between them, issue #25576 still open (review B4): the
-vendor README's "Drop when" can never fire as written and no slice may plan around their merging. We offer our
-additions upstream and keep them separable for it (new files under `bevy_pbr/src/gpu_instance_batch/`, separate WGSL
-modules, never hunks inside `build_indirect_params.wesl`), but we do **not** plan around a merge: budget 1-2 days per
-Bevy release, a full slice when the renderer moves.
+**Both patches are own forks: we offer our additions upstream and plan around no merge.** #25978 is dirty, unmilestoned,
+reviewed once, and untested with shadows, occlusion culling, Vulkan or DX12; bevy **#26149** and **#26161** were
+**closed unmerged on 2026-10-30** with zero reviews (dates, PR states and review counts: architecture review S9 and B4),
+so the vendor README's "Drop when" can never fire as written and **no slice may plan around their merging**. Our
+additions stay separable for the offer — new files under `bevy_pbr/src/gpu_instance_batch/`, separate WGSL modules,
+never hunks inside `build_indirect_params.wesl` — and cost 1-2 days per Bevy release, a full slice when the renderer
+moves. **Offered upstream** (as what: gs-patch-plan §7): the cull (§4) as the producer; N geometry ranges per batch;
+per-view level selection; cell-range upload/free; per-shadow-view culling and its schedule registration; motion-vector
+history (§7); the per-batch generation counter the `SkipRootViewRendering` hash needs (§8).
 
-**Our additions**, offered upstream: the cull (§4) as the producer; N geometry ranges per batch (S3a2); per-view level
-selection (S3a3); cell-range upload/free; per-shadow-view culling and the schedule registration; motion-vector history
-(§7); and the per-batch **generation counter** the `SkipRootViewRendering` hash needs (§8).
-
-This is within CONTRIBUTING rule 4: a vendored patch written to be upstreamed, no code reaching into private
-render-world state from our crates. Not chosen: a public-API bypass (`BinnedRenderPhaseType::NonMesh`,
-`custom_phase_item`), which forks material specialisation, prepass and motion vectors and breaks on every Bevy upgrade;
-our own renderer (SPUD-style), which loses Solari, DLSS, GI and upstream work. Port shape as built (S3a): the vendor
-README's "The GPU-batched mesh port" and [archive/static-scene-s0-s2.md](archive/static-scene-s0-s2.md).
-
+Within CONTRIBUTING rule 4: upstreamable, with no crate of ours reaching into private render-world state. Not chosen: a
+public-API bypass (`BinnedRenderPhaseType::NonMesh`), which forks material specialisation, prepass and motion vectors
+and breaks on every Bevy upgrade; our own renderer (SPUD-style), which loses Solari, DLSS, GI and upstream work. Port
+shape as built (S3a): `vendor/README.md` "The GPU-batched mesh port" and
+[archive/static-scene-s0-s2.md](archive/static-scene-s0-s2.md).
 ### 7. Motion vectors (DLSS)
 
 #25978 has none. For statics, `MeshInputUniform::previous_input_index` points at the instance itself (previous transform
@@ -299,12 +300,12 @@ normal form. `size_cull_px` defaults to 0 in every shadow view (§4 step 4).
 
 The lamp cache ([shadows.md](shadows.md) "Caching") keeps working — a cached face simply skips its dispatch — **only
 once its skip hash stops being blind to the table**, which is S3a3 scope. The hash is our own code (§6: #26161 is dead
-upstream) and reads `BinnedRenderPhase::entity_count`, which counts **one entity per batch**: it changes when a batch
+upstream) and reads `BinnedRenderPhase::entity_count`, which counts **one entity per batch**: it moves when a batch
 appears or disappears and never when a batch's instance set does (stream-in, promotion, the cull), so a cached face
-would keep a stale map; and `has_casters = phase_entity_count > 0`
-(`vendor/bevy_pbr/src/render/light.rs:1559`) becomes permanently true on every shadow-mapped lamp face as soon as one
-batch exists, disabling the cache's early-out. The fix is a per-batch **generation counter** fed into the hash, not a
-bigger entity count: per-batch visible counts are GPU-side only.
+would keep a stale map; and `has_casters = phase_entity_count > 0` (`vendor/bevy_pbr/src/render/light.rs:1559`) becomes
+permanently true on every shadow-mapped lamp face as soon as one batch exists, disabling the early-out (port audit A6).
+The fix is a per-batch **generation counter** fed into the hash, not a bigger entity count: per-batch visible counts
+are GPU-side only. **Measure the lamp cache before and after S3b with that in mind.**
 
 ### 9. Far field on the same table
 
@@ -337,7 +338,8 @@ RT-only proxy set as entities near the camera (as today's `RayTracingMesh` level
   (always correct, never stale).
 - **Saves, co-op:** no instance state is gameplay; nothing to save or replicate.
 - **Interiors and portals:** each interior is a space with its own table; a portal view (M9,
-  [seamless-interiors research](../research/seamless-interiors-2026-11-08.md)) is one more view running §4.
+  [seamless-interiors research](../research/seamless-interiors-2026-11-08.md)) is one more view running §4. Whether
+  interiors get a table **at all for now is an owner question, not a settled decision** (Risks).
 - **Debug:** `--off scene` (statics drawn as entities by the old path while it exists), per-class tint, LOD tint, a
   counter overlay (instances resident / culled per test / drawn, per view).
 
@@ -352,12 +354,11 @@ RT-only proxy set as entities near the camera (as today's `RayTracingMesh` level
 | Batch sets per view | ≤ 2 × material classes, and only while a class fits one slab pair: slabs per class is a **measured** quantity in S3b, not an assumption (gs-patch-plan C1) |
 | **Per-view output memory** (`MeshUniform` data buffer) | sized by **visible** instances, never by reserved capacity |
 
-The last row is a **design requirement**, not a target. Today `batch_and_prepare` does
-`data_buffer.add_multiple(input_range.len())` per view per frame (`gpu_preprocessing.rs:2585`) — the whole reserved
-range, not the count that survived the cull — and at ≈ 176 B per `MeshUniform` (`render/mesh.rs:561-601`) that is
-**≈ 140 MB** at this spec's own 100k instances × ~8 views (architecture review B2). The Steam Deck floor makes it
-harder, not easier (one unified memory budget, no DLSS internal-resolution discount), so right-sizing is the producer's
-duty: capacity is sized once per space from measured residency, never grown per cell.
+The last row is a **design requirement**, not a target: today Bevy sizes a view's output by the whole *reserved* range,
+not by what survived the cull, which at ≈ 176 B per `MeshUniform` is **≈ 140 MB** at this spec's own 100k instances ×
+~8 views (architecture review B2). The Steam Deck floor makes that harder, not easier (one unified memory budget, no
+DLSS internal-resolution discount), so right-sizing is the **producer's** duty: capacity is fixed per batch from
+measured residency and never grown per cell (§3).
 
 ## Crates
 
@@ -370,11 +371,10 @@ duty: capacity is sized once per space from measured residency, never grown per 
 
 ## Verification
 
-- **Exact tests** (`sf_scene`): table round trip and versioning; slot allocator; LOD pick (resolution and FOV scaling,
-  monotone with distance); the **orthographic LOD pick** (no distance term, one level per (chain, instance scale)), the
-  **orthographic frustum** (the cascade box) and the orthographic sub-pixel cull in map texels, all tested
-  (`sf_scene/src/cull/tests.rs:386,411,434,462`); CPU cull twin vs hand-built cases (frustum, horizon, sub-pixel);
-  eligibility and promotion.
+- **Exact tests** (`sf_scene`, the authoritative list being its own test modules): table round trip and versioning;
+  slot allocator; the perspective LOD pick (resolution and FOV scaling, monotone with distance); the **orthographic**
+  LOD pick, frustum and sub-pixel cull, all three already tested (`sf_scene/src/cull/tests.rs:386,411,434,462`); CPU
+  cull twin vs hand-built cases (frustum, horizon, sub-pixel); eligibility and promotion.
 - **GPU vs CPU twin:** a headless test reads back per-view work items for a fixed camera and compares them with the twin
   (counts and ids, no images).
 - **Measurement** (`#[ignore = "measurement: ..."]` and the perf suite): per-view instances, work items, batch sets,
@@ -386,17 +386,16 @@ duty: capacity is sized once per space from measured residency, never grown per 
 
 ## Slices
 
-S0-S3a are built; what each delivered and what is still open for the owner is in
-[archive/static-scene-s0-s2.md](archive/static-scene-s0-s2.md) (S3a also in
-`bevyrrowind/docs/test-pass-handoffs/s3a-gpu-batch.md`): **S0** per-view counters `[~]`, **S1a** `sf_scene` core `[x]`,
-**S1b** `scene.cells` bake + adapter hooks `[~]`, **S1c** format v2 `[x]`, **S2** material classes on the entity path
-`[~]`, **S3a** the #25978 port `[~]`.
+S0-S3a are built — **S0** `[~]`, **S1a** `[x]`, **S1b** `[~]`, **S1c** `[x]`, **S2** `[~]`, **S3a** `[~]` — and what
+each delivered, with the owner runs still open, is in
+[archive/static-scene-s0-s2.md](archive/static-scene-s0-s2.md) and
+`bevyrrowind/docs/test-pass-handoffs/` (`s0-instrument.md`, `s2-material-classes.md`, `s3a-gpu-batch.md`).
 
 | # | Slice | Done when |
 |---|---|---|
-| S3a2 | Patch "GS" extension ([gs-patch-plan.md](gs-patch-plan.md)): N geometry ranges per batch sharing one batch set, AABB per range; `unpack_ranges` in the shadow-view schedules; the counters see instance batches; `is_active` out of `@if(FRUSTUM_CULLING)` (§1) | ranges draw the geometry they name; lamp shadow views unpack their own ranges; `batch_set_count` counts statics |
-| S3a3 | Per-view per-instance level selection (GPU count → bump-allocate → scatter) and the per-batch generation counter the lamp skip hash reads (§8); may fold into S4 | a view's instances draw their own levels; no stale cached lamp face |
-| S3b | Scrib runtime on the port: batch entities fed from the baked tables, the **global chain table** (slot allocation, `Handle<Mesh>` lifetime, cross-cell residency and refcounting, the per-chain concatenate-and-rebase) and a fragmentation policy (§3), main view only, opaque class, no LOD | one town's opaque statics drawn from the table; slabs per class and batch sets per view measured |
+| S3a2 | Patch "GS" extension, split into two agent slices ([gs-patch-plan.md](gs-patch-plan.md) §3): N geometry ranges per batch sharing one batch set with the AABB per range; range unpacking inside the early preprocess pass; counters that see instance batches; guards; `is_active` out of `@if(FRUSTUM_CULLING)` (§1) | ranges draw the geometry they name; lamp shadow views unpack their own ranges; `batch_set_count` counts statics |
+| S3a3 | Per-view per-instance level selection (gs-patch-plan §4) and the per-batch generation counter the lamp skip hash reads (§8); may fold into S4 | a view's instances draw their own levels; no stale cached lamp face |
+| S3b | Scrib runtime on the port ([scene-runtime-plan.md](scene-runtime-plan.md)): table format v3 + the `scene.chains` bake step, batch entities fed from the baked tables, the global chain table and the size-class allocator (§3); main view only, opaque class, no LOD | one town's opaque statics drawn from the table; slabs per class and batch sets per view measured |
 | S4 | All classes, LOD ranges, pixel-error presets, motion vectors; the far-field lead bands **stay** (an explicit per-instance draw-distance end in the cull) | statics fully on the table in the main view, no holes at far-field handoffs |
 | S5 | Shadow views (cascades, lamp faces) + far shadows | shadows from the table; per-view cost flat |
 | S6 | Horizon + Hi-Z occlusion (forward path, §4 step 6); Solari decision (§10) | numbers; decision logged |
@@ -409,18 +408,17 @@ mesh entities did not move the frame once already (§Why), so "no change" is a p
 
 ## Risks and open questions
 
-- **#25978 will not merge on our schedule, and #26149/#26161 never will.** We own patch GS and the shadow patch as
-  forks (§6); rebasing them on each Bevy release is the cost. Mitigation: keep our additions in new files, offer them
-  upstream early, follow the Rendering working group.
+- **#25978 will not merge on our schedule, and #26149/#26161 never will.** Patch GS and the shadow patch are own forks
+  (§6); rebasing them on each Bevy release is the cost.
 - **Statics require `GpuPreprocessingMode::Culling`** — a stated **hardware floor**. An adapter limited to
   `PreprocessingOnly` drops instance batches silently (`gpu_preprocessing.rs:2574-2576`; `push_range` returns `None` in
   `Direct` mode), and §1's `is_active` hole has the same root; there the design falls back to the entity path
   automatically with one startup `warn!`. The Steam Deck (RDNA2, Vulkan) supports culling, so the floor does not touch
   the owner's performance floor. The failure is adapter-wide or a deliberate camera setting, never per view: our
-  inherited shadow views take the camera's flag (`sf_sky_bevy/src/sun_view.rs:227-231,255-257`,
-  `sf_shadow_cache_bevy/src/render.rs:518,546-549`), which corrects the port audit's SERIOUS 7 framing.
-- **Two supported draw paths, not a driver risk:** `multi_draw_indirect_count` per batch set on Vulkan (4060 Laptop,
-  Steam Deck), one draw per batch on DX12 where our vendored Bevy disables the count path (§6). Both are measured.
+  inherited shadow views take the camera's flag, clamped by `GpuPreprocessingSupport`
+  (`sf_sky_bevy/src/sun_view.rs:230-231,254-255`, `sf_shadow_cache_bevy/src/render.rs:518,546-549`), which corrects the
+  port audit's A9 framing. (`bevyrrowind/docs/perf.md:53-54` still names our extra sun views as `NoIndirectDrawing`;
+  that line predates the inheritance above and is stale.)
 - **Motion vectors** for wind-swayed foliage need the prepass to evaluate two times; verify DLSS ghosting (owner).
 - **Bindless limits** on the 4060 Laptop with Morrowind + mod texture counts; atlases only if measured.
 - **Memory:** a full worldspace table is small (≈ 80 B × instances; 100k ≈ 8 MB), but a chain's **vertex** memory is
@@ -432,8 +430,11 @@ mesh entities did not move the frame once already (§Why), so "no change" is a p
   `BARRED` copies precombine's bar set (`sf_scene/src/bake.rs:69-70`) — so they stay entities for ever and pay exactly
   the per-entity cost this system exists to remove. But `NO_LOD` means "keep full detail at every distance", which the
   static scene could honour by **pinning level 0** instead. Flagged, not decided.
-- Open: per-instance tint and vertex colour variation within a class (the `MeshTag` route, §5, avoids a format v3
-  field); animated-but-static NIF controllers (which stay entities, and how many in a town); whether interiors (few
-  hundred objects, hundreds loaded over a session, where fragmentation and chain churn show first) are worth the table
-  from S3 or later; warm-up for the compute pipelines this design adds (cull, materialize, per-view variants) and never
-  precompiles.
+- **Open, for the owner: are interiors in the static scene at all?** (§11.) The case for leaving them out for now: a
+  few hundred statics each against the 46-55k this design exists to remove; a door crossing cycles a whole worldspace
+  in one frame, the worst case for chain churn and for §3's size-class bound; promotion is the common case indoors, so
+  much of an interior stays entities anyway; and the bake grows a product per cell across hundreds of worldspaces
+  (scene-runtime-plan.md §12 recommends off by default). **Owner decision.**
+- Open: per-instance tint and vertex colour variation within a class (the `MeshTag` route, §5); animated-but-static NIF
+  controllers (which stay entities, and how many in a town); warm-up for the compute pipelines this design adds (cull,
+  materialize, per-view variants) and never precompiles.

@@ -134,3 +134,27 @@ by `Mesh3d`) — the batch pushes the `Mesh3d` class in an `on_add` hook and a `
 shadow lists by the rules `bevy_light` applies to a `NoFrustumCulling` mesh. `GpuInstanceBatchPlugin` is opt-in; the
 shared-path changes are always on. Full detail: `superfargoth/vendor/README.md` "The GPU-batched mesh port
 (#25978, static-scene S3a)"; handoff `bevyrrowind/docs/test-pass-handoffs/s3a-gpu-batch.md`.
+
+## Moved out of the spec on 2026-11-09 (second trim pass, coordinator decision)
+
+- **§6's mechanism** — the hunks, shaders, shader entry points, line-level citations and slice sizes behind
+  patch "GS" — now lives in [gs-patch-plan.md](../gs-patch-plan.md), its work order. The spec's §6 keeps the
+  decisions (batch key, the materialize route, AABB per range, the two draw paths, S3a2-as-prerequisite, both patches as
+  own forks, what we offer upstream, what was not chosen) and links there.
+- **§3's CPU half** — streaming seam, chain residency, the allocator's bound, the `--scene` A/B — now lives in
+  [scene-runtime-plan.md](../scene-runtime-plan.md). The spec keeps the ownership decisions and the open S3b items.
+- **§2's byte layout** points at the `sf_scene::table` and `sf_scene::chain` module docs (authoritative) and at the
+  "Format notes" section above.
+- **The Industry comparison table** (seven engines × three columns) points at the architecture review §0, which holds
+  the sourced version with quotes and corrected four of the spec's rows on 2026-11-09. The spec keeps the canonical
+  technique, our own row, the Haar & Aaltonen measurement and the fallback.
+- **The withdrawn bevyengine/bevy#26456 citation** (§3, mesh-allocator slab movement): closed as a duplicate
+  2026-11-08, diagnosis retracted. The real bug was **#25595**, fixed by **#26095**, which we already vendor. The
+  spec's rule — resolve a chain's offsets per frame, never cache one — rests on the allocator's own documented
+  contract (`bevy_render/src/mesh/allocator.rs:285-296`) and never rested on that bug.
+- **The spec is an accepted over-budget exception**, recorded in its own status block: 25 KB is the house budget, the
+  spec is 38.1 KB, and the overage is normative (nine slices, a vendored renderer fork, and §4's cull/LOD contract,
+  which a CPU twin and a GPU pass must both satisfy). Revisit at **S9**, when six of the nine slices become history.
+  This pass relocated ≈ 2.4 KB of mechanism and added ≈ 2.4 KB of newly decided normative content (format v3, the
+  size-class allocator, the rejected LOD quantisation, interiors as an open question, the softened `is_active`
+  finding), so the net move was ≈ 0 (38198 → 38142 B). Reported as such rather than closed by deleting design.
