@@ -1660,3 +1660,36 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   Section names must stay single-segment: `sf_save` derives a section's family as the name up to the first `/`, so a
   second section under `sf/ai/...` would collide with `sf/ai`'s spec and version chain. AI13's memory section is
   therefore `sf/aimemory`, not `sf/ai/memory` (audit 2026-11-09).
+- 2026-11-09 (static-scene, patch "GS" is our own fork): we offer our #25978 additions upstream and plan around no
+  merge. bevy#25978 has been dirty since 2026-10-17, no milestone, one cosmetic review, untested with shadows,
+  occlusion culling, Vulkan or DX12; bevy#26149 and #26161 were closed unmerged 2026-10-30, so the shadow patch is an
+  own fork too (architecture review S9/B4). Budget 1-2 days per Bevy release.
+- 2026-11-09 (static-scene, LOD chains): a chain's levels are **concatenated, not vertex-shared**, and `mesh.cook` does
+  not change — `sf_model/src/cook.rs:449-455` optimises vertex fetch per level, costing ≈ 1.7-2× LOD0 vertex memory
+  (architecture review S1). Per-level fetch locality is a real GPU win, each level keeps its own `base_vertex`, and the
+  property the design needs — a chain is one allocation, so LOD never changes the instance or its batch — holds.
+- 2026-11-09 (static-scene, slice order): **S3a2 goes before S3b**, split into Slice A (range unpacking moved inside
+  the early preprocess pass, so it covers all three view schedules; counters that can see instance batches; guards) and
+  Slice B (N geometry ranges per batch sharing one batch set; per-range AABB; the DX12 multi-draw-indirect-count gate).
+  Work order `specs/gs-patch-plan.md` §3.
+- 2026-11-09 (static-scene, rejected): **per-(cell, chain) LOD quantisation**. It would collapse the hardest remaining
+  slice from ~250 to ~100 lines by making every per-range count CPU-known, but it breaks static-scene.md §4 step 5's
+  per-instance pixel-error rule (gs-patch-plan O6). Owner may overrule.
+- 2026-11-09 (static-scene, table format v3 + a `scene.chains` bake step, approved): a chain's `mesh_key` is a blake3
+  hash and not invertible, so a v2 table cannot tell the runtime which model a chain came from — there is no path from
+  a baked table to a mesh without a format change (scene-runtime-plan.md §3.1). Safe now because **nothing has ever
+  been baked**: `bake_scene` is still not called by `bevyrrowind bake`. Free today and never again.
+- 2026-11-09 (static-scene, instance slots): fragmentation is **bounded by a segregated size-class allocator per
+  batch** (blocks never split or merged, so the high-water mark converges), and **batch capacity is fixed at config,
+  never grown at stream-in** — growing it reallocates the output buffer and rebuilds a bind group
+  (scene-runtime-plan.md §4.4). Overflow leaves those placements out of the table, to spawn as entities.
+- 2026-11-09 (static-scene, hardware floor): `GpuPreprocessingMode::Culling` is a **hardware floor** for statics; a
+  `PreprocessingOnly` adapter falls back to the entity path automatically with one startup `warn!`. Steam Deck
+  (RDNA2/Vulkan) has culling, so the owner's performance floor is unaffected (port audit A9, gs-patch-plan O5).
+- 2026-11-09 (static-scene, sub-pixel cull): `size_cull_px` is a **per-view** knob, defaulting to **0 (off) in shadow
+  views** — the cutoff was tried there once and reverted the same day (`bevyrrowind/docs/perf.md:55-57`). The
+  implementation is kept so the owner can enable it after a visual check.
+- 2026-11-09 (static-scene, interiors — **open question, not a settled decision; owner decides**): the recommendation
+  is to leave interiors out of the static scene for now (a few hundred objects each, worst-case chain churn on door
+  crossings, promotion-heavy indoors, one bake product per cell across hundreds of worldspaces —
+  scene-runtime-plan.md §12). It is a runtime switch either way; flagged in static-scene.md §11 and Risks.
