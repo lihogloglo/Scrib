@@ -123,8 +123,34 @@ solving the same problem by some other means. Nothing in `docs/specs/static-scen
   and a binary search in `materialize.wesl` writing per-instance geometry and culling bounds;
   `RenderMeshInstanceBatch::spans` + `GetFullBatchData::get_instance_batch -> Option<&[InstanceBatchSpan]>`
   in place of #25978's single `Range<u32>`. **`ranges` empty is exactly #25978**: no range table is read
-  (`range_count == 0`), and the batch reserves one span over its whole capacity. Drawing still gives every
-  slot the first range's geometry; one sub-draw per span is plan step 2e (a separate slice).
+  (`range_count == 0`), and the batch reserves one span over its whole capacity. The drawing half is the
+  next entry.
+- Tag `ranges` (slice B2, plan steps 2e-2f), the drawing half: `instance_batch_sub_draws(base, output_base,
+  spans)` in `bevy_render/src/batching/mod.rs` is the single place a batch's sub-draw layout is decided -
+  span *i* takes indirect parameters slot `base + i` and the output slots the first *i* spans do not - and
+  the metadata writes, the binned work items and the sorted work items all read it, so they cannot
+  disagree about which slot a range draws from. `prepare_instance_batch_indirect` now `allocate`s
+  `spans.len()` contiguous slots (still in the first view loop, still through
+  `UntypedPhaseIndirectParametersBuffers::allocate`, so the shared `metadata` buffer keeps its
+  init-before-uninit order), writes one `IndirectParametersMetadata` per span, and registers the whole run
+  as **one** `IndirectBatchSet`: a batch of N ranges is a single `multi_draw_indirect_count` of N
+  sub-draws, and a range-less batch is one command in one batch set, byte for byte #25978.
+  `get_next_batch_set_index` is read after `allocate` and immediately before `add_batch_set`, with nothing
+  pushing a batch set in between. **Sorted phases pass `use_batch_set: false`** and so write no batch set
+  index into their metadata: `SortedRenderBatchSet::flush` never draws through a batch set, so their N
+  commands are one plain `multi_draw_indirect` and `build_indirect_params.wesl` must keep its 1:1
+  batch-to-slot mapping for them (a batch-set index there would make the shader compact the commands into
+  slots the sorted draw does not read). The hardware gate is
+  `render_phase::multi_draw_indirect_count_supported(features, backend)` - `MULTI_DRAW_INDIRECT_COUNT` and
+  **not** DX12 (the wgpu [#7974](https://github.com/gfx-rs/wgpu/issues/7974) workaround) - one function
+  now shared by `render_batchable_meshes` (its inline copy removed, same expression) and
+  `render_instance_batches`, which drops `batch_set_index` and keeps the indirect parameters range when it
+  is false, so the draw falls back to `multi_draw_indirect` over all N commands. **DX12 is a backend we
+  ship on, so that is a normal path**; it inherits upstream's #7974 compromise exactly (metadata still
+  carries the batch set index, so the shader compacts while the draw issues all N commands - see
+  `docs/test-pass-handoffs/gs-slice-b2.md`). `bevy_render::settings` re-exports `Backend` so the gate is
+  testable without a GPU. Also `own, GS: guards`: both batching callers now `warn_once` instead of
+  silently dropping every instance batch in a `NoIndirectDrawing` view (plan step 4.2's per-view warning).
 
 ## Upstream PR fixes
 

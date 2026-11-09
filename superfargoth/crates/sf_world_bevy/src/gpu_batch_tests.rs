@@ -576,14 +576,13 @@ fn sub_draws_are_contiguous_and_in_span_order() {
     let sub_draws: Vec<_> = instance_batch_sub_draws(7, 1000, &spans).collect();
 
     assert_eq!(sub_draws.len(), 3, "one indirect draw command per geometry range");
-    for (index, sub_draw) in sub_draws.iter().enumerate() {
+    for (slot, (sub_draw, span)) in (7u32..).zip(sub_draws.iter().zip(&spans)) {
         assert_eq!(
-            sub_draw.indirect_parameters_index,
-            7 + index as u32,
+            sub_draw.indirect_parameters_index, slot,
             "the commands are contiguous from the allocation base, in span order"
         );
-        assert_eq!(sub_draw.base_input_index, spans[index].base_input_index);
-        assert_eq!(sub_draw.count, spans[index].count);
+        assert_eq!(sub_draw.base_input_index, span.base_input_index);
+        assert_eq!(sub_draw.count, span.count);
     }
     // Each command's instances start where the previous command's end: the batch occupies exactly
     // `output_base..output_base + capacity`, which is what #25978 allocated for its one command.
