@@ -8,8 +8,9 @@
 //!   name the models their geometry was cooked from.
 //! - [`eligibility`]: which placements live in the scene (§1), asked through an adapter trait
 //!   ([`SceneEligibility`]), and the one-way per-cell [`Promotions`].
-//! - [`alloc`]: the per-space GPU table's slot allocator (§3): one contiguous range per cell,
-//!   free list, release deferred by the frames in flight.
+//! - [`alloc`]: the slot allocators (§3): [`SlotAllocator`] for the per-space instance table (one
+//!   contiguous range per cell, free list) and [`ClassAllocator`] for a batch's fixed output slots
+//!   (segregated size classes, bounded fragmentation); both defer reuse by the frames in flight.
 //! - [`material`]: the material classes (§5) every scene material folds into.
 //! - [`chain`]: how one model part's cooked LOD levels become one chain mesh ([`chain_layout`]),
 //!   shared by the bake and the runtime.
@@ -36,7 +37,10 @@ pub mod material;
 pub mod product;
 pub mod table;
 
-pub use alloc::{AllocError, SlotAllocator, SlotRange, SlotStats};
+pub use alloc::{
+    AllocError, BLOCK_GRAIN, CLASS_SIZES, CLASSES, ClassAllocator, ClassStats, SlotAllocator, SlotRange, SlotStats,
+    size_class,
+};
 pub use chain::{ChainLayout, LAYOUT_VERSION, LayoutError, LevelSource, Segment, chain_layout};
 pub use cull::{
     CullReason, CullStats, Frustum, HorizonGrid, HorizonParams, ScenePreset, SceneProjection, SceneView, Verdict,
