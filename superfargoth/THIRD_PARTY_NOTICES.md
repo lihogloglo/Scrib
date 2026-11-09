@@ -99,10 +99,17 @@ SOFTWARE.
   `getLevelupAttributeMultiplier`, `hasSkillsForRank`), `apps/openmw/mwgui/levelupdialog.cpp` (picks, cap 100),
   `apps/openmw/mwdialogue/filter.cpp` (faction rank skill/reputation requirements, `RankRequirement`); stats S6: `filter.cpp`
   (`getSelectStructInteger`, `testSelectStructNumeric`, `getSelectStructBoolean`, `testPlayer`: the PC and speaker stat
-  functions), `apps/openmw/mwclass/armor.cpp` and `clothing.cpp` (`getValue`, for `PcClothingModifier`).
+  functions), `apps/openmw/mwclass/armor.cpp` and `clothing.cpp` (`getValue`, for `PcClothingModifier`); stats S7
+  (2026-11-08): `apps/openmw/mwscript/statsextensions.cpp` (attribute, skill, dynamic, level, crime and faction
+  opcodes, `modStat`, `getDialogueActorFaction`), `apps/openmw/mwscript/dialogueextensions.cpp` (`Op*Reputation`),
+  `npcstats.cpp` (`setFactionRank`, `setReputation`), `stat.cpp` (`DynamicStat::getRatio`); disposition and persuasion
+  (2026-11-08): `mechanicsmanagerimp.cpp` (persuasion ratings, `getDerivedDisposition`,
+  `getPersuasionDispositionChange`), `apps/openmw/mwdialogue/dialoguemanagerimp.cpp` (`persuade`), and GMST defaults
+  from `apps/opencs/model/world/defaultgmsts.cpp`.
 - Licence: GPL-3.0 (OpenMW: "GNU General Public License version 3"; the full text is the repository's `LICENSE`,
   identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt). Holder: the OpenMW contributors.
-- Ported into: `bevyrrowind/crates/mw_stats/src/{init,derived,progression,faction}.rs`, `mw_rpg/src/{stats,equip}.rs` (S6) (the game; f32 arithmetic in OpenMW's order,
+- Ported into: `bevyrrowind/crates/mw_stats/src/{init,derived,progression,faction,gmst}.rs`, `mw_rpg/src/{stats,equip}.rs` (S6),
+  `mw_rpg/src/script_stats.rs` (S7), `mw_rpg/src/{disposition,persuasion}.rs` (the game; f32 arithmetic in OpenMW's order,
   differences listed in the module docs) and, for the two stat semantics only, `superfargoth/crates/sf_stats/src/ops.rs`
   (`set_current`, capped `StatOp::Damage`).
 
@@ -116,3 +123,54 @@ SOFTWARE.
   identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt). Holder: the OpenMW contributors.
 - Ported into: `bevyrrowind/crates/mw_weather/src/ambient.rs` (the game; differences in the module docs: linear decode and
   luminance normalisation after OpenMW's gamma-space interpolation).
+
+## OpenMW (book markup)
+
+- Source: https://github.com/OpenMW/openmw, commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`:
+  `apps/openmw/mwgui/formatting.cpp` (`BookTextParser::next`, `parseTag`, `BookFormatter::markupToWidget`, `handleDiv`,
+  `handleFont`), `components/misc/resourcehelpers.cpp` (`correctBookartPath`, `correctResourcePath`) and
+  `components/fontloader/fontloader.cpp` (`getFontForFace`).
+- Licence: GPL-3.0 (OpenMW: "GNU General Public License version 3"; the full text is the repository's `LICENSE`,
+  identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt). Holder: the OpenMW contributors.
+- Ported into: `bevyrrowind/crates/mw_ui/src/book.rs` (the game; deviations in the module docs: `<FONT>` restyles inline
+  instead of breaking the line, malformed tags are repaired instead of throwing).
+
+## OpenMW (magic effects)
+
+- Source: https://github.com/OpenMW/openmw, commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`:
+  `components/esm3/loadmgef.cpp` (HardcodedFlags, effect names, GMST ids, resistance and weakness maps),
+  `apps/openmw/mwmechanics/spellutil.cpp` (`calcEffectCost`, `getTotalCost`, `calcSpellCost`),
+  `apps/openmw/mwmechanics/spellresistance.cpp` (`getEffectResistanceAttribute`) and `apps/openmw/mwworld/esmstore.cpp`
+  (effect-list validation).
+- Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
+- Ported into: `bevyrrowind/crates/mw_effects` (the game; written 2026-11-08, untested).
+
+## OpenMW (barter and service prices)
+
+- Source: https://github.com/OpenMW/openmw, commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`:
+  `apps/openmw/mwmechanics/mechanicsmanagerimp.cpp` (`getBarterOffer`, 563-590), `apps/openmw/mwgui/tradewindow.cpp`
+  (38-114, 447-457, 608-645), `trainingwindow.cpp` (118-121, 172-191), `travelwindow.cpp` (50-83, 203-213),
+  `spellbuyingwindow.cpp` (54-59), `merchantrepair.cpp` (64-83); GMST defaults from
+  `apps/opencs/model/world/defaultgmsts.cpp`.
+- Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
+- Ported into: `bevyrrowind/crates/mw_rpg/src/services.rs` and GMST defaults in `bevyrrowind/crates/mw_stats/src/gmst.rs`
+  (the game; written 2026-11-08, untested).
+- Merchant rules (2026-11-08, services A2a): `apps/openmw/mwclass/npc.cpp` and `creature.cpp` (`getServices`,
+  `getBaseGold`), `mwclass/*.cpp` (`canSell`), `mwclass/misc.cpp` (`isGold`), `components/esm3/loadnpc.hpp` (service
+  bits, `AllItems`), `apps/openmw/mwgui/dialogue.cpp` (`updateTopicsPane`, `onSelectListItem`, restock),
+  `mwbase/dialoguemanager.hpp` (`ServiceType`), `mwdialogue/dialoguemanagerimp.cpp` (`checkServiceRefused`),
+  `mwgui/tradeitemmodel.cpp` (`update`), `mwgui/tradewindow.cpp` (`onOfferButtonClicked`),
+  `mwmechanics/mechanicsmanagerimp.cpp` (`isBoundItem`), `mwworld/containerstore.cpp` and
+  `mwgui/containeritemmodel.cpp` (restocking counts); ported into `bevyrrowind/crates/mw_rpg/src/barter.rs`.
+- Persuasion menu (2026-11-08): `apps/openmw/mwgui/dialogue.cpp` (`PersuasionDialog`) and
+  `files/data/mygui/openmw_persuasion_dialog.layout` (labels); ported into
+  `bevyrrowind/crates/mw_rpg_bevy/src/dialogue/persuasion.rs`.
+
+## OpenMW (MessageBox formatting)
+
+- Source: https://github.com/OpenMW/openmw, commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`:
+  `components/misc/messageformatparser.cpp`, `components/interpreter/miscopcodes.hpp`,
+  `components/compiler/lineparser.cpp`, `components/compiler/generator.cpp`; test vectors from
+  `apps/openmw_tests/mwscript/testscripts.cpp`.
+- Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
+- Ported into: `bevyrrowind/crates/mw_ui/src/message.rs` (the game; written 2026-11-08, untested).

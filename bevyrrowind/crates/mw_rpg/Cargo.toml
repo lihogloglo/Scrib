@@ -13,8 +13,12 @@ thiserror.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 sf_records.workspace = true
 sf_rpg.workspace = true
+# `ServiceRules` returns `SmallVec` (barter).
+smallvec.workspace = true
 mw_records.workspace = true
 mw_script.workspace = true
+# MessageBox formatting (`OpenMW`'s formatter and button rule) for result scripts.
+mw_ui.workspace = true
 # Character sheets for the PC filter functions (`stats`).
 mw_stats.workspace = true
 sf_stats.workspace = true

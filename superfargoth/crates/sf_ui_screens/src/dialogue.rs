@@ -9,6 +9,9 @@
 //! - the scrollback: one entry per `Entry` (topic heading, then one `Text` with a `TextSpan`
 //!   per run; link spans are clickable and hoverable through span picking), the player's
 //!   echoed choices and journal notices;
+//! - the host's action buttons above the topic list (`disabled` and `submenu` classes) and,
+//!   while one's submenu is open, a modal panel with its options over a dimmed window (the
+//!   backdrop blocks the pointer; the view takes only the options' focus);
 //! - the topic list (sorted rows, `new` and `disabled` classes) with Goodbye under it;
 //! - the choices, numbered (keys 1-9 pick them).
 //!
@@ -18,6 +21,7 @@
 
 use std::collections::HashMap;
 
+use bevy_color::{Alpha, Color};
 use bevy_ecs::prelude::*;
 use bevy_input::ButtonInput;
 use bevy_input::keyboard::KeyCode;
@@ -30,7 +34,8 @@ use bevy_ui::{ComputedNode, ScrollPosition, UiGlobalTransform};
 use bevy_ui_widgets::{Activate, ScrollArea};
 use sf_rpg::RecordId;
 use sf_rpg_ui::{
-    DialogueFocus, DialogueNav, DialogueRequest, DialogueView, Entry, EntryId, EntryKind, LinkState,
+    ActionId, DialogueAction, DialogueFocus, DialogueNav, DialogueRequest, DialogueView, Entry,
+    EntryId, EntryKind, LinkState,
 };
 use sf_ui_bevy::{
     ScreenStackRes, UiAction, UiActionEvent, UiHandlesBack, UiNavEvent, UiOwnsFocus, UiScreenRoot,
@@ -77,6 +82,10 @@ pub struct DialogueParts {
     entries: KeyedChildren<EntryId>,
     shown: HashMap<EntryId, EntryKind>,
     links: HashMap<(EntryId, usize), Entity>,
+    actions: KeyedChildren<ActionId>,
+    /// Per button: label, live, has a submenu (what it was last drawn with).
+    action_shown: HashMap<ActionId, (String, bool, bool)>,
+    submenu: Option<SubmenuParts>,
     topics: KeyedChildren<RecordId>,
     topic_shown: HashMap<RecordId, (u64, Entity)>,
     choices: KeyedChildren<(usize, String)>,
@@ -100,6 +109,31 @@ impl DialogueParts {
     /// The span of a link run.
     pub fn link(&self, entry: EntryId, run: usize) -> Option<Entity> {
         self.links.get(&(entry, run)).copied()
+    }
+
+    /// The button of an action.
+    pub fn action(&self, action: &ActionId) -> Option<Entity> {
+        self.actions.get(action)
+    }
+
+    /// Action buttons in display order.
+    pub fn actions(&self) -> impl Iterator<Item = (&ActionId, Entity)> {
+        self.actions.iter()
+    }
+
+    /// The open submenu's backdrop (the modal's root), if one is open.
+    pub fn submenu(&self) -> Option<Entity> {
+        self.submenu.as_ref().map(|s| s.backdrop)
+    }
+
+    /// The row of an option of the open submenu.
+    pub fn submenu_option(&self, option: &ActionId) -> Option<Entity> {
+        self.submenu
+            .as_ref()?
+            .options
+            .iter()
+            .find(|(id, _)| id == option)
+            .map(|(_, e)| *e)
     }
 
     pub fn topic(&self, topic: &RecordId) -> Option<Entity> {
@@ -133,7 +167,93 @@ impl DialogueParts {
             DialogueFocus::Choice(i) => self.choice(*i),
             DialogueFocus::Goodbye => Some(self.goodbye),
             DialogueFocus::Link { .. } => None,
+            DialogueFocus::Action(a) => self.action(a),
+            DialogueFocus::SubAction(o) => self.submenu_option(o),
         }
+    }
+}
+
+/// The open submenu as drawn: the action it shows (options included), redrawn whole when
+/// that changes.
+#[derive(Debug)]
+struct SubmenuParts {
+    shown: DialogueAction,
+    backdrop: Entity,
+    options: Vec<(ActionId, Entity)>,
+}
+
+/// Spawns `action`'s submenu under `root`: a backdrop over the whole window (dims it and
+/// takes the pointer) centring a panel with the action's label and one row per option.
+fn spawn_submenu(
+    commands: &mut Commands,
+    root: Entity,
+    action: &DialogueAction,
+    colors: &ScreenColors,
+) -> SubmenuParts {
+    let backdrop = commands
+        .spawn((
+            part("sf-dialogue-submenu"),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..Node::default()
+            },
+            BackgroundColor(Color::BLACK.with_alpha(0.5)),
+            ZIndex(10),
+            ChildOf(root),
+        ))
+        .id();
+    let panel = commands
+        .spawn((
+            part("sf-dialogue-submenu-panel"),
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(4.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                min_width: Val::Px(240.0),
+                max_height: Val::Percent(90.0),
+                ..Node::default()
+            },
+            // Opaque: it lies over the window.
+            BackgroundColor(colors.panel.with_alpha(1.0)),
+            ChildOf(backdrop),
+        ))
+        .id();
+    commands.spawn((
+        label("sf-dialogue-submenu-title", action.label.clone(), colors),
+        ChildOf(panel),
+    ));
+    let mut options = Vec::with_capacity(action.submenu.len());
+    for option in &action.submenu {
+        let (row, _) = spawn_button(
+            commands,
+            Some(panel),
+            "sf-dialogue-submenu-option",
+            option.label.clone(),
+            colors,
+        );
+        commands.entity(row).insert((
+            DialogueTarget(DialogueFocus::SubAction(option.id.clone())),
+            classes(
+                "sf-dialogue-submenu-option",
+                &[("disabled", !option.enabled)],
+            ),
+        ));
+        set_disabled(commands, row, !option.enabled);
+        if !option.enabled {
+            relabel(commands, row, option.label.clone(), colors.muted);
+        }
+        options.push((option.id.clone(), row));
+    }
+    SubmenuParts {
+        shown: action.clone(),
+        backdrop,
+        options,
     }
 }
 
@@ -214,6 +334,19 @@ pub(crate) fn spawn_dialogue(
                 ChildOf(root),
             ))
             .id();
+        // Above the topic list (spawned first: children keep their spawn order).
+        let actions = commands
+            .spawn((
+                part("sf-dialogue-actions"),
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(4.0),
+                    flex_shrink: 0.0,
+                    ..Node::default()
+                },
+                ChildOf(side),
+            ))
+            .id();
         let topics = commands
             .spawn((
                 part("sf-dialogue-topics"),
@@ -244,6 +377,9 @@ pub(crate) fn spawn_dialogue(
             entries: KeyedChildren::new(log),
             shown: HashMap::new(),
             links: HashMap::new(),
+            actions: KeyedChildren::new(actions),
+            action_shown: HashMap::new(),
+            submenu: None,
             topics: KeyedChildren::new(topics),
             topic_shown: HashMap::new(),
             choices: KeyedChildren::new(choices),
@@ -255,7 +391,7 @@ pub(crate) fn spawn_dialogue(
     }
 }
 
-fn link_color(state: LinkState, colors: &ScreenColors) -> bevy_color::Color {
+fn link_color(state: LinkState, colors: &ScreenColors) -> Color {
     match state {
         LinkState::New => colors.new,
         LinkState::Known => colors.link,
@@ -430,6 +566,50 @@ pub(crate) fn sync_dialogue(
                     &mut parts.links,
                 );
                 parts.shown.insert(entry.id, entry.kind.clone());
+            }
+
+            // Action buttons, in the host's order; a button redraws when its label or state
+            // changes.
+            let action_ids: Vec<ActionId> = view.actions().iter().map(|a| a.id.clone()).collect();
+            parts
+                .actions
+                .sync(&mut commands, action_ids.iter().cloned(), |commands, id| {
+                    let (button, _) =
+                        spawn_button(commands, None, "sf-dialogue-action", "", colors);
+                    commands
+                        .entity(button)
+                        .insert(DialogueTarget(DialogueFocus::Action(id.clone())));
+                    button
+                });
+            parts.action_shown.retain(|id, _| action_ids.contains(id));
+            for action in view.actions() {
+                let Some(button) = parts.actions.get(&action.id) else {
+                    continue;
+                };
+                let live = action.is_live();
+                let has_submenu = !action.submenu.is_empty();
+                let shown = (action.label.clone(), live, has_submenu);
+                if parts.action_shown.get(&action.id) == Some(&shown) {
+                    continue;
+                }
+                commands.entity(button).insert(classes(
+                    "sf-dialogue-action",
+                    &[("disabled", !live), ("submenu", has_submenu)],
+                ));
+                set_disabled(&mut commands, button, !live);
+                let color = if live { colors.text } else { colors.muted };
+                relabel(&mut commands, button, action.label.clone(), color);
+                parts.action_shown.insert(action.id.clone(), shown);
+            }
+
+            // The open submenu (modal), redrawn whole when its action or options change.
+            let open = view.submenu();
+            if parts.submenu.as_ref().map(|s| &s.shown) != open {
+                if let Some(old) = parts.submenu.take() {
+                    commands.entity(old.backdrop).despawn();
+                }
+                parts.submenu =
+                    open.map(|action| spawn_submenu(&mut commands, root_entity, action, colors));
             }
 
             // Topic list, sorted by the view; rows redraw on their row version.
@@ -632,7 +812,7 @@ pub(crate) fn dialogue_input(
     }
 }
 
-/// A topic row, choice or goodbye activated (click, confirm).
+/// A topic row, choice, goodbye, action button or submenu option activated (click, confirm).
 pub(crate) fn on_dialogue_button(
     activate: On<Activate>,
     targets: Query<&DialogueTarget>,

@@ -390,7 +390,7 @@ impl<'a> Emitter<'a> {
     fn arg(&self, a: &Arg, f: &Function, index: usize) -> String {
         match a {
             Arg::Id(id) => lua_string(&id.key),
-            Arg::Str(s) => lua_string(s),
+            Arg::Str(s) | Arg::Word(s) => lua_string(s),
             Arg::Expr(e) => self.expr(e),
             Arg::Axis(axis) => match axis {
                 Axis::X => "\"x\"",

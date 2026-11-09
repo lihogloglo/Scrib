@@ -168,7 +168,7 @@ fn skill(t: &MwTable, s: &sf_stats::Sheet, id: SkillId) -> f32 {
 #[test]
 fn table_has_the_format_stats_and_roles() {
     let t = table();
-    assert_eq!(t.table.len(), 8 + 27 + 1 + 3 + 4 + 27 + 8 + 3 + 1 + 3 + 27 + 1 + 3);
+    assert_eq!(t.table.len(), 8 + 27 + 1 + 3 + 4 + 27 + 8 + 3 + 1 + 3 + 27 + 1 + 3 + 22);
     for (i, a) in ATTRIBUTES.iter().enumerate() {
         assert_eq!(t.table.find(a), Some(t.idx.attributes[i]));
         assert_eq!(usize::from(t.idx.attributes[i].0), i);
@@ -181,6 +181,31 @@ fn table_has_the_format_stats_and_roles() {
     assert_eq!(t.table.role(Role::Bounty), Some(t.idx.bounty));
     assert_eq!(t.table.role(Role::CarryCapacity), Some(t.idx.capacity));
     assert_eq!(t.table.role(Role::Encumbrance), Some(t.idx.encumbrance));
+}
+
+/// The 22 magnitude stats (2026-11-08) are appended: every older index is where it was (`MwIdx`
+/// fields are positional), and each magnitude key resolves to a base-0 `Value` in `magnitude`.
+#[test]
+fn magnitude_stats_are_appended_after_the_older_indices() {
+    let t = table();
+    let i = &t.idx;
+    let pos = |s: sf_stats::StatIdx| usize::from(s.0);
+    assert_eq!((pos(i.attributes[0]), pos(i.skills[0]), pos(i.skills[26])), (0, 8, 34));
+    assert_eq!((pos(i.fortify_max_magicka), pos(i.health), pos(i.magicka), pos(i.fatigue)), (35, 36, 37, 38));
+    assert_eq!((pos(i.level), pos(i.reputation), pos(i.bounty), pos(i.level_progress)), (39, 40, 41, 42));
+    assert_eq!((pos(i.skill_progress[0]), pos(i.levelup_attr[0]), pos(i.levelup_spec[0])), (43, 70, 78));
+    assert_eq!((pos(i.werewolf_kills), pos(i.magicka_offset), pos(i.fatigue_offset), pos(i.creature)), (81, 82, 83, 84));
+    assert_eq!((pos(i.class_skills[0]), pos(i.class_specialization)), (85, 112));
+    assert_eq!((pos(i.capacity), pos(i.encumbrance), pos(i.fatigue_term)), (113, 114, 115));
+    for (n, (key, label)) in MAGNITUDE_STATS.iter().enumerate() {
+        let s = t.table.find(key).unwrap_or_else(|| panic!("{key} not in MwTable"));
+        assert_eq!(s, i.magnitudes[n], "{key}");
+        assert_eq!(pos(s), 116 + n, "{key}");
+        let def = t.table.def(s);
+        assert_eq!((def.group.as_str(), def.label.as_str(), def.public), ("magnitude", *label, false), "{key}");
+        assert!(matches!(def.kind, sf_stats::StatKind::Value { min, cap: None } if min == 0.0), "{key}");
+    }
+    assert_eq!(t.table.find("ResistFire"), Some(i.magnitudes[12]));
 }
 
 #[test]

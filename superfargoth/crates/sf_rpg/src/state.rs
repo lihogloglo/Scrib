@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::equip::Loadout;
 use crate::ids::Holder;
-use crate::item::{Attrs, InventoryError, StackId};
+use crate::item::{AttrValue, Attrs, InventoryError, StackId};
 use crate::quest::{EntryDraft, HeardLine, Journal, QuestLog, QuestState, StageFlags, Topics};
 
 /// Shared, host-owned RPG world state (net.md "Quest model").
@@ -35,16 +35,33 @@ pub enum RpgCommand {
     SplitStack { holder: Holder, stack: StackId, count: u32 },
     /// Merge stack `from` into the identical stack `into` (UI "merge", drop onto a stack).
     MergeStacks { holder: Holder, from: StackId, into: StackId },
+    /// Take `count` pieces of a stack and add them to another holder, merging into an
+    /// identical stack there (trade settlement, the container screen). Spans two characters:
+    /// apply with [`CharacterRpg::apply_move`].
+    MoveStack { from: Holder, to: Holder, stack: StackId, count: u32 },
+    /// Set (`Some`) or clear (`None`) one attribute of a stack, then re-merge it.
+    SetStackAttr { holder: Holder, stack: StackId, key: RecordId, value: Option<AttrValue> },
 }
 
 impl RpgCommand {
-    /// The inventory an item command targets (`None` for world commands).
+    /// The inventory an item command targets (`None` for world commands). For a
+    /// [`RpgCommand::MoveStack`], the source; see [`RpgCommand::target`].
     pub fn holder(&self) -> Option<Holder> {
         match self {
             Self::AddItem { holder, .. }
             | Self::RemoveItem { holder, .. }
             | Self::SplitStack { holder, .. }
-            | Self::MergeStacks { holder, .. } => Some(*holder),
+            | Self::MergeStacks { holder, .. }
+            | Self::SetStackAttr { holder, .. }
+            | Self::MoveStack { from: holder, .. } => Some(*holder),
+            _ => None,
+        }
+    }
+
+    /// The second inventory of a [`RpgCommand::MoveStack`] (`None` for every other command).
+    pub fn target(&self) -> Option<Holder> {
+        match self {
+            Self::MoveStack { to, .. } => Some(*to),
             _ => None,
         }
     }
@@ -61,6 +78,9 @@ pub enum RpgEvent {
     StackSplit { holder: Holder, source: StackId, new: StackId },
     /// Stack `from` merged into `into`; counts per item are unchanged.
     StacksMerged { holder: Holder, from: StackId, into: StackId },
+    /// A stack's attributes changed; `stack` now holds its pieces (when it re-merged, a
+    /// `StacksMerged` from the old id comes first).
+    StackChanged { holder: Holder, stack: StackId },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -69,6 +89,12 @@ pub enum RpgError {
     NotAWorldCommand,
     #[error("world commands apply to the world, not a character")]
     NotAnItemCommand,
+    #[error("a stack move spans two characters: use CharacterRpg::apply_move")]
+    TwoHolders,
+    #[error("CharacterRpg::apply_move takes only MoveStack")]
+    NotAMove,
+    #[error("a stack move needs two different holders")]
+    SameHolder,
     #[error(transparent)]
     Inventory(#[from] InventoryError),
 }
@@ -101,7 +127,9 @@ impl WorldRpg {
             RpgCommand::AddItem { .. }
             | RpgCommand::RemoveItem { .. }
             | RpgCommand::SplitStack { .. }
-            | RpgCommand::MergeStacks { .. } => return Err(RpgError::NotAWorldCommand),
+            | RpgCommand::MergeStacks { .. }
+            | RpgCommand::MoveStack { .. }
+            | RpgCommand::SetStackAttr { .. } => return Err(RpgError::NotAWorldCommand),
         }
         Ok(events)
     }
@@ -128,7 +156,43 @@ impl CharacterRpg {
                 self.loadout.merge(from, into)?;
                 Ok(vec![RpgEvent::StacksMerged { holder, from, into }])
             }
+            RpgCommand::SetStackAttr { holder, stack, key, value } => {
+                let now = self.loadout.set_attr(stack, key, value)?;
+                let mut events = Vec::with_capacity(2);
+                if now != stack {
+                    events.push(RpgEvent::StacksMerged { holder, from: stack, into: now });
+                }
+                events.push(RpgEvent::StackChanged { holder, stack: now });
+                Ok(events)
+            }
+            RpgCommand::MoveStack { .. } => Err(RpgError::TwoHolders),
             _ => Err(RpgError::NotAnItemCommand),
         }
+    }
+
+    /// Applies a [`RpgCommand::MoveStack`] from `source` to `target` (the caller resolved both
+    /// holders). Atomic: the target is checked before the source changes.
+    pub fn apply_move(source: &mut Self, target: &mut Self, cmd: RpgCommand) -> Result<Vec<RpgEvent>, RpgError> {
+        let RpgCommand::MoveStack { from, to, stack, count } = cmd else {
+            return Err(RpgError::NotAMove);
+        };
+        if from == to {
+            return Err(RpgError::SameHolder);
+        }
+        let s = source.loadout.inventory().get(stack).ok_or(InventoryError::NoStack(stack))?;
+        if count == 0 {
+            return Err(InventoryError::ZeroCount.into());
+        }
+        if count > s.count {
+            return Err(InventoryError::NotEnough { item: s.item.clone(), have: u64::from(s.count), want: count }.into());
+        }
+        target.loadout.can_add(&s.item, count, &s.attrs)?;
+        let taken = source.loadout.take(stack, count)?;
+        let item = taken.item.clone();
+        target.loadout.add(taken.item, taken.count, taken.attrs)?;
+        Ok(vec![
+            RpgEvent::ItemsChanged { holder: from, item: item.clone(), delta: -i64::from(count) },
+            RpgEvent::ItemsChanged { holder: to, item, delta: i64::from(count) },
+        ])
     }
 }

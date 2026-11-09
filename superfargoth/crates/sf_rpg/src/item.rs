@@ -254,6 +254,20 @@ impl Inventory {
         Ok(ItemStack { id, item: stack.item.clone(), count, attrs: stack.attrs.clone() })
     }
 
+    /// Sets (`Some`) or clears (`None`) one attribute of a stack, in place. The caller decides
+    /// whether the changed stack re-merges ([`Inventory::merge_back`]).
+    pub fn set_attr(&mut self, id: StackId, key: RecordId, value: Option<AttrValue>) -> Result<(), InventoryError> {
+        let i = self.index_of(id)?;
+        let attrs = &mut self.stacks[i].attrs;
+        match value {
+            Some(v) => attrs.set(key, v),
+            None => {
+                attrs.remove(&key);
+            }
+        }
+        Ok(())
+    }
+
     /// Splits `count` pieces off a stack into a new stack placed right after it.
     pub fn split(&mut self, id: StackId, count: u32) -> Result<StackId, InventoryError> {
         let i = self.index_of(id)?;

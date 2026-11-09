@@ -367,6 +367,19 @@ does nothing), `GoodbyeOnly`, `Ended`. Focus has two regions: the topic list and
 links in reading order (spans aren't layout nodes, so directional navigation can't reach them). No geometry
 in the view: `take_scroll_request()`, `version()`.
 
+**Action buttons** (2026-11-08; written without compiling: UNTESTED, owner test pass 2026-11-10). The host
+supplies `set_actions(Vec<DialogueAction>)` (none by default): `id: ActionId`, localised `label`, `enabled`,
+and an optional one-level `submenu` of `ActionOption`s (Morrowind fills one with its Persuasion options;
+the framework names none). Services first (`DialogueAction::from_offer`, services.md "Dialogue
+integration"), live only while talking; disabled buttons and options are greyed and skipped. Focus:
+`Action(id)` rows sit above the topics in the list region (focus still starts on the first topic); an action
+with a submenu opens it on activate (no request) and the submenu is modal (`SubAction(id)` only, `Back`
+closes it). Activation yields `DialogueRequest::Action { action, option }`, not a session step (`apply`
+is a no-op): the host routes it, `service_open(offers)` → `ServiceRequest::Open`. Picking an option
+closes the submenu, focus back on its button; host changes that leave it no live option close it too.
+Screen (`sf_ui_screens`, same status): keyed `sf-dialogue-action` buttons above the topics; the open submenu
+is a `sf-dialogue-submenu` backdrop (dims the window, blocks the pointer) centring its option rows.
+
 ### Inventory logic (U5, 2026-10-22)
 
 `sf_ui_inventory` (Bevy-free), one view per holder (inventory, container, both barter sides); own

@@ -286,21 +286,21 @@ fn ui_session_and_sound_effects() {
 #[test]
 fn unhandled_functions_are_reported_once() {
     let mut f = Fixture::new();
-    let effects = f.run("ModPCFacRep 5 \"temple\"\nif ( GetPCRank temple < 0 )\nGoodbye\nendif");
+    let effects = f.run("SetFight 30\nif ( GetDisposition < 60 )\nGoodbye\nendif");
     assert_eq!(
         effects,
         [ResultEffect::Goodbye],
-        "GetPCRank reads its stub -1"
+        "GetDisposition reads its stub 50"
     );
-    f.run_as("other", "ModPCFacRep 1 \"temple\"").unwrap();
+    f.run_as("other", "SetFight 10").unwrap();
     assert_eq!(
         f.results.drain_reports(),
         [
-            ResultReport::Unhandled("ModPCFacRep".into()),
-            ResultReport::Unhandled("GetPCRank".into())
+            ResultReport::Unhandled("SetFight".into()),
+            ResultReport::Unhandled("GetDisposition".into())
         ]
     );
-    f.run("ModPCFacRep 2 \"temple\"");
+    f.run("SetFight 20");
     assert!(f.results.drain_reports().is_empty());
 }
 
@@ -332,4 +332,27 @@ fn runaway_loops_fail_the_run() {
         .run_as("loop", "while ( 1 )\nAddTopic a\nendwhile")
         .unwrap_err();
     assert!(matches!(err, ResultError::Failed { response, .. } if response.as_str() == "loop"));
+}
+
+#[test]
+fn message_box_formats_as_openmw() {
+    // `%s` takes text (a bare word or a quoted string, never a button); after the values, the
+    // button count is the number of quoted strings, labels taken from the front (issue 8129).
+    let mut f = Fixture::new();
+    let effects = f.run(
+        "MessageBox \"Hi %s, %.1f gold\" Fargoth 5 Yes \"No\" \"Maybe\"\nMessageBox \"Go %s?\" \"north\"",
+    );
+    assert_eq!(
+        effects,
+        [
+            ResultEffect::MessageBox {
+                text: "Hi Fargoth, 5.0 gold".into(),
+                buttons: vec!["Yes".into(), "No".into()]
+            },
+            ResultEffect::MessageBox {
+                text: "Go north?".into(),
+                buttons: vec![]
+            },
+        ]
+    );
 }

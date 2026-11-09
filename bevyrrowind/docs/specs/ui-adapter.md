@@ -2,7 +2,7 @@
 
 Status: draft (2026-10-11), design only; built at M5 with the framework UI. Names of data files
 were read from the installed BSAs; formats marked "verify" must be checked on data first.
-Crates (proposed): `mw_ui` (Bevy-free: book markup, MessageBox formatting, topic linking,
+Crates (proposed; `mw_ui` exists since 2026-11-08 with `book` and `message` (MessageBox formatting), not compiled yet): `mw_ui` (Bevy-free: book markup, MessageBox formatting, topic linking,
 `.fnt` reader), a `ui.frames` step in `mw_bake`, the classic theme as files in Bevyrrowind's
 built-in mod, `mw_script` (MessageBox lowering), `mw_openmw_lua` (later). Framework spec:
 `../../../superfargoth/docs/specs/ui.md`.
@@ -99,8 +99,8 @@ From `Morrowind.bsa` (checked by listing the archive):
 
 ## MWScript UI calls
 
-- `MessageBox "fmt" [vars...] ["button"...]`: printf-style `%g`/`%f`/`%.Nf` substitution
-  (verify the accepted specifiers). No buttons → a timed notification (duration from text
+- `MessageBox "fmt" [vars...] ["button"...]`: `std::format`-style substitution (specifiers
+  verified against OpenMW, "As built" below). No buttons → a timed notification (duration from text
   length, GMST-driven; verify which). Buttons → a modal on the Modal layer; the script polls
   `GetButtonPressed` (−1 until chosen, then the index once). The transpiler lowers this to the
   `mw` library calling `ui.message` / `ui.message_box{ text, buttons }` with a per-script
@@ -110,6 +110,25 @@ From `Morrowind.bsa` (checked by listing the archive):
   (character generation gating). `EnableNameMenu`, `EnableRaceMenu`, `EnableClassMenu`,
   `EnableBirthMenu`, `EnableStatReviewMenu` → content-pack chargen screens. `ShowMap`,
   `FadeIn/FadeOut` → map reveal and the framework's fade overlay.
+
+### As built (MessageBox formatting)
+
+Status: written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10).
+`mw_ui::message` (Bevy-free), ported from OpenMW `ca5e2576` (`misc/messageformatparser.cpp`,
+`interpreter/miscopcodes.hpp`, `compiler/lineparser.cpp`; module docs cite lines).
+- `format_message(fmt, &[MessageArg])` → text + `MessageReport`; `message_box(fmt, values,
+  buttons)` → `Message { text, buttons, report }` (≤ 10 buttons); `message_box_from_args`
+  also does OpenMW's compile-time split; `placeholders(fmt)` gives the value kinds (`Str`,
+  `Int`, `Float`) the lowering needs at parse time.
+- OpenMW formats with C++ `std::format`, not `printf`: flags `- + space 0 #`, width,
+  `.precision`; `s S d i f F e E g G a A`; floats are `f32`; `%g`/`%f` 6 digits; exponents
+  `e+07`; `%a` without `0x`; `%d` truncates; `0` on `%s` is the fill char (`000ab`). Unknown
+  conversion → the char alone (`%x` → `x`, takes no value); trailing `%` dropped.
+- Arguments: one per placeholder, before the buttons, so a `%s` takes a quoted string as its
+  value. Button count = quoted arguments after the values (max 10), labels = that many from
+  the front, quoted or not (OpenMW issue 8129). Defines (`^PCName`) are expanded after
+  formatting by the caller.
+- Lowering (2026-11-08, UNTESTED): `mw_script`'s parser splits the args by the format's placeholders (`%s` text, others expressions, then quoted strings and bare words as `Arg::Str`/`Arg::Word`); `Host::message_box(fmt, &[MessageArg])` gets them raw and `mw_rpg`'s runner calls `message_box_from_args` (mw_script's own formatter deleted).
 
 ## OpenMW-Lua UI compatibility (`mw_openmw_lua`, after the core game)
 

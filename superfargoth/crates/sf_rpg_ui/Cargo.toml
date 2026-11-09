@@ -1,6 +1,6 @@
 [package]
 name = "sf_rpg_ui"
-description = "Bevy-free view-models for the RPG screens over sf_rpg state: the dialogue window (topics, hyperlinked text, choices, notices, scrollback, focus) and the journal (paged book, quests, topic index, search, new markers)"
+description = "Bevy-free view-models for the RPG screens over sf_rpg state: the dialogue window (topics, hyperlinked text, choices, notices, scrollback, focus), the journal (paged book, quests, topic index, search, new markers) and NPC services (trade deal bar, service lists)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,8 @@ sf_rpg.workspace = true
 # `ViewModel`, `UiValue`, `ListModel` (keyed, sortable, filterable rows): topic list, quest
 # list, topic index.
 sf_ui.workspace = true
+# `InventoryView` (the trade screen's two panes; services.md "Screens").
+sf_ui_inventory.workspace = true
 
 [dev-dependencies]
 postcard.workspace = true

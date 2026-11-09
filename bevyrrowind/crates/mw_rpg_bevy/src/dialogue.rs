@@ -24,15 +24,15 @@ use bevy_input::prelude::*;
 use bevy_log::prelude::*;
 use bevy_enhanced_input::prelude::EnhancedInputPlugin;
 use mw_rpg::{
-    ActorFacts, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwSheets, MwSlot, MwView, MwWorld, NoSheets, NpcStates,
-    ResultCall, ResultEffect, ResultRunner, ResultState, ScriptVar, Target, VarType, clothing_value, rank_name, record_clothing_value,
+    ActorFacts, AiNudge, DispositionExtras, DispositionInput, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwSheets, MwSlot,
+    MwView, MwWorld, NoSheets, NpcStates, PersuasionSession, ResultCall, ResultEffect, ResultRunner, ResultState, ScriptVar, Target, VarType, clothing_value, rank_name, record_clothing_value,
 };
 use serde::{Deserialize, Serialize};
 use sf_character_bevy::{Character, CharacterPlacement};
 use sf_records::{RecordDb, RecordFormat, RecordId, apply_record_file};
 use sf_rpg::{
     ActorKey, Attrs, CharacterRpg, ConversationCtx, DialogueOutput, DialogueSession, GameTime,
-    HeardLine, Holder, JournalEntry, PlayerId, RpgCommand, RpgEvent, TopicKind, WorldRpg,
+    HeardLine, Holder, JournalEntry, PlayerId, RpgCommand, RpgEvent, SessionState, TopicKind, WorldRpg,
 };
 use sf_rpg_ui::{Alphabet, DialogueRequest, DialogueView, JournalLabels, JournalScreen, JournalSeen};
 use sf_script_bevy::{ActivationOutcome, PLAYER, ScriptPlacements};
@@ -49,12 +49,15 @@ use tes3::esp::{FilterComparison, FilterFunction, FilterType, FilterValue, Globa
 use sf_world_bevy::StreamCell;
 use bevy_ecs::system::SystemParam;
 use mw_game_core::player::HOST_KEY;
-use mw_stats::MwTable;
+use mw_stats::{MwGmst, MwTable};
 use sf_rpg::PlayerKey;
-use sf_stats_bevy::sf_stats::{Sheet, StatOwner};
-use sf_stats_bevy::{StatIndex, Stats};
+use sf_stats_bevy::sf_stats::{CauseKind, Rules, Sheet, StatOwner};
+use sf_stats_bevy::{StatCommand, StatIndex, StatRules, StatTick, Stats};
 
 use crate::stats::MwStats;
+
+mod persuasion;
+pub use persuasion::{PERSUASION_ACTION, PERSUASION_OPTIONS, PersuadeRefused, Persuaded, persuasion_kind};
 
 /// Fargoth's ring (scaffold [`DevGiveRing`]).
 const RING: &str = "ring_keley";
@@ -67,22 +70,79 @@ fn id(s: &str) -> RecordId {
 
 // ============================================================ the Bevy-free core
 
-/// The speaker's disposition towards the player. A seam: the derived disposition (race,
-/// personality, faction, crime: `OpenMW` `MechanicsManager::getDerivedDisposition`) is a feel
-/// system (ARCHITECTURE §1b, owner 2026-10-25) and not ported; the slice uses content data only.
-pub trait DispositionModel: Send + Sync {
-    /// `base`: the NPC record's disposition; `modifier`: the sum of `ModDisposition` /
-    /// `SetDisposition` changes from result scripts.
-    fn disposition(&self, speaker: &ActorFacts, base: i32, modifier: i32) -> i32;
+/// What a [`DispositionModel`] reads: one speaker's disposition towards one player (co-op: the
+/// player by id, never a singleton).
+pub struct DispositionCtx<'a> {
+    pub sheets: &'a dyn MwSheets,
+    pub records: &'a RecordDb,
+    pub speaker: ActorKey,
+    pub facts: &'a ActorFacts,
+    pub player: PlayerId,
+    /// The player's race id (`None`: the raceless placeholder player, until chargen).
+    pub player_race: Option<&'a RecordId>,
+    /// The NPC record's disposition.
+    pub base: i32,
+    /// The sum of permanent changes: `ModDisposition` / `SetDisposition` from result scripts and
+    /// persuasion ([`Rpg::persuade`]).
+    pub modifier: i32,
 }
 
-/// Content data only: record base plus script changes, clamped to 0..=100 as `OpenMW` clamps
-/// the value the filters see.
+/// The speaker's disposition towards the player, as the filters and persuasion read it. A seam
+/// (rule-hooks.md; future rule id `mw.disposition.derived`): the game's model is
+/// [`DerivedDisposition`] (stats-adapter.md open question 2, owner 2026-11-08: `OpenMW`'s
+/// formula ported); [`ContentDisposition`] is the content-only value.
+pub trait DispositionModel: Send + Sync {
+    /// The disposition, 0..=100.
+    fn disposition(&self, cx: &DispositionCtx<'_>) -> i32;
+
+    /// The unclamped value with a zero base and modifier and without Charm (`goodbyeSelected`'s
+    /// `zero`: persuasion's goodbye keeps the derived value inside 0..=100 with it).
+    fn without_base(&self, cx: &DispositionCtx<'_>) -> i32 {
+        let _ = cx;
+        0
+    }
+}
+
+/// Content data only: record base plus permanent changes, clamped to 0..=100 as `OpenMW`
+/// clamps the value the filters see.
 pub struct ContentDisposition;
 
 impl DispositionModel for ContentDisposition {
-    fn disposition(&self, _speaker: &ActorFacts, base: i32, modifier: i32) -> i32 {
-        (base + modifier).clamp(0, 100)
+    fn disposition(&self, cx: &DispositionCtx<'_>) -> i32 {
+        (cx.base + cx.modifier).clamp(0, 100)
+    }
+}
+
+/// `OpenMW`'s `getDerivedDisposition` ([`mw_rpg::derived_disposition`]: race, the player's
+/// Personality, faction standing, bounty), over the GMSTs the records give. Falls back to
+/// [`ContentDisposition`] where the formula has no input: a creature, or no stats loaded.
+pub struct DerivedDisposition {
+    pub gmst: MwGmst,
+}
+
+impl DerivedDisposition {
+    /// The formula's input with this base and modifier. Not ours yet, so 0 / false:
+    /// TODO(crime system, ROADMAP crime): `crime_modifier` (`getCrimeDispositionModifier`);
+    /// TODO(effect runtime, `sf_effects`): `diseased` (common or blight) and `charm` (Charm
+    /// magnitude on the speaker); TODO(combat stance, `mw_player_bevy::combat`): `weapon_drawn`.
+    fn input(cx: &DispositionCtx<'_>, base: i32, modifier: i32) -> Option<DispositionInput> {
+        let extras = DispositionExtras { base, modifier, ..DispositionExtras::default() };
+        mw_rpg::disposition_input(cx.sheets, cx.records, cx.player, cx.player_race, cx.facts, extras)
+    }
+}
+
+impl DispositionModel for DerivedDisposition {
+    fn disposition(&self, cx: &DispositionCtx<'_>) -> i32 {
+        match Self::input(cx, cx.base, cx.modifier) {
+            Some(i) => mw_rpg::derived_disposition(&i, &self.gmst),
+            None => ContentDisposition.disposition(cx),
+        }
+    }
+
+    /// Charm is 0 until the effect runtime (see [`DerivedDisposition::input`]), so this is the
+    /// unclamped formula over a zero base.
+    fn without_base(&self, cx: &DispositionCtx<'_>) -> i32 {
+        Self::input(cx, 0, 0).map_or(0, |i| mw_rpg::derived_disposition_unclamped(&i, &self.gmst))
     }
 }
 
@@ -91,6 +151,8 @@ impl DispositionModel for ContentDisposition {
 struct Actor {
     facts: ActorFacts,
     base_disposition: i32,
+    /// The record's base Fight and Flee (`AIDT`), what persuasion's Intimidate and Taunt nudge.
+    ai: AiNudge,
     declared: HashMap<RecordId, VarType>,
 }
 
@@ -126,12 +188,16 @@ struct Content {
     /// the initial value [`Rpg::add_actor`] gives a local the actor has no value for yet.
     chargen_locals: HashMap<RecordId, Vec<(RecordId, f32)>>,
     disposition: Box<dyn DispositionModel>,
+    /// The records' GMSTs (persuasion; vanilla values for missing ones).
+    gmst: MwGmst,
 }
 
 /// One conversation (host side).
 pub struct Talk {
     pub session: DialogueSession,
     pub speaker: ActorKey,
+    /// Persuasion's bookkeeping for this conversation ([`Rpg::persuade`], settled at goodbye).
+    pub persuasion: PersuasionSession,
 }
 
 /// The game's RPG host: content, state, the result runner.
@@ -142,9 +208,38 @@ pub struct Rpg {
     results: MwResults,
     /// Message boxes and sounds result scripts asked for (UI and audio events, not saved).
     events: Vec<ResultEffect>,
+    /// Sheet changes result scripts asked for (stats.md S7), sent as `StatCommand`s by
+    /// `send_stat_commands`; the next fixed tick applies them.
+    stat_commands: Vec<StatCommand>,
+    /// Base Fight and Flee persuasion changed (Intimidate, Taunt), by actor; the record's
+    /// otherwise. TODO(AI settings, ROADMAP Phase 3 AI): no per-actor AI settings exist yet; move
+    /// these into them (saved, read by the AI) when they land. Unsaved until then.
+    ai_settings: HashMap<ActorKey, AiNudge>,
 }
 
 impl Content {
+    /// The disposition model's context for `speaker` (registered as `actor`) towards `player`.
+    /// TODO(co-op): `player`'s race comes from the host's placeholder facts (`Content::player`).
+    fn disposition_ctx<'a>(
+        &'a self,
+        state: &RpgState,
+        sheets: &'a dyn MwSheets,
+        player: PlayerId,
+        speaker: ActorKey,
+        actor: &'a Actor,
+    ) -> DispositionCtx<'a> {
+        DispositionCtx {
+            sheets,
+            records: &self.records,
+            speaker,
+            facts: &actor.facts,
+            player,
+            player_race: self.player.race.as_ref(),
+            base: actor.base_disposition,
+            modifier: state.npcs.modifier(speaker),
+        }
+    }
+
     /// The actor a result-script target names (`"arrille"->ModDisposition`): the first actor
     /// met with that base record.
     fn by_base(&self, base: &RecordId) -> Option<ActorKey> {
@@ -227,8 +322,8 @@ impl MwView for View<'_> {
 
     fn disposition(&self, ctx: &ConversationCtx) -> i32 {
         let Some(actor) = self.c.actors.get(&ctx.speaker) else { return 0 };
-        let modifier = self.s.npcs.modifier(ctx.speaker);
-        self.c.disposition.disposition(&actor.facts, actor.base_disposition, modifier)
+        let cx = self.c.disposition_ctx(self.s, self.sheets, ctx.player, ctx.speaker, actor);
+        self.c.disposition.disposition(&cx)
     }
 
     fn rank_name(&self, faction: &RecordId, rank: i32) -> Option<String> {
@@ -267,6 +362,19 @@ impl MwWorld for View<'_> {
                 .and_then(|k| self.s.inventories.get(&k))
                 .map_or(0, |inv| inv.loadout.count(item)),
         }
+    }
+
+    fn sheets(&self) -> &dyn MwSheets {
+        self.sheets
+    }
+
+    fn actor(&self, ctx: &ConversationCtx, target: &Target) -> Option<ActorKey> {
+        self.target(ctx, target)
+    }
+
+    fn facts(&self, ctx: &ConversationCtx, target: &Target) -> Option<&ActorFacts> {
+        let key = self.target(ctx, target)?;
+        self.c.actors.get(&key).map(|a| &a.facts)
     }
 }
 
@@ -338,6 +446,8 @@ impl Rpg {
             rank: -1,
             ..ActorFacts::default()
         };
+        // Missing GMSTs take vanilla values (the stats glue logs them).
+        let (gmst, _) = MwGmst::from_db(&records);
         Ok(Self {
             content: Content {
                 records,
@@ -348,11 +458,14 @@ impl Rpg {
                 player,
                 starting_clothes,
                 chargen_locals: HashMap::new(),
-                disposition: Box::new(ContentDisposition),
+                disposition: Box::new(DerivedDisposition { gmst: gmst.clone() }),
+                gmst,
             },
             state: RpgState::default(),
             results: MwResults::new(),
             events: Vec::new(),
+            stat_commands: Vec::new(),
+            ai_settings: HashMap::new(),
         })
     }
 
@@ -452,8 +565,12 @@ impl Rpg {
         let db = &self.content.records;
         let Some(npc) = db.get::<Npc>(base) else { return false };
         let declared = db.get::<Script>(&id(&npc.script)).map(|s| declared_locals(&s.text)).unwrap_or_default();
-        let actor =
-            Actor { facts: ActorFacts::from_npc(db, npc, cell), base_disposition: i32::from(npc.data.disposition), declared };
+        let actor = Actor {
+            facts: ActorFacts::from_npc(db, npc, cell),
+            base_disposition: i32::from(npc.data.disposition),
+            ai: AiNudge { flee: i32::from(npc.ai_data.flee), fight: i32::from(npc.ai_data.fight) },
+            declared,
+        };
         self.content.actors.insert(key, actor);
         for (name, value) in self.content.chargen_locals.get(base).into_iter().flatten() {
             self.state.locals.entry((key, name.clone())).or_insert(*value);
@@ -532,7 +649,8 @@ impl Rpg {
                 | ResultEffect::RemoveItem { target, .. }
                 | ResultEffect::ModDisposition { target, .. }
                 | ResultEffect::SetDisposition { target, .. }
-                | ResultEffect::SetLocal { target, .. } = &mut effect
+                | ResultEffect::SetLocal { target, .. }
+                | ResultEffect::Stats { target, .. } = &mut effect
                 && *target == Target::Speaker
             {
                 *target = Target::Player;
@@ -558,14 +676,26 @@ impl Rpg {
             let rules = MwDialogueRules::new(&self.content.dialogue, &view);
             DialogueSession::open(&self.content.dialogue.db, &rules, ctx)
         };
-        let mut talk = Talk { session, speaker };
+        let mut talk = Talk { session, speaker, persuasion: PersuasionSession::default() };
         let mut view = DialogueView::new(name);
         self.after(&mut talk, &mut view, &out, sheets);
         Some((talk, view))
     }
 
-    /// Applies a request from the dialogue window and feeds the view.
+    /// Applies a request from the dialogue window and feeds the view: [`Rpg::request_at`] at
+    /// tick 0 (tests, tools; the game passes its tick, which seeds persuasion rolls).
     pub fn request(&mut self, talk: &mut Talk, view: &mut DialogueView, request: &DialogueRequest, sheets: &dyn MwSheets) {
+        self.request_at(talk, view, request, sheets, 0);
+    }
+
+    /// Applies a request from the dialogue window at simulation tick `tick` and feeds the view.
+    /// Topics, choices and goodbye are session steps; [`DialogueRequest::Action`] is routed by
+    /// [`Rpg::route_action`] (Persuasion options; services are a logged no-op until SV3).
+    pub fn request_at(&mut self, talk: &mut Talk, view: &mut DialogueView, request: &DialogueRequest, sheets: &dyn MwSheets, tick: u64) {
+        if let DialogueRequest::Action { action, option } = request {
+            let _ = self.route_action(talk, view, action, option.as_ref(), sheets, tick);
+            return;
+        }
         let out = {
             let v = View { c: &self.content, s: &self.state, sheets };
             let rules = MwDialogueRules::new(&self.content.dialogue, &v);
@@ -574,6 +704,9 @@ impl Rpg {
         match out {
             Ok(out) => self.after(talk, view, &out, sheets),
             Err(e) => warn!("dialogue: {request:?} refused: {e}"),
+        }
+        if *talk.session.state() == SessionState::Ended {
+            self.end_talk(talk, sheets);
         }
     }
 
@@ -626,6 +759,8 @@ impl Rpg {
             events.extend(self.apply(Some(&mut *talk), &ctx, effect, sheets));
         }
         view.apply_events(&events);
+        // The action buttons follow the state the step left (a bribe's gold, ...).
+        self.refresh_actions(talk, view);
         let v = View { c: &self.content, s: &self.state, sheets };
         let rules = MwDialogueRules::new(&self.content.dialogue, &v);
         view.refresh_from(&talk.session, &self.content.dialogue.db, &rules, &self.state.world.topics);
@@ -712,6 +847,18 @@ impl Rpg {
                 self.state.globals.insert(name, value);
             }
             e @ (ResultEffect::MessageBox { .. } | ResultEffect::PlaySound(_)) => self.events.push(e),
+            // The context player's sheet, or the actor's by its key (net rule 6: never a singleton).
+            ResultEffect::Stats { target, ops } => {
+                let owner = match &target {
+                    Target::Player => player_key(ctx.player).map(StatOwner::Player),
+                    other => target_key(self, other).map(StatOwner::Actor),
+                };
+                if let Some(owner) = owner {
+                    self.stat_commands.push(StatCommand::new(owner, CauseKind::Script, ops));
+                } else {
+                    debug!("result scripts: stats of {target:?} have no sheet owner");
+                }
+            }
         }
         events
     }
@@ -800,7 +947,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
         )
         .add_systems(
             Update,
-            (host_dialogue, close_screens, keep_journal_seen, show_events, free_camera_lock, pause_player)
+            (host_dialogue, close_screens, keep_journal_seen, show_events, send_stat_commands, free_camera_lock, pause_player)
                 .chain()
                 .after(ScreenSystems::Input),
         );
@@ -826,6 +973,7 @@ fn player_key(player: PlayerId) -> Option<PlayerKey> {
 #[derive(SystemParam)]
 pub struct DialogueSheets<'w, 's> {
     stats: Option<Res<'w, MwStats>>,
+    rules: Option<Res<'w, StatRules>>,
     index: Option<Res<'w, StatIndex>>,
     sheets: Query<'w, 's, &'static Stats>,
 }
@@ -848,6 +996,10 @@ impl MwSheets for DialogueSheets<'_, '_> {
 
     fn actor(&self, actor: ActorKey) -> Option<&Sheet> {
         self.sheet(StatOwner::Actor(actor))
+    }
+
+    fn rules(&self) -> Option<&Rules> {
+        self.rules.as_deref().map(|r| &*r.0)
     }
 }
 
@@ -873,6 +1025,10 @@ impl MwSheets for WorldSheets<'_> {
 
     fn actor(&self, actor: ActorKey) -> Option<&Sheet> {
         self.sheet(StatOwner::Actor(actor))
+    }
+
+    fn rules(&self) -> Option<&Rules> {
+        self.0.get_resource::<StatRules>().map(|r| &*r.0)
     }
 }
 
@@ -1063,7 +1219,9 @@ fn keep_journal_seen(mut changes: MessageReader<JournalSeenChanged>, mut store: 
     }
 }
 
-/// Window requests → the session; a closed conversation closes its window.
+/// Window requests → the session (action buttons → [`Rpg::route_action`]); a closed
+/// conversation closes its window. The fixed tick (`StatTick`, 0 without the stats plugin)
+/// seeds persuasion rolls.
 fn host_dialogue(
     mut requests: MessageReader<DialogueRequestEvent>,
     mut rpg: ResMut<Rpg>,
@@ -1071,16 +1229,18 @@ fn host_dialogue(
     mut screens: Query<&mut DialogueScreen>,
     sheets: DialogueSheets,
     mut stack: ResMut<ScreenStackRes>,
+    tick: Option<Res<StatTick>>,
 ) {
     let Some(mut active) = active else {
         requests.clear();
         return;
     };
+    let tick = tick.map_or(0, |t| u64::from(t.0));
     let screen = active.screen;
     let Ok(mut window) = screens.get_mut(screen) else { return };
     for event in requests.read() {
         if event.screen == screen {
-            rpg.request(&mut active.talk, &mut window.view, &event.request, &sheets);
+            rpg.request_at(&mut active.talk, &mut window.view, &event.request, &sheets, tick);
         }
     }
     if window.view.is_closed() {
@@ -1089,21 +1249,38 @@ fn host_dialogue(
 }
 
 /// Menu screens taken off the stack (goodbye, Back, `J`) despawn; the conversation ends with
-/// its window.
+/// its window, settled as goodbye settles it ([`Rpg::end_talk`]; Back and `J` close it without
+/// one).
 fn close_screens(
     mut commands: Commands,
     stack: Res<ScreenStackRes>,
     roots: Query<(Entity, &UiScreenRoot)>,
-    active: Option<Res<ActiveTalk>>,
+    mut active: Option<ResMut<ActiveTalk>>,
+    mut rpg: ResMut<Rpg>,
+    sheets: DialogueSheets,
 ) {
     for (e, root) in &roots {
         let id = root.0.as_str();
         if matches!(id, "dialogue" | "journal") && !stack.0.is_open(id) {
             commands.entity(e).despawn();
-            if active.as_ref().is_some_and(|a| a.screen == e) {
+            if let Some(a) = active.as_deref_mut()
+                && a.screen == e
+            {
+                rpg.end_talk(&mut a.talk, &sheets);
                 commands.remove_resource::<ActiveTalk>();
             }
         }
+    }
+}
+
+/// Result scripts' sheet changes go to `sf_stats_bevy` as commands, applied on its next fixed
+/// tick (stats.md S7). Checked before taking, so `Rpg` isn't marked changed every frame.
+fn send_stat_commands(mut rpg: ResMut<Rpg>, mut commands: Commands) {
+    if rpg.stat_commands.is_empty() {
+        return;
+    }
+    for command in std::mem::take(&mut rpg.stat_commands) {
+        commands.write_message(command);
     }
 }
 

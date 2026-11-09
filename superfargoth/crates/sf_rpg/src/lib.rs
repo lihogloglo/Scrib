@@ -2,7 +2,8 @@
 //! equipment, a quest store, the journal and known topics, and the dialogue session state
 //! machine. No rules and no content format: filters, text macros, formulas and scripts come
 //! from the content pack through the adapter hooks ([`DialogueRules`], [`EquipRules`],
-//! [`LinkRules`]). Everything saved or sent is plain serde data keyed by stable ids.
+//! [`LinkRules`], [`service::ServiceRules`]). Everything saved or sent is plain serde data keyed by
+//! stable ids.
 
 mod dialogue;
 mod equip;
@@ -10,6 +11,7 @@ mod ids;
 mod item;
 mod link;
 mod quest;
+pub mod service;
 mod state;
 
 pub use dialogue::{
@@ -29,3 +31,5 @@ pub use state::{CharacterRpg, RpgCommand, RpgError, RpgEvent, WorldRpg};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_service;

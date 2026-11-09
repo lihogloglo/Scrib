@@ -1,0 +1,19 @@
+[package]
+name = "mw_ui"
+description = "Morrowind's UI adapter core on sf_ui: book and scroll markup to the rich-text IR, MessageBox formatting (later: topic linking, the .fnt reader)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Bevy-free core (build-perf.md rule 1): in hakari's final-excludes.
+[dependencies]
+sf_ui.workspace = true
+sf_vfs.workspace = true
+
+[dev-dependencies]
+mw_install.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+
+[lints]
+workspace = true

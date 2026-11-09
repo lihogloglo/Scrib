@@ -1627,12 +1627,27 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-06 (night-ambient, RO-16 fix 2): the sky's flat ambient floor takes its hue from the weather
   (`sf_sky::Weather::ambient_tint`, luminance relative to `SkyRenderOptions::ambient_color`), not its brightness: the
   game's calibrated nits stay (owner: lit nights); Morrowind feeds OpenMW's time-of-day ambient colours as chroma only.
+- 2026-11-08 (stats-s7): MWScript stat functions are semantics in the host (`mw_rpg::script_stats`), not the
+  interpreter; a result run steps a copy of each sheet it writes so later reads see the write, and emits the same ops for
+  the host. `StatOp` gains `Leave` as its last variant (append-only: serialized op lists keep their indices).
 - 2026-11-08 (static-scene): statics move to a retained GPU-driven scene (one instance table per space, GPU cull and
   pixel-error LOD per view, Bevy's material pipeline via a vendored, upstreamable patch on bevy#25978); not a CPU cull,
   a public-API bypass or our own renderer. Owner: future-proof over quick fixes. Spec `specs/static-scene.md`.
+- 2026-11-08 (rule-hooks): event-rate feel formulas are written as rules: a pure Rust `fn(&In) -> Out` over one input
+  struct holding every number the formula reads (OpenMW issue 9104 lesson), declared by the seam owner; Luau overrides
+  wrap them (`rules.wrap`, load order). Spec `specs/rule-hooks.md`; applies to every 2.7 mechanic from its first slice.
+- 2026-11-08 (owner, later): everything starts in Rust; Luau comes later and rewrites specific bits (events, rule
+  overrides). Kept from rule-hooks.md now: event-rate formulas are pure `fn(&In) -> Out` over one input struct, so the
+  later `rules.wrap` changes no caller. No `sf_rules` crate or `@sf/rules` until the owner unparks Luau.
+- 2026-11-08 (owner): the recommended defaults answer the open questions of effects.md, effects-adapter.md, services.md,
+  services-adapter.md, the disposition port and the book parser (each spec marks them taken). Next round: effects E1,
+  services SV1, disposition wiring + persuasion in the game host.
+- 2026-11-08 (round 3, effects E2): until Luau unparks, rules are plain pure `fn(&In) -> Out` (serde In/Out, future rule id in the doc comment); no `sf_rules` crate or macro. Effects: spell absorption is checked before reflect; reflect is decided per source.
+- 2026-11-08 (owner): all 2026-11-08 laptop work is UNTESTED; owner test pass 2026-11-10 from `bevyrrowind/docs/test-pass-2026-11-10.md`; specs flag untested slices "UNTESTED (owner test pass 2026-11-10)".
 - 2026-11-08 (delirium-repin): delirium-physics pinned to `f4ff84d` (0.7.0) after upstream rewrote history and dropped
   `91ee246`; new 0.7.0 fields take delirium's serde defaults in `mw_delirium`. Delirium stays a default feature (owner).
   A project-owned fork pin is the open follow-up.
 - 2026-11-09 (owner, AI2b): HTN planner uses full backtracking, bounded by try/depth limits (owner, 2026-11-09):
   chronological (SHOP/Humphreys/Decima), not Fluid's method-local; `SEARCH_TRIES`/`SEARCH_DEPTH` cut it off identically on
   every CPU tier (`RejectReason::Limit`); a method opts out with `cut: true` (ai-as-built.md, AI2).
+- 2026-11-08 (round 4, effects E3): world time in `sf_effects` is `GameMinutes` (no `sf_rpg` dependency); `apply_book` takes an `EffectEnv` so E1 `apply`/`EffectCtx` stay stable; power recharge is checked by the step, tick cooldowns by the cast model.

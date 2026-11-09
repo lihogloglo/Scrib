@@ -467,7 +467,7 @@ impl mw_script::Host for NeutralHost {
     fn mod_disposition(&mut self, _: &mw_script::ast::Target, _: i32) {
         self.hit("ModDisposition");
     }
-    fn message_box(&mut self, _: String, _: Vec<String>) {
+    fn message_box(&mut self, _: &str, _: &[mw_script::MessageArg]) {
         self.hit("MessageBox");
     }
     fn play_sound(&mut self, _: &mw_script::ast::Ident) {
