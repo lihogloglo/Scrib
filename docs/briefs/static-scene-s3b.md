@@ -75,6 +75,9 @@ u32::MAX`, statics are fine, S4 adds history); one AABB per batch.
   game is never allowed on the laptop**, and agents never judge visuals anywhere. `cargo` needs
   `export PATH="$HOME/.cargo/bin:$PATH"` in Git Bash; always build through `bash bevyrrowind/tools/cargo_turn.sh ...
   -j 6`. A cold vendored-Bevy build takes ~20-25 min there.
+- **`cargo_turn.sh` always exits 0** (`cmd start /wait` drops cargo's exit code; found 2026-11-09 by the AI4 agent):
+  judge every build, test and clippy run by its output (`error`, `could not compile`, `test result: FAILED`,
+  `Finished`), never by the exit code. The script is a shared tool: fixing it is the owner's call.
 - **Never share a target dir between checkouts that build vendored Bevy**: worktrees and `repo/` write vendored
   `bevy_render`/`bevy_pbr` under the same artifact names, so a build can silently link another checkout's patched
   Bevy (hit twice on 2026-11-09). Give each worktree its own `CARGO_TARGET_DIR`; Bevy-free crates are safe to share.
