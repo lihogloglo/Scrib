@@ -8,9 +8,9 @@ use crate::{
     MaterialPropertiesExt, MeshLayouts, MeshPipeline, MeshPipelineKey, PreparedMaterial,
     PrepassAlphaMaskDrawFunction, PrepassFragmentShader, PrepassOpaqueDepthOnlyDrawFunction,
     PrepassOpaqueDrawFunction, PrepassVertexShader, RenderLightmaps, RenderMaterialInstances,
-    RenderMeshInstanceFlags, RenderMeshInstances, SetMaterialBindGroup, SetMeshBindGroup,
+    RenderMeshInstanceFlags, SetMaterialBindGroup, SetMeshBindGroup,
     ShadowView,
-    RenderMeshDraws, // superfargoth patch (bevyengine/bevy#25978)
+    RenderMeshDraws, // superfargoth patch (bevyengine/bevy#25978): replaces `RenderMeshInstances`
     surface_weather_bind_entries, surface_weather_layout_entries, SurfaceWeatherPrepassBindGroups,
     SurfaceWeatherView, // superfargoth patch (own, SW)
 };

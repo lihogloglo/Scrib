@@ -8863,6 +8863,7 @@ dependencies = [
  "big_space",
  "glam 0.33.12",
  "log",
+ "naga",
  "postcard",
  "sf_bake",
  "sf_coords",
@@ -8873,6 +8874,7 @@ dependencies = [
  "sf_vfs",
  "sf_world",
  "tempfile",
+ "wesl",
  "workspace-hack",
 ]
 

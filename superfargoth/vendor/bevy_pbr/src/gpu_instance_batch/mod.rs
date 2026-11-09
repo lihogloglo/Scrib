@@ -24,7 +24,8 @@ use bevy_light::{NotShadowReceiver, TransmittedShadowReceiver};
 use bevy_camera::{
     visibility::{
         CascadesVisibleEntities, CubemapVisibleEntities, InheritedVisibility, RenderLayers,
-        ViewVisibility, VisibilityRange, VisibilitySystems, VisibleEntities, VisibleEntityRanges,
+        SetViewVisibility, ViewVisibility, VisibilityRange, VisibilitySystems, VisibleEntities,
+        VisibleEntityRanges,
         VisibleMeshEntities,
     },
     Camera, RenderTarget, ShadowLodOrigin,

@@ -836,7 +836,7 @@ pub fn late_sweep_material_instances(
     mut removed_meshes_query: Extract<RemovedComponents<Mesh3d>>,
     // superfargoth patch (bevyengine/bevy#25978): batches draw without `Mesh3d` (upstream sweeps `Mesh3dVisibility`).
     mut removed_batches_query: Extract<
-        RemovedComponents<crate::gpu_instance_batch::GpuBatchedMesh3d>,
+        RemovedComponents<gpu_instance_batch::GpuBatchedMesh3d>,
     >,
 ) {
     let last_change_tick = material_instances.current_change_tick;

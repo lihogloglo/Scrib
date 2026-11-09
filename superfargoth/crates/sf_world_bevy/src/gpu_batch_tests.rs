@@ -21,7 +21,8 @@ use std::path::PathBuf;
 use bevy::app::App;
 use bevy::asset::{AssetApp, AssetPlugin, Assets};
 use bevy::camera::visibility::{
-    CascadesVisibleEntities, InheritedVisibility, ViewVisibility, VisibilityClass, VisibleMeshEntities,
+    CascadesVisibleEntities, InheritedVisibility, SetViewVisibility, ViewVisibility, VisibilityClass,
+    VisibleMeshEntities,
 };
 use bevy::ecs::entity::{Entity, EntityHashMap};
 use bevy::light::{DirectionalLight, NotShadowCaster};
