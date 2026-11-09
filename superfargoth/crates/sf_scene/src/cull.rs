@@ -21,7 +21,9 @@
 //! Level errors are model-space in both forms: the instance's largest axis scale
 //! ([`StaticInstance::max_scale`]) multiplies them first, so a placement scaled 2× switches each
 //! level at twice the distance (the GPU pass does the same). [`ScenePreset`] sets `lod_px` and
-//! `size_cull_px`, the only knobs the quality presets turn.
+//! `size_cull_px`, the only knobs the quality presets turn — and `size_cull_px` is **per view**,
+//! not one number per preset: a preset's value is for main views, and shadow views get 0 (off)
+//! until a caster size rule is measured ([`ViewKind`]).
 
 use glam::{IVec2, Vec2, Vec3, Vec4, Vec4Swizzles};
 
@@ -68,6 +70,19 @@ impl SceneProjection {
     }
 }
 
+/// What a view is for. The one thing it decides here is the sub-pixel cull's default
+/// ([`ScenePreset::size_cull_px`]): a size cutoff that is right in the view the player looks
+/// through is not automatically right in a shadow view, where it drops a caster's **shadow**
+/// while the caster itself is still on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ViewKind {
+    /// The camera, and anything else drawn for the player to look at.
+    Main,
+    /// A view drawn only to gather casters: the sun cascades (orthographic) and the lamp cube
+    /// faces (perspective, §8).
+    Shadow,
+}
+
 /// Quality presets (§4): they change only `lod_px` and `size_cull_px`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ScenePreset {
@@ -90,10 +105,24 @@ impl ScenePreset {
         }
     }
 
-    /// Projected radius under which an instance is dropped, pixels. The spec gives one number
-    /// per preset for both knobs; they are separate here so S4 can tune them apart.
-    pub fn size_cull_px(self) -> f32 {
-        self.lod_px()
+    /// Projected radius under which an instance is dropped, in the view's own units
+    /// ([`cull_instance`]). The spec gives one number per preset for both knobs; they are
+    /// separate here so S4 can tune them apart.
+    ///
+    /// **Off ([`Self::lod_px`] worth of pixels in main views, 0 in shadow views.)** A
+    /// main-view-style size cutoff applied to casters was measured on this project and reverted
+    /// the same day — "its cascades refit with the view, so small casters lost and regained
+    /// shadows as the camera turned" (`bevyrrowind/docs/perf.md:55-57`) — and what ships
+    /// elsewhere is a *per-cascade* threshold over a stable cascade fit (Unity 6.6 small-mesh
+    /// culling; UE's `r.Nanite.ShadowRaster.PixelsPerEdgeScaling` is a per-cascade LOD bias).
+    /// The orthographic test in [`cull_instance`] is that rule's cascade-texel form and stays
+    /// implemented, so the owner can turn it on for a view by setting
+    /// [`SceneView::size_cull_px`] directly; it is only off by default.
+    pub fn size_cull_px(self, kind: ViewKind) -> f32 {
+        match kind {
+            ViewKind::Main => self.lod_px(),
+            ViewKind::Shadow => 0.0,
+        }
     }
 }
 
@@ -188,17 +217,22 @@ pub struct SceneView {
     /// How the view projects: the LOD pick and the sub-pixel test read its density term.
     pub projection: SceneProjection,
     pub lod_px: f32,
-    /// 0 turns the sub-pixel cull off.
+    /// Smallest projected radius an instance may have, in the view's own units ([`cull_instance`]:
+    /// screen pixels in a perspective view, shadow-map texels in an orthographic one). **0 turns
+    /// the sub-pixel cull off**, and that is the default for shadow views
+    /// ([`ScenePreset::size_cull_px`]).
     pub size_cull_px: f32,
     /// Apply the terrain horizon (exterior main views).
     pub horizon: bool,
 }
 
 impl SceneView {
-    /// The view with a preset's pixel thresholds.
+    /// The view with a preset's pixel thresholds for a view of this kind. `kind` is explicit so
+    /// that a slice building shadow views cannot inherit the main view's sub-pixel cutoff by
+    /// forgetting about it ([`ScenePreset::size_cull_px`]).
     #[must_use]
-    pub fn with_preset(self, preset: ScenePreset) -> Self {
-        Self { lod_px: preset.lod_px(), size_cull_px: preset.size_cull_px(), ..self }
+    pub fn with_preset(self, preset: ScenePreset, kind: ViewKind) -> Self {
+        Self { lod_px: preset.lod_px(), size_cull_px: preset.size_cull_px(kind), ..self }
     }
 }
 
@@ -308,12 +342,15 @@ pub fn cull_instance(view: &SceneView, instance: &StaticInstance, offset: Vec3, 
         return Verdict::Culled(CullReason::Frustum);
     }
     let size = view.size_cull_px;
+    // Step 4 is a *threshold*, so 0 is "no threshold": it turns the test off in either
+    // projection, and is the default for shadow views ([`ScenePreset::size_cull_px`]).
+    let sub_pixel_cull = size > 0.0;
     let surface = match view.projection {
         SceneProjection::Perspective { pixels_per_radian: ppr } => {
             // Projected radius at the screen centre, ppr · r / √(d² − r²): drop under
             // size_cull_px (squared, as the GPU pass does it: no sqrt, no boundary drift).
             let d2 = center.distance_squared(view.eye);
-            if size > 0.0 && d2 > r * r && ppr * ppr * r * r < size * size * (d2 - r * r) {
+            if sub_pixel_cull && d2 > r * r && ppr * ppr * r * r < size * size * (d2 - r * r) {
                 return Verdict::Culled(CullReason::SubPixel);
             }
             (d2.sqrt() - r).max(0.0)
@@ -326,8 +363,10 @@ pub fn cull_instance(view: &SceneView, instance: &StaticInstance, offset: Vec3, 
             // shipped cascade implementations (UE's shadow radius threshold), and it falls out
             // of the cascade's own density: a small object keeps its shadow in the dense near
             // cascade and loses it in a far one, where its shadow is sub-pixel on screen anyway.
-            // `size_cull_px = 0` turns it off for a view that wants every caster.
-            if size > 0.0 && r * tpm < size {
+            // `size_cull_px = 0` turns it off for a view that wants every caster, which is what
+            // a shadow view gets by default until the per-cascade form is measured
+            // ([`ScenePreset::size_cull_px`]).
+            if sub_pixel_cull && r * tpm < size {
                 return Verdict::Culled(CullReason::SubPixel);
             }
             // No distance: the pick ignores it.

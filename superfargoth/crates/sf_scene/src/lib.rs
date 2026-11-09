@@ -35,7 +35,7 @@ pub use alloc::{AllocError, SlotAllocator, SlotRange, SlotStats};
 pub use chain::{ChainLayout, LayoutError, LevelSource, Segment, chain_layout};
 pub use cull::{
     CullReason, CullStats, Frustum, HorizonGrid, HorizonParams, ScenePreset, SceneProjection, SceneView, Verdict,
-    WorkItem, cull_cell, cull_instance, pick_level, pick_level_ortho, pixels_per_radian, texels_per_metre,
+    ViewKind, WorkItem, cull_cell, cull_instance, pick_level, pick_level_ortho, pixels_per_radian, texels_per_metre,
 };
 pub use eligibility::{ClassKind, Eligibility, EntityReason, MaterialKind, Promotions, SceneEligibility, classify};
 pub use material::{MaterialClass, MaterialTraits};
