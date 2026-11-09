@@ -34,8 +34,10 @@ sf_diag_bevy.workspace = true
 sf_save.workspace = true
 thiserror.workspace = true
 # Section types (save.md "What is saved"): the character body (ActionState, Locomotion), `GRID_CELL`,
-# records, the placement overlay, RPG state, the sky clock, the stats sheet, weather and wind.
+# records, the placement overlay, RPG state, the sky clock, the stats sheet, weather and wind; the
+# AI directive stacks (`sf/ai`, Bevy-free `sf_ai`).
 sf_action.workspace = true
+sf_ai.workspace = true
 sf_controller.workspace = true
 sf_coords.workspace = true
 sf_records.workspace = true

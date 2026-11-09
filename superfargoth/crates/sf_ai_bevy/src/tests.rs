@@ -272,7 +272,8 @@ fn ai_directives_prints_the_actors_stack_top_first() {
     let custom = |name: &str, source| DirectiveSpec::new(DirectiveKind::Custom(name.into()), source);
     stack.push(custom("wander", DirectiveSource::Record).limit(Limit::For { minutes: 60 }), now, &ModernPolicy, &mut events);
     stack.push(custom("deliver", DirectiveSource::Quest).priority(5).origin("q1"), now, &ModernPolicy, &mut events);
-    app.world_mut().spawn((AiActor(A), AiDirectives(stack)));
+    app.world_mut().spawn(AiActor(A));
+    app.world_mut().resource_mut::<AiDirectives>().insert(stack);
     assert_eq!(
         info(&run(&mut app, "ai.directives 7")),
         [
@@ -286,4 +287,36 @@ fn ai_directives_prints_the_actors_stack_top_first() {
     assert!(lines.last().unwrap().1.contains("no directive stack"), "{lines:?}");
     let lines = run(&mut app, "ai.directives");
     assert!(lines.last().unwrap().1.contains("no actor selected"), "{lines:?}");
+}
+
+/// AI5: the `sf/ai` accessors. An empty store saves nothing (equal to a world without the
+/// section); a load replaces the whole store, so an actor the save lacks loses its stale stack.
+#[test]
+fn the_sf_ai_accessors_snapshot_and_replace_the_whole_store() {
+    use sf_ai::{DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, GameTime, ModernPolicy, Serving};
+    let mut app = app(LIBRARY);
+    let world = app.world_mut();
+    assert_eq!(ai_save(world), None);
+    let now = GameTime { day: 2, minute: 30 };
+    let mut events = Vec::new();
+    let mut a = DirectiveStack::new(A, now);
+    a.push(DirectiveSpec::new(DirectiveKind::Follow(B), DirectiveSource::Script), now, &ModernPolicy, &mut events);
+    a.serve(Serving::Suspended, now, &ModernPolicy, &mut events);
+    world.resource_mut::<AiDirectives>().insert(a.clone());
+    let saved = ai_save(world).unwrap();
+    assert_eq!(saved.actors.keys().copied().collect::<Vec<_>>(), [A]);
+
+    // Before the load, another actor got a stack the save doesn't know.
+    world.resource_mut::<AiDirectives>().insert(DirectiveStack::new(B, now));
+    world.resource_mut::<AiDirectives>().get_mut(A).unwrap().serve(Serving::Top, now, &ModernPolicy, &mut events);
+    ai_load(world, saved.clone());
+    let store = world.resource::<AiDirectives>();
+    assert_eq!(store.iter().collect::<Vec<_>>(), [&a]);
+    assert_eq!(store.get(B), None);
+    assert_eq!(ai_save(world), Some(saved));
+
+    // A store-less world gets one on load.
+    world.remove_resource::<AiDirectives>();
+    ai_load(world, AiSave::default());
+    assert!(world.resource::<AiDirectives>().is_empty());
 }

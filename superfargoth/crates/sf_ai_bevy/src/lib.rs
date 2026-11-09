@@ -8,8 +8,9 @@
 //! - [`AiLibrary`]: the HTN [`Library`] and its load report. [`load_library`] builds it from the
 //!   `RecordDb` once mods are loaded, logs every error and keeps running with an empty library.
 //! - [`AiActor`]: the stable [`ActorKey`] of an entity the AI runs (placement or spawn id, never the
-//!   `Entity`); [`AiSelected`]: the actor the overlay shows; [`AiDirectives`]: its directive
-//!   stack (AI4).
+//!   `Entity`); [`AiSelected`]: the actor the overlay shows; [`AiDirectives`]: every actor's
+//!   directive stack by key (AI4), the `sf/ai` save section's state ([`ai_save`] / [`ai_load`],
+//!   AI5; `sf_save_bevy::sections::ai` registers it, so this crate needs no save dependency).
 //! - Console (`console.md`): `ai.select [id|off]` (no id: the console's click-selection, feature
 //!   `debug`), `ai.trace [n] [id]`, `ai.directives [id]` (AI4: the stack, top first),
 //!   `ai.tiers` (provisional until the AI9 allocator), `ai.stats`;
@@ -22,6 +23,7 @@
 //! system here writes anything gameplay reads (ai.md "Architecture": presentation never feeds
 //! gameplay).
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::ops::{Deref, DerefMut};
 
@@ -30,7 +32,7 @@ use bevy_ecs::prelude::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sf_ai::{
-    ActorKey, DirectiveStack, LoadReport, Library, MethodId, OperatorId, PlanOutcome, StateKeys, TaskId, Trace,
+    ActorKey, AiSave, DirectiveStack, LoadReport, Library, MethodId, OperatorId, PlanOutcome, StateKeys, TaskId, Trace,
     TraceNames, TraceStore, format_directives, format_trace_with,
 };
 use sf_records::RecordDb;
@@ -70,7 +72,10 @@ impl Plugin for AiPlugin {
     fn build(&self, app: &mut App) {
         let mut store = TraceStore::new();
         store.set_timings(self.timings);
-        app.insert_resource(AiTraces(store)).init_resource::<AiLibrary>().init_resource::<AiSelected>();
+        app.insert_resource(AiTraces(store))
+            .init_resource::<AiLibrary>()
+            .init_resource::<AiSelected>()
+            .init_resource::<AiDirectives>();
         console::register(app);
         #[cfg(feature = "debug")]
         gizmos::add(app);
@@ -114,20 +119,89 @@ impl Default for AiLibrary {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AiActor(pub ActorKey);
 
-/// An actor's directive stack (AI4; `sf_ai::directive`), on the [`AiActor`] entity. The
-/// fixed-tick systems that push, advance and finish it, and the message the completion events
-/// become, come with AI6/AI7; today the spawner or a test fills it. `ai.directives` prints it.
-#[derive(Component, Clone, Debug, PartialEq)]
-pub struct AiDirectives(pub DirectiveStack);
+/// Every actor's directive stack (AI4; `sf_ai::directive`), keyed by [`ActorKey`]: the host's one
+/// copy, whether or not the actor's entity is spawned (AI5). Tier 0 keeps every actor logically
+/// alive in every worldspace, so a stack never unloads with its cell and streaming can't
+/// disagree with a save; an [`AiActor`] entity finds its stack by key. The `sf/ai` section
+/// snapshots and replaces this store ([`ai_save`], [`ai_load`]). The fixed-tick systems that
+/// push, advance and finish stacks come with AI6/AI7; today the spawner or a test fills it.
+/// `ai.directives` prints one.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct AiDirectives {
+    stacks: BTreeMap<ActorKey, DirectiveStack>,
+}
+
+impl AiDirectives {
+    /// Adds or replaces the stack of `stack.actor()`; returns the old one.
+    pub fn insert(&mut self, stack: DirectiveStack) -> Option<DirectiveStack> {
+        self.stacks.insert(stack.actor(), stack)
+    }
+
+    pub fn get(&self, actor: ActorKey) -> Option<&DirectiveStack> {
+        self.stacks.get(&actor)
+    }
+
+    pub fn get_mut(&mut self, actor: ActorKey) -> Option<&mut DirectiveStack> {
+        self.stacks.get_mut(&actor)
+    }
+
+    /// Drops an actor's AI state (it was deleted from the world, not unloaded).
+    pub fn remove(&mut self, actor: ActorKey) -> Option<DirectiveStack> {
+        self.stacks.remove(&actor)
+    }
+
+    /// In key order.
+    pub fn iter(&self) -> impl Iterator<Item = &DirectiveStack> {
+        self.stacks.values()
+    }
+
+    pub fn len(&self) -> usize {
+        self.stacks.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.stacks.is_empty()
+    }
+
+    /// The `sf/ai` value of this store.
+    pub fn to_save(&self) -> AiSave {
+        AiSave::from_stacks(self.iter())
+    }
+
+    /// Replaces the whole store with a loaded `sf/ai` (load is a full replace: an actor the save
+    /// lacks gets its record defaults when its stack is next built). A stack that breaks its
+    /// invariants is skipped with an error line; the section's check refuses those before any
+    /// load applies, so this only guards a caller that skipped it.
+    pub fn restore(&mut self, save: AiSave) {
+        self.stacks.clear();
+        for (actor, a) in save.actors {
+            match DirectiveStack::from_saved(actor, a.directives) {
+                Ok(stack) => {
+                    self.stacks.insert(actor, stack);
+                }
+                Err(e) => log::error!(target: "sf_ai", "sf/ai: actor {}: {e}; record defaults instead", actor_hex(actor)),
+            }
+        }
+    }
+}
+
+/// `get` of the `sf/ai` section (`sf_save_bevy::sections::ai`): `None` when no actor has AI state,
+/// so a world without AI writes no section (and loads back as one).
+pub fn ai_save(world: &World) -> Option<AiSave> {
+    world.get_resource::<AiDirectives>().filter(|d| !d.is_empty()).map(AiDirectives::to_save)
+}
+
+/// `set` of the `sf/ai` section: replaces [`AiDirectives`] (inserted if absent).
+pub fn ai_load(world: &mut World, save: AiSave) {
+    world.get_resource_or_insert_with(AiDirectives::default).restore(save);
+}
 
 /// `ai.directives`'s output for `actor`: a header line, then [`format_directives`].
 pub fn directives_text(world: &mut World, actor: ActorKey) -> Result<String, String> {
-    let mut query = world.query::<(&AiActor, &AiDirectives)>();
-    let stack = query
-        .iter(world)
-        .find(|(a, _)| a.0 == actor)
-        .map(|(_, d)| &d.0)
-        .ok_or_else(|| format!("actor {}: no directive stack (no AiActor with AiDirectives)", actor_hex(actor)))?;
+    let stack = world
+        .get_resource::<AiDirectives>()
+        .and_then(|d| d.get(actor))
+        .ok_or_else(|| format!("actor {}: no directive stack", actor_hex(actor)))?;
     let mut out = format!("actor {}: directives, top first", actor_hex(actor));
     out.push('\n');
     out.push_str(&format_directives(stack));

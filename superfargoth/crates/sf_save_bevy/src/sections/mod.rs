@@ -20,6 +20,7 @@ pub mod script;
 
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
+use sf_ai::AiSave;
 use sf_rpg::WorldRpg;
 use sf_save::{Family, SectionKey};
 use sf_sky::SkyClock;
@@ -48,6 +49,9 @@ pub const OVERLAY: &str = "overlay";
 pub const OVERLAY_VERSION: u32 = 1;
 pub const RPG: &str = "rpg";
 pub const RPG_VERSION: u32 = 1;
+/// `sf/ai`: every actor's AI state (ai.md "Saves"); shape and version owned by `sf_ai::save`.
+pub const AI: &str = "ai";
+pub const AI_VERSION: u32 = sf_ai::AI_VERSION;
 /// Family of `sf/character/<player key>`.
 pub const CHARACTER: &str = "character";
 /// v3: `stats` (the stats sheet, stats.md S4); v2 is frozen in [`character::legacy::v2`]: v2
@@ -66,6 +70,8 @@ pub mod order {
     pub const CLOCK: i32 = 200;
     pub const WEATHER: i32 = 250;
     pub const RPG: i32 = 300;
+    /// `sf/ai`: after the overlay and clock it refers to, before the adapter (whose rules may read it).
+    pub const AI: i32 = 350;
     pub const PARTY: i32 = 400;
     pub const CHARACTERS: i32 = 450;
     /// Adapter sections (`mw/globals`): the default for game sections.
@@ -209,4 +215,17 @@ pub fn characters(
     .typed_step(1, character::legacy::v1::CharacterSave::migrate)
     .typed_step(2, character::legacy::v2::CharacterSave::migrate)
     .order(order::CHARACTERS)
+}
+
+/// `sf/ai`: every actor's AI state by stable key (ai.md "Saves"; the game wires
+/// `sf_ai_bevy::ai_save` / `ai_load`). `get` returns `None` when no actor has AI state, so such a
+/// world writes no section and a save without one (from before AI5) loads as no AI state. The
+/// check refuses a stack that breaks its invariants, naming the actor, before anything applies.
+pub fn ai(
+    get: impl Fn(&World) -> Option<AiSave> + Send + Sync + 'static,
+    set: impl Fn(&mut World, AiSave) + Send + Sync + 'static,
+) -> SaveSection {
+    SaveSection::value(key(AI), AI_VERSION, get, set)
+        .check(|_: &World, v: &AiSave| v.check().map_err(|e| e.to_string()))
+        .order(order::AI)
 }

@@ -48,6 +48,9 @@ pub(crate) struct Rpg(pub WorldRpg);
 pub(crate) struct Records(pub RecordOverlay);
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Party(pub Vec<CharacterSave>);
+/// The AI store (`sf_ai_bevy::AiDirectives` in a game), as its `sf/ai` value.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub(crate) struct Ai(pub sf_ai::AiSave);
 /// The adapter's state (`test/globals`), like `MWScript` globals.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Globals(pub BTreeMap<String, f64>);
@@ -115,6 +118,12 @@ pub(crate) fn wire(app: &mut App) {
         .add_save_section(sections::records(read(|r: &Records| r.0.clone()), write(|r: &mut Records, v| r.0 = v)))
         .add_save_section(sections::overlay(read(|o: &Overlay| o.0.clone()), write(|o: &mut Overlay, v| o.0 = v)))
         .add_save_section(sections::rpg(read(|r: &Rpg| r.0.clone()), write(|r: &mut Rpg, v| r.0 = v)))
+        .add_save_section(sections::ai(
+            |w: &World| w.get_resource::<Ai>().filter(|a| !a.0.actors.is_empty()).map(|a| a.0.clone()),
+            |w: &mut World, v| {
+                w.insert_resource(Ai(v));
+            },
+        ))
         .add_save_section(sections::characters(
             |w: &World| w.get_resource::<Party>().map(|p| p.0.clone()).unwrap_or_default(),
             |w: &mut World, v| {
@@ -137,7 +146,8 @@ pub(crate) fn app(root: &Path, background: bool) -> App {
         .init_resource::<Rpg>()
         .init_resource::<Records>()
         .init_resource::<Party>()
-        .init_resource::<Globals>();
+        .init_resource::<Globals>()
+        .init_resource::<Ai>();
     app.world_mut().resource_mut::<Autosave>().interval = None;
     app
 }
@@ -257,6 +267,7 @@ pub(crate) struct State {
     records: Records,
     party: Party,
     globals: Globals,
+    ai: Ai,
 }
 
 pub(crate) fn state(app: &App) -> State {
@@ -269,6 +280,7 @@ pub(crate) fn state(app: &App) -> State {
         records: w.resource::<Records>().clone(),
         party: w.resource::<Party>().clone(),
         globals: w.resource::<Globals>().clone(),
+        ai: w.resource::<Ai>().clone(),
     }
 }
 
@@ -629,7 +641,7 @@ fn latest_falls_back_past_a_corrupt_newest_save() {
 }
 
 /// Re-writes a save with extra sections (as another build or a removed mod would have).
-fn with_extra(path: &Path, extra: &[(SectionKey, u32, SectionFlags, Vec<u8>)]) -> PathBuf {
+pub(crate) fn with_extra(path: &Path, extra: &[(SectionKey, u32, SectionFlags, Vec<u8>)]) -> PathBuf {
     let f = SaveFile::open(std::fs::read(path).unwrap()).unwrap();
     let mut w = SaveWriter::new(FileKind::World, &f.meta().unwrap());
     for e in f.entries().iter().skip(1) {

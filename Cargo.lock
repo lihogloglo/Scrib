@@ -8333,6 +8333,7 @@ dependencies = [
  "serde-reflection",
  "serde_json",
  "sf_action",
+ "sf_ai",
  "sf_controller",
  "sf_coords",
  "sf_diag_bevy",

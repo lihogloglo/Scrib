@@ -31,6 +31,8 @@ pub mod sections;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_ai;
+#[cfg(test)]
 mod tests_budget;
 #[cfg(test)]
 mod tests_formats;

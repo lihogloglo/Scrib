@@ -1,0 +1,262 @@
+{
+  "ActorKey": {
+    "NEWTYPESTRUCT": "U128"
+  },
+  "ActorSave": {
+    "STRUCT": [
+      {
+        "directives": {
+          "TYPENAME": "SavedStack"
+        }
+      }
+    ]
+  },
+  "AiSave": {
+    "STRUCT": [
+      {
+        "actors": {
+          "MAP": {
+            "KEY": {
+              "TYPENAME": "ActorKey"
+            },
+            "VALUE": {
+              "TYPENAME": "ActorSave"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "Directive": {
+    "STRUCT": [
+      {
+        "id": "U32"
+      },
+      {
+        "spec": {
+          "TYPENAME": "DirectiveSpec"
+        }
+      },
+      {
+        "served": "U32"
+      }
+    ]
+  },
+  "DirectiveKind": {
+    "ENUM": {
+      "0": {
+        "StayNear": {
+          "STRUCT": [
+            {
+              "home": {
+                "TYPENAME": "Location"
+              }
+            },
+            {
+              "radius": "F32"
+            }
+          ]
+        }
+      },
+      "1": {
+        "GoTo": {
+          "NEWTYPE": {
+            "TYPENAME": "Location"
+          }
+        }
+      },
+      "2": {
+        "Follow": {
+          "NEWTYPE": {
+            "TYPENAME": "ActorKey"
+          }
+        }
+      },
+      "3": {
+        "Escort": {
+          "STRUCT": [
+            {
+              "who": {
+                "TYPENAME": "ActorKey"
+              }
+            },
+            {
+              "to": {
+                "TYPENAME": "Location"
+              }
+            }
+          ]
+        }
+      },
+      "4": {
+        "Use": {
+          "NEWTYPE": "U128"
+        }
+      },
+      "5": {
+        "Fight": {
+          "NEWTYPE": {
+            "TYPENAME": "ActorKey"
+          }
+        }
+      },
+      "6": {
+        "Custom": {
+          "NEWTYPE": "STR"
+        }
+      }
+    }
+  },
+  "DirectiveSource": {
+    "ENUM": {
+      "0": {
+        "record": "UNIT"
+      },
+      "1": {
+        "schedule": "UNIT"
+      },
+      "2": {
+        "memory": "UNIT"
+      },
+      "3": {
+        "script": "UNIT"
+      },
+      "4": {
+        "quest": "UNIT"
+      }
+    }
+  },
+  "DirectiveSpec": {
+    "STRUCT": [
+      {
+        "kind": {
+          "TYPENAME": "DirectiveKind"
+        }
+      },
+      {
+        "source": {
+          "TYPENAME": "DirectiveSource"
+        }
+      },
+      {
+        "priority": "U8"
+      },
+      {
+        "repeat": "BOOL"
+      },
+      {
+        "limit": {
+          "OPTION": {
+            "TYPENAME": "Limit"
+          }
+        }
+      },
+      {
+        "origin": {
+          "OPTION": "STR"
+        }
+      }
+    ]
+  },
+  "GameTime": {
+    "STRUCT": [
+      {
+        "day": "U32"
+      },
+      {
+        "minute": "U16"
+      }
+    ]
+  },
+  "Grid": {
+    "STRUCT": [
+      {
+        "cell": {
+          "TUPLEARRAY": {
+            "CONTENT": "I32",
+            "SIZE": 3
+          }
+        }
+      },
+      {
+        "local": {
+          "TUPLEARRAY": {
+            "CONTENT": "F32",
+            "SIZE": 3
+          }
+        }
+      }
+    ]
+  },
+  "Limit": {
+    "ENUM": {
+      "0": {
+        "Until": {
+          "NEWTYPE": {
+            "TYPENAME": "GameTime"
+          }
+        }
+      },
+      "1": {
+        "For": {
+          "STRUCT": [
+            {
+              "minutes": "U32"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Location": {
+    "STRUCT": [
+      {
+        "worldspace": "STR"
+      },
+      {
+        "pos": {
+          "TYPENAME": "Grid"
+        }
+      }
+    ]
+  },
+  "SavedStack": {
+    "STRUCT": [
+      {
+        "entries": {
+          "SEQ": {
+            "TYPENAME": "Directive"
+          }
+        }
+      },
+      {
+        "next_id": "U32"
+      },
+      {
+        "clock": {
+          "TYPENAME": "GameTime"
+        }
+      },
+      {
+        "serving": {
+          "TYPENAME": "Serving"
+        }
+      }
+    ]
+  },
+  "Serving": {
+    "ENUM": {
+      "0": {
+        "Top": "UNIT"
+      },
+      "1": {
+        "Directive": {
+          "NEWTYPE": "U32"
+        }
+      },
+      "2": {
+        "Suspended": "UNIT"
+      }
+    }
+  }
+}

@@ -96,6 +96,13 @@ fn saved_shapes_match_their_goldens() {
     check_golden(&v(sections::OVERLAY, sections::OVERLAY_VERSION), &shape(Some(&overlay), &[]));
     check_golden(&v(sections::RPG, sections::RPG_VERSION), &shape::<WorldRpg>(None, &[]));
     check_golden(
+        &v(sections::AI, sections::AI_VERSION),
+        &shape::<sf_ai::AiSave>(
+            None,
+            &[&traced::<sf_ai::DirectiveKind>, &traced::<sf_ai::DirectiveSource>, &traced::<sf_ai::Limit>, &traced::<sf_ai::Serving>],
+        ),
+    );
+    check_golden(
         &v(sections::CHARACTER, sections::CHARACTER_VERSION),
         &shape::<CharacterSave>(None, &[&traced::<sf_rpg::AttrValue>, &traced::<sf_controller::MoverMode>, &traced::<sf_action::Mode>]),
     );
