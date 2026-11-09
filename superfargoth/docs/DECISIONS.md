@@ -1693,3 +1693,14 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   is to leave interiors out of the static scene for now (a few hundred objects each, worst-case chain churn on door
   crossings, promotion-heavy indoors, one bake product per cell across hundreds of worldspaces —
   scene-runtime-plan.md §12). It is a runtime switch either way; flagged in static-scene.md §11 and Risks.
+- 2026-11-10 (static-scene, instance slots — **reverses the 2026-11-09 size-class decision above, by
+  measurement**): the plan claimed a segregated size-class allocator keeps `bump ≤ 1.25 × the worst resident
+  footprint + one block per class` and *converges*; A4 measured **3.0× the peak live slots at 200 k stream-in cycles
+  and 3.33× at 2 M (≈ 9 h of play), still creeping**, while first fit settled at **1.17×** on the same 5×5-ring walk
+  (1.14× re-measured through `SceneSpace` in A5). Robson's ≈ 11× is adversarial; a streaming ring with a
+  content-bounded size set is not an adversary. **Decision: first fit (`SlotAllocator`) for the scene-buffer records,
+  the per-batch output slots and the chain table** — per-view output memory is sized by capacity (~140 MB, × views),
+  and at 4096 slots the size-class allocator would hold only ~1 300 live slots, making the entity fallback the main
+  path. `ClassAllocator` stays in the tree, tested, for its a-priori ceiling and 64-slot-aligned blocks. Unchanged:
+  batch capacity fixed at config, never grown at stream-in, `Exhausted` → entities counted and warned once
+  (scene-runtime-plan.md §4.4, corrected).

@@ -117,7 +117,7 @@ one function. A range is then `{ mesh: meshes[level], first_index: 0, index_coun
 Costs, stated: one extra offline copy of scene-eligible static geometry on disk (**unverified**,
 measure at bake) and one more bake step. Per-level meshes make `LodLevel::first_index` describe a
 concatenation nothing builds — **spec correction** (§12). `sf_model::CookedSubmesh::encode` is
-`pub(crate)` (`cooked.rs:106`): make it `pub` (one line, Bevy-free).
+`pub(crate)` (`cooked.rs:107`): make it `pub` (one line, Bevy-free).
 ### 3.3 `bake_scene` and `bake_chains`
 
 `bake_scene(baker, db, worldspaces) -> Result<BakeReport, BakeError>` already exists
@@ -170,8 +170,8 @@ impl ChainRegistry {
 }
 ```
 Rules, each a test: slots are **dense and deterministic** (first fit over the coalesced free list
-is the lowest free slot, `alloc.rs:76-104`), reuse is **deferred by the frames in flight**
-(`alloc.rs:107-130`) so a reused slot can never be read by a frame holding the old geometry, and a
+is the lowest free slot, `alloc.rs:79-108`), reuse is **deferred by the frames in flight**
+(`alloc.rs:110-134`) so a reused slot can never be read by a frame holding the old geometry, and a
 **disagreement is an error, not an assert** — equal mesh key must mean equal class, material key,
 level count and every `LodLevel`; a mismatch means a stale `scene.cells` product, fails that cell
 (§5.3), and mutates nothing. `ChainRegistry` holds **no Bevy types**: the Bevy half keeps
@@ -192,7 +192,7 @@ New type; `SlotAllocator` is untouched (review: "do not touch"). `AllocError` ga
 /// Block sizes: multiples of 64 slots to 512, then geometric ×1.25 rounded up to 64.
 /// 64 because the materialize dispatch is `capacity / 64` workgroups (`materialize.rs:210`).
 pub const CLASSES: usize = 32;
-pub fn size_class(len: u32) -> (u8, u32);     // (class, block slots); waste < max(63 slots, 25 %)
+pub fn size_class(len: u32) -> Option<(u8, u32)>;  // (class, block slots), None for 0 or > 129_088
 pub struct ClassAllocator {
     capacity: u32, bump: u32,            // capacity = the batch's fixed output size
     free: [Vec<u32>; CLASSES],           // released block starts per class, LIFO (deterministic)
@@ -200,28 +200,56 @@ pub struct ClassAllocator {
 }
 impl ClassAllocator {
     pub fn new(capacity: u32, frames_in_flight: u32) -> Self;
-    pub fn alloc(&mut self, len: u32) -> Result<SlotRange, AllocError>;  // never splits a block
+    pub fn alloc(&mut self, len: u32, tag: u64) -> Result<SlotRange, AllocError>;  // never splits
     pub fn release(&mut self, range: SlotRange, frame: u64) -> Result<(), AllocError>;
     pub fn advance(&mut self, frame: u64);
     /// Live blocks in address order, each with the caller's tag: §4.5 builds `ranges` from this.
-    pub fn blocks(&self) -> impl Iterator<Item = (SlotRange, u32)>;
+    pub fn blocks(&self) -> impl Iterator<Item = (SlotRange, u64)>;
     pub fn stats(&self) -> ClassStats;   // bump, live, pending, free per class, internal waste
 }
 ```
-**Verdict: bounded.** Blocks are never split and never merged, so a freed class-`c` block satisfies
-*any* later class-`c` request: **external fragmentation inside a class is zero**, and the only
-growth is `bump = Σ_c s_c·peak_c`, `peak_c` the most simultaneously live class-`c` blocks over the
-session. Since `s_c < 1.25·len` (`< len + 64` for small blocks),
-`bump < 1.25·Σ_c peak_c·len_c + 64·CLASSES` — **≤ 1.25 × the worst resident footprint plus one
-block of slack per class** — and that footprint is bounded by the ring configuration (a fixed cell
-count, each cell's instance count a content constant), so the high-water mark is monotone and
-*converges* once the worst neighbourhood has been walked; it is not a creep. The sum over classes is
-the honest part: one class's free list can hold its peak while another peaks. Measured by
-`scene/slots/*` (§9), asserted by `bump_is_bounded_under_a_city_walk` (§11). Contrast: first fit
-over mixed sizes (what `SlotAllocator` does) is bounded only by Robson's `O(M·log(max/min))` ≈ 11×
-the live set at our size ratio — so batch and scene buffers get `ClassAllocator`, and only the
-1-slot chain table keeps plain first fit, where every request is the same size and first fit *is* a
-segregated list.
+**Verdict: corrected 2026-11-10 by measurement (A4) — the bound below is false and the policy was
+reversed.** Blocks are never split and never merged, so a freed class-`c` block satisfies *any*
+later class-`c` request: **external fragmentation inside a class is zero**, and the only growth is
+`bump = Σ_c size(c)·peak(c)`, with `peak(c)` the most class-`c` blocks ever *occupied* at once —
+live, or still waiting for the frames in flight. That identity is exact
+(`bump_is_bounded_under_a_city_walk` asserts it at twenty stages of a 200 000-cycle walk), and with
+it comes the one bound that holds a priori: `peak(c) ≤ resident cells + frames in flight`, so
+`bump ≤ (resident + frames in flight) · Σ_{c reachable} size(c)` — computable from the ring
+configuration before a cell streams in, and **independent of session length**. That is what
+"bounded" means here, and all it means.
+
+**What this section claimed and the measurement denies:** `bump` is *not*
+`≤ 1.25·Σ_c peak_c·len_c + 64·CLASSES` ("≤ 1.25 × the worst resident footprint plus one block of
+slack per class"), and it does *not* converge. The classes do not peak together, and `peak(c)` is a
+record process whose records keep being beaten, ever more rarely. On a synthetic 5×5 ring over 40
+cell footprints (7..=638 instances, nine classes) `bump / peak_live` measures **3.0× after 200 000
+stream-in cycles and 3.33× after 2 M** (≈ 9 h of play at 60 fps), still creeping, against an
+a-priori ceiling of 7.0×. The same sequence through first-fit `SlotAllocator` settles at **1.2×**
+(`first_fit_high_water_on_the_same_walk`): Robson's ≈ 11× is an adversarial bound, and a streaming
+ring with a content-bounded size set is not an adversary. Measured again in A5 through the whole
+space (`batch_slot_high_water_curve`): **1.14×**, identical at 1 000, 10 000, 50 000 and 200 000
+cycles, with two or three coalesced free ranges.
+
+So the case for segregated classes over a batch's output slots is the a-priori ceiling (no appeal to
+the sequence), `BLOCK_GRAIN`-aligned block starts for the materialize dispatch, and O(1) allocation
+with no free-list scan — **not** a smaller high-water mark. Budget a batch's `capacity` from the
+ceiling, never from `1.25 × the live set`. The internal waste this section predicts does hold:
+`size(c) < 1.25·len + 64`, measured under 1 000 slots across 25 live cells.
+
+**Coordinator decision 2026-11-10: first fit.** The scene-buffer records, the per-batch output slots
+and the chain table all allocate with `SlotAllocator` (`SlotAllocator::with_capacity` adds the fixed
+ceiling a batch needs, answering `Exhausted` instead of growing). Two reasons beyond the 2.6×:
+per-view output memory is sized by **capacity**, so allocator waste multiplies by the view count in
+a quantity already estimated at ~140 MB; and at a 4096-slot capacity the size-class allocator would
+hold only ~1 300 live slots, making "exhausted, fall back to entities" the main path instead of a
+corner. `ClassAllocator` stays in the tree, tested, carrying the corrected verdict in its doc
+comment: its a-priori ceiling and 64-slot-aligned block starts may earn it a place later. This also
+supersedes static-scene.md §3's "a segregated size-class allocator per batch" bullet, which points
+here for its proof. What does **not** change: batch capacity is fixed at config and never grown at
+stream-in, and `Exhausted` → entity fallback stays a counted, warned, tested path — first fit has no
+a-priori ceiling, and its 1.14-1.17× was measured on one synthetic walk, so a heavy mod list could
+differ and we need to be able to see it.
 
 **Capacity policy** (the review's missing item 4; our duty per gs SERIOUS 6): `capacity` is fixed
 per batch at plugin configuration (`SceneConfig::batch_capacity`, default 4096), **never grown at
@@ -278,17 +306,21 @@ impl SceneSpace {
     pub fn stats(&self) -> SpaceStats;
 }
 ```
-`plan_in` is the heart and entirely Bevy-free: acquire a chain slot per `chains()` entry
-(`table.rs:506`), build `chain_slots` in cell-local order, allocate the scene range,
-`write_remapped(&chain_slots, &mut scene_bytes)` (`table.rs:425`), bucket instances by batch key,
-allocate one block per (batch, chain, level) bucket, fill `batch_slots`, collect `covered`, report
-overflows. One pass over the table plus one per bucket; three vectors, nothing per instance.
-**Atomic:** on any error every acquired chain ref and allocated block is rolled back (tested).
-Why `batch_slots` and not arithmetic: the table is sorted by `(placement, part)` (`table.rs:9-13`),
+`plan_in` is the heart and entirely Bevy-free: acquire a chain slot per chain of the table
+(`ChainEntry::from_table`, `chains.rs`; the `chains()` iterator is `table.rs:763`), build
+`chain_slots` in cell-local order, allocate the scene range, `write_remapped(&chain_slots, &mut
+scene_bytes)` (`table.rs:645`, which **panics** unless `chain_slots` holds one slot per chain,
+overflowed ones included), bucket instances by batch key, allocate one block per
+(batch, chain, level) bucket, fill `batch_slots`, collect `covered`, report overflows. One pass over
+the table plus one per bucket; three vectors, nothing per instance.
+**Atomic:** on any error every acquired chain ref and allocated block is rolled back (tested); as
+built, the chains a cell shares with a resident one are acquired *first*, so the one reachable error
+(a stale-product disagreement) is found before anything is allocated and unwinds to refcounts alone.
+Why `batch_slots` and not arithmetic: the table is sorted by `(placement, part)` (`table.rs:7-12`),
 not by chain, so a cell's instances for one chain are not contiguous and
-`WorkItem::slot = cell start + instance` (`cull.rs:264-266`) holds under no batch granularity. 4 B
-per instance (400 KB at 100k) buys exact promotion and release; chain-major instance order is a
-v3+ driver (review M7) that would reduce it to a base per bucket.
+`slot = cell start + WorkItem::instance` (`cull.rs:304-311`; there is no `WorkItem::slot`) holds
+under no batch granularity. 4 B per instance (400 KB at 100k) buys exact promotion and release;
+chain-major instance order is a v3+ driver (review M7) that would reduce it to a base per bucket.
 ## 5. The streaming lifecycle
 ### 5.1 The seam: a sibling of `CellProxies`
 
