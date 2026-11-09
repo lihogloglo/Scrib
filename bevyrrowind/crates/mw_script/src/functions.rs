@@ -332,7 +332,26 @@ mod tests {
         let status = |n: &str| t.function(t.get(n).unwrap()).status;
         assert_eq!(status("GetJournalIndex"), Status::Live);
         assert_eq!(status("GetPCRank"), Status::Live);
+        // Still a stub, and a known gap: `OpenMW`'s `OpGetDisposition`
+        // (`apps/openmw/mwscript/statsextensions.cpp` 775-788 at `c0790fc`) pushes 0 for a
+        // non-NPC and `getDerivedDisposition(ptr)` otherwise, so `ModDisposition 10` followed
+        // by `GetDisposition` reads 50 here while the dialogue filters already use the derived
+        // value. Flipping the row to `live` needs, in files outside this crate's reach for the
+        // defect slice: a `Builtin::GetDisposition` plus `Host::get_disposition` in `interp.rs`,
+        // an `MwWorld` hook for the derived value (only `MwView::disposition` has it today) and
+        // its impl in `mw_rpg_bevy`. See the `Status::Live` neutral trap below before doing it.
         assert_eq!(status("GetDisposition"), Status::Stub(50));
+        // `Status::Live.neutral()` is 0 (`Status::neutral`), and that is what `Host::unhandled`
+        // (`interp.rs` 134-137) and the emitted Luau `fallback()` (`emit.rs` 449-453) return for
+        // a `live` row whose host does not implement `Host::stat` -- today only
+        // `mw_rpg::runner::RunHost` does. So object and global scripts read `GetPCRank` 0
+        // ("rank-0 member") instead of -1 ("not a member"), inverting every vanilla
+        // `if ( GetPCRank < 0 )` guard, and `StatFn::no_sheet_value` (`statfn.rs` 203-205),
+        // which has the right -1, is never called. Fixing it means either a per-row neutral for
+        // `live` (`Status::Live(i32)`, which touches `coverage.rs`, `interp_tests.rs` and
+        // `tests/real_install.rs`) or routing `no_sheet_value` through `unhandled` in
+        // `interp.rs`; both are outside the defect slice's file list.
+        assert_eq!(Status::Live.neutral(), 0, "see the comment above before flipping rows to live");
         assert_eq!(status("AITravel"), Status::Later);
         let name = |n: &str| t.function(t.get(n).unwrap()).luau_name();
         assert_eq!(name("GetPCCell"), "get_pc_cell");

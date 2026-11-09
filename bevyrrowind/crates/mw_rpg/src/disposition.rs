@@ -20,7 +20,13 @@
 //!   any faction the player is a non-expelled member of, with the player's rank in it (the
 //!   first such faction in id order wins a tie, and `OpenMW`'s quirk is kept: when the first
 //!   faction in id order is expelled the start value stays 0, so only negative reactions are
-//!   taken); a speaker without a faction: 0 and 0.
+//!   taken); a speaker without a faction: 0 and 0. Re-verified at `c0790fc` (2026-11-09),
+//!   `mechanicsmanagerimp.cpp` 512-534: the loop's guard really is
+//!   `if (playerFactionIt == playerStats.getFactionRanks().begin() || itReaction < reaction)`,
+//!   so a non-member *does* adopt the first faction's reaction (positive ones too) and that
+//!   faction's rank, and the `continue` for an expelled faction comes before the `begin()`
+//!   test. [`faction_standing`]'s `n == 0 || r < best` over `enumerate()` is that, line for
+//!   line; it is not a "keep only negatives" rule.
 //! - `DialogueManager::getFactionReaction` (`apps/openmw/mwdialogue/dialoguemanagerimp.cpp`
 //!   724-743): the first FACT reaction entry naming the other faction, 0 without one
 //!   ([`faction_reaction`]). `ModFactionReaction` overrides (`mChangedFactionReaction`) do not

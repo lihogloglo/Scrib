@@ -76,7 +76,14 @@ gmsts! {
     auto_rep_fac_mod: "iAutoRepFacMod" = 2.0,
     auto_rep_lev_mod: "iAutoRepLevMod" = 0.0,
     // Derived disposition and persuasion (`mw_rpg::disposition`, `mw_rpg::persuasion`). Vanilla
-    // values from `OpenMW`'s `apps/opencs/model/world/defaultgmsts.cpp` (commit ca5e2576).
+    // values from `OpenMW`'s `apps/opencs/model/world/defaultgmsts.cpp` (re-read at commit
+    // c0790fc, 2026-11-09: `FloatsDefaultValues` / `IntsDefaultValues`, one entry per name in
+    // the `Floats` / `Ints` lists). Two that reviews keep re-filing as wrong are right as
+    // written: `fDispCrimeMod` is 0.0 (defaultgmsts.cpp:1678, name at :67, editor range
+    // `-FInf, 0` at :2031), so a bounty moves vanilla disposition by nothing and the crime term
+    // is inert in vanilla; `fPerTempMult` is 1.0 (:1782, name at :171, range at :2135), so the
+    // temporary and permanent persuasion changes coincide and the `/fPerTempMult` divisions are
+    // no-ops in vanilla. Both are Morrowind.esm values, not OpenMW inventions.
     disp_race_mod: "fDispRaceMod" = 5.0,
     disp_personality_mult: "fDispPersonalityMult" = 0.5,
     disp_personality_base: "fDispPersonalityBase" = 50.0,

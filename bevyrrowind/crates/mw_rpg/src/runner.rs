@@ -467,8 +467,28 @@ impl Host for RunHost<'_> {
     }
 
     /// Formats as `OpenMW` (`mw_ui::message::message_box_from_args`: values first, then as many
-    /// buttons as there are quoted strings among the rest, at most 10). Text defines
-    /// (`^PCName`) are left for the UI, as `OpenMW` expands them after formatting.
+    /// buttons as there are quoted strings among the rest, at most 10).
+    ///
+    /// **Text defines are NOT expanded here, and that is a known gap, not OpenMW's behaviour.**
+    /// `OpenMW` expands them in the interpreter, right after formatting and before the UI sees
+    /// the string: `components/interpreter/miscopcodes.hpp` 123-130 `formatMessage` runs
+    /// `fixDefinesMsgBox(formattedMessage, ...)` on the *formatted* text (not the format
+    /// string, and never on the buttons), `c0790fc`. `fixDefinesMsgBox` is
+    /// `fixDefinesReal(text, dialogue = false)` (`components/interpreter/defines.cpp` 174-181),
+    /// so outside dialogue only the player-side and cell defines resolve -- `%PCName`,
+    /// `%PCRace`, `%PCClass`, `%Cell`, `%PCCrimeLevel`, the action bindings, and `%Name` /
+    /// `%Race` / `%Class` which all map to the *player* there -- while `%Faction`, `%Rank`,
+    /// `%NextRank`, `%PCRank` and `%PCNextRank` are consumed and replaced by nothing
+    /// (`defines.cpp` 85-93: a null method still counts as found); globals resolve as usual.
+    ///
+    /// It cannot be done from here: [`crate::expand`] needs a
+    /// [`crate::MacroSource`], and [`MwWorld`] exposes no player-side facts
+    /// ([`MwWorld::facts`] is documented `None` for the player), so nothing in this crate can
+    /// supply `%PCName` or `%Cell`. The host already has the pieces: `mw_rpg_bevy`'s dialogue
+    /// plugin holds an `MwDialogueRules` with `expand` when it applies a [`ResultEffect`] (it
+    /// uses it for `Journal` entries), so the one-line fix belongs where
+    /// [`ResultEffect::MessageBox`] is pushed to the event list, next to the `Journal` arm --
+    /// expanding `text` only, leaving `buttons` alone.
     fn message_box(&mut self, format: &str, args: &[MessageArg]) {
         let args: Vec<UiArg> = args
             .iter()

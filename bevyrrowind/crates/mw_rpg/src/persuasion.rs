@@ -21,6 +21,20 @@
 //!   temporary disposition by `iPerMinChange` (Morrowind gave `x = 0, y = -iPerMinChange`).
 //!   All arithmetic is `f32` in `OpenMW`'s order and `int(...)` truncates toward zero, as `as`.
 //!
+//! Re-verified branch by branch against `c0790fc` (2026-11-09),
+//! `mwmechanics/mechanicsmanagerimp.cpp` 597-743, after a review flagged three deviations that
+//! turned out not to exist:
+//! - Taunt's `x` is `floor(-c x fPerDieRollMult)` (line 712), a floor and not a `static_cast`
+//!   truncation, so `c = 31, fPerDieRollMult = 0.3` gives -10 and [`taunt`] is right.
+//!   Intimidate's `c = -abs(floor(r x fPerDieRollMult))` (line 672) is a different expression
+//!   over a different variable, not an inconsistency.
+//! - The marginal Intimidate win really is `x = iPerMinChange, y = x` (lines 675-681, see
+//!   [`intimidate`]), not Morrowind's `x = 0`.
+//! - The bribe's gold moves only inside `if (success)`
+//!   (`mwdialogue/dialoguemanagerimp.cpp` 550-565): it is removed from the player's store and
+//!   added to the NPC's, so a failed bribe is free in `OpenMW` too and the merchant is credited.
+//!   The GUI only greys out bribes the player cannot afford (`mwgui/dialogue.cpp` 139-141).
+//!
 //! **Randomness.** The only Rng call, `Misc::Rng::roll0to99(prng)`, is [`PersuasionInput::roll`]
 //! (0..=99): the caller draws it from the world's seeded stream, so this stays pure.
 //!
@@ -274,8 +288,10 @@ fn intimidate(per: &Per, target: f32, roll: f32, ai: AiNudge) -> Branch {
     });
     let change = -((margin * per.die_roll_mult).floor().abs());
     let (x, y) = if success && change.abs() < per.min_change {
-        // Deviating from Morrowind (OpenMW, MCP): a marginal win raises the disposition
-        // (Morrowind: x = 0, y = -iPerMinChange). `y` is unused on success.
+        // `mechanicsmanagerimp.cpp` 675-681 at `c0790fc`, verbatim: "Deviating from Morrowind
+        // here: it doesn't increase disposition on marginal wins, which seems to be a bug (MCP
+        // fixes it too). Original logic: x = 0, y = -iPerMinChange" -- then `x = iPerMinChange;
+        // y = x; // This goes unused.` We keep OpenMW's side, `y` included, deliberately.
         (per.min_change, per.min_change)
     } else if success {
         (-((change * per.temp_mult).floor()), change)

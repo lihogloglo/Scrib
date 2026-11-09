@@ -4,7 +4,9 @@
 //! effect; casts read the caster's sheet through the cast model only.
 
 use sf_records::RecordId;
-use sf_stats::{Cause, CauseKind, Layer, ModOp, Modifier, Role, SheetRead, SourceId, StatIdx, StatOp, StatTable};
+use sf_stats::{
+    Cause, CauseKind, Layer, ModOp, Modifier, Rebase, Role, SheetRead, SourceId, StatIdx, StatKind, StatOp, StatTable,
+};
 use smallvec::SmallVec;
 
 use crate::active::{
@@ -90,8 +92,15 @@ pub fn apply_book(
     ctx: &mut EffectCtx<'_>,
     out: &mut EffectOut,
 ) {
-    let step =
-        Step { defs: env.defs, stats: env.stats, src_defs: env.sources, target: ctx.target, tick: ctx.tick, dt: ctx.dt };
+    let step = Step {
+        defs: env.defs,
+        stats: env.stats,
+        src_defs: env.sources,
+        sheet: env.sheet,
+        target: ctx.target,
+        tick: ctx.tick,
+        dt: ctx.dt,
+    };
     for op in ops {
         match op {
             EffectOp::Inflict { source, class, caster, entries, flags, rolls } => {
@@ -133,7 +142,8 @@ pub fn tick(defs: &EffectTable, stats: &StatTable, set: &mut ActiveSet, ctx: &Ef
         return;
     }
     let src_defs = SourceTable::default();
-    let step = Step { defs, stats, src_defs: &src_defs, target: ctx.target, tick: ctx.tick, dt: ctx.dt };
+    // No landing happens in a tick, so the resist rule is never asked: no sheet needed.
+    let step = Step { defs, stats, src_defs: &src_defs, sheet: None, target: ctx.target, tick: ctx.tick, dt: ctx.dt };
     step.advance(set, 1, out);
     set.timed = step.timed(set);
 }

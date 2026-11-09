@@ -19,6 +19,11 @@
 //! - `mwmechanics/mechanicsmanagerimp.cpp` 563-590 `getBarterOffer` ([`barter_offer`]): zero
 //!   base and creature merchants keep the base; skills clamped to 100, `0.1 x Luck` and
 //!   `0.2 x Personality` clamped to 10, times each side's fatigue term; buy and sell terms.
+//!   Re-verified line for line at `c0790fc` (2026-11-09): the sell branch is `sellTerm` alone,
+//!   with no `min(buyTerm, sellTerm)`, so at `pcTerm - npcTerm > 50` the raw sell offer does
+//!   exceed the raw buy offer. `OpenMW` closes that round trip in `updateOffer`'s 75% cap
+//!   (`tradewindow.cpp` 616-639, "to avoid exploits connected to buying and selling the same
+//!   item"), which is [`BarterPriceIn::cap_75`] here, not in `getBarterOffer`.
 //! - `mwgui/tradewindow.cpp` 38-46 `getEffectiveValue` ([`effective_value`]), 48-114 `haggle`
 //!   ([`barter_haggle`]; unclamped terms, integer `d`, `rollDice(100) + 1`, the Mercantile
 //!   skill-use scale), 447-457 the disposition change for NPC merchants after every haggle,
