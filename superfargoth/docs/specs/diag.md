@@ -271,6 +271,15 @@ binned phase, read from Bevy's public render-world state (`sf_diag::views` does 
   measured frames it was drawn in, views per frame, and per metric (also `<phase>/<metric>`) the mean and max per frame.
   Lamps share their face's label. The counts lag the main frame by one, like `render/thread/ms`.
 
+**Known reading caveats** (measurement defects, scheduled for a code fix, not design intent): views carrying
+`SkipRootViewRendering` report items and bins but near-zero batch sets and work items; the three non-cascade depth
+views of `sf_sky_bevy::sun_view` (precipitation occlusion, shelter, canopy) are labelled `cascade0` and summed into
+the real first sun cascade, and shadow-cache capture views appear as `lamp.face6`-`lamp.face11`;
+`views/<kind>/batch_sets` sums every phase, not one pass; a label's "mean" is a sum over that label's views, so
+divide by `views_per_frame` for a per-view figure; and there is no `--off views` switch, so the counters cannot be
+subtracted to compare with pre-S0 numbers. The full list, with how it affects the S0 baseline, is in
+`bevyrrowind/docs/perf.md` "Caveats on the S0 numbers".
+
 ## Verification
 
 - `sf_diag` unit tests: percentiles against hand-computed values; gate

@@ -77,15 +77,52 @@ High budget (≤ 0.3 ms, 16 sets) holds; the step dominates (~0.3 µs per moving
 
 Per-view render counters (static-scene.md S0; superfargoth `diag.md` "Render views"): gauges `views/<kind>/...`
 (`main`, `cascade`, `lamp_face`, `other`, `all`), `phases/<phase>/...`, `preprocess/bind_groups` in each run's `.md`
-gauges table and `.csv`, a per-view breakdown under `views` in the `.json`, and five summary columns. Owner, `dlss`
-build (`cargo build --profile profiling -p bevyrrowind --features dlss`), then:
+gauges table and `.csv`, a per-view breakdown under `views` in the `.json`, and five summary columns.
+
+Scenarios: the five daytime benches **plus `balmora_night` and `balmora_walk_night`**. Lamp cube-face views exist
+only in the night scenarios (`perf/cli.rs`: both set `--hour 22`), so a daytime-only suite returns empty
+`views/lamp_face/*` columns — the kind the S0 baseline most needs. Owner, `dlss` build
+(`cargo build --profile profiling -p bevyrrowind --features dlss`), then:
 
 ```sh
-target/profiling/bevyrrowind.exe perf suite s0_baseline balmora seyda_neen red_mountain run balmora_walk flight \
+target/profiling/bevyrrowind.exe perf suite s0_baseline \
+    balmora seyda_neen red_mountain run balmora_walk flight balmora_night balmora_walk_night \
     --repeat 3 --resolution 2560x1440 --env BEVYRROWIND_DLSS=quality --save benchmarks/runs/s0_baseline
-target/profiling/bevyrrowind.exe perf suite s0_baseline_noprecombine balmora seyda_neen red_mountain run balmora_walk flight \
+target/profiling/bevyrrowind.exe perf suite s0_baseline_noprecombine \
+    balmora seyda_neen red_mountain run balmora_walk flight balmora_night balmora_walk_night \
     --repeat 3 --resolution 2560x1440 --env BEVYRROWIND_DLSS=quality --off precombine --save benchmarks/runs/s0_baseline_noprecombine
 ```
+
+**What to paste back, and where.** From `benchmarks/runs/s0_baseline/summary.md` (median of the 3 runs), copy per
+scenario the gauges `views/{main,cascade,lamp_face,all}/{count,items,bins,batch_sets,work_items,pipelines}`,
+`views/all/pipelines_distinct` and `preprocess/bind_groups`, plus the frame median, into the table under
+**"S0 baseline results"** just below — one row per scenario, the `--off precombine` run as a second block. Then
+transfer those numbers into static-scene.md's "Budgets (targets, to be confirmed by S0)" table.
+
+#### S0 baseline results
+
+Awaiting the owner's run (ROADMAP 1.16, S0). Paste the table here.
+
+#### Caveats on the S0 numbers (known issues, to be fixed in code)
+
+Read the baseline with these in mind. All five are measurement defects already scheduled for a code fix, **not**
+design intent; none of them is a reason to re-plan the slices.
+
+- **Skipped views read far too cheap.** A view carrying `SkipRootViewRendering` (the lamp shadow-cache LRU leaves
+  most cube faces unrendered each frame, `sf_shadow_cache_bevy`) still reports `items` and `bins` but near-zero
+  `batch_sets` and `work_items`, so lamp-face cost is understated.
+- **Not comparable with the pre-S0 figures** recorded earlier in this file: the counters run inside the measured
+  render frame and there is no `--off views` switch to subtract them (`mw_game_core::perf` has no `views` part).
+- **`cascade0` is overloaded.** Three non-cascade depth views — precipitation occlusion (`sf_precip_bevy`), shelter
+  and canopy (`sf_surface_bevy`) — are tagged `LightEntity::Directional { cascade_index: 0 }` by
+  `sf_sky_bevy::sun_view`, so they are labelled `cascade0` and summed into the real first sun cascade:
+  `views/cascade/count` reads 7 for a 4-cascade sun. Shadow-cache capture views likewise appear as `lamp.face6` to
+  `lamp.face11` (`CAPTURE_SUBVIEW = 6`), not as faces 0-5.
+- **`views/main/batch_sets` sums all four phases** (opaque, alpha mask, and the two prepass phases), while
+  static-scene.md's budget row "batch sets per view" is meant per pass.
+- **Per-label "mean" is a per-label sum.** In the JSON `views` map a label's metrics are summed over every view
+  sharing that label in the frame before the mean over frames; divide by that label's `views_per_frame` for a
+  per-view figure.
 
 ### Static material classes (S2)
 
@@ -93,13 +130,17 @@ Static template materials fold into their material class and images share equal 
 `sf_world_bevy::matclass`; default on, `--off matclass` restores the old materials). Extra gauges in the same
 runs: `statics/materials`, `statics/material_classes`, `statics/material_keys` (distinct `StandardMaterialKey`s),
 `statics/material_pipelines`, `statics/materials_unclassed`, `statics/material_bind_groups`,
-`statics/materials_bound`, `statics/bindless` (1 = bindless slabs). The A/B, same build as S0 (compare
-`views/main/batch_sets`, `views/all/pipelines_distinct` and the `statics/*` gauges; ms per preset):
+`statics/materials_bound`, `statics/bindless` (1 = bindless slabs). The A/B, same build and the same eight
+scenarios as S0 — the night pair matters here too, since lamp faces are where a batch-set drop should show up most
+(compare `views/main/batch_sets`, `views/lamp_face/batch_sets`, `views/all/pipelines_distinct` and the `statics/*`
+gauges; ms per preset). The S0 caveats above apply unchanged to these runs.
 
 ```sh
-target/profiling/bevyrrowind.exe perf suite s2_matclass balmora seyda_neen red_mountain run balmora_walk flight \
+target/profiling/bevyrrowind.exe perf suite s2_matclass \
+    balmora seyda_neen red_mountain run balmora_walk flight balmora_night balmora_walk_night \
     --repeat 3 --resolution 2560x1440 --env BEVYRROWIND_DLSS=quality --save benchmarks/runs/s2_matclass
-target/profiling/bevyrrowind.exe perf suite s2_matclass_off balmora seyda_neen red_mountain run balmora_walk flight \
+target/profiling/bevyrrowind.exe perf suite s2_matclass_off \
+    balmora seyda_neen red_mountain run balmora_walk flight balmora_night balmora_walk_night \
     --repeat 3 --resolution 2560x1440 --env BEVYRROWIND_DLSS=quality --off matclass --save benchmarks/runs/s2_matclass_off
 ```
 
@@ -107,6 +148,13 @@ Expected: `statics/material_keys` ≤ 4 (cull back / none, ± leaf transmission)
 keys on the class), `statics/material_bind_groups` lower with the default (one sampler per image doubled slab use),
 `statics/bindless` 1 on Vulkan (0 means one bind group per material: the device misses binding arrays or the
 6 × 2048 sampler limit).
+
+**What to paste back, and where.** The two runs' `statics/*` and `views/*/batch_sets` gauges plus the frame median,
+default vs `--off matclass`, into the table under **"S2 material-class results"** below.
+
+#### S2 material-class results
+
+Awaiting the owner's run (ROADMAP 1.16, S2). Paste the table here.
 
 ### Dated measurement log (archived)
 
