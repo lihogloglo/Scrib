@@ -7,14 +7,21 @@
 //! horizon, as the CPU pre-cull does, and applies the horizon per cell (SPUD `Space::land_hides`,
 //! `docs/research/spud-code-2026-11-08.md` item 3).
 //!
-//! **LOD:** the coarsest level whose error `e` (metres) satisfies
-//! `e² · (pixels_per_radian / lod_px)² ≤ d²`, `d` the distance from the eye to the bounding
-//! sphere (0 inside it). Level errors are model-space: the instance's largest axis scale
+//! **LOD** follows how the view projects ([`SceneProjection`], §4 step 5):
+//!
+//! - **Perspective** (the camera, lamp cube faces): the coarsest level whose error `e` (metres)
+//!   satisfies `e² · (pixels_per_radian / lod_px)² ≤ d²`, `d` the distance from the eye to the
+//!   bounding sphere (0 inside it). `pixels_per_radian` is
+//!   `sf_model::lod::LodScreen::focal_px`'s `H / (2 tan(fov_y / 2))` (copied, not imported:
+//!   `sf_model` builds meshoptimizer), from the view's **internal** resolution under an upscaler.
+//! - **Orthographic** (sun cascades, §8): no distance term, because an orthographic projection
+//!   has none: the coarsest level with `e · texels_per_metre ≤ lod_px`, one level for the whole
+//!   cascade per chain (per chain and instance scale, below).
+//!
+//! Level errors are model-space in both forms: the instance's largest axis scale
 //! ([`StaticInstance::max_scale`]) multiplies them first, so a placement scaled 2× switches each
-//! level at twice the distance (the GPU pass does the same). `pixels_per_radian` is
-//! `sf_model::lod::LodScreen::focal_px`'s `H / (2 tan(fov_y / 2))` (copied, not imported:
-//! `sf_model` builds meshoptimizer), from the view's **internal** resolution under an upscaler.
-//! [`ScenePreset`] sets `lod_px` and `size_cull_px`, the only knobs the quality presets turn.
+//! level at twice the distance (the GPU pass does the same). [`ScenePreset`] sets `lod_px` and
+//! `size_cull_px`, the only knobs the quality presets turn.
 
 use glam::{IVec2, Vec2, Vec3, Vec4, Vec4Swizzles};
 
@@ -26,6 +33,39 @@ use crate::PlacementId;
 /// `LodScreen::focal_px`). Pass the internal (pre-upscale) height.
 pub fn pixels_per_radian(height_px: f32, fov_y: f32) -> f32 {
     height_px / (2.0 * (fov_y * 0.5).tan())
+}
+
+/// Texels per metre of an orthographic view: its map side in texels over the world extent it
+/// covers (a sun cascade: `cascade_px / cascade_extent_m`). Constant over the whole view, which
+/// is why the orthographic LOD form has no distance term.
+pub fn texels_per_metre(map_px: f32, extent_m: f32) -> f32 {
+    map_px / extent_m
+}
+
+/// How a view projects, with the one term its LOD pick and sub-pixel test need (§4 step 5).
+/// Not one overloaded number: the perspective term is an angular density (pixels per radian,
+/// so what it covers grows with distance), the orthographic one a surface density (texels per
+/// metre, the same everywhere in the view).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SceneProjection {
+    /// Camera views, and the lamp cube faces (§8: "lamp cube faces are perspective and use the
+    /// normal form"): [`pixels_per_radian`] of the view's internal resolution.
+    Perspective { pixels_per_radian: f32 },
+    /// Sun cascades and any other orthographic view: [`texels_per_metre`] of its map.
+    Orthographic { texels_per_metre: f32 },
+}
+
+impl SceneProjection {
+    /// The coarsest acceptable level of `errors` (finest first, **already multiplied** by the
+    /// instance's scale, so in world metres), §4 step 5. `surface_distance` is the distance from
+    /// the eye to the bounding sphere's surface, ignored by [`Self::Orthographic`]. `None` only
+    /// for a chain without levels (tables reject those), so a pick is always a level that exists.
+    pub fn pick_level(self, errors: impl IntoIterator<Item = f32>, surface_distance: f32, lod_px: f32) -> Option<usize> {
+        match self {
+            Self::Perspective { pixels_per_radian } => pick_level(errors, surface_distance, pixels_per_radian, lod_px),
+            Self::Orthographic { texels_per_metre } => pick_level_ortho(errors, texels_per_metre, lod_px),
+        }
+    }
 }
 
 /// Quality presets (§4): they change only `lod_px` and `size_cull_px`.
@@ -91,6 +131,36 @@ impl Frustum {
         }
     }
 
+    /// An orthographic frustum: the box a sun cascade covers, looking along `forward` from
+    /// `center`, `half_width` × `half_height` metres wide and from `near` to `far` along
+    /// `forward` (`far` may be infinite, as in [`Self::perspective`]).
+    pub fn orthographic(
+        center: Vec3,
+        forward: Vec3,
+        up: Vec3,
+        half_width: f32,
+        half_height: f32,
+        near: f32,
+        far: f32,
+    ) -> Self {
+        let ahead = forward.normalize();
+        let right = ahead.cross(up).normalize();
+        let above = right.cross(ahead);
+        // Inward normal `n` through the box face at `± half` of its axis.
+        let side = |n: Vec3, half: f32| n.extend(-n.dot(center) + half);
+        let far_plane = if far.is_finite() { (-ahead).extend(ahead.dot(center) + far) } else { Vec4::W };
+        Self {
+            planes: [
+                side(-right, half_width),
+                side(right, half_width),
+                side(-above, half_height),
+                side(above, half_height),
+                ahead.extend(-ahead.dot(center) - near),
+                far_plane,
+            ],
+        }
+    }
+
     /// The sphere is wholly outside one plane.
     pub fn sphere_outside(&self, center: Vec3, radius: f32) -> bool {
         self.planes.iter().any(|p| p.xyz().dot(center) + p.w < -radius)
@@ -109,12 +179,14 @@ impl Frustum {
 /// One view's cull inputs, all in the cull frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneView {
+    /// Where the view is seen from. An orthographic view has no eye point: its LOD and
+    /// sub-pixel tests ignore this, and only the horizon pre-cull (main views) reads it.
     pub eye: Vec3,
     pub frustum: Frustum,
     /// Drawn layers; a table needs one in common ([`crate::StaticCellTable::layers`]).
     pub layers: u32,
-    /// [`pixels_per_radian`] of the internal resolution (shadow views: their texel density).
-    pub pixels_per_radian: f32,
+    /// How the view projects: the LOD pick and the sub-pixel test read its density term.
+    pub projection: SceneProjection,
     pub lod_px: f32,
     /// 0 turns the sub-pixel cull off.
     pub size_cull_px: f32,
@@ -130,9 +202,10 @@ impl SceneView {
     }
 }
 
-/// Picks the coarsest level of `errors` (finest first, metres) acceptable at `distance` metres:
-/// the largest index with `e² · (ppr / lod_px)² ≤ d²`; level 0 when none passes. `None` only for
-/// a chain without levels (tables reject those), so a pick is always a level that exists.
+/// The perspective pick: the coarsest level of `errors` (finest first, metres) acceptable at
+/// `distance` metres, the largest index with `e² · (ppr / lod_px)² ≤ d²`; level 0 when none
+/// passes. `None` only for a chain without levels (tables reject those), so a pick is always a
+/// level that exists.
 pub fn pick_level(errors: impl IntoIterator<Item = f32>, distance: f32, pixels_per_radian: f32, lod_px: f32) -> Option<usize> {
     let scale = pixels_per_radian / lod_px;
     let d2 = distance * distance;
@@ -146,6 +219,24 @@ pub fn pick_level(errors: impl IntoIterator<Item = f32>, distance: f32, pixels_p
     pick
 }
 
+/// The orthographic pick (§4 step 5, "Orthographic views (sun cascades) have no distance term"):
+/// the coarsest level of `errors` (finest first, metres) with `e · texels_per_metre ≤ lod_px`;
+/// level 0 when none passes, `None` for no levels (as [`pick_level`]).
+///
+/// The cascade's texel density is the same everywhere in the view, so this is one level for the
+/// whole cascade per chain (per chain and instance scale: `errors` arrive scaled). A distance
+/// term would be meaningless here — an orthographic projection's footprint per texel does not
+/// grow with distance — and it is what made the cascades pick main-view levels before.
+pub fn pick_level_ortho(errors: impl IntoIterator<Item = f32>, texels_per_metre: f32, lod_px: f32) -> Option<usize> {
+    let mut pick = None;
+    for (k, e) in errors.into_iter().enumerate() {
+        if k == 0 || e * texels_per_metre <= lod_px {
+            pick = Some(k);
+        }
+    }
+    pick
+}
+
 /// Why an instance produced no work item.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CullReason {
@@ -153,6 +244,8 @@ pub enum CullReason {
     Inactive,
     Frustum,
     Horizon,
+    /// Smaller than `size_cull_px` in the view's own units: screen pixels in a perspective
+    /// view, shadow-map texels in an orthographic one ([`cull_instance`]).
     SubPixel,
 }
 
@@ -204,6 +297,7 @@ impl CullStats {
 /// Steps 1 (active flag), 2, 4 and 5 for one instance (layers and the horizon are per table,
 /// [`cull_cell`]). `offset` places the cell in the cull frame ([`crate::cell_offset`]); `errors`
 /// are its chain's level errors, model-space (scaled here by [`StaticInstance::max_scale`]).
+/// Both the sub-pixel test and the LOD pick take the form of the view's [`SceneProjection`].
 pub fn cull_instance(view: &SceneView, instance: &StaticInstance, offset: Vec3, errors: impl IntoIterator<Item = f32>) -> Verdict {
     if instance.flags.contains(InstanceFlags::INACTIVE) {
         return Verdict::Culled(CullReason::Inactive);
@@ -213,15 +307,35 @@ pub fn cull_instance(view: &SceneView, instance: &StaticInstance, offset: Vec3, 
     if view.frustum.sphere_outside(center, r) {
         return Verdict::Culled(CullReason::Frustum);
     }
-    // Projected radius at the screen centre, ppr · r / √(d² − r²): drop under size_cull_px.
-    let d2 = center.distance_squared(view.eye);
-    let (ppr, size) = (view.pixels_per_radian, view.size_cull_px);
-    if size > 0.0 && d2 > r * r && ppr * ppr * r * r < size * size * (d2 - r * r) {
-        return Verdict::Culled(CullReason::SubPixel);
-    }
-    let surface = (d2.sqrt() - r).max(0.0);
+    let size = view.size_cull_px;
+    let surface = match view.projection {
+        SceneProjection::Perspective { pixels_per_radian: ppr } => {
+            // Projected radius at the screen centre, ppr · r / √(d² − r²): drop under
+            // size_cull_px (squared, as the GPU pass does it: no sqrt, no boundary drift).
+            let d2 = center.distance_squared(view.eye);
+            if size > 0.0 && d2 > r * r && ppr * ppr * r * r < size * size * (d2 - r * r) {
+                return Verdict::Culled(CullReason::SubPixel);
+            }
+            (d2.sqrt() - r).max(0.0)
+        }
+        SceneProjection::Orthographic { texels_per_metre: tpm } => {
+            // Step 4 in the view's own units: an orthographic projection has no distance term,
+            // so the radius covers r · texels_per_metre texels of the shadow map wherever the
+            // instance sits. "Sub-pixel on screen" would be the wrong question here; dropping a
+            // caster smaller than a map texel is the standard minimum-caster-radius cull of
+            // shipped cascade implementations (UE's shadow radius threshold), and it falls out
+            // of the cascade's own density: a small object keeps its shadow in the dense near
+            // cascade and loses it in a far one, where its shadow is sub-pixel on screen anyway.
+            // `size_cull_px = 0` turns it off for a view that wants every caster.
+            if size > 0.0 && r * tpm < size {
+                return Verdict::Culled(CullReason::SubPixel);
+            }
+            // No distance: the pick ignores it.
+            0.0
+        }
+    };
     let scale = instance.max_scale();
-    let level = pick_level(errors.into_iter().map(|e| e * scale), surface, ppr, view.lod_px).unwrap_or(0);
+    let level = view.projection.pick_level(errors.into_iter().map(|e| e * scale), surface, view.lod_px).unwrap_or(0);
     Verdict::Draw { level: u8::try_from(level).unwrap_or(u8::MAX) }
 }
 

@@ -17,9 +17,11 @@
 //! `sf_world::PlacementId` hash does not fit the u32 the GPU record carries without collisions.)
 //!
 //! **Candidates.** Only `sf_world` [`PlacementClass::Static`] placements with a model are read
-//! (their `mesh.cook` product); editor-only placements are never drawn. The adapter's
-//! [`SceneEligibility`] (through [`SceneSource::eligibility`]) then decides per placement with
-//! [`classify`], seeing what the cooker reported for its model ([`ModelFacts`]).
+//! (their `mesh.cook` product), and never one whose own switches bar it ([`BARRED`]:
+//! editor-only, no-LOD, near-only, starts-disabled; the framework reads those, not the adapter).
+//! The adapter's [`SceneEligibility`] (through [`SceneSource::eligibility`]) then decides per
+//! placement with [`classify_placement`], seeing what the cooker reported for its model
+//! ([`ModelFacts`]).
 //!
 //! **Chains.** One per (model, material part) ([`crate::chain`]), cell-local (`table.rs`):
 //! instances name them by index, sorted by mesh key. The **mesh key** is a stable hash of the
@@ -52,14 +54,38 @@ use sf_world::bake::{DIR_STEP, PAGE_STEP, page_subject, worldspace_subject};
 use sf_world::{CellDirectory, IndexPage, Partition, Placement, PlacementClass, PlacementFlags, WorldspaceId};
 
 use crate::chain::{LayoutError, LevelSource, chain_layout};
-use crate::eligibility::{Eligibility, MaterialKind, SceneEligibility, classify};
+use crate::eligibility::{Eligibility, EntityReason, MaterialKind, SceneEligibility, classify};
 use crate::material::{MaterialClass, MaterialTraits};
 use crate::table::{Aabb, InstanceFlags, LodChain, Sphere, StaticCellTable, StaticInstance, TableError};
 use crate::PlacementId;
 
 pub const CELLS_STEP: &str = "scene.cells";
-/// File extension of `scene.cells` products in `baked://` asset paths.
-pub const EXTENSION: &str = "sfscene";
+
+/// Per-placement switches that bar a placement from the static scene whatever its record says
+/// (module docs, "Candidates"): the precombine "Members" bars of `sf_lod::near::near_eligible`.
+/// The framework applies them ([`classify_placement`]), so no adapter can forget one.
+pub const BARRED: PlacementFlags = PlacementFlags::EDITOR_ONLY
+    .union(PlacementFlags::NO_LOD)
+    .union(PlacementFlags::NEAR_ONLY)
+    .union(PlacementFlags::DISABLED);
+
+/// [`classify`] with the framework's [`BARRED`] switches applied first: the §1 rule as the bake
+/// runs it.
+///
+/// The switches are `sf_world` data the framework already holds, so it reads them itself instead
+/// of asking the adapter: routing them through [`SceneEligibility`] is what let `NO_LOD`,
+/// `NEAR_ONLY` and `DISABLED` fall through an adapter that answered only the record questions
+/// (eligibility must be conservative, static-scene.md §1 and "Risks").
+pub fn classify_placement(
+    facts: &(impl SceneEligibility + ?Sized),
+    id: PlacementId,
+    placement: &Placement,
+) -> Eligibility {
+    if placement.flags.intersects(BARRED) {
+        return Eligibility::Entity(EntityReason::Barred);
+    }
+    classify(facts, id)
+}
 
 /// Subject of a cell's table: `<ws>/<x>,<y>,<z>`.
 pub fn cell_subject(ws: &WorldspaceId, cell: IVec3) -> String {
@@ -286,10 +312,7 @@ pub fn build_cell_table(
     for (k, (placement, model)) in placements.iter().zip(models).enumerate() {
         let id = PlacementId::try_from(k).map_err(|_| BuildError::TooManyPlacements)?;
         let CellModel::Static { path, model, parts: part_bounds } = *model else { continue };
-        if placement.flags.contains(PlacementFlags::EDITOR_ONLY) {
-            continue;
-        }
-        let parts: Vec<usize> = match classify(&*eligibility, id) {
+        let parts: Vec<usize> = match classify_placement(&*eligibility, id, placement) {
             Eligibility::Scene => (0..model.materials.len()).collect(),
             Eligibility::Split { scene, .. } => scene,
             Eligibility::Entity(_) => continue,
@@ -439,8 +462,13 @@ impl SceneBake {
         Self { source, settings, land: BTreeMap::new() }
     }
 
-    /// The level-0 terrain tiles of `ws` (the terrain bake's coverage). A worldspace without
-    /// any has no land: every cell's land minimum is negative infinity.
+    /// Declares the level-0 terrain tiles of `ws` (the terrain bake's coverage). Declaring an
+    /// empty set says "this worldspace has no land": every cell's land minimum is then negative
+    /// infinity and the horizon test hides nothing there (interiors).
+    ///
+    /// Every worldspace baked must be declared, even a landless one: a worldspace the caller
+    /// never declared is a wiring error ([`Self::coverage`]), not "no land", because the two
+    /// look the same in the output and the wrong one is cached ([`land_min`]).
     #[must_use]
     pub fn with_land_tiles(mut self, ws: WorldspaceId, tiles: impl IntoIterator<Item = (i32, i32)>) -> Self {
         let tiles: BTreeSet<(i32, i32)> = tiles.into_iter().collect();
@@ -457,6 +485,25 @@ impl SceneBake {
     /// `terrain.*`).
     pub fn register(self: &Arc<Self>, baker: &mut Baker) {
         baker.register(CellsStep(self.clone()));
+    }
+
+    /// The declared land coverage of `ws`, or the wiring error. An undeclared worldspace fails
+    /// the product instead of baking it with no land: a table baked before the terrain validates
+    /// like any other, and its `land_min = -∞` would turn horizon culling off for that cell for
+    /// as long as the cache lives (static-scene.md §4 step 3; silently disabling a culling
+    /// system is exactly what CONTRIBUTING "Industry standard, never kludge" forbids).
+    fn coverage(&self, ws: &WorldspaceId) -> Result<&LandCoverage, BakeError> {
+        self.land.get(ws).ok_or_else(|| {
+            step_err(
+                ws.as_str(),
+                format!(
+                    "no land coverage declared for worldspace {}: call SceneBake::with_land_tiles for it \
+                     (with the terrain bake's level-0 tiles, or an empty set for a landless worldspace) \
+                     before baking, and bake {TILE_STEP} first",
+                    ws.as_str()
+                ),
+            )
+        })
     }
 
     /// Every cell's product key, from the worldspaces' `world.dir` (errors where it fails).
@@ -506,7 +553,7 @@ impl Step for CellsStep {
         let (ws, cell) = parse_cell_subject(subject).ok_or_else(|| step_err(subject, "malformed subject"))?;
         cx.product(PAGE_STEP, page_subject(&ws, Partition::page_of(cell)));
         cx.param("source", self.0.source.fingerprint().to_vec()).param("settings", self.0.settings.key_bytes());
-        cx.param("land", self.0.land.get(&ws).map_or([0; 32], |l| l.digest).to_vec());
+        cx.param("land", self.0.coverage(&ws)?.digest.to_vec());
         cx.param("table", crate::table::FORMAT_VERSION.to_le_bytes().to_vec());
         Ok(())
     }
@@ -543,10 +590,10 @@ impl Step for CellsStep {
             .collect();
         let origin_cell = page.partition.cell_origin(cell).cell;
         let tiles = land_tiles(page.partition, cell);
-        let coverage = self.0.land.get(&ws).map(|l| &l.tiles);
+        let coverage = &self.0.coverage(&ws)?.tiles;
         let mut products = Vec::with_capacity(tiles.len());
         for &(x, z) in &tiles {
-            products.push(if coverage.is_some_and(|t| t.contains(&(x, z))) {
+            products.push(if coverage.contains(&(x, z)) {
                 let bytes = cx.product(TILE_STEP, &tile_subject(&ws, TileCoord::new(0, x, z)))?;
                 Some(TileProduct::from_bytes(&bytes).map_err(|e| step_err(subject, e))?)
             } else {
@@ -559,6 +606,13 @@ impl Step for CellsStep {
         let table = build_cell_table(&*self.0.source, &self.0.settings, origin_cell, land_min, &placements, &models)
             .map_err(|e| step_err(subject, e))?;
         table.write().map_err(|e| step_err(subject, e))
+    }
+    /// Never: a table is dense binary already, and the runtime **mmap-reads** it and uploads
+    /// [`crate::StaticCellTableView::instance_bytes`] straight to the GPU (static-scene.md §2).
+    /// An LZ4'd product would have to be decompressed into a heap buffer first, which is the
+    /// opposite of what the format is for.
+    fn compress(&self) -> bool {
+        false
     }
 }
 
