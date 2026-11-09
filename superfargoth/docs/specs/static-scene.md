@@ -1,7 +1,12 @@
 # Static scene: a retained, GPU-driven static world (`sf_scene`, `sf_scene_bevy`)
 
-Status: **design, owner go 2026-11-08** ("a future proof engine that can work flawlessly and fast"; no quick fixes).
-Nothing built. Replaces, once complete, per-entity statics (`sf_world_bevy` `spawn_template_ranges`) and the near-cell
+Status: **building** (owner go 2026-11-08: "a future proof engine that can work flawlessly and fast"; no quick fixes).
+Built and committed: **S1a**, **S1c** `[x]`; **S0** `[~]` (counters in, baseline run open), **S1b** `[~]`
+(bake step in, the Vvardenfell measurement and the `bake_scene` call in `mw_boot_bevy::bake` open), **S2** `[~]`
+(material-class fold in, perf A/B and visual check SS-matclass open), **S3a** `[~]` (#25978 ported and tested, nothing
+draws through it yet). **S3b is next**; S4-S9 not started. As-built detail: "Slices" below.
+
+Replaces, once complete, per-entity statics (`sf_world_bevy` `spawn_template_ranges`) and the near-cell
 precombine ([precombine.md](precombine.md)); absorbs far-field selection ([far-field.md](far-field.md)). Hard problem H1
 (`bevyrrowind/docs/hard-problems.md`). Research: [spud-code-2026-11-08](../research/spud-code-2026-11-08.md); the
 three-agent study of 2026-11-08 (industry, Bevy fit, crates, ECS audit) is summarised in "Why" and "Industry comparison".
@@ -295,12 +300,12 @@ RT-only proxy set as entities near the camera (as today's `RayTracingMesh` level
 
 | # | Slice | Done when |
 |---|---|---|
-| S0 | Instrumentation: per-view instances, work items, batch sets, bind groups, pipeline states in the perf report | baseline on all benches, ×3. **[~] 2026-11-08:** counters built (`sf_diag::views`, `RenderViewsPlugin`, diag.md "Render views"); compiled on the laptop: `sf_diag` 46 tests, `sf_diag_bevy --features views` 11 tests, clippy pedantic clean on `sf_diag`, `sf_diag_bevy`, `mw_devtools_bevy`, `bevyrrowind` (no-default-features); next: the owner runs perf.md "Static scene baseline (S0)" |
-| S1a | `sf_scene` core: table format v1 (`table.rs` docs), eligibility trait + `Promotions`, slot allocator, CPU cull/LOD twin | **[x] 2026-11-08:** compiled on the laptop: 28 tests pass, clippy pedantic clean (7 lint fixes); hakari check pending |
-| S1b | `scene.cells` bake + adapter eligibility hook and material class map | Vvardenfell tables baked, tests pass, bake time within bake.md gates. **[~] 2026-11-08:** `sf_scene::bake` (`CellsStep`, `SceneBake`, `SceneSource`, pure `build_cell_table`, `land_min`), `sf_scene::chain_layout`, `mw_bake::scene` (`MwSceneSource`, `scene_material`, `bake_scene`); compiled and tested with S1c (format v2); next: owner runs `scene_cells_real_install` (measurement), then one `bake_scene` line in `mw_boot_bevy::bake` |
-| S1c | Table format v2 (review fixes before any bake) | **[x] 2026-11-09:** §2 "Format v2 (S1c)": cell-local dense chain indices + `chain_index` / `write_remapped` for stream-in, chain record with mesh key, material key (`bake::material_key`) and class, `material_override` per instance, layers in the header, per-part spheres (`bake::part_spheres`), scale-aware LOD in the CPU twin (§4 step 5), `scene.cells` step version 2; compiled on the laptop: `sf_scene` 41 tests, 50 with `bake`, `mw_bake` 48 lib tests (4 scene); clippy pedantic clean (`sf_scene` both ways, `mw_bake`); next: as S1b (the Vvardenfell measurement) |
-| S2 | Material classes + bindless material table for statics (on the current entity path first) | batch sets per view measured down; look unchanged (owner). **[~] 2026-11-08:** `sf_world_bevy::matclass` folds every static template material into its class (traits from alpha mode + culling, wind off; unused UV channels, parallax and sub-unit depth bias canonical); today's mapper already keys on the class except leaf transmission, which stays split (one key for all masked would light non-leaves with a second lobe and render them forward under `--rt`), as would normal maps, depth bias and other UV sets (none on statics today); vendored `bevy_render` `SharedImageSamplers` (one sampler per descriptor: bindless slabs count samplers); gauges `statics/*` (materials, classes, keys, pipelines, bind groups, bindless); `--off matclass` A/B, default on; next: owner runs perf.md "Static material classes (S2)" and visual check SS-matclass |
-| S3a | Patch "GS" base: #25978 ported into vendored `bevy_pbr`/`bevy_render` 0.20 (§6 "Port shape"), with its sanity test | **[~] 2026-11-09:** ported (branch `static-scene/s3a`), `sf_world_bevy` `gpu_batch_tests.rs` (WGSL links + validates, layouts, headless app); handoff `bevyrrowind/docs/test-pass-handoffs/s3a-gpu-batch.md` |
+| S0 | Instrumentation: per-view instances, work items, batch sets, bind groups, pipeline states in the perf report | baseline on all benches, ×3. **[~] 2026-11-08** |
+| S1a | `sf_scene` core: table format v1 (`table.rs` docs), eligibility trait + `Promotions`, slot allocator, CPU cull/LOD twin | **[x] 2026-11-08** |
+| S1b | `scene.cells` bake + adapter eligibility hook and material class map | Vvardenfell tables baked, tests pass, bake time within bake.md gates. **[~] 2026-11-08** |
+| S1c | Table format v2 (review fixes before any bake) | §2 "Format v2 (S1c)". **[x] 2026-11-09** |
+| S2 | Material classes + bindless material table for statics (on the current entity path first) | batch sets per view measured down; look unchanged (owner). **[~] 2026-11-08** |
+| S3a | Patch "GS" base: #25978 ported into vendored `bevy_pbr`/`bevy_render` 0.20 (§6 "Port shape"), with its sanity test | **[~] 2026-11-09** |
 | S3b | Scrib runtime on the port: batch entities fed from the baked tables, main view only, opaque class, no LOD | one town’s opaque statics drawn from the table; numbers |
 | S4 | All classes, LOD ranges, pixel-error presets, motion vectors | statics fully on the table in the main view |
 | S5 | Shadow views (cascades, lamp faces, #26161 count) + far shadows | shadows from the table; per-view cost flat |
@@ -308,6 +313,8 @@ RT-only proxy set as entities near the camera (as today's `RayTracingMesh` level
 | S7 | Far field on the table (§9) | lead bands and node ranges removed |
 | S8 | Promotion and runtime demotion paths; picking | grab, script and mod cases tested |
 | S9 | Retire per-entity statics and precombine; upstream PR | old path deleted, `--off scene` gone, PR open |
+
+As built per slice (what each built, what is still open, the S1c follow-ups): [archive/static-scene-s0-s2.md](archive/static-scene-s0-s2.md); S3a: `bevyrrowind/docs/test-pass-handoffs/s3a-gpu-batch.md`.
 
 S2 pays on its own and de-risks S3. Each slice reports ms per preset.
 
