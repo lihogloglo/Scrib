@@ -296,7 +296,7 @@ M5 module set (each small; names provisional):
 | `@sf/anim` | play a montage in a slot (animation.md "Slots and montages") | `sf_anim_bevy` |
 | `@sf/physics` | impulse, raycast (physics.md) | `sf_physics_bevy` |
 
-Later: `@sf/rpg` (M7: inventory rules, stats, effects, dialogue, quests), `@sf/weather` (M6),
+Later: `@sf/rules` (formula overrides, [rule-hooks.md](rule-hooks.md); unparks first if the owner agrees), `@sf/rpg` (M7: inventory rules, stats, effects, dialogue, quests), `@sf/weather` (M6),
 `@sf/audio` (with the audio system), `@sf/save` hooks (M7).
 
 ### Hot reload

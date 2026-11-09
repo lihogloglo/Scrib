@@ -68,6 +68,13 @@ pub struct GameTime {
     pub minute: u16,
 }
 
+impl GameTime {
+    /// Minutes since the game started (a day is 1,440 minutes).
+    pub fn total_minutes(self) -> u64 {
+        u64::from(self.day) * 1440 + u64::from(self.minute)
+    }
+}
+
 /// Text for a journal entry or heard line, before it gets its sequence number.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntryDraft {

@@ -50,6 +50,10 @@ pub enum StatOp {
     LevelUp { picks: SmallVec<[StatIdx; 3]> },
     /// Rest or wait, through [`crate::DerivedModel::rest`].
     Rest { hours: f32, sleep: bool },
+    /// Leaves the group: no rank and not expelled; the group reputation stays (`OpenMW`
+    /// `NpcStats::setFactionRank` below 0 erases the rank and the expulsion, not the reputation).
+    /// No-op for a non-member. Last variant: serialized op lists keep their indices.
+    Leave { group: RecordId },
 }
 
 /// Whose sheet (net rule 6: never a singleton, never an `Entity`).
@@ -378,6 +382,16 @@ impl Run<'_, '_> {
                 let m: &mut Membership = sheet.groups.entry(group.clone()).or_default();
                 m.reputation = if *set { *delta } else { m.reputation.saturating_add(*delta) };
                 sheet.changed_since_init = true;
+            }
+            StatOp::Leave { group } => {
+                if let Some(m) = sheet.groups.get_mut(group) {
+                    let old = m.rank.take();
+                    m.expelled = false;
+                    if old.is_some() {
+                        self.out.push(StatEvent::RankChanged { owner, group: group.clone(), old, new: None, cause });
+                    }
+                    sheet.changed_since_init = true;
+                }
             }
             StatOp::UseSkill { skill, use_kind, scale } => {
                 if slot(*skill).is_none() {

@@ -371,6 +371,12 @@ pub(super) fn write_summary(args: &SuiteArgs, exe: &Path, dir: &Path, runs: &[Su
         GaugeColumn { label: "point lights".into(), counter: "world/point_lights".into() },
         GaugeColumn { label: "process CPU %".into(), counter: "process/cpu_usage".into() },
         GaugeColumn { label: "system CPU %".into(), counter: "system/cpu_usage".into() },
+        // Static-scene S0 (sf_diag::views): render-thread work per view, all views summed.
+        GaugeColumn { label: "views".into(), counter: "views/all/count".into() },
+        GaugeColumn { label: "phase items".into(), counter: "views/all/items".into() },
+        GaugeColumn { label: "batch sets".into(), counter: "views/all/batch_sets".into() },
+        GaugeColumn { label: "work items".into(), counter: "views/all/work_items".into() },
+        GaugeColumn { label: "preprocess bind groups".into(), counter: "preprocess/bind_groups".into() },
     ];
     let mut summary = suite::suite_markdown(&format!("Perf suite `{}`", args.tag), runs, &gauges);
     let mut header = String::new();

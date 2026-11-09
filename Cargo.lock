@@ -249,7 +249,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -260,7 +260,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1666,7 +1666,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-time",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3029,9 +3029,10 @@ dependencies = [
 [[package]]
 name = "delirium"
 version = "0.1.0"
-source = "git+https://github.com/PVCPC/delirium-physics?rev=91ee2468820d434e123d4c09e89760ce38d165f5#91ee2468820d434e123d4c09e89760ce38d165f5"
+source = "git+https://github.com/PVCPC/delirium-physics?rev=f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d#f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d"
 dependencies = [
  "bevy_math",
+ "bevy_tasks",
  "bevy_transform",
  "delirium-data",
  "tracing",
@@ -3040,19 +3041,21 @@ dependencies = [
 [[package]]
 name = "delirium-data"
 version = "0.1.0"
-source = "git+https://github.com/PVCPC/delirium-physics?rev=91ee2468820d434e123d4c09e89760ce38d165f5#91ee2468820d434e123d4c09e89760ce38d165f5"
+source = "git+https://github.com/PVCPC/delirium-physics?rev=f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d#f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d"
 dependencies = [
  "aes",
+ "blake3",
  "miniz_oxide 0.8.9",
 ]
 
 [[package]]
 name = "delirium-sdk"
 version = "0.1.0"
-source = "git+https://github.com/PVCPC/delirium-physics?rev=91ee2468820d434e123d4c09e89760ce38d165f5#91ee2468820d434e123d4c09e89760ce38d165f5"
+source = "git+https://github.com/PVCPC/delirium-physics?rev=f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d#f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d"
 dependencies = [
  "delirium",
  "delirium-data",
+ "rayon",
  "serde",
  "serde_json",
 ]
@@ -3098,7 +3101,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3333,7 +3336,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5041,11 +5044,13 @@ dependencies = [
  "sf_bake",
  "sf_character",
  "sf_controller",
+ "sf_coords",
  "sf_lod",
  "sf_model",
  "sf_physics",
  "sf_ragdoll",
  "sf_records",
+ "sf_scene",
  "sf_script",
  "sf_terrain",
  "sf_texture",
@@ -5267,6 +5272,19 @@ dependencies = [
  "sf_world",
  "sf_world_bevy",
  "workspace-hack",
+]
+
+[[package]]
+name = "mw_effects"
+version = "0.1.0"
+dependencies = [
+ "mw_install",
+ "mw_stats",
+ "sf_effects",
+ "sf_records",
+ "sf_stats",
+ "smallvec",
+ "tes3",
 ]
 
 [[package]]
@@ -5551,6 +5569,7 @@ dependencies = [
  "mw_records",
  "mw_script",
  "mw_stats",
+ "mw_ui",
  "mw_vfs",
  "postcard",
  "serde",
@@ -5558,6 +5577,7 @@ dependencies = [
  "sf_rpg",
  "sf_stats",
  "sf_vfs",
+ "smallvec",
  "tes3",
  "thiserror 2.0.21",
 ]
@@ -5700,6 +5720,16 @@ dependencies = [
  "smallvec",
  "tes3",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "mw_ui"
+version = "0.1.0"
+dependencies = [
+ "mw_install",
+ "sf_ui",
+ "sf_vfs",
+ "tes3",
 ]
 
 [[package]]
@@ -6057,7 +6087,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6585,7 +6615,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -7294,7 +7324,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7903,8 +7933,10 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_asset",
+ "bevy_core_pipeline",
  "bevy_diagnostic",
  "bevy_ecs",
+ "bevy_pbr",
  "bevy_platform",
  "bevy_render",
  "bevy_time",
@@ -7914,6 +7946,18 @@ dependencies = [
  "sf_diag",
  "tempfile",
  "workspace-hack",
+]
+
+[[package]]
+name = "sf_effects"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
+ "sf_records",
+ "sf_stats",
+ "smallvec",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -8221,6 +8265,7 @@ dependencies = [
  "serde",
  "sf_rpg",
  "sf_ui",
+ "sf_ui_inventory",
 ]
 
 [[package]]
@@ -8269,6 +8314,21 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "workspace-hack",
+]
+
+[[package]]
+name = "sf_scene"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.2",
+ "glam 0.33.12",
+ "sf_bake",
+ "sf_coords",
+ "sf_model",
+ "sf_terrain",
+ "sf_vfs",
+ "sf_world",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -8777,6 +8837,7 @@ dependencies = [
  "sf_diag_bevy",
  "sf_model",
  "sf_model_bevy",
+ "sf_scene",
  "sf_vfs",
  "sf_world",
  "tempfile",
@@ -9158,10 +9219,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10178,7 +10239,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

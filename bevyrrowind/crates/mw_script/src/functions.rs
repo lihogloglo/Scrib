@@ -331,7 +331,8 @@ mod tests {
         let t = FunctionTable::vanilla();
         let status = |n: &str| t.function(t.get(n).unwrap()).status;
         assert_eq!(status("GetJournalIndex"), Status::Live);
-        assert_eq!(status("GetPCRank"), Status::Stub(-1));
+        assert_eq!(status("GetPCRank"), Status::Live);
+        assert_eq!(status("GetDisposition"), Status::Stub(50));
         assert_eq!(status("AITravel"), Status::Later);
         let name = |n: &str| t.function(t.get(n).unwrap()).luau_name();
         assert_eq!(name("GetPCCell"), "get_pc_cell");

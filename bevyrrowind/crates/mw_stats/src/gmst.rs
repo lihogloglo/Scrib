@@ -75,6 +75,42 @@ gmsts! {
     rest_magic_mult: "fRestMagicMult" = 0.15,
     auto_rep_fac_mod: "iAutoRepFacMod" = 2.0,
     auto_rep_lev_mod: "iAutoRepLevMod" = 0.0,
+    // Derived disposition and persuasion (`mw_rpg::disposition`, `mw_rpg::persuasion`). Vanilla
+    // values from `OpenMW`'s `apps/opencs/model/world/defaultgmsts.cpp` (commit ca5e2576).
+    disp_race_mod: "fDispRaceMod" = 5.0,
+    disp_personality_mult: "fDispPersonalityMult" = 0.5,
+    disp_personality_base: "fDispPersonalityBase" = 50.0,
+    disp_faction_rank_mult: "fDispFactionRankMult" = 0.5,
+    disp_faction_rank_base: "fDispFactionRankBase" = 1.0,
+    disp_faction_mod: "fDispFactionMod" = 3.0,
+    disp_crime_mod: "fDispCrimeMod" = 0.0,
+    disp_disease_mod: "fDispDiseaseMod" = -10.0,
+    disp_weapon_drawn: "fDispWeaponDrawn" = -5.0,
+    personality_mod: "fPersonalityMod" = 5.0,
+    luck_mod: "fLuckMod" = 10.0,
+    reputation_mod: "fReputationMod" = 1.0,
+    level_mod: "fLevelMod" = 5.0,
+    bribe10_mod: "fBribe10Mod" = 35.0,
+    bribe100_mod: "fBribe100Mod" = 75.0,
+    bribe1000_mod: "fBribe1000Mod" = 150.0,
+    per_min_chance: "iPerMinChance" = 5.0,
+    per_min_change: "iPerMinChange" = 10.0,
+    per_die_roll_mult: "fPerDieRollMult" = 0.3,
+    per_temp_mult: "fPerTempMult" = 1.0,
+    // Service prices (`mw_rpg::services`, services-adapter.md "GMSTs read"). Vanilla values from
+    // `OpenMW`'s `apps/opencs/model/world/defaultgmsts.cpp` (commit ca5e2576).
+    bargain_offer_base: "fBargainOfferBase" = 50.0,
+    bargain_offer_multi: "fBargainOfferMulti" = -4.0,
+    disposition_mod: "fDispositionMod" = 1.0,
+    barter_success_disposition: "iBarterSuccessDisposition" = 1.0,
+    barter_fail_disposition: "iBarterFailDisposition" = -1.0,
+    barter_gold_reset_delay: "fBarterGoldResetDelay" = 24.0,
+    training_mod: "iTrainingMod" = 10.0,
+    travel_mult: "fTravelMult" = 4000.0,
+    travel_time_mult: "fTravelTimeMult" = 16000.0,
+    mages_guild_travel: "fMagesGuildTravel" = 10.0,
+    spell_value_mult: "fSpellValueMult" = 10.0,
+    repair_mult: "fRepairMult" = 1.0,
 }
 
 /// One GMST as a number (`None` when absent or a string).

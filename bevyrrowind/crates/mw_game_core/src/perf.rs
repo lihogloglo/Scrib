@@ -74,6 +74,11 @@ pub enum Part {
     /// Near cells drawn from their precombines (superfargoth precombine.md); off, one entity per
     /// static placement, LOD level and part (the old way, an A/B; no rebake needed).
     Precombine,
+    /// Material classes for statics (superfargoth static-scene.md S2): template materials fold into
+    /// their class (one pipeline key per class) and images share equal samplers (fuller bindless
+    /// slabs); off, the mapper's materials as they come and one sampler per image (an A/B; the look
+    /// should not change).
+    MatClass,
     /// Point/spot (lamp) shadows filtered with 2x2 hardware PCF while the sun keeps the preset's filter
     /// (vendored `bevy_pbr::PointSpotShadowsHardware2x2`, shadow reset B2); off, lamps use the camera's
     /// filter as stock Bevy does (an A/B).
@@ -109,7 +114,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 53] = [
+    const ALL: [(&'static str, Part); 54] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -153,6 +158,7 @@ impl Part {
         ("foliagetransmission", Part::FoliageTransmission),
         ("skymotion", Part::SkyMotion),
         ("precombine", Part::Precombine),
+        ("matclass", Part::MatClass),
         ("lampfilter", Part::LampFilter),
         ("movershadows", Part::MoverShadows),
         ("precipocc", Part::PrecipOcc),

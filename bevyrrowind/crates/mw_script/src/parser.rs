@@ -782,7 +782,121 @@ impl<'a> Parser<'a> {
         ) || word_key(self.peek()).is_some_and(|k| is_keyword(&k))
     }
 
+    /// Skips a `,` before an argument (`CommaBetweenArgs`).
+    fn skip_comma(&mut self, line: u32) {
+        if *self.peek() == Tok::Comma {
+            self.diags.push(Rule::CommaBetweenArgs, line, "");
+            self.bump();
+        }
+    }
+
+    /// A `MessageBox` bare word as written: a run of glued word, number, `-` and `.` tokens
+    /// (`Yes`, `-2`, `.todd`; `3.14pi` is one word token already). Numbers print in their
+    /// shortest form, since the lexer keeps only the value (`2.50` reads `2.5`, `.5` `0.5`).
+    fn take_word(&mut self) -> String {
+        let mut word = String::new();
+        loop {
+            let token = &self.toks[self.pos];
+            if !word.is_empty() && !token.glued {
+                break;
+            }
+            let part = match &token.tok {
+                Tok::Word(w) => w.clone(),
+                Tok::Int(i) => i.to_string(),
+                Tok::Float(f) => f.to_string(),
+                Tok::Minus => "-".to_owned(),
+                Tok::Dot => ".".to_owned(),
+                _ => break,
+            };
+            word.push_str(&part);
+            self.bump();
+        }
+        word
+    }
+
+    /// `MessageBox`'s arguments, split at compile time as `OpenMW` does (`lineparser.cpp`
+    /// lines 145-180, 501-519, commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`): the format
+    /// text (quoted or a bare word), then one value per placeholder of the format
+    /// ([`message_placeholders`]; a `%s` takes a quoted string or a bare word as text, a number
+    /// placeholder an expression), then every quoted string ([`Arg::Str`]) or bare word
+    /// ([`Arg::Word`], keywords and numbers included) up to the end of the line as a potential
+    /// button. Which of those become buttons is the host's call (`mw_ui::message`).
+    fn parse_message_box(&mut self, target: Target, function: FnId, line: u32) -> Call {
+        let mut args = Vec::new();
+        self.skip_comma(line);
+        let format = match self.peek().clone() {
+            Tok::Str(s) => {
+                self.bump();
+                Some(s)
+            }
+            Tok::Word(_) if !self.at_arg_end() => Some(self.take_word()),
+            _ => None,
+        };
+        let Some(format) = format else {
+            self.diags.push(Rule::MissingArgument, line, "MessageBox");
+            args.push(Arg::Missing);
+            return Call {
+                target,
+                function,
+                args,
+                line,
+            };
+        };
+        let placeholders = message_placeholders(&format);
+        args.push(Arg::Str(format));
+        for text in placeholders {
+            self.skip_comma(line);
+            let ended = if text {
+                !matches!(
+                    self.peek(),
+                    Tok::Str(_) | Tok::Word(_) | Tok::Int(_) | Tok::Float(_) | Tok::Minus | Tok::Dot
+                )
+            } else {
+                self.at_arg_end()
+            };
+            if ended {
+                self.diags.push(Rule::MissingArgument, line, "MessageBox");
+                args.push(Arg::Missing);
+                break;
+            }
+            let arg = match self.peek().clone() {
+                Tok::Str(s) => {
+                    self.bump();
+                    Arg::Str(s)
+                }
+                Tok::Word(_) | Tok::Int(_) | Tok::Float(_) | Tok::Minus | Tok::Dot if text => {
+                    Arg::Word(self.take_word())
+                }
+                _ => Arg::Expr(self.unary(line)),
+            };
+            args.push(arg);
+        }
+        loop {
+            self.skip_comma(line);
+            let arg = match self.peek().clone() {
+                Tok::Str(s) => {
+                    self.bump();
+                    Arg::Str(s)
+                }
+                Tok::Word(_) | Tok::Int(_) | Tok::Float(_) | Tok::Minus | Tok::Dot => {
+                    Arg::Word(self.take_word())
+                }
+                _ => break,
+            };
+            args.push(arg);
+        }
+        Call {
+            target,
+            function,
+            args,
+            line,
+        }
+    }
+
     fn parse_call(&mut self, target: Target, function: FnId, line: u32) -> Call {
+        if self.table.function(function).name == "MessageBox" {
+            return self.parse_message_box(target, function, line);
+        }
         let specs = self.table.function(function).args.clone();
         let mut args = Vec::with_capacity(specs.len());
         for spec in specs {
@@ -866,6 +980,49 @@ impl<'a> Parser<'a> {
             line,
         }
     }
+}
+
+/// The placeholders of a `MessageBox` format in order, `true` for a text one (`%s`, `%S`) and
+/// `false` for a number (`%d %i %f %F %e %E %g %G %a %A`): `OpenMW`'s `MessageFormatParser` scan
+/// (`components/misc/messageformatparser.cpp` lines 26-97) as `GetArgumentsFromMessageFormat`
+/// reads it. The same scan as `mw_ui::message::placeholders`, which this dependency-free crate
+/// cannot call: `%%` is no placeholder, flags `- + space 0 #`, a width and a `.precision` are
+/// skipped, any other conversion character (or the end of the text) takes no value.
+pub(crate) fn message_placeholders(format: &str) -> Vec<bool> {
+    let m: Vec<char> = format.chars().collect();
+    let mut kinds = Vec::new();
+    let mut i = 0;
+    while i < m.len() {
+        if m[i] != '%' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if m.get(i) == Some(&'%') {
+            i += 1;
+            continue;
+        }
+        while matches!(m.get(i), Some('-' | '+' | ' ' | '0' | '#')) {
+            i += 1;
+        }
+        while m.get(i).is_some_and(char::is_ascii_digit) {
+            i += 1;
+        }
+        if m.get(i) == Some(&'.') {
+            i += 1;
+            while m.get(i).is_some_and(char::is_ascii_digit) {
+                i += 1;
+            }
+        }
+        match m.get(i) {
+            Some('s' | 'S') => kinds.push(true),
+            Some('d' | 'i' | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' | 'a' | 'A') => kinds.push(false),
+            _ => {}
+        }
+        // Past the conversion character (or the end).
+        i += 1;
+    }
+    kinds
 }
 
 fn is_keyword(k: &str) -> bool {

@@ -93,6 +93,13 @@ pub struct StreamingConfig {
     /// member placement, LOD level and part. Only with a far field (its near
     /// level holds every placement of the cell).
     pub precombine: bool,
+    /// Fold every static template material into its material class
+    /// (static-scene.md §5, slice S2; [`crate::matclass`]) and share equal image
+    /// samplers in the render world (vendored `bevy_render`
+    /// `SharedImageSamplers`), so statics of one class share a pipeline and fill
+    /// bindless slabs half as fast. Off: the mapper's materials as they come and
+    /// one sampler per image (the app's `--off matclass` A/B).
+    pub material_classes: bool,
 }
 
 impl Default for StreamingConfig {
@@ -107,6 +114,7 @@ impl Default for StreamingConfig {
             origin_shift_guard_s: 0.05,
             max_loading_meshes: 64,
             precombine: true,
+            material_classes: true,
         }
     }
 }
@@ -947,6 +955,7 @@ impl Runtime {
             return;
         }
         let mapper = world.get_resource::<ModelMaterials>().cloned().unwrap_or_default();
+        let fold = self.config.material_classes;
         world.resource_scope(|world, mut materials: Mut<Assets<StandardMaterial>>| {
             let asset_server = world.resource::<AssetServer>().clone();
             let cooked = world.resource::<Assets<CookedModelAsset>>();
@@ -970,7 +979,7 @@ impl Runtime {
                                     asset,
                                     &mut materials,
                                     &mut self.materials,
-                                    &mapper,
+                                    (&mapper, fold),
                                     &asset_server,
                                 )))
                             }
@@ -1128,6 +1137,7 @@ impl Runtime {
             placements.iter().filter(|p| members.contains(&p.placement.id)).map(|p| (p.placement.id, p)).collect();
         let origin = self.info(&request.worldspace).partition.cell_origin(request.cell);
         let mapper = world.get_resource::<ModelMaterials>().cloned().unwrap_or_default();
+        let fold = self.config.material_classes;
         let mut buckets = Vec::new();
         world.resource_scope(|world, mut materials: Mut<Assets<StandardMaterial>>| {
             let asset_server = world.resource::<AssetServer>().clone();
@@ -1141,7 +1151,7 @@ impl Runtime {
                         (end, band) = (e.distance + reach, e.band);
                     }
                 }
-                let template = build_template(&bucket.model, &mut materials, &mut self.materials, &mapper, &asset_server);
+                let template = build_template(&bucket.model, &mut materials, &mut self.materials, (&mapper, fold), &asset_server);
                 let errors: Vec<f32> = template.lods.iter().map(|l| l.error).collect();
                 let ranges = bucket_ranges(&errors, &ends.lod, end, band, bucket.reach);
                 buckets.push((template, ranges, end, band));
@@ -1422,18 +1432,28 @@ fn load_page(reader: &dyn IndexReader, cache: &Mutex<PageCache>, ws: &Worldspace
 }
 
 /// Turns a loaded cooked model into a template, deduplicating materials by
-/// description.
+/// description. With `fold` ([`StreamingConfig::material_classes`]) each new
+/// material folds into its class ([`crate::matclass::fold`]).
 fn build_template(
     asset: &CookedModelAsset,
     materials: &mut Assets<StandardMaterial>,
     cache: &mut HashMap<String, Handle<StandardMaterial>>,
-    mapper: &ModelMaterials,
+    (mapper, fold): (&ModelMaterials, bool),
     asset_server: &AssetServer,
 ) -> ModelTemplate {
     let mut material = |i: u32| -> Handle<StandardMaterial> {
         let desc = asset.materials.get(i as usize).cloned().unwrap_or_default();
         let key = format!("{desc:?}");
-        cache.entry(key).or_insert_with(|| materials.add((mapper.0)(&desc, asset_server))).clone()
+        cache
+            .entry(key)
+            .or_insert_with(|| {
+                let mut made = (mapper.0)(&desc, asset_server);
+                if fold {
+                    crate::matclass::fold(&mut made);
+                }
+                materials.add(made)
+            })
+            .clone()
     };
     let lods = asset
         .lods

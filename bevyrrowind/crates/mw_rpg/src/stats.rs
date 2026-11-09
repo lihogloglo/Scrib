@@ -26,7 +26,7 @@
 
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::{ActorKey, ConversationCtx, PlayerId};
-use sf_stats::{Sheet, SheetRead, StatIdx};
+use sf_stats::{Rules, Sheet, SheetRead, StatIdx};
 use tes3::esp::{Faction, FilterFunction};
 
 use mw_stats::{FactionRanks, MwTable};
@@ -41,6 +41,11 @@ pub trait MwSheets {
     fn player(&self, player: PlayerId) -> Option<&Sheet>;
     /// An NPC's or creature's sheet by its actor key (the speaker's: `ctx.speaker`).
     fn actor(&self, actor: ActorKey) -> Option<&Sheet>;
+    /// The rules the host steps sheets with. Result scripts need them to see their own stat
+    /// writes later in the same run (stats.md S7); `None`: they read the host's sheets only.
+    fn rules(&self) -> Option<&Rules> {
+        None
+    }
 }
 
 /// No stats: every sheet function is neutral (headless tools, tests, a run without records).

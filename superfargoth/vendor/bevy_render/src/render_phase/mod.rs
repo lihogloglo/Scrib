@@ -1441,6 +1441,32 @@ where
                 .sum::<usize>()
     }
 
+    // superfargoth patch (own: phase counts)
+    /// The number of bins in this phase: one per distinct bin key in each
+    /// multidrawable batch set, plus the batchable, unbatchable and non-mesh
+    /// bins.
+    pub fn bin_count(&self) -> usize {
+        self.multidrawable_meshes
+            .values()
+            .map(|batch_set| batch_set.bins.iter().flatten().count())
+            .sum::<usize>()
+            + self.batchable_meshes.len()
+            + self.unbatchable_meshes.len()
+            + self.non_mesh_items.len()
+    }
+
+    // superfargoth patch (own: phase counts)
+    /// The number of batch sets built for this frame by
+    /// `batch_and_prepare_binned_render_phase`: one (multi-)draw each when
+    /// storage buffers are available. Zero before batching runs.
+    pub fn batch_set_count(&self) -> usize {
+        match &self.batch_sets {
+            BinnedRenderPhaseBatchSets::DynamicUniforms(sets) => sets.len(),
+            BinnedRenderPhaseBatchSets::Direct(batches) => batches.len(),
+            BinnedRenderPhaseBatchSets::MultidrawIndirect(sets) => sets.len(),
+        }
+    }
+
     pub fn prepare_for_new_frame(&mut self) {
         self.batch_sets.clear();
 

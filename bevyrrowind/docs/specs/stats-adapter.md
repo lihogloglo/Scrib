@@ -3,7 +3,7 @@
 Status (2026-11-05): S5 built (`mw_stats`: table, `MwGmst`, NPC/creature/chargen/dev-start init, `MwDerived`,
 `OpenMwSkillUse`, `OpenMwLeveling`, `openmw_rules`, `FactionRanks`; `mw_rpg_bevy::stats`: sheets on the player, NPCs and
 creatures, saved with the character and the overlay; as built: `../../../superfargoth/docs/specs/stats-as-built.md`
-"S2"-"S6"; S5: `mw_player_bevy::vitals`, HUD bars from roles; S6: `mw_rpg::stats`, dialogue filters from the sheets); S7 MWScript next. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
+"S2"-"S6"; S5: `mw_player_bevy::vitals`, HUD bars from roles; S6: `mw_rpg::stats`, dialogue filters from the sheets); S7 (2026-11-08, written, UNTESTED (owner test pass 2026-11-10)): `mw_script::statfn` + `mw_rpg::script_stats`, "Consumers" MWScript. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
 Ported from OpenMW `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (paths under `apps/openmw/` unless noted; line numbers
 approximate). Content mechanics port 1:1; growth and recovery formulas are the first implementations of the rules seams
 (owner 2026-11-05: `SkillUseModel` starts with OpenMW's values).
@@ -25,7 +25,7 @@ approximate). Content mechanics port 1:1; growth and recovery formulas are the f
 | Pools | `health` (`depleted_below` 1, `KeepCurrent`, stored base), `magicka` (`KeepRatio`, derived), `fatigue` (`KeepRatio`, derived); a record's stored magicka/fatigue = formula + hidden `<pool>.offset` counter (follows attributes by delta; OpenMW snaps to the formula on the first attribute change) | `Pool` |
 | Counters | `level`, `reputation` (0-255), `bounty` (≥ 0), `level.progress`, `progress.<skill>` (27), `levelup.attr.<attribute>` (8), `levelup.spec.<combat/magic/stealth>`, `werewolf.kills`, `class.<skill>` (27), `class.specialization` | `Counter`, all but level/reputation/bounty hidden |
 | Derived | `capacity`, `encumbrance` (carried weight from `Inputs`), `fatigue.term` | `Derived` |
-| Magnitude (if the effect spec adopts them) | `fortifymaximummagicka`, resistances, ... | `Value`, base 0 |
+| Magnitude (effects-adapter.md A1) | `fortifymaximummagicka`; appended last (`MAGNITUDE_STATS`, `MwIdx::magnitudes`): `fireshield lightningshield frostshield`, `weaknessto<fire frost shock magicka commondisease blightdisease corprusdisease poison normalweapons>`, `resist<fire frost shock magicka commondisease blightdisease corprusdisease poison normalweapons paralysis>` | `Value`, base 0, hidden |
 
 Roles: `Health` = health, `Mana` = magicka, `Stamina` = fatigue, `Level`, `CarryCapacity` = capacity, `Encumbrance`,
 `Bounty`. Groups: FACT record ids; NPC membership from the NPC record's faction and rank.
@@ -122,6 +122,9 @@ Health-Magicka-Fatigue = `PoolAdjust { below_zero: true }`, inverted on end; For
   `fDispPersonalityMult` x (Per - `fDispPersonalityBase`), faction (`fDispFactionRankMult` x rank +
   `fDispFactionRankBase`) x `fDispFactionMod` x reaction, - `fDispCrimeMod` x bounty, disease, weapon drawn. Whether
   the OpenMW formula becomes the model is the persuasion lane's call (open question 2).
+- As built (2026-11-08, not compiled: UNTESTED (owner test pass 2026-11-10)): `mw_rpg::derived_disposition` over `disposition_input` is the game's
+  model (`mw_rpg_bevy` `DerivedDisposition`, through `DispositionModel::disposition(&DispositionCtx)`); a creature or
+  no stats keeps the content-only value. Crime modifier, disease, Charm and weapon drawn are 0/false (named TODOs).
 
 ## Consumers
 
@@ -140,6 +143,21 @@ Health-Magicka-Fatigue = `PoolAdjust { below_zero: true }`, inverted on end; For
   `GetPCRank`, `PCRaiseRank`, `PCLowerRank`, `PCJoinFaction`, `PCExpell(ed)`, `PCClearExpelled`, `Get/Set/ModPCFacRep`,
   `RaiseRank`/`LowerRank` (NPC); `Get/Set/ModPCCrimeLevel` = bounty. `dagoth_ur_1` `ModHealth` workaround kept (OpenMW
   252-300). `functions.txt` statuses move to `live`.
+  **As built S7 (2026-11-08, not compiled: UNTESTED (owner test pass 2026-11-10)):** `mw_script::statfn` decodes the 140 names into `StatFn` (value and
+  faction argument positions) and the interpreter calls `Host::stat` (default `None` → `unhandled`, so other hosts are
+  unchanged). `mw_rpg::script_stats` holds the semantics: reads from the run's copy of a sheet, writes as `sf_stats` ops
+  applied to that copy (stepped with `MwSheets::rules` and the sheet's `last_inputs`) and emitted as one
+  `ResultEffect::Stats { target, ops }`; `mw_rpg_bevy` turns it into a `StatCommand` (cause `Script`). Mapping: Set
+  attribute/skill = `SetBase` + `Restore` (damage cleared); Mod = `SetBase(modStat)`; `ModDyn` = `PoolModMax` (base
+  floored at 0: plus `PoolSetCurrent`); `SetDyn` = `SetBase` + `PoolSetCurrent(max)`; `ModCurrentDyn` = `PoolAdjust`;
+  level, reputation (0..=255) and bounty as `CounterSet`; ranks through `setFactionRank` rules (below 0 = new
+  `StatOp::Leave`, past slot 10 ignored). No sheet: reads 0 (`GetPCRank` -1), writes dropped, nothing logged.
+  Deviations (named in the module docs): `modStat`'s excess past 100 into the modifier, `setBase(.., true)` zeroing
+  modifiers, OpenMW's script abort without a speaker faction (skipped here). Gaps: `PCExpell` message box, fatigue
+  knockdown at ≤ 0, `recordCrimeId`, unknown faction ids accepted, `SetMagicka`/`SetFatigue` bases are re-derived by
+  `MwDerived` on the next recompute (OpenMW recalculates them too). Tests: `mw_script` `interp_tests`
+  (`stat_functions_reach_the_host_typed`, `every_stat_function_is_a_live_table_function`), `mw_rpg`
+  `tests_script_stats` (9 exact), `sf_stats` `leave_drops_rank_and_expulsion_keeps_reputation`.
 
 ## Use sources (S9)
 
@@ -167,3 +185,4 @@ call sites and `use_kind`s from OpenMW (grep `skillUsageSucceeded` in `mwmechani
    profile, or a modern `LevelingModel` from the start? Default: OpenMW first (stats.md question 1).
 2. Derived disposition: port OpenMW's `getDerivedDisposition` as the `DispositionModel` (the research suggests it; the
    model's comment says feel system, owner 2026-10-25)? Default: port it in the persuasion slice, keep the seam.
+   **Owner 2026-11-08: default taken, ported.**

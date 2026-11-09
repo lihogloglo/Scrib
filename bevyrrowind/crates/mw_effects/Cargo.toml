@@ -1,0 +1,22 @@
+[package]
+name = "mw_effects"
+description = "Morrowind's magic effects on sf_effects: the MGEF table as EffectDefs (OpenMW hardcoded flags, resistances), the magnitude stats, and SPEL/ALCH records as effect sources (effects-adapter.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Bevy-free core (build-perf.md rule 1): in hakari's final-excludes.
+[dependencies]
+mw_stats.workspace = true
+sf_effects.workspace = true
+sf_records.workspace = true
+sf_stats.workspace = true
+smallvec.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+
+[dev-dependencies]
+mw_install.workspace = true
+
+[lints]
+workspace = true

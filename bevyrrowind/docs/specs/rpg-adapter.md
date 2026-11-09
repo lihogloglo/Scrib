@@ -270,3 +270,18 @@ the interpreter share the parser, the function table and the numeric rules.
   install) and `synthetic_ring_quest` (the same flow on our own DIAL/INFO fixture, runs
   everywhere); `mw_script` `real_install::vanilla_corpus_interprets` runs every vanilla result
   once against a neutral host and lists the functions not interpreted yet by calls.
+
+## As built (persuasion in the host, 2026-11-08, not compiled: UNTESTED (owner test pass 2026-11-10))
+
+- `Rpg::persuade(talk, kind, sheets, tick)` (`mw_rpg_bevy/src/dialogue/persuasion.rs`) ports `DialogueManager::persuade`,
+  `goodbyeSelected` and `updateOriginalDisposition` (`dialoguemanagerimp.cpp` @`ca5e2576`): the roll is
+  `mw_rpg::persuasion_roll`, `splitmix64` over (speaker key, player index, the host's tick, the session's attempt count);
+  `persuasion_change` decides; the temporary change goes on the speaker's base at once (`NpcStates`), and goodbye or the
+  window closing (`Rpg::end_talk`) leaves original + permanent changes, clamped so the derived value stays in 0..=100
+  (`mw_rpg::PersuasionSession`, per `Talk`). Speechcraft use 0/1 as a stat command; a successful bribe moves `gold_001`
+  from the context player to the speaker (refused when the player can't pay). Returns the reply DIAL ("admire success",
+  ...); `persuade_and_reply` asks it as a service topic. Fight/Flee nudges stay in an unsaved per-actor map until AI
+  settings exist (TODO). Tests: `mw_rpg` `persuasion::session_tests` (exact), `mw_rpg_bevy`
+  `dialogue::persuasion::tests` (headless fallback; real-data Fargoth flow against the pure functions).
+- Menu (2026-11-08, UNTESTED): `Rpg::refresh_actions` (after every step) gives an NPC's window one `persuasion` action whose six options are labelled from `sAdmire`, `sIntimidate`, `sTaunt`, `sBribe 10/100/1000 Gold` (button `sPersuasion`), bribes disabled below their price (`PersuasionDialog::onOpen`, `mwgui/dialogue.cpp` @`ca5e2576`).
+- `Rpg::request_at(.., tick)` (the game passes `StatTick`) routes `DialogueRequest::Action` through `Rpg::route_action`: a Persuasion option → `persuade_and_reply`; other ids (services) are a logged no-op until SV3. Headless tests: options exact, bribes follow gold, requests reach `persuade`.

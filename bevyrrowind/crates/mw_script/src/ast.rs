@@ -183,8 +183,14 @@ impl Call {
 pub enum Arg {
     /// A record or object ID (bare word or quoted string).
     Id(Ident),
-    /// Text (message box text, button labels, sound files, animation groups).
+    /// Text (message box text, button labels, sound files, animation groups). In a
+    /// `MessageBox` call: the format text, then quoted strings only (its other bare words are
+    /// [`Arg::Word`]).
     Str(String),
+    /// A `MessageBox` bare word kept as written (`Yes`, `-2`, `3.14pi`, a keyword): text in a
+    /// `%s` position, else a potential button label that does not count as a button
+    /// (`OpenMW`'s compile-time split, `lineparser.cpp` lines 145-180).
+    Word(String),
     /// A numeric value.
     Expr(Expr),
     /// `X`, `Y` or `Z`.

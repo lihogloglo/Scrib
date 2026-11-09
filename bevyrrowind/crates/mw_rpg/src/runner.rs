@@ -11,12 +11,16 @@ use std::fmt;
 
 use mw_script::ast::{Call, Ident, Target as AstTarget, VarRef, VarType};
 use mw_script::functions::Function;
-use mw_script::interp::{Host, Interpreter, Locals, store};
-use mw_script::{Env, FunctionTable, MemberLookup, Parsed, SourceKind, parse_and_resolve};
+use mw_script::interp::{Host, Interpreter, Locals, MessageArg, store};
+use mw_script::{Env, FunctionTable, MemberLookup, Parsed, SourceKind, StatCall, parse_and_resolve};
+use mw_ui::message::{MessageArg as UiArg, message_box_from_args};
 use sf_records::RecordId;
-use sf_rpg::{CharacterRpg, Choice, ConversationCtx, WorldRpg};
+use sf_rpg::{ActorKey, CharacterRpg, Choice, ConversationCtx, WorldRpg};
 
+use crate::filter::ActorFacts;
 use crate::result::{ResultCall, ResultEffect, ResultError, ResultRunner, Target};
+use crate::script_stats::StatOverlay;
+use crate::stats::{MwSheets, NoSheets};
 use crate::text::GlobalNumber;
 
 /// A script variable and its declared type.
@@ -37,6 +41,24 @@ pub trait MwWorld {
     /// Items held by `target` when it is not the context player (the speaker, `id->`
     /// actors and containers); the player's come from its `CharacterRpg`.
     fn item_count(&self, ctx: &ConversationCtx, target: &Target, item: &RecordId) -> u64;
+
+    /// The character sheets the stat functions read and write (stats.md S7). Default: none,
+    /// so every stat read is neutral and writes are dropped.
+    fn sheets(&self) -> &dyn MwSheets {
+        &NoSheets
+    }
+
+    /// The actor `target` names (`None`: the player, or no such actor). Default: the speaker.
+    fn actor(&self, ctx: &ConversationCtx, target: &Target) -> Option<ActorKey> {
+        (*target == Target::Speaker).then_some(ctx.speaker)
+    }
+
+    /// What the records say about the actor `target` names (faction and record rank, NPC or
+    /// creature); `None` for the player. Default: nothing known.
+    fn facts(&self, ctx: &ConversationCtx, target: &Target) -> Option<&ActorFacts> {
+        let _ = (ctx, target);
+        None
+    }
 }
 
 /// What the runner reads: `sf_rpg` world state, the context player's character, the world.
@@ -176,6 +198,7 @@ impl ResultRunner for MwResultRunner<'_> {
             items: HashMap::new(),
             vars: HashMap::new(),
             globals: HashMap::new(),
+            stats: StatOverlay::default(),
         };
         let mut locals = Locals::new(&parsed.script);
         interp
@@ -241,6 +264,8 @@ struct RunHost<'a> {
     items: HashMap<(Target, RecordId), i64>,
     vars: HashMap<(Target, RecordId), f32>,
     globals: HashMap<RecordId, f32>,
+    /// The run's copies of the sheets it changed.
+    stats: StatOverlay,
 }
 
 impl RunHost<'_> {
@@ -441,13 +466,35 @@ impl Host for RunHost<'_> {
         });
     }
 
-    fn message_box(&mut self, text: String, buttons: Vec<String>) {
-        self.effects
-            .push(ResultEffect::MessageBox { text, buttons });
+    /// Formats as `OpenMW` (`mw_ui::message::message_box_from_args`: values first, then as many
+    /// buttons as there are quoted strings among the rest, at most 10). Text defines
+    /// (`^PCName`) are left for the UI, as `OpenMW` expands them after formatting.
+    fn message_box(&mut self, format: &str, args: &[MessageArg]) {
+        let args: Vec<UiArg> = args
+            .iter()
+            .map(|a| match a {
+                MessageArg::Num(v) => UiArg::Num(*v),
+                MessageArg::Str(s) => UiArg::Str(s.clone()),
+                MessageArg::Word(s) => UiArg::Word(s.clone()),
+            })
+            .collect();
+        let message = message_box_from_args(format, &args);
+        self.effects.push(ResultEffect::MessageBox {
+            text: message.text,
+            buttons: message.buttons,
+        });
     }
 
     fn play_sound(&mut self, sound: &Ident) {
         self.effects.push(ResultEffect::PlaySound(rid(sound)));
+    }
+
+    fn stat(&mut self, target: &AstTarget, call: &StatCall) -> Option<f64> {
+        let target = self::target(target);
+        Some(
+            self.stats
+                .call(self.ctx, self.state.env, &target, call, &mut self.effects),
+        )
     }
 
     fn unhandled(&mut self, function: &Function, _call: &Call) -> f64 {

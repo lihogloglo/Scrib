@@ -1,6 +1,7 @@
 # Near-cell precombine (`sf_lod` `lod.near`, `sf_world_bevy`)
 
-Status: **slices 1-3 built** (2026-10-20; owner go 2026-10-19); measurement and visual check in "As built". Roadmap: bevyrrowind ROADMAP 1.2 (the
+Status: **slices 1-3 built** (2026-10-20; owner go 2026-10-19); measurement and visual check in "As built".
+**To be replaced** by [static-scene.md](static-scene.md) (owner go 2026-11-08, slice S9): don't extend this path. Roadmap: bevyrrowind ROADMAP 1.2 (the
 cut) and industry-audit.md J6/#10 ("Precombined near geometry", missing). Related: far-field.md (L1 proxies
 merge the same cells, simplified and untextured), bake.md (`mesh.cook`), streaming.md (spawn stage).
 

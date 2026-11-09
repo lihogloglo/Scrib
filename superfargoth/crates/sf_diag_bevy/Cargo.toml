@@ -10,6 +10,9 @@ license.workspace = true
 assets = ["dep:bevy_asset"]
 # Render-pipeline churn counters (`PipelineChurnPlugin`): the render world.
 render = ["dep:bevy_render"]
+# Per-view render counters (`RenderViewsPlugin`, static-scene.md S0): binned
+# phases, preprocessing work items and bind groups in the render world.
+views = ["render", "dep:bevy_core_pipeline", "dep:bevy_pbr"]
 
 # Minimal Bevy (ARCHITECTURE §8b rule 6). No rendering crate by default: GPU
 # timings arrive through `DiagnosticsStore` when the app adds `RenderDiagnosticsPlugin`.
@@ -18,12 +21,16 @@ render = ["dep:bevy_render"]
 bevy_app = { workspace = true, features = ["std"] }
 # AssetEvent (feature `assets`).
 bevy_asset = { workspace = true, optional = true }
+# Opaque3d / prepass / deferred phase types (feature `views`).
+bevy_core_pipeline = { workspace = true, optional = true }
 # Resource, Component, systems, MessageWriter.
 bevy_ecs = { workspace = true, features = ["std"] }
 # DiagnosticsStore: sampled into counters every frame.
 bevy_diagnostic = { workspace = true, features = ["std"] }
 # Instant of diagnostic measurements; HashMap.
 bevy_platform = { workspace = true, features = ["std"] }
+# Shadow phase, light views, mesh preprocessing buffers (feature `views`).
+bevy_pbr = { workspace = true, optional = true }
 # PipelineCache in the render world (feature `render`).
 bevy_render = { workspace = true, optional = true }
 # Time<Real>: the frame-time source; TimeSystems for ordering.

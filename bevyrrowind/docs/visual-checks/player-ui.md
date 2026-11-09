@@ -136,6 +136,17 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   2026-10-25 ~23:40. No barter/persuasion yet (expected). Wish (later): resizable dialogue window; check OpenMW's
   recent UI refactor first. Journal layout, outlines and hover (uipolish) not reported yet.
 
+### DJ-2: Dialogue action buttons and the Persuasion submenu (`cargo dev view "Seyda Neen"`)
+- Written 2026-11-08 without compiling (UNTESTED; `test-pass-2026-11-10.md`); needs the persuasion-menu host slice too.
+- Talk to Fargoth (E): a "Persuasion" button sits above the topic list, same look as the topics; Goodbye stays under it.
+- Click it (or pad: up from the first topic, A): the window dims and a centred panel lists Admire, Intimidate, Taunt
+  and the three Bribes; bribes you can't afford are greyed and skipped by the pad/arrows.
+- With the panel open, topics, links and Goodbye behind it don't react to hover or clicks.
+- Esc / B closes the panel, focus back on Persuasion. Picking Admire closes it and Fargoth replies; disposition changes.
+- Focused rows show the hover colour with arrows/pad, no bright outline with the mouse (as uipolish).
+- Known gaps: no Morrowind theme rules for the new classes yet; clicking the dimmed backdrop doesn't close the panel.
+- Status: awaiting owner.
+
 ## Dev console (superfargoth `console.md`; ROADMAP 1.13; `.sessions/console.md`)
 
 ### CO-1: Live SSAO and A/B switches from the console

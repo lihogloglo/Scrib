@@ -157,3 +157,13 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   => point-light (lamp/torch) shadows cost ~8 ms here. Next: a proper `perf suite` run (perf.md) from a fixed
   camera outside the door at night, profiling build, `--point-shadows` default vs 0 and `--off movershadows`, GPU pass ms.
 - Status: known bug: point shadows suspected, not measured properly (owner pass 2026-11-02).
+
+### SH-23: Sun shadow early-out looks identical (vendored `bevy_pbr`, 2026-11-09)
+- Kind: game location, release build of the patched tree vs one with the directional hunks reverted (shaders are
+  embedded: no runtime switch). Runs: `view Balmora --hour 12`, `--hour 18.5` looking west under trees (RO-15 spot),
+  `--hour 22` (moon shadows); each also with `--off contactshadows`.
+- Look for: before/after identical: sun and moon shadows, contact shadows at wall bases and under props, leaf
+  light-through (backlit canopy glow, trunk shadow on it), faces turned from the sun, nothing new at dusk as the sun sets.
+- Cascade debug view (`DIRECTIONAL_LIGHT_SHADOW_MAP_DEBUG_CASCADES`): no game switch sets it; unchanged by construction
+  (overlay never 0, so it still fetches everywhere), naga-validated only. Perf A/B: `test-pass-2026-11-10.md` "Rendering".
+- Status: awaiting owner (naga-validated, never run). Source: sun-shadow-early-out; spec `shadows.md` "Reset B2 as built".

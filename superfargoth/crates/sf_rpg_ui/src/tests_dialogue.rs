@@ -8,9 +8,12 @@ use sf_rpg::{
     EntryDraft, GameTime, HeardLine, LinkRules, PlayerId, RecordId, RpgCommand, StageFlags,
     TopicEntry, TopicKind, WorldRpg,
 };
+use sf_rpg::service::{LabelRef, ServiceKind, ServiceOffer, ServiceRequest, ServiceShape};
 use sf_ui::{UiValue, ViewModel};
 
 use super::*;
+// Not re-exported from the crate root yet (lib.rs is another slice's file this round).
+use crate::dialogue::{ActionId, ActionOption, DialogueAction};
 
 fn id(s: &str) -> RecordId {
     RecordId::new(s)
@@ -620,5 +623,266 @@ fn unlinked_text_and_no_greeting() {
     assert_eq!(
         view.nav(DialogueNav::Confirm),
         Some(DialogueRequest::Goodbye)
+    );
+}
+
+// ---------------------------------------------------------------- action buttons
+
+fn barter_offer() -> ServiceOffer {
+    ServiceOffer {
+        provider: ActorKey(7),
+        kind: ServiceKind(id("barter")),
+        shape: ServiceShape::Trade,
+        label: LabelRef(id("barter")),
+    }
+}
+
+/// A service, a disabled service, a content menu with one disabled option.
+fn actions() -> Vec<DialogueAction> {
+    vec![
+        DialogueAction::from_offer(&barter_offer(), "Barter"),
+        DialogueAction::new("train", "Training").enabled(false),
+        DialogueAction::new("menu", "Menu").with_submenu(vec![
+            ActionOption::new("a", "Option A"),
+            ActionOption::new("b", "Option B").enabled(false),
+            ActionOption::new("c", "Option C"),
+        ]),
+    ]
+}
+
+fn action(s: &str) -> DialogueFocus {
+    DialogueFocus::Action(ActionId::new(s))
+}
+
+fn sub(s: &str) -> DialogueFocus {
+    DialogueFocus::SubAction(ActionId::new(s))
+}
+
+#[allow(clippy::unnecessary_wraps, reason = "compared with the view's Option results")]
+fn pressed(action: &str, option: Option<&str>) -> Option<DialogueRequest> {
+    Some(DialogueRequest::Action {
+        action: ActionId::new(action),
+        option: option.map(ActionId::new),
+    })
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one scripted walk over buttons, submenu and topics
+fn gamepad_walks_action_buttons_and_a_submenu() {
+    use DialogueNav::{Back, Confirm, Next, Prev, PrevRegion};
+    let mut h = Host::open();
+    assert!(h.view.actions().is_empty(), "none by default");
+    let v0 = h.view.version();
+    h.view.set_actions(actions());
+    assert!(h.view.version() > v0);
+    let v1 = h.view.version();
+    h.view.set_actions(actions());
+    assert_eq!(h.view.version(), v1, "same buttons: no change");
+    assert_eq!(
+        h.view.focus(),
+        Some(&topic_focus("background")),
+        "focus starts on the topics; the buttons sit above them"
+    );
+    assert_eq!(DialogueAction::KIND, "dialogue.action");
+    assert_eq!(
+        h.view.actions()[0].field("label"),
+        Some(UiValue::Text("Barter".into()))
+    );
+    assert_eq!(
+        h.view.actions()[1].field("enabled"),
+        Some(UiValue::Bool(false))
+    );
+    assert_eq!(
+        h.view.actions()[2].field("has_submenu"),
+        Some(UiValue::Bool(true))
+    );
+
+    // Up from the first topic: the live buttons (the disabled one is skipped), clamped.
+    assert_eq!(h.input(Prev), None);
+    assert_eq!(h.view.focus(), Some(&action("menu")));
+    assert_eq!(h.input(Prev), None);
+    assert_eq!(h.view.focus(), Some(&action("barter")));
+    assert_eq!(h.input(Prev), None);
+    assert_eq!(h.view.focus(), Some(&action("barter")), "clamped, no wrap");
+    assert!(!h.view.set_focus(action("train")), "disabled: no focus");
+    assert_eq!(h.view.activate(action("train")), None);
+    assert_eq!(h.view.activate(action("nope")), None);
+
+    // A service button: a request the host maps to `ServiceRequest::Open`; no session step.
+    let request = h.input(Confirm);
+    assert_eq!(request, pressed("barter", None));
+    assert_eq!(
+        request.unwrap().service_open(&[barter_offer()]),
+        Some(ServiceRequest::Open {
+            provider: ActorKey(7),
+            kind: ServiceKind(id("barter")),
+        })
+    );
+    assert_eq!(h.view.entries().len(), 1, "nothing said, nothing echoed");
+    assert_eq!(h.view.mode(), DialogueMode::Talking);
+    assert_eq!(h.view.focus(), Some(&action("barter")));
+    assert_eq!(
+        DialogueRequest::Goodbye.service_open(&[barter_offer()]),
+        None
+    );
+    assert_eq!(
+        pressed("menu", None)
+            .unwrap()
+            .service_open(&[barter_offer()]),
+        None,
+        "not an offered kind"
+    );
+
+    // A submenu button opens its submenu: no request, focus on the first enabled option.
+    assert_eq!(h.input(Next), None);
+    assert_eq!(h.view.focus(), Some(&action("menu")));
+    assert_eq!(h.input(Confirm), None);
+    assert_eq!(
+        h.view.submenu().map(|a| a.id.clone()),
+        Some(ActionId::new("menu"))
+    );
+    assert_eq!(h.view.focus(), Some(&sub("a")));
+    assert_eq!(h.input(Next), None);
+    assert_eq!(
+        h.view.focus(),
+        Some(&sub("c")),
+        "the disabled option is skipped"
+    );
+    assert_eq!(h.input(Next), None);
+    assert_eq!(h.view.focus(), Some(&sub("c")), "clamped");
+    assert_eq!(h.input(Prev), None);
+    assert_eq!(h.view.focus(), Some(&sub("a")));
+
+    // Modal: nothing outside the submenu is live.
+    assert_eq!(h.view.activate(sub("b")), None, "disabled option");
+    assert_eq!(h.view.activate(topic_focus("ring")), None);
+    assert_eq!(h.view.activate(action("barter")), None);
+    assert!(!h.view.set_focus(DialogueFocus::Goodbye));
+    assert_eq!(h.input(PrevRegion), None);
+    assert_eq!(
+        h.view.focus(),
+        Some(&sub("a")),
+        "no link cursor from a submenu"
+    );
+
+    // Back closes it (not goodbye), focus back on its button.
+    assert_eq!(h.input(Back), None);
+    assert!(h.view.submenu().is_none());
+    assert_eq!(h.view.focus(), Some(&action("menu")));
+    assert_eq!(h.view.mode(), DialogueMode::Talking);
+    assert!(!h.view.close_submenu(), "already closed");
+
+    // An option: the request names button and option; the submenu closes.
+    assert_eq!(h.input(Confirm), None);
+    assert_eq!(h.input(Next), None);
+    assert_eq!(h.input(Confirm), pressed("menu", Some("c")));
+    assert!(h.view.submenu().is_none());
+    assert_eq!(h.view.focus(), Some(&action("menu")));
+    assert_eq!(
+        pressed("menu", Some("c"))
+            .unwrap()
+            .service_open(&[barter_offer()]),
+        None,
+        "an option is never a service"
+    );
+
+    // Down into the topics and on as before; choices lock the buttons.
+    assert_eq!(h.input(Next), None);
+    assert_eq!(h.view.focus(), Some(&topic_focus("background")));
+    h.input(Next);
+    h.input(Next);
+    assert_eq!(h.input(Confirm), Some(DialogueRequest::Ask(id("ring"))));
+    assert_eq!(h.view.mode(), DialogueMode::Choosing);
+    assert_eq!(h.view.activate(action("barter")), None);
+    assert_eq!(h.view.activate(action("menu")), None);
+    assert!(h.view.submenu().is_none());
+    assert_eq!(h.input(Prev), None);
+    assert_eq!(h.view.focus(), Some(&DialogueFocus::Choice(0)));
+}
+
+#[test]
+fn host_changes_close_the_submenu_and_move_the_focus() {
+    let mut h = Host::open();
+    h.view.set_actions(actions());
+
+    // Pointer: open the submenu, then every option of it gets disabled.
+    assert_eq!(h.view.activate(action("menu")), None);
+    assert_eq!(h.view.focus(), Some(&sub("a")));
+    let mut locked = actions();
+    for option in &mut locked[2].submenu {
+        option.enabled = false;
+    }
+    h.view.set_actions(locked);
+    assert!(h.view.submenu().is_none(), "no live option: closed");
+    assert!(!h.view.actions()[2].is_live());
+    assert_eq!(
+        h.view.actions()[2].field("enabled"),
+        Some(UiValue::Bool(false))
+    );
+    assert_eq!(
+        h.view.focus(),
+        Some(&action("barter")),
+        "the live button now at its index (clamped)"
+    );
+    assert_eq!(h.view.activate(action("menu")), None);
+
+    // An option's own disabling moves the focus inside the open submenu.
+    h.view.set_actions(actions());
+    assert_eq!(h.view.activate(action("menu")), None);
+    assert!(h.view.set_focus(sub("c")));
+    let mut no_c = actions();
+    no_c[2].submenu[2].enabled = false;
+    h.view.set_actions(no_c);
+    assert!(h.view.submenu().is_some());
+    assert_eq!(h.view.focus(), Some(&sub("a")));
+
+    // A pointer press on an option works without moving the focus first.
+    assert_eq!(h.view.activate(sub("a")), pressed("menu", Some("a")));
+    assert_eq!(h.view.focus(), Some(&action("menu")));
+
+    // Buttons removed: the focus falls back to the topics.
+    h.view.set_actions(Vec::new());
+    assert_eq!(h.view.focus(), Some(&topic_focus("background")));
+
+    // Forced goodbye closes an open submenu.
+    h.view.set_actions(actions());
+    assert_eq!(h.view.activate(action("menu")), None);
+    h.session.force_goodbye();
+    h.refresh();
+    assert_eq!(h.view.mode(), DialogueMode::GoodbyeOnly);
+    assert!(h.view.submenu().is_none());
+    assert_eq!(h.view.focus(), Some(&DialogueFocus::Goodbye));
+    assert_eq!(
+        h.view.nav(DialogueNav::Back),
+        Some(DialogueRequest::Goodbye)
+    );
+}
+
+#[test]
+fn action_requests_are_plain_data_and_no_session_step() {
+    let request = pressed("menu", Some("c")).unwrap();
+    let bytes = postcard::to_allocvec(&request).unwrap();
+    assert_eq!(
+        postcard::from_bytes::<DialogueRequest>(&bytes).unwrap(),
+        request
+    );
+    let buttons = actions();
+    let bytes = postcard::to_allocvec(&buttons).unwrap();
+    assert_eq!(
+        postcard::from_bytes::<Vec<DialogueAction>>(&bytes).unwrap(),
+        buttons
+    );
+
+    let mut h = Host::open();
+    let state = h.session.state().clone();
+    let out = request
+        .apply(&mut h.session, &h.db, &Talk { conds: &h.conds })
+        .unwrap();
+    assert!(out.is_empty());
+    assert_eq!(h.session.state(), &state);
+    assert_eq!(ActionOption::KIND, "dialogue.action_option");
+    assert_eq!(
+        buttons[2].submenu[1].field("enabled"),
+        Some(UiValue::Bool(false))
     );
 }

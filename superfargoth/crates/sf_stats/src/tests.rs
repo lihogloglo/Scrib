@@ -430,6 +430,25 @@ fn groups_join_rank_expel_clear_reputation() {
 }
 
 #[test]
+fn leave_drops_rank_and_expulsion_keeps_reputation() {
+    let (t, r, mut s) = setup();
+    let g = RecordId::new("Guild");
+    let c = cause(CauseKind::Debug);
+    ops(&t, &r, &mut s, &[
+        StatOp::SetRank { group: g.clone(), rank: 2 },
+        StatOp::Expel { group: g.clone() },
+        StatOp::GroupRep { group: g.clone(), delta: 6, set: true },
+    ]);
+    let ev = ops(&t, &r, &mut s, &[StatOp::Leave { group: g.clone() }, StatOp::Leave { group: g.clone() }]);
+    assert_eq!(ev, vec![StatEvent::RankChanged { owner: OWNER, group: g.clone(), old: Some(2), new: None, cause: c }]);
+    assert_eq!(s.view(&t).membership(&g), Some(&Membership { rank: None, reputation: 6, expelled: false }));
+    // Never a member: nothing to leave, no entry made.
+    let other = RecordId::new("other");
+    assert!(ops(&t, &r, &mut s, &[StatOp::Leave { group: other.clone() }]).is_empty());
+    assert_eq!(s.view(&t).membership(&other), None);
+}
+
+#[test]
 fn regen_tick_and_rest() {
     let (t, r, mut s) = setup();
     let inputs = Inputs::default();

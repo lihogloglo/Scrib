@@ -10,14 +10,18 @@
 //! `id.var`, speaker locals), the [`Builtin`] functions, and [`Host::unhandled`] for the
 //! rest of the function table (neutral value, the host reports it). Runaway loops stop at
 //! [`Interpreter::step_limit`] with [`RunError::StepLimit`].
-
-use std::fmt::Write as _;
+//!
+//! `MessageBox` is not formatted here: the interpreter evaluates the number arguments and hands
+//! the format and the [`MessageArg`]s, split as the parser kept them, to
+//! [`Host::message_box`]; the host formats with `mw_ui::message::message_box_from_args`
+//! (`OpenMW`'s formatter and button rule; this crate stays dependency-free).
 
 use crate::ast::{
     Arg, ArithOp, Call, Expr, Ident, Script, Stmt, StmtKind, Target, VarRef, VarType,
 };
 use crate::functions::{Function, FunctionTable, Returns};
 use crate::lexer::CmpOp;
+use crate::statfn::{StatCall, StatFn};
 
 /// Statements and loop tests one run may execute before it is stopped.
 pub const DEFAULT_STEP_LIMIT: u32 = 100_000;
@@ -77,6 +81,19 @@ impl Builtin {
     }
 }
 
+/// One `MessageBox` argument after the format text, as [`Host::message_box`] receives it. It
+/// mirrors `mw_ui::message::MessageArg` variant for variant (this crate has no dependencies;
+/// the host converts one to the other).
+#[derive(Clone, Debug, PartialEq)]
+pub enum MessageArg {
+    /// A number argument (literal, variable or expression), evaluated.
+    Num(f64),
+    /// A quoted string ([`Arg::Str`]).
+    Str(String),
+    /// A bare word as written ([`Arg::Word`]).
+    Word(String),
+}
+
 /// What the interpreter needs from the game. Ids arrive as written (`Ident::key` is the
 /// lowercase lookup form); counts and indices are already truncated to integers.
 pub trait Host {
@@ -99,9 +116,19 @@ pub trait Host {
     fn get_item_count(&mut self, target: &Target, item: &Ident) -> i32;
     fn set_disposition(&mut self, target: &Target, value: i32);
     fn mod_disposition(&mut self, target: &Target, delta: i32);
-    /// The formatted text ([`format_message`]) and the button labels (none: a notification).
-    fn message_box(&mut self, text: String, buttons: Vec<String>);
+    /// `MessageBox`: the format text unformatted and every argument after it in order (values,
+    /// then potential buttons). The host formats and picks the buttons; `mw_ui`'s
+    /// `message_box_from_args` takes the same argument kinds ([`MessageArg`]).
+    fn message_box(&mut self, format: &str, args: &[MessageArg]);
     fn play_sound(&mut self, sound: &Ident);
+
+    /// A stat, faction or crime function ([`StatFn`]) on `target`; the call reads the returned
+    /// value (ignored for void functions). `None`: this host doesn't run stats, and the call
+    /// goes to [`Host::unhandled`] like any other function. Default: `None`.
+    fn stat(&mut self, target: &Target, call: &StatCall) -> Option<f64> {
+        let _ = (target, call);
+        None
+    }
 
     /// Any other function. Its numeric arguments were evaluated (calls inside them ran);
     /// the call reads the returned value. Default: the function table's neutral value.
@@ -176,90 +203,13 @@ pub fn to_int(value: f64) -> i32 {
     }
 }
 
-/// `MessageBox` text substitution (`printf`-style, scripting-adapter.md semantics 5):
-/// `%f`/`%F` (6 decimals), `%.Nf`, `%g`/`%G` (6 significant digits, trailing zeros
-/// dropped), `%d`/`%D` (truncated), `%%`. Values are used in order; missing ones read 0.
-/// Anything else after `%` stays as written.
-pub fn format_message(text: &str, values: &[f64]) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut values = values.iter().copied();
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            out.push(c);
-            continue;
-        }
-        let mut spec = String::from("%");
-        let mut precision = None;
-        if chars.peek() == Some(&'.') {
-            spec.push('.');
-            chars.next();
-            let mut digits = String::new();
-            while let Some(d) = chars.peek().copied().filter(char::is_ascii_digit) {
-                digits.push(d);
-                chars.next();
-            }
-            spec.push_str(&digits);
-            precision = Some(digits.parse::<usize>().unwrap_or(0));
-        }
-        match chars.peek().copied() {
-            Some('%') if precision.is_none() => {
-                chars.next();
-                out.push('%');
-            }
-            Some('f' | 'F') => {
-                chars.next();
-                let v = values.next().unwrap_or(0.0);
-                let _ = write!(out, "{v:.*}", precision.unwrap_or(6));
-            }
-            Some('g' | 'G') if precision.is_none() => {
-                chars.next();
-                out.push_str(&format_g(values.next().unwrap_or(0.0)));
-            }
-            Some('d' | 'D') if precision.is_none() => {
-                chars.next();
-                let _ = write!(out, "{}", to_int(values.next().unwrap_or(0.0)));
-            }
-            _ => out.push_str(&spec),
-        }
-    }
-    out
-}
-
-/// C's `%g` with precision 6: fixed notation for exponents -4..6, else scientific;
-/// trailing zeros dropped.
-#[allow(clippy::cast_possible_truncation)]
-fn format_g(v: f64) -> String {
-    if v == 0.0 {
-        return "0".into();
-    }
-    if !v.is_finite() {
-        return format!("{v}").to_lowercase();
-    }
-    let sci = format!("{v:.5e}");
-    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
-    let exp: i32 = exp.parse().unwrap_or(0);
-    let trim = |s: &str| {
-        if s.contains('.') {
-            s.trim_end_matches('0').trim_end_matches('.').to_owned()
-        } else {
-            s.to_owned()
-        }
-    };
-    if (-4..6).contains(&exp) {
-        let decimals = usize::try_from(5 - exp).unwrap_or(0);
-        trim(&format!("{v:.decimals$}"))
-    } else {
-        let sign = if exp < 0 { '-' } else { '+' };
-        format!("{}e{sign}{:02}", trim(mantissa), exp.abs())
-    }
-}
-
 /// Runs scripts against a [`Host`]. Built once per function table.
 #[derive(Clone, Debug)]
 pub struct Interpreter<'t> {
     table: &'t FunctionTable,
     builtins: Vec<Option<Builtin>>,
+    /// The table's stat, faction and crime functions, by function id.
+    stat_fns: Vec<Option<StatFn>>,
     pub step_limit: u32,
 }
 
@@ -285,9 +235,15 @@ impl<'t> Interpreter<'t> {
                 builtins[usize::from(id.0)] = Some(b);
             }
         }
+        let stat_fns = table
+            .functions
+            .iter()
+            .map(|f| StatFn::from_name(&f.name))
+            .collect();
         Self {
             table,
             builtins,
+            stat_fns,
             step_limit: DEFAULT_STEP_LIMIT,
         }
     }
@@ -434,8 +390,28 @@ impl Run<'_, '_> {
         to_int(self.num(call, i))
     }
 
+    /// A stat function's call: the value argument evaluated, the faction id as written.
+    fn stat_call(&mut self, function: StatFn, call: &Call) -> f64 {
+        let value = function.value_arg().map_or(0.0, |i| self.num(call, i));
+        let faction = function.faction_arg().and_then(|i| match call.args.get(i) {
+            Some(Arg::Id(id)) if !id.key.is_empty() => Some(id.clone()),
+            Some(Arg::Str(s)) if !s.is_empty() => Some(Ident::new(s)),
+            _ => None,
+        });
+        let f = self.interp.table.function(call.function);
+        let stat = StatCall { function, value, faction };
+        let value = match self.host.stat(&call.target, &stat) {
+            Some(v) => v,
+            None => self.host.unhandled(f, call),
+        };
+        if f.returns == Returns::Void { 0.0 } else { value }
+    }
+
     /// Calls the function and returns its value (0 for void functions).
     fn call(&mut self, call: &Call) -> f64 {
+        if let Some(function) = self.interp.stat_fns[usize::from(call.function.0)] {
+            return self.stat_call(function, call);
+        }
         let Some(builtin) = self.interp.builtins[usize::from(call.function.0)] else {
             for a in &call.args {
                 if let Arg::Expr(e) = a {
@@ -506,19 +482,21 @@ impl Run<'_, '_> {
                 self.host.mod_disposition(target, delta);
             }
             Builtin::MessageBox => {
-                let mut text = String::new();
-                let mut values = Vec::new();
-                let mut buttons = Vec::new();
-                for (i, a) in call.args.iter().enumerate() {
-                    match a {
-                        Arg::Str(s) if i == 0 => text.clone_from(s),
-                        Arg::Str(s) => buttons.push(s.clone()),
-                        Arg::Expr(e) => values.push(self.expr(e)),
-                        _ => {}
-                    }
+                let format = match call.args.first() {
+                    Some(Arg::Str(s) | Arg::Word(s)) => s.as_str(),
+                    _ => "",
+                };
+                let mut args = Vec::with_capacity(call.args.len().saturating_sub(1));
+                for a in call.args.iter().skip(1) {
+                    args.push(match a {
+                        Arg::Expr(e) => MessageArg::Num(self.expr(e)),
+                        Arg::Str(s) => MessageArg::Str(s.clone()),
+                        Arg::Word(s) => MessageArg::Word(s.clone()),
+                        Arg::Id(id) => MessageArg::Word(id.text.clone()),
+                        Arg::Axis(_) | Arg::Missing => continue,
+                    });
                 }
-                self.host
-                    .message_box(format_message(&text, &values), buttons);
+                self.host.message_box(format, &args);
             }
             Builtin::PlaySound => self.host.play_sound(&id(0)),
         }

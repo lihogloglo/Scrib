@@ -270,6 +270,8 @@ impl Host<'_> {
                 self.events.push(e);
             }
             ResultEffect::Journal { .. } => unreachable!("handled by the caller"),
+            // No sheets in this host: stat functions never write.
+            ResultEffect::Stats { .. } => unreachable!("no sheets"),
         }
     }
 }

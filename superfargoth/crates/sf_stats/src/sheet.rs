@@ -165,6 +165,12 @@ impl Sheet {
         &self.mods
     }
 
+    /// The derivation inputs of the last recompute (seed 0; `None` before the first one). Lets a
+    /// caller step a copy of the sheet the way its owner last did (a script run's overlay).
+    pub fn last_inputs(&self) -> Option<&crate::Inputs> {
+        self.last_inputs.as_ref()
+    }
+
     pub fn view<'a>(&'a self, table: &'a StatTable) -> SheetRead<'a> {
         SheetRead { table, sheet: self }
     }

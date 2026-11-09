@@ -1,0 +1,21 @@
+[package]
+name = "sf_effects"
+description = "Bevy-free magic effects for superfargoth: effect definitions and archetypes, active instances per target, stacking, and the pure apply/tick step that writes stats only through sf_stats ops (effects.md)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Bevy-free core (build-perf.md rule 1): in hakari's final-excludes.
+[dependencies]
+serde.workspace = true
+sf_records.workspace = true
+sf_stats.workspace = true
+smallvec = { workspace = true, features = ["serde"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
+
+[lints]
+workspace = true
