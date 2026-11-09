@@ -2,7 +2,9 @@
 use bevy_app::App;
 use bevy_asset::{embedded_asset, load_embedded_asset};
 use bevy_ecs::prelude::*;
-use bevy_math::UVec2;
+// superfargoth patch (own, GS: ranges): `Vec3` and `Pod` for the range record.
+use bevy_math::{UVec2, Vec3};
+use bytemuck::{Pod, Zeroable};
 use bevy_render::{
     batching::gpu_preprocessing::BatchedInstanceBuffers,
     diagnostic::RecordDiagnostics as _,
@@ -26,6 +28,36 @@ use crate::{
     // superfargoth patch (own, GS: counters)
     PreprocessBindGroupCount,
 };
+
+// superfargoth patch (own, GS: ranges)
+/// One geometry range of a batch, as `materialize.wesl` reads it: the
+/// `MeshInput` geometry fields that every instance in the slot span
+/// `first_slot..` (up to the next range's `first_slot`) draws, plus that
+/// span's model-space culling bounds.
+///
+/// 64 bytes, 16-aligned, identical in Rust and WGSL: the `vec3<f32>` align-16
+/// rule puts `aabb_center` at 32 and `aabb_half_extents` at 48 with no
+/// implicit padding. Asserted by `sf_world_bevy`'s `gpu_batch_tests`.
+#[derive(Clone, Copy, Default, Pod, Zeroable, ShaderType, Debug, PartialEq)]
+#[repr(C)]
+pub struct GpuBatchGeometryRange {
+    /// First instance slot of this range. Ranges are sorted by this field and
+    /// partition the batch, so the range of a slot is the last one whose
+    /// `first_slot <= slot`.
+    pub first_slot: u32,
+    pub first_vertex_index: u32,
+    pub first_index_index: u32,
+    pub index_count: u32,
+    pub metadata_index: u32,
+    pub material_and_lightmap_bind_group_slot: u32,
+    /// `MeshFlags` to OR into the instance's flags. Reserved; 0 today.
+    pub flags: u32,
+    pub pad0: u32,
+    pub aabb_center: Vec3,
+    pub pad1: f32,
+    pub aabb_half_extents: Vec3,
+    pub pad2: f32,
+}
 
 #[derive(Clone, Copy, Default, ShaderType)]
 struct MaterializationMetadata {

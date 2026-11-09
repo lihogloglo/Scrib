@@ -58,7 +58,9 @@ use bevy_render::{
             IndirectParametersIndexed, IndirectParametersMetadata, IndirectParametersNonIndexed,
             InstanceInputUniformBuffer, UntypedPhaseIndirectParametersBuffers,
         },
-        no_gpu_preprocessing, GetBatchData, GetFullBatchData, NoAutomaticBatching,
+        // superfargoth patch (own, GS: ranges): `InstanceBatchSpan`.
+        no_gpu_preprocessing, GetBatchData, GetFullBatchData, InstanceBatchSpan,
+        NoAutomaticBatching,
     },
     mesh::{allocator::MeshAllocator, RenderMesh, RenderMeshBufferInfo},
     render_asset::RenderAssets,
@@ -706,18 +708,20 @@ impl MeshInputUniform {
 
 /// The [`MeshInputUniform`] fields that locate a mesh's data in the
 /// [`MeshAllocator`] slabs.
+// superfargoth patch (own, GS: ranges): `pub(crate)`, so a batch's geometry
+// ranges can resolve one mesh each (`gpu_instance_batch`).
 #[derive(Clone, Copy, Default)]
-struct MeshInputGeometry {
-    first_vertex_index: u32,
-    first_index_index: u32,
+pub(crate) struct MeshInputGeometry {
+    pub(crate) first_vertex_index: u32,
+    pub(crate) first_index_index: u32,
     /// The vertex count for non-indexed meshes.
-    index_count: u32,
-    metadata_index: u32,
+    pub(crate) index_count: u32,
+    pub(crate) metadata_index: u32,
 }
 
 impl MeshInputGeometry {
     /// Returns `None` until the mesh's vertex data has been allocated.
-    fn new(allocator: &MeshAllocator, mesh: AssetId<Mesh>) -> Option<Self> {
+    pub(crate) fn new(allocator: &MeshAllocator, mesh: AssetId<Mesh>) -> Option<Self> {
         let vertices = allocator.mesh_vertex_slice(&mesh)?;
         let (first_index_index, index_count) = match allocator.mesh_index_slice(&mesh) {
             Some(indices) => (indices.range.start, indices.range.len() as u32),
@@ -736,7 +740,8 @@ impl MeshInputGeometry {
 
 /// Packs a material bind group slot and a lightmap slot into
 /// [`MeshInputUniform::material_and_lightmap_bind_group_slot`].
-fn material_and_lightmap_bind_group_slot(material: MaterialBindingId, lightmap_slot: u16) -> u32 {
+// superfargoth patch (own, GS: ranges): `pub(crate)` for per-range materials.
+pub(crate) fn material_and_lightmap_bind_group_slot(material: MaterialBindingId, lightmap_slot: u16) -> u32 {
     let material_slot = u32::from(material.slot);
     debug_assert!(
         material_slot <= 0xFFFF,
@@ -1350,6 +1355,12 @@ pub struct RenderMeshInstanceBatch {
     /// Empty until the renderer can initialize this frame's inputs.
     pub input_range: Range<u32>,
     pub world_center: Vec3,
+    // superfargoth patch (own, GS: ranges)
+    /// One entry per geometry range, in slot order, together tiling
+    /// `input_range`. A batch with no ranges has exactly one span, the whole
+    /// batch (upstream #25978). Empty when the batch is not drawable this
+    /// frame - which is what an empty `input_range` used to say alone.
+    pub spans: Vec<InstanceBatchSpan>,
 }
 
 #[derive(Resource, Default, Deref, DerefMut)]
@@ -3303,13 +3314,14 @@ impl GetFullBatchData for MeshPipeline {
     }
     // superfargoth patch (bevyengine/bevy#25978)
 
-    fn get_instance_batch(
-        (_, _, _, _, _, instance_batches): &SystemParamItem<Self::Param>,
+    // superfargoth patch (own, GS: ranges)
+    fn get_instance_batch<'a>(
+        (_, _, _, _, _, instance_batches): &'a SystemParamItem<Self::Param>,
         main_entity: MainEntity,
-    ) -> Option<Range<u32>> {
+    ) -> Option<&'a [InstanceBatchSpan]> {
         instance_batches
             .get(&main_entity)
-            .map(|batch| batch.input_range.clone())
+            .map(|batch| &batch.spans[..])
     }
 }
 
