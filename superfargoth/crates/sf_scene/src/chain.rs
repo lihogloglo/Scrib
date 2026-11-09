@@ -6,8 +6,10 @@
 //! first, every submesh of that material in each level: vertices back to back, and each
 //! submesh's indices rebased by the vertex count before it (`index + vertex_base`), so one index
 //! buffer addresses one vertex buffer. A level's [`LodLevel`] is its range in that index buffer
-//! and its error. A level with no submesh of the material repeats the next finer level (same
-//! range, same error: it draws exactly that geometry), as SPUD does.
+//! and its error. A level with **no geometry** of the material — no submesh of it, or only
+//! zero-index ones, which draw nothing — repeats the next finer level (same range, same error:
+//! it draws exactly that geometry), as SPUD does; the chain is an error only when its finest
+//! level has none (every level would repeat nothing).
 //!
 //! The bake (`scene.cells`) and the runtime (`sf_scene_bevy`, which builds the buffer) both use
 //! [`chain_layout`], so the ranges in the table always match the uploaded mesh.
@@ -75,18 +77,27 @@ pub fn chain_layout(levels: &[LevelSource]) -> Result<ChainLayout, LayoutError> 
         if !(source.error.is_finite() && source.error >= 0.0) {
             return Err(LayoutError::Error(level));
         }
-        if source.submeshes.is_empty() {
-            let finer = *out.levels.last().expect("level 0 has geometry");
-            out.levels.push(finer);
-            continue;
-        }
         let first_index = index_base;
         for (submesh, &(vertex_count, index_count)) in source.submeshes.iter().enumerate() {
+            // A submesh with no index draws nothing, and its vertices would be unreachable:
+            // "no geometry for this part", the same test as the finest-level guard above. Taking
+            // it would emit a zero-length draw range (the object vanishes at that distance) and
+            // count its vertices into the chain's buffer.
+            if index_count == 0 {
+                continue;
+            }
             out.segments.push(Segment { level, submesh, vertex_base, index_base, vertex_count, index_count });
             vertex_base = vertex_base.checked_add(vertex_count).ok_or(LayoutError::TooLarge)?;
             index_base = index_base.checked_add(index_count).ok_or(LayoutError::TooLarge)?;
         }
-        out.levels.push(LodLevel { first_index, index_count: index_base - first_index, error: source.error });
+        if index_base == first_index {
+            // Nothing of this part at this level: repeat the next finer one (same range, same
+            // error, since it draws exactly that geometry), as SPUD does.
+            let finer = *out.levels.last().expect("level 0 has geometry");
+            out.levels.push(finer);
+        } else {
+            out.levels.push(LodLevel { first_index, index_count: index_base - first_index, error: source.error });
+        }
     }
     out.vertex_count = vertex_base;
     out.index_count = index_base;
@@ -122,6 +133,19 @@ mod tests {
         assert_eq!(layout.levels, [lod(0, 12, 0.0), lod(0, 12, 0.0), lod(12, 6, 0.3), lod(12, 6, 0.3)]);
         assert_eq!(layout.segments.len(), 2);
         assert_eq!(layout.segments[1], Segment { level: 2, submesh: 0, vertex_base: 8, index_base: 12, vertex_count: 4, index_count: 6 });
+        assert_eq!((layout.vertex_count, layout.index_count), (12, 18));
+    }
+
+    #[test]
+    fn a_level_whose_submeshes_draw_nothing_repeats_the_finer_one() {
+        // A submesh the cooker kept with zero indices draws nothing: the level has no geometry
+        // for this part, exactly as if the submesh were absent. Taking it would have emitted a
+        // zero-length range (the part vanishes at that distance) and counted its vertices.
+        let layout =
+            chain_layout(&[level(0.0, &[(8, 12)]), level(0.1, &[(5, 0)]), level(0.3, &[(4, 6), (7, 0)])]).unwrap();
+        assert_eq!(layout.levels, [lod(0, 12, 0.0), lod(0, 12, 0.0), lod(12, 6, 0.3)]);
+        // Only the two drawing submeshes are in the buffers; the empty ones add no vertices.
+        assert_eq!(layout.segments.iter().map(|s| s.level).collect::<Vec<_>>(), [0, 2]);
         assert_eq!((layout.vertex_count, layout.index_count), (12, 18));
     }
 

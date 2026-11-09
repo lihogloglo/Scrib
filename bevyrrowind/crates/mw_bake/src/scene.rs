@@ -10,8 +10,9 @@
 //!   script field) is scripted.
 //! - **References.** A base id that any script or dialogue result names (the same token scan
 //!   as the precombine veto, [`crate::far`]) can be the target of `"id"->Disable`, `SetPos`,
-//!   `Position`..., so it stays an entity; so does a placement that starts disabled. A token
-//!   match: a false positive only keeps an object out of the scene.
+//!   `Position`..., so it stays an entity. A token match: a false positive only keeps an object
+//!   out of the scene. A placement that starts disabled is barred by the framework itself
+//!   (`sf_scene::bake::BARRED`), and kept here as well: a cheap, local answer.
 //! - **Models.** As the cooker reports them: `mesh.cook` skips models with any controller,
 //!   billboard, particle system or switch node (`importer.rs` "Dynamic parts"), so they are not
 //!   cooked and stay entities.
@@ -24,7 +25,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
-use sf_bake::{BakeReport, Baker, Digest};
+use sf_bake::{BakeError, BakeReport, Baker, Digest};
 use sf_model::{AlphaMode, Material};
 use sf_records::RecordDb;
 use sf_scene::bake::{CellFacts, SceneBake, SceneMaterial, SceneSettings, SceneSource};
@@ -191,14 +192,30 @@ pub fn land_tiles(baker: &Baker, ws: &WorldspaceId) -> Vec<(i32, i32)> {
 
 /// Registers `scene.cells` on `baker` (which already has the model, world and terrain steps and
 /// their products) and bakes every cell of `worldspaces`.
-pub fn bake_scene(baker: &mut Baker, db: &RecordDb, worldspaces: &[WorldspaceId]) -> BakeReport {
+///
+/// **Order matters:** the terrain bake must have run on this baker first. Its level-0 tiles are
+/// where each cell's land minimum comes from, and a cell baked without them gets `land_min = -∞`
+/// — a table that validates, keeps its digest and turns horizon culling off for that cell for as
+/// long as the cache lives (static-scene.md §4 step 3). So a worldspace with no level-0
+/// `terrain.tile` product in the baker's manifest is an error here, not a silent landless bake:
+/// every Morrowind worldspace that gets a table is an exterior with `LAND` records.
+pub fn bake_scene(baker: &mut Baker, db: &RecordDb, worldspaces: &[WorldspaceId]) -> Result<BakeReport, BakeError> {
     let source = Arc::new(MwSceneSource::build(db));
     let mut bake = SceneBake::new(source, SceneSettings::default());
     for ws in worldspaces {
-        bake = bake.with_land_tiles(ws.clone(), land_tiles(baker, ws));
+        let tiles = land_tiles(baker, ws);
+        if tiles.is_empty() {
+            return Err(BakeError::Other(format!(
+                "scene.cells: worldspace {} has no level-0 {TILE_STEP} product in this baker's manifest. \
+                 Bake the terrain (mw_bake::world::bake_exterior) before bake_scene: without it every cell \
+                 bakes with no land minimum and horizon culling stays off in the cache (static-scene.md §4).",
+                ws.as_str()
+            )));
+        }
+        bake = bake.with_land_tiles(ws.clone(), tiles);
     }
     Arc::new(bake).register(baker);
-    SceneBake::bake_worldspaces(baker, worldspaces)
+    Ok(SceneBake::bake_worldspaces(baker, worldspaces))
 }
 
 #[cfg(test)]

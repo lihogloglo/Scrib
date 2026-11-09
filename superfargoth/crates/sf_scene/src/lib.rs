@@ -14,7 +14,9 @@
 //!   shared by the bake and the runtime.
 //! - `bake` (feature `bake`): the `scene.cells` step writing one table per cell.
 //! - [`cull`]: the CPU twin of the per-view pass (§4): layer mask, active flag, frustum, terrain
-//!   horizon, sub-pixel cull and the pixel-error LOD pick, with the quality presets.
+//!   horizon, sub-pixel cull and the LOD pick in the view's own projection ([`SceneProjection`]:
+//!   the perspective pixel-error form, the orthographic cascade texel-density form), with the
+//!   quality presets.
 //!
 //! Space: `sf_coords` engine space (right-handed, Y up, metres). Table contents are relative to
 //! the cell origin, the centre of a `sf_coords` grid cell; [`cull`] works in any one f32 frame the
@@ -32,8 +34,8 @@ pub mod table;
 pub use alloc::{AllocError, SlotAllocator, SlotRange, SlotStats};
 pub use chain::{ChainLayout, LayoutError, LevelSource, Segment, chain_layout};
 pub use cull::{
-    CullReason, CullStats, Frustum, HorizonGrid, HorizonParams, ScenePreset, SceneView, Verdict, WorkItem, cull_cell,
-    cull_instance, pick_level, pixels_per_radian,
+    CullReason, CullStats, Frustum, HorizonGrid, HorizonParams, ScenePreset, SceneProjection, SceneView, Verdict,
+    WorkItem, cull_cell, cull_instance, pick_level, pick_level_ortho, pixels_per_radian, texels_per_metre,
 };
 pub use eligibility::{ClassKind, Eligibility, EntityReason, MaterialKind, Promotions, SceneEligibility, classify};
 pub use material::{MaterialClass, MaterialTraits};

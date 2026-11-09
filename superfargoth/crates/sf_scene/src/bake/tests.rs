@@ -346,3 +346,81 @@ fn land_minimum_of_a_streaming_cell() {
     // A 512 m cell spans four tiles.
     assert_eq!(land_tiles(Partition::Grid { shift: 1 }, IVec3::ZERO), [(0, 0), (1, 0), (0, 1), (1, 1)]);
 }
+
+#[test]
+fn per_placement_switches_bar_a_placement_whatever_the_adapter_says() {
+    // `Rules` answers only the record questions (class, script, reference): `NO_LOD`,
+    // `NEAR_ONLY` and `DISABLED` are `sf_world` data, so the framework applies them itself.
+    assert_eq!(
+        BARRED,
+        PlacementFlags::EDITOR_ONLY | PlacementFlags::NO_LOD | PlacementFlags::NEAR_ONLY | PlacementFlags::DISABLED
+    );
+    let pos = WorldPos::new(IVec3::ZERO, Vec3::ZERO);
+    let plain = placement(1, "rock", PlacementClass::Static, pos, 1.0);
+    let facts = Facts(CellFacts { placements: std::slice::from_ref(&plain), models: &[ModelFacts { cooked: true, animated: false, parts: vec![MaterialKind::Opaque] }] });
+    assert_eq!(classify_placement(&facts, 0, &plain), Eligibility::Scene);
+    for flag in [
+        PlacementFlags::EDITOR_ONLY,
+        PlacementFlags::NO_LOD,
+        PlacementFlags::NEAR_ONLY,
+        PlacementFlags::DISABLED,
+    ] {
+        let barred = Placement { flags: flag, ..plain.clone() };
+        assert_eq!(classify_placement(&facts, 0, &barred), Eligibility::Entity(EntityReason::Barred), "{flag:?}");
+    }
+    // A switch that says nothing about the scene does not bar it.
+    let grounded = Placement { flags: PlacementFlags::GROUNDED | PlacementFlags::NO_SIZE_CULL, ..plain.clone() };
+    assert_eq!(classify_placement(&facts, 0, &grounded), Eligibility::Scene);
+    // And the bake leaves every barred placement out of the table.
+    let rock = model(vec![material(AlphaMode::Opaque, false)], vec![(0.0, vec![sub(0, 4, 6)])]);
+    let one = [Some(sphere(Vec3::ZERO, 1.0))];
+    let placements: Vec<Placement> = [PlacementFlags::NO_LOD, PlacementFlags::NEAR_ONLY, PlacementFlags::DISABLED, PlacementFlags::empty()]
+        .into_iter()
+        .zip(0u128..)
+        .map(|(flags, k)| Placement { flags, ..placement(k, "rock", PlacementClass::Static, pos, 1.0) })
+        .collect();
+    let models: Vec<CellModel<'_>> =
+        placements.iter().map(|_| CellModel::Static { path: "rock", model: &rock, parts: &one }).collect();
+    let table = build_cell_table(&Rules, &SceneSettings::default(), IVec3::ZERO, 0.0, &placements, &models).unwrap();
+    assert_eq!(table.instances.iter().map(|i| i.placement).collect::<Vec<_>>(), [3]);
+}
+
+#[test]
+fn a_worldspace_with_no_declared_land_is_a_wiring_error() {
+    // A cell baked before the terrain would validate, cache, and keep horizon culling off for
+    // as long as the cache lives: it must fail in `plan`, not bake with `land_min = -inf`.
+    let undeclared = CellsStep(Arc::new(SceneBake::new(Arc::new(Rules), SceneSettings::default())));
+    let err = undeclared.plan("ws/0,0,0", &mut PlanCx::default()).unwrap_err().to_string();
+    assert!(err.contains("no land coverage declared"), "{err}");
+    // Declaring the coverage plans, and so does declaring an empty one (a landless worldspace:
+    // the caller said so, instead of the bake guessing).
+    let ws = WorldspaceId::new("ws");
+    let with_land = SceneBake::new(Arc::new(Rules), SceneSettings::default()).with_land_tiles(ws.clone(), [(0, 0), (1, 0)]);
+    CellsStep(Arc::new(with_land)).plan("ws/0,0,0", &mut PlanCx::default()).unwrap();
+    let landless = SceneBake::new(Arc::new(Rules), SceneSettings::default()).with_land_tiles(ws, std::iter::empty());
+    let step = CellsStep(Arc::new(landless));
+    step.plan("ws/0,0,0", &mut PlanCx::default()).unwrap();
+    // Another worldspace is still undeclared.
+    assert!(step.plan("other/0,0,0", &mut PlanCx::default()).is_err());
+    // The land set is part of the key, so a different coverage is a different product.
+    let digest = |tiles: &[(i32, i32)]| {
+        SceneBake::new(Arc::new(Rules), SceneSettings::default())
+            .with_land_tiles(WorldspaceId::new("ws"), tiles.to_vec())
+            .coverage(&WorldspaceId::new("ws"))
+            .unwrap()
+            .digest
+    };
+    assert_ne!(digest(&[(0, 0)]), digest(&[(0, 0), (1, 0)]));
+    assert_eq!(digest(&[(0, 0), (1, 0)]), digest(&[(1, 0), (0, 0)]), "order must not matter");
+}
+
+#[test]
+fn tables_are_stored_uncompressed() {
+    // The runtime mmap-reads a table and uploads its instance section straight to the GPU
+    // (static-scene.md §2): an LZ4'd product would have to be unpacked into a heap buffer.
+    let step = CellsStep(Arc::new(SceneBake::new(Arc::new(Rules), SceneSettings::default())));
+    assert!(!step.compress());
+    assert_eq!(step.id(), CELLS_STEP);
+    assert_eq!(step.version(), 2);
+    assert_eq!(EXTENSION, "sfscene");
+}

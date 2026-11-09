@@ -49,7 +49,9 @@ fn scene_cells_over_vvardenfell() {
     let before = t.elapsed();
     let ext = world::exterior();
     let t = Instant::now();
-    let report = scene::bake_scene(&mut baker, &db, std::slice::from_ref(&ext));
+    // `bake_scene` errors out when the terrain bake above left no level-0 tiles for the
+    // worldspace (it would otherwise cache tables with horizon culling off, `scene.rs` docs).
+    let report = scene::bake_scene(&mut baker, &db, std::slice::from_ref(&ext)).expect("terrain baked first");
     let scene_time = t.elapsed();
     inputs.save().expect("memo");
 

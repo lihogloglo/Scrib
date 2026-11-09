@@ -47,6 +47,13 @@
 //! Like `sf_model`'s `.sfmesh` (`cooked.rs`, magic and a `u32` version), a reader takes only the
 //! versions it knows and rejects the rest with [`TableError::Version`]; a layout change bumps
 //! [`FORMAT_VERSION`]. Every read is bounds-checked: malformed input is an error, never a panic.
+//!
+//! A table is a **cached file**, so the reader also rejects values that would quietly break a
+//! cull rather than fail: an empty layer mask (a whole worldspace baked invisible), a non-finite
+//! or inverted AABB, a NaN or positive-infinity land minimum (negative infinity is the intended
+//! "no land"), a non-finite transform (its [`StaticInstance::max_scale`] would be 0 and always
+//! pick the coarsest level) or bounding sphere, and any flag bit nothing implements yet
+//! ([`InstanceFlags::NOT_BAKED`]).
 
 use glam::{Affine3A, IVec3, Mat3A, Vec3, Vec3A};
 
@@ -73,10 +80,12 @@ bitflags::bitflags! {
         const CASTS_SHADOW = 1;
         const ALPHA_MASKED = 1 << 1;
         /// Reserved for the far field on the same table (S7, §9): drawn only in sky / far views.
-        /// Not set by the `scene.cells` bake, not read by the cull yet.
+        /// Not written by the bake and not read by the cull, so a table setting it is rejected
+        /// ([`InstanceFlags::NOT_BAKED`]) until S7 implements it.
         const FAR_ONLY = 1 << 2;
         /// Reserved for Hi-Z occlusion (S6, §4 step 6): may be drawn into the occluder pass.
-        /// Not set by the `scene.cells` bake, not read by the cull yet.
+        /// Not written by the bake and not read by the cull, so a table setting it is rejected
+        /// ([`InstanceFlags::NOT_BAKED`]) until S6 implements it.
         const OCCLUDER = 1 << 3;
         /// The vertex shader applies wind sway.
         const WIND = 1 << 4;
@@ -84,6 +93,13 @@ bitflags::bitflags! {
         /// cull drops the instance; the table reader rejects it.
         const INACTIVE = 1 << 15;
     }
+}
+
+impl InstanceFlags {
+    /// Bits a baked table may not set: the runtime-only [`Self::INACTIVE`] and the bits reserved
+    /// for slices that don't read them yet. A flag whose meaning nothing implements must not
+    /// parse: it would be stored, ignored, and silently wrong the day it is implemented.
+    pub const NOT_BAKED: Self = Self::INACTIVE.union(Self::FAR_ONLY).union(Self::OCCLUDER);
 }
 
 /// An axis-aligned box, cell-relative.
@@ -206,6 +222,16 @@ pub enum TableError {
     Size { expected: u64, got: usize },
     #[error("non-zero reserved bytes at offset {0}")]
     Reserved(usize),
+    #[error("the table draws in no layer (mask 0): nothing of this cell would ever be visible")]
+    NoLayers,
+    #[error("the table's AABB is not a finite box")]
+    Aabb,
+    #[error("the table's land minimum is NaN or positive infinity (negative infinity means no land)")]
+    LandMin,
+    #[error("instance {0} has a non-finite transform")]
+    Transform(PlacementId),
+    #[error("instance {0} has a non-finite or negative bounding sphere")]
+    Sphere(PlacementId),
     #[error("instances not sorted by placement id at {0}")]
     PlacementOrder(PlacementId),
     #[error("chains not sorted by unique mesh key at {0:#x}")]
@@ -220,7 +246,7 @@ pub enum TableError {
     LevelError(u32),
     #[error("chain {chain} has unknown material class {class}")]
     MaterialClass { chain: u32, class: u16 },
-    #[error("instance {0} has unknown or runtime-only flag bits")]
+    #[error("instance {0} has unknown, runtime-only or not-yet-implemented flag bits")]
     Flags(PlacementId),
     #[error("instance {0} has a material override (none is defined in format version {FORMAT_VERSION})")]
     MaterialOverride(PlacementId),
@@ -341,6 +367,19 @@ impl<'a> StaticCellTableView<'a> {
 
     /// `chains_at`: the chain section's offset in the file (for [`TableError::Reserved`]).
     fn validate(&self, chains_at: usize) -> Result<(), TableError> {
+        // Header values the cull would otherwise take at face value: a zero mask hides a whole
+        // worldspace, a NaN or inverted box culls every cell (or none), a NaN land minimum
+        // makes every horizon comparison false and a positive infinity makes them all true
+        // (negative infinity is the one intended infinity: "no land", which hides nothing).
+        if self.layers == 0 {
+            return Err(TableError::NoLayers);
+        }
+        if !(self.aabb.min.is_finite() && self.aabb.max.is_finite() && self.aabb.min.cmple(self.aabb.max).all()) {
+            return Err(TableError::Aabb);
+        }
+        if !(self.land_min.is_finite() || self.land_min == f32::NEG_INFINITY) {
+            return Err(TableError::LandMin);
+        }
         let mut prev: Option<u64> = None;
         for (index, c) in (0u32..).zip(self.chain_records()) {
             if prev.is_some_and(|p| p >= c.mesh) {
@@ -376,8 +415,16 @@ impl<'a> StaticCellTableView<'a> {
             if i.material_override != 0 {
                 return Err(TableError::MaterialOverride(i.placement));
             }
+            // A NaN transform would make `max_scale` 0.0, which silently picks the coarsest
+            // level for ever; a NaN or negative sphere breaks every cull test (§4).
+            if !i.transform.iter().flatten().all(|v| v.is_finite()) {
+                return Err(TableError::Transform(i.placement));
+            }
+            if !(i.sphere.center.is_finite() && i.sphere.radius.is_finite() && i.sphere.radius >= 0.0) {
+                return Err(TableError::Sphere(i.placement));
+            }
             match InstanceFlags::from_bits(i.flags.bits()) {
-                Some(f) if !f.contains(InstanceFlags::INACTIVE) => {}
+                Some(f) if !f.intersects(InstanceFlags::NOT_BAKED) => {}
                 _ => return Err(TableError::Flags(i.placement)),
             }
         }

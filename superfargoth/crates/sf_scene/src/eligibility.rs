@@ -66,6 +66,11 @@ pub trait SceneEligibility {
 /// Why a placement stays an entity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EntityReason {
+    /// A per-placement switch bars it from the scene whatever its record says: editor-only,
+    /// no-LOD, near-only or starts-disabled (`sf_scene::bake::BARRED`, as the precombine
+    /// "Members" rule `sf_lod::near::near_eligible` bars them). The framework answers this
+    /// from the placement's own flags, never the adapter (`bake::classify_placement`).
+    Barred,
     Class(ClassKind),
     Scripted,
     Referenced,
@@ -87,7 +92,12 @@ pub enum Eligibility {
     Entity(EntityReason),
 }
 
-/// The §1 rule. Checks run cheapest first; the first failing one is the reason.
+/// The §1 rule over the adapter's facts. Checks run cheapest first; the first failing one is
+/// the reason.
+///
+/// This sees no per-placement switches: they are framework data, so the bake applies them
+/// itself ([`EntityReason::Barred`], `bake::classify_placement`). Call that, not this, when you
+/// have the placement.
 pub fn classify(facts: &(impl SceneEligibility + ?Sized), placement: PlacementId) -> Eligibility {
     let class = facts.class_kind(placement);
     if class != ClassKind::Static {

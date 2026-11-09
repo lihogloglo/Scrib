@@ -158,3 +158,31 @@ fn mixed_opaque_and_blended_model_splits() {
     assert_eq!(table.layers, SceneSettings::default().layers);
     assert!(table.write().is_ok());
 }
+
+/// No files and no records: enough for a [`Baker`] with an empty manifest.
+struct NoInputs;
+
+impl sf_bake::Inputs for NoInputs {
+    fn file_fingerprint(&self, _: &str) -> Result<Option<Digest>, BakeError> {
+        Ok(None)
+    }
+    fn read_file(&self, path: &str) -> Result<Vec<u8>, BakeError> {
+        Err(BakeError::MissingInput(sf_bake::Input::File(path.to_owned())))
+    }
+    fn record_fingerprint(&self, _: &str, _: &str) -> Result<Option<Digest>, BakeError> {
+        Ok(None)
+    }
+}
+
+#[test]
+fn bake_scene_refuses_to_run_before_the_terrain() {
+    // Without level-0 terrain tiles every cell would bake with `land_min = -inf` and keep
+    // horizon culling off for as long as the cache lives (module docs, "Order matters").
+    let dir = tempfile::tempdir().unwrap();
+    let store = sf_bake::Store::open(dir.path()).unwrap();
+    let mut baker = Baker::new(store, Arc::new(NoInputs));
+    let ws = WorldspaceId::new("ws");
+    assert!(land_tiles(&baker, &ws).is_empty(), "a fresh baker has no tile products");
+    let err = bake_scene(&mut baker, &db(), std::slice::from_ref(&ws)).unwrap_err().to_string();
+    assert!(err.contains("no level-0") && err.contains(TILE_STEP), "{err}");
+}

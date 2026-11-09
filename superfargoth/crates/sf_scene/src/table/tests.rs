@@ -299,3 +299,73 @@ fn rejects_inconsistent_tables() {
     b[chain1..chain1 + 4].copy_from_slice(&4u32.to_le_bytes());
     assert_eq!(StaticCellTableView::parse(&b).unwrap_err(), TableError::ChainLevels(1));
 }
+
+#[test]
+fn rejects_header_values_that_would_break_a_cull() {
+    let write = |t: StaticCellTable| t.write().unwrap_err();
+    // A table in no layer is a cell nothing would ever draw.
+    assert_eq!(write(StaticCellTable { layers: 0, ..sample() }), TableError::NoLayers);
+    // A non-finite or inverted box pre-culls every cell, or none.
+    for aabb in [
+        Aabb { min: Vec3::new(f32::NAN, 0.0, 0.0), max: Vec3::splat(1.0) },
+        Aabb { min: Vec3::splat(f32::NEG_INFINITY), max: Vec3::splat(f32::INFINITY) },
+        Aabb { min: Vec3::splat(1.0), max: Vec3::splat(-1.0) },
+        Aabb { min: Vec3::new(0.0, 2.0, 0.0), max: Vec3::new(1.0, 1.0, 1.0) },
+    ] {
+        assert_eq!(write(StaticCellTable { aabb, ..sample() }), TableError::Aabb, "{aabb:?}");
+    }
+    // A degenerate (point) box is fine: a cell with one tiny instance, or none.
+    StaticCellTable { aabb: Aabb { min: Vec3::ZERO, max: Vec3::ZERO }, ..sample() }.write().unwrap();
+    // NaN makes every horizon comparison false, +inf makes them all true; only −inf means
+    // "no land" (it hides nothing).
+    for land_min in [f32::NAN, f32::INFINITY] {
+        assert_eq!(write(StaticCellTable { land_min, ..sample() }), TableError::LandMin, "{land_min}");
+    }
+    StaticCellTable { land_min: f32::NEG_INFINITY, ..sample() }.write().unwrap();
+}
+
+#[test]
+fn rejects_instances_the_cull_could_not_test() {
+    let write = |t: StaticCellTable| t.write().unwrap_err();
+    // A non-finite transform: `max_scale` would be NaN and the LOD pick meaningless.
+    let mut t = sample();
+    t.instances[1].transform[1][2] = f32::NAN;
+    assert_eq!(write(t), TableError::Transform(9));
+    let mut t = sample();
+    t.instances[0].transform[0][3] = f32::INFINITY;
+    assert_eq!(write(t), TableError::Transform(4));
+    // A non-finite or negative sphere breaks the frustum, sub-pixel and LOD tests.
+    for sphere in [
+        Sphere { center: Vec3::new(0.0, f32::NAN, 0.0), radius: 1.0 },
+        Sphere { center: Vec3::ZERO, radius: f32::NAN },
+        Sphere { center: Vec3::ZERO, radius: f32::INFINITY },
+        Sphere { center: Vec3::ZERO, radius: -1.0 },
+    ] {
+        let mut t = sample();
+        t.instances[1].sphere = sphere;
+        assert_eq!(write(t), TableError::Sphere(9), "{sphere:?}");
+    }
+    // Radius 0 is a legal point instance.
+    let mut t = sample();
+    t.instances[1].sphere = Sphere { center: Vec3::ZERO, radius: 0.0 };
+    t.write().unwrap();
+}
+
+#[test]
+fn rejects_flags_no_slice_implements_yet() {
+    // FAR_ONLY (S7) and OCCLUDER (S6) parse as flags but nothing writes or reads them: a table
+    // setting one would be stored, ignored, and silently wrong the day the slice lands.
+    assert_eq!(
+        InstanceFlags::NOT_BAKED,
+        InstanceFlags::INACTIVE | InstanceFlags::FAR_ONLY | InstanceFlags::OCCLUDER
+    );
+    for flag in [InstanceFlags::FAR_ONLY, InstanceFlags::OCCLUDER, InstanceFlags::INACTIVE] {
+        let mut t = sample();
+        t.instances[1].flags |= flag;
+        assert_eq!(t.write().unwrap_err(), TableError::Flags(9), "{flag:?}");
+    }
+    // The bits the bake does write are accepted.
+    let mut t = sample();
+    t.instances[1].flags = InstanceFlags::CASTS_SHADOW | InstanceFlags::ALPHA_MASKED | InstanceFlags::WIND;
+    t.write().unwrap();
+}
