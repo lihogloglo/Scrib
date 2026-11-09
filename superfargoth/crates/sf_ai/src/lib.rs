@@ -11,6 +11,8 @@
 //! - AI4 (directives): [`directive`], the per-actor [`DirectiveStack`] of content orders, the
 //!   adapter's [`StackPolicy`] seam with the modern default [`ModernPolicy`], and the
 //!   [`DirectiveDone`] completion events, all on one logical clock.
+//! - AI5 (saves): [`save`], the `sf/ai` section's shape ([`AiSave`]: per actor, its
+//!   [`SavedStack`]), key and version, and the checks a loaded section must pass.
 //!
 //! The console command `ai.trace` and BRP live in `sf_ai_bevy` (AI3): actor references and the
 //! console context are the shell's.
@@ -18,18 +20,20 @@
 pub mod directive;
 pub mod htn;
 pub mod ids;
+pub mod save;
 pub mod state;
 pub mod trace;
 
 pub use directive::{
     Directive, DirectiveDone, DirectiveEnd, DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, DirectiveStatus,
-    Limit, MAX_REACTIONS, ModernPolicy, Serving, StackEdit, StackPolicy, format_directives,
+    Limit, MAX_REACTIONS, ModernPolicy, SavedStack, Serving, StackEdit, StackError, StackPolicy, format_directives,
 };
 pub use htn::{
     Decomposition, LoadError, LoadReport, Library, METHOD_KIND, MethodDef, NoPlan, Operators, Replan, Resume,
     SEARCH_DEPTH, SEARCH_TRIES, SubtaskDef, TASK_KIND, TaskDef, decompose, mtr_better, register_kinds, replan, resume,
 };
 pub use ids::{ConsiderationId, DirectiveId, DriveId, MethodId, OperatorId, TaskId};
+pub use save::{AI_SECTION, AI_VERSION, ActorSave, AiSave, AiSaveError};
 pub use sf_ids::ActorKey;
 pub use sf_rpg::GameTime;
 pub use state::{BitKey, IntKey, KeyKind, KeySet, RefKey, StateKey, StateKeyError, StateKeys, Target, WorldState};
@@ -45,3 +49,5 @@ mod tests;
 mod tests_directive;
 #[cfg(test)]
 mod tests_htn;
+#[cfg(test)]
+mod tests_save;

@@ -344,11 +344,12 @@ fn the_stack_round_trips_through_the_save_codec_and_carries_on_identically() {
     stack.serve(Serving::Directive(DirectiveId(4)), t(15), &policy, &mut events);
     stack.advance(t(20), &policy, &mut events);
 
-    let bytes = postcard::to_stdvec(&stack).unwrap();
-    let mut loaded: DirectiveStack = postcard::from_bytes(&bytes).unwrap();
+    // The saved form (AI5: `sf/ai` keys it by actor).
+    let bytes = postcard::to_stdvec(&stack.to_saved()).unwrap();
+    let mut loaded = DirectiveStack::from_saved(NPC, postcard::from_bytes(&bytes).unwrap()).unwrap();
     assert_eq!(loaded, stack);
-    let json = serde_json::to_string(&stack).unwrap();
-    assert_eq!(serde_json::from_str::<DirectiveStack>(&json).unwrap(), stack);
+    let json = serde_json::to_string(&stack.to_saved()).unwrap();
+    assert_eq!(DirectiveStack::from_saved(NPC, serde_json::from_str(&json).unwrap()).unwrap(), stack);
 
     // The same future from the original and the loaded copy: ids continue, timers resume.
     let mut a = Vec::new();

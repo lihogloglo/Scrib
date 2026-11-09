@@ -343,9 +343,54 @@ fn game_time(minutes: u64) -> GameTime {
     }
 }
 
-/// One actor's directives, top first, with its id sequence and logical clock: everything AI5
-/// saves (serde). Mutations take `now`, the policy and an event sink.
+/// A stack's saved form (`sf/ai`, [`crate::save`]): everything but the actor, which the section
+/// keys by. Rebuilt into a stack only through [`DirectiveStack::from_saved`], which checks it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedStack {
+    /// Top first.
+    pub entries: Vec<Directive>,
+    /// The next id the stack issues: every id below it was issued (`done(id)` answers from it).
+    pub next_id: u32,
+    pub clock: GameTime,
+    pub serving: Serving,
+}
+
+/// A [`SavedStack`] that breaks the stack's invariants.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum StackError {
+    #[error("{id} is on the stack but the id sequence is only at {next}")]
+    NotIssued { id: DirectiveId, next: u32 },
+    #[error("{id} is on the stack twice")]
+    Duplicate { id: DirectiveId },
+    #[error("serving {id}, which was never issued (next id {next})")]
+    ServingNotIssued { id: DirectiveId, next: u32 },
+}
+
+impl SavedStack {
+    /// The invariants every live stack keeps: ids on it were issued (below `next_id`) and are
+    /// unique; a named served directive was issued (it may have left: serving falls back to the
+    /// top).
+    pub fn check(&self) -> Result<(), StackError> {
+        let next = self.next_id;
+        for (i, d) in self.entries.iter().enumerate() {
+            if d.id.0 >= next {
+                return Err(StackError::NotIssued { id: d.id, next });
+            }
+            if self.entries[..i].iter().any(|e| e.id == d.id) {
+                return Err(StackError::Duplicate { id: d.id });
+            }
+        }
+        match self.serving {
+            Serving::Directive(id) if id.0 >= next => Err(StackError::ServingNotIssued { id, next }),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// One actor's directives, top first, with its id sequence and logical clock. Saved as a
+/// [`SavedStack`] (AI5); serializes whole for debug dumps. Mutations take `now`, the policy and
+/// an event sink.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DirectiveStack {
     actor: ActorKey,
     entries: Vec<Directive>,
@@ -361,8 +406,26 @@ impl DirectiveStack {
         Self { actor, entries: Vec::new(), next_id: 0, clock: now, serving: Serving::Top }
     }
 
+    /// `actor`'s stack from its saved form, refused if it breaks the invariants
+    /// ([`SavedStack::check`]).
+    pub fn from_saved(actor: ActorKey, saved: SavedStack) -> Result<Self, StackError> {
+        saved.check()?;
+        let SavedStack { entries, next_id, clock, serving } = saved;
+        Ok(Self { actor, entries, next_id, clock, serving })
+    }
+
+    /// The saved form (everything but the actor).
+    pub fn to_saved(&self) -> SavedStack {
+        SavedStack { entries: self.entries.clone(), next_id: self.next_id, clock: self.clock, serving: self.serving }
+    }
+
     pub fn actor(&self) -> ActorKey {
         self.actor
+    }
+
+    /// The id the next push or repeat gets.
+    pub fn next_id(&self) -> DirectiveId {
+        DirectiveId(self.next_id)
     }
 
     /// Top first.
