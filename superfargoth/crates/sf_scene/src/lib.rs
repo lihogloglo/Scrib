@@ -21,6 +21,10 @@
 //!   grammar of a cell's table and a chain's geometry. Always compiled: the runtime reads what
 //!   the bake wrote, and must not pull the baker to learn its names.
 //! - `bake` (feature `bake`): the `scene.cells` and `scene.chains` steps writing them.
+//! - [`space`]: one space's retained scene ([`SceneSpace`], §3): a cell's table in, its chain
+//!   slots, scene-buffer range, batch blocks and output-slot writes out ([`CellPlan`]), plus each
+//!   batch's range list ([`SceneSpace::batch_ranges`]) — a strict partition of its output slots,
+//!   as the GS patch's `validate_ranges` demands.
 //! - [`cull`]: the CPU twin of the per-view pass (§4): layer mask, active flag, frustum, terrain
 //!   horizon, sub-pixel cull and the LOD pick in the view's own projection ([`SceneProjection`]:
 //!   the perspective pixel-error form, the orthographic cascade texel-density form), with the
@@ -39,6 +43,7 @@ pub mod cull;
 pub mod eligibility;
 pub mod material;
 pub mod product;
+pub mod space;
 pub mod table;
 
 pub use alloc::{
@@ -56,6 +61,10 @@ pub use material::{MaterialClass, MaterialTraits};
 pub use product::{
     CELLS_EXT, CELLS_STEP, CHAINS_EXT, CHAINS_STEP, cell_subject, chain_subject, parse_cell_subject,
     parse_chain_subject,
+};
+pub use space::{
+    BatchGranularity, BatchId, BatchKey, CellPlan, CellRelease, CellResidency, ChainSlabs, DrawSlabs, M1_LEVEL,
+    NO_SLOT, RangeSpec, SceneError, SceneSpace, SlabId, SlotWrite, SpaceConfig, SpaceId, SpaceStats, UNRESOLVED,
 };
 pub use table::{
     Aabb, FORMAT_VERSION, InstanceFlags, LodChain, LodLevel, MAGIC, MAX_LOD_LEVELS, MAX_MODELS, Sphere,
