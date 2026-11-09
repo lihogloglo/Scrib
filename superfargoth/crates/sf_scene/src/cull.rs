@@ -206,6 +206,12 @@ impl Frustum {
 }
 
 /// One view's cull inputs, all in the cull frame.
+///
+/// Build the pixel thresholds with [`Self::with_preset`], which takes the [`ViewKind`]: writing
+/// `lod_px` and `size_cull_px` by hand is allowed (it is how the owner turns the shadow-view
+/// sub-pixel cull on for a look) but it is also how a shadow view silently inherits the main
+/// view's size cutoff, which was measured and reverted here once
+/// ([`ScenePreset::size_cull_px`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneView {
     /// Where the view is seen from. An orthographic view has no eye point: its LOD and
