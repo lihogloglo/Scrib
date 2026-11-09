@@ -1,6 +1,6 @@
 # NPC AI: directives, drives, HTN behaviours, tiers (`sf_ai`)
 
-Status: **AI1-AI4 built (2026-11-08/09)**: `sf_ai` ids, trace, HTN core, directives; `sf_ai_bevy` overlay; AI5 on not built. M7.
+Status: **AI1-AI5 built (2026-11-08/09)**: `sf_ai` ids, trace, HTN core, directives, `sf/ai` save; `sf_ai_bevy` overlay; AI6 on not built. M7.
 Former open questions decided 2026-11-08 (owner-delegated): `../research/ai-nav-decisions-2026-11-08.md` (d, g, k, l).
 Crates (planned): `sf_ai` (Bevy-free: directives, drives, HTN, perception model, facts, tiers, trace), `sf_ai_bevy`
 (thin: fixed-tick systems, executors' glue to `sf_action`/`sf_controller`, debugger, console). Uses [nav.md](nav.md)
@@ -9,7 +9,7 @@ Sources: `../research/npc-ai-2026-11-08.md` (approved), seamless research §4.2/
 [action.md](action.md), [net.md](net.md), [combat.md](combat.md) C6.
 
 <!-- agent-summary -->
-> **Agent summary (2026-11-08).** AI1-AI4 (trace, HTN, overlay, directives) built; the rest is design. Layers: directives (packages, schedules, quest orders) →
+> **Agent summary (2026-11-08).** AI1-AI5 (trace, HTN, overlay, directives, saves) built; the rest is design. Layers: directives (packages, schedules, quest orders) →
 > utility drives → one shared data-driven HTN method library → executors writing `Command` + `LocomotionIntent`.
 > Host-only, fixed tick. Tiers 2/1/0 under a budget that is a host CPU setting (never the graphics preset); tier 0
 > simulates logically so outcomes are tier-invariant. Perception through doors, a persistent memory/relationship fact
@@ -102,9 +102,8 @@ pub fn decide(ws: &WorldState, stack: &[Directive], lib: &Library, rng: u64, tra
   is the default until AI10, AI11 and AI12 exist (decisions (e)); an anchor that doesn't resolve keeps the actor on
   its record directives.
 - Directives are fully saved; the stack is the truth across tiers.
-- **As built (AI4):** `sf_ai::directive` (detail: [ai-as-built.md](ai-as-built.md)). `until` became `Limit::Until`
-  or `Limit::For` (served minutes: OpenMW pauses package durations under interrupts); `Serving` (top, a named
-  directive, suspended) is what AI7's arbiter sets; ids are per-actor instances; no `done` flag or `ParamBag`.
+- **As built (AI4):** `sf_ai::directive` ([ai-as-built.md](ai-as-built.md)): `Limit::Until` or `Limit::For`
+  (served minutes); `Serving` (top, named, suspended) for AI7; per-actor instance ids; no `done` flag or `ParamBag`.
 
 ## Drives (utility arbitration)
 
@@ -249,8 +248,11 @@ facts, tiers, paths, claims. 6: per-player awareness and memory. 7: stable ids. 
 
 Sections (owner-keyed, versioned, save.md): `sf/ai` per actor (directive stack, schedule cursor, tier-0 state
 `(route, progress, until)`, current activity and claim, drive and running directive id) and `sf/ai/memory` (facts,
-relations). Not saved: plans, traces, awareness, path requests (rebuilt on load; promotion resolve places actors).
-Belongs to the one state registry when it exists (vision §4.2.3).
+relations). Not saved: plans, traces, awareness, path requests, `DirectiveDone` events (rebuilt on load; promotion
+resolve places actors). Belongs to the one state registry when it exists (vision §4.2.3).
+- **As built (AI5):** one world section over the host's store (`sf_ai_bevy::AiDirectives`, a resource keyed by
+  `ActorKey`: stacks never unload, tier 0), not overlay blobs; v1 holds each actor's `SavedStack`, later fields by
+  version steps. Why, and the clock and key caveats: [ai-as-built.md](ai-as-built.md) "AI5".
 
 ## Scripting (Luau `@sf/ai`)
 

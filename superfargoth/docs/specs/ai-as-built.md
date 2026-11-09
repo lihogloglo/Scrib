@@ -3,6 +3,47 @@
 Moved here to keep [ai.md](ai.md) inside its size budget. Newest slice first; the module docs in
 `superfargoth/crates/sf_ai/src/` are the detailed reference.
 
+## AI5: the `sf/ai` save section (2026-11-09)
+
+`sf_ai::save`: `AI_SECTION` = `sf/ai`, `AI_VERSION` 1, `AiSave { actors: BTreeMap<ActorKey, ActorSave> }`,
+`ActorSave { directives: SavedStack }`, `legacy` (empty: v1 is the first). `SavedStack` (in `directive.rs`) is the
+stack minus its actor (the map keys it): entries with served minutes, `next_id`, clock, serving mode;
+`DirectiveStack::{to_saved, from_saved, next_id}`. `DirectiveStack` keeps `Serialize` (dumps) but lost
+`Deserialize`: the only way in is `from_saved`, which checks the invariants (`StackError`: an entry id the
+sequence never issued, a duplicate id, serving an unissued id). `sf_save_bevy::sections::ai(get, set)`: order 350
+(after overlay, clock, RPG; before the adapter), `check` refuses a broken stack naming the actor before anything
+applies; shape golden `tests/shapes/sf.ai.v1.json`. `sf_ai_bevy`: `AiDirectives` is now a **resource** keyed by
+`ActorKey` (was a component on the `AiActor` entity), `ai_save` / `ai_load` are the section's accessors (`None`
+when empty, so a world without AI writes no section; load replaces the whole store). Not wired into the game
+(no `AiPlugin` there yet). Tests: `sf_ai` `tests_save.rs` (3), `sf_save_bevy` `tests_ai.rs` (3) + the shape
+golden, `sf_ai_bevy` accessor test; the four released save goldens now load with `sf/ai` wired.
+
+Design, and why (research: `OpenMW` `esm3/aisequence.cpp` and `mwmechanics/aisequence.cpp` read for behaviour;
+UESP Skyrim save format, ACHR change form `CHANGE_ACTOR_EXTRA_PACKAGE_DATA`; Unreal: behaviour-tree state is
+transient, games save a high-level AI state and re-run the tree):
+- **One world section, not per-placement overlay blobs** (save.md "One path for unload and save" was the
+  alternative). Tier 0 keeps every actor logically alive in every worldspace, so the stack is host state that
+  never unloads with its cell: one store keyed by stable id, no second copy for streaming to disagree with.
+  Blobs would be frozen copies tier 0 can't advance, the stacks of actors with no entity after a load
+  (`reload_resident` respawns cells after the apply) would need a holding place anyway, and the overlay's
+  one-version-per-owner table refuses older blobs until overlay v2 (C7), while `sf/ai` will step versions often
+  (AI10, AI11, AI13, AI14). Actors of a missing mod stay in the store and the section (save.md "Mod-list changes").
+- **Saved = what can't be re-derived** (Bethesda's runtime package overrides and package data as change-form
+  deltas; `OpenMW` each package's parameters and remaining duration): the stack with its id sequence, so
+  `status(id)` answers `done(id)` after a load. `OpenMW` doesn't save `mDone` and loses it; events
+  (`DirectiveDone`) aren't saved here either, so AI6/AI7 consumers must read them in the tick they're emitted
+  or poll `status`. Not saved (rebuilt): plans, traces, awareness, path requests, wander-like executor state.
+- **Base/delta, later:** every stack is saved, record defaults included (~40-60 B per actor before LZ4). When
+  MA2 builds stacks from record packages, a stack nothing pushed to since it was built can be skipped and
+  rebuilt (as stats' `changed_since_init`); it must not have issued ids beyond the record's, or `done(id)` breaks.
+- **Clock:** nothing converts `SkyClock` to `GameTime` yet (the dialogue host passes `GameTime::default()`). Stacks
+  ignore readings older than their clock, so a load that put the host clock behind a stack would freeze its
+  timers. `sf/clock` and `sf/ai` are snapshotted at the same tick boundary, so this holds if the AI tick's `now`
+  is derived from the saved clock and rounded down; which clock wins is the open owner question (three clocks).
+- **Keys:** placement and spawn ids are stable (spawn ids come from the saved overlay counter). Flagged:
+  `mw_rpg_bevy::dialogue::key` falls back to `Entity` bits for an actor without a placement; such a key must never
+  get a stack, or its saved state attaches to nobody (or someone else) after a load.
+
 ## AI4: directives (2026-11-09)
 
 `sf_ai::directive` (Bevy-free; new deps `sf_rpg` for `GameTime`, `sf_world` for `Location`/`PlacementId`).

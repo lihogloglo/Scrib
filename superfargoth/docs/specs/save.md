@@ -97,13 +97,14 @@ stable ids (`PlacementId`, spawn ids, `RecordId`, `PlayerKey`, mod ids) and posi
 | `sf/records` | `sf_records` | the **runtime record overlay**: records created in play (spells, potions, enchantments: Bethesda's "created objects") under a `save:` id namespace, and runtime patches to existing records as (kind, id, field path, `Value`), the same ops mods use |
 | `sf/overlay` | `sf_world` | `PlacementOverlay`: removed, moved and spawned placements, per-system state blobs, spawn counter |
 | `sf/rpg` | `sf_rpg` | `WorldRpg`: quests, journal, known topics |
+| `sf/ai` | `sf_ai` (registered by `sections::ai`) | `AiSave`: per actor, the directive stack (v1; schedule, tier-0 and activity state join by version steps, ai.md "Saves") |
 | `sf/party` | `sf_save_bevy` (`sf_net` later) | player keys and names, party leader, co-op settings (friendly fire) |
 | `sf/character/<player key>` | per character | `CharacterSave` (below), one section per player who ever played here |
 | `<adapter>/<name>` | adapter | adapter state (Bevyrrowind: MWScript globals and locals, its NPC rule state) |
 | `<mod id>/script` | `sf_script` | that mod's `ContextSnapshot` (storage, entity-script states, timers, RNG) |
 
-**Overlay blobs.** Per-placement state blobs (`physics` v1, `stats` v1: a touched actor's sheet, stats.md; AI
-progress, container contents) are already keyed by owning system. The overlay codec gains a **blob version table**
+**Overlay blobs.** Per-placement state blobs (`physics` v1, `stats` v1: a touched actor's sheet, stats.md;
+container contents; AI state is `sf/ai`, never blobs, ai-as-built.md "AI5") are already keyed by owning system. The overlay codec gains a **blob version table**
 (system → schema version) so each system migrates its own blobs (overlay format v2, `sf_world`).
 
 **`CharacterSave`**: player key, display name, `Location` + facing, the gameplay body (`ActionState` +
