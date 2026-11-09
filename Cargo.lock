@@ -7583,6 +7583,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_ai_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_app",
+ "bevy_camera",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_gizmos",
+ "bevy_math",
+ "bevy_transform",
+ "log",
+ "serde",
+ "serde_json",
+ "sf_ai",
+ "sf_console_bevy",
+ "sf_records",
+ "workspace-hack",
+]
+
+[[package]]
 name = "sf_anim"
 version = "0.1.0"
 dependencies = [

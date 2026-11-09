@@ -1,0 +1,52 @@
+[package]
+name = "sf_ai_bevy"
+description = "Bevy shell for sf_ai (ai.md): the decision-trace store and HTN library as resources, the ai.* console commands, a BRP-shaped trace handler and (feature debug) the selected actor's plan gizmos; fixed-tick systems and executors' glue follow in later slices"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+# In-game debugger: the selected actor's plan text and outcome as gizmos, click-select through the
+# console overlay (`ai.select` with no id), an inspector row. Needs the app's gizmo plugin; dev
+# builds only (the console overlay is dev-only too).
+debug = [
+    "dep:bevy_camera",
+    "dep:bevy_color",
+    "dep:bevy_gizmos",
+    "dep:bevy_math",
+    "dep:bevy_transform",
+    "sf_console_bevy/overlay",
+]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6, build-perf.md rule 1: a thin shell over the Bevy-free core).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sf_ai.workspace = true
+sf_console_bevy.workspace = true
+sf_records.workspace = true
+# debug: the camera to face the text; colours; immediate-mode gizmos (the trace changes every
+# decision, so nothing is retained); isometries; the actors' world positions.
+bevy_camera = { workspace = true, optional = true }
+bevy_color = { workspace = true, features = ["std"], optional = true }
+bevy_gizmos = { workspace = true, optional = true }
+bevy_math = { workspace = true, features = ["std"], optional = true }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"], optional = true }
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# MinimalPlugins for the headless tests; a window, 3D and UI for the example.
+bevy = { workspace = true, features = ["3d", "ui", "tonemapping_luts"] }
+
+[lints]
+workspace = true
+
+# The overlay over three actors with a synthetic trace (nothing decides until AI4/AI6): AI-1, owner check
+# (needs a window). Instructions in the example's docs.
+[[example]]
+name = "ai_overlay"
+required-features = ["debug"]

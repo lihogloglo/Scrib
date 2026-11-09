@@ -1,6 +1,6 @@
 # NPC AI: directives, drives, HTN behaviours, tiers (`sf_ai`)
 
-Status: **AI1-AI2 built (2026-11-08/09)**: `sf_ai` ids, decision trace ("Debugging"), HTN core ("Behaviours"); AI3 on not built. Label M7.
+Status: **AI1-AI3 built (2026-11-08/09)**: `sf_ai` ids, trace, HTN core; `sf_ai_bevy` debug overlay ("Debugging"); AI4 on not built. M7.
 Former open questions decided 2026-11-08 (owner-delegated): `../research/ai-nav-decisions-2026-11-08.md` (d, g, k, l).
 Crates (planned): `sf_ai` (Bevy-free: directives, drives, HTN, perception model, facts, tiers, trace), `sf_ai_bevy`
 (thin: fixed-tick systems, executors' glue to `sf_action`/`sf_controller`, debugger, console). Uses [nav.md](nav.md)
@@ -271,8 +271,8 @@ Per-actor **trace ring buffer** (64 decisions: tick, tier, drive and considerati
 `ai.select` (reference picking, ROADMAP 1.13), `ai.tiers`, `ai.stats`, `ai.facts`; JSON/BRP for agents; gizmos
 (paths, cones, tier colours, claims, plan text), feature `debug`. Later: Visual-Logger-style recording.
 
-**As built (AI1).** `sf_ai::{ids, trace}`; detail in [ai-as-built.md](ai-as-built.md). `decide` takes
-`Option<&mut TraceEntry>` (the store's off switch). `ai.trace` is registered in AI3 (`format_trace`, JSON dumps).
+**As built (AI1, AI3).** `sf_ai::{ids, trace}`; `sf_ai_bevy`: `ai.select`/`ai.trace`/`ai.tiers`/`ai.stats`, `debug` gizmos,
+BRP handler `sf_ai/trace`. Detail in [ai-as-built.md](ai-as-built.md).
 
 ## Industry comparison
 

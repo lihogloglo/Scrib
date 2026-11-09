@@ -3,6 +3,29 @@
 Moved here to keep [ai.md](ai.md) inside its size budget. Newest slice first; the module docs in
 `superfargoth/crates/sf_ai/src/` are the detailed reference.
 
+## AI3: debug overlay, `sf_ai_bevy` (2026-11-09)
+
+New thin Bevy crate `sf_ai_bevy` (bevy_app/bevy_ecs + `sf_console_bevy`; feature `debug` adds gizmos, camera,
+colour, transform and the console overlay). `AiPlugin { timings }` inserts `AiTraces` (the `TraceStore`, tier-2
+admission), `AiLibrary` (library + last `LoadReport`), `AiSelected`; `AiActor(ActorKey)` marks an entity the AI
+runs. `load_library(world, db, keys, operators)` logs one `error` line per bad record (target `sf_ai`,
+`HTN library: sf.ai.method `x`: unknown task `y``, then a count line) and keeps an empty library. Console:
+`ai.select [hex|off]` (no id: the console's click selection, `debug`), `ai.trace [n] [hex]` (names through the
+library, indices for unknown ids), `ai.tiers` (labelled provisional: last traced step per actor until AI9),
+`ai.stats`; `ai.gizmos` (`debug`): ring at the selected actor's feet coloured by the last plan outcome and
+`overlay_lines` above its head as Bevy 0.20 stroke-font `Gizmos::text`, facing the active camera. Tier colours,
+paths, cones and claims are not drawn (no data until AI6/AI8/AI9/AI14). Enum names print through serde, so
+variants `sf_ai` adds later need no change here. Owner check: example `ai_overlay` (AI-1, synthetic trace).
+
+Deviations, and why:
+- **BRP without `bevy_remote`:** one `RemotePlugin` per app (the game's `mw_devtools_bevy` owns it) and hakari keeps
+  `bevy_remote` out of every other build, so the crate exports `brp_trace(world, params)` /
+  `brp_trace_system` for `with_method_main(BRP_TRACE_METHOD = "sf_ai/trace", ..)`.
+- **Actor keys as 32-hex strings in BRP**, not `TraceStore::to_json`'s numbers: a 128-bit placement id doesn't fit
+  a `serde_json::Value` number or a JavaScript client. The console prints and parses the same hex as `PlacementId`.
+- **Not wired into the game yet:** no NPC entity carries `AiActor` and the game app doesn't add `AiPlugin` (needs
+  `mw_devtools_bevy`: plugin, `AiActor` from `CharacterPlacement`, the BRP line; a game build, not done here).
+
 ## AI2: HTN core (2026-11-09)
 
 `sf_ai::{state, htn}`. `StateKeys` (code-declared, case-folded; same name + kind shares a key, a kind clash
