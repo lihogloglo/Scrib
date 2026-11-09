@@ -416,12 +416,11 @@ impl Step<'_> {
         if !e.phase.is_live() {
             return;
         }
-        match self.defs.get(&e.effect) {
-            Some(def) => self.emit(who, def, e, Stage::End(e.applied), out),
-            None => {
-                let source = who.id.source_id(e.index);
-                out.stat_ops.push((self.target, StatOp::RemoveSource(source), self.cause(source)));
-            }
+        if let Some(def) = self.defs.get(&e.effect) {
+            self.emit(who, def, e, Stage::End(e.applied), out);
+        } else {
+            let source = who.id.source_id(e.index);
+            out.stat_ops.push((self.target, StatOp::RemoveSource(source), self.cause(source)));
         }
         e.phase = Phase::Ended;
         out.events.push(EffectEvent::Ended {
@@ -679,7 +678,7 @@ impl Step<'_> {
                     .sources
                     .iter()
                     .filter(|s| matches!(s.class, SourceClass::Cast | SourceClass::Power))
-                    .filter(|s| !*harmful_only || harmful(*s))
+                    .filter(|s| !*harmful_only || harmful(s))
                     .filter(|s| roll(RollSeed(seed.0 ^ s.id.0), 0, 3) < chance)
                     .map(|s| s.id)
                     .collect();

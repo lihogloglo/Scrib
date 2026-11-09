@@ -382,6 +382,7 @@ fn crime_reputation_level() {
 }
 
 #[test]
+#[allow(clippy::items_after_statements, reason = "a local host fixture next to the case it serves")]
 fn creatures_and_missing_sheets() {
     let w = World::new();
     let r = run(

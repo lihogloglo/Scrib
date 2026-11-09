@@ -183,7 +183,7 @@ fn table_has_the_format_stats_and_roles() {
     assert_eq!(t.table.role(Role::Encumbrance), Some(t.idx.encumbrance));
 }
 
-/// The 22 magnitude stats (2026-11-08) are appended: every older index is where it was (MwIdx
+/// The 22 magnitude stats (2026-11-08) are appended: every older index is where it was (`MwIdx`
 /// fields are positional), and each magnitude key resolves to a base-0 `Value` in `magnitude`.
 #[test]
 fn magnitude_stats_are_appended_after_the_older_indices() {

@@ -59,12 +59,11 @@ impl WorldServices {
         let PurseRule::Pool { base, reset_hours } = rule else {
             return None;
         };
-        match self.purses.get_mut(&provider) {
-            Some(purse) => purse.restock(base, reset_hours, now).then_some(purse.gold),
-            None => {
-                self.purses.insert(provider, Purse { gold: base, last_restock: now });
-                Some(base)
-            }
+        if let Some(purse) = self.purses.get_mut(&provider) {
+            purse.restock(base, reset_hours, now).then_some(purse.gold)
+        } else {
+            self.purses.insert(provider, Purse { gold: base, last_restock: now });
+            Some(base)
         }
     }
 

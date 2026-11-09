@@ -56,7 +56,7 @@ pub struct CostEntryIn {
 /// One entry's cost: `base_cost · max(1, (min + max) / 2) · max(1, duration) · (1 + area /
 /// area_unit) · scale`. Not a rule of its own: part of `sf.effects.cast` and `sf.effects.item_charge`.
 pub fn entry_cost(e: &CostEntryIn, k: &CostConsts) -> f32 {
-    let magnitude = ((e.magnitude.0 + e.magnitude.1) / 2.0).max(1.0);
+    let magnitude = f32::midpoint(e.magnitude.0, e.magnitude.1).max(1.0);
     let duration = e.duration.max(1.0);
     let area = if k.area_unit > 0.0 { 1.0 + e.area.max(0.0) / k.area_unit } else { 1.0 };
     e.base_cost * magnitude * duration * area * k.scale

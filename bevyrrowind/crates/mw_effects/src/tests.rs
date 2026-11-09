@@ -193,7 +193,7 @@ fn stat_table() -> StatTable {
 fn magnitude_stats_match_the_mgef_table() {
     for (n, &i) in MAGNITUDE_STAT_EFFECTS.iter().enumerate() {
         let (key, label) = mw_stats::MAGNITUDE_STATS[n];
-        assert_eq!(crate::mgef::magnitude_stat_key(i), StatKey::new(key), "MGEF {i}");
+        assert_eq!(mgef::magnitude_stat_key(i), StatKey::new(key), "MGEF {i}");
         assert_eq!(effect_label(i), Some(label), "MGEF {i}");
     }
 }

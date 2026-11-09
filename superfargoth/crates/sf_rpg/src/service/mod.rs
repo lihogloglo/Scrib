@@ -233,10 +233,20 @@ pub trait ServiceRules {
     fn sells(&self, ctx: &ServiceCtx, source: Holder, stack: &ItemStack) -> bool;
     /// A restocking stack is never used up by a sale (content's infinite stock).
     fn restocking(&self, ctx: &ServiceCtx, source: Holder, stack: &ItemStack) -> bool;
+    /// The attrs of the copy a restocking sale gives the player: content strips its own
+    /// restock marker here so the copy stacks with ordinary items. Default: unchanged.
+    fn restocked_copy_attrs(&self, _ctx: &ServiceCtx, attrs: &Attrs) -> Attrs {
+        attrs.clone()
+    }
     /// The price of a whole line, `>= 0`.
     fn quote(&self, ctx: &ServiceCtx, line: &QuoteLine<'_>) -> i64;
     /// Whether a haggled balance is accepted; `roll` is the host's seeded draw.
     fn haggle(&self, ctx: &ServiceCtx, deal: &DealTotals, roll: u8) -> HaggleOutcome;
+    /// Side effects of a deal accepted at the merchant's own offer (no haggle), e.g. a
+    /// disposition gain content applies on every successful deal. Default: none.
+    fn plain_deal_effects(&self, _ctx: &ServiceCtx, _deal: &DealTotals) -> Vec<ServiceEffect> {
+        Vec::new()
+    }
     /// Deal check beyond money and counts (stolen goods).
     fn vet_deal(&self, ctx: &ServiceCtx, session: &TradeSession) -> Result<(), DealVeto>;
     /// List services: rows, priced, enabled or not.

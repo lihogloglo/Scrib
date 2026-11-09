@@ -126,6 +126,7 @@ pub enum ScreenSystems {
 pub struct SfScreensPlugin;
 
 impl Plugin for SfScreensPlugin {
+    #[allow(clippy::too_many_lines, reason = "one flat registration list: resources, observers, systems per screen")]
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<bevy_ui_widgets::ScrollAreaPlugin>() {
             app.add_plugins(bevy_ui_widgets::ScrollAreaPlugin);

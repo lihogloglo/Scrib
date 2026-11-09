@@ -658,6 +658,7 @@ fn sub(s: &str) -> DialogueFocus {
     DialogueFocus::SubAction(ActionId::new(s))
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "compared with the view's Option results")]
 fn pressed(action: &str, option: Option<&str>) -> Option<DialogueRequest> {
     Some(DialogueRequest::Action {
         action: ActionId::new(action),

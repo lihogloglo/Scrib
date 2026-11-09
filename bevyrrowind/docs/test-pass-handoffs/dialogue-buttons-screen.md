@@ -58,4 +58,4 @@ Visual-check entry for bevyrrowind/docs/visual-checks/player-ui.md (after DJ-1):
 - Focused rows show the hover colour with arrows/pad, no bright outline with the mouse (as uipolish).
 
 Index line for visual-checks.md:
-DJ-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Dialogue action buttons, Persuasion submenu modal
+DJ-2 | awaiting owner | [player-ui](../visual-checks/player-ui.md) | Dialogue action buttons, Persuasion submenu modal

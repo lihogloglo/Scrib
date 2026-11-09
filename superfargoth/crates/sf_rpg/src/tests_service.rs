@@ -1,4 +1,5 @@
 //! `service` tests (services.md "Tests"): synthetic records, exact assertions.
+#![allow(clippy::many_single_char_names, reason = "test fixtures: w, s, r, c, t mirror the spec's examples")]
 
 use std::cell::Cell;
 use std::collections::BTreeMap;

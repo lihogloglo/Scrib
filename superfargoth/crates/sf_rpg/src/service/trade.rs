@@ -226,27 +226,26 @@ impl TradeSession {
         if n == 0 {
             return Err(TradeRefusal::NothingLeft);
         }
-        let index = match self.lines.iter().position(|l| l.side == side && l.source == source && l.stack == stack) {
-            Some(i) => {
-                if !found.is_same_kind(&self.lines[i].item, &self.lines[i].attrs) {
-                    return Err(TradeRefusal::StockChanged { line: i });
-                }
-                // `n <= found.count - staged`, so the sum fits the stack's own count.
-                self.lines[i].count += n;
-                i
+        let index = if let Some(i) =
+            self.lines.iter().position(|l| l.side == side && l.source == source && l.stack == stack)
+        {
+            if !found.is_same_kind(&self.lines[i].item, &self.lines[i].attrs) {
+                return Err(TradeRefusal::StockChanged { line: i });
             }
-            None => {
-                self.lines.push(TradeLine {
-                    side,
-                    source,
-                    stack,
-                    item: found.item.clone(),
-                    attrs: found.attrs.clone(),
-                    count: n,
-                    price: 0,
-                });
-                self.lines.len() - 1
-            }
+            // `n <= found.count - staged`, so the sum fits the stack's own count.
+            self.lines[i].count += n;
+            i
+        } else {
+            self.lines.push(TradeLine {
+                side,
+                source,
+                stack,
+                item: found.item.clone(),
+                attrs: found.attrs.clone(),
+                count: n,
+                price: 0,
+            });
+            self.lines.len() - 1
         };
         self.requote(env, index);
         self.update_offer();
@@ -355,15 +354,16 @@ impl TradeSession {
             }
         }
         env.rules.vet_deal(env.ctx, self).map_err(TradeRefusal::Vetoed)?;
-        let mut effects = Vec::new();
-        if self.balance != self.merchant_offer {
+        let effects = if self.balance == self.merchant_offer {
+            env.rules.plain_deal_effects(env.ctx, &self.totals())
+        } else {
             let outcome = env.rules.haggle(env.ctx, &self.totals(), roll);
             self.attempts = self.attempts.saturating_add(1);
             if !outcome.accepted {
                 return Err(TradeRefusal::HaggleFailed { effects: outcome.effects });
             }
-            effects = outcome.effects;
-        }
+            outcome.effects
+        };
         let mut commands = Vec::with_capacity(self.lines.len() + 2);
         for line in &self.lines {
             let cmd = match line.side {
@@ -375,7 +375,12 @@ impl TradeSession {
                         .and_then(|l| l.inventory().get(line.stack))
                         .is_some_and(|s| env.rules.restocking(env.ctx, line.source, s));
                     if restocking {
-                        RpgCommand::AddItem { holder: player, item: line.item.clone(), count: line.count, attrs: line.attrs.clone() }
+                        RpgCommand::AddItem {
+                            holder: player,
+                            item: line.item.clone(),
+                            count: line.count,
+                            attrs: env.rules.restocked_copy_attrs(env.ctx, &line.attrs),
+                        }
                     } else {
                         RpgCommand::MoveStack { from: line.source, to: player, stack: line.stack, count: line.count }
                     }

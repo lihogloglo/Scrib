@@ -1,5 +1,5 @@
 //! Stat, faction and crime functions in result scripts (stats.md S7, stats-adapter.md
-//! "Consumers", MWScript bullet): each [`StatCall`] reads the sheet the run sees, and a write
+//! "Consumers", `MWScript` bullet): each [`StatCall`] reads the sheet the run sees, and a write
 //! becomes `sf_stats` ops, applied to the run's copy of that sheet (later reads in the same run
 //! see it, as in the original engine) and handed to the host as one [`ResultEffect::Stats`].
 //!
@@ -8,8 +8,8 @@
 //!   Set = base with the damage cleared, Mod through `modStat`: base clamped to 0..=100, a gain
 //!   capped at a modified 100 unless a fortification lifts a base under 100), `OpGet/Set/ModSkill`
 //!   (writes on NPCs only), `OpGetDynamic` (current; magicka never below 0), `OpSetDynamic`
-//!   (base, then current = max), `OpModDynamic` (base + diff, kept ≥ 0 except fatigue; current
-//!   + diff, unclamped), `OpModCurrentDynamic` (current + diff, fatigue may go below 0),
+//!   (base, then current = max), `OpModDynamic` (base + diff, kept ≥ 0 except fatigue;
+//!   current + diff, unclamped), `OpModCurrentDynamic` (current + diff, fatigue may go below 0),
 //!   `OpGetDynamicGetRatio` (`DynamicStat::getRatio(false)`, `mwmechanics/stat.cpp`: 1 for a
 //!   0 max), `OpGet/SetLevel`, `OpGet/Set/ModPCCrimeLevel` (bounty; Mod floors the total at 0),
 //!   `OpPCJoinFaction`, `OpPCRaiseRank` (joins a non-member), `OpPCLowerRank`, `OpGetPCRank`,
@@ -141,9 +141,9 @@ impl StatOverlay {
     /// copy can't be stepped: later reads in the run see the host's sheet.
     fn apply(&mut self, t: &MwTable, sheets: &dyn MwSheets, ctx: &ConversationCtx, who: Who, ops: &[StatOp]) {
         let Some(rules) = sheets.rules() else { return };
-        if !self.sheets.contains_key(&who) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = self.sheets.entry(who) {
             let Some(base) = host_sheet(sheets, ctx, who) else { return };
-            self.sheets.insert(who, base.clone());
+            slot.insert(base.clone());
         }
         let Some(sheet) = self.sheets.get_mut(&who) else { return };
         step_copy(t, rules, sheet, who, ops);
@@ -200,9 +200,9 @@ pub(crate) fn mod_stat(base: f32, modified: f32, amount: f32) -> f32 {
     if !amount.is_finite() {
         return base;
     }
-    let modifier = modified - base;
+    let bonus = modified - base;
     let mut amount = amount;
-    if (modifier <= 0.0 || base >= 100.0) && amount > 0.0 {
+    if (bonus <= 0.0 || base >= 100.0) && amount > 0.0 {
         amount = (100.0 - modified).clamp(0.0, amount);
     }
     (base + amount).clamp(0.0, 100.0)
@@ -237,7 +237,12 @@ fn set_rank(group: &RecordId, new: i32) -> Option<StatOp> {
 /// What `f` does on sheet `s`. `faction`: the call's faction (argument or the target's own);
 /// `record_rank`: the target's rank in its record (`RaiseRank` / `LowerRank` the first time).
 // One arm per function; ranks, reputations and bounties are small integers.
-#[allow(clippy::too_many_lines, clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+#[allow(
+    clippy::too_many_lines,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::many_single_char_names
+)]
 fn step(
     t: &MwTable,
     s: &SheetRead<'_>,

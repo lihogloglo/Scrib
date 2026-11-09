@@ -58,6 +58,7 @@ pub enum EndReason {
 /// One change to an [`crate::ActiveSet`] (and, from E3, its owner's [`crate::SpellBook`]).
 /// E1: landing, ending and skipping time; E3: casting, the book, cures and request answers.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant, reason = "short-lived per-tick op lists; boxing would change the public op shape")]
 pub enum EffectOp {
     /// Lands `entries` from `source` on the target (scripts, potions, and later casts).
     Inflict {

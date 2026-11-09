@@ -853,9 +853,10 @@ impl Rpg {
                     Target::Player => player_key(ctx.player).map(StatOwner::Player),
                     other => target_key(self, other).map(StatOwner::Actor),
                 };
-                match owner {
-                    Some(owner) => self.stat_commands.push(StatCommand::new(owner, CauseKind::Script, ops)),
-                    None => debug!("result scripts: stats of {target:?} have no sheet owner"),
+                if let Some(owner) = owner {
+                    self.stat_commands.push(StatCommand::new(owner, CauseKind::Script, ops));
+                } else {
+                    debug!("result scripts: stats of {target:?} have no sheet owner");
                 }
             }
         }

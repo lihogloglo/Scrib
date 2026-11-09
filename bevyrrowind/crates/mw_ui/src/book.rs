@@ -314,6 +314,7 @@ pub fn legacy_font_size(value: &str) -> Option<f32> {
 }
 
 /// `<FONT COLOR>` as `OpenMW` reads it (see the module docs).
+#[allow(clippy::many_single_char_names, reason = "mirrors OpenMW's short names")]
 pub fn font_color(value: &str) -> Rgba8 {
     let s = value.strip_prefix('#').unwrap_or(value);
     let end = s.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(s.len());

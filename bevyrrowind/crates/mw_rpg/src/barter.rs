@@ -509,6 +509,20 @@ impl<H: MwTradeHost + ?Sized> ServiceRules for MwServiceRules<'_, H> {
         is_restocking(&stack.attrs)
     }
 
+    /// The bought copy drops [`ATTR_RESTOCK`], so it stacks with the player's ordinary items.
+    fn restocked_copy_attrs(&self, _ctx: &ServiceCtx, attrs: &Attrs) -> Attrs {
+        let mut copy = attrs.clone();
+        copy.remove(&RecordId::new(ATTR_RESTOCK));
+        copy
+    }
+
+    /// `OpenMW` applies `iBarterSuccessDisposition` on every accepted deal: at the merchant's
+    /// offer the haggle accepts at once (`tradewindow.cpp` `onOfferButtonClicked`), so this is
+    /// the haggle's success effects.
+    fn plain_deal_effects(&self, ctx: &ServiceCtx, deal: &DealTotals) -> Vec<ServiceEffect> {
+        self.haggle(ctx, deal, 0).effects
+    }
+
     /// `mw.barter.price` of the line's effective value (condition-scaled, whole line).
     fn quote(&self, ctx: &ServiceCtx, line: &QuoteLine<'_>) -> i64 {
         let Some(item) = trade_item(self.records, line.item) else { return 0 };

@@ -1,4 +1,4 @@
-//! `MessageBox` text formatting and button selection (ui-adapter.md "MWScript UI calls").
+//! `MessageBox` text formatting and button selection (ui-adapter.md "`MWScript` UI calls").
 //!
 //! Status: written 2026-11-08 without compiling: UNTESTED (owner test pass 2026-11-10).
 //!

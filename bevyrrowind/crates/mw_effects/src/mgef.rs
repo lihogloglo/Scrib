@@ -275,7 +275,7 @@ pub fn hardcoded_flags(index: usize) -> u32 {
 }
 
 /// A legacy-format record's flags as `OpenMW` loads them: the record keeps only
-/// [`flag::RECORD_MASK`], the hardcoded flags are ORed in.
+/// [`flag::RECORD_MASK`], the hardcoded flags are or-ed in.
 #[must_use]
 pub fn effective_flags(index: usize, record_flags: u32) -> u32 {
     (record_flags & flag::RECORD_MASK) | hardcoded_flags(index)
@@ -519,7 +519,7 @@ impl MwEffectInfo {
         def.base_cost = self.base_cost;
         def.resisted_by = resistance_effect(i).into_iter().chain(shield_effect(i)).map(magnitude_stat_key).collect();
         def.weakened_by = weakness_effect(i).into_iter().map(magnitude_stat_key).collect::<SmallVec<_>>();
-        def.label = EFFECTS[i].1.to_owned();
+        EFFECTS[i].1.clone_into(&mut def.label);
         Some(def)
     }
 }

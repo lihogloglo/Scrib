@@ -155,6 +155,16 @@ SOFTWARE.
 - Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
 - Ported into: `bevyrrowind/crates/mw_rpg/src/services.rs` and GMST defaults in `bevyrrowind/crates/mw_stats/src/gmst.rs`
   (the game; written 2026-11-08, untested).
+- Merchant rules (2026-11-08, services A2a): `apps/openmw/mwclass/npc.cpp` and `creature.cpp` (`getServices`,
+  `getBaseGold`), `mwclass/*.cpp` (`canSell`), `mwclass/misc.cpp` (`isGold`), `components/esm3/loadnpc.hpp` (service
+  bits, `AllItems`), `apps/openmw/mwgui/dialogue.cpp` (`updateTopicsPane`, `onSelectListItem`, restock),
+  `mwbase/dialoguemanager.hpp` (`ServiceType`), `mwdialogue/dialoguemanagerimp.cpp` (`checkServiceRefused`),
+  `mwgui/tradeitemmodel.cpp` (`update`), `mwgui/tradewindow.cpp` (`onOfferButtonClicked`),
+  `mwmechanics/mechanicsmanagerimp.cpp` (`isBoundItem`), `mwworld/containerstore.cpp` and
+  `mwgui/containeritemmodel.cpp` (restocking counts); ported into `bevyrrowind/crates/mw_rpg/src/barter.rs`.
+- Persuasion menu (2026-11-08): `apps/openmw/mwgui/dialogue.cpp` (`PersuasionDialog`) and
+  `files/data/mygui/openmw_persuasion_dialog.layout` (labels); ported into
+  `bevyrrowind/crates/mw_rpg_bevy/src/dialogue/persuasion.rs`.
 
 ## OpenMW (MessageBox formatting)
 

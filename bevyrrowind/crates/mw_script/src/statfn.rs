@@ -1,5 +1,5 @@
 //! The stat, faction and crime functions as typed calls (stats.md S7, stats-adapter.md
-//! "Consumers", MWScript bullet): the interpreter decodes them by name once per table and hands
+//! "Consumers", `MWScript` bullet): the interpreter decodes them by name once per table and hands
 //! each call to [`crate::Host::stat`] as a [`StatCall`]. Semantics live in the host (`mw_rpg`'s
 //! runner ports `OpenMW`'s `statsextensions.cpp` onto `sf_stats` ops); this module only names
 //! the calls and where their arguments are.

@@ -87,3 +87,10 @@ Written 2026-11-08 without compiling: UNTESTED (owner test pass 2026-11-10). `sf
   until the deal's lines change. The list spawns every row (short lists); the view's `VirtualList` only drives focus
   and paging. `progress: Option<f32>` on `ServiceListScreen` is the host-driven PassTime bar.
 - Tests open the screens under the demo registry's `container` / `inventory` ids; a host registers its own ids.
+
+## Fix (2026-11-09): two gaps found by services A2a
+
+UNTESTED. `ServiceRules` gained two default methods: `restocked_copy_attrs` (a restocking sale gives the player a copy
+whose attrs content may clean, so `mw.restock` no longer leaks onto bought items) and `plain_deal_effects` (effects of
+a deal accepted at the merchant's own offer; `OpenMW` applies `iBarterSuccessDisposition` on every accepted deal).
+`TradeSession::accept` calls the second when the balance equals the offer, the haggle otherwise.

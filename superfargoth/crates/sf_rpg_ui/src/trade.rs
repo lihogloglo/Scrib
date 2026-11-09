@@ -54,6 +54,7 @@ impl TradePane {
     }
 
     /// The other pane.
+    #[must_use]
     pub fn other(self) -> Self {
         match self {
             Self::Provider => Self::Player,
@@ -441,18 +442,18 @@ impl TradeView {
             count: l.count,
             price: l.price,
         };
-        let side = |s: Side| -> Vec<BarLine> {
+        let lines_of = |s: Side| -> Vec<BarLine> {
             self.lines.iter().enumerate().filter(|(_, l)| l.side == s).map(bar_line).collect()
         };
-        let (buy, sell) = (side(Side::Buy), side(Side::Sell));
+        let (buy_lines, sell_lines) = (lines_of(Side::Buy), lines_of(Side::Sell));
         let total = |v: &[BarLine]| v.iter().map(|l| l.price).fold(0, i64::saturating_add);
         let player_gold = self.player_gold();
         let merchant_gold = self.merchant_gold();
         DealBar {
-            buy_total: total(&buy),
-            sell_total: total(&sell),
-            buy,
-            sell,
+            buy_total: total(&buy_lines),
+            sell_total: total(&sell_lines),
+            buy: buy_lines,
+            sell: sell_lines,
             merchant_offer: self.merchant_offer,
             balance: self.balance,
             haggle: self.haggle && !self.lines.is_empty(),
@@ -596,7 +597,7 @@ impl TradeView {
     fn unstage_request(&self, line: u32, count: u32) -> Option<ServiceRequest> {
         let l = self.line(line)?;
         let count = count.min(l.count);
-        (!self.closed && count > 0).then(|| ServiceRequest::Unstage { session: self.session, line, count })
+        (!self.closed && count > 0).then_some(ServiceRequest::Unstage { session: self.session, line, count })
     }
 
     /// A or a click on a pane row: stages every piece not staged yet.

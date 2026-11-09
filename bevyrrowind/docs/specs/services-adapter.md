@@ -357,20 +357,10 @@ UESP refused automated fetches on 2026-11-08; the UESP-sourced values are as rem
 - Marked `#[ignore = "needs Morrowind.esm"]`: GMST defaults as in the table; Arrille's gold and services; the Seyda
   Neen silt strider's destinations and prices against OpenMW at the same stats (owner-run).
 
-## As built (A1)
+## As built
 
-`mw_rpg::services` (`crates/mw_rpg/src/services.rs`, tests `tests_services.rs`, 25 tests): `PartyTerms`, `BarterTerms`,
-`barter_offer`, `effective_value`, and the six rules as pure `fn(&In) -> Out` (`barter_price`, `barter_haggle`,
-`training_price`, `travel_price`, `spell_price`, `repair_price`; ids in `RULE_IDS`); each `In` holds its GMSTs and has
-`In::new(.., &MwGmst)`. The 12 GMSTs above are in `mw_stats::MwGmst` (the fatigue ones already were). Changes from the
-design: travel takes `player_pos`/`dest_pos` (fare distance in `f64` as `std::pow` promotes, hours from the `f32` 2D
-length); the training skill and attribute are `f32` (OpenMW compares floats); `HaggleOut::disposition_delta` is 0 for
-creatures. Not wired (A2). Real-install GMST check: `mw_stats` test `real_install` (ignored) prints every GMST against
-`vanilla()`.
-
-**As built (A2a)**, written 2026-11-08 without compiling: UNTESTED (owner test pass 2026-11-10). `mw_rpg::barter`
-(`barter.rs`, tests `tests_barter.rs`, 12 tests): `MwServiceRules` over a host `MwTradeHost` (terms, owned stock, the
-"Service Refusal" filter); `AllItems` excludes `MagicItems` (no Barter button for it); bound items from `sMagicBound*`.
+A1 (price formulas, `mw_rpg::services`) and A2a (barter rules, `mw_rpg::barter`), both written 2026-11-08 without
+compiling: UNTESTED (owner test pass 2026-11-10). Detail: [archive/services-adapter-history.md](archive/services-adapter-history.md).
 
 ## Build plan (one deliverable per slice; framework SV1-SV3 first)
 

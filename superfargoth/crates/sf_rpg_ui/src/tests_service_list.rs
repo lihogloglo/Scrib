@@ -59,6 +59,7 @@ fn view() -> ServiceListView {
     v
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "compared with the view's Option results")]
 fn buy(entry: &str) -> Option<ListOutcome> {
     Some(ListOutcome::Request(ServiceRequest::BuyEntry { provider: TRAINER, kind: kind(), entry: eid(entry) }))
 }

@@ -98,6 +98,7 @@ fn quote(view: &mut TradeView, lines: Vec<TradeLine>, merchant_offer: i64, balan
     assert!(view.apply_event(&ServiceEventKind::TradeQuoted { session: S, lines, merchant_offer, balance }));
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "compared with the view's Option results")]
 fn stage(side: Side, source: Holder, stack: StackId, count: u32) -> Option<ServiceRequest> {
     Some(ServiceRequest::Stage { session: S, side, source, stack, count })
 }

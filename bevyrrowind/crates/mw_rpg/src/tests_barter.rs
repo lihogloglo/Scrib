@@ -1,6 +1,7 @@
 //! Barter rules (services-adapter.md "Tests": flags, offers, buys/sells, restocking, pool),
 //! on synthetic records. Prices use equal party terms, so the buy term is exactly 1.0 and the
 //! sell term exactly 0.5 in `f32` (`0.01 * 100.0` and `0.01 * 50.0` round to them).
+#![allow(clippy::many_single_char_names, reason = "test fixtures: db, g, m, p, c, n")]
 
 use std::collections::BTreeMap;
 
@@ -402,6 +403,16 @@ fn buying_from_a_restocking_stack_copies_it() {
         "nothing leaves the merchant's restocking stack"
     );
     assert_eq!(settled.purse_delta, 20);
+    assert!(
+        settled.commands.iter().all(|cmd| match cmd {
+            RpgCommand::AddItem { attrs, .. } => !is_restocking(attrs),
+            _ => true,
+        }),
+        "the bought copy drops the restock marker: {:?}",
+        settled.commands
+    );
+    // A deal at the merchant's own offer still gains iBarterSuccessDisposition (1), as in OpenMW.
+    assert_eq!(settled.effects, vec![ServiceEffect::Disposition { delta: 1 }]);
 }
 
 #[test]
