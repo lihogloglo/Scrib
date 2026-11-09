@@ -216,6 +216,7 @@ SK-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Night and moon
 ST-2 | deferred | [streaming](visual-checks/streaming.md) | No pop at origin shifts in flight
 ST-3 | deferred | [streaming](visual-checks/streaming.md) | Paced model loads arrive in time
 SC-2 | deferred | [streaming](visual-checks/streaming.md) | The cutoff fades, never pops
+SC-foliage | deferred (needs the `--scene` A/B, S3b) | [rendering](visual-checks/rendering.md) | Cutout candidates (foliage, fences, grates) drawn from the static table, and no candidate that should fade softly gaining hard edges
 SN-2 | deferred | [characters](visual-checks/characters.md) | Guar from its cooked skinned product
 SN-3 | deferred | [characters](visual-checks/characters.md) | Dark elf head morphs
 CH-1 | deferred | [characters](visual-checks/characters.md) | The M3 lineup

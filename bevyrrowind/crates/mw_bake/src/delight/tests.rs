@@ -248,3 +248,86 @@ fn roles_from_nif_materials() {
     // Spell effect models: every base texture is an effect.
     assert!(roles_of("meshes/e/magic.nif", &nif).iter().filter(|u| u.texture == t("wall")).all(|u| u.role == Role::Effect));
 }
+
+/// A `w` x `h` PNG whose alpha is `alpha(x, y)`: the whole input of an [`AlphaClass`].
+fn png_alpha(w: u32, h: u32, alpha: impl Fn(u32, u32) -> u8) -> Vec<u8> {
+    let image = image::RgbaImage::from_fn(w, h, |x, y| image::Rgba([200, 180, 90, alpha(x, y)]));
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+    bytes.into_inner()
+}
+
+fn candidate(texture: &str) -> TextureUse {
+    TextureUse { cutoff: Some(mw_nif::CUTOUT_CUTOFF), candidate: true, ..albedo(texture) }
+}
+
+/// `texture.alpha_class`: one class per *winning file* for every cutout candidate's reference,
+/// collected into the index the static-scene bake reads, and memoized on the file.
+#[test]
+fn alpha_classes_per_texture_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    // Holes and solid texels (a leaf card), flat half-alpha (gauze), and a file that won't decode.
+    let leaf = |cutout: bool| png_alpha(16, 16, move |x, _| if !cutout { 128 } else if x % 2 == 0 { 0 } else { 255 });
+    let world = |cutout| {
+        Arc::new(
+            Vfs::builder()
+                .mount(
+                    MemSource::new("data")
+                        .with("textures/leaf.png", leaf(cutout))
+                        .with("textures/glass.png", png_alpha(16, 16, |_, _| 128))
+                        .with("textures/broken.dds", b"not a dds".to_vec()),
+                )
+                .build(),
+        )
+    };
+    // References as a material names them (`.dds`), resolving to the files that exist.
+    let uses: Vec<TextureUse> =
+        ["textures/leaf.dds", "textures/glass.dds", "textures/broken.dds", "textures/absent.dds"].iter().map(|t| candidate(t)).collect();
+    let bake = |vfs: &Arc<Vfs>| {
+        let resolve =
+            |r: &str| vfs.resolve_preferring(&VfsPath::new(r).ok()?, TEXTURE_ALTERNATES).map(|(p, _)| p.as_str().to_owned());
+        let textures = Arc::new(alpha_class_jobs(&uses, resolve));
+        // `absent.dds` resolves to nothing: no class, and the rule's answer is "not a cutout".
+        assert_eq!(textures.len(), 3, "{textures:?}");
+        assert_eq!(textures.get("textures/leaf.dds").map(String::as_str), Some("textures/leaf.png"));
+        let mut baker = Baker::new(store.clone(), Arc::new(TestInputs(vfs.clone())));
+        baker.register(AlphaClassStep).register(AlphaIndexStep { textures });
+        let report = baker.bake(&[ProductKey::new(ALPHA_INDEX_STEP, ALPHA_INDEX_SUBJECT)]);
+        assert_eq!(report.failures().count(), 0);
+        let built = report.steps.get(ALPHA_CLASS_STEP).map_or(0, |s| s.built);
+        (built, load_alpha_classes(&store, &baker.manifest()).unwrap())
+    };
+    let class = |t: &str, c| (t.to_owned(), c);
+    let (built, index) = bake(&world(true));
+    assert_eq!(built, 3);
+    assert_eq!(
+        index.classes,
+        BTreeMap::from([
+            class("textures/leaf.dds", AlphaClass::Cutout),
+            class("textures/glass.dds", AlphaClass::Soft),
+            class("textures/broken.dds", AlphaClass::Undecodable),
+        ])
+    );
+    // Same files: nothing re-runs, same index.
+    let (built, again) = bake(&world(true));
+    assert_eq!((built, &again), (0, &index));
+    // The leaf texture is replaced by a translucent one: only it re-runs, and it is no longer a
+    // cutout, so the material rule stops promoting it (and the cells re-bake: the classes are
+    // part of `MwSceneSource::fingerprint`).
+    let (built, soft) = bake(&world(false));
+    assert_eq!(built, 1);
+    assert_eq!(soft.classes["textures/leaf.dds"], AlphaClass::Soft);
+}
+
+#[test]
+fn only_cutout_candidates_are_classified() {
+    let resolve = |r: &str| Some(r.to_owned());
+    // Plain albedo, a glow map, a translucent blend: their alpha class is nobody's question.
+    let other = [albedo("textures/a.dds"), with("textures/b.dds", Role::Glow), with("textures/c.dds", Role::Translucent)];
+    assert!(alpha_class_jobs(&other, resolve).is_empty());
+    // An authored alpha test is not a candidate either: it is already alpha-tested.
+    let tested = TextureUse { cutoff: Some(0.5), ..albedo("textures/d.dds") };
+    assert!(alpha_class_jobs(&[tested], resolve).is_empty());
+    assert_eq!(alpha_class_jobs(&[candidate("textures/leaf.dds")], resolve).len(), 1);
+}

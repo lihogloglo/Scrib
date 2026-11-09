@@ -3,7 +3,7 @@
 //!
 //! | Step | Subject | Reads | Output |
 //! |---|---|---|---|
-//! | `scene.cells` | `<ws>/<x>,<y>,<z>` (cell) | `world.page`; *dynamic*: `mesh.cook`, level-0 `terrain.tile` | [`StaticCellTable`] bytes (`table.rs`, format v2) |
+//! | `scene.cells` | `<ws>/<x>,<y>,<z>` (cell) | `world.page`; *dynamic*: `mesh.cook`, level-0 `terrain.tile` | [`StaticCellTable`] bytes (`table.rs`, format v3) |
 //!
 //! Keyed like `lod.near`: the cell's index page (its placements, so its records), the adapter's
 //! [`SceneSource::fingerprint`] (eligibility rules and the record facts they read, the mod set),
@@ -28,7 +28,9 @@
 //! cooked model's product key and the part's material index ([`mesh_key`]); the **material key**
 //! a stable hash of the cooked material's contents ([`material_key`]), so models sharing a
 //! material share it; the chain's [`MaterialClass`] comes from the adapter's reading of that
-//! material.
+//! material. Since format v3 the chain also carries the **source** of its geometry: the index of
+//! its model's `mesh.cook` subject in the table's model section, and the part (material index)
+//! inside it — the two inputs of [`mesh_key`], which is a hash and cannot be inverted.
 //!
 //! **Bounds.** Each instance carries its own part's sphere: the circumsphere of the part's LOD0
 //! vertex bounds ([`part_spheres`], decoded once per model per cell), placed by the transform and
@@ -59,9 +61,10 @@ use crate::material::{MaterialClass, MaterialTraits};
 use crate::table::{Aabb, InstanceFlags, LodChain, Sphere, StaticCellTable, StaticInstance, TableError};
 use crate::PlacementId;
 
-pub const CELLS_STEP: &str = "scene.cells";
-/// File extension of `scene.cells` products in `baked://` asset paths.
-pub const EXTENSION: &str = "sfscene";
+pub use crate::product::{CELLS_STEP, CHAINS_STEP};
+/// File extension of `scene.cells` products in `baked://` asset paths
+/// ([`crate::product::CELLS_EXT`]).
+pub use crate::product::CELLS_EXT as EXTENSION;
 
 /// Per-placement switches that bar a placement from the static scene whatever its record says
 /// (module docs, "Candidates"): the precombine "Members" bars of `sf_lod::near::near_eligible`.
@@ -89,17 +92,27 @@ pub fn classify_placement(
     classify(facts, id)
 }
 
-/// Subject of a cell's table: `<ws>/<x>,<y>,<z>`.
+/// Subject of a cell's table: `<ws>/<x>,<y>,<z>` ([`crate::product::cell_subject`] with the
+/// bake's own worldspace type).
 pub fn cell_subject(ws: &WorldspaceId, cell: IVec3) -> String {
-    format!("{}/{},{},{}", ws.as_str(), cell.x, cell.y, cell.z)
+    crate::product::cell_subject(ws.as_str(), cell)
 }
 
 /// Inverse of [`cell_subject`].
 pub fn parse_cell_subject(subject: &str) -> Option<(WorldspaceId, IVec3)> {
-    let (ws, tail) = subject.rsplit_once('/')?;
-    let mut it = tail.split(',').map(str::parse::<i32>);
-    let cell = IVec3::new(it.next()?.ok()?, it.next()?.ok()?, it.next()?.ok()?);
-    it.next().is_none().then(|| (WorldspaceId::new(ws), cell))
+    let (ws, cell) = crate::product::parse_cell_subject(subject)?;
+    Some((WorldspaceId::new(ws), cell))
+}
+
+/// Subject of a chain's geometry: `<model>/<part>`, the model's [`MeshCookStep`] subject and the
+/// chain's material index in it ([`crate::product::chain_subject`]).
+pub fn chain_subject(model: &str, part: u32) -> String {
+    crate::product::chain_subject(model, part)
+}
+
+/// Inverse of [`chain_subject`].
+pub fn parse_chain_subject(subject: &str) -> Option<(&str, u32)> {
+    crate::product::parse_chain_subject(subject)
 }
 
 /// The opaque mesh key of a chain: blake3 of the `mesh.cook` product key and the material index,
@@ -246,7 +259,27 @@ impl Default for SceneSettings {
     }
 }
 
+/// An invalid [`SceneSettings`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SettingsError {
+    #[error("SceneSettings.layers = 0: every table of this bake would be invisible to every view (a view draws a table only when `table.layers & view.layers != 0`); set the space's layer bit")]
+    NoLayers,
+}
+
 impl SceneSettings {
+    /// The settings' own invariant: an all-zero layer mask is a table no view can ever draw.
+    ///
+    /// Checked where the settings **enter** the bake ([`build_cell_table`] and the step's
+    /// `plan`), so the error names the caller that chose the value instead of surfacing later
+    /// as a [`TableError`] from the writer. [`StaticCellTable::write`] and the reader keep
+    /// their own check: a table also arrives from disk, where no [`SceneSettings`] was involved.
+    pub fn validate(&self) -> Result<(), SettingsError> {
+        if self.layers == 0 {
+            return Err(SettingsError::NoLayers);
+        }
+        Ok(())
+    }
+
     pub fn key_bytes(&self) -> Vec<u8> {
         let mut out = self.layers.to_le_bytes().to_vec();
         out.push(u8::from(self.casts_shadow));
@@ -289,12 +322,19 @@ pub enum BuildError {
     PartBounds { model: String, part: u32 },
     #[error("more placements than 32-bit ids")]
     TooManyPlacements,
+    #[error("one cell draws more than {} models", crate::table::MAX_MODELS)]
+    TooManyModels,
     #[error("table: {0}")]
     Table(#[from] TableError),
+    #[error("settings: {0}")]
+    Settings(#[from] SettingsError),
 }
 
 /// The step's pure core: one cell's table from its placements (index = [`PlacementId`]) and
 /// their loaded models (same length).
+///
+/// `settings` are checked first ([`SceneSettings::validate`]): settings no table could ever be
+/// drawn with fail here, naming them, not later in [`StaticCellTable::write`].
 pub fn build_cell_table(
     source: &dyn SceneSource,
     settings: &SceneSettings,
@@ -304,12 +344,15 @@ pub fn build_cell_table(
     models: &[CellModel<'_>],
 ) -> Result<StaticCellTable, BuildError> {
     assert_eq!(placements.len(), models.len(), "one model slot per placement");
+    settings.validate()?;
     let facts: Vec<ModelFacts> = models.iter().map(|m| m.facts(source)).collect();
     let eligibility = source.eligibility(CellFacts { placements, models: &facts });
     let origin = WorldPos::new(origin_cell, Vec3::ZERO);
     // Instances name their chain by mesh key until the chains are known (then by index).
     let mut instances: Vec<(StaticInstance, u64)> = Vec::new();
-    let mut chains: BTreeMap<u64, LodChain> = BTreeMap::new();
+    // Mesh key → its chain and the `mesh.cook` subject it came from (the table's model section
+    // is built from them once every chain is known, and the chain's `model` index set then).
+    let mut chains: BTreeMap<u64, (LodChain, &str)> = BTreeMap::new();
     let mut bounds: Option<(Vec3, Vec3)> = None;
     for (k, (placement, model)) in placements.iter().zip(models).enumerate() {
         let id = PlacementId::try_from(k).map_err(|_| BuildError::TooManyPlacements)?;
@@ -346,11 +389,17 @@ pub fn build_cell_table(
             let sphere = Sphere { center: affine.transform_point3(local.center), radius: local.radius * scale };
             let scene = source.material(&model.materials[part]);
             let mesh = mesh_key(path, material);
-            chains.entry(mesh).or_insert_with(|| LodChain {
-                mesh,
-                material: material_key(&model.materials[part]),
-                material_class: MaterialClass::of(scene.traits),
-                levels: layout.levels,
+            chains.entry(mesh).or_insert_with(|| {
+                let chain = LodChain {
+                    mesh,
+                    material: material_key(&model.materials[part]),
+                    material_class: MaterialClass::of(scene.traits),
+                    // Set below, once the model section's order is known.
+                    model: 0,
+                    part: material,
+                    levels: layout.levels,
+                };
+                (chain, path)
             });
             let mut flags = InstanceFlags::empty();
             flags.set(InstanceFlags::CASTS_SHADOW, settings.casts_shadow);
@@ -372,6 +421,18 @@ pub fn build_cell_table(
     // Dense cell-local indices in mesh key order (the table's chain order).
     let index: BTreeMap<u64, u32> = chains.keys().copied().zip(0u32..).collect();
     let instances = instances.into_iter().map(|(i, mesh)| StaticInstance { chain: index[&mesh], ..i }).collect();
+    // The model section: every chain's `mesh.cook` subject, sorted and unique (the table's own
+    // rule), so a chain's model index is its subject's rank.
+    let names: BTreeSet<&str> = chains.values().map(|(_, path)| *path).collect();
+    let models: Vec<String> = names.iter().map(|&s| s.to_owned()).collect();
+    let model_index: BTreeMap<&str, u32> = names.into_iter().zip(0u32..).collect();
+    let chains = chains
+        .into_values()
+        .map(|(chain, path)| {
+            let model = u16::try_from(model_index[path]).map_err(|_| BuildError::TooManyModels)?;
+            Ok(LodChain { model, ..chain })
+        })
+        .collect::<Result<Vec<LodChain>, BuildError>>()?;
     let (min, max) = bounds.unwrap_or((Vec3::ZERO, Vec3::ZERO));
     Ok(StaticCellTable {
         origin_cell,
@@ -379,7 +440,8 @@ pub fn build_cell_table(
         land_min,
         layers: settings.layers,
         instances,
-        chains: chains.into_values().collect(),
+        chains,
+        models,
     })
 }
 
@@ -548,15 +610,22 @@ impl Step for CellsStep {
     fn id(&self) -> &'static str {
         CELLS_STEP
     }
+    /// 3: table format v3 (the chain source and the model section).
     fn version(&self) -> u32 {
-        2
+        3
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (ws, cell) = parse_cell_subject(subject).ok_or_else(|| step_err(subject, "malformed subject"))?;
+        // The settings came from whoever built this `SceneBake`: reject theirs here, before a
+        // cell is planned, rather than per cell from the table writer.
+        self.0.settings.validate().map_err(|e| step_err(subject, e))?;
         cx.product(PAGE_STEP, page_subject(&ws, Partition::page_of(cell)));
         cx.param("source", self.0.source.fingerprint().to_vec()).param("settings", self.0.settings.key_bytes());
         cx.param("land", self.0.coverage(&ws)?.digest.to_vec());
         cx.param("table", crate::table::FORMAT_VERSION.to_le_bytes().to_vec());
+        // The chain layout rule decides every level range in the table (and, in `scene.chains`,
+        // the geometry those ranges address): a changed rule is a stale table, so it is a key.
+        cx.param("layout", crate::chain::LAYOUT_VERSION.to_le_bytes().to_vec());
         Ok(())
     }
     fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
@@ -607,6 +676,9 @@ impl Step for CellsStep {
         let land_min = land_min(page.partition, cell, origin_cell, &land);
         let table = build_cell_table(&*self.0.source, &self.0.settings, origin_cell, land_min, &placements, &models)
             .map_err(|e| step_err(subject, e))?;
+        // The product is what the runtime will trust: check the chains' mesh keys against the
+        // sources the table now carries, which only this side can (`mesh_key` is a hash).
+        table.verify_chain_sources().map_err(|e| step_err(subject, e))?;
         table.write().map_err(|e| step_err(subject, e))
     }
     /// Never: a table is dense binary already, and the runtime is to read it in place and upload

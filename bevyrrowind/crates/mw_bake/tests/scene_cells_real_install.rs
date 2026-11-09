@@ -46,6 +46,9 @@ fn scene_cells_over_vvardenfell() {
     let t = Instant::now();
     baker.bake(&mw_bake::model_keys(&paths));
     world::bake_exterior(&mut baker, &db, terrain, layers, &paths);
+    // The texture bake too: its per-texture alpha classes are what tell a cutout candidate
+    // (foliage, fences) from a translucent blend, and `bake_scene` requires them (`scene.rs`).
+    let delight = mw_bake::delight::bake_delight(&mut baker, &vfs, &paths, mw_bake::delight::DEFAULT_STRENGTH);
     let before = t.elapsed();
     let ext = world::exterior();
     let t = Instant::now();
@@ -84,7 +87,11 @@ fn scene_cells_over_vvardenfell() {
             materials.insert(c.material);
         }
     }
-    println!("load {loaded:.2?}; models + exterior {before:.2?}; scene.cells {scene_time:.2?}");
+    println!("load {loaded:.2?}; models + exterior + textures {before:.2?}; scene.cells {scene_time:.2?}");
+    // How many textures the candidate rule rests on, and how they split: the share of Morrowind's
+    // authored-blend cards that are really cutouts (foliage, fences, grates) is what the static
+    // table gains over baking every candidate blended, and `Soft` is what it must not promote.
+    println!("alpha classes: {} cutout-candidate textures ({} built this run)", delight.alpha_classes, delight.alpha_built);
     println!(
         "cells {cells} ({empty} empty, {no_land} without land); instances {instances} from {placements_in_scene} placements; \
          chains {} distinct ({chain_refs} cell copies), {} distinct material keys; {:.1} MiB of tables",

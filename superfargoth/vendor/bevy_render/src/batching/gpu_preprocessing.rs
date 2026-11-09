@@ -20,7 +20,9 @@ use bevy_ecs::{
     world::{FromWorld, World},
 };
 use bevy_encase_derive::ShaderType;
-use bevy_log::{error, info_once};
+// superfargoth patch (own, GS: guards): `warn_once` for views that cannot
+// draw GPU instance batches.
+use bevy_log::{error, info_once, warn_once};
 // superfargoth patch (bevyengine/bevy#25978)
 use bevy_math::{UVec2, UVec4};
 use bevy_platform::collections::{hash_map::Entry, HashMap, HashSet};
@@ -54,7 +56,11 @@ use crate::{
     GpuResourceAppExt, Render, RenderApp, RenderDebugFlags, RenderSystems,
 };
 
-use super::{BatchSetMeta, GetBatchData, GetFullBatchData};
+// superfargoth patch (own, GS: ranges): `InstanceBatchSpan`,
+// `instance_batch_sub_draws`.
+use super::{
+    instance_batch_sub_draws, BatchSetMeta, GetBatchData, GetFullBatchData, InstanceBatchSpan,
+};
 
 #[derive(Default)]
 pub struct BatchingPlugin {
@@ -2046,35 +2052,46 @@ pub fn batch_and_prepare_sorted_render_phase<I, GFBD>(
                 }
 
                 if no_indirect_drawing || spans.is_empty() {
+                    // superfargoth patch (own, GS: guards)
+                    if no_indirect_drawing {
+                        warn_once!(
+                            "GPU instance batches need indirect drawing; this sorted phase \
+                             draws none for views with `NoIndirectDrawing`"
+                        );
+                    }
                     *phase.items[current_index].batch_range_mut() = 0..0;
                     continue;
                 }
-                // superfargoth patch (own, GS: ranges): the spans tile the
-                // batch's slots in order, so the batch still reserves exactly
-                // what #25978 reserved - one work-item range over all of them,
-                // one indirect parameters slot, one batch set. Giving each
-                // span its own sub-draw is `gs-patch-plan.md` step 2e, which
-                // also needs the batch-set merging of that step; until then a
-                // batch with several ranges draws the first range's geometry
-                // for all of them, exactly as it did before this slice.
-                let base_input_index = spans[0].base_input_index;
+                // superfargoth patch (own, GS: ranges): one indirect draw
+                // command per geometry range, over the one contiguous
+                // `MeshUniform` allocation the spans tile. Sorted phases never
+                // draw through a batch set - `SortedRenderBatchSet::flush`
+                // always writes `batch_set_index: None` - so these N commands
+                // are one plain `multi_draw_indirect`, and the preprocessing
+                // shader keeps its 1:1 batch-to-slot mapping for them.
                 let count: u32 = spans.iter().map(|span| span.count).sum();
                 let output_base = data_buffer.add_multiple(count as usize) as u32;
 
-                let (indirect_parameters_index, extra_index) =
+                let (indirect_parameters_range, extra_index) =
                     prepare_instance_batch_indirect::<GFBD>(
                         &mut phase_indirect_parameters_buffers.buffers,
                         extracted_view.retained_view_entity,
                         item_is_indexed,
                         output_base,
+                        spans,
+                        false,
                     );
                 // CPU work items must precede the GPU-initialized tail.
-                pending_ranges.push((
-                    item_is_indexed,
-                    base_input_index,
-                    indirect_parameters_index,
-                    count,
-                ));
+                for sub_draw in
+                    instance_batch_sub_draws(indirect_parameters_range.start, output_base, spans)
+                {
+                    pending_ranges.push((
+                        item_is_indexed,
+                        sub_draw.base_input_index,
+                        sub_draw.indirect_parameters_index,
+                        sub_draw.count,
+                    ));
+                }
 
                 let (batch_range, batch_extra_index) =
                     phase.items[current_index].batch_range_and_extra_index_mut();
@@ -2256,25 +2273,71 @@ pub fn batch_and_prepare_sorted_render_phase<I, GFBD>(
 }
 
 // superfargoth patch (bevyengine/bevy#25978)
-/// Allocates the single indirect draw command for a GPU-authored instance
-/// batch and registers it as its own batch set.
+// superfargoth patch (own, GS: ranges): one indirect draw command per geometry
+// range instead of one per batch.
+/// Allocates one indirect draw command per span of a GPU-authored instance
+/// batch - that is, one per geometry range - in a single contiguous run, and
+/// registers the whole run as **one** batch set, so the batch draws as one
+/// `multi_draw_indirect_count` of `spans.len()` commands.
+///
+/// `output_base` is the batch's first `MeshUniform` slot; the spans tile the
+/// batch's slots in order, so command *i* starts at the output slot the first
+/// *i* spans do not take (see `instance_batch_sub_draws`).
+///
+/// `use_batch_set` asks for the `multi_draw_indirect_count` form, in which
+/// `build_indirect_params.wesl` compacts the batch's non-empty commands into
+/// the batch set. Binned phases use it; sorted phases never draw through a
+/// batch set (`SortedRenderBatchSet::flush` always writes
+/// `batch_set_index: None`), and pass `false` so the shader keeps its 1:1
+/// batch-to-slot mapping, which is what a plain `multi_draw_indirect` over all
+/// `spans.len()` commands needs.
+///
+/// Returns the allocated indirect parameters range and the `extra_index` the
+/// phase item must carry; the range's `start + i` is command *i*'s slot, which
+/// is also span *i*'s work item target.
 fn prepare_instance_batch_indirect<GFBD: GetFullBatchData>(
     buffers: &mut UntypedPhaseIndirectParametersBuffers,
     view: RetainedViewEntity,
     indexed: bool,
     output_base: u32,
-) -> (u32, PhaseItemExtraIndex) {
-    let index = buffers.allocate(indexed, 1);
-    GFBD::write_batch_indirect_parameters_metadata(indexed, output_base, None, buffers, index);
-    let range = index..index + 1;
+    spans: &[InstanceBatchSpan],
+    use_batch_set: bool,
+) -> (Range<u32>, PhaseItemExtraIndex) {
+    // `batch_spans` guarantees this: an empty range table still yields one
+    // whole-batch span. Callers drop batches with no spans at all before they
+    // get here, because those are #25978's "inputs unavailable" batches.
+    debug_assert!(!spans.is_empty());
+
+    // The `metadata` buffer this writes into is shared with the multidrawable
+    // preparer, which pushes *uninit* entries, so every init push has to come
+    // first: this must stay in the first view loop and go through `allocate`
+    // (`push_multiple_init`).
+    let base = buffers.allocate(indexed, spans.len() as u32);
+    // Read after `allocate` and immediately before `add_batch_set`, with
+    // nothing else pushing a batch set in between.
+    let batch_set_index = if use_batch_set {
+        buffers.get_next_batch_set_index(indexed)
+    } else {
+        None
+    };
+
+    for sub_draw in instance_batch_sub_draws(base, output_base, spans) {
+        GFBD::write_batch_indirect_parameters_metadata(
+            indexed,
+            sub_draw.base_output_index,
+            batch_set_index,
+            buffers,
+            sub_draw.indirect_parameters_index,
+        );
+    }
+
+    let range = base..(base + spans.len() as u32);
     buffers.add_batch_set(indexed, &view, range.clone());
-    (
-        index,
-        PhaseItemExtraIndex::IndirectParametersIndex {
-            range,
-            batch_set_index: None,
-        },
-    )
+    let extra_index = PhaseItemExtraIndex::IndirectParametersIndex {
+        range: range.clone(),
+        batch_set_index,
+    };
+    (range, extra_index)
 }
 
 /// How a single sorted phase item can be batched with the previous phase item.
@@ -2580,6 +2643,11 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
 
             for &main_entity in bin.iter() {
                 if no_indirect_drawing {
+                    // superfargoth patch (own, GS: guards)
+                    warn_once!(
+                        "GPU instance batches need indirect drawing; this binned phase draws \
+                         none for views with `NoIndirectDrawing`"
+                    );
                     continue;
                 }
                 let Some(spans) = GFBD::get_instance_batch(&system_param_item, main_entity) else {
@@ -2588,28 +2656,35 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
                 if spans.is_empty() {
                     continue;
                 }
-                // superfargoth patch (own, GS: ranges): as in the sorted
-                // caller above - the spans tile the batch's slots, so this
-                // reserves exactly what #25978 reserved. One sub-draw per span
-                // is `gs-patch-plan.md` step 2e.
-                let base_input_index = spans[0].base_input_index;
+                // superfargoth patch (own, GS: ranges): one indirect draw
+                // command per geometry range, all of them in one batch set, so
+                // the batch is a single `multi_draw_indirect_count` of N
+                // commands over the one contiguous `MeshUniform` allocation
+                // the spans tile. A range-less batch has one span, hence one
+                // command and one batch set, exactly as #25978 built it.
                 let count_u32: u32 = spans.iter().map(|span| span.count).sum();
 
                 let output_base = data_buffer.add_multiple(count_u32 as usize) as u32;
 
-                let (indirect_parameters_index, extra_index) =
+                let (indirect_parameters_range, extra_index) =
                     prepare_instance_batch_indirect::<GFBD>(
                         &mut phase_indirect_parameters_buffers.buffers,
                         extracted_view.retained_view_entity,
                         indexed,
                         output_base,
+                        spans,
+                        true,
                     );
-                work_item_buffer.push_range(
-                    indexed,
-                    base_input_index,
-                    indirect_parameters_index,
-                    count_u32,
-                );
+                for sub_draw in
+                    instance_batch_sub_draws(indirect_parameters_range.start, output_base, spans)
+                {
+                    work_item_buffer.push_range(
+                        indexed,
+                        sub_draw.base_input_index,
+                        sub_draw.indirect_parameters_index,
+                        sub_draw.count,
+                    );
+                }
 
                 phase.instance_batch_draws.push(InstanceBatchDraw {
                     batch_set_key: key.0.clone(),

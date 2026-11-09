@@ -128,6 +128,24 @@ fn material_keys_follow_contents_not_names() {
     }
 }
 
+/// `SceneSettings { layers: 0 }` asks for an instance table no view can ever draw. It is
+/// rejected where the settings enter the bake, so the error names them, and the writer keeps its
+/// own check for a table that arrives from disk instead of from these settings.
+#[test]
+fn layerless_settings_fail_where_they_enter() {
+    let settings = SceneSettings { layers: 0, ..SceneSettings::default() };
+    assert_eq!(settings.validate(), Err(SettingsError::NoLayers));
+    assert_eq!(SceneSettings::default().validate(), Ok(()));
+    let err = build_cell_table(&Rules, &settings, IVec3::ZERO, 0.0, &[], &[]).unwrap_err();
+    assert_eq!(err, BuildError::Settings(SettingsError::NoLayers));
+    assert!(err.to_string().contains("SceneSettings.layers"), "{err}");
+    // Defence in depth: a table of valid settings whose mask is cleared afterwards (or read back
+    // from disk) is still rejected by the writer.
+    let table = build_cell_table(&Rules, &SceneSettings::default(), IVec3::ZERO, 0.0, &[], &[]).unwrap();
+    assert_eq!(table.layers, 1);
+    assert_eq!(StaticCellTable { layers: 0, ..table }.write().unwrap_err(), TableError::NoLayers);
+}
+
 #[test]
 fn default_material_reading() {
     let m = default_material(&material(AlphaMode::Mask(0.5), true));
@@ -220,6 +238,59 @@ fn two_model_cell_round_trips() {
         build_cell_table(&Rules, &settings, origin_cell, 0.0, &placements[..1], &unbounded).unwrap_err(),
         BuildError::PartBounds { model: "meshes/a.mdl".into(), part: 1 }
     );
+}
+
+#[test]
+fn chains_name_the_model_and_part_their_mesh_key_came_from() {
+    // Format v3: the mesh key is a hash, so the table carries the (model, part) it was made
+    // from — the chain's `scene.chains` subject, and the only way the runtime can find its
+    // geometry.
+    let a = model(
+        vec![material(AlphaMode::Opaque, false), material(AlphaMode::Mask(0.5), true)],
+        vec![(0.0, vec![sub(0, 100, 300), sub(1, 20, 30)])],
+    );
+    let b = model(vec![material(AlphaMode::Opaque, false)], vec![(0.0, vec![sub(0, 8, 12)])]);
+    let a_parts = [Some(sphere(Vec3::ZERO, 1.0)); 2];
+    let b_parts = [Some(sphere(Vec3::ZERO, 1.0))];
+    let origin_cell = IVec3::ZERO;
+    let at = WorldPos::new(origin_cell, Vec3::ZERO);
+    // `b.mdl` is placed first, so the model section is sorted by name, not by first use.
+    let placements = vec![
+        placement(10, "frame", PlacementClass::Static, at, 1.0),
+        placement(11, "rock", PlacementClass::Static, at, 1.0),
+    ];
+    let models = [
+        CellModel::Static { path: "meshes/b.mdl", model: &b, parts: &b_parts },
+        CellModel::Static { path: "meshes/a.mdl", model: &a, parts: &a_parts },
+    ];
+    let table =
+        build_cell_table(&Rules, &SceneSettings::default(), origin_cell, 0.0, &placements, &models).unwrap();
+    assert_eq!(table.models, ["meshes/a.mdl", "meshes/b.mdl"]);
+    let sources: Vec<(&str, u32)> =
+        table.chains.iter().map(|c| (table.models[c.model as usize].as_str(), c.part)).collect();
+    let mut expected = vec![("meshes/a.mdl", 0), ("meshes/a.mdl", 1), ("meshes/b.mdl", 0)];
+    expected.sort_by_key(|&(m, p)| mesh_key(m, p));
+    assert_eq!(sources, expected, "chains stay sorted by mesh key, whatever their source");
+    // Every chain's mesh key is the key of its own source, and the bake says so before storing.
+    for c in &table.chains {
+        assert_eq!(mesh_key(&table.models[c.model as usize], c.part), c.mesh);
+    }
+    table.verify_chain_sources().unwrap();
+    // The reader gives the runtime the same pair back, as the chain's product subject.
+    let bytes = table.write().unwrap();
+    let view = StaticCellTableView::parse(&bytes).unwrap();
+    assert_eq!(view.to_table(), table);
+    for (index, &(model, part)) in (0u32..).zip(&expected) {
+        assert_eq!(view.chain_source(index), Some((model, part)));
+        assert_eq!(crate::product::chain_subject(model, part), format!("{model}/{part}"));
+    }
+    // A table whose key does not match its source is a stale product, and the bake refuses it.
+    let mut stale = table.clone();
+    stale.chains[0].part += 100;
+    assert_eq!(stale.verify_chain_sources(), Err(TableError::MeshKey(0)));
+    let mut stale = table;
+    stale.chains[0].model = 9;
+    assert_eq!(stale.verify_chain_sources(), Err(TableError::MissingModel { chain: 0, model: 9 }));
 }
 
 /// A 10 m floor (material 0) and a small sign high in one corner (material 1), cooked for real.
@@ -421,6 +492,6 @@ fn tables_are_stored_uncompressed() {
     let step = CellsStep(Arc::new(SceneBake::new(Arc::new(Rules), SceneSettings::default())));
     assert!(!step.compress());
     assert_eq!(step.id(), CELLS_STEP);
-    assert_eq!(step.version(), 2);
+    assert_eq!(step.version(), 3, "format v3: the chain source and the model section");
     assert_eq!(EXTENSION, "sfscene");
 }

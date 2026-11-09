@@ -11,7 +11,9 @@ use bevy_window::RawHandleWrapperHolder;
 
 use wgpu::MemoryBudgetThresholds;
 pub use wgpu::{
-    Backends, Dx12Compiler, Features as WgpuFeatures, Gles3MinorVersion, InstanceFlags,
+    // superfargoth patch (own, GS: ranges): `Backend`, so the
+    // `multi_draw_indirect_count` capability test can be exercised off-GPU.
+    Backend, Backends, Dx12Compiler, Features as WgpuFeatures, Gles3MinorVersion, InstanceFlags,
     Limits as WgpuLimits, MemoryHints, PowerPreference,
 };
 

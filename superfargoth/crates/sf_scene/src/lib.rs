@@ -3,16 +3,24 @@
 //! Spec: `superfargoth/docs/specs/static-scene.md` ("Crates": `sf_scene`).
 //!
 //! - [`table`]: the baked per-cell instance table ([`StaticCellTable`], §2), a versioned
-//!   little-endian binary format (v2) with a borrowing reader ([`StaticCellTableView`]) whose instance
-//!   section is the GPU layout (cell-local chain indices remapped at stream-in).
+//!   little-endian binary format (v3) with a borrowing reader ([`StaticCellTableView`]) whose instance
+//!   section is the GPU layout (cell-local chain indices remapped at stream-in), and whose chains
+//!   name the models their geometry was cooked from.
 //! - [`eligibility`]: which placements live in the scene (§1), asked through an adapter trait
 //!   ([`SceneEligibility`]), and the one-way per-cell [`Promotions`].
-//! - [`alloc`]: the per-space GPU table's slot allocator (§3): one contiguous range per cell,
-//!   free list, release deferred by the frames in flight.
+//! - [`alloc`]: the slot allocators (§3): [`SlotAllocator`] for the per-space instance table (one
+//!   contiguous range per cell, free list) and [`ClassAllocator`] for a batch's fixed output slots
+//!   (segregated size classes, bounded fragmentation); both defer reuse by the frames in flight.
 //! - [`material`]: the material classes (§5) every scene material folds into.
 //! - [`chain`]: how one model part's cooked LOD levels become one chain mesh ([`chain_layout`]),
 //!   shared by the bake and the runtime.
-//! - `bake` (feature `bake`): the `scene.cells` step writing one table per cell.
+//! - [`chains`]: the per-space global chain table ([`ChainRegistry`], §2 "Chains are cell-local"):
+//!   mesh key → one dense slot, refcounted by resident cell, reuse deferred by the frames in
+//!   flight, and a disagreement between two cells about one mesh key is an error.
+//! - [`product`]: the bake products both halves name — step ids, file extensions and the subject
+//!   grammar of a cell's table and a chain's geometry. Always compiled: the runtime reads what
+//!   the bake wrote, and must not pull the baker to learn its names.
+//! - `bake` (feature `bake`): the `scene.cells` and `scene.chains` steps writing them.
 //! - [`cull`]: the CPU twin of the per-view pass (§4): layer mask, active flag, frustum, terrain
 //!   horizon, sub-pixel cull and the LOD pick in the view's own projection ([`SceneProjection`]:
 //!   the perspective pixel-error form, the orthographic cascade texel-density form), with the
@@ -26,22 +34,32 @@ pub mod alloc;
 #[cfg(feature = "bake")]
 pub mod bake;
 pub mod chain;
+pub mod chains;
 pub mod cull;
 pub mod eligibility;
 pub mod material;
+pub mod product;
 pub mod table;
 
-pub use alloc::{AllocError, SlotAllocator, SlotRange, SlotStats};
-pub use chain::{ChainLayout, LayoutError, LevelSource, Segment, chain_layout};
+pub use alloc::{
+    AllocError, BLOCK_GRAIN, CLASS_SIZES, CLASSES, ClassAllocator, ClassStats, SlotAllocator, SlotRange, SlotStats,
+    size_class,
+};
+pub use chain::{ChainLayout, LAYOUT_VERSION, LayoutError, LevelSource, Segment, chain_layout};
+pub use chains::{Acquired, ChainEntry, ChainError, ChainKey, ChainRegistry, ChainSlot, ChainSource, ChainStats};
 pub use cull::{
     CullReason, CullStats, Frustum, HorizonGrid, HorizonParams, ScenePreset, SceneProjection, SceneView, Verdict,
-    WorkItem, cull_cell, cull_instance, pick_level, pick_level_ortho, pixels_per_radian, texels_per_metre,
+    ViewKind, WorkItem, cull_cell, cull_instance, pick_level, pick_level_ortho, pixels_per_radian, texels_per_metre,
 };
 pub use eligibility::{ClassKind, Eligibility, EntityReason, MaterialKind, Promotions, SceneEligibility, classify};
 pub use material::{MaterialClass, MaterialTraits};
+pub use product::{
+    CELLS_EXT, CELLS_STEP, CHAINS_EXT, CHAINS_STEP, cell_subject, chain_subject, parse_cell_subject,
+    parse_chain_subject,
+};
 pub use table::{
-    Aabb, FORMAT_VERSION, InstanceFlags, LodChain, LodLevel, MAGIC, MAX_LOD_LEVELS, Sphere, StaticCellTable,
-    StaticCellTableView, StaticInstance, TableError,
+    Aabb, FORMAT_VERSION, InstanceFlags, LodChain, LodLevel, MAGIC, MAX_LOD_LEVELS, MAX_MODELS, Sphere,
+    StaticCellTable, StaticCellTableView, StaticInstance, TableError,
 };
 
 /// A placement's id, **cell-local**: with its table's cell it names one placement of the space

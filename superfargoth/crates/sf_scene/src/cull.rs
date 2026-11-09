@@ -21,7 +21,9 @@
 //! Level errors are model-space in both forms: the instance's largest axis scale
 //! ([`StaticInstance::max_scale`]) multiplies them first, so a placement scaled 2× switches each
 //! level at twice the distance (the GPU pass does the same). [`ScenePreset`] sets `lod_px` and
-//! `size_cull_px`, the only knobs the quality presets turn.
+//! `size_cull_px`, the only knobs the quality presets turn — and `size_cull_px` is **per view**,
+//! not one number per preset: a preset's value is for main views, and shadow views get 0 (off)
+//! until a caster size rule is measured ([`ViewKind`]).
 
 use glam::{IVec2, Vec2, Vec3, Vec4, Vec4Swizzles};
 
@@ -68,6 +70,19 @@ impl SceneProjection {
     }
 }
 
+/// What a view is for. The one thing it decides here is the sub-pixel cull's default
+/// ([`ScenePreset::size_cull_px`]): a size cutoff that is right in the view the player looks
+/// through is not automatically right in a shadow view, where it drops a caster's **shadow**
+/// while the caster itself is still on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ViewKind {
+    /// The camera, and anything else drawn for the player to look at.
+    Main,
+    /// A view drawn only to gather casters: the sun cascades (orthographic) and the lamp cube
+    /// faces (perspective, §8).
+    Shadow,
+}
+
 /// Quality presets (§4): they change only `lod_px` and `size_cull_px`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ScenePreset {
@@ -90,10 +105,24 @@ impl ScenePreset {
         }
     }
 
-    /// Projected radius under which an instance is dropped, pixels. The spec gives one number
-    /// per preset for both knobs; they are separate here so S4 can tune them apart.
-    pub fn size_cull_px(self) -> f32 {
-        self.lod_px()
+    /// Projected radius under which an instance is dropped, in the view's own units
+    /// ([`cull_instance`]). The spec gives one number per preset for both knobs; they are
+    /// separate here so S4 can tune them apart.
+    ///
+    /// **Off ([`Self::lod_px`] worth of pixels in main views, 0 in shadow views.)** A
+    /// main-view-style size cutoff applied to casters was measured on this project and reverted
+    /// the same day — "its cascades refit with the view, so small casters lost and regained
+    /// shadows as the camera turned" (`bevyrrowind/docs/perf.md:55-57`) — and what ships
+    /// elsewhere is a *per-cascade* threshold over a stable cascade fit (Unity 6.6 small-mesh
+    /// culling; UE's `r.Nanite.ShadowRaster.PixelsPerEdgeScaling` is a per-cascade LOD bias).
+    /// The orthographic test in [`cull_instance`] is that rule's cascade-texel form and stays
+    /// implemented, so the owner can turn it on for a view by setting
+    /// [`SceneView::size_cull_px`] directly; it is only off by default.
+    pub fn size_cull_px(self, kind: ViewKind) -> f32 {
+        match kind {
+            ViewKind::Main => self.lod_px(),
+            ViewKind::Shadow => 0.0,
+        }
     }
 }
 
@@ -177,10 +206,18 @@ impl Frustum {
 }
 
 /// One view's cull inputs, all in the cull frame.
+///
+/// Build the pixel thresholds with [`Self::with_preset`], which takes the [`ViewKind`]: writing
+/// `lod_px` and `size_cull_px` by hand is allowed (it is how the owner turns the shadow-view
+/// sub-pixel cull on for a look) but it is also how a shadow view silently inherits the main
+/// view's size cutoff, which was measured and reverted here once
+/// ([`ScenePreset::size_cull_px`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneView {
     /// Where the view is seen from. An orthographic view has no eye point: its LOD and
-    /// sub-pixel tests ignore this, and only the horizon pre-cull (main views) reads it.
+    /// sub-pixel tests ignore this, and only the horizon pre-cull (main views) reads it — which
+    /// is why `horizon` and [`SceneProjection::Orthographic`] together are a caller bug
+    /// ([`cull_cell`] asserts it in debug builds).
     pub eye: Vec3,
     pub frustum: Frustum,
     /// Drawn layers; a table needs one in common ([`crate::StaticCellTable::layers`]).
@@ -188,17 +225,23 @@ pub struct SceneView {
     /// How the view projects: the LOD pick and the sub-pixel test read its density term.
     pub projection: SceneProjection,
     pub lod_px: f32,
-    /// 0 turns the sub-pixel cull off.
+    /// Smallest projected radius an instance may have, in the view's own units ([`cull_instance`]:
+    /// screen pixels in a perspective view, shadow-map texels in an orthographic one). **0 turns
+    /// the sub-pixel cull off**, and that is the default for shadow views
+    /// ([`ScenePreset::size_cull_px`]).
     pub size_cull_px: f32,
-    /// Apply the terrain horizon (exterior main views).
+    /// Apply the terrain horizon (exterior main views). Never on an orthographic view: it has no
+    /// eye point and the test marches from `eye` ([`cull_cell`], [`HorizonGrid::land_hides`]).
     pub horizon: bool,
 }
 
 impl SceneView {
-    /// The view with a preset's pixel thresholds.
+    /// The view with a preset's pixel thresholds for a view of this kind. `kind` is explicit so
+    /// that a slice building shadow views cannot inherit the main view's sub-pixel cutoff by
+    /// forgetting about it ([`ScenePreset::size_cull_px`]).
     #[must_use]
-    pub fn with_preset(self, preset: ScenePreset) -> Self {
-        Self { lod_px: preset.lod_px(), size_cull_px: preset.size_cull_px(), ..self }
+    pub fn with_preset(self, preset: ScenePreset, kind: ViewKind) -> Self {
+        Self { lod_px: preset.lod_px(), size_cull_px: preset.size_cull_px(kind), ..self }
     }
 }
 
@@ -308,12 +351,15 @@ pub fn cull_instance(view: &SceneView, instance: &StaticInstance, offset: Vec3, 
         return Verdict::Culled(CullReason::Frustum);
     }
     let size = view.size_cull_px;
+    // Step 4 is a *threshold*, so 0 is "no threshold": it turns the test off in either
+    // projection, and is the default for shadow views ([`ScenePreset::size_cull_px`]).
+    let sub_pixel_cull = size > 0.0;
     let surface = match view.projection {
         SceneProjection::Perspective { pixels_per_radian: ppr } => {
             // Projected radius at the screen centre, ppr · r / √(d² − r²): drop under
             // size_cull_px (squared, as the GPU pass does it: no sqrt, no boundary drift).
             let d2 = center.distance_squared(view.eye);
-            if size > 0.0 && d2 > r * r && ppr * ppr * r * r < size * size * (d2 - r * r) {
+            if sub_pixel_cull && d2 > r * r && ppr * ppr * r * r < size * size * (d2 - r * r) {
                 return Verdict::Culled(CullReason::SubPixel);
             }
             (d2.sqrt() - r).max(0.0)
@@ -326,8 +372,10 @@ pub fn cull_instance(view: &SceneView, instance: &StaticInstance, offset: Vec3, 
             // shipped cascade implementations (UE's shadow radius threshold), and it falls out
             // of the cascade's own density: a small object keeps its shadow in the dense near
             // cascade and loses it in a far one, where its shadow is sub-pixel on screen anyway.
-            // `size_cull_px = 0` turns it off for a view that wants every caster.
-            if size > 0.0 && r * tpm < size {
+            // `size_cull_px = 0` turns it off for a view that wants every caster, which is what
+            // a shadow view gets by default until the per-cascade form is measured
+            // ([`ScenePreset::size_cull_px`]).
+            if sub_pixel_cull && r * tpm < size {
                 return Verdict::Culled(CullReason::SubPixel);
             }
             // No distance: the pick ignores it.
@@ -342,6 +390,15 @@ pub fn cull_instance(view: &SceneView, instance: &StaticInstance, offset: Vec3, 
 /// The whole cell: pre-cull (the table's layers, the AABB against the frustum, then the horizon
 /// when `view.horizon` and a grid are given), then every instance; promoted placements count as
 /// inactive. Work items are appended to `out` in table order.
+///
+/// # Panics
+///
+/// Debug builds only: `view.horizon` on an orthographic view. The horizon test marches from
+/// `view.eye` ([`HorizonGrid::land_hides`]) and an orthographic view has no eye point, so the
+/// combination has no meaning and the result would depend on whatever was left in `eye`. Both
+/// fields document it; the assert is so the slices that build shadow views (S5) cannot get it
+/// wrong silently. Not an error in release: a release build culls one cell too few or too many,
+/// which must never take the game down.
 pub fn cull_cell(
     view: &SceneView,
     cell: u32,
@@ -351,6 +408,11 @@ pub fn cull_cell(
     promotions: &Promotions,
     out: &mut Vec<WorkItem>,
 ) -> CullStats {
+    debug_assert!(
+        !(view.horizon && matches!(view.projection, SceneProjection::Orthographic { .. })),
+        "SceneView::horizon on an orthographic view: it has no eye point, and the horizon test \
+         marches from SceneView::eye (HorizonGrid::land_hides). Shadow views set horizon: false."
+    );
     let mut stats = CullStats::default();
     let n = u32::try_from(table.len()).unwrap_or(u32::MAX);
     if table.layers() & view.layers == 0 {

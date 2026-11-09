@@ -67,10 +67,38 @@ fn pixels_per_radian_matches_the_lod_screen_formula() {
 
 #[test]
 fn presets_are_the_spec_table() {
-    let px: Vec<_> = ScenePreset::ALL.iter().map(|p| (p.lod_px(), p.size_cull_px())).collect();
-    assert_eq!(px, [(0.5, 0.5), (1.0, 1.0), (2.0, 2.0), (4.0, 4.0)]);
-    let v = view(Vec3::ZERO, Vec3::NEG_Z).with_preset(ScenePreset::Low);
+    let lod: Vec<f32> = ScenePreset::ALL.iter().map(|p| p.lod_px()).collect();
+    assert_eq!(lod, [0.5, 1.0, 2.0, 4.0]);
+    // The sub-pixel cutoff is per view: a preset's number is the main view's, and a shadow view
+    // gets 0 (off) until a per-cascade caster rule is measured (`ScenePreset::size_cull_px`).
+    let main: Vec<f32> = ScenePreset::ALL.iter().map(|p| p.size_cull_px(ViewKind::Main)).collect();
+    assert_eq!(main, lod);
+    let shadow: Vec<f32> = ScenePreset::ALL.iter().map(|p| p.size_cull_px(ViewKind::Shadow)).collect();
+    assert_eq!(shadow, [0.0; 4]);
+    let v = view(Vec3::ZERO, Vec3::NEG_Z).with_preset(ScenePreset::Low, ViewKind::Main);
     assert_eq!((v.lod_px, v.size_cull_px), (4.0, 4.0));
+    // The LOD knob still applies in a cascade: only the size cull defaults off.
+    let cascade = ortho_view(Vec3::ZERO, 2048.0, 64.0).with_preset(ScenePreset::Low, ViewKind::Shadow);
+    assert_eq!((cascade.lod_px, cascade.size_cull_px), (4.0, 0.0));
+}
+
+/// The sub-pixel cull is off by default in shadow views, in both of their projections (sun
+/// cascades are orthographic, lamp cube faces perspective), and `0` is what turns it off. The
+/// rule itself is untouched: the same preset still culls in a main view, and setting
+/// `size_cull_px` on a shadow view turns it back on for the owner's visual check.
+#[test]
+fn shadow_views_keep_every_caster_by_default() {
+    let speck = inst(1, Vec3::new(0.0, 0.0, -10.0), 1e-4);
+    let far = inst(1, Vec3::new(0.0, 0.0, -900.0), 0.1);
+    let cascade = ortho_view(Vec3::ZERO, 2048.0, 64.0).with_preset(ScenePreset::Low, ViewKind::Shadow);
+    assert_eq!(cull_instance(&cascade, &speck, Vec3::ZERO, [0.0]), Verdict::Draw { level: 0 });
+    let face = view(Vec3::ZERO, Vec3::NEG_Z).with_preset(ScenePreset::Low, ViewKind::Shadow);
+    assert_eq!(cull_instance(&face, &far, Vec3::ZERO, [0.0]), Verdict::Draw { level: 0 });
+    // The same preset in a main view still drops both: only the default changed.
+    let main = view(Vec3::ZERO, Vec3::NEG_Z).with_preset(ScenePreset::Low, ViewKind::Main);
+    assert_eq!(cull_instance(&main, &far, Vec3::ZERO, [0.0]), Verdict::Culled(CullReason::SubPixel));
+    let turned_on = SceneView { size_cull_px: ScenePreset::Low.size_cull_px(ViewKind::Main), ..cascade };
+    assert_eq!(cull_instance(&turned_on, &speck, Vec3::ZERO, [0.0]), Verdict::Culled(CullReason::SubPixel));
 }
 
 #[test]
@@ -156,7 +184,7 @@ fn sub_pixel_cull_at_the_threshold() {
     assert_eq!(cull_instance(&off, &inst(1, Vec3::new(0.0, 0.0, -900.0), r), Vec3::ZERO, [0.0]), Verdict::Draw { level: 0 });
     assert_eq!(cull_instance(&v, &inst(1, Vec3::new(0.0, 0.0, -0.5), 1.0), Vec3::ZERO, [0.0]), Verdict::Draw { level: 0 });
     // Coarser presets cull nearer.
-    let low = v.with_preset(ScenePreset::Low);
+    let low = v.with_preset(ScenePreset::Low, ViewKind::Main);
     assert_eq!(cull_instance(&low, &inst(1, Vec3::new(0.0, 0.0, -d_px * 0.3), r), Vec3::ZERO, [0.0]), Verdict::Culled(CullReason::SubPixel));
 }
 
@@ -307,10 +335,13 @@ fn cell_table() -> StaticCellTable {
             inst(5, local(-200.0), 0.001),                                // sub-pixel
             inst(6, Vec3::new(-127.0, 1.0, 236.0), 1.0),                  // left of the frustum
         ],
+        models: vec!["meshes/a.mdl".into()],
         chains: vec![LodChain {
             mesh: 9,
             material: 0x77,
             material_class: MaterialClass::Masked,
+            model: 0,
+            part: 0,
             levels: vec![
                 LodLevel { first_index: 0, index_count: 600, error: 0.0 },
                 LodLevel { first_index: 600, index_count: 300, error: 0.01 },
@@ -474,4 +505,30 @@ fn ortho_sub_pixel_cull_is_in_map_texels() {
     // 0 turns it off for a view that wants every caster.
     let every = SceneView { size_cull_px: 0.0, ..v };
     assert_eq!(cull_instance(&every, &inst(1, Vec3::new(0.0, 0.0, -10.0), 1e-4), Vec3::ZERO, [0.0]), Verdict::Draw { level: 0 });
+}
+
+/// An orthographic view has no eye point, so `horizon` on one cannot mean anything: the test
+/// marches from `SceneView::eye`. A debug build says so instead of culling cells off a
+/// meaningless value (release builds carry on: this must never take the game down).
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "orthographic view")]
+fn the_horizon_on_an_orthographic_view_is_a_caller_bug() {
+    let bytes = cell_table().write().unwrap();
+    let table = StaticCellTableView::parse(&bytes).unwrap();
+    let v = SceneView { horizon: true, ..ortho_view(Vec3::ZERO, 2048.0, 64.0) };
+    cull_cell(&v, 0, &table, Vec3::ZERO, None, &Promotions::new(), &mut Vec::new());
+}
+
+/// The same view without the horizon is fine, and so is a perspective view with it: the assert
+/// is about the pair, not about either field.
+#[test]
+fn an_orthographic_view_culls_without_the_horizon() {
+    let bytes = cell_table().write().unwrap();
+    let table = StaticCellTableView::parse(&bytes).unwrap();
+    let ortho = ortho_view(Vec3::new(0.0, 0.0, -256.0), 2048.0, 256.0);
+    assert!(!ortho.horizon);
+    let mut out = Vec::new();
+    let stats = cull_cell(&ortho, 0, &table, Vec3::new(0.0, 0.0, -256.0), None, &Promotions::new(), &mut out);
+    assert_eq!(stats.drawn + stats.frustum + stats.sub_pixel + stats.inactive, 5);
 }

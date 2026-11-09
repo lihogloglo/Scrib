@@ -24,6 +24,11 @@
 //!   whole-batch span upstream #25978 reserved. The WGSL `range_of` is a hand-kept mirror of
 //!   the Rust one: only its compilation is machine-checked here (no GPU, so nothing executes
 //!   it), the equivalence is reviewed by eye.
+//! - Patch GS steps 2e-2f (the drawing half): a batch's N geometry ranges lay out as N contiguous
+//!   indirect draw commands in span order over one contiguous `MeshUniform` allocation, sharing
+//!   **one** `IndirectBatchSet` (so one `multi_draw_indirect_count` of N sub-draws); a range-less
+//!   batch is still exactly one command; and the count-vs-no-count decision follows one shared
+//!   capability test, which DX12 fails by design (wgpu#7974).
 
 use std::any::TypeId;
 use std::borrow::Cow;
@@ -556,4 +561,141 @@ fn instance_batch_bins_and_patch_gs_counters() {
     assert_eq!(phase.batch_set_count(), 0);
     assert_eq!(phase.instance_batch_draw_count(), 0, "cleared with the batch sets");
     assert_eq!(phase.bin_count(), 1, "bins are retained across frames");
+}
+
+/// `gs-patch-plan.md` step 2e: a batch's N geometry ranges become N **contiguous** indirect draw
+/// commands in span (slot) order, over the one contiguous `MeshUniform` allocation the spans tile.
+/// `instance_batch_sub_draws` is the single place that layout is decided, so the metadata writes,
+/// the binned work items and the sorted work items cannot disagree about which slot a range draws
+/// from.
+#[test]
+fn sub_draws_are_contiguous_and_in_span_order() {
+    use bevy::render::batching::instance_batch_sub_draws;
+
+    let spans = batch_spans(100, 64, [(0, 4), (4, 6), (10, 54)]);
+    let sub_draws: Vec<_> = instance_batch_sub_draws(7, 1000, &spans).collect();
+
+    assert_eq!(sub_draws.len(), 3, "one indirect draw command per geometry range");
+    for (index, sub_draw) in sub_draws.iter().enumerate() {
+        assert_eq!(
+            sub_draw.indirect_parameters_index,
+            7 + index as u32,
+            "the commands are contiguous from the allocation base, in span order"
+        );
+        assert_eq!(sub_draw.base_input_index, spans[index].base_input_index);
+        assert_eq!(sub_draw.count, spans[index].count);
+    }
+    // Each command's instances start where the previous command's end: the batch occupies exactly
+    // `output_base..output_base + capacity`, which is what #25978 allocated for its one command.
+    assert_eq!(
+        sub_draws.iter().map(|sub_draw| sub_draw.base_output_index).collect::<Vec<_>>(),
+        vec![1000, 1004, 1010],
+        "output slots are partitioned in span order"
+    );
+    let last = sub_draws.last().expect("three commands");
+    assert_eq!(last.base_output_index + last.count, 1000 + 64, "the commands tile the capacity");
+    assert_eq!(
+        sub_draws.iter().map(|sub_draw| sub_draw.count).sum::<u32>(),
+        64,
+        "no slot is drawn twice and none is left out"
+    );
+}
+
+/// `gs-patch-plan.md` step 2e, the regression half: a batch **without** ranges is byte for byte
+/// what #25978 built - `batch_spans` gives it one whole-batch span, so it gets exactly one indirect
+/// draw command, at the allocation base, reading the batch's whole `MeshUniform` span from the
+/// batch's own base input index.
+#[test]
+fn a_range_less_batch_is_one_sub_draw_exactly_as_before() {
+    use bevy::render::batching::{instance_batch_sub_draws, InstanceBatchSubDraw};
+
+    let no_ranges: [(u32, u32); 0] = [];
+    let spans = batch_spans(100, 64, no_ranges);
+    let sub_draws: Vec<_> = instance_batch_sub_draws(7, 1000, &spans).collect();
+
+    assert_eq!(
+        sub_draws,
+        vec![InstanceBatchSubDraw {
+            indirect_parameters_index: 7,
+            base_output_index: 1000,
+            base_input_index: 100,
+            count: 64,
+        }],
+        "one command over the whole batch: the single sub-draw of #25978"
+    );
+}
+
+/// `gs-patch-plan.md` step 2e: the N commands of one batch share **one** `IndirectBatchSet`, which
+/// is what makes the batch a single `multi_draw_indirect_count` of N sub-draws rather than N draws.
+/// This walks the real buffers the binned caller uses (`allocate`, then
+/// `get_next_batch_set_index` immediately before `add_batch_set`, nothing pushing a batch set in
+/// between), which need no `RenderDevice` until they are written to the GPU.
+#[test]
+fn n_commands_share_one_batch_set() {
+    use bevy::render::batching::gpu_preprocessing::UntypedPhaseIndirectParametersBuffers;
+    use bevy::render::sync_world::MainEntity;
+    use bevy::render::view::RetainedViewEntity;
+
+    let view = RetainedViewEntity::new(MainEntity::from(Entity::PLACEHOLDER), None, 0);
+    let mut buffers = UntypedPhaseIndirectParametersBuffers::new(false);
+    assert_eq!(buffers.batch_set_count(true), 0);
+
+    // A three-range batch.
+    let base = buffers.allocate(true, 3);
+    assert_eq!(base, 0, "the first batch starts at the base of the buffer");
+    assert_eq!(buffers.indexed.batch_count(), 3, "N ranges = N indirect parameters slots");
+    let batch_set_index = buffers.get_next_batch_set_index(true);
+    assert_eq!(batch_set_index.map(u32::from), Some(0), "read after `allocate`, before `add_batch_set`");
+    buffers.add_batch_set(true, &view, base..base + 3);
+    assert_eq!(buffers.batch_set_count(true), 1, "all three commands are in one batch set");
+
+    // A second, range-less batch: its one command follows the first batch's three, in its own set.
+    let next_base = buffers.allocate(true, 1);
+    assert_eq!(next_base, 3, "the next batch's commands follow, still contiguous per batch");
+    let next_batch_set_index = buffers.get_next_batch_set_index(true);
+    assert_eq!(next_batch_set_index.map(u32::from), Some(1), "one batch set per batch, never shared");
+    buffers.add_batch_set(true, &view, next_base..next_base + 1);
+    assert_eq!(buffers.batch_set_count(true), 2);
+    assert_eq!(buffers.indexed.batch_count(), 4);
+
+    // The non-indexed mesh class is a separate buffer and is untouched by indexed batches.
+    assert_eq!(buffers.batch_set_count(false), 0);
+    assert_eq!(buffers.non_indexed.batch_count(), 0);
+}
+
+/// `gs-patch-plan.md` step 2f: whether a batch set is drawn with `multi_draw_indirect_count` (the
+/// command count read from the batch set's GPU-written counter) or with a plain
+/// `multi_draw_indirect` over every command follows one capability test, shared by
+/// `render_instance_batches` and `render_batchable_meshes` so they cannot diverge.
+///
+/// **DX12 is a normal path, not an edge case**: it is our shipping backend and it fails this test
+/// even when it reports the feature (the wgpu #7974 workaround), so a multi-range batch there draws
+/// all N commands unconditionally. Which of the two `wgpu` calls is then issued is GPU-side and
+/// unverified here (see `gs-slice-b2.md`); only the decision is pinned.
+#[test]
+fn multi_draw_indirect_count_follows_the_capability_test() {
+    use bevy::render::render_phase::multi_draw_indirect_count_supported;
+    use bevy::render::settings::{Backend, WgpuFeatures};
+
+    let with = WgpuFeatures::MULTI_DRAW_INDIRECT_COUNT;
+    let without = WgpuFeatures::empty();
+
+    assert!(
+        multi_draw_indirect_count_supported(with, Backend::Vulkan),
+        "the feature on a backend wgpu#7974 does not affect: the count form"
+    );
+    assert!(
+        multi_draw_indirect_count_supported(with, Backend::Metal),
+        "the only backend #25978 was ever tested on"
+    );
+    assert!(
+        !multi_draw_indirect_count_supported(with, Backend::Dx12),
+        "DX12 reports the feature but is excluded by the wgpu#7974 workaround"
+    );
+    assert!(
+        !multi_draw_indirect_count_supported(without, Backend::Vulkan),
+        "no feature, no count form"
+    );
+    assert!(!multi_draw_indirect_count_supported(without, Backend::Dx12));
+    assert!(!multi_draw_indirect_count_supported(without, Backend::Gl));
 }
