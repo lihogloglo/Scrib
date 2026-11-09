@@ -102,8 +102,7 @@ pub fn decide(ws: &WorldState, stack: &[Directive], lib: &Library, rng: u64, tra
   is the default until AI10, AI11 and AI12 exist (decisions (e)); an anchor that doesn't resolve keeps the actor on
   its record directives.
 - Directives are fully saved; the stack is the truth across tiers.
-- **As built (AI4):** `sf_ai::directive` ([ai-as-built.md](ai-as-built.md)): `Limit::Until` or `Limit::For`
-  (served minutes); `Serving` (top, named, suspended) for AI7; per-actor instance ids; no `done` flag or `ParamBag`.
+- **As built (AI4):** `sf_ai::directive` — limits, `Serving`, instance ids: [ai-as-built.md](ai-as-built.md) "AI4".
 
 ## Drives (utility arbitration)
 
@@ -121,9 +120,7 @@ Flee and Alarm rules are adapter considerations.
   re-arbitrate at the tier's rate; a replan wins only with a higher-priority method traversal record (MTR).
 - **Smart objects** add method fragments through their slots, so ambient life doesn't grow the library.
 
-**As built (AI2).** `sf_ai::{state, htn}`: records `sf.ai.task`/`sf.ai.method`, `StateKeys` + `WorldState`, `Library`,
-`decompose`/`resume`/`replan`. Effects on primitive tasks; full backtracking (AI2b, `cut` opts out); a replan wins only on a
-better MTR prefix (trace `outcome` `kept_not_better`, `mtr`). Why: [ai-as-built.md](ai-as-built.md).
+**As built (AI2, AI2b).** `sf_ai::{state, htn}`: records, `WorldState`, `Library`, `decompose`/`resume`/`replan`, full backtracking, MTR-prefix replans: [ai-as-built.md](ai-as-built.md) "AI2".
 
 ## Executors (operators)
 
@@ -163,7 +160,7 @@ A host-side **fact store**, the social layer every NPC queries and systems appen
   for any number of players.
 - **Nemesis-style** `MemoryRules` (content): encounters (defeated by, fled from, spared), rivalry escalating to a
   vendetta (a `Memory` directive: seek, ambush), survivor returns, promotions via `sf_stats` groups. The framework
-  ships store, decay, queries and events. Saved in `sf/ai/memory`; dialogue filters and scripts read facts.
+  ships store, decay, queries and events. Saved in `sf/aimemory` (one segment: see "Saves"); dialogue filters and scripts read facts.
 - **Vendettas may cross worldspaces, bounded** (decisions (g); Nemesis ambushes, Skyrim's hired thugs): the host picks
   an encounter point near the target player (a link end or route node out of every player's view) within `max_hops`
   and `ttl`; the actor travels on tier 0 and is promoted out of view, then seeks/ambushes. Only actors the quest-safety
@@ -247,12 +244,15 @@ facts, tiers, paths, claims. 6: per-player awareness and memory. 7: stable ids. 
 ## Saves
 
 Sections (owner-keyed, versioned, save.md): `sf/ai` per actor (directive stack, schedule cursor, tier-0 state
-`(route, progress, until)`, current activity and claim, drive and running directive id) and `sf/ai/memory` (facts,
+`(route, progress, until)`, current activity and claim, drive and running directive id) and `sf/aimemory` (facts,
 relations). Not saved: plans, traces, awareness, path requests, `DirectiveDone` events (rebuilt on load; promotion
 resolve places actors). Belongs to the one state registry when it exists (vision §4.2.3).
-- **As built (AI5):** one world section over the host's store (`sf_ai_bevy::AiDirectives`, a resource keyed by
-  `ActorKey`: stacks never unload, tier 0), not overlay blobs; v1 holds each actor's `SavedStack`, later fields by
-  version steps. Why, and the clock and key caveats: [ai-as-built.md](ai-as-built.md) "AI5".
+- **Section names are single-segment.** `sf_save` derives a section's family as the name up to the first `/`
+  (`sf_save::SectionKey::family`, resolved by family alone), so a second section named `sf/ai/...` would clash with
+  `sf/ai`'s spec, version and migration chain — registration either refuses it or it silently inherits the wrong
+  steps. Hence `sf/aimemory` for AI13. Multi-segment names are for *instances* of one family (`sf/character/<key>`,
+  declared with `SaveSection::family`), never for a second family (audit 2026-11-09).
+- **As built (AI5):** one world section keyed by `ActorKey` (not overlay blobs), v1 = each actor's `SavedStack`; clock and key caveats: [ai-as-built.md](ai-as-built.md) "AI5".
 
 ## Scripting (Luau `@sf/ai`)
 
@@ -276,7 +276,7 @@ Per-actor **trace ring buffer** (64 decisions: tick, tier, drive and considerati
 `ai.select` (reference picking, ROADMAP 1.13), `ai.tiers`, `ai.stats`, `ai.facts`; JSON/BRP for agents; gizmos
 (paths, cones, tier colours, claims, plan text), feature `debug`.
 
-**As built (AI1, AI3; AI4 `ai.directives`):** [ai-as-built.md](ai-as-built.md).
+**As built (AI1-AI5):** [ai-as-built.md](ai-as-built.md).
 
 ## Industry comparison
 
@@ -320,7 +320,7 @@ One deliverable plus its test per slice. Visual checks use prefix `AI-`.
 | **AI10** tier 0 | logical state, promotion resolve, `fast_forward` | tier invariance; no in-view promotion |
 | **AI11** schedules | records, `ScheduleRules`, quest-safety validator | exact pushes at window edges |
 | **AI12** doors | `Traverse` (open, cross, close behind), fade-only "unseen" rule (supersedes seamless SI14; seamless branch on the `sf_portal` core, SI2) | follower through both door modes (seamless on the core double) |
-| **AI13** memory | fact store, relations, decay, `MemoryRules`, bounded vendetta encounters, `sf/ai/memory` | exact decay, eviction, round trip; vendetta pauses when its target is offline |
+| **AI13** memory | fact store, relations, decay, `MemoryRules`, bounded vendetta encounters, `sf/aimemory` | exact decay, eviction, round trip; vendetta pauses when its target is offline |
 | **AI14** smart objects | `UseSlot` + fragments (after the `sf_interaction` spec) | claim conflicts deterministic |
 | **AI15** combat | C6 operators, attack tokens, reactions | scripted duel, tokens respected |
 | **AI16** net | replicated AI state via `sf_net` (after N2) | loopback sees activity, barks |

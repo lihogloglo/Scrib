@@ -1,4 +1,4 @@
-//! Morrowind NPC life before `sf_ai` (M10), Bevy-free.
+//! Morrowind NPC life before `sf_ai` (M7), Bevy-free.
 //!
 //! - [`pathgrid`]: PGRD records as per-cell directed graphs in engine space
 //!   (meters, Y up), with nearest/within/A* queries.

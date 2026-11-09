@@ -131,6 +131,8 @@ in the world; only the release start path (or a session working on the menu) sho
 - [ ] 3.6 Swimming + underwater (owner 2026-10-26; was W5 under Phase 4): player swims (`MoverMode::Swim`, `locomotion.md`), camera medium + underwater fog/medium, waterline split, surface from below, `underwater` audio cue (`water.md` "Underwater"). Caustics and breath/drowning later. Owner 2026-11-05: brainstorm first with 3.7: Morrowind has one global water plane; we want water bodies at any altitude, anywhere (data model + rendering + physics), so swim/buoyancy wait for that design.
 - [ ] 3.7 Buoyancy (owner 2026-10-26; was W6): pontoon bodies in `sf_physics`, wood floats / iron sinks, flow drag (`water.md` "Buoyancy"); thrown and dropped items, corpses. Boats' hull method later.
 - [~] 3.8 Ambient life clip factory (owner 2026-10-28): Kimodo + MotionBricks offline generation, SOMA BVH onto `base_anim`, review on a real NPC (`specs/motion-generation.md`). Done: MG1-MG6, MG7a, MG10a (`clip-preview --browse`); tier1 batch 268 clips. Next: MG10b per-clip furniture/props + calibration + verdict keys, MG7b grip table, MG1b chaining/contact constraints, MG8 loops/links. Runtime activity system (interaction points, AI) separate.
+- [ ] 3.9 **NPC navigation** (M7; `superfargoth/docs/specs/nav.md`): NV0 navmesh crate spike first (research `superfargoth/docs/research/navmesh-crates-2026-11-09.md`, FFI fallback NV0b), then NV1-NV12; SI3 (`InWorldspace`) before NV5; NV7a+NV8 gate AI6. Nothing built; `sf_nav` does not exist. Checks NV-.
+- [~] 3.10 **NPC AI** (M7; `superfargoth/docs/specs/ai.md` + `ai-as-built.md`, `specs/ai-adapter.md`): AI1 trace, AI2/AI2b HTN, AI3 overlay, AI4 directives, AI5 `sf/ai` saves built 2026-11-08/09, headless and unit-tested. **Not wired into the game** (no `AiActor`, no `AiPlugin`, section unregistered: `docs/briefs/ai-next.md`). AI6 blocked on NV7a/NV8/SI3; AI7 (drives) needs no nav. Audit 2026-11-09 left trace-allocation and guard fixes. Checks AI-.
 
 ## Phase 4: eye candy and the wider world (after phase 2)
 
@@ -145,13 +147,13 @@ in the world; only the release start path (or a session working on the menu) sho
 - [x] Foliage light transmission (WISHLIST §11): Bevy `diffuse_transmission` 0.3 on leaf cutouts + transmitted shadows, `--off foliagetransmission` (RO-15 awaiting owner).
 - [p] Cloth: capes/banners/tents (robes stay authored skin; PH-3 confirmed).
 - [p] Crowd LOD via vertex animation textures (owner 2026-10-25: adopt `bevy_open_vat`; `research/crates-2026-10-25.md`): tier below anim LOD 3; spike one creature first.
-- [p] Seamless portals (M9), far-field performance (M8: HLOD, texture streaming, PBR generation).
+- [p] Seamless portals: M9a player (SI0-SI11), M9b world (SI12b, NV11, AI12/MA9, AI10, SI16; after 3.10); far-field performance (M8: HLOD, texture streaming, PBR generation).
 - [p] Co-op N1–N8 (`specs/net.md`; N1–N5 after this phase, N6–N8 after M7).
 - [p] Lua/Luau beyond L3; mods milestone demo (M5 E1, U7, X1, X2). Rule hooks spec written 2026-11-08 (`superfargoth/docs/specs/rule-hooks.md`: Luau `rules.wrap` over Rust formula defaults; R1 needs no Luau and sets the shape of every 2.7 formula; owner 2026-11-08: Rust first, Luau later; only the pure-formula shape applies now).
 - [p] Crate "update all" pass once `bevy_hanabi` supports Bevy 0.20 (archive Backlog).
 - [p] Classic option (owner 2026-10-20/23, ARCHITECTURE §1b): (a) Classic graphics preset on the `--off` switches; (b) classic rules (`mw_rules`, from OpenMW) behind the feel-system seams, after each modern version exists.
 - [p] Setup screen (owner 2026-10-26, `specs/setup.md`): first-run setup in the game binary: Morrowind path, mod list import, bring-your-own downloads (DLSS, animation libraries; one click where licences allow, guided download + hash check otherwise), bake queue with progress. After the Phase 3 animation lanes.
-- [p] Living world AI (owner 2026-10-28, not started, no design yet): characters going about their lives. Reference: https://www.nexusmods.com/reddeadredemption2/mods/10967. A Nemesis-like system (NPCs that remember the player and build rivalries) is a good first step. Research before any spec (rule 8).
+- [p] Living world AI (owner 2026-10-28; design `superfargoth/docs/specs/ai.md`, memory ai.md "Memory", decisions `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md`; built part in 3.10): characters going about their lives. Reference: https://www.nexusmods.com/reddeadredemption2/mods/10967. A Nemesis-like system (NPCs that remember the player and build rivalries) is a good first step (AI13).
 - [p] Groundcover (owner 2026-10-20, low priority; 2026-10-25 adopts `bevy_grass`): masks from LTEX, wind from `sf_wind`; later load Morrowind groundcover mods (`research/crates-2026-10-25.md`).
 
 ## Recent

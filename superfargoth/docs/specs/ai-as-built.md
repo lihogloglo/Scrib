@@ -40,6 +40,9 @@ transient, games save a high-level AI state and re-run the tree):
   ignore readings older than their clock, so a load that put the host clock behind a stack would freeze its
   timers. `sf/clock` and `sf/ai` are snapshotted at the same tick boundary, so this holds if the AI tick's `now`
   is derived from the saved clock and rounded down; which clock wins is the open owner question (three clocks).
+  **Owned elsewhere (2026-11-09):** clock consolidation is ROADMAP 1.17, assigned to the mechanics lane; the spec
+  lands at [clock.md](clock.md). The AI lane writes no clock conversion: AI4/AI5 directive timers stay blocked on
+  1.17, and the AI tick's `now` must come from whatever 1.17 makes authoritative.
 - **Keys:** placement and spawn ids are stable (spawn ids come from the saved overlay counter). Flagged:
   `mw_rpg_bevy::dialogue::key` falls back to `Entity` bits for an actor without a placement; such a key must never
   get a stack, or its saved state attaches to nobody (or someone else) after a load.

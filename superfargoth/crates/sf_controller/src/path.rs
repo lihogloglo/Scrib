@@ -1,4 +1,4 @@
-//! Path following for NPCs until `sf_ai` owns the intent (M10). The
+//! Path following for NPCs until `sf_ai` owns the intent (M7). The
 //! framework follows a polyline; adapters supply the paths (their named
 //! scaffold, e.g. `PathWalkScaffold`, turns authored path data into
 //! [`PathNode`]s).

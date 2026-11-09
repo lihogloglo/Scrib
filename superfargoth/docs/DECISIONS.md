@@ -1651,3 +1651,12 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   chronological (SHOP/Humphreys/Decima), not Fluid's method-local; `SEARCH_TRIES`/`SEARCH_DEPTH` cut it off identically on
   every CPU tier (`RejectReason::Limit`); a method opts out with `cut: true` (ai-as-built.md, AI2).
 - 2026-11-08 (round 4, effects E3): world time in `sf_effects` is `GameMinutes` (no `sf_rpg` dependency); `apply_book` takes an `EffectEnv` so E1 `apply`/`EffectCtx` stay stable; power recharge is checked by the step, tick cooldowns by the cast model.
+- 2026-11-09 (owner-delegated, AI/nav open questions): the AI and navigation answers (d) fixed provisional tier caps
+  set by AIM, (e) schedules after AI10-AI12 with patterns in the adapter, (f) merchants never refuse service,
+  (g) bounded cross-worldspace vendettas, (h) crime in `mw_rpg::crime`, (a) two navmesh agent classes, (b) doors by
+  poly state with prop carving opt-in later, (c) client routes are presentation: `research/ai-nav-decisions-2026-11-08.md`.
+- 2026-11-09 (AI5, save shape): `sf/ai` is **one world section keyed by `ActorKey`** (stacks never unload, tier 0),
+  not per-placement overlay blobs; v1 holds each actor's `SavedStack`, later fields arrive by version steps.
+  Section names must stay single-segment: `sf_save` derives a section's family as the name up to the first `/`, so a
+  second section under `sf/ai/...` would collide with `sf/ai`'s spec and version chain. AI13's memory section is
+  therefore `sf/aimemory`, not `sf/ai/memory` (audit 2026-11-09).
