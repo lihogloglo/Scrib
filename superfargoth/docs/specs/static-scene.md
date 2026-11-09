@@ -157,12 +157,23 @@ The CPU half's work order is [scene-runtime-plan.md](scene-runtime-plan.md); the
   (today, a garbage index range) (architecture review B3). The per-chain **concatenate-and-rebase** that
   `sf_scene/src/chain.rs:13-14` assigns to "the runtime" is **no longer runtime work**: it moves into the `scene.chains`
   bake step below, because at stream-in it has no budget and no streaming stage.
-- **Instance-slot fragmentation is bounded by construction, not by compaction.** `sf_scene::alloc` is first-fit, never
-  compacts and `high_water` only grows (`sf_scene/src/alloc.rs:1-8,86-110`), which creeps over a long session
-  (architecture review S10). **Decision 2026-11-09: a segregated size-class allocator per batch** (blocks never split
-  or merged, so the high-water mark converges on the ring configuration) and **batch capacity fixed at config, never
-  grown at stream-in** — growing it reallocates the output buffer and rebuilds a bind group, which "stream-in ≤ 0.2 ms,
-  zero spawns" cannot pay. Overflow leaves those placements out of the table, to spawn as entities. Bound and proof:
+- **Instance-slot fragmentation was settled by measurement, against this spec's first answer.** Decision 2026-11-09
+  was a segregated size-class allocator per batch, on the argument that blocks never split or merged make the
+  high-water mark converge on the ring configuration (architecture review S10 had flagged first fit as creeping).
+  **A4 measured both on the same synthetic city walk and the argument was wrong.** The size-class allocator reaches
+  **3.33x peak live slots and is still climbing after 2M cycles** (~9 h of play): `peak(c)` is a record process whose
+  per-class records keep being beaten, ever more rarely, and the classes never peak together. First fit settles at
+  **1.17x** with its free ranges coalesced, and A5 re-measured it at the space level as **1.14x, byte-identical from
+  1 000 to 200 000 cycles** - flat, not creeping. Robson's adversarial `O(M log(max/min))` bound does not describe a
+  streaming ring over a content-bounded size set. **Decision 2026-11-10: first fit (`sf_scene::alloc::SlotAllocator`)
+  allocates the scene records, the per-batch output slots and the chain table**; `ClassAllocator` stays in the tree,
+  tested, carrying the corrected verdict in its doc comment, since its a-priori ceiling and 64-slot-aligned block
+  starts may earn it a place later. What does hold either way: `bump = sum of size(c)*peak(c)` exactly (the real
+  zero-external-fragmentation statement) and an a-priori ceiling from the ring configuration, independent of session
+  length. **Batch capacity stays fixed at config and is never grown at stream-in** - growing it reallocates the output
+  buffer and rebuilds a bind group, which "stream-in <= 0.2 ms, zero spawns" cannot pay - so overflow leaves those
+  placements out of the table to spawn as entities, counted and warned once. The 4096-slot default is an **untested
+  guess**: A5's walk already used ~67 % of it at 25 resident cells with only four chains. Numbers and tests:
   scene-runtime-plan.md §4.4.
 - **Origin shifts** (`big_space`): instance transforms are cell-relative; the per-view pass adds the camera-relative
   cell offset, so an origin shift rewrites nothing.
@@ -395,7 +406,7 @@ each delivered, with the owner runs still open, is in
 |---|---|---|
 | S3a2 | Patch "GS" extension, split into two agent slices ([gs-patch-plan.md](gs-patch-plan.md) §3): N geometry ranges per batch sharing one batch set with the AABB per range; range unpacking inside the early preprocess pass; counters that see instance batches; guards; `is_active` out of `@if(FRUSTUM_CULLING)` (§1) | ranges draw the geometry they name; lamp shadow views unpack their own ranges; `batch_set_count` counts statics |
 | S3a3 | Per-view per-instance level selection (gs-patch-plan §4) and the per-batch generation counter the lamp skip hash reads (§8); may fold into S4 | a view's instances draw their own levels; no stale cached lamp face |
-| S3b | Scrib runtime on the port ([scene-runtime-plan.md](scene-runtime-plan.md)): table format v3 + the `scene.chains` bake step, batch entities fed from the baked tables, the global chain table and the size-class allocator (§3); main view only, opaque class, no LOD | one town's opaque statics drawn from the table; slabs per class and batch sets per view measured |
+| S3b | Scrib runtime on the port ([scene-runtime-plan.md](scene-runtime-plan.md)): table format v3 + the `scene.chains` bake step, batch entities fed from the baked tables, the global chain table and the slot allocator (§3); main view only, opaque class, no LOD | one town's opaque statics drawn from the table; slabs per class and batch sets per view measured |
 | S4 | All classes, LOD ranges, pixel-error presets, motion vectors; the far-field lead bands **stay** (an explicit per-instance draw-distance end in the cull) | statics fully on the table in the main view, no holes at far-field handoffs |
 | S5 | Shadow views (cascades, lamp faces) + far shadows | shadows from the table; per-view cost flat |
 | S6 | Horizon + Hi-Z occlusion (forward path, §4 step 6); Solari decision (§10) | numbers; decision logged |
@@ -432,7 +443,7 @@ mesh entities did not move the frame once already (§Why), so "no change" is a p
   static scene could honour by **pinning level 0** instead. Flagged, not decided.
 - **Open, for the owner: are interiors in the static scene at all?** (§11.) The case for leaving them out for now: a
   few hundred statics each against the 46-55k this design exists to remove; a door crossing cycles a whole worldspace
-  in one frame, the worst case for chain churn and for §3's size-class bound; promotion is the common case indoors, so
+  in one frame, the worst case for chain churn and for §3's slot bound; promotion is the common case indoors, so
   much of an interior stays entities anyway; and the bake grows a product per cell across hundreds of worldspaces
   (scene-runtime-plan.md §12 recommends off by default). **Owner decision.**
 - Open: per-instance tint and vertex colour variation within a class (the `MeshTag` route, §5); animated-but-static NIF
