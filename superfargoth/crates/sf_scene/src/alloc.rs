@@ -178,10 +178,11 @@ pub const CLASSES: usize = 32;
 
 /// Block size per class, ascending: multiples of [`BLOCK_GRAIN`] up to 512 slots, then ×1.25
 /// rounded up to the grain. The largest ([`CLASS_SIZES`]`[31]`, 129 088 slots ≈ 8 MB of 64 B
-/// output slots) is far above any batch capacity we configure, so a request that fits no class
-/// could not have fitted the batch either.
+/// output slots) is far above any batch capacity we configure (`SceneConfig::batch_capacity`,
+/// default 4096), so a request that fits no class could not have fitted the batch either.
 pub const CLASS_SIZES: [u32; CLASSES] = class_sizes();
 
+#[allow(clippy::cast_possible_truncation)] // CLASSES is 32; `u32::try_from` is not const
 const fn class_sizes() -> [u32; CLASSES] {
     let mut out = [0u32; CLASSES];
     let mut c = 0;
@@ -243,7 +244,7 @@ pub struct ClassStats {
     pub waste: u32,
 }
 
-/// A batch's output slots: segregated size classes over a fixed capacity, **bounded**.
+/// A batch's output slots: segregated size classes over a fixed capacity.
 ///
 /// One per batch (static-scene.md §3, "The GPU scene"; `scene-runtime-plan.md` §4.4). A request
 /// takes a whole block of its [`size_class`], and a block is **never split and never merged**, so
@@ -254,15 +255,33 @@ pub struct ClassStats {
 /// bump = Σ_c size(c) · peak(c)
 /// ```
 ///
-/// with `peak(c)` the most simultaneously live class-`c` blocks over the session — monotone,
-/// and it *converges* once the worst neighbourhood has been walked, instead of creeping the way
-/// first fit over mixed sizes does (bounded only by Robson's `O(M·log(max/min))`, ≈ 11× the live
-/// set at our size ratio). The price is bounded internal waste, `size(c) < 1.25·len + 64`.
+/// with `peak(c)` the most class-`c` blocks ever occupied at once — live, or still waiting for the
+/// frames in flight. That identity is exact (`bump_is_bounded_under_a_city_walk` asserts it at
+/// twenty stages of a 200 000-cycle walk), and with it comes the one bound that holds a priori:
+/// `peak(c) ≤ resident cells + frames in flight`, so
 ///
-/// `peak(c)` is per class, and two classes may peak at different times, so `bump` is **not**
-/// bounded by `1.25 × the live set`: it is bounded by `Σ_c (1.25·len(c) + 64)·peak(c)`, and the
-/// honest statement is that the sum over classes is what it costs. `bump_is_bounded_under_a_city_walk`
-/// demonstrates the identity, the convergence and the ratio.
+/// ```text
+/// bump ≤ (resident + frames in flight) · Σ_{c reachable} size(c)
+/// ```
+///
+/// — computable from the ring configuration before a cell streams in, and **independent of session
+/// length**. That is what "bounded" means here, and all it means.
+///
+/// **What the plan claims and the measurement denies** (`scene-runtime-plan.md` §4.4 "Verdict:
+/// bounded", to be corrected): `bump` is *not* `≤ 1.25 × the live set + 64·CLASSES`, and it does
+/// *not* converge. The classes do not peak together, and `peak(c)` is a record process whose
+/// records keep being beaten, ever more rarely. On a synthetic 5×5 ring over 40 cell footprints
+/// (7..=638 instances, nine classes) `bump / peak_live` measures **3.0× after 200 000 stream-in
+/// cycles and 3.33× after 2 M**, still creeping, against an a-priori ceiling of 7.0×. The same
+/// sequence through first-fit [`SlotAllocator`] settles at **1.2×**
+/// (`first_fit_high_water_on_the_same_walk`): Robson's ≈ 11× is adversarial, and a streaming ring
+/// with a content-bounded size set is not an adversary.
+///
+/// So the case for segregated classes over a batch's output slots is the a-priori ceiling (no
+/// appeal to the sequence), [`BLOCK_GRAIN`]-aligned block starts for the materialize dispatch, and
+/// O(1) allocation with no free-list scan — **not** a smaller high-water mark. Budget a batch's
+/// `capacity` from the ceiling, never from `1.25 × the live set`. The internal waste the plan
+/// predicts does hold: `size(c) < 1.25·len + 64`, measured under 1 000 slots across 25 live cells.
 ///
 /// `capacity` is **fixed** (the batch's output buffer and its materialize bind group are sized
 /// from it, and growing them at stream-in would rebuild both): a request that does not fit is
@@ -320,17 +339,16 @@ impl ClassAllocator {
         }
         let exhausted = || AllocError::Exhausted { want: len, capacity: self.capacity };
         let (class, size) = size_class(len).ok_or_else(exhausted)?;
-        let start = match self.free[usize::from(class)].pop() {
-            Some(start) => start,
-            None => {
-                // A new block at the end, never a split of a bigger free one.
-                let end = self.bump.checked_add(size).ok_or(AllocError::Overflow)?;
-                if end > self.capacity {
-                    return Err(exhausted());
-                }
-                self.bump = end;
-                end - size
+        let start = if let Some(start) = self.free[usize::from(class)].pop() {
+            start
+        } else {
+            // A new block at the end, never a split of a bigger free one.
+            let end = self.bump.checked_add(size).ok_or(AllocError::Overflow)?;
+            if end > self.capacity {
+                return Err(exhausted());
             }
+            self.bump = end;
+            end - size
         };
         self.live.insert(start, Block { class, len, tag });
         self.live_slots += len;
@@ -433,6 +451,7 @@ mod tests {
         assert_eq!(size_class(512), Some((7, 512)));
         assert_eq!(size_class(513), Some((8, 640)));
         let top = CLASS_SIZES[CLASSES - 1];
+        assert_eq!(top, 129_088, "the largest class, quoted in CLASS_SIZES' docs");
         assert_eq!(size_class(top), Some((31, top)));
         assert_eq!(size_class(top + 1), None, "above the largest class");
         // The waste bound, over every length a class can be asked for.
@@ -520,99 +539,235 @@ mod tests {
         assert_eq!(a.alloc(64, 3).unwrap(), first);
     }
 
-    /// The claim the whole design rests on: the high-water mark is `Σ_c size(c)·peak(c)`, it
-    /// stops growing once the worst neighbourhood has been walked, and nothing creeps.
-    #[test]
-    fn bump_is_bounded_under_a_city_walk() {
-        const SIZES: usize = 40;
-        const RESIDENT: usize = 25;
-        const CYCLES: u64 = 10_000;
-        // 40 cell footprints, 7..638 instances: the spread of a Vvardenfell ring.
-        let sizes: [u32; SIZES] = std::array::from_fn(|i| {
-            let i = i as u32;
-            7 + i * 13 + (i % 5) * 31
-        });
-        /// The walk's own books, so the test can check the allocator against them. A class's
-        /// blocks are *occupied* while they are live **and** while they wait for the frames in
-        /// flight: that is what the allocator cannot hand out again, so that is the peak.
-        struct Walk {
-            resident: std::collections::VecDeque<(SlotRange, u8)>,
-            /// (frame the block returns to its class, class).
-            waiting: std::collections::VecDeque<(u64, u8)>,
-            occupied_per_class: [u32; CLASSES],
-            peak_per_class: [u32; CLASSES],
-            longest_per_class: [u32; CLASSES],
+    /// The walk's own books, so the test can check the allocator against them. A class's blocks
+    /// are *occupied* while they are live **and** while they wait for the frames in flight: that
+    /// is what the allocator cannot hand out again, so that is the peak.
+    struct Walk {
+        resident: std::collections::VecDeque<(SlotRange, u8)>,
+        /// (frame the block returns to its class, class).
+        waiting: std::collections::VecDeque<(u64, u8)>,
+        occupied_per_class: [u32; CLASSES],
+        peak_per_class: [u32; CLASSES],
+        longest_per_class: [u32; CLASSES],
+    }
+
+    impl Walk {
+        fn new() -> Self {
+            Self {
+                resident: std::collections::VecDeque::new(),
+                waiting: std::collections::VecDeque::new(),
+                occupied_per_class: [0; CLASSES],
+                peak_per_class: [0; CLASSES],
+                longest_per_class: [0; CLASSES],
+            }
         }
-        /// Streams one cell in per frame and, past the ring's size, the oldest one out.
+
+        /// Streams one cell in per frame and, past `resident`'s size, the oldest one out.
         fn walk(
+            &mut self,
             a: &mut ClassAllocator,
-            w: &mut Walk,
             next: &mut dyn FnMut() -> u32,
             sizes: &[u32],
+            resident: usize,
+            flight: u64,
             frames: std::ops::Range<u64>,
         ) {
             for frame in frames {
                 a.advance(frame);
-                while w.waiting.front().is_some_and(|&(ready, _)| ready <= frame) {
-                    let (_, class) = w.waiting.pop_front().expect("front");
-                    w.occupied_per_class[usize::from(class)] -= 1;
+                while self.waiting.front().is_some_and(|&(ready, _)| ready <= frame) {
+                    let (_, class) = self.waiting.pop_front().expect("front");
+                    self.occupied_per_class[usize::from(class)] -= 1;
                 }
-                let len = sizes[next() as usize % sizes.len()];
+                let pick = usize::try_from(next()).expect("u32 fits usize") % sizes.len();
+                let len = sizes[pick];
                 let (class, _) = size_class(len).expect("a cell footprint has a class");
                 let range = a.alloc(len, u64::from(class)).expect("capacity");
-                for (other, _) in &w.resident {
+                for (other, _) in &self.resident {
                     assert!(!overlaps(range, *other), "frame {frame}: {range:?} overlaps {other:?}");
                 }
-                w.resident.push_back((range, class));
+                self.resident.push_back((range, class));
                 let c = usize::from(class);
-                w.occupied_per_class[c] += 1;
-                w.peak_per_class[c] = w.peak_per_class[c].max(w.occupied_per_class[c]);
-                w.longest_per_class[c] = w.longest_per_class[c].max(len);
-                if w.resident.len() > RESIDENT {
-                    let (old, old_class) = w.resident.pop_front().expect("resident");
+                self.occupied_per_class[c] += 1;
+                self.peak_per_class[c] = self.peak_per_class[c].max(self.occupied_per_class[c]);
+                self.longest_per_class[c] = self.longest_per_class[c].max(len);
+                if self.resident.len() > resident {
+                    let (old, old_class) = self.resident.pop_front().expect("resident");
                     a.release(old, frame).expect("a live block");
-                    w.waiting.push_back((frame + 3, old_class));
+                    self.waiting.push_back((frame + flight, old_class));
                 }
             }
         }
-        let mut a = ClassAllocator::new(1 << 20, 3);
+    }
+
+    /// Cell footprints of the synthetic walk: 40 of them, 7..=638 instances, the spread of a
+    /// Vvardenfell ring. They fall in classes 0..=8, so the walk exercises nine free lists.
+    const WALK_SIZES: usize = 40;
+    /// Cells resident at once (a 5×5 ring).
+    const WALK_RESIDENT: usize = 25;
+    const WALK_FLIGHT: u64 = 3;
+
+    fn walk_sizes() -> [u32; WALK_SIZES] {
+        std::array::from_fn(|i| {
+            let i = u32::try_from(i).expect("WALK_SIZES fits u32");
+            7 + i * 13 + (i % 5) * 31
+        })
+    }
+
+    /// The only bound of a [`ClassAllocator`] that holds a priori: every class the size set can
+    /// ask for, each holding as many blocks as the ring can have occupied at once (resident plus
+    /// the ones still waiting for the frames in flight). Computable from the ring configuration
+    /// before a single cell streams in, and independent of session length — which is what
+    /// "bounded" means here, and all it means.
+    fn occupancy_ceiling(sizes: &[u32], resident: usize, flight: u64) -> u32 {
+        let mut per_class = [0u32; CLASSES];
+        for &len in sizes {
+            let (class, _) = size_class(len).expect("a footprint has a class");
+            per_class[usize::from(class)] = 1;
+        }
+        let blocks = u32::try_from(resident).expect("small") + u32::try_from(flight).expect("small");
+        (0..CLASSES).map(|c| CLASS_SIZES[c] * per_class[c] * blocks).sum()
+    }
+
+    /// The design's load-bearing claim, measured rather than argued — and **the plan's version of
+    /// it is false** (`scene-runtime-plan.md` §4.4 "Verdict: bounded").
+    ///
+    /// What holds:
+    /// - the identity `bump = Σ_c size(c)·peak(c)`, exactly, with `peak(c)` the most class-`c`
+    ///   blocks ever occupied at once (live, or waiting for the frames in flight). Blocks are
+    ///   never split and never merged, so nothing else can make the allocator grow: **external
+    ///   fragmentation inside a class is zero**;
+    /// - `bump ≤` [`occupancy_ceiling`], an a-priori ceiling from the ring configuration alone,
+    ///   independent of how long the session runs.
+    ///
+    /// What does **not** hold: `bump ≤ 1.25·peak_live + 64·CLASSES`. The classes do not peak
+    /// together, so `bump` is measured at **3.0 × the peak live slots** after 200 000 cycles (and
+    /// still creeping: 3.33× at 2 M, `class_allocator_high_water_curve`). `peak(c)` is a record
+    /// process — each class's record occupancy keeps being beaten, ever more rarely — so the
+    /// high-water mark does not converge within any session length we can test; it only flattens
+    /// logarithmically under its ceiling. `first_fit_high_water_on_the_same_walk` is the contrast
+    /// the plan expected to lose.
+    #[test]
+    fn bump_is_bounded_under_a_city_walk() {
+        const CYCLES: u64 = 10_000;
+        let sizes = walk_sizes();
+        let ceiling = occupancy_ceiling(&sizes, WALK_RESIDENT, WALK_FLIGHT);
+        assert_eq!(ceiling, 82_432, "nine classes × 28 occupiable blocks");
+        let mut a = ClassAllocator::new(1 << 20, u32::try_from(WALK_FLIGHT).expect("small"));
         let mut next = rng(0x9E37_79B9);
-        let mut w = Walk {
-            resident: std::collections::VecDeque::new(),
-            live_per_class: [0; CLASSES],
-            peak_per_class: [0; CLASSES],
-            longest_per_class: [0; CLASSES],
-        };
-        walk(&mut a, &mut w, &mut next, &sizes, 0..CYCLES);
-        let after_first_walk = a.stats();
-        // The identity: blocks are never split and never merged, so the only growth is the
-        // number of class-`c` blocks that were ever live at once.
-        let identity: u32 = (0..CLASSES).map(|c| CLASS_SIZES[c] * w.peak_per_class[c]).sum();
-        assert_eq!(after_first_walk.bump, identity, "bump is Σ_c size(c)·peak(c)");
-        // The bound, honestly stated: `size(c) < 1.25·len + 64` per class, summed over classes.
+        let mut w = Walk::new();
+        let mut curve = Vec::new();
+        for seg in 0..20 {
+            w.walk(&mut a, &mut next, &sizes, WALK_RESIDENT, WALK_FLIGHT, seg * CYCLES..(seg + 1) * CYCLES);
+            let s = a.stats();
+            // The identity, re-checked at every stage of the walk.
+            let identity: u32 = (0..CLASSES).map(|c| CLASS_SIZES[c] * w.peak_per_class[c]).sum();
+            assert_eq!(s.bump, identity, "after {} cycles: bump is Σ_c size(c)·peak(c)", (seg + 1) * CYCLES);
+            // The a-priori ceiling.
+            assert!(s.bump <= ceiling, "after {} cycles: bump {} > ceiling {ceiling}", (seg + 1) * CYCLES, s.bump);
+            // Monotone, and the ring is the only thing live.
+            assert!(s.bump >= curve.last().copied().unwrap_or(0));
+            assert_eq!(s.live_blocks, u32::try_from(WALK_RESIDENT).expect("small"));
+            curve.push(s.bump);
+        }
+        let end = a.stats();
         let classes_in_play = w.peak_per_class.iter().filter(|&&p| p > 0).count();
-        let bound: f64 = (0..CLASSES)
-            .map(|c| {
-                (1.25 * f64::from(w.longest_per_class[c]) + f64::from(BLOCK_GRAIN)) * f64::from(w.peak_per_class[c])
-            })
-            .sum();
-        assert!(f64::from(after_first_walk.bump) <= bound, "bump {} > bound {bound}", after_first_walk.bump);
-        // And it converges: ten thousand more cycles of the same walk grow it by nothing.
-        walk(&mut a, &mut w, &mut next, &sizes, CYCLES..2 * CYCLES);
-        let after_second_walk = a.stats();
-        assert_eq!(after_second_walk.bump, after_first_walk.bump, "the high-water mark creeps");
-        assert_eq!(after_second_walk.live_blocks, RESIDENT as u32 + 1);
-        // The measured price of the policy, for the record: bump / peak live slots. 25 cells of
-        // 7..638 instances peak around 8 k slots; the classes do not peak together, which is
-        // exactly why the bound is a sum over classes and not 1.25 × the live set.
-        let ratio = f64::from(after_second_walk.bump) / f64::from(after_second_walk.peak_live_slots);
-        assert!(
-            (1.0..3.0).contains(&ratio),
-            "bump {} peak_live {} ratio {ratio:.2} over {classes_in_play} classes",
-            after_second_walk.bump,
-            after_second_walk.peak_live_slots
+        assert_eq!(classes_in_play, 9);
+        let ratio = f64::from(end.bump) / f64::from(end.peak_live_slots);
+        println!(
+            "city walk, 200 000 cycles: bump {} peak_live {} ratio {ratio:.2} ceiling {ceiling} \
+             waste {} over {classes_in_play} classes; curve {curve:?}",
+            end.bump, end.peak_live_slots, end.waste
         );
-        assert!(after_second_walk.waste < after_second_walk.live_slots / 4 + BLOCK_GRAIN * RESIDENT as u32);
+        // The disproof, pinned: the plan's bound is violated by more than a factor of two. If a
+        // later change makes this fail *low*, the plan was right after all and §4.4 can stand.
+        let plan_bound = 1.25 * f64::from(end.peak_live_slots)
+            + f64::from(BLOCK_GRAIN) * f64::from(u32::try_from(CLASSES).expect("small"));
+        assert!(f64::from(end.bump) > plan_bound, "bump {} <= the plan's bound {plan_bound:.0}", end.bump);
+        assert!((2.5..4.0).contains(&ratio), "measured price of the policy moved: {ratio:.2}");
+        // Still creeping at the end of the walk: the last increase is in the second half.
+        let half = curve[curve.len() / 2 - 1];
+        assert!(end.bump > half, "bump {} did not grow after 100 000 cycles ({half})", end.bump);
+        // Internal waste is the part the plan gets right: under a quarter of the live slots plus
+        // one grain per live block (`size(c) < 1.25·len + 64`, summed over the resident cells).
+        let waste_bound = end.live_slots / 4 + BLOCK_GRAIN * u32::try_from(WALK_RESIDENT).expect("small");
+        assert!(end.waste < waste_bound, "waste {} >= {waste_bound}", end.waste);
+    }
+
+    /// The contrast the plan claims is the bad one: the **same** walk through the first-fit
+    /// [`SlotAllocator`] over mixed sizes. Its measured high-water mark is **1.2 × the peak live
+    /// slots** — not the ≈ 11× of Robson's worst case, and 2.7× tighter than the segregated
+    /// classes on the identical sequence. Robson's bound is adversarial; a streaming ring with a
+    /// content-bounded size set is nowhere near adversarial, and coalescing keeps the holes usable.
+    ///
+    /// So the reason to prefer [`ClassAllocator`] for a batch's output slots is **not** the
+    /// high-water mark: it is the a-priori ceiling (`occupancy_ceiling`, no appeal to the
+    /// sequence), [`BLOCK_GRAIN`]-aligned block starts for the materialize dispatch, and O(1)
+    /// allocation. Where neither is needed, first fit is the cheaper policy.
+    #[test]
+    fn first_fit_high_water_on_the_same_walk() {
+        const CYCLES: u64 = 200_000;
+        let sizes = walk_sizes();
+        let mut a = SlotAllocator::new(u32::try_from(WALK_FLIGHT).expect("small"));
+        let mut next = rng(0x9E37_79B9);
+        let mut resident: std::collections::VecDeque<SlotRange> = std::collections::VecDeque::new();
+        let mut peak_live = 0;
+        for frame in 0..CYCLES {
+            a.advance(frame);
+            let len = sizes[usize::try_from(next()).expect("u32 fits usize") % sizes.len()];
+            let range = a.alloc(len).expect("first fit never refuses");
+            for other in &resident {
+                assert!(!overlaps(range, *other), "frame {frame}");
+            }
+            resident.push_back(range);
+            peak_live = peak_live.max(a.stats().live_slots);
+            if resident.len() > WALK_RESIDENT {
+                a.release(resident.pop_front().expect("resident"), frame).expect("a live range");
+            }
+        }
+        let s = a.stats();
+        let ratio = f64::from(s.high_water) / f64::from(peak_live);
+        println!(
+            "first fit, same walk: high_water {} peak_live {peak_live} ratio {ratio:.2} \
+             free_ranges {} fragmentation {:.2}",
+            s.high_water, s.free_ranges, s.fragmentation
+        );
+        assert!(ratio < 1.5, "first fit's high-water mark moved: {ratio:.2}");
+        // And the free space stays a handful of coalesced holes, not a sieve.
+        assert!(s.free_ranges < 16, "free ranges {}", s.free_ranges);
+    }
+
+    /// Where the high-water mark goes over a session far longer than any test should run: it is
+    /// still creeping at 2 M stream-in cycles (≈ 9 h at 60 fps), under its ceiling.
+    #[test]
+    #[ignore = "measurement: the ClassAllocator high-water curve over 2 M stream-in cycles"]
+    fn class_allocator_high_water_curve() {
+        const SEG: u64 = 10_000;
+        let sizes = walk_sizes();
+        let mut a = ClassAllocator::new(1 << 22, u32::try_from(WALK_FLIGHT).expect("small"));
+        let mut next = rng(0x9E37_79B9);
+        let mut w = Walk::new();
+        let mut last = 0;
+        for seg in 0..200 {
+            w.walk(&mut a, &mut next, &sizes, WALK_RESIDENT, WALK_FLIGHT, seg * SEG..(seg + 1) * SEG);
+            let s = a.stats();
+            if s.bump != last {
+                last = s.bump;
+                println!(
+                    "cycles {:>8} bump {:>6} peak_live {:>5} ratio {:.2} waste {:>5}",
+                    (seg + 1) * SEG,
+                    s.bump,
+                    s.peak_live_slots,
+                    f64::from(s.bump) / f64::from(s.peak_live_slots),
+                    s.waste
+                );
+            }
+        }
+        println!(
+            "peaks per class {:?}, longest request per class {:?}, ceiling {}",
+            &w.peak_per_class[..9],
+            &w.longest_per_class[..9],
+            occupancy_ceiling(&sizes, WALK_RESIDENT, WALK_FLIGHT)
+        );
     }
 
     #[test]
