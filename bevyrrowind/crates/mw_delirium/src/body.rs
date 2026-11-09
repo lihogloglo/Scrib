@@ -405,6 +405,8 @@ pub fn character_from_skeleton(skeleton: &Skeleton, opt: &Options) -> Result<Bod
             damping: 2.0 * g,
             strength: g * g,
             max_torque: max.map(|m| m * opt.torque),
+            // delirium 0.7.0 field; `true` is its serde default, the behaviour before the field existed.
+            centred: true,
         });
     }
     let parts: Vec<Part> = (0..21).map(|k| Part { name: NAMES[k].into(), frame: mrows(zrot[k], zc[k]), mass: kg(k) }).collect();
@@ -432,6 +434,8 @@ pub fn character_from_skeleton(skeleton: &Skeleton, opt: &Options) -> Result<Bod
                 bind: rot[k].to_array(),
                 boxed: boxed.map(|e| e.to_array()),
                 inertia: [0.0; 3],
+                // delirium 0.7.0 field: a capsule's length; 0 (its serde default) keeps the shape from radius/half/boxed.
+                length: 0.0,
                 frame: fr(centre[k], rot[k]),
             }
         })

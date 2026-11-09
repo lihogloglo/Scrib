@@ -145,9 +145,10 @@ wgpu = { version = "30", default-features = false }
 tes3 = { git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0", default-features = false }
 clap = { version = "4", features = ["derive"] }
 # Euphoria-style active ragdoll (GPL-3.0-only; owner 2026-10-26, ROADMAP 3.2b). Game crates only (`mw_delirium`):
-# GPL-3.0-only code stays out of the framework. No releases: pinned to a commit.
-delirium = { git = "https://github.com/PVCPC/delirium-physics", rev = "91ee2468820d434e123d4c09e89760ce38d165f5", default-features = false }
-delirium-sdk = { git = "https://github.com/PVCPC/delirium-physics", rev = "91ee2468820d434e123d4c09e89760ce38d165f5" }
+# GPL-3.0-only code stays out of the framework. No releases: pinned to a commit. Re-pinned 2026-11-08 to 0.7.0
+# (`f4ff84d`, main of 2026-11-06): the old pin 91ee246 vanished when upstream rewrote its history.
+delirium = { git = "https://github.com/PVCPC/delirium-physics", rev = "f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d", default-features = false }
+delirium-sdk = { git = "https://github.com/PVCPC/delirium-physics", rev = "f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d" }
 # Platform data directories: the bake cache lives in the local data dir.
 dirs = "6"
 encoding_rs = "0.8"

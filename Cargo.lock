@@ -3029,9 +3029,10 @@ dependencies = [
 [[package]]
 name = "delirium"
 version = "0.1.0"
-source = "git+https://github.com/PVCPC/delirium-physics?rev=91ee2468820d434e123d4c09e89760ce38d165f5#91ee2468820d434e123d4c09e89760ce38d165f5"
+source = "git+https://github.com/PVCPC/delirium-physics?rev=f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d#f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d"
 dependencies = [
  "bevy_math",
+ "bevy_tasks",
  "bevy_transform",
  "delirium-data",
  "tracing",
@@ -3040,19 +3041,21 @@ dependencies = [
 [[package]]
 name = "delirium-data"
 version = "0.1.0"
-source = "git+https://github.com/PVCPC/delirium-physics?rev=91ee2468820d434e123d4c09e89760ce38d165f5#91ee2468820d434e123d4c09e89760ce38d165f5"
+source = "git+https://github.com/PVCPC/delirium-physics?rev=f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d#f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d"
 dependencies = [
  "aes",
+ "blake3",
  "miniz_oxide 0.8.9",
 ]
 
 [[package]]
 name = "delirium-sdk"
 version = "0.1.0"
-source = "git+https://github.com/PVCPC/delirium-physics?rev=91ee2468820d434e123d4c09e89760ce38d165f5#91ee2468820d434e123d4c09e89760ce38d165f5"
+source = "git+https://github.com/PVCPC/delirium-physics?rev=f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d#f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d"
 dependencies = [
  "delirium",
  "delirium-data",
+ "rayon",
  "serde",
  "serde_json",
 ]
