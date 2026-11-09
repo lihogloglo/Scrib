@@ -1,9 +1,10 @@
-//! The `scene.cells` bake step (feature `bake`, static-scene.md §2): one [`StaticCellTable`] per
-//! streaming cell.
+//! The `scene.cells` and `scene.chains` bake steps (feature `bake`, static-scene.md §2): one
+//! [`StaticCellTable`] per streaming cell, and one mesh per chain.
 //!
 //! | Step | Subject | Reads | Output |
 //! |---|---|---|---|
 //! | `scene.cells` | `<ws>/<x>,<y>,<z>` (cell) | `world.page`; *dynamic*: `mesh.cook`, level-0 `terrain.tile` | [`StaticCellTable`] bytes (`table.rs`, format v3) |
+//! | `scene.chains` | `<model>/<part>` (chain) | `mesh.cook` (static) | an `sf_model` `.sfmesh`, one LOD level per chain level |
 //!
 //! Keyed like `lod.near`: the cell's index page (its placements, so its records), the adapter's
 //! [`SceneSource::fingerprint`] (eligibility rules and the record facts they read, the mod set),
@@ -32,6 +33,26 @@
 //! its model's `mesh.cook` subject in the table's model section, and the part (material index)
 //! inside it — the two inputs of [`mesh_key`], which is a hash and cannot be inverted.
 //!
+//! **Chain geometry (`scene.chains`).** The concatenate-and-rebase of [`crate::chain`] is a bake
+//! step, not stream-in work: at stream-in it would have to decode every level's submeshes with no
+//! stage and no budget (scene-runtime-plan.md §3.2). [`build_chain_mesh`] builds one `.sfmesh`
+//! per chain with **one LOD level per chain level, one submesh each** — that level's submeshes of
+//! the chain's material, concatenated and rebased *within the level*, since each level is its own
+//! mesh allocation (`CookedModelAsset::meshes[level]`) and the runtime draws it whole
+//! (`first_index: 0, index_count: 0`). A level with no geometry of the part carries a copy of the
+//! next finer level's, which is exactly what the table's level range for it says
+//! ([`chain_layout`]). The product's single material is the chain's.
+//!
+//! A table's `LodLevel::first_index` therefore describes a concatenation of the *whole* chain
+//! that nothing builds (a logged spec correction, plan §12): it stays in the format — the reader
+//! validates against it and [`chain_layout`] produces it — but it is not what the runtime indexes
+//! with. Do not "simplify" it away.
+//!
+//! **Chain subjects come from the baked tables.** [`SceneBake::chain_keys`] reads each baked
+//! cell's model section: a v3 table already names the `mesh.cook` subject and material part of
+//! every chain ([`chain_subjects`]), and `<model>/<part>` *is* a `scene.chains` subject. So the
+//! step needs no new adapter method and no game-specific name, and chains dedup across cells.
+//!
 //! **Bounds.** Each instance carries its own part's sphere: the circumsphere of the part's LOD0
 //! vertex bounds ([`part_spheres`], decoded once per model per cell), placed by the transform and
 //! grown by its largest axis scale. Coarser levels need no margin: the cooker's simplifier only
@@ -49,7 +70,7 @@ use glam::{Affine3A, DVec2, IVec3, Vec3};
 use sf_bake::{BakeError, BakeReport, Baker, Digest, PlanCx, ProductKey, RunCx, Step};
 use sf_coords::{GRID_CELL, WorldPos};
 use sf_model::steps::MeshCookStep;
-use sf_model::{AlphaMode, Cooked, CookedModel, Material};
+use sf_model::{Aabb as ModelAabb, AlphaMode, Cooked, CookedLod, CookedModel, CookedSubmesh, Material, Vertex};
 use sf_terrain::bake::{TILE_STEP, tile_subject};
 use sf_terrain::{BASE_SPACING, BLOCK_QUADS, BLOCKS, BlockBounds, MAX_QUANT_STEP, TileCoord, TileProduct};
 use sf_world::bake::{DIR_STEP, PAGE_STEP, page_subject, worldspace_subject};
@@ -58,7 +79,9 @@ use sf_world::{CellDirectory, IndexPage, Partition, Placement, PlacementClass, P
 use crate::chain::{LayoutError, LevelSource, chain_layout};
 use crate::eligibility::{Eligibility, EntityReason, MaterialKind, SceneEligibility, classify};
 use crate::material::{MaterialClass, MaterialTraits};
-use crate::table::{Aabb, InstanceFlags, LodChain, Sphere, StaticCellTable, StaticInstance, TableError};
+use crate::table::{
+    Aabb, InstanceFlags, LodChain, Sphere, StaticCellTable, StaticCellTableView, StaticInstance, TableError,
+};
 use crate::PlacementId;
 
 pub use crate::product::{CELLS_STEP, CHAINS_STEP};
@@ -445,6 +468,94 @@ pub fn build_cell_table(
     })
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ChainMeshError {
+    #[error("the model has no material part {0}")]
+    NoPart(u32),
+    #[error("layout: {0}")]
+    Layout(#[from] LayoutError),
+    #[error("mesh: {0}")]
+    Mesh(#[from] sf_model::FormatError),
+    /// The level's concatenation is not the length the table's level range says: the two sides of
+    /// [`chain_layout`] disagree, which no input should be able to cause.
+    #[error("level {level}: {indices} indices, the layout says {expected}")]
+    LevelLength { level: usize, indices: u32, expected: u32 },
+}
+
+/// The `scene.chains` product's core: one chain's geometry as an `sf_model` model with **one LOD
+/// level per chain level, one submesh each** and the chain's material as its only material
+/// (module docs, "Chain geometry").
+///
+/// Each level holds that level's submeshes of `part`, in submesh order, concatenated and rebased
+/// within the level (`index + the vertices before it in this level`), by the same
+/// [`chain_layout`] the table's level ranges come from; a level with no geometry of the part
+/// carries a copy of the next finer level's, as its table range does. Decodes and re-encodes
+/// through meshopt once per level, offline.
+pub fn build_chain_mesh(model: &CookedModel, part: u32) -> Result<CookedModel, ChainMeshError> {
+    let material = model.materials.get(part as usize).ok_or(ChainMeshError::NoPart(part))?.clone();
+    // The chain's source levels, exactly as `build_cell_table` reads them.
+    let parts: Vec<Vec<&CookedSubmesh>> =
+        model.lods.iter().map(|l| l.submeshes.iter().filter(|s| s.material == part).collect()).collect();
+    let levels: Vec<LevelSource> = model
+        .lods
+        .iter()
+        .zip(&parts)
+        .map(|(l, subs)| LevelSource {
+            error: l.error,
+            submeshes: subs.iter().map(|s| (s.vertex_count, s.index_count)).collect(),
+        })
+        .collect();
+    let layout = chain_layout(&levels)?;
+    let mut lods: Vec<CookedLod> = Vec::with_capacity(layout.levels.len());
+    let mut bounds: Option<(Vec3, Vec3)> = None;
+    for (level, target) in layout.levels.iter().enumerate() {
+        let mut vertices: Vec<Vertex> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+        for segment in layout.segments.iter().filter(|s| s.level == level) {
+            let (v, i) = parts[level][segment.submesh].decode()?;
+            // Level-local, not chain-global: this level is its own mesh allocation.
+            let base = u32::try_from(vertices.len()).map_err(|_| sf_model::FormatError::TooLarge)?;
+            indices.extend(i.iter().map(|&k| k + base));
+            for v in &v {
+                let p = Vec3::from_array(v.position);
+                bounds = Some(bounds.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p))));
+            }
+            vertices.extend(v);
+        }
+        if vertices.is_empty() {
+            // No geometry of this part at this level: the table's range repeats the next finer
+            // level, so the mesh must hold that level's geometry.
+            let finer = lods.last().expect("chain_layout rejects an empty finest level").clone();
+            lods.push(CookedLod { error: target.error, submeshes: finer.submeshes });
+            continue;
+        }
+        let count = u32::try_from(indices.len()).map_err(|_| sf_model::FormatError::TooLarge)?;
+        if count != target.index_count {
+            return Err(ChainMeshError::LevelLength { level, indices: count, expected: target.index_count });
+        }
+        lods.push(CookedLod { error: target.error, submeshes: vec![CookedSubmesh::encode(0, &vertices, &indices)?] });
+    }
+    let (min, max) = bounds.unwrap_or((Vec3::ZERO, Vec3::ZERO));
+    Ok(CookedModel {
+        bounds: ModelAabb { min: min.to_array(), max: max.to_array() },
+        has_normals: model.has_normals,
+        has_uvs: model.has_uvs,
+        has_colors: model.has_colors,
+        materials: vec![material],
+        lods,
+    })
+}
+
+/// The `scene.chains` subjects of a baked table's chains, in chain order: each chain's model
+/// (its `mesh.cook` subject, from the table's model section) and material part
+/// ([`chain_subject`]). The whole of what the chain bake needs from a cell.
+pub fn chain_subjects(view: &StaticCellTableView<'_>) -> Vec<String> {
+    (0..u32::try_from(view.chain_count()).unwrap_or(u32::MAX))
+        .filter_map(|index| view.chain_source(index))
+        .map(|(model, part)| chain_subject(model, part))
+        .collect()
+}
+
 /// The level-0 terrain tiles (x, z) under a cell's XZ footprint; empty without a grid.
 pub fn land_tiles(partition: Partition, cell: IVec3) -> Vec<(i32, i32)> {
     let Some((lo, hi)) = cell_rect(partition, cell) else { return Vec::new() };
@@ -545,10 +656,11 @@ impl SceneBake {
         self
     }
 
-    /// Registers `scene.cells` (the baker also needs `mesh.cook`, `world.*` and, for land,
-    /// `terrain.*`).
+    /// Registers `scene.cells` and `scene.chains` (the baker also needs `mesh.cook`, `world.*`
+    /// and, for land, `terrain.*`).
     pub fn register(self: &Arc<Self>, baker: &mut Baker) {
         baker.register(CellsStep(self.clone()));
+        baker.register(ChainsStep);
     }
 
     /// The declared land coverage of `ws`, or the wiring error. An undeclared worldspace fails
@@ -581,6 +693,42 @@ impl SceneBake {
         Ok(keys)
     }
 
+    /// Every chain's product key, from the **baked tables' model sections** (module docs, "Chain
+    /// subjects come from the baked tables"), deduplicated across cells: a chain shared by two
+    /// cells is baked once, and one whose model did not change is a cache hit.
+    ///
+    /// Run **after** the cells ([`Self::bake_worldspaces`]): it reads their products. A cell
+    /// whose own table failed to bake is skipped — it has already been reported there, and one
+    /// broken cell must not cost every chain of the worldspace.
+    pub fn chain_keys(baker: &Baker, worldspaces: &[WorldspaceId]) -> Result<Vec<ProductKey>, BakeError> {
+        let mut subjects: BTreeSet<String> = BTreeSet::new();
+        for key in Self::cell_keys(baker, worldspaces)? {
+            let Ok(digest) = baker.product(&key) else { continue };
+            let bytes = baker.store().get(&digest)?;
+            let view = StaticCellTableView::parse(&bytes).map_err(|e| BakeError::step(&key, e))?;
+            subjects.extend(chain_subjects(&view));
+        }
+        Ok(subjects.into_iter().map(|s| ProductKey::new(CHAINS_STEP, s)).collect())
+    }
+
+    /// Bakes every chain the baked cells of `worldspaces` name, in parallel. Call it right after
+    /// [`Self::bake_worldspaces`], in the same baker (scene-runtime-plan.md §3.3).
+    pub fn bake_chains(baker: &Baker, worldspaces: &[WorldspaceId]) -> BakeReport {
+        let started = Instant::now();
+        match Self::chain_keys(baker, worldspaces) {
+            Ok(keys) => {
+                let mut report = baker.bake(&keys);
+                report.elapsed = started.elapsed();
+                report
+            }
+            Err(e) => BakeReport {
+                products: vec![(ProductKey::new(CHAINS_STEP, ""), Err(Arc::new(e)))],
+                steps: baker.step_stats(),
+                elapsed: started.elapsed(),
+            },
+        }
+    }
+
     /// Bakes every cell of `worldspaces` in parallel.
     pub fn bake_worldspaces(baker: &Baker, worldspaces: &[WorldspaceId]) -> BakeReport {
         let started = Instant::now();
@@ -601,6 +749,46 @@ impl SceneBake {
 
 fn step_err(subject: &str, e: impl std::fmt::Display) -> BakeError {
     BakeError::step(&ProductKey::new(CELLS_STEP, subject), e)
+}
+
+fn chain_err(subject: &str, e: impl std::fmt::Display) -> BakeError {
+    BakeError::step(&ProductKey::new(CHAINS_STEP, subject), e)
+}
+
+/// `scene.chains`: one chain's geometry (module docs, "Chain geometry").
+///
+/// Stateless, unlike [`CellsStep`]: a chain's mesh is a function of the cooked model and the
+/// layout rule alone — no eligibility, no settings, no land — so two mod sets that cook a model
+/// the same way share its chains.
+pub struct ChainsStep;
+
+impl Step for ChainsStep {
+    fn id(&self) -> &'static str {
+        CHAINS_STEP
+    }
+    /// 1: one `.sfmesh` per chain, one LOD level per chain level, one submesh each.
+    fn version(&self) -> u32 {
+        1
+    }
+    fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
+        let (model, _part) = parse_chain_subject(subject).ok_or_else(|| chain_err(subject, "malformed subject"))?;
+        // A static input: the cook is known from the subject, so invalidation is exact.
+        cx.product(MeshCookStep::ID, model);
+        // The layout rule decides the concatenation, and the table's level ranges address it.
+        cx.param("layout", crate::chain::LAYOUT_VERSION.to_le_bytes().to_vec());
+        Ok(())
+    }
+    fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
+        let (model, part) = parse_chain_subject(subject).ok_or_else(|| chain_err(subject, "malformed subject"))?;
+        let bytes = cx.product(MeshCookStep::ID, model)?;
+        let cook_err = |e| BakeError::step(&ProductKey::new(MeshCookStep::ID, model), e);
+        let Cooked::Static(cooked) = Cooked::from_bytes(&bytes).map_err(cook_err)? else {
+            // Only a static cook has chains; `scene.cells` never names any other kind.
+            return Err(chain_err(subject, "the chain's model is not a static cook"));
+        };
+        let chain = build_chain_mesh(&cooked, part).map_err(|e| chain_err(subject, e))?;
+        Ok(Cooked::Static(chain).to_bytes())
+    }
 }
 
 /// `scene.cells`.

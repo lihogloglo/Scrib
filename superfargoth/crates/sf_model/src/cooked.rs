@@ -104,7 +104,10 @@ impl CookedSubmesh {
         Ok((vertices, indices))
     }
 
-    pub(crate) fn encode(material: u32, vertices: &[Vertex], indices: &[u32]) -> Result<Self, FormatError> {
+    /// A submesh from raw buffers, meshopt-encoded. Public for the bake steps that build a
+    /// cooked model from decoded geometry rather than from a source import (`sf_scene`'s
+    /// `scene.chains` concatenates one material's submeshes per LOD level).
+    pub fn encode(material: u32, vertices: &[Vertex], indices: &[u32]) -> Result<Self, FormatError> {
         let codec = |e: meshopt::Error| FormatError::Codec(e.to_string());
         Ok(Self {
             material,
