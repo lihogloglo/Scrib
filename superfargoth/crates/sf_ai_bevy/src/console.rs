@@ -8,7 +8,9 @@ use sf_ai::{ActorKey, TRACE_LEN};
 use sf_console_bevy::ConsoleAppExt;
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
 
-use crate::{AiLibrary, AiSelected, AiTraces, DEFAULT_TRACE_LINES, actor_hex, parse_actor, trace_text};
+use crate::{
+    AiLibrary, AiSelected, AiTraces, DEFAULT_TRACE_LINES, actor_hex, directives_text, parse_actor, trace_text,
+};
 
 const NO_ACTOR: &str = "no actor selected: `ai.select <id>`, or click one with the console open and `ai.select`";
 
@@ -64,6 +66,22 @@ pub(crate) fn register(app: &mut App) {
             };
             let text = trace_text(world.resource::<AiTraces>(), &world.resource::<AiLibrary>().library, key, n)?;
             for line in text.lines() {
+                inv.log.info(line);
+            }
+            Ok(())
+        },
+    )
+    .add_console_command(
+        CommandSpec::new("ai.directives")
+            .help("The selected (or given) actor's directive stack, top first, and what it serves")
+            .param(Param::new("actor", ArgKind::Str).optional()),
+        |inv| {
+            let world = &mut *inv.ctx;
+            let key = match inv.args.str("actor").map(str::trim).filter(|s| !s.is_empty()) {
+                Some(id) => parse_actor(id).ok_or_else(|| format!("bad actor key {id:?}: hex, up to 32 digits"))?,
+                None => world.resource::<AiSelected>().0.ok_or(NO_ACTOR)?,
+            };
+            for line in directives_text(world, key)?.lines() {
                 inv.log.info(line);
             }
             Ok(())

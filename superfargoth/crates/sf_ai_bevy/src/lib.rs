@@ -8,9 +8,11 @@
 //! - [`AiLibrary`]: the HTN [`Library`] and its load report. [`load_library`] builds it from the
 //!   `RecordDb` once mods are loaded, logs every error and keeps running with an empty library.
 //! - [`AiActor`]: the stable [`ActorKey`] of an entity the AI runs (placement or spawn id, never the
-//!   `Entity`); [`AiSelected`]: the actor the overlay shows.
+//!   `Entity`); [`AiSelected`]: the actor the overlay shows; [`AiDirectives`]: its directive
+//!   stack (AI4).
 //! - Console (`console.md`): `ai.select [id|off]` (no id: the console's click-selection, feature
-//!   `debug`), `ai.trace [n] [id]`, `ai.tiers` (provisional until the AI9 allocator), `ai.stats`;
+//!   `debug`), `ai.trace [n] [id]`, `ai.directives [id]` (AI4: the stack, top first),
+//!   `ai.tiers` (provisional until the AI9 allocator), `ai.stats`;
 //!   `ai.gizmos` on/off (feature `debug`). `ai.facts` waits for AI13.
 //! - BRP: [`brp_trace`] answers [`BRP_TRACE_METHOD`] with the store as JSON. This crate doesn't add
 //!   `bevy_remote` (one `RemotePlugin` per app, owned by the game's dev tools, and hakari keeps its
@@ -28,8 +30,8 @@ use bevy_ecs::prelude::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sf_ai::{
-    ActorKey, LoadReport, Library, MethodId, OperatorId, PlanOutcome, StateKeys, TaskId, Trace,
-    TraceNames, TraceStore, format_trace_with,
+    ActorKey, DirectiveStack, LoadReport, Library, MethodId, OperatorId, PlanOutcome, StateKeys, TaskId, Trace,
+    TraceNames, TraceStore, format_directives, format_trace_with,
 };
 use sf_records::RecordDb;
 
@@ -111,6 +113,26 @@ impl Default for AiLibrary {
 /// inserts it (AI6's executors; until then the game's spawner, or a test).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AiActor(pub ActorKey);
+
+/// An actor's directive stack (AI4; `sf_ai::directive`), on the [`AiActor`] entity. The
+/// fixed-tick systems that push, advance and finish it, and the message the completion events
+/// become, come with AI6/AI7; today the spawner or a test fills it. `ai.directives` prints it.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub struct AiDirectives(pub DirectiveStack);
+
+/// `ai.directives`'s output for `actor`: a header line, then [`format_directives`].
+pub fn directives_text(world: &mut World, actor: ActorKey) -> Result<String, String> {
+    let mut query = world.query::<(&AiActor, &AiDirectives)>();
+    let stack = query
+        .iter(world)
+        .find(|(a, _)| a.0 == actor)
+        .map(|(_, d)| &d.0)
+        .ok_or_else(|| format!("actor {}: no directive stack (no AiActor with AiDirectives)", actor_hex(actor)))?;
+    let mut out = format!("actor {}: directives, top first", actor_hex(actor));
+    out.push('\n');
+    out.push_str(&format_directives(stack));
+    Ok(out)
+}
 
 /// The actor the overlay shows and `ai.trace` reads by default (`ai.select`).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]

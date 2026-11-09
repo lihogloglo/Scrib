@@ -7575,10 +7575,14 @@ dependencies = [
 name = "sf_ai"
 version = "0.1.0"
 dependencies = [
+ "postcard",
  "serde",
  "serde_json",
+ "sf_coords",
  "sf_ids",
  "sf_records",
+ "sf_rpg",
+ "sf_world",
  "thiserror 2.0.21",
 ]
 

@@ -3,6 +3,42 @@
 Moved here to keep [ai.md](ai.md) inside its size budget. Newest slice first; the module docs in
 `superfargoth/crates/sf_ai/src/` are the detailed reference.
 
+## AI4: directives (2026-11-09)
+
+`sf_ai::directive` (Bevy-free; new deps `sf_rpg` for `GameTime`, `sf_world` for `Location`/`PlacementId`).
+`DirectiveStack` per actor, top first, serde (what AI5 saves: entries, id sequence, clock, serving mode):
+`push(spec, now, policy, events) -> DirectiveId`, `finish`, `cancel`, `cancel_where` (a quest stopping: by
+`origin`), `serve(Serving)`, `advance(now)`; `status(id)` answers `done(id)` (`serving`/`waiting`/`ended`/`unknown`).
+`DirectiveDone { actor, id, end: Completed | Expired | Cancelled, at }`, exactly one per issued id (a push the
+policy refuses ends `Cancelled` at once). `StackPolicy { push, on_end }` edits only through `StackEdit` (`insert`,
+`push_bottom`, `cancel`, `cancel_where`, `renew`), so ids and events stay exact. `ModernPolicy`: source rank
+(record < schedule < memory < script < quest), then priority, newest first among equals (OpenMW's tie rule too);
+`repeat` re-pushes a fresh instance on completion or `For` expiry, never on cancel or `Until`. `DirectiveKind`:
+`StayNear`, `GoTo`, `Follow`, `Escort`, `Use`, `Fight`, `Custom(RecordId)`. `format_directives`; in
+`sf_ai_bevy` the `AiDirectives(DirectiveStack)` component and `ai.directives [id]` (top first, `[serving]`).
+
+Deviations from the illustrative data model, and why (research: OpenMW `aisequence.cpp`/`aiwander.cpp` read for
+behaviour; Creation Kit "Package Stack"):
+- **Two limits instead of `until`:** OpenMW packages count their remaining duration only while they execute
+  (`AiWander` `mRemainingDuration`, game hours), so a quest on top or a fight pauses them; an absolute deadline
+  can't express that. `Limit::Until(GameTime)` (schedule windows, served or not) and `Limit::For { minutes }`
+  (served minutes, `Directive::served`).
+- **`Serving` (`Top` | `Directive(id)` | `Suspended`):** what `For` counts and the drives work on. AI7's
+  arbiter sets `Suspended` while a non-directive drive runs (Bethesda: combat suspends package evaluation; OpenMW:
+  combat is a package on top) and may name a lower directive when the top can't be served (Bethesda runs the
+  topmost package whose conditions hold). A named directive that leaves falls back to `Top`.
+- **Exact on one clock:** every mutation takes `now`; `advance` ends expiries in time order at their exact
+  deadline (ties top first), so one coarse step equals many fine ones (tested at 1-, 7- and 1000-minute steps):
+  tier invariance. Integer game minutes (`GameTime`'s resolution); a clock reading from the past is ignored.
+- **Ids are instances:** `DirectiveId` is a per-actor, never-reused sequence (not a load-time index); a repeat
+  is a new instance, so `done(old)` holds after one cycle.
+- **No `done` flag, no `ParamBag`:** completion is `finish` + the event + `status` (a removed directive's flag
+  can't be polled; OpenMW's `mDone` is one sticky flag per sequence, which MA2 keeps from the events). Kinds carry
+  their data; OpenMW's per-package options (`canCancel`, `shouldCancelPreviousAi`, ...) are per type, MA2's;
+  `origin` names the issuing record. `MAX_REACTIONS` (256) bounds policy cascades and same-instant expiries.
+- Not built: the systems that push/advance/finish stacks (AI6/AI7), the Bevy message for `DirectiveDone`,
+  filling `TraceEntry::directive` (from `serving()`), `decide`.
+
 ## AI3: debug overlay, `sf_ai_bevy` (2026-11-09)
 
 New thin Bevy crate `sf_ai_bevy` (bevy_app/bevy_ecs + `sf_console_bevy`; feature `debug` adds gizmos, camera,

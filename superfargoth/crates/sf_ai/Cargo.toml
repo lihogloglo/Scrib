@@ -1,6 +1,6 @@
 [package]
 name = "sf_ai"
-description = "Bevy-free NPC AI core for superfargoth (ai.md): ids, the per-actor decision trace (AI1), typed world state and the record-built HTN library and planner (AI2); drives, directives and tiers follow in later slices"
+description = "Bevy-free NPC AI core for superfargoth (ai.md): ids, the per-actor decision trace (AI1), typed world state and the record-built HTN library and planner (AI2), the per-actor directive stack and its policy seam (AI4); drives and tiers follow in later slices"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,17 @@ serde.workspace = true
 serde_json.workspace = true
 sf_ids.workspace = true
 sf_records.workspace = true
+# `GameTime`, the logical clock directives expire on (AI4).
+sf_rpg.workspace = true
+# `Location` and `PlacementId` in `DirectiveKind` (AI4).
+sf_world.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+# The save codec (save.md): the directive stack's binary round trip.
+postcard.workspace = true
+# `WorldPos` for test locations (`sf_world` doesn't re-export it).
+sf_coords.workspace = true
 
 [lints]
 workspace = true

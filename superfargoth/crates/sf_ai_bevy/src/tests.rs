@@ -261,3 +261,29 @@ fn actor_keys_round_trip_as_hex() {
     assert_eq!(parse_actor(&"1".repeat(33)), None);
     assert_eq!(parse_actor("g"), None);
 }
+
+#[test]
+fn ai_directives_prints_the_actors_stack_top_first() {
+    use sf_ai::{DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, GameTime, Limit, ModernPolicy};
+    let mut app = app(LIBRARY);
+    let now = GameTime { day: 0, minute: 600 };
+    let mut stack = DirectiveStack::new(A, now);
+    let mut events = Vec::new();
+    let custom = |name: &str, source| DirectiveSpec::new(DirectiveKind::Custom(name.into()), source);
+    stack.push(custom("wander", DirectiveSource::Record).limit(Limit::For { minutes: 60 }), now, &ModernPolicy, &mut events);
+    stack.push(custom("deliver", DirectiveSource::Quest).priority(5).origin("q1"), now, &ModernPolicy, &mut events);
+    app.world_mut().spawn((AiActor(A), AiDirectives(stack)));
+    assert_eq!(
+        info(&run(&mut app, "ai.directives 7")),
+        [
+            format!("actor {A_HEX}: directives, top first").as_str(),
+            "dir1 quest p5 custom deliver from q1 [serving]",
+            "dir0 record p0 custom wander for 0/60 min",
+            "clock d0 10:00, serving top, 2 directive(s)",
+        ]
+    );
+    let lines = run(&mut app, "ai.directives 2a");
+    assert!(lines.last().unwrap().1.contains("no directive stack"), "{lines:?}");
+    let lines = run(&mut app, "ai.directives");
+    assert!(lines.last().unwrap().1.contains("no actor selected"), "{lines:?}");
+}

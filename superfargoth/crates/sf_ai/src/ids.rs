@@ -2,7 +2,8 @@
 //!
 //! Content names things by string (`sf.ai.method`, `sf.ai.drive`, `sf.ai.consideration` records);
 //! names resolve to these indices **once, at load**, through registries the owning slice builds
-//! (AI2: tasks, methods, operators; AI4: directives; AI7: drives, considerations). Nothing in a tick
+//! (AI2: tasks, methods, operators; AI7: drives, considerations); [`DirectiveId`] is the exception, a
+//! per-actor instance sequence the directive stack issues (AI4). Nothing in a tick
 //! compares strings. Each id serializes as its bare number (`#[serde(transparent)]`) and displays
 //! with a short prefix (`t3`, `m7`, ...) for console lines.
 

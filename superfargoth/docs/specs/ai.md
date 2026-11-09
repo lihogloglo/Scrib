@@ -1,6 +1,6 @@
 # NPC AI: directives, drives, HTN behaviours, tiers (`sf_ai`)
 
-Status: **AI1-AI3 built (2026-11-08/09)**: `sf_ai` ids, trace, HTN core; `sf_ai_bevy` debug overlay ("Debugging"); AI4 on not built. M7.
+Status: **AI1-AI4 built (2026-11-08/09)**: `sf_ai` ids, trace, HTN core, directives; `sf_ai_bevy` overlay; AI5 on not built. M7.
 Former open questions decided 2026-11-08 (owner-delegated): `../research/ai-nav-decisions-2026-11-08.md` (d, g, k, l).
 Crates (planned): `sf_ai` (Bevy-free: directives, drives, HTN, perception model, facts, tiers, trace), `sf_ai_bevy`
 (thin: fixed-tick systems, executors' glue to `sf_action`/`sf_controller`, debugger, console). Uses [nav.md](nav.md)
@@ -9,7 +9,7 @@ Sources: `../research/npc-ai-2026-11-08.md` (approved), seamless research §4.2/
 [action.md](action.md), [net.md](net.md), [combat.md](combat.md) C6.
 
 <!-- agent-summary -->
-> **Agent summary (2026-11-08).** AI1 (trace) built; the rest is design. Layers: directives (packages, schedules, quest orders) →
+> **Agent summary (2026-11-08).** AI1-AI4 (trace, HTN, overlay, directives) built; the rest is design. Layers: directives (packages, schedules, quest orders) →
 > utility drives → one shared data-driven HTN method library → executors writing `Command` + `LocomotionIntent`.
 > Host-only, fixed tick. Tiers 2/1/0 under a budget that is a host CPU setting (never the graphics preset); tier 0
 > simulates logically so outcomes are tier-invariant. Perception through doors, a persistent memory/relationship fact
@@ -102,6 +102,9 @@ pub fn decide(ws: &WorldState, stack: &[Directive], lib: &Library, rng: u64, tra
   is the default until AI10, AI11 and AI12 exist (decisions (e)); an anchor that doesn't resolve keeps the actor on
   its record directives.
 - Directives are fully saved; the stack is the truth across tiers.
+- **As built (AI4):** `sf_ai::directive` (detail: [ai-as-built.md](ai-as-built.md)). `until` became `Limit::Until`
+  or `Limit::For` (served minutes: OpenMW pauses package durations under interrupts); `Serving` (top, a named
+  directive, suspended) is what AI7's arbiter sets; ids are per-actor instances; no `done` flag or `ParamBag`.
 
 ## Drives (utility arbitration)
 
@@ -269,10 +272,9 @@ Built when Lua is unparked; MWScript AI functions go through the adapter.
 Per-actor **trace ring buffer** (64 decisions: tick, tier, drive and consideration scores, chosen methods, each
 **rejected method with its failing precondition**, plan, operator and path state, budget), serde. Console `ai.trace`,
 `ai.select` (reference picking, ROADMAP 1.13), `ai.tiers`, `ai.stats`, `ai.facts`; JSON/BRP for agents; gizmos
-(paths, cones, tier colours, claims, plan text), feature `debug`. Later: Visual-Logger-style recording.
+(paths, cones, tier colours, claims, plan text), feature `debug`.
 
-**As built (AI1, AI3).** `sf_ai::{ids, trace}`; `sf_ai_bevy`: `ai.select`/`ai.trace`/`ai.tiers`/`ai.stats`, `debug` gizmos,
-BRP handler `sf_ai/trace`. Detail in [ai-as-built.md](ai-as-built.md).
+**As built (AI1, AI3; AI4 `ai.directives`):** [ai-as-built.md](ai-as-built.md).
 
 ## Industry comparison
 
@@ -288,7 +290,6 @@ BRP handler `sf_ai/trace`. Detail in [ai-as-built.md](ai-as-built.md).
 | Memory | Shadow of Mordor Nemesis; Bethesda crime per faction | fact store + `MemoryRules` | **match** |
 | LLM NPCs | inZOI/ACE on-device, Mantella out of process, Where Winds Meet chatbots | advisor over validated options | **differ** (choices only) |
 | Debugging | UE Gameplay Debugger + Visual Logger, Guerrilla in-game HTN view | trace from slice 1 | **match**; recording later (P2) |
-| Scaling cost | rays × tier-2 actors, decisions × rate, paths × requests, facts × NPCs | caps, staggering, bounds | checked |
 
 Sources: research "Sources" (UESP, Warhorse GDC 2025/2026, Guerrilla, Humphreys, Orkin, IAUS, UE docs, OpenMW
 `b8285cc9`).
