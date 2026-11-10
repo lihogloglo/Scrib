@@ -21,6 +21,7 @@ mod text;
 pub use barter::{
     ALL_ITEMS, ATTR_HEALTH, ATTR_RESTOCK, BarterOptions, BoundItems, GOLD_IDS, MwItemClass, MwService, MwServiceRules,
     MwTradeHost, ProviderFacts, SERVICE_REFUSAL_TOPIC, TradeItem, can_sell, is_gold, is_restocking, item_health,
+    mercantile_use,
     provider_facts, record_entry_stack, trade_item,
 };
 pub use db::{

@@ -66,3 +66,21 @@ Barter in game, host side (2026-11-10, headless tests; not run in game). `mw_rpg
 - Gaps: `ServiceLabels` are the screens' English fallbacks (GMST strings such as `sBarter*` not mapped yet); the
   "deal done" toast dies with the screen; re-pricing on every `Rpg` change quotes every stack (cheap at merchant
   sizes, not measured).
+
+## As built (A2b)
+
+2026-11-10, unit + headless tests (not run in game).
+- `mw_rpg::mercantile_use(&HaggleOut) -> Option<ServiceEffect>`: `UseSkill { stat: "mercantile", use_kind: 0
+  (Mercantile_Success), scale: mercantile_scale }`, only for an accepted haggle with a scale above 0. Ported from
+  `apps/openmw/mwgui/tradewindow.cpp` `haggle` 99-111 (OpenMW `ca5e2576`): `skillUsageSucceeded` runs only after a
+  won roll, with `floor(100 x haggled difference / larger price)`; a deal at or under the merchant's offer returns
+  before the roll (no use), a lost roll and a creature merchant use nothing. A floored gain of 0 is skipped (OpenMW
+  calls with 0, which progresses nothing). `MwServiceRules::haggle` puts it before the disposition change (OpenMW's
+  order: inside `haggle`, then `onOfferButtonClicked` 447-457).
+- Host (`dialogue/services.rs` `apply_service_effects`, now taking the sheets): `UseSkill` looks the stat key up in
+  the sheet table and pushes `StatCommand(Player, CauseKind::Dialogue, [StatOp::UseSkill])`, as persuasion's
+  Speechcraft use; the next fixed tick applies it. Skills at base 100 do not progress (`OpenMwSkillUse`).
+- Tests: `tests_barter::a_won_haggle_uses_mercantile_by_the_haggled_percentage` (exact effects, buy and sell, lost,
+  at-offer, zero gain, creature); `a_won_haggle_raises_the_players_mercantile_progress` (headless: one gold off,
+  accept until the roll wins, one command, progress rises when applied).
+

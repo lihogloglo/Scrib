@@ -28,19 +28,20 @@
 //!   lowercased) ([`BoundItems`]).
 //! - `mwworld/containerstore.cpp` 1030-1044, `mwgui/containeritemmodel.cpp` ~134: negative
 //!   inventory counts are restocking stacks, never used up ([`record_entry_stack`]).
-//! - `mwgui/tradewindow.cpp` `onOfferButtonClicked`: the disposition change after each haggle
-//!   for NPC merchants ([`MwServiceRules`]'s `haggle`).
+//! - `mwgui/tradewindow.cpp` `onOfferButtonClicked` (447-457): the disposition change after each
+//!   haggle for NPC merchants; `haggle` (99-111): a haggle won at a better price than offered
+//!   uses Mercantile (`Mercantile_Success`, use 0) scaled by the haggled percentage
+//!   ([`MwServiceRules`]'s `haggle`, [`mercantile_use`]).
 //! - `mwgui/dialogue.cpp` 525-540 `restock`: the gold pool resets to the base gold after
 //!   `fBarterGoldResetDelay` hours ([`MwServiceRules`]'s `purse_base`).
 //!
-//! Not here: the Mercantile skill use of a won haggle (the next slice reads
-//! `HaggleOut::mercantile_scale`), the Bevy and dialogue wiring, the stolen-goods veto (A7).
+//! Not here: the Bevy and dialogue wiring (`mw_rpg_bevy`), the stolen-goods veto (A7).
 //!
 //! Status: written 2026-11-08 without compiling: UNTESTED (owner test pass 2026-11-10).
 
 use std::collections::HashSet;
 
-use mw_stats::MwGmst;
+use mw_stats::{MwGmst, SKILLS};
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::service::{
     DealTotals, DealVeto, EntryId, EntryRefusal, HaggleOutcome, Holdings, LabelRef, PurseRule, QuoteLine, ServiceCtx,
@@ -54,8 +55,28 @@ use tes3::esp::{
 };
 
 use crate::services::{
-    BarterPriceIn, BarterTerms, EffectiveValueIn, HaggleIn, barter_haggle, barter_price, effective_value,
+    BarterPriceIn, BarterTerms, EffectiveValueIn, HaggleIn, HaggleOut, barter_haggle, barter_price, effective_value,
 };
+
+/// The ESM skill index of Mercantile (`ESM::Skill::Mercantile`).
+const MERCANTILE: usize = 24;
+/// SKIL use 0 of Mercantile, `ESM::Skill::Mercantile_Success`.
+const MERCANTILE_SUCCESS: u8 = 0;
+
+/// The player's Mercantile use after a haggle (`tradewindow.cpp` 99-111): an accepted haggle at a
+/// better price than offered calls `skillUsageSucceeded(player, Mercantile, Mercantile_Success,
+/// skillGain)` with [`HaggleOut::mercantile_scale`] as `skillGain`. A deal at the merchant's own
+/// offer (accepted before the roll), a refused haggle and a creature merchant use nothing; a won
+/// haggle whose `floor`ed gain is 0 is skipped too (`OpenMW` calls with 0, which progresses
+/// nothing). The stat is the skill's sheet key (`mw_stats::SKILLS`); the host maps it.
+#[must_use]
+pub fn mercantile_use(out: &HaggleOut) -> Option<ServiceEffect> {
+    (out.accepted && out.mercantile_scale > 0.0).then(|| ServiceEffect::UseSkill {
+        stat: RecordId::new(SKILLS[MERCANTILE]),
+        use_kind: MERCANTILE_SUCCESS,
+        scale: out.mercantile_scale,
+    })
+}
 
 /// The dialogue topic whose first matching INFO refuses a service (`checkServiceRefused`).
 pub const SERVICE_REFUSAL_TOPIC: &str = "service refusal";
@@ -535,8 +556,9 @@ impl<H: MwTradeHost + ?Sized> ServiceRules for MwServiceRules<'_, H> {
         i64::from(price.max(0))
     }
 
-    /// `mw.barter.haggle` with `roll + 1` as `rollDice(100) + 1`; an NPC merchant's disposition
-    /// change as an effect. The Mercantile use is the next slice's.
+    /// `mw.barter.haggle` with `roll + 1` as `rollDice(100) + 1`. Effects in `OpenMW`'s order:
+    /// the Mercantile use of a won haggle ([`mercantile_use`], inside `haggle`), then an NPC
+    /// merchant's disposition change (`onOfferButtonClicked`, after it).
     fn haggle(&self, ctx: &ServiceCtx, deal: &DealTotals, roll: u8) -> HaggleOutcome {
         let Some(terms) = self.host.barter_terms(ctx.player, ctx.provider) else {
             return HaggleOutcome { accepted: deal.balance <= deal.merchant_offer, effects: Vec::new() };
@@ -550,6 +572,7 @@ impl<H: MwTradeHost + ?Sized> ServiceRules for MwServiceRules<'_, H> {
         );
         let out = barter_haggle(&input);
         let mut effects = Vec::new();
+        effects.extend(mercantile_use(&out));
         if out.disposition_delta != 0 {
             effects.push(ServiceEffect::Disposition { delta: out.disposition_delta });
         }

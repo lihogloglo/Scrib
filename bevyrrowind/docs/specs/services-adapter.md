@@ -1,7 +1,7 @@
 # Services adapter: Morrowind barter, training, travel, spells and repair on `sf_rpg::service`
 
-Status: A1 (formulas) written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10); A2a (barter rules) the same day, same status; A2b-A7 not
-built. Framework SV1 (`sf_rpg::service`) written 2026-11-08,
+Status: A1 (formulas) written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10); A2a (barter rules) the same day, same status; A2b (Mercantile use)
+2026-11-10, unit + headless tests; A3-A7 not built. Framework SV1 (`sf_rpg::service`) written 2026-11-08,
 not yet compiled (services.md "As built (SV1)": `QuoteLine` has no `base_value`, the adapter derives it in `quote`;
 `FixedPrice` takes `sell_permille`). Owner 2026-11-08: every open question below takes its default. Framework:
 [services.md](../../../superfargoth/docs/specs/services.md) (`ServiceRules`, `TradeSession`, `Purse`, effects,
@@ -363,6 +363,8 @@ A1 (price formulas, `mw_rpg::services`) and A2a (barter rules, `mw_rpg::barter`)
 compiling: UNTESTED (owner test pass 2026-11-10). TR1 (2026-11-10, headless tests only): barter in the game host
 (`mw_rpg_bevy` `dialogue/services.rs`: buttons, open/refusal, session requests, settlement, merchant stock seeded
 from the record). TR2 (2026-11-10, headless tests only): the trade screen over the dialogue (`dialogue/trade_screen.rs`).
+A2b (2026-11-10, unit + headless tests): a won haggle's Mercantile use (`mw_rpg::mercantile_use`, a `StatOp::UseSkill`
+on the player's sheet in the host).
 Detail: [archive/services-adapter-history.md](archive/services-adapter-history.md).
 
 ## Build plan (one deliverable per slice; framework SV1-SV3 first)

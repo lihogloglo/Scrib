@@ -20,7 +20,8 @@
 //!   bookkeeping, and is temporary (`barter disposition change is permanent` defaults off), so
 //!   goodbye drops it ([`Rpg::end_talk`]).
 //! - `mwgui/tradewindow.cpp` `onOfferButtonClicked`: an accepted deal closes the barter window
-//!   (here: the session), a failed haggle keeps it open.
+//!   (here: the session), a failed haggle keeps it open; `haggle` 99-111: a won haggle's
+//!   Mercantile use goes on the player's sheet ([`mw_rpg::mercantile_use`], slice A2b).
 //! - `mwworld/containerstore.cpp` `fill` (the NPC's inventory list, levelled lists resolved;
 //!   negative counts restock): a merchant's stock is seeded from its record on first access
 //!   ([`seed_store`]), its armor and clothing worn (first piece per slot, as
@@ -45,10 +46,12 @@ use sf_rpg::{
     RpgCommand, RpgEvent, SessionState, StackId,
 };
 use sf_rpg_ui::{DialogueAction, DialogueRequest, DialogueView};
+use sf_stats_bevy::StatCommand;
+use sf_stats_bevy::sf_stats::{CauseKind, StatOp, StatOwner};
 use tes3::esp::{LeveledItem, Npc};
 
 use super::persuasion::gmst_text;
-use super::{Rpg, Talk, View, id};
+use super::{Rpg, Talk, View, id, player_key};
 use crate::inventory::GOLD;
 
 /// Morrowind's trade settings: gold (`gold_001`) is the money, and the player may haggle.
@@ -577,22 +580,28 @@ impl Rpg {
         match result {
             Ok(Some(settlement)) => {
                 self.sessions.close(id);
-                self.settle(talk, ctx, settlement);
+                self.settle(talk, ctx, settlement, sheets);
             }
             Ok(None) => {}
             Err(TradeRefusal::HaggleFailed { effects }) => {
-                self.apply_service_effects(talk, ctx, effects);
+                self.apply_service_effects(talk, ctx, effects, sheets);
             }
             Err(TradeRefusal::Vetoed(veto)) => {
                 self.sessions.close(id);
-                self.apply_service_effects(talk, ctx, veto.effects);
+                self.apply_service_effects(talk, ctx, veto.effects, sheets);
             }
             Err(e) => debug!("services: {request:?} refused: {e}"),
         }
     }
 
     /// An accepted deal, in the settlement's order: item and gold commands, the purse, effects.
-    fn settle(&mut self, talk: &mut Talk, ctx: &ServiceCtx, settlement: Settlement) {
+    fn settle(
+        &mut self,
+        talk: &mut Talk,
+        ctx: &ServiceCtx,
+        settlement: Settlement,
+        sheets: &dyn MwSheets,
+    ) {
         for command in settlement.commands {
             if let Err(e) = self.apply_item_command(command.clone()) {
                 warn!("services: settling {command:?}: {e}");
@@ -600,7 +609,7 @@ impl Rpg {
         }
         self.services
             .apply_delta(ctx.provider, settlement.purse_delta);
-        self.apply_service_effects(talk, ctx, settlement.effects);
+        self.apply_service_effects(talk, ctx, settlement.effects, sheets);
     }
 
     /// An item command on the host's inventories (`MoveStack` between two of them).
@@ -656,13 +665,16 @@ impl Rpg {
         }
     }
 
-    /// A deal's effects. `Disposition`: `applyBarterDispositionChange` (module docs). The
-    /// Mercantile use is slice A2b; list-service effects are A3-A6.
+    /// A deal's effects. `Disposition`: `applyBarterDispositionChange` (module docs).
+    /// `UseSkill` (a won haggle's Mercantile use, [`mw_rpg::mercantile_use`]): a
+    /// `StatOp::UseSkill` on the player's sheet, the stat looked up by key, sent with the
+    /// dialogue's other stat commands. List-service effects are A3-A6.
     fn apply_service_effects(
         &mut self,
         talk: &mut Talk,
         ctx: &ServiceCtx,
         effects: Vec<ServiceEffect>,
+        sheets: &dyn MwSheets,
     ) {
         for effect in effects {
             match effect {
@@ -687,7 +699,28 @@ impl Rpg {
                         ctx.provider
                     );
                 }
-                other => debug!("services: effect {other:?} not applied yet (A2b, A3-A6)"),
+                ServiceEffect::UseSkill {
+                    stat,
+                    use_kind,
+                    scale,
+                } => {
+                    let skill = sheets.table().and_then(|t| t.table.find(stat.as_str()));
+                    let (Some(skill), Some(pk)) = (skill, player_key(ctx.player)) else {
+                        warn!("services: no sheet stat {stat:?} for {:?}", ctx.player);
+                        continue;
+                    };
+                    let ops = vec![StatOp::UseSkill {
+                        skill,
+                        use_kind,
+                        scale,
+                    }];
+                    self.stat_commands.push(StatCommand::new(
+                        StatOwner::Player(pk),
+                        CauseKind::Dialogue,
+                        ops,
+                    ));
+                }
+                other => debug!("services: effect {other:?} not applied yet (A3-A6)"),
             }
         }
     }
@@ -738,6 +771,8 @@ pub(super) mod tests {
     use super::super::PERSUASION_ACTION;
     use super::*;
 
+    /// The ESM skill index of Mercantile.
+    const MERCANTILE: usize = 24;
     pub(crate) const MERCHANT: ActorKey = ActorKey(1);
     const FARGOTH: ActorKey = ActorKey(2);
     pub(crate) const PLAYER: Holder = Holder::Player(PlayerId::HOST);
@@ -1183,6 +1218,11 @@ pub(super) mod tests {
     }
 
     fn test_sheets() -> TestSheets {
+        test_sheets_with(0.0)
+    }
+
+    /// [`test_sheets`] with the player's base Mercantile at `mercantile`.
+    fn test_sheets_with(mercantile: f32) -> TestSheets {
         let table = MwTable::with_skills(std::array::from_fn(|_| SkillInfo {
             governing: 0,
             specialization: 0,
@@ -1195,10 +1235,16 @@ pub(super) mod tests {
                 is_player: matches!(owner, StatOwner::Player(_)),
                 ..Inputs::default()
             };
-            let ops = [StatOp::SetBase {
+            let mut ops = vec![StatOp::SetBase {
                 stat: table.idx.attributes[6],
                 value: 50.0,
             }];
+            if matches!(owner, StatOwner::Player(_)) {
+                ops.push(StatOp::SetBase {
+                    stat: table.idx.skills[MERCANTILE],
+                    value: mercantile,
+                });
+            }
             mw_stats::new_sheet(&table, &rules, owner, &inputs, &ops).0
         };
         let (player, npc) = (
@@ -1258,5 +1304,92 @@ pub(super) mod tests {
         // ...and temporary: goodbye drops it.
         rpg.request(&mut talk, &mut view, &DialogueRequest::Goodbye, &sheets);
         assert_eq!(rpg.state.npcs.modifier(MERCHANT), 0);
+    }
+
+    #[test]
+    fn a_won_haggle_raises_the_players_mercantile_progress() {
+        // Mercantile 75 (under 100, where skills stop progressing) makes the roll likely.
+        let sheets = test_sheets_with(75.0);
+        let (mut rpg, mut talk, mut view) = host(None, MERCHANT, &sheets);
+        let session = open_barter(&mut rpg, &mut talk, &mut view, &sheets);
+        let bottle = stack_of(&rpg, SELLER, "misc_bottle");
+        let stage = ServiceRequest::Stage {
+            session,
+            side: Side::Buy,
+            source: SELLER,
+            stack: bottle,
+            count: 1,
+        };
+        request(&mut rpg, &mut talk, &mut view, &stage, &sheets);
+        let price = rpg.trade_session(session).unwrap().balance;
+        assert!(price < -1, "the player pays: {price}");
+        // One gold off: a haggle (skillGain = floor(100 / |price|) > 0 for any price up to 100).
+        let ask = ServiceRequest::SetBalance {
+            session,
+            balance: price + 1,
+        };
+        request(&mut rpg, &mut talk, &mut view, &ask, &sheets);
+        let before = rpg.stat_commands.len();
+        let accept = ServiceRequest::Accept { session };
+        for _ in 0..16 {
+            request(&mut rpg, &mut talk, &mut view, &accept, &sheets);
+            if rpg.trade_session(session).is_none() {
+                break;
+            }
+            assert_eq!(
+                rpg.stat_commands.len(),
+                before,
+                "a lost haggle uses no skill"
+            );
+        }
+        assert!(
+            rpg.trade_session(session).is_none(),
+            "no roll won in 16 tries"
+        );
+        let used: Vec<_> = rpg.stat_commands.drain(before..).collect();
+        assert_eq!(used.len(), 1, "one Mercantile use: {used:?}");
+        let t = &sheets.table;
+        let gain = f32::from(u8::try_from(100 / price.unsigned_abs()).unwrap());
+        assert_eq!(
+            (used[0].owner, used[0].cause, used[0].ops.as_slice()),
+            (
+                StatOwner::Player(HOST_KEY),
+                CauseKind::Dialogue,
+                [StatOp::UseSkill {
+                    skill: t.idx.skills[MERCANTILE],
+                    use_kind: 0,
+                    scale: gain,
+                }]
+                .as_slice()
+            )
+        );
+        // Applied to the player's sheet, the progress rises.
+        let rules = openmw_rules(t, &MwGmst::vanilla());
+        let mut sheet = sheets.player.clone();
+        let progress = t.idx.skill_progress[MERCANTILE];
+        let inputs = Inputs {
+            is_player: true,
+            ..Inputs::default()
+        };
+        let ctx = sf_stats_bevy::sf_stats::ApplyCtx {
+            owner: StatOwner::Player(HOST_KEY),
+            cause: sf_stats_bevy::sf_stats::Cause {
+                kind: CauseKind::Dialogue,
+                source: None,
+                tick: 0,
+            },
+            inputs: &inputs,
+        };
+        let start = sheet.view(&t.table).base(progress);
+        sf_stats_bevy::sf_stats::apply(
+            &t.table,
+            &rules,
+            &mut sheet,
+            &used[0].ops,
+            &ctx,
+            &mut Vec::new(),
+        );
+        let end = sheet.view(&t.table).base(progress);
+        assert!(end > start, "Mercantile progress {start} -> {end}");
     }
 }
