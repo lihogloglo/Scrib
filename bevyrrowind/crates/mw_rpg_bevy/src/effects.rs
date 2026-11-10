@@ -4,7 +4,8 @@
 //! - **Setup** ([`add`], called by [`crate::stats::add`]: effects need the sheets): the MGEF
 //!   records as `EffectTableRes` (`MwEffects`; A1 defs only, the other indices land as
 //!   `Rejected { UnknownEffect }`), the modern rules (`EffectRules::standard`), no sources yet
-//!   (the SPEL source table comes with abilities and casting, adapter A3 / A5).
+//!   (the SPEL source table comes with abilities and casting, adapter A3 / A5), and the
+//!   `MwEffects` themselves as [`MwEffectsRes`] (potions map their ALCH on use, `item_use`).
 //! - **Attach**: `Effects` sits beside every `Stats` the stats glue attaches (the player
 //!   character, NPCs, creatures), same owner; see [`crate::stats`].
 //! - **Clock** ([`feed_clock`]): `EffectClock` follows the dialogue's game clock (`DaysPassed`,
@@ -45,6 +46,11 @@ pub const EFFECTS_BLOB: &str = "effects";
 /// Its schema version (`sf_save_bevy::sections::BlobVersions`).
 pub const EFFECTS_BLOB_VERSION: u32 = 1;
 
+/// Morrowind's MGEF table (with each effect's `MwEffectInfo`), for mapping item and spell
+/// records to effect sources (`crate::item_use`: potions).
+#[derive(Resource, Clone)]
+pub struct MwEffectsRes(pub Arc<MwEffects>);
+
 /// Re-registered modifiers: `(owner, op, cause)`.
 pub type Modifiers = Vec<(StatOwner, StatOp, Cause)>;
 
@@ -65,6 +71,7 @@ pub fn add(app: &mut App, db: &RecordDb) {
         app.add_plugins(SfEffectsPlugin);
     }
     app.insert_resource(EffectTableRes(Arc::new(fx.table().clone())))
+        .insert_resource(MwEffectsRes(Arc::new(fx)))
         .insert_resource(EffectRulesRes(Arc::new(EffectRules::standard())))
         .add_systems(FixedUpdate, feed_clock.before(EffectSystems::Commands));
 }
@@ -183,13 +190,52 @@ mod tests;
 
 /// Synthetic records for headless tests of the stats and effects glue without an install (this
 /// crate's and `mw_saves_bevy`'s): the 27 SKIL records, the MGEF records of Fortify and Drain
-/// Attribute, and creatures with Strength `strength`.
+/// Attribute and Restore Health, two potions ([`RESTORE_HEALTH_POTION`],
+/// [`FORTIFY_STRENGTH_POTION`]), a misc item ([`MISC_ITEM`]), and creatures with Strength
+/// `strength`.
 #[doc(hidden)]
 pub mod test_records {
     use std::sync::Arc;
 
     use sf_records::{RecordDb, RecordId};
-    use tes3::esp::{Creature, EffectId, MagicEffect, Skill, SkillData, SkillId};
+    use tes3::esp::{
+        Alchemy, AttributeId2, Creature, Effect, EffectId, EffectId2, EffectRange, MagicEffect,
+        MiscItem, Skill, SkillData, SkillId, SkillId2,
+    };
+
+    /// ALCH: Restore Health 10 points a second for 5 seconds.
+    pub const RESTORE_HEALTH_POTION: &str = "p_test_restore_health";
+    /// ALCH: Fortify Strength 10 points for 1 second.
+    pub const FORTIFY_STRENGTH_POTION: &str = "p_test_fortify_strength";
+    /// MISC: a bottle.
+    pub const MISC_ITEM: &str = "misc_test_bottle";
+
+    fn potion(id: &str, effect: Effect) -> Alchemy {
+        Alchemy {
+            id: id.into(),
+            name: id.into(),
+            effects: vec![effect],
+            ..Alchemy::default()
+        }
+    }
+
+    fn on_self(
+        magic_effect: EffectId2,
+        attribute: AttributeId2,
+        magnitude: u32,
+        duration: u32,
+    ) -> Effect {
+        Effect {
+            magic_effect,
+            skill: SkillId2::None,
+            attribute,
+            range: EffectRange::OnSelf,
+            area: 0,
+            duration,
+            min_magnitude: magnitude,
+            max_magnitude: magnitude,
+        }
+    }
 
     const SKILLS: [SkillId; 27] = [
         SkillId::Block,
@@ -241,6 +287,7 @@ pub mod test_records {
         for (id, effect_id) in [
             ("fortifyattribute", EffectId::FortifyAttribute),
             ("drainattribute", EffectId::DrainAttribute),
+            ("restorehealth", EffectId::RestoreHealth),
         ] {
             db.define(
                 src,
@@ -252,6 +299,21 @@ pub mod test_records {
             )
             .expect("mgef");
         }
+        let restore = on_self(EffectId2::RestoreHealth, AttributeId2::None, 10, 5);
+        let fortify = on_self(EffectId2::FortifyAttribute, AttributeId2::Strength, 10, 1);
+        for p in [
+            potion(RESTORE_HEALTH_POTION, restore),
+            potion(FORTIFY_STRENGTH_POTION, fortify),
+        ] {
+            db.define(src, RecordId::new(&p.id), p).expect("alch");
+        }
+        let misc = MiscItem {
+            id: MISC_ITEM.into(),
+            name: "Bottle".into(),
+            ..MiscItem::default()
+        };
+        db.define(src, RecordId::new(MISC_ITEM), misc)
+            .expect("misc");
         for &(id, strength) in creatures {
             let mut c = Creature {
                 id: id.into(),
