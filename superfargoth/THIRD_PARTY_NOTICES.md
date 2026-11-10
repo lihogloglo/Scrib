@@ -165,6 +165,11 @@ SOFTWARE.
 - Persuasion menu (2026-11-08): `apps/openmw/mwgui/dialogue.cpp` (`PersuasionDialog`) and
   `files/data/mygui/openmw_persuasion_dialog.layout` (labels); ported into
   `bevyrrowind/crates/mw_rpg_bevy/src/dialogue/persuasion.rs`.
+- Barter in the game host (2026-11-10, services TR1): `apps/openmw/mwgui/dialogue.cpp` (`updateTopicsPane`,
+  `onSelectListItem`), `mwdialogue/dialoguemanagerimp.cpp` (`checkServiceRefused`, `applyBarterDispositionChange`),
+  `mwdialogue/filter.cpp` (`testDisposition` inverted, `testSelectStruct` choice gate, `list`),
+  `mwgui/tradewindow.cpp` (`onOfferButtonClicked`), `mwworld/containerstore.cpp` (`fill`); ported into
+  `bevyrrowind/crates/mw_rpg_bevy/src/dialogue/services.rs` and `bevyrrowind/crates/mw_rpg/src/filter.rs`.
 
 ## OpenMW (MessageBox formatting)
 

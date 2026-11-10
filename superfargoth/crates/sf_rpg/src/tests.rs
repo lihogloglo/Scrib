@@ -559,3 +559,22 @@ fn one_conversation_per_speaker() {
     assert_eq!(c.holder(ActorKey(2)), None);
     round_trip(&c);
 }
+
+#[test]
+fn say_shows_a_chosen_response_and_keeps_the_topic() {
+    let db = db();
+    let world = WorldRpg::default();
+    let pc = CharacterRpg::default();
+    let talk = Talk { conds: conds(), world: &world, pc: &pc };
+    let (mut s, _) = DialogueSession::open(&db, &talk, ctx());
+    let current = s.current_topic().cloned();
+    let lines = s.history().len();
+    // The host picked `w_other` (its rules would not): shown as it is, result included.
+    let out = s.say(&db, &talk, &id("weather"), &id("w_other")).unwrap();
+    assert_eq!(line_of(&out), Some("w_other"));
+    assert_eq!(out.last(), Some(&DialogueOutput::RunResult { topic: id("weather"), response: id("w_other") }));
+    assert_eq!((s.history().len(), s.current_topic().cloned()), (lines + 1, current));
+    assert_eq!(s.say(&db, &talk, &id("nope"), &id("w_other")), Err(DialogueError::UnknownTopic(id("nope"))));
+    s.goodbye();
+    assert_eq!(s.say(&db, &talk, &id("weather"), &id("w_other")), Err(DialogueError::Ended));
+}

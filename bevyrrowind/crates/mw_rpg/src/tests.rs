@@ -345,3 +345,41 @@ fn journal_entries_once_per_index_and_stage_only_rises() {
         panic!("raise")
     };
 }
+
+/// `checkServiceRefused` (`dialoguemanagerimp.cpp`, `filter.cpp` at `ca5e2576`): outside a
+/// choice (the general check) every `Choice` condition fails, the service's own check passes
+/// its `ServiceType` as the choice, the disposition check is inverted and a 0 always passes.
+#[test]
+fn service_refusal_gates_choices_and_inverts_disposition() {
+    use FilterComparison::{Equal, NotEqual};
+    let choice = |op, value| {
+        let mut f = filter(FilterType::Function, "", op, value);
+        f.function = FilterFunction::Choice;
+        f
+    };
+    let not_barter = said_by(info("sr1", "", "Not that."), "fargoth", vec![choice(NotEqual, 1)]);
+    let mut barter = said_by(info("sr2", "sr1", "I don't trade with you."), "", vec![choice(Equal, 1)]);
+    barter.data.disposition = 60;
+    let guard = said_by(info("sr3", "sr2", "Move along."), "guard", vec![]);
+    let dlg = MwDialogue::from_topics([(
+        dial("Service Refusal", DialogueType2::Persuasion),
+        vec![not_barter, barter, guard],
+    )])
+    .unwrap();
+    let refusal = |view: &View, speaker: &str, choice: Option<i32>| {
+        let ctx = ConversationCtx { choice, ..ctx(speaker) };
+        MwDialogueRules::new(&dlg, view).service_refusal(&ctx)
+    };
+    let response = |info: &str| Some(crate::response_id("Service Refusal", info));
+    let mut fargoth = View::new("fargoth");
+    // The general check: `Choice != 1` and `Choice == 1` both fail, sr3 is the guard's.
+    assert_eq!(refusal(&fargoth, "fargoth", None), None);
+    // Barter (1): sr1 fails, sr2 refuses while the disposition (40) is below 60.
+    assert_eq!(refusal(&fargoth, "fargoth", Some(1)), response("sr2"));
+    fargoth.disposition = 60;
+    assert_eq!(refusal(&fargoth, "fargoth", Some(1)), None, "60 is not below 60");
+    // Training (4): `Choice != 1` holds.
+    assert_eq!(refusal(&fargoth, "fargoth", Some(4)), response("sr1"));
+    // Disposition 0 always passes the inverted check.
+    assert_eq!(refusal(&View::new("guard"), "guard", None), response("sr3"));
+}

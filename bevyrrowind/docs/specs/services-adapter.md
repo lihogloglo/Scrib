@@ -360,7 +360,9 @@ UESP refused automated fetches on 2026-11-08; the UESP-sourced values are as rem
 ## As built
 
 A1 (price formulas, `mw_rpg::services`) and A2a (barter rules, `mw_rpg::barter`), both written 2026-11-08 without
-compiling: UNTESTED (owner test pass 2026-11-10). Detail: [archive/services-adapter-history.md](archive/services-adapter-history.md).
+compiling: UNTESTED (owner test pass 2026-11-10). TR1 (2026-11-10, headless tests only): barter in the game host
+(`mw_rpg_bevy` `dialogue/services.rs`: buttons, open/refusal, session requests, settlement, merchant stock seeded
+from the record). Detail: [archive/services-adapter-history.md](archive/services-adapter-history.md).
 
 ## Build plan (one deliverable per slice; framework SV1-SV3 first)
 
