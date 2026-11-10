@@ -34,8 +34,8 @@ pub use react::{ReactionTable, Side, Tier};
 pub use rules::{CombatRules, Contact, DefenderState, Outcome, PoolDelta, RegenState, StandardRules, Swing, SwingPlan, roll};
 pub use shape::{HurtShape, SWEEP_STEPS, WeaponShape, closest_on_segment, closest_points, segment_distance};
 pub use sheet::{
-    At, CompiledSheet, Costs, Defaults, HitDef, HitMask, HitRow, HitStopDef, MaskDef, MoveDef, MoveSpec, MoveTable, Movesets, SheetDef, SheetError,
+    At, CompiledSheet, Costs, Defaults, GuardDef, GuardSpec, HitDef, HitMask, HitRow, HitStopDef, MaskDef, MoveDef, MoveSpec, MoveTable, Movesets, SheetDef, SheetError,
     SlotSpan, WeaponDef, WindowDef, compile, load,
 };
 pub use spar::SparSchedule;
-pub use step::{Body, CombatCtx, CombatEvent, CombatOutput, HOSTILE_RANGE, SocketSource, SocketTracks, Unit, gate, step};
+pub use step::{Body, CombatCtx, CombatEvent, CombatOutput, GuardResult, HOSTILE_RANGE, SocketSource, SocketTracks, Unit, gate, step};

@@ -43,6 +43,13 @@ pub const WEAPON_BONES: [&str; 2] = ["Weapon Bone", "Bip01 R Hand"];
 /// Attack value until weapon records feed `Offense` (C3): a mid iron sword's slash.
 pub const DEFAULT_ATTACK: f32 = 10.0;
 
+/// Share of a guarded hit's damage the sword guard absorbs (C2b; weapon records feed it at C3).
+/// Elden Ring's straight swords negate roughly 60-70 % of guarded physical damage, shields 100 %.
+pub const GUARD_ABSORB: f32 = 0.65;
+/// The sword guard's stability (`StandardRules`: guarded stamina damage x 0.55 / this). 1 is the
+/// weapon baseline; a shield record raises it (C3).
+pub const GUARD_STABILITY: f32 = 1.0;
+
 /// Modern stamina for a record's fatigue.
 #[must_use]
 pub fn stamina_from_fatigue(fatigue: f32) -> f32 {
@@ -57,14 +64,17 @@ pub fn stamina_from_fatigue(fatigue: f32) -> f32 {
 pub fn sheet_slots(sheet: &str) -> Result<Vec<String>, SheetError> {
     let ron = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
     let def: SheetDef = ron.from_str(sheet).map_err(|e| SheetError { sheet: "?".into(), mov: None, message: e.to_string() })?;
-    let mut out: Vec<String> = def.moves.values().flat_map(|m| m.slots.iter().cloned()).chain(def.reactions.into_values()).collect();
+    let guard = def.guard_hit.into_iter().chain(def.guard_break);
+    let mut out: Vec<String> = def.moves.values().flat_map(|m| m.slots.iter().cloned()).chain(def.reactions.into_values()).chain(guard).collect();
     out.sort();
     out.dedup();
     Ok(out)
 }
 
 /// A fighter with `sheet`'s weapon: full `health` and stamina from `fatigue`, a hurt capsule of
-/// the body's `radius` and `height`, unguarded (no guard in C1), every hit staggers (`Small`).
+/// the body's `radius` and `height`, the sword's guard numbers ([`GUARD_ABSORB`],
+/// [`GUARD_STABILITY`]; they count only while a guard move is raised), every unguarded hit
+/// staggers (`Small`).
 #[must_use]
 pub fn fighter(id: CharacterId, sheet: &CompiledSheet, health: f32, fatigue: f32, (radius, height): (f32, f32), hostile: bool) -> Fighter {
     Fighter {
@@ -74,7 +84,7 @@ pub fn fighter(id: CharacterId, sheet: &CompiledSheet, health: f32, fatigue: f32
         weapon: sheet.weapon,
         hurt: HurtShape::from_capsule(radius, height),
         offense: Offense { attack: DEFAULT_ATTACK },
-        defense: Defense { absorb: 0.0, guard_absorb: 0.0, guard_stability: 0.0 },
+        defense: Defense { absorb: 0.0, guard_absorb: GUARD_ABSORB, guard_stability: GUARD_STABILITY },
         hostile,
         min_tier: Tier::Small,
     }
@@ -85,7 +95,7 @@ mod tests {
     use super::*;
 
     /// First-candidate clip lengths (combat.md "C1b" table), clip seconds.
-    const CLIP_LENGTHS: [(&str, f32); 15] = [
+    const CLIP_LENGTHS: [(&str, f32); 18] = [
         ("attack.sword_1h.light1", 0.37),
         ("attack.sword_1h.light1_rec", 0.50),
         ("attack.sword_1h.light2", 0.43),
@@ -101,6 +111,9 @@ mod tests {
         ("attack.sword_1h.heavy3_rec", 0.57),
         ("attack.sword_1h.heavy4", 2.33),
         ("dodge.roll.fwd", 1.47),
+        ("guard.sword_1h.raise", 0.21),
+        ("guard.sword_1h.idle", 0.30),
+        ("guard.sword_1h.break", 1.07),
     ];
 
     fn first_candidates(slot: &str) -> Option<f32> {
@@ -113,16 +126,23 @@ mod tests {
     #[test]
     fn the_sword_sheet_compiles_with_every_move_and_reaction() {
         let sheet = sf_combat::load(SWORD_1H, &first_candidates).expect("sword_1h compiles");
-        for mov in ["light1", "light2", "light3", "light4", "heavy1", "heavy2", "heavy3", "heavy4", "roll"] {
+        for mov in ["light1", "light2", "light3", "light4", "heavy1", "heavy2", "heavy3", "heavy4", "roll", "guard"] {
             assert!(sheet.moves.moves.contains_key(&sheet.rule_key(mov)), "move {mov}");
         }
-        // Every attack limits the first-person look while committed (C4b); the roll looks free.
+        // Every attack limits the first-person look while committed (C4b), the guard its pitch
+        // (C2b: free yaw); the roll looks free.
         for r in &sheet.rules {
-            let attack = r.category == sf_action::Category::Attack;
-            assert_eq!(r.look.is_some(), attack, "{}: look {:?}", r.id, r.look);
+            let limited = matches!(r.category, sf_action::Category::Attack | sf_action::Category::Guard);
+            assert_eq!(r.look.is_some(), limited, "{}: look {:?}", r.id, r.look);
         }
+        let guard = &sheet.moves.moves[&sheet.rule_key("guard")];
+        let g = guard.guard.expect("the guard move guards");
+        assert_eq!(g.raise, sf_action::ClockTime::from_ticks(4));
+        assert!((g.arc_cos - 80f32.to_radians().cos()).abs() < 1e-6);
+        assert_eq!(sheet.reactions.guard_break, Some(sheet.rule_key("guard.break")));
+        assert_eq!(sheet.reactions.guard_hit, None, "no guard-hit clip: the guard holds");
         let slots = sheet_slots(SWORD_1H).unwrap();
-        assert_eq!(slots.len(), 21, "{slots:?}");
+        assert_eq!(slots.len(), 24, "{slots:?}");
         assert!(slots.iter().all(|s| first_candidates(s).is_some()), "{slots:?}");
     }
 
@@ -238,6 +258,57 @@ mod tests {
         assert_eq!(s, SparSchedule { class: sf_action::ActionClass::Light, first: 1.5, period: 2.5, reach: 2.0 });
         assert!(sparring("(class: Light, first: 0.0, period: 0.0, reach: 2.0)").is_err());
         assert!(sparring("(class: Light, first: 0.0, period: 1.0)").is_err(), "reach is required");
+    }
+
+    /// Guard numbers (C2b): a guarded light costs 24 x 0.55 = 13.2 of the player's 100 stamina, so
+    /// the eighth light (or fifth heavy) on a full pool breaks the guard without regen; guarded
+    /// damage keeps 35 %; and every attack rises into a held guard at its Dodge cancel.
+    #[test]
+    #[allow(clippy::default_trait_access)] // the contact's glam vectors, without a glam dependency
+    fn the_sword_guard_breaks_after_eight_lights_or_five_heavies() {
+        use sf_action::ActionClass;
+        use sf_combat::{CombatRules, Contact, DefenderState, StandardRules, WindowDef};
+        let sheet = sf_combat::load(SWORD_1H, &first_candidates).unwrap();
+        let rules = StandardRules::default();
+        let blocks = |mov: &str| {
+            let row = sheet.moves.moves[&sheet.rule_key(mov)].hits[0];
+            let mut d = fighter(CharacterId(2), &sheet, 100.0, 200.0, (0.3, 1.8), false);
+            let a = fighter(CharacterId(1), &sheet, 100.0, 200.0, (0.3, 1.8), true);
+            let c = Contact {
+                attacker: a.id,
+                defender: d.id,
+                move_key: sheet.rule_key(mov),
+                hit: 0,
+                strength: 1.0,
+                kind: row.kind,
+                mv: row.mv,
+                flags: row.flags,
+                guard_damage: row.guard_damage,
+                point: Default::default(),
+                direction: Default::default(),
+                side: sf_combat::Side::Front,
+                defender_state: DefenderState { guarded: true, ..DefenderState::default() },
+            };
+            for n in 1..=20 {
+                let o = rules.resolve_contact(&c, &a, &d);
+                assert!(o.guarded);
+                let want = a.offense.attack * row.mv * (1.0 - GUARD_ABSORB);
+                assert!((o.defender.health + want).abs() < 1e-5, "{mov}: {o:?}");
+                if o.guard_break {
+                    return n;
+                }
+                d.vitals.apply(o.defender);
+            }
+            panic!("{mov}: never broke");
+        };
+        assert_eq!(blocks("light1"), 8);
+        assert_eq!(blocks("heavy1"), 5);
+        let def: SheetDef = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME).from_str(SWORD_1H).unwrap();
+        for (name, m) in def.moves.iter().filter(|(n, _)| n.starts_with("light") || n.starts_with("heavy")) {
+            let accepts = m.windows.iter().any(|w| matches!(w, WindowDef::Accept(c, _, _) if c.contains(&ActionClass::Guard)));
+            let rises = m.windows.iter().any(|w| matches!(w, WindowDef::Cancel(c, _, _) if c.contains(&ActionClass::Guard) && c.contains(&ActionClass::Dodge)));
+            assert!(accepts && rises, "{name}");
+        }
     }
 
     #[test]

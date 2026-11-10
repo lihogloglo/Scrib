@@ -388,6 +388,13 @@ impl CompiledRule {
     pub fn force_only(&self) -> bool {
         self.rule.kind == MoveKind::Forced
     }
+
+    /// A hold move (guard, action.md "Category default windows"): every request class is a hold
+    /// class ([`ClassSet::HOLD`]). It lasts while one of them is held and lapses on release; its
+    /// chain's last slot may loop (the held pose).
+    pub fn holds(&self) -> bool {
+        !self.classes.is_empty() && self.classes.intersection(ClassSet::HOLD) == self.classes
+    }
 }
 
 impl CompiledRule {

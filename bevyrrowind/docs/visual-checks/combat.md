@@ -87,3 +87,16 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
   the flinch, no camera kick yet (C4 shake).
 - Tune: `mw_combat/data/sparring.ron` (first, period, reach); reaction slots in `mw_graphs/data/animation/sources.ron`.
 - Known gaps: Medium/Large reactions front only, one clip; no guard (C2b) or knockdown (C2c). Status: awaiting owner.
+
+### CB-3b: Guard in both views; guard break (C2b, 2026-11-10)
+- Bake first (`bevyrrowind bake`: new slots `guard.sword_1h.{raise,idle,break}`). `cargo dev scene level-sparring` (cameras `behind`,
+  `side`), F11, F to draw, then hold right mouse (or L1): the guard (UAL2 Sword_Block raise into a crouched hold). Third person, then
+  Tab to first person, view model off and `on viewmodel`.
+- Feel for: guard up within ~4 frames, the hold pose steady while held (loop seam: no pop), down on release. Facing the dummy its
+  hits are guarded: hit-stop, no reaction, health -3.5 (not -10), stamina bar dips ~13 then refills at half rate; turn your back or
+  side past ~80 deg: a normal hit. Third person the guard turns to the stick or faces a lock; first person the body follows the
+  mouse at 360 deg/s (a fast flick leads, the guard catches up), pitch held to -45..20 like attacks. Drain stamina (roll, attack)
+  then block: the guard breaks (UAL2 Idle_Shield_Break), and still held, comes back up after it. Sheathed: right mouse does nothing.
+- Tune: `mw_combat/data/movesets/sword_1h.ron` `guard` (raise, arc, Turn rate, look), hit rows `guard_damage`, `mw_combat`
+  `GUARD_ABSORB` / `GUARD_STABILITY`; clips in `mw_graphs/data/animation/sources.ron`. Known gaps: no guard-hit recoil clip (an
+  Additive flinch, not wired to the avatar's hit springs yet), no guard walk (stationary), no HUD guard cue. Status: awaiting owner.

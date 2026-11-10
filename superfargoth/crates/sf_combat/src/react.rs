@@ -65,6 +65,10 @@ impl Side {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ReactionTable {
     pub moves: BTreeMap<(Tier, Side), RuleKey>,
+    /// A guarded hit's reaction (the sheet's `guard_hit`; `None`: the guard holds).
+    pub guard_hit: Option<RuleKey>,
+    /// The guard break's reaction (`guard_break`; `None`: the `Large` reaction by side).
+    pub guard_break: Option<RuleKey>,
 }
 
 impl ReactionTable {

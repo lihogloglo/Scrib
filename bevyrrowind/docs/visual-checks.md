@@ -185,6 +185,7 @@ PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the C
 PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)
 CB-3 | confirmed (2026-11-05; follow-up: new sword attack clips) | [combat](visual-checks/combat.md) | F draws a visible sword; sheathed clicks do nothing; draw / sheathe clips, sword at the attach key (2026-11-05)
 CB-3a | awaiting owner | [combat](visual-checks/combat.md) | Sparring dummy strikes on a beat; player hit reactions by side in third and first person, free look in a reaction (scene level-sparring, 2026-11-10)
+CB-3b | awaiting owner | [combat](visual-checks/combat.md) | Guard (hold right mouse / L1) in third and first person: front hits guarded (no reaction, stamina dip), back hits not, guard break at 0 stamina; body follows the view in first person (scene level-sparring, 2026-11-10)
 CB-5 | awaiting owner | [combat](visual-checks/combat.md) | First-person melee: swings where you look, soft aim bends onto the dummy, no lock in first person (scene level-arena, 2026-11-10)
 CB-5b | awaiting owner | [combat](visual-checks/combat.md) | First-person attack look limits: the view stops ~45 deg off the body mid-swing, released at recovery; view model on and off (scene level-arena, 2026-11-10)
 PL-6 | awaiting owner (2026-10-30: hard-landing lock removed until fall damage) | [player-ui](visual-checks/player-ui.md) | Recovery delay after jumping down from a high box (2026-10-30)

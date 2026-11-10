@@ -359,9 +359,12 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
             state.buffer.latched.insert(c);
         }
     }
-    if !cmd.held(ActionClass::Guard) {
-        state.buffer.latched.remove(ActionClass::Guard);
-    }
+    // A held hold class (Guard) latches each tick like a fresh press while it is accepted and not
+    // refused (no refusal every tick it stays down): a guard held through an attack rises at the
+    // attack's `Cancel(Guard)`, and again after a reaction. Released, it leaves the buffer.
+    let holding = cmd.buttons.held.intersection(ClassSet::HOLD);
+    state.buffer.latched = state.buffer.latched.union(holding.intersection(g.accept).intersection(ClassSet(!sense.refused.0)));
+    state.buffer.latched = state.buffer.latched.intersection(ClassSet(!(ClassSet::HOLD.0 & !holding.0)));
     let jump_buffered = sense.grounded && state.timers.jump_pressed.is_some_and(|t| tick.since(t) <= u32::from(p.jump_buffer_ticks));
 
     let (stick, facing) = (cmd.stick, Vec2::new(sense.yaw.sin(), sense.yaw.cos()));
@@ -403,8 +406,9 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
                     ExitOn::Touchdown => landed && !fresh,
                     ExitOn::Airborne => !sense.grounded && !fresh,
                 });
-                // An automatic move lasts while its entry holds.
-                let lapsed = automatic(r) && !fresh && facts.entry(r).is_err();
+                // An automatic move lasts while its entry holds; a hold move while its class is held.
+                let released = r.holds() && !fresh && cmd.buttons.held.intersection(r.classes).is_empty();
+                let lapsed = released || (automatic(r) && !fresh && facts.entry(r).is_err());
                 (exit.copied(), g.ended || exit.is_some() || lapsed)
             }
             None => (None, true),
@@ -490,14 +494,16 @@ fn steers(r: &CompiledRule) -> bool {
 /// Clip owner: yaw (square-up on the first tick, then `Turn` toward the lock target, else an
 /// attack's soft-aim target, else the stick, unless `NoTurn` is open, plus the clip's own root
 /// yaw) and the planar root delta over the tick's clock interval x `root_scale`. With
-/// [`Command::face_view`] (first person) an attack squares up to the view and its free aim is
-/// the view, not the stick: the body swings where the player looks.
+/// [`Command::face_view`] (first person) an attack or a guard ([`faces_view`]) squares up to the
+/// view and its free aim is the view, not the stick: the body swings where the player looks, and a
+/// held guard follows the view at its `Turn` window's rate (the capped turn-with-view, combat.md
+/// "C2b"). A hold move's looping last slot wraps its progress ([`looped_progress`]).
 fn write_clip(ctx: &StepCtx<'_>, cur: Option<usize>, cmd: &Command, sense: &Sense, fresh: bool, out: &mut ActionOutput) {
     let Some(r) = cur.map(|i| ctx.rules.at(i)) else { return };
     let Owner::Clip { root_scale, square_up, rate } = r.rule.owner else { return };
     let (t0, t1) = out.clock;
     let attack = r.rule.category == Category::Attack;
-    let view = (cmd.face_view && attack).then(|| Vec2::new(cmd.view.yaw.sin(), cmd.view.yaw.cos()));
+    let view = (cmd.face_view && faces_view(r.rule.category)).then(|| Vec2::new(cmd.view.yaw.sin(), cmd.view.yaw.cos()));
     let stick = (cmd.stick.length() > ctx.params.deadzone).then_some(cmd.stick);
     let free = view.or(stick);
     let mut yaw = sense.yaw;
@@ -538,7 +544,32 @@ fn write_clip(ctx: &StepCtx<'_>, cur: Option<usize>, cmd: &Command, sense: &Sens
     yaw += dyaw;
     let delta = glam::Quat::from_rotation_y(yaw) * Vec3::new(local.x, 0.0, local.z) * root_scale;
     let duration = clip_root(r, ctx.slots, |p| p.duration()).unwrap_or(f32::INFINITY);
-    out.clip = Some(ClipOutput { delta, yaw, progress: c1.min(duration) });
+    let progress = looped_progress(r, ctx.slots, c1).unwrap_or(c1.min(duration));
+    out.clip = Some(ClipOutput { delta, yaw, progress });
+}
+
+/// Categories whose Clip moves face the view in first person ([`Command::face_view`]): attacks
+/// (square up and aim the swing) and guards (follow the view at the `Turn` rate).
+const fn faces_view(c: Category) -> bool {
+    matches!(c, Category::Attack | Category::Guard)
+}
+
+/// A hold move whose chain ends in a looping slot ([`crate::SlotInfo::length`] `None`, a guard's held
+/// pose): chain progress (clip seconds) wrapped inside that slot's clip, whose length is its root
+/// path's duration; the slots before it play once. `None` when the last present slot doesn't loop,
+/// a present slot has no root path, or the clock hasn't reached the loop.
+fn looped_progress(r: &CompiledRule, slots: &dyn SlotSource, c: f32) -> Option<f32> {
+    let present: Vec<SlotKey> = r.slots.iter().copied().filter(|k| slots.slot(*k).is_some()).collect();
+    let (&last, before) = present.split_last()?;
+    if !r.holds() || slots.slot(last)?.length.is_some() {
+        return None;
+    }
+    let mut prior = 0.0;
+    for k in before {
+        prior += slots.root(*k)?.duration();
+    }
+    let len = slots.root(last)?.duration();
+    (len > 1e-6 && c > prior).then(|| prior + (c - prior).rem_euclid(len))
 }
 
 /// Runs `f` on the root path of the rule's present slots (dropped slots skipped); `None` when a

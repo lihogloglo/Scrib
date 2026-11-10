@@ -123,10 +123,21 @@ pub struct Unit<'a> {
     pub body: Body,
 }
 
+/// Whether a landed hit met a guard (C2b).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GuardResult {
+    #[default]
+    Unguarded,
+    /// Guarded: the guard held (an `Additive` flinch, or the sheet's `guard_hit` reaction).
+    Held,
+    /// Guarded, and the guard broke (the forced guard-break reaction).
+    Broken,
+}
+
 /// Presentation and gameplay messages.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CombatEvent {
-    HitLanded { attacker: CharacterId, defender: CharacterId, hit: u8, point: Vec3, kind: TagId, tier: Tier, side: Side },
+    HitLanded { attacker: CharacterId, defender: CharacterId, hit: u8, point: Vec3, kind: TagId, tier: Tier, side: Side, guard: GuardResult },
     /// A sweep touched a defender inside its i-frames: no landing, the pair stays unspent.
     Evaded { attacker: CharacterId, defender: CharacterId, hit: u8 },
     /// The rules said the contact doesn't land (the pair is spent).
@@ -192,7 +203,7 @@ pub fn step<R: CombatRules + ?Sized>(ctx: &CombatCtx<'_>, units: &mut [Unit<'_>]
 /// Item 4: a combat move start begins its swing and charges its start cost; an opening hit window
 /// charges its row's stamina; a jump (a launch start) and sprinting cost the sheet's `costs` while
 /// a hostile is `near`; regen while open (not in a combat move, or past its first `Cancel(Move)`;
-/// never on a draining sprint tick).
+/// never on a draining sprint tick), at the guarding rate throughout a guard move (C2b).
 fn vitals<R: CombatRules + ?Sized>(ctx: &CombatCtx<'_>, u: &mut Unit<'_>, rules: &R, near: bool) {
     if u.fighter.dead() {
         u.fight.regen_open = false;
@@ -243,10 +254,11 @@ fn vitals<R: CombatRules + ?Sized>(ctx: &CombatCtx<'_>, u: &mut Unit<'_>, rules:
         let d = rules.cost(u.fighter, costs.sprint_per_s / TICK_HZ as f32, 1.0);
         u.fighter.vitals.apply(d);
     }
-    let open = !draining && spec.is_none_or(|s| t0 >= s.regen_from);
+    let guarding = spec.is_some_and(|s| s.guard.is_some());
+    let open = !draining && (guarding || spec.is_none_or(|s| t0 >= s.regen_from));
     u.fight.regen_open = open;
     if open {
-        let d = rules.regen(u.fighter, RegenState::Open);
+        let d = rules.regen(u.fighter, if guarding { RegenState::Guarding } else { RegenState::Open });
         u.fighter.vitals.apply(d);
     }
     u.fight.update_winded(u.fighter.vitals.stamina);
@@ -326,8 +338,13 @@ fn sweep(ctx: &CombatCtx<'_>, units: &[Unit<'_>]) -> Vec<Pending> {
     pending
 }
 
-/// Items 6-8 for one contact: dead -> skip; open i-frames -> no landing, pair unspent; (guard: C2);
-/// then the rules, pools, tier and side, death, the forced reaction and hit-stop on both sides.
+/// Items 6-8 for one contact: dead -> skip; open i-frames -> no landing, pair unspent; a raised
+/// guard with the attacker in its arc -> `guarded` (C2b: the guard move's `raise` time before this
+/// tick, the arc around the defender's facing toward the attacker's position); then the rules,
+/// pools, tier and side, death, the forced reaction and hit-stop on both sides. A guarded hit
+/// ([`Outcome::guarded`]) plays the guard reaction: held, tier `Additive` and the sheet's
+/// `guard_hit` move if any (the guard stays up otherwise); broken, the sheet's `guard_break` move
+/// (else the `Large` reaction), tier `Large`. The defender's `min_tier` clamps unguarded hits only.
 fn resolve<R: CombatRules + ?Sized>(
     ctx: &CombatCtx<'_>,
     units: &mut [Unit<'_>],
@@ -350,6 +367,8 @@ fn resolve<R: CombatRules + ?Sized>(
     let toward = Vec3::new(d.body.pos.x - a.body.pos.x, 0.0, d.body.pos.z - a.body.pos.z).normalize_or_zero();
     let side = Side::of(d.body.yaw, -toward);
     let in_reaction = dspec.is_some_and(|s| s.category == sf_action::Category::Forced);
+    let facing = Vec3::new(d.body.yaw.sin(), 0.0, d.body.yaw.cos());
+    let guarded = dspec.and_then(|s| s.guard).is_some_and(|g| g.covers(d.output.clock.0, facing.dot(-toward)));
     let contact = Contact {
         attacker: aid,
         defender: did,
@@ -359,10 +378,11 @@ fn resolve<R: CombatRules + ?Sized>(
         kind: p.row.kind,
         mv: p.row.mv,
         flags: p.row.flags,
+        guard_damage: p.row.guard_damage,
         point: p.point,
         direction: toward,
         side,
-        defender_state: DefenderState { in_reaction, ..DefenderState::default() },
+        defender_state: DefenderState { guarded, in_reaction, ..DefenderState::default() },
     };
     let outcome = rules.resolve_contact(&contact, a.fighter, d.fighter);
     if let Some(sw) = units[p.attacker].fight.swing.as_mut() {
@@ -375,12 +395,27 @@ fn resolve<R: CombatRules + ?Sized>(
     }
     let victim = &mut units[p.defender];
     victim.fighter.vitals.apply(outcome.defender);
-    let mut tier = outcome.tier_hint.unwrap_or(p.row.tier).max(victim.fighter.min_tier);
+    let guard = match (outcome.guarded, outcome.guard_break) {
+        (false, _) => GuardResult::Unguarded,
+        (true, false) => GuardResult::Held,
+        (true, true) => GuardResult::Broken,
+    };
+    let mut tier = match guard {
+        GuardResult::Unguarded => outcome.tier_hint.unwrap_or(p.row.tier).max(victim.fighter.min_tier),
+        GuardResult::Held => outcome.tier_hint.unwrap_or(Tier::Additive),
+        GuardResult::Broken => outcome.tier_hint.unwrap_or(Tier::Large),
+    };
     let killed = victim.fighter.dead();
     if killed {
         tier = Tier::Death;
     }
-    if let Some(rule) = ctx.movesets.sheets.get(&victim.fighter.moveset).and_then(|s| s.reactions.lookup(tier, side)) {
+    let reactions = ctx.movesets.sheets.get(&victim.fighter.moveset).map(|s| &s.reactions);
+    let rule = reactions.and_then(|r| match guard {
+        GuardResult::Held if !killed => r.guard_hit,
+        GuardResult::Broken if !killed => r.guard_break.or_else(|| r.lookup(tier, side)),
+        _ => r.lookup(tier, side),
+    });
+    if let Some(rule) = rule {
         victim.action.forced = Some(Forced { rule, side: side.index() });
     }
     let ease = ctx.movesets.sheets.get(&units[p.attacker].fighter.moveset).map_or(0.0, |s| s.hit_stop.ease);
@@ -389,7 +424,7 @@ fn resolve<R: CombatRules + ?Sized>(
         stops[p.attacker] = Some(stop);
         stops[p.defender] = Some(stop);
     }
-    out.events.push(CombatEvent::HitLanded { attacker: aid, defender: did, hit: p.hit, point: p.point, kind: p.row.kind, tier, side });
+    out.events.push(CombatEvent::HitLanded { attacker: aid, defender: did, hit: p.hit, point: p.point, kind: p.row.kind, tier, side, guard });
     if killed {
         out.events.push(CombatEvent::Died { who: did });
     }

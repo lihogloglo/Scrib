@@ -102,6 +102,20 @@ pub struct HitDef {
     pub stop: Option<f32>,
     #[serde(default)]
     pub flags: u8,
+    /// Stamina damage when the hit is guarded (`None`: the row's `stamina`); the rules scale it
+    /// (`StandardRules`: x0.55 / the defender's `guard_stability`).
+    #[serde(default)]
+    pub guard_damage: Option<f32>,
+}
+
+/// A guard move's guard (combat.md "C2b"): hits inside the arc count as guarded once it is raised.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuardDef {
+    /// Seconds from the move's start before the guard counts (rounded to whole 60 Hz ticks).
+    pub raise: f32,
+    /// Half-angle around the defender's facing that the guard covers, degrees (0, 180].
+    pub arc: f32,
 }
 
 fn one() -> f32 {
@@ -146,6 +160,9 @@ pub struct MoveDef {
     /// stays near the body the swing hangs off until `Cancel(Move)` (combat.md "C4b").
     #[serde(default)]
     pub look: Option<LookRule>,
+    /// A guard move (C2b; classes `[Guard]`: a hold move whose last slot loops while held).
+    #[serde(default)]
+    pub guard: Option<GuardDef>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -206,6 +223,13 @@ pub struct SheetDef {
     /// (tier, side) -> the reaction's slot.
     #[serde(default)]
     pub reactions: BTreeMap<(Tier, Side), String>,
+    /// A guarded hit's reaction slot (C2b; `None`: the guard holds, an `Additive` flinch only).
+    #[serde(default)]
+    pub guard_hit: Option<String>,
+    /// The guard break's reaction slot (stamina gone on a guarded hit; `None`: the `Large`
+    /// reaction).
+    #[serde(default)]
+    pub guard_break: Option<String>,
     #[serde(default)]
     pub costs: Costs,
 }
@@ -231,6 +255,26 @@ pub struct HitRow {
     /// Hit-stop hold, s.
     pub stop: f32,
     pub flags: HitMask,
+    /// Stamina damage when guarded, before the rules scale it.
+    pub guard_damage: f32,
+}
+
+/// A guard move's guard, compiled.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GuardSpec {
+    /// Move time from which the guard counts (whole ticks).
+    pub raise: ClockTime,
+    /// Cosine of the half-arc: an attacker whose direction from the defender has at least this
+    /// dot with the defender's facing is inside the guard.
+    pub arc_cos: f32,
+}
+
+impl GuardSpec {
+    /// Raised at move time `t` (the time before this tick) with the attacker in the arc:
+    /// `facing_dot` = defender facing . unit direction to the attacker.
+    pub fn covers(&self, t: ClockTime, facing_dot: f32) -> bool {
+        t >= self.raise && facing_dot >= self.arc_cos
+    }
 }
 
 /// A present slot of a move's chain, in move time.
@@ -256,6 +300,8 @@ pub struct MoveSpec {
     pub iframes: Vec<(ClockTime, ClockTime, HitMask)>,
     /// Regeneration opens here: the first `Cancel(Move)` (else the end).
     pub regen_from: ClockTime,
+    /// A guard move's guard (regeneration then runs at the guarding rate throughout).
+    pub guard: Option<GuardSpec>,
 }
 
 impl MoveSpec {
@@ -471,7 +517,24 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
             warnings.push(format!("moveset '{}', move '{name}': every slot dropped; move not loaded", def.id));
             continue;
         }
+        // A hold move (Guard) lasts while held: its last slot loops, and `End` never comes.
+        let holds = !m.classes.is_empty() && m.classes.iter().all(|c| c.needs_hold());
         let length = t;
+        let end = if holds { ClockTime(u32::MAX) } else { length };
+        let guard = match m.guard {
+            Some(g) if !(g.raise.is_finite() && g.raise >= 0.0 && g.arc.is_finite() && g.arc > 0.0 && g.arc <= 180.0) => {
+                errors.push(err(Some(name), "guard: raise must be >= 0 and arc in (0, 180] degrees".into()));
+                None
+            }
+            Some(_) if !holds => {
+                errors.push(err(Some(name), "guard: only a hold move (classes [Guard]) guards".into()));
+                None
+            }
+            // Whole ticks: `raise: 0.067` is the spec's 4 frames.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+            Some(g) => Some(GuardSpec { raise: ClockTime::from_ticks((g.raise * sf_action::TICK_HZ as f32).round() as u32), arc_cos: g.arc.to_radians().cos() }),
+            None => None,
+        };
         // Windows in move time.
         let mut windows = Vec::new();
         for w in &m.windows {
@@ -483,11 +546,11 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
                 WindowDef::Turn(rate, a, b) => (WindowKind::Turn(rate.max(0.0) as u16), *a, *b),
                 WindowDef::NoTurn(a, b) => (WindowKind::NoTurn, *a, *b),
             };
-            windows.push(Window { kind, start: ClockTime::from_secs(a), end: secs(b, length) });
+            windows.push(Window { kind, start: ClockTime::from_secs(a), end: secs(b, end) });
         }
         let mut hits = Vec::new();
         for (i, h) in m.hits.iter().enumerate() {
-            let (start, end) = (ClockTime::from_secs(h.window.0), secs(h.window.1, length));
+            let (start, end) = (ClockTime::from_secs(h.window.0), secs(h.window.1, end));
             if start >= end || !h.mv.is_finite() || !h.stamina.is_finite() {
                 errors.push(err(Some(name), format!("hit {i}: empty window or bad numbers")));
                 continue;
@@ -506,23 +569,27 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
                 tier: h.tier,
                 stop: h.stop.unwrap_or(def.defaults.hit_stop.hold),
                 flags: HitMask(h.flags),
+                guard_damage: h.guard_damage.unwrap_or(h.stamina),
             });
         }
         if hits.len() > 32 {
             errors.push(err(Some(name), "more than 32 hit rows".into()));
         }
-        let iframes: Vec<_> = m.iframes.iter().map(|&(a, b, k)| (ClockTime::from_secs(a), secs(b, length), k.mask())).collect();
+        let iframes: Vec<_> = m.iframes.iter().map(|&(a, b, k)| (ClockTime::from_secs(a), secs(b, end), k.mask())).collect();
         for &(start, end, k) in &iframes {
             windows.push(Window { kind: WindowKind::IFrames(k), start, end });
         }
         // Split the move's windows into its slots' local windows.
-        for (span, slot) in spans.iter().zip(&present) {
-            let (s0, s1) = (span.start.0, span.start.0 + span.len.0);
-            let mut info = SlotInfo { length: Some(span.len), windows: Vec::new() };
+        let last = spans.len() - 1;
+        for (i, (span, slot)) in spans.iter().zip(&present).enumerate() {
+            // A hold move's last slot loops: no length, its windows run on past one pass.
+            let looping = holds && i == last;
+            let (s0, s1) = (span.start.0, if looping { u32::MAX } else { span.start.0 + span.len.0 });
+            let mut info = SlotInfo { length: (!looping).then_some(span.len), windows: Vec::new() };
             for w in &windows {
                 let (a, b) = (w.start.0.max(s0), w.end.0.min(s1));
                 // A window open to the end of the move stays open to the end of its last slot.
-                if a < b || (a == b && w.end == length && b == s1) {
+                if a < b || (a == b && w.end == end && b == s1) {
                     info.windows.push(Window { kind: w.kind, start: ClockTime(a - s0), end: ClockTime(b - s0) });
                 }
             }
@@ -533,7 +600,7 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
             .filter(|w| matches!(w.kind, WindowKind::Cancel(c) if c.contains(ActionClass::Move)))
             .map(|w| w.start)
             .min()
-            .unwrap_or(length);
+            .unwrap_or(end);
         // `from`: authored (sheet names prefixed) plus chain sources; a lock-on variant with none
         // authored takes its base's.
         let variant = variants.get(name.as_str()).copied();
@@ -569,16 +636,19 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
         });
         moves.moves.insert(
             RuleKey::of(&id),
-            MoveSpec { id, category: m.category, classes: ClassSet::of(&m.classes), rate: m.rate, cost: m.cost, slots: spans, length, hits, iframes, regen_from },
+            MoveSpec { id, category: m.category, classes: ClassSet::of(&m.classes), rate: m.rate, cost: m.cost, slots: spans, length, hits, iframes, regen_from, guard },
         );
     }
     let mut reactions = ReactionTable::default();
-    for (&(tier, side), slot) in &def.reactions {
+    let guard_reactions = [("guard.hit", def.guard_hit.as_ref()), ("guard.break", def.guard_break.as_ref())];
+    let tiered = def.reactions.iter().map(|(&(tier, side), slot)| (Some((tier, side)), format!("react.{tier:?}.{side:?}").to_lowercase(), slot));
+    let guarded = guard_reactions.into_iter().filter_map(|(n, s)| s.map(|s| (None, n.to_owned(), s)));
+    for (key, name, slot) in tiered.chain(guarded) {
         let Some(len) = clip_len(slot) else {
             warnings.push(format!("moveset '{}': reaction slot '{slot}' has no clip; dropped", def.id));
             continue;
         };
-        let id = full(&format!("react.{tier:?}.{side:?}").to_lowercase());
+        let id = full(&name);
         let len = ClockTime::from_secs(len);
         slots.push((slot.clone(), SlotInfo { length: Some(len), windows: Vec::new() }));
         rules.push(MoveRule {
@@ -596,12 +666,29 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
             redo_ticks: 0,
             look: None,
         });
-        let key = RuleKey::of(&id);
-        reactions.moves.insert((tier, side), key);
+        let rule = RuleKey::of(&id);
+        match key {
+            Some(k) => {
+                reactions.moves.insert(k, rule);
+            }
+            None if name == "guard.hit" => reactions.guard_hit = Some(rule),
+            None => reactions.guard_break = Some(rule),
+        }
         let span = SlotSpan { key: SlotKey::of(slot), start: ClockTime::ZERO, len };
-        let spec =
-            MoveSpec { id, category: Category::Forced, classes: ClassSet::EMPTY, rate: 1.0, cost: 0.0, slots: vec![span], length: len, hits: Vec::new(), iframes: Vec::new(), regen_from: len };
-        moves.moves.insert(key, spec);
+        let spec = MoveSpec {
+            id,
+            category: Category::Forced,
+            classes: ClassSet::EMPTY,
+            rate: 1.0,
+            cost: 0.0,
+            slots: vec![span],
+            length: len,
+            hits: Vec::new(),
+            iframes: Vec::new(),
+            regen_from: len,
+            guard: None,
+        };
+        moves.moves.insert(rule, spec);
     }
     if !errors.is_empty() {
         return Err(errors);

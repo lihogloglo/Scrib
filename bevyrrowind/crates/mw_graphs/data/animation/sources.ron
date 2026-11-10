@@ -310,6 +310,38 @@
       root: Progress,
       fallback: Drop,
     ),
+    // Guard (combat.md "C2b", the sword sheet's `guard` move): UAL2 Sword_Block (1.23 s) raises the
+    // sword into a crouched guard by 0.21 s, holds it to 0.51 s (hands within 3 cm), then lowers it.
+    // The raise plays once, the hold loops while Guard is down (no lowering: the move ends on
+    // release and blends out). Morrowind's shield block behind the hold, none behind the raise.
+    "guard.sword_1h.raise": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Block", range: Some((0.0, 0.21))),
+      ],
+      root: Progress,
+      fallback: Drop,
+    ),
+    "guard.sword_1h.idle": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Block", range: Some((0.21, 0.51))),
+      ],
+      looping: Whole,
+      root: Progress,
+      fallback: Clip("Shield@block"),
+    ),
+    // The guard break: UAL2 Idle_Shield_Break (1.07 s: the guard knocked open, arms flung, then
+    // back), else the knockback, else Morrowind's Hit5.
+    "guard.sword_1h.break": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Idle_Shield_Break"),
+        (source: "quaternius_ual2", clip: "Hit_Knockback"),
+      ],
+      root: Progress,
+      fallback: Clip("Hit5"),
+    ),
     // Hit reactions (forced Clip moves by tier and side), Morrowind's Hit1-5 behind.
     "react.small.front": (
       graph: "humanoid",

@@ -33,7 +33,7 @@ use bevy_ecs::prelude::*;
 use sf_action::{ClassSet, Refused, SlotKey, TagId};
 use sf_action_bevy::{ActionBody, ActionCharacter, ActionGate, ActionSystems, ActionTick};
 use sf_anim::{Clip, Skeleton};
-use sf_combat::{Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, FightState, Fighter, Movesets, Side, SocketTracks, Tier, Unit};
+use sf_combat::{Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, FightState, Fighter, GuardResult, Movesets, Side, SocketTracks, Tier, Unit};
 use sf_coords::WorldPos;
 
 pub mod lock;
@@ -135,6 +135,8 @@ pub struct HitLanded {
     pub kind: TagId,
     pub tier: Tier,
     pub side: Side,
+    /// Whether it met a guard (C2b): held (`Additive` tier) or broken.
+    pub guard: GuardResult,
 }
 
 /// A press was refused by the gate (the HUD flashes the stamina bar).
@@ -202,9 +204,9 @@ fn step<R: CombatRules + Resource>(
     drop(units);
     for e in &out.events {
         match *e {
-            CombatEvent::HitLanded { attacker, defender, hit, point, kind, tier, side } => {
+            CombatEvent::HitLanded { attacker, defender, hit, point, kind, tier, side, guard } => {
                 if let (Some(&attacker), Some(&defender)) = (ids.get(&attacker), ids.get(&defender)) {
-                    hits.write(HitLanded { attacker, defender, hit, point: anchor.offset(point), kind, tier, side });
+                    hits.write(HitLanded { attacker, defender, hit, point: anchor.offset(point), kind, tier, side, guard });
                 }
             }
             CombatEvent::Died { who } => {

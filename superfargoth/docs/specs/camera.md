@@ -60,6 +60,9 @@ R7 §2, R8 §1.4, §2-3. Companion: [action.md](action.md).
   free (an interrupted attack's limits ease out) while the body holds its yaw and the arms follow its pose; the standard flinch
   is a small rotation-only view kick (Source `ViewPunch`, Mordhau) on the shake path (`CameraShake`, after the look, never into
   `Command.view`), fed by `HitLanded` on the followed body: combat C4's shake, not built.
+- **Guard** (decision, combat.md "C2b", 2026-11-10): a held guard's `look` is pitch-only (yaw 180, pitch the attacks' -45..20)
+  and the body follows the view at the guard's `Turn` rate (360 deg/s): blocking in Skyrim, Mordhau and KCD never clamps the
+  view's yaw, and our arms hang off the body, so a fast flick leads the guard and it catches up (the guard arc is the body's).
 - **Render bodies** (decision; R7 §2.1, R8 §3): a first-person body (arms, and legs when looking
   down) with its own FOV and scale toward the camera, head hidden; plus the world body for shadows
   and reflections. Per action: an **arms layer** for weapons and spells (a content pack's own

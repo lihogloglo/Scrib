@@ -1,6 +1,6 @@
 # Combat: feel layer, moveset sheets, rules seam
 
-Status (2026-11-10): C1a, C1b, C1c (lock-on parts 1-4), the C4 soft aim, C4b first-person attack look limits and C2a (sparring dummy, player reactions) built; next C2b guard, C1c-2b strafe clips. ROADMAP 3.5. Game side:
+Status (2026-11-10): C1a, C1b, C1c (lock-on parts 1-4), the C4 soft aim, C4b first-person attack look limits, C2a (sparring dummy, player reactions) and C2b (guard, both views) built; next C2c backstep + knockdown, C1c-2b strafe clips. ROADMAP 3.5. Game side:
 `../../../bevyrrowind/docs/specs/combat-adapter.md`. Built on [action.md](action.md) (commands, windows, chooser, motion
 owners, co-op rules: referenced, not repeated); owns its build-plan row E1-E3. Slices **combat C1..C7** are not action.md's
 C1 (interactions).
@@ -115,9 +115,13 @@ classes, `moveset` and `from` predicates, `owner: Clip`, exits), the slot window
   or the content pack's text-key synthesis); one that brings none gets the sheet windows scaled by the length ratio, with a
   load warning. Startup/active/recovery are derived from hit and cancel windows (R6 §12), never authored.
 - **Hit row**: window, `mv` (motion value), `stamina` (cost, charged when the window opens), `kind` (content tag for the
-  rules), `tier` (unguarded reaction), `stop` (hit-stop hold, s); later `poise`, `knockback`, `guard_damage`, flags
+  rules), `tier` (unguarded reaction), `stop` (hit-stop hold, s), `guard_damage` (stamina damage when guarded; default
+  `stamina`); later `poise`, `knockback`, flags
   `Unblockable | Sweep | Thrust | Grab`, `source: Sweep | Cone` (classic resolves by reach cone).
-- **Load errors**: unknown slot, class, tier or `next` target; overlapping hit windows with one index; `Hit(n)` with no row.
+- **Guard** (C2b): a move with `classes: [Guard]` is a hold move (it lasts while held; its last slot loops); `guard: (raise, arc)`
+  makes it guard (raise s, rounded to ticks; half-arc deg). Sheet `guard_hit` / `guard_break`: optional reaction slots.
+- **Load errors**: unknown slot, class, tier or `next` target; overlapping hit windows with one index; `Hit(n)` with no row; a
+  `guard` on a non-hold move, a guard arc outside (0, 180].
 
 ### Fighter and vitals
 
@@ -148,14 +152,17 @@ In `FixedUpdate`, `CombatSystems::Gate` runs before `ActionSystems::Step`; the o
    `clip: Option<ClipOutput { delta, yaw, progress }>` and the clock interval `(t0, t1)`.
 3. **Move**: the shell applies the Clip delta through the mover's collide-and-slide, gravity on.
 4. **Vitals**: a combat move start calls `rules.begin_swing` and charges its start cost; a hit window opening charges its
-   row's stamina; `rules.regen` while regen is open (in `Loco`, or past the move's first `Cancel(Move)`).
+   row's stamina; `rules.regen` while regen is open (in `Loco`, or past the move's first `Cancel(Move)`; `Guarding` throughout
+   a guard move).
 5. **Sweep**: each open `Hit(n)` in `(t0, t1]`: the weapon segment at 5 sub-steps between the track samples at `t0` and `t1`,
    on the two ticks' root poses, against hurt shapes within the move's reach (segment-capsule distance). A first touch of
    `(n, defender)` is a `Contact`. Positions are relative to the attacker (WorldPos deltas, never `Entity`).
 6. **Contact order** (SK, R6 §7): dead → skip; defender `IFrames` open for the row's flags → no landing, pair unspent;
-   guard raised and attacker in the guard arc → `guarded` (C2); then `rules.resolve_contact`.
+   guard raised (the guard move's clock before this tick >= `raise`) and the attacker's position within its arc of the
+   defender's facing → `DefenderState::guarded` (C2b); then `rules.resolve_contact`.
 7. **Outcome**: pool deltas on both sides; tier = `max(rules hint or row tier, defender.min_tier)` (armor clamps it, C3),
-   side from the hit direction in the defender's frame; death at health 0.
+   side from the hit direction in the defender's frame; death at health 0. `Outcome::guarded`: tier `Additive` and the sheet's
+   `guard_hit` (none: the guard holds); with `guard_break`: tier `Large` and `guard_break` (else the Large reaction).
 8. **Apply**: the reaction becomes `ActionState::forced` for the next `Step`; hit-stop starts on both sides; presentation
    messages (`HitLanded { point, kind, tier }`, `CameraShake`, sound tag).
 
@@ -182,15 +189,17 @@ pub trait CombatRules: Send + Sync {
 
 - `Swing { attacker, move_key, strength, candidates: &[CharacterId] }` (candidates: a cone query for `source: Cone`, else
   empty); `SwingPlan { connects, strength, target: Option<CharacterId> }`.
-- `Contact { attacker, defender, move_key, hit: u8, strength, kind: TagId, mv, flags, point, direction, side,
+- `Contact { attacker, defender, move_key, hit: u8, strength, kind: TagId, mv, flags, guard_damage, point, direction, side,
   defender_state { guarded, down, unaware, in_reaction } }`.
-- `Outcome { landed: bool, defender: PoolDelta, attacker: PoolDelta, guard_break: bool, tier_hint: Option<Tier>,
-  events: SmallVec<[TagId; 2]> }`; `PoolDelta { health, stamina, poise }`.
+- `Outcome { landed: bool, defender: PoolDelta, attacker: PoolDelta, guarded: bool, guard_break: bool, tier_hint:
+  Option<Tier>, events: SmallVec<[TagId; 2]> }`; `PoolDelta { health, stamina, poise }`. `guarded` is the rules' answer (the
+  guard reaction plays), so a classic rule can block with no guard move.
 - Stats are the implementor's: the content's rules resource keeps its own per-character table keyed by `CharacterId`,
   refreshed in `CombatSystems::Stats` before resolve. The framework never reads stats. Random picks hash (seed, character,
   tick) (`sf_combat::roll`).
 - **`StandardRules`** (modern, `sf_combat`): no hit roll; damage `attack x mv x strength x (1 - absorb)`; guarded: `x (1 -
-  guard_absorb)` and stamina damage `guard_damage x 0.55 / guard_stability`, guard break at 0 (C2); `can_start` = stamina
+  guard_absorb)` and stamina damage `guard_damage x 0.55 / guard_stability` (stability floor 0.1), guard break when that
+  reaches 0 (C2b); `can_start` = stamina
   > 0 for Light/Heavy/Offhand/Dodge (the last action may overdraw, ER); costs = base; regen 45/s, x0.5 guarding. Content
   wraps or replaces it (stat bands, C5).
 
@@ -198,8 +207,8 @@ pub trait CombatRules: Send + Sync {
 
 Spend per hit at window open (attacks), at start (roll, backstep, jump while a hostile is near), sprint per second while a
 hostile fighter is within 20 m (calm-world sprinting is free, ER). Start only while stamina > 0. Regen has no delay timer:
-it opens at `Loco` or the move's first `Cancel(Move)`, so long recoveries also delay it (ER). Guard (C2): regen x0.5,
-blocked hits take stamina, 0 = guard break. Numbers come from content and rules; behaviour at 0 is the framework's.
+it opens at `Loco` or the move's first `Cancel(Move)`, so long recoveries also delay it (ER). Guard (C2b): regen x0.5,
+blocked hits take stamina, 0 = guard break; raising a guard costs nothing and works at 0 (the next block breaks it, ER). Numbers come from content and rules; behaviour at 0 is the framework's.
 Classic: `can_start` always true; fatigue scales effectiveness inside its rules.
 
 ## Lock-on and camera
@@ -253,19 +262,8 @@ only: sweeps, contacts, rules, pools, reactions, deaths, lock validity. `FightSt
 
 Logic keeps exact assertions; feel tests assert sanity and print measurements (`#[ignore = "measurement: ..."]`). Scripted
 `Command` streams run through `sf_action::step` + `sf_combat::step` headless (ER `fec0975`).
-- Chain: a Light inside `Accept` starts `light2` exactly on the `Cancel(Light)` tick; a press before `Accept` is lost; leaving
-  the move resets the chain; `light3` wraps to `light1`.
-- Tap/hold: release within 17 ticks = `Dodge` on the release tick; held 30 ticks = `Sprint` from tick 18, no `Dodge`.
-- Sweeps: one landing per (hit, defender); `light3` lands twice; out of reach never hits; open i-frames leave the pair
-  unspent and it lands after they close inside the same window.
-- Stamina: zero refuses Light and Dodge (`Refused::Gate`); cancelled before its hit window = no cost; regen only after
-  `Cancel(Move)`; overdraw clamps at 0.
-- Hit-stop: both clocks hold then ease; latched input fires after; a second hit replaces the stop.
-- Seam: an always-miss double changes no pool and starts no hit-stop; an always-`can_start` double never refuses.
-- Determinism: one command stream twice = byte-identical `ActionState` + `FightState` (postcard). Latency: first response
-  on the press tick from `Loco` (R8 adopt 1).
-- Measurements: first contact time vs dummy distance (0.8-2.5 m), stamina per chain, roll distance, i-frame share, hit-stop
-  total.
+The C1 test list (chain, tap/hold, sweeps, stamina, hit-stop, seam, determinism, latency, measurements): [history](archive/combat-history.md)
+"C1 test list"; each slice's tests are in its as-built notes.
 
 ## Build plan
 
@@ -274,7 +272,7 @@ Logic keeps exact assertions; feel tests assert sanity and print measurements (`
 | **C1a** core | `sf_action` vocabulary + `Clip` owner; `sf_combat` sheet, vitals, sweeps, contact order, `StandardRules`, hit-stop | Tests list, headless | none |
 | **C1b** player vs dummy | `sf_combat_bevy`; game glue (sheet, clips, player, training dummy, level `arena`, stamina bar) | 3-hit chain on the dummy lands 4 hits; no NaN; dummy on the floor | CB-1 chain, roll, stamina, hit-stop |
 | **C1c** lock-on | built 2026-10-27 (parts 1-4, "As built (C1c)"; strafe clips C1c-2b next): acquire/break, locked strafe, 4-way rolls, framing | breaks past 20 m and on a mantle | CB-2 strafe and roll around the dummy |
-| **C2** guard, reactions | **C2a** (built 2026-11-10) sparring dummy that strikes, player reactions by tier and side; **C2b** guard (both views); **C2c** backstep, knockdown via `Physics` | contact-order unit tests; guard break at 0 | CB-3a sparring hits; CB-3 block, guard break, knockdown, get-up |
+| **C2** guard, reactions | **C2a** (built 2026-11-10) sparring dummy that strikes, player reactions by tier and side; **C2b** (built 2026-11-10) guard (both views); **C2c** backstep, knockdown via `Physics` | contact-order unit tests; guard break at 0 | CB-3a sparring hits; CB-3 block, guard break, knockdown, get-up |
 | **C3** heavy, openers, poise | heavy + charge; run/roll/backstep/jump attacks; armor windows; poise; lunge; typed i-frames; second weapon class | second class adds no code; charge release swaps clip | CB-4 heavy and openers |
 | **C4** targeting | switching, soft aim (built 2026-11-10, first person included; C4b look limits built), combat shake, per-bone hurt capsules | switch picks the flicked side; soft-aim pick and window | CB-5 |
 | **C5** classic rules | classic `CombatRules` (game side), cone contacts, Classic profile | formula tests against the ported source | CB-6 classic swing |
@@ -285,36 +283,35 @@ action.md E1 = combat C1-C3 (windows, sheet, light/heavy/dodge/guard), E2 = C1c 
 
 ## As built by slice
 
-### C1b, C1c, C4 soft aim, C4b
+### C1b, C1c, C4 soft aim, C4b, C2a
 
 All built; as built and tests in [history](archive/combat-history.md) ("C1b sheet", "C1c as built", "C4 soft aim as built", "C4b
-as built"; live sheet `bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron`). C1c (CB-2): lock, locked facing and strafe,
-4-way rolls, marker (to do: strafe clips C1c-2b, back roll, switching C4). C4 (CB-5): the nearest `Lockable` within 3 m and +-30 deg
-of the aim axis is the swing's turn target; first person (`face_view`) squares attacks to the view, never locks; the body turns
-only in `Turn` windows. C4b (CB-5b): `MoveRule.look` bounds the first-person view around the body until `Cancel(Move)` (sword: 45
-deg, pitch -45..20, ease 0.10 s; rolls free).
+as built", "C2a as built"; live sheet `bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron`). C1c (CB-2): lock, locked facing
+and strafe, 4-way rolls, marker (to do: strafe clips C1c-2b, back roll, switching C4). C4 (CB-5): soft aim 3 m / +-30 deg; first
+person (`face_view`) squares attacks to the view, never locks. C4b (CB-5b): `MoveRule.look` bounds the first-person view around
+the body until `Cancel(Move)`. C2a (CB-3a): `SparSchedule` writes an ordinary `Command` on a beat; the player is a defender like
+any; a reaction has no `look` rule (free view).
 
-### C2a: sparring dummy and player reactions
+### C2b: guard in both views
 
-**As built (2026-11-10)**, check CB-3a; industry and tests: [history](archive/combat-history.md) "C2a as built".
-- **Schedule** (`sf_combat::SparSchedule { class, first, period, reach }`, `spar.rs`): `command(tick, since, to_target)` writes
-  an ordinary `Command`: the view at the target with `face_view` (the attack squares up to it), `class` pressed on a due tick
-  (`first`, then every `period`) while the target's feet are within `reach`. No special path: the swing goes through the chooser,
-  sweeps, contact order and rules like the player's (C6's `sf_ai` will write `Command` the same way). A due tick out of reach or
-  inside a move that refuses the press is skipped.
-- **Game** (combat-adapter.md "Sparring dummy"): `mw_combat/data/sparring.ron` (Light, first 1.5 s, period 2.5 s, reach 2 m); the
-  sparring dummy is a mode of the training dummy (`DummyKind::Sparring`, spawn points `sparring*`, level `sparring`), sword sheet.
-- **Player reactions**: nothing new in the framework: the pipeline already forces the defender's reaction from its sheet
-  (`ReactionTable::lookup`, side then tier fallback); the player is a defender like any. Health and stamina change on the player's
-  stat sheet through the S5 wiring (`PoolAdjust`, cause `Combat`).
-- **First person during a reaction** (decision): reactions carry no `look` rule, so the view stays free (the player keeps the
-  camera; limits of an interrupted attack ease out); the body holds its yaw (`SquareUp::Keep`, no `Turn`), the view-model arms follow
-  the body's pose. The kick is the hook for C4's combat shake: `HitLanded` on the followed body -> `CameraShake` (rotation only,
-  after the look, never into `Command.view`); not built.
+**As built (2026-11-10)**, check CB-3b; industry, content numbers and tests: [history](archive/combat-history.md) "C2b as built".
+- **Hold moves** (`sf_action`): `CompiledRule::holds` (request classes all in `ClassSet::HOLD` = Guard) lapses on the release
+  tick; a held hold class latches each tick it is accepted and not refused (a guard held through an attack rises at its
+  `Cancel(Guard)`, and after a reaction). A looping last slot (`SlotInfo.length` `None`) wraps `ClipOutput.progress` by its
+  root path's duration.
+- **Facing**: Guard moves face the view in first person like attacks (`faces_view`), and their `Turn(rate)` window over the
+  whole guard is the capped turn-with-view; third person the stick, locked the target; no new window kind.
+- **Contact** (`sf_combat`): `MoveSpec.guard: GuardSpec { raise, arc_cos }`; guarded = clock before this tick >= `raise` and
+  `facing . (attacker - defender) >= cos(arc)`; `HitLanded.guard: GuardResult { Unguarded, Held, Broken }`; regen `Guarding`
+  for the whole guard move.
+- **Classic seam (C5)**: no held guard in Morrowind; a classic `resolve_contact` rolls OpenMW's `blockMeleeAttack`
+  (`apps/openmw/mwmechanics/combat.cpp` at `ca5e2576`) and sets `Outcome::guarded`; the same guard reaction plays.
+- **Not built**: guard walk (the pose in the `upper` slot over a Sim-owned hold move), guard-hit recoil and the avatar's Additive
+  hit springs, HUD guard cue (`HudView` is `sf_ui_screens`'), guard counter, parry, guard numbers from records (C3).
 
 ## Open questions
 
 1. Co-op hit-stop on a client's own attacker: wait for the host's `HitLanded`, or predict? Decide at C7.
-2. Clips for heavy, charged, stagger tiers by side, guard-hit recoil, backstep, running and jump attacks are missing from the
-   free packs (R1 §5): buy a pack, prototype with Mixamo, or use the content's own clips? Needed by C2/C3, not C1.
+2. Clips for heavy, charged, stagger tiers by side, guard-hit recoil (C2b: none; a guard walk too), backstep, running and jump
+   attacks are missing from the free packs (R1 §5): buy a pack, prototype with Mixamo, or use the content's own clips? Needed by C2/C3, not C1.
 3. Player poise and hyper-armor numbers (C3): ER-like per-weapon armor windows, or a single poise pool first?

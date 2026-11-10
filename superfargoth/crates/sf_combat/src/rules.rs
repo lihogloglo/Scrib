@@ -1,6 +1,16 @@
 //! The rules seam (combat.md "The rules seam"): the framework owns timing and never computes
 //! damage; a [`CombatRules`] implementor decides hit or miss, damage, costs and regeneration.
 //! [`StandardRules`] is the modern default; classic rules live in the content pack (C5).
+//!
+//! Guard (C2b): the framework tests a raised guard and its arc before the rules
+//! ([`DefenderState::guarded`]); the rules decide what a guarded hit costs and report
+//! [`Outcome::guarded`] and [`Outcome::guard_break`], which pick the guard reaction instead of a hit
+//! reaction. The classic seam (C5, not built): Morrowind has no held guard, so a classic
+//! `resolve_contact` rolls the block itself (`OpenMW` `apps/openmw/mwmechanics/combat.cpp`
+//! `blockMeleeAttack` at `ca5e2576`: a shield in the left hand, the attacker inside
+//! `fCombatBlockLeftAngle..fCombatBlockRightAngle` of the facing from `Contact::direction`, a Block
+//! skill roll with `fBlockStillBonus` when standing still) and sets `Outcome::guarded` on success:
+//! the same guard reaction then plays (`Shield@block`), with no guard move or arc from here.
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -54,6 +64,7 @@ impl SwingPlan {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct DefenderState {
+    /// A raised guard (past its raise time) with the attacker inside its arc (C2b).
     pub guarded: bool,
     pub down: bool,
     pub unaware: bool,
@@ -71,6 +82,8 @@ pub struct Contact {
     pub kind: TagId,
     pub mv: f32,
     pub flags: HitMask,
+    /// The hit row's stamina damage when guarded, before the rules scale it.
+    pub guard_damage: f32,
     /// Contact point, in the frame the shell placed the bodies in.
     pub point: Vec3,
     /// Planar unit direction attacker to defender.
@@ -85,6 +98,9 @@ pub struct Outcome {
     pub landed: bool,
     pub defender: PoolDelta,
     pub attacker: PoolDelta,
+    /// The hit was guarded: the guard reaction plays instead of a hit reaction (C2b).
+    pub guarded: bool,
+    /// A guarded hit broke the guard: the forced guard-break reaction.
     pub guard_break: bool,
     pub tier_hint: Option<Tier>,
     /// Content tags (other pools, effects).
@@ -93,7 +109,15 @@ pub struct Outcome {
 
 impl Outcome {
     pub fn miss() -> Self {
-        Self { landed: false, defender: PoolDelta::ZERO, attacker: PoolDelta::ZERO, guard_break: false, tier_hint: None, events: SmallVec::new() }
+        Self {
+            landed: false,
+            defender: PoolDelta::ZERO,
+            attacker: PoolDelta::ZERO,
+            guarded: false,
+            guard_break: false,
+            tier_hint: None,
+            events: SmallVec::new(),
+        }
     }
 }
 
@@ -121,22 +145,39 @@ pub trait CombatRules: Send + Sync {
 }
 
 /// The modern rules: no hit roll, damage `attack x mv x strength x (1 - absorb)`, starts need
-/// stamina > 0 (the last action may overdraw), costs = base, regen 45/s (x0.5 guarding).
+/// stamina > 0 (the last action may overdraw), costs = base, regen 45/s (x0.5 guarding). Guarded
+/// (C2b): damage also x `(1 - guard_absorb)`, stamina damage `guard_damage x guard_stamina /
+/// guard_stability`, and the guard breaks when that empties the pool (at 0 exactly too).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StandardRules {
     pub regen_per_s: f32,
+    /// Regeneration multiplier while guarding.
     pub guard_regen: f32,
+    /// Share of a guarded hit's `guard_damage` the defender's stamina takes at stability 1.
+    #[serde(default = "guard_stamina")]
+    pub guard_stamina: f32,
+}
+
+fn guard_stamina() -> f32 {
+    0.55
 }
 
 impl Default for StandardRules {
     fn default() -> Self {
-        Self { regen_per_s: 45.0, guard_regen: 0.5 }
+        Self { regen_per_s: 45.0, guard_regen: 0.5, guard_stamina: guard_stamina() }
     }
 }
 
 impl StandardRules {
     /// Classes whose start costs stamina.
     pub const COSTED: [ActionClass; 4] = [ActionClass::Light, ActionClass::Heavy, ActionClass::Offhand, ActionClass::Dodge];
+    /// The least `Defense::guard_stability` counts as (an unset 0 would divide by zero).
+    pub const MIN_STABILITY: f32 = 0.1;
+
+    /// A guarded hit's stamina damage on `defender` (positive).
+    pub fn guard_stamina_damage(&self, guard_damage: f32, defender: &Fighter) -> f32 {
+        (guard_damage.max(0.0) * self.guard_stamina / defender.defense.guard_stability.max(Self::MIN_STABILITY)).max(0.0)
+    }
 }
 
 impl CombatRules for StandardRules {
@@ -145,8 +186,20 @@ impl CombatRules for StandardRules {
     }
 
     fn resolve_contact(&self, c: &Contact, attacker: &Fighter, defender: &Fighter) -> Outcome {
-        let damage = attacker.offense.attack * c.mv * c.strength * (1.0 - defender.defense.absorb.clamp(0.0, 1.0));
-        Outcome { landed: true, defender: PoolDelta { health: -damage.max(0.0), ..PoolDelta::ZERO }, ..Outcome::miss() }
+        let mut damage = attacker.offense.attack * c.mv * c.strength * (1.0 - defender.defense.absorb.clamp(0.0, 1.0));
+        if !c.defender_state.guarded {
+            return Outcome { landed: true, defender: PoolDelta { health: -damage.max(0.0), ..PoolDelta::ZERO }, ..Outcome::miss() };
+        }
+        damage *= 1.0 - defender.defense.guard_absorb.clamp(0.0, 1.0);
+        let stamina = self.guard_stamina_damage(c.guard_damage, defender);
+        let guard_break = defender.vitals.stamina.cur - stamina <= 0.0;
+        Outcome {
+            landed: true,
+            defender: PoolDelta { health: -damage.max(0.0), stamina: -stamina, poise: 0.0 },
+            guarded: true,
+            guard_break,
+            ..Outcome::miss()
+        }
     }
 
     fn can_start(&self, who: &Fighter, class: ActionClass) -> bool {

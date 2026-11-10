@@ -186,6 +186,21 @@ holds the body in `NoTurn`, so the view is bounded by an angle box around the bo
 
 ### C2a as built (from combat.md 2026-11-10)
 
+- **Schedule** (`sf_combat::SparSchedule { class, first, period, reach }`, `spar.rs`): `command(tick, since, to_target)` writes
+  an ordinary `Command`: the view at the target with `face_view` (the attack squares up to it), `class` pressed on a due tick
+  (`first`, then every `period`) while the target's feet are within `reach`. No special path: the swing goes through the chooser,
+  sweeps, contact order and rules like the player's (C6's `sf_ai` will write `Command` the same way). A due tick out of reach or
+  inside a move that refuses the press is skipped.
+- **Game** (combat-adapter.md "Sparring dummy"): `mw_combat/data/sparring.ron` (Light, first 1.5 s, period 2.5 s, reach 2 m); the
+  sparring dummy is a mode of the training dummy (`DummyKind::Sparring`, spawn points `sparring*`, level `sparring`), sword sheet.
+- **Player reactions**: nothing new in the framework: the pipeline already forces the defender's reaction from its sheet
+  (`ReactionTable::lookup`, side then tier fallback); the player is a defender like any. Health and stamina change on the player's
+  stat sheet through the S5 wiring (`PoolAdjust`, cause `Combat`).
+- **First person during a reaction** (decision): reactions carry no `look` rule, so the view stays free (the player keeps the
+  camera; limits of an interrupted attack ease out); the body holds its yaw (`SquareUp::Keep`, no `Turn`), the view-model arms follow
+  the body's pose. The kick is the hook for C4's combat shake: `HitLanded` on the followed body -> `CameraShake` (rotation only,
+  after the look, never into `Command.view`); not built.
+
 Industry: fighting games' training dummies (SF6, Tekken 8 record/playback) and practice
 targets strike on a fixed timer, not an AI, so the defender learns the timing; first-person melee (Mordhau, Chivalry 2, Skyrim)
 flinches the view with a small rotation-only kick (Source `ViewPunch`) and never takes the look during a stagger, as Souls
@@ -218,3 +233,61 @@ shell `SfLockOnPlugin`, `LockOwner`, `Lockable`), locked facing and strafe, lock
   (`sf_character::ReadyChange`/`ReadyClip::from_clip`, the content names the event); the clip plays from that elapsed
   time, so presentation never decides when the weapon is out. Attacks wait for the draw's end.
 
+### C2b as built (from combat.md 2026-11-10)
+
+Check CB-3b. Industry: Elden Ring and Dark Souls III guard is a held state (L1) covering the front,
+with per-weapon guarded damage negation (straight swords ~60-70 %, shields 100 %) and guard boost (stability) scaling the
+stamina a block costs; stamina at 0 on a block is a guard break (a long stagger); guarding halves stamina regen; attacks and
+rolls come out of it; a guard held through an attack rises in its recovery. First-person blocking (Skyrim, Mordhau, KCD) never
+clamps the view's yaw while blocking (Mordhau caps turning only on attacks; KCD locks on); our arms hang off the body (hybrid
+first person), so the body follows the view at a capped rate instead. The ER-Combat-Rewrite reference (`receive_hit`) gives the
+numbers: raise 4 frames, 80 deg half-arc, stamina x0.55. Reuse: nothing to adopt (Bevy has no gameplay layer; no crate).
+- **Hold moves** (`sf_action`): `CompiledRule::holds` (every request class a hold class, `ClassSet::HOLD` = Guard). The chooser
+  lapses one on the tick its class is released (as an automatic move whose entry fails), and a held hold class latches each tick
+  it is accepted and not refused (one refusal for the press, none per held tick), so a guard held through an attack rises at the
+  attack's `Cancel(Guard)` and again after a reaction. A hold move's chain may end in a looping slot (`SlotInfo.length` `None`):
+  `ClipOutput.progress` wraps inside it by its root path's duration; the shell's progress lerp skips the wrap tick.
+- **Facing**: Guard moves face the view in first person like attacks (`faces_view`): square up to `Command.view`, then their
+  `Turn` window aims at the view; third person at the stick, locked at the target; no stick, the body holds. No new window kind:
+  `Turn(rate)` over the whole guard is the capped turn-with-view.
+- **Guard and contact** (`sf_combat`): `MoveSpec.guard: GuardSpec { raise, arc_cos }`; in `resolve`, guarded = the defender's
+  move guards, its clock before this tick >= `raise`, and `facing . (attacker - defender) >= cos(arc)`. Guarded outcomes pick the
+  reaction (item 7); `CombatEvent::HitLanded.guard: GuardResult { Unguarded, Held, Broken }` (also on the Bevy `HitLanded`).
+  `vitals` regenerates at `RegenState::Guarding` for the whole guard move (its windows never open regen otherwise).
+- **Classic seam (C5, not built)**: Morrowind has no held guard; its block is a roll in the rules (OpenMW
+  `apps/openmw/mwmechanics/combat.cpp` `blockMeleeAttack` at `ca5e2576`: left-hand shield, `fCombatBlockLeftAngle`..`RightAngle`,
+  Block skill, `fBlockStillBonus`). A classic `resolve_contact` sets `Outcome::guarded` from it; the same guard reaction plays
+  (`guard_hit` = `Shield@block`); no guard move, no arc from the framework.
+- **Content** (`sword_1h.ron`): `guard` (from Any, raise 0.067 s = 4 ticks, arc 80, `Turn(360)` throughout, cancels to Light,
+  Heavy, Dodge after the raise, no `Cancel(Move)`: no guard walk), `look` yaw 180 (free) pitch -45..20 (the attacks', the arms
+  hang off the body); clips UAL2 `Sword_Block` 0-0.21 s raise + 0.21-0.51 s looping hold (`Shield@block` behind), `guard_break` UAL2
+  `Idle_Shield_Break` (then `Hit_Knockback`, `Hit5`); no `guard_hit` (no recoil clip: an Additive flinch). Hit rows `guard_damage`
+  = 2x the swing's stamina; the fighter's `guard_absorb` 0.65, `guard_stability` 1 (`mw_combat::GUARD_*`): 8 lights or 5 heavies
+  break a full player guard without regen. Attacks accept Guard and rise into it at their Dodge cancel. Input `Control::Guard`
+  (right mouse, L1, held or toggle; heavy moved to R); withheld while sheathed.
+- **Tests**: `sf_action` (lasts while held and lapses on release; a held guard rises at the attack's `Cancel(Guard)`; a refused
+  held guard is refused once; looped progress wraps); `sf_combat` (front guarded with exact health and stamina, back not; arc
+  79/81 deg; raise 4 vs 3 ticks; exact break at 0 and the forced break next tick, 1 more holds; regen x0.5 per tick; first-person
+  follow at 6 deg/tick, third-person stick, lock; look holds; load errors); `mw_combat` (8 lights / 5 heavies, attacks rise into
+  guard); `mw_player_bevy` headless (sparring strikes guarded in both views: Additive, no reaction, -3.5 health, stamina at the hit;
+  break on the 4th strike with regen off and a 1.25 s beat, break move next tick, guard back up after; first person body steps
+  <= 6 deg/tick, view leads > 45 deg, look limits held, catches up).
+- **Not built**: guard walk (needs the guard pose in the `upper` slot over locomotion: a Sim-owned hold move), guard-hit recoil
+  clip and the avatar's Additive hit springs on a guarded hit, HUD guard cue (`HudView` is `sf_ui_screens`'), guard counter,
+  parry/deflect, per-weapon guard numbers from records (C3).
+
+### C1 test list (from combat.md "Tests" 2026-11-10, C2b)
+
+- Chain: a Light inside `Accept` starts `light2` exactly on the `Cancel(Light)` tick; a press before `Accept` is lost; leaving
+  the move resets the chain; `light3` wraps to `light1`.
+- Tap/hold: release within 17 ticks = `Dodge` on the release tick; held 30 ticks = `Sprint` from tick 18, no `Dodge`.
+- Sweeps: one landing per (hit, defender); `light3` lands twice; out of reach never hits; open i-frames leave the pair
+  unspent and it lands after they close inside the same window.
+- Stamina: zero refuses Light and Dodge (`Refused::Gate`); cancelled before its hit window = no cost; regen only after
+  `Cancel(Move)`; overdraw clamps at 0.
+- Hit-stop: both clocks hold then ease; latched input fires after; a second hit replaces the stop.
+- Seam: an always-miss double changes no pool and starts no hit-stop; an always-`can_start` double never refuses.
+- Determinism: one command stream twice = byte-identical `ActionState` + `FightState` (postcard). Latency: first response
+  on the press tick from `Loco` (R8 adopt 1).
+- Measurements: first contact time vs dummy distance (0.8-2.5 m), stamina per chain, roll distance, i-frame share, hit-stop
+  total.

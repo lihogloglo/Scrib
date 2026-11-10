@@ -9,7 +9,7 @@ use sf_action::SlotKey;
 use sf_action_bevy::ActionTick;
 use sf_anim::{SocketTrack, Trs};
 use sf_camera::ViewChoice;
-use sf_combat::{Side, Tier};
+use sf_combat::{GuardResult, Side, Tier};
 use sf_combat_bevy::{CombatData, CombatSystems, Combatant, CombatantDied, HitLanded};
 
 use super::*;
@@ -451,4 +451,262 @@ fn a_standing_dummy_never_strikes() {
             .command,
         sf_action::Command::default()
     );
+}
+
+// ---------- Guard (combat.md "C2b") ----------
+
+/// A guarded light1's stamina damage on the player (`guard_damage` 24 x 0.55 / stability 1).
+fn guard_cost(s: &Spar) -> f32 {
+    let sheet = s
+        .app
+        .world()
+        .resource::<PlayerCombat>()
+        .sheet
+        .clone()
+        .unwrap();
+    let row = sheet.moves.moves[&sheet.rule_key("light1")].hits[0];
+    let player = &s.app.world().get::<Combatant>(s.player).unwrap().fighter;
+    sf_combat::StandardRules::default().guard_stamina_damage(row.guard_damage, player)
+}
+
+/// Draws the weapon (F: instant without a draw clip) and holds the guard key from now on.
+fn draw_and_guard(s: &mut Spar) {
+    tests::hold_key(&mut s.app, KeyCode::KeyF, true);
+    s.frames(2);
+    tests::hold_key(&mut s.app, KeyCode::KeyF, false);
+    s.frames(2);
+    let guard = tests::action(&mut s.app, PlayerAction::Button(ActionClass::Guard));
+    tests::mock(&mut s.app, guard, true);
+    s.frames(2);
+    assert_eq!(
+        s.mov(),
+        s.key("guard"),
+        "drawn, the held key raises the guard"
+    );
+}
+
+impl Spar {
+    fn mov(&self) -> RuleKey {
+        self.app
+            .world()
+            .get::<ActionCharacter>(self.player)
+            .unwrap()
+            .state
+            .mov
+    }
+
+    fn stamina(&self) -> sf_combat::Pool {
+        self.app
+            .world()
+            .get::<Combatant>(self.player)
+            .unwrap()
+            .fighter
+            .vitals
+            .stamina
+    }
+
+    /// Runs frames (one tick each) until the log holds `n` hits; returns the stamina at each hit's
+    /// tick.
+    fn until_hits(&mut self, n: usize, max: usize) -> Vec<f32> {
+        let mut at = Vec::new();
+        for _ in 0..max {
+            let before = self.log().hits.len();
+            self.app.update();
+            if self.log().hits.len() > before {
+                at.push(self.stamina().cur);
+            }
+            if self.log().hits.len() >= n {
+                return at;
+            }
+        }
+        panic!(
+            "{} hits after {max} frames: {:?}",
+            self.log().hits.len(),
+            self.log().hits
+        );
+    }
+}
+
+/// The player holds the guard facing the sparring dummy: every strike is guarded (tier
+/// `Additive`, no reaction: the guard stays up), the health drops by the guarded amount (attack 10
+/// x 0.35) and the stamina by the guard cost at each hit, then refills at the guarding rate before
+/// the next strike (2.5 s apart).
+fn guard_holds_the_strikes(view: ViewChoice) {
+    let mut s = Spar::new(1.2, 0.0, view, false);
+    draw_and_guard(&mut s);
+    let cost = guard_cost(&s);
+    let at = s.until_hits(3, 30 + 480);
+    let max = s.stamina().max;
+    for (&(_, h), &stamina) in s.log().hits.iter().zip(&at) {
+        assert_eq!(
+            (h.attacker, h.defender, h.tier, h.guard),
+            (s.dummy, s.player, Tier::Additive, GuardResult::Held),
+            "{view:?}"
+        );
+        assert!(
+            (stamina - (max - cost)).abs() < 1e-3,
+            "stamina {stamina} at the hit ({view:?}): full {max} - {cost}"
+        );
+    }
+    let guard = s.key("guard");
+    let first = s.log().hits[0].0;
+    assert!(
+        s.log()
+            .starts
+            .iter()
+            .all(|&(t, e, m)| e != s.player || t < first || m == guard),
+        "no reaction while the guard holds: {:?}",
+        s.log().starts
+    );
+    assert_eq!(s.mov(), guard);
+    let want = combat::UNSHEETED_VITALS[0]
+        - 3.0 * mw_combat::DEFAULT_ATTACK * (1.0 - mw_combat::GUARD_ABSORB);
+    assert!(
+        (s.health() - want).abs() < 1e-3,
+        "health {} vs {want}",
+        s.health()
+    );
+    s.frames(60);
+    assert!(
+        (s.stamina().cur - max).abs() < 1e-3,
+        "refilled while guarding: {:?}",
+        s.stamina()
+    );
+    s.on_the_floor();
+}
+
+#[test]
+fn a_held_guard_takes_the_sparring_dummys_strikes_third_person() {
+    guard_holds_the_strikes(ViewChoice::ThirdPerson);
+}
+
+#[test]
+fn a_held_guard_takes_the_sparring_dummys_strikes_first_person() {
+    guard_holds_the_strikes(ViewChoice::FirstPerson);
+}
+
+/// With regeneration off and a strike every 1.25 s, the guard breaks on the first guarded hit
+/// the stamina can't pay: the player's 50 holds three (13.2 each), the fourth breaks it (tier
+/// `Large`, stamina 0), the guard-break move starts on the next tick, and once it ends the still
+/// held key raises the guard again.
+#[test]
+#[allow(
+    clippy::float_cmp,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)] // a handful of hits; 0 is exact (clamped)
+fn the_guard_breaks_when_a_strike_empties_the_stamina() {
+    let mut s = Spar::new(1.2, 0.0, ViewChoice::ThirdPerson, false);
+    s.app
+        .insert_resource(combat::ModernRules(sf_combat::StandardRules {
+            regen_per_s: 0.0,
+            ..sf_combat::StandardRules::default()
+        }));
+    s.app
+        .world_mut()
+        .resource_mut::<SparringRules>()
+        .0
+        .as_mut()
+        .expect("schedule")
+        .period = 1.25;
+    draw_and_guard(&mut s);
+    let (full, cost) = (s.stamina().cur, guard_cost(&s));
+    let n = (full / cost).ceil() as usize;
+    assert_eq!(n, 4, "50 / 13.2");
+    let at = s.until_hits(n, 30 + 600);
+    let hits: Vec<_> = s
+        .log()
+        .hits
+        .iter()
+        .map(|&(t, h)| (t, h.tier, h.guard))
+        .collect();
+    for (k, &(_, tier, guard)) in hits.iter().enumerate().take(n - 1) {
+        assert_eq!(
+            (tier, guard),
+            (Tier::Additive, GuardResult::Held),
+            "hit {k}"
+        );
+        assert!(
+            (at[k] - (full - cost * (k as f32 + 1.0))).abs() < 1e-3,
+            "hit {k}: {}",
+            at[k]
+        );
+    }
+    let (t, tier, guard) = hits[n - 1];
+    assert_eq!((tier, guard), (Tier::Large, GuardResult::Broken));
+    assert_eq!(at[n - 1], 0.0);
+    s.frames(1);
+    let brk = s.key("guard.break");
+    assert!(
+        s.log()
+            .starts
+            .iter()
+            .any(|&(tt, e, m)| (tt, e, m) == (t + 1, s.player, brk)),
+        "{:?}",
+        s.log().starts
+    );
+    let want = combat::UNSHEETED_VITALS[0]
+        - n as f32 * mw_combat::DEFAULT_ATTACK * (1.0 - mw_combat::GUARD_ABSORB);
+    assert!(
+        (s.health() - want).abs() < 1e-3,
+        "guarded damage only: {}",
+        s.health()
+    );
+    s.frames(ticks(SLOT_LEN + 0.3) as usize);
+    assert_eq!(
+        s.mov(),
+        s.key("guard"),
+        "the held key raises the guard again after the break"
+    );
+    s.on_the_floor();
+}
+
+/// First person: the held guard's body follows the view at the guard's turn rate (360 deg/s, 6
+/// deg a tick) however fast the mouse turns, the view is free in yaw (the guard's `look` is
+/// pitch-only), and once the mouse stops the body catches up and squares on the view.
+#[test]
+fn first_person_the_guard_follows_the_view_at_its_turn_rate() {
+    let mut s = Spar::new(6.0, 0.0, ViewChoice::FirstPerson, true);
+    draw_and_guard(&mut s);
+    let want = sf_camera::LookLimits::from_degrees(180.0, (-45.0, 20.0), 0.10);
+    let yaws = |s: &Spar| {
+        let body = s
+            .app
+            .world()
+            .get::<ActionBody>(s.player)
+            .unwrap()
+            .loco
+            .motion
+            .yaw;
+        let cam = s.app.world().get::<PlayerCamera>(s.cam).unwrap();
+        (body, cam.look().yaw, cam.look_limits)
+    };
+    look_right(&mut s.app, 0.2);
+    let mut last = yaws(&s).0;
+    let mut ahead = 0.0f32;
+    for _ in 0..20 {
+        s.app.update();
+        let (body, view, limits) = yaws(&s);
+        assert_eq!(limits, Some(want), "the guard's look rule holds");
+        let step = sf_camera::wrap_angle(body - last).to_degrees().abs();
+        assert!(
+            step <= 6.0 + 1e-3,
+            "the body turned {step:.3} deg in a tick"
+        );
+        ahead = ahead.max(sf_camera::wrap_angle(view - body).to_degrees().abs());
+        last = body;
+    }
+    assert!(
+        ahead > 45.0,
+        "the view runs ahead of the body, free in yaw: {ahead:.1} deg"
+    );
+    look_right(&mut s.app, 0.0);
+    s.frames(90);
+    let (body, view, _) = yaws(&s);
+    assert!(
+        sf_camera::wrap_angle(view - body).abs() < 1e-3,
+        "squared on the view: body {body}, view {view}"
+    );
+    assert_eq!(s.mov(), s.key("guard"));
 }

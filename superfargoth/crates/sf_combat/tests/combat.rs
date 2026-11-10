@@ -23,7 +23,7 @@ use sf_camera::{Candidate, SoftAimParams};
 use sf_coords::WorldPos;
 use sf_combat::{
     At, Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, CompiledSheet, Contact, Defense, FightState, Fighter, HitStop, HurtShape,
-    Movesets, Offense, Outcome, Pool, PoolDelta, RegenState, Side, SocketSource, SocketTracks, SoftAimInput, SparSchedule, StandardRules, Swing, SwingPlan, Tier, Unit, Vitals, gate,
+    GuardResult, Movesets, Offense, Outcome, Pool, PoolDelta, RegenState, Side, SocketSource, SocketTracks, SoftAimInput, SparSchedule, StandardRules, Swing, SwingPlan, Tier, Unit, Vitals, gate,
     load, soft_aim_axis, update_soft_aim,
 };
 
@@ -43,6 +43,9 @@ const CLIPS: &[(&str, f32)] = &[
     ("dodge.test.roll.left", 1.0),
     ("react.test.small.front", 0.4),
     ("react.test.medium.front", 0.6),
+    ("guard.test.raise", 0.2),
+    ("guard.test.idle", 0.5),
+    ("react.test.guard.break", 0.8),
 ];
 
 /// Roll root track: straight ahead over the clip.
@@ -322,8 +325,8 @@ fn at_parses_seconds_integers_and_end() {
 fn sheet_compiles_rules_slots_and_table() {
     let s = sheet();
     assert!(s.warnings.is_empty(), "{:?}", s.warnings);
-    // Six moves and two reactions.
-    assert_eq!(s.rules.len(), 8);
+    // Seven moves (the guard included), two reactions and the guard break.
+    assert_eq!(s.rules.len(), 10);
     let rank = |m: &str| s.rules.iter().find(|r| r.id == format!("test_sword.{m}")).unwrap().rank;
     // Chain targets outrank the opener that could also take the press (light1, from Any).
     assert!(rank("light2") > rank("light1"));
@@ -1311,4 +1314,256 @@ fn facing_the_view_leaves_rolls_squared_to_the_stick() {
     w.run(&[cmd]);
     assert!(w.started(0, w.key("roll")));
     assert!((yaw_deg(&w) - 90.0).abs() < 1e-3, "{}", yaw_deg(&w));
+}
+
+// ---------- Guard (combat.md "C2b") ----------
+
+/// The guard numbers of these tests: 70 % of the damage absorbed, stamina at stability 1.
+const GUARD: Defense = Defense { absorb: 0.0, guard_absorb: 0.7, guard_stability: 1.0 };
+
+/// Guard held this tick (`press`: its first tick, the press edge too).
+fn guarding(press: bool) -> Command {
+    let mut cmd = Command::default();
+    cmd.buttons.held.insert(ActionClass::Guard);
+    if press {
+        cmd.buttons.pressed.insert(ActionClass::Guard);
+    }
+    cmd
+}
+
+/// Attacker at the origin facing +Z; the defender 1 m ahead turned `defender_deg` from facing it
+/// (0: face to face), with [`GUARD`]. Settled in Loco.
+fn guard_duel(rules: StandardRules, defender_deg: f32) -> World {
+    let mut w = World::new(Box::new(rules));
+    w.spawn(Vec3::ZERO, 0.0);
+    w.spawn(Vec3::new(0.0, 0.0, 1.0), std::f32::consts::PI + defender_deg.to_radians());
+    w.actors[1].fighter.defense = GUARD;
+    w.settle();
+    w
+}
+
+/// Actor 0 swings light1 while actor 1 raises a guard `lead` ticks before the attack's press
+/// (negative: after it) and holds it; returns the tick of the attack press and runs until the
+/// attacker is back in Loco.
+fn swing_into_guard(w: &mut World, lead: i32) -> Tick {
+    let mut t = -lead.max(0);
+    let mut press_tick = Tick(0);
+    while t < 200 {
+        let attack = if t == 0 { press(ActionClass::Light) } else { Command::default() };
+        if t == 0 {
+            press_tick = w.tick.next();
+        }
+        let guard = if t >= -lead { guarding(t == -lead) } else { Command::default() };
+        w.run(&[attack, guard]);
+        t += 1;
+        if t > 0 && w.actors[0].state.mov == loco() {
+            break;
+        }
+    }
+    press_tick
+}
+
+/// The single hit of the log.
+fn the_hit(w: &World) -> (Tick, Tier, Side, GuardResult) {
+    let hits: Vec<_> = w
+        .log
+        .iter()
+        .filter_map(|&(t, e)| match e {
+            CombatEvent::HitLanded { tier, side, guard, .. } => Some((t, tier, side, guard)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hits.len(), 1, "{:?}", w.log);
+    hits[0]
+}
+
+/// The contact order's guard test: a front hit on a raised guard is guarded (damage x `(1 -
+/// guard_absorb)`, stamina `guard_damage x 0.55 / stability`, tier `Additive`, no reaction, the
+/// guard stays up); a hit from behind is not.
+#[test]
+fn a_front_hit_on_a_raised_guard_is_guarded_and_a_back_hit_is_not() {
+    let mut w = guard_duel(StandardRules::default(), 0.0);
+    swing_into_guard(&mut w, 30);
+    let (t, tier, side, guard) = the_hit(&w);
+    assert_eq!((tier, side, guard), (Tier::Additive, Side::Front, GuardResult::Held));
+    let d = &w.actors[1];
+    assert_eq!(d.fighter.vitals.health.cur, 100.0 - 10.0 * (1.0 - 0.7));
+    assert_eq!(d.state.mov, w.key("guard"), "no reaction: the guard stays up");
+    assert!(!d.events.iter().any(|e| e.tick > t && matches!(e.kind, EventKind::MoveStart(_))), "nothing started after the hit");
+    // Stamina: the guarded hit's 12 x 0.55 at the hit tick, then guarding regen (x0.5) after it.
+    let at_hit = 100.0 + -(12.0 * 0.55 / 1.0);
+    let regen = StandardRules::default().regen(&d.fighter, RegenState::Guarding).stamina;
+    let ticks = w.tick.0 - t.0;
+    let mut want = Pool { cur: at_hit, max: 100.0 };
+    for _ in 0..ticks {
+        want.add(regen);
+    }
+    assert_eq!(d.fighter.vitals.stamina.cur, want.cur);
+
+    let mut w = guard_duel(StandardRules::default(), 180.0);
+    swing_into_guard(&mut w, 30);
+    let (_, tier, side, guard) = the_hit(&w);
+    assert_eq!((tier, side, guard), (Tier::Small, Side::Back, GuardResult::Unguarded));
+    assert_eq!(w.actors[1].fighter.vitals.health.cur, 90.0, "unguarded: the full hit");
+    assert_eq!(w.actors[1].fighter.vitals.stamina.max, 100.0);
+}
+
+/// The arc is +-80 deg around the defender's facing, measured toward the attacker's position.
+#[test]
+fn the_guard_arc_is_eighty_degrees_either_side() {
+    for (deg, held) in [(79.0, true), (-79.0, true), (81.0, false), (-81.0, false)] {
+        let mut w = guard_duel(StandardRules::default(), deg);
+        swing_into_guard(&mut w, 30);
+        let (_, _, _, guard) = the_hit(&w);
+        assert_eq!(guard == GuardResult::Held, held, "{deg} deg: {guard:?}");
+    }
+}
+
+/// The guard counts from its fourth tick on (raise 0.067 s = 4 ticks before the contact's tick):
+/// raised 4 ticks before the hit it holds, 3 ticks before it is a plain hit.
+#[test]
+fn during_its_raise_ticks_the_guard_does_not_count_yet() {
+    // When does light1 land unguarded on a face-to-face dummy?
+    let mut w = guard_duel(StandardRules::default(), 0.0);
+    let p = swing_into_guard(&mut w, -1000);
+    let (land, ..) = the_hit(&w);
+    let after = i32::try_from(land.0 - p.0).unwrap();
+    for (raised_before, held) in [(4, true), (3, false)] {
+        let mut w = guard_duel(StandardRules::default(), 0.0);
+        swing_into_guard(&mut w, raised_before - after);
+        let (t, _, _, guard) = the_hit(&w);
+        assert_eq!(t.0 - p.0, land.0 - p.0, "the same contact tick");
+        assert_eq!(guard == GuardResult::Held, held, "raised {raised_before} ticks before: {guard:?}");
+    }
+}
+
+/// A guarded hit that empties the stamina (to exactly 0) breaks the guard: tier `Large`, the
+/// sheet's guard-break move forced on the next tick. One unit of stamina more and it holds.
+#[test]
+fn a_guarded_hit_that_empties_stamina_breaks_the_guard_into_its_reaction() {
+    let no_regen = StandardRules { regen_per_s: 0.0, ..StandardRules::default() };
+    let cost = no_regen.guard_stamina_damage(12.0, &w_fighter_with(GUARD));
+    for (stamina, broke) in [(cost, true), (cost + 1.0, false)] {
+        let mut w = guard_duel(no_regen, 0.0);
+        w.actors[1].fighter.vitals.stamina.cur = stamina;
+        swing_into_guard(&mut w, 30);
+        let (t, tier, _, guard) = the_hit(&w);
+        let d = &w.actors[1];
+        if broke {
+            assert_eq!((tier, guard), (Tier::Large, GuardResult::Broken));
+            assert_eq!(d.fighter.vitals.stamina.cur, 0.0);
+            let brk = w.sheet.reactions.guard_break.expect("the sheet's guard break");
+            assert_eq!(brk, w.key("guard.break"));
+            let start = d.events.iter().find(|e| e.kind == EventKind::MoveStart(brk)).expect("guard break started");
+            assert_eq!(start.tick, t.next());
+        } else {
+            assert_eq!((tier, guard), (Tier::Additive, GuardResult::Held));
+            assert_eq!(d.fighter.vitals.stamina.cur, stamina - cost);
+            assert_eq!(d.state.mov, w.key("guard"));
+        }
+    }
+}
+
+/// A fighter with `defense` (the guard-damage helper reads only the defence).
+fn w_fighter_with(defense: Defense) -> Fighter {
+    let mut w = World::standard();
+    w.spawn(Vec3::ZERO, 0.0);
+    let mut f = w.actors[0].fighter.clone();
+    f.defense = defense;
+    f
+}
+
+/// Stamina regenerates at half rate while guarding (from the guard's first tick, the raise too),
+/// at the full rate in Loco.
+#[test]
+fn guarding_regenerates_stamina_at_half_rate() {
+    let rules = StandardRules::default();
+    let mut w = guard_duel(rules, 0.0);
+    w.actors[1].fighter.vitals.stamina.cur = 50.0;
+    let full = rules.regen(&w.actors[1].fighter, RegenState::Open).stamina;
+    let half = rules.regen(&w.actors[1].fighter, RegenState::Guarding).stamina;
+    assert_eq!(half, full * 0.5);
+    let mut last = 50.0;
+    for n in 0..30 {
+        w.run(&[Command::default(), guarding(n == 0)]);
+        let cur = w.actors[1].fighter.vitals.stamina.cur;
+        assert_eq!(w.actors[1].state.mov, w.key("guard"));
+        assert_eq!(cur - last, half, "tick {n}");
+        last = cur;
+    }
+    w.idle();
+    let cur = w.actors[1].fighter.vitals.stamina.cur;
+    assert_eq!(w.actors[1].state.mov, loco(), "released");
+    assert_eq!(cur - last, full);
+}
+
+/// In first person (`face_view`) a held guard squares up to the view and then follows it at its
+/// `Turn` rate (360 deg/s: 6 deg a tick); third person it turns toward the stick, holds without
+/// one, and faces a lock target. Its `look` rule holds the whole guard (no `Cancel(Move)`).
+#[test]
+fn a_held_guard_follows_the_view_at_its_turn_rate() {
+    let mut w = World::standard();
+    w.spawn(Vec3::ZERO, 0.0);
+    w.spawn(Vec3::new(0.0, 0.0, 30.0), 0.0);
+    w.settle();
+    let fp = |view_deg: f32, press: bool| {
+        let mut c = guarding(press);
+        c.face_view = true;
+        c.view.yaw = view_deg.to_radians();
+        c
+    };
+    w.run(&[fp(10.0, true)]);
+    assert_eq!(w.actors[0].state.mov, w.key("guard"));
+    assert!((yaw_deg(&w) - 10.0).abs() < 1e-4, "squared up to the view: {}", yaw_deg(&w));
+    // The view swings to 70 deg: the body follows, 6 deg a tick, and stops on it.
+    for n in 1..=10 {
+        w.run(&[fp(70.0, false)]);
+        assert!((yaw_deg(&w) - (10.0 + 6.0 * n as f32)).abs() < 1e-3, "tick {n}: {}", yaw_deg(&w));
+    }
+    for _ in 0..5 {
+        w.run(&[fp(70.0, false)]);
+        assert!((yaw_deg(&w) - 70.0).abs() < 1e-3, "{}", yaw_deg(&w));
+    }
+    let r = w.rules.get(w.key("guard")).unwrap();
+    for t in [0.0, 0.5, 10.0, 600.0] {
+        let look = r.look_at(&w.actors[0].slots, sf_action::ClockTime::from_secs(t)).expect("look holds");
+        assert_eq!((look.yaw, look.pitch), (180.0, (-45.0, 20.0)));
+    }
+    // Third person: the view is ignored; no stick, the body holds; the stick turns it.
+    let tp = |stick: Vec2| {
+        let mut c = guarding(false);
+        c.view.yaw = 0.0;
+        c.stick = stick;
+        c
+    };
+    for _ in 0..5 {
+        w.run(&[tp(Vec2::ZERO)]);
+        assert!((yaw_deg(&w) - 70.0).abs() < 1e-3);
+    }
+    w.run(&[tp(Vec2::new(0.0, 1.0))]);
+    assert!((yaw_deg(&w) - 64.0).abs() < 1e-3, "toward the stick (+Z): {}", yaw_deg(&w));
+    // Locked on the actor 30 m ahead (+Z): it faces the target whatever the stick.
+    w.actors[0].lock = Some(1);
+    for _ in 0..20 {
+        w.run(&[tp(Vec2::new(1.0, 0.0))]);
+    }
+    assert!(yaw_deg(&w).abs() < 1e-3, "faces the lock target: {}", yaw_deg(&w));
+    assert_eq!(w.actors[0].state.mov, w.key("guard"));
+}
+
+/// Guard load errors: a guard on a move that isn't a hold move, a bad arc.
+#[test]
+fn guard_load_errors_name_the_move() {
+    let on_attack = SHEET.replace("hits: [(window: (0.10, 0.60)", "guard: (raise: 0.05, arc: 80.0), hits: [(window: (0.10, 0.60)");
+    let e = load(&on_attack, &clip_len).unwrap_err();
+    assert!(e.iter().any(|e| e.mov.as_deref() == Some("thrust") && e.message.starts_with("guard: only a hold move")), "{e:?}");
+    let wide = SHEET.replace("arc: 80.0", "arc: 190.0");
+    let e = load(&wide, &clip_len).unwrap_err();
+    assert!(e.iter().any(|e| e.mov.as_deref() == Some("guard") && e.message.starts_with("guard: raise")), "{e:?}");
+    // The guard compiles to whole ticks, its idle slot loops.
+    let s = sheet();
+    let g = s.moves.moves[&s.rule_key("guard")].guard.expect("guard");
+    assert_eq!(g.raise, sf_action::ClockTime::from_ticks(4));
+    let idle = &s.slots.iter().find(|(k, _)| k == "guard.test.idle").unwrap().1;
+    assert_eq!(idle.length, None, "the held pose loops");
 }

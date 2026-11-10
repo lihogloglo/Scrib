@@ -195,3 +195,12 @@ need a target that doesn't hit back.
   Content gap: Medium and Large have Front only (other sides fall back) and share one clip at full root travel (combat.md open
   question 2).
 
+
+## Guard (C2b)
+
+As built 2026-11-10 (framework: combat.md "C2b"; check CB-3b). Sword sheet `guard` (hold right mouse / L1, `Control::Guard`; heavy
+moved to R), withheld while sheathed (`combat.rs` `ATTACKS`). Numbers: `mw_combat::GUARD_ABSORB` 0.65, `GUARD_STABILITY` 1, hit
+rows `guard_damage` 2x their stamina. Clips (`sources.ron`): `guard.sword_1h.raise` / `.idle` = UAL2 `Sword_Block` 0-0.21 s / 0.21-0.51
+s looping (fallback `Shield@block`), `.break` = UAL2 `Idle_Shield_Break` (then `Hit_Knockback`, `Hit5`); no guard-hit clip. Classic
+(C5): Morrowind has no held guard; `ClassicCombat::resolve_contact` sets `Outcome::guarded` from `blockMeleeAttack` and the
+classic profile's guard reaction is `Shield@block` (`guard_hit`).

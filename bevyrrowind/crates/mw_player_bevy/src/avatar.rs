@@ -292,9 +292,12 @@ pub(crate) fn traversal(
         (None, Some(c)) => (Some(c.progress), CLIP_BLEND_IN),
         (None, None) => (None, CLIP_BLEND_IN),
     };
+    // A looping slot (a held guard, combat.md "C2b") wraps its progress: across the wrap the
+    // playhead jumps to the current tick's instead of scrubbing back through the loop.
     let progress = |fallback: f32, offset: f32| {
         let (prev, curr) = ticks.unwrap_or((fallback, fallback));
-        (prev + (curr - prev) * alpha - offset).max(0.0)
+        let p = if curr < prev { curr } else { prev + (curr - prev) * alpha };
+        (p - offset).max(0.0)
     };
     match (moving.zip(out.slot), feed.traversal.as_mut()) {
         (Some((p, key)), Some(t)) if t.key == key && t.rule == out.rule => {

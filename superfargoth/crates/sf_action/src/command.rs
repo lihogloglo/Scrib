@@ -73,6 +73,9 @@ impl ClassSet {
     /// Classes the buffer latches: everything but the state classes (stick, sprint, sneak).
     pub const LATCHABLE: Self =
         Self(Self::ALL.0 & !(1 << ActionClass::Move as u16 | 1 << ActionClass::Sprint as u16 | 1 << ActionClass::Sneak as u16));
+    /// Hold classes ([`ActionClass::needs_hold`]): a move they start lasts while one is held
+    /// ([`crate::CompiledRule::holds`]), and a held one latches like a fresh press.
+    pub const HOLD: Self = Self::of(&[ActionClass::Guard]);
     /// What a traversal `tail` window opens (action.md "Windows").
     pub const TAIL: Self = Self::of(&[ActionClass::Move, ActionClass::Jump, ActionClass::Dodge, ActionClass::Down]);
 
