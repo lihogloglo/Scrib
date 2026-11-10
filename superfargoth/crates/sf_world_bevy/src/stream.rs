@@ -42,6 +42,7 @@ use sf_world::{
 use crate::coords::{GRID_SWITCH, from_grid, to_grid};
 use crate::far::{FarProxies, ProxySpawnCx};
 use crate::precombine::{CellPrecombine, Precombines, bucket_ranges};
+use crate::scene::{SceneCellCx, SceneCells};
 use crate::spawn::{
     ActivateCx, LoadedModel, ModelMaterials, ModelTemplate, PlacementSpawners, SpawnCx, TemplateLod, model_aabb,
     size_culled_end, spawn_template_ranges,
@@ -233,6 +234,11 @@ pub struct StreamStats {
     /// Near loads whose precombine was dropped (a member moved, removed or
     /// missing): the cell spawned the old way.
     pub precombine_fallbacks: u64,
+    /// Placements drawn by a static-scene cell table instead of their own
+    /// entities, summed over loads ([`crate::CellScene::covered`]).
+    pub scene_covered: u64,
+    /// Bytes the static scene queued in the upload stage, summed over loads.
+    pub scene_upload_bytes: u64,
     /// Model uses that wanted ray-tracing variants ([`RayTracingVariants`])
     /// but found the model already loading or loaded without them.
     pub ray_tracing_misses: u64,
@@ -256,6 +262,9 @@ struct Work {
     /// A far-field proxy was acquired for this load (R2 with a far field).
     proxy: bool,
     proxy_spawned: bool,
+    /// A static scene is installed and this is the load of a cell's near level
+    /// (the hook decides per cell and per worldspace whether it has a table).
+    scene: bool,
     next: usize,
     group: Option<Entity>,
     despawn: Option<Vec<Entity>>,
@@ -268,6 +277,9 @@ struct Work {
     /// The cell's precombine (near loads with [`Precombines`]); the fetch
     /// completes once it loaded or failed.
     near: Option<Handle<CellPrecombine>>,
+    /// The cell's static-scene table ([`crate::CellScene::acquire`]); the fetch
+    /// completes once it loaded or failed, so `covered` sees a resolved table.
+    scene_table: Option<UntypedHandle>,
     /// Its members, once validated against the fetched placements: no model,
     /// no visuals of their own.
     members: Arc<HashSet<PlacementId>>,
@@ -326,6 +338,8 @@ struct Runtime {
     stats: StreamStats,
     /// The far-field hook, refreshed every frame from [`FarProxies`].
     far: FarProxies,
+    /// The static-scene hook, refreshed every frame from [`SceneCells`].
+    scene: SceneCells,
     /// Cells a reload is unloading this frame (their deactivations discard).
     reloading: HashSet<(WorldspaceId, IVec3)>,
     /// Models held while a reload runs, so the cells come back from memory
@@ -375,6 +389,7 @@ impl Streaming {
                 materials: HashMap::new(),
                 stats: StreamStats::default(),
                 far: FarProxies::default(),
+                scene: SceneCells::default(),
                 reloading: HashSet::new(),
                 pinned: Vec::new(),
             },
@@ -486,6 +501,7 @@ impl Streaming {
     ) {
         let now = self.now();
         self.rt.far = world.get_resource::<FarProxies>().cloned().unwrap_or_default();
+        self.rt.scene = world.get_resource::<SceneCells>().cloned().unwrap_or_default();
         self.sync_settings(world);
         self.poll_directories(world);
 
@@ -523,6 +539,7 @@ impl Streaming {
             let ready = self.rt.work.get(&id).is_none_or(|w| {
                 w.models.iter().all(|m| self.rt.model_ready(m))
                     && (!w.proxy || self.rt.far.proxies.as_ref().is_none_or(|p| p.ready(world_ref, &r.worldspace, r.cell)))
+                    && (!w.scene || self.rt.scene.0.as_ref().is_none_or(|s| s.ready(world_ref, &r.worldspace, r.cell)))
             });
             let spawning = r.kind == RequestKind::Load && r.to != Level::Active;
             if ready && (!spawning || self.rt.prepared(world_ref, id, spawners)) {
@@ -723,17 +740,29 @@ impl Streaming {
             }
             _ => None,
         };
-        self.rt.work.insert(request.id, Work { near, ..Work::default() });
+        // The static scene, the same shape: a near load's table starts loading
+        // here and its handle holds the fetch open (`settled` below), so the
+        // cell's `covered` set is read off a resolved table. Which cells and
+        // which worldspaces have a table is the hook's business, not ours.
+        let scene = self.rt.scene.is_installed() && request.kind == RequestKind::Load && request.to == Level::Near;
+        let scene_table = match &self.rt.scene.0 {
+            Some(s) if scene => s.acquire(world, &request.worldspace, request.cell),
+            _ => None,
+        };
+        self.rt.work.insert(request.id, Work { scene, near, scene_table, ..Work::default() });
     }
 
     fn poll_fetches(&mut self, world: &World, now: f64, spawners: &PlacementSpawners, counters: Option<&Counters>) {
         let asset_server = world.resource::<AssetServer>();
         let work = &self.rt.work;
-        // A near load's fetch also waits for its precombine (loaded or failed).
+        // A near load's fetch also waits for its precombine and its static-scene
+        // table (loaded or failed): the model gather below is the one place
+        // `covered` can feed, and it must see a resolved table.
+        let pending = |state: Option<LoadState>| matches!(state, Some(LoadState::NotLoaded | LoadState::Loading));
         let settled = |id: &RequestId| {
-            work.get(id).and_then(|w| w.near.as_ref()).is_none_or(|h| {
-                !matches!(asset_server.get_load_state(h.id()), Some(LoadState::NotLoaded | LoadState::Loading))
-            })
+            let w = work.get(id);
+            w.and_then(|w| w.near.as_ref()).is_none_or(|h| !pending(asset_server.get_load_state(h.id())))
+                && w.and_then(|w| w.scene_table.as_ref()).is_none_or(|h| !pending(asset_server.get_load_state(h.id())))
         };
         let done: Vec<RequestId> =
             self.fetches.iter().filter(|(id, t)| t.is_finished() && settled(id)).map(|(id, _)| *id).collect();
@@ -754,13 +783,29 @@ impl Streaming {
                 self.rt.stats.precombine_fallbacks += u64::from(members.is_none());
                 members
             });
+            // The placements the static scene's table draws, off a table the
+            // fetch waited for (`settled` above). They activate as before: the
+            // activate stage is a separate request with its own work, so this
+            // set never reaches it.
+            let covered = match &self.rt.scene.0 {
+                Some(s) if self.rt.work.get(&id).is_some_and(|w| w.scene) => {
+                    s.covered(world, &request.worldspace, request.cell)
+                }
+                _ => None,
+            };
+            if let Some(c) = &covered {
+                self.rt.stats.scene_covered += u64::try_from(c.len()).unwrap_or(u64::MAX);
+            }
             // Models to load: only for spawning steps, only those a spawner
-            // will use, and none for precombined members.
+            // will use, and none for precombined or scene-covered members.
+            let drawn = |p: &PlacementId| {
+                members.as_ref().is_some_and(|s| s.contains(p)) || covered.as_ref().is_some_and(|s| s.contains(p))
+            };
             let mut models = BTreeSet::new();
             if request.kind == RequestKind::Load && request.to != Level::Active {
                 for p in placements.iter() {
                     if let Some(m) = &p.placement.model
-                        && !members.as_ref().is_some_and(|s| s.contains(&p.placement.id))
+                        && !drawn(&p.placement.id)
                         && spawners.for_class(p.placement.class).is_some_and(|s| s.needs_model(p))
                     {
                         models.insert(m.clone());
@@ -771,9 +816,19 @@ impl Streaming {
             let work = self.rt.work.entry(id).or_default();
             work.placements = placements;
             work.models = models.into_iter().collect();
-            match members {
-                Some(m) => work.members = Arc::new(m),
-                None => work.near = None,
+            // A dropped precombine is a fallback whatever the scene covers.
+            if members.is_none() {
+                work.near = None;
+            }
+            match (members, covered) {
+                (None, None) => {}
+                (Some(m), None) => work.members = Arc::new(m),
+                // The common case: the hook's set, shared, not rebuilt.
+                (None, Some(c)) => work.members = c,
+                (Some(mut m), Some(c)) => {
+                    m.extend(c.iter().copied());
+                    work.members = Arc::new(m);
+                }
             }
             let assets = u32::try_from(work.models.len()).unwrap_or(u32::MAX);
             self.scheduler.fetched(id, now, assets, upload);
@@ -788,11 +843,17 @@ impl Streaming {
         let Some(dir) = self.scheduler.directory(&r.worldspace) else { return 0 };
         let Some(i) = dir.find(r.cell) else { return 0 };
         let c = &dir.cells[i];
+        // The scene's table is orthogonal to whether a far field is installed,
+        // so it adds to both near arms rather than widening the match.
+        let scene = match &self.rt.scene.0 {
+            Some(s) if r.to == Level::Near => s.bytes(&r.worldspace, r.cell),
+            _ => 0,
+        };
         match (r.to, &self.rt.far.proxies) {
             (Level::Far, Some(p)) => p.bytes(&r.worldspace, r.cell),
-            (Level::Near, Some(_)) => c.bytes_all,
+            (Level::Near, Some(_)) => c.bytes_all.saturating_add(scene),
             (Level::Far, None) => c.bytes_far,
-            (Level::Near, None) => c.bytes_all.saturating_sub(c.bytes_far),
+            (Level::Near, None) => c.bytes_all.saturating_sub(c.bytes_far).saturating_add(scene),
             _ => 0,
         }
     }
@@ -1061,6 +1122,13 @@ impl Runtime {
         {
             proxies.release(world, &request.worldspace, request.cell);
         }
+        // Without this a cancelled near load would leak the cell's chain refs
+        // and its scene-buffer range for ever.
+        if work.scene
+            && let Some(scene) = self.scene.0.clone()
+        {
+            scene.release(world, &request.worldspace, request.cell);
+        }
         let key = (request.worldspace.clone(), request.cell);
         if request.from == Level::Unloaded
             && self.cells.get(&key).is_some_and(|c| c.groups.is_empty() && c.active.is_none())
@@ -1261,9 +1329,24 @@ impl Runtime {
         end >= placements.len()
     }
 
-    /// The last stage of a load: reveal the level group at once.
+    /// The last stage of a load: queue the static scene's writes, then reveal
+    /// the level group at once.
     fn reveal(&mut self, world: &mut World, request: &Request) -> bool {
         let cell_entity = self.cell_entity(world, &request.worldspace, request.cell);
+        // Before the reveal, so the cell's instances are in the scene buffer by
+        // the time its group becomes visible. One invocation, which must
+        // complete (`CellScene::upload`): this stage item is not resumable.
+        if self.work.get(&request.id).is_some_and(|w| w.scene)
+            && let Some(scene) = self.scene.0.clone()
+        {
+            let cx = SceneCellCx {
+                worldspace: &request.worldspace,
+                cell: request.cell,
+                cell_origin: self.info(&request.worldspace).partition.cell_origin(request.cell),
+                level: request.to,
+            };
+            self.stats.scene_upload_bytes += scene.upload(world, &cx);
+        }
         let Some(mut work) = self.work.remove(&request.id) else { return true };
         let group = work.group.take().unwrap_or_else(|| world.spawn((Transform::IDENTITY, ChildOf(cell_entity))).id());
         if let Ok(mut e) = world.get_entity_mut(group) {
@@ -1350,6 +1433,16 @@ impl Runtime {
             && let Some(proxies) = self.far.proxies.clone()
         {
             proxies.release(world, &request.worldspace, request.cell);
+        }
+        // Also on the `to == Unloaded` sweep above, which tears down every
+        // remaining level's group without a per-level despawn request: a cell
+        // whose unload is reported with `from == Far` would otherwise never see
+        // its near release. `CellScene::release` is idempotent, which is
+        // cheaper and safer than proving the scheduler cannot do that.
+        if (request.from == Level::Near || request.to == Level::Unloaded)
+            && let Some(scene) = self.scene.0.clone()
+        {
+            scene.release(world, &request.worldspace, request.cell);
         }
         true
     }

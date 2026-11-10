@@ -27,6 +27,7 @@ mod far;
 pub mod matclass;
 mod origin;
 mod precombine;
+mod scene;
 mod spawn;
 mod stream;
 mod worldspace;
@@ -39,6 +40,7 @@ pub use fade::{FadeCutHooks, FadePhase, FadeTransition, StartBlackout, StartTrav
 pub use far::{CellProxies, FarProxies, ProxySpawnCx};
 pub use origin::{PHASE_PERIODS, WorldOrigin, WorldOriginBuffer, WorldOriginUniform};
 pub use precombine::{CellPrecombine, PrecombineBucket, PrecombinePath, Precombines, bucket_ranges};
+pub use scene::{CellScene, SceneCellCx, SceneCells};
 pub use spawn::{
     ActivateCx, LoadedModel, MaterialMapper, ModelMaterials, ModelTemplate, PlacementSpawner, PlacementSpawners, SubtreeLayers,
     SubtreeRange, SpawnCx, StaticSpawner, RANGE_STEPS_PER_OCTAVE, shared_range, TemplateLod, apply_subtree_layers, apply_subtree_ranges, chain_ranges, model_aabb, size_culled_end, spawn_template, spawn_template_ranges, standard_material,
