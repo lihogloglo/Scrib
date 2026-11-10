@@ -335,4 +335,7 @@ Detail per slice: [archive/effects-history.md](archive/effects-history.md) (E1-E
 2026-11-08. E4 (2026-11-10): `sf_effects_bevy` (`Effects`, `EffectCommand` in, messages out, sets before
 `StatSystems::Apply`), saves (`EffectsSave`, `reregister`, `sf.character` v4, `sf/effects` v1, NPC blob `effects`
 v1), glue `mw_rpg_bevy::effects`. 0.089 ms effect tick at 500 characters / 2 000 effects (dev profile). Known issue
-(E1): a temporary `Pool Fortify` on a `KeepRatio` pool (magicka, fatigue) counts twice (modifier rebase + adjust).
+(E1): a temporary `Pool Fortify` on a `KeepRatio` pool (magicka, fatigue) counts twice (modifier rebase + adjust). A3
+(2026-11-10): an innate `Pool Fortify` (`PoolModMax`) on a derived pool is lost: magicka reads 40 / 40 before an
+ability's Fortify Magicka 20, after `Learn` and after `Forget` (each recompute rewrites base and max from the formula;
+ignored test `mw_rpg_bevy` `an_ability_fortify_magicka_raises_the_maximum`).

@@ -6,12 +6,16 @@
 //! - **Player**: the sheet lives on its own entity, [`PlayerCharacter`], not on the body (the
 //!   body comes and goes with the free camera; the character stays). Owner
 //!   `StatOwner::Player(HOST_KEY)`, built from the `player` record ([`player_start_ops`]: chargen
-//!   is skipped). A save restores it ([`restore_player_sheet`]).
+//!   is skipped) with its start spells learned (the record's race's powers, then the
+//!   [`PlayerBirthsign`]'s spells: [`MwStats::player_spells`]). A save restores it
+//!   ([`restore_player_sheet`]).
 //! - **NPCs and creatures**: every new `Character::Record` of an NPC or creature record (not the
 //!   player's avatar) gets `Stats` and `Effects` (same owner, [`crate::effects`]) before the next
 //!   effect and stat tick ([`attach_actor_stats`]), owner
 //!   `ActorKey` = its placement id ([`crate::dialogue::key`]). A placement with an overlay
-//!   [`STATS_BLOB`] loads it ([`load_sheet`]); else the record's init ops.
+//!   [`STATS_BLOB`] loads it ([`load_sheet`]); else the record's init ops. Saved effects come
+//!   back as saved; with none saved the character learns its record's start spells
+//!   ([`MwStats::actor_spells`]), never both (a save holds the abilities' instances).
 //! - **Unload and save** (save.md "One path for unload and save"): [`ActorStatsSpawner`] writes a
 //!   changed sheet (`changed_since_init`, stats.md "Saves") and its effects
 //!   ([`crate::effects::EFFECTS_BLOB`]) to the overlay when its placement
@@ -38,7 +42,7 @@ use sf_effects_bevy::{EffectSystems, Effects};
 use sf_stats_bevy::{SfStatsPlugin, StatRules, StatSystems, StatTableRes, StatTick, Stats};
 use sf_world::{IndexedPlacement, PlacementOverlay};
 use sf_world_bevy::{ActivateCx, PlacementSpawner, SpawnCx, WorldOverlay};
-use tes3::esp::{Creature, Npc};
+use tes3::esp::{Birthsign, Creature, Npc, Race, Spell};
 
 /// Owner name of the per-placement stats blob (`PlacementOverlay::set_state`): a postcard
 /// [`SheetSave`].
@@ -47,6 +51,12 @@ pub const STATS_BLOB: &str = "stats";
 pub const STATS_BLOB_VERSION: u32 = 1;
 /// The player record (chargen skipped: the dev and release start).
 const PLAYER_RECORD: &str = "player";
+
+/// The new player's birthsign (BSGN id), read when the player character is built (a new game,
+/// or a save without effects): chargen's choice, none until chargen exists (the dev start
+/// skips it). Not saved: the book holds what it gave.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlayerBirthsign(pub Option<RecordId>);
 
 /// The Morrowind side of the stats: the table with its indices and the GMST snapshot.
 #[derive(Resource, Clone)]
@@ -63,6 +73,44 @@ impl MwStats {
             return npc_ops(&self.table, &self.gmst, &self.db, npc).map_err(|e| warn!("stats: {e}")).ok();
         }
         self.db.get::<Creature>(id).map(|c| creature_ops(&self.table, &self.gmst, c))
+    }
+
+    /// The start spells of an NPC (its race's powers, then its record's spells) or creature (its
+    /// record's spells); `mw_effects::start_spells`, unknown ids warned. Autocalc spells: A3b.
+    pub fn actor_spells(&self, id: &RecordId) -> Vec<RecordId> {
+        let lists: Vec<&[String]> = if let Some(npc) = self.db.get::<Npc>(id) {
+            let race = self.db.get::<Race>(&RecordId::new(&npc.race));
+            vec![race.map_or(&[][..], |r| &r.spells), &npc.spells]
+        } else if let Some(c) = self.db.get::<Creature>(id) {
+            vec![&c.spells]
+        } else {
+            return Vec::new();
+        };
+        self.start_spells(id, lists)
+    }
+
+    /// The new player's start spells (`buildPlayer`): the `player` record's race's powers, then
+    /// `birthsign`'s spells; never the record's own list. `F_PCStart` autocalc spells: A3b.
+    pub fn player_spells(&self, birthsign: Option<&RecordId>) -> Vec<RecordId> {
+        let player = RecordId::new(PLAYER_RECORD);
+        let race = self.db.get::<Npc>(&player).and_then(|p| self.db.get::<Race>(&RecordId::new(&p.race)));
+        let sign = birthsign.and_then(|b| {
+            let sign = self.db.get::<Birthsign>(b);
+            if sign.is_none() {
+                warn!("effects: birthsign {b:?} has no BSGN record");
+            }
+            sign
+        });
+        let lists = [race.map_or(&[][..], |r| &r.spells), sign.map_or(&[][..], |s| &s.spells)];
+        self.start_spells(&player, lists)
+    }
+
+    fn start_spells<'a>(&self, who: &RecordId, lists: impl IntoIterator<Item = &'a [String]>) -> Vec<RecordId> {
+        let s = mw_effects::start_spells(lists, |id| self.db.get::<Spell>(id).is_some());
+        if !s.missing.is_empty() {
+            warn!("effects: {who:?}: start spells without a SPEL record ignored: {:?}", s.missing);
+        }
+        s.known
     }
 
     /// The player's init ops (chargen skipped); none without a `player` record.
@@ -129,23 +177,27 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>) {
     }
     let rules = Arc::new(mw_stats::openmw_rules(&table, &gmst));
     let stats = MwStats { table: table.clone(), gmst, db };
-    let player = new_sheet(&stats, &rules, StatOwner::Player(HOST_KEY), &player_inputs(), &stats.player_ops());
     let fx_db = stats.db.clone();
     if !app.is_plugin_added::<SfStatsPlugin>() {
         app.add_plugins(SfStatsPlugin);
     }
     app.insert_resource(StatTableRes(Arc::new(table.table.clone())))
-        .insert_resource(StatRules(rules))
-        .insert_resource(stats)
+        .insert_resource(StatRules(rules.clone()))
+        .insert_resource(stats.clone())
         .add_systems(FixedUpdate, attach_actor_stats.before(EffectSystems::Commands).before(StatSystems::Apply));
     crate::effects::add(app, &fx_db);
     let owner = StatOwner::Player(HOST_KEY);
-    app.world_mut().spawn((
-        Name::new("player character"),
-        PlayerCharacter { key: HOST_KEY },
-        Stats::new(owner, player, player_inputs()),
-        Effects::new(owner),
-    ));
+    let character = new_player(app.world_mut(), &stats, &rules, owner);
+    app.world_mut().spawn((Name::new("player character"), PlayerCharacter { key: HOST_KEY }, character));
+}
+
+/// A new player character's sheet and effects: init ops, then the start spells' modifiers, then
+/// one settle with full pools.
+fn new_player(world: &mut World, stats: &MwStats, rules: &Rules, owner: StatOwner) -> (Stats, Effects) {
+    let birthsign = world.get_resource::<PlayerBirthsign>().and_then(|b| b.0.clone());
+    let (fx, modifiers) = crate::effects::learn_in_world(world, owner, &stats.player_spells(birthsign.as_ref()));
+    let sheet = fresh_sheet(stats, rules, owner, &player_inputs(), &stats.player_ops(), &modifiers);
+    (Stats::new(owner, sheet, player_inputs()), fx)
 }
 
 /// A new sheet from init ops (`mw_stats::new_sheet`), warning on rejected ops.
@@ -155,6 +207,34 @@ fn new_sheet(stats: &MwStats, rules: &Rules, owner: StatOwner, inputs: &Inputs, 
         warn!("stats: {rejected} init ops rejected for {owner:?}");
     }
     sheet
+}
+
+/// A new sheet from init ops with `modifiers` (an effect source's, [`crate::effects`]) applied
+/// before it settles with full pools, warning on rejected ops.
+fn fresh_sheet(stats: &MwStats, rules: &Rules, owner: StatOwner, inputs: &Inputs, ops: &[StatOp], modifiers: &[(StatOwner, StatOp, Cause)]) -> Sheet {
+    if modifiers.is_empty() {
+        return new_sheet(stats, rules, owner, inputs, ops);
+    }
+    let t = &stats.table;
+    let mut sheet = Sheet::new(&t.table);
+    let ctx = ApplyCtx { owner, cause: Cause { kind: CauseKind::Rules, source: None, tick: 0 }, inputs };
+    let rejected = sf_stats_bevy::sf_stats::apply(&t.table, rules, &mut sheet, ops, &ctx, &mut Vec::new());
+    if rejected > 0 {
+        warn!("stats: {rejected} init ops rejected for {owner:?}");
+    }
+    apply_modifiers(t, rules, &mut sheet, owner, inputs, modifiers);
+    sheet.settle(&t.table, rules, inputs, Settle::NewCharacter);
+    sheet
+}
+
+/// `modifiers` of `owner` on a building sheet, each with its own cause; others' are skipped.
+fn apply_modifiers(t: &MwTable, rules: &Rules, sheet: &mut Sheet, owner: StatOwner, inputs: &Inputs, modifiers: &[(StatOwner, StatOp, Cause)]) {
+    for (_, op, cause) in modifiers.iter().filter(|(o, _, _)| *o == owner) {
+        let ctx = ApplyCtx { owner, cause: *cause, inputs };
+        if sf_stats_bevy::sf_stats::apply(&t.table, rules, sheet, std::slice::from_ref(op), &ctx, &mut Vec::new()) > 0 {
+            warn!("stats: {owner:?}: an effect modifier was rejected: {op:?}");
+        }
+    }
 }
 
 /// A saved sheet back (stats.md "Saves", load order): keys the save lacks take their init
@@ -179,19 +259,16 @@ pub fn load_sheet(
         let ctx = ApplyCtx { owner, cause: Cause { kind: CauseKind::Load, source: None, tick: 0 }, inputs };
         sf_stats_bevy::sf_stats::apply(&t.table, rules, &mut sheet, &missing, &ctx, &mut Vec::new());
     }
-    for (_, op, cause) in modifiers.iter().filter(|(o, _, _)| *o == owner) {
-        let ctx = ApplyCtx { owner, cause: *cause, inputs };
-        if sf_stats_bevy::sf_stats::apply(&t.table, rules, &mut sheet, std::slice::from_ref(op), &ctx, &mut Vec::new()) > 0 {
-            warn!("stats: {owner:?}: a re-registered modifier was rejected: {op:?}");
-        }
-    }
+    apply_modifiers(t, rules, &mut sheet, owner, inputs, modifiers);
     sheet.settle(&t.table, rules, inputs, Settle::Loaded);
     sheet
 }
 
 /// `Stats` and `Effects` for every new NPC or creature character (see the module docs). A
-/// placement with saved stats loads them, with its saved effects' modifiers re-registered
-/// before the sheet settles.
+/// placement with saved stats loads them, an untouched one builds its sheet from the record;
+/// either way saved effects re-register their modifiers before the sheet settles, and without
+/// saved effects (none yet, or a save from before abilities) the record's start spells are
+/// learned.
 #[allow(clippy::needless_pass_by_value, clippy::type_complexity)] // system parameters
 pub fn attach_actor_stats(
     mut commands: Commands,
@@ -210,14 +287,13 @@ pub fn attach_actor_stats(
             let o = o.0.read().unwrap_or_else(PoisonError::into_inner);
             (saved_sheet(&o, p), crate::effects::saved_effects(&o, p))
         });
-        let (sheet, effects) = if let Some(save) = saved {
-            let (effects, modifiers) = fx.restore(owner, saved_fx);
-            (load_sheet(&stats.table, &rules.0, owner, &save, &init, &inputs, &modifiers), effects)
-        } else {
-            if saved_fx.is_some() {
-                warn!("effects: {owner:?} has saved effects but no saved sheet; dropped");
-            }
-            (new_sheet(&stats, &rules.0, owner, &inputs, &init), Effects::new(owner))
+        let (effects, modifiers) = match saved_fx {
+            Some(saved_fx) => fx.restore(owner, Some(saved_fx)),
+            None => fx.learn(owner, &stats.actor_spells(id)),
+        };
+        let sheet = match saved {
+            Some(save) => load_sheet(&stats.table, &rules.0, owner, &save, &init, &inputs, &modifiers),
+            None => fresh_sheet(&stats, &rules.0, owner, &inputs, &init, &modifiers),
         };
         commands.entity(e).try_insert((Stats::new(owner, sheet, inputs), effects));
     }
@@ -265,22 +341,27 @@ pub fn player_sheet_save(world: &World, key: sf_rpg::PlayerKey) -> Option<SheetS
 /// The player's sheet and effects from a loaded `CharacterSave`: the saved sheet with the saved
 /// effects' modifiers re-registered before it settles, or (a save from before stats, `None`) a
 /// new sheet from the `player` record, the new-game path (stats.md "Saves"); no saved effects
-/// (a v3 save, or nothing was active) is an empty set and book (TODO(effects adapter A3): the
-/// init hook builds the book from race, birthsign and class spells).
+/// (a v3 save, a save from before abilities, or nothing was active and the book was empty)
+/// learns the new player's start spells (effects-adapter.md "Saves": the init hook), never on
+/// top of saved effects (their abilities are in the save).
 pub fn restore_player_sheet(world: &mut World, key: sf_rpg::PlayerKey, save: Option<&SheetSave>, effects: Option<&EffectsSave>) {
     let (Some(stats), Some(rules)) = (world.get_resource::<MwStats>().cloned(), world.get_resource::<StatRules>().cloned()) else { return };
     let owner = StatOwner::Player(key);
     let init = stats.player_ops();
     let inputs = player_inputs();
-    let (sheet, fx) = match save {
-        Some(save) => {
-            let (fx, modifiers) = crate::effects::restore_in_world(world, owner, effects.cloned());
-            (load_sheet(&stats.table, &rules.0, owner, save, &init, &inputs, &modifiers), fx)
+    let character = match (save, effects) {
+        (Some(save), Some(effects)) => {
+            let (fx, modifiers) = crate::effects::restore_in_world(world, owner, Some(effects.clone()));
+            (Stats::new(owner, load_sheet(&stats.table, &rules.0, owner, save, &init, &inputs, &modifiers), inputs), fx)
         }
-        None => (new_sheet(&stats, &rules.0, owner, &inputs, &init), Effects::new(owner)),
+        (Some(save), None) => {
+            let birthsign = world.get_resource::<PlayerBirthsign>().and_then(|b| b.0.clone());
+            let (fx, modifiers) = crate::effects::learn_in_world(world, owner, &stats.player_spells(birthsign.as_ref()));
+            (Stats::new(owner, load_sheet(&stats.table, &rules.0, owner, save, &init, &inputs, &modifiers), inputs), fx)
+        }
+        (None, _) => new_player(world, &stats, &rules.0, owner),
     };
     let found = world.try_query::<(Entity, &PlayerCharacter)>().and_then(|mut q| q.iter(world).find(|(_, p)| p.key == key).map(|(e, _)| e));
-    let character = (Stats::new(owner, sheet, inputs), fx);
     match found {
         Some(e) => {
             world.entity_mut(e).insert(character);

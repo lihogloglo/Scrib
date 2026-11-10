@@ -879,6 +879,80 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[test]
+    #[allow(clippy::float_cmp, reason = "exact values: saves are logic")]
+    fn abilities_survive_a_save_round_trip_once() {
+        use std::time::Duration;
+
+        use bevy_ecs::system::RunSystemOnce;
+        use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
+        use mw_rpg_bevy::effects::test_records::{NPC, SIGN};
+        use sf_character_bevy::{Character, CharacterPlacement};
+        use sf_effects_bevy::{EffectIds, Effects};
+        use sf_stats_bevy::sf_stats::StatOwner;
+        use sf_stats_bevy::{StatTableRes, Stats};
+
+        let root = temp_root("abilities");
+        let db = mw_rpg_bevy::effects::test_records::spell_db(&[]);
+        let mut app = app(root.clone(), Rpg::new(db.clone()).unwrap());
+        let step = |app: &mut App, seconds: f64| {
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(seconds)));
+        };
+        app.add_plugins(TimePlugin).insert_resource(Time::<Fixed>::from_hz(60.0));
+        app.insert_resource(mw_rpg_bevy::stats::PlayerBirthsign(Some(RecordId::new(SIGN))));
+        step(&mut app, 1.0 / 60.0);
+        mw_rpg_bevy::stats::add(&mut app, Some(db));
+        app.update();
+        let npc_at = PlacementId(0xF00 << 64 | 0x3D);
+        let spawn_npc = |app: &mut App| {
+            let e = app.world_mut().spawn((Character::record("NPC_", RecordId::new(NPC)), CharacterPlacement(npc_at))).id();
+            app.world_mut().run_system_once(mw_rpg_bevy::stats::attach_actor_stats).unwrap();
+            app.world_mut().flush();
+            e
+        };
+        let npc = spawn_npc(&mut app);
+        for _ in 0..3 {
+            app.update();
+        }
+        let (hero, npc_owner) = (StatOwner::Player(HOST_KEY), StatOwner::Actor(ActorKey(npc_at.0)));
+        let table = app.world().resource::<StatTableRes>().0.clone();
+        let idx = |k: &str| table.find(k).unwrap();
+        // Strength (effective base, modified), magicka (max, current), Resist Fire, active
+        // sources, book.
+        let read = |app: &mut App, owner: StatOwner| {
+            let mut q = app.world_mut().query::<(&Stats, &Effects)>();
+            let (s, fx) = q.iter(app.world()).find(|(s, _)| s.owner == owner).expect("the character");
+            let v = s.view(&table);
+            let records: Vec<_> = fx.active.sources().iter().map(|s| s.source.record.clone()).collect();
+            let values = [v.effective_base(idx("strength")), v.modified(idx("strength")), v.max(idx("magicka")), v.current(idx("magicka")), v.modified(idx("resistfire"))];
+            (values, records, fx.book.known().to_vec())
+        };
+        let (hero_before, npc_before) = (read(&mut app, hero), read(&mut app, npc_owner));
+        assert_eq!(hero_before.0, [50.0, 50.0, 60.0, 60.0, 50.0], "race and birthsign abilities");
+        assert_eq!(npc_before.0[..2], [45.0, 45.0], "race and record abilities");
+        assert_eq!((hero_before.1.len(), npc_before.1.len()), (2, 2));
+
+        // Save, then a fresh state (a new player relearns its start spells; no NPC, empty
+        // overlay), then load: the saved sets come back, nothing is learned on top.
+        step(&mut app, 0.0);
+        save(&mut app);
+        restore_player_sheet_fresh(&mut app);
+        app.world_mut().despawn(npc);
+        app.insert_resource(WorldOverlay::default()).insert_resource(EffectIds::default());
+        load(&mut app);
+        let blob = app.world().resource::<WorldOverlay>().0.read().unwrap().state(npc_at, mw_rpg_bevy::stats::STATS_BLOB).is_some();
+        assert!(!blob, "the NPC's sheet is untouched: only its effects blob is saved");
+        spawn_npc(&mut app);
+        assert_eq!(read(&mut app, hero), hero_before, "the player's Strength 50, not 60");
+        assert_eq!(read(&mut app, npc_owner), npc_before, "the NPC's Strength 45, not 50");
+        step(&mut app, 1.0 / 60.0);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!((read(&mut app, hero), read(&mut app, npc_owner)), (hero_before, npc_before), "and stays so");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn restore_player_sheet_fresh(app: &mut App) {
         mw_rpg_bevy::stats::restore_player_sheet(app.world_mut(), HOST_KEY, None, None);
     }

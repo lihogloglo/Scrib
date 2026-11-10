@@ -144,10 +144,13 @@ SOFTWARE.
   (effect-list validation); potions (adapter A2, 2026-11-10, behaviour only): `apps/openmw/mwgui/inventorywindow.cpp`
   (`useItem`), `apps/openmw/mwclass/potion.cpp` (`use`, the `Drink` sound), `apps/openmw/mwworld/actionapply.cpp`,
   `apps/openmw/mwclass/actor.cpp` (`consume`), `apps/openmw/mwmechanics/spellcasting.cpp` (`cast(Potion)`) and
-  `apps/openmw/mwmechanics/activespells.cpp` (`addToSpells`: stackable sources).
+  `apps/openmw/mwmechanics/activespells.cpp` (`addToSpells`: stackable sources); start spells (adapter A3, 2026-11-10):
+  `apps/openmw/mwmechanics/spells.cpp` (`addSpell`, `setSpells`, `addAllToInstance`), `apps/openmw/mwclass/npc.cpp` and
+  `creature.cpp` (`getCreatureStats`: race powers, record spells) and `apps/openmw/mwmechanics/mechanicsmanagerimp.cpp`
+  (`buildPlayer`: race powers, birthsign spells).
 - Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
-- Ported into: `bevyrrowind/crates/mw_effects` (the game; written 2026-11-08, untested) and
-  `bevyrrowind/crates/mw_rpg_bevy/src/item_use.rs` (A2).
+- Ported into: `bevyrrowind/crates/mw_effects` (the game; written 2026-11-08, untested; `book.rs` A3),
+  `bevyrrowind/crates/mw_rpg_bevy/src/item_use.rs` (A2) and `effects.rs` / `stats.rs` (A3 start spells).
 
 ## OpenMW (barter and service prices)
 

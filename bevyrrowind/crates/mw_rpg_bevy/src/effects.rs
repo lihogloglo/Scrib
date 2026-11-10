@@ -3,11 +3,15 @@
 //!
 //! - **Setup** ([`add`], called by [`crate::stats::add`]: effects need the sheets): the MGEF
 //!   records as `EffectTableRes` (`MwEffects`; A1 defs only, the other indices land as
-//!   `Rejected { UnknownEffect }`), the modern rules (`EffectRules::standard`), no sources yet
-//!   (the SPEL source table comes with abilities and casting, adapter A3 / A5), and the
+//!   `Rejected { UnknownEffect }`), the modern rules (`EffectRules::standard`), every SPEL
+//!   record as a source (`mw_effects::source_table`, `SourceTableRes`, adapter A3), and the
 //!   `MwEffects` themselves as [`MwEffectsRes`] (potions map their ALCH on use, `item_use`).
 //! - **Attach**: `Effects` sits beside every `Stats` the stats glue attaches (the player
-//!   character, NPCs, creatures), same owner; see [`crate::stats`].
+//!   character, NPCs, creatures), same owner; see [`crate::stats`]. A new character learns its
+//!   start spells ([`EffectLoad::learn`], lists from `mw_effects::start_spells`): abilities
+//!   start their instance on the Permanent layer and their modifiers go on the sheet before it
+//!   settles, so a new character's pools fill to the fortified maximum (`OpenMW` `buildPlayer`
+//!   sets each current to the modified value after the spells).
 //! - **Clock** ([`feed_clock`]): `EffectClock` follows the dialogue's game clock (`DaysPassed`,
 //!   `GameHour`, [`crate::dialogue::Rpg::game_time`]) every fixed tick, until ROADMAP 1.17's
 //!   single host clock replaces both. Durations count fixed ticks, not this clock.
@@ -25,18 +29,21 @@ use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 use bevy_log::prelude::*;
-use mw_effects::MwEffects;
+use mw_effects::{MwEffectGmst, MwEffects};
 use mw_game_core::player::PlayerCharacter;
 use sf_character_bevy::CharacterPlacement;
-use sf_effects_bevy::sf_effects::{EffectRules, EffectsSave, GameMinutes};
+use sf_effects_bevy::sf_effects::{
+    EffectCtx, EffectEnv, EffectEvent, EffectOp, EffectOut, EffectRules, EffectsSave, GameMinutes,
+};
 use sf_effects_bevy::{
     EffectClock, EffectIds, EffectRulesRes, EffectSystems, EffectTableRes, Effects, LoadTables,
     SfEffectsPlugin, SourceTableRes, stat_commands,
 };
-use sf_records::RecordDb;
+use sf_records::{RecordDb, RecordId};
 use sf_stats_bevy::sf_stats::{Cause, StatOp, StatOwner};
 use sf_stats_bevy::{StatCommand, StatTableRes, StatTick};
 use sf_world::PlacementOverlay;
+use tes3::esp::Spell;
 
 use crate::dialogue::Rpg;
 
@@ -67,10 +74,25 @@ pub fn add(app: &mut App, db: &RecordDb) {
     if missing > 0 {
         info!("effects: {missing} effect indices have no MGEF record (their entries are dropped)");
     }
+    let (gmst, missing_gmst) = MwEffectGmst::from_db(db);
+    if !missing_gmst.is_empty() {
+        warn!(
+            "effects: GMSTs missing, vanilla values used: {}",
+            missing_gmst.join(", ")
+        );
+    }
+    let (sources, notes) = mw_effects::source_table(&fx, &gmst, db.iter::<Spell>().map(|(_, s)| s));
+    if !notes.is_empty() {
+        info!(
+            "effects: {} SPEL entries changed by the mapping (unknown effects dropped, bad arguments)",
+            notes.len()
+        );
+    }
     if !app.is_plugin_added::<SfEffectsPlugin>() {
         app.add_plugins(SfEffectsPlugin);
     }
     app.insert_resource(EffectTableRes(Arc::new(fx.table().clone())))
+        .insert_resource(SourceTableRes(Arc::new(sources)))
         .insert_resource(MwEffectsRes(Arc::new(fx)))
         .insert_resource(EffectRulesRes(Arc::new(EffectRules::standard())))
         .add_systems(FixedUpdate, feed_clock.before(EffectSystems::Commands));
@@ -92,6 +114,8 @@ pub fn feed_clock(rpg: Option<Res<Rpg>>, mut clock: ResMut<EffectClock>) {
 pub struct EffectLoad<'w> {
     defs: Option<Res<'w, EffectTableRes>>,
     sources: Res<'w, SourceTableRes>,
+    rules: Res<'w, EffectRulesRes>,
+    clock: Res<'w, EffectClock>,
     stats: Option<Res<'w, StatTableRes>>,
     tick: Res<'w, StatTick>,
     ids: ResMut<'w, EffectIds>,
@@ -116,6 +140,60 @@ impl EffectLoad<'_> {
         self.out.write_batch(stat_commands(others));
         (effects, own)
     }
+
+    /// A new character's effects: `spells` learned in order (`Learn`; abilities, diseases and
+    /// curses start their instance with the owner as caster, resistances ignored), and the
+    /// modifiers they put on its own sheet, to apply before the sheet settles. Refusals (an
+    /// unknown source) are warned. No tables: none learned.
+    pub fn learn(&mut self, owner: StatOwner, spells: &[RecordId]) -> (Effects, Modifiers) {
+        let mut effects = Effects::new(owner);
+        let (Some(defs), Some(stats)) = (&self.defs, &self.stats) else {
+            return (effects, Vec::new());
+        };
+        if spells.is_empty() {
+            return (effects, Vec::new());
+        }
+        let env = EffectEnv::new(
+            &defs.0,
+            &stats.0,
+            &self.sources.0,
+            &self.rules.0,
+            None,
+            self.clock.0,
+        );
+        // `dt` turns durations into ticks; book sources live with the book and have none.
+        let mut ctx = EffectCtx {
+            target: owner,
+            tick: self.tick.0,
+            dt: 0.0,
+            ids: &mut self.ids.0,
+        };
+        let ops: Vec<EffectOp> = spells
+            .iter()
+            .map(|s| EffectOp::Learn { source: s.clone() })
+            .collect();
+        let mut out = EffectOut::default();
+        sf_effects_bevy::sf_effects::apply_book(
+            &env,
+            &mut effects.active,
+            &mut effects.book,
+            &ops,
+            &mut ctx,
+            &mut out,
+        );
+        for event in &out.events {
+            if matches!(
+                event,
+                EffectEvent::BookRejected { .. } | EffectEvent::Rejected { .. }
+            ) {
+                warn!("effects: {owner:?}: start spell refused: {event:?}");
+            }
+        }
+        let (own, others): (Modifiers, Modifiers) =
+            out.stat_ops.into_iter().partition(|(o, _, _)| *o == owner);
+        self.out.write_batch(stat_commands(others));
+        (effects, own)
+    }
 }
 
 /// [`EffectLoad::restore`] from exclusive world access (the character section's `set`).
@@ -124,12 +202,29 @@ pub fn restore_in_world(
     owner: StatOwner,
     save: Option<EffectsSave>,
 ) -> (Effects, Modifiers) {
+    with_load(world, owner, |load| load.restore(owner, save))
+}
+
+/// [`EffectLoad::learn`] from exclusive world access (the player character's spawn).
+pub fn learn_in_world(
+    world: &mut World,
+    owner: StatOwner,
+    spells: &[RecordId],
+) -> (Effects, Modifiers) {
+    with_load(world, owner, |load| load.learn(owner, spells))
+}
+
+fn with_load(
+    world: &mut World,
+    owner: StatOwner,
+    f: impl FnOnce(&mut EffectLoad) -> (Effects, Modifiers),
+) -> (Effects, Modifiers) {
     if !world.contains_resource::<EffectIds>() {
         return (Effects::new(owner), Vec::new());
     }
     let mut state = bevy_ecs::system::SystemState::<EffectLoad>::new(world);
     let restored = match state.get_mut(world) {
-        Ok(mut load) => load.restore(owner, save),
+        Ok(mut load) => f(&mut load),
         Err(e) => {
             warn!("effects: {owner:?}: not restored: {e}");
             (Effects::new(owner), Vec::new())
@@ -175,14 +270,15 @@ pub fn write_effects(
     }
 }
 
-/// The player's effects for its `CharacterSave` (`None`: nothing active, an empty book, or no
-/// effects).
+/// The player's effects for its `CharacterSave` (`None`: no effects). Saved even when empty:
+/// `None` on load means "from before abilities" and learns the start spells
+/// (`stats::restore_player_sheet`), so a book emptied in play must not read as `None`.
 pub fn player_effects_save(world: &World, key: sf_rpg::PlayerKey) -> Option<EffectsSave> {
     let tick = world.get_resource::<StatTick>().map_or(0, |t| t.0);
     let mut q = world.try_query::<(&PlayerCharacter, &Effects)>()?;
     q.iter(world)
         .find(|(p, _)| p.key == key)
-        .and_then(|(_, fx)| fx.to_save(tick))
+        .map(|(_, fx)| EffectsSave::capture(&fx.active, &fx.book, tick))
 }
 
 #[cfg(test)]
@@ -192,15 +288,16 @@ mod tests;
 /// crate's and `mw_saves_bevy`'s): the 27 SKIL records, the MGEF records of Fortify and Drain
 /// Attribute and Restore Health, two potions ([`RESTORE_HEALTH_POTION`],
 /// [`FORTIFY_STRENGTH_POTION`]), a misc item ([`MISC_ITEM`]), and creatures with Strength
-/// `strength`.
+/// `strength`; [`spell_db`] adds start spells (a race, a birthsign, a `player` and an NPC).
 #[doc(hidden)]
 pub mod test_records {
     use std::sync::Arc;
 
     use sf_records::{RecordDb, RecordId};
     use tes3::esp::{
-        Alchemy, AttributeId2, Creature, Effect, EffectId, EffectId2, EffectRange, MagicEffect,
-        MiscItem, Skill, SkillData, SkillId, SkillId2,
+        Alchemy, AttributeId2, Birthsign, Creature, Effect, EffectId, EffectId2, EffectRange,
+        MagicEffect, MiscItem, Npc, NpcData, NpcStats, Race, Skill, SkillData, SkillId, SkillId2,
+        Spell, SpellData, SpellFlags, SpellType,
     };
 
     /// ALCH: Restore Health 10 points a second for 5 seconds.
@@ -209,6 +306,28 @@ pub mod test_records {
     pub const FORTIFY_STRENGTH_POTION: &str = "p_test_fortify_strength";
     /// MISC: a bottle.
     pub const MISC_ITEM: &str = "misc_test_bottle";
+    /// SPEL ability: Resist Fire 50 (the race's).
+    pub const RACE_ABILITY: &str = "test_race_resist_fire";
+    /// SPEL power: Fortify Strength 20 for 60 s (the race's).
+    pub const RACE_POWER: &str = "test_race_power";
+    /// SPEL ability: Fortify Strength 10 and Fortify Maximum Magicka 0.5 x Int (magnitude 5;
+    /// the birthsign's, as The Mage's).
+    pub const SIGN_ABILITY: &str = "test_sign_might";
+    /// SPEL ability: Fortify Magicka 20 (in no list).
+    pub const POOL_ABILITY: &str = "test_fortify_magicka";
+    /// SPEL ability: Fortify Strength 5 (the NPC's own).
+    pub const NPC_ABILITY: &str = "test_npc_might";
+    /// SPEL spell: Resist Fire 10 for 10 s on self (the NPC's and the `player` record's).
+    pub const NPC_SPELL: &str = "test_npc_spell";
+    /// RACE: [`RACE_ABILITY`], [`RACE_POWER`].
+    pub const RACE: &str = "test_race";
+    /// BSGN: [`SIGN_ABILITY`].
+    pub const SIGN: &str = "test_sign";
+    /// NPC of [`RACE`] with [`NPC_ABILITY`], [`NPC_SPELL`], [`RACE_ABILITY`] again and an
+    /// unknown id; attributes 40.
+    pub const NPC: &str = "test_npc";
+    /// Every attribute of the `player` record and [`NPC`].
+    pub const ATTRIBUTE: u8 = 40;
 
     fn potion(id: &str, effect: Effect) -> Alchemy {
         Alchemy {
@@ -267,8 +386,56 @@ pub mod test_records {
         SkillId::HandToHand,
     ];
 
+    fn ability(id: &str, spell_type: SpellType, effects: Vec<Effect>) -> Spell {
+        Spell {
+            id: id.into(),
+            name: id.into(),
+            effects,
+            data: SpellData {
+                spell_type,
+                cost: 5,
+                flags: SpellFlags::empty(),
+            },
+            ..Spell::default()
+        }
+    }
+
+    fn npc(id: &str, spells: &[&str]) -> Npc {
+        Npc {
+            id: id.into(),
+            name: id.into(),
+            race: RACE.into(),
+            spells: spells.iter().map(|&s| s.to_owned()).collect(),
+            data: NpcData {
+                level: 1,
+                stats: Some(NpcStats {
+                    attributes: [ATTRIBUTE; 8],
+                    skills: [10; 27],
+                    health: 50,
+                    magicka: 80,
+                    fatigue: 100,
+                }),
+                ..NpcData::default()
+            },
+            ..Npc::default()
+        }
+    }
+
     /// The records, with one creature per `(id, strength)`.
     pub fn db(creatures: &[(&str, u32)]) -> Arc<RecordDb> {
+        build(creatures, false)
+    }
+
+    /// [`db`] plus the start-spell records: MGEF Resist Fire, Fortify Magicka and Fortify Maximum
+    /// Magicka, the SPEL
+    /// constants above, [`RACE`], [`SIGN`], a `player` of [`RACE`] whose own list
+    /// ([`NPC_SPELL`]) a new player does not learn, and [`NPC`].
+    pub fn spell_db(creatures: &[(&str, u32)]) -> Arc<RecordDb> {
+        build(creatures, true)
+    }
+
+    #[allow(clippy::too_many_lines, reason = "one flat list of records")]
+    fn build(creatures: &[(&str, u32)], spells: bool) -> Arc<RecordDb> {
         let mut db = RecordDb::new();
         mw_records::register_kinds(&mut db).expect("kinds register");
         let src = db.add_source("test", &[]);
@@ -324,6 +491,76 @@ pub mod test_records {
             c.data.health = 50;
             db.define(src, RecordId::new(id), c).expect("creature");
         }
+        if !spells {
+            return Arc::new(db);
+        }
+        for (id, effect_id) in [
+            ("resistfire", EffectId::ResistFire),
+            ("fortifymagicka", EffectId::FortifyMagicka),
+            ("fortifymaximummagicka", EffectId::FortifyMagickaMultiplier),
+        ] {
+            let m = MagicEffect {
+                effect_id,
+                ..MagicEffect::default()
+            };
+            db.define(src, RecordId::new(id), m).expect("mgef");
+        }
+        let resist = |magnitude, duration| {
+            on_self(
+                EffectId2::ResistFire,
+                AttributeId2::None,
+                magnitude,
+                duration,
+            )
+        };
+        let strength = |magnitude, duration| {
+            on_self(
+                EffectId2::FortifyAttribute,
+                AttributeId2::Strength,
+                magnitude,
+                duration,
+            )
+        };
+        let magicka = on_self(EffectId2::FortifyMagicka, AttributeId2::None, 20, 0);
+        let max_magicka = on_self(
+            EffectId2::FortifyMagickaMultiplier,
+            AttributeId2::None,
+            5,
+            0,
+        );
+        for s in [
+            ability(RACE_ABILITY, SpellType::Ability, vec![resist(50, 0)]),
+            ability(RACE_POWER, SpellType::Power, vec![strength(20, 60)]),
+            ability(
+                SIGN_ABILITY,
+                SpellType::Ability,
+                vec![strength(10, 0), max_magicka],
+            ),
+            ability(POOL_ABILITY, SpellType::Ability, vec![magicka]),
+            ability(NPC_ABILITY, SpellType::Ability, vec![strength(5, 0)]),
+            ability(NPC_SPELL, SpellType::Spell, vec![resist(10, 10)]),
+        ] {
+            db.define(src, RecordId::new(&s.id), s).expect("spel");
+        }
+        let race = Race {
+            id: RACE.into(),
+            name: RACE.into(),
+            spells: vec![RACE_ABILITY.into(), RACE_POWER.into()],
+            ..Race::default()
+        };
+        db.define(src, RecordId::new(RACE), race).expect("race");
+        let sign = Birthsign {
+            id: SIGN.into(),
+            name: SIGN.into(),
+            spells: vec![SIGN_ABILITY.into()],
+            ..Birthsign::default()
+        };
+        db.define(src, RecordId::new(SIGN), sign).expect("bsgn");
+        db.define(src, RecordId::new("player"), npc("player", &[NPC_SPELL]))
+            .expect("player");
+        let list = [NPC_ABILITY, NPC_SPELL, RACE_ABILITY, "test_no_such_spell"];
+        db.define(src, RecordId::new(NPC), npc(NPC, &list))
+            .expect("npc");
         Arc::new(db)
     }
 }

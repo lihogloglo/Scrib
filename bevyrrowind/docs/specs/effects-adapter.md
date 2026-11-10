@@ -1,6 +1,6 @@
 # Effects adapter: Morrowind's MGEF, SPEL, ALCH, ENCH, INGR on `sf_effects`
 
-Status (2026-11-08): **agreed** (owner 2026-11-08, defaults taken). A1 written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10). A2 potions 2026-11-10 (headless tests; HUD icons not built). Framework: `../../../superfargoth/docs/specs/effects.md`.
+Status (2026-11-08): **agreed** (owner 2026-11-08, defaults taken). A1 written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10). A2 potions 2026-11-10 (headless tests; HUD icons not built). A3 start spells 2026-11-10 (headless tests; autocalc spells are A3b). Framework: `../../../superfargoth/docs/specs/effects.md`.
 Ported from OpenMW `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (paths under `apps/openmw/` unless noted; line numbers
 approximate). Magic effect semantics are content mechanics: one implementation, ported 1:1 (ARCHITECTURE §1b; where
 OpenMW deliberately differs from vanilla, follow vanilla). Cast chance, resist roll, reflect/absorb rolls, ingredient
@@ -164,6 +164,7 @@ effects.
 | **A1** table + first slice | `mw_effects`: MGEF table, magnitude stats in the stat table, A1 archetypes, SPEL/ALCH mapping | mapping and ops tests; real-install sweep |
 | **A2** potions | inventory use → `Inflict`, stack, consume; HUD icon list | drinking a Restore Health potion heals over its duration |
 | **A3** abilities + book init | race/birthsign/class spells, `Learn`/`Forget`, Permanent layer; stats S8 round trip | fortified attribute equal after a save round trip |
+| **A3b** autocalc spells | `autoCalcNpcSpells` (autocalc NPCs, before race powers), `autoCalcPlayerSpells` (`F_PCStart`, after the birthsign) | spell picks against hand-computed OpenMW results |
 | **A4** MWScript | the table above `live` | interp tests per function |
 | **A5** casting | `OpenMwEffectRules` + modern rules, self/touch casts, powers | chance formulas; power recharge |
 | **A6** enchantments | constant effect on equip, on use, on strike (combat), charge | charge spent; constant follows the loadout |
@@ -213,6 +214,37 @@ glue, as dialogue sounds), drinking does not break Invisibility (A7), potion scr
 `PCSkipEquip`, quick keys, MWScript `Equip` (functions.txt "later"). **HUD icon list: not built**: the HUD
 (`sf_ui_screens::HudView`) has no effect-icon slot and its game glue is `mw_player_bevy::hud`; next slice
 (`HudView.effects` aggregated per effect key as OpenMW `MWGui::SpellIcons`, icons from `Presentation`).
+
+## As built (A3)
+
+2026-11-10, headless tests (`mw_effects` 3, `mw_rpg_bevy::effects::tests` 3 + 1 ignored bug, `mw_saves_bevy` 1); not
+run in game. `mw_effects/src/book.rs`: `MwSource::source_def` (affliction → cure tag `disease`/`blight`/`curse`,
+`Recharge::GameDays(n)` → `GameMinutes::days(n)`, spells and powers take their first effect's school as `skill`, A5
+picks the caster's weakest school per cast; `cost` stays `calcSpellCost`, `auto_cost` the record flag),
+`source_table` (every SPEL in record order, first record of an id) and `start_spells` (lists in order, each id once,
+ids without a SPEL skipped and warned: `spells.cpp` `addSpell` 85-89, `addAllToInstance` 317-326). Glue:
+`effects::add` inserts `SourceTableRes`; `EffectLoad::learn` / `learn_in_world` run `Learn` ops through
+`apply_book` at spawn and return the owner's modifiers, applied on the building sheet before it settles (new
+character: full pools at the fortified max, as `buildPlayer`'s current = modified). Lists (`stats::MwStats`):
+`actor_spells` = NPC race powers then record spells (`npc.cpp` 311-374), creature record spells (`creature.cpp`
+154-156); `player_spells` = the `player` record's race powers then the birthsign's spells, never the record's own list
+(`mechanicsmanagerimp.cpp` `buildPlayer` 154-176). Birthsign: `stats::PlayerBirthsign` (chargen's choice; none in the
+dev start; not saved, the book holds it). The race is always the record's (OpenMW adds race powers only once a race
+is chosen; our dev start skips chargen with the record's race).
+
+Saves (owner: the whole active set, never re-learned on load): player `None` effects (a v3 save, a save from before
+A3) learns the start spells, `Some` restores only; the player's effects are now saved even when empty, so a book
+emptied in play stays empty. NPC: saved effects restore (with or without a saved sheet: an untouched sheet with
+abilities has only its `effects` blob, now built from the record plus the restored modifiers); no saved effects learns
+the record's lists. Verified: Strength 50 (40 + birthsign 10) and an NPC's 45 (40 + 5) equal after a round trip, not
+60 / 50. Fortify Maximum Magicka 5 (The Mage style) gives magicka 60 from 40 and leaves on `Forget`.
+
+**Bug (logged, not fixed: E1 / stats):** an ability's Fortify Magicka (innate → `PoolModMax`, OpenMW `modDynamicStat`)
+is lost on the derived magicka pool: 40 / 40 before, after `Learn` and after `Forget` (ignored test
+`an_ability_fortify_magicka_raises_the_maximum`); Fortify Health / Fatigue abilities likely the same. Vanilla
+birthsigns use Fortify Maximum Magicka, which works. Gaps: an NPC that forgets every start spell and has nothing
+active writes no blob when it had none, so it relearns on respawn (A4 `RemoveSpell` must write an empty blob);
+`NewGameSheets` (dialogue without an app) has no abilities.
 
 ## Open questions (owner)
 

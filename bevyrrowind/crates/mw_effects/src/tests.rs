@@ -35,7 +35,7 @@ fn mgef(id: EffectId, school: EffectSchool, base_cost: f32, flags: u32) -> Magic
 }
 
 /// MGEF records for the effects the tests use (every record flag bit set on Fortify Attribute).
-fn effects() -> MwEffects {
+pub(crate) fn effects() -> MwEffects {
     let d = EffectSchool::Destruction;
     let r = EffectSchool::Restoration;
     MwEffects::from_records(&[
@@ -49,7 +49,7 @@ fn effects() -> MwEffects {
     ])
 }
 
-fn entry(effect: EffectId2, range: EffectRange, magnitude: (u32, u32), duration: u32, area: u32) -> Effect {
+pub(crate) fn entry(effect: EffectId2, range: EffectRange, magnitude: (u32, u32), duration: u32, area: u32) -> Effect {
     Effect {
         magic_effect: effect,
         skill: SkillId2::None,
@@ -62,7 +62,7 @@ fn entry(effect: EffectId2, range: EffectRange, magnitude: (u32, u32), duration:
     }
 }
 
-fn spell(id: &str, spell_type: SpellType, flags: SpellFlags, cost: u32, effects: Vec<Effect>) -> Spell {
+pub(crate) fn spell(id: &str, spell_type: SpellType, flags: SpellFlags, cost: u32, effects: Vec<Effect>) -> Spell {
     Spell { id: id.to_owned(), effects, data: SpellData { spell_type, cost, flags }, ..Default::default() }
 }
 
