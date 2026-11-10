@@ -76,3 +76,14 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
   the view moves on without a jump; chained lights move the stop to each new swing; a roll (Space) never limits; Tab to third
   person: no limits. With the view model on the arms draw ~1.24x larger: judge whether 45 / -45..20 still frames them.
 - Tune: `look` per attack in `sword_1h.ron` (yaw, pitch, ease); default off if it feels like a wall. Status: awaiting owner.
+
+### CB-3a: Sparring dummy strikes; player reactions in both views (C2a, 2026-11-10)
+- `cargo dev scene level-sparring` (cameras `behind`, `side`), F11 player, F to draw. The sparring dummy (Fargoth, sword drawn) stands
+  3 m ahead and swings light1 every 2.5 s while you are within 2 m (`sparring: the player: hit ...` in the log); `dummy` 6 m left
+  stands still. Run third person, then Tab to first person (view model off, then `on viewmodel`).
+- Feel for: step in: a steady beat you can learn; each hit lands as the blade arrives, hit-stop on both, and your body plays the
+  reaction for the side it came from (turn your back, side-on); health -10 per hit; at 0 you refill (non-lethal bout). Step back past
+  2 m: it never swings. Roll through its swing: no hit. First person: the view stays free in a reaction (no wall), the arms follow
+  the flinch, no camera kick yet (C4 shake).
+- Tune: `mw_combat/data/sparring.ron` (first, period, reach); reaction slots in `mw_graphs/data/animation/sources.ron`.
+- Known gaps: Medium/Large reactions front only, one clip; no guard (C2b) or knockdown (C2c). Status: awaiting owner.

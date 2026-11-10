@@ -1,6 +1,6 @@
 # Combat adapter: what Bevyrrowind adds to the framework's combat
 
-Status: spec (2026-10-27), nothing built. Framework design: `../../../superfargoth/docs/specs/combat.md` (feel layer, sheets,
+Status: spec (2026-10-27); built: C1b, C1c, C4, C2a (sparring dummy, below). Framework design: `../../../superfargoth/docs/specs/combat.md` (feel layer, sheets,
 `CombatRules` seam, build plan C1-C7). Classic requirements: `../research/combat-classic-openmw.md`. ROADMAP 3.5.
 
 ## Crates
@@ -162,11 +162,36 @@ made for it and the `live_only` routing above never runs. The same hole covers f
 - **Bindings** (defaults, the player can rebind): `Sprint` becomes **Dodge/Sprint** (tap = roll on release, hold = sprint;
   Shift, pad East); `Attack` (Light): left mouse, pad right bumper; `Lock`: middle mouse, pad right stick click (ToggleView's
   pad binding moves to D-pad up); `Sneak`'s pad binding moves to left stick click; `ReadyWeapon`: F.
-- **Training dummy** (named scaffold `TrainingDummy`, removed when C2's sparring dummy lands): a level actor (a plain human
-  NPC record) standing still, `Combatant` health 100, hostile, `Lockable`, never attacks; refills at 0 and plays `Large`.
+- **Training dummy** (named scaffold `TrainingDummy`; kept as the standing kind beside C2a's sparring dummy, both go when C6
+  NPCs fight): a level actor (a plain human NPC record) standing still, `Combatant` health 100, hostile, `Lockable`, never
+  attacks; refills at 0 and plays `Large`.
 - **Level `arena`** (scene `level-arena`): 40 m flat floor; player start; dummy 3 m ahead; a second dummy 10 m off (C1c
   lock, switch later); a 1 m ledge for the lock break on mantle (C1c). Cameras `chain` (side view of player and dummy) and
   `behind`.
 - **Visual checks**: new `docs/visual-checks/combat.md`; CB-1 (C1b): three-hit chain and a roll through the dummy; look for
   hits landing when the blade arrives (not before), hit-stop reading as impact (not a stall), the stamina bar draining per
   hit and refilling after recovery, no slide at the roll's end. CB-2 (C1c): locked strafe and four-way rolls around the dummy.
+
+## Sparring dummy (C2a)
+
+As built 2026-11-10 (framework: combat.md "C2a"; check CB-3a). A **mode of the training dummy**, not a second actor type
+(`mw_player_bevy::dummy::DummyKind::Sparring`, component `Sparring`): same body, ground, combat, refill and `Lockable`, plus a
+strike schedule. The spec planned to replace the training dummy; the standing kind stays because the C1 checks (chain, lock)
+need a target that doesn't hit back.
+- **Data**: `mw_combat/data/sparring.ron` (`mw_combat::SPARRING`, `sparring()` checks it) -> `sf_combat::SparSchedule`: Light
+  (sword sheet `light1`), first 1.5 s, period 2.5 s, reach 2 m. Unparsable: it stands still (logged).
+- **Command**: `dummy::spar` (`ActionSystems::Command`) writes the dummy's `Command` each tick toward the nearest living
+  `PlayerBody` (view at it, `face_view`, Light on the schedule); the swing is the chooser's, the hit the sweep's and rules'.
+- **Damage**: the dummy's `Offense::attack` is `DEFAULT_ATTACK` (10): `StandardRules` takes 10 health per light1; on the
+  player's stat sheet through S5 (`PoolAdjust`, cause `Combat`; Morrowind.esm's player has 35).
+- **Non-lethal** (scaffold until the player's death flow; KCD practice bouts): while a sparring dummy stands, a player body brought
+  down refills (sheet health, cause `Rules`) as the dummy does; it plays the Death tier's reaction (falls back to `Large`).
+- **Look**: the dummy's avatar is `SparringAvatar` with `CharacterReadiness::Drawn`; the level host gives it the level's
+  `player_held` items (`mw_exterior_bevy` `equip_player`).
+- **Level** `sparring` (scene `level-sparring`): start, a sparring dummy 3 m ahead (`sparring` spawn), a standing dummy 6 m off
+  (`dummy`), cameras `behind`, `side`. Spawn names: `sparring*` spar, `dummy*` stand (`DummyKind::of_spawn`).
+- **Clips**: the player's reactions are the C1b slots (`react.small.{front,left,right,back}`: UAL1 `Hit_Chest`,
+  `Hit_Shoulder_L/R`, `Hit_Stomach`, fallback `Hit1`-`Hit4`; `react.medium|large.front`: UAL2 `Hit_Knockback`, fallback `Hit5`).
+  Content gap: Medium and Large have Front only (other sides fall back) and share one clip at full root travel (combat.md open
+  question 2).
+

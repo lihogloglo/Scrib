@@ -23,7 +23,7 @@ use sf_camera::{Candidate, SoftAimParams};
 use sf_coords::WorldPos;
 use sf_combat::{
     At, Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, CompiledSheet, Contact, Defense, FightState, Fighter, HitStop, HurtShape,
-    Movesets, Offense, Outcome, Pool, PoolDelta, RegenState, Side, SocketSource, SocketTracks, SoftAimInput, StandardRules, Swing, SwingPlan, Tier, Unit, Vitals, gate,
+    Movesets, Offense, Outcome, Pool, PoolDelta, RegenState, Side, SocketSource, SocketTracks, SoftAimInput, SparSchedule, StandardRules, Swing, SwingPlan, Tier, Unit, Vitals, gate,
     load, soft_aim_axis, update_soft_aim,
 };
 
@@ -661,6 +661,99 @@ fn a_dead_defender_is_skipped_and_refuses_everything() {
     assert_eq!(w.log.len(), 2);
     assert_eq!(w.actors[1].fighter.vitals.health.cur, 0.0);
     assert_eq!(gate(&StandardRules::default(), &w.actors[1].fighter, &w.actors[1].fight), sf_action::ClassSet::LATCHABLE);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sparring (C2a): a scheduled partner's swings on the player, through its own `Command`
+
+const SPAR: SparSchedule = SparSchedule { class: ActionClass::Light, first: 0.25, period: 1.5, reach: 2.0 };
+
+/// Partner (actor 0) and player (actor 1) `dist` apart along +Z, both facing away from each other
+/// (the partner must square up to its view of the player), settled in Loco.
+fn sparring(dist: f32) -> World {
+    let mut w = World::new(Box::new(Counting::default()));
+    w.spawn(Vec3::ZERO, std::f32::consts::PI);
+    w.spawn(Vec3::new(0.0, 0.0, dist), 0.0);
+    w.settle();
+    w
+}
+
+/// `n` ticks: actor 0 runs `SPAR` toward actor 1 (no target once it is dead), actor 1 gets
+/// `player(since)`. Returns the partner's light1 start ticks, since its start.
+fn spar(w: &mut World, n: u32, player: impl Fn(u32) -> Command) -> Vec<u32> {
+    let start = w.tick.next().0;
+    let light1 = w.key("light1");
+    let mut strikes = Vec::new();
+    for _ in 0..n {
+        let since = w.tick.next().0 - start;
+        let alive = !w.actors[1].fighter.dead();
+        let to = w.actors[1].body.pos - w.actors[0].body.pos;
+        w.run(&[SPAR.command(w.tick.next(), since, alive.then_some(to)), player(since)]);
+        if w.started(0, light1) {
+            strikes.push(since);
+        }
+    }
+    strikes
+}
+
+#[test]
+fn a_sparring_partner_squares_up_and_lands_on_its_schedule() {
+    let mut w = sparring(1.0);
+    let start = w.tick.next().0;
+    let strikes = spar(&mut w, 220, |_| Command::default());
+    assert_eq!(strikes, [15, 105, 195]);
+    let (partner, player) = (w.actors[0].fighter.id, w.actors[1].fighter.id);
+    let landed = w.landings();
+    assert_eq!(landed.iter().map(|l| (l.1, l.2, l.3)).collect::<Vec<_>>(), [(partner, player, 0); 3], "{:?}", w.log);
+    // Every swing lands the same number of ticks after its press (deterministic).
+    let after: Vec<u32> = landed.iter().zip(&strikes).map(|(l, s)| l.0.0 - start - s).collect();
+    assert!(after.iter().all(|&a| a == after[0]) && after[0] > 0, "{after:?}");
+    assert_eq!(w.actors[1].fighter.vitals.health.cur, 70.0);
+    // The player, facing away, is hit in the back: its reaction falls back to the front one.
+    let back = w.log.iter().filter_map(|&(_, e)| match e {
+        CombatEvent::HitLanded { side, tier, .. } => Some((tier, side)),
+        _ => None,
+    });
+    assert!(back.clone().count() == 3 && back.into_iter().all(|ts| ts == (Tier::Small, Side::Back)));
+    let react = w.sheet.reactions.lookup(Tier::Small, Side::Back).unwrap();
+    assert_eq!(react, w.sheet.reactions.lookup(Tier::Small, Side::Front).unwrap());
+    let reacted: Vec<Tick> = w.actors[1].events.iter().filter(|e| e.kind == EventKind::MoveStart(react)).map(|e| e.tick).collect();
+    assert_eq!(reacted, landed.iter().map(|l| l.0.next()).collect::<Vec<_>>());
+}
+
+#[test]
+fn a_sparring_partner_never_presses_out_of_reach() {
+    let mut w = sparring(2.5);
+    assert_eq!(spar(&mut w, 220, |_| Command::default()), Vec::<u32>::new());
+    assert!(w.log.is_empty(), "{:?}", w.log);
+}
+
+/// Contact order on the player: a roll's i-frames evade the whole swing (no contact reaches the
+/// rules, no landing, health kept); the next swing lands; a dead player is skipped and the
+/// partner stops pressing.
+#[test]
+fn the_contact_order_holds_for_the_partners_swings_on_the_player() {
+    let counting = Counting::default();
+    let contacts = Arc::clone(&counting.contacts);
+    let mut w = World::new(Box::new(counting));
+    w.spawn(Vec3::ZERO, 0.0);
+    let p = w.spawn(Vec3::new(0.0, 0.0, 1.0), std::f32::consts::PI);
+    // The player rolls in place (no root track), so only its i-frames matter.
+    w.actors[p].slots = slot_table(&w.sheet, false);
+    w.settle();
+    // It rolls 2 ticks before the first strike (since 15): i-frames cover the hit window.
+    let strikes = spar(&mut w, 100, |since| if since == 13 { press(ActionClass::Dodge) } else { Command::default() });
+    assert_eq!(strikes, [15]);
+    let evaded = w.log.iter().filter(|(_, e)| matches!(e, CombatEvent::Evaded { .. })).count();
+    assert!(evaded > 0 && w.landings().is_empty(), "{:?}", w.log);
+    assert_eq!((contacts.load(Ordering::Relaxed), w.actors[p].fighter.vitals.health.cur), (0, 100.0));
+    // The next strike lands; with 5 health left it kills, and the partner stops.
+    w.actors[p].fighter.vitals.health.cur = 5.0;
+    let strikes = spar(&mut w, 300, |_| Command::default());
+    assert_eq!(strikes.len(), 1, "{strikes:?}");
+    assert_eq!(w.landings().len(), 1);
+    assert_eq!(contacts.load(Ordering::Relaxed), 1);
+    assert_eq!(w.log.iter().filter(|(_, e)| matches!(e, CombatEvent::Died { .. })).count(), 1);
 }
 
 // ---------------------------------------------------------------------------------------------

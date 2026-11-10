@@ -14,7 +14,7 @@ fn armed() -> (App, Entity) {
 }
 
 /// [`armed`], `extra` adding plugins before the app finishes.
-fn armed_with(extra: impl FnOnce(&mut App)) -> (App, Entity) {
+pub(crate) fn armed_with(extra: impl FnOnce(&mut App)) -> (App, Entity) {
     let sheet = sf_combat::load(mw_combat::SWORD_1H, &|_| Some(0.5)).expect("sheet compiles");
     let (mut app, player) = app_setup(60, &mw_controls_bevy::keymap(), |app| {
         combat::add(app, Some(sheet), &PlayerClips::default());
@@ -485,7 +485,7 @@ fn switching_to_first_person_breaks_a_held_lock() {
 }
 
 /// Mouse look right by `rad_per_frame` on every frame from now (the camera's look action).
-fn look_right(app: &mut App, rad_per_frame: f32) {
+pub(crate) fn look_right(app: &mut App, rad_per_frame: f32) {
     let mut q = app.world_mut().query::<(Entity, &CameraAction)>();
     let look = q.iter(app.world()).find(|(_, t)| **t == CameraAction::Look).expect("camera look action").0;
     app.world_mut().entity_mut(look).insert(ActionMock::new(TriggerState::Fired, Vec2::new(rad_per_frame, 0.0), MockSpan::Manual));

@@ -176,3 +176,23 @@ fn a_hit_on_the_dummy_lowers_its_sheets_health_and_a_sheet_death_refills_it() {
     assert!(depleted, "Depleted(health)");
     assert_eq!(pool_of(&app, avatar, HEALTH), (dummy::DUMMY_HEALTH, dummy::DUMMY_HEALTH), "refilled");
 }
+
+/// C2a: a sparring dummy's hit on the player goes to the player's sheet through the S5 wiring:
+/// exactly the rules' damage (attack 10 x mv 1.0), cause `Combat`, and combat reads it back.
+#[test]
+fn a_sparring_hit_lowers_the_players_sheet_health_by_the_rules_amount() {
+    let (mut app, player, character) = armed_with_stats();
+    dummy::systems::<Statics>(&mut app);
+    tests_sparring::slash_tracks(&mut app);
+    let root = app.world_mut().spawn_empty().id();
+    let feet = app.world().get::<ActionBody>(player).unwrap().loco.position;
+    dummy::spawn_kind(&mut app.world_mut().commands(), 0, dummy::DummyKind::Sparring, (feet.offset(Vec3::new(0.0, 0.0, 1.2)), std::f32::consts::PI), root);
+    app.world_mut().flush();
+    assert_eq!(pool_of(&app, character, HEALTH).0, PLAYER_POOLS[0]);
+    // The first strike is 1.5 s after the dummy stands; one swing, one landing.
+    frames(&mut app, 150);
+    let after = PLAYER_POOLS[0] - mw_combat::DEFAULT_ATTACK;
+    assert_eq!(pool_of(&app, character, HEALTH).0, after);
+    assert_eq!(combat_changes(&app, PLAYER, HEALTH), [(PLAYER_POOLS[0], after)]);
+    assert_eq!(app.world().get::<Combatant>(player).unwrap().fighter.vitals.health.cur, after, "combat reads it back");
+}

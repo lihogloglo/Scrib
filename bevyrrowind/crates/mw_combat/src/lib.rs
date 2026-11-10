@@ -1,16 +1,29 @@
 //! Morrowind combat content for the framework's `sf_combat` (`docs/specs/combat-adapter.md`):
 //! the builtin moveset sheets, the slots they name (the host loads their clips from the baked
 //! humanoid graph) and record stats to [`Fighter`] numbers. Bevy-free; the game's Bevy glue lives
-//! in `mw_player_bevy` (player, training dummy).
+//! in `mw_player_bevy` (player, training and sparring dummies; [`SPARRING`] is the sparring
+//! dummy's strike schedule).
 //!
 //! C1b: one sheet, [`SWORD_1H`]; the weapon-record mapping and Morrowind text-key windows come
 //! with C3 (combat-adapter.md "Weapon records to moveset sheets").
 
 use sf_action::CharacterId;
-use sf_combat::{CompiledSheet, Defense, Fighter, HurtShape, Offense, Pool, SheetDef, SheetError, Tier, Vitals};
+use sf_combat::{CompiledSheet, Defense, Fighter, HurtShape, Offense, Pool, SheetDef, SheetError, SparSchedule, Tier, Vitals};
 
 /// The one-handed sword sheet (combat.md "C1b" first sheet values).
 pub const SWORD_1H: &str = include_str!("../data/movesets/sword_1h.ron");
+
+/// The sparring dummy's strike schedule (combat.md "C2a"; it fights with [`SWORD_1H`]).
+pub const SPARRING: &str = include_str!("../data/sparring.ron");
+
+/// [`SPARRING`] parsed and checked.
+///
+/// # Errors
+/// The RON doesn't parse or a number is out of range ([`SparSchedule::valid`]).
+pub fn sparring(ron: &str) -> Result<SparSchedule, String> {
+    let s: SparSchedule = ron::from_str(ron).map_err(|e| e.to_string())?;
+    if s.valid() { Ok(s) } else { Err(format!("sparring schedule out of range: {s:?}")) }
+}
 
 /// The sword sheet's draw clip: `base_anim`'s `WeaponOneHand` equip section, a slot clip of the
 /// humanoid graph (its `upper` slot plays it over locomotion). Its `Equip Attach` text key
@@ -193,6 +206,38 @@ mod tests {
         let sheet = sf_combat::load(SWORD_1H, &|s| if s.starts_with("dodge.") { None } else { first_candidates(s) }).expect("loads");
         assert!(sheet.moves.moves.contains_key(&sheet.rule_key("light1")));
         assert!(!sheet.moves.moves.contains_key(&sheet.rule_key("roll")));
+    }
+
+    /// Reaction pick by tier x side on the sword sheet (combat.md "Reactions"): Small has all four
+    /// sides; Medium and Large only Front (a missing side falls back to Front); Knockdown and Death
+    /// have none (a missing tier falls back to the next lower: Large); Additive is no move.
+    #[test]
+    fn reactions_by_tier_and_side_fall_back_to_front_then_the_next_lower_tier() {
+        use sf_combat::Side;
+        let sheet = sf_combat::load(SWORD_1H, &first_candidates).unwrap();
+        let key = |slot: &str| sheet.rule_key(slot);
+        for side in [Side::Front, Side::Back, Side::Left, Side::Right] {
+            let small = format!("react.small.{side:?}").to_lowercase();
+            let want = [
+                (Tier::Additive, None),
+                (Tier::Small, Some(key(&small))),
+                (Tier::Medium, Some(key("react.medium.front"))),
+                (Tier::Large, Some(key("react.large.front"))),
+                (Tier::Knockdown, Some(key("react.large.front"))),
+                (Tier::Death, Some(key("react.large.front"))),
+            ];
+            for (tier, mov) in want {
+                assert_eq!(sheet.reactions.lookup(tier, side), mov, "{tier:?} x {side:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_sparring_schedule_parses_and_strikes_light() {
+        let s = sparring(SPARRING).expect("sparring.ron");
+        assert_eq!(s, SparSchedule { class: sf_action::ActionClass::Light, first: 1.5, period: 2.5, reach: 2.0 });
+        assert!(sparring("(class: Light, first: 0.0, period: 0.0, reach: 2.0)").is_err());
+        assert!(sparring("(class: Light, first: 0.0, period: 1.0)").is_err(), "reach is required");
     }
 
     #[test]

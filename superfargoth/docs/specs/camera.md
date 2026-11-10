@@ -56,6 +56,10 @@ R7 §2, R8 §1.4, §2-3. Companion: [action.md](action.md).
   view, its `Turn` window steers onto the soft target, `NoTurn` holds the swing whatever the mouse
   does (no dragging, R8 §2); a lock press does nothing and a held lock breaks on entering first
   person. Attack look limits around the body's yaw while committed: built (previous bullet).
+- **Hit reactions** (decision, combat.md "C2a", 2026-11-10): a reaction is a forced move with no `look` rule, so the view stays
+  free (an interrupted attack's limits ease out) while the body holds its yaw and the arms follow its pose; the standard flinch
+  is a small rotation-only view kick (Source `ViewPunch`, Mordhau) on the shake path (`CameraShake`, after the look, never into
+  `Command.view`), fed by `HitLanded` on the followed body: combat C4's shake, not built.
 - **Render bodies** (decision; R7 §2.1, R8 §3): a first-person body (arms, and legs when looking
   down) with its own FOV and scale toward the camera, head hidden; plus the world body for shadows
   and reflections. Per action: an **arms layer** for weapons and spells (a content pack's own

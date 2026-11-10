@@ -1,0 +1,28 @@
+// Synthetic test level (docs/specs/test-levels.md): sparring (combat C2a, visual check CB-3a). Meters,
+// y up, x east, z south; spawn yaw in degrees, 0 faces -z. The player drops under the first camera
+// (`behind`) 3 m in front of `sparring`, a sparring dummy (mw_player_bevy `dummy.rs`) that strikes
+// on `mw_combat/data/sparring.ron`'s schedule (light1 every 2.5 s) while the player is within 2 m;
+// `dummy` is a standing training dummy to hit back at off to the side.
+// Open with `bevyrrowind scene level-sparring`.
+(
+    name: "sparring",
+    description: "40 m floor; a sparring dummy 3 m ahead of the start that strikes when the player comes within 2 m, a standing dummy 6 m off",
+    weather: Some("clear"),
+    // The player's sword (Morrowind.esm `iron longsword`), shown while drawn (F); the sparring dummy
+    // holds it too, always drawn.
+    player_held: ["iron longsword"],
+    cameras: [
+        (name: "behind", eye: (0.0, 2.2, 4.0), target: (0.0, 1.0, 0.0)),
+        (name: "side", eye: (5.0, 1.6, 2.0), target: (0.0, 1.0, 2.0)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 4.0)),
+        (name: "sparring", at: (0.0, 0.0, 1.0), yaw: 180.0),
+        (name: "dummy", at: (-6.0, 0.0, 2.0), yaw: 90.0),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (40.0, 40.0))),
+        // A 2 m scale post beside the sparring dummy.
+        (name: "post-2m", shape: Cylinder(radius: 0.1, height: 2.0), at: (1.5, 0.0, 1.0), material: White),
+    ],
+)

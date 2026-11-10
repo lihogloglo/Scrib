@@ -1010,4 +1010,6 @@ mod tests_feel;
 #[cfg(test)]
 mod tests_combat;
 #[cfg(test)]
+mod tests_sparring;
+#[cfg(test)]
 mod tests_vitals;

@@ -1,6 +1,6 @@
 # Combat: feel layer, moveset sheets, rules seam
 
-Status (2026-11-10): C1a, C1b, C1c (lock-on parts 1-4) the C4 soft aim and C4b first-person attack look limits built; next C1c-2b strafe clips, then C2. ROADMAP 3.5. Game side:
+Status (2026-11-10): C1a, C1b, C1c (lock-on parts 1-4), the C4 soft aim, C4b first-person attack look limits and C2a (sparring dummy, player reactions) built; next C2b guard, C1c-2b strafe clips. ROADMAP 3.5. Game side:
 `../../../bevyrrowind/docs/specs/combat-adapter.md`. Built on [action.md](action.md) (commands, windows, chooser, motion
 owners, co-op rules: referenced, not repeated); owns its build-plan row E1-E3. Slices **combat C1..C7** are not action.md's
 C1 (interactions).
@@ -234,10 +234,8 @@ Front, a missing tier to the next lower.
 - Clips play in the graph's full-body montage slot, `Progress` root mode, playhead = chain progress on the action clock
   (`set_slot_progress`), as the mantle does (action.md "As built (A2 slice 2)"); cancels blend in ~0.1 s (R6 adapt).
   Classic content may use an upper-body slot over locomotion.
-- **Draw / sheathe** (built 2026-11-05): an upper-body clip over locomotion with an attach key where the held props
-  change mount (UE attach notify, Skyrim `weaponDraw`). Gameplay times it on the fixed tick from the baked key
-  (`sf_character::ReadyChange`/`ReadyClip::from_clip`, the content names the event); the clip plays from that elapsed
-  time, so presentation never decides when the weapon is out. Attacks wait for the draw's end.
+- **Draw / sheathe** (built 2026-11-05; [history](archive/combat-history.md) "Draw / sheathe as built"): an upper-body clip
+  over locomotion, timed on the fixed tick from the baked attach key (`sf_character::ReadyChange`).
 - Slots `kind.family.variant`: `attack.<sheet>.<move>[_rec]`, `dodge.roll.{fwd,left,right}`, `react.<tier>.<side>`,
   `guard.<sheet>.{raise,idle,hit,break}`.
 - **Sources**: candidates in the content's animation-sources manifest, first present wins, then the fallback
@@ -276,7 +274,7 @@ Logic keeps exact assertions; feel tests assert sanity and print measurements (`
 | **C1a** core | `sf_action` vocabulary + `Clip` owner; `sf_combat` sheet, vitals, sweeps, contact order, `StandardRules`, hit-stop | Tests list, headless | none |
 | **C1b** player vs dummy | `sf_combat_bevy`; game glue (sheet, clips, player, training dummy, level `arena`, stamina bar) | 3-hit chain on the dummy lands 4 hits; no NaN; dummy on the floor | CB-1 chain, roll, stamina, hit-stop |
 | **C1c** lock-on | built 2026-10-27 (parts 1-4, "As built (C1c)"; strafe clips C1c-2b next): acquire/break, locked strafe, 4-way rolls, framing | breaks past 20 m and on a mantle | CB-2 strafe and roll around the dummy |
-| **C2** guard, reactions | sparring dummy that strikes; player reactions by tier and side; guard; backstep; knockdown via `Physics` | contact-order unit tests; guard break at 0 | CB-3 block, guard break, knockdown, get-up |
+| **C2** guard, reactions | **C2a** (built 2026-11-10) sparring dummy that strikes, player reactions by tier and side; **C2b** guard (both views); **C2c** backstep, knockdown via `Physics` | contact-order unit tests; guard break at 0 | CB-3a sparring hits; CB-3 block, guard break, knockdown, get-up |
 | **C3** heavy, openers, poise | heavy + charge; run/roll/backstep/jump attacks; armor windows; poise; lunge; typed i-frames; second weapon class | second class adds no code; charge release swaps clip | CB-4 heavy and openers |
 | **C4** targeting | switching, soft aim (built 2026-11-10, first person included; C4b look limits built), combat shake, per-bone hurt capsules | switch picks the flicked side; soft-aim pick and window | CB-5 |
 | **C5** classic rules | classic `CombatRules` (game side), cone contacts, Classic profile | formula tests against the ported source | CB-6 classic swing |
@@ -287,41 +285,32 @@ action.md E1 = combat C1-C3 (windows, sheet, light/heavy/dodge/guard), E2 = C1c 
 
 ## As built by slice
 
-### C1b: player vs training dummy (Bevy + game)
+### C1b, C1c, C4 soft aim, C4b
 
-Briefs, as-built notes and the first sheet's table (UAL2 `Sword_Light_A-D` chain, roll and side rolls; the live values are
-`bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron`): [history](archive/combat-history.md) "C1b sheet".
+All built; as built and tests in [history](archive/combat-history.md) ("C1b sheet", "C1c as built", "C4 soft aim as built", "C4b
+as built"; live sheet `bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron`). C1c (CB-2): lock, locked facing and strafe,
+4-way rolls, marker (to do: strafe clips C1c-2b, back roll, switching C4). C4 (CB-5): the nearest `Lockable` within 3 m and +-30 deg
+of the aim axis is the swing's turn target; first person (`face_view`) squares attacks to the view, never locks; the body turns
+only in `Turn` windows. C4b (CB-5b): `MoveRule.look` bounds the first-person view around the body until `Cancel(Move)` (sword: 45
+deg, pitch -45..20, ease 0.10 s; rolls free).
 
-### C1c: lock-on
+### C2a: sparring dummy and player reactions
 
-**As built (C1c, 2026-10-27)**, four commits (a2e6d20, 3a54f4b, ddc252d, 2709b71), check CB-2: lock (`sf_combat::update_lock`,
-shell `SfLockOnPlugin`, `LockOwner`, `Lockable`), locked facing and strafe, locked 4-way rolls, the marker. Detail:
-[history](archive/combat-history.md) "C1c as built". Left: strafe clips (C1c-2b), back-roll / backstep clip, target switching
-(C4), the Classic profile hiding lock-on.
-
-### C4 soft aim (first-person melee)
-
-**As built (2026-11-10)**, check CB-5. Industry: Sekiro picks an attack target without a lock (nearest within ~3 m and +-30 deg
-of the stick, first ~1/6 s; R6 §5), God of War auto-orients attacks (R8 §1.3); first-person melee games soft-aim rather than
-hard-lock (R8 §2; KCD's hard lock was rejected by the owner, camera.md). Reuse: no crate; the pick sits beside `acquire`.
-- **Detail** (pick, tick, shell, steer): [history](archive/combat-history.md) "C4 soft aim as built". In short: the nearest
-  `Lockable` within `SoftAimParams { reach 3 m, cone 30 deg, window 1/6 s }` of the aim axis (view with `Command::face_view`)
-  becomes the swing's turn target (`SwingState::aim`); first person (`face_view`) squares attacks up to the view, never locks.
-- **Dragging** (Chivalry, R8 §2): the body turns only in `Turn` windows (360 deg/s, attack start) and holds through `NoTurn`
-  (the hit), so mouse turns mid-swing never move the blade or the sweeps. The view is bounded around the body while committed
-  ("C4b").
-- Tests: [history](archive/combat-history.md) "C4 soft aim as built".
-
-### C4b first-person attack look limits
-
-**As built (2026-11-10)**, check CB-5b; full notes and tests: [history](archive/combat-history.md) "C4b as built". Industry
-(R8 §2): true first-person bodies turn with the view and cap the swing's turn rate (Mordhau "turn cap", Chivalry 2 torque); ours
-holds the body in `NoTurn`, so the view is bounded by an angle box around the body instead.
-- `sf_action::LookRule { yaw, pitch, ease }` = `MoveRule.look` (sheet moves: `look`, copied onto the generated rule);
-  `CompiledRule::look_at`: in force until `Cancel(Move)` opens or the chain ends.
-- `sf_camera_bevy::follow_move_look` writes `PlayerCamera::look_limits`, centred (`limits_yaw`) on the body's gameplay yaw;
-  `update_look` applies them in first person only, eased, and that look is `Command.view` (the clamp is where the view is made).
-- `sword_1h` attacks: yaw 45 deg (half the 16:9 horizontal FOV at 60 deg vertical: 45.7), pitch -45..20, ease 0.10 s; rolls free.
+**As built (2026-11-10)**, check CB-3a; industry and tests: [history](archive/combat-history.md) "C2a as built".
+- **Schedule** (`sf_combat::SparSchedule { class, first, period, reach }`, `spar.rs`): `command(tick, since, to_target)` writes
+  an ordinary `Command`: the view at the target with `face_view` (the attack squares up to it), `class` pressed on a due tick
+  (`first`, then every `period`) while the target's feet are within `reach`. No special path: the swing goes through the chooser,
+  sweeps, contact order and rules like the player's (C6's `sf_ai` will write `Command` the same way). A due tick out of reach or
+  inside a move that refuses the press is skipped.
+- **Game** (combat-adapter.md "Sparring dummy"): `mw_combat/data/sparring.ron` (Light, first 1.5 s, period 2.5 s, reach 2 m); the
+  sparring dummy is a mode of the training dummy (`DummyKind::Sparring`, spawn points `sparring*`, level `sparring`), sword sheet.
+- **Player reactions**: nothing new in the framework: the pipeline already forces the defender's reaction from its sheet
+  (`ReactionTable::lookup`, side then tier fallback); the player is a defender like any. Health and stamina change on the player's
+  stat sheet through the S5 wiring (`PoolAdjust`, cause `Combat`).
+- **First person during a reaction** (decision): reactions carry no `look` rule, so the view stays free (the player keeps the
+  camera; limits of an interrupted attack ease out); the body holds its yaw (`SquareUp::Keep`, no `Turn`), the view-model arms follow
+  the body's pose. The kick is the hook for C4's combat shake: `HitLanded` on the followed body -> `CameraShake` (rotation only,
+  after the look, never into `Command.view`); not built.
 
 ## Open questions
 

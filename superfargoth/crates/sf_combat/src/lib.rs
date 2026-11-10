@@ -1,7 +1,8 @@
 //! Bevy-free melee combat core (`docs/specs/combat.md`): moveset sheets compiled into
 //! `sf_action` move rules and a combat move table, fighters and vitals, hit and hurt volumes with
 //! sub-stepped weapon sweeps, the contact order, the [`CombatRules`] seam with the modern
-//! [`StandardRules`], reaction tiers and hit-stop.
+//! [`StandardRules`], reaction tiers and hit-stop, and a sparring partner's strike schedule
+//! ([`SparSchedule`], C2a).
 //!
 //! Slice C1a. The feel layer (this crate and `sf_action`) owns timing and never computes damage;
 //! rules decide numbers; content supplies sheets, clips and stats. Per fixed tick, a host runs
@@ -22,6 +23,7 @@ mod react;
 mod rules;
 mod shape;
 mod sheet;
+mod spar;
 mod step;
 
 pub use aim::{SoftAimInput, soft_aim_axis, soft_aim_wanted, update_soft_aim};
@@ -35,4 +37,5 @@ pub use sheet::{
     At, CompiledSheet, Costs, Defaults, HitDef, HitMask, HitRow, HitStopDef, MaskDef, MoveDef, MoveSpec, MoveTable, Movesets, SheetDef, SheetError,
     SlotSpan, WeaponDef, WindowDef, compile, load,
 };
+pub use spar::SparSchedule;
 pub use step::{Body, CombatCtx, CombatEvent, CombatOutput, HOSTILE_RANGE, SocketSource, SocketTracks, Unit, gate, step};

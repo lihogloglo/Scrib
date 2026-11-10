@@ -1,7 +1,7 @@
 # Combat: archive
 
-Moved out of [combat.md](../combat.md) on 2026-10-27 to keep the spec under the doc budget: the C1a and C1b briefs
-and their as-built notes. combat.md and the `sf_combat` code win where they differ.
+Moved out of [combat.md](../combat.md) on 2026-10-27 (and later) to keep the spec under the doc budget: the C1a and C1b briefs
+and their as-built notes, then each slice's as-built detail and tests. combat.md and the `sf_combat` code win where they differ.
 
 ## C1 briefs and as built (moved 2026-10-27)
 
@@ -157,3 +157,64 @@ still in `NoTurn` (no dragging), so the bound is an angle box around the body in
   `mw_combat` (every attack has `look`), `sf_camera` (recentred limits keep their weight, ease in again after release),
   `mw_player_bevy` headless (first person: light1 holds the view within 45 deg of the body, `Command.view` equals it, free after
   `Cancel(Move)`; third person and the roll free).
+
+### C4 soft aim and C4b summaries (moved from combat.md 2026-11-10, C2a)
+
+#### C4 soft aim (first-person melee)
+
+**As built (2026-11-10)**, check CB-5. Industry: Sekiro picks an attack target without a lock (nearest within ~3 m and +-30 deg
+of the stick, first ~1/6 s; R6 §5), God of War auto-orients attacks (R8 §1.3); first-person melee games soft-aim rather than
+hard-lock (R8 §2; KCD's hard lock was rejected by the owner, camera.md). Reuse: no crate; the pick sits beside `acquire`.
+- **Detail** (pick, tick, shell, steer): [history](combat-history.md) "C4 soft aim as built". In short: the nearest
+  `Lockable` within `SoftAimParams { reach 3 m, cone 30 deg, window 1/6 s }` of the aim axis (view with `Command::face_view`)
+  becomes the swing's turn target (`SwingState::aim`); first person (`face_view`) squares attacks up to the view, never locks.
+- **Dragging** (Chivalry, R8 §2): the body turns only in `Turn` windows (360 deg/s, attack start) and holds through `NoTurn`
+  (the hit), so mouse turns mid-swing never move the blade or the sweeps. The view is bounded around the body while committed
+  ("C4b").
+- Tests: [history](combat-history.md) "C4 soft aim as built".
+
+#### C4b first-person attack look limits
+
+**As built (2026-11-10)**, check CB-5b; full notes and tests: [history](combat-history.md) "C4b as built". Industry
+(R8 §2): true first-person bodies turn with the view and cap the swing's turn rate (Mordhau "turn cap", Chivalry 2 torque); ours
+holds the body in `NoTurn`, so the view is bounded by an angle box around the body instead.
+- `sf_action::LookRule { yaw, pitch, ease }` = `MoveRule.look` (sheet moves: `look`, copied onto the generated rule);
+  `CompiledRule::look_at`: in force until `Cancel(Move)` opens or the chain ends.
+- `sf_camera_bevy::follow_move_look` writes `PlayerCamera::look_limits`, centred (`limits_yaw`) on the body's gameplay yaw;
+  `update_look` applies them in first person only, eased, and that look is `Command.view` (the clamp is where the view is made).
+- `sword_1h` attacks: yaw 45 deg (half the 16:9 horizontal FOV at 60 deg vertical: 45.7), pitch -45..20, ease 0.10 s; rolls free.
+
+### C2a as built (from combat.md 2026-11-10)
+
+Industry: fighting games' training dummies (SF6, Tekken 8 record/playback) and practice
+targets strike on a fixed timer, not an AI, so the defender learns the timing; first-person melee (Mordhau, Chivalry 2, Skyrim)
+flinches the view with a small rotation-only kick (Source `ViewPunch`) and never takes the look during a stagger, as Souls
+never takes the camera.
+- Tests: `sf_combat` (`spar.rs` schedule; `combat.rs` partner squares up and lands on schedule, Back falls back to Front, never
+  presses out of reach, contact order on the player: roll i-frames evade the whole swing, a dead player is skipped and the partner
+  stops); `mw_combat` (tier x side matrix with both fallbacks; the schedule parses); `mw_player_bevy` headless
+  (`tests_sparring.rs`: strikes on schedule in both views, -10 health per hit, reaction starts the next tick and ends; four sides;
+  out of reach never struck; first-person free look through a reaction; non-lethal bout; `tests_vitals`: the player's sheet health
+  -10, cause `Combat`).
+
+### C1b, C1c, C4 pointers (from combat.md 2026-11-10, C2a)
+
+#### C1b: player vs training dummy (Bevy + game)
+
+Briefs, as-built notes and the first sheet's table (UAL2 `Sword_Light_A-D` chain, roll and side rolls; the live values are
+`bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron`): [history](combat-history.md) "C1b sheet".
+
+#### C1c: lock-on
+
+**As built (C1c, 2026-10-27)**, four commits (a2e6d20, 3a54f4b, ddc252d, 2709b71), check CB-2: lock (`sf_combat::update_lock`,
+shell `SfLockOnPlugin`, `LockOwner`, `Lockable`), locked facing and strafe, locked 4-way rolls, the marker. Detail:
+[history](combat-history.md) "C1c as built". Left: strafe clips (C1c-2b), back-roll / backstep clip, target switching
+(C4), the Classic profile hiding lock-on.
+
+### Draw / sheathe as built (from combat.md "Animation integration" 2026-11-10)
+
+- **Draw / sheathe** (built 2026-11-05): an upper-body clip over locomotion with an attach key where the held props
+  change mount (UE attach notify, Skyrim `weaponDraw`). Gameplay times it on the fixed tick from the baked key
+  (`sf_character::ReadyChange`/`ReadyClip::from_clip`, the content names the event); the clip plays from that elapsed
+  time, so presentation never decides when the weapon is out. Attacks wait for the draw's end.
+
