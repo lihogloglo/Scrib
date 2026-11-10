@@ -5592,9 +5592,11 @@ dependencies = [
  "bevy_enhanced_input",
  "bevy_input",
  "bevy_log",
+ "bevy_time",
  "bevy_ui",
  "mw_boot_bevy",
  "mw_controls_bevy",
+ "mw_effects",
  "mw_game_core",
  "mw_install",
  "mw_records",
@@ -5607,6 +5609,7 @@ dependencies = [
  "postcard",
  "serde",
  "sf_character_bevy",
+ "sf_effects_bevy",
  "sf_physics_bevy",
  "sf_records",
  "sf_rpg",
@@ -7995,6 +7998,19 @@ dependencies = [
  "sf_stats",
  "smallvec",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_effects_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_log",
+ "bevy_time",
+ "sf_effects",
+ "sf_stats_bevy",
+ "workspace-hack",
 ]
 
 [[package]]

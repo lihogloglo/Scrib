@@ -8,7 +8,8 @@
 //!   `StatOwner::Player(HOST_KEY)`, built from the `player` record ([`player_start_ops`]: chargen
 //!   is skipped). A save restores it ([`restore_player_sheet`]).
 //! - **NPCs and creatures**: every new `Character::Record` of an NPC or creature record (not the
-//!   player's avatar) gets `Stats` before the next stat tick ([`attach_actor_stats`]), owner
+//!   player's avatar) gets `Stats` and `Effects` (same owner, [`crate::effects`]) before the next
+//!   effect and stat tick ([`attach_actor_stats`]), owner
 //!   `ActorKey` = its placement id ([`crate::dialogue::key`]). A placement with an overlay
 //!   [`STATS_BLOB`] loads it ([`load_sheet`]); else the record's init ops.
 //! - **Unload and save** (save.md "One path for unload and save"): [`ActorStatsSpawner`] writes a
@@ -31,6 +32,7 @@ use sf_records::{RecordDb, RecordId};
 use sf_stats_bevy::sf_stats::{
     ActorKey, ApplyCtx, Cause, CauseKind, Inputs, Rules, Settle, Sheet, SheetSave, StatOp, StatOwner,
 };
+use sf_effects_bevy::{EffectSystems, Effects};
 use sf_stats_bevy::{SfStatsPlugin, StatRules, StatSystems, StatTableRes, Stats};
 use sf_world::{IndexedPlacement, PlacementOverlay};
 use sf_world_bevy::{ActivateCx, PlacementSpawner, SpawnCx, WorldOverlay};
@@ -126,17 +128,21 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>) {
     let rules = Arc::new(mw_stats::openmw_rules(&table, &gmst));
     let stats = MwStats { table: table.clone(), gmst, db };
     let player = new_sheet(&stats, &rules, StatOwner::Player(HOST_KEY), &player_inputs(), &stats.player_ops());
+    let fx_db = stats.db.clone();
     if !app.is_plugin_added::<SfStatsPlugin>() {
         app.add_plugins(SfStatsPlugin);
     }
     app.insert_resource(StatTableRes(Arc::new(table.table.clone())))
         .insert_resource(StatRules(rules))
         .insert_resource(stats)
-        .add_systems(FixedUpdate, attach_actor_stats.before(StatSystems::Apply));
+        .add_systems(FixedUpdate, attach_actor_stats.before(EffectSystems::Commands).before(StatSystems::Apply));
+    crate::effects::add(app, &fx_db);
+    let owner = StatOwner::Player(HOST_KEY);
     app.world_mut().spawn((
         Name::new("player character"),
         PlayerCharacter { key: HOST_KEY },
-        Stats::new(StatOwner::Player(HOST_KEY), player, player_inputs()),
+        Stats::new(owner, player, player_inputs()),
+        Effects::new(owner),
     ));
 }
 
@@ -185,7 +191,7 @@ pub fn attach_actor_stats(
             Some(save) => load_sheet(&stats.table, &rules.0, owner, &save, &init, &inputs),
             None => new_sheet(&stats, &rules.0, owner, &inputs, &init),
         };
-        commands.entity(e).try_insert(Stats::new(owner, sheet, inputs));
+        commands.entity(e).try_insert((Stats::new(owner, sheet, inputs), Effects::new(owner)));
     }
 }
 
@@ -241,7 +247,7 @@ pub fn restore_player_sheet(world: &mut World, key: sf_rpg::PlayerKey, save: Opt
             world.entity_mut(e).insert(character);
         }
         None => {
-            world.spawn((Name::new("player character"), PlayerCharacter { key }, character));
+            world.spawn((Name::new("player character"), PlayerCharacter { key }, character, Effects::new(owner)));
         }
     }
 }

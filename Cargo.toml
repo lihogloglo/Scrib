@@ -185,6 +185,7 @@ sf_coords = { path = "superfargoth/crates/sf_coords", version = "0.1.0" }
 sf_diag = { path = "superfargoth/crates/sf_diag", version = "0.1.0" }
 sf_diag_bevy = { path = "superfargoth/crates/sf_diag_bevy", version = "0.1.0" }
 sf_effects = { path = "superfargoth/crates/sf_effects", version = "0.1.0" }
+sf_effects_bevy = { path = "superfargoth/crates/sf_effects_bevy", version = "0.1.0" }
 sf_gi = { path = "superfargoth/crates/sf_gi", version = "0.1.0" }
 sf_gi_bevy = { path = "superfargoth/crates/sf_gi_bevy", version = "0.1.0" }
 sf_ids = { path = "superfargoth/crates/sf_ids", version = "0.1.0" }

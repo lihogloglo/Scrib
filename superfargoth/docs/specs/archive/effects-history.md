@@ -41,3 +41,17 @@ defs, stats, sources, land and cast models, the target's `SheetRead` and `time: 
 `EffectRequest::Touch`/`Launch(Delivery)`; `Request` effects as `EffectRequest::Effect { Start | End }` (no `Tick`
 until `period`), answered by `EffectOp::Invalidate`. `CureFilter::Effect` (the spec's `Archetype`), `SourceTag`
 (book sources leave the book), `Dispel` (`Cast`/`Power` only, chance `magnitude/100`; the `Cure` op uses 100).
+
+## As built (E4a)
+
+Crate `sf_effects_bevy` (deps `sf_effects`, `sf_stats_bevy`): `Effects { owner,
+active, book }` component, `EffectIndex` (observers), resources `EffectTableRes` (content), `SourceTableRes` (empty),
+`EffectRulesRes` (standard), `EffectIds` (the host counter), `EffectClock`, `PendingEffectOut`; messages `EffectCommand`
+in, `EffectMessage` and `EffectRequestMessage` out; `EffectSystems::{Commands, Tick, Requests, Out}` chained before
+`StatSystems::Apply`. Stat ops leave as `StatCommand`s, one per run of ops with one owner and cause
+(`stat_commands`), so they land the same tick. Ticks only timed sets, in owner order. Game glue
+`mw_rpg_bevy::effects` (`add` from `stats::add`; `Effects` beside every `Stats`; `feed_clock`). Tests: 3 headless +
+1 game (synthetic records); measurement 500 characters / 2 000 effects / 50 rate: effect tick 0.089 ms, whole fixed
+tick with stats 0.55 ms (dev profile, workspace crates at opt-level 1; the 0.03 ms budget is for release on the
+target laptop). Known issue (E1, logged): a temporary `Pool Fortify` on a `KeepRatio` pool (Morrowind magicka,
+fatigue) counts twice: the modifier rebases the current by ratio, then `PoolAdjust` adds the magnitude.

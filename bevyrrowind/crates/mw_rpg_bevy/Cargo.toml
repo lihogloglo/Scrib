@@ -17,6 +17,8 @@ bevy_log.workspace = true
 bevy_ui.workspace = true
 mw_boot_bevy.workspace = true
 mw_controls_bevy.workspace = true
+# Morrowind's MGEF table for the effects glue (`effects`).
+mw_effects.workspace = true
 mw_game_core.workspace = true
 mw_records.workspace = true
 mw_rpg.workspace = true
@@ -29,6 +31,8 @@ mw_world.workspace = true
 postcard.workspace = true
 serde.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
+# Magic effects on the characters (`effects`).
+sf_effects_bevy.workspace = true
 sf_physics_bevy.workspace = true
 sf_records.workspace = true
 sf_rpg.workspace = true
@@ -45,6 +49,8 @@ tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
 
 [dev-dependencies]
+# The effects glue's headless test (fixed tick).
+bevy_time = { workspace = true, features = ["std"] }
 # The moved tests: the RPG state round trip and the installed game's records.
 mw_install.workspace = true
 mw_vfs.workspace = true
