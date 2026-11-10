@@ -259,7 +259,7 @@ instance in this order:
    goes on (`:403` restores it), so step 6 runs in no other view and on no other path; steps 1-5 and Bevy's own frustum
    cull are unaffected by the shading path (architecture review S8);
 7. emit a work item: (batch set, chain, level, instance) — one geometry range per (chain, level) group, which is what
-   S3a2 and S3a3 add to the port (§6).
+   S3a2 added to the port and S3a3 still owes it (§6).
 
 **Quality presets change only `lod_px` and `size_cull_px`** (proposal: Ultra 0.5, High 1, Medium 2, Low 4 px), replacing
 today's view-distance bias, size cutoff and ring distances for statics. No hard draw distance: streaming decides what
