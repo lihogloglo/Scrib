@@ -75,10 +75,10 @@ today, and precombine was its merge step.** The sourced table, with the one row 
 architecture review §0 (which corrected four of our rows on 2026-11-09).
 
 We take the GPU variant of SPUD's data model because what scales with views on the CPU is the number of **phase
-items**, which this design makes O(batch sets) rather than O(entities) — Haar & Aaltonen measured exactly that ("CPU:
-1-2 orders of magnitude less drawcalls… GPU: 20-40 % triangles culled… only small overall gain"). The fallback if the
-patch proves too large is SPUD as-is: a CPU cull feeding `multi_draw_indirect` through a bypass phase. Nothing does
-this for Bevy 0.20 (survey 2026-11-08), so the base is upstream **bevyengine/bevy#25978** (§6).
+items**, which this design makes O(batch sets) rather than O(entities). Sourced case, measurements, the justified
+divergence from SPUD's CPU cull, the rejected alternatives and the SPUD-as-is fallback: architecture review §0-§1,
+not repeated here. Nothing does this for Bevy 0.20 (survey 2026-11-08), so the base is upstream
+**bevyengine/bevy#25978** (§6).
 
 ## Design
 
@@ -104,18 +104,22 @@ the preprocess pass. So it carries residency and promotion for every view at onc
 (§4, "What S3b does and does not deliver"). Promotion is one-way for the life of the cell load; demotion happens only when the
 cell unloads. Promotions are not saved: they are a consequence of gameplay state that is (record overlay, physics).
 
-**Risk, and S3a2 scope.** `is_active` is read inside `@if(FRUSTUM_CULLING)` (`mesh_preprocess.wesl:190-194`), a def set
-only for the indirect pipelines, so a view that preprocesses without GPU frustum culling never tests it. **What such a
-view shows is under investigation 2026-11-09**: the architecture review (S0) reads it as a promoted placement drawn
-**twice**, entity plus stale instance; the port audit (A9) holds the path unreachable today because those views are
-`no_indirect_drawing` and **drop instance batches entirely**, so the statics go **missing** instead. Either way the two
-guards are independent and should not be: moving the test out of that block is one upstreamable line, and until it
-lands statics rest on the `Culling` hardware floor below.
+**What a non-indirect view shows — settled 2026-11-10 from the code. The statics go *missing*; they are not drawn
+twice.** The architecture review (S0) read a promoted placement as drawn **twice**, entity plus stale instance; the
+port audit (A9) held that path unreachable because such views are `no_indirect_drawing` and drop instance batches
+entirely. **A9 is right, and it is the documented hardware floor, not a bug.** Binned phases `continue` past every
+instance batch of a `no_indirect_drawing` view with one `warn_once!`
+(`vendor/bevy_render/src/batching/gpu_preprocessing.rs:2644-2652`); sorted phases do the same and set the item's
+batch range to `0..0` (`:2054-2063`); `PreprocessWorkItemBuffers::push_range` returns `None` on a `Direct`
+work-item buffer, so such a view reserves nothing and queues no draw record. The port's own documentation states the
+conclusion — "the statics are simply **absent** there, not drawn without culling"
+(`vendor/bevy_pbr/src/gpu_instance_batch/mod.rs:101-116`; same text in `vendor/README.md:107-113`). So a promoted
+placement can never double; it can only be absent, in a view the `Culling` floor below already excludes.
 
-**Status of that paragraph, 2026-11-10.** The upstreamable line landed with patch GS slice A — the gate is no longer
-nested inside the frustum-culling block (`vendor/bevy_pbr/src/render/mesh_preprocess.wesl:195-215`, which carries its
-own note on what a non-indirect view then shows). **Which of the two readings above describes that view is being
-settled from the code in a separate pass; this paragraph's wording is that pass's to write, not this one's.**
+The two guards were independent and should not have been: that upstreamable line landed with patch GS slice A, so the
+gate now has its own `@if(FRUSTUM_CULLING)` statement (`vendor/bevy_pbr/src/render/mesh_preprocess.wesl:212-215`,
+with its own note at `:190-211` saying it is defence in depth, not a fix). Statics still rest on the `Culling`
+hardware floor below, and the floor is the whole of the answer.
 
 ### 2. Data model (bake output, `sf_scene`, Bevy-free)
 
@@ -199,24 +203,18 @@ The CPU half's work order is [scene-runtime-plan.md](scene-runtime-plan.md); the
   slot is freed only when the last reference goes. What the review left open (B3) and S3b must still answer: **what the
   pass does with an instance whose chain mesh is not yet in `MeshAllocator`** — today a garbage index range, so
   readiness is a **gate**, not a free action (Budgets).
-- **Instance-slot fragmentation was settled by measurement, against this spec's first answer.** Decision 2026-11-09
-  was a segregated size-class allocator per batch, on the argument that blocks never split or merged make the
-  high-water mark converge on the ring configuration (architecture review S10 had flagged first fit as creeping).
-  **A4 measured both on the same synthetic city walk and the argument was wrong.** The size-class allocator reaches
-  **3.33x peak live slots and is still climbing after 2M cycles** (~9 h of play): `peak(c)` is a record process whose
-  per-class records keep being beaten, ever more rarely, and the classes never peak together. First fit settles at
-  **1.17x** with its free ranges coalesced, and A5 re-measured it at the space level as **1.14x, byte-identical from
-  1 000 to 200 000 cycles** - flat, not creeping. Robson's adversarial `O(M log(max/min))` bound does not describe a
-  streaming ring over a content-bounded size set. **Decision 2026-11-10: first fit (`sf_scene::alloc::SlotAllocator`)
-  allocates the scene records, the per-batch output slots and the chain table**; `ClassAllocator` stays in the tree,
-  tested, carrying the corrected verdict in its doc comment, since its a-priori ceiling and 64-slot-aligned block
-  starts may earn it a place later. What does hold either way: `bump = sum of size(c)*peak(c)` exactly (the real
-  zero-external-fragmentation statement) and an a-priori ceiling from the ring configuration, independent of session
-  length. **Batch capacity stays fixed at config and is never grown at stream-in** - growing it reallocates the output
-  buffer and rebuilds a bind group, which "stream-in <= 0.2 ms, zero spawns" cannot pay - so overflow leaves those
-  placements out of the table to spawn as entities, counted and warned once. The 4096-slot default is an **untested
-  guess**: A5's walk already used ~67 % of it at 25 resident cells with only four chains. Numbers and tests:
-  scene-runtime-plan.md §4.4.
+- **Instance-slot fragmentation: first fit, settled by measurement against this spec's first answer.**
+  **Decision 2026-11-10: first fit (`sf_scene::alloc::SlotAllocator`) allocates the scene records, the per-batch
+  output slots and the chain table.** It reverses the 2026-11-09 decision (a segregated size-class allocator per
+  batch, chosen on a convergence argument that A4 disproved); `ClassAllocator` stays in the tree, tested, carrying
+  the corrected verdict in its doc comment, since its a-priori ceiling and 64-slot-aligned block starts may earn it a
+  place later. **Batch capacity stays fixed at config and is never grown at stream-in** - growing it reallocates the
+  output buffer and rebuilds a bind group, which "stream-in <= 0.2 ms, zero spawns" cannot pay - so overflow leaves
+  those placements out of the table to spawn as entities, counted and warned once. The 4096-slot default is an
+  **untested guess**: A5's walk already used ~67 % of it at 25 resident cells with only four chains, and the ceiling
+  that matters is the product `batches x batch_capacity` (~16 batches fit the Steam Deck). **The measurement tables,
+  the per-allocator high-water curves and the `bump = sum of size(c)*peak(c)` identity are not reproduced here**:
+  scene-runtime-plan.md §4.4 and `docs/briefs/scene-core-a5-a6.md` §3 both carry them in full, with the tests.
 - **Origin shifts** (`big_space`): instance transforms are cell-relative; the per-view pass adds the camera-relative
   cell offset, so an origin shift rewrites nothing.
 
@@ -361,10 +359,12 @@ shape as built (S3a): `vendor/README.md` "The GPU-batched mesh port" and
 [archive/static-scene-history.md](archive/static-scene-history.md).
 ### 7. Motion vectors (DLSS)
 
-#25978 has none. For statics, `MeshInputUniform::previous_input_index` points at the instance itself (previous transform
-= current), and camera motion comes from the view's previous matrices, as for any static mesh today. Wind and UV-scroll
-shaders take the previous frame's time to produce their own motion (the prepass vertex shader evaluates the sway twice).
-A reviewer on #25978 already asked for a flags field to carry history bits; we use it.
+#25978 adds no motion-vector code, **and rigid statics need none**: `previous_input_index = u32::MAX` makes
+`mesh_preprocess` reuse the current transform as the previous one, which *is* the correct rule for a rigid static —
+a zero object-space delta with camera motion from the view's previous matrices, exactly as for any static mesh today.
+Only wind/UV-scroll *history* is missing (S4): those shaders take the previous frame's time to produce their own
+motion (the prepass vertex shader evaluates the sway twice), and a reviewer on #25978 already asked for a flags field
+to carry history bits; we use it. (Correction 2026-11-10: the S3a handoff's flat "no motion vectors" is wrong.)
 
 ### 8. Shadows and other views
 

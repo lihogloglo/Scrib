@@ -30,12 +30,22 @@ From `gs-patch-plan.md` §1, §2, 2a-2e:
 6. `is_active`'s `@if(FRUSTUM_CULLING)` nesting is fixed in gs step 4, the hardware floor is gs O5
    ("fall back to the entity path on a `PreprocessingOnly` adapter") ⇒ §7's verdict, and per-view
    **per-instance LOD is S3a3** (gs §1.6, §4.2), after S3b.
+7. **gs steps 1 and 4 have landed** (verified 2026-11-10). Step 4 gave the `is_active` gate its own
+   `@if(FRUSTUM_CULLING)` statement (`vendor/bevy_pbr/src/render/mesh_preprocess.wesl:212-215`, with
+   its own twenty-line note at `:190-211`). Step 1 moved the range-unpacking dispatch inside
+   `early_gpu_preprocess`, so **every** preprocessing schedule unpacks — the point/spot shadow
+   schedule and `sf_shadow_cache_bevy`'s `LampShadowView` included (`mod.rs:400-407`,
+   `vendor/README.md:105-114`). ⇒ Audit §A4's `NotShadowCaster` mitigation is **obsolete, and
+   applying it is now a bug**: `add_gpu_batched_meshes_to_light_visibility` filters
+   `Without<NotShadowCaster>` (`gpu_instance_batch/mod.rs:893-909`), so the marker would drop every
+   static from every shadow map. §6 and §10 corrected below.
 
-**One conflict to flag.** gs §1.6's "a chain's levels share vertices" is false against our cooker —
-`sf_model::cook` runs `meshopt::optimize_vertex_fetch` per level (`sf_model/src/cook.rs:449-455`),
-so levels have disjoint vertex buffers (review S1; `sf_scene/src/chain.rs:5-9` says so too) — but
-**harmless**: `GpuBatchGeometryRange` already carries a per-range `first_vertex_index` and
-`metadata_index` (gs 2d), so per-level ranges just differ in those fields. Delete the sentence.
+**One conflict, resolved 2026-11-10.** gs §1.6's "a chain's levels share vertices" was false against
+our cooker — `sf_model::cook` runs `meshopt::optimize_vertex_fetch` per level
+(`sf_model/src/cook.rs:449-455`), so levels have disjoint vertex buffers (review S1;
+`sf_scene/src/chain.rs:5-9` says so too) — but **harmless**: `GpuBatchGeometryRange` already carries
+a per-range `first_vertex_index` and `metadata_index` (gs 2d), so per-level ranges just differ in
+those fields. The sentence has been deleted from `gs-patch-plan.md` §1.6.
 ### 1.1 Two instance buffers, not one
 
 The spec's §3 "retained GPU instance table per space" and the port's batch output buffer are
@@ -45,8 +55,9 @@ cell-relative transform, sphere, placement, global chain slot, flags — written
 stream-in through `StaticCellTableView::write_remapped` (`table.rs:425`), allocated by a
 `SlotAllocator` per space, one contiguous range per cell. The **batch outputs** are the port's, one
 per batch: 64 B `GpuMeshInstance` (render-space transform, `is_active`, `tag`;
-`vendor/bevy_pbr/src/gpu_instance_batch/mod.rs:68-76`), allocated by a `ClassAllocator` per batch
-(§4.4), retained in S3b and rewritten per frame by the cull from S3a3. The 80 B record is not the
+`vendor/bevy_pbr/src/gpu_instance_batch/mod.rs:68-76`), allocated by a `SlotAllocator` per batch
+(§4.4: **first fit for all three allocations**, coordinator decision 2026-11-10 by measurement),
+retained in S3b and rewritten per frame by the cull from S3a3. The 80 B record is not the
 64 B slot, so a verbatim copy was never possible (audit §C): the scene buffer is the **input** to
 the cull of §4 (S3a3+), the batch outputs are its result. Three things fall out: `write_remapped` is
 exactly right as the upload path, §3's per-space `SlotAllocator` is the right model, and **origin
@@ -68,7 +79,8 @@ count/allocate/scatter pass picking levels (gs §4.2). Everything below is writt
 inside a main-world resource. The space owns: a `ChainRegistry` (mesh key → global dense chain
 slot, refcounted by resident cell, slots allocated by a `SlotAllocator` with `alloc(1)` so reuse is
 deferred by the frames in flight), a `SlotAllocator` over the scene buffer (one contiguous range
-per resident cell), one `ClassAllocator` per batch over that batch's output slots, the resident-cell
+per resident cell), one `SlotAllocator::with_capacity` per batch over that batch's output slots
+(first fit, all three — §4.4), the resident-cell
 map holding each cell's per-instance slot vector and its allocated blocks, and the **frame
 counter** — which `sf_scene_bevy` increments in `First` and feeds to every `advance`, because
 streaming has no frames-in-flight deferral of its own (`sf_world_bevy/src/stream.rs:1311-1355`
@@ -183,14 +195,37 @@ resident (§5.2); the slot writer also sets `is_active = 0` for an instance whos
 resident; and the port independently leaves `batch.input_range` empty while a range's mesh allocation
 is missing (`gpu_instance_batch/mod.rs:412-425`, re-validated every frame by gs 2c). Three belts, so
 a garbage index range (review B3's open question) is unreachable.
-### 4.4 `alloc.rs` — `ClassAllocator`: the fragmentation policy
+### 4.4 `alloc.rs` — slot allocation: first fit, with a measured-and-rejected alternative
 
-New type; `SlotAllocator` is untouched (review: "do not touch"). `AllocError` gains
-`Exhausted { want: u32, capacity: u32 }`.
+**The policy, and it is all three allocations.** The scene buffer, a batch's output slots and the
+chain table all allocate with **first fit** — `sf_scene::alloc::SlotAllocator`, with
+`SlotAllocator::with_capacity` adding the fixed ceiling a batch needs so it answers `Exhausted`
+instead of growing. Coordinator decision 2026-11-10, taken **by measurement** against this
+section's own first answer, and recorded in `DECISIONS.md` and in `sf_scene/src/space.rs:33-46`.
+Two reasons beyond the 2.6× below: per-view output memory is sized by **capacity**, so allocator
+waste multiplies by the view count in a quantity already estimated at ~140 MB; and at a 4096-slot
+capacity the size-class allocator would hold only ~1 300 live slots, making "exhausted, fall back to
+entities" the main path instead of a corner. What does **not** change: batch capacity is fixed at
+config and never grown at stream-in, and `Exhausted` → entity fallback stays a counted, warned,
+tested path — first fit has no a-priori ceiling, and its 1.14-1.17× was measured on one synthetic
+walk, so a heavy mod list could differ and we need to be able to see it.
+
+**`ClassAllocator` is the rejected alternative, and it stays in the tree, tested.** A new type;
+`SlotAllocator` is untouched (review: "do not touch"). `AllocError` gains
+`Exhausted { want: u32, capacity: u32 }` for both. Keep it for its a-priori ceiling and its
+`BLOCK_GRAIN`-aligned block starts, which may earn it a place later; its doc comment carries the
+corrected verdict. This also supersedes static-scene.md §3's original "a segregated size-class
+allocator per batch" bullet, which points here for the evidence.
 
 ```rust
 /// Block sizes: multiples of 64 slots to 512, then geometric ×1.25 rounded up to 64.
-/// 64 because the materialize dispatch is `capacity / 64` workgroups (`materialize.rs:210`).
+/// `BLOCK_GRAIN` is 64 so block starts fall on the materialize dispatch's workgroup boundary —
+/// a locality property, *not* a requirement. The dispatch is
+/// `capacity.div_ceil(64)` workgroups of `@workgroup_size(64)` (`materialize.rs:319`) running
+/// **one thread per slot** (`materialize.wesl:59-61`: `if id.x >= metadata.capacity { return }`,
+/// `instances[id.x]`), so a workgroup count says nothing about where a block may start and no
+/// alignment is required of one. (Corrected 2026-11-10: this comment used to give the dispatch
+/// as the *reason*.)
 pub const CLASSES: usize = 32;
 pub fn size_class(len: u32) -> Option<(u8, u32)>;  // (class, block slots), None for 0 or > 129_088
 pub struct ClassAllocator {
@@ -208,8 +243,11 @@ impl ClassAllocator {
     pub fn stats(&self) -> ClassStats;   // bump, live, pending, free per class, internal waste
 }
 ```
-**Verdict: corrected 2026-11-10 by measurement (A4) — the bound below is false and the policy was
-reversed.** Blocks are never split and never merged, so a freed class-`c` block satisfies *any*
+**The evidence — A4's measurement, 2026-11-10. Do not delete it; it is why the policy above is what
+it is.**
+
+*What holds a priori, and all it holds.* Blocks are never split and never merged, so a freed
+class-`c` block satisfies *any*
 later class-`c` request: **external fragmentation inside a class is zero**, and the only growth is
 `bump = Σ_c size(c)·peak(c)`, with `peak(c)` the most class-`c` blocks ever *occupied* at once —
 live, or still waiting for the frames in flight. That identity is exact
@@ -219,7 +257,7 @@ it comes the one bound that holds a priori: `peak(c) ≤ resident cells + frames
 configuration before a cell streams in, and **independent of session length**. That is what
 "bounded" means here, and all it means.
 
-**What this section claimed and the measurement denies:** `bump` is *not*
+*What this section claimed and the measurement denies:* `bump` is *not*
 `≤ 1.25·Σ_c peak_c·len_c + 64·CLASSES` ("≤ 1.25 × the worst resident footprint plus one block of
 slack per class"), and it does *not* converge. The classes do not peak together, and `peak(c)` is a
 record process whose records keep being beaten, ever more rarely. On a synthetic 5×5 ring over 40
@@ -231,33 +269,44 @@ ring with a content-bounded size set is not an adversary. Measured again in A5 t
 space (`batch_slot_high_water_curve`): **1.14×**, identical at 1 000, 10 000, 50 000 and 200 000
 cycles, with two or three coalesced free ranges.
 
-So the case for segregated classes over a batch's output slots is the a-priori ceiling (no appeal to
-the sequence), `BLOCK_GRAIN`-aligned block starts for the materialize dispatch, and O(1) allocation
-with no free-list scan — **not** a smaller high-water mark. Budget a batch's `capacity` from the
-ceiling, never from `1.25 × the live set`. The internal waste this section predicts does hold:
-`size(c) < 1.25·len + 64`, measured under 1 000 slots across 25 live cells.
-
-**Coordinator decision 2026-11-10: first fit.** The scene-buffer records, the per-batch output slots
-and the chain table all allocate with `SlotAllocator` (`SlotAllocator::with_capacity` adds the fixed
-ceiling a batch needs, answering `Exhausted` instead of growing). Two reasons beyond the 2.6×:
-per-view output memory is sized by **capacity**, so allocator waste multiplies by the view count in
-a quantity already estimated at ~140 MB; and at a 4096-slot capacity the size-class allocator would
-hold only ~1 300 live slots, making "exhausted, fall back to entities" the main path instead of a
-corner. `ClassAllocator` stays in the tree, tested, carrying the corrected verdict in its doc
-comment: its a-priori ceiling and 64-slot-aligned block starts may earn it a place later. This also
-supersedes static-scene.md §3's "a segregated size-class allocator per batch" bullet, which points
-here for its proof. What does **not** change: batch capacity is fixed at config and never grown at
-stream-in, and `Exhausted` → entity fallback stays a counted, warned, tested path — first fit has no
-a-priori ceiling, and its 1.14-1.17× was measured on one synthetic walk, so a heavy mod list could
-differ and we need to be able to see it.
+*So what is left of the case for segregated classes* is the a-priori ceiling (no appeal to the
+sequence), `BLOCK_GRAIN`-aligned block starts, and O(1) allocation with no free-list scan — **not**
+a smaller high-water mark, which is what it was chosen for. Were it ever revived, budget a batch's
+`capacity` from the ceiling, never from `1.25 × the live set`. The internal waste the type predicts
+does hold: `size(c) < 1.25·len + 64`, measured under 1 000 slots across 25 live cells.
 
 **Capacity policy** (the review's missing item 4; our duty per gs SERIOUS 6): `capacity` is fixed
 per batch at plugin configuration (`SceneConfig::batch_capacity`, default 4096), **never grown at
 stream-in** — growing it reallocates the output buffer and rebuilds the materialize bind group
 (`mod.rs:479-494`, `materialize.rs:162-166`, review S7), breaking "stream-in ≤ 0.2 ms, zero
 spawns". On `Exhausted` the cell publishes **without** that batch's instances, those placements are
-left out of `covered` so they spawn as entities (§5.3), `scene/overflow/cells` counts it and a
-`warn_once` names the batch key.
+left out of `covered` so they spawn as entities, `scene/overflow/cells` counts it and a `warn_once`
+names the batch key. **One ordering problem, open:** `covered` is answered in the Fetch stage and
+`plan_in` runs later, so `covered` cannot yet know which placements will overflow — §5.3's open item
+is the same mechanism and must be settled before B3 relies on this sentence.
+
+**The memory ceiling, and it shapes the rest of S3b** (struct layouts verified 2026-11-10; brief
+`docs/briefs/scene-bevy-b3-b4.md` §1.3 has the table). A **reserved** batch slot costs **208 B +
+176 B per view** — 64 B `GpuMeshInstance` output once per batch, 112 B `MeshInputUniform` and 32 B
+`MeshCullingData` once globally, 176 B `MeshUniform` **per view** — so **≈ 1.6 KB at the eight views
+an exterior frame runs**. gs §1.3's "output space is allocated per range, summing to the capacity"
+means *reserved*, not live: nothing is right-sized until S3a3. Against roughly **100 MB on the Steam
+Deck** that is **≈ 64k reserved slots in total**, i.e. **about 16 batches at the default 4096
+capacity**. The number that matters is therefore the **product** `batches × batch_capacity`, not
+either factor; `SpaceStats::batch_capacity` already reports it and B6 wires it to
+`scene/slots/batch_capacity` as the VRAM gauge it is. Two consequences, stated plainly:
+
+- **`BatchGranularity::PerChain` is not a shippable configuration.** Hundreds of resident chains ×
+  4096 slots is hundreds of megabytes. It stays what §13 question 1 calls it: the one-range fallback
+  and a test oracle. B3 must not ship with `&()` as its slab resolver (§4.5).
+- **`AllocError::Exhausted` → entity fallback is a hot path that must be tested, not a corner
+  case.** At first fit's measured 1.17× a batch holding ~3 500 live instances is already near 4096.
+  §11 exercises it with a deliberately tiny `batch_capacity`; see §13 question 2.
+
+**Open item, awaiting the owner — do not design it here.** If the measured class × slab-pair ×
+bind-group fan-out exceeds ~16 batches, the fix is a **total slot budget in `SpaceConfig` with
+per-batch capacity derived from it**, which is an `sf_scene` (A5) change and not a B3 one. The
+measurement is the `#[ignore = "measurement"]` walk of §11 plus `scene/batches/count`.
 ### 4.5 `space.rs` — the lifecycle, and the range list
 
 ```rust
@@ -288,12 +337,14 @@ pub struct CellPlan {
 }
 pub enum SceneError { Table(TableError), Chain(ChainError), Scene(AllocError), Resident(IVec3),
                       NotResident(IVec3) }
-pub struct SceneSpace { /* chains, scene: SlotAllocator, batches: Vec<(BatchKey, ClassAllocator)>,
+pub struct SceneSpace { /* chains, scene: SlotAllocator, batches: Vec<Batch { key, slots: SlotAllocator, blocks }>,
                           cells: BTreeMap<IVec3, CellResidency>, frame, stats */ }
 impl SceneSpace {
     pub fn new(config: SpaceConfig) -> Self;   // granularity, frames_in_flight, capacities
     /// Pure: validates, allocates, returns the plan. On error nothing is mutated.
-    pub fn plan_in(&mut self, cell: IVec3, table: &StaticCellTableView<'_>) -> Result<CellPlan, SceneError>;
+    /// `slabs` answers for chain levels whose geometry is already resolved; `&()` resolves
+    /// nothing and gives every chain its own batch (as built, `space.rs:384-389`).
+    pub fn plan_in(&mut self, cell: IVec3, table: &StaticCellTableView<'_>, slabs: &impl ChainSlabs) -> Result<CellPlan, SceneError>;
     pub fn commit_in(&mut self, cell: IVec3, plan: &CellPlan);
     pub fn plan_out(&mut self, cell: IVec3) -> CellRelease;   // chains whose last ref went, batches to rebuild
     pub fn promote(&mut self, cell: IVec3, p: PlacementId, table: &StaticCellTableView<'_>) -> Vec<SlotWrite>;
@@ -321,6 +372,31 @@ not by chain, so a cell's instances for one chain are not contiguous and
 `slot = cell start + WorkItem::instance` (`cull.rs:304-311`; there is no `WorkItem::slot`) holds
 under no batch granularity. 4 B per instance (400 KB at 100k) buys exact promotion and release;
 chain-major instance order is a v3+ driver (review M7) that would reduce it to a base per bucket.
+
+**Slab identity is render-world only, and the resolution is a render→main snapshot** (verified
+2026-11-10; brief `docs/briefs/scene-bevy-b3-b4.md` §1.1). Three of the five parts of the batch key
+cannot be computed in the main world: `MeshAllocator` is a render-app GPU resource
+(`MeshAllocatorPlugin::finish` does `render_app.init_gpu_resource::<MeshAllocator>()`,
+`vendor/bevy_render/src/mesh/allocator.rs:214-221`) and the material bind group comes from
+`RenderMaterialBindings::get(&material.asset_id)` (`vendor/bevy_pbr/src/gpu_instance_batch/mod.rs:666`).
+So B3, planning a cell in the main world, cannot name `vertex_slab`, `index_slab` or `bind_group`
+unaided. A5 anticipated it — `plan_in` takes `slabs: &impl ChainSlabs` and `&()` means every chain
+level gets its own batch — but a key is decided **once** per chain slot and there is **no re-keying
+path**, so "resolve later" is not a recovery: a chain first referenced before its slabs resolve
+stays in its own batch for the life of the slot, and §4.4's ceiling rules that out.
+
+**Resolution:** a render-world system takes `ResMut<MainWorld>` in `ExtractSchedule`, reads
+`MeshAllocator` + `RenderMaterialBindings` (both `pub`, both read-only — no private state, no
+ordering surgery) and writes a main-world `ChainSlabTable`. That access is the pattern this repo
+already uses twice, in both cases through a system called `extract_writes`
+(`sf_surface_bevy/src/cells.rs:143`, `sf_terrain_bevy/src/render.rs:33`); those two carry main→render
+and this one carries render→main, which `ResMut` makes legal in the same schedule. **Patching
+nothing, injecting nothing.** It is sound at one frame of lag because slab identity is stable from
+allocation to free: the id is recorded once per allocation (`SlabAllocator::record_allocation`,
+`vendor/bevy_render/src/slab_allocator.rs:915-917` — note the path, the file is not under
+`render_resource/`) and growth keeps the id, moving only offsets inside it (`grow_if_necessary`,
+`:1133-1163`), which the port re-resolves every frame anyway. So a late snapshot can only be
+*absent*, never *wrong* — and absent is exactly what `ChainSlabs` already models as `None`.
 ## 5. The streaming lifecycle
 ### 5.1 The seam: a sibling of `CellProxies`
 
@@ -332,32 +408,52 @@ share the in-flight caps, the byte budget and the reveal-at-once rule:
 // sf_world_bevy/src/scene.rs (new, ~90 lines)
 pub struct SceneCellCx<'a> { pub worldspace: &'a WorldspaceId, pub cell: IVec3,
                              pub cell_origin: WorldPos, pub level: Level }
-/// Order for one cell: `acquire` -> `ready` until true -> `covered` -> `upload` -> `release`.
+/// Order for one cell, and it has **two gates**, not one (§5.3):
+/// `acquire` -> the *fetch* waits on the returned table handle -> `covered` -> `ready` until
+/// true (the chain assets) -> `upload` -> `release`. An abandoned load ends at `release` too.
 pub trait CellScene: Send + Sync + 'static {
-    fn acquire(&self, world: &World, ws: &WorldspaceId, cell: IVec3);
+    /// Starts the `.sfscene` load and **returns its handle**, which streaming parks beside
+    /// `Work::near` so `poll_fetches`' `settled` closure holds the fetch until the table
+    /// resolves. `None` means "no table for this cell" (gate 1 is then a no-op).
+    fn acquire(&self, world: &World, ws: &WorldspaceId, cell: IVec3) -> Option<UntypedHandle>;
+    /// Gate 2, in the Assets stage: the chain `CookedModelAsset`s only — the table is already
+    /// resolved by gate 1, which is what makes `covered` answerable.
     fn ready(&self, world: &World, ws: &WorldspaceId, cell: IVec3) -> bool;
     /// Placements the table draws: their models are not loaded and they do not spawn.
+    /// Consulted in the **Fetch** stage, so it may only read the table (gate 1), never chains.
     fn covered(&self, world: &World, ws: &WorldspaceId, cell: IVec3) -> Option<Arc<HashSet<PlacementId>>>;
-    /// Queues this cell's uploads; returns (bytes queued, done) — resumable.
+    /// Queues this cell's uploads; returns (bytes queued, done). **In M1 `done` is always
+    /// `true`** — one invocation per cell (§5.2); the `bool` is the shape S3a3 may need.
     fn upload(&self, world: &mut World, cx: &SceneCellCx<'_>) -> (u64, bool);
+    /// **Idempotent, and specified so**: a no-op for a cell with no scene residency. It is the
+    /// unload path *and* the rollback of a load cancelled after `acquire` (the `cancel` row below).
     fn release(&self, world: &mut World, ws: &WorldspaceId, cell: IVec3);
     fn bytes(&self, _ws: &WorldspaceId, _cell: IVec3) -> u64 { 0 }
 }
 #[derive(Resource, Clone, Default)] pub struct SceneCells(pub Option<Arc<dyn CellScene>>);
 ```
-Call sites in `stream.rs`, one or two lines each:
+Call sites in `stream.rs` — **seven** line insertions, plus `reveal`, whose control flow changes
+(§5.2). Line numbers re-verified against `main` 2026-11-10:
 
 | Where | What |
 |---|---|
-| `start_fetch` `:695-726` | installed, `to == Level::Near`, `kind == Load` ⇒ `acquire`, `work.scene = true` |
-| `poll_fetches` `:779-792` | union `covered(..)` into `work.members`, so the model gather at `:760-770` skips them; `stats.scene_covered` |
-| readiness `:496-510` | `&& (!w.scene \|\| scene.ready(..))`, exactly as `w.proxy` does |
-| `reveal` (`Stage::Upload`) `:1262-1275` | `scene.upload(world, &cx)` before revealing the group; the stage's cost is already `request.upload_bytes` (`:816`) |
-| `despawn_item` `:1346-1352` | `if request.from == Level::Near { scene.release(..) }`, beside the far proxy release |
-| `upload_estimate` `:787-798` | add `scene.bytes(..)` to the `Level::Near` arms |
+| `start_fetch` `:695-726` | installed, `to == Level::Near`, `kind == Load` ⇒ `acquire`, `work.scene = true`, park the returned handle beside `Work::near` |
+| `settled` in `poll_fetches` `:733-737` | **gate 1**: extend it to also require the table handle out of `NotLoaded`/`Loading`, exactly as it already holds a near load's fetch for its `Handle<CellPrecombine>` |
+| `poll_fetches` `:750-777` | union `covered(..)` into `work.members`, so the model gather at `:759-770` skips them; `stats.scene_covered` |
+| readiness `:523-526` | **gate 2**: `&& (!w.scene \|\| scene.ready(..))`, exactly as `w.proxy` does |
+| `reveal` (`Stage::Upload`) `:1265-1275` | `scene.upload(world, &cx)` before revealing the group; one invocation, `done == true` (§5.2). The stage's cost is already `request.upload_bytes` (`:814-815`) |
+| **`Runtime::cancel` `:1049-1072`** | **the row the plan was missing.** `if work.scene { scene.release(world, &request.worldspace, request.cell) }` — **without it a cancelled near load leaks the cell's chain refs and its scene-buffer range for ever**, and §11's `release_runs_on_the_near_unload_and_after_a_cancelled_load` could not pass. The precedent is exact and two lines away: `cancel` already does `release_models(&work.models)` (`:1058`) and `proxies.release(world, …)` (`:1063`) for the same reason |
+| `despawn_item` `:1347-1353` | `if request.from == Level::Near { scene.release(..) }`, beside the far proxy release — **and from the `to == Level::Unloaded` branch (`:1324-1331`) as well**, which takes `std::mem::take(&mut cell.groups)` and tears every remaining level down with no per-level request, so a cell at Near reported with `from == Level::Far` would otherwise never be released |
+| `upload_estimate` `:787-798` | add `scene.bytes(..)` to the two `Level::Near` arms |
+
+A cancel can reach a cell at any point after `acquire` — the scheduler drops a request whose cell
+left the ring mid-load — so `release` carries both paths rather than a second method: it is
+**specified idempotent** and must tolerate a cell that never reached `plan_in` (release the chain
+refs and the scene range if `commit_in` ran, do nothing otherwise). That is cheaper and safer than
+proving the scheduler can never take either route twice.
 
 `work.members` already means "drawn by something else, do not spawn, still activate"
-(`stream.rs:1232-1236` skips the spawn; `activate_item` `:1276-1307` runs for every placement), so
+(`stream.rs:1227-1230` skips the spawn; `activate_item` `:1278-1307` runs for every placement), so
 colliders, scripts and AI are untouched and **no new concept enters `sf_world_bevy`**.
 
 **Why `Near`:** with a far field the near level holds every placement of the cell and R1 is sized
@@ -375,10 +471,35 @@ chain's `CookedModelAsset` reached `Loaded` or `Failed`
 failed chain fails the cell (§5.3), so reveal-at-once holds and a cell never publishes half its
 statics. `upload` queues the cell's `scene_bytes` (80 B × instances ≈ 8-40 KB) and its `writes`
 (64 B × instances) into `SceneUploads`, drained by extraction; in the render world each becomes one
-`write_buffer` per contiguous run, so a cell costs 1 + (buckets touched) writes. The residency keeps
-a cursor and `upload` returns `done == false` when the byte budget cut it short, so the scheduler
-re-invokes it next frame (`run_stage` `:802-818`). `RenderAssetBytesPerFrame` is already disabled
-(`sf_world_bevy/src/lib.rs:136-141`) and does not interfere.
+`write_buffer` per contiguous run, so a cell costs 1 + (buckets touched) writes.
+`RenderAssetBytesPerFrame` is already disabled (`sf_world_bevy/src/lib.rs:136-141`) and does not
+interfere.
+
+**Coordinator ruling 2026-11-10: M1 uploads a whole cell's table in one invocation** — `upload`
+returns `done == true` always, and `SceneConfig` carries **no per-frame scene upload budget**. The
+earlier text here (a cursor, `done == false` when the byte budget cut it short) is withdrawn. Two
+reasons from the code:
+
+1. **`reveal` cannot be resumed.** `reveal` (`:1265-1275`) removes the `Work` at `:1267` and returns
+   `true` unconditionally. Returning `false` from it would leave the group already revealed
+   (`:1269-1271`) and the next invocation would hit the `else { return true }` and silently drop the
+   rest of the upload. `run_stage` (`:802-818`) does support a multi-frame item
+   (`StageStep { cost, done }`), so the *mechanism* exists; the state does not.
+2. **The `Upload` budget would be multiply charged.** `cost` for the Upload stage is
+   `request.upload_bytes` — the whole estimate, charged on **every** invocation (`:814-815`). A
+   three-frame upload would spend 3× the cell's byte budget against `Stage::Upload`'s per-frame
+   allowance, starving every other cell.
+
+The arithmetic says one invocation is the right answer anyway, not a concession: an instance record
+is 80 B, so even a 2 000-instance cell is ~160 KB — one buffer write. The real control is the
+scheduler's existing budget throttling **how many cells upload per frame**, which is what
+`upload_estimate` + `scene.bytes(..)` already feeds. `upload` still runs **before** the reveal, so
+an error leaves the group `Visibility::Hidden` and reveal-at-once holds.
+
+The multiply-charging in (2) is a **latent bug, not a live one**: today `Stage::Upload` runs exactly
+once per request, so nothing can observe it. It is therefore **logged, not fixed** — one line in
+`bevyrrowind/docs/ROADMAP.md` — and becomes reachable only when some stage first spans frames. Our
+rule is log bugs, don't chase them; the owner picks what gets fixed next.
 ### 5.3 Missing or failed products — every path ends at the entity path
 
 | Failure | Behaviour |
@@ -388,8 +509,54 @@ re-invokes it next frame (`run_stage` `:802-818`). `RenderAssetBytesPerFrame` is
 | a chain's `scene.chains` product missing or failed, or `ChainError::Disagreement` | the **cell** falls back entirely; acquired chain refs released. `scene/chains/failed`, `error!` naming the key and (for a disagreement) the field. |
 | `AllocError::Exhausted` | the cell publishes without that batch's instances; they are absent from `covered`, so they spawn as entities. `scene/overflow/cells`. |
 
-`covered` is consulted after `ready`, so the decision is always made on a resolved table — the same
-shape as the precombine's `valid_members` fallback (`stream.rs:783-789`).
+**Two gates, not one — corrected 2026-11-10; the earlier guarantee was inverted.** This section used
+to say "`covered` is consulted after `ready`, so the decision is always made on a resolved table".
+It cannot be, and the table above depends on it being true, so the seam's shape changes rather than
+the claim being softened.
+
+Why it is inverted: `covered()` must feed the **model gather** (`stream.rs:759-770`), which runs
+inside `poll_fetches` (`:729-785`) — the completion of the **Fetch** stage. `ready()` is polled in
+the loop at `:519-530` over requests whose `stage == Stage::Assets`, i.e. strictly *after*
+`poll_fetches` has already called `scheduler.fetched(id, now, assets, upload)` (`:779`) with the
+model count. So `covered` runs **before** `ready`, always.
+
+The fix is already in the file and is the standard one (asset-gated stage completion — how
+Bethesda and UE gate a streaming cell's publish on its dependent loads): make the **fetch itself**
+wait. The precombine has exactly this problem and solves it in `poll_fetches`' `settled` closure
+(`:733-737`), which holds a near load's fetch until its `Handle<CellPrecombine>` leaves
+`NotLoaded`/`Loading`; the handle is started in `start_fetch` (`:713-723`) and parked in `Work::near`.
+So:
+
+- **Gate 1 — the table, in Fetch.** `CellScene::acquire` returns the `.sfscene` handle; streaming
+  parks it beside `Work::near` and `settled` requires it out of `NotLoaded`/`Loading` too. *Now*
+  `covered` is consulted on a resolved table and every row of the table above is true.
+- **Gate 2 — the chains, in Assets.** `CellScene::ready` keeps its place at `:523-526`
+  (`&& (!w.scene || scene.ready(..))`) and covers only what the resolved table can name: the chain
+  `CookedModelAsset`s, via `AssetServer::get_recursive_dependency_load_state` as
+  `sf_lod_bevy/src/runtime.rs:226-233` does. A failed chain still fails the whole cell, so
+  reveal-at-once holds and a cell never publishes half its statics.
+
+That is one honest change to the published trait (`acquire` gains the return type, §5.1) and no new
+concept in `sf_world_bevy`: streaming already owns a slot for exactly this. `CellProxies::acquire`
+returns `()` only because a far proxy has nothing the *fetch* must wait for. Worked version:
+`docs/briefs/scene-bevy-b1-b2.md` §3.1.
+
+The consequence for the failure table: it is now read in two places. Rows 1-2 (no product, parse
+failure) are answered by **gate 1** — the handle resolves to `Failed`/`NotFound`, `covered` returns
+`None`, nothing is suppressed, and the fallback is exactly as tabulated. Same shape as the
+precombine's `valid_members` fallback (`stream.rs:751-756`).
+
+**Open, for the coordinator — rows 3-4 need an answer the two gates do not give.** A chain failure
+(row 3) and `Exhausted` (row 4) are discovered at **gate 2** and in `plan_in`, i.e. *after* `covered`
+has already folded those placements into `work.members` and *after* the model gather skipped them
+(`:759-770`). The spawn stage then skips them too (`:1227-1230`), so "the cell falls back entirely"
+cannot be delivered by withdrawing coverage at that point: the models are not loaded. Three shapes
+exist — restart the near load as a non-scene load; have `covered` promise nothing a chain could
+retract (i.e. answer `None` for the whole cell until the chains are in, moving gate 1 to cover them,
+at the cost of a later `covered`); or accept that a failed chain costs one cell of statics until it
+reloads. **Not decided here**; row 3's "the cell falls back entirely" is the claim at risk and S3b
+must not be written against it as stated. (Row 4 is the same mechanism and is a *hot* path — §4.4's
+memory ceiling — so it needs the answer first.)
 ### 5.4 Origin shifts
 
 The scene buffer is cell-relative, so a `big_space` shift changes nothing there (`cell_offset`,
@@ -421,6 +588,9 @@ pub struct ChainAssets { pub product: Handle<CookedModelAsset>, pub levels: Vec<
                          pub material: Handle<StandardMaterial> }
 #[derive(Resource, Default)] pub struct SceneFrame(pub u64);
 #[derive(Resource, Default)] pub struct SceneUploads { pub cells: Vec<CellUpload>, pub writes: Vec<SlotWrite> }
+/// Main-world snapshot of render-world slab + bind-group identity (§4.5). Written by
+/// `extract_chain_slabs` through `ResMut<MainWorld>`; the `ChainSlabs` impl `plan_in` reads.
+#[derive(Resource, Default)] pub struct ChainSlabTable(HashMap<AssetId<Mesh>, DrawSlabs>);
 ```
 `SceneTableAsset(pub Vec<u8>)` is a one-field asset with a loader registered for `CELLS_EXT`
 (template `sf_lod_bevy/src/assets.rs:41-66`); the view borrows its bytes, so the asset must own the
@@ -431,10 +601,18 @@ pub struct ChainAssets { pub product: Handle<CookedModelAsset>, pub levels: Vec<
 
 **Batch entities.** Per `BatchId`, one entity with
 `GpuBatchedMesh3d { mesh, max_capacity: config.batch_capacity, ranges }` (gs 2a) +
-`MeshMaterial3d<StandardMaterial>` (required in practice, `mod.rs:415-420`) + `Transform::IDENTITY`;
-**never `Mesh3d`**, never `NoCpuCulling` (`mod.rs:311-316`); plus `NotShadowCaster` until gs step 1
-lands (audit §A4: lamp shadow views do not unpack their range work items and would read
-uninitialized slots), removed by whichever slice takes that step. `mesh` is the first range's mesh,
+`MeshMaterial3d<StandardMaterial>` (required in practice — `materials.instances.get(&entity)` then
+`bindings.get(&material.asset_id)`, `continue` on either miss, so no material ⇒ the batch reserves
+and never draws: `mod.rs:663-668`, and the type's own doc at `:97`) + `Transform::IDENTITY`;
+**never `Mesh3d`**, never `NoCpuCulling` (`mod.rs:311-316`), and — corrected 2026-11-10 — **never
+`NotShadowCaster`**. Audit §A4's mitigation (lamp shadow views do not unpack their range work items
+and would read uninitialized slots) was for gs BLOCKER 2, and **gs step 1 has landed**: the
+range-unpacking dispatch now lives inside `early_gpu_preprocess`, which every preprocessing schedule
+runs (`mod.rs:400-407`, `vendor/README.md:105-114`). Adding the marker now would **remove every
+static from every shadow map** — `add_gpu_batched_meshes_to_light_visibility` filters
+`Without<NotShadowCaster>` (`mod.rs:893-909`) — a visible bug, not a safety net. §11's
+`a_resident_cell_spawns_its_batches_and_despawns_them_on_unload` asserts its absence. `mesh` is the
+first range's mesh,
 `ranges` comes from `SceneSpace::batch_ranges`. Materials are built once per `material_key` from the
 chain product's `materials[0]` through `ModelMaterials` + `sf_world_bevy::matclass::fold`
 (`stream.rs:1437-1457`, `matclass.rs:142-194`), so scene materials fold into classes exactly as
@@ -448,6 +626,7 @@ entity-path materials do and `--off matclass` keeps working.
 | `poll_cell_loads` (plan a cell whose table and chains resolved; spawn/despawn batch entities; rebuild `ranges`) | `Update`, `Residency` | `.after(StreamingSystems::Drive)` — the hook ran this frame |
 | `apply_promotions` (drain the queue into `SceneUploads::writes`) | `Update`, `Promote` | `.after(Residency)` |
 | `extract_scene_uploads` (take `SceneUploads`) | `ExtractSchedule` | — |
+| `extract_chain_slabs` (read `MeshAllocator` + `RenderMaterialBindings`, write `ChainSlabTable` into `ResMut<MainWorld>`; §4.5) | `ExtractSchedule` | — |
 | `prepare_scene_buffers` (create/grow the space's scene buffer: `STORAGE \| COPY_SRC \| COPY_DST`, doubling, encoder copy as `mod.rs:479-494`) | `Render`, `RenderSystems::PrepareResources` | — |
 | `publish_scene` (scene-range writes, batch slot writes, `is_active` flips) | `RenderGraph`, `GpuInstanceBatchSystems::Publish` | — |
 
@@ -471,22 +650,43 @@ the same placement id through the existing spawner (`StaticSpawner`, `spawn.rs:2
 side never spawns, it only stops drawing. Demotion is the cell unload (`Promotions` dies with the
 residency); there is nothing to undo.
 
-**The `is_active` hole — verdict: promotion does not need the GPU fix first.** The gate is nested in
-`@if(FRUSTUM_CULLING)` (`render/mesh_preprocess.wesl:190-194`), and `FRUSTUM_CULLING` is set for
-every indirect preprocessing pipeline and only those: `direct_preprocess` is specialised with
-`PreprocessPipelineKey::empty()` (`render/gpu_preprocess.rs:2095-2099`) while every other prepared
-key contains it (`:2100-2123`), so `INDIRECT ⇒ FRUSTUM_CULLING ⇒ is_active honoured`. And a view
-that does not draw indirectly drops instance batches entirely (`if no_indirect_drawing { continue }`,
-`bevy_render/src/batching/gpu_preprocessing.rs:2573-2576`), so it draws **no** statics rather than
-drawing them twice: a promoted placement can never double, it only goes missing there — the hardware
-floor gs O5 names (and gs SERIOUS 7 corrects the audit: our inherited shadow views never
-individually lose indirect drawing, they inherit the camera's setting,
-`sf_sky_bevy/src/sun_view.rs:227-231`, `sf_shadow_cache_bevy/src/render.rs:518`). So the plugin logs
-one startup `warn!` and behaves as `--off scene` when `GpuPreprocessingSupport` is
-`PreprocessingOnly` (gs O5's default), and `promotion_is_safe_without_the_shader_fix` asserts both
-pipeline-key facts from the vendored source so the day someone prepares a `FRUSTUM_CULLING`-less
-indirect pipeline it fails. gs step 4 un-nests the guard anyway (one line), after which that test's
-second half is redundant and its comment says so.
+**The `is_active` hole — coordinator decision 9 is CONFIRMED from the code, 2026-11-10: in a view
+that does not draw indirectly, statics go *missing*; they do not double-draw.** The architecture
+review (S0) had it the other way round — a promoted placement drawn twice, entity plus stale
+instance — and that reading is now closed. The three citations, all in the vendored tree:
+
+- **Binned phases drop the batches.** `for &main_entity in bin.iter() { if no_indirect_drawing {
+  warn_once!(…); continue; } }` — `vendor/bevy_render/src/batching/gpu_preprocessing.rs:2644-2652`.
+- **Sorted phases do the same and empty the item.** `if no_indirect_drawing || spans.is_empty() {
+  warn_once!(…); *phase.items[current_index].batch_range_mut() = 0..0; continue; }` — `:2054-2063`.
+- **The port's own docs say it.** "the statics are simply **absent** there, not drawn without
+  culling" — `vendor/bevy_pbr/src/gpu_instance_batch/mod.rs:101-116`, under "Hardware floor"; same
+  text in `vendor/README.md:107-113`.
+
+So a promoted placement can never double: it only goes missing in such a view, which is precisely
+the **documented hardware floor** gs O5 names. The supporting pipeline-key fact holds too —
+`FRUSTUM_CULLING` is set for every indirect preprocessing pipeline and only those:
+`direct_preprocess` is specialised with `PreprocessPipelineKey::empty()`
+(`vendor/bevy_pbr/src/render/gpu_preprocess.rs:2163-2167`) while every other prepared key contains
+it (`:2168-2190`), so `INDIRECT ⇒ FRUSTUM_CULLING ⇒ is_active honoured` — and gs SERIOUS 7 corrects
+the audit further: our inherited shadow views never individually lose indirect drawing, they inherit
+the camera's setting (`sf_sky_bevy/src/sun_view.rs:227-231`,
+`sf_shadow_cache_bevy/src/render.rs:518`). gs step 4 has landed, so the gate also has its own
+`@if(FRUSTUM_CULLING)` statement now (`render/mesh_preprocess.wesl:212-215`) — defence in depth, as
+its twenty-line note at `:190-211` says, not a fix.
+
+**Consequence: promotion does not need the GPU fix first**, and the plugin logs one startup `warn!`
+and behaves as `--off scene` when `GpuPreprocessingSupport` is `PreprocessingOnly` (gs O5's
+default). **And §11's `promotion_is_safe_without_the_shader_fix` must be rewritten**: as planned it
+would assert a doubling that cannot happen. The replacement is specified in
+`docs/briefs/scene-bevy-b3-b4.md` §6.2 — assert the two facts that make promotion *safe* instead,
+not the one that would make it unsafe. One reachability question that brief left open is answered:
+`PreprocessPipelineKey` **is** nameable from outside `bevy_pbr`
+(`render/mod.rs:15` `pub use gpu_preprocess::*` under `lib.rs:78` `pub use render::*`), but the
+*specialisation* happens inside `prepare_preprocess_pipelines`' body, so a headless test can only
+assert the bitflag constants — near-vacuous. Prefer the brief's fallback: assert that
+`GpuPreprocessingSupport::is_culling_supported` is the gate B5 reads, and leave a comment citing
+`vendor/bevy_pbr/src/render/gpu_preprocess.rs:2163-2190` for the rest.
 ## 8. The `--scene` switch and the A/B
 
 Framework side: `pub fn suppress_scene_placements(spawners: &mut PlacementSpawners)` in
@@ -504,20 +704,40 @@ stops the **model loads**; `needs_model` cannot be cell-aware (`IndexedPlacement
 - Resolved into plugin config **before `add_plugins`**, as `--off matclass` is (`exterior.rs:269`,
   `:283`): `ScenePlugin { config }` with `config.enabled = scene`, plus
   `streaming.precombine &= !scene` — the precombine draws the same placements
-  (`stream.rs:1176-1207`), so the two must never both be on.
+  (`spawn_precombine`, `stream.rs:1125-1137`, reached from the near-spawn block at `:1209-1216`;
+  corrected 2026-11-10, the old citation `:1176-1207` pointed at the *far-proxy* spawn block), so the
+  two must never both be on.
 - `if scene { sf_scene_bevy::suppress_scene_placements(&mut spawners); }` where `apply_off` runs.
 
 A/B recipe: `balmora_walk` with and without `--scene`, reading `views/<kind>/{items, bins,
-batch_sets}` (`sf_diag/src/views.rs:13-17`) and `stream/*`. **Blocked on two one-liners outside this
-plan:** `batch_set_count()` is blind to instance batches (audit §A5) and `items` under-reports by
-orders of magnitude (§B1) — the A/B is unreadable without them.
+batch_sets, instance_batches, instance_draws, instance_slots}` (`sf_diag/src/views.rs:13-17`,
+`:78-80`) and `stream/*`.
+
+**The A/B is readable today — the former blocker is closed (verified 2026-11-10).** Both counters
+the A/B needs are already fixed in the tree, so nothing outside this plan gates it:
+
+- `batch_set_count()` returns `entity_path_batch_sets + self.instance_batch_draws.len()`
+  (`vendor/bevy_render/src/render_phase/mod.rs:1590-1602`), with its own comment naming audit §A5 /
+  BLOCKER 3 as what it fixes;
+- `entity_count()` adds `self.instance_batches.values().map(IndexSet::len).sum::<usize>()`
+  (`:1545-1547`);
+- `sf_diag` carries `instance_batches` / `instance_draws` / `instance_slots` end to end — per phase,
+  summed per view and summed across views, with its own tests (`sf_diag/src/views.rs:78-80`,
+  `:102-124`, `:160-162`, `:223-253`).
+
+§13 question 8 is therefore closed; see it for the record.
 ## 9. Counters (`sf_diag`, namespace `scene/`)
 
 `chains/{live,pending,high_water,loading,failed}`, `cells/{resident,missing,failed,covered}`,
 `slots/{scene_bump,scene_live,batch_bump,batch_live,waste,overflow}`,
 `batches/{count,ranges,instances}`, `upload/bytes`, `shift/rewrite_bytes`, `plan/ms` — set in `Last`
 behind `resource_exists::<DiagCounters>`, as `matclass::track_static_materials` is
-(`sf_world_bevy/src/lib.rs:131-133`).
+(`sf_world_bevy/src/lib.rs:131-133`). Add `slots/batch_capacity` = `batches × batch_capacity`, which
+`SpaceStats::batch_capacity` already computes: §4.4's memory ceiling makes it the VRAM gauge.
+
+**Nothing to add on the view side.** The counters the §8 A/B reads already exist and already see
+instance batches — `views/<kind>/{instance_batches, instance_draws, instance_slots}` in `sf_diag`,
+over the fixed `batch_set_count()` / `entity_count()` (§8). §13 question 8 is closed.
 ## 10. Steps
 "Bevy?" = needs a Bevy build slot. `sf_scene` steps compile and test in seconds; group them.
 
@@ -540,8 +760,9 @@ behind `resource_exists::<DiagCounters>`, as `matclass::track_static_materials` 
 
 Every step leaves the tree compiling: A1-A6 are additive in a crate nothing yet calls (A2's v3
 breaks only `bake.rs`, changed in A6 in the same test slot), B1-B6 build a plugin nobody adds, C1-C2
-turn it on. Run α+β+γ in one `cargo test -p sf_scene` slot, δ+ε in one Bevy slot, ζ+η in a second;
-B3's `NotShadowCaster` comes off in whichever slice takes gs step 1.
+turn it on. Run α+β+γ in one `cargo test -p sf_scene` slot, δ+ε in one Bevy slot, ζ+η in a second.
+(The former note "B3's `NotShadowCaster` comes off in whichever slice takes gs step 1" is **stale**:
+gs step 1 has landed and B3 must never add the marker at all — §1 item 7, §6.)
 ## 11. Tests
 
 `sf_scene`, Bevy-free and in seconds, synthetic tables through `StaticCellTable::write` as
@@ -555,9 +776,10 @@ B3's `NotShadowCaster` comes off in whichever slice takes gs step 1.
   `a_released_slot_is_not_reused_inside_the_window`.
 - `alloc`: `size_class_waste_is_under_a_quarter`, `a_freed_block_satisfies_its_class`,
   `blocks_are_never_split`, `exhaustion_is_an_error_not_a_panic`, and
-  `bump_is_bounded_under_a_city_walk` — 10 000 deterministic stream-in/out cycles over 40 cell
-  sizes, asserting `bump ≤ 1.25·peak_live + 64·CLASSES` and that `bump` stops growing after the
-  first full traversal.
+  `bump_is_bounded_under_a_city_walk` — deterministic stream-in/out cycles over 40 cell sizes,
+  asserting the **exact identity** `bump = Σ_c size(c)·peak(c)` at twenty stages of the walk, and
+  `first_fit_high_water_on_the_same_walk` beside it. **Not** the withdrawn
+  `bump ≤ 1.25·peak_live + 64·CLASSES`, nor convergence: §4.4 records what A4 measured instead.
 - `space`: `plan_in_remaps_every_chain_index`, `plan_in_is_atomic_on_error`,
   `batch_slots_index_promotion`, `promote_deactivates_every_part_of_the_placement`,
   `plan_out_releases_ranges_and_chains`, `overflow_leaves_the_rest_of_the_cell`,
@@ -568,16 +790,36 @@ B3's `NotShadowCaster` comes off in whichever slice takes gs step 1.
 - `bake`: `chain_product_levels_match_the_table`, `chain_subject_round_trips`,
   `chain_keys_deduplicates_across_cells`.
 
-Headless apps, no render app (template `gpu_batch_tests.rs:178-190`) — `sf_world_bevy`:
-`scene_covered_placements_load_no_models_and_spawn_nothing`,
-`a_cell_without_a_scene_hook_streams_as_before`,
-`release_runs_on_the_near_unload_and_after_a_cancelled_load`. `sf_scene_bevy`:
-`a_resident_cell_spawns_its_batches_and_despawns_them_on_unload`,
-`chain_handles_outlive_the_first_cell_and_drop_with_the_last`,
-`promotion_queues_one_write_per_part`, `promotion_is_safe_without_the_shader_fix` (§7),
+Headless apps, **two different templates for two different crates** — the single citation
+`gpu_batch_tests.rs:178-190` was wrong twice over (that range is the naga reflection helpers
+`wgsl_struct` / `wgsl_size`), corrected 2026-11-10:
+
+- **`sf_world_bevy/src/tests.rs:185-229`** — `streaming_app()` + `settle()` + `count()`: a real
+  streaming app (`MinimalPlugins`, `AssetPlugin`, `MeshPlugin`, `WorldStreamingPlugin`, a
+  `MemoryIndex` and a `baked_source`). This is the template for the **seam** tests, in
+  `sf_world_bevy`: `scene_covered_placements_load_no_models_and_spawn_nothing`,
+  `a_cell_without_a_scene_hook_streams_as_before`,
+  `release_runs_on_the_near_unload_and_after_a_cancelled_load` (§5.1's `cancel` row).
+- **`sf_world_bevy/src/gpu_batch_tests.rs:377-387`** — `app()`: `MinimalPlugins` + `AssetPlugin` +
+  `GpuInstanceBatchPlugin`, **no render app**, with the explicit `app.finish(); app.cleanup();` that
+  makes the plugin's render-app check run. This is the template for the **plugin** tests, to be
+  copied into `sf_scene_bevy`; its helpers `sun()` `:391`, `batch()` `:402`, `batch_with()` `:407`
+  and the worked example at `:418` come with it.
+
+`sf_scene_bevy`: `a_resident_cell_spawns_its_batches_and_despawns_them_on_unload` (asserting
+**no** `NotShadowCaster`, §6), `chain_handles_outlive_the_first_cell_and_drop_with_the_last`,
+`promotion_queues_one_write_per_part`,
+**`promotion_is_safe_without_the_shader_fix` — rewritten, see `docs/briefs/scene-bevy-b3-b4.md`
+§6.2** (decision 9 is settled, §7, so the planned doubling assertion would test something that
+cannot happen; that row also carries the vacuity warning for it),
 `frames_in_flight_defers_every_reuse` (drives `SceneFrame` by hand),
-`a_missing_table_falls_back_to_entities`. Owner machine only, `#[ignore = "measurement"]`: the §8
-A/B; `scene/slots/*` after a 20-minute Balmora walk (the §4.4 bound in the field); frames until all
+`a_missing_table_falls_back_to_entities`, and `overflow_leaves_the_rest_of_the_cell_resident` with a
+deliberately tiny `batch_capacity` — §4.4's ceiling makes that a hot path, not a corner (§13 Q2).
+Brief §6.2 also warns that any test of the *resolved* slab path must inject a `ChainSlabTable` by
+hand and assert its length first: a headless app has no `MeshAllocator`, so such a test passes
+vacuously otherwise. Owner machine only, `#[ignore = "measurement"]`: the §8
+A/B; `scene/slots/*` plus `scene/batches/count` after a 20-minute Balmora walk (§4.4's first-fit
+high-water **and** its memory ceiling in the field); frames until all
 static pipelines are resident (review "cold start"); determinism — the same pose reached by flying
 vs. starting there gives the same resident cells, chain slots, batch list and `ranges` (item 6).
 ## 12. Recommendations and flags
@@ -602,7 +844,9 @@ per cell across hundreds of worldspaces. The bake already *can* (a landless worl
 key is not invertible (§3.1); (3) §3 — name the **two** buffers (§1.1); (4) §1/§4 — `is_active` is
 per instance, not per view, so our cull and per-view LOD need gs S3a3 (§1.2); (5) §Budgets —
 "stream-in ≤ 0.2 ms, zero entity spawns" must gain the chain asset load and the fixed-capacity
-policy (§4.4); (6) gs §1.6's "levels share vertices" should go (§1).
+policy (§4.4); (6) gs §1.6's "levels share vertices" should go (§1). **(1) and (6) landed
+2026-11-10** with this correction pass (`chain.rs:14-15` fixed, the gs sentence deleted); (2)-(5)
+remain with the spec's owner.
 
 **Owner decisions this plan would reverse: none.** Two places where "no quick fixes" made the design
 *larger*, said out loud: baking chain geometry instead of concatenating at stream-in (§3.2), and a
@@ -613,14 +857,17 @@ tightens it: §4.4's fixed batch capacity, because per-view output is sized by c
 
 | # | Question | Default |
 |---|---|---|
-| 1 | Batch granularity | **`PerClass` per (class, slab pair, bind group)**, matching gs O3; `PerChain` stays as the one-range fallback and as a test oracle. |
-| 2 | Batch capacity | **4096 slots**, fixed per batch, overflow per §4.4. Re-tune from `scene/slots/*` after the first walk. |
+| 1 | Batch granularity | **`PerClass` per (class, slab pair, bind group)**, matching gs O3; `PerChain` stays as the one-range fallback and as a test oracle — §4.4's memory ceiling makes it **not shippable**, so this is no longer a free choice. Needs §4.5's slab snapshot to be answerable at all. |
+| 2 | Batch capacity | **4096 slots**, fixed per batch, overflow per §4.4. The knob that matters is the **product** `batches × batch_capacity` — ≈ 16 batches fit the Steam Deck at 4096 (§4.4's ceiling) — and `Exhausted` → entities is therefore a **tested hot path**, not a corner. Re-tune from `scene/slots/*` + `scene/batches/count` after the first walk; if the measured fan-out exceeds ~16, the fix is a total slot budget in `SpaceConfig` with per-batch capacity derived — an `sf_scene` change, **awaiting the owner**, not designed here. |
 | 3 | Chain product shape, and interiors | **One mesh per level** (§3.2; a concatenated variant needs only `ChainsStep` and the range builder to change); interiors **off** (§12). |
 | 4 | One level per instance under M1 — which level? | **LOD0**, and measure the GPU cost against `--off scene`. The alternative (one slot per level, `is_active` picking) costs 4× capacity, which is the argument for gs §4.2, not against LOD0. |
 | 5 | `frames_in_flight` | **3**, in `SceneConfig`; wrong by at most one frame of a stale transform. |
 | 6 | `--scene` or `--off scene` | **Both**: `--scene` opts in now, `Part::Scene` (ALL → 55) keeps the A/B after it becomes the default. |
 | 7 | A baked per-worldspace chain directory instead of runtime slot allocation? | **No** — it would make a cell unloadable on its own (review CONFIRMED-GOOD) and a mod adding one model would rebake the directory. Runtime allocation, as the spec says. |
-| 8 | Who fixes `batch_set_count()` and `items` (audit §A5, §B1)? | **Not this plan — coordinator.** The §8 A/B is unreadable without them. |
+| 8 | Who fixes `batch_set_count()` and `items` (audit §A5, §B1)? | **CLOSED 2026-11-10 — nobody has to; both are already fixed.** `batch_set_count()` adds `instance_batch_draws.len()` (`vendor/bevy_render/src/render_phase/mod.rs:1590-1602`), `entity_count()` adds the instance batches (`:1545-1547`), and `sf_diag` carries `instance_batches` / `instance_draws` / `instance_slots` end to end with its own tests. **The §8 A/B is readable today.** |
+| 9 | What a non-indirect view shows (review S0 vs. port audit A9) | **CLOSED 2026-11-10 — confirmed from the code: the statics go *missing*, they do not double-draw.** Binned `gpu_preprocessing.rs:2644-2652`, sorted `:2054-2063`, port docs `gpu_instance_batch/mod.rs:101-116`. That is the documented hardware floor; §7 and §11's rewritten test. |
+| 10 | Is a cell's upload resumable across frames? | **No in M1 — coordinator ruling 2026-11-10: one invocation per cell, `done == true`, and no per-frame scene upload budget** (§5.2). `reveal` cannot be resumed and `Stage::Upload` would multiply-charge; 160 KB for a 2 000-instance cell makes one write right anyway. The charging bug is latent and **logged** in `bevyrrowind/docs/ROADMAP.md`, not fixed. |
+| 11 | Where does slab + bind-group identity come from in the main world? | **A render→main snapshot in `ExtractSchedule` via `ResMut<MainWorld>`** (§4.5), the access this repo already uses twice. Resolved, not open; the remaining *measurement* is the class × slab-pair × bind-group fan-out (question 2). |
 ## 14. Size
 
 ≈ 4 000 lines — `sf_scene` ≈ 1 400 + 700 of tests (table v3 +260, chains +230, alloc +210, space
