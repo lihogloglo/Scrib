@@ -65,15 +65,16 @@ icon, colour) are read by presentation only (net rule 3).
 | `Damage { stat, cap_at_modified }` | (applied_once: `Damage`) | `Damage(m·dt)` | none | damage attribute/skill |
 | `Restore { stat }` | (once) | `Restore(m·dt)` | none | restore attribute/skill |
 | `Drain { stat }` | `Damage(m)` | none | `Restore(m)` | drain attribute/skill (exact inverse, saved magnitude) |
-| `Pool { pool, mode }` | `PoolAdjust` / `PoolModMax` per mode | `PoolAdjust(±m·dt)` | inverse if `mode` reverts | damage/restore/drain/fortify health, magicka, stamina |
+| `Pool { pool, mode }` | `PoolAdjust` / `AddModifierShift` per mode | `PoolAdjust(±m·dt)` | inverse if `mode` reverts | damage/restore/drain/fortify health, magicka, stamina |
 | `Absorb { inner: Box<Archetype> }` | target gets `inner`, caster the inverse, one `Cause` | same | same | absorb health, absorb skill |
 | `Cure { filter: CureFilter }` | ends matching sources (instant) | none | none | cure disease/poison/paralysis, dispel, remove curse |
 | `Request { kind: TagId }` | `EffectRequest::Start` | `Tick` if periodic | `End` | open/lock, teleport, summon, bound item, levitate, calm/frenzy |
 
 - `StatTarget = Fixed(StatKey) | Arg` (the effect entry picks the attribute or skill). `LayerRule = BySource`:
   `Permanent` when the source class is innate (OpenMW `Flag_AffectsBaseValues`), else `Temporary`.
-- `PoolMode`: `Hurt` (no below zero), `Heal`, `Drain` (below zero allowed, reverted), `Fortify` (`above_max` current,
-  reverted; innate sources use `PoolModMax`).
+- `PoolMode`: `Hurt` (no below zero), `Heal`, `Drain` (below zero allowed, reverted), `Fortify` (max and current
+  together: `AddModifierShift`, `Permanent` when innate; `RemoveSourceShift` at the end), `Boost` (the current over
+  the max, reverted below zero allowed; innate as `Fortify`: OpenMW's Fortify Health / Magicka / Fatigue).
 - `CureFilter = Archetype(EffectKey) | SourceTag(TagId) | Dispel { harmful_only, chance_from_magnitude }`.
 - `Request` effects are the escape hatch for anything that is not a sheet: the runtime emits data, the game's
   handler acts (lock state, teleport, AI intent, spawning) and may answer `Invalid` (the effect ends, still
@@ -267,12 +268,12 @@ from its calendar. The 1.17 fix writes `EffectClock` (and `StatTick`) from the o
 - **What is saved** per character (`EffectsSave { tick, active, book }`): `SpellBook` (by record id) and the whole
   `ActiveSet`, each effect with `magnitude`, `elapsed`, `applied`, `phase`; `started` and cooldowns are rebased from
   `tick` on load. Innate sources are kept (E4): re-landing them from the book would re-apply base changes the sheet
-  already holds (an innate pool fortify is `PoolModMax`) and churn ids; E5 decides whether `ItemConstant` sources are
+  already holds (a pool fortify's shifted current) and churn ids; E5 decides whether `ItemConstant` sources are
   rebuilt from the loadout instead. `EffectIdAlloc` in the world section **`sf/effects`** v1 (E4: `sf/meta` belongs to
   `sf_save` and would need a `META_VERSION` bump; owner question); restored sets also move it past their ids.
 - **Load order** (stats S8): sheets load clamped-off; the effect runtime **re-registers modifiers only**
-  (`sf_effects::reregister`: `AddModifier` of running effects; no `Damage`, `PoolAdjust` or `PoolModMax`: those results
-  are already in the saved sheet) on the building sheet, then one settle. The sheet and its effects load in one step
+  (`sf_effects::reregister`: `AddModifier` of running effects, shifting ones as plain; no `Damage` or `PoolAdjust`:
+  those results are already in the saved sheet) on the building sheet, then one settle. The sheet and its effects load in one step
   (player at `CHARACTERS` order, NPCs at spawn), so nothing runs between them.
 - **Player**: `CharacterSave` gains `effects: Option<EffectsSave>`: `sf.character` **v4**; step v3 → v4 sets `None`,
   and the adapter's init hook builds the book from the character's records (new-game path). Frozen `legacy::v3`.
@@ -334,8 +335,6 @@ Content slices (first effect set, consumables, abilities, script functions, ench
 Detail per slice: [archive/effects-history.md](archive/effects-history.md) (E1-E4b). Open questions: answered
 2026-11-08. E4 (2026-11-10): `sf_effects_bevy` (`Effects`, `EffectCommand` in, messages out, sets before
 `StatSystems::Apply`), saves (`EffectsSave`, `reregister`, `sf.character` v4, `sf/effects` v1, NPC blob `effects`
-v1), glue `mw_rpg_bevy::effects`. 0.089 ms effect tick at 500 characters / 2 000 effects (dev profile). Known issue
-(E1): a temporary `Pool Fortify` on a `KeepRatio` pool (magicka, fatigue) counts twice (modifier rebase + adjust). A3
-(2026-11-10): an innate `Pool Fortify` (`PoolModMax`) on a derived pool is lost: magicka reads 40 / 40 before an
-ability's Fortify Magicka 20, after `Learn` and after `Forget` (each recompute rewrites base and max from the formula;
-ignored test `mw_rpg_bevy` `an_ability_fortify_magicka_raises_the_maximum`).
+v1), glue `mw_rpg_bevy::effects`. 0.089 ms effect tick at 500 characters / 2 000 effects (dev profile). Pool fortifies fixed
+2026-11-10 (E1 double count on `KeepRatio` pools, A3 innate fortify lost on a derived pool): `Fortify` is a shifting
+modifier, `Boost` added (DECISIONS 2026-11-10).

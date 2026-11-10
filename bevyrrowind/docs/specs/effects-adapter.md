@@ -239,10 +239,12 @@ abilities has only its `effects` blob, now built from the record plus the restor
 the record's lists. Verified: Strength 50 (40 + birthsign 10) and an NPC's 45 (40 + 5) equal after a round trip, not
 60 / 50. Fortify Maximum Magicka 5 (The Mage style) gives magicka 60 from 40 and leaves on `Forget`.
 
-**Bug (logged, not fixed: E1 / stats):** an ability's Fortify Magicka (innate → `PoolModMax`, OpenMW `modDynamicStat`)
-is lost on the derived magicka pool: 40 / 40 before, after `Learn` and after `Forget` (ignored test
-`an_ability_fortify_magicka_raises_the_maximum`); Fortify Health / Fatigue abilities likely the same. Vanilla
-birthsigns use Fortify Maximum Magicka, which works. Gaps: an NPC that forgets every start spell and has nothing
+**Fixed 2026-11-10 (pool fortifies):** an ability's Fortify Magicka (lost on the derived pool: 40 / 40 before, after
+`Learn` and after `Forget`) is a `Permanent` `AddModifierShift` (60 / 60, kept through Intelligence changes, `Forget`
+takes 20 off max and current); temporary Fortify Health / Magicka / Fatigue map to `PoolMode::Boost` (OpenMW
+`adjustDynamicStat`: 40 / 40 + 40 reads 80 / 40, the end takes 40 back, below zero allowed). Tests: `mw_rpg_bevy`
+`an_ability_fortify_magicka_raises_the_maximum`, `a_temporary_pool_fortify_...`, `mw_saves_bevy`
+`pool_fortifies_survive_a_save_round_trip`. Gaps: an NPC that forgets every start spell and has nothing
 active writes no blob when it had none, so it relearns on respawn (A4 `RemoveSpell` must write an empty blob);
 `NewGameSheets` (dialogue without an app) has no abilities.
 

@@ -118,9 +118,10 @@ fn timed(defs: &EffectTable, set: &ActiveSet) -> bool {
 
 /// The modifiers `set`'s running effects hold, for a sheet loaded from a save (stats.md "Saves":
 /// sheets load in building mode, sources re-add their modifiers, then one settle). Only
-/// `AddModifier` ops: damage, restores, pool changes and base changes (an innate pool fortify)
-/// are already in the saved sheet. No events, no requests (a `Request` effect's handler state is
-/// the game's own save). An absorb's caster side comes out under the caster's owner, for the
+/// `AddModifier` ops: damage, restores and pool currents are already in the saved sheet, so a
+/// shifting pool modifier ([`StatOp::AddModifierShift`], a pool fortify) comes out as a plain
+/// `AddModifier` (its shift is in the saved current). No events, no requests (a `Request`
+/// effect's handler state is the game's own save). An absorb's caster side comes out under the caster's owner, for the
 /// host to route to that sheet if it is loaded. Same causes as the landing (`tick` the load's).
 pub fn reregister(
     defs: &EffectTable,
@@ -131,8 +132,9 @@ pub fn reregister(
     out: &mut Vec<(StatOwner, StatOp, Cause)>,
 ) {
     crate::step::start_ops(defs, stats, set, target, tick, &mut |owner, op, cause| {
-        if matches!(op, StatOp::AddModifier(_)) {
-            out.push((owner, op, cause));
+        match op {
+            StatOp::AddModifier(m) | StatOp::AddModifierShift(m) => out.push((owner, StatOp::AddModifier(m), cause)),
+            _ => {}
         }
     });
 }

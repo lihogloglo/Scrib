@@ -15,7 +15,8 @@ use sf_effects_bevy::sf_effects::{
 };
 use sf_effects_bevy::{EffectCommand, EffectTableRes, Effects};
 use sf_records::RecordId;
-use sf_stats_bevy::{StatTableRes, Stats};
+use sf_stats_bevy::sf_stats::{CauseKind, StatIdx, StatOp, StatOwner};
+use sf_stats_bevy::{StatCommand, StatTableRes, Stats};
 
 fn app() -> App {
     let mut app = App::new();
@@ -246,29 +247,161 @@ fn forgetting_an_ability_removes_its_effect_and_learning_brings_it_back() {
     assert_eq!(innate(&app, p), ids(&[RACE_ABILITY, SIGN_ABILITY]));
 }
 
-/// Logged bug (effects-adapter.md "As built (A3)"): an ability's Fortify Magicka is
-/// `PoolModMax` (`OpenMW` `modDynamicStat` with `Flag_AffectsBaseValues`), but magicka's base
-/// and max are derived (`mw_stats::magicka_max`) and every recompute overwrites the delta: the
-/// sheet reads 40 / 40 before, after `Learn` and after `Forget`. Fortify Health and Fatigue
-/// abilities likely the same where the pool is derived.
+/// An ability's Fortify Magicka (`OpenMW` `modDynamicStat` with `Flag_AffectsBaseValues`) on
+/// the derived magicka pool: a `Permanent` shifting modifier, so max and current rise by 20 and
+/// stay through an Intelligence change and later recomputes (the A3 bug: the derived base
+/// overwrote a `PoolModMax`, 40 / 40 before, after `Learn` and after `Forget`); `Forget` takes
+/// the 20 off max and current.
 #[test]
-#[ignore = "bug: an innate Fortify Magicka is lost on the derived magicka pool (E1 / stats)"]
 fn an_ability_fortify_magicka_raises_the_maximum() {
     let mut app = spell_app(None);
     let p = player(&mut app);
     let owner = app.world().get::<Effects>(p).unwrap().owner;
-    let before = stat(&app, p, "magicka");
-    let learn = EffectOp::Learn {
-        source: RecordId::new(POOL_ABILITY),
-    };
+    assert_eq!(stat(&app, p, "magicka"), (40.0, 40.0, 40.0, 40.0));
+    let book = |op| EffectCommand::new(owner, vec![op]);
+    let source = || RecordId::new(POOL_ABILITY);
     app.world_mut()
-        .write_message(EffectCommand::new(owner, vec![learn]));
+        .write_message(book(EffectOp::Learn { source: source() }));
     app.update();
     assert_eq!(innate(&app, p), ids(&[RACE_ABILITY, POOL_ABILITY]));
-    let after = stat(&app, p, "magicka");
-    assert_eq!(
-        after.2,
-        before.2 + 20.0,
-        "before {before:?}, after {after:?}"
+    assert_eq!(stat(&app, p, "magicka"), (40.0, 60.0, 60.0, 60.0));
+
+    let (magicka, int, str) = (
+        idx(&app, "magicka"),
+        idx(&app, "intelligence"),
+        idx(&app, "strength"),
     );
+    // Spent to 30 / 60, then Intelligence 40 -> 50: base 50 + 20, current by the ratio (35).
+    stat_ops(
+        &mut app,
+        owner,
+        vec![
+            StatOp::PoolSetCurrent {
+                pool: magicka,
+                value: 30.0,
+            },
+            StatOp::ModBase {
+                stat: int,
+                delta: 10.0,
+            },
+        ],
+    );
+    assert_eq!(stat(&app, p, "magicka"), (50.0, 70.0, 70.0, 35.0));
+    // Another recompute (an unrelated base change) and more ticks keep it.
+    stat_ops(
+        &mut app,
+        owner,
+        vec![StatOp::ModBase {
+            stat: str,
+            delta: 1.0,
+        }],
+    );
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(stat(&app, p, "magicka"), (50.0, 70.0, 70.0, 35.0));
+
+    app.world_mut()
+        .write_message(book(EffectOp::Forget { source: source() }));
+    app.update();
+    assert_eq!(innate(&app, p), ids(&[RACE_ABILITY]));
+    assert_eq!(stat(&app, p, "magicka"), (50.0, 50.0, 50.0, 15.0));
+}
+
+/// A temporary Fortify Health / Magicka / Fatigue as `OpenMW` (`spelleffects.cpp`
+/// `adjustDynamicStat(m, false, true)`, removed with `adjustDynamicStat(-m, true)`): the current
+/// rises over a max that stays, and the end takes the magnitude back, partly spent or not, below
+/// zero allowed (the E4 bug: magicka and fatigue rebased by ratio and counted twice; health
+/// can die of it). Magicka 40, fatigue 160 (Str + Wil + Agi + End), health from the `player`
+/// record.
+#[test]
+fn a_temporary_pool_fortify_raises_the_current_over_the_max_and_takes_it_back() {
+    let mut app = spell_app(None);
+    let p = player(&mut app);
+    let owner = app.world().get::<Effects>(p).unwrap().owner;
+    for (index, key) in [(81, "magicka"), (82, "fatigue"), (80, "health")] {
+        let (_, _, max, full) = stat(&app, p, key);
+        assert_eq!(full, max, "{key} starts full");
+        let fortify = || {
+            let entry = EffectEntry {
+                effect: mw_effects::effect_key(index).unwrap(),
+                arg: None,
+                range: Range::OnSelf,
+                area: 0.0,
+                duration: 1.0,
+                magnitude: (40.0, 40.0),
+            };
+            EffectCommand::new(
+                owner,
+                vec![EffectOp::Inflict {
+                    source: SourceRef {
+                        record: RecordId::new("p_test_fortify_pool"),
+                        item: None,
+                    },
+                    class: SourceClass::Consumable,
+                    caster: None,
+                    entries: [entry].into_iter().collect(),
+                    flags: InstanceFlags::default(),
+                    rolls: RollSeed(1),
+                }],
+            )
+        };
+        let pool = |app: &App| {
+            let s = stat(app, p, key);
+            (s.2, s.3)
+        };
+        app.world_mut().write_message(fortify());
+        app.update();
+        assert_eq!(
+            pool(&app),
+            (max, max + 40.0),
+            "{key}: the current over the max"
+        );
+        for _ in 0..60 {
+            app.update();
+        }
+        assert_eq!(pool(&app), (max, max), "{key}: back at the end");
+
+        // Partly spent (to 30 under the max), and spent below the bonus (to 10). Not fatigue:
+        // it regenerates below its max every tick (`Actors::calculateRestoration`).
+        if key == "fatigue" {
+            continue;
+        }
+        for spent in [max - 30.0, 10.0] {
+            app.world_mut().write_message(fortify());
+            app.update();
+            let pool_idx = idx(&app, key);
+            stat_ops(
+                &mut app,
+                owner,
+                vec![StatOp::PoolSetCurrent {
+                    pool: pool_idx,
+                    value: spent,
+                }],
+            );
+            for _ in 0..60 {
+                app.update();
+            }
+            assert_eq!(pool(&app), (max, spent - 40.0), "{key}: spent to {spent}");
+            stat_ops(
+                &mut app,
+                owner,
+                vec![StatOp::PoolSetCurrent {
+                    pool: pool_idx,
+                    value: max,
+                }],
+            );
+        }
+    }
+}
+
+fn idx(app: &App, key: &str) -> StatIdx {
+    app.world().resource::<StatTableRes>().0.find(key).unwrap()
+}
+
+/// Runs `ops` on `owner`'s sheet through the stats shell (one update).
+fn stat_ops(app: &mut App, owner: StatOwner, ops: Vec<StatOp>) {
+    app.world_mut()
+        .write_message(StatCommand::new(owner, CauseKind::Debug, ops));
+    app.update();
 }

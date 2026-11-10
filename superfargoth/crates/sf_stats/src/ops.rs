@@ -30,7 +30,9 @@ pub enum StatOp {
     PoolAdjust { pool: StatIdx, delta: f32, below_zero: bool, above_max: bool },
     /// Sets a pool's current as given (no clamping).
     PoolSetCurrent { pool: StatIdx, value: f32 },
-    /// Base and current together, no [`crate::Rebase`] (`OpenMW` `modDynamicStat`).
+    /// Base and current together, no [`crate::Rebase`] (`OpenMW` `modDynamicStat`). A pool whose
+    /// base the derived model computes rewrites it at the next recompute: a lasting change to a
+    /// derived pool is a [`StatOp::AddModifierShift`] instead.
     PoolModMax { pool: StatIdx, delta: f32 },
     CounterSet { stat: StatIdx, value: f32 },
     CounterAdd { stat: StatIdx, delta: f32 },
@@ -52,8 +54,17 @@ pub enum StatOp {
     Rest { hours: f32, sleep: bool },
     /// Leaves the group: no rank and not expelled; the group reputation stays (`OpenMW`
     /// `NpcStats::setFactionRank` below 0 erases the rank and the expulsion, not the reputation).
-    /// No-op for a non-member. Last variant: serialized op lists keep their indices.
+    /// No-op for a non-member. Serialized op lists keep their indices: new variants go last.
     Leave { group: RecordId },
+    /// [`StatOp::AddModifier`] whose change to a pool's max moves the current by the same
+    /// amount, never by the pool's [`crate::Rebase`]: max and current together, source-tracked
+    /// (`OpenMW` `modDynamicStat`, `spelleffects.cpp`; a pool fortify). The shifted current is
+    /// clamped as `OpenMW`'s `setCurrent(current + delta)` (default flags: not below 0). While
+    /// the sheet is building it is a plain `AddModifier` (no rebase then either).
+    AddModifierShift(Modifier),
+    /// [`StatOp::RemoveSource`] whose pools' currents shift by their max change, as
+    /// [`StatOp::AddModifierShift`]: the inverse of a shifting add.
+    RemoveSourceShift(SourceId),
 }
 
 /// Whose sheet (net rule 6: never a singleton, never an `Entity`).
@@ -260,6 +271,13 @@ impl Run<'_, '_> {
         self.rejected += 1;
     }
 
+    /// Recomputes with shifting pools; a moved current is saved state.
+    fn shift(&self, sheet: &mut Sheet) {
+        if sheet.recompute_shifting(self.table, self.rules, self.inputs) {
+            sheet.changed_since_init = true;
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn op(&mut self, sheet: &mut Sheet, op: &StatOp, depth: u8) {
         if depth > MAX_DEPTH {
@@ -304,18 +322,33 @@ impl Run<'_, '_> {
                 sheet.dirty = true;
                 sheet.changed_since_init = true;
             }
-            StatOp::AddModifier(m) => {
-                match slot(m.stat) {
-                    Some(Slot::Value(_) | Slot::Pool(_)) => sheet.mods.push(*m),
-                    _ => return self.reject(),
+            StatOp::AddModifier(m) | StatOp::AddModifierShift(m) => {
+                if !matches!(slot(m.stat), Some(Slot::Value(_) | Slot::Pool(_))) {
+                    return self.reject();
                 }
+                let shift = matches!(op, StatOp::AddModifierShift(_));
+                if shift {
+                    // Earlier ops in this call rebase as usual; only this modifier shifts.
+                    sheet.recompute(table, self.rules, self.inputs);
+                }
+                sheet.mods.push(*m);
                 sheet.dirty = true;
+                if shift {
+                    self.shift(sheet);
+                }
             }
-            StatOp::RemoveSource(src) => {
+            StatOp::RemoveSource(src) | StatOp::RemoveSourceShift(src) => {
+                let shift = matches!(op, StatOp::RemoveSourceShift(_));
+                if shift {
+                    sheet.recompute(table, self.rules, self.inputs);
+                }
                 let n = sheet.mods.len();
                 sheet.mods.retain(|m| m.source != *src);
                 if sheet.mods.len() != n {
                     sheet.dirty = true;
+                    if shift {
+                        self.shift(sheet);
+                    }
                 }
             }
             StatOp::PoolAdjust { pool, delta, below_zero, above_max } => {

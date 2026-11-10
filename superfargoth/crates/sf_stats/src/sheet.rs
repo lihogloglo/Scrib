@@ -178,10 +178,24 @@ impl Sheet {
     /// Recomputes the caches when dirty or when the inputs changed: values, then pools (base from
     /// `DerivedModel::pool_base`, max, [`Rebase`] unless building), then derived stats in table order.
     pub(crate) fn recompute(&mut self, table: &StatTable, rules: &crate::Rules, inputs: &crate::Inputs) {
+        self.recompute_with(table, rules, inputs, false);
+    }
+
+    /// [`Sheet::recompute`] for a shifting modifier op ([`crate::StatOp::AddModifierShift`]): a
+    /// pool whose max moved shifts its current by the same amount instead of its [`Rebase`]
+    /// (`OpenMW` `modDynamicStat`: `setCurrent(current + delta)`, default flags). Call
+    /// [`Sheet::recompute`] before the change so earlier ops rebase as usual. Returns whether a
+    /// current moved.
+    pub(crate) fn recompute_shifting(&mut self, table: &StatTable, rules: &crate::Rules, inputs: &crate::Inputs) -> bool {
+        self.recompute_with(table, rules, inputs, true)
+    }
+
+    fn recompute_with(&mut self, table: &StatTable, rules: &crate::Rules, inputs: &crate::Inputs, shift: bool) -> bool {
         let inputs_changed = self.last_inputs.as_ref().is_none_or(|l| !l.same_derivation(inputs));
         if !self.dirty && !inputs_changed {
-            return;
+            return false;
         }
+        let mut moved = false;
         self.dirty = false;
         if inputs_changed {
             self.last_inputs = Some(inputs.for_derivation());
@@ -212,11 +226,18 @@ impl Sheet {
             p.eff_base = p.base + sums.permanent;
             let max = ((p.eff_base + sums.temp) * (1.0 + sums.mul)).max(0.0);
             if max.to_bits() != p.max.to_bits() && !building {
-                p.current = rebased(rebase, p.current, p.max, max);
+                let current = if shift {
+                    crate::ops::set_current(p.current, max, p.current + (max - p.max), false, false)
+                } else {
+                    rebased(rebase, p.current, p.max, max)
+                };
+                moved |= current.to_bits() != p.current.to_bits();
+                p.current = current;
             }
             p.max = max;
         }
         self.refresh_derived(table, rules, inputs);
+        moved
     }
 
     /// Recomputes only the derived stats (a game has a handful). Also runs after pool currents

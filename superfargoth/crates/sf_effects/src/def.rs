@@ -153,8 +153,13 @@ pub enum PoolMode {
     Heal,
     /// Lowers the current, below 0 allowed; reverted at the end.
     Drain,
-    /// Raises max and current; reverted at the end (innate sources move the base instead).
+    /// Raises max and current by the magnitude (a modifier, `Permanent` for an innate source,
+    /// that shifts the current instead of rebasing it); reverted at the end.
     Fortify,
+    /// Raises the current over the max, which stays; the same amount comes off at the end,
+    /// below 0 allowed. Innate sources raise max and current together, as `Fortify` (Morrowind's
+    /// Fortify Health / Magicka / Fatigue: `adjustDynamicStat`, `modDynamicStat` for abilities).
+    Boost,
 }
 
 impl PoolMode {
@@ -165,7 +170,7 @@ impl PoolMode {
             Self::Hurt => Self::Heal,
             Self::Heal => Self::Hurt,
             Self::Drain => Self::Fortify,
-            Self::Fortify => Self::Drain,
+            Self::Fortify | Self::Boost => Self::Drain,
         }
     }
 }
@@ -183,7 +188,7 @@ pub enum Archetype {
     Restore { stat: StatTarget },
     /// Damage of the magnitude at the start, the same amount restored at the end.
     Drain { stat: StatTarget },
-    /// A pool's current (and for `Fortify` its max), per [`PoolMode`].
+    /// A pool's current (and for `Fortify` and innate `Boost` its max), per [`PoolMode`].
     Pool { pool: StatTarget, mode: PoolMode },
     /// The target gets `inner`, the caster its inverse, under one cause.
     Absorb { inner: Box<Archetype> },

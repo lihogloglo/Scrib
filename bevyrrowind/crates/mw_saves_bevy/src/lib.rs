@@ -953,6 +953,93 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// Pool fortifies through the game's save path: an ability's Fortify Magicka learned in play
+    /// (a `Permanent` modifier on the derived pool, re-registered without shifting again) with
+    /// magicka partly spent, and a temporary Fortify Health (the current over the max): equal
+    /// after a load, the fortify still ends on time, and `Forget` still takes the 20 off.
+    #[test]
+    #[allow(clippy::float_cmp, reason = "exact values: saves are logic")]
+    fn pool_fortifies_survive_a_save_round_trip() {
+        use std::time::Duration;
+
+        use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
+        use mw_rpg_bevy::effects::test_records::POOL_ABILITY;
+        use sf_effects_bevy::sf_effects::{EffectEntry, EffectKey, EffectOp, InstanceFlags, Range, RollSeed, SourceClass, SourceRef};
+        use sf_effects_bevy::{EffectCommand, EffectIds, Effects};
+        use sf_stats_bevy::sf_stats::{CauseKind, StatOp, StatOwner};
+        use sf_stats_bevy::{StatCommand, StatTableRes, Stats};
+
+        let root = temp_root("pool-fortify");
+        let db = mw_rpg_bevy::effects::test_records::spell_db(&[]);
+        let mut app = app(root.clone(), Rpg::new(db.clone()).unwrap());
+        let step = |app: &mut App, seconds: f64| {
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(seconds)));
+        };
+        app.add_plugins(TimePlugin).insert_resource(Time::<Fixed>::from_hz(60.0));
+        step(&mut app, 1.0 / 60.0);
+        mw_rpg_bevy::stats::add(&mut app, Some(db));
+        app.update();
+        let hero = StatOwner::Player(HOST_KEY);
+        let table = app.world().resource::<StatTableRes>().0.clone();
+        let (magicka, health) = (table.find("magicka").unwrap(), table.find("health").unwrap());
+        // (magicka max, current, health max, current, active source records)
+        let read = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&Stats, &Effects)>();
+            let (s, fx) = q.iter(app.world()).find(|(s, _)| s.owner == hero).expect("the player");
+            let v = s.view(&table);
+            let records: Vec<_> = fx.active.sources().iter().map(|s| s.source.record.to_string()).collect();
+            ([v.max(magicka), v.current(magicka), v.max(health), v.current(health)], records)
+        };
+        let full = read(&mut app).0;
+        assert_eq!(full[..2], [40.0, 40.0]);
+
+        let fortify = EffectEntry {
+            effect: EffectKey::new("FortifyHealth"),
+            arg: None,
+            range: Range::OnSelf,
+            area: 0.0,
+            duration: 2.0,
+            magnitude: (30.0, 30.0),
+        };
+        let potion = EffectOp::Inflict {
+            source: SourceRef { record: RecordId::new("p_hero"), item: None },
+            class: SourceClass::Consumable,
+            caster: None,
+            entries: [fortify].into_iter().collect(),
+            flags: InstanceFlags::default(),
+            rolls: RollSeed(3),
+        };
+        let learn = EffectOp::Learn { source: RecordId::new(POOL_ABILITY) };
+        app.world_mut().write_message(EffectCommand::new(hero, vec![learn, potion]));
+        app.update();
+        let spend = StatOp::PoolSetCurrent { pool: magicka, value: 30.0 };
+        app.world_mut().write_message(StatCommand::new(hero, CauseKind::Debug, vec![spend]));
+        for _ in 0..9 {
+            app.update();
+        }
+        let before = read(&mut app);
+        assert_eq!(before.0, [60.0, 30.0, full[2], full[3] + 30.0]);
+
+        step(&mut app, 0.0);
+        save(&mut app);
+        restore_player_sheet_fresh(&mut app);
+        app.insert_resource(WorldOverlay::default()).insert_resource(EffectIds::default());
+        load(&mut app);
+        assert_eq!(read(&mut app), before, "magicka 30 / 60 and health over its max, not shifted twice");
+
+        // The fortify ends 110 ticks on; the ability stays until forgotten.
+        step(&mut app, 1.0 / 60.0);
+        for _ in 0..110 {
+            app.update();
+        }
+        assert_eq!(read(&mut app).0, [60.0, 30.0, full[2], full[3]]);
+        let forget = EffectOp::Forget { source: RecordId::new(POOL_ABILITY) };
+        app.world_mut().write_message(EffectCommand::new(hero, vec![forget]));
+        app.update();
+        assert_eq!(read(&mut app).0, [40.0, 10.0, full[2], full[3]]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn restore_player_sheet_fresh(app: &mut App) {
         mw_rpg_bevy::stats::restore_player_sheet(app.world_mut(), HOST_KEY, None, None);
     }

@@ -168,7 +168,7 @@ fn a1_archetypes() {
     assert_eq!(archetype(18), Some((pool("health", PoolMode::Drain), ArgKind::None)));
     assert_eq!(archetype(24), Some((pool("magicka", PoolMode::Hurt), ArgKind::None)));
     assert_eq!(archetype(77), Some((pool("fatigue", PoolMode::Heal), ArgKind::None)));
-    assert_eq!(archetype(81), Some((pool("magicka", PoolMode::Fortify), ArgKind::None)));
+    assert_eq!(archetype(81), Some((pool("magicka", PoolMode::Boost), ArgKind::None)));
     assert_eq!(archetype(15), Some((pool("health", PoolMode::Hurt), ArgKind::None)));
     assert_eq!(archetype(27), Some((pool("health", PoolMode::Hurt), ArgKind::None)));
     let magnitude = |k: &str| Some((Archetype::MagnitudeStat { stat: StatTarget::Fixed(key(k)) }, ArgKind::None));

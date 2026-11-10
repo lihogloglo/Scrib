@@ -273,3 +273,13 @@ Spec text moved here to keep `stats.md` under budget:
 - **Tests**: `mw_rpg/src/tests_stats.rs` 5 (attribute, skill, health percent, faction rank and `SameFaction` /
   `FactionRankDifference` on both sides of each threshold; an unknown co-op player and a run without stats are
   neutral); the real-data dialogue tests (`mw_rpg_bevy` dialogue) run on `NewGameSheets`.
+
+## Pool fortifies (2026-11-10): `sf_stats` `ops.rs`, `sheet.rs`
+
+- `StatOp::AddModifierShift(Modifier)` / `RemoveSourceShift(SourceId)` (last variants): recompute first (earlier ops
+  rebase as usual), change the modifiers, then `Sheet::recompute_shifting`: a pool whose max moved gets
+  `set_current(current, new_max, current + (new_max - old_max), false, false)` (OpenMW `modDynamicStat`) instead of
+  its `Rebase`; no shift while building. A moved current sets `changed_since_init`.
+- `PoolModMax` stays a stored-base change: on a derived pool (Morrowind magicka, fatigue) the next recompute rewrites
+  it, so lasting changes there are shifting modifiers. Tests: 3 in `tests.rs` (ratio pool partly spent and clamped
+  at 0; a Permanent shift on a derived pool through a base change; no shift while building).

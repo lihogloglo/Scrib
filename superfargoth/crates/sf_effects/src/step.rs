@@ -353,18 +353,25 @@ impl Side {
                 Stage::End(a) => push(adjust(a, false, false)),
                 Stage::Tick(_) => {}
             },
-            Kind::Pool(PoolMode::Fortify) => match stage {
-                Stage::Start(m) if self.innate => push(StatOp::PoolModMax { pool: stat, delta: m }),
-                Stage::End(a) if self.innate => push(StatOp::PoolModMax { pool: stat, delta: -a }),
-                Stage::Start(m) => {
-                    push(modifier(Layer::Temporary, m));
-                    push(adjust(m, false, true));
-                }
-                // The current first, while the max still holds the modifier.
-                Stage::End(a) => {
-                    push(adjust(-a, false, true));
-                    push(StatOp::RemoveSource(source));
-                }
+            // The current only, over the max (`OpenMW` `adjustDynamicStat(m, false, true)`); the
+            // end takes the amount back, below 0 allowed (`adjustDynamicStat(-m, true)`).
+            Kind::Pool(PoolMode::Boost) if !self.innate => match stage {
+                Stage::Start(m) => push(adjust(m, false, true)),
+                Stage::End(a) => push(adjust(-a, true, false)),
+                Stage::Tick(_) => {}
+            },
+            // Max and current together: a shifting modifier on the source's layer (innate:
+            // `Permanent`, which a derived pool's recompute keeps), never the pool's rebase
+            // (`OpenMW` `modDynamicStat`).
+            Kind::Pool(PoolMode::Fortify | PoolMode::Boost) => match stage {
+                Stage::Start(m) => push(StatOp::AddModifierShift(Modifier {
+                    stat,
+                    layer: self.layer,
+                    op: ModOp::Add,
+                    value: m,
+                    source,
+                })),
+                Stage::End(_) => push(StatOp::RemoveSourceShift(source)),
                 Stage::Tick(_) => {}
             },
         }

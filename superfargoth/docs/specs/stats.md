@@ -124,6 +124,7 @@ pub enum StatOp {
     AddModifier(Modifier), RemoveSource(SourceId),
     PoolAdjust { pool, delta, below_zero: bool, above_max: bool },   // OpenMW DynamicStat::setCurrent flags
     PoolSetCurrent { pool, value }, PoolModMax { pool, delta },       // ModMax: base and current together (OpenMW modDynamicStat)
+    AddModifierShift(Modifier), RemoveSourceShift(SourceId),          // a pool's current moves by its max change, no Rebase
     CounterSet { stat, value }, CounterAdd { stat, delta },
     Join { group }, SetRank { group, rank }, Expel { group }, ClearExpelled { group }, GroupRep { group, delta, set: bool },
     UseSkill { skill, use_kind: u8, scale: f32 },                      // through SkillUseModel
@@ -205,7 +206,8 @@ What the effect runtime gets from stats, and nothing more:
   on start, `RemoveSource` on end. `Layer::Permanent` for abilities that count as base (OpenMW `Flag_AffectsBaseValues`),
   else `Temporary`. Instance ids are host-allocated stable ids (net rule 7), so removal survives saves and the wire.
 - **Instant and per-tick effects**: `Damage`/`Restore` (attributes, skills), `PoolAdjust` with the two flags
-  (damage/restore health, drain below zero, fortify current over max), `PoolModMax`, `CounterAdd`. Per-tick magnitudes
+  (damage/restore health, drain below zero, fortify current over max), `PoolModMax`, `CounterAdd`; a pool fortify
+  `AddModifierShift` / `RemoveSourceShift` (source-tracked: a derived pool keeps it). Per-tick magnitudes
   are the runtime's job (it calls `apply` on the fixed tick).
 - **Absorb** = two `apply` calls (target loses, caster gains) in one host step with one `Cause`.
 - **Magnitude stats**: numbers the content queries as values (resistances, attack bonus, chameleon, fortify maximum

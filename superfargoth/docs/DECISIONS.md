@@ -1752,3 +1752,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (combat C4b): first-person look limits are `MoveRule.look`, in force until `Cancel(Move)`, centred on the body's
   current yaw (not a fixed entry yaw: the arms hang off the body); the clamp lives in the camera's look accumulator, the one
   producer of `Command.view`, so gameplay and co-op hosts see the limited view. Sword default 45 deg, not 60 (combat.md "C4b").
+- 2026-11-10 (pool fortifies): Morrowind's temporary Fortify Health/Magicka/Fatigue = OpenMW's: current over an unchanged
+  max, taken back at the end (`PoolMode::Boost`); `Fortify` and innate ones = source-tracked `AddModifierShift` (no rebase,
+  derived pools keep them). Not chosen: a no-rebase flag on `Modifier` (every constructor, save shape) (effects.md "As built").

@@ -426,8 +426,8 @@ pub mod test_records {
         build(creatures, false)
     }
 
-    /// [`db`] plus the start-spell records: MGEF Resist Fire, Fortify Magicka and Fortify Maximum
-    /// Magicka, the SPEL
+    /// [`db`] plus the start-spell records: MGEF Resist Fire, Fortify Health / Magicka / Fatigue
+    /// and Fortify Maximum Magicka, the SPEL
     /// constants above, [`RACE`], [`SIGN`], a `player` of [`RACE`] whose own list
     /// ([`NPC_SPELL`]) a new player does not learn, and [`NPC`].
     pub fn spell_db(creatures: &[(&str, u32)]) -> Arc<RecordDb> {
@@ -496,7 +496,9 @@ pub mod test_records {
         }
         for (id, effect_id) in [
             ("resistfire", EffectId::ResistFire),
+            ("fortifyhealth", EffectId::FortifyHealth),
             ("fortifymagicka", EffectId::FortifyMagicka),
+            ("fortifyfatigue", EffectId::FortifyFatigue),
             ("fortifymaximummagicka", EffectId::FortifyMagickaMultiplier),
         ] {
             let m = MagicEffect {

@@ -75,3 +75,16 @@ equal, same expiry; drift and rebase), sf_save_bevy 3 (codec round trip, v3 gold
 save loads with none), mw_saves_bevy 1 (game path, synthetic records: player and creature).
 An NPC's empty effects are written over an older blob (the overlay has no blob removal), so ended effects do not
 come back.
+
+## As built (pool fortifies, 2026-11-10)
+
+Fixes the E1 double count (a temporary `Pool Fortify` on a `KeepRatio` pool: the modifier rebased the current, then a
+`PoolAdjust` added the magnitude again, 100 / 100 read 180 / 140 for 40) and the A3 loss (an innate one was
+`PoolModMax`, a stored-base change a derived pool's recompute overwrote). `sf_stats`: `StatOp::AddModifierShift` /
+`RemoveSourceShift` (appended; `Sheet::recompute_shifting`): the pools whose max the op moves shift their current by
+the same amount, clamped as OpenMW's `setCurrent(current + delta)` (`modDynamicStat`), instead of their `Rebase`; a
+plain modifier while building. `sf_effects`: `PoolMode::Fortify` = a shifting modifier on the source's layer
+(`Permanent` when innate); new `PoolMode::Boost` = `PoolAdjust(+m, above_max)` on start, `PoolAdjust(-m,
+below_zero)` on end, innate as `Fortify` (OpenMW `spelleffects.cpp` 799-819 / 1125-1145 at `ca5e2576`);
+`reregister` turns shifting adds into plain ones (the shift is in the saved current). Tests: sf_stats 3, sf_effects 2,
+mw_rpg_bevy 2 (one un-ignored), mw_saves_bevy 1.
