@@ -116,3 +116,17 @@ exist; `PassTime` applied (training); `Teleport` and the `GetPCTraveling` flag n
   before committing, then check `git show --stat HEAD` (f1a1acb reverted another slice this way).
 - System packages for Bevy builds: `libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev`.
 - `bevyrrowind/tools/cargo_turn.sh` is Windows-only; on Linux cargo's build lock serialises agents.
+
+## Final hour (wrap-up for usage limits)
+
+- **25c54c1 crime spec** (docs): `superfargoth/docs/specs/crime.md` (~26 KB) + `bevyrrowind/docs/specs/crime-adapter.md`
+  (~28.6 KB, over budget; its TODO says to move the GMST table and tests list to an archive at A0). ROADMAP 2.8.
+  Slices LW1-LW9 (rules-only first) and adapter A0-A8. GMSTs and dialogue global names unverified (U); jail skill-loss
+  handler not found in OpenMW; MWScript mapping section is a short TODO. Owner questions (defaults): per-player crime in
+  co-op; one global bounty in Morrowind content; stolen ledger reconciled on inventory change; classic detection roll
+  until AI perception; jail skill loss as a rules hook; co-op jail skips time for the jailed player; Pay/Jail/Resist
+  only; no fences in Morrowind content.
+- **A5b player cast: designed, not built**: `docs/briefs/a5b-player-cast.md` (crate cycle: `CastRequest` moves into
+  `mw_player_bevy::magic`; new `ActionClass::Cast`; attack casts while magic is readied; Morrowind `SpellCast@*`
+  clips; owner question: ready magic on C, next/prev spell on X/Z and d-pad, because R is now heavy attack).
+- **Services A5 spell purchase: researched, not built**: section above.
