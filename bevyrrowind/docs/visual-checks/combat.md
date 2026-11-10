@@ -66,5 +66,13 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
   first ~0.1 s (the view never turns for you); turning the mouse mid-swing doesn't drag the blade (it lands on its line, the view
   leaves the arms); locked in third person then Tab: the lock (dot) goes. Third person unlocked: swings bend onto a near dummy too.
 - Tune: `LockConfig::soft` (reach, cone, window; `sf_combat_bevy`), the sheet's `Turn`/`NoTurn` windows (`sword_1h.ron`).
-- Known gaps: no first-person look limits during a swing (the view can leave the arms; next slice), the body faces the stick, not
-  the view, while walking (an attack snaps it to the view); no view-model arms (FP-2). Status: awaiting owner.
+- Known gaps: the body faces the stick, not the view, while walking (an attack snaps it to the view); no view-model arms (FP-2);
+  look limits during a swing: CB-5b. Status: awaiting owner.
+
+### CB-5b: First-person attack look limits (C4b, 2026-11-10)
+- As CB-5 (`level-arena`, F11, Tab, F). Run it twice: view model off (default) and on (dev console `on viewmodel`).
+- Feel for: LMB, then whip the mouse sideways: the view stops ~45 deg off the body (soft, eased in ~0.1 s, no snap) and the arms
+  and blade stay on screen; up/down stops at ~-45 / +20 deg; the stop lifts as the swing's recovery starts (light1 ~0.57 s) and
+  the view moves on without a jump; chained lights move the stop to each new swing; a roll (Space) never limits; Tab to third
+  person: no limits. With the view model on the arms draw ~1.24x larger: judge whether 45 / -45..20 still frames them.
+- Tune: `look` per attack in `sword_1h.ron` (yaw, pitch, ease); default off if it feels like a wall. Status: awaiting owner.

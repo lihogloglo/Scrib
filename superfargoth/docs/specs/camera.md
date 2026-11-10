@@ -39,16 +39,23 @@ R7 §2, R8 §1.4, §2-3. Companion: [action.md](action.md).
   low-passed head position, a few degrees of head pitch and roll, no head yaw; authored tracks and
   per-clip overrides win; R2 adapt) composed with view yaw/pitch. Each full-body move's track is
   reviewed in visual checks before it ships (R7 §5).
-- **Per-move look limits**: yaw and pitch limits around the move's entry yaw, eased in over the
-  rule's `ease` time, and `ignore_look` windows (action.md `look`). Hanging limits the look-down;
-  a mantle limits yaw to the lip direction. Limits release eased.
+- **Per-move look limits**: yaw and pitch limits around the body's yaw, eased in over the rule's
+  `ease` time, and `ignore_look` windows (action.md `look`). Hanging limits the look-down;
+  a mantle limits yaw to the lip direction. Limits release eased. Built for attacks 2026-11-10
+  (combat.md "C4b"): `MoveRule.look` holds until a `Cancel(Move)` window opens;
+  `sf_camera_bevy::follow_move_look` writes `PlayerCamera::look_limits` centred on the followed
+  body's gameplay yaw (the square-up yaw plus `Turn`-window turns: the arms hang off the body, so
+  a fixed entry yaw would let the view drift off them). **The clamp is in the look accumulator**
+  (`update_look`), the one producer of `Command.view` (the sampler copies it): gameplay and a co-op
+  host get the limited view the player sees; a host does not re-clamp (the ease is frame-rate
+  presentation, and the view is the client's input). `ignore_look` has no writer yet.
 - **Soft aim, no hard lock-on in first person** (decision). Soft aim is gameplay, in the action
   layer: early in an attack (`turn` window start), the nearest valid target in a small cone around
   `Command.view` and within reach becomes the lunge/turn target (R6 §5). The camera does not turn.
   Built 2026-11-10 (combat.md "C4 soft aim"): with `Command.face_view` an attack squares up to the
   view, its `Turn` window steers onto the soft target, `NoTurn` holds the swing whatever the mouse
   does (no dragging, R8 §2); a lock press does nothing and a held lock breaks on entering first
-  person. Next (presentation): attack look limits around the body yaw while committed.
+  person. Attack look limits around the body's yaw while committed: built (previous bullet).
 - **Render bodies** (decision; R7 §2.1, R8 §3): a first-person body (arms, and legs when looking
   down) with its own FOV and scale toward the camera, head hidden; plus the world body for shadows
   and reflections. Per action: an **arms layer** for weapons and spells (a content pack's own

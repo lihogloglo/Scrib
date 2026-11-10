@@ -262,8 +262,8 @@ material, `SkinnedMesh` joints, morph weights and bounds), spawned, re-layered a
 6. **FP-5 wall pull-back** from the wall-brace / hand-IK probes.
 7. **FP-6** (optional) first-person clips as a presentation override (`bevyrrowind bake`).
 First-person combat gameplay (soft aim, no hard lock, attacks face the view) is built ahead of
-FP-2 (combat.md "C4 soft aim", 2026-11-10); its presentation (attack look limits, arms in the view
-model) rides on FP-2.
+FP-2 (combat.md "C4 soft aim", 2026-11-10), and so are its attack look limits (combat.md "C4b": the view
+held within a move's `look` yaw of the body until `Cancel(Move)`); the arms in the view model ride on FP-2.
 
 ## Industry comparison
 

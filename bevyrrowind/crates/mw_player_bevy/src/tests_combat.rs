@@ -10,9 +10,15 @@ use crate::combat::{ReadyWeaponAction, Stance};
 use crate::tests::{Statics, action, app_setup, hold_key, mock};
 
 fn armed() -> (App, Entity) {
+    armed_with(|_| {})
+}
+
+/// [`armed`], `extra` adding plugins before the app finishes.
+fn armed_with(extra: impl FnOnce(&mut App)) -> (App, Entity) {
     let sheet = sf_combat::load(mw_combat::SWORD_1H, &|_| Some(0.5)).expect("sheet compiles");
     let (mut app, player) = app_setup(60, &mw_controls_bevy::keymap(), |app| {
         combat::add(app, Some(sheet), &PlayerClips::default());
+        extra(app);
     });
     app.world_mut().entity_mut(player).insert(PlayerBody);
     app.update();
@@ -356,9 +362,20 @@ fn the_draw_and_sheathe_clips_move_the_weapon_at_their_keys_and_gate_the_attacks
 
 /// First-person combat (combat.md C4 soft aim, camera.md "First person"): the player is armed and
 /// drawn with the game's rules, the training dummy stands `dist` m off at `deg` degrees from the
-/// view (yaw 0, +Z), and the camera following the player is in `view`. Settled.
+/// view (yaw 0, +Z), and the camera following the player is in `view`. Settled. The camera is
+/// data only (no camera plugin): tests set the sampler's view themselves.
 fn first_person_arena(dist: f32, deg: f32, view: sf_camera::ViewChoice) -> (App, Entity, Entity, Entity) {
-    let (mut app, player) = armed();
+    arena(dist, deg, view, false)
+}
+
+/// [`first_person_arena`]; `camera`: with the camera plugin, so the look runs through the player
+/// camera (look input, first-person limits) into the commands.
+fn arena(dist: f32, deg: f32, view: sf_camera::ViewChoice, camera: bool) -> (App, Entity, Entity, Entity) {
+    let (mut app, player) = armed_with(|app| {
+        if camera {
+            app.add_plugins(SfCameraPlugin::<Statics>::default());
+        }
+    });
     let sheet = app.world().resource::<combat::PlayerCombat>().sheet.clone();
     app.insert_resource(rules(&[], sheet.as_ref()));
     dummy::systems::<Statics>(&mut app);
@@ -371,7 +388,7 @@ fn first_person_arena(dist: f32, deg: f32, view: sf_camera::ViewChoice) -> (App,
     let d = dummy::spawn(&mut app.world_mut().commands(), 0, (feet.offset(Vec3::new(dist * s, 0.0, dist * c)), std::f32::consts::PI), root);
     let mut cam = PlayerCamera::new(player);
     cam.set_view(view);
-    let cam = app.world_mut().spawn(cam).id();
+    let cam = app.world_mut().spawn((cam, Transform::default())).id();
     app.world_mut().flush();
     hold_key(&mut app, KeyCode::KeyF, true);
     app.update();
@@ -465,4 +482,110 @@ fn switching_to_first_person_breaks_a_held_lock() {
     assert_eq!(app.world().get::<ActionCharacter>(player).unwrap().state.lock, None);
     assert_eq!(app.world().get::<sf_combat_bevy::LockOwner>(player).unwrap().last, Some(sf_combat::LockEvent::Broke(sf_camera::BreakReason::View)));
     assert!(app.world().get::<sf_camera_bevy::LockOn>(player).is_none());
+}
+
+/// Mouse look right by `rad_per_frame` on every frame from now (the camera's look action).
+fn look_right(app: &mut App, rad_per_frame: f32) {
+    let mut q = app.world_mut().query::<(Entity, &CameraAction)>();
+    let look = q.iter(app.world()).find(|(_, t)| **t == CameraAction::Look).expect("camera look action").0;
+    app.world_mut().entity_mut(look).insert(ActionMock::new(TriggerState::Fired, Vec2::new(rad_per_frame, 0.0), MockSpan::Manual));
+}
+
+/// One frame of a move: action clock, view (camera look) yaw, the view the commands carry, body yaw.
+#[derive(Clone, Copy, Debug)]
+struct LookSample {
+    t: f32,
+    view: f32,
+    command: f32,
+    body: f32,
+}
+
+impl LookSample {
+    /// The view's yaw off the body's, degrees.
+    fn off(&self) -> f32 {
+        sf_camera::wrap_angle(self.view - self.body).to_degrees()
+    }
+}
+
+/// Starts `rule` with `start` and, with the mouse turning right ~2.9 deg a frame, samples every
+/// frame of it (the dummy 6 m ahead: out of soft-aim reach).
+fn turn_through(view: sf_camera::ViewChoice, start: impl FnOnce(&mut App, Entity), rule: &str) -> Vec<LookSample> {
+    let (mut app, player, _, cam) = arena(6.0, 0.0, view, true);
+    let key = app.world().resource::<combat::PlayerCombat>().sheet.as_ref().unwrap().rule_key(rule);
+    start(&mut app, player);
+    look_right(&mut app, 0.05);
+    let mut samples = Vec::new();
+    for _ in 0..120 {
+        app.update();
+        let c = app.world().get::<ActionCharacter>(player).unwrap();
+        if c.state.mov != key {
+            if samples.is_empty() {
+                continue;
+            }
+            break;
+        }
+        let (t, command) = (c.state.clock.elapsed.secs(), c.command.view.yaw);
+        let body = app.world().get::<ActionBody>(player).unwrap().loco.motion.yaw;
+        let view = app.world().get::<PlayerCamera>(cam).unwrap().look().yaw;
+        samples.push(LookSample { t, view, command, body });
+    }
+    assert!(samples.len() > 10, "{rule} played: {samples:?}");
+    samples
+}
+
+fn press_light(app: &mut App, _: Entity) {
+    let attack = action(app, PlayerAction::Button(ActionClass::Light));
+    mock(app, attack, true);
+    app.update();
+    app.world_mut().entity_mut(attack).insert(ActionMock::new(TriggerState::None, false, MockSpan::Manual));
+}
+
+/// C4b: in first person a light attack holds the view within its `look` yaw (45 deg) of the body
+/// while committed, whatever the mouse does, and the commands carry that held view; once
+/// `Cancel(Move)` opens (light1: 0.57 s) the limits ease out and the view turns on freely.
+#[test]
+fn first_person_light_attack_holds_the_view_near_the_body_until_cancel_move() {
+    let samples = turn_through(sf_camera::ViewChoice::FirstPerson, press_light, "light1");
+    let limit = 45.0;
+    let committed: Vec<_> = samples.iter().filter(|s| s.t < 0.57).collect();
+    assert!(committed.len() > 20, "{samples:?}");
+    for s in &committed {
+        assert!(s.off().abs() <= limit + 0.01, "the view left the limits at {:.3} s: {:.2} deg ({samples:?})", s.t, s.off());
+    }
+    let held = committed.iter().map(|s| s.off().abs()).fold(0.0, f32::max);
+    assert!(held > limit - 0.5, "the mouse pushed the view to the limit: {held:.2} deg");
+    // The commands carry the view the player has (this frame's tick samples this frame's look).
+    for s in &samples {
+        assert!((s.command - s.view).abs() < 1e-5, "Command.view is the held look: {s:?}");
+    }
+    let free = samples.iter().filter(|s| s.t > 0.57 + 0.15).map(|s| s.off().abs()).fold(0.0, f32::max);
+    assert!(free > limit + 10.0, "released after Cancel(Move): {free:.1} deg ({samples:?})");
+}
+
+/// Third person never limits the look: the same attack and mouse turn leave the body behind.
+#[test]
+fn third_person_attacks_never_limit_the_look() {
+    let samples = turn_through(sf_camera::ViewChoice::ThirdPerson, press_light, "light1");
+    let off = samples.iter().filter(|s| s.t < 0.57).map(|s| s.off().abs()).fold(0.0, f32::max);
+    assert!(off > 60.0, "third person turned freely while committed: {off:.1} deg ({samples:?})");
+}
+
+/// A move without `look` (the roll) leaves the first-person view free.
+#[test]
+fn a_move_without_look_limits_leaves_the_first_person_view_free() {
+    fn press_dodge(mut chars: Query<&mut ActionCharacter, With<PlayerBody>>, mut done: Local<bool>) {
+        for mut c in &mut chars {
+            if !*done {
+                c.command.buttons.pressed.insert(ActionClass::Dodge);
+                c.command.buttons.held.insert(ActionClass::Dodge);
+                *done = true;
+            }
+        }
+    }
+    let roll = |app: &mut App, _: Entity| {
+        app.add_systems(FixedUpdate, press_dodge.in_set(ActionSystems::Command));
+    };
+    let samples = turn_through(sf_camera::ViewChoice::FirstPerson, roll, "roll");
+    let off = samples.iter().map(|s| s.off().abs()).fold(0.0, f32::max);
+    assert!(off > 55.0, "free look through the roll: {off:.1} deg ({samples:?})");
 }

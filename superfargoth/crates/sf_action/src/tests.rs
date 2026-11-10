@@ -655,3 +655,39 @@ fn a_jump_launch_flies_the_real_mover_to_its_apex() {
     // Jump by height: the base rule asks for a 1 m apex.
     assert!((apex - 1.0).abs() < 0.02 && loco.grounded.is_some() && ticks > 50, "apex {apex} after {ticks} ticks");
 }
+
+// ---- First-person look limits (MoveRule.look) --------------------------------------------
+
+/// `look` holds while the move is committed and lifts when `Cancel(Move)` opens or the chain
+/// ends; a rule without `look`, or an unrestricted one, never limits; bad numbers are load errors.
+#[test]
+fn look_limits_hold_until_cancel_move_and_only_with_look() {
+    let text = r#"[
+        (id: "swing", kind: Combat, category: Attack, slots: ["atk"], entry: (classes: [Light]),
+         look: Some((yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.1))),
+        (id: "plain", kind: Combat, category: Attack, slots: ["atk"], entry: (classes: [Light])),
+        (id: "loop", kind: Combat, category: Guard, slots: ["loop"], entry: (classes: [Guard]), windows: Unrestricted,
+         look: Some((yaw: 45.0, pitch: (-45.0, 20.0)))),
+    ]"#;
+    let rules = RuleSetBuilder::new().add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Mod("C".into()), text).build().unwrap();
+    let atk = SlotInfo::once(0.8)
+        .with(Window::secs(WindowKind::Cancel(ClassSet::of(&[ActionClass::Light])), 0.3, 0.8))
+        .with(Window::secs(WindowKind::Cancel(ClassSet::of(&[ActionClass::Move])), 0.5, 0.8));
+    let slots = SlotTable::new().with("atk", atk).with("loop", SlotInfo::looping());
+    let at = |id: &str, t: f32| rules.get(RuleKey::of(id)).unwrap().look_at(&slots, ClockTime::from_secs(t));
+    let want = LookRule { yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.1 };
+    for t in [0.0, 0.29, 0.31, 0.49] {
+        assert_eq!(at("swing", t), Some(want), "committed at {t}");
+    }
+    for t in [0.5, 0.79, 0.8, 2.0] {
+        assert_eq!(at("swing", t), None, "released at {t}");
+    }
+    assert_eq!(at("plain", 0.1), None, "no look, no limits");
+    assert_eq!(at("loop", 0.1), None, "an unrestricted move cancels Move from its start");
+
+    for bad in ["(yaw: 0.0, pitch: (-10.0, 10.0))", "(yaw: 200.0, pitch: (-10.0, 10.0))", "(yaw: 45.0, pitch: (10.0, -10.0))", "(yaw: 45.0, pitch: (-95.0, 0.0))", "(yaw: 45.0, pitch: (0.0, 0.0), ease: -1.0)"] {
+        let r = format!(r#"[(id: "x", kind: Combat, category: Attack, slots: ["atk"], entry: (classes: [Light]), look: Some({bad}))]"#);
+        let errors = RuleSetBuilder::new().add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Mod("C".into()), &r).build().unwrap_err();
+        assert!(errors.iter().any(|e| e.message.starts_with("look:")), "{bad}: {errors:?}");
+    }
+}

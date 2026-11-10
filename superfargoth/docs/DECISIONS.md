@@ -1749,3 +1749,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (first person FP-2b): view copies draw a derived, forward-rendered `ExtendedMaterial` (bindless) whose
   vertex stages are copies of Bevy's (re-sync on each Bevy update; guarded by tests); clustered lights picked at the
   drawn pixel are accepted (error < 2 % at a 3 m light); `view_model` stays off until the owner's FP-2 check.
+- 2026-11-10 (combat C4b): first-person look limits are `MoveRule.look`, in force until `Cancel(Move)`, centred on the body's
+  current yaw (not a fixed entry yaw: the arms hang off the body); the clamp lives in the camera's look accumulator, the one
+  producer of `Command.view`, so gameplay and co-op hosts see the limited view. Sword default 45 deg, not 60 (combat.md "C4b").

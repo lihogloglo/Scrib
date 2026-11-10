@@ -1,6 +1,6 @@
 # Combat: feel layer, moveset sheets, rules seam
 
-Status (2026-11-10): C1a, C1b, C1c (lock-on parts 1-4) and the C4 soft aim (first-person melee) built; next C1c-2b strafe clips, then C2. ROADMAP 3.5. Game side:
+Status (2026-11-10): C1a, C1b, C1c (lock-on parts 1-4) the C4 soft aim and C4b first-person attack look limits built; next C1c-2b strafe clips, then C2. ROADMAP 3.5. Game side:
 `../../../bevyrrowind/docs/specs/combat-adapter.md`. Built on [action.md](action.md) (commands, windows, chooser, motion
 owners, co-op rules: referenced, not repeated); owns its build-plan row E1-E3. Slices **combat C1..C7** are not action.md's
 C1 (interactions).
@@ -278,7 +278,7 @@ Logic keeps exact assertions; feel tests assert sanity and print measurements (`
 | **C1c** lock-on | built 2026-10-27 (parts 1-4, "As built (C1c)"; strafe clips C1c-2b next): acquire/break, locked strafe, 4-way rolls, framing | breaks past 20 m and on a mantle | CB-2 strafe and roll around the dummy |
 | **C2** guard, reactions | sparring dummy that strikes; player reactions by tier and side; guard; backstep; knockdown via `Physics` | contact-order unit tests; guard break at 0 | CB-3 block, guard break, knockdown, get-up |
 | **C3** heavy, openers, poise | heavy + charge; run/roll/backstep/jump attacks; armor windows; poise; lunge; typed i-frames; second weapon class | second class adds no code; charge release swaps clip | CB-4 heavy and openers |
-| **C4** targeting | switching, soft aim (built 2026-11-10, first person included), combat shake, per-bone hurt capsules | switch picks the flicked side; soft-aim pick and window | CB-5 |
+| **C4** targeting | switching, soft aim (built 2026-11-10, first person included; C4b look limits built), combat shake, per-bone hurt capsules | switch picks the flicked side; soft-aim pick and window | CB-5 |
 | **C5** classic rules | classic `CombatRules` (game side), cone contacts, Classic profile | formula tests against the ported source | CB-6 classic swing |
 | **C6** NPC combat | NPCs and creatures through `Command` from `sf_ai`; per-rig sheets; paired takedown, ragdoll victim | AI uses baked reach and recovery | CB-7 |
 | **C7** net | host-authoritative hits, own-start prediction (co-op phase F) | replay determinism | none |
@@ -304,23 +304,24 @@ shell `SfLockOnPlugin`, `LockOwner`, `Lockable`), locked facing and strafe, lock
 **As built (2026-11-10)**, check CB-5. Industry: Sekiro picks an attack target without a lock (nearest within ~3 m and +-30 deg
 of the stick, first ~1/6 s; R6 §5), God of War auto-orients attacks (R8 §1.3); first-person melee games soft-aim rather than
 hard-lock (R8 §2; KCD's hard lock was rejected by the owner, camera.md). Reuse: no crate; the pick sits beside `acquire`.
-- **Pick**: `sf_camera::lockon::soft_aim` (pure): the nearest candidate (horizontal distance) within `SoftAimParams { reach 3 m,
-  cone 30 deg, window 1/6 s }` with line of sight; ties to the smaller angle, then the smaller id.
-- **Tick**: `sf_combat::update_soft_aim` keeps the target on the swing (`SwingState::aim`): acquired while the attack's move time
-  is inside the window, then held for that swing (a chained light picks again); a lock wins. Axis `soft_aim_axis`: the view
-  yaw with `Command::face_view`, else the stick, else the facing (third person unlocked gets it too).
-- **Shell**: `sf_combat_bevy::lock` (same pass as the lock): candidates are the other `Lockable`s, line of sight cast only for
-  those in reach and only while acquiring; `sf_action_bevy::SoftAim` -> `Sense::soft_target`. `LockConfig::soft` tunes it.
-- **Steer**: `sf_action` Clip owner: `Turn` aims at the lock, else an Attack's soft target, else the stick; with
-  `Command::face_view` an Attack squares up to the view on its first tick and its free aim is the view. Rolls keep the stick.
-- **First person** = `Command::face_view` (the input shell sets it from the view choice; the game's `mw_player_bevy::combat`
-  `face_view` system): `update_lock` breaks a held lock (`BreakReason::View`) and ignores presses. The camera never turns.
+- **Detail** (pick, tick, shell, steer): [history](archive/combat-history.md) "C4 soft aim as built". In short: the nearest
+  `Lockable` within `SoftAimParams { reach 3 m, cone 30 deg, window 1/6 s }` of the aim axis (view with `Command::face_view`)
+  becomes the swing's turn target (`SwingState::aim`); first person (`face_view`) squares attacks up to the view, never locks.
 - **Dragging** (Chivalry, R8 §2): the body turns only in `Turn` windows (360 deg/s, attack start) and holds through `NoTurn`
-  (the hit), so mouse turns mid-swing never move the blade or the sweeps. Presentation, not built: per-attack first-person look
-  limits (`MoveRule.look`, camera.md) around the body yaw so the view can't leave the arms while committed (owner to feel first).
-- Tests: `sf_camera` pick (cone, reach, nearest, line of sight, ties, window); `sf_combat` tests `combat.rs` (square-up, turn in
-  the window only, late targets, chains, lock wins, third person, rolls) and `lock.rs` (no lock facing the view); `mw_player_bevy`
-  headless (dummy 20 deg off: turned onto it in light1's window, not after; lock breaks entering first person).
+  (the hit), so mouse turns mid-swing never move the blade or the sweeps. The view is bounded around the body while committed
+  ("C4b").
+- Tests: [history](archive/combat-history.md) "C4 soft aim as built".
+
+### C4b first-person attack look limits
+
+**As built (2026-11-10)**, check CB-5b; full notes and tests: [history](archive/combat-history.md) "C4b as built". Industry
+(R8 §2): true first-person bodies turn with the view and cap the swing's turn rate (Mordhau "turn cap", Chivalry 2 torque); ours
+holds the body in `NoTurn`, so the view is bounded by an angle box around the body instead.
+- `sf_action::LookRule { yaw, pitch, ease }` = `MoveRule.look` (sheet moves: `look`, copied onto the generated rule);
+  `CompiledRule::look_at`: in force until `Cancel(Move)` opens or the chain ends.
+- `sf_camera_bevy::follow_move_look` writes `PlayerCamera::look_limits`, centred (`limits_yaw`) on the body's gameplay yaw;
+  `update_look` applies them in first person only, eased, and that look is `Command.view` (the clamp is where the view is made).
+- `sword_1h` attacks: yaw 45 deg (half the 16:9 horizontal FOV at 60 deg vertical: 45.7), pitch -45..20, ease 0.10 s; rolls free.
 
 ## Open questions
 

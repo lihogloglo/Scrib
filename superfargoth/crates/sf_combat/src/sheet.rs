@@ -12,7 +12,7 @@ use glam::Vec3;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize, Serializer};
 use sf_action::{
-    ActionClass, Category, ClassSet, ClockTime, Entry, StickSide, MoveKind, MoveRule, MovesetKey, Origin, Owner, Prev, RuleKey, RuleSetBuilder, SlotInfo, SlotKey,
+    ActionClass, Category, ClassSet, ClockTime, Entry, LookRule, StickSide, MoveKind, MoveRule, MovesetKey, Origin, Owner, Prev, RuleKey, RuleSetBuilder, SlotInfo, SlotKey,
     SlotTable, SquareUp, TagId, Window, WindowKind, WindowPolicy,
 };
 
@@ -142,6 +142,10 @@ pub struct MoveDef {
     /// Lock-on variants by side (C1c).
     #[serde(default)]
     pub locked: BTreeMap<Side, String>,
+    /// First-person look limits while the move is committed (`MoveRule.look`, degrees): the view
+    /// stays near the body the swing hangs off until `Cancel(Move)` (combat.md "C4b").
+    #[serde(default)]
+    pub look: Option<LookRule>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -437,6 +441,9 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
     let mut slots = Vec::new();
     let mut moves = MoveTable::default();
     for (name, m) in &def.moves {
+        if m.look.is_some_and(|l| !l.valid()) {
+            errors.push(err(Some(name), "look: yaw must be in (0, 180], pitch min <= max inside +-90, ease >= 0".into()));
+        }
         let numbers_ok = m.rate.is_finite() && m.rate > 0.0 && m.root_scale.is_finite() && m.root_scale >= 0.0;
         if !numbers_ok {
             errors.push(err(Some(name), "rate must be > 0 and root_scale >= 0".into()));
@@ -558,6 +565,7 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
             launch: None,
             steer: false,
             redo_ticks: 0,
+            look: m.look,
         });
         moves.moves.insert(
             RuleKey::of(&id),
@@ -586,6 +594,7 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
             launch: None,
             steer: false,
             redo_ticks: 0,
+            look: None,
         });
         let key = RuleKey::of(&id);
         reactions.moves.insert((tier, side), key);

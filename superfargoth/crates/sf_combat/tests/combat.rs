@@ -359,6 +359,24 @@ fn sheet_load_errors_name_the_move() {
     assert!(load(&bad, &clip_len).is_err());
 }
 
+/// A sheet move's `look` (bare, as authored) becomes its generated rule's `MoveRule.look`;
+/// moves without one and reactions get none; bad numbers name the move.
+#[test]
+fn a_moves_look_limits_reach_its_rule() {
+    let with = SHEET.replace(r#"next: { Light: "light2" }"#, r#"next: { Light: "light2" }, look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.1)"#);
+    let s = load(&with, &clip_len).expect("sheet with look compiles");
+    let look = |m: &str| s.rules.iter().find(|r| r.id == format!("test_sword.{m}")).unwrap().look;
+    assert_eq!(look("light1"), Some(sf_action::LookRule { yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.1 }));
+    assert_eq!(look("light2"), None);
+    assert_eq!(look("roll"), None);
+    assert!(s.rules.iter().filter(|r| r.kind == sf_action::MoveKind::Forced).all(|r| r.look.is_none()), "reactions never limit");
+    let bad = SHEET.replace(r#"next: { Light: "light2" }"#, r#"next: { Light: "light2" }, look: (yaw: 0.0, pitch: (-45.0, 20.0))"#);
+    let errs = load(&bad, &clip_len).unwrap_err();
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert_eq!(errs[0].mov.as_deref(), Some("light1"));
+    assert!(errs[0].message.starts_with("look:"), "{}", errs[0]);
+}
+
 #[test]
 fn a_dropped_slot_shortens_the_move_with_a_warning() {
     let s = load(SHEET, &|n| if n == "attack.test.light1_rec" { None } else { clip_len(n) }).unwrap();

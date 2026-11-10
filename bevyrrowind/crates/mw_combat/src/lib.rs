@@ -103,6 +103,11 @@ mod tests {
         for mov in ["light1", "light2", "light3", "light4", "heavy1", "heavy2", "heavy3", "heavy4", "roll"] {
             assert!(sheet.moves.moves.contains_key(&sheet.rule_key(mov)), "move {mov}");
         }
+        // Every attack limits the first-person look while committed (C4b); the roll looks free.
+        for r in &sheet.rules {
+            let attack = r.category == sf_action::Category::Attack;
+            assert_eq!(r.look.is_some(), attack, "{}: look {:?}", r.id, r.look);
+        }
         let slots = sheet_slots(SWORD_1H).unwrap();
         assert_eq!(slots.len(), 21, "{slots:?}");
         assert!(slots.iter().all(|s| first_candidates(s).is_some()), "{slots:?}");

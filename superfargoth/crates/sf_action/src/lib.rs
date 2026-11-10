@@ -54,7 +54,7 @@ pub use command::{
 pub use grip::{GRIP_INSET, GRIP_LATERAL, GRIP_MAX_GAP, GRIP_RAMP, GRIP_RISE, HandHold, LEFT, LedgeGrip, RIGHT, hold_target, hold_weight};
 pub use ids::{CharacterId, ClockTime, MovesetKey, PlayerId, RuleKey, SlotKey, TICK_HZ, TagId, TargetId, Tick, fnv1a32};
 pub use rule::{
-    Category, CompiledRule, Entry, Exit, ExitOn, ExitTo, Launch, LoadError, Mode, MoveKind, MoveRule, ObstacleClass, Origin, Owner, Phase,
+    Category, CompiledRule, Entry, Exit, ExitOn, ExitTo, Launch, LoadError, LookRule, Mode, MoveKind, MoveRule, ObstacleClass, Origin, Owner, Phase,
     Prev, PrevKey, ProbeNeed, RuleSet, RuleSetBuilder, SquareUp, StickSide, WarpTarget, WindowPolicy,
 };
 pub use state::{

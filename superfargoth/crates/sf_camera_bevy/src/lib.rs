@@ -6,10 +6,13 @@
 //! 1. `PreUpdate`: `bevy_enhanced_input` evaluates the [`CameraAction`]s on the player's
 //!    `PlayerControls` context.
 //! 2. `RunFixedMainLoop`, [`CameraSystems::Look`] (before the fixed loop, after
-//!    `ActionSystems::Gather`): look input, zoom, view toggle and shoulder swap; the player's
-//!    look (free, first-person limited, or eased onto a [`LockOn`] target) goes into the
-//!    sampler as the next commands' `view`, and the move stick is resolved against the look's
-//!    yaw (camera-relative movement). Shake, framing and push-in never reach the look.
+//!    `ActionSystems::Gather`): the followed character's move writes its first-person look
+//!    limits (`MoveRule.look` while committed, centred on the body's yaw), then look input,
+//!    zoom, view toggle and shoulder swap; the player's look (free, first-person limited, or
+//!    eased onto a [`LockOn`] target) goes into the sampler as the next commands' `view`, so
+//!    gameplay (and a co-op host) sees the limited look the player has, and the move stick is
+//!    resolved against the look's yaw (camera-relative movement). Shake, framing and push-in
+//!    never reach the look.
 //! 3. The fixed ticks and `ActionSystems::Interpolate` draw the body.
 //! 4. `PostUpdate`, [`CameraSystems::Rig`] (before transform propagation and `big_space`'s
 //!    recentering): the orbit rig on the drawn (interpolated) body, the arm's sphere cast
@@ -36,7 +39,7 @@ use bevy_transform::TransformSystems;
 use bevy_transform::components::Transform;
 use big_space::prelude::{BigSpaceSystems, CellCoord};
 use sf_action::{Mode, ViewDir};
-use sf_action_bevy::{ActionBody, ActionCharacter, ActionSystems, PlayerAction, PlayerControls, PlayerInput};
+use sf_action_bevy::{ActionBody, ActionCharacter, ActionRules, ActionSystems, PlayerAction, PlayerControls, PlayerInput};
 use sf_camera::{
     ArmCollision, CollisionParams, ComfortSettings, FirstPersonLook, LockParams, Look, LookLimits, OrbitParams, OrbitRig,
     RecentreParams, RigMode, ShakeParams, Shoulder, TraumaShake, ViewChoice, locked_look, recentre_behind,
@@ -79,7 +82,7 @@ impl<G: GroundProbe + Resource> Plugin for SfCameraPlugin<G> {
                 PostUpdate,
                 CameraSystems::Rig.before(TransformSystems::Propagate).before(BigSpaceSystems::RecenterLargeTransforms),
             )
-            .add_systems(RunFixedMainLoop, update_look.in_set(CameraSystems::Look))
+            .add_systems(RunFixedMainLoop, (follow_move_look, update_look).chain().in_set(CameraSystems::Look))
             .add_systems(PostUpdate, update_rig::<G>.in_set(CameraSystems::Rig));
         #[cfg(feature = "projection")]
         app.add_systems(PostUpdate, apply_fov.in_set(CameraSystems::Rig).after(update_rig::<G>));
@@ -188,10 +191,14 @@ pub struct PlayerCamera {
     /// host keeps it current, as `ActionBody::frame_origin`). With a `CellCoord` the camera is
     /// placed on its `big_space` grid exactly and this is unused.
     pub frame_origin: WorldPos,
-    /// The current move's first-person look limits (`None`: free) and its entry yaw, and the
-    /// `ignore_look` window: the action shell writes them from the move rule.
+    /// The first-person look limits in force (`None`: free) and the yaw they are centred on.
+    /// Written every frame, before the look, from the followed character's move when it has an
+    /// `ActionCharacter` and the app has `ActionRules` ([`follow_move_look`]: `MoveRule.look`
+    /// while the move is committed, centred on the body's gameplay yaw); otherwise a host may
+    /// write them. Applied in first person only, eased in and out over the limits' `ease`.
     pub look_limits: Option<LookLimits>,
-    pub limits_entry_yaw: f32,
+    pub limits_yaw: f32,
+    /// The `ignore_look` window (look input dropped); no writer yet.
     pub ignore_look: bool,
     look: Look,
     idle_look: f32,
@@ -214,7 +221,7 @@ impl PlayerCamera {
             settings: ComfortSettings::default(),
             frame_origin: WorldPos::ORIGIN,
             look_limits: None,
-            limits_entry_yaw: 0.0,
+            limits_yaw: 0.0,
             ignore_look: false,
             look: Look::default(),
             idle_look: 0.0,
@@ -344,6 +351,23 @@ fn stick_to_world(stick: Vec2, yaw: f32) -> Vec2 {
     Vec2::new(-c * stick.x + s * stick.y, s * stick.x + c * stick.y)
 }
 
+/// Frame rate, first in [`CameraSystems::Look`]: each player camera takes its followed
+/// character's look limits from the move it plays (`sf_action::CompiledRule::look_at`: the rule's
+/// `look` until a `Cancel(Move)` window opens), centred on the body's gameplay yaw, which is where
+/// its arms and weapon are: a first-person attack squares up to the view and then turns only in
+/// its `Turn` windows (combat.md "C4b"). Presentation reads gameplay here; nothing flows back
+/// except through the look the player then has (`Command.view`).
+#[allow(clippy::needless_pass_by_value)]
+fn follow_move_look(rules: Option<Res<ActionRules>>, mut cameras: Query<&mut PlayerCamera>, characters: Query<(&ActionCharacter, &ActionBody)>) {
+    let Some(rules) = rules else { return };
+    for mut cam in &mut cameras {
+        let Ok((c, body)) = characters.get(cam.follow) else { continue };
+        let look = rules.rules.get(c.state.mov).and_then(|r| r.look_at(&*rules.slots, c.state.clock.elapsed));
+        cam.look_limits = look.map(|l| LookLimits::from_degrees(l.yaw, l.pitch, l.ease));
+        cam.limits_yaw = body.loco.motion.yaw;
+    }
+}
+
 type Follower<'a> = (
     &'a ActionBody,
     Option<&'a mut PlayerInput>,
@@ -387,7 +411,7 @@ fn update_look(
         let p = cam.params;
         cam.look = match (cam.settings.view, cam.locked) {
             (ViewChoice::FirstPerson, _) => {
-                cam.first_person.set_limits(cam.look_limits, cam.limits_entry_yaw);
+                cam.first_person.set_limits(cam.look_limits, cam.limits_yaw);
                 let fp = p.first_person;
                 cam.first_person.update(cam.look, delta, cam.ignore_look, (fp.pitch_min, fp.pitch_max), dt)
             }

@@ -119,3 +119,41 @@ Light hit windows sit on the right hand's speed peak +-0.07 s; light1/light2 `Ca
 is the next strike's first frame). `root_scale` gives ~0.4 m per swing (baked travel A 0.37, B 0.43, C 1.69, D 2.03 m). The
 roll cancels open where its travel ends (no settle tail, owner). Fallbacks: `light*` -> UAL1 `Sword_Attack` -> content slash;
 `_rec` and rolls -> `Drop`. Watch: light3 end -> `C_Rec` pose jump (hips +0.25 m); light3 -> light4 pose mismatch.
+
+### C4 soft aim as built (moved from combat.md 2026-11-10)
+
+- **Pick**: `sf_camera::lockon::soft_aim` (pure): the nearest candidate (horizontal distance) within `SoftAimParams { reach 3 m,
+  cone 30 deg, window 1/6 s }` with line of sight; ties to the smaller angle, then the smaller id.
+- **Tick**: `sf_combat::update_soft_aim` keeps the target on the swing (`SwingState::aim`): acquired while the attack's move time
+  is inside the window, then held for that swing (a chained light picks again); a lock wins. Axis `soft_aim_axis`: the view
+  yaw with `Command::face_view`, else the stick, else the facing (third person unlocked gets it too).
+- **Shell**: `sf_combat_bevy::lock` (same pass as the lock): candidates are the other `Lockable`s, line of sight cast only for
+  those in reach and only while acquiring; `sf_action_bevy::SoftAim` -> `Sense::soft_target`. `LockConfig::soft` tunes it.
+- **Steer**: `sf_action` Clip owner: `Turn` aims at the lock, else an Attack's soft target, else the stick; with
+  `Command::face_view` an Attack squares up to the view on its first tick and its free aim is the view. Rolls keep the stick.
+- **First person** = `Command::face_view` (the input shell sets it from the view choice; the game's `mw_player_bevy::combat`
+  `face_view` system): `update_lock` breaks a held lock (`BreakReason::View`) and ignores presses. The camera never turns.
+- Tests: `sf_camera` pick (cone, reach, nearest, line of sight, ties, window); `sf_combat` tests `combat.rs` (square-up, turn in
+  the window only, late targets, chains, lock wins, third person, rolls) and `lock.rs` (no lock facing the view); `mw_player_bevy`
+  headless (dummy 20 deg off: turned onto it in light1's window, not after; lock breaks entering first person).
+
+### C4b as built (from combat.md 2026-11-10)
+
+**As built (2026-11-10)**, check CB-5b. Industry (R8 §2): true first-person melee bodies turn with the view, so the view never
+leaves the weapon, and the swing's turn rate is capped while it is released (Mordhau's per-weapon "turn cap", near 360 deg for
+high values; Chivalry 2's "torque"); Skyrim's and Dying Light's arms are the view model, so nothing to bound. Ours holds the body
+still in `NoTurn` (no dragging), so the bound is an angle box around the body instead of a rate cap.
+- **Data**: `sf_action::LookRule { yaw, pitch, ease }` (degrees, s) as `MoveRule.look`; a sheet move's `look` (bare in RON) is
+  copied onto its generated rule, validated (yaw in (0, 180], pitch min <= max inside +-90, ease >= 0). `CompiledRule::look_at`:
+  the rule's `look` until a `Cancel(Move)` window opens or the chain ends (an unrestricted move never limits).
+- **Shell**: `sf_camera_bevy::follow_move_look` (`CameraSystems::Look`, before `update_look`): each player camera's
+  `look_limits` from its followed character's move, `limits_yaw` = the body's gameplay yaw (where the arms are: the square-up
+  yaw, plus what the `Turn` window turned). `update_look` applies them in first person only (`sf_camera::FirstPersonLook`,
+  eased in and out over `ease`, input past a limit is dropped), and the look it leaves is what the sampler puts in
+  `Command.view`: the clamp sits where the view is produced, so gameplay and a co-op host see the view the player has.
+- **Content**: `sword_1h` attacks `look: (yaw: 45, pitch: (-45, 20), ease: 0.10)`; rolls free. 45 deg, not the suggested 60:
+  half the horizontal FOV at the default 60 deg vertical on 16:9 is 45.7 deg, so the swing in front of the body stays on screen.
+- Tests: `sf_action` (held until `Cancel(Move)`, none without `look` or unrestricted, load errors), `sf_combat` (sheet to rule),
+  `mw_combat` (every attack has `look`), `sf_camera` (recentred limits keep their weight, ease in again after release),
+  `mw_player_bevy` headless (first person: light1 holds the view within 45 deg of the body, `Command.view` equals it, free after
+  `Cancel(Move)`; third person and the roll free).

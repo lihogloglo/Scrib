@@ -10,6 +10,11 @@
 // Heavy chain = UAL2's four-hit heavy combo (Sword_Heavy_A-D + _Rec). Heavy `root_scale`: each
 // swing steps ~0.6 m. Root travel, m: A 1.65 + A_Rec 0.41, B 0.89 + B_Rec 0.14, C 2.03 + C_Rec 0,
 // D 1.68 (test `heavy_attacks_step_further_than_light_ones`).
+// First-person look limits (`look`, combat.md "C4b"): while an attack is committed (until its
+// Cancel(Move)) the view stays within 45 deg of the body's yaw, half the horizontal FOV at the
+// default 60 deg vertical on 16:9 (45.7 deg), so the swing in front of the body stays on screen;
+// pitch -45..20 keeps the hands' shoulder-to-waist path in view. Tune at CB-5b with the view
+// model on (its arms draw ~1.24x larger) and off. Rolls keep free look.
 (
     id: "sword_1h",
     rig: "humanoid",
@@ -25,6 +30,7 @@
                 Turn(360.0, 0.0, 0.11), NoTurn(0.11, 0.28),
             ],
             hits: [(window: (0.14, 0.28), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Light: "light2" },
         ),
         "light2": (
@@ -36,6 +42,7 @@
                 Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.32),
             ],
             hits: [(window: (0.18, 0.32), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Light: "light3" },
         ),
         // A dash-in strike; its recovery starts from a lunge, so the chain cancels before the clip's end.
@@ -48,6 +55,7 @@
                 Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.52),
             ],
             hits: [(window: (0.38, 0.52), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Light: "light4" },
         ),
         // The finisher: a lunge (hit at 0.30), a held follow-through (0.42-1.02), then it steps forward
@@ -61,6 +69,7 @@
                 Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.38),
             ],
             hits: [(window: (0.23, 0.37), mv: 1.2, stamina: 14.0, kind: "slash", tier: Medium, stop: 0.07)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Light: "light1" },
         ),
         // Heavy chain (Elden Ring's R2): slower, a bigger hit (mv, tier, hit-stop) for more stamina.
@@ -76,6 +85,7 @@
                 Turn(360.0, 0.0, 0.28), NoTurn(0.28, 0.46),
             ],
             hits: [(window: (0.32, 0.46), mv: 1.5, stamina: 20.0, kind: "slash", tier: Medium, stop: 0.08)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Heavy: "heavy2" },
         ),
         "heavy2": (
@@ -87,6 +97,7 @@
                 Turn(360.0, 0.0, 0.30), NoTurn(0.30, 0.48),
             ],
             hits: [(window: (0.34, 0.48), mv: 1.5, stamina: 20.0, kind: "slash", tier: Medium, stop: 0.08)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Heavy: "heavy3" },
         ),
         "heavy3": (
@@ -98,6 +109,7 @@
                 Turn(360.0, 0.0, 0.40), NoTurn(0.40, 0.57),
             ],
             hits: [(window: (0.43, 0.57), mv: 1.5, stamina: 20.0, kind: "slash", tier: Medium, stop: 0.08)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Heavy: "heavy4" },
         ),
         // The heavy finisher: the hit at 0.54, then it steps into stance inside the same take (2.33 s).
@@ -110,6 +122,7 @@
                 Turn(360.0, 0.0, 0.42), NoTurn(0.42, 0.62),
             ],
             hits: [(window: (0.48, 0.62), mv: 1.8, stamina: 24.0, kind: "slash", tier: Large, stop: 0.10)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Heavy: "heavy1" },
         ),
         "roll": (

@@ -445,6 +445,49 @@ fn first_person_limits_ease_in_hold_and_release() {
     assert!(close(after.yaw, 1.7, 1e-5) && close(after.pitch, -1.0, 1e-5), "{after:?}");
 }
 
+/// The shell's use (C4b): limits recentred on a turning body or a chained move stay at full
+/// weight and clamp around the new centre at once; released, then limited again from free look,
+/// they ease in from zero.
+#[test]
+fn first_person_limits_follow_their_centre_and_ease_in_again_after_release() {
+    let lim = LookLimits::from_degrees(45.0, (-45.0, 20.0), 0.1);
+    let free = (-1.5, 1.5);
+    let dt = 1.0 / 60.0;
+    let mut fp = FirstPersonLook::new();
+    fp.set_limits(Some(lim), 0.0);
+    let mut look = Look::new(0.0, 0.0);
+    for _ in 0..10 {
+        look = fp.update(look, Look::default(), false, free, dt);
+    }
+    assert!(close(fp.weight(), 1.0, 1e-6));
+    // Mouse hard right (yaw -): held at -45 deg around the centre.
+    look = fp.update(look, Look::new(-2.0, 0.0), false, free, dt);
+    assert!(close(look.yaw, -lim.yaw, 1e-5), "{look:?}");
+    // The body turns 20 deg toward the view: the clamp follows at full weight.
+    fp.set_limits(Some(lim), -0.35);
+    assert!(close(fp.weight(), 1.0, 1e-6), "recentring keeps the weight");
+    look = fp.update(look, Look::new(-2.0, 0.0), false, free, dt);
+    assert!(close(look.yaw, -0.35 - lim.yaw, 1e-5), "{look:?}");
+    // Released: eased out over `ease`, then free.
+    fp.set_limits(None, 0.0);
+    let first = fp.update(look, Look::new(-0.5, 0.0), false, free, dt);
+    assert!(first.yaw > look.yaw - 0.5 + 1e-3, "eases out, not a snap: {first:?}");
+    for _ in 0..8 {
+        fp.update(first, Look::default(), false, free, dt);
+    }
+    assert!(fp.weight() < 1e-6);
+    // Limited again from free look: from zero weight, eased in over `ease` (6 frames at 0.1 s).
+    fp.set_limits(Some(lim), 0.0);
+    let mut weights = Vec::new();
+    let mut l = Look::new(1.5, 0.0);
+    for _ in 0..7 {
+        l = fp.update(l, Look::default(), false, free, dt);
+        weights.push(fp.weight());
+    }
+    assert!(weights[0] > 0.0 && weights[0] < 0.2 && weights.windows(2).all(|w| w[1] >= w[0]), "{weights:?}");
+    assert!(close(weights[5], 1.0, 1e-5) && close(l.yaw, lim.yaw, 1e-4), "{weights:?} {l:?}");
+}
+
 #[test]
 fn first_person_limits_wrap_at_seam() {
     let lim = LookLimits::from_degrees(30.0, (-45.0, 35.0), 0.0);
