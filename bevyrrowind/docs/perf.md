@@ -55,6 +55,8 @@ balmora_walk (eye height, 4 m/s, 254 m) is the worst case. Moved with its A/B ta
 
 ### Current levers and leads
 
+**Audit 2026-11-10** (lanes, code findings, options, MSAA vs DLSS): [research/perf-audit-2026-11-10.md](research/perf-audit-2026-11-10.md).
+
 **Lead (not yet tested):** Bevy runs the GPU frustum + `VisibilityRange` test only in views with GPU culling; a view
 with `NoIndirectDrawing` (`PreprocessingOnly`, e.g. our extra sun views in `sf_sky_bevy` `sun_view.rs`) culls a
 `NoCpuCulling` mesh nowhere, so every part at every LOD draws there. Retry once every view supports GPU culling. Reverted the same day: the animation budget (1 ms; it "saved" ~1 ms by freezing poses: characters slid) and the
