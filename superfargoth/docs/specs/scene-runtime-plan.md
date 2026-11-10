@@ -280,8 +280,10 @@ per batch at plugin configuration (`SceneConfig::batch_capacity`, default 4096),
 stream-in** — growing it reallocates the output buffer and rebuilds the materialize bind group
 (`mod.rs:479-494`, `materialize.rs:162-166`, review S7), breaking "stream-in ≤ 0.2 ms, zero
 spawns". On `Exhausted` the cell publishes **without** that batch's instances, those placements are
-left out of `covered` so they spawn as entities (§5.3), `scene/overflow/cells` counts it and a
-`warn_once` names the batch key.
+left out of `covered` so they spawn as entities, `scene/overflow/cells` counts it and a `warn_once`
+names the batch key. **One ordering problem, open:** `covered` is answered in the Fetch stage and
+`plan_in` runs later, so `covered` cannot yet know which placements will overflow — §5.3's open item
+is the same mechanism and must be settled before B3 relies on this sentence.
 
 **The memory ceiling, and it shapes the rest of S3b** (struct layouts verified 2026-11-10; brief
 `docs/briefs/scene-bevy-b3-b4.md` §1.3 has the table). A **reserved** batch slot costs **208 B +
@@ -424,7 +426,7 @@ pub trait CellScene: Send + Sync + 'static {
     /// `true`** — one invocation per cell (§5.2); the `bool` is the shape S3a3 may need.
     fn upload(&self, world: &mut World, cx: &SceneCellCx<'_>) -> (u64, bool);
     /// **Idempotent, and specified so**: a no-op for a cell with no scene residency. It is the
-    /// unload path *and* the rollback of a load cancelled after `acquire` (§5.1, `cancel`).
+    /// unload path *and* the rollback of a load cancelled after `acquire` (the `cancel` row below).
     fn release(&self, world: &mut World, ws: &WorldspaceId, cell: IVec3);
     fn bytes(&self, _ws: &WorldspaceId, _cell: IVec3) -> u64 { 0 }
 }
@@ -451,7 +453,7 @@ refs and the scene range if `commit_in` ran, do nothing otherwise). That is chea
 proving the scheduler can never take either route twice.
 
 `work.members` already means "drawn by something else, do not spawn, still activate"
-(`stream.rs:1232-1236` skips the spawn; `activate_item` `:1276-1307` runs for every placement), so
+(`stream.rs:1227-1230` skips the spawn; `activate_item` `:1278-1307` runs for every placement), so
 colliders, scripts and AI are untouched and **no new concept enters `sf_world_bevy`**.
 
 **Why `Near`:** with a far field the near level holds every placement of the cell and R1 is sized
@@ -702,7 +704,9 @@ stops the **model loads**; `needs_model` cannot be cell-aware (`IndexedPlacement
 - Resolved into plugin config **before `add_plugins`**, as `--off matclass` is (`exterior.rs:269`,
   `:283`): `ScenePlugin { config }` with `config.enabled = scene`, plus
   `streaming.precombine &= !scene` — the precombine draws the same placements
-  (`stream.rs:1176-1207`), so the two must never both be on.
+  (`spawn_precombine`, `stream.rs:1125-1137`, reached from the near-spawn block at `:1209-1216`;
+  corrected 2026-11-10, the old citation `:1176-1207` pointed at the *far-proxy* spawn block), so the
+  two must never both be on.
 - `if scene { sf_scene_bevy::suppress_scene_placements(&mut spawners); }` where `apply_off` runs.
 
 A/B recipe: `balmora_walk` with and without `--scene`, reading `views/<kind>/{items, bins,

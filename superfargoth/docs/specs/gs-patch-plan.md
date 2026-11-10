@@ -294,7 +294,9 @@ and, inside `main` after `var input = metadata.mesh_input;` (`materialize.wesl:2
 ```
 (the existing determinant/`tag`/`is_active` lines at `:25-34` are unchanged; `culling.is_active` keeps
 coming from the instance). Binary search is ~12 iterations for 4096 ranges, once per slot per *frame*
-(not per view) - the materialize dispatch is already `capacity/64` workgroups (`materialize.rs:210`).
+(not per view) - the materialize dispatch is already `capacity.div_ceil(64)` workgroups of
+`@workgroup_size(64)`, one thread per slot (`materialize.rs:319`, `materialize.wesl:59-61`;
+`:210` was the pipeline descriptor, not the dispatch).
 
 #### 2e. Batching: N indirect slots, one batch set
 
