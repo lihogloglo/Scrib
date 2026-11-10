@@ -66,6 +66,7 @@ spec. "Shadow" = casts / receives / alpha test in the shadow pass.
 | `LightSpriteMaterial` (`sf_lod_bevy`, Add) | Sorted | world, baked AABB; billboard grows in the shader inside it | test only | disabled | froxel via `TranslucentFog`, transmittance only | none (`enable_shadows` false) |
 | `WaterMaterial` (`StandardMaterial` Blend + `WaterExt`) | Refractive | shader-placed clipmap at the origin, `NoFrustumCulling`, `DrawBand::Refractive` | **write** + test, no culling | none; MV by step 9 | own (froxels, else analytic height fog) | `NotShadowCaster` / receive |
 | `PrecipMaterial` (`sf_precip_bevy`, Blend) | Overlay | shader-placed camera-wrapped boxes, `NoFrustumCulling`, `DrawBand::Overlay` | test only | disabled | froxel via `TranslucentFog` (blend) | none |
+| `KickupMaterial` (`sf_surface_bevy` `kickup.rs`, Blend) | Overlay | shader-placed sprites of one fixed mesh, `NoFrustumCulling`, `DrawBand::Overlay { order: -3 }` | test only; fades against the depth prepass | disabled | froxel via `TranslucentFog` (blend) | none |
 | Sea plane scaffold (`exterior.rs`) | Opaque3d | world | write | std | composite | `NotShadowCaster` |
 
 ## Rules

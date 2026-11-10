@@ -1111,7 +1111,8 @@ mod tests {
         settings.reflectance = -1.0;
         assert_eq!(detail_params(&settings, 100.0)[2], 0.0);
 
-        let common = include_str!("shaders/common.wesl");
+        // LF line ends: a Windows checkout with `core.autocrlf` has CRLF.
+        let common = include_str!("shaders/common.wesl").replace("\r\n", "\n");
         assert!(common.contains("fn base_reflectance() -> f32 {\n    return pf(P_DETAIL).z;"));
         let terrain = include_str!("shaders/terrain.wesl");
         let at = |s: &str| terrain.find(s).unwrap_or_else(|| panic!("{s}"));

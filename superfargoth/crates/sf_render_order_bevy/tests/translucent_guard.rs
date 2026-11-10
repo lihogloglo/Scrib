@@ -62,6 +62,7 @@ struct Site {
 const SITES: &[Site] = &[
     Site { file: "sf_lod_bevy/src/materials.rs", what: "LightSpriteMaterial (additive distant light glows)", fog: Fog::Froxel, placement: Placement::World, violation: None },
     Site { file: "sf_precip_bevy/src/lib.rs", what: "PrecipMaterial (camera-wrapped rain/snow boxes)", fog: Fog::Froxel, placement: Placement::ShaderPlaced, violation: None },
+    Site { file: "sf_surface_bevy/src/kickup.rs", what: "KickupMaterial (shader-flown snow/ash puffs, one fixed mesh)", fog: Fog::Froxel, placement: Placement::ShaderPlaced, violation: None },
     Site { file: "sf_water_bevy/src/lib.rs", what: "WaterMaterial (clipmap, refractive)", fog: Fog::Own, placement: Placement::ShaderPlaced, violation: None },
     Site { file: "sf_world_bevy/src/spawn.rs", what: "generic model spawn, sf_model Blend -> StandardMaterial", fog: Fog::Host, placement: Placement::World, violation: Some("RO-4") },
 ];
@@ -174,7 +175,13 @@ fn every_translucent_is_fogged_or_a_tracked_violation() {
                 let mut files = Vec::new();
                 rust_files(&root.join(krate).join("src"), &mut files);
                 let binds = files.iter().any(|f| fs::read_to_string(f).is_ok_and(|t| t.contains("TranslucentFog")));
-                let shaders = fs::read_dir(root.join(krate).join("src/shaders")).map(|d| d.flatten().map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default();
+                // Shaders sit in `src/shaders/` or beside the Rust files in `src/` (sf_surface_bevy).
+                let shaders: Vec<PathBuf> = ["src/shaders", "src"]
+                    .iter()
+                    .filter_map(|d| fs::read_dir(root.join(krate).join(d)).ok())
+                    .flat_map(|d| d.flatten().map(|e| e.path()))
+                    .filter(|p| p.extension().is_some_and(|x| x == "wesl" || x == "wgsl"))
+                    .collect();
                 let imports = shaders.iter().any(|f| fs::read_to_string(f).is_ok_and(|t| t.contains("import sf_render_order_bevy::translucent_fog::") && t.contains("froxel_fog_lookup(")));
                 if !binds || !imports {
                     errors.push(format!("{}: declared Froxel but its crate doesn't bind TranslucentFog ({binds}) and call the translucent_fog module's froxel_fog_lookup ({imports})", site.file));

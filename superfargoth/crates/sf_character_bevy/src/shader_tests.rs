@@ -34,8 +34,9 @@ fn vendor(package: &str) -> PathBuf {
         .join("src")
 }
 
+/// The file as text with LF line ends (a Windows checkout with `core.autocrlf` has CRLF).
 fn read(path: PathBuf) -> String {
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())).replace("\r\n", "\n")
 }
 
 /// Module paths to files: the vendored Bevy crates and this crate.

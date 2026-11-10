@@ -39,9 +39,9 @@ const VAULT: &str = "quaternius_ual2:SafetyVault";
 /// step-up onto a 1.05 m box. Its tests resolve it explicitly.
 const LAFAN1: &str = "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2";
 /// Every slot in the shipped manifest with a non-LAFAN1 candidate: the 4 traversal slots (`traverse.climb.up` = UAL1
-/// `ClimbLedge`, for B3; the two mantles; the vault), the 21 combat slots (7 of them the heavy chain) and the 2
-/// Quaternius get-ups (`getup.supine`, `getup.prone`).
-const SLOTS: usize = 27;
+/// `ClimbLedge`, for B3; the two mantles; the vault), the 21 combat slots (7 of them the heavy chain), the 3 guard
+/// slots (`guard.sword_1h.{raise,idle,break}`, C2b) and the 2 Quaternius get-ups (`getup.supine`, `getup.prone`).
+const SLOTS: usize = 30;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
 const TARGETS: usize = 3;
 
