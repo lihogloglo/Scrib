@@ -147,10 +147,13 @@ SOFTWARE.
   `apps/openmw/mwmechanics/activespells.cpp` (`addToSpells`: stackable sources); start spells (adapter A3, 2026-11-10):
   `apps/openmw/mwmechanics/spells.cpp` (`addSpell`, `setSpells`, `addAllToInstance`), `apps/openmw/mwclass/npc.cpp` and
   `creature.cpp` (`getCreatureStats`: race powers, record spells) and `apps/openmw/mwmechanics/mechanicsmanagerimp.cpp`
-  (`buildPlayer`: race powers, birthsign spells).
+  (`buildPlayer`: race powers, birthsign spells); casting (adapter A5a, 2026-11-10): `spellutil.cpp`
+  (`calcSpellBaseSuccessChance`, `getSpellSuccessChance`, `getSpellSchool`, `spellIncreasesSkill`), `spellcasting.cpp`
+  (`cast(Spell)`: the fizzle roll), `apps/openmw/mwworld/worldimp.cpp` (`startSpellCast`: magicka check and deduction),
+  `spells.cpp` (`canUsePower`, `usePower`) and `apps/openmw/mwmechanics/creaturestats.cpp` (`getFatigueTerm`).
 - Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
-- Ported into: `bevyrrowind/crates/mw_effects` (the game; written 2026-11-08, untested; `book.rs` A3),
-  `bevyrrowind/crates/mw_rpg_bevy/src/item_use.rs` (A2) and `effects.rs` / `stats.rs` (A3 start spells).
+- Ported into: `bevyrrowind/crates/mw_effects` (the game; written 2026-11-08, untested; `book.rs` A3, `cast.rs` A5a),
+  `bevyrrowind/crates/mw_rpg_bevy/src/item_use.rs` (A2), `effects.rs` / `stats.rs` (A3 start spells) and `cast.rs` (A5a).
 
 ## OpenMW (barter and service prices)
 

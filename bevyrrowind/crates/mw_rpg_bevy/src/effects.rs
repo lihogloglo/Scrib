@@ -3,9 +3,12 @@
 //!
 //! - **Setup** ([`add`], called by [`crate::stats::add`]: effects need the sheets): the MGEF
 //!   records as `EffectTableRes` (`MwEffects`; A1 defs only, the other indices land as
-//!   `Rejected { UnknownEffect }`), the modern rules (`EffectRules::standard`), every SPEL
+//!   `Rejected { UnknownEffect }`), the modern rules (`mw_effects::MwModernEffectRules`: casts
+//!   never fizzle, `calcSpellCost` raised by Sound, Silence refuses; adapter A5a; the classic
+//!   `OpenMwEffectRules` is built and unselected until a rule-set choice exists), every SPEL
 //!   record as a source (`mw_effects::source_table`, `SourceTableRes`, adapter A3), and the
-//!   `MwEffects` themselves as [`MwEffectsRes`] (potions map their ALCH on use, `item_use`).
+//!   `MwEffects` themselves as [`MwEffectsRes`] (potions map their ALCH on use, `item_use`),
+//!   and the host's cast path ([`crate::cast`]).
 //! - **Attach**: `Effects` sits beside every `Stats` the stats glue attaches (the player
 //!   character, NPCs, creatures), same owner; see [`crate::stats`]. A new character learns its
 //!   start spells ([`EffectLoad::learn`], lists from `mw_effects::start_spells`): abilities
@@ -29,7 +32,7 @@ use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 use bevy_log::prelude::*;
-use mw_effects::{MwEffectGmst, MwEffects};
+use mw_effects::{MwEffectGmst, MwEffects, MwModernEffectRules};
 use mw_game_core::player::PlayerCharacter;
 use sf_character_bevy::CharacterPlacement;
 use sf_effects_bevy::sf_effects::{
@@ -94,8 +97,11 @@ pub fn add(app: &mut App, db: &RecordDb) {
     app.insert_resource(EffectTableRes(Arc::new(fx.table().clone())))
         .insert_resource(SourceTableRes(Arc::new(sources)))
         .insert_resource(MwEffectsRes(Arc::new(fx)))
-        .insert_resource(EffectRulesRes(Arc::new(EffectRules::standard())))
+        .insert_resource(EffectRulesRes(Arc::new(EffectRules::from_model(
+            &MwModernEffectRules::default(),
+        ))))
         .add_systems(FixedUpdate, feed_clock.before(EffectSystems::Commands));
+    crate::cast::add(app);
 }
 
 /// `EffectClock` = the game clock in minutes (see the module docs).
@@ -319,6 +325,10 @@ pub mod test_records {
     pub const NPC_ABILITY: &str = "test_npc_might";
     /// SPEL spell: Resist Fire 10 for 10 s on self (the NPC's and the `player` record's).
     pub const NPC_SPELL: &str = "test_npc_spell";
+    /// SPEL spell: Restore Health 10 points a second for 2 s on self, cost 5 (in no list).
+    pub const HEAL_SPELL: &str = "test_heal";
+    /// SPEL spell: Fortify Strength 10 for 10 s on touch, cost 5 (in no list).
+    pub const TOUCH_SPELL: &str = "test_touch_might";
     /// RACE: [`RACE_ABILITY`], [`RACE_POWER`].
     pub const RACE: &str = "test_race";
     /// BSGN: [`SIGN_ABILITY`].
@@ -524,6 +534,11 @@ pub mod test_records {
             )
         };
         let magicka = on_self(EffectId2::FortifyMagicka, AttributeId2::None, 20, 0);
+        let heal = on_self(EffectId2::RestoreHealth, AttributeId2::None, 10, 2);
+        let touch = Effect {
+            range: EffectRange::OnTouch,
+            ..strength(10, 10)
+        };
         let max_magicka = on_self(
             EffectId2::FortifyMagickaMultiplier,
             AttributeId2::None,
@@ -541,6 +556,8 @@ pub mod test_records {
             ability(POOL_ABILITY, SpellType::Ability, vec![magicka]),
             ability(NPC_ABILITY, SpellType::Ability, vec![strength(5, 0)]),
             ability(NPC_SPELL, SpellType::Spell, vec![resist(10, 10)]),
+            ability(HEAL_SPELL, SpellType::Spell, vec![heal]),
+            ability(TOUCH_SPELL, SpellType::Spell, vec![touch]),
         ] {
             db.define(src, RecordId::new(&s.id), s).expect("spel");
         }

@@ -180,7 +180,7 @@ fn a1_archetypes() {
     for i in [10, 85, 102, 135] {
         assert_eq!(archetype(i), None, "{i}");
     }
-    assert_eq!(MwEffects::from_records(std::iter::empty()).table().len(), 47);
+    assert_eq!(MwEffects::from_records(std::iter::empty()).table().len(), 49);
 }
 
 /// The game's stat table: `MwTable`'s (SKIL data is irrelevant to effects).

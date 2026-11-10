@@ -30,6 +30,9 @@
 //! - Any other line runs as `MWScript` (vanilla's console: `player->AddItem gold_001 100`),
 //!   on the selected actor (click-select) or else the player; completion offers the
 //!   functions the interpreter runs, with their short forms.
+//! - `cast <spell>`: the player casts a spell or power through the host cast path
+//!   (`mw_rpg_bevy::cast::console_cast`; learns it first if unknown), touch entries on the
+//!   click-selected actor.
 
 use bevy_core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy_ecs::system::SystemState;
@@ -122,6 +125,22 @@ fn register_cheats(app: &mut App) {
         |inv| {
             let cell = inv.args.str("cell").unwrap_or_default().trim().trim_matches('"').trim().to_owned();
             let text = center_on_cell(inv.ctx, &cell)?;
+            inv.log.info(&text);
+            Ok(())
+        },
+    );
+    // Effects adapter A5a: the host cast path without the cast input (A5b).
+    app.add_console_command(
+        CommandSpec::new("cast")
+            .help(
+                "Casts a spell or power by id from the player through the host cast path (book, magicka, chance; \
+                 learns it first if unknown): self entries on the player, touch entries on the click-selected actor",
+            )
+            .param(Param::new("spell", ArgKind::Str)),
+        |inv| {
+            let spell = inv.args.str("spell").unwrap_or_default().trim().trim_matches('"').to_owned();
+            let selected = inv.ctx.get_resource::<ConsoleSelection>().and_then(|s| s.0);
+            let text = mw_rpg_bevy::cast::console_cast(inv.ctx, &spell, selected)?;
             inv.log.info(&text);
             Ok(())
         },

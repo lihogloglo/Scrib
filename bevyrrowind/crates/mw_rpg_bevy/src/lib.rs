@@ -2,6 +2,7 @@
 //! the inventory screen (app-split.md slice 9) and
 //! item use (potions).
 
+pub mod cast;
 pub mod dialogue;
 pub mod effects;
 pub mod inventory;

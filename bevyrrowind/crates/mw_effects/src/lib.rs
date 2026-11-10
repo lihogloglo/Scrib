@@ -3,7 +3,9 @@
 //! resistances and weaknesses, school, cost, presentation), which effects write the magnitude
 //! stats of `mw_stats::MAGNITUDE_STATS` ([`MAGNITUDE_STAT_EFFECTS`]), and SPEL / ALCH records as effect sources
 //! ([`map_spell`], [`map_potion`], [`MwSource`]), the SPEL source table ([`source_table`]) and
-//! the spells a character starts with ([`start_spells`]). Bevy-free.
+//! the spells a character starts with ([`start_spells`]), and the casting rules behind the
+//! framework's cast seam ([`OpenMwEffectRules`] classic, [`MwModernEffectRules`] modern, A5a).
+//! Bevy-free.
 //!
 //! Slice A1: the archetypes of the first effect set (fortify / drain / damage / restore of
 //! attributes, skills and the three pools, Fortify Maximum Magicka, elemental damage and poison,
@@ -16,11 +18,16 @@
 //! files.
 
 mod book;
+mod cast;
 mod mgef;
 mod source;
 mod stats;
 
 pub use book::{StartSpells, source_table, start_spells};
+pub use cast::{
+    BaseChance, CastChanceIn, ChanceEffectIn, ModernCast, ModernCastIn, MwModernEffectRules, OpenMwEffectRules,
+    SILENCE_STAT, SOUND_STAT, base_success_chance, modern_cast, roll_chance, spell_school, success_chance,
+};
 pub use mgef::{
     EFFECT_COUNT, MwEffectInfo, MwEffects, Presentation, RangeFlags, SCHOOLS, archetype, effect_flags, effect_index,
     effect_key, effect_label, effect_name, effective_flags, flag, hardcoded_flags, resistance_effect, shield_effect,
@@ -36,3 +43,5 @@ pub use stats::MAGNITUDE_STAT_EFFECTS;
 mod tests;
 #[cfg(test)]
 mod tests_book;
+#[cfg(test)]
+mod tests_cast;

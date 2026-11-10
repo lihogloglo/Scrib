@@ -1755,3 +1755,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (pool fortifies): Morrowind's temporary Fortify Health/Magicka/Fatigue = OpenMW's: current over an unchanged
   max, taken back at the end (`PoolMode::Boost`); `Fortify` and innate ones = source-tracked `AddModifierShift` (no rebase,
   derived pools keep them). Not chosen: a no-rebase flag on `Modifier` (every constructor, save shape) (effects.md "As built").
+- 2026-11-10 (effects A5a): Morrowind casting = `MwModernEffectRules` by default (chance 1, Sound raises a spell's cost, Silence
+  refuses); classic `OpenMwEffectRules` ports OpenMW exactly (fizzle spends the cost) and waits for a rule-set choice. Silence and
+  Sound are magnitude stats (`mw_stats::MAGNITUDE_STATS`, appended) read by the cast rules (effects-adapter.md "As built (A5a)").

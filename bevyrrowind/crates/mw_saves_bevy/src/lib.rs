@@ -1040,6 +1040,68 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// Adapter A5a: a power cast through the host's `CastRequest` records its use on the world
+    /// clock; the use survives a save round trip, so a recast right after the load is refused
+    /// (24 game hours, `spells.cpp` `canUsePower`) and spends nothing.
+    #[test]
+    #[allow(clippy::float_cmp, reason = "exact values: saves are logic")]
+    fn a_used_power_still_recharges_after_a_save_round_trip() {
+        use std::time::Duration;
+
+        use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
+        use mw_rpg_bevy::cast::CastRequest;
+        use mw_rpg_bevy::effects::test_records::RACE_POWER;
+        use sf_effects_bevy::sf_effects::GameMinutes;
+        use sf_effects_bevy::{EffectClock, EffectIds, Effects};
+        use sf_rpg::PlayerId;
+        use sf_stats_bevy::sf_stats::StatOwner;
+        use sf_stats_bevy::{StatTableRes, Stats};
+
+        let root = temp_root("power-recharge");
+        let db = mw_rpg_bevy::effects::test_records::spell_db(&[]);
+        let mut app = app(root.clone(), Rpg::new(db.clone()).unwrap());
+        app.add_plugins(TimePlugin)
+            .insert_resource(Time::<Fixed>::from_hz(60.0))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
+        mw_rpg_bevy::stats::add(&mut app, Some(db));
+        app.update();
+        let hero = StatOwner::Player(HOST_KEY);
+        let power = RecordId::new(RACE_POWER);
+        let table = app.world().resource::<StatTableRes>().0.clone();
+        let magicka = table.find("magicka").unwrap();
+        // (magicka current, the power's last use)
+        let read = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&Stats, &Effects)>();
+            let (s, fx) = q.iter(app.world()).find(|(s, _)| s.owner == hero).expect("the player");
+            (s.view(&table).current(magicka), fx.book.power_used(&power))
+        };
+        let cast = |app: &mut App| {
+            let request = CastRequest { player: PlayerId::HOST, source: power.clone(), target: None };
+            app.world_mut().write_message(request);
+            for _ in 0..3 {
+                app.update();
+            }
+        };
+        assert_eq!(read(&mut app), (40.0, None));
+        cast(&mut app);
+        let clock = app.world().resource::<EffectClock>().0;
+        let used = read(&mut app);
+        assert_eq!(used, (35.0, Some(clock)), "cost 5, used now");
+
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+        save(&mut app);
+        restore_player_sheet_fresh(&mut app);
+        app.insert_resource(WorldOverlay::default()).insert_resource(EffectIds::default());
+        load(&mut app);
+        assert_eq!(read(&mut app), used, "the use is kept");
+
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
+        cast(&mut app);
+        assert_eq!(read(&mut app), used, "refused while recharging: nothing spent");
+        assert!(app.world().resource::<EffectClock>().0 < GameMinutes(clock.0 + GameMinutes::DAY.0));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn restore_player_sheet_fresh(app: &mut App) {
         mw_rpg_bevy::stats::restore_player_sheet(app.world_mut(), HOST_KEY, None, None);
     }
