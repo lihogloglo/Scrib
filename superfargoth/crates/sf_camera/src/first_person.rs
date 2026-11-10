@@ -1,6 +1,7 @@
-//! First-person look limits (camera.md "First person"): per-move yaw and pitch limits around the
-//! move's entry yaw, eased in over the rule's `ease` time and released eased, and `ignore_look`
-//! windows. The eye itself (the baked virtual camera track) arrives with slice D2.
+//! First-person look limits (camera.md "First person"): per-move yaw limits around a centre yaw
+//! (the shell passes the followed body's yaw: `sf_camera_bevy` `follow_move_look`) and pitch
+//! limits, eased in over the rule's `ease` time and released eased, and `ignore_look` windows.
+//! The eye itself (the baked virtual camera track) arrives with slice D2.
 
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +11,7 @@ use crate::{Look, smoothstep, wrap_angle};
 /// [`Self::from_degrees`]).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LookLimits {
-    /// Half range of yaw around the entry yaw.
+    /// Half range of yaw around the centre yaw.
     pub yaw: f32,
     pub pitch_min: f32,
     pub pitch_max: f32,
@@ -50,8 +51,10 @@ impl FirstPersonLook {
         smoothstep(self.weight)
     }
 
-    /// Set the active move's limits (`None`: free look). Call when the move changes; `entry_yaw`
-    /// is the character's yaw at move start. Same limits again are a no-op.
+    /// Set the active move's limits (`None`: free look) around `entry_yaw` (the centre: the
+    /// body's yaw, so it may change every frame). New limits from free look ease in from 0; a
+    /// change of limits or centre while limited (a chained attack, a turning body) keeps the
+    /// current weight; `None` eases the last limits out. Same limits and centre again: a no-op.
     pub fn set_limits(&mut self, limits: Option<LookLimits>, entry_yaw: f32) {
         if limits == self.limits && (limits.is_none() || (self.entry_yaw - entry_yaw).abs() < 1e-6) {
             return;

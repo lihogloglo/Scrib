@@ -23,8 +23,17 @@
 //!   `RootMotionMode::Progress`; its playhead is the move's chain progress, interpolated between
 //!   the last two ticks like the body. When the move ends the slot stops and the graph
 //!   inertializes back to locomotion.
-//! - **First person**: the camera fades the followed body (`CameraPose::fade`); the avatar is
-//!   hidden while it is mostly faded (no first-person arms yet).
+//! - **First person** (superfargoth `docs/specs/first-person.md`, FP-1): the avatar carries
+//!   `RoleLayers`, so its outfit is split by role (head, arms, body; held items) and first person
+//!   only re-layers it: the head leaves every camera but keeps casting (shadow-only layer, FP-1b;
+//!   `RoleLayers::first_person`), the body, arms
+//!   and weapon stay drawn, so the player sees their own arms. With the camera's
+//!   `ComfortSettings::view_model` (FP-2; off by default until the owner's FP-2 check, console
+//!   `flip viewmodel`) arms and weapon cast from the shadow-only layer and their view copies are
+//!   drawn instead, with the camera's view-model projection (`sf_character_bevy::ViewModelPlugin`,
+//!   fed from [`first_person`]). Third person shows every role and
+//!   hides the whole avatar while the camera's collision fade is past [`HIDE_FADE`] (the eye
+//!   inside the body). Presentation only: nothing here writes gameplay state.
 
 use bevy_camera::prelude::Visibility;
 use bevy_ecs::prelude::*;
@@ -39,8 +48,9 @@ use sf_action_bevy::{ActionBody, ActionCharacter};
 use sf_anim::{RootDelta, RootMotionMode};
 use sf_anim_bevy::{AnimLod, AnimTier, Animator};
 use sf_anim_graph::{MontageClip, SlotId, SlotRequest};
+use sf_camera::ViewChoice;
 use sf_camera_bevy::PlayerCamera;
-use sf_character_bevy::CharacterBody;
+use sf_character_bevy::{CharacterBody, RoleLayers, ViewModelSettings};
 use sf_controller::{CharacterFrame, Gait};
 use sf_controller_bevy::{ControllerSettings, FeedGait, FeedValues, Mover};
 
@@ -61,7 +71,7 @@ const CLIP_BLEND_IN: f32 = 0.10;
 const TELEPORT_M: f32 = 3.0;
 /// The character kind of `NPC_` records (`mw_actors::source::NPC_KIND`).
 const NPC_KIND: &str = "NPC_";
-/// The avatar hides while the camera fades the body more than this (first person).
+/// In third person the avatar hides while the camera fades the body more than this.
 const HIDE_FADE: f32 = 0.5;
 /// Unlaunched air time the animation ignores (a step-down miss), seconds.
 pub const AIR_GRACE: f32 = 0.1;
@@ -164,6 +174,8 @@ pub(crate) fn avatar_bundle() -> impl Bundle {
         Name::new("player avatar"),
         sf_character_bevy::Character::record(NPC_KIND, sf_records::RecordId::new(crate::hud::PLAYER_RECORD)),
         PlayerAvatar,
+        // Split by role at build time; `first_person` re-layers it.
+        RoleLayers::world(),
         Transform::IDENTITY,
         Visibility::Inherited,
     )
@@ -280,9 +292,12 @@ pub(crate) fn traversal(
         (None, Some(c)) => (Some(c.progress), CLIP_BLEND_IN),
         (None, None) => (None, CLIP_BLEND_IN),
     };
+    // A looping slot (a held guard, combat.md "C2b") wraps its progress: across the wrap the
+    // playhead jumps to the current tick's instead of scrubbing back through the loop.
     let progress = |fallback: f32, offset: f32| {
         let (prev, curr) = ticks.unwrap_or((fallback, fallback));
-        (prev + (curr - prev) * alpha - offset).max(0.0)
+        let p = if curr < prev { curr } else { prev + (curr - prev) * alpha };
+        (p - offset).max(0.0)
     };
     match (moving.zip(out.slot), feed.traversal.as_mut()) {
         (Some((p, key)), Some(t)) if t.key == key && t.rule == out.rule => {
@@ -347,11 +362,39 @@ fn stop(a: &mut Animator, slot: SlotId) {
     a.instance.stop_slot(&asset.binding(), slot, TRAVERSAL_BLEND_OUT);
 }
 
-/// Hides the avatar while the camera fades the body (first person).
-pub(crate) fn first_person(cams: Query<&PlayerCamera>, mut avatars: Query<&mut Visibility, With<PlayerAvatar>>) {
-    let fade = cams.iter().find_map(|c| c.pose().map(|p| p.fade)).unwrap_or(0.0);
-    let want = if fade > HIDE_FADE { Visibility::Hidden } else { Visibility::Inherited };
-    for mut v in &mut avatars {
-        v.set_if_neq(want);
+/// What the avatar shows for the camera's view and body fade (`None`: no camera pose yet, as
+/// third person unfaded) and its view-model setting. See the module docs, "First person".
+pub(crate) fn avatar_view(pose: Option<(ViewChoice, f32)>, view_model: bool) -> (Visibility, RoleLayers) {
+    match pose {
+        Some((ViewChoice::FirstPerson, _)) => (Visibility::Inherited, RoleLayers::first_person(view_model)),
+        Some((ViewChoice::ThirdPerson, fade)) if fade > HIDE_FADE => (Visibility::Hidden, RoleLayers::world()),
+        _ => (Visibility::Inherited, RoleLayers::world()),
+    }
+}
+
+/// Schedules [`first_person`]: after the camera rig writes the pose, before the character layer
+/// sync, so a view switch is laid out in the frame the camera cuts.
+pub(crate) fn add_first_person(app: &mut bevy_app::App) {
+    app.add_systems(bevy_app::PostUpdate, first_person.after(sf_camera_bevy::CameraSystems::Rig).before(sf_character_bevy::CharacterLayerSystems));
+}
+
+/// Lays the avatar out for the camera's view ([`avatar_view`]) and hands the camera's view-model
+/// projection (`ComfortSettings::view_model_projection`: `fov_world` to `fov_body`, the depth
+/// slice) to the view copies' material (`ViewModelSettings`, when `ViewModelPlugin` runs).
+pub(crate) fn first_person(
+    cams: Query<&PlayerCamera>,
+    mut avatars: Query<(&mut Visibility, &mut RoleLayers), With<PlayerAvatar>>,
+    view_model: Option<ResMut<ViewModelSettings>>,
+) {
+    let cam = cams.iter().find(|c| c.pose().is_some());
+    let pose = cam.and_then(|c| c.pose().map(|p| (p.view, p.fade)));
+    let (visibility, roles) = avatar_view(pose, cam.is_some_and(|c| c.settings.view_model));
+    for (mut v, mut r) in &mut avatars {
+        v.set_if_neq(visibility);
+        r.set_if_neq(roles.clone());
+    }
+    if let (Some(c), Some(mut vm)) = (cam.or_else(|| cams.iter().next()), view_model) {
+        let p = c.settings.view_model_projection();
+        vm.set_if_neq(ViewModelSettings { fov_scale: p.k, depth: p.depth });
     }
 }

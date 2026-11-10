@@ -1,7 +1,9 @@
 # First-person arms, hands and held items (research, 2026-11-05)
 
 Status: research only. No web access was used: external facts are from memory and marked (verify) where a
-symbol, line or version matters. In-repo facts were grepped.
+symbol, line or version matters. In-repo facts were grepped. **Checked 2026-11-10 (FP-1)**: the Bevy and
+OpenMW items are confirmed against source below (Bevy 0.20.0 registry source; OpenMW commit ca5e2576);
+the Unreal item is still unverified. Spec: `../specs/first-person.md`.
 
 ## 0. What we already decided
 
@@ -46,20 +48,30 @@ physical pull-back (lower the weapon near walls) for long weapons.
 - Morrowind: BODY records carry a first-person flag (BYDT flags); the player's race has `.1st` arm/hand parts
   and armor/clothing can list a first-person part (gauntlets, pauldrons). Animations: `xbase_anim.1st.nif`
   (humanoid) and beast variants; a separate arms-only skeleton with its own clip set (technique A).
-- OpenMW does technique A: `apps/openmw/mwrender/npcanimation.cpp` (`NpcAnimation::setViewMode`,
-  `VM_FirstPerson`, `updateParts()` showing only `.1st` parts, first-person offset for head-bob alignment,
-  weapon via the usual attach nodes) and the "first person field of view" setting (Camera category) with a
-  separate projection / depth clear for the first-person node in `renderingmanager.cpp` (verify exact symbols
-  and line numbers at current master; I could not fetch the repo, so no commit is cited).
+- OpenMW does technique A (confirmed, `apps/openmw/mwrender/npcanimation.cpp` at ca5e2576):
+  `setViewMode` (~l.296) rebuilds with the first-person skeleton (`getActorSkeleton(is1stPerson, ...)`,
+  `xbaseanim1st`, ~l.501-514); `updateParts` (~l.574) adds no head or hair in first person (~l.651);
+  `addPartGroup` (~l.865) looks up `<part>.1st` and falls back to the third-person part only for hand,
+  wrist, forearm and upper arm; a neck `RotateController` pitches the arms (~l.920). The FOV and depth
+  clear live in npcanimation.cpp too, not renderingmanager.cpp: `rebuild` (~l.543) gives the root
+  `Mask_FirstPerson` and an `OverrideFieldOfViewCallback` (cull-time projection swap for the subgraph,
+  ~l.374), `setRenderBin` (~l.419) puts it in a `DepthClear` bin whose `DepthClearCallback` (~l.324) clears
+  depth, draws, then redraws depth-only into the opaque depth FBO so post-processing sees full depth.
+  `renderingmanager.cpp` only reads `Settings::camera().mFirstPersonFieldOfView` (~l.217).
 - Implication: our `FIRST_PERSON` table mirrors this. Content-pack `.1st` clips are optional presentation; the
   UAL fallback must be the shared-rig path.
 
 ## 3. Bevy 0.20-dev
 
-Root `Cargo.toml` uses `bevy = "0.20"` (exact rev not checked).
+Root `Cargo.toml` uses `bevy = "0.20"`: 0.20.0 from crates.io, with `bevy_core_pipeline`, `bevy_pbr`,
+`bevy_render`, `bevy_solari` patched from `superfargoth/vendor/` (confirmed 2026-11-10).
 - Official example `examples/camera/first_person_view_model.rs` (since 0.15): world camera plus a second
   `Camera3d` with higher `order`, `RenderLayers` for the view model, its own perspective FOV, depth cleared so
-  arms never clip, view-model meshes `NotShadowCaster`, lights must also include the layer. (verify details)
+  arms never clip, view-model meshes `NotShadowCaster`, lights must also include the layer. Confirmed in
+  the 0.20.0 source: world camera FOV 90 on layer 0, viewmodel camera `order: 1`, FOV 70,
+  `RenderLayers::layer(1)`, the arm on layer 1 with `NotShadowCaster`, the light on `[0, 1]`; the example
+  sets no explicit depth clear (each camera has its own depth texture). Bevy 0.20 has no shadow-only flag:
+  `bevy_light` pairs casters and lights by `RenderLayers` intersection.
 - Cost for us: (a) a second camera repeats camera-bound passes (prepass, post stack, SSAO, bloom, DLSS) unless
   kept minimal; (b) TAA/DLSS need jitter plus motion vectors per camera, and DLSS history is per camera
   (roughly 0.5-1 ms at 1440p if upscaled separately, unmeasured), so the stable choice is to render the

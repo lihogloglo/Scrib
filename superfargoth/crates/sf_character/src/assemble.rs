@@ -13,7 +13,8 @@
 //! - a submesh that still carries [`MorphKind::Expression`](sf_model::MorphKind::Expression) targets (blink,
 //!   mouth) is never merged: it becomes its own mesh with only its own
 //!   targets, on the same palette (one extra draw and palette copy);
-//! - everything else merges per material and carries no morph data.
+//! - everything else merges per material (and [`AssemblyPart::group`]) and
+//!   carries no morph data.
 //!
 //! `sf_character_bevy` turns the result into `Mesh` assets and one
 //! `SkinnedMesh` entity per mesh, sharing the joint entities.
@@ -78,12 +79,17 @@ pub struct AssemblyPart<'a> {
     /// its palette and submeshes replace the cooked ones; materials and
     /// morph target infos still come from `cooked`.
     pub decoded: Option<&'a DecodedPart>,
+    /// Merge group: parts merge per material only within one group, so a
+    /// caller that draws groups apart (first-person roles,
+    /// `sf_character_bevy::RoleLayers`) gets one mesh per (material, group).
+    /// 0 for all parts merges per material.
+    pub group: u8,
 }
 
 impl<'a> AssemblyPart<'a> {
     /// A cooked part as it is.
     pub fn new(cooked: &'a CookedSkinned, body_part: Option<&'a BodyPart>) -> Self {
-        Self { cooked, body_part, decoded: None }
+        Self { cooked, body_part, decoded: None, group: 0 }
     }
 }
 
@@ -118,6 +124,8 @@ impl DecodedPart {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AssembledMesh {
     pub material: Material,
+    /// The [`AssemblyPart::group`] of its parts.
+    pub group: u8,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     /// One per vertex; joints index [`AssembledOutfit::joints`].
@@ -226,8 +234,8 @@ pub fn assemble(parts: &[AssemblyPart<'_>], lod: usize, shapes: &ShapeWeights) -
             }
             let material = cooked.model.materials.get(sub.material as usize).cloned().unwrap_or_default();
             if sub.targets.is_empty() {
-                let k = out.merged.iter().position(|m| m.material == material).unwrap_or_else(|| {
-                    out.merged.push(AssembledMesh::empty(material.clone()));
+                let k = out.merged.iter().position(|m| m.material == material && m.group == part.group).unwrap_or_else(|| {
+                    out.merged.push(AssembledMesh::empty(material.clone(), part.group));
                     out.merged.len() - 1
                 });
                 let mesh = &mut out.merged[k];
@@ -238,6 +246,7 @@ pub fn assemble(parts: &[AssemblyPart<'_>], lod: usize, shapes: &ShapeWeights) -
             } else {
                 out.morphed.push(AssembledMesh {
                     material,
+                    group: part.group,
                     vertices: sub.vertices,
                     indices: sub.indices,
                     skin: sub.skin,
@@ -251,7 +260,7 @@ pub fn assemble(parts: &[AssemblyPart<'_>], lod: usize, shapes: &ShapeWeights) -
 }
 
 impl AssembledMesh {
-    fn empty(material: Material) -> Self {
-        Self { material, vertices: Vec::new(), indices: Vec::new(), skin: Vec::new(), morph_targets: Vec::new(), morphs: Vec::new() }
+    fn empty(material: Material, group: u8) -> Self {
+        Self { material, group, vertices: Vec::new(), indices: Vec::new(), skin: Vec::new(), morph_targets: Vec::new(), morphs: Vec::new() }
     }
 }

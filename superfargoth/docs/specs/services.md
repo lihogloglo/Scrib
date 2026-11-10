@@ -286,6 +286,8 @@ followers only. Owner question 1.
   in single-player; in co-op the host cancels open sessions in the save snapshot only, since staged items never
   moved, nothing is lost).
 - Restocking stacks and "already bought" spells are ordinary inventory and character state.
+- As built 2026-11-10: `sf_save_bevy::sections::services`, wired in `mw_saves_bevy`; the load-side drop of missing
+  actors' purses is not built ([archive/services-history.md](archive/services-history.md) "Saves (as built)").
 
 ## Performance
 

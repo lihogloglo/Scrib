@@ -17,10 +17,12 @@ mod services;
 mod state;
 mod stats;
 mod text;
+mod training;
 
 pub use barter::{
     ALL_ITEMS, ATTR_HEALTH, ATTR_RESTOCK, BarterOptions, BoundItems, GOLD_IDS, MwItemClass, MwService, MwServiceRules,
     MwTradeHost, ProviderFacts, SERVICE_REFUSAL_TOPIC, TradeItem, can_sell, is_gold, is_restocking, item_health,
+    mercantile_use,
     provider_facts, record_entry_stack, trade_item,
 };
 pub use db::{
@@ -47,6 +49,10 @@ pub use services::{
 };
 pub use state::NpcStates;
 pub use stats::{MwSheets, NoSheets, player_rank, sheet_function};
+pub use training::{
+    Calendar, TRAINER_SKILLS, TRAINING_HOURS, TrainingOptions, TrainingSheets, advance_calendar, days_per_month,
+    refusal_label, skill_entry, trainer_skills, training_entries, training_purchase,
+};
 pub use text::{GlobalNumber, Macro, MacroSource, expand, format_global};
 /// Script variable types ([`ScriptVar`]), from `mw_script`.
 pub use mw_script::ast::VarType;
@@ -65,3 +71,5 @@ mod tests_script_stats;
 mod tests_services;
 #[cfg(test)]
 mod tests_stats;
+#[cfg(test)]
+mod tests_training;

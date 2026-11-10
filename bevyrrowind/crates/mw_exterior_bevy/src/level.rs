@@ -44,6 +44,7 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("light-lab", include_str!("../../../levels/light-lab.ron")),
     ("anim-lab", include_str!("../../../levels/anim-lab.ron")),
     ("arena", include_str!("../../../levels/arena.ron")),
+    ("sparring", include_str!("../../../levels/sparring.ron")),
     ("shapes-bench", include_str!("../../../levels/shapes-bench.ron")),
 ];
 
@@ -244,16 +245,17 @@ fn spawn(
             ChildOf(entry.root),
         ));
     }
-    // `dummy*` spawns: training dummies (scaffold `TrainingDummy`, combat C1b, `levels/arena.ron`).
+    // `dummy*` spawns: training dummies (scaffold `TrainingDummy`, combat C1b, `levels/arena.ron`);
+    // `sparring*`: sparring dummies that strike back (combat C2a, `levels/sparring.ron`).
     let mut dummies = 0;
-    for s in level.spawns.iter().filter(|s| s.name.to_ascii_lowercase().starts_with("dummy")) {
+    for (s, kind) in level.spawns.iter().filter_map(|s| Some((s, mw_player_bevy::dummy::DummyKind::of_spawn(&s.name)?))) {
         // Level yaw: degrees, 0 faces -z; the mover's 0 faces +z.
         let yaw = s.yaw.to_radians() + std::f32::consts::PI;
-        mw_player_bevy::dummy::spawn(&mut commands, dummies, (WorldPos::from_f64(s.at.as_dvec3()), yaw), entry.root);
+        mw_player_bevy::dummy::spawn_kind(&mut commands, dummies, kind, (WorldPos::from_f64(s.at.as_dvec3()), yaw), entry.root);
         dummies += 1;
     }
     if dummies > 0 {
-        info!("level {}: {dummies} training dummies", level.name);
+        info!("level {}: {dummies} dummies (training and sparring)", level.name);
     }
     info!(
         "level {}: {} objects ({triangles} triangles), {bodies} static colliders, {props} props, {} actors, spawned in {:.2} ms (F11: player)",
@@ -265,8 +267,13 @@ fn spawn(
 }
 
 /// The level's `player_held` items are the player's equipment (each new avatar; CB-3): its
-/// weapon shows while drawn (F).
-fn equip_player(mut commands: Commands, level: Res<ActiveLevel>, avatars: Query<Entity, Added<mw_game_core::player::PlayerAvatar>>) {
+/// weapon shows while drawn (F). A sparring dummy (C2a) holds the same, always drawn.
+#[allow(clippy::type_complexity)] // system parameters
+fn equip_player(
+    mut commands: Commands,
+    level: Res<ActiveLevel>,
+    avatars: Query<Entity, Or<(Added<mw_game_core::player::PlayerAvatar>, Added<mw_player_bevy::dummy::SparringAvatar>)>>,
+) {
     let held = &level.0.level.player_held;
     if held.is_empty() {
         return;
@@ -282,7 +289,7 @@ pub struct LabLight(usize);
 
 /// The rig's lights through the game's own path (`mw_assets::lights::spawn_light`: the
 /// calibration's range and power for the radius, `BudgetedShadow`, so the point-shadow budget,
-/// contact shadows and the shadow cache treat them as lamps), on the worldspace's layer.
+/// contact shadows and the shadow cache treat them as lamps), on the worldspace's light layers.
 fn spawn_lights(mut commands: Commands, mut registry: ResMut<WorldspaceRegistry>, level: Res<ActiveLevel>, calibration: Res<mw_assets::LightCalibration>) {
     let ActiveLevel(LevelSetup { level, worldspace: ws, .. }) = &*level;
     let Some(rig) = &level.lights else { return };
@@ -293,7 +300,7 @@ fn spawn_lights(mut commands: Commands, mut registry: ResMut<WorldspaceRegistry>
         let (cell, transform) = to_grid(WorldPos::from_f64(at.as_dvec3()));
         #[allow(clippy::cast_possible_truncation)]
         let light = mw_assets::lights::spawn_light(&mut commands, &calibration, &info, None, transform, i as u32);
-        commands.entity(light).try_insert((Name::new(format!("lab light {i}")), LabLight(i), cell, transform, RenderLayers::layer(entry.layer), ChildOf(entry.root)));
+        commands.entity(light).try_insert((Name::new(format!("lab light {i}")), LabLight(i), cell, transform, entry.layers().light(), ChildOf(entry.root)));
     }
     info!("level {}: {} lights ({:?}, radius {} m, orbit {} deg/s)", level.name, positions.len(), rig.layout, rig.radius, rig.orbit);
 }

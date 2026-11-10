@@ -303,6 +303,43 @@ fn deal(merchant_offer: i64, balance: i64) -> DealTotals {
     DealTotals { merchant_offer, balance, buy_total: 0, sell_total: 0 }
 }
 
+/// `skillUsageSucceeded(player, Mercantile, Mercantile_Success, scale)`.
+fn mercantile(scale: f32) -> ServiceEffect {
+    ServiceEffect::UseSkill { stat: id("mercantile"), use_kind: 0, scale }
+}
+
+#[test]
+fn a_won_haggle_uses_mercantile_by_the_haggled_percentage() {
+    let (db, g) = (db(), MwGmst::vanilla());
+    let bound = BoundItems::default();
+    let host = Host { terms: Some(even_terms(false)), ..Default::default() };
+    let rules = MwServiceRules::new(&db, &g, &bound, &host);
+    let c = ctx("trader");
+    let plus = ServiceEffect::Disposition { delta: 1 };
+    // Buying for 90 against 100: d = 10, x = -4 x 10 + 50 + 0 = 10; roll 9 is rollDice + 1 = 10.
+    // skillGain = floor(100 x (100 - 90) / 100) = 10, used before the disposition change.
+    let bought = rules.haggle(&c, &deal(-100, -90), 9);
+    assert!(bought.accepted);
+    assert_eq!(bought.effects, vec![mercantile(10.0), plus.clone()]);
+    // The same haggle lost: no skill use, only iBarterFailDisposition.
+    let lost = rules.haggle(&c, &deal(-100, -90), 10);
+    assert!(!lost.accepted);
+    assert_eq!(lost.effects, vec![ServiceEffect::Disposition { delta: -1 }]);
+    // At (or under) the merchant's offer the haggle accepts before the roll: no skill use.
+    assert_eq!(rules.haggle(&c, &deal(-100, -100), 99).effects, vec![plus.clone()]);
+    assert_eq!(rules.haggle(&c, &deal(100, 90), 99).effects, vec![plus.clone()]);
+    // Selling for 1001 against 1000 wins at x = 50 but floor(100 x 1 / 1001) = 0: nothing to use.
+    let tiny = rules.haggle(&c, &deal(1000, 1001), 0);
+    assert!(tiny.accepted);
+    assert_eq!(tiny.effects, vec![plus]);
+
+    let creature = Host { terms: Some(even_terms(true)), ..Default::default() };
+    let rules = MwServiceRules::new(&db, &g, &bound, &creature);
+    let refused = rules.haggle(&ctx("scamp_creeper"), &deal(-100, -90), 0);
+    assert!(!refused.accepted, "creatures never haggle");
+    assert!(refused.effects.is_empty());
+}
+
 #[test]
 fn haggle_maps_the_roll_and_returns_disposition_effects() {
     let (db, g) = (db(), MwGmst::vanilla());
@@ -319,7 +356,7 @@ fn haggle_maps_the_roll_and_returns_disposition_effects() {
     // `roll + 1` is OpenMW's rollDice(100) + 1, so roll 13 is 14 (accepted), roll 14 is 15.
     let won = rules.haggle(&c, &deal(100, 110), 13);
     assert!(won.accepted);
-    assert_eq!(won.effects, plus);
+    assert_eq!(won.effects, vec![mercantile(9.0), plus[0].clone()], "floor(100 x 10 / 110) = 9");
     let lost = rules.haggle(&c, &deal(100, 110), 14);
     assert!(!lost.accepted);
     assert_eq!(lost.effects, minus);

@@ -184,8 +184,12 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         .add_systems(Update, await_ground::<Physics>.after(arrive).before(StreamingSystems::Transition))
         .add_systems(Update, update_focus.in_set(FocusUpdate).before(ScriptSlot::Update))
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate))
-        .add_systems(PostUpdate, (avatar::link, avatar::feed, grip::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe))
-        .add_systems(PostUpdate, avatar::first_person);
+        .add_systems(PostUpdate, (avatar::link, avatar::feed, grip::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe));
+    // FP-2b: the view copies' material (first person with `ComfortSettings::view_model`).
+    if !app.is_plugin_added::<sf_character_bevy::ViewModelPlugin>() {
+        app.add_plugins(sf_character_bevy::ViewModelPlugin);
+    }
+    avatar::add_first_person(app);
     hud::add(app);
     combat::add(app, sheet, &clips);
     dummy::add(app);
@@ -285,6 +289,7 @@ fn spawn_controls(commands: &mut Commands, keymap: &sf_ui::Keymap, body: Entity)
             PlayerAction::Button(ActionClass::Sneak) => bind(commands, keymap, Control::Sneak, action, plain),
             PlayerAction::Button(ActionClass::Light) => bind(commands, keymap, Control::Attack, action, plain),
             PlayerAction::Button(ActionClass::Heavy) => bind(commands, keymap, Control::HeavyAttack, action, plain),
+            PlayerAction::Button(ActionClass::Guard) => bind(commands, keymap, Control::Guard, action, plain),
             // One button: tap rolls on release, hold sprints (the separate Sprint and Dodge buttons
             // stay unbound).
             PlayerAction::DodgeSprint => bind(commands, keymap, Control::Sprint, action, plain),
@@ -1005,5 +1010,7 @@ mod tests_avatar;
 mod tests_feel;
 #[cfg(test)]
 mod tests_combat;
+#[cfg(test)]
+mod tests_sparring;
 #[cfg(test)]
 mod tests_vitals;

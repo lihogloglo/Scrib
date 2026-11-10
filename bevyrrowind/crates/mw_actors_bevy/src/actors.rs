@@ -132,6 +132,10 @@ impl CharacterContent for MwCharacters {
         mw_actors::probes::smooth_probes(&animation.skeleton, animation.clips.iter().map(|c| &**c))
     }
 
+    /// Part slots onto first-person roles (`mw_actors::slots::view_role`).
+    fn view_role(&self, slot: sf_character::SlotId) -> sf_character::ViewRole {
+        self.actors.view_role(slot)
+    }
     /// Robes (Chest parts) and skirts (`mw_physics::MwClothRules`): `None`
     /// (drawn as authored) unless `--cloth robes`.
     fn cloth_spec(&self, id: &sf_records::RecordId, part: &sf_character::BodyPart) -> Option<sf_character::ClothSpec> {

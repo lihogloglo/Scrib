@@ -1,7 +1,8 @@
 //! Bevy-free melee combat core (`docs/specs/combat.md`): moveset sheets compiled into
 //! `sf_action` move rules and a combat move table, fighters and vitals, hit and hurt volumes with
 //! sub-stepped weapon sweeps, the contact order, the [`CombatRules`] seam with the modern
-//! [`StandardRules`], reaction tiers and hit-stop.
+//! [`StandardRules`], reaction tiers and hit-stop, and a sparring partner's strike schedule
+//! ([`SparSchedule`], C2a).
 //!
 //! Slice C1a. The feel layer (this crate and `sf_action`) owns timing and never computes damage;
 //! rules decide numbers; content supplies sheets, clips and stats. Per fixed tick, a host runs
@@ -14,6 +15,7 @@
 // Geometry reads best with its textbook names (a, b, p, q, s, t).
 #![allow(clippy::many_single_char_names)]
 
+mod aim;
 mod fighter;
 mod hitstop;
 mod lock;
@@ -21,8 +23,10 @@ mod react;
 mod rules;
 mod shape;
 mod sheet;
+mod spar;
 mod step;
 
+pub use aim::{SoftAimInput, soft_aim_axis, soft_aim_wanted, update_soft_aim};
 pub use fighter::{Defense, FightState, Fighter, Offense, Pool, SwingState, Vitals};
 pub use hitstop::{HitStop, ticks};
 pub use lock::{LockEvent, LockInput, lock_key, update_lock};
@@ -30,7 +34,8 @@ pub use react::{ReactionTable, Side, Tier};
 pub use rules::{CombatRules, Contact, DefenderState, Outcome, PoolDelta, RegenState, StandardRules, Swing, SwingPlan, roll};
 pub use shape::{HurtShape, SWEEP_STEPS, WeaponShape, closest_on_segment, closest_points, segment_distance};
 pub use sheet::{
-    At, CompiledSheet, Costs, Defaults, HitDef, HitMask, HitRow, HitStopDef, MaskDef, MoveDef, MoveSpec, MoveTable, Movesets, SheetDef, SheetError,
+    At, CompiledSheet, Costs, Defaults, GuardDef, GuardSpec, HitDef, HitMask, HitRow, HitStopDef, MaskDef, MoveDef, MoveSpec, MoveTable, Movesets, SheetDef, SheetError,
     SlotSpan, WeaponDef, WindowDef, compile, load,
 };
-pub use step::{Body, CombatCtx, CombatEvent, CombatOutput, HOSTILE_RANGE, SocketSource, SocketTracks, Unit, gate, step};
+pub use spar::SparSchedule;
+pub use step::{Body, CombatCtx, CombatEvent, CombatOutput, GuardResult, HOSTILE_RANGE, SocketSource, SocketTracks, Unit, gate, step};

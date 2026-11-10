@@ -1,0 +1,43 @@
+{
+  "ActorKey": {
+    "NEWTYPESTRUCT": "U128"
+  },
+  "GameTime": {
+    "STRUCT": [
+      {
+        "day": "U32"
+      },
+      {
+        "minute": "U16"
+      }
+    ]
+  },
+  "Purse": {
+    "STRUCT": [
+      {
+        "gold": "I64"
+      },
+      {
+        "last_restock": {
+          "TYPENAME": "GameTime"
+        }
+      }
+    ]
+  },
+  "WorldServices": {
+    "STRUCT": [
+      {
+        "purses": {
+          "MAP": {
+            "KEY": {
+              "TYPENAME": "ActorKey"
+            },
+            "VALUE": {
+              "TYPENAME": "Purse"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

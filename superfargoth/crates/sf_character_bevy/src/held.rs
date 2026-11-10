@@ -90,7 +90,9 @@ impl HeldProp {
 }
 
 /// Where a held item's light goes: the host adds the light (calibrated,
-/// animated, budgeted) to this entity. Inherits the prop's visibility.
+/// animated, budgeted) to this entity. Inherits the prop's visibility. Its
+/// `RenderLayers` are the character's light layers (the root's plus its
+/// [`crate::ShadowLayers`]): copy them onto the light.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct HeldLightSlot {
     pub item: RecordId,
@@ -284,14 +286,22 @@ pub(crate) fn sync_held(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
-    mut roots: Query<(Entity, &HeldPending, &CharacterBody, Option<&mut HeldProps>, Option<&CharacterReadiness>, Option<&RenderLayers>)>,
+    mut roots: Query<(
+        Entity,
+        &HeldPending,
+        &CharacterBody,
+        Option<&mut HeldProps>,
+        Option<&CharacterReadiness>,
+        Option<&RenderLayers>,
+        Option<&crate::ShadowLayers>,
+    )>,
     bindings: Query<&SkeletonBinding>,
     joints: Query<(Option<&ChildOf>, Has<Visibility>)>,
     mut warned: Local<HashSet<String>>,
 ) {
     let Some(characters) = characters else { return };
     let content = characters.content().as_ref();
-    for (root, pending, body, props, readiness, layers) in &mut roots {
+    for (root, pending, body, props, readiness, layers, shadow) in &mut roots {
         commands.entity(root).try_remove::<HeldPending>();
         let Ok(binding) = bindings.get(body.body) else { continue };
         let readiness = readiness.map(|r| r.0).unwrap_or_default();
@@ -349,6 +359,8 @@ pub(crate) fn sync_held(
             });
             for (mesh, material) in &assets.meshes {
                 let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::IDENTITY, Visibility::Inherited, ChildOf(entity)));
+                // Layered by role on roots with `RoleLayers` (module `roles`); the light slot is not.
+                e.insert(crate::PartRole(sf_character::ViewRole::Held));
                 if let Some(skinned) = &skinned {
                     e.insert((
                         skinned.clone(),
@@ -367,8 +379,9 @@ pub(crate) fn sync_held(
                     Visibility::Inherited,
                     ChildOf(entity),
                 ));
+                // A light: the root's layers plus its shadow-only ones (`ShadowLayers::light`).
                 if let Some(layers) = layers {
-                    e.insert(layers.clone());
+                    e.insert(crate::ShadowLayers::light(shadow, layers));
                 }
                 e.id()
             });

@@ -35,11 +35,13 @@ sf_save.workspace = true
 thiserror.workspace = true
 # Section types (save.md "What is saved"): the character body (ActionState, Locomotion), `GRID_CELL`,
 # records, the placement overlay, RPG state, the sky clock, the stats sheet, weather and wind; the
-# AI directive stacks (`sf/ai`, Bevy-free `sf_ai`).
+# AI directive stacks (`sf/ai`, Bevy-free `sf_ai`); effects (`sf/effects`, the character's `effects`).
 sf_action.workspace = true
 sf_ai.workspace = true
 sf_controller.workspace = true
 sf_coords.workspace = true
+# `sf/effects` and the character's `effects` (Bevy-free `sf_effects`).
+sf_effects.workspace = true
 sf_records.workspace = true
 sf_rpg.workspace = true
 sf_sky.workspace = true

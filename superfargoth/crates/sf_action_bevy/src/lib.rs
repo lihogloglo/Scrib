@@ -176,6 +176,11 @@ pub struct ActionGate(pub ClassSet);
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub struct LockAim(pub Option<Vec3>);
 
+/// The attack's soft-aim target relative to the feet, world axes ([`Sense::soft_target`]):
+/// written before [`ActionSystems::Step`] by the lock owner's shell (`sf_combat_bevy::lock`).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct SoftAim(pub Option<Vec3>);
+
 /// A probe that never hits ([`NoClip`] bodies).
 struct NoHits;
 
@@ -291,15 +296,18 @@ impl ActionBody {
 /// How far ahead the ledge probe looks, m (the context probe's `ObstacleAhead` range).
 const OBSTACLE_RANGE_M: f32 = 1.5;
 
+/// What [`step_actions`] reads per character: the gate and the lock and soft-aim senses.
+type StepQuery = (&'static mut ActionCharacter, &'static ActionBody, Option<&'static ActionGate>, Option<&'static LockAim>, Option<&'static SoftAim>);
+
 #[allow(clippy::needless_pass_by_value)]
 fn step_actions<G: GroundProbe + Resource>(
     rules: Option<Res<ActionRules>>,
     ground: Option<Res<G>>,
     mut probes: Local<ContextProbes>,
-    mut characters: Query<(&mut ActionCharacter, &ActionBody, Option<&ActionGate>, Option<&LockAim>)>,
+    mut characters: Query<StepQuery>,
 ) {
     let Some(rules) = rules else { return };
-    for (mut c, body, gate, lock) in &mut characters {
+    for (mut c, body, gate, lock, soft) in &mut characters {
         let c = &mut *c;
         let ctx = StepCtx { rules: &rules.rules, slots: &*rules.slots, params: &c.params, source: c.id };
         let v = body.loco.motion.velocity;
@@ -319,6 +327,7 @@ fn step_actions<G: GroundProbe + Resource>(
             obstacle,
             refused: gate.map_or(ClassSet::EMPTY, |g| g.0),
             lock_target: lock.and_then(|l| l.0),
+            soft_target: soft.and_then(|s| s.0),
         };
         sf_action::step(&ctx, &mut c.state, &c.command, &sense, &mut c.output);
         log_traversal_press(&rules.rules, &c.command, obstacle.as_ref(), &c.output);

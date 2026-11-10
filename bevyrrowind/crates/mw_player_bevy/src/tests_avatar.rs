@@ -295,3 +295,136 @@ fn the_wall_brace_runs_in_plain_locomotion_and_not_under_a_clip_move() {
     character.output.warp = Some(WarpOutput { root: RootPose::IDENTITY, progress: 0.1, settle: false });
     assert!(!grip::brace_active(&body, &character), "a warp (mantle) owns the arms");
 }
+
+/// FP-1 (superfargoth first-person.md): the camera's view lays the avatar out by role through the
+/// real systems (camera rig, `first_person`, the character layer sync), headless: third person
+/// draws every part on the avatar's layers, first person moves the head to the shadow-only layer and keeps body,
+/// arms and held items, and switching back restores them; with the view model on (FP-2) arms and
+/// held items go shadow only and their view copies take the avatar's layers. No rendering is judged.
+#[test]
+fn switching_first_and_third_person_relayers_the_avatar_by_role() {
+    use bevy_camera::visibility::RenderLayers;
+    use sf_camera::ViewChoice;
+    use sf_camera_bevy::{PlayerCamera, SfCameraPlugin};
+    use sf_character_bevy::{PartRole, RoleLayers, SfCharacterPlugin, ShadowLayers, ViewCopy, ViewRole};
+    let keymap = mw_controls_bevy::keymap();
+    let (mut app, player) = tests::app_setup(60, &keymap, |app| {
+        app.add_plugins((AssetPlugin::default(), SfCameraPlugin::<tests::Statics>::default(), SfCharacterPlugin))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<bevy_mesh::skinning::SkinnedMeshInverseBindposes>();
+        avatar::add_first_person(app);
+    });
+    // The worldspace's content and shadow-only layers (`WorldspaceLayers`, as the worldspace push writes them).
+    let (ws, shadow) = (RenderLayers::layer(1), RenderLayers::layer(2));
+    let avatar = app.world_mut().spawn((avatar::avatar_bundle(), ws.clone(), ShadowLayers(shadow.clone()), ChildOf(player))).id();
+    let parts = ViewRole::ALL.map(|role| app.world_mut().spawn((PartRole(role), Mesh3d::default(), ChildOf(avatar))).id());
+    let cam = app.world_mut().spawn((PlayerCamera::new(player), Transform::default())).id();
+    let layers = |app: &App| parts.map(|p| app.world().get::<RenderLayers>(p).cloned().unwrap_or_default());
+    let shown = |app: &App| *app.world().get::<Visibility>(avatar).unwrap();
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(app.world().get::<PlayerCamera>(cam).unwrap().pose().map(|p| p.view), Some(ViewChoice::ThirdPerson));
+    assert_eq!(layers(&app), [ws.clone(), ws.clone(), ws.clone(), ws.clone()], "third person: body, head, arms, held");
+    assert_eq!(shown(&app), Visibility::Inherited);
+
+    app.world_mut().get_mut::<PlayerCamera>(cam).unwrap().set_view(ViewChoice::FirstPerson);
+    app.update();
+    assert_eq!(app.world().get::<RoleLayers>(avatar), Some(&RoleLayers::first_person(false)));
+    assert_eq!(layers(&app), [ws.clone(), shadow.clone(), ws.clone(), ws.clone()], "first person: the head shadow-only, the rest drawn");
+    assert_eq!(shown(&app), Visibility::Inherited, "the avatar is no longer hidden whole in first person");
+    let copies = |app: &mut App| {
+        let mut q = app.world_mut().query::<(&ViewCopy, &RenderLayers)>();
+        let mut v: Vec<_> = q.iter(app.world()).map(|(c, l)| (c.source, l.clone())).collect();
+        v.sort_by_key(|(e, _)| *e);
+        v
+    };
+    assert!(copies(&mut app).is_empty(), "no view copies while the view model is off (the default)");
+
+    app.world_mut().get_mut::<PlayerCamera>(cam).unwrap().settings.view_model = true;
+    app.update();
+    assert_eq!(app.world().get::<RoleLayers>(avatar), Some(&RoleLayers::first_person(true)));
+    assert_eq!(layers(&app), [ws.clone(), shadow.clone(), shadow.clone(), shadow], "view model: head, arms and held shadow-only");
+    let mut want = vec![(parts[2], ws.clone()), (parts[3], ws.clone())];
+    want.sort_by_key(|(e, _)| *e);
+    assert_eq!(copies(&mut app), want, "arms and held drawn as view copies on the avatar's layers");
+
+    app.world_mut().get_mut::<PlayerCamera>(cam).unwrap().set_view(ViewChoice::ThirdPerson);
+    app.update();
+    assert_eq!(layers(&app), [ws.clone(), ws.clone(), ws.clone(), ws]);
+    assert!(copies(&mut app).is_empty(), "third person: copies gone");
+}
+
+/// FP-2b: with the view model on, the arm part's view copy draws the view-model material derived
+/// from the part's material, carrying the camera's projection (`fov_world` to `fov_body`, the
+/// depth slice), and a settings change on the camera reaches it. Headless; no rendering judged.
+#[test]
+fn view_copy_material_follows_the_camera_settings() {
+    use sf_camera::{ViewChoice, ViewModelProjection};
+    use sf_camera_bevy::{PlayerCamera, SfCameraPlugin};
+    use sf_character_bevy::{PartRole, SfCharacterPlugin, ViewCopy, ViewModel, ViewModelMaterial, ViewModelPlugin, ViewModelSettings, ViewRole};
+    let keymap = mw_controls_bevy::keymap();
+    let (mut app, player) = tests::app_setup(60, &keymap, |app| {
+        app.add_plugins((AssetPlugin::default(), SfCameraPlugin::<tests::Statics>::default(), SfCharacterPlugin))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<bevy_mesh::skinning::SkinnedMeshInverseBindposes>()
+            .add_plugins(ViewModelPlugin);
+        avatar::add_first_person(app);
+    });
+    let avatar = app.world_mut().spawn((avatar::avatar_bundle(), ChildOf(player))).id();
+    let skin = app.world_mut().resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial::default());
+    let arm = app.world_mut().spawn((PartRole(ViewRole::Arms), Mesh3d::default(), MeshMaterial3d(skin.clone()), ChildOf(avatar))).id();
+    let cam = app.world_mut().spawn((PlayerCamera::new(player), Transform::default())).id();
+    {
+        let mut c = app.world_mut().get_mut::<PlayerCamera>(cam).unwrap();
+        c.set_view(ViewChoice::FirstPerson);
+        c.settings.view_model = true;
+    }
+    for _ in 0..3 {
+        app.update();
+    }
+    let drawn = |app: &mut App| -> ViewModel {
+        let mut q = app.world_mut().query::<(&ViewCopy, &MeshMaterial3d<ViewModelMaterial>)>();
+        let (copy, material) = q.single(app.world()).expect("one view copy, with the view-model material");
+        assert_eq!(copy.source, arm);
+        let m = app.world().resource::<Assets<ViewModelMaterial>>().get(&material.0).expect("derived material");
+        m.extension
+    };
+    let want = |settings: &sf_camera::ComfortSettings| {
+        let p: ViewModelProjection = settings.view_model_projection();
+        ViewModel { fov_scale: p.k, depth: p.depth }
+    };
+    let settings = app.world().get::<PlayerCamera>(cam).unwrap().settings;
+    assert!(want(&settings).fov_scale > 1.0, "fov_body narrower than fov_world by default");
+    assert_eq!(drawn(&mut app), want(&settings));
+    let resource = *app.world().resource::<ViewModelSettings>();
+    assert_eq!(ViewModel::from(resource), want(&settings));
+
+    // The camera's settings change (a wider body FOV, a thinner slice): the material follows.
+    {
+        let mut c = app.world_mut().get_mut::<PlayerCamera>(cam).unwrap();
+        c.settings.fov_body = 40.0;
+        c.settings.view_model_depth = 0.5;
+    }
+    app.update();
+    let settings = app.world().get::<PlayerCamera>(cam).unwrap().settings;
+    assert_eq!(drawn(&mut app), want(&settings));
+    assert!((drawn(&mut app).depth - 0.5).abs() < f32::EPSILON);
+}
+
+/// The view rule itself: first person by role, third person hides the whole avatar only past the
+/// collision fade threshold.
+#[test]
+fn avatar_view_per_camera_view_and_fade() {
+    use avatar::avatar_view;
+    use sf_camera::ViewChoice;
+    use sf_character_bevy::RoleLayers;
+    for vm in [false, true] {
+        assert_eq!(avatar_view(None, vm), (Visibility::Inherited, RoleLayers::world()));
+        assert_eq!(avatar_view(Some((ViewChoice::FirstPerson, 1.0)), vm), (Visibility::Inherited, RoleLayers::first_person(vm)));
+        assert_eq!(avatar_view(Some((ViewChoice::ThirdPerson, 0.2)), vm), (Visibility::Inherited, RoleLayers::world()));
+        assert_eq!(avatar_view(Some((ViewChoice::ThirdPerson, 0.9)), vm), (Visibility::Hidden, RoleLayers::world()));
+    }
+}

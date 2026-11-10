@@ -1,5 +1,6 @@
 //! One `big_space` `BigSpace` root per loaded worldspace, each with its own
-//! render layer (streaming.md, "Worldspaces at runtime").
+//! pair of render layers, [`WorldspaceLayers`] (streaming.md, "Worldspaces at
+//! runtime"; first-person.md "Layer plan").
 //!
 //! `big_space` needs exactly one `FloatingOrigin` in every `BigSpace`. A
 //! worldspace the camera is in uses the camera; every other root gets an
@@ -20,8 +21,63 @@ use crate::coords::world_grid;
 #[derive(Component, Clone, Debug)]
 pub struct WorldspaceRoot {
     pub id: WorldspaceId,
-    /// The render layer of everything in this worldspace.
+    /// The render layer of everything in this worldspace ([`WorldspaceLayers::world`]).
     pub layer: usize,
+}
+
+impl WorldspaceRoot {
+    pub fn layers(&self) -> WorldspaceLayers {
+        WorldspaceLayers::of(self.layer)
+    }
+}
+
+/// A worldspace's two render layers, allocated together by the [`WorldspaceRegistry`], and the
+/// sets each kind of entity carries. Layer 0 stays shared (sky, debug, UI cameras).
+///
+/// - `world`: its content (meshes, terrain, water), drawn by its cameras, lit and shadowed by its lights.
+/// - `shadow`, the next layer: **shadow-only**. Its lights carry it and no camera does, so a mesh
+///   on it alone casts shadows (raster: Bevy pairs a light with casters by `RenderLayers`; ray
+///   traced: `sf_sky_bevy` traces what the lights' layers meet) without being drawn. Bevy 0.20
+///   has no shadow-only flag (UE `bCastHiddenShadow`, Unity `ShadowsOnly`); this is that, per
+///   worldspace so another worldspace's lights never pick it up. First user: the first-person
+///   body's head (`sf_character_bevy::RoleLayer::SHADOW`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct WorldspaceLayers {
+    pub world: usize,
+    pub shadow: usize,
+}
+
+impl WorldspaceLayers {
+    /// The pair whose world layer is `world` (the shadow layer is the next one).
+    pub const fn of(world: usize) -> Self {
+        Self { world, shadow: world + 1 }
+    }
+
+    /// Content: `[world]`.
+    pub fn content(self) -> RenderLayers {
+        RenderLayers::layer(self.world)
+    }
+
+    /// A camera in the worldspace: `[0, world]`, never the shadow layer.
+    pub fn camera(self) -> RenderLayers {
+        RenderLayers::from_layers(&[0, self.world])
+    }
+
+    /// A light of the worldspace (lamps, carried torches): `[world, shadow]`.
+    pub fn light(self) -> RenderLayers {
+        RenderLayers::from_layers(&[self.world, self.shadow])
+    }
+
+    /// A sky light shining into the worldspace (sun, moon): `[0, world, shadow]`, like its camera
+    /// plus the shadow layer.
+    pub fn sky_light(self) -> RenderLayers {
+        RenderLayers::from_layers(&[0, self.world, self.shadow])
+    }
+
+    /// Shadow-only: `[shadow]`.
+    pub fn shadow_only(self) -> RenderLayers {
+        RenderLayers::layer(self.shadow)
+    }
 }
 
 /// Holds a root's `FloatingOrigin` while no camera of that worldspace does.
@@ -33,11 +89,18 @@ pub struct OriginProxy;
 pub struct WorldspaceEntry {
     pub root: Entity,
     pub proxy: Entity,
+    /// [`WorldspaceLayers::world`].
     pub layer: usize,
 }
 
+impl WorldspaceEntry {
+    pub fn layers(&self) -> WorldspaceLayers {
+        WorldspaceLayers::of(self.layer)
+    }
+}
+
 /// Every worldspace root, by id. Layer 0 stays shared (sky, debug, UI
-/// cameras see it); worldspaces get layers 1, 2, …
+/// cameras see it); worldspaces get [`WorldspaceLayers`] pairs (1, 2), (3, 4), …
 #[derive(Resource, Debug, Default)]
 pub struct WorldspaceRegistry {
     entries: BTreeMap<WorldspaceId, WorldspaceEntry>,
@@ -54,9 +117,15 @@ impl WorldspaceRegistry {
     }
 
     /// The render layers a camera in `id` should see: the worldspace's
-    /// layer plus the shared layer 0.
+    /// layer plus the shared layer 0 ([`WorldspaceLayers::camera`]).
     pub fn camera_layers(&self, id: &WorldspaceId) -> RenderLayers {
-        self.get(id).map_or_else(RenderLayers::default, |e| RenderLayers::from_layers(&[0, e.layer]))
+        self.get(id).map_or_else(RenderLayers::default, |e| e.layers().camera())
+    }
+
+    /// The render layers a light in `id` carries ([`WorldspaceLayers::light`]); layer 0 for a
+    /// worldspace not loaded.
+    pub fn light_layers(&self, id: &WorldspaceId) -> RenderLayers {
+        self.get(id).map_or_else(RenderLayers::default, |e| e.layers().light())
     }
 
     /// The root of `id`, spawning it (and its origin proxy) on first use.
@@ -81,9 +150,11 @@ impl WorldspaceRegistry {
         world.resource_mut::<Self>().insert(id, WorldspaceEntry { root, proxy, layer })
     }
 
+    /// The next pair's world layer ([`WorldspaceLayers::of`] adds the shadow layer after it).
     fn allocate_layer(&mut self) -> usize {
-        self.next_layer += 1;
-        self.next_layer
+        let layers = WorldspaceLayers::of(self.next_layer + 1);
+        self.next_layer = layers.shadow;
+        layers.world
     }
 
     fn insert(&mut self, id: &WorldspaceId, entry: WorldspaceEntry) -> WorldspaceEntry {

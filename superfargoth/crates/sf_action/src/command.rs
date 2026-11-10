@@ -73,6 +73,9 @@ impl ClassSet {
     /// Classes the buffer latches: everything but the state classes (stick, sprint, sneak).
     pub const LATCHABLE: Self =
         Self(Self::ALL.0 & !(1 << ActionClass::Move as u16 | 1 << ActionClass::Sprint as u16 | 1 << ActionClass::Sneak as u16));
+    /// Hold classes ([`ActionClass::needs_hold`]): a move they start lasts while one is held
+    /// ([`crate::CompiledRule::holds`]), and a held one latches like a fresh press.
+    pub const HOLD: Self = Self::of(&[ActionClass::Guard]);
     /// What a traversal `tail` window opens (action.md "Windows").
     pub const TAIL: Self = Self::of(&[ActionClass::Move, ActionClass::Jump, ActionClass::Dodge, ActionClass::Down]);
 
@@ -164,6 +167,11 @@ pub struct Command {
     /// Ticks each class has been held, counting this one (0 when up).
     pub hold_ticks: [u16; CLASSES],
     pub lock_request: LockRequest,
+    /// The body faces the view while it attacks (first person: the input shell sets it from the
+    /// player's view choice). Attacks square up to `view` and their `Turn` windows aim along it
+    /// (or at the soft-aim target) instead of the stick; there is no hard lock-on (camera.md
+    /// "First person"). Input, so a remote player's view choice reaches the host the same way.
+    pub face_view: bool,
 }
 
 impl Command {
@@ -224,6 +232,7 @@ pub struct InputSampler {
     released: ClassSet,
     hold_ticks: [u16; CLASSES],
     lock: LockRequest,
+    face_view: bool,
     shared: Vec<SharedButton>,
 }
 
@@ -290,6 +299,11 @@ impl InputSampler {
         self.lock = request;
     }
 
+    /// [`Command::face_view`] from now on (the view choice: first person faces the view).
+    pub fn set_face_view(&mut self, face_view: bool) {
+        self.face_view = face_view;
+    }
+
     /// The command for `tick`; clears the edges.
     pub fn sample(&mut self, tick: Tick, player: Option<PlayerId>) -> Command {
         for i in 0..self.shared.len() {
@@ -324,6 +338,7 @@ impl InputSampler {
             buttons: ButtonEdges { pressed: self.pressed, held: self.held, released: self.released },
             hold_ticks: self.hold_ticks,
             lock_request: self.lock,
+            face_view: self.face_view,
         };
         self.pressed = ClassSet::EMPTY;
         self.released = ClassSet::EMPTY;

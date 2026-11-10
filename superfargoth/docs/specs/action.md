@@ -137,7 +137,7 @@ One RON record per move, of record kind `MoveRule` (patchable like other records
     exits: [(on: End, to: Loco), (on: Tail(Move), to: Loco), (on: Tail(Jump), to: Rule("air.jump"))],
     exit_velocity: KeepPlanar(0.6),
     redo_ticks: 12,
-    look: (yaw: 70.0, pitch: (-45.0, 35.0), ease: 0.15),        // first-person limits around entry yaw
+    look: Some((yaw: 70.0, pitch: (-45.0, 35.0), ease: 0.15)),  // first-person limits around the body's yaw until Cancel(Move) (built: sf_action::LookRule, combat.md "C4b")
     noise: Loud,                         // perception event for sf_ai
     breaks_lock: true,
 )

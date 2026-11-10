@@ -14,13 +14,16 @@
 //! modern defaults [`StandardEffectRules`] as pure `sf.effects.*` rule functions.
 //! Slice E3 (book + casting): [`SpellBook`] and [`SourceTable`], [`apply_book`] with `Cast`,
 //! `Learn` / `Forget` / `Select`, cures, powers recharging on [`GameMinutes`], cooldowns, and the
-//! `Request` archetype ([`EffectRequest`]). Items and the Bevy shell come later.
+//! `Request` archetype ([`EffectRequest`]). Slice E4 (saves): [`EffectsSave`] with tick rebasing and
+//! drift reports, and [`reregister`] for loaded sheets; the Bevy shell is `sf_effects_bevy`.
+//! Items come later.
 
 mod active;
 mod book;
 mod def;
 mod op;
 mod rules;
+mod save;
 mod standard;
 mod step;
 
@@ -46,6 +49,7 @@ pub use standard::{
     CastIn, CostConsts, CostEntryIn, ItemCharge, ItemIn, MagnitudeIn, ProtectIn, ResistIn, StandardEffectRules, cast_rule,
     entry_cost, item_charge_rule, magnitude_rule, protect_rule, resist_rule,
 };
+pub use save::{EffectsLoadReport, EffectsSave, reregister};
 pub use step::{EffectEnv, apply, apply_book, tick};
 
 #[cfg(test)]
@@ -54,3 +58,5 @@ mod tests;
 mod tests_rules;
 #[cfg(test)]
 mod tests_book;
+#[cfg(test)]
+mod tests_save;

@@ -12,7 +12,8 @@ R7 §2, R8 §1.4, §2-3. Companion: [action.md](action.md).
 - **The camera is presentation.** It reads `ActionOutput` and the render body; it never writes
   gameplay state. Aim reaches gameplay only as `Command.view` (yaw, pitch), which the input shell
   fills from the player's look input, not from the camera's final pose (action.md "Co-op
-  readiness"). Shake, framing and collision push-in never change aim.
+  readiness"), plus one input bit for the view choice, `Command.face_view` (first person: attacks
+  face the view, no hard lock; below). Shake, framing and collision push-in never change aim.
 - One gameplay body in both views. Switching views changes no gameplay tick.
 
 ## Third person (primary)
@@ -38,19 +39,38 @@ R7 §2, R8 §1.4, §2-3. Companion: [action.md](action.md).
   low-passed head position, a few degrees of head pitch and roll, no head yaw; authored tracks and
   per-clip overrides win; R2 adapt) composed with view yaw/pitch. Each full-body move's track is
   reviewed in visual checks before it ships (R7 §5).
-- **Per-move look limits**: yaw and pitch limits around the move's entry yaw, eased in over the
-  rule's `ease` time, and `ignore_look` windows (action.md `look`). Hanging limits the look-down;
-  a mantle limits yaw to the lip direction. Limits release eased.
+- **Per-move look limits**: yaw and pitch limits around the body's yaw, eased in over the rule's
+  `ease` time, and `ignore_look` windows (action.md `look`). Hanging limits the look-down;
+  a mantle limits yaw to the lip direction. Limits release eased. Built for attacks 2026-11-10
+  (combat.md "C4b"): `MoveRule.look` holds until a `Cancel(Move)` window opens;
+  `sf_camera_bevy::follow_move_look` writes `PlayerCamera::look_limits` centred on the followed
+  body's gameplay yaw (the square-up yaw plus `Turn`-window turns: the arms hang off the body, so
+  a fixed entry yaw would let the view drift off them). **The clamp is in the look accumulator**
+  (`update_look`), the one producer of `Command.view` (the sampler copies it): gameplay and a co-op
+  host get the limited view the player sees; a host does not re-clamp (the ease is frame-rate
+  presentation, and the view is the client's input). `ignore_look` has no writer yet.
 - **Soft aim, no hard lock-on in first person** (decision). Soft aim is gameplay, in the action
   layer: early in an attack (`turn` window start), the nearest valid target in a small cone around
   `Command.view` and within reach becomes the lunge/turn target (R6 §5). The camera does not turn.
+  Built 2026-11-10 (combat.md "C4 soft aim"): with `Command.face_view` an attack squares up to the
+  view, its `Turn` window steers onto the soft target, `NoTurn` holds the swing whatever the mouse
+  does (no dragging, R8 §2); a lock press does nothing and a held lock breaks on entering first
+  person. Attack look limits around the body's yaw while committed: built (previous bullet).
+- **Hit reactions** (decision, combat.md "C2a", 2026-11-10): a reaction is a forced move with no `look` rule, so the view stays
+  free (an interrupted attack's limits ease out) while the body holds its yaw and the arms follow its pose; the standard flinch
+  is a small rotation-only view kick (Source `ViewPunch`, Mordhau) on the shake path (`CameraShake`, after the look, never into
+  `Command.view`), fed by `HitLanded` on the followed body: combat C4's shake, not built.
+- **Guard** (decision, combat.md "C2b", 2026-11-10): a held guard's `look` is pitch-only (yaw 180, pitch the attacks' -45..20)
+  and the body follows the view at the guard's `Turn` rate (360 deg/s): blocking in Skyrim, Mordhau and KCD never clamps the
+  view's yaw, and our arms hang off the body, so a fast flick leads the guard and it catches up (the guard arc is the body's).
 - **Render bodies** (decision; R7 §2.1, R8 §3): a first-person body (arms, and legs when looking
   down) with its own FOV and scale toward the camera, head hidden; plus the world body for shadows
   and reflections. Per action: an **arms layer** for weapons and spells (a content pack's own
   first-person clips may play here as presentation on the shared clock), or the **full body** with
   the baked camera for traversal, sitting and paired moves. Bevy has no shadow-only flag (character.md
-  open question 1): render layers until it does. character.md's first-person section is rewritten
-  to this model when D2 starts.
+  open question 1): render layers until it does. Roles, layer plan and build plan (FP-1..FP-6):
+  [first-person.md](first-person.md). character.md's first-person section is rewritten to this
+  model when D2 starts.
 
 ## Framed cameras (paired moves)
 

@@ -240,6 +240,23 @@ impl DialogueSession {
         Ok(self.select_and_show(db, rules, topic.clone()))
     }
 
+    /// Shows a response the host chose outside [`DialogueSession::ask`] (a service refusal the
+    /// adapter selected, services.md "Dialogue integration"): the same outputs as an answer
+    /// (line, learned topics, result), recorded in the history; the current topic is kept.
+    pub fn say(
+        &mut self,
+        db: &DialogueDb,
+        rules: &dyn DialogueRules,
+        topic: &RecordId,
+        response: &RecordId,
+    ) -> Result<Vec<DialogueOutput>, DialogueError> {
+        self.check_talking()?;
+        if db.topic(topic).is_none() {
+            return Err(DialogueError::UnknownTopic(topic.clone()));
+        }
+        Ok(self.show(db, rules, topic.clone(), response.clone()))
+    }
+
     fn select_and_show(&mut self, db: &DialogueDb, rules: &dyn DialogueRules, topic: RecordId) -> Vec<DialogueOutput> {
         if let Some(response) = db.select(rules, &self.ctx, &topic) {
             return self.show(db, rules, topic, response);

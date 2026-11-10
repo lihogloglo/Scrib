@@ -35,11 +35,15 @@ sf_ui.workspace = true
 sf_ui_bevy.workspace = true
 sf_ui_screens.workspace = true
 sf_weather_bevy.workspace = true
+# The effect instance counter (`sf/effects`) and the in-flight output reset on load.
+sf_effects_bevy.workspace = true
 sf_world.workspace = true
 sf_world_bevy.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+# The effects round trip runs fixed ticks.
+bevy_time = { workspace = true, features = ["std"] }
 # The moved test: save, fresh state, load on the installed game's records.
 mw_install.workspace = true
 mw_records.workspace = true

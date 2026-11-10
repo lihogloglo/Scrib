@@ -74,6 +74,8 @@ fn defs() -> EffectTable {
         EffectDef::new("damage_health", hurt.clone()),
         EffectDef::new("drain_health", Archetype::Pool { pool: fixed("health"), mode: PoolMode::Drain }),
         EffectDef::new("fortify_health", Archetype::Pool { pool: fixed("health"), mode: PoolMode::Fortify }),
+        EffectDef::new("fortify_mana", Archetype::Pool { pool: fixed("mana"), mode: PoolMode::Fortify }),
+        EffectDef::new("boost_health", Archetype::Pool { pool: fixed("health"), mode: PoolMode::Boost }),
         EffectDef::new("absorb_health", Archetype::Absorb { inner: Box::new(hurt) }),
         EffectDef::new("absorb_str", Archetype::Absorb { inner: Box::new(Archetype::Drain { stat: fixed("str") }) }),
         lonely,
@@ -100,7 +102,10 @@ struct World {
 
 impl World {
     fn new() -> Self {
-        let stats = stats();
+        Self::with(stats())
+    }
+
+    fn with(stats: StatTable) -> Self {
         let rules = TestModel::default().rules();
         let mut sheets = BTreeMap::new();
         for owner in [TARGET, CASTER] {
@@ -163,6 +168,20 @@ impl World {
         for _ in 0..n {
             self.step();
         }
+    }
+
+    /// Sets a pool's current directly (spending it), outside any effect.
+    fn set_current(&mut self, owner: StatOwner, pool: StatIdx, value: f32) {
+        let inputs = Inputs::default();
+        let cause = sf_stats::Cause { kind: sf_stats::CauseKind::Debug, source: None, tick: self.tick };
+        let ctx = ApplyCtx { owner, cause, inputs: &inputs };
+        let op = StatOp::PoolSetCurrent { pool, value };
+        let sheet = self.sheets.get_mut(&owner).unwrap();
+        assert_eq!(sf_stats::apply(&self.stats, &self.rules, sheet, &[op], &ctx, &mut Vec::new()), 0);
+    }
+
+    fn pool(&self, owner: StatOwner, idx: StatIdx) -> (f32, f32) {
+        (self.current(owner, idx), self.max(owner, idx))
     }
 
     fn modified(&self, owner: StatOwner, idx: StatIdx) -> f32 {
@@ -394,6 +413,62 @@ fn absorb_gives_two_owners_one_cause() {
     assert_eq!((w.modified(TARGET, STR), w.modified(CASTER, STR)), (40.0, 60.0));
     w.steps(4);
     assert_eq!((w.modified(TARGET, STR), w.modified(CASTER, STR)), (50.0, 50.0));
+}
+
+/// [`stats`] with mana rebasing by ratio (Morrowind's magicka and fatigue).
+fn ratio_stats() -> StatTable {
+    let value = StatKind::Value { min: 0.0, cap: None };
+    let pool = |rebase| StatKind::Pool { depleted_below: 0.0, rebase };
+    let defs = vec![
+        stat("str", "attribute", value),
+        stat("blade", "skill", value),
+        stat("health", "pool", pool(Rebase::KeepCurrent)),
+        stat("mana", "pool", pool(Rebase::KeepRatio)),
+    ];
+    StatTable::new(defs, &[(Role::Health, "health".into()), (Role::Mana, "mana".into())]).unwrap()
+}
+
+/// E4 bug: a temporary pool fortify on a `KeepRatio` pool counted twice (the modifier rebased
+/// the current, then an adjust added the magnitude again: 100 / 100 read 180 / 140). Max and
+/// current now move together, and the end takes the same amount back.
+#[test]
+fn a_pool_fortify_on_a_ratio_pool_counts_once() {
+    let mut w = World::with(ratio_stats());
+    w.run(&[cast("sp", smallvec![entry("fortify_mana", 40.0, 1.0)])]);
+    assert_eq!(w.pool(TARGET, MANA), (140.0, 140.0));
+    w.steps(4);
+    assert_eq!(w.pool(TARGET, MANA), (100.0, 100.0));
+    // Partly spent while active: 90 / 140 ends at 50 / 100 (the ratio would give 64.3).
+    w.run(&[cast("sp", smallvec![entry("fortify_mana", 40.0, 1.0)])]);
+    w.set_current(TARGET, MANA, 90.0);
+    w.steps(4);
+    assert_eq!(w.pool(TARGET, MANA), (50.0, 100.0));
+    // Innate: on the Permanent layer, removed with its source.
+    w.run(&[land_from("ability", SourceClass::Innate, None, smallvec![entry("fortify_mana", 20.0, 0.0)])]);
+    assert_eq!(w.pool(TARGET, MANA), (70.0, 120.0));
+    w.run(&[EffectOp::EndBySource { record: RecordId::new("ability") }]);
+    assert_eq!(w.pool(TARGET, MANA), (50.0, 100.0));
+}
+
+/// `Boost` (Morrowind's Fortify Health / Magicka / Fatigue, `OpenMW` `adjustDynamicStat`): the
+/// current over a max that stays, the same amount back at the end, below 0 allowed; an innate
+/// source raises max and current together (`modDynamicStat`).
+#[test]
+fn a_boost_raises_the_current_over_the_max_and_takes_it_back() {
+    let mut w = World::with(ratio_stats());
+    w.run(&[cast("sp", smallvec![entry("boost_health", 40.0, 1.0)])]);
+    assert_eq!(w.pool(TARGET, HEALTH), (140.0, 100.0));
+    w.steps(4);
+    assert_eq!(w.pool(TARGET, HEALTH), (100.0, 100.0));
+    w.run(&[cast("sp", smallvec![entry("boost_health", 40.0, 1.0)])]);
+    w.set_current(TARGET, HEALTH, 20.0);
+    w.steps(4);
+    assert_eq!(w.pool(TARGET, HEALTH), (-20.0, 100.0), "the end can kill");
+    w.set_current(TARGET, HEALTH, 100.0);
+    w.run(&[land_from("ability", SourceClass::Innate, None, smallvec![entry("boost_health", 20.0, 0.0)])]);
+    assert_eq!(w.pool(TARGET, HEALTH), (120.0, 120.0));
+    w.run(&[EffectOp::EndBySource { record: RecordId::new("ability") }]);
+    assert_eq!(w.pool(TARGET, HEALTH), (100.0, 100.0));
 }
 
 #[test]

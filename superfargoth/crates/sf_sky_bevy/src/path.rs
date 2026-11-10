@@ -69,8 +69,22 @@ pub(crate) fn camera_layers<'a>(cameras: impl Iterator<Item = Option<&'a RenderL
     })
 }
 
+/// The layers of the ray-traced scene for cameras seeing `view`: theirs plus
+/// every layer of the lights they see (a light's layers meet `view`; none:
+/// layer 0). Bevy's raster path draws a mesh whose layers meet a camera's and
+/// shadows one whose layers meet a light's, so tracing the union keeps the two
+/// paths' casters the same: a worldspace's shadow-only layer (on its lights,
+/// on no camera: the first-person head, first-person.md "Layer plan") casts
+/// traced shadows and GI too, and another worldspace's lights add nothing.
+#[cfg_attr(not(feature = "solari"), allow(dead_code))]
+pub(crate) fn scene_layers<'a>(view: RenderLayers, lights: impl Iterator<Item = Option<&'a RenderLayers>>) -> RenderLayers {
+    let zero = RenderLayers::default();
+    let lit = lights.map(|l| l.unwrap_or(&zero)).filter(|l| view.intersects(l)).fold(RenderLayers::none(), |all, l| all.union(l));
+    view.union(&lit)
+}
+
 /// Whether a mesh on `layers` (none: layer 0) belongs in the ray-traced
-/// scene of cameras seeing `view`: its worldspace is the one shown.
+/// scene of cameras seeing `view` ([`scene_layers`]): its worldspace is the one shown.
 #[cfg_attr(not(feature = "solari"), allow(dead_code))]
 pub(crate) fn traced_by(view: &RenderLayers, layers: Option<&RenderLayers>) -> bool {
     view.intersects(layers.unwrap_or(&RenderLayers::default()))
@@ -131,6 +145,7 @@ mod solari {
     use bevy_transform::components::Transform;
 
     use bevy_camera::visibility::{InheritedVisibility, RenderLayers};
+    use bevy_light::{DirectionalLight, PointLight, SpotLight};
 
     use super::{GiActive, GiSkipEmissive, NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
     use crate::{ActiveRenderPath, RenderPathSetting, SkyRenderOptions, SkySystems, UpscalingSetting};
@@ -480,10 +495,11 @@ mod solari {
     /// (layout other than position/normal/uv0/tangent, u16 indices) are
     /// skipped by Solari itself: loaders provide a [`RayTracingMesh`].
     ///
-    /// Only meshes the render-path cameras' `RenderLayers` see are traced:
-    /// each loaded worldspace draws in its own layer, so the other
-    /// worldspaces (an exterior kept loaded behind an interior) stay out of
-    /// the BLAS/TLAS, and leave it when the camera changes worldspace.
+    /// Only meshes the render-path cameras' `RenderLayers` see, or the lights
+    /// they see cast ([`super::scene_layers`]), are traced: each loaded
+    /// worldspace draws in its own layers, so the other worldspaces (an
+    /// exterior kept loaded behind an interior) stay out of the BLAS/TLAS, and
+    /// leave it when the camera changes worldspace.
     ///
     /// A [`GiSkipEmissive`] mesh on the raster path is traced through a child
     /// proxy without emission ([`mirror_one`]); a path switch or a newly added
@@ -495,6 +511,7 @@ mod solari {
         options: Res<SkyRenderOptions>,
         gi: Res<GiActive>,
         cameras: Query<Option<&RenderLayers>, With<RenderPathCamera>>,
+        lights: Query<Option<&RenderLayers>, Or<(With<PointLight>, With<SpotLight>, With<DirectionalLight>)>>,
         mut seen: Local<Option<RenderLayers>>,
         mut materials: ResMut<Assets<StandardMaterial>>,
         mut stripped: Local<HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>>>,
@@ -529,7 +546,7 @@ mod solari {
     ) {
         let wanted = active.0 == RenderPath::RayTraced || gi.0;
         if wanted && options.auto_ray_tracing_meshes {
-            let view = super::camera_layers(cameras.iter());
+            let view = super::scene_layers(super::camera_layers(cameras.iter()), lights.iter());
             let view_changed = seen.as_ref() != Some(&view);
             let raster = active.0 != RenderPath::RayTraced;
             for (entity, mesh, variant, material, skip, visibility, layers) in &unmirrored {

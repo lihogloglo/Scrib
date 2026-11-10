@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sf_action::ActionState;
 use sf_controller::Locomotion;
+use sf_effects::EffectsSave;
 use sf_rpg::{CharacterRpg, PlayerKey};
 use sf_save::SectionKey;
 use sf_stats::SheetSave;
@@ -47,6 +48,10 @@ pub struct CharacterSave {
     /// The stats sheet (stats.md "Saves": values, pools, counters, groups by `StatKey`; no
     /// modifiers, their sources re-add them). `None`: built by the content on first spawn.
     pub stats: Option<SheetSave>,
+    /// The character's effects (effects.md "Saves": active set and spell book; on load the active
+    /// set re-registers its modifiers on the sheet before it settles). `None`: nothing active and
+    /// an empty book, or a save from before effects (the content's init hook builds the book).
+    pub effects: Option<EffectsSave>,
     /// Extension blobs by owner (`mw`, a mod id).
     pub ext: BTreeMap<String, VersionedBlob>,
 }
@@ -174,6 +179,48 @@ pub mod legacy {
         impl CharacterSave {
             /// v2 → v3: no sheet; the content builds it on first spawn (the new-game path,
             /// stats.md "Saves").
+            pub fn migrate(self) -> super::v3::CharacterSave {
+                super::v3::CharacterSave {
+                    player: self.player,
+                    name: self.name,
+                    location: self.location,
+                    facing: self.facing,
+                    body: self.body,
+                    rpg: self.rpg,
+                    stats: None,
+                    ext: self.ext,
+                }
+            }
+        }
+    }
+
+    /// `sf.character.v3` (stats S4 until effects E4): no effects. The leaves are the live types;
+    /// the v3 shape golden catches a change to them.
+    pub mod v3 {
+        use std::collections::BTreeMap;
+
+        use serde::{Deserialize, Serialize};
+        use sf_rpg::{CharacterRpg, PlayerKey};
+        use sf_stats::SheetSave;
+        use sf_world::Location;
+
+        use super::super::{CharacterBody, VersionedBlob};
+
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct CharacterSave {
+            pub player: PlayerKey,
+            pub name: String,
+            pub location: Location,
+            pub facing: f32,
+            pub body: Option<CharacterBody>,
+            pub rpg: CharacterRpg,
+            pub stats: Option<SheetSave>,
+            pub ext: BTreeMap<String, VersionedBlob>,
+        }
+
+        impl CharacterSave {
+            /// v3 → v4: no effects (nothing active; the content's init hook builds the book, the
+            /// new-game path, effects.md "Saves").
             pub fn migrate(self) -> super::super::CharacterSave {
                 super::super::CharacterSave {
                     player: self.player,
@@ -182,7 +229,8 @@ pub mod legacy {
                     facing: self.facing,
                     body: self.body,
                     rpg: self.rpg,
-                    stats: None,
+                    stats: self.stats,
+                    effects: None,
                     ext: self.ext,
                 }
             }

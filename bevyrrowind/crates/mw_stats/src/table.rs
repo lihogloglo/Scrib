@@ -88,9 +88,10 @@ const SKILL_LABELS: [&str; 27] = [
 /// The magnitude stats of the resist, weakness and elemental-shield effects (effects-adapter.md
 /// "As built (A1)"): (key, label GMST), keyed by the MGEF effect's `RefId` name, in MGEF index
 /// order: Fire / Lightning / Frost Shield (4-6), the nine Weakness effects (28-36), the ten Resist
-/// effects (90-99). `mw_effects` checks this list against its MGEF table. Appended after every
-/// other def so the older indices (and saves, which are keyed) stay put.
-pub const MAGNITUDE_STATS: [(&str, &str); 22] = [
+/// effects (90-99), then Silence (46) and Sound (48), which the cast rules read (adapter A5a,
+/// appended 2026-11-10). `mw_effects` checks this list against its MGEF table. Appended after
+/// every other def so the older indices (and saves, which are keyed) stay put.
+pub const MAGNITUDE_STATS: [(&str, &str); 24] = [
     ("fireshield", "sEffectFireShield"),
     ("lightningshield", "sEffectLightningShield"),
     ("frostshield", "sEffectFrostShield"),
@@ -113,6 +114,8 @@ pub const MAGNITUDE_STATS: [(&str, &str); 22] = [
     ("resistpoison", "sEffectResistPoison"),
     ("resistnormalweapons", "sEffectResistNormalWeapons"),
     ("resistparalysis", "sEffectResistParalysis"),
+    ("silence", "sEffectSilence"),
+    ("sound", "sEffectSound"),
 ];
 
 /// Specialization keys in ESM order (`ESM::Class::Specialization`).
@@ -196,7 +199,7 @@ pub struct MwIdx {
     pub encumbrance: StatIdx,
     pub fatigue_term: StatIdx,
     /// The [`MAGNITUDE_STATS`], in that order.
-    pub magnitudes: [StatIdx; 22],
+    pub magnitudes: [StatIdx; 24],
 }
 
 /// The Morrowind stat table with its indices and the SKIL data.

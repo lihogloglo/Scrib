@@ -73,12 +73,14 @@ struct Sim {
     out: ActionOutput,
     tick: Tick,
     focus: Option<Focus>,
+    /// Classes the gate refuses (`Sense::refused`).
+    refused: ClassSet,
 }
 
 impl Sim {
     fn new(rules: RuleSet, body: Body) -> Self {
         let state = ActionState::new(RuleKey::of("loco"));
-        Self { rules, slots: slots(), params: CharacterParams::default(), state, body, out: ActionOutput::default(), tick: Tick(0), focus: None }
+        Self { rules, slots: slots(), params: CharacterParams::default(), state, body, out: ActionOutput::default(), tick: Tick(0), focus: None, refused: ClassSet::EMPTY }
     }
 
     fn base(body: Body) -> Self {
@@ -90,7 +92,7 @@ impl Sim {
         self.tick = self.tick.next();
         cmd.tick = self.tick;
         let ctx = StepCtx { rules: &self.rules, slots: &self.slots, params: &self.params, source: CharacterId(7) };
-        let sense = Sense { focus: self.focus, ..self.body.sense() };
+        let sense = Sense { focus: self.focus, refused: self.refused, ..self.body.sense() };
         step(&ctx, &mut self.state, &cmd, &sense, &mut self.out);
         self.body.apply(&self.out);
         &self.out
@@ -349,6 +351,105 @@ fn guard_fires_from_the_buffer_only_if_still_held() {
             guarded |= started(sim.run(hold(keep_holding)), "guard");
         }
         assert_eq!(guarded, keep_holding);
+    }
+}
+
+/// A command holding Guard (no new press).
+fn holding_guard() -> Command {
+    let mut c = Command::default();
+    c.buttons.held.insert(ActionClass::Guard);
+    c
+}
+
+/// A hold move (C2b guard) lasts while its class is held, past any clip length, and lapses to Loco
+/// on the release tick.
+#[test]
+fn a_hold_move_lasts_while_held_and_lapses_on_release() {
+    let mut sim = combat();
+    assert!(sim.rules.get(RuleKey::of("guard")).unwrap().holds());
+    assert!(!sim.rules.get(RuleKey::of("light")).unwrap().holds());
+    assert!(started(sim.press(ActionClass::Guard), "guard"));
+    for _ in 0..300 {
+        assert_eq!(sim.run(holding_guard()).rule, RuleKey::of("guard"));
+    }
+    let out = sim.idle().clone();
+    assert_eq!(out.rule, RuleKey::of("loco"), "released: back to Loco on the release tick");
+    assert!(out.events.iter().any(|e| e.kind == EventKind::MoveEnd(RuleKey::of("guard"))));
+}
+
+/// A guard held through an attack, never pressed inside it, latches each tick and rises exactly
+/// when the attack's `Cancel(Guard)` opens; held from before the attack's accept, too.
+#[test]
+fn a_held_guard_rises_at_the_attacks_guard_cancel() {
+    let mut sim = combat();
+    let s = attack(&mut sim);
+    while sim.tick.0 + 1 < s + 24 {
+        assert_eq!(sim.run(holding_guard()).rule, RuleKey::of("light"));
+    }
+    assert!(started(sim.run(holding_guard()), "guard"), "0.4 s: Cancel(Guard) opens");
+    assert_eq!(sim.tick.0, s + 24);
+}
+
+/// A refused hold class held down is refused once (its press), not on every tick it stays down.
+#[test]
+fn a_held_refused_guard_is_refused_once() {
+    let mut sim = combat();
+    sim.refused = ClassSet::of(&[ActionClass::Guard]);
+    let mut refusals = sim.press(ActionClass::Guard).refusals.len();
+    assert_eq!(refusals, 1, "the press is refused");
+    for _ in 0..30 {
+        let out = sim.run(holding_guard());
+        assert_eq!(out.rule, RuleKey::of("loco"));
+        refusals += out.refusals.len();
+    }
+    assert_eq!(refusals, 1, "held, it doesn't latch again while refused");
+    sim.refused = ClassSet::EMPTY;
+    assert!(started(sim.run(holding_guard()), "guard"), "the gate opens while it is held: it rises");
+}
+
+/// A straight-ahead root track `len` seconds long (the looped-progress test).
+struct Track(f32);
+
+impl RootPath for Track {
+    fn duration(&self) -> f32 {
+        self.0
+    }
+
+    fn root_at(&self, t: f32) -> sf_anim::RootPose {
+        sf_anim::RootPose::new(Vec3::Z * (t / self.0).clamp(0.0, 1.0) * 0.1, 0.0)
+    }
+}
+
+/// A hold move's looping last slot wraps the Clip progress inside its clip (the raise plays once);
+/// a non-hold Clip move clamps at its chain's end.
+#[test]
+fn a_hold_moves_looping_slot_wraps_its_progress() {
+    let text = r#"[
+        (id: "guard", kind: Combat, category: Guard, slots: ["raise", "pose"], entry: (classes: [Guard]),
+         owner: Clip(root_scale: 1.0, square_up: Keep)),
+        (id: "swing", kind: Combat, category: Attack, slots: ["raise"], entry: (classes: [Light]),
+         owner: Clip(root_scale: 1.0, square_up: Keep)),
+    ]"#;
+    let rules = RuleSetBuilder::new().add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Mod("C".into()), text).build().unwrap();
+    let mut sim = Sim::new(rules, Body::at(0.0));
+    sim.slots = std::mem::take(&mut sim.slots)
+        .with("raise", SlotInfo::once(0.2))
+        .with("pose", SlotInfo::looping())
+        .with_root("raise", std::sync::Arc::new(Track(0.2)))
+        .with_root("pose", std::sync::Arc::new(Track(0.5)));
+    assert!(started(sim.press(ActionClass::Guard), "guard"));
+    for n in 2..=120u16 {
+        let p = sim.run(holding_guard()).clip.expect("clip").progress;
+        let c = f32::from(n) / 60.0;
+        let want = if c <= 0.2 { c } else { 0.2 + (c - 0.2).rem_euclid(0.5) };
+        assert!((p - want).abs() < 1e-4, "tick {n}: {p} vs {want}");
+        assert!(p < 0.7 + 1e-4);
+    }
+    sim.idle();
+    assert!(started(sim.press(ActionClass::Light), "swing"));
+    for _ in 0..30 {
+        let p = sim.idle().clip.map(|c| c.progress);
+        assert!(p.is_none_or(|p| p <= 0.2 + 1e-6), "{p:?}");
     }
 }
 
@@ -654,4 +755,40 @@ fn a_jump_launch_flies_the_real_mover_to_its_apex() {
     }
     // Jump by height: the base rule asks for a 1 m apex.
     assert!((apex - 1.0).abs() < 0.02 && loco.grounded.is_some() && ticks > 50, "apex {apex} after {ticks} ticks");
+}
+
+// ---- First-person look limits (MoveRule.look) --------------------------------------------
+
+/// `look` holds while the move is committed and lifts when `Cancel(Move)` opens or the chain
+/// ends; a rule without `look`, or an unrestricted one, never limits; bad numbers are load errors.
+#[test]
+fn look_limits_hold_until_cancel_move_and_only_with_look() {
+    let text = r#"[
+        (id: "swing", kind: Combat, category: Attack, slots: ["atk"], entry: (classes: [Light]),
+         look: Some((yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.1))),
+        (id: "plain", kind: Combat, category: Attack, slots: ["atk"], entry: (classes: [Light])),
+        (id: "loop", kind: Combat, category: Guard, slots: ["loop"], entry: (classes: [Guard]), windows: Unrestricted,
+         look: Some((yaw: 45.0, pitch: (-45.0, 20.0)))),
+    ]"#;
+    let rules = RuleSetBuilder::new().add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Mod("C".into()), text).build().unwrap();
+    let atk = SlotInfo::once(0.8)
+        .with(Window::secs(WindowKind::Cancel(ClassSet::of(&[ActionClass::Light])), 0.3, 0.8))
+        .with(Window::secs(WindowKind::Cancel(ClassSet::of(&[ActionClass::Move])), 0.5, 0.8));
+    let slots = SlotTable::new().with("atk", atk).with("loop", SlotInfo::looping());
+    let at = |id: &str, t: f32| rules.get(RuleKey::of(id)).unwrap().look_at(&slots, ClockTime::from_secs(t));
+    let want = LookRule { yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.1 };
+    for t in [0.0, 0.29, 0.31, 0.49] {
+        assert_eq!(at("swing", t), Some(want), "committed at {t}");
+    }
+    for t in [0.5, 0.79, 0.8, 2.0] {
+        assert_eq!(at("swing", t), None, "released at {t}");
+    }
+    assert_eq!(at("plain", 0.1), None, "no look, no limits");
+    assert_eq!(at("loop", 0.1), None, "an unrestricted move cancels Move from its start");
+
+    for bad in ["(yaw: 0.0, pitch: (-10.0, 10.0))", "(yaw: 200.0, pitch: (-10.0, 10.0))", "(yaw: 45.0, pitch: (10.0, -10.0))", "(yaw: 45.0, pitch: (-95.0, 0.0))", "(yaw: 45.0, pitch: (0.0, 0.0), ease: -1.0)"] {
+        let r = format!(r#"[(id: "x", kind: Combat, category: Attack, slots: ["atk"], entry: (classes: [Light]), look: Some({bad}))]"#);
+        let errors = RuleSetBuilder::new().add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Mod("C".into()), &r).build().unwrap_err();
+        assert!(errors.iter().any(|e| e.message.starts_with("look:")), "{bad}: {errors:?}");
+    }
 }

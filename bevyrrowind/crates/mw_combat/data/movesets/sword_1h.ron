@@ -10,6 +10,16 @@
 // Heavy chain = UAL2's four-hit heavy combo (Sword_Heavy_A-D + _Rec). Heavy `root_scale`: each
 // swing steps ~0.6 m. Root travel, m: A 1.65 + A_Rec 0.41, B 0.89 + B_Rec 0.14, C 2.03 + C_Rec 0,
 // D 1.68 (test `heavy_attacks_step_further_than_light_ones`).
+// First-person look limits (`look`, combat.md "C4b"): while an attack is committed (until its
+// Cancel(Move)) the view stays within 45 deg of the body's yaw, half the horizontal FOV at the
+// default 60 deg vertical on 16:9 (45.7 deg), so the swing in front of the body stays on screen;
+// pitch -45..20 keeps the hands' shoulder-to-waist path in view. Tune at CB-5b with the view
+// model on (its arms draw ~1.24x larger) and off. Rolls keep free look.
+// Guard (C2b): attacks accept Guard and rise into it with their Dodge cancel (a guard held through
+// a swing comes up there, Elden Ring). `guard_damage` = 2x the swing's stamina: a guarded light
+// takes 24 x 0.55 / stability 1 (the sword's, mw_combat GUARD_STABILITY) = 13.2 of the player's
+// 100, so a weapon guard breaks after 8 lights or 5 heavies from full, without regen (Elden Ring
+// weapon guards break within a handful of blocks; shields will raise the stability). Tune at CB-3b.
 (
     id: "sword_1h",
     rig: "humanoid",
@@ -20,22 +30,24 @@
             category: Attack, classes: [Light], from: [Any], rank: 10,
             slots: ["attack.sword_1h.light1", "attack.sword_1h.light1_rec"], root_scale: 1.0,
             windows: [
-                Accept([Light, Heavy, Dodge], 0.10, End),
-                Cancel([Dodge], 0.31, End), Cancel([Light, Heavy], 0.37, End), Cancel([Move], 0.57, End),
+                Accept([Light, Heavy, Dodge, Guard], 0.10, End),
+                Cancel([Dodge, Guard], 0.31, End), Cancel([Light, Heavy], 0.37, End), Cancel([Move], 0.57, End),
                 Turn(360.0, 0.0, 0.11), NoTurn(0.11, 0.28),
             ],
-            hits: [(window: (0.14, 0.28), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            hits: [(window: (0.14, 0.28), mv: 1.0, stamina: 12.0, guard_damage: 24.0, kind: "slash", tier: Small, stop: 0.05)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Light: "light2" },
         ),
         "light2": (
             category: Attack, classes: [Light],
             slots: ["attack.sword_1h.light2", "attack.sword_1h.light2_rec"], root_scale: 1.0,
             windows: [
-                Accept([Light, Heavy, Dodge], 0.10, End),
-                Cancel([Dodge], 0.36, End), Cancel([Light, Heavy], 0.43, End), Cancel([Move], 0.66, End),
+                Accept([Light, Heavy, Dodge, Guard], 0.10, End),
+                Cancel([Dodge, Guard], 0.36, End), Cancel([Light, Heavy], 0.43, End), Cancel([Move], 0.66, End),
                 Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.32),
             ],
-            hits: [(window: (0.18, 0.32), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            hits: [(window: (0.18, 0.32), mv: 1.0, stamina: 12.0, guard_damage: 24.0, kind: "slash", tier: Small, stop: 0.05)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Light: "light3" },
         ),
         // A dash-in strike; its recovery starts from a lunge, so the chain cancels before the clip's end.
@@ -43,11 +55,12 @@
             category: Attack, classes: [Light],
             slots: ["attack.sword_1h.light3", "attack.sword_1h.light3_rec"], root_scale: 0.25,
             windows: [
-                Accept([Light, Heavy, Dodge], 0.10, End),
-                Cancel([Dodge], 0.56, End), Cancel([Light, Heavy], 0.70, End), Cancel([Move], 1.15, End),
+                Accept([Light, Heavy, Dodge, Guard], 0.10, End),
+                Cancel([Dodge, Guard], 0.56, End), Cancel([Light, Heavy], 0.70, End), Cancel([Move], 1.15, End),
                 Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.52),
             ],
-            hits: [(window: (0.38, 0.52), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            hits: [(window: (0.38, 0.52), mv: 1.0, stamina: 12.0, guard_damage: 24.0, kind: "slash", tier: Small, stop: 0.05)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Light: "light4" },
         ),
         // The finisher: a lunge (hit at 0.30), a held follow-through (0.42-1.02), then it steps forward
@@ -56,11 +69,12 @@
             category: Attack, classes: [Light],
             slots: ["attack.sword_1h.light4"], root_scale: 0.22,
             windows: [
-                Accept([Light, Heavy, Dodge], 0.10, End),
-                Cancel([Dodge], 0.50, End), Cancel([Light, Heavy], 1.05, End), Cancel([Move], 1.25, End),
+                Accept([Light, Heavy, Dodge, Guard], 0.10, End),
+                Cancel([Dodge, Guard], 0.50, End), Cancel([Light, Heavy], 1.05, End), Cancel([Move], 1.25, End),
                 Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.38),
             ],
-            hits: [(window: (0.23, 0.37), mv: 1.2, stamina: 14.0, kind: "slash", tier: Medium, stop: 0.07)],
+            hits: [(window: (0.23, 0.37), mv: 1.2, stamina: 14.0, guard_damage: 28.0, kind: "slash", tier: Medium, stop: 0.07)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Light: "light1" },
         ),
         // Heavy chain (Elden Ring's R2): slower, a bigger hit (mv, tier, hit-stop) for more stamina.
@@ -71,33 +85,36 @@
             category: Attack, classes: [Heavy], from: [Any], rank: 10,
             slots: ["attack.sword_1h.heavy1", "attack.sword_1h.heavy1_rec"], root_scale: 0.3,
             windows: [
-                Accept([Light, Heavy, Dodge], 0.15, End),
-                Cancel([Dodge], 0.50, End), Cancel([Light, Heavy], 0.73, End), Cancel([Move], 1.10, End),
+                Accept([Light, Heavy, Dodge, Guard], 0.15, End),
+                Cancel([Dodge, Guard], 0.50, End), Cancel([Light, Heavy], 0.73, End), Cancel([Move], 1.10, End),
                 Turn(360.0, 0.0, 0.28), NoTurn(0.28, 0.46),
             ],
-            hits: [(window: (0.32, 0.46), mv: 1.5, stamina: 20.0, kind: "slash", tier: Medium, stop: 0.08)],
+            hits: [(window: (0.32, 0.46), mv: 1.5, stamina: 20.0, guard_damage: 40.0, kind: "slash", tier: Medium, stop: 0.08)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Heavy: "heavy2" },
         ),
         "heavy2": (
             category: Attack, classes: [Heavy],
             slots: ["attack.sword_1h.heavy2", "attack.sword_1h.heavy2_rec"], root_scale: 0.6,
             windows: [
-                Accept([Light, Heavy, Dodge], 0.15, End),
-                Cancel([Dodge], 0.50, End), Cancel([Light, Heavy], 0.50, End), Cancel([Move], 0.80, End),
+                Accept([Light, Heavy, Dodge, Guard], 0.15, End),
+                Cancel([Dodge, Guard], 0.50, End), Cancel([Light, Heavy], 0.50, End), Cancel([Move], 0.80, End),
                 Turn(360.0, 0.0, 0.30), NoTurn(0.30, 0.48),
             ],
-            hits: [(window: (0.34, 0.48), mv: 1.5, stamina: 20.0, kind: "slash", tier: Medium, stop: 0.08)],
+            hits: [(window: (0.34, 0.48), mv: 1.5, stamina: 20.0, guard_damage: 40.0, kind: "slash", tier: Medium, stop: 0.08)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Heavy: "heavy3" },
         ),
         "heavy3": (
             category: Attack, classes: [Heavy],
             slots: ["attack.sword_1h.heavy3", "attack.sword_1h.heavy3_rec"], root_scale: 0.3,
             windows: [
-                Accept([Light, Heavy, Dodge], 0.15, End),
-                Cancel([Dodge], 0.60, End), Cancel([Light, Heavy], 0.70, End), Cancel([Move], 1.00, End),
+                Accept([Light, Heavy, Dodge, Guard], 0.15, End),
+                Cancel([Dodge, Guard], 0.60, End), Cancel([Light, Heavy], 0.70, End), Cancel([Move], 1.00, End),
                 Turn(360.0, 0.0, 0.40), NoTurn(0.40, 0.57),
             ],
-            hits: [(window: (0.43, 0.57), mv: 1.5, stamina: 20.0, kind: "slash", tier: Medium, stop: 0.08)],
+            hits: [(window: (0.43, 0.57), mv: 1.5, stamina: 20.0, guard_damage: 40.0, kind: "slash", tier: Medium, stop: 0.08)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Heavy: "heavy4" },
         ),
         // The heavy finisher: the hit at 0.54, then it steps into stance inside the same take (2.33 s).
@@ -105,12 +122,33 @@
             category: Attack, classes: [Heavy],
             slots: ["attack.sword_1h.heavy4"], root_scale: 0.38,
             windows: [
-                Accept([Light, Heavy, Dodge], 0.15, End),
-                Cancel([Dodge], 0.75, End), Cancel([Light, Heavy], 1.45, End), Cancel([Move], 1.70, End),
+                Accept([Light, Heavy, Dodge, Guard], 0.15, End),
+                Cancel([Dodge, Guard], 0.75, End), Cancel([Light, Heavy], 1.45, End), Cancel([Move], 1.70, End),
                 Turn(360.0, 0.0, 0.42), NoTurn(0.42, 0.62),
             ],
-            hits: [(window: (0.48, 0.62), mv: 1.8, stamina: 24.0, kind: "slash", tier: Large, stop: 0.10)],
+            hits: [(window: (0.48, 0.62), mv: 1.8, stamina: 24.0, guard_damage: 48.0, kind: "slash", tier: Large, stop: 0.10)],
+            look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.10),
             next: { Heavy: "heavy1" },
+        ),
+        // Guard (C2b, held): UAL2 Sword_Block's raise (0-0.21 s), then its held crouch (0.21-0.51 s) looping
+        // while Guard is down (sources.ron `guard.sword_1h.*`). Counts after 4 ticks (raise 0.067 s, the
+        // ER-Combat-Rewrite reference's GUARD_RAISE_FRAMES at 60 Hz) for attackers within 80 deg of the
+        // facing (its GUARD_ARC_DEG half-arc; Elden Ring guards roughly the front half). Attacks, rolls
+        // out of it once raised. Turn(360): third person it turns to the stick or faces the lock
+        // target; first person it follows the view at that rate (combat.md "C2b"). No Cancel(Move): no
+        // guard walk yet (a held pose over locomotion needs the upper slot; logged). First-person
+        // look: free yaw (the body follows the view, as blocking in Skyrim, Mordhau and KCD never
+        // clamps it), pitch as the attacks' -45..20 (the arms hang off the body).
+        "guard": (
+            category: Guard, classes: [Guard], from: [Any], rank: 10,
+            slots: ["guard.sword_1h.raise", "guard.sword_1h.idle"],
+            guard: (raise: 0.067, arc: 80.0),
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.0, End),
+                Cancel([Light, Heavy, Dodge], 0.067, End),
+                Turn(360.0, 0.0, End),
+            ],
+            look: (yaw: 180.0, pitch: (-45.0, 20.0), ease: 0.10),
         ),
         "roll": (
             category: Dodge, classes: [Dodge], from: [Any], rank: 10,
@@ -131,5 +169,9 @@
         (Medium, Front): "react.medium.front",
         (Large, Front): "react.large.front",
     },
+    // Guard break (stamina gone on a guarded hit): UAL2 Idle_Shield_Break (guard knocked open, 1.07 s).
+    // No guard-hit recoil clip in the free packs (combat.md open question 2): a held guard flinches
+    // (Additive) and stays up.
+    guard_break: "guard.sword_1h.break",
     costs: (jump: 10.0, sprint_per_s: 11.0),
 )

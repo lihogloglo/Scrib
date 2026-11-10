@@ -33,7 +33,7 @@ use bevy_ecs::prelude::*;
 use sf_action::{ClassSet, Refused, SlotKey, TagId};
 use sf_action_bevy::{ActionBody, ActionCharacter, ActionGate, ActionSystems, ActionTick};
 use sf_anim::{Clip, Skeleton};
-use sf_combat::{Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, FightState, Fighter, Movesets, Side, SocketTracks, Tier, Unit};
+use sf_combat::{Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, FightState, Fighter, GuardResult, Movesets, Side, SocketTracks, Tier, Unit};
 use sf_coords::WorldPos;
 
 pub mod lock;
@@ -86,8 +86,11 @@ impl<R: CombatRules + Resource> Plugin for SfCombatPlugin<R> {
             .add_systems(FixedUpdate, gate::<R>.in_set(CombatSystems::Gate))
             .add_systems(FixedUpdate, step::<R>.in_set(CombatSystems::Step))
             .add_systems(FixedUpdate, flash.in_set(CombatSystems::Apply));
+        // Only where Bevy's gizmo plugin runs (`GizmoConfigStore`): a headless app or test built
+        // with `debug` (`--all-features`) has none, and `Gizmos` would fail validation.
         #[cfg(feature = "debug")]
-        app.init_resource::<CombatGizmos>().add_systems(bevy_app::PostUpdate, draw_gizmos);
+        app.init_resource::<CombatGizmos>()
+            .add_systems(bevy_app::PostUpdate, draw_gizmos.run_if(resource_exists::<bevy_gizmos::config::GizmoConfigStore>));
     }
 }
 
@@ -132,6 +135,8 @@ pub struct HitLanded {
     pub kind: TagId,
     pub tier: Tier,
     pub side: Side,
+    /// Whether it met a guard (C2b): held (`Additive` tier) or broken.
+    pub guard: GuardResult,
 }
 
 /// A press was refused by the gate (the HUD flashes the stamina bar).
@@ -199,9 +204,9 @@ fn step<R: CombatRules + Resource>(
     drop(units);
     for e in &out.events {
         match *e {
-            CombatEvent::HitLanded { attacker, defender, hit, point, kind, tier, side } => {
+            CombatEvent::HitLanded { attacker, defender, hit, point, kind, tier, side, guard } => {
                 if let (Some(&attacker), Some(&defender)) = (ids.get(&attacker), ids.get(&defender)) {
-                    hits.write(HitLanded { attacker, defender, hit, point: anchor.offset(point), kind, tier, side });
+                    hits.write(HitLanded { attacker, defender, hit, point: anchor.offset(point), kind, tier, side, guard });
                 }
             }
             CombatEvent::Died { who } => {
@@ -228,7 +233,8 @@ fn flash(fighters: Query<(Entity, &ActionCharacter), With<Combatant>>, mut out: 
 
 /// Combat gizmos: the weapon segment of a playing combat move (red while a hit window is open,
 /// yellow otherwise) and every combatant's hurt capsule and head (green; cyan in i-frames).
-/// Toggle `enabled` (the content binds it to its dev overlay).
+/// Toggle `enabled` (the content binds it to its dev overlay). Drawn only when the app has Bevy's
+/// gizmo plugin (`GizmoConfigStore`; headless apps have none).
 #[cfg(feature = "debug")]
 #[derive(Resource, Clone, Debug, Default)]
 pub struct CombatGizmos {

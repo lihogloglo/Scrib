@@ -272,9 +272,10 @@ fn light_held_slots(
         // The budget writes the range from the reach (short until it holds a shadow map).
         let reach = calibration.reach(info.radius);
         let mut e = commands.spawn((light, HeldTorch, BudgetedShadow { priority: TORCH_SHADOW_PRIORITY }, reach, Transform::IDENTITY, Visibility::Inherited, ChildOf(entity)));
-        // The slot's worldspace layer from the first frame (Bevy pairs a light only with the
-        // casters and views sharing its `RenderLayers`); `sf_character_bevy`'s layer propagation
-        // keeps it in step when the carrier changes worldspace.
+        // The slot's light layers from the first frame (the worldspace's content and shadow-only
+        // layers: Bevy pairs a light only with the casters and views sharing its `RenderLayers`,
+        // so the carrier's first-person head casts too); `sf_character_bevy`'s layer propagation
+        // keeps them in step when the carrier changes worldspace.
         if let Some(layers) = layers {
             e.insert(layers.clone());
         }

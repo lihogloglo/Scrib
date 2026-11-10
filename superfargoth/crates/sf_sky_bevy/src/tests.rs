@@ -458,6 +458,29 @@ fn ray_tracing_follows_the_cameras_worldspace_layer() {
     assert!(traced_by(&default_view, None) && !traced_by(&default_view, Some(&RenderLayers::layer(2))));
 }
 
+/// FP-1b: the traced scene adds the layers of the lights the cameras see, so a worldspace's
+/// shadow-only layer (its lights carry it, no camera does) is traced, and another worldspace's
+/// lights add nothing.
+#[test]
+fn ray_tracing_adds_the_shadow_only_layer_of_the_lights_the_cameras_see() {
+    use crate::path::{camera_layers, scene_layers, traced_by};
+    use bevy_camera::visibility::RenderLayers;
+    // Worldspace (world 3, shadow 4); another one loaded behind it (world 1, shadow 2).
+    let camera = RenderLayers::from_layers(&[0, 3]);
+    let (sun, lamp, other_lamp) = (RenderLayers::from_layers(&[0, 3, 4]), RenderLayers::from_layers(&[3, 4]), RenderLayers::from_layers(&[1, 2]));
+    let view = camera_layers([Some(&camera)].into_iter());
+    let scene = scene_layers(view.clone(), [Some(&sun), Some(&lamp), Some(&other_lamp), None].into_iter());
+    assert_eq!(scene, RenderLayers::from_layers(&[0, 3, 4]));
+    assert!(traced_by(&scene, Some(&RenderLayers::layer(4))), "a shadow-only head is traced");
+    assert!(!traced_by(&scene, Some(&RenderLayers::layer(2))) && !traced_by(&scene, Some(&RenderLayers::layer(1))));
+    assert!(!view.intersects(&RenderLayers::layer(4)), "the camera itself never sees the shadow layer");
+    // An interior lamp alone (sun off: no layers) brings its shadow layer too.
+    assert_eq!(scene_layers(view.clone(), [Some(&lamp), Some(&RenderLayers::none())].into_iter()), RenderLayers::from_layers(&[0, 3, 4]));
+    // No light: the cameras' layers; no camera: nothing.
+    assert_eq!(scene_layers(view, std::iter::empty()), camera);
+    assert_eq!(scene_layers(camera_layers(std::iter::empty()), [Some(&lamp)].into_iter()), RenderLayers::none());
+}
+
 /// N3: the moon's `DirectionalLight` follows `SkySettings::moonlight` live, and keeps the
 /// moon's cheaper cascades.
 #[test]

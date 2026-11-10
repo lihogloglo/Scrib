@@ -593,3 +593,66 @@ fn measure_tick_cost() {
     let per = start.elapsed() / rounds;
     println!("500 sheets x {} stats, 10% dirty, all regenerating: {:.4} ms per tick (apply + tick)", t.len(), per.as_secs_f64() * 1000.0);
 }
+
+fn shift(stat: StatIdx, layer: Layer, value: f32, id: u64) -> StatOp {
+    StatOp::AddModifierShift(Modifier { stat, layer, op: ModOp::Add, value, source: src(id) })
+}
+
+/// A pool fortify on a `KeepRatio` pool (effects E4 bug): max and current move by the same
+/// amount, never by the ratio (`OpenMW` `modDynamicStat`), and the inverse takes the same amount
+/// back, clamped at 0 (`setCurrent` default flags).
+#[test]
+fn a_shifting_modifier_moves_max_and_current_together_on_a_ratio_pool() {
+    let (t, r, mut s) = setup();
+    let pool = |s: &Sheet| (s.view(&t).current(MANA), s.view(&t).max(MANA));
+    assert_eq!(pool(&s), (100.0, 100.0));
+    ops(&t, &r, &mut s, &[shift(MANA, Layer::Temporary, 40.0, 1)]);
+    assert_eq!(pool(&s), (140.0, 140.0));
+    assert!(s.changed_since_init(), "a shifted current is saved state");
+    ops(&t, &r, &mut s, &[StatOp::RemoveSourceShift(src(1))]);
+    assert_eq!(pool(&s), (100.0, 100.0));
+
+    // Partly spent: 50 / 100 + 40 is 90 / 140 (a plain modifier rebases to 70 / 140).
+    ops(&t, &r, &mut s, &[StatOp::PoolSetCurrent { pool: MANA, value: 50.0 }, shift(MANA, Layer::Temporary, 40.0, 1)]);
+    assert_eq!(pool(&s), (90.0, 140.0));
+    ops(&t, &r, &mut s, &[StatOp::RemoveSourceShift(src(1))]);
+    assert_eq!(pool(&s), (50.0, 100.0));
+
+    // Spent below the bonus: the removal stops at 0.
+    ops(&t, &r, &mut s, &[shift(MANA, Layer::Temporary, 40.0, 1), StatOp::PoolSetCurrent { pool: MANA, value: 10.0 }]);
+    ops(&t, &r, &mut s, &[StatOp::RemoveSourceShift(src(1))]);
+    assert_eq!(pool(&s), (0.0, 100.0));
+    assert!(s.modifiers().is_empty());
+    // Removing an unknown source shifts nothing.
+    assert!(ops(&t, &r, &mut s, &[StatOp::RemoveSourceShift(src(9))]).is_empty());
+}
+
+/// An innate pool fortify on a derived pool (effects adapter A3 bug): a `Permanent` shifting
+/// modifier survives the derivation (the derived base no longer overwrites it) and rebases with
+/// the pool when the derivation moves.
+#[test]
+fn a_permanent_shift_on_a_derived_pool_survives_a_recompute() {
+    let (t, r, mut s) = setup();
+    let pool = |s: &Sheet| (s.view(&t).current(MANA), s.view(&t).max(MANA), s.view(&t).effective_base(MANA));
+    ops(&t, &r, &mut s, &[shift(MANA, Layer::Permanent, 20.0, 1)]);
+    assert_eq!(pool(&s), (120.0, 120.0, 120.0));
+    assert_eq!(s.view(&t).base(MANA), 100.0, "the derived base is the formula's");
+    // Str 50 -> 60: base 120 + 20, current by the pool's ratio.
+    ops(&t, &r, &mut s, &[StatOp::PoolSetCurrent { pool: MANA, value: 60.0 }, StatOp::ModBase { stat: STR, delta: 10.0 }]);
+    assert_eq!(pool(&s), (70.0, 140.0, 140.0));
+    ops(&t, &r, &mut s, &[StatOp::RemoveSourceShift(src(1))]);
+    assert_eq!(pool(&s), (50.0, 120.0, 120.0));
+}
+
+/// While building (spawn, load) a shifting modifier is a plain one: settle fills a new
+/// character, a load keeps its saved current.
+#[test]
+fn a_shifting_modifier_does_not_shift_while_building() {
+    let t = table();
+    let r = model().rules();
+    let mut s = Sheet::new(&t);
+    ops(&t, &r, &mut s, &[StatOp::SetBase { stat: STR, value: 50.0 }, shift(MANA, Layer::Permanent, 20.0, 1)]);
+    s.settle(&t, &r, &Inputs::default(), Settle::NewCharacter);
+    assert_eq!((s.view(&t).current(MANA), s.view(&t).max(MANA)), (120.0, 120.0));
+    assert!(!s.changed_since_init());
+}

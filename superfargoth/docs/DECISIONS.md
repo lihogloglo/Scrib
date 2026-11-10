@@ -1728,3 +1728,36 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   target, **revisit at S9**. Unreachable without cutting contract text: the 2026-11-09 restructure already relocated
   the mechanism, the byte tables and the S0-S2 history, and this pass removed the last two duplications (§3's
   fragmentation measurements, the industry-comparison sourced case). Further cuts are a coordinator decision.
+- 2026-11-10 (first person FP-1): hybrid first person on one skeleton (world body, head off the main view; arms
+  and held items redrawn by a view model in FP-2), roles by `RenderLayers` since Bevy 0.20 has no shadow-only flag;
+  outfits split by role only for roots with `RoleLayers` (the player), NPCs keep one mesh per material (first-person.md).
+- 2026-11-10 (combat C4 soft aim): the view choice reaches gameplay only as the input bit `Command::face_view` (first person:
+  attacks square up to the view, `Turn` steers onto the soft-aim target, no hard lock, a held lock breaks); the soft target
+  lives on the swing (`SwingState::aim`), not in the saved `ActionState` (combat.md "C4 soft aim").
+- 2026-11-10 (first person FP-1b): each worldspace owns two render layers, content `W` and shadow-only `S` = W+1
+  (`WorldspaceLayers`); lights carry `S`, cameras never do, the traced scene adds its lights' layers. A mesh on `S`
+  alone is Bevy 0.20's shadow-only caster (first-person head; FP-2 arms and held items) (first-person.md).
+- 2026-11-10 (first person FP-2, research): the view model is one render, not a second camera: a `NotShadowCaster`
+  view copy of arms and held items on `W`, own FOV and a near depth slice in the vertex stage, true world position for
+  lighting; the role parts stay on `S`. A second Bevy 0.20 camera re-renders the sun cascades per view (first-person.md).
+- 2026-11-10 (first person FP-2a): a view copy is a child entity of its role part sharing mesh, material and the
+  rig's joint entities (no second rig; despawns with the part); the view model is a setting
+  (`ComfortSettings::view_model`, off until FP-2b's material) and its math lives Bevy-free in `sf_camera::view_model`.
+- 2026-11-10 (effects E4): the effect instance counter is saved in its own world section `sf/effects` v1, not in
+  `sf/meta` (owned by `sf_save`, a change would bump `META_VERSION`); restored active sets also move it past their
+  ids. E4 saves the whole active set, innate sources included (re-landing them would re-apply saved base changes).
+- 2026-11-10 (first person FP-2b): view copies draw a derived, forward-rendered `ExtendedMaterial` (bindless) whose
+  vertex stages are copies of Bevy's (re-sync on each Bevy update; guarded by tests); clustered lights picked at the
+  drawn pixel are accepted (error < 2 % at a 3 m light); `view_model` stays off until the owner's FP-2 check.
+- 2026-11-10 (combat C4b): first-person look limits are `MoveRule.look`, in force until `Cancel(Move)`, centred on the body's
+  current yaw (not a fixed entry yaw: the arms hang off the body); the clamp lives in the camera's look accumulator, the one
+  producer of `Command.view`, so gameplay and co-op hosts see the limited view. Sword default 45 deg, not 60 (combat.md "C4b").
+- 2026-11-10 (pool fortifies): Morrowind's temporary Fortify Health/Magicka/Fatigue = OpenMW's: current over an unchanged
+  max, taken back at the end (`PoolMode::Boost`); `Fortify` and innate ones = source-tracked `AddModifierShift` (no rebase,
+  derived pools keep them). Not chosen: a no-rebase flag on `Modifier` (every constructor, save shape) (effects.md "As built").
+- 2026-11-10 (effects A5a): Morrowind casting = `MwModernEffectRules` by default (chance 1, Sound raises a spell's cost, Silence
+  refuses); classic `OpenMwEffectRules` ports OpenMW exactly (fizzle spends the cost) and waits for a rule-set choice. Silence and
+  Sound are magnitude stats (`mw_stats::MAGNITUDE_STATS`, appended) read by the cast rules (effects-adapter.md "As built (A5a)").
+- 2026-11-10 (services A3): training is modern-flow over OpenMW's rules: a skill row asks first (2 h pass), the list stays
+  open and re-lists after a purchase (OpenMW closes to the game: classic column), refused rows show their reason; the 2
+  hours move the MWScript calendar globals and `SkyTime` until ROADMAP 1.17's single clock.

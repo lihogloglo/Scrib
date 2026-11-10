@@ -6,7 +6,7 @@
 //! framework's humanoid defaults where the region matches; Morrowind adds
 //! skirt, wrists, ankles, shield, weapon, and `body` (a creature's whole model).
 
-use sf_character::{BoneSet, HumanoidBone as B, SlotId, SlotRegistry, slot as hs};
+use sf_character::{BoneSet, HumanoidBone as B, SlotId, SlotRegistry, ViewRole, slot as hs};
 use tes3::esp::BodypartId;
 
 /// Slots Morrowind adds to the humanoid defaults.
@@ -117,6 +117,21 @@ pub const FIRST_PERSON: [usize; 11] = [
     prt::L_PAULDRON,
     prt::SHIELD,
 ];
+
+/// The first-person role of a part slot (superfargoth `docs/specs/first-person.md` "Roles"):
+/// head, hair and neck are the head (`OpenMW` adds neither head nor hair in first person,
+/// `apps/openmw/mwrender/npcanimation.cpp` `updateParts`, ca5e2576); the [`FIRST_PERSON`]
+/// slots (hands, wrists, forearms, upper arms, pauldrons, shield) are the arms, the parts
+/// `OpenMW`'s first-person model shows; the weapon slot is held; the rest is the body. Out of
+/// range (the creature `body` slot): body.
+pub fn view_role(prt: usize) -> ViewRole {
+    match prt {
+        prt::HEAD | prt::HAIR | prt::NECK => ViewRole::Head,
+        prt::WEAPON => ViewRole::Held,
+        p if FIRST_PERSON.contains(&p) => ViewRole::Arms,
+        _ => ViewRole::Body,
+    }
+}
 
 /// The part slots a skin part (`BODY` of type skin) fills, by its mesh part.
 /// Head and hair come from the NPC record; clavicles have no skin.

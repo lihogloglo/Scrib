@@ -1,0 +1,18 @@
+{
+  "EffectIdAlloc": {
+    "STRUCT": [
+      {
+        "next": "U64"
+      }
+    ]
+  },
+  "EffectsWorldSave": {
+    "STRUCT": [
+      {
+        "ids": {
+          "TYPENAME": "EffectIdAlloc"
+        }
+      }
+    ]
+  }
+}

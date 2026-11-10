@@ -11,6 +11,7 @@ use tes3::esp::{
     FilterValue, Npc, NpcFlags, Race, Sex,
 };
 
+use crate::barter::SERVICE_REFUSAL_TOPIC;
 use crate::db::{INFO_REFUSAL, MwDialogue};
 use crate::text::{GlobalNumber, Macro, MacroSource, expand};
 
@@ -171,6 +172,34 @@ impl<'a> MwDialogueRules<'a> {
             || self.view.disposition(ctx) >= info.data.disposition
     }
 
+    /// `OpenMW` `Filter::testDisposition(info, true)`, for service refusals: an NPC passes
+    /// when its disposition is below the INFO's, and a 0 still always passes.
+    fn passes_disposition_inverted(&self, ctx: &ConversationCtx, info: &DialogueInfo) -> bool {
+        self.view.speaker(ctx).is_some_and(|s| !s.npc)
+            || info.data.disposition == 0
+            || self.view.disposition(ctx) < info.data.disposition
+    }
+
+    /// `DialogueManager::checkServiceRefused`'s search (`apps/openmw/mwdialogue/
+    /// dialoguemanagerimp.cpp` and `filter.cpp` `Filter::list(dialogue, false, false, true)` at
+    /// `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`): the first INFO of the "Service Refusal"
+    /// topic ([`SERVICE_REFUSAL_TOPIC`]) passing the actor, player and select checks for `ctx`
+    /// (`ctx.choice`: the service's `ServiceType`, `None` for the general check, where every
+    /// `Choice` condition fails) and the inverted disposition check. No "Info Refusal"
+    /// fallback. Returns the response id.
+    pub fn service_refusal(&self, ctx: &ConversationCtx) -> Option<RecordId> {
+        let entry = self.dialogue.db.topic(&RecordId::new(SERVICE_REFUSAL_TOPIC))?;
+        entry
+            .responses
+            .iter()
+            .find(|r| {
+                self.dialogue.info(r).is_some_and(|info| {
+                    self.passes_static(ctx, info) && self.passes_disposition_inverted(ctx, info)
+                })
+            })
+            .cloned()
+    }
+
     /// `OpenMW` `Filter::testActor`.
     fn passes_actor(info: &DialogueInfo, speaker: &ActorFacts) -> bool {
         let eq = |field: &str, id: Option<&RecordId>| {
@@ -276,6 +305,10 @@ impl<'a> MwDialogueRules<'a> {
             #[allow(clippy::cast_precision_loss)]
             FilterType::Item => self.view.item_count(ctx.player, &id) as f64,
             FilterType::Dead => f64::from(self.view.dead_count(&id)),
+            // Outside a choice every `Choice` condition fails (`testSelectStruct`, `mChoice == -1`).
+            FilterType::Function if filter.function == FilterFunction::Choice && ctx.choice.is_none() => {
+                return false;
+            }
             FilterType::Function => self.function_value(ctx, filter.function),
         };
         compare(value, filter.comparison, filter.value)

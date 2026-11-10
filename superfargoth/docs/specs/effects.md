@@ -1,6 +1,6 @@
 # Magic effects: definitions, active instances, spell books, casting (`sf_effects`)
 
-Status (2026-11-08): **agreed** (owner 2026-11-08). E1, E2 and E3 written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10) ("As built"). Builds on [stats.md](stats.md) "The effect seam" (writes only
+Status (2026-11-10): **agreed** (owner 2026-11-08). E1-E3 written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; E4 (`sf_effects_bevy`, game glue, saves) 2026-11-10, headless tests; not run in game ("As built"). Builds on [stats.md](stats.md) "The effect seam" (writes only
 through `StatOp` with `SourceId`s) and [rule-hooks.md](rule-hooks.md) "Declaring a rule". First content pack's
 mapping: `../../../bevyrrowind/docs/specs/effects-adapter.md`. Blocks: spells, potions, alchemy, enchanting, spellmaking,
 MWScript `AddSpell`/`Cast`, stats S8 (source re-registration).
@@ -65,15 +65,16 @@ icon, colour) are read by presentation only (net rule 3).
 | `Damage { stat, cap_at_modified }` | (applied_once: `Damage`) | `Damage(m·dt)` | none | damage attribute/skill |
 | `Restore { stat }` | (once) | `Restore(m·dt)` | none | restore attribute/skill |
 | `Drain { stat }` | `Damage(m)` | none | `Restore(m)` | drain attribute/skill (exact inverse, saved magnitude) |
-| `Pool { pool, mode }` | `PoolAdjust` / `PoolModMax` per mode | `PoolAdjust(±m·dt)` | inverse if `mode` reverts | damage/restore/drain/fortify health, magicka, stamina |
+| `Pool { pool, mode }` | `PoolAdjust` / `AddModifierShift` per mode | `PoolAdjust(±m·dt)` | inverse if `mode` reverts | damage/restore/drain/fortify health, magicka, stamina |
 | `Absorb { inner: Box<Archetype> }` | target gets `inner`, caster the inverse, one `Cause` | same | same | absorb health, absorb skill |
 | `Cure { filter: CureFilter }` | ends matching sources (instant) | none | none | cure disease/poison/paralysis, dispel, remove curse |
 | `Request { kind: TagId }` | `EffectRequest::Start` | `Tick` if periodic | `End` | open/lock, teleport, summon, bound item, levitate, calm/frenzy |
 
 - `StatTarget = Fixed(StatKey) | Arg` (the effect entry picks the attribute or skill). `LayerRule = BySource`:
   `Permanent` when the source class is innate (OpenMW `Flag_AffectsBaseValues`), else `Temporary`.
-- `PoolMode`: `Hurt` (no below zero), `Heal`, `Drain` (below zero allowed, reverted), `Fortify` (`above_max` current,
-  reverted; innate sources use `PoolModMax`).
+- `PoolMode`: `Hurt` (no below zero), `Heal`, `Drain` (below zero allowed, reverted), `Fortify` (max and current
+  together: `AddModifierShift`, `Permanent` when innate; `RemoveSourceShift` at the end), `Boost` (the current over
+  the max, reverted below zero allowed; innate as `Fortify`: OpenMW's Fortify Health / Magicka / Fatigue).
 - `CureFilter = Archetype(EffectKey) | SourceTag(TagId) | Dispel { harmful_only, chance_from_magnitude }`.
 - `Request` effects are the escape hatch for anything that is not a sheet: the runtime emits data, the game's
   handler acts (lock state, teleport, AI intent, spawning) and may answer `Invalid` (the effect ends, still
@@ -258,14 +259,22 @@ ops); **Tick** (expiries, rate effects; only sets with timed effects); **Request
 ops next tick); **Out** (stat ops into the same tick's `StatCommand` queue; events in command order, then by
 `ActorRef`). Script ops run synchronously on the host (the allowed exception), as in stats.
 
+**Clocks** (E4; ROADMAP 1.17): durations, rates and cooldowns count fixed ticks (`Time<Fixed>`, numbered by
+`StatTick`; real seconds as OpenMW, no timescale); power recharges read `EffectClock(GameMinutes)`, fed by the game
+from its calendar. The 1.17 fix writes `EffectClock` (and `StatTick`) from the one host clock; `sf_effects` is unchanged.
+
 ## Saves
 
-- **What is saved** per character: `SpellBook` (by record id), `ActiveSet` minus `Innate`/`ItemConstant` sources
-  (they are rebuilt from the book and the loadout), each effect with `magnitude`, `elapsed`, `applied`, `phase`.
-  `EffectIdAlloc` in the world meta.
-- **Load order** (stats S8): sheets load clamped-off; the effect runtime **re-registers modifiers only** (`AddModifier`
-  for running `Modify`/`MagnitudeStat`/innate pool effects; no `Damage`, no `PoolAdjust`: those results are already
-  in the saved sheet); book rebuild adds innate instances, loadout adds constant ones; one recompute clamps.
+- **What is saved** per character (`EffectsSave { tick, active, book }`): `SpellBook` (by record id) and the whole
+  `ActiveSet`, each effect with `magnitude`, `elapsed`, `applied`, `phase`; `started` and cooldowns are rebased from
+  `tick` on load. Innate sources are kept (E4): re-landing them from the book would re-apply base changes the sheet
+  already holds (a pool fortify's shifted current) and churn ids; E5 decides whether `ItemConstant` sources are
+  rebuilt from the loadout instead. `EffectIdAlloc` in the world section **`sf/effects`** v1 (E4: `sf/meta` belongs to
+  `sf_save` and would need a `META_VERSION` bump; owner question); restored sets also move it past their ids.
+- **Load order** (stats S8): sheets load clamped-off; the effect runtime **re-registers modifiers only**
+  (`sf_effects::reregister`: `AddModifier` of running effects, shifting ones as plain; no `Damage` or `PoolAdjust`:
+  those results are already in the saved sheet) on the building sheet, then one settle. The sheet and its effects load in one step
+  (player at `CHARACTERS` order, NPCs at spawn), so nothing runs between them.
 - **Player**: `CharacterSave` gains `effects: Option<EffectsSave>`: `sf.character` **v4**; step v3 → v4 sets `None`,
   and the adapter's init hook builds the book from the character's records (new-game path). Frozen `legacy::v3`.
 - **NPCs and creatures**: overlay blob `effects` v1 when the book differs from the record or the active set is not
@@ -316,15 +325,16 @@ One deliverable plus its test per slice; E1-E3 are Bevy-free.
 | **E1** core (written) | `sf_effects`: stat archetypes, `ActiveSet`, `Inflict`/`End`/`EndBySource`/`Skip`, `apply`/`tick`, stacking, events, `TestRules` | lifecycle + stacking + determinism tests above |
 | **E2** rules (written) | `EffectRules` traits, `StandardEffectRules`, `sf.effects.*` rule declarations | exact formula tests; rule In/Out round trip |
 | **E3** book + casting (written) | `SpellBook`, `Learn`/`Forget`/`Cast`/`Cure`, powers on game time, cooldowns, `Request` archetype | book sync, cast refused/fizzle/success, recharge |
-| **E4** Bevy + saves | `sf_effects_bevy` (component, sets, commands, events); `sf.character` v4, NPC blob v1, re-registration order (stats S8) | headless app; save round trip with a fortify and a drain active; old goldens load |
+| **E4** Bevy + saves (built) | `sf_effects_bevy` (component, sets, commands, events); `sf.character` v4, NPC blob v1, re-registration order (stats S8) | headless app; save round trip with a fortify and a drain active; old goldens load |
 | **E5** items + delivery | `UseItem`, `Equip`/`Unequip`, `ItemModel`, touch and area landing, `Launch` request; on-strike from combat outcomes | charge spent; area radius filter; constant effect follows the loadout |
 
 Content slices (first effect set, consumables, abilities, script functions, enchantments, afflictions): adapter spec.
 
 ## As built
 
-**E1**, **E2**: [archive/effects-history.md](archive/effects-history.md). Open questions: all answered 2026-11-08.
-**E3** (`book.rs`, `tests_book.rs`; detail in the archive): `SourceTable`, `SpellBook`, `apply_book(env: &EffectEnv,
-..)` (`EffectEnv`: tables, models, the target's sheet, `time: GameMinutes`; E1 `apply`/`EffectCtx` unchanged).
-Touch/target entries leave as `EffectRequest::Touch`/`Launch`; `Request` effects emit `Start`/`End`, answered by
-`EffectOp::Invalidate`; `CureFilter::Effect` is the spec's `Archetype`.
+Detail per slice: [archive/effects-history.md](archive/effects-history.md) (E1-E4b). Open questions: answered
+2026-11-08. E4 (2026-11-10): `sf_effects_bevy` (`Effects`, `EffectCommand` in, messages out, sets before
+`StatSystems::Apply`), saves (`EffectsSave`, `reregister`, `sf.character` v4, `sf/effects` v1, NPC blob `effects`
+v1), glue `mw_rpg_bevy::effects`. 0.089 ms effect tick at 500 characters / 2 000 effects (dev profile). Pool fortifies fixed
+2026-11-10 (E1 double count on `KeepRatio` pools, A3 innate fortify lost on a derived pool): `Fortify` is a shifting
+modifier, `Boost` added (DECISIONS 2026-11-10).

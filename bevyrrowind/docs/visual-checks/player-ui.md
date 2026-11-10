@@ -1,6 +1,6 @@
 # Visual checks: player-ui
 
-Open visual checks: player, inventory, saves, input, dialogue and journal, console (PL, IV, SV, IN, DJ, CO). Index and how-to: [`../visual-checks.md`](../visual-checks.md).
+Open visual checks: player, inventory, saves, input, dialogue and journal, console (PL, FP, IV, SV, IN, DJ, CO). Index and how-to: [`../visual-checks.md`](../visual-checks.md).
 
 ## Player (ROADMAP 2.1; `crates/mw_player_bevy/src/lib.rs`)
 
@@ -29,6 +29,36 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Fixed 2026-10-27 (afternoon): the split was the body leaving its capsule, not the camera: Delirium click-to-push hit the
   player's own body on a left-click attack (now F11 only, never action characters) plus the UAL2 split-take clip offset
   (cook `start_anchor`). Owner confirmed the view switch live. Status: confirmed (first-person arms still not built).
+
+### FP-1: First person shows your body and arms, head hidden (`cargo dev view "Seyda Neen"`, 10:00; 3.4b, superfargoth first-person.md)
+- Kind: game location, player mode, default flags. Tab to first person; F readies the weapon (if the player carries one), F again sheathes.
+- Look for: looking ahead, no face, hair or helmet in view (no inside-of-head polygons at the screen edges); looking down,
+  chest, legs and feet; your arms and hands (and the drawn weapon) in their third-person pose, following the clips.
+  Tab back: the full body (head included) in third person, no frame with a missing or doubled part at the switch.
+- Known for this slice: arms use the world FOV and can clip into walls (view model is FP-2). Report the look-down
+  view (neck/collar line, torso). The headless shadow is fixed by FP-1b below.
+- Status: awaiting owner (built 2026-11-10, not run here: no display).
+
+### FP-1b: In first person your shadow keeps its head (`cargo dev view "Seyda Neen"`, 10:00, then a lit interior at night; 3.4b)
+- Kind: game location, player mode, default flags (raster); optionally `--rt` (solari build) after.
+- Look for: under the sun (10:00, stand with the sun behind you on open ground), Tab between first and third person: the
+  ground shadow is the same full body, head and helmet included, no flicker or one-frame loss at the switch. Then at
+  night next to a lamp (an interior or a lit street), and holding a torch: the head's shadow on the wall/floor in first
+  person. Walk through a door: still there on the other side. Nothing of your own head ever on screen in first person.
+  With `--rt`: the head casts like the rest of the body there (Solari 0.20's skinned-mesh gap, rendering.md, applies).
+- Status: awaiting owner (built 2026-11-10, not run here: no display).
+
+### FP-2: First-person view model: arms and weapon at their own FOV, never in walls (`cargo dev view "Seyda Neen"`, 10:00; 3.4b)
+- Kind: game location, player mode. Tab to first person, F readies the weapon, then backquote console `flip viewmodel`
+  (A/B in one run; off is FP-1b's look). First GPU run, log line check: no `ERROR` naming `view_model.wesl` or
+  `view_model_prepass.wesl` (shader or pipeline creation), and the arms are visible at all with it on.
+- Look for: the drawn weapon and hands slightly larger (body FOV 50 vs world 60); stand face against a wall (Census
+  office): arms and blade stay drawn, never cut by the wall; arm lighting matches the body/world under the sun (10:00),
+  next to a lamp at night and holding a torch (no dark or over-bright arms, shadows on them plausible); turn fast with
+  DLSS on and off (F4) and TAA: no smear or ghost trail on the arms; SSAO: a dark halo around the arm silhouette
+  (known cost of the depth slice); look down: the shoulder seam where the larger arms meet the torso (spec open
+  question 4: accept, blend, or `fov_body = fov_world`?). Report the toggle's default you want.
+- Status: awaiting owner (built 2026-11-10, not run here: no GPU).
 
 ### PL-4: Movement feel: starts, stops, reversals (`cargo dev scene level-anim-overview`, F11 player, Tab 3rd person)
 - Player-only motion tuning (Elden-Ring-style): fast speed ramp, faster brake, facing capped at 720/1080/480 deg/s
@@ -145,6 +175,26 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Esc / B closes the panel, focus back on Persuasion. Picking Admire closes it and Fargoth replies; disposition changes.
 - Focused rows show the hover colour with arrows/pad, no bright outline with the mouse (as uipolish).
 - Known gaps: no Morrowind theme rules for the new classes yet; clicking the dimmed backdrop doesn't close the panel.
+- Status: awaiting owner.
+
+### PUI-SV3: Trade screen over the dialogue (`cargo dev view "Seyda Neen, Arrille's Tradehouse"`)
+- Built 2026-11-10 (TR2), headless tests only. Talk to Arrille (E), press Barter: the trade window opens centred over the dialogue.
+- Left his stock, right your items, deal bar between; a price on every row; rows he won't buy greyed ("not traded"); no gold rows.
+- Pad: d-pad rows and sideways to/from the bar, LB/RB panes, A stages whole, X asks how many, Y accepts, B backs out then cancels.
+- Bar: lines per side, totals, both purses, balance; haggle stepper left/right (LB/RB 10%), Reset; a refusal shows on the bar.
+- Mouse: hover focuses, click stages, drag a row onto the bar or the other pane, drag a line back; nothing sticks.
+- Accept (enough gold): the window closes back to the dialogue; the items and gold moved (I after Goodbye). Barter again: new stock.
+- Cancel or Esc: back to the dialogue, nothing moved. Goodbye with the window open is not reachable (it has the input).
+- Known gaps: English fallback labels, not the GMST strings; no "deal done" message; no Morrowind theme rules for `sf-trade-*`.
+- Status: awaiting owner.
+
+### PUI-SV4: Training list over the dialogue (`cargo dev view "Balmora, Fighters Guild"`)
+- Built 2026-11-10 (A3), headless tests only. Talk to Eydis Fire-Eye (named from memory: any NPC with a Training button works), press Training.
+- A list opens centred over the dialogue: title "Training", your gold, her three best skills (by her base skill), each with "skill now -> next" and a price.
+- Rows she can't teach stay greyed with the reason (her skill not above yours; yours at its governing attribute); rows above your gold greyed "Too expensive".
+- A or click a live row: "are you sure?" (2 hours pass), yes: gold drops by the price, "bought" line, the row shows the skill +1 within a tick; the list stays open.
+- After: the sky and the hour moved 2 h (HUD/console clock), the skill +1 in the stats screen; Back returns to the dialogue; Goodbye from there closes all.
+- Known gaps: no fade or progress bar (time jumps); the "are you sure?" and toasts use English fallbacks; no Morrowind theme rules for `sf-service-*`.
 - Status: awaiting owner.
 
 ## Dev console (superfargoth `console.md`; ROADMAP 1.13; `.sessions/console.md`)

@@ -24,7 +24,7 @@ use bevy_input::prelude::*;
 use bevy_log::prelude::*;
 use bevy_enhanced_input::prelude::EnhancedInputPlugin;
 use mw_rpg::{
-    ActorFacts, AiNudge, DispositionExtras, DispositionInput, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwSheets, MwSlot,
+    ActorFacts, AiNudge, BoundItems, DispositionExtras, DispositionInput, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwSheets, MwSlot,
     MwView, MwWorld, NoSheets, NpcStates, PersuasionSession, ResultCall, ResultEffect, ResultRunner, ResultState, ScriptVar, Target, VarType, clothing_value, rank_name, record_clothing_value,
 };
 use serde::{Deserialize, Serialize};
@@ -34,6 +34,7 @@ use sf_rpg::{
     ActorKey, Attrs, CharacterRpg, ConversationCtx, DialogueOutput, DialogueSession, GameTime,
     HeardLine, Holder, JournalEntry, PlayerId, RpgCommand, RpgEvent, SessionState, TopicKind, WorldRpg,
 };
+use sf_rpg::service::{ServiceEvent, ServiceSessions, WorldServices};
 use sf_rpg_ui::{Alphabet, DialogueRequest, DialogueView, JournalLabels, JournalScreen, JournalSeen};
 use sf_script_bevy::{ActivationOutcome, PLAYER, ScriptPlacements};
 use sf_ui::{Layer, UiRegistry, register_kinds};
@@ -57,7 +58,11 @@ use sf_stats_bevy::{StatCommand, StatIndex, StatRules, StatTick, Stats};
 use crate::stats::MwStats;
 
 mod persuasion;
+mod services;
+pub mod service_list_screen;
+pub mod trade_screen;
 pub use persuasion::{PERSUASION_ACTION, PERSUASION_OPTIONS, PersuadeRefused, Persuaded, persuasion_kind};
+pub use services::{ServiceEventMessage, TradeQuotes, seed_store, trade_config};
 
 /// Fargoth's ring (scaffold [`DevGiveRing`]).
 const RING: &str = "ring_keley";
@@ -190,6 +195,8 @@ struct Content {
     disposition: Box<dyn DispositionModel>,
     /// The records' GMSTs (persuasion; vanilla values for missing ones).
     gmst: MwGmst,
+    /// Bound item ids (`sMagicBound*`), never traded.
+    bound: BoundItems,
 }
 
 /// One conversation (host side).
@@ -215,6 +222,18 @@ pub struct Rpg {
     /// otherwise. TODO(AI settings, ROADMAP Phase 3 AI): no per-actor AI settings exist yet; move
     /// these into them (saved, read by the AI) when they land. Unsaved until then.
     ai_settings: HashMap<ActorKey, AiNudge>,
+    /// Merchant purses on the game clock, saved as `sf/services` (`mw_saves_bevy`).
+    pub services: WorldServices,
+    /// Open trade sessions, by id and player (not saved: staged items never moved).
+    sessions: ServiceSessions,
+    /// Service events for the screens since the last [`Rpg::take_service_events`].
+    service_events: Vec<ServiceEvent>,
+    /// Open list services (training...), by player and provider, with the rows last listed
+    /// (not saved, like sessions).
+    lists: Vec<services::OpenList>,
+    /// Game hours passed by services since the sky clock last took them
+    /// ([`services::advance_sky`]).
+    sky_hours: f32,
 }
 
 impl Content {
@@ -448,6 +467,7 @@ impl Rpg {
         };
         // Missing GMSTs take vanilla values (the stats glue logs them).
         let (gmst, _) = MwGmst::from_db(&records);
+        let bound = BoundItems::from_records(&records);
         Ok(Self {
             content: Content {
                 records,
@@ -460,12 +480,18 @@ impl Rpg {
                 chargen_locals: HashMap::new(),
                 disposition: Box::new(DerivedDisposition { gmst: gmst.clone() }),
                 gmst,
+                bound,
             },
             state: RpgState::default(),
             results: MwResults::new(),
             events: Vec::new(),
             stat_commands: Vec::new(),
             ai_settings: HashMap::new(),
+            services: WorldServices::default(),
+            sessions: ServiceSessions::new(),
+            service_events: Vec::new(),
+            lists: Vec::new(),
+            sky_hours: 0.0,
         })
     }
 
@@ -690,7 +716,7 @@ impl Rpg {
 
     /// Applies a request from the dialogue window at simulation tick `tick` and feeds the view.
     /// Topics, choices and goodbye are session steps; [`DialogueRequest::Action`] is routed by
-    /// [`Rpg::route_action`] (Persuasion options; services are a logged no-op until SV3).
+    /// [`Rpg::route_action`] (Persuasion options and service buttons).
     pub fn request_at(&mut self, talk: &mut Talk, view: &mut DialogueView, request: &DialogueRequest, sheets: &dyn MwSheets, tick: u64) {
         if let DialogueRequest::Action { action, option } = request {
             let _ = self.route_action(talk, view, action, option.as_ref(), sheets, tick);
@@ -771,7 +797,7 @@ impl Rpg {
             return Some((Holder::Player(PlayerId::HOST), &mut self.state.pc));
         }
         let key = self.content.target(ctx, target)?;
-        Some((Holder::Actor(key), self.state.inventories.entry(key).or_default()))
+        Some((Holder::Actor(key), self.npc_store(key)))
     }
 
     /// One result-script effect, with `OpenMW`'s semantics (`apps/openmw/mwscript/
@@ -866,7 +892,8 @@ impl Rpg {
 
 // ============================================================ the app glue
 
-/// Screens of the game so far: the dialogue window, the journal and message boxes.
+/// Screens of the game so far: the dialogue window, the journal, the service screens over the
+/// dialogue (trade: [`trade_screen`], service list: [`service_list_screen`]) and message boxes.
 /// TODO(HUD slice): these records belong in the builtin mod's data (everything is a mod) once
 /// more screens land.
 const SCREENS: &str = r#"
@@ -879,6 +906,16 @@ value = { layer = "Menu", implementation = { Template = "dialogue" } }
 kind = "ui.screen"
 id = "journal"
 value = { layer = "Menu", implementation = { Template = "journal" } }
+
+[[define]]
+kind = "ui.screen"
+id = "trade"
+value = { layer = "Menu", implementation = { Template = "trade" } }
+
+[[define]]
+kind = "ui.screen"
+id = "service"
+value = { layer = "Menu", implementation = { Template = "service" } }
 
 [[define]]
 kind = "ui.screen"
@@ -937,6 +974,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
     }
     app.add_plugins((SfUiPlugin, UiTextPlugin, SfScreensPlugin, JournalUiPlugin::<Rpg>::default()))
         .add_message::<ActivationOutcome>()
+        .add_message::<ServiceEventMessage>()
         .insert_resource(UiRegistryRes(registry()))
         .insert_resource(rpg)
         .init_resource::<JournalSeenStore>()
@@ -947,10 +985,22 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
         )
         .add_systems(
             Update,
-            (host_dialogue, close_screens, keep_journal_seen, show_events, send_stat_commands, free_camera_lock, pause_player)
+            (
+                host_dialogue,
+                close_screens,
+                keep_journal_seen,
+                show_events,
+                send_stat_commands,
+                services::relist_services,
+                services::send_service_events,
+                services::advance_sky,
+                free_camera_lock,
+                pause_player,
+            )
                 .chain()
                 .after(ScreenSystems::Input),
         );
+    service_list_screen::add(app);
     // The Morrowind theme over the stock screens (content: the builtin mod's sheet).
     mw_boot_bevy::ui_theme::add(app);
 }

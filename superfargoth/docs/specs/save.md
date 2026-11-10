@@ -98,6 +98,7 @@ stable ids (`PlacementId`, spawn ids, `RecordId`, `PlayerKey`, mod ids) and posi
 | `sf/overlay` | `sf_world` | `PlacementOverlay`: removed, moved and spawned placements, per-system state blobs, spawn counter |
 | `sf/rpg` | `sf_rpg` | `WorldRpg`: quests, journal, known topics |
 | `sf/ai` | `sf_ai` (registered by `sections::ai`) | `AiSave`: per actor, the directive stack (v1; schedule, tier-0 and activity state join by version steps, ai.md "Saves") |
+| `sf/services` | `sf_rpg::service` (registered by `sections::services`) | `WorldServices`: merchant purses by stable actor key (v1; none written when empty, an older save loads with none; trade sessions never saved, services.md "Saves") |
 | `sf/party` | `sf_save_bevy` (`sf_net` later) | player keys and names, party leader, co-op settings (friendly fire) |
 | `sf/character/<player key>` | per character | `CharacterSave` (below), one section per player who ever played here |
 | `<adapter>/<name>` | adapter | adapter state (Bevyrrowind: MWScript globals and locals, its NPC rule state) |

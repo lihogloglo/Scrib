@@ -16,7 +16,10 @@
 //!   container). [`host_containers`] applies its Move / Take all intents to the RPG state
 //!   (`inventory::move_stack`); both panes re-sync from the state; Take all closes it
 //!   (vanilla). Module docs of `inventory.rs` hold the `OpenMW` behaviour.
-//! - Read-only for now: the screen's use / split / merge intents are ignored. Not yet: equip,
+//! - **Trade window**: hosted by `dialogue/trade_screen.rs` (over the dialogue, the Barter
+//!   button), registered here with the item records and slots it shows; centred as these are.
+//! - **Use**: the screen's Use intent on a stack goes to `item_use` (a request the host applies:
+//!   drinking a potion); the split / merge intents are still ignored. Not yet: equip,
 //!   drop, weight limit (no capacity: the encumbrance bar shows the carried total only),
 //!   item tooltips' stats.
 
@@ -30,7 +33,7 @@ use sf_rpg::{ActorKey, Attrs, CharacterRpg, Holder, ItemStack, PlayerId, RpgComm
 use sf_ui::{Layer, UiRegistry};
 use sf_ui_bevy::{ScreenStackRes, UiRegistryRes, UiScreenRoot};
 use sf_ui_inventory::{InventoryTab, InventoryView, ItemCatalog, ItemInfo, StatDef};
-use sf_ui_screens::{ContainerEvent, ContainerIntent, ContainerScreen, InventoryScreen, ScreenSystems};
+use sf_ui_screens::{ContainerEvent, ContainerIntent, ContainerScreen, InventoryScreen, ScreenSystems, TradeScreen};
 use tes3::esp::{
     Alchemy, Apparatus, Armor, Book, Clothing, Container, GameSetting, GameSettingValue, Ingredient, Light, Lockpick,
     MiscItem, Probe, RepairItem, Weapon,
@@ -114,6 +117,8 @@ pub fn add(app: &mut App, open_at_start: bool) {
             (centre_inventory.after(ScreenSystems::Spawn), close_inventory),
         ),
     );
+    crate::dialogue::trade_screen::add(app);
+    crate::item_use::add(app);
 }
 
 pub(crate) fn screens() -> UiRegistry {
@@ -299,8 +304,8 @@ pub fn sync_open(
     }
 }
 
-/// The windows [`centre_inventory`] centres.
-type CentredWindow = Or<(With<InventoryScreen>, With<ContainerScreen>)>;
+/// The windows [`centre_inventory`] centres (the trade window too: `dialogue/trade_screen.rs`).
+type CentredWindow = Or<(With<InventoryScreen>, With<ContainerScreen>, With<TradeScreen>)>;
 
 /// Centres the window once the stock screen gave its root the panel `Node` (it replaces the
 /// spawn's): absolute at the middle, offset by half the panel's fixed size.

@@ -1,6 +1,6 @@
 # Effects adapter: Morrowind's MGEF, SPEL, ALCH, ENCH, INGR on `sf_effects`
 
-Status (2026-11-08): **agreed** (owner 2026-11-08, defaults taken). A1 written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10). Framework: `../../../superfargoth/docs/specs/effects.md`.
+Status (2026-11-08): **agreed** (owner 2026-11-08, defaults taken). A1 written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10). A2 potions 2026-11-10 (headless tests; HUD icons not built). A3 start spells 2026-11-10 (headless tests; autocalc spells are A3b). A5a cast rules + host cast path 2026-11-10 (headless tests; cast input is A5b). Framework: `../../../superfargoth/docs/specs/effects.md`.
 Ported from OpenMW `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (paths under `apps/openmw/` unless noted; line numbers
 approximate). Magic effect semantics are content mechanics: one implementation, ported 1:1 (ARCHITECTURE §1b; where
 OpenMW deliberately differs from vanilla, follow vanilla). Cast chance, resist roll, reflect/absorb rolls, ingredient
@@ -102,7 +102,7 @@ handler that re-applies its harmful effects each period. Levitate is removed whe
 
 | Rule | Classic (`OpenMwEffectRules`) | Modern (`MwModernEffectRules`) |
 |---|---|---|
-| `mw.effects.cast_chance` | `calcSpellBaseSuccessChance` (`spellutil.cpp` 225-270: per effect `x = max(1,dur) × 0.1 baseCost × avg magnitude + area × 0.05 baseCost`, ×1.5 on target, × `fEffectCostMult`; lowest `2 × school skill - x` picks the school; `chance = skill - cost + 0.2 Wil + 0.1 Luck`), then `getSpellSuccessChance` (272-308): powers 100/0 by recharge, Silence → 0, non-spell 100, magicka check, `F_Always` 100, minus Sound magnitude, × fatigue term, clamp 0-100 | 1 when magicka ≥ cost and not silenced; Sound raises cost |
+| `mw.effects.cast_chance` | `calcSpellBaseSuccessChance` (`spellutil.cpp` 225-270: per effect `x = max(1,dur) × 0.1 baseCost × avg magnitude + area × 0.05 baseCost`, ×1.5 on target, × `fEffectCostMult`; lowest `2 × school skill - x` picks the school; `chance = skill - cost + 0.2 Wil + 0.1 Luck`), then `getSpellSuccessChance` (272-308): powers 100/0 by recharge, Silence → 0, non-spell 100, magicka check, `F_Always` 100, minus Sound magnitude, × fatigue term, clamp 0-100 | 1 when magicka ≥ cost; Silence refuses spells (nothing spent); Sound raises a spell's cost × (1 + Sound/100); powers ignore both (built A5a) |
 | `mw.effects.cost` (content) | `calcEffectCost` (42-84) / `calcSpellCost` (86) | same (spellmaking, spell purchase, NPC AI use it) |
 | roll | `roll0to99 >= chance` → fail, `sMagicSkillFail`, cost spent | no roll |
 | skill use | `Spellcast_Success` on success, player only, if `spellIncreasesSkill` (332) | same through `UseSkill` |
@@ -111,7 +111,7 @@ handler that re-applies its harmful effects each period. Levitate is removed whe
 ## Potion use
 
 Inventory "use" on an ALCH: glue removes one from the stack and sends `Inflict { source: alch id, caster: self,
-entries: all ranges as self, area 0 }`; `Stack`. Ingredient eat: `mw.effects.ingredient_eat` (`(Alchemy + 0.2 Int +
+entries: all ranges as self, area 0 }`; `Stack` (built A2: "As built (A2)"). Ingredient eat: `mw.effects.ingredient_eat` (`(Alchemy + 0.2 Int +
 0.1 Luck) × fatigueTerm` vs `roll0to99`; duration and magnitude from `y = roll / min(x,100) × 0.25 x`), then
 `Inflict` of the first effect only; failure → `sNotifyMessage50`. Both are `CastSpell::cast` (`spellcasting.cpp`
 315-420). Item-use skill gain: `Enchant_UseMagicItem` for WhenUsed (`spellcasting.cpp` ~280).
@@ -164,36 +164,79 @@ effects.
 | **A1** table + first slice | `mw_effects`: MGEF table, magnitude stats in the stat table, A1 archetypes, SPEL/ALCH mapping | mapping and ops tests; real-install sweep |
 | **A2** potions | inventory use → `Inflict`, stack, consume; HUD icon list | drinking a Restore Health potion heals over its duration |
 | **A3** abilities + book init | race/birthsign/class spells, `Learn`/`Forget`, Permanent layer; stats S8 round trip | fortified attribute equal after a save round trip |
+| **A3b** autocalc spells | `autoCalcNpcSpells` (autocalc NPCs, before race powers), `autoCalcPlayerSpells` (`F_PCStart`, after the birthsign) | spell picks against hand-computed OpenMW results |
 | **A4** MWScript | the table above `live` | interp tests per function |
-| **A5** casting | `OpenMwEffectRules` + modern rules, self/touch casts, powers | chance formulas; power recharge |
+| **A5a** casting rules + host (built) | `OpenMwEffectRules` + `MwModernEffectRules`, `CastRequest`, self/touch casts, powers, console `cast` | chance formulas; power recharge |
+| **A5b** cast input | cast action + selected spell (`mw_player_bevy`), HUD spell slot and fail messages, first-person spell hand (FP-3) | headless input → `CastRequest` |
 | **A6** enchantments | constant effect on equip, on use, on strike (combat), charge | charge spent; constant follows the loadout |
 | **A7** afflictions + requests | diseases, curses, cures, dispel; first requests (Open/Lock, Levitate, Paralyze) | cure removes by tag; dispel chance |
 
 Later: bolts and area (with projectiles), summons, bound items, Mark/Recall/Interventions, Soultrap (with soul
 gems), Corprus, Vampirism, disease transmission on creature hits (`fDiseaseXferChance`; source location to find).
 
-## As built (A1)
+## As built (A1, A2)
 
-Written 2026-11-08 without compiling: UNTESTED (owner test pass 2026-11-10). Crate `mw_effects` (deps `sf_effects`,
-`sf_stats`, `sf_records`, `mw_stats`, `tes3`; no `mw_records`): `mgef.rs` (143-row table of OpenMW `RefId` name,
-`sEffect*` GMST label, `HardcodedFlags`; resistance / weakness / shield maps; `archetype(index)`; `MwEffects`),
-`stats.rs`, `source.rs`, unit tests in `tests.rs`, `tests/real_install.rs` (`#[ignore]`). Choices:
+Moved to [archive/effects-adapter-history.md](archive/effects-adapter-history.md) (A1 table and mapping choices, A2
+potions; HUD icon list not built: `HudView.effects` per effect key as `MWGui::SpellIcons`, glue `mw_player_bevy::hud`).
 
-- Flags as OpenMW's legacy loader: `(record & (spellmaking | enchanting | negative light)) | hardcoded`, not a
-  plain OR. `EffectDef` has no `school`, ranges or presentation yet (E1 deferred them): they live in
-  `MwEffectInfo` (`school`, `ranges()`, `Presentation`). Label = the GMST name. Stacking: class default.
-- Only A1 indices get a def (47: the list above plus Poison, and the three elemental shields as magnitude stats
-  because they resist fire / shock / frost damage). Other indices keep key and info; a landing is `Rejected`.
-- Magnitude stats: key = effect key (`resistfire`), group `magnitude` (as `mw_stats`'s `fortifymaximummagicka`,
-  which Fortify Maximum Magicka writes), `Value { min 0 }`. The 22 defs live in `mw_stats::MAGNITUDE_STATS`,
-  appended last to `mw_stats::defs()` (`MwIdx::magnitudes`; older indices unchanged, saves are keyed so no version
-  bump); `mw_effects::MAGNITUDE_STAT_EFFECTS` names their MGEF indices, a test checks the two agree (2026-11-08).
-- Sources: `MwSource` (the adapter's `SourceDef` until E3) with `recharge` (`GameDays(1)` for powers) and
-  `affliction` (disease / blight / curse) beside the flat `SourceClass`; `inflict()` builds the op (abilities
-  `ignore_resist`). Entries of indices without an MGEF record are dropped and stray arguments cleared
-  (`esmstore.cpp` `getSpellsToReplace`); a skill / attribute effect with no valid argument is kept with none and
-  reported (`MapNote`). Areas: feet × 0.3048 m. ALCH: self, no area, no cost. SPEL cost: `calcSpellCost` with
-  `fEffectCostMult` (`MwEffectGmst`, vanilla 0.5). ENCH / INGR mapping: A6 / A2.
+## As built (A3)
+
+2026-11-10, headless tests (`mw_effects` 3, `mw_rpg_bevy::effects::tests` 3 + 1 ignored bug, `mw_saves_bevy` 1); not
+run in game. `mw_effects/src/book.rs`: `MwSource::source_def` (affliction → cure tag `disease`/`blight`/`curse`,
+`Recharge::GameDays(n)` → `GameMinutes::days(n)`, spells and powers take their first effect's school as `skill`, A5
+picks the caster's weakest school per cast; `cost` stays `calcSpellCost`, `auto_cost` the record flag),
+`source_table` (every SPEL in record order, first record of an id) and `start_spells` (lists in order, each id once,
+ids without a SPEL skipped and warned: `spells.cpp` `addSpell` 85-89, `addAllToInstance` 317-326). Glue:
+`effects::add` inserts `SourceTableRes`; `EffectLoad::learn` / `learn_in_world` run `Learn` ops through
+`apply_book` at spawn and return the owner's modifiers, applied on the building sheet before it settles (new
+character: full pools at the fortified max, as `buildPlayer`'s current = modified). Lists (`stats::MwStats`):
+`actor_spells` = NPC race powers then record spells (`npc.cpp` 311-374), creature record spells (`creature.cpp`
+154-156); `player_spells` = the `player` record's race powers then the birthsign's spells, never the record's own list
+(`mechanicsmanagerimp.cpp` `buildPlayer` 154-176). Birthsign: `stats::PlayerBirthsign` (chargen's choice; none in the
+dev start; not saved, the book holds it). The race is always the record's (OpenMW adds race powers only once a race
+is chosen; our dev start skips chargen with the record's race).
+
+Saves (owner: the whole active set, never re-learned on load): player `None` effects (a v3 save, a save from before
+A3) learns the start spells, `Some` restores only; the player's effects are now saved even when empty, so a book
+emptied in play stays empty. NPC: saved effects restore (with or without a saved sheet: an untouched sheet with
+abilities has only its `effects` blob, now built from the record plus the restored modifiers); no saved effects learns
+the record's lists. Verified: Strength 50 (40 + birthsign 10) and an NPC's 45 (40 + 5) equal after a round trip, not
+60 / 50. Fortify Maximum Magicka 5 (The Mage style) gives magicka 60 from 40 and leaves on `Forget`.
+
+**Fixed 2026-11-10 (pool fortifies):** an ability's Fortify Magicka (lost on the derived pool: 40 / 40 before, after
+`Learn` and after `Forget`) is a `Permanent` `AddModifierShift` (60 / 60, kept through Intelligence changes, `Forget`
+takes 20 off max and current); temporary Fortify Health / Magicka / Fatigue map to `PoolMode::Boost` (OpenMW
+`adjustDynamicStat`: 40 / 40 + 40 reads 80 / 40, the end takes 40 back, below zero allowed). Tests: `mw_rpg_bevy`
+`an_ability_fortify_magicka_raises_the_maximum`, `a_temporary_pool_fortify_...`, `mw_saves_bevy`
+`pool_fortifies_survive_a_save_round_trip`. Gaps: an NPC that forgets every start spell and has nothing
+active writes no blob when it had none, so it relearns on respawn (A4 `RemoveSpell` must write an empty blob);
+`NewGameSheets` (dialogue without an app) has no abilities.
+
+## As built (A5a)
+
+2026-11-10, unit tests (`mw_effects::tests_cast`, 8) and headless tests (`mw_rpg_bevy::cast::tests` 3, `mw_saves_bevy`
+`a_used_power_still_recharges_after_a_save_round_trip`); not run in game. `mw_effects/src/cast.rs`: classic
+`OpenMwEffectRules { fx, effect_gmst, gmst }` and modern `MwModernEffectRules` (the game's, `effects::add`), both
+`CastModel` with `LandModel` / `ItemModel` delegated to `StandardEffectRules` until A6/A7. Rules as pure fns:
+`base_success_chance` (`calcSpellBaseSuccessChance`: weakest school from the entries in record units, areas back to
+whole feet), `success_chance` (`getSpellSuccessChance`, capped), `roll_chance` (OpenMW's `roll0to99 < chance` is exactly
+`u < ceil(chance)/100`), `modern_cast`, `spell_school` (for the S9 skill use). Classic plan: `NoMana` when a cost above
+0 exceeds current magicka (`startSpellCast`, nothing spent), else the cost and the chance; Silence = chance 0, so a
+silenced caster fizzles **with the cost spent**, as OpenMW; a power is 100 (silenced or not); fatigue term from
+`MwGmst` (`fFatigueBase` 1.25, `fFatigueMult` 0.5), `fEffectCostMult` 0.5 (vanilla values as `MwGmst::vanilla`,
+not checked against an install here). Modern plan: chance 1, Silence refuses spells (`Silenced`, nothing spent), Sound
+raises a spell's cost × (1 + Sound/100), powers free of both. Silence and Sound became magnitude stats
+(`mw_stats::MAGNITUDE_STATS` 24, appended; MGEF 46 / 48 `MagnitudeStat` defs). Verified: two-school spell 57.375 %
+→ 58 % roll; fizzle spends 12 of 50; refused at 2 < 12; power used at 0, refused at `DAY - 1`, cast at `DAY`; ability
+and disease `NotCastable`; modern Sound 50 → 18 for 12.
+
+Host (`mw_rpg_bevy/src/cast.rs`): `CastRequest { player, source, target }` (Update) → `EffectCommand(Player(HOST_KEY),
+[Cast])` with seed `tick << 32 | 1 << 31 | n`, host player only; `deliver_casts` (`EffectSystems::Requests`): `Touch`
+→ `Inflict` on the contact (one tick later), `Launch` logged and dropped (no projectiles); `report_casts` logs the
+player's outcomes; `console_cast` behind the dev console's `cast <spell>` (`mw_devtools_bevy`; learns first if unknown;
+touch at the click-selected actor). Not built: fatigue loss per cast (`fFatigueSpellBase`/`Mult`, 0 in vanilla per the
+OpenMW source), god mode, `Spellcast_Success` skill use, failure sound and message boxes, the rule-set choice (classic
+is selectable only in code), MWScript `Cast` (A4), the cast input (A5b).
 
 ## Open questions (owner)
 
@@ -202,3 +245,6 @@ Written 2026-11-08 without compiling: UNTESTED (owner test pass 2026-11-10). Cra
 3. Roll magnitude once (vanilla behaviour as we read it) rather than OpenMW's per-frame re-roll of rate effects? Owner 2026-11-08: default taken.
 4. NPC temporary effects resume after unload (proposed) or are purged (OpenMW `ActiveSpells::unloadActor`)? Owner 2026-11-08: default taken.
 5. `ModResist*` writes a magnitude stat's base: fine, or a script-owned modifier source instead? Owner 2026-11-08: default taken.
+6. Modern Sound: a spell costs × (1 + Sound/100) (spec default "Sound raises cost"; vanilla lowers the chance): fine?
+7. Modern Silence refuses the cast with nothing spent; classic keeps OpenMW (fizzle, magicka spent). Powers ignore both, as OpenMW: fine?
+8. Classic rules are built but only selectable in code: wire a per-new-game rule-set choice now or with the classic option (ROADMAP `[p]`)?

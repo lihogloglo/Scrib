@@ -230,6 +230,8 @@ const WEAKNESS_TO_CORPRUS_DISEASE: usize = 34;
 const WEAKNESS_TO_POISON: usize = 35;
 const SANCTUARY: usize = 42;
 const PARALYZE: usize = 45;
+const SILENCE: usize = 46;
+const SOUND: usize = 48;
 const RESIST_FIRE: usize = 90;
 const RESIST_FROST: usize = 91;
 const RESIST_SHOCK: usize = 92;
@@ -341,8 +343,8 @@ pub fn archetype(index: usize) -> Option<(Archetype, ArgKind)> {
     let attribute = || ArgKind::Stat("attribute".to_owned());
     let skill = || ArgKind::Stat("skill".to_owned());
     Some(match index {
-        // Fire / Lightning / Frost Shield, Weakness*, Fortify Maximum Magicka, Resist*.
-        FIRE_SHIELD..=FROST_SHIELD | 28..=36 | 84 | 90..=99 => {
+        // Fire / Lightning / Frost Shield, Weakness*, Silence, Sound, Fortify Maximum Magicka, Resist*.
+        FIRE_SHIELD..=FROST_SHIELD | 28..=36 | SILENCE | SOUND | 84 | 90..=99 => {
             (Archetype::MagnitudeStat { stat: StatTarget::Fixed(magnitude_stat_key(index)) }, ArgKind::None)
         }
         FIRE_DAMAGE..=FROST_DAMAGE | POISON => (pool("health", PoolMode::Hurt), ArgKind::None),
@@ -356,7 +358,8 @@ pub fn archetype(index: usize) -> Option<(Archetype, ArgKind)> {
         75..=77 => (pool(POOLS[index - 75], PoolMode::Heal), ArgKind::None),
         78 => (Archetype::Restore { stat: StatTarget::Arg }, skill()),
         79 => (Archetype::Modify { stat: StatTarget::Arg, layer: LayerRule::BySource }, attribute()),
-        80..=82 => (pool(POOLS[index - 80], PoolMode::Fortify), ArgKind::None),
+        // Fortify Health / Magicka / Fatigue: the current over the max (`spelleffects.cpp` 799-819).
+        80..=82 => (pool(POOLS[index - 80], PoolMode::Boost), ArgKind::None),
         83 => (Archetype::Modify { stat: StatTarget::Arg, layer: LayerRule::BySource }, skill()),
         _ => return None,
     })

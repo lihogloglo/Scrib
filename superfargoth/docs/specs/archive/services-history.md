@@ -94,3 +94,18 @@ UNTESTED. `ServiceRules` gained two default methods: `restocked_copy_attrs` (a r
 whose attrs content may clean, so `mw.restock` no longer leaks onto bought items) and `plain_deal_effects` (effects of
 a deal accepted at the merchant's own offer; `OpenMW` applies `iBarterSuccessDisposition` on every accepted deal).
 `TradeSession::accept` calls the second when the balance equals the offer, the haggle otherwise.
+
+## Saves (as built)
+
+2026-11-10. `sf_save_bevy::sections::services(get, set)`: key `sf/services` (`SERVICES`), version
+`sf_rpg::service::SERVICES_VERSION` (1), apply order `order::SERVICES` = 320 (after `sf/rpg`, before `sf/ai`), no
+check (any purse is valid state). `get` returns `None` without purses, so no section is written; a save without the
+section (all saves before it) loads `WorldServices::default()`: every merchant restocks to its base on its next open.
+`mw_saves_bevy::register` wires it over `Rpg::services`, keeping placement-id actors only (as `mw/rpg`: spawned
+characters' entity-bits keys are left out), and its `set` closes every open trade session
+(`Rpg::close_service_sessions`; sessions are never saved). Not built: dropping purses of actors gone from the
+content on load (`WorldServices::drop_missing` exists; the game's actor registry fills as cells stream, so there is
+no existence test at load time yet). Tests: `sf_save_bevy` `tests_services.rs` (round trip byte-identical, restock
+clock after load, the S2 golden loads with no purses, newer version refused), shape golden
+`tests/shapes/sf.services.v1.json`; `mw_saves_bevy` `merchant_purses_round_trip_and_a_save_without_them_loads_empty`.
+

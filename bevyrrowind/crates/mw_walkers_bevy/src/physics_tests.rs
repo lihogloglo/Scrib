@@ -76,7 +76,7 @@ fn hit(hook: Option<RagdollTakeover>, skeleton: &str, impulse: f32, extra: impl 
         app.insert_resource(hook);
     }
     let body = app.world_mut().spawn((Transform::IDENTITY, GlobalTransform::IDENTITY, Animator::new(asset()))).id();
-    let key = OutfitCacheKey { skeleton: skeleton.to_owned(), outfit: OutfitKey(0), lod: 0, shape: 0, bodies: SmoothBodies::default() };
+    let key = OutfitCacheKey { skeleton: skeleton.to_owned(), outfit: OutfitKey(0), lod: 0, shape: 0, bodies: SmoothBodies::default(), roles: false };
     let character = CharacterBody { body, skeleton: skeleton.to_owned(), key, outfit: Arc::default(), meshes: Vec::new(), cloth_joints: Vec::new() };
     let mover = Mover::new(WorldPos::ORIGIN, 0.0, MoverParams::default(), WorldPos::ORIGIN);
     let root = app.world_mut().spawn((character, mover, Transform::IDENTITY, extra)).id();
@@ -154,7 +154,7 @@ fn proxy_hits_on_a_held_body_each_reach_the_hook_with_their_joint() {
         true
     })));
     let body = app.world_mut().spawn((Transform::IDENTITY, GlobalTransform::IDENTITY, Animator::new(asset()))).id();
-    let key = OutfitCacheKey { skeleton: HUMAN.to_owned(), outfit: OutfitKey(0), lod: 0, shape: 0, bodies: SmoothBodies::default() };
+    let key = OutfitCacheKey { skeleton: HUMAN.to_owned(), outfit: OutfitKey(0), lod: 0, shape: 0, bodies: SmoothBodies::default(), roles: false };
     let character = CharacterBody { body, skeleton: HUMAN.to_owned(), key, outfit: Arc::default(), meshes: Vec::new(), cloth_joints: Vec::new() };
     let mover = Mover::new(WorldPos::ORIGIN, 0.0, MoverParams::default(), WorldPos::ORIGIN);
     let shape = |joint| BoneShape { joint, capsule: Capsule { radius: 0.1, half: 0.2 }, local: (Vec3::ZERO, bevy_math::Quat::IDENTITY), region: 0, hurt_scale: 1.0 };
@@ -186,7 +186,7 @@ fn die(hook: Option<RagdollTakeover>, skeleton: &str, extra: impl Bundle) -> (Ap
         app.insert_resource(hook);
     }
     let body = app.world_mut().spawn((Transform::IDENTITY, GlobalTransform::IDENTITY, Animator::new(asset()))).id();
-    let key = OutfitCacheKey { skeleton: skeleton.to_owned(), outfit: OutfitKey(0), lod: 0, shape: 0, bodies: SmoothBodies::default() };
+    let key = OutfitCacheKey { skeleton: skeleton.to_owned(), outfit: OutfitKey(0), lod: 0, shape: 0, bodies: SmoothBodies::default(), roles: false };
     let character = CharacterBody { body, skeleton: skeleton.to_owned(), key, outfit: Arc::default(), meshes: Vec::new(), cloth_joints: Vec::new() };
     let mover = Mover::new(WorldPos::ORIGIN, 0.0, MoverParams::default(), WorldPos::ORIGIN);
     let root = app.world_mut().spawn((character, mover, Transform::IDENTITY, extra)).id();

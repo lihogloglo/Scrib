@@ -81,6 +81,50 @@ pub fn acquire<Id: Copy>(origin: WorldPos, view_yaw: f32, candidates: &[Candidat
         .map(|(_, id)| id)
 }
 
+/// Soft-aim tuning (camera.md "First person", combat.md "Lock-on and camera" C4): the attack
+/// target picked without a lock. Sekiro's auto-aim (R6 §5): the nearest enemy within ~3 m and
+/// +-30 deg of the aim axis, acquired only in the attack's first ~1/6 s.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SoftAimParams {
+    /// Horizontal reach from the attacker, m.
+    pub reach: f32,
+    /// Cone half-angle around the aim axis (the view yaw in first person, else the stick or the
+    /// facing), radians.
+    pub cone: f32,
+    /// Acquire only while the attack's move time is at most this, seconds.
+    pub window: f32,
+}
+
+impl Default for SoftAimParams {
+    fn default() -> Self {
+        Self { reach: 3.0, cone: 30f32.to_radians(), window: 1.0 / 6.0 }
+    }
+}
+
+impl SoftAimParams {
+    /// Whether an attack `elapsed` seconds into its move may still acquire.
+    pub fn open(&self, elapsed: f32) -> bool {
+        elapsed <= self.window
+    }
+}
+
+/// The soft-aim target around `axis_yaw` from `origin`: the nearest candidate (horizontal
+/// distance) within `reach` and `cone` with line of sight; ties go to the smaller angle, then the
+/// smaller id, so the pick never depends on the candidates' order.
+pub fn soft_aim<Id: Copy + Ord>(origin: WorldPos, axis_yaw: f32, candidates: &[Candidate<Id>], p: &SoftAimParams) -> Option<Id> {
+    candidates
+        .iter()
+        .filter(|c| c.los)
+        .filter_map(|c| {
+            let (yaw, dist) = yaw_and_distance(origin, c.pos);
+            let angle = wrap_angle(yaw - axis_yaw).abs();
+            (dist <= p.reach && angle <= p.cone).then_some((dist, angle, c.id))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)))
+        .map(|(_, _, id)| id)
+}
+
 /// Switch to the next target on one side of the current one (`right`: clockwise on screen, i.e.
 /// toward the view's right), the smallest yaw step within `break_range` with line of sight.
 pub fn switch_target<Id: Copy + PartialEq>(
@@ -114,6 +158,9 @@ pub enum BreakReason {
     Lost,
     /// A traversal or interaction started (action.md priority list).
     Traversal,
+    /// The body faces the view (first person): no hard lock there, soft aim instead (camera.md
+    /// "First person").
+    View,
 }
 
 /// Timers kept with the locked target by its owner (`sf_action` state), advanced with that

@@ -28,7 +28,14 @@ pub struct ComfortSettings {
     pub auto_camera: bool,
     /// Vertical FOV of the world camera and of the first-person body, degrees.
     pub fov_world: f32,
+    /// The view model's (first-person arms and held items, first-person.md "View model").
     pub fov_body: f32,
+    /// First-person view model: arms and held items redrawn at [`Self::fov_body`] in the nearest
+    /// depth slice. Off by default until the view-model material lands (FP-2b): off, they are
+    /// drawn with the body at `fov_world` (FP-1b).
+    pub view_model: bool,
+    /// The view model's depth slice `R` (`ViewModelProjection::depth`), 0..0.99.
+    pub view_model_depth: f32,
     pub centre_dot: bool,
     pub motion_blur: bool,
     pub view: ViewChoice,
@@ -43,6 +50,8 @@ impl Default for ComfortSettings {
             auto_camera: false,
             fov_world: 60.0,
             fov_body: 50.0,
+            view_model: false,
+            view_model_depth: 0.8,
             centre_dot: false,
             motion_blur: false,
             view: ViewChoice::ThirdPerson,
@@ -54,6 +63,11 @@ impl ComfortSettings {
     /// Shake strength after the on/off switch, 0..1.
     pub fn shake_scale(&self) -> f32 {
         if self.shake { self.shake_strength.clamp(0.0, 1.0) } else { 0.0 }
+    }
+
+    /// The first-person view model's projection: `fov_world` to `fov_body`, the depth slice.
+    pub fn view_model_projection(&self) -> crate::ViewModelProjection {
+        crate::ViewModelProjection::new(self.fov_world, self.fov_body, self.view_model_depth)
     }
 }
 

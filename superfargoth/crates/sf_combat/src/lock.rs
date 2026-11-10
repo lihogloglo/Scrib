@@ -8,7 +8,8 @@
 //! nearest candidate. The lock breaks past `break_range`, after `los_timeout` without line of
 //! sight, when the target is gone (dead or despawned), and on any traversal, which re-offers the
 //! same target for `reacquire_window` after touchdown (Elden Ring keeps it through a jump: a
-//! jump is not a traversal).
+//! jump is not a traversal). With the body facing the view (first person) there is no lock: a
+//! held one breaks and presses do nothing.
 
 use sf_action::{LockRequest, LockSide, TargetId};
 use sf_camera::{BreakReason, Candidate, LockParams, LockTimers, acquire, switch_target};
@@ -28,6 +29,9 @@ pub struct LockInput<'a> {
     /// A traversal (mantle, climb, vault) plays.
     pub traversing: bool,
     pub grounded: bool,
+    /// The body faces the view (first person, `Command::face_view`): no hard lock; a held one
+    /// breaks ([`BreakReason::View`]) and presses are ignored (soft aim picks attack targets).
+    pub face_view: bool,
 }
 
 /// What [`update_lock`] did.
@@ -55,6 +59,14 @@ pub fn lock_key(id: TargetId) -> u32 {
 /// One tick of `lock` (the character's `ActionState::lock`) and its `timers` (module docs). A
 /// press during a traversal is ignored: the broken target comes back on its own after touchdown.
 pub fn update_lock(lock: &mut Option<TargetId>, timers: &mut LockTimers, s: &LockInput<'_>, p: &LockParams, dt: f32) -> LockEvent {
+    if s.face_view {
+        // No hard lock in first person (camera.md "First person"): a pending re-offer goes too.
+        *timers = LockTimers::default();
+        return match lock.take() {
+            Some(_) => LockEvent::Broke(BreakReason::View),
+            None => LockEvent::Kept,
+        };
+    }
     if let Some(target) = *lock {
         if s.traversing {
             *lock = None;

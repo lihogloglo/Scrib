@@ -274,7 +274,9 @@ of load and unload requests.
 ## Worldspaces at runtime
 
 Each loaded worldspace is one big_space `BigSpace` root plus its own
-`RenderLayers` layer, because worldspaces overlap in coordinates. A
+`RenderLayers` pair (`WorldspaceLayers`: content, and a shadow-only layer its
+lights carry and no camera does, first-person.md "Layer plan"), because
+worldspaces overlap in coordinates. A
 worldspace has three states:
 - **Inactive**: no entities.
 - **Prefetched**: R0 cells around a link end are resident but invisible to
@@ -323,7 +325,8 @@ thousand sequential lookups. Adapters report door link ends whose
 worldspace has no directory (must be 0). Each worldspace draws only in its
 own render layer: cooked parts get it at spawn, runtime-imported scenes
 through `SubtreeLayers` on their root (as `SubtreeRange`), and point lights
-take `SpawnCx::layers`, so a prefetched interior never shows or lights the
+take its light layers (`WorldspaceRegistry::light_layers`: content plus
+shadow-only), so a prefetched interior never shows or lights the
 exterior view. What a worldspace looks like (sky, terrain, ambient, fog,
 exposure) is the content pack's: it follows `ActiveWorldspace`.
 

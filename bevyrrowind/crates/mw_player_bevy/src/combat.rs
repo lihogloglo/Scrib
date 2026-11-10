@@ -10,7 +10,7 @@
 //!   stamina from the character sheet each tick, [`crate::vitals`]; the mover's capsule) and its
 //!   moveset in `ActionState::mode.moveset`, kept set (rolls work sheathed).
 //! - **Stance.** [`Stance`]: the ready-weapon key (F) draws and sheathes; while sheathed the
-//!   attacks are withheld (`Combatant::withheld`): an attack press does nothing (owner
+//!   attacks and the guard are withheld (`Combatant::withheld`): an attack press does nothing (owner
 //!   2026-11-02: first the fighting stance, then the fight; Elden Ring has no sheathed state, but
 //!   Morrowind and Skyrim attack only drawn). The avatar's `CharacterReadiness` follows it
 //!   ([`show_stance`]): its held weapon (`mw_actors_bevy::held::EquippedHeld`, e.g. a level's
@@ -31,6 +31,16 @@
 //!   it; `LockMarkerPlugin` draws the aim cursor on the target's chest (both views): the HUD
 //!   crosshair is its template ([`tag_crosshair`]: same look, as themed) and hides meanwhile
 //!   (`crate::hud`), so one cursor shows.
+//! - **First person** ([`face_view`]): with the player camera in first person the commands carry
+//!   `face_view`: attacks square up to the view and their `Turn` windows steer onto the soft-aim
+//!   target (`SfLockOnPlugin`'s soft aim: nearest dummy within 3 m and +-30 deg of the view, picked
+//!   in the attack's first 1/6 s), and the lock key does nothing (a held lock breaks). Third person
+//!   unlocked soft-aims around the stick or facing.
+//! - **Guard** (combat.md "C2b"): the guard key (right mouse, L1; `Control::Guard`, held) raises
+//!   the sheet's `guard` move while drawn: hits from within 80 deg of the facing are guarded
+//!   (damage x 0.35, stamina taken, a flinch instead of a reaction), a guarded hit that empties
+//!   stamina breaks it (`guard.break`), regen runs at half rate. First person the body follows the
+//!   view at the guard's turn rate (free yaw, attack pitch limits). HUD cue: not yet.
 //! - **Rules.** [`ModernRules`]: `sf_combat::StandardRules` as a resource (the classic rules
 //!   would replace it, combat-adapter.md "Rules").
 
@@ -42,7 +52,7 @@ use bevy_time::prelude::*;
 use bevy_time::Fixed;
 use sf_action::{ActionClass, ClassSet};
 use mw_game_core::player::PlayerAvatar;
-use sf_action_bevy::ActionCharacter;
+use sf_action_bevy::{ActionCharacter, PlayerInput};
 use sf_anim::RootMotionMode;
 use sf_anim_bevy::Animator;
 use sf_anim_graph::{MontageClip, SlotId, SlotRequest};
@@ -54,6 +64,8 @@ use sf_combat::{
 use sf_combat_bevy::{
     CombatData, CombatSystems, Combatant, LockMarkerPlugin, LockMarkerTemplate, LockOwner, SfCombatPlugin, SfLockOnPlugin,
 };
+use sf_camera::ViewChoice;
+use sf_camera_bevy::PlayerCamera;
 use sf_physics_bevy::Physics;
 
 use crate::avatar::PlayerFeed;
@@ -63,8 +75,9 @@ use crate::{PLAYER_CHARACTER, PlayerBody, PlayerClips};
 /// refresh overwrites them); an app without stats (tests) keeps them.
 pub const UNSHEETED_VITALS: [f32; 2] = [100.0, 100.0];
 
-/// The classes a sheathed weapon withholds.
-const ATTACKS: ClassSet = ClassSet::of(&[ActionClass::Light, ActionClass::Heavy]);
+/// The classes a sheathed weapon withholds: the attacks and the guard (C2b: Morrowind and Skyrim
+/// block only with a weapon or shield ready).
+const ATTACKS: ClassSet = ClassSet::of(&[ActionClass::Light, ActionClass::Heavy, ActionClass::Guard]);
 
 /// The modern combat rules as a resource (`sf_combat::StandardRules`).
 #[derive(Resource, Clone, Copy, Debug, Default)]
@@ -226,10 +239,23 @@ pub(crate) fn add(app: &mut App, sheet: Option<CompiledSheet>, clips: &PlayerCli
     app.insert_resource(PlayerCombat { sheet })
         .insert_resource(StanceClips::from_clips(clips))
         .add_systems(Update, ((arm, ready_weapon, show_stance).chain().after(crate::apply_mode).before(CharacterSystems), tag_crosshair))
+        .add_systems(RunFixedMainLoop, face_view.in_set(sf_action_bevy::ActionSystems::Gather))
         .add_systems(FixedUpdate, advance_stance.before(CombatSystems::Gate))
         .add_systems(PostUpdate, play_stance.after(crate::avatar::feed).in_set(sf_anim_bevy::AnimSystems::Probe));
     #[cfg(feature = "debug")]
     app.add_systems(Update, toggle_gizmos);
+}
+
+/// Frame rate, before the fixed loop: the followed body's commands face the view while its camera
+/// is in first person (`Command::face_view`: attacks square up to the view and soft-aim around
+/// it, no hard lock-on; camera.md "First person"). The view choice reaches gameplay only as this
+/// input bit, as the look does through `Command::view`.
+fn face_view(cameras: Query<&PlayerCamera>, mut players: Query<&mut PlayerInput>) {
+    for cam in &cameras {
+        if let Ok(mut input) = players.get_mut(cam.follow) {
+            input.sampler.set_face_view(cam.view() == ViewChoice::FirstPerson);
+        }
+    }
 }
 
 /// The HUD crosshair, once built, is the lock marker's template (the marker copies its look).

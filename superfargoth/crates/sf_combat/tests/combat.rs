@@ -16,13 +16,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use glam::{Vec2, Vec3};
 use sf_action::{
     ActionClass, ActionEvent, ActionOutput, ActionState, BASE_RULES, CharacterId, CharacterParams, Command, EventKind, InputSampler, Origin,
-    RATE_ONE, Refused, RootPath, RuleKey, RuleSet, RuleSetBuilder, Sense, SlotInfo, SlotKey, SlotTable, StepCtx, TapHold, Tick,
+    RATE_ONE, Refused, RootPath, RuleKey, RuleSet, RuleSetBuilder, Sense, SlotInfo, SlotKey, SlotTable, StepCtx, TapHold, TargetId, Tick,
 };
 use sf_anim::{RootPose, SocketTrack, Trs};
+use sf_camera::{Candidate, SoftAimParams};
+use sf_coords::WorldPos;
 use sf_combat::{
     At, Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, CompiledSheet, Contact, Defense, FightState, Fighter, HitStop, HurtShape,
-    Movesets, Offense, Outcome, Pool, PoolDelta, RegenState, Side, SocketSource, SocketTracks, StandardRules, Swing, SwingPlan, Tier, Unit, Vitals, gate,
-    load,
+    GuardResult, Movesets, Offense, Outcome, Pool, PoolDelta, RegenState, Side, SocketSource, SocketTracks, SoftAimInput, SparSchedule, StandardRules, Swing, SwingPlan, Tier, Unit, Vitals, gate,
+    load, soft_aim_axis, update_soft_aim,
 };
 
 const SHEET: &str = include_str!("data/test_sword.ron");
@@ -41,6 +43,9 @@ const CLIPS: &[(&str, f32)] = &[
     ("dodge.test.roll.left", 1.0),
     ("react.test.small.front", 0.4),
     ("react.test.medium.front", 0.6),
+    ("guard.test.raise", 0.2),
+    ("guard.test.idle", 0.5),
+    ("react.test.guard.break", 0.8),
 ];
 
 /// Roll root track: straight ahead over the clip.
@@ -127,6 +132,8 @@ struct Actor {
     slots: SlotTable,
     /// Lock-on target (actor index): its position goes out as `Sense::lock_target`.
     lock: Option<usize>,
+    /// Picks its attacks' soft-aim target (`sf_combat::update_soft_aim`) among the other actors.
+    soft_aim: bool,
     /// (tick, event) of every action event.
     events: Vec<ActionEvent>,
 }
@@ -185,6 +192,7 @@ impl World {
             body: Body::at(pos, yaw),
             slots: slot_table(&self.sheet, true),
             lock: None,
+            soft_aim: false,
             events: Vec::new(),
         });
         i
@@ -218,11 +226,20 @@ impl World {
         self.tick = self.tick.next();
         let tick = self.tick;
         let locks: Vec<Option<Vec3>> = self.actors.iter().map(|a| a.lock.map(|j| self.actors[j].body.pos - a.body.pos)).collect();
+        let aims: Vec<(TargetId, Vec3)> = self.actors.iter().map(|a| (TargetId(a.fighter.id.0), a.body.pos)).collect();
+        let soft = SoftAimParams::default();
         for (i, a) in self.actors.iter_mut().enumerate() {
             let mut cmd = cmds.get(i).copied().unwrap_or_default();
             cmd.tick = tick;
             let refused = gate(&*self.combat, &a.fighter, &a.fight);
-            let sense = Sense { grounded: true, yaw: a.body.yaw, refused, lock_target: locks[i], ..Sense::default() };
+            let soft_target = a.soft_aim.then(|| {
+                let at = |p: Vec3| WorldPos::ORIGIN.offset(p + Vec3::Y * 1.3);
+                let candidates: Vec<_> = aims.iter().enumerate().filter(|&(j, _)| j != i).map(|(_, &(id, p))| Candidate { id, pos: at(p), los: true }).collect();
+                let input = SoftAimInput { origin: at(a.body.pos), axis_yaw: soft_aim_axis(&cmd, a.body.yaw, self.params.deadzone), candidates: &candidates, locked: locks[i].is_some() };
+                let target = update_soft_aim(&mut a.fight, &a.state, &input, &soft)?;
+                aims.iter().find(|t| t.0 == target).map(|t| t.1 - a.body.pos)
+            });
+            let sense = Sense { grounded: true, yaw: a.body.yaw, refused, lock_target: locks[i], soft_target: soft_target.flatten(), ..Sense::default() };
             let ctx = StepCtx { rules: &self.rules, slots: &a.slots, params: &self.params, source: a.fighter.id };
             sf_action::step(&ctx, &mut a.state, &cmd, &sense, &mut a.out);
             a.events.extend(a.out.events.iter().copied());
@@ -308,8 +325,8 @@ fn at_parses_seconds_integers_and_end() {
 fn sheet_compiles_rules_slots_and_table() {
     let s = sheet();
     assert!(s.warnings.is_empty(), "{:?}", s.warnings);
-    // Six moves and two reactions.
-    assert_eq!(s.rules.len(), 8);
+    // Seven moves (the guard included), two reactions and the guard break.
+    assert_eq!(s.rules.len(), 10);
     let rank = |m: &str| s.rules.iter().find(|r| r.id == format!("test_sword.{m}")).unwrap().rank;
     // Chain targets outrank the opener that could also take the press (light1, from Any).
     assert!(rank("light2") > rank("light1"));
@@ -343,6 +360,24 @@ fn sheet_load_errors_name_the_move() {
     // A chain into a move that doesn't take the class.
     let bad = SHEET.replace(r#"next: { Light: "light2" }"#, r#"next: { Light: "thrust" }"#);
     assert!(load(&bad, &clip_len).is_err());
+}
+
+/// A sheet move's `look` (bare, as authored) becomes its generated rule's `MoveRule.look`;
+/// moves without one and reactions get none; bad numbers name the move.
+#[test]
+fn a_moves_look_limits_reach_its_rule() {
+    let with = SHEET.replace(r#"next: { Light: "light2" }"#, r#"next: { Light: "light2" }, look: (yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.1)"#);
+    let s = load(&with, &clip_len).expect("sheet with look compiles");
+    let look = |m: &str| s.rules.iter().find(|r| r.id == format!("test_sword.{m}")).unwrap().look;
+    assert_eq!(look("light1"), Some(sf_action::LookRule { yaw: 45.0, pitch: (-45.0, 20.0), ease: 0.1 }));
+    assert_eq!(look("light2"), None);
+    assert_eq!(look("roll"), None);
+    assert!(s.rules.iter().filter(|r| r.kind == sf_action::MoveKind::Forced).all(|r| r.look.is_none()), "reactions never limit");
+    let bad = SHEET.replace(r#"next: { Light: "light2" }"#, r#"next: { Light: "light2" }, look: (yaw: 0.0, pitch: (-45.0, 20.0))"#);
+    let errs = load(&bad, &clip_len).unwrap_err();
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert_eq!(errs[0].mov.as_deref(), Some("light1"));
+    assert!(errs[0].message.starts_with("look:"), "{}", errs[0]);
 }
 
 #[test]
@@ -629,6 +664,99 @@ fn a_dead_defender_is_skipped_and_refuses_everything() {
     assert_eq!(w.log.len(), 2);
     assert_eq!(w.actors[1].fighter.vitals.health.cur, 0.0);
     assert_eq!(gate(&StandardRules::default(), &w.actors[1].fighter, &w.actors[1].fight), sf_action::ClassSet::LATCHABLE);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sparring (C2a): a scheduled partner's swings on the player, through its own `Command`
+
+const SPAR: SparSchedule = SparSchedule { class: ActionClass::Light, first: 0.25, period: 1.5, reach: 2.0 };
+
+/// Partner (actor 0) and player (actor 1) `dist` apart along +Z, both facing away from each other
+/// (the partner must square up to its view of the player), settled in Loco.
+fn sparring(dist: f32) -> World {
+    let mut w = World::new(Box::new(Counting::default()));
+    w.spawn(Vec3::ZERO, std::f32::consts::PI);
+    w.spawn(Vec3::new(0.0, 0.0, dist), 0.0);
+    w.settle();
+    w
+}
+
+/// `n` ticks: actor 0 runs `SPAR` toward actor 1 (no target once it is dead), actor 1 gets
+/// `player(since)`. Returns the partner's light1 start ticks, since its start.
+fn spar(w: &mut World, n: u32, player: impl Fn(u32) -> Command) -> Vec<u32> {
+    let start = w.tick.next().0;
+    let light1 = w.key("light1");
+    let mut strikes = Vec::new();
+    for _ in 0..n {
+        let since = w.tick.next().0 - start;
+        let alive = !w.actors[1].fighter.dead();
+        let to = w.actors[1].body.pos - w.actors[0].body.pos;
+        w.run(&[SPAR.command(w.tick.next(), since, alive.then_some(to)), player(since)]);
+        if w.started(0, light1) {
+            strikes.push(since);
+        }
+    }
+    strikes
+}
+
+#[test]
+fn a_sparring_partner_squares_up_and_lands_on_its_schedule() {
+    let mut w = sparring(1.0);
+    let start = w.tick.next().0;
+    let strikes = spar(&mut w, 220, |_| Command::default());
+    assert_eq!(strikes, [15, 105, 195]);
+    let (partner, player) = (w.actors[0].fighter.id, w.actors[1].fighter.id);
+    let landed = w.landings();
+    assert_eq!(landed.iter().map(|l| (l.1, l.2, l.3)).collect::<Vec<_>>(), [(partner, player, 0); 3], "{:?}", w.log);
+    // Every swing lands the same number of ticks after its press (deterministic).
+    let after: Vec<u32> = landed.iter().zip(&strikes).map(|(l, s)| l.0.0 - start - s).collect();
+    assert!(after.iter().all(|&a| a == after[0]) && after[0] > 0, "{after:?}");
+    assert_eq!(w.actors[1].fighter.vitals.health.cur, 70.0);
+    // The player, facing away, is hit in the back: its reaction falls back to the front one.
+    let back = w.log.iter().filter_map(|&(_, e)| match e {
+        CombatEvent::HitLanded { side, tier, .. } => Some((tier, side)),
+        _ => None,
+    });
+    assert!(back.clone().count() == 3 && back.into_iter().all(|ts| ts == (Tier::Small, Side::Back)));
+    let react = w.sheet.reactions.lookup(Tier::Small, Side::Back).unwrap();
+    assert_eq!(react, w.sheet.reactions.lookup(Tier::Small, Side::Front).unwrap());
+    let reacted: Vec<Tick> = w.actors[1].events.iter().filter(|e| e.kind == EventKind::MoveStart(react)).map(|e| e.tick).collect();
+    assert_eq!(reacted, landed.iter().map(|l| l.0.next()).collect::<Vec<_>>());
+}
+
+#[test]
+fn a_sparring_partner_never_presses_out_of_reach() {
+    let mut w = sparring(2.5);
+    assert_eq!(spar(&mut w, 220, |_| Command::default()), Vec::<u32>::new());
+    assert!(w.log.is_empty(), "{:?}", w.log);
+}
+
+/// Contact order on the player: a roll's i-frames evade the whole swing (no contact reaches the
+/// rules, no landing, health kept); the next swing lands; a dead player is skipped and the
+/// partner stops pressing.
+#[test]
+fn the_contact_order_holds_for_the_partners_swings_on_the_player() {
+    let counting = Counting::default();
+    let contacts = Arc::clone(&counting.contacts);
+    let mut w = World::new(Box::new(counting));
+    w.spawn(Vec3::ZERO, 0.0);
+    let p = w.spawn(Vec3::new(0.0, 0.0, 1.0), std::f32::consts::PI);
+    // The player rolls in place (no root track), so only its i-frames matter.
+    w.actors[p].slots = slot_table(&w.sheet, false);
+    w.settle();
+    // It rolls 2 ticks before the first strike (since 15): i-frames cover the hit window.
+    let strikes = spar(&mut w, 100, |since| if since == 13 { press(ActionClass::Dodge) } else { Command::default() });
+    assert_eq!(strikes, [15]);
+    let evaded = w.log.iter().filter(|(_, e)| matches!(e, CombatEvent::Evaded { .. })).count();
+    assert!(evaded > 0 && w.landings().is_empty(), "{:?}", w.log);
+    assert_eq!((contacts.load(Ordering::Relaxed), w.actors[p].fighter.vitals.health.cur), (0, 100.0));
+    // The next strike lands; with 5 health left it kills, and the partner stops.
+    w.actors[p].fighter.vitals.health.cur = 5.0;
+    let strikes = spar(&mut w, 300, |_| Command::default());
+    assert_eq!(strikes.len(), 1, "{strikes:?}");
+    assert_eq!(w.landings().len(), 1);
+    assert_eq!(contacts.load(Ordering::Relaxed), 1);
+    assert_eq!(w.log.iter().filter(|(_, e)| matches!(e, CombatEvent::Died { .. })).count(), 1);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1038,4 +1166,404 @@ fn measure_hit_stop() {
         }
     }
     println!("light1 hit-stop: {slow} slow ticks, {:.3} s of clock lost", lost as f32 / (f32::from(RATE_ONE) * 60.0));
+}
+
+// ---------- Soft aim (combat.md "Lock-on and camera" C4, camera.md "First person") ----------
+
+/// `deg` degrees from +Z, `dist` m from the origin, on the floor.
+fn bearing_at(dist: f32, deg: f32) -> Vec3 {
+    let (s, c) = deg.to_radians().sin_cos();
+    Vec3::new(dist * s, 0.0, dist * c)
+}
+
+/// First person: the view (yaw 0) is the aim, the body starts turned `body_deg` away from it,
+/// and a dummy stands `dist` m off at `deg` degrees. Settled in Loco.
+fn first_person_duel(body_deg: f32, dist: f32, deg: f32) -> World {
+    let mut w = World::standard();
+    let a = w.spawn(Vec3::ZERO, body_deg.to_radians());
+    w.actors[a].soft_aim = true;
+    w.spawn(bearing_at(dist, deg), std::f32::consts::PI);
+    w.settle();
+    w
+}
+
+fn looking(view_deg: f32, pressed: Option<ActionClass>) -> Command {
+    let mut cmd = pressed.map_or_else(Command::default, press);
+    cmd.face_view = true;
+    cmd.view.yaw = view_deg.to_radians();
+    cmd
+}
+
+fn yaw_deg(w: &World) -> f32 {
+    w.actors[0].body.yaw.to_degrees()
+}
+
+fn elapsed(w: &World) -> f32 {
+    w.actors[0].state.clock.elapsed.secs()
+}
+
+/// An attack in first person squares up to the view on its first tick, then its `Turn` window
+/// (0-0.15 s, 360 deg/s) turns the body onto the soft-aim target 20 deg off the view, 6 deg a
+/// tick; after the window the body holds its line whatever the view or the target do (no
+/// dragging: R8 §2), and the camera was never asked to turn.
+#[test]
+fn first_person_attack_squares_to_the_view_then_turns_onto_the_soft_target_in_its_turn_window() {
+    let mut w = first_person_duel(-50.0, 2.5, 20.0);
+    let dummy = TargetId(w.actors[1].fighter.id.0);
+    w.run(&[looking(0.0, Some(ActionClass::Light))]);
+    assert!(w.started(0, w.key("light1")));
+    assert!(yaw_deg(&w).abs() < 1e-3, "squared up to the view: {}", yaw_deg(&w));
+    let mut last = yaw_deg(&w);
+    while elapsed(&w) < 0.15 {
+        w.run(&[looking(0.0, None)]);
+        let y = yaw_deg(&w);
+        assert!(y - last >= -1e-3 && y - last <= 6.0 + 1e-3, "turns toward the target at the window's rate: {last} -> {y}");
+        last = y;
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().and_then(|s| s.aim), Some(dummy));
+    assert!((last - 20.0).abs() < 1e-2, "on the target by the window's end: {last}");
+    // After the window: the view swings 60 deg and the dummy steps to 40 deg; the body holds.
+    w.actors[1].body.pos = bearing_at(2.5, 40.0);
+    while w.actors[0].state.mov == w.key("light1") {
+        w.run(&[looking(60.0, None)]);
+        assert!((yaw_deg(&w) - last).abs() < 1e-3, "no turn after the window at {:.3} s: {}", elapsed(&w), yaw_deg(&w));
+    }
+}
+
+/// A target that only enters the cone after the first 1/6 s isn't picked: the attack keeps the
+/// view's line. One already out of reach or cone at the start is never picked either.
+#[test]
+fn soft_aim_acquires_only_in_the_attacks_first_sixth_of_a_second() {
+    let mut w = first_person_duel(0.0, 2.5, 60.0);
+    w.run(&[looking(0.0, Some(ActionClass::Light))]);
+    while elapsed(&w) <= 1.0 / 6.0 {
+        w.run(&[looking(0.0, None)]);
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().map(|s| s.aim), Some(None), "60 deg is outside the cone");
+    w.actors[1].body.pos = bearing_at(2.5, 20.0);
+    for _ in 0..5 {
+        w.run(&[looking(0.0, None)]);
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().map(|s| s.aim), Some(None), "entered the cone too late");
+    assert!(yaw_deg(&w).abs() < 1e-3, "{}", yaw_deg(&w));
+    // Out of reach (3.5 m at 10 deg): none.
+    let mut w = first_person_duel(0.0, 3.5, 10.0);
+    w.run(&[looking(0.0, Some(ActionClass::Light))]);
+    for _ in 0..8 {
+        w.run(&[looking(0.0, None)]);
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().map(|s| s.aim), Some(None));
+    assert!(yaw_deg(&w).abs() < 1e-3);
+}
+
+/// A chained light starts its own swing and picks again; the lock, when there is one, wins.
+#[test]
+fn each_swing_picks_its_own_soft_target_and_a_lock_wins() {
+    let mut w = first_person_duel(0.0, 2.0, 20.0);
+    let dummy = TargetId(w.actors[1].fighter.id.0);
+    w.run(&[looking(0.0, Some(ActionClass::Light))]);
+    for _ in 0..12 {
+        w.run(&[looking(0.0, None)]);
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().and_then(|s| s.aim), Some(dummy));
+    w.run(&[looking(0.0, Some(ActionClass::Light))]);
+    let light2 = w.key("light2");
+    for _ in 0..40 {
+        if w.started(0, light2) {
+            break;
+        }
+        w.run(&[looking(0.0, None)]);
+    }
+    assert_eq!(w.actors[0].state.mov, light2, "chained");
+    assert_eq!(w.actors[0].fight.swing.as_ref().map(|s| (s.mov, s.aim)), Some((light2, None)), "a new swing starts empty");
+    w.run(&[looking(0.0, None)]);
+    assert_eq!(w.actors[0].fight.swing.as_ref().and_then(|s| s.aim), Some(dummy), "and picks again");
+    // Third person, locked: the lock aims the turn, the soft aim stays off.
+    let mut w = World::duel(2.0);
+    w.actors[0].soft_aim = true;
+    w.actors[0].lock = Some(1);
+    w.press(ActionClass::Light);
+    for _ in 0..5 {
+        w.idle();
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().map(|s| s.aim), Some(None));
+}
+
+/// Third person without a lock falls out of the same rule (Sekiro): the cone's axis is the stick,
+/// else the facing, and the `Turn` window steers onto the target instead of the stick.
+#[test]
+fn third_person_unlocked_attacks_soft_aim_around_the_facing() {
+    let mut w = World::standard();
+    let a = w.spawn(Vec3::ZERO, 0.0);
+    w.actors[a].soft_aim = true;
+    w.spawn(bearing_at(2.0, -25.0), 0.0);
+    w.settle();
+    w.press(ActionClass::Light);
+    for _ in 0..9 {
+        w.idle();
+    }
+    assert!((yaw_deg(&w) + 25.0).abs() < 1e-2, "turned onto the target: {}", yaw_deg(&w));
+}
+
+/// Facing the view changes attacks only: a roll still squares up to the stick.
+#[test]
+fn facing_the_view_leaves_rolls_squared_to_the_stick() {
+    let mut w = first_person_duel(0.0, 10.0, 0.0);
+    let mut cmd = looking(0.0, Some(ActionClass::Dodge));
+    cmd.stick = Vec2::X;
+    w.run(&[cmd]);
+    assert!(w.started(0, w.key("roll")));
+    assert!((yaw_deg(&w) - 90.0).abs() < 1e-3, "{}", yaw_deg(&w));
+}
+
+// ---------- Guard (combat.md "C2b") ----------
+
+/// The guard numbers of these tests: 70 % of the damage absorbed, stamina at stability 1.
+const GUARD: Defense = Defense { absorb: 0.0, guard_absorb: 0.7, guard_stability: 1.0 };
+
+/// Guard held this tick (`press`: its first tick, the press edge too).
+fn guarding(press: bool) -> Command {
+    let mut cmd = Command::default();
+    cmd.buttons.held.insert(ActionClass::Guard);
+    if press {
+        cmd.buttons.pressed.insert(ActionClass::Guard);
+    }
+    cmd
+}
+
+/// Attacker at the origin facing +Z; the defender 1 m ahead turned `defender_deg` from facing it
+/// (0: face to face), with [`GUARD`]. Settled in Loco.
+fn guard_duel(rules: StandardRules, defender_deg: f32) -> World {
+    let mut w = World::new(Box::new(rules));
+    w.spawn(Vec3::ZERO, 0.0);
+    w.spawn(Vec3::new(0.0, 0.0, 1.0), std::f32::consts::PI + defender_deg.to_radians());
+    w.actors[1].fighter.defense = GUARD;
+    w.settle();
+    w
+}
+
+/// Actor 0 swings light1 while actor 1 raises a guard `lead` ticks before the attack's press
+/// (negative: after it) and holds it; returns the tick of the attack press and runs until the
+/// attacker is back in Loco.
+fn swing_into_guard(w: &mut World, lead: i32) -> Tick {
+    let mut t = -lead.max(0);
+    let mut press_tick = Tick(0);
+    while t < 200 {
+        let attack = if t == 0 { press(ActionClass::Light) } else { Command::default() };
+        if t == 0 {
+            press_tick = w.tick.next();
+        }
+        let guard = if t >= -lead { guarding(t == -lead) } else { Command::default() };
+        w.run(&[attack, guard]);
+        t += 1;
+        if t > 0 && w.actors[0].state.mov == loco() {
+            break;
+        }
+    }
+    press_tick
+}
+
+/// The single hit of the log.
+fn the_hit(w: &World) -> (Tick, Tier, Side, GuardResult) {
+    let hits: Vec<_> = w
+        .log
+        .iter()
+        .filter_map(|&(t, e)| match e {
+            CombatEvent::HitLanded { tier, side, guard, .. } => Some((t, tier, side, guard)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hits.len(), 1, "{:?}", w.log);
+    hits[0]
+}
+
+/// The contact order's guard test: a front hit on a raised guard is guarded (damage x `(1 -
+/// guard_absorb)`, stamina `guard_damage x 0.55 / stability`, tier `Additive`, no reaction, the
+/// guard stays up); a hit from behind is not.
+#[test]
+fn a_front_hit_on_a_raised_guard_is_guarded_and_a_back_hit_is_not() {
+    let mut w = guard_duel(StandardRules::default(), 0.0);
+    swing_into_guard(&mut w, 30);
+    let (t, tier, side, guard) = the_hit(&w);
+    assert_eq!((tier, side, guard), (Tier::Additive, Side::Front, GuardResult::Held));
+    let d = &w.actors[1];
+    assert_eq!(d.fighter.vitals.health.cur, 100.0 - 10.0 * (1.0 - 0.7));
+    assert_eq!(d.state.mov, w.key("guard"), "no reaction: the guard stays up");
+    assert!(!d.events.iter().any(|e| e.tick > t && matches!(e.kind, EventKind::MoveStart(_))), "nothing started after the hit");
+    // Stamina: the guarded hit's 12 x 0.55 at the hit tick, then guarding regen (x0.5) after it.
+    let at_hit = 100.0 + -(12.0 * 0.55 / 1.0);
+    let regen = StandardRules::default().regen(&d.fighter, RegenState::Guarding).stamina;
+    let ticks = w.tick.0 - t.0;
+    let mut want = Pool { cur: at_hit, max: 100.0 };
+    for _ in 0..ticks {
+        want.add(regen);
+    }
+    assert_eq!(d.fighter.vitals.stamina.cur, want.cur);
+
+    let mut w = guard_duel(StandardRules::default(), 180.0);
+    swing_into_guard(&mut w, 30);
+    let (_, tier, side, guard) = the_hit(&w);
+    assert_eq!((tier, side, guard), (Tier::Small, Side::Back, GuardResult::Unguarded));
+    assert_eq!(w.actors[1].fighter.vitals.health.cur, 90.0, "unguarded: the full hit");
+    assert_eq!(w.actors[1].fighter.vitals.stamina.max, 100.0);
+}
+
+/// The arc is +-80 deg around the defender's facing, measured toward the attacker's position.
+#[test]
+fn the_guard_arc_is_eighty_degrees_either_side() {
+    for (deg, held) in [(79.0, true), (-79.0, true), (81.0, false), (-81.0, false)] {
+        let mut w = guard_duel(StandardRules::default(), deg);
+        swing_into_guard(&mut w, 30);
+        let (_, _, _, guard) = the_hit(&w);
+        assert_eq!(guard == GuardResult::Held, held, "{deg} deg: {guard:?}");
+    }
+}
+
+/// The guard counts from its fourth tick on (raise 0.067 s = 4 ticks before the contact's tick):
+/// raised 4 ticks before the hit it holds, 3 ticks before it is a plain hit.
+#[test]
+fn during_its_raise_ticks_the_guard_does_not_count_yet() {
+    // When does light1 land unguarded on a face-to-face dummy?
+    let mut w = guard_duel(StandardRules::default(), 0.0);
+    let p = swing_into_guard(&mut w, -1000);
+    let (land, ..) = the_hit(&w);
+    let after = i32::try_from(land.0 - p.0).unwrap();
+    for (raised_before, held) in [(4, true), (3, false)] {
+        let mut w = guard_duel(StandardRules::default(), 0.0);
+        swing_into_guard(&mut w, raised_before - after);
+        let (t, _, _, guard) = the_hit(&w);
+        assert_eq!(t.0 - p.0, land.0 - p.0, "the same contact tick");
+        assert_eq!(guard == GuardResult::Held, held, "raised {raised_before} ticks before: {guard:?}");
+    }
+}
+
+/// A guarded hit that empties the stamina (to exactly 0) breaks the guard: tier `Large`, the
+/// sheet's guard-break move forced on the next tick. One unit of stamina more and it holds.
+#[test]
+fn a_guarded_hit_that_empties_stamina_breaks_the_guard_into_its_reaction() {
+    let no_regen = StandardRules { regen_per_s: 0.0, ..StandardRules::default() };
+    let cost = no_regen.guard_stamina_damage(12.0, &w_fighter_with(GUARD));
+    for (stamina, broke) in [(cost, true), (cost + 1.0, false)] {
+        let mut w = guard_duel(no_regen, 0.0);
+        w.actors[1].fighter.vitals.stamina.cur = stamina;
+        swing_into_guard(&mut w, 30);
+        let (t, tier, _, guard) = the_hit(&w);
+        let d = &w.actors[1];
+        if broke {
+            assert_eq!((tier, guard), (Tier::Large, GuardResult::Broken));
+            assert_eq!(d.fighter.vitals.stamina.cur, 0.0);
+            let brk = w.sheet.reactions.guard_break.expect("the sheet's guard break");
+            assert_eq!(brk, w.key("guard.break"));
+            let start = d.events.iter().find(|e| e.kind == EventKind::MoveStart(brk)).expect("guard break started");
+            assert_eq!(start.tick, t.next());
+        } else {
+            assert_eq!((tier, guard), (Tier::Additive, GuardResult::Held));
+            assert_eq!(d.fighter.vitals.stamina.cur, stamina - cost);
+            assert_eq!(d.state.mov, w.key("guard"));
+        }
+    }
+}
+
+/// A fighter with `defense` (the guard-damage helper reads only the defence).
+fn w_fighter_with(defense: Defense) -> Fighter {
+    let mut w = World::standard();
+    w.spawn(Vec3::ZERO, 0.0);
+    let mut f = w.actors[0].fighter.clone();
+    f.defense = defense;
+    f
+}
+
+/// Stamina regenerates at half rate while guarding (from the guard's first tick, the raise too),
+/// at the full rate in Loco.
+#[test]
+fn guarding_regenerates_stamina_at_half_rate() {
+    let rules = StandardRules::default();
+    let mut w = guard_duel(rules, 0.0);
+    w.actors[1].fighter.vitals.stamina.cur = 50.0;
+    let full = rules.regen(&w.actors[1].fighter, RegenState::Open).stamina;
+    let half = rules.regen(&w.actors[1].fighter, RegenState::Guarding).stamina;
+    assert_eq!(half, full * 0.5);
+    let mut last = 50.0;
+    for n in 0..30 {
+        w.run(&[Command::default(), guarding(n == 0)]);
+        let cur = w.actors[1].fighter.vitals.stamina.cur;
+        assert_eq!(w.actors[1].state.mov, w.key("guard"));
+        assert_eq!(cur - last, half, "tick {n}");
+        last = cur;
+    }
+    w.idle();
+    let cur = w.actors[1].fighter.vitals.stamina.cur;
+    assert_eq!(w.actors[1].state.mov, loco(), "released");
+    assert_eq!(cur - last, full);
+}
+
+/// In first person (`face_view`) a held guard squares up to the view and then follows it at its
+/// `Turn` rate (360 deg/s: 6 deg a tick); third person it turns toward the stick, holds without
+/// one, and faces a lock target. Its `look` rule holds the whole guard (no `Cancel(Move)`).
+#[test]
+fn a_held_guard_follows_the_view_at_its_turn_rate() {
+    let mut w = World::standard();
+    w.spawn(Vec3::ZERO, 0.0);
+    w.spawn(Vec3::new(0.0, 0.0, 30.0), 0.0);
+    w.settle();
+    let fp = |view_deg: f32, press: bool| {
+        let mut c = guarding(press);
+        c.face_view = true;
+        c.view.yaw = view_deg.to_radians();
+        c
+    };
+    w.run(&[fp(10.0, true)]);
+    assert_eq!(w.actors[0].state.mov, w.key("guard"));
+    assert!((yaw_deg(&w) - 10.0).abs() < 1e-4, "squared up to the view: {}", yaw_deg(&w));
+    // The view swings to 70 deg: the body follows, 6 deg a tick, and stops on it.
+    for n in 1..=10 {
+        w.run(&[fp(70.0, false)]);
+        assert!((yaw_deg(&w) - (10.0 + 6.0 * n as f32)).abs() < 1e-3, "tick {n}: {}", yaw_deg(&w));
+    }
+    for _ in 0..5 {
+        w.run(&[fp(70.0, false)]);
+        assert!((yaw_deg(&w) - 70.0).abs() < 1e-3, "{}", yaw_deg(&w));
+    }
+    let r = w.rules.get(w.key("guard")).unwrap();
+    for t in [0.0, 0.5, 10.0, 600.0] {
+        let look = r.look_at(&w.actors[0].slots, sf_action::ClockTime::from_secs(t)).expect("look holds");
+        assert_eq!((look.yaw, look.pitch), (180.0, (-45.0, 20.0)));
+    }
+    // Third person: the view is ignored; no stick, the body holds; the stick turns it.
+    let tp = |stick: Vec2| {
+        let mut c = guarding(false);
+        c.view.yaw = 0.0;
+        c.stick = stick;
+        c
+    };
+    for _ in 0..5 {
+        w.run(&[tp(Vec2::ZERO)]);
+        assert!((yaw_deg(&w) - 70.0).abs() < 1e-3);
+    }
+    w.run(&[tp(Vec2::new(0.0, 1.0))]);
+    assert!((yaw_deg(&w) - 64.0).abs() < 1e-3, "toward the stick (+Z): {}", yaw_deg(&w));
+    // Locked on the actor 30 m ahead (+Z): it faces the target whatever the stick.
+    w.actors[0].lock = Some(1);
+    for _ in 0..20 {
+        w.run(&[tp(Vec2::new(1.0, 0.0))]);
+    }
+    assert!(yaw_deg(&w).abs() < 1e-3, "faces the lock target: {}", yaw_deg(&w));
+    assert_eq!(w.actors[0].state.mov, w.key("guard"));
+}
+
+/// Guard load errors: a guard on a move that isn't a hold move, a bad arc.
+#[test]
+fn guard_load_errors_name_the_move() {
+    let on_attack = SHEET.replace("hits: [(window: (0.10, 0.60)", "guard: (raise: 0.05, arc: 80.0), hits: [(window: (0.10, 0.60)");
+    let e = load(&on_attack, &clip_len).unwrap_err();
+    assert!(e.iter().any(|e| e.mov.as_deref() == Some("thrust") && e.message.starts_with("guard: only a hold move")), "{e:?}");
+    let wide = SHEET.replace("arc: 80.0", "arc: 190.0");
+    let e = load(&wide, &clip_len).unwrap_err();
+    assert!(e.iter().any(|e| e.mov.as_deref() == Some("guard") && e.message.starts_with("guard: raise")), "{e:?}");
+    // The guard compiles to whole ticks, its idle slot loops.
+    let s = sheet();
+    let g = s.moves.moves[&s.rule_key("guard")].guard.expect("guard");
+    assert_eq!(g.raise, sf_action::ClockTime::from_ticks(4));
+    let idle = &s.slots.iter().find(|(k, _)| k == "guard.test.idle").unwrap().1;
+    assert_eq!(idle.length, None, "the held pose loops");
 }

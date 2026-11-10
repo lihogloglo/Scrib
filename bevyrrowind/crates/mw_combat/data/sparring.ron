@@ -1,0 +1,17 @@
+// The sparring dummy's strike schedule (combat.md "C2a", combat-adapter.md "Sparring dummy";
+// mw_player_bevy `dummy.rs`, check CB-3a). It fights with the sword sheet (`movesets/sword_1h.ron`,
+// the player's) and presses `class` through its `Command` like any character: Light = light1, one
+// swing then its recovery (~0.9 s on UAL2 Sword_Regular_A + _Rec). Seconds, meters.
+// - first: after it stands, so a fresh scene isn't a hit on the first frame.
+// - period: a swing and its recovery (~0.9 s), the player's Small reaction (~0.6 s) and room to
+//   step in, roll or counter before the next one; Elden Ring's slow sparring foes (Godrick
+//   soldiers) swing every 2-3 s.
+// - reach: centre to centre; light1's blade at full extension (~1.5 m off the root) plus its
+//   0.37 m step and the defender's hurt radius. The sweep decides whether it lands.
+// Tune at CB-3a (docs/visual-checks/combat.md).
+(
+    class: Light,
+    first: 1.5,
+    period: 2.5,
+    reach: 2.0,
+)

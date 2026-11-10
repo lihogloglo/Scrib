@@ -106,7 +106,7 @@ From `mwmechanics/spelleffects.cpp` (helpers 66-140, apply ~700-920, remove ~111
 the same magnitude on end (so Restore spells cancel drains, as OpenMW); Damage Attribute/Skill = `Damage` capped at
 modified; Restore = `Restore`; Restore/Damage Health-Magicka-Fatigue = `PoolAdjust` (damage never below zero); Drain
 Health-Magicka-Fatigue = `PoolAdjust { below_zero: true }`, inverted on end; Fortify Health-Magicka-Fatigue =
-`PoolAdjust { above_max: true }`, or `PoolModMax` for abilities; Absorb = target and caster calls in one step.
+`PoolAdjust { above_max: true }` (max unchanged), or a `Permanent` `AddModifierShift` for abilities; Absorb = target and caster calls in one step.
 
 ## Factions, reputation, bounty, disposition
 
@@ -152,6 +152,9 @@ Health-Magicka-Fatigue = `PoolAdjust { below_zero: true }`, inverted on end; For
   floored at 0: plus `PoolSetCurrent`); `SetDyn` = `SetBase` + `PoolSetCurrent(max)`; `ModCurrentDyn` = `PoolAdjust`;
   level, reputation (0..=255) and bounty as `CounterSet`; ranks through `setFactionRank` rules (below 0 = new
   `StatOp::Leave`, past slot 10 ignored). No sheet: reads 0 (`GetPCRank` -1), writes dropped, nothing logged.
+  **Bug (logged 2026-11-10, not fixed):** on the derived magicka and fatigue pools `ModDyn` / `SetDyn` change the
+  stored base, which the next recompute rewrites from the formula (the A3 class, fixed for effects with
+  `AddModifierShift`); likely fix: write the `*_offset` stats, or a shifting modifier with a `Script` source.
   Deviations (named in the module docs): `modStat`'s excess past 100 into the modifier, `setBase(.., true)` zeroing
   modifiers, OpenMW's script abort without a speaker faction (skipped here). Gaps: `PCExpell` message box, fatigue
   knockdown at ≤ 0, `recordCrimeId`, unknown faction ids accepted, `SetMagicka`/`SetFatigue` bases are re-derived by

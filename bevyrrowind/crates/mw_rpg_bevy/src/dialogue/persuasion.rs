@@ -53,7 +53,7 @@ pub fn persuasion_kind(option: &ActionId) -> Option<PersuasionKind> {
 }
 
 /// A string GMST, trimmed (`fallback` when missing, not a string, or blank).
-fn gmst_text(db: &RecordDb, name: &str, fallback: &str) -> String {
+pub(super) fn gmst_text(db: &RecordDb, name: &str, fallback: &str) -> String {
     match db.get::<GameSetting>(&RecordId::new(name)).map(|g| &g.value) {
         Some(GameSettingValue::String(s)) if !s.trim().is_empty() => s.trim().to_owned(),
         _ => fallback.to_owned(),
@@ -184,20 +184,21 @@ impl Rpg {
         Some(DialogueAction::new(PERSUASION_ACTION, label).with_submenu(options))
     }
 
-    /// The dialogue window's action buttons for `talk`'s speaker: Persuasion (NPCs only).
-    /// Called after every conversation step and every routed action, so a bribe's enabled
-    /// state follows the player's gold. TODO(SV3): the speaker's service buttons
-    /// ([`DialogueAction::from_offer`]) go after it, as `OpenMW` lists services after
-    /// Persuasion.
+    /// The dialogue window's action buttons for `talk`'s speaker: Persuasion (NPCs only), then
+    /// one button per service offer, as `OpenMW`'s `updateTopicsPane` lists them
+    /// ([`Rpg::service_actions`]). Called after every conversation step and every routed
+    /// action, so a bribe's enabled state follows the player's gold.
     pub fn refresh_actions(&self, talk: &Talk, view: &mut DialogueView) {
-        let actions = self.persuasion_action(talk.speaker).into_iter().collect();
+        let mut actions: Vec<DialogueAction> = self.persuasion_action(talk.speaker).into_iter().collect();
+        actions.extend(self.service_actions(talk));
         view.set_actions(actions);
     }
 
     /// A pressed action button or submenu option ([`DialogueRequest::Action`]): a Persuasion
-    /// option runs [`Rpg::persuade_and_reply`] at `tick` and returns its result; anything else
-    /// (the Persuasion button alone, service buttons until SV3, unknown ids) is a logged no-op
-    /// and returns `None`. The buttons are refreshed either way.
+    /// option runs [`Rpg::persuade_and_reply`] at `tick` and returns its result; a service
+    /// button goes to the service host ([`Rpg::service_request`], its outcome in
+    /// [`Rpg::take_service_events`]) and returns `None`, as does anything else (the Persuasion
+    /// button alone, unknown ids: a logged no-op). The buttons are refreshed either way.
     pub fn route_action(
         &mut self,
         talk: &mut Talk,
@@ -216,8 +217,10 @@ impl Rpg {
             }
             Some(result)
         } else {
-            // TODO(SV3): service buttons → `DialogueRequest::service_open` → the service host.
-            debug!("dialogue: action {action:?} (option {option:?}) has no handler yet");
+            let request = DialogueRequest::Action { action: action.clone(), option: option.cloned() };
+            if !self.route_service_action(talk, view, &request, sheets, tick) {
+                debug!("dialogue: action {action:?} (option {option:?}) has no handler");
+            }
             None
         };
         self.refresh_actions(talk, view);
@@ -225,11 +228,14 @@ impl Rpg {
     }
 
     /// The conversation ends (`goodbyeSelected`; also when its window closes without goodbye):
-    /// the speaker's base becomes the session's original plus its permanent changes, clamped so
+    /// the player's trade sessions close, and the speaker's base becomes the session's original plus its permanent changes, clamped so
     /// the derived disposition stays in 0..=100. A no-op without persuasion, and when called
     /// again.
     pub fn end_talk(&mut self, talk: &mut Talk, sheets: &dyn MwSheets) {
         let speaker = talk.speaker;
+        // The service windows close with the conversation; staged items never moved.
+        self.sessions.close_player(talk.session.ctx().player);
+        self.close_service_lists(talk.session.ctx().player);
         let Some(actor) = self.content.actors.get(&speaker).filter(|a| a.facts.npc) else { return };
         let record_base = actor.base_disposition;
         let zero = {

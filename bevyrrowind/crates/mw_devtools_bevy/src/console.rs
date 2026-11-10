@@ -30,6 +30,9 @@
 //! - Any other line runs as `MWScript` (vanilla's console: `player->AddItem gold_001 100`),
 //!   on the selected actor (click-select) or else the player; completion offers the
 //!   functions the interpreter runs, with their short forms.
+//! - `cast <spell>`: the player casts a spell or power through the host cast path
+//!   (`mw_rpg_bevy::cast::console_cast`; learns it first if unknown), touch entries on the
+//!   click-selected actor.
 
 use bevy_core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy_ecs::system::SystemState;
@@ -122,6 +125,22 @@ fn register_cheats(app: &mut App) {
         |inv| {
             let cell = inv.args.str("cell").unwrap_or_default().trim().trim_matches('"').trim().to_owned();
             let text = center_on_cell(inv.ctx, &cell)?;
+            inv.log.info(&text);
+            Ok(())
+        },
+    );
+    // Effects adapter A5a: the host cast path without the cast input (A5b).
+    app.add_console_command(
+        CommandSpec::new("cast")
+            .help(
+                "Casts a spell or power by id from the player through the host cast path (book, magicka, chance; \
+                 learns it first if unknown): self entries on the player, touch entries on the click-selected actor",
+            )
+            .param(Param::new("spell", ArgKind::Str)),
+        |inv| {
+            let spell = inv.args.str("spell").unwrap_or_default().trim().trim_matches('"').to_owned();
+            let selected = inv.ctx.get_resource::<ConsoleSelection>().and_then(|s| s.0);
+            let text = mw_rpg_bevy::cast::console_cast(inv.ctx, &spell, selected)?;
             inv.log.info(&text);
             Ok(())
         },
@@ -337,7 +356,7 @@ fn register(app: &mut App) {
         .insert_resource(GiGain { intensity: gi_intensity, ambient: gi_ambient, reported: None })
         .add_systems(Update, (apply_ssao, apply_contact_shadows, apply_bloom, apply_gi, apply_gi_gain, apply_terrain_reflectance));
     let vars = LiveVars { ssao, contact, gi };
-    let live = format!("live: ssao, contactshadows, gi, ambient, {}; other --off parts are startup only", Switch::names());
+    let live = format!("live: ssao, contactshadows, gi, ambient, viewmodel, {}; other --off parts are startup only", Switch::names());
     for (name, on) in [("on", Some(true)), ("off", Some(false)), ("flip", None)] {
         let verb = match on {
             Some(true) => "Turns on",
@@ -723,6 +742,20 @@ fn set_rain_slant_cap(world: &mut World, on: Option<bool>) -> Result<String, Str
     Ok(format!("rain slant cap {}", if v { "on" } else { "off (raw wind)" }))
 }
 
+/// `viewmodel` (first-person.md FP-2): the player camera's `ComfortSettings::view_model`, so the
+/// owner can A/B the first-person view model in one run (arms and held items redrawn at the body
+/// FOV in the near depth slice vs drawn with the body).
+fn set_view_model(world: &mut World, on: Option<bool>) -> Result<String, String> {
+    let mut cameras = world.query::<&mut sf_camera_bevy::PlayerCamera>();
+    let mut text = None;
+    for mut cam in cameras.iter_mut(world) {
+        let v = on.unwrap_or(!cam.settings.view_model);
+        cam.settings.view_model = v;
+        text = Some(format!("view model {} (first person)", if v { "on" } else { "off" }));
+    }
+    text.ok_or_else(|| "viewmodel: no player camera in this run".to_owned())
+}
+
 /// `on`/`off`/`flip <name>`: what happened, or why nothing did.
 fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on: Option<bool>) -> Result<String, String> {
     let var = match name {
@@ -744,6 +777,9 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
     if name == "rain_slant_cap" {
         return set_rain_slant_cap(world, on);
     }
+    if name == "viewmodel" {
+        return set_view_model(world, on);
+    }
     if let Some(var) = var {
         if world.query_filtered::<(), With<ExteriorCamera>>().iter(world).next().is_none() {
             return Err(format!("{name}: no streaming camera in this run"));
@@ -762,7 +798,7 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
     }
     match mw_game_core::perf::Off::from_flags(&[name.to_owned()]) {
         Ok(_) => Err(format!("{name}: startup only, relaunch with --off {name}")),
-        Err(unknown) => Err(format!("{unknown}; live: ssao, contactshadows, gi, ambient, {}", Switch::names())),
+        Err(unknown) => Err(format!("{unknown}; live: ssao, contactshadows, gi, ambient, viewmodel, {}", Switch::names())),
     }
 }
 
@@ -1138,6 +1174,20 @@ mod tests {
     }
 
     /// RO-16 fix 2: `flip weather_ambient` swaps the weather's ambient tint for the old fixed blue.
+    #[test]
+    fn view_model_switch_flips_the_player_camera_setting() {
+        let mut app = app();
+        run(&mut app, "flip viewmodel");
+        assert!(log(&app).iter().any(|l| l.ends_with("viewmodel: no player camera in this run")), "{:?}", log(&app));
+        let cam = app.world_mut().spawn(sf_camera_bevy::PlayerCamera::new(Entity::PLACEHOLDER)).id();
+        assert!(!app.world().get::<sf_camera_bevy::PlayerCamera>(cam).unwrap().settings.view_model, "off by default");
+        run(&mut app, "flip viewmodel");
+        assert!(app.world().get::<sf_camera_bevy::PlayerCamera>(cam).unwrap().settings.view_model);
+        assert!(log(&app).iter().any(|l| l == "view model on (first person)"), "{:?}", log(&app));
+        run(&mut app, "off viewmodel");
+        assert!(!app.world().get::<sf_camera_bevy::PlayerCamera>(cam).unwrap().settings.view_model);
+    }
+
     #[test]
     fn weather_ambient_switch_flips_the_sky_option() {
         let mut app = app();

@@ -444,6 +444,59 @@ fn a_blackout_queued_behind_a_door_fade_runs_its_hooks_and_travel_at_the_cut() {
     assert!(!app.world().resource::<FadeTransition>().is_active(), "faded back in");
 }
 
+/// Worldspace layers (first-person.md "Layer plan", FP-1b): each worldspace gets a pair, its
+/// content layer and the shadow-only layer after it; lights carry both, cameras only layer 0 and
+/// the content layer, and a camera traveling between worldspaces takes the target's camera
+/// layers at the cut, never a shadow layer.
+#[test]
+fn worldspaces_get_layer_pairs_and_a_traveling_camera_never_carries_a_shadow_layer() {
+    use bevy::camera::visibility::RenderLayers;
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = streaming_app(dir.path());
+    {
+        let mut fade = app.world_mut().resource_mut::<FadeTransition>();
+        fade.fade_secs = 0.0;
+        fade.max_hold_secs = 0.05;
+    }
+    let inside = WorldspaceId::new("inside");
+    let outside = WorldspaceRegistry::ensure_in(app.world_mut(), &ws());
+    let interior = WorldspaceRegistry::ensure_in(app.world_mut(), &inside);
+    assert_eq!((outside.layers(), interior.layers()), (WorldspaceLayers { world: 1, shadow: 2 }, WorldspaceLayers { world: 3, shadow: 4 }));
+    let registry = app.world().resource::<WorldspaceRegistry>();
+    assert_eq!(registry.camera_layers(&inside), RenderLayers::from_layers(&[0, 3]));
+    assert_eq!(registry.light_layers(&inside), RenderLayers::from_layers(&[3, 4]));
+    assert_eq!(registry.light_layers(&WorldspaceId::new("unloaded")), RenderLayers::default());
+    let l = interior.layers();
+    assert_eq!((l.content(), l.shadow_only(), l.sky_light()), (RenderLayers::layer(3), RenderLayers::layer(4), RenderLayers::from_layers(&[0, 3, 4])));
+    assert!(!l.camera().intersects(&l.shadow_only()) && l.light().intersects(&l.shadow_only()) && l.sky_light().intersects(&l.shadow_only()));
+    assert!(!l.light().intersects(&outside.layers().light()), "a worldspace's lights reach none of another's layers");
+    let root = app.world().get::<WorldspaceRoot>(interior.root).unwrap();
+    assert_eq!(root.layers(), l);
+
+    let (cell, transform) = to_grid(WorldPos::ORIGIN);
+    let camera = app.world_mut().spawn((Camera::default(), outside.layers().camera(), cell, transform, ChildOf(outside.root))).id();
+    let shadow_layers = [outside.layers().shadow_only(), interior.layers().shadow_only()];
+    let travel = |app: &mut App, to: &WorldspaceId| {
+        let to = Location::new(to.clone(), WorldPos::from_f64(DVec3::new(2.0, 1.0, 0.0)));
+        app.world_mut().write_message(StartTravel { traveler: camera, to: to.clone(), rotation: Quat::IDENTITY, reload: false });
+        for _ in 0..2000 {
+            app.update();
+            let layers = app.world().get::<RenderLayers>(camera).unwrap();
+            assert!(shadow_layers.iter().all(|s| !layers.intersects(s)), "no camera carries a shadow layer: {layers:?}");
+            if app.world_mut().resource_mut::<Messages<TravelArrived>>().drain().any(|a| a.to == to) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        panic!("never arrived");
+    };
+    travel(&mut app, &inside);
+    assert_eq!(app.world().get::<RenderLayers>(camera), Some(&RenderLayers::from_layers(&[0, 3])));
+    assert_eq!(app.world().get::<ChildOf>(camera).map(ChildOf::parent), Some(interior.root));
+    travel(&mut app, &ws());
+    assert_eq!(app.world().get::<RenderLayers>(camera), Some(&RenderLayers::from_layers(&[0, 1])));
+}
+
 /// Meshes spawned later under a `SubtreeRange` root (a runtime-imported
 /// model's scene) get the placement's range, pushed out by their offset.
 #[test]

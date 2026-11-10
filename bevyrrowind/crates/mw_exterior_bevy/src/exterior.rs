@@ -591,10 +591,12 @@ impl NifSpawner {
         let calibration = *world.resource::<LightCalibration>();
         #[allow(clippy::cast_possible_truncation)]
         let seed = placement.placement.id.0 as u32;
+        let layers = world.resource::<WorldspaceRegistry>().get(cx.worldspace).map_or_else(|| cx.layers.clone(), |e| e.layers().light());
         let mut commands = world.commands();
         let light = mw_assets::lights::spawn_light(&mut commands, &calibration, info, root, cx.local, seed);
-        // The worldspace's layer: lights reach only their own worldspace's meshes.
-        commands.entity(light).try_insert(cx.layers.clone());
+        // The worldspace's light layers (content and shadow-only, `WorldspaceLayers::light`):
+        // lights reach only their own worldspace's meshes.
+        commands.entity(light).try_insert(layers);
         if root.is_none() {
             commands.entity(light).try_insert(ChildOf(cx.parent));
         }
@@ -739,7 +741,7 @@ fn setup(
     // every LOD and far-field crossfade). Measured: the prepass also cost 0.4 ms
     // here. With motion vectors the prepass gets a fragment stage that applies
     // the dither, which is how DLSS (`--dlss`) and `--prepass` run.
-    let layers = RenderLayers::from_layers(&[0, entry.layer]);
+    let layers = entry.layers().camera();
     let mut camera = commands.spawn((
         Camera3d::default(),
         // HDR in every worldspace, as it is under the sky (Bevy's atmosphere
@@ -924,7 +926,8 @@ type SkyLights = Or<(With<SunLight>, With<MoonLight>)>;
 type CameraNotPlayer = (With<ExteriorCamera>, Without<Player>);
 
 /// The sky's sun and moon light (and shadow) the active worldspace while it shows the
-/// sky, `[0, its layer]` like its camera, and no view otherwise. Bevy filters
+/// sky, `[0, its layer]` like its camera plus its shadow-only layer
+/// (`WorldspaceLayers::sky_light`: the first-person head casts), and no view otherwise. Bevy filters
 /// directional lights per view by layers (not per mesh), so a sun on `[0, exterior]`
 /// stayed in every interior view through the shared layer 0: unlit there (no
 /// `SkyCamera`, illuminance 0) but still evaluated per pixel with its contact-shadow
@@ -940,7 +943,7 @@ fn light_layers(
     let sky = envs.is_none_or(|envs| envs.0.get(&ws).is_none_or(|e| e.sky));
     let want = if sky {
         let Some(entry) = registry.get(&ws) else { return };
-        RenderLayers::from_layers(&[0, entry.layer])
+        entry.layers().sky_light()
     } else {
         RenderLayers::none()
     };
@@ -1593,4 +1596,38 @@ fn far_worldspaces(manifest: &Manifest) -> sf_lod_bevy::FarWorldspaces {
             .map(|k| sf_world::WorldspaceId::new(&k.subject))
             .collect(),
     ))
+}
+
+#[cfg(test)]
+mod light_layer_tests {
+    use bevy::ecs::system::RunSystemOnce;
+    use sf_world::WorldspaceId;
+
+    use super::*;
+
+    /// FP-1b (first-person.md "Layer plan"): the sun and moon carry the active worldspace's sky
+    /// light layers (`[0, world, shadow]`, so its shadow-only layer casts), move with it, and
+    /// carry nothing in a worldspace without sky.
+    #[test]
+    fn sky_lights_carry_the_active_worldspace_shadow_layer() {
+        let mut world = World::new();
+        world.init_resource::<WorldspaceRegistry>();
+        let outside = WorldspaceRegistry::ensure_in(&mut world, &ids::exterior()).layers();
+        let (hall, cave) = (WorldspaceId::new("hall"), WorldspaceId::new("cave"));
+        let hall_layers = WorldspaceRegistry::ensure_in(&mut world, &hall).layers();
+        WorldspaceRegistry::ensure_in(&mut world, &cave);
+        let env = |sky| mw_world::CellEnvironment { atmosphere: None, sky, water_level: None };
+        world.insert_resource(mw_doors_bevy::Environments(HashMap::from([(hall.clone(), env(true)), (cave.clone(), env(false))])));
+        let sun = world.spawn(SunLight).id();
+        let moon = world.spawn(MoonLight).id();
+        let run = |world: &mut World, ws: &WorldspaceId| {
+            world.insert_resource(ActiveWorldspace(Some(ws.clone())));
+            world.run_system_once(light_layers).unwrap();
+            [sun, moon].map(|e| world.get::<RenderLayers>(e).cloned())
+        };
+        assert_eq!(run(&mut world, &ids::exterior()), [Some(outside.sky_light()), Some(outside.sky_light())]);
+        assert_eq!(outside.sky_light(), RenderLayers::from_layers(&[0, outside.world, outside.shadow]));
+        assert_eq!(run(&mut world, &hall), [Some(hall_layers.sky_light()), Some(hall_layers.sky_light())], "a cell with sky");
+        assert_eq!(run(&mut world, &cave), [Some(RenderLayers::none()), Some(RenderLayers::none())], "no sky: no view, no caster");
+    }
 }

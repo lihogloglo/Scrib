@@ -3,8 +3,8 @@
 //! [`ServiceRules`]'s trade path over the record db and a host view ([`MwTradeHost`]). The
 //! service bits of the provider (the class's for autocalc NPCs) give the dialogue buttons and
 //! what the merchant trades; prices and the haggle go through A1's [`barter_price`] and
-//! [`barter_haggle`]. List services (training, travel, spells, repair) are slices A3-A6: their
-//! offers show, their `entries` are empty for now.
+//! [`barter_haggle`]. List services: training's rows and purchase are `crate::training` (A3);
+//! travel, spells and repair (A4-A6) show their offers, their `entries` are empty for now.
 //!
 //! Ported from `OpenMW` (GPL-3.0) at commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`, paths
 //! under `apps/openmw/` (line numbers from the spec where given; the rest name the function):
@@ -28,19 +28,20 @@
 //!   lowercased) ([`BoundItems`]).
 //! - `mwworld/containerstore.cpp` 1030-1044, `mwgui/containeritemmodel.cpp` ~134: negative
 //!   inventory counts are restocking stacks, never used up ([`record_entry_stack`]).
-//! - `mwgui/tradewindow.cpp` `onOfferButtonClicked`: the disposition change after each haggle
-//!   for NPC merchants ([`MwServiceRules`]'s `haggle`).
+//! - `mwgui/tradewindow.cpp` `onOfferButtonClicked` (447-457): the disposition change after each
+//!   haggle for NPC merchants; `haggle` (99-111): a haggle won at a better price than offered
+//!   uses Mercantile (`Mercantile_Success`, use 0) scaled by the haggled percentage
+//!   ([`MwServiceRules`]'s `haggle`, [`mercantile_use`]).
 //! - `mwgui/dialogue.cpp` 525-540 `restock`: the gold pool resets to the base gold after
 //!   `fBarterGoldResetDelay` hours ([`MwServiceRules`]'s `purse_base`).
 //!
-//! Not here: the Mercantile skill use of a won haggle (the next slice reads
-//! `HaggleOut::mercantile_scale`), the Bevy and dialogue wiring, the stolen-goods veto (A7).
+//! Not here: the Bevy and dialogue wiring (`mw_rpg_bevy`), the stolen-goods veto (A7).
 //!
 //! Status: written 2026-11-08 without compiling: UNTESTED (owner test pass 2026-11-10).
 
 use std::collections::HashSet;
 
-use mw_stats::MwGmst;
+use mw_stats::{MwGmst, SKILLS};
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::service::{
     DealTotals, DealVeto, EntryId, EntryRefusal, HaggleOutcome, Holdings, LabelRef, PurseRule, QuoteLine, ServiceCtx,
@@ -54,8 +55,29 @@ use tes3::esp::{
 };
 
 use crate::services::{
-    BarterPriceIn, BarterTerms, EffectiveValueIn, HaggleIn, barter_haggle, barter_price, effective_value,
+    BarterPriceIn, BarterTerms, EffectiveValueIn, HaggleIn, HaggleOut, barter_haggle, barter_price, effective_value,
 };
+use crate::training::{TrainingOptions, TrainingSheets, training_entries, training_purchase};
+
+/// The ESM skill index of Mercantile (`ESM::Skill::Mercantile`).
+const MERCANTILE: usize = 24;
+/// SKIL use 0 of Mercantile, `ESM::Skill::Mercantile_Success`.
+const MERCANTILE_SUCCESS: u8 = 0;
+
+/// The player's Mercantile use after a haggle (`tradewindow.cpp` 99-111): an accepted haggle at a
+/// better price than offered calls `skillUsageSucceeded(player, Mercantile, Mercantile_Success,
+/// skillGain)` with [`HaggleOut::mercantile_scale`] as `skillGain`. A deal at the merchant's own
+/// offer (accepted before the roll), a refused haggle and a creature merchant use nothing; a won
+/// haggle whose `floor`ed gain is 0 is skipped too (`OpenMW` calls with 0, which progresses
+/// nothing). The stat is the skill's sheet key (`mw_stats::SKILLS`); the host maps it.
+#[must_use]
+pub fn mercantile_use(out: &HaggleOut) -> Option<ServiceEffect> {
+    (out.accepted && out.mercantile_scale > 0.0).then(|| ServiceEffect::UseSkill {
+        stat: RecordId::new(SKILLS[MERCANTILE]),
+        use_kind: MERCANTILE_SUCCESS,
+        scale: out.mercantile_scale,
+    })
+}
 
 /// The dialogue topic whose first matching INFO refuses a service (`checkServiceRefused`).
 pub const SERVICE_REFUSAL_TOPIC: &str = "service refusal";
@@ -391,6 +413,12 @@ pub trait MwTradeHost: Holdings {
     /// rejects every `Choice` condition), with `OpenMW`'s inverted disposition check
     /// (`filter.list(dialogue, false, false, true)`). Returns the INFO id.
     fn service_refusal(&self, ctx: &ConversationCtx) -> Option<RecordId>;
+    /// The stat table and this player's and provider's sheets, for training (A3). `None`: no
+    /// stats in this run, or no sheet for one of them; training then lists nothing.
+    fn training_sheets(&self, player: PlayerId, provider: ActorKey) -> Option<TrainingSheets<'_>> {
+        let _ = (player, provider);
+        None
+    }
 }
 
 /// Trade switches (services-adapter.md "Options").
@@ -406,22 +434,29 @@ impl Default for BarterOptions {
     }
 }
 
-/// Morrowind's [`ServiceRules`] (the trade path; list services come in A3-A6).
+/// Morrowind's [`ServiceRules`] (the trade path and training; travel, spells and repair come in
+/// A4-A6).
 pub struct MwServiceRules<'a, H: ?Sized> {
     pub records: &'a RecordDb,
     pub gmst: &'a MwGmst,
     pub bound: &'a BoundItems,
     pub host: &'a H,
     pub options: BarterOptions,
+    pub training: TrainingOptions,
 }
 
 impl<'a, H: MwTradeHost + ?Sized> MwServiceRules<'a, H> {
     pub fn new(records: &'a RecordDb, gmst: &'a MwGmst, bound: &'a BoundItems, host: &'a H) -> Self {
-        Self { records, gmst, bound, host, options: BarterOptions::default() }
+        Self { records, gmst, bound, host, options: BarterOptions::default(), training: TrainingOptions::default() }
     }
 
     fn facts(&self, ctx: &ServiceCtx) -> Option<ProviderFacts> {
         provider_facts(self.records, &ctx.provider_base)
+    }
+
+    /// Whether `kind` is `service` and this provider offers it (its flags, re-read now).
+    fn lists(&self, ctx: &ServiceCtx, kind: &ServiceKind, service: MwService) -> bool {
+        MwService::from_kind(kind) == Some(service) && self.facts(ctx).is_some_and(|f| service.offered(&f))
     }
 
     /// Whether the provider would trade this stack at all (class filter and bound items).
@@ -535,8 +570,9 @@ impl<H: MwTradeHost + ?Sized> ServiceRules for MwServiceRules<'_, H> {
         i64::from(price.max(0))
     }
 
-    /// `mw.barter.haggle` with `roll + 1` as `rollDice(100) + 1`; an NPC merchant's disposition
-    /// change as an effect. The Mercantile use is the next slice's.
+    /// `mw.barter.haggle` with `roll + 1` as `rollDice(100) + 1`. Effects in `OpenMW`'s order:
+    /// the Mercantile use of a won haggle ([`mercantile_use`], inside `haggle`), then an NPC
+    /// merchant's disposition change (`onOfferButtonClicked`, after it).
     fn haggle(&self, ctx: &ServiceCtx, deal: &DealTotals, roll: u8) -> HaggleOutcome {
         let Some(terms) = self.host.barter_terms(ctx.player, ctx.provider) else {
             return HaggleOutcome { accepted: deal.balance <= deal.merchant_offer, effects: Vec::new() };
@@ -550,6 +586,7 @@ impl<H: MwTradeHost + ?Sized> ServiceRules for MwServiceRules<'_, H> {
         );
         let out = barter_haggle(&input);
         let mut effects = Vec::new();
+        effects.extend(mercantile_use(&out));
         if out.disposition_delta != 0 {
             effects.push(ServiceEffect::Disposition { delta: out.disposition_delta });
         }
@@ -561,18 +598,30 @@ impl<H: MwTradeHost + ?Sized> ServiceRules for MwServiceRules<'_, H> {
         Ok(())
     }
 
-    /// List services are A3-A6.
-    fn entries(&self, _ctx: &ServiceCtx, _kind: &ServiceKind) -> Vec<ServiceEntry> {
-        Vec::new()
+    /// Training's rows ([`training_entries`]) when the provider trains; travel, spells and
+    /// repair are A4-A6 (empty).
+    fn entries(&self, ctx: &ServiceCtx, kind: &ServiceKind) -> Vec<ServiceEntry> {
+        if !self.lists(ctx, kind, MwService::Training) {
+            return Vec::new();
+        }
+        let Some(sheets) = self.host.training_sheets(ctx.player, ctx.provider) else { return Vec::new() };
+        let terms = self.host.barter_terms(ctx.player, ctx.provider);
+        training_entries(&sheets, terms, self.training, self.gmst)
     }
 
+    /// Training's purchase re-checked now ([`training_purchase`]); `Unknown` for the others.
     fn buy_entry(
         &self,
-        _ctx: &ServiceCtx,
-        _kind: &ServiceKind,
-        _entry: &EntryId,
+        ctx: &ServiceCtx,
+        kind: &ServiceKind,
+        entry: &EntryId,
     ) -> Result<Vec<ServiceEffect>, EntryRefusal> {
-        Err(EntryRefusal::Unknown)
+        if !self.lists(ctx, kind, MwService::Training) {
+            return Err(EntryRefusal::Unknown);
+        }
+        let sheets = self.host.training_sheets(ctx.player, ctx.provider).ok_or(EntryRefusal::Unknown)?;
+        let terms = self.host.barter_terms(ctx.player, ctx.provider);
+        training_purchase(&sheets, terms, self.training, self.gmst, entry)
     }
 
     /// A pool of the base gold, reset after `fBarterGoldResetDelay` hours.

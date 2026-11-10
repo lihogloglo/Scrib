@@ -1,7 +1,7 @@
 # Services adapter: Morrowind barter, training, travel, spells and repair on `sf_rpg::service`
 
-Status: A1 (formulas) written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10); A2a (barter rules) the same day, same status; A2b-A7 not
-built. Framework SV1 (`sf_rpg::service`) written 2026-11-08,
+Status: A1 (formulas) written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10); A2a (barter rules) the same day, same status; A2b (Mercantile use)
+2026-11-10, unit + headless tests; A3-A7 not built. Framework SV1 (`sf_rpg::service`) written 2026-11-08,
 not yet compiled (services.md "As built (SV1)": `QuoteLine` has no `base_value`, the adapter derives it in `quote`;
 `FixedPrice` takes `sell_permille`). Owner 2026-11-08: every open question below takes its default. Framework:
 [services.md](../../../superfargoth/docs/specs/services.md) (`ServiceRules`, `TradeSession`, `Purse`, effects,
@@ -179,14 +179,7 @@ mercantile_scale on acceptance (accepted with a better price than offered):
 disposition_delta = accepted ? iBarterSuccessDisposition : iBarterFailDisposition   (NPC merchants only)
 ```
 
-The disposition change is applied on **every** accept attempt that reaches the haggle step, including the
-no-haggle path (OpenMW `onOfferButtonClicked` 447-457 applies it after `haggle` returns, and `haggle` accepts at once
-when the player asks no more than offered). Our `TradeSession` skips `haggle` when `balance == merchant_offer`, so
-the adapter's settlement adds `Disposition { delta: iBarterSuccessDisposition }` for NPC merchants on every accepted
-deal, and a failed haggle emits `iBarterFailDisposition`. Temporary vs permanent: OpenMW's dialogue manager applies
-it as the conversation's temporary change unless `barter disposition change is permanent` ([settings
-doc](https://openmw.readthedocs.io/en/latest/reference/modding/settings/game.html)); the disposition port owns
-where it lands.
+Disposition on every accept (the no-haggle path too) and where it lands: archive "Barter disposition (A2a design)".
 
 **Mercantile skill use** (stats-adapter S9): an accepted haggle with `mercantile_scale > 0` emits
 `StatOp::UseSkill { skill: Mercantile, use_kind: 0 /* Mercantile_Success */, scale: mercantile_scale }`
@@ -215,18 +208,20 @@ A first purse starts at `base` with `last_restock = now` (OpenMW starts at base 
 
 - **Offered skills**: the trainer's three highest skills, walking skills in record order and replacing the lowest
   only when strictly greater (ties keep the earlier skill). Value = trainer's **modified** skill, or base when
-  `trainers training skills based on base skill` is set (`getSkillForTraining` 236-241).
+  `trainers training skills based on base skill` is set (`getSkillForTraining` 230-235; our default: base).
 - **Rule `mw.services.training`**: `In { terms, pc_skill_base: i32, trainer_skill: f32, governing_attr_modified:
   i32, iTrainingMod: i32 }` → `Out { price: i32, refusal: None | TrainerNotBetter | AttributeCap }`:
   `price = barter_offer(max(1, pc_skill_base * iTrainingMod), buying)`; `TrainerNotBetter` if
   `trainer_skill <= pc_skill_base` (`sServiceTrainingWords`); `AttributeCap` if `pc_skill_base >=
   governing_attr_modified` (`sNotifyMessage17`). OpenMW's purchase path omits the `max(1, ...)` the list uses; we use
   the list's value in both so the shown price is the paid price (a 0-skill edge case only).
-- **Effects**: `Pay(price)`, `RaiseStat(skill)` → `StatOp::RaiseSkill { source: Training }` (counts toward level
-  progress, as OpenMW's `skillLevelUp(..., "trainer")`), `PassTime { hours: 2, sleep: false }` (OpenMW `rest(2,
-  false)` then `advanceTime(2)`, with a 2-step progress bar and a fade).
-- Rows: refused skills stay listed with the reason (modern: OpenMW only says why after the click). No per-level
-  training limit: that is Skyrim's rule, not Morrowind's.
+- **Effects**: `Pay(price)` (into the trainer's pool), `RaiseStat(skill)` → `StatOp::RaiseSkill { source: Training }`
+  (counts toward level progress, as OpenMW's `skillLevelUp(..., "trainer")`), `PassTime { hours: 2, sleep: false }`
+  (OpenMW `rest(2, false)` then `advanceTime(2)`, with a 2-step progress bar and a 0.2 s fade).
+- Rows: refused skills stay listed with the reason (modern: OpenMW only says why after the click; it also checks the
+  gold first and says nothing). No per-level training limit: that is Skyrim's rule, not Morrowind's.
+- **Flow (modern)**: a row asks "are you sure?" (2 hours pass); after a purchase the list stays open and re-lists
+  (Skyrim's trainer menu). OpenMW closes the training window and the dialogue (`onTrainingFinished`): classic column.
 
 ### Travel (`mw.travel`, `mwgui/travelwindow.cpp` 50-235)
 
@@ -302,7 +297,8 @@ A first purse starts at `base` with `last_restock = now` (OpenMW starts at base 
 | Trainers use base skill | on (no fortify exploit) | off | OpenMW setting |
 | Prevent merchant equipping | on | off | OpenMW setting |
 | Barter disposition permanent | off | off | OpenMW setting |
-| Refusal reasons on rows, travel confirmation | on | off | framework screens |
+| Refusal reasons on rows, travel and training confirmation | on | off | framework screens |
+| List stays open after training | on | off (closes to the game) | `trainingwindow.cpp` 217-228 |
 
 ## Co-op (net-ready rules)
 
@@ -360,7 +356,13 @@ UESP refused automated fetches on 2026-11-08; the UESP-sourced values are as rem
 ## As built
 
 A1 (price formulas, `mw_rpg::services`) and A2a (barter rules, `mw_rpg::barter`), both written 2026-11-08 without
-compiling: UNTESTED (owner test pass 2026-11-10). Detail: [archive/services-adapter-history.md](archive/services-adapter-history.md).
+compiling: UNTESTED (owner test pass 2026-11-10). TR1 (2026-11-10, headless tests only): barter in the game host
+(`mw_rpg_bevy` `dialogue/services.rs`: buttons, open/refusal, session requests, settlement, merchant stock seeded
+from the record). TR2 (2026-11-10, headless tests only): the trade screen over the dialogue (`dialogue/trade_screen.rs`).
+A2b (2026-11-10, unit + headless tests): a won haggle's Mercantile use (`mw_rpg::mercantile_use`, a `StatOp::UseSkill`
+on the player's sheet in the host). A3 (2026-11-10, unit + headless tests; PUI-SV4 awaiting owner): training in game
+(`mw_rpg::training`, the host's list path in `dialogue/services.rs`, `dialogue/service_list_screen.rs`).
+Detail: [archive/services-adapter-history.md](archive/services-adapter-history.md).
 
 ## Build plan (one deliverable per slice; framework SV1-SV3 first)
 

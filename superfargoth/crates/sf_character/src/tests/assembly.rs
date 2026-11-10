@@ -194,3 +194,32 @@ fn outfit_memory_before_and_after() {
 fn mb(bytes: usize) -> f64 {
     bytes as f64 / 1e6
 }
+
+/// Merge groups (first-person roles): same-material parts in different groups stay apart, each
+/// mesh carries its group, and one group merges exactly like no grouping.
+#[test]
+fn merge_groups_split_one_material_into_one_mesh_per_group() {
+    let body = part_model(vec![grid(10, 6, 0.5, 0)]);
+    let still_face = part_model(vec![head(false)]);
+    let arm = part_model(vec![grid(4, 4, 1.0, 0), grid(2, 2, 1.0, 1)]);
+    let grouped = |g: [u8; 3]| {
+        let parts = [(&body, g[0]), (&still_face, g[1]), (&arm, g[2])].map(|(c, group)| AssemblyPart { group, ..whole(c) });
+        assemble(&parts, 0, &ShapeWeights::default()).unwrap()
+    };
+    let flat = grouped([0, 0, 0]);
+    assert_eq!(flat, assemble(&[whole(&body), whole(&still_face), whole(&arm)], 0, &ShapeWeights::default()).unwrap());
+    let summary =
+        |o: &AssembledOutfit| -> Vec<(String, u8, usize)> { o.merged.iter().map(|m| (m.material.name.clone(), m.group, m.indices.len() / 3)).collect() };
+    assert_eq!(summary(&flat), [("skin".to_owned(), 0, (60 + 64 + 16) * 2), ("cloth".to_owned(), 0, 4 * 2)]);
+    // Body 0, head 1, arm 2: skin splits three ways, the arm's cloth is its own mesh in group 2.
+    let split = grouped([0, 1, 2]);
+    assert_eq!(
+        summary(&split),
+        [("skin".to_owned(), 0, 60 * 2), ("skin".to_owned(), 1, 64 * 2), ("skin".to_owned(), 2, 16 * 2), ("cloth".to_owned(), 2, 4 * 2)]
+    );
+    assert_eq!(split.joints, flat.joints, "one palette whatever the grouping");
+    // A morph-bearing head keeps its own mesh and carries its part's group.
+    let face = part_model(vec![head(true)]);
+    let parts = [AssemblyPart { group: 1, ..whole(&face) }];
+    assert_eq!(assemble(&parts, 0, &ShapeWeights::default()).unwrap().morphed[0].group, 1);
+}

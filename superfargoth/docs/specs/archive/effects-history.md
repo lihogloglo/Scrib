@@ -41,3 +41,50 @@ defs, stats, sources, land and cast models, the target's `SheetRead` and `time: 
 `EffectRequest::Touch`/`Launch(Delivery)`; `Request` effects as `EffectRequest::Effect { Start | End }` (no `Tick`
 until `period`), answered by `EffectOp::Invalidate`. `CureFilter::Effect` (the spec's `Archetype`), `SourceTag`
 (book sources leave the book), `Dispel` (`Cast`/`Power` only, chance `magnitude/100`; the `Cure` op uses 100).
+
+## As built (E4a)
+
+Crate `sf_effects_bevy` (deps `sf_effects`, `sf_stats_bevy`): `Effects { owner,
+active, book }` component, `EffectIndex` (observers), resources `EffectTableRes` (content), `SourceTableRes` (empty),
+`EffectRulesRes` (standard), `EffectIds` (the host counter), `EffectClock`, `PendingEffectOut`; messages `EffectCommand`
+in, `EffectMessage` and `EffectRequestMessage` out; `EffectSystems::{Commands, Tick, Requests, Out}` chained before
+`StatSystems::Apply`. Stat ops leave as `StatCommand`s, one per run of ops with one owner and cause
+(`stat_commands`), so they land the same tick. Ticks only timed sets, in owner order. Game glue
+`mw_rpg_bevy::effects` (`add` from `stats::add`; `Effects` beside every `Stats`; `feed_clock`). Tests: 3 headless +
+1 game (synthetic records); measurement 500 characters / 2 000 effects / 50 rate: effect tick 0.089 ms, whole fixed
+tick with stats 0.55 ms (dev profile, workspace crates at opt-level 1; the 0.03 ms budget is for release on the
+target laptop). Known issue (E1, logged): a temporary `Pool Fortify` on a `KeepRatio` pool (Morrowind magicka,
+fatigue) counts twice: the modifier rebases the current by ratio, then `PoolAdjust` adds the magnitude.
+
+## As built (E4b)
+
+`sf_effects::save` (`EffectsSave { tick, active, book }` with `capture`, `is_empty`, `restore(defs, sources, now,
+ids)`: `started` rebased by age, cooldowns by ticks left (an expired one dropped), unknown effects and book sources
+dropped into `EffectsLoadReport`, the selection cleared with its source, `ids.next` moved past restored instances,
+`timed` recomputed; `reregister` keeps the `AddModifier` ops of `step::start_ops`, an absorb's caster side under the
+caster). `sf_effects_bevy`: `Effects::to_save(tick)` (`None` when empty), `Effects::restore(owner, save, LoadTables,
+now, ids)` (warns drift, returns the modifiers). `sf_save_bevy`: `CharacterSave.effects`, `CHARACTER_VERSION` 4,
+`legacy::v3` + typed step, `sections::effects` / `EffectsWorldSave`, goldens `sf.character.v4.json`,
+`sf.effects.v1.json`, `character-v4.sfsave` (the current golden; `character-v3.sfsave` loads through the step).
+Game: `mw_rpg_bevy::effects` (`EFFECTS_BLOB`, `EffectLoad` system param, `restore_in_world`, `saved_effects`,
+`write_effects`, `player_effects_save`); `stats::load_sheet(.., modifiers)` applies the owner's before settle,
+`restore_player_sheet(.., effects)`, attach and unload/persist read and write the blob; `mw_saves_bevy` declares the
+blob, registers `sf/effects` over `EffectIds`, fills `CharacterSave.effects`, clears `PendingEffectOut` on load.
+Tests: sf_effects 2 (round trip with fortify + drain + pool fortify: sheet bytes, values and remaining durations
+equal, same expiry; drift and rebase), sf_save_bevy 3 (codec round trip, v3 golden through the step, pre-effects
+save loads with none), mw_saves_bevy 1 (game path, synthetic records: player and creature).
+An NPC's empty effects are written over an older blob (the overlay has no blob removal), so ended effects do not
+come back.
+
+## As built (pool fortifies, 2026-11-10)
+
+Fixes the E1 double count (a temporary `Pool Fortify` on a `KeepRatio` pool: the modifier rebased the current, then a
+`PoolAdjust` added the magnitude again, 100 / 100 read 180 / 140 for 40) and the A3 loss (an innate one was
+`PoolModMax`, a stored-base change a derived pool's recompute overwrote). `sf_stats`: `StatOp::AddModifierShift` /
+`RemoveSourceShift` (appended; `Sheet::recompute_shifting`): the pools whose max the op moves shift their current by
+the same amount, clamped as OpenMW's `setCurrent(current + delta)` (`modDynamicStat`), instead of their `Rebase`; a
+plain modifier while building. `sf_effects`: `PoolMode::Fortify` = a shifting modifier on the source's layer
+(`Permanent` when innate); new `PoolMode::Boost` = `PoolAdjust(+m, above_max)` on start, `PoolAdjust(-m,
+below_zero)` on end, innate as `Fortify` (OpenMW `spelleffects.cpp` 799-819 / 1125-1145 at `ca5e2576`);
+`reregister` turns shifting adds into plain ones (the shift is in the saved current). Tests: sf_stats 3, sf_effects 2,
+mw_rpg_bevy 2 (one un-ignored), mw_saves_bevy 1.

@@ -1,7 +1,7 @@
 //! Fighters, vitals and the per-character fight state (combat.md "Fighter and vitals").
 
 use serde::{Deserialize, Serialize};
-use sf_action::{CharacterId, MovesetKey, RuleKey, Tick};
+use sf_action::{CharacterId, MovesetKey, RuleKey, TargetId, Tick};
 use smallvec::SmallVec;
 
 use crate::hitstop::HitStop;
@@ -93,6 +93,9 @@ pub struct SwingState {
     pub landed: SmallVec<[(u8, CharacterId); 4]>,
     /// Hit rows whose window opened (their stamina is charged), a bit per row.
     pub charged: u32,
+    /// The soft-aim target picked early in the swing (`crate::aim`), if any.
+    #[serde(default)]
+    pub aim: Option<TargetId>,
 }
 
 /// A character's combat state beside its `ActionState`: plain serde, replicated (host-only parts

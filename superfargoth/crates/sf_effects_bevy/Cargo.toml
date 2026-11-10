@@ -1,0 +1,22 @@
+[package]
+name = "sf_effects_bevy"
+description = "Thin Bevy shell for sf_effects: the Effects component (active set + spell book) per character, the fixed-tick EffectSystems sets, EffectCommand in, effect and request messages out, stat ops into sf_stats_bevy (effects.md E4)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Minimal Bevy (build-perf.md): the logic lives in `sf_effects`; this crate schedules it.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_log.workspace = true
+# `Time` (the fixed tick's length) in `FixedUpdate`.
+bevy_time = { workspace = true, features = ["std"] }
+sf_effects.workspace = true
+# The sheets the effect ops land on (`Stats`, `StatCommand`, `StatTick`, `StatSystems`).
+sf_stats_bevy.workspace = true
+workspace-hack.workspace = true
+
+[lints]
+workspace = true

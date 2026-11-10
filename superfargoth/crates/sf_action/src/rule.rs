@@ -277,6 +277,31 @@ pub enum Launch {
     Speed(f32),
 }
 
+/// A move's first-person look limits (action.md "Move rule": `look`; camera.md "First person"),
+/// authored in degrees: presentation data the camera shell turns into `sf_camera::LookLimits`.
+/// The view's yaw stays within `yaw` of the body's yaw and its pitch inside `pitch` while the
+/// move is committed: from its start until a `Cancel(Move)` window opens (or it ends; see
+/// [`CompiledRule::look_at`]), eased in and out over `ease`. Third person ignores them.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LookRule {
+    /// Half range of yaw around the body's yaw, degrees (0, 180].
+    pub yaw: f32,
+    /// Pitch range, degrees (down negative), `min <= max`.
+    pub pitch: (f32, f32),
+    /// Seconds to ease the limits in, and out on release.
+    #[serde(default)]
+    pub ease: f32,
+}
+
+impl LookRule {
+    /// Finite, yaw in (0, 180], pitch inside +-90 with `min <= max`, ease >= 0.
+    pub fn valid(&self) -> bool {
+        let (lo, hi) = self.pitch;
+        self.yaw.is_finite() && self.yaw > 0.0 && self.yaw <= 180.0 && lo.is_finite() && hi.is_finite() && -90.0 <= lo && lo <= hi && hi <= 90.0 && self.ease.is_finite() && self.ease >= 0.0
+    }
+}
+
 /// One move, as data. Patched field-level like other records once the shell registers it as an
 /// `sf_records` kind.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -307,6 +332,9 @@ pub struct MoveRule {
     /// Ticks before this rule may start again.
     #[serde(default)]
     pub redo_ticks: u16,
+    /// First-person look limits while the move is committed ([`LookRule`]); `None`: free look.
+    #[serde(default)]
+    pub look: Option<LookRule>,
 }
 
 fn yes() -> bool {
@@ -360,11 +388,28 @@ impl CompiledRule {
     pub fn force_only(&self) -> bool {
         self.rule.kind == MoveKind::Forced
     }
+
+    /// A hold move (guard, action.md "Category default windows"): every request class is a hold
+    /// class ([`ClassSet::HOLD`]). It lasts while one of them is held and lapses on release; its
+    /// chain's last slot may loop (the held pose).
+    pub fn holds(&self) -> bool {
+        !self.classes.is_empty() && self.classes.intersection(ClassSet::HOLD) == self.classes
+    }
 }
 
 impl CompiledRule {
     pub fn id(&self) -> &str {
         &self.rule.id
+    }
+
+    /// The look limits in force at clock `t` ([`LookRule`]): the rule's `look` while the move is
+    /// committed, `None` once a `Cancel(Move)` window is open (the stick may walk out, so the
+    /// body no longer holds the view) or the chain has ended. An unrestricted move (loops, no
+    /// gating windows) cancels `Move` from its start, so it never limits.
+    pub fn look_at(&self, slots: &dyn SlotSource, t: crate::ClockTime) -> Option<LookRule> {
+        let look = self.rule.look?;
+        let g = crate::windows::gates(self, slots, t);
+        (!g.ended && !g.cancel.contains(ActionClass::Move)).then_some(look)
     }
 }
 
@@ -462,6 +507,9 @@ impl RuleSetBuilder {
                 && (lo.is_nan() || hi.is_nan() || lo > hi)
             {
                 errors.push(err(origin, r, "probe height band is empty or NaN".into()));
+            }
+            if r.look.is_some_and(|l| !l.valid()) {
+                errors.push(err(origin, r, "look: yaw must be in (0, 180], pitch min <= max inside +-90, ease >= 0".into()));
             }
             if let Some(Launch::Speed(v)) = r.launch
                 && !(v.is_finite() && v > 0.0)

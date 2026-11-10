@@ -168,7 +168,7 @@ fn skill(t: &MwTable, s: &sf_stats::Sheet, id: SkillId) -> f32 {
 #[test]
 fn table_has_the_format_stats_and_roles() {
     let t = table();
-    assert_eq!(t.table.len(), 8 + 27 + 1 + 3 + 4 + 27 + 8 + 3 + 1 + 3 + 27 + 1 + 3 + 22);
+    assert_eq!(t.table.len(), 8 + 27 + 1 + 3 + 4 + 27 + 8 + 3 + 1 + 3 + 27 + 1 + 3 + 24);
     for (i, a) in ATTRIBUTES.iter().enumerate() {
         assert_eq!(t.table.find(a), Some(t.idx.attributes[i]));
         assert_eq!(usize::from(t.idx.attributes[i].0), i);
@@ -183,7 +183,7 @@ fn table_has_the_format_stats_and_roles() {
     assert_eq!(t.table.role(Role::Encumbrance), Some(t.idx.encumbrance));
 }
 
-/// The 22 magnitude stats (2026-11-08) are appended: every older index is where it was (`MwIdx`
+/// The 24 magnitude stats (2026-11-08, Silence and Sound 2026-11-10) are appended: every older index is where it was (`MwIdx`
 /// fields are positional), and each magnitude key resolves to a base-0 `Value` in `magnitude`.
 #[test]
 fn magnitude_stats_are_appended_after_the_older_indices() {

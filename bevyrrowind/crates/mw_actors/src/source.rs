@@ -229,6 +229,12 @@ impl MwActors {
         &self.slots
     }
 
+    /// The first-person role of a registered slot: [`slots::view_role`] of its part slot, else
+    /// the framework's region default (the creature `body` slot: body).
+    pub fn view_role(&self, slot: SlotId) -> sf_character::ViewRole {
+        self.prt_slots.iter().position(|&s| s == slot).map_or_else(|| self.slots.role(slot), slots::view_role)
+    }
+
     pub fn db(&self) -> &RecordDb {
         &self.db
     }

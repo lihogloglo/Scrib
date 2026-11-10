@@ -35,7 +35,7 @@ fn mgef(id: EffectId, school: EffectSchool, base_cost: f32, flags: u32) -> Magic
 }
 
 /// MGEF records for the effects the tests use (every record flag bit set on Fortify Attribute).
-fn effects() -> MwEffects {
+pub(crate) fn effects() -> MwEffects {
     let d = EffectSchool::Destruction;
     let r = EffectSchool::Restoration;
     MwEffects::from_records(&[
@@ -49,7 +49,7 @@ fn effects() -> MwEffects {
     ])
 }
 
-fn entry(effect: EffectId2, range: EffectRange, magnitude: (u32, u32), duration: u32, area: u32) -> Effect {
+pub(crate) fn entry(effect: EffectId2, range: EffectRange, magnitude: (u32, u32), duration: u32, area: u32) -> Effect {
     Effect {
         magic_effect: effect,
         skill: SkillId2::None,
@@ -62,7 +62,7 @@ fn entry(effect: EffectId2, range: EffectRange, magnitude: (u32, u32), duration:
     }
 }
 
-fn spell(id: &str, spell_type: SpellType, flags: SpellFlags, cost: u32, effects: Vec<Effect>) -> Spell {
+pub(crate) fn spell(id: &str, spell_type: SpellType, flags: SpellFlags, cost: u32, effects: Vec<Effect>) -> Spell {
     Spell { id: id.to_owned(), effects, data: SpellData { spell_type, cost, flags }, ..Default::default() }
 }
 
@@ -168,7 +168,7 @@ fn a1_archetypes() {
     assert_eq!(archetype(18), Some((pool("health", PoolMode::Drain), ArgKind::None)));
     assert_eq!(archetype(24), Some((pool("magicka", PoolMode::Hurt), ArgKind::None)));
     assert_eq!(archetype(77), Some((pool("fatigue", PoolMode::Heal), ArgKind::None)));
-    assert_eq!(archetype(81), Some((pool("magicka", PoolMode::Fortify), ArgKind::None)));
+    assert_eq!(archetype(81), Some((pool("magicka", PoolMode::Boost), ArgKind::None)));
     assert_eq!(archetype(15), Some((pool("health", PoolMode::Hurt), ArgKind::None)));
     assert_eq!(archetype(27), Some((pool("health", PoolMode::Hurt), ArgKind::None)));
     let magnitude = |k: &str| Some((Archetype::MagnitudeStat { stat: StatTarget::Fixed(key(k)) }, ArgKind::None));
@@ -180,7 +180,7 @@ fn a1_archetypes() {
     for i in [10, 85, 102, 135] {
         assert_eq!(archetype(i), None, "{i}");
     }
-    assert_eq!(MwEffects::from_records(std::iter::empty()).table().len(), 47);
+    assert_eq!(MwEffects::from_records(std::iter::empty()).table().len(), 49);
 }
 
 /// The game's stat table: `MwTable`'s (SKIL data is irrelevant to effects).

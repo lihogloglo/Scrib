@@ -141,9 +141,19 @@ SOFTWARE.
   `components/esm3/loadmgef.cpp` (HardcodedFlags, effect names, GMST ids, resistance and weakness maps),
   `apps/openmw/mwmechanics/spellutil.cpp` (`calcEffectCost`, `getTotalCost`, `calcSpellCost`),
   `apps/openmw/mwmechanics/spellresistance.cpp` (`getEffectResistanceAttribute`) and `apps/openmw/mwworld/esmstore.cpp`
-  (effect-list validation).
+  (effect-list validation); potions (adapter A2, 2026-11-10, behaviour only): `apps/openmw/mwgui/inventorywindow.cpp`
+  (`useItem`), `apps/openmw/mwclass/potion.cpp` (`use`, the `Drink` sound), `apps/openmw/mwworld/actionapply.cpp`,
+  `apps/openmw/mwclass/actor.cpp` (`consume`), `apps/openmw/mwmechanics/spellcasting.cpp` (`cast(Potion)`) and
+  `apps/openmw/mwmechanics/activespells.cpp` (`addToSpells`: stackable sources); start spells (adapter A3, 2026-11-10):
+  `apps/openmw/mwmechanics/spells.cpp` (`addSpell`, `setSpells`, `addAllToInstance`), `apps/openmw/mwclass/npc.cpp` and
+  `creature.cpp` (`getCreatureStats`: race powers, record spells) and `apps/openmw/mwmechanics/mechanicsmanagerimp.cpp`
+  (`buildPlayer`: race powers, birthsign spells); casting (adapter A5a, 2026-11-10): `spellutil.cpp`
+  (`calcSpellBaseSuccessChance`, `getSpellSuccessChance`, `getSpellSchool`, `spellIncreasesSkill`), `spellcasting.cpp`
+  (`cast(Spell)`: the fizzle roll), `apps/openmw/mwworld/worldimp.cpp` (`startSpellCast`: magicka check and deduction),
+  `spells.cpp` (`canUsePower`, `usePower`) and `apps/openmw/mwmechanics/creaturestats.cpp` (`getFatigueTerm`).
 - Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
-- Ported into: `bevyrrowind/crates/mw_effects` (the game; written 2026-11-08, untested).
+- Ported into: `bevyrrowind/crates/mw_effects` (the game; written 2026-11-08, untested; `book.rs` A3, `cast.rs` A5a),
+  `bevyrrowind/crates/mw_rpg_bevy/src/item_use.rs` (A2), `effects.rs` / `stats.rs` (A3 start spells) and `cast.rs` (A5a).
 
 ## OpenMW (barter and service prices)
 
@@ -165,6 +175,17 @@ SOFTWARE.
 - Persuasion menu (2026-11-08): `apps/openmw/mwgui/dialogue.cpp` (`PersuasionDialog`) and
   `files/data/mygui/openmw_persuasion_dialog.layout` (labels); ported into
   `bevyrrowind/crates/mw_rpg_bevy/src/dialogue/persuasion.rs`.
+- Barter in the game host (2026-11-10, services TR1): `apps/openmw/mwgui/dialogue.cpp` (`updateTopicsPane`,
+  `onSelectListItem`), `mwdialogue/dialoguemanagerimp.cpp` (`checkServiceRefused`, `applyBarterDispositionChange`),
+  `mwdialogue/filter.cpp` (`testDisposition` inverted, `testSelectStruct` choice gate, `list`),
+  `mwgui/tradewindow.cpp` (`onOfferButtonClicked`), `mwworld/containerstore.cpp` (`fill`); ported into
+  `bevyrrowind/crates/mw_rpg_bevy/src/dialogue/services.rs` and `bevyrrowind/crates/mw_rpg/src/filter.rs`.
+- Training (2026-11-10, services A3): `apps/openmw/mwgui/trainingwindow.cpp` (`setPtr` 75-104, `onTrainingSelected`
+  163-210, `onTrainingFinished` 217-228, `getSkillForTraining` 230-235), `mwgui/timeadvancer.cpp`,
+  `mwmechanics/actors.cpp` (`rest`), `mwworld/worldimp.cpp` (`advanceTime`), `mwworld/datetimemanager.cpp`
+  (`advanceTime`, `setHour`, `setDay`, `getDaysPerMonth`), `files/data/scripts/omw/skillhandlers.lua`
+  (`skillLevelUp` sources); ported into `bevyrrowind/crates/mw_rpg/src/training.rs` and
+  `bevyrrowind/crates/mw_rpg_bevy/src/dialogue/services.rs`.
 
 ## OpenMW (MessageBox formatting)
 

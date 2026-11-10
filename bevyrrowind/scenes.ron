@@ -911,6 +911,14 @@
             checks: ["CB-1"],
         ),
         (
+            name: "level-sparring",
+            level: "sparring",
+            hour: 10.0,
+            description: "Greybox sparring: the player 3 m from a sparring dummy that strikes (light1 every 2.5 s) once the player is within 2 m, a standing dummy 6 m off (cameras: behind, side; F ready, LMB attack, Shift tap roll, Tab first person)",
+            look_for: "step in: the dummy swings on a steady beat and each hit plays the player's reaction for the side it came from (front, left, right, back), health drops 10 per hit; out of reach it never swings; in first person the view stays free during a reaction and the arms follow it",
+            checks: ["CB-3a"],
+        ),
+        (
             name: "level-robe-walk",
             level: "robe-walk",
             hour: 10.0,
