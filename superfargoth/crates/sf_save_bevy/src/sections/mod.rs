@@ -22,6 +22,7 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 use sf_ai::AiSave;
 use sf_rpg::WorldRpg;
+use sf_rpg::service::WorldServices;
 use sf_save::{Family, SectionKey};
 use sf_sky::SkyClock;
 use sf_surface::SurfaceSave;
@@ -52,6 +53,10 @@ pub const RPG_VERSION: u32 = 1;
 /// `sf/ai`: every actor's AI state (ai.md "Saves"); shape and version owned by `sf_ai::save`.
 pub const AI: &str = "ai";
 pub const AI_VERSION: u32 = sf_ai::AI_VERSION;
+/// `sf/services`: merchant purses (services.md "Saves"); shape and version owned by
+/// `sf_rpg::service` ([`sf_rpg::service::SERVICES_SECTION`]).
+pub const SERVICES: &str = "services";
+pub const SERVICES_VERSION: u32 = sf_rpg::service::SERVICES_VERSION;
 /// Family of `sf/character/<player key>`.
 pub const CHARACTER: &str = "character";
 /// v3: `stats` (the stats sheet, stats.md S4); v2 is frozen in [`character::legacy::v2`]: v2
@@ -62,7 +67,7 @@ pub const CHARACTER_VERSION: u32 = 3;
 pub const SCRIPT: &str = "script";
 pub const SCRIPT_VERSION: u32 = 1;
 
-/// Apply order on load (save.md "Loading" step 4): records, overlay, clock and weather, RPG,
+/// Apply order on load (save.md "Loading" step 4): records, overlay, clock and weather, RPG and services,
 /// party and characters, adapter, scripts (restored last so `on_load` sees everything).
 pub mod order {
     pub const RECORDS: i32 = 0;
@@ -70,6 +75,8 @@ pub mod order {
     pub const CLOCK: i32 = 200;
     pub const WEATHER: i32 = 250;
     pub const RPG: i32 = 300;
+    /// `sf/services`: after the RPG state; refers to actors by stable key only.
+    pub const SERVICES: i32 = 320;
     /// `sf/ai`: after the overlay and clock it refers to, before the adapter (whose rules may read it).
     pub const AI: i32 = 350;
     pub const PARTY: i32 = 400;
@@ -228,4 +235,15 @@ pub fn ai(
     SaveSection::value(key(AI), AI_VERSION, get, set)
         .check(|_: &World, v: &AiSave| v.check().map_err(|e| e.to_string()))
         .order(order::AI)
+}
+
+/// `sf/services`: merchant purses by stable actor key (services.md "Saves"). `get` returns `None`
+/// when no purse exists, so such a world writes no section; a save without one (from before the
+/// section) loads as no purses, and every merchant restocks to its base on its next open. Trade
+/// sessions are never saved (staged items never moved). No check: any purse is valid state.
+pub fn services(
+    get: impl Fn(&World) -> Option<WorldServices> + Send + Sync + 'static,
+    set: impl Fn(&mut World, WorldServices) + Send + Sync + 'static,
+) -> SaveSection {
+    SaveSection::value(key(SERVICES), SERVICES_VERSION, get, set).order(order::SERVICES)
 }

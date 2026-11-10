@@ -36,6 +36,8 @@ mod tests_ai;
 mod tests_budget;
 #[cfg(test)]
 mod tests_formats;
+#[cfg(test)]
+mod tests_services;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;

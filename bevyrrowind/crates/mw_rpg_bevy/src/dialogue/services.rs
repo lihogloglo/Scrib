@@ -280,6 +280,12 @@ impl Rpg {
         true
     }
 
+    /// Closes every open trade session (a load: sessions are never saved, services.md
+    /// "Saves"; staged items never moved, so nothing is lost).
+    pub fn close_service_sessions(&mut self) {
+        self.sessions.close_all();
+    }
+
     /// Service events since the last call (`ServiceOpened`, `TradeQuoted`, ...).
     pub fn take_service_events(&mut self) -> Vec<ServiceEvent> {
         std::mem::take(&mut self.service_events)

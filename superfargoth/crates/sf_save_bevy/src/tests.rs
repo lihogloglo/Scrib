@@ -51,6 +51,9 @@ pub(crate) struct Party(pub Vec<CharacterSave>);
 /// The AI store (`sf_ai_bevy::AiDirectives` in a game), as its `sf/ai` value.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Ai(pub sf_ai::AiSave);
+/// The host's merchant purses (`mw_rpg_bevy::Rpg::services` in a game), as its `sf/services` value.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub(crate) struct Services(pub sf_rpg::service::WorldServices);
 /// The adapter's state (`test/globals`), like `MWScript` globals.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Globals(pub BTreeMap<String, f64>);
@@ -124,6 +127,12 @@ pub(crate) fn wire(app: &mut App) {
                 w.insert_resource(Ai(v));
             },
         ))
+        .add_save_section(sections::services(
+            |w: &World| w.get_resource::<Services>().filter(|s| !s.0.purses.is_empty()).map(|s| s.0.clone()),
+            |w: &mut World, v| {
+                w.insert_resource(Services(v));
+            },
+        ))
         .add_save_section(sections::characters(
             |w: &World| w.get_resource::<Party>().map(|p| p.0.clone()).unwrap_or_default(),
             |w: &mut World, v| {
@@ -147,7 +156,8 @@ pub(crate) fn app(root: &Path, background: bool) -> App {
         .init_resource::<Records>()
         .init_resource::<Party>()
         .init_resource::<Globals>()
-        .init_resource::<Ai>();
+        .init_resource::<Ai>()
+        .init_resource::<Services>();
     app.world_mut().resource_mut::<Autosave>().interval = None;
     app
 }
@@ -268,6 +278,7 @@ pub(crate) struct State {
     party: Party,
     globals: Globals,
     ai: Ai,
+    services: Services,
 }
 
 pub(crate) fn state(app: &App) -> State {
@@ -281,6 +292,7 @@ pub(crate) fn state(app: &App) -> State {
         party: w.resource::<Party>().clone(),
         globals: w.resource::<Globals>().clone(),
         ai: w.resource::<Ai>().clone(),
+        services: w.resource::<Services>().clone(),
     }
 }
 

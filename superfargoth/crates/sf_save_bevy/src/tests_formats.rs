@@ -102,6 +102,7 @@ fn saved_shapes_match_their_goldens() {
             &[&traced::<sf_ai::DirectiveKind>, &traced::<sf_ai::DirectiveSource>, &traced::<sf_ai::Limit>, &traced::<sf_ai::Serving>],
         ),
     );
+    check_golden(&v(sections::SERVICES, sections::SERVICES_VERSION), &shape::<sf_rpg::service::WorldServices>(None, &[]));
     check_golden(
         &v(sections::CHARACTER, sections::CHARACTER_VERSION),
         &shape::<CharacterSave>(None, &[&traced::<sf_rpg::AttrValue>, &traced::<sf_controller::MoverMode>, &traced::<sf_action::Mode>]),

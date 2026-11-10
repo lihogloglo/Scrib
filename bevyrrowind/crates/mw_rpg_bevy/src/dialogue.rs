@@ -221,8 +221,7 @@ pub struct Rpg {
     /// otherwise. TODO(AI settings, ROADMAP Phase 3 AI): no per-actor AI settings exist yet; move
     /// these into them (saved, read by the AI) when they land. Unsaved until then.
     ai_settings: HashMap<ActorKey, AiNudge>,
-    /// Merchant purses on the game clock (`sf/services`). TODO(saves): the `sf/services` save
-    /// section (`SERVICES_SECTION`) in `mw_saves_bevy`; a new game until then.
+    /// Merchant purses on the game clock, saved as `sf/services` (`mw_saves_bevy`).
     pub services: WorldServices,
     /// Open trade sessions, by id and player (not saved: staged items never moved).
     sessions: ServiceSessions,

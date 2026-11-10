@@ -15,6 +15,9 @@
 //!     gameplay body (`ActionState`, `Locomotion`; restored through `RestoreBody`), the
 //!     inventory (`RpgState::pc`), and an `mw` extension blob ([`PlayerExt`]: first / third
 //!     person).
+//!   - `sf/services`: merchant purses (`Rpg::services`; placement-id actors only). Old saves
+//!     without it load with none: each merchant restocks to its base on its next open. Open
+//!     trade sessions are never saved and close on load.
 //!   - `mw/rpg` ([`MwRpgSave`]): the rest of `RpgState`: NPC dialogue state (disposition changes,
 //!     greetings), container inventories, script locals and globals. Actor keys that are not
 //!     placement ids (entity bits of spawned characters: `dialogue.rs` `actor_key`) are left out.
@@ -59,6 +62,7 @@ use sf_camera::ViewChoice;
 use sf_camera_bevy::PlayerCamera;
 use sf_coords::WorldPos;
 use sf_records::RecordId;
+use sf_rpg::service::WorldServices;
 use sf_rpg::{ActorKey, CharacterRpg};
 use mw_boot_bevy::mods::ProfileIdentity;
 use sf_save_bevy::sf_save::{ModRef, SaveMode, SaveReason, SectionKey, SlotDir, list_worlds};
@@ -112,6 +116,15 @@ pub struct PlayerExt {
 /// entity's 64 bits; placement ids are 128-bit hashes).
 fn stable(key: ActorKey) -> bool {
     key.0 > u128::from(u64::MAX)
+}
+
+/// `sf/services`: the merchant purses of placement-id actors (as [`MwRpgSave`], spawned
+/// characters' entity-bit keys are left out). Purses of actors gone from the content are not
+/// dropped on load yet: the actor registry fills as cells stream (leftover).
+fn services_save(services: &WorldServices) -> WorldServices {
+    let mut copy = services.clone();
+    copy.drop_missing(stable);
+    copy
 }
 
 impl MwRpgSave {
@@ -173,6 +186,15 @@ pub fn register(app: &mut App) {
         |w, v| {
             if let Some(mut rpg) = w.get_resource_mut::<Rpg>() {
                 rpg.state.world = v;
+            }
+        },
+    ))
+    .add_save_section(sections::services(
+        |w| w.get_resource::<Rpg>().map(|r| services_save(&r.services)).filter(|s| !s.purses.is_empty()),
+        |w, v| {
+            if let Some(mut rpg) = w.get_resource_mut::<Rpg>() {
+                rpg.services = v;
+                rpg.close_service_sessions();
             }
         },
     ))
@@ -542,6 +564,40 @@ mod tests {
         assert_eq!(meta.load_order.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["mw", "morrowind-data"]);
         assert_eq!(meta.load_order[1].manifest_hash, [2; 32]);
         assert_eq!(meta.profile_fingerprint, [7; 32]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `sf/services` through the game's registration (no install): a save without purses writes
+    /// no section, and loading it (like a save from before the section) leaves no purses; a
+    /// placement-id merchant's purse round-trips, an entity-bits key is left out.
+    #[test]
+    fn merchant_purses_round_trip_and_a_save_without_them_loads_empty() {
+        use sf_rpg::GameTime;
+        use sf_rpg::service::Purse;
+
+        let root = temp_root("services");
+        let mut db = sf_records::RecordDb::new();
+        mw_records::register_kinds(&mut db).unwrap();
+        let mut app = app(root.clone(), Rpg::new(Arc::new(db)).unwrap());
+        let purse = Purse { gold: 137, last_restock: GameTime { day: 2, minute: 615 } };
+        let spawned = ActorKey(42);
+        let set_purses = |app: &mut App| {
+            let mut rpg = app.world_mut().resource_mut::<Rpg>();
+            rpg.services.purses.insert(FARGOTH, purse);
+            rpg.services.purses.insert(spawned, purse);
+        };
+
+        save(&mut app);
+        set_purses(&mut app);
+        load(&mut app);
+        assert_eq!(app.world().resource::<Rpg>().services, WorldServices::default(), "no section: no purses");
+
+        set_purses(&mut app);
+        save(&mut app);
+        app.world_mut().resource_mut::<Rpg>().services = WorldServices::default();
+        load(&mut app);
+        let loaded = &app.world().resource::<Rpg>().services;
+        assert_eq!(loaded.purses.iter().map(|(k, p)| (*k, *p)).collect::<Vec<_>>(), [(FARGOTH, purse)]);
         let _ = std::fs::remove_dir_all(&root);
     }
 
