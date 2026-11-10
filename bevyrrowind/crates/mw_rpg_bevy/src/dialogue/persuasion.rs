@@ -235,6 +235,7 @@ impl Rpg {
         let speaker = talk.speaker;
         // The service windows close with the conversation; staged items never moved.
         self.sessions.close_player(talk.session.ctx().player);
+        self.close_service_lists(talk.session.ctx().player);
         let Some(actor) = self.content.actors.get(&speaker).filter(|a| a.facts.npc) else { return };
         let record_base = actor.base_disposition;
         let zero = {

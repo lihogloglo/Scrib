@@ -3,6 +3,13 @@
 //! trade session's requests, settled into the world. The trade screen over them is
 //! `trade_screen.rs` (TR2; [`Rpg::trade_quotes`] gives its money and price columns).
 //!
+//! List services (slice A3, training first): opening one lists its rows (`EntriesListed`, kept
+//! as an [`OpenList`] and re-sent whenever they change, [`relist_services`]: a sheet stepped
+//! after a purchase); `BuyEntry` on an open list re-checks the row ([`purchase`]) and applies
+//! its effects in order ([`Rpg::apply_service_effects`]: the payment into the provider's pool,
+//! the skill raise, the time passed), then `EntryBought`. The list screen is
+//! `service_list_screen.rs`.
+//!
 //! Net-ready (services.md "Co-op"): [`ServiceRequest`]s in ([`Rpg::service_request`]),
 //! [`ServiceEvent`]s out ([`Rpg::take_service_events`], sent as [`ServiceEventMessage`]s),
 //! sessions and purses owned by the host. Rolls are [`haggle_roll`] over (provider, session,
@@ -26,32 +33,43 @@
 //!   negative counts restock): a merchant's stock is seeded from its record on first access
 //!   ([`seed_store`]), its armor and clothing worn (first piece per slot, as
 //!   [`mw_rpg::record_clothing_value`]; `OpenMW`'s `autoEquip` picks by value, not modelled).
+//! - `mwgui/trainingwindow.cpp` `onTrainingSelected` / `onTrainingFinished` (rules in
+//!   [`mw_rpg::training_purchase`]): the skill rises as a trainer level-up
+//!   (`skillLevelUp(player, skill, "trainer")`: `IncreaseSource::Training`, which counts toward
+//!   the level), the gold goes into the trainer's pool, then `rest(2, false)` (the player's
+//!   awake rest: fatigue; `OpenMW` rests every actor in range, here only the player, logged)
+//!   and `advanceTime(2)` (`mwworld/datetimemanager.cpp` `advanceTime`: the `MWScript` calendar
+//!   globals, [`mw_rpg::advance_calendar`], and the sky clock, [`advance_sky`], until ROADMAP
+//!   1.17's single clock). Modern differences: the list stays open after a purchase (`OpenMW`
+//!   closes the training window and the dialogue), no fade or progress bar (2 game hours pass
+//!   at once; `OpenMW` steps them 1/60 s apart under a 0.2 s fade).
 
 use bevy_ecs::prelude::*;
 use bevy_log::prelude::*;
 use mw_rpg::{
-    BarterTerms, MwDialogueRules, MwEquipKind, MwEquipRules, MwService, MwServiceRules, MwSheets,
-    MwTradeHost, MwView, NoSheets, PartyTerms, PersuaderStats, is_gold, persuader_stats,
-    record_entry_stack,
+    BarterTerms, Calendar, MwDialogueRules, MwEquipKind, MwEquipRules, MwService, MwServiceRules,
+    MwSheets, MwTradeHost, MwView, NoSheets, PartyTerms, PersuaderStats, TrainingSheets,
+    advance_calendar, is_gold, persuader_stats, record_entry_stack,
 };
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::service::{
-    Currency, Holdings, MerchantMoney, OpenError, ServiceCtx, ServiceEffect, ServiceEvent,
-    ServiceEventKind, ServiceKind, ServiceOffer, ServiceRequest, ServiceRules, SessionId,
-    Settlement, Side, TradeConfig, TradeEnv, TradeRefusal, TradeSession, haggle_roll, open,
-    pane_prices, purchase,
+    Currency, EntryId, Holdings, MerchantMoney, OpenError, Purchase, ServiceCtx, ServiceEffect,
+    ServiceEntry, ServiceEvent, ServiceEventKind, ServiceKind, ServiceOffer, ServiceRequest,
+    ServiceRules, ServiceShape, SessionId, Settlement, Side, TradeConfig, TradeEnv, TradeRefusal,
+    TradeSession, haggle_roll, open, pane_prices, payment_command, purchase,
 };
 use sf_rpg::{
     ActorKey, CharacterRpg, ConversationCtx, Conversations, GameTime, Holder, Loadout, PlayerId,
     RpgCommand, RpgEvent, SessionState, StackId,
 };
 use sf_rpg_ui::{DialogueAction, DialogueRequest, DialogueView};
-use sf_stats_bevy::StatCommand;
-use sf_stats_bevy::sf_stats::{CauseKind, StatOp, StatOwner};
+use sf_sky_bevy::{SkyConfig, SkyTime};
+use sf_stats_bevy::sf_stats::{CauseKind, IncreaseSource, StatOp, StatOwner};
+use sf_stats_bevy::{StatCommand, StatTick};
 use tes3::esp::{LeveledItem, Npc};
 
 use super::persuasion::gmst_text;
-use super::{Rpg, Talk, View, id, player_key};
+use super::{DialogueSheets, Rpg, Talk, View, id, player_key};
 use crate::inventory::GOLD;
 
 /// Morrowind's trade settings: gold (`gold_001`) is the money, and the player may haggle.
@@ -63,7 +81,7 @@ pub fn trade_config() -> TradeConfig {
 }
 
 /// A service button's text without its GMST (Morrowind.esm's English value).
-fn label_fallback(service: MwService) -> &'static str {
+pub(super) fn label_fallback(service: MwService) -> &'static str {
     match service {
         MwService::Barter => "Barter",
         MwService::Spells => "Spells",
@@ -79,6 +97,19 @@ fn label_fallback(service: MwService) -> &'static str {
 /// `trade_screen.rs`).
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct ServiceEventMessage(pub ServiceEvent);
+
+/// An open list service: who, with whom, which service, and the rows last listed
+/// (`EntriesListed` goes out again only when they change).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenList {
+    pub player: PlayerId,
+    pub provider: ActorKey,
+    pub kind: ServiceKind,
+    pub entries: Vec<ServiceEntry>,
+}
+
+/// The `MWScript` globals of the calendar `advanceTime` writes, in [`Calendar`]'s field order.
+const CALENDAR_GLOBALS: [&str; 5] = ["gamehour", "dayspassed", "day", "month", "year"];
 
 /// [`Rpg::trade_quotes`]: an open session's provider money and price columns.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,6 +171,14 @@ impl MwTradeHost for View<'_> {
 
     fn service_refusal(&self, ctx: &ConversationCtx) -> Option<RecordId> {
         MwDialogueRules::new(&self.c.dialogue, self).service_refusal(ctx)
+    }
+
+    fn training_sheets(&self, player: PlayerId, provider: ActorKey) -> Option<TrainingSheets<'_>> {
+        Some(TrainingSheets {
+            table: self.sheets.table()?,
+            player: self.sheets.player(player)?,
+            trainer: self.sheets.actor(provider)?,
+        })
     }
 }
 
@@ -280,10 +319,93 @@ impl Rpg {
         true
     }
 
-    /// Closes every open trade session (a load: sessions are never saved, services.md
+    /// Closes every open trade session and list (a load: sessions are never saved, services.md
     /// "Saves"; staged items never moved, so nothing is lost).
     pub fn close_service_sessions(&mut self) {
         self.sessions.close_all();
+        self.lists.clear();
+    }
+
+    /// Closes `player`'s list with `provider` (the list screen's Back).
+    pub fn close_service_list(&mut self, player: PlayerId, provider: ActorKey) {
+        self.lists
+            .retain(|l| l.player != player || l.provider != provider);
+    }
+
+    /// Closes `player`'s lists (goodbye).
+    pub(super) fn close_service_lists(&mut self, player: PlayerId) {
+        self.lists.retain(|l| l.player != player);
+    }
+
+    /// `player`'s open list with `provider`, if any.
+    pub fn service_list(&self, player: PlayerId, provider: ActorKey) -> Option<&OpenList> {
+        self.lists
+            .iter()
+            .find(|l| l.player == player && l.provider == provider)
+    }
+
+    /// The rows of list service `kind` with `provider` for `player` now (`ServiceRules::entries`
+    /// with `sheets`).
+    pub fn service_entries(
+        &self,
+        player: PlayerId,
+        provider: ActorKey,
+        kind: &ServiceKind,
+        sheets: &dyn MwSheets,
+        tick: u64,
+    ) -> Vec<ServiceEntry> {
+        let Some(actor) = self.content.actors.get(&provider) else {
+            return Vec::new();
+        };
+        let ctx = ServiceCtx {
+            player,
+            provider,
+            provider_base: actor.facts.id.clone(),
+            now: self.game_time(),
+            tick,
+        };
+        let v = View {
+            c: &self.content,
+            s: &self.state,
+            sheets,
+        };
+        let rules = MwServiceRules::new(
+            &self.content.records,
+            &self.content.gmst,
+            &self.content.bound,
+            &v,
+        );
+        rules.entries(&ctx, kind)
+    }
+
+    /// The open lists whose rows changed since last listed, with their new rows.
+    fn stale_lists(&self, sheets: &dyn MwSheets, tick: u64) -> Vec<(usize, Vec<ServiceEntry>)> {
+        self.lists
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| {
+                let entries = self.service_entries(l.player, l.provider, &l.kind, sheets, tick);
+                (entries != l.entries).then_some((i, entries))
+            })
+            .collect()
+    }
+
+    /// Re-lists open lists whose rows changed: `EntriesListed` for each.
+    pub fn relist(&mut self, sheets: &dyn MwSheets, tick: u64) {
+        for (i, entries) in self.stale_lists(sheets, tick) {
+            let l = &mut self.lists[i];
+            l.entries.clone_from(&entries);
+            let e = ServiceEvent {
+                tick,
+                player: l.player,
+                provider: l.provider,
+                kind: ServiceEventKind::EntriesListed {
+                    kind: l.kind.clone(),
+                    entries,
+                },
+            };
+            self.service_events.push(e);
+        }
     }
 
     /// Service events since the last call (`ServiceOpened`, `TradeQuoted`, ...).
@@ -376,6 +498,13 @@ impl Rpg {
                     &self.content.bound,
                     &v,
                 );
+                let open = self
+                    .service_list(ctx.player, ctx.provider)
+                    .is_some_and(|l| l.kind == *kind);
+                if !open {
+                    warn!("services: {request:?} without its list open");
+                    return;
+                }
                 match purchase(&rules, &ctx, kind, entry, gold) {
                     Err(reason) => {
                         let kind = ServiceEventKind::EntryRefused {
@@ -385,10 +514,7 @@ impl Rpg {
                         };
                         self.service_events.push(event(&ctx, kind));
                     }
-                    Ok(p) => warn!(
-                        "services: {kind:?} {entry:?} for {}: list services are slices A3-A6",
-                        p.price
-                    ),
+                    Ok(p) => self.buy_listed(talk, &ctx, kind, entry, p, sheets),
                 }
             }
             ServiceRequest::Open { .. } | ServiceRequest::BuyEntry { .. } => {
@@ -460,12 +586,29 @@ impl Rpg {
                     "services: {kind:?} opened with {:?} ({:?})",
                     ctx.provider, o.session
                 );
-                let kind = ServiceEventKind::ServiceOpened {
+                let list = o.shape == ServiceShape::List;
+                let opened = ServiceEventKind::ServiceOpened {
                     kind: kind.clone(),
                     shape: o.shape,
                     session: o.session,
                 };
-                self.service_events.push(event(ctx, kind));
+                self.service_events.push(event(ctx, opened));
+                if list {
+                    let entries =
+                        self.service_entries(ctx.player, ctx.provider, kind, sheets, ctx.tick);
+                    self.close_service_lists(ctx.player);
+                    self.lists.push(OpenList {
+                        player: ctx.player,
+                        provider: ctx.provider,
+                        kind: kind.clone(),
+                        entries: entries.clone(),
+                    });
+                    let listed = ServiceEventKind::EntriesListed {
+                        kind: kind.clone(),
+                        entries,
+                    };
+                    self.service_events.push(event(ctx, listed));
+                }
             }
             Err(OpenError::Refused { topic, response }) => {
                 let out = {
@@ -618,6 +761,83 @@ impl Rpg {
         self.apply_service_effects(talk, ctx, settlement.effects, sheets);
     }
 
+    /// A list purchase that passed its checks: its effects in order, then `EntryBought` and the
+    /// re-listed rows (a sheet change lands on the next stat tick: [`relist_services`]).
+    fn buy_listed(
+        &mut self,
+        talk: &mut Talk,
+        ctx: &ServiceCtx,
+        kind: &ServiceKind,
+        entry: &EntryId,
+        bought: Purchase,
+        sheets: &dyn MwSheets,
+    ) {
+        info!(
+            "services: {kind:?} {entry:?} bought from {:?} for {}",
+            ctx.provider, bought.price
+        );
+        self.apply_service_effects(talk, ctx, bought.effects, sheets);
+        let kind = ServiceEventKind::EntryBought {
+            kind: kind.clone(),
+            entry: entry.clone(),
+            price: bought.price,
+        };
+        self.service_events.push(event(ctx, kind));
+        self.relist(sheets, ctx.tick);
+    }
+
+    /// `advanceTime(hours)` on the `MWScript` calendar globals the game declares (`GameHour`,
+    /// `DaysPassed`, `Day`, `Month`, `Year`; [`Rpg::game_time`] reads the first two), and the
+    /// hours queued for the sky clock ([`advance_sky`]). Single player: time passes.
+    /// TODO(co-op, services.md "Co-op"): a party rest request, the time skipped when the vote
+    /// fails or is pending.
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        reason = "calendar globals are small whole numbers stored as f32"
+    )]
+    fn pass_time(&mut self, hours: f32) {
+        let names = CALENDAR_GLOBALS.map(id);
+        let read = |rpg: &Rpg, name: &RecordId| {
+            View {
+                c: &rpg.content,
+                s: &rpg.state,
+                sheets: &NoSheets,
+            }
+            .global_value(name)
+            .map(mw_rpg::GlobalNumber::as_f32)
+        };
+        let [hour, days, day, month, year] = names.each_ref().map(|n| read(self, n));
+        let before = Calendar {
+            hour: hour.unwrap_or(0.0),
+            days_passed: days.unwrap_or(0.0) as i32,
+            day: day.unwrap_or(1.0) as i32,
+            month: month.unwrap_or(0.0) as i32,
+            year: year.unwrap_or(0.0) as i32,
+        };
+        let after = advance_calendar(before, hours);
+        let values = [
+            after.hour,
+            after.days_passed as f32,
+            after.day as f32,
+            after.month as f32,
+            after.year as f32,
+        ];
+        for ((name, value), declared) in names
+            .into_iter()
+            .zip(values)
+            .zip([hour, days, day, month, year])
+        {
+            if declared.is_some() {
+                self.state.globals.insert(name, value);
+            } else {
+                debug!("services: no {name} global to advance");
+            }
+        }
+        self.sky_hours += hours;
+        info!("services: {hours} h passed ({before:?} -> {after:?})");
+    }
+
     /// An item command on the host's inventories (`MoveStack` between two of them).
     fn apply_item_command(&mut self, command: RpgCommand) -> Result<Vec<RpgEvent>, String> {
         let holder = command.holder().ok_or("no holder")?;
@@ -671,10 +891,14 @@ impl Rpg {
         }
     }
 
-    /// A deal's effects. `Disposition`: `applyBarterDispositionChange` (module docs).
-    /// `UseSkill` (a won haggle's Mercantile use, [`mw_rpg::mercantile_use`]): a
-    /// `StatOp::UseSkill` on the player's sheet, the stat looked up by key, sent with the
-    /// dialogue's other stat commands. List-service effects are A3-A6.
+    /// A deal's or a list purchase's effects, in order. `Pay`: the currency leaves the player
+    /// ([`payment_command`]) into the provider's pool. `Disposition`:
+    /// `applyBarterDispositionChange` (module docs). `UseSkill` (a won haggle's Mercantile use,
+    /// [`mw_rpg::mercantile_use`]) and `RaiseStat` (training: `RaiseSkill` from
+    /// `IncreaseSource::Training`): stat ops on the player's sheet, the stat looked up by key,
+    /// sent with the dialogue's other stat commands. `PassTime`: the player's rest
+    /// (`StatOp::Rest`) and the clocks ([`Rpg::pass_time`]). Teleport, grants and attrs are
+    /// A4-A6.
     fn apply_service_effects(
         &mut self,
         talk: &mut Talk,
@@ -726,7 +950,44 @@ impl Rpg {
                         ops,
                     ));
                 }
-                other => debug!("services: effect {other:?} not applied yet (A3-A6)"),
+                ServiceEffect::Pay { amount } => {
+                    let pay = payment_command(ctx.player, &trade_config().currency, amount);
+                    if let Some(Err(e)) = pay.map(|c| self.apply_item_command(c)) {
+                        warn!("services: paying {amount}: {e}");
+                        continue;
+                    }
+                    self.services.apply_delta(ctx.provider, amount);
+                }
+                ServiceEffect::RaiseStat { stat } => {
+                    let skill = sheets.table().and_then(|t| t.table.find(stat.as_str()));
+                    let (Some(skill), Some(pk)) = (skill, player_key(ctx.player)) else {
+                        warn!("services: no sheet stat {stat:?} for {:?}", ctx.player);
+                        continue;
+                    };
+                    let ops = vec![StatOp::RaiseSkill {
+                        skill,
+                        source: IncreaseSource::Training,
+                    }];
+                    self.stat_commands.push(StatCommand::new(
+                        StatOwner::Player(pk),
+                        CauseKind::Dialogue,
+                        ops,
+                    ));
+                }
+                ServiceEffect::PassTime { hours, sleep } => {
+                    let hours = f32::from(hours);
+                    if let Some(pk) = player_key(ctx.player) {
+                        let ops = vec![StatOp::Rest { hours, sleep }];
+                        self.stat_commands.push(StatCommand::new(
+                            StatOwner::Player(pk),
+                            CauseKind::Rest,
+                            ops,
+                        ));
+                    }
+                    debug!("services: only the player rests (OpenMW rests every actor in range)");
+                    self.pass_time(hours);
+                }
+                other => debug!("services: effect {other:?} not applied yet (A4-A6)"),
             }
         }
     }
@@ -739,6 +1000,44 @@ fn event(ctx: &ServiceCtx, kind: ServiceEventKind) -> ServiceEvent {
         provider: ctx.provider,
         kind,
     }
+}
+
+/// Open lists re-listed when their rows changed ([`Rpg::relist`]; checked through `&Rpg`
+/// first, so `Rpg` isn't marked changed every frame).
+#[allow(clippy::needless_pass_by_value)] // system parameters
+pub(super) fn relist_services(
+    mut rpg: ResMut<Rpg>,
+    sheets: DialogueSheets,
+    tick: Option<Res<StatTick>>,
+) {
+    if rpg.lists.is_empty() {
+        return;
+    }
+    let tick = tick.map_or(0, |t| u64::from(t.0));
+    if !rpg.stale_lists(&sheets, tick).is_empty() {
+        rpg.relist(&sheets, tick);
+    }
+}
+
+/// Hours services passed move the sky clock (`SkyTime`, what the sky, held lights, Lua's
+/// `core.game_time()` and saves read): `days += hours / hours_per_day`. Without a sky clock
+/// (headless, interiors before the exterior plugin) only the `MWScript` calendar moved.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+pub(super) fn advance_sky(
+    mut rpg: ResMut<Rpg>,
+    sky: Option<ResMut<SkyTime>>,
+    config: Option<Res<SkyConfig>>,
+) {
+    if rpg.sky_hours <= 0.0 {
+        return;
+    }
+    let hours = std::mem::take(&mut rpg.sky_hours);
+    let Some(mut sky) = sky else {
+        debug!("services: no sky clock; {hours} h passed on the MWScript calendar only");
+        return;
+    };
+    let per_day = config.map_or(24.0, |c| c.0.calendar.hours_per_day);
+    sky.0.days += f64::from(hours) / f64::from(per_day);
 }
 
 /// Queued service events go out as [`ServiceEventMessage`]s (checked before taking, so `Rpg`

@@ -180,6 +180,12 @@ SOFTWARE.
   `mwdialogue/filter.cpp` (`testDisposition` inverted, `testSelectStruct` choice gate, `list`),
   `mwgui/tradewindow.cpp` (`onOfferButtonClicked`), `mwworld/containerstore.cpp` (`fill`); ported into
   `bevyrrowind/crates/mw_rpg_bevy/src/dialogue/services.rs` and `bevyrrowind/crates/mw_rpg/src/filter.rs`.
+- Training (2026-11-10, services A3): `apps/openmw/mwgui/trainingwindow.cpp` (`setPtr` 75-104, `onTrainingSelected`
+  163-210, `onTrainingFinished` 217-228, `getSkillForTraining` 230-235), `mwgui/timeadvancer.cpp`,
+  `mwmechanics/actors.cpp` (`rest`), `mwworld/worldimp.cpp` (`advanceTime`), `mwworld/datetimemanager.cpp`
+  (`advanceTime`, `setHour`, `setDay`, `getDaysPerMonth`), `files/data/scripts/omw/skillhandlers.lua`
+  (`skillLevelUp` sources); ported into `bevyrrowind/crates/mw_rpg/src/training.rs` and
+  `bevyrrowind/crates/mw_rpg_bevy/src/dialogue/services.rs`.
 
 ## OpenMW (MessageBox formatting)
 

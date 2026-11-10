@@ -43,9 +43,6 @@ use crate::inventory_ui::{PcSlots, container_view, player_view};
 /// The trade screen's id (`SCREENS` in `dialogue.rs`).
 pub const TRADE_SCREEN: &str = "trade";
 
-/// The service list screen's id (list services, slices A3-A6; registered, not opened yet).
-pub const SERVICE_SCREEN: &str = "service";
-
 /// On a trade screen's root: the session it shows and its provider.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpenTrade {
@@ -100,10 +97,8 @@ fn host_trade(
             ServiceIntent::Request(request) if trades.contains(event.screen) => {
                 rpg.service_request(&mut active.talk, &mut window.view, request, &sheets, tick);
             }
-            ServiceIntent::Request(request) => {
-                debug!("trade: {request:?} from a screen that isn't a trade");
-            }
-            ServiceIntent::Close => debug!("trade: list screen closed (list services are A3-A6)"),
+            // The list screen's requests and Close: `service_list_screen.rs`.
+            ServiceIntent::Request(_) | ServiceIntent::Close => {}
         }
     }
 }

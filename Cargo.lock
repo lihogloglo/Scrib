@@ -5616,6 +5616,7 @@ dependencies = [
  "sf_rpg",
  "sf_rpg_ui",
  "sf_script_bevy",
+ "sf_sky_bevy",
  "sf_stats_bevy",
  "sf_ui",
  "sf_ui_bevy",

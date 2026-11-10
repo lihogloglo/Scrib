@@ -59,6 +59,7 @@ use crate::stats::MwStats;
 
 mod persuasion;
 mod services;
+pub mod service_list_screen;
 pub mod trade_screen;
 pub use persuasion::{PERSUASION_ACTION, PERSUASION_OPTIONS, PersuadeRefused, Persuaded, persuasion_kind};
 pub use services::{ServiceEventMessage, TradeQuotes, seed_store, trade_config};
@@ -227,6 +228,12 @@ pub struct Rpg {
     sessions: ServiceSessions,
     /// Service events for the screens since the last [`Rpg::take_service_events`].
     service_events: Vec<ServiceEvent>,
+    /// Open list services (training...), by player and provider, with the rows last listed
+    /// (not saved, like sessions).
+    lists: Vec<services::OpenList>,
+    /// Game hours passed by services since the sky clock last took them
+    /// ([`services::advance_sky`]).
+    sky_hours: f32,
 }
 
 impl Content {
@@ -483,6 +490,8 @@ impl Rpg {
             services: WorldServices::default(),
             sessions: ServiceSessions::new(),
             service_events: Vec::new(),
+            lists: Vec::new(),
+            sky_hours: 0.0,
         })
     }
 
@@ -884,7 +893,7 @@ impl Rpg {
 // ============================================================ the app glue
 
 /// Screens of the game so far: the dialogue window, the journal, the service screens over the
-/// dialogue (trade, service list: [`trade_screen`]) and message boxes.
+/// dialogue (trade: [`trade_screen`], service list: [`service_list_screen`]) and message boxes.
 /// TODO(HUD slice): these records belong in the builtin mod's data (everything is a mod) once
 /// more screens land.
 const SCREENS: &str = r#"
@@ -982,13 +991,16 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
                 keep_journal_seen,
                 show_events,
                 send_stat_commands,
+                services::relist_services,
                 services::send_service_events,
+                services::advance_sky,
                 free_camera_lock,
                 pause_player,
             )
                 .chain()
                 .after(ScreenSystems::Input),
         );
+    service_list_screen::add(app);
     // The Morrowind theme over the stock screens (content: the builtin mod's sheet).
     mw_boot_bevy::ui_theme::add(app);
 }

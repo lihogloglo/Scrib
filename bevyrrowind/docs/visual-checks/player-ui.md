@@ -188,6 +188,15 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Known gaps: English fallback labels, not the GMST strings; no "deal done" message; no Morrowind theme rules for `sf-trade-*`.
 - Status: awaiting owner.
 
+### PUI-SV4: Training list over the dialogue (`cargo dev view "Balmora, Fighters Guild"`)
+- Built 2026-11-10 (A3), headless tests only. Talk to Eydis Fire-Eye (named from memory: any NPC with a Training button works), press Training.
+- A list opens centred over the dialogue: title "Training", your gold, her three best skills (by her base skill), each with "skill now -> next" and a price.
+- Rows she can't teach stay greyed with the reason (her skill not above yours; yours at its governing attribute); rows above your gold greyed "Too expensive".
+- A or click a live row: "are you sure?" (2 hours pass), yes: gold drops by the price, "bought" line, the row shows the skill +1 within a tick; the list stays open.
+- After: the sky and the hour moved 2 h (HUD/console clock), the skill +1 in the stats screen; Back returns to the dialogue; Goodbye from there closes all.
+- Known gaps: no fade or progress bar (time jumps); the "are you sure?" and toasts use English fallbacks; no Morrowind theme rules for `sf-service-*`.
+- Status: awaiting owner.
+
 ## Dev console (superfargoth `console.md`; ROADMAP 1.13; `.sessions/console.md`)
 
 ### CO-1: Live SSAO and A/B switches from the console

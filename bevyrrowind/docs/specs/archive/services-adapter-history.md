@@ -84,3 +84,54 @@ Barter in game, host side (2026-11-10, headless tests; not run in game). `mw_rpg
   at-offer, zero gain, creature); `a_won_haggle_raises_the_players_mercantile_progress` (headless: one gold off,
   accept until the roll wins, one command, progress rises when applied).
 
+
+## Barter disposition (A2a design)
+
+Moved verbatim from the "Formulas" section (2026-11-10, doc budget).
+
+The disposition change is applied on **every** accept attempt that reaches the haggle step, including the
+no-haggle path (OpenMW `onOfferButtonClicked` 447-457 applies it after `haggle` returns, and `haggle` accepts at once
+when the player asks no more than offered). Our `TradeSession` skips `haggle` when `balance == merchant_offer`, so
+the adapter's settlement adds `Disposition { delta: iBarterSuccessDisposition }` for NPC merchants on every accepted
+deal, and a failed haggle emits `iBarterFailDisposition`. Temporary vs permanent: OpenMW's dialogue manager applies
+it as the conversation's temporary change unless `barter disposition change is permanent` ([settings
+doc](https://openmw.readthedocs.io/en/latest/reference/modding/settings/game.html)); the disposition port owns
+where it lands.
+
+## As built (A3)
+
+2026-11-10, unit + headless tests (not run in game; PUI-SV4 awaiting owner). OpenMW `ca5e2576`.
+- `mw_rpg::training` (`training.rs`, tests `tests_training.rs`): `trainer_skills` (`setPtr` 75-104: three best in
+  record order, a later skill replaces the lowest only when strictly greater, stable sort), `training_entries` (rows:
+  id = skill key, label = `sSkill*` GMST, `EntryDetail::Stat { current, next }`, A1's `training_price`, refused rows
+  `EntryState::Refused(sServiceTrainingWords | sNotifyMessage17)`), `training_purchase` (the same checks now; effects
+  `Pay`, `RaiseStat`, `PassTime { 2, awake }`; `Unknown` for a skill not in the three), `TrainingOptions { base_skill:
+  true }`, `advance_calendar` (`datetimemanager.cpp` `advanceTime`/`setHour`/`setDay`: hour wraps, month lengths,
+  year, `DaysPassed`). Without barter terms the price is the base (as `quote`).
+- `MwTradeHost::training_sheets` (default `None`: no stats, no rows); `MwServiceRules::entries`/`buy_entry` dispatch
+  `mw.training` when the provider's flags still offer it; `MwServiceRules.training` options.
+- Host (`mw_rpg_bevy` `dialogue/services.rs`): opening a `List` offer stores an `OpenList` (player, provider, kind,
+  rows) and sends `ServiceOpened` then `EntriesListed`; `BuyEntry` needs that list open, then `purchase` (gold check)
+  and the effects in order: `Pay` (`payment_command` out of the loadout, `+price` on the provider's pool), `RaiseStat`
+  (`StatCommand(Player, Dialogue, [RaiseSkill { Training }])`: `OpenMwSkillUse::raise` adds the class level-up
+  progress and attribute tallies, keeps the skill's progress), `PassTime` (`StatCommand(Player, Rest, [Rest { 2,
+  awake }])` and `Rpg::pass_time`: the declared `GameHour`/`DaysPassed`/`Day`/`Month`/`Year` globals advanced, the
+  hours queued for `advance_sky`, which adds `hours / hours_per_day` to `sf_sky_bevy::SkyTime`), then `EntryBought`.
+  `relist_services` re-sends `EntriesListed` whenever a list's rows change (the raise lands on the next stat tick).
+  Back closes the host list (`close_service_list`), goodbye all of a player's lists (`end_talk`), a load all.
+- Screen glue (`dialogue/service_list_screen.rs`, after `trade_screen.rs`): `ServiceListScreen` over the dialogue on a
+  `List` `ServiceOpened` (rows from the host's `OpenList`, title `sServiceTrainingTitle`, gold from the loadout),
+  `confirm_time_passing` (skill and destination rows ask first), label keys' GMST texts into `ServiceLabels`, the
+  view fed from `EntriesListed`/`EntryBought`/`EntryRefused`, gold synced on `Rpg` changes, `close_list` follows the
+  dialogue and the view. `host_trade` now ignores list screens' events.
+- What moves the clocks: the MWScript calendar globals (so `Rpg::game_time`, the effects clock and services' purse
+  restock) and the sky clock (`SkyTime`: sky, held lights, Lua `core.game_time()`, saves). No NPC schedule reads a
+  clock yet (ROADMAP 1.17 unchanged). Only the player rests (OpenMW rests every actor in range: NPC fatigue gap).
+- Gaps: no fade or progress bar (OpenMW: 1/60 s per hour under a 0.2 s fade; the screen's `progress` is unused);
+  co-op `PassTime` (party rest vote) not built (single player only); refusal GMST texts are the content's (the
+  Morrowind.esm strings are not checked here, no install).
+- Tests: `tests_training` (7: top three with ties, rows/prices/reasons, Mercantile difference and no terms, skill 0
+  costs 1, base vs modified option, purchase effects and refusals, calendar); `service_list_screen` (7 headless: the
+  Training button; the list's top three at A1 prices with reasons and labels; a confirmed purchase pays, fills the
+  pool, raises Long Blade 20 → 21 with one major level-up point, moves globals and sky by 2 h, re-lists at 21; both
+  refusals and a non-offered skill; short gold; Back to the dialogue; goodbye).

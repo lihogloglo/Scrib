@@ -38,6 +38,7 @@ sf_records.workspace = true
 sf_rpg.workspace = true
 sf_rpg_ui.workspace = true
 sf_script_bevy.workspace = true
+sf_sky_bevy.workspace = true
 sf_stats_bevy.workspace = true
 sf_ui.workspace = true
 sf_ui_bevy.workspace = true

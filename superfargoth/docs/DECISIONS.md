@@ -1758,3 +1758,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (effects A5a): Morrowind casting = `MwModernEffectRules` by default (chance 1, Sound raises a spell's cost, Silence
   refuses); classic `OpenMwEffectRules` ports OpenMW exactly (fizzle spends the cost) and waits for a rule-set choice. Silence and
   Sound are magnitude stats (`mw_stats::MAGNITUDE_STATS`, appended) read by the cast rules (effects-adapter.md "As built (A5a)").
+- 2026-11-10 (services A3): training is modern-flow over OpenMW's rules: a skill row asks first (2 h pass), the list stays
+  open and re-lists after a purchase (OpenMW closes to the game: classic column), refused rows show their reason; the 2
+  hours move the MWScript calendar globals and `SkyTime` until ROADMAP 1.17's single clock.

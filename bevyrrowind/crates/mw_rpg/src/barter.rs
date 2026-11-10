@@ -3,8 +3,8 @@
 //! [`ServiceRules`]'s trade path over the record db and a host view ([`MwTradeHost`]). The
 //! service bits of the provider (the class's for autocalc NPCs) give the dialogue buttons and
 //! what the merchant trades; prices and the haggle go through A1's [`barter_price`] and
-//! [`barter_haggle`]. List services (training, travel, spells, repair) are slices A3-A6: their
-//! offers show, their `entries` are empty for now.
+//! [`barter_haggle`]. List services: training's rows and purchase are `crate::training` (A3);
+//! travel, spells and repair (A4-A6) show their offers, their `entries` are empty for now.
 //!
 //! Ported from `OpenMW` (GPL-3.0) at commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`, paths
 //! under `apps/openmw/` (line numbers from the spec where given; the rest name the function):
@@ -57,6 +57,7 @@ use tes3::esp::{
 use crate::services::{
     BarterPriceIn, BarterTerms, EffectiveValueIn, HaggleIn, HaggleOut, barter_haggle, barter_price, effective_value,
 };
+use crate::training::{TrainingOptions, TrainingSheets, training_entries, training_purchase};
 
 /// The ESM skill index of Mercantile (`ESM::Skill::Mercantile`).
 const MERCANTILE: usize = 24;
@@ -412,6 +413,12 @@ pub trait MwTradeHost: Holdings {
     /// rejects every `Choice` condition), with `OpenMW`'s inverted disposition check
     /// (`filter.list(dialogue, false, false, true)`). Returns the INFO id.
     fn service_refusal(&self, ctx: &ConversationCtx) -> Option<RecordId>;
+    /// The stat table and this player's and provider's sheets, for training (A3). `None`: no
+    /// stats in this run, or no sheet for one of them; training then lists nothing.
+    fn training_sheets(&self, player: PlayerId, provider: ActorKey) -> Option<TrainingSheets<'_>> {
+        let _ = (player, provider);
+        None
+    }
 }
 
 /// Trade switches (services-adapter.md "Options").
@@ -427,22 +434,29 @@ impl Default for BarterOptions {
     }
 }
 
-/// Morrowind's [`ServiceRules`] (the trade path; list services come in A3-A6).
+/// Morrowind's [`ServiceRules`] (the trade path and training; travel, spells and repair come in
+/// A4-A6).
 pub struct MwServiceRules<'a, H: ?Sized> {
     pub records: &'a RecordDb,
     pub gmst: &'a MwGmst,
     pub bound: &'a BoundItems,
     pub host: &'a H,
     pub options: BarterOptions,
+    pub training: TrainingOptions,
 }
 
 impl<'a, H: MwTradeHost + ?Sized> MwServiceRules<'a, H> {
     pub fn new(records: &'a RecordDb, gmst: &'a MwGmst, bound: &'a BoundItems, host: &'a H) -> Self {
-        Self { records, gmst, bound, host, options: BarterOptions::default() }
+        Self { records, gmst, bound, host, options: BarterOptions::default(), training: TrainingOptions::default() }
     }
 
     fn facts(&self, ctx: &ServiceCtx) -> Option<ProviderFacts> {
         provider_facts(self.records, &ctx.provider_base)
+    }
+
+    /// Whether `kind` is `service` and this provider offers it (its flags, re-read now).
+    fn lists(&self, ctx: &ServiceCtx, kind: &ServiceKind, service: MwService) -> bool {
+        MwService::from_kind(kind) == Some(service) && self.facts(ctx).is_some_and(|f| service.offered(&f))
     }
 
     /// Whether the provider would trade this stack at all (class filter and bound items).
@@ -584,18 +598,30 @@ impl<H: MwTradeHost + ?Sized> ServiceRules for MwServiceRules<'_, H> {
         Ok(())
     }
 
-    /// List services are A3-A6.
-    fn entries(&self, _ctx: &ServiceCtx, _kind: &ServiceKind) -> Vec<ServiceEntry> {
-        Vec::new()
+    /// Training's rows ([`training_entries`]) when the provider trains; travel, spells and
+    /// repair are A4-A6 (empty).
+    fn entries(&self, ctx: &ServiceCtx, kind: &ServiceKind) -> Vec<ServiceEntry> {
+        if !self.lists(ctx, kind, MwService::Training) {
+            return Vec::new();
+        }
+        let Some(sheets) = self.host.training_sheets(ctx.player, ctx.provider) else { return Vec::new() };
+        let terms = self.host.barter_terms(ctx.player, ctx.provider);
+        training_entries(&sheets, terms, self.training, self.gmst)
     }
 
+    /// Training's purchase re-checked now ([`training_purchase`]); `Unknown` for the others.
     fn buy_entry(
         &self,
-        _ctx: &ServiceCtx,
-        _kind: &ServiceKind,
-        _entry: &EntryId,
+        ctx: &ServiceCtx,
+        kind: &ServiceKind,
+        entry: &EntryId,
     ) -> Result<Vec<ServiceEffect>, EntryRefusal> {
-        Err(EntryRefusal::Unknown)
+        if !self.lists(ctx, kind, MwService::Training) {
+            return Err(EntryRefusal::Unknown);
+        }
+        let sheets = self.host.training_sheets(ctx.player, ctx.provider).ok_or(EntryRefusal::Unknown)?;
+        let terms = self.host.barter_terms(ctx.player, ctx.provider);
+        training_purchase(&sheets, terms, self.training, self.gmst, entry)
     }
 
     /// A pool of the base gold, reset after `fBarterGoldResetDelay` hours.
