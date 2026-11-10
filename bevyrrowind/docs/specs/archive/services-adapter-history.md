@@ -45,3 +45,24 @@ Barter in game, host side (2026-11-10, headless tests; not run in game). `mw_rpg
 - Clock: `Rpg::game_time` reads the `DaysPassed` and `GameHour` globals (OpenMW `getTimeStamp`); nothing advances them
   yet, so a purse restocks only on first open.
 - Events out: `Rpg::take_service_events`, sent each frame as `ServiceEventMessage` (Bevy message) for TR2.
+
+## As built (TR2)
+
+2026-11-10, headless tests only (not run in game; no Morrowind install on the build machine).
+- `mw_rpg_bevy` `dialogue/trade_screen.rs` (registered from `inventory_ui::add`, which holds the item records and
+  slots): `ServiceOpened { shape: Trade, session: Some(id) }` for the conversation's speaker pushes the `trade` screen
+  (Menu layer) over `dialogue`, only when the dialogue is the top menu. `TradeView` panes: the speaker's store
+  (`container_view`) and the player's loadout (`player_view`); title the actor's name.
+- `Rpg::trade_quotes(session, sheets, tick)` -> `TradeQuotes { money, provider, player }`: `MerchantMoney::of` the
+  purse rule and `pane_prices` (buy side over the store, sell side over the player) through the private `View`.
+- `host_trade`: the screen's `ServiceScreenEvent` requests (only from roots with `OpenTrade`) go to
+  `Rpg::service_request` with the active `Talk` and the dialogue's view (refusal lines land there), at `StatTick`.
+  Ordered after `host_dialogue`, before `send_service_events`, so a request's events reach the view the same frame.
+- `trade_events` (after `send_service_events`): the provider's events feed `TradeView::apply_event`; `TradeDone`
+  closes the screen (OpenMW closes the barter window on an accepted offer; the host already closed the session).
+  Whenever `Rpg` changed, both panes re-sync and are re-priced (so after staging, a deal, a script).
+- `close_trade`: no `dialogue` on the stack (goodbye drops the sessions) or a closed view (Cancel, a veto) closes
+  `trade`; a root off the stack despawns. `service` (list screen) id registered, not opened yet (A3-A6).
+- Gaps: `ServiceLabels` are the screens' English fallbacks (GMST strings such as `sBarter*` not mapped yet); the
+  "deal done" toast dies with the screen; re-pricing on every `Rpg` change quotes every stack (cheap at merchant
+  sizes, not measured).

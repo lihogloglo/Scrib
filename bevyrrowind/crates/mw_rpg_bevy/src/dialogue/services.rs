@@ -1,7 +1,7 @@
 //! NPC services in the game host (slice TR1, services-adapter.md "As built (TR1)"): the
 //! dialogue's service buttons, `sf_rpg::service`'s host steps over [`Rpg`]'s state, and the
-//! trade session's requests, settled into the world. No screens yet (TR2 opens the trade
-//! screen on [`ServiceEventKind::ServiceOpened`]).
+//! trade session's requests, settled into the world. The trade screen over them is
+//! `trade_screen.rs` (TR2; [`Rpg::trade_quotes`] gives its money and price columns).
 //!
 //! Net-ready (services.md "Co-op"): [`ServiceRequest`]s in ([`Rpg::service_request`]),
 //! [`ServiceEvent`]s out ([`Rpg::take_service_events`], sent as [`ServiceEventMessage`]s),
@@ -37,11 +37,12 @@ use sf_records::{RecordDb, RecordId};
 use sf_rpg::service::{
     Currency, Holdings, MerchantMoney, OpenError, ServiceCtx, ServiceEffect, ServiceEvent,
     ServiceEventKind, ServiceKind, ServiceOffer, ServiceRequest, ServiceRules, SessionId,
-    Settlement, TradeConfig, TradeEnv, TradeRefusal, TradeSession, haggle_roll, open, purchase,
+    Settlement, Side, TradeConfig, TradeEnv, TradeRefusal, TradeSession, haggle_roll, open,
+    pane_prices, purchase,
 };
 use sf_rpg::{
     ActorKey, CharacterRpg, ConversationCtx, Conversations, GameTime, Holder, Loadout, PlayerId,
-    RpgCommand, RpgEvent, SessionState,
+    RpgCommand, RpgEvent, SessionState, StackId,
 };
 use sf_rpg_ui::{DialogueAction, DialogueRequest, DialogueView};
 use tes3::esp::{LeveledItem, Npc};
@@ -71,9 +72,20 @@ fn label_fallback(service: MwService) -> &'static str {
     }
 }
 
-/// A [`ServiceEvent`] for the screens (TR2: the trade screen opens on `ServiceOpened`).
+/// A [`ServiceEvent`] for the screens (the trade screen opens on `ServiceOpened`,
+/// `trade_screen.rs`).
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct ServiceEventMessage(pub ServiceEvent);
+
+/// [`Rpg::trade_quotes`]: an open session's provider money and price columns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TradeQuotes {
+    pub money: MerchantMoney,
+    /// The provider's stock, buy-side quotes (`None`: not sold).
+    pub provider: Vec<(StackId, Option<i64>)>,
+    /// The player's items, sell-side quotes (`None`: currency, or not bought).
+    pub player: Vec<(StackId, Option<i64>)>,
+}
 
 /// The barter rules' view of the host: inventories by holder (one player character until co-op
 /// N slices), the barter terms from the sheets and the derived disposition, refusals through the
@@ -273,6 +285,50 @@ impl Rpg {
     /// An open trade session.
     pub fn trade_session(&self, id: SessionId) -> Option<&TradeSession> {
         self.sessions.get(id)
+    }
+
+    /// What the trade screen shows of open session `id` besides its panes (TR2): the
+    /// provider's money and both price columns ([`pane_prices`]: the provider's stock on the
+    /// buy side, the player's items on the sell side), quoted with `sheets` at tick `tick`.
+    /// `None` without that session or its provider.
+    pub fn trade_quotes(
+        &self,
+        id: SessionId,
+        sheets: &dyn MwSheets,
+        tick: u64,
+    ) -> Option<TradeQuotes> {
+        let session = self.sessions.get(id)?;
+        let actor = self.content.actors.get(&session.provider)?;
+        let ctx = ServiceCtx {
+            player: session.player,
+            provider: session.provider,
+            provider_base: actor.facts.id.clone(),
+            now: self.game_time(),
+            tick,
+        };
+        let config = trade_config();
+        let v = View {
+            c: &self.content,
+            s: &self.state,
+            sheets,
+        };
+        let rules = MwServiceRules::new(
+            &self.content.records,
+            &self.content.gmst,
+            &self.content.bound,
+            &v,
+        );
+        let env = TradeEnv {
+            ctx: &ctx,
+            rules: &rules,
+            holdings: &v,
+            config: &config,
+        };
+        Some(TradeQuotes {
+            money: MerchantMoney::of(rules.purse_base(&ctx), &self.services, ctx.provider),
+            provider: pane_prices(&env, Side::Buy, Holder::Actor(ctx.provider)),
+            player: pane_prices(&env, Side::Sell, Holder::Player(ctx.player)),
+        })
     }
 
     /// Applies one [`ServiceRequest`] of `talk`'s player at simulation tick `tick` (the haggle
@@ -662,7 +718,7 @@ pub(super) fn send_service_events(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     //! The service host, headless: synthetic records, exact assertions. Prices without sheets
     //! are the items' base values (`MwServiceRules::quote` without barter terms).
     use std::sync::Arc;
@@ -682,10 +738,10 @@ mod tests {
     use super::super::PERSUASION_ACTION;
     use super::*;
 
-    const MERCHANT: ActorKey = ActorKey(1);
+    pub(crate) const MERCHANT: ActorKey = ActorKey(1);
     const FARGOTH: ActorKey = ActorKey(2);
-    const PLAYER: Holder = Holder::Player(PlayerId::HOST);
-    const SELLER: Holder = Holder::Actor(MERCHANT);
+    pub(crate) const PLAYER: Holder = Holder::Player(PlayerId::HOST);
+    pub(crate) const SELLER: Holder = Holder::Actor(MERCHANT);
 
     fn misc(value: u32) -> MiscItem {
         let mut m = MiscItem::default();
@@ -696,7 +752,7 @@ mod tests {
     /// Records: `arrille` (barters misc items, 500 gold, a bottle and a restocking pile of 5
     /// candles), `fargoth` (no services), three misc items, `sBarter` = " Trade " (trimmed on
     /// use), and optionally a "Service Refusal" INFO.
-    fn records(refusal: Option<DialogueInfo>) -> RecordDb {
+    pub(crate) fn records(refusal: Option<DialogueInfo>) -> RecordDb {
         let mut db = RecordDb::new();
         mw_records::register_kinds(&mut db).unwrap();
         let src = db.add_source("test", &[]);
@@ -748,7 +804,7 @@ mod tests {
 
     /// A host over [`records`] with both NPCs registered and the player holding 100 gold and a
     /// spoon, talking to `speaker`.
-    fn host(
+    pub(crate) fn host(
         refusal: Option<DialogueInfo>,
         speaker: ActorKey,
         sheets: &dyn MwSheets,
@@ -770,14 +826,14 @@ mod tests {
         (rpg, talk, view)
     }
 
-    fn barter() -> DialogueRequest {
+    pub(crate) fn barter() -> DialogueRequest {
         DialogueRequest::Action {
             action: ActionId::new(MwService::Barter.id()),
             option: None,
         }
     }
 
-    fn stack_of(rpg: &Rpg, holder: Holder, item: &str) -> StackId {
+    pub(crate) fn stack_of(rpg: &Rpg, holder: Holder, item: &str) -> StackId {
         let v = View {
             c: &rpg.content,
             s: &rpg.state,
@@ -793,7 +849,7 @@ mod tests {
             .id
     }
 
-    fn count(rpg: &Rpg, holder: Holder, item: &str) -> u64 {
+    pub(crate) fn count(rpg: &Rpg, holder: Holder, item: &str) -> u64 {
         let v = View {
             c: &rpg.content,
             s: &rpg.state,

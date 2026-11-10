@@ -156,6 +156,17 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Known gaps: no Morrowind theme rules for the new classes yet; clicking the dimmed backdrop doesn't close the panel.
 - Status: awaiting owner.
 
+### PUI-SV3: Trade screen over the dialogue (`cargo dev view "Seyda Neen, Arrille's Tradehouse"`)
+- Built 2026-11-10 (TR2), headless tests only. Talk to Arrille (E), press Barter: the trade window opens centred over the dialogue.
+- Left his stock, right your items, deal bar between; a price on every row; rows he won't buy greyed ("not traded"); no gold rows.
+- Pad: d-pad rows and sideways to/from the bar, LB/RB panes, A stages whole, X asks how many, Y accepts, B backs out then cancels.
+- Bar: lines per side, totals, both purses, balance; haggle stepper left/right (LB/RB 10%), Reset; a refusal shows on the bar.
+- Mouse: hover focuses, click stages, drag a row onto the bar or the other pane, drag a line back; nothing sticks.
+- Accept (enough gold): the window closes back to the dialogue; the items and gold moved (I after Goodbye). Barter again: new stock.
+- Cancel or Esc: back to the dialogue, nothing moved. Goodbye with the window open is not reachable (it has the input).
+- Known gaps: English fallback labels, not the GMST strings; no "deal done" message; no Morrowind theme rules for `sf-trade-*`.
+- Status: awaiting owner.
+
 ## Dev console (superfargoth `console.md`; ROADMAP 1.13; `.sessions/console.md`)
 
 ### CO-1: Live SSAO and A/B switches from the console

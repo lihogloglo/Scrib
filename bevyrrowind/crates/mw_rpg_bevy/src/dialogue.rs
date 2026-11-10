@@ -59,8 +59,9 @@ use crate::stats::MwStats;
 
 mod persuasion;
 mod services;
+pub mod trade_screen;
 pub use persuasion::{PERSUASION_ACTION, PERSUASION_OPTIONS, PersuadeRefused, Persuaded, persuasion_kind};
-pub use services::{ServiceEventMessage, seed_store, trade_config};
+pub use services::{ServiceEventMessage, TradeQuotes, seed_store, trade_config};
 
 /// Fargoth's ring (scaffold [`DevGiveRing`]).
 const RING: &str = "ring_keley";
@@ -883,7 +884,8 @@ impl Rpg {
 
 // ============================================================ the app glue
 
-/// Screens of the game so far: the dialogue window, the journal and message boxes.
+/// Screens of the game so far: the dialogue window, the journal, the service screens over the
+/// dialogue (trade, service list: [`trade_screen`]) and message boxes.
 /// TODO(HUD slice): these records belong in the builtin mod's data (everything is a mod) once
 /// more screens land.
 const SCREENS: &str = r#"
@@ -896,6 +898,16 @@ value = { layer = "Menu", implementation = { Template = "dialogue" } }
 kind = "ui.screen"
 id = "journal"
 value = { layer = "Menu", implementation = { Template = "journal" } }
+
+[[define]]
+kind = "ui.screen"
+id = "trade"
+value = { layer = "Menu", implementation = { Template = "trade" } }
+
+[[define]]
+kind = "ui.screen"
+id = "service"
+value = { layer = "Menu", implementation = { Template = "service" } }
 
 [[define]]
 kind = "ui.screen"

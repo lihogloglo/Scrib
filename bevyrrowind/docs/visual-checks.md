@@ -170,6 +170,7 @@ WA-2 | confirmed with follow-up | [terrain-water](visual-checks/terrain-water.md
 RO-A | confirmed with follow-up | [rendering](visual-checks/rendering.md) | Translucents cast no shadows; distant lights and rai...
 DJ-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Talk to Fargoth, Sellus greeting; resizable window wished
 DJ-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Dialogue action buttons, Persuasion submenu modal (written 2026-11-08, untested)
+PUI-SV3 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Trade screen over the dialogue: Barter with Arrille, stage, haggle, accept, cancel (TR2)
 SV-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Quicksave / quickload; load sometimes spawns below the floor
 
 ### Known bug (3)
