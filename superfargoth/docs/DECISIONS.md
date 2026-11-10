@@ -1704,3 +1704,27 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   path. `ClassAllocator` stays in the tree, tested, for its a-priori ceiling and 64-slot-aligned blocks. Unchanged:
   batch capacity fixed at config, never grown at stream-in, `Exhausted` → entities counted and warned once
   (scene-runtime-plan.md §4.4, corrected).
+- 2026-11-10 (static-scene, the A/B counters — **closed, nothing to do**): `batch_set_count()` already returns
+  `entity_path_batch_sets + instance_batch_draws.len()` (`vendor/bevy_render/src/render_phase/mod.rs:1590-1602`),
+  `entity_count()` adds instance batches (`:1545-1547`), `sf_diag` carries them end to end with tests. **The
+  `--scene` A/B is readable today** (scene-runtime-plan.md §8, §13 q8 — no longer "blocked on two one-liners").
+- 2026-11-10 (static-scene, decision 9 — **confirmed from the code**): in a view that does not draw indirectly the
+  statics go **missing**, not double-drawn — binned `vendor/bevy_render/src/batching/gpu_preprocessing.rs:2644-2652`,
+  sorted `:2054-2063`, port docs `gpu_instance_batch/mod.rs:101-116`. Port audit A9 right, review S0 backwards; the
+  documented hardware floor. §11's `promotion_is_safe_without_the_shader_fix` is rewritten (b3-b4 brief §6.2).
+- 2026-11-10 (static-scene, slab identity is render-world only — **resolved**): `MeshAllocator` is a render-app GPU
+  resource (`vendor/bevy_render/src/mesh/allocator.rs:214-221`) and the bind group comes from `RenderMaterialBindings`
+  (`gpu_instance_batch/mod.rs:666`), so **a render→main snapshot via `ResMut<MainWorld>` in `ExtractSchedule`** (as
+  `sf_surface_bevy/src/cells.rs:143`, `sf_terrain_bevy/src/render.rs:33`) feeds `plan_in`'s `slabs`. Sound because a
+  slab id is stable from allocation to free (`vendor/bevy_render/src/slab_allocator.rs:915-917`; growth keeps the id,
+  `:1133-1163`), so a late snapshot is *absent*, never wrong (scene-runtime-plan.md §4.5).
+- 2026-11-10 (static-scene, M1 upload — **one invocation per cell**): `reveal` removes the `Work` and returns `true`
+  unconditionally (`sf_world_bevy/src/stream.rs:1265-1275`) and `Stage::Upload` charges the full `upload_bytes` on
+  every invocation (`:814-815`), so **M1 uploads a whole cell's table in one invocation (`done == true`), with no
+  per-frame scene upload budget** — 160 KB for 2 000 instances; the scheduler throttles *cells* per frame. The
+  multiply-charging is **latent, not live** (Upload runs once per request today): **logged in ROADMAP 1.19, not
+  fixed** (scene-runtime-plan.md §5.2, §13 q10).
+- 2026-11-10 (docs, static-scene.md size — **formal exception**): the spec stays at **≈ 48 KB** against the ~25 KB
+  target, **revisit at S9**. Unreachable without cutting contract text: the 2026-11-09 restructure already relocated
+  the mechanism, the byte tables and the S0-S2 history, and this pass removed the last two duplications (§3's
+  fragmentation measurements, the industry-comparison sourced case). Further cuts are a coordinator decision.
