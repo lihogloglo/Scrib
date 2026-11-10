@@ -2,6 +2,23 @@
 
 Dated measurement blocks moved verbatim from `perf.md` "Frame budget" (doc cleanup S3, 2026-10-25), newest first. Numbers here are history: the current budget table and levers live in [perf.md](../perf.md). The 2026-10-20/21 shadow numbers are superseded by the shadow reset.
 
+### Frame budget (2026-10-28)
+
+Moved from `perf.md` "Frame budget" on 2026-11-10, when the 2026-11-10 `s0_baseline` table replaced it.
+
+| lane (High, 1440p DLSS Q) | budget ms | Balmora | Seyda Neen | Red Mountain | balmora_walk | flight |
+|---|---:|---:|---:|---:|---:|---:|
+| frame (median) | 11.0 | 9.5 | 10.0 | 9.0 | 10.5 | 11.1 (10.6 warm) |
+| render thread busy | 9.5 | 7.2 | 8.4 | 7.2 | 9.0 | 9.0 |
+| - of it graph encoding | 4.0 | 3.5 | 4.2 | 3.3 | 4.1 | 4.0 |
+| main thread busy | 9.5 | 6.6 | 7.2 | 6.6 | 8.0 | 7.6 |
+| GPU (Bevy-timed) | 9.5 | 8.6 | 8.7 | 7.9 | 7.5 | 8.1 |
+| - opaque + prepass | 3.5 | 2.9 | 2.6 | 2.3 | 1.8 | 2.5 |
+| - DLSS SR | 2.1 | 2.2 | 2.3 | 2.2 | 2.2 | 2.1 |
+| - sky, clouds, fog, light probes | 1.5 | 0.8 | 0.8 | 0.9 | 0.7 | 0.9 |
+
+Measured 2026-10-28 (`slice4b_final` + `slice4c_flight`, 2560x1440 + `BEVYRROWIND_DLSS=quality`, ×3; down from 2026-10-19's `14.3 / 17.7 / 17.2 / — / 19.3 ms`): 4/5 benches pass `<= 11.0 ms` (`balmora_walk` `10.50 ms`), and 60 m/s `flight` hits `10.63 ms` warm (`11.10 ms` 3-run median incl. cold disk). Key wins: static `OutfitAssets` AABBs (`bigspace/total` `0.75 -> 0.41 ms`), `AnimLod::idle_skip_a3` (`anim/evaluate_cpu` `2.01 -> 0.12 ms`), 110 m walker AI wake radius (`controller/move` `1.02 -> 0.14 ms`), `CookedMaterials` dedup + 30 Hz NIF material stepping, `AtmosphereStaticLutCache`, incremental `extract_visibility_ranges`, and dry-weather `PrecipOcclusion` skip. The 2026-10-19 what-costs-what A/B table and trace summary remain in the log below.
+
 ### Shadow reset B2 (shadowB2, 2026-10-21)
 
 **Shadow reset B2 (shadowB2, 2026-10-21; `target/perf/b2-*`; 1440p, High, profiling exe, x3, medians of runs, quiet

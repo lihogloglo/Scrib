@@ -1,0 +1,356 @@
+mods: 0 errors, 3165 warnings (`bevyrrowind mods report`)
+delight: layer mounted, 3521 textures (0 stale: source changed since the bake), 53ms
+exterior at Balmora (4 cells): (-293, 205) m
+camera [-202.6, 90.2, 324.8] -> [-292.6, 2.2, 204.8]
+weather Clear (forced)
+[2m2026-11-10T15:27:48.206108Z[0m [32m INFO[0m [2mbevy_diagnostic::system_information_diagnostics_plugin::internal[0m[2m:[0m SystemInfo { os: "Windows 11 Home Single Language", kernel: "26200", cpu: "AMD Ryzen 7 7435HS", core_count: "8", memory: "31.8 GiB" }
+[2m2026-11-10T15:27:48.301166Z[0m [32m INFO[0m [2mmw_walkers_bevy::physics[0m[2m:[0m physics: items.check holds 6055 items until grabbed; 2272 statics with support meshes
+[2m2026-11-10T15:27:48.316389Z[0m [32m INFO[0m [2mdlss_wgpu::plugin[0m[2m:[0m DLSS plugin loaded from C:\cargo-target\scrib-ab\profiling\dlss\sf_dlss.dll
+[2m2026-11-10T15:27:48.351701Z[0m [32m INFO[0m [2mbevy_render::renderer[0m[2m:[0m AdapterInfo { name: "NVIDIA GeForce RTX 4060 Laptop GPU", vendor: 4318, device: 10464, device_type: DiscreteGpu, device_pci_bus_id: "0000:01:00.0", driver: "NVIDIA", driver_info: "617.42", backend: Vulkan, subgroup_min_size: 32, subgroup_max_size: 32, transient_saves_memory: Some(false), limit_bucket: None }
+[2m2026-11-10T15:27:49.613050Z[0m [32m INFO[0m [2mmw_rpg_bevy::dialogue[0m[2m:[0m dialogue: PcClothingModifier is 10 (the player record's clothes) while nothing is worn (scaffold StartingClothesFallback)
+[2m2026-11-10T15:27:49.613593Z[0m [32m INFO[0m [2mmw_rpg_bevy::dialogue[0m[2m:[0m new game without chargen: 9 topics from the chargen hand-off
+surface cover snow: textures/tx_bm_snow_01.dds (ok)
+surface cover ash: textures/tx_ashlands_08.tga (ok)
+[2m2026-11-10T15:27:49.638693Z[0m [32m INFO[0m [2mmw_doors_bevy[0m[2m:[0m door links: 1828 (1329 worldspaces, 1328 interior environments)
+[2m2026-11-10T15:27:49.639897Z[0m [32m INFO[0m [2mmw_scripts_bevy[0m[2m:[0m scripts: 1 contexts [mw.legacy]
+[2m2026-11-10T15:27:49.670183Z[0m [32m INFO[0m [2mmw_saves_bevy[0m[2m:[0m saves: C:\Users\leogloglo\AppData\Local\bevyrrowind
+[2m2026-11-10T15:27:49.696434Z[0m [32m INFO[0m [2mmw_exterior_bevy::exterior[0m[2m:[0m player clips: 26 of 26 slot clips baked
+[2m2026-11-10T15:27:49.709437Z[0m [32m INFO[0m [2mmw_player_bevy::combat[0m[2m:[0m combat: sheet sword_1h with 21 slots, 15 moves
+[2m2026-11-10T15:27:49.709516Z[0m [32m INFO[0m [2mmw_player_bevy::combat[0m[2m:[0m combat: draw 0.47 s (attach at 0.20), sheathe 0.47 s (detach at 0.27)
+[2m2026-11-10T15:27:49.828128Z[0m [32m INFO[0m [2msf_atmos_bevy[0m[2m:[0m cloud noise generated in 205 ms
+[2m2026-11-10T15:27:50.690279Z[0m [32m INFO[0m [2mbevy_pbr::cluster[0m[2m:[0m GPU clustering is supported on this device.
+[2m2026-11-10T15:27:50.690338Z[0m [32m INFO[0m [2mbevy_render::batching::gpu_preprocessing[0m[2m:[0m GPU preprocessing is fully supported on this device.
+[2m2026-11-10T15:27:50.691644Z[0m [32m INFO[0m [2msf_sky_bevy::upscale[0m[2m:[0m upscaling support: UpscalingSupport { dlss_super_resolution: true, dlss_ray_reconstruction: true }
+[2m2026-11-10T15:27:50.692802Z[0m [32m INFO[0m [2mbevy_winit::system[0m[2m:[0m Creating new window Bevyrrowind - Balmora (4 cells) (156v0)
+[2m2026-11-10T15:27:51.029407Z[0m [33m WARN[0m [2mbevy_ecs::schedule::schedule[0m[2m:[0m Update schedule built successfully, however: hierarchy contains redundant edge(s) -- system `<Enable the debug feature to see the name> (in sets PathSystems, RenderPath)` cannot be child of system set `RenderPath`, longer path exists
+ -- system `<Enable the debug feature to see the name> (in sets PathSystems, RenderPath)` cannot be child of system set `RenderPath`, longer path exists
+ -- system `<Enable the debug feature to see the name> (in sets PathSystems, RenderPath)` cannot be child of system set `RenderPath`, longer path exists
+ -- system `<Enable the debug feature to see the name> (in sets PathSystems, RenderPath)` cannot be child of system set `RenderPath`, longer path exists
+
+[2m2026-11-10T15:27:51.031374Z[0m [32m INFO[0m [2mmw_environment_bevy::water[0m[2m:[0m water: shore field 1729x1601 at 3.66 m in 1.40 s (1950950 wet texels, 147 components, 1 open)
+[2m2026-11-10T15:27:51.031370Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m walkers: 0 movers + 0 dormant (0 wander, 0 moving, 0 awake grounded, 0 walks given up: 0 steep, 0 wall, 0 other; 0 on a first leg, 0 off the pathgrid; 0 rerouted around a blocked edge), 0 statics, terrain on physics; last frame avoid 0 us, move 0 us, feed 0 us
+[2m2026-11-10T15:27:51.031452Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m walkers feet: 0 blocked; IK guards since start: 0 samples rejected, 0 unplanted, 0 reach clamps, 0 pelvis clamps, 0 teleports, 0 non-finite
+[2m2026-11-10T15:27:51.031462Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m walkers strides since start: 0 stances, 0 skated (planted foot moved > 5 cm), 0 legs without a plant for 2 s while walking, 0 contacts held 1.5 s above 1 m/s
+[2m2026-11-10T15:27:51.038800Z[0m [32m INFO[0m [2msf_sky_bevy::upscale[0m[2m:[0m upscaling: off -> quality
+[2m2026-11-10T15:27:51.039614Z[0m [32m INFO[0m [2mmw_doors_bevy[0m[2m:[0m worldspace look: @exterior
+[2m2026-11-10T15:27:51.041549Z[0m [32m INFO[0m [2msf_audio_bevy[0m[2m:[0m audio: music music/explore/mx_explore_5.mp3
+[2m2026-11-10T15:27:51.559379Z[0m [32m INFO[0m [2msf_audio_bevy[0m[2m:[0m audio: listener outdoors
+[2m2026-11-10T15:27:51.657535Z[0m [33m WARN[0m [2mbevy_pbr::prepass[0m[2m:[0m The default normal prepass expects the mesh to have vertex normal attributes.
+[2m2026-11-10T15:27:51.892665Z[0m [32m INFO[0m [2msf_lod_bevy::runtime[0m[2m:[0m sf_lod_bevy: far field of @exterior: 1623 L1, 25 L2, 4 L3 nodes; L2+L3 79.7 MiB resident; 121 impostor models
+[2m2026-11-10T15:27:51.893763Z[0m [33m WARN[0m [2mbevy_pbr::prepass[0m[2m:[0m The default normal prepass expects the mesh to have vertex normal attributes.
+[2m2026-11-10T15:27:52.093544Z[0m [33m WARN[0m [2mbevy_pbr::prepass[0m[2m:[0m The default normal prepass expects the mesh to have vertex normal attributes.
+[2m2026-11-10T15:27:52.381159Z[0m [32m INFO[0m [2mmw_devtools_bevy::pipeline_watch[0m[2m:[0m pipelines: +124 new (aerial_view_lut_pipeline x1, atmos_froxel_inject x1, atmos_froxel_integrate x1, background_motion_vectors_pipeline x1, bin unpacking x1, blit pipeline x1, bloom_downsampling_pipeline x1, bloom_downsampling_pipeline_first x1, bloom_upsampling_pipeline x2, clouds_composite_1 x1, clouds_fog_light_1 x1, clouds_resolve_1 x1, clouds_shadow_1 x1, clouds_trace_1 x1, clustering Z slicing pipeline x1, clustering allocation global pass pipeline x1, clustering allocation local pass pipeline x1, clustering count pipeline x1, clustering populate pipeline x1, copy_deferred_lighting_id_pipeline x1, copy_pipeline x1, downsample depth first phase pipeline x1, downsample depth multisample first phase pipeline x1, downsample depth multisample second phase pipeline x1, downsample depth second phase pipeline x1, early occlusion culling build indexed indirect parameters x1, early occlusion culling build non-indexed indirect parameters x1, environment_pipeline x1, frustum culling build indexed indirect parameters x1, frustum culling build non-indexed indirect parameters x1, irradiance_pipeline x1, late occlusion culling build indexed indirect parameters x1, late occlusion culling build non-indexed indirect parameters x1, main occlusion culling build indexed indirect parameters x1, main occlusion culling build non-indexed indirect parameters x1, mesh preprocessing (GPU frustum culling) x1, mesh preprocessing (direct) x1, mesh preprocessing (early GPU occlusion culling) x1, mesh preprocessing (late GPU occlusion culling) x1, mip generation pipeline, pass 1 (Rgba16Float) x1, mip generation pipeline, pass 2 (Rgba16Float) x1, multi_scattering_lut_pipeline x1, night_sky_1 x1, opaque_mesh_pipeline x4, pbr_alpha_blend_mesh_pipeline x3, pbr_opaque_mesh_pipeline x11, pbr_prepass_pipeline x18, postprocessing x1, premultiplied_alpha_mesh_pipeline x1, prepass_pipeline x5, radiance_pipeline x1, render_sky_pipeline_1 x1, reset indirect batch sets x1, sky_motion x1, sky_view_lut_pipeline x1, solari_lighting_blend_new_world_cache_samples_pipeline x1, solari_lighting_compact_world_cache_blocks_pipeline x1, solari_lighting_compact_world_cache_single_block_pipeline x1, solari_lighting_compact_world_cache_write_active_cells_pipeline x1, solari_lighting_decay_world_cache_pipeline x1, solari_lighting_initial_and_shade_pipeline x1, solari_lighting_initial_and_shade_with_psr_pipeline x1, solari_lighting_initial_and_temporal_pipeline x1, solari_lighting_initial_and_temporal_with_psr_pipeline x1, solari_lighting_presample_light_tiles_pipeline x1, solari_lighting_resolve_dlss_rr_textures_pipeline x1, solari_lighting_sample_di_for_world_cache_pipeline x1, solari_lighting_sample_gi_for_world_cache_pipeline x1, solari_lighting_spatial_and_shade_pipeline x1, sparse buffer update pipeline x1, ssao_preprocess_depth_pipeline x1, ssao_spatial_denoise_pipeline x1, ssao_ssao_pipeline x1, surface_trail x1, tlas_instance_setup_pipeline x1, tonemapping pipeline x1, transmittance_lut_pipeline x1, uniform allocation, fan x1, uniform allocation, global scan x1, uniform allocation, local scan x1, water_copy_aerial x1, water_downsample x1, water_fft_cols x1, water_fft_rows x1, water_snapshot_1 x1, water_velocity_1 x1, weather_map x1), 93 compiling
+[2m2026-11-10T15:27:52.960547Z[0m [32m INFO[0m [2mmw_devtools_bevy::pipeline_watch[0m[2m:[0m pipelines: +6 new (pbr_alpha_blend_mesh_pipeline x1, pbr_opaque_mesh_pipeline x2, pbr_prepass_pipeline x3), 75 compiling
+[2m2026-11-10T15:27:53.368186Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.368230Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.368356Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.368368Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.368378Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.377741Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.377788Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.377798Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev-1: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.377805Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.392044Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.392087Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.444836Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.444886Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.444902Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.444919Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.444931Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.444942Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.444951Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev-1: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.444960Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.444971Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev-2: wide and low, physics cylinder 0.91 m radius x 1.16 m high
+[2m2026-11-10T15:27:53.462611Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.462656Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.462667Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.462682Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.462688Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.462696Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.462708Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_rat_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.462718Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.462725Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.462733Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.462739Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.462745Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.462753Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462760Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462766Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462772Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462828Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev-1: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462840Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462847Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462853Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462858Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462864Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462870Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462875Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462881Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462887Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462892Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462898Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462904Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462909Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462915Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462920Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462926Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462933Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462948Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462954Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.462959Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.501734Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.501787Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.501873Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.501887Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.501898Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.501924Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.501936Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.501946Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.501954Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.501966Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.501976Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.501985Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.501996Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.502007Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.502016Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.502026Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.502036Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.502045Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.502056Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502066Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502076Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502084Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502093Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502103Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev-1: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502182Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502197Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502208Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502219Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502229Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502238Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502247Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502257Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502266Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502276Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.502289Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature guar: wide and low, physics cylinder 1.40 m radius x 1.03 m high
+[2m2026-11-10T15:27:53.502298Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature guar: wide and low, physics cylinder 1.40 m radius x 1.03 m high
+[2m2026-11-10T15:27:53.502306Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature guar: wide and low, physics cylinder 1.40 m radius x 1.03 m high
+[2m2026-11-10T15:27:53.522231Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522296Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522323Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522336Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522348Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522359Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522373Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522436Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522447Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522463Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522475Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522487Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.522585Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature in_cave_alit_lev+0: wide and low, physics cylinder 1.41 m radius x 1.41 m high
+[2m2026-11-10T15:27:53.522598Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature in_cave_alit_lev+0: wide and low, physics cylinder 1.41 m radius x 1.41 m high
+[2m2026-11-10T15:27:53.522608Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522618Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.522628Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.522637Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.522649Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.522661Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.522672Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.522682Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.522692Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.522702Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541221Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.541274Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.541288Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.541297Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.541309Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.541317Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.541325Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.541334Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.541351Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.541363Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.541372Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.541385Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.541393Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.541403Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.541414Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541423Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541430Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541440Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev-1: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541448Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541455Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541463Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev-1: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541471Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev-1: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541479Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541487Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev-1: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.541497Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+0: wide and low, physics cylinder 0.91 m radius x 1.16 m high
+[2m2026-11-10T15:27:53.541505Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+0: wide and low, physics cylinder 0.91 m radius x 1.16 m high
+[2m2026-11-10T15:27:53.560404Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.560446Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.560460Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.560473Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.560490Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.560502Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.560513Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.560524Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.560535Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.560545Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.560559Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560569Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560581Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_westgash_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560591Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560602Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560613Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560622Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560632Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560642Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560651Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560660Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.560669Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.580829Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.580881Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.580901Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.580915Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_rat_lev-2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.580933Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.580945Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.580958Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.580968Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.580980Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.580990Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.581000Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.641846Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.641885Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.641895Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.641907Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.641914Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.641919Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.641927Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.641934Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.641942Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+2: wide and low, physics cylinder 0.55 m radius x 0.60 m high
+[2m2026-11-10T15:27:53.641947Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.641953Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.641959Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.641965Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.641971Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.641976Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.641987Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.641997Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.642003Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.642010Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_wild_all_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.642016Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.642024Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+2: wide and low, physics cylinder 0.28 m radius x 0.16 m high
+[2m2026-11-10T15:27:53.642030Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+2: wide and low, physics cylinder 0.28 m radius x 0.16 m high
+[2m2026-11-10T15:27:53.659131Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659181Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659196Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659208Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659217Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659224Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659231Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659237Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659243Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659249Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659256Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.659263Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659268Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659275Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659280Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659288Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.659299Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659307Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659313Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659319Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659324Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659334Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev-2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659340Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659345Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+0: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659352Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.659358Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+2: wide and low, physics cylinder 0.94 m radius x 0.26 m high
+[2m2026-11-10T15:27:53.659365Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_mudcrab: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659371Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659376Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_mudcrab: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659386Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_mudcrab: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659396Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659406Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_mudcrab: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659423Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659640Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659655Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659662Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659668Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659674Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659684Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659691Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659697Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_cliffracer_lev+2: wide and low, physics cylinder 3.11 m radius x 1.45 m high
+[2m2026-11-10T15:27:53.659703Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+0: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659708Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659714Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_all_lev+2: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659722Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659727Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659733Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659739Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659745Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659751Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659757Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659762Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659768Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659774Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev-1: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659779Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_molagmar_lev-1: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659784Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659791Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659796Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659802Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659807Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+0: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.659815Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+2: wide and low, physics cylinder 0.28 m radius x 0.16 m high
+[2m2026-11-10T15:27:53.659823Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+2: wide and low, physics cylinder 0.28 m radius x 0.16 m high
+[2m2026-11-10T15:27:53.659830Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+2: wide and low, physics cylinder 0.28 m radius x 0.16 m high
+[2m2026-11-10T15:27:53.659836Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+2: wide and low, physics cylinder 0.28 m radius x 0.16 m high
+[2m2026-11-10T15:27:53.659842Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+2: wide and low, physics cylinder 0.28 m radius x 0.16 m high
+[2m2026-11-10T15:27:53.659848Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_slaughterfish: wide and low, physics cylinder 0.28 m radius x 0.16 m high
+[2m2026-11-10T15:27:53.659855Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+0: wide and low, physics cylinder 0.91 m radius x 1.16 m high
+[2m2026-11-10T15:27:53.659861Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_slaughterfish: wide and low, physics cylinder 0.28 m radius x 0.16 m high
+[2m2026-11-10T15:27:53.659866Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_slaughterfish: wide and low, physics cylinder 0.28 m radius x 0.16 m high
+[2m2026-11-10T15:27:53.659872Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature h2o_all_lev+0: wide and low, physics cylinder 0.91 m radius x 1.16 m high
+[2m2026-11-10T15:27:53.659899Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature slaughterfish: wide and low, physics cylinder 0.91 m radius x 1.16 m high
+[2m2026-11-10T15:27:53.659922Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature kagouti_mating: wide and low, physics cylinder 1.71 m radius x 2.40 m high
+[2m2026-11-10T15:27:53.659928Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature kagouti_mating: wide and low, physics cylinder 1.71 m radius x 2.40 m high
+[2m2026-11-10T15:27:53.659934Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature guar: wide and low, physics cylinder 1.40 m radius x 1.03 m high
+[2m2026-11-10T15:27:53.659948Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature mudcrab: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659954Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature mudcrab: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.659959Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature mudcrab: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.675910Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_mudcrab: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.675968Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_shore_mudcrab: wide and low, physics cylinder 1.11 m radius x 0.71 m high
+[2m2026-11-10T15:27:53.675985Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_bittercoast_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.675998Z[0m [32m INFO[0m [2mmw_walkers_bevy::walkers[0m[2m:[0m creature ex_ascadianisles_lev+2: wide and low, physics cylinder 0.32 m radius x 0.27 m high
+[2m2026-11-10T15:27:53.979889Z[0m [32m INFO[0m [2mmw_devtools_bevy::pipeline_watch[0m[2m:[0m pipelines: +11 new (pbr_opaque_mesh_pipeline x4, pbr_prepass_pipeline x7), 41 compiling
+[2m2026-11-10T15:27:55.030022Z[0m [31mERROR[0m [2mbevy_render::error_handler[0m[2m:[0m Caught DeviceLost error: Unknown Unexpected error variant (driver implementation is at fault)
+[2m2026-11-10T15:27:55.030120Z[0m [31mERROR[0m [2mbevy_render::view::window[0m[2m:[0m Couldn't get swap chain texture: Validation
+
+thread 'Compute Task Pool (5)' (16324) panicked at C:\Users\leogloglo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-30.0.1\src\util\device.rs:72:18:
+Failed to get mapped range for buffer created with mapped_at_creation: MapRangeError("Validation Error\n\nCaused by:\n  Buffer with 'ssao_settings_buffer' label is invalid\n")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'Compute Task Pool (2)' (16932) panicked at C:\Users\leogloglo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-30.0.1\src\util\device.rs:72:18:
+Failed to get mapped range for buffer created with mapped_at_creation: MapRangeError("Validation Error\n\nCaused by:\n  Buffer with '' label is invalid\n")
+
+thread 'Compute Task Pool (2)' (16932) panicked at C:\Users\leogloglo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-30.0.1\src\util\device.rs:72:18:
+Failed to get mapped range for buffer created with mapped_at_creation: MapRangeError("Validation Error\n\nCaused by:\n  Buffer with '' label is invalid\n")
+
+thread 'Compute Task Pool (4)' (25184) panicked at C:\Users\leogloglo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-30.0.1\src\util\device.rs:72:18:
+Failed to get mapped range for buffer created with mapped_at_creation: MapRangeError("Validation Error\n\nCaused by:\n  Buffer with '' label is invalid\n")
+
+thread 'Compute Task Pool (7)' (24164) panicked at C:\Users\leogloglo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-30.0.1\src\util\device.rs:72:18:
+Failed to get mapped range for buffer created with mapped_at_creation: MapRangeError("Validation Error\n\nCaused by:\n  Buffer with '' label is invalid\n")
+
+thread 'Compute Task Pool (3)' (22568) panicked at C:\Users\leogloglo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-30.0.1\src\util\device.rs:72:18:
+Failed to get mapped range for buffer created with mapped_at_creation: MapRangeError("Validation Error\n\nCaused by:\n  Buffer with 'material uniform data 0' label is invalid\n")
+
+thread 'Compute Task Pool (1)' (24540) panicked at C:\Users\leogloglo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-30.0.1\src\util\device.rs:72:18:
+Failed to get mapped range for buffer created with mapped_at_creation: MapRangeError("Validation Error\n\nCaused by:\n  Buffer with '' label is invalid\n")
+[2m2026-11-10T15:27:55.032315Z[0m [31mERROR[0m [2mbevy_pbr::cluster::gpu[0m[2m:[0m Failed to fetch staging buffer; not clustering.
+[2m2026-11-10T15:27:55.032330Z[0m [31mERROR[0m [2mbevy_render::diagnostic[0m[2m:[0m TimeSpanScope::end was never called
+[2m2026-11-10T15:27:55.032684Z[0m [33m WARN[0m [2mbevy_render::diagnostic::internal[0m[2m:[0m Failed to download render statistics buffer: Error occurred when trying to async map a buffer
+[2m2026-11-10T15:27:55.041675Z[0m [33m WARN[0m [2mbevy_render::diagnostic::internal[0m[2m:[0m Failed to download render statistics buffer: Error occurred when trying to async map a buffer
+[2m2026-11-10T15:27:55.041717Z[0m [33m WARN[0m [2mbevy_render::diagnostic::internal[0m[2m:[0m Failed to download render statistics buffer: Error occurred when trying to async map a buffer
+
+thread 'main' (13076) panicked at superfargoth\vendor\bevy_pbr\src\cluster\gpu.rs:1157:90:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }

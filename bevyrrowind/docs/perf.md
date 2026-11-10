@@ -27,18 +27,23 @@ Laptop: **median <= 11 ms** in every exterior benchmark (`max_frame_stat` median
 and the GPU, so a frame costs about the slowest of the three: each gets the whole 11 ms minus ~1.5 ms
 headroom for spikes and thermal clocks.
 
-| lane (High, 1440p DLSS Q) | budget ms | Balmora | Seyda Neen | Red Mountain | balmora_walk | flight |
-|---|---:|---:|---:|---:|---:|---:|
-| frame (median) | 11.0 | 9.5 | 10.0 | 9.0 | 10.5 | 11.1 (10.6 warm) |
-| render thread busy | 9.5 | 7.2 | 8.4 | 7.2 | 9.0 | 9.0 |
-| - of it graph encoding | 4.0 | 3.5 | 4.2 | 3.3 | 4.1 | 4.0 |
-| main thread busy | 9.5 | 6.6 | 7.2 | 6.6 | 8.0 | 7.6 |
-| GPU (Bevy-timed) | 9.5 | 8.6 | 8.7 | 7.9 | 7.5 | 8.1 |
-| - opaque + prepass | 3.5 | 2.9 | 2.6 | 2.3 | 1.8 | 2.5 |
-| - DLSS SR | 2.1 | 2.2 | 2.3 | 2.2 | 2.2 | 2.1 |
-| - sky, clouds, fog, light probes | 1.5 | 0.8 | 0.8 | 0.9 | 0.7 | 0.9 |
+| lane (High, 1440p DLSS Q) | budget ms | Balmora | Seyda Neen | Red Mountain | run | balmora_walk | flight | Balmora night | walk night |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| frame (median) | 11.0 | 9.63 | 10.08 | 9.27 | 10.20 | 10.77 | 10.90 | 8.68 | 10.26 |
+| frame p95 | | 11.03 | 11.88 | 10.67 | 16.05 | 13.60 | 14.00 | 10.07 | 14.81 |
+| render thread busy | 9.5 | 7.4 | 8.2 | 7.4 | 8.6 | 9.1 | 8.5 | 6.8 | 8.8 |
+| - of it graph encoding | 4.0 | 3.9 | 4.2 | 3.6 | 4.2 | 4.5 | 3.9 | 3.5 | 4.5 |
+| main thread busy | 9.5 | 6.8 | 7.2 | 6.8 | 7.5 | 8.1 | 7.8 | 6.5 | 8.0 |
+| GPU (Bevy-timed) | 9.5 | 8.6 | 8.7 | 7.9 | 8.3 | 7.5 | 8.5 | 8.0 | 7.2 |
+| - main opaque + prepasses | 3.5 | 3.2 | 2.9 | 2.5 | 2.6 | 2.0 | 2.9 | 2.8 | 1.7 |
+| - DLSS SR | 2.1 | 2.2 | 2.2 | 2.2 | 2.2 | 2.2 | 2.2 | 2.2 | 2.2 |
 
-Measured 2026-10-28 (`slice4b_final` + `slice4c_flight`, 2560x1440 + `BEVYRROWIND_DLSS=quality`, ×3; down from 2026-10-19's `14.3 / 17.7 / 17.2 / — / 19.3 ms`): 4/5 benches pass `<= 11.0 ms` (`balmora_walk` `10.50 ms`), and 60 m/s `flight` hits `10.63 ms` warm (`11.10 ms` 3-run median incl. cold disk). Key wins: static `OutfitAssets` AABBs (`bigspace/total` `0.75 -> 0.41 ms`), `AnimLod::idle_skip_a3` (`anim/evaluate_cpu` `2.01 -> 0.12 ms`), 110 m walker AI wake radius (`controller/move` `1.02 -> 0.14 ms`), `CookedMaterials` dedup + 30 Hz NIF material stepping, `AtmosphereStaticLutCache`, incremental `extract_visibility_ranges`, and dry-weather `PrecipOcclusion` skip. The 2026-10-19 what-costs-what A/B table and trace summary remain in the log below.
+Measured 2026-11-10 (`s0_baseline`, main `018c0f6`, Delirium off; 2560x1440 + `BEVYRROWIND_DLSS=quality`, ×3; frame
+and GPU = medians of runs from `summary.md`, lanes = median run of the per-run means; reports in
+`benchmarks/runs/s0_baseline/`). Every median passes `<= 11.0 ms`; the weak spot is pacing while moving (`run`,
+the walks, `flight`: p95 13.6-16 ms, 1 % lows 52-66 fps). "Opaque + prepasses" is `main_opaque_pass_3d` plus every
+`*prepass*` pass (the 2026-10-28 row may have summed differently); the sky/clouds/fog row moved to the archive with
+the 2026-10-28 table ([Frame budget (2026-10-28)](archive/perf-log-2026-10.md#frame-budget-2026-10-28)).
 
 ### Render-thread baseline, A/B and trace
 
@@ -110,7 +115,31 @@ transfer those numbers into static-scene.md's "Budgets (targets, to be confirmed
 
 #### S0 baseline results
 
-Awaiting the owner's run (ROADMAP 1.16, S0). Paste the table here.
+Run 2026-11-10 on the owner's machine (main `018c0f6` + Delirium off by default; profiling, `dlss`; the documented
+command with tag `ab_main`; reports in `benchmarks/runs/s0_baseline/`). Gauges are run #2's per-frame means (`.md`
+gauges table, "mean" column); frame = median of 3 runs. The `--off precombine` block has not been run yet.
+
+| scenario | frame ms | main items / bins (items per bin) | all items / bins | lamp_face views / items | all batch_sets | pipelines_distinct | preprocess/bind_groups |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| balmora | 9.63 | 9294 / 3182 (2.9) | 14.6 k / 5218 (2.8) | 0 / 0 | 67 | 55 | 154 |
+| seyda_neen | 10.08 | 9444 / 3678 (2.6) | 18.3 k / 7285 (2.5) | 12 / 1204 | 78 | 63 | 176 |
+| red_mountain | 9.27 | 6808 / 2698 (2.5) | 10.9 k / 4411 (2.5) | 0 / 0 | 67 | 53 | 154 |
+| run | 10.20 | 10.6 k / 4744 (2.2) | 18.8 k / 7711 (2.4) | 0 / 0 | 73 | 55 | 166 |
+| balmora_walk | 10.77 | 8494 / 2882 (2.9) | 18.4 k / 6542 (2.8) | 18 / 1293 | 84 | 62 | 189 |
+| flight | 10.90 | 7168 / 2890 (2.5) | 11.4 k / 4518 (2.5) | 0 / 0 | 61 | 54 | 142 |
+| balmora_night | 8.68 | 9312 / 3178 (2.9) | 11.3 k / 4166 (2.7) | 0 / 0 | 60 | 55 | 139 |
+| balmora_walk_night | 10.26 | 8226 / 2896 (2.8) | 11.5 k / 4822 (2.4) | 18 / 1200 | 70 | 58 | 159 |
+
+Read: **bins are about a third of items everywhere (2.2-2.9 items per bin)**, so "one batch per model" is the
+precombine case (test-pass-2026-11-10.md §1, architecture review B1): the GPU count/allocate/scatter pass is needed
+from S3b. `balmora_night` (standing, 150 m up) shows no lamp-face views at all; only the walks and Seyda Neen do.
+
+A/B against `ab/before-static-scene` (same flags, Delirium off, its own bake; `benchmarks/runs/ab_before_static_scene/`),
+frame median ms, before → main: balmora 9.61 → 9.63, seyda_neen 9.92 → 10.08, red_mountain 9.23 → 9.27, run 10.54 →
+10.20, balmora_walk 11.32 → 10.77, flight 12.28 → 10.90, balmora_night 9.19 → 8.68 (before: 2 runs, run 1 lost to a
+`DeviceLost`), balmora_walk_night 10.45 → 10.26. Same GPU clocks and temperatures; other processes used ~5 % more CPU
+during the before suite. **The always-on static-scene Bevy changes cost nothing measurable** (standing ±0.2 ms) and
+the moving scenarios are 0.2-1.4 ms faster on main.
 
 #### Caveats on the S0 numbers (known issues, to be fixed in code)
 
@@ -171,63 +200,7 @@ Awaiting the owner's run (ROADMAP 1.16, S2). Paste the table here.
 
 ### Dated measurement log (archived)
 
-The dated measurement blocks (2026-10-20/21) moved verbatim to [archive/perf-log-2026-10.md](archive/perf-log-2026-10.md), newest first. Each old section name still resolves below.
-
-#### Bare baseline and precombine
-
-Moved: [Bare baseline and precombine (precombine3, 2026-10-20)](archive/perf-log-2026-10.md#bare-baseline-and-precombine-precombine3-2026-10-20).
-
-#### Feature ladder
-
-Moved: [Feature ladder (precombine3, 2026-10-20)](archive/perf-log-2026-10.md#feature-ladder-precombine3-2026-10-20).
-
-#### Terrain blend removed
-
-Moved: [Terrain blend removed (lights1, 2026-10-20)](archive/perf-log-2026-10.md#terrain-blend-removed-lights1-2026-10-20).
-
-#### Lights
-
-Moved: [Lights (lights1, 2026-10-20)](archive/perf-log-2026-10.md#lights-lights1-2026-10-20).
-
-#### Audit
-
-Moved: [Audit (lights1, 2026-10-20)](archive/perf-log-2026-10.md#audit-lights1-2026-10-20).
-
-#### GPU particles
-
-Moved: [GPU particles (particles1, 2026-10-20)](archive/perf-log-2026-10.md#gpu-particles-particles1-2026-10-20).
-
-#### Night
-
-Moved: [Night (particles1, 2026-10-20)](archive/perf-log-2026-10.md#night-particles1-2026-10-20).
-
-#### Shadows v2
-
-Moved: [Shadows v2 (shadows2, 2026-10-20)](archive/perf-log-2026-10.md#shadows-v2-shadows2-2026-10-20).
-
-#### Per-lamp GPU cost
-
-Moved: [Per-lamp GPU cost (lampcost, 2026-10-21)](archive/perf-log-2026-10.md#per-lamp-gpu-cost-lampcost-2026-10-21).
-
-#### Light lab cost model
-
-Moved: [Light lab cost model (lightlab, 2026-10-21)](archive/perf-log-2026-10.md#light-lab-cost-model-lightlab-2026-10-21).
-
-#### Shadow reset A1
-
-Moved: [Shadow reset A1 (shadowA1, 2026-10-21)](archive/perf-log-2026-10.md#shadow-reset-a1-shadowa1-2026-10-21).
-
-#### Shadow reset A2
-
-Moved: [Shadow reset A2 (shadowA2, 2026-10-21)](archive/perf-log-2026-10.md#shadow-reset-a2-shadowa2-2026-10-21).
-
-#### Shadow reset B1
-
-Moved: [Shadow reset B1 (shadowB1, 2026-10-21)](archive/perf-log-2026-10.md#shadow-reset-b1-shadowb1-2026-10-21).
-
-#### Shadow reset B2
-
-Moved: [Shadow reset B2 (shadowB2, 2026-10-21)](archive/perf-log-2026-10.md#shadow-reset-b2-shadowb2-2026-10-21).
+Older measurement blocks moved verbatim to [archive/perf-log-2026-10.md](archive/perf-log-2026-10.md), newest first: [Bare baseline and precombine (precombine3, 2026-10-20)](archive/perf-log-2026-10.md#bare-baseline-and-precombine-precombine3-2026-10-20), [Feature ladder (precombine3, 2026-10-20)](archive/perf-log-2026-10.md#feature-ladder-precombine3-2026-10-20), [Terrain blend removed (lights1, 2026-10-20)](archive/perf-log-2026-10.md#terrain-blend-removed-lights1-2026-10-20), [Lights (lights1, 2026-10-20)](archive/perf-log-2026-10.md#lights-lights1-2026-10-20), [Audit (lights1, 2026-10-20)](archive/perf-log-2026-10.md#audit-lights1-2026-10-20), [GPU particles (particles1, 2026-10-20)](archive/perf-log-2026-10.md#gpu-particles-particles1-2026-10-20), [Night (particles1, 2026-10-20)](archive/perf-log-2026-10.md#night-particles1-2026-10-20), [Shadows v2 (shadows2, 2026-10-20)](archive/perf-log-2026-10.md#shadows-v2-shadows2-2026-10-20), [Per-lamp GPU cost (lampcost, 2026-10-21)](archive/perf-log-2026-10.md#per-lamp-gpu-cost-lampcost-2026-10-21), [Light lab cost model (lightlab, 2026-10-21)](archive/perf-log-2026-10.md#light-lab-cost-model-lightlab-2026-10-21), [Shadow reset A1 (shadowA1, 2026-10-21)](archive/perf-log-2026-10.md#shadow-reset-a1-shadowa1-2026-10-21), [Shadow reset A2 (shadowA2, 2026-10-21)](archive/perf-log-2026-10.md#shadow-reset-a2-shadowa2-2026-10-21), [Shadow reset B1 (shadowB1, 2026-10-21)](archive/perf-log-2026-10.md#shadow-reset-b1-shadowb1-2026-10-21), [Shadow reset B2 (shadowB2, 2026-10-21)](archive/perf-log-2026-10.md#shadow-reset-b2-shadowb2-2026-10-21).
 
 ## Dev loop
 
