@@ -1737,3 +1737,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (first person FP-1b): each worldspace owns two render layers, content `W` and shadow-only `S` = W+1
   (`WorldspaceLayers`); lights carry `S`, cameras never do, the traced scene adds its lights' layers. A mesh on `S`
   alone is Bevy 0.20's shadow-only caster (first-person head; FP-2 arms and held items) (first-person.md).
+- 2026-11-10 (first person FP-2, research): the view model is one render, not a second camera: a `NotShadowCaster`
+  view copy of arms and held items on `W`, own FOV and a near depth slice in the vertex stage, true world position for
+  lighting; the role parts stay on `S`. A second Bevy 0.20 camera re-renders the sun cascades per view (first-person.md).

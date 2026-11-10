@@ -1,6 +1,6 @@
 # First person: body, arms, held items, view model
 
-Status: **FP-1 and FP-1b built (2026-11-10), FP-2..FP-6 planned.** Crates: `sf_character` (`ViewRole`,
+Status: **FP-1 and FP-1b built (2026-11-10); FP-2 designed (single-pass view model, "View model" below), FP-2a..FP-6 planned.** Crates: `sf_character` (`ViewRole`,
 merge groups), `sf_character_bevy` (`RoleLayers`, `ShadowLayers`, `PartRole`, module `roles`),
 `sf_world_bevy` (`WorldspaceLayers`), `sf_sky_bevy` (traced scene), `sf_camera(_bevy)` (view choice,
 eye); game: `mw_actors` (`slots::view_role`), `mw_actors_bevy`, `mw_exterior_bevy` (sky lights,
@@ -66,14 +66,15 @@ NPCs and remote co-op players keep one mesh per material, since a split costs +2
 Bevy 0.20 has no shadow-only flag (`bevy_light` pairs casters with a light by `RenderLayers`
 intersection, `lib.rs` ~l.437/611/703; a `Visibility::Hidden` entity casts nothing), so roles are
 moved between layers. `W` = the root's own layers (its worldspace's, `world::follow_worldspace_layers`),
-`S` = a worldspace shadow-only layer (FP-1b), `V` = the viewmodel camera's layer (FP-2).
+`S` = a worldspace shadow-only layer (FP-1b). FP-2 adds no layer: the view copy ("View model") is drawn
+by the main camera on `W` with the view-model projection, `NotShadowCaster`.
 
 | Role | Third person | FP-1b (built) | + FP-2 (target) |
 |---|---|---|---|
 | Body | W | W | W |
 | Head | W | S (`RoleLayer::SHADOW`) | S |
-| Arms | W | W | S + V |
-| Held | W | W | S + V |
+| Arms | W | W | S, plus a view copy on W |
+| Held | W | W | S, plus a view copy on W |
 | Held lights | W + S | W + S | W + S (never role-layered) |
 
 `RoleLayers { roles: [RoleLayer { world, shadow, extra }; 4] }`: part layers = `extra`, plus `W`
@@ -113,6 +114,70 @@ never list it. Checked consumers:
   (`sf_character_bevy` cannot tell lights from meshes without `bevy_light`); viewers and examples
   without worldspaces have no `S` (a shadow-only role there casts nothing).
 
+## View model (FP-2 decision, 2026-11-10)
+
+**Decision: one render, the view copy drawn by the main camera with its own projection (UE 5.5
+"First Person Rendering", Source's viewmodel, OpenMW's projection swap), not a second camera.**
+Research against the Bevy 0.20.0 source built here (`bevy` examples, `bevy_render`, `bevy_pbr`,
+`bevy_light`, `bevy_core_pipeline`, vendored copies):
+
+**A second `Camera3d`** (`examples/camera/first_person_view_model.rs`: `order: 1`, its own layer and
+FOV, light on both layers; the example's arm is `NotShadowCaster`, its only light a point light):
+- *Sun shadows twice.* `bevy_light::build_directional_light_cascades` fits cascades for every active
+  camera, and `bevy_pbr` `prepare_lights` (vendor `render/light.rs` ~l.2147, ~l.2580) makes cascade
+  shadow views per (camera x directional light whose layers meet the camera's). A sun carrying `V`
+  re-renders all its cascades (4) for the view model, frusta nearly equal to the main camera's;
+  without `V` the sun does not light the arms at all (sun-lit world, dark arms). Point and
+  spot maps are per light (shared), but every light needs `V`, and `V` is not per worldspace.
+- *Every per-view input duplicated to match the world:* `Exposure`, `Tonemapping`/`ColorGrading`,
+  `AtmosphereEnvironmentMapLight` (a per-view cubemap), the DDGI `GiProbeVolumeView`, surface
+  weather, fog, ambient; plus the per-view CPU visibility pass, clusters and light assignment.
+- *Compositing.* Cameras on one target share main textures when target, usages, format and MSAA
+  match (`view/mod.rs` `prepare_view_targets`, `MainTextureKey`); each runs the whole `Core3d`
+  schedule. Shared with `ClearColorConfig::None`: the view model loads the main camera's already
+  tonemapped texture and tonemaps it again (`tonemapping/node.rs` only checks `hdr`), unless the main
+  camera gives up tonemapping and bloom while first person is on. Not shared (MSAA differs): it
+  clears its own texture, tonemaps only the arms, and `upscaling` alpha-blends it over the output
+  (`sorted_camera_index_for_target > 0`, `upscaling/mod.rs`), so post runs twice and bloom splits.
+  Its own depth texture (`Camera3dDepthLoadOp::Clear(0.0)`) is why arms never clip into walls.
+- *DLSS/TAA.* It has no `MainPassResolutionOverride`: it renders at output resolution after the
+  main camera's DLSS, outside its history (no ghosting, but no temporal AA: MSAA at full res, and
+  the arms look sharper than the world). Bevy UI's default camera is the highest-order one.
+- Cost: a second 4-cascade sun pass (perf.md cascade counters) + ~0.3-0.6 ms of full-res clear,
+  resolve, tonemap and blit at 1440p, per frame in first person. Removing the sun cost needs a Bevy
+  patch (a view borrowing another view's lights and shadow maps: no upstream concept). Rejected.
+
+**Single pass** (chosen): a material extension (`ExtendedMaterial<StandardMaterial, ViewModel>`,
+public API: `MaterialExtension::{vertex_shader, prepass_vertex_shader}`; `sf_water_bevy`'s
+`WaterExt` is our extension precedent, `sf_lod_bevy`/`sf_terrain_bevy` our custom vertex stages) whose vertex stage copies Bevy's `render/mesh.wesl` / `prepass.wesl`
+(skinning, morph) and changes only the clip position:
+- *FOV:* view-space x and y scaled by `k = tan(fov_world/2) / tan(fov_view/2)` before the camera's
+  own `clip_from_view`, which keeps aspect, near plane and the TAA/DLSS jitter.
+- *No wall clipping:* clip depth remapped into the nearest slice, `z' = R w + (1 - R) z` (reverse Z:
+  `ndc' = R + (1 - R) ndc`, `R` ~0.8): only geometry closer than `near / R` can cover the arms
+  (the classic viewmodel depth range; UE does it by scaling toward the eye).
+- *Lighting stays true:* `world_position` (lighting, shadows, GI, fog, surface weather) is the real
+  one; only `position` changes, so the arms are lit exactly like the body, with no duplicated state.
+- *Prepass and motion vectors:* the prepass vertex stage applies the same clip so depth-prepass
+  equality holds, and outputs pseudo-world positions `world_from_view * S_k * view_from_world * p`
+  (previous frame: `previous_view_uniforms`), so Bevy's stock prepass fragment writes the right
+  motion vectors: the arms go through DLSS/TAA with the world (FP-4 then checks, not builds).
+- *Shadows:* shadow views use the prepass vertex shader too, and Bevy 0.20 has no shader def that
+  tells a shadow view from the main prepass (`light.rs` ~l.3124 `light_key` = `DEPTH_PREPASS` +
+  projection, as a depth-only camera prepass). So the arms are **drawn twice**: the role part stays
+  on `S` with its `StandardMaterial` (shadow only, as the head), and a **view copy** (same mesh, same
+  `SkinnedMesh` joints, the view-model material, `NotShadowCaster`, on `W`) is what the camera sees.
+  Draw count equals third person; +1 joint palette per copy.
+- Cost: vertex ALU on the arm and held meshes only, no extra view: expected < 0.05 ms per preset.
+- Known costs of the depth slice (to watch in the visual check): screen-space effects read the
+  remapped depth (SSAO halo around the arm silhouette, contact shadows on the arms march the wrong
+  pixels); the FOV change moves the arms against the body on `W` (a shoulder seam looking down,
+  open question 4). The copies stay out of the traced scene (skinned meshes are not traced, DL-3; a
+  marker keeps it so) and out of other cameras' views.
+
+Setting: `ComfortSettings::fov_body` (vertical degrees, default 50 against `fov_world` 60, Bevy's
+example ratio; already there, unused). `V` and the light-layer change from FP-1b's handoff are dropped.
+
 ## Build plan
 
 1. **FP-1 layer split** (built): roles, merge groups, `RoleLayers`, the avatar's first person shows
@@ -121,8 +186,14 @@ never list it. Checked consumers:
 2. **FP-1b shadow layer** (built): as above; tests: layer pairs and travel (`sf_world_bevy`), the
    head on `S` alone through the real systems and on travel (`sf_character_bevy`, avatar test),
    sky lights per worldspace (`mw_exterior_bevy`), the traced scene (`sf_sky_bevy`).
-3. **FP-2 viewmodel camera**: a second `Camera3d` (higher `order`, `RenderLayers` `V`, own FOV
-   from the comfort setting, own depth) or a pass into the main targets; arms/held to `S + V`.
+3. **FP-2 view model** ("View model"), three slices: **FP-2a** the projection as Bevy-free math in
+   `sf_camera` (`k` from `fov_world`/`fov_body`, the depth slice, pseudo-world positions; exact unit
+   tests) and the view-copy plan in `sf_character_bevy` (`RoleLayers` gains a per-role `view_copy`;
+   copies spawned, re-synced and despawned with the role, sharing mesh and joints, `NotShadowCaster`,
+   marker; headless tests: copies exist only in first person, on `W` only, base parts on `S` only,
+   travel); **FP-2b** the `ViewModel` material extension and its two shaders (copy Bevy's mesh and
+   prepass vertex stages), the copy's material derived from the part's, params from the setting;
+   needs a GPU run for the shader-compile log line; **FP-2c** visual check FP-2 (DLSS on/off).
 4. **FP-3 held items**: `held.rs` props in the viewmodel, torch light kept on the world body,
    spell-hand attach for VFX.
 5. **FP-4 TAA/DLSS/GI**: viewmodel motion vectors and jitter, the upscale decision, printed ms
@@ -139,7 +210,7 @@ model) rides on FP-2.
 |---|---|---|---|
 | Hide own head, keep its shadow | UE `bOwnerNoSee` + `bCastHiddenShadow`; Unity `ShadowCastingMode.ShadowsOnly` | head to a per-worldspace layer only lights (and the traced scene) see | **match** (FP-1b) |
 | First-person arms | separate viewmodel rig (Skyrim, OpenMW `xbase_anim.1st`, shooters) or the world body's arms (Mirror's Edge) | world body's arms (FP-1), redrawn in a viewmodel (FP-2) | **match** (hybrid C) |
-| Viewmodel FOV and clipping | OpenMW: per-subgraph projection swap (`OverrideFieldOfViewCallback`) + depth clear bin (`DepthClearCallback`, then a depth-only pass into the opaque depth for post); Bevy example: second camera on its own layer; UE 5.5: per-primitive FOV in the vertex stage | second camera or main-target pass (FP-2) | **planned** |
+| Viewmodel FOV and clipping | OpenMW: per-subgraph projection swap (`OverrideFieldOfViewCallback`) + depth clear bin (`DepthClearCallback`, then a depth-only pass into the opaque depth for post); Bevy example: second camera on its own layer; UE 5.5: per-primitive FOV in the vertex stage | single pass: view copy with own FOV and a near depth slice in the vertex stage, true world position for lighting (FP-2) | **planned** (UE 5.5 shape) |
 | Split meshes only where needed | UE merges skeletal meshes per material for crowds, keeps the player modular | split by role only for roots with `RoleLayers` | **match** |
 
 ## Reuse
@@ -148,7 +219,7 @@ model) rides on FP-2.
   `visibility/render_layers.rs`: `layer`, `none`, `from_layers`, `with`, `union`, `intersects`; no
   component = layer 0; empty = invisible) and `examples/camera/first_person_view_model.rs` (world
   camera on layer 0, viewmodel camera `order: 1` on layer 1 with its own FOV, arm `NotShadowCaster`,
-  light on both layers). No shadow-only or owner-no-see flag. Hierarchy layer propagation
+  light on both layers; rejected for FP-2, "View model"). No shadow-only or owner-no-see flag. Hierarchy layer propagation
   (`HierarchyPropagatePlugin<RenderLayers>`) is not used, as world.rs explains.
 - **Crates**: none covers character part roles.
 - **OpenMW** (ca5e2576): technique A, separate first-person skeleton and parts; cited above.
@@ -161,3 +232,6 @@ model) rides on FP-2.
 3. On the ray-traced path the head is in the traced scene, so it can show in reflections (a
    mirror shows your face). Keep, or mask `S` out of reflection rays if Solari ever offers per-ray
    masks?
+4. FP-2's FOV override moves the arms against the body (the torso is drawn at `fov_world`): with
+   `fov_body` 50 vs 60 the arms are ~24% larger on screen. Accept the shoulder seam looking down,
+   blend `k` toward 1 near the shoulders, or default `fov_body = fov_world`? Owner, at FP-2c.
