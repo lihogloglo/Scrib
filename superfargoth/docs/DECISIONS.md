@@ -1761,3 +1761,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (services A3): training is modern-flow over OpenMW's rules: a skill row asks first (2 h pass), the list stays
   open and re-lists after a purchase (OpenMW closes to the game: classic column), refused rows show their reason; the 2
   hours move the MWScript calendar globals and `SkyTime` until ROADMAP 1.17's single clock.
+- 2026-11-10 (owner): the app's `delirium` feature is **off by default** (and out of `dev`): delirium-physics 0.5+ reads its
+  numbers from the player's own GTA IV program (`kv::unlock`) and is, by its README, a port of Euphoria from GTA IV's code;
+  every takeover panics without it. Active ragdoll is an open owner decision; opt in with `--features delirium`.
