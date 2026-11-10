@@ -1,6 +1,6 @@
 # Effects adapter: Morrowind's MGEF, SPEL, ALCH, ENCH, INGR on `sf_effects`
 
-Status (2026-11-08): **agreed** (owner 2026-11-08, defaults taken). A1 written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10). A2 potions 2026-11-10 (headless tests; HUD icons not built). Framework: `../../../superfargoth/docs/specs/effects.md`.
+Status (2026-11-08): **agreed** (owner 2026-11-08, defaults taken). A1 written 2026-11-08, compiled + unit tests + pedantic clippy 2026-11-09; UNTESTED in game (owner test pass 2026-11-10). Framework: `../../../superfargoth/docs/specs/effects.md`.
 Ported from OpenMW `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (paths under `apps/openmw/` unless noted; line numbers
 approximate). Magic effect semantics are content mechanics: one implementation, ported 1:1 (ARCHITECTURE §1b; where
 OpenMW deliberately differs from vanilla, follow vanilla). Cast chance, resist roll, reflect/absorb rolls, ingredient
@@ -111,7 +111,7 @@ handler that re-applies its harmful effects each period. Levitate is removed whe
 ## Potion use
 
 Inventory "use" on an ALCH: glue removes one from the stack and sends `Inflict { source: alch id, caster: self,
-entries: all ranges as self, area 0 }`; `Stack` (built A2: "As built (A2)"). Ingredient eat: `mw.effects.ingredient_eat` (`(Alchemy + 0.2 Int +
+entries: all ranges as self, area 0 }`; `Stack`. Ingredient eat: `mw.effects.ingredient_eat` (`(Alchemy + 0.2 Int +
 0.1 Luck) × fatigueTerm` vs `roll0to99`; duration and magnitude from `y = roll / min(x,100) × 0.25 x`), then
 `Inflict` of the first effect only; failure → `sNotifyMessage50`. Both are `CastSpell::cast` (`spellcasting.cpp`
 315-420). Item-use skill gain: `Enchant_UseMagicItem` for WhenUsed (`spellcasting.cpp` ~280).
@@ -194,25 +194,6 @@ Written 2026-11-08 without compiling: UNTESTED (owner test pass 2026-11-10). Cra
   (`esmstore.cpp` `getSpellsToReplace`); a skill / attribute effect with no valid argument is kept with none and
   reported (`MapNote`). Areas: feet × 0.3048 m. ALCH: self, no area, no cost. SPEL cost: `calcSpellCost` with
   `fEffectCostMult` (`MwEffectGmst`, vanilla 0.5). ENCH / INGR mapping: A6 / A2.
-
-## As built (A2)
-
-2026-11-10, headless tests (`mw_rpg_bevy::item_use::tests`, 4); not run in game. `mw_rpg_bevy/src/item_use.rs`:
-the inventory screen's `InventoryIntent::Use(stack)` on the player's own view → `UseItemRequest { player, stack }`
-(`request_item_use`); host `apply_item_use` (Update, before `inventory_ui::sync_open`): host player only, stack in
-the loadout, ALCH record, else nothing; `Loadout::take(stack, 1)` (the last piece removes the stack), then
-`EffectCommand(Player(HOST_KEY), [map_potion(..).inflict(Some(self), RollSeed(tick << 32 | n))])` and
-`ItemUsed { player, item, sound: Drink }`. The MGEF table is kept as `effects::MwEffectsRes` for the mapping.
-OpenMW (`inventorywindow.cpp` `useItem` 610-702, `potion.cpp` `use` 122-131, `actor.cpp` `consume` 79-92,
-`spellcasting.cpp` 315-328, `activespells.cpp` 484-501): one piece removed before the cast; a stackable source is
-always a new instance (second drink = two instances, each expiring on its own); no "cannot drink while" rule.
-Differences: OpenMW inflicts self / touch / target entries as up to three instances, we land one instance; the
-effect lands on the next fixed tick and a rate's first tick is on the landing tick (Restore Health 10 / 5 s from
-70: 70.17 at landing, +20 two seconds later, capped at 100). Leftovers: the `Drink` sound is not routed (audio
-glue, as dialogue sounds), drinking does not break Invisibility (A7), potion scripts' `OnPCEquip` /
-`PCSkipEquip`, quick keys, MWScript `Equip` (functions.txt "later"). **HUD icon list: not built**: the HUD
-(`sf_ui_screens::HudView`) has no effect-icon slot and its game glue is `mw_player_bevy::hud`; next slice
-(`HudView.effects` aggregated per effect key as OpenMW `MWGui::SpellIcons`, icons from `Presentation`).
 
 ## Open questions (owner)
 

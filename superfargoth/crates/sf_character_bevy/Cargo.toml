@@ -22,11 +22,17 @@ bevy_camera.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
 # NotShadowCaster (first-person view copies).
 bevy_light.workspace = true
+# OpaqueRendererMethod (the view-model material is forward).
+bevy_material.workspace = true
 bevy_math = { workspace = true, features = ["std"] }
 # "morph": Mesh::set_morph_targets, MeshMorphWeights (heads).
 bevy_mesh = { workspace = true, features = ["morph"] }
-# StandardMaterial, MeshMaterial3d.
+# StandardMaterial, MeshMaterial3d; the view-model `ExtendedMaterial` (FP-2b).
 bevy_pbr.workspace = true
+# The view-model extension: TypePath, AsBindGroup/ShaderType, ShaderRef.
+bevy_reflect = { workspace = true, features = ["std"] }
+bevy_render.workspace = true
+bevy_shader.workspace = true
 # AsyncComputeTaskPool: resolve + load + assemble off the main thread.
 bevy_tasks = { workspace = true, features = ["futures-lite"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
@@ -52,6 +58,10 @@ glam.workspace = true
 sf_anim = { workspace = true, features = ["fixtures"] }
 sf_anim_graph = { workspace = true, features = ["bake"] }
 sf_bake.workspace = true
+# Shader compile checks (no GPU, no picture): wesl links the view-model stages against the
+# vendored bevy_pbr modules per def set, as Bevy's shader cache does; naga validates (as sf_sky_bevy's).
+naga = { workspace = true, features = ["wgsl-in"] }
+wesl = { workspace = true, features = ["naga-ext"] }
 
 [lints]
 workspace = true

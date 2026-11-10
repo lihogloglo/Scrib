@@ -10,7 +10,7 @@
 //! ([`RoleLayer::view_copy`]) gets a [`ViewCopy`] of each of its parts, a child of the part on
 //! the root's layers, sharing its mesh, material and `SkinnedMesh` joints (no second rig, one more
 //! joint palette), `NotShadowCaster` and out of the ray-traced scene (`NoRayTracing`). The camera
-//! draws the copy (FP-2b gives it the view-model projection); the part itself stays on the
+//! draws the copy (with [`crate::ViewModelPlugin`] through its view-model material, FP-2b); the part itself stays on the
 //! shadow-only layer and casts. Copies are spawned and despawned with the rule, rebuilt with the
 //! outfit and the held props (they are the parts' children), and follow their part's mesh,
 //! material, skin, morph weights and bounds ([`follow_view_copies`]).
@@ -24,7 +24,7 @@
 //! camera does.
 
 use bevy_camera::primitives::Aabb;
-use bevy_camera::visibility::{DynamicSkinnedMeshBounds, NoAutoAabb, RenderLayers, Visibility};
+use bevy_camera::visibility::{DynamicSkinnedMeshBounds, NoAutoAabb, NoFrustumCulling, RenderLayers, Visibility};
 use bevy_ecs::prelude::*;
 use bevy_light::NotShadowCaster;
 use bevy_mesh::morph::MeshMorphWeights;
@@ -35,6 +35,7 @@ use bevy_transform::components::Transform;
 use sf_character::ViewRole;
 use sf_model_bevy::NoRayTracing;
 
+use crate::view_model::{ViewCopyMaterial, ViewModelMaterials};
 use crate::{Character, CharacterBody, HeldProps};
 
 /// How one role's parts are layered.
@@ -181,6 +182,7 @@ pub(crate) fn sync_role_layers(
     parts: Query<(&PartRole, Option<&RenderLayers>)>,
     sources: Query<Source<'_>>,
     copies: Query<Option<&RenderLayers>, With<ViewCopy>>,
+    view_model: Option<Res<ViewModelMaterials>>,
 ) {
     for (root, rule, layers, shadow, body, held) in &roots {
         let changed = rule.is_changed()
@@ -203,7 +205,7 @@ pub(crate) fn sync_role_layers(
             match (copy, rule.copy_layers(role.0, &base)) {
                 (None, Some(layers)) => {
                     if let Ok(source) = sources.get(part) {
-                        spawn_copy(&mut commands, part, source, layers);
+                        spawn_copy(&mut commands, part, source, layers, view_model.is_some());
                     }
                 }
                 (Some(copy), Some(layers)) => {
@@ -223,7 +225,9 @@ type SourceItem<'a> =
     (&'a Mesh3d, Option<&'a MeshMaterial3d<StandardMaterial>>, Option<&'a SkinnedMesh>, Option<&'a MeshMorphWeights>, Option<&'a Aabb>, bool, bool);
 
 /// A view copy of `part` on `layers`: same mesh, material, joints, morph weights and bounds.
-fn spawn_copy(commands: &mut Commands, part: Entity, source: SourceItem<'_>, layers: RenderLayers) {
+/// With `view_model` (`ViewModelPlugin`) the material is a [`ViewCopyMaterial`], turned into the
+/// derived view-model material by `view_model::derive_view_model_materials`.
+fn spawn_copy(commands: &mut Commands, part: Entity, source: SourceItem<'_>, layers: RenderLayers, view_model: bool) {
     let (mesh, material, skin, morph, aabb, no_auto_aabb, dynamic) = source;
     let mut e = commands.spawn((
         Name::new("view copy"),
@@ -236,10 +240,17 @@ fn spawn_copy(commands: &mut Commands, part: Entity, source: SourceItem<'_>, lay
         NotShadowCaster,
         // Skinned meshes are not traced (rendering.md DL-3), and the copy's pose is a view's.
         NoRayTracing,
+        // Drawn with another projection than the bounds are tested with (a `fov_body` wider than
+        // the world's draws the copy inside a frustum its real bounds leave); a handful of meshes.
+        NoFrustumCulling,
         ChildOf(part),
     ));
     if let Some(material) = material {
-        e.insert(material.clone());
+        if view_model {
+            e.insert(ViewCopyMaterial(material.0.clone()));
+        } else {
+            e.insert(material.clone());
+        }
     }
     if let Some(skin) = skin {
         // The part's joint entities: one rig poses both.
@@ -269,8 +280,14 @@ type Followed<'a> = (
 
 /// Keeps every [`ViewCopy`] on its part's mesh, material (a host's swap, e.g. a self-lit torch
 /// variant), skin, morph weights and bounds (`PostUpdate`, after [`sync_role_layers`]). Copies
-/// with dynamic skinned bounds compute their own, as their part does.
-pub(crate) fn follow_view_copies(mut commands: Commands, copies: Query<(Entity, &ViewCopy, Has<DynamicSkinnedMeshBounds>)>, parts: Query<Followed<'_>>) {
+/// with dynamic skinned bounds compute their own, as their part does. With `ViewModelPlugin` a
+/// material swap rewrites the copy's [`ViewCopyMaterial`].
+pub(crate) fn follow_view_copies(
+    mut commands: Commands,
+    copies: Query<(Entity, &ViewCopy, Has<DynamicSkinnedMeshBounds>)>,
+    parts: Query<Followed<'_>>,
+    view_model: Option<Res<ViewModelMaterials>>,
+) {
     for (copy, of, has_dynamic) in &copies {
         let Ok((mesh, material, skin, morph, aabb, dynamic)) = parts.get(of.source) else { continue };
         let changed = mesh.is_changed()
@@ -287,7 +304,11 @@ pub(crate) fn follow_view_copies(mut commands: Commands, copies: Query<(Entity, 
             e.try_insert(Mesh3d::clone(&mesh));
         }
         if let Some(material) = material.filter(Ref::is_changed) {
-            e.try_insert(MeshMaterial3d::clone(&material));
+            if view_model.is_some() {
+                e.try_insert(ViewCopyMaterial(material.0.clone()));
+            } else {
+                e.try_insert(MeshMaterial3d::clone(&material));
+            }
         }
         if let Some(skin) = skin.filter(Ref::is_changed) {
             e.try_insert(SkinnedMesh::clone(&skin));

@@ -48,6 +48,18 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   With `--rt`: the head casts like the rest of the body there (Solari 0.20's skinned-mesh gap, rendering.md, applies).
 - Status: awaiting owner (built 2026-11-10, not run here: no display).
 
+### FP-2: First-person view model: arms and weapon at their own FOV, never in walls (`cargo dev view "Seyda Neen"`, 10:00; 3.4b)
+- Kind: game location, player mode. Tab to first person, F readies the weapon, then backquote console `flip viewmodel`
+  (A/B in one run; off is FP-1b's look). First GPU run, log line check: no `ERROR` naming `view_model.wesl` or
+  `view_model_prepass.wesl` (shader or pipeline creation), and the arms are visible at all with it on.
+- Look for: the drawn weapon and hands slightly larger (body FOV 50 vs world 60); stand face against a wall (Census
+  office): arms and blade stay drawn, never cut by the wall; arm lighting matches the body/world under the sun (10:00),
+  next to a lamp at night and holding a torch (no dark or over-bright arms, shadows on them plausible); turn fast with
+  DLSS on and off (F4) and TAA: no smear or ghost trail on the arms; SSAO: a dark halo around the arm silhouette
+  (known cost of the depth slice); look down: the shoulder seam where the larger arms meet the torso (spec open
+  question 4: accept, blend, or `fov_body = fov_world`?). Report the toggle's default you want.
+- Status: awaiting owner (built 2026-11-10, not run here: no GPU).
+
 ### PL-4: Movement feel: starts, stops, reversals (`cargo dev scene level-anim-overview`, F11 player, Tab 3rd person)
 - Player-only motion tuning (Elden-Ring-style): fast speed ramp, faster brake, facing capped at 720/1080/480 deg/s
   (walk/run/sprint) with the motion following the facing, so a reversal turns at speed. NPCs keep their 0.27 s springs.

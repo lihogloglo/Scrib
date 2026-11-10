@@ -1746,3 +1746,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (effects E4): the effect instance counter is saved in its own world section `sf/effects` v1, not in
   `sf/meta` (owned by `sf_save`, a change would bump `META_VERSION`); restored active sets also move it past their
   ids. E4 saves the whole active set, innate sources included (re-landing them would re-apply saved base changes).
+- 2026-11-10 (first person FP-2b): view copies draw a derived, forward-rendered `ExtendedMaterial` (bindless) whose
+  vertex stages are copies of Bevy's (re-sync on each Bevy update; guarded by tests); clustered lights picked at the
+  drawn pixel are accepted (error < 2 % at a 3 m light); `view_model` stays off until the owner's FP-2 check.

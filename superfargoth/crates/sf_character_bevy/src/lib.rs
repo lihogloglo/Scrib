@@ -34,7 +34,8 @@
 //!    gets its outfit split by [`ViewRole`] (one mesh per material and role)
 //!    and its parts layered per role, so first person can hide the head from
 //!    the main view while the body keeps rendering, and redraw arms and held
-//!    items as view copies (FP-2, [`ViewCopy`]).
+//!    items as view copies (FP-2, [`ViewCopy`]), drawn with their own FOV and depth slice
+//!    by [`ViewModelPlugin`]'s material (module `view_model`).
 //! 5. **Held items** (module `held`): each recipe item becomes a rigid prop
 //!    on its socket joint, mounted by [`CharacterReadiness`]. A change of
 //!    held items alone (same outfit) keeps the outfit meshes.
@@ -55,6 +56,9 @@ mod held;
 mod mesh;
 mod morph;
 mod roles;
+mod view_model;
+#[cfg(test)]
+mod shader_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(feature = "world")]
@@ -69,6 +73,7 @@ pub use world::{CharacterPlacement, CharacterSpawner};
 pub use morph::{CharacterMorphs, MorphCurvePlayer, MorphTrack, MorphTracks, drive_character_morphs};
 pub use roles::{CharacterLayerSystems, PartRole, RoleLayer, RoleLayers, ShadowLayers, ViewCopy};
 pub use sf_character::ViewRole;
+pub use view_model::{ViewCopyMaterial, ViewModel, ViewModelMaterial, ViewModelMaterials, ViewModelPlugin, ViewModelSettings, ViewModelUniform};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};

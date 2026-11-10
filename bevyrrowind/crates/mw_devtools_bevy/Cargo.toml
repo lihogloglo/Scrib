@@ -60,6 +60,8 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 sf_action_bevy.workspace = true
 sf_atmos_bevy.workspace = true
+# `flip viewmodel`: the player camera's first-person view model setting.
+sf_camera_bevy.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
 sf_console_bevy = { workspace = true, features = ["overlay"] }
 sf_controller.workspace = true

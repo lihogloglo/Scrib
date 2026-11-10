@@ -141,13 +141,9 @@ SOFTWARE.
   `components/esm3/loadmgef.cpp` (HardcodedFlags, effect names, GMST ids, resistance and weakness maps),
   `apps/openmw/mwmechanics/spellutil.cpp` (`calcEffectCost`, `getTotalCost`, `calcSpellCost`),
   `apps/openmw/mwmechanics/spellresistance.cpp` (`getEffectResistanceAttribute`) and `apps/openmw/mwworld/esmstore.cpp`
-  (effect-list validation); potions (adapter A2, 2026-11-10, behaviour only): `apps/openmw/mwgui/inventorywindow.cpp`
-  (`useItem`), `apps/openmw/mwclass/potion.cpp` (`use`, the `Drink` sound), `apps/openmw/mwworld/actionapply.cpp`,
-  `apps/openmw/mwclass/actor.cpp` (`consume`), `apps/openmw/mwmechanics/spellcasting.cpp` (`cast(Potion)`) and
-  `apps/openmw/mwmechanics/activespells.cpp` (`addToSpells`: stackable sources).
+  (effect-list validation).
 - Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
-- Ported into: `bevyrrowind/crates/mw_effects` (the game; written 2026-11-08, untested) and
-  `bevyrrowind/crates/mw_rpg_bevy/src/item_use.rs` (A2).
+- Ported into: `bevyrrowind/crates/mw_effects` (the game; written 2026-11-08, untested).
 
 ## OpenMW (barter and service prices)
 

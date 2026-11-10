@@ -1,9 +1,9 @@
 # First person: body, arms, held items, view model
 
-Status: **FP-1, FP-1b and FP-2a built (2026-11-10); FP-2 designed (single-pass view model, "View model" below), FP-2b..FP-6 planned.** Crates: `sf_character` (`ViewRole`,
+Status: **FP-1, FP-1b, FP-2a and FP-2b built (2026-11-10; FP-2 awaiting the owner's check, view model off by default); FP-2c..FP-6 planned.** Crates: `sf_character` (`ViewRole`,
 merge groups), `sf_character_bevy` (`RoleLayers`, `ShadowLayers`, `PartRole`, module `roles`),
 `sf_world_bevy` (`WorldspaceLayers`), `sf_sky_bevy` (traced scene), `sf_camera(_bevy)` (view choice,
-eye, `view_model` projection math); game: `mw_actors` (`slots::view_role`), `mw_actors_bevy`, `mw_exterior_bevy` (sky lights,
+eye, `view_model` projection math), `sf_character_bevy::view_model` (FP-2b material); game: `mw_actors` (`slots::view_role`), `mw_actors_bevy`, `mw_exterior_bevy` (sky lights,
 lamps), `mw_player_bevy` (avatar).
 Design source: [camera.md](camera.md) "First person" (render bodies, look limits, soft aim); research:
 `../research/first-person-arms-2026-11-05.md` (techniques, OpenMW, Bevy) and
@@ -178,73 +178,64 @@ public API: `MaterialExtension::{vertex_shader, prepass_vertex_shader}`; `sf_wat
   marker keeps it so) and out of other cameras' views.
 
 Setting: `ComfortSettings::fov_body` (vertical degrees, default 50 against `fov_world` 60, Bevy's
-example ratio), `view_model` (on/off, default off until FP-2b) and `view_model_depth` (`R`, 0.8).
+example ratio), `view_model` (on/off, default off until the owner's FP-2 check) and `view_model_depth` (`R`, 0.8).
 `V` and the light-layer change from FP-1b's handoff are dropped.
 
-**As built, FP-2a (2026-11-10).** Math: `sf_camera::view_model` (`fov_scale`,
-`ViewModelProjection { k, depth }`, `ComfortSettings::view_model_projection`), exact tests in
-`sf_camera/src/tests_view_model.rs`. The formulas both WESL stages mirror, line for line
-(`view_from_world` rigid, as Bevy's camera views are; `right`/`up` = its rows 0 and 1):
+**As built, FP-2a (2026-11-10)** (detail: [archive](archive/first-person-history.md)): the math in
+`sf_camera::view_model` (`fov_scale`, `ViewModelProjection { k, depth }`,
+`ComfortSettings::view_model_projection`; exact tests, and the WESL mirror lines in its docs) and
+the copies in `sf_character_bevy::roles`: `RoleLayer::view_copy` (`VIEW_MODEL`: the part on `S`
+only plus a `ViewCopy { source }` child on `W`, `NotShadowCaster`, `NoRayTracing`, the part's mesh,
+material, `SkinnedMesh` joints, morph weights and bounds), spawned, re-layered and despawned by
+`sync_role_layers`, kept on the part's mesh, material, skin and bounds by `follow_view_copies`.
 
-```text
-fn view_model_world(p, view_from_world, k) -> vec3:       // pseudo-world position
-    let v = view_from_world * vec4(p, 1.0);
-    let right = vec3(view_from_world[0].x, view_from_world[1].x, view_from_world[2].x);
-    let up = vec3(view_from_world[0].y, view_from_world[1].y, view_from_world[2].y);
-    return p + (k - 1.0) * (v.x * right + v.y * up);    // = world_from_view S_k view_from_world p
-fn view_model_clip(clip, r) -> vec4:                      // depth slice
-    return vec4(clip.xy, r * clip.w + (1.0 - r) * clip.z, clip.w);
-position = view_model_clip(position_world_to_clip(view_model_world(world, view.view_from_world, k)), r)
-```
-
-The rows form needs no `world_from_view`, which `PreviousViewUniforms` lacks. Tested: in view
-space x, y scale by `k` and depth is kept (equal to the inverse-matrix form); through Bevy's jittered
-`perspective_infinite_reverse` the result is the `fov_body` projection with the same jitter;
-`ndc' = R + (1 - R) ndc` keeps order and the near plane, and only geometry inside `near / R` can
-cover; Bevy's stock motion-vector formula over the pseudo positions of two frames equals the drawn
-motion (zero for an arm still on screen). **FP-2b's two stages** (vendor `bevy_pbr`):
-`render/mesh.wesl` `vertex` (l.34-98): keep l.67 `world_position`, replace l.69 `position` by the
-line above. `prepass/prepass.wesl` `vertex` (l.70-174): l.92 `world_position` = the pseudo position
-(the prepass fragment reads it only for motion vectors: l.187, StandardMaterial's
-`pbr_prepass.wesl` l.148 / `pbr_prepass_functions.wesl` l.93-97), l.93 `position` as above; l.157-160
-`previous_world_position` = `view_model_world(prev, previous_view_uniforms.view_from_world, k)`;
-l.94-97 (shadow-view ortho clamp) never runs, the copy casting nothing.
-
-Copies: `sf_character_bevy::roles`. `RoleLayer::view_copy` (+ `VIEW_MODEL`: `S` only plus a copy)
-gives every `PartRole` part of the role a `ViewCopy { source }` child (`Name` "view copy", `W`,
-`NotShadowCaster`, `NoRayTracing`, the part's `Mesh3d`, `MeshMaterial3d<StandardMaterial>`,
-`SkinnedMesh` with the **same joint entities**, morph weights, `Aabb`/`NoAutoAabb` or
-`DynamicSkinnedMeshBounds`). Being the part's child, it despawns with it (outfit swap, held change)
-and inherits its visibility; `sync_role_layers` spawns, re-layers and despawns copies with the rule,
-the root's layers (travel: the worldspace push writes `W` to copies too) and the outfit;
-`follow_view_copies` (after it) re-copies the part's mesh, material, skin, morph weights and bounds
-on change, so a host's material swap (`mw_actors_bevy` `held.rs` self-lit torches, which also
-reaches the copy itself as a descendant of the prop) needs no hook. Bevy 0.20 skins every mesh
-from its own `SkinnedMesh::joints` (one palette per mesh), and the outfit already shares one rig's
-joints between meshes, so a copy is one more palette, no second rig. Traced scene and GI:
-`sf_sky_bevy` `mirror_meshes` mirrors every visible `StandardMaterial` mesh in the traced layers,
-skinned or not, so a copy on `W` would be mirrored: `NoRayTracing` keeps it out (its
-`Without<NoRayTracing>` filter), and DDGI traces only `RaytracingMesh3d`. No `sf_sky_bevy` change.
-**Gate:** the avatar asks for `first_person(ComfortSettings::view_model)`, off by default: with the
-stock material a copy draws exactly where the part did (the part is off `W`, so nothing draws
-twice), at one extra draw and palette for nothing, so FP-2a changes nothing in game until FP-2b.
-Tests: `sf_character_bevy` (copies only with the view model, arms and held only, on `W`, parts on
-`S`, shared mesh/material/joints, material swap, held change, outfit swap, back to third person,
-travel with feature `world`), `mw_player_bevy` avatar (both states of the setting through the real
-camera and layer systems).
-
-FP-2b must know: (a) Bevy's clustered lighting indexes the cluster by `frag_coord.xy` with the real
-view z (`pbr_functions.wesl` l.457, `clustered_forward.wesl` l.57): the copy's drawn pixel is not its
-lit position's, so near the screen edge a clustered light can be missed (fix in the extension's
-fragment or accept; check in FP-2c); (b) the material is the part's, swapped by hosts (torches):
-derive the extension per part handle and follow `follow_view_copies`' changes; asset mutation in
-place does not change the handle; (c) `StandardMaterial` is bindless in 0.20: the extension's
-`k`/`R` uniform must fit that layout or the copy's pipeline is non-bindless (one bind group per
-material); (d) a headless check is possible: link the stages with `wesl` against the vendored
-modules per def set and naga-validate (pattern: `sf_sky_bevy/src/shader_tests.rs`,
-`sf_surface_bevy`'s), defs at least `SKINNED`, `MORPH_TARGETS`, `MOTION_VECTOR_PREPASS`,
-`HAS_PREVIOUS_SKIN`, `HAS_PREVIOUS_MORPH`, `VERTEX_TANGENTS`; pipeline creation on a GPU stays an
-owner log-line check.
+**As built, FP-2b (2026-11-10): the material.** `sf_character_bevy::view_model`:
+`ViewModelMaterial = ExtendedMaterial<StandardMaterial, ViewModel>`, `ViewModel { fov_scale, depth }`
+(`k`, `R`); `ViewModelPlugin` (embedded shaders, `MaterialPlugin`, the systems below).
+- *Stages* (`src/shaders/`): `view_model.wesl` (main pass) and `view_model_prepass.wesl` (prepass;
+  also the deferred vertex shader) are copies of the vendored Bevy 0.20.0 `render/mesh.wesl` and
+  `prepass/prepass.wesl` vertex stages, each with a re-sync header; `view_model_common.wesl` holds
+  the bindings and the two helpers (`view_model_world`, `view_model_clip`). Main pass: the lit
+  `world_position` is the real one, `position = view_model_clip(position_world_to_clip(
+  view_model_world(world, view.view_from_world, k)), R)`. Prepass: `world_position` is the pseudo
+  position, `position` the same clip, `previous_world_position` the previous frame's pseudo position
+  through `previous_view_uniforms.view_from_world`, so Bevy's stock prepass fragments write the
+  drawn motion. Public `MaterialExtension` API only; no Bevy patch.
+- *Bindless:* the extension is bindless like `StandardMaterial` (Bevy's `extended_material_bindless`
+  layout: data index 100, index table at binding 101, data array at 102; a uniform at 100 when
+  bindless is off), so `ExtendedMaterial` stays bindless and the copies batch; the vertex stage
+  reads its slot from `mesh[instance].material_and_lightmap_bind_group_slot`.
+- *Derivation:* with the plugin, a copy never carries a `StandardMaterial` component: `roles` writes
+  `ViewCopyMaterial(part handle)` on spawn and on the part's handle swap, and
+  `derive_view_model_materials` gives it the material derived from that handle (one per source
+  asset id, `ViewModelMaterials`; other material swappers such as `sf_atmos_bevy`'s fog on blended
+  materials never see a copy). Derived base = the source with `OpaqueRendererMethod::Forward` (a
+  deferred G-buffer would relight the copy from its remapped depth: the RT path, which defaults to
+  deferred, lights the copies forward). In-place edits of a source (`AssetEvent::Modified`, same
+  handle) are copied over; a removed source is forgotten. Copies get `NoFrustumCulling` (drawn with
+  another projection than their bounds; with `fov_body > fov_world` real bounds would cull a copy
+  still on screen). Without the plugin copies keep the stock material (FP-2a).
+- *Parameters:* `ViewModelSettings { fov_scale, depth }` (default identity), written by the game
+  (`mw_player_bevy::avatar::first_person`) from the player camera's
+  `ComfortSettings::view_model_projection()`; a change rewrites every derived material.
+- *Decided:* (a) **clustered lights near the edge: accepted.** The fragment picks its cluster from
+  the drawn pixel and the real view z; the real position is off the drawn ray by `(k - 1)` times its
+  view-space x, y (< ~10 cm for arms within 1 m at `k` 1.24), so a light is missed only when its
+  range ends within that distance of the arm, where Bevy's windowed falloff `(1 - (d/r)^4)^2` is
+  ~`16 (0.1/r)^2` (2 % at a 3 m light, Morrowind lamps 2-7 m). A fix needs the whole PBR fragment
+  copied; FP-2c's lamp check decides. (b) **Occlusion culling** (exteriors) tests the real bounds
+  against last frame's depth, which holds the copy's own near-slice depth: a copy culled in the
+  early phase is redrawn in Bevy's late phase (no flicker, a little cost; FP-4 measures).
+  (c) **Default off** (`ComfortSettings::view_model`) until the owner's FP-2 check: dev console
+  `on`/`off`/`flip viewmodel` (`mw_devtools_bevy`) A/Bs it in one run.
+- Tests (headless): naga validation of both stages for 60 def sets (plain, `SKINNED`,
+  `MORPH_TARGETS`, both, compressed vertices, colours/UV1/dither; prepass depth, normal, motion
+  vectors with `HAS_PREVIOUS_SKIN`/`HAS_PREVIOUS_MORPH`; each bindless or not); re-sync guards
+  (each copy equals the vendored stage except the documented lines); the helpers contain
+  `sf_camera`'s mirror lines; uniform and bindless layout; derivation (per handle, handle swap,
+  in-place edit, settings change); the avatar's copy carries the camera's projection and follows a
+  settings change; the console switch. Pipeline creation on a GPU is the owner's log-line check
+  (visual check FP-2).
 
 ## Build plan
 
@@ -260,9 +251,10 @@ owner log-line check.
    tests) and the view-copy plan in `sf_character_bevy` (`RoleLayers` gains a per-role `view_copy`;
    copies spawned, re-synced and despawned with the role, sharing mesh and joints, `NotShadowCaster`,
    marker; headless tests: copies exist only in first person, on `W` only, base parts on `S` only,
-   travel); **FP-2b** the `ViewModel` material extension and its two shaders (copy Bevy's mesh and
-   prepass vertex stages), the copy's material derived from the part's, params from the setting;
-   needs a GPU run for the shader-compile log line; **FP-2c** visual check FP-2 (DLSS on/off).
+   travel); **FP-2b** (built 2026-11-10, "As built, FP-2b") the `ViewModel` material extension and
+   its two shaders (copies of Bevy's mesh and prepass vertex stages), the copy's material derived
+   from the part's, params from the setting; **FP-2c** visual check FP-2 (owner: shader-compile log
+   line, walls, lighting, DLSS on/off), then the default.
 4. **FP-3 held items**: `held.rs` props in the viewmodel, torch light kept on the world body,
    spell-hand attach for VFX.
 5. **FP-4 TAA/DLSS/GI**: viewmodel motion vectors and jitter, the upscale decision, printed ms
@@ -279,7 +271,7 @@ model) rides on FP-2.
 |---|---|---|---|
 | Hide own head, keep its shadow | UE `bOwnerNoSee` + `bCastHiddenShadow`; Unity `ShadowCastingMode.ShadowsOnly` | head to a per-worldspace layer only lights (and the traced scene) see | **match** (FP-1b) |
 | First-person arms | separate viewmodel rig (Skyrim, OpenMW `xbase_anim.1st`, shooters) or the world body's arms (Mirror's Edge) | world body's arms (FP-1), redrawn in a viewmodel (FP-2) | **match** (hybrid C) |
-| Viewmodel FOV and clipping | OpenMW: per-subgraph projection swap (`OverrideFieldOfViewCallback`) + depth clear bin (`DepthClearCallback`, then a depth-only pass into the opaque depth for post); Bevy example: second camera on its own layer; UE 5.5: per-primitive FOV in the vertex stage | single pass: view copy with own FOV and a near depth slice in the vertex stage, true world position for lighting (FP-2) | **planned** (UE 5.5 shape) |
+| Viewmodel FOV and clipping | OpenMW: per-subgraph projection swap (`OverrideFieldOfViewCallback`) + depth clear bin (`DepthClearCallback`, then a depth-only pass into the opaque depth for post); Bevy example: second camera on its own layer; UE 5.5: per-primitive FOV in the vertex stage | single pass: view copy with own FOV and a near depth slice in the vertex stage, true world position for lighting (FP-2) | **match** (UE 5.5 shape; built FP-2b, awaiting owner) |
 | Split meshes only where needed | UE merges skeletal meshes per material for crowds, keeps the player modular | split by role only for roots with `RoleLayers` | **match** |
 
 ## Reuse

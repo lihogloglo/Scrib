@@ -356,6 +356,64 @@ fn switching_first_and_third_person_relayers_the_avatar_by_role() {
     assert!(copies(&mut app).is_empty(), "third person: copies gone");
 }
 
+/// FP-2b: with the view model on, the arm part's view copy draws the view-model material derived
+/// from the part's material, carrying the camera's projection (`fov_world` to `fov_body`, the
+/// depth slice), and a settings change on the camera reaches it. Headless; no rendering judged.
+#[test]
+fn view_copy_material_follows_the_camera_settings() {
+    use sf_camera::{ViewChoice, ViewModelProjection};
+    use sf_camera_bevy::{PlayerCamera, SfCameraPlugin};
+    use sf_character_bevy::{PartRole, SfCharacterPlugin, ViewCopy, ViewModel, ViewModelMaterial, ViewModelPlugin, ViewModelSettings, ViewRole};
+    let keymap = mw_controls_bevy::keymap();
+    let (mut app, player) = tests::app_setup(60, &keymap, |app| {
+        app.add_plugins((AssetPlugin::default(), SfCameraPlugin::<tests::Statics>::default(), SfCharacterPlugin))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<bevy_mesh::skinning::SkinnedMeshInverseBindposes>()
+            .add_plugins(ViewModelPlugin);
+        avatar::add_first_person(app);
+    });
+    let avatar = app.world_mut().spawn((avatar::avatar_bundle(), ChildOf(player))).id();
+    let skin = app.world_mut().resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial::default());
+    let arm = app.world_mut().spawn((PartRole(ViewRole::Arms), Mesh3d::default(), MeshMaterial3d(skin.clone()), ChildOf(avatar))).id();
+    let cam = app.world_mut().spawn((PlayerCamera::new(player), Transform::default())).id();
+    {
+        let mut c = app.world_mut().get_mut::<PlayerCamera>(cam).unwrap();
+        c.set_view(ViewChoice::FirstPerson);
+        c.settings.view_model = true;
+    }
+    for _ in 0..3 {
+        app.update();
+    }
+    let drawn = |app: &mut App| -> ViewModel {
+        let mut q = app.world_mut().query::<(&ViewCopy, &MeshMaterial3d<ViewModelMaterial>)>();
+        let (copy, material) = q.single(app.world()).expect("one view copy, with the view-model material");
+        assert_eq!(copy.source, arm);
+        let m = app.world().resource::<Assets<ViewModelMaterial>>().get(&material.0).expect("derived material");
+        m.extension
+    };
+    let want = |settings: &sf_camera::ComfortSettings| {
+        let p: ViewModelProjection = settings.view_model_projection();
+        ViewModel { fov_scale: p.k, depth: p.depth }
+    };
+    let settings = app.world().get::<PlayerCamera>(cam).unwrap().settings;
+    assert!(want(&settings).fov_scale > 1.0, "fov_body narrower than fov_world by default");
+    assert_eq!(drawn(&mut app), want(&settings));
+    let resource = *app.world().resource::<ViewModelSettings>();
+    assert_eq!(ViewModel::from(resource), want(&settings));
+
+    // The camera's settings change (a wider body FOV, a thinner slice): the material follows.
+    {
+        let mut c = app.world_mut().get_mut::<PlayerCamera>(cam).unwrap();
+        c.settings.fov_body = 40.0;
+        c.settings.view_model_depth = 0.5;
+    }
+    app.update();
+    let settings = app.world().get::<PlayerCamera>(cam).unwrap().settings;
+    assert_eq!(drawn(&mut app), want(&settings));
+    assert!((drawn(&mut app).depth - 0.5).abs() < f32::EPSILON);
+}
+
 /// The view rule itself: first person by role, third person hides the whole avatar only past the
 /// collision fade threshold.
 #[test]

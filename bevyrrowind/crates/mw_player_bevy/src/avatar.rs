@@ -28,8 +28,10 @@
 //!   only re-layers it: the head leaves every camera but keeps casting (shadow-only layer, FP-1b;
 //!   `RoleLayers::first_person`), the body, arms
 //!   and weapon stay drawn, so the player sees their own arms. With the camera's
-//!   `ComfortSettings::view_model` (FP-2, off until its material lands) arms and weapon cast from
-//!   the shadow-only layer and their view copies are drawn instead. Third person shows every role and
+//!   `ComfortSettings::view_model` (FP-2; off by default until the owner's FP-2 check, console
+//!   `flip viewmodel`) arms and weapon cast from the shadow-only layer and their view copies are
+//!   drawn instead, with the camera's view-model projection (`sf_character_bevy::ViewModelPlugin`,
+//!   fed from [`first_person`]). Third person shows every role and
 //!   hides the whole avatar while the camera's collision fade is past [`HIDE_FADE`] (the eye
 //!   inside the body). Presentation only: nothing here writes gameplay state.
 
@@ -48,7 +50,7 @@ use sf_anim_bevy::{AnimLod, AnimTier, Animator};
 use sf_anim_graph::{MontageClip, SlotId, SlotRequest};
 use sf_camera::ViewChoice;
 use sf_camera_bevy::PlayerCamera;
-use sf_character_bevy::{CharacterBody, RoleLayers};
+use sf_character_bevy::{CharacterBody, RoleLayers, ViewModelSettings};
 use sf_controller::{CharacterFrame, Gait};
 use sf_controller_bevy::{ControllerSettings, FeedGait, FeedValues, Mover};
 
@@ -373,13 +375,23 @@ pub(crate) fn add_first_person(app: &mut bevy_app::App) {
     app.add_systems(bevy_app::PostUpdate, first_person.after(sf_camera_bevy::CameraSystems::Rig).before(sf_character_bevy::CharacterLayerSystems));
 }
 
-/// Lays the avatar out for the camera's view ([`avatar_view`]).
-pub(crate) fn first_person(cams: Query<&PlayerCamera>, mut avatars: Query<(&mut Visibility, &mut RoleLayers), With<PlayerAvatar>>) {
+/// Lays the avatar out for the camera's view ([`avatar_view`]) and hands the camera's view-model
+/// projection (`ComfortSettings::view_model_projection`: `fov_world` to `fov_body`, the depth
+/// slice) to the view copies' material (`ViewModelSettings`, when `ViewModelPlugin` runs).
+pub(crate) fn first_person(
+    cams: Query<&PlayerCamera>,
+    mut avatars: Query<(&mut Visibility, &mut RoleLayers), With<PlayerAvatar>>,
+    view_model: Option<ResMut<ViewModelSettings>>,
+) {
     let cam = cams.iter().find(|c| c.pose().is_some());
     let pose = cam.and_then(|c| c.pose().map(|p| (p.view, p.fade)));
     let (visibility, roles) = avatar_view(pose, cam.is_some_and(|c| c.settings.view_model));
     for (mut v, mut r) in &mut avatars {
         v.set_if_neq(visibility);
         r.set_if_neq(roles.clone());
+    }
+    if let (Some(c), Some(mut vm)) = (cam.or_else(|| cams.iter().next()), view_model) {
+        let p = c.settings.view_model_projection();
+        vm.set_if_neq(ViewModelSettings { fov_scale: p.k, depth: p.depth });
     }
 }

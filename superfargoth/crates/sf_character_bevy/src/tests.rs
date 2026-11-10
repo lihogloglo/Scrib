@@ -850,3 +850,74 @@ fn view_copies_follow_travel() {
     app.update();
     assert_eq!(layers(&mut app), expect(WorldspaceLayers::of(3)));
 }
+
+/// FP-2b (first-person.md "View model"): with `ViewModelPlugin`, every view copy draws a
+/// view-model material derived from its part's material (no stock material on the copy), one per
+/// source handle, forward-rendered, carrying the settings; it follows the part's handle swap, an
+/// in-place edit of the source, and a settings change.
+#[test]
+fn view_copies_draw_the_view_model_material_derived_from_their_parts() {
+    use crate::{RoleLayers, ViewCopyMaterial, ViewModel, ViewModelMaterial, ViewModelMaterials, ViewModelPlugin, ViewModelSettings};
+    use bevy::material::OpaqueRendererMethod;
+    let mut app = app();
+    app.add_plugins(ViewModelPlugin).insert_resource(ViewModelSettings { fov_scale: 1.25, depth: 0.8 });
+    let player = |held_item: HeldItem| Character::Record {
+        kind: "player".into(),
+        id: RecordId::new("player"),
+        state: CharacterState { worn: None, held: Some(vec![held_item]) },
+    };
+    let a = app.world_mut().spawn((player(held("torch", "hand_l", true)), RoleLayers::first_person(true))).id();
+    run_until(&mut app, |w| w.get::<CharacterBody>(a).is_some() && w.get::<HeldProps>(a).is_some_and(|h| !h.props.is_empty()));
+    app.update();
+
+    // Every copy: the derived material of its part's handle, and no stock material.
+    let check = |app: &mut App, settings: ViewModel| -> Vec<(Entity, Entity)> {
+        let copies: Vec<(Entity, Entity)> = view_copies(app).iter().map(|c| (c.0, c.1)).collect();
+        assert_eq!(copies.len(), 2, "an arm and a held copy");
+        let w = app.world();
+        let derived = w.resource::<ViewModelMaterials>();
+        let standard = w.resource::<Assets<StandardMaterial>>();
+        let materials = w.resource::<Assets<ViewModelMaterial>>();
+        for &(copy, part) in &copies {
+            let source = w.get::<MeshMaterial3d<StandardMaterial>>(part).expect("the part keeps its material").0.clone();
+            assert!(w.get::<MeshMaterial3d<StandardMaterial>>(copy).is_none(), "no stock material on the copy");
+            assert_eq!(w.get::<ViewCopyMaterial>(copy), Some(&ViewCopyMaterial(source.clone())));
+            let drawn = w.get::<MeshMaterial3d<ViewModelMaterial>>(copy).expect("the view-model material").0.clone();
+            assert_eq!(derived.get(source.id()), Some(&drawn), "one derived material per source handle");
+            let m = materials.get(&drawn).expect("derived material asset");
+            let s = standard.get(&source).expect("source asset");
+            assert_eq!(m.base.base_color, s.base_color, "derived from the part's material");
+            assert_eq!(m.base.opaque_render_method, OpaqueRendererMethod::Forward, "forward-rendered");
+            assert_eq!(m.extension, settings);
+        }
+        copies
+    };
+    let copies = check(&mut app, ViewModel { fov_scale: 1.25, depth: 0.8 });
+    let before = app.world().resource::<ViewModelMaterials>().len();
+
+    // A host swaps the held prop's material: the copy draws one derived from the new handle.
+    let red = Color::srgb(1.0, 0.0, 0.0);
+    let lit = app.world_mut().resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial { base_color: red, ..default() });
+    let held_part = copies.iter().find(|c| app.world().get::<crate::PartRole>(c.1).unwrap().0 == crate::ViewRole::Held).unwrap().1;
+    app.world_mut().entity_mut(held_part).insert(MeshMaterial3d(lit.clone()));
+    app.update();
+    check(&mut app, ViewModel { fov_scale: 1.25, depth: 0.8 });
+    assert_eq!(app.world().resource::<ViewModelMaterials>().len(), before + 1, "a material for the new handle");
+
+    // The source edited in place (same handle): the derived base follows.
+    let blue = Color::srgb(0.0, 0.0, 1.0);
+    app.world_mut().resource_mut::<Assets<StandardMaterial>>().get_mut(&lit).unwrap().base_color = blue;
+    app.update();
+    app.update();
+    let copy = copies.iter().find(|c| c.1 == held_part).unwrap().0;
+    let drawn = app.world().get::<MeshMaterial3d<ViewModelMaterial>>(copy).unwrap().0.clone();
+    assert_eq!(app.world().resource::<Assets<ViewModelMaterial>>().get(&drawn).unwrap().base.base_color, blue);
+
+    // A settings change reaches every derived material.
+    *app.world_mut().resource_mut::<ViewModelSettings>() = ViewModelSettings { fov_scale: 1.5, depth: 0.6 };
+    app.update();
+    check(&mut app, ViewModel { fov_scale: 1.5, depth: 0.6 });
+    let materials = app.world().resource::<Assets<ViewModelMaterial>>();
+    let derived = app.world().resource::<ViewModelMaterials>();
+    assert!(derived.by_source_handles().all(|h| materials.get(h).is_some_and(|m| m.extension == ViewModel { fov_scale: 1.5, depth: 0.6 })));
+}

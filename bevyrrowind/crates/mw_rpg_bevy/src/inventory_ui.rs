@@ -18,8 +18,7 @@
 //!   (vanilla). Module docs of `inventory.rs` hold the `OpenMW` behaviour.
 //! - **Trade window**: hosted by `dialogue/trade_screen.rs` (over the dialogue, the Barter
 //!   button), registered here with the item records and slots it shows; centred as these are.
-//! - **Use**: the screen's Use intent on a stack goes to `item_use` (a request the host applies:
-//!   drinking a potion); the split / merge intents are still ignored. Not yet: equip,
+//! - Read-only for now: the screen's use / split / merge intents are ignored. Not yet: equip,
 //!   drop, weight limit (no capacity: the encumbrance bar shows the carried total only),
 //!   item tooltips' stats.
 
@@ -118,7 +117,6 @@ pub fn add(app: &mut App, open_at_start: bool) {
         ),
     );
     crate::dialogue::trade_screen::add(app);
-    crate::item_use::add(app);
 }
 
 pub(crate) fn screens() -> UiRegistry {
