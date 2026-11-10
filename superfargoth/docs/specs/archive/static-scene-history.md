@@ -1,7 +1,7 @@
-# Static scene: as-built history, S0-S2
+# Static scene: as-built history
 
-Moved out of [static-scene.md](../static-scene.md) on 2026-11-09 (doc budget, 25 KB). The spec's "Slices" table keeps
-one short state per slice and points here. Append-only; grep it.
+Moved out of [static-scene.md](../static-scene.md) from 2026-11-09 on (doc budget, 25 KB). The spec's "Slices" table
+keeps one short state per slice and points here. Append-only; grep it.
 
 Verification state of every row below: built and tested on the laptop (ThinkPad X13, Rust 1.98.1), re-checked on
 2026-11-09 at `main` 80c9a2c with **default features** (Delirium on) — `sf_scene` (`--features bake`),
@@ -158,3 +158,48 @@ shared-path changes are always on. Full detail: `superfargoth/vendor/README.md` 
   This pass relocated ≈ 2.4 KB of mechanism and added ≈ 2.4 KB of newly decided normative content (format v3, the
   size-class allocator, the rejected LOD quantisation, interiors as an open question, the softened `is_active`
   finding), so the net move was ≈ 0 (38198 → 38142 B). Reported as such rather than closed by deleting design.
+
+## S3a2 as built (2026-11-10): patch "GS" complete
+
+Moved out of the spec's status block on 2026-11-10. Two agent slices, both on `main`, **untested in game** (the
+owner's 2026-11-10 test pass has not run; there is no Morrowind install on the laptop).
+
+- **Slice A.** `unpack_ranges` moved out of its own schedule registration and **inside `early_gpu_preprocess`**, which
+  every preprocessing schedule runs, so `bevy_core_pipeline::Core3d`, the point/spot shadow schedule `Core3dShadows`
+  (patch #26149) and `sf_shadow_cache_bevy`'s `LampShadowView` all unpack their own ranges instead of reading
+  uninitialised work items (`vendor/bevy_pbr/src/gpu_instance_batch/mod.rs:400-407`). The per-view counters see
+  instance batches. The `is_active` gate is no longer nested inside the frustum-culling block
+  (`vendor/bevy_pbr/src/render/mesh_preprocess.wesl:195-215`, with its own note on what a non-indirect view shows).
+  `prepare_range_unpacking_pipeline` and its bind groups stay registered per schedule, so with the plugin absent the
+  pipeline id stays `None` and the dispatch is skipped: the port is still opt-in.
+- **Slice B-i.** N geometry ranges per batch: `GpuBatchedMesh3d::ranges: Vec<GpuBatchedMeshRange>`
+  (`mod.rs:130-142`), sorted by `first_slot` and validated as a gapless, non-overlapping partition of
+  `0..max_capacity` (`validate_ranges`, `mod.rs:207`). A range is a contiguous span of the batch's instance slots plus
+  the index range it draws, with its own AABB, so there is no sorting and no per-instance geometry field.
+- **Slice B-ii.** N indirect slots sharing one `IndirectBatchSet`, with the DX12 `multi_draw_indirect_count` gate
+  (our vendored Bevy disables the count path on DX12 whatever the adapter reports, wgpu#7974).
+
+Mechanism, hunk by hunk: [gs-patch-plan.md](../gs-patch-plan.md). Port shape: `superfargoth/vendor/README.md`.
+
+## `sf_scene` core A1-A6 as built (2026-11-10): the Bevy-free half of S3b
+
+Built, unit-tested and Bevy-free; **nothing has ever been baked** (`bake_scene` is still not called from
+`bevyrrowind bake` — scene-runtime-plan.md step C1), so none of this has produced a byte the game has read.
+
+- **A1** — `CELLS_STEP`, `EXTENSION`, `cell_subject` and `parse_cell_subject` moved out of `feature = "bake"` into
+  `sf_scene::product` (always compiled), so no downstream crate enables `bake` and pulls the baker into the app build.
+- **A2 — format v3** (`FORMAT_VERSION = 3`, `sf_scene/src/table.rs:94`): a **model index and part per chain** plus a
+  **model-names section**, and `chain::LAYOUT_VERSION` in the header so level ranges built by one layout rule can never
+  be paired with chain geometry built by another (`table.rs:33-42`, `TableError::Layout`). **v3 has no reserved bytes
+  left** (`table.rs:42`). The reason v3 was unavoidable: `mesh_key` is blake3 and not invertible
+  (`bake.rs:141-143`), so a v2 table could not name the model a chain came from.
+- **A3 — `ChainRegistry`** (`chains.rs:157`): refcounted mesh key to dense chain slot, so a chain outlives any one cell
+  that referenced it and a slot frees on the last release.
+- **A4 — `alloc.rs`**: `SlotAllocator` (first fit, `:64`), `ClassAllocator` (`:334`) and `size_class` (`:244`), with
+  the measured fragmentation verdict that reversed the design's first answer (spec §3; scene-runtime-plan.md §4.4).
+- **A5** — `SceneSpace` (`space.rs:309`), `CellPlan` (`:172`), `BatchKey` (`:127`) and `batch_ranges` (`:618`).
+- **A6** — the `scene.chains` bake step: `SceneBake::chain_keys` (`bake.rs:703`) derives subjects from the baked
+  tables' model sections, `bake_chains` (`bake.rs:716`) emits one `.sfmesh` per chain with one LOD level per chain
+  level, read at runtime by the existing `baked://` source and `SfMeshLoader`.
+
+Brief and the v3 contract in full: `docs/briefs/scene-core-a5-a6.md` §1-§2.
