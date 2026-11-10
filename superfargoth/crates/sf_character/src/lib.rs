@@ -45,7 +45,7 @@ pub use records::{
 };
 pub use ready::{ReadyChange, ReadyClip};
 pub use rig::{Chain,JointName, RetargetOptions, RigMap, RigMapError};
-pub use slots::{SlotDef, SlotId, SlotRegistry, slot};
+pub use slots::{SlotDef, SlotId, SlotRegistry, ViewRole, slot};
 #[cfg(feature = "smooth")]
 pub use smooth::{
     GuardReport, SeamLink, SkinSurface, SmoothReport, SmoothSettings, TransferReport, TransferSettings, bind_palette, blend_seam_normals, find_seams,

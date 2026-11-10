@@ -30,7 +30,11 @@
 //!    mesh entities stay until the new outfit is uploaded and settled, then
 //!    both change in one command flush, so nothing pops. The rig and the
 //!    animator survive a swap on the same skeleton.
-//! 4. **Held items** (module `held`): each recipe item becomes a rigid prop
+//! 4. **First-person roles** (module `roles`): a root with [`RoleLayers`]
+//!    gets its outfit split by [`ViewRole`] (one mesh per material and role)
+//!    and its parts layered per role, so first person can hide the head from
+//!    the main view while the body keeps rendering.
+//! 5. **Held items** (module `held`): each recipe item becomes a rigid prop
 //!    on its socket joint, mounted by [`CharacterReadiness`]. A change of
 //!    held items alone (same outfit) keeps the outfit meshes.
 //!
@@ -49,6 +53,7 @@ mod cloth;
 mod held;
 mod mesh;
 mod morph;
+mod roles;
 #[cfg(test)]
 mod tests;
 #[cfg(feature = "world")]
@@ -61,6 +66,8 @@ pub use mesh::{OutfitMeshError, assembled_mesh_to_mesh, outfit_inverse_bindposes
 #[cfg(feature = "world")]
 pub use world::{CharacterPlacement, CharacterSpawner};
 pub use morph::{CharacterMorphs, MorphCurvePlayer, MorphTrack, MorphTracks, drive_character_morphs};
+pub use roles::{CharacterLayerSystems, PartRole, RoleLayer, RoleLayers};
+pub use sf_character::ViewRole;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -82,8 +89,7 @@ use sf_anim_graph::Variety;
 use sf_anim_bevy::{AnimAsset, AnimLod, AnimRootMotion, AnimSystems, Animator, SkeletonBinding, spawn_rig};
 use sf_character::{
     AssembledOutfit, AssemblyPart, BodyPart, CharacterRecipe, CharacterSource, CharacterState, OutfitKey, OutfitSmoothReport, OutfitSmoothing, PartKind,
-    PartLookup, SlotRegistry, SmoothRig, View,
-    assemble, resolve_recipe, smooth_outfit,
+    PartLookup, SlotId, SlotRegistry, SmoothRig, View, assemble, resolve_recipe, smooth_outfit,
 };
 use sf_model::{Cooked, CookedSkinned};
 use sf_records::RecordId;
@@ -158,6 +164,12 @@ pub trait CharacterContent: Send + Sync + 'static {
     fn cloth_leg_follow(&self) -> f32 {
         sf_anim_bevy::CLOTH_LEG_FOLLOW
     }
+    /// The first-person role of a slot's parts (first-person.md "Roles"; read only for
+    /// characters with [`RoleLayers`]). Default: by the slot's region
+    /// ([`SlotRegistry::role`]); adapters map their accessory slots (shields, weapons).
+    fn view_role(&self, slot: SlotId) -> ViewRole {
+        self.slots().role(slot)
+    }
 }
 
 /// How segmented bodies are drawn (smooth-bodies.md; owner decision
@@ -229,6 +241,8 @@ pub struct OutfitCacheKey {
     pub shape: u64,
     /// Smooth and vanilla builds of one outfit are different meshes.
     pub bodies: SmoothBodies,
+    /// Split by [`ViewRole`] (the root has [`RoleLayers`]): one mesh per material and role.
+    pub roles: bool,
 }
 
 /// A character to spawn and dress. Changing it rebuilds the outfit (and
@@ -302,6 +316,8 @@ pub struct OutfitMesh {
     /// The cooked material's name (`sf_model::Material::name`): adapters
     /// find the meshes their material effects drive by it.
     pub material_name: String,
+    /// The role of its parts when the outfit is split by role ([`OutfitCacheKey::roles`]).
+    pub role: Option<ViewRole>,
     /// Runtime morph target names (`MorphTarget::name`); empty for merged meshes.
     pub morph_targets: Vec<String>,
     /// Default morph weights, one per target.
@@ -446,11 +462,13 @@ impl Plugin for SfCharacterPlugin {
                 Update,
                 (apply_settings, request_builds, finish_builds, held::sync_held, held::apply_readiness).chain().in_set(CharacterSystems),
             )
-            .add_systems(PostUpdate, drive_character_morphs.after(AnimSystems::Apply));
+            .add_systems(PostUpdate, drive_character_morphs.after(AnimSystems::Apply))
+            .configure_sets(PostUpdate, CharacterLayerSystems.before(bevy_camera::visibility::VisibilitySystems::CheckVisibility))
+            .add_systems(PostUpdate, roles::sync_role_layers.in_set(CharacterLayerSystems));
         #[cfg(feature = "world")]
         app.add_systems(
             PostUpdate,
-            world::follow_worldspace_layers.before(bevy_camera::visibility::VisibilitySystems::CheckVisibility),
+            world::follow_worldspace_layers.before(bevy_camera::visibility::VisibilitySystems::CheckVisibility).before(CharacterLayerSystems),
         );
     }
 }
@@ -558,7 +576,7 @@ impl Shared {
     }
 
     /// Step 1 of the module docs (runs on a task).
-    fn build(&self, spec: &Character, bodies: SmoothBodies, force: bool) -> Result<Built, String> {
+    fn build(&self, spec: &Character, bodies: SmoothBodies, roles: bool, force: bool) -> Result<Built, String> {
         let recipe = match spec {
             Character::Record { kind, id, state } => self.content.source().recipe(kind, id, state).map_err(|e| e.to_string())?,
             Character::Recipe(recipe) => (**recipe).clone(),
@@ -566,7 +584,7 @@ impl Shared {
         let animation = self.animation(&recipe)?;
         let parts = self.content.parts();
         let outfit = resolve_recipe(parts, self.content.slots(), &recipe, View::ThirdPerson).map_err(|e| e.to_string())?;
-        let key = OutfitCacheKey { skeleton: recipe.skeleton.as_str().to_owned(), outfit: outfit.key, lod: 0, shape: recipe.shape.key(), bodies };
+        let key = OutfitCacheKey { skeleton: recipe.skeleton.as_str().to_owned(), outfit: outfit.key, lod: 0, shape: recipe.shape.key(), bodies, roles };
         let held = recipe.held.iter().map(|item| self.held(item)).collect();
         let resident = self.resident.read().unwrap_or_else(PoisonError::into_inner).contains(&key);
         if resident && !force {
@@ -574,17 +592,22 @@ impl Shared {
         }
         let mut missing_parts = 0;
         let mut owned: Vec<(Arc<CookedSkinned>, &BodyPart, bool, &RecordId)> = Vec::with_capacity(outfit.parts.len());
-        for (_, id) in &outfit.parts {
+        let mut groups: Vec<u8> = Vec::with_capacity(outfit.parts.len());
+        for (slot, id) in &outfit.parts {
             match parts.part(id).and_then(|part| Some((self.part(id, part)?, part))) {
                 // Hair stays on its joint as authored (smooth-bodies.md).
-                Some((cooked, part)) => owned.push((cooked, part, recipe.hair.as_ref() == Some(id), id)),
+                Some((cooked, part)) => {
+                    owned.push((cooked, part, recipe.hair.as_ref() == Some(id), id));
+                    groups.push(if roles { role_group(self.content.view_role(*slot)) } else { 0 });
+                }
                 None => missing_parts += 1,
             }
         }
         // Cloth parts (module `cloth`): rebound onto their lattice joints.
         let cloth_parts: Vec<Option<Arc<cloth::ClothPart>>> =
             owned.iter().map(|(cooked, part, _, id)| self.cloth_part(&recipe, &animation, id, cooked, part)).collect();
-        let mut assembly: Vec<AssemblyPart<'_>> = owned.iter().map(|(cooked, part, _, _)| AssemblyPart::new(cooked, Some(*part))).collect();
+        let mut assembly: Vec<AssemblyPart<'_>> =
+            owned.iter().zip(&groups).map(|((cooked, part, _, _), &group)| AssemblyPart { group, ..AssemblyPart::new(cooked, Some(*part)) }).collect();
         let lod = usize::from(key.lod);
         let mut smooth = None;
         let mut rewritten = if bodies == SmoothBodies::Smooth {
@@ -630,10 +653,15 @@ impl Shared {
     }
 }
 
-fn spawn_build(shared: &Arc<Shared>, spec: &Character, bodies: SmoothBodies, force: bool) -> CharacterBuild {
+fn spawn_build(shared: &Arc<Shared>, spec: &Character, bodies: SmoothBodies, roles: bool, force: bool) -> CharacterBuild {
     let shared = Arc::clone(shared);
     let spec = spec.clone();
-    CharacterBuild(AsyncComputeTaskPool::get().spawn(async move { shared.build(&spec, bodies, force) }))
+    CharacterBuild(AsyncComputeTaskPool::get().spawn(async move { shared.build(&spec, bodies, roles, force) }))
+}
+
+/// A role's merge group ([`AssemblyPart::group`]).
+fn role_group(role: ViewRole) -> u8 {
+    u8::try_from(role.index()).expect("four roles")
 }
 
 /// A settings change rebuilds every character (through the no-pop swap).
@@ -649,12 +677,12 @@ fn request_builds(
     mut commands: Commands,
     characters: Option<Res<Characters>>,
     settings: Res<CharacterSettings>,
-    changed: Query<(Entity, &Character), Changed<Character>>,
+    changed: Query<(Entity, &Character, Has<RoleLayers>), Changed<Character>>,
 ) {
     let Some(characters) = characters else { return };
-    for (entity, spec) in &changed {
+    for (entity, spec, roles) in &changed {
         // Replaces (cancels) a running build and a pending swap.
-        commands.entity(entity).try_remove::<PendingSwap>().try_insert(spawn_build(&characters.shared, spec, settings.bodies, false));
+        commands.entity(entity).try_remove::<PendingSwap>().try_insert(spawn_build(&characters.shared, spec, settings.bodies, roles, false));
     }
 }
 
@@ -662,6 +690,7 @@ fn request_builds(
 #[allow(clippy::too_many_arguments)]
 fn upload(
     built: &AssembledOutfit,
+    roles: bool,
     content: &dyn CharacterContent,
     cache: &mut OutfitCache,
     server: &AssetServer,
@@ -683,6 +712,7 @@ fn upload(
             mesh,
             material,
             material_name: m.material.name.clone(),
+            role: roles.then(|| ViewRole::ALL.get(usize::from(m.group)).copied()).flatten(),
             morph_targets: m.morph_targets.iter().map(|t| t.name.clone()).collect(),
             morph_weights: m.morph_targets.iter().map(|t| t.default_weight).collect(),
         });
@@ -765,7 +795,7 @@ fn finish_builds(
             Arc::clone(found)
         } else if let Some(outfit) = &built.outfit {
             stats.cache_misses += 1;
-            match upload(outfit, shared.content.as_ref(), &mut cache, &server, &mut meshes, &mut materials, &mut inverse, frame.0) {
+            match upload(outfit, built.key.roles, shared.content.as_ref(), &mut cache, &server, &mut meshes, &mut materials, &mut inverse, frame.0) {
                 Ok(assets) => {
                     let mut assets = assets;
                     assets.cloth.clone_from(&built.cloth);
@@ -782,7 +812,7 @@ fn finish_builds(
             }
         } else {
             // Evicted between the task's look and now: assemble after all.
-            commands.entity(entity).try_insert(spawn_build(shared, spec, built.key.bodies, true));
+            commands.entity(entity).try_insert(spawn_build(shared, spec, built.key.bodies, built.key.roles, true));
             continue;
         };
         ready.push((entity, built, assets));
@@ -867,6 +897,10 @@ fn finish_builds(
                 }
                 if let Some(layers) = &layers {
                     e.insert(layers.clone());
+                }
+                if let Some(role) = m.role {
+                    // Layered by role in `PostUpdate` (`roles::sync_role_layers`).
+                    e.insert(PartRole(role));
                 }
                 e.id()
             })

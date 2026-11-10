@@ -26,6 +26,50 @@ pub struct SlotRegistry {
     by_name: HashMap<String, SlotId>,
 }
 
+/// What a slot's parts are to a first-person view (`docs/specs/first-person.md` "Roles"). The
+/// role decides a part's render layers per view (`sf_character_bevy::RoleLayers`): first person
+/// hides the head from the main view; the arms and held items are what a view model draws.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ViewRole {
+    /// Torso, pelvis, legs, feet, tail, accessories: the world body.
+    #[default]
+    Body,
+    /// Head, face, hair, neck, and what is worn there (helmets, amulets).
+    Head,
+    /// Shoulders to fingertips, and what is worn there (pauldrons, gauntlets).
+    Arms,
+    /// Held items (weapons, shields, torches). No default slot has it; an adapter may map one.
+    Held,
+}
+
+impl ViewRole {
+    pub const ALL: [Self; 4] = [Self::Body, Self::Head, Self::Arms, Self::Held];
+    pub const COUNT: usize = Self::ALL.len();
+
+    /// Dense index (`ALL` order).
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The default role of a slot region: [`Self::Head`] if it covers the neck, head, eyes or jaw,
+    /// else [`Self::Arms`] if it covers a shoulder, arm, hand or finger, else [`Self::Body`].
+    /// Accessory slots (empty region) are body; adapters override per slot.
+    pub fn of_region(region: BoneSet) -> Self {
+        let head = BoneSet::of(&[B::Neck, B::Head, B::LeftEye, B::RightEye, B::Jaw]);
+        let arm = |side: Side| {
+            let m = |b: B| if side == Side::Left { b } else { b.mirror() };
+            BoneSet::of(&[m(B::LeftShoulder), m(B::LeftUpperArm), m(B::LeftLowerArm), m(B::LeftHand)]).union(BoneSet::fingers(side))
+        };
+        if region.intersects(head) {
+            Self::Head
+        } else if region.intersects(arm(Side::Left).union(arm(Side::Right))) {
+            Self::Arms
+        } else {
+            Self::Body
+        }
+    }
+}
+
 /// Names of the default humanoid slots ([`SlotRegistry::with_humanoid_defaults`]).
 pub mod slot {
     pub const HEAD: &str = "head";
@@ -157,6 +201,11 @@ impl SlotRegistry {
 
     pub fn iter(&self) -> impl Iterator<Item = (SlotId, &SlotDef)> {
         self.slots.iter().enumerate().map(|(i, d)| (SlotId(u16::try_from(i).expect("checked at registration")), d))
+    }
+
+    /// The default [`ViewRole`] of a slot (by its region; unknown slots are body).
+    pub fn role(&self, id: SlotId) -> ViewRole {
+        self.def(id).map_or(ViewRole::Body, |d| ViewRole::of_region(d.region))
     }
 
     /// Slots whose region includes `bone`.

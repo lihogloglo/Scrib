@@ -80,7 +80,7 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (46)
+### Awaiting owner (47)
 
 SH-11 | confirmed (2026-10-30) | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
 SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player and torches cast none; fixes built 2026-11-01: SH-21) | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
@@ -184,6 +184,7 @@ PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the C
 PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)
 CB-3 | confirmed (2026-11-05; follow-up: new sword attack clips) | [combat](visual-checks/combat.md) | F draws a visible sword; sheathed clicks do nothing; draw / sheathe clips, sword at the attach key (2026-11-05)
 PL-6 | awaiting owner (2026-10-30: hard-landing lock removed until fall damage) | [player-ui](visual-checks/player-ui.md) | Recovery delay after jumping down from a high box (2026-10-30)
+FP-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person shows body, arms and weapon with the head hidden; headless shadow known until FP-1b (2026-11-10)
 RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn away from the model (2026-10-30)
 WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
 WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)

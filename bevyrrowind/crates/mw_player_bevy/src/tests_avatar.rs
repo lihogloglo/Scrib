@@ -295,3 +295,58 @@ fn the_wall_brace_runs_in_plain_locomotion_and_not_under_a_clip_move() {
     character.output.warp = Some(WarpOutput { root: RootPose::IDENTITY, progress: 0.1, settle: false });
     assert!(!grip::brace_active(&body, &character), "a warp (mantle) owns the arms");
 }
+
+/// FP-1 (superfargoth first-person.md): the camera's view lays the avatar out by role through the
+/// real systems (camera rig, `first_person`, the character layer sync), headless: third person
+/// draws every part on the avatar's layers, first person takes the head off them and keeps body,
+/// arms and held items, and switching back restores them. No rendering is judged.
+#[test]
+fn switching_first_and_third_person_relayers_the_avatar_by_role() {
+    use bevy_camera::visibility::RenderLayers;
+    use sf_camera::ViewChoice;
+    use sf_camera_bevy::{PlayerCamera, SfCameraPlugin};
+    use sf_character_bevy::{PartRole, RoleLayers, SfCharacterPlugin, ViewRole};
+    let keymap = mw_controls_bevy::keymap();
+    let (mut app, player) = tests::app_setup(60, &keymap, |app| {
+        app.add_plugins((AssetPlugin::default(), SfCameraPlugin::<tests::Statics>::default(), SfCharacterPlugin))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<bevy_mesh::skinning::SkinnedMeshInverseBindposes>();
+        avatar::add_first_person(app);
+    });
+    let ws = RenderLayers::layer(2);
+    let avatar = app.world_mut().spawn((avatar::avatar_bundle(), ws.clone(), ChildOf(player))).id();
+    let parts = ViewRole::ALL.map(|role| app.world_mut().spawn((PartRole(role), ChildOf(avatar))).id());
+    let cam = app.world_mut().spawn((PlayerCamera::new(player), Transform::default())).id();
+    let layers = |app: &App| parts.map(|p| app.world().get::<RenderLayers>(p).cloned().unwrap_or_default());
+    let shown = |app: &App| *app.world().get::<Visibility>(avatar).unwrap();
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(app.world().get::<PlayerCamera>(cam).unwrap().pose().map(|p| p.view), Some(ViewChoice::ThirdPerson));
+    assert_eq!(layers(&app), [ws.clone(), ws.clone(), ws.clone(), ws.clone()], "third person: body, head, arms, held");
+    assert_eq!(shown(&app), Visibility::Inherited);
+
+    app.world_mut().get_mut::<PlayerCamera>(cam).unwrap().set_view(ViewChoice::FirstPerson);
+    app.update();
+    assert_eq!(app.world().get::<RoleLayers>(avatar), Some(&RoleLayers::first_person()));
+    assert_eq!(layers(&app), [ws.clone(), RenderLayers::none(), ws.clone(), ws.clone()], "first person: the head off, the rest drawn");
+    assert_eq!(shown(&app), Visibility::Inherited, "the avatar is no longer hidden whole in first person");
+
+    app.world_mut().get_mut::<PlayerCamera>(cam).unwrap().set_view(ViewChoice::ThirdPerson);
+    app.update();
+    assert_eq!(layers(&app), [ws.clone(), ws.clone(), ws.clone(), ws]);
+}
+
+/// The view rule itself: first person by role, third person hides the whole avatar only past the
+/// collision fade threshold.
+#[test]
+fn avatar_view_per_camera_view_and_fade() {
+    use avatar::avatar_view;
+    use sf_camera::ViewChoice;
+    use sf_character_bevy::RoleLayers;
+    assert_eq!(avatar_view(None), (Visibility::Inherited, RoleLayers::world()));
+    assert_eq!(avatar_view(Some((ViewChoice::FirstPerson, 1.0))), (Visibility::Inherited, RoleLayers::first_person()));
+    assert_eq!(avatar_view(Some((ViewChoice::ThirdPerson, 0.2))), (Visibility::Inherited, RoleLayers::world()));
+    assert_eq!(avatar_view(Some((ViewChoice::ThirdPerson, 0.9))), (Visibility::Hidden, RoleLayers::world()));
+}

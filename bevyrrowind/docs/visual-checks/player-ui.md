@@ -1,6 +1,6 @@
 # Visual checks: player-ui
 
-Open visual checks: player, inventory, saves, input, dialogue and journal, console (PL, IV, SV, IN, DJ, CO). Index and how-to: [`../visual-checks.md`](../visual-checks.md).
+Open visual checks: player, inventory, saves, input, dialogue and journal, console (PL, FP, IV, SV, IN, DJ, CO). Index and how-to: [`../visual-checks.md`](../visual-checks.md).
 
 ## Player (ROADMAP 2.1; `crates/mw_player_bevy/src/lib.rs`)
 
@@ -29,6 +29,15 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Fixed 2026-10-27 (afternoon): the split was the body leaving its capsule, not the camera: Delirium click-to-push hit the
   player's own body on a left-click attack (now F11 only, never action characters) plus the UAL2 split-take clip offset
   (cook `start_anchor`). Owner confirmed the view switch live. Status: confirmed (first-person arms still not built).
+
+### FP-1: First person shows your body and arms, head hidden (`cargo dev view "Seyda Neen"`, 10:00; 3.4b, superfargoth first-person.md)
+- Kind: game location, player mode, default flags. Tab to first person; F readies the weapon (if the player carries one), F again sheathes.
+- Look for: looking ahead, no face, hair or helmet in view (no inside-of-head polygons at the screen edges); looking down,
+  chest, legs and feet; your arms and hands (and the drawn weapon) in their third-person pose, following the clips.
+  Tab back: the full body (head included) in third person, no frame with a missing or doubled part at the switch.
+- Known for this slice: the player's shadow has no head in first person (shadow layer is slice FP-1b); arms use the
+  world FOV and can clip into walls (view model is FP-2). Report the look-down view (neck/collar line, torso).
+- Status: awaiting owner (built 2026-11-10, not run here: no display).
 
 ### PL-4: Movement feel: starts, stops, reversals (`cargo dev scene level-anim-overview`, F11 player, Tab 3rd person)
 - Player-only motion tuning (Elden-Ring-style): fast speed ramp, faster brake, facing capped at 720/1080/480 deg/s

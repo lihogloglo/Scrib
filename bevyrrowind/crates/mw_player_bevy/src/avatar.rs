@@ -23,8 +23,12 @@
 //!   `RootMotionMode::Progress`; its playhead is the move's chain progress, interpolated between
 //!   the last two ticks like the body. When the move ends the slot stops and the graph
 //!   inertializes back to locomotion.
-//! - **First person**: the camera fades the followed body (`CameraPose::fade`); the avatar is
-//!   hidden while it is mostly faded (no first-person arms yet).
+//! - **First person** (superfargoth `docs/specs/first-person.md`, FP-1): the avatar carries
+//!   `RoleLayers`, so its outfit is split by role (head, arms, body; held items) and first person
+//!   only re-layers it: the head leaves every view (`RoleLayers::first_person`), the body, arms
+//!   and weapon stay drawn, so the player sees their own arms. Third person shows every role and
+//!   hides the whole avatar while the camera's collision fade is past [`HIDE_FADE`] (the eye
+//!   inside the body). Presentation only: nothing here writes gameplay state.
 
 use bevy_camera::prelude::Visibility;
 use bevy_ecs::prelude::*;
@@ -39,8 +43,9 @@ use sf_action_bevy::{ActionBody, ActionCharacter};
 use sf_anim::{RootDelta, RootMotionMode};
 use sf_anim_bevy::{AnimLod, AnimTier, Animator};
 use sf_anim_graph::{MontageClip, SlotId, SlotRequest};
+use sf_camera::ViewChoice;
 use sf_camera_bevy::PlayerCamera;
-use sf_character_bevy::CharacterBody;
+use sf_character_bevy::{CharacterBody, RoleLayers};
 use sf_controller::{CharacterFrame, Gait};
 use sf_controller_bevy::{ControllerSettings, FeedGait, FeedValues, Mover};
 
@@ -61,7 +66,7 @@ const CLIP_BLEND_IN: f32 = 0.10;
 const TELEPORT_M: f32 = 3.0;
 /// The character kind of `NPC_` records (`mw_actors::source::NPC_KIND`).
 const NPC_KIND: &str = "NPC_";
-/// The avatar hides while the camera fades the body more than this (first person).
+/// In third person the avatar hides while the camera fades the body more than this.
 const HIDE_FADE: f32 = 0.5;
 /// Unlaunched air time the animation ignores (a step-down miss), seconds.
 pub const AIR_GRACE: f32 = 0.1;
@@ -164,6 +169,8 @@ pub(crate) fn avatar_bundle() -> impl Bundle {
         Name::new("player avatar"),
         sf_character_bevy::Character::record(NPC_KIND, sf_records::RecordId::new(crate::hud::PLAYER_RECORD)),
         PlayerAvatar,
+        // Split by role at build time; `first_person` re-layers it.
+        RoleLayers::world(),
         Transform::IDENTITY,
         Visibility::Inherited,
     )
@@ -347,11 +354,28 @@ fn stop(a: &mut Animator, slot: SlotId) {
     a.instance.stop_slot(&asset.binding(), slot, TRAVERSAL_BLEND_OUT);
 }
 
-/// Hides the avatar while the camera fades the body (first person).
-pub(crate) fn first_person(cams: Query<&PlayerCamera>, mut avatars: Query<&mut Visibility, With<PlayerAvatar>>) {
-    let fade = cams.iter().find_map(|c| c.pose().map(|p| p.fade)).unwrap_or(0.0);
-    let want = if fade > HIDE_FADE { Visibility::Hidden } else { Visibility::Inherited };
-    for mut v in &mut avatars {
-        v.set_if_neq(want);
+/// What the avatar shows for the camera's view and body fade (`None`: no camera pose yet, as
+/// third person unfaded). See the module docs, "First person".
+pub(crate) fn avatar_view(pose: Option<(ViewChoice, f32)>) -> (Visibility, RoleLayers) {
+    match pose {
+        Some((ViewChoice::FirstPerson, _)) => (Visibility::Inherited, RoleLayers::first_person()),
+        Some((ViewChoice::ThirdPerson, fade)) if fade > HIDE_FADE => (Visibility::Hidden, RoleLayers::world()),
+        _ => (Visibility::Inherited, RoleLayers::world()),
+    }
+}
+
+/// Schedules [`first_person`]: after the camera rig writes the pose, before the character layer
+/// sync, so a view switch is laid out in the frame the camera cuts.
+pub(crate) fn add_first_person(app: &mut bevy_app::App) {
+    app.add_systems(bevy_app::PostUpdate, first_person.after(sf_camera_bevy::CameraSystems::Rig).before(sf_character_bevy::CharacterLayerSystems));
+}
+
+/// Lays the avatar out for the camera's view ([`avatar_view`]).
+pub(crate) fn first_person(cams: Query<&PlayerCamera>, mut avatars: Query<(&mut Visibility, &mut RoleLayers), With<PlayerAvatar>>) {
+    let pose = cams.iter().find_map(|c| c.pose().map(|p| (p.view, p.fade)));
+    let (visibility, roles) = avatar_view(pose);
+    for (mut v, mut r) in &mut avatars {
+        v.set_if_neq(visibility);
+        r.set_if_neq(roles.clone());
     }
 }

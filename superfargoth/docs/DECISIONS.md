@@ -1728,3 +1728,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   target, **revisit at S9**. Unreachable without cutting contract text: the 2026-11-09 restructure already relocated
   the mechanism, the byte tables and the S0-S2 history, and this pass removed the last two duplications (§3's
   fragmentation measurements, the industry-comparison sourced case). Further cuts are a coordinator decision.
+- 2026-11-10 (first person FP-1): hybrid first person on one skeleton (world body, head off the main view; arms
+  and held items redrawn by a view model in FP-2), roles by `RenderLayers` since Bevy 0.20 has no shadow-only flag;
+  outfits split by role only for roots with `RoleLayers` (the player), NPCs keep one mesh per material (first-person.md).

@@ -349,6 +349,8 @@ pub(crate) fn sync_held(
             });
             for (mesh, material) in &assets.meshes {
                 let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::IDENTITY, Visibility::Inherited, ChildOf(entity)));
+                // Layered by role on roots with `RoleLayers` (module `roles`); the light slot is not.
+                e.insert(crate::PartRole(sf_character::ViewRole::Held));
                 if let Some(skinned) = &skinned {
                     e.insert((
                         skinned.clone(),

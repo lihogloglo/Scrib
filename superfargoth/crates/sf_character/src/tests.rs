@@ -968,6 +968,31 @@ fn slot_registry_regions() {
     assert!(slots.def(again).unwrap().region.contains(HumanoidBone::Hips), "re-registering extends the region");
 }
 
+/// First-person roles of the default humanoid slots, by region (first-person.md "Roles").
+#[test]
+fn default_slots_take_their_view_role_from_their_region() {
+    let slots = SlotRegistry::with_humanoid_defaults();
+    let role = |name: &str| slots.role(slots.get(name).unwrap());
+    let roles: Vec<(&str, ViewRole)> = slots.iter().map(|(id, d)| (d.name.as_str(), slots.role(id))).collect();
+    let expect = |name: &str| match name {
+        slot::HEAD | slot::HAIR | slot::FACE | slot::NECK => ViewRole::Head,
+        n if ["shoulder", "upper_arm", "forearm", "hand"].iter().any(|a| n.ends_with(a)) => ViewRole::Arms,
+        _ => ViewRole::Body,
+    };
+    assert_eq!(roles.len(), 23);
+    for (name, r) in &roles {
+        assert_eq!(*r, expect(name), "{name}");
+    }
+    assert_eq!(
+        [slot::HEAD, slot::NECK, slot::LEFT_SHOULDER, slot::RIGHT_HAND, slot::CHEST, slot::BACK, slot::PELVIS, slot::TAIL, slot::LEFT_FOOT].map(role),
+        [ViewRole::Head, ViewRole::Head, ViewRole::Arms, ViewRole::Arms, ViewRole::Body, ViewRole::Body, ViewRole::Body, ViewRole::Body, ViewRole::Body]
+    );
+    assert_eq!(ViewRole::of_region(BoneSet::EMPTY), ViewRole::Body, "accessories are body until an adapter says otherwise");
+    assert_eq!(ViewRole::of_region(BoneSet::of(&[HumanoidBone::RightRingDistal])), ViewRole::Arms);
+    assert_eq!(slots.role(SlotId(999)), ViewRole::Body);
+    assert_eq!(ViewRole::ALL.map(ViewRole::index), [0, 1, 2, 3]);
+}
+
 /// An adapter sketch: the trait is object-safe and Bevy-free.
 #[test]
 fn character_source_is_object_safe() {

@@ -307,3 +307,35 @@ fn auto_calculated_skills() {
 
 // Held items (`held`): weapon choice, ammunition, shields, torches at night, mounts.
 mod held_items;
+
+/// First-person roles of all 27 part slots (superfargoth first-person.md "Roles"), and through the
+/// registry: slots no part slot fills take the framework's region default.
+#[test]
+fn part_slots_map_onto_first_person_roles() {
+    use crate::slots::{PRT_COUNT, prt, view_role};
+    use sf_character::ViewRole::{Arms, Body, Head, Held};
+    let roles: Vec<_> = (0..PRT_COUNT).map(view_role).collect();
+    #[rustfmt::skip]
+    let expect = [
+        Head, Head, Head, // head, hair, neck
+        Body, Body, Body, // cuirass, groin, skirt
+        Arms, Arms, Arms, Arms, // hands, wrists
+        Arms, // shield
+        Arms, Arms, Arms, Arms, // forearms, upper arms
+        Body, Body, Body, Body, Body, Body, Body, Body, // feet, ankles, knees, legs
+        Arms, Arms, // pauldrons
+        Held, // weapon
+        Body, // tail
+    ];
+    assert_eq!(roles, expect);
+    assert_eq!(view_role(PRT_COUNT), Body);
+    let a = actors();
+    let slot = |name: &str| a.slots().get(name).unwrap();
+    assert_eq!(a.view_role(slot("hair")), Head);
+    assert_eq!(a.view_role(slot("shield")), Arms, "the region rule alone would say body");
+    assert_eq!(a.view_role(slot("weapon")), Held);
+    assert_eq!(a.view_role(slot("left_wrist")), Arms);
+    assert_eq!(a.view_role(slot("body")), Body);
+    assert_eq!(a.view_role(slot("face")), Head, "no part slot fills `face`: the region default");
+    assert_eq!(view_role(prt::L_PAULDRON), Arms);
+}

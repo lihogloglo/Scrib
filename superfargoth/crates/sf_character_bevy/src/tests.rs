@@ -123,6 +123,8 @@ impl Content {
                 part("meshes/skin.nif", s(slot::RIGHT_UPPER_LEG), PartKind::Rigid { joint: "thigh_r".into(), offset: mirror }),
             ),
             (RecordId::new("shirt"), part("meshes/cloth.nif", s(slot::CHEST), PartKind::rigid("root"))),
+            (RecordId::new("head"), part("meshes/skin.nif", s(slot::HEAD), PartKind::rigid("root"))),
+            (RecordId::new("arm_l"), part("meshes/skin.nif", s(slot::LEFT_UPPER_ARM), PartKind::rigid("root"))),
             (RecordId::new("segmented"), part("meshes/segmented.nif", s(slot::CHEST), PartKind::Skinned)),
             (RecordId::new("morphing"), part("meshes/morphing.nif", s(slot::CHEST), PartKind::Skinned)),
         ]);
@@ -147,8 +149,12 @@ impl CharacterSource for Content {
         Ok(CharacterRecipe {
             skeleton: self.path.clone(),
             rig: RigRef::Profile(self.path.clone()),
-            base: if creature { vec![RecordId::new(body)] } else { ["chest", "leg_l", "leg_r"].map(RecordId::new).to_vec() },
-            head: None,
+            base: match kind {
+                _ if creature => vec![RecordId::new(body)],
+                "player" => ["chest", "leg_l", "leg_r", "arm_l"].map(RecordId::new).to_vec(),
+                _ => ["chest", "leg_l", "leg_r"].map(RecordId::new).to_vec(),
+            },
+            head: (kind == "player").then(|| RecordId::new("head")),
             hair: None,
             worn: if creature { vec![] } else { state.worn.clone().unwrap_or_else(|| vec![RecordId::new("shirt")]) },
             held: state.held.clone().unwrap_or_default(),
@@ -529,4 +535,106 @@ fn characters_and_their_parts_follow_their_worldspace_render_layer() {
     app.world_mut().entity_mut(a).insert(ChildOf(three));
     app.update();
     assert_eq!(layers_of(&app), vec![Some(RenderLayers::layer(3)); n]);
+}
+
+/// First-person roles (first-person.md): a root with `RoleLayers` gets one mesh per material and
+/// role, each tagged with its `PartRole` (held props `Held`), and re-layering by role changes
+/// only layers: first person takes the head off the root's layers, keeps the rest, and leaves
+/// the torch's light slot alone. A character without `RoleLayers` merges as before.
+#[test]
+fn role_layers_split_the_outfit_by_role_and_relayer_on_a_view_switch() {
+    use crate::{PartRole, RoleLayer, RoleLayers, ViewRole};
+    use bevy::camera::visibility::RenderLayers;
+    let mut app = app();
+    let player = || Character::Record {
+        kind: "player".into(),
+        id: RecordId::new("player"),
+        state: CharacterState { worn: None, held: Some(vec![held("torch", "hand_l", true)]) },
+    };
+    let ws = RenderLayers::layer(3);
+    let a = app.world_mut().spawn((player(), RoleLayers::world(), ws.clone())).id();
+    let plain = app.world_mut().spawn(player()).id();
+    run_until(&mut app, |w| [a, plain].iter().all(|&e| w.get::<CharacterBody>(e).is_some() && w.get::<HeldProps>(e).is_some_and(|h| !h.props.is_empty())));
+    app.update();
+    let roles = |w: &World, e: Entity| -> Vec<(String, Option<ViewRole>)> {
+        let mut v: Vec<_> = w.get::<CharacterBody>(e).unwrap().outfit.meshes.iter().map(|m| (m.material_name.clone(), m.role)).collect();
+        v.sort();
+        v
+    };
+    // The shirt (cloth) replaces the skin chest; skin splits into legs (body), head and arm.
+    let split = vec![
+        ("cloth".to_owned(), Some(ViewRole::Body)),
+        ("skin".to_owned(), Some(ViewRole::Body)),
+        ("skin".to_owned(), Some(ViewRole::Head)),
+        ("skin".to_owned(), Some(ViewRole::Arms)),
+    ];
+    let mut sorted = split.clone();
+    sorted.sort();
+    assert_eq!(roles(app.world(), a), sorted);
+    assert_eq!(roles(app.world(), plain), [("cloth".to_owned(), None), ("skin".to_owned(), None)], "no RoleLayers: merged per material");
+    assert!(!Arc::ptr_eq(&app.world().get::<CharacterBody>(a).unwrap().outfit, &app.world().get::<CharacterBody>(plain).unwrap().outfit));
+
+    // Every role part with its layers; the torch's light slot apart.
+    let parts = |w: &World| -> (Vec<(ViewRole, Option<RenderLayers>)>, Option<RenderLayers>) {
+        let body = w.get::<CharacterBody>(a).unwrap();
+        let props = &w.get::<HeldProps>(a).unwrap().props;
+        let prop_meshes = props.iter().flat_map(|p| w.get::<Children>(p.entity).map(|c| c.to_vec()).unwrap_or_default());
+        let mut v: Vec<_> =
+            body.meshes.iter().copied().chain(prop_meshes).filter_map(|e| Some((w.get::<PartRole>(e)?.0, w.get::<RenderLayers>(e).cloned()))).collect();
+        v.sort_by_key(|(r, _)| *r);
+        let light = props.iter().find_map(|p| p.light).and_then(|l| w.get::<RenderLayers>(l).cloned());
+        (v, light)
+    };
+    let all = |head: Option<RenderLayers>| {
+        let mut v = vec![
+            (ViewRole::Body, Some(ws.clone())),
+            (ViewRole::Body, Some(ws.clone())),
+            (ViewRole::Head, head),
+            (ViewRole::Arms, Some(ws.clone())),
+            (ViewRole::Held, Some(ws.clone())),
+        ];
+        v.sort_by_key(|(r, _)| *r);
+        v
+    };
+    assert_eq!(parts(app.world()), (all(Some(ws.clone())), Some(ws.clone())), "third person: every role on the root's layers");
+
+    app.world_mut().entity_mut(a).insert(RoleLayers::first_person());
+    app.update();
+    assert_eq!(parts(app.world()), (all(Some(RenderLayers::none())), Some(ws.clone())), "first person: the head off every view");
+    let meshes = app.world().get::<CharacterBody>(a).unwrap().meshes.clone();
+
+    // A view-model layer on the arms and held items (the FP-2 shape) adds to the world layers.
+    let vm = RoleLayer { world: true, extra: RenderLayers::layer(9) };
+    app.world_mut().entity_mut(a).insert(RoleLayers::first_person().with(ViewRole::Arms, vm.clone()).with(ViewRole::Held, vm));
+    app.update();
+    let (got, light) = parts(app.world());
+    let with_vm = ws.clone().with(9);
+    assert_eq!(
+        got.iter().filter(|(r, _)| matches!(r, ViewRole::Arms | ViewRole::Held)).map(|(_, l)| l.clone()).collect::<Vec<_>>(),
+        [Some(with_vm.clone()), Some(with_vm)]
+    );
+    assert_eq!(light, Some(ws.clone()));
+
+    // Back to third person: all on the root's layers again, same mesh entities.
+    app.world_mut().entity_mut(a).insert(RoleLayers::world());
+    app.update();
+    assert_eq!(parts(app.world()), (all(Some(ws.clone())), Some(ws)));
+    assert_eq!(app.world().get::<CharacterBody>(a).unwrap().meshes, meshes, "a view switch rebuilds nothing");
+}
+
+/// The per-role layer rule, exactly (first-person.md "Layer plan").
+#[test]
+fn role_layer_rule_per_role() {
+    use crate::{RoleLayer, RoleLayers, ViewRole};
+    use bevy::camera::visibility::RenderLayers;
+    let ws = RenderLayers::from_layers(&[3]);
+    let world = RoleLayers::world();
+    let fp = RoleLayers::first_person();
+    for role in ViewRole::ALL {
+        assert_eq!(world.layers(role, &ws), ws, "{role:?}");
+    }
+    assert_eq!(ViewRole::ALL.map(|r| fp.layers(r, &ws)), [ws.clone(), RenderLayers::none(), ws.clone(), ws.clone()]);
+    let shadow = RoleLayers::world().with(ViewRole::Head, RoleLayer { world: false, extra: RenderLayers::layer(40) });
+    assert_eq!(shadow.layers(ViewRole::Head, &ws), RenderLayers::layer(40));
+    assert_eq!(RoleLayers::world().layers(ViewRole::Body, &RenderLayers::default()), RenderLayers::layer(0));
 }

@@ -169,7 +169,8 @@ pub struct CameraPose {
     /// Pivot-to-eye length in use (0 in first person), and whether the cast was blocked.
     pub arm_length: f32,
     pub blocked: bool,
-    /// Followed body's fade, 0 opaque to 1 hidden (hidden in first person until D2's body).
+    /// Followed body's collision fade, 0 opaque to 1 hidden; 1 in first person, where the body is
+    /// laid out by part roles instead (`first-person.md`).
     pub fade: f32,
     /// The framed lock target, if any.
     pub locked: Option<Entity>,

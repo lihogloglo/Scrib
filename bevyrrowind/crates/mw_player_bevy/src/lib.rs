@@ -184,8 +184,8 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         .add_systems(Update, await_ground::<Physics>.after(arrive).before(StreamingSystems::Transition))
         .add_systems(Update, update_focus.in_set(FocusUpdate).before(ScriptSlot::Update))
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate))
-        .add_systems(PostUpdate, (avatar::link, avatar::feed, grip::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe))
-        .add_systems(PostUpdate, avatar::first_person);
+        .add_systems(PostUpdate, (avatar::link, avatar::feed, grip::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe));
+    avatar::add_first_person(app);
     hud::add(app);
     combat::add(app, sheet, &clips);
     dummy::add(app);

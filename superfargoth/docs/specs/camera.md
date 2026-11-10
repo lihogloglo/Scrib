@@ -49,8 +49,9 @@ R7 §2, R8 §1.4, §2-3. Companion: [action.md](action.md).
   and reflections. Per action: an **arms layer** for weapons and spells (a content pack's own
   first-person clips may play here as presentation on the shared clock), or the **full body** with
   the baked camera for traversal, sitting and paired moves. Bevy has no shadow-only flag (character.md
-  open question 1): render layers until it does. character.md's first-person section is rewritten
-  to this model when D2 starts.
+  open question 1): render layers until it does. Roles, layer plan and build plan (FP-1..FP-6):
+  [first-person.md](first-person.md). character.md's first-person section is rewritten to this
+  model when D2 starts.
 
 ## Framed cameras (paired moves)
 
