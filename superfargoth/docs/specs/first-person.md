@@ -10,7 +10,8 @@ Design source: [camera.md](camera.md) "First person" (render bodies, look limits
 ## Rules
 
 - **Presentation only** (camera.md "Rules"): the view choice and these layers never write gameplay
-  state; a view switch rebuilds nothing and changes no tick. Aim stays `Command.view`.
+  state; a view switch rebuilds nothing and changes no tick. Aim stays `Command.view`, and the
+  view choice reaches gameplay only as the input bit `Command.face_view` (camera.md "Rules").
 - **One skeleton, one clip set.** The world body's pose (third-person, UAL and pack clips, IK) is the
   pose first person shows; a content pack's own first-person clips are an optional presentation
   override (FP-6), never required.
@@ -101,7 +102,9 @@ arms cast no shadow in first person: a headless player shadow is a known FP-1 ar
    per preset.
 6. **FP-5 wall pull-back** from the wall-brace / hand-IK probes.
 7. **FP-6** (optional) first-person clips as a presentation override (`bevyrrowind bake`).
-Then first-person combat (soft aim, combat C4 subset) on top.
+First-person combat gameplay (soft aim, no hard lock, attacks face the view) is built ahead of
+FP-2 (combat.md "C4 soft aim", 2026-11-10); its presentation (attack look limits, arms in the view
+model) rides on FP-2.
 
 ## Industry comparison
 

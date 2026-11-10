@@ -353,3 +353,116 @@ fn the_draw_and_sheathe_clips_move_the_weapon_at_their_keys_and_gate_the_attacks
     }
     assert_eq!(shown(&app), Some(Readiness::Sheathed));
 }
+
+/// First-person combat (combat.md C4 soft aim, camera.md "First person"): the player is armed and
+/// drawn with the game's rules, the training dummy stands `dist` m off at `deg` degrees from the
+/// view (yaw 0, +Z), and the camera following the player is in `view`. Settled.
+fn first_person_arena(dist: f32, deg: f32, view: sf_camera::ViewChoice) -> (App, Entity, Entity, Entity) {
+    let (mut app, player) = armed();
+    let sheet = app.world().resource::<combat::PlayerCombat>().sheet.clone();
+    app.insert_resource(rules(&[], sheet.as_ref()));
+    dummy::systems::<Statics>(&mut app);
+    for _ in 0..30 {
+        app.update();
+    }
+    let feet = app.world().get::<ActionBody>(player).unwrap().loco.position;
+    let (s, c) = deg.to_radians().sin_cos();
+    let root = app.world_mut().spawn_empty().id();
+    let d = dummy::spawn(&mut app.world_mut().commands(), 0, (feet.offset(Vec3::new(dist * s, 0.0, dist * c)), std::f32::consts::PI), root);
+    let mut cam = PlayerCamera::new(player);
+    cam.set_view(view);
+    let cam = app.world_mut().spawn(cam).id();
+    app.world_mut().flush();
+    hold_key(&mut app, KeyCode::KeyF, true);
+    app.update();
+    hold_key(&mut app, KeyCode::KeyF, false);
+    for _ in 0..30 {
+        app.update();
+    }
+    assert_eq!(stance(&app, player), (Stance::Drawn, false));
+    (app, player, d, cam)
+}
+
+fn press_lock(app: &mut App) {
+    let mut q = app.world_mut().query_filtered::<Entity, With<Action<sf_combat_bevy::LockOnAction>>>();
+    let lock = q.single(app.world()).expect("one lock action");
+    mock(app, lock, true);
+    for _ in 0..3 {
+        app.update();
+    }
+    app.world_mut().entity_mut(lock).insert(ActionMock::new(TriggerState::None, false, MockSpan::Manual));
+    for _ in 0..3 {
+        app.update();
+    }
+}
+
+/// First person: a light attack with the dummy 20 deg off the view and 2.5 m away turns the body
+/// onto it inside the attack's `Turn` window (light1: 0-0.11 s at 360 deg/s), and not after:
+/// once the window has closed, neither the view swinging 60 deg away nor the dummy stepping to
+/// 40 deg moves the body (no dragging). The lock key locks nothing in first person.
+#[test]
+fn first_person_light_attack_soft_aims_at_the_dummy_in_its_turn_window_only() {
+    let (mut app, player, d, _) = first_person_arena(2.5, 20.0, sf_camera::ViewChoice::FirstPerson);
+    press_lock(&mut app);
+    assert_eq!(app.world().get::<ActionCharacter>(player).unwrap().state.lock, None, "no hard lock in first person");
+    assert!(app.world().get::<sf_camera_bevy::LockOn>(player).is_none());
+    let feet = |app: &App, e: Entity| app.world().get::<ActionBody>(e).unwrap().loco.position;
+    let to = feet(&app, player).delta_f32(feet(&app, d));
+    let bearing = to.x.atan2(to.z);
+    assert!((bearing.to_degrees() - 20.0).abs() < 1.0, "the dummy stands 20 deg off the view: {}", bearing.to_degrees());
+    let yaw = |app: &App| app.world().get::<ActionBody>(player).unwrap().loco.motion.yaw;
+    assert!(yaw(&app).abs() < 0.02, "the body faces the view before the attack: {}", yaw(&app));
+
+    let light1 = app.world().resource::<combat::PlayerCombat>().sheet.as_ref().unwrap().rule_key("light1");
+    let attack = action(&mut app, PlayerAction::Button(ActionClass::Light));
+    mock(&mut app, attack, true);
+    let state = |app: &App| app.world().get::<ActionCharacter>(player).unwrap().state.clone();
+    let (mut in_window, mut after) = (Vec::new(), Vec::new());
+    for _ in 0..60 {
+        app.update();
+        let s = state(&app);
+        if s.mov != light1 {
+            if in_window.is_empty() {
+                continue;
+            }
+            break;
+        }
+        app.world_mut().entity_mut(attack).insert(ActionMock::new(TriggerState::None, false, MockSpan::Manual));
+        let t = s.clock.elapsed.secs();
+        if t <= 0.12 {
+            in_window.push((t, yaw(&app)));
+        } else {
+            if after.is_empty() {
+                // The window has closed: the player looks 60 deg away and the dummy steps to 40 deg.
+                app.world_mut().get_mut::<PlayerInput>(player).unwrap().sampler.set_view(sf_action::ViewDir { yaw: 60f32.to_radians(), pitch: 0.0 });
+                let (s, c) = 40f32.to_radians().sin_cos();
+                let at = feet(&app, player).offset(Vec3::new(2.5 * s, 0.0, 2.5 * c));
+                app.world_mut().get_mut::<ActionBody>(d).unwrap().loco.position = at;
+            }
+            after.push((t, yaw(&app)));
+        }
+    }
+    assert!(!in_window.is_empty() && after.len() > 5, "light1 played: {in_window:?} then {after:?}");
+    let target = app.world().get::<Combatant>(player).unwrap().fight.swing.as_ref().and_then(|s| s.aim);
+    assert_eq!(target, Some(sf_action::TargetId(app.world().get::<ActionCharacter>(d).unwrap().id.0)), "the dummy is the swing's soft target");
+    let turned = in_window.last().unwrap().1;
+    assert!((turned - bearing).abs() < 0.02, "on the dummy by the window's end: {turned:.3} vs {bearing:.3} ({in_window:?})");
+    for &(t, y) in &after {
+        assert!((y - turned).abs() < 1e-3, "turned after the window at {t:.3} s: {y:.3} vs {turned:.3}");
+    }
+}
+
+/// A lock taken in third person breaks when the camera goes to first person (no hard lock there).
+#[test]
+fn switching_to_first_person_breaks_a_held_lock() {
+    let (mut app, player, _, cam) = first_person_arena(3.0, 0.0, sf_camera::ViewChoice::ThirdPerson);
+    press_lock(&mut app);
+    assert!(app.world().get::<ActionCharacter>(player).unwrap().state.lock.is_some(), "locked in third person");
+    app.world_mut().get_mut::<PlayerCamera>(cam).unwrap().set_view(sf_camera::ViewChoice::FirstPerson);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(app.world().get::<ActionCharacter>(player).unwrap().state.lock, None);
+    assert_eq!(app.world().get::<sf_combat_bevy::LockOwner>(player).unwrap().last, Some(sf_combat::LockEvent::Broke(sf_camera::BreakReason::View)));
+    assert!(app.world().get::<sf_camera_bevy::LockOn>(player).is_none());
+}

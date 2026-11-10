@@ -12,7 +12,8 @@ R7 §2, R8 §1.4, §2-3. Companion: [action.md](action.md).
 - **The camera is presentation.** It reads `ActionOutput` and the render body; it never writes
   gameplay state. Aim reaches gameplay only as `Command.view` (yaw, pitch), which the input shell
   fills from the player's look input, not from the camera's final pose (action.md "Co-op
-  readiness"). Shake, framing and collision push-in never change aim.
+  readiness"), plus one input bit for the view choice, `Command.face_view` (first person: attacks
+  face the view, no hard lock; below). Shake, framing and collision push-in never change aim.
 - One gameplay body in both views. Switching views changes no gameplay tick.
 
 ## Third person (primary)
@@ -44,6 +45,10 @@ R7 §2, R8 §1.4, §2-3. Companion: [action.md](action.md).
 - **Soft aim, no hard lock-on in first person** (decision). Soft aim is gameplay, in the action
   layer: early in an attack (`turn` window start), the nearest valid target in a small cone around
   `Command.view` and within reach becomes the lunge/turn target (R6 §5). The camera does not turn.
+  Built 2026-11-10 (combat.md "C4 soft aim"): with `Command.face_view` an attack squares up to the
+  view, its `Turn` window steers onto the soft target, `NoTurn` holds the swing whatever the mouse
+  does (no dragging, R8 §2); a lock press does nothing and a held lock breaks on entering first
+  person. Next (presentation): attack look limits around the body yaw while committed.
 - **Render bodies** (decision; R7 §2.1, R8 §3): a first-person body (arms, and legs when looking
   down) with its own FOV and scale toward the camera, head hidden; plus the world body for shadows
   and reflections. Per action: an **arms layer** for weapons and spells (a content pack's own

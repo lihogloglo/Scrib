@@ -14,8 +14,13 @@
 //!   the camera that follows the owner.
 //! - Locked locomotion faces the target and strafes (C1c-2, `sf_action`'s step through
 //!   `LockAim`); the dot on the target is [`crate::marker`].
-//! - Not yet: locked rolls (C1c-3), switching by a stick flick (C4; `LockRequest::Next` already
-//!   switches).
+//! - **Soft aim** (C4 part, camera.md "First person"): in the same pass, an owner whose attack
+//!   swing is inside its acquire window (`sf_combat::soft_aim_wanted`) picks the nearest
+//!   candidate in `LockConfig::soft`'s reach and cone around its aim axis (the view in first
+//!   person, else the stick or facing) with line of sight, cast only for candidates in reach;
+//!   [`SoftAim`] carries it to `Sense::soft_target` (the attack's `Turn` windows aim at it).
+//! - **First person** (`Command::face_view`): no hard lock; a held one breaks, presses do nothing.
+//! - Not yet: switching by a stick flick (C4; `LockRequest::Next` already switches).
 
 use std::marker::PhantomData;
 
@@ -24,12 +29,12 @@ use bevy_ecs::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use bevy_math::Vec3;
 use sf_action::{LockRequest, TICK_HZ, TargetId};
-use sf_action_bevy::{ActionBody, ActionCharacter, ActionSystems, LockAim, PlayerControls, PlayerInput};
-pub use sf_camera::{BreakReason, LockParams, LockTimers};
+use sf_action_bevy::{ActionBody, ActionCharacter, ActionSystems, LockAim, PlayerControls, PlayerInput, SoftAim};
+pub use sf_camera::{BreakReason, LockParams, LockTimers, SoftAimParams};
 use sf_camera::Candidate;
 pub use sf_camera_bevy::{LockOn, Lockable};
 use sf_camera_bevy::PlayerCamera;
-use sf_combat::{LockEvent, LockInput, update_lock};
+use sf_combat::{LockEvent, LockInput, SoftAimInput, soft_aim_axis, soft_aim_wanted, update_lock, update_soft_aim};
 use sf_controller::{GroundProbe, ProbeQuery};
 use sf_coords::WorldPos;
 
@@ -37,7 +42,7 @@ use crate::{CombatSystems, Combatant};
 
 /// A character that owns a lock-on (local players; AI later). Its target is `ActionState::lock`.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
-#[require(LockAim)]
+#[require(LockAim, SoftAim)]
 pub struct LockOwner {
     pub timers: LockTimers,
     /// The last event that changed the lock (HUD, sounds, tests).
@@ -52,11 +57,13 @@ pub struct LockConfig {
     pub eye_height: f32,
     /// Radius of the line-of-sight cast (a thin sphere: a fence post doesn't break the lock), m.
     pub los_radius: f32,
+    /// The attacks' soft aim without a lock (content tuning; R6 §5 defaults).
+    pub soft: SoftAimParams,
 }
 
 impl Default for LockConfig {
     fn default() -> Self {
-        Self { params: LockParams::default(), eye_height: 1.5, los_radius: 0.1 }
+        Self { params: LockParams::default(), eye_height: 1.5, los_radius: 0.1, soft: SoftAimParams::default() }
     }
 }
 
@@ -117,9 +124,10 @@ type LockQuery = (
     &'static mut ActionCharacter,
     &'static ActionBody,
     Option<&'static Lockable>,
-    Option<&'static Combatant>,
+    Option<&'static mut Combatant>,
     Option<&'static mut LockOwner>,
     Option<&'static mut LockAim>,
+    Option<&'static mut SoftAim>,
     Option<&'static LockOn>,
 );
 
@@ -144,12 +152,13 @@ fn update_locks<G: GroundProbe + Resource>(
         })
         .collect();
     let mut candidates = Vec::with_capacity(targets.len());
-    for (e, mut c, body, _, _, owner, aim, lock_on) in &mut characters {
+    for (e, mut c, body, _, combatant, owner, aim, soft, lock_on) in &mut characters {
         let Some(mut owner) = owner else { continue };
         let c = &mut *c;
         let request = c.command.lock_request;
+        let face_view = c.command.face_view;
         // Idle (no lock, no press, no re-offer pending): nothing to sense.
-        if c.state.lock.is_some() || request != LockRequest::None || owner.timers.offered.is_some() {
+        if c.state.lock.is_some() || (request != LockRequest::None && !face_view) || owner.timers.offered.is_some() {
             let eye = body.loco.position.offset(Vec3::Y * config.eye_height);
             // Held without a press: only the target's own line of sight matters.
             let all = c.state.lock.is_none() || request != LockRequest::None;
@@ -166,6 +175,7 @@ fn update_locks<G: GroundProbe + Resource>(
                 candidates: &candidates,
                 traversing: c.state.warp.is_some() || body.loco.traversing,
                 grounded: body.loco.grounded.is_some(),
+                face_view,
             };
             let event = update_lock(&mut c.state.lock, &mut owner.timers, &input, &config.params, dt);
             if event != LockEvent::Kept {
@@ -176,6 +186,33 @@ fn update_locks<G: GroundProbe + Resource>(
             }
         }
         let target = c.state.lock.and_then(|id| targets.iter().find(|t| t.1 == id));
+        let soft_target = combatant.and_then(|mut k| {
+            let eye = body.loco.position.offset(Vec3::Y * config.eye_height);
+            let p = &config.soft;
+            if soft_aim_wanted(&k.fight, &c.state, p) && c.state.lock.is_none() {
+                // Line of sight only for the few in reach (the cone is checked by the pick).
+                candidates.clear();
+                candidates.extend(targets.iter().filter(|t| t.0 != e).filter_map(|&(_, id, pos)| {
+                    let d = eye.delta_f32(pos);
+                    (Vec3::new(d.x, 0.0, d.z).length() <= p.reach).then(|| Candidate { id, pos, los: line_of_sight(probe, eye, pos, config.los_radius) })
+                }));
+            } else {
+                candidates.clear();
+            }
+            let input = SoftAimInput {
+                origin: eye,
+                axis_yaw: soft_aim_axis(&c.command, body.loco.motion.yaw, c.params.deadzone),
+                candidates: &candidates,
+                locked: c.state.lock.is_some(),
+            };
+            let id = update_soft_aim(&mut k.fight, &c.state, &input, p)?;
+            targets.iter().find(|t| t.1 == id).map(|t| body.loco.position.delta_f32(t.2))
+        });
+        if let Some(mut soft) = soft
+            && soft.0 != soft_target
+        {
+            soft.0 = soft_target;
+        }
         if let Some(mut aim) = aim {
             let to = target.map(|t| body.loco.position.delta_f32(t.2));
             if aim.0 != to {

@@ -1,6 +1,6 @@
 # Combat: feel layer, moveset sheets, rules seam
 
-Status (2026-10-27): C1a, C1b and C1c (lock-on parts 1-4) built; next C1c-2b strafe clips, then C2. ROADMAP 3.5. Game side:
+Status (2026-11-10): C1a, C1b, C1c (lock-on parts 1-4) and the C4 soft aim (first-person melee) built; next C1c-2b strafe clips, then C2. ROADMAP 3.5. Game side:
 `../../../bevyrrowind/docs/specs/combat-adapter.md`. Built on [action.md](action.md) (commands, windows, chooser, motion
 owners, co-op rules: referenced, not repeated); owns its build-plan row E1-E3. Slices **combat C1..C7** are not action.md's
 C1 (interactions).
@@ -13,7 +13,7 @@ clips and a rules implementation. The same framework runs classic rules (swing t
 one seam (ARCHITECTURE §1b), and drives NPCs and creatures with per-rig sheets.
 
 Non-goals (first cuts): parry/deflect (guard only), player poise and hyper-armor (every unguarded hit staggers), weapon
-skills, ranged and magic combat, stealth/paired kills (C6), first-person melee presentation (camera.md soft aim; later), AI
+skills, ranged and magic combat, stealth/paired kills (C6), first-person melee presentation (arms view model: first-person.md FP-2..; gameplay: "C4 soft aim"), AI
 (`sf_ai`, M7), damage numbers.
 
 Owner decisions (2026-10-27, DECISIONS.md): one button, tap = roll on release, hold = sprint; clips from free packs
@@ -210,7 +210,8 @@ over `Lockable` hostiles (the shell gathers candidates and line of sight), else 
 `sf_camera_bevy::LockOn`, which already frames it. Locked locomotion sets `LocomotionIntent::desired_facing` to the
 target, capped by the mover's own turn rates (`SpringParams::turn`, the player-feel retune): no second turn system. Clip
 moves aim `Turn` windows at the target; locked rolls use the sheet's `locked` moves, unlocked rolls square up to the stick.
-C4: switching by stick flick, soft aim without lock (~3 m, +-30 deg, first ~1/6 s of an attack, R6 §5), combat shake.
+Unlocked, attacks soft-aim (~3 m, +-30 deg, first ~1/6 s of an attack, R6 §5; "C4 soft aim"); first person has no hard lock.
+C4 left: switching by stick flick, combat shake.
 The Classic mode profile turns lock-on and hit-stop off (action.md "Mode profiles").
 
 ## Reactions, ragdoll and Delirium
@@ -277,57 +278,49 @@ Logic keeps exact assertions; feel tests assert sanity and print measurements (`
 | **C1c** lock-on | built 2026-10-27 (parts 1-4, "As built (C1c)"; strafe clips C1c-2b next): acquire/break, locked strafe, 4-way rolls, framing | breaks past 20 m and on a mantle | CB-2 strafe and roll around the dummy |
 | **C2** guard, reactions | sparring dummy that strikes; player reactions by tier and side; guard; backstep; knockdown via `Physics` | contact-order unit tests; guard break at 0 | CB-3 block, guard break, knockdown, get-up |
 | **C3** heavy, openers, poise | heavy + charge; run/roll/backstep/jump attacks; armor windows; poise; lunge; typed i-frames; second weapon class | second class adds no code; charge release swaps clip | CB-4 heavy and openers |
-| **C4** targeting | switching, soft aim, combat shake, per-bone hurt capsules | switch picks the flicked side | CB-5 |
+| **C4** targeting | switching, soft aim (built 2026-11-10, first person included), combat shake, per-bone hurt capsules | switch picks the flicked side; soft-aim pick and window | CB-5 |
 | **C5** classic rules | classic `CombatRules` (game side), cone contacts, Classic profile | formula tests against the ported source | CB-6 classic swing |
 | **C6** NPC combat | NPCs and creatures through `Command` from `sf_ai`; per-rig sheets; paired takedown, ragdoll victim | AI uses baked reach and recovery | CB-7 |
 | **C7** net | host-authoritative hits, own-start prediction (co-op phase F) | replay determinism | none |
 
 action.md E1 = combat C1-C3 (windows, sheet, light/heavy/dodge/guard), E2 = C1c + C4 (lock-on, soft aim), E3 = C6.
 
-## C1 brief
-
-Order: C1a, then C1b, then C1c, one agent each. C1b and C1c touch `sf_controller` and `mw_player_bevy`: start them after
-the `player-feel` session lands (`.sessions/player-feel.md`).
+## As built by slice
 
 ### C1b: player vs training dummy (Bevy + game)
 
-Briefs and as-built notes for C1a and C1b (first sheet values on the UAL2 `Sword_Regular_*` 3-hit chain):
-[history](archive/combat-history.md). The sheet as it stands:
-
-| Move | Slots (first candidate) | rate / root_scale | Hits (window, mv, stamina, tier, stop) | Cancels Dodge / Light / Move |
-|---|---|---|---|---|
-| `light1` | UAL2 `Sword_Light_A` + `_A_Rec` | 1 / 1.0 | 0.14-0.28, 1.0, 12, Small, 0.05 | 0.31 / 0.37 / 0.57 |
-| `light2` | UAL2 `Sword_Light_B` + `_B_Rec` | 1 / 1.0 | 0.18-0.32, 1.0, 12, Small, 0.05 | 0.36 / 0.43 / 0.66 |
-| `light3` | UAL2 `Sword_Light_C` + `SwordLight_C_Rec` | 1 / 0.25 | 0.38-0.52, 1.0, 12, Small, 0.05 | 0.56 / 0.70 / 1.15 |
-| `light4` | UAL2 `Sword_Light_D` (finisher; `next` wraps to `light1`) | 1 / 0.22 | 0.23-0.37, 1.2, 14, Medium, 0.07 | 0.50 / 1.05 / 1.25 |
-| `roll` | UAL1 `Roll` (`_RM` pack) | 1.25 / 0.75 | i-frames 0.02-0.40; cost 12 | 0.72 / 0.70 / 0.74 |
-| `roll_left`/`_right` | UAL1 `Dodge_Left`/`_Right`, only through `locked`, `square_up: Lock` | 1.4 / 1.0 | i-frames 0.02-0.30; cost 12 | 0.34 / 0.36 / 0.38 |
-
-Light hit windows sit on the right hand's speed peak +-0.07 s; light1/light2 `Cancel(Light)` at the strike clip's end (its pose
-is the next strike's first frame). `root_scale` gives ~0.4 m per swing (baked travel A 0.37, B 0.43, C 1.69, D 2.03 m). The
-roll cancels open where its travel ends (no settle tail, owner). Fallbacks: `light*` -> UAL1 `Sword_Attack` -> content slash;
-`_rec` and rolls -> `Drop`. Watch: light3 end -> `C_Rec` pose jump (hips +0.25 m); light3 -> light4 pose mismatch.
+Briefs, as-built notes and the first sheet's table (UAL2 `Sword_Light_A-D` chain, roll and side rolls; the live values are
+`bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron`): [history](archive/combat-history.md) "C1b sheet".
 
 ### C1c: lock-on
 
-**As built (C1c, 2026-10-27).** Four commits (a2e6d20, 3a54f4b, ddc252d, 2709b71); check CB-2.
-- **Part 1, lock** (`sf_combat::update_lock` over `sf_camera::lockon`; shell `sf_combat_bevy::SfLockOnPlugin`, `LockOwner`,
-  `Lockable { aim_height: 1.3 }`): a press acquires within 15 m and a 35 deg cone around the view yaw with line of sight (thin
-  sphere cast through the ground probe: statics and terrain), else recentres the camera (`PlayerCamera::recentre`); a press
-  while locked releases. Holds to 20 m; breaks on 1.5 s without line of sight, death or any traversal, re-offered for 1 s after
-  touchdown (a jump is not a traversal). `ActionState::lock` is the truth; `LockAim` -> `Sense::lock_target`; the existing
-  `sf_camera_bevy::LockOn` frames it (third person). Bound to Q / middle mouse / pad R3 (`Control::LockOn`).
-- **Part 2a, facing and strafe** (`sf_action` step): locked and not sprinting, desired facing = the target's yaw through the
-  mover's own turn caps; gait speed is taken against that facing (side/back speeds), so sideways circles the target and back
-  backs away facing it; standing still turns to it; sprint faces its run. Locomotion still plays the forward cycles.
-- **Part 3, locked rolls**: `Entry::lock` (`StickSide`, front/back +-45 deg), `Refused::Lock`, `SquareUp::Lock` (faces the
-  target on the first tick); the sheet compiles a move's `locked` map into ranked variants (load errors for unknown targets).
-  Left/right pick `roll_left`/`roll_right`; front/back keep the forward roll squared to the stick.
-- **Part 4, marker** (`sf_combat_bevy::LockMarkerPlugin`, owner request): one UI node (8 px white dot, 1 px dark rim) at the
-  target's root + `aim_height` projected through the player camera (PostUpdate after propagation); hidden unlocked, behind the
-  camera or off screen.
-- Left: strafe and back-walk clips in the graph (C1c-2b; UAL2 `Walk_Fwd/Bwd/L/R`); back-roll / backstep clip missing (back input
-  rolls away); target switching by stick flick (C4: `LockRequest::Next` already switches); the Classic profile hiding lock-on.
+**As built (C1c, 2026-10-27)**, four commits (a2e6d20, 3a54f4b, ddc252d, 2709b71), check CB-2: lock (`sf_combat::update_lock`,
+shell `SfLockOnPlugin`, `LockOwner`, `Lockable`), locked facing and strafe, locked 4-way rolls, the marker. Detail:
+[history](archive/combat-history.md) "C1c as built". Left: strafe clips (C1c-2b), back-roll / backstep clip, target switching
+(C4), the Classic profile hiding lock-on.
+
+### C4 soft aim (first-person melee)
+
+**As built (2026-11-10)**, check CB-5. Industry: Sekiro picks an attack target without a lock (nearest within ~3 m and +-30 deg
+of the stick, first ~1/6 s; R6 §5), God of War auto-orients attacks (R8 §1.3); first-person melee games soft-aim rather than
+hard-lock (R8 §2; KCD's hard lock was rejected by the owner, camera.md). Reuse: no crate; the pick sits beside `acquire`.
+- **Pick**: `sf_camera::lockon::soft_aim` (pure): the nearest candidate (horizontal distance) within `SoftAimParams { reach 3 m,
+  cone 30 deg, window 1/6 s }` with line of sight; ties to the smaller angle, then the smaller id.
+- **Tick**: `sf_combat::update_soft_aim` keeps the target on the swing (`SwingState::aim`): acquired while the attack's move time
+  is inside the window, then held for that swing (a chained light picks again); a lock wins. Axis `soft_aim_axis`: the view
+  yaw with `Command::face_view`, else the stick, else the facing (third person unlocked gets it too).
+- **Shell**: `sf_combat_bevy::lock` (same pass as the lock): candidates are the other `Lockable`s, line of sight cast only for
+  those in reach and only while acquiring; `sf_action_bevy::SoftAim` -> `Sense::soft_target`. `LockConfig::soft` tunes it.
+- **Steer**: `sf_action` Clip owner: `Turn` aims at the lock, else an Attack's soft target, else the stick; with
+  `Command::face_view` an Attack squares up to the view on its first tick and its free aim is the view. Rolls keep the stick.
+- **First person** = `Command::face_view` (the input shell sets it from the view choice; the game's `mw_player_bevy::combat`
+  `face_view` system): `update_lock` breaks a held lock (`BreakReason::View`) and ignores presses. The camera never turns.
+- **Dragging** (Chivalry, R8 §2): the body turns only in `Turn` windows (360 deg/s, attack start) and holds through `NoTurn`
+  (the hit), so mouse turns mid-swing never move the blade or the sweeps. Presentation, not built: per-attack first-person look
+  limits (`MoveRule.look`, camera.md) around the body yaw so the view can't leave the arms while committed (owner to feel first).
+- Tests: `sf_camera` pick (cone, reach, nearest, line of sight, ties, window); `sf_combat` tests `combat.rs` (square-up, turn in
+  the window only, late targets, chains, lock wins, third person, rolls) and `lock.rs` (no lock facing the view); `mw_player_bevy`
+  headless (dummy 20 deg off: turned onto it in light1's window, not after; lock breaks entering first person).
 
 ## Open questions
 

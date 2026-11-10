@@ -16,13 +16,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use glam::{Vec2, Vec3};
 use sf_action::{
     ActionClass, ActionEvent, ActionOutput, ActionState, BASE_RULES, CharacterId, CharacterParams, Command, EventKind, InputSampler, Origin,
-    RATE_ONE, Refused, RootPath, RuleKey, RuleSet, RuleSetBuilder, Sense, SlotInfo, SlotKey, SlotTable, StepCtx, TapHold, Tick,
+    RATE_ONE, Refused, RootPath, RuleKey, RuleSet, RuleSetBuilder, Sense, SlotInfo, SlotKey, SlotTable, StepCtx, TapHold, TargetId, Tick,
 };
 use sf_anim::{RootPose, SocketTrack, Trs};
+use sf_camera::{Candidate, SoftAimParams};
+use sf_coords::WorldPos;
 use sf_combat::{
     At, Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, CompiledSheet, Contact, Defense, FightState, Fighter, HitStop, HurtShape,
-    Movesets, Offense, Outcome, Pool, PoolDelta, RegenState, Side, SocketSource, SocketTracks, StandardRules, Swing, SwingPlan, Tier, Unit, Vitals, gate,
-    load,
+    Movesets, Offense, Outcome, Pool, PoolDelta, RegenState, Side, SocketSource, SocketTracks, SoftAimInput, StandardRules, Swing, SwingPlan, Tier, Unit, Vitals, gate,
+    load, soft_aim_axis, update_soft_aim,
 };
 
 const SHEET: &str = include_str!("data/test_sword.ron");
@@ -127,6 +129,8 @@ struct Actor {
     slots: SlotTable,
     /// Lock-on target (actor index): its position goes out as `Sense::lock_target`.
     lock: Option<usize>,
+    /// Picks its attacks' soft-aim target (`sf_combat::update_soft_aim`) among the other actors.
+    soft_aim: bool,
     /// (tick, event) of every action event.
     events: Vec<ActionEvent>,
 }
@@ -185,6 +189,7 @@ impl World {
             body: Body::at(pos, yaw),
             slots: slot_table(&self.sheet, true),
             lock: None,
+            soft_aim: false,
             events: Vec::new(),
         });
         i
@@ -218,11 +223,20 @@ impl World {
         self.tick = self.tick.next();
         let tick = self.tick;
         let locks: Vec<Option<Vec3>> = self.actors.iter().map(|a| a.lock.map(|j| self.actors[j].body.pos - a.body.pos)).collect();
+        let aims: Vec<(TargetId, Vec3)> = self.actors.iter().map(|a| (TargetId(a.fighter.id.0), a.body.pos)).collect();
+        let soft = SoftAimParams::default();
         for (i, a) in self.actors.iter_mut().enumerate() {
             let mut cmd = cmds.get(i).copied().unwrap_or_default();
             cmd.tick = tick;
             let refused = gate(&*self.combat, &a.fighter, &a.fight);
-            let sense = Sense { grounded: true, yaw: a.body.yaw, refused, lock_target: locks[i], ..Sense::default() };
+            let soft_target = a.soft_aim.then(|| {
+                let at = |p: Vec3| WorldPos::ORIGIN.offset(p + Vec3::Y * 1.3);
+                let candidates: Vec<_> = aims.iter().enumerate().filter(|&(j, _)| j != i).map(|(_, &(id, p))| Candidate { id, pos: at(p), los: true }).collect();
+                let input = SoftAimInput { origin: at(a.body.pos), axis_yaw: soft_aim_axis(&cmd, a.body.yaw, self.params.deadzone), candidates: &candidates, locked: locks[i].is_some() };
+                let target = update_soft_aim(&mut a.fight, &a.state, &input, &soft)?;
+                aims.iter().find(|t| t.0 == target).map(|t| t.1 - a.body.pos)
+            });
+            let sense = Sense { grounded: true, yaw: a.body.yaw, refused, lock_target: locks[i], soft_target: soft_target.flatten(), ..Sense::default() };
             let ctx = StepCtx { rules: &self.rules, slots: &a.slots, params: &self.params, source: a.fighter.id };
             sf_action::step(&ctx, &mut a.state, &cmd, &sense, &mut a.out);
             a.events.extend(a.out.events.iter().copied());
@@ -1038,4 +1052,152 @@ fn measure_hit_stop() {
         }
     }
     println!("light1 hit-stop: {slow} slow ticks, {:.3} s of clock lost", lost as f32 / (f32::from(RATE_ONE) * 60.0));
+}
+
+// ---------- Soft aim (combat.md "Lock-on and camera" C4, camera.md "First person") ----------
+
+/// `deg` degrees from +Z, `dist` m from the origin, on the floor.
+fn bearing_at(dist: f32, deg: f32) -> Vec3 {
+    let (s, c) = deg.to_radians().sin_cos();
+    Vec3::new(dist * s, 0.0, dist * c)
+}
+
+/// First person: the view (yaw 0) is the aim, the body starts turned `body_deg` away from it,
+/// and a dummy stands `dist` m off at `deg` degrees. Settled in Loco.
+fn first_person_duel(body_deg: f32, dist: f32, deg: f32) -> World {
+    let mut w = World::standard();
+    let a = w.spawn(Vec3::ZERO, body_deg.to_radians());
+    w.actors[a].soft_aim = true;
+    w.spawn(bearing_at(dist, deg), std::f32::consts::PI);
+    w.settle();
+    w
+}
+
+fn looking(view_deg: f32, pressed: Option<ActionClass>) -> Command {
+    let mut cmd = pressed.map_or_else(Command::default, press);
+    cmd.face_view = true;
+    cmd.view.yaw = view_deg.to_radians();
+    cmd
+}
+
+fn yaw_deg(w: &World) -> f32 {
+    w.actors[0].body.yaw.to_degrees()
+}
+
+fn elapsed(w: &World) -> f32 {
+    w.actors[0].state.clock.elapsed.secs()
+}
+
+/// An attack in first person squares up to the view on its first tick, then its `Turn` window
+/// (0-0.15 s, 360 deg/s) turns the body onto the soft-aim target 20 deg off the view, 6 deg a
+/// tick; after the window the body holds its line whatever the view or the target do (no
+/// dragging: R8 §2), and the camera was never asked to turn.
+#[test]
+fn first_person_attack_squares_to_the_view_then_turns_onto_the_soft_target_in_its_turn_window() {
+    let mut w = first_person_duel(-50.0, 2.5, 20.0);
+    let dummy = TargetId(w.actors[1].fighter.id.0);
+    w.run(&[looking(0.0, Some(ActionClass::Light))]);
+    assert!(w.started(0, w.key("light1")));
+    assert!(yaw_deg(&w).abs() < 1e-3, "squared up to the view: {}", yaw_deg(&w));
+    let mut last = yaw_deg(&w);
+    while elapsed(&w) < 0.15 {
+        w.run(&[looking(0.0, None)]);
+        let y = yaw_deg(&w);
+        assert!(y - last >= -1e-3 && y - last <= 6.0 + 1e-3, "turns toward the target at the window's rate: {last} -> {y}");
+        last = y;
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().and_then(|s| s.aim), Some(dummy));
+    assert!((last - 20.0).abs() < 1e-2, "on the target by the window's end: {last}");
+    // After the window: the view swings 60 deg and the dummy steps to 40 deg; the body holds.
+    w.actors[1].body.pos = bearing_at(2.5, 40.0);
+    while w.actors[0].state.mov == w.key("light1") {
+        w.run(&[looking(60.0, None)]);
+        assert!((yaw_deg(&w) - last).abs() < 1e-3, "no turn after the window at {:.3} s: {}", elapsed(&w), yaw_deg(&w));
+    }
+}
+
+/// A target that only enters the cone after the first 1/6 s isn't picked: the attack keeps the
+/// view's line. One already out of reach or cone at the start is never picked either.
+#[test]
+fn soft_aim_acquires_only_in_the_attacks_first_sixth_of_a_second() {
+    let mut w = first_person_duel(0.0, 2.5, 60.0);
+    w.run(&[looking(0.0, Some(ActionClass::Light))]);
+    while elapsed(&w) <= 1.0 / 6.0 {
+        w.run(&[looking(0.0, None)]);
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().map(|s| s.aim), Some(None), "60 deg is outside the cone");
+    w.actors[1].body.pos = bearing_at(2.5, 20.0);
+    for _ in 0..5 {
+        w.run(&[looking(0.0, None)]);
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().map(|s| s.aim), Some(None), "entered the cone too late");
+    assert!(yaw_deg(&w).abs() < 1e-3, "{}", yaw_deg(&w));
+    // Out of reach (3.5 m at 10 deg): none.
+    let mut w = first_person_duel(0.0, 3.5, 10.0);
+    w.run(&[looking(0.0, Some(ActionClass::Light))]);
+    for _ in 0..8 {
+        w.run(&[looking(0.0, None)]);
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().map(|s| s.aim), Some(None));
+    assert!(yaw_deg(&w).abs() < 1e-3);
+}
+
+/// A chained light starts its own swing and picks again; the lock, when there is one, wins.
+#[test]
+fn each_swing_picks_its_own_soft_target_and_a_lock_wins() {
+    let mut w = first_person_duel(0.0, 2.0, 20.0);
+    let dummy = TargetId(w.actors[1].fighter.id.0);
+    w.run(&[looking(0.0, Some(ActionClass::Light))]);
+    for _ in 0..12 {
+        w.run(&[looking(0.0, None)]);
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().and_then(|s| s.aim), Some(dummy));
+    w.run(&[looking(0.0, Some(ActionClass::Light))]);
+    let light2 = w.key("light2");
+    for _ in 0..40 {
+        if w.started(0, light2) {
+            break;
+        }
+        w.run(&[looking(0.0, None)]);
+    }
+    assert_eq!(w.actors[0].state.mov, light2, "chained");
+    assert_eq!(w.actors[0].fight.swing.as_ref().map(|s| (s.mov, s.aim)), Some((light2, None)), "a new swing starts empty");
+    w.run(&[looking(0.0, None)]);
+    assert_eq!(w.actors[0].fight.swing.as_ref().and_then(|s| s.aim), Some(dummy), "and picks again");
+    // Third person, locked: the lock aims the turn, the soft aim stays off.
+    let mut w = World::duel(2.0);
+    w.actors[0].soft_aim = true;
+    w.actors[0].lock = Some(1);
+    w.press(ActionClass::Light);
+    for _ in 0..5 {
+        w.idle();
+    }
+    assert_eq!(w.actors[0].fight.swing.as_ref().map(|s| s.aim), Some(None));
+}
+
+/// Third person without a lock falls out of the same rule (Sekiro): the cone's axis is the stick,
+/// else the facing, and the `Turn` window steers onto the target instead of the stick.
+#[test]
+fn third_person_unlocked_attacks_soft_aim_around_the_facing() {
+    let mut w = World::standard();
+    let a = w.spawn(Vec3::ZERO, 0.0);
+    w.actors[a].soft_aim = true;
+    w.spawn(bearing_at(2.0, -25.0), 0.0);
+    w.settle();
+    w.press(ActionClass::Light);
+    for _ in 0..9 {
+        w.idle();
+    }
+    assert!((yaw_deg(&w) + 25.0).abs() < 1e-2, "turned onto the target: {}", yaw_deg(&w));
+}
+
+/// Facing the view changes attacks only: a roll still squares up to the stick.
+#[test]
+fn facing_the_view_leaves_rolls_squared_to_the_stick() {
+    let mut w = first_person_duel(0.0, 10.0, 0.0);
+    let mut cmd = looking(0.0, Some(ActionClass::Dodge));
+    cmd.stick = Vec2::X;
+    w.run(&[cmd]);
+    assert!(w.started(0, w.key("roll")));
+    assert!((yaw_deg(&w) - 90.0).abs() < 1e-3, "{}", yaw_deg(&w));
 }

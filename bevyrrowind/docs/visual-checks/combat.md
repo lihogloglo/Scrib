@@ -58,3 +58,13 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
   press, not after the clip); LMB during the draw does nothing, LMB after it swings; F again: hand goes back, sword
   vanishes mid-clip, LMB refused from the press. Log line: `combat: draw .. s (attach at ..)`. No sheath model (original).
 - Status: confirmed 2026-11-05 (owner: "the sheathe thing works well"). Follow-up: the sword attack clips (Quaternius UAL Sword_Light_*) are poor; generate new ones (3.8 clip factory).
+
+### CB-5: First-person melee with soft aim (C4 soft-aim part, 2026-11-10)
+- `cargo dev scene level-arena`, F11 player, Tab to first person, F to draw. The dummy stands 3 m ahead (just at the soft-aim reach:
+  step ~0.5 m closer). Keys as CB-1; Q (lock) does nothing in first person.
+- Feel for: LMB swings where you look; with the dummy up to ~30 deg off the crosshair and within ~3 m the swing bends onto it in its
+  first ~0.1 s (the view never turns for you); turning the mouse mid-swing doesn't drag the blade (it lands on its line, the view
+  leaves the arms); locked in third person then Tab: the lock (dot) goes. Third person unlocked: swings bend onto a near dummy too.
+- Tune: `LockConfig::soft` (reach, cone, window; `sf_combat_bevy`), the sheet's `Turn`/`NoTurn` windows (`sword_1h.ron`).
+- Known gaps: no first-person look limits during a swing (the view can leave the arms; next slice), the body faces the stick, not
+  the view, while walking (an attack snaps it to the view); no view-model arms (FP-2). Status: awaiting owner.

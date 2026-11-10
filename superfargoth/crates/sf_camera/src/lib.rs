@@ -10,7 +10,8 @@
 //!   once, ease out slower, never inside geometry, near-character fade 0..1.
 //! - [`lockon`]: acquisition scoring, target switching, break hysteresis, line-of-sight
 //!   timeout and re-acquire after traversal as pure functions over candidate lists (the
-//!   target itself lives in `sf_action`), plus the locked framing.
+//!   target itself lives in `sf_action`), plus the locked framing and the soft-aim pick
+//!   ([`soft_aim`]: an attack's target without a lock).
 //! - [`first_person`]: per-move look limits around the entry yaw, eased in and out, and
 //!   `ignore_look`.
 //! - [`comfort`]: the settings list and a rotation-only trauma shake.
@@ -35,7 +36,7 @@ pub use sf_controller::wrap_angle;
 pub use collision::{ArmCollision, ArmResult, CollisionParams};
 pub use comfort::{ComfortSettings, ShakeParams, TraumaShake, ViewChoice};
 pub use first_person::{FirstPersonLook, LookLimits};
-pub use lockon::{BreakReason, Candidate, LockParams, LockTimers, acquire, locked_look, switch_target};
+pub use lockon::{BreakReason, Candidate, LockParams, LockTimers, SoftAimParams, acquire, locked_look, soft_aim, switch_target};
 pub use orbit::{ModeDistances, OrbitParams, OrbitPose, OrbitRig, RecentreParams, RigMode, Shoulder, recentre_behind};
 
 /// A look direction in radians, same convention as `sf_action::ViewDir`: yaw about +Y (0 faces

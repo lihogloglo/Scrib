@@ -1731,3 +1731,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (first person FP-1): hybrid first person on one skeleton (world body, head off the main view; arms
   and held items redrawn by a view model in FP-2), roles by `RenderLayers` since Bevy 0.20 has no shadow-only flag;
   outfits split by role only for roots with `RoleLayers` (the player), NPCs keep one mesh per material (first-person.md).
+- 2026-11-10 (combat C4 soft aim): the view choice reaches gameplay only as the input bit `Command::face_view` (first person:
+  attacks square up to the view, `Turn` steers onto the soft-aim target, no hard lock, a held lock breaks); the soft target
+  lives on the swing (`SwingState::aim`), not in the saved `ActionState` (combat.md "C4 soft aim").

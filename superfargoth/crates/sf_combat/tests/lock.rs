@@ -17,7 +17,7 @@ fn at(id: TargetId, x: f32, z: f32) -> Candidate<TargetId> {
 
 /// The view looks down +Z (yaw 0), grounded, no traversal.
 fn input(request: LockRequest, candidates: &[Candidate<TargetId>]) -> LockInput<'_> {
-    LockInput { request, origin: WorldPos::ORIGIN, view_yaw: 0.0, candidates, traversing: false, grounded: true }
+    LockInput { request, origin: WorldPos::ORIGIN, view_yaw: 0.0, candidates, traversing: false, grounded: true, face_view: false }
 }
 
 struct Locker {
@@ -149,4 +149,26 @@ fn next_switches_to_the_side() {
     assert_eq!(l.lock, Some(DUMMY));
     assert_eq!(l.tick(&input(LockRequest::Next(LockSide::Left), &c)), LockEvent::Kept, "nothing on the left");
     assert_eq!(l.tick(&input(LockRequest::Next(LockSide::Right), &c)), LockEvent::Switched(right));
+}
+
+/// No hard lock in first person (camera.md "First person"): facing the view, a press locks
+/// nothing (and doesn't recentre), a held lock breaks, and a traversal's re-offer is dropped.
+#[test]
+fn facing_the_view_never_locks_and_breaks_a_held_lock() {
+    let c = [at(DUMMY, 0.0, 5.0)];
+    let fp = |request| LockInput { face_view: true, ..input(request, &c) };
+    let mut l = Locker::new();
+    assert_eq!(l.tick(&fp(LockRequest::Toggle)), LockEvent::Kept);
+    assert_eq!(l.lock, None);
+    l.press(&c);
+    assert_eq!(l.lock, Some(DUMMY));
+    assert_eq!(l.tick(&fp(LockRequest::None)), LockEvent::Broke(BreakReason::View));
+    assert_eq!(l.lock, None);
+    assert_eq!(l.tick(&fp(LockRequest::Next(LockSide::Right))), LockEvent::Kept);
+    // A re-offer pending from a traversal is dropped too: back in third person, nothing returns.
+    l.press(&c);
+    l.tick(&LockInput { traversing: true, grounded: false, ..input(LockRequest::None, &c) });
+    assert_eq!(l.tick(&fp(LockRequest::None)), LockEvent::Kept);
+    assert_eq!(l.tick(&input(LockRequest::None, &c)), LockEvent::Kept);
+    assert_eq!(l.lock, None);
 }

@@ -56,6 +56,9 @@ pub struct Sense {
     pub refused: ClassSet,
     /// The lock-on target's position relative to the feet (world axes): Clip `Turn` windows aim at it.
     pub lock_target: Option<Vec3>,
+    /// The attack's soft-aim target relative to the feet (world axes; combat.md "Lock-on and
+    /// camera", C4): with no lock, an Attack's `Turn` windows aim at it.
+    pub soft_target: Option<Vec3>,
 }
 
 /// An obstacle ahead, classified by the shell's context probe. Positions are relative to the
@@ -484,20 +487,25 @@ fn steers(r: &CompiledRule) -> bool {
     r.rule.steer && matches!(r.rule.owner, Owner::Sim)
 }
 
-/// Clip owner: yaw (square-up on the first tick, then `Turn` toward the lock target or the stick
-/// unless `NoTurn` is open, plus the clip's own root yaw) and the planar root delta over the
-/// tick's clock interval x `root_scale`.
+/// Clip owner: yaw (square-up on the first tick, then `Turn` toward the lock target, else an
+/// attack's soft-aim target, else the stick, unless `NoTurn` is open, plus the clip's own root
+/// yaw) and the planar root delta over the tick's clock interval x `root_scale`. With
+/// [`Command::face_view`] (first person) an attack squares up to the view and its free aim is
+/// the view, not the stick: the body swings where the player looks.
 fn write_clip(ctx: &StepCtx<'_>, cur: Option<usize>, cmd: &Command, sense: &Sense, fresh: bool, out: &mut ActionOutput) {
     let Some(r) = cur.map(|i| ctx.rules.at(i)) else { return };
     let Owner::Clip { root_scale, square_up, rate } = r.rule.owner else { return };
     let (t0, t1) = out.clock;
+    let attack = r.rule.category == Category::Attack;
+    let view = (cmd.face_view && attack).then(|| Vec2::new(cmd.view.yaw.sin(), cmd.view.yaw.cos()));
     let stick = (cmd.stick.length() > ctx.params.deadzone).then_some(cmd.stick);
+    let free = view.or(stick);
     let mut yaw = sense.yaw;
     if fresh {
         let lock = (square_up == SquareUp::Lock).then(|| lock_dir(sense)).flatten();
         let to = match square_up {
-            SquareUp::Keep => None,
-            SquareUp::Stick | SquareUp::Lock => lock.or(stick),
+            SquareUp::Keep => view,
+            SquareUp::Stick | SquareUp::Lock => lock.or(free),
         };
         if let Some(d) = to {
             yaw = d.x.atan2(d.y);
@@ -511,7 +519,8 @@ fn write_clip(ctx: &StepCtx<'_>, cur: Option<usize>, cmd: &Command, sense: &Sens
             _ => {}
         }
     }
-    let aim = lock_dir(sense).or(stick);
+    let soft = sense.soft_target.filter(|_| attack).map(|v| Vec2::new(v.x, v.z)).filter(|v| v.length_squared() > 1e-6);
+    let aim = lock_dir(sense).or(soft).or(free);
     if let (Some(rate), Some(aim), false) = (turn, aim, no_turn) {
         #[allow(clippy::cast_precision_loss)]
         let max = f32::from(rate).to_radians() * (t1.0 - t0.0) as f32 / (1000.0 * TICK_HZ as f32);

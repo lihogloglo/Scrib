@@ -14,6 +14,7 @@
 // Geometry reads best with its textbook names (a, b, p, q, s, t).
 #![allow(clippy::many_single_char_names)]
 
+mod aim;
 mod fighter;
 mod hitstop;
 mod lock;
@@ -23,6 +24,7 @@ mod shape;
 mod sheet;
 mod step;
 
+pub use aim::{SoftAimInput, soft_aim_axis, soft_aim_wanted, update_soft_aim};
 pub use fighter::{Defense, FightState, Fighter, Offense, Pool, SwingState, Vitals};
 pub use hitstop::{HitStop, ticks};
 pub use lock::{LockEvent, LockInput, lock_key, update_lock};

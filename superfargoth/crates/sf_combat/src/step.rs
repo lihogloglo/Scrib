@@ -209,7 +209,7 @@ fn vitals<R: CombatRules + ?Sized>(ctx: &CombatCtx<'_>, u: &mut Unit<'_>, rules:
                 u.fighter.vitals.apply(d);
             }
             if !spec.hits.is_empty() {
-                u.fight.swing = Some(SwingState { mov: u.action.mov, start: ctx.tick, plan, landed: SmallVec::default(), charged: 0 });
+                u.fight.swing = Some(SwingState { mov: u.action.mov, start: ctx.tick, plan, landed: SmallVec::default(), charged: 0, aim: None });
             }
         }
     }

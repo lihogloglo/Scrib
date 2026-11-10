@@ -79,3 +79,43 @@ and large reactions share one clip at full travel. Check CB-1 (`visual-checks/co
 `sf_combat_bevy::lock` (candidates, `acquire`, `LockTimers`, `LockOn` mirror), `Sense::lock_target`, locked
 `desired_facing`, `locked` roll moves. Test: acquire within 15 m and the cone, break past 20 m and on a mantle, re-offer on
 touchdown.
+
+### C1c as built (moved from combat.md 2026-11-10)
+
+Four commits (a2e6d20, 3a54f4b, ddc252d, 2709b71); check CB-2.
+- **Part 1, lock** (`sf_combat::update_lock` over `sf_camera::lockon`; shell `sf_combat_bevy::SfLockOnPlugin`, `LockOwner`,
+  `Lockable { aim_height: 1.3 }`): a press acquires within 15 m and a 35 deg cone around the view yaw with line of sight (thin
+  sphere cast through the ground probe: statics and terrain), else recentres the camera (`PlayerCamera::recentre`); a press
+  while locked releases. Holds to 20 m; breaks on 1.5 s without line of sight, death or any traversal, re-offered for 1 s after
+  touchdown (a jump is not a traversal). `ActionState::lock` is the truth; `LockAim` -> `Sense::lock_target`; the existing
+  `sf_camera_bevy::LockOn` frames it (third person). Bound to Q / middle mouse / pad R3 (`Control::LockOn`).
+- **Part 2a, facing and strafe** (`sf_action` step): locked and not sprinting, desired facing = the target's yaw through the
+  mover's own turn caps; gait speed is taken against that facing (side/back speeds), so sideways circles the target and back
+  backs away facing it; standing still turns to it; sprint faces its run. Locomotion still plays the forward cycles.
+- **Part 3, locked rolls**: `Entry::lock` (`StickSide`, front/back +-45 deg), `Refused::Lock`, `SquareUp::Lock` (faces the
+  target on the first tick); the sheet compiles a move's `locked` map into ranked variants (load errors for unknown targets).
+  Left/right pick `roll_left`/`roll_right`; front/back keep the forward roll squared to the stick.
+- **Part 4, marker** (`sf_combat_bevy::LockMarkerPlugin`, owner request): one UI node (8 px white dot, 1 px dark rim) at the
+  target's root + `aim_height` projected through the player camera (PostUpdate after propagation); hidden unlocked, behind the
+  camera or off screen.
+- Left: strafe and back-walk clips in the graph (C1c-2b; UAL2 `Walk_Fwd/Bwd/L/R`); back-roll / backstep clip missing (back input
+  rolls away); target switching by stick flick (C4: `LockRequest::Next` already switches); the Classic profile hiding lock-on.
+
+### C1b sheet (moved from combat.md 2026-11-10)
+
+Briefs and as-built notes for C1a and C1b (first sheet values on the UAL2 `Sword_Regular_*` 3-hit chain):
+[history](archive/combat-history.md). The sheet as it stands:
+
+| Move | Slots (first candidate) | rate / root_scale | Hits (window, mv, stamina, tier, stop) | Cancels Dodge / Light / Move |
+|---|---|---|---|---|
+| `light1` | UAL2 `Sword_Light_A` + `_A_Rec` | 1 / 1.0 | 0.14-0.28, 1.0, 12, Small, 0.05 | 0.31 / 0.37 / 0.57 |
+| `light2` | UAL2 `Sword_Light_B` + `_B_Rec` | 1 / 1.0 | 0.18-0.32, 1.0, 12, Small, 0.05 | 0.36 / 0.43 / 0.66 |
+| `light3` | UAL2 `Sword_Light_C` + `SwordLight_C_Rec` | 1 / 0.25 | 0.38-0.52, 1.0, 12, Small, 0.05 | 0.56 / 0.70 / 1.15 |
+| `light4` | UAL2 `Sword_Light_D` (finisher; `next` wraps to `light1`) | 1 / 0.22 | 0.23-0.37, 1.2, 14, Medium, 0.07 | 0.50 / 1.05 / 1.25 |
+| `roll` | UAL1 `Roll` (`_RM` pack) | 1.25 / 0.75 | i-frames 0.02-0.40; cost 12 | 0.72 / 0.70 / 0.74 |
+| `roll_left`/`_right` | UAL1 `Dodge_Left`/`_Right`, only through `locked`, `square_up: Lock` | 1.4 / 1.0 | i-frames 0.02-0.30; cost 12 | 0.34 / 0.36 / 0.38 |
+
+Light hit windows sit on the right hand's speed peak +-0.07 s; light1/light2 `Cancel(Light)` at the strike clip's end (its pose
+is the next strike's first frame). `root_scale` gives ~0.4 m per swing (baked travel A 0.37, B 0.43, C 1.69, D 2.03 m). The
+roll cancels open where its travel ends (no settle tail, owner). Fallbacks: `light*` -> UAL1 `Sword_Attack` -> content slash;
+`_rec` and rolls -> `Drop`. Watch: light3 end -> `C_Rec` pose jump (hips +0.25 m); light3 -> light4 pose mismatch.

@@ -300,6 +300,61 @@ fn acquire_scores_cone_range_and_line_of_sight() {
     assert_eq!(switch_target(o, 1, &wide, false, &p), None);
 }
 
+/// A candidate at `dist` m and `deg` degrees from +Z (yaw 0), at the aim point's height.
+fn polar(id: u32, dist: f32, deg: f32, los: bool) -> Candidate<u32> {
+    let a = deg.to_radians();
+    cand(id, dist * a.sin(), dist * a.cos(), los)
+}
+
+#[test]
+fn soft_aim_takes_the_nearest_inside_the_cone_and_reach() {
+    let p = SoftAimParams::default();
+    let o = WorldPos::ORIGIN.offset(Vec3::Y);
+    assert!((p.reach - 3.0).abs() < 1e-6 && (p.cone - 30f32.to_radians()).abs() < 1e-6);
+    // Cone edge: 29.9 deg in, 30.1 deg out (either side).
+    assert_eq!(soft_aim(o, 0.0, &[polar(1, 2.0, 29.9, true)], &p), Some(1));
+    assert_eq!(soft_aim(o, 0.0, &[polar(1, 2.0, -29.9, true)], &p), Some(1));
+    assert_eq!(soft_aim(o, 0.0, &[polar(1, 2.0, 30.1, true)], &p), None);
+    assert_eq!(soft_aim(o, 0.0, &[polar(1, 2.0, -30.1, true)], &p), None);
+    // Reach edge, horizontal (the height gap doesn't count).
+    assert_eq!(soft_aim(o, 0.0, &[polar(1, 2.99, 0.0, true)], &p), Some(1));
+    assert_eq!(soft_aim(o, 0.0, &[polar(1, 3.01, 0.0, true)], &p), None);
+    let high = Candidate { id: 1, pos: WorldPos::ORIGIN.offset(Vec3::new(0.0, 4.0, 2.9)), los: true };
+    assert_eq!(soft_aim(o, 0.0, &[high], &p), Some(1));
+    // Nearest wins over most centred; hidden candidates never count, however near.
+    let list = [polar(1, 2.5, 0.0, true), polar(2, 1.5, 25.0, true), polar(3, 0.8, 5.0, false)];
+    assert_eq!(soft_aim(o, 0.0, &list, &p), Some(2));
+    // The axis turns the cone: around yaw 90 deg only the one at 80 deg is inside.
+    let side = [polar(1, 2.0, 0.0, true), polar(2, 2.5, 80.0, true)];
+    assert_eq!(soft_aim(o, 90f32.to_radians(), &side, &p), Some(2));
+    // Across the +-180 seam.
+    assert_eq!(soft_aim(o, PI, &[polar(4, 2.0, -170.0, true)], &p), Some(4));
+}
+
+#[test]
+fn soft_aim_ties_are_deterministic_whatever_the_order() {
+    let p = SoftAimParams::default();
+    let o = WorldPos::ORIGIN.offset(Vec3::Y);
+    // Same distance: the smaller angle wins; same distance and angle (mirrored): the smaller id.
+    let by_angle = [polar(7, 2.0, 20.0, true), polar(9, 2.0, 10.0, true)];
+    let mirrored = [polar(7, 2.0, 15.0, true), polar(3, 2.0, -15.0, true)];
+    for list in [by_angle, mirrored] {
+        let mut rev = list;
+        rev.reverse();
+        assert_eq!(soft_aim(o, 0.0, &list, &p), soft_aim(o, 0.0, &rev, &p));
+    }
+    assert_eq!(soft_aim(o, 0.0, &by_angle, &p), Some(9));
+    assert_eq!(soft_aim(o, 0.0, &mirrored, &p), Some(3));
+    assert_eq!(soft_aim::<u32>(o, 0.0, &[], &p), None);
+}
+
+#[test]
+fn soft_aim_window_is_the_first_sixth_of_a_second() {
+    let p = SoftAimParams::default();
+    assert!(p.open(0.0) && p.open(10.0 / 60.0));
+    assert!(!p.open(11.0 / 60.0));
+}
+
 #[test]
 fn lock_breaks_with_range_hysteresis_and_los_timeout() {
     let p = LockParams::default();
