@@ -6,9 +6,10 @@
 //! else (textures, tint, roughness, alpha cutoff, UV transform) is per-instance data in the bindless material
 //! table. Blended and additive materials are never scene materials (§1): they stay entities, sorted.
 //!
-//! The class is a pure function of the material, so format v2 stores it once per **chain**, as a `u16`
-//! ([`crate::LodChain::material_class`]), not per instance (v1 did). Values are stable across versions: a new
-//! class takes a new value, an old value never changes meaning.
+//! The class is a pure function of the material, so it lives once per **chain**, not per instance: format v2 moved it
+//! off the instance record and v3 kept it there, as a `u16` at chain-record offset 8
+//! ([`crate::LodChain::material_class`], [`crate::table`]). Values are stable across versions: a new class takes a
+//! new value, an old value never changes meaning.
 
 /// One of the scene's material classes. `repr(u16)` values are the on-disk and GPU encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
