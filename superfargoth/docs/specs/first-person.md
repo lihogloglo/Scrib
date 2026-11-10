@@ -1,8 +1,10 @@
 # First person: body, arms, held items, view model
 
-Status: **FP-1 built (2026-11-10), FP-1b..FP-6 planned.** Crates: `sf_character` (`ViewRole`, merge
-groups), `sf_character_bevy` (`RoleLayers`, `PartRole`, module `roles`), `sf_camera(_bevy)` (view
-choice, eye); game: `mw_actors` (`slots::view_role`), `mw_actors_bevy`, `mw_player_bevy` (avatar).
+Status: **FP-1 and FP-1b built (2026-11-10), FP-2..FP-6 planned.** Crates: `sf_character` (`ViewRole`,
+merge groups), `sf_character_bevy` (`RoleLayers`, `ShadowLayers`, `PartRole`, module `roles`),
+`sf_world_bevy` (`WorldspaceLayers`), `sf_sky_bevy` (traced scene), `sf_camera(_bevy)` (view choice,
+eye); game: `mw_actors` (`slots::view_role`), `mw_actors_bevy`, `mw_exterior_bevy` (sky lights,
+lamps), `mw_player_bevy` (avatar).
 Design source: [camera.md](camera.md) "First person" (render bodies, look limits, soft aim); research:
 `../research/first-person-arms-2026-11-05.md` (techniques, OpenMW, Bevy) and
 `../research/animation/08-industry-combat-responsiveness.md` §2. ROADMAP 3.4b; visual checks FP-.
@@ -66,34 +68,59 @@ intersection, `lib.rs` ~l.437/611/703; a `Visibility::Hidden` entity casts nothi
 moved between layers. `W` = the root's own layers (its worldspace's, `world::follow_worldspace_layers`),
 `S` = a worldspace shadow-only layer (FP-1b), `V` = the viewmodel camera's layer (FP-2).
 
-| Role | Third person | FP-1 (built) | FP-1b + FP-2 (target) |
+| Role | Third person | FP-1b (built) | + FP-2 (target) |
 |---|---|---|---|
 | Body | W | W | W |
-| Head | W | none (no view, no shadow) | S |
+| Head | W | S (`RoleLayer::SHADOW`) | S |
 | Arms | W | W | S + V |
 | Held | W | W | S + V |
-| Held lights | W | W | W (never role-layered) |
+| Held lights | W + S | W + S | W + S (never role-layered) |
 
-`RoleLayers { roles: [RoleLayer { world, extra }; 4] }`: part layers = `W ∪ extra` when `world`,
-else `extra`. `RoleLayers::world()` is third person, `RoleLayers::first_person()` the current
-first-person column. `roles::sync_role_layers` (`PostUpdate`, set `CharacterLayerSystems`, after
+`RoleLayers { roles: [RoleLayer { world, shadow, extra }; 4] }`: part layers = `extra`, plus `W`
+when `world`, plus `S` (the root's `ShadowLayers`) when `shadow`. `RoleLayers::world()` is third
+person, `RoleLayers::first_person()` the current first-person column. `roles::sync_role_layers` (`PostUpdate`, set `CharacterLayerSystems`, after
 the worldspace push, before `CheckVisibility`) re-layers a root's `PartRole` descendants when its
 rule, layers, outfit or held props change. Third person still hides the whole avatar while the
 camera's collision fade is past 0.5 (eye inside the body), as before.
 
-**FP-1b, the shadow layer** (not built): every worldspace entry gets a shadow-only layer `S` that
-its lights carry (sky lights in `mw_exterior_bevy::light_layers`, placement lamps through
-`SpawnCx::layers`, held lights) and no camera does; anchored sun views
-(`sf_sky_bevy::sun_view::view_layers` takes the camera's layers) and the RT scene
-(`path::traced_by` takes the camera's) must add `S` too. Until then the head (FP-1) and later the
-arms cast no shadow in first person: a headless player shadow is a known FP-1 artefact.
+**FP-1b, the shadow layer** (built 2026-11-10). One framework allocation: `WorldspaceRegistry`
+hands out layer pairs, `WorldspaceLayers { world, shadow: world + 1 }` (1/2, 3/4, …; layer 0 stays
+shared), with the sets per kind: `content()` `[W]`, `camera()` `[0, W]`, `light()` `[W, S]`,
+`sky_light()` `[0, W, S]`, `shadow_only()` `[S]`. Writers: cameras at spawn and on travel
+(`fade.rs` `Cut::travel`, `camera()`, never `S`); sky lights (`mw_exterior_bevy::light_layers`,
+`sky_light()` of the active worldspace, none without sky); placement and script lamps
+(`NifSpawner::spawn_light`, `light()`), the lab rig; character lights:
+`world::follow_worldspace_layers` writes the root's `RenderLayers` `[W]` and `ShadowLayers([S])`,
+pushes `[W]` to parts and `light()` to `HeldLightSlot`s and everything under them, and new slots
+take `ShadowLayers::light` (`held.rs`), which `mw_actors_bevy` copies onto the torch.
+`sync_role_layers` re-layers on a `ShadowLayers` change, so `S` follows travel.
+Bevy side, unchanged and public: `check_dir_light_mesh_visibility` / point / spot checks pair
+casters with a light's layers and mark them `ViewVisibility` (so an `S`-only mesh is extracted and
+skinned), and the shadow views carry the light's layers (`queue_shadows` `matches_layers`); cameras
+never list it. Checked consumers:
+- **Ray traced scene and DDGI**: `sf_sky_bevy::path::scene_layers` traces the cameras' layers plus
+  the layers of every light they see, the raster rule's union, so `S` is in the BLAS/TLAS (Solari
+  shadows, GI, reflections) and `sf_gi_bevy` probes trace it, as the third-person body is (Solari
+  0.20 traces static BLASes only, rendering.md DL-3: a known gap, not FP's); GI's
+  light list already intersects lights with the cameras' layers (`[W, S]` still meets `[0, W]`).
+- **Sun cascades, point/spot cubes, shadow cache**: Bevy's own views use the light's layers; the
+  cache treats skinned meshes as movers, drawn by Bevy's face views each frame.
+- **Sun views**: a light's view (`sf_precip_bevy` rain occlusion) takes the light's layers, so `S`
+  occludes rain as in third person; an anchor's view (`sf_surface_bevy` shelter, canopy) keeps the
+  camera's layers, and its hosts skip skinned meshes, so `S` (character parts only) changes nothing
+  there. The far shadow map is terrain heights: no meshes.
+- Not covered: a light a host hangs on a character outside a `HeldLightSlot` gets `[W]` only
+  (`sf_character_bevy` cannot tell lights from meshes without `bevy_light`); viewers and examples
+  without worldspaces have no `S` (a shadow-only role there casts nothing).
 
 ## Build plan
 
 1. **FP-1 layer split** (built): roles, merge groups, `RoleLayers`, the avatar's first person shows
    body, arms and held items with the head off. Tests: roles per slot (framework and Morrowind),
    merge groups, the layer rule per role, a headless view switch through the real systems.
-2. **FP-1b shadow layer**: as above; log-line check that the player casts in first person.
+2. **FP-1b shadow layer** (built): as above; tests: layer pairs and travel (`sf_world_bevy`), the
+   head on `S` alone through the real systems and on travel (`sf_character_bevy`, avatar test),
+   sky lights per worldspace (`mw_exterior_bevy`), the traced scene (`sf_sky_bevy`).
 3. **FP-2 viewmodel camera**: a second `Camera3d` (higher `order`, `RenderLayers` `V`, own FOV
    from the comfort setting, own depth) or a pass into the main targets; arms/held to `S + V`.
 4. **FP-3 held items**: `held.rs` props in the viewmodel, torch light kept on the world body,
@@ -110,7 +137,7 @@ model) rides on FP-2.
 
 | Technique | Shipped practice | Us | Verdict |
 |---|---|---|---|
-| Hide own head, keep its shadow | UE `bOwnerNoSee` + `bCastHiddenShadow`; Unity `ShadowCastingMode.ShadowsOnly` | head to a layer only lights see | **match** once FP-1b lands; FP-1 drops the head shadow |
+| Hide own head, keep its shadow | UE `bOwnerNoSee` + `bCastHiddenShadow`; Unity `ShadowCastingMode.ShadowsOnly` | head to a per-worldspace layer only lights (and the traced scene) see | **match** (FP-1b) |
 | First-person arms | separate viewmodel rig (Skyrim, OpenMW `xbase_anim.1st`, shooters) or the world body's arms (Mirror's Edge) | world body's arms (FP-1), redrawn in a viewmodel (FP-2) | **match** (hybrid C) |
 | Viewmodel FOV and clipping | OpenMW: per-subgraph projection swap (`OverrideFieldOfViewCallback`) + depth clear bin (`DepthClearCallback`, then a depth-only pass into the opaque depth for post); Bevy example: second camera on its own layer; UE 5.5: per-primitive FOV in the vertex stage | second camera or main-target pass (FP-2) | **planned** |
 | Split meshes only where needed | UE merges skeletal meshes per material for crowds, keeps the player modular | split by role only for roots with `RoleLayers` | **match** |
@@ -130,4 +157,7 @@ model) rides on FP-2.
 
 1. The neck is `Head` (hidden): looking down shows the collar line. Torso and legs stay; is the
    look-down view right, or should the upper torso hide too (most full-body-awareness games keep it)?
-2. FP-1b touches four crates' light layers: own slice before or with FP-2?
+2. ~~FP-1b own slice?~~ Done as its own slice (2026-11-10).
+3. On the ray-traced path the head is in the traced scene, so it can show in reflections (a
+   mirror shows your face). Keep, or mask `S` out of reflection rays if Solari ever offers per-ray
+   masks?

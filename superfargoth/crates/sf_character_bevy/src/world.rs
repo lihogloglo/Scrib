@@ -1,5 +1,5 @@
 //! Actor placements of `sf_world_bevy` streaming as characters, and the
-//! worldspace render layer of every character ([`follow_worldspace_layers`]).
+//! worldspace render layers of every character ([`follow_worldspace_layers`]).
 
 use bevy_camera::visibility::{RenderLayers, Visibility, VisibilityClass};
 use bevy_ecs::prelude::*;
@@ -8,7 +8,7 @@ use sf_character::CharacterState;
 use sf_world::{IndexedPlacement, Level, PlacementFlags, PlacementId};
 use sf_world_bevy::{PlacementSpawner, SpawnCx, WorldspaceRoot};
 
-use crate::{Character, Characters, HeldLightSlot};
+use crate::{Character, Characters, HeldLightSlot, ShadowLayers};
 
 /// On a character spawned from a placement: the placement it stands for, the stable id that
 /// activation, scripts and saves address it by (the entity is per session).
@@ -59,15 +59,20 @@ impl PlacementSpawner for CharacterSpawner {
 /// already carries layers.
 type Layered = Or<(With<Mesh3d>, With<VisibilityClass>, With<HeldLightSlot>, With<RenderLayers>)>;
 
-/// Keeps every [`Character`] on the render layer of its worldspace: the
-/// root's `RenderLayers` become `layer(N)` of its nearest
-/// [`WorldspaceRoot`] ancestor, and a change is pushed to every existing
-/// descendant that renders or lights ([`Layered`]). Parts built later copy
-/// the root's layers at build time (`finish_builds`, `held::sync_held`).
+/// Keeps every [`Character`] on the render layers of its worldspace: the
+/// root's `RenderLayers` become the content layer of its nearest
+/// [`WorldspaceRoot`] ancestor and its [`ShadowLayers`] that worldspace's
+/// shadow-only layer (`WorldspaceLayers`), and a change is pushed to every
+/// existing descendant that renders or lights ([`Layered`]): content layers,
+/// except for held light slots and what hangs under them (the character's
+/// lights), which take the worldspace's light layers (content plus shadow-only,
+/// so they cast the character's shadow-only parts too). Parts built later copy
+/// the root's layers at build time (`finish_builds`, `held::sync_held`), role
+/// parts are re-layered from them (`roles::sync_role_layers`).
 ///
 /// Why: Bevy pairs a light with shadow casters and views by `RenderLayers`
 /// (a mesh without the component is layer 0), and a worldspace's lamps sit
-/// on its layer only (a `[0, N]` light would light resident neighbouring
+/// on its layers only (a `[0, N]` light would light resident neighbouring
 /// worldspaces), so a character left on layer 0 never shadows under them,
 /// and a torch it carries lights nothing of its worldspace.
 ///
@@ -82,25 +87,33 @@ type Layered = Or<(With<Mesh3d>, With<VisibilityClass>, With<HeldLightSlot>, Wit
 /// Bevy's `HierarchyPropagatePlugin<RenderLayers>` would do the push, but it
 /// observes every `ChildOf` insert in the world (all streamed content) and
 /// puts two components on every rig joint; the layer changes only on travel.
+#[allow(clippy::type_complexity)]
 pub(crate) fn follow_worldspace_layers(
     mut commands: Commands,
-    characters: Query<(Entity, Option<&RenderLayers>), With<Character>>,
+    characters: Query<(Entity, Option<&RenderLayers>, Option<&ShadowLayers>), With<Character>>,
     parents: Query<&ChildOf>,
     roots: Query<&WorldspaceRoot>,
     children: Query<&Children>,
     layered: Query<(), Layered>,
+    slots: Query<(), With<HeldLightSlot>>,
 ) {
-    for (character, current) in &characters {
-        let Some(layer) = parents.iter_ancestors(character).find_map(|a| roots.get(a).ok().map(|r| r.layer)) else { continue };
-        let layers = RenderLayers::from_layers(&[layer]);
-        if current == Some(&layers) {
+    for (character, current, current_shadow) in &characters {
+        let Some(ws) = parents.iter_ancestors(character).find_map(|a| roots.get(a).ok().map(WorldspaceRoot::layers)) else { continue };
+        let (layers, shadow) = (ws.content(), ShadowLayers(ws.shadow_only()));
+        if current == Some(&layers) && current_shadow == Some(&shadow) {
             continue;
         }
         for part in children.iter_descendants(character) {
-            if layered.contains(part) {
+            if slots.contains(part) {
+                for light in std::iter::once(part).chain(children.iter_descendants(part)) {
+                    if layered.contains(light) {
+                        commands.entity(light).try_insert(ws.light());
+                    }
+                }
+            } else if layered.contains(part) && !parents.iter_ancestors(part).take_while(|a| *a != character).any(|a| slots.contains(a)) {
                 commands.entity(part).try_insert(layers.clone());
             }
         }
-        commands.entity(character).try_insert(layers);
+        commands.entity(character).try_insert((layers, shadow));
     }
 }

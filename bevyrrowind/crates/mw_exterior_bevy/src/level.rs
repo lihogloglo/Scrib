@@ -282,7 +282,7 @@ pub struct LabLight(usize);
 
 /// The rig's lights through the game's own path (`mw_assets::lights::spawn_light`: the
 /// calibration's range and power for the radius, `BudgetedShadow`, so the point-shadow budget,
-/// contact shadows and the shadow cache treat them as lamps), on the worldspace's layer.
+/// contact shadows and the shadow cache treat them as lamps), on the worldspace's light layers.
 fn spawn_lights(mut commands: Commands, mut registry: ResMut<WorldspaceRegistry>, level: Res<ActiveLevel>, calibration: Res<mw_assets::LightCalibration>) {
     let ActiveLevel(LevelSetup { level, worldspace: ws, .. }) = &*level;
     let Some(rig) = &level.lights else { return };
@@ -293,7 +293,7 @@ fn spawn_lights(mut commands: Commands, mut registry: ResMut<WorldspaceRegistry>
         let (cell, transform) = to_grid(WorldPos::from_f64(at.as_dvec3()));
         #[allow(clippy::cast_possible_truncation)]
         let light = mw_assets::lights::spawn_light(&mut commands, &calibration, &info, None, transform, i as u32);
-        commands.entity(light).try_insert((Name::new(format!("lab light {i}")), LabLight(i), cell, transform, RenderLayers::layer(entry.layer), ChildOf(entry.root)));
+        commands.entity(light).try_insert((Name::new(format!("lab light {i}")), LabLight(i), cell, transform, entry.layers().light(), ChildOf(entry.root)));
     }
     info!("level {}: {} lights ({:?}, radius {} m, orbit {} deg/s)", level.name, positions.len(), rig.layout, rig.radius, rig.orbit);
 }

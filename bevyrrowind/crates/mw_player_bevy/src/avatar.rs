@@ -25,7 +25,8 @@
 //!   inertializes back to locomotion.
 //! - **First person** (superfargoth `docs/specs/first-person.md`, FP-1): the avatar carries
 //!   `RoleLayers`, so its outfit is split by role (head, arms, body; held items) and first person
-//!   only re-layers it: the head leaves every view (`RoleLayers::first_person`), the body, arms
+//!   only re-layers it: the head leaves every camera but keeps casting (shadow-only layer, FP-1b;
+//!   `RoleLayers::first_person`), the body, arms
 //!   and weapon stay drawn, so the player sees their own arms. Third person shows every role and
 //!   hides the whole avatar while the camera's collision fade is past [`HIDE_FADE`] (the eye
 //!   inside the body). Presentation only: nothing here writes gameplay state.

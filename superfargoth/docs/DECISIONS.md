@@ -1734,3 +1734,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (combat C4 soft aim): the view choice reaches gameplay only as the input bit `Command::face_view` (first person:
   attacks square up to the view, `Turn` steers onto the soft-aim target, no hard lock, a held lock breaks); the soft target
   lives on the swing (`SwingState::aim`), not in the saved `ActionState` (combat.md "C4 soft aim").
+- 2026-11-10 (first person FP-1b): each worldspace owns two render layers, content `W` and shadow-only `S` = W+1
+  (`WorldspaceLayers`); lights carry `S`, cameras never do, the traced scene adds its lights' layers. A mesh on `S`
+  alone is Bevy 0.20's shadow-only caster (first-person head; FP-2 arms and held items) (first-person.md).

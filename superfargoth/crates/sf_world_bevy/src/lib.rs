@@ -4,8 +4,8 @@
 //! Specs: `docs/specs/streaming.md`, `docs/specs/world-coordinates.md`.
 //!
 //! - Each loaded worldspace is one `big_space` `BigSpace` root with a
-//!   `Grid(256 m, 32 m)` and its own `RenderLayers` layer
-//!   ([`WorldspaceRegistry`]). Positions convert 1:1 between `WorldPos` and
+//!   `Grid(256 m, 32 m)` and its own `RenderLayers` pair, content and
+//!   shadow-only ([`WorldspaceRegistry`], [`WorldspaceLayers`]). Positions convert 1:1 between `WorldPos` and
 //!   `CellCoord + Transform` ([`coords`]).
 //! - [`WorldStreamingPlugin`] drives `sf_world::Scheduler` every frame from
 //!   [`StreamingAnchor`] entities: index fetches on the IO pool, cooked
@@ -50,7 +50,7 @@ pub use stream::{
     ActiveWorldspace, CellLoaded, CellUnloaded, DoorLinks, RayTracingVariants, StreamCell, StreamStats, Streaming, StreamingAnchor,
     StreamingConfig, WorldIndexSource, WorldOverlay, WorldspaceActivated, WorldspaceRecords,
 };
-pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceRegistry, WorldspaceRoot};
+pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceLayers, WorldspaceRegistry, WorldspaceRoot};
 
 use bevy_app::{App, Last, Plugin, PostStartup, PostUpdate, Update};
 use bevy_asset::AssetApp;

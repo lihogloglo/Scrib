@@ -32,7 +32,6 @@ use std::sync::Arc;
 
 use bevy_asset::{AssetServer, Assets, Handle};
 use bevy_camera::Camera;
-use bevy_camera::visibility::RenderLayers;
 use bevy_color::Color;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
@@ -269,7 +268,7 @@ impl Cut<'_, '_> {
         transform.rotation = travel.rotation;
         self.commands.entity(travel.traveler).insert((ChildOf(entry.root), cell, transform));
         if self.cameras.contains(travel.traveler) {
-            self.commands.entity(travel.traveler).insert(RenderLayers::from_layers(&[0, entry.layer]));
+            self.commands.entity(travel.traveler).insert(entry.layers().camera());
         }
         self.active.0 = Some(travel.to.worldspace.clone());
         self.streaming.begin_burst();

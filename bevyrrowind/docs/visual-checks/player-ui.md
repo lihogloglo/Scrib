@@ -35,8 +35,17 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Look for: looking ahead, no face, hair or helmet in view (no inside-of-head polygons at the screen edges); looking down,
   chest, legs and feet; your arms and hands (and the drawn weapon) in their third-person pose, following the clips.
   Tab back: the full body (head included) in third person, no frame with a missing or doubled part at the switch.
-- Known for this slice: the player's shadow has no head in first person (shadow layer is slice FP-1b); arms use the
-  world FOV and can clip into walls (view model is FP-2). Report the look-down view (neck/collar line, torso).
+- Known for this slice: arms use the world FOV and can clip into walls (view model is FP-2). Report the look-down
+  view (neck/collar line, torso). The headless shadow is fixed by FP-1b below.
+- Status: awaiting owner (built 2026-11-10, not run here: no display).
+
+### FP-1b: In first person your shadow keeps its head (`cargo dev view "Seyda Neen"`, 10:00, then a lit interior at night; 3.4b)
+- Kind: game location, player mode, default flags (raster); optionally `--rt` (solari build) after.
+- Look for: under the sun (10:00, stand with the sun behind you on open ground), Tab between first and third person: the
+  ground shadow is the same full body, head and helmet included, no flicker or one-frame loss at the switch. Then at
+  night next to a lamp (an interior or a lit street), and holding a torch: the head's shadow on the wall/floor in first
+  person. Walk through a door: still there on the other side. Nothing of your own head ever on screen in first person.
+  With `--rt`: the head casts like the rest of the body there (Solari 0.20's skinned-mesh gap, rendering.md, applies).
 - Status: awaiting owner (built 2026-11-10, not run here: no display).
 
 ### PL-4: Movement feel: starts, stops, reversals (`cargo dev scene level-anim-overview`, F11 player, Tab 3rd person)

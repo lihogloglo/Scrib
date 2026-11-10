@@ -66,7 +66,7 @@ pub use mesh::{OutfitMeshError, assembled_mesh_to_mesh, outfit_inverse_bindposes
 #[cfg(feature = "world")]
 pub use world::{CharacterPlacement, CharacterSpawner};
 pub use morph::{CharacterMorphs, MorphCurvePlayer, MorphTrack, MorphTracks, drive_character_morphs};
-pub use roles::{CharacterLayerSystems, PartRole, RoleLayer, RoleLayers};
+pub use roles::{CharacterLayerSystems, PartRole, RoleLayer, RoleLayers, ShadowLayers};
 pub use sf_character::ViewRole;
 
 use std::collections::{HashMap, HashSet};

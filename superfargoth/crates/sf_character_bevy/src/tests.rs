@@ -494,6 +494,7 @@ fn anim_variety_is_seeded_by_the_stable_id_not_the_entity() {
 #[cfg(feature = "world")]
 #[test]
 fn characters_and_their_parts_follow_their_worldspace_render_layer() {
+    use crate::ShadowLayers;
     use bevy::camera::visibility::RenderLayers;
     use sf_world_bevy::WorldspaceRoot;
     let mut app = app();
@@ -526,15 +527,81 @@ fn characters_and_their_parts_follow_their_worldspace_render_layer() {
     };
     let n = parts(app.world()).len();
     assert!(n >= 6, "root, mesh, light, body meshes, prop mesh, light slot: {n}");
-    assert_eq!(layers_of(&app), vec![Some(RenderLayers::layer(3)); n]);
+    // The held light slot, and the light a host hangs under it, take the worldspace's light
+    // layers (content plus shadow-only, FP-1b); everything else its content layer.
+    let slot = app.world().get::<HeldProps>(a).unwrap().props.iter().find_map(|p| p.light).unwrap();
+    // The host's light copies the slot's layers (`mw_actors_bevy` `light_held_slots`).
+    let slot_layers = app.world().get::<RenderLayers>(slot).cloned().unwrap();
+    let torch = app.world_mut().spawn((PointLight::default(), slot_layers, ChildOf(slot))).id();
+    let expect = |world: usize| -> (Vec<Option<RenderLayers>>, [Option<RenderLayers>; 2], Option<ShadowLayers>) {
+        let ws = sf_world_bevy::WorldspaceLayers::of(world);
+        let mut v = vec![Some(ws.content()); n];
+        v[n - 1] = Some(ws.light());
+        (v, [Some(ws.light()), Some(ws.light())], Some(ShadowLayers(ws.shadow_only())))
+    };
+    let got = |app: &App| {
+        let w = app.world();
+        (layers_of(app), [slot, torch].map(|e| w.get::<RenderLayers>(e).cloned()), w.get::<ShadowLayers>(a).cloned())
+    };
+    assert_eq!(got(&app), expect(3));
+    assert_eq!(expect(3).1[0], Some(RenderLayers::from_layers(&[3, 4])));
     // The carrier moves to the other worldspace: everything follows.
     app.world_mut().entity_mut(carrier).insert(ChildOf(five));
     app.update();
-    assert_eq!(layers_of(&app), vec![Some(RenderLayers::layer(5)); n]);
+    assert_eq!(got(&app), expect(5));
     // The character itself reparented back: back to layer 3.
     app.world_mut().entity_mut(a).insert(ChildOf(three));
     app.update();
-    assert_eq!(layers_of(&app), vec![Some(RenderLayers::layer(3)); n]);
+    assert_eq!(got(&app), expect(3));
+}
+
+/// FP-1b through the real systems: a first-person root in a worldspace casts its head on that
+/// worldspace's shadow-only layer only, body and held items on its content layer, its torch on
+/// both; travel moves the shadow layer with the worldspace.
+#[cfg(feature = "world")]
+#[test]
+fn first_person_head_is_shadow_only_in_its_worldspace_and_follows_travel() {
+    use crate::{PartRole, RoleLayers, ViewRole};
+    use bevy::camera::visibility::RenderLayers;
+    use sf_world_bevy::{WorldspaceLayers, WorldspaceRoot};
+    let mut app = app();
+    let worldspace = |w: &mut World, id: &str, layer: usize| {
+        w.spawn((WorldspaceRoot { id: sf_world::WorldspaceId::new(id), layer }, Transform::IDENTITY, Visibility::default())).id()
+    };
+    let outside = worldspace(app.world_mut(), "outside", 1);
+    let inside = worldspace(app.world_mut(), "inside", 3);
+    let player = Character::Record {
+        kind: "player".into(),
+        id: RecordId::new("player"),
+        state: CharacterState { worn: None, held: Some(vec![held("torch", "hand_l", true)]) },
+    };
+    let a = app.world_mut().spawn((player, RoleLayers::first_person(), Transform::IDENTITY, Visibility::default(), ChildOf(outside))).id();
+    run_until(&mut app, |w| w.get::<CharacterBody>(a).is_some() && w.get::<HeldProps>(a).is_some_and(|h| h.props.iter().any(|p| p.light.is_some())));
+    app.update();
+    let by_role = |app: &App| -> (Vec<(ViewRole, RenderLayers)>, Option<RenderLayers>) {
+        let w = app.world();
+        let props = &w.get::<HeldProps>(a).unwrap().props;
+        let prop_meshes = props.iter().flat_map(|p| w.get::<Children>(p.entity).map(|c| c.to_vec()).unwrap_or_default());
+        let body = w.get::<CharacterBody>(a).unwrap().meshes.iter().copied();
+        let mut v: Vec<_> =
+            body.chain(prop_meshes).filter_map(|e| Some((w.get::<PartRole>(e)?.0, w.get::<RenderLayers>(e).cloned().unwrap_or_default()))).collect();
+        v.sort_by_key(|(r, _)| *r);
+        v.dedup();
+        (v, props.iter().find_map(|p| p.light).and_then(|l| w.get::<RenderLayers>(l).cloned()))
+    };
+    let expect = |ws: WorldspaceLayers| {
+        let v = vec![(ViewRole::Body, ws.content()), (ViewRole::Head, ws.shadow_only()), (ViewRole::Arms, ws.content()), (ViewRole::Held, ws.content())];
+        (v, Some(ws.light()))
+    };
+    assert_eq!(by_role(&app), expect(WorldspaceLayers::of(1)));
+    assert_eq!(by_role(&app).0[1], (ViewRole::Head, RenderLayers::layer(2)), "the head: shadow-only layer alone");
+    app.world_mut().entity_mut(a).insert(ChildOf(inside));
+    app.update();
+    assert_eq!(by_role(&app), expect(WorldspaceLayers::of(3)));
+    // Back to third person: the head back on the content layer, off the shadow layer.
+    app.world_mut().entity_mut(a).insert(RoleLayers::world());
+    app.update();
+    assert!(by_role(&app).0.iter().all(|(_, l)| *l == RenderLayers::layer(3)));
 }
 
 /// First-person roles (first-person.md): a root with `RoleLayers` gets one mesh per material and
@@ -552,7 +619,8 @@ fn role_layers_split_the_outfit_by_role_and_relayer_on_a_view_switch() {
         state: CharacterState { worn: None, held: Some(vec![held("torch", "hand_l", true)]) },
     };
     let ws = RenderLayers::layer(3);
-    let a = app.world_mut().spawn((player(), RoleLayers::world(), ws.clone())).id();
+    let shadow = RenderLayers::layer(4);
+    let a = app.world_mut().spawn((player(), RoleLayers::world(), ws.clone(), crate::ShadowLayers(shadow.clone()))).id();
     let plain = app.world_mut().spawn(player()).id();
     run_until(&mut app, |w| [a, plain].iter().all(|&e| w.get::<CharacterBody>(e).is_some() && w.get::<HeldProps>(e).is_some_and(|h| !h.props.is_empty())));
     app.update();
@@ -596,15 +664,16 @@ fn role_layers_split_the_outfit_by_role_and_relayer_on_a_view_switch() {
         v.sort_by_key(|(r, _)| *r);
         v
     };
-    assert_eq!(parts(app.world()), (all(Some(ws.clone())), Some(ws.clone())), "third person: every role on the root's layers");
+    let light = ws.union(&shadow);
+    assert_eq!(parts(app.world()), (all(Some(ws.clone())), Some(light.clone())), "third person: every role on the root's layers");
 
     app.world_mut().entity_mut(a).insert(RoleLayers::first_person());
     app.update();
-    assert_eq!(parts(app.world()), (all(Some(RenderLayers::none())), Some(ws.clone())), "first person: the head off every view");
+    assert_eq!(parts(app.world()), (all(Some(shadow.clone())), Some(light.clone())), "first person: the head on the shadow-only layer alone");
     let meshes = app.world().get::<CharacterBody>(a).unwrap().meshes.clone();
 
     // A view-model layer on the arms and held items (the FP-2 shape) adds to the world layers.
-    let vm = RoleLayer { world: true, extra: RenderLayers::layer(9) };
+    let vm = RoleLayer { world: true, shadow: false, extra: RenderLayers::layer(9) };
     app.world_mut().entity_mut(a).insert(RoleLayers::first_person().with(ViewRole::Arms, vm.clone()).with(ViewRole::Held, vm));
     app.update();
     let (got, light) = parts(app.world());
@@ -613,28 +682,34 @@ fn role_layers_split_the_outfit_by_role_and_relayer_on_a_view_switch() {
         got.iter().filter(|(r, _)| matches!(r, ViewRole::Arms | ViewRole::Held)).map(|(_, l)| l.clone()).collect::<Vec<_>>(),
         [Some(with_vm.clone()), Some(with_vm)]
     );
-    assert_eq!(light, Some(ws.clone()));
+    assert_eq!(light, Some(ws.union(&shadow)));
 
     // Back to third person: all on the root's layers again, same mesh entities.
     app.world_mut().entity_mut(a).insert(RoleLayers::world());
     app.update();
-    assert_eq!(parts(app.world()), (all(Some(ws.clone())), Some(ws)));
+    assert_eq!(parts(app.world()), (all(Some(ws.clone())), Some(ws.union(&shadow))));
     assert_eq!(app.world().get::<CharacterBody>(a).unwrap().meshes, meshes, "a view switch rebuilds nothing");
 }
 
 /// The per-role layer rule, exactly (first-person.md "Layer plan").
 #[test]
 fn role_layer_rule_per_role() {
-    use crate::{RoleLayer, RoleLayers, ViewRole};
+    use crate::{RoleLayer, RoleLayers, ShadowLayers, ViewRole};
     use bevy::camera::visibility::RenderLayers;
     let ws = RenderLayers::from_layers(&[3]);
+    let s = RenderLayers::layer(4);
     let world = RoleLayers::world();
     let fp = RoleLayers::first_person();
     for role in ViewRole::ALL {
-        assert_eq!(world.layers(role, &ws), ws, "{role:?}");
+        assert_eq!(world.layers(role, &ws, &s), ws, "{role:?}");
     }
-    assert_eq!(ViewRole::ALL.map(|r| fp.layers(r, &ws)), [ws.clone(), RenderLayers::none(), ws.clone(), ws.clone()]);
-    let shadow = RoleLayers::world().with(ViewRole::Head, RoleLayer { world: false, extra: RenderLayers::layer(40) });
-    assert_eq!(shadow.layers(ViewRole::Head, &ws), RenderLayers::layer(40));
-    assert_eq!(RoleLayers::world().layers(ViewRole::Body, &RenderLayers::default()), RenderLayers::layer(0));
+    assert_eq!(ViewRole::ALL.map(|r| fp.layers(r, &ws, &s)), [ws.clone(), s.clone(), ws.clone(), ws.clone()]);
+    assert_eq!(fp.layers(ViewRole::Head, &ws, &RenderLayers::none()), RenderLayers::none(), "no shadow layer: casts nothing");
+    let vm = RoleLayers::world().with(ViewRole::Arms, RoleLayer { world: false, shadow: true, extra: RenderLayers::layer(40) });
+    assert_eq!(vm.layers(ViewRole::Arms, &ws, &s), RenderLayers::from_layers(&[4, 40]), "the FP-2 shape: shadow + view model");
+    assert_eq!(RoleLayer::OFF.extra, RenderLayers::none());
+    assert_eq!(RoleLayers::world().with(ViewRole::Head, RoleLayer::OFF).layers(ViewRole::Head, &ws, &s), RenderLayers::none());
+    assert_eq!(RoleLayers::world().layers(ViewRole::Body, &RenderLayers::default(), &s), RenderLayers::layer(0));
+    assert_eq!(ShadowLayers::light(Some(&ShadowLayers(s.clone())), &ws), RenderLayers::from_layers(&[3, 4]));
+    assert_eq!(ShadowLayers::light(None, &ws), ws);
 }

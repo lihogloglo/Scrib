@@ -298,14 +298,14 @@ fn the_wall_brace_runs_in_plain_locomotion_and_not_under_a_clip_move() {
 
 /// FP-1 (superfargoth first-person.md): the camera's view lays the avatar out by role through the
 /// real systems (camera rig, `first_person`, the character layer sync), headless: third person
-/// draws every part on the avatar's layers, first person takes the head off them and keeps body,
+/// draws every part on the avatar's layers, first person moves the head to the shadow-only layer and keeps body,
 /// arms and held items, and switching back restores them. No rendering is judged.
 #[test]
 fn switching_first_and_third_person_relayers_the_avatar_by_role() {
     use bevy_camera::visibility::RenderLayers;
     use sf_camera::ViewChoice;
     use sf_camera_bevy::{PlayerCamera, SfCameraPlugin};
-    use sf_character_bevy::{PartRole, RoleLayers, SfCharacterPlugin, ViewRole};
+    use sf_character_bevy::{PartRole, RoleLayers, SfCharacterPlugin, ShadowLayers, ViewRole};
     let keymap = mw_controls_bevy::keymap();
     let (mut app, player) = tests::app_setup(60, &keymap, |app| {
         app.add_plugins((AssetPlugin::default(), SfCameraPlugin::<tests::Statics>::default(), SfCharacterPlugin))
@@ -314,8 +314,9 @@ fn switching_first_and_third_person_relayers_the_avatar_by_role() {
             .init_asset::<bevy_mesh::skinning::SkinnedMeshInverseBindposes>();
         avatar::add_first_person(app);
     });
-    let ws = RenderLayers::layer(2);
-    let avatar = app.world_mut().spawn((avatar::avatar_bundle(), ws.clone(), ChildOf(player))).id();
+    // The worldspace's content and shadow-only layers (`WorldspaceLayers`, as the worldspace push writes them).
+    let (ws, shadow) = (RenderLayers::layer(1), RenderLayers::layer(2));
+    let avatar = app.world_mut().spawn((avatar::avatar_bundle(), ws.clone(), ShadowLayers(shadow.clone()), ChildOf(player))).id();
     let parts = ViewRole::ALL.map(|role| app.world_mut().spawn((PartRole(role), ChildOf(avatar))).id());
     let cam = app.world_mut().spawn((PlayerCamera::new(player), Transform::default())).id();
     let layers = |app: &App| parts.map(|p| app.world().get::<RenderLayers>(p).cloned().unwrap_or_default());
@@ -330,7 +331,7 @@ fn switching_first_and_third_person_relayers_the_avatar_by_role() {
     app.world_mut().get_mut::<PlayerCamera>(cam).unwrap().set_view(ViewChoice::FirstPerson);
     app.update();
     assert_eq!(app.world().get::<RoleLayers>(avatar), Some(&RoleLayers::first_person()));
-    assert_eq!(layers(&app), [ws.clone(), RenderLayers::none(), ws.clone(), ws.clone()], "first person: the head off, the rest drawn");
+    assert_eq!(layers(&app), [ws.clone(), shadow, ws.clone(), ws.clone()], "first person: the head shadow-only, the rest drawn");
     assert_eq!(shown(&app), Visibility::Inherited, "the avatar is no longer hidden whole in first person");
 
     app.world_mut().get_mut::<PlayerCamera>(cam).unwrap().set_view(ViewChoice::ThirdPerson);
