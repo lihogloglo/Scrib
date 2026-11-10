@@ -27,7 +27,9 @@
 //!   `RoleLayers`, so its outfit is split by role (head, arms, body; held items) and first person
 //!   only re-layers it: the head leaves every camera but keeps casting (shadow-only layer, FP-1b;
 //!   `RoleLayers::first_person`), the body, arms
-//!   and weapon stay drawn, so the player sees their own arms. Third person shows every role and
+//!   and weapon stay drawn, so the player sees their own arms. With the camera's
+//!   `ComfortSettings::view_model` (FP-2, off until its material lands) arms and weapon cast from
+//!   the shadow-only layer and their view copies are drawn instead. Third person shows every role and
 //!   hides the whole avatar while the camera's collision fade is past [`HIDE_FADE`] (the eye
 //!   inside the body). Presentation only: nothing here writes gameplay state.
 
@@ -356,10 +358,10 @@ fn stop(a: &mut Animator, slot: SlotId) {
 }
 
 /// What the avatar shows for the camera's view and body fade (`None`: no camera pose yet, as
-/// third person unfaded). See the module docs, "First person".
-pub(crate) fn avatar_view(pose: Option<(ViewChoice, f32)>) -> (Visibility, RoleLayers) {
+/// third person unfaded) and its view-model setting. See the module docs, "First person".
+pub(crate) fn avatar_view(pose: Option<(ViewChoice, f32)>, view_model: bool) -> (Visibility, RoleLayers) {
     match pose {
-        Some((ViewChoice::FirstPerson, _)) => (Visibility::Inherited, RoleLayers::first_person()),
+        Some((ViewChoice::FirstPerson, _)) => (Visibility::Inherited, RoleLayers::first_person(view_model)),
         Some((ViewChoice::ThirdPerson, fade)) if fade > HIDE_FADE => (Visibility::Hidden, RoleLayers::world()),
         _ => (Visibility::Inherited, RoleLayers::world()),
     }
@@ -373,8 +375,9 @@ pub(crate) fn add_first_person(app: &mut bevy_app::App) {
 
 /// Lays the avatar out for the camera's view ([`avatar_view`]).
 pub(crate) fn first_person(cams: Query<&PlayerCamera>, mut avatars: Query<(&mut Visibility, &mut RoleLayers), With<PlayerAvatar>>) {
-    let pose = cams.iter().find_map(|c| c.pose().map(|p| (p.view, p.fade)));
-    let (visibility, roles) = avatar_view(pose);
+    let cam = cams.iter().find(|c| c.pose().is_some());
+    let pose = cam.and_then(|c| c.pose().map(|p| (p.view, p.fade)));
+    let (visibility, roles) = avatar_view(pose, cam.is_some_and(|c| c.settings.view_model));
     for (mut v, mut r) in &mut avatars {
         v.set_if_neq(visibility);
         r.set_if_neq(roles.clone());

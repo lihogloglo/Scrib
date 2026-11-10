@@ -3,20 +3,37 @@
 //! roles from [`crate::CharacterContent::view_role`]), every part mesh carries its [`PartRole`],
 //! and each part's `RenderLayers` follow the root's per-role rule: the root's own (worldspace)
 //! layers, its world's shadow-only layers ([`ShadowLayers`]), both or neither, plus extra layers
-//! (a view model's). Held item meshes are [`ViewRole::Held`]. Lights (held light slots, torches)
+//! a host adds. Held item meshes are [`ViewRole::Held`]. Lights (held light slots, torches)
 //! are never role parts: they keep the root's layers plus its shadow layers.
 //!
+//! **View copies** (FP-2, first-person.md "View model"): a role whose rule asks for one
+//! ([`RoleLayer::view_copy`]) gets a [`ViewCopy`] of each of its parts, a child of the part on
+//! the root's layers, sharing its mesh, material and `SkinnedMesh` joints (no second rig, one more
+//! joint palette), `NotShadowCaster` and out of the ray-traced scene (`NoRayTracing`). The camera
+//! draws the copy (FP-2b gives it the view-model projection); the part itself stays on the
+//! shadow-only layer and casts. Copies are spawned and despawned with the rule, rebuilt with the
+//! outfit and the held props (they are the parts' children), and follow their part's mesh,
+//! material, skin, morph weights and bounds ([`follow_view_copies`]).
+//!
 //! Presentation only: the host (the player's camera view) writes [`RoleLayers`]; nothing here
-//! feeds gameplay, and switching changes no mesh, only layers.
+//! feeds gameplay, and switching changes no outfit mesh, only layers and copies.
 //!
 //! Why layers, not `Visibility`: a hidden entity casts no shadow either, and the world body has
 //! to keep casting (first-person.md "Layer plan"). Bevy 0.20 has no shadow-only flag, so a role
 //! off the main view goes to its worldspace's shadow-only layer (FP-1b): its lights carry it, no
 //! camera does.
 
-use bevy_camera::visibility::RenderLayers;
+use bevy_camera::primitives::Aabb;
+use bevy_camera::visibility::{DynamicSkinnedMeshBounds, NoAutoAabb, RenderLayers, Visibility};
 use bevy_ecs::prelude::*;
+use bevy_light::NotShadowCaster;
+use bevy_mesh::morph::MeshMorphWeights;
+use bevy_mesh::skinning::SkinnedMesh;
+use bevy_mesh::Mesh3d;
+use bevy_pbr::{MeshMaterial3d, StandardMaterial};
+use bevy_transform::components::Transform;
 use sf_character::ViewRole;
+use sf_model_bevy::NoRayTracing;
 
 use crate::{Character, CharacterBody, HeldProps};
 
@@ -27,17 +44,23 @@ pub struct RoleLayer {
     pub world: bool,
     /// On the root's [`ShadowLayers`]: its world's lights cast it, no camera draws it.
     pub shadow: bool,
-    /// Layers added on top (a view model camera's, FP-2).
+    /// Layers added on top (a host's own view or light layers).
     pub extra: RenderLayers,
+    /// Each part gets a [`ViewCopy`] on the root's layers, `NotShadowCaster` (FP-2: the copy is
+    /// what the camera draws, with the view-model projection). Pair it with `world: false`, or
+    /// the camera draws the part twice.
+    pub view_copy: bool,
 }
 
 impl RoleLayer {
     /// On the root's layers, nothing added.
-    pub const WORLD: Self = Self { world: true, shadow: false, extra: RenderLayers::none() };
+    pub const WORLD: Self = Self { world: true, shadow: false, extra: RenderLayers::none(), view_copy: false };
     /// Shadow only: cast by the world's lights, drawn by no camera (first person's head).
-    pub const SHADOW: Self = Self { world: false, shadow: true, extra: RenderLayers::none() };
+    pub const SHADOW: Self = Self { world: false, shadow: true, extra: RenderLayers::none(), view_copy: false };
     /// On no layer: drawn by no view (no shadow either) until `extra` names one.
-    pub const OFF: Self = Self { world: false, shadow: false, extra: RenderLayers::none() };
+    pub const OFF: Self = Self { world: false, shadow: false, extra: RenderLayers::none(), view_copy: false };
+    /// The view model (FP-2): the part shadow only, a [`ViewCopy`] of it drawn on the root's layers.
+    pub const VIEW_MODEL: Self = Self { world: false, shadow: true, extra: RenderLayers::none(), view_copy: true };
 }
 
 impl Default for RoleLayer {
@@ -62,11 +85,13 @@ impl RoleLayers {
         Self::default()
     }
 
-    /// First person, FP-1b (first-person.md "Layer plan"): the head off the main view but still
-    /// casting (shadow only); body, arms and held items stay on the world layers, so the player
-    /// sees their own arms and weapon until the view model (FP-2) draws them.
-    pub fn first_person() -> Self {
-        Self::world().with(ViewRole::Head, RoleLayer::SHADOW)
+    /// First person (first-person.md "Layer plan"): the head off the main view but still casting
+    /// (shadow only), the body on the world layers. With `view_model` (FP-2) arms and held items
+    /// are [`RoleLayer::VIEW_MODEL`]: shadow only, their [`ViewCopy`]s drawn; without (FP-1b) they
+    /// stay on the world layers, drawn with the body.
+    pub fn first_person(view_model: bool) -> Self {
+        let fp = Self::world().with(ViewRole::Head, RoleLayer::SHADOW);
+        if view_model { fp.with(ViewRole::Arms, RoleLayer::VIEW_MODEL).with(ViewRole::Held, RoleLayer::VIEW_MODEL) } else { fp }
     }
 
     #[must_use]
@@ -92,6 +117,12 @@ impl RoleLayers {
         }
         layers
     }
+
+    /// The layers of a [`ViewCopy`] of a `role` part when its root is on `root`: the root's, if
+    /// the role has copies.
+    pub fn copy_layers(&self, role: ViewRole, root: &RenderLayers) -> Option<RenderLayers> {
+        self.get(role).view_copy.then(|| root.clone())
+    }
 }
 
 /// On a character root: the shadow-only layers of its world (`sf_world_bevy`
@@ -115,6 +146,13 @@ impl ShadowLayers {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PartRole(pub ViewRole);
 
+/// On a part's view copy (FP-2, [`RoleLayer::view_copy`]): a child of the part it redraws.
+/// Despawned with it; the copy's mesh, material, skin, morph weights and bounds follow it.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewCopy {
+    pub source: Entity,
+}
+
 /// Where part layers are written (`PostUpdate`, after the worldspace layer push and before
 /// `CheckVisibility`). A host that changes [`RoleLayers`] in `PostUpdate` runs before it.
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
@@ -123,12 +161,26 @@ pub struct CharacterLayerSystems;
 type Roots<'a> =
     (Entity, Ref<'a, RoleLayers>, Option<Ref<'a, RenderLayers>>, Option<Ref<'a, ShadowLayers>>, Option<Ref<'a, CharacterBody>>, Option<Ref<'a, HeldProps>>);
 
-/// Re-layers the role parts of every root whose rule, layers, outfit or held props changed.
+/// What a view copy is made from (its part).
+type Source<'a> = (
+    &'a Mesh3d,
+    Option<&'a MeshMaterial3d<StandardMaterial>>,
+    Option<&'a SkinnedMesh>,
+    Option<&'a MeshMorphWeights>,
+    Option<&'a Aabb>,
+    Has<NoAutoAabb>,
+    Has<DynamicSkinnedMeshBounds>,
+);
+
+/// Re-layers the role parts of every root whose rule, layers, outfit or held props changed, and
+/// spawns or despawns their view copies (re-layering the ones that stay).
 pub(crate) fn sync_role_layers(
     mut commands: Commands,
     roots: Query<Roots<'_>, With<Character>>,
     children: Query<&Children>,
     parts: Query<(&PartRole, Option<&RenderLayers>)>,
+    sources: Query<Source<'_>>,
+    copies: Query<Option<&RenderLayers>, With<ViewCopy>>,
 ) {
     for (root, rule, layers, shadow, body, held) in &roots {
         let changed = rule.is_changed()
@@ -146,6 +198,111 @@ pub(crate) fn sync_role_layers(
             let want = rule.layers(role.0, &base, &shadow);
             if current.unwrap_or(&RenderLayers::default()) != &want {
                 commands.entity(part).try_insert(want);
+            }
+            let copy = children.get(part).ok().and_then(|c| c.iter().find(|&c| copies.contains(c)));
+            match (copy, rule.copy_layers(role.0, &base)) {
+                (None, Some(layers)) => {
+                    if let Ok(source) = sources.get(part) {
+                        spawn_copy(&mut commands, part, source, layers);
+                    }
+                }
+                (Some(copy), Some(layers)) => {
+                    if copies.get(copy).ok().flatten() != Some(&layers) {
+                        commands.entity(copy).try_insert(layers);
+                    }
+                }
+                (Some(copy), None) => commands.entity(copy).try_despawn(),
+                (None, None) => {}
+            }
+        }
+    }
+}
+
+/// A [`Source`] query item.
+type SourceItem<'a> =
+    (&'a Mesh3d, Option<&'a MeshMaterial3d<StandardMaterial>>, Option<&'a SkinnedMesh>, Option<&'a MeshMorphWeights>, Option<&'a Aabb>, bool, bool);
+
+/// A view copy of `part` on `layers`: same mesh, material, joints, morph weights and bounds.
+fn spawn_copy(commands: &mut Commands, part: Entity, source: SourceItem<'_>, layers: RenderLayers) {
+    let (mesh, material, skin, morph, aabb, no_auto_aabb, dynamic) = source;
+    let mut e = commands.spawn((
+        Name::new("view copy"),
+        ViewCopy { source: part },
+        mesh.clone(),
+        Transform::IDENTITY,
+        Visibility::Inherited,
+        layers,
+        // The part casts (on the shadow-only layer); the copy is only seen.
+        NotShadowCaster,
+        // Skinned meshes are not traced (rendering.md DL-3), and the copy's pose is a view's.
+        NoRayTracing,
+        ChildOf(part),
+    ));
+    if let Some(material) = material {
+        e.insert(material.clone());
+    }
+    if let Some(skin) = skin {
+        // The part's joint entities: one rig poses both.
+        e.insert(skin.clone());
+    }
+    if let Some(morph) = morph {
+        e.insert(morph.clone());
+    }
+    if no_auto_aabb {
+        e.insert(NoAutoAabb);
+    }
+    if dynamic {
+        e.insert(DynamicSkinnedMeshBounds);
+    } else if let Some(aabb) = aabb {
+        e.insert(*aabb);
+    }
+}
+
+type Followed<'a> = (
+    Ref<'a, Mesh3d>,
+    Option<Ref<'a, MeshMaterial3d<StandardMaterial>>>,
+    Option<Ref<'a, SkinnedMesh>>,
+    Option<Ref<'a, MeshMorphWeights>>,
+    Option<Ref<'a, Aabb>>,
+    Has<DynamicSkinnedMeshBounds>,
+);
+
+/// Keeps every [`ViewCopy`] on its part's mesh, material (a host's swap, e.g. a self-lit torch
+/// variant), skin, morph weights and bounds (`PostUpdate`, after [`sync_role_layers`]). Copies
+/// with dynamic skinned bounds compute their own, as their part does.
+pub(crate) fn follow_view_copies(mut commands: Commands, copies: Query<(Entity, &ViewCopy, Has<DynamicSkinnedMeshBounds>)>, parts: Query<Followed<'_>>) {
+    for (copy, of, has_dynamic) in &copies {
+        let Ok((mesh, material, skin, morph, aabb, dynamic)) = parts.get(of.source) else { continue };
+        let changed = mesh.is_changed()
+            || material.as_ref().is_some_and(Ref::is_changed)
+            || skin.as_ref().is_some_and(Ref::is_changed)
+            || morph.as_ref().is_some_and(Ref::is_changed)
+            || (!dynamic && aabb.as_ref().is_some_and(Ref::is_changed))
+            || dynamic != has_dynamic;
+        if !changed {
+            continue;
+        }
+        let mut e = commands.entity(copy);
+        if mesh.is_changed() {
+            e.try_insert(Mesh3d::clone(&mesh));
+        }
+        if let Some(material) = material.filter(Ref::is_changed) {
+            e.try_insert(MeshMaterial3d::clone(&material));
+        }
+        if let Some(skin) = skin.filter(Ref::is_changed) {
+            e.try_insert(SkinnedMesh::clone(&skin));
+        }
+        if let Some(morph) = morph.filter(Ref::is_changed) {
+            e.try_insert(MeshMorphWeights::clone(&morph));
+        }
+        if dynamic && !has_dynamic {
+            e.try_insert(DynamicSkinnedMeshBounds);
+        } else if !dynamic {
+            if has_dynamic {
+                e.try_remove::<DynamicSkinnedMeshBounds>();
+            }
+            if let Some(aabb) = aabb.filter(|a| a.is_changed() || has_dynamic) {
+                e.try_insert(*aabb);
             }
         }
     }

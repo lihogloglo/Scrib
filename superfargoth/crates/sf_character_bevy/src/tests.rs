@@ -575,7 +575,7 @@ fn first_person_head_is_shadow_only_in_its_worldspace_and_follows_travel() {
         id: RecordId::new("player"),
         state: CharacterState { worn: None, held: Some(vec![held("torch", "hand_l", true)]) },
     };
-    let a = app.world_mut().spawn((player, RoleLayers::first_person(), Transform::IDENTITY, Visibility::default(), ChildOf(outside))).id();
+    let a = app.world_mut().spawn((player, RoleLayers::first_person(false), Transform::IDENTITY, Visibility::default(), ChildOf(outside))).id();
     run_until(&mut app, |w| w.get::<CharacterBody>(a).is_some() && w.get::<HeldProps>(a).is_some_and(|h| h.props.iter().any(|p| p.light.is_some())));
     app.update();
     let by_role = |app: &App| -> (Vec<(ViewRole, RenderLayers)>, Option<RenderLayers>) {
@@ -667,14 +667,14 @@ fn role_layers_split_the_outfit_by_role_and_relayer_on_a_view_switch() {
     let light = ws.union(&shadow);
     assert_eq!(parts(app.world()), (all(Some(ws.clone())), Some(light.clone())), "third person: every role on the root's layers");
 
-    app.world_mut().entity_mut(a).insert(RoleLayers::first_person());
+    app.world_mut().entity_mut(a).insert(RoleLayers::first_person(false));
     app.update();
     assert_eq!(parts(app.world()), (all(Some(shadow.clone())), Some(light.clone())), "first person: the head on the shadow-only layer alone");
     let meshes = app.world().get::<CharacterBody>(a).unwrap().meshes.clone();
 
-    // A view-model layer on the arms and held items (the FP-2 shape) adds to the world layers.
-    let vm = RoleLayer { world: true, shadow: false, extra: RenderLayers::layer(9) };
-    app.world_mut().entity_mut(a).insert(RoleLayers::first_person().with(ViewRole::Arms, vm.clone()).with(ViewRole::Held, vm));
+    // A host's extra layer on the arms and held items adds to the world layers.
+    let vm = RoleLayer { extra: RenderLayers::layer(9), ..RoleLayer::WORLD };
+    app.world_mut().entity_mut(a).insert(RoleLayers::first_person(false).with(ViewRole::Arms, vm.clone()).with(ViewRole::Held, vm));
     app.update();
     let (got, light) = parts(app.world());
     let with_vm = ws.clone().with(9);
@@ -699,17 +699,154 @@ fn role_layer_rule_per_role() {
     let ws = RenderLayers::from_layers(&[3]);
     let s = RenderLayers::layer(4);
     let world = RoleLayers::world();
-    let fp = RoleLayers::first_person();
+    let fp = RoleLayers::first_person(false);
     for role in ViewRole::ALL {
         assert_eq!(world.layers(role, &ws, &s), ws, "{role:?}");
     }
     assert_eq!(ViewRole::ALL.map(|r| fp.layers(r, &ws, &s)), [ws.clone(), s.clone(), ws.clone(), ws.clone()]);
     assert_eq!(fp.layers(ViewRole::Head, &ws, &RenderLayers::none()), RenderLayers::none(), "no shadow layer: casts nothing");
-    let vm = RoleLayers::world().with(ViewRole::Arms, RoleLayer { world: false, shadow: true, extra: RenderLayers::layer(40) });
-    assert_eq!(vm.layers(ViewRole::Arms, &ws, &s), RenderLayers::from_layers(&[4, 40]), "the FP-2 shape: shadow + view model");
+    let extra = RoleLayers::world().with(ViewRole::Arms, RoleLayer { extra: RenderLayers::layer(40), ..RoleLayer::SHADOW });
+    assert_eq!(extra.layers(ViewRole::Arms, &ws, &s), RenderLayers::from_layers(&[4, 40]), "shadow + a host's extra layer");
+    // FP-2: arms and held items shadow only, their view copies on the root's layers.
+    let vm = RoleLayers::first_person(true);
+    assert_eq!(ViewRole::ALL.map(|r| vm.layers(r, &ws, &s)), [ws.clone(), s.clone(), s.clone(), s.clone()]);
+    assert_eq!(ViewRole::ALL.map(|r| vm.copy_layers(r, &ws)), [None, None, Some(ws.clone()), Some(ws.clone())]);
+    assert!(ViewRole::ALL.iter().all(|&r| fp.copy_layers(r, &ws).is_none() && world.copy_layers(r, &ws).is_none()), "no copies off the view model");
     assert_eq!(RoleLayer::OFF.extra, RenderLayers::none());
     assert_eq!(RoleLayers::world().with(ViewRole::Head, RoleLayer::OFF).layers(ViewRole::Head, &ws, &s), RenderLayers::none());
     assert_eq!(RoleLayers::world().layers(ViewRole::Body, &RenderLayers::default(), &s), RenderLayers::layer(0));
     assert_eq!(ShadowLayers::light(Some(&ShadowLayers(s.clone())), &ws), RenderLayers::from_layers(&[3, 4]));
     assert_eq!(ShadowLayers::light(None, &ws), ws);
+}
+
+/// Every view copy in the world: (copy, its part, the part's role).
+fn view_copies(app: &mut App) -> Vec<(Entity, Entity, crate::ViewRole)> {
+    let mut q = app.world_mut().query::<(Entity, &crate::ViewCopy)>();
+    let w = app.world();
+    let mut v: Vec<_> = q.iter(w).map(|(e, c)| (e, c.source, w.get::<crate::PartRole>(c.source).expect("a copy's source is a role part").0)).collect();
+    v.sort_by_key(|(_, _, r)| *r);
+    v
+}
+
+/// FP-2a (first-person.md "View model"): view copies exist only with the view model on, for arms
+/// and held items alone, each a child of its part on the root's layers, sharing its mesh,
+/// material and joints, casting nothing and out of the ray-traced scene, while the part goes
+/// shadow only. Copies follow a material swap, a held change and an outfit swap, and go with the
+/// rule.
+#[test]
+fn view_copies_redraw_arms_and_held_items_only_with_the_view_model() {
+    use crate::{PartRole, RoleLayers, ViewRole};
+    use bevy::camera::visibility::RenderLayers;
+    use bevy::light::NotShadowCaster;
+    use bevy::mesh::skinning::SkinnedMesh;
+    use sf_model_bevy::NoRayTracing;
+    let mut app = app();
+    let player = |held_item: HeldItem, worn: Option<Vec<RecordId>>| Character::Record {
+        kind: "player".into(),
+        id: RecordId::new("player"),
+        state: CharacterState { worn, held: Some(vec![held_item]) },
+    };
+    let (ws, shadow) = (RenderLayers::layer(3), RenderLayers::layer(4));
+    let a = app.world_mut().spawn((player(held("torch", "hand_l", true), None), RoleLayers::world(), ws.clone(), crate::ShadowLayers(shadow.clone()))).id();
+    run_until(&mut app, |w| w.get::<CharacterBody>(a).is_some() && w.get::<HeldProps>(a).is_some_and(|h| !h.props.is_empty()));
+    app.update();
+    assert!(view_copies(&mut app).is_empty(), "third person: no copies");
+    app.world_mut().entity_mut(a).insert(RoleLayers::first_person(false));
+    app.update();
+    assert!(view_copies(&mut app).is_empty(), "first person without the view model: no copies");
+
+    app.world_mut().entity_mut(a).insert(RoleLayers::first_person(true));
+    app.update();
+    let check = |app: &mut App| -> Vec<(Entity, Entity, ViewRole)> {
+        let copies = view_copies(app);
+        assert_eq!(copies.iter().map(|c| c.2).collect::<Vec<_>>(), [ViewRole::Arms, ViewRole::Held], "one copy per arm and held part");
+        let w = app.world();
+        for &(copy, part, role) in &copies {
+            assert_eq!(w.get::<ChildOf>(copy).map(ChildOf::parent), Some(part), "{role:?}: a child of its part");
+            assert_eq!(w.get::<RenderLayers>(copy), Some(&ws), "{role:?}: the copy on the root's layers");
+            assert_eq!(w.get::<RenderLayers>(part), Some(&shadow), "{role:?}: the part shadow only");
+            assert!(w.get::<NotShadowCaster>(copy).is_some() && w.get::<NoRayTracing>(copy).is_some(), "{role:?}: casts nothing, not traced");
+            assert_eq!(w.get::<Mesh3d>(copy), w.get::<Mesh3d>(part));
+            assert_eq!(w.get::<MeshMaterial3d<StandardMaterial>>(copy), w.get::<MeshMaterial3d<StandardMaterial>>(part));
+            assert_eq!(w.get::<SkinnedMesh>(copy).map(|s| &s.joints), w.get::<SkinnedMesh>(part).map(|s| &s.joints), "{role:?}: the part's joints");
+        }
+        let body = w.get::<CharacterBody>(a).unwrap();
+        for &m in &body.meshes {
+            let role = w.get::<PartRole>(m).unwrap().0;
+            let want = if role == ViewRole::Body { &ws } else { &shadow };
+            assert_eq!(w.get::<RenderLayers>(m), Some(want), "{role:?}");
+        }
+        copies
+    };
+    let copies = check(&mut app);
+    let arm = copies[0];
+    assert!(app.world().get::<SkinnedMesh>(arm.0).is_some(), "the arm copy is skinned on the rig");
+    let light = app.world().get::<HeldProps>(a).unwrap().props[0].light.unwrap();
+    assert_eq!(app.world().get::<RenderLayers>(light), Some(&ws.union(&shadow)), "the torch's light slot keeps its layers");
+
+    // A host swaps the torch's material (a self-lit variant): the copy follows.
+    let lit = app.world_mut().resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial::default());
+    app.world_mut().entity_mut(copies[1].1).insert(MeshMaterial3d(lit.clone()));
+    app.update();
+    assert_eq!(app.world().get::<MeshMaterial3d<StandardMaterial>>(copies[1].0).map(|m| m.0.clone()), Some(lit));
+
+    // A held change: the old prop's copy goes with it, the new prop gets one; the arm copy stays.
+    *app.world_mut().get_mut::<Character>(a).unwrap() = player(held("sword", "hand_r", false), None);
+    run_until(&mut app, |w| w.get::<HeldProps>(a).is_some_and(|h| h.props.iter().any(|p| p.item.item == RecordId::new("sword"))));
+    app.update();
+    let after_held = check(&mut app);
+    assert_eq!(after_held[0].0, arm.0, "the outfit and its arm copy are kept");
+    assert!(app.world().get_entity(copies[1].0).is_err(), "the old prop's copy despawned");
+
+    // An outfit swap: the new arm part gets its own copy, the old one goes with its part.
+    let meshes = app.world().get::<CharacterBody>(a).unwrap().meshes.clone();
+    *app.world_mut().get_mut::<Character>(a).unwrap() = player(held("sword", "hand_r", false), Some(vec![]));
+    run_until(&mut app, |w| w.get::<CharacterBody>(a).unwrap().meshes != meshes);
+    app.update();
+    let after_swap = check(&mut app);
+    assert_ne!(after_swap[0].1, arm.1, "a new arm part");
+    assert!(app.world().get_entity(arm.0).is_err(), "the old arm copy despawned");
+
+    // Back to third person: copies gone, every part on the root's layers.
+    app.world_mut().entity_mut(a).insert(RoleLayers::world());
+    app.update();
+    assert!(view_copies(&mut app).is_empty());
+    assert!(after_swap.iter().all(|c| app.world().get_entity(c.0).is_err()));
+    assert!(after_swap.iter().all(|c| app.world().get::<RenderLayers>(c.1) == Some(&ws)));
+}
+
+/// FP-2a through travel: the copies on the worldspace's content layer, their parts on its
+/// shadow-only layer, both moving with the worldspace.
+#[cfg(feature = "world")]
+#[test]
+fn view_copies_follow_travel() {
+    use crate::{RoleLayers, ViewRole};
+    use bevy::camera::visibility::RenderLayers;
+    use sf_world_bevy::{WorldspaceLayers, WorldspaceRoot};
+    let mut app = app();
+    let worldspace = |w: &mut World, id: &str, layer: usize| {
+        w.spawn((WorldspaceRoot { id: sf_world::WorldspaceId::new(id), layer }, Transform::IDENTITY, Visibility::default())).id()
+    };
+    let outside = worldspace(app.world_mut(), "outside", 1);
+    let inside = worldspace(app.world_mut(), "inside", 3);
+    let player = Character::Record {
+        kind: "player".into(),
+        id: RecordId::new("player"),
+        state: CharacterState { worn: None, held: Some(vec![held("torch", "hand_l", true)]) },
+    };
+    let a = app.world_mut().spawn((player, RoleLayers::first_person(true), Transform::IDENTITY, Visibility::default(), ChildOf(outside))).id();
+    run_until(&mut app, |w| w.get::<CharacterBody>(a).is_some() && w.get::<HeldProps>(a).is_some_and(|h| !h.props.is_empty()));
+    app.update();
+    let layers = |app: &mut App| -> Vec<(ViewRole, Option<RenderLayers>, Option<RenderLayers>)> {
+        let copies = view_copies(app);
+        let w = app.world();
+        copies.iter().map(|&(copy, part, role)| (role, w.get::<RenderLayers>(copy).cloned(), w.get::<RenderLayers>(part).cloned())).collect()
+    };
+    let expect = |ws: WorldspaceLayers| {
+        [ViewRole::Arms, ViewRole::Held].map(|r| (r, Some(ws.content()), Some(ws.shadow_only()))).to_vec()
+    };
+    assert_eq!(layers(&mut app), expect(WorldspaceLayers::of(1)));
+    app.world_mut().entity_mut(a).insert(ChildOf(inside));
+    app.update();
+    assert_eq!(layers(&mut app), expect(WorldspaceLayers::of(3)));
 }

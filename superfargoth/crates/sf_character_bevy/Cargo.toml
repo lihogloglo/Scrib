@@ -20,6 +20,8 @@ bevy_asset.workspace = true
 # Visibility, RenderLayers, DynamicSkinnedMeshBounds.
 bevy_camera.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
+# NotShadowCaster (first-person view copies).
+bevy_light.workspace = true
 bevy_math = { workspace = true, features = ["std"] }
 # "morph": Mesh::set_morph_targets, MeshMorphWeights (heads).
 bevy_mesh = { workspace = true, features = ["morph"] }

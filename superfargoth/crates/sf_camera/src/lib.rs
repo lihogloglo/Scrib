@@ -15,6 +15,8 @@
 //! - [`first_person`]: per-move look limits around the entry yaw, eased in and out, and
 //!   `ignore_look`.
 //! - [`comfort`]: the settings list and a rotation-only trauma shake.
+//! - [`view_model`]: the first-person view model's projection (FOV scale, depth slice,
+//!   pseudo-world positions for motion vectors), mirrored by its vertex shaders.
 //!
 //! [`GroundProbe`]: sf_controller::GroundProbe
 
@@ -23,9 +25,12 @@ pub mod comfort;
 pub mod first_person;
 pub mod lockon;
 pub mod orbit;
+pub mod view_model;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_view_model;
 
 use std::f32::consts::PI;
 
@@ -38,6 +43,7 @@ pub use comfort::{ComfortSettings, ShakeParams, TraumaShake, ViewChoice};
 pub use first_person::{FirstPersonLook, LookLimits};
 pub use lockon::{BreakReason, Candidate, LockParams, LockTimers, SoftAimParams, acquire, locked_look, soft_aim, switch_target};
 pub use orbit::{ModeDistances, OrbitParams, OrbitPose, OrbitRig, RecentreParams, RigMode, Shoulder, recentre_behind};
+pub use view_model::{ViewModelProjection, fov_scale};
 
 /// A look direction in radians, same convention as `sf_action::ViewDir`: yaw about +Y (0 faces
 /// +Z), pitch up positive.

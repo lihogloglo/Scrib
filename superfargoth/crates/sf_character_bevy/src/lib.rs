@@ -33,7 +33,8 @@
 //! 4. **First-person roles** (module `roles`): a root with [`RoleLayers`]
 //!    gets its outfit split by [`ViewRole`] (one mesh per material and role)
 //!    and its parts layered per role, so first person can hide the head from
-//!    the main view while the body keeps rendering.
+//!    the main view while the body keeps rendering, and redraw arms and held
+//!    items as view copies (FP-2, [`ViewCopy`]).
 //! 5. **Held items** (module `held`): each recipe item becomes a rigid prop
 //!    on its socket joint, mounted by [`CharacterReadiness`]. A change of
 //!    held items alone (same outfit) keeps the outfit meshes.
@@ -66,7 +67,7 @@ pub use mesh::{OutfitMeshError, assembled_mesh_to_mesh, outfit_inverse_bindposes
 #[cfg(feature = "world")]
 pub use world::{CharacterPlacement, CharacterSpawner};
 pub use morph::{CharacterMorphs, MorphCurvePlayer, MorphTrack, MorphTracks, drive_character_morphs};
-pub use roles::{CharacterLayerSystems, PartRole, RoleLayer, RoleLayers, ShadowLayers};
+pub use roles::{CharacterLayerSystems, PartRole, RoleLayer, RoleLayers, ShadowLayers, ViewCopy};
 pub use sf_character::ViewRole;
 
 use std::collections::{HashMap, HashSet};
@@ -464,7 +465,7 @@ impl Plugin for SfCharacterPlugin {
             )
             .add_systems(PostUpdate, drive_character_morphs.after(AnimSystems::Apply))
             .configure_sets(PostUpdate, CharacterLayerSystems.before(bevy_camera::visibility::VisibilitySystems::CheckVisibility))
-            .add_systems(PostUpdate, roles::sync_role_layers.in_set(CharacterLayerSystems));
+            .add_systems(PostUpdate, (roles::sync_role_layers, roles::follow_view_copies).chain().in_set(CharacterLayerSystems));
         #[cfg(feature = "world")]
         app.add_systems(
             PostUpdate,

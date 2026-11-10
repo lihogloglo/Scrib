@@ -1740,3 +1740,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (first person FP-2, research): the view model is one render, not a second camera: a `NotShadowCaster`
   view copy of arms and held items on `W`, own FOV and a near depth slice in the vertex stage, true world position for
   lighting; the role parts stay on `S`. A second Bevy 0.20 camera re-renders the sun cascades per view (first-person.md).
+- 2026-11-10 (first person FP-2a): a view copy is a child entity of its role part sharing mesh, material and the
+  rig's joint entities (no second rig; despawns with the part); the view model is a setting
+  (`ComfortSettings::view_model`, off until FP-2b's material) and its math lives Bevy-free in `sf_camera::view_model`.
