@@ -55,3 +55,23 @@ in, `EffectMessage` and `EffectRequestMessage` out; `EffectSystems::{Commands, T
 tick with stats 0.55 ms (dev profile, workspace crates at opt-level 1; the 0.03 ms budget is for release on the
 target laptop). Known issue (E1, logged): a temporary `Pool Fortify` on a `KeepRatio` pool (Morrowind magicka,
 fatigue) counts twice: the modifier rebases the current by ratio, then `PoolAdjust` adds the magnitude.
+
+## As built (E4b)
+
+`sf_effects::save` (`EffectsSave { tick, active, book }` with `capture`, `is_empty`, `restore(defs, sources, now,
+ids)`: `started` rebased by age, cooldowns by ticks left (an expired one dropped), unknown effects and book sources
+dropped into `EffectsLoadReport`, the selection cleared with its source, `ids.next` moved past restored instances,
+`timed` recomputed; `reregister` keeps the `AddModifier` ops of `step::start_ops`, an absorb's caster side under the
+caster). `sf_effects_bevy`: `Effects::to_save(tick)` (`None` when empty), `Effects::restore(owner, save, LoadTables,
+now, ids)` (warns drift, returns the modifiers). `sf_save_bevy`: `CharacterSave.effects`, `CHARACTER_VERSION` 4,
+`legacy::v3` + typed step, `sections::effects` / `EffectsWorldSave`, goldens `sf.character.v4.json`,
+`sf.effects.v1.json`, `character-v4.sfsave` (the current golden; `character-v3.sfsave` loads through the step).
+Game: `mw_rpg_bevy::effects` (`EFFECTS_BLOB`, `EffectLoad` system param, `restore_in_world`, `saved_effects`,
+`write_effects`, `player_effects_save`); `stats::load_sheet(.., modifiers)` applies the owner's before settle,
+`restore_player_sheet(.., effects)`, attach and unload/persist read and write the blob; `mw_saves_bevy` declares the
+blob, registers `sf/effects` over `EffectIds`, fills `CharacterSave.effects`, clears `PendingEffectOut` on load.
+Tests: sf_effects 2 (round trip with fortify + drain + pool fortify: sheet bytes, values and remaining durations
+equal, same expiry; drift and rebase), sf_save_bevy 3 (codec round trip, v3 golden through the step, pre-effects
+save loads with none), mw_saves_bevy 1 (game path, synthetic records: player and creature).
+An NPC's empty effects are written over an older blob (the overlay has no blob removal), so ended effects do not
+come back.

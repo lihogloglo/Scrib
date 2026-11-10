@@ -10,20 +10,43 @@
 //! - **Clock** ([`feed_clock`]): `EffectClock` follows the dialogue's game clock (`DaysPassed`,
 //!   `GameHour`, [`crate::dialogue::Rpg::game_time`]) every fixed tick, until ROADMAP 1.17's
 //!   single host clock replaces both. Durations count fixed ticks, not this clock.
+//! - **Saves** (effects.md "Saves"): the player's in its `CharacterSave` ([`player_effects_save`],
+//!   restored with the sheet by `stats::restore_player_sheet`), an NPC's or creature's in the
+//!   placement's [`EFFECTS_BLOB`] beside its stats blob, written on unload and into the save's
+//!   overlay copy, read when the placement spawns again ([`EffectLoad`]); timers resume where
+//!   they stopped (no time passes while unloaded). Either way the restored set re-registers its
+//!   modifiers on the loaded sheet before it settles (stats.md S8 load order): the sheet and its
+//!   effects come back in one step, at `CHARACTERS` order for the player, at spawn for NPCs.
 
 use std::sync::Arc;
 
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemParam;
 use bevy_log::prelude::*;
 use mw_effects::MwEffects;
-use sf_effects_bevy::sf_effects::{EffectRules, GameMinutes};
+use mw_game_core::player::PlayerCharacter;
+use sf_character_bevy::CharacterPlacement;
+use sf_effects_bevy::sf_effects::{EffectRules, EffectsSave, GameMinutes};
 use sf_effects_bevy::{
-    EffectClock, EffectRulesRes, EffectSystems, EffectTableRes, SfEffectsPlugin,
+    EffectClock, EffectIds, EffectRulesRes, EffectSystems, EffectTableRes, Effects, LoadTables,
+    SfEffectsPlugin, SourceTableRes, stat_commands,
 };
 use sf_records::RecordDb;
+use sf_stats_bevy::sf_stats::{Cause, StatOp, StatOwner};
+use sf_stats_bevy::{StatCommand, StatTableRes, StatTick};
+use sf_world::PlacementOverlay;
 
 use crate::dialogue::Rpg;
+
+/// Owner name of the per-placement effects blob (`PlacementOverlay::set_state`): a postcard
+/// [`EffectsSave`].
+pub const EFFECTS_BLOB: &str = "effects";
+/// Its schema version (`sf_save_bevy::sections::BlobVersions`).
+pub const EFFECTS_BLOB_VERSION: u32 = 1;
+
+/// Re-registered modifiers: `(owner, op, cause)`.
+pub type Modifiers = Vec<(StatOwner, StatOp, Cause)>;
 
 /// The effects layer over `db`'s MGEF records (after the stats setup).
 pub fn add(app: &mut App, db: &RecordDb) {
@@ -55,6 +78,104 @@ pub fn feed_clock(rpg: Option<Res<Rpg>>, mut clock: ResMut<EffectClock>) {
             clock.0 = now;
         }
     }
+}
+
+/// What restoring a character's effects reads and writes, as a system parameter (the NPC attach).
+#[derive(SystemParam)]
+pub struct EffectLoad<'w> {
+    defs: Option<Res<'w, EffectTableRes>>,
+    sources: Res<'w, SourceTableRes>,
+    stats: Option<Res<'w, StatTableRes>>,
+    tick: Res<'w, StatTick>,
+    ids: ResMut<'w, EffectIds>,
+    out: MessageWriter<'w, StatCommand>,
+}
+
+impl EffectLoad<'_> {
+    /// `owner`'s effects from `save` and the modifiers for its own sheet; other owners' modifiers
+    /// (an absorb's caster side) go out as `StatCommand`s. No save, or no tables: none active.
+    pub fn restore(&mut self, owner: StatOwner, save: Option<EffectsSave>) -> (Effects, Modifiers) {
+        let (Some(save), Some(defs), Some(stats)) = (save, &self.defs, &self.stats) else {
+            return (Effects::new(owner), Vec::new());
+        };
+        let tables = LoadTables {
+            defs: &defs.0,
+            sources: &self.sources.0,
+            stats: &stats.0,
+        };
+        let (effects, ops) = Effects::restore(owner, save, tables, self.tick.0, &mut self.ids.0);
+        let (own, others): (Modifiers, Modifiers) =
+            ops.into_iter().partition(|(o, _, _)| *o == owner);
+        self.out.write_batch(stat_commands(others));
+        (effects, own)
+    }
+}
+
+/// [`EffectLoad::restore`] from exclusive world access (the character section's `set`).
+pub fn restore_in_world(
+    world: &mut World,
+    owner: StatOwner,
+    save: Option<EffectsSave>,
+) -> (Effects, Modifiers) {
+    if !world.contains_resource::<EffectIds>() {
+        return (Effects::new(owner), Vec::new());
+    }
+    let mut state = bevy_ecs::system::SystemState::<EffectLoad>::new(world);
+    let restored = match state.get_mut(world) {
+        Ok(mut load) => load.restore(owner, save),
+        Err(e) => {
+            warn!("effects: {owner:?}: not restored: {e}");
+            (Effects::new(owner), Vec::new())
+        }
+    };
+    state.apply(world);
+    restored
+}
+
+/// The placement's saved effects, if its blob decodes.
+pub fn saved_effects(
+    overlay: &PlacementOverlay,
+    placement: &CharacterPlacement,
+) -> Option<EffectsSave> {
+    let bytes = overlay.state(placement.0, EFFECTS_BLOB)?;
+    postcard::from_bytes(bytes)
+        .map_err(|e| {
+            warn!(
+                "effects: placement {:032x}: bad {EFFECTS_BLOB} blob: {e}",
+                placement.0.0
+            );
+        })
+        .ok()
+}
+
+/// Writes a character's effects into `overlay` as its placement's [`EFFECTS_BLOB`] at fixed tick
+/// `tick`: when something is active or the book is not empty, or over an older blob (so effects
+/// that ended since do not come back; the overlay has no blob removal).
+pub fn write_effects(
+    overlay: &mut PlacementOverlay,
+    placement: &CharacterPlacement,
+    effects: &Effects,
+    tick: u32,
+) {
+    let save = match effects.to_save(tick) {
+        Some(save) => save,
+        None if overlay.state(placement.0, EFFECTS_BLOB).is_some() => EffectsSave::default(),
+        None => return,
+    };
+    match postcard::to_stdvec(&save) {
+        Ok(bytes) => overlay.set_state(placement.0, EFFECTS_BLOB, bytes),
+        Err(e) => warn!("effects: {:?} not saved: {e}", effects.owner),
+    }
+}
+
+/// The player's effects for its `CharacterSave` (`None`: nothing active, an empty book, or no
+/// effects).
+pub fn player_effects_save(world: &World, key: sf_rpg::PlayerKey) -> Option<EffectsSave> {
+    let tick = world.get_resource::<StatTick>().map_or(0, |t| t.0);
+    let mut q = world.try_query::<(&PlayerCharacter, &Effects)>()?;
+    q.iter(world)
+        .find(|(p, _)| p.key == key)
+        .and_then(|(_, fx)| fx.to_save(tick))
 }
 
 #[cfg(test)]

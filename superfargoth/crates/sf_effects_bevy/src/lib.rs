@@ -27,6 +27,9 @@
 //! only while the simulation runs; `StatTick` numbers them); power recharges read
 //! [`EffectClock`], world minutes the content keeps current.
 //!
+//! **Saves** (effects.md "Saves"): [`Effects::to_save`] and [`Effects::restore`]; the content
+//! puts the save in its character and NPC records and the counter ([`EffectIds`]) in the world.
+//!
 //! Presentation (VFX, sounds, HUD icons) reads [`Effects`] and [`EffectMessage`]s in `Update`.
 
 use std::collections::HashMap;
@@ -39,7 +42,7 @@ use bevy_time::Time;
 pub use sf_effects;
 use sf_effects::{
     ActiveSet, ActorRef, EffectCtx, EffectEnv, EffectEvent, EffectIdAlloc, EffectOp, EffectOut,
-    EffectRequest, EffectRules, EffectTable, GameMinutes, SourceTable, SpellBook,
+    EffectRequest, EffectRules, EffectTable, EffectsSave, GameMinutes, SourceTable, SpellBook,
 };
 use sf_stats_bevy::sf_stats::{Cause, StatOp, StatOwner};
 use sf_stats_bevy::{StatCommand, StatSystems, StatTableRes, StatTick, Stats};
@@ -85,6 +88,51 @@ impl Effects {
             book: SpellBook::new(),
         }
     }
+
+    /// This character's save at fixed tick `tick` (effects.md "Saves"); `None` when nothing is
+    /// active and the book is empty.
+    pub fn to_save(&self, tick: u32) -> Option<EffectsSave> {
+        let save = EffectsSave::capture(&self.active, &self.book, tick);
+        (!save.is_empty()).then_some(save)
+    }
+
+    /// A loaded character's effects at fixed tick `now`, and the modifiers its active set holds
+    /// ([`sf_effects::reregister`]): the content applies the owner's to its sheet while the sheet
+    /// is still in building mode, before it settles (stats.md "Saves", load order), and sends the
+    /// rest (an absorb's caster side) as [`StatCommand`]s ([`stat_commands`]). Drift is warned.
+    pub fn restore(
+        owner: ActorRef,
+        save: EffectsSave,
+        tables: LoadTables<'_>,
+        now: u32,
+        ids: &mut EffectIdAlloc,
+    ) -> (Self, Vec<(StatOwner, StatOp, Cause)>) {
+        let (active, book, report) = save.restore(tables.defs, tables.sources, now, ids);
+        if !report.is_empty() {
+            warn!(
+                "effects: {owner:?}: dropped effects {:?} and book sources {:?}, unknown to this mod list",
+                report.dropped_effects, report.dropped_sources
+            );
+        }
+        let mut ops = Vec::new();
+        sf_effects::reregister(tables.defs, tables.stats, &active, owner, now, &mut ops);
+        (
+            Self {
+                owner,
+                active,
+                book,
+            },
+            ops,
+        )
+    }
+}
+
+/// The tables a restore reads.
+#[derive(Clone, Copy, Debug)]
+pub struct LoadTables<'a> {
+    pub defs: &'a EffectTable,
+    pub sources: &'a SourceTable,
+    pub stats: &'a sf_stats_bevy::sf_stats::StatTable,
 }
 
 /// Ops for one character's effects (net rule 2: the host turns validated intents into these).
@@ -350,7 +398,7 @@ pub fn stat_commands(
                     && last.cause == cause.kind
                     && last.source == cause.source =>
             {
-                last.ops.push(op)
+                last.ops.push(op);
             }
             _ => out.push(StatCommand {
                 owner,

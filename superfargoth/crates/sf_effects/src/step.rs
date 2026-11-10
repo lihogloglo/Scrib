@@ -138,6 +138,32 @@ pub fn tick(defs: &EffectTable, stats: &StatTable, set: &mut ActiveSet, ctx: &Ef
     set.timed = step.timed(set);
 }
 
+/// Every running effect's start-stage ops in `set`, as its landing emitted them (target side and
+/// an absorb's caster side), for [`crate::reregister`] to filter.
+pub(crate) fn start_ops(
+    defs: &EffectTable,
+    stats: &StatTable,
+    set: &ActiveSet,
+    target: ActorRef,
+    tick: u32,
+    f: &mut impl FnMut(ActorRef, StatOp, Cause),
+) {
+    let src_defs = SourceTable::default();
+    let step = Step { defs, stats, src_defs: &src_defs, target, tick, dt: 0.0 };
+    let mut out = EffectOut::default();
+    for src in &set.sources {
+        let who = Owner::from(src);
+        for e in src.effects.iter().filter(|e| e.phase == Phase::Running) {
+            if let Some(def) = defs.get(&e.effect) {
+                step.emit(who, def, e, Stage::Start(e.magnitude), &mut out);
+            }
+        }
+    }
+    for (owner, op, cause) in out.stat_ops {
+        f(owner, op, cause);
+    }
+}
+
 /// `round(seconds / dt)`; float-to-int `as` saturates (negative and NaN give 0).
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "saturating float-to-int cast")]
 fn ticks_for(seconds: f32, dt: f32) -> u32 {

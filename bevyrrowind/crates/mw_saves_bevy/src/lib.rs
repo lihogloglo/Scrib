@@ -15,6 +15,9 @@
 //!     gameplay body (`ActionState`, `Locomotion`; restored through `RestoreBody`), the
 //!     inventory (`RpgState::pc`), and an `mw` extension blob ([`PlayerExt`]: first / third
 //!     person).
+//!   - Effects: the player's in its `CharacterSave` (`effects`, v4), an NPC's or creature's in
+//!     the overlay `effects` blob beside its `stats` blob (`mw_rpg_bevy::effects`); `sf/effects`
+//!     holds the effect instance counter. Older saves load with none active.
 //!   - `sf/services`: merchant purses (`Rpg::services`; placement-id actors only). Old saves
 //!     without it load with none: each merchant restocks to its base on its next open. Open
 //!     trade sessions are never saved and close on load.
@@ -177,6 +180,13 @@ pub fn register(app: &mut App) {
     app.on_load_reset(close_menus);
     // NPC and creature sheets ride the overlay (`mw_rpg_bevy::stats`).
     app.world_mut().resource_mut::<sections::BlobVersions>().declare(mw_rpg_bevy::stats::STATS_BLOB, mw_rpg_bevy::stats::STATS_BLOB_VERSION);
+    // Their effects too (`mw_rpg_bevy::effects`); effect output in flight is dropped on load.
+    app.world_mut().resource_mut::<sections::BlobVersions>().declare(mw_rpg_bevy::effects::EFFECTS_BLOB, mw_rpg_bevy::effects::EFFECTS_BLOB_VERSION);
+    app.on_load_reset(|w: &mut World| {
+        if let Some(mut pending) = w.get_resource_mut::<sf_effects_bevy::PendingEffectOut>() {
+            pending.0.clear();
+        }
+    });
     app.add_save_section(sections::overlay(
         snapshot_overlay,
         set_overlay,
@@ -219,6 +229,14 @@ pub fn register(app: &mut App) {
                 ww.0 = v.weather;
             }
             restore_surface(w, v.surface.as_ref());
+        },
+    ))
+    .add_save_section(sections::effects(
+        |w| w.get_resource::<sf_effects_bevy::EffectIds>().map(|ids| sections::EffectsWorldSave { ids: ids.0 }),
+        |w, v| {
+            if let Some(mut ids) = w.get_resource_mut::<sf_effects_bevy::EffectIds>() {
+                ids.0 = v.ids;
+            }
         },
     ))
     .add_save_section(sections::characters(host_character, restore_characters))
@@ -320,6 +338,7 @@ fn host_character(world: &World) -> Vec<sections::CharacterSave> {
         body: player_body(world),
         rpg: rpg.state.pc.clone(),
         stats: mw_rpg_bevy::stats::player_sheet_save(world, HOST_KEY),
+        effects: mw_rpg_bevy::effects::player_effects_save(world, HOST_KEY),
         ext,
     }]
 }
@@ -330,7 +349,7 @@ fn restore_characters(world: &mut World, all: Vec<sections::CharacterSave>) {
     if let Some(mut rpg) = world.get_resource_mut::<Rpg>() {
         rpg.state.pc = host.rpg;
     }
-    mw_rpg_bevy::stats::restore_player_sheet(world, HOST_KEY, host.stats.as_ref());
+    mw_rpg_bevy::stats::restore_player_sheet(world, HOST_KEY, host.stats.as_ref(), host.effects.as_ref());
     let ext =host.ext.get(OWNER).filter(|b| b.version == PLAYER_EXT_VERSION).and_then(|b| sf_save_bevy::sf_save::decode::<PlayerExt>(&b.bytes).ok());
     if host.location.worldspace.as_str().is_empty() {
         return;
@@ -749,7 +768,118 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// Effects through the game's save path, no install (effects.md "Saves", E4): the player's
+    /// fortify and drain in its `CharacterSave`, a creature's fortify in its overlay `effects`
+    /// blob; after a load the modified values and the remaining durations are equal and the
+    /// effects still expire on time; a character section without effects (a v3 save) and a
+    /// placement without the blob load with none active.
+    #[test]
+    #[allow(clippy::float_cmp, clippy::too_many_lines, reason = "exact values: saves are logic; one round trip")]
+    fn a_fortify_and_a_drain_survive_a_save_round_trip() {
+        use std::time::Duration;
+
+        use bevy_ecs::system::RunSystemOnce;
+        use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
+        use sf_character_bevy::{Character, CharacterPlacement};
+        use sf_effects_bevy::sf_effects::{ArgRef, EffectEntry, EffectOp, InstanceFlags, Range, RollSeed, SourceClass, SourceRef};
+        use sf_effects_bevy::{EffectCommand, EffectIds, Effects};
+        use sf_stats_bevy::sf_stats::StatOwner;
+        use sf_stats_bevy::{StatTableRes, Stats};
+
+        let root = temp_root("effects");
+        let db = mw_rpg_bevy::effects::test_records::db(&[("rat", 20)]);
+        let mut app = app(root.clone(), Rpg::new(db.clone()).unwrap());
+        let step = |app: &mut App, seconds: f64| {
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(seconds)));
+        };
+        app.add_plugins(TimePlugin).insert_resource(Time::<Fixed>::from_hz(60.0));
+        step(&mut app, 1.0 / 60.0);
+        mw_rpg_bevy::stats::add(&mut app, Some(db));
+        app.update();
+        let rat_at = PlacementId(0xF00 << 64 | 0x2C);
+        let spawn_rat = |app: &mut App| {
+            let e = app.world_mut().spawn((Character::record("CREA", RecordId::new("rat")), CharacterPlacement(rat_at))).id();
+            app.world_mut().run_system_once(mw_rpg_bevy::stats::attach_actor_stats).unwrap();
+            app.world_mut().flush();
+            e
+        };
+        let rat = spawn_rat(&mut app);
+        let (hero, rat_owner) = (StatOwner::Player(HOST_KEY), StatOwner::Actor(ActorKey(rat_at.0)));
+
+        let fortify = sf_effects_bevy::sf_effects::EffectKey::new("FortifyAttribute");
+        let drain = sf_effects_bevy::sf_effects::EffectKey::new("DrainAttribute");
+        let entry = |effect: &sf_effects_bevy::sf_effects::EffectKey, seconds: f32, magnitude: f32| EffectEntry {
+            effect: effect.clone(),
+            arg: Some(ArgRef::Stat("strength".into())),
+            range: Range::OnSelf,
+            area: 0.0,
+            duration: seconds,
+            magnitude: (magnitude, magnitude),
+        };
+        let inflict = |record: &str, entries: Vec<EffectEntry>| EffectOp::Inflict {
+            source: SourceRef { record: RecordId::new(record), item: None },
+            class: SourceClass::Consumable,
+            caster: None,
+            entries: entries.into_iter().collect(),
+            flags: InstanceFlags::default(),
+            rolls: RollSeed(3),
+        };
+        app.world_mut().write_message(EffectCommand::new(hero, vec![inflict("p_hero", vec![entry(&fortify, 2.0, 10.0), entry(&drain, 1.0, 5.0)])]));
+        app.world_mut().write_message(EffectCommand::new(rat_owner, vec![inflict("p_rat", vec![entry(&fortify, 2.0, 7.0)])]));
+        for _ in 0..10 {
+            app.update();
+        }
+
+        let table = app.world().resource::<StatTableRes>().0.clone();
+        let str_idx = table.find("strength").unwrap();
+        let read = |app: &mut App, owner: StatOwner| {
+            let mut q = app.world_mut().query::<(&Stats, &Effects)>();
+            let (s, fx) = q.iter(app.world()).find(|(s, _)| s.owner == owner).expect("the character");
+            let left: Vec<_> = fx.active.sources().iter().flat_map(|s| &s.effects).map(|e| e.duration.map(|d| d - e.elapsed)).collect();
+            (s.view(&table).modified(str_idx), left)
+        };
+        let (hero_before, rat_before) = (read(&mut app, hero), read(&mut app, rat_owner));
+        let base_str = read(&mut app, hero).0 - 5.0;
+        assert_eq!(rat_before.0, 27.0);
+        assert_eq!(hero_before.1, [Some(110), Some(50)]);
+        let ids_before = *app.world().resource::<EffectIds>();
+
+        // Save with time stopped, then a fresh state: new player, no creature, empty overlay.
+        step(&mut app, 0.0);
+        save(&mut app);
+        restore_player_sheet_fresh(&mut app);
+        assert!(app.world_mut().query::<&Effects>().iter(app.world()).all(|fx| fx.owner != hero || fx.active.is_empty()));
+        app.world_mut().despawn(rat);
+        app.insert_resource(WorldOverlay::default()).insert_resource(EffectIds::default());
+        load(&mut app);
+        assert!(app.world().resource::<WorldOverlay>().0.read().unwrap().state(rat_at, mw_rpg_bevy::effects::EFFECTS_BLOB).is_some());
+        spawn_rat(&mut app);
+        assert_eq!(read(&mut app, hero), hero_before, "the player's modified Strength and remaining durations");
+        assert_eq!(read(&mut app, rat_owner), rat_before, "the creature's, from its overlay blob");
+        assert_eq!(*app.world().resource::<EffectIds>(), ids_before, "the counter is back");
+
+        // Time runs again: the drain ends 50 ticks on, the fortifies 110.
+        step(&mut app, 1.0 / 60.0);
+        for _ in 0..49 {
+            app.update();
+        }
+        assert_eq!(read(&mut app, hero).0, base_str + 5.0);
+        app.update();
+        assert_eq!(read(&mut app, hero).0, base_str + 10.0, "the drain ended on time");
+        for _ in 0..60 {
+            app.update();
+        }
+        assert_eq!((read(&mut app, hero).0, read(&mut app, rat_owner).0), (base_str, 20.0), "the fortifies ended on time");
+
+        // A v3 character section (no effects) loads with none active.
+        let mut old = host_character(app.world());
+        old[0].effects = None;
+        restore_characters(app.world_mut(), old);
+        assert!(read(&mut app, hero).1.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn restore_player_sheet_fresh(app: &mut App) {
-        mw_rpg_bevy::stats::restore_player_sheet(app.world_mut(), HOST_KEY, None);
+        mw_rpg_bevy::stats::restore_player_sheet(app.world_mut(), HOST_KEY, None, None);
     }
 }

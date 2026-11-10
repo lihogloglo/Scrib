@@ -13,7 +13,8 @@
 //!   `ActorKey` = its placement id ([`crate::dialogue::key`]). A placement with an overlay
 //!   [`STATS_BLOB`] loads it ([`load_sheet`]); else the record's init ops.
 //! - **Unload and save** (save.md "One path for unload and save"): [`ActorStatsSpawner`] writes a
-//!   changed sheet (`changed_since_init`, stats.md "Saves") to the overlay when its placement
+//!   changed sheet (`changed_since_init`, stats.md "Saves") and its effects
+//!   ([`crate::effects::EFFECTS_BLOB`]) to the overlay when its placement
 //!   leaves R0, never on a reload's discard; [`persist_actor_stats`] writes the same into the
 //!   save's overlay copy. An untouched NPC re-initialises from its record.
 //! - **Inputs**: `is_player`; `carried` is 0 until inventories have weight (TODO(stats S5+):
@@ -32,8 +33,9 @@ use sf_records::{RecordDb, RecordId};
 use sf_stats_bevy::sf_stats::{
     ActorKey, ApplyCtx, Cause, CauseKind, Inputs, Rules, Settle, Sheet, SheetSave, StatOp, StatOwner,
 };
+use sf_effects_bevy::sf_effects::EffectsSave;
 use sf_effects_bevy::{EffectSystems, Effects};
-use sf_stats_bevy::{SfStatsPlugin, StatRules, StatSystems, StatTableRes, Stats};
+use sf_stats_bevy::{SfStatsPlugin, StatRules, StatSystems, StatTableRes, StatTick, Stats};
 use sf_world::{IndexedPlacement, PlacementOverlay};
 use sf_world_bevy::{ActivateCx, PlacementSpawner, SpawnCx, WorldOverlay};
 use tes3::esp::{Creature, Npc};
@@ -157,8 +159,17 @@ fn new_sheet(stats: &MwStats, rules: &Rules, owner: StatOwner, inputs: &Inputs, 
 
 /// A saved sheet back (stats.md "Saves", load order): keys the save lacks take their init
 /// values (`ops_for_missing` of `init`), unknown keys are dropped and reported, sources re-add
-/// their modifiers (none yet: equipment and the effect runtime come later), then one settle.
-pub fn load_sheet(t: &MwTable, rules: &Rules, owner: StatOwner, save: &SheetSave, init: &[StatOp], inputs: &Inputs) -> Sheet {
+/// their modifiers (`modifiers`: the effect runtime's, [`crate::effects::restore`]; ops for other
+/// owners are skipped; equipment comes later), then one settle.
+pub fn load_sheet(
+    t: &MwTable,
+    rules: &Rules,
+    owner: StatOwner,
+    save: &SheetSave,
+    init: &[StatOp],
+    inputs: &Inputs,
+    modifiers: &[(StatOwner, StatOp, Cause)],
+) -> Sheet {
     let (mut sheet, report) = Sheet::from_save(&t.table, save);
     if !report.dropped.is_empty() {
         warn!("stats: {owner:?}: {} saved stats unknown to this mod list, dropped", report.dropped.len());
@@ -168,17 +179,26 @@ pub fn load_sheet(t: &MwTable, rules: &Rules, owner: StatOwner, save: &SheetSave
         let ctx = ApplyCtx { owner, cause: Cause { kind: CauseKind::Load, source: None, tick: 0 }, inputs };
         sf_stats_bevy::sf_stats::apply(&t.table, rules, &mut sheet, &missing, &ctx, &mut Vec::new());
     }
+    for (_, op, cause) in modifiers.iter().filter(|(o, _, _)| *o == owner) {
+        let ctx = ApplyCtx { owner, cause: *cause, inputs };
+        if sf_stats_bevy::sf_stats::apply(&t.table, rules, &mut sheet, std::slice::from_ref(op), &ctx, &mut Vec::new()) > 0 {
+            warn!("stats: {owner:?}: a re-registered modifier was rejected: {op:?}");
+        }
+    }
     sheet.settle(&t.table, rules, inputs, Settle::Loaded);
     sheet
 }
 
-/// `Stats` for every new NPC or creature character (see the module docs).
+/// `Stats` and `Effects` for every new NPC or creature character (see the module docs). A
+/// placement with saved stats loads them, with its saved effects' modifiers re-registered
+/// before the sheet settles.
 #[allow(clippy::needless_pass_by_value, clippy::type_complexity)] // system parameters
 pub fn attach_actor_stats(
     mut commands: Commands,
     stats: Res<MwStats>,
     rules: Res<StatRules>,
     overlay: Option<Res<WorldOverlay>>,
+    mut fx: crate::effects::EffectLoad,
     added: Query<(Entity, &Character, Option<&CharacterPlacement>), (Added<Character>, Without<Stats>, Without<PlayerAvatar>)>,
 ) {
     for (e, character, placement) in &added {
@@ -186,12 +206,20 @@ pub fn attach_actor_stats(
         let Some(init) = stats.actor_ops(id) else { continue };
         let owner = StatOwner::Actor(crate::dialogue::key(e, placement));
         let inputs = Inputs::default();
-        let saved = placement.zip(overlay.as_deref()).and_then(|(p, o)| saved_sheet(&o.0.read().unwrap_or_else(PoisonError::into_inner), p));
-        let sheet = match saved {
-            Some(save) => load_sheet(&stats.table, &rules.0, owner, &save, &init, &inputs),
-            None => new_sheet(&stats, &rules.0, owner, &inputs, &init),
+        let (saved, saved_fx) = placement.zip(overlay.as_deref()).map_or((None, None), |(p, o)| {
+            let o = o.0.read().unwrap_or_else(PoisonError::into_inner);
+            (saved_sheet(&o, p), crate::effects::saved_effects(&o, p))
+        });
+        let (sheet, effects) = if let Some(save) = saved {
+            let (effects, modifiers) = fx.restore(owner, saved_fx);
+            (load_sheet(&stats.table, &rules.0, owner, &save, &init, &inputs, &modifiers), effects)
+        } else {
+            if saved_fx.is_some() {
+                warn!("effects: {owner:?} has saved effects but no saved sheet; dropped");
+            }
+            (new_sheet(&stats, &rules.0, owner, &inputs, &init), Effects::new(owner))
         };
-        commands.entity(e).try_insert((Stats::new(owner, sheet, inputs), Effects::new(owner)));
+        commands.entity(e).try_insert((Stats::new(owner, sheet, inputs), effects));
     }
 }
 
@@ -212,13 +240,18 @@ fn write_sheet(overlay: &mut PlacementOverlay, table: &StatTableRes, placement: 
     }
 }
 
-/// Saving (save.md "One path for unload and save"): every resident actor's changed sheet into
-/// `overlay` (the snapshot's copy), as its deactivation would, without removing anything.
+/// Saving (save.md "One path for unload and save"): every resident actor's changed sheet and
+/// its effects into `overlay` (the snapshot's copy), as its deactivation would, without removing
+/// anything.
 pub fn persist_actor_stats(world: &World, overlay: &mut PlacementOverlay) {
     let Some(table) = world.get_resource::<StatTableRes>() else { return };
-    let Some(mut q) = world.try_query::<(&CharacterPlacement, &Stats)>() else { return };
-    for (placement, stats) in q.iter(world) {
+    let tick = world.get_resource::<StatTick>().map_or(0, |t| t.0);
+    let Some(mut q) = world.try_query::<(&CharacterPlacement, &Stats, Option<&Effects>)>() else { return };
+    for (placement, stats, effects) in q.iter(world) {
         write_sheet(overlay, table, placement, stats);
+        if let Some(effects) = effects {
+            crate::effects::write_effects(overlay, placement, effects, tick);
+        }
     }
 }
 
@@ -229,25 +262,31 @@ pub fn player_sheet_save(world: &World, key: sf_rpg::PlayerKey) -> Option<SheetS
     q.iter(world).find(|(p, _)| p.key == key).map(|(_, s)| s.sheet.to_save(&table.0))
 }
 
-/// The player's sheet from a loaded `CharacterSave`: the saved one, or (a save from before
-/// stats, `None`) a new one from the `player` record, the new-game path (stats.md "Saves").
-pub fn restore_player_sheet(world: &mut World, key: sf_rpg::PlayerKey, save: Option<&SheetSave>) {
+/// The player's sheet and effects from a loaded `CharacterSave`: the saved sheet with the saved
+/// effects' modifiers re-registered before it settles, or (a save from before stats, `None`) a
+/// new sheet from the `player` record, the new-game path (stats.md "Saves"); no saved effects
+/// (a v3 save, or nothing was active) is an empty set and book (TODO(effects adapter A3): the
+/// init hook builds the book from race, birthsign and class spells).
+pub fn restore_player_sheet(world: &mut World, key: sf_rpg::PlayerKey, save: Option<&SheetSave>, effects: Option<&EffectsSave>) {
     let (Some(stats), Some(rules)) = (world.get_resource::<MwStats>().cloned(), world.get_resource::<StatRules>().cloned()) else { return };
     let owner = StatOwner::Player(key);
     let init = stats.player_ops();
     let inputs = player_inputs();
-    let sheet = match save {
-        Some(save) => load_sheet(&stats.table, &rules.0, owner, save, &init, &inputs),
-        None => new_sheet(&stats, &rules.0, owner, &inputs, &init),
+    let (sheet, fx) = match save {
+        Some(save) => {
+            let (fx, modifiers) = crate::effects::restore_in_world(world, owner, effects.cloned());
+            (load_sheet(&stats.table, &rules.0, owner, save, &init, &inputs, &modifiers), fx)
+        }
+        None => (new_sheet(&stats, &rules.0, owner, &inputs, &init), Effects::new(owner)),
     };
     let found = world.try_query::<(Entity, &PlayerCharacter)>().and_then(|mut q| q.iter(world).find(|(_, p)| p.key == key).map(|(e, _)| e));
-    let character = Stats::new(owner, sheet, inputs);
+    let character = (Stats::new(owner, sheet, inputs), fx);
     match found {
         Some(e) => {
             world.entity_mut(e).insert(character);
         }
         None => {
-            world.spawn((Name::new("player character"), PlayerCharacter { key }, character, Effects::new(owner)));
+            world.spawn((Name::new("player character"), PlayerCharacter { key }, character));
         }
     }
 }
@@ -275,6 +314,12 @@ impl PlacementSpawner for ActorStatsSpawner {
         else {
             return;
         };
-        write_sheet(&mut overlay.0.write().unwrap_or_else(PoisonError::into_inner), table, &CharacterPlacement(placement.placement.id), stats);
+        let mut overlay = overlay.0.write().unwrap_or_else(PoisonError::into_inner);
+        let p = CharacterPlacement(placement.placement.id);
+        write_sheet(&mut overlay, table, &p, stats);
+        if let Some(effects) = world.get::<Effects>(e) {
+            let tick = world.get_resource::<StatTick>().map_or(0, |t| t.0);
+            crate::effects::write_effects(&mut overlay, &p, effects, tick);
+        }
     }
 }

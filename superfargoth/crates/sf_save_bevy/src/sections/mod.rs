@@ -21,6 +21,7 @@ pub mod script;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 use sf_ai::AiSave;
+use sf_effects::EffectIdAlloc;
 use sf_rpg::WorldRpg;
 use sf_rpg::service::WorldServices;
 use sf_save::{Family, SectionKey};
@@ -57,12 +58,16 @@ pub const AI_VERSION: u32 = sf_ai::AI_VERSION;
 /// `sf_rpg::service` ([`sf_rpg::service::SERVICES_SECTION`]).
 pub const SERVICES: &str = "services";
 pub const SERVICES_VERSION: u32 = sf_rpg::service::SERVICES_VERSION;
+/// `sf/effects`: the world's effect state (effects.md "Saves": the host's instance counter).
+pub const EFFECTS: &str = "effects";
+pub const EFFECTS_VERSION: u32 = 1;
 /// Family of `sf/character/<player key>`.
 pub const CHARACTER: &str = "character";
+/// v4: `effects` (effects.md E4); v3 is frozen in [`character::legacy::v3`].
 /// v3: `stats` (the stats sheet, stats.md S4); v2 is frozen in [`character::legacy::v2`]: v2
 /// `sf_action::ActionState` gained `forced` and `lock`, and its `ModeState` gained `moveset`
 /// (combat C1a and lock-on); v1 is frozen in [`character::legacy::v1`].
-pub const CHARACTER_VERSION: u32 = 3;
+pub const CHARACTER_VERSION: u32 = 4;
 /// Family of `<mod id>/script`.
 pub const SCRIPT: &str = "script";
 pub const SCRIPT_VERSION: u32 = 1;
@@ -77,6 +82,8 @@ pub mod order {
     pub const RPG: i32 = 300;
     /// `sf/services`: after the RPG state; refers to actors by stable key only.
     pub const SERVICES: i32 = 320;
+    /// `sf/effects`: before the characters, whose restored instances move the counter past theirs.
+    pub const EFFECTS: i32 = 330;
     /// `sf/ai`: after the overlay and clock it refers to, before the adapter (whose rules may read it).
     pub const AI: i32 = 350;
     pub const PARTY: i32 = 400;
@@ -89,6 +96,14 @@ pub mod order {
 /// `sf/<name>`.
 pub fn key(name: &str) -> SectionKey {
     SectionKey::new(OWNER, name).expect("framework keys are valid")
+}
+
+/// `sf/effects`: the world's effect state. Per-character effects ride the character (`effects`)
+/// and the NPC overlay blobs; this is what belongs to no character.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectsWorldSave {
+    /// The host's instance counter (`sf_effects::EffectIdAlloc`, net rule 7).
+    pub ids: EffectIdAlloc,
 }
 
 /// `sf/clock`: the sky clock and the fixed simulation tick.
@@ -221,6 +236,7 @@ pub fn characters(
     })
     .typed_step(1, character::legacy::v1::CharacterSave::migrate)
     .typed_step(2, character::legacy::v2::CharacterSave::migrate)
+    .typed_step(3, character::legacy::v3::CharacterSave::migrate)
     .order(order::CHARACTERS)
 }
 
@@ -246,4 +262,15 @@ pub fn services(
     set: impl Fn(&mut World, WorldServices) + Send + Sync + 'static,
 ) -> SaveSection {
     SaveSection::value(key(SERVICES), SERVICES_VERSION, get, set).order(order::SERVICES)
+}
+
+/// `sf/effects` (effects.md "Saves"): the host's effect instance counter. A save without the
+/// section (from before effects) loads the default counter; restored active sets move it past
+/// their instances (`sf_effects::EffectsSave::restore`), so no live id is reissued. No check: any
+/// counter is valid.
+pub fn effects(
+    get: impl Fn(&World) -> Option<EffectsWorldSave> + Send + Sync + 'static,
+    set: impl Fn(&mut World, EffectsWorldSave) + Send + Sync + 'static,
+) -> SaveSection {
+    SaveSection::value(key(EFFECTS), EFFECTS_VERSION, get, set).order(order::EFFECTS)
 }

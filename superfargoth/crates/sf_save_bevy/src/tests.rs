@@ -54,6 +54,9 @@ pub(crate) struct Ai(pub sf_ai::AiSave);
 /// The host's merchant purses (`mw_rpg_bevy::Rpg::services` in a game), as its `sf/services` value.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Services(pub sf_rpg::service::WorldServices);
+/// The world's effect state (`sf_effects_bevy::EffectIds` in a game), as its `sf/effects` value.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub(crate) struct FxWorld(pub sections::EffectsWorldSave);
 /// The adapter's state (`test/globals`), like `MWScript` globals.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Globals(pub BTreeMap<String, f64>);
@@ -110,6 +113,7 @@ pub(crate) fn new_character(y: &Yard) -> CharacterSave {
         body: Some(CharacterBody { action: ActionState::new(RuleKey::of("locomotion")), locomotion: Locomotion::new(pos, start.yaw.to_radians()) }),
         rpg,
         stats: None,
+        effects: None,
         ext: BTreeMap::new(),
     }
 }
@@ -131,6 +135,12 @@ pub(crate) fn wire(app: &mut App) {
             |w: &World| w.get_resource::<Services>().filter(|s| !s.0.purses.is_empty()).map(|s| s.0.clone()),
             |w: &mut World, v| {
                 w.insert_resource(Services(v));
+            },
+        ))
+        .add_save_section(sections::effects(
+            |w: &World| w.get_resource::<FxWorld>().filter(|f| f.0 != sections::EffectsWorldSave::default()).map(|f| f.0),
+            |w: &mut World, v| {
+                w.insert_resource(FxWorld(v));
             },
         ))
         .add_save_section(sections::characters(
@@ -157,7 +167,8 @@ pub(crate) fn app(root: &Path, background: bool) -> App {
         .init_resource::<Party>()
         .init_resource::<Globals>()
         .init_resource::<Ai>()
-        .init_resource::<Services>();
+        .init_resource::<Services>()
+        .init_resource::<FxWorld>();
     app.world_mut().resource_mut::<Autosave>().interval = None;
     app
 }

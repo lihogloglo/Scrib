@@ -7,7 +7,8 @@
 //!   need a bump too; reviewers check.
 //! - **Golden saves**: `tests/golden/s2.sfsave`, the canonical played yard written by S2
 //!   (`sf/character` v1, `sf/weather` v1), and `tests/golden/character-v2.sfsave` (`sf/weather`
-//!   v1), must keep loading (through migration) into the same state; [`CURRENT`], the same yard
+//!   v1), `weather-v2.sfsave` and `character-v3.sfsave` (`sf/character` v2 and v3), must keep
+//!   loading (through migration) into the same state; [`CURRENT`], the same yard
 //!   at the current versions, must also re-save to the same raw section bytes. Released goldens
 //!   are never re-blessed.
 //!
@@ -103,9 +104,21 @@ fn saved_shapes_match_their_goldens() {
         ),
     );
     check_golden(&v(sections::SERVICES, sections::SERVICES_VERSION), &shape::<sf_rpg::service::WorldServices>(None, &[]));
+    check_golden(&v(sections::EFFECTS, sections::EFFECTS_VERSION), &shape::<sections::EffectsWorldSave>(None, &[]));
     check_golden(
         &v(sections::CHARACTER, sections::CHARACTER_VERSION),
-        &shape::<CharacterSave>(None, &[&traced::<sf_rpg::AttrValue>, &traced::<sf_controller::MoverMode>, &traced::<sf_action::Mode>]),
+        &shape::<CharacterSave>(
+            None,
+            &[
+                &traced::<sf_rpg::AttrValue>,
+                &traced::<sf_controller::MoverMode>,
+                &traced::<sf_action::Mode>,
+                &traced::<sf_stats::StatOwner>,
+                &traced::<sf_effects::SourceClass>,
+                &traced::<sf_effects::ArgRef>,
+                &traced::<sf_effects::Phase>,
+            ],
+        ),
     );
     // `<mod id>/script`: the runtime's snapshot bytes are `ContextSnapshot` (any owner).
     #[cfg(feature = "script")]
@@ -136,6 +149,13 @@ fn legacy_shapes_match_their_goldens() {
     check_golden(
         &format!("sf.{}.v2", sections::CHARACTER),
         &shape::<sections::character::legacy::v2::CharacterSave>(
+            None,
+            &[&traced::<sf_rpg::AttrValue>, &traced::<sf_controller::MoverMode>, &traced::<sf_action::Mode>],
+        ),
+    );
+    check_golden(
+        &format!("sf.{}.v3", sections::CHARACTER),
+        &shape::<sections::character::legacy::v3::CharacterSave>(
             None,
             &[&traced::<sf_rpg::AttrValue>, &traced::<sf_controller::MoverMode>, &traced::<sf_action::Mode>],
         ),
@@ -176,8 +196,8 @@ fn load_golden(golden: &Path, dir: &Path, migrated: &[(sf_save::SectionKey, u32,
     raw_sections(&again.path)
 }
 
-/// The golden save at the current versions (the yard re-written when `sf/character` went to v3).
-const CURRENT: &str = "character-v3.sfsave";
+/// The golden save at the current versions (the yard re-written when `sf/character` went to v4).
+const CURRENT: &str = "character-v4.sfsave";
 
 fn weather_step() -> (sf_save::SectionKey, u32, u32) {
     (sections::key(sections::WEATHER), 1, sections::WEATHER_VERSION)
@@ -219,6 +239,17 @@ fn the_character_v2_golden_save_loads_through_the_weather_step() {
     assert!(old.exists(), "the character-v2 golden is released: never re-bless it");
     let current = golden_save(CURRENT, dir.path());
     assert_eq!(load_golden(&old, dir.path(), &[character_step(2), weather_step()]), raw_sections(&current));
+}
+
+/// The `sf/character` v3 golden (a save from before effects) loads through the v3 → v4 step (no
+/// effects) and re-saves to exactly the current golden's sections.
+#[test]
+fn the_character_v3_golden_save_loads_through_the_effects_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = data_dir("golden").join("character-v3.sfsave");
+    assert!(old.exists(), "the character-v3 golden is released: never re-bless it");
+    let current = golden_save(CURRENT, dir.path());
+    assert_eq!(load_golden(&old, dir.path(), &[character_step(3)]), raw_sections(&current));
 }
 
 /// The current golden ([`CURRENT`]) loads without migration and re-saves byte for byte.

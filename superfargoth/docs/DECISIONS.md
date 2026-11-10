@@ -1743,3 +1743,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (first person FP-2a): a view copy is a child entity of its role part sharing mesh, material and the
   rig's joint entities (no second rig; despawns with the part); the view model is a setting
   (`ComfortSettings::view_model`, off until FP-2b's material) and its math lives Bevy-free in `sf_camera::view_model`.
+- 2026-11-10 (effects E4): the effect instance counter is saved in its own world section `sf/effects` v1, not in
+  `sf/meta` (owned by `sf_save`, a change would bump `META_VERSION`); restored active sets also move it past their
+  ids. E4 saves the whole active set, innate sources included (re-landing them would re-apply saved base changes).
