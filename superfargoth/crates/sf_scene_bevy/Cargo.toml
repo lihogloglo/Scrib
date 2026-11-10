@@ -1,0 +1,39 @@
+[package]
+name = "sf_scene_bevy"
+description = "Bevy plugin for the superfargoth static scene: baked cell tables as assets, retained GPU instance batches, chain geometry residency"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6). The scene logic (table format, chain
+# registry, slot allocators, batch ranges, CPU cull) is Bevy-free in sf_scene.
+#
+# Only what B1 uses: the residency and render halves (B3/B4) add bevy_camera,
+# bevy_mesh, bevy_pbr, bevy_platform, bevy_render, bevy_transform, glam,
+# sf_coords, sf_diag_bevy, sf_model_bevy and sf_world_bevy with the code that
+# needs them (all of them are already in the unified feature set, so adding
+# them later is free).
+[dependencies]
+# App, Plugin, schedules.
+bevy_app = { workspace = true, features = ["std"] }
+# Asset, AssetApp, AssetLoader: the `.sfscene` cell table.
+bevy_asset.workspace = true
+# Resource: SceneConfig.
+bevy_ecs = { workspace = true, features = ["std"] }
+# TypePath for the asset and its loader.
+bevy_reflect = { workspace = true, features = ["std"] }
+sf_scene.workspace = true
+# WorldspaceId: which worldspaces the scene is enabled for.
+sf_world.workspace = true
+thiserror.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+glam.workspace = true
+sf_bake.workspace = true
+sf_model_bevy.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

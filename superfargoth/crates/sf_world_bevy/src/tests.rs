@@ -1,11 +1,12 @@
 //! Headless glue tests: grid precision, origin phases, and a full stream
 //! in and out through the real stages (cooked models from a bake store).
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bevy::asset::AssetPlugin;
+use bevy::asset::{AssetPlugin, UntypedHandle};
 use bevy::mesh::{Mesh3d, MeshPlugin};
 use bevy::prelude::*;
 use big_space::plugin::BigSpaceMinimalPlugins;
@@ -17,7 +18,7 @@ use sf_model::{CookSettings, Material as ModelMaterial, MeshData, Model, Node, c
 use sf_model_bevy::{BAKED_SOURCE, BakedManifest, baked_source};
 use sf_vfs::VfsPath;
 use sf_world::{
-    IndexParams, IndexedPlacement, Level, Location, MemoryIndex, ModelInfo, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef,
+    IndexParams, IndexedPlacement, Level, Location, MemoryIndex, ModelInfo, Partition, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef,
     WorldspaceId,
 };
 
@@ -183,6 +184,16 @@ fn placements() -> Vec<Placement> {
 }
 
 fn streaming_app(dir: &std::path::Path) -> App {
+    streaming_app_radius(dir, IndexParams::default().far_min_radius)
+}
+
+/// [`streaming_app`] with the directory's `far_min_radius` overridden.
+///
+/// `f32::MAX` puts every placement at `Level::Near` (`LevelContent::level_of`):
+/// the plate is 8 m across, so at the default 4 m radius every placement of
+/// [`placements`] is far-eligible and the *near* step — the only level the
+/// static scene draws — is empty.
+fn streaming_app_radius(dir: &std::path::Path, far_min_radius: f32) -> App {
     let store = Store::open(dir).unwrap();
     let cooked = cook(&plate(), &CookSettings::default()).unwrap().to_bytes();
     let mut manifest = Manifest::default();
@@ -191,8 +202,9 @@ fn streaming_app(dir: &std::path::Path) -> App {
     let models = |p: &VfsPath| {
         (p.as_str() != "nothing").then_some(ModelInfo { min: Vec3::new(-4.0, -0.3, -4.0), max: Vec3::new(4.0, 0.3, 4.0), bytes: 50_000, lod_distance: 0.0 })
     };
-    let (pages, _) = sf_world::build_pages(&IndexParams::default(), placements(), &models);
-    let directory = sf_world::build_directory(ws(), &IndexParams::default(), &pages);
+    let params = IndexParams { far_min_radius, ..IndexParams::default() };
+    let (pages, _) = sf_world::build_pages(&params, placements(), &models);
+    let directory = sf_world::build_directory(ws(), &params, &pages);
     let mut index = MemoryIndex::new();
     index.insert(&sf_world::WorldIndex { directory, pages, stats: sf_world::IndexStats::default() });
 
@@ -545,4 +557,258 @@ fn bucket_ranges_push_switches_by_reach() {
     // A reach past the end collapses the coarser levels into the end.
     let wide = bucket_ranges(&errors, &lod, 50.0, 0.0, 500.0);
     assert!((wide[0].end - 50.0).abs() < 1e-3 && wide[1].end <= wide[1].start && wide[2].end <= wide[2].start);
+}
+
+// -- the static-scene hook (B2) ------------------------------------------------
+
+/// Every call the hook saw, by cell.
+#[derive(Default)]
+struct SceneLog {
+    acquires: HashMap<IVec3, u32>,
+    readies: u32,
+    covereds: HashMap<IVec3, u32>,
+    uploads: HashMap<IVec3, u32>,
+    releases: HashMap<IVec3, u32>,
+}
+
+/// A test [`CellScene`]: logs every call and reports `covered` for the cells the
+/// test gave it. `acquire` returns no handle (there is nothing to load here), so
+/// the fetch is not held open; `ready` is a gate the test owns, which is how the
+/// cancelled-load half below holds every near load in its assets stage without
+/// touching the shared IO task pool.
+struct TestScene {
+    log: Mutex<SceneLog>,
+    covered: HashMap<IVec3, Arc<HashSet<PlacementId>>>,
+    ready: AtomicBool,
+    bytes: u64,
+}
+
+impl TestScene {
+    fn new(covered: HashMap<IVec3, Arc<HashSet<PlacementId>>>) -> Arc<Self> {
+        Arc::new(Self { log: Mutex::new(SceneLog::default()), covered, ready: AtomicBool::new(true), bytes: 4096 })
+    }
+
+    fn log(&self) -> std::sync::MutexGuard<'_, SceneLog> {
+        self.log.lock().unwrap()
+    }
+}
+
+impl CellScene for TestScene {
+    fn acquire(&self, _world: &World, _ws: &WorldspaceId, cell: IVec3) -> Option<UntypedHandle> {
+        *self.log().acquires.entry(cell).or_default() += 1;
+        None
+    }
+    fn ready(&self, _world: &World, _ws: &WorldspaceId, _cell: IVec3) -> bool {
+        self.log().readies += 1;
+        self.ready.load(Ordering::Acquire)
+    }
+    fn covered(&self, _world: &World, _ws: &WorldspaceId, cell: IVec3) -> Option<Arc<HashSet<PlacementId>>> {
+        *self.log().covereds.entry(cell).or_default() += 1;
+        self.covered.get(&cell).cloned()
+    }
+    fn upload(&self, _world: &mut World, cx: &SceneCellCx<'_>) -> u64 {
+        *self.log().uploads.entry(cx.cell).or_default() += 1;
+        self.bytes(cx.worldspace, cx.cell)
+    }
+    fn release(&self, _world: &mut World, _ws: &WorldspaceId, cell: IVec3) {
+        *self.log().releases.entry(cell).or_default() += 1;
+    }
+    fn bytes(&self, _ws: &WorldspaceId, cell: IVec3) -> u64 {
+        if self.covered.contains_key(&cell) { self.bytes } else { 0 }
+    }
+}
+
+#[derive(Default)]
+struct SpawnLog {
+    spawns: u32,
+    activates: u32,
+}
+
+/// Counts spawns and activations of one class, spawning nothing.
+struct CountSpawner(Arc<Mutex<SpawnLog>>);
+
+impl PlacementSpawner for CountSpawner {
+    fn spawn(&self, _world: &mut World, _cx: &SpawnCx<'_>, _p: &IndexedPlacement) -> u32 {
+        self.0.lock().unwrap().spawns += 1;
+        0
+    }
+    fn needs_model(&self, _: &IndexedPlacement) -> bool {
+        false
+    }
+    fn activate(&self, _world: &mut World, _cx: &ActivateCx<'_>, _p: &IndexedPlacement) {
+        self.0.lock().unwrap().activates += 1;
+    }
+}
+
+/// The placements of one streaming cell a table could draw: everything with a
+/// cooked model, whatever its class.
+fn covered_in(cell: IVec3) -> HashMap<IVec3, Arc<HashSet<PlacementId>>> {
+    let ids: HashSet<PlacementId> = placements()
+        .iter()
+        .filter(|p| {
+            Partition::STREAMING.cell_of(p.transform.pos) == cell
+                && p.class != PlacementClass::Marker
+                && p.model.as_ref().is_some_and(|m| m.as_str() == "plate.mdl")
+        })
+        .map(|p| p.id)
+        .collect();
+    HashMap::from([(cell, Arc::new(ids))])
+}
+
+/// Streams in around the origin with `scene` installed (if any) and a counting
+/// spawner for the dynamic class; returns its stats, its mesh parts, the
+/// spawner's log and the app, still resident.
+fn stream_in(dir: &std::path::Path, scene: Option<Arc<TestScene>>, far_min_radius: f32) -> (StreamStats, usize, SpawnLog, App) {
+    let mut app = streaming_app_radius(dir, far_min_radius);
+    let log = Arc::new(Mutex::new(SpawnLog::default()));
+    let mut spawners = PlacementSpawners::default();
+    spawners.set(PlacementClass::Dynamic, Arc::new(CountSpawner(log.clone())));
+    app.insert_resource(spawners);
+    if let Some(s) = scene {
+        app.insert_resource(SceneCells(Some(s)));
+    }
+    let root = WorldspaceRegistry::ensure_in(app.world_mut(), &ws()).root;
+    let (cell, transform) = to_grid(WorldPos::from_f64(DVec3::new(0.0, 2.0, 0.0)));
+    app.world_mut().spawn((cell, transform, StreamingAnchor::visual(), FloatingOrigin, ChildOf(root)));
+    app.world_mut().spawn((to_grid(WorldPos::ORIGIN).0, Transform::IDENTITY, StreamingAnchor::gameplay(), ChildOf(root)));
+    app.world_mut().resource_mut::<Streaming>().begin_burst();
+    settle(&mut app);
+    let stats = app.world().resource::<Streaming>().stats();
+    let parts = count::<With<Mesh3d>>(&mut app);
+    let spawned = std::mem::take(&mut *log.lock().unwrap());
+    (stats, parts, spawned, app)
+}
+
+/// A cell whose table covers everything in it spawns none of those placements'
+/// entities and loads none of their models, but still activates them: the
+/// activate stage is a separate request with its own, empty, `members`.
+#[test]
+fn scene_covered_placements_load_no_models_and_spawn_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    // The cell around the origin: the two dynamic placements live in it, so the
+    // counting spawner sees exactly what the table took over.
+    let target = Partition::STREAMING.cell_of(WorldPos::from_f64(DVec3::new(20.0, 0.0, 20.0)));
+    let map = covered_in(target);
+    let n = u64::try_from(map[&target].len()).unwrap();
+    assert!(n > 4, "{n} placements in the covered cell: too few to be a test");
+
+    // Every placement at Level::Near: the level the scene draws.
+    let (base, base_parts, base_spawn, _base_app) = stream_in(dir.path(), None, f32::MAX);
+    let scene = TestScene::new(map);
+    let (stats, parts, spawned, _app) = stream_in(dir.path(), Some(scene.clone()), f32::MAX);
+
+    // The hook was asked once for the cell, on its resolved table.
+    assert_eq!(stats.scene_covered, n);
+    assert_eq!(scene.log().covereds.get(&target).copied(), Some(1));
+    // Exactly those placements were skipped at spawn, and nothing else was.
+    assert_eq!(base.precombined, 0, "no precombine in this app");
+    assert_eq!(stats.precombined, n);
+    assert!(parts < base_parts, "{parts} parts, {base_parts} without the scene");
+    // Exactly: the cell's two dynamic placements are covered, so their spawner
+    // is never called...
+    assert_eq!(base_spawn.spawns, 2);
+    assert_eq!(spawned.spawns, 0);
+    // ...and they are activated just the same.
+    assert!(base_spawn.activates > 0, "nothing was activated: the test would prove nothing");
+    assert_eq!(spawned.activates, base_spawn.activates);
+    // The cell uploaded once, before its group was revealed, and its bytes were
+    // counted once.
+    assert_eq!(scene.log().uploads.get(&target).copied(), Some(1));
+    assert_eq!(stats.scene_upload_bytes, 4096);
+}
+
+/// The regression gate for all seven call sites: an installed hook that covers
+/// nothing and loads nothing leaves streaming identical to no hook at all —
+/// which also proves `covered -> None` is a true no-op.
+#[test]
+fn a_cell_without_a_scene_hook_streams_as_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let (base, base_parts, base_spawn, _base_app) = stream_in(dir.path(), None, IndexParams::default().far_min_radius);
+    let inert = TestScene::new(HashMap::new());
+    let (stats, parts, spawned, _app) = stream_in(dir.path(), Some(inert.clone()), IndexParams::default().far_min_radius);
+
+    {
+        let log = inert.log();
+        assert!(!log.acquires.is_empty(), "the hook was never asked: the seam is not wired");
+        assert!(!log.covereds.is_empty(), "the fetch never asked what the table covers");
+        assert!(!log.uploads.is_empty(), "the upload stage never called the hook");
+        assert!(log.readies > 0, "the assets stage never asked readiness");
+    }
+    assert_eq!(stats, base);
+    assert_eq!(parts, base_parts);
+    assert_eq!((spawned.spawns, spawned.activates), (base_spawn.spawns, base_spawn.activates));
+}
+
+/// Release runs on the near unload and after a cancelled load; without the
+/// second, a cancelled near load would leak the cell's chain refs and its
+/// scene-buffer range for ever.
+#[test]
+fn release_runs_on_the_near_unload_and_after_a_cancelled_load() {
+    // -- the near unload --
+    let dir = tempfile::tempdir().unwrap();
+    let scene = TestScene::new(HashMap::new());
+    let (_, _, _, mut app) = stream_in(dir.path(), Some(scene.clone()), IndexParams::default().far_min_radius);
+    let acquired: Vec<IVec3> = scene.log().acquires.keys().copied().collect();
+    assert!(!acquired.is_empty(), "no cell was acquired");
+
+    let camera: Entity = app
+        .world_mut()
+        .query_filtered::<Entity, (With<StreamingAnchor>, With<FloatingOrigin>)>()
+        .single(app.world())
+        .unwrap();
+    app.world_mut().entity_mut(camera).insert(to_grid(WorldPos::from_f64(DVec3::new(50_000.0, 2.0, 0.0))));
+    let gameplay: Vec<Entity> = app
+        .world_mut()
+        .query_filtered::<Entity, (With<StreamingAnchor>, Without<FloatingOrigin>)>()
+        .iter(app.world())
+        .collect();
+    for e in gameplay {
+        app.world_mut().entity_mut(e).despawn();
+    }
+    settle(&mut app);
+    assert_eq!(count::<With<StreamCell>>(&mut app), 0, "nothing unloaded");
+    {
+        let log = scene.log();
+        assert!(!log.releases.is_empty(), "the unload released nothing");
+        let missed: Vec<IVec3> = acquired.iter().copied().filter(|c| !log.releases.contains_key(c)).collect();
+        assert!(missed.is_empty(), "acquired and never released: {missed:?}");
+    }
+
+    // -- a cancelled load --
+    //
+    // The hook's own readiness gate holds every near load in its assets stage:
+    // no frame timing (flaky on Windows) and, unlike a blocking `IndexReader`,
+    // no thread of the process-wide `IoTaskPool` held hostage from the other
+    // tests in this binary.
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = streaming_app(dir.path());
+    let scene = TestScene::new(HashMap::new());
+    scene.ready.store(false, Ordering::Release);
+    app.insert_resource(SceneCells(Some(scene.clone())));
+    let root = WorldspaceRegistry::ensure_in(app.world_mut(), &ws()).root;
+    let (cell, transform) = to_grid(WorldPos::from_f64(DVec3::new(0.0, 2.0, 0.0)));
+    let camera = app.world_mut().spawn((cell, transform, StreamingAnchor::visual(), FloatingOrigin, ChildOf(root))).id();
+    let pump = |app: &mut App| {
+        for _ in 0..300 {
+            app.update();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    pump(&mut app);
+    let acquired: Vec<IVec3> = scene.log().acquires.keys().copied().collect();
+    assert!(!acquired.is_empty(), "no near load started while the hook was not ready");
+    assert!(scene.log().readies > 0, "the gate was never consulted");
+    assert!(scene.log().releases.is_empty(), "nothing is unloading yet");
+    // Out of every ring while every near load is still in its assets stage: the
+    // scheduler cancels them, so `Runtime::cancel` is the only path that can
+    // release.
+    app.world_mut().entity_mut(camera).insert(to_grid(WorldPos::from_f64(DVec3::new(50_000.0, 2.0, 0.0))));
+    pump(&mut app);
+    let cancelled: Vec<IVec3> = scene.log().releases.keys().copied().collect();
+    assert!(!cancelled.is_empty(), "the held loads were never cancelled: nothing was released");
+    scene.ready.store(true, Ordering::Release);
+    settle(&mut app);
+    let log = scene.log();
+    let missed: Vec<IVec3> = acquired.iter().copied().filter(|c| !log.releases.contains_key(c)).collect();
+    assert!(missed.is_empty(), "acquired and never released after cancellation: {missed:?}");
 }

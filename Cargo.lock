@@ -8369,6 +8369,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_scene_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_app",
+ "bevy_asset",
+ "bevy_ecs",
+ "bevy_reflect",
+ "glam 0.33.12",
+ "sf_bake",
+ "sf_model_bevy",
+ "sf_scene",
+ "sf_world",
+ "tempfile",
+ "thiserror 2.0.21",
+ "workspace-hack",
+]
+
+[[package]]
 name = "sf_script"
 version = "0.1.0"
 dependencies = [
