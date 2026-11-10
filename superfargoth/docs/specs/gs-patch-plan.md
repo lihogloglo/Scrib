@@ -23,9 +23,11 @@ re-read in the vendored tree; "unverified" marks GPU behaviour I could not check
 5. The existing "first work item of a draw writes `mesh_index`" rule (`mesh_preprocess.wesl:178-181`) then
    becomes **correct without sorting**: every instance sharing an indirect slot shares one range, hence
    identical geometry fields. No counting sort, no ordered work items, no CPU-ordered producer.
-6. **Per-instance LOD** (S3a3) adds nothing to the instance record: a chain's levels share vertices
-   (static-scene §2), so `first_vertex_index`/`metadata_index` are chain-level and view-independent and only
-   `first_index_index`/`index_count` differ - read **only** through `mesh_index`
+6. **Per-instance LOD** (S3a3) adds nothing to the instance record: every geometry field is **per range**
+   and view-independent, so a chain's levels differ only in fields `GpuBatchGeometryRange` already
+   carries (2d) - `first_vertex_index` and `metadata_index` included, since our cooker gives each level
+   its own vertex buffer (`sf_model/src/cook.rs:449-455`; corrected 2026-11-10, this item used to say
+   "a chain's levels share vertices"). All of it read **only** through `mesh_index`
    (`build_indirect_params.wesl:134-144`), never per instance (`MeshUniform` has no index fields,
    `render/mesh.rs:560-604`). So per-view LOD = "put the instance in the indirect slot of its level": it
    needs (a) a `geometry_index` on `IndirectParametersMetadata` so `mesh_index` can point at a per-level

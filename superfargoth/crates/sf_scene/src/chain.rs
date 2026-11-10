@@ -11,8 +11,11 @@
 //! it draws exactly that geometry), as SPUD does; the chain is an error only when its finest
 //! level has none (every level would repeat nothing).
 //!
-//! The bake (`scene.cells`) and the runtime (`sf_scene_bevy`, which builds the buffer) both use
-//! [`chain_layout`], so the ranges in the table always match the uploaded mesh.
+//! **The bake owns the geometry; the runtime only holds handles** (v3 decision, 2026-11-09). The
+//! `scene.chains` step emits one `.sfmesh` per chain with one LOD level per chain level
+//! (`crate::bake`, feature `bake`), read at runtime by the existing `SfMeshLoader` — `sf_scene_bevy` builds no
+//! chain buffer. Both the `scene.cells` and `scene.chains` steps use [`chain_layout`], so the
+//! ranges in a table always match the geometry baked beside it.
 
 use crate::table::{LodLevel, MAX_LOD_LEVELS};
 
