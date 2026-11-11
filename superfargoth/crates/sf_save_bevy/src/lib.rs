@@ -25,6 +25,7 @@
 //! Net-ready (net.md "Saves"): the host world save holds one `sf/character/<player key>` per
 //! player; guest character files (S4) carry those sections' exact bytes.
 
+mod baseline;
 mod section;
 pub mod sections;
 
@@ -62,6 +63,7 @@ use sf_save::{
     SaveMode, SaveReason, SaveWriter, SectionFlags, SectionKey, SlotDir, StdFs, TocEntry, write_atomic,
 };
 
+pub use baseline::{NewGameBaseline, apply_baseline, capture_baseline};
 pub use section::{SaveSection, read, write};
 use section::{Decoded, Encoder, SectionIo};
 

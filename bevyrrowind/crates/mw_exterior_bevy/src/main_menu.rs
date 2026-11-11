@@ -4,8 +4,9 @@
 //!
 //! - **Open**: on entering `AppPhase::Frontend` when `ExteriorOptions::start_in_main_menu` is set
 //!   (running `bevyrrowind` with no subcommand). Dev runs (`view`, `scene`) never open it.
-//! - **Leaving**: New game closes the menu and enters `Loading` (the world builds at the new-game
-//!   start). Interim until F3 (Continue / Load from the front end): Continue and Load also start
+//! - **Leaving**: New game restores the new-game baseline (`sf_save_bevy::apply_baseline`,
+//!   captured on the first `Frontend` entry), closes the menu and enters `Loading` (the world
+//!   builds at the new-game start). Interim until F3 (Continue / Load from the front end): Continue and Load also start
 //!   at the new-game start, and once `InGame` Continue's load runs as an in-game load and Load
 //!   opens the save/load screen over the game ([`PendingFrontend`]). Should the menu close any
 //!   other way in the front end, the world loads too (never a front end without a menu).
@@ -90,7 +91,8 @@ pub fn add(app: &mut App, open: bool) {
     app.init_resource::<MenuBackdropCandidates>().add_message::<VideoFinished>();
     app.add_systems(Update, backdrop_fallthrough.after(VideoSystems))
         .add_systems(PostUpdate, fit_backdrop.before(bevy::ui::UiSystems::Prepare));
-    app.add_systems(OnEnter(AppPhase::Frontend), open_main_menu)
+    // The new-game baseline: the content's pristine state, before any world exists (New game).
+    app.add_systems(OnEnter(AppPhase::Frontend), (sf_save_bevy::capture_baseline, open_main_menu).chain())
         .add_systems(OnEnter(AppPhase::InGame), run_pending)
         .add_systems(
             Update,
@@ -347,7 +349,12 @@ fn host_main_menu(
                 }
             }
             NEW_GAME => {
-                info!("main menu: new game");
+                // Pristine game state and a new save session through the load path (menus.md
+                // "App phases"): after Main menu from a game, its state would carry on otherwise.
+                commands.queue(|world: &mut World| match sf_save_bevy::apply_baseline(world) {
+                    Ok(()) => info!("main menu: new game from baseline"),
+                    Err(e) => error!("main menu: new game: the baseline did not apply: {e}"),
+                });
                 stack.0.close(MAIN_MENU);
                 phase.set(AppPhase::Loading);
             }
