@@ -1013,5 +1013,23 @@
             look_for: "no two neighbours breathe in sync (chests rise and fall out of step), fidgets start at different times and vary, no one plays the same fidget twice in a row",
             checks: ["CH-1", "CH-3", "AL-7"],
         ),
+        // ---- static scene (static-scene S3b C2; visual-checks/rendering.md SC-scene) ----
+        (
+            name: "sc-scene",
+            cell: "Balmora",
+            hour: 14.0,
+            flags: ["--scene"],
+            description: "Balmora with exterior statics drawn by the static scene (--scene); A/B: the same view without it (scene sc-noscene)",
+            look_for: "every building, rock, fence and tree present; nothing doubled or flickering; walk 300 m one way: nothing jumps or drifts after ~256 m; doors and lights still interactive",
+            checks: ["SC-scene", "SC-foliage"],
+        ),
+        (
+            name: "sc-noscene",
+            cell: "Balmora",
+            hour: 14.0,
+            description: "The SC-scene A/B: Balmora at 14:00 the usual way (entities + precombine)",
+            look_for: "compare against scene sc-scene: same statics, same look",
+            checks: ["SC-scene"],
+        ),
     ],
 )

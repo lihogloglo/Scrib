@@ -157,6 +157,10 @@ pub struct SuiteArgs {
     /// Extra environment for the game, KEY=VALUE (repeatable).
     #[arg(long = "env")]
     envs: Vec<String>,
+    /// Extra game flag for every run (repeatable; `--arg=--scene`): an A/B of a switch that is
+    /// not an `--off` part. Shown in the variant name.
+    #[arg(long = "arg", allow_hyphen_values = true)]
+    args: Vec<String>,
     /// The game executable (default: this one).
     #[arg(long)]
     pub(super) exe: Option<PathBuf>,
@@ -480,17 +484,23 @@ fn working_gpu_load(samples: &[suite::GpuSample]) -> f64 {
     samples.iter().map(|s| if s.clock_mhz < IDLE_GPU_CLOCK_MHZ { 0.0 } else { s.util_pct }).sum::<f64>() / n
 }
 
+/// A run's variant label: resolution, then `off=`, extra game flags and the sweep step when present.
+fn variant_name(resolution: &str, off: &[String], game_args: &[String], step: Option<&str>) -> String {
+    let mut variant = if off.is_empty() { resolution.to_owned() } else { format!("{resolution} off={}", off.join(",")) };
+    for extra in game_args.iter().map(String::as_str).chain(step) {
+        variant = format!("{variant} {extra}");
+    }
+    variant
+}
+
 fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str]) -> RunResult {
     let mut off = args.off.clone();
     off.extend(p.step.iter().flat_map(|s| s.off.iter().cloned()));
-    let mut variant = if off.is_empty() { p.resolution.clone() } else { format!("{} off={}", p.resolution, off.join(",")) };
-    if let Some(s) = &p.step {
-        variant = format!("{variant} {}", s.label);
-    }
+    let variant = variant_name(&p.resolution, &off, &args.args, p.step.as_ref().map(|s| s.label.as_str()));
     let name = run_name(p.scenario.name, &variant, p.repeat);
     let run_dir = dir.join(&name);
     let mut cmd_args: Vec<String> = p.scenario.args.iter().map(|a| (*a).to_owned()).collect();
-    cmd_args.extend(p.step.iter().flat_map(|s| s.args.iter().cloned()));
+    cmd_args.extend(p.step.iter().flat_map(|s| s.args.iter().cloned()).chain(args.args.iter().cloned()));
     cmd_args.extend(["--resolution".to_owned(), p.resolution.clone(), "--bench-out".to_owned(), run_dir.display().to_string(), "--bench-baseline".to_owned(), "none".to_owned()]);
     if !off.is_empty() {
         cmd_args.extend(["--off".to_owned(), off.join(",")]);
@@ -615,5 +625,18 @@ mod tests {
         // A game: counted.
         assert!((working_gpu_load(&[at(90.0, 1800.0), at(10.0, 210.0)]) - 45.0).abs() < 1e-9);
         assert!(working_gpu_load(&[]) < 1e-9);
+    }
+
+    /// `--arg` takes a game flag that starts with `--` (the `--scene` A/B), repeatable.
+    #[test]
+    fn suite_arg_passes_game_flags_through() {
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(flatten)]
+            suite: SuiteArgs,
+        }
+        let cli = <Cli as clap::Parser>::try_parse_from(["perf", "t", "balmora_walk", "--arg=--scene", "--arg", "--rings"]).unwrap();
+        assert_eq!(cli.suite.args, ["--scene", "--rings"]);
+        assert_eq!(cli.suite.scenarios, ["balmora_walk"]);
     }
 }

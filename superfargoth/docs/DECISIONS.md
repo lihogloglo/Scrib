@@ -1809,3 +1809,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-11 (static scene O1): an origin shift rewrites every resident cell's batch slots **in the shift frame**
   (`sf_scene_bevy::rewrite_on_origin_shift`, ~3.5 MB at 55k instances), not spread over frames (plan §5.4's
   `shift_rewrite_bytes`, removed: it would tear). A per-batch origin delta in `materialize.wesl` is the later O(1) fix.
+- 2026-11-11 (static scene C2): no `suppress_scene_placements` spawner wrapper (plan §8's "belt to the braces"):
+  `CellScene::covered` already stops spawns and model loads, and a wrapper would also block a promoted placement's
+  entity spawn (B5a-2). `--scene` and the precombine are exclusive (`mw_exterior_bevy::static_paths`).

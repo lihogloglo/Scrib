@@ -79,6 +79,8 @@ pub struct ExteriorOptions {
     pub store: Store,
     pub manifest: Manifest,
     pub lod_tint: bool,
+    /// `--scene`: near statics draw from the static scene (`sf_scene_bevy`) instead of the precombine.
+    pub scene: bool,
     pub terrain_lod: bool,
     pub wireframe: bool,
     pub rings: bool,
@@ -208,6 +210,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     mw_boot_bevy::ui_theme::add_source(&mut app, vfs.clone());
     let mut extensions = BTreeMap::from([(MeshCookStep::ID.to_owned(), mw_bake::SFMESH_EXT.to_owned())]);
     extensions.extend(sf_lod_bevy::baked_extensions());
+    extensions.extend(sf_scene_bevy::baked_extensions());
     // The far field (far-field.md) when the bake has it and `--off farfield` doesn't drop it.
     let far_field = manifest.get(sf_lod::products::DIR_STEP, ext.as_str()).is_some() && !options.perf.off.has(Part::FarField);
     app.register_asset_source(
@@ -271,11 +274,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     streaming.lod = screen;
     // Static material classes (static-scene.md S2); `--off matclass` keeps the mapper's materials.
     streaming.material_classes = !perf.off.has(Part::MatClass);
-    // Buckets bypass the spawners: off with `--off precombine`, and where a
-    // spawner must see every static (no near statics, the runtime NIF path,
-    // the LOD tint view).
-    streaming.precombine =
-        !(perf.off.has(Part::Precombine) || perf.off.has(Part::Near) || perf.off.has(Part::Nif) || options.lod_tint);
+    // The static scene (`--scene`) or the precombine draws the near statics, never both.
+    let (scene, precombine) = static_paths(options.scene, &perf.off, options.lod_tint);
+    streaming.precombine = precombine;
     app.add_plugins(
         DefaultPlugins
             .build()
@@ -285,6 +286,15 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     )
     .add_plugins((MwAssetsPlugin { vfs: vfs.clone() }, FreeCameraPlugin))
     .add_plugins(WorldStreamingPlugin { config: streaming });
+    // The static scene (scene-runtime-plan.md §8): after streaming (it orders after
+    // `StreamingSystems::Drive` and installs `SceneCells` when enabled); exterior cells only.
+    // Its batches need the vendored `GpuInstanceBatchPlugin`, which `DefaultPlugins` lacks.
+    app.add_plugins(sf_scene_bevy::ScenePlugin {
+        config: sf_scene_bevy::SceneConfig { enabled: scene, worldspaces: Some(vec![ext.clone()]), ..default() },
+    });
+    if scene {
+        app.add_plugins(bevy::pbr::gpu_instance_batch::GpuInstanceBatchPlugin);
+    }
     // App phases (menus.md "App phases"): the world's sets run only while `WorldAlive`.
     crate::phase::add(&mut app, options.start_in_main_menu);
     app
@@ -1236,6 +1246,19 @@ fn fog_shadow_heights(map: Option<Res<sf_terrain_bevy::FarShadowMap>>, mut input
     }
 }
 
+/// Which path draws the near statics: `(scene, precombine)`, never both on.
+///
+/// The static scene needs `--scene` and no `--off scene`. Both bypass the spawners, so both are
+/// off where a spawner must see every static: `--off near` (no near statics), `--off nif` (the
+/// runtime NIF path) and `--lod-tint` (the tint view). The precombine is also off with
+/// `--off precombine`, and whenever the scene draws (the two draw the same placements).
+fn static_paths(scene_flag: bool, off: &Off, lod_tint: bool) -> (bool, bool) {
+    let spawners_only = off.has(Part::Near) || off.has(Part::Nif) || lod_tint;
+    let scene = scene_flag && !off.has(Part::Scene) && !spawners_only;
+    let precombine = !(scene || spawners_only || off.has(Part::Precombine));
+    (scene, precombine)
+}
+
 /// `config` with optional R1/R2 load radii (calibration runs).
 fn streaming_config(mut config: StreamingConfig, near: Option<f32>, far: Option<f32>) -> StreamingConfig {
     // A/B switch (perf.md): meshes of cooked models loading at once, 0 = no cap.
@@ -1671,5 +1694,28 @@ mod light_layer_tests {
         assert_eq!(outside.sky_light(), RenderLayers::from_layers(&[0, outside.world, outside.shadow]));
         assert_eq!(run(&mut world, &hall), [Some(hall_layers.sky_light()), Some(hall_layers.sky_light())], "a cell with sky");
         assert_eq!(run(&mut world, &cave), [Some(RenderLayers::none()), Some(RenderLayers::none())], "no sky: no view, no caster");
+    }
+}
+
+#[cfg(test)]
+mod static_paths_tests {
+    use super::*;
+
+    fn off(names: &[&str]) -> Off {
+        Off::from_flags(&names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>()).expect("known parts")
+    }
+
+    /// C2a (scene-runtime-plan.md §8): `--scene` swaps the precombine for the static scene, and the
+    /// views that need every static as an entity turn both off.
+    #[test]
+    fn scene_flag_replaces_the_precombine_and_spawner_views_turn_both_off() {
+        assert_eq!(static_paths(false, &Off::default(), false), (false, true), "default: the precombine");
+        assert_eq!(static_paths(true, &Off::default(), false), (true, false), "--scene");
+        assert_eq!(static_paths(true, &off(&["scene"]), false), (false, true), "--scene --off scene");
+        assert_eq!(static_paths(true, &off(&["near"]), false), (false, false), "--scene --off near");
+        assert_eq!(static_paths(true, &off(&["nif"]), false), (false, false), "--scene --off nif");
+        assert_eq!(static_paths(true, &Off::default(), true), (false, false), "--scene --lod-tint");
+        assert_eq!(static_paths(false, &off(&["precombine"]), false), (false, false), "--off precombine");
+        assert_eq!(static_paths(true, &off(&["precombine"]), false), (true, false), "--scene --off precombine");
     }
 }

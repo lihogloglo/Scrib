@@ -103,6 +103,7 @@ RO-16 | 2026-11-06: ground better (fix 1, N1), moonlight OK (N3); night too lit 
 RO-17 | parked (owner 2026-11-06) | [rendering](visual-checks/rendering.md) | Tree leaves reflect as one flat panel in the light colour, leaf texture lost (2026-11-05)
 TX-delight | awaiting owner | [rendering](visual-checks/rendering.md) | De-lit albedo textures: no double-dark corners, no colour shift or BC7 blocks, cutouts keep coverage (`--off delight` A/B)
 SS-matclass | awaiting owner | [rendering](visual-checks/rendering.md) | Static material classes: every static looks as with `--off matclass` (textures, cutout edges, two-sided leaves, glow) in Balmora and Seyda Neen
+SC-scene | awaiting owner | [rendering](visual-checks/rendering.md) | Static scene (`--scene`): every static present, no double draw, nothing jumps after a 256 m walk; doors/lights stay entities
 RO-B | partial (2026-10-30: draws in front now; odd blend, weak over dark things, like Ghostfence) | [rendering](visual-checks/rendering.md) | Lit smoke shading + dynamic plume Aabb sort over sky and objects
 CB-1 | confirmed (2026-10-27: sprint hold, chain step, mouse capture, dummy collision fixed; evening: 4-hit chain and M1 cursor confirmed) | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
 CB-2 | confirmed (2026-10-30) | [combat](visual-checks/combat.md) | Lock-on, locked facing and side rolls around the dummy (scene level-arena)
@@ -228,7 +229,7 @@ SK-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Night and moon
 ST-2 | deferred | [streaming](visual-checks/streaming.md) | No pop at origin shifts in flight
 ST-3 | deferred | [streaming](visual-checks/streaming.md) | Paced model loads arrive in time
 SC-2 | deferred | [streaming](visual-checks/streaming.md) | The cutoff fades, never pops
-SC-foliage | deferred (needs the `--scene` A/B, S3b) | [rendering](visual-checks/rendering.md) | Cutout candidates (foliage, fences, grates) drawn from the static table, and no candidate that should fade softly gaining hard edges
+SC-foliage | awaiting owner (with SC-scene) | [rendering](visual-checks/rendering.md) | Cutout candidates (foliage, fences, grates) drawn from the static table, and no candidate that should fade softly gaining hard edges
 SN-2 | deferred | [characters](visual-checks/characters.md) | Guar from its cooked skinned product
 SN-3 | deferred | [characters](visual-checks/characters.md) | Dark elf head morphs
 CH-1 | deferred | [characters](visual-checks/characters.md) | The M3 lineup

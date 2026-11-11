@@ -209,8 +209,18 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   as one surface drawn with the wrong edges.
 - Kind: game location, A/B. Needs the S3b `--scene` path and a current `bevyrrowind bake` (start log:
   `alpha classes: N cutout candidates`). Runs: `view "Seyda Neen" --hour 14` and `view "Balmora" --hour 14`,
-  each default and restarted with `--off scene`.
+  each default and restarted with `--scene`.
 - Look for: no missing vegetation, hedges, fences, grates or tree cards with `--scene` on; and no candidate
   surface with hard cutout edges where it used to fade softly (glass, gauze, cobwebs, smoke cards) — name the
   surface, which names the misclassified texture (`textures::alpha_is_cutout` thresholds).
-- Status: deferred (needs the `--scene` A/B, S3b). Source: static-scene scene-fixes, defects 1 + 5.
+- Status: awaiting owner (with SC-scene). Source: static-scene scene-fixes, defects 1 + 5.
+
+### SC-scene: Statics drawn by the static scene (static-scene S3b C2, 2026-11-11)
+- Why: `--scene` draws exterior statics from the baked GPU table (one batch per material/slab, slots retained) instead
+  of entities + precombine. First time it runs in the game: anything wrong shows as missing, doubled or misplaced statics.
+- Kind: game location, A/B. Needs a current `bevyrrowind bake` (log: `static scene: N cell tables`, `N chains`).
+  Runs: `view "Balmora" --hour 14`, default then restarted with `--scene`; then walk/fly ≥ 300 m in one direction with `--scene`.
+- Look for: every building, rock, fence and tree present with `--scene` (none missing, none flickering or z-fighting
+  as a double draw); after crossing ~256 m nothing jumps or drifts (origin shift, O1); doors, containers, lights and
+  scripted objects still entities (interactable); cutouts as SC-foliage. Log: no `sf_scene_bevy` errors, no `is full` warning.
+- Status: awaiting owner.

@@ -5441,6 +5441,7 @@ dependencies = [
  "sf_records",
  "sf_render_order_bevy",
  "sf_save_bevy",
+ "sf_scene_bevy",
  "sf_shadow_cache_bevy",
  "sf_sky_bevy",
  "sf_surface_bevy",

@@ -395,6 +395,10 @@ struct ViewFlags {
     /// Tint cooked models by LOD level (green LOD0, yellow, orange, red, magenta).
     #[arg(long)]
     lod_tint: bool,
+    /// Draw near statics from the static scene (baked `scene.cells`) instead of the precombine
+    /// (scene-runtime-plan.md §8; exteriors only, `--off scene` for the A/B).
+    #[arg(long)]
+    scene: bool,
     /// Load skinned models (actors, creatures, body parts) from their cooked
     /// `Cooked::Skinned` product, bound by joint name to the NIF's skeleton
     /// (scaffold until actor spawning; keys: K cooked/NIF, M cycle a morph).
@@ -562,6 +566,7 @@ impl ViewFlags {
             store,
             manifest,
             lod_tint: self.lod_tint,
+            scene: self.scene,
             terrain_lod: self.terrain_lod,
             wireframe: self.wire,
             rings: self.rings,

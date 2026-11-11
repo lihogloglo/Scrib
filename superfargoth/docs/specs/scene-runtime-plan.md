@@ -704,13 +704,12 @@ assert the bitflag constants — near-vacuous. Prefer the brief's fallback: asse
 `vendor/bevy_pbr/src/render/gpu_preprocess.rs:2163-2190` for the rest.
 ## 8. The `--scene` switch and the A/B
 
-Framework side: `pub fn suppress_scene_placements(spawners: &mut PlacementSpawners)` in
-`sf_scene_bevy`, wrapping every spawner so a placement a resident table draws spawns nothing (shape
-copied from `mw_devtools_bevy`'s `OffSpawner`/`apply_off`, `perf.rs:236-276`). It is a belt to the
-braces: the primary mechanism is `CellScene::covered` feeding `work.members` (§5.1), which also
-stops the **model loads**; `needs_model` cannot be cell-aware (`IndexedPlacement` has no cell,
-`sf_world/src/index.rs:76-80`), which is exactly why `members` is primary. Game side
-(`bevyrrowind`):
+No framework side (struck 2026-11-11, C2a): the planned `suppress_scene_placements` spawner wrapper
+is dropped. `CellScene::covered` feeding `work.members` (§5.1) already stops both the spawns and the
+model loads (`sf_world_bevy` test `scene_covered_placements_load_no_models_and_spawn_nothing`), and a
+wrapper would also block B5a-2's promoted entity spawn. Game side (`bevyrrowind`, as built in C2a:
+`static_paths` in `exterior.rs` also turns the scene off under `--off near`/`nif` and `--lod-tint`;
+`ScenePlugin` admits the exterior worldspace only and brings `GpuInstanceBatchPlugin` when on):
 - `#[arg(long)] pub scene: bool`, beside `lod_tint` (`apps/bevyrrowind/src/main.rs:395-397`),
   threaded into `ExteriorOptions::scene` (`mw_exterior_bevy/src/exterior.rs:78`), **off by default**.
 - `("scene", Part::Scene)` in `Part::ALL` — **the count becomes 55** (`mw_game_core/src/perf.rs:117`)
@@ -722,7 +721,7 @@ stops the **model loads**; `needs_model` cannot be cell-aware (`IndexedPlacement
   (`spawn_precombine`, `stream.rs:1125-1137`, reached from the near-spawn block at `:1209-1216`;
   corrected 2026-11-10, the old citation `:1176-1207` pointed at the *far-proxy* spawn block), so the
   two must never both be on.
-- `if scene { sf_scene_bevy::suppress_scene_placements(&mut spawners); }` where `apply_off` runs.
+- ~~`suppress_scene_placements` where `apply_off` runs~~: struck with the wrapper above.
 
 A/B recipe: `balmora_walk` with and without `--scene`, reading `views/<kind>/{items, bins,
 batch_sets, instance_batches, instance_draws, instance_slots}` (`sf_diag/src/views.rs:13-17`,

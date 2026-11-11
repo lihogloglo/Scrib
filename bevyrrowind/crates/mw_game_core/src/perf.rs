@@ -111,10 +111,14 @@ pub enum Part {
     Trails,
     /// Kick-up in snow and ash (surface-weather.md W7): off, feet throw no puffs (an A/B).
     Kickup,
+    /// The static scene (superfargoth scene-runtime-plan.md §8): with `--scene`, near statics draw from
+    /// the baked cell tables (`sf_scene_bevy`) instead of the precombine; off, the precombine draws
+    /// them again (an A/B).
+    Scene,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 54] = [
+    const ALL: [(&'static str, Part); 55] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -170,6 +174,7 @@ impl Part {
         ("cover", Part::Cover),
         ("trails", Part::Trails),
         ("kickup", Part::Kickup),
+        ("scene", Part::Scene),
     ];
 
     fn name(self) -> &'static str {

@@ -57,6 +57,7 @@ sf_physics_bevy.workspace = true
 sf_records.workspace = true
 sf_render_order_bevy.workspace = true
 sf_save_bevy.workspace = true
+sf_scene_bevy.workspace = true
 sf_shadow_cache_bevy.workspace = true
 sf_sky_bevy.workspace = true
 sf_terrain_bevy.workspace = true
