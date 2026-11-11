@@ -248,7 +248,10 @@ pub struct StreamStats {
 }
 
 
-type FetchResult = Result<Arc<Vec<IndexedPlacement>>, String>;
+/// A fetch: the cell's placements for the step, and — for a near load with a static scene —
+/// the ids of the cell's *indexed* placements in index order, which a scene table's cell-local
+/// placement ids index ([`crate::CellScene::covered`]); empty otherwise.
+type FetchResult = Result<(Arc<Vec<IndexedPlacement>>, Vec<PlacementId>), String>;
 type DirResult = Result<Option<CellDirectory>, String>;
 
 /// Per-request engine state.
@@ -717,14 +720,17 @@ impl Streaming {
         let content = LevelContent::of(dir).with_proxies(self.rt.far.is_installed());
         let cache = self.cache.clone();
         let (ws, cell, from, to) = (request.worldspace.clone(), request.cell, request.from, request.to);
+        let scene = self.rt.scene.is_installed() && request.kind == RequestKind::Load && request.to == Level::Near;
         let task = IoTaskPool::get().spawn(async move {
             let page = load_page(&*reader, &cache, &ws, Partition::page_of(cell))?;
             let indexed = page.cell(cell).map(|c| c.placements.as_slice()).unwrap_or_default();
+            // A scene table names placements by their index here (`CellScene::covered`).
+            let ids = if scene { indexed.iter().map(|p| p.placement.id).collect() } else { Vec::new() };
             let placements = match &overlay {
                 Some(o) => o.read().unwrap_or_else(PoisonError::into_inner).apply(&ws, partition, cell, indexed),
                 None => indexed.to_vec(),
             };
-            Ok(Arc::new(content.step(&placements, from, to).cloned().collect()))
+            Ok((Arc::new(content.step(&placements, from, to).cloned().collect()), ids))
         });
         self.fetches.insert(request.id, task);
         let near = match world.get_resource::<Precombines>() {
@@ -744,7 +750,6 @@ impl Streaming {
         // here and its handle holds the fetch open (`settled` below), so the
         // cell's `covered` set is read off a resolved table. Which cells and
         // which worldspaces have a table is the hook's business, not ours.
-        let scene = self.rt.scene.is_installed() && request.kind == RequestKind::Load && request.to == Level::Near;
         let scene_table = match &self.rt.scene.0 {
             Some(s) if scene => s.acquire(world, &request.worldspace, request.cell),
             _ => None,
@@ -757,21 +762,31 @@ impl Streaming {
         let work = &self.rt.work;
         // A near load's fetch also waits for its precombine and its static-scene
         // table (loaded or failed): the model gather below is the one place
-        // `covered` can feed, and it must see a resolved table.
+        // `covered` can feed, and it must see a resolved table. With a scene it
+        // also waits for `ready`: the hook plans the cell (chains and their
+        // slabs in, `plan_in` run) or falls it back before `covered` is asked,
+        // so `covered` is exactly what the scene placed and everything else
+        // (overflow, a failed chain) is gathered and spawned like any uncovered
+        // placement (scene-runtime-plan.md §5.3, "Ruled 2026-11-11").
         let pending = |state: Option<LoadState>| matches!(state, Some(LoadState::NotLoaded | LoadState::Loading));
+        let scene_ready = |id: &RequestId| match (&self.rt.scene.0, self.scheduler.request(*id)) {
+            (Some(s), Some(r)) => s.ready(world, &r.worldspace, r.cell),
+            _ => true,
+        };
         let settled = |id: &RequestId| {
             let w = work.get(id);
             w.and_then(|w| w.near.as_ref()).is_none_or(|h| !pending(asset_server.get_load_state(h.id())))
                 && w.and_then(|w| w.scene_table.as_ref()).is_none_or(|h| !pending(asset_server.get_load_state(h.id())))
+                && w.is_none_or(|w| !w.scene || scene_ready(id))
         };
         let done: Vec<RequestId> =
             self.fetches.iter().filter(|(id, t)| t.is_finished() && settled(id)).map(|(id, _)| *id).collect();
         for id in done {
             let task = self.fetches.remove(&id).expect("listed above");
-            let placements = future::block_on(task).unwrap_or_else(|e| {
+            let (placements, indexed) = future::block_on(task).unwrap_or_else(|e| {
                 log::error!("sf_world_bevy: fetch failed: {e}");
                 self.rt.stats.fetch_errors += 1;
-                Arc::new(Vec::new())
+                (Arc::new(Vec::new()), Vec::new())
             });
             let Some(request) = self.scheduler.request(id).cloned() else {
                 self.rt.work.remove(&id);
@@ -789,7 +804,7 @@ impl Streaming {
             // set never reaches it.
             let covered = match &self.rt.scene.0 {
                 Some(s) if self.rt.work.get(&id).is_some_and(|w| w.scene) => {
-                    s.covered(world, &request.worldspace, request.cell)
+                    s.covered(world, &request.worldspace, request.cell, &indexed)
                 }
                 _ => None,
             };

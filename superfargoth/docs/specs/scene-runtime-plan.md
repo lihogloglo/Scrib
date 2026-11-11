@@ -416,12 +416,13 @@ pub trait CellScene: Send + Sync + 'static {
     /// `Work::near` so `poll_fetches`' `settled` closure holds the fetch until the table
     /// resolves. `None` means "no table for this cell" (gate 1 is then a no-op).
     fn acquire(&self, world: &World, ws: &WorldspaceId, cell: IVec3) -> Option<UntypedHandle>;
-    /// Gate 2, in the Assets stage: the chain `CookedModelAsset`s only — the table is already
-    /// resolved by gate 1, which is what makes `covered` answerable.
+    /// As built (B3a, 2026-11-11 ruling, §5.3): true once the cell is planned or fell back; the
+    /// fetch's `settled` gate asks it too, so `covered` always reads a plan.
     fn ready(&self, world: &World, ws: &WorldspaceId, cell: IVec3) -> bool;
-    /// Placements the table draws: their models are not loaded and they do not spawn.
-    /// Consulted in the **Fetch** stage, so it may only read the table (gate 1), never chains.
-    fn covered(&self, world: &World, ws: &WorldspaceId, cell: IVec3) -> Option<Arc<HashSet<PlacementId>>>;
+    /// Placements the plan placed (overflow excluded; a fallen-back cell answers `None`).
+    /// `indexed` = the cell's indexed-page placement ids in index order, because a table names
+    /// placements by cell-local `u32` index (as built, B3a).
+    fn covered(&self, world: &World, ws: &WorldspaceId, cell: IVec3, indexed: &[PlacementId]) -> Option<Arc<HashSet<PlacementId>>>;
     /// Queues this cell's uploads; returns (bytes queued, done). **In M1 `done` is always
     /// `true`** — one invocation per cell (§5.2); the `bool` is the shape S3a3 may need.
     fn upload(&self, world: &mut World, cx: &SceneCellCx<'_>) -> (u64, bool);

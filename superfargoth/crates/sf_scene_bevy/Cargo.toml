@@ -8,11 +8,9 @@ license.workspace = true
 # Minimal Bevy (ARCHITECTURE §8b rule 6). The scene logic (table format, chain
 # registry, slot allocators, batch ranges, CPU cull) is Bevy-free in sf_scene.
 #
-# Only what B1 uses: the residency and render halves (B3/B4) add bevy_camera,
-# bevy_mesh, bevy_pbr, bevy_platform, bevy_render, bevy_transform, glam,
-# sf_coords, sf_diag_bevy, sf_model_bevy and sf_world_bevy with the code that
-# needs them (all of them are already in the unified feature set, so adding
-# them later is free).
+# Only what B1 and B3a use: B3b/B4 add bevy_camera, bevy_platform,
+# bevy_transform, sf_coords with the code that needs them (all of them are
+# already in the unified feature set, so adding them later is free).
 [dependencies]
 # App, Plugin, schedules.
 bevy_app = { workspace = true, features = ["std"] }
@@ -20,19 +18,38 @@ bevy_app = { workspace = true, features = ["std"] }
 bevy_asset.workspace = true
 # Resource: SceneConfig.
 bevy_ecs = { workspace = true, features = ["std"] }
+# IVec3 of the streaming seam.
+bevy_math = { workspace = true, features = ["std"] }
+# Mesh: a chain level's geometry.
+bevy_mesh.workspace = true
+# StandardMaterial: a chain's material (B3b fills it).
+bevy_pbr.workspace = true
 # TypePath for the asset and its loader.
 bevy_reflect = { workspace = true, features = ["std"] }
+# MainWorld, ExtractSchedule, MeshAllocator: the render-world slab feedback.
+bevy_render.workspace = true
+log.workspace = true
+sf_diag_bevy.workspace = true
+# CookedModelAsset (a chain product is an `.sfmesh`), baked_path.
+sf_model_bevy.workspace = true
 sf_scene.workspace = true
-# WorldspaceId: which worldspaces the scene is enabled for.
+# WorldspaceId, PlacementId.
 sf_world.workspace = true
+# The CellScene hook this crate implements.
+sf_world_bevy.workspace = true
 thiserror.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+# The residency tests' streaming harness (`residency_tests.rs`).
+big_space.workspace = true
 glam.workspace = true
 sf_bake.workspace = true
-sf_model_bevy.workspace = true
+sf_coords.workspace = true
+# Cooks the test plate (as sf_world_bevy's tests do; no glTF).
+sf_model = { path = "../sf_model", version = "0.1.0", default-features = false }
+sf_vfs.workspace = true
 tempfile.workspace = true
 
 [lints]

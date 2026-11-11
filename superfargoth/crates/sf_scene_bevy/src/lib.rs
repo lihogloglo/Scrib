@@ -1,19 +1,26 @@
 //! Bevy plugin for the static scene: the baked per-cell instance tables as
 //! assets, the retained GPU instance batches and the chain geometry's
-//! residency. Spec: `superfargoth/docs/specs/static-scene.md`.
+//! residency. Spec: `superfargoth/docs/specs/static-scene.md`; runtime plan:
+//! `superfargoth/docs/specs/scene-runtime-plan.md`.
 //!
 //! Thin by design (ARCHITECTURE "Build performance"): everything that is logic
 //! — the table format, the chain registry, the slot allocators, the batch
 //! ranges and the CPU twin of the per-view cull — is Bevy-free in `sf_scene`.
 //! This crate is the Bevy seam: an asset and its loader, the config resource,
-//! and (from B3/B4 on) the residency and render systems.
+//! the cell residency ([`residency`]: the `CellScene` hook streaming drives)
+//! and the render-world slab feedback ([`slabs`]).
 //!
-//! **B1 state: [`ScenePlugin`] registers the asset and its loader and nothing
-//! else.** It is in no `add_plugins` call and [`baked_extensions`] is in no
-//! extensions map, so the tree ships identically until the game side (C1/C2)
-//! installs it. The cells' streaming seam is `sf_world_bevy`'s `CellScene`
-//! hook, which this crate will implement in B3; `sf_world_bevy` must never
-//! depend on this crate (the hook exists so the dependency goes one way).
+//! **B3a state.** Cells load, resolve their chains and slabs, plan, commit and
+//! stream out; `covered` follows the plan. No batch entity, material or GPU
+//! write exists yet (B3b/B4), so an app with [`ScenePlugin`] enabled draws the
+//! covered statics *nowhere*. [`ScenePlugin`] is in no `add_plugins` call and
+//! [`baked_extensions`] is in no extensions map, so the tree ships identically
+//! until the game side (C1/C2) installs it. `sf_world_bevy` must never depend
+//! on this crate (the hook exists so the dependency goes one way).
+//!
+//! An app that enables the scene must also clear
+//! `StreamingConfig::precombine` (`sf_world_bevy::scene` module docs), and
+//! needs `sf_model_bevy`'s `SfModelPlugin` (the chain products are `.sfmesh`).
 //!
 //! ```ignore
 //! app.register_asset_source(BAKED_SOURCE, baked_source(store, manifest, extensions /* + baked_extensions() */))
@@ -21,16 +28,31 @@
 //! ```
 
 mod assets;
+pub mod chains;
+pub mod residency;
+pub mod slabs;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod residency_tests;
 
 pub use assets::{SceneLoadError, SceneTableAsset, SceneTableLoader};
+pub use chains::ChainAssets;
+pub use residency::{
+    CellLoad, CellUpload, LoadPhase, SLAB_WAIT_FRAMES, SceneFrame, SceneHook, SceneInbox, SceneSpaces, SceneUploads,
+    SpaceState, poll_cell_loads, tick_frame,
+};
+pub use slabs::{ChainSlabTable, extract_chain_slabs};
 
-use bevy_app::{App, Plugin};
+use std::sync::Arc;
+
+use bevy_app::{App, First, Plugin, Update};
 use bevy_asset::AssetApp;
 use bevy_ecs::prelude::*;
+use bevy_render::{ExtractSchedule, RenderApp};
 use sf_scene::{CELLS_EXT, CELLS_STEP, CHAINS_EXT, CHAINS_STEP, SpaceConfig};
 use sf_world::WorldspaceId;
+use sf_world_bevy::{SceneCells, StreamingSystems};
 
 /// Settings of the static scene (one per app).
 ///
@@ -65,7 +87,21 @@ impl SceneConfig {
     }
 }
 
+/// System sets of the static scene (B3 brief §4.3).
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SceneSystems {
+    /// `First`: [`tick_frame`], before anything else of the scene.
+    Frame,
+    /// `Update`, after `StreamingSystems::Drive`: [`poll_cell_loads`].
+    Residency,
+    /// `Update`, after [`Self::Residency`]: promotions (B5; empty until then).
+    Promote,
+}
+
 /// The static scene plugin.
+///
+/// With [`SceneConfig::enabled`] it also installs [`SceneHook`] as
+/// `sf_world_bevy`'s `SceneCells`; off, streaming never sees the scene.
 #[derive(Default)]
 pub struct ScenePlugin {
     pub config: SceneConfig,
@@ -75,7 +111,32 @@ impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.config.clone())
             .init_asset::<SceneTableAsset>()
-            .register_asset_loader(SceneTableLoader);
+            .register_asset_loader(SceneTableLoader)
+            .init_resource::<SceneFrame>()
+            .init_resource::<SceneSpaces>()
+            .init_resource::<SceneInbox>()
+            .init_resource::<ChainSlabTable>()
+            .init_resource::<SceneUploads>()
+            .configure_sets(
+                Update,
+                (
+                    SceneSystems::Residency.after(StreamingSystems::Drive),
+                    SceneSystems::Promote.after(SceneSystems::Residency),
+                ),
+            )
+            .add_systems(First, tick_frame.in_set(SceneSystems::Frame))
+            .add_systems(Update, poll_cell_loads.in_set(SceneSystems::Residency));
+        if self.config.enabled {
+            app.insert_resource(SceneCells(Some(Arc::new(SceneHook))));
+        }
+    }
+
+    fn finish(&self, app: &mut App) {
+        // The render world answers which slabs each chain mesh landed in (`slabs` module docs).
+        // Without one nothing ever resolves, so cells plan without waiting for slabs.
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
+        render_app.add_systems(ExtractSchedule, extract_chain_slabs);
+        app.world_mut().resource_mut::<ChainSlabTable>().tracking = true;
     }
 }
 

@@ -99,6 +99,14 @@ pub struct DrawSlabs {
 /// [`BatchGranularity::PerChain`] does for every chain.
 pub trait ChainSlabs {
     fn slabs(&self, chain: ChainSlot, level: u8) -> Option<DrawSlabs>;
+    /// The same question, also told the chain's mesh key. [`SceneSpace::plan_in`] asks this one:
+    /// a chain the cell references first only gets its slot *inside* `plan_in`, so a caller that
+    /// loaded the chain's geometry before planning (keyed by mesh key, since the slot did not
+    /// exist yet) answers here. The default ignores the key and asks [`Self::slabs`].
+    fn slabs_keyed(&self, key: ChainKey, chain: ChainSlot, level: u8) -> Option<DrawSlabs> {
+        let _ = key;
+        self.slabs(chain, level)
+    }
 }
 
 /// Resolves nothing: every chain level batches on its own.
@@ -423,7 +431,7 @@ impl SceneSpace {
             let local = instance.chain as usize;
             let chain = chain_slots[local];
             let level = top_level(entries[local].levels.len());
-            let key = self.key_of(chain, level, entries[local].class, slabs);
+            let key = self.key_of(entries[local].key, chain, level, entries[local].class, slabs);
             buckets.entry((key, chain, level)).or_default().push(index);
         }
 
@@ -712,10 +720,10 @@ impl SceneSpace {
 
     /// The batch key of one chain level: the renderer's slabs when the caller can resolve them,
     /// else the chain's own batch.
-    fn key_of(&self, chain: ChainSlot, level: u8, class: MaterialClass, slabs: &impl ChainSlabs) -> BatchKey {
+    fn key_of(&self, key: ChainKey, chain: ChainSlot, level: u8, class: MaterialClass, slabs: &impl ChainSlabs) -> BatchKey {
         let resolved = match self.config.granularity {
             BatchGranularity::PerChain => None,
-            BatchGranularity::PerClass => slabs.slabs(chain, level),
+            BatchGranularity::PerClass => slabs.slabs_keyed(key, chain, level),
         };
         match resolved {
             Some(d) => BatchKey {
@@ -1221,6 +1229,41 @@ mod tests {
         for (batch, _) in per_class.batch_keys() {
             assert_partitions(&per_class.batch_ranges(batch), 32);
         }
+    }
+
+    /// Resolves by mesh key only, as the Bevy half does: it loads a chain before the slot exists.
+    struct Keyed(Vec<ChainKey>);
+
+    impl ChainSlabs for Keyed {
+        fn slabs(&self, _chain: ChainSlot, _level: u8) -> Option<DrawSlabs> {
+            None
+        }
+        fn slabs_keyed(&self, key: ChainKey, _chain: ChainSlot, _level: u8) -> Option<DrawSlabs> {
+            self.0.contains(&key).then_some(DrawSlabs { vertex_slab: 1, index_slab: 2, bind_group: 3 })
+        }
+    }
+
+    /// Plan §6.1 / brief B3 §6.1: a chain the resolver cannot answer for lands in a batch of its
+    /// own, keyed by `(chain, level)`; the resolved ones of one class share the slab-keyed batch.
+    /// Asked by mesh key, so the answer holds for chains first referenced by this very cell.
+    #[test]
+    fn an_unresolved_chain_gets_its_own_batch_and_resolved_ones_share() {
+        let bytes = table_bytes(
+            &["meshes/a.mdl"],
+            &[(0x10, 0, 0, MaterialClass::Opaque), (0x20, 0, 1, MaterialClass::Opaque), (0x30, 0, 2, MaterialClass::Opaque)],
+            &[(1, 0), (2, 1), (3, 2)],
+        );
+        let view = StaticCellTableView::parse(&bytes).unwrap();
+        let mut space = space(BatchGranularity::PerClass, 32);
+        let plan = space.plan_in(IVec3::ZERO, &view, &Keyed(vec![0x10, 0x30])).unwrap();
+        assert_eq!(plan.batches.len(), 2, "{:?}", plan.batches);
+        let shared: Vec<BatchKey> = plan.batches.iter().map(|&(_, k)| k).filter(|k| k.chain.is_none()).collect();
+        let own: Vec<BatchKey> = plan.batches.iter().map(|&(_, k)| k).filter(|k| k.chain.is_some()).collect();
+        assert_eq!(shared.len(), 1);
+        assert_eq!((shared[0].vertex_slab, shared[0].index_slab, shared[0].bind_group), (1, 2, 3));
+        let unresolved = space.chains().slot(0x20).unwrap();
+        assert_eq!(own, vec![BatchKey { space: 0, class: MaterialClass::Opaque, vertex_slab: UNRESOLVED, index_slab: UNRESOLVED, bind_group: UNRESOLVED, chain: Some((unresolved, M1_LEVEL)) }]);
+        assert_eq!(plan.covered, vec![1, 2, 3]);
     }
 
     #[test]

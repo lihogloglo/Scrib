@@ -45,32 +45,48 @@ pub struct SceneCellCx<'a> {
 /// A static scene's per-cell residency (implemented by the scene plugin).
 ///
 /// Calls for one cell come in order: [`acquire`](Self::acquire), then the
-/// cell's *fetch* waits for the handle it returned, then
-/// [`covered`](Self::covered) once on the resolved table, then
-/// [`ready`](Self::ready) until true, then [`upload`](Self::upload) once, and
-/// eventually [`release`](Self::release) — also after a cancelled load.
+/// cell's *fetch* waits for the handle it returned **and** for
+/// [`ready`](Self::ready) (polled until true), then [`covered`](Self::covered)
+/// once, then `ready` again in the assets stage (it re-confirms), then
+/// [`upload`](Self::upload) once, and eventually [`release`](Self::release) —
+/// also after a cancelled load.
 ///
-/// `covered` is asked *before* `ready` because it feeds the fetch's model
-/// gather; the fetch waiting on `acquire`'s handle is what makes it a decision
-/// on a resolved table (the near precombine's handle gates the fetch the same
-/// way). `ready` then covers what only the resolved table can name: the chain
-/// geometry it references.
+/// `covered` feeds the fetch's model gather, so it must be the scene's final
+/// answer: the fetch waiting on `ready` lets the hook resolve the table, the
+/// chain geometry it names and (in the scene plugin) plan the cell's slots
+/// first, so overflow and a failed chain are *excluded* from `covered` and
+/// their models are gathered like any other placement's ("plan before
+/// `covered`", scene-runtime-plan.md §5.3, ruled 2026-11-11: asset-gated stage
+/// completion, the shape the near precombine already uses here).
 pub trait CellScene: Send + Sync + 'static {
     /// A cell's near load started its fetch: start loading its table. The
     /// returned handle, if any, holds the fetch open until it is loaded or
-    /// failed, so `covered` is never asked on a table that is still arriving.
+    /// failed (and `ready` holds it until the hook is done with the cell).
     /// `None`: this cell (or this worldspace) has no scene.
     fn acquire(&self, world: &World, worldspace: &WorldspaceId, cell: IVec3) -> Option<UntypedHandle>;
-    /// Whether the chain geometry the resolved table names is loaded (or
-    /// failed, or the cell has no scene).
+    /// Whether the hook has made its decision for the cell: everything the
+    /// table names resolved and the cell planned, or the cell fell back to the
+    /// entity path, or it has no scene. Read-only; polled every frame from the
+    /// fetch until true.
     fn ready(&self, world: &World, worldspace: &WorldspaceId, cell: IVec3) -> bool;
     /// The placements the table draws: their models are not loaded and they do
     /// not spawn. They are still *activated*, so colliders, scripts and AI are
     /// untouched (the activate stage is a separate request with its own work).
     ///
+    /// `indexed` is the cell's placement ids in *index* order (the world
+    /// index page's order, before any overlay): a baked table names its
+    /// placements by that cell-local index, so this is how its ids become
+    /// [`PlacementId`]s.
+    ///
     /// The `Arc` is shared with `Work::members`, so the common case — a scene
     /// and no precombine — clones no set.
-    fn covered(&self, world: &World, worldspace: &WorldspaceId, cell: IVec3) -> Option<Arc<HashSet<PlacementId>>>;
+    fn covered(
+        &self,
+        world: &World,
+        worldspace: &WorldspaceId,
+        cell: IVec3,
+        indexed: &[PlacementId],
+    ) -> Option<Arc<HashSet<PlacementId>>>;
     /// Queues this cell's instance and chain-slot writes, before its level
     /// group is revealed; returns the bytes queued, for the counters.
     ///

@@ -1,0 +1,637 @@
+//! Headless residency tests (B3a; brief §6.2): real `scene.cells` tables and
+//! `scene.chains` products off a bake store, through real streaming.
+//!
+//! The fixture is one streaming cell of plates, every placement at
+//! `Level::Near` (`far_min_radius = f32::MAX`: at the default radius the
+//! plates are far-eligible and the near step, the only level the scene draws,
+//! is empty — `sf_world_bevy`'s `streaming_app_radius` note). Its table names
+//! up to two chains of one model, `plate.mdl` parts 0 and 1, both stored as the
+//! same cooked plate. No render app: [`ChainSlabTable`] resolves only what a
+//! test injects by hand, and asserts its length first.
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use bevy::asset::{AssetPlugin, AssetServer, LoadState, UntypedHandle};
+use bevy::mesh::MeshPlugin;
+use bevy::prelude::*;
+use big_space::prelude::FloatingOrigin;
+use glam::{Affine3A, DVec3};
+use sf_bake::{Manifest, ProductKey, Store};
+use sf_coords::{WorldPos, WorldTransform};
+use sf_diag_bevy::DiagCounters;
+use sf_diag_bevy::sf_diag::Counters;
+use sf_model::{CookSettings, Cooked, Material as ModelMaterial, MeshData, Model, Node, cook};
+use sf_model_bevy::{BAKED_SOURCE, BakedManifest, baked_source};
+use sf_scene::{
+    Aabb, CELLS_STEP, CHAINS_STEP, CellPlan, DrawSlabs, InstanceFlags, LodChain, LodLevel, MaterialClass, Sphere,
+    SpaceConfig, StaticCellTable, StaticInstance, cell_subject, chain_subject,
+};
+use sf_vfs::VfsPath;
+use sf_world::{
+    IndexParams, IndexedPlacement, MemoryIndex, ModelInfo, Partition, Placement, PlacementClass, PlacementFlags,
+    PlacementId, RecordRef, WorldspaceId,
+};
+use sf_world_bevy::{
+    ActiveWorldspace, CellScene, PlacementSpawner, PlacementSpawners, SceneCellCx, SceneCells, SpawnCx, Streaming,
+    StreamingAnchor, WorldIndexSource, WorldStreamingPlugin, WorldspaceRegistry, to_grid,
+};
+
+use super::*;
+
+const PLACEMENTS: usize = 9;
+
+fn ws() -> WorldspaceId {
+    WorldspaceId::new("test")
+}
+
+/// A flat 8 × 8 m grid, fine enough for a LOD chain (`sf_world_bevy`'s test plate).
+fn plate() -> Model {
+    let n = 24u32;
+    let mut mesh = MeshData { normals: Some(Vec::new()), ..MeshData::default() };
+    for z in 0..=n {
+        for x in 0..=n {
+            #[allow(clippy::cast_precision_loss)]
+            let (fx, fz) = (x as f32 / n as f32, z as f32 / n as f32);
+            mesh.positions.push([fx * 8.0 - 4.0, 0.3 * (fx * 9.0).sin() * (fz * 7.0).cos(), fz * 8.0 - 4.0]);
+            mesh.normals.as_mut().unwrap().push([0.0, 1.0, 0.0]);
+        }
+    }
+    let row = n + 1;
+    for z in 0..n {
+        for x in 0..n {
+            let i = z * row + x;
+            mesh.indices.extend([i, i + row, i + 1, i + 1, i + row, i + row + 1]);
+        }
+    }
+    let mut node = Node::new("plate");
+    node.mesh = Some(0);
+    Model { nodes: vec![node], meshes: vec![mesh], materials: vec![ModelMaterial::default()] }
+}
+
+/// `PLACEMENTS` static plates, 3 m apart, all in one streaming cell.
+fn placements() -> Vec<Placement> {
+    (0..PLACEMENTS)
+        .map(|i| {
+            let key = format!("p{i}");
+            #[allow(clippy::cast_precision_loss)]
+            let x = 1.0 + i as f64 * 3.0;
+            Placement {
+                id: PlacementId::from_key("test", key.as_bytes()),
+                base: RecordRef::new("thing", key.as_str()),
+                model: Some(VfsPath::new("plate.mdl").unwrap()),
+                transform: WorldTransform::from_pos(WorldPos::from_f64(DVec3::new(x, 0.0, 2.0))),
+                class: PlacementClass::Static,
+                flags: PlacementFlags::empty(),
+            }
+        })
+        .collect()
+}
+
+/// What the cell's `scene.cells` product is.
+#[derive(Clone, Copy)]
+enum TableKind {
+    /// A valid table; `parts(k)` lists the chains (0 or 1) instance `k` draws.
+    Valid(fn(usize) -> Vec<u32>),
+    /// No product at all (not baked).
+    Missing,
+    /// Bytes the loader rejects.
+    Corrupt,
+}
+
+fn chain_a(_: usize) -> Vec<u32> {
+    vec![0]
+}
+
+fn chain_a_and_b(k: usize) -> Vec<u32> {
+    if k % 2 == 1 { vec![0, 1] } else { vec![0] }
+}
+
+/// Placements 0-2 draw chain 0 only, placement 3 both chains, the rest chain 1
+/// only: with capacity 4 and one batch per (unresolved) chain, chain 0's
+/// bucket (4 instances) fits and chain 1's (6) overflows.
+fn overflow_split(k: usize) -> Vec<u32> {
+    match k {
+        0..=2 => vec![0],
+        3 => vec![0, 1],
+        _ => vec![1],
+    }
+}
+
+struct Fixture {
+    app: App,
+    cell: IVec3,
+    /// The cell's placements in index order: a table's cell-local id indexes this.
+    indexed: Vec<PlacementId>,
+    /// Instances per local placement.
+    parts: Vec<Vec<u32>>,
+    counters: Arc<Counters>,
+    spawned: Arc<Mutex<Vec<PlacementId>>>,
+}
+
+impl Fixture {
+    fn ids(&self, locals: impl IntoIterator<Item = usize>) -> HashSet<PlacementId> {
+        locals.into_iter().map(|k| self.indexed[k]).collect()
+    }
+
+    fn all(&self) -> HashSet<PlacementId> {
+        self.indexed.iter().copied().collect()
+    }
+
+    fn spawned(&self) -> HashSet<PlacementId> {
+        let s = self.spawned.lock().unwrap();
+        let set: HashSet<PlacementId> = s.iter().copied().collect();
+        assert_eq!(set.len(), s.len(), "a placement spawned twice: {s:?}");
+        set
+    }
+
+    /// Every counter's total since the start (nothing else drains them here). Drains: call once.
+    fn counters(&self) -> HashMap<String, f64> {
+        let mut out = HashMap::new();
+        self.counters.drain(|_, def, value| {
+            if let Some(v) = value {
+                out.insert(def.name.clone(), v);
+            }
+        });
+        out
+    }
+
+    fn state(&self) -> &SpaceState {
+        &self.app.world().resource::<SceneSpaces>().0[&ws()]
+    }
+}
+
+/// Records the static placements it is asked to spawn; needs their model, so
+/// a placement the scene does not cover has its model gathered and loaded.
+struct Recorder(Arc<Mutex<Vec<PlacementId>>>);
+
+impl PlacementSpawner for Recorder {
+    fn spawn(&self, _world: &mut World, _cx: &SpawnCx<'_>, p: &IndexedPlacement) -> u32 {
+        self.0.lock().unwrap().push(p.placement.id);
+        0
+    }
+    fn needs_model(&self, _: &IndexedPlacement) -> bool {
+        true
+    }
+}
+
+/// The cooked plate, and its LOD level count (a chain level per cooked level).
+fn cooked_plate() -> (Vec<u8>, usize) {
+    let bytes = cook(&plate(), &CookSettings::default()).unwrap().to_bytes();
+    let Cooked::Static(model) = Cooked::from_bytes(&bytes).unwrap() else { panic!("the plate cooks static") };
+    (bytes, model.lods.len())
+}
+
+fn table_bytes(levels: usize, parts: &[Vec<u32>]) -> Vec<u8> {
+    let levels: Vec<LodLevel> = (0..levels)
+        .map(|l| {
+            #[allow(clippy::cast_precision_loss)]
+            let error = l as f32 * 0.01;
+            LodLevel { first_index: 0, index_count: 600, error }
+        })
+        .collect();
+    let mut instances = Vec::new();
+    for (k, chains) in parts.iter().enumerate() {
+        #[allow(clippy::cast_precision_loss)]
+        let center = Vec3::new(k as f32 * 3.0, 0.0, 0.0);
+        for &chain in chains {
+            instances.push(StaticInstance {
+                placement: u32::try_from(k).unwrap(),
+                transform: StaticInstance::rows(&Affine3A::from_translation(center)),
+                sphere: Sphere { center, radius: 6.0 },
+                chain,
+                material_override: 0,
+                flags: InstanceFlags::CASTS_SHADOW,
+            });
+        }
+    }
+    let chain = |mesh, part| LodChain {
+        mesh,
+        material: 0xA5A5,
+        material_class: MaterialClass::Opaque,
+        model: 0,
+        part,
+        levels: levels.clone(),
+    };
+    StaticCellTable {
+        origin_cell: IVec3::ZERO,
+        aabb: Aabb { min: Vec3::splat(-64.0), max: Vec3::splat(64.0) },
+        land_min: -1.0,
+        layers: 1,
+        instances,
+        // A table names only the chains its instances use (`TableError::UnusedChain`).
+        chains: if parts.iter().flatten().any(|&c| c == 1) { vec![chain(0x10, 0), chain(0x20, 1)] } else { vec![chain(0x10, 0)] },
+        models: vec!["plate.mdl".into()],
+    }
+    .write()
+    .unwrap()
+}
+
+/// The store, the index and the streaming app with the scene enabled.
+/// `chain_b`: whether chain 1's product is in the store.
+fn fixture(dir: &std::path::Path, kind: TableKind, chain_b: bool, capacity: u32) -> Fixture {
+    let store = Store::open(dir).unwrap();
+    let (cooked, levels) = cooked_plate();
+    let mut manifest = Manifest::default();
+    let put = |m: &mut Manifest, step: &str, subject: String, bytes: &[u8]| {
+        m.products.insert(ProductKey::new(step, subject), store.put(bytes, true).unwrap());
+    };
+    put(&mut manifest, "mesh.cook", "plate.mdl".into(), &cooked);
+    put(&mut manifest, CHAINS_STEP, chain_subject("plate.mdl", 0), &cooked);
+    if chain_b {
+        put(&mut manifest, CHAINS_STEP, chain_subject("plate.mdl", 1), &cooked);
+    }
+
+    let models = |_: &VfsPath| {
+        Some(ModelInfo { min: Vec3::new(-4.0, -0.3, -4.0), max: Vec3::new(4.0, 0.3, 4.0), bytes: 50_000, lod_distance: 0.0 })
+    };
+    let params = IndexParams { far_min_radius: f32::MAX, ..IndexParams::default() };
+    let all = placements();
+    let cell = Partition::STREAMING.cell_of(all[0].transform.pos);
+    assert!(all.iter().all(|p| Partition::STREAMING.cell_of(p.transform.pos) == cell), "the fixture spans cells");
+    let (pages, _) = sf_world::build_pages(&params, all, &models);
+    let indexed: Vec<PlacementId> =
+        pages.iter().find_map(|p| p.cell(cell)).expect("the cell is indexed").placements.iter().map(|p| p.placement.id).collect();
+    assert_eq!(indexed.len(), PLACEMENTS);
+
+    let mut parts = Vec::new();
+    let subject = cell_subject(ws().as_str(), cell);
+    match kind {
+        TableKind::Valid(f) => {
+            parts = (0..PLACEMENTS).map(f).collect();
+            put(&mut manifest, CELLS_STEP, subject, &table_bytes(levels, &parts));
+        }
+        TableKind::Missing => {}
+        TableKind::Corrupt => {
+            let mut bytes = table_bytes(levels, &[vec![0]]);
+            bytes.truncate(bytes.len() - 8);
+            put(&mut manifest, CELLS_STEP, subject, &bytes);
+        }
+    }
+
+    let directory = sf_world::build_directory(ws(), &params, &pages);
+    let mut index = MemoryIndex::new();
+    index.insert(&sf_world::WorldIndex { directory, pages, stats: sf_world::IndexStats::default() });
+
+    let mut extensions = BTreeMap::from([("mesh.cook".to_owned(), "sfmesh".to_owned())]);
+    extensions.extend(baked_extensions());
+    let mut app = App::new();
+    app.register_asset_source(BAKED_SOURCE, baked_source(store, BakedManifest::new(manifest), extensions));
+    let config = SceneConfig {
+        enabled: true,
+        space: SpaceConfig { batch_capacity: capacity, ..SpaceConfig::default() },
+        ..SceneConfig::default()
+    };
+    app.add_plugins((MinimalPlugins, AssetPlugin::default(), MeshPlugin))
+        .init_asset::<StandardMaterial>()
+        .add_plugins(WorldStreamingPlugin::default())
+        .add_plugins(ScenePlugin { config })
+        .insert_resource(WorldIndexSource(Arc::new(index)))
+        .insert_resource(ActiveWorldspace(Some(ws())));
+    app.finish();
+    app.cleanup();
+    let counters = Arc::new(Counters::new());
+    app.insert_resource(DiagCounters(counters.clone()));
+    let spawned = Arc::new(Mutex::new(Vec::new()));
+    let mut spawners = PlacementSpawners::default();
+    spawners.set(PlacementClass::Static, Arc::new(Recorder(spawned.clone())));
+    app.insert_resource(spawners);
+    Fixture { app, cell, indexed, parts, counters, spawned }
+}
+
+/// Puts the anchors at the origin and starts a burst.
+fn anchor(app: &mut App) -> Entity {
+    let root = WorldspaceRegistry::ensure_in(app.world_mut(), &ws()).root;
+    let (cell, transform) = to_grid(WorldPos::from_f64(DVec3::new(0.0, 2.0, 0.0)));
+    let camera = app.world_mut().spawn((cell, transform, StreamingAnchor::visual(), FloatingOrigin, ChildOf(root))).id();
+    app.world_mut().spawn((to_grid(WorldPos::ORIGIN).0, Transform::IDENTITY, StreamingAnchor::gameplay(), ChildOf(root)));
+    app.world_mut().resource_mut::<Streaming>().begin_burst();
+    camera
+}
+
+/// Runs frames until streaming is idle.
+fn settle(app: &mut App) {
+    for frame in 0..5000 {
+        app.update();
+        if frame > 3 && app.world().resource::<Streaming>().is_idle() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    panic!("streaming never went idle");
+}
+
+/// Runs frames until `done`.
+fn pump(app: &mut App, what: &str, mut done: impl FnMut(&mut App) -> bool) {
+    for _ in 0..5000 {
+        app.update();
+        if done(app) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    panic!("never: {what}");
+}
+
+/// What one `covered` call saw.
+struct Seen {
+    cell: IVec3,
+    /// The cell's table had resolved (loaded or failed).
+    table_resolved: bool,
+    /// The cell's plan, if it was planned.
+    plan: Option<CellPlan>,
+    decided: bool,
+    answer: Option<Arc<HashSet<PlacementId>>>,
+}
+
+/// [`SceneHook`] with a log; `bypass_ready` answers `ready` true always, so
+/// only `acquire`'s handle can hold the fetch (gate 1 alone).
+#[derive(Default)]
+struct Probe {
+    bypass_ready: bool,
+    seen: Mutex<Vec<Seen>>,
+    acquired: Mutex<Vec<IVec3>>,
+}
+
+impl CellScene for Probe {
+    fn acquire(&self, world: &World, worldspace: &WorldspaceId, cell: IVec3) -> Option<UntypedHandle> {
+        self.acquired.lock().unwrap().push(cell);
+        SceneHook.acquire(world, worldspace, cell)
+    }
+    fn ready(&self, world: &World, worldspace: &WorldspaceId, cell: IVec3) -> bool {
+        self.bypass_ready || SceneHook.ready(world, worldspace, cell)
+    }
+    fn covered(&self, world: &World, worldspace: &WorldspaceId, cell: IVec3, indexed: &[PlacementId]) -> Option<Arc<HashSet<PlacementId>>> {
+        let asset_server = world.resource::<AssetServer>();
+        let load = world.resource::<SceneSpaces>().0.get(worldspace).and_then(|s| s.loading.get(&cell));
+        let table_resolved = load.is_some_and(|l| {
+            matches!(asset_server.get_load_state(l.table.id()), Some(LoadState::Loaded | LoadState::Failed(_)))
+        });
+        let plan = load.and_then(|l| match &l.phase {
+            LoadPhase::Planned { plan } => Some((**plan).clone()),
+            _ => None,
+        });
+        let decided = load.is_some_and(|l| l.phase.decided());
+        let answer = SceneHook.covered(world, worldspace, cell, indexed);
+        self.seen.lock().unwrap().push(Seen { cell, table_resolved, plan, decided, answer: answer.clone() });
+        answer
+    }
+    fn upload(&self, world: &mut World, cx: &SceneCellCx<'_>) -> u64 {
+        SceneHook.upload(world, cx)
+    }
+    fn release(&self, world: &mut World, worldspace: &WorldspaceId, cell: IVec3) {
+        SceneHook.release(world, worldspace, cell);
+    }
+}
+
+/// Anchors at the origin, waits for the cell's near load to start (streaming
+/// reads idle before its directory is in), then settles.
+fn stream_in(f: &mut Fixture, probe: &Probe) {
+    anchor(&mut f.app);
+    let cell = f.cell;
+    pump(&mut f.app, "the cell's near load started", |_| probe.acquired.lock().unwrap().contains(&cell));
+    settle(&mut f.app);
+}
+
+fn install(f: &mut Fixture, probe: Probe) -> Arc<Probe> {
+    let probe = Arc::new(probe);
+    f.app.insert_resource(SceneCells(Some(probe.clone())));
+    probe
+}
+
+/// The scene answers `covered` for exactly this cell, once.
+fn the_covered_call(probe: &Probe, cell: IVec3) -> Seen {
+    let mut seen = probe.seen.lock().unwrap();
+    assert_eq!(seen.iter().filter(|s| s.cell == cell).count(), 1, "covered asked once for the cell");
+    let i = seen.iter().position(|s| s.cell == cell).unwrap();
+    seen.swap_remove(i)
+}
+
+/// Gate 1 alone: with `ready` bypassed, only the table handle `acquire`
+/// returned can hold the fetch, and `covered` still never sees a table that is
+/// still arriving.
+#[test]
+fn acquires_table_handle_holds_the_fetch_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a), true, 4096);
+    let probe = install(&mut f, Probe { bypass_ready: true, ..Probe::default() });
+    stream_in(&mut f, &probe);
+    assert!(probe.acquired.lock().unwrap().contains(&f.cell), "the cell's near load acquired its table");
+    let seen = the_covered_call(&probe, f.cell);
+    assert!(seen.table_resolved, "covered was asked before the cell's table resolved");
+}
+
+/// The ruling: the fetch stays open until the cell is planned. Held at gate 3
+/// (a render world that has not allocated the chain meshes yet), `covered` is
+/// not asked; once the slabs arrive the cell plans with them (one shared
+/// batch, slab-keyed) and `covered` is exactly the placed set.
+#[test]
+fn the_fetch_waits_until_the_cell_is_planned() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let probe = install(&mut f, Probe::default());
+    f.app.world_mut().resource_mut::<ChainSlabTable>().tracking = true;
+    anchor(&mut f.app);
+    let cell = f.cell;
+    let phase_is_slabs = |app: &mut App| {
+        app.world().resource::<SceneSpaces>().0.get(&ws()).and_then(|s| s.loading.get(&cell)).is_some_and(|l| {
+            matches!(l.phase, LoadPhase::Slabs { .. })
+        })
+    };
+    pump(&mut f.app, "the cell waits for its slabs", phase_is_slabs);
+    for _ in 0..30 {
+        f.app.update();
+    }
+    assert!(phase_is_slabs(&mut f.app), "still waiting for slabs");
+    assert!(probe.seen.lock().unwrap().iter().all(|s| s.cell != cell), "covered was asked before the cell was planned");
+
+    // The render world's answer, by hand: every mesh the scene asked about.
+    let (_, levels) = cooked_plate();
+    let mut slabs = f.app.world_mut().resource_mut::<ChainSlabTable>();
+    let wanted: Vec<_> = slabs.wanted.iter().copied().collect();
+    assert_eq!(wanted.len(), 2 * levels, "two chains' level meshes asked about");
+    for id in wanted {
+        slabs.slabs.insert(id, DrawSlabs { vertex_slab: 1, index_slab: 2, bind_group: 0 });
+    }
+    settle(&mut f.app);
+
+    let seen = the_covered_call(&probe, cell);
+    assert!(seen.decided && seen.table_resolved);
+    let plan = seen.plan.expect("covered is asked on a planned cell");
+    assert_eq!(plan.batches.len(), 1, "both chains share the slab-keyed batch: {:?}", plan.batches);
+    assert!(plan.batches[0].1.chain.is_none());
+    assert!(plan.overflowed.is_empty());
+    assert_eq!(seen.answer.as_deref(), Some(&f.all()), "covered is every placement the plan placed");
+    assert!(f.spawned().is_empty(), "nothing the scene placed spawns");
+    // Committed by the upload stage: resident, its table kept for promotion.
+    let state = f.state();
+    assert!(state.space.resident(cell).is_some() && state.loading.is_empty() && state.tables.contains_key(&cell));
+    assert_eq!(f.app.world().resource::<Streaming>().stats().scene_covered, PLACEMENTS as u64);
+}
+
+/// Overflow, the hot path (§1.3): a batch too small for its bucket. Those
+/// placements are not in `covered`, their models are gathered, and they reach
+/// the spawner — including placement 3, whose other part did get a slot and is
+/// written inactive.
+#[test]
+fn overflowed_placements_are_not_covered_and_spawn_as_entities() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(overflow_split), true, 4);
+    let probe = install(&mut f, Probe::default());
+    stream_in(&mut f, &probe);
+
+    let seen = the_covered_call(&probe, f.cell);
+    let plan = seen.plan.expect("planned");
+    assert_eq!(plan.overflowed.len(), 1, "chain 1's batch overflowed");
+    assert_eq!(plan.covered, vec![0, 1, 2]);
+    // Placement 3's chain-0 part is resident but drawn by nobody: it spawns whole.
+    let index_of_3 = f.parts[..3].iter().map(Vec::len).sum::<usize>();
+    let write = plan.writes.iter().find(|w| w.index as usize == index_of_3).expect("placement 3's chain-0 part has a slot");
+    assert!(!write.active);
+    assert!(plan.writes.iter().filter(|w| w.active).all(|w| (w.index as usize) < index_of_3));
+
+    assert_eq!(seen.answer.as_deref(), Some(&f.ids(0..3)));
+    assert_eq!(f.spawned(), f.ids(3..PLACEMENTS), "exactly the overflowed placements spawn");
+    assert_eq!(f.app.world().resource::<Streaming>().stats().models_loaded, 1, "their model was gathered");
+    let counters = f.counters();
+    assert_eq!(counters.get("scene/slots/overflow"), Some(&6.0));
+    assert_eq!(counters.get("scene/overflow/cells"), Some(&1.0));
+    assert_eq!(f.state().space.stats().overflow_cells, 1);
+}
+
+/// A failed chain product fails the whole cell: `covered` is `None`, every
+/// placement spawns, nothing of the cell stays in the space.
+#[test]
+fn a_failed_chain_falls_back_the_whole_cell() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), false, 4096);
+    let probe = install(&mut f, Probe::default());
+    stream_in(&mut f, &probe);
+
+    let seen = the_covered_call(&probe, f.cell);
+    assert!(seen.decided && seen.plan.is_none() && seen.answer.is_none());
+    assert_eq!(f.spawned(), f.all());
+    assert_eq!(f.counters().get("scene/chains/failed"), Some(&1.0));
+    let state = f.state();
+    assert!(matches!(state.loading.get(&f.cell).map(|l| &l.phase), Some(LoadPhase::Fallback)));
+    assert_eq!(state.space.stats().cells, 0);
+    assert_eq!(state.space.chains().stats().live, 0, "no chain ref was taken");
+    assert!(state.chains.iter().all(Option::is_none));
+}
+
+/// §4.4 row 1: no `scene.cells` product.
+#[test]
+fn a_missing_table_falls_back_to_entities() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Missing, true, 4096);
+    let probe = install(&mut f, Probe::default());
+    stream_in(&mut f, &probe);
+    let seen = the_covered_call(&probe, f.cell);
+    assert!(seen.table_resolved && seen.decided && seen.answer.is_none());
+    assert_eq!(f.spawned(), f.all());
+    let counters = f.counters();
+    assert_eq!(counters.get("scene/cells/missing"), Some(&1.0));
+    assert_eq!(counters.get("scene/cells/failed"), None);
+    assert_eq!(f.state().space.stats().cells, 0);
+}
+
+/// §4.4 row 2: a table the loader rejects.
+#[test]
+fn a_corrupt_table_falls_back_to_entities() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Corrupt, true, 4096);
+    let probe = install(&mut f, Probe::default());
+    stream_in(&mut f, &probe);
+    let seen = the_covered_call(&probe, f.cell);
+    assert!(seen.decided && seen.answer.is_none());
+    assert_eq!(f.spawned(), f.all());
+    let counters = f.counters();
+    assert_eq!(counters.get("scene/cells/failed"), Some(&1.0));
+    assert_eq!(counters.get("scene/cells/missing"), None);
+}
+
+/// Drives the hook by hand, without streaming: `release` twice in each state.
+#[test]
+fn release_is_idempotent_when_planned_committed_or_fallen_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let (cell, indexed) = (f.cell, f.indexed.clone());
+    let hook = SceneHook;
+    let ready = |app: &mut App, cell: IVec3| SceneHook.ready(app.world(), &ws(), cell);
+    let clean = |f: &Fixture| {
+        let state = f.state();
+        assert!(state.loading.is_empty() && state.tables.is_empty());
+        assert_eq!((state.space.stats().cells, state.space.chains().stats().live), (0, 0));
+        assert!(state.chains.iter().all(Option::is_none), "chain assets dropped");
+    };
+
+    // Planned, never committed.
+    assert!(hook.acquire(f.app.world(), &ws(), cell).is_some());
+    pump(&mut f.app, "planned", |app| ready(app, cell));
+    assert_eq!(hook.covered(f.app.world(), &ws(), cell, &indexed).as_deref(), Some(&f.all()));
+    assert!(f.state().chains.iter().flatten().count() == 2, "the plan stored both chains' assets");
+    for _ in 0..2 {
+        hook.release(f.app.world_mut(), &ws(), cell);
+        clean(&f);
+    }
+
+    // Committed.
+    assert!(hook.acquire(f.app.world(), &ws(), cell).is_some());
+    pump(&mut f.app, "planned again", |app| ready(app, cell));
+    let cx = SceneCellCx { worldspace: &ws(), cell, cell_origin: WorldPos::ORIGIN, level: sf_world::Level::Near };
+    assert!(hook.upload(f.app.world_mut(), &cx) > 0);
+    assert!(f.state().space.resident(cell).is_some() && f.state().tables.contains_key(&cell));
+    assert!(ready(&mut f.app, cell), "a committed cell is ready");
+    for _ in 0..2 {
+        hook.release(f.app.world_mut(), &ws(), cell);
+        clean(&f);
+    }
+
+    // Fallen back: a cell with no table.
+    let empty = cell + IVec3::X;
+    assert!(hook.acquire(f.app.world(), &ws(), empty).is_some());
+    assert!(!ready(&mut f.app, empty), "not ready before its table resolved");
+    pump(&mut f.app, "fallen back", |app| ready(app, empty));
+    assert!(hook.covered(f.app.world(), &ws(), empty, &indexed).is_none());
+    for _ in 0..2 {
+        hook.release(f.app.world_mut(), &ws(), empty);
+        clean(&f);
+    }
+    // Released before `poll_cell_loads` even saw it.
+    assert!(hook.acquire(f.app.world(), &ws(), cell).is_some());
+    hook.release(f.app.world_mut(), &ws(), cell);
+    f.app.update();
+    clean(&f);
+}
+
+/// A chain two cells share keeps its assets while either is resident.
+#[test]
+fn chain_assets_outlive_the_first_cell_and_drop_with_the_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a), true, 4096);
+    let cell = f.cell;
+    // A second cell naming the same chain (its table is added below, by hand).
+    let other = cell + IVec3::Z;
+    let hook = SceneHook;
+    let commit = |f: &mut Fixture, c: IVec3| {
+        let cx = SceneCellCx { worldspace: &ws(), cell: c, cell_origin: WorldPos::ORIGIN, level: sf_world::Level::Near };
+        hook.upload(f.app.world_mut(), &cx)
+    };
+    assert!(hook.acquire(f.app.world(), &ws(), cell).is_some());
+    pump(&mut f.app, "planned", |app| SceneHook.ready(app.world(), &ws(), cell));
+    assert!(commit(&mut f, cell) > 0);
+    let slot = f.state().space.chains().slot(0x10).expect("chain 0 resident");
+    // The second cell's table is the first one's, re-planned under another cell id.
+    let bytes = f.app.world().resource::<Assets<SceneTableAsset>>().get(&f.state().tables[&cell]).unwrap().0.clone();
+    let handle = f.app.world_mut().resource_mut::<Assets<SceneTableAsset>>().add(SceneTableAsset(bytes));
+    f.app.world().resource::<SceneInbox>().lock().push((ws(), other, handle));
+    pump(&mut f.app, "the second cell planned", |app| SceneHook.ready(app.world(), &ws(), other));
+    assert!(commit(&mut f, other) > 0);
+    assert_eq!(f.state().space.chains().refs(0x10), Some(2));
+
+    hook.release(f.app.world_mut(), &ws(), cell);
+    assert!(f.state().chain(slot).is_some(), "the other cell still holds the chain");
+    hook.release(f.app.world_mut(), &ws(), other);
+    assert!(f.state().chain(slot).is_none(), "dropped with the last cell");
+}

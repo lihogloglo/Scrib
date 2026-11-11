@@ -655,7 +655,7 @@ impl CellScene for TestScene {
         self.log().readies += 1;
         self.ready.load(Ordering::Acquire)
     }
-    fn covered(&self, _world: &World, _ws: &WorldspaceId, cell: IVec3) -> Option<Arc<HashSet<PlacementId>>> {
+    fn covered(&self, _world: &World, _ws: &WorldspaceId, cell: IVec3, _indexed: &[PlacementId]) -> Option<Arc<HashSet<PlacementId>>> {
         *self.log().covereds.entry(cell).or_default() += 1;
         self.covered.get(&cell).cloned()
     }
