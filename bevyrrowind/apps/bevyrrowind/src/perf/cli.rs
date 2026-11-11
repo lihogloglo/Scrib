@@ -381,6 +381,11 @@ pub(super) fn write_summary(args: &SuiteArgs, exe: &Path, dir: &Path, runs: &[Su
         GaugeColumn { label: "batch sets".into(), counter: "views/all/batch_sets".into() },
         GaugeColumn { label: "work items".into(), counter: "views/all/work_items".into() },
         GaugeColumn { label: "preprocess bind groups".into(), counter: "preprocess/bind_groups".into() },
+        // Static scene (sf_scene_bevy::gauges): "—" in a run without `--scene`.
+        GaugeColumn { label: "scene cells".into(), counter: "scene/cells/resident".into() },
+        GaugeColumn { label: "scene batches".into(), counter: "scene/batches/count".into() },
+        GaugeColumn { label: "scene live slots".into(), counter: "scene/slots/batch_live".into() },
+        GaugeColumn { label: "scene slot bytes".into(), counter: "scene/slots/batch_capacity_bytes".into() },
     ];
     let mut summary = suite::suite_markdown(&format!("Perf suite `{}`", args.tag), runs, &gauges);
     let mut header = String::new();

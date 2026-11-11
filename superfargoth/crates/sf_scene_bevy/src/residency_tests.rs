@@ -812,6 +812,35 @@ fn a_committed_cell_spawns_its_batches_with_their_ranges() {
     }
 }
 
+/// B6 (§9): the occupancy gauges follow one cell in and out, set every frame.
+#[test]
+#[allow(clippy::cast_precision_loss)] // a few slots
+fn scene_gauges_follow_a_cell_in_and_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a), true, 4096);
+    let cell = f.cell;
+    let plan = stream_cell_in(&mut f, cell);
+    assert!(plan.overflowed.is_empty(), "the fixture fits its batches");
+    f.app.update();
+    let gauges = f.counters();
+    let writes = plan.writes.len() as f64;
+    assert_eq!(gauges.get("scene/cells/resident"), Some(&1.0));
+    assert_eq!(gauges.get("scene/batches/count"), Some(&(plan.batches.len() as f64)));
+    assert_eq!(gauges.get("scene/slots/batch_live"), Some(&writes));
+    assert_eq!(gauges.get("scene/slots/batch_capacity"), Some(&(plan.batches.len() as f64 * 4096.0)));
+    assert_eq!(
+        gauges.get("scene/slots/batch_capacity_bytes"),
+        Some(&(plan.batches.len() as f64 * 4096.0 * upload::SLOT_BYTES as f64))
+    );
+    assert_eq!(gauges.get("scene/overflow/instances"), Some(&0.0));
+
+    SceneHook.release(f.app.world_mut(), &ws(), cell);
+    f.app.update();
+    let gauges = f.counters();
+    assert_eq!(gauges.get("scene/cells/resident"), Some(&0.0), "set every frame, zeros included");
+    assert_eq!(gauges.get("scene/slots/batch_live"), Some(&0.0));
+}
+
 /// Step 10: a batch two cells share keeps its entity when one streams out, and its ranges
 /// follow `batch_ranges`.
 #[test]

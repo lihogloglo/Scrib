@@ -31,6 +31,7 @@
 
 mod assets;
 pub mod chains;
+pub mod gauges;
 pub mod residency;
 pub mod shift;
 pub mod slabs;
@@ -42,6 +43,7 @@ mod residency_tests;
 
 pub use assets::{SceneLoadError, SceneTableAsset, SceneTableLoader};
 pub use chains::{ChainAssets, ChainMaterials};
+pub use gauges::publish_scene_gauges;
 pub use residency::{
     BatchEntity, BatchZeroFill, CellLoad, CellUpload, LoadPhase, PromotePlacement, SLAB_WAIT_FRAMES, SceneBatch, SceneFrame, SceneHook,
     SceneInbox, SceneSpaces, SceneUploads, SpaceState, apply_promotions, despawn_empty_batches, poll_cell_loads, tick_frame,
@@ -54,12 +56,13 @@ pub use upload::{
 
 use std::sync::Arc;
 
-use bevy_app::{App, First, Plugin, PostUpdate, Update};
+use bevy_app::{App, First, Last, Plugin, PostUpdate, Update};
 use bevy_asset::AssetApp;
 use bevy_ecs::prelude::*;
 use bevy_pbr::gpu_instance_batch::{GpuInstanceBatchReservations, GpuInstanceBatchSystems};
 use bevy_render::renderer::RenderGraph;
 use bevy_render::{ExtractSchedule, RenderApp};
+use sf_diag_bevy::DiagCounters;
 use sf_scene::{CELLS_EXT, CELLS_STEP, CHAINS_EXT, CHAINS_STEP, SpaceConfig};
 use sf_world::WorldspaceId;
 use sf_world_bevy::{SceneCells, StreamingSystems, WorldOriginSystems};
@@ -131,7 +134,8 @@ impl Plugin for ScenePlugin {
             .add_message::<PromotePlacement>()
             .add_systems(Update, poll_cell_loads.in_set(SceneSystems::Residency))
             .add_systems(Update, apply_promotions.in_set(SceneSystems::Promote))
-            .add_systems(PostUpdate, rewrite_on_origin_shift.after(WorldOriginSystems));
+            .add_systems(PostUpdate, rewrite_on_origin_shift.after(WorldOriginSystems))
+            .add_systems(Last, publish_scene_gauges.run_if(resource_exists::<DiagCounters>));
         if self.config.enabled {
             app.insert_resource(SceneCells(Some(Arc::new(SceneHook))));
         }

@@ -749,6 +749,12 @@ behind `resource_exists::<DiagCounters>`, as `matclass::track_static_materials` 
 (`sf_world_bevy/src/lib.rs:131-133`). Add `slots/batch_capacity` = `batches × batch_capacity`, which
 `SpaceStats::batch_capacity` already computes: §4.4's memory ceiling makes it the VRAM gauge.
 
+**As built (B6, 2026-11-11):** `sf_scene_bevy::gauges::publish_scene_gauges` (`Last`) sums `stats()` over the
+spaces and sets, every frame, `cells/resident`, `chains/{live,pending,high_water}`, `slots/{scene_live,scene_bump,
+batch_live,batch_bump,batch_capacity,batch_capacity_bytes,waste}`, `batches/count`, `promoted`, `overflow/instances`;
+`perf suite` shows cells, batches, live slots, slot bytes. Not built (no source): `chains/loading`, `cells/covered`,
+`batches/{ranges,instances}`, `upload/bytes`, `plan/ms`.
+
 **Nothing to add on the view side.** The counters the §8 A/B reads already exist and already see
 instance batches — `views/<kind>/{instance_batches, instance_draws, instance_slots}` in `sf_diag`,
 over the fixed `batch_set_count()` / `entity_count()` (§8). §13 question 8 is closed.
