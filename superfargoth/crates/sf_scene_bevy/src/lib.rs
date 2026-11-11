@@ -60,8 +60,9 @@ use bevy_app::{App, First, Last, Plugin, PostUpdate, Update};
 use bevy_asset::AssetApp;
 use bevy_ecs::prelude::*;
 use bevy_pbr::gpu_instance_batch::{GpuInstanceBatchReservations, GpuInstanceBatchSystems};
+use bevy_render::batching::gpu_preprocessing::GpuPreprocessingSupport;
 use bevy_render::renderer::RenderGraph;
-use bevy_render::{ExtractSchedule, RenderApp};
+use bevy_render::{ExtractSchedule, MainWorld, RenderApp};
 use sf_diag_bevy::DiagCounters;
 use sf_scene::{CELLS_EXT, CELLS_STEP, CHAINS_EXT, CHAINS_STEP, SpaceConfig};
 use sf_world::WorldspaceId;
@@ -90,6 +91,48 @@ impl SceneConfig {
     pub fn admits(&self, worldspace: &WorldspaceId) -> bool {
         self.enabled && self.worldspaces.as_ref().is_none_or(|list| list.contains(worldspace))
     }
+}
+
+/// Whether this adapter can draw the static scene: its batches need GPU
+/// culling (indirect draws). Without it both batching callers skip instance
+/// batches, so the scene's statics would go missing (`scene-runtime-plan.md`
+/// §7); the scene then behaves as if [`SceneConfig::enabled`] were off and
+/// statics spawn as entities.
+///
+/// Inserted as [`Self::Unknown`] by [`ScenePlugin::finish`] only when there is
+/// a render app; [`extract_scene_support`] answers it on the first extract.
+/// No resource (no render app, e.g. headless): the scene is not gated.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneSupport {
+    /// The render world has not answered yet: cells wait (`SceneHook::ready`).
+    Unknown,
+    /// GPU culling is supported: the scene draws.
+    Supported,
+    /// No GPU culling on this adapter: the scene is off.
+    Unsupported,
+}
+
+impl SceneSupport {
+    /// The answer for an adapter, from `GpuPreprocessingSupport::is_culling_supported`.
+    pub fn resolve(culling: bool) -> Self {
+        if culling { Self::Supported } else { Self::Unsupported }
+    }
+}
+
+/// Render world, `ExtractSchedule`: answers the main world's [`SceneSupport`]
+/// once, from `GpuPreprocessingSupport::is_culling_supported`
+/// (`vendor/bevy_render/src/batching/gpu_preprocessing.rs:151-154`), and warns
+/// once when that turns an enabled scene off.
+pub fn extract_scene_support(mut main: ResMut<MainWorld>, support: Option<Res<GpuPreprocessingSupport>>) {
+    let Some(support) = support else { return };
+    if main.get_resource::<SceneSupport>() != Some(&SceneSupport::Unknown) {
+        return;
+    }
+    let answer = SceneSupport::resolve(support.is_culling_supported());
+    if answer == SceneSupport::Unsupported && main.get_resource::<SceneConfig>().is_some_and(|c| c.enabled) {
+        log::warn!("GPU culling unsupported on this adapter: the static scene is off, statics draw as entities");
+    }
+    main.insert_resource(answer);
 }
 
 /// System sets of the static scene (B3 brief §4.3).
@@ -148,7 +191,7 @@ impl Plugin for ScenePlugin {
         // The batch-slot writer (`upload` module): extracted, then published before materialization.
         render_app
             .init_resource::<PendingSceneWrites>()
-            .add_systems(ExtractSchedule, (extract_chain_slabs, extract_scene_uploads))
+            .add_systems(ExtractSchedule, (extract_scene_support, extract_chain_slabs, extract_scene_uploads))
             .add_systems(
                 RenderGraph,
                 publish_scene
@@ -156,6 +199,8 @@ impl Plugin for ScenePlugin {
                     .run_if(resource_exists::<GpuInstanceBatchReservations>),
             );
         app.world_mut().resource_mut::<ChainSlabTable>().tracking = true;
+        // Whether the adapter can draw the scene at all (GPU culling); the first extract answers.
+        app.insert_resource(SceneSupport::Unknown);
     }
 }
 

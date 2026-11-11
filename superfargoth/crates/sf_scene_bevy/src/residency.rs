@@ -60,7 +60,7 @@ use crate::chains::{
 };
 use crate::slabs::{CellSlabs, ChainIds, ChainSlabTable};
 use crate::upload::{BatchSlotWrite, SLOT_BYTES, gpu_instance};
-use crate::{SceneConfig, SceneTableAsset};
+use crate::{SceneConfig, SceneSupport, SceneTableAsset};
 
 /// Frames a planned-to-be cell waits for its chain meshes' slabs before it
 /// plans without them. A mesh the render world never allocates must not hold
@@ -738,9 +738,25 @@ fn overlay_touched(world: &World, id: PlacementId) -> bool {
 #[derive(Default)]
 pub struct SceneHook;
 
+/// Whether the scene draws `worldspace`: `Some(false)` when [`SceneConfig`] does not admit it or
+/// the adapter has no GPU culling ([`SceneSupport::Unsupported`], plan §7: the scene is then
+/// `--off scene`), `None` while the render world has not answered ([`SceneSupport::Unknown`]:
+/// wait), `Some(true)` otherwise. No [`SceneSupport`] (no render app): not gated.
+fn scene_on(world: &World, worldspace: &WorldspaceId) -> Option<bool> {
+    if !world.get_resource::<SceneConfig>().is_some_and(|c| c.admits(worldspace)) {
+        return Some(false);
+    }
+    match world.get_resource::<SceneSupport>() {
+        None | Some(SceneSupport::Supported) => Some(true),
+        Some(SceneSupport::Unsupported) => Some(false),
+        Some(SceneSupport::Unknown) => None,
+    }
+}
+
 impl CellScene for SceneHook {
     fn acquire(&self, world: &World, worldspace: &WorldspaceId, cell: IVec3) -> Option<UntypedHandle> {
-        if !world.get_resource::<SceneConfig>()?.admits(worldspace) {
+        // Unknown proceeds: the table loads while the adapter answers (within a frame).
+        if scene_on(world, worldspace) == Some(false) {
             return None;
         }
         let inbox = world.get_resource::<SceneInbox>()?;
@@ -752,8 +768,10 @@ impl CellScene for SceneHook {
     }
 
     fn ready(&self, world: &World, worldspace: &WorldspaceId, cell: IVec3) -> bool {
-        if !world.get_resource::<SceneConfig>().is_some_and(|c| c.admits(worldspace)) {
-            return true;
+        match scene_on(world, worldspace) {
+            Some(false) => return true,
+            None => return false,
+            Some(true) => {}
         }
         if world.get_resource::<SceneInbox>().is_some_and(|i| i.contains(worldspace, cell)) {
             return false;
@@ -773,6 +791,9 @@ impl CellScene for SceneHook {
         cell: IVec3,
         indexed: &[PlacementId],
     ) -> Option<Arc<HashSet<PlacementId>>> {
+        if scene_on(world, worldspace) == Some(false) {
+            return None;
+        }
         let load = world.get_resource::<SceneSpaces>()?.0.get(worldspace)?.loading.get(&cell)?;
         let LoadPhase::Planned { plan } = &load.phase else { return None };
         let mut out = HashSet::with_capacity(plan.covered.len());
@@ -805,7 +826,9 @@ impl CellScene for SceneHook {
     ///
     /// TODO(B4b): push `plan.scene_bytes` into [`SceneUploads`].
     fn upload(&self, world: &mut World, cx: &SceneCellCx<'_>) -> u64 {
-        if !world.contains_resource::<SceneSpaces>() {
+        // A cell planned while the adapter was Unknown that then turned out Unsupported: `covered`
+        // said `None` (entities spawn), so it must not commit a batch too; `release` drops the plan.
+        if scene_on(world, cx.worldspace) != Some(true) || !world.contains_resource::<SceneSpaces>() {
             return 0;
         }
         world.resource_scope(|world, mut spaces: Mut<SceneSpaces>| {

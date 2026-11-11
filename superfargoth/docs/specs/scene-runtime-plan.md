@@ -702,6 +702,11 @@ not the one that would make it unsafe. One reachability question that brief left
 assert the bitflag constants — near-vacuous. Prefer the brief's fallback: assert that
 `GpuPreprocessingSupport::is_culling_supported` is the gate B5 reads, and leave a comment citing
 `vendor/bevy_pbr/src/render/gpu_preprocess.rs:2163-2190` for the rest.
+
+**As built (B5c, 2026-11-11):** main-world `SceneSupport` (`Unknown` from `ScenePlugin::finish` only with a render app),
+answered once by `extract_scene_support` from `is_culling_supported` with one `warn!`; `SceneHook`'s `scene_on` gates
+`acquire`/`ready`/`covered` (and `upload`): `Unsupported` = `--off scene`, `Unknown` holds `ready`. The §11 test is
+`an_adapter_without_gpu_culling_turns_the_scene_off`.
 ## 8. The `--scene` switch and the A/B
 
 No framework side (struck 2026-11-11, C2a): the planned `suppress_scene_placements` spawner wrapper

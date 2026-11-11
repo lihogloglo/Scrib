@@ -812,6 +812,65 @@ fn a_committed_cell_spawns_its_batches_with_their_ranges() {
     }
 }
 
+/// B5c (plan §7, which replaces §11's `promotion_is_safe_without_the_shader_fix`: no doubling can
+/// happen, the risk is the opposite). Without GPU culling both batching callers skip instance
+/// batches, so scene statics would go missing; the gate `extract_scene_support` reads is
+/// `GpuPreprocessingSupport::is_culling_supported` (`vendor/bevy_render/src/batching/
+/// gpu_preprocessing.rs:151-154`; the pipeline specialisation behind it is in
+/// `vendor/bevy_pbr/src/render/gpu_preprocess.rs:2163-2190`). `Unsupported` is `--off scene`:
+/// nothing acquired, no batch, `covered` is `None`, every placement spawns as an entity.
+#[test]
+fn an_adapter_without_gpu_culling_turns_the_scene_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    f.app.insert_resource(SceneSupport::Unsupported);
+    let probe = install(&mut f, Probe::default());
+    stream_in(&mut f, &probe);
+    let cell = f.cell;
+    let world = f.app.world();
+    assert!(SceneHook.acquire(world, &ws(), cell).is_none(), "acquire gives nothing");
+    assert!(SceneHook.ready(world, &ws(), cell), "nothing to wait for");
+    assert!(SceneHook.covered(world, &ws(), cell, &f.indexed).is_none(), "covered is None");
+    assert!(probe.seen.lock().unwrap().iter().all(|s| s.answer.is_none()), "streaming never saw a covered set");
+    assert_eq!(world.resource::<Streaming>().stats().scene_covered, 0);
+    assert!(world.resource::<SceneSpaces>().0.get(&ws()).is_none_or(|s| s.space.stats().cells == 0), "no cell committed");
+    assert!(batch_entities(&mut f).is_empty(), "no batch is created");
+    assert!(zero_fills(&f).is_empty());
+    assert_eq!(f.spawned(), f.all(), "every placement spawns as an entity");
+}
+
+/// B5c: while the render world has not answered (`SceneSupport::Unknown`), `acquire` proceeds but
+/// `ready` holds the cell; once the answer is `Supported` it plans and commits as usual.
+#[test]
+fn an_unanswered_adapter_holds_the_cell_until_supported() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    f.app.insert_resource(SceneSupport::Unknown);
+    let cell = f.cell;
+    assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some(), "Unknown lets acquire proceed");
+    let is_planned = |app: &mut App| {
+        app.world().resource::<SceneSpaces>().0.get(&ws()).and_then(|s| s.loading.get(&cell)).is_some_and(|l| {
+            matches!(l.phase, LoadPhase::Planned { .. })
+        })
+    };
+    pump(&mut f.app, "the cell planned behind the gate", is_planned);
+    for _ in 0..10 {
+        f.app.update();
+        assert!(!SceneHook.ready(f.app.world(), &ws(), cell), "ready waits for the adapter's answer");
+    }
+    f.app.insert_resource(SceneSupport::Supported);
+    let plan = planned(&mut f, cell);
+    assert!(commit(&mut f, cell) > 0);
+    assert_eq!(batch_entities(&mut f).len(), plan.batches.len());
+}
+
+/// B5c: the extract system's answer.
+#[test]
+fn scene_support_resolves_from_culling() {
+    assert_eq!(SceneSupport::resolve(true), SceneSupport::Supported);
+    assert_eq!(SceneSupport::resolve(false), SceneSupport::Unsupported);
+}
+
 /// B6 (§9): the occupancy gauges follow one cell in and out, set every frame.
 #[test]
 #[allow(clippy::cast_precision_loss)] // a few slots
