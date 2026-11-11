@@ -36,6 +36,7 @@
 //!   `cover` fit (menus.md "Backdrop and title").
 
 mod backdrop;
+mod conditions;
 mod ids;
 mod input;
 mod keymap;
@@ -67,7 +68,10 @@ mod tests_mods;
 mod tests_notify;
 #[cfg(test)]
 mod tests_text;
+#[cfg(test)]
+mod tests_settings_v2;
 
+pub use conditions::{Condition, PHASE_FRONTEND, PHASE_IN_GAME, SettingValueMatch, evaluate};
 pub use backdrop::{BackdropCandidate, BackdropKind, cover_size, resolve_backdrop};
 pub use ids::{
     ColumnId, InputContextId, ListId, ModId, PresetId, ScreenId, SettingKey, SlotId, TemplateId,

@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sf_records::{RecordDb, RecordError};
 
+use crate::conditions::Condition;
 use crate::ids::{InputContextId, ListId, PresetId, SlotId, TemplateId};
 
 /// Record kind names.
@@ -220,6 +221,9 @@ impl PresetDef {
 /// The record id is the setting key. Its value lives in the profile under
 /// the owning mod's table (`[settings.<owner>]`), keyed by the record id
 /// with a leading `<owner>.` stripped.
+///
+/// Every field after `kind` is optional (menus.md "Settings v2") and
+/// defaults to the v1 behaviour, so older records load unchanged.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SettingDef {
     /// Fluent key of the label.
@@ -233,6 +237,103 @@ pub struct SettingDef {
     #[serde(default)]
     pub group: Option<String>,
     pub kind: SettingKind,
+    /// When a change takes effect.
+    #[serde(default)]
+    pub apply: SettingApply,
+    /// Where the value is stored.
+    #[serde(default)]
+    pub scope: SettingScope,
+    /// The row is enabled only while every condition holds (empty: always).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enabled_if: Vec<Condition>,
+    /// The row is shown only while every condition holds (empty: always).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub visible_if: Vec<Condition>,
+    /// Fluent key shown on the row while it is disabled.
+    #[serde(default)]
+    pub disabled_reason: Option<String>,
+    /// Position within the group; `None` keeps load order.
+    #[serde(default)]
+    pub order: Option<i32>,
+    /// Fluent key of search words.
+    #[serde(default)]
+    pub keywords: Option<String>,
+    /// Included in "Reset page" (`false` for language, bindings).
+    #[serde(default = "yes")]
+    pub reset: bool,
+    /// How the value is displayed.
+    #[serde(default)]
+    pub format: ValueFormat,
+}
+
+impl SettingDef {
+    /// A setting with a label and a kind, every other field at its default.
+    pub fn new(label: impl Into<String>, kind: SettingKind) -> Self {
+        Self {
+            label: label.into(),
+            description: None,
+            page: None,
+            group: None,
+            kind,
+            apply: SettingApply::default(),
+            scope: SettingScope::default(),
+            enabled_if: Vec::new(),
+            visible_if: Vec::new(),
+            disabled_reason: None,
+            order: None,
+            keywords: None,
+            reset: true,
+            format: ValueFormat::default(),
+        }
+    }
+}
+
+/// When a setting change takes effect.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SettingApply {
+    /// The consumer applies it on change.
+    #[default]
+    Live,
+    /// Staged behind Apply/Revert; with `keep_seconds`, a keep-or-revert
+    /// countdown follows Apply.
+    Confirm {
+        #[serde(default)]
+        keep_seconds: Option<u32>,
+    },
+    /// Stored now, read at the next start.
+    Restart,
+}
+
+/// Where a setting's value is stored.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SettingScope {
+    /// `[settings.<owner>]` in the profile.
+    #[default]
+    Profile,
+    /// Per machine (display, graphics).
+    Machine,
+    /// In the save game.
+    Save,
+}
+
+/// How a value is displayed (`raw`, `percent`, `ms`, `x`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ValueFormat {
+    /// As stored.
+    #[default]
+    Raw,
+    /// 0..1 shown as 0..100 %.
+    Percent,
+    /// Milliseconds.
+    Ms,
+    /// A multiplier ("1.5x").
+    #[serde(rename = "x")]
+    Times,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// A setting's type, default and range.
@@ -254,17 +355,27 @@ pub enum SettingKind {
         max: f64,
         #[serde(default)]
         step: Option<f64>,
+        /// The slider moves on a logarithmic scale.
+        #[serde(default)]
+        log_scale: bool,
     },
-    /// One of a fixed set of option ids (labels are Fluent keys `<setting>-<option>`).
+    /// One of a set of option ids (labels are Fluent keys `<setting>-<option>`).
     Choice {
         default: String,
+        /// The static options, used when `options_from` is absent.
+        #[serde(default)]
         options: Vec<String>,
+        /// Id of a registered options provider (`display.monitors`, ...).
+        #[serde(default)]
+        options_from: Option<String>,
     },
     Text {
         default: String,
         #[serde(default)]
         max_len: Option<usize>,
     },
+    /// A button row with no value (opens a sub-screen, runs a calibration).
+    Action,
 }
 
 fn one() -> i64 {

@@ -224,7 +224,7 @@ fn audio_volume_settings_are_built_in_and_retunable() {
         assert_eq!(volume.def.page.as_deref(), Some("audio"));
         assert!(matches!(
             volume.def.kind,
-            SettingKind::Float { default, min, max, step: Some(_) }
+            SettingKind::Float { default, min, max, step: Some(_), .. }
                 if (default, min, max) == (1.0, 0.0, 1.0)
         ));
         let muted = reg.setting(&audio_muted_key(bus)).unwrap();

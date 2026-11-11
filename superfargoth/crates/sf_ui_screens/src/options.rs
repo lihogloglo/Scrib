@@ -226,6 +226,7 @@ impl OptionsModel {
                     min,
                     max,
                     step,
+                    ..
                 } => {
                     let step = step
                         .filter(|s| *s > 0.0)
@@ -242,7 +243,9 @@ impl OptionsModel {
                         SettingValue::Float(*default),
                     )
                 }
-                SettingKind::Choice { default, options } => (
+                SettingKind::Choice {
+                    default, options, ..
+                } => (
                     OptionKind::Choice(
                         options
                             .iter()
@@ -251,7 +254,7 @@ impl OptionsModel {
                     ),
                     SettingValue::Text(default.clone()),
                 ),
-                SettingKind::Text { .. } => continue,
+                SettingKind::Text { .. } | SettingKind::Action => continue,
             };
             let local = key.strip_prefix(&format!("{}.", def.owner)).unwrap_or(key);
             let row = OptionRow {

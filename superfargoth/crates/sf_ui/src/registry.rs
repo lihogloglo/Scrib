@@ -357,7 +357,7 @@ fn mod_of(db: &RecordDb, source: SourceId) -> ModId {
 
 fn validate_setting(kind: &SettingKind) -> Result<(), String> {
     match kind {
-        SettingKind::Bool { .. } => Ok(()),
+        SettingKind::Bool { .. } | SettingKind::Action => Ok(()),
         SettingKind::Int {
             default,
             min,
@@ -379,6 +379,7 @@ fn validate_setting(kind: &SettingKind) -> Result<(), String> {
             min,
             max,
             step,
+            log_scale,
         } => {
             if !(min.is_finite() && max.is_finite() && default.is_finite()) || min > max {
                 Err(format!("bad range {min}..={max}"))
@@ -386,12 +387,19 @@ fn validate_setting(kind: &SettingKind) -> Result<(), String> {
                 Err(format!("default {default} outside {min}..={max}"))
             } else if step.is_some_and(|s| s.is_nan() || s <= 0.0) {
                 Err("step not positive".into())
+            } else if *log_scale && *min <= 0.0 {
+                Err(format!("log scale needs min > 0, got {min}"))
             } else {
                 Ok(())
             }
         }
-        SettingKind::Choice { default, options } => {
-            if options.contains(default) {
+        SettingKind::Choice {
+            default,
+            options,
+            options_from,
+        } => {
+            // A provider's options are only known at run time.
+            if options_from.is_some() || options.contains(default) {
                 Ok(())
             } else {
                 Err(format!("default `{default}` not among the options"))

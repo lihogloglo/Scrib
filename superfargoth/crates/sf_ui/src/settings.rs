@@ -43,11 +43,9 @@ impl SettingDef {
     /// and the value stays in `[settings.sf]`.
     pub fn builtins() -> Vec<(SettingKey, SettingDef)> {
         let def = |label: String, kind| SettingDef {
-            label,
-            description: None,
             page: Some("audio".into()),
             group: Some("volume".into()),
-            kind,
+            ..SettingDef::new(label, kind)
         };
         AUDIO_BUSES
             .iter()
@@ -62,6 +60,7 @@ impl SettingDef {
                                 min: 0.0,
                                 max: 1.0,
                                 step: Some(AUDIO_VOLUME_STEP),
+                                log_scale: false,
                             },
                         ),
                     ),
@@ -78,8 +77,9 @@ impl SettingDef {
     }
 }
 
-/// A setting value.
-#[derive(Clone, Debug, PartialEq)]
+/// A setting value (untagged in records: `true`, `3`, `0.5`, `"dlss"`).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
 pub enum SettingValue {
     Bool(bool),
     Int(i64),
@@ -114,10 +114,11 @@ pub struct SettingsStore {
 }
 
 impl SettingsStore {
-    /// Every registered setting at its default.
+    /// Every registered setting at its default (actions have no value).
     pub fn new(registry: &UiRegistry) -> Self {
         let slots = registry
             .settings()
+            .filter(|d| d.def.kind != SettingKind::Action)
             .map(|d| {
                 let local =
                     d.id.as_str()
@@ -241,6 +242,8 @@ fn default_of(kind: &SettingKind) -> SettingValue {
         SettingKind::Choice { default, .. } | SettingKind::Text { default, .. } => {
             SettingValue::Text(default.clone())
         }
+        // Never stored: `SettingsStore::new` gives actions no slot.
+        SettingKind::Action => SettingValue::Bool(false),
     }
 }
 
@@ -251,6 +254,7 @@ fn expected(kind: &SettingKind) -> &'static str {
         SettingKind::Float { .. } => "a number",
         SettingKind::Choice { .. } => "an option id",
         SettingKind::Text { .. } => "text",
+        SettingKind::Action => "no value (an action)",
     }
 }
 
