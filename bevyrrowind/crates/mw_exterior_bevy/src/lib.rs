@@ -6,6 +6,7 @@
 
 pub mod exterior;
 mod gi_volume;
+mod teardown;
 pub mod level;
 pub mod main_menu;
 pub mod pause_menu;

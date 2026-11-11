@@ -244,13 +244,26 @@ fn step(time: Res<Time<Fixed>>, mut water: ResMut<Water>) {
     water.world.step(t);
 }
 
-fn spawn_ocean(mut commands: Commands, registry: Res<WorldspaceRegistry>, mut done: Local<bool>) {
-    if *done {
+/// The ocean once the exterior's root exists; again for each new world ([`despawn_world`]).
+fn spawn_ocean(mut commands: Commands, registry: Res<WorldspaceRegistry>, oceans: Query<(), With<OceanSurface>>) {
+    if !oceans.is_empty() {
         return;
     }
     let Some(entry) = registry.get(&ids::exterior()) else { return };
     commands.spawn((OceanSurface, Transform::IDENTITY, Visibility::Visible, RenderLayers::layer(entry.layer)));
-    *done = true;
+}
+
+/// Leaving the world (menus.md "App phases", F2a): the ocean and the interior pool go (they are
+/// free-standing, on the old registry's layers); the next world spawns its own.
+pub fn despawn_world(world: &mut World) {
+    let surfaces: Vec<Entity> =
+        world.query_filtered::<Entity, Or<(With<OceanSurface>, With<WaterSurface>)>>().iter(world).collect();
+    for e in surfaces {
+        world.despawn(e);
+    }
+    if let Some(mut pools) = world.get_resource_mut::<Pools>() {
+        pools.current = None;
+    }
 }
 
 fn mark_camera(mut commands: Commands, cameras: Query<Entity, (With<ExteriorCamera>, Without<WaterCamera>)>) {

@@ -22,16 +22,29 @@
 //!   menu and play begins; Options opens the options screen on top as the pause menu does
 //!   ([`crate::pause_menu::open_options`]); Quit asks (the screen), then exits.
 //!   Labels come from the builtin mod's Fluent file (`main-menu-<id>`).
+//! - **Backdrop** (menus.md "Backdrop and title", ui-adapter.md "Menus and front end"): the
+//!   first of [`MenuBackdropCandidates`] in the VFS, resolved by `sf_ui::resolve_backdrop`: a mod's
+//!   `video/menu_background.bik`, vanilla's `[Movies] Options Menu=` video (`mw_menu.bik`), then
+//!   `textures/menu_morrowind.dds`, else the plain theme background. A video plays looped and
+//!   silent through `sf_video_bevy::VideoPlayer`; one that fails to read or decode falls through to
+//!   the next candidate. Fit `cover` (`sf_ui::cover_size`): a clipping layer behind the menu's
+//!   parts (`ZIndex(-1)`, a child of the menu's root) holds the media node, sized in percent
+//!   of the layer and centred, so the 4:3 art fills a 16:9 window, cropped, never stretched. It
+//!   despawns with the menu's root (and on leaving the front end), which stops the decode
+//!   thread. No title image: `menu_morrowind` is the backdrop itself (`OpenMW` shows it as the
+//!   menu background, `mainmenu.cpp` @ 97722d48), and the video carries the title art.
 
 use bevy::prelude::*;
 use mw_saves_bevy::{OpenSaveLoad, SAVELOAD};
 use sf_app_bevy::AppPhase;
-use sf_app_bevy::bevy_state::prelude::{NextState, OnEnter, in_state};
+use sf_app_bevy::bevy_state::prelude::{DespawnOnExit, NextState, OnEnter, in_state};
 use sf_records::RecordDb;
 use sf_save_bevy::{LoadRequest, SaveConfig, SaveStorage};
-use sf_ui::UiRegistry;
+use sf_ui::{BackdropCandidate, BackdropKind, UiRegistry, cover_size, resolve_backdrop};
 use sf_ui_bevy::{ScreenStackRes, UiLocalizer, UiRegistryRes, UiScreenRoot, UiSettingsStore};
 use sf_ui_screens::{MainMenuEntry, MainMenuEvent, MainMenuModel, MainMenuScreen, SaveLoadMode, ScreenSystems};
+use sf_vfs::{Vfs, VfsPath};
+use sf_video_bevy::{VideoFinished, VideoPlayer, VideoSystems};
 
 /// The main menu's screen id.
 pub const MAIN_MENU: &str = "main_menu";
@@ -72,6 +85,11 @@ pub fn add(app: &mut App, open: bool) {
     registry.0.extend_screens(&screens());
     // Continue's request and Load's (the save plugin and `pause_menu` register them too).
     app.add_message::<LoadRequest>().add_message::<OpenSaveLoad>();
+    // The backdrop: candidates (the app may insert its own first), a failed video's fall-through
+    // after the players run (`VideoPlugin`, added by the app), and the cover fit before UI layout.
+    app.init_resource::<MenuBackdropCandidates>().add_message::<VideoFinished>();
+    app.add_systems(Update, backdrop_fallthrough.after(VideoSystems))
+        .add_systems(PostUpdate, fit_backdrop.before(bevy::ui::UiSystems::Prepare));
     app.add_systems(OnEnter(AppPhase::Frontend), open_main_menu)
         .add_systems(OnEnter(AppPhase::InGame), run_pending)
         .add_systems(
@@ -129,11 +147,177 @@ fn open_main_menu(
     localizer: Option<Res<UiLocalizer>>,
     storage: Option<Res<SaveStorage>>,
     config: Option<Res<SaveConfig>>,
+    backdrop: (Res<MenuBackdropCandidates>, Option<Res<mw_assets::SharedVfs>>, Option<Res<AssetServer>>),
 ) {
     let saves = newest(storage.as_deref(), config.as_deref()).is_some();
-    commands.spawn((UiScreenRoot(MAIN_MENU.into()), MainMenuScreen::new(model(localizer.as_deref(), saves))));
+    let root = commands.spawn((UiScreenRoot(MAIN_MENU.into()), MainMenuScreen::new(model(localizer.as_deref(), saves)))).id();
     if let Err(e) = stack.0.push(&registry.0, MAIN_MENU) {
         warn!("main menu: {e:?}");
+    }
+    let (candidates, vfs, assets) = backdrop;
+    if let Some(vfs) = vfs {
+        spawn_backdrop(&mut commands, root, &candidates.0, &vfs.0, assets.as_deref());
+    }
+}
+
+/// Adapter hook (menus.md "Backdrop and title"): the menu backdrop's candidates in order, the
+/// first whose file is in the VFS wins. `Default`: [`backdrop_candidates`] without an ini.
+#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+pub struct MenuBackdropCandidates(pub Vec<BackdropCandidate>);
+
+impl Default for MenuBackdropCandidates {
+    fn default() -> Self {
+        Self(backdrop_candidates(None))
+    }
+}
+
+/// Vanilla's menu video when `Morrowind.ini` names none.
+const MENU_VIDEO: &str = "mw_menu.bik";
+
+/// ui-adapter.md "Menus and front end" order. `options_menu`: `Morrowind.ini`'s
+/// `[Movies] Options Menu=` value (none or blank: vanilla's [`MENU_VIDEO`]).
+pub fn backdrop_candidates(options_menu: Option<&str>) -> Vec<BackdropCandidate> {
+    let menu = options_menu.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(MENU_VIDEO);
+    vec![
+        BackdropCandidate::video("video/menu_background.bik"),
+        BackdropCandidate::video(format!("video/{menu}")),
+        BackdropCandidate::image("textures/menu_morrowind.dds"),
+    ]
+}
+
+/// The backdrop's clipping layer behind the menu's parts; `next`: the candidate after the one
+/// shown (where a failed video resumes), `candidates`: the list it resolved from.
+#[derive(Component, Debug)]
+struct MenuBackdrop {
+    candidates: Vec<BackdropCandidate>,
+    next: usize,
+}
+
+/// The video or image inside the backdrop layer, sized by [`fit_backdrop`].
+#[derive(Component, Debug)]
+struct BackdropMedia;
+
+fn exists(vfs: &Vfs, path: &str) -> bool {
+    VfsPath::new(path).is_ok_and(|p| vfs.contains(&p))
+}
+
+/// The layer and its media node under the menu's `root`, then the first candidate that loads.
+fn spawn_backdrop(commands: &mut Commands, root: Entity, candidates: &[BackdropCandidate], vfs: &Vfs, assets: Option<&AssetServer>) {
+    if resolve_backdrop(candidates, 0, |p| exists(vfs, p)).is_none() {
+        return; // the plain theme background
+    }
+    let layer = commands
+        .spawn((
+            Name::new("main menu backdrop"),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            // Behind the framework's parts (siblings), whatever their spawn order.
+            ZIndex(-1),
+            DespawnOnExit(AppPhase::Frontend),
+            ChildOf(root),
+        ))
+        .id();
+    let media = commands
+        .spawn((
+            BackdropMedia,
+            Node { position_type: PositionType::Absolute, ..default() },
+            ImageNode::default(),
+            // Until the media's size is known (no white placeholder flash).
+            Visibility::Hidden,
+            ChildOf(layer),
+        ))
+        .id();
+    let next = show_candidate(commands, media, candidates, 0, vfs, assets);
+    commands.entity(layer).insert(MenuBackdrop { candidates: candidates.to_vec(), next });
+}
+
+/// Puts the first candidate at or after `from` that loads on `media`: a looped silent
+/// [`VideoPlayer`] or an [`ImageNode`]. Returns the index after it (`len`: none left; the layer
+/// stays empty, the theme background shows).
+fn show_candidate(commands: &mut Commands, media: Entity, candidates: &[BackdropCandidate], mut from: usize, vfs: &Vfs, assets: Option<&AssetServer>) -> usize {
+    while let Some(i) = resolve_backdrop(candidates, from, |p| exists(vfs, p)) {
+        let candidate = &candidates[i];
+        from = i + 1;
+        match candidate.kind {
+            BackdropKind::Video => match VfsPath::new(&candidate.path).map_err(|e| e.to_string()).and_then(|p| vfs.read(&p).map_err(|e| e.to_string())) {
+                Ok(bytes) => {
+                    info!("main menu: backdrop video {}", candidate.path);
+                    commands.entity(media).insert(VideoPlayer::new(bytes, true));
+                    return from;
+                }
+                Err(e) => warn!("main menu: backdrop video {}: {e}; trying the next", candidate.path),
+            },
+            BackdropKind::Image => {
+                let Some(assets) = assets else {
+                    warn!("main menu: no asset server for backdrop image {}", candidate.path);
+                    continue;
+                };
+                info!("main menu: backdrop image {}", candidate.path);
+                commands.entity(media).insert(ImageNode::new(assets.load(candidate.path.clone())));
+                return from;
+            }
+        }
+    }
+    candidates.len()
+}
+
+/// A backdrop video that failed to open or decode (a looped player finishes only on an error):
+/// drop its player and show the next candidate.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn backdrop_fallthrough(
+    mut commands: Commands,
+    mut finished: MessageReader<VideoFinished>,
+    media: Query<&ChildOf, With<BackdropMedia>>,
+    mut layers: Query<&mut MenuBackdrop>,
+    vfs: Option<Res<mw_assets::SharedVfs>>,
+    assets: Option<Res<AssetServer>>,
+) {
+    for done in finished.read() {
+        let Ok(parent) = media.get(done.entity) else { continue };
+        let Ok(mut layer) = layers.get_mut(parent.parent()) else { continue };
+        warn!("main menu: backdrop video {} failed; trying the next", layer.candidates.get(layer.next.wrapping_sub(1)).map_or("?", |c| c.path.as_str()));
+        commands.entity(done.entity).remove::<VideoPlayer>().insert((ImageNode::default(), Visibility::Hidden));
+        let Some(vfs) = vfs.as_deref() else { continue };
+        let candidates = layer.candidates.clone();
+        layer.next = show_candidate(&mut commands, done.entity, &candidates, layer.next, &vfs.0, assets.as_deref());
+    }
+}
+
+/// The backdrop media node's parts the fit reads and writes.
+type MediaParts = (&'static ChildOf, &'static mut Node, &'static mut Visibility, &'static ImageNode, Option<&'static VideoPlayer>);
+
+/// The `cover` fit: the media node in percent of its layer, centred (the layer clips the rest).
+/// Hidden until the media's size is known (a video once open, an image once loaded).
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn fit_backdrop(
+    images: Res<Assets<Image>>,
+    layers: Query<&ComputedNode, With<MenuBackdrop>>,
+    mut media: Query<MediaParts, With<BackdropMedia>>,
+) {
+    for (parent, mut node, mut visibility, image, video) in &mut media {
+        let open = video.is_none_or(|v| v.image().is_some());
+        let size = open.then(|| images.get(&image.image)).flatten().map(Image::size_f32);
+        let container = layers.get(parent.parent()).map(ComputedNode::size).unwrap_or_default();
+        let shown = match size {
+            Some(size) if container.x > 0.0 && container.y > 0.0 && size.x > 0.0 && size.y > 0.0 => {
+                let (w, h) = cover_size((container.x, container.y), (size.x, size.y));
+                let (w, h) = (w / container.x * 100.0, h / container.y * 100.0);
+                let fit = (Val::Percent(w), Val::Percent(h), Val::Percent((100.0 - w) / 2.0), Val::Percent((100.0 - h) / 2.0));
+                if (node.width, node.height, node.left, node.top) != fit {
+                    (node.width, node.height, node.left, node.top) = fit;
+                }
+                Visibility::Inherited
+            }
+            _ => Visibility::Hidden,
+        };
+        visibility.set_if_neq(shown);
     }
 }
 
@@ -501,6 +685,103 @@ mod tests {
         // the streaming plugin, so the reduced app stays in Loading.
         assert_eq!(phase(&app), AppPhase::Loading);
         assert!(app.world().resource::<sf_world_bevy::Streaming>().in_burst(), "the start burst is armed");
+    }
+
+    /// A release start over an in-memory VFS of `files`; `video`: with the video players.
+    fn release_with_vfs(files: &[(&str, &[u8])], video: bool) -> App {
+        let source = files.iter().fold(sf_vfs::MemSource::new("test"), |s, (path, bytes)| s.with(path, bytes.to_vec()));
+        let vfs = std::sync::Arc::new(Vfs::builder().mount(source).build());
+        app_with(|app| {
+            app.insert_resource(mw_assets::SharedVfs(vfs));
+            if video {
+                app.add_plugins(sf_video_bevy::VideoPlugin);
+            }
+            app.add_plugins(AppPhasePlugin::default());
+            add(app, true);
+        })
+    }
+
+    /// The backdrop media node: whether it holds a video player, and its image's asset path.
+    fn backdrop(app: &mut App) -> Option<(Entity, bool, Option<String>)> {
+        let mut q = app.world_mut().query_filtered::<(Entity, Has<VideoPlayer>, &ImageNode), With<BackdropMedia>>();
+        let found: Vec<_> = q.iter(app.world()).map(|(e, video, image)| (e, video, image.image.path().map(|p| p.path().to_string_lossy().replace('\\', "/")))).collect();
+        assert!(found.len() <= 1, "one backdrop at most");
+        found.into_iter().next()
+    }
+
+    const DDS: &str = "textures/menu_morrowind.dds";
+
+    #[test]
+    fn backdrop_candidates_follow_the_ini() {
+        let paths = |c: Vec<BackdropCandidate>| c.into_iter().map(|c| (c.path, c.kind)).collect::<Vec<_>>();
+        let vanilla = [
+            ("video/menu_background.bik".to_owned(), BackdropKind::Video),
+            ("video/mw_menu.bik".to_owned(), BackdropKind::Video),
+            (DDS.to_owned(), BackdropKind::Image),
+        ];
+        assert_eq!(paths(backdrop_candidates(None)), vanilla);
+        assert_eq!(paths(backdrop_candidates(Some("  "))), vanilla, "blank: vanilla's video");
+        assert_eq!(paths(backdrop_candidates(Some(" my_menu.bik ")))[1].0, "video/my_menu.bik");
+        assert_eq!(MenuBackdropCandidates::default().0, backdrop_candidates(None));
+    }
+
+    #[test]
+    fn the_menu_video_plays_behind_the_menu_and_stops_with_it() {
+        // No players: the video stays pending (no decode in a headless test).
+        let mut app = release_with_vfs(&[("video/mw_menu.bik", b"BIKi"), (DDS, b"dds")], false);
+        let (_, video, _) = backdrop(&mut app).expect("a backdrop");
+        assert!(video, "vanilla's menu video wins over the image");
+        let screen = menu(&mut app);
+        assert!(screen.model.title_image.is_none() && screen.model.background.is_none(), "the art is in the video");
+
+        choose(&mut app, NEW_GAME);
+        frames(&mut app, 3);
+        assert!(backdrop(&mut app).is_none(), "the player despawns with the menu");
+    }
+
+    #[test]
+    fn without_a_video_the_title_image_covers_the_window() {
+        let mut app = release_with_vfs(&[(DDS, b"dds")], false);
+        let (media, video, path) = backdrop(&mut app).expect("a backdrop");
+        assert!(!video);
+        assert_eq!(path.as_deref(), Some(DDS));
+
+        // A loaded 640x480 image in the test window (1600x1000): full width, cropped top and bottom.
+        let image = app.world_mut().resource_mut::<Assets<Image>>().add(Image::new_fill(
+            bevy::render::render_resource::Extent3d { width: 640, height: 480, depth_or_array_layers: 1 },
+            bevy::render::render_resource::TextureDimension::D2,
+            &[0, 0, 0, 255],
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default(),
+        ));
+        app.world_mut().entity_mut(media).insert(ImageNode::new(image));
+        frames(&mut app, 3);
+        let node = app.world().get::<Node>(media).expect("media node");
+        let percent = |v: Val| match v {
+            Val::Percent(p) => p,
+            other => panic!("not a percentage: {other:?}"),
+        };
+        let fit = [node.width, node.height, node.left, node.top].map(percent);
+        for (got, want) in fit.into_iter().zip([100.0, 120.0, 0.0, -10.0]) {
+            assert!((got - want).abs() < 1e-3, "cover fit {fit:?}");
+        }
+        assert_eq!(app.world().get::<Visibility>(media), Some(&Visibility::Inherited));
+    }
+
+    #[test]
+    fn a_video_that_fails_to_decode_falls_through_to_the_image() {
+        let mut app = release_with_vfs(&[("video/menu_background.bik", b"not a video"), (DDS, b"dds")], true);
+        frames(&mut app, 3);
+        let (_, video, path) = backdrop(&mut app).expect("a backdrop");
+        assert!(!video, "the failed player is dropped");
+        assert_eq!(path.as_deref(), Some(DDS));
+    }
+
+    #[test]
+    fn no_candidate_leaves_the_theme_background() {
+        let mut app = release_with_vfs(&[], false);
+        assert!(backdrop(&mut app).is_none());
+        assert!(open(&app, MAIN_MENU));
     }
 
     #[test]

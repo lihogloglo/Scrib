@@ -5429,6 +5429,7 @@ dependencies = [
  "sf_ui_bevy",
  "sf_ui_screens",
  "sf_vfs",
+ "sf_video_bevy",
  "sf_weather_bevy",
  "sf_wind_bevy",
  "sf_world",

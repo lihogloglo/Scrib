@@ -32,7 +32,10 @@
 //!   with per-device slots, conflicts per scope, swap/unbind resolution,
 //!   resets, the profile's `[bindings.<context>]` tables; [`glyph`] labels
 //!   input names per device and pad family.
+//! - [`resolve_backdrop`] and [`cover_size`]: the menu backdrop's candidate pick and its
+//!   `cover` fit (menus.md "Backdrop and title").
 
+mod backdrop;
 mod ids;
 mod input;
 mod keymap;
@@ -53,6 +56,8 @@ mod virtual_list;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_backdrop;
+#[cfg(test)]
 mod tests_list;
 #[cfg(test)]
 mod tests_keymap;
@@ -63,6 +68,7 @@ mod tests_notify;
 #[cfg(test)]
 mod tests_text;
 
+pub use backdrop::{BackdropCandidate, BackdropKind, cover_size, resolve_backdrop};
 pub use ids::{
     ColumnId, InputContextId, ListId, ModId, PresetId, ScreenId, SettingKey, SlotId, TemplateId,
     ThemeId,

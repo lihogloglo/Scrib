@@ -397,7 +397,7 @@ fn toggle(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<PlayerMode>) {
 
 /// Where an interior `view` start puts the player: the free camera frames the cell from above
 /// (`main.rs` `interior_view`), so feet at its eye would land on the roof.
-#[derive(Resource, Debug, Default)]
+#[derive(Resource, Clone, Debug, Default)]
 pub struct PlayerStart {
     /// The interior the run starts in; cleared once the player has spawned there.
     worldspace: Option<WorldspaceId>,

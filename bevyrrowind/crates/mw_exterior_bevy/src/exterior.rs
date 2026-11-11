@@ -49,7 +49,7 @@ use sf_vfs::Vfs;
 use sf_world::bake::BakedIndex;
 use sf_world::{IndexedPlacement, PlacementClass};
 use sf_app_bevy::WorldAlive;
-use sf_app_bevy::bevy_state::prelude::{OnEnter, in_state};
+use sf_app_bevy::bevy_state::prelude::{DespawnOnExit, OnEnter, in_state};
 
 use mw_devtools_bevy::perf::{Off, Part};
 use mw_devtools_bevy::ready::settled;
@@ -535,6 +535,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     mw_rpg_bevy::inventory_ui::add(&mut app, options.open_ui.as_deref() == Some(mw_rpg_bevy::inventory_ui::SCREEN));
     // The pause (escape) menu and the options screen (`pause_menu.rs`; after the UI plugins).
     crate::pause_menu::add(&mut app);
+    // Video players (video.md): the main menu's backdrop video.
+    app.add_plugins(sf_video_bevy::VideoPlugin);
     // The release start's main menu (`main_menu.rs`; after the pause menu, whose clock it shares).
     crate::main_menu::add(&mut app, options.start_in_main_menu);
     // ROADMAP 2.5: quicksave / quickload (`saves.rs`; after the RPG host, the overlay and the keymap).
@@ -565,6 +567,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     if gi && !app.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>() {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
+    // Leaving the world tears it down (`teardown.rs`); last, so it snapshots the start values.
+    crate::teardown::add(&mut app);
     app.run();
     Ok(())
 }
@@ -777,6 +781,8 @@ fn setup(
         StreamingAnchor::visual(),
         layers.clone(),
         ChildOf(entry.root),
+        // Also under the root, which `teardown.rs` despawns; a door may have reparented it.
+        DespawnOnExit(WorldAlive),
     ));
     let camera_id = camera.id();
     // A/B runs (`--off`) leave the terrain or the sky out entirely.
@@ -834,8 +840,8 @@ fn setup(
         use bevy::ui::IsDefaultUiCamera;
         let image = images.add(Image::new_target_texture(w, h, TextureFormat::Bgra8UnormSrgb, None));
         commands.entity(camera_id).insert(RenderTarget::Image(image.clone().into()));
-        commands.spawn((Camera2d, Camera { order: 1, ..Camera::default() }, IsDefaultUiCamera));
-        commands.spawn((Node { width: percent(100), height: percent(100), ..Node::default() }, ImageNode::new(image)));
+        commands.spawn((Camera2d, Camera { order: 1, ..Camera::default() }, IsDefaultUiCamera, DespawnOnExit(WorldAlive)));
+        commands.spawn((Node { width: percent(100), height: percent(100), ..Node::default() }, ImageNode::new(image), DespawnOnExit(WorldAlive)));
     }
     commands.spawn((cell, transform, StreamingAnchor::gameplay(), Player, ChildOf(entry.root)));
 
@@ -863,6 +869,7 @@ fn setup(
         Transform::IDENTITY,
         GlobalTransform::IDENTITY,
         RenderLayers::layer(exterior_layer),
+        DespawnOnExit(WorldAlive),
     ));
 }
 
@@ -1608,6 +1615,26 @@ fn far_worldspaces(manifest: &Manifest) -> sf_lod_bevy::FarWorldspaces {
             .map(|k| sf_world::WorldspaceId::new(&k.subject))
             .collect(),
     ))
+}
+
+/// The viewer's world `setup` on `OnEnter(WorldAlive)` with a plain exterior start (no sky,
+/// terrain or effects), for headless phase tests (`teardown.rs`).
+#[cfg(test)]
+pub(crate) fn test_world_setup(app: &mut App) {
+    app.insert_resource(Start {
+        worldspace: ids::exterior(),
+        eye: DVec3::new(0.0, 10.0, 0.0),
+        target: DVec3::new(0.0, 10.0, -10.0),
+        bench: false,
+        prepass: false,
+        contact: None,
+        ssao: None,
+        shadow_filter: ShadowFilteringMethod::Hardware2x2,
+        lamp_hw_filter: false,
+        bloom: None,
+    })
+    .init_resource::<Off>()
+    .add_systems(OnEnter(WorldAlive), setup.in_set(WorldSetup));
 }
 
 #[cfg(test)]
