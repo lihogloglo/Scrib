@@ -38,12 +38,12 @@ mod tests;
 mod residency_tests;
 
 pub use assets::{SceneLoadError, SceneTableAsset, SceneTableLoader};
-pub use chains::ChainAssets;
+pub use chains::{ChainAssets, ChainMaterials};
 pub use residency::{
     BatchEntity, BatchZeroFill, CellLoad, CellUpload, LoadPhase, SLAB_WAIT_FRAMES, SceneBatch, SceneFrame, SceneHook,
     SceneInbox, SceneSpaces, SceneUploads, SpaceState, despawn_empty_batches, poll_cell_loads, tick_frame,
 };
-pub use slabs::{ChainSlabTable, extract_chain_slabs};
+pub use slabs::{ChainIds, ChainSlabTable, MeshSlabIds, extract_chain_slabs};
 
 use std::sync::Arc;
 
@@ -117,6 +117,7 @@ impl Plugin for ScenePlugin {
             .init_resource::<SceneSpaces>()
             .init_resource::<SceneInbox>()
             .init_resource::<ChainSlabTable>()
+            .init_resource::<ChainMaterials>()
             .init_resource::<SceneUploads>()
             .configure_sets(
                 Update,

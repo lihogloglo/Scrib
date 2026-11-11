@@ -16,10 +16,13 @@
 //! ## The three-deep gate (B3 brief §1.2), as [`LoadPhase`]
 //!
 //! 1. [`LoadPhase::Table`]: the cell's `scene.cells` product resolves.
-//! 2. [`LoadPhase::Chains`]: every chain product it names, with its meshes.
-//! 3. [`LoadPhase::Slabs`]: every chain level mesh is in [`ChainSlabTable`],
-//!    i.e. the render world allocated it (skipped without a render world, and
-//!    bounded by [`SLAB_WAIT_FRAMES`]).
+//! 2. [`LoadPhase::Chains`]: every chain product it names, with its meshes;
+//!    each chain's material is made as it resolves (`chains::chain_material`).
+//! 3. [`LoadPhase::Slabs`]: every chain level mesh and chain material is in
+//!    [`ChainSlabTable`], i.e. the render world allocated the mesh and
+//!    prepared the material into its bind group (skipped without a render
+//!    world, and bounded by [`SLAB_WAIT_FRAMES`]). The batch key is fixed at
+//!    `plan_in`, so the material's bind group must be known before it.
 //!
 //! then [`LoadPhase::Planned`] (planned, not committed) or
 //! [`LoadPhase::Fallback`]. [`CellScene::upload`] commits a planned cell and
@@ -48,10 +51,12 @@ use sf_scene::{
     SlotWrite, SpaceConfig, SpaceId, cell_subject,
 };
 use sf_world::{PlacementId, WorldspaceId};
-use sf_world_bevy::{CellScene, SceneCellCx};
+use sf_world_bevy::{CellScene, ModelMaterials, SceneCellCx, Streaming};
 
-use crate::chains::{ChainAssets, ProductState, chain_assets, load_product, product_state};
-use crate::slabs::{CellSlabs, ChainSlabTable};
+use crate::chains::{
+    ChainAssets, ChainMaterials, MaterialMaker, ProductState, chain_assets, load_product, product_state,
+};
+use crate::slabs::{CellSlabs, ChainIds, ChainSlabTable};
 use crate::{SceneConfig, SceneTableAsset};
 
 /// Frames a planned-to-be cell waits for its chain meshes' slabs before it
@@ -266,7 +271,7 @@ fn ensure_batches(world: &mut World, state: &mut SpaceState, batches: &[(BatchId
         let entity = world
             .spawn((
                 GpuBatchedMesh3d { mesh: Handle::default(), max_capacity: config.batch_capacity, ranges: Vec::new() },
-                // TODO(B3b-2): the batch's material (the bind group its chains share).
+                // Re-pointed with `mesh` by `rebuild_ranges`: the first range's chain's material.
                 MeshMaterial3d::<StandardMaterial>(Handle::default()),
                 SceneBatch { space: config.space, batch },
             ))
@@ -284,39 +289,60 @@ fn ensure_batches(world: &mut World, state: &mut SpaceState, batches: &[(BatchId
     spawned
 }
 
-/// A batch's range list as the port takes it (B3 brief §4.3 step 8), or
-/// `None` if a range names a chain level that is not resident (a bug).
-fn map_ranges(state: &SpaceState, batch: BatchId) -> Option<Vec<GpuBatchedMeshRange>> {
-    state
-        .space
-        .batch_ranges(batch)
+/// A batch's range list as the port takes it (B3 brief §4.3 step 8) and the
+/// batch's own material (its first range's chain's, the chain whose mesh the
+/// batch's `mesh` is), or `None` if a range names a chain level that is not
+/// resident (a bug). A range's `material` is `None` when its chain's material
+/// is the batch's, its id otherwise: the batch key put both in one bind group,
+/// which is all the port requires (`gpu_instance_batch` `mod.rs:808-813`).
+fn map_ranges(
+    state: &SpaceState,
+    batch: BatchId,
+) -> Option<(Vec<GpuBatchedMeshRange>, Option<Handle<StandardMaterial>>)> {
+    let specs = state.space.batch_ranges(batch);
+    let own = match specs.first() {
+        Some(r) => state.chain(r.chain)?.material.clone(),
+        None => None,
+    };
+    let own_id = own.as_ref().map(Handle::id);
+    let ranges = specs
         .into_iter()
         .map(|r| {
-            let mesh = state.chain(r.chain)?.levels.get(usize::from(r.level))?.clone();
-            // TODO(B3b-2): `Some(id)` when the chain's material is not the batch's own.
+            let chain = state.chain(r.chain)?;
+            let mesh = chain.levels.get(usize::from(r.level))?.clone();
+            let material = chain.material_id().filter(|&m| Some(m) != own_id).map(AssetId::untyped);
             Some(GpuBatchedMeshRange {
                 mesh,
                 first_index: 0,
                 index_count: 0,
                 first_slot: r.first_slot,
                 slot_count: r.slot_count,
-                material: None,
+                material,
             })
         })
-        .collect()
+        .collect::<Option<Vec<_>>>()?;
+    Some((ranges, own))
 }
 
 /// Rebuilds the range list of every batch of `batches` that has an entity from
 /// `SceneSpace::batch_ranges`, re-points its `mesh` at the first range's mesh
-/// (B3 brief §3 item 12), and stamps the frame a list went empty.
+/// (B3 brief §3 item 12) and its `MeshMaterial3d` at that range's chain's
+/// material, and stamps the frame a list went empty.
 fn rebuild_ranges(world: &mut World, state: &mut SpaceState, batches: impl IntoIterator<Item = BatchId>) {
     let frame = world.resource::<SceneFrame>().0;
     for batch in batches {
         let Some(Some(slot)) = state.batches.get(batch as usize).copied() else { continue };
-        let ranges = map_ranges(state, batch).unwrap_or_else(|| {
+        let (ranges, own) = map_ranges(state, batch).unwrap_or_else(|| {
             log::error!("sf_scene_bevy: batch {batch} names a chain level that is not resident; it draws nothing");
-            Vec::new()
+            (Vec::new(), None)
         });
+        // An empty list keeps the last material, as it keeps the last mesh.
+        if let Some(own) = own
+            && let Some(mut material) = world.get_mut::<MeshMaterial3d<StandardMaterial>>(slot.entity)
+            && material.0 != own
+        {
+            material.0 = own;
+        }
         let Some(mut mesh) = world.get_mut::<GpuBatchedMesh3d>(slot.entity) else {
             debug_assert!(false, "batch {batch}'s entity {} lost its GpuBatchedMesh3d", slot.entity);
             continue;
@@ -349,7 +375,7 @@ struct Cx<'a> {
 /// `Update`, after `StreamingSystems::Drive`: picks up acquired cells and moves
 /// every undecided one through the gate, planning it when it clears (§4.3
 /// steps 1-4). Several phases may pass in one frame.
-#[allow(clippy::too_many_arguments)] // one system, eight resources
+#[allow(clippy::too_many_arguments)] // one system, thirteen resources
 pub fn poll_cell_loads(
     asset_server: Res<AssetServer>,
     tables: Res<Assets<SceneTableAsset>>,
@@ -360,7 +386,20 @@ pub fn poll_cell_loads(
     mut spaces: ResMut<SceneSpaces>,
     mut slabs: ResMut<ChainSlabTable>,
     counters: Option<Res<DiagCounters>>,
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
+    mut chain_materials: ResMut<ChainMaterials>,
+    mapper: Option<Res<ModelMaterials>>,
+    streaming: Option<Res<Streaming>>,
 ) {
+    let mapper = mapper.as_deref().cloned().unwrap_or_default();
+    // `build_template`'s switch: the app's `--off matclass` reaches both paths.
+    let fold = streaming.as_deref().is_none_or(|s| s.config().material_classes);
+    let mut maker = materials.as_deref_mut().map(|materials| MaterialMaker {
+        materials,
+        cache: &mut chain_materials,
+        mapper: &mapper,
+        fold,
+    });
     let acquired = std::mem::take(&mut *inbox.lock());
     for (worldspace, cell, table) in acquired {
         let next = SpaceId::try_from(spaces.0.len()).unwrap_or(SpaceId::MAX);
@@ -381,28 +420,43 @@ pub fn poll_cell_loads(
         let undecided: Vec<IVec3> =
             state.loading.iter().filter(|(_, l)| !l.phase.decided()).map(|(&c, _)| c).collect();
         for cell in undecided {
-            step(&cx, worldspace, cell, state, slabs);
+            step(&cx, worldspace, cell, state, slabs, maker.as_mut());
         }
     }
     if slabs.dirty {
         let mut wanted: HashSet<AssetId<Mesh>> = HashSet::new();
+        let mut wanted_materials: HashSet<AssetId<StandardMaterial>> = HashSet::new();
+        let mut want = |a: &ChainAssets| {
+            wanted.extend(a.level_ids());
+            wanted_materials.extend(a.material_id());
+        };
         for state in spaces.0.values() {
-            for assets in state.chains.iter().flatten() {
-                wanted.extend(assets.level_ids());
-            }
+            state.chains.iter().flatten().for_each(&mut want);
             for load in state.loading.values() {
                 if let LoadPhase::Slabs { chains, .. } = &load.phase {
-                    wanted.extend(chains.iter().flat_map(|(_, a)| a.level_ids()));
+                    for (_, a) in chains {
+                        want(a);
+                    }
                 }
             }
         }
+        // A material no chain holds any more is dropped with its last chain.
+        chain_materials.0.retain(|_, h| wanted_materials.contains(&h.id()));
         slabs.wanted = wanted;
+        slabs.wanted_materials = wanted_materials;
         slabs.dirty = false;
     }
 }
 
 /// Advances one cell as far as it can go this frame.
-fn step(cx: &Cx<'_>, worldspace: &WorldspaceId, cell: IVec3, state: &mut SpaceState, slabs: &mut ChainSlabTable) {
+fn step(
+    cx: &Cx<'_>,
+    worldspace: &WorldspaceId,
+    cell: IVec3,
+    state: &mut SpaceState,
+    slabs: &mut ChainSlabTable,
+    mut maker: Option<&mut MaterialMaker<'_>>,
+) {
     let Some(load) = state.loading.get_mut(&cell) else { return };
     loop {
         let next = match &load.phase {
@@ -410,7 +464,7 @@ fn step(cx: &Cx<'_>, worldspace: &WorldspaceId, cell: IVec3, state: &mut SpaceSt
                 Some(next) => next,
                 None => return,
             },
-            LoadPhase::Chains { products } => match chains_step(cx, worldspace, cell, products) {
+            LoadPhase::Chains { products } => match chains_step(cx, worldspace, cell, products, maker.as_deref_mut()) {
                 Some(next) => {
                     slabs.dirty = true;
                     next
@@ -418,13 +472,13 @@ fn step(cx: &Cx<'_>, worldspace: &WorldspaceId, cell: IVec3, state: &mut SpaceSt
                 None => return,
             },
             LoadPhase::Slabs { chains, since } => {
-                let resolved = chains.iter().all(|(_, a)| slabs.has_all(a.level_ids()));
+                let resolved = chains.iter().all(|(_, a)| slabs.resolves(a));
                 if slabs.tracking && !resolved {
                     if cx.frame.saturating_sub(*since) < SLAB_WAIT_FRAMES {
                         return;
                     }
                     log::warn!(
-                        "sf_scene_bevy: cell {cell} of {worldspace}: the render world has not allocated every chain mesh after {SLAB_WAIT_FRAMES} frames; planning without them (their chains batch alone)"
+                        "sf_scene_bevy: cell {cell} of {worldspace}: the render world has not allocated every chain mesh and prepared every chain material after {SLAB_WAIT_FRAMES} frames; planning without them (their chains batch alone)"
                     );
                 }
                 slabs.dirty = true;
@@ -494,6 +548,7 @@ fn chains_step(
     worldspace: &WorldspaceId,
     cell: IVec3,
     products: &[(ChainEntry, Handle<CookedModelAsset>)],
+    mut maker: Option<&mut MaterialMaker<'_>>,
 ) -> Option<LoadPhase> {
     let chain_failed = |entry: &ChainEntry, why: &str| {
         log::error!(
@@ -518,7 +573,7 @@ fn chains_step(
     }
     let mut chains = Vec::with_capacity(products.len());
     for (entry, handle) in products {
-        match chain_assets(assets, handle, entry) {
+        match chain_assets(assets, handle, entry, maker.as_deref_mut(), cx.asset_server) {
             Ok(a) => chains.push((entry.clone(), a)),
             Err(why) => return chain_failed(entry, &format!("its product disagrees with the table: {why}")),
         }
@@ -542,9 +597,8 @@ fn plan(
         count(cx.counters, "scene/cells/failed", 1.0);
         return LoadPhase::Fallback;
     };
-    let levels: HashMap<ChainKey, Vec<AssetId<Mesh>>> =
-        chains.iter().map(|(e, a)| (e.key, a.level_ids().collect())).collect();
-    let resolver = CellSlabs { levels: &levels, table: slabs };
+    let ids: HashMap<ChainKey, ChainIds> = chains.iter().map(|(e, a)| (e.key, ChainIds::from(a))).collect();
+    let resolver = CellSlabs { chains: &ids, table: slabs };
     match state.space.plan_in(cell, &view, &resolver) {
         Ok(plan) => {
             // `chain_slots` is in the table's chain order, as `chains` is.

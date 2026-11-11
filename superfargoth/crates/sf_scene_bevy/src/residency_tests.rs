@@ -1,4 +1,4 @@
-//! Headless residency tests (B3a, B3b-1; brief §6.2): real `scene.cells` tables and
+//! Headless residency tests (B3a, B3b-1, B3b-2; brief §6.2): real `scene.cells` tables and
 //! `scene.chains` products off a bake store, through real streaming.
 //!
 //! The fixture is one streaming cell of plates, every placement at
@@ -26,7 +26,7 @@ use sf_diag_bevy::sf_diag::Counters;
 use sf_model::{CookSettings, Cooked, Material as ModelMaterial, MeshData, Model, Node, cook};
 use sf_model_bevy::{BAKED_SOURCE, BakedManifest, baked_source};
 use sf_scene::{
-    Aabb, BatchId, CELLS_STEP, CHAINS_STEP, CellPlan, DrawSlabs, InstanceFlags, LodChain, LodLevel, MaterialClass,
+    Aabb, BatchId, CELLS_STEP, CHAINS_STEP, CellPlan, InstanceFlags, LodChain, LodLevel, MaterialClass,
     RangeSpec, Sphere, SpaceConfig, StaticCellTable, StaticInstance, cell_subject, chain_subject,
 };
 use sf_vfs::VfsPath;
@@ -179,12 +179,22 @@ impl PlacementSpawner for Recorder {
 
 /// The cooked plate, and its LOD level count (a chain level per cooked level).
 fn cooked_plate() -> (Vec<u8>, usize) {
-    let bytes = cook(&plate(), &CookSettings::default()).unwrap().to_bytes();
+    cooked_plate_with(ModelMaterial::default())
+}
+
+/// The plate cooked with `material` as its only material.
+fn cooked_plate_with(material: ModelMaterial) -> (Vec<u8>, usize) {
+    let mut model = plate();
+    model.materials = vec![material];
+    let bytes = cook(&model, &CookSettings::default()).unwrap().to_bytes();
     let Cooked::Static(model) = Cooked::from_bytes(&bytes).unwrap() else { panic!("the plate cooks static") };
     (bytes, model.lods.len())
 }
 
-fn table_bytes(levels: usize, parts: &[Vec<u32>]) -> Vec<u8> {
+/// Chain 0's material key; chain 1's is `b_material`.
+const A_MATERIAL: u64 = 0xA5A5;
+
+fn table_bytes(levels: usize, parts: &[Vec<u32>], b_material: u64) -> Vec<u8> {
     let levels: Vec<LodLevel> = (0..levels)
         .map(|l| {
             #[allow(clippy::cast_precision_loss)]
@@ -209,7 +219,7 @@ fn table_bytes(levels: usize, parts: &[Vec<u32>]) -> Vec<u8> {
     }
     let chain = |mesh, part| LodChain {
         mesh,
-        material: 0xA5A5,
+        material: if part == 0 { A_MATERIAL } else { b_material },
         material_class: MaterialClass::Opaque,
         model: 0,
         part,
@@ -232,8 +242,23 @@ fn table_bytes(levels: usize, parts: &[Vec<u32>]) -> Vec<u8> {
 /// The store, the index and the streaming app with the scene enabled.
 /// `chain_b`: whether chain 1's product is in the store.
 fn fixture(dir: &std::path::Path, kind: TableKind, chain_b: bool, capacity: u32) -> Fixture {
+    fixture_with(dir, kind, chain_b, capacity, None)
+}
+
+/// [`fixture`]; with `b_material`, chain 1's product is the plate cooked with that material and
+/// the table gives chain 1 its own material key (`B_MATERIAL`).
+fn fixture_with(
+    dir: &std::path::Path,
+    kind: TableKind,
+    chain_b: bool,
+    capacity: u32,
+    b_material: Option<ModelMaterial>,
+) -> Fixture {
+    const B_MATERIAL: u64 = 0xB6B6;
     let store = Store::open(dir).unwrap();
     let (cooked, levels) = cooked_plate();
+    let b_key = if b_material.is_some() { B_MATERIAL } else { A_MATERIAL };
+    let cooked_b = b_material.map_or_else(|| cooked.clone(), |m| cooked_plate_with(m).0);
     let mut manifest = Manifest::default();
     let put = |m: &mut Manifest, step: &str, subject: String, bytes: &[u8]| {
         m.products.insert(ProductKey::new(step, subject), store.put(bytes, true).unwrap());
@@ -241,7 +266,7 @@ fn fixture(dir: &std::path::Path, kind: TableKind, chain_b: bool, capacity: u32)
     put(&mut manifest, "mesh.cook", "plate.mdl".into(), &cooked);
     put(&mut manifest, CHAINS_STEP, chain_subject("plate.mdl", 0), &cooked);
     if chain_b {
-        put(&mut manifest, CHAINS_STEP, chain_subject("plate.mdl", 1), &cooked);
+        put(&mut manifest, CHAINS_STEP, chain_subject("plate.mdl", 1), &cooked_b);
     }
 
     let models = |_: &VfsPath| {
@@ -261,11 +286,11 @@ fn fixture(dir: &std::path::Path, kind: TableKind, chain_b: bool, capacity: u32)
     match kind {
         TableKind::Valid(f) => {
             parts = (0..PLACEMENTS).map(f).collect();
-            put(&mut manifest, CELLS_STEP, subject, &table_bytes(levels, &parts));
+            put(&mut manifest, CELLS_STEP, subject, &table_bytes(levels, &parts, b_key));
         }
         TableKind::Missing => {}
         TableKind::Corrupt => {
-            let mut bytes = table_bytes(levels, &[vec![0]]);
+            let mut bytes = table_bytes(levels, &[vec![0]], b_key);
             bytes.truncate(bytes.len() - 8);
             put(&mut manifest, CELLS_STEP, subject, &bytes);
         }
@@ -447,14 +472,12 @@ fn the_fetch_waits_until_the_cell_is_planned() {
     assert!(phase_is_slabs(&mut f.app), "still waiting for slabs");
     assert!(probe.seen.lock().unwrap().iter().all(|s| s.cell != cell), "covered was asked before the cell was planned");
 
-    // The render world's answer, by hand: every mesh the scene asked about.
+    // The render world's answer, by hand: every mesh and material the scene asked about.
     let (_, levels) = cooked_plate();
-    let mut slabs = f.app.world_mut().resource_mut::<ChainSlabTable>();
-    let wanted: Vec<_> = slabs.wanted.iter().copied().collect();
-    assert_eq!(wanted.len(), 2 * levels, "two chains' level meshes asked about");
-    for id in wanted {
-        slabs.slabs.insert(id, DrawSlabs { vertex_slab: 1, index_slab: 2, bind_group: 0 });
-    }
+    let slabs = f.app.world().resource::<ChainSlabTable>();
+    assert_eq!(slabs.wanted.len(), 2 * levels, "two chains' level meshes asked about");
+    assert_eq!(slabs.wanted_materials.len(), 1, "one material key, one material asked about");
+    answer_slabs(&mut f, |_| 0);
     settle(&mut f.app);
 
     let seen = the_covered_call(&probe, cell);
@@ -646,26 +669,36 @@ fn rows(ranges: &[GpuBatchedMeshRange]) -> Vec<RangeRow> {
     ranges.iter().map(|r| (r.mesh.id(), r.first_index, r.index_count, r.first_slot, r.slot_count, r.material)).collect()
 }
 
-/// `SceneSpace::batch_ranges` mapped per step 8: a range is one whole chain level mesh.
-fn expected_rows(state: &SpaceState, batch: BatchId) -> Vec<RangeRow> {
-    let level = |r: &RangeSpec| state.chain(r.chain).expect("a range names a resident chain").levels[usize::from(r.level)].id();
-    state.space.batch_ranges(batch).iter().map(|r| (level(r), 0, 0, r.first_slot, r.slot_count, None)).collect()
+/// `SceneSpace::batch_ranges` mapped per step 8: a range is one whole chain level mesh, and its
+/// material is `None` when its chain's material is `own`, the batch's.
+fn expected_rows(state: &SpaceState, batch: BatchId, own: AssetId<StandardMaterial>) -> Vec<RangeRow> {
+    let chain = |r: &RangeSpec| state.chain(r.chain).expect("a range names a resident chain");
+    let row = |r: &RangeSpec| {
+        let c = chain(r);
+        let material = c.material_id().expect("a chain material").untyped();
+        (c.levels[usize::from(r.level)].id(), 0, 0, r.first_slot, r.slot_count, (material != own.untyped()).then_some(material))
+    };
+    state.space.batch_ranges(batch).iter().map(row).collect()
 }
 
 /// Asserts the batch's entity carries exactly its `batch_ranges`, non-empty and valid for the
-/// port, with `mesh` the first range's mesh and no `Mesh3d`; returns the entity.
+/// port, with `mesh` the first range's mesh, `MeshMaterial3d` that range's chain's material and
+/// no `Mesh3d`; returns the entity.
 fn check_batch(f: &Fixture, batch: BatchId) -> Entity {
     let state = f.state();
     let entity = state.batches[batch as usize].expect("the batch has its entity").entity;
     let world = f.app.world();
     let mesh = world.get::<GpuBatchedMesh3d>(entity).expect("a GpuBatchedMesh3d");
-    let expected = expected_rows(state, batch);
+    let own = world.get::<MeshMaterial3d<StandardMaterial>>(entity).expect("a MeshMaterial3d").id();
+    let first = state.space.batch_ranges(batch).first().map(|r| state.chain(r.chain).unwrap().material_id());
+    assert_eq!(first, Some(Some(own)), "batch {batch}'s material is its first range's chain's");
+    let expected = expected_rows(state, batch, own);
     assert!(!expected.is_empty(), "batch {batch} holds a block");
     assert_eq!(rows(&mesh.ranges), expected, "batch {batch}'s ranges");
     assert_eq!(mesh.mesh.id(), expected[0].0, "mesh is the first range's mesh");
     assert_eq!(mesh.max_capacity, state.space.config().batch_capacity);
     assert_eq!(validate_ranges(&mesh.ranges, mesh.max_capacity), Ok(()));
-    assert!(world.get::<Mesh3d>(entity).is_none() && world.get::<MeshMaterial3d<StandardMaterial>>(entity).is_some());
+    assert!(world.get::<Mesh3d>(entity).is_none());
     assert_eq!(world.get::<SceneBatch>(entity).map(|b| b.batch), Some(batch));
     entity
 }
@@ -710,18 +743,40 @@ fn stream_cell_in(f: &mut Fixture, cell: IVec3) -> CellPlan {
 /// the cell's chains get, as in the game. Without slabs a batch is keyed by its chain slot, and
 /// a cell back within the frames in flight gets fresh slots, so fresh batches.
 fn stream_cell_in_with_slabs(f: &mut Fixture, cell: IVec3) -> CellPlan {
-    assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some());
+    stream_cell_in_with_groups(f, cell, |_| 0)
+}
+
+/// The render world's answer, by hand: slabs `(1, 2)` for every mesh the scene asked about and
+/// `group(material)` as the bind group of every material it asked about.
+fn answer_slabs(f: &mut Fixture, group: impl Fn(&StandardMaterial) -> u32) {
+    let world = f.app.world_mut();
+    let wanted_materials: Vec<_> = world.resource::<ChainSlabTable>().wanted_materials.iter().copied().collect();
+    let groups: Vec<(AssetId<StandardMaterial>, u32)> = {
+        let materials = world.resource::<Assets<StandardMaterial>>();
+        wanted_materials.into_iter().map(|id| (id, group(materials.get(id).expect("a made material")))).collect()
+    };
+    let mut slabs = world.resource_mut::<ChainSlabTable>();
+    let wanted: Vec<_> = slabs.wanted.iter().copied().collect();
+    for id in wanted {
+        slabs.slabs.insert(id, MeshSlabIds { vertex_slab: 1, index_slab: 2 });
+    }
+    slabs.groups.extend(groups);
+}
+
+fn waits_for_slabs(f: &mut Fixture, cell: IVec3) {
     let waiting = |app: &mut App| {
         app.world().resource::<SceneSpaces>().0.get(&ws()).and_then(|s| s.loading.get(&cell)).is_some_and(|l| {
             matches!(l.phase, LoadPhase::Slabs { .. })
         })
     };
     pump(&mut f.app, "the cell waits for its slabs", waiting);
-    let mut slabs = f.app.world_mut().resource_mut::<ChainSlabTable>();
-    let wanted: Vec<_> = slabs.wanted.iter().copied().collect();
-    for id in wanted {
-        slabs.slabs.insert(id, DrawSlabs { vertex_slab: 1, index_slab: 2, bind_group: 0 });
-    }
+}
+
+/// [`stream_cell_in_with_slabs`] with each material's bind group from `group`.
+fn stream_cell_in_with_groups(f: &mut Fixture, cell: IVec3, group: impl Fn(&StandardMaterial) -> u32) -> CellPlan {
+    assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some());
+    waits_for_slabs(f, cell);
+    answer_slabs(f, group);
     let plan = planned(f, cell);
     assert!(plan.batches.iter().all(|(_, key)| key.chain.is_none()), "slab-keyed batches: {:?}", plan.batches);
     assert!(commit(f, cell) > 0);
@@ -832,4 +887,104 @@ fn an_empty_batch_despawns_after_the_frames_in_flight() {
         assert!(f.state().batches[b as usize].is_none());
     }
     assert!(batch_entities(&mut f).is_empty());
+}
+
+// ---- B3b-2: chain materials and their bind groups (B3 brief §4.3 steps 6, 8) ----
+
+fn red() -> ModelMaterial {
+    ModelMaterial { base_color: [1.0, 0.0, 0.0, 1.0], ..ModelMaterial::default() }
+}
+
+fn is_red(m: &StandardMaterial) -> bool {
+    m.base_color == Color::linear_rgba(1.0, 0.0, 0.0, 1.0)
+}
+
+/// The materials of the resident chains, in slot order.
+fn chain_materials(f: &Fixture) -> Vec<AssetId<StandardMaterial>> {
+    f.state().chains.iter().flatten().map(|a| a.material_id().expect("a chain material")).collect()
+}
+
+/// Step 6: one material per material key. Two chains with one key share a handle; a chain
+/// with its own key and description gets its own, made from its product's material.
+#[test]
+fn chains_share_a_material_per_material_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    stream_cell_in(&mut f, cell);
+    let shared = chain_materials(&f);
+    assert_eq!(shared.len(), 2);
+    assert_eq!(shared[0], shared[1], "one material key, one material");
+    assert_eq!(f.app.world().resource::<ChainMaterials>().0.len(), 1);
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture_with(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096, Some(red()));
+    stream_cell_in(&mut f, cell);
+    let own = chain_materials(&f);
+    assert_eq!(own.len(), 2);
+    assert_ne!(own[0], own[1], "two material keys, two materials");
+    assert_eq!(f.app.world().resource::<ChainMaterials>().0.len(), 2);
+    let materials = f.app.world().resource::<Assets<StandardMaterial>>();
+    let reds: Vec<bool> = own.iter().map(|&m| is_red(materials.get(m).unwrap())).collect();
+    assert_eq!(reds, vec![false, true], "each chain's material is its own product's");
+}
+
+/// Steps 6 and 8: the bind group splits batches. Two chains in different groups land in
+/// different batches; two in one group with different materials share a batch, whose
+/// `MeshMaterial3d` is its first range's chain's material and whose other chain's ranges
+/// name their own material.
+#[test]
+fn bind_groups_split_batches_and_name_range_materials() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture_with(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096, Some(red()));
+    f.app.world_mut().resource_mut::<ChainSlabTable>().tracking = true;
+    let cell = f.cell;
+    let plan = stream_cell_in_with_groups(&mut f, cell, |m| u32::from(is_red(m)));
+    let mut groups: Vec<u32> = plan.batches.iter().map(|(_, k)| k.bind_group).collect();
+    groups.sort_unstable();
+    assert_eq!(groups, vec![0, 1], "one batch per bind group: {:?}", plan.batches);
+    for &(batch, _) in &plan.batches {
+        let entity = check_batch(&f, batch);
+        let ranges = &f.app.world().get::<GpuBatchedMesh3d>(entity).unwrap().ranges;
+        assert!(ranges.iter().all(|r| r.material.is_none()), "one chain per batch, all its own material");
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture_with(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096, Some(red()));
+    f.app.world_mut().resource_mut::<ChainSlabTable>().tracking = true;
+    let plan = stream_cell_in_with_groups(&mut f, cell, |_| 7);
+    assert_eq!(plan.batches.len(), 1, "one bind group, one batch: {:?}", plan.batches);
+    assert_eq!(plan.batches[0].1.bind_group, 7);
+    let entity = check_batch(&f, plan.batches[0].0);
+    let world = f.app.world();
+    let own = world.get::<MeshMaterial3d<StandardMaterial>>(entity).unwrap().id();
+    let other = chain_materials(&f).into_iter().find(|&m| m != own).expect("the other chain's material");
+    let named: HashSet<Option<UntypedAssetId>> =
+        world.get::<GpuBatchedMesh3d>(entity).unwrap().ranges.iter().map(|r| r.material).collect();
+    assert_eq!(named, HashSet::from([None, Some(other.untyped())]), "the non-batch chain's ranges name its material");
+}
+
+/// The Slabs gate also waits for the material's bind group, and a binding that never arrives
+/// lets the cell plan after `SLAB_WAIT_FRAMES`, its chains batching alone.
+#[test]
+fn a_material_binding_that_never_arrives_times_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    f.app.world_mut().resource_mut::<ChainSlabTable>().tracking = true;
+    let cell = f.cell;
+    assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some());
+    waits_for_slabs(&mut f, cell);
+    let since = scene_frame(&f);
+    // Mesh slabs only: no material is ever prepared.
+    answer_slabs(&mut f, |_| 0);
+    f.app.world_mut().resource_mut::<ChainSlabTable>().groups.clear();
+    for _ in 0..30 {
+        f.app.update();
+    }
+    assert!(!SceneHook.ready(f.app.world(), &ws(), cell), "the gate waits for the material binding");
+    let plan = planned(&mut f, cell);
+    assert!(scene_frame(&f) - since >= SLAB_WAIT_FRAMES, "planned only after the wait");
+    assert!(!plan.batches.is_empty());
+    assert!(plan.batches.iter().all(|(_, k)| k.chain.is_some()), "unresolved chains batch alone: {:?}", plan.batches);
+    assert!(commit(&mut f, cell) > 0);
 }

@@ -22,7 +22,7 @@ bevy_ecs = { workspace = true, features = ["std"] }
 bevy_math = { workspace = true, features = ["std"] }
 # Mesh: a chain level's geometry.
 bevy_mesh.workspace = true
-# StandardMaterial: a chain's material (B3b fills it).
+# StandardMaterial: a chain's material.
 bevy_pbr.workspace = true
 # TypePath for the asset and its loader.
 bevy_reflect = { workspace = true, features = ["std"] }
