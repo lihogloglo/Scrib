@@ -38,11 +38,13 @@ use bevy_asset::{AssetLoadError, io::AssetReaderError};
 use bevy_ecs::prelude::*;
 use bevy_math::IVec3;
 use bevy_mesh::Mesh;
+use bevy_pbr::gpu_instance_batch::{GpuBatchedMesh3d, GpuBatchedMeshRange};
+use bevy_pbr::{MeshMaterial3d, StandardMaterial};
 use sf_diag_bevy::DiagCounters;
 use sf_diag_bevy::sf_diag::{Counters, unit};
 use sf_model_bevy::{CookedModelAsset, baked_path};
 use sf_scene::{
-    CELLS_EXT, CELLS_STEP, CellPlan, ChainEntry, ChainKey, ChainSlot, NO_SLOT, SceneError, SceneSpace, SlotRange,
+    BatchId, BatchKey, CELLS_EXT, CELLS_STEP, CellPlan, ChainEntry, ChainKey, ChainSlot, NO_SLOT, SceneError, SceneSpace, SlotRange,
     SlotWrite, SpaceConfig, SpaceId, cell_subject,
 };
 use sf_world::{PlacementId, WorldspaceId};
@@ -76,9 +78,9 @@ pub struct SpaceState {
     /// Indexed by `ChainSlot`: the assets of every resident chain. Grown on
     /// demand to the registry's high water.
     pub chains: Vec<Option<ChainAssets>>,
-    /// Indexed by `BatchId` (dense, never reused). TODO(B3b): the batch
-    /// entities; nothing spawns them yet.
-    pub batches: Vec<Option<Entity>>,
+    /// Indexed by `BatchId` (dense, never reused): each batch's
+    /// `GpuBatchedMesh3d` entity, while it has one (B3 brief §4.3 steps 5, 8, 10).
+    pub batches: Vec<Option<BatchEntity>>,
     /// Cells acquired and not yet committed (or fallen back, until released).
     pub loading: HashMap<IVec3, CellLoad>,
     /// The table of every resident cell: `SceneSpace::promote` needs its view
@@ -124,6 +126,22 @@ impl SpaceState {
             }
         }
     }
+}
+
+/// A batch's entity, and the frame its range list last went empty.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BatchEntity {
+    pub entity: Entity,
+    /// `Some(frame)` while `SceneSpace::batch_ranges` is empty: [`despawn_empty_batches`]
+    /// despawns the entity once that has lasted more than the frames in flight.
+    pub empty_since: Option<u64>,
+}
+
+/// Names a batch entity's batch: B4's way from the entity back to the space.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SceneBatch {
+    pub space: SpaceId,
+    pub batch: BatchId,
 }
 
 /// One cell between `acquire` and commit (or release).
@@ -182,11 +200,26 @@ pub struct CellUpload {
     pub bytes: Vec<u8>,
 }
 
-/// GPU writes queued for the render world. TODO(B3b/B4): empty until then.
+/// A new batch's first upload: all `slots` of its output written zero
+/// (`is_active = 0`) before any of it draws, so a slot no cell wrote yet never
+/// draws garbage (B3 brief §2.2, the empty-ranges footgun). Queued by
+/// `upload` when it spawns the batch; read by B4.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BatchZeroFill {
+    pub space: SpaceId,
+    pub batch: BatchId,
+    pub entity: Entity,
+    /// The batch's whole capacity (`SpaceConfig::batch_capacity`).
+    pub slots: u32,
+}
+
+/// GPU writes queued for the render world. TODO(B4): `cells` and `writes`
+/// stay empty until then; `upload` fills `zero_fills`.
 #[derive(Resource, Default)]
 pub struct SceneUploads {
     pub cells: Vec<CellUpload>,
     pub writes: Vec<SlotWrite>,
+    pub zero_fills: Vec<BatchZeroFill>,
 }
 
 /// `First`: the frame counter, and every space frees what its frames in flight are done with.
@@ -194,6 +227,107 @@ pub fn tick_frame(mut frame: ResMut<SceneFrame>, mut spaces: ResMut<SceneSpaces>
     frame.0 += 1;
     for state in spaces.0.values_mut() {
         state.space.advance(frame.0);
+    }
+}
+
+/// `First`, after [`tick_frame`]: despawns every batch entity whose range list
+/// has been empty for more than the frames in flight (B3 brief §4.3 step 10).
+/// One that refills before then keeps its entity, and with it its output buffer.
+pub fn despawn_empty_batches(frame: Res<SceneFrame>, mut spaces: ResMut<SceneSpaces>, mut commands: Commands) {
+    for state in spaces.0.values_mut() {
+        let window = u64::from(state.space.config().frames_in_flight);
+        for entry in &mut state.batches {
+            if let Some(BatchEntity { entity, empty_since: Some(since) }) = *entry
+                && frame.0.saturating_sub(since) > window
+            {
+                commands.entity(entity).despawn();
+                *entry = None;
+            }
+        }
+    }
+}
+
+/// Makes sure every batch of `batches` has its entity (B3 brief §4.3 step 5):
+/// the space's capacity, no range yet, no `Mesh3d`, no `NoCpuCulling`, no
+/// `NotShadowCaster`, and a zero-fill of its whole capacity queued. Returns
+/// the batches it spawned.
+fn ensure_batches(world: &mut World, state: &mut SpaceState, batches: &[(BatchId, BatchKey)]) -> Vec<BatchId> {
+    let config = state.space.config();
+    let frame = world.resource::<SceneFrame>().0;
+    let mut spawned = Vec::new();
+    for &(batch, _) in batches {
+        let i = batch as usize;
+        if state.batches.len() <= i {
+            state.batches.resize(i + 1, None);
+        }
+        if state.batches[i].is_some() {
+            continue;
+        }
+        let entity = world
+            .spawn((
+                GpuBatchedMesh3d { mesh: Handle::default(), max_capacity: config.batch_capacity, ranges: Vec::new() },
+                // TODO(B3b-2): the batch's material (the bind group its chains share).
+                MeshMaterial3d::<StandardMaterial>(Handle::default()),
+                SceneBatch { space: config.space, batch },
+            ))
+            .id();
+        // Empty until its ranges are rebuilt.
+        state.batches[i] = Some(BatchEntity { entity, empty_since: Some(frame) });
+        world.resource_mut::<SceneUploads>().zero_fills.push(BatchZeroFill {
+            space: config.space,
+            batch,
+            entity,
+            slots: config.batch_capacity,
+        });
+        spawned.push(batch);
+    }
+    spawned
+}
+
+/// A batch's range list as the port takes it (B3 brief §4.3 step 8), or
+/// `None` if a range names a chain level that is not resident (a bug).
+fn map_ranges(state: &SpaceState, batch: BatchId) -> Option<Vec<GpuBatchedMeshRange>> {
+    state
+        .space
+        .batch_ranges(batch)
+        .into_iter()
+        .map(|r| {
+            let mesh = state.chain(r.chain)?.levels.get(usize::from(r.level))?.clone();
+            // TODO(B3b-2): `Some(id)` when the chain's material is not the batch's own.
+            Some(GpuBatchedMeshRange {
+                mesh,
+                first_index: 0,
+                index_count: 0,
+                first_slot: r.first_slot,
+                slot_count: r.slot_count,
+                material: None,
+            })
+        })
+        .collect()
+}
+
+/// Rebuilds the range list of every batch of `batches` that has an entity from
+/// `SceneSpace::batch_ranges`, re-points its `mesh` at the first range's mesh
+/// (B3 brief §3 item 12), and stamps the frame a list went empty.
+fn rebuild_ranges(world: &mut World, state: &mut SpaceState, batches: impl IntoIterator<Item = BatchId>) {
+    let frame = world.resource::<SceneFrame>().0;
+    for batch in batches {
+        let Some(Some(slot)) = state.batches.get(batch as usize).copied() else { continue };
+        let ranges = map_ranges(state, batch).unwrap_or_else(|| {
+            log::error!("sf_scene_bevy: batch {batch} names a chain level that is not resident; it draws nothing");
+            Vec::new()
+        });
+        let Some(mut mesh) = world.get_mut::<GpuBatchedMesh3d>(slot.entity) else {
+            debug_assert!(false, "batch {batch}'s entity {} lost its GpuBatchedMesh3d", slot.entity);
+            continue;
+        };
+        // An empty list keeps the last mesh: every slot of such a batch is inactive.
+        if let Some(first) = ranges.first() {
+            mesh.mesh = first.mesh.clone();
+        }
+        let empty_since = if ranges.is_empty() { Some(slot.empty_since.unwrap_or(frame)) } else { None };
+        mesh.ranges = ranges;
+        state.batches[batch as usize] = Some(BatchEntity { empty_since, ..slot });
     }
 }
 
@@ -496,67 +630,83 @@ impl CellScene for SceneHook {
         Some(Arc::new(out))
     }
 
-    /// Commits the cell's plan (`SceneSpace::commit_in`) and returns the bytes
-    /// it will upload: the scene-buffer copy plus 64 B per batch slot written.
+    /// Commits the cell's plan (`SceneSpace::commit_in`), makes sure its
+    /// batches have their entities (a new one queues its zero-fill) and
+    /// rebuilds `plan.ranges`. Returns the bytes it will upload: the
+    /// scene-buffer copy plus 64 B per batch slot written.
     ///
-    /// **Queues nothing yet.** TODO(B3b/B4): push `plan.scene_bytes` and
-    /// `plan.writes` into [`SceneUploads`], make sure the plan's batches exist
-    /// (zero-filled before their first range) and rebuild `plan.ranges`.
+    /// TODO(B4): push `plan.scene_bytes` and `plan.writes` into [`SceneUploads`].
     fn upload(&self, world: &mut World, cx: &SceneCellCx<'_>) -> u64 {
-        let Some(mut spaces) = world.get_resource_mut::<SceneSpaces>() else { return 0 };
-        let Some(state) = spaces.0.get_mut(cx.worldspace) else { return 0 };
-        if !matches!(state.loading.get(&cx.cell), Some(CellLoad { phase: LoadPhase::Planned { .. }, .. })) {
+        if !world.contains_resource::<SceneSpaces>() {
             return 0;
         }
-        let Some(CellLoad { table, phase: LoadPhase::Planned { plan } }) = state.loading.remove(&cx.cell) else {
-            unreachable!("checked above")
-        };
-        state.space.commit_in(cx.cell, &plan);
-        state.tables.insert(cx.cell, table);
-        if let Some(key) = state.space.take_overflow_warning() {
-            log::warn!(
-                "sf_scene_bevy: batch {key:?} of {} is full ({} slots): what overflows spawns as entities (scene/slots/overflow counts it; this warns once)",
-                cx.worldspace,
-                state.space.config().batch_capacity
-            );
-        }
-        (plan.scene_bytes.len() as u64).saturating_add(plan.writes.len() as u64 * SLOT_WRITE_BYTES)
+        world.resource_scope(|world, mut spaces: Mut<SceneSpaces>| {
+            let Some(state) = spaces.0.get_mut(cx.worldspace) else { return 0 };
+            if !matches!(state.loading.get(&cx.cell), Some(CellLoad { phase: LoadPhase::Planned { .. }, .. })) {
+                return 0;
+            }
+            let Some(CellLoad { table, phase: LoadPhase::Planned { plan } }) = state.loading.remove(&cx.cell) else {
+                unreachable!("checked above")
+            };
+            state.space.commit_in(cx.cell, &plan);
+            state.tables.insert(cx.cell, table);
+            if let Some(key) = state.space.take_overflow_warning() {
+                log::warn!(
+                    "sf_scene_bevy: batch {key:?} of {} is full ({} slots): what overflows spawns as entities (scene/slots/overflow counts it; this warns once)",
+                    cx.worldspace,
+                    state.space.config().batch_capacity
+                );
+            }
+            // Spawned with no range first (step 5), then every changed list rebuilt (step 8).
+            let mut changed = ensure_batches(world, state, &plan.batches);
+            changed.extend_from_slice(&plan.ranges);
+            changed.sort_unstable();
+            changed.dedup();
+            rebuild_ranges(world, state, changed);
+            (plan.scene_bytes.len() as u64).saturating_add(plan.writes.len() as u64 * SLOT_WRITE_BYTES)
+        })
     }
 
     /// Idempotent: a planned cell gives its plan back (`cancel_in`), a resident
     /// one streams out (`plan_out`), a fallen-back or unknown one only drops
-    /// its handles.
-    ///
-    /// TODO(B3b): rebuild the ranges of `CellRelease::ranges` and despawn a
-    /// batch entity empty for longer than the frames in flight.
+    /// its handles. The batches whose lists changed are rebuilt; one left
+    /// empty is despawned by [`despawn_empty_batches`] after the frames in
+    /// flight.
     fn release(&self, world: &mut World, worldspace: &WorldspaceId, cell: IVec3) {
         if let Some(inbox) = world.get_resource::<SceneInbox>() {
             inbox.lock().retain(|(w, c, _)| !(w == worldspace && *c == cell));
         }
-        let Some(mut spaces) = world.get_resource_mut::<SceneSpaces>() else { return };
-        let Some(state) = spaces.0.get_mut(worldspace) else { return };
-        let changed = if let Some(load) = state.loading.remove(&cell) {
-            if let LoadPhase::Planned { plan } = load.phase {
-                state.space.cancel_in(&plan);
-                state.drop_released(&plan.chain_slots);
-            }
-            true
-        } else if state.space.resident(cell).is_some() {
-            match state.space.plan_out(cell) {
-                Ok(released) => {
-                    for slot in released.freed_chains {
-                        if let Some(entry) = state.chains.get_mut(slot as usize) {
-                            *entry = None;
+        if !world.contains_resource::<SceneSpaces>() {
+            return;
+        }
+        let changed = world.resource_scope(|world, mut spaces: Mut<SceneSpaces>| {
+            let Some(state) = spaces.0.get_mut(worldspace) else { return false };
+            if let Some(load) = state.loading.remove(&cell) {
+                if let LoadPhase::Planned { plan } = load.phase {
+                    state.space.cancel_in(&plan);
+                    // A batch another cell committed meanwhile listed this plan's blocks.
+                    rebuild_ranges(world, state, plan.ranges.iter().copied());
+                    state.drop_released(&plan.chain_slots);
+                }
+                true
+            } else if state.space.resident(cell).is_some() {
+                match state.space.plan_out(cell) {
+                    Ok(released) => {
+                        rebuild_ranges(world, state, released.ranges.iter().copied());
+                        for slot in released.freed_chains {
+                            if let Some(entry) = state.chains.get_mut(slot as usize) {
+                                *entry = None;
+                            }
                         }
                     }
+                    Err(e) => debug_assert!(false, "streaming out resident cell {cell}: {e}"),
                 }
-                Err(e) => debug_assert!(false, "streaming out resident cell {cell}: {e}"),
+                state.tables.remove(&cell);
+                true
+            } else {
+                false
             }
-            state.tables.remove(&cell);
-            true
-        } else {
-            false
-        };
+        });
         if changed && let Some(mut slabs) = world.get_resource_mut::<ChainSlabTable>() {
             slabs.dirty = true;
         }

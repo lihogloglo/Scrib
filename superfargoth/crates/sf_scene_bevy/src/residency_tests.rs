@@ -1,4 +1,4 @@
-//! Headless residency tests (B3a; brief §6.2): real `scene.cells` tables and
+//! Headless residency tests (B3a, B3b-1; brief §6.2): real `scene.cells` tables and
 //! `scene.chains` products off a bake store, through real streaming.
 //!
 //! The fixture is one streaming cell of plates, every placement at
@@ -13,8 +13,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bevy::asset::{AssetPlugin, AssetServer, LoadState, UntypedHandle};
+use bevy::asset::{AssetPlugin, AssetServer, LoadState, UntypedAssetId, UntypedHandle};
 use bevy::mesh::MeshPlugin;
+use bevy::pbr::gpu_instance_batch::{GpuBatchedMesh3d, GpuBatchedMeshRange, validate_ranges};
 use bevy::prelude::*;
 use big_space::prelude::FloatingOrigin;
 use glam::{Affine3A, DVec3};
@@ -25,8 +26,8 @@ use sf_diag_bevy::sf_diag::Counters;
 use sf_model::{CookSettings, Cooked, Material as ModelMaterial, MeshData, Model, Node, cook};
 use sf_model_bevy::{BAKED_SOURCE, BakedManifest, baked_source};
 use sf_scene::{
-    Aabb, CELLS_STEP, CHAINS_STEP, CellPlan, DrawSlabs, InstanceFlags, LodChain, LodLevel, MaterialClass, Sphere,
-    SpaceConfig, StaticCellTable, StaticInstance, cell_subject, chain_subject,
+    Aabb, BatchId, CELLS_STEP, CHAINS_STEP, CellPlan, DrawSlabs, InstanceFlags, LodChain, LodLevel, MaterialClass,
+    RangeSpec, Sphere, SpaceConfig, StaticCellTable, StaticInstance, cell_subject, chain_subject,
 };
 use sf_vfs::VfsPath;
 use sf_world::{
@@ -634,4 +635,201 @@ fn chain_assets_outlive_the_first_cell_and_drop_with_the_last() {
     assert!(f.state().chain(slot).is_some(), "the other cell still holds the chain");
     hook.release(f.app.world_mut(), &ws(), other);
     assert!(f.state().chain(slot).is_none(), "dropped with the last cell");
+}
+
+// ---- B3b-1: batch entities and their ranges (B3 brief §4.3 steps 5, 8, 10) ----
+
+/// A batch's range list as plain values (`GpuBatchedMeshRange` has no `PartialEq`).
+type RangeRow = (AssetId<Mesh>, u32, u32, u32, u32, Option<UntypedAssetId>);
+
+fn rows(ranges: &[GpuBatchedMeshRange]) -> Vec<RangeRow> {
+    ranges.iter().map(|r| (r.mesh.id(), r.first_index, r.index_count, r.first_slot, r.slot_count, r.material)).collect()
+}
+
+/// `SceneSpace::batch_ranges` mapped per step 8: a range is one whole chain level mesh.
+fn expected_rows(state: &SpaceState, batch: BatchId) -> Vec<RangeRow> {
+    let level = |r: &RangeSpec| state.chain(r.chain).expect("a range names a resident chain").levels[usize::from(r.level)].id();
+    state.space.batch_ranges(batch).iter().map(|r| (level(r), 0, 0, r.first_slot, r.slot_count, None)).collect()
+}
+
+/// Asserts the batch's entity carries exactly its `batch_ranges`, non-empty and valid for the
+/// port, with `mesh` the first range's mesh and no `Mesh3d`; returns the entity.
+fn check_batch(f: &Fixture, batch: BatchId) -> Entity {
+    let state = f.state();
+    let entity = state.batches[batch as usize].expect("the batch has its entity").entity;
+    let world = f.app.world();
+    let mesh = world.get::<GpuBatchedMesh3d>(entity).expect("a GpuBatchedMesh3d");
+    let expected = expected_rows(state, batch);
+    assert!(!expected.is_empty(), "batch {batch} holds a block");
+    assert_eq!(rows(&mesh.ranges), expected, "batch {batch}'s ranges");
+    assert_eq!(mesh.mesh.id(), expected[0].0, "mesh is the first range's mesh");
+    assert_eq!(mesh.max_capacity, state.space.config().batch_capacity);
+    assert_eq!(validate_ranges(&mesh.ranges, mesh.max_capacity), Ok(()));
+    assert!(world.get::<Mesh3d>(entity).is_none() && world.get::<MeshMaterial3d<StandardMaterial>>(entity).is_some());
+    assert_eq!(world.get::<SceneBatch>(entity).map(|b| b.batch), Some(batch));
+    entity
+}
+
+fn batch_entities(f: &mut Fixture) -> HashSet<Entity> {
+    let world = f.app.world_mut();
+    world.query_filtered::<Entity, With<GpuBatchedMesh3d>>().iter(world).collect()
+}
+
+fn zero_fills(f: &Fixture) -> Vec<BatchZeroFill> {
+    f.app.world().resource::<SceneUploads>().zero_fills.clone()
+}
+
+fn scene_frame(f: &Fixture) -> u64 {
+    f.app.world().resource::<SceneFrame>().0
+}
+
+/// Pumps `cell` (acquired, or posted to the inbox by hand) to planned and returns its plan.
+fn planned(f: &mut Fixture, cell: IVec3) -> CellPlan {
+    pump(&mut f.app, "planned", |app| SceneHook.ready(app.world(), &ws(), cell));
+    match &f.state().loading[&cell].phase {
+        LoadPhase::Planned { plan } => (**plan).clone(),
+        _ => panic!("cell {cell} fell back"),
+    }
+}
+
+fn commit(f: &mut Fixture, cell: IVec3) -> u64 {
+    let cx = SceneCellCx { worldspace: &ws(), cell, cell_origin: WorldPos::ORIGIN, level: sf_world::Level::Near };
+    SceneHook.upload(f.app.world_mut(), &cx)
+}
+
+/// Acquires `cell`, plans it and commits it; returns the plan.
+fn stream_cell_in(f: &mut Fixture, cell: IVec3) -> CellPlan {
+    assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some());
+    let plan = planned(f, cell);
+    assert!(commit(f, cell) > 0);
+    plan
+}
+
+/// [`stream_cell_in`] with the render world's slab answer injected by hand (needs
+/// `ChainSlabTable::tracking`): the batches are then slab-keyed, the same whatever chain slot
+/// the cell's chains get, as in the game. Without slabs a batch is keyed by its chain slot, and
+/// a cell back within the frames in flight gets fresh slots, so fresh batches.
+fn stream_cell_in_with_slabs(f: &mut Fixture, cell: IVec3) -> CellPlan {
+    assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some());
+    let waiting = |app: &mut App| {
+        app.world().resource::<SceneSpaces>().0.get(&ws()).and_then(|s| s.loading.get(&cell)).is_some_and(|l| {
+            matches!(l.phase, LoadPhase::Slabs { .. })
+        })
+    };
+    pump(&mut f.app, "the cell waits for its slabs", waiting);
+    let mut slabs = f.app.world_mut().resource_mut::<ChainSlabTable>();
+    let wanted: Vec<_> = slabs.wanted.iter().copied().collect();
+    for id in wanted {
+        slabs.slabs.insert(id, DrawSlabs { vertex_slab: 1, index_slab: 2, bind_group: 0 });
+    }
+    let plan = planned(f, cell);
+    assert!(plan.batches.iter().all(|(_, key)| key.chain.is_none()), "slab-keyed batches: {:?}", plan.batches);
+    assert!(commit(f, cell) > 0);
+    plan
+}
+
+/// Posts a second cell whose table is `cell`'s, so it shares `cell`'s chains and batches.
+fn post_twin(f: &mut Fixture, cell: IVec3, twin: IVec3) {
+    let bytes = f.app.world().resource::<Assets<SceneTableAsset>>().get(&f.state().tables[&cell]).unwrap().0.clone();
+    let handle = f.app.world_mut().resource_mut::<Assets<SceneTableAsset>>().add(SceneTableAsset(bytes));
+    f.app.world().resource::<SceneInbox>().lock().push((ws(), twin, handle));
+}
+
+/// Steps 5 and 8: every batch a committed plan names is one entity with its ranges, and one
+/// zero-fill of its whole capacity is queued per new batch.
+#[test]
+fn a_committed_cell_spawns_its_batches_with_their_ranges() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    let plan = stream_cell_in(&mut f, cell);
+    assert!(!plan.batches.is_empty());
+    let entities = batch_entities(&mut f);
+    assert_eq!(entities.len(), plan.batches.len());
+    let fills = zero_fills(&f);
+    assert_eq!(fills.len(), plan.batches.len(), "one zero-fill per new batch");
+    for &(batch, _) in &plan.batches {
+        let entity = check_batch(&f, batch);
+        assert!(entities.contains(&entity));
+        let mine: Vec<(Entity, u32)> = fills.iter().filter(|z| z.batch == batch).map(|z| (z.entity, z.slots)).collect();
+        assert_eq!(mine, vec![(entity, 4096)], "batch {batch}'s zero-fill covers its whole capacity");
+    }
+}
+
+/// Step 10: a batch two cells share keeps its entity when one streams out, and its ranges
+/// follow `batch_ranges`.
+#[test]
+fn a_shared_batch_keeps_its_entity_when_one_cell_streams_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a), true, 4096);
+    let cell = f.cell;
+    let twin = cell + IVec3::Z;
+    let first = stream_cell_in(&mut f, cell);
+    post_twin(&mut f, cell, twin);
+    let second = planned(&mut f, twin);
+    assert!(commit(&mut f, twin) > 0);
+    let shared: Vec<BatchId> =
+        second.batches.iter().map(|&(b, _)| b).filter(|b| first.batches.iter().any(|(a, _)| a == b)).collect();
+    assert!(!shared.is_empty(), "the twin shares its batches");
+    assert_eq!(zero_fills(&f).len(), first.batches.len(), "a shared batch is zero-filled once");
+    let before: Vec<Entity> = shared.iter().map(|&b| check_batch(&f, b)).collect();
+    for &b in &shared {
+        assert_eq!(f.state().space.batch_ranges(b).len(), 2, "one range per cell's block");
+    }
+
+    SceneHook.release(f.app.world_mut(), &ws(), cell);
+    let after: Vec<Entity> = shared.iter().map(|&b| check_batch(&f, b)).collect();
+    assert_eq!(after, before, "the shared batch keeps its entity");
+    for &b in &shared {
+        assert_eq!(f.state().space.batch_ranges(b).len(), 1);
+    }
+}
+
+/// Step 10: an emptied batch outlives the frames in flight, refills in place before then
+/// (same entity, no second zero-fill), and despawns once empty for longer.
+#[test]
+fn an_empty_batch_despawns_after_the_frames_in_flight() {
+    // Wide enough for a re-plan to fit inside it; the space reads it at its first poll.
+    const WINDOW: u32 = 300;
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a), true, 4096);
+    f.app.world_mut().resource_mut::<SceneConfig>().space.frames_in_flight = WINDOW;
+    f.app.world_mut().resource_mut::<ChainSlabTable>().tracking = true;
+    let cell = f.cell;
+    let plan = stream_cell_in_with_slabs(&mut f, cell);
+    assert_eq!(f.state().space.config().frames_in_flight, WINDOW);
+    let batches: Vec<(BatchId, Entity)> = plan.batches.iter().map(|&(b, _)| (b, check_batch(&f, b))).collect();
+    let empty = |f: &Fixture, e: Entity| f.app.world().get::<GpuBatchedMesh3d>(e).is_some_and(|m| m.ranges.is_empty());
+
+    SceneHook.release(f.app.world_mut(), &ws(), cell);
+    for &(b, e) in &batches {
+        assert!(empty(&f, e), "batch {b} emptied");
+        assert!(f.state().batches[b as usize].is_some_and(|s| s.entity == e && s.empty_since.is_some()));
+    }
+
+    // Back in before the window ends: the same entities, refilled, no second zero-fill.
+    let start = scene_frame(&f);
+    let again = stream_cell_in_with_slabs(&mut f, cell);
+    assert!(scene_frame(&f) - start < u64::from(WINDOW), "the re-plan fit in the window");
+    assert_eq!(again.batches, plan.batches);
+    for &(b, e) in &batches {
+        assert_eq!(check_batch(&f, b), e, "batch {b} kept its entity");
+        assert_eq!(f.state().batches[b as usize].unwrap().empty_since, None);
+    }
+    assert_eq!(zero_fills(&f).len(), plan.batches.len());
+
+    // Out for good: alive for the window, gone the frame after.
+    SceneHook.release(f.app.world_mut(), &ws(), cell);
+    for _ in 0..WINDOW {
+        f.app.update();
+    }
+    for &(b, e) in &batches {
+        assert!(empty(&f, e), "batch {b} survives the frames in flight");
+    }
+    f.app.update();
+    for &(b, e) in &batches {
+        assert!(f.app.world().get_entity(e).is_err(), "batch {b}'s entity despawned");
+        assert!(f.state().batches[b as usize].is_none());
+    }
+    assert!(batch_entities(&mut f).is_empty());
 }

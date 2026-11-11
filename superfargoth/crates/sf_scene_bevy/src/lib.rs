@@ -10,9 +10,10 @@
 //! the cell residency ([`residency`]: the `CellScene` hook streaming drives)
 //! and the render-world slab feedback ([`slabs`]).
 //!
-//! **B3a state.** Cells load, resolve their chains and slabs, plan, commit and
-//! stream out; `covered` follows the plan. No batch entity, material or GPU
-//! write exists yet (B3b/B4), so an app with [`ScenePlugin`] enabled draws the
+//! **B3b-1 state.** Cells load, resolve their chains and slabs, plan, commit and
+//! stream out; `covered` follows the plan; every batch a committed plan names
+//! is a `GpuBatchedMesh3d` entity with its range list. No material or GPU
+//! write exists yet (B3b-2/B4), so an app with [`ScenePlugin`] enabled draws the
 //! covered statics *nowhere*. [`ScenePlugin`] is in no `add_plugins` call and
 //! [`baked_extensions`] is in no extensions map, so the tree ships identically
 //! until the game side (C1/C2) installs it. `sf_world_bevy` must never depend
@@ -39,8 +40,8 @@ mod residency_tests;
 pub use assets::{SceneLoadError, SceneTableAsset, SceneTableLoader};
 pub use chains::ChainAssets;
 pub use residency::{
-    CellLoad, CellUpload, LoadPhase, SLAB_WAIT_FRAMES, SceneFrame, SceneHook, SceneInbox, SceneSpaces, SceneUploads,
-    SpaceState, poll_cell_loads, tick_frame,
+    BatchEntity, BatchZeroFill, CellLoad, CellUpload, LoadPhase, SLAB_WAIT_FRAMES, SceneBatch, SceneFrame, SceneHook,
+    SceneInbox, SceneSpaces, SceneUploads, SpaceState, despawn_empty_batches, poll_cell_loads, tick_frame,
 };
 pub use slabs::{ChainSlabTable, extract_chain_slabs};
 
@@ -124,7 +125,7 @@ impl Plugin for ScenePlugin {
                     SceneSystems::Promote.after(SceneSystems::Residency),
                 ),
             )
-            .add_systems(First, tick_frame.in_set(SceneSystems::Frame))
+            .add_systems(First, (tick_frame, despawn_empty_batches).chain().in_set(SceneSystems::Frame))
             .add_systems(Update, poll_cell_loads.in_set(SceneSystems::Residency));
         if self.config.enabled {
             app.insert_resource(SceneCells(Some(Arc::new(SceneHook))));
