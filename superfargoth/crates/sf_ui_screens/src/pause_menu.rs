@@ -5,10 +5,11 @@
 //!
 //! A column of entries (keyed by [`PauseChoice`]): focus starts on Resume (else the first
 //! enabled entry), up and down skip disabled entries (clamped, no wrap), confirm or a click
-//! chooses. Quit asks first (No focused); No or Back answers no and returns to Quit. Back
-//! otherwise means Resume. Resume, chosen or by Back, sends [`PauseChoice::Resume`] and closes
-//! the screen; the other choices leave it open (the app closes it when it quits, and the
-//! save/load or options screen it opens covers it until closed).
+//! chooses. Main menu and Quit ask first (No focused, the question names the entry); No or Back
+//! answers no and returns focus to the entry that asked. Back otherwise means Resume. Resume, chosen or by Back, sends [`PauseChoice::Resume`] and closes
+//! the screen; the other choices leave it open (the app closes it when it quits or returns to
+//! its main menu, and the save/load or options screen it opens covers it until closed). An app
+//! with no main menu leaves Main menu out of its model.
 //!
 //! Pause policy: the screen record declares `pause = "WhileOpen"` (ui.md "Screen" records; the
 //! demo's `ui.screen` "pause"), so `ScreenStack::pauses_game` is true while it is open; the app
@@ -39,18 +40,26 @@ pub enum PauseChoice {
     Save,
     Load,
     Options,
+    /// Back to the app's front end (after a yes/no: unsaved progress is lost).
+    MainMenu,
     Quit,
 }
 
 impl PauseChoice {
-    /// Every entry, in the default order.
-    pub const ALL: [Self; 5] = [
+    /// Every entry, in the default order (Morrowind/OpenMW put the ways out last).
+    pub const ALL: [Self; 6] = [
         Self::Resume,
         Self::Save,
         Self::Load,
         Self::Options,
+        Self::MainMenu,
         Self::Quit,
     ];
+
+    /// Choosing it asks yes/no first.
+    pub fn asks(self) -> bool {
+        matches!(self, Self::MainMenu | Self::Quit)
+    }
 
     fn label(self, labels: &ScreenLabels) -> &str {
         match self {
@@ -58,6 +67,7 @@ impl PauseChoice {
             Self::Save => &labels.pause_save,
             Self::Load => &labels.pause_load,
             Self::Options => &labels.options,
+            Self::MainMenu => &labels.main_menu,
             Self::Quit => &labels.quit,
         }
     }
@@ -69,7 +79,16 @@ impl PauseChoice {
             Self::Save => "save",
             Self::Load => "load",
             Self::Options => "options",
+            Self::MainMenu => "main-menu",
             Self::Quit => "quit",
+        }
+    }
+
+    /// The question its choice asks ([`Self::asks`]).
+    fn question(self, labels: &ScreenLabels) -> &str {
+        match self {
+            Self::MainMenu => &labels.confirm_main_menu,
+            _ => &labels.confirm_quit,
         }
     }
 }
@@ -98,7 +117,7 @@ pub struct PauseMenuModel {
 }
 
 impl Default for PauseMenuModel {
-    /// All five entries, enabled.
+    /// All six entries, enabled.
     fn default() -> Self {
         Self {
             entries: PauseChoice::ALL.map(PauseEntry::new).to_vec(),
@@ -148,7 +167,7 @@ pub enum PauseMenuFocus {
     #[default]
     Start,
     Entry(PauseChoice),
-    /// An answer of the quit question: yes, no.
+    /// An answer of the question (Main menu, Quit): yes, no.
     Confirm(usize),
 }
 
@@ -159,8 +178,8 @@ pub enum PauseMenuFocus {
 pub struct PauseMenuScreen {
     pub model: PauseMenuModel,
     focus: PauseMenuFocus,
-    /// The quit question is up.
-    asking: bool,
+    /// The entry whose question is up (Main menu, Quit).
+    asking: Option<PauseChoice>,
 }
 
 impl PauseMenuScreen {
@@ -175,29 +194,37 @@ impl PauseMenuScreen {
         self.focus
     }
 
-    /// The quit question is up.
-    pub fn asking_quit(&self) -> bool {
+    /// The entry whose question is up, if one is.
+    pub fn asking(&self) -> Option<PauseChoice> {
         self.asking
     }
 
-    /// Choosing an entry: Quit asks first; a disabled entry does nothing.
+    /// The quit question is up.
+    pub fn asking_quit(&self) -> bool {
+        self.asking == Some(PauseChoice::Quit)
+    }
+
+    /// Choosing an entry: Main menu and Quit ask first; a disabled entry does nothing.
     fn choose(&mut self, choice: PauseChoice) -> Option<PauseChoice> {
         if !self.model.is_enabled(choice) {
             return None;
         }
-        if choice == PauseChoice::Quit {
-            self.asking = true;
-            // No first: a stray confirm never quits.
+        if choice.asks() {
+            self.asking = Some(choice);
+            // No first: a stray confirm never leaves the game.
             self.focus = PauseMenuFocus::Confirm(1);
             return None;
         }
         Some(choice)
     }
 
-    /// Closes the question, focus back on Quit.
-    fn answer(&mut self) {
-        self.asking = false;
-        self.focus = PauseMenuFocus::Entry(PauseChoice::Quit);
+    /// Closes the question, focus back on the entry that asked; returns that entry.
+    fn answer(&mut self) -> Option<PauseChoice> {
+        let asked = self.asking.take();
+        if let Some(choice) = asked {
+            self.focus = PauseMenuFocus::Entry(choice);
+        }
+        asked
     }
 
     /// Where focus lands: Resume, else the first enabled entry.
@@ -251,7 +278,7 @@ pub struct PauseMenuParts {
     /// Whether each entry is shown enabled.
     shown: HashMap<PauseChoice, bool>,
     seen: Option<PauseMenuModel>,
-    /// Quit: yes, no.
+    /// Main menu's or Quit's: yes, no.
     question: Question,
 }
 
@@ -395,14 +422,14 @@ pub(crate) fn sync_pause_menu(
                     if enabled { colors.text } else { colors.muted },
                 );
             }
-            if screen.asking && !model.is_enabled(PauseChoice::Quit) {
-                screen.asking = false;
+            if screen.asking.is_some_and(|c| !model.is_enabled(c)) {
+                screen.asking = None;
             }
             parts.seen = Some(model);
         }
 
         // Focus: the question takes it; otherwise an enabled entry.
-        let next = match (screen.asking, screen.focus) {
+        let next = match (screen.asking.is_some(), screen.focus) {
             (true, PauseMenuFocus::Confirm(_)) => screen.focus,
             (true, _) => PauseMenuFocus::Confirm(1),
             (false, PauseMenuFocus::Entry(c)) if screen.model.is_enabled(c) => screen.focus,
@@ -412,11 +439,10 @@ pub(crate) fn sync_pause_menu(
             screen.focus = next;
         }
 
-        let question = if screen.asking {
-            labels.confirm_quit.clone()
-        } else {
-            String::new()
-        };
+        let question = screen
+            .asking
+            .map(|c| c.question(&labels).to_owned())
+            .unwrap_or_default();
         parts
             .question
             .set(&mut commands, &mut nodes, question, colors);
@@ -453,7 +479,7 @@ pub(crate) fn pause_menu_input(
             if action.action != UiAction::Back {
                 continue;
             }
-            if screen.asking {
+            if screen.asking.is_some() {
                 screen.answer();
             } else {
                 out.write(PauseMenuEvent {
@@ -485,16 +511,13 @@ pub(crate) fn on_pause_menu_part(
         return;
     };
     let choice = match *kind {
-        PauseMenuPart::Yes if screen.asking => {
-            screen.answer();
-            Some(PauseChoice::Quit)
-        }
-        PauseMenuPart::No if screen.asking => {
+        PauseMenuPart::Yes if screen.asking.is_some() => screen.answer(),
+        PauseMenuPart::No if screen.asking.is_some() => {
             screen.answer();
             None
         }
         // The question is modal.
-        _ if screen.asking => None,
+        _ if screen.asking.is_some() => None,
         PauseMenuPart::Entry(choice) => {
             if screen.model.is_enabled(choice) {
                 screen.focus = PauseMenuFocus::Entry(choice);

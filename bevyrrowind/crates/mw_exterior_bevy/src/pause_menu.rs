@@ -13,12 +13,17 @@
 //!   player's controls pause through `dialogue.rs`'s menu seam (`PlayerMode::paused`, any
 //!   Menu-layer screen).
 //! - **Choices**: Resume (or Back) closes the menu (the screen does); Quit, after its yes/no,
-//!   exits (`AppExit::Success`); Options opens the options screen on top (its Back returns
+//!   exits (`AppExit::Success`); Main menu, after its yes/no (unsaved progress is lost), closes
+//!   the Menu layer and enters `AppPhase::Frontend` (menus.md §1: leaving the world tears it
+//!   down, `teardown.rs`; the main menu opens there, `main_menu.rs`). Only a run with a front end
+//!   (the release start, which registers the main menu screen) lists it; dev runs (`view`,
+//!   `scene`) have none. Options opens the options screen on top (its Back returns
 //!   here); Save and Load open the save/load screen on top (`mw_saves_bevy::menu`, which lists
 //!   the save folder and carries the choices out; its Back returns here).
 //! - **Options**: the settings store (`UiSettingsStore`, every `ui.setting` record, values from
 //!   the player's profile `profiles/<name>.toml` `[settings.<mod>]`, only non-defaults) is
-//!   inserted here at startup; strings come from the builtin mod's Fluent file (`controls.rs`).
+//!   inserted here at startup; strings come from the builtin mod's Fluent file (`controls.rs`),
+//!   as do the pause menu's Main menu strings (`pause-main-menu`, `pause-confirm-main-menu`).
 //!   A change is written to the store at once and applies live where a consumer reads the store
 //!   (the framework's audio page: `sf_audio_bevy` `SettingsAudioPlugin` in `mw_audio_bevy`);
 //!   other settings are stored only (logged). The profile file is written when the player
@@ -27,13 +32,15 @@
 //!   its Back returns to the options.
 
 use bevy::prelude::*;
+use sf_app_bevy::AppPhase;
+use sf_app_bevy::bevy_state::prelude::NextState;
 use sf_console_bevy::ConsoleOpen;
 use sf_records::RecordDb;
 use sf_ui::{Layer, SettingsStore, UiRegistry};
 use sf_ui_bevy::{ScreenStackRes, UiAction, UiActionEvent, UiLocalizer, UiRegistryRes, UiScreenRoot, UiSettingsStore, UiSystems};
 use sf_ui_screens::{
     OptionsChange, OptionsEvent, OptionsModel, OptionsScreen, PauseChoice, PauseMenuEvent, PauseMenuModel, PauseMenuScreen, SaveLoadMode,
-    ScreenSystems,
+    ScreenLabels, ScreenSystems,
 };
 
 use mw_player_bevy::PlayerMode;
@@ -78,7 +85,7 @@ pub fn add(app: &mut App) {
     app.add_systems(
         Update,
         (
-            (keep_hud, open_pause_menu).chain().after(UiSystems::Dispatch).before(ScreenSystems::Spawn),
+            (localize_labels, keep_hud, open_pause_menu).chain().after(UiSystems::Dispatch).before(ScreenSystems::Spawn),
             (host_pause_menu, host_options, close_screens, pause_time).chain().after(ScreenSystems::Input),
         ),
     );
@@ -95,9 +102,28 @@ fn screens() -> UiRegistry {
     UiRegistry::build(&db).0
 }
 
-/// The pause menu's model: every entry.
-fn model() -> PauseMenuModel {
-    PauseMenuModel::default()
+/// The pause menu's model: every entry; Main menu only with a front end to return to.
+fn model(front_end: bool) -> PauseMenuModel {
+    let mut model = PauseMenuModel::default();
+    if !front_end {
+        model.entries.retain(|e| e.choice != PauseChoice::MainMenu);
+    }
+    model
+}
+
+/// The framework strings the game localizes from the builtin mod's Fluent file (English
+/// fallbacks in `ScreenLabels::default`).
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn localize_labels(localizer: Option<Res<UiLocalizer>>, mut labels: ResMut<ScreenLabels>) {
+    let Some(localizer) = localizer.filter(DetectChanges::is_changed) else { return };
+    let set = |field: &mut String, key: &str| {
+        if localizer.0.has(key) {
+            *field = localizer.0.format(key, None).into_owned();
+        }
+    };
+    let labels = &mut *labels;
+    set(&mut labels.main_menu, "pause-main-menu");
+    set(&mut labels.confirm_main_menu, "pause-confirm-main-menu");
 }
 
 /// Keeps the HUD screen open (a load clears only the Menu and Modal layers).
@@ -128,7 +154,9 @@ fn open_pause_menu(
     if console.is_some_and(|c| c.0 || c.is_changed()) {
         return;
     }
-    commands.spawn((UiScreenRoot(PAUSE.into()), PauseMenuScreen::new(model())));
+    // The release start registers the main menu's screen; dev runs have no front end.
+    let front_end = registry.0.screen(crate::main_menu::MAIN_MENU).is_some();
+    commands.spawn((UiScreenRoot(PAUSE.into()), PauseMenuScreen::new(model(front_end))));
     if let Err(e) = stack.0.push(&registry.0, PAUSE) {
         warn!("pause menu: {e:?}");
     }
@@ -145,12 +173,23 @@ fn host_pause_menu(
     localizer: Option<Res<UiLocalizer>>,
     mut exit: MessageWriter<AppExit>,
     mut open_saves: MessageWriter<OpenSaveLoad>,
+    mut phase: Option<ResMut<NextState<AppPhase>>>,
 ) {
     for event in choices.read() {
         match event.choice {
             PauseChoice::Quit => {
                 info!("pause menu: quit");
                 exit.write(AppExit::Success);
+            }
+            // Leaving the world tears it down; the front end opens the main menu.
+            PauseChoice::MainMenu => {
+                info!("pause menu: main menu");
+                stack.0.clear(Layer::Menu);
+                if let Some(phase) = phase.as_mut() {
+                    phase.set(AppPhase::Frontend);
+                } else {
+                    warn!("pause menu: no app phases, no main menu to return to");
+                }
             }
             PauseChoice::Options => open_options(&mut commands, &mut stack, &registry, store.as_deref(), localizer.as_deref()),
             // Resume: the screen has closed itself.
@@ -353,7 +392,9 @@ pub(crate) mod tests {
         assert!(paused(&app), "the game pauses while it is open");
         let mut q = app.world_mut().query::<&PauseMenuScreen>();
         let screen = q.single(app.world()).unwrap();
-        assert!(PauseChoice::ALL.iter().all(|c| screen.model.is_enabled(*c)), "every entry, Save and Load too");
+        let dev = [PauseChoice::Resume, PauseChoice::Save, PauseChoice::Load, PauseChoice::Options, PauseChoice::Quit];
+        assert_eq!(screen.model.choices(), dev, "no Main menu without a front end");
+        assert!(dev.iter().all(|c| screen.model.is_enabled(*c)), "every entry, Save and Load too");
 
         // Esc again is the menu's Back: resume.
         tap(&mut app, KeyCode::Escape);
@@ -397,6 +438,80 @@ pub(crate) mod tests {
         tap(&mut app, KeyCode::ArrowLeft);
         tap(&mut app, KeyCode::Enter);
         assert_eq!(app.should_exit(), Some(AppExit::Success));
+    }
+
+    /// F2c: a release start in game; pause menu -> Main menu asks (No focused), Yes closes the
+    /// menus, tears the world down and opens the main menu in the front end.
+    #[test]
+    fn main_menu_from_the_pause_menu_returns_to_the_front_end() {
+        use mw_game_core::exterior::ExteriorCamera;
+        use sf_app_bevy::bevy_state::prelude::State;
+
+        let mut app = app_with(|app| {
+            if !app.world().contains_resource::<Assets<Mesh>>() {
+                app.init_asset::<Mesh>();
+            }
+            if !app.world().contains_resource::<Assets<StandardMaterial>>() {
+                app.init_asset::<StandardMaterial>();
+            }
+            // The world resources `WorldStreamingPlugin` adds and the player's (as `teardown.rs`'s test).
+            app.insert_resource(sf_world_bevy::Streaming::new(sf_world_bevy::StreamingConfig::default()))
+                .init_resource::<sf_world_bevy::WorldspaceRegistry>()
+                .init_resource::<sf_world_bevy::WorldOverlay>()
+                .init_resource::<sf_world_bevy::FadeTransition>()
+                .insert_resource(sf_world_bevy::ActiveWorldspace(None))
+                .init_resource::<mw_player_bevy::PlayerStart>()
+                .init_resource::<mw_player_bevy::RestoreBody>()
+                .init_resource::<mw_player_bevy::ArrivalSpot>()
+                .init_resource::<mw_player_bevy::Focus>();
+            crate::phase::add(app, true);
+            crate::exterior::test_world_setup(app);
+            crate::main_menu::add(app, true);
+            crate::teardown::add(app);
+        });
+        let phase = |app: &App| *app.world().resource::<State<AppPhase>>().get();
+        let cameras = |app: &mut App| app.world_mut().query_filtered::<Entity, With<ExteriorCamera>>().iter(app.world()).count();
+        let main_menu = crate::main_menu::MAIN_MENU;
+        assert_eq!(phase(&app), AppPhase::Frontend);
+        assert!(open(&app, main_menu));
+
+        // New game (focused: Continue is disabled), then the world is in.
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(phase(&app), AppPhase::Loading);
+        app.world_mut().resource_mut::<NextState<AppPhase>>().set(AppPhase::InGame);
+        frames(&mut app, 3);
+        assert_eq!(phase(&app), AppPhase::InGame);
+        assert_eq!(cameras(&mut app), 1, "the world's camera");
+
+        // Esc: the pause menu lists Main menu, before Quit.
+        tap(&mut app, KeyCode::Escape);
+        assert!(open(&app, PAUSE) && paused(&app));
+        let screen = |app: &mut App| app.world_mut().query::<&PauseMenuScreen>().single(app.world()).expect("pause menu").clone();
+        assert_eq!(screen(&mut app).model.choices(), PauseChoice::ALL);
+
+        // Resume -> Save -> Load -> Options -> Main menu: it asks, No focused; No stays in game.
+        for _ in 0..4 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(screen(&mut app).asking(), Some(PauseChoice::MainMenu));
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(screen(&mut app).asking(), None);
+        assert_eq!(screen(&mut app).focus(), sf_ui_screens::PauseMenuFocus::Entry(PauseChoice::MainMenu));
+        assert_eq!(phase(&app), AppPhase::InGame);
+        assert!(open(&app, PAUSE));
+
+        // Again, left to Yes, confirm: the front end, no world, the main menu over it.
+        tap(&mut app, KeyCode::Enter);
+        tap(&mut app, KeyCode::ArrowLeft);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(phase(&app), AppPhase::Frontend);
+        assert_eq!(cameras(&mut app), 0, "the world is torn down");
+        assert!(!open(&app, PAUSE));
+        assert_eq!(roots(&mut app, PAUSE), 0);
+        assert!(open(&app, main_menu));
+        assert_eq!(roots(&mut app, main_menu), 1);
+        assert!(app.should_exit().is_none());
     }
 
     fn master_volume(app: &App) -> Option<f64> {

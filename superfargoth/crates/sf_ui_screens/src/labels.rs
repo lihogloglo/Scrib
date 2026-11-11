@@ -69,15 +69,19 @@ pub struct ScreenLabels {
     pub confirm_delete: String,
     /// `pause-title`: the pause menu's heading.
     pub pause_title: String,
-    /// `pause-resume`, `pause-save`, `pause-load`, `pause-options`, `pause-quit`: its entries.
+    /// `pause-resume`, `pause-save`, `pause-load`, `pause-options`, `pause-main-menu`,
+    /// `pause-quit`: its entries.
     pub resume: String,
     pub pause_save: String,
     pub pause_load: String,
     pub options: String,
+    pub main_menu: String,
     pub quit: String,
     /// `pause-confirm-quit`, `pause-no`: the question before quitting.
     pub confirm_quit: String,
     pub no: String,
+    /// `pause-confirm-main-menu`: the question before returning to the main menu.
+    pub confirm_main_menu: String,
     /// `main-confirm-quit`: the main menu's question before quitting (answers `saveload-yes`,
     /// `pause-no`).
     pub main_confirm_quit: String,
@@ -140,9 +144,11 @@ impl Default for ScreenLabels {
             pause_save: s("Save game"),
             pause_load: s("Load game"),
             options: s("Options"),
+            main_menu: s("Main menu"),
             quit: s("Quit"),
             confirm_quit: s("Quit the game? Unsaved progress will be lost."),
             no: s("No"),
+            confirm_main_menu: s("Return to the main menu? Unsaved progress will be lost."),
             main_confirm_quit: s("Quit the game?"),
             keybinds: s("Key bindings"),
             on: s("On"),

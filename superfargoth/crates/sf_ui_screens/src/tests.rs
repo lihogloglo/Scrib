@@ -1415,12 +1415,20 @@ fn pause_menu_opens_on_resume_and_skips_disabled_entries() {
     let texts = entries.map(|e| ui.text_of(e));
     assert_eq!(
         texts,
-        ["Resume", "Save game", "Load game", "Options", "Quit"]
+        [
+            "Resume",
+            "Save game",
+            "Load game",
+            "Options",
+            "Main menu",
+            "Quit"
+        ]
     );
     assert_eq!(ui.focus(), Some(entries[0]), "focus starts on Resume");
     assert!(ui.class_of(entries[1]).contains("disabled"));
     assert!(!ui.class_of(entries[2]).contains("disabled"));
-    assert!(ui.class_of(entries[4]).contains("quit"));
+    assert!(ui.class_of(entries[4]).contains("main-menu"));
+    assert!(ui.class_of(entries[5]).contains("quit"));
     assert!(
         ui.world().resource::<ScreenStackRes>().0.pauses_game(),
         "the record pauses the game while open"
@@ -1480,7 +1488,7 @@ fn pause_menu_quit_asks_first() {
     let quit = parts.entry(PauseChoice::Quit).unwrap();
     let [yes, no] = parts.confirm_buttons();
     let overlay = parts.overlay();
-    for _ in 0..4 {
+    for _ in 0..5 {
         ui.tap(GamepadButton::DPadDown);
     }
     assert_eq!(ui.focus(), Some(quit));
@@ -1526,6 +1534,61 @@ fn pause_menu_quit_asks_first() {
     ui.tap(GamepadButton::South);
     assert_eq!(take_pause(&mut ui), vec![PauseChoice::Quit]);
     assert!(!asking(&ui));
+}
+
+#[test]
+fn pause_menu_main_menu_asks_first() {
+    let (mut ui, root) = open_pause(PauseMenuModel::default());
+    let parts = pause_parts(&ui, root);
+    let main_menu = parts.entry(PauseChoice::MainMenu).unwrap();
+    let [yes, no] = parts.confirm_buttons();
+    let overlay = parts.overlay();
+    for _ in 0..4 {
+        ui.tap(GamepadButton::DPadDown);
+    }
+    assert_eq!(ui.focus(), Some(main_menu));
+    let asking = |ui: &Ui| ui.world().get::<PauseMenuScreen>(root).unwrap().asking();
+
+    // Main menu asks its own question, No focused; No returns focus to Main menu.
+    ui.tap(GamepadButton::South);
+    assert!(take_pause(&mut ui).is_empty());
+    assert_eq!(asking(&ui), Some(PauseChoice::MainMenu));
+    assert_eq!(ui.focus(), Some(no));
+    assert_eq!(
+        ui.world().get::<Node>(overlay).unwrap().display,
+        Display::Flex
+    );
+    let text = ui.text_of(overlay);
+    assert!(
+        text.contains("Return to the main menu? Unsaved progress will be lost.")
+            && !text.contains("Quit the game?"),
+        "{text}"
+    );
+    ui.tap(GamepadButton::South);
+    assert!(take_pause(&mut ui).is_empty());
+    assert_eq!(asking(&ui), None);
+    assert_eq!(ui.focus(), Some(main_menu), "back on Main menu");
+    assert_eq!(
+        ui.world().get::<Node>(overlay).unwrap().display,
+        Display::None
+    );
+
+    // Esc answers no too.
+    ui.tap(GamepadButton::South);
+    tap_key(&mut ui, KeyCode::Escape);
+    assert_eq!(asking(&ui), None);
+    assert!(take_pause(&mut ui).is_empty());
+    assert!(pause_open(&ui));
+    assert_eq!(ui.focus(), Some(main_menu));
+
+    // Yes sends Main menu (the app leaves; the screen stays until it does).
+    ui.tap(GamepadButton::South);
+    ui.tap(GamepadButton::DPadLeft);
+    assert_eq!(ui.focus(), Some(yes));
+    ui.tap(GamepadButton::South);
+    assert_eq!(take_pause(&mut ui), vec![PauseChoice::MainMenu]);
+    assert_eq!(asking(&ui), None);
+    assert!(pause_open(&ui));
 }
 
 // ---------------------------------------------------------------- main menu
