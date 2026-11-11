@@ -514,3 +514,58 @@ fn measure_encode_512() {
         }
     }
 }
+
+/// FNV-1a 64 of a byte string: a compact golden for whole files.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// Synthetic BC7 levels (not real blocks: the container only copies them) for `width` x `height`.
+fn synthetic_bc7_levels(width: u32, height: u32, count: u32) -> Vec<Vec<u8>> {
+    (0..count)
+        .map(|level| {
+            let len = bc7_level_len((width >> level).max(1), (height >> level).max(1));
+            (0..len)
+                .map(|i| (i * 7 + level as usize * 31) as u8)
+                .collect()
+        })
+        .collect()
+}
+
+/// Goldens taken from `write_ktx2_bc7` and `bc7_ktx2` before the container was generalised to every
+/// block format (textures.md T1): the de-light products must not change.
+#[test]
+fn bc7_container_is_byte_identical_to_the_golden() {
+    let cases = [
+        (64, 32, true, 7),
+        (300, 200, false, 9),
+        (300, 200, true, 1),
+        (1, 1, true, 1),
+    ];
+    let hashes: Vec<(usize, u64)> = cases
+        .iter()
+        .map(|&(w, h, srgb, count)| {
+            let file = write_ktx2_bc7(w, h, srgb, &synthetic_bc7_levels(w, h, count));
+            (file.len(), fnv1a(&file))
+        })
+        .collect();
+    let rgba: Vec<u8> = (0..64u32 * 32)
+        .flat_map(|i| [(i % 251) as u8, (i % 13 * 19) as u8, 77, (i % 7 * 40) as u8])
+        .collect();
+    let encoded = bc7_ktx2_cutout(&rgba, 64, 32, true, Bc7Quality::Fast, Some(0.5));
+    assert_eq!(
+        hashes,
+        [
+            (3104, 0x2097_a90a_ca49_a28b),
+            (81040, 0x28dd_807b_17e0_f132),
+            (60192, 0x021b_d06b_ba18_24f4),
+            (208, 0xa571_85de_e7b3_bc3f),
+        ]
+    );
+    assert_eq!(
+        (encoded.len(), fnv1a(&encoded)),
+        (3104, 0xb4d0_4dd4_8a25_6c9f)
+    );
+}

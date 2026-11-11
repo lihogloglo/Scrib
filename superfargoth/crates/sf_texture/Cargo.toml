@@ -1,16 +1,21 @@
 [package]
 name = "sf_texture"
-description = "Bevy-free texture processing for superfargoth bake steps: albedo de-lighting, mips, BC7 KTX2 (bake.md \"De-lighting\")"
+description = "Bevy-free texture processing for superfargoth bake steps: albedo de-lighting, mips, role cook to BC7/BC5/BC4 KTX2, BCn rewrap (bake.md \"De-lighting\", textures.md)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+block_compression.workspace = true
+ddsfile.workspace = true
 intel_tex_2.workspace = true
 ktx2.workspace = true
+serde.workspace = true
+texpresso.workspace = true
 
 [dev-dependencies]
-block_compression.workspace = true
+# `profile` round trip in the data format profiles ship in.
+ron.workspace = true
 
 [lints]
 workspace = true

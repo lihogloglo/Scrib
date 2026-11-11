@@ -28,6 +28,8 @@ mw_world.workspace = true
 # `mw.anim.groups` products.
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 rayon.workspace = true
+# `texture_profiles`: pack profiles as data (`data/texture_profiles.ron`).
+ron.workspace = true
 serde = { version = "1", features = ["derive"] }
 # `census`: `bands.json` for the motion-generation planner (MG4).
 serde_json.workspace = true

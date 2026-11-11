@@ -1,0 +1,40 @@
+// Texture pack profiles: the conventions Morrowind texture packs follow, as data
+// (textures-adapter.md §7; type: `sf_texture::profile::PackProfile`). The bake converts each
+// pack's files to the canonical layout (Bevy StandardMaterial: +Y normals, glTF ORM, depth =
+// 1 - height). A layout lists, for each canonical channel of the role, the shipped channel it
+// comes from. Suffix order is lookup order: `_nh` before `_n` (OpenMW's order).
+[
+    // OpenMW's vanilla conventions (`[Shaders]` defaults, texture-basics): the default for any
+    // pack that names none. DirectX normals ("OpenMW uses the DX format for normal maps");
+    // `_nh` alpha is height with 0.5 neutral (OpenMW's parallax offset). `_nm` is the older
+    // name OpenMW asks users to rename. OpenMW's `_spec` (RGB specular colour, A shininess) and
+    // terrain `_diffusespec` (A specular intensity) have no canonical slot yet (owner
+    // question 5), so they are not listed.
+    (
+        name: "openmw",
+        suffixes: [
+            (suffix: "", role: Albedo, layout: (Channel(R), Channel(G), Channel(B), Channel(A))),
+            (suffix: "_nh", role: NormalHeight, layout: (Channel(R), Channel(G), Channel(B), Channel(A))),
+            (suffix: "_n", role: Normal, layout: (Channel(R), Channel(G), Channel(B), Unused)),
+            (suffix: "_nm", role: Normal, layout: (Channel(R), Channel(G), Channel(B), Unused)),
+        ],
+        normal_y: Down,
+        height_neutral: 0.5,
+    ),
+    // Wareya's OpenMW PBR shaders (github.com/wareya/OpenMW-PBR `cab24e7a`, `lighting_pbr.glsl`
+    // `specMapToPBR`, `terrain.frag`), measured in the 2026-11-11 census: `_spec` R metallic,
+    // G perceptual roughness, B AO, A 1 - subsurface (unused: Bevy has no skin SSS input);
+    // `_diffusespec` RGB diffuse, A roughness. Normals and height as OpenMW's.
+    (
+        name: "wareya-pbr",
+        suffixes: [
+            (suffix: "", role: Albedo, layout: (Channel(R), Channel(G), Channel(B), Channel(A))),
+            (suffix: "_nh", role: NormalHeight, layout: (Channel(R), Channel(G), Channel(B), Channel(A))),
+            (suffix: "_n", role: Normal, layout: (Channel(R), Channel(G), Channel(B), Unused)),
+            (suffix: "_spec", role: Orm, layout: (Channel(B), Channel(G), Channel(R), Unused)),
+            (suffix: "_diffusespec", role: TerrainAlbedoRoughness, layout: (Channel(R), Channel(G), Channel(B), Channel(A))),
+        ],
+        normal_y: Down,
+        height_neutral: 0.5,
+    ),
+]

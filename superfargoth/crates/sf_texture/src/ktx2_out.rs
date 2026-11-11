@@ -17,14 +17,15 @@
 //!    the "basic" or "fast" profile, its alpha variant only when the level has a texel with
 //!    alpha below 255. A level whose size isn't a multiple of 4 is padded by repeating its edge
 //!    (the padding lies outside the texture and is never sampled).
-//! 3. [`write_ktx2_bc7`]: a KTX 2.0 file, `VK_FORMAT_BC7_SRGB_BLOCK` (146) or `_UNORM_BLOCK` (145),
-//!    no supercompression. Layout per the Khronos KTX 2.0 specification
+//! 3. [`write_ktx2`]: a KTX 2.0 file of any [`BlockFormat`] (BC1-BC5, BC7; [`write_ktx2_bc7`] is
+//!    its BC7 form, `VK_FORMAT_BC7_SRGB_BLOCK` (146) or `_UNORM_BLOCK` (145)), no
+//!    supercompression. Layout per the Khronos KTX 2.0 specification
 //!    (<https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html>): header and index (§3.1-3.7),
 //!    level index with level 0 first (§3.8), the Data Format Descriptor (§3.10) from the `ktx2`
-//!    crate's table for the format (one basic block: colour model BC7, BT.709 primaries, sRGB or
-//!    linear transfer, straight alpha, 4x4 blocks of 16 bytes), one key/value entry `KTXwriter`
-//!    (§3.11, §5.13), then the level data smallest level first (§3.9), each level at an offset that
-//!    is a multiple of 16 (`lcm(texel block size, 4)`, §3.9.7).
+//!    crate's table for the format (one basic block: the format's colour model, BT.709 primaries,
+//!    sRGB or linear transfer, straight alpha, 4x4 blocks of 8 or 16 bytes), one key/value entry
+//!    `KTXwriter` (§3.11, §5.13), then the level data smallest level first (§3.9), each level at an
+//!    offset that is a multiple of `lcm(texel block size, 4)` (§3.9.7): 8 or 16 bytes.
 //!
 //! [`bc7_ktx2`] runs all three; [`bc7_ktx2_cutout`] also preserves coverage when given a cutoff. wgpu needs a block-compressed texture's level 0 to be a whole number
 //! of blocks: check [`is_block_aligned`] first.
@@ -39,6 +40,68 @@ pub const KTX_WRITER: &str = concat!("sf_texture ", env!("CARGO_PKG_VERSION"));
 
 /// Bytes in one BC7 block (4x4 texels).
 pub const BC7_BLOCK_BYTES: usize = 16;
+
+/// A block-compressed texel format this crate writes (4x4 blocks). The `*Srgb` variants hold
+/// sRGB-encoded colour (the GPU decodes to linear when sampling); the others are linear (UNORM).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BlockFormat {
+    /// BC1 with 1-bit alpha (`BC1_RGBA`), 8 bytes per block.
+    Bc1,
+    Bc1Srgb,
+    /// BC2 (explicit 4-bit alpha), 16 bytes per block.
+    Bc2,
+    Bc2Srgb,
+    /// BC3 (interpolated alpha), 16 bytes per block.
+    Bc3,
+    Bc3Srgb,
+    /// One linear channel, 8 bytes per block: masks, height.
+    Bc4,
+    /// Two linear channels (R, G), 16 bytes per block: tangent-space normals.
+    Bc5,
+    /// RGBA, 16 bytes per block.
+    Bc7,
+    Bc7Srgb,
+}
+
+impl BlockFormat {
+    /// BC7, sRGB or linear.
+    pub const fn bc7(srgb: bool) -> Self {
+        if srgb { Self::Bc7Srgb } else { Self::Bc7 }
+    }
+
+    /// The Vulkan format (`vkFormat` in the KTX2 header): 133/134 BC1 RGBA, 135/136 BC2,
+    /// 137/138 BC3, 139 BC4, 141 BC5, 145/146 BC7 (UNORM/SRGB).
+    pub const fn vk_format(self) -> Format {
+        match self {
+            Self::Bc1 => Format::BC1_RGBA_UNORM_BLOCK,
+            Self::Bc1Srgb => Format::BC1_RGBA_SRGB_BLOCK,
+            Self::Bc2 => Format::BC2_UNORM_BLOCK,
+            Self::Bc2Srgb => Format::BC2_SRGB_BLOCK,
+            Self::Bc3 => Format::BC3_UNORM_BLOCK,
+            Self::Bc3Srgb => Format::BC3_SRGB_BLOCK,
+            Self::Bc4 => Format::BC4_UNORM_BLOCK,
+            Self::Bc5 => Format::BC5_UNORM_BLOCK,
+            Self::Bc7 => Format::BC7_UNORM_BLOCK,
+            Self::Bc7Srgb => Format::BC7_SRGB_BLOCK,
+        }
+    }
+
+    /// Bytes in one 4x4 block: 8 for BC1 and BC4, 16 for the rest.
+    pub const fn block_bytes(self) -> usize {
+        match self {
+            Self::Bc1 | Self::Bc1Srgb | Self::Bc4 => 8,
+            _ => 16,
+        }
+    }
+
+    /// Whether the colour channels are sRGB-encoded.
+    pub const fn is_srgb(self) -> bool {
+        matches!(
+            self,
+            Self::Bc1Srgb | Self::Bc2Srgb | Self::Bc3Srgb | Self::Bc7Srgb
+        )
+    }
+}
 
 /// Colour weight of a fully transparent texel, relative to an opaque one's 1: enough that a
 /// footprint with no visible texel still averages its colours, too little to tint a visible one.
@@ -73,9 +136,14 @@ pub fn is_block_aligned(width: u32, height: u32) -> bool {
     width > 0 && height > 0 && width.is_multiple_of(4) && height.is_multiple_of(4)
 }
 
+/// Bytes of one level of this size in `format`: whole 4x4 blocks, a partial block rounded up.
+pub fn level_len(format: BlockFormat, width: u32, height: u32) -> usize {
+    width.div_ceil(4) as usize * height.div_ceil(4) as usize * format.block_bytes()
+}
+
 /// Bytes of one BC7 level of this size.
 pub fn bc7_level_len(width: u32, height: u32) -> usize {
-    width.div_ceil(4) as usize * height.div_ceil(4) as usize * BC7_BLOCK_BYTES
+    level_len(BlockFormat::Bc7, width, height)
 }
 
 /// The full mip chain of a texture: level 0 is `rgba` itself, then each level box-filters the
@@ -233,7 +301,7 @@ fn quantise(&[r, g, b, weight]: &[f32; 4], srgb: bool) -> [u8; 4] {
     clippy::cast_sign_loss,
     reason = "clamped to 0..=255 first"
 )]
-fn unit_to_byte(value: f32) -> u8 {
+pub(crate) fn unit_to_byte(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
@@ -263,7 +331,7 @@ fn ratio(numerator: usize, denominator: usize) -> f32 {
 }
 
 /// Separable box filter of a weighted texel grid: rows, then columns.
-fn downsample(
+pub(crate) fn downsample(
     src: &[[f32; 4]],
     (src_w, src_h): (usize, usize),
     (dst_w, dst_h): (usize, usize),
@@ -323,7 +391,7 @@ pub fn encode_bc7(rgba: &[u8], width: u32, height: u32, quality: Bc7Quality) -> 
     let data = if (padded_w, padded_h) == (width, height) {
         rgba
     } else {
-        padded = pad_to(rgba, (w, h), (padded_w as usize, padded_h as usize));
+        padded = pad_to(rgba, 4, (w, h), (padded_w as usize, padded_h as usize));
         &padded
     };
     let surface = RgbaSurface {
@@ -337,14 +405,20 @@ pub fn encode_bc7(rgba: &[u8], width: u32, height: u32, quality: Bc7Quality) -> 
     blocks
 }
 
-/// The texels on a larger grid, the last column and row repeated into the margin.
-fn pad_to(rgba: &[u8], (w, h): (usize, usize), (padded_w, padded_h): (usize, usize)) -> Vec<u8> {
-    let mut out = Vec::with_capacity(padded_w * padded_h * 4);
+/// The texels (`texel_bytes` each) on a larger grid, the last column and row repeated into the
+/// margin.
+pub(crate) fn pad_to(
+    texels: &[u8],
+    texel_bytes: usize,
+    (w, h): (usize, usize),
+    (padded_w, padded_h): (usize, usize),
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(padded_w * padded_h * texel_bytes);
     for y in 0..padded_h {
-        let row = &rgba[y.min(h - 1) * w * 4..][..w * 4];
+        let row = &texels[y.min(h - 1) * w * texel_bytes..][..w * texel_bytes];
         out.extend_from_slice(row);
         for _ in w..padded_w {
-            out.extend_from_slice(&row[(w - 1) * 4..]);
+            out.extend_from_slice(&row[(w - 1) * texel_bytes..]);
         }
     }
     out
@@ -354,9 +428,22 @@ fn pad_to(rgba: &[u8], (w, h): (usize, usize), (padded_w, padded_h): (usize, usi
 /// `width` x `height` texture. `srgb` picks `BC7_SRGB_BLOCK` over `BC7_UNORM_BLOCK`.
 ///
 /// # Panics
-/// If `levels` is empty, longer than [`mip_count`], or a level's length isn't
-/// [`bc7_level_len`] of its size.
+/// As [`write_ktx2`].
 pub fn write_ktx2_bc7(width: u32, height: u32, srgb: bool, levels: &[Vec<u8>]) -> Vec<u8> {
+    write_ktx2(BlockFormat::bc7(srgb), width, height, levels)
+}
+
+/// A KTX2 file holding `format` levels (level 0 first) of a `width` x `height` texture.
+///
+/// # Panics
+/// If `levels` is empty, longer than [`mip_count`], or a level's length isn't
+/// [`level_len`] of its size.
+pub fn write_ktx2<L: AsRef<[u8]>>(
+    format: BlockFormat,
+    width: u32,
+    height: u32,
+    levels: &[L],
+) -> Vec<u8> {
     let level_count = u32::try_from(levels.len()).unwrap_or(u32::MAX);
     assert!(
         (1..=mip_count(width, height)).contains(&level_count),
@@ -365,16 +452,13 @@ pub fn write_ktx2_bc7(width: u32, height: u32, srgb: bool, levels: &[Vec<u8>]) -
     for (level, data) in levels.iter().enumerate() {
         let (w, h) = ((width >> level).max(1), (height >> level).max(1));
         assert_eq!(
-            data.len(),
-            bc7_level_len(w, h),
-            "level {level} ({w}x{h}) holds whole BC7 blocks"
+            data.as_ref().len(),
+            level_len(format, w, h),
+            "level {level} ({w}x{h}) holds whole {format:?} blocks"
         );
     }
-    let format = if srgb {
-        Format::BC7_SRGB_BLOCK
-    } else {
-        Format::BC7_UNORM_BLOCK
-    };
+    let block_bytes = format.block_bytes();
+    let format = format.vk_format();
     let (basic, type_size) = dfd::Basic::from_format(format)
         .unwrap_or_else(|error| panic!("ktx2 describes {format:?}: {error:?}"));
     let block = dfd::Block::Basic(basic).to_vec();
@@ -395,14 +479,14 @@ pub fn write_ktx2_bc7(width: u32, height: u32, srgb: bool, levels: &[Vec<u8>]) -
     ];
     let mut end = kvd_offset + kvd.len();
     for (level, data) in levels.iter().enumerate().rev() {
-        end = end.next_multiple_of(BC7_BLOCK_BYTES);
-        let length = data.len() as u64;
+        end = end.next_multiple_of(block_bytes);
+        let length = data.as_ref().len() as u64;
         level_index[level] = LevelIndex {
             byte_offset: end as u64,
             byte_length: length,
             uncompressed_byte_length: length,
         };
-        end += data.len();
+        end += data.as_ref().len();
     }
 
     let header = Header {
@@ -437,7 +521,7 @@ pub fn write_ktx2_bc7(width: u32, height: u32, srgb: bool, levels: &[Vec<u8>]) -
             usize::try_from(level_index[level].byte_offset).unwrap_or(usize::MAX),
             0,
         );
-        out.extend_from_slice(data);
+        out.extend_from_slice(data.as_ref());
     }
     out
 }

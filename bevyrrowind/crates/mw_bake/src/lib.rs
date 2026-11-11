@@ -31,6 +31,7 @@ pub mod script;
 pub mod scene;
 pub mod sources;
 pub mod ragdoll;
+pub mod texture_profiles;
 pub mod textures;
 pub mod world;
 
