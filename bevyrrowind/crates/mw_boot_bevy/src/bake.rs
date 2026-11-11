@@ -71,6 +71,12 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let scripts = mw_bake::script::bake_scripts(&mut baker, &store, &db);
     // Albedo de-lighting (bake.md "De-lighting"): roles per model, de-lit BC7 KTX2 per texture, the layer's index.
     let delight = mw_bake::delight::bake_delight(&mut baker, &vfs, &paths, mw_bake::delight::DEFAULT_STRENGTH);
+    // Static scene (static-scene.md, scene-runtime-plan.md §3.3): one `scene.cells` table per
+    // exterior cell, then the geometry of every chain they name. After the terrain (each cell's
+    // land minimum) and the de-light (per-texture alpha classes): `bake_scene` refuses otherwise.
+    let ext = [world::exterior()];
+    let scene = mw_bake::scene::bake_scene(&mut baker, &db, &ext);
+    let chains = scene.as_ref().ok().map(|_| mw_bake::scene::bake_chains(&baker, &ext));
     let manifest = baker.manifest();
     let save = Instant::now();
     inputs.save()?;
@@ -125,6 +131,18 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     for (key, error) in delight.failures.iter().take(10) {
         eprintln!("  failed: {key}: {error}");
     }
+    let mut scene_failed = 0;
+    match &scene {
+        Ok(cells) => {
+            println!("static scene: {} cell tables in {:.2?}", cells.products.len(), cells.elapsed);
+            scene_failed += print_failures(cells);
+        }
+        Err(e) => eprintln!("static scene: not baked: {e}"),
+    }
+    if let Some(chains) = &chains {
+        println!("static scene: {} chains in {:.2?}", chains.products.len(), chains.elapsed);
+        scene_failed += print_failures(chains);
+    }
     let fingerprint_hex = fingerprint.hex();
     println!("profile fingerprint {} ({})", &fingerprint_hex[..12], if profile_changed { "changed since the last bake" } else { "unchanged" });
     println!(
@@ -156,10 +174,25 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     if delight_failed > 0 {
         errors.push(format!("{delight_failed} de-lit texture products failed"));
     }
+    if let Err(e) = &scene {
+        errors.push(format!("static scene not baked ({e})"));
+    }
+    if scene_failed > 0 {
+        errors.push(format!("{scene_failed} static scene products failed"));
+    }
     if scripts.errors() > 0 {
         errors.push(format!("{} legacy script products failed to translate or compile", scripts.errors()));
     }
     if errors.is_empty() { Ok(()) } else { Err(errors.join("; ").into()) }
+}
+
+/// Prints at most ten of `report`'s failures and returns how many there were.
+fn print_failures(report: &sf_bake::BakeReport) -> usize {
+    let failures: Vec<_> = report.failures().collect();
+    for (key, error) in failures.iter().take(10) {
+        eprintln!("  failed: {key}: {error}");
+    }
+    failures.len()
 }
 
 /// Rest-pose cooks (weather.md bug B2): exterior models `mesh.cook` skips

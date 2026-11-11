@@ -359,5 +359,16 @@ pub fn bake_scene(baker: &mut Baker, db: &RecordDb, worldspaces: &[WorldspaceId]
     Ok(SceneBake::bake_worldspaces(baker, worldspaces))
 }
 
+/// Bakes the geometry of every chain the baked `scene.cells` tables of `worldspaces` name
+/// (`scene.chains`: one `.sfmesh` per chain, one LOD level per chain level; scene-runtime-plan.md
+/// §3.3). Chains dedup across cells, and one whose cooked model did not change is a cache hit.
+///
+/// Run it right after [`bake_scene`] on the same baker: the subjects come from the cells'
+/// products, and the step is registered there. Called first, it reports one failure (no cell
+/// directory) instead of an empty, successful bake.
+pub fn bake_chains(baker: &Baker, worldspaces: &[WorldspaceId]) -> BakeReport {
+    SceneBake::bake_chains(baker, worldspaces)
+}
+
 #[cfg(test)]
 mod tests;

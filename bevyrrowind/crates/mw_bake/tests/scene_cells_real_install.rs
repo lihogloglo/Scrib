@@ -56,6 +56,9 @@ fn scene_cells_over_vvardenfell() {
     // worldspace (it would otherwise cache tables with horizon culling off, `scene.rs` docs).
     let report = scene::bake_scene(&mut baker, &db, std::slice::from_ref(&ext)).expect("terrain baked first");
     let scene_time = t.elapsed();
+    let t = Instant::now();
+    let chain_report = scene::bake_chains(&baker, std::slice::from_ref(&ext));
+    let chains_time = t.elapsed();
     inputs.save().expect("memo");
 
     let (mut cells, mut empty, mut instances, mut chain_refs, mut bytes, mut no_land) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
@@ -87,7 +90,11 @@ fn scene_cells_over_vvardenfell() {
             materials.insert(c.material);
         }
     }
-    println!("load {loaded:.2?}; models + exterior + textures {before:.2?}; scene.cells {scene_time:.2?}");
+    println!(
+        "load {loaded:.2?}; models + exterior + textures {before:.2?}; scene.cells {scene_time:.2?}; scene.chains {chains_time:.2?} ({} chains, {} failed)",
+        chain_report.products.len(),
+        chain_report.failures().count()
+    );
     // How many textures the candidate rule rests on, and how they split: the share of Morrowind's
     // authored-blend cards that are really cutouts (foliage, fences, grates) is what the static
     // table gains over baking every candidate blended, and `Soft` is what it must not promote.

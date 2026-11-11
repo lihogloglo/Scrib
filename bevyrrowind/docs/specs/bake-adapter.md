@@ -122,8 +122,8 @@ alpha-tested (cutouts included) are scene materials; blends, additive, `cutout_c
 surfaces without depth write/test stay entities; two-sided from the NIF; no wind yet. Tables are
 format v2 (S1c): cell-local chain indices, a material key per chain (content hash of the cooked
 NIF material, so two NIFs with the same texture and settings share it), the layer mask in the
-header, per-part spheres from each part's LOD0 vertices. The adapter itself is unchanged. Not yet
-called by `bevyrrowind bake` (`mw_boot_bevy::bake`, one line after `bake_far`); measurement:
+header, per-part spheres from each part's LOD0 vertices. The adapter itself is unchanged. Called
+by `bevyrrowind bake` after the de-light (it needs the alpha classes), then `scene::bake_chains` (C1); measurement:
 `cargo test --release -p mw_bake --test scene_cells_real_install -- --ignored --nocapture`.
 
 ## Runtime (`mw_assets::cooked`, `view`)

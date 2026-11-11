@@ -237,6 +237,19 @@ fn bake_scene_refuses_to_run_before_the_terrain() {
     assert!(err.contains("no level-0") && err.contains(TILE_STEP), "{err}");
 }
 
+/// `bake_chains` reads the cells' products, so called before `bake_scene` it must say so (one
+/// failure) rather than report an empty, successful chain bake that would leave the runtime with
+/// tables and no geometry.
+#[test]
+fn bake_chains_before_bake_scene_is_a_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let baker = textureless_baker(sf_bake::Store::open(dir.path()).unwrap());
+    let ws = WorldspaceId::new("ws");
+    let report = bake_chains(&baker, std::slice::from_ref(&ws));
+    assert_eq!(report.products.len(), 1, "{:?}", report.products);
+    assert_eq!(report.failures().count(), 1);
+}
+
 /// Without the texture bake's alpha classes no cutout candidate can be told from a translucent
 /// blend, so every leaf card in the world would quietly stay out of the table: the scene bake
 /// says so instead of baking that.

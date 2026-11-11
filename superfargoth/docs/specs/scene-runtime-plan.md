@@ -133,8 +133,9 @@ concatenation nothing builds — **spec correction** (§12). `sf_model::CookedSu
 ### 3.3 `bake_scene` and `bake_chains`
 
 `bake_scene(baker, db, worldspaces) -> Result<BakeReport, BakeError>` already exists
-(`bevyrrowind/crates/mw_bake/src/scene.rs:200`). Call it in `mw_boot_bevy/src/bake.rs` **after
-`bake_far` (`:64`) and before `bake_actors` (`:66`)**: it reads `world.page` and level-0
+(`bevyrrowind/crates/mw_bake/src/scene.rs:343`). **As built (C1, 2026-11-11):** it runs in `mw_boot_bevy/src/bake.rs` **after
+`bake_delight`**, not after `bake_far` as first planned: it also needs the alpha-class index (`scene.rs:300`).
+It reads `world.page` and level-0
 `terrain.tile` (`mw_bake/src/scene.rs:180-190`, `sf_scene/src/bake.rs:560-585`), so it must follow
 `bake_exterior` (`:62`) and precede `baker.manifest()` (`:75`) and `store.save_manifest` (`:77`).
 `bake_chains` runs immediately after in the same baker: `SceneBake::chain_keys` derives its subjects
