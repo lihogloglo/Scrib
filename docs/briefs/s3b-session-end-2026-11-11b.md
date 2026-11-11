@@ -9,6 +9,7 @@ Written by session `scene-coord` on the owner's desktop. Previous handoff: `s3b-
 | Commit | Slice | What |
 |---|---|---|
 | `019b13a` | B5a | `sf_scene_bevy::PromotePlacement { worldspace, cell, placement }` (global id) → `apply_promotions` (`SceneSystems::Promote`): global → local via `SpaceState::covered`, `SceneSpace::promote`, inactive 64 B slot writes through B4a's writer. Seam: `SceneCellCx::indexed` (kept in `Work::scene_ids` from the fetch) |
+| (this commit) | B5b | `covered` leaves out what the `WorldOverlay` removed or moved; `upload` writes their planned slots inactive via `SceneSpace::promote` (re-read at upload). sf_scene_bevy 26 |
 | `cc7f4ec` | B5a-2 | `sf_world_bevy::PromoteToEntity` (gameplay's entry point): the near `Group` keeps its load's placements/members/covered; the model is acquired for the group, spawned after the settle frame through the shared `spawn_placement`, then `CellScene::promoted` → `SceneHook` writes `PromotePlacement`. Entity first, so no missing frame |
 
 Floor at `cc7f4ec`: `sf_scene_bevy` 23, `sf_world_bevy` 36, `sf_scene --features bake` 107 / 2 ignored; clippy
@@ -21,6 +22,7 @@ Floor at `cc7f4ec`: `sf_scene_bevy` 23, `sf_world_bevy` 36, `sf_scene --features
 8. **First-seen material pipeline:** `promoted` fires in the spawn frame; if the entity's pipeline still compiles,
    the placement can be missing for a frame or so. The pipeline-warmup spec (`specs/pipeline-warmup.md`) is the fix.
 9. Promotions spawn outside the origin-shift guard (one placement; acceptable, noted).
+11. **Overlay changes on a resident cell** are not seen (B5b covers loads only): the scene keeps drawing until the cell reloads. Fix: an overlay-change event → spawn the moved entity first, then `PromotePlacement`; a removal needs an "inactive, no entity" variant.
 10. A promotion dropped after acceptance (uncooked, `prepare` spawner) keeps its id and model ref until unload.
 
 ## Coordinator rulings this session
@@ -33,7 +35,7 @@ Floor at `cc7f4ec`: `sf_scene_bevy` 23, `sf_world_bevy` 36, `sf_scene --features
 
 ## Next slices, one deliverable each, in order
 
-1. **B5b, overlay-touched placements** (gap 2 of the previous handoff): a placement the `WorldOverlay` removed or
+1. **DONE (B5b, see the table)** — **B5b, overlay-touched placements** (gap 2 of the previous handoff): a placement the `WorldOverlay` removed or
    moved (`sf_world/src/overlay.rs:48` `is_removed`, `:86` `placed`; the precombine's test of the same thing is
    `stream.rs` `valid_members`, ~:1760) must not be drawn by the scene. Design: `SceneHook::covered` (has `&World`)
    leaves touched ids out of its set (so a moved one spawns as an entity from the overlay-applied placements, and a
@@ -47,9 +49,20 @@ Floor at `cc7f4ec`: `sf_scene_bevy` 23, `sf_world_bevy` 36, `sf_scene --features
    Check the timing: the first cell's `acquire` may run before the first extract.
 3. **B6** counters (`scene/…`, plan §9; names from `SpaceStats`, B3/B4 brief §3 item 19), plus `scene/promoted`.
 4. **C1** `bake_scene` + `bake_chains` in `bevyrrowind bake`.
-5. **C2** `--scene`, `ScenePlugin` in the game, `Part::Scene`, precombine interlock (no `suppress_scene_placements`),
+5. **O1, origin shift (moved ahead of C2, research 2026-11-11):** the floating origin moves about every 256 m
+   (`sf_world_bevy/src/origin.rs:111-122` follows big_space; `GRID_CELL = 256` `sf_coords/src/lib.rs:23`,
+   `GRID_SWITCH = 32` `sf_world_bevy/src/coords.rs:22`), so without this every resident static draws 256 m off after
+   a shift: a Balmora walk would show it within a minute. `GpuMeshInstance.world_from_local` is used raw
+   (`vendor/bevy_pbr/.../materialize.wesl:82-85`); the batch entity's `GlobalTransform` only feeds bounds
+   (`gpu_instance_batch/mod.rs:585-586`), so no per-batch offset exists today. Plan §5.4's rewrite spread over ~7
+   frames (`shift_rewrite_bytes`) would **tear** for those frames. Two clean options: (a) re-queue every resident
+   cell's writes **in the shift frame** (~3.5 MB at 55k instances, one upload, inside the guard's frames), one slice;
+   (b) a per-batch origin delta in the vendored `materialize.wesl` (O(1), no rewrite), a vendor-patch slice.
+   Coordinator default: (a) now for the owner's first walk, (b) logged as the long-term fix. Unconfirmed: whether
+   `mw_exterior_bevy` overrides the grid size.
+6. **C2** `--scene`, `ScenePlugin` in the game, `Part::Scene`, precombine interlock (no `suppress_scene_placements`),
    visual-check entry, the owner run. The owner's first look at anything is here.
-6. Lower: B4b, S1c-b, the origin-shift rewrite.
+7. Lower: B4b, S1c-b, option (b) of O1.
 
 Agents this session ran 115-160k tokens of total context on these slices, more than the ~80k target: keep the
 B5b/B5c briefs narrower (one function each, line ranges in the brief itself).

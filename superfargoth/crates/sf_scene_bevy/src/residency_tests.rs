@@ -1130,3 +1130,92 @@ fn promoted_queues_one_promote_placement() {
     let got: Vec<&PromotePlacement> = messages.iter_current_update_messages().collect();
     assert_eq!(got, [&PromotePlacement { worldspace: ws(), cell, placement }]);
 }
+
+// -- the world overlay (B5b) ----------------------------------------------------------
+
+/// Edits the fixture's `WorldOverlay` with `edit` before the cell streams in, then acquires,
+/// plans and commits it; returns the plan and `covered`'s answer (asked between the two).
+fn stream_in_overlaid(
+    f: &mut Fixture,
+    edit: impl FnOnce(&Fixture, &mut sf_world::PlacementOverlay),
+) -> (CellPlan, Arc<HashSet<PlacementId>>) {
+    let cell = f.cell;
+    let overlay = f.app.world().resource::<sf_world_bevy::WorldOverlay>().0.clone();
+    edit(f, &mut overlay.write().unwrap());
+    assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some());
+    let plan = planned(f, cell);
+    let covered = SceneHook.covered(f.app.world(), &ws(), cell, &f.indexed).expect("a planned cell answers");
+    assert!(commit(f, cell) > 0);
+    (plan, covered)
+}
+
+/// The three facts of a placement `k` the overlay touched: `covered` lacks it, each of its
+/// planned slots ends inactive in `SceneUploads::writes`, and the promotion map lacks it.
+fn assert_left_the_scene(f: &Fixture, plan: &CellPlan, covered: &HashSet<PlacementId>, k: usize) {
+    let local = u32::try_from(k).unwrap();
+    assert!(plan.covered.contains(&local), "the plan itself draws placement {k}");
+    let id = f.indexed[k];
+    assert!(!covered.contains(&id), "covered keeps placement {k}");
+    assert_eq!(covered.len(), plan.covered.len() - 1, "covered drops only placement {k}");
+
+    let world = f.app.world();
+    let state = f.state();
+    let view = world.resource::<Assets<SceneTableAsset>>().get(&state.tables[&f.cell]).unwrap().view().unwrap();
+    let slots: Vec<(BatchId, u32)> = plan
+        .writes
+        .iter()
+        .filter(|w| view.instance(w.index as usize).unwrap().placement == local)
+        .map(|w| (w.batch, w.slot))
+        .collect();
+    assert_eq!(slots.len(), f.parts[k].len(), "one planned slot per part of placement {k}");
+    let writes = &world.resource::<SceneUploads>().writes;
+    for (batch, slot) in slots {
+        let last = writes.iter().rev().find(|w| (w.batch, w.slot) == (batch, slot)).expect("the slot is written");
+        assert!(!last.active(), "slot {slot} of batch {batch:?} ends active");
+    }
+    let map = &state.covered[&f.cell];
+    assert!(!map.contains_key(&id), "the promotion map keeps placement {k}");
+    assert_eq!(map.len(), plan.covered.len() - 1);
+}
+
+/// B5b test 1: a placement the overlay removed before its cell streamed in is not drawn.
+#[test]
+fn an_overlay_removed_placement_is_not_drawn() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    assert_eq!(f.parts[1].len(), 2, "placement 1 draws both chains");
+    let (plan, covered) = stream_in_overlaid(&mut f, |f, o| o.remove(f.indexed[1]));
+    assert_left_the_scene(&f, &plan, &covered, 1);
+}
+
+/// B5b test 2: a placement the overlay moved leaves the scene (streaming spawns it where it went).
+#[test]
+fn an_overlay_moved_placement_leaves_the_scene() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let (plan, covered) = stream_in_overlaid(&mut f, |f, o| {
+        let mut moved = placements().into_iter().find(|p| p.id == f.indexed[2]).expect("placement 2 is the fixture's");
+        moved.transform = WorldTransform::from_pos(WorldPos::from_f64(DVec3::new(5.5, 1.0, 6.0)));
+        o.place(ws(), moved);
+    });
+    assert_left_the_scene(&f, &plan, &covered, 2);
+}
+
+/// B5b test 3: an overlay that touches only another cell's placement (and stores a state blob
+/// for one of this cell's, which moves nothing) leaves the cell drawn exactly as planned.
+#[test]
+fn an_untouched_cell_is_drawn_as_planned() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let (plan, covered) = stream_in_overlaid(&mut f, |f, o| {
+        o.remove(PlacementId::from_key("test", b"another cell's"));
+        o.set_state(f.indexed[4], "lock", vec![1]);
+    });
+    let full: HashSet<PlacementId> = plan.covered.iter().map(|&l| f.indexed[l as usize]).collect();
+    assert_eq!(*covered, full);
+    assert_eq!(f.state().covered[&f.cell].keys().copied().collect::<HashSet<_>>(), full);
+    let got: Vec<_> =
+        f.app.world().resource::<SceneUploads>().writes.iter().map(|w| (w.batch, w.slot, w.active())).collect();
+    let want: Vec<_> = plan.writes.iter().map(|w| (w.batch, w.slot, w.active)).collect();
+    assert_eq!(got, want);
+}

@@ -53,7 +53,7 @@ use sf_scene::{
     SlotWrite, SpaceConfig, SpaceId, cell_subject,
 };
 use sf_world::{PlacementId, WorldspaceId};
-use sf_world_bevy::{CellScene, ModelMaterials, SceneCellCx, Streaming, WorldOrigin};
+use sf_world_bevy::{CellScene, ModelMaterials, SceneCellCx, Streaming, WorldOrigin, WorldOverlay};
 
 use crate::chains::{
     ChainAssets, ChainMaterials, MaterialMaker, ProductState, chain_assets, load_product, product_state,
@@ -722,6 +722,17 @@ pub fn apply_promotions(
     }
 }
 
+/// Whether the world overlay removed `id` or placed it anywhere (a mod or a save moved it): the
+/// scene does not draw such a placement and streaming handles it like any other (a moved one
+/// spawns from the overlay-applied list, a removed one spawns nothing). The precombine's test
+/// (`sf_world_bevy` `valid_members`). No [`WorldOverlay`] resource: nothing is touched.
+fn overlay_touched(world: &World, id: PlacementId) -> bool {
+    world.get_resource::<WorldOverlay>().is_some_and(|o| {
+        let o = o.0.read().unwrap_or_else(PoisonError::into_inner);
+        o.is_removed(id) || o.placed(id).is_some()
+    })
+}
+
 /// The static scene's streaming hook, installed by `ScenePlugin` as
 /// `SceneCells` when the scene is enabled.
 #[derive(Default)]
@@ -768,6 +779,8 @@ impl CellScene for SceneHook {
         let mut stale = 0usize;
         for &local in &plan.covered {
             match indexed.get(local as usize) {
+                // Moved or removed by the overlay: streaming's, not the scene's (B5b).
+                Some(&id) if overlay_touched(world, id) => {}
                 Some(&id) => {
                     out.insert(id);
                 }
@@ -786,7 +799,8 @@ impl CellScene for SceneHook {
     /// Commits the cell's plan (`SceneSpace::commit_in`), makes sure its
     /// batches have their entities (a new one queues its zero-fill) and
     /// rebuilds `plan.ranges`, then queues `plan.writes` in [`SceneUploads`]
-    /// ([`queue_slot_writes`]). Returns the bytes it will upload: the
+    /// ([`queue_slot_writes`]), followed by the inactive writes of each covered
+    /// placement the overlay moved or removed ([`overlay_touched`]). Returns the bytes it will upload: the
     /// scene-buffer copy plus 64 B per batch slot written.
     ///
     /// TODO(B4b): push `plan.scene_bytes` into [`SceneUploads`].
@@ -803,9 +817,34 @@ impl CellScene for SceneHook {
                 unreachable!("checked above")
             };
             state.space.commit_in(cx.cell, &plan);
+            // B5b: what the overlay moved or removed leaves the scene: its planned slots are
+            // written inactive after the plan's own writes (a later write to a slot wins) and it
+            // stays out of the promotion map. The overlay is re-read here, not only in `covered`:
+            // this also catches a removal that landed between the two (streaming then spawns
+            // nothing for it, and the scene must not draw it either).
+            let mut slot_writes = plan.writes.clone();
+            let mut covered = HashMap::with_capacity(plan.covered.len());
+            {
+                let view = world.resource::<Assets<SceneTableAsset>>().get(&table).and_then(|a| a.view().ok());
+                for &local in &plan.covered {
+                    // A local past `indexed` was logged in `covered`.
+                    let Some(&id) = cx.indexed.get(local as usize) else { continue };
+                    if !overlay_touched(world, id) {
+                        covered.insert(id, local);
+                        continue;
+                    }
+                    let Some(view) = &view else {
+                        log::error!("sf_scene_bevy: cell {}'s table went away at upload; {id:?} stays drawn", cx.cell);
+                        continue;
+                    };
+                    match state.space.promote(cx.cell, local, view) {
+                        Ok(writes) => slot_writes.extend(writes),
+                        Err(e) => log::error!("sf_scene_bevy: cell {}: {id:?} cannot leave the scene: {e}", cx.cell),
+                    }
+                }
+            }
             state.tables.insert(cx.cell, table);
-            // The promotion map: `covered`'s answer, kept (a local past `indexed` was logged there).
-            let covered = plan.covered.iter().filter_map(|&local| Some((*cx.indexed.get(local as usize)?, local))).collect();
+            // The promotion map: `covered`'s answer, kept.
             state.covered.insert(cx.cell, covered);
             if let Some(key) = state.space.take_overflow_warning() {
                 log::warn!(
@@ -822,9 +861,9 @@ impl CellScene for SceneHook {
             rebuild_ranges(world, state, changed);
             // After `ensure_batches`: every batch of the plan has its entity now.
             let frame = world.get_resource::<WorldOrigin>().map_or(IVec3::ZERO, |o| o.cell);
-            let writes = queue_slot_writes(world.resource::<Assets<SceneTableAsset>>(), state, cx.cell, &plan.writes, frame);
+            let writes = queue_slot_writes(world.resource::<Assets<SceneTableAsset>>(), state, cx.cell, &slot_writes, frame);
             world.resource_mut::<SceneUploads>().writes.extend(writes);
-            (plan.scene_bytes.len() as u64).saturating_add(plan.writes.len() as u64 * SLOT_BYTES)
+            (plan.scene_bytes.len() as u64).saturating_add(slot_writes.len() as u64 * SLOT_BYTES)
         })
     }
 
