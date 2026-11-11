@@ -146,6 +146,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   the vendored refresh rule every frame, zeroing the 2-face LRU budget for every other lamp, and faces of one lamp refresh
   on different frames (the cut at a cube-face seam). Fix slice SH-20b (per-light grouping, separate budgets) in progress.
   Status: partial.
+- Owner 2026-11-12: the shadow on the player still flickers hard close to some torches and lamps. Next session.
 
 ### SH-22: Exterior fps halves after leaving the Census office (owner report, perf)
 - Kind: game location, dev build, 1280x720, High. `run_dev.ps1 view "Seyda Neen, Census and Excise Office"`, walk out the front door.
