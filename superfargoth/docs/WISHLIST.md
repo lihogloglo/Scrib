@@ -256,6 +256,18 @@ door links as first-class records, not per-cell teleports.
 - The first attempt (`sf_terrain_bevy::ground_blend`) only darkened the base and cost 10-13 ms of render thread
   on the Balmora walk (non-batched per-part materials); removed 2026-10-20. Look for a Bevy crate first.
 
+## 14. Interiors seen through windows (later; owner 2026-11-11, an agent's research slice first)
+
+- From outside, windows show a room behind them instead of a flat texture, with a day/night cycle (lit at night).
+  Owner's idea: cubemapped interior windows ("interior mapping", parallax-corrected room cubemaps, as in Spider-Man
+  and The Matrix Awakens); research other options first (real interior portals, §6 window portals, 2D room atlases).
+- From inside, outside light actually shines in through windows and moves with the sun.
+
+## 15. Character customization and face generation (later; owner 2026-11-11)
+
+- Customize the player character's face and body. Morrowind heads are fixed meshes, so this likely needs
+  replacement head/body models with morph targets, behind an option (classic heads stay the default path).
+
 ---
 
 ## Early decisions this list forces

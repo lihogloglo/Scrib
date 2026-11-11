@@ -208,6 +208,33 @@ gate is missed (see animation.md "Measured"). The 2,050 groups in the
 182 files actors use (93 of the 162 KFs) match `mw_anim` file by file
 (mw_anim's 2,330 counts every KF in the install).
 
+## What bakes when (Morrowind)
+
+Framework policy: superfargoth `bake.md` "Inventory" and "What bakes when" (2026-11-11, bake-policy). Morrowind parts:
+
+- **Inputs the player brings**: the install's content files and BSAs (load order from `Morrowind.ini` / the profile),
+  loose `Data Files`, our mods folder, and the BYO animation libraries (`AnimSources::local`, animation-sources.md).
+  All are fingerprinted by content, so game editions need no version string; a library fetched on the setup screen
+  invalidates only the clips it feeds. Nothing baked from them leaves the machine.
+- **Driver** (`mw_boot_bevy::bake::run`): models + collision, exterior (index, terrain), far field, actors (anim,
+  ragdolls), bodies + item check, scripts, de-light, static scene (`scene::bake_scene` + `bake_chains`, C1), then the manifest and fingerprint;
+  nav by NV4. Each phase is its own `bake()` call (bake.md gap 3: one plan would overlap them).
+- **Classes**: gameplay = `collision.cook`, `body.cook`, `support.cook`, `items.check`, `ragdoll.cook`, `world.*`,
+  terrain heights, `skeleton.cook`, `anim.*`, `rig.profile`, `animgraph.compile`, `mw.anim.*`, `mwscript.*`, `nav.*`;
+  presentation = `mesh.*`, `model.info` (feeds the gameplay index only through bounds), terrain layers, macro and RT
+  proxy, `lod.*`, `scene.*`, `texture.*`.
+- **Fallbacks as built**: cooked models fall back to NIFs (`view` prints "no baked products ... loading NIFs";
+  `--no-baked` forces it, single-cell viewer only); the exterior refuses to start without products ("the exterior
+  streams from bake products"); de-light serves originals for stale or missing textures.
+- **Start check (gap)**: `apps/bevyrrowind/src/main.rs` loads the manifest without comparing fingerprints; the check
+  exists only in `mods` (`mods.rs::bake_status`: "up to date" / "stale"). Tier 3 moves it to the start path and runs
+  the bake on the start screen.
+- **Profile identity (gap)**: `mw_bake::profile_name` hashes only the install's archives and content files
+  (`lib.rs` 66), so two `sf_mods` profiles over one install share a manifest and overwrite each other. Name the
+  manifest by `sf_mods` profile id plus that hash; the fingerprint stays as is.
+- **Co-op**: the handshake's mod list carries content-file and BSA hashes (Bethesda data is never sent), our mods' ids,
+  versions and hashes, and the gameplay digest.
+
 ## Verification
 
 - `cargo test -p mw_bake` (importer mapping, dynamic parts, markers,

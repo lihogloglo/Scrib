@@ -1793,3 +1793,16 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-11 (menus, owner): the vanilla/classic option's options screen mirrors OpenMW's settings categories (pages,
   order, option sets); the modern option keeps the framework pages. A content pack supplies the alternate page layout
   over the same settings (menus.md §5, ui-adapter "Vanilla page layout"). Research OpenMW's window before S2.
+- 2026-11-11 (textures T2): rewrapped BCn takes its colour space from the role, not the DDS/KTX2 flag (as Bevy's DDS
+  loader); missing mips are filled in the source format (`texpresso` for BC1 punch-through and BC2), never by re-encoding
+  the whole file. T2 rewraps as-is; Y flips and channel remaps are T2b, block-exact where possible (textures.md §9).
+- 2026-11-11 (textures T0): PBR packs (Wareya OpenMW layout: `_spec` R metal G rough B AO) cook by block-exact remaps (R↔B to glTF ORM, G complement for DirectX normals, DXT5 `_nh` split into BC1 + BC4 depth), never a second lossy encode; per-level zstd for BC1-5 products, BC7 raw (bevyrrowind/docs/specs/textures-adapter.md §7).
+- 2026-11-11 (textures, owner): the renderer stays generic, never adapted to one texture pack. One canonical runtime
+  material layout; each pack's conventions (suffixes, channels, Y, height, defects) are data in a pack profile,
+  converted at bake. Supporting packs like MVR PBR is a goal; tuning the engine to them is not (textures.md §7).
+- 2026-11-11 (textures T2b): layout changes run on the blocks (`sf_texture::remap`, composed role + pack `ChannelMap`);
+  what isn't exact cooks instead: every BC7 complement (shared p-bits, rounding) and BC1 punch-through complement.
+  Normals drop alpha (BC2/BC3 → BC1); pack profiles are serde data, instances in the adapter (textures.md T2b).
+- 2026-11-11 (navigation NV2): sliced A* state lives in each `PathJob` as a navmesh-rs `DetachedQuery` attached to
+  its mesh per step (own vendored patch makes it public; to offer upstream), not a per-worker query pool; one Detour
+  mesh per (worldspace, class, region), our `PolyRef` = Detour ref + mesh slot/generation in unused tile bits (nav.md).

@@ -43,6 +43,11 @@ Non-goals: hosting third-party files, scraping sites whose terms forbid it, an a
 - **Licences are shown before every download**, with "redistributable" or "bring your own" labels. Nothing we bake from
   a non-redistributable source ever leaves the player's machine (animation-sources.md principle 3).
 - **Bakes** run as one queue with per-step progress, cancel and resume (the bake cache already makes reruns cheap).
+  Policy, budget (≤ 3 min target on the owner's laptop, ceiling 5) and the progress events: superfargoth `bake.md`
+  "What bakes when". The screen reuses the start check: it opens by itself when the profile fingerprint is stale
+  (after a mod change, seconds), not only on first run. Required products block the menu ("Bake" / "Quit");
+  degradable ones may start the game with the feature off (owner question 2 in bake.md). The pipeline warm-up is the
+  queue's last row (`pipeline-warmup.md`). BYO downloads come before the bake so one pass covers them.
 - **Mod list import:** `Morrowind.ini` (built in `mw_install`), `openmw.cfg` content and data lines, MO2 profile
   (`modlist.txt` / `plugins.txt`) mapped onto our mods directory and profiles (mods.md).
 - **Framework split:** the step runner, download manager (direct / guided / manual, hash check, folder watch) and the

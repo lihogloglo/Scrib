@@ -23,6 +23,10 @@ and `superfargoth/docs/DECISIONS.md`.
 
 ## How we decide what to build
 
+0. **Every time, for anything new (owner 2026-11-11, repeated).** Each new system *or feature inside one*
+   starts with three checks, written down before any code: Bevy's native features (the source, examples and
+   upstream issues/PRs of our version), the current crate ecosystem, and the industry standard. Specs record
+   them in "Reuse check" and "Industry comparison"; every brief for new work asks for them (rules 1-3 below).
 1. **Research first, and challenge our docs.** Before designing or building a system, research how the
    industry does it today: papers, GDC/SIGGRAPH talks, engine docs, OpenMW and the modding community, and
    the current crate ecosystem (versions, Bevy compatibility, maintenance). Our specs and ARCHITECTURE.md
@@ -114,6 +118,9 @@ shipped plugin and are never committed. Other games' data follows the clean-room
 
 - One deliverable plus its test per slice; if it needs "and", it's two slices. Research or diagnosis and
   building are separate slices; so are measurement sweeps and docs.
+- **Questions for the owner (owner 2026-11-11):** ask only what changes the design or what the player can and can't
+  do. Performance, optimisation, formats, budgets and defaults are decided from the industry standard: write the
+  choice and its source in the spec instead of asking.
 - A brief is prepared: exact files, functions and line ranges, the previous handoff, what's ruled out, how
   to verify. Never add scope to a running agent; queue a new slice.
 - Read lean: grep first, read only the lines needed; filter cargo output to errors and warnings.

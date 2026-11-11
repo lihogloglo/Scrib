@@ -80,7 +80,7 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (48)
+### Awaiting owner (49)
 
 SH-11 | confirmed (2026-10-30) | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
 SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player and torches cast none; fixes built 2026-11-01: SH-21) | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
@@ -149,6 +149,7 @@ MM-1 | awaiting owner (F1 2026-11-11: menu with no world; was rejected 2026-10-3
 FG-9 | confirmed (2026-11-02: no pillar; god rays still not visible, FG-10) | [weather-sky](visual-checks/weather-sky.md) | Vertical light pillar toward a low sun in fog: isotropic sky fill (fix built 2026-11-02)
 FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)
+RG-1 | awaiting owner | [streaming](visual-checks/streaming.md) | Nothing pops in after a door fade or the loading screen lifts (reveal gate W1; `reveal:` lines)
 
 ### Partial (9)
 
@@ -190,6 +191,8 @@ CB-3b | awaiting owner | [combat](visual-checks/combat.md) | Guard (hold right m
 CB-5 | awaiting owner | [combat](visual-checks/combat.md) | First-person melee: swings where you look, soft aim bends onto the dummy, no lock in first person (scene level-arena, 2026-11-10)
 CB-5b | awaiting owner | [combat](visual-checks/combat.md) | First-person attack look limits: the view stops ~45 deg off the body mid-swing, released at recovery; view model on and off (scene level-arena, 2026-11-10)
 PL-6 | awaiting owner (2026-10-30: hard-landing lock removed until fall damage) | [player-ui](visual-checks/player-ui.md) | Recovery delay after jumping down from a high box (2026-10-30)
+PL-7 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Player foot placement on slopes and stairs, K A/B (P-IK1, 2026-11-11)
+PL-8 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Pause menu freezes all animation (walkers on stairs, the player at a wall), no pop on resume (P-IK2, 2026-11-11)
 FP-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person shows body, arms and weapon with the head hidden (2026-11-10)
 FP-1b | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person: the player's shadow keeps its head under sun, lamps and a torch, raster and RT (2026-11-10)
 FP-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First-person view model (`flip viewmodel`): weapon and arms at the body FOV, never in walls, lit like the world, no DLSS/TAA smear; shader-compile log line (2026-11-10)
