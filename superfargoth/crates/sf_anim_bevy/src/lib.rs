@@ -21,6 +21,13 @@
 //!    [`AnimEvent`] messages and [`AnimNotify`] entity events for observers.
 //!
 //! Bevy then propagates transforms and skins on the GPU, as for glTF.
+//!
+//! **Pause.** While `Time<Virtual>` is paused (a pause menu) animation stops, as UE's
+//! `bTickEvenWhenPaused = false` default and Unity's scaled-time Animator do: the Probe set
+//! doesn't run, no character is due, Evaluate and Apply are skipped outright unless something opts
+//! in, and bones keep their last pose exactly. [`AnimateWhilePaused`] opts a character in (a menu
+//! preview): it keeps updating on real time. On resume the next update takes the resumed frame's
+//! virtual delta, so nothing catches up or pops.
 
 pub mod lod;
 #[cfg(test)]
@@ -34,7 +41,7 @@ use bevy_app::{App, Plugin, PostUpdate};
 use bevy_camera::{Camera, Projection};
 use bevy_ecs::prelude::*;
 use bevy_math::{Quat, Vec3};
-use bevy_time::Time;
+use bevy_time::{Real, Time, Virtual};
 use bevy_transform::TransformSystems;
 use bevy_transform::components::{GlobalTransform, Transform};
 use sf_anim::{Clip, EventEdge, RootDelta, Skeleton, Trs};
@@ -78,7 +85,18 @@ impl Plugin for SfAnimPlugin {
                     .chain()
                     .before(TransformSystems::Propagate),
             )
-            .add_systems(PostUpdate, select_tiers.in_set(AnimSystems::Lod))
+            // Host feeds (ground probes, IK and grip targets) touch the world: never while paused.
+            .configure_sets(PostUpdate, AnimSystems::Probe.run_if(not(world_paused)))
+            .configure_sets(
+                PostUpdate,
+                (AnimSystems::Evaluate, AnimSystems::Apply).run_if(evaluates),
+            )
+            .add_systems(
+                PostUpdate,
+                (select_tiers, hold_paused.run_if(world_paused))
+                    .chain()
+                    .in_set(AnimSystems::Lod),
+            )
             .add_systems(PostUpdate, evaluate.in_set(AnimSystems::Evaluate))
             .add_systems(
                 PostUpdate,
@@ -271,6 +289,29 @@ impl Animator {
     }
 }
 
+/// Keeps this character animating while `Time<Virtual>` is paused, on real time (UE's
+/// `bTickEvenWhenPaused`, Unity's `AnimatorUpdateMode.UnscaledTime`): menu previews such as a
+/// character in an inventory screen. [`AnimSystems::Probe`] still doesn't run while paused, so the
+/// host drives a preview's parameters itself (it has no world to probe).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct AnimateWhilePaused;
+
+/// Evaluate and Apply run unless the game is paused with no [`AnimateWhilePaused`] character.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn evaluates(
+    time: Option<Res<Time<Virtual>>>,
+    previews: Query<(), (With<AnimateWhilePaused>, With<Animator>)>,
+) -> bool {
+    !world_paused(time) || !previews.is_empty()
+}
+
+/// Run condition: the game clock (`Time<Virtual>`) is paused; false in an app without one. Host
+/// systems that feed animation outside [`AnimSystems::Probe`] gate on `not(world_paused)`.
+#[allow(clippy::needless_pass_by_value)] // system parameter
+pub fn world_paused(time: Option<Res<Time<Virtual>>>) -> bool {
+    time.is_some_and(|t| t.is_paused())
+}
+
 /// Skeleton joint index → bone entity, on the character root.
 #[derive(Component, Clone, Debug, Default)]
 pub struct SkeletonBinding {
@@ -402,12 +443,28 @@ fn select_tiers(
     settings: Res<AnimLodSettings>,
     mut budget: ResMut<AnimBudget>,
     time: Res<Time>,
+    (clock, real): (Option<Res<Time<Virtual>>>, Option<Res<Time<Real>>>),
     mut frame: ResMut<AnimFrame>,
     cameras: Query<(&Camera, &GlobalTransform, &Projection)>,
-    mut chars: Query<(Entity, Option<&GlobalTransform>, &mut AnimLod, Has<PhysicsPose>), With<Animator>>,
+    mut chars: Query<
+        (
+            Entity,
+            Option<&GlobalTransform>,
+            &mut AnimLod,
+            Has<PhysicsPose>,
+            Has<AnimateWhilePaused>,
+        ),
+        With<Animator>,
+    >,
 ) {
     frame.0 = frame.0.wrapping_add(1);
     let dt = time.delta_secs();
+    let paused = clock.as_ref().is_some_and(|c| c.is_paused());
+    // Opted-in characters run on real time while paused, clamped as the virtual clock would be.
+    let real_dt = match (&clock, &real) {
+        (Some(c), Some(r)) => r.delta().min(c.max_delta()).as_secs_f32(),
+        _ => 0.0,
+    };
     let view = cameras
         .iter()
         .filter(|(c, ..)| c.is_active)
@@ -416,7 +473,7 @@ fn select_tiers(
             Projection::Perspective(p) => Some((t.affine().inverse(), p.fov, p.aspect_ratio)),
             _ => None,
         });
-    for (entity, at, mut lod, _) in &mut chars {
+    for (entity, at, mut lod, ..) in &mut chars {
         let current = lod.tier;
         let tier = if let Some(t) = lod.forced {
             t
@@ -452,7 +509,7 @@ fn select_tiers(
     if let Some(limit) = settings.budget_us {
         let mut picks: Vec<(f32, AnimTier)> = Vec::new();
         let mut who = Vec::new();
-        for (entity, _, lod, _) in &chars {
+        for (entity, _, lod, ..) in &chars {
             if lod.forced.is_none() {
                 picks.push((lod.pixels * lod.significance, lod.tier));
                 who.push(entity);
@@ -462,21 +519,46 @@ fn select_tiers(
         budget.predicted_us = predicted;
         budget.demoted = demoted;
         for (e, (_, t)) in who.into_iter().zip(picks) {
-            if let Ok((_, _, mut lod, _)) = chars.get_mut(e) {
+            if let Ok((_, _, mut lod, ..)) = chars.get_mut(e) {
                 lod.tier = t;
             }
         }
     }
-    for (_, _, mut lod, has_physics) in &mut chars {
+    for (_, _, mut lod, has_physics, while_paused) in &mut chars {
+        if paused && !while_paused {
+            // Paused: hold the pose; `pending` keeps what was owed before the pause.
+            lod.due = false;
+            continue;
+        }
         if lod.idle_skip_a3 && lod.tier == AnimTier::A3 && !has_physics {
             lod.due = false;
             lod.pending = 0.0;
             continue;
         }
-        lod.pending += dt;
+        lod.pending += if paused { real_dt } else { dt };
         let interval = lod.tier.interval();
         lod.due = (frame.0 + lod.phase).is_multiple_of(interval);
     }
+}
+
+/// While paused: characters that don't animate report not updated and not posed (Evaluate and
+/// Apply may be skipped outright, which would leave last frame's flags for the readers of
+/// [`Animator::posed`]), and the frame's stats read zero.
+fn hold_paused(
+    mut chars: Query<&mut Animator, Without<AnimateWhilePaused>>,
+    mut stats: ResMut<AnimStats>,
+) {
+    for mut animator in &mut chars {
+        if animator.updated || animator.posed {
+            animator.updated = false;
+            animator.posed = false;
+        }
+    }
+    *stats = AnimStats {
+        per_tier: stats.per_tier,
+        feet_total: stats.feet_total,
+        ..AnimStats::default()
+    };
 }
 
 fn evaluate(

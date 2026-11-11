@@ -597,36 +597,149 @@ impl FeedValues {
     }
 }
 
-/// Reused buffers of the feed system.
+/// One frame's per-leg ground probes for foot placement, batched over every
+/// character that queues into it (locomotion.md "Ground probes": one probe
+/// call per stage per frame). The walkers' feed and any host feed (the
+/// player's) share it, so every animated character's ground samples come
+/// from the same probe, origins and frame conversion:
+///
+/// 1. [`FootProbes::clear`], then per character [`FootProbes::queue`] (or
+///    [`FootProbes::drop_samples`] while foot placement must not run);
+/// 2. [`FootProbes::probe`] against the ground resource, once;
+/// 3. per queued span ([`FootProbes::spans`]), [`FootProbes::write`] into
+///    that character's [`Animator`].
+///
+/// Probes start at the graph's last output `probe_origins` (UE Foot
+/// Placement / Leg IK traces from the animated feet), in the frame the
+/// character is **drawn** in (a fixed-tick body: its interpolated root), and
+/// scaled by the body's scale (the graph works in the unscaled skeleton).
 #[derive(Default)]
-struct FeedScratch {
+pub struct FootProbes {
     queries: Vec<ProbeQuery>,
     hits: Vec<Option<GroundHit>>,
-    /// Per-leg probe origins of one mover, scaled to the mover frame.
+    /// Per-leg probe origins of one character, scaled to its frame.
     origins: Vec<Vec3>,
-    /// (animator entity, first query, query count, mover frame, body scale).
-    spans: Vec<(Entity, usize, usize, CharacterFrame, Vec3)>,
+    spans: Vec<ProbeSpan>,
 }
 
-#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
+/// One character's probes in a [`FootProbes`] batch.
+#[derive(Clone, Copy, Debug)]
+pub struct ProbeSpan {
+    /// The entity carrying the character's [`Animator`].
+    pub animator: Entity,
+    first: usize,
+    count: usize,
+    frame: CharacterFrame,
+    scale: Vec3,
+}
+
+impl FootProbes {
+    /// Starts a new frame's batch (keeps the buffers).
+    pub fn clear(&mut self) {
+        self.queries.clear();
+        self.spans.clear();
+    }
+
+    /// Probes queued so far.
+    pub fn len(&self) -> usize {
+        self.queries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.queries.is_empty()
+    }
+
+    /// Clears `a`'s ground samples: its foot placement fades out and holds
+    /// the animated pose (A/B off, a dormant character, a move that owns
+    /// the body).
+    pub fn drop_samples(a: &mut Animator) {
+        a.drive.ground.fill(None);
+    }
+
+    /// Queues `a`'s per-leg probes (at its last output's `probe_origins`)
+    /// under the character drawn at `frame` with body `scale`, reaching
+    /// `settings.foot_probe_up` above and `foot_probe_down` below each
+    /// origin (scaled by the body's height). A graph without legs queues
+    /// nothing. The samples land at [`FootProbes::write`].
+    pub fn queue(
+        &mut self,
+        animator: Entity,
+        a: &Animator,
+        frame: CharacterFrame,
+        scale: Vec3,
+        settings: &ControllerSettings,
+    ) {
+        let legs = a.output.probe_origins.len().min(a.drive.ground.len());
+        if legs == 0 {
+            return;
+        }
+        let first = self.queries.len();
+        self.origins.clear();
+        self.origins.extend(
+            a.output.probe_origins[..legs]
+                .iter()
+                .map(|&o| o * scale),
+        );
+        self.queries.extend(frame.foot_queries(
+            &self.origins,
+            settings.foot_probe_up * scale.y,
+            settings.foot_probe_down * scale.y,
+        ));
+        self.spans.push(ProbeSpan {
+            animator,
+            first,
+            count: legs,
+            frame,
+            scale,
+        });
+    }
+
+    /// Runs every queued probe in one batched call.
+    pub fn probe(&mut self, ground: &impl GroundProbe) {
+        self.hits.clear();
+        self.hits.resize(self.queries.len(), None);
+        if !self.queries.is_empty() {
+            ground.probe(&self.queries, &mut self.hits);
+        }
+    }
+
+    /// The characters queued this frame.
+    pub fn spans(&self) -> &[ProbeSpan] {
+        &self.spans
+    }
+
+    /// Writes `span`'s hits (after [`FootProbes::probe`]) as `a`'s ground
+    /// samples in its unscaled character space; a miss is `None`.
+    pub fn write(&self, span: &ProbeSpan, a: &mut Animator) {
+        let Some(hits) = self.hits.get(span.first..span.first + span.count) else {
+            return;
+        };
+        let inv = span.scale.recip();
+        for (slot, hit) in a.drive.ground.iter_mut().zip(hits) {
+            *slot = hit.as_ref().map(|h| {
+                let (point, normal) = span.frame.ground_sample(h);
+                // Points scale by 1/s; normals by the inverse transpose, s.
+                GroundSample {
+                    point: point * inv,
+                    normal: (normal * span.scale).normalize_or(Vec3::Y),
+                }
+            });
+        }
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
 fn feed_animators<G: GroundProbe + Resource>(
     settings: Res<ControllerSettings>,
     ground: Option<Res<G>>,
     mut stats: ResMut<ControllerStats>,
     counters: Option<Res<DiagCounters>>,
-    mut scratch: Local<FeedScratch>,
+    mut probes: Local<FootProbes>,
     mut movers: Query<(&mut Mover, Has<Dormant>)>,
     mut animators: Query<&mut Animator>,
 ) {
     let t0 = Instant::now();
-    let FeedScratch {
-        queries,
-        hits,
-        origins,
-        spans,
-    } = &mut *scratch;
-    queries.clear();
-    spans.clear();
+    probes.clear();
     let names = &settings.params;
     for (mut m, dormant) in &mut movers {
         let Some(entity) = m.animator else { continue };
@@ -675,50 +788,22 @@ fn feed_animators<G: GroundProbe + Resource>(
         if let Some(n) = &names.speed {
             a.set_float(n, v.speed);
         }
-        let legs = a.output.probe_origins.len().min(a.drive.ground.len());
-        if legs > 0 && (dormant || !settings.foot_probes) {
-            a.drive.ground.fill(None);
-        } else if legs > 0 && ground.is_some() {
-            let first = queries.len();
-            let scale = m.body_scale;
-            origins.clear();
-            origins.extend(a.output.probe_origins[..legs].iter().map(|&o| o * scale));
-            queries.extend(m.loco.frame().foot_queries(
-                origins,
-                settings.foot_probe_up * scale.y,
-                settings.foot_probe_down * scale.y,
-            ));
-            spans.push((entity, first, legs, m.loco.frame(), scale));
+        if dormant || !settings.foot_probes {
+            FootProbes::drop_samples(a);
+        } else if ground.is_some() {
+            probes.queue(entity, a, m.loco.frame(), m.body_scale, &settings);
         }
     }
-    if let (Some(ground), false) = (ground, queries.is_empty()) {
-        hits.clear();
-        hits.resize(queries.len(), None);
-        ground.probe(queries, hits);
-        for &(entity, first, n, ref frame, scale) in spans.iter() {
-            let Ok(mut animator) = animators.get_mut(entity) else {
-                continue;
-            };
-            let inv = scale.recip();
-            for (slot, hit) in animator
-                .drive
-                .ground
-                .iter_mut()
-                .zip(&hits[first..first + n])
-            {
-                *slot = hit.as_ref().map(|h| {
-                    let (point, normal) = frame.ground_sample(h);
-                    // Points scale by 1/s; normals by the inverse transpose, s.
-                    GroundSample {
-                        point: point * inv,
-                        normal: (normal * scale).normalize_or(Vec3::Y),
-                    }
-                });
+    if let (Some(ground), false) = (ground, probes.is_empty()) {
+        probes.probe(&*ground);
+        for span in probes.spans() {
+            if let Ok(mut animator) = animators.get_mut(span.animator) {
+                probes.write(span, &mut animator);
             }
         }
     }
     stats.feed_us = micros(t0);
-    stats.foot_probes = queries.len();
+    stats.foot_probes = probes.len();
     if let Some(c) = counters {
         c.add_named(
             "controller/feed/ms",

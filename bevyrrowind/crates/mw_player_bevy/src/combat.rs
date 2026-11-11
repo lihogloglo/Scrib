@@ -241,7 +241,7 @@ pub(crate) fn add(app: &mut App, sheet: Option<CompiledSheet>, clips: &PlayerCli
         .add_systems(Update, ((arm, ready_weapon, show_stance).chain().after(crate::apply_mode).before(CharacterSystems), tag_crosshair))
         .add_systems(RunFixedMainLoop, face_view.in_set(sf_action_bevy::ActionSystems::Gather))
         .add_systems(FixedUpdate, advance_stance.before(CombatSystems::Gate))
-        .add_systems(PostUpdate, play_stance.after(crate::avatar::feed).in_set(sf_anim_bevy::AnimSystems::Probe));
+        .add_systems(PostUpdate, play_stance.after(crate::avatar::feed::<Physics>).in_set(sf_anim_bevy::AnimSystems::Probe));
     #[cfg(feature = "debug")]
     app.add_systems(Update, toggle_gizmos);
 }

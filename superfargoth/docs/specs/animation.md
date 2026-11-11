@@ -430,6 +430,10 @@ scenario is our M3 floor, not the ceiling.
   written only for joints in the LOD mask, events sent). The mover runs
   earlier, in `Update` (locomotion.md). Bevy then propagates
   transforms and skins on the GPU.
+- Pause (P-IK2, 2026-11-11): while `Time<Virtual>` is paused, `Probe` doesn't run, no character
+  is due, and `Evaluate`/`Apply` are skipped unless an `AnimateWhilePaused` character exists (UE
+  `bTickEvenWhenPaused`, Unity unscaled-time Animator: menu previews, on real time). Hosts gate
+  feeds outside `Probe` on `not(sf_anim_bevy::world_paused)`.
 - Bone entities stay, because Bevy's `SkinnedMesh` reads their
   `GlobalTransform`. If profiling shows propagation or skin extraction
   dominating, the fallback is writing bone `GlobalTransform`s directly

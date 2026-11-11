@@ -10,10 +10,12 @@ use sf_anim::{ClipRules, CookSettings, Looping, RootPose, cook_clip};
 use sf_anim_bevy::{AnimAsset, AnimTier, Animator};
 use sf_anim_graph::{CompileSource, compile_str};
 use sf_bake::ProductKey;
+use sf_controller::CharacterFrame;
+use sf_controller_bevy::ControllerSettings;
 
 use super::*;
 use crate::avatar::{AirDebounce, AvatarSlots, PlayerFeed};
-use crate::tests::{action, app, mock};
+use crate::tests::{Statics, action, app, mock};
 
 /// Every clip reference cooks the same short walk cycle.
 struct Clips(Clip);
@@ -71,7 +73,7 @@ fn dressed_spawn_puts_the_player_record_under_the_body_and_no_capsule_mesh() {
 fn walking_feeds_the_graph_motion() {
     let (mut app, player) = app(60);
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)))
-        .add_systems(PostUpdate, avatar::feed);
+        .add_systems(PostUpdate, avatar::feed::<Statics>);
     let animator = app.world_mut().spawn((Animator::new(asset()), Transform::default())).id();
     let mut feed = PlayerFeed::default();
     feed.animator = Some(animator);
@@ -155,7 +157,7 @@ struct AirFrame {
 /// first 0.1 s when `jump`.
 fn air_run(at: Option<Vec3>, stick: Vec2, jump: bool, secs: f32) -> Vec<AirFrame> {
     let (mut app, player) = app(60);
-    app.add_systems(PostUpdate, avatar::feed);
+    app.add_systems(PostUpdate, avatar::feed::<Statics>);
     let animator = app.world_mut().spawn((Animator::new(asset()), Transform::default())).id();
     let mut feed = PlayerFeed::default();
     feed.animator = Some(animator);
@@ -309,7 +311,7 @@ fn switching_first_and_third_person_relayers_the_avatar_by_role() {
     use sf_character_bevy::{PartRole, RoleLayers, SfCharacterPlugin, ShadowLayers, ViewCopy, ViewRole};
     let keymap = mw_controls_bevy::keymap();
     let (mut app, player) = tests::app_setup(60, &keymap, |app| {
-        app.add_plugins((AssetPlugin::default(), SfCameraPlugin::<tests::Statics>::default(), SfCharacterPlugin))
+        app.add_plugins((AssetPlugin::default(), SfCameraPlugin::<Statics>::default(), SfCharacterPlugin))
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
             .init_asset::<bevy_mesh::skinning::SkinnedMeshInverseBindposes>();
@@ -366,7 +368,7 @@ fn view_copy_material_follows_the_camera_settings() {
     use sf_character_bevy::{PartRole, SfCharacterPlugin, ViewCopy, ViewModel, ViewModelMaterial, ViewModelPlugin, ViewModelSettings, ViewRole};
     let keymap = mw_controls_bevy::keymap();
     let (mut app, player) = tests::app_setup(60, &keymap, |app| {
-        app.add_plugins((AssetPlugin::default(), SfCameraPlugin::<tests::Statics>::default(), SfCharacterPlugin))
+        app.add_plugins((AssetPlugin::default(), SfCameraPlugin::<Statics>::default(), SfCharacterPlugin))
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
             .init_asset::<bevy_mesh::skinning::SkinnedMeshInverseBindposes>()
@@ -427,4 +429,133 @@ fn avatar_view_per_camera_view_and_fade() {
         assert_eq!(avatar_view(Some((ViewChoice::ThirdPerson, 0.2)), vm), (Visibility::Inherited, RoleLayers::world()));
         assert_eq!(avatar_view(Some((ViewChoice::ThirdPerson, 0.9)), vm), (Visibility::Hidden, RoleLayers::world()));
     }
+}
+
+/// [`asset`]'s walk with two legs and a `FootPlacement` op (pelvis drop, foot lock).
+fn ik_asset() -> Arc<AnimAsset> {
+    let skeleton = biped();
+    let src = gait(&skeleton, "walk", 1.0, 1.4, 0.5, 0.6, &[("thigh_l", "foot_l", 0.0), ("thigh_r", "foot_r", 0.5)]);
+    let rules = ClipRules { looping: Looping::Whole, ..ClipRules::default() };
+    let clip = cook_clip(&skeleton, &src, &rules, &CookSettings::default()).unwrap();
+    let ron = r#"(
+        clips: {"walk": (source: "walk")},
+        nodes: {"walk": Clip(clip: "walk")},
+        layers: [(node: "walk")],
+        legs: [
+            (name: "l", hip: Joint("thigh_l"), knee: Joint("shin_l"), foot: Joint("foot_l")),
+            (name: "r", hip: Joint("thigh_r"), knee: Joint("shin_r"), foot: Joint("foot_r")),
+        ],
+        procedural: [FootPlacement(pelvis: Joint("hips"), legs: ["l", "r"])],
+    )"#;
+    let graph = compile_str("avatar-ik", ron, &skeleton, &mut Clips(clip.clone())).unwrap();
+    let clips = graph.clips.iter().map(|_| Arc::new(clip.clone())).collect();
+    Arc::new(AnimAsset::new(Arc::new(skeleton), Arc::new(graph), clips).unwrap())
+}
+
+/// One frame of [`probe_walk`]: the drawn root, the graph's ground samples and output.
+struct ProbeFrame {
+    root: Vec3,
+    /// The samples in the world (through the drawn frame), `None` where missing.
+    samples: Vec<Option<(Vec3, Vec3)>>,
+    weight: f32,
+    grade: f32,
+    /// World height of each foot joint minus the ramp/floor height under it.
+    foot_above: [f32; 2],
+    finite: bool,
+}
+
+/// `level-flat-slopes`' 20° ramp: rises toward -z from z = 0.493 (2 m over 5.495 m), 4 m wide at x = -12.
+fn ramp_20_height(p: Vec3) -> f32 {
+    let (start, run) = (-2.253 + 5.495 / 2.0, 5.495);
+    if (p.x + 12.0).abs() > 2.0 {
+        return 0.0;
+    }
+    ((start - p.z) / run).clamp(0.0, 1.0) * 2.0
+}
+
+/// The game's player feed (`avatar::feed` over the level's statics) on a graph with foot
+/// placement, walking north from `at` with `settings`, the graph updated each frame after the
+/// feed (as `AnimSystems::Evaluate`).
+fn probe_walk(at: Vec3, settings: ControllerSettings, secs: f32) -> Vec<ProbeFrame> {
+    let (mut app, player) = app(60);
+    app.insert_resource(settings).add_systems(PostUpdate, avatar::feed::<Statics>);
+    let animator = app.world_mut().spawn((Animator::new(ik_asset()), Transform::default())).id();
+    let mut feed = PlayerFeed::default();
+    feed.animator = Some(animator);
+    app.world_mut().entity_mut(player).insert((PlayerBody, feed));
+    app.world_mut().get_mut::<ActionBody>(player).unwrap().teleport(WorldPos::from_f64(at.as_dvec3()), std::f32::consts::PI);
+    let stick = action(&mut app, PlayerAction::Stick);
+    mock(&mut app, stick, Vec2::NEG_Y);
+    let skeleton = ik_asset().skeleton.clone();
+    let foot_joints = [skeleton.find("foot_l").unwrap(), skeleton.find("foot_r").unwrap()];
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a few hundred frames")]
+    let n = (secs * 60.0).round() as usize;
+    let mut frames = Vec::with_capacity(n);
+    for _ in 0..n {
+        app.update();
+        let (body, t) = (app.world().get::<ActionBody>(player).unwrap(), app.world().get::<Transform>(player).unwrap());
+        let drawn = CharacterFrame::new(body.frame_origin.offset(t.translation), Mover::yaw_of(t.rotation));
+        let mut a = app.world_mut().get_mut::<Animator>(animator).unwrap();
+        a.update(1.0 / 60.0, AnimTier::A0);
+        a.drive.moved = sf_anim::RootDelta::ZERO;
+        let world = |p: Vec3| WorldPos::ORIGIN.delta_f32(drawn.to_world(p));
+        let samples = a.drive.ground.iter().map(|s| s.map(|s| (world(s.point), drawn.rotation() * s.normal))).collect();
+        let foot_above = foot_joints.map(|j| {
+            let p = world(a.output.model.translation(j));
+            p.y - ramp_20_height(p)
+        });
+        let finite = a.output.model.mats.iter().all(bevy_math::Affine3A::is_finite);
+        frames.push(ProbeFrame {
+            root: world(Vec3::ZERO),
+            samples,
+            weight: a.output.feet.weight_max,
+            grade: a.output.grade,
+            foot_above,
+            finite,
+        });
+    }
+    frames
+}
+
+/// P-IK1 (ik-feel-diagnosis 2026-11-11, cause 1): the player's graph gets ground samples from
+/// the level's statics under its legs, in the drawn frame. Exact on the data path: every sample
+/// arrives and lies on the ramp's surface with its normal; foot placement turns on and the
+/// grade goes positive uphill. Sanity on the pose: finite, feet not through the ramp.
+/// `K` (`foot_probes` off) drops them all.
+#[test]
+fn the_player_probes_the_ground_under_its_feet() {
+    let frames = probe_walk(Vec3::new(-12.0, 0.0, 2.5), ControllerSettings::default(), 3.0);
+    // After the first frames, every leg is probed (short of the plateau's far edge, z = -9, where the
+    // leading foot's probe misses the 2 m drop).
+    let missing: Vec<(usize, Vec3, usize)> = frames
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.root.z > -8.0 && (f.samples.len() != 2 || f.samples.iter().any(Option::is_none)))
+        .map(|(i, f)| (i, f.root, f.samples.iter().flatten().count()))
+        .collect();
+    assert!(missing.iter().all(|m| m.0 < 2), "every leg sampled after the first frames: missing at {missing:?}");
+    let ramp: Vec<&ProbeFrame> = frames.iter().filter(|f| f.root.y > 0.3 && f.root.y < 1.7).collect();
+    assert!(ramp.len() > 30, "walked up the 20° ramp: {} frames on it", ramp.len());
+    let (tilt, cos20) = (20f32.to_radians().sin(), 20f32.to_radians().cos());
+    for f in &ramp {
+        for (p, n) in f.samples.iter().flatten() {
+            if p.z < 0.3 && p.z > -4.8 {
+                assert!((p.y - ramp_20_height(*p)).abs() < 1e-3, "sample on the ramp: {p}");
+                assert!((n.y - cos20).abs() < 1e-3 && (n.z - tilt).abs() < 1e-3, "ramp normal (faces +z, down the slope): {n}");
+            }
+        }
+    }
+    let weight = ramp.iter().map(|f| f.weight).fold(0.0f32, f32::max);
+    #[allow(clippy::cast_precision_loss, reason = "a few hundred frames")]
+    let grade = ramp.iter().map(|f| f.grade).sum::<f32>() / ramp.len() as f32;
+    let sink = ramp.iter().flat_map(|f| f.foot_above).fold(f32::INFINITY, f32::min);
+    println!("20° ramp: {} frames, foot placement weight max {weight:.2}, mean grade {grade:.2}, lowest foot joint {sink:+.3} m", ramp.len());
+    assert!(weight > 0.0, "foot placement on: {weight}");
+    assert!(grade > 0.0, "uphill grade: {grade}");
+    assert!(frames.iter().all(|f| f.finite), "a finite pose");
+    assert!(sink > -0.05, "no foot joint through the ramp: {sink}");
+
+    let off = probe_walk(Vec3::new(-12.0, 0.0, 2.5), ControllerSettings { foot_probes: false, ..ControllerSettings::default() }, 1.0);
+    assert!(off.iter().all(|f| f.samples.iter().all(Option::is_none)), "K off: no samples");
+    assert!(off.iter().all(|f| f.weight.abs() < f32::EPSILON), "K off: foot placement holds the animated pose");
 }

@@ -14,7 +14,7 @@ use sf_bake::ProductKey;
 
 use crate::{
     AnimAsset, AnimEvent, AnimJoint, AnimLod, AnimNotify, AnimRootMotion, AnimStats, AnimTier,
-    Animator, SfAnimPlugin, spawn_rig,
+    AnimateWhilePaused, Animator, SfAnimPlugin, spawn_rig,
 };
 
 struct Walk(sf_anim::Clip);
@@ -167,4 +167,96 @@ fn a2_updates_every_other_frame() {
         evaluated += app.world().resource::<AnimStats>().evaluated;
     }
     assert_eq!(evaluated, 10);
+}
+
+#[derive(Resource, Default)]
+struct Runs {
+    probe: usize,
+    evaluate: usize,
+}
+
+fn bones(app: &mut App, who: Entity) -> Vec<(u16, Transform)> {
+    let mut q = app.world_mut().query::<(&AnimJoint, &Transform)>();
+    let mut v: Vec<_> = q
+        .iter(app.world())
+        .filter(|(j, _)| j.character == who)
+        .map(|(j, t)| (j.joint, *t))
+        .collect();
+    v.sort_by_key(|(j, _)| *j);
+    v
+}
+
+/// ROADMAP 1.18 (P-IK2): a paused `Time<Virtual>` stops the Probe, Evaluate and Apply stage;
+/// `AnimateWhilePaused` keeps a preview going on real time; resuming doesn't pop.
+#[test]
+fn pause_holds_the_pose_and_resume_does_not_pop() {
+    let asset = walk_asset();
+    let mut app = app();
+    app.init_resource::<Runs>()
+        .add_systems(
+            PostUpdate,
+            (|mut r: ResMut<Runs>| r.probe += 1).in_set(crate::AnimSystems::Probe),
+        )
+        .add_systems(
+            PostUpdate,
+            (|mut r: ResMut<Runs>| r.evaluate += 1).in_set(crate::AnimSystems::Evaluate),
+        );
+    let walker = spawn(&mut app, &asset, AnimTier::A0);
+    let preview = spawn(&mut app, &asset, AnimTier::A0);
+    app.world_mut().entity_mut(preview).insert(AnimateWhilePaused);
+    let thigh = u16::try_from(asset.skeleton.find("thigh_l").unwrap()).unwrap();
+    let thigh_of = |b: &[(u16, Transform)]| b.iter().find(|(j, _)| *j == thigh).unwrap().1;
+    for _ in 0..20 {
+        app.update();
+    }
+    let before = bones(&mut app, walker);
+    let root_before = *app.world().get::<Transform>(walker).unwrap();
+    let runs_before = (app.world().resource::<Runs>().probe, app.world().resource::<Runs>().evaluate);
+    assert_eq!(runs_before, (20, 20));
+
+    app.world_mut().resource_mut::<Time<Virtual>>().pause();
+    let mut preview_moved = 0;
+    let mut last_preview = thigh_of(&bones(&mut app, preview));
+    for _ in 0..10 {
+        app.update();
+        assert_eq!(bones(&mut app, walker), before, "paused bones don't change");
+        assert_eq!(*app.world().get::<Transform>(walker).unwrap(), root_before, "no root motion");
+        let a = app.world().get::<Animator>(walker).unwrap();
+        assert!(!a.updated && !a.posed(), "the paused walker isn't updated");
+        let p = thigh_of(&bones(&mut app, preview));
+        preview_moved += usize::from(p != last_preview);
+        last_preview = p;
+        assert_eq!(app.world().resource::<AnimStats>().evaluated, 1, "only the preview");
+    }
+    assert_eq!(preview_moved, 10, "the opted-in preview animates on real time");
+    let runs = app.world().resource::<Runs>();
+    assert_eq!(runs.probe, 20, "no Probe feed while paused");
+    assert_eq!(runs.evaluate, 30, "Evaluate runs for the preview");
+
+    // Nothing opted in: the Evaluate and Apply sets are skipped outright.
+    app.world_mut().entity_mut(preview).remove::<AnimateWhilePaused>();
+    let held = bones(&mut app, preview);
+    for _ in 0..5 {
+        app.update();
+        assert_eq!(bones(&mut app, preview), held);
+        assert_eq!(bones(&mut app, walker), before);
+    }
+    let runs = app.world().resource::<Runs>();
+    assert_eq!((runs.probe, runs.evaluate), (20, 30), "Probe and Evaluate skipped");
+    let stats = app.world().resource::<AnimStats>();
+    assert_eq!((stats.evaluated, stats.bones_written, stats.events), (0, 0, 0));
+    let a = app.world().get::<Animator>(preview).unwrap();
+    assert!(!a.updated && !a.posed(), "flags cleared when the sets skip");
+
+    app.world_mut().resource_mut::<Time<Virtual>>().unpause();
+    app.update();
+    let runs = app.world().resource::<Runs>();
+    assert_eq!((runs.probe, runs.evaluate), (21, 31), "resumed");
+    assert!(app.world().get::<Animator>(walker).unwrap().posed());
+    let after = bones(&mut app, walker);
+    // One 1/60 s step of a 1 s walk cycle from the held pose, not a jump (sanity bound).
+    let turn = thigh_of(&after).rotation.angle_between(thigh_of(&before).rotation);
+    assert!(turn > 0.0 && turn < 0.15, "first resumed frame continues the pose: {turn} rad");
+    let step = app.world().get::<Transform>(walker).unwrap().translation - root_before.translation;
+    assert!(step.length() < 0.05, "one frame of root motion, no catch-up: {step}");
 }

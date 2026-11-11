@@ -1106,3 +1106,239 @@ fn gait_bands() {
         }
     }
 }
+
+// --- IK/feel diagnosis 2026-11-11 (superfargoth docs/research/ik-feel-diagnosis-2026-11-11.md) ----------
+
+/// One frame of [`drive`]: world pelvis (`Bip01 Pelvis`) and, per leg, the sole's gap to the
+/// ground under it (m, positive floats) with the leg's contact curve, and the foot's position.
+struct Sample {
+    pelvis: Vec3,
+    soles: Vec<(f32, f32)>,
+    feet: Vec<Vec3>,
+    /// The graph's filtered ground grade (`out.grade`).
+    grade: f32,
+}
+
+/// Which character's feed [`drive`] stands in for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Feed {
+    /// The walkers' (`sf_controller_bevy` `feed_animators`): ground probes, measured speed
+    /// half-life 0.05 s.
+    Npc,
+    /// The player's before P-IK1 as the diagnosis measured it: no probes (half-life 0.05 s).
+    PlayerBefore,
+    /// The player's since P-IK1 (`mw_player_bevy::avatar::feed`, the walkers' `FootProbes` at
+    /// the drawn root, which is the tick's root at 60 fps): probes, the player's measured speed
+    /// half-life `feel::MEASURE_HALFLIFE` (0.025 s).
+    Player,
+}
+
+impl Feed {
+    fn probes(self) -> bool {
+        self != Self::PlayerBefore
+    }
+
+    fn halflife(self) -> f32 {
+        if self == Self::Player { 0.025 } else { 0.05 }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Npc => "npc",
+            Self::PlayerBefore => "player before",
+            Self::Player => "player",
+        }
+    }
+}
+
+/// Walks the humanoid sim like `walk_at` (NPC mover, measured feed, ground probes per `feed`),
+/// then holds `paused` updates at dt = 0 with the probes refreshed each update (what
+/// `sf_controller_bevy`'s feed and `sf_anim_bevy::evaluate` do while `Time<Virtual>` is paused).
+/// Returns the walking frames (after the first second) and the paused frames.
+fn drive(sim: &mut Sim, world: &World, start: Vec3, velocity: Vec3, seconds: f32, feed: Feed, paused: usize) -> (Vec<Sample>, Vec<Sample>) {
+    let probes = feed.probes();
+    let dir = velocity.normalize();
+    let mut loco = Locomotion::new(WorldPos::ORIGIN.offset(start), dir.x.atan2(dir.z));
+    let params = MoverParams::default();
+    let mut stepper = KinematicMover::new();
+    let intent = LocomotionIntent { desired_velocity: velocity, ..LocomotionIntent::IDLE };
+    let legs: Vec<(usize, Option<usize>)> = sim.graph.legs.iter().map(|l| (usize::from(l.effector()), l.contact.map(usize::from))).collect();
+    let sole = soles(sim);
+    let pelvis = sim.skeleton.find("Bip01 Pelvis").expect("pelvis");
+    let mut measured = Vec3::ZERO;
+    let (mut walking, mut held) = (Vec::new(), Vec::new());
+    let frames = (seconds / DT).round() as usize;
+    for frame in 0..frames + 60 + paused {
+        let pause = frame >= frames + 60;
+        if !pause {
+            let it = if frame >= 60 { intent } else { LocomotionIntent::IDLE };
+            stepper.step(MoveInput { loco: &mut loco, intent: it, params: &params, root: RootMotion::default() }, world, DT);
+            let moved = loco.moved;
+            let raw = (Quat::from_rotation_y(-moved.yaw) * moved.translation / DT).with_y(0.0);
+            measured = raw.lerp(measured, 0.5f32.powf(DT / feed.halflife()));
+            let flat = Vec2::new(-measured.x, measured.z);
+            sim.set(p::MOVING, if flat.length() > 0.5 { 1.0 } else { 0.0 });
+            sim.set_vec2(p::MOVE, if flat.length() > 1e-3 { flat.normalize() } else { Vec2::Y });
+            sim.velocity = measured;
+            sim.moved = moved;
+        }
+        let f = loco.frame();
+        let queries: Vec<_> = f.foot_queries(&sim.out.probe_origins, 0.5, 0.75).collect();
+        let mut hits = vec![None; queries.len()];
+        world.probe(&queries, &mut hits);
+        for (slot, hit) in sim.ground.iter_mut().zip(&hits) {
+            *slot = if probes {
+                hit.as_ref().map(|h| {
+                    let (point, normal) = f.ground_sample(h);
+                    GroundSample { point, normal }
+                })
+            } else {
+                None
+            };
+        }
+        if pause {
+            // One update at dt = 0 (`Sim::run` rounds the step count up to 1).
+            sim.run(0.0, 0.0);
+        } else {
+            sim.run(DT, DT);
+        }
+        if frame < 120 {
+            continue;
+        }
+        let w = |j: usize| WorldPos::ORIGIN.delta_f32(f.to_world(sim.out.model.translation(j)));
+        let s = Sample {
+            pelvis: w(pelvis),
+            soles: legs
+                .iter()
+                .enumerate()
+                .map(|(k, &(j, c))| {
+                    let at = w(j);
+                    (ground_at(world, at).map_or(f32::NAN, |g| at.y - g - sole[k]), c.map_or(0.0, |c| sim.out.curves[c]))
+                })
+                .collect(),
+            feet: legs.iter().map(|&(j, _)| w(j)).collect(),
+            grade: sim.out.grade,
+        };
+        if pause {
+            held.push(s);
+        } else {
+            walking.push(s);
+        }
+    }
+    (walking, held)
+}
+
+/// The player's foot feed: the shipped humanoid graph on the lab ramps with the walkers' probes
+/// ("npc"), with none ("player before": `mw_player_bevy::avatar::feed` set `drive.ground` to
+/// `None` every frame until P-IK1) and with the player's feed since P-IK1 ("player": the same
+/// probes, the player's speed half-life; the real path's data is asserted by `mw_player_bevy`'s
+/// `the_player_probes_the_ground_under_its_feet`). Per walk: planted soles' worst sink and float (cm, contact > 0.5), the
+/// planted feet's slide (cm per second of stance), the filtered grade the graph reads
+/// (`out.grade`, drives `Lean` and `StrideWarp`), and the pelvis' vertical jerk (RMS of the
+/// second difference per frame, mm). Sanity only: finite.
+#[test]
+#[ignore = "measurement: player foot feed vs walkers"]
+fn player_without_foot_probes() {
+    if humanoid_sim().is_none() {
+        return;
+    }
+    let mut walks: Vec<Walk> = vec![("flat".into(), World::new(), Vec3::new(-4.0, 0.0, 0.0), Vec3::X, (-99.0, 99.0))];
+    for deg in [10.0, 20.0, 30.0] {
+        let (w, top) = World::ramp(deg, 8.0);
+        walks.push((format!("up {deg}°"), w, Vec3::new(-3.0, 0.0, 0.0), Vec3::X, (1.0, top.x - 1.0)));
+        let (w, top) = World::ramp(deg, 8.0);
+        walks.push((format!("down {deg}°"), w, Vec3::new(top.x + 3.0, top.y, 0.0), -Vec3::X, (1.0, top.x - 1.0)));
+    }
+    let (w, top) = World::stairs(12, 0.15, 0.30);
+    walks.push(("stairs up 0.15".into(), w, Vec3::new(-3.0, 0.0, 0.0), Vec3::X, (0.5, top.x - 0.5)));
+    for (speed, gait) in [(1.6f32, "walk 1.6"), (4.5, "run 4.5")] {
+        eprintln!("--- {gait} m/s");
+        for (name, world, start, dir, window) in &walks {
+            for feed in [Feed::Npc, Feed::PlayerBefore, Feed::Player] {
+                let mut sim = humanoid_sim().unwrap();
+                sim.set(p::RUNNING, if speed > 3.0 { 1.0 } else { 0.0 });
+                let secs = (12.0 / speed).max(3.0);
+                let (frames, _) = drive(&mut sim, world, *start, *dir * speed, secs, feed, 0);
+                let on: Vec<&Sample> = frames.iter().filter(|s| s.pelvis.x >= window.0 && s.pelvis.x <= window.1).collect();
+                let (mut sink, mut float, mut slide, mut stance) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+                let grade = on.iter().map(|s| s.grade).sum::<f32>() / on.len().max(1) as f32;
+                for pair in on.windows(2) {
+                    for k in 0..pair[1].soles.len() {
+                        let (gap, c) = pair[1].soles[k];
+                        if c > 0.5 && gap.is_finite() {
+                            sink = sink.max(-gap);
+                            float = float.max(gap);
+                            stance += DT;
+                            slide += Vec2::new(pair[1].feet[k].x - pair[0].feet[k].x, pair[1].feet[k].z - pair[0].feet[k].z).length();
+                        }
+                    }
+                }
+                let ys: Vec<f32> = on.iter().map(|s| s.pelvis.y).collect();
+                let jerk = (ys.windows(3).map(|w| (w[2] - 2.0 * w[1] + w[0]).powi(2)).sum::<f32>() / ys.len().saturating_sub(2).max(1) as f32).sqrt();
+                eprintln!(
+                    "{name:15} {:13} | {:3} frames | planted sole sink {:5.1} float {:5.1} cm | slide {:5.2} cm/s stance | mean grade {:5.2} | pelvis d2y rms {:6.3} mm",
+                    feed.label(),
+                    on.len(),
+                    sink * 100.0,
+                    float * 100.0,
+                    slide / stance.max(1e-3) * 100.0,
+                    grade,
+                    jerk * 1000.0
+                );
+                assert!(sink.is_finite() && float.is_finite() && jerk.is_finite());
+            }
+        }
+    }
+}
+
+/// ROADMAP 1.18 (IK runs while paused): after a walk (20° ramp, stairs, flat), the graph keeps
+/// updating at dt = 0 with fresh probes (no pause gate on `AnimSystems`). Prints the largest
+/// pelvis and foot motion (mm) from the last walking frame to the first paused one, and over 60
+/// paused updates from the first paused frame. Sanity only: finite.
+#[test]
+#[ignore = "measurement: paused updates"]
+fn paused_updates_move_the_pose() {
+    if humanoid_sim().is_none() {
+        return;
+    }
+    let (ramp, _) = World::ramp(20.0, 8.0);
+    let (stairs, _) = World::stairs(12, 0.15, 0.30);
+    let flat = World::new();
+    for (name, world, secs) in [("ramp 20° mid-walk", &ramp, 2.4), ("stairs mid-walk", &stairs, 2.0), ("flat", &flat, 2.0)] {
+        let mut sim = humanoid_sim().unwrap();
+        let (walking, held) = drive(&mut sim, world, Vec3::new(-3.0, 0.0, 0.0), Vec3::X * SPEED, secs, Feed::Npc, 60);
+        let first = &held[0];
+        let last = walking.last().unwrap();
+        let dist = |a: &Sample, b: &Sample| {
+            let feet = a.feet.iter().zip(&b.feet).map(|(x, y)| x.distance(*y)).fold(0.0, f32::max);
+            (a.pelvis.distance(b.pelvis), feet)
+        };
+        let (enter_p, enter_f) = dist(last, first);
+        let (mut drift_p, mut drift_f) = (0.0f32, 0.0f32);
+        let mut moving = 0;
+        let mut steps = Vec::new();
+        let mut prev = last;
+        for s in &held {
+            let (dp, df) = dist(s, first);
+            drift_p = drift_p.max(dp);
+            drift_f = drift_f.max(df);
+            let (_, step) = dist(s, prev);
+            moving += usize::from(step > 1e-3);
+            if steps.len() < 8 {
+                steps.push(format!("{:.0}", step * 1000.0));
+            }
+            prev = s;
+        }
+        let heights: Vec<String> = held.iter().take(6).map(|s| s.feet.iter().map(|f| format!("{:.3}", f.y)).collect::<Vec<_>>().join("/")).collect();
+        eprintln!(
+            "{name:18} pause entry: pelvis {:6.2} mm, feet {:6.2} mm | over 60 paused updates: pelvis {:6.3} mm, feet {:6.3} mm | {moving} updates moved a foot > 1 mm, first steps [{}] mm, foot y {}",
+            enter_p * 1000.0,
+            enter_f * 1000.0,
+            drift_p * 1000.0,
+            drift_f * 1000.0,
+            steps.join(" "),
+            heights.join(" ")
+        );
+        assert!(drift_p.is_finite() && drift_f.is_finite());
+    }
+}

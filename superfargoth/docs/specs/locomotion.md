@@ -94,6 +94,12 @@ Implementations, composed by taking the nearest hit:
 Surface ids give foot-placement and footstep sounds their material
 (stone, wood, sand).
 
+**Foot probes (as built; shared 2026-11-11, P-IK1).** `sf_controller_bevy::FootProbes` batches every animated
+character's per-leg rays (from `foot_probe_up` above the graph's last `probe_origins` to `foot_probe_down` below,
+scaled by the body, in the frame the character is drawn in) into one `GroundProbe` call and writes the samples back
+in unscaled character space. The walkers' `feed_animators` and hosts' own feeds (the game's player, a fixed-tick
+body at its interpolated root) both use it; a host drops the samples while a scripted move owns the body.
+
 ## Movers
 
 - **`KinematicMover` (M3).** Per frame, in `Update` after intents are

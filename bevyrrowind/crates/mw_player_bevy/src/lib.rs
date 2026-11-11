@@ -184,7 +184,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         .add_systems(Update, await_ground::<Physics>.after(arrive).before(StreamingSystems::Transition))
         .add_systems(Update, update_focus.in_set(FocusUpdate).before(ScriptSlot::Update))
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate))
-        .add_systems(PostUpdate, (avatar::link, avatar::feed, grip::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe));
+        .add_systems(PostUpdate, (avatar::link, avatar::feed::<Physics>, grip::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe));
     // FP-2b: the view copies' material (first person with `ComfortSettings::view_model`).
     if !app.is_plugin_added::<sf_character_bevy::ViewModelPlugin>() {
         app.add_plugins(sf_character_bevy::ViewModelPlugin);

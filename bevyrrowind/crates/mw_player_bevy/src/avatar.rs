@@ -15,8 +15,16 @@
 //!   ([`AirDebounce`]): a launch leaves the ground at once, a fall only after [`AIR_GRACE`] in
 //!   the air or below [`FALL_SPEED`], so step-down misses on rocks and stairs don't flicker the
 //!   fall pose (UE keeps Walking within the step height; Lyra/ALS gate the fall on air time).
-//!   Foot probes are not fed yet: foot placement holds the animated pose. `strafing` is set
-//!   while the intent holds a facing (locked on): walk and run play the 8-way strafe loops.
+//!   `strafing` is set while the intent holds a facing (locked on): walk and run play the 8-way
+//!   strafe loops.
+//! - **Foot probes** (P-IK1): the per-leg ground samples for foot placement (feet on slopes and
+//!   treads, foot lock, pelvis drop) and the ground grade (slope lean, stride warp), from the
+//!   walkers' batched probe (`sf_controller_bevy::FootProbes`) against the ground resource `G`
+//!   (the game: `Physics`), at the graph's last `probe_origins` in the **drawn** root frame, as
+//!   UE's Foot Placement traces from the interpolated mesh. Dropped (the op fades out and holds
+//!   the animated pose) while a Warp or Clip move owns the body (its clip and root motion place
+//!   the feet), and with `ControllerSettings::foot_probes` off (K, the walkers' A/B too); in the
+//!   air the `on_ground` gate fades the op.
 //! - **Traversal and combat moves** (action.md B2a, combat.md C1b): while the action layer's Warp
 //!   or Clip owner moves the body, the move's slot clip (`traverse.mantle.waist`, an attack, a roll,
 //!   a hit reaction; [`AvatarSlots`]) plays in the graph's `full` montage slot with
@@ -51,8 +59,8 @@ use sf_anim_graph::{MontageClip, SlotId, SlotRequest};
 use sf_camera::ViewChoice;
 use sf_camera_bevy::PlayerCamera;
 use sf_character_bevy::{CharacterBody, RoleLayers, ViewModelSettings};
-use sf_controller::{CharacterFrame, Gait};
-use sf_controller_bevy::{ControllerSettings, FeedGait, FeedValues, Mover};
+use sf_controller::{CharacterFrame, Gait, GroundProbe};
+use sf_controller_bevy::{ControllerSettings, FeedGait, FeedValues, FootProbes, Mover};
 
 use mw_game_core::player::{PlayerAvatar, PlayerBody};
 
@@ -199,12 +207,15 @@ pub(crate) fn link(
     }
 }
 
-/// The graph parameters, drive and traversal slot from the body (see the module docs).
-#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
-pub(crate) fn feed(
+/// The graph parameters, drive, foot probes (against the ground `G`) and traversal slot from
+/// the body (see the module docs).
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity, clippy::too_many_arguments)]
+pub(crate) fn feed<G: GroundProbe + Resource>(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     settings: Option<Res<ControllerSettings>>,
+    ground: Option<Res<G>>,
+    mut probes: Local<FootProbes>,
     mut players: Query<(&ActionBody, &ActionCharacter, &Transform, &mut PlayerFeed), Or<(With<PlayerBody>, With<TrainingDummy>)>>,
     slots: Option<Res<AvatarSlots>>,
     builtin: Local<AvatarSlots>,
@@ -215,9 +226,10 @@ pub(crate) fn feed(
     let settings = settings.as_deref().unwrap_or(&fallback);
     let dt = time.delta_secs();
     let alpha = fixed.overstep_fraction().clamp(0.0, 1.0);
+    probes.clear();
     for (body, character, transform, mut feed) in &mut players {
         let feed = &mut *feed;
-        let Some((mut animator, body_transform)) = feed.animator.and_then(|e| animators.get_mut(e).ok()) else {
+        let Some((entity, (mut animator, body_transform))) = feed.animator.and_then(|e| animators.get_mut(e).ok().map(|a| (e, a))) else {
             feed.last = None;
             continue;
         };
@@ -245,7 +257,8 @@ pub(crate) fn feed(
         let v = FeedValues::measured(feed.measured, feed.turn, braking, intent.gait, settings, feed.gait);
         feed.gait = v.gait();
         // Mover space -> the body's unscaled skeleton space (race height and weight).
-        let inv = body_transform.map_or(Vec3::ONE, |t| t.scale).recip();
+        let scale = body_transform.map_or(Vec3::ONE, |t| t.scale);
+        let inv = scale.recip();
         let a = &mut *animator;
         a.drive.velocity = v.velocity * inv;
         a.drive.acceleration = drawn.dir_to_local(body.loco.motion.acceleration) * inv;
@@ -268,8 +281,24 @@ pub(crate) fn feed(
         a.set_bool(gp::ON_GROUND, on_ground);
         // The flag clears on the tick after touchdown: report it with the ground, not after.
         a.set_bool(gp::JUMPING, launched && !on_ground);
-        a.drive.ground.fill(None);
+        // A Warp or Clip move owns the body: its clip places the feet, not the ground.
+        let owned = character.output.warp.is_some() || character.output.clip.is_some();
+        if owned || !settings.foot_probes || ground.is_none() {
+            FootProbes::drop_samples(a);
+        } else {
+            probes.queue(entity, a, drawn, scale, settings);
+        }
         traversal(feed, a, character, slots, body.warp_progress(), alpha);
+    }
+    if let Some(ground) = ground.as_deref()
+        && !probes.is_empty()
+    {
+        probes.probe(ground);
+        for span in probes.spans() {
+            if let Ok((mut a, _)) = animators.get_mut(span.animator) {
+                probes.write(span, &mut a);
+            }
+        }
     }
 }
 
