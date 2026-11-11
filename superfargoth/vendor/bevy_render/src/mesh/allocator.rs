@@ -12,6 +12,8 @@ use bevy_ecs::{
 };
 use bevy_log::warn;
 use bevy_mesh::Indices;
+// superfargoth patch (own, GS: change detection)
+use bevy_platform::collections::HashSet;
 use bevy_shape::{Aabb2d, BoundingVolume};
 use glam::Vec4;
 use wgpu::{BufferUsages, DownlevelFlags, COPY_BUFFER_ALIGNMENT};
@@ -56,6 +58,70 @@ pub struct MeshAllocator {
     /// WebGL 2. On this platform, we must give each vertex array its own
     /// buffer, because we can't adjust the first vertex when we perform a draw.
     general_vertex_slabs_supported: bool,
+
+    // superfargoth patch (own, GS: change detection)
+    /// Which meshes the latest allocation round moved; see [`MeshAllocationChanges`].
+    changes: MeshAllocationChanges,
+}
+
+// superfargoth patch (own, GS: change detection)
+/// A generation counter over [`MeshAllocator`] rounds, so that anything caching
+/// a mesh's slab offsets (`first_vertex_index`, `first_index_index`, the
+/// metadata index, the slab ids) can rebuild on change only, the way UE's
+/// cached mesh draw commands are invalidated.
+///
+/// [`generation`](Self::generation) is bumped by every `allocate_and_free_meshes`
+/// round that freed, allocated, reallocated or displaced (slab growth) at least
+/// one mesh, and [`meshes`](Self::meshes) is then exactly that round's meshes. A
+/// round that touches nothing leaves both alone, so a reader that last saw
+/// `generation - 1` knows `meshes` is everything that moved since; a reader
+/// further behind must assume everything moved.
+///
+/// A mesh outside `meshes` keeps its offsets and slab ids: slabs grow by
+/// copying into a bigger buffer at the same offsets, and offsets are only handed
+/// out or taken back for the mesh being (re)allocated or freed. Only the buffer
+/// *object* changes on growth; those meshes are included here too
+/// ([`MeshAllocator::meshes_displaced_by_slab_growth`]).
+#[derive(Clone, Debug, Default)]
+pub struct MeshAllocationChanges {
+    generation: u64,
+    meshes: HashSet<AssetId<Mesh>>,
+}
+
+impl MeshAllocationChanges {
+    /// Rounds that changed at least one mesh's allocation since startup.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The meshes whose allocation the round that produced
+    /// [`generation`](Self::generation) changed.
+    pub fn meshes(&self) -> &HashSet<AssetId<Mesh>> {
+        &self.meshes
+    }
+
+    /// Records one allocation round: every mesh extracted (added, modified or
+    /// re-extracted: all are freed and reallocated), removed, or displaced by
+    /// slab growth. Bumps the generation only if that set is non-empty.
+    pub fn record_round(
+        &mut self,
+        extracted_meshes: &ExtractedAssets<RenderMesh>,
+        displaced: impl IntoIterator<Item = AssetId<Mesh>>,
+    ) {
+        let meshes: HashSet<AssetId<Mesh>> = extracted_meshes
+            .extracted
+            .iter()
+            .map(|(id, _)| *id)
+            .chain(extracted_meshes.removed.iter().copied())
+            .chain(extracted_meshes.modified.iter().copied())
+            .chain(extracted_meshes.added.iter().copied())
+            .chain(displaced)
+            .collect();
+        if !meshes.is_empty() {
+            self.generation = self.generation.wrapping_add(1);
+            self.meshes = meshes;
+        }
+    }
 }
 
 /// Tunable parameters that customize the behavior of the allocator.
@@ -240,6 +306,8 @@ impl FromWorld for MeshAllocator {
         Self {
             slab_allocator,
             general_vertex_slabs_supported,
+            // superfargoth patch (own, GS: change detection)
+            changes: MeshAllocationChanges::default(),
         }
     }
 }
@@ -268,9 +336,22 @@ pub fn allocate_and_free_meshes(
         &render_device,
         &render_queue,
     );
+
+    // superfargoth patch (own, GS: change detection): after both stages, so the
+    // slab growth of this round's allocations is in the displaced list.
+    let displaced: Vec<_> = mesh_allocator.meshes_displaced_by_slab_growth().collect();
+    mesh_allocator
+        .changes
+        .record_round(&extracted_meshes, displaced);
 }
 
 impl MeshAllocator {
+    // superfargoth patch (own, GS: change detection)
+    /// The allocation generation and the meshes its latest round moved.
+    pub fn changes(&self) -> &MeshAllocationChanges {
+        &self.changes
+    }
+
     /// Returns the buffer and range within that buffer of the metadata for
     /// the mesh with the given ID.
     ///
@@ -792,6 +873,8 @@ mod tests {
         MeshAllocator {
             slab_allocator: SlabAllocator::new(),
             general_vertex_slabs_supported,
+            // superfargoth patch (own, GS: change detection)
+            changes: MeshAllocationChanges::default(),
         }
     }
 

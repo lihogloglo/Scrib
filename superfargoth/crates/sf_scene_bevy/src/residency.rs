@@ -219,7 +219,7 @@ pub struct BatchZeroFill {
     pub space: SpaceId,
     pub batch: BatchId,
     pub entity: Entity,
-    /// The batch's whole capacity (`SpaceConfig::batch_capacity`).
+    /// The batch's whole capacity (`SceneSpace::batch_capacity`: its class's).
     pub slots: u32,
 }
 
@@ -260,9 +260,9 @@ pub fn despawn_empty_batches(frame: Res<SceneFrame>, mut spaces: ResMut<SceneSpa
 }
 
 /// Makes sure every batch of `batches` has its entity (B3 brief §4.3 step 5):
-/// the space's capacity, no range yet, no `Mesh3d`, no `NoCpuCulling`, no
-/// `NotShadowCaster`, and a zero-fill of its whole capacity queued. Returns
-/// the batches it spawned.
+/// the batch's own capacity (its class's, `SpaceConfig::capacity_of_key`), no
+/// range yet, no `Mesh3d`, no `NoCpuCulling`, no `NotShadowCaster`, and a
+/// zero-fill of its whole capacity queued. Returns the batches it spawned.
 fn ensure_batches(world: &mut World, state: &mut SpaceState, batches: &[(BatchId, BatchKey)]) -> Vec<BatchId> {
     let config = state.space.config();
     let frame = world.resource::<SceneFrame>().0;
@@ -275,9 +275,10 @@ fn ensure_batches(world: &mut World, state: &mut SpaceState, batches: &[(BatchId
         if state.batches[i].is_some() {
             continue;
         }
+        let capacity = state.space.batch_capacity(batch);
         let entity = world
             .spawn((
-                GpuBatchedMesh3d { mesh: Handle::default(), max_capacity: config.batch_capacity, ranges: Vec::new() },
+                GpuBatchedMesh3d { mesh: Handle::default(), max_capacity: capacity, ranges: Vec::new() },
                 // Re-pointed with `mesh` by `rebuild_ranges`: the first range's chain's material.
                 MeshMaterial3d::<StandardMaterial>(Handle::default()),
                 SceneBatch { space: config.space, batch },
@@ -289,7 +290,7 @@ fn ensure_batches(world: &mut World, state: &mut SpaceState, batches: &[(BatchId
             space: config.space,
             batch,
             entity,
-            slots: config.batch_capacity,
+            slots: capacity,
         });
         spawned.push(batch);
     }
@@ -449,9 +450,8 @@ pub fn poll_cell_loads(
         }
         // A material no chain holds any more is dropped with its last chain.
         chain_materials.0.retain(|_, h| wanted_materials.contains(&h.id()));
-        slabs.wanted = wanted;
-        slabs.wanted_materials = wanted_materials;
-        slabs.dirty = false;
+        // Drops the answers no longer wanted and marks new ids pending (`slabs` module docs).
+        slabs.set_wanted(wanted, wanted_materials);
     }
 }
 
@@ -869,11 +869,13 @@ impl CellScene for SceneHook {
             state.tables.insert(cx.cell, table);
             // The promotion map: `covered`'s answer, kept.
             state.covered.insert(cx.cell, covered);
-            if let Some(key) = state.space.take_overflow_warning() {
+            // Once per material class (and once for the single-chain batches) for the run.
+            while let Some(key) = state.space.take_overflow_warning() {
                 log::warn!(
-                    "sf_scene_bevy: batch {key:?} of {} is full ({} slots): what overflows spawns as entities (scene/slots/overflow counts it; this warns once)",
+                    "sf_scene_bevy: batch {key:?} of {} is full ({} slots): what overflows spawns as entities (scene/batch/{}/overflow counts it; this warns once per class)",
                     cx.worldspace,
-                    state.space.config().batch_capacity
+                    state.space.config().capacity_of_key(&key),
+                    crate::gauges::group_name(&key)
                 );
             }
             // Spawned with no range first (step 5), then every changed list rebuilt (step 8).

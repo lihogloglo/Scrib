@@ -213,7 +213,7 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Look for: no missing vegetation, hedges, fences, grates or tree cards with `--scene` on; and no candidate
   surface with hard cutout edges where it used to fade softly (glass, gauze, cobwebs, smoke cards) — name the
   surface, which names the misclassified texture (`textures::alpha_is_cutout` thresholds).
-- Status: awaiting owner (with SC-scene). Source: static-scene scene-fixes, defects 1 + 5.
+- Status: owner 2026-11-11 (Balmora): no missing cutouts seen. Source: static-scene scene-fixes, defects 1 + 5.
 
 ### SC-scene: Statics drawn by the static scene (static-scene S3b C2, 2026-11-11)
 - Why: `--scene` draws exterior statics from the baked GPU table (one batch per material/slab, slots retained) instead
@@ -224,3 +224,38 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   as a double draw); after crossing ~256 m nothing jumps or drifts (origin shift, O1); doors, containers, lights and
   scripted objects still entities (interactable); cutouts as SC-foliage. Log: no `sf_scene_bevy` errors, no `is full` warning.
 - Status: awaiting owner.
+- Status: owner 2026-11-11: "seems perfect": nothing missing or popping; a subtle flicker now and then, maybe shadows or fog
+  (unattributed: compare in sc-noscene); felt faster, no FPS counter in the overlay to tell. Log: 883 `batch ... @exterior is
+  full (4096 slots)` warnings (the overflow spawns as entities, so the batch is undersized for Balmora, and the warn-once
+  doesn't hold). Logged, not fixed.
+- Owner 2026-11-11, later in the same run: **foliage floating in the sky** when flying up; grass/foliage only, appearing and
+  disappearing as a batch every ~200 m. Check sc-noscene (A/B) to tell if `--scene` causes it. Frame rate from the log (physics
+  line, frames per 10 s): ~49-62, mostly 60 (vsync cap?); the stairs scene ran ~121 in the same build.
+- A/B (sc-noscene, owner 2026-11-11): "exactly the same things", the short shadow flickers included, so the flicker and
+  the floating foliage are not from `--scene` (log them as their own bugs). Frames per 10 s off: 90, 72, 69 (35 s run,
+  different spots) vs on ~49-62: no faster on this evidence; the batch overflow above may explain it. Perf suite pending.
+- Perf A/B 2026-11-11 (profiling exe, 1440p, DLSS Quality loaded, 3 runs each; benchmarks/runs/scene_off, scene_on):
+  balmora_walk median 11.4-12.3 ms off vs 14.4-14.9 ms on (+~2.7 ms); balmora 9.3 ms off vs 11.2-11.8 ms on (+~2.1 ms).
+  GPU busy 77-96% off vs 63-88% on (more CPU-bound). The on runs log 81 `batch ... is full (4096 slots)` warnings
+  (overflow spawns as entities, so both paths run at once). Audit 2026-11-11 (traced, incl. 32k slots, no overflow:
+  still +1.8 ms): per-frame O(ranges) CPU in the GS port + per-frame `extract_chain_slabs`; capacity is secondary.
+  `superfargoth/docs/research/static-scene-perf-audit-2026-11-11.md`.
+
+### SC-lamps: Lamp shadows of statics drawn by the static scene (static-scene fix 5, 2026-11-12)
+- Why: the point-light shadow cache only knew `Mesh3d` casters; scene batches are now static casters (capture after the
+  batch visibility, `ShadowCastersChanged` from cell stream-in/out and promotion recaptures nearby lamps).
+- Kind: game location, A/B. Run: `scene sc-scene-night` (Balmora 22:00, `--scene`); A/B: `scene sc-noscene` then `[`/`]` to night.
+- Look for: lamps cast shadows of buildings and walls, steady (no flicker or popping); walk into a new cell: its statics cast
+  lamp shadows within ~2 s; shadows of cells left behind clear. Same shadows as without `--scene`.
+
+### RO-18: Grass and foliage floating in the sky (owner report 2026-11-11)
+- Seen in `scene sc-scene` and `scene sc-noscene` (Balmora 14:00), so not the static scene: fly up high and grass/foliage
+  hangs in the air; it disappears and reappears as a batch every ~200 m of travel (grass or cell streaming, unknown).
+- 2026-11-11 later (scene-audit): not reproduced. A scripted climb to 700 m and the owner's own flight (to 595 m, coast and
+  open water, BRP capture of every new mesh) showed nothing floating; vertical origin shifts move all statics correctly.
+  Intermittent. Capture tool: `node bevyrrowind/tools/brp_capture_meshes.mjs <out.jsonl> [port]`; rerun when it shows again.
+- Status: known bug, not diagnosed. Next step: a diagnosis slice (which system spawns it: groundcover, statics, streaming).
+
+### RO-19: Very short shadow flickers here and there (owner report 2026-11-11)
+- Balmora 14:00, same in sc-scene and sc-noscene: brief, subtle flickers, the owner thinks shadows (maybe fog).
+- Status: known bug, not diagnosed (see the shadows checks SH-* for related cases).

@@ -108,6 +108,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Kind: game location. Rain with open water in view (seen 2026-10-30).
 - Look for: the distant rain curtain doesn't draw over the water body, so it ends at the water's edge.
 - Suspect (not tested): pass order/depth between the water snapshot and precip (hard-problems H3, `render-order.md`).
+- Owner 2026-11-11: also clouds. Flying high, a cloud between the camera and the ocean does not show (same family, H3).
 - Status: known bug: not diagnosed (owner pass 2026-10-30).
 
 ### WE-8: Rain leans with the wind, capped, turning slowly (rain-slant, weather/wind.md "Precipitation tilt as built")

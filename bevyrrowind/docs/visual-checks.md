@@ -103,7 +103,8 @@ RO-16 | 2026-11-06: ground better (fix 1, N1), moonlight OK (N3); night too lit 
 RO-17 | parked (owner 2026-11-06) | [rendering](visual-checks/rendering.md) | Tree leaves reflect as one flat panel in the light colour, leaf texture lost (2026-11-05)
 TX-delight | awaiting owner | [rendering](visual-checks/rendering.md) | De-lit albedo textures: no double-dark corners, no colour shift or BC7 blocks, cutouts keep coverage (`--off delight` A/B)
 SS-matclass | awaiting owner | [rendering](visual-checks/rendering.md) | Static material classes: every static looks as with `--off matclass` (textures, cutout edges, two-sided leaves, glow) in Balmora and Seyda Neen
-SC-scene | awaiting owner | [rendering](visual-checks/rendering.md) | Static scene (`--scene`): every static present, no double draw, nothing jumps after a 256 m walk; doors/lights stay entities
+SC-scene | owner: matches sc-noscene (2026-11-11); floating foliage + shadow flicker are not from --scene; 883 batch-full warnings; perf: ~2-3 ms SLOWER on (batch overflow) | [rendering](visual-checks/rendering.md) | Static scene (`--scene`): every static present, no double draw, nothing jumps after a 256 m walk; doors/lights stay entities
+SC-lamps | awaiting owner | [rendering](visual-checks/rendering.md) | Lamp shadows of `--scene` statics at night: present, steady, recapture after a new cell (scene sc-scene-night)
 RO-B | partial (2026-10-30: draws in front now; odd blend, weak over dark things, like Ghostfence) | [rendering](visual-checks/rendering.md) | Lit smoke shading + dynamic plume Aabb sort over sky and objects
 CB-1 | confirmed (2026-10-27: sprint hold, chain step, mouse capture, dummy collision fixed; evening: 4-hit chain and M1 cursor confirmed) | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
 CB-2 | confirmed (2026-10-30) | [combat](visual-checks/combat.md) | Lock-on, locked facing and side rolls around the dummy (scene level-arena)
@@ -176,7 +177,7 @@ PUI-SV3 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Trade scree
 PUI-SV4 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Training list over the dialogue: top 3 skills, prices, refusals, buy +1 and 2 h pass, Back (A3)
 SV-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Quicksave / quickload; load sometimes spawns below the floor
 
-### Known bug (3)
+### Known bug (5)
 
 SH-13 | known bug | [shadows](visual-checks/shadows.md) | Point-light (lamp) shadows
 SH-14 | known bug | [shadows](visual-checks/shadows.md) | Contact-shadow bands at object edges
@@ -188,6 +189,8 @@ PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the C
 PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)
 CB-3 | confirmed (2026-11-05; follow-up: new sword attack clips) | [combat](visual-checks/combat.md) | F draws a visible sword; sheathed clicks do nothing; draw / sheathe clips, sword at the attach key (2026-11-05)
 CB-3a | awaiting owner | [combat](visual-checks/combat.md) | Sparring dummy strikes on a beat; player hit reactions by side in third and first person, free look in a reaction (scene level-sparring, 2026-11-10)
+RO-18 | known bug | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
+RO-19 | known bug | [rendering](visual-checks/rendering.md) | Very short shadow flickers in Balmora (2026-11-11)
 CB-3b | awaiting owner | [combat](visual-checks/combat.md) | Guard (hold right mouse / L1) in third and first person: front hits guarded (no reaction, stamina dip), back hits not, guard break at 0 stamina; body follows the view in first person (scene level-sparring, 2026-11-10)
 CB-5 | awaiting owner | [combat](visual-checks/combat.md) | First-person melee: swings where you look, soft aim bends onto the dummy, no lock in first person (scene level-arena, 2026-11-10)
 CB-5b | awaiting owner | [combat](visual-checks/combat.md) | First-person attack look limits: the view stops ~45 deg off the body mid-swing, released at recovery; view model on and off (scene level-arena, 2026-11-10)
@@ -229,7 +232,7 @@ SK-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Night and moon
 ST-2 | deferred | [streaming](visual-checks/streaming.md) | No pop at origin shifts in flight
 ST-3 | deferred | [streaming](visual-checks/streaming.md) | Paced model loads arrive in time
 SC-2 | deferred | [streaming](visual-checks/streaming.md) | The cutoff fades, never pops
-SC-foliage | awaiting owner (with SC-scene) | [rendering](visual-checks/rendering.md) | Cutout candidates (foliage, fences, grates) drawn from the static table, and no candidate that should fade softly gaining hard edges
+SC-foliage | owner: OK in Balmora (2026-11-11) | [rendering](visual-checks/rendering.md) | Cutout candidates (foliage, fences, grates) drawn from the static table, and no candidate that should fade softly gaining hard edges
 SN-2 | deferred | [characters](visual-checks/characters.md) | Guar from its cooked skinned product
 SN-3 | deferred | [characters](visual-checks/characters.md) | Dark elf head morphs
 CH-1 | deferred | [characters](visual-checks/characters.md) | The M3 lineup

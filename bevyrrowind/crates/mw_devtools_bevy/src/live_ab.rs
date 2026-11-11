@@ -26,6 +26,7 @@ use bevy_mesh::skinning::SkinnedMesh;
 use bevy_pbr::wireframe::{Wireframe, WireframeColor, WireframePlugin};
 use bevy_app::prelude::*;
 use bevy_clipboard::prelude::*;
+use bevy_diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy_ui::prelude::*;
 use bevy_text::prelude::*;
 use bevy_ecs::prelude::*;
@@ -56,6 +57,10 @@ impl Plugin for LiveAbPlugin {
         // F7 on skinned meshes (is the mesh following the ragdoll?).
         if !app.is_plugin_added::<WireframePlugin>() {
             app.add_plugins(WireframePlugin::default());
+        }
+        // The overlay's fps / ms readout: Bevy's own smoothed frame-time diagnostic.
+        if !app.is_plugin_added::<FrameTimeDiagnosticsPlugin>() {
+            app.add_plugins(FrameTimeDiagnosticsPlugin::default());
         }
         app.init_resource::<LiveAb>()
             .add_systems(Startup, (spawn_overlay, pause_scene_clock))
@@ -648,11 +653,22 @@ fn overlay(
     colliders: Option<Res<sf_physics_bevy::PhysicsDebug>>,
     mut text: Query<&mut Text, With<OverlayText>>,
     mut last: Local<String>,
+    (diagnostics, mut fps): (Option<Res<DiagnosticsStore>>, Local<(f32, String)>),
 ) {
     let Ok(mut text) = text.single_mut() else { return };
+    // Smoothed fps and frame ms, refreshed twice a second so the digits stay readable.
+    let now = real.elapsed_secs();
+    if now - fps.0 >= 0.5 || fps.1.is_empty() {
+        let smoothed = |path: &bevy_diagnostic::DiagnosticPath| diagnostics.as_ref().and_then(|d| d.get(path)).and_then(bevy_diagnostic::Diagnostic::smoothed);
+        fps.1 = match (smoothed(&FrameTimeDiagnosticsPlugin::FPS), smoothed(&FrameTimeDiagnosticsPlugin::FRAME_TIME)) {
+            (Some(f), Some(ms)) => format!("{f:.0} fps {ms:.1} ms"),
+            _ => "-- fps".to_owned(),
+        };
+        fps.0 = now;
+    }
     let scene = mw_game_core::scenes::active();
     let title = scene.map_or_else(|| "view".to_owned(), |s| format!("scene {}", s.name));
-    let mut out = format!("{title}  |  F1 {}", if state.help { "hide" } else { "help" });
+    let mut out = format!("{title}  |  {}  |  F1 {}", fps.1, if state.help { "hide" } else { "help" });
     if let (Some(t), Some(c)) = (s.time.as_ref(), s.config.as_ref()) {
         let _ = write!(out, "  |  {:.2} h ({})", c.sky_clock(t).hour(&c.0.calendar), clock_label(t));
     }

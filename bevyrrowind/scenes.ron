@@ -1031,5 +1031,14 @@
             look_for: "compare against scene sc-scene: same statics, same look",
             checks: ["SC-scene"],
         ),
+        (
+            name: "sc-scene-night",
+            cell: "Balmora",
+            hour: 22.0,
+            flags: ["--scene"],
+            description: "Lamp shadows of statics drawn by the static scene (--scene) at night; A/B: the same at night without --scene",
+            look_for: "lamps cast shadows of buildings and walls, steady (no flicker, no popping); walk into a new cell: its statics cast lamp shadows within ~2 s; shadows of cells left behind clear",
+            checks: ["SC-lamps"],
+        ),
     ],
 )

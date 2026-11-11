@@ -7,6 +7,8 @@
 //! standard mesh pipeline as a single indirect draw.
 
 mod materialize;
+// superfargoth patch (own, GS: change detection)
+mod range_cache;
 
 use bevy_app::{App, Plugin, PostUpdate};
 use bevy_asset::{AssetEvent, AssetEventSystems, AssetId, Assets};
@@ -75,6 +77,12 @@ use materialize::GpuInstanceMaterialization;
 // superfargoth patch (own, GS: ranges): the GPU range record is part of the
 // batch's public contract (a producer sees it in `gpu_batch_tests`).
 pub use materialize::GpuBatchGeometryRange;
+// superfargoth patch (own, GS: change detection): the cache is public so its
+// invalidation rules are testable without a GPU (`gpu_batch_tests`).
+pub use range_cache::{
+    BatchRangeInputs, GpuBatchRangeCache, GpuInstanceBatchStats, RangeResolveError,
+    ResolvedRanges,
+};
 
 /// One instance slot published by a GPU producer. Zeroed slots are inactive.
 #[derive(Clone, Copy, Default, Pod, Zeroable, ShaderType)]
@@ -95,6 +103,15 @@ pub enum GpuInstanceBatchSystems {
     /// renders.
     Materialize,
 }
+
+// superfargoth patch (own, GS: light visibility set)
+/// `PostUpdate`: where GPU instance batches join the lights' shadow lists
+/// (directional cascades, point-light cube faces, spot lights), after
+/// `SimulationLightSystems::CheckLightVisibility`. A system that reads or
+/// filters those lists and must see the batches (a shadow cache) runs
+/// `.after(GpuBatchedLightVisibility)`.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GpuBatchedLightVisibility;
 
 /// Up to `max_capacity` GPU-authored instances of a mesh, drawn as one indirect
 /// draw. Pair with `MeshMaterial3d<M>`, not [`Mesh3d`].
@@ -136,9 +153,12 @@ pub struct GpuBatchedMesh3d {
     ///
     /// Each range must resolve into the batch's own `MeshAllocator` vertex
     /// slab, index slab and material bind group; a range that does not is
-    /// rejected per frame in `prepare_gpu_batched_mesh_draws` and the batch
-    /// then draws nothing that frame (see [`validate_ranges`] for the
-    /// slot-layout half, which is checked once per change on extraction).
+    /// rejected in `prepare_gpu_batched_mesh_draws` and the batch draws
+    /// nothing until a re-check passes (superfargoth patch (own, GS: change
+    /// detection): re-checked when the ranges, a mesh allocation or a material
+    /// binding change, not every frame: [`GpuBatchRangeCache`]). See
+    /// [`validate_ranges`] for the slot-layout half, which is checked once per
+    /// change on extraction.
     pub ranges: Vec<GpuBatchedMeshRange>,
 }
 
@@ -202,7 +222,7 @@ pub enum RangeError {
 ///
 /// This is the contract [`range_of`] and its WGSL twin rely on; it does not
 /// look at the index ranges, the slabs or the materials, which need a
-/// `MeshAllocator` and are re-checked every frame in
+/// `MeshAllocator` and are re-checked on change ([`GpuBatchRangeCache`]) in
 /// `prepare_gpu_batched_mesh_draws`.
 pub fn validate_ranges(ranges: &[GpuBatchedMeshRange], max_capacity: u32) -> Result<(), RangeError> {
     if ranges.is_empty() {
@@ -300,6 +320,16 @@ pub(crate) struct ExtractedGpuBatchedMesh {
     /// upstream behaviour, whether the batch had no ranges or its ranges were
     /// rejected.
     pub ranges: Vec<ExtractedRange>,
+    // superfargoth patch (own, GS: change detection)
+    /// Unique per extraction of the batch's mesh, capacity and ranges: bumped
+    /// only when those are re-extracted, which is what `GpuBatchRangeCache`
+    /// keys on. `flags` and `world_center` refresh every frame without it.
+    pub version: u64,
+    /// `mesh_asset_id` and every range's mesh, for allocator and asset-event
+    /// invalidation.
+    pub meshes: HashSet<AssetId<Mesh>>,
+    /// The distinct `Some` range materials, for binding invalidation.
+    pub materials: Vec<bevy_asset::UntypedAssetId>,
 }
 
 // superfargoth patch (own, GS: ranges)
@@ -369,6 +399,8 @@ impl Plugin for GpuInstanceBatchPlugin {
         app.add_systems(
             PostUpdate,
             add_gpu_batched_meshes_to_light_visibility
+                // superfargoth patch (own, GS: light visibility set)
+                .in_set(GpuBatchedLightVisibility)
                 .after(SimulationLightSystems::CheckLightVisibility)
                 .before(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
         );
@@ -406,6 +438,8 @@ impl Plugin for GpuInstanceBatchPlugin {
             // `prepare_range_unpacking_bind_groups` stay here: with this plugin absent the
             // pipeline id stays `None` and the dispatch is skipped, so the port stays opt-in.
             .init_resource::<ExtractedGpuBatchedMeshes>()
+            // superfargoth patch (own, GS: change detection)
+            .init_resource::<GpuBatchRangeCache>()
             .init_gpu_resource::<GpuInstanceBatchReservations>()
             .add_systems(ExtractSchedule, extract_gpu_batched_meshes)
             .add_systems(
@@ -482,13 +516,21 @@ pub(crate) fn mark_gpu_batched_meshes_as_changed_if_their_assets_changed(
     }
 }
 
+// superfargoth patch (own, GS: change detection): `ExtractedGpuBatchedMeshes`
+// persists across frames. A batch's mesh, capacity and ranges are re-extracted
+// (and its `version` bumped) only when its `GpuBatchedMesh3d` changed or an
+// asset event (added, modified, removed) named one of its meshes, whose bounds
+// then refresh; `flags` and `world_center` are O(1) and refresh every frame.
+// Despawned batches, and batches whose capacity went to zero, drop out.
+#[allow(clippy::type_complexity)]
 pub(crate) fn extract_gpu_batched_meshes(
     mut extracted: ResMut<ExtractedGpuBatchedMeshes>,
+    mut range_cache: ResMut<GpuBatchRangeCache>,
     meshes: Extract<Res<Assets<Mesh>>>,
     query: Extract<
         Query<(
             Entity,
-            &GpuBatchedMesh3d,
+            Ref<GpuBatchedMesh3d>,
             Option<&Aabb>,
             &GlobalTransform,
             Has<NotShadowReceiver>,
@@ -499,16 +541,21 @@ pub(crate) fn extract_gpu_batched_meshes(
     >,
     mut events: Extract<MessageReader<AssetEvent<Mesh>>>,
     mut mesh_bounds: Local<HashMap<AssetId<Mesh>, Option<Aabb>>>,
+    mut live: Local<EntityHashSet>,
+    mut next_version: Local<u64>,
 ) {
+    let mut touched: HashSet<AssetId<Mesh>> = HashSet::new();
     for event in events.read() {
         match event {
             AssetEvent::Added { id } | AssetEvent::Modified { id } | AssetEvent::Removed { id } => {
                 mesh_bounds.remove(id);
+                touched.insert(*id);
             }
             _ => {}
         }
     }
-    extracted.0.clear();
+    live.clear();
+    let mut reextracted = 0u32;
     for (
         entity,
         batch,
@@ -529,19 +576,51 @@ pub(crate) fn extract_gpu_batched_meshes(
         if batch.max_capacity == 0 {
             continue;
         }
+        live.insert(entity);
+        let main_entity = MainEntity::from(entity);
+        let flags = u16::MAX as u32
+            | if not_receiver {
+                0
+            } else {
+                crate::MeshFlags::SHADOW_RECEIVER.bits()
+            }
+            | if transmitted_receiver {
+                crate::MeshFlags::TRANSMITTED_SHADOW_RECEIVER.bits()
+            } else {
+                0
+            };
+        let world_center =
+            transform.transform_point(bounds.map_or(Vec3::ZERO, |b| b.center.into()));
+        if !batch.is_changed()
+            && let Some(draw) = extracted.0.get_mut(&main_entity)
+            && !touched.iter().any(|mesh| draw.meshes.contains(mesh))
+        {
+            draw.flags = flags;
+            draw.world_center = world_center;
+            continue;
+        }
         // superfargoth patch (own, GS: ranges): the slot layout is checked
-        // here, once per change of the component (extraction only runs for
-        // live entities and the whole map is rebuilt each frame, so "once per
-        // change" is as cheap as the validation is). A bad layout clears the
+        // here, once per change of the component. A bad layout clears the
         // ranges, which is exactly upstream behaviour rather than a dropped
         // batch: the batch keeps drawing its own mesh.
         let mut ranges = Vec::new();
+        let mut batch_meshes = HashSet::new();
+        batch_meshes.insert(batch.mesh.id());
+        let mut materials = Vec::new();
+        let mut seen_materials = HashSet::new();
         match validate_ranges(&batch.ranges, batch.max_capacity) {
             Ok(()) => {
+                ranges.reserve_exact(batch.ranges.len());
                 for range in &batch.ranges {
                     let local_bounds = *mesh_bounds
                         .entry(range.mesh.id())
                         .or_insert_with(|| meshes.get(&range.mesh).and_then(Mesh::get_aabb));
+                    batch_meshes.insert(range.mesh.id());
+                    if let Some(material) = range.material
+                        && seen_materials.insert(material)
+                    {
+                        materials.push(material);
+                    }
                     ranges.push(ExtractedRange {
                         mesh: range.mesh.id(),
                         first_index: range.first_index,
@@ -561,8 +640,10 @@ pub(crate) fn extract_gpu_batched_meshes(
                 );
             }
         }
+        *next_version = next_version.wrapping_add(1);
+        reextracted += 1;
         extracted.0.insert(
-            entity.into(),
+            main_entity,
             ExtractedGpuBatchedMesh {
                 mesh_asset_id: batch.mesh.id(),
                 max_capacity: batch.max_capacity,
@@ -571,22 +652,17 @@ pub(crate) fn extract_gpu_batched_meshes(
                 local_bounds: *mesh_bounds
                     .entry(batch.mesh.id())
                     .or_insert_with(|| meshes.get(&batch.mesh).and_then(Mesh::get_aabb)),
-                flags: u16::MAX as u32
-                    | if not_receiver {
-                        0
-                    } else {
-                        crate::MeshFlags::SHADOW_RECEIVER.bits()
-                    }
-                    | if transmitted_receiver {
-                        crate::MeshFlags::TRANSMITTED_SHADOW_RECEIVER.bits()
-                    } else {
-                        0
-                    },
-                world_center: transform
-                    .transform_point(bounds.map_or(Vec3::ZERO, |b| b.center.into())),
+                flags,
+                world_center,
+                // superfargoth patch (own, GS: change detection)
+                version: *next_version,
+                meshes: batch_meshes,
+                materials,
             },
         );
     }
+    extracted.0.retain(|entity, _| live.contains(&entity.id()));
+    range_cache.set_extracted_batches(reextracted);
 }
 
 fn prepare_gpu_batched_mesh_reservations(
@@ -614,6 +690,17 @@ fn prepare_gpu_batched_mesh_reservations(
     }
 }
 
+// superfargoth patch (own, GS: change detection): a batch's geometry ranges are
+// resolved against the allocator and the material bindings only on a
+// `GpuBatchRangeCache` miss (see `range_cache` for what is cached and what
+// invalidates it); a steady frame does O(batches) work here, not O(ranges).
+// What stays per frame: the batch's own template (its timestamp changes every
+// frame) and its input base, which moves with the number of ordinary mesh
+// inputs. The spans embed that base and are rebuilt only when it or the ranges
+// moved. Debug builds re-resolve every cached batch and assert the cache
+// matches, so a missing invalidation (stale offsets: garbage geometry) fails
+// loudly instead of drawing.
+#[allow(clippy::too_many_arguments)]
 fn prepare_gpu_batched_mesh_draws(
     extracted: Res<ExtractedGpuBatchedMeshes>,
     mut buffers: ResMut<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
@@ -629,8 +716,24 @@ fn prepare_gpu_batched_mesh_draws(
     cache: Res<PipelineCache>,
     pipeline: Option<Res<materialize::MaterializationPipeline>>,
     preprocess: Res<crate::PreprocessPipelines>,
+    // superfargoth patch (own, GS: change detection)
+    mut range_cache: ResMut<GpuBatchRangeCache>,
 ) {
-    batches.clear();
+    // superfargoth patch (own, GS: change detection): before anything below
+    // can skip a batch, so no allocator round or binding change goes unseen.
+    let changes = allocator.changes();
+    range_cache.begin_frame(
+        changes.generation(),
+        allocator.is_added(),
+        changes.meshes(),
+        bindings.is_changed(),
+        |material| bindings.get(material).copied(),
+        |entity| extracted.0.contains_key(entity),
+    );
+    // superfargoth patch (own, GS: change detection): retained rather than
+    // cleared, so a batch's `spans` survive the frame; every batch below starts
+    // the frame "not drawable" (empty `input_range` and `spans`).
+    batches.retain(|entity, _| extracted.0.contains_key(entity));
     materialization
         .jobs
         .retain(|entity, _| extracted.0.contains_key(entity));
@@ -638,6 +741,7 @@ fn prepare_gpu_batched_mesh_draws(
         job.active = false;
     }
     if !support.is_culling_supported() || extracted.0.is_empty() {
+        batches.clear();
         return;
     }
 
@@ -650,13 +754,22 @@ fn prepare_gpu_batched_mesh_draws(
     input.ensure_nonempty();
     let mut scratch_end = input.len().max(culling.len() as usize) as u32;
     for (&entity, draw) in &extracted.0 {
-        let batch = batches.entry(entity).or_insert(RenderMeshInstanceBatch {
-            asset_id: draw.mesh_asset_id,
-            input_range: 0..0,
-            world_center: draw.world_center,
-            // superfargoth patch (own, GS: ranges)
-            spans: Vec::new(),
-        });
+        let batch = batches
+            .entry(entity)
+            .or_insert_with(|| RenderMeshInstanceBatch {
+                asset_id: draw.mesh_asset_id,
+                input_range: 0..0,
+                world_center: draw.world_center,
+                // superfargoth patch (own, GS: ranges)
+                spans: Vec::new(),
+            });
+        batch.asset_id = draw.mesh_asset_id;
+        batch.world_center = draw.world_center;
+        // superfargoth patch (own, GS: change detection): last frame's spans,
+        // put back below if neither the ranges nor the base moved.
+        let previous_base = batch.input_range.start;
+        let mut spans = core::mem::take(&mut batch.spans);
+        batch.input_range = 0..0;
         if !writers_ready {
             continue;
         }
@@ -673,14 +786,47 @@ fn prepare_gpu_batched_mesh_draws(
         };
         template.flags = draw.flags;
         template.timestamp = frame.0;
-        // superfargoth patch (own, GS: ranges): resolve every range against
-        // this frame's slabs and material bindings. Slabs move
-        // (`meshes_displaced_by_slab_growth`), so this is a per-frame check,
-        // not a once-per-change one; a rejected batch leaves `input_range` and
-        // `spans` empty, the port's existing "do not draw this frame" signal,
-        // and its materialization job inactive.
-        let Some(gpu_ranges) = resolve_gpu_ranges(entity, draw, &allocator, &bindings, *binding)
-        else {
+        // superfargoth patch (own, GS: ranges + change detection): resolve the
+        // ranges against this frame's slabs and material bindings on a cache
+        // miss only. A rejected batch leaves `input_range` and `spans` empty,
+        // the port's "do not draw this frame" signal, and its materialization
+        // job inactive, for as long as the cached rejection stands.
+        let resolved_now = range_cache
+            .current(entity, draw.version, *binding)
+            .is_none();
+        if resolved_now {
+            let resolved = resolve_gpu_ranges(draw, &allocator, &bindings, *binding);
+            if let Err(RangeResolveError { range, why }) = resolved {
+                warn_once!(
+                    "GpuBatchedMesh3d {entity:?} geometry range {range} {why}; the batch draws \
+                     nothing until its ranges, meshes or materials change"
+                );
+            }
+            let inputs = BatchRangeInputs {
+                extract_version: draw.version,
+                batch_binding: *binding,
+                meshes: draw.meshes.clone(),
+                material_bindings: draw
+                    .materials
+                    .iter()
+                    .map(|material| (*material, bindings.get(material).copied()))
+                    .collect(),
+            };
+            range_cache.insert(entity, inputs, draw.ranges.len(), resolved);
+        }
+        let Some(cached) = range_cache.current(entity, draw.version, *binding) else {
+            continue;
+        };
+        #[cfg(debug_assertions)]
+        if !resolved_now {
+            assert!(
+                resolve_gpu_ranges(draw, &allocator, &bindings, *binding) == *cached,
+                "GpuBatchedMesh3d {entity:?}: its cached geometry ranges no longer match the \
+                 allocator and material bindings (an invalidation is missing in \
+                 `gpu_instance_batch::range_cache`)"
+            );
+        }
+        let Ok(gpu_ranges) = cached else {
             continue;
         };
         let base = scratch_end;
@@ -692,20 +838,28 @@ fn prepare_gpu_batched_mesh_draws(
             MeshCullingData::new(draw.local_bounds.as_ref()),
             base,
             draw.max_capacity,
-            // superfargoth patch (own, GS: ranges)
-            &gpu_ranges,
+            // superfargoth patch (own, GS: ranges + change detection)
+            gpu_ranges,
+            resolved_now,
         );
         batch.input_range = base..scratch_end;
         // superfargoth patch (own, GS: ranges): one span per range, in slot
         // order, tiling `input_range`; one span for the whole batch when it
-        // has no ranges (upstream #25978).
-        batch.spans = batch_spans(
-            base,
-            draw.max_capacity,
+        // has no ranges (upstream #25978). (own, GS: change detection): reused
+        // while the ranges and the base stay put.
+        let slot_spans = || {
             draw.ranges
                 .iter()
-                .map(|range| (range.first_slot, range.slot_count)),
+                .map(|range| (range.first_slot, range.slot_count))
+        };
+        if resolved_now || previous_base != base || spans.is_empty() {
+            spans = batch_spans(base, draw.max_capacity, slot_spans());
+        }
+        debug_assert!(
+            spans == batch_spans(base, draw.max_capacity, slot_spans()),
+            "GpuBatchedMesh3d {entity:?}: reused spans are stale"
         );
+        batch.spans = spans;
     }
     if !materialization.jobs.is_empty() {
         input.reserve_gpu(scratch_end, &device);
@@ -714,37 +868,31 @@ fn prepare_gpu_batched_mesh_draws(
 }
 
 // superfargoth patch (own, GS: ranges)
-/// Resolves a batch's geometry ranges into this frame's GPU range records, or
-/// `None` (warning once) if any range cannot be drawn by the batch's single
-/// indirect draw.
+/// Resolves a batch's geometry ranges into GPU range records against the
+/// current slabs and material bindings, or names the first range that the
+/// batch's single indirect draw cannot draw. Logging is the caller's: the
+/// debug-build cache check calls this too.
 ///
 /// Returns an empty vector for a batch without ranges: it draws its own mesh,
 /// exactly as upstream #25978 drew it.
 fn resolve_gpu_ranges(
-    entity: MainEntity,
     draw: &ExtractedGpuBatchedMesh,
     allocator: &MeshAllocator,
     bindings: &RenderMaterialBindings,
     batch_binding: MaterialBindingId,
-) -> Option<Vec<GpuBatchGeometryRange>> {
+) -> ResolvedRanges {
     if draw.ranges.is_empty() {
-        return Some(Vec::new());
+        return Ok(Vec::new());
     }
     let batch_slabs = allocator.mesh_slabs(&draw.mesh_asset_id);
-    let mut records = Vec::with_capacity(draw.ranges.len());
-    for (index, range) in draw.ranges.iter().enumerate() {
-        match resolve_gpu_range(range, allocator, bindings, batch_binding, batch_slabs.as_ref()) {
-            Ok(record) => records.push(record),
-            Err(why) => {
-                warn_once!(
-                    "GpuBatchedMesh3d {entity:?} geometry range {index} {why}; the batch draws \
-                     nothing this frame"
-                );
-                return None;
-            }
-        }
-    }
-    Some(records)
+    draw.ranges
+        .iter()
+        .enumerate()
+        .map(|(index, range)| {
+            resolve_gpu_range(range, allocator, bindings, batch_binding, batch_slabs.as_ref())
+                .map_err(|why| RangeResolveError { range: index, why })
+        })
+        .collect()
 }
 
 // superfargoth patch (own, GS: ranges)

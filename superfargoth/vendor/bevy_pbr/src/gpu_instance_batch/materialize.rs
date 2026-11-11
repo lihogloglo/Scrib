@@ -117,6 +117,10 @@ impl MaterializationJob {
         // superfargoth patch (own, GS: ranges): empty = draw the batch's own
         // mesh over every slot, which is upstream #25978.
         ranges: &[GpuBatchGeometryRange],
+        // superfargoth patch (own, GS: change detection): `false` when `ranges`
+        // is the same cached table as at the last update (`GpuBatchRangeCache`
+        // hit), which skips the O(ranges) comparison below.
+        ranges_resolved: bool,
     ) {
         self.metadata.set(MaterializationMetadata {
             template,
@@ -132,7 +136,12 @@ impl MaterializationJob {
         // that keeps the binding non-empty.
         let unchanged = !self.ranges.is_empty()
             && self.range_count == ranges.len() as u32
-            && self.ranges.values()[..ranges.len()] == *ranges;
+            // superfargoth patch (own, GS: change detection)
+            && (!ranges_resolved || self.ranges.values()[..ranges.len()] == *ranges);
+        debug_assert!(
+            !unchanged || self.ranges.values()[..ranges.len()] == *ranges,
+            "a cached range table differs from the uploaded one"
+        );
         if !unchanged {
             self.range_count = ranges.len() as u32;
             self.ranges.clear();

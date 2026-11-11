@@ -8544,6 +8544,7 @@ dependencies = [
  "sf_model",
  "sf_model_bevy",
  "sf_scene",
+ "sf_shadow_cache_bevy",
  "sf_vfs",
  "sf_world",
  "sf_world_bevy",

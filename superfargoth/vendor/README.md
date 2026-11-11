@@ -153,6 +153,13 @@ solving the same problem by some other means. Nothing in `docs/specs/static-scen
   `docs/test-pass-handoffs/gs-slice-b2.md`). `bevy_render::settings` re-exports `Backend` so the gate is
   testable without a GPU. Also `own, GS: guards`: both batching callers now `warn_once` instead of
   silently dropping every instance batch in a `NoIndirectDrawing` view (plan step 4.2's per-view warning).
+- Tag `change detection` (perf audit 2026-11-11 fix 2; UE cached mesh draw commands): extraction persists and
+  re-extracts a batch only on change or a mesh asset event; `gpu_instance_batch/range_cache.rs` caches resolved
+  ranges until a new extraction, a binding move or a `MeshAllocator::changes()` round (`bevy_render`, new
+  generation counter) names one of its meshes; debug builds assert hits. Tests: `sf_world_bevy` `gpu_batch_cache_tests.rs`.
+- Tag `light visibility set` (perf audit 2026-11-11 fix 5): `add_gpu_batched_meshes_to_light_visibility` runs in the
+  public set `gpu_instance_batch::GpuBatchedLightVisibility`, so `sf_shadow_cache_bevy` filters the light face lists
+  after the batches joined them (the pair was unordered).
 
 ## Upstream PR fixes
 

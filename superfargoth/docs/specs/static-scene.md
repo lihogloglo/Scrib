@@ -215,9 +215,13 @@ The CPU half's work order is [scene-runtime-plan.md](scene-runtime-plan.md); the
   the corrected verdict in its doc comment, since its a-priori ceiling and 64-slot-aligned block starts may earn it a
   place later. **Batch capacity stays fixed at config and is never grown at stream-in** - growing it reallocates the
   output buffer and rebuilds a bind group, which "stream-in <= 0.2 ms, zero spawns" cannot pay - so overflow leaves
-  those placements out of the table to spawn as entities, counted and warned once. The 4096-slot default is an
-  **untested guess**: A5's walk already used ~67 % of it at 25 resident cells with only four chains, and the ceiling
-  that matters is the product `batches x batch_capacity` (~16 batches fit the Steam Deck). **The measurement tables,
+  those placements out of the table to spawn as entities, counted and warned once per class. **Capacity is per
+  material class** (`SpaceConfig::class_capacity`, fix 3, 2026-11-12), since GPU preprocessing dispatches the
+  *reserved* slots in every view: a uniform 4096 overflowed Balmora's two big classes (~19.2k live over four batches)
+  while two sat empty, and a uniform 32768 reserved 131k. Provisional defaults (fixed pools sized from measured
+  residency plus headroom): opaque 16k, masked 8k, masked two-sided and its wind twin 4k, the rare classes 1-2k
+  (38.9k if all eight are used), single-chain batches 1k; the producer re-tunes them from
+  `scene/batch/<class>/{live,high_water,capacity,overflow}`. **The measurement tables,
   the per-allocator high-water curves and the `bump = sum of size(c)*peak(c)` identity are not reproduced here**:
   scene-runtime-plan.md §4.4 and `docs/briefs/scene-core-a5-a6.md` §3 both carry them in full, with the tests.
 - **Origin shifts** (`big_space`): instance transforms are cell-relative; the per-view pass adds the camera-relative
@@ -387,13 +391,10 @@ permanently true on every shadow-mapped lamp face as soon as one batch exists, d
 The fix is a per-batch **generation counter** fed into the hash, not a bigger entity count: per-batch visible counts
 are GPU-side only. **Measure the lamp cache before and after S3b with that in mind.**
 
-**An ordering gap, for review at S6.** Two `PostUpdate` systems both sit `.after(SimulationLightSystems::CheckLightVisibility)`
-with **no ordering between them**: the cache's `classify_lights` (`sf_shadow_cache_bevy/src/lib.rs:185`), which filters
-a cached light's `CubemapVisibleEntities` down to its movers (`filter_faces`, `lib.rs:416-425`), and the port's
-`add_gpu_batched_meshes_to_light_visibility` (`vendor/bevy_pbr/src/gpu_instance_batch/mod.rs:366-372`, body `:895`),
-which adds batch entities to those same lists. Whichever runs second decides what a cached face draws — all the
-statics, or none of them — and nothing in either schedule says which it is. The gap is latent today (no batch entities
-exist yet) and must be closed with an explicit `.after()` before lamp faces read the table.
+**Lamp cache and batches (closed 2026-11-12, perf audit fix 5).** A batch entity is a **static caster** of the lamp
+cache: `classify_lights` runs after the port's public set `GpuBatchedLightVisibility`, so batches go into capture face
+lists and out of cached ones, and `sf_scene_bevy::shadows` sends `sf_shadow_cache_bevy::ShadowCastersChanged` (the
+cell's table bounds) when a cell commits, streams out or promotes a placement, which recaptures the lamps it reaches.
 
 ### 9. Far field on the same table
 

@@ -63,7 +63,7 @@ pub use product::{
     parse_chain_subject,
 };
 pub use space::{
-    BatchGranularity, BatchId, BatchKey, CellPlan, CellRelease, CellResidency, ChainSlabs, DrawSlabs, M1_LEVEL,
+    BatchGranularity, BatchGroupStats, BatchId, BatchKey, CellPlan, CellRelease, CellResidency, ChainSlabs, DrawSlabs, M1_LEVEL,
     NO_SLOT, RangeSpec, SceneError, SceneSpace, SlabId, SlotWrite, SpaceConfig, SpaceId, SpaceStats, UNRESOLVED,
 };
 pub use table::{

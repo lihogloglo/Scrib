@@ -30,6 +30,16 @@
 //! shadows off isn't enough: the cache would track it). Hosts on a floating
 //! origin report shifts with [`ShadowOriginShift`]. A torch's flicker changes
 //! intensity only: no recapture.
+//!
+//! **GPU instance batches** (`bevy_pbr::gpu_instance_batch::GpuBatchedMesh3d`,
+//! e.g. the static scene's retained batches) are static casters: one batch
+//! entity draws many instances whose placement lives in GPU slots, so the cache
+//! has no transform to watch. It captures them with the other statics (they
+//! join the light face lists in `GpuBatchedLightVisibility`, which
+//! [`classify_lights`] runs after) and keeps them out of cached faces. Their
+//! producer reports where their instances changed (slots written or released)
+//! with [`ShadowCastersChanged`], which recaptures the lights that sphere
+//! touches; a batch whose instances move every frame must be `NotShadowCaster`.
 
 
 mod render;
@@ -47,6 +57,7 @@ use bevy_light::{NotShadowCaster, PointLight, PointLightShadowMap, SimulationLig
 use bevy_math::{Affine3A, Vec3, Vec3A};
 use bevy_mesh::skinning::SkinnedMesh;
 use bevy_mesh::Mesh3d;
+use bevy_pbr::gpu_instance_batch::GpuBatchedLightVisibility;
 use bevy_time::Time;
 use bevy_transform::components::GlobalTransform;
 use bevy_transform::TransformSystems;
@@ -157,6 +168,25 @@ impl ShadowCacheStats {
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct ShadowOriginShift(pub Vec3);
 
+/// Static casters the cache cannot track as entities changed inside this
+/// sphere (render space, world units): a GPU instance batch's slots were written
+/// or released (a cell streamed its statics in or out). Every cached light the
+/// sphere reaches recaptures on its schedule, as when a baked mesh in its range
+/// changes. Write it in the frame of this frame's origin shift, before
+/// [`ShadowCacheSystems`] (a later one is read the next frame).
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub struct ShadowCastersChanged {
+    pub center: Vec3,
+    pub radius: f32,
+}
+
+impl ShadowCastersChanged {
+    /// The sphere around a box.
+    pub fn from_aabb(min: Vec3, max: Vec3) -> Self {
+        Self { center: (min + max) * 0.5, radius: (max - min).length() * 0.5 }
+    }
+}
+
 /// The cache's main-world systems (`PostUpdate`).
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ShadowCacheSystems;
@@ -168,31 +198,38 @@ impl Plugin for ShadowCachePlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "copy_depth.wesl");
         let shared = SharedCaptures::default();
-        app.init_resource::<ShadowCacheSettings>()
-            .init_resource::<ShadowCacheStats>()
-            .init_resource::<ShadowOriginShift>()
-            .init_resource::<Casters>()
-            .init_resource::<Lights>()
-            .init_resource::<render::CacheFrame>()
-            .insert_resource(shared.clone())
-            .add_systems(
-                PostUpdate,
-                (
-                    track_casters
-                        .after(TransformSystems::Propagate)
-                        .after(VisibilitySystems::VisibilityPropagate)
-                        .after(VisibilitySystems::CalculateBounds),
-                    classify_lights.after(SimulationLightSystems::CheckLightVisibility),
-                )
-                    .chain()
-                    .in_set(ShadowCacheSystems),
-            );
+        add_main_world(app, shared.clone());
         render::build(app, shared);
     }
 
     fn finish(&self, app: &mut App) {
         render::finish(app);
     }
+}
+
+/// The plugin's main-world half (resources, messages, [`ShadowCacheSystems`]).
+fn add_main_world(app: &mut App, shared: SharedCaptures) {
+    app.init_resource::<ShadowCacheSettings>()
+        .init_resource::<ShadowCacheStats>()
+        .init_resource::<ShadowOriginShift>()
+        .add_message::<ShadowCastersChanged>()
+        .init_resource::<Casters>()
+        .init_resource::<Lights>()
+        .init_resource::<render::CacheFrame>()
+        .insert_resource(shared)
+        .add_systems(
+            PostUpdate,
+            (
+                track_casters
+                    .after(TransformSystems::Propagate)
+                    .after(VisibilitySystems::VisibilityPropagate)
+                    .after(VisibilitySystems::CalculateBounds),
+                // After the GPU instance batches joined the face lists: they are statics.
+                classify_lights.after(SimulationLightSystems::CheckLightVisibility).after(GpuBatchedLightVisibility),
+            )
+                .chain()
+                .in_set(ShadowCacheSystems),
+        );
 }
 
 /// Faces captured by the render world: light (main entity) → (generation,
@@ -244,8 +281,9 @@ struct Casters {
     moving: EntityHashSet,
     /// Spheres whose baked depth changed this frame.
     dirty: Vec<(Sphere, Entity)>,
-    /// Dirty events since start: removed, moved after bake, static changed, settled.
-    kinds: [u64; 4],
+    /// Dirty events since start: removed, moved after bake, static changed, settled,
+    /// reported ([`ShadowCastersChanged`]).
+    kinds: [u64; 5],
 }
 
 type CasterItem<'a> = (Entity, &'a GlobalTransform, Option<Ref<'a, Aabb>>, Option<&'a ShadowMobility>, Has<SkinnedMesh>, &'a InheritedVisibility);
@@ -253,7 +291,10 @@ type CasterChanged = (With<Mesh3d>, Without<NotShadowCaster>, Or<(Changed<Global
 
 /// Classifies casters (moving or baked) and collects the spheres whose baked
 /// depth changed: a baked caster that moved (old and new place), a caster
-/// that settled, a baked caster that went away.
+/// that settled, a baked caster that went away, and what producers of GPU
+/// instance batches report ([`ShadowCastersChanged`], no entity:
+/// `Entity::PLACEHOLDER`).
+#[allow(clippy::too_many_arguments)]
 fn track_casters(
     time: Res<Time>,
     settings: Res<ShadowCacheSettings>,
@@ -262,6 +303,7 @@ fn track_casters(
     changed: Query<CasterItem, CasterChanged>,
     mut removed: RemovedComponents<Mesh3d>,
     ancestors: Query<(Option<&ShadowMobility>, Option<&ChildOf>)>,
+    mut reported: MessageReader<ShadowCastersChanged>,
 ) {
     let now = time.elapsed_secs();
     let c = &mut *casters;
@@ -271,6 +313,10 @@ fn track_casters(
             k.sphere.center += shift.0;
             k.at.translation += Vec3A::from(shift.0);
         }
+    }
+    for change in reported.read() {
+        c.dirty.push((Sphere { center: change.center, radius: change.radius }, Entity::PLACEHOLDER));
+        c.kinds[4] += 1;
     }
     for entity in removed.read() {
         if let Some(old) = c.map.remove(&entity) {
@@ -633,6 +679,9 @@ fn classify_lights(
         *next_report = now + 5.0;
         // A mover's own name, else its nearest named ancestor's.
         let name = |e: Entity| {
+            if e == Entity::PLACEHOLDER {
+                return "reported change".to_owned();
+            }
             let mut at = Some(e);
             for _ in 0..6 {
                 let Some(x) = at else { break };
@@ -651,7 +700,7 @@ fn classify_lights(
         }
         log::debug!(
             "shadow cache: {} cached ({} of {} faces hold a mover), {} capturing, {} uncached, {} captures so far (recaptures: {} moved, {} touched); {} moving casters \
-             (settling {}, skinned {}, moved after bake {}, movable {}), e.g. {movers:?}; recaptured by {dirtied:?}; dirty events (removed, moved, static, settled) {:?}",
+             (settling {}, skinned {}, moved after bake {}, movable {}), e.g. {movers:?}; recaptured by {dirtied:?}; dirty events (removed, moved, static, settled, reported) {:?}",
             counts.cached,
             counts.mover_faces,
             counts.cached * 6,
@@ -695,6 +744,101 @@ mod tests {
         // this frame keeps it.
         assert_eq!(lights.allocate(2), Some(a));
         assert_eq!(lights.allocate(2), None);
+    }
+
+    use bevy_pbr::gpu_instance_batch::GpuBatchedMesh3d;
+
+    /// Stands in for the vendored `add_gpu_batched_meshes_to_light_visibility`
+    /// (crate-private there), in its public set: every batch joins every face.
+    fn batches_join_faces(batches: Query<Entity, With<GpuBatchedMesh3d>>, mut lights: Query<&mut CubemapVisibleEntities>) {
+        for mut faces in &mut lights {
+            for face in faces.iter_mut() {
+                for batch in &batches {
+                    if let Err(i) = face.entities.binary_search(&batch) {
+                        face.entities.insert(i, batch);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The main-world half with a lamp at the origin (range 10) and a batch.
+    fn lamp_and_batch() -> (App, Entity, Entity) {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        add_main_world(&mut app, SharedCaptures::default());
+        app.add_systems(PostUpdate, batches_join_faces.in_set(GpuBatchedLightVisibility));
+        // Both write the face lists: an unordered pair fails the schedule build instead of
+        // passing on whichever order the executor happens to pick.
+        app.edit_schedule(PostUpdate, |schedule| {
+            schedule.set_build_settings(bevy_ecs::schedule::ScheduleBuildSettings {
+                ambiguity_detection: bevy_ecs::schedule::LogLevel::Error,
+                ..Default::default()
+            });
+        });
+        // Time stands still here: recapture as soon as a change is seen.
+        app.world_mut().resource_mut::<ShadowCacheSettings>().recapture_interval = 0.0;
+        let light = app
+            .world_mut()
+            .spawn((PointLight { shadow_maps_enabled: true, range: 10.0, ..Default::default() }, GlobalTransform::default(), ViewVisibility::VISIBLE))
+            .id();
+        let batch = app.world_mut().spawn(GpuBatchedMesh3d { mesh: bevy_asset::Handle::default(), max_capacity: 16, ranges: Vec::new() }).id();
+        (app, light, batch)
+    }
+
+    fn frame(app: &App) -> &render::CacheFrame {
+        app.world().resource::<render::CacheFrame>()
+    }
+
+    /// The render world confirms all six faces of the light's current capture.
+    fn confirm(app: &mut App, light: Entity) {
+        let generation = app.world().resource::<Lights>().map[&light].generation;
+        let shared = app.world().resource::<SharedCaptures>().clone();
+        shared.0.lock().unwrap().insert(light, (generation, 0x3F));
+    }
+
+    fn is_valid(app: &App, light: Entity) -> bool {
+        frame(app).lights.iter().any(|l| l.light == light && !l.capture)
+    }
+
+    #[test]
+    fn batches_are_captured_as_statics_and_kept_out_of_cached_faces() {
+        let (mut app, light, batch) = lamp_and_batch();
+        // Frame 1 sizes the texture (everything recaptures); frame 2 captures.
+        app.update();
+        app.update();
+        let request = frame(&app).captures.iter().find(|c| c.light == light).expect("the lamp captures");
+        for face in &request.faces {
+            assert!(face.iter().any(|(_, main)| main.id() == batch), "the batch is in every capture face");
+        }
+        confirm(&mut app, light);
+        app.update();
+        assert!(is_valid(&app, light), "cached after the confirmed capture");
+        let cached = frame(&app).lights.iter().find(|l| l.light == light).unwrap();
+        assert_eq!(cached.movers, 0, "no face keeps a Bevy view for the batch");
+        let faces = app.world().get::<CubemapVisibleEntities>(light).unwrap();
+        assert!(faces.iter().all(|f| !f.entities.contains(&batch)), "the batch is drawn from the cache, not live");
+    }
+
+    #[test]
+    fn reported_change_recaptures_only_the_lights_it_reaches() {
+        let (mut app, light, _) = lamp_and_batch();
+        app.update();
+        app.update();
+        confirm(&mut app, light);
+        app.update();
+        assert!(is_valid(&app, light));
+        // Out of range (12 > 10 + 1): stays cached.
+        app.world_mut().write_message(ShadowCastersChanged { center: Vec3::new(12.0, 0.0, 0.0), radius: 1.0 });
+        app.update();
+        assert!(is_valid(&app, light));
+        assert_eq!(app.world().resource::<ShadowCacheStats>().touched, 0);
+        // A cell streaming in next to it: back to capture.
+        app.world_mut().write_message(ShadowCastersChanged::from_aabb(Vec3::new(8.0, -1.0, -1.0), Vec3::new(14.0, 1.0, 1.0)));
+        app.update();
+        assert_eq!(app.world().resource::<ShadowCacheStats>().touched, 1);
+        assert!(frame(&app).captures.iter().any(|c| c.light == light), "recapturing");
+        assert!(!is_valid(&app, light));
     }
 
     #[test]

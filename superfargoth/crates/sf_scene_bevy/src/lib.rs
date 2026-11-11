@@ -33,6 +33,7 @@ mod assets;
 pub mod chains;
 pub mod gauges;
 pub mod residency;
+pub mod shadows;
 pub mod shift;
 pub mod slabs;
 pub mod upload;
@@ -48,8 +49,11 @@ pub use residency::{
     BatchEntity, BatchZeroFill, CellLoad, CellUpload, LoadPhase, PromotePlacement, SLAB_WAIT_FRAMES, SceneBatch, SceneFrame, SceneHook,
     SceneInbox, SceneSpaces, SceneUploads, SpaceState, apply_promotions, despawn_empty_batches, poll_cell_loads, tick_frame,
 };
+pub use shadows::{ReportedCells, report_shadow_casters};
 pub use shift::rewrite_on_origin_shift;
-pub use slabs::{ChainIds, ChainSlabTable, MeshSlabIds, extract_chain_slabs};
+pub use slabs::{
+    ChainIds, ChainSlabTable, MeshSlabIds, Pending, chain_slabs_pending, extract_chain_slabs, invalidate_chain_slabs,
+};
 pub use upload::{
     BatchSlotWrite, PendingSceneWrites, SlotRun, extract_scene_uploads, gpu_instance, instance_bytes, publish_scene, slot_runs,
 };
@@ -65,6 +69,7 @@ use bevy_render::renderer::RenderGraph;
 use bevy_render::{ExtractSchedule, MainWorld, RenderApp};
 use sf_diag_bevy::DiagCounters;
 use sf_scene::{CELLS_EXT, CELLS_STEP, CHAINS_EXT, CHAINS_STEP, SpaceConfig};
+use sf_shadow_cache_bevy::ShadowCacheSystems;
 use sf_world::WorldspaceId;
 use sf_world_bevy::{SceneCells, StreamingSystems, WorldOriginSystems};
 
@@ -178,6 +183,9 @@ impl Plugin for ScenePlugin {
             .add_systems(Update, poll_cell_loads.in_set(SceneSystems::Residency))
             .add_systems(Update, apply_promotions.in_set(SceneSystems::Promote))
             .add_systems(PostUpdate, rewrite_on_origin_shift.after(WorldOriginSystems))
+            // Fix 5: the cached lamp shadows recapture where batch slots changed (`shadows`).
+            .init_resource::<ReportedCells>()
+            .add_systems(PostUpdate, report_shadow_casters.after(WorldOriginSystems).before(ShadowCacheSystems))
             .add_systems(Last, publish_scene_gauges.run_if(resource_exists::<DiagCounters>));
         if self.config.enabled {
             app.insert_resource(SceneCells(Some(Arc::new(SceneHook))));
@@ -191,7 +199,10 @@ impl Plugin for ScenePlugin {
         // The batch-slot writer (`upload` module): extracted, then published before materialization.
         render_app
             .init_resource::<PendingSceneWrites>()
-            .add_systems(ExtractSchedule, (extract_scene_support, extract_chain_slabs, extract_scene_uploads))
+            .add_systems(
+                ExtractSchedule,
+                (extract_scene_support, extract_chain_slabs.run_if(chain_slabs_pending), extract_scene_uploads),
+            )
             .add_systems(
                 RenderGraph,
                 publish_scene
@@ -199,6 +210,9 @@ impl Plugin for ScenePlugin {
                     .run_if(resource_exists::<GpuInstanceBatchReservations>),
             );
         app.world_mut().resource_mut::<ChainSlabTable>().tracking = true;
+        // A re-allocated mesh or re-prepared material is asked about again (`slabs` module docs,
+        // "Invalidation"): `Last` sees this frame's asset events before this frame's extract.
+        app.add_systems(Last, invalidate_chain_slabs);
         // Whether the adapter can draw the scene at all (GPU culling); the first extract answers.
         app.insert_resource(SceneSupport::Unknown);
     }

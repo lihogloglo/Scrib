@@ -189,3 +189,6 @@ mod tests;
 // Sanity checks for the vendored bevyengine/bevy#25978 port (static-scene.md S3a).
 #[cfg(test)]
 mod gpu_batch_tests;
+// Patch GS change detection: the range cache and allocator generation (static-scene perf fix 2).
+#[cfg(test)]
+mod gpu_batch_cache_tests;

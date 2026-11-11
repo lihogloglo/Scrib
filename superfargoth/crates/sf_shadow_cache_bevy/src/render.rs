@@ -444,7 +444,9 @@ fn confirm_capture(
     waits.0 += 1;
     if !(phase.multidrawable_meshes.keys().all(ready)
         && phase.batchable_meshes.keys().all(|(k, _)| ready(k))
-        && phase.unbatchable_meshes.keys().all(|(k, _)| ready(k)))
+        && phase.unbatchable_meshes.keys().all(|(k, _)| ready(k))
+        // GPU instance batches (static casters, drawn from their own bins).
+        && phase.instance_batches.keys().all(|(k, _)| ready(k)))
     {
         waits.1 += 1;
         if waits.1.is_power_of_two() {

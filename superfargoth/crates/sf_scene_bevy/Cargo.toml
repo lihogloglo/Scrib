@@ -35,6 +35,8 @@ sf_diag_bevy.workspace = true
 # CookedModelAsset (a chain product is an `.sfmesh`), baked_path.
 sf_model_bevy.workspace = true
 sf_scene.workspace = true
+# ShadowCastersChanged: where batch slots changed, for the cached lamp shadows (`shadows`).
+sf_shadow_cache_bevy.workspace = true
 # WorldspaceId, PlacementId.
 sf_world.workspace = true
 # The CellScene hook this crate implements.

@@ -208,8 +208,9 @@ pub struct CellPlan {
     /// one of whose parts overflowed is **not** here — it spawns whole, and its other parts' slots
     /// are written inactive.
     pub covered: Vec<PlacementId>,
-    /// The batches that were full, once each: `scene/overflow/*` and the one-time warning.
-    pub overflowed: Vec<BatchKey>,
+    /// The batches that were full, once each, with the instances each left to the entity path:
+    /// `scene/overflow/*`, `scene/batch/<class>/overflow` and the once-per-group warning.
+    pub overflowed: Vec<(BatchKey, u32)>,
 }
 
 /// What [`SceneSpace::plan_out`] freed.
@@ -253,8 +254,14 @@ pub struct SpaceStats {
     /// Output slots ever handed out, summed over the batches: `batch_live_slots` at its peak is
     /// what perfect packing would need, this is what first fit needs.
     pub batch_high_water: u32,
-    /// Output slots the batches reserve: `batches × batch_capacity`, **per view**.
+    /// Output slots the batches reserve, summed over their own capacities
+    /// ([`SpaceConfig::capacity_of_key`]), **per view**.
     pub batch_capacity: u32,
+    /// The batches of each material class (single-chain batches excluded), indexed by
+    /// `MaterialClass as usize`.
+    pub classes: [BatchGroupStats; MaterialClass::ALL.len()],
+    /// Every single-chain batch (`BatchKey::chain` is `Some`), whatever its class.
+    pub chain_batches: BatchGroupStats,
     /// Resident cells that overflowed at least one batch.
     pub overflow_cells: u32,
     /// Instances left to the entity path because their batch was full.
@@ -290,21 +297,105 @@ pub struct SpaceConfig {
     pub granularity: BatchGranularity,
     /// Frames the GPU may still be reading a released slot: every reuse waits that long.
     pub frames_in_flight: u32,
-    /// Output slots per batch, **fixed here and never grown at stream-in** (plan §4.4): growing
+    /// Output slots per batch of each material class, indexed by `MaterialClass as usize`
+    /// ([`Self::capacity_of`]), **fixed here and never grown at stream-in** (plan §4.4): growing
     /// it would reallocate the batch's output buffer and rebuild its materialize bind group.
-    pub batch_capacity: u32,
+    ///
+    /// Per class, not uniform, because GPU preprocessing dispatches a batch's *reserved*
+    /// capacity in every view (~176 B per slot per view), and classes differ by orders of
+    /// magnitude in use: a uniform 4096 overflowed the two big classes of a dense town (~19.2k
+    /// resident instances over four batches, 2026-11-11) while the other two sat nearly empty,
+    /// and a uniform 32768 reserved 131k slots for 19.2k live. The industry answer is a fixed
+    /// pool per bucket sized from measured residency plus headroom; right-sizing it is the
+    /// producer's job, from the `scene/batch/<class>/*` gauges. See
+    /// [`Self::DEFAULT_CLASS_CAPACITY`] for the provisional defaults.
+    pub class_capacity: [u32; MaterialClass::ALL.len()],
+    /// Output slots of a single-chain batch (`BatchKey::chain` is `Some`): every batch under
+    /// [`BatchGranularity::PerChain`], and under `PerClass` a chain whose slabs were not
+    /// resolved at stream-in. Such a batch holds one chain level's instances across the
+    /// resident cells, and there is one per chain level, so its reservation is multiplied by
+    /// the number of resident chain levels: it stays small ([`Self::DEFAULT_CHAIN_CAPACITY`]).
+    /// What it cannot hold spawns as entities, as any overflow does, and is gauged as
+    /// `scene/batch/chain/*`.
+    pub chain_capacity: u32,
+}
+
+impl SpaceConfig {
+    /// Provisional per-class capacities (`MaterialClass` order: opaque, opaque two-sided,
+    /// masked, masked two-sided, opaque wind, opaque wind two-sided, masked wind, masked wind
+    /// two-sided), 38 912 slots if every class is present. The only measurement so far is a
+    /// dense town at ~19.2k resident instances, two classes each well past 4096 and two nearly
+    /// empty, so: the plain opaque and masked classes, which carry most static architecture
+    /// in any content, are large (16k, 8k: the two big classes' ~18k plus first fit's ~1.17×
+    /// and stream-in headroom); masked two-sided, the foliage card class, and its wind twin get
+    /// 4k; the rest (two-sided opaque, wind) are rare in statics and get 1-2k. Which classes a
+    /// pack actually uses is not knowable here: re-tune from `scene/batch/<class>/high_water`.
+    pub const DEFAULT_CLASS_CAPACITY: [u32; MaterialClass::ALL.len()] = [16384, 2048, 8192, 4096, 1024, 1024, 2048, 4096];
+    /// One chain level's instances across the resident cells: a few hundred for the most
+    /// repeated mesh of a town, so 1024 holds it with room while hundreds of such batches
+    /// (one per chain level under `PerChain`) stay affordable per view.
+    pub const DEFAULT_CHAIN_CAPACITY: u32 = 1024;
+
+    /// The output slots of a batch of `class` (not a single-chain one).
+    #[must_use]
+    pub fn capacity_of(&self, class: MaterialClass) -> u32 {
+        self.class_capacity[class as usize]
+    }
+
+    /// The output slots of the batch keyed `key`: its class's, or [`Self::chain_capacity`] for
+    /// a single-chain batch.
+    #[must_use]
+    pub fn capacity_of_key(&self, key: &BatchKey) -> u32 {
+        if key.chain.is_some() { self.chain_capacity } else { self.capacity_of(key.class) }
+    }
+
+    /// This config with every batch, of every class and single-chain, at `capacity` slots.
+    #[must_use]
+    pub fn with_uniform_capacity(self, capacity: u32) -> Self {
+        Self { class_capacity: [capacity; MaterialClass::ALL.len()], chain_capacity: capacity, ..self }
+    }
 }
 
 impl Default for SpaceConfig {
     fn default() -> Self {
-        Self { space: 0, granularity: BatchGranularity::PerClass, frames_in_flight: 3, batch_capacity: 4096 }
+        Self {
+            space: 0,
+            granularity: BatchGranularity::PerClass,
+            frames_in_flight: 3,
+            class_capacity: Self::DEFAULT_CLASS_CAPACITY,
+            chain_capacity: Self::DEFAULT_CHAIN_CAPACITY,
+        }
     }
+}
+
+/// Occupancy of one group of batches (`scene/batch/<class>/*`): the batches of one material
+/// class, or every single-chain batch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BatchGroupStats {
+    pub batches: u32,
+    /// Output slots in live blocks.
+    pub live_slots: u32,
+    /// Output slots ever handed out (first fit's high water), summed over the group's batches.
+    pub high_water: u32,
+    /// Output slots reserved, per view: the sum of the group's batch capacities.
+    pub capacity: u32,
+    /// Instances left to the entity path because a batch of this group was full.
+    pub overflow_instances: u32,
+}
+
+/// Index of a batch's group in [`SpaceStats::classes`], or [`CHAIN_GROUP`].
+const CHAIN_GROUP: usize = MaterialClass::ALL.len();
+
+fn group_of(key: &BatchKey) -> usize {
+    if key.chain.is_some() { CHAIN_GROUP } else { key.class as usize }
 }
 
 /// One batch: its key, its fixed output slots, and what lives in them.
 #[derive(Clone, Debug)]
 struct Batch {
     key: BatchKey,
+    /// Its fixed output slots, [`SpaceConfig::capacity_of_key`] at creation.
+    capacity: u32,
     /// First fit over the batch's fixed capacity (the module docs' measurement).
     slots: SlotAllocator,
     /// Live blocks: first slot → `(chain, level)`. Exactly the allocator's live ranges, so
@@ -327,7 +418,13 @@ pub struct SceneSpace {
     frame: u64,
     overflow_cells: u32,
     overflow_instances: u32,
-    first_overflow: Option<BatchKey>,
+    /// Overflowed instances per batch group (`group_of`).
+    overflow_by_group: [u32; CHAIN_GROUP + 1],
+    /// Batch groups already named by [`Self::take_overflow_warning`] or queued for it: one bit
+    /// per group, set for the run.
+    warned_groups: u16,
+    /// The first overflowed key of each newly overflowed group, waiting to be warned about.
+    pending_warnings: Vec<BatchKey>,
 }
 
 impl SceneSpace {
@@ -342,7 +439,9 @@ impl SceneSpace {
             frame: 0,
             overflow_cells: 0,
             overflow_instances: 0,
-            first_overflow: None,
+            overflow_by_group: [0; CHAIN_GROUP + 1],
+            warned_groups: 0,
+            pending_warnings: Vec::new(),
             config,
         }
     }
@@ -440,7 +539,7 @@ impl SceneSpace {
         let mut batch_ids = vec![BatchId::MAX; table_len as usize];
         let mut blocks: Vec<(BatchId, SlotRange, ChainSlot, u8)> = Vec::new();
         let mut batches: BTreeMap<BatchId, BatchKey> = BTreeMap::new();
-        let mut overflowed: Vec<BatchKey> = Vec::new();
+        let mut overflowed: BTreeMap<BatchKey, u32> = BTreeMap::new();
         for ((key, chain, level), indices) in buckets {
             let id = self.batch_of(key);
             let len = u32::try_from(indices.len()).unwrap_or(u32::MAX);
@@ -456,7 +555,7 @@ impl SceneSpace {
                     }
                 }
                 // The batch is full: these instances spawn as entities (plan §5.3).
-                Err(AllocError::Exhausted { .. }) => overflowed.push(key),
+                Err(AllocError::Exhausted { .. }) => *overflowed.entry(key).or_default() += len,
                 Err(e) => {
                     // Unreachable: a bucket is never empty and a capped allocator cannot overflow
                     // `u32`. Unwound anyway, so no error path can leak a slot.
@@ -503,7 +602,7 @@ impl SceneSpace {
             blocks,
             ranges,
             covered,
-            overflowed,
+            overflowed: overflowed.into_iter().collect(),
         })
     }
 
@@ -514,8 +613,13 @@ impl SceneSpace {
         if !plan.overflowed.is_empty() {
             self.overflow_cells += 1;
             self.overflow_instances += u32::try_from(overflowed).unwrap_or(u32::MAX);
-            if self.first_overflow.is_none() {
-                self.first_overflow = plan.overflowed.first().copied();
+            for &(key, instances) in &plan.overflowed {
+                let group = group_of(&key);
+                self.overflow_by_group[group] = self.overflow_by_group[group].saturating_add(instances);
+                if self.warned_groups & (1 << group) == 0 {
+                    self.warned_groups |= 1 << group;
+                    self.pending_warnings.push(key);
+                }
             }
         }
         let residency = CellResidency {
@@ -614,7 +718,7 @@ impl SceneSpace {
         Ok(writes)
     }
 
-    /// The batch's range list: a **strict partition** of its `0..batch_capacity` output slots,
+    /// The batch's range list: a **strict partition** of its `0..capacity` output slots,
     /// sorted by first slot, every span non-empty, each starting exactly where the previous ended
     /// and the last ending at the capacity — the contract `validate_ranges` enforces
     /// (`vendor/bevy_pbr/src/gpu_instance_batch/mod.rs`).
@@ -630,7 +734,7 @@ impl SceneSpace {
     #[must_use]
     pub fn batch_ranges(&self, batch: BatchId) -> Vec<RangeSpec> {
         let Some(b) = self.batches.get(batch as usize) else { return Vec::new() };
-        let capacity = self.config.batch_capacity;
+        let capacity = b.capacity;
         let mut out: Vec<RangeSpec> = Vec::with_capacity(b.blocks.len());
         for (&start, &(chain, level)) in &b.blocks {
             // The first range absorbs the leading gap; every other starts at its block.
@@ -658,21 +762,45 @@ impl SceneSpace {
         }
     }
 
-    /// The batch key of the first batch that ever overflowed, once: the caller warns with it and
-    /// never again (this crate has no logger). [`SpaceStats`] keeps counting.
+    /// The key of the first batch of a group (a material class, or the single-chain batches)
+    /// that overflowed, **once per group for the run**: the caller warns with it (this crate has
+    /// no logger) and is never handed that group again, however often it overflows later.
+    /// [`SpaceStats`] keeps counting. Per group rather than per key, so `PerChain`'s many
+    /// batches cannot flood the log, and per group rather than per space, so each class that
+    /// needs a larger [`SpaceConfig::class_capacity`] is named. Call it until `None`.
     pub fn take_overflow_warning(&mut self) -> Option<BatchKey> {
-        self.first_overflow.take()
+        if self.pending_warnings.is_empty() { None } else { Some(self.pending_warnings.remove(0)) }
+    }
+
+    /// The fixed output slots of `batch` ([`SpaceConfig::capacity_of_key`] of its key), or 0
+    /// for a batch that does not exist.
+    #[must_use]
+    pub fn batch_capacity(&self, batch: BatchId) -> u32 {
+        self.batches.get(batch as usize).map_or(0, |b| b.capacity)
     }
 
     #[must_use]
     pub fn stats(&self) -> SpaceStats {
         let mut batch_live_slots = 0u32;
         let mut batch_high_water = 0u32;
+        let mut batch_capacity = 0u32;
+        let mut groups = [BatchGroupStats::default(); CHAIN_GROUP + 1];
+        for (group, &overflow) in groups.iter_mut().zip(&self.overflow_by_group) {
+            group.overflow_instances = overflow;
+        }
         for batch in &self.batches {
             let slots = batch.slots.stats();
             batch_live_slots += slots.live_slots;
             batch_high_water += slots.high_water;
+            batch_capacity = batch_capacity.saturating_add(batch.capacity);
+            let group = &mut groups[group_of(&batch.key)];
+            group.batches += 1;
+            group.live_slots += slots.live_slots;
+            group.high_water += slots.high_water;
+            group.capacity = group.capacity.saturating_add(batch.capacity);
         }
+        let mut classes = [BatchGroupStats::default(); MaterialClass::ALL.len()];
+        classes.copy_from_slice(&groups[..CHAIN_GROUP]);
         let batches = u32::try_from(self.batches.len()).unwrap_or(u32::MAX);
         SpaceStats {
             cells: u32::try_from(self.cells.len()).unwrap_or(u32::MAX),
@@ -681,7 +809,9 @@ impl SceneSpace {
             batches,
             batch_live_slots,
             batch_high_water,
-            batch_capacity: batches.saturating_mul(self.config.batch_capacity),
+            batch_capacity,
+            classes,
+            chain_batches: groups[CHAIN_GROUP],
             overflow_cells: self.overflow_cells,
             overflow_instances: self.overflow_instances,
             promoted: self
@@ -756,8 +886,9 @@ impl SceneSpace {
             return id;
         }
         let id = u32::try_from(self.batches.len()).unwrap_or(u32::MAX);
-        let slots = SlotAllocator::with_capacity(self.config.batch_capacity, self.config.frames_in_flight);
-        self.batches.push(Batch { key, slots, blocks: BTreeMap::new() });
+        let capacity = self.config.capacity_of_key(&key);
+        let slots = SlotAllocator::with_capacity(capacity, self.config.frames_in_flight);
+        self.batches.push(Batch { key, capacity, slots, blocks: BTreeMap::new() });
         self.by_key.insert(key, id);
         id
     }
@@ -929,7 +1060,7 @@ mod tests {
     }
 
     fn space(granularity: BatchGranularity, capacity: u32) -> SceneSpace {
-        SceneSpace::new(SpaceConfig { granularity, batch_capacity: capacity, ..SpaceConfig::default() })
+        SceneSpace::new(SpaceConfig { granularity, ..SpaceConfig::default() }.with_uniform_capacity(capacity))
     }
 
     /// The vendor's `validate_ranges` (`vendor/bevy_pbr/src/gpu_instance_batch/mod.rs`), which a
@@ -1195,7 +1326,8 @@ mod tests {
         // Counted, and named once.
         let stats = s.stats();
         assert_eq!((stats.overflow_cells, stats.overflow_instances), (1, 2));
-        assert_eq!(s.take_overflow_warning(), Some(plan.overflowed[0]));
+        assert_eq!(plan.overflowed[0].1, 2, "chain 1's two instances");
+        assert_eq!(s.take_overflow_warning(), Some(plan.overflowed[0].0));
         assert_eq!(s.take_overflow_warning(), None, "warned once");
         // Every chain still got a slot, overflowed or not: `write_remapped` demands one per chain.
         assert_eq!(plan.chain_slots, [0, 1, 2]);
@@ -1458,6 +1590,103 @@ mod tests {
         assert_eq!(release, CellRelease { scene: SlotRange { start: 0, len: 0 }, freed_chains: vec![], ranges: vec![] });
     }
 
+    /// A config whose opaque batches hold 3 slots and masked ones 1, the rest 64.
+    fn per_class_config() -> SpaceConfig {
+        let mut class_capacity = [64; MaterialClass::ALL.len()];
+        class_capacity[MaterialClass::Opaque as usize] = 3;
+        class_capacity[MaterialClass::Masked as usize] = 1;
+        SpaceConfig { class_capacity, chain_capacity: 5, ..SpaceConfig::default() }
+    }
+
+    #[test]
+    fn each_class_batch_has_its_own_capacity_and_overflows_at_it() {
+        // `two_chain_table`: an opaque chain and a masked one, two instances each.
+        let bytes = two_chain_table();
+        let view = StaticCellTableView::parse(&bytes).unwrap();
+        let slabs = Slabs(1, 2, 3);
+        let config = per_class_config();
+        let mut s = SceneSpace::new(config);
+        let plan = s.plan_in(IVec3::ZERO, &view, &slabs).unwrap();
+        s.commit_in(IVec3::ZERO, &plan);
+        assert_eq!(s.stats().batches, 2);
+        for (batch, key) in s.batch_keys() {
+            assert_eq!(key.chain, None);
+            assert_eq!(s.batch_capacity(batch), config.capacity_of(key.class), "{:?}", key.class);
+            let ranges = s.batch_ranges(batch);
+            assert_partitions(&ranges, s.batch_capacity(batch));
+            if let Some(last) = ranges.last() {
+                assert_eq!(last.first_slot + last.slot_count, 3, "the opaque batch's last span ends at its capacity");
+            }
+        }
+        // Two opaque instances fit three slots; two masked ones do not fit one.
+        assert_eq!(plan.overflowed.len(), 1);
+        assert_eq!((plan.overflowed[0].0.class, plan.overflowed[0].1), (MaterialClass::Masked, 2));
+        let stats = s.stats();
+        assert_eq!(stats.batch_capacity, 3 + 1, "the sum of the batches' own capacities");
+        assert_eq!(
+            stats.classes[MaterialClass::Opaque as usize],
+            BatchGroupStats { batches: 1, live_slots: 2, high_water: 2, capacity: 3, overflow_instances: 0 }
+        );
+        assert_eq!(
+            stats.classes[MaterialClass::Masked as usize],
+            BatchGroupStats { batches: 1, live_slots: 0, high_water: 0, capacity: 1, overflow_instances: 2 }
+        );
+        assert_eq!(stats.chain_batches, BatchGroupStats::default());
+        let untouched = MaterialClass::ALL.iter().filter(|c| !matches!(c, MaterialClass::Opaque | MaterialClass::Masked));
+        for &class in untouched {
+            assert_eq!(stats.classes[class as usize], BatchGroupStats::default(), "{class:?}");
+        }
+    }
+
+    #[test]
+    fn the_overflow_warning_fires_once_per_class_for_the_run() {
+        let bytes = two_chain_table();
+        let view = StaticCellTableView::parse(&bytes).unwrap();
+        let slabs = Slabs(1, 2, 3);
+        let mut s = SceneSpace::new(per_class_config());
+        let mut warnings = Vec::new();
+        for x in 0..3 {
+            let cell = IVec3::new(x, 0, 0);
+            let plan = s.plan_in(cell, &view, &slabs).unwrap();
+            s.commit_in(cell, &plan);
+            let mut cell_warnings = Vec::new();
+            while let Some(key) = s.take_overflow_warning() {
+                cell_warnings.push(key.class);
+            }
+            warnings.push(cell_warnings);
+        }
+        // Cell 0 overflows the masked batch; cell 1 fills the opaque one too (2 + 2 > 3) and
+        // overflows the masked one again; cell 2 overflows both again. Each class is named
+        // once, the first time it overflows, and never re-armed.
+        assert_eq!(warnings, [vec![MaterialClass::Masked], vec![MaterialClass::Opaque], vec![]]);
+        let stats = s.stats();
+        assert_eq!(stats.classes[MaterialClass::Masked as usize].overflow_instances, 6);
+        assert_eq!(stats.classes[MaterialClass::Opaque as usize].overflow_instances, 4);
+        assert_eq!((stats.overflow_cells, stats.overflow_instances), (3, 10), "and the counting goes on");
+    }
+
+    #[test]
+    fn single_chain_batches_take_the_chain_capacity() {
+        let bytes = two_chain_table();
+        let view = StaticCellTableView::parse(&bytes).unwrap();
+        let config = SpaceConfig { granularity: BatchGranularity::PerChain, chain_capacity: 1, ..per_class_config() };
+        let mut s = SceneSpace::new(config);
+        let plan = s.plan_in(IVec3::ZERO, &view, &()).unwrap();
+        s.commit_in(IVec3::ZERO, &plan);
+        for (batch, key) in s.batch_keys() {
+            assert!(key.chain.is_some());
+            assert_eq!(s.batch_capacity(batch), 1);
+        }
+        let stats = s.stats();
+        assert_eq!(
+            stats.chain_batches,
+            BatchGroupStats { batches: 2, live_slots: 0, high_water: 0, capacity: 2, overflow_instances: 4 }
+        );
+        assert!(stats.classes.iter().all(|c| *c == BatchGroupStats::default()), "no class batch");
+        assert_eq!(s.take_overflow_warning().map(|k| k.chain.is_some()), Some(true));
+        assert_eq!(s.take_overflow_warning(), None, "one group, one warning");
+    }
+
     #[test]
     fn a_batch_block_is_never_wider_than_its_bucket() {
         // First fit hands out exactly what was asked for: no block padding, so a batch's live
@@ -1470,7 +1699,7 @@ mod tests {
         let instances: u32 = plan.blocks.iter().map(|&(_, range, ..)| range.len).sum();
         assert_eq!(instances, 4);
         assert_eq!(s.stats().batch_live_slots, 4);
-        // Which is what makes the capacity the only ceiling: `batch_capacity` slots per batch and
+        // Which is what makes the capacity the only ceiling: the batch's capacity in slots and
         // per view, no class rounding on top.
         assert_eq!(s.stats().batch_capacity, 2 * 4096);
     }

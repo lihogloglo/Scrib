@@ -215,8 +215,8 @@ pub const CLASSES: usize = 32;
 
 /// Block size per class, ascending: multiples of [`BLOCK_GRAIN`] up to 512 slots, then ×1.25
 /// rounded up to the grain. The largest ([`CLASS_SIZES`]`[31]`, 129 088 slots ≈ 8 MB of 64 B
-/// output slots) is far above any batch capacity we configure (`SceneConfig::batch_capacity`,
-/// default 4096), so a request that fits no class could not have fitted the batch either.
+/// output slots) is far above any batch capacity we configure (`SpaceConfig::class_capacity`,
+/// at most 16 384 by default), so a request that fits no class could not have fitted the batch either.
 pub const CLASS_SIZES: [u32; CLASSES] = class_sizes();
 
 #[allow(clippy::cast_possible_truncation)] // CLASSES is 32; `u32::try_from` is not const

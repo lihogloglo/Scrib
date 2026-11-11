@@ -307,7 +307,7 @@ fn fixture_with(
     app.register_asset_source(BAKED_SOURCE, baked_source(store, BakedManifest::new(manifest), extensions));
     let config = SceneConfig {
         enabled: true,
-        space: SpaceConfig { batch_capacity: capacity, ..SpaceConfig::default() },
+        space: SpaceConfig::default().with_uniform_capacity(capacity),
         ..SceneConfig::default()
     };
     app.add_plugins((MinimalPlugins, AssetPlugin::default(), MeshPlugin))
@@ -697,7 +697,9 @@ fn check_batch(f: &Fixture, batch: BatchId) -> Entity {
     assert!(!expected.is_empty(), "batch {batch} holds a block");
     assert_eq!(rows(&mesh.ranges), expected, "batch {batch}'s ranges");
     assert_eq!(mesh.mesh.id(), expected[0].0, "mesh is the first range's mesh");
-    assert_eq!(mesh.max_capacity, state.space.config().batch_capacity);
+    let key = state.space.batch_keys().nth(batch as usize).expect("the batch exists").1;
+    assert_eq!(mesh.max_capacity, state.space.config().capacity_of_key(&key), "batch {batch}'s own class capacity");
+    assert_eq!(mesh.max_capacity, state.space.batch_capacity(batch));
     assert_eq!(validate_ranges(&mesh.ranges, mesh.max_capacity), Ok(()));
     assert!(world.get::<Mesh3d>(entity).is_none());
     assert_eq!(world.get::<SceneBatch>(entity).map(|b| b.batch), Some(batch));
@@ -898,6 +900,45 @@ fn scene_gauges_follow_a_cell_in_and_out() {
     let gauges = f.counters();
     assert_eq!(gauges.get("scene/cells/resident"), Some(&0.0), "set every frame, zeros included");
     assert_eq!(gauges.get("scene/slots/batch_live"), Some(&0.0));
+}
+
+/// Fix 3: a batch's output buffer is its own class's capacity (or the single-chain one), not
+/// one uniform size, and `scene/batch/<group>/*` reports it per group.
+#[test]
+#[allow(clippy::cast_precision_loss, clippy::float_cmp)] // a few slots: small integers, exact in f64
+fn each_batch_takes_its_class_capacity_and_is_gauged_per_class() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    // Before the space exists: it is created from this config at first stream-in.
+    {
+        let mut config = f.app.world_mut().resource_mut::<SceneConfig>();
+        config.space.class_capacity[MaterialClass::Opaque as usize] = 3000;
+        config.space.chain_capacity = 2000;
+    }
+    let cell = f.cell;
+    let plan = stream_cell_in(&mut f, cell);
+    assert!(plan.overflowed.is_empty());
+    f.app.update();
+    let counters = f.counters();
+    let state = f.state();
+    let mut capacity: HashMap<&str, f64> = HashMap::new();
+    for (batch, key) in state.space.batch_keys() {
+        let expected = if key.chain.is_some() { 2000 } else { 3000 };
+        assert_eq!(key.class, MaterialClass::Opaque, "the fixture's chains are opaque");
+        let entity = state.batches[batch as usize].expect("the batch has its entity").entity;
+        let mesh = f.app.world().get::<GpuBatchedMesh3d>(entity).expect("a GpuBatchedMesh3d");
+        assert_eq!(mesh.max_capacity, expected, "batch {batch} ({key:?})");
+        *capacity.entry(gauges::group_name(&key)).or_default() += f64::from(expected);
+    }
+    assert!(!capacity.is_empty());
+    for (group, total) in &capacity {
+        assert_eq!(counters.get(&format!("scene/batch/{group}/capacity")), Some(total), "{group}");
+        assert_eq!(counters.get(&format!("scene/batch/{group}/overflow")), Some(&0.0), "{group}");
+    }
+    let live: f64 = capacity.keys().map(|g| counters[&format!("scene/batch/{g}/live")]).sum();
+    assert_eq!(live, plan.writes.len() as f64, "the groups' live slots are the batches' live slots");
+    // Every group is set, zeros included.
+    assert_eq!(counters.get("scene/batch/masked_wind_two_sided/count"), Some(&0.0));
 }
 
 /// Step 10: a batch two cells share keeps its entity when one streams out, and its ranges

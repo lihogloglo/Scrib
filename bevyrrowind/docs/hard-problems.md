@@ -89,7 +89,8 @@ Paste the entry plus this:
 
 - **Symptom:** the ash/blight storm draws over terrain and objects (WE-5; precip streaks ruled out, suspects ash
   height fog or the cloud composite); smoke not drawn in front of the sky (RO-B); translucents write no motion
-  vectors (RO-6), so TAA/DLSS ghosts them.
+  vectors (RO-6), so TAA/DLSS ghosts them. Weather is not drawn over water: the rain curtain and region storms stop at
+  the sea (WE-7, WE-10), and (owner 2026-11-11) from high up a cloud between the camera and the ocean does not show.
 - **Why hard:** several custom passes (clouds composite, froxel fog, precip, particles, water snapshot) each choose a
   place in Bevy's graph; the order and depth contracts are implicit.
 - **Start:** `superfargoth/docs/specs/render-order.md`, `weather.md` (clouds/precip as built), `--off
