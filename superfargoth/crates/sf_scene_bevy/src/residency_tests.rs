@@ -1021,6 +1021,49 @@ fn a_committed_cell_queues_one_resolved_write_per_plan_write() {
     }
 }
 
+/// O1: an origin shift re-queues one write per resident slot in the new frame, a promoted
+/// placement still inactive; no shift, no write.
+#[test]
+fn an_origin_shift_rewrites_every_resident_slot_in_the_new_frame() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    let plan = stream_cell_in(&mut f, cell);
+    assert_eq!(promote(&mut f, cell, 1).len(), 2, "placement 1 draws both chains");
+    f.app.world_mut().resource_mut::<SceneUploads>().writes.clear();
+
+    let old = f.app.world().get_resource::<sf_world_bevy::WorldOrigin>().map_or(IVec3::ZERO, |o| o.cell);
+    let frame = old + IVec3::X;
+    f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(ws()), frame));
+    f.app.update();
+
+    let world = f.app.world();
+    let writes = &world.resource::<SceneUploads>().writes;
+    assert_eq!(writes.len(), plan.writes.len(), "one write per resident slot");
+    let state = f.state();
+    let view = world.resource::<Assets<SceneTableAsset>>().get(&state.tables[&cell]).unwrap().view().unwrap();
+    let offset = sf_scene::cell_offset(view.origin_cell(), WorldPos::new(frame, Vec3::ZERO));
+    for (got, want) in writes.iter().zip(&plan.writes) {
+        let row = view.instance(want.index as usize).unwrap();
+        let active = want.active && row.placement != 1;
+        let entity = state.batches[want.batch as usize].expect("a committed batch has its entity").entity;
+        assert_eq!(got.entity, MainEntity::from(entity));
+        assert_eq!((got.batch, got.slot, got.active()), (want.batch, want.slot, active));
+        assert_eq!(instance_bytes(&[got.instance]), instance_bytes(&[gpu_instance(row.transform, offset, active)]));
+    }
+    assert_eq!(writes.iter().filter(|w| !w.active()).count(), 2, "the promoted placement stays inactive");
+    let counters = f.counters();
+    assert_eq!(counters.get("scene/shift/rewrites"), Some(&1.0));
+    #[allow(clippy::cast_precision_loss)] // a few slots
+    let bytes = (plan.writes.len() as u64 * upload::SLOT_BYTES) as f64;
+    assert_eq!(counters.get("scene/shift/rewrite_bytes"), Some(&bytes));
+
+    // No change, no rewrite.
+    f.app.world_mut().resource_mut::<SceneUploads>().writes.clear();
+    f.app.update();
+    assert!(f.app.world().resource::<SceneUploads>().writes.is_empty());
+}
+
 // -- promotion (B5a) ------------------------------------------------------------
 
 /// Sends one [`PromotePlacement`] (by its global id) for local placement `k` of `cell`, runs a

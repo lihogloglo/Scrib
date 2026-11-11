@@ -90,12 +90,19 @@ pub struct WorldOriginBuffer {
     pub buffer: UniformBuffer<WorldOriginUniform>,
 }
 
+/// The set of `update_world_origin` (`PostUpdate`, after `TransformSystems::Propagate`): order
+/// after it to read this frame's [`WorldOrigin`].
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct WorldOriginSystems;
+
 pub(crate) struct WorldOriginPlugin;
 
 impl Plugin for WorldOriginPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WorldOrigin>()
-            .add_systems(PostUpdate, update_world_origin.after(TransformSystems::Propagate));
+        app.init_resource::<WorldOrigin>().add_systems(
+            PostUpdate,
+            update_world_origin.after(TransformSystems::Propagate).in_set(WorldOriginSystems),
+        );
         if app.get_sub_app(RenderApp).is_some() {
             load_shader_library!(app, "world_origin.wesl");
             let render_app = app.sub_app_mut(RenderApp);

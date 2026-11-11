@@ -14,9 +14,11 @@
 //! before `PrepareMeshes` sized it) keeps its work for the next frame; work for
 //! a batch entity that is gone is dropped at extract.
 //!
-//! **Known gap, origin shifts** (§5.3): the outputs are render-space, placed by
-//! the floating origin at upload; a later origin shift leaves them where they
-//! were until the rewrite of plan §5.4 lands. The per-space scene buffer
+//! **Origin shifts** (plan §5.4): the outputs are render-space, placed by the
+//! floating origin at upload; when the origin moves,
+//! [`rewrite_on_origin_shift`](crate::shift::rewrite_on_origin_shift) queues
+//! every resident cell's slots again in the new frame, in the shift frame, and
+//! the stable run sort makes that later write win. The per-space scene buffer
 //! (`CellPlan::scene_bytes`, write 1) is B4b.
 
 use std::ops::Range;

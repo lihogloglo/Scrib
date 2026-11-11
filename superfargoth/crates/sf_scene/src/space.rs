@@ -45,6 +45,7 @@
 //! measured on one synthetic walk, so overflow is a path we must be able to *see*, not a corner.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use glam::IVec3;
 
@@ -473,18 +474,12 @@ impl SceneSpace {
         // placement would be drawn twice, once by the scene and once by the entity it spawns.
         let mut covered: Vec<PlacementId> = Vec::new();
         let mut active = vec![true; table_len as usize];
-        let mut first = 0usize;
-        while first < placements.len() {
-            let placement = placements[first];
-            let end = placements[first..].iter().position(|&p| p != placement).map_or(placements.len(), |n| first + n);
-            if (first..end).all(|k| batch_slots[k] != NO_SLOT) {
+        for (placement, run) in placement_runs(&placements) {
+            if run.clone().all(|k| batch_slots[k] != NO_SLOT) {
                 covered.push(placement);
             } else {
-                for flag in &mut active[first..end] {
-                    *flag = false;
-                }
+                active[run].fill(false);
             }
-            first = end;
         }
 
         let mut writes: Vec<SlotWrite> = Vec::new();
@@ -586,24 +581,34 @@ impl SceneSpace {
         if !residency.promotions.promote(placement) {
             return Ok(Vec::new());
         }
+        let residency = &*residency;
+        let writes = table
+            .find_all(placement)
+            .filter_map(|index| {
+                let (batch, slot) = slot_of(residency, table, index, cell)?;
+                Some(SlotWrite { batch, slot, index: u32::try_from(index).unwrap_or(u32::MAX), active: false })
+            })
+            .collect();
+        Ok(writes)
+    }
+
+    /// The current state of every batch output slot resident cell `cell` holds, in table order:
+    /// what a floating-origin shift re-queues in the new frame (plan §5.4).
+    ///
+    /// The same `active` rule as [`Self::plan_in`] — a placement draws only if every part of it
+    /// got a slot — and inactive for every placement the cell has promoted ([`Self::promote`]).
+    /// Right after [`Self::commit_in`] this equals the plan's [`CellPlan::writes`].
+    pub fn cell_writes(&self, cell: IVec3, table: &StaticCellTableView<'_>) -> Result<Vec<SlotWrite>, SceneError> {
+        let residency = self.resident(cell).ok_or(SceneError::NotResident(cell))?;
+        let placements: Vec<PlacementId> = table.instances().map(|instance| instance.placement).collect();
         let mut writes = Vec::new();
-        for index in table.find_all(placement) {
-            let slot = residency.batch_slots.get(index).copied().unwrap_or(NO_SLOT);
-            if slot == NO_SLOT {
-                continue;
-            }
-            // The instance's chain and level name its block, and the block names its batch: a
-            // slot number alone would not, since every batch numbers its slots from zero.
-            let Some(instance) = table.instance(index) else { continue };
-            let chain = residency.chain_slots.get(instance.chain as usize).copied().unwrap_or(NO_SLOT);
-            let level = top_level(table.levels(instance.chain).map_or(1, |levels| levels.len()));
-            let block = residency.blocks.iter().find(|&&(_, range, c, l)| {
-                c == chain && l == level && range.start <= slot && slot < range.end()
-            });
-            if let Some(&(batch, ..)) = block {
-                writes.push(SlotWrite { batch, slot, index: u32::try_from(index).unwrap_or(u32::MAX), active: false });
-            } else {
-                debug_assert!(false, "slot {slot} of cell {cell:?} is in no block of chain {chain}");
+        for (placement, run) in placement_runs(&placements) {
+            let resident = run.clone().all(|k| residency.batch_slots.get(k).is_some_and(|&slot| slot != NO_SLOT));
+            let active = resident && !residency.promotions.is_promoted(placement);
+            for index in run {
+                if let Some((batch, slot)) = slot_of(residency, table, index, cell) {
+                    writes.push(SlotWrite { batch, slot, index: u32::try_from(index).unwrap_or(u32::MAX), active });
+                }
             }
         }
         Ok(writes)
@@ -800,6 +805,45 @@ impl SceneSpace {
 /// What [`SceneSpace::acquire_chains`] took: a slot per cell-local chain, the chains to load, and
 /// the keys to unwind if the rest of the plan fails.
 type AcquiredChains = (Vec<ChainSlot>, Vec<(ChainSlot, ChainSource)>, Vec<ChainKey>);
+
+/// The runs of equal placements of a table sorted by `(placement, part)`: each placement once,
+/// with the table indices of its parts.
+fn placement_runs(placements: &[PlacementId]) -> impl Iterator<Item = (PlacementId, Range<usize>)> + '_ {
+    let mut first = 0usize;
+    std::iter::from_fn(move || {
+        let &placement = placements.get(first)?;
+        let end = placements[first..].iter().position(|&p| p != placement).map_or(placements.len(), |n| first + n);
+        let run = first..end;
+        first = end;
+        Some((placement, run))
+    })
+}
+
+/// The `(batch, slot)` of table instance `index` of a resident cell, `None` where its batch was
+/// full. The instance's chain and level name its block, and the block names its batch: a slot
+/// number alone would not, since every batch numbers its slots from zero.
+fn slot_of(
+    residency: &CellResidency,
+    table: &StaticCellTableView<'_>,
+    index: usize,
+    cell: IVec3,
+) -> Option<(BatchId, u32)> {
+    let slot = residency.batch_slots.get(index).copied().unwrap_or(NO_SLOT);
+    if slot == NO_SLOT {
+        return None;
+    }
+    let instance = table.instance(index)?;
+    let chain = residency.chain_slots.get(instance.chain as usize).copied().unwrap_or(NO_SLOT);
+    let level = top_level(table.levels(instance.chain).map_or(1, |levels| levels.len()));
+    let block = residency
+        .blocks
+        .iter()
+        .find(|&&(_, range, c, l)| c == chain && l == level && range.start <= slot && slot < range.end());
+    if block.is_none() {
+        debug_assert!(false, "slot {slot} of cell {cell:?} is in no block of chain {chain}");
+    }
+    block.map(|&(batch, ..)| (batch, slot))
+}
 
 /// The level a resident instance draws, clamped to a chain of `levels` levels ([`M1_LEVEL`]).
 fn top_level(levels: usize) -> u8 {
@@ -1024,6 +1068,47 @@ mod tests {
         // A placement of another cell, and a cell that is not resident.
         assert!(s.promote(IVec3::ZERO, 99, &view).unwrap().is_empty());
         assert_eq!(s.promote(IVec3::X, 1, &view), Err(SceneError::NotResident(IVec3::X)));
+    }
+
+    #[test]
+    fn cell_writes_restate_the_plan_and_every_promotion() {
+        let bytes = two_chain_table();
+        let view = StaticCellTableView::parse(&bytes).unwrap();
+        let mut s = space(BatchGranularity::PerChain, 64);
+        let plan = s.plan_in(IVec3::ZERO, &view, &()).unwrap();
+        s.commit_in(IVec3::ZERO, &plan);
+        // Right after the commit: exactly the plan's writes, in the same (table) order.
+        assert_eq!(s.cell_writes(IVec3::ZERO, &view).unwrap(), plan.writes);
+        // After a promotion, that placement's parts are inactive and the rest is unchanged.
+        let promoted = s.promote(IVec3::ZERO, 1, &view).unwrap();
+        let writes = s.cell_writes(IVec3::ZERO, &view).unwrap();
+        assert_eq!(writes.len(), plan.writes.len());
+        for (now, then) in writes.iter().zip(&plan.writes) {
+            let is_promoted = promoted.iter().any(|w| w.index == now.index);
+            assert_eq!(*now, SlotWrite { active: then.active && !is_promoted, ..*then });
+        }
+        assert_eq!(writes.iter().filter(|w| !w.active).map(|w| w.index).collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(s.cell_writes(IVec3::X, &view), Err(SceneError::NotResident(IVec3::X)));
+    }
+
+    #[test]
+    fn cell_writes_keep_an_overflowed_placements_siblings_inactive() {
+        let bytes = table_bytes(
+            &["meshes/a.mdl"],
+            &[
+                (0x10, 0, 0, MaterialClass::Opaque),
+                (0x20, 0, 1, MaterialClass::Opaque),
+                (0x30, 0, 2, MaterialClass::Opaque),
+            ],
+            &[(1, 0), (1, 1), (2, 0), (3, 1), (4, 2)],
+        );
+        let view = StaticCellTableView::parse(&bytes).unwrap();
+        let mut s = space(BatchGranularity::PerClass, 3);
+        let plan = s.plan_in(IVec3::ZERO, &view, &Slabs(0, 0, 0)).unwrap();
+        s.commit_in(IVec3::ZERO, &plan);
+        let writes = s.cell_writes(IVec3::ZERO, &view).unwrap();
+        assert_eq!(writes, plan.writes);
+        assert_eq!(writes.iter().filter(|w| !w.active).map(|w| w.index).collect::<Vec<_>>(), [0]);
     }
 
     #[test]

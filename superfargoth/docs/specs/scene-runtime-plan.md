@@ -574,13 +574,13 @@ cell twice), and accepting missing statics until reload.
 
 The scene buffer is cell-relative, so a `big_space` shift changes nothing there (`cell_offset`,
 `lib.rs:50-55`), and under **M2** the batch slots are rewritten every frame by the cull: a shift is
-a non-event end to end. Under **M1** the retained batch slots hold render-space transforms and must
-be rewritten — the plugin reacts to the shift the streaming guard already detects
-(`stream.rs:596-616`, `SHIFT_COOLDOWN_FRAMES` `:57`) and queues a rewrite of every resident cell's
-writes, spread by `SceneConfig::shift_rewrite_bytes` (default 1 MiB/frame) while the guard holds the
-other stages: 6.4 MB at 100k instances, ~7 frames every 256 m of travel (`GRID_CELL`), reported as
-`scene/shift/rewrite_bytes`. M1's one price for having no GPU cull, and the reason M1 is a milestone
-and not the shipping configuration.
+a non-event end to end. Under **M1** the retained batch slots hold render-space transforms, so
+**as built (O1)** `rewrite_on_origin_shift` (`sf_scene_bevy/src/shift.rs`, `PostUpdate` after
+`WorldOriginSystems`) re-queues every resident cell's slots (`SceneSpace::cell_writes`, promotions
+kept inactive) in the new frame, **in the shift frame**: ~3.5 MB at 55k instances, one upload, every
+256 m of travel (`GRID_CELL`), counted as `scene/shift/rewrites` and `scene/shift/rewrite_bytes`.
+Not spread over frames (the old `shift_rewrite_bytes` plan): statics in two frames at once tear.
+Later, option (b): a per-batch origin delta in the vendored `materialize.wesl`, O(1), no rewrite.
 ## 6. `sf_scene_bevy`
 
 **Crate.** `superfargoth/crates/sf_scene_bevy`, template `sf_lod_bevy` (same role: a Bevy plugin
@@ -888,6 +888,6 @@ tightens it: §4.4's fixed batch capacity, because per-view output is sized by c
 ≈ 4 000 lines — `sf_scene` ≈ 1 400 + 700 of tests (table v3 +260, chains +230, alloc +210, space
 +460, product +60, bake +180), `sf_world_bevy` ≈ 110, `sf_scene_bevy` ≈ 1 250 + 250 of tests,
 `mw_*` ≈ 70 — in **4 agent slices**: A1-A6 (Bevy-free, one test slot), B1-B2 (crate + seam, one cold
-build), B3-B4 (the plugin), B5-B6+C1-C2. Deferrable past S3b: the M1 origin-shift rewrite (§5.4,
-unnecessary if gs §4.2 lands first), interiors (§12), and the `--scene-cpu` debug path the review
+build), B3-B4 (the plugin), B5-B6+C1-C2. The M1 origin-shift rewrite (§5.4) was built before C2 as O1 (2026-11-11: a walk shifts within a minute). Deferrable past S3b:
+interiors (§12), and the `--scene-cpu` debug path the review
 asks for (its item 7), its own small slice once `cull` is wired.

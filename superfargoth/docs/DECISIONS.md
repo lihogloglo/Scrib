@@ -1806,3 +1806,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-11 (navigation NV2): sliced A* state lives in each `PathJob` as a navmesh-rs `DetachedQuery` attached to
   its mesh per step (own vendored patch makes it public; to offer upstream), not a per-worker query pool; one Detour
   mesh per (worldspace, class, region), our `PolyRef` = Detour ref + mesh slot/generation in unused tile bits (nav.md).
+- 2026-11-11 (static scene O1): an origin shift rewrites every resident cell's batch slots **in the shift frame**
+  (`sf_scene_bevy::rewrite_on_origin_shift`, ~3.5 MB at 55k instances), not spread over frames (plan §5.4's
+  `shift_rewrite_bytes`, removed: it would tear). A per-batch origin delta in `materialize.wesl` is the later O(1) fix.

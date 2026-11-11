@@ -32,6 +32,7 @@
 mod assets;
 pub mod chains;
 pub mod residency;
+pub mod shift;
 pub mod slabs;
 pub mod upload;
 #[cfg(test)]
@@ -45,6 +46,7 @@ pub use residency::{
     BatchEntity, BatchZeroFill, CellLoad, CellUpload, LoadPhase, PromotePlacement, SLAB_WAIT_FRAMES, SceneBatch, SceneFrame, SceneHook,
     SceneInbox, SceneSpaces, SceneUploads, SpaceState, apply_promotions, despawn_empty_batches, poll_cell_loads, tick_frame,
 };
+pub use shift::rewrite_on_origin_shift;
 pub use slabs::{ChainIds, ChainSlabTable, MeshSlabIds, extract_chain_slabs};
 pub use upload::{
     BatchSlotWrite, PendingSceneWrites, SlotRun, extract_scene_uploads, gpu_instance, instance_bytes, publish_scene, slot_runs,
@@ -52,7 +54,7 @@ pub use upload::{
 
 use std::sync::Arc;
 
-use bevy_app::{App, First, Plugin, Update};
+use bevy_app::{App, First, Plugin, PostUpdate, Update};
 use bevy_asset::AssetApp;
 use bevy_ecs::prelude::*;
 use bevy_pbr::gpu_instance_batch::{GpuInstanceBatchReservations, GpuInstanceBatchSystems};
@@ -60,7 +62,7 @@ use bevy_render::renderer::RenderGraph;
 use bevy_render::{ExtractSchedule, RenderApp};
 use sf_scene::{CELLS_EXT, CELLS_STEP, CHAINS_EXT, CHAINS_STEP, SpaceConfig};
 use sf_world::WorldspaceId;
-use sf_world_bevy::{SceneCells, StreamingSystems};
+use sf_world_bevy::{SceneCells, StreamingSystems, WorldOriginSystems};
 
 /// Settings of the static scene (one per app).
 ///
@@ -68,7 +70,7 @@ use sf_world_bevy::{SceneCells, StreamingSystems};
 /// truth for the allocator's granularity, frames in flight and batch capacity,
 /// whose defaults `sf_scene` already chose. `SpaceConfig::space` is per space,
 /// so the plugin overrides it per worldspace when it builds one (B3).
-#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct SceneConfig {
     /// Whether the static scene draws at all. Off by default: until the game
     /// side turns it on, streaming behaves exactly as it did.
@@ -78,14 +80,6 @@ pub struct SceneConfig {
     /// Worldspaces the scene is enabled for. `None`: all those with a
     /// `scene.cells` product.
     pub worldspaces: Option<Vec<WorldspaceId>>,
-    /// Bytes an origin shift may rewrite per frame.
-    pub shift_rewrite_bytes: u64,
-}
-
-impl Default for SceneConfig {
-    fn default() -> Self {
-        Self { enabled: false, space: SpaceConfig::default(), worldspaces: None, shift_rewrite_bytes: 1 << 20 }
-    }
 }
 
 impl SceneConfig {
@@ -136,7 +130,8 @@ impl Plugin for ScenePlugin {
             .add_systems(First, (tick_frame, despawn_empty_batches).chain().in_set(SceneSystems::Frame))
             .add_message::<PromotePlacement>()
             .add_systems(Update, poll_cell_loads.in_set(SceneSystems::Residency))
-            .add_systems(Update, apply_promotions.in_set(SceneSystems::Promote));
+            .add_systems(Update, apply_promotions.in_set(SceneSystems::Promote))
+            .add_systems(PostUpdate, rewrite_on_origin_shift.after(WorldOriginSystems));
         if self.config.enabled {
             app.insert_resource(SceneCells(Some(Arc::new(SceneHook))));
         }

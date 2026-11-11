@@ -41,7 +41,7 @@ pub use debug::{StreamingDebug, level_color};
 pub use fade::{FadeCutHooks, FadePhase, FadeTransition, StartBlackout, StartTravel, TravelArrived};
 pub use far::{CellProxies, FarProxies, ProxySpawnCx};
 pub use reveal::{RevealAsk, RevealCheck, RevealGate, RevealInputs, RevealPending, RevealStatus, RevealStep, SETTLE_FRAMES};
-pub use origin::{PHASE_PERIODS, WorldOrigin, WorldOriginBuffer, WorldOriginUniform};
+pub use origin::{PHASE_PERIODS, WorldOrigin, WorldOriginBuffer, WorldOriginSystems, WorldOriginUniform};
 pub use precombine::{CellPrecombine, PrecombineBucket, PrecombinePath, Precombines, bucket_ranges};
 pub use scene::{CellScene, SceneCellCx, SceneCells};
 pub use spawn::{

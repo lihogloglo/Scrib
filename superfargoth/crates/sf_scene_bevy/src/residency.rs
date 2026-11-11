@@ -364,7 +364,7 @@ fn rebuild_ranges(world: &mut World, state: &mut SpaceState, batches: impl IntoI
     }
 }
 
-fn count(counters: Option<&Counters>, name: &str, value: f64) {
+pub(crate) fn count(counters: Option<&Counters>, name: &str, value: f64) {
     if let Some(c) = counters {
         c.add_named(name, unit::COUNT, value);
     }
@@ -634,9 +634,9 @@ fn plan(
 /// batch's entity, and the instance's table row placed in render space, the
 /// frame of the floating origin's cell `frame` (`sf_world_bevy::WorldOrigin`:
 /// `GlobalTransform` is relative to it). A write with no batch entity or no
-/// table row is a bug, dropped with an error. An origin shift after this
-/// leaves the outputs stale (`upload` module docs, the known gap).
-fn queue_slot_writes(
+/// table row is a bug, dropped with an error. An origin shift re-queues every
+/// resident cell through here in the new frame (`shift` module).
+pub(crate) fn queue_slot_writes(
     tables: &Assets<SceneTableAsset>,
     state: &SpaceState,
     cell: IVec3,
