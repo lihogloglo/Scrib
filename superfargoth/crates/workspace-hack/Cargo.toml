@@ -45,6 +45,7 @@ bevy_reflect = { version = "0.20", features = ["glam", "petgraph", "smol_str", "
 bevy_render = { path = "../../vendor/bevy_render", default-features = false, features = ["morph", "multi_threaded", "raw_vulkan_init", "reflect_auto_register", "webgl"] }
 bevy_shape = { version = "0.20", features = ["bevy_reflect"] }
 bevy_sprite = { version = "0.20", default-features = false, features = ["bevy_picking", "bevy_text"] }
+bevy_state = { version = "0.20", default-features = false, features = ["bevy_app", "bevy_reflect", "std"] }
 bevy_tasks = { version = "0.20", features = ["multi_threaded"] }
 bevy_text = { version = "0.20", default-features = false, features = ["default_font"] }
 bevy_time = { version = "0.20" }

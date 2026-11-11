@@ -29,6 +29,8 @@ use sf_physics::{BodyDesc, BodyKind, Layer, MeshShape, ShapeRef};
 use sf_physics_bevy::{Physics, PhysicsBody};
 use sf_world::{IndexParams, IndexReader, MemoryIndex, Placement, WorldIndex, WorldspaceId, build_directory, build_pages};
 use sf_world_bevy::big_space::prelude::CellCoord;
+use sf_app_bevy::WorldAlive;
+use sf_app_bevy::bevy_state::prelude::OnEnter;
 use sf_world_bevy::{Streaming, WorldIndexSource, WorldspaceRegistry, to_grid};
 
 pub mod actors;
@@ -143,9 +145,9 @@ pub fn add(app: &mut App, setup: LevelSetup) {
     actors::add(app, Arc::clone(&setup.actors));
     app.insert_resource(WorldIndexSource(Arc::new(LevelIndex::new(&setup.worldspace, base, placements))))
         .insert_resource(ActiveLevel(setup))
-        // After Startup's commands: the viewer's `setup` creates the worldspace root.
         .add_systems(PreStartup, interior_environment)
-        .add_systems(PostStartup, (spawn, spawn_lights).chain())
+        // After the viewer's `setup` (its commands applied): it creates the worldspace root.
+        .add_systems(OnEnter(WorldAlive), (spawn, spawn_lights).chain().after(crate::exterior::WorldSetup))
         .add_systems(Update, (orbit_lights, equip_player))
         .add_systems(Last, report_ready);
 }

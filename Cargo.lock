@@ -5364,6 +5364,7 @@ dependencies = [
  "mw_world",
  "sf_anim_bevy",
  "sf_anim_graph",
+ "sf_app_bevy",
  "sf_atmos_bevy",
  "sf_audio_bevy",
  "sf_bake",
@@ -7668,6 +7669,16 @@ dependencies = [
  "spade",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_app_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_state",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -10823,6 +10834,7 @@ dependencies = [
  "bevy_render",
  "bevy_shape",
  "bevy_sprite",
+ "bevy_state",
  "bevy_tasks",
  "bevy_text",
  "bevy_time",

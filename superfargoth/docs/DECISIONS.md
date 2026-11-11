@@ -1770,3 +1770,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-11 (static scene S1c-a): instance flags carry only per-placement facts (`CASTS_SHADOW`, reserved `FAR_ONLY`/
   `OCCLUDER`, runtime `INACTIVE`); masked and wind come from the chain's `MaterialClass`. A non-zero `material_override`
   will be a 1-based index into a per-cell override section of a later format; rejected on read until then.
+- 2026-11-11 (menus, owner): main menu is a front end with no world (`AppPhase`, menus.md); built front end first, then
+  video, options v2, textured Morrowind art. Video decoder: pure-Rust Bink 1 (`infinitier_bik_decoder`, GPL-3.0+) gated on
+  a V1 measurement, FFmpeg-port fallback, FFmpeg only later for mod formats. Intro logos play on first launch only.

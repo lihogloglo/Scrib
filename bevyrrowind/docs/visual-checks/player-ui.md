@@ -248,18 +248,16 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Hit the dummy: the log reads `training dummy: hit ... health h/100` falling per hit; at 0 it refills to 100.
 - Known: nothing hurts the player yet (the health bar's drop needs an attacker: C2 sparring dummy). Owner 2026-11-05: magicka at max, fatigue drops and refills, health bar still (as expected); dummy health "seems to go down", to re-confirm. Status: confirmed except the dummy log line.
 
-### MM-1: Release start: main menu over Seyda Neen, New game (`bevyrrowind` with no arguments, release build)
-- Build `cargo build --release -p bevyrrowind`, run `target/release/bevyrrowind` (no subcommand). The world streams in at
-  Seyda Neen, just outside the Census and Excise Office (the `CharGen Exit Door` marker), with the main menu over it.
-- Entries: Continue (greyed), New Game (focused), Load Game (greyed), Options, Quit. No HUD; NPCs, sky and physics
-  stand still; Esc does nothing (no pause menu under it).
-- Options opens the options screen on top, Esc returns. Quit asks Yes/No (No focused); Yes exits.
-- New Game closes the menu: HUD appears, the player stands at the office door and can walk; Esc now opens the pause menu.
-- Dev runs (`cargo dev view ...`, `scene`) never show it. Known: no title image or background art yet.
-- 2026-10-26 (M3): with a save on disk, Continue (focused) and Load Game are live: Continue loads the newest save (any kind) and play resumes there; Load Game opens the save list, Esc returns to the main menu.
-- Owner 2026-10-30: the buttons work, but a menu over the live world is not a main menu: Morrowind shows a title
-  image or video, not the game. Wanted: background art/video behind the menu; "Main menu" from the pause menu.
-  Status: rejected (menu over title art, not the world).
+### MM-1: Release start: main menu with no world behind it, New game (`bevyrrowind` with no arguments)
+- Build `cargo build -p bevyrrowind --features dev`, run `target/debug/bevyrrowind.exe` (no subcommand).
+- Front end (F1, 2026-11-11): the main menu over a plain near-black background, **no world**: no terrain, sky, NPCs or
+  HUD behind it, window title stays "Bevyrrowind" (no fps/cells line). Esc does nothing. Options, Quit as before.
+- New Game: the menu closes, Seyda Neen streams in outside the Census and Excise Office, the player can walk; Esc opens
+  the pause menu. Log: `main menu: new game`, then `app phase: start area resident, in game`.
+- Interim (F3 does it properly): Continue / Load Game first build the world at the new-game start, then Continue loads
+  the newest save in game (a normal load fade) and Load opens the save list over the game (Esc: play the new game).
+- Dev runs (`view`, `scene`) unchanged: no menu, the world at once. Known: no title art yet (B1), no loading screen (F4).
+- Owner 2026-10-30: rejected the menu over the live world (wants title art/video). Status: awaiting owner (F1).
 
 ### PL-6: Recovery delay after jumping down from a high box (owner report)
 - Kind: synthetic. `scene level-anim-ledges`, F11; stand on a high box, Space off it toward the ground, keep W held.

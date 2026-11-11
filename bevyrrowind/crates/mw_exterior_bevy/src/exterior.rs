@@ -48,6 +48,8 @@ use sf_terrain_bevy::{TerrainCamera, TerrainDebug, TerrainOrigin, TerrainPlugin,
 use sf_vfs::Vfs;
 use sf_world::bake::BakedIndex;
 use sf_world::{IndexedPlacement, PlacementClass};
+use sf_app_bevy::WorldAlive;
+use sf_app_bevy::bevy_state::prelude::{OnEnter, in_state};
 
 use mw_devtools_bevy::perf::{Off, Part};
 use mw_devtools_bevy::ready::settled;
@@ -134,8 +136,9 @@ pub struct ExteriorOptions {
     pub water: mw_environment_bevy::water::WaterInputs,
     /// A synthetic test level (`level.rs`, TS1): `worldspace` is its own.
     pub level: Option<crate::level::LevelSetup>,
-    /// The release start (no subcommand): open the main menu over the world, paused, until New
-    /// game (`main_menu.rs`). Dev runs (`view`, `scene`) leave it off.
+    /// The release start (no subcommand): the front end, the main menu with no world, until New
+    /// game builds it (`phase.rs`, `main_menu.rs`). Dev runs (`view`, `scene`) leave it off and
+    /// go straight to loading.
     pub start_in_main_menu: bool,
 }
 
@@ -280,7 +283,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             .set(WindowPlugin { primary_window: Some(perf.window(options.title.clone(), Some((1280, 720)))), ..WindowPlugin::default() }),
     )
     .add_plugins((MwAssetsPlugin { vfs: vfs.clone() }, FreeCameraPlugin))
-    .add_plugins(WorldStreamingPlugin { config: streaming })
+    .add_plugins(WorldStreamingPlugin { config: streaming });
+    // App phases (menus.md "App phases"): the world's sets run only while `WorldAlive`.
+    crate::phase::add(&mut app, options.start_in_main_menu);
+    app
     .insert_resource(WorldIndexSource(Arc::new(BakedIndex::new(options.store.clone(), manifest.clone()))))
     .insert_resource(ActiveWorldspace(Some(options.worldspace.clone())))
     .insert_resource(StreamingDebug { enabled: options.rings, ..StreamingDebug::default() })
@@ -503,15 +509,17 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             bloom: if perf.off.has(Part::Bloom) { None } else { options.quality.bloom() },
         })
         .insert_resource(Started(Instant::now()))
-        // Chained: both reserve the worldspace root through `Commands`; unordered,
-        // one could queue `ChildOf(root)` ahead of the root's spawn (a panic with
-        // the `solari` feature, whose Startup systems change the order).
-        .add_systems(Startup, (setup, setup_spawners).chain())
-        .add_systems(Update, (follow_pose, follow_player).chain().before(StreamingSystems::Drive))
-        .add_systems(Update, (light_layers, status))
+        // The spawners at startup (the `PostStartup` hooks of audio, scripts and physics wrap
+        // them); the world itself (camera, player anchor, worldspace roots) once a world is
+        // wanted (`phase.rs`: at once on dev runs, after New game on the release start).
+        .add_systems(Startup, setup_spawners)
+        .add_systems(OnEnter(WorldAlive), setup.in_set(WorldSetup))
+        .add_systems(Update, (follow_pose, follow_player).chain().before(StreamingSystems::Drive).run_if(in_state(WorldAlive)))
+        .add_systems(Update, (light_layers, status).run_if(in_state(WorldAlive)))
         .add_systems(
             PostUpdate,
             sync_origin
+                .run_if(in_state(WorldAlive))
                 .after(TransformSystems::Propagate)
                 .before(TerrainSystems::Update)
                 .before(sf_sky_bevy::SkySystems::Origin)
@@ -537,10 +545,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     let clips = player_clips(&options.store, &manifest);
     mw_player_bevy::add(&mut app, options.actors.clone(), !bench && options.screenshot.is_none() && !scene_camera, player_start, clips);
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
-    app.add_systems(Update, mark_settled);
+    app.add_systems(Update, mark_settled.run_if(in_state(WorldAlive)));
     mw_devtools_bevy::live_ab::add(&mut app, !bench && options.screenshot.is_none());
     if bench {
-        app.add_systems(Update, (hold_warmup, counters)).add_systems(Startup, |mut s: ResMut<Streaming>| s.begin_burst());
+        app.add_systems(Update, (hold_warmup, counters)).add_systems(OnEnter(WorldAlive), |mut s: ResMut<Streaming>| s.begin_burst());
     } else if let Some(path) = options.screenshot {
         app.insert_resource(Capture {
             path,
@@ -550,7 +558,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             failed: false,
         })
             .add_systems(Update, capture)
-            .add_systems(Startup, |mut s: ResMut<Streaming>| s.begin_burst());
+            .add_systems(OnEnter(WorldAlive), |mut s: ResMut<Streaming>| s.begin_burst());
     }
     perf.add_plugins(&mut app)?;
     // The GI's GPU timer (`gi: probe_update ...` log); benchmark runs already have it.
@@ -679,17 +687,21 @@ const LEVEL_TINTS: [Color; 5] = [
     Color::srgb(1.0, 0.2, 1.0),
 ];
 
+/// `OnEnter(WorldAlive)`: the world's own setup (camera, player anchor, worldspace roots).
+/// World content that needs the roots (a test level's props) orders after it.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct WorldSetup;
+
+/// Startup: the placement spawners only, no world entity (the front end has none). The
+/// worldspace roots are `setup`'s.
 fn setup_spawners(
     mut commands: Commands,
     config: Res<Spawners>,
     off: Res<Off>,
-    mut registry: ResMut<WorldspaceRegistry>,
     characters: Option<Res<sf_character_bevy::Characters>>,
     walkers: Option<Res<mw_walkers_bevy::walkers::MwGround>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Reserves the exterior root (see the chain in `run`).
-    registry.ensure(&mut commands, &ids::exterior());
     let nif = Arc::new(NifSpawner { lights: config.lights.clone() });
     let mut spawners = PlacementSpawners::default();
     spawners

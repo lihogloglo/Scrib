@@ -34,6 +34,7 @@ mw_walkers_bevy.workspace = true
 mw_world.workspace = true
 sf_anim_bevy.workspace = true
 sf_anim_graph.workspace = true
+sf_app_bevy.workspace = true
 sf_atmos_bevy.workspace = true
 sf_audio_bevy = { workspace = true, features = ["weather"] }
 sf_bake.workspace = true

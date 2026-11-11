@@ -25,6 +25,8 @@ bevy_audio = { version = "0.20", default-features = false }
 bevy_mesh = { version = "0.20", default-features = false }
 bevy_platform = { version = "0.20", default-features = false }
 bevy_reflect = { version = "0.20", default-features = false }
+# App phases (sf_app_bevy, menus.md "App phases").
+bevy_state = { version = "0.20", default-features = false }
 bevy_time = { version = "0.20", default-features = false }
 bevy_transform = { version = "0.20", default-features = false }
 # Rendering sub-crates (sf_sky_bevy). `bevy_solari` is optional there (`solari` feature).
@@ -165,6 +167,7 @@ sf_ai = { path = "superfargoth/crates/sf_ai", version = "0.1.0" }
 sf_ai_bevy = { path = "superfargoth/crates/sf_ai_bevy", version = "0.1.0" }
 sf_anim = { path = "superfargoth/crates/sf_anim", version = "0.1.0", default-features = false }
 sf_anim_bevy = { path = "superfargoth/crates/sf_anim_bevy", version = "0.1.0" }
+sf_app_bevy = { path = "superfargoth/crates/sf_app_bevy", version = "0.1.0" }
 sf_anim_graph = { path = "superfargoth/crates/sf_anim_graph", version = "0.1.0" }
 sf_atmos = { path = "superfargoth/crates/sf_atmos", version = "0.1.0" }
 sf_atmos_bevy = { path = "superfargoth/crates/sf_atmos_bevy", version = "0.1.0" }

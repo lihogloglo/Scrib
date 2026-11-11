@@ -145,7 +145,7 @@ PM-1 | confirmed with follow-up (2026-10-30: mouse sliders, mute icon, Main menu
 SV-2 | confirmed with follow-up (2026-10-30: thumbnails missing) | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)
 HD-1 | confirmed (2026-10-30) | [player-ui](visual-checks/player-ui.md) | Minimal HUD: bars, compass, crosshair, use prompt
 HD-2 | confirmed (2026-11-05: bars ok; dummy health log to re-confirm) | [player-ui](visual-checks/player-ui.md) | Bars follow damage and regen (stats S5: bars from the player's sheet)
-MM-1 | rejected (2026-10-30: wants title art/video, not the live world) | [player-ui](visual-checks/player-ui.md) | Release start: main menu over Seyda Neen, New game
+MM-1 | awaiting owner (F1 2026-11-11: menu with no world; was rejected 2026-10-30) | [player-ui](visual-checks/player-ui.md) | Release start: main menu with no world behind it, New game
 FG-9 | confirmed (2026-11-02: no pillar; god rays still not visible, FG-10) | [weather-sky](visual-checks/weather-sky.md) | Vertical light pillar toward a low sun in fog: isotropic sky fill (fix built 2026-11-02)
 FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)

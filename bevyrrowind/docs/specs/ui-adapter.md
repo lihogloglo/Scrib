@@ -72,6 +72,30 @@ From `Morrowind.bsa` (checked by listing the archive):
   gamepad focus shows the "over" art.
 - Art is borrowed, layouts are not: the classic look applies to the framework's preset layouts.
 
+## Menus and front end
+
+Framework: `superfargoth/docs/specs/menus.md` and `video.md`; research
+`docs/research/menus-video-art-2026-11-11.md`. The adapter fills the framework hooks:
+
+- **Backdrop** (`MenuBackdropCandidates`, first that exists): `video/menu_background.bik` (OpenMW's name, what menu
+  mods ship), then the `[Movies] Options Menu=` file from `Morrowind.ini` (vanilla `mw_menu.bik`, 885 frames,
+  640×480, silent: vanilla's own animated menu), then `textures/menu_morrowind.dds` (OpenMW's static fallback),
+  then the plain theme background. Videos probe by header, so a mod's other container plugs in once a decoder
+  exists for it. OpenMW `apps/openmw/mwgui/mainmenu.cpp` @ 97722d48.
+- **Title image**: none over a video (the art is in it); `menu_morrowind` over a plain background.
+- **Intro videos**: `[Movies] Company Logo=` then `Morrowind Logo=` (`bethesda logo.bik`, `mw_logo.bik`);
+  **new game**: `New Game=` (`mw_intro.bik`, with sound). Missing files are skipped.
+- **Loading screen**: a random file under `splash/` (recursive, loose over BSA), as OpenMW `loadingscreen.cpp`.
+- **Menu music**: `music/special/morrowind title.mp3` (vanilla) through the music bus; to verify against OpenMW.
+- **Textured buttons** (`mw_classic` theme): main menu entries classed by id get `menu_{newgame,loadgame,options,
+  exitgame,return}` art, `_over` for `:hover`/`:focus-visible`, `_pressed` for `:active`, with the localized
+  label hidden (art carries the text) only when the art exists; Continue uses `menu_return`. Frames come from the
+  `ui.frames` bake above (needs `-bevy-image-mode: sliced` through bevy_flair: verify in that slice).
+- **Graphics page** (menus.md S4): the `Quality` preset (Low..Ultra) becomes the `sf.graphics_preset` driver with
+  levels as `ui.setting_preset` data; a curated subset of `Off` parts (`mw_game_core/src/perf.rs`) become
+  per-feature settings (shadows, soft/contact shadows, SSAO, bloom, GI, clouds, froxel fog, far field, actors'
+  shadows); upscaler and RT from `RenderSettings`. All `Restart` first, made `Live` one by one later.
+
 ## Books and scrolls: markup → rich text
 
 - BOOK text is simplified HTML (verify the tag set over every BOOK record): `<DIV ALIGN=...>`,
