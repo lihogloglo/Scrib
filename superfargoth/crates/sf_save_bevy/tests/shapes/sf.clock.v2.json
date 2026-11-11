@@ -1,0 +1,24 @@
+{
+  "ClockSave": {
+    "STRUCT": [
+      {
+        "clock": {
+          "TYPENAME": "GameClock"
+        }
+      },
+      {
+        "sim_tick": "U64"
+      }
+    ]
+  },
+  "GameClock": {
+    "STRUCT": [
+      {
+        "now": "U64"
+      },
+      {
+        "time_scale": "F32"
+      }
+    ]
+  }
+}

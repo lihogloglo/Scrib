@@ -73,7 +73,7 @@ use sf_save_bevy::{
     LoadDone, LoadRequest, LoadTransition, SaveAppExt, SaveConfig, SaveDone, SaveGate, SaveIdentity, SaveRequest, SaveSection, SaveSession,
     SaveStorage, SfSavePlugin, sections,
 };
-use sf_sky_bevy::SkyTime;
+use sf_sky_bevy::GameClock;
 use sf_weather_bevy::{WeatherRecords, WorldSurface, WorldWeather};
 use sf_world::{Location, WorldspaceId};
 use sf_world_bevy::big_space::prelude::CellCoord;
@@ -209,10 +209,13 @@ pub fn register(app: &mut App) {
         },
     ))
     .add_save_section(sections::clock(
-        |w| w.get_resource::<SkyTime>().map(|t| t.0),
+        |w| w.get_resource::<GameClock>().copied(),
         |w, v| {
-            if let Some(mut t) = w.get_resource_mut::<SkyTime>() {
-                t.0 = v;
+            // The saved instant and scale; the dev freeze (`paused`) stays this session's.
+            if let Some(mut t) = w.get_resource_mut::<GameClock>() {
+                let paused = t.paused;
+                *t = v;
+                t.paused = paused;
             }
         },
     ))
@@ -527,7 +530,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(SfSavePlugin { config: SaveConfig { root, background: false, ..Default::default() } });
         register(&mut app);
-        app.insert_resource(rpg).insert_resource(WorldOverlay::default()).insert_resource(SkyTime::default());
+        app.insert_resource(rpg).insert_resource(WorldOverlay::default()).insert_resource(GameClock::default());
         app
     }
 
@@ -661,7 +664,8 @@ mod tests {
         let before = rpg.state.clone();
         let mut app = app(root.clone(), rpg);
         app.world().resource::<WorldOverlay>().0.write().unwrap().remove(TAKEN);
-        app.world_mut().resource_mut::<SkyTime>().0.days = 3.75;
+        // Day 3, 18:00 (clock.md: integer game ms).
+        app.world_mut().resource_mut::<GameClock>().now = sf_sky_bevy::GameInstant(3 * 86_400_000 + 64_800_000);
 
         app.world_mut().write_message(SaveRequest::quick());
         app.update();
@@ -670,7 +674,7 @@ mod tests {
         assert!(report.per_owner.contains_key(OWNER) && report.per_owner.contains_key("sf"), "{:?}", report.per_owner);
 
         // Fresh state, then quickload.
-        app.insert_resource(Rpg::new(db.clone()).unwrap()).insert_resource(WorldOverlay::default()).insert_resource(SkyTime::default());
+        app.insert_resource(Rpg::new(db.clone()).unwrap()).insert_resource(WorldOverlay::default()).insert_resource(GameClock::default());
         app.world_mut().write_message(LoadRequest::latest(Some(SaveReason::Quick)));
         app.update();
         let loaded: Vec<_> = app.world_mut().resource_mut::<Messages<LoadDone>>().drain().collect();
@@ -682,7 +686,7 @@ mod tests {
         assert!(rpg.state.world.journal.for_quest(&quest).next().is_some(), "journal entries are back");
         assert!(mw_rpg_bevy::inventory::take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel).is_empty(), "the barrel stays empty");
         assert!(app.world().resource::<WorldOverlay>().0.read().unwrap().is_removed(TAKEN));
-        assert!((app.world().resource::<SkyTime>().0.days - 3.75).abs() < 1e-9);
+        assert_eq!(app.world().resource::<GameClock>().now, sf_sky_bevy::GameInstant(3 * 86_400_000 + 64_800_000));
         let _ = std::fs::remove_dir_all(&root);
     }
 

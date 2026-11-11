@@ -44,6 +44,8 @@ dlss_wgpu = { version = "6.0.0", optional = true }
 log.workspace = true
 sf_model_bevy.workspace = true
 sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
+# The game clock resource (`GameClock`, clock.md).
+sf_ids = { workspace = true, features = ["bevy"] }
 sf_sky.workspace = true
 workspace-hack.workspace = true
 

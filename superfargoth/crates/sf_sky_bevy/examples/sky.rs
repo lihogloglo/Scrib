@@ -18,10 +18,10 @@ use bevy::prelude::*;
 use bevy::render::occlusion_culling::OcclusionCulling;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::WindowResolution;
-use sf_sky_bevy::sf_sky::{RenderPath, SkyClock, SkySettings};
+use sf_sky_bevy::sf_sky::{RenderPath, SkySettings};
 use sf_sky_bevy::{
     ActiveRenderPath, CurrentSky, NoRayTracing, RayTracingSupport, RenderPathSetting, SkyCamera,
-    SkyConfig, SkyPlugin, SkyTime,
+    GameClock, SkyConfig, SkyPlugin,
 };
 
 #[derive(Resource, Clone, Debug)]
@@ -67,7 +67,7 @@ fn parse_args() -> Args {
 fn main() {
     let args = parse_args();
     let settings = SkySettings::default();
-    let mut clock = SkyClock::at(args.day, args.hour, &settings.calendar);
+    let mut clock = GameClock::at(args.day, args.hour, settings.calendar.day_ms());
     clock.time_scale = 1800.0;
     clock.paused = args.screenshot.is_some();
 
@@ -230,7 +230,7 @@ fn spawn_lamps(
 fn controls(
     keys: Res<ButtonInput<KeyCode>>,
     mut setting: ResMut<RenderPathSetting>,
-    mut time: ResMut<SkyTime>,
+    mut clock: ResMut<GameClock>,
     config: Res<SkyConfig>,
 ) {
     if keys.just_pressed(KeyCode::KeyR) {
@@ -239,7 +239,6 @@ fn controls(
             RenderPath::RayTraced => RenderPath::Raster,
         };
     }
-    let clock = &mut time.0;
     if keys.just_pressed(KeyCode::Space) {
         clock.paused = !clock.paused;
     }
@@ -257,7 +256,7 @@ fn controls(
         (KeyCode::Digit5, 0.0),
     ] {
         if keys.just_pressed(key) {
-            clock.set_hour(hour, &config.0.calendar);
+            clock.set_hour(hour, config.day_ms());
         }
     }
 }
@@ -266,7 +265,7 @@ fn status(
     sky: Res<CurrentSky>,
     path: Res<ActiveRenderPath>,
     support: Res<RayTracingSupport>,
-    time: Res<SkyTime>,
+    clock: Res<GameClock>,
     mut window: Single<&mut Window>,
     exposure: Single<&Exposure, With<SkyCamera>>,
 ) {
@@ -275,8 +274,8 @@ fn status(
     let (h, m) = (s.hour as u32, (s.hour.fract() * 60.0) as u32);
     window.title = format!(
         "sf_sky  {h:02}:{m:02}  x{:.0}{}  sun {:.1}°  moon {:.1}° ({:.0}%)  EV {:.1}  {:?}{}",
-        time.0.time_scale,
-        if time.0.paused { " paused" } else { "" },
+        clock.time_scale,
+        if clock.paused { " paused" } else { "" },
         s.celestial.sun.elevation_deg(),
         s.celestial.moon.elevation_deg(),
         s.celestial.moon_illuminated * 100.0,

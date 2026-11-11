@@ -39,8 +39,8 @@
 //!   the level), the gold goes into the trainer's pool, then `rest(2, false)` (the player's
 //!   awake rest: fatigue; `OpenMW` rests every actor in range, here only the player, logged)
 //!   and `advanceTime(2)` (`mwworld/datetimemanager.cpp` `advanceTime`: the `MWScript` calendar
-//!   globals, [`mw_rpg::advance_calendar`], and the sky clock, [`advance_sky`], until ROADMAP
-//!   1.17's single clock). Modern differences: the list stays open after a purchase (`OpenMW`
+//!   globals, [`mw_rpg::advance_calendar`], and the game clock, [`advance_sky`]; C3 derives the
+//!   globals from the clock, clock.md). Modern differences: the list stays open after a purchase (`OpenMW`
 //!   closes the training window and the dialogue), no fade or progress bar (2 game hours pass
 //!   at once; `OpenMW` steps them 1/60 s apart under a 0.2 s fade).
 
@@ -63,7 +63,7 @@ use sf_rpg::{
     RpgCommand, RpgEvent, SessionState, StackId,
 };
 use sf_rpg_ui::{DialogueAction, DialogueRequest, DialogueView};
-use sf_sky_bevy::{SkyConfig, SkyTime};
+use sf_sky_bevy::GameClock;
 use sf_stats_bevy::sf_stats::{CauseKind, IncreaseSource, StatOp, StatOwner};
 use sf_stats_bevy::{StatCommand, StatTick};
 use tes3::esp::{LeveledItem, Npc};
@@ -221,15 +221,21 @@ pub fn seed_store(records: &RecordDb, base: &RecordId) -> CharacterRpg {
 }
 
 impl Rpg {
-    /// The game clock as the services read it: the `DaysPassed` and `GameHour` globals
-    /// (`OpenMW`'s `getTimeStamp`).
+    /// Game time as the services, journal and effects read it: the game clock's instant at the
+    /// last [`sync_clock`] (`GameTime::from`, rounded down to the minute; clock.md). Without a
+    /// clock (headless), the `DaysPassed` and `GameHour` globals (`OpenMW`'s `getTimeStamp`).
+    pub fn game_time(&self) -> GameTime {
+        self.clock.map_or_else(|| self.calendar_time(), GameTime::from)
+    }
+
+    /// The `MWScript` calendar's `DaysPassed` and `GameHour` (C3 derives them from the clock).
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         reason = "game clock globals, clamped to the u32/u16 ranges first"
     )]
-    pub fn game_time(&self) -> GameTime {
+    fn calendar_time(&self) -> GameTime {
         let v = View {
             c: &self.content,
             s: &self.state,
@@ -788,7 +794,7 @@ impl Rpg {
 
     /// `advanceTime(hours)` on the `MWScript` calendar globals the game declares (`GameHour`,
     /// `DaysPassed`, `Day`, `Month`, `Year`; [`Rpg::game_time`] reads the first two), and the
-    /// hours queued for the sky clock ([`advance_sky`]). Single player: time passes.
+    /// hours queued for the game clock ([`advance_sky`]). Single player: time passes.
     /// TODO(co-op, services.md "Co-op"): a party rest request, the time skipped when the vote
     /// fails or is pending.
     #[allow(
@@ -1019,25 +1025,30 @@ pub(super) fn relist_services(
     }
 }
 
-/// Hours services passed move the sky clock (`SkyTime`, what the sky, held lights, Lua's
-/// `core.game_time()` and saves read): `days += hours / hours_per_day`. Without a sky clock
-/// (headless, interiors before the exterior plugin) only the `MWScript` calendar moved.
+/// [`Rpg::game_time`] follows the game clock (clock.md "Views"): the instant copied in before the
+/// dialogue host runs, without marking `Rpg` changed.
 #[allow(clippy::needless_pass_by_value)] // system parameters
-pub(super) fn advance_sky(
-    mut rpg: ResMut<Rpg>,
-    sky: Option<ResMut<SkyTime>>,
-    config: Option<Res<SkyConfig>>,
-) {
+pub(super) fn sync_clock(clock: Option<Res<GameClock>>, mut rpg: ResMut<Rpg>) {
+    let now = clock.map(|c| c.now);
+    if rpg.clock != now {
+        rpg.bypass_change_detection().clock = now;
+    }
+}
+
+/// Hours services passed skip the game clock ([`GameClock::skip`], clock.md: what the sky, held
+/// lights, AI timers, Lua's `core.game_time()` and saves read), rounded down to the ms. Without
+/// a clock (headless, interiors before the exterior plugin) only the `MWScript` calendar moved.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+pub(super) fn advance_sky(mut rpg: ResMut<Rpg>, clock: Option<ResMut<GameClock>>) {
     if rpg.sky_hours <= 0.0 {
         return;
     }
     let hours = std::mem::take(&mut rpg.sky_hours);
-    let Some(mut sky) = sky else {
-        debug!("services: no sky clock; {hours} h passed on the MWScript calendar only");
+    let Some(mut clock) = clock else {
+        debug!("services: no game clock; {hours} h passed on the MWScript calendar only");
         return;
     };
-    let per_day = config.map_or(24.0, |c| c.0.calendar.hours_per_day);
-    sky.0.days += f64::from(hours) / f64::from(per_day);
+    clock.skip(sf_sky_bevy::sf_ids::clock::hours_ms(f64::from(hours)));
 }
 
 /// Queued service events go out as [`ServiceEventMessage`]s (checked before taking, so `Rpg`

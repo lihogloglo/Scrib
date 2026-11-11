@@ -7,7 +7,8 @@
 //!   need a bump too; reviewers check.
 //! - **Golden saves**: `tests/golden/s2.sfsave`, the canonical played yard written by S2
 //!   (`sf/character` v1, `sf/weather` v1), and `tests/golden/character-v2.sfsave` (`sf/weather`
-//!   v1), `weather-v2.sfsave` and `character-v3.sfsave` (`sf/character` v2 and v3), must keep
+//!   v1), `weather-v2.sfsave`, `character-v3.sfsave` and `character-v4.sfsave` (`sf/character` v2,
+//!   v3 and v4; `sf/clock` v1 in all of them), must keep
 //!   loading (through migration) into the same state; [`CURRENT`], the same yard
 //!   at the current versions, must also re-save to the same raw section bytes. Released goldens
 //!   are never re-blessed.
@@ -135,6 +136,7 @@ fn saved_shapes_match_their_goldens() {
 /// one (`ActionClock`, `Timers`, `Locomotion`) would silently break the migration's input.
 #[test]
 fn legacy_shapes_match_their_goldens() {
+    check_golden(&format!("sf.{}.v1", sections::CLOCK), &shape::<sections::clock_legacy::v1::ClockSave>(None, &[]));
     check_golden(
         &format!("sf.{}.v1", sections::WEATHER),
         &shape::<sections::weather_legacy::v1::WeatherSave>(None, &[&traced::<sf_weather::Override>, &traced::<sf_wind::WindSourceKind>]),
@@ -196,8 +198,8 @@ fn load_golden(golden: &Path, dir: &Path, migrated: &[(sf_save::SectionKey, u32,
     raw_sections(&again.path)
 }
 
-/// The golden save at the current versions (the yard re-written when `sf/character` went to v4).
-const CURRENT: &str = "character-v4.sfsave";
+/// The golden save at the current versions (the yard re-written when `sf/clock` went to v2).
+const CURRENT: &str = "clock-v2.sfsave";
 
 fn weather_step() -> (sf_save::SectionKey, u32, u32) {
     (sections::key(sections::WEATHER), 1, sections::WEATHER_VERSION)
@@ -205,6 +207,10 @@ fn weather_step() -> (sf_save::SectionKey, u32, u32) {
 
 fn character_step(from: u32) -> (sf_save::SectionKey, u32, u32) {
     (sections::character_key(crate::tests::HERO), from, sections::CHARACTER_VERSION)
+}
+
+fn clock_step() -> (sf_save::SectionKey, u32, u32) {
+    (sections::key(sections::CLOCK), 1, sections::CLOCK_VERSION)
 }
 
 /// The `sf/weather` v2 golden (`sf/character` v2: a save from before the stats sheet) loads
@@ -215,7 +221,7 @@ fn the_weather_v2_golden_save_loads_through_the_character_step() {
     let old = data_dir("golden").join("weather-v2.sfsave");
     assert!(old.exists(), "the weather-v2 golden is released: never re-bless it");
     let current = golden_save(CURRENT, dir.path());
-    assert_eq!(load_golden(&old, dir.path(), &[character_step(2)]), raw_sections(&current));
+    assert_eq!(load_golden(&old, dir.path(), &[character_step(2), clock_step()]), raw_sections(&current));
 }
 
 /// The S2 golden (`sf/character` v1, `sf/weather` v1) loads through both v1 → v2 steps into the
@@ -226,7 +232,7 @@ fn the_s2_golden_save_still_loads_through_migration() {
     let s2 = data_dir("golden").join("s2.sfsave");
     assert!(s2.exists(), "the S2 golden is released: never re-bless it");
     let current = golden_save(CURRENT, dir.path());
-    let resaved = load_golden(&s2, dir.path(), &[character_step(1), weather_step()]);
+    let resaved = load_golden(&s2, dir.path(), &[character_step(1), clock_step(), weather_step()]);
     assert_eq!(resaved, raw_sections(&current));
 }
 
@@ -238,7 +244,7 @@ fn the_character_v2_golden_save_loads_through_the_weather_step() {
     let old = data_dir("golden").join("character-v2.sfsave");
     assert!(old.exists(), "the character-v2 golden is released: never re-bless it");
     let current = golden_save(CURRENT, dir.path());
-    assert_eq!(load_golden(&old, dir.path(), &[character_step(2), weather_step()]), raw_sections(&current));
+    assert_eq!(load_golden(&old, dir.path(), &[character_step(2), clock_step(), weather_step()]), raw_sections(&current));
 }
 
 /// The `sf/character` v3 golden (a save from before effects) loads through the v3 → v4 step (no
@@ -249,7 +255,31 @@ fn the_character_v3_golden_save_loads_through_the_effects_step() {
     let old = data_dir("golden").join("character-v3.sfsave");
     assert!(old.exists(), "the character-v3 golden is released: never re-bless it");
     let current = golden_save(CURRENT, dir.path());
-    assert_eq!(load_golden(&old, dir.path(), &[character_step(3)]), raw_sections(&current));
+    assert_eq!(load_golden(&old, dir.path(), &[character_step(3), clock_step()]), raw_sections(&current));
+}
+
+/// The `sf/character` v4 golden (`sf/clock` v1: a save from before the integer clock) loads
+/// through the clock step and re-saves to exactly the current golden's sections.
+#[test]
+fn the_character_v4_golden_save_loads_through_the_clock_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = data_dir("golden").join("character-v4.sfsave");
+    assert!(old.exists(), "the character-v4 golden is released: never re-bless it");
+    let current = golden_save(CURRENT, dir.path());
+    assert_eq!(load_golden(&old, dir.path(), &[clock_step()]), raw_sections(&current));
+}
+
+/// `sf/clock` v1 → v2 (clock.md "Save"): fractional days on 24-hour days become whole game
+/// milliseconds, the scale is kept, the dev freeze is dropped, the sim tick is untouched.
+#[test]
+fn a_v1_clock_migrates_to_the_exact_instant() {
+    use sections::clock_legacy::v1;
+    let old = v1::ClockSave { clock: v1::SkyClock { days: 3.75, time_scale: 12.5, paused: true }, sim_tick: 77 };
+    let new = old.migrate();
+    assert_eq!(new.clock.now, sf_ids::GameInstant(3 * 86_400_000 + 64_800_000));
+    assert_eq!(new.clock.time_scale.to_bits(), 12.5_f32.to_bits());
+    assert!(!new.clock.paused);
+    assert_eq!(new.sim_tick, 77);
 }
 
 /// The current golden ([`CURRENT`]) loads without migration and re-saves byte for byte.

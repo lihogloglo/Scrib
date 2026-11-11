@@ -40,7 +40,8 @@ use sf_coords::WorldPos;
 use sf_diag_bevy::{DiagCounters, DiagScenario, FlyThroughPose};
 use sf_model::steps::MeshCookStep;
 use sf_model_bevy::{BAKED_SOURCE, BakedManifest, baked_source};
-use sf_sky_bevy::sf_sky::{SkyClock, SkySettings};
+use sf_sky_bevy::GameClock;
+use sf_sky_bevy::sf_sky::SkySettings;
 use sf_sky_bevy::{MoonLight, SkyCamera, SkyPlugin, SkyRenderOptions, SunLight, TemporalHistory};
 use sf_weather_bevy::{WeatherOverrides, WeatherPlugin, WeatherSite, WeatherSystems};
 use sf_terrain_bevy::sf_terrain::bake::BakedTerrain;
@@ -310,7 +311,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     if let Some(degrees) = options.sun_size {
         settings.sun_disk.angular_size = degrees.to_radians();
     }
-    let mut clock = SkyClock::at(options.day, options.hour, &settings.calendar);
+    let mut clock = GameClock::at(options.day, options.hour, settings.calendar.day_ms());
     clock.paused = options.screenshot.is_some() || bench;
     render.insert(&mut app);
     let off_parts = &perf.off;

@@ -604,12 +604,12 @@ pub(crate) mod tests {
         let mut app = app_with(|app| {
             app.add_plugins(SfSavePlugin { config })
                 .insert_resource(sf_world_bevy::WorldOverlay::default())
-                .insert_resource(sf_sky_bevy::SkyTime::default())
+                .insert_resource(sf_sky_bevy::GameClock::default())
                 .insert_resource(sf_world_bevy::ActiveWorldspace(Some(sf_world::WorldspaceId::new("Seyda Neen, Census and Excise Office"))));
             mw_saves_bevy::register(app);
             mw_saves_bevy::menu::add(app);
         });
-        app.world_mut().resource_mut::<sf_sky_bevy::SkyTime>().0.days = 2.75;
+        app.world_mut().resource_mut::<sf_sky_bevy::GameClock>().now = sf_sky_bevy::GameInstant(2 * 86_400_000 + 64_800_000); // day 2.75
 
         // Esc -> Save: the screen on top of the menu, nothing saved yet.
         tap(&mut app, KeyCode::Escape);

@@ -138,3 +138,42 @@ fn a_stack_that_breaks_its_invariants_is_refused_naming_the_actor() {
     assert_eq!(left.check(), Ok(()));
     assert_eq!(AiSave::default().into_stacks(), Ok(Vec::new()));
 }
+
+/// clock.md / ai-as-built "AI5 Clock": the tick's `now` is the saved world clock rounded down,
+/// so a directive timer keeps running across a save and load and expires at its exact minute.
+#[test]
+fn a_directive_timer_advances_across_a_load_on_the_world_clock() {
+    use core::time::Duration;
+    use sf_ids::clock::MS_PER_MINUTE;
+    use sf_ids::{GameClock, GameInstant};
+    let policy = ModernPolicy;
+    let mut events = Vec::new();
+    // 10:00 plus 30 game seconds: rounds down to minute 600.
+    let mut clock = GameClock::new(GameInstant(600 * MS_PER_MINUTE + 30_000), 30.0);
+    let mut stack = DirectiveStack::new(GUARD, GameTime::from(clock.now));
+    let wait = DirectiveSpec::new(DirectiveKind::Custom(RecordId::new("wait")), DirectiveSource::Quest).limit(Limit::For { minutes: 2 });
+    let id = stack.push(wait, GameTime::from(clock.now), &policy, &mut events);
+    assert_eq!(stack.clock(), t(600));
+
+    // Save both at one tick boundary, load them back.
+    let saved_clock = postcard::to_allocvec(&clock).unwrap();
+    let saved_stack = postcard::to_allocvec(&stack.to_saved()).unwrap();
+    clock = postcard::from_bytes(&saved_clock).unwrap();
+    let mut stack = DirectiveStack::from_saved(GUARD, postcard::from_bytes(&saved_stack).unwrap()).unwrap();
+    assert_eq!(GameTime::from(clock.now), t(600), "the loaded clock is not behind the stack");
+
+    // 64 Hz fixed ticks at x30 (468.75 game ms each): the timer ends at minute 602, not before.
+    let tick = Duration::from_micros(15_625);
+    let mut ticks = 0;
+    while events.iter().all(|e: &DirectiveDone| e.id != id) {
+        clock.advance(tick);
+        stack.advance(GameTime::from(clock.now), &policy, &mut events);
+        ticks += 1;
+        assert!(ticks < 1000, "the timer never fired");
+    }
+    let done = events.iter().find(|e| e.id == id).unwrap();
+    assert_eq!((done.end, done.at), (DirectiveEnd::Expired, t(602)));
+    // 90 game seconds from 10:00:30 to 10:02:00 = 192 ticks of 468.75 ms.
+    assert_eq!(ticks, 192);
+    assert_eq!(clock.now.minutes(), 602);
+}

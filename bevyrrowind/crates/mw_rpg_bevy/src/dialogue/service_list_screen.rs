@@ -269,7 +269,8 @@ mod tests {
     use sf_rpg::Attrs;
     use sf_rpg::service::{EntryId, EntryRefusal, ServiceEvent, ServiceRequest};
     use sf_rpg_ui::{ActionId, DialogueRequest, ListNav, ListOutcome, RowReason};
-    use sf_sky_bevy::SkyTime;
+    use sf_sky_bevy::GameClock;
+    use sf_sky_bevy::sf_ids::clock::MS_PER_HOUR;
     use sf_stats_bevy::sf_stats::{Inputs, Sheet, StatOp, StatOwner};
     use sf_stats_bevy::{SfStatsPlugin, StatRules, StatTableRes, Stats};
     use sf_ui_screens::DialogueRequestEvent;
@@ -277,7 +278,7 @@ mod tests {
         GameSetting, GameSettingValue, GlobalValue, GlobalVariable, Npc, ServiceFlags,
     };
 
-    use super::super::services::{OpenList, advance_sky};
+    use super::super::services::{OpenList, advance_sky, sync_clock};
     use super::super::{PERSUASION_ACTION, View, close_screens, registry, send_stat_commands};
     use super::*;
     use crate::stats::MwStats;
@@ -415,7 +416,7 @@ mod tests {
                 db: db.clone(),
             })
             .insert_resource(Time::<()>::default())
-            .insert_resource(SkyTime::default())
+            .insert_resource(GameClock::default())
             .insert_resource(rpg)
             .insert_resource(UiRegistryRes(registry()))
             .init_resource::<ScreenStackRes>()
@@ -423,6 +424,7 @@ mod tests {
             .add_systems(
                 Update,
                 (
+                    sync_clock,
                     host_dialogue,
                     close_screens,
                     send_stat_commands,
@@ -700,7 +702,7 @@ mod tests {
             Some(100),
             "the trainer's purse opened at its base gold"
         );
-        let days = app.world().resource::<SkyTime>().0.days;
+        let before = app.world().resource::<GameClock>().now;
         // A asks first (2 hours pass), yes buys.
         assert_eq!(view(&mut app, screen).activate(&long_blade), None);
         assert_eq!(view(&mut app, screen).asking(), Some(&long_blade));
@@ -712,14 +714,16 @@ mod tests {
             Some(100 + paid),
             "the price goes into the trainer's pool"
         );
-        // 9:00 on 16 Last Seed + 2 h: the MWScript calendar and the sky clock.
+        // 9:00 on 16 Last Seed + 2 h: the MWScript calendar and the game clock.
         assert_eq!(
             ["gamehour", "dayspassed", "day", "month", "year"].map(|g| global(&app, g)),
             [Some(11.0), Some(1.0), Some(16.0), Some(7.0), Some(427.0)]
         );
-        let moved = app.world().resource::<SkyTime>().0.days - days;
-        assert!((moved - 2.0 / 24.0).abs() < 1e-9, "sky +{moved} days");
-        assert_eq!(app.world().resource::<Rpg>().game_time().minute, 11 * 60);
+        let now = app.world().resource::<GameClock>().now;
+        assert_eq!(now.0 - before.0, 2 * MS_PER_HOUR, "the game clock skipped exactly 2 h");
+        // The stamps read the clock (synced before the next dialogue host run).
+        app.update();
+        assert_eq!(app.world().resource::<Rpg>().game_time(), sf_rpg::GameTime::from(now));
         // The raise applies on the next stats tick: Long Blade 21, one major-skill level-up
         // point (`iLevelUpMajorMult` 1), as a trainer level-up.
         let t = table();

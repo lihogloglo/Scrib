@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use sf_ids::GameInstant;
 use sf_records::RecordId;
 use sf_stats::StatKey;
 use smallvec::SmallVec;
@@ -14,11 +15,17 @@ use crate::active::{SourceClass, SourceRef};
 use crate::def::Tag;
 use crate::op::EffectList;
 
-/// The world clock in game minutes since the game started: what power recharges count. The
-/// host converts from its calendar (`sf_rpg::GameTime::total_minutes`); `sf_effects` does not
-/// depend on `sf_rpg`.
+/// The world clock in game minutes since the game started: what power recharges count. A
+/// view of the host's one clock (`sf_ids::GameInstant`, clock.md), rounded down; the same
+/// minutes as `sf_rpg::GameTime::total_minutes`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct GameMinutes(pub u64);
+
+impl From<GameInstant> for GameMinutes {
+    fn from(now: GameInstant) -> Self {
+        Self(now.minutes())
+    }
+}
 
 impl GameMinutes {
     /// One game day (24 game hours).

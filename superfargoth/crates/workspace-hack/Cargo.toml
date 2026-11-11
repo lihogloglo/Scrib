@@ -146,6 +146,7 @@ syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-trai
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "full", "visit", "visit-mut"] }
 toml_datetime = { version = "1", features = ["serde"] }
 toml_parser = { version = "1" }
+variadics_please = { version = "2" }
 winnow = { version = "1" }
 
 [target.x86_64-pc-windows-msvc.dependencies]

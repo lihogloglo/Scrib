@@ -559,7 +559,7 @@ mod tests {
         app_with(|app| {
             app.add_plugins(SfSavePlugin { config })
                 .insert_resource(sf_world_bevy::WorldOverlay::default())
-                .insert_resource(sf_sky_bevy::SkyTime::default());
+                .insert_resource(sf_sky_bevy::GameClock::default());
             mw_saves_bevy::register(app);
             mw_saves_bevy::menu::add(app);
             app.add_plugins(AppPhasePlugin::default());
@@ -574,7 +574,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(SfSavePlugin { config: SaveConfig { root: root.to_path_buf(), background: false, ..default() } })
             .insert_resource(sf_world_bevy::WorldOverlay::default())
-            .insert_resource(sf_sky_bevy::SkyTime::default());
+            .insert_resource(sf_sky_bevy::GameClock::default());
         mw_saves_bevy::register(&mut app);
         let mut save = |request: SaveRequest| {
             app.world_mut().write_message(request);

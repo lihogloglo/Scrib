@@ -26,7 +26,7 @@ use sf_rpg::{
     PlayerKey, RpgCommand, SlotId, StageFlags, WorldRpg,
 };
 use sf_save::{FileKind, SaveFile, SaveReason, SaveWriter, SectionFlags, SectionKey, encode};
-use sf_sky::{Calendar, SkyClock};
+use sf_ids::GameClock;
 use sf_weather::WeatherState;
 use sf_wind::{Wind, WindSource, WindState};
 use sf_world::{Location, Placement, PlacementClass, PlacementFlags, PlacementId, PlacementOverlay, RecordRef, WorldspaceId};
@@ -37,7 +37,7 @@ use crate::*;
 // ---- the test game: resources a content pack would own ---------------------------------------
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub(crate) struct Sky(pub SkyClock);
+pub(crate) struct Sky(pub GameClock);
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Weather(pub WeatherSave);
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
@@ -259,7 +259,8 @@ pub(crate) fn play(app: &mut App, y: &Yard) {
         let line = HeardLine { source: RecordId::new("info.secret.1"), speaker: "Guard".into(), text: "Don't tell.".into() };
         rpg.0.apply(RpgCommand::HearLine { topic: RecordId::new("little secret"), line }).unwrap();
     }
-    w.resource_mut::<Sky>().0.advance(3600.0 * 7.0, &Calendar::default());
+    // 7 real hours at x30: 210 game hours after noon of day 0 (day 9.25 on a 24-hour day).
+    w.resource_mut::<Sky>().0.advance(std::time::Duration::from_secs(3600 * 7));
     {
         let mut weather = w.resource_mut::<Weather>();
         weather.0.weather = WeatherState::new(42);

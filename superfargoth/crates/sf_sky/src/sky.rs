@@ -235,7 +235,7 @@ impl SkySettings {
             tint: Vec3::ONE,
         };
         let mut sun = light(celestial.sun, self.sun_illuminance, self.sun_angular_size);
-        let night = self.evaluate_night(clock, weather, celestial.sun.elevation_deg(), horizon);
+        let night = self.evaluate_night(*clock, weather, celestial.sun.elevation_deg(), horizon);
         let gain = self.moonlight.gain(&self.moon_list());
         let mut moon = moonlight(night.moons(), gain, weather.moonlight_tint);
         let sun_deg = celestial.sun.elevation_deg();
@@ -276,12 +276,12 @@ impl SkySettings {
         }])
     }
 
-    fn evaluate_night(&self, clock: &SkyClock, weather: &Weather, sun_deg: f32, horizon: f32) -> NightSky {
+    fn evaluate_night(&self, clock: SkyClock, weather: &Weather, sun_deg: f32, horizon: f32) -> NightSky {
         let direct = weather.direct_light_factor();
         let mut night = NightSky::default();
         for (slot, moon) in night.moons.iter_mut().zip(self.moon_list().iter()) {
-            let (phase, frame) = moon.phase(clock);
-            let position = moon.position(&self.orbit, clock, &self.calendar, phase);
+            let (phase, frame) = moon.phase(&clock);
+            let position = moon.position(&self.orbit, &clock, &self.calendar, phase);
             let (illuminated, brightness) = crate::night::phase_light(phase);
             let full = moon.illuminance * direct;
             #[expect(clippy::cast_possible_truncation, reason = "fraction")]

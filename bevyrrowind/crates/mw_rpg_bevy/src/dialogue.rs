@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use sf_character_bevy::{Character, CharacterPlacement};
 use sf_records::{RecordDb, RecordFormat, RecordId, apply_record_file};
 use sf_rpg::{
-    ActorKey, Attrs, CharacterRpg, ConversationCtx, DialogueOutput, DialogueSession, GameTime,
+    ActorKey, Attrs, CharacterRpg, ConversationCtx, DialogueOutput, DialogueSession,
     HeardLine, Holder, JournalEntry, PlayerId, RpgCommand, RpgEvent, SessionState, TopicKind, WorldRpg,
 };
 use sf_rpg::service::{ServiceEvent, ServiceSessions, WorldServices};
@@ -231,9 +231,13 @@ pub struct Rpg {
     /// Open list services (training...), by player and provider, with the rows last listed
     /// (not saved, like sessions).
     lists: Vec<services::OpenList>,
-    /// Game hours passed by services since the sky clock last took them
+    /// Game hours passed by services since the game clock last took them
     /// ([`services::advance_sky`]).
     sky_hours: f32,
+    /// The game clock's instant at the last [`services::sync_clock`] (clock.md): what journal
+    /// stamps, purses and [`Rpg::game_time`] read. `None` without a clock (headless): the
+    /// `MWScript` calendar globals until C3 derives them from the clock.
+    clock: Option<sf_sky_bevy::GameInstant>,
 }
 
 impl Content {
@@ -492,6 +496,7 @@ impl Rpg {
             service_events: Vec::new(),
             lists: Vec::new(),
             sky_hours: 0.0,
+            clock: None,
         })
     }
 
@@ -813,7 +818,7 @@ impl Rpg {
                 let cmd = {
                     let v = View { c: &self.content, s: &self.state, sheets };
                     let rules = MwDialogueRules::new(&self.content.dialogue, &v);
-                    self.content.dialogue.journal_command(&self.state.world, &quest, index, GameTime::default(), |t| {
+                    self.content.dialogue.journal_command(&self.state.world, &quest, index, self.game_time(), |t| {
                         rules.expand(ctx, t)
                     })
                 };
@@ -986,6 +991,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
         .add_systems(
             Update,
             (
+                services::sync_clock,
                 host_dialogue,
                 close_screens,
                 keep_journal_seen,

@@ -15,7 +15,7 @@ bevy_platform = { workspace = true, features = ["std"] }
 sf_diag_bevy.workspace = true
 # Clouds and Fog (the settings the frame drives).
 sf_atmos_bevy = { path = "../sf_atmos_bevy", version = "0.1.0" }
-# SkyTime (the game clock), SkyConfig (calendar), WeatherState (the sky medium).
+# GameClock (the game clock), SkyConfig (calendar), WeatherState (the sky medium).
 sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
 sf_weather.workspace = true
 # Surface weather state (W1): stepped on game time with the weather; console `surface`.

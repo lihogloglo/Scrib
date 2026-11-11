@@ -186,22 +186,22 @@ fn set(
         state.note(note, now);
     }
     if let (Some(time), Some(config)) = (s.time.as_mut(), s.config.as_ref()) {
-        let calendar = &config.0.calendar;
+        let day_ms = config.day_ms();
         if let Some(hour) = params.hour {
-            time.0.set_hour(hour.rem_euclid(24.0), calendar);
+            time.set_hour(hour.rem_euclid(f64::from(config.0.calendar.hours_per_day)), day_ms);
         }
         if let Some(lapse) = params.time_lapse {
-            time.0.time_scale = if lapse { 600.0 } else { 30.0 };
+            time.time_scale = if lapse { 600.0 } else { 30.0 };
             if lapse {
-                time.0.paused = false;
+                time.paused = false;
             }
         }
         if let Some(scale) = params.time_scale.filter(|s| *s > 0.0) {
-            time.0.time_scale = scale;
-            time.0.paused = false;
+            time.time_scale = scale;
+            time.paused = false;
         }
         if let Some(paused) = params.paused {
-            time.0.paused = paused;
+            time.paused = paused;
         }
     } else if params.hour.is_some() || params.paused.is_some() || params.time_lapse.is_some() || params.time_scale.is_some() {
         return Err(invalid("no sky clock in this run"));
@@ -243,7 +243,7 @@ fn report(
 ) -> Status {
     let scene = mw_game_core::scenes::active();
     let (hour, clock) = match (s.time.as_ref(), s.config.as_ref()) {
-        (Some(t), Some(c)) => (Some(t.0.hour(&c.0.calendar)), Some(crate::live_ab::clock_label(&t.0))),
+        (Some(t), Some(c)) => (Some(c.sky_clock(t).hour(&c.0.calendar)), Some(crate::live_ab::clock_label(t))),
         _ => (None, None),
     };
     let switches = Switch::ALL.iter().map(|sw| (sw.name().to_owned(), sw.get(state, s).map_or(Value::Null, Value::Bool))).collect();

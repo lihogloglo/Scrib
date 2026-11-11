@@ -3,7 +3,7 @@
 //! `sf_script_bevy`'s slots, placements entering R0 become script handles, and E (the
 //! activate key) activates the player's focus (`player::Focus`, a physics ray). Unhandled
 //! activations of a door open it (`doors.rs`); scripts' spawns and despawns (`WorldCommand`, M5 L3) are applied by the
-//! `LiveSpawn` scaffold below; `core.game_time()` follows the sky clock.
+//! `LiveSpawn` scaffold below; `core.game_time()` follows the game clock.
 //!
 //! Contexts come from the loaded profile (`mods::script_plans`, one per mod with
 //! `content.scripts`, in load order), plus the shared `mw.legacy` context owned by the builtin
@@ -106,9 +106,9 @@ pub fn add(app: &mut App, vfs: Arc<Vfs>, auto_activate: u32) {
         .add_systems(Update, (report, apply_world_commands).after(ScriptSlot::Update));
 }
 
-/// `core.game_time()`: game hours since the sky clock's epoch (24-hour days).
-fn game_clock(time: Option<Res<sf_sky_bevy::SkyTime>>, mut scripts: ResMut<Scripts>) {
-    scripts.bypass_change_detection().runtime.set_game_time(time.map(|t| t.0.days * 24.0));
+/// `core.game_time()`: game hours since the game clock's epoch (clock.md).
+fn game_clock(time: Option<Res<sf_sky_bevy::GameClock>>, mut scripts: ResMut<Scripts>) {
+    scripts.bypass_change_detection().runtime.set_game_time(time.map(|t| t.now.hours()));
 }
 
 /// One placement per record id seen entering R0: what a script's `world.spawn(record, ..)`

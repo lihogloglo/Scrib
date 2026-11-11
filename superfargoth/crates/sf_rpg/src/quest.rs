@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use sf_ids::GameInstant;
 use sf_records::RecordId;
 
 /// A quest's progress. An unknown quest is `QuestState::default()`: stage 0, not finished.
@@ -61,7 +62,9 @@ impl QuestLog {
 }
 
 /// Game time of an entry: days since the game started and minute of the day. The calendar
-/// (month names, year) is the adapter's.
+/// (month names, year) is the adapter's. A minute view of the world clock (`sf_ids::GameInstant`,
+/// clock.md), rounded down; its days are 1,440-minute bookkeeping days whatever the calendar, so
+/// ordering and [`GameTime::total_minutes`] always agree with the instant.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct GameTime {
     pub day: u32,
@@ -72,6 +75,32 @@ impl GameTime {
     /// Minutes since the game started (a day is 1,440 minutes).
     pub fn total_minutes(self) -> u64 {
         u64::from(self.day) * 1440 + u64::from(self.minute)
+    }
+
+    /// The time `minutes` whole minutes after the start (days saturate at `u32::MAX`, past
+    /// 11 million years).
+    pub fn from_minutes(minutes: u64) -> Self {
+        Self {
+            day: u32::try_from(minutes / 1440).unwrap_or(u32::MAX),
+            minute: u16::try_from(minutes % 1440).unwrap_or(0),
+        }
+    }
+
+    /// The world clock's instant, rounded down to the minute (the AI tick's `now`, journal dates,
+    /// purse restocks).
+    pub fn from_instant(now: GameInstant) -> Self {
+        Self::from_minutes(now.minutes())
+    }
+
+    /// The instant at the start of this minute.
+    pub fn instant(self) -> GameInstant {
+        GameInstant::from_minutes(self.total_minutes())
+    }
+}
+
+impl From<GameInstant> for GameTime {
+    fn from(now: GameInstant) -> Self {
+        Self::from_instant(now)
     }
 }
 

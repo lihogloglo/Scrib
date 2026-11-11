@@ -1,10 +1,10 @@
 //! Bevy plugin for [`sf_weather`] (weather.md "Canonical technique"; as
 //! built: "WE3 as built").
 //!
-//! Each frame, in `Update` between `SkySystems::Clock` and
-//! `SkySystems::Apply`:
+//! Each frame, in `Update` after `SkySystems::Clock` (the fixed tick advanced the clock) and
+//! before `SkySystems::Apply`:
 //!
-//! 1. [`WeatherSystems::Evaluate`]: the game clock ([`SkyTime`]) and the
+//! 1. [`WeatherSystems::Evaluate`]: the game clock ([`GameClock`]) and the
 //!    camera's climates ([`WeatherSite`], written by the app: it knows its
 //!    world's regions) go through [`sf_weather::evaluate_into`] into
 //!    [`CurrentWeather`]. The weather is a pure function of the records, the
@@ -43,7 +43,7 @@ use bevy_math::DVec2;
 use bevy_platform::time::Instant;
 use sf_atmos_bevy::sf_atmos::{CloudWeather, FogBanks, FogLayer, FogSettings};
 use sf_diag_bevy::DiagCounters;
-use sf_sky_bevy::{SkyConfig, SkySystems, SkyTime};
+use sf_sky_bevy::{GameClock, SkyConfig, SkySystems};
 use sf_weather::{ClimateIx, ClimateRaster, MAP_SIZE, Site, WeatherBook, WeatherFrame, WeatherInput, WeatherMap, WeatherState, evaluate_into};
 use sf_wind_bevy::WindField;
 use sf_wind_bevy::sf_wind::WindSourceId;
@@ -221,7 +221,7 @@ impl Plugin for WeatherPlugin {
 
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn evaluate(
-    time: Res<SkyTime>,
+    time: Res<GameClock>,
     config: Res<SkyConfig>,
     records: Res<WeatherRecords>,
     world: Res<WorldWeather>,
@@ -236,7 +236,7 @@ fn evaluate(
     }
     let t0 = Instant::now();
     let calendar = &config.0.calendar;
-    let hours = time.0.days * f64::from(calendar.hours_per_day);
+    let hours = time.now.hours();
     // Lightning fires for strikes in (prev, hours]: none on the first frame
     // or when the clock went back, at most MAX_STEP_HOURS after a jump.
     let prev = if current.valid && current.hours <= hours {
@@ -247,7 +247,7 @@ fn evaluate(
     let input = WeatherInput {
         hours,
         prev_hours: prev,
-        hour_of_day: time.0.hour(calendar),
+        hour_of_day: config.sky_clock(&time).hour(calendar),
         altitude: site.altitude,
         climates: &site.climates,
     };
@@ -289,7 +289,7 @@ fn evaluate(
 /// for this frame's clock and camera, mirrored into the clouds' map.
 #[allow(clippy::needless_pass_by_value)]
 fn update_map(
-    time: Res<SkyTime>,
+    time: Res<GameClock>,
     config: Res<SkyConfig>,
     records: Res<WeatherRecords>,
     world: Res<WorldWeather>,
@@ -301,9 +301,9 @@ fn update_map(
     let Some(camera) = map.camera else { return };
     let t0 = Instant::now();
     let calendar = &config.0.calendar;
-    let hours = time.0.days * f64::from(calendar.hours_per_day);
+    let hours = time.now.hours();
     let map = &mut *map;
-    let update = map.map.update(&records.0, &world.0, hours, time.0.hour(calendar), camera);
+    let update = map.map.update(&records.0, &world.0, hours, config.sky_clock(&time).hour(calendar), camera);
     clouds.sync(&map.map, update);
     if let Some(c) = counters {
         c.add_named("weather/map/ms", sf_diag_bevy::sf_diag::unit::MS, t0.elapsed().as_secs_f64() * 1000.0);

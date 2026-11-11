@@ -1,7 +1,7 @@
 //! WE-9 (owner 2026-11-06): forced Foggy / Thunderstorm seemed to go away at night. These tests
 //! pin what the weather data does through the night (it doesn't change) and print what the look
 //! does: precipitation brightness, fog densities, wetting rates, and what a live force (the C key)
-//! does when the hour keys wrap past midnight (`SkyClock::set_hour` keeps the day: 23.5 + 0.5 is
+//! does when the hour keys wrap past midnight (`GameClock::set_hour` keeps the day: 23.5 + 0.5 is
 //! 0:00 of the *same* day, 24 game hours back, before the force started).
 
 use mw_weather::{MwWeather, WeatherType, climate_id};
@@ -108,7 +108,7 @@ fn print_night_weather_terms() {
         }
     }
     // Live force (the C key, `force_live`): from `now`, held 1e6 h. Then the `]` key steps the
-    // hour with `SkyClock::set_hour`, which keeps the day count.
+    // hour with `GameClock::set_hour`, which keeps the day count (the same day, hour wrapped).
     let mut clock = SkyClock::at(DAY, 7.0, &sky.calendar);
     let hours = |c: &SkyClock| c.days * f64::from(sky.calendar.hours_per_day);
     let mut state = WeatherState::new(0);
@@ -117,7 +117,7 @@ fn print_night_weather_terms() {
     println!("Thunderstorm forced live at 7:00, hour keys (]) through midnight:");
     for _ in 0..48 {
         let h = f64::from(clock.hour(&sky.calendar)) + 0.5;
-        clock.set_hour(h, &sky.calendar);
+        clock = SkyClock::at(clock.days.floor(), h.rem_euclid(f64::from(sky.calendar.hours_per_day)), &sky.calendar);
         let f = frame(&book, &state, hours(&clock));
         let natural = state.current(&book, c, hours(&clock)).map(|p| book.preset_id(p).as_str().to_owned());
         println!("  shown {:5.2}  weather clock {:9.2}  rain {:4.2}  weather {natural:?}", clock.hour(&sky.calendar), hours(&clock), rain(&f));

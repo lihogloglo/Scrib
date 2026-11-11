@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use bevy_app::App;
-use sf_sky_bevy::sf_sky::SkyClock;
+use sf_sky_bevy::sf_ids::clock::hours_ms;
 use sf_weather::sf_wind::{Wind, WindSource};
 use sf_weather::{Climate, SkyTerms, WeatherPreset, WindTerms};
 
@@ -54,7 +54,7 @@ fn book() -> WeatherBook {
 fn app() -> App {
     let book = Arc::new(book());
     let mut app = App::new();
-    app.insert_resource(SkyTime(SkyClock::default()))
+    app.insert_resource(GameClock::default())
         .init_resource::<SkyConfig>()
         .init_resource::<sf_sky_bevy::WeatherState>()
         .insert_resource(WindField::new(
@@ -145,10 +145,10 @@ fn cost_per_frame() {
     let mut app = app();
     site(&mut app);
     app.update();
-    let n = 2000;
+    let n: u32 = 2000;
     let t0 = Instant::now();
     for i in 0..n {
-        app.world_mut().resource_mut::<SkyTime>().0.days += 1e-4 * f64::from(i);
+        app.world_mut().resource_mut::<GameClock>().skip(8_640 * u64::from(i)); // 1e-4 day × i
         app.update();
     }
     let ms = t0.elapsed().as_secs_f64() * 1000.0 / f64::from(n);
@@ -218,8 +218,7 @@ fn sky_app() -> App {
 }
 
 fn set_hours(app: &mut App, hours: f64) {
-    let per_day = f64::from(app.world().resource::<SkyConfig>().0.calendar.hours_per_day);
-    app.world_mut().resource_mut::<SkyTime>().0.days = hours / per_day;
+    app.world_mut().resource_mut::<GameClock>().now = sf_sky_bevy::GameInstant(hours_ms(hours));
     app.update();
 }
 
@@ -329,7 +328,7 @@ fn storm_app() -> App {
         [(id("rain"), sf_weather::PrecipKind::default())],
     ));
     let mut app = App::new();
-    app.insert_resource(SkyTime(SkyClock::default()))
+    app.insert_resource(GameClock::default())
         .init_resource::<SkyConfig>()
         .init_resource::<sf_sky_bevy::WeatherState>()
         .init_resource::<sf_precip_bevy::Precip>()
@@ -357,7 +356,7 @@ fn frame_drives_precip_cues_and_lightning() {
     // ~100 strikes per game hour: step the clock until one fires.
     let mut struck = false;
     for _ in 0..400 {
-        app.world_mut().resource_mut::<SkyTime>().0.days += 0.05 / 24.0;
+        app.world_mut().resource_mut::<GameClock>().skip(hours_ms(0.05));
         app.update();
         if app.world().resource::<LightningFlash>().strike.is_some() {
             struck = true;

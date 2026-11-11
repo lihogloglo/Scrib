@@ -27,19 +27,21 @@ fn orbit_at(latitude: f32) -> Orbit {
 // ---- clock ----
 
 #[test]
-fn clock_advances_with_time_scale_and_pauses() {
+fn the_sky_view_reads_the_game_clock_instant() {
+    // The game clock owns time (sf_ids); the sky only views its instant for its calendar.
     let cal = Calendar::default();
-    let mut clock = SkyClock::at(10.0, 6.0, &cal);
-    clock.time_scale = 60.0;
+    let mut game = sf_ids::GameClock::at(10.0, 6.0, cal.day_ms());
+    game.time_scale = 60.0;
     // 60 real seconds at 60x is one game hour.
-    clock.advance(60.0, &cal);
-    assert!(close(clock.hour(&cal), 7.0, 1e-3));
-    clock.paused = true;
-    clock.advance(1000.0, &cal);
-    assert!(close(clock.hour(&cal), 7.0, 1e-3));
-    clock.set_hour(23.5, &cal);
-    assert!(close(clock.hour(&cal), 23.5, 1e-3));
-    assert!((clock.days - 10.0).abs() < 1.0);
+    game.advance(core::time::Duration::from_secs(60));
+    let view = SkyClock::from_instant(game.now, &cal);
+    assert!(close(view.hour(&cal), 7.0, 1e-6));
+    assert!((view.days - (10.0 + 7.0 / 24.0)).abs() < 1e-9);
+    // A 20-hour day: 25 game hours are day 1, hour 5.
+    let short = Calendar { hours_per_day: 20.0, ..cal };
+    let view = SkyClock::from_instant(sf_ids::GameInstant(25 * sf_ids::clock::MS_PER_HOUR), &short);
+    assert!((view.days - 1.25).abs() < 1e-12);
+    assert!(close(view.hour(&short), 5.0, 1e-6));
 }
 
 #[test]
@@ -593,13 +595,13 @@ fn two_moons() -> SkySettings {
 #[test]
 fn circuit_moons_transit_at_epoch_and_rise_later_each_day() {
     let s = two_moons();
-    let midnight = s.evaluate(&SkyClock { days: 0.0, time_scale: 0.0, paused: true }, &Weather::default());
+    let midnight = s.evaluate(&SkyClock { days: 0.0 }, &Weather::default());
     let big = midnight.night.moons()[0];
     // Highest at day 0 midnight, tilted 35° from the zenith.
     assert!(close(big.position.elevation_deg(), 55.0, 0.5), "{}", big.position.elevation_deg());
     // A day later it is 1/25 of a circuit behind: not yet back at transit.
-    let next = s.evaluate(&SkyClock { days: 1.0, time_scale: 0.0, paused: true }, &Weather::default());
-    let later = s.evaluate(&SkyClock { days: 1.0 + 1.0 / 24.0, time_scale: 0.0, paused: true }, &Weather::default());
+    let next = s.evaluate(&SkyClock { days: 1.0 }, &Weather::default());
+    let later = s.evaluate(&SkyClock { days: 1.0 + 1.0 / 24.0 }, &Weather::default());
     assert!(later.night.moons()[0].position.elevation > next.night.moons()[0].position.elevation);
     assert_eq!(midnight.night.moon_count, 2);
 }
@@ -607,7 +609,7 @@ fn circuit_moons_transit_at_epoch_and_rise_later_each_day() {
 #[test]
 fn moon_phases_snap_to_frames_and_cycle() {
     let s = two_moons();
-    let at = |days: f64| s.evaluate(&SkyClock { days, ..SkyClock::default() }, &Weather::default()).night.moons()[0];
+    let at = |days: f64| s.evaluate(&SkyClock { days }, &Weather::default()).night.moons()[0];
     let full = at(0.0);
     assert_eq!(full.frame, Some(4));
     assert!(close(full.brightness, 1.0, 1e-3));
@@ -622,7 +624,7 @@ fn moon_phases_snap_to_frames_and_cycle() {
 #[test]
 fn one_moonlight_sums_the_moons_toward_the_brightest() {
     let s = two_moons();
-    let sky = s.evaluate(&SkyClock { days: 0.0, time_scale: 0.0, paused: true }, &Weather::default());
+    let sky = s.evaluate(&SkyClock { days: 0.0 }, &Weather::default());
     let moons = sky.night.moons();
     let total: f32 = moons.iter().map(MoonState::ground_illuminance).sum();
     assert!(close(sky.moon.ground_illuminance(), total, total * 0.02 + 1e-6));
@@ -662,7 +664,7 @@ fn steady_moon(artistic: bool) -> SkySettings {
 }
 
 fn midnight(s: &SkySettings, day: f64, weather: &Weather) -> SkyState {
-    s.evaluate(&SkyClock { days: day, time_scale: 0.0, paused: true }, weather)
+    s.evaluate(&SkyClock { days: day }, weather)
 }
 
 #[test]

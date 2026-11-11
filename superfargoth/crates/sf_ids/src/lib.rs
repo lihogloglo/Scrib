@@ -1,8 +1,16 @@
 //! Shared stable ids (net.md "Players", net-ready rules 6 and 7): plain serde data, never a
 //! Bevy `Entity`. `sf_action` and `sf_rpg` both name players with [`PlayerId`] from here;
 //! [`PlayerKey`] and [`ActorKey`] live here so `sf_rpg` and `sf_stats` share them (stats.md S0).
+//! The world clock ([`GameClock`], [`GameInstant`]; clock.md) lives here too: one plain value
+//! every core reads.
 
 use serde::{Deserialize, Serialize};
+
+pub mod clock;
+#[cfg(test)]
+mod tests_clock;
+
+pub use clock::{GameClock, GameInstant};
 
 /// Most players in one world (net.md: 2-4 player co-op).
 pub const MAX_PLAYERS: u8 = 4;

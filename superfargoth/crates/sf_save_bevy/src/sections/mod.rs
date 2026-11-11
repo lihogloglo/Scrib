@@ -25,7 +25,7 @@ use sf_effects::EffectIdAlloc;
 use sf_rpg::WorldRpg;
 use sf_rpg::service::WorldServices;
 use sf_save::{Family, SectionKey};
-use sf_sky::SkyClock;
+use sf_ids::GameClock;
 use sf_surface::SurfaceSave;
 use sf_weather::WeatherState;
 use sf_wind::WindState;
@@ -41,7 +41,8 @@ pub use records::{CreatedRecord, RecordOverlay, RecordPatch, SAVE_NAMESPACE, Sav
 pub const OWNER: &str = "sf";
 
 pub const CLOCK: &str = "clock";
-pub const CLOCK_VERSION: u32 = 1;
+/// v2: the integer game clock (`sf_ids::GameClock`, clock.md); v1 is frozen in [`clock_legacy::v1`].
+pub const CLOCK_VERSION: u32 = 2;
 pub const WEATHER: &str = "weather";
 /// v2: `surface` (surface weather W1); v1 is frozen in [`weather_legacy::v1`].
 pub const WEATHER_VERSION: u32 = 2;
@@ -106,12 +107,48 @@ pub struct EffectsWorldSave {
     pub ids: EffectIdAlloc,
 }
 
-/// `sf/clock`: the sky clock and the fixed simulation tick.
+/// `sf/clock` (v2, clock.md "Save"): the world's one game clock (its instant and scale; the dev
+/// freeze is not saved) and the fixed simulation tick.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ClockSave {
-    pub clock: SkyClock,
+    pub clock: GameClock,
     /// Fixed ticks since the world began ([`SaveSession::sim_tick`]).
     pub sim_tick: u64,
+}
+
+/// Frozen older `sf/clock` shapes (save.md "Versioning and migration").
+pub mod clock_legacy {
+    /// `sf.clock.v1` (S2 until clock C2): the sky clock, fractional days on 24-hour days.
+    pub mod v1 {
+        use serde::{Deserialize, Serialize};
+        use sf_ids::{GameClock, GameInstant};
+
+        /// Game milliseconds in a v1 day: every v1 save ran on 24-hour days (clock.md "Save").
+        pub const V1_DAY_MS: u64 = 86_400_000;
+
+        /// `sf_sky::SkyClock` as it was saved in v1.
+        #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct SkyClock {
+            pub days: f64,
+            pub time_scale: f32,
+            pub paused: bool,
+        }
+
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct ClockSave {
+            pub clock: SkyClock,
+            pub sim_tick: u64,
+        }
+
+        impl ClockSave {
+            /// v1 → v2: the instant from the days (rounded down to the ms), the scale kept, the
+            /// dev freeze dropped (session state now).
+            pub fn migrate(self) -> super::super::ClockSave {
+                let now = GameInstant::from_days(self.clock.days, V1_DAY_MS);
+                super::super::ClockSave { clock: GameClock::new(now, self.clock.time_scale), sim_tick: self.sim_tick }
+            }
+        }
+    }
 }
 
 /// `sf/weather`: the weather's seed and explicit overrides, the wind with its live sources, and
@@ -147,11 +184,11 @@ pub mod weather_legacy {
     }
 }
 
-/// `sf/clock` over the game's clock resource (`sf_sky_bevy::SkyTime`); the sim tick comes from
+/// `sf/clock` over the game's clock resource (`sf_sky_bevy::GameClock`); the sim tick comes from
 /// and returns to [`SaveSession`].
 pub fn clock(
-    get: impl Fn(&World) -> Option<SkyClock> + Send + Sync + 'static,
-    set: impl Fn(&mut World, SkyClock) + Send + Sync + 'static,
+    get: impl Fn(&World) -> Option<GameClock> + Send + Sync + 'static,
+    set: impl Fn(&mut World, GameClock) + Send + Sync + 'static,
 ) -> SaveSection {
     SaveSection::value(
         key(CLOCK),
@@ -164,6 +201,7 @@ pub fn clock(
             }
         },
     )
+    .typed_step(1, clock_legacy::v1::ClockSave::migrate)
     .order(order::CLOCK)
 }
 

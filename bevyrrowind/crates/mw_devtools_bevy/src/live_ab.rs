@@ -36,8 +36,8 @@ use bevy_input::prelude::*;
 use bevy_color::prelude::*;
 use bevy_render::view::screenshot::{Screenshot, save_to_disk};
 use sf_coords::WorldPos;
-use sf_sky_bevy::sf_sky::{SkyClock, UpscaleQuality, Upscaling};
-use sf_sky_bevy::{ActiveUpscaling, SkyConfig, SkyTime, UpscalingSetting};
+use sf_sky_bevy::sf_sky::{UpscaleQuality, Upscaling};
+use sf_sky_bevy::{ActiveUpscaling, GameClock, SkyConfig, UpscalingSetting};
 use sf_world_bevy::big_space::prelude::CellCoord;
 
 /// Adds the keys and overlay (and BRP, with the `remote` feature) when the run is interactive.
@@ -120,9 +120,9 @@ fn spawn_overlay(mut commands: Commands) {
 }
 
 /// A scene is checked at its hour: its clock starts paused (P resumes).
-fn pause_scene_clock(time: Option<ResMut<SkyTime>>) {
+fn pause_scene_clock(time: Option<ResMut<GameClock>>) {
     if let (Some(mut time), Some(_)) = (time, mw_game_core::scenes::active()) {
-        time.0.paused = true;
+        time.paused = true;
     }
 }
 
@@ -133,7 +133,7 @@ pub struct Switches<'w> {
     far: Option<ResMut<'w, sf_lod_bevy::FarFieldDebug>>,
     rings: Option<ResMut<'w, sf_world_bevy::StreamingDebug>>,
     upscaling: Option<ResMut<'w, UpscalingSetting>>,
-    pub time: Option<ResMut<'w, SkyTime>>,
+    pub time: Option<ResMut<'w, GameClock>>,
     pub config: Option<ResMut<'w, SkyConfig>>,
     clouds: Option<ResMut<'w, sf_atmos_bevy::Clouds>>,
     /// The live weather (C key, BRP `weather`): the world state, records, the grid's
@@ -436,8 +436,8 @@ pub fn set_clouds(s: &mut Switches, genus: Option<sf_atmos_bevy::sf_atmos::Cloud
 
 /// Game hours since the clock's epoch (the weather's time).
 fn weather_now(s: &Switches) -> Option<f64> {
-    let (time, config) = (s.time.as_ref()?, s.config.as_ref()?);
-    Some(time.0.days * f64::from(config.0.calendar.hours_per_day))
+    let time = s.time.as_ref()?;
+    Some(time.now.hours())
 }
 
 /// Forces a weather from now over `transition_hours` (`None`: the climate's;
@@ -474,7 +474,7 @@ pub fn live_weather(s: &Switches) -> Option<mw_environment_bevy::weather::LiveWe
 /// transition in ~10-25 s), x20 (a day in ~2.4 min).
 pub const TIME_SCALES: [f32; 3] = [30.0, 120.0, 600.0];
 
-pub fn clock_label(clock: &SkyClock) -> &'static str {
+pub fn clock_label(clock: &GameClock) -> &'static str {
     if clock.paused {
         "paused"
     } else if clock.time_scale > 100.0 {
@@ -563,19 +563,19 @@ fn keys(
             0.0
         };
         if delta != 0.0 {
-            let hour = f64::from(time.0.hour(calendar)) + delta;
-            time.0.set_hour(hour, calendar);
-            state.note(format!("hour {:.2}", time.0.hour(calendar)), now);
+            let hour = (f64::from(config.sky_clock(time).hour(calendar)) + delta).rem_euclid(f64::from(calendar.hours_per_day));
+            time.set_hour(hour, config.day_ms());
+            state.note(format!("hour {:.2}", config.sky_clock(time).hour(calendar)), now);
         }
         if input.just_pressed(KeyCode::KeyP) {
-            time.0.paused = !time.0.paused;
-            state.note(format!("clock {}", if time.0.paused { "paused" } else { "running" }), now);
+            time.paused = !time.paused;
+            state.note(format!("clock {}", if time.paused { "paused" } else { "running" }), now);
         }
         if input.just_pressed(KeyCode::KeyT) {
-            let i = TIME_SCALES.iter().position(|s| *s >= time.0.time_scale).map_or(0, |i| (i + 1) % TIME_SCALES.len());
-            time.0.time_scale = TIME_SCALES[i];
-            time.0.paused = false;
-            state.note(format!("clock x{} (game time x{})", time.0.time_scale / TIME_SCALES[0], time.0.time_scale), now);
+            let i = TIME_SCALES.iter().position(|s| *s >= time.time_scale).map_or(0, |i| (i + 1) % TIME_SCALES.len());
+            time.time_scale = TIME_SCALES[i];
+            time.paused = false;
+            state.note(format!("clock x{} (game time x{})", time.time_scale / TIME_SCALES[0], time.time_scale), now);
         }
     }
     if shifted && input.just_pressed(KeyCode::F12)
@@ -583,7 +583,7 @@ fn keys(
     {
         let raw = camera_string(global, local, cell);
         let hour = match (s.time.as_ref(), s.config.as_ref()) {
-            (Some(t), Some(c)) => format!(" --hour {:.2}", t.0.hour(&c.0.calendar)),
+            (Some(t), Some(c)) => format!(" --hour {:.2}", c.sky_clock(t).hour(&c.0.calendar)),
             _ => String::new(),
         };
         let line = format!("--camera \"{raw}\"{hour}");
@@ -654,7 +654,7 @@ fn overlay(
     let title = scene.map_or_else(|| "view".to_owned(), |s| format!("scene {}", s.name));
     let mut out = format!("{title}  |  F1 {}", if state.help { "hide" } else { "help" });
     if let (Some(t), Some(c)) = (s.time.as_ref(), s.config.as_ref()) {
-        let _ = write!(out, "  |  {:.2} h ({})", t.0.hour(&c.0.calendar), clock_label(&t.0));
+        let _ = write!(out, "  |  {:.2} h ({})", c.sky_clock(t).hour(&c.0.calendar), clock_label(t));
     }
     if state.help {
         let opt = |sw: Switch| sw.get(&state, &s).map_or("n/a", on_off);

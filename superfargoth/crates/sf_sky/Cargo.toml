@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 glam = { workspace = true, features = ["serde"] }
 serde.workspace = true
+# The game clock's instant (`SkyClock::from_instant`; clock.md).
+sf_ids.workspace = true
 sf_wind.workspace = true
 
 [dev-dependencies]

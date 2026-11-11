@@ -12,7 +12,7 @@ use sf_console_bevy::ConsoleAppExt;
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
 use sf_diag_bevy::DiagCounters;
 use sf_records::RecordId;
-use sf_sky_bevy::{SkyConfig, SkyTime};
+use sf_sky_bevy::GameClock;
 use sf_surface::view::DebugView;
 use sf_surface::{CELL_M, CellGrid, Channel, RateSource, SurfaceSave, SurfaceState, SurfaceTuning, WeatherRates, cell_of};
 use sf_weather::{ClimateIx, WeatherBook};
@@ -63,16 +63,15 @@ impl WorldSurface {
 pub struct SurfaceDebug(pub DebugView);
 
 /// Game hours since the clock's epoch.
-fn game_hours(time: &SkyTime, config: &SkyConfig) -> f64 {
-    time.0.days * f64::from(config.0.calendar.hours_per_day)
+fn game_hours(time: &GameClock) -> f64 {
+    time.now.hours()
 }
 
 /// `WeatherSystems::Evaluate`: steps the state to the clock (none most frames: one step per
 /// 10 game minutes).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn advance(
-    time: Res<SkyTime>,
-    config: Res<SkyConfig>,
+    time: Res<GameClock>,
     records: Res<WeatherRecords>,
     world: Res<WorldWeather>,
     map: Option<Res<WorldWeatherMap>>,
@@ -90,7 +89,7 @@ pub(crate) fn advance(
     let t0 = Instant::now();
     let rates = WeatherRates { book: &records.0, state: &world.0 };
     let grids: Vec<&CellGrid> = grid.iter().collect();
-    let steps = sf_surface::advance(state, game_hours(&time, &config), &rates, &grids, tuning);
+    let steps = sf_surface::advance(state, game_hours(&time), &rates, &grids, tuning);
     if steps > 0 {
         *generation = generation.wrapping_add(1);
     }

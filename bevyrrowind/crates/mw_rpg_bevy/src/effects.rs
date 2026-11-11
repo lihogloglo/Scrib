@@ -15,9 +15,9 @@
 //!   start their instance on the Permanent layer and their modifiers go on the sheet before it
 //!   settles, so a new character's pools fill to the fortified maximum (`OpenMW` `buildPlayer`
 //!   sets each current to the modified value after the spells).
-//! - **Clock** ([`feed_clock`]): `EffectClock` follows the dialogue's game clock (`DaysPassed`,
-//!   `GameHour`, [`crate::dialogue::Rpg::game_time`]) every fixed tick, until ROADMAP 1.17's
-//!   single host clock replaces both. Durations count fixed ticks, not this clock.
+//! - **Clock** ([`feed_clock`]): `EffectClock` follows the game clock (`GameMinutes::from` its
+//!   instant, clock.md) every fixed tick, after it advanced; headless without a clock, the
+//!   dialogue's [`crate::dialogue::Rpg::game_time`]. Durations count fixed ticks, not this clock.
 //! - **Saves** (effects.md "Saves"): the player's in its `CharacterSave` ([`player_effects_save`],
 //!   restored with the sheet by `stats::restore_player_sheet`), an NPC's or creature's in the
 //!   placement's [`EFFECTS_BLOB`] beside its stats blob, written on unload and into the save's
@@ -100,18 +100,20 @@ pub fn add(app: &mut App, db: &RecordDb) {
         .insert_resource(EffectRulesRes(Arc::new(EffectRules::from_model(
             &MwModernEffectRules::default(),
         ))))
-        .add_systems(FixedUpdate, feed_clock.before(EffectSystems::Commands));
+        .add_systems(FixedUpdate, feed_clock.after(sf_sky_bevy::SkySystems::Clock).before(EffectSystems::Commands));
     crate::cast::add(app);
 }
 
-/// `EffectClock` = the game clock in minutes (see the module docs).
+/// `EffectClock` = the game clock in whole minutes (see the module docs).
 #[allow(clippy::needless_pass_by_value)] // system parameters
-pub fn feed_clock(rpg: Option<Res<Rpg>>, mut clock: ResMut<EffectClock>) {
-    if let Some(rpg) = rpg {
-        let now = GameMinutes(rpg.game_time().total_minutes());
-        if clock.0 != now {
-            clock.0 = now;
-        }
+pub fn feed_clock(game: Option<Res<sf_sky_bevy::GameClock>>, rpg: Option<Res<Rpg>>, mut clock: ResMut<EffectClock>) {
+    let now = match (game, rpg) {
+        (Some(game), _) => GameMinutes::from(game.now),
+        (None, Some(rpg)) => GameMinutes(rpg.game_time().total_minutes()),
+        (None, None) => return,
+    };
+    if clock.0 != now {
+        clock.0 = now;
     }
 }
 

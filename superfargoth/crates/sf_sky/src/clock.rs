@@ -1,6 +1,8 @@
-//! Calendar and the time-of-day clock.
+//! Calendar and the sky's view of the game clock.
 
 use serde::{Deserialize, Serialize};
+use sf_ids::GameInstant;
+use sf_ids::clock::day_ms;
 
 /// Length of a day and a year, in game time. Games pick their own; the
 /// defaults are Earth's.
@@ -23,52 +25,40 @@ impl Default for Calendar {
 }
 
 impl Calendar {
-    /// Game seconds in one day.
-    pub fn seconds_per_day(&self) -> f64 {
-        f64::from(self.hours_per_day) * 3600.0
+    /// Game milliseconds in one day (`sf_ids::clock::day_ms`): the day the game clock's views use.
+    pub fn day_ms(&self) -> u64 {
+        day_ms(self.hours_per_day)
     }
 }
 
-/// Game time as a continuous count of days since the world's epoch.
+/// The sky's view of game time: a continuous count of days since the world's epoch.
 ///
-/// `days.fract()` is the time of day (0 = midnight, 0.5 = noon); the integer
-/// part counts days. f64 keeps sub-millisecond resolution for millions of
-/// days, so saves store this value as is.
+/// `days.fract()` is the time of day (0 = midnight, 0.5 = noon); the integer part counts days.
+/// Not a clock: the one game clock is `sf_ids::GameClock` (clock.md), and the sky builds this
+/// view from its instant each frame ([`SkyClock::from_instant`]), exact to the millisecond.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SkyClock {
     /// Days since the epoch (day 0, midnight).
     pub days: f64,
-    /// Game seconds per real second. 1 is real time; many RPGs use 20–30.
-    pub time_scale: f32,
-    /// When set, [`SkyClock::advance`] does nothing.
-    pub paused: bool,
 }
 
 impl Default for SkyClock {
+    /// Noon of day 0 (`GameClock::default`'s instant).
     fn default() -> Self {
-        Self {
-            days: 0.5,
-            time_scale: 30.0,
-            paused: false,
-        }
+        Self { days: 0.5 }
     }
 }
 
 impl SkyClock {
-    /// A clock at `hour` of day `day` (both may be fractional).
+    /// `hour` of day `day` (both may be fractional).
     pub fn at(day: f64, hour: f64, calendar: &Calendar) -> Self {
-        Self {
-            days: day + hour / f64::from(calendar.hours_per_day),
-            ..Self::default()
-        }
+        Self { days: day + hour / f64::from(calendar.hours_per_day) }
     }
 
-    /// Advances by `real_seconds` of real time, scaled by `time_scale`.
-    pub fn advance(&mut self, real_seconds: f64, calendar: &Calendar) {
-        if !self.paused {
-            self.days += real_seconds * f64::from(self.time_scale) / calendar.seconds_per_day();
-        }
+    /// The view of the game clock's `instant` for `calendar`'s day length.
+    pub fn from_instant(instant: GameInstant, calendar: &Calendar) -> Self {
+        Self { days: instant.days(calendar.day_ms()) }
     }
 
     /// Time of day as a fraction in `[0, 1)`: 0 = midnight, 0.5 = noon.
@@ -80,11 +70,6 @@ impl SkyClock {
     #[expect(clippy::cast_possible_truncation, reason = "an hour fits f32")]
     pub fn hour(&self, calendar: &Calendar) -> f32 {
         (self.day_fraction() * f64::from(calendar.hours_per_day)) as f32
-    }
-
-    /// Jumps to `hour` of the current day, keeping the day count.
-    pub fn set_hour(&mut self, hour: f64, calendar: &Calendar) {
-        self.days = self.days.floor() + (hour / f64::from(calendar.hours_per_day)).rem_euclid(1.0);
     }
 
     /// Day within the year, fractional, in `[0, days_per_year)`.

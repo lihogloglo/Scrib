@@ -205,9 +205,9 @@ fn self_light_props(
 
 /// Dark by the sky clock (exterior rule; interiors' ambient rule needs the
 /// actor's cell: follow-up).
-fn clock_dark(time: Option<&sf_sky_bevy::SkyTime>, config: Option<&sf_sky_bevy::SkyConfig>) -> bool {
+fn clock_dark(time: Option<&sf_sky_bevy::GameClock>, config: Option<&sf_sky_bevy::SkyConfig>) -> bool {
     match (time, config) {
-        (Some(t), Some(c)) => exterior_dark(t.0.hour(&c.0.calendar), DayCycle::default()),
+        (Some(t), Some(c)) => exterior_dark(c.sky_clock(t).hour(&c.0.calendar), DayCycle::default()),
         _ => false,
     }
 }
@@ -224,7 +224,7 @@ fn held_override(rules: &MwCharacters, kind: &str, id: &sf_records::RecordId, da
 fn carry_lights_when_dark(
     rules: Res<HeldRules>,
     mut darkness: ResMut<HeldDarkness>,
-    time: Option<Res<sf_sky_bevy::SkyTime>>,
+    time: Option<Res<sf_sky_bevy::GameClock>>,
     config: Option<Res<sf_sky_bevy::SkyConfig>>,
     mut characters: Query<(&mut Character, Option<Ref<EquippedHeld>>)>,
 ) {
@@ -466,8 +466,8 @@ mod tests {
     fn darkness_follows_the_clock() {
         let config = sf_sky_bevy::SkyConfig::default();
         let at = |hour: f64| {
-            let mut t = sf_sky_bevy::SkyTime::default();
-            t.0.set_hour(hour, &config.0.calendar);
+            let mut t = sf_sky_bevy::GameClock::default();
+            t.set_hour(hour, config.day_ms());
             clock_dark(Some(&t), Some(&config))
         };
         assert!(at(21.0) && at(3.0), "torches at night");

@@ -1,6 +1,6 @@
 //! Bevy plugin for [`sf_sky`]. Spec: `docs/specs/sky-lighting.md`.
 //!
-//! - [`SkyPlugin`]: advances the [`SkyTime`] clock, evaluates the sky into
+//! - [`SkyPlugin`]: advances the game clock ([`GameClock`], `FixedUpdate`), evaluates the sky into
 //!   [`CurrentSky`], and drives Bevy's `Atmosphere`, a sun and a moon
 //!   (`DirectionalLight` + `SunDisk`), and the exposure and ambient floor
 //!   of every [`SkyCamera`].
@@ -33,7 +33,7 @@ mod tests;
 #[cfg(test)]
 mod shader_tests;
 
-use bevy_app::{App, Plugin, PostUpdate, Startup, Update};
+use bevy_app::{App, FixedUpdate, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{Assets, Handle};
 use bevy_camera::{Camera3d, Exposure};
 use bevy_color::{Color, LinearRgba};
@@ -45,7 +45,7 @@ use bevy_light::{
 };
 use bevy_math::{Dir3, Vec3};
 use bevy_pbr::AtmosphereSettings;
-use bevy_time::{Real, Time};
+use bevy_time::{Fixed, Real, Time};
 use bevy_transform::components::{GlobalTransform, Transform};
 use bevy_transform::TransformSystems;
 
@@ -67,9 +67,22 @@ pub use env_refresh::EnvMapRefresh;
 #[derive(Resource, Clone, Debug, Default)]
 pub struct SkyConfig(pub SkySettings);
 
-/// The game clock. Saves store `SkyTime.0.days`.
-#[derive(Resource, Clone, Copy, Debug, Default)]
-pub struct SkyTime(pub SkyClock);
+impl SkyConfig {
+    /// The sky's view of the game clock for this calendar (fractional days, exact to the ms).
+    pub fn sky_clock(&self, clock: &GameClock) -> SkyClock {
+        SkyClock::from_instant(clock.now, &self.0.calendar)
+    }
+
+    /// Game milliseconds in one day of this calendar (`GameClock::at`, `set_hour`).
+    pub fn day_ms(&self) -> u64 {
+        self.0.calendar.day_ms()
+    }
+}
+
+/// The world's one game clock (`sf_ids`, clock.md), a resource here: [`SkyPlugin`] inserts
+/// [`SkyPlugin::clock`] when the app has none and advances it on the fixed tick; the sky,
+/// weather, AI, effects and dialogue read views of its instant. Saved as `sf/clock`.
+pub use sf_ids::{self, GameClock, GameInstant};
 
 /// Current weather (M2: cloud dimming, haze, wind; M6 blends presets here).
 #[derive(Resource, Clone, Copy, Debug, Default)]
@@ -250,7 +263,7 @@ pub struct SkyAtmosphere;
 /// Ordering of the plugin's systems (in `Update`, except `Origin`).
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SkySystems {
-    /// Advance [`SkyTime`].
+    /// `FixedUpdate`: advance the [`GameClock`] (the set is also chained in `Update`, empty there).
     Clock,
     /// Resolve and apply the render path.
     RenderPath,
@@ -262,12 +275,13 @@ pub enum SkySystems {
     Origin,
 }
 
-/// The sky plugin. Insert [`SkyConfig`], [`SkyTime`], etc. before adding it
+/// The sky plugin. Insert [`SkyConfig`], [`GameClock`], etc. before adding it
 /// to override the defaults, or set the fields here.
 #[derive(Default)]
 pub struct SkyPlugin {
     pub settings: SkySettings,
-    pub clock: SkyClock,
+    /// The game clock inserted when the app has none.
+    pub clock: GameClock,
     /// Requested render path at startup.
     pub render_path: RenderPath,
 }
@@ -277,8 +291,8 @@ impl Plugin for SkyPlugin {
         if !app.world().contains_resource::<SkyConfig>() {
             app.insert_resource(SkyConfig(self.settings.clone()));
         }
-        if !app.world().contains_resource::<SkyTime>() {
-            app.insert_resource(SkyTime(self.clock));
+        if !app.world().contains_resource::<GameClock>() {
+            app.insert_resource(self.clock);
         }
         if !app.world().contains_resource::<RenderPathSetting>() {
             app.insert_resource(RenderPathSetting(self.render_path));
@@ -297,7 +311,7 @@ impl Plugin for SkyPlugin {
         if !app.is_plugin_added::<PointShadowPlugin>() {
             app.add_plugins(PointShadowPlugin);
         }
-        app.add_systems(Update, advance_clock.in_set(SkySystems::Clock))
+        app.add_systems(FixedUpdate, advance_clock.in_set(SkySystems::Clock))
             .add_systems(
                 Update,
                 (
@@ -472,18 +486,19 @@ fn atmosphere_transform(inner_radius: f32, sea_level: f32) -> GlobalTransform {
     GlobalTransform::from_translation(Vec3::new(0.0, sea_level - inner_radius, 0.0))
 }
 
-fn advance_clock(time: Res<Time>, config: Res<SkyConfig>, mut clock: ResMut<SkyTime>) {
-    let calendar = config.0.calendar;
-    clock.0.advance(time.delta_secs_f64(), &calendar);
+/// One fixed tick of the game clock (clock.md "Advance"): `Time<Fixed>`'s delta, so menus that
+/// pause virtual time stop it and two machines given the same ticks reach the same instant.
+fn advance_clock(time: Res<Time<Fixed>>, mut clock: ResMut<GameClock>) {
+    clock.advance(time.delta());
 }
 
 fn evaluate_sky(
     config: Res<SkyConfig>,
-    clock: Res<SkyTime>,
+    clock: Res<GameClock>,
     weather: Res<WeatherState>,
     mut sky: ResMut<CurrentSky>,
 ) {
-    sky.0 = config.0.evaluate(&clock.0, &weather.0);
+    sky.0 = config.0.evaluate(&config.sky_clock(&clock), &weather.0);
 }
 
 /// Rebuilds the medium when the atmosphere description changes, or when the

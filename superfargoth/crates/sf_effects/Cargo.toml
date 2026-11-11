@@ -9,6 +9,7 @@ license.workspace = true
 # Bevy-free core (build-perf.md rule 1): in hakari's final-excludes.
 [dependencies]
 serde.workspace = true
+sf_ids.workspace = true
 sf_records.workspace = true
 sf_stats.workspace = true
 smallvec = { workspace = true, features = ["serde"] }

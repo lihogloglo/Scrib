@@ -122,7 +122,7 @@ impl Orbit {
     }
 
     /// Sun hour angle (radians, 0 at solar noon) and ecliptic longitude.
-    fn sun_angles(&self, clock: &SkyClock, calendar: Calendar) -> (f64, f64) {
+    fn sun_angles(&self, clock: SkyClock, calendar: Calendar) -> (f64, f64) {
         let day = clock.day_of_year(&calendar);
         (TAU * (clock.day_fraction() - 0.5), self.solar_longitude(day, calendar))
     }
@@ -137,7 +137,7 @@ impl Orbit {
     /// of the sun in longitude by its phase, so it transits later (full
     /// moon at midnight).
     pub fn synodic_moon(&self, clock: &SkyClock, calendar: &Calendar, phase: f64) -> SkyPosition {
-        let (sun_hour_angle, sun_longitude) = self.sun_angles(clock, *calendar);
+        let (sun_hour_angle, sun_longitude) = self.sun_angles(*clock, *calendar);
         let tilt = f64::from(self.axial_tilt_deg).to_radians();
         let moon_longitude = sun_longitude + TAU * phase;
         let declination = (tilt.sin() * moon_longitude.sin()).asin();
@@ -150,7 +150,7 @@ impl Orbit {
         let latitude = f64::from(self.latitude_deg).to_radians();
         let tilt = f64::from(self.axial_tilt_deg).to_radians();
         // Solar noon at half the day.
-        let (sun_hour_angle, sun_longitude) = self.sun_angles(clock, *calendar);
+        let (sun_hour_angle, sun_longitude) = self.sun_angles(*clock, *calendar);
         let sun_declination = (tilt.sin() * sun_longitude.sin()).asin();
         let sun = SkyPosition::from_equatorial(sun_declination, sun_hour_angle, latitude, north);
 

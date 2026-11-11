@@ -30,8 +30,8 @@ use sf_atmos_bevy::sf_atmos::{fog, CloudPreset, CloudSettings, FogLayer, FogSett
 use sf_atmos_bevy::{CloudCamera, CloudShadowLight, CloudWeatherMap, Clouds, CloudsPlugin, FroxelFogExt, FroxelFogMaterial, FroxelVolume};
 use bevy::math::DVec2;
 use sf_weather::{ClimateIx, ClimateRaster, ClimateRow, MAP_SIZE, WeatherMap, row};
-use sf_sky_bevy::sf_sky::{RenderPath, SkyClock, SkySettings};
-use sf_sky_bevy::{CurrentSky, SkyCamera, SkyPlugin, SkyTime, SunLight};
+use sf_sky_bevy::sf_sky::{RenderPath, SkySettings};
+use sf_sky_bevy::{CurrentSky, GameClock, SkyCamera, SkyPlugin, SunLight};
 
 #[derive(Resource, Clone)]
 struct Args {
@@ -111,7 +111,7 @@ fn settings(preset: CloudPreset, scale: f32, wind: f32) -> CloudSettings {
 fn main() {
     let args = parse_args();
     let sky = SkySettings::default();
-    let mut clock = SkyClock::at(172.0, args.hour, &sky.calendar);
+    let mut clock = GameClock::at(172.0, args.hour, sky.calendar.day_ms());
     clock.time_scale = 30.0;
     clock.paused = true;
     App::new()
@@ -189,7 +189,7 @@ fn aim(args: Res<Args>, sky: Res<CurrentSky>, mut cameras: Query<&mut Transform,
     }
 }
 
-fn keys(input: Res<ButtonInput<KeyCode>>, mut clouds: ResMut<Clouds>, args: Res<Args>, mut time: ResMut<SkyTime>, mut genus: Local<Option<usize>>) {
+fn keys(input: Res<ButtonInput<KeyCode>>, mut clouds: ResMut<Clouds>, args: Res<Args>, mut clock: ResMut<GameClock>, mut genus: Local<Option<usize>>) {
     if input.just_pressed(KeyCode::KeyC) {
         let i = genus.unwrap_or_else(|| CloudPreset::ALL.iter().position(|(_, p)| *p == args.preset).unwrap_or(0));
         let next = (i + 1) % CloudPreset::ALL.len();
@@ -199,7 +199,7 @@ fn keys(input: Res<ButtonInput<KeyCode>>, mut clouds: ResMut<Clouds>, args: Res<
         info!("clouds: {name}");
     }
     if input.just_pressed(KeyCode::Space) {
-        time.0.paused = !time.0.paused;
+        clock.paused = !clock.paused;
     }
     if input.just_pressed(KeyCode::ArrowUp) {
         clouds.settings.weather.wind *= 2.0;

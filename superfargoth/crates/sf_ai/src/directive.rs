@@ -336,11 +336,7 @@ fn minutes(t: GameTime) -> u64 {
 }
 
 fn game_time(minutes: u64) -> GameTime {
-    // Days fit u32 for 11 million years; the minute of the day fits u16.
-    GameTime {
-        day: u32::try_from(minutes / 1440).unwrap_or(u32::MAX),
-        minute: u16::try_from(minutes % 1440).expect("minute of the day"),
-    }
+    GameTime::from_minutes(minutes)
 }
 
 /// A stack's saved form (`sf/ai`, [`crate::save`]): everything but the actor, which the section

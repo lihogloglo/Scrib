@@ -4,11 +4,18 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Bevy-free shared ids for superfargoth: the session PlayerId, PlayerKey, ActorKey (serde only)"
+description = "Bevy-free shared ids for superfargoth: the session PlayerId, PlayerKey, ActorKey, the game clock (serde; a Bevy resource behind `bevy`)"
 
 # The one home of ids that several Bevy-free cores share (`sf_action` commands, `sf_rpg`
-# contexts), so neither depends on the other. Kept to serde: `sf_net` (N2) re-exports from here.
+# contexts), so neither depends on the other. Kept to serde (+ `bevy_ecs` behind `bevy`): `sf_net`
+# (N2) re-exports from here.
+[features]
+default = []
+# `GameClock` as a Bevy `Resource` (clock.md C2; the `sf_vfs` precedent: Bevy only behind a feature).
+bevy = ["dep:bevy_ecs"]
+
 [dependencies]
+bevy_ecs = { workspace = true, features = ["std"], optional = true }
 serde.workspace = true
 
 [dev-dependencies]

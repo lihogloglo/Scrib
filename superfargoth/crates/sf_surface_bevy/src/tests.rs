@@ -13,8 +13,7 @@ use bevy_mesh::Mesh3d;
 use bevy_mesh::skinning::SkinnedMesh;
 use bevy_transform::components::GlobalTransform;
 use sf_coords::WorldPos;
-use sf_sky_bevy::sf_sky::SkyClock;
-use sf_sky_bevy::{SkyConfig, SkyTime};
+use sf_sky_bevy::{GameClock, SkyConfig};
 use sf_surface::view::DebugView;
 use sf_surface::{Channel, Worldspace};
 use sf_weather_bevy::sf_weather::{
@@ -142,7 +141,7 @@ fn book() -> WeatherBook {
 pub(crate) fn app() -> App {
     let mut app = App::new();
     app.insert_resource(Assets::<Image>::default())
-        .insert_resource(SkyTime(SkyClock::default()))
+        .insert_resource(GameClock::default())
         .init_resource::<SkyConfig>()
         .init_resource::<sf_sky_bevy::WeatherState>()
         .insert_resource(WindField::new(

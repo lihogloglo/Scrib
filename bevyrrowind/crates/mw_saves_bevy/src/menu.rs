@@ -38,7 +38,7 @@ use bevy_log::prelude::*;
 use sf_records::RecordDb;
 use sf_save_bevy::sf_save::{SaveMeta, SaveReason, SlotDir, SlotEntry, list_worlds, with_suffix};
 use sf_save_bevy::{LoadRequest, SaveConfig, SaveDisplay, SaveDone, SaveGate, SaveRequest, SaveSession, SaveStorage};
-use sf_sky_bevy::SkyTime;
+use sf_sky_bevy::{GameClock, SkyConfig};
 use sf_ui::{FluentArgs, FluentValue, Localizer, UiRegistry};
 use sf_ui_bevy::{ScreenStackRes, UiLocalizer, UiRegistryRes, UiScreenRoot};
 use sf_ui_screens::{SaveEntryView, SaveLoadChoice, SaveLoadEvent, SaveLoadMode, SaveLoadModel, SaveLoadScreen, ScreenSystems};
@@ -276,7 +276,8 @@ fn utc_stamp(unix: i64) -> String {
 fn display(
     active: Option<Res<ActiveWorldspace>>,
     records: Option<Res<ItemRecords>>,
-    sky: Option<Res<SkyTime>>,
+    clock: Option<Res<GameClock>>,
+    sky: Option<Res<SkyConfig>>,
     localizer: Option<Res<UiLocalizer>>,
     mut display: ResMut<SaveDisplay>,
     mut labelled: Local<Option<WorldspaceId>>,
@@ -287,10 +288,12 @@ fn display(
         display.location_label = label;
         *labelled = here;
     }
-    if let Some(sky) = sky
-        && display.game_days.to_bits() != sky.0.days.to_bits()
-    {
-        display.game_days = sky.0.days;
+    if let Some(clock) = clock {
+        let day_ms = sky.map_or_else(|| sf_sky_bevy::sf_sky::Calendar::default().day_ms(), |s| s.day_ms());
+        let days = clock.now.days(day_ms);
+        if display.game_days.to_bits() != days.to_bits() {
+            display.game_days = days;
+        }
     }
 }
 

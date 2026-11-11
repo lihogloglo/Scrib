@@ -14,7 +14,7 @@ use crate::*;
 
 fn app(hour: f64) -> App {
     let settings = SkySettings::default();
-    let mut clock = SkyClock::at(172.0, hour, &settings.calendar);
+    let mut clock = GameClock::at(172.0, hour, settings.calendar.day_ms());
     clock.paused = true;
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
@@ -152,8 +152,8 @@ fn night_sky_glow_reaches_the_atmosphere_tied_to_the_floor() {
 fn moon_takes_over_shadows_at_night() {
     // Day 162 is a full moon; at 0:30 the sun is well below the horizon.
     let mut app = app(0.5);
-    app.world_mut().resource_mut::<SkyTime>().0 =
-        SkyClock::at(162.0, 0.5, &SkySettings::default().calendar);
+    app.world_mut().resource_mut::<GameClock>().now =
+        GameClock::at(162.0, 0.5, SkySettings::default().calendar.day_ms()).now;
     app.world_mut().spawn(SkyCamera::default());
     app.update();
     let (sun_light, _) = sun(&mut app);
@@ -163,6 +163,30 @@ fn moon_takes_over_shadows_at_night() {
         .query_filtered::<&DirectionalLight, With<MoonLight>>();
     let moon = q.single(app.world()).expect("one moon");
     assert!(moon.shadow_maps_enabled && moon.illuminance > 0.0);
+}
+
+/// The game clock advances on the fixed tick (clock.md "Advance"): exactly the fixed time that
+/// accumulated, scaled, in whole ms; paused or with virtual time paused (menus), not at all.
+#[test]
+fn the_game_clock_advances_on_the_fixed_tick() {
+    let mut app = app(12.0);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(50)));
+    app.world_mut().resource_mut::<GameClock>().paused = false;
+    let start = app.world().resource::<GameClock>().now;
+    for _ in 0..40 {
+        app.update();
+    }
+    let fixed = app.world().resource::<Time<Fixed>>().elapsed();
+    let moved = app.world().resource::<GameClock>().now.0 - start.0;
+    assert!(fixed > std::time::Duration::ZERO, "fixed time accumulated");
+    assert_eq!(u128::from(moved), fixed.as_nanos() * 30 / 1_000_000, "x30, whole ms");
+    // Menus pause virtual time: no fixed ticks, no game time.
+    app.world_mut().resource_mut::<Time<bevy_time::Virtual>>().pause();
+    let held = app.world().resource::<GameClock>().now;
+    for _ in 0..10 {
+        app.update();
+    }
+    assert_eq!(app.world().resource::<GameClock>().now, held);
 }
 
 fn budget_app(budget: PointShadowBudget) -> (App, Vec<Entity>) {
@@ -486,7 +510,7 @@ fn ray_tracing_adds_the_shadow_only_layer_of_the_lights_the_cameras_see() {
 #[test]
 fn moon_light_follows_the_moonlight_setting() {
     let mut app = app(0.5);
-    app.world_mut().resource_mut::<SkyTime>().0 = SkyClock::at(162.0, 0.5, &SkySettings::default().calendar);
+    app.world_mut().resource_mut::<GameClock>().now = GameClock::at(162.0, 0.5, SkySettings::default().calendar.day_ms()).now;
     app.world_mut().spawn(SkyCamera::default());
     app.update();
     let moon = |app: &mut App| {

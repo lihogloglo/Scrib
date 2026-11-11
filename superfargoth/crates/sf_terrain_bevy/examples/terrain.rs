@@ -39,8 +39,8 @@ use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::WindowResolution;
 use glam::DVec3;
-use sf_sky_bevy::sf_sky::{RenderPath, SkyClock, SkySettings};
-use sf_sky_bevy::{SkyCamera, SkyConfig, SkyPlugin, SkyRenderOptions, SkyTime};
+use sf_sky_bevy::sf_sky::{RenderPath, SkySettings};
+use sf_sky_bevy::{GameClock, SkyCamera, SkyConfig, SkyPlugin, SkyRenderOptions};
 use sf_terrain_bevy::{TerrainCamera, TerrainDebug, TerrainPlugin, TerrainSettings, TerrainStats, TerrainWorld};
 
 #[path = "../../sf_terrain/examples/synthetic/mod.rs"]
@@ -128,7 +128,7 @@ fn main() {
     let (baked, size) = bake(args.size_km, args.rebake);
     let settings = SkySettings::default();
     let calendar = settings.calendar;
-    let mut clock = SkyClock::at(172.0, args.hour, &calendar);
+    let mut clock = GameClock::at(172.0, args.hour, calendar.day_ms());
     clock.paused = true;
 
     let mut app = App::new();
@@ -273,7 +273,7 @@ fn fly(
 fn keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut debug: ResMut<TerrainDebug>,
-    mut sky: ResMut<SkyTime>,
+    mut sky: ResMut<GameClock>,
     config: Res<SkyConfig>,
 ) {
     if keys.just_pressed(KeyCode::KeyL) {
@@ -286,8 +286,8 @@ fn keys(
         debug.freeze = !debug.freeze;
     }
     if keys.just_pressed(KeyCode::KeyT) {
-        let h = (f64::from(sky.0.hour(&config.0.calendar)) + 1.0) % 24.0;
-        sky.0.set_hour(h, &config.0.calendar);
+        let h = (f64::from(config.sky_clock(&sky).hour(&config.0.calendar)) + 1.0) % 24.0;
+        sky.set_hour(h, config.day_ms());
     }
 }
 

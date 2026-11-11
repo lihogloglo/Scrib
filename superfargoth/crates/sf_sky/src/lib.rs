@@ -1,6 +1,7 @@
 //! Sky core (Bevy-free). Spec: `docs/specs/sky-lighting.md`.
 //!
-//! - [`SkyClock`] and [`Calendar`]: game time as days since an epoch.
+//! - [`SkyClock`] and [`Calendar`]: the sky's view of the game clock (`sf_ids::GameClock`) as
+//!   days since an epoch.
 //! - [`Orbit`]: sun and moon positions from time of day, season, latitude
 //!   and axial tilt.
 //! - [`AtmosphereModel`]: the scattering medium (fed to the GPU sky) and

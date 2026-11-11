@@ -578,3 +578,20 @@ fn say_shows_a_chosen_response_and_keeps_the_topic() {
     s.goodbye();
     assert_eq!(s.say(&db, &talk, &id("weather"), &id("w_other")), Err(DialogueError::Ended));
 }
+
+/// clock.md: `GameTime` is the world instant rounded down to the minute, and back.
+#[test]
+fn game_time_is_the_instant_rounded_down() {
+    use sf_ids::GameInstant;
+    use sf_ids::clock::{MS_PER_HOUR, MS_PER_MINUTE};
+    let day = 24 * MS_PER_HOUR;
+    let now = GameInstant(2 * day + 615 * MS_PER_MINUTE + 59_999);
+    assert_eq!(GameTime::from(now), GameTime { day: 2, minute: 615 });
+    assert_eq!(GameTime::from_instant(now).instant(), GameInstant(2 * day + 615 * MS_PER_MINUTE));
+    assert_eq!(GameTime::from_minutes(1439), GameTime { day: 0, minute: 1439 });
+    assert_eq!(GameTime::from_minutes(1440), GameTime { day: 1, minute: 0 });
+    assert_eq!(GameTime::from_minutes(u64::MAX).day, u32::MAX, "saturates");
+    for m in [0, 1, 1439, 1440, 9 * 1440 + 600] {
+        assert_eq!(GameTime::from_minutes(m).total_minutes(), m);
+    }
+}

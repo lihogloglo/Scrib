@@ -477,3 +477,12 @@ fn book_round_trips_and_same_inputs_give_same_outputs() {
     assert_eq!(back.ready_at(&rid("quick")), Some(8));
     assert_eq!(back.power_used(&rid("might")), Some(GameMinutes(5)));
 }
+
+/// clock.md: power recharges count the world instant's whole minutes.
+#[test]
+fn game_minutes_are_the_instant_rounded_down() {
+    use sf_ids::GameInstant;
+    assert_eq!(GameMinutes::from(GameInstant(59_999)), GameMinutes(0));
+    assert_eq!(GameMinutes::from(GameInstant(86_400_000)), GameMinutes::DAY);
+    assert_eq!(GameMinutes::from(GameInstant::from_minutes(1441)), GameMinutes(1441));
+}

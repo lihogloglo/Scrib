@@ -32,7 +32,7 @@ pub const MAX_VISIBILITY_M: f32 = 100_000.0;
 /// What `evaluate` needs besides the records and the state.
 #[derive(Clone, Copy, Debug)]
 pub struct WeatherInput<'a> {
-    /// Game time, hours since the clock's epoch (`SkyClock::days` × hours per day).
+    /// Game time, hours since the clock's epoch (`GameInstant::hours`).
     pub hours: f64,
     /// The previous evaluation's `hours` (lightning reports strikes in `[prev_hours, hours)`).
     pub prev_hours: f64,
