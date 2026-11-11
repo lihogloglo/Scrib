@@ -1,0 +1,377 @@
+# `exterior_balmora`
+
+- bench_ground: false · build: release · camera: [-202.6, 90.2, 324.8] -> [-292.6, 2.2, 204.8] · cell: Bevyrrowind - Balmora (4 cells) · gpu: NVIDIA GeForce RTX 4060 Laptop GPU (Vulkan, 617.42) · off: none · prepass: false · present: AutoNoVsync · render: raster dlss=quality · resolution: 2560x1440 · rings: near None far None
+- 1574 frames over 15.0 s · **median 9.43 ms (106 fps)** · mean 9.53 · p95 10.60 · p99 11.54 (1% low 87 fps) · worst 15.70 ms · 1 spikes over 1.5× median · 4.0 stutters/min (work 0.0/min)
+- warm-up: 587 frames over 6.8 s, worst 588.0 ms
+- hitches (> 25.0 ms): **0** measured, 8 in warm-up
+- timed GPU passes: 8.31 ms of a 9.53 ms mean frame (passes Bevy doesn't time, CPU and waits are the rest)
+- verdict: PASS
+
+## Gates
+
+- pass Median frame 9.43 ms, limit 11 ms
+- pass worst frame 15.70 ms, limit 33 ms
+
+## GPU passes (Bevy-timed, mean per frame)
+
+| pass | GPU ms | GPU p95 | CPU ms |
+|---|---:|---:|---:|
+| main_opaque_pass_3d | 2.236 | 2.574 | 0.052 |
+| dlss_super_resolution | 2.073 | 2.139 | 0.178 |
+| early prepass | 0.640 | 0.973 | 0.081 |
+| lightprobe_irradiance_map | 0.435 | 0.731 | 0.001 |
+| atmosphere_luts | 0.419 | 0.689 | 0.003 |
+| bloom | 0.322 | 0.337 | 0.062 |
+| ssao | 0.243 | 0.553 | 0.007 |
+| lightprobe_radiance_map | 0.224 | 0.231 | 0.004 |
+| main_transparent_pass_3d | 0.181 | 0.190 | 0.043 |
+| water_fft | 0.141 | 0.275 | 0.003 |
+| clouds_trace | 0.136 | 0.158 | 0.001 |
+| uniform_allocation | 0.131 | 0.132 | 0.018 |
+| upscaling | 0.116 | 0.126 | 0.004 |
+| bin_unpacking | 0.101 | 0.102 | 0.013 |
+| gpu_instance_materialization | 0.091 | 0.093 | 0.004 |
+| tonemapping | 0.088 | 0.094 | 0.003 |
+| atmos_froxel_inject | 0.088 | 0.090 | 0.002 |
+| early_mesh_preprocessing | 0.084 | 0.089 | 0.004 |
+| clustering | 0.079 | 0.083 | 0.021 |
+| water_velocity | 0.076 | 0.076 | 0.001 |
+| clouds_composite | 0.064 | 0.066 | 0.002 |
+| render_sky | 0.053 | 0.054 | 0.002 |
+| per_view_shadow_pass | 0.040 | 0.043 | 0.008 |
+| clouds_resolve | 0.035 | 0.037 | 0.001 |
+| range_unpacking | 0.034 | 0.035 | 0.004 |
+| clouds_shadow | 0.033 | 0.035 | 0.003 |
+| water_mips | 0.025 | 0.024 | 0.002 |
+| water_snapshot | 0.023 | 0.024 | 0.001 |
+| atmos_froxel_integrate | 0.023 | 0.026 | 0.001 |
+| lightprobe_copy | 0.014 | 0.015 | 0.004 |
+| lightprobe_downsampling_first_pass | 0.014 | 0.015 | 0.001 |
+| atmosphere_environment | 0.012 | 0.014 | 0.003 |
+| clouds_fog_light | 0.012 | 0.013 | 0.002 |
+| lightprobe_downsampling_second_pass | 0.011 | 0.012 | 0.001 |
+| sparse buffer updates | 0.007 | 0.008 | 0.003 |
+| night_sky | 0.004 | 0.004 | 0.002 |
+| auxiliary_views | 0.002 | 0.003 | 0.003 |
+| blas_build | 0.001 | 0.002 | 0.005 |
+| surface_trail | — | — | — |
+| weather_map | — | — | — |
+
+## Per-frame costs (ms)
+
+| counter | mean | p95 | max | total |
+|---|---:|---:|---:|---:|
+| render/thread/ms | 8.352 | 9.413 | 14.50 | 13145.6 |
+| render/busy/ms | 7.477 | 8.552 | 11.24 | 11768.7 |
+| main/busy/ms | 6.861 | 7.666 | 8.85 | 10799.3 |
+| render/graph/ms | 3.871 | 4.846 | 6.29 | 6093.3 |
+| render/present/ms | 0.474 | 0.603 | 4.56 | 746.6 |
+| render/acquire/ms | 0.400 | 1.299 | 2.08 | 630.3 |
+| bigspace/total/ms | 0.311 | 0.532 | 1.61 | 489.6 |
+| stream/drive/ms | 0.228 | 0.386 | 0.64 | 359.6 |
+| terrain/update/ms | 0.226 | 0.288 | 0.55 | 355.8 |
+| stream/tick/ms | 0.196 | 0.347 | 0.59 | 308.9 |
+| terrain/select/ms | 0.194 | 0.247 | 0.52 | 305.0 |
+| far/select/ms | 0.189 | 0.326 | 0.67 | 297.6 |
+| controller/move/ms | 0.152 | 0.265 | 0.69 | 239.0 |
+| controller/feed/ms | 0.134 | 0.189 | 0.44 | 211.3 |
+| bigspace/high_precision/ms | 0.104 | 0.228 | 1.41 | 164.4 |
+| bigspace/low_precision/ms | 0.082 | 0.146 | 1.20 | 129.8 |
+| anim/evaluate/ms | 0.075 | 0.200 | 1.34 | 118.2 |
+| anim/apply/ms | 0.073 | 0.156 | 1.07 | 115.2 |
+| anim/evaluate_cpu/ms | 0.065 | 0.078 | 0.36 | 102.2 |
+| physics/step/ms | 0.028 | 0.057 | 0.17 | 43.7 |
+| weather/map/ms | 0.027 | 0.042 | 0.13 | 43.1 |
+| weather/eval/ms | 0.012 | 0.019 | 0.22 | 19.3 |
+| script/update/ms | 0.009 | 0.018 | 0.07 | 13.6 |
+| controller/avoid/ms | 0.007 | 0.010 | 0.03 | 10.4 |
+| script/input/ms | 0.005 | 0.006 | 0.16 | 7.9 |
+| script/ui/ms | 0.004 | 0.007 | 0.02 | 6.8 |
+| controller/write/ms | 0.002 | 0.003 | 0.03 | 3.0 |
+| weather/fx/ms | 0.001 | 0.002 | 0.02 | 1.8 |
+| shapes/activate/ms | 0.001 | 0.002 | 0.01 | 1.3 |
+| weather/apply/ms | 0.000 | 0.001 | 0.00 | 0.4 |
+| physics/insert/ms | 0.000 | 0.000 | 0.00 | 0.0 |
+| pipelines/compile_ms | 0.000 | 0.000 | 0.00 | 0.0 |
+| pipelines/driver_ms | 0.000 | 0.000 | 0.00 | 0.0 |
+| pipelines/front_ms | 0.000 | 0.000 | 0.00 | 0.0 |
+| pipelines/wait_ms | 0.000 | 0.000 | 0.00 | 0.0 |
+| stream/activate/ms | 0.000 | 0.000 | 0.00 | 0.0 |
+| stream/spawn/ms | 0.000 | 0.000 | 0.00 | 0.0 |
+| stream/upload/ms | 0.000 | 0.000 | 0.00 | 0.0 |
+| surface/advance_cpu_ms | 0.000 | 0.000 | 0.00 | 0.0 |
+| surface/cell_upload_ms | 0.000 | 0.000 | 0.00 | 0.0 |
+
+## Gauges (counts, sizes)
+
+| gauge | unit | median | max | last |
+|---|---|---:|---:|---:|
+| anim/a0/count | count | 0 | 0 | 0 |
+| anim/a1/count | count | 0 | 0 | 0 |
+| anim/a2/count | count | 0 | 0 | 0 |
+| anim/a3/count | count | 414 | 414 | 414 |
+| anim/characters/count | count | 414 | 414 | 414 |
+| anim/evaluated/count | count | 7 | 7 | 7 |
+| controller/movers/count | count | 7 | 7 | 7 |
+| ecs/entities | count | 37.3 k | 37.3 k | 37.3 k |
+| far/entities | count | 2319 | 2319 | 2319 |
+| far/forced | count | 0 | 0 | 0 |
+| far/impostors | count | 58.5 k | 58.5 k | 58.5 k |
+| far/lights | count | 6750 | 6750 | 6750 |
+| far/nodes/l1 | count | 946 | 946 | 946 |
+| far/nodes/l2 | count | 25 | 25 | 25 |
+| far/nodes/l3 | count | 4 | 4 | 4 |
+| far/resident/bytes | bytes | 187.32 M | 187.32 M | 187.32 M |
+| far/triangles | count | 4.62 M | 4.62 M | 4.62 M |
+| frame/work/ms | ms | 8.36 | 11.24 | 8.00 |
+| gpu/timed/ms | ms | 8.35 | 9.32 | 8.00 |
+| mesh_allocator_allocations |  meshes | 9463 | 9463 | 9463 |
+| mesh_allocator_slabs |  slabs | 14 | 14 | 14 |
+| mesh_allocator_slabs_size |  bytes | 309.15 M | 309.15 M | 309.15 M |
+| phases/alpha_mask3d/batch_sets | count | 9 | 9 | 9 |
+| phases/alpha_mask3d/bins | count | 249 | 249 | 249 |
+| phases/alpha_mask3d/instance_batches | count | 2 | 2 | 2 |
+| phases/alpha_mask3d/instance_draws | count | 566 | 566 | 566 |
+| phases/alpha_mask3d/instance_slots | count | 16.4 k | 16.4 k | 16.4 k |
+| phases/alpha_mask3d/items | count | 320 | 320 | 320 |
+| phases/alpha_mask3d/pipelines | count | 6 | 6 | 6 |
+| phases/alpha_mask3d_prepass/batch_sets | count | 9 | 9 | 9 |
+| phases/alpha_mask3d_prepass/bins | count | 249 | 249 | 249 |
+| phases/alpha_mask3d_prepass/instance_batches | count | 2 | 2 | 2 |
+| phases/alpha_mask3d_prepass/instance_draws | count | 566 | 566 | 566 |
+| phases/alpha_mask3d_prepass/instance_slots | count | 16.4 k | 16.4 k | 16.4 k |
+| phases/alpha_mask3d_prepass/items | count | 320 | 320 | 320 |
+| phases/alpha_mask3d_prepass/pipelines | count | 6 | 6 | 6 |
+| phases/opaque3d/batch_sets | count | 16 | 16 | 16 |
+| phases/opaque3d/bins | count | 877 | 877 | 877 |
+| phases/opaque3d/instance_batches | count | 2 | 2 | 2 |
+| phases/opaque3d/instance_draws | count | 5298 | 5298 | 5298 |
+| phases/opaque3d/instance_slots | count | 32.8 k | 32.8 k | 32.8 k |
+| phases/opaque3d/items | count | 2810 | 2810 | 2810 |
+| phases/opaque3d/pipelines | count | 13 | 13 | 13 |
+| phases/opaque3d_prepass/batch_sets | count | 16 | 16 | 16 |
+| phases/opaque3d_prepass/bins | count | 877 | 877 | 877 |
+| phases/opaque3d_prepass/instance_batches | count | 2 | 2 | 2 |
+| phases/opaque3d_prepass/instance_draws | count | 5298 | 5298 | 5298 |
+| phases/opaque3d_prepass/instance_slots | count | 32.8 k | 32.8 k | 32.8 k |
+| phases/opaque3d_prepass/items | count | 2810 | 2810 | 2810 |
+| phases/opaque3d_prepass/pipelines | count | 13 | 13 | 13 |
+| phases/shadow/batch_sets | count | 34 | 37 | 34 |
+| phases/shadow/bins | count | 859 | 872 | 858 |
+| phases/shadow/instance_batches | count | 12 | 12 | 12 |
+| phases/shadow/instance_draws | count | 17.6 k | 17.6 k | 17.6 k |
+| phases/shadow/instance_slots | count | 147.5 k | 147.5 k | 147.5 k |
+| phases/shadow/items | count | 2848 | 2876 | 2847 |
+| phases/shadow/pipelines | count | 27 | 30 | 27 |
+| physics/awake | count | 0 | 0 | 0 |
+| physics/bodies | count | 2084 | 2084 | 2084 |
+| physics/items | count | 19 | 19 | 19 |
+| physics/pending | count | 0 | 0 | 0 |
+| physics/terrain/chunks | count | 52 | 52 | 52 |
+| pipelines/total | count | 155 | 155 | 155 |
+| pipelines/waiting | count | 0 | 0 | 0 |
+| preprocess/bind_groups | count | 155 | 163 | 155 |
+| preprocess/bind_groups_created | count | 148 | 156 | 148 |
+| preprocess/bind_groups_materialize | count | 0 | 0 | 0 |
+| preprocess/bind_groups_ranges | count | 7 | 7 | 7 |
+| process/cpu_usage | % | 23.85 | 37.68 | 15.38 |
+| process/mem_usage | GiB | 2.48 | 2.55 | 2.55 |
+| scene/batch/chain/capacity | count | 0 | 0 | 0 |
+| scene/batch/chain/count | count | 0 | 0 | 0 |
+| scene/batch/chain/high_water | count | 0 | 0 | 0 |
+| scene/batch/chain/live | count | 0 | 0 | 0 |
+| scene/batch/chain/overflow | count | 0 | 0 | 0 |
+| scene/batch/masked/capacity | count | 16.4 k | 16.4 k | 16.4 k |
+| scene/batch/masked/count | count | 2 | 2 | 2 |
+| scene/batch/masked/high_water | count | 2389 | 2389 | 2389 |
+| scene/batch/masked/live | count | 2389 | 2389 | 2389 |
+| scene/batch/masked/overflow | count | 0 | 0 | 0 |
+| scene/batch/masked_two_sided/capacity | count | 0 | 0 | 0 |
+| scene/batch/masked_two_sided/count | count | 0 | 0 | 0 |
+| scene/batch/masked_two_sided/high_water | count | 0 | 0 | 0 |
+| scene/batch/masked_two_sided/live | count | 0 | 0 | 0 |
+| scene/batch/masked_two_sided/overflow | count | 0 | 0 | 0 |
+| scene/batch/masked_wind/capacity | count | 0 | 0 | 0 |
+| scene/batch/masked_wind/count | count | 0 | 0 | 0 |
+| scene/batch/masked_wind/high_water | count | 0 | 0 | 0 |
+| scene/batch/masked_wind/live | count | 0 | 0 | 0 |
+| scene/batch/masked_wind/overflow | count | 0 | 0 | 0 |
+| scene/batch/masked_wind_two_sided/capacity | count | 0 | 0 | 0 |
+| scene/batch/masked_wind_two_sided/count | count | 0 | 0 | 0 |
+| scene/batch/masked_wind_two_sided/high_water | count | 0 | 0 | 0 |
+| scene/batch/masked_wind_two_sided/live | count | 0 | 0 | 0 |
+| scene/batch/masked_wind_two_sided/overflow | count | 0 | 0 | 0 |
+| scene/batch/opaque/capacity | count | 32.8 k | 32.8 k | 32.8 k |
+| scene/batch/opaque/count | count | 2 | 2 | 2 |
+| scene/batch/opaque/high_water | count | 16.8 k | 16.8 k | 16.8 k |
+| scene/batch/opaque/live | count | 16.8 k | 16.8 k | 16.8 k |
+| scene/batch/opaque/overflow | count | 0 | 0 | 0 |
+| scene/batch/opaque_two_sided/capacity | count | 0 | 0 | 0 |
+| scene/batch/opaque_two_sided/count | count | 0 | 0 | 0 |
+| scene/batch/opaque_two_sided/high_water | count | 0 | 0 | 0 |
+| scene/batch/opaque_two_sided/live | count | 0 | 0 | 0 |
+| scene/batch/opaque_two_sided/overflow | count | 0 | 0 | 0 |
+| scene/batch/opaque_wind/capacity | count | 0 | 0 | 0 |
+| scene/batch/opaque_wind/count | count | 0 | 0 | 0 |
+| scene/batch/opaque_wind/high_water | count | 0 | 0 | 0 |
+| scene/batch/opaque_wind/live | count | 0 | 0 | 0 |
+| scene/batch/opaque_wind/overflow | count | 0 | 0 | 0 |
+| scene/batch/opaque_wind_two_sided/capacity | count | 0 | 0 | 0 |
+| scene/batch/opaque_wind_two_sided/count | count | 0 | 0 | 0 |
+| scene/batch/opaque_wind_two_sided/high_water | count | 0 | 0 | 0 |
+| scene/batch/opaque_wind_two_sided/live | count | 0 | 0 | 0 |
+| scene/batch/opaque_wind_two_sided/overflow | count | 0 | 0 | 0 |
+| scene/batches/count | count | 4 | 4 | 4 |
+| scene/cells/resident | count | 101 | 101 | 101 |
+| scene/chains/high_water | count | 1642 | 1642 | 1642 |
+| scene/chains/live | count | 1642 | 1642 | 1642 |
+| scene/chains/pending | count | 0 | 0 | 0 |
+| scene/overflow/instances | count | 0 | 0 | 0 |
+| scene/promoted | count | 0 | 0 | 0 |
+| scene/slots/batch_bump | count | 19.2 k | 19.2 k | 19.2 k |
+| scene/slots/batch_capacity | count | 49.2 k | 49.2 k | 49.2 k |
+| scene/slots/batch_capacity_bytes | bytes | 3.15 M | 3.15 M | 3.15 M |
+| scene/slots/batch_live | count | 19.2 k | 19.2 k | 19.2 k |
+| scene/slots/scene_bump | count | 19.2 k | 19.2 k | 19.2 k |
+| scene/slots/scene_live | count | 19.2 k | 19.2 k | 19.2 k |
+| scene/slots/waste | count | 0 | 0 | 0 |
+| script/ctx/mw.legacy/mib | count | 0.42 | 0.42 | 0.42 |
+| shapes/proxies | count | 0 | 0 | 0 |
+| shapes/sets | count | 0 | 0 | 0 |
+| shapes/sync/ms | ms | 0 | 0 | 0 |
+| started_load_count |  | 4193 | 4195 | 4195 |
+| statics/bindless | count | 1 | 1 | 1 |
+| statics/material_bind_groups | count | 1 | 1 | 1 |
+| statics/material_classes | count | 2 | 2 | 2 |
+| statics/material_keys | count | 2 | 2 | 2 |
+| statics/material_pipelines | count | 2 | 2 | 2 |
+| statics/materials | count | 174 | 174 | 174 |
+| statics/materials_bound | count | 174 | 174 | 174 |
+| statics/materials_unclassed | count | 0 | 0 | 0 |
+| stream/activate/queue | count | 0 | 0 | 0 |
+| stream/assets/queue | count | 0 | 0 | 0 |
+| stream/deactivate/queue | count | 0 | 0 | 0 |
+| stream/despawn/queue | count | 0 | 0 | 0 |
+| stream/fetch/queue | count | 0 | 0 | 0 |
+| stream/latency/s | s | 0.04 | 0.04 | 0.04 |
+| stream/model_queue | count | 0 | 0 | 0 |
+| stream/models | count | 187 | 187 | 187 |
+| stream/oldest_request/s | s | 0 | 0 | 0 |
+| stream/page_cache/bytes | bytes | 19.53 M | 19.53 M | 19.53 M |
+| stream/requests | count | 0 | 0 | 0 |
+| stream/resident_cells | count | 961 | 961 | 961 |
+| stream/spawn/queue | count | 0 | 0 | 0 |
+| stream/upload/queue | count | 0 | 0 | 0 |
+| system/cpu_usage | % | 29.79 | 37.69 | 27.41 |
+| system/mem_usage | % | 42.06 | 42.28 | 42.28 |
+| terrain/patches | count | 370 | 370 | 370 |
+| views/all/batch_sets | count | 84 | 87 | 84 |
+| views/all/bins | count | 3111 | 3124 | 3110 |
+| views/all/count | count | 4 | 6 | 4 |
+| views/all/instance_batches | count | 20 | 20 | 20 |
+| views/all/instance_draws | count | 29.3 k | 29.3 k | 29.3 k |
+| views/all/instance_slots | count | 245.8 k | 245.8 k | 245.8 k |
+| views/all/items | count | 9108 | 9136 | 9107 |
+| views/all/pipelines | count | 65 | 68 | 65 |
+| views/all/pipelines_distinct | count | 53 | 53 | 53 |
+| views/all/work_items | count | 255.0 k | 255.0 k | 255.0 k |
+| views/cascade/batch_sets | count | 34 | 37 | 34 |
+| views/cascade/bins | count | 859 | 872 | 858 |
+| views/cascade/count | count | 3 | 5 | 3 |
+| views/cascade/instance_batches | count | 12 | 12 | 12 |
+| views/cascade/instance_draws | count | 17.6 k | 17.6 k | 17.6 k |
+| views/cascade/instance_slots | count | 147.5 k | 147.5 k | 147.5 k |
+| views/cascade/items | count | 2848 | 2876 | 2847 |
+| views/cascade/pipelines | count | 27 | 30 | 27 |
+| views/cascade/work_items | count | 150.3 k | 150.3 k | 150.3 k |
+| views/lamp_face/batch_sets | count | 0 | 0 | 0 |
+| views/lamp_face/bins | count | 0 | 0 | 0 |
+| views/lamp_face/count | count | 0 | 0 | 0 |
+| views/lamp_face/instance_batches | count | 0 | 0 | 0 |
+| views/lamp_face/instance_draws | count | 0 | 0 | 0 |
+| views/lamp_face/instance_slots | count | 0 | 0 | 0 |
+| views/lamp_face/items | count | 0 | 0 | 0 |
+| views/lamp_face/pipelines | count | 0 | 0 | 0 |
+| views/lamp_face/work_items | count | 0 | 0 | 0 |
+| views/main/batch_sets | count | 50 | 50 | 50 |
+| views/main/bins | count | 2252 | 2252 | 2252 |
+| views/main/count | count | 1 | 1 | 1 |
+| views/main/instance_batches | count | 8 | 8 | 8 |
+| views/main/instance_draws | count | 11.7 k | 11.7 k | 11.7 k |
+| views/main/instance_slots | count | 98.3 k | 98.3 k | 98.3 k |
+| views/main/items | count | 6260 | 6260 | 6260 |
+| views/main/pipelines | count | 38 | 38 | 38 |
+| views/main/work_items | count | 104.7 k | 104.7 k | 104.7 k |
+| views/other/batch_sets | count | 0 | 0 | 0 |
+| views/other/bins | count | 0 | 0 | 0 |
+| views/other/count | count | 0 | 0 | 0 |
+| views/other/instance_batches | count | 0 | 0 | 0 |
+| views/other/instance_draws | count | 0 | 0 | 0 |
+| views/other/instance_slots | count | 0 | 0 | 0 |
+| views/other/items | count | 0 | 0 | 0 |
+| views/other/pipelines | count | 0 | 0 | 0 |
+| views/other/work_items | count | 0 | 0 | 0 |
+| world/meshes | count | 15.0 k | 15.0 k | 15.0 k |
+| world/point_lights | count | 210 | 210 | 210 |
+
+## Churn (per frame)
+
+| counter | unit | mean | max | total |
+|---|---|---:|---:|---:|
+| anim/bones_written/count | count | 0 | 0 | 0 |
+| anim/events/count | count | 0.11 | 4 | 178 |
+| assets/Image/added | count | 0 | 0 | 0 |
+| assets/Image/modified | count | 0.00 | 1 | 2 |
+| assets/Image/removed | count | 0 | 0 | 0 |
+| assets/Mesh/added | count | 0 | 0 | 0 |
+| assets/Mesh/removed | count | 0 | 0 | 0 |
+| assets/StandardMaterial/added | count | 0 | 0 | 0 |
+| assets/StandardMaterial/modified | count | 3.14 | 11 | 4950 |
+| assets/WorldAsset/added | count | 0 | 0 | 0 |
+| assets/WorldAsset/removed | count | 0 | 0 | 0 |
+| draws/skipped_late | count | 0 | 0 | 0 |
+| ecs/entities_delta | count | 0 | 1 | 0 |
+| physics/inserts | count | 0 | 0 | 0 |
+| physics/rebases | count | 0 | 0 | 0 |
+| physics/removals | count | 0 | 0 | 0 |
+| physics/steps | count | 0.57 | 1 | 900 |
+| physics/steps_dropped | count | 0 | 0 | 0 |
+| pipelines/after_reveal | count | 0 | 0 | 0 |
+| pipelines/created | count | 0 | 0 | 0 |
+| shapes/activations | count | 0 | 0 | 0 |
+| shapes/impacts | count | 0 | 0 | 0 |
+| shapes/removals | count | 0 | 0 | 0 |
+| stream/activate/items | count | 0 | 0 | 0 |
+| stream/deactivate/items | count | 0 | 0 | 0 |
+| stream/despawn/items | count | 0 | 0 | 0 |
+| stream/fetch/items | count | 0 | 0 | 0 |
+| stream/spawn/items | count | 0 | 0 | 0 |
+| stream/upload/bytes | bytes | 0 | 0 | 0 |
+| stream/upload/items | count | 0 | 0 | 0 |
+| surface/active_cells | count | 0 | 0 | 0 |
+| surface/shelter_redraws | count | 0.00 | 1 | 1 |
+| surface/steps | count | 0 | 0 | 0 |
+| terrain/upload/bytes | bytes | 0 | 0 | 0 |
+| weather/strikes | count | 0 | 0 | 0 |
+| world/origin_shifts | count | 0 | 0 | 0 |
+
+## Hitches (> 25.0 ms; slowest 8, time order; churn = this frame + the one before)
+
+| phase | t s | frame ms | churn |
+|---|---:|---:|---|
+| warm-up | 0.59 | 588.0 | main/busy/ms 564, surface/advance_cpu_ms 67.17, surface/cell_upload_ms 0.75, stream/drive/ms 0.41, weather/map/ms 0.12, stream/tick/ms 0.08, bigspace/total/ms 0.08, bigspace/high_precision/ms 0.04, weather/eval/ms 0.03, script/update/ms 0.02, anim/evaluate/ms 0.02, script/ui/ms 0.01 |
+| warm-up | 0.92 | 331.8 | main/busy/ms 595, render/thread/ms 297, render/busy/ms 219, render/acquire/ms 75.79, surface/advance_cpu_ms 67.17, render/graph/ms 4.46, render/present/ms 2.17, stream/drive/ms 0.98, surface/cell_upload_ms 0.75, stream/tick/ms 0.46, terrain/update/ms 0.43, terrain/select/ms 0.28 |
+| warm-up | 1.01 | 88.7 | pipelines/wait_ms 657, render/thread/ms 313, render/busy/ms 233, pipelines/compile_ms 95.34, pipelines/front_ms 88.14, render/acquire/ms 75.89, main/busy/ms 48.99, terrain/update/ms 17.09, render/graph/ms 9.13, pipelines/driver_ms 7.20, render/present/ms 3.50, stream/drive/ms 0.94 |
+| warm-up | 1.23 | 80.9 | main/busy/ms 60.76, render/thread/ms 50.12, render/busy/ms 48.20, render/graph/ms 4.25, stream/drive/ms 1.92, render/present/ms 1.66, stream/tick/ms 1.52, terrain/update/ms 0.63, terrain/select/ms 0.48, bigspace/total/ms 0.41, render/acquire/ms 0.27, bigspace/high_precision/ms 0.16 |
+| warm-up | 3.06 | 26.4 | main/busy/ms 33.71, render/thread/ms 22.46, render/busy/ms 20.98, render/graph/ms 6.94, stream/drive/ms 2.15, render/present/ms 1.25, stream/tick/ms 0.77, terrain/update/ms 0.47, stream/upload/ms 0.45, bigspace/total/ms 0.42, terrain/select/ms 0.38, render/acquire/ms 0.23 |
+| warm-up | 3.22 | 48.2 | main/busy/ms 57.84, render/thread/ms 43.37, render/busy/ms 41.66, terrain/update/ms 8.83, render/graph/ms 8.64, stream/drive/ms 3.74, render/present/ms 1.42, stream/upload/ms 1.36, stream/tick/ms 0.97, stream/spawn/ms 0.73, bigspace/total/ms 0.67, terrain/select/ms 0.47 |
+| warm-up | 5.14 | 30.1 | pipelines/wait_ms 8886, pipelines/compile_ms 73.38, pipelines/front_ms 56.95, render/thread/ms 37.89, render/busy/ms 36.79, render/graph/ms 28.20, main/busy/ms 17.29, pipelines/driver_ms 16.44, stream/drive/ms 1.11, render/present/ms 0.93, physics/insert/ms 0.89, bigspace/total/ms 0.54 |
+| warm-up | 5.18 | 26.2 | main/busy/ms 31.48, render/thread/ms 24.38, render/busy/ms 23.24, render/graph/ms 7.99, stream/drive/ms 1.08, physics/insert/ms 1.02, render/present/ms 0.97, physics/step/ms 0.91, bigspace/total/ms 0.66, anim/evaluate_cpu/ms 0.65, stream/tick/ms 0.57, terrain/update/ms 0.46 |
+
+## Run
+
+- `../target/profiling/bevyrrowind.exe` view Balmora --bench benchmarks/exterior_balmora.json --scene --resolution 2560x1440 --bench-out target/perf\fix_on\balmora@2560x1440_--scene-1 --bench-baseline none
+- env: BEVYRROWIND_DLSS=quality
+- before the run: GPU 0%, CPU 5%
+- during the run: other processes 6% CPU (system minus this process)
+- nvidia-smi over the window (58 samples): GPU load **96%** (min 91%) · 2580 MHz (min 2580) · memory 8001 MHz · 93.2 W · 73 °C (max 75) · VRAM 3653 MiB · throttled 100% of samples

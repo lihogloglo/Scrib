@@ -330,7 +330,12 @@ impl SpaceConfig {
     /// and stream-in headroom); masked two-sided, the foliage card class, and its wind twin get
     /// 4k; the rest (two-sided opaque, wind) are rare in statics and get 1-2k. Which classes a
     /// pack actually uses is not knowable here: re-tune from `scene/batch/<class>/high_water`.
-    pub const DEFAULT_CLASS_CAPACITY: [u32; MaterialClass::ALL.len()] = [16384, 2048, 8192, 4096, 1024, 1024, 2048, 4096];
+    ///
+    /// Re-tuned 2026-11-12 from the gauges (dense town walk, 3 runs): each class splits over two
+    /// slab pairs, i.e. two batches. Opaque: 18.8k live (19.4k peak) over two 16k batches still
+    /// overflowed one of them (461 instances at peak), so 20k per batch; masked: ~3k live over two
+    /// 8k batches, so 4k. Same total per view as before (dispatch width is reserved capacity).
+    pub const DEFAULT_CLASS_CAPACITY: [u32; MaterialClass::ALL.len()] = [20480, 2048, 4096, 4096, 1024, 1024, 2048, 4096];
     /// One chain level's instances across the resident cells: a few hundred for the most
     /// repeated mesh of a town, so 1024 holds it with room while hundreds of such batches
     /// (one per chain level under `PerChain`) stay affordable per view.

@@ -91,6 +91,20 @@ Not a cause: CPU culling, per-frame slot uploads (writes happen at stream-in onl
 
 Default stays the old path until 1-3 land and an untraced A/B shows parity or better.
 
+## Measured after fixes 1-3 + 5 (2026-11-12, untraced, profiling exe, 3 runs each, 1440p DLSS Quality)
+
+`benchmarks/runs/fix_off`, `fix_on` (before: `scene_off`, `scene_on`, 2026-11-11).
+
+| scenario | old path | `--scene` before | `--scene` after | entities after |
+|---|---:|---:|---:|---:|
+| balmora (standing) | 9.31 ms | 11.23 ms | **9.44 ms** | 37.3 k (old 47.0 k) |
+| balmora_walk | 10.71 ms | 14.50 ms | **11.10 ms** | 48.8 k (old 59.2 k) |
+
+`--scene` gained 1.8 ms standing and 3.4 ms walking; it is now within 0.1-0.4 ms of the old path (standing is
+GPU-bound at 97 %). Stutters on the walk 12.8/min vs 15.5/min on the old path. Gauges: only opaque (2 batches, 18.8k
+live, 461 overflow at peak) and masked (2 batches, ~3k live) are used; capacities re-tuned to 20480 / 4096 per batch
+(`SpaceConfig::DEFAULT_CLASS_CAPACITY`). Remaining CPU gap: 32.1k sub-draws per frame (fix 4); remaining GPU gap: S3a3.
+
 ## RO-18 (floating foliage): not reproduced under control
 
 Seen in both paths (owner A/B), so not the scene. BRP checks on the dev build (no `--scene`): after a vertical origin
