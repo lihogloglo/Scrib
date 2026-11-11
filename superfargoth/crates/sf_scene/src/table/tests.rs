@@ -25,7 +25,7 @@ fn instance(placement: u32, chain: u32, center: Vec3, radius: f32) -> StaticInst
         sphere: Sphere { center, radius },
         chain,
         material_override: 0,
-        flags: InstanceFlags::CASTS_SHADOW | InstanceFlags::WIND,
+        flags: InstanceFlags::CASTS_SHADOW,
     }
 }
 
@@ -41,7 +41,7 @@ fn sample() -> StaticCellTable {
         instances: vec![
             instance(4, 0, Vec3::new(1.0, 2.0, 3.0), 2.0),
             instance(9, 1, Vec3::new(-50.0, 0.5, 60.0), 8.0),
-            StaticInstance { flags: InstanceFlags::ALPHA_MASKED, ..instance(77, 0, Vec3::ZERO, 0.5) },
+            StaticInstance { flags: InstanceFlags::empty(), ..instance(77, 0, Vec3::ZERO, 0.5) },
         ],
         chains: vec![
             chain(0x10, MaterialClass::OpaqueWind, &[0.0, 0.02, 0.1]),
@@ -98,7 +98,7 @@ fn v3_round_trip_is_exact() {
     assert_eq!(&second[64..68], &9u32.to_le_bytes());
     assert_eq!(&second[68..72], &1u32.to_le_bytes());
     assert_eq!(&second[72..76], &0u32.to_le_bytes());
-    assert_eq!(&second[76..80], &(InstanceFlags::CASTS_SHADOW | InstanceFlags::WIND).bits().to_le_bytes());
+    assert_eq!(&second[76..80], &InstanceFlags::CASTS_SHADOW.bits().to_le_bytes());
     // Chain records: class at 8, model index at 10, part at 12, mesh key at 16, material key 24.
     let chain1 = &bytes[80 + 240 + 32..80 + 240 + 64];
     assert_eq!(&chain1[8..10], &(MaterialClass::MaskedWindTwoSided as u16).to_le_bytes());
@@ -468,6 +468,27 @@ fn rejects_flags_no_slice_implements_yet() {
     }
     // The bits the bake does write are accepted.
     let mut t = sample();
-    t.instances[1].flags = InstanceFlags::CASTS_SHADOW | InstanceFlags::ALPHA_MASKED | InstanceFlags::WIND;
+    t.instances[1].flags = InstanceFlags::CASTS_SHADOW;
     t.write().unwrap();
+}
+
+#[test]
+fn the_old_masked_and_wind_bits_are_reserved() {
+    // Bits 1 and 4 were ALPHA_MASKED and WIND: pure functions of the chain's material class, so
+    // they are no flags at all and a table setting either is rejected on read like any reserved bit.
+    assert_eq!(InstanceFlags::all(), InstanceFlags::CASTS_SHADOW | InstanceFlags::NOT_BAKED);
+    for bit in [1, 4] {
+        assert_eq!(InstanceFlags::from_bits(1 << bit), None, "bit {bit}");
+        let mut b = sample().write().unwrap();
+        // Second instance (placement 9): keep CASTS_SHADOW, add the old bit.
+        b[80 + 80 + 76..80 + 80 + 80].copy_from_slice(&(1u32 | 1 << bit).to_le_bytes());
+        assert_eq!(StaticCellTableView::parse(&b).unwrap_err(), TableError::Flags(9), "bit {bit}");
+        let mut t = sample();
+        t.instances[1].flags = InstanceFlags::from_bits_retain(1 << bit);
+        assert_eq!(t.write().unwrap_err(), TableError::Flags(9), "bit {bit}");
+    }
+    // What they meant is read from the chain: chain 1 is MaskedWindTwoSided.
+    let bytes = sample().write().unwrap();
+    let traits = StaticCellTableView::parse(&bytes).unwrap().material_class(1).unwrap().traits();
+    assert!(traits.masked && traits.wind);
 }

@@ -64,8 +64,8 @@
 //! [`StaticCellTableView::instance_bytes`] only in the chain field (offset 68).
 //!
 //! The **material override** is 0 in every baked table: the instance draws its chain's material.
-//! Other values are reserved for a per-placement material table (retextures, tint) that a later
-//! format version adds, and for the runtime's own writes on the GPU copy; the reader rejects them.
+//! A non-zero value will be a 1-based index into a per-cell override section (retextures, tint)
+//! that a later format version adds; until that version it is reserved and the reader rejects it.
 //! Version 1 (chain ids folded from the mesh key, class and layers per instance) and version 2
 //! (no model section: a chain's geometry could not be found from the table) are not read. No
 //! table of either was ever baked — `bake_scene` is not called yet — so neither needs migrating.
@@ -107,11 +107,13 @@ const MODEL_OFFSET: usize = 4;
 const INSTANCE_CHAIN: usize = 68;
 
 bitflags::bitflags! {
-    /// Per-instance flags (§2). Bits not listed here are reserved (zero).
+    /// Per-instance flags (§2). Bits not listed here are reserved: zero, and rejected on read.
+    /// Bits 1 and 4 (once `ALPHA_MASKED` and `WIND`) are reserved since v3 closed: both are pure
+    /// functions of the chain's material, read from [`LodChain::material_class`]
+    /// ([`MaterialClass::traits`]), never copied per instance where they could disagree.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
     pub struct InstanceFlags: u32 {
         const CASTS_SHADOW = 1;
-        const ALPHA_MASKED = 1 << 1;
         /// Reserved for the far field on the same table (S7, §9): drawn only in sky / far views.
         /// Not written by the bake and not read by the cull, so a table setting it is rejected
         /// ([`InstanceFlags::NOT_BAKED`]) until S7 implements it.
@@ -120,8 +122,6 @@ bitflags::bitflags! {
         /// Not written by the bake and not read by the cull, so a table setting it is rejected
         /// ([`InstanceFlags::NOT_BAKED`]) until S6 implements it.
         const OCCLUDER = 1 << 3;
-        /// The vertex shader applies wind sway.
-        const WIND = 1 << 4;
         /// Runtime only, never baked: promotion's "one flag write" on the GPU copy (§1). The
         /// cull drops the instance; the table reader rejects it.
         const INACTIVE = 1 << 15;
@@ -169,7 +169,9 @@ pub struct StaticInstance {
     pub sphere: Sphere,
     /// Index of its [`LodChain`] in this table's chains (cell-local, module docs).
     pub chain: u32,
-    /// 0: the chain's material. Other values are reserved (module docs).
+    /// 0: the chain's own material. A non-zero value will be a 1-based index into a per-cell
+    /// override section that a later format version adds; until then it is reserved and the
+    /// reader rejects it ([`TableError::MaterialOverride`], module docs).
     pub material_override: u32,
     pub flags: InstanceFlags,
 }

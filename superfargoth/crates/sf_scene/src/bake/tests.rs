@@ -185,10 +185,11 @@ fn two_model_cell_round_trips() {
 
     let (a0, a1, b0) = (mesh_key("meshes/a.mdl", 0), mesh_key("meshes/a.mdl", 1), mesh_key("meshes/b.mdl", 0));
     let chain = |i: &StaticInstance| &table.chains[i.chain as usize];
-    let got: Vec<(u32, u64, InstanceFlags)> = table.instances.iter().map(|i| (i.placement, chain(i).mesh, i.flags)).collect();
-    let opaque = InstanceFlags::CASTS_SHADOW;
-    let masked = InstanceFlags::CASTS_SHADOW | InstanceFlags::ALPHA_MASKED;
-    assert_eq!(got, [(0, a0, opaque), (0, a1, masked), (1, b0, opaque), (3, a0, opaque), (3, a1, masked)]);
+    // Masking (and wind) is the chain's material class; the bake writes only CASTS_SHADOW.
+    let got: Vec<(u32, u64, bool)> =
+        table.instances.iter().map(|i| (i.placement, chain(i).mesh, chain(i).material_class.traits().masked)).collect();
+    assert_eq!(got, [(0, a0, false), (0, a1, true), (1, b0, false), (3, a0, false), (3, a1, true)]);
+    assert!(table.instances.iter().all(|i| i.flags == InstanceFlags::CASTS_SHADOW));
     // Layers are the table's; no instance overrides its material.
     assert_eq!(table.layers, 0b101);
     assert!(table.instances.iter().all(|i| i.material_override == 0));

@@ -154,7 +154,12 @@ docs** — authoritative, and where an implementer looks — and in
   it. Format, bake step and costs: scene-runtime-plan.md §3. Taking the format break was safe once and **never
   again**: nothing has ever been baked — `bake_scene` is still not called by `bevyrrowind bake`.
 - **Reserved means rejected on read**: `material_override` ≠ 0, `FAR_ONLY` (S7) and `OCCLUDER` (S6) make a baked table
-  an error (`InstanceFlags::NOT_BAKED`, `sf_scene/src/table.rs:102,427`); `INACTIVE` is runtime-only (§1), likewise.
+  an error (`InstanceFlags::NOT_BAKED`, `sf_scene/src/table.rs:135,563`); `INACTIVE` is runtime-only (§1), likewise.
+  The instance flags are `CASTS_SHADOW` (bit 0) plus those three; every other bit is reserved, **bits 1 and 4
+  included** (once `ALPHA_MASKED` and `WIND`, dropped in S1c-a): masking and wind are pure functions of the chain's
+  material, so readers take them from the chain's `MaterialClass::traits`, never from a per-instance copy that could
+  disagree. A non-zero **`material_override`** will be a **1-based index into a per-cell override section** (0 = the
+  chain's own material); a future format version adds that section, and until then the value stays rejected.
 - **Per-part bounds**: an instance's sphere bounds its *part's* LOD0 vertices, so a small part culls as itself, not as
   its building. A cell with a hole or no land reports a land minimum of **negative infinity** and hides nothing
   behind it.

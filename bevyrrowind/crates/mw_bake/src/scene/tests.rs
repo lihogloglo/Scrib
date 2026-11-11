@@ -3,7 +3,7 @@ use sf_coords::{WorldPos, WorldTransform};
 use sf_model::{Aabb, CookedLod, CookedModel, CookedSubmesh};
 use sf_records::RecordId;
 use sf_scene::bake::{CellModel, ModelFacts, build_cell_table, material_key, mesh_key};
-use sf_scene::{Eligibility, EntityReason, InstanceFlags, MaterialClass, Sphere, classify};
+use sf_scene::{Eligibility, EntityReason, MaterialClass, Sphere, classify};
 use sf_vfs::VfsPath;
 use sf_world::{Placement, PlacementId, RecordRef};
 use tes3::esp::Static;
@@ -309,7 +309,10 @@ fn the_texture_class_decides_which_candidates_reach_the_table() {
     let got: Vec<(u32, MaterialClass, bool)> = table
         .instances
         .iter()
-        .map(|i| (i.placement, table.chains[i.chain as usize].material_class, i.flags.contains(InstanceFlags::ALPHA_MASKED)))
+        .map(|i| {
+            let class = table.chains[i.chain as usize].material_class;
+            (i.placement, class, class.traits().masked)
+        })
         .collect();
     assert_eq!(got, [(0, MaterialClass::MaskedTwoSided, true), (3, MaterialClass::Opaque, false)]);
     assert!(table.write().is_ok());

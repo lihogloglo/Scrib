@@ -1764,3 +1764,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-10 (owner): the app's `delirium` feature is **off by default** (and out of `dev`): delirium-physics 0.5+ reads its
   numbers from the player's own GTA IV program (`kv::unlock`) and is, by its README, a port of Euphoria from GTA IV's code;
   every takeover panics without it. Active ragdoll is an open owner decision; opt in with `--features delirium`.
+- 2026-11-11 (static scene, S3b `covered` ruling): plan before `covered`. A near load's fetch waits for the cell's table,
+  chains and slabs and for `plan_in`; `covered` = the placed instances, so overflow and failed chains spawn as entities
+  (asset-gated stage completion, as UE/Bethesda). Cost: stream-in latency only (scene-runtime-plan.md §5.3).
+- 2026-11-11 (static scene S1c-a): instance flags carry only per-placement facts (`CASTS_SHADOW`, reserved `FAR_ONLY`/
+  `OCCLUDER`, runtime `INACTIVE`); masked and wind come from the chain's `MaterialClass`. A non-zero `material_override`
+  will be a 1-based index into a per-cell override section of a later format; rejected on read until then.

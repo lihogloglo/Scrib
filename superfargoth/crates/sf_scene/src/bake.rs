@@ -426,8 +426,6 @@ pub fn build_cell_table(
             });
             let mut flags = InstanceFlags::empty();
             flags.set(InstanceFlags::CASTS_SHADOW, settings.casts_shadow);
-            flags.set(InstanceFlags::ALPHA_MASKED, scene.traits.masked);
-            flags.set(InstanceFlags::WIND, scene.traits.wind);
             let instance = StaticInstance {
                 placement: id,
                 transform: StaticInstance::rows(&affine),

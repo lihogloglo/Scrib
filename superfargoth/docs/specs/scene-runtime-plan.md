@@ -554,9 +554,20 @@ cannot be delivered by withdrawing coverage at that point: the models are not lo
 exist — restart the near load as a non-scene load; have `covered` promise nothing a chain could
 retract (i.e. answer `None` for the whole cell until the chains are in, moving gate 1 to cover them,
 at the cost of a later `covered`); or accept that a failed chain costs one cell of statics until it
-reloads. **Not decided here**; row 3's "the cell falls back entirely" is the claim at risk and S3b
-must not be written against it as stated. (Row 4 is the same mechanism and is a *hot* path — §4.4's
-memory ceiling — so it needs the answer first.)
+reloads. (Row 4 is the same mechanism and is a *hot* path — §4.4's memory ceiling.)
+
+**Ruled 2026-11-11 (coordinator; owner: "follow the industry standard"): plan before `covered`.** The
+gates merge: a near load's fetch stays open (`settled`, `stream.rs:762`) until the table **and** its
+chains and slabs are resolved (the three-deep gate of `docs/briefs/scene-bevy-b3-b4.md` §1.2) and
+`plan_in` has run; only then is `covered` asked, and it returns exactly the placed instances. Overflow
+(`CellPlan::overflowed`) is left out of `covered`; a failed chain makes the whole cell answer `None`.
+Either way those models are gathered and spawn as entities like any uncovered placement, so every row
+of the table above holds as written, with no re-entry path in streaming. This is asset-gated stage
+completion (UE World Partition, Bethesda cell attach), the shape the precombine already uses here.
+Cost: latency only. The cell's other models start after its chains (no wait for a chain another
+resident cell holds). In the seam, `settled` also asks `CellScene::ready`. Rejected: restarting the
+near load as a non-scene load (a second state-machine path, and the hot overflow path would load the
+cell twice), and accepting missing statics until reload.
 ### 5.4 Origin shifts
 
 The scene buffer is cell-relative, so a `big_space` shift changes nothing there (`cell_offset`,
