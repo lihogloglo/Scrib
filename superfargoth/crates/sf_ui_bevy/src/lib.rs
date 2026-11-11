@@ -20,6 +20,8 @@
 //!   ([`screen_z`]), so menus draw over the HUD and modals over menus.
 //! - **Device** ([`device`]): last-used device switches [`InputMode`] the same frame, and the
 //!   last pad's vendor sets [`GamepadFamily`] for glyphs (`sf_ui::glyph`).
+//! - **Settings** ([`settings`]): [`SettingChanged`] for every effective store change, and
+//!   `Machine` settings in a per-machine file ([`load_machine_settings`]).
 //! - **Profile** ([`profile`]): [`insert_from_profile`] builds registry, settings, strings and
 //!   bindings from an `sf_mods` profile; changes are saved back when the player leaves the menus.
 //!
@@ -41,6 +43,7 @@ pub mod notify;
 pub mod profile;
 pub mod reader;
 pub mod router;
+pub mod settings;
 pub mod text_measure;
 
 #[cfg(test)]
@@ -48,9 +51,11 @@ mod tests;
 #[cfg(test)]
 mod tests_profile;
 #[cfg(test)]
+mod tests_settings;
+#[cfg(test)]
 mod tests_text;
 
-use bevy_app::{App, Last, Plugin, PreUpdate, Update};
+use bevy_app::{App, Last, Plugin, PostUpdate, PreUpdate, Update};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 use bevy_enhanced_input::prelude::{EnhancedInputSystems, InputContextAppExt};
@@ -73,6 +78,10 @@ pub use nav::{NavRepeat, UiDefaultFocus, UiFocusable, UiNavEvent, UiOwnsFocus, h
 pub use notify::{
     MESSAGE_BOX_Z, MessageBoxAnswer, MessageBoxButton, MessageBoxConfig, MessageBoxView,
     MessageBoxes, NotifyColors, TOAST_Z, ToastStack, ToastView, Toasts,
+};
+pub use settings::{
+    SettingChanged, UiMachineSettings, emit_setting_changes, load_machine_settings,
+    sync_machine_settings,
 };
 pub use profile::{
     BINDINGS_CONTEXT, UiLoadReport, UiLocales, UiProfile, binding_name, insert_from_profile,
@@ -218,8 +227,17 @@ impl Plugin for SfUiPlugin {
             .add_message::<UiActionEvent>()
             .add_message::<UiRebindEvent>()
             .add_message::<UiNavEvent>()
+            .add_message::<SettingChanged>()
             .add_observer(router::record_activation)
-            .add_systems(Last, (router::clear_activations, profile::sync_profile))
+            .add_systems(
+                Last,
+                (
+                    router::clear_activations,
+                    profile::sync_profile,
+                    sync_machine_settings,
+                ),
+            )
+            .add_systems(PostUpdate, emit_setting_changes)
             .add_input_context::<UiScreenInput>()
             .configure_sets(
                 PreUpdate,

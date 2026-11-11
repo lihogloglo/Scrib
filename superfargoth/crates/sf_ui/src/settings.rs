@@ -8,13 +8,26 @@
 //! The framework's own settings are built in (owner `sf`, stored under
 //! `[settings.sf]`): the audio page's per-bus volume sliders and mutes
 //! ([`AUDIO_BUSES`], audio.md "Volume mixer").
+//!
+//! **Scope** (menus.md "Settings v2"): `Machine` settings (display, graphics)
+//! are not in the profile but in a per-machine TOML file ([`SettingsStore::load_machine`],
+//! [`SettingsStore::save_machine`]; `[<owner>] key = value`, the profile's
+//! `[settings.<owner>]` tables at top level). `Save` settings stay in the
+//! profile until saves carry settings.
+//!
+//! **Change log**: every write that changes a value ([`SettingsStore::set`],
+//! `reset`, the loads, presets) is remembered per key with the value it had
+//! before; [`SettingsStore::take_changes`] drains it as [`SettingChange`]s
+//! (`sf_ui_bevy` turns them into `SettingChanged` messages once per frame).
+//! A key changed and changed back before the drain reports nothing.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 
 use crate::ids::{ModId, SettingKey};
-use crate::records::{SettingDef, SettingKind};
+use crate::records::{SettingDef, SettingKind, SettingScope};
 use crate::registry::{FRAMEWORK_MOD, UiRegistry};
 
 /// Volume buses on the framework's audio settings page, in menu order
@@ -98,12 +111,45 @@ pub enum SettingError {
     NotAnOption { key: String, value: String },
 }
 
+/// One effective change, drained by [`SettingsStore::take_changes`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingChange {
+    pub key: SettingKey,
+    /// The value before the first write since the last drain. Always `Some`
+    /// today (every registered setting has a value); `None` is kept for a
+    /// setting that had none.
+    pub old: Option<SettingValue>,
+    pub new: SettingValue,
+}
+
+/// Why the machine settings file could not be read or written. On a read
+/// error every `Machine` setting keeps its default.
+#[derive(Debug, thiserror::Error)]
+pub enum MachineFileError {
+    #[error("machine settings `{}`: {source}", path.display())]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("machine settings `{}`: {message}", path.display())]
+    Parse { path: PathBuf, message: String },
+}
+
 struct Slot {
     owner: ModId,
     /// Key inside the owner's profile table.
     local: String,
     kind: SettingKind,
+    scope: SettingScope,
     value: SettingValue,
+}
+
+impl Slot {
+    /// In the machine file rather than the profile.
+    fn machine(&self) -> bool {
+        self.scope == SettingScope::Machine
+    }
 }
 
 /// Current values of every registered setting.
@@ -111,6 +157,11 @@ pub struct SettingsStore {
     slots: IndexMap<SettingKey, Slot>,
     /// Profile entries with no registered setting, kept for saving.
     unknown: BTreeMap<String, toml::Table>,
+    /// Machine file entries with no registered setting, kept for saving.
+    machine_unknown: BTreeMap<String, toml::Table>,
+    /// Keys written since the last [`Self::take_changes`], with their value
+    /// before the first of those writes.
+    changed: IndexMap<SettingKey, SettingValue>,
 }
 
 impl SettingsStore {
@@ -129,6 +180,7 @@ impl SettingsStore {
                     owner: d.owner.clone(),
                     local,
                     kind: d.def.kind.clone(),
+                    scope: d.def.scope,
                     value: default_of(&d.def.kind),
                 };
                 (d.id.clone(), slot)
@@ -137,7 +189,32 @@ impl SettingsStore {
         Self {
             slots,
             unknown: BTreeMap::new(),
+            machine_unknown: BTreeMap::new(),
+            changed: IndexMap::new(),
         }
+    }
+
+    /// Whether a value changed since the last [`Self::take_changes`] (it may
+    /// still drain to nothing if it was changed back).
+    pub fn has_changes(&self) -> bool {
+        !self.changed.is_empty()
+    }
+
+    /// Drains the change log: one entry per key whose value now differs from
+    /// the value it had at the previous drain, in first-write order.
+    pub fn take_changes(&mut self) -> Vec<SettingChange> {
+        let changed = std::mem::take(&mut self.changed);
+        changed
+            .into_iter()
+            .filter_map(|(key, old)| {
+                let new = self.slots.get(&key)?.value.clone();
+                (new != old).then_some(SettingChange {
+                    key,
+                    old: Some(old),
+                    new,
+                })
+            })
+            .collect()
     }
 
     pub fn get(&self, key: &str) -> Option<&SettingValue> {
@@ -164,27 +241,43 @@ impl SettingsStore {
     /// an int setting accepts a float (rounded) and a float setting an int.
     /// Returns the value actually stored.
     pub fn set(&mut self, key: &str, value: SettingValue) -> Result<&SettingValue, SettingError> {
-        let slot = self
+        let (key, slot) = self
             .slots
-            .get_mut(key)
+            .get_full_mut(key)
+            .map(|(_, k, s)| (k, s))
             .ok_or_else(|| SettingError::Unknown(key.to_owned()))?;
-        slot.value = coerce(key, &slot.kind, value)?;
+        let value = coerce(key.as_str(), &slot.kind, value)?;
+        write(&mut self.changed, key, slot, value);
         Ok(&slot.value)
     }
 
     /// Resets one setting to its default.
     pub fn reset(&mut self, key: &str) -> bool {
-        self.slots
-            .get_mut(key)
-            .map(|s| s.value = default_of(&s.kind))
-            .is_some()
+        let Some((key, slot)) = self.slots.get_full_mut(key).map(|(_, k, s)| (k, s)) else {
+            return false;
+        };
+        let value = default_of(&slot.kind);
+        write(&mut self.changed, key, slot, value);
+        true
     }
 
     /// Reads values from profile tables (keyed by mod id). Invalid values keep
     /// the default and are returned as errors; unknown entries are kept for saving.
+    /// Entries for `Machine` settings are ignored (they live in the machine file).
     pub fn load_profile(&mut self, tables: &BTreeMap<String, toml::Table>) -> Vec<SettingError> {
+        self.load_tables(tables, false)
+    }
+
+    /// Reads tables into the slots of one storage (`machine`: the machine
+    /// file, else the profile). Entries for the other storage's settings are
+    /// ignored; entries for no setting are kept for that storage's save.
+    fn load_tables(
+        &mut self,
+        tables: &BTreeMap<String, toml::Table>,
+        machine: bool,
+    ) -> Vec<SettingError> {
         let mut errors = Vec::new();
-        self.unknown.clear();
+        let mut unknown = BTreeMap::<String, toml::Table>::new();
         for (mod_id, table) in tables {
             for (local, raw) in table {
                 let found = self
@@ -192,12 +285,15 @@ impl SettingsStore {
                     .iter_mut()
                     .find(|(_, s)| s.owner.as_str() == mod_id && &s.local == local);
                 let Some((key, slot)) = found else {
-                    self.unknown
+                    unknown
                         .entry(mod_id.clone())
                         .or_default()
                         .insert(local.clone(), raw.clone());
                     continue;
                 };
+                if slot.machine() != machine {
+                    continue;
+                }
                 let result = match from_toml(raw) {
                     Some(v) => coerce(key.as_str(), &slot.kind, v),
                     None => Err(SettingError::WrongType {
@@ -205,26 +301,117 @@ impl SettingsStore {
                         expected: expected(&slot.kind),
                     }),
                 };
-                match result {
-                    Ok(v) => slot.value = v,
-                    Err(e) => {
-                        errors.push(e);
-                        slot.value = default_of(&slot.kind);
-                    }
-                }
+                let value = result.unwrap_or_else(|e| {
+                    errors.push(e);
+                    default_of(&slot.kind)
+                });
+                write(&mut self.changed, key, slot, value);
             }
+        }
+        if machine {
+            self.machine_unknown = unknown;
+        } else {
+            self.unknown = unknown;
         }
         errors
     }
 
+    /// Reads the machine settings file at `path` (`Machine` settings only).
+    /// A missing file is a first run: nothing changes, no error. A file that
+    /// can't be read or parsed resets every `Machine` setting to its default
+    /// and returns the error; invalid values inside a good file keep the
+    /// default and come back as [`SettingError`]s, like the profile's.
+    pub fn load_machine(&mut self, path: &Path) -> Result<Vec<SettingError>, MachineFileError> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(source) => {
+                self.reset_machine();
+                return Err(MachineFileError::Io {
+                    path: path.to_owned(),
+                    source,
+                });
+            }
+        };
+        let tables = match toml::from_str::<toml::Table>(&text) {
+            Ok(root) => machine_tables(root).map_err(|key| {
+                format!("`{key}` is not a table of settings ([<owner>] key = value)")
+            }),
+            Err(e) => Err(e.to_string()),
+        };
+        match tables {
+            Ok(tables) => Ok(self.load_tables(&tables, true)),
+            Err(message) => {
+                self.reset_machine();
+                Err(MachineFileError::Parse {
+                    path: path.to_owned(),
+                    message,
+                })
+            }
+        }
+    }
+
+    /// Every `Machine` setting back to its default, unknown machine entries dropped.
+    fn reset_machine(&mut self) {
+        self.machine_unknown.clear();
+        for (key, slot) in self.slots.iter_mut().filter(|(_, s)| s.machine()) {
+            let value = default_of(&slot.kind);
+            write(&mut self.changed, key, slot, value);
+        }
+    }
+
+    /// The machine file's tables: `Machine` values that differ from their
+    /// default, plus passed-through unknown machine entries.
+    pub fn to_machine(&self) -> toml::Table {
+        self.tables(true)
+            .into_iter()
+            .filter(|(_, t)| !t.is_empty())
+            .map(|(owner, t)| (owner, toml::Value::Table(t)))
+            .collect()
+    }
+
+    /// Writes [`Self::to_machine`] to `path` (parent folders created, written
+    /// to a temporary file then renamed over the old one, so a crash mid-save
+    /// keeps the previous file). With nothing to store and no file yet, writes
+    /// nothing. Returns whether it wrote.
+    pub fn save_machine(&self, path: &Path) -> Result<bool, MachineFileError> {
+        let io = |source| MachineFileError::Io {
+            path: path.to_owned(),
+            source,
+        };
+        let table = self.to_machine();
+        if table.is_empty() && !path.exists() {
+            return Ok(false);
+        }
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir).map_err(io)?;
+        }
+        let mut temp = path.as_os_str().to_owned();
+        temp.push(".new");
+        let temp = PathBuf::from(temp);
+        std::fs::write(&temp, table.to_string()).map_err(io)?;
+        std::fs::rename(&temp, path).map_err(io)?;
+        Ok(true)
+    }
+
     /// Profile tables to save: values that differ from their default, plus
     /// passed-through unknown entries.
+    /// `Machine` settings are not included (see [`Self::to_machine`]).
     pub fn to_profile(&self) -> BTreeMap<String, toml::Table> {
-        let mut out = self.unknown.clone();
+        self.tables(false)
+    }
+
+    /// Non-default values of one storage's settings plus its unknown entries.
+    fn tables(&self, machine: bool) -> BTreeMap<String, toml::Table> {
+        let mut out = if machine {
+            self.machine_unknown.clone()
+        } else {
+            self.unknown.clone()
+        };
         for slot in self
             .slots
             .values()
-            .filter(|s| s.value != default_of(&s.kind))
+            .filter(|s| s.machine() == machine && s.value != default_of(&s.kind))
         {
             out.entry(slot.owner.0.clone())
                 .or_default()
@@ -232,6 +419,30 @@ impl SettingsStore {
         }
         out
     }
+}
+
+/// Stores `value` in `slot`, logging the old value on the first change since the last drain.
+fn write(
+    changed: &mut IndexMap<SettingKey, SettingValue>,
+    key: &SettingKey,
+    slot: &mut Slot,
+    value: SettingValue,
+) {
+    if slot.value == value {
+        return;
+    }
+    let old = std::mem::replace(&mut slot.value, value);
+    changed.entry(key.clone()).or_insert(old);
+}
+
+/// The machine file's top-level tables, or the first key that isn't a table.
+fn machine_tables(root: toml::Table) -> Result<BTreeMap<String, toml::Table>, String> {
+    root.into_iter()
+        .map(|(owner, value)| match value {
+            toml::Value::Table(t) => Ok((owner, t)),
+            _ => Err(owner),
+        })
+        .collect()
 }
 
 fn default_of(kind: &SettingKind) -> SettingValue {

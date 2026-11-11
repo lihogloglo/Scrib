@@ -76,6 +76,8 @@ mod tests_text;
 mod tests_settings_v2;
 #[cfg(test)]
 mod tests_presets;
+#[cfg(test)]
+mod tests_settings_store;
 
 pub use conditions::{Condition, PHASE_FRONTEND, PHASE_IN_GAME, SettingValueMatch, evaluate};
 pub use backdrop::{BackdropCandidate, BackdropKind, cover_size, resolve_backdrop};
@@ -109,7 +111,8 @@ pub use rich_text::{
     Align, Block, ImageRef, Inline, OBJECT_REPLACEMENT, Paragraph, Rgba8, RichDoc, RunStyle,
 };
 pub use settings::{
-    AUDIO_BUSES, AUDIO_VOLUME_STEP, SettingError, SettingValue, SettingsStore, audio_muted_key,
+    AUDIO_BUSES, AUDIO_VOLUME_STEP, MachineFileError, SettingChange, SettingError, SettingValue,
+    SettingsStore, audio_muted_key,
     audio_volume_key,
 };
 pub use stack::{OpenScreen, ScreenStack, StackError};

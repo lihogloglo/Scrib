@@ -50,7 +50,7 @@ button and VRAM estimates (nice-to-have, later), subtitles (ui.md open question 
 | Widgets | `bevy_ui_widgets` 0.20 `Slider`, `Checkbox`, `RadioGroup`, `TabList`/`Tab`, `TextInput`, `Dialog`, scrollbars (checked in the 0.20 source) | headless, styleable by our CSS; replaces our hand-made option rows |
 | Focus, navigation | `bevy_input_focus` + `AutoDirectionalNavigation` | already used |
 | Styling | `bevy_flair` 0.9 (`sf_ui_css`) | stack decision |
-| Settings persistence | our `sf_mods` profile (`[settings.<owner>]`), plus a machine file (below) | Bevy 0.20's optional `bevy-settings` crate is evaluated in S1 for the machine file: adopt it if its format and path fit, else our TOML |
+| Settings persistence | our `sf_mods` profile (`[settings.<owner>]`), plus our machine file `<user dir>/machine.toml` (S1c) | Bevy 0.20's `bevy-settings` (evaluated S1c): same TOML layout and per-user folder, but each group is a compile-time reflected `SettingsGroup` resource; our settings are records that mods add at load, so it doesn't fit a key → value store |
 | Video | [video.md](video.md) | |
 | Menu crates | none | haalka, cobweb_ui, alt-ui-navigation, bevy_pkv, bevy-settings (3rd party) are stale or replace bevy_ui (research §4) |
 
@@ -127,7 +127,7 @@ to Frontend. The save screen opens over the main menu (`DeferLoads` → `LoadCho
 | Field | Values | Default |
 |---|---|---|
 | `apply` | `Live` (consumer applies on change), `Confirm` (staged; Apply/Revert bar; with `keep_seconds` a keep-or-revert countdown), `Restart` (stored; badge "applies after restart") | `Live` |
-| `scope` | `Profile` (`[settings.<owner>]` in the profile), `Machine` (graphics/display, `user/machine.toml` or `bevy-settings`), `Save` (stored in the save; later) | `Profile` |
+| `scope` | `Profile` (`[settings.<owner>]` in the profile), `Machine` (graphics/display, `<user dir>/machine.toml`), `Save` (stored in the save; later) | `Profile` |
 | `enabled_if`, `visible_if` | a small condition list, ANDed: `{ setting = "sf.upscaler", is = "dlss" }`, `{ trait = "dlss" }`, `{ phase = "frontend" }` | always |
 | `disabled_reason` | Fluent key shown on a disabled row | - |
 | `order`, `keywords` | int within group; search words (Fluent key) | load order; - |
@@ -148,7 +148,11 @@ to Frontend. The save screen opens over the main menu (`DeferLoads` → `LoadCho
 - **Change contract**: the store emits `SettingChanged { key, old, new }` (a Bevy message in `sf_ui_bevy`);
   consumers are ordinary systems, one per setting family, registered by the owning crate. `Restart` settings
   are read once from the store at app build (before plugins are added), which is how the game's start-time
-  switches become settings without making each one live on day one.
+  switches become settings without making each one live on day one. *As built (S1c):* `SettingsStore` logs
+  every effective write (set, reset, loads, presets) per key with its first old value; `sf_ui_bevy::emit_setting_changes`
+  drains it in `PostUpdate` (changed-and-back reports nothing). `Machine` keys skip the profile; `load_machine_settings(world,
+  <user dir>/machine.toml)` right after the store is inserted at app build, saved on the profile's rule; a corrupt file
+  loads defaults and returns the error. `Save` keys stay in the profile until saves carry settings.
 - **Dynamic providers** register `fn(&World) -> Vec<(value, label)>` by id; the options model re-queries on
   open and on `WindowCreated`/monitor change.
 - Values are clamped and validated on load (range, option still offered, else default + a log line).
