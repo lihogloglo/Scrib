@@ -1,0 +1,74 @@
+diff -ru a/src/detour/mod.rs b/src/detour/mod.rs
+--- a/src/detour/mod.rs	2006-07-24 08:21:28.000000000 +0700
++++ b/src/detour/mod.rs	2026-11-11 15:37:33.737509400 +0700
+@@ -49,8 +49,10 @@
+     Committed, EdgeKind, NavMesh, NavMeshParams, PreparedTile, REMOVAL_LOG_CAPACITY, RefState,
+     ResidencyRecord, SlotPolicy, TileKey, UnloadedTile, content_hash, prepare_tile,
+ };
++// superfargoth patch (own: public detached query): `DetachedQuery` exported.
+ pub use query::{
+-    DefaultFilter, NavMeshQuery, QueryFilter, RaycastHit, SegmentWall, StraightPathPoint,
++    DefaultFilter, DetachedQuery, NavMeshQuery, QueryFilter, RaycastHit, SegmentWall,
++    StraightPathPoint,
+ };
+ pub use resumable::{
+     DistanceToWallSearch, LocalNeighbourhoodSearch, PolysAroundSearch, RaycastSearch,
+diff -ru a/src/detour/query.rs b/src/detour/query.rs
+--- a/src/detour/query.rs	2006-07-24 08:21:28.000000000 +0700
++++ b/src/detour/query.rs	2026-11-11 15:37:27.175006500 +0700
+@@ -1836,23 +1836,37 @@
+ 
+ // A detached query retains sliced-search state while the caller mutates tiles
+ // between crowd updates. Attaching borrows the navmesh only for that update.
+-#[cfg(feature = "crowd")]
+-pub(crate) struct DetachedQuery {
++//
++// superfargoth patch (own: public detached query): `DetachedQuery` was crate-private and
++// built only with `crowd` (for `PathQueue`). Public and ungated here, so a caller can own
++// sliced A* state (one detached query per search, poolable: no lifetime) and attach it to
++// a borrowed navmesh only for each step, like the resumable searches. To offer upstream.
++/// A [`NavMeshQuery`] without its navmesh borrow (not in recastnavigation): the node
++/// pools, the open list and the sliced-search state, kept across steps while the
++/// caller mutates tiles. [`DetachedQuery::attach`] borrows a navmesh for one step and
++/// [`NavMeshQuery::detach`] gives the state back. Attach it to the navmesh it was
++/// created for: a sliced search continued on another navmesh fails or reads unrelated
++/// polygons (never out of bounds). Tile changes between steps behave as for
++/// [`NavMeshQuery::update_sliced_find_path`]: removing a tile the search touched fails
++/// it with [`Error::MeshChanged`]; added tiles do not.
++pub struct DetachedQuery {
+     node_pool: NodePool,
+     tiny_node_pool: NodePool,
+     open_list: NodeQueue,
+     query: QueryData,
+     fixes: UpstreamFixes,
+ }
+-#[cfg(feature = "crowd")]
+ impl DetachedQuery {
+-    pub(crate) fn new(nav: &NavMesh, max_nodes: usize) -> Result<Self, Error> {
++    /// A detached query with `max_nodes` search nodes, as [`NavMeshQuery::new`].
++    pub fn new(nav: &NavMesh, max_nodes: usize) -> Result<Self, Error> {
+         Ok(NavMeshQuery::new(nav, max_nodes)?.detach())
+     }
+-    pub(crate) fn set_fixes(&mut self, fixes: UpstreamFixes) {
++    /// Selects the upstream defect corrections, as [`NavMeshQuery::set_fixes`].
++    pub fn set_fixes(&mut self, fixes: UpstreamFixes) {
+         self.fixes = fixes;
+     }
+-    pub(crate) fn attach(self, nav: &NavMesh) -> NavMeshQuery<'_> {
++    /// A query over `nav` that carries this state.
++    pub fn attach(self, nav: &NavMesh) -> NavMeshQuery<'_> {
+         NavMeshQuery {
+             nav,
+             node_pool: self.node_pool,
+@@ -1863,9 +1877,9 @@
+         }
+     }
+ }
+-#[cfg(feature = "crowd")]
+ impl NavMeshQuery<'_> {
+-    pub(crate) fn detach(self) -> DetachedQuery {
++    /// Releases the navmesh borrow and keeps the state (see [`DetachedQuery`]).
++    pub fn detach(self) -> DetachedQuery {
+         DetachedQuery {
+             node_pool: self.node_pool,
+             tiny_node_pool: self.tiny_node_pool,

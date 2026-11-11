@@ -2420,6 +2420,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "block-buffer"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
+dependencies = [
+ "generic-array",
+]
+
+[[package]]
 name = "block2"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3081,6 +3090,16 @@ dependencies = [
  "rustc_version",
  "syn 2.0.119",
  "unicode-xid",
+]
+
+[[package]]
+name = "digest"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
+dependencies = [
+ "block-buffer",
+ "crypto-common",
 ]
 
 [[package]]
@@ -5070,6 +5089,7 @@ dependencies = [
  "mw_world",
  "postcard",
  "rayon",
+ "ron",
  "serde",
  "serde_json",
  "sf_action",
@@ -5984,6 +6004,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "navmesh-rs"
+version = "0.2.2"
+dependencies = [
+ "libm",
+ "sha2",
 ]
 
 [[package]]
@@ -8051,9 +8079,11 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_asset",
+ "bevy_camera",
  "bevy_core_pipeline",
  "bevy_diagnostic",
  "bevy_ecs",
+ "bevy_mesh",
  "bevy_pbr",
  "bevy_platform",
  "bevy_render",
@@ -8072,6 +8102,7 @@ version = "0.1.0"
 dependencies = [
  "postcard",
  "serde",
+ "sf_ids",
  "sf_records",
  "sf_stats",
  "smallvec",
@@ -8129,6 +8160,7 @@ dependencies = [
 name = "sf_ids"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "postcard",
  "serde",
 ]
@@ -8251,6 +8283,31 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "sf_nav"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.2",
+ "glam 0.33.12",
+ "postcard",
+ "serde",
+ "serde_json",
+ "sf_coords",
+ "sf_world",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_nav_recast"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "navmesh-rs",
+ "sf_coords",
+ "sf_nav",
+ "sf_world",
 ]
 
 [[package]]
@@ -8433,12 +8490,12 @@ dependencies = [
  "sf_coords",
  "sf_diag_bevy",
  "sf_effects",
+ "sf_ids",
  "sf_level",
  "sf_records",
  "sf_rpg",
  "sf_save",
  "sf_script_bevy",
- "sf_sky",
  "sf_stats",
  "sf_surface",
  "sf_weather",
@@ -8549,6 +8606,7 @@ dependencies = [
  "glam 0.33.12",
  "serde",
  "serde_json",
+ "sf_ids",
  "sf_wind",
 ]
 
@@ -8579,6 +8637,7 @@ dependencies = [
  "dlss_wgpu",
  "log",
  "naga",
+ "sf_ids",
  "sf_model_bevy",
  "sf_render_order_bevy",
  "sf_sky",
@@ -8711,8 +8770,12 @@ name = "sf_texture"
 version = "0.1.0"
 dependencies = [
  "block_compression",
+ "ddsfile",
  "intel_tex_2",
  "ktx2",
+ "ron",
+ "serde",
+ "texpresso",
 ]
 
 [[package]]
@@ -9040,6 +9103,17 @@ dependencies = [
  "tempfile",
  "wesl",
  "workspace-hack",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest",
 ]
 
 [[package]]
@@ -11012,6 +11086,7 @@ dependencies = [
  "tracing-core",
  "twox-hash",
  "uuid",
+ "variadics_please",
  "wgpu",
  "wgpu-core",
  "wgpu-hal",

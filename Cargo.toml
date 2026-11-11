@@ -94,8 +94,14 @@ gltf = { version = "1.4", default-features = false, features = ["utils", "names"
 glam = "0.33"
 # Dialogue topic hyperlinks (sf_rpg, rpg.md "Topic links"); already in the lock through regex.
 aho-corasick = "1.1"
-# BC7 decoder for sf_texture's encode round-trip tests (dev-dependency only). Pure Rust, MIT.
+# BC7 decoder (sf_texture::rewrap decodes a shipped level to fill missing mips, textures.md T2; encode
+# round-trip tests). Pure Rust, MIT.
 block_compression = { version = "0.11", default-features = false, features = ["bc7"] }
+# DDS header + DX10 header parsing (sf_texture::rewrap). MIT; already in the lock through bevy_image "dds".
+ddsfile = "0.6"
+# BC1-BC5 decode, and the BC1 punch-through / BC2 encode intel_tex_2 lacks (sf_texture::rewrap fills missing
+# mips in the source's format). libsquish port, MIT; already in the lock through mw_bake.
+texpresso = "2"
 indexmap = "2"
 # BC7 encoder at bake (sf_texture, bake.md "De-lighting"): Intel ISPC Texture Compressor kernels, shipped
 # prebuilt in the crate (no ISPC at build). MIT/Apache-2.0. 4.5x the pure-Rust port's speed, same quality.
@@ -119,6 +125,11 @@ parry3d = { version = "0.31.1", default-features = false, features = ["required-
 # Rigid-body engine behind the Bevy-free sf_physics (physics.md; ARCHITECTURE §10 2026-10-12). Apache-2.0, no Bevy.
 # Same parry3d as above. No `parallel` (rayon) until a measured step needs it; no `enhanced-determinism`.
 rapier3d = { version = "0.36.1", default-features = false, features = ["dim3", "f32", "std"] }
+# Recast + Detour in pure Rust behind sf_nav_recast (nav.md; NV0 spike adopted it, exact pin: one author, fast
+# churn, upgrades only in the "update all" pass). `libm`: identical floats on every platform (host-authoritative
+# co-op, reproducible bakes); `polyref64`: upstream DT_POLYREF64 tiles. No `crowd`/`tilecache` yet (NV8, NV10),
+# `parallel` only in the bake crate (NV4). Vendored with a small own patch (superfargoth/vendor/README.md).
+navmesh-rs = { version = "=0.2.2", default-features = false, features = ["libm", "recast", "detour", "polyref64"] }
 # Save/wire format (sf_save) and the game's round-trip tests.
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 rayon = "1.12"
@@ -202,6 +213,8 @@ sf_lod_bevy = { path = "superfargoth/crates/sf_lod_bevy", version = "0.1.0" }
 sf_model = { path = "superfargoth/crates/sf_model", version = "0.1.0" }
 sf_model_bevy = { path = "superfargoth/crates/sf_model_bevy", version = "0.1.0" }
 sf_mods = { path = "superfargoth/crates/sf_mods", version = "0.1.0" }
+sf_nav = { path = "superfargoth/crates/sf_nav", version = "0.1.0" }
+sf_nav_recast = { path = "superfargoth/crates/sf_nav_recast", version = "0.1.0" }
 sf_physics = { path = "superfargoth/crates/sf_physics", version = "0.1.0" }
 sf_physics_bevy = { path = "superfargoth/crates/sf_physics_bevy", version = "0.1.0" }
 sf_precip_bevy = { path = "superfargoth/crates/sf_precip_bevy", version = "0.1.0" }
@@ -306,6 +319,9 @@ bevy_solari = { path = "superfargoth/vendor/bevy_solari" }
 # (superfargoth/plugins/sf_dlss), loaded at runtime from <exe>/dlss/; superfargoth/vendor/README.md.
 # Keep while the game is GPL.
 dlss_wgpu = { path = "superfargoth/vendor/dlss_wgpu" }
+# navmesh-rs 0.2.2, own patch (superfargoth/vendor/README.md): `DetachedQuery` public, so sf_nav_recast keeps each
+# sliced A* in its own job. Drop when upstream exposes detached (or self-owned) sliced A* state.
+navmesh-rs = { path = "superfargoth/vendor/navmesh-rs" }
 # Our feature-unification crate in place of the crates.io stub (`workspace-hack` above).
 workspace-hack = { path = "superfargoth/crates/workspace-hack" }
 

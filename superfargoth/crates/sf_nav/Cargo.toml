@@ -1,0 +1,26 @@
+[package]
+name = "sf_nav"
+description = "Bevy-free navigation core for superfargoth (nav.md): agent classes, area table, query filters, goals, the NavBackend trait and the GridBackend test double"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Bevy-free core (build-perf.md rule 1): in hakari's final-excludes. No navmesh backend here:
+# `sf_nav_recast` (NV2) implements `NavBackend` over navmesh-rs.
+[dependencies]
+bitflags.workspace = true
+glam = { workspace = true, features = ["serde"] }
+# The GridBackend's tile blobs.
+postcard.workspace = true
+serde.workspace = true
+sf_coords.workspace = true
+# `Location` and `WorldspaceId`.
+sf_world.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

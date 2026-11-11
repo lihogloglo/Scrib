@@ -1,23 +1,24 @@
 # Navigation: navmesh tiles, links, the worldspace graph (`sf_nav`)
 
-Status: **draft, docs only (2026-11-08)**, written on a machine that cannot compile. Nothing built. Scope label M7
-(RPG core: AI). Slices NV0-NV12 below; NV0 (the `navmesh-rs` spike) is research and comes first. The former open
+Status: **draft (2026-11-08); NV0 done, NV1 + NV2 built (2026-11-11)**: `sf_nav` core with the `GridBackend` double;
+`sf_nav_recast` (`navmesh-rs` backend). Scope label M7 (RPG core: AI). Slices NV0-NV12 below. The former open
 questions are decided (2026-11-08, owner-delegated): reasoning in `../research/ai-nav-decisions-2026-11-08.md` (a-c).
-Crates (planned): `sf_nav` (Bevy-free core: types, `NavBackend` trait, worldspace graph, `portal_query`, query
-service logic), `sf_nav_recast` (backend over `navmesh-rs`, chosen in NV0; `sf_nav_recast_sys` is the C++ FFI
-fallback), `sf_nav_bevy` (thin: tile residency, worker tasks, debug draw, console). Game side: `mw_ai` + `mw_bake`
-([ai-adapter](../../../bevyrrowind/docs/specs/ai-adapter.md) "Navigation").
+Crates: `sf_nav` (Bevy-free core: types, `NavBackend` trait; planned: worldspace graph, `portal_query`, query service
+logic), `sf_nav_recast` (Bevy-free backend over vendored `navmesh-rs`), planned `sf_nav_bevy` (thin: tile residency,
+worker tasks, debug draw, console). Game side: `mw_ai` + `mw_bake`
+([ai-adapter](../../../bevyrrowind/docs/specs/ai-adapter.md) "Navigation"). As-built history:
+[archive/nav-history.md](archive/nav-history.md).
 Sources: `../research/npc-ai-2026-11-08.md` §4, §5.2-5.3, §7.4 (approved); `../research/seamless-interiors-2026-11-08.md`
 §4.2, §4.8; [ai.md](ai.md) (the main consumer); [streaming.md](streaming.md) "Rings"; [bake.md](bake.md) "Data model";
 [locomotion.md](locomotion.md) "Local avoidance"; [net.md](net.md) "Net-ready rules".
 
 <!-- agent-summary -->
-> **Agent summary (2026-11-08).** Draft, nothing built. Recast/Detour navmesh per worldspace and agent class, baked
-> once by `sf_bake` (`nav.tiles`); two classes (humanoid, large). Doorways are baked door polygons switched at runtime
-> by area/flags; prop carving (TileCache) is opt-in later (owner: patches are not "baking during play"). Tiles stream
-> with a fixed nav ring around gameplay anchors. Routing: worldspace graph (door links) → per-space coarse graph →
-> Detour over resident tiles → corridor → our ORCA (+ navmesh wall lines), on the fixed tick (NV7a).
-> Backend behind `NavBackend`: `navmesh-rs` after the NV0 spike, recastnavigation FFI as fallback (owner).
+> **Agent summary (2026-11-11).** Draft; NV1 (`sf_nav` core) and NV2 (`sf_nav_recast`) built ("Build plan"). Recast/Detour
+> navmesh per worldspace, agent class and nav region, baked once by `sf_bake` (`nav.tiles`); two classes (humanoid, large).
+> Doorways are baked door polygons switched at runtime by area/flags; prop carving (TileCache) is opt-in later (owner:
+> patches are not "baking during play"). Tiles stream with a fixed nav ring around gameplay anchors. Routing:
+> worldspace graph (door links) → per-space coarse graph → Detour over resident tiles → corridor → our ORCA (+ navmesh
+> wall lines), on the fixed tick (NV7a). Backend behind `NavBackend`: `navmesh-rs` (NV0 verdict).
 > Read next: "Data model", "Routing", "Streaming", "Build plan".
 <!-- /agent-summary -->
 
@@ -53,10 +54,12 @@ avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour.
 ## Reuse (Bevy, then crates, then our own)
 
 - **Bevy 0.20** ships no navigation.
-- **`navmesh-rs` 0.2.2** (MIT/Apache, pure Rust Recast + Detour + DetourCrowd + TileCache, claims bit-exact parity
-  with upstream `9f4ce644`; 2 days old, one author): adopt **after NV0** re-runs its parity suite, bakes our
-  geometry and reads the code. **Fallback**: upstream recastnavigation (zlib) through refreshed `-sys` bindings or a
-  vendored `cc` build (`sf_nav_recast_sys`). If bit-exact, its tiles may match Detour's format (NV0 checks).
+- **`navmesh-rs` 0.2.2** (MIT OR Apache-2.0 + zlib, pure Rust Recast + Detour + DetourCrowd + TileCache, bit-exact
+  with upstream `9f4ce644`; one author): **adopted (NV0, 2026-11-11)**, pinned `=0.2.2`, features `libm`
+  (cross-platform determinism) + `polyref64`, vendored with one own patch (`superfargoth/vendor/README.md`), behind
+  `NavBackend` in `sf_nav_recast`. NV0 baked all our cooked collision with no failures; full bake ≈ 55 s at 16
+  threads, over the 45 s slot (NV4 tunes). [Spike report](../research/navmesh-spike-nv0-2026-11-11.md). Fallback
+  (not needed): recastnavigation through a vendored `cc` build.
 - Rejected (research §5.2): `rerecast` (no tiles; re-check at "update all"), `landmass` (glam 0.30 + `dodgy_2d`, no
   dynamic obstacles; its islands idea becomes nav regions), `vleue_navigator`/`polyanya` (2D/layered),
   `oxidized_navigation` (archived), `bevy_northstar`/flow-field crates (grids). `petgraph` covers the graphs.
@@ -64,22 +67,12 @@ avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour.
 
 ## Data model
 
-All types derive `Clone, Debug, PartialEq, Serialize, Deserialize` unless noted. Backend refs never leave memory.
-
-```rust
-// sf_nav (Bevy-free; deps sf_ids, sf_coords, sf_world, glam, petgraph, serde). Illustrative, not compiled.
-pub struct AgentClassId(pub u8);
-pub struct AgentClass { pub id: AgentClassId, pub radius: f32, pub height: f32, pub max_climb: f32,
-                        pub max_slope_deg: f32, pub can_swim: bool }        // adapter data (record `sf.nav.agent`)
-pub struct AreaId(pub u8);                                                // adapter table `sf.nav.area`
-pub struct AreaDef { pub id: AreaId, pub name: Symbol, pub cost: [f32; MAX_CLASSES], pub flags: AreaFlags } // WALK, SWIM, DOOR, AVOID
-pub struct TileKey { pub ws: WorldspaceId, pub class: AgentClassId, pub region: u16, pub x: i32, pub z: i32 }
-pub struct NavLinkId(pub u64);                                            // stable: hash of (kind, ends)
-pub enum TraverseKind { Walk, Jump, Drop, Climb, Ladder, Swim, Door(LinkId) }
-pub struct OffMeshLink { pub id: NavLinkId, pub a: Location, pub b: Location, pub radius: f32, pub two_way: bool,
-                         pub kind: TraverseKind, pub area: AreaId, pub classes: ClassMask }
-pub struct NavPoint { pub loc: Location, pub poly: PolyRef }              // PolyRef: backend-opaque, never saved/sent
-```
+Built in NV1 (`sf_nav::types`, the code is the reference): `AgentClass { id, radius, height, max_climb, max_slope_deg,
+can_swim }` (adapter record `sf.nav.agent`), `AreaDef { id, name, cost: [f32; MAX_CLASSES], flags }` in the
+adapter's `AreaTable` (`sf.nav.area`), `PolyFlags` (WALK, SWIM, DOOR, JUMP, AVOID, DISABLED + adapter bits), `TileKey
+{ ws, class, region, x, z }`, `OffMeshLink { id: NavLinkId, a, b, radius, two_way, kind: TraverseKind, area, classes
+}` (`TraverseKind::Door(LinkId)` with NV11), `NavPoint { loc, poly }`. Serde except the backend-opaque `PolyRef` /
+`TileRef`, which never leave memory.
 
 - **Agent classes**: content data, one navmesh per (worldspace, class); Morrowind bakes **two**, `humanoid` (small
   creatures too) and `large` (adapter). Voxel cost scales with `1 / cs²` and `cs ≈ radius / 2`, so a large class costs
@@ -89,7 +82,8 @@ pub struct NavPoint { pub loc: Location, pub poly: PolyRef }              // Pol
   a cost per agent class, flags for filters (swimmers, avoid-hazard). The adapter's table names them, not the framework.
 - **Nav regions**: meshes split into regions of at most `region_size` (16 km: f32 precision, poly-ref bits), each a
   Detour mesh in local coordinates with a `WorldPos` origin (landmass's islands); every Morrowind worldspace is one
-  region (NV0 verifies). Region borders are coarse nodes; corridors hand over there.
+  region (NV0 verifies). Region borders are coarse nodes; corridors hand over there. NV2: one Detour mesh per
+  (worldspace, class, region), origin set with `RecastBackend::set_region_origin`.
 - **Tiles** (bake product): one blob per `TileKey`, backend format, LZ4. NV0 calibrates: humanoid cs 0.15 m, ch 0.1 m,
   128 voxels per side (19.2 m); `large` cs ≈ 0.5 m (`cs ≈ radius / 2`).
 - **Off-mesh links** (bake, per worldspace): pathgrid edges the mesh misses, authored jumps, drops, ladders, ledges
@@ -108,23 +102,13 @@ ends' worldspace and frame) in NV11, since the AI saves routes by link.
 
 ## Interfaces
 
-```rust
-/// What a backend provides; the core, the bake step and the query service use only this.
-pub trait NavBackend: Send + Sync {
-    fn build_tile(&self, input: &TileInput, cfg: &BuildConfig) -> Result<Vec<u8>, NavError>;  // bake only
-    fn add_tile(&mut self, key: TileKey, blob: &[u8]) -> Result<(), NavError>;
-    fn remove_tile(&mut self, key: TileKey);
-    fn nearest(&self, at: &Location, class: AgentClassId, extent: Vec3, f: &Filter) -> Option<NavPoint>;
-    fn find_path(&self, job: &mut PathJob, budget: &mut SliceBudget) -> JobState;         // sliced A*
-    fn raycast(&self, from: &NavPoint, to: Vec3, f: &Filter) -> NavRay;                   // walkable straight line?
-    fn corridor_move(&self, c: &mut Corridor, agent: Vec3, target: Vec3, f: &Filter);     // dtPathCorridor
-    fn boundary(&self, at: &NavPoint, range: f32, f: &Filter, out: &mut Vec<Segment>);    // dtLocalBoundary
-    fn set_door(&mut self, d: &DoorPolys, area: AreaId, flags: PolyFlags);               // setPolyArea/Flags, no rebuild
-    fn set_obstacle(&mut self, o: &NavObstacle) -> DirtyTiles;                            // TileCache (NV10, opt-in)
-    fn clear_obstacle(&mut self, id: ObstacleId) -> DirtyTiles;
-    fn rebuild_dirty(&mut self, budget: &mut SliceBudget) -> Vec<TileKey>;
-}
+`NavBackend` (`sf_nav::backend`, built NV1; the code is the reference): `build_tile(input, cfg, areas)` (bake only),
+`add_tile` / `remove_tile` / `tile`, `nearest`, sliced `find_path(&self, &mut PathJob, &mut SliceBudget)`, `raycast`,
+`poly_state` / `set_poly_state` (doors: `setPolyArea`/`setPolyFlags`, no rebuild). Still to add: corridor moves
+(`dtPathCorridor`, NV8), local boundary (`dtLocalBoundary`, NV7b), `set_obstacle` / `clear_obstacle` /
+`rebuild_dirty` (TileCache, NV10, opt-in). The bake's adapter seam (NV4):
 
+```rust
 /// The adapter's geometry for the bake: the same cooked collision the mover uses.
 pub trait NavGeometrySource: Send + Sync {
     fn tile_input(&self, cx: &mut RunCx, ws: WorldspaceId, bounds: Aabb) -> TileInput;   // triangles + area marks + water
@@ -300,10 +284,10 @@ One deliverable plus its test per slice; research and building are separate.
 
 | Slice | Deliverable | Test |
 |---|---|---|
-| **NV0** spike (research) | `navmesh-rs` verdict: re-run its parity suite, bake the Census Office and a 3×3 Balmora block from cooked collision in a throwaway harness, measure ms per tile, MiB, query µs, extrapolate a full bake; read the code (unsafe, panics, licence); check tile format vs Detour, poly area/flag setters, convex area volumes | report in `../research/` + `#[ignore = "measurement: ..."]` numbers |
-| **NV0b** (only if NV0 fails) | FFI fallback spike: refreshed recastnavigation bindings, same measurements | same |
-| **NV1** core | `sf_nav`: types, `NavBackend`, `GridBackend` double, `Goal`, filters | exact paths on synthetic grids |
-| **NV2** backend | `sf_nav_recast`: `build_tile`, tiles, `nearest`, sliced `find_path`, `raycast` | paths on synthetic boxes, ramps, two floors; no NaN |
+| **NV0** spike (**done 2026-11-11**) | `navmesh-rs` verdict on our cooked collision (parity, ms per tile, MiB, query µs, code read, tile format, setters) | [report](../research/navmesh-spike-nv0-2026-11-11.md): adopt |
+| **NV0b** (not needed) | FFI fallback spike (recastnavigation bindings) | same |
+| **NV1** core (**done 2026-11-11**) | `sf_nav`: types, `NavBackend`, `GridBackend` double, `Goal`, filters | exact paths on synthetic grids (17 tests) |
+| **NV2** backend (**done 2026-11-11**) | `sf_nav_recast`: `build_tile`, tiles, `nearest`, sliced `find_path`, `raycast` | paths on synthetic boxes, ramps, two floors; no NaN (18 tests + measurement) |
 | **NV3** debug draw | `sf_nav_bevy` gizmos + `nav.draw` / `nav.stats` + BRP over a test bake | headless plugin smoke; stats line counts tiles |
 | **NV4** bake step | `nav.tiles`, `nav.links`, `nav.coarse` steps + `NavGeometrySource`, door polygons | cache hit on rerun; moving one box re-bakes only its tiles; each doorway has its own polys; cold bake time and MiB printed per class |
 | **NV5** streaming | nav ring residency per gameplay anchor and open portal, per class on demand (needs seamless SI3) | residency set exact for scripted anchor paths; `large` tiles absent with no large actor; unload hysteresis |
@@ -319,6 +303,17 @@ One deliverable plus its test per slice; research and building are separate.
 
 Order: NV0 → NV1 → NV2 → NV3 → NV4 → (seamless SI3) → NV5 → NV6 → NV7a → NV7b → NV8 → NV9 → NV10 → NV11 → NV12; NVM
 after NV8. NV11 replaces seamless SI13 (M9b); NV7a lands before AI6.
+
+**As built** (full notes: [archive/nav-history.md](archive/nav-history.md)). **NV1**: the trait as sketched in
+"Interfaces" with `build_tile(input, cfg, areas)` (flags from our `AreaTable`), `add_tile -> TileRef`, sliced
+`find_path(&self, &mut PathJob, &mut SliceBudget)` (search state in the job, so one backend serves many workers),
+`raycast(from, to: &Location)`, `poly_state` / `set_poly_state` (doors); corridor, boundary and obstacle methods come
+with NV7b, NV8, NV10. **NV2**: one Detour mesh per (worldspace, class, region), region-local f32 from each region's
+`WorldPos` origin; our `PolyRef` = the Detour 64-bit ref + mesh slot and generation in unused tile bits; the Recast
+demo's tile pipeline with flags from `AreaTable`; each job owns a Detour `DetachedQuery` attached per step (vendored
+navmesh-rs patch: made public); a removed tile fails only jobs that touched it; `Near` cuts the string-pulled path at
+the radius, `AnyOf` = one A* per candidate with a straight-distance prune, `Away` = resumable Dijkstra. Measured on a
+synthetic town at the NV0 calibration: 4.6 ms per tile, `nearest` 1.2 µs, a 115 m path 48 µs, raycast 2 µs.
 
 ## Open questions
 

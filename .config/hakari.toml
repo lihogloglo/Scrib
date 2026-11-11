@@ -34,7 +34,7 @@ third-party = [
 # Bevy-free cores (ARCHITECTURE section 8b rule 1) don't depend on the hack: it carries the whole
 # Bevy stack, and a core must still build cold in seconds. Their feature needs still count toward
 # the hack. A new crate whose graph has no Bevy, even with `--all-features`, goes here; `sf_vfs` is
-# here too (Bevy only behind its `bevy` feature).
+# here too (Bevy only behind its `bevy` feature), as is `sf_ids` (the clock resource).
 workspace-members = [
     "sf_action",
     "sf_ai",
@@ -57,6 +57,8 @@ workspace-members = [
     "sf_lod",
     "sf_model",
     "sf_mods",
+    "sf_nav",
+    "sf_nav_recast",
     "sf_physics",
     "sf_ragdoll",
     "sf_records",

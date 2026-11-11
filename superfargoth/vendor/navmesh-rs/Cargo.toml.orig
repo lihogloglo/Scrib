@@ -1,0 +1,55 @@
+[package]
+name = "navmesh-rs"
+version = "0.2.2"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+description = "Pure-Rust port of recastnavigation's Recast, Detour, DetourCrowd and DetourTileCache"
+repository = "https://github.com/Tavrin/navmesh-rs"
+readme = "README.md"
+keywords = ["navmesh", "recast", "detour", "pathfinding", "gamedev"]
+categories = ["game-development", "algorithms", "no-std"]
+include = ["/src", "/README.md", "/CHANGELOG.md", "/LICENSE-MIT", "/LICENSE-APACHE", "/NOTICE"]
+
+[lib]
+name = "navmesh_rs"
+
+[features]
+default = ["std", "recast", "detour", "crowd", "tilecache", "polyref64"]
+# Use the platform libm through std for sqrt/floor/ceil/cos (bit-identical to the
+# C++ oracle on x86-64 glibc).
+std = []
+# Use the `libm` crate (a musl port) for transcendentals instead of the platform
+# libm; required without `std`.
+libm = ["dep:libm"]
+# Navmesh generation (Recast).
+recast = []
+# Navmesh runtime, tile data and queries (Detour).
+detour = ["dep:sha2"]
+# Agent simulation and local avoidance (DetourCrowd).
+crowd = ["detour"]
+# Dynamic obstacle carving over cached heightfield layers.
+tilecache = ["recast", "detour"]
+# 64-bit poly refs (upstream's DT_POLYREF64); without it refs are 32-bit. The width
+# is part of the tile byte format (links hold refs).
+polyref64 = []
+# Opt-in concurrent tile baking; the bake API also works serially without rayon.
+parallel = ["dep:rayon"]
+
+# Serialization of diagnostic report structs (also available with alloc only).
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+sha2 = { version = "0.10.9", default-features = false, features = ["force-soft"], optional = true }
+libm = { version = "0.2.16", optional = true }
+rayon = { version = "1.11", optional = true }
+
+[dev-dependencies]
+serde_json = "1"
+
+[workspace]
+members = ["parity"]
+default-members = [".", "parity"]
+# The cargo-fuzz crate is its own workspace (nightly, libFuzzer).
+exclude = ["fuzz"]

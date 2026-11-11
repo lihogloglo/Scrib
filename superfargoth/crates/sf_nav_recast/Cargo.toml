@@ -1,0 +1,19 @@
+[package]
+name = "sf_nav_recast"
+description = "Bevy-free navmesh backend for superfargoth (nav.md NV2): sf_nav's NavBackend over navmesh-rs (pure Rust Recast + Detour)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Bevy-free core (build-perf.md rule 1): in hakari's final-excludes. navmesh-rs is pinned and
+# vendored at the workspace root (`superfargoth/vendor/navmesh-rs`, own patch: `DetachedQuery`).
+[dependencies]
+glam.workspace = true
+navmesh-rs.workspace = true
+sf_coords.workspace = true
+sf_nav.workspace = true
+sf_world.workspace = true
+
+[lints]
+workspace = true

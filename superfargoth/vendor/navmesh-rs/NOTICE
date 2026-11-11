@@ -1,0 +1,35 @@
+navmesh-rs is an altered, translated version of recastnavigation
+(https://github.com/recastnavigation/recastnavigation) at upstream commit
+9f4ce64458dfae86e1239c525ddc219c4e9e06f1. It is not the original software.
+Our changes and additions are licensed under MIT OR Apache-2.0 (LICENSE-MIT,
+LICENSE-APACHE). The recastnavigation licence is reproduced below unaltered.
+
+The zlib licence below covers all translated sources and headers listed here.
+
+Translated crowd sources: DetourCrowd.cpp, DetourPathCorridor.cpp,
+DetourLocalBoundary.cpp, DetourObstacleAvoidance.cpp, DetourProximityGrid.cpp,
+DetourPathQueue.cpp and their public headers (DetourCrowd/Source and Include).
+
+Translated tile-cache sources: DetourTileCache.cpp, DetourTileCacheBuilder.cpp
+and their public headers (DetourTileCache/Source and Include).
+No FastLZ source is included; the supplied compressor stores raw grids.
+
+--------------------------------------------------------------------------------
+
+Copyright (c) 2009 Mikko Mononen memon@inside.org
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.

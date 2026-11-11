@@ -195,3 +195,34 @@ SOFTWARE.
   `apps/openmw_tests/mwscript/testscripts.cpp`.
 - Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
 - Ported into: `bevyrrowind/crates/mw_ui/src/message.rs` (the game; written 2026-11-08, untested).
+
+## navmesh-rs / recastnavigation (vendored, altered)
+
+- Source: navmesh-rs 0.2.2 (crates.io; https://github.com/Tavrin/navmesh-rs), a translation of recastnavigation
+  (https://github.com/recastnavigation/recastnavigation) at commit `9f4ce64458dfae86e1239c525ddc219c4e9e06f1`.
+- Licence: navmesh-rs's own code MIT OR Apache-2.0; the translated Recast and Detour sources zlib (below, also
+  in `vendor/navmesh-rs/NOTICE`).
+- Used in: `crates/sf_nav_recast` (nav.md NV2), through the copy in `vendor/navmesh-rs`, which we altered: the
+  `superfargoth patch` hunks in `src/detour/query.rs` and `src/detour/mod.rs` make `DetachedQuery` public
+  (`vendor/patches/superfargoth-navmesh-rs-detached-query.diff`; zlib clause 2: marked as altered here and there).
+  `sf_nav_recast/src/build.rs` follows the Recast demo's `Sample_TileMesh::buildTileMesh` stage order and settings.
+
+```text
+Copyright (c) 2009 Mikko Mononen memon@inside.org
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+```
