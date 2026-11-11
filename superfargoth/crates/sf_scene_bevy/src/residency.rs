@@ -39,10 +39,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use bevy_asset::{AssetId, AssetServer, Assets, Handle, LoadState, UntypedHandle};
 use bevy_asset::{AssetLoadError, io::AssetReaderError};
 use bevy_ecs::prelude::*;
-use bevy_math::IVec3;
+use bevy_math::{IVec3, Vec3};
 use bevy_mesh::Mesh;
 use bevy_pbr::gpu_instance_batch::{GpuBatchedMesh3d, GpuBatchedMeshRange};
 use bevy_pbr::{MeshMaterial3d, StandardMaterial};
+use bevy_render::sync_world::MainEntity;
+use sf_coords::WorldPos;
 use sf_diag_bevy::DiagCounters;
 use sf_diag_bevy::sf_diag::{Counters, unit};
 use sf_model_bevy::{CookedModelAsset, baked_path};
@@ -51,12 +53,13 @@ use sf_scene::{
     SlotWrite, SpaceConfig, SpaceId, cell_subject,
 };
 use sf_world::{PlacementId, WorldspaceId};
-use sf_world_bevy::{CellScene, ModelMaterials, SceneCellCx, Streaming};
+use sf_world_bevy::{CellScene, ModelMaterials, SceneCellCx, Streaming, WorldOrigin};
 
 use crate::chains::{
     ChainAssets, ChainMaterials, MaterialMaker, ProductState, chain_assets, load_product, product_state,
 };
 use crate::slabs::{CellSlabs, ChainIds, ChainSlabTable};
+use crate::upload::{BatchSlotWrite, SLOT_BYTES, gpu_instance};
 use crate::{SceneConfig, SceneTableAsset};
 
 /// Frames a planned-to-be cell waits for its chain meshes' slabs before it
@@ -64,9 +67,6 @@ use crate::{SceneConfig, SceneTableAsset};
 /// a streaming fetch open for ever; the chains still unresolved then get a
 /// batch of their own (correct, just more draws), with one `warn!`.
 pub const SLAB_WAIT_FRAMES: u64 = 120;
-
-/// Bytes per batch output slot written (`GpuMeshInstance`, B3 brief §1.3).
-const SLOT_WRITE_BYTES: u64 = 64;
 
 /// The scene's frame counter: what releases are stamped with
 /// (`SceneSpace::advance`).
@@ -218,12 +218,14 @@ pub struct BatchZeroFill {
     pub slots: u32,
 }
 
-/// GPU writes queued for the render world. TODO(B4): `cells` and `writes`
-/// stay empty until then; `upload` fills `zero_fills`.
+/// GPU writes queued for the render world (`upload` module): `upload` fills
+/// `zero_fills` and `writes`, `extract_scene_uploads` takes them.
+/// TODO(B4b): `cells` stays empty until the scene buffer lands.
 #[derive(Resource, Default)]
 pub struct SceneUploads {
     pub cells: Vec<CellUpload>,
-    pub writes: Vec<SlotWrite>,
+    /// One per `CellPlan::writes`, in plan order.
+    pub writes: Vec<BatchSlotWrite>,
     pub zero_fills: Vec<BatchZeroFill>,
 }
 
@@ -623,6 +625,42 @@ fn plan(
     }
 }
 
+/// A committed cell's `plan_writes` resolved for the render world (B4a): each
+/// batch's entity, and the instance's table row placed in render space, the
+/// frame of the floating origin's cell `frame` (`sf_world_bevy::WorldOrigin`:
+/// `GlobalTransform` is relative to it). A write with no batch entity or no
+/// table row is a bug, dropped with an error. An origin shift after this
+/// leaves the outputs stale (`upload` module docs, the known gap).
+fn queue_slot_writes(
+    world: &World,
+    state: &SpaceState,
+    cell: IVec3,
+    plan_writes: &[SlotWrite],
+    frame: IVec3,
+) -> Vec<BatchSlotWrite> {
+    let view = state.tables.get(&cell).and_then(|t| world.resource::<Assets<SceneTableAsset>>().get(t)).and_then(|a| a.view().ok());
+    let Some(view) = view else {
+        log::error!("sf_scene_bevy: cell {cell}'s table went away before its batch slots were written");
+        return Vec::new();
+    };
+    let offset = sf_scene::cell_offset(view.origin_cell(), WorldPos::new(frame, Vec3::ZERO));
+    let mut out = Vec::with_capacity(plan_writes.len());
+    for w in plan_writes {
+        let entity = state.batches.get(w.batch as usize).copied().flatten().map(|b| b.entity);
+        let (Some(entity), Some(row)) = (entity, view.instance(w.index as usize)) else {
+            log::error!("sf_scene_bevy: cell {cell}: slot write {w:?} has no batch entity or table row; not written");
+            continue;
+        };
+        out.push(BatchSlotWrite {
+            entity: MainEntity::from(entity),
+            batch: w.batch,
+            slot: w.slot,
+            instance: gpu_instance(row.transform, offset, w.active),
+        });
+    }
+    out
+}
+
 /// The static scene's streaming hook, installed by `ScenePlugin` as
 /// `SceneCells` when the scene is enabled.
 #[derive(Default)]
@@ -686,10 +724,11 @@ impl CellScene for SceneHook {
 
     /// Commits the cell's plan (`SceneSpace::commit_in`), makes sure its
     /// batches have their entities (a new one queues its zero-fill) and
-    /// rebuilds `plan.ranges`. Returns the bytes it will upload: the
+    /// rebuilds `plan.ranges`, then queues `plan.writes` in [`SceneUploads`]
+    /// ([`queue_slot_writes`]). Returns the bytes it will upload: the
     /// scene-buffer copy plus 64 B per batch slot written.
     ///
-    /// TODO(B4): push `plan.scene_bytes` and `plan.writes` into [`SceneUploads`].
+    /// TODO(B4b): push `plan.scene_bytes` into [`SceneUploads`].
     fn upload(&self, world: &mut World, cx: &SceneCellCx<'_>) -> u64 {
         if !world.contains_resource::<SceneSpaces>() {
             return 0;
@@ -717,7 +756,11 @@ impl CellScene for SceneHook {
             changed.sort_unstable();
             changed.dedup();
             rebuild_ranges(world, state, changed);
-            (plan.scene_bytes.len() as u64).saturating_add(plan.writes.len() as u64 * SLOT_WRITE_BYTES)
+            // After `ensure_batches`: every batch of the plan has its entity now.
+            let frame = world.get_resource::<WorldOrigin>().map_or(IVec3::ZERO, |o| o.cell);
+            let writes = queue_slot_writes(world, state, cx.cell, &plan.writes, frame);
+            world.resource_mut::<SceneUploads>().writes.extend(writes);
+            (plan.scene_bytes.len() as u64).saturating_add(plan.writes.len() as u64 * SLOT_BYTES)
         })
     }
 

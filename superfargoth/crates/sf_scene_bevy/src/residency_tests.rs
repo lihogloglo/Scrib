@@ -17,6 +17,7 @@ use bevy::asset::{AssetPlugin, AssetServer, LoadState, UntypedAssetId, UntypedHa
 use bevy::mesh::MeshPlugin;
 use bevy::pbr::gpu_instance_batch::{GpuBatchedMesh3d, GpuBatchedMeshRange, validate_ranges};
 use bevy::prelude::*;
+use bevy::render::sync_world::MainEntity;
 use big_space::prelude::FloatingOrigin;
 use glam::{Affine3A, DVec3};
 use sf_bake::{Manifest, ProductKey, Store};
@@ -987,4 +988,35 @@ fn a_material_binding_that_never_arrives_times_out() {
     assert!(!plan.batches.is_empty());
     assert!(plan.batches.iter().all(|(_, k)| k.chain.is_some()), "unresolved chains batch alone: {:?}", plan.batches);
     assert!(commit(&mut f, cell) > 0);
+}
+
+/// B4a test 3: a committed cell queues exactly one resolved write per `plan.writes`, in plan
+/// order, with its batch's entity, its slot, its `active` (an overflowed placement's other
+/// parts written inactive) and its table row placed by the floating origin.
+#[test]
+fn a_committed_cell_queues_one_resolved_write_per_plan_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(overflow_split), true, 4);
+    let cell = f.cell;
+    let plan = stream_cell_in(&mut f, cell);
+    assert!(!plan.overflowed.is_empty(), "the fixture overflows chain 1's batch");
+    let world = f.app.world();
+    let writes = &world.resource::<SceneUploads>().writes;
+    assert_eq!(writes.len(), plan.writes.len());
+    assert!(plan.writes.iter().any(|w| !w.active), "placement 3's chain-0 part is written inactive");
+
+    let state = f.state();
+    let view = world.resource::<Assets<SceneTableAsset>>().get(&state.tables[&cell]).unwrap().view().unwrap();
+    let frame = world.get_resource::<sf_world_bevy::WorldOrigin>().map_or(IVec3::ZERO, |o| o.cell);
+    let offset = sf_scene::cell_offset(view.origin_cell(), WorldPos::new(frame, Vec3::ZERO));
+    for (got, want) in writes.iter().zip(&plan.writes) {
+        let entity = state.batches[want.batch as usize].expect("a committed batch has its entity").entity;
+        assert_eq!(got.entity, MainEntity::from(entity));
+        assert_eq!((got.batch, got.slot, got.active()), (want.batch, want.slot, want.active));
+        let row = view.instance(want.index as usize).unwrap().transform;
+        assert_eq!(
+            instance_bytes(&[got.instance]),
+            instance_bytes(&[gpu_instance(row, offset, want.active)])
+        );
+    }
 }

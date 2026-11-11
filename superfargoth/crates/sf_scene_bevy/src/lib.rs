@@ -7,14 +7,14 @@
 //! — the table format, the chain registry, the slot allocators, the batch
 //! ranges and the CPU twin of the per-view cull — is Bevy-free in `sf_scene`.
 //! This crate is the Bevy seam: an asset and its loader, the config resource,
-//! the cell residency ([`residency`]: the `CellScene` hook streaming drives)
-//! and the render-world slab feedback ([`slabs`]).
+//! the cell residency ([`residency`]: the `CellScene` hook streaming drives),
+//! the render-world slab feedback ([`slabs`]) and the batch-slot writer ([`upload`]).
 //!
-//! **B3b-1 state.** Cells load, resolve their chains and slabs, plan, commit and
+//! **B4a state.** Cells load, resolve their chains and slabs, plan, commit and
 //! stream out; `covered` follows the plan; every batch a committed plan names
-//! is a `GpuBatchedMesh3d` entity with its range list. No material or GPU
-//! write exists yet (B3b-2/B4), so an app with [`ScenePlugin`] enabled draws the
-//! covered statics *nowhere*. [`ScenePlugin`] is in no `add_plugins` call and
+//! is a `GpuBatchedMesh3d` entity with its range list and material, and its
+//! slots are written into the batch outputs ([`upload`]). The scene buffer (B4b)
+//! is not uploaded yet. [`ScenePlugin`] is in no `add_plugins` call and
 //! [`baked_extensions`] is in no extensions map, so the tree ships identically
 //! until the game side (C1/C2) installs it. `sf_world_bevy` must never depend
 //! on this crate (the hook exists so the dependency goes one way).
@@ -32,6 +32,7 @@ mod assets;
 pub mod chains;
 pub mod residency;
 pub mod slabs;
+pub mod upload;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -44,12 +45,17 @@ pub use residency::{
     SceneInbox, SceneSpaces, SceneUploads, SpaceState, despawn_empty_batches, poll_cell_loads, tick_frame,
 };
 pub use slabs::{ChainIds, ChainSlabTable, MeshSlabIds, extract_chain_slabs};
+pub use upload::{
+    BatchSlotWrite, PendingSceneWrites, SlotRun, extract_scene_uploads, gpu_instance, instance_bytes, publish_scene, slot_runs,
+};
 
 use std::sync::Arc;
 
 use bevy_app::{App, First, Plugin, Update};
 use bevy_asset::AssetApp;
 use bevy_ecs::prelude::*;
+use bevy_pbr::gpu_instance_batch::{GpuInstanceBatchReservations, GpuInstanceBatchSystems};
+use bevy_render::renderer::RenderGraph;
 use bevy_render::{ExtractSchedule, RenderApp};
 use sf_scene::{CELLS_EXT, CELLS_STEP, CHAINS_EXT, CHAINS_STEP, SpaceConfig};
 use sf_world::WorldspaceId;
@@ -137,7 +143,16 @@ impl Plugin for ScenePlugin {
         // The render world answers which slabs each chain mesh landed in (`slabs` module docs).
         // Without one nothing ever resolves, so cells plan without waiting for slabs.
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
-        render_app.add_systems(ExtractSchedule, extract_chain_slabs);
+        // The batch-slot writer (`upload` module): extracted, then published before materialization.
+        render_app
+            .init_resource::<PendingSceneWrites>()
+            .add_systems(ExtractSchedule, (extract_chain_slabs, extract_scene_uploads))
+            .add_systems(
+                RenderGraph,
+                publish_scene
+                    .in_set(GpuInstanceBatchSystems::Publish)
+                    .run_if(resource_exists::<GpuInstanceBatchReservations>),
+            );
         app.world_mut().resource_mut::<ChainSlabTable>().tracking = true;
     }
 }

@@ -8,8 +8,8 @@ license.workspace = true
 # Minimal Bevy (ARCHITECTURE §8b rule 6). The scene logic (table format, chain
 # registry, slot allocators, batch ranges, CPU cull) is Bevy-free in sf_scene.
 #
-# Only what B1 and B3a use: B3b/B4 add bevy_camera, bevy_platform,
-# bevy_transform, sf_coords with the code that needs them (all of them are
+# Only what B1-B4a use: later slices add bevy_camera, bevy_platform,
+# bevy_transform with the code that needs them (all of them are
 # already in the unified feature set, so adding them later is free).
 [dependencies]
 # App, Plugin, schedules.
@@ -29,6 +29,8 @@ bevy_reflect = { workspace = true, features = ["std"] }
 # MainWorld, ExtractSchedule, MeshAllocator: the render-world slab feedback.
 bevy_render.workspace = true
 log.workspace = true
+# WorldPos: the render frame a batch slot is placed in (B4a).
+sf_coords.workspace = true
 sf_diag_bevy.workspace = true
 # CookedModelAsset (a chain product is an `.sfmesh`), baked_path.
 sf_model_bevy.workspace = true
