@@ -95,6 +95,9 @@ Framework: `superfargoth/docs/specs/menus.md` and `video.md`; research
   levels as `ui.setting_preset` data; a curated subset of `Off` parts (`mw_game_core/src/perf.rs`) become
   per-feature settings (shadows, soft/contact shadows, SSAO, bloom, GI, clouds, froxel fog, far field, actors'
   shadows); upscaler and RT from `RenderSettings`. All `Restart` first, made `Live` one by one later.
+- **Vanilla page layout** (owner 2026-11-11): with the vanilla/classic option the options screen mirrors OpenMW's
+  settings window categories and their option sets (the launcher and in-game Options tabs; cite file + commit); the
+  modern option keeps the framework pages. Same settings and screen, only the grouping. Research slice before S2.
 
 ## Books and scrolls: markup → rich text
 

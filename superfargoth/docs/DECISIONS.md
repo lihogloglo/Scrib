@@ -1773,6 +1773,23 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-11 (menus, owner): main menu is a front end with no world (`AppPhase`, menus.md); built front end first, then
   video, options v2, textured Morrowind art. Video decoder: pure-Rust Bink 1 (`infinitier_bik_decoder`, GPL-3.0+) gated on
   a V1 measurement, FFmpeg-port fallback, FFmpeg only later for mod formats. Intro logos play on first launch only.
+- 2026-11-11 (clock, ROADMAP 1.17): one game clock, `sf_ids::GameClock { now: GameInstant(u64 game ms), time_scale }`,
+  host-owned, advanced on the fixed tick; sky days, `GameTime`, `GameMinutes`, AI `now` and the MWScript calendar globals
+  are views that round down. `sf/clock` v2 saves it; v1 f64 days migrate at 24 h days (clock.md).
+- 2026-11-11 (bake-policy, draft pending owner questions): bake vs runtime in four tiers: runtime (never cached),
+  setup bake of every product, incremental bake on a stale profile fingerprint before the menu, never in play (load
+  screens count as play). Steps are gameplay or presentation; co-op compares a gameplay digest, never files (bake.md).
 - 2026-11-11 (static scene B3a): `CellScene::covered` takes the cell's indexed-page placement ids (tables name placements
   by cell-local index); chain slabs resolve by mesh key (`ChainSlabs::slabs_keyed`, new chains get their slot inside
   `plan_in`); chain materials are one per `material_key`, made before planning so the bind group is in the batch key.
+- 2026-11-11 (bake-policy, owner answers): first bake ≤ 3 min / 5 min ceiling on the laptop; a cancelled bake may start
+  with degradable products missing (runtime fallback, frame spikes accepted, loading screen where needed); the setup
+  bake may use the GPU. Load-screen work (bounded warm-up/uploads, no content bakes) still to confirm (bake.md).
+- 2026-11-11 (interaction, owner): everything breakable breaks, contents spill and take damage by hit strength; new
+  vandalism offence; building destruction parked; mounts first = climb on + drive; player sits only on furniture;
+  NPC chair moving waits for AI (IN5 folded into IN9). Answers in interaction.md "Owner questions".
+- 2026-11-11 (textures + pipeline warm-up, by industry standard): GPU BC7 on the setup screen; native Bevy parallax per
+  preset; anisotropic 4/8/16x per preset; skip late draws; warm current settings only; Vulkan is the shipping backend.
+- 2026-11-11 (menus, owner): the vanilla/classic option's options screen mirrors OpenMW's settings categories (pages,
+  order, option sets); the modern option keeps the framework pages. A content pack supplies the alternate page layout
+  over the same settings (menus.md §5, ui-adapter "Vanilla page layout"). Research OpenMW's window before S2.

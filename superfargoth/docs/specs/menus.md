@@ -157,7 +157,9 @@ until F3: Continue/Load build the world at the new-game start, then load or open
   settings? Reverting in 15 s", focus on Revert, timeout reverts (Windows' and most engines' rule).
 - **Pages** (framework order; packs and mods add pages): Gameplay, Display, Graphics, Audio, Controls,
   Interface (UI and text scale, theme, layout preset), Accessibility, then one page per mod with settings.
-  Search box: later (keywords are in the data now).
+  Search box: later (keywords are in the data now). A content pack may supply a second **page layout** (which
+  pages, their order, which settings sit on each) selected by its classic option; the settings and the screen
+  are the same, only the grouping differs (Bevyrrowind: OpenMW's categories, ui-adapter.md).
 - **Two entry points, one screen**: conditions (`phase`) hide or disable what doesn't apply (e.g. language only
   in the front end). In game the panel is translucent over the paused world, so `Live` graphics settings
   preview; in the front end it sits over the backdrop.
