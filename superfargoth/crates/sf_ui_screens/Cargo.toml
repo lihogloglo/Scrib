@@ -20,6 +20,8 @@ bevy_input_focus = { workspace = true, features = ["std"] }
 bevy_math = { workspace = true, features = ["std"] }
 bevy_picking.workspace = true
 bevy_text = { workspace = true }
+# The loading bar's indeterminate sweep (`loading.rs`).
+bevy_time = { workspace = true, features = ["std"] }
 bevy_ui.workspace = true
 bevy_ui_widgets.workspace = true
 # "press to use" prompts on the HUD (`sf_action::Prompt`).

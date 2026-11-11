@@ -56,6 +56,7 @@ pub mod journal;
 pub mod keybinds;
 pub mod keyed;
 pub mod labels;
+pub mod loading;
 pub mod main_menu;
 pub mod options;
 pub mod pause_menu;
@@ -87,6 +88,7 @@ pub use journal::{JournalSeenChanged, JournalSource, JournalUi, JournalUiPlugin}
 pub use keybinds::{KeybindsFocus, KeybindsScreen};
 pub use keyed::{KeyedChildren, KeyedSync};
 pub use labels::ScreenLabels;
+pub use loading::{LoadingModel, LoadingParts, LoadingScreen, loading_z};
 pub use main_menu::{
     MainMenuEntry, MainMenuEvent, MainMenuFocus, MainMenuModel, MainMenuPart, MainMenuParts,
     MainMenuScreen,
@@ -199,6 +201,7 @@ impl Plugin for SfScreensPlugin {
                     pause_menu::spawn_pause_menu,
                     main_menu::spawn_main_menu,
                     options::spawn_options,
+                    loading::spawn_loading,
                 )
                     .in_set(ScreenSystems::Spawn),
             )
@@ -233,6 +236,7 @@ impl Plugin for SfScreensPlugin {
                     pause_menu::sync_pause_menu,
                     main_menu::sync_main_menu,
                     options::sync_options,
+                    loading::sync_loading,
                     widgets::sync_bars,
                     widgets::focus_ring,
                     widgets::scroll_to_focus,

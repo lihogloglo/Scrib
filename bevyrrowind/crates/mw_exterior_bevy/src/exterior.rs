@@ -539,6 +539,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     app.add_plugins(sf_video_bevy::VideoPlugin);
     // The release start's main menu (`main_menu.rs`; after the pause menu, whose clock it shares).
     crate::main_menu::add(&mut app, options.start_in_main_menu);
+    // Its loading screen while the world builds (`loading_screen.rs`; release start only).
+    crate::loading_screen::add(&mut app, options.start_in_main_menu);
     // ROADMAP 2.5: quicksave / quickload (`saves.rs`; after the RPG host, the overlay and the keymap).
     mw_saves_bevy::add(&mut app);
     // ROADMAP 2.1: the player character, orbit camera and activation focus (`player.rs`).

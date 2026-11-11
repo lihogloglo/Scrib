@@ -8,6 +8,7 @@ pub mod exterior;
 mod gi_volume;
 mod teardown;
 pub mod level;
+mod loading_screen;
 pub mod main_menu;
 pub mod pause_menu;
 pub mod phase;
