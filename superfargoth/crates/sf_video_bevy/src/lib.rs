@@ -33,14 +33,33 @@
 //!   despawn never waits on a decode. The [`VideoAudio`] entity is despawned in the next update once its
 //!   player is gone or finished.
 //!
-//! Not yet (V3b): ducking music and ambience during a sounded video, skip, and pausing the thread (and
-//! the sound) while the node is hidden or the window minimised.
+//! - **Skip** ([`VideoPlayer::skippable`], V3b). While a skippable player plays (open, not paused), a
+//!   just-pressed [`SKIP_KEYS`] key, [`SKIP_MOUSE`] button or [`SKIP_PAD`] gamepad button ends it: the
+//!   thread and the sound stop, [`VideoSkipped`] is written and then [`VideoFinished`] too, so a caller
+//!   waiting for the end has one path either way (read [`VideoSkipped`] only to tell the two apart). The
+//!   press is consumed (`clear_just_pressed`) for systems after [`VideoSystems`], so the Escape that skips
+//!   an intro doesn't also open a menu. Missing input resources (headless) mean no skip.
+//! - **Pause** (V3b). A player whose [`InheritedVisibility`] is false (only when [`VideoPauseWhenHidden`]
+//!   is on: by default when Bevy's `VisibilityPlugin` is in the app, the only thing that computes it), or
+//!   any player while the primary window is minimised (zero physical size: how Windows reports it; or
+//!   invisible, or `WindowOccluded` where winit reports it), stops pulling frames: the decode thread
+//!   blocks on its full queue, the real-time clock stops (shifted on resume) and the audio sink is paused
+//!   (the device stops pulling, so the audio clock stops too). It resumes where it was.
+//! - **Ducking** (V3b). While any open, unpaused player has a sound track, `sf_audio_bevy`'s
+//!   [`AudioDucking`](sf_audio_bevy::AudioDucking) hold [`VIDEO_DUCK_HOLD`] is on: rules added on first
+//!   use duck [`DUCKED_BUSES`] (music, ambience with its weather child, SFX, voice) by
+//!   [`VIDEO_DUCK_DB`], near silence, as `OpenMW` pauses all but the movie's sound. Released when none plays.
+//!   No `AudioDucking` resource (no `SfAudioPlugin`): nothing ducks.
+//!
+//! [`InheritedVisibility`]: bevy_camera::visibility::InheritedVisibility
 
 mod audio;
+mod control;
 #[cfg(test)]
 mod tests_audio;
 
 pub use audio::{VideoAudio, VideoAudioSource, VideoAudioStream};
+pub use control::{DUCKED_BUSES, SKIP_KEYS, SKIP_MOUSE, SKIP_PAD, VIDEO_DUCK_DB, VIDEO_DUCK_HOLD};
 
 use std::io::Cursor;
 use std::sync::Arc;
@@ -82,17 +101,46 @@ impl Plugin for VideoPlugin {
         if !app.world().contains_resource::<VideoDecoderRegistry>() {
             app.insert_resource(VideoDecoderRegistry::default());
         }
-        app.add_message::<VideoFinished>().add_systems(
-            Update,
-            (advance_players, movie_audio).chain().in_set(VideoSystems),
-        );
+        app.add_message::<VideoFinished>()
+            .add_message::<VideoSkipped>()
+            .add_systems(
+                Update,
+                (
+                    control::skip_players,
+                    control::pause_players,
+                    advance_players,
+                    movie_audio,
+                    control::duck_other_audio,
+                )
+                    .chain()
+                    .in_set(VideoSystems),
+            );
     }
 
     fn finish(&self, app: &mut App) {
         if app.is_plugin_added::<bevy_audio::AudioPlugin>() {
             app.add_audio_source::<VideoAudioStream>();
         }
+        if !app.world().contains_resource::<VideoPauseWhenHidden>() {
+            let visibility = app.is_plugin_added::<bevy_camera::visibility::VisibilityPlugin>();
+            app.insert_resource(VideoPauseWhenHidden(visibility));
+        }
     }
+}
+
+/// Whether players pause while their [`InheritedVisibility`] is false. Only Bevy's `VisibilityPlugin`
+/// computes it (the component defaults to hidden), so [`VideoPlugin::finish`](Plugin::finish) sets this
+/// to whether that plugin is in the app, unless the app inserted it first. Absent: off.
+///
+/// [`InheritedVisibility`]: bevy_camera::visibility::InheritedVisibility
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VideoPauseWhenHidden(pub bool);
+
+/// Written once when a [skippable](VideoPlayer::skippable) player is skipped, just before its
+/// [`VideoFinished`].
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoSkipped {
+    pub entity: Entity,
 }
 
 /// The player systems (open, show due frames, finish), for ordering against them.
@@ -104,8 +152,9 @@ pub struct VideoSystems;
 #[derive(Resource, Default)]
 pub struct VideoDecoderRegistry(pub VideoDecoders);
 
-/// Written once when a player that doesn't loop reaches the end of its video, or when its video fails
-/// to open or decode. Not written for a player despawned or removed mid-play.
+/// Written once when a player that doesn't loop reaches the end of its video, when its video fails
+/// to open or decode, or when it is skipped (after its [`VideoSkipped`]). Not written for a player
+/// despawned or removed mid-play.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VideoFinished {
     pub entity: Entity,
@@ -117,6 +166,8 @@ pub struct VideoFinished {
 pub struct VideoPlayer {
     bytes: Arc<[u8]>,
     looped: bool,
+    skippable: bool,
+    paused: bool,
     state: PlayerState,
     image: Option<Handle<Image>>,
     info: Option<VideoInfo>,
@@ -145,12 +196,65 @@ impl VideoPlayer {
         Self {
             bytes: bytes.into(),
             looped,
+            skippable: false,
+            paused: false,
             state: PlayerState::Pending,
             image: None,
             info: None,
             frames_shown: 0,
             last_frame: None,
             audio: None,
+        }
+    }
+
+    /// Whether a key, click or gamepad button ends this video (see the crate docs, "Skip"). Default: no.
+    #[must_use]
+    pub fn skippable(mut self, skippable: bool) -> Self {
+        self.skippable = skippable;
+        self
+    }
+
+    /// Whether input can end this video.
+    #[must_use]
+    pub fn is_skippable(&self) -> bool {
+        self.skippable
+    }
+
+    /// Whether playback is paused now (hidden, or the window minimised).
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Open and not paused: what skip and ducking act on.
+    fn is_playing(&self) -> bool {
+        !self.paused && matches!(self.state, PlayerState::Playing(_))
+    }
+
+    /// Whether this player's sound track plays now (ducking holds while one does).
+    fn is_sounding(&self) -> bool {
+        self.is_playing() && self.audio.is_some()
+    }
+
+    /// End playback now: drops the decode thread's receiver (its next send fails) and the audio track
+    /// (the ring stops, the [`VideoAudio`] entity goes in [`movie_audio`]).
+    fn stop(&mut self) {
+        self.state = PlayerState::Finished;
+        self.audio = None;
+    }
+
+    /// Pause or resume at `now` (`Time<Real>` elapsed). The real-time clock skips the paused span; the
+    /// audio clock stops by itself while [`movie_audio`] holds the sink paused.
+    fn set_paused(&mut self, paused: bool, now: Duration) {
+        self.paused = paused;
+        if let PlayerState::Playing(playback) = &mut self.state {
+            if paused {
+                playback.paused_at = Some(now);
+            } else if let Some(at) = playback.paused_at.take()
+                && let Some(start) = &mut playback.clock_start
+            {
+                *start += now.saturating_sub(at);
+            }
         }
     }
 
@@ -219,6 +323,8 @@ struct Playback {
     pending: Option<Msg>,
     /// `Time<Real>` elapsed at stream time 0, set by the first message.
     clock_start: Option<Duration>,
+    /// `Time<Real>` elapsed when playback paused (the clock start shifts by the span on resume).
+    paused_at: Option<Duration>,
 }
 
 /// Decode thread to display, in stream order. Times are microseconds from the start of playback
@@ -301,6 +407,10 @@ fn advance_players(
                 }
             }
         }
+        // Paused: take nothing, so the decode thread blocks on its full queue.
+        if player.paused {
+            continue;
+        }
         let PlayerState::Playing(playback) = &mut player.state else {
             continue;
         };
@@ -334,8 +444,8 @@ fn advance_players(
 /// What one update takes from the queue: the frame to show (index, RGBA) and, once due, how playback ended.
 type Drained = (Option<(u32, Vec<u8>)>, Option<Result<(), String>>);
 
-/// Despawns audio entities whose player is gone or finished, and sets the others' sinks to the Movie
-/// bus gain.
+/// Despawns audio entities whose player is gone or finished, sets the others' sinks to the Movie bus
+/// gain and pauses or resumes them with their player.
 fn movie_audio(
     mixer: Option<Res<AudioMixer>>,
     players: Query<&VideoPlayer>,
@@ -344,15 +454,24 @@ fn movie_audio(
 ) {
     let gain = movie_gain(mixer.as_deref());
     for (entity, track, sink) in &mut tracks {
-        let live = players
+        let player = players
             .get(track.owner)
-            .is_ok_and(|p| !p.is_finished() && p.audio_entity() == Some(entity));
-        if !live {
+            .ok()
+            .filter(|p| !p.is_finished() && p.audio_entity() == Some(entity));
+        let Some(player) = player else {
             commands.entity(entity).try_despawn();
-        } else if let Some(mut sink) = sink
-            && (sink.volume().to_linear() - gain).abs() > f32::EPSILON
-        {
+            continue;
+        };
+        let Some(mut sink) = sink else { continue };
+        if (sink.volume().to_linear() - gain).abs() > f32::EPSILON {
             sink.set_volume(Volume::Linear(gain));
+        }
+        if sink.is_paused() != player.is_paused() {
+            if player.is_paused() {
+                sink.pause();
+            } else {
+                sink.play();
+            }
         }
     }
 }
@@ -449,6 +568,8 @@ fn start(
         recycle,
         pending: None,
         clock_start: None,
+        // Opened while paused: no frame drained yet, so the clock hasn't started; nothing to shift.
+        paused_at: None,
     });
     Ok(handle)
 }

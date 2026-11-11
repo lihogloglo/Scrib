@@ -14,12 +14,17 @@ bevy_asset.workspace = true
 # The audio track (V3a): a custom `Decodable` source on the Movie bus. Both already in the graph via
 # sf_audio_bevy; bevy_reflect for the asset's `TypePath`.
 bevy_audio.workspace = true
+# V3b: `InheritedVisibility` / `VisibilityPlugin` (pause when hidden), the skip inputs and the primary
+# window (pause when minimised). All already in the graph via bevy_ui.
+bevy_camera.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_image.workspace = true
+bevy_input = { workspace = true, features = ["gamepad", "keyboard", "mouse"] }
 bevy_log.workspace = true
 bevy_reflect = { workspace = true, features = ["std"] }
 bevy_time = { workspace = true, features = ["std"] }
 bevy_ui.workspace = true
+bevy_window.workspace = true
 sf_audio.workspace = true
 sf_audio_bevy.workspace = true
 sf_video.workspace = true

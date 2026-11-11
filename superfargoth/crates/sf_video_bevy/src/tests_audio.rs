@@ -105,6 +105,7 @@ fn playback() -> Playback {
         recycle,
         pending: None,
         clock_start: None,
+        paused_at: None,
     }
 }
 

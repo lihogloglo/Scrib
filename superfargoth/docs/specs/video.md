@@ -87,3 +87,11 @@ thread, drained by a bevy_audio `Decodable` (rodio 0.22 f32 `Source`, `add_audio
 before the device pulls any (or with no track/device) the clock stays `Time<Real>`. A loop pass ends at the longer of
 picture and sound, the shorter padded, so both restart together. `Bus::Movie` in `sf_audio` (`COUNT` 8, `USER` 7) and
 `AUDIO_BUSES` ("movie"). Left (V3b): skip, ducking, pause when hidden/minimised, output-latency compensation.
+
+## As built (V3b, 2026-11-11)
+
+`sf_video_bevy/src/control.rs`: `VideoPlayer::skippable(bool)`: Escape/Enter/Space, left click, pad South/East/Start
+end it (press consumed), `VideoSkipped` then `VideoFinished`; raw Bevy input, not the UI router yet. Ducking: a
+`"video"` hold on `sf_audio_bevy::AudioDucking` (music, ambience, SFX, voice −60 dB) while a sounded video plays.
+Pause (clock shifted on resume, decode and sink paused): entity not `InheritedVisibility` (only with `VisibilityPlugin`,
+`VideoPauseWhenHidden`), primary window size 0 (Windows minimise), not visible, or `WindowOccluded`.
