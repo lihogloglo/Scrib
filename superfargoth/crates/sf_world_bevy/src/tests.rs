@@ -622,6 +622,9 @@ struct SceneLog {
     covereds: HashMap<IVec3, u32>,
     uploads: HashMap<IVec3, u32>,
     releases: HashMap<IVec3, u32>,
+    /// The `indexed` ids `covered` got, and those `upload` got in `SceneCellCx::indexed`.
+    covered_ids: HashMap<IVec3, Vec<PlacementId>>,
+    upload_ids: HashMap<IVec3, Vec<PlacementId>>,
 }
 
 /// A test [`CellScene`]: logs every call and reports `covered` for the cells the
@@ -655,12 +658,14 @@ impl CellScene for TestScene {
         self.log().readies += 1;
         self.ready.load(Ordering::Acquire)
     }
-    fn covered(&self, _world: &World, _ws: &WorldspaceId, cell: IVec3, _indexed: &[PlacementId]) -> Option<Arc<HashSet<PlacementId>>> {
+    fn covered(&self, _world: &World, _ws: &WorldspaceId, cell: IVec3, indexed: &[PlacementId]) -> Option<Arc<HashSet<PlacementId>>> {
         *self.log().covereds.entry(cell).or_default() += 1;
+        self.log().covered_ids.insert(cell, indexed.to_vec());
         self.covered.get(&cell).cloned()
     }
     fn upload(&self, _world: &mut World, cx: &SceneCellCx<'_>) -> u64 {
         *self.log().uploads.entry(cx.cell).or_default() += 1;
+        self.log().upload_ids.insert(cx.cell, cx.indexed.to_vec());
         self.bytes(cx.worldspace, cx.cell)
     }
     fn release(&self, _world: &mut World, _ws: &WorldspaceId, cell: IVec3) {
@@ -744,6 +749,7 @@ fn scene_covered_placements_load_no_models_and_spawn_nothing() {
     let map = covered_in(target);
     let n = u64::try_from(map[&target].len()).unwrap();
     assert!(n > 4, "{n} placements in the covered cell: too few to be a test");
+    let target_ids = map[&target].clone();
 
     // Every placement at Level::Near: the level the scene draws.
     let (base, base_parts, base_spawn, _base_app) = stream_in(dir.path(), None, f32::MAX);
@@ -768,6 +774,12 @@ fn scene_covered_placements_load_no_models_and_spawn_nothing() {
     // counted once.
     assert_eq!(scene.log().uploads.get(&target).copied(), Some(1));
     assert_eq!(stats.scene_upload_bytes, 4096);
+    // `upload` got the cell's indexed ids in index order: the very list `covered` got, which
+    // names every placement of the cell, the covered ones among them (B5a seam).
+    let log = scene.log();
+    let ids = &log.upload_ids[&target];
+    assert_eq!(Some(ids), log.covered_ids.get(&target));
+    assert!(target_ids.iter().all(|p| ids.contains(p)), "{ids:?}");
 }
 
 /// The regression gate for all seven call sites: an installed hook that covers

@@ -283,6 +283,9 @@ struct Work {
     /// The cell's static-scene table ([`crate::CellScene::acquire`]); the fetch
     /// completes once it loaded or failed, so `covered` sees a resolved table.
     scene_table: Option<UntypedHandle>,
+    /// With `scene`: the fetch's ids of the cell's *indexed* placements, in index order, kept
+    /// from `covered` until `reveal` hands them to `upload` ([`SceneCellCx::indexed`]).
+    scene_ids: Arc<[PlacementId]>,
     /// Its members, once validated against the fetched placements: no model,
     /// no visuals of their own.
     members: Arc<HashSet<PlacementId>>,
@@ -831,6 +834,9 @@ impl Streaming {
             let work = self.rt.work.entry(id).or_default();
             work.placements = placements;
             work.models = models.into_iter().collect();
+            if work.scene {
+                work.scene_ids = indexed.into();
+            }
             // A dropped precombine is a fallback whatever the scene covers.
             if members.is_none() {
                 work.near = None;
@@ -1351,7 +1357,7 @@ impl Runtime {
         // Before the reveal, so the cell's instances are in the scene buffer by
         // the time its group becomes visible. One invocation, which must
         // complete (`CellScene::upload`): this stage item is not resumable.
-        if self.work.get(&request.id).is_some_and(|w| w.scene)
+        if let Some(ids) = self.work.get(&request.id).filter(|w| w.scene).map(|w| w.scene_ids.clone())
             && let Some(scene) = self.scene.0.clone()
         {
             let cx = SceneCellCx {
@@ -1359,6 +1365,7 @@ impl Runtime {
                 cell: request.cell,
                 cell_origin: self.info(&request.worldspace).partition.cell_origin(request.cell),
                 level: request.to,
+                indexed: &ids,
             };
             self.stats.scene_upload_bytes += scene.upload(world, &cx);
         }

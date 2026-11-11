@@ -604,7 +604,7 @@ fn release_is_idempotent_when_planned_committed_or_fallen_back() {
     // Committed.
     assert!(hook.acquire(f.app.world(), &ws(), cell).is_some());
     pump(&mut f.app, "planned again", |app| ready(app, cell));
-    let cx = SceneCellCx { worldspace: &ws(), cell, cell_origin: WorldPos::ORIGIN, level: sf_world::Level::Near };
+    let cx = SceneCellCx { worldspace: &ws(), cell, cell_origin: WorldPos::ORIGIN, level: sf_world::Level::Near, indexed: &f.indexed };
     assert!(hook.upload(f.app.world_mut(), &cx) > 0);
     assert!(f.state().space.resident(cell).is_some() && f.state().tables.contains_key(&cell));
     assert!(ready(&mut f.app, cell), "a committed cell is ready");
@@ -640,7 +640,7 @@ fn chain_assets_outlive_the_first_cell_and_drop_with_the_last() {
     let other = cell + IVec3::Z;
     let hook = SceneHook;
     let commit = |f: &mut Fixture, c: IVec3| {
-        let cx = SceneCellCx { worldspace: &ws(), cell: c, cell_origin: WorldPos::ORIGIN, level: sf_world::Level::Near };
+        let cx = SceneCellCx { worldspace: &ws(), cell: c, cell_origin: WorldPos::ORIGIN, level: sf_world::Level::Near, indexed: &f.indexed };
         hook.upload(f.app.world_mut(), &cx)
     };
     assert!(hook.acquire(f.app.world(), &ws(), cell).is_some());
@@ -727,7 +727,7 @@ fn planned(f: &mut Fixture, cell: IVec3) -> CellPlan {
 }
 
 fn commit(f: &mut Fixture, cell: IVec3) -> u64 {
-    let cx = SceneCellCx { worldspace: &ws(), cell, cell_origin: WorldPos::ORIGIN, level: sf_world::Level::Near };
+    let cx = SceneCellCx { worldspace: &ws(), cell, cell_origin: WorldPos::ORIGIN, level: sf_world::Level::Near, indexed: &f.indexed };
     SceneHook.upload(f.app.world_mut(), &cx)
 }
 
@@ -1019,4 +1019,101 @@ fn a_committed_cell_queues_one_resolved_write_per_plan_write() {
             instance_bytes(&[gpu_instance(row, offset, want.active)])
         );
     }
+}
+
+// -- promotion (B5a) ------------------------------------------------------------
+
+/// Sends one [`PromotePlacement`] (by its global id) for local placement `k` of `cell`, runs a
+/// frame and returns the writes it queued.
+fn promote(f: &mut Fixture, cell: IVec3, k: usize) -> Vec<BatchSlotWrite> {
+    let before = f.app.world().resource::<SceneUploads>().writes.len();
+    f.app.world_mut().write_message(PromotePlacement { worldspace: ws(), cell, placement: f.indexed[k] });
+    f.app.update();
+    f.app.world().resource::<SceneUploads>().writes[before..].to_vec()
+}
+
+/// B5a test 1: promoting a two-part placement queues exactly its two slots, inactive, at the
+/// batch, slot and table row its commit wrote them to.
+#[test]
+fn promotion_queues_one_inactive_write_per_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    let plan = stream_cell_in(&mut f, cell);
+    assert_eq!(f.parts[1].len(), 2, "placement 1 draws both chains");
+    assert!(plan.covered.contains(&1));
+    let got = promote(&mut f, cell, 1);
+
+    let world = f.app.world();
+    let state = f.state();
+    let view = world.resource::<Assets<SceneTableAsset>>().get(&state.tables[&cell]).unwrap().view().unwrap();
+    let want: Vec<_> = plan.writes.iter().filter(|w| view.instance(w.index as usize).unwrap().placement == 1).collect();
+    assert_eq!(want.len(), 2);
+    assert_eq!(got.len(), 2);
+    let frame = world.get_resource::<sf_world_bevy::WorldOrigin>().map_or(IVec3::ZERO, |o| o.cell);
+    let offset = sf_scene::cell_offset(view.origin_cell(), WorldPos::new(frame, Vec3::ZERO));
+    for (got, want) in got.iter().zip(&want) {
+        let entity = state.batches[want.batch as usize].expect("a committed batch has its entity").entity;
+        assert_eq!(got.entity, MainEntity::from(entity));
+        assert_eq!((got.batch, got.slot), (want.batch, want.slot));
+        assert!(!got.active());
+        let row = view.instance(want.index as usize).unwrap().transform;
+        assert_eq!(instance_bytes(&[got.instance]), instance_bytes(&[gpu_instance(row, offset, false)]));
+    }
+}
+
+/// B5a test 2: a second promotion of the same placement queues nothing, and neither does one
+/// of a placement the scene does not draw (one of its parts overflowed: the entity path has it).
+#[test]
+fn promotion_is_one_way_and_skips_what_the_scene_does_not_draw() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(overflow_split), true, 4);
+    let cell = f.cell;
+    let plan = stream_cell_in(&mut f, cell);
+    assert!(!plan.overflowed.is_empty(), "the fixture overflows chain 1's batch");
+    assert!(plan.covered.contains(&0), "placement 0 draws chain 0 only, which fits");
+    let uncovered: Vec<usize> =
+        (0..PLACEMENTS).filter(|&k| !plan.covered.contains(&u32::try_from(k).unwrap())).collect();
+    assert!(uncovered.contains(&3), "placement 3's chain-1 part overflowed: {uncovered:?}");
+
+    assert_eq!(promote(&mut f, cell, 0).len(), 1);
+    assert!(promote(&mut f, cell, 0).is_empty(), "promotion is one way");
+    for k in uncovered {
+        assert!(promote(&mut f, cell, k).is_empty(), "placement {k} is not the scene's");
+    }
+    assert_eq!(f.state().space.stats().promoted, 1);
+}
+
+/// B5a test 3: a promotion of a cell still loading, of a released cell or of an unknown
+/// worldspace is dropped; promotions die with the cell, so streaming it back in draws all of it.
+#[test]
+fn promotion_of_a_cell_that_is_not_resident_is_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some());
+    let _ = planned(&mut f, cell);
+    assert!(promote(&mut f, cell, 1).is_empty(), "planned, not committed");
+    assert!(commit(&mut f, cell) > 0);
+    assert_eq!(promote(&mut f, cell, 1).len(), 2);
+    assert_eq!(f.state().space.stats().promoted, 1);
+
+    let before = f.app.world().resource::<SceneUploads>().writes.len();
+    let elsewhere = PromotePlacement { worldspace: WorldspaceId::new("nowhere"), cell, placement: f.indexed[3] };
+    f.app.world_mut().write_message(elsewhere);
+    f.app.update();
+    assert_eq!(f.app.world().resource::<SceneUploads>().writes.len(), before, "unknown worldspace");
+
+    SceneHook.release(f.app.world_mut(), &ws(), cell);
+    assert!(!f.state().covered.contains_key(&cell), "the map drops with the table");
+    assert!(promote(&mut f, cell, 1).is_empty(), "released");
+    assert!(promote(&mut f, cell, 3).is_empty(), "released");
+    assert_eq!(f.state().space.stats().promoted, 0);
+
+    let before = f.app.world().resource::<SceneUploads>().writes.len();
+    let plan = stream_cell_in(&mut f, cell);
+    let writes = &f.app.world().resource::<SceneUploads>().writes[before..];
+    assert_eq!(writes.len(), plan.writes.len());
+    assert!(plan.writes.iter().all(|w| w.active), "{:?}", plan.writes);
+    assert!(writes.iter().all(BatchSlotWrite::active), "placement 1 is drawn again");
 }

@@ -40,6 +40,9 @@ pub struct SceneCellCx<'a> {
     /// The level this load is reaching (always [`Level::Near`] while only the
     /// near ring has a scene).
     pub level: Level,
+    /// The cell's placement ids in index order, as [`CellScene::covered`] got them (empty when
+    /// the load has no scene): how the hook maps its cell-local ids to [`PlacementId`]s later.
+    pub indexed: &'a [PlacementId],
 }
 
 /// A static scene's per-cell residency (implemented by the scene plugin).
@@ -76,7 +79,8 @@ pub trait CellScene: Send + Sync + 'static {
     /// `indexed` is the cell's placement ids in *index* order (the world
     /// index page's order, before any overlay): a baked table names its
     /// placements by that cell-local index, so this is how its ids become
-    /// [`PlacementId`]s.
+    /// [`PlacementId`]s. The same ids reach [`upload`](Self::upload) as
+    /// [`SceneCellCx::indexed`].
     ///
     /// The `Arc` is shared with `Work::members`, so the common case — a scene
     /// and no precombine — clones no set.
@@ -89,6 +93,8 @@ pub trait CellScene: Send + Sync + 'static {
     ) -> Option<Arc<HashSet<PlacementId>>>;
     /// Queues this cell's instance and chain-slot writes, before its level
     /// group is revealed; returns the bytes queued, for the counters.
+    /// [`SceneCellCx::indexed`] lets it keep the cell's local → [`PlacementId`] map past
+    /// `covered`, for promotions while the cell is resident.
     ///
     /// **One invocation per load, and it must complete** (owner 2026-11-10):
     /// the upload stage item is not resumable (`Streaming::reveal` removes the

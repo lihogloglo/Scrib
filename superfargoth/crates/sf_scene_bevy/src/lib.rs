@@ -13,7 +13,8 @@
 //! **B4a state.** Cells load, resolve their chains and slabs, plan, commit and
 //! stream out; `covered` follows the plan; every batch a committed plan names
 //! is a `GpuBatchedMesh3d` entity with its range list and material, and its
-//! slots are written into the batch outputs ([`upload`]). The scene buffer (B4b)
+//! slots are written into the batch outputs ([`upload`]); a [`PromotePlacement`]
+//! writes a placement's slots inactive (B5a). The scene buffer (B4b)
 //! is not uploaded yet. [`ScenePlugin`] is in no `add_plugins` call and
 //! [`baked_extensions`] is in no extensions map, so the tree ships identically
 //! until the game side (C1/C2) installs it. `sf_world_bevy` must never depend
@@ -41,8 +42,8 @@ mod residency_tests;
 pub use assets::{SceneLoadError, SceneTableAsset, SceneTableLoader};
 pub use chains::{ChainAssets, ChainMaterials};
 pub use residency::{
-    BatchEntity, BatchZeroFill, CellLoad, CellUpload, LoadPhase, SLAB_WAIT_FRAMES, SceneBatch, SceneFrame, SceneHook,
-    SceneInbox, SceneSpaces, SceneUploads, SpaceState, despawn_empty_batches, poll_cell_loads, tick_frame,
+    BatchEntity, BatchZeroFill, CellLoad, CellUpload, LoadPhase, PromotePlacement, SLAB_WAIT_FRAMES, SceneBatch, SceneFrame, SceneHook,
+    SceneInbox, SceneSpaces, SceneUploads, SpaceState, apply_promotions, despawn_empty_batches, poll_cell_loads, tick_frame,
 };
 pub use slabs::{ChainIds, ChainSlabTable, MeshSlabIds, extract_chain_slabs};
 pub use upload::{
@@ -101,7 +102,7 @@ pub enum SceneSystems {
     Frame,
     /// `Update`, after `StreamingSystems::Drive`: [`poll_cell_loads`].
     Residency,
-    /// `Update`, after [`Self::Residency`]: promotions (B5; empty until then).
+    /// `Update`, after [`Self::Residency`]: [`apply_promotions`].
     Promote,
 }
 
@@ -133,7 +134,9 @@ impl Plugin for ScenePlugin {
                 ),
             )
             .add_systems(First, (tick_frame, despawn_empty_batches).chain().in_set(SceneSystems::Frame))
-            .add_systems(Update, poll_cell_loads.in_set(SceneSystems::Residency));
+            .add_message::<PromotePlacement>()
+            .add_systems(Update, poll_cell_loads.in_set(SceneSystems::Residency))
+            .add_systems(Update, apply_promotions.in_set(SceneSystems::Promote));
         if self.config.enabled {
             app.insert_resource(SceneCells(Some(Arc::new(SceneHook))));
         }

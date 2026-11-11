@@ -91,6 +91,10 @@ pub struct SpaceState {
     /// The table of every resident cell: `SceneSpace::promote` needs its view
     /// (B3 brief §3 item 16), so it lives as long as the cell.
     pub tables: HashMap<IVec3, Handle<SceneTableAsset>>,
+    /// Next to `tables`, each resident cell's covered placements, global → the
+    /// table's cell-local id (`plan.covered` through `SceneCellCx::indexed`): how
+    /// [`PromotePlacement`] reaches `SceneSpace::promote`. Dropped with the table.
+    pub covered: HashMap<IVec3, HashMap<PlacementId, sf_scene::PlacementId>>,
 }
 
 impl SpaceState {
@@ -101,6 +105,7 @@ impl SpaceState {
             batches: Vec::new(),
             loading: HashMap::new(),
             tables: HashMap::new(),
+            covered: HashMap::new(),
         }
     }
 
@@ -632,13 +637,13 @@ fn plan(
 /// table row is a bug, dropped with an error. An origin shift after this
 /// leaves the outputs stale (`upload` module docs, the known gap).
 fn queue_slot_writes(
-    world: &World,
+    tables: &Assets<SceneTableAsset>,
     state: &SpaceState,
     cell: IVec3,
     plan_writes: &[SlotWrite],
     frame: IVec3,
 ) -> Vec<BatchSlotWrite> {
-    let view = state.tables.get(&cell).and_then(|t| world.resource::<Assets<SceneTableAsset>>().get(t)).and_then(|a| a.view().ok());
+    let view = state.tables.get(&cell).and_then(|t| tables.get(t)).and_then(|a| a.view().ok());
     let Some(view) = view else {
         log::error!("sf_scene_bevy: cell {cell}'s table went away before its batch slots were written");
         return Vec::new();
@@ -659,6 +664,62 @@ fn queue_slot_writes(
         });
     }
     out
+}
+
+/// Gameplay's request that the scene stop drawing one placement (scene-runtime-plan.md §7): its
+/// slots stay allocated and are written inactive from the next publish. The scene never spawns;
+/// the sender spawns (and reveals) the placement's entity first, so there is no pop. One way:
+/// the promotion lasts until the cell streams out.
+#[derive(Message, Clone, Debug, PartialEq, Eq)]
+pub struct PromotePlacement {
+    pub worldspace: WorldspaceId,
+    pub cell: IVec3,
+    /// The global id (`sf_world::PlacementId`), not the table's cell-local one.
+    pub placement: PlacementId,
+}
+
+/// `Update`, in `SceneSystems::Promote`: each [`PromotePlacement`] maps its placement to the
+/// table's local id ([`SpaceState::covered`]), promotes it (`SceneSpace::promote`) and queues
+/// one inactive [`BatchSlotWrite`] per slot in [`SceneUploads::writes`]. An unknown worldspace,
+/// a cell not resident, a placement the cell does not draw (overflowed, failed chain, not a
+/// static) or one already promoted queues nothing.
+pub fn apply_promotions(
+    mut promotions: MessageReader<PromotePlacement>,
+    mut spaces: ResMut<SceneSpaces>,
+    tables: Res<Assets<SceneTableAsset>>,
+    origin: Option<Res<WorldOrigin>>,
+    mut uploads: ResMut<SceneUploads>,
+) {
+    let frame = origin.map_or(IVec3::ZERO, |o| o.cell);
+    for m in promotions.read() {
+        let Some(state) = spaces.0.get_mut(&m.worldspace) else {
+            log::debug!("sf_scene_bevy: promotion of {:?} in {}: no scene there", m.placement, m.worldspace);
+            continue;
+        };
+        let Some(&local) = state.covered.get(&m.cell).and_then(|c| c.get(&m.placement)) else {
+            log::debug!(
+                "sf_scene_bevy: promotion of {:?} in cell {} of {}: the cell is not resident or does not draw it",
+                m.placement,
+                m.cell,
+                m.worldspace
+            );
+            continue;
+        };
+        let Some(view) = state.tables.get(&m.cell).and_then(|t| tables.get(t)).and_then(|a| a.view().ok()) else {
+            log::error!("sf_scene_bevy: cell {}'s table went away while it was resident; promotion dropped", m.cell);
+            continue;
+        };
+        let writes = match state.space.promote(m.cell, local, &view) {
+            Ok(writes) => writes,
+            Err(e) => {
+                log::debug!("sf_scene_bevy: promotion of {:?} in cell {}: {e}", m.placement, m.cell);
+                continue;
+            }
+        };
+        if !writes.is_empty() {
+            uploads.writes.extend(queue_slot_writes(&tables, state, m.cell, &writes, frame));
+        }
+    }
 }
 
 /// The static scene's streaming hook, installed by `ScenePlugin` as
@@ -743,6 +804,9 @@ impl CellScene for SceneHook {
             };
             state.space.commit_in(cx.cell, &plan);
             state.tables.insert(cx.cell, table);
+            // The promotion map: `covered`'s answer, kept (a local past `indexed` was logged there).
+            let covered = plan.covered.iter().filter_map(|&local| Some((*cx.indexed.get(local as usize)?, local))).collect();
+            state.covered.insert(cx.cell, covered);
             if let Some(key) = state.space.take_overflow_warning() {
                 log::warn!(
                     "sf_scene_bevy: batch {key:?} of {} is full ({} slots): what overflows spawns as entities (scene/slots/overflow counts it; this warns once)",
@@ -758,7 +822,7 @@ impl CellScene for SceneHook {
             rebuild_ranges(world, state, changed);
             // After `ensure_batches`: every batch of the plan has its entity now.
             let frame = world.get_resource::<WorldOrigin>().map_or(IVec3::ZERO, |o| o.cell);
-            let writes = queue_slot_writes(world, state, cx.cell, &plan.writes, frame);
+            let writes = queue_slot_writes(world.resource::<Assets<SceneTableAsset>>(), state, cx.cell, &plan.writes, frame);
             world.resource_mut::<SceneUploads>().writes.extend(writes);
             (plan.scene_bytes.len() as u64).saturating_add(plan.writes.len() as u64 * SLOT_BYTES)
         })
@@ -799,6 +863,7 @@ impl CellScene for SceneHook {
                     Err(e) => debug_assert!(false, "streaming out resident cell {cell}: {e}"),
                 }
                 state.tables.remove(&cell);
+                state.covered.remove(&cell);
                 true
             } else {
                 false
