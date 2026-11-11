@@ -1773,3 +1773,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-11 (menus, owner): main menu is a front end with no world (`AppPhase`, menus.md); built front end first, then
   video, options v2, textured Morrowind art. Video decoder: pure-Rust Bink 1 (`infinitier_bik_decoder`, GPL-3.0+) gated on
   a V1 measurement, FFmpeg-port fallback, FFmpeg only later for mod formats. Intro logos play on first launch only.
+- 2026-11-11 (static scene B3a): `CellScene::covered` takes the cell's indexed-page placement ids (tables name placements
+  by cell-local index); chain slabs resolve by mesh key (`ChainSlabs::slabs_keyed`, new chains get their slot inside
+  `plan_in`); chain materials are one per `material_key`, made before planning so the bind group is in the batch key.
