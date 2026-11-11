@@ -1,0 +1,15 @@
+[package]
+name = "sf_video"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy-free video decoding for superfargoth: the VideoSource trait, the decoder registry, Bink 1"
+
+# Bevy-free core (video.md "Design"): takes a reader, never a path; `sf_vfs` access is the caller's job.
+[dependencies]
+infinitier_bik_decoder.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -137,6 +137,8 @@ spade = "2.15"
 tempfile = "3"
 thiserror = "2"
 toml = "0.9"
+# Bink 1 video decoding (sf_video; video.md "Reuse"). GPL-3.0-or-later, pure Rust.
+infinitier_bik_decoder = "0.1.0"
 # FBX import at bake time (sf_anim `fbx` feature): bindings to the single-file ufbx C library, built with `cc`.
 ufbx = "0.11.5"
 # Same version Bevy 0.20 renders with. Dev-dependency only: headless GPU twin tests (sf_wind).

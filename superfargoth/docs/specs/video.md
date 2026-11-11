@@ -62,3 +62,11 @@ waits when early (FFmpeg's ffplay, OpenMW `videostate.cpp`). Loops seek to start
 
 1. **Chosen:** start with `infinitier_bik_decoder` (pure Rust, GPL-3.0-or-later, young single-author crate),
    measured in V1 with the FFmpeg-port fallback; FFmpeg later for mod formats only.
+
+## As built (V1, 2026-11-11)
+
+`superfargoth/crates/sf_video` (Bevy-free): `VideoInfo`, planar YUV 4:2:0 `Frame` (+ optional alpha; the decoder's
+native output) and `yuv_to_rgba`, `VideoSource`, `VideoDecoders` (`probe`: `BIK` + version; `KB2` recognised,
+unsupported error). `bink.rs` drives `infinitier_bik_decoder`'s low-level parts, not its streaming decoder (no rewind,
+copies frames, one audio track, can panic on a bad audio length). Gate passed (`tests/bik_corpus.rs`, ignored
+measurement): all 17 Morrowind files, all frames, 0.54-1.55 ms/frame at 640×480 release; audio length matches video.

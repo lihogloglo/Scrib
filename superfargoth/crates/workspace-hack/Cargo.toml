@@ -61,6 +61,7 @@ bytemuck = { version = "1", default-features = false, features = ["aarch64_simd"
 byteorder = { version = "1" }
 concurrent-queue = { version = "2" }
 constant_time_eq = { version = "0.4", default-features = false, features = ["std"] }
+crc32fast = { version = "1" }
 crossbeam-channel = { version = "0.5" }
 crossbeam-utils = { version = "0.8" }
 derive_more = { version = "2", features = ["add", "add_assign", "as_ref", "constructor", "debug", "deref", "deref_mut", "display", "from", "into", "is_variant", "try_unwrap", "unwrap"] }
@@ -105,6 +106,7 @@ ron = { version = "0.12" }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 serde_json = { version = "1", features = ["alloc", "raw_value"] }
+simd-adler32 = { version = "0.3" }
 slotmap = { version = "1", default-features = false, features = ["std"] }
 smallvec = { version = "1", default-features = false, features = ["const_new", "serde", "union"] }
 smol_str = { version = "0.2", features = ["serde"] }
