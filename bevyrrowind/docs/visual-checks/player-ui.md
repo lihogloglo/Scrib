@@ -250,14 +250,15 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 
 ### MM-1: Release start: main menu with no world behind it, New game (`bevyrrowind` with no arguments)
 - Build `cargo build -p bevyrrowind --features dev`, run `target/debug/bevyrrowind.exe` (no subcommand).
-- Front end (F1, 2026-11-11): the main menu over a plain near-black background, **no world**: no terrain, sky, NPCs or
-  HUD behind it, window title stays "Bevyrrowind" (no fps/cells line). Esc does nothing. Options, Quit as before.
+- Front end (F1 + B1, 2026-11-11): the main menu over Morrowind's looping menu video (`mw_menu.bik`, silent; log
+  `main menu: backdrop video video/mw_menu.bik`), filling the window without stretching (cover: at 16:9 the
+  4:3 video is cropped top and bottom, nothing squashed), **no world**: no terrain, sky, NPCs or HUD behind it, window title stays "Bevyrrowind" (no fps/cells line). Esc does nothing. Options, Quit as before.
 - New Game: the menu closes, Seyda Neen streams in outside the Census and Excise Office, the player can walk; Esc opens
   the pause menu. Log: `main menu: new game`, then `app phase: start area resident, in game`.
 - Interim (F3 does it properly): Continue / Load Game first build the world at the new-game start, then Continue loads
   the newest save in game (a normal load fade) and Load opens the save list over the game (Esc: play the new game).
-- Dev runs (`view`, `scene`) unchanged: no menu, the world at once. Known: no title art yet (B1), no loading screen (F4).
-- Owner 2026-10-30: rejected the menu over the live world (wants title art/video). Status: awaiting owner (F1).
+- Dev runs (`view`, `scene`) unchanged: no menu, the world at once. Known: no loading screen (F4), video has no sound path yet (V3).
+- Owner 2026-10-30: rejected the menu over the live world (wants title art/video). Status: awaiting owner (F1 + B1).
 
 ### PL-6: Recovery delay after jumping down from a high box (owner report)
 - Kind: synthetic. `scene level-anim-ledges`, F11; stand on a high box, Space off it toward the ground, keep W held.
