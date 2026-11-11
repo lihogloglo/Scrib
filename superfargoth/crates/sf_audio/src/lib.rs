@@ -40,14 +40,17 @@ pub enum Bus {
     Ui,
     /// Speech (dialogue, greetings, combat barks).
     Voice,
+    /// Video sound tracks (intro, menu and cutscene movies; video.md).
+    Movie,
 }
 
 impl Bus {
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
     pub const ALL: [Bus; Self::COUNT] =
-        [Bus::Master, Bus::Ambience, Bus::Weather, Bus::Sfx, Bus::Music, Bus::Ui, Bus::Voice];
+        [Bus::Master, Bus::Ambience, Bus::Weather, Bus::Sfx, Bus::Music, Bus::Ui, Bus::Voice, Bus::Movie];
     /// The buses a settings menu shows (audio.md "Volume mixer"); `Weather` follows `Ambience`.
-    pub const USER: [Bus; 6] = [Bus::Master, Bus::Music, Bus::Sfx, Bus::Voice, Bus::Ambience, Bus::Ui];
+    pub const USER: [Bus; 7] =
+        [Bus::Master, Bus::Music, Bus::Sfx, Bus::Voice, Bus::Ambience, Bus::Ui, Bus::Movie];
     const fn index(self) -> usize {
         self as usize
     }
@@ -69,6 +72,7 @@ impl Bus {
             Bus::Music => "music",
             Bus::Ui => "ui",
             Bus::Voice => "voice",
+            Bus::Movie => "movie",
         }
     }
     pub fn from_name(name: &str) -> Option<Bus> {

@@ -19,7 +19,7 @@ use crate::registry::{FRAMEWORK_MOD, UiRegistry};
 
 /// Volume buses on the framework's audio settings page, in menu order
 /// (the names `sf_audio::Bus::USER` uses).
-pub const AUDIO_BUSES: [&str; 6] = ["master", "music", "sfx", "voice", "ambience", "ui"];
+pub const AUDIO_BUSES: [&str; 7] = ["master", "music", "sfx", "voice", "ambience", "ui", "movie"];
 
 /// Key of a bus's volume slider (`sf.audio_music_volume`): a float 0..1, the
 /// slider position (the audio side maps it to dB).

@@ -210,3 +210,18 @@ fn ducks_do_not_stack_and_holds_duck_children() {
     snap.tick(0.0, |b| b == Bus::Ui);
     assert!((snap.duck_db(Bus::Sfx) - 3.0).abs() < 1e-6);
 }
+
+#[test]
+fn the_movie_bus_is_a_menu_bus_under_master() {
+    assert!(Bus::ALL.contains(&Bus::Movie) && Bus::USER.contains(&Bus::Movie));
+    assert_eq!(Bus::Movie.parent(), Some(Bus::Master));
+    assert_eq!(Bus::from_name("movie"), Some(Bus::Movie));
+    let mut m = Mixer::default();
+    assert_eq!(m.bus_gain(Bus::Movie), 1.0);
+    m.set_volume(Bus::Master, 0.5);
+    m.set_volume(Bus::Movie, 0.5);
+    assert!((m.bus_gain(Bus::Movie) - 0.25).abs() < 1e-7);
+    m.set_muted(Bus::Movie, true);
+    assert_eq!(m.bus_gain(Bus::Movie), 0.0);
+    assert_eq!(m.bus_gain(Bus::Music), 0.5, "other buses keep theirs");
+}

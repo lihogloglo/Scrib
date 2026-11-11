@@ -78,3 +78,12 @@ measurement): all 17 Morrowind files, all frames, 0.54-1.55 ms/frame at 640×480
 `image`, `info`, `frames_shown`, `is_finished`). Decode thread with a 3-frame RGBA queue (`QUEUE_FRAMES`), clock on
 `Time<Real>`, loop by `seek_start`, despawn or removal stops the thread. Per-frame `Assets::get_mut` re-uploads in place
 (0.20: `Modified` → extract → `GpuImage::prepare_asset` `write_texture`). Not yet: audio, sync, skip, pause when hidden (V3).
+
+## As built (V3a, 2026-11-11)
+
+Audio: `sf_video_bevy/src/audio.rs`: a lock-free SPSC i16 ring (whole frames, underrun = silence) filled by the decode
+thread, drained by a bevy_audio `Decodable` (rodio 0.22 f32 `Source`, `add_audio_source`), played with `AudioPlayer` on
+`Bus::Movie` (gain from `AudioMixer` when `sf_audio_bevy` is present). Samples handed to the device drive the clock;
+before the device pulls any (or with no track/device) the clock stays `Time<Real>`. A loop pass ends at the longer of
+picture and sound, the shorter padded, so both restart together. `Bus::Movie` in `sf_audio` (`COUNT` 8, `USER` 7) and
+`AUDIO_BUSES` ("movie"). Left (V3b): skip, ducking, pause when hidden/minimised, output-latency compensation.

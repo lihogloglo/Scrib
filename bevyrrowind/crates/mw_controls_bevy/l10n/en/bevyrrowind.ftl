@@ -58,6 +58,8 @@ set-audio-ambience-volume = Ambience Volume
 set-audio-ambience-muted = Mute Ambience
 set-audio-ui-volume = Menu Volume
 set-audio-ui-muted = Mute Menus
+set-audio-movie-volume = Movie Volume
+set-audio-movie-muted = Mute Movies
 
 ## Save/load screen (mw_saves_bevy menu.rs; fields after OpenMW's savegame dialog). The default
 ## name is OpenMW's "Day 24 - 16 Last Seed 7 p.m."; reasons `saves-reason-<SaveReason token>`.
@@ -111,3 +113,8 @@ main-menu-new = New Game
 main-menu-load = Load Game
 main-menu-options = Options
 main-menu-quit = Quit
+
+## Pause menu (sf_ui_screens pause_menu.rs; mw_exterior_bevy pause_menu.rs localizes these):
+## the entry back to the front end and its question.
+pause-main-menu = Main menu
+pause-confirm-main-menu = Return to the main menu? Unsaved progress will be lost.
