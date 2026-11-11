@@ -93,6 +93,14 @@ Loading → InGame: the start worldspace's directory in, then (release) a burst 
 until F3: Continue/Load build the world at the new-game start, then load or open the save list in game. Plugin
 `Startup` resources (sky entities, precipitation layers, HUD root) still spawn in Boot: F2's teardown must scope them.
 
+**As built (F2-F3, 2026-11-11).** Teardown on `OnExit(WorldAlive)` (`mw_exterior_bevy/src/teardown.rs`): worldspace
+roots despawned recursively, `Streaming`/registry/overlay/fade/start resources replaced. New game applies a
+`NewGameBaseline` captured on the first Frontend (`sf_save_bevy/src/baseline.rs`; session reset to default, the
+first save picks the world id). Pause menu "Main menu" asks Yes/No, then Frontend. Continue/Load from the front end:
+`LoadingSave` holds streaming's `Drive` set, the `LoadRequest` goes out on entering Loading with a zero fade-out, the
+character section's `StartTravel { reload }` moves the player at the cut, streaming starts there; a failed load returns
+to Frontend. The save screen opens over the main menu (`DeferLoads` → `LoadChosen`).
+
 ### 2. Backdrop and title
 
 - The content pack registers an ordered **backdrop candidate list** (adapter hook `MenuBackdropCandidates`):

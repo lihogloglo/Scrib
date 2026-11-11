@@ -255,8 +255,10 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   4:3 video is cropped top and bottom, nothing squashed), **no world**: no terrain, sky, NPCs or HUD behind it, window title stays "Bevyrrowind" (no fps/cells line). Esc does nothing. Options, Quit as before.
 - New Game: the menu closes, Seyda Neen streams in outside the Census and Excise Office, the player can walk; Esc opens
   the pause menu. Log: `main menu: new game`, then `app phase: start area resident, in game`.
-- Interim (F3 does it properly): Continue / Load Game first build the world at the new-game start, then Continue loads
-  the newest save in game (a normal load fade) and Load opens the save list over the game (Esc: play the new game).
+- Continue / Load Game (F3): arrive at the save's place with no glimpse of Seyda Neen; Load shows the save list over
+  the menu (Back returns to it). Log: `app phase: loading`, `app phase: save loaded`, then `start area resident, in game`.
+- Pause menu (F2c): "Main menu" between Options and Quit asks Yes/No (No focused); Yes returns to the menu over the
+  video with no world left; New game from there starts fresh (log `main menu: new game from baseline`).
 - Dev runs (`view`, `scene`) unchanged: no menu, the world at once. Known: no loading screen (F4), video has no sound path yet (V3).
 - Owner 2026-10-30: rejected the menu over the live world (wants title art/video). Status: awaiting owner (F1 + B1).
 
@@ -271,3 +273,23 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Owner decision 2026-10-30: a movement lock belongs to damage only; no damage logic exists yet, so `land.hard` no
   longer commits or stops steering (base_rules.ron; test `hard_landing_never_stops_the_stick`). Re-check in a build
   after 2026-10-30 14:00. Status: awaiting owner.
+
+### PL-7: Player foot placement on slopes and stairs (P-IK1, 2026-11-11)
+- Kind: synthetic. `cargo dev scene level-flat-slopes` (cameras `ramps`, `stairs`) and `cargo dev scene level-anim-stairs`,
+  F11 player, Tab third person, 12:00. K is the A/B (log `walker foot placement on/off`; it switches walkers and player).
+- Before: the player got no ground samples (diagnosis `superfargoth/docs/research/ik-feel-diagnosis-2026-11-11.md`):
+  feet sank or floated 8-34 cm on ramps and treads, planted feet skated, no hip drop, trunk upright on ramps.
+- Walk and run up and down the 10/20/30° ramps and the three stairs; stop and turn sharply on a ramp. Look for: feet on
+  the ramp and on each tread (no sinking, no floating; the sim proxy floats a foot ~15 cm on 0.15 m treads at walk:
+  say if you see it), planted feet staying put on stops and quick turns, the hips
+  dropping onto the lower foot, the trunk leaning uphill; K off brings back the old floating feet.
+- Not this slice: a once-per-step hip bob on ramps, worse downhill (walker cause 2, slice P-IK3), now shows on the
+  player too. Mantles, attacks and rolls drop the probes (their clips place the feet). Status: awaiting owner.
+
+### PL-8: Nothing animates in the pause menu (P-IK2, 2026-11-11)
+- Kind: synthetic. `cargo dev scene level-anim-stairs` (walkers on the stairs), then `cargo dev scene level-flat-slopes`,
+  12:00. F11 player, Tab third person; stand on a tread and next to a wall (hand brace), walk, then Esc (pause menu).
+- Before: the animation stage kept running at dt 0 while paused (a walker's foot dropped ~14 cm for a frame on stairs,
+  the player's wall brace re-probed every frame).
+- Look for: while the menu is open nothing in the world moves (walker feet, hips, hands, the player's hands on the
+  wall); close it: walking resumes from the held pose with no pop or snap on the first frame. Status: awaiting owner.

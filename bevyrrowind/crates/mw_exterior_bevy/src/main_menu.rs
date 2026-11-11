@@ -6,10 +6,10 @@
 //!   (running `bevyrrowind` with no subcommand). Dev runs (`view`, `scene`) never open it.
 //! - **Leaving**: New game restores the new-game baseline (`sf_save_bevy::apply_baseline`,
 //!   captured on the first `Frontend` entry), closes the menu and enters `Loading` (the world
-//!   builds at the new-game start). Interim until F3 (Continue / Load from the front end): Continue and Load also start
-//!   at the new-game start, and once `InGame` Continue's load runs as an in-game load and Load
-//!   opens the save/load screen over the game ([`PendingFrontend`]). Should the menu close any
-//!   other way in the front end, the world loads too (never a front end without a menu).
+//!   builds at the new-game start). Continue, or a save chosen in the save/load screen, closes
+//!   the menus and enters `Loading` with a [`LoadingSave`]: the world builds at the save's place
+//!   (`phase.rs`), and a failed load comes back here. Should the menu close any other way in
+//!   the front end, the world loads too (never a front end without a menu).
 //! - **Pause**: the "`main_menu`" record declares `pause = "WhileOpen"`, so the virtual clock is
 //!   paused while it is open (`pause_menu.rs` `pause_time`, the pause menu's mechanism) and the
 //!   player's controls pause through the Menu-layer seam; the HUD hides under Menu screens.
@@ -19,7 +19,8 @@
 //!   (checked at open and again when the save/load screen closes, a delete may have emptied it).
 //!   Continue loads the newest save of any reason (`mw_saves_bevy::newest_save`, quickload's
 //!   search; `OpenMW`'s "return" does the same); Load opens the save/load screen in Load mode
-//!   (`mw_saves_bevy::menu`; its Back pops it). Both in game for now (above). New game closes the
+//!   over the menu (`mw_saves_bevy::menu`; its Back pops it, back to the menu), whose Load
+//!   choices come back as `LoadChosen` while the front end holds `DeferLoads`. New game closes the
 //!   menu and play begins; Options opens the options screen on top as the pause menu does
 //!   ([`crate::pause_menu::open_options`]); Quit asks (the screen), then exits.
 //!   Labels come from the builtin mod's Fluent file (`main-menu-<id>`).
@@ -36,11 +37,14 @@
 //!   menu background, `mainmenu.cpp` @ 97722d48), and the video carries the title art.
 
 use bevy::prelude::*;
+use mw_saves_bevy::menu::{DeferLoads, LoadChosen};
 use mw_saves_bevy::{OpenSaveLoad, SAVELOAD};
 use sf_app_bevy::AppPhase;
-use sf_app_bevy::bevy_state::prelude::{DespawnOnExit, NextState, OnEnter, in_state};
+use sf_app_bevy::bevy_state::prelude::{DespawnOnExit, NextState, OnEnter, OnExit, in_state};
 use sf_records::RecordDb;
-use sf_save_bevy::{LoadRequest, SaveConfig, SaveStorage};
+use sf_save_bevy::{SaveConfig, SaveStorage};
+
+use crate::phase::LoadingSave;
 use sf_ui::{BackdropCandidate, BackdropKind, UiRegistry, cover_size, resolve_backdrop};
 use sf_ui_bevy::{ScreenStackRes, UiLocalizer, UiRegistryRes, UiScreenRoot, UiSettingsStore};
 use sf_ui_screens::{MainMenuEntry, MainMenuEvent, MainMenuModel, MainMenuScreen, SaveLoadMode, ScreenSystems};
@@ -66,16 +70,6 @@ id = "main_menu"
 value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "main_menu" } }
 "#;
 
-/// Interim (until F3): what the front end's Continue or Load does once the world, built at the
-/// new-game start, is in game.
-#[derive(Resource, Debug, Clone, PartialEq, Eq)]
-pub enum PendingFrontend {
-    /// Continue: load this save (the in-game load path).
-    Load(std::path::PathBuf),
-    /// Load: open the save/load screen in Load mode over the game.
-    OpenLoadScreen,
-}
-
 /// After `pause_menu::add` and the app phases (`phase.rs`). `open`: the release start, whose
 /// front end shows the menu.
 pub fn add(app: &mut App, open: bool) {
@@ -84,20 +78,21 @@ pub fn add(app: &mut App, open: bool) {
     }
     let Some(mut registry) = app.world_mut().get_resource_mut::<UiRegistryRes>() else { return };
     registry.0.extend_screens(&screens());
-    // Continue's request and Load's (the save plugin and `pause_menu` register them too).
-    app.add_message::<LoadRequest>().add_message::<OpenSaveLoad>();
+    // Load's screen and its choices (the save menu and `pause_menu` register them too).
+    app.add_message::<OpenSaveLoad>().add_message::<LoadChosen>();
     // The backdrop: candidates (the app may insert its own first), a failed video's fall-through
     // after the players run (`VideoPlugin`, added by the app), and the cover fit before UI layout.
     app.init_resource::<MenuBackdropCandidates>().add_message::<VideoFinished>();
     app.add_systems(Update, backdrop_fallthrough.after(VideoSystems))
         .add_systems(PostUpdate, fit_backdrop.before(bevy::ui::UiSystems::Prepare));
     // The new-game baseline: the content's pristine state, before any world exists (New game).
-    app.add_systems(OnEnter(AppPhase::Frontend), (sf_save_bevy::capture_baseline, open_main_menu).chain())
-        .add_systems(OnEnter(AppPhase::InGame), run_pending)
+    // The save/load screen over the front end hands its Load choices back (`load_chosen`).
+    app.add_systems(OnEnter(AppPhase::Frontend), (sf_save_bevy::capture_baseline, open_main_menu, defer_loads).chain())
+        .add_systems(OnExit(AppPhase::Frontend), |mut commands: Commands| commands.remove_resource::<DeferLoads>())
         .add_systems(
             Update,
             (
-                (host_main_menu, refresh_saves).run_if(in_state(AppPhase::Frontend)),
+                (host_main_menu, load_chosen, refresh_saves).chain().run_if(in_state(AppPhase::Frontend)),
                 close_main_menu,
                 leave_without_menu.run_if(in_state(AppPhase::Frontend)),
             )
@@ -334,16 +329,15 @@ fn host_main_menu(
     localizer: Option<Res<UiLocalizer>>,
     saves: (Option<Res<SaveStorage>>, Option<Res<SaveConfig>>),
     mut phase: ResMut<NextState<AppPhase>>,
+    mut open_saves: MessageWriter<OpenSaveLoad>,
     mut exit: MessageWriter<AppExit>,
 ) {
     for event in choices.read() {
         match event.id.as_str() {
             CONTINUE => {
                 if let Some(path) = newest(saves.0.as_deref(), saves.1.as_deref()) {
-                    info!("main menu: continue from {} (loads once in game)", path.display());
-                    commands.insert_resource(PendingFrontend::Load(path));
-                    stack.0.close(MAIN_MENU);
-                    phase.set(AppPhase::Loading);
+                    info!("main menu: continue from {}", path.display());
+                    load_save(&mut commands, &mut stack, &mut phase, path);
                 } else {
                     warn!("main menu: no save to continue");
                 }
@@ -359,10 +353,8 @@ fn host_main_menu(
                 phase.set(AppPhase::Loading);
             }
             LOAD => {
-                info!("main menu: load (the save screen opens once in game)");
-                commands.insert_resource(PendingFrontend::OpenLoadScreen);
-                stack.0.close(MAIN_MENU);
-                phase.set(AppPhase::Loading);
+                info!("main menu: load (the save list over the menu)");
+                open_saves.write(OpenSaveLoad(SaveLoadMode::Load));
             }
             OPTIONS => crate::pause_menu::open_options(&mut commands, &mut stack, &registry, store.as_deref(), localizer.as_deref()),
             QUIT => {
@@ -408,24 +400,34 @@ fn leave_without_menu(stack: Res<ScreenStackRes>, mut phase: ResMut<NextState<Ap
     }
 }
 
-/// Interim (F3 replaces it): the front end's Continue or Load, once in game.
-fn run_pending(
+/// Leaves the front end to load `path`: the menus close, `Loading` builds the world at the
+/// save's place ([`LoadingSave`], `phase.rs`).
+fn load_save(commands: &mut Commands, stack: &mut ScreenStackRes, phase: &mut NextState<AppPhase>, path: std::path::PathBuf) {
+    commands.insert_resource(LoadingSave::new(path));
+    stack.0.close(SAVELOAD);
+    stack.0.close(MAIN_MENU);
+    phase.set(AppPhase::Loading);
+}
+
+/// The front end's save/load screen hands its Load choices here (no world to load into yet).
+fn defer_loads(mut commands: Commands) {
+    commands.insert_resource(DeferLoads);
+}
+
+/// A save chosen in the save/load screen over the menu: load it (the first, should two come).
+fn load_chosen(
     mut commands: Commands,
-    pending: Option<Res<PendingFrontend>>,
-    mut loads: MessageWriter<LoadRequest>,
-    mut open_saves: MessageWriter<OpenSaveLoad>,
+    mut chosen: MessageReader<LoadChosen>,
+    mut stack: ResMut<ScreenStackRes>,
+    mut phase: ResMut<NextState<AppPhase>>,
 ) {
-    let Some(pending) = pending else { return };
-    match &*pending {
-        PendingFrontend::Load(path) => {
-            info!("main menu: continue, loading {}", path.display());
-            loads.write(LoadRequest::path(path.clone()));
-        }
-        PendingFrontend::OpenLoadScreen => {
-            open_saves.write(OpenSaveLoad(SaveLoadMode::Load));
-        }
+    let Some(LoadChosen(path)) = chosen.read().next().cloned() else { return };
+    chosen.clear();
+    if !matches!(*phase, NextState::Unchanged) {
+        return;
     }
-    commands.remove_resource::<PendingFrontend>();
+    info!("main menu: load {}", path.display());
+    load_save(&mut commands, &mut stack, &mut phase, path);
 }
 
 /// The menu's root despawns once off the stack.
@@ -474,12 +476,6 @@ mod tests {
 
     fn phase(app: &App) -> AppPhase {
         *app.world().resource::<State<AppPhase>>().get()
-    }
-
-    /// The world is "in" (the streaming signal, which these apps don't run).
-    fn in_game(app: &mut App) {
-        app.world_mut().resource_mut::<NextState<AppPhase>>().set(AppPhase::InGame);
-        frames(app, 3);
     }
 
     fn menu(app: &mut App) -> MainMenuScreen {
@@ -536,7 +532,28 @@ mod tests {
         assert_eq!(app.should_exit(), Some(AppExit::Success));
     }
 
-    /// A release start with the save plugin on `root` (the save/load screen hosted).
+    /// Each load request as it went out: its file, whether a streaming burst was armed then, and
+    /// how often streaming had driven so far.
+    #[derive(Resource, Default)]
+    struct Requests(Vec<(PathBuf, bool, u32)>);
+
+    #[allow(clippy::needless_pass_by_value)] // system parameters
+    fn record_requests(
+        mut requests: MessageReader<sf_save_bevy::LoadRequest>,
+        streaming: Res<sf_world_bevy::Streaming>,
+        runs: Res<DriveRuns>,
+        mut seen: ResMut<Requests>,
+    ) {
+        for request in requests.read() {
+            if let sf_save_bevy::LoadSource::Path(path) = &request.0 {
+                seen.0.push((path.clone(), streaming.in_burst(), runs.0));
+            }
+        }
+    }
+
+    /// A release start with the save plugin on `root` (the save/load screen hosted) and the app
+    /// phases of `phase.rs` over streaming resources (no streaming plugin: nothing streams, the
+    /// `Drive` set only counts its runs).
     fn release_with_saves(root: &std::path::Path) -> App {
         let config = SaveConfig { root: root.to_path_buf(), background: false, ..default() };
         app_with(|app| {
@@ -591,8 +608,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// F3: Continue builds the world at the save's place: the load request goes out on entering
+    /// `Loading`, before streaming has driven or a burst is armed at the new-game start; once the
+    /// load has placed the player, streaming runs and the start burst is armed there.
     #[test]
-    fn continue_loads_the_newest_save_and_plays() {
+    fn continue_loads_the_newest_save_before_streaming_starts() {
         let root = temp_root("continue");
         let (quick, manual) = earlier_run(&root);
         assert!(quick.is_file() && manual.is_file());
@@ -603,46 +623,88 @@ mod tests {
         let screen = menu(&mut app);
         assert!(screen.model.is_enabled(CONTINUE) && screen.model.is_enabled(LOAD));
         assert!(open(&app, MAIN_MENU) && paused(&app));
+        assert_eq!(app.world().resource::<DriveRuns>().0, 0, "no streaming in the front end");
 
-        // Focus starts on Continue now; confirm: the world builds at the new-game start (interim,
-        // F3), then the newest save of any reason loads in game.
+        // Focus starts on Continue now; confirm: the newest save of any reason.
         tap(&mut app, KeyCode::Enter);
+        frames(&mut app, 3);
         assert_eq!(phase(&app), AppPhase::Loading);
-        assert_eq!(app.world().get_resource::<PendingFrontend>(), Some(&PendingFrontend::Load(manual.clone())));
-        assert!(app.world().resource::<Loads>().0.is_empty(), "nothing loads into a missing world");
-        assert!(!open(&app, MAIN_MENU) && !paused(&app), "the menu closes");
+        assert_eq!(
+            app.world().resource::<Requests>().0,
+            [(manual.clone(), false, 0)],
+            "one request, sent before any burst or streaming at the new-game start"
+        );
+        assert_eq!(app.world().resource::<Loads>().0, [manual], "the manual save, newer than the quicksave");
+        assert!(app.world().get_resource::<LoadingSave>().is_none(), "placed");
+        assert!(!open(&app, MAIN_MENU) && !paused(&app), "the menu closes, play runs");
         assert_eq!(roots(&mut app, MAIN_MENU), 0);
-        in_game(&mut app);
-        let loads = app.world().resource::<Loads>().0.clone();
-        assert_eq!(loads, [manual], "the manual save, newer than the quicksave");
-        assert!(app.world().get_resource::<PendingFrontend>().is_none() && !paused(&app), "play runs");
+        assert!(app.world().resource::<DriveRuns>().0 > 0, "streaming runs once placed");
+        // No worldspace in the reduced app: the burst `phase.rs` arms never ends without the
+        // streaming plugin, so the app stays in Loading.
+        assert!(app.world().resource::<sf_world_bevy::Streaming>().in_burst(), "the start burst is armed");
+        assert!((fade_secs(&app) - sf_world_bevy::FadeTransition::default().fade_secs).abs() < f32::EPSILON, "the fade-out restored");
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// F3: a load that fails (here a corrupt file) returns to the front end and its menu, with
+    /// no world kept and streaming never started.
     #[test]
-    fn load_builds_the_world_then_opens_the_save_screen() {
+    fn a_failed_load_returns_to_the_main_menu() {
+        let root = temp_root("corrupt");
+        let (_, manual) = earlier_run(&root);
+        let mut app = release_with_saves(&root);
+        choose(&mut app, CONTINUE);
+        app.update();
+        assert_eq!(app.world().get_resource::<LoadingSave>().map(LoadingSave::path), Some(manual.as_path()));
+        // Corrupted after the choice, before the load reads it.
+        std::fs::write(&manual, b"not a save").expect("overwrite the save");
+        frames(&mut app, 5);
+        assert_eq!(app.world().resource::<Requests>().0, [(manual, false, 0)]);
+        assert!(app.world().resource::<Loads>().0.is_empty(), "nothing loaded");
+        assert_eq!(phase(&app), AppPhase::Frontend, "back to the front end");
+        assert!(app.world().get_resource::<LoadingSave>().is_none());
+        assert!(open(&app, MAIN_MENU) && paused(&app), "the main menu again");
+        assert_eq!(roots(&mut app, MAIN_MENU), 1);
+        assert_eq!(app.world().resource::<DriveRuns>().0, 0, "streaming never ran");
+        assert!(!app.world().resource::<sf_world_bevy::Streaming>().in_burst());
+        assert!((fade_secs(&app) - sf_world_bevy::FadeTransition::default().fade_secs).abs() < f32::EPSILON, "the fade-out restored");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// F3: Load opens the save list over the main menu in the front end; Back returns to the
+    /// menu; a save chosen there builds the world at it.
+    #[test]
+    fn load_opens_the_save_list_over_the_front_end() {
         let root = temp_root("load");
-        let _ = earlier_run(&root);
+        let (_, manual) = earlier_run(&root);
         let mut app = release_with_saves(&root);
 
-        // Interim (F3): the world builds at the new-game start; the save screen waits for it.
         choose(&mut app, LOAD);
         frames(&mut app, 3);
-        assert_eq!(phase(&app), AppPhase::Loading);
-        assert!(!open(&app, MAIN_MENU) && !open(&app, SAVELOAD), "no save screen over a missing world");
-        assert_eq!(app.world().get_resource::<PendingFrontend>(), Some(&PendingFrontend::OpenLoadScreen));
+        assert_eq!(phase(&app), AppPhase::Frontend, "no world for the list");
+        assert!(open(&app, SAVELOAD) && open(&app, MAIN_MENU) && paused(&app), "the list over the menu");
+        let mut q = app.world_mut().query::<(Entity, &SaveLoadScreen)>();
+        let (_, screen) = q.single(app.world()).expect("save/load screen");
+        assert_eq!(screen.model.mode, SaveLoadMode::Load);
+        assert_eq!(screen.model.entries.len(), 2, "a fresh run lists every world's saves");
 
-        in_game(&mut app);
-        assert!(open(&app, SAVELOAD) && paused(&app), "the save screen over the game");
-        let mut q = app.world_mut().query::<&SaveLoadScreen>();
-        let model = q.single(app.world()).expect("save/load screen").model.clone();
-        assert_eq!(model.mode, SaveLoadMode::Load);
-        assert_eq!(model.entries.len(), 2, "a fresh run lists every world's saves");
-
-        // Back: the new game plays, no main menu, no pause menu.
+        // Back: the main menu again, still in the front end.
         tap(&mut app, KeyCode::Escape);
-        assert!(!open(&app, SAVELOAD) && !open(&app, MAIN_MENU) && !open(&app, PAUSE) && !paused(&app));
-        assert!(app.world().resource::<Loads>().0.is_empty());
+        assert!(!open(&app, SAVELOAD) && open(&app, MAIN_MENU) && paused(&app));
+        assert_eq!(phase(&app), AppPhase::Frontend);
+
+        // Again, and choose the manual save.
+        choose(&mut app, LOAD);
+        frames(&mut app, 3);
+        let screen = app.world_mut().query_filtered::<Entity, With<SaveLoadScreen>>().single(app.world()).expect("save/load screen");
+        let list = &app.world().resource::<mw_saves_bevy::menu::SaveList>().0;
+        let id = list.iter().find(|(_, path)| **path == manual).map(|(id, _)| id.clone()).expect("the manual save listed");
+        app.world_mut().write_message(sf_ui_screens::SaveLoadEvent { screen, choice: sf_ui_screens::SaveLoadChoice::Load(id) });
+        frames(&mut app, 4);
+        assert_eq!(phase(&app), AppPhase::Loading);
+        assert!(!open(&app, SAVELOAD) && !open(&app, MAIN_MENU) && !paused(&app), "the menus close");
+        assert_eq!(app.world().resource::<Requests>().0, [(manual.clone(), false, 0)]);
+        assert_eq!(app.world().resource::<Loads>().0, [manual]);
         let _ = std::fs::remove_dir_all(&root);
     }
 

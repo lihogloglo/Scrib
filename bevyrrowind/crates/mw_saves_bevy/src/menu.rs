@@ -16,7 +16,8 @@
 //! - **Choices**: New → a manual save in the slot folder; Overwrite → that file
 //!   (`SaveTarget::Path`, keeps `.bak`); Load → that file (the load's reset closes the menus, the
 //!   clock runs again, as quickload); Delete → the file and its `.bak`, then the list again;
-//!   Back → the menu under it. A save while the `SaveGate` is closed (a load, a door fade) is not
+//!   Back → the menu under it. In the front end ([`DeferLoads`]: no world yet) Load is a
+//!   [`LoadChosen`] instead: the app builds the world and loads there. A save while the `SaveGate` is closed (a load, a door fade) is not
 //!   queued: a notice says so.
 //! - **Place label**: [`SaveDisplay`] is kept current here: an interior's cell name (records)
 //!   or "Vvardenfell" outside (until the region or town under the player), and the clock.
@@ -60,13 +61,23 @@ value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "sa
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpenSaveLoad(pub SaveLoadMode);
 
+/// While present (the app's front end: no world to load into), a Load choice is written as a
+/// [`LoadChosen`] for the app, which builds the world and loads it there (menus.md "Load from
+/// the front end"), instead of a `LoadRequest` into the running game.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeferLoads;
+
+/// A save chosen to load while [`DeferLoads`] holds.
+#[derive(Message, Clone, Debug, PartialEq, Eq)]
+pub struct LoadChosen(pub PathBuf);
+
 /// The open screen's save ids and their files.
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct SaveList(pub BTreeMap<String, PathBuf>);
 
 /// After `SfSavePlugin` and the UI registry (`dialogue::add`); the app and the headless tests.
 pub fn add(app: &mut App) {
-    app.add_message::<OpenSaveLoad>().init_resource::<SaveList>();
+    app.add_message::<OpenSaveLoad>().add_message::<LoadChosen>().init_resource::<SaveList>();
     if let Some(mut registry) = app.world_mut().get_resource_mut::<UiRegistryRes>() {
         registry.0.extend_screens(&screens());
     }
@@ -324,9 +335,10 @@ fn host(
     mut list: ResMut<SaveList>,
     mut screens: Query<&mut SaveLoadScreen>,
     mut saves: MessageWriter<SaveRequest>,
-    mut loads: MessageWriter<LoadRequest>,
+    loads: (MessageWriter<LoadRequest>, MessageWriter<LoadChosen>, Option<Res<DeferLoads>>),
     mut toasts: Option<ResMut<sf_ui_bevy::Toasts>>,
 ) {
+    let (mut loads, mut chosen, defer) = loads;
     let l = folder.strings();
     for event in choices.read() {
         let file = |id: &str| list.0.get(id).cloned();
@@ -350,7 +362,11 @@ fn host(
             }
             SaveLoadChoice::Load(id) => {
                 if let Some(path) = file(id) {
-                    loads.write(LoadRequest::path(path));
+                    if defer.is_some() {
+                        chosen.write(LoadChosen(path));
+                    } else {
+                        loads.write(LoadRequest::path(path));
+                    }
                 } else {
                     warn!("saves: no file for {id}");
                 }
