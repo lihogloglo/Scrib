@@ -47,8 +47,8 @@ pub use spawn::{
     visibility_range,
 };
 pub use stream::{
-    ActiveWorldspace, CellLoaded, CellUnloaded, DoorLinks, RayTracingVariants, StreamCell, StreamStats, Streaming, StreamingAnchor,
-    StreamingConfig, WorldIndexSource, WorldOverlay, WorldspaceActivated, WorldspaceRecords,
+    ActiveWorldspace, CellLoaded, CellUnloaded, DoorLinks, PromoteToEntity, RayTracingVariants, StreamCell, StreamStats, Streaming,
+    StreamingAnchor, StreamingConfig, WorldIndexSource, WorldOverlay, WorldspaceActivated, WorldspaceRecords,
 };
 pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceLayers, WorldspaceRegistry, WorldspaceRoot};
 
@@ -105,6 +105,7 @@ impl Plugin for WorldStreamingPlugin {
             .insert_resource(Streaming::new(self.config.clone()))
             .add_message::<CellLoaded>()
             .add_message::<CellUnloaded>()
+            .add_message::<PromoteToEntity>()
             .add_message::<WorldspaceActivated>()
             .add_message::<StartTravel>()
             .add_message::<StartBlackout>()

@@ -873,4 +873,10 @@ impl CellScene for SceneHook {
             slabs.dirty = true;
         }
     }
+
+    /// Streaming spawned the placement's entity (`sf_world_bevy::PromoteToEntity`): queue the
+    /// [`PromotePlacement`] that [`apply_promotions`] turns into inactive slot writes.
+    fn promoted(&self, world: &mut World, worldspace: &WorldspaceId, cell: IVec3, placement: PlacementId) {
+        world.write_message(PromotePlacement { worldspace: worldspace.clone(), cell, placement });
+    }
 }

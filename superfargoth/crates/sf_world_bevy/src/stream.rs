@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use bevy_asset::{AssetServer, Assets, Handle, LoadState, RecursiveDependencyLoadState, UntypedHandle};
 use bevy_camera::visibility::{RenderLayers, Visibility};
-use bevy_ecs::message::Messages;
+use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_math::{IVec3, Vec3};
 use bevy_pbr::StandardMaterial;
@@ -210,6 +210,20 @@ pub struct CellUnloaded {
     pub level: Level,
 }
 
+/// Gameplay's request that a placement the static scene draws become an
+/// entity (scene-runtime-plan.md §7). Streaming loads its model, spawns it
+/// under the cell's near group like any other placement, and only then calls
+/// [`crate::CellScene::promoted`], so the scene stops drawing it in the frame
+/// the entity appears, never before (the instance-to-actor swap order). One
+/// way: the entity leaves with the cell. A placement the scene does not draw,
+/// a cell not at Near or one already promoted is dropped (`debug!`).
+#[derive(Message, Clone, Debug, PartialEq, Eq)]
+pub struct PromoteToEntity {
+    pub worldspace: WorldspaceId,
+    pub cell: IVec3,
+    pub placement: PlacementId,
+}
+
 /// The active worldspace changed.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub struct WorldspaceActivated {
@@ -289,6 +303,9 @@ struct Work {
     /// Its members, once validated against the fetched placements: no model,
     /// no visuals of their own.
     members: Arc<HashSet<PlacementId>>,
+    /// The static scene's share of `members` (the hook's `covered` set,
+    /// shared, not copied): what a [`PromoteToEntity`] may spawn later.
+    covered: Arc<HashSet<PlacementId>>,
     near_spawned: bool,
 }
 
@@ -298,6 +315,28 @@ struct Group {
     /// Held while the level is resident (its buckets' meshes are labeled
     /// assets of this load).
     _precombine: Option<Handle<CellPrecombine>>,
+    /// With a static scene drawing part of this level: the load's placements,
+    /// its never-spawned `members` and the scene's `covered` share of them,
+    /// moved from the load's work at `reveal` (empty otherwise), so a
+    /// [`PromoteToEntity`] can spawn one of them later.
+    placements: Arc<Vec<IndexedPlacement>>,
+    members: Arc<HashSet<PlacementId>>,
+    covered: Arc<HashSet<PlacementId>>,
+    /// Covered placements a promotion accepted (one way: dies with the group).
+    promoted: HashSet<PlacementId>,
+}
+
+/// A [`PromoteToEntity`] accepted and waiting for its placement's model.
+struct PendingPromotion {
+    worldspace: WorldspaceId,
+    cell: IVec3,
+    /// The near group it was accepted for: another entity there (or none)
+    /// means the cell left Near, whose unload released the model ref.
+    group: Entity,
+    placements: Arc<Vec<IndexedPlacement>>,
+    index: usize,
+    /// The model was ready last frame (the assets stage's settle frame).
+    settled: bool,
 }
 
 struct CellRuntime {
@@ -351,6 +390,10 @@ struct Runtime {
     /// Models held while a reload runs, so the cells come back from memory
     /// instead of reloading their assets (dropped once streaming is idle).
     pinned: Vec<Handle<CookedModelAsset>>,
+    /// Where `drive` is in the [`PromoteToEntity`] queue.
+    promote_cursor: MessageCursor<PromoteToEntity>,
+    /// Accepted promotions waiting for their model.
+    promotions: Vec<PendingPromotion>,
 }
 
 /// The streaming runtime (one per app).
@@ -398,6 +441,8 @@ impl Streaming {
                 scene: SceneCells::default(),
                 reloading: HashSet::new(),
                 pinned: Vec::new(),
+                promote_cursor: MessageCursor::default(),
+                promotions: Vec::new(),
             },
             fetches: HashMap::new(),
             directories: HashMap::new(),
@@ -475,6 +520,18 @@ impl Streaming {
     pub fn cell_entity(&self, ws: &WorldspaceId, cell: IVec3) -> Option<Entity> {
         self.rt.cells.get(&(ws.clone(), cell)).map(|c| c.entity)
     }
+
+    /// The group entity of a resident cell's level (tests).
+    #[cfg(test)]
+    pub(crate) fn group_entity(&self, ws: &WorldspaceId, cell: IVec3, level: Level) -> Option<Entity> {
+        self.rt.cells.get(&(ws.clone(), cell)).and_then(|c| c.groups.get(&level)).map(|g| g.entity)
+    }
+
+    /// Users of a model's slot; `None` once no slot is left (tests).
+    #[cfg(test)]
+    pub(crate) fn model_users(&self, model: &VfsPath) -> Option<u32> {
+        self.rt.models.get(model).map(|s| s.users)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -536,6 +593,7 @@ impl Streaming {
 
         self.poll_fetches(world, now, spawners, counters);
         self.rt.poll_models(world, self.scheduler.in_burst());
+        self.rt.promote(world, spawners, self.scheduler.in_burst());
         let world_ref: &World = world;
         let running: Vec<RequestId> =
             self.scheduler.requests().filter(|r| r.stage == Stage::Assets && r.running).map(|r| r.id).collect();
@@ -845,10 +903,14 @@ impl Streaming {
                 (None, None) => {}
                 (Some(m), None) => work.members = Arc::new(m),
                 // The common case: the hook's set, shared, not rebuilt.
-                (None, Some(c)) => work.members = c,
+                (None, Some(c)) => {
+                    work.covered = c.clone();
+                    work.members = c;
+                }
                 (Some(mut m), Some(c)) => {
                     m.extend(c.iter().copied());
                     work.members = Arc::new(m);
+                    work.covered = c;
                 }
             }
             let assets = u32::try_from(work.models.len()).unwrap_or(u32::MAX);
@@ -953,21 +1015,12 @@ impl Runtime {
         let ray_tracing_lod =
             world.get_resource::<RayTracingVariants>().and_then(|v| v.lod_for(partition));
         let Some(work) = self.work.get_mut(&request.id) else { return };
-        for model in &work.models {
-            let slot = self.models.entry(model.clone()).or_insert_with(|| {
-                self.load_queue.push_back(model.clone());
-                ModelSlot { handle: None, users: 0, state: SlotState::Loading, ray_tracing_lod }
-            });
-            slot.users += 1;
-            if ray_tracing_lod.is_some() && slot.ray_tracing_lod.is_none() {
-                if slot.handle.is_none() {
-                    slot.ray_tracing_lod = ray_tracing_lod; // still queued: load it with variants
-                } else {
-                    self.stats.ray_tracing_misses += 1;
-                    log::debug!("sf_world_bevy: {model} already loaded without ray-tracing variants");
-                }
-            }
+        let models = std::mem::take(&mut work.models);
+        for model in &models {
+            self.acquire_model(model, ray_tracing_lod);
         }
+        let work = self.work.get_mut(&request.id).expect("checked above");
+        work.models = models;
         work.acquired = true;
         if request.kind == RequestKind::Load
             && request.to == Level::Far
@@ -975,6 +1028,23 @@ impl Runtime {
         {
             proxies.acquire(world, &request.worldspace, request.cell);
             work.proxy = true;
+        }
+    }
+
+    /// One more user of `model`'s slot (queued for loading if new).
+    fn acquire_model(&mut self, model: &VfsPath, ray_tracing_lod: Option<usize>) {
+        let slot = self.models.entry(model.clone()).or_insert_with(|| {
+            self.load_queue.push_back(model.clone());
+            ModelSlot { handle: None, users: 0, state: SlotState::Loading, ray_tracing_lod }
+        });
+        slot.users += 1;
+        if ray_tracing_lod.is_some() && slot.ray_tracing_lod.is_none() {
+            if slot.handle.is_none() {
+                slot.ray_tracing_lod = ray_tracing_lod; // still queued: load it with variants
+            } else {
+                self.stats.ray_tracing_misses += 1;
+                log::debug!("sf_world_bevy: {model} already loaded without ray-tracing variants");
+            }
         }
     }
 
@@ -1189,12 +1259,12 @@ impl Runtime {
     }
 
     /// What decides where placements of this load stop being drawn.
-    fn ends(&self, world: &World, request: &Request, info: &WsInfo) -> Ends {
+    fn ends(&self, world: &World, worldspace: &WorldspaceId, cell: IVec3, info: &WsInfo) -> Ends {
         let handoff = self.far.handoff.filter(|_| self.far.is_installed());
         // Size culling (industry-audit.md J1) keeps what the cell's proxy
         // represents drawn to the handoff.
         let kept = match (&self.far.proxies, handoff) {
-            (Some(proxies), Some(_)) => proxies.kept_radius(world, &request.worldspace, request.cell),
+            (Some(proxies), Some(_)) => proxies.kept_radius(world, worldspace, cell),
             _ => 0.0,
         };
         Ends {
@@ -1271,7 +1341,7 @@ impl Runtime {
     fn spawn_item(&mut self, world: &mut World, request: &Request, spawners: &PlacementSpawners) -> bool {
         let cell_entity = self.cell_entity(world, &request.worldspace, request.cell);
         let info = self.info(&request.worldspace);
-        let ends = self.ends(world, request, &info);
+        let ends = self.ends(world, &request.worldspace, request.cell, &info);
         let Some(work) = self.work.get_mut(&request.id) else { return true };
         let group =
             *work.group.get_or_insert_with(|| world.spawn((Transform::IDENTITY, Visibility::Hidden, ChildOf(cell_entity))).id());
@@ -1311,43 +1381,181 @@ impl Runtime {
         let placements = work.placements.clone();
         let members = work.members.clone();
         let batch = world.spawn((Transform::IDENTITY, Visibility::Inherited, ChildOf(group))).id();
+        let at = PlaceAt { worldspace: &request.worldspace, cell: request.cell, level: request.to, layers: &layers, origin, ends: &ends };
         let mut entities = 0u64;
         for p in &placements[start..end] {
             if members.contains(&p.placement.id) {
                 self.stats.precombined += 1;
                 continue;
             }
-            let model = p.placement.model.as_ref().and_then(|m| match self.models.get(m).map(|s| &s.state) {
-                Some(SlotState::Ready(loaded)) => Some(loaded),
-                _ => None,
-            });
-            if matches!(model, Some(LoadedModel::Uncooked(_))) {
-                self.stats.uncooked += 1;
-            }
-            let Some(spawner) = spawners.spawner_for(p, model) else { continue };
-            let t = &p.placement.transform;
-            let end = ends.of(p);
-            let (max_distance, end_band) = (end.distance, end.band);
-            self.stats.size_culled += u64::from(end.size_culled);
-            let cx = SpawnCx {
-                worldspace: &request.worldspace,
-                cell: request.cell,
-                level: request.to,
-                parent: batch,
-                layers: &layers,
-                local: Transform { translation: origin.delta_f32(t.pos), rotation: t.rotation, scale: t.scale },
-                model,
-                max_distance,
-                end_band,
-                lod: &self.config.lod,
-            };
-            entities += u64::from(spawner.spawn(world, &cx, p));
+            entities += u64::from(self.spawn_placement(world, &at, batch, spawners, p));
         }
         self.stats.entities_spawned += entities + 1;
         self.stats.placements_spawned += (end - start) as u64;
         let work = self.work.get_mut(&request.id).expect("checked above");
         work.next = end;
         end >= placements.len()
+    }
+
+    /// Spawns one placement under `parent` (a batch entity) through its
+    /// spawner, with its end and its cell-relative pose: the body of a spawn
+    /// item, shared with promotions. Returns the entities the spawner made.
+    fn spawn_placement(
+        &mut self,
+        world: &mut World,
+        at: &PlaceAt<'_>,
+        parent: Entity,
+        spawners: &PlacementSpawners,
+        p: &IndexedPlacement,
+    ) -> u32 {
+        let model = p.placement.model.as_ref().and_then(|m| match self.models.get(m).map(|s| &s.state) {
+            Some(SlotState::Ready(loaded)) => Some(loaded),
+            _ => None,
+        });
+        if matches!(model, Some(LoadedModel::Uncooked(_))) {
+            self.stats.uncooked += 1;
+        }
+        let Some(spawner) = spawners.spawner_for(p, model) else { return 0 };
+        let t = &p.placement.transform;
+        let end = at.ends.of(p);
+        self.stats.size_culled += u64::from(end.size_culled);
+        let cx = SpawnCx {
+            worldspace: at.worldspace,
+            cell: at.cell,
+            level: at.level,
+            parent,
+            layers: at.layers,
+            local: Transform { translation: at.origin.delta_f32(t.pos), rotation: t.rotation, scale: t.scale },
+            model,
+            max_distance: end.distance,
+            end_band: end.band,
+            lod: &self.config.lod,
+        };
+        spawner.spawn(world, &cx, p)
+    }
+
+    // -- promotions (scene-runtime-plan.md §7) -------------------------------
+
+    /// Accepts this frame's [`PromoteToEntity`] messages (acquiring each
+    /// one's model for its group) and spawns the pending ones whose model is
+    /// ready, then tells the scene. Runs after `poll_models`.
+    fn promote(&mut self, world: &mut World, spawners: &PlacementSpawners, burst: bool) {
+        let requests: Vec<PromoteToEntity> = world
+            .get_resource::<Messages<PromoteToEntity>>()
+            .map(|m| self.promote_cursor.read(m).cloned().collect())
+            .unwrap_or_default();
+        for r in requests {
+            self.accept_promotion(world, spawners, r);
+        }
+        if self.promotions.is_empty() {
+            return;
+        }
+        for mut pending in std::mem::take(&mut self.promotions) {
+            let key = (pending.worldspace.clone(), pending.cell);
+            let resident = self.cells.get(&key).and_then(|c| c.groups.get(&Level::Near)).is_some_and(|g| g.entity == pending.group);
+            if !resident {
+                // Its unload released the model ref with the group's models.
+                log::debug!("sf_world_bevy: promotion in cell {} dropped: the cell left Near", pending.cell);
+                continue;
+            }
+            let placements = pending.placements.clone();
+            let p = &placements[pending.index];
+            if !p.placement.model.as_ref().is_none_or(|m| self.model_ready(m)) {
+                self.promotions.push(pending);
+                continue;
+            }
+            if matches!(self.loaded_model(p), Some(LoadedModel::Uncooked(_))) {
+                log::debug!("sf_world_bevy: promotion of {:?} dropped: its model is not cooked", p.placement.id);
+                continue;
+            }
+            let has_model = p.placement.model.is_some() && spawners.for_class(p.placement.class).is_some_and(|s| s.needs_model(p));
+            if has_model && !burst && !pending.settled {
+                pending.settled = true; // one settle frame, as the assets stage
+                self.promotions.push(pending);
+                continue;
+            }
+            let model = self.loaded_model(p);
+            let Some(spawner) = spawners.spawner_for(p, model) else {
+                log::debug!("sf_world_bevy: promotion of {:?} dropped: no spawner for it", p.placement.id);
+                continue;
+            };
+            // Scene-covered placements are cooked statics: a spawner that
+            // prepares its own asset is out of scope (B5a-2).
+            if spawner.prepare(world.resource::<AssetServer>(), p, model).is_some() {
+                log::debug!("sf_world_bevy: promotion of {:?} dropped: its spawner prepares an asset", p.placement.id);
+                continue;
+            }
+            self.spawn_promoted(world, spawners, &pending, p);
+        }
+    }
+
+    /// One [`PromoteToEntity`]: checks the cell's near group draws it through
+    /// the scene, acquires its model for the group and parks it.
+    fn accept_promotion(&mut self, world: &World, spawners: &PlacementSpawners, r: PromoteToEntity) {
+        let partition = self.info(&r.worldspace).partition;
+        let Some(group) = self.cells.get_mut(&(r.worldspace.clone(), r.cell)).and_then(|c| c.groups.get_mut(&Level::Near)) else {
+            log::debug!("sf_world_bevy: promotion of {:?} dropped: cell {} of {} is not at Near", r.placement, r.cell, r.worldspace);
+            return;
+        };
+        if !group.covered.contains(&r.placement) {
+            let why = if group.members.contains(&r.placement) { "a precombine member" } else { "not drawn by the scene" };
+            log::debug!("sf_world_bevy: promotion of {:?} in cell {} dropped: {why}", r.placement, r.cell);
+            return;
+        }
+        let Some(index) = group.placements.iter().position(|p| p.placement.id == r.placement) else {
+            log::debug!("sf_world_bevy: promotion of {:?} in cell {} dropped: not a placement of the load", r.placement, r.cell);
+            return;
+        };
+        if !group.promoted.insert(r.placement) {
+            log::debug!("sf_world_bevy: promotion of {:?} in cell {} dropped: already promoted", r.placement, r.cell);
+            return;
+        }
+        let p = &group.placements[index];
+        let model = p
+            .placement
+            .model
+            .clone()
+            .filter(|_| spawners.for_class(p.placement.class).is_some_and(|s| s.needs_model(p)));
+        let pending = PendingPromotion {
+            worldspace: r.worldspace,
+            cell: r.cell,
+            group: group.entity,
+            placements: group.placements.clone(),
+            index,
+            settled: false,
+        };
+        if let Some(model) = model {
+            group.models.push(model.clone()); // the unload releases it with the group
+            let ray_tracing_lod = world.get_resource::<RayTracingVariants>().and_then(|v| v.lod_for(partition));
+            self.acquire_model(&model, ray_tracing_lod);
+        }
+        self.promotions.push(pending);
+    }
+
+    /// Spawns a promoted placement into a batch of its own under the near
+    /// group (already revealed), then tells the scene to stop drawing it.
+    fn spawn_promoted(&mut self, world: &mut World, spawners: &PlacementSpawners, pending: &PendingPromotion, p: &IndexedPlacement) {
+        let info = self.info(&pending.worldspace);
+        let ends = self.ends(world, &pending.worldspace, pending.cell, &info);
+        let layers = world
+            .resource::<WorldspaceRegistry>()
+            .get(&pending.worldspace)
+            .map_or_else(RenderLayers::default, |e| RenderLayers::layer(e.layer));
+        let at = PlaceAt {
+            worldspace: &pending.worldspace,
+            cell: pending.cell,
+            level: Level::Near,
+            layers: &layers,
+            origin: info.partition.cell_origin(pending.cell),
+            ends: &ends,
+        };
+        let batch = world.spawn((Transform::IDENTITY, Visibility::Inherited, ChildOf(pending.group))).id();
+        let n = self.spawn_placement(world, &at, batch, spawners, p);
+        self.stats.entities_spawned += u64::from(n) + 1;
+        self.stats.placements_spawned += 1;
+        if let Some(scene) = self.scene.0.clone() {
+            scene.promoted(world, &pending.worldspace, pending.cell, p.placement.id);
+        }
     }
 
     /// The last stage of a load: queue the static scene's writes, then reveal
@@ -1375,7 +1583,25 @@ impl Runtime {
             e.insert(Visibility::Inherited);
         }
         let cell = self.cells.get_mut(&(request.worldspace.clone(), request.cell)).expect("spawned above");
-        cell.groups.insert(request.to, Group { entity: group, models: std::mem::take(&mut work.models), _precombine: work.near.take() });
+        // Only a level the scene draws part of keeps its placements past the
+        // reveal (for promotions); the others drop them here, as before.
+        let (placements, members, covered) = if work.covered.is_empty() {
+            Default::default()
+        } else {
+            (std::mem::take(&mut work.placements), std::mem::take(&mut work.members), std::mem::take(&mut work.covered))
+        };
+        cell.groups.insert(
+            request.to,
+            Group {
+                entity: group,
+                models: std::mem::take(&mut work.models),
+                _precombine: work.near.take(),
+                placements,
+                members,
+                covered,
+                promoted: HashSet::new(),
+            },
+        );
         true
     }
 
@@ -1480,6 +1706,17 @@ fn stage_name(stage: Stage) -> &'static str {
         Stage::Deactivate => "deactivate",
         Stage::Despawn => "despawn",
     }
+}
+
+/// Where one placement spawns ([`Runtime::spawn_placement`]): the load's
+/// cell and level, its layers, the cell origin poses are relative to, its ends.
+struct PlaceAt<'a> {
+    worldspace: &'a WorldspaceId,
+    cell: IVec3,
+    level: Level,
+    layers: &'a RenderLayers,
+    origin: WorldPos,
+    ends: &'a Ends,
 }
 
 /// Where placements of one load stop being drawn ([`Runtime::ends`]).

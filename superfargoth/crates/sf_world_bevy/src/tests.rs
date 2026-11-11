@@ -625,6 +625,8 @@ struct SceneLog {
     /// The `indexed` ids `covered` got, and those `upload` got in `SceneCellCx::indexed`.
     covered_ids: HashMap<IVec3, Vec<PlacementId>>,
     upload_ids: HashMap<IVec3, Vec<PlacementId>>,
+    /// Every `promoted` call, in order.
+    promoted: Vec<(IVec3, PlacementId)>,
 }
 
 /// A test [`CellScene`]: logs every call and reports `covered` for the cells the
@@ -671,6 +673,9 @@ impl CellScene for TestScene {
     fn release(&self, _world: &mut World, _ws: &WorldspaceId, cell: IVec3) {
         *self.log().releases.entry(cell).or_default() += 1;
     }
+    fn promoted(&self, _world: &mut World, _ws: &WorldspaceId, cell: IVec3, placement: PlacementId) {
+        self.log().promoted.push((cell, placement));
+    }
     fn bytes(&self, _ws: &WorldspaceId, cell: IVec3) -> u64 {
         if self.covered.contains_key(&cell) { self.bytes } else { 0 }
     }
@@ -680,14 +685,18 @@ impl CellScene for TestScene {
 struct SpawnLog {
     spawns: u32,
     activates: u32,
+    /// Each spawn's placement, parent (batch) and level.
+    spawned: Vec<(PlacementId, Entity, Level)>,
 }
 
 /// Counts spawns and activations of one class, spawning nothing.
 struct CountSpawner(Arc<Mutex<SpawnLog>>);
 
 impl PlacementSpawner for CountSpawner {
-    fn spawn(&self, _world: &mut World, _cx: &SpawnCx<'_>, _p: &IndexedPlacement) -> u32 {
-        self.0.lock().unwrap().spawns += 1;
+    fn spawn(&self, _world: &mut World, cx: &SpawnCx<'_>, p: &IndexedPlacement) -> u32 {
+        let mut log = self.0.lock().unwrap();
+        log.spawns += 1;
+        log.spawned.push((p.placement.id, cx.parent, cx.level));
         0
     }
     fn needs_model(&self, _: &IndexedPlacement) -> bool {
@@ -717,6 +726,17 @@ fn covered_in(cell: IVec3) -> HashMap<IVec3, Arc<HashSet<PlacementId>>> {
 /// spawner for the dynamic class; returns its stats, its mesh parts, the
 /// spawner's log and the app, still resident.
 fn stream_in(dir: &std::path::Path, scene: Option<Arc<TestScene>>, far_min_radius: f32) -> (StreamStats, usize, SpawnLog, App) {
+    let (stats, parts, log, app) = stream_in_logged(dir, scene, far_min_radius);
+    let spawned = std::mem::take(&mut *log.lock().unwrap());
+    (stats, parts, spawned, app)
+}
+
+/// [`stream_in`], keeping the spawner's live log.
+fn stream_in_logged(
+    dir: &std::path::Path,
+    scene: Option<Arc<TestScene>>,
+    far_min_radius: f32,
+) -> (StreamStats, usize, Arc<Mutex<SpawnLog>>, App) {
     let mut app = streaming_app_radius(dir, far_min_radius);
     let log = Arc::new(Mutex::new(SpawnLog::default()));
     let mut spawners = PlacementSpawners::default();
@@ -733,8 +753,7 @@ fn stream_in(dir: &std::path::Path, scene: Option<Arc<TestScene>>, far_min_radiu
     settle(&mut app);
     let stats = app.world().resource::<Streaming>().stats();
     let parts = count::<With<Mesh3d>>(&mut app);
-    let spawned = std::mem::take(&mut *log.lock().unwrap());
-    (stats, parts, spawned, app)
+    (stats, parts, log, app)
 }
 
 /// A cell whose table covers everything in it spawns none of those placements'
@@ -876,4 +895,130 @@ fn release_runs_on_the_near_unload_and_after_a_cancelled_load() {
     let log = scene.log();
     let missed: Vec<IVec3> = acquired.iter().copied().filter(|c| !log.releases.contains_key(c)).collect();
     assert!(missed.is_empty(), "acquired and never released after cancellation: {missed:?}");
+}
+
+// -- promotion to an entity (B5a-2) ---------------------------------------------
+
+/// The cell around the origin, which holds both dynamic placements.
+fn promo_cell() -> IVec3 {
+    Partition::STREAMING.cell_of(WorldPos::from_f64(DVec3::new(20.0, 0.0, 20.0)))
+}
+
+fn promote(app: &mut App, cell: IVec3, placement: PlacementId) {
+    app.world_mut().write_message(PromoteToEntity { worldspace: ws(), cell, placement });
+}
+
+/// Runs `frames` frames; after each one, the `promoted` calls are never ahead of `spawns(app)`.
+fn run_promotions(app: &mut App, frames: u32, scene: &TestScene, spawns: impl Fn(&App) -> usize) {
+    for _ in 0..frames {
+        app.update();
+        let promoted = scene.log().promoted.len();
+        assert!(promoted <= spawns(app), "the scene was told before the entity spawned");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Flies the visual anchor 50 km out and drops the gameplay one: every cell unloads.
+fn stream_everything_out(app: &mut App) {
+    let anchors: Vec<(Entity, bool)> = app
+        .world_mut()
+        .query_filtered::<(Entity, Has<FloatingOrigin>), With<StreamingAnchor>>()
+        .iter(app.world())
+        .collect();
+    for (e, visual) in anchors {
+        if visual {
+            app.world_mut().entity_mut(e).insert(to_grid(WorldPos::from_f64(DVec3::new(50_000.0, 2.0, 0.0))));
+        } else {
+            app.world_mut().entity_mut(e).despawn();
+        }
+    }
+    settle(app);
+}
+
+#[test]
+fn promote_to_entity_spawns_once_then_tells_the_scene() {
+    let dir = tempfile::tempdir().unwrap();
+    let cell = promo_cell();
+    let scene = TestScene::new(covered_in(cell));
+    let item = PlacementId::from_key("test", b"item");
+    assert!(scene.covered[&cell].contains(&item), "the dynamic placement is the scene's");
+    let (_, _, log, mut app) = stream_in_logged(dir.path(), Some(scene.clone()), f32::MAX);
+    assert_eq!(log.lock().unwrap().spawns, 0, "the scene draws both dynamic placements");
+
+    promote(&mut app, cell, item);
+    run_promotions(&mut app, 10, &scene, |_| log.lock().unwrap().spawned.len());
+    {
+        let log = log.lock().unwrap();
+        assert_eq!(log.spawns, 1);
+        let (id, batch, level) = log.spawned[0];
+        assert_eq!((id, level), (item, Level::Near));
+        let group = app.world().resource::<Streaming>().group_entity(&ws(), cell, Level::Near).unwrap();
+        assert_eq!(app.world().get::<ChildOf>(batch).map(ChildOf::parent), Some(group), "under the cell's near group");
+    }
+    assert_eq!(scene.log().promoted, [(cell, item)]);
+
+    promote(&mut app, cell, item);
+    run_promotions(&mut app, 10, &scene, |_| log.lock().unwrap().spawned.len());
+    assert_eq!(log.lock().unwrap().spawns, 1, "promotion is one way");
+    assert_eq!(scene.log().promoted.len(), 1);
+}
+
+#[test]
+fn promote_to_entity_ignores_what_the_scene_does_not_draw() {
+    let dir = tempfile::tempdir().unwrap();
+    let cell = promo_cell();
+    let covered = covered_in(cell);
+    // A placement of the cell the scene leaves to the entity path (a marker or
+    // an uncooked model): streaming already spawned what it spawns.
+    let uncovered = placements()
+        .into_iter()
+        .find(|p| Partition::STREAMING.cell_of(p.transform.pos) == cell && !covered[&cell].contains(&p.id))
+        .expect("the cell has an uncovered placement")
+        .id;
+    let scene = TestScene::new(covered);
+    let (_, _, log, mut app) = stream_in_logged(dir.path(), Some(scene.clone()), f32::MAX);
+    let spawned = app.world().resource::<Streaming>().stats().entities_spawned;
+
+    promote(&mut app, cell, uncovered);
+    promote(&mut app, IVec3::new(1000, 0, 1000), PlacementId::from_key("test", b"item"));
+    promote(&mut app, cell, PlacementId::from_key("test", b"nothing like it"));
+    run_promotions(&mut app, 10, &scene, |_| log.lock().unwrap().spawned.len());
+    assert_eq!(log.lock().unwrap().spawns, 0);
+    assert!(scene.log().promoted.is_empty());
+    assert_eq!(app.world().resource::<Streaming>().stats().entities_spawned, spawned);
+}
+
+#[test]
+fn a_promoted_entity_and_its_model_leave_with_the_cell() {
+    let dir = tempfile::tempdir().unwrap();
+    let cell = promo_cell();
+    let covered = covered_in(cell);
+    // A covered static: its spawner (the default StaticSpawner) needs the model.
+    let target = placements()
+        .into_iter()
+        .find(|p| p.class == PlacementClass::Static && covered[&cell].contains(&p.id))
+        .expect("the cell has a covered static")
+        .id;
+    let plate = VfsPath::new("plate.mdl").unwrap();
+    let scene = TestScene::new(covered);
+    let (_, _, _, mut app) = stream_in_logged(dir.path(), Some(scene.clone()), f32::MAX);
+    let users = app.world().resource::<Streaming>().model_users(&plate).expect("other cells draw plates");
+    let group = app.world().resource::<Streaming>().group_entity(&ws(), cell, Level::Near).unwrap();
+    let before: HashSet<Entity> = app.world().get::<Children>(group).map(|c| c.iter().collect()).unwrap_or_default();
+
+    promote(&mut app, cell, target);
+    let new_batches = |app: &App| app.world().get::<Children>(group).map_or(0, |c| c.iter().filter(|e| !before.contains(e)).count());
+    run_promotions(&mut app, 10, &scene, new_batches);
+    assert_eq!(scene.log().promoted, [(cell, target)]);
+    assert_eq!(app.world().resource::<Streaming>().model_users(&plate), Some(users + 1), "the group holds one more ref");
+    let after: Vec<Entity> =
+        app.world().get::<Children>(group).unwrap().iter().filter(|e| !before.contains(e)).collect();
+    assert_eq!(after.len(), 1, "one batch for the promoted entity");
+    let batch = after[0];
+    assert!(app.world().get::<Children>(batch).is_some_and(|c| !c.is_empty()), "the static spawned its parts");
+
+    stream_everything_out(&mut app);
+    assert!(app.world().get_entity(batch).is_err(), "the promoted entity left with the cell");
+    assert_eq!(app.world().resource::<Streaming>().model_users(&plate), None, "no slot left for the model");
+    assert_eq!(app.world().resource::<Streaming>().stats().models_loaded, 0);
 }

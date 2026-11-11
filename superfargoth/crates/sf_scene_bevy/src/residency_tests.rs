@@ -1117,3 +1117,16 @@ fn promotion_of_a_cell_that_is_not_resident_is_dropped() {
     assert!(plan.writes.iter().all(|w| w.active), "{:?}", plan.writes);
     assert!(writes.iter().all(BatchSlotWrite::active), "placement 1 is drawn again");
 }
+
+/// B5a-2: streaming tells the hook after it spawned a promoted placement's entity, and the hook
+/// queues exactly one [`PromotePlacement`] for it, with its fields as given.
+#[test]
+fn promoted_queues_one_promote_placement() {
+    let mut world = World::new();
+    world.init_resource::<Messages<PromotePlacement>>();
+    let (cell, placement) = (IVec3::new(2, 0, -1), PlacementId::from_key("test", b"promoted"));
+    SceneHook.promoted(&mut world, &ws(), cell, placement);
+    let messages = world.resource::<Messages<PromotePlacement>>();
+    let got: Vec<&PromotePlacement> = messages.iter_current_update_messages().collect();
+    assert_eq!(got, [&PromotePlacement { worldspace: ws(), cell, placement }]);
+}

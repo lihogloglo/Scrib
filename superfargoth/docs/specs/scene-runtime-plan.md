@@ -657,9 +657,11 @@ holds only `Commands`). `SceneSpace::promote` records it in `Promotions` (`eligi
 one-way, dropped with the cell) and returns one `SlotWrite { active: false }` per table instance of
 that placement (`find_all`, `table.rs:464`, then `batch_slots`); `publish_scene` turns each into a
 4-byte `write_buffer` at `slot * 64 + 48` (`GpuMeshInstance::is_active`, `mod.rs:68-76`;
-`COPY_BUFFER_ALIGNMENT` is 4, so one word is a legal write). The caller then spawns the entity with
-the same placement id through the existing spawner (`StaticSpawner`, `spawn.rs:280-283`): the scene
-side never spawns, it only stops drawing. Demotion is the cell unload (`Promotions` dies with the
+`COPY_BUFFER_ALIGNMENT` is 4, so one word is a legal write). As built (B5a-2), gameplay sends
+`sf_world_bevy::PromoteToEntity`: streaming loads the model for the cell's near group, spawns the
+entity through the placement's spawner like any spawn item, and only then calls
+`CellScene::promoted`, which writes `PromotePlacement` (entity first, so no frame lacks the object);
+the scene side never spawns, it only stops drawing. Demotion is the cell unload (`Promotions` dies with the
 residency); there is nothing to undo.
 
 **The `is_active` hole — coordinator decision 9 is CONFIRMED from the code, 2026-11-10: in a view

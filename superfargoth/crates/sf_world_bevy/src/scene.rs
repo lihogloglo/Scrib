@@ -111,6 +111,10 @@ pub trait CellScene: Send + Sync + 'static {
     /// tears down every remaining level at once, and from a cancelled load,
     /// and never proves the three are disjoint.
     fn release(&self, world: &mut World, worldspace: &WorldspaceId, cell: IVec3);
+    /// A [`crate::PromoteToEntity`] spawned `placement`'s entity (under the
+    /// cell's near group, this frame): stop drawing it. Called only after the
+    /// spawn, so there is no frame without the object. The default does nothing.
+    fn promoted(&self, _world: &mut World, _worldspace: &WorldspaceId, _cell: IVec3, _placement: PlacementId) {}
     /// Upload estimate of the cell's table, bytes, added to the near load's
     /// budget. The default, 0, lets a hook skip the estimate (its uploads then
     /// ride on the placements' own estimate).
