@@ -8841,6 +8841,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_video_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_app",
+ "bevy_asset",
+ "bevy_ecs",
+ "bevy_image",
+ "bevy_log",
+ "bevy_time",
+ "bevy_ui",
+ "sf_video",
+ "wgpu-types",
+ "workspace-hack",
+]
+
+[[package]]
 name = "sf_water"
 version = "0.1.0"
 dependencies = [

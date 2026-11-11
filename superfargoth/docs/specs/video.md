@@ -70,3 +70,11 @@ native output) and `yuv_to_rgba`, `VideoSource`, `VideoDecoders` (`probe`: `BIK`
 unsupported error). `bink.rs` drives `infinitier_bik_decoder`'s low-level parts, not its streaming decoder (no rewind,
 copies frames, one audio track, can panic on a bad audio length). Gate passed (`tests/bik_corpus.rs`, ignored
 measurement): all 17 Morrowind files, all frames, 0.54-1.55 ms/frame at 640×480 release; audio length matches video.
+
+## As built (V2, 2026-11-11)
+
+`superfargoth/crates/sf_video_bevy`: `VideoPlugin` (registry resource `VideoDecoderRegistry`, Bink by default; message
+`VideoFinished { entity }`; set `VideoSystems`), `VideoPlayer::new(bytes, looped)` (requires `ImageNode`; getters
+`image`, `info`, `frames_shown`, `is_finished`). Decode thread with a 3-frame RGBA queue (`QUEUE_FRAMES`), clock on
+`Time<Real>`, loop by `seek_start`, despawn or removal stops the thread. Per-frame `Assets::get_mut` re-uploads in place
+(0.20: `Modified` → extract → `GpuImage::prepare_asset` `write_texture`). Not yet: audio, sync, skip, pause when hidden (V3).

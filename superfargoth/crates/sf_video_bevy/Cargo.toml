@@ -1,0 +1,27 @@
+[package]
+name = "sf_video_bevy"
+description = "Thin Bevy plugin for sf_video: a VideoPlayer component that decodes on its own thread and shows frames on a UI ImageNode (video.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Thin (ARCHITECTURE §8b rule 6): the decoders and the YUV conversion live in Bevy-free `sf_video`; this crate
+# only runs the decode thread, the clock and the image swap. `wgpu-types` names the image's size and format
+# (bevy_image doesn't re-export them; same version it uses, no new crate in the tree).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_image.workspace = true
+bevy_log.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+bevy_ui.workspace = true
+sf_video.workspace = true
+wgpu-types.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+bevy.workspace = true
+
+[lints]
+workspace = true

@@ -143,6 +143,8 @@ infinitier_bik_decoder = "0.1.0"
 ufbx = "0.11.5"
 # Same version Bevy 0.20 renders with. Dev-dependency only: headless GPU twin tests (sf_wind).
 wgpu = { version = "30", default-features = false }
+# Texture size and format types for images built in code (sf_video_bevy): the wgpu-types bevy_image 0.20 uses.
+wgpu-types = { version = "30", default-features = false, features = ["std"] }
 
 # Game-only third-party crates (bevyrrowind).
 # TES3 formats (MIT/Apache). Unstable API: pinned to a commit.
@@ -230,6 +232,8 @@ sf_ui_css = { path = "superfargoth/crates/sf_ui_css", version = "0.1.0" }
 sf_ui_inventory = { path = "superfargoth/crates/sf_ui_inventory", version = "0.1.0" }
 sf_ui_screens = { path = "superfargoth/crates/sf_ui_screens", version = "0.1.0" }
 sf_vfs = { path = "superfargoth/crates/sf_vfs", version = "0.1.0" }
+sf_video = { path = "superfargoth/crates/sf_video", version = "0.1.0" }
+sf_video_bevy = { path = "superfargoth/crates/sf_video_bevy", version = "0.1.0" }
 sf_water = { path = "superfargoth/crates/sf_water", version = "0.1.0" }
 sf_water_bevy = { path = "superfargoth/crates/sf_water_bevy", version = "0.1.0" }
 sf_weather = { path = "superfargoth/crates/sf_weather", version = "0.1.0" }
