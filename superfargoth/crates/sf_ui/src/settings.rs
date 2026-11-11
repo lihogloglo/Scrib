@@ -259,7 +259,7 @@ fn expected(kind: &SettingKind) -> &'static str {
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn coerce(
+pub(crate) fn coerce(
     key: &str,
     kind: &SettingKind,
     value: SettingValue,

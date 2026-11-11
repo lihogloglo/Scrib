@@ -11,6 +11,7 @@ use sf_records::{RecordDb, RecordError};
 
 use crate::conditions::Condition;
 use crate::ids::{InputContextId, ListId, PresetId, SlotId, TemplateId};
+use crate::settings::SettingValue;
 
 /// Record kind names.
 pub const SCREEN_KIND: &str = "ui.screen";
@@ -19,6 +20,8 @@ pub const COLUMN_KIND: &str = "ui.column";
 pub const THEME_KIND: &str = "ui.theme";
 pub const PRESET_KIND: &str = "ui.preset";
 pub const SETTING_KIND: &str = "ui.setting";
+/// Setting presets (graphics Low..Ultra); `ui.preset` is the layout preset.
+pub const SETTING_PRESET_KIND: &str = "ui.setting_preset";
 
 /// Registers every UI kind as a serde kind. Call once before loading mods.
 pub fn register_kinds(db: &mut RecordDb) -> Result<(), RecordError> {
@@ -28,6 +31,7 @@ pub fn register_kinds(db: &mut RecordDb) -> Result<(), RecordError> {
     db.register_serde::<ThemeDef>(THEME_KIND)?;
     db.register_serde::<PresetDef>(PRESET_KIND)?;
     db.register_serde::<SettingDef>(SETTING_KIND)?;
+    db.register_serde::<SettingPresetDef>(SETTING_PRESET_KIND)?;
     Ok(())
 }
 
@@ -334,6 +338,30 @@ pub enum ValueFormat {
 
 fn yes() -> bool {
     true
+}
+
+/// A `ui.setting_preset` record (menus.md "Settings v2", Presets): named
+/// levels of setting values behind one Choice setting, the driver.
+///
+/// The driver's options are the level ids plus `"custom"`. Picking a level
+/// writes its values ([`crate::apply_level`]); the driver's value is always
+/// derived from the current values ([`crate::derived_level`]), never stored
+/// as a separate truth.
+///
+/// Records naming the same driver merge, in load order, into the first one:
+/// a mod adds keys to a level by defining its own record with that driver
+/// (`levels = { low = { "x.key" = 1 } }`), and the last mod writing a key
+/// wins. (A field-path patch can't: merge keys may not contain dots, and
+/// setting keys do.)
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SettingPresetDef {
+    /// Key of the Choice setting that shows the levels (`sf.graphics_preset`).
+    pub driver: String,
+    /// Level id to the values it writes (setting key to value). Levels are
+    /// matched in level-id order (byte-wise), so of two levels holding the
+    /// same current values the one whose id sorts first is shown.
+    #[serde(default)]
+    pub levels: BTreeMap<String, BTreeMap<String, SettingValue>>,
 }
 
 /// A setting's type, default and range.

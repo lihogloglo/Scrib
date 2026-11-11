@@ -3,7 +3,7 @@
 //! Everything here is plain data and logic, testable without an engine:
 //!
 //! - [`records`]: the UI record kinds mods define through `sf_records`
-//!   (`ui.screen`, `ui.slot`, `ui.column`, `ui.theme`, `ui.preset`, `ui.setting`).
+//!   (`ui.screen`, `ui.slot`, `ui.column`, `ui.theme`, `ui.preset`, `ui.setting`, `ui.setting_preset`).
 //! - [`UiRegistry`]: those records resolved once per mod set, with owners,
 //!   ordered slot contributions and columns, and a [`UiConflict`] report.
 //! - [`ScreenStack`]: the Unreal Common UI layer model (screens stacked per [`Layer`]);
@@ -34,6 +34,9 @@
 //!   input names per device and pad family.
 //! - [`resolve_backdrop`] and [`cover_size`]: the menu backdrop's candidate pick and its
 //!   `cover` fit (menus.md "Backdrop and title").
+//! - [`apply_level`], [`derived_level`] and [`sync_driver`]: `ui.setting_preset`
+//!   levels behind a Choice driver that reads "custom" when no level matches
+//!   (menus.md "Settings v2").
 
 mod backdrop;
 mod conditions;
@@ -45,6 +48,7 @@ mod list;
 mod mods;
 mod notify;
 mod paginate;
+mod presets;
 mod rebind;
 pub mod records;
 mod registry;
@@ -70,6 +74,8 @@ mod tests_notify;
 mod tests_text;
 #[cfg(test)]
 mod tests_settings_v2;
+#[cfg(test)]
+mod tests_presets;
 
 pub use conditions::{Condition, PHASE_FRONTEND, PHASE_IN_GAME, SettingValueMatch, evaluate};
 pub use backdrop::{BackdropCandidate, BackdropKind, cover_size, resolve_backdrop};
@@ -95,6 +101,7 @@ pub use paginate::{
     DocPos, Fragment, LineMetrics, Page, PageFormat, PageView, Pagination, Placed, Size,
     TextMeasure,
 };
+pub use presets::{CUSTOM_LEVEL, PresetError, apply_level, derived_level, sync_driver};
 pub use rebind::{CAPTURE_TIMEOUT, CaptureFrame, RebindEvent, Rebinder};
 pub use records::{Layer, register_kinds};
 pub use registry::{Def, Severity, UiConflict, UiRegistry};

@@ -4,12 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use indexmap::IndexMap;
-use sf_records::{Op, RecordDb, SourceId};
+use sf_records::{Op, RecordDb, SourceId, paths_overlap};
 
 use crate::ids::{ColumnId, ListId, ModId, PresetId, ScreenId, SettingKey, SlotId, ThemeId};
 use crate::records::{
-    ColumnDef, PresetDef, ScreenDef, SettingDef, SettingKind, SlotContribution, ThemeDef,
+    ColumnDef, PresetDef, ScreenDef, SettingDef, SettingKind, SettingPresetDef, SlotContribution,
+    ThemeDef,
 };
+use crate::presets::CUSTOM_LEVEL;
+use crate::settings::{SettingValue, coerce};
 
 /// Mod id of the built-in definitions (presets and settings the framework ships).
 pub const FRAMEWORK_MOD: &str = "sf";
@@ -63,6 +66,16 @@ pub enum UiConflict {
         owner: ModId,
         reason: String,
     },
+    /// A `ui.setting_preset` is invalid: with `level` and `key`, that one
+    /// value was dropped (owner: the mod that wrote it); without, the whole
+    /// preset was (a missing or non-Choice driver).
+    InvalidSettingPreset {
+        preset: String,
+        level: Option<String>,
+        key: Option<SettingKey>,
+        owner: ModId,
+        reason: String,
+    },
 }
 
 impl UiConflict {
@@ -70,7 +83,9 @@ impl UiConflict {
         match self {
             UiConflict::ScreenReplaced { .. } => Severity::Info,
             UiConflict::UnknownSlot { .. } | UiConflict::UnknownPreset { .. } => Severity::Warning,
-            UiConflict::InvalidSetting { .. } => Severity::Error,
+            UiConflict::InvalidSetting { .. } | UiConflict::InvalidSettingPreset { .. } => {
+                Severity::Error
+            }
         }
     }
 
@@ -80,7 +95,8 @@ impl UiConflict {
             UiConflict::ScreenReplaced { by: owner, .. }
             | UiConflict::UnknownSlot { owner, .. }
             | UiConflict::UnknownPreset { owner, .. }
-            | UiConflict::InvalidSetting { owner, .. } => owner,
+            | UiConflict::InvalidSetting { owner, .. }
+            | UiConflict::InvalidSettingPreset { owner, .. } => owner,
         }
     }
 }
@@ -120,6 +136,19 @@ impl fmt::Display for UiConflict {
             UiConflict::InvalidSetting { key, owner, reason } => {
                 write!(f, "{owner}: setting `{key}` dropped: {reason}")
             }
+            UiConflict::InvalidSettingPreset {
+                preset,
+                level,
+                key,
+                owner,
+                reason,
+            } => match (level, key) {
+                (Some(level), Some(key)) => write!(
+                    f,
+                    "{owner}: setting preset `{preset}` level `{level}`: `{key}` dropped: {reason}"
+                ),
+                _ => write!(f, "{owner}: setting preset `{preset}` dropped: {reason}"),
+            },
         }
     }
 }
@@ -133,6 +162,7 @@ pub struct UiRegistry {
     themes: IndexMap<ThemeId, Def<ThemeId, ThemeDef>>,
     presets: IndexMap<PresetId, Def<PresetId, PresetDef>>,
     settings: IndexMap<SettingKey, Def<SettingKey, SettingDef>>,
+    setting_presets: IndexMap<String, Def<String, SettingPresetDef>>,
 }
 
 impl UiRegistry {
@@ -227,6 +257,7 @@ impl UiRegistry {
         }
 
         reg.add_settings(db, &mut conflicts);
+        reg.add_setting_presets(db, &mut conflicts);
 
         (reg, conflicts)
     }
@@ -261,6 +292,136 @@ impl UiRegistry {
                     reason,
                 }),
             }
+        }
+    }
+
+    /// `ui.setting_preset` records, checked against the settings: a missing or
+    /// non-Choice driver (or one not offering every level and `custom`) drops
+    /// the record; an unknown key or a value that doesn't fit drops that value,
+    /// attributed to the mod that wrote it. Kept values are stored as the
+    /// store would hold them (an int written for a float setting becomes a float).
+    ///
+    /// Records sharing a driver merge into the first one, in load order, a
+    /// later record's value winning for a key: that is how a mod adds keys to a
+    /// level (field-path patches can't, as setting keys contain dots).
+    fn add_setting_presets(&mut self, db: &RecordDb, conflicts: &mut Vec<UiConflict>) {
+        let mut records = collect::<SettingPresetDef, _>(db, String::from);
+        records.sort_by_key(|d| d.source);
+        for mut d in records {
+            let preset_error = |owner: ModId, reason: String| UiConflict::InvalidSettingPreset {
+                preset: d.id.clone(),
+                level: None,
+                key: None,
+                owner,
+                reason,
+            };
+            let driver = d.def.driver.clone();
+            let options = match self.settings.get(driver.as_str()).map(|s| &s.def.kind) {
+                None => {
+                    conflicts.push(preset_error(
+                        d.owner.clone(),
+                        format!("driver `{driver}` is not a setting"),
+                    ));
+                    continue;
+                }
+                Some(SettingKind::Choice { options, .. }) => options,
+                Some(_) => {
+                    conflicts.push(preset_error(
+                        d.owner.clone(),
+                        format!("driver `{driver}` is not a Choice setting"),
+                    ));
+                    continue;
+                }
+            };
+            if d.def.levels.contains_key(CUSTOM_LEVEL) {
+                let owner = writer_of(db, &d, &format!("levels.{CUSTOM_LEVEL}"));
+                conflicts.push(preset_error(
+                    owner,
+                    format!("level id `{CUSTOM_LEVEL}` is reserved"),
+                ));
+                continue;
+            }
+            let missing = std::iter::once(CUSTOM_LEVEL)
+                .chain(d.def.levels.keys().map(String::as_str))
+                .find(|o| !options.iter().any(|x| x == o));
+            if let Some(missing) = missing {
+                let owner = if missing == CUSTOM_LEVEL {
+                    d.owner.clone()
+                } else {
+                    writer_of(db, &d, &format!("levels.{missing}"))
+                };
+                conflicts.push(preset_error(
+                    owner,
+                    format!("driver `{driver}` doesn't offer `{missing}`"),
+                ));
+                continue;
+            }
+
+            let mut levels = std::mem::take(&mut d.def.levels);
+            for (level, values) in &mut levels {
+                let checked = std::mem::take(values);
+                for (key, value) in checked {
+                    match self.preset_value(&driver, &key, value) {
+                        Ok(value) => {
+                            values.insert(key, value);
+                        }
+                        Err(reason) => conflicts.push(UiConflict::InvalidSettingPreset {
+                            preset: d.id.clone(),
+                            level: Some(level.clone()),
+                            owner: writer_of(db, &d, &format!("levels.{level}.{key}")),
+                            key: Some(SettingKey::new(key)),
+                            reason,
+                        }),
+                    }
+                }
+            }
+            d.def.levels = levels;
+            let base = self
+                .setting_presets
+                .values_mut()
+                .find(|p| p.def.driver == d.def.driver);
+            match base {
+                Some(base) => {
+                    for (level, values) in d.def.levels {
+                        base.def.levels.entry(level).or_default().extend(values);
+                    }
+                }
+                None => {
+                    self.setting_presets.insert(d.id.clone(), d);
+                }
+            }
+        }
+    }
+
+    /// A preset level's value for `key`, as the store holds it, or why it
+    /// doesn't fit the setting.
+    fn preset_value(
+        &self,
+        driver: &str,
+        key: &str,
+        value: SettingValue,
+    ) -> Result<SettingValue, String> {
+        if key == driver {
+            return Err("the driver can't be a level member".into());
+        }
+        let Some(setting) = self.settings.get(key) else {
+            return Err("unknown setting".into());
+        };
+        let stored = coerce(key, &setting.def.kind, value.clone()).map_err(|e| e.to_string())?;
+        let same = match (&value, &stored) {
+            #[allow(clippy::cast_precision_loss)]
+            (SettingValue::Int(n), SettingValue::Float(x))
+            | (SettingValue::Float(x), SettingValue::Int(n)) => (*n as f64 - x).abs() == 0.0,
+            (a, b) => a == b,
+        };
+        if same {
+            Ok(stored)
+        } else {
+            Err(format!(
+                "{} is out of range or off step (the setting would hold {})",
+                show(&value),
+                show(&stored)
+            ))
         }
     }
 
@@ -313,6 +474,54 @@ impl UiRegistry {
     /// Settings in first-definition order.
     pub fn settings(&self) -> impl Iterator<Item = &Def<SettingKey, SettingDef>> {
         self.settings.values()
+    }
+
+    /// A valid setting preset by the id of its first record (the one later
+    /// records sharing its driver merged into).
+    pub fn setting_preset(&self, id: &str) -> Option<&Def<String, SettingPresetDef>> {
+        self.setting_presets.get(id)
+    }
+
+    /// The setting preset a driver setting shows.
+    pub fn setting_preset_for_driver(
+        &self,
+        driver: &str,
+    ) -> Option<&Def<String, SettingPresetDef>> {
+        self.setting_presets.values().find(|p| p.def.driver == driver)
+    }
+
+    /// Valid setting presets in load order (each merged with the later
+    /// records sharing its driver).
+    pub fn setting_presets(&self) -> impl Iterator<Item = &Def<String, SettingPresetDef>> {
+        self.setting_presets.values()
+    }
+}
+
+/// The mod that last wrote `path` of a record (the latest patch since the
+/// current define whose fields cover it), else the mod that defined it.
+fn writer_of(db: &RecordDb, d: &Def<String, SettingPresetDef>, path: &str) -> ModId {
+    db.entry::<SettingPresetDef>(&d.id.as_str().into())
+        .and_then(|entry| {
+            entry
+                .history
+                .iter()
+                .rev()
+                .take_while(|t| t.op != Op::Define)
+                .find(|t| {
+                    t.fields
+                        .as_ref()
+                        .is_some_and(|f| f.iter().any(|p| paths_overlap(p, path)))
+                })
+        })
+        .map_or_else(|| d.owner.clone(), |t| mod_of(db, t.source))
+}
+
+fn show(value: &SettingValue) -> String {
+    match value {
+        SettingValue::Bool(b) => b.to_string(),
+        SettingValue::Int(n) => n.to_string(),
+        SettingValue::Float(x) => x.to_string(),
+        SettingValue::Text(s) => format!("`{s}`"),
     }
 }
 

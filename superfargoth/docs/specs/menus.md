@@ -141,7 +141,10 @@ to Frontend. The save screen opens over the main menu (`DeferLoads` → `LoadCho
 - **Presets** (new record `ui.setting_preset`; not `ui.preset`, which is the layout preset): `id`, `driver`
   (the Choice setting showing the levels, e.g. `sf.graphics_preset`), `levels` (`low = { "sf.shadows" = "low",
   ... }`). Picking a level writes its values; the driver reads **Custom** whenever current values match no
-  level (derived each change, never stored as truth). Mods add keys to a level in load order.
+  level (derived each change, never stored as truth). Mods add keys to a level in load order. *As built (S1b):*
+  a mod ships its own `ui.setting_preset` with the same `driver` (sf_records patch keys can't contain the dots of
+  setting keys); records sharing a driver merge into the first in load order, last writer of a key wins (as slot
+  contributions). `derived_level` checks levels in level-id byte order, first match wins; "custom" is reserved.
 - **Change contract**: the store emits `SettingChanged { key, old, new }` (a Bevy message in `sf_ui_bevy`);
   consumers are ordinary systems, one per setting family, registered by the owning crate. `Restart` settings
   are read once from the store at app build (before plugins are added), which is how the game's start-time
