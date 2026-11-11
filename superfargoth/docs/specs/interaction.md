@@ -160,6 +160,7 @@ The NPC path is `sf_ai`'s `UseSlot(slot)` operator (claim, approach, enter, loop
 
 `InteractionEvent { tick, user, slot, kind: Claimed | Entered | Exited | Released | Invalidated(reason) }`, plus
 `Destroyed`, `Mounted`, `Dismounted` below. Scripts (adapter: MWScript `OnActivate`), audio, barks and crime read them.
+NPC reactions to changed objects read `WorldChange` events ([world-reactions.md](world-reactions.md), IN14-IN16).
 
 ### Cost, net, save, risk (core)
 
@@ -305,6 +306,7 @@ attach transform each; moving platforms measured in IN11.
 | IN11 | Moving platforms in `sf_controller`; walk on a moving deck | IN7, 3.7 buoyancy | sanity: no slide-off at rest, no tunnelling; measure ms; IN-11 |
 | IN12 | Pre-fractured chunk visuals for a stage | IN1 | sanity; IN-12 |
 | IN13 | Building damage: design slice (structure vs authored stages) | owner decision | doc |
+| IN14-IN16 | `WorldChange` events, reset/persistence classes, loose-item `take` slots ([world-reactions.md](world-reactions.md)) | there | there |
 
 Visual checks go in `bevyrrowind/docs/visual-checks/interaction.md` (prefix IN-) with camera, time, flags and what to
 look for; agents never judge them from screenshots.

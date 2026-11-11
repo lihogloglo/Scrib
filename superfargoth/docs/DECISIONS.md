@@ -1812,3 +1812,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-11 (static scene C2): no `suppress_scene_placements` spawner wrapper (plan §8's "belt to the braces"):
   `CellScene::covered` already stops spawns and model loads, and a wrapper would also block a promoted placement's
   entity spawn (B5a-2). `--scene` and the precombine are exclusive (`mw_exterior_bevy::static_paths`).
+- 2026-11-11 (world reactions, owner): NPCs are full culprits (theft, looting, vandalism; Classic preset player-only);
+  unwitnessed harm raises evidence-scored suspicion, never bounty alone; consequences, suspicion weights and reset timings
+  are data records, not code. Reference games for AI: Cyberpunk 2077, KCD II, RDR2, Nemesis (not Oblivion Radiant).

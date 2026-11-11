@@ -334,6 +334,7 @@ Bevy-free, exact assertions, synthetic records and GMSTs (`sf_crime` tests):
 | **LW7** | `sf/crime` save section, goldens, wiring in `sf_save_bevy` |
 | **LW8** | `sf_rpg_ui` `InteractPrompt` / `StealthView`, arrest dialogue buttons, visual-check entry (awaiting owner) |
 | LW9 | AI integration once AI8: replace the scaffold, guard behaviours, Meter model |
+| LW10 | NPC culprits: `offender` becomes `Culprit` (player or actor) in `OffenceAttempt`/`OffenceObserved`, same witness and ledger paths (owner 2026-11-11; [world-reactions.md](world-reactions.md)) |
 
 ## Open questions (owner)
 

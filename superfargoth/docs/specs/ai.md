@@ -148,6 +148,8 @@ set registered under the same task ids (e.g. an `AiWander` port in `mw_rules`), 
   simulated actor in range when the event happens, whatever their tier.
 - Generic crime hook: `OffenceObserved { offender, kind: RecordId, witnesses, at, tick }`; bounty, guards and arrest
   are adapter rules.
+- **World reactions** (noticing changed objects, suspicion, investigate/report/tidy, NPC culprits, reset):
+  [world-reactions.md](world-reactions.md), slices AI19-AI25 and AIM2 there.
 
 ## Memory and relationships (Nemesis-style; owner decision 7)
 
@@ -282,7 +284,8 @@ Per-actor **trace ring buffer** (64 decisions: tick, tier, drive and considerati
 
 | Technique | Industry | Ours | Verdict |
 |---|---|---|---|
-| Top layer | Bethesda packages (Radiant), Skyrim procedure trees, OpenMW `AiSequence` | directive stack + `StackPolicy` | **match** |
+| Top layer | KCD II routines, RDR2 and Cyberpunk schedules, Skyrim procedure trees, OpenMW `AiSequence` | directive stack + `StackPolicy` | **match** |
+| Reactions | UE AI Perception sources; Hitman, KCD II, RDR2 witnesses and suspicion | world-reactions.md concerns | **match** (planned) |
 | Selection | utility: Sims, GW2 IAUS, OpenMW combat ratings | drives + momentum | **match** |
 | Behaviours | HTN: Horizon, Transformers FoC, Killzone; GOAP: F.E.A.R., KCD II; BT/StateTree: UE, CryEngine | shared HTN library, MTR | **match** (HTN: designer control, cost) |
 | Schedules | Ultima VII, Gothic, Bethesda packages, KCD routines | records → directives | **match** |
@@ -326,6 +329,7 @@ One deliverable plus its test per slice. Visual checks use prefix `AI-`.
 | **AI16** net | replicated AI state via `sf_net` (after N2) | loopback sees activity, barks |
 | **AI17** Luau | `@sf/ai` (when Lua is unparked) | push/done round trip |
 | **AI18** advisor seam | `Advisor`, protocol schema, null advisor, deadline | late answer ignored; saved |
+| AI19-AI25, AIM2 | world reactions: concerns, notice drive, discovery by tier, investigate/report, suspicion, tidy, consequences ([world-reactions.md](world-reactions.md)) | there |
 | **AIM** measurement | Floor and High cap sweeps ("Tiers and budget"), AI + mover + animation ms together | owner runs; provisional rows filled |
 
 Order: AI1 → AI2 → AI3 → AI4 → AI5 → AI6 (needs NV7a, NV8, seamless SI3) → AI7 → AI8 → AI9 → AI10 (needs NV12) →

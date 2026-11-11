@@ -123,7 +123,8 @@ calls `notifyMurder` on the victim (MM 1233-1234).
 
 ## `commitCrime` (A2; MM 1137-1202)
 
-1. Player only (our `OffenceAttempt.offender` is the player; NPC crimes are not tracked). Assault forces
+1. Player only (our `OffenceAttempt.offender` is the player; NPC crimes are not tracked; modern preset adds NPC
+   culprits, LW10 in crime.md, classic keeps this). Assault forces
    `victimAware = true`.
 2. Candidates: actors within `fAlarmRadius` of the player plus the victim even beyond it. Followers and allies of the
    player (`getActorsSidingWith`, recursive) are excluded as reporters.
