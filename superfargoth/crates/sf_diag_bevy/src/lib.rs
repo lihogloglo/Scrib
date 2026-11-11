@@ -47,8 +47,18 @@ pub use views::RenderViewsPlugin;
 pub mod ready;
 pub use ready::{GateReceipt, GateStatus, GpuPending, ReadyGate};
 
+pub mod warmup;
+pub use warmup::{PendingDraws, PendingSample, Reveal, RevealProbe, RevealTerm, RevealWatchPlugin};
+
+#[cfg(feature = "pipelines")]
+mod pipeline_watch;
+#[cfg(feature = "pipelines")]
+pub use pipeline_watch::{PendingDrawsPlugin, PendingMaterialPlugin, PipelineWatchPlugin};
+
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_warmup;
 
 /// Which Bevy diagnostics are recorded as gauge counters (under their own
 /// path, e.g. `render/opaque_pass/elapsed_gpu`). Bevy's own frame time,

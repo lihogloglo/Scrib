@@ -367,6 +367,19 @@ impl<A: ErasedRenderAsset> Default for PrepareNextFrameAssets<A> {
     }
 }
 
+// superfargoth patch (own: pipeline compile timing), pipeline-warmup.md W1: read-only count of
+// one material type's retry queue (materials whose textures or buffers are not prepared yet).
+impl<A: ErasedRenderAsset> PrepareNextFrameAssets<A> {
+    /// Assets waiting for a later frame (dependencies not prepared, or over the upload budget).
+    pub fn len(&self) -> usize {
+        self.assets.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.assets.is_empty()
+    }
+}
+
 /// This system prepares all assets of the corresponding [`ErasedRenderAsset::SourceAsset`] type
 /// which where extracted this frame for the GPU.
 pub fn prepare_erased_assets<A: ErasedRenderAsset>(

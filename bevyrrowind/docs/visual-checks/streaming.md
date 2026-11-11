@@ -79,3 +79,10 @@ Open visual checks: streaming spikes, size-based draw distance, door links (ST, 
   streams out, and leaving takes about 1 s again.
 - Status: partial, owner 2026-10-19 (round 8): works, see DR-4.
 - Source: interiors, doorfix.
+
+### RG-1: Nothing pops in after a reveal (reveal gate, pipeline-warmup W1)
+- Kind: game location, cold (delete `%LOCALAPPDATA%\NVIDIA\DXCache` and `\GLCache` first) then warm. Build: `cargo build -p bevyrrowind --features dev`.
+- Run: (1) release start, New game into Seyda Neen; (2) `.\bevyrrowind view "Seyda Neen"`, walk into "Seyda Neen, Census and Excise Office"; (3) back out. High preset, then Low.
+- Look for: when the fade (or the loading screen) lifts, every object, texture and shadow near you is already there: nothing appears one by one. Holds may be longer than before, never over ~10 s.
+- Log: one `reveal: door|loading held X s (cells, textures, assets, pipelines, gates ...)` line per reveal (which term held), its `+10.0 s: after_reveal N` line (target 0); any `reveal gate: ... not ready after` warning names what was pending (send it).
+- Status: awaiting owner (2026-11-11). Source: warmup-w1.

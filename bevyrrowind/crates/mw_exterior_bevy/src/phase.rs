@@ -9,7 +9,7 @@
 //! - `Loading` → `InGame` once streaming has the active worldspace's directory and, on the
 //!   release start, a load burst ([`Streaming::begin_burst`]) armed after it has ended: R0 and R1
 //!   resident (`sf_world` scheduler). Dev runs keep today's budgets (no burst), so they enter
-//!   `InGame` as soon as the directory is in.
+//!   `InGame` as soon as the directory is in. Both then wait on `sf_world_bevy::RevealGate` (W1).
 //! - **Loading a save** (Continue, or Load from the front end: a [`LoadingSave`]): the world's
 //!   setup runs as for New game, but streaming holds (the `Drive` set doesn't run) and the
 //!   `LoadRequest` goes out on entering `Loading`. The load applies through the game's own path
@@ -27,7 +27,7 @@ use bevy::prelude::*;
 use sf_app_bevy::bevy_state::prelude::{NextState, OnEnter, OnExit, in_state};
 use sf_app_bevy::{AppPhase, AppPhasePlugin, WorldAlive};
 use sf_save_bevy::{LoadDone, LoadRequest};
-use sf_world_bevy::{ActiveWorldspace, FadeTransition, Streaming, StreamingSystems, TravelArrived};
+use sf_world_bevy::{ActiveWorldspace, FadeTransition, RevealAsk, RevealCheck, Streaming, StreamingSystems, TravelArrived};
 
 /// The front end's UI camera (despawned when the front end exits).
 #[derive(Component)]
@@ -151,36 +151,53 @@ fn track_save_load(
 }
 
 /// `Loading` → `InGame`: the active worldspace's directory is in and (release) the burst armed
-/// after it has ended. `armed` resets on the way out, for the next world (F2). A save's load
-/// waits for the player's placement first ([`LoadingSave`]).
-#[allow(clippy::needless_pass_by_value)] // system parameters
+/// after it has ended, then the reveal gate opens (pipeline-warmup.md §5.4, W1: the start area's
+/// textures, prepared assets and pipelines, shadow views included; capped at 10 s with a `warn!`).
+/// `armed` resets on the way out, for the next world (F2). A save's load waits for the player's
+/// placement first ([`LoadingSave`]); its arrival is the fade's reveal (the fade holds it black).
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)] // system parameters
 fn loading_done(
     mut streaming: ResMut<Streaming>,
     active: Res<ActiveWorldspace>,
     burst: Option<Res<LoadingBurst>>,
     loading_save: Option<Res<LoadingSave>>,
+    fade: Option<Res<FadeTransition>>,
+    mut reveal: RevealCheck,
     mut next: ResMut<NextState<AppPhase>>,
     mut armed: Local<bool>,
 ) {
     if loading_save.is_some() || !matches!(*next, NextState::Unchanged) {
         return;
     }
-    if let Some(ws) = active.0.as_ref()
-        && !streaming.has_directory(ws)
-    {
-        return;
-    }
-    // Armed only now: before the directory the scheduler has no request to wait for, so a
-    // burst begun earlier may already have ended.
-    if burst.is_some() && !*armed {
-        streaming.begin_burst();
-        *armed = true;
-        return;
-    }
-    if streaming.in_burst() {
+    let resident = start_area_resident(&mut streaming, &active, burst.is_some(), &mut armed);
+    let revealed = if fade.is_some_and(|f| f.is_active()) {
+        resident
+    } else {
+        let place = active.0.as_ref().map_or("", |w| w.as_str());
+        let ask = RevealAsk { kind: "loading", place, focus: None, cells: resident, gated: false, give_up: false };
+        reveal.step(ask).open
+    };
+    if !revealed {
         return;
     }
     *armed = false;
-    info!("app phase: start area resident, in game");
+    info!("app phase: start area resident and revealed, in game");
     next.set(AppPhase::InGame);
+}
+
+/// The streaming half of [`loading_done`]: the directory is in and the (armed) burst has ended.
+fn start_area_resident(streaming: &mut Streaming, active: &ActiveWorldspace, burst: bool, armed: &mut bool) -> bool {
+    if let Some(ws) = active.0.as_ref()
+        && !streaming.has_directory(ws)
+    {
+        return false;
+    }
+    // Armed only now: before the directory the scheduler has no request to wait for, so a
+    // burst begun earlier may already have ended.
+    if burst && !*armed {
+        streaming.begin_burst();
+        *armed = true;
+        return false;
+    }
+    !streaming.in_burst()
 }

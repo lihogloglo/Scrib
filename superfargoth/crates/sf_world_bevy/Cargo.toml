@@ -51,7 +51,8 @@ big_space.workspace = true
 glam.workspace = true
 log.workspace = true
 sf_coords.workspace = true
-sf_diag_bevy.workspace = true
+# Reveal, PendingDraws and the render-world counting of the reveal gate (feature `pipelines`).
+sf_diag_bevy = { workspace = true, features = ["pipelines"] }
 sf_model = { path = "../sf_model", version = "0.1.0", default-features = false }
 sf_model_bevy.workspace = true
 # MaterialClass, MaterialTraits: material classes of statics (static-scene.md S2).

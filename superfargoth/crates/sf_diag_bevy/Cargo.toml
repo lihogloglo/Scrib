@@ -13,14 +13,19 @@ render = ["dep:bevy_render"]
 # Per-view render counters (`RenderViewsPlugin`, static-scene.md S0): binned
 # phases, preprocessing work items and bind groups in the render world.
 views = ["render", "dep:bevy_core_pipeline", "dep:bevy_pbr"]
+# Pipeline warm-up watch (`PipelineWatchPlugin`, pipeline-warmup.md W0): pending draws, compile
+# times and view-key flips in the render world.
+pipelines = ["render", "dep:bevy_asset", "dep:bevy_camera", "dep:bevy_mesh", "dep:bevy_pbr"]
 
 # Minimal Bevy (ARCHITECTURE §8b rule 6). No rendering crate by default: GPU
 # timings arrive through `DiagnosticsStore` when the app adds `RenderDiagnosticsPlugin`.
 [dependencies]
 # App, Plugin, First schedule, AppExit.
 bevy_app = { workspace = true, features = ["std"] }
-# AssetEvent (feature `assets`).
+# AssetEvent (feature `assets`); AssetId (feature `pipelines`).
 bevy_asset = { workspace = true, optional = true }
+# InheritedVisibility of meshes near a reveal (feature `pipelines`).
+bevy_camera = { workspace = true, optional = true }
 # Opaque3d / prepass / deferred phase types (feature `views`).
 bevy_core_pipeline = { workspace = true, optional = true }
 # Resource, Component, systems, MessageWriter.
@@ -29,6 +34,8 @@ bevy_ecs = { workspace = true, features = ["std"] }
 bevy_diagnostic = { workspace = true, features = ["std"] }
 # Instant of diagnostic measurements; HashMap.
 bevy_platform = { workspace = true, features = ["std"] }
+# Mesh3d visibility class (feature `pipelines`).
+bevy_mesh = { workspace = true, optional = true }
 # Shadow phase, light views, mesh preprocessing buffers (feature `views`).
 bevy_pbr = { workspace = true, optional = true }
 # PipelineCache in the render world (feature `render`).

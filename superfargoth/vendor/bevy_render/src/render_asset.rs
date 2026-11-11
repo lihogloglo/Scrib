@@ -388,6 +388,18 @@ impl<A: RenderAsset> Default for PrepareNextFrameAssets<A> {
     }
 }
 
+// superfargoth patch (own: pipeline compile timing), pipeline-warmup.md W0: read-only count.
+impl<A: RenderAsset> PrepareNextFrameAssets<A> {
+    /// Assets waiting for a later frame (dependencies not prepared, or over the upload budget).
+    pub fn len(&self) -> usize {
+        self.assets.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.assets.is_empty()
+    }
+}
+
 /// This system prepares all assets of the corresponding [`RenderAsset::SourceAsset`] type
 /// which where extracted this frame for the GPU.
 pub fn prepare_assets<A: RenderAsset>(

@@ -28,6 +28,50 @@ use core::{future::Future, mem};
 use std::sync::{Mutex, PoisonError};
 use wgpu::{PipelineCompilationOptions, VertexBufferLayout as RawVertexBufferLayout};
 
+// superfargoth patch (own: pipeline compile timing), pipeline-warmup.md W0: per-pipeline creation
+// times, kept only once a consumer calls `PipelineCache::record_compile_timings` (else stock).
+/// One pipeline's creation, timed on the task that built it (see
+/// [`PipelineCache::take_compile_timings`]).
+#[derive(Clone, Debug)]
+pub struct PipelineCompileTiming {
+    pub id: CachedPipelineId,
+    pub label: Option<Cow<'static, str>>,
+    /// Task spawned to task body started (the async compute pool was busy).
+    pub queued: core::time::Duration,
+    /// Waiting for the shader and layout cache locks (other pipelines' front ends hold them).
+    pub lock_wait: core::time::Duration,
+    /// Front end under the shader-cache lock: shader composition (WESL / naga_oil) and shader
+    /// module creation (naga parse and validation), plus the pipeline layout.
+    pub front: core::time::Duration,
+    /// `create_*_pipeline` (on Vulkan: naga's SPIR-V write, then the driver's compile).
+    pub driver: core::time::Duration,
+}
+
+/// The recorded timings (`None` until a consumer asks for them: nothing is kept).
+#[derive(Default)]
+struct CompileTimingSink(Mutex<Option<Vec<PipelineCompileTiming>>>);
+
+/// Instants of one pipeline task: spawned, body started, locks taken, front end done.
+type CompileClock = [bevy_platform::time::Instant; 4];
+
+impl CompileTimingSink {
+    fn record(&self, id: CachedPipelineId, label: Option<Cow<'static, str>>, clock: CompileClock) {
+        let mut sink = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(timings) = sink.as_mut() {
+            let [spawned, started, locked, composed] = clock;
+            timings.push(PipelineCompileTiming {
+                id,
+                label,
+                queued: started - spawned,
+                lock_wait: locked - started,
+                front: composed - locked,
+                driver: composed.elapsed(),
+            });
+        }
+    }
+}
+// end superfargoth patch (own: pipeline compile timing)
+
 /// A pipeline defining the data layout and shader logic for a specific GPU task.
 ///
 /// Used to store a heterogenous collection of render and compute pipelines together.
@@ -224,6 +268,8 @@ pub struct PipelineCache {
     pipelines: Vec<CachedPipeline>,
     waiting_pipelines: HashSet<CachedPipelineId>,
     new_pipelines: Mutex<Vec<CachedPipeline>>,
+    // superfargoth patch (own: pipeline compile timing)
+    compile_timings: Arc<CompileTimingSink>,
     global_shader_defs: Vec<ShaderDefVal>,
     /// If `true`, disables asynchronous pipeline compilation.
     /// This has no effect on macOS, wasm, or without the `multi_threaded` feature.
@@ -241,6 +287,21 @@ impl PipelineCache {
     /// Returns a iterator of the IDs of all currently waiting pipelines.
     pub fn waiting_pipelines(&self) -> impl Iterator<Item = CachedPipelineId> + '_ {
         self.waiting_pipelines.iter().copied()
+    }
+
+    // superfargoth patch (own: pipeline compile timing)
+    /// Starts keeping a [`PipelineCompileTiming`] for each pipeline created from now on.
+    pub fn record_compile_timings(&self) {
+        let mut sink = self.compile_timings.0.lock().unwrap_or_else(PoisonError::into_inner);
+        sink.get_or_insert_with(Vec::new);
+    }
+
+    // superfargoth patch (own: pipeline compile timing)
+    /// The timings of the pipelines created since the last call (empty unless
+    /// [`Self::record_compile_timings`] was called).
+    pub fn take_compile_timings(&self) -> Vec<PipelineCompileTiming> {
+        let mut sink = self.compile_timings.0.lock().unwrap_or_else(PoisonError::into_inner);
+        sink.as_mut().map(mem::take).unwrap_or_default()
     }
 
     /// Create a new pipeline cache associated with the given render device.
@@ -280,6 +341,7 @@ impl PipelineCache {
             bindgroup_layout_cache: default(),
             waiting_pipelines: default(),
             new_pipelines: default(),
+            compile_timings: default(), // superfargoth patch (own: pipeline compile timing)
             pipelines: default(),
             global_shader_defs,
             synchronous_pipeline_compilation,
@@ -550,10 +612,15 @@ impl PipelineCache {
             })
             .collect::<SmallVec<[_; BIND_GROUP_LAYOUTS_INLINE_CAPACITY]>>();
 
+        // superfargoth patch (own: pipeline compile timing)
+        let (timings, label, spawned) =
+            (self.compile_timings.clone(), descriptor.label.clone(), bevy_platform::time::Instant::now());
         create_pipeline_task(
             async move {
+                let started = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
                 let mut shader_cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
+                let locked = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
 
                 let vertex_module = match shader_cache.get(
                     id,
@@ -581,6 +648,7 @@ impl PipelineCache {
                 };
 
                 drop((shader_cache, layout_cache));
+                let composed = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
 
                 let vertex_buffer_layouts = descriptor
                     .vertex
@@ -647,9 +715,9 @@ impl PipelineCache {
                     cache: None,
                 };
 
-                Ok(Pipeline::RenderPipeline(
-                    device.create_render_pipeline(&descriptor),
-                ))
+                let pipeline = device.create_render_pipeline(&descriptor);
+                timings.record(id, label, [spawned, started, locked, composed]); // superfargoth patch (own: pipeline compile timing)
+                Ok(Pipeline::RenderPipeline(pipeline))
             },
             self.synchronous_pipeline_compilation,
         )
@@ -672,10 +740,15 @@ impl PipelineCache {
             })
             .collect::<SmallVec<[_; BIND_GROUP_LAYOUTS_INLINE_CAPACITY]>>();
 
+        // superfargoth patch (own: pipeline compile timing)
+        let (timings, label, spawned) =
+            (self.compile_timings.clone(), descriptor.label.clone(), bevy_platform::time::Instant::now());
         create_pipeline_task(
             async move {
+                let started = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
                 let mut shader_cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
+                let locked = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
 
                 let compute_module =
                     match shader_cache.get(id, descriptor.shader.id(), &descriptor.shader_defs) {
@@ -690,6 +763,7 @@ impl PipelineCache {
                 };
 
                 drop((shader_cache, layout_cache));
+                let composed = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
 
                 let constants: Vec<(&str, f64)> = descriptor
                     .constants
@@ -709,9 +783,9 @@ impl PipelineCache {
                     cache: None,
                 };
 
-                Ok(Pipeline::ComputePipeline(
-                    device.create_compute_pipeline(&descriptor),
-                ))
+                let pipeline = device.create_compute_pipeline(&descriptor);
+                timings.record(id, label, [spawned, started, locked, composed]); // superfargoth patch (own: pipeline compile timing)
+                Ok(Pipeline::ComputePipeline(pipeline))
             },
             self.synchronous_pipeline_compilation,
         )
@@ -734,10 +808,15 @@ impl PipelineCache {
             })
             .collect::<SmallVec<[_; BIND_GROUP_LAYOUTS_INLINE_CAPACITY]>>();
 
+        // superfargoth patch (own: pipeline compile timing)
+        let (timings, label, spawned) =
+            (self.compile_timings.clone(), descriptor.label.clone(), bevy_platform::time::Instant::now());
         create_pipeline_task(
             async move {
+                let started = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
                 let mut shader_cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
+                let locked = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
 
                 let mesh_module = match shader_cache.get(
                     id,
@@ -773,6 +852,7 @@ impl PipelineCache {
                 };
 
                 drop((shader_cache, layout_cache));
+                let composed = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
 
                 let fragment_data = descriptor.fragment.as_ref().map(|fragment| {
                     (
@@ -847,9 +927,9 @@ impl PipelineCache {
                     cache: None,
                 };
 
-                Ok(Pipeline::MeshPipeline(
-                    device.create_mesh_pipeline(&descriptor),
-                ))
+                let pipeline = device.create_mesh_pipeline(&descriptor);
+                timings.record(id, label, [spawned, started, locked, composed]); // superfargoth patch (own: pipeline compile timing)
+                Ok(Pipeline::MeshPipeline(pipeline))
             },
             self.synchronous_pipeline_compilation,
         )

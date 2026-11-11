@@ -5,48 +5,22 @@
 //! pipelines (SH-17). `BEVYRROWIND_PIPELINE_DEFS=1` also logs each new render
 //! pipeline's fragment shader defs, to tell which key bit made it new.
 //!
-//! The door fade holds at black while a mesh the arrival's camera sees still
-//! waits for its main-pass pipeline ([`PendingDraws`]), within the fade's gate
-//! cap: the loading-screen practice of not showing a frame before the
-//! pipelines (PSOs) it draws with are compiled (Bevy's `loading_screen`
-//! example waits on the same cache; Unreal's PSO precaching hides such
-//! primitives instead).
+//! The holds themselves are the framework's reveal gate (`sf_world_bevy::RevealGate`,
+//! pipeline-warmup.md W1): the door fade and `Loading` -> `InGame` wait for the arrival's
+//! textures, prepared assets and pipelines (shadow views included), and write the `reveal:`
+//! lines. The counting lives in the framework too (`sf_diag_bevy::PipelineWatchPlugin`, W0):
+//! pending and unprepared draws, compile times (front end vs driver), view-key flips, and what
+//! arrived late after each reveal.
 
-use bevy_pbr::SpecializedMaterialPipelineCache;
 use bevy_app::prelude::*;
-use bevy_mesh::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_log::prelude::*;
-use bevy_render::camera::ExtractedCamera;
-use bevy_render::render_resource::{CachedPipelineState, PipelineCache, PipelineDescriptor};
-use bevy_render::view::{ExtractedView, RenderVisibleEntities};
+use bevy_render::render_resource::{PipelineCache, PipelineDescriptor};
 use bevy_render::{Render, RenderApp, RenderSystems};
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-/// Meshes visible to a camera whose main-pass pipeline is still compiling
-/// (Bevy skips their draws until it is ready). Written in the render world,
-/// read in the main world (one frame late, which the fade's hold absorbs).
-/// Also carries `PipelineCache::waiting_pipelines` (queued or compiling)
-/// for the screenshot readiness gate ([`sf_diag_bevy::ReadyGate`]).
-#[derive(Resource, Clone, Default)]
-pub struct PendingDraws {
-    draws: Arc<AtomicUsize>,
-    pipelines: Arc<AtomicUsize>,
-}
-
-impl PendingDraws {
-    pub fn get(&self) -> usize {
-        self.draws.load(Ordering::Relaxed)
-    }
-
-    /// Pipelines still compiling and the visible draws they hold back.
-    pub fn gpu(&self) -> sf_diag_bevy::GpuPending {
-        sf_diag_bevy::GpuPending { pipelines: self.pipelines.load(Ordering::Relaxed), draws: self.get() }
-    }
-}
+pub use sf_diag_bevy::PendingDraws;
 
 /// Seconds a burst of new pipelines is gathered into one log line.
 const FLUSH_SECS: f32 = 0.5;
@@ -62,50 +36,11 @@ struct Watch {
 
 pub fn add(app: &mut App) {
     let defs = std::env::var_os("BEVYRROWIND_PIPELINE_DEFS").is_some();
-    let pending = PendingDraws::default();
-    app.insert_resource(pending.clone())
-        .add_systems(Update, pipelines_at_black.before(sf_world_bevy::StreamingSystems::Transition));
+    app.add_plugins(sf_diag_bevy::PipelineWatchPlugin);
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
         let mut watch = Watch { defs, ..Watch::default() };
-        render.insert_resource(pending).add_systems(
-            Render,
-            ((move |cache: Res<PipelineCache>| watch.update(&cache)), count_pending).in_set(RenderSystems::Cleanup),
-        );
+        render.add_systems(Render, (move |cache: Res<PipelineCache>| watch.update(&cache)).in_set(RenderSystems::Cleanup));
     }
-}
-
-/// Holds the door fade at black while the arrival's visible meshes wait for pipelines.
-fn pipelines_at_black(fade: Option<ResMut<sf_world_bevy::FadeTransition>>, pending: Res<PendingDraws>) {
-    let Some(mut fade) = fade else { return };
-    if fade.is_holding() && pending.get() > 0 {
-        fade.hold();
-    }
-}
-
-/// Counts [`PendingDraws`]: the cameras' visible meshes whose specialized
-/// main-pass pipeline is queued or compiling (as `queue_material_meshes`
-/// looks them up; shadow views are left out).
-fn count_pending(
-    pending: Res<PendingDraws>,
-    cache: Res<PipelineCache>,
-    specialized: Option<Res<SpecializedMaterialPipelineCache>>,
-    views: Query<(&ExtractedView, &RenderVisibleEntities), With<ExtractedCamera>>,
-) {
-    let mut n = 0;
-    if let Some(specialized) = specialized {
-        for (view, visible) in &views {
-            let (Some(pipelines), Some(meshes)) = (specialized.get(&view.retained_view_entity), visible.get::<Mesh3d>()) else {
-                continue;
-            };
-            let main = meshes.entities_cpu_culling.iter().map(|(_, m)| m).chain(meshes.entities_gpu_culling.keys());
-            n += main
-                .filter_map(|m| pipelines.get(m))
-                .filter(|id| matches!(cache.get_render_pipeline_state(**id), CachedPipelineState::Queued | CachedPipelineState::Creating(_)))
-                .count();
-        }
-    }
-    pending.draws.store(n, Ordering::Relaxed);
-    pending.pipelines.store(cache.waiting_pipelines().count(), Ordering::Relaxed);
 }
 
 impl Watch {

@@ -13,7 +13,8 @@
 //!   thread, `sf_diag` counters per stage.
 //! - [`PlacementSpawners`] are the per-class hooks; the framework spawns
 //!   statics as cooked LOD chains with `VisibilityRange`s.
-//! - [`FadeTransition`] is the M2 door-crossing scaffold.
+//! - [`FadeTransition`] is the M2 door-crossing scaffold; [`RevealGate`] is what it (and the
+//!   app's `Loading` → `InGame`) waits on before showing new content.
 //!
 //! The app must disable Bevy's `TransformPlugin` (`big_space` propagates
 //! transforms) and register the `baked://` asset source before
@@ -27,6 +28,7 @@ mod far;
 pub mod matclass;
 mod origin;
 mod precombine;
+mod reveal;
 mod scene;
 mod spawn;
 mod stream;
@@ -38,6 +40,7 @@ pub use coords::{GRID_SWITCH, WorldPosOf, from_grid, to_grid, transform_to_grid,
 pub use debug::{StreamingDebug, level_color};
 pub use fade::{FadeCutHooks, FadePhase, FadeTransition, StartBlackout, StartTravel, TravelArrived};
 pub use far::{CellProxies, FarProxies, ProxySpawnCx};
+pub use reveal::{RevealAsk, RevealCheck, RevealGate, RevealInputs, RevealPending, RevealStatus, RevealStep, SETTLE_FRAMES};
 pub use origin::{PHASE_PERIODS, WorldOrigin, WorldOriginBuffer, WorldOriginUniform};
 pub use precombine::{CellPrecombine, PrecombineBucket, PrecombinePath, Precombines, bucket_ranges};
 pub use scene::{CellScene, SceneCellCx, SceneCells};
@@ -91,6 +94,13 @@ impl Plugin for WorldStreamingPlugin {
         if !app.is_plugin_added::<sf_model_bevy::SfModelPlugin>() {
             app.add_plugins(sf_model_bevy::SfModelPlugin);
         }
+        // The reveal gate's render-world terms (pipeline-warmup.md §5.4), in every build.
+        if !app.is_plugin_added::<sf_diag_bevy::PendingDrawsPlugin>() {
+            app.add_plugins(sf_diag_bevy::PendingDrawsPlugin);
+        }
+        if !app.is_plugin_added::<sf_diag_bevy::PendingMaterialPlugin<bevy_pbr::StandardMaterial>>() {
+            app.add_plugins(sf_diag_bevy::PendingMaterialPlugin::<bevy_pbr::StandardMaterial>::default());
+        }
         app.init_resource::<WorldspaceRegistry>()
             .init_resource::<FarProxies>()
             .init_resource::<ActiveWorldspace>()
@@ -101,6 +111,7 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<ModelMaterials>()
             .init_resource::<FadeTransition>()
             .init_resource::<FadeCutHooks>()
+            .init_resource::<RevealGate>()
             .init_asset::<CellPrecombine>()
             .insert_resource(Streaming::new(self.config.clone()))
             .add_message::<CellLoaded>()
@@ -110,6 +121,8 @@ impl Plugin for WorldStreamingPlugin {
             .add_message::<StartTravel>()
             .add_message::<StartBlackout>()
             .add_message::<TravelArrived>()
+            // The reveal lines (pipeline-warmup.md W0); logged by `sf_diag_bevy::RevealWatchPlugin`.
+            .add_message::<sf_diag_bevy::Reveal>()
             .add_plugins(origin::WorldOriginPlugin)
             .configure_sets(Update, (StreamingSystems::Drive, StreamingSystems::Transition).chain())
             .add_systems(Update, stream::drive_streaming.in_set(StreamingSystems::Drive))
@@ -121,7 +134,7 @@ impl Plugin for WorldStreamingPlugin {
                 PostUpdate,
                 (apply_subtree_ranges, apply_subtree_layers).before(bevy_camera::visibility::VisibilitySystems::CalculateBounds),
             )
-            .add_systems(Last, report_propagation)
+            .add_systems(Last, (report_propagation, reveal::end_reveal_frame))
             // Material-class gauges (static-scene.md S2), only while counters run.
             .init_resource::<matclass::StaticMaterialTracker>()
             .init_resource::<matclass::StaticMaterialIds>()
