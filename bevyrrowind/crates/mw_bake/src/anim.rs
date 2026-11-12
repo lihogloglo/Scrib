@@ -90,12 +90,26 @@ pub fn anim_importers() -> AnimImporters {
 
 /// The retarget source rig of a library file's cooked skeleton: auto-mapped,
 /// auto-aligned from its rest pose (a BVH take's stance frame when its source
-/// sets `rest_frame`), no leg IK. `None` when it has no humanoid map.
-pub fn library_rig(skeleton: &Skeleton) -> Option<(RigMap, RetargetRig)> {
+/// sets `rest_frame`), then source `source`'s retarget-pose offsets
+/// (`pose_offsets` in the shipped manifest; none for an unknown source), no
+/// leg IK. `None` when it has no humanoid map.
+pub fn library_rig(skeleton: &Skeleton, source: &str) -> Option<(RigMap, RetargetRig)> {
     let (mut map, _) = sf_character::auto_map(skeleton);
     map.auto_align(skeleton);
+    if let Some(s) = mw_graphs::sources::SourcesManifest::builtin().sources.get(source) {
+        map.offset_retarget_pose(skeleton, &s.pose_offsets);
+    }
     let retarget = map.retarget_rig(skeleton, RetargetOptions { ik_legs: false }).ok()?;
     Some((map, retarget))
+}
+
+/// The humanoid map of an actor skeleton as the retarget target of library
+/// clips: `mw_anim::rig::humanoid`'s map (auto-aligned) with the manifest's
+/// `target_pose_offsets` applied.
+fn humanoid_target_map(skeleton: &Skeleton) -> Result<RigMap, String> {
+    let mut map = mw_anim::rig::humanoid(skeleton).map_err(|e| e.to_string())?.map;
+    map.offset_retarget_pose(skeleton, &mw_graphs::sources::SourcesManifest::builtin().target_pose_offsets);
+    Ok(map)
 }
 
 /// A humanoid skeleton as a library clip's retarget target, built the way
@@ -114,7 +128,7 @@ impl HumanoidTarget {
     /// `skeleton` as `skeleton.cook` makes it: [`mw_anim::rig::skeleton`] of
     /// the model (`meshes/base_anim.nif`, `base_anim_female.nif`, `base_animkna.nif`).
     pub fn new(skeleton: Skeleton) -> Result<Self, String> {
-        let map = mw_anim::rig::humanoid(&skeleton).map_err(|e| e.to_string())?.map;
+        let map = humanoid_target_map(&skeleton)?;
         let rig = map.retarget_rig(&skeleton, RetargetOptions::default()).map_err(|e| e.to_string())?;
         let hints = RigHints { profile: map.profile(&skeleton).ok(), ..RigHints::default() };
         let profile = sf_anim::detect_profile(&skeleton, &hints).map_err(|e| e.to_string())?;
@@ -149,7 +163,7 @@ pub fn cook_library_clip(source: &str, path: &Path, clip: Option<&str>, rules: &
     skeleton_rules.root_motion_joint.clone_from(&anim_source.root_motion);
     let (skeleton, _) = Skeleton::with_rules(joints, &skeleton_rules).map_err(|e| e.to_string())?;
     // rig.profile, with the hints `MwAnimRules::add_library_file` gives.
-    let (map, source_rig) = library_rig(&skeleton).ok_or_else(|| format!("{name}: its skeleton has no humanoid retarget rig"))?;
+    let (map, source_rig) = library_rig(&skeleton, source).ok_or_else(|| format!("{name}: its skeleton has no humanoid retarget rig"))?;
     let hints = RigHints { profile: map.profile(&skeleton).ok(), ..RigHints::default() };
     let profile = sf_anim::detect_profile(&skeleton, &hints).map_err(|e| e.to_string())?;
     // anim.cook
@@ -547,8 +561,9 @@ impl MwAnimRules {
                 data.hints.profile = rig.map.profile(skeleton).ok();
                 data.rig.joints =
                     HumanoidBone::ALL.iter().filter_map(|b| rig.map.joint(*b).map(|j| (b.name().to_owned(), j.to_owned()))).collect();
-                // Target of library clips: legs keep the source's contacts by IK.
-                data.retarget = rig.map.retarget_rig(skeleton, RetargetOptions::default()).ok();
+                // Target of library clips: legs keep the source's contacts by
+                // IK; the manifest's target retarget-pose offsets.
+                data.retarget = humanoid_target_map(skeleton).ok().and_then(|m| m.retarget_rig(skeleton, RetargetOptions::default()).ok());
             }
         } else {
             data.hints = mw_anim::rig::creature_hints(&set.skeleton);
@@ -571,7 +586,9 @@ impl MwAnimRules {
     /// rig, the retarget source) and the clip names it holds. Returns the
     /// references it can't serve, with why.
     pub fn add_library_file(&mut self, file: &str, skeleton: Option<&Skeleton>, clips: &[String]) -> Vec<(String, String)> {
-        let rig = skeleton.and_then(|s| library_rig(s).map(|(map, retarget)| (s, map, retarget)));
+        // The file's source (its references all name one: the virtual path is per source).
+        let source = self.library.values().find(|r| r.file == file).map(|r| r.provenance.source.clone()).unwrap_or_default();
+        let rig = skeleton.and_then(|s| library_rig(s, &source).map(|(map, retarget)| (s, map, retarget)));
         let mapped = rig.is_some();
         if let Some((s, map, retarget)) = rig {
             let hints = RigHints { profile: map.profile(s).ok(), ..RigHints::default() };

@@ -628,6 +628,12 @@ pub enum OpSpec {
         max: f32,
         #[serde(default = "one")]
         rate_share: f32,
+        /// A `Bool` or `Float` graph parameter scaling the op (clamped 0-1): the
+        /// rate factor is raised to it, so 0 plays the clips at their own rate (a
+        /// running `StrideWarp` still takes the speed ratio within its limits).
+        /// `None`: always on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gate: Option<String>,
         #[serde(default = "lod2")]
         max_lod: u8,
     },
@@ -741,6 +747,10 @@ pub enum OpSpec {
         grade: GradeLean,
         #[serde(default = "tenth")]
         halflife: f32,
+        /// A `Bool` or `Float` graph parameter scaling both angle goals (clamped
+        /// 0-1); the angles follow it over `halflife`. `None`: always on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gate: Option<String>,
         #[serde(default = "lod1")]
         max_lod: u8,
     },

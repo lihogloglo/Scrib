@@ -145,7 +145,7 @@ fn import(sources: &AnimSources, source: &str, file: &str) -> Option<AnimSource>
 fn rig(src: &AnimSource, target: (Side, sf_anim::RetargetRig)) -> Rig {
     let rules = SkeletonRules { root_motion_joint: src.root_motion.clone(), ..SkeletonRules::default() };
     let (skeleton, _) = Skeleton::with_rules(src.skeleton.as_ref().unwrap(), &rules).unwrap();
-    let (map, source_rig) = mw_bake::anim::library_rig(&skeleton).expect("a humanoid source rig");
+    let (map, source_rig) = mw_bake::anim::library_rig(&skeleton, "lafan1").expect("a humanoid source rig");
     let (target, target_rig) = target;
     let retargeter = Retargeter::new(&skeleton, &source_rig, &target.skeleton, &target_rig).unwrap();
     let target_ref = model_of(&target.skeleton, retargeter.target_retarget_pose()).iter().map(rot).collect();

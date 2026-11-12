@@ -258,7 +258,7 @@ impl HumanoidBone {
 }
 
 /// Paired (left/right) bones, by role.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Limb {
     UpperLeg,
     LowerLeg,

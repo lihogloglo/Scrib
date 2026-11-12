@@ -137,6 +137,8 @@ AN-9 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted foot hol
 AN-10, AN-13, AN-14 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/anim-lab.md) | Get-ups
 AN-21 | confirmed (2026-11-05: slope lean works) | [anim-lab](visual-checks/anim-lab.md) | Slope trunk lean
 DE-1 | confirmed with follow-up (2026-10-27: floor slide fixed, push in F11 only; a crouched landing sinks ~1.5 s, later) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
+LOCO-2 | rated 2026-11-12 (229 takes: 38 keep, 61 maybe, 130 reject; verdicts.toml) | [anim-lab](visual-checks/anim-lab.md) | Generated locomotion batch 1 (Kimodo): gait, speed, skate, clean starts/stops, one style; pick keepers
+AL-TRUNK | confirmed in the browser 2026-11-12 (arms clear the chest, trunk upright); in-game mantle/combat clips not yet looked at | [anim-lab](visual-checks/anim-lab.md) | Matched retarget pose: retargeted clips keep Morrowind's trunk curvature (upright vs before), mantle/combat no worse
 AU-3 | partial (2026-10-30: greets only very close; NPCs don't stop or turn) | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
 AU-4 | confirmed (2026-10-30) | [audio](visual-checks/audio.md) | Footsteps by boots
 AU-5 | rejected (2026-10-30: no swing, no sound, prompt only) | [audio](visual-checks/audio.md) | Swinging-door sounds
@@ -198,13 +200,14 @@ RO-22 | awaiting owner | [rendering](visual-checks/rendering.md) | Near/far hand
 PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the Census Office floor (again 2026-10-30)
 PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)
 CB-3 | confirmed (2026-11-05; follow-up: new sword attack clips) | [combat](visual-checks/combat.md) | F draws a visible sword; sheathed clicks do nothing; draw / sheathe clips, sword at the attach key (2026-11-05)
-CB-3a | awaiting owner | [combat](visual-checks/combat.md) | Sparring dummy strikes on a beat; player hit reactions by side in third and first person, free look in a reaction (scene level-sparring, 2026-11-10)
-CB-3b | awaiting owner | [combat](visual-checks/combat.md) | Guard (hold right mouse / L1) in third and first person: front hits guarded (no reaction, stamina dip), back hits not, guard break at 0 stamina; body follows the view in first person (scene level-sparring, 2026-11-10)
+CB-3a | confirmed 2026-11-12 (logged: late roll start, first-person chest clipping looking down) | [combat](visual-checks/combat.md) | Sparring dummy strikes on a beat; player hit reactions by side in third and first person, free look in a reaction (scene level-sparring, 2026-11-10)
+CB-3b | partial 2026-11-12 (held guard loop jumps; stamina refills too fast to test the break; regenerate clips) | [combat](visual-checks/combat.md) | Guard (hold right mouse / L1) in third and first person: front hits guarded (no reaction, stamina dip), back hits not, guard break at 0 stamina; body follows the view in first person (scene level-sparring, 2026-11-10)
 CB-5 | awaiting owner | [combat](visual-checks/combat.md) | First-person melee: swings where you look, soft aim bends onto the dummy, no lock in first person (scene level-arena, 2026-11-10)
 CB-5b | awaiting owner | [combat](visual-checks/combat.md) | First-person attack look limits: the view stops ~45 deg off the body mid-swing, released at recovery; view model on and off (scene level-arena, 2026-11-10)
 PL-6 | awaiting owner (2026-10-30: hard-landing lock removed until fall damage) | [player-ui](visual-checks/player-ui.md) | Recovery delay after jumping down from a high box (2026-10-30)
 PL-7 | partial (owner 2026-11-11 re-test: feet on the ground OK; stop pops a leg back + hip rise, arms point back on slopes, head too tilted; locomotion rethink) | [player-ui](visual-checks/player-ui.md) | Player foot placement on slopes and stairs, K A/B (P-IK1, 2026-11-11)
 PL-8 | awaiting owner (pause not tested 2026-11-11; stairs IK issues logged: leg snap, wide steps on stairs, arms behind back) | [player-ui](visual-checks/player-ui.md) | Pause menu freezes all animation (walkers on stairs, the player at a wall), no pop on resume (P-IK2, 2026-11-11)
+WALK-0 | awaiting owner | [player-ui](visual-checks/player-ui.md) | A/B ladder on the player's walk: speed_match, stride_warp, foot_placement, lean, side_lanes off one at a time (3.4c A0)
 PL-9 | confirmed (owner 2026-11-11: "seems ok") | [player-ui](visual-checks/player-ui.md) | Sharp 90/180° turns at walk and run on flat and ramps: the planted foot lets go instead of the legs spreading, K A/B (P-IK5, 2026-11-11)
 FP-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person shows body, arms and weapon with the head hidden (2026-11-10)
 FP-1b | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person: the player's shadow keeps its head under sun, lamps and a torch, raster and RT (2026-11-10)

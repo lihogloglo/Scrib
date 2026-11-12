@@ -30,7 +30,7 @@ mod smooth;
 mod smooth_outfit;
 mod source;
 
-pub use align::{AlignReport, auto_align};
+pub use align::{AlignReport, PoseOffset, auto_align, offset_retarget_pose};
 pub use assemble::{
     AssembledMesh, AssembledOutfit, AssemblyPart, BEVY_JOINT_BYTES, BEVY_MORPH_BYTES, DecodedPart, OutfitBytes, ShapeWeights, assemble,
 };

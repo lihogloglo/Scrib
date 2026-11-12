@@ -10,7 +10,7 @@ publish = false
 # `character` interactive runs serve BRP (`mw_devtools_bevy::remote`); the app's `remote` turns it on.
 remote = ["mw_devtools_bevy/remote"]
 # `clip-preview` (dev builds; motion-generation.md MG5): clips cooked + retargeted in process, captured to MP4.
-clip_preview = ["dep:mw_anim", "dep:sf_anim", "dep:sf_anim_graph", "dep:serde_json"]
+clip_preview = ["dep:mw_anim", "dep:sf_anim", "dep:sf_anim_graph", "dep:serde_json", "dep:toml"]
 
 [dependencies]
 # The umbrella crate: each viewer builds its own `App` with `DefaultPlugins` (as the binary does).
@@ -41,6 +41,7 @@ sf_records.workspace = true
 sf_sky_bevy.workspace = true
 sf_vfs = { workspace = true, features = ["bevy"] }
 tes3 = { workspace = true, features = ["esp"] }
+toml = { workspace = true, optional = true }
 workspace-hack.workspace = true
 
 [lints]

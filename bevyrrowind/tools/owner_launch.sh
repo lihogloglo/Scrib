@@ -20,7 +20,8 @@ set -u
 # `--sound` is ours, not the game's: drop it and skip the default `--mute`.
 sound=0; kept=()
 for a in "$@"; do if [ "$a" = "--sound" ]; then sound=1; else kept+=("$a"); fi; done
-[ "$sound" = 1 ] || kept+=("--mute")
+# Only `scene` and `view` take `--mute` (clip-preview has no audio and rejects it).
+case "${kept[0]:-}" in scene|view) [ "$sound" = 1 ] || kept+=("--mute") ;; esac
 set -- "${kept[@]}"
 TARGET=/c/cargo-target/scrib/debug
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"   # bevyrrowind/, the game's working dir

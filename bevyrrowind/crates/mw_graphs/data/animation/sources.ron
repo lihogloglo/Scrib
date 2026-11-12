@@ -7,6 +7,14 @@
 // holds the clip), then its fallback. Slot names: superfargoth action.md
 // "Move taxonomy" (`kind.family.variant`).
 (
+  // Retarget pose of the Morrowind humanoid target (UE5 "Edit Retarget Pose"),
+  // every source: the upper arms land 4 deg more abducted, for Morrowind's bulky
+  // arm and chest meshes (upper arm r 6.2 cm, chest 19.4 cm half-width); its own
+  // WalkForward swings at 12-14 deg abduction, retargeted walks at 9-11 without.
+  // `generated_arms.rs` prints the elbow and wrist clearance to the chest mesh.
+  target_pose_offsets: [
+    (limb: UpperArm, raise_deg: 4.0),
+  ],
   sources: {
     "quaternius_ual1": (
       title: "Quaternius Universal Animation Library (full, 120 clips, root motion export)",
@@ -81,6 +89,16 @@
       unit_scale: 0.01,
       up: Y,
       root_from_pelvis: true,
+      // Retarget pose (UE5 "Edit Retarget Pose"): Kimodo walks hold the clavicles
+      // 10.5 deg below its level T-pose (mean over the 24 loco1 walk.cycle takes, both
+      // sides, `generated_arms.rs` measure_generated_clavicle_offset; runs +1..+3), so the
+      // shoulder's deltas start from there and Morrowind's clavicle stays near its bind in
+      // walks. An offset turns the bone's subtree: the upper arm's counter-offset keeps the
+      // arm's reference at the T-pose (its direction already matches).
+      pose_offsets: [
+        (limb: Shoulder, raise_deg: -10.5),
+        (limb: UpperArm, raise_deg: 10.5),
+      ],
     ),
   },
   slots: {

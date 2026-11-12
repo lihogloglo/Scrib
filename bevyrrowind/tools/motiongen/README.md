@@ -28,6 +28,12 @@ $PY -m motiongen bench motiongen/recipes/seed.toml --out <dir>   # speed matrix:
 $PY -m motiongen joints                                      # rewrite soma77_joints.txt
 ```
 
+`grade <dir> [--out grades.json] [--verdicts [verdicts.toml]]` (AG1, numpy only): physical reject gates per clip on the
+source BVH (`skate` >= 60 cm/s, `jerk` p99 >= 5000 m/s^3, turn-in-place `turn_mag` > 9 deg off the prompt and `no_step`;
+a wrong-way turn is only `mirror_candidate`) and prompt-group triage (>= 2/3 of a group's takes gated = failing).
+Writes `<dir>/grades.json` atomically (stem -> type, gates, mirror_candidate, metrics; `_groups`), prints a table per group;
+`--verdicts` prints gated vs the owner's reject / maybe / keep. Design: `superfargoth/docs/research/animation/17-autograde-2026-11-12.md`.
+
 `run` options: `--bands <bands.json>` (default `<out>/bands.json` from the MG4 census if present, else
 `default_bands.json`, placeholders), `--batch N` (max samples per GPU batch, default 8), `--steps N` (default 50),
 `--precision fp32|fp16|bf16`, `--no-postprocess`, `--bvh-rest tpose|seed`, `--encoder-device cpu|cuda`,

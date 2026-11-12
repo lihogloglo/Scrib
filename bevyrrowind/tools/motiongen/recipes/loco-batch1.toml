@@ -1,0 +1,409 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Locomotion batch 1 (B3b, ROADMAP 3.4c, 2026-11-12): the modern preset's generated free-movement set, one style.
+# Clip list and targets: superfargoth/docs/research/animation/16-gait-card-2026-11-12.md section 3.1 (walk 1.6, run 4.5,
+# sprint 7.0 m/s = sf_action::GaitTable). Output "animation packs/generated/loco1/" (BYO, never committed). Format:
+# bevyrrowind/docs/specs/motion-generation.md, "Recipes (MG1)". Rules from the owner's gen2 verdict (combat-gen2.toml):
+# short plain prompts in Kimodo's style, no body description, 2-3 phrasings per clip, many samples, the owner picks.
+# Left and straight only: the right side comes from the graph's Mirror node. Canonical space: start at XZ (0, 0) facing
+# +Z, left on +X; root paths are pelvis XZ (meters @ seconds) and set the speed and the turn direction.
+# Dropped from the card: start_pose chains (idle pose in, cycle frame for stops; MG1 rejects start_pose), the long prompt
+# tail (owner: plain prompts), the first foot (not controllable: pick or mirror). Loops are not seamless: cycles are long
+# takes and the bake cuts a same-foot window. Starts/stops/pivots run longer than the card's lengths (stand-still lead
+# and gait tail for the blend; the bake trims). *.free = the same prompt without a root path (speed control).
+
+# --- loco.walk.cycle: walk 1.6 m/s, loop cut at the bake (>= 5 strides) -----------------------------------------------
+
+[[activity]]
+id = "loco.walk.cycle.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 6.0
+prompt = "A person walks forward in a straight line at a steady relaxed pace."
+constraints.act = { root = "path:0,0@0;0,1.6@1;0,3.2@2;0,4.8@3;0,6.4@4;0,8.0@5;0,9.6@6" }
+
+[[activity]]
+id = "loco.walk.cycle.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 6.0
+prompt = "A person walks forward."
+constraints.act = { root = "path:0,0@0;0,1.6@1;0,3.2@2;0,4.8@3;0,6.4@4;0,8.0@5;0,9.6@6" }
+
+[[activity]]
+id = "loco.walk.cycle.3"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 6.0
+prompt = "A person walks briskly forward."
+constraints.act = { root = "path:0,0@0;0,1.6@1;0,3.2@2;0,4.8@3;0,6.4@4;0,8.0@5;0,9.6@6" }
+
+[[activity]]
+id = "loco.walk.cycle.free"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 6.0
+prompt = "A person walks forward in a straight line at a steady relaxed pace."
+
+# --- loco.run.cycle: run (jog) 4.5 m/s --------------------------------------------------------------------------------
+
+[[activity]]
+id = "loco.run.cycle.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 5.0
+prompt = "A person jogs forward in a straight line at a steady moderate pace."
+constraints.act = { root = "path:0,0@0;0,4.5@1;0,9.0@2;0,13.5@3;0,18.0@4;0,22.5@5" }
+
+[[activity]]
+id = "loco.run.cycle.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 5.0
+prompt = "A person jogs forward."
+constraints.act = { root = "path:0,0@0;0,4.5@1;0,9.0@2;0,13.5@3;0,18.0@4;0,22.5@5" }
+
+[[activity]]
+id = "loco.run.cycle.3"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 5.0
+prompt = "A person runs forward at a steady pace."
+constraints.act = { root = "path:0,0@0;0,4.5@1;0,9.0@2;0,13.5@3;0,18.0@4;0,22.5@5" }
+
+[[activity]]
+id = "loco.run.cycle.free"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 5.0
+prompt = "A person jogs forward in a straight line at a steady moderate pace."
+
+# --- loco.sprint.cycle: sprint 7.0 m/s --------------------------------------------------------------------------------
+
+[[activity]]
+id = "loco.sprint.cycle.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 4.0
+prompt = "A person sprints forward at full speed in a straight line."
+constraints.act = { root = "path:0,0@0;0,3.5@0.5;0,7.0@1;0,10.5@1.5;0,14.0@2;0,17.5@2.5;0,21.0@3;0,24.5@3.5;0,28.0@4" }
+
+[[activity]]
+id = "loco.sprint.cycle.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 4.0
+prompt = "A person sprints forward."
+constraints.act = { root = "path:0,0@0;0,3.5@0.5;0,7.0@1;0,10.5@1.5;0,14.0@2;0,17.5@2.5;0,21.0@3;0,24.5@3.5;0,28.0@4" }
+
+[[activity]]
+id = "loco.sprint.cycle.3"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 4.0
+prompt = "A person runs forward as fast as possible."
+constraints.act = { root = "path:0,0@0;0,3.5@0.5;0,7.0@1;0,10.5@1.5;0,14.0@2;0,17.5@2.5;0,21.0@3;0,24.5@3.5;0,28.0@4" }
+
+[[activity]]
+id = "loco.sprint.cycle.free"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 4.0
+prompt = "A person sprints forward at full speed in a straight line."
+
+# --- loco.walk.start: walk starts: stand 0.4 s, reach 1.6 m/s about 1 s later, walk on (tail for the blend) -----------
+
+[[activity]]
+id = "loco.walk.start.f.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.8
+prompt = "A person starts walking forward from standing still."
+constraints.act = { root = "path:0,0@0;0,0@0.4;0,0.8@1.4;0,2.4@2.4;0,3.04@2.8" }
+
+[[activity]]
+id = "loco.walk.start.f.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.8
+prompt = "A person standing still begins to walk forward."
+constraints.act = { root = "path:0,0@0;0,0@0.4;0,0.8@1.4;0,2.4@2.4;0,3.04@2.8" }
+
+[[activity]]
+id = "loco.walk.start.l90.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 3.0
+prompt = "A person standing still turns 90 degrees to the left and walks off."
+constraints.act = { root = "path:0,0@0;0,0@0.4;0.6,0@1.6;2.2,0@2.6;2.84,0@3.0" }
+
+[[activity]]
+id = "loco.walk.start.l90.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 3.0
+prompt = "A person standing turns left and starts walking."
+constraints.act = { root = "path:0,0@0;0,0@0.4;0.6,0@1.6;2.2,0@2.6;2.84,0@3.0" }
+
+[[activity]]
+id = "loco.walk.start.b180.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 3.2
+prompt = "A person standing still turns around and walks off."
+constraints.act = { root = "path:0,0@0;0,0@0.4;0,-0.5@1.8;0,-2.1@2.8;0,-2.74@3.2" }
+
+[[activity]]
+id = "loco.walk.start.b180.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 3.2
+prompt = "A person turns around and starts walking the other way."
+constraints.act = { root = "path:0,0@0;0,0@0.4;0,-0.5@1.8;0,-2.1@2.8;0,-2.74@3.2" }
+
+# --- loco.run.start: run starts: stand 0.3 s, reach 4.5 m/s about 0.8-1.2 s later, jog on -----------------------------
+
+[[activity]]
+id = "loco.run.start.f.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.4
+prompt = "A person starts jogging forward from standing still."
+constraints.act = { root = "path:0,0@0;0,0@0.3;0,1.8@1.1;0,6.3@2.1;0,7.65@2.4" }
+
+[[activity]]
+id = "loco.run.start.f.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.4
+prompt = "A person standing still starts running forward."
+constraints.act = { root = "path:0,0@0;0,0@0.3;0,1.8@1.1;0,6.3@2.1;0,7.65@2.4" }
+
+[[activity]]
+id = "loco.run.start.l90.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.6
+prompt = "A person standing still turns 90 degrees to the left and jogs off."
+constraints.act = { root = "path:0,0@0;0,0@0.3;1.6,0@1.3;6.1,0@2.3;7.45,0@2.6" }
+
+[[activity]]
+id = "loco.run.start.l90.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.6
+prompt = "A person standing turns left and starts running."
+constraints.act = { root = "path:0,0@0;0,0@0.3;1.6,0@1.3;6.1,0@2.3;7.45,0@2.6" }
+
+[[activity]]
+id = "loco.run.start.b180.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.8
+prompt = "A person standing still turns around and jogs off."
+constraints.act = { root = "path:0,0@0;0,0@0.3;0,-1.4@1.5;0,-5.9@2.5;0,-7.25@2.8" }
+
+[[activity]]
+id = "loco.run.start.b180.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.8
+prompt = "A person turns around and starts running the other way."
+constraints.act = { root = "path:0,0@0;0,0@0.3;0,-1.4@1.5;0,-5.9@2.5;0,-7.25@2.8" }
+
+# --- loco.walk.stop.lf: walk stop: 2 s at 1.6 m/s, stop over ~0.8 s / 0.64 m, stand -----------------------------------
+
+[[activity]]
+id = "loco.walk.stop.lf.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 3.6
+prompt = "A person walking forward comes to a stop and stands still."
+constraints.act = { root = "path:0,0@0;0,1.6@1;0,3.2@2;0,3.84@2.8;0,3.84@3.6" }
+
+[[activity]]
+id = "loco.walk.stop.lf.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 3.6
+prompt = "A person walks forward and stops."
+constraints.act = { root = "path:0,0@0;0,1.6@1;0,3.2@2;0,3.84@2.8;0,3.84@3.6" }
+
+[[activity]]
+id = "loco.walk.stop.lf.3"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 3.6
+prompt = "A person walks a few steps and comes to a halt."
+constraints.act = { root = "path:0,0@0;0,1.6@1;0,3.2@2;0,3.84@2.8;0,3.84@3.6" }
+
+# --- loco.run.stop.lf: run stop: 2 s at 4.5 m/s, plant within 0.6 m / 0.4 s, gather, stand ----------------------------
+
+[[activity]]
+id = "loco.run.stop.lf.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 3.4
+prompt = "A person jogging comes to a quick stop, plants a foot and stands still."
+constraints.act = { root = "path:0,0@0;0,4.5@1;0,9.0@2;0,9.6@2.4;0,9.6@3.4" }
+
+[[activity]]
+id = "loco.run.stop.lf.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 3.4
+prompt = "A person jogs forward and stops quickly."
+constraints.act = { root = "path:0,0@0;0,4.5@1;0,9.0@2;0,9.6@2.4;0,9.6@3.4" }
+
+[[activity]]
+id = "loco.run.stop.lf.3"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 3.4
+prompt = "A person running forward comes to a sudden stop."
+constraints.act = { root = "path:0,0@0;0,4.5@1;0,9.0@2;0,9.6@2.4;0,9.6@3.4" }
+
+# --- loco.run.pivot.l180: run pivot: 4.5 m/s in, reverse over ~0.8 s (apex 0.9 m past, 0.2 m left), 4.5 m/s out -------
+
+[[activity]]
+id = "loco.run.pivot.l180.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 4.4
+prompt = "A person jogging forward turns sharply to run back the way they came."
+constraints.act = { root = "path:0,0@0;0,4.5@1;0,9.0@2;0.2,9.9@2.4;0,9.0@2.8;0,4.5@3.8;0,1.8@4.4" }
+
+[[activity]]
+id = "loco.run.pivot.l180.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 4.4
+prompt = "A person runs forward, turns around quickly and runs back."
+constraints.act = { root = "path:0,0@0;0,4.5@1;0,9.0@2;0.2,9.9@2.4;0,9.0@2.8;0,4.5@3.8;0,1.8@4.4" }
+
+# --- loco.walk.pivot.l180: walk pivot: 1.6 m/s in, reverse over ~1 s (apex 0.4 m past), 1.6 m/s out -------------------
+
+[[activity]]
+id = "loco.walk.pivot.l180.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 4.6
+prompt = "A person walking forward turns around and walks back."
+constraints.act = { root = "path:0,0@0;0,1.6@1;0,3.2@2;0.1,3.6@2.5;0,3.2@3;0,1.6@4;0,0.64@4.6" }
+
+[[activity]]
+id = "loco.walk.pivot.l180.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 4.6
+prompt = "A person walks forward, turns around and walks back the way they came."
+constraints.act = { root = "path:0,0@0;0,1.6@1;0,3.2@2;0.1,3.6@2.5;0,3.2@3;0,1.6@4;0,0.64@4.6" }
+
+# --- loco.turn.l90: turns in place: pelvis XZ pinned (fixed_xz; fixed would also pin the facing), stand before and after ---
+
+[[activity]]
+id = "loco.turn.l90.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.0
+prompt = "A person standing turns 90 degrees to the left on the spot."
+constraints.act = { root = "fixed_xz" }
+
+[[activity]]
+id = "loco.turn.l90.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.0
+prompt = "A person standing still turns to the left."
+constraints.act = { root = "fixed_xz" }
+
+[[activity]]
+id = "loco.turn.l180.1"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.5
+prompt = "A person standing turns around to the left on the spot."
+constraints.act = { root = "fixed_xz" }
+
+[[activity]]
+id = "loco.turn.l180.2"
+point = "ground"
+props = []
+phases = ["act"]
+variants = 6
+duration = 2.5
+prompt = "A person standing still turns around."
+constraints.act = { root = "fixed_xz" }

@@ -17,6 +17,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use sf_anim::{ClipRules, Looping, RootMotionMode, RootMotionRules};
 use sf_anim_graph::asset::{ClipFallback, ClipRef};
+use sf_character::PoseOffset;
 
 /// The shipped manifest's path under `data/`.
 pub const SOURCES_PATH: &str = "animation/sources.ron";
@@ -112,6 +113,13 @@ pub struct Source {
     /// actor's T-pose: frame 0). `None`: the zero pose.
     #[serde(default)]
     pub rest_frame: Option<u32>,
+    /// Retarget-pose edits of the source rig after auto-align
+    /// (`sf_character::PoseOffset`; UE5 "Edit Retarget Pose"): the relaxed
+    /// posture its motion is measured from, where it differs from its rest
+    /// (Kimodo walks hold the clavicles lower than its level T-pose).
+    /// Empty: the auto-aligned pose.
+    #[serde(default)]
+    pub pose_offsets: Vec<PoseOffset>,
 }
 
 fn one() -> f32 {
@@ -229,6 +237,11 @@ pub struct SourceRef {
 pub struct SourcesManifest {
     pub sources: BTreeMap<String, Source>,
     pub slots: BTreeMap<String, Slot>,
+    /// Retarget-pose edits of the humanoid target rig (the actor skeletons
+    /// library clips land on), after auto-align: where the sources' relaxed
+    /// posture lands. Empty: the auto-aligned pose.
+    #[serde(default)]
+    pub target_pose_offsets: Vec<PoseOffset>,
 }
 
 impl SourcesManifest {

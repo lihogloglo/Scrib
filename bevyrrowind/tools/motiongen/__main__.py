@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""motiongen CLI: `plan`, `run`, `bench`, `selftest`, `joints`. See README.md."""
+"""motiongen CLI: `plan`, `run`, `bench`, `selftest`, `stats`, `grade`, `joints`. See README.md."""
 
 from __future__ import annotations
 
@@ -309,6 +309,9 @@ def main(argv=None) -> int:
     from .clipstats import add_parser as add_stats
 
     add_stats(sub)
+    from .grade import add_parser as add_grade
+
+    add_grade(sub)
     p = sub.add_parser("joints", help="write the SOMA-77 joint list file")
     p.add_argument("--path", default=str(HERE / "soma77_joints.txt"))
     p.set_defaults(fn=cmd_joints)

@@ -86,7 +86,9 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
   2 m: it never swings. Roll through its swing: no hit. First person: the view stays free in a reaction (no wall), the arms follow
   the flinch, no camera kick yet (C4 shake).
 - Tune: `mw_combat/data/sparring.ron` (first, period, reach); reaction slots in `mw_graphs/data/animation/sources.ron`.
-- Known gaps: Medium/Large reactions front only, one clip; no guard (C2b) or knockdown (C2c). Status: awaiting owner.
+- Known gaps: Medium/Large reactions front only, one clip; no guard (C2b) or knockdown (C2c).
+- Status: confirmed 2026-11-12 ("all good"). Logged: the roll starts late (Shift tap waits to tell a tap from a sprint hold), hard to time
+  through a swing; first person looking down shows the inside of the body (chest clipping the eye).
 
 ### CB-3b: Guard in both views; guard break (C2b, 2026-11-10)
 - Bake first (`bevyrrowind bake`: new slots `guard.sword_1h.{raise,idle,break}`). `cargo dev scene level-sparring` (cameras `behind`,
@@ -99,4 +101,6 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
   then block: the guard breaks (UAL2 Idle_Shield_Break), and still held, comes back up after it. Sheathed: right mouse does nothing.
 - Tune: `mw_combat/data/movesets/sword_1h.ron` `guard` (raise, arc, Turn rate, look), hit rows `guard_damage`, `mw_combat`
   `GUARD_ABSORB` / `GUARD_STABILITY`; clips in `mw_graphs/data/animation/sources.ron`. Known gaps: no guard-hit recoil clip (an
-  Additive flinch, not wired to the avatar's hit springs yet), no guard walk (stationary), no HUD guard cue. Status: awaiting owner.
+  Additive flinch, not wired to the avatar's hit springs yet), no guard walk (stationary), no HUD guard cue.
+- Owner 2026-11-12: **partial**. The held guard is a looping clip that visibly jumps (not a still hold); stamina refills too fast to
+  test the guard break. Clips judged poor overall (Quaternius): regenerate (3.8 clip factory). Break not yet judged.

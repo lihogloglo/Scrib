@@ -247,3 +247,13 @@ user). No gap.
   knee/elbow bends 0, soles up at the end; UAL2 unchanged (0.8 deg). Measurements: `mw_bake/tests/lafan1_retarget_real_install.rs`.
   Get-up slots: `getup.supine` UAL2 `LayToIdle`, `getup.prone` UAL1 `Crawl_Exit` (LaFAN1 second), `getup.side_right`
   LaFAN1 trimmed to planted feet; `getup.side_left` dropped (walks 2.5 m once up).
+
+## Gait set (modern preset)
+
+Owner 2026-11-12: the modern preset drops Morrowind's walk/run (they stay for Classic) and uses one set for free movement,
+play rate clamped 0.8-1.25. Gaits 1.6 / 4.5 / 7.0 m/s. Dance card: `superfargoth/docs/research/animation/16-gait-card-2026-11-12.md`.
+- UAL root travel (authored, A1 to confirm): `Jog_Fwd_Loop` 5.36 m/s (rate 0.84 at 4.5), `Sprint_Loop` 8.25 (0.85 at 7.0),
+  `Walk_Loop` 0.97 (rate 1.65 at 1.6: no UAL or Morrowind walk fits the clamp, so the walk is generated).
+- Slot chain per gait: generated `loco.<gait>.cycle`, then UAL jog/sprint, then Morrowind. Starts, stops, pivots, turns in
+  place: `loco.<gait>.start|stop|pivot.*`, `loco.turn.*`; generated left/straight variants, the right side by mirror.
+- Kimodo batch 1 is 15 clips (3 cycles, 6 starts, 2 stops, 2 pivots, 2 turns); the bake retimes speed and closes loop seams.

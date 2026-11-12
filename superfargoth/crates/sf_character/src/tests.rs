@@ -558,7 +558,8 @@ fn dir(skeleton: &Skeleton, map: &RigMap, a: HumanoidBone, b: HumanoidBone) -> V
     (p(b) - p(a)).normalize()
 }
 
-fn assert_t_pose(skeleton: &Skeleton, map: &RigMap) {
+/// Limbs in the canonical T-pose, facing +Z (whatever the trunk does).
+fn assert_limbs_aligned(skeleton: &Skeleton, map: &RigMap) {
     let checks = [
         (B::LeftUpperArm, B::LeftLowerArm, Vec3::X),
         (B::LeftLowerArm, B::LeftHand, Vec3::X),
@@ -566,9 +567,6 @@ fn assert_t_pose(skeleton: &Skeleton, map: &RigMap) {
         (B::RightLowerArm, B::RightHand, Vec3::NEG_X),
         (B::LeftUpperLeg, B::LeftLowerLeg, Vec3::NEG_Y),
         (B::RightLowerLeg, B::RightFoot, Vec3::NEG_Y),
-        (B::Hips, B::Spine, Vec3::Y),
-        (B::Spine, B::Chest, Vec3::Y),
-        (B::Neck, B::Head, Vec3::Y),
     ];
     for (a, b, want) in checks {
         let got = dir(skeleton, map, a, b);
@@ -577,6 +575,223 @@ fn assert_t_pose(skeleton: &Skeleton, map: &RigMap) {
     // Facing +Z: the toes are in front of the feet, the left leg on +X.
     assert!(dir(skeleton, map, B::LeftFoot, B::LeftToes).z > 0.5);
     assert!(dir(skeleton, map, B::RightUpperLeg, B::LeftUpperLeg).x > 0.99);
+}
+
+/// [`assert_limbs_aligned`], and the trunk straight up (the fixtures' rest
+/// trunk is straight, so the matched trunk keeps it so).
+fn assert_t_pose(skeleton: &Skeleton, map: &RigMap) {
+    assert_limbs_aligned(skeleton, map);
+    for (a, b) in [(B::Hips, B::Spine), (B::Spine, B::Chest), (B::Neck, B::Head)] {
+        let got = dir(skeleton, map, a, b);
+        assert!(got.angle_between(Vec3::Y).to_degrees() < 0.05, "{a:?}→{b:?}: {got}");
+    }
+}
+
+/// `spec` with its named joints moved forward (+Z) by the given amounts:
+/// a curved rest trunk (arched spine, neck forward).
+fn curved(mut spec: RigSpec, dz: &[(&str, f32)]) -> RigSpec {
+    for (name, z) in dz {
+        spec.joints.iter_mut().find(|j| j.0 == *name).unwrap_or_else(|| panic!("no joint {name}")).2.z += z;
+    }
+    spec
+}
+
+/// A Biped rig whose rest spine arches back and whose neck leans forward.
+fn curved_biped() -> RigSpec {
+    curved(
+        biped(),
+        &[("Bip01 Spine1", -0.03), ("Bip01 Spine2", -0.02), ("Bip01 Neck", 0.02), ("Bip01 Head", 0.05), ("Bip01 HeadNub", 0.06)],
+    )
+}
+
+/// A SOMA rig curved the other way (spine forward, head back).
+fn curved_soma() -> RigSpec {
+    curved(soma77(), &[("Spine2", 0.02), ("Chest", 0.04), ("Neck1", 0.03), ("Neck2", 0.03), ("Head", 0.02), ("HeadEnd", 0.02)])
+}
+
+/// The trunk joints (hips to head, every joint between) of a mapped rig.
+fn trunk_joints(skeleton: &Skeleton, map: &RigMap) -> Vec<usize> {
+    let hips = skeleton.find(map.joint(B::Hips).unwrap()).unwrap();
+    let mut j = skeleton.find(map.joint(B::Head).unwrap()).unwrap();
+    let mut out = vec![j];
+    while j != hips {
+        j = skeleton.parent(j).unwrap();
+        out.push(j);
+    }
+    out
+}
+
+#[test]
+fn auto_align_keeps_the_rest_trunk() {
+    // Matched retarget pose: hips, spine, neck and head keep their rest
+    // rotation (each rig its own curvature); the limbs still align.
+    for (spec, a_pose, neg_z) in [(curved_biped(), true, true), (curved_soma(), false, false), (curved(vrm_names(), &[("Chest", 0.03)]), true, false)] {
+        let skeleton = spec.build(a_pose, neg_z);
+        let (mut map, _) = auto_map(&skeleton);
+        let report = map.auto_align(&skeleton);
+        assert!(report.max_residual_deg < 0.05, "{report:?}");
+        let local = map.retarget_pose_local(&skeleton);
+        for j in trunk_joints(&skeleton, &map) {
+            let angle = local[j].rotation.angle_between(skeleton.rest()[j].rotation);
+            assert!(angle < 1e-4, "{}: {angle} rad from rest", skeleton.name(j));
+        }
+        assert_limbs_aligned(&skeleton, &map);
+    }
+    // The curvature really is kept (not straightened): the Biped spine leans back.
+    let skeleton = curved_biped().build(true, true);
+    let (mut map, _) = auto_map(&skeleton);
+    map.auto_align(&skeleton);
+    let d = dir(&skeleton, &map, B::Spine, B::Chest);
+    assert!((d.angle_between(Vec3::Y).to_degrees() - 0.03f32.atan2(0.15).to_degrees()).abs() < 0.05 && d.z < 0.0, "{d}");
+}
+
+#[test]
+fn auto_align_straightens_a_trunk_bone_far_from_up() {
+    // A hips bone lying 60° forward is not a standing rest: it points up;
+    // the bone above keeps its own rest direction.
+    let mut spec = vrm_names();
+    let hips = body("hips", 0.0);
+    let spine = hips + Vec3::new(0.0, 60f32.to_radians().cos(), 60f32.to_radians().sin()) * 0.1;
+    spec.joints.iter_mut().find(|j| j.0 == "Spine").unwrap().2 = spine;
+    let skeleton = spec.build(false, false);
+    let (mut map, _) = auto_map(&skeleton);
+    let report = map.auto_align(&skeleton);
+    assert!(report.max_residual_deg < 0.05, "{report:?}");
+    assert!(dir(&skeleton, &map, B::Hips, B::Spine).angle_between(Vec3::Y).to_degrees() < 0.05);
+    let rest = (body("spine0.5", 0.0) - spine).normalize();
+    assert!(dir(&skeleton, &map, B::Spine, B::Chest).angle_between(rest).to_degrees() < 0.05);
+    assert_limbs_aligned(&skeleton, &map);
+}
+
+#[test]
+fn retarget_maps_a_rest_trunk_onto_the_target_bind() {
+    // A source standing in its rest, retargeted onto a rig of another trunk
+    // curvature: the target's trunk lands on its own bind (local rotations),
+    // the limbs on the target's aligned T-pose.
+    let (s, t) = (curved_soma().build(false, false), curved_biped().build(true, true));
+    let (mut sm, _) = auto_map(&s);
+    let (mut tm, _) = auto_map(&t);
+    sm.auto_align(&s);
+    tm.auto_align(&t);
+    let options = RetargetOptions { ik_legs: false };
+    let r = Retargeter::new(&s, &sm.retarget_rig(&s, options).unwrap(), &t, &tm.retarget_rig(&t, options).unwrap()).unwrap();
+    let mut out = vec![Trs::IDENTITY; t.len()];
+    r.pose(s.rest(), &[], &mut out);
+    for j in trunk_joints(&t, &tm) {
+        let angle = out[j].rotation.angle_between(t.rest()[j].rotation);
+        assert!(angle < 1e-4, "{}: {angle} rad from bind", t.name(j));
+    }
+    let model = model_of(&t, &out);
+    let at = |b: B| Vec3::from(model[t.find(tm.joint(b).unwrap()).unwrap()].translation);
+    for (a, b, want) in [(B::LeftUpperArm, B::LeftLowerArm, Vec3::X), (B::RightLowerArm, B::RightHand, Vec3::NEG_X), (B::LeftUpperLeg, B::LeftLowerLeg, Vec3::NEG_Y)]
+    {
+        let got = (at(b) - at(a)).normalize();
+        assert!(got.angle_between(want).to_degrees() < 0.05, "{a:?}→{b:?}: {got}");
+    }
+}
+
+/// Shoulder and arm retarget-pose offsets as a source like Kimodo needs them
+/// (clavicle lowered, upper arm kept) and a target abducting its arms.
+fn shoulder_offsets() -> (Vec<PoseOffset>, Vec<PoseOffset>) {
+    let source = vec![
+        PoseOffset { limb: Limb::Shoulder, raise_deg: -19.0, forward_deg: 0.0 },
+        PoseOffset { limb: Limb::UpperArm, raise_deg: 19.0, forward_deg: 0.0 },
+    ];
+    let target = vec![PoseOffset { limb: Limb::UpperArm, raise_deg: 4.0, forward_deg: 0.0 }];
+    (source, target)
+}
+
+#[test]
+fn zero_pose_offsets_leave_the_retarget_output_identical() {
+    let (s, t) = (curved_soma().build(false, false), curved_biped().build(true, true));
+    let (mut sm, _) = auto_map(&s);
+    let (mut tm, _) = auto_map(&t);
+    sm.auto_align(&s);
+    tm.auto_align(&t);
+    let options = RetargetOptions { ik_legs: true };
+    let rigs = |sm: &RigMap, tm: &RigMap| (sm.retarget_rig(&s, options).unwrap(), tm.retarget_rig(&t, options).unwrap());
+    let (s0, t0) = rigs(&sm, &tm);
+    let zero = [
+        PoseOffset { limb: Limb::Shoulder, raise_deg: 0.0, forward_deg: 0.0 },
+        PoseOffset { limb: Limb::UpperArm, raise_deg: 0.0, forward_deg: 0.0 },
+    ];
+    let (mut sz, mut tz) = (sm.clone(), tm.clone());
+    sz.offset_retarget_pose(&s, &zero);
+    tz.offset_retarget_pose(&t, &[]);
+    assert_eq!((&sz, &tz), (&sm, &tm));
+    let (s1, t1) = rigs(&sz, &tz);
+    assert_eq!((s1.key_bytes(), t1.key_bytes()), (s0.key_bytes(), t0.key_bytes()));
+    // The same output bytes for a pose away from the retarget pose.
+    let mut pose = sm.retarget_pose_local(&s);
+    for (k, p) in pose.iter_mut().enumerate() {
+        #[allow(clippy::cast_precision_loss)]
+        let a = 0.1 + 0.03 * (k % 7) as f32;
+        p.rotation = (Quat::from_rotation_x(a) * Quat::from_rotation_z(-a * 0.5) * p.rotation).normalize();
+    }
+    let run = |sr: &sf_anim::RetargetRig, tr: &sf_anim::RetargetRig| {
+        let mut out = vec![Trs::IDENTITY; t.len()];
+        Retargeter::new(&s, sr, &t, tr).unwrap().pose(&pose, &[1.0, 1.0], &mut out);
+        out.iter().flat_map(|x| x.translation.to_array().into_iter().chain(x.rotation.to_array())).map(f32::to_bits).collect::<Vec<u32>>()
+    };
+    assert_eq!(run(&s1, &t1), run(&s0, &t0));
+}
+
+#[test]
+fn a_source_at_its_offset_pose_lands_on_the_target_offset_pose() {
+    let (s, t) = (curved_soma().build(false, false), curved_biped().build(true, true));
+    let (mut sm, _) = auto_map(&s);
+    let (mut tm, _) = auto_map(&t);
+    sm.auto_align(&s);
+    tm.auto_align(&t);
+    let aligned = sm.clone();
+    let (so, to) = shoulder_offsets();
+    sm.offset_retarget_pose(&s, &so);
+    tm.offset_retarget_pose(&t, &to);
+    // The source clavicle is 19° lower than auto-align's, its upper arm still along ±X.
+    for (side, out) in [(Side::Left, Vec3::X), (Side::Right, Vec3::NEG_X)] {
+        let limb = |l: Limb| HumanoidBone::limb(side, l).unwrap();
+        let (clav, upper, lower) = (limb(Limb::Shoulder), limb(Limb::UpperArm), limb(Limb::LowerArm));
+        let (before, after) = (dir(&s, &aligned, clav, upper), dir(&s, &sm, clav, upper));
+        let drop = before.y.clamp(-1.0, 1.0).asin().to_degrees() - after.y.clamp(-1.0, 1.0).asin().to_degrees();
+        assert!((drop - 19.0).abs() < 0.5, "{side:?} clavicle dropped {drop}°");
+        assert!(dir(&s, &sm, upper, lower).angle_between(out).to_degrees() < 0.05);
+        // The target arm is abducted 4° above ±X.
+        let up = dir(&t, &tm, upper, lower).y.asin().to_degrees();
+        assert!((up - 4.0).abs() < 0.05, "{side:?} target arm at {up}°");
+    }
+    let options = RetargetOptions { ik_legs: false };
+    let r = Retargeter::new(&s, &sm.retarget_rig(&s, options).unwrap(), &t, &tm.retarget_rig(&t, options).unwrap()).unwrap();
+    let mut out = vec![Trs::IDENTITY; t.len()];
+    r.pose(&sm.retarget_pose_local(&s), &[], &mut out);
+    for (j, (got, want)) in out.iter().zip(tm.retarget_pose_local(&t)).enumerate() {
+        // 2·asin|v| of the difference (f32 `angle_between`'s acos floors at ~7e-4 rad).
+        let angle = 2.0 * (got.rotation.inverse() * want.rotation).xyz().length().min(1.0).asin();
+        assert!(angle < 1e-4, "{}: {angle} rad from the target's retarget pose", t.name(j));
+    }
+}
+
+#[test]
+fn mirrored_sides_get_mirrored_offsets() {
+    let o = PoseOffset { limb: Limb::Shoulder, raise_deg: -15.0, forward_deg: 10.0 };
+    let (l, r) = (o.rotation(Side::Left), o.rotation(Side::Right));
+    let mirrored = Quat::from_xyzw(l.x, -l.y, -l.z, l.w);
+    assert!(r.angle_between(mirrored) < 1e-6, "{r} vs {mirrored}");
+    assert_eq!(o.rotation(Side::Center), Quat::IDENTITY);
+    let s = biped().build(true, false);
+    let (mut map, _) = auto_map(&s);
+    map.auto_align(&s);
+    let before = map.retarget_pose_model(&s);
+    map.offset_retarget_pose(&s, &[o, PoseOffset { limb: Limb::UpperArm, raise_deg: 4.0, forward_deg: -6.0 }]);
+    let model = map.retarget_pose_model(&s);
+    let at = |m: &[glam::Affine3A], b: B| Vec3::from(m[s.find(map.joint(b).unwrap()).unwrap()].translation);
+    let flip = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
+    for (a, b) in [(B::LeftUpperArm, B::RightUpperArm), (B::LeftLowerArm, B::RightLowerArm), (B::LeftHand, B::RightHand)] {
+        let (pl, pr) = (at(&model, a), at(&model, b));
+        assert!(pl.distance(flip(pr)) < 1e-4, "{a:?} {pl} vs mirrored {b:?} {}", flip(pr));
+    }
+    // Left clavicle end: lower and further forward than before.
+    let (p0, p1) = (at(&before, B::LeftUpperArm), at(&model, B::LeftUpperArm));
+    assert!(p1.y < p0.y - 1e-3 && p1.z > p0.z + 1e-3, "{p0} -> {p1}");
 }
 
 #[test]

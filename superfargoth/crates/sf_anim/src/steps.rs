@@ -386,7 +386,11 @@ impl Step for AnimRetargetStep {
         // 2: the target's hand and foot contacts, from its `rig.profile` (`annotate_contacts`).
         // 3: the source clip's contacts carried over (`transfer_contacts`): times from the source, positions the target's.
         // 4: leg IK weights eased around contact changes and a stable knee pole (AN-22).
-        4
+        // 5: matched retarget pose for the trunk (auto-align keeps each rig's rest spine,
+        //    neck and head; the rigs are keyed too, this marks the output change).
+        // 6: retarget-pose offsets per source and target rig (`sf_character::PoseOffset`,
+        //    UE5 "Edit Retarget Pose"; in the keyed rigs' retarget poses).
+        6
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (target, anim, source) = Self::parse(subject)?;

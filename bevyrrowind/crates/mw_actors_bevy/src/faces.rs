@@ -91,13 +91,17 @@ pub struct FaceState {
 #[derive(Component, Debug, Default)]
 pub struct Talking(pub f32);
 
+/// Turns the scaffold talk key (Y) off, for tools that bind Y themselves (`clip-preview --browse`: Y = keep).
+#[derive(Resource, Debug, Default)]
+pub struct NoTalkKey;
+
 /// No head morph to drive (looked up once).
 #[derive(Component)]
 struct NoFace;
 
 pub fn add(app: &mut App, vfs: Arc<Vfs>) {
     app.insert_resource(MwFaces { vfs, cache: HashMap::new(), talking: false })
-        .add_systems(Update, (attach_faces, talk_key, drive_faces).chain());
+        .add_systems(Update, (attach_faces, talk_key.run_if(not(resource_exists::<NoTalkKey>)), drive_faces).chain());
 }
 
 /// Next pause before a blink: 2-8 s (xorshift per face).

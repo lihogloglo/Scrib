@@ -1615,6 +1615,7 @@ fn player_ik_vs_walkers() {
 /// Sanity only: finite.
 #[test]
 #[ignore = "measurement: player stop"]
+#[allow(clippy::similar_names, clippy::needless_range_loop, reason = "per-leg tables (L1)")]
 fn player_stop() {
     use sf_controller::Gait;
     let Some(sim) = humanoid_sim() else { return };
@@ -1700,4 +1701,447 @@ fn player_stop() {
             );
         }
     }
+}
+
+// --- A1 (locomotion rebuild, ROADMAP 3.4c): the player's gaits on the base pose ----------------
+// superfargoth docs/research/animation/15-audit-and-plan-2026-11-12.md §2 causes 1, 3, 4, 6.
+
+/// The player's forward gait speeds, m/s: `sf_action::GaitTable::default()`
+/// (`superfargoth/crates/sf_action/src/state.rs:167-171`; Morrowind sets no other table). The
+/// stick picks the gait (`sf_action/src/step.rs:876-896`): under `run_threshold` (0.6,
+/// `state.rs:210`) the walk speed scales with the stick, from it on the run and sprint play at
+/// full speed. `mw_graphs` has no `sf_action` dependency, so the values are copied here.
+const GAIT_WALK: f32 = 1.6;
+const GAIT_RUN: f32 = 4.5;
+const GAIT_SPRINT: f32 = 7.0;
+const RUN_THRESHOLD: f32 = 0.6;
+/// `sf_action_bevy`'s fixed tick, ns (60 Hz, as `Time<Fixed>` holds it).
+const TICK_NS: u64 = 16_666_667;
+
+/// The player's animation feed, `mw_player_bevy::avatar::feed` (`avatar.rs:230-252`) and
+/// `sf_controller_bevy::FeedValues::measured` (`sf_controller_bevy/src/lib.rs:560-590`) with
+/// `ControllerSettings::default()` (`:300-304`: moving 0.3, idle 0.15, stop 0.25 m/s; `run_speed`
+/// infinite, so `running` is the gait intent): per render frame, the drawn root's finite
+/// difference, low-passed with `feel::MEASURE_HALFLIFE` (0.025 s). Replicated because the real
+/// system needs a Bevy app (`mw_player_bevy` is not a dependency of this crate).
+#[derive(Default)]
+struct PlayerFeed {
+    last: Option<sf_controller::CharacterFrame>,
+    measured: Vec3,
+    turn: f32,
+    moving: bool,
+}
+
+impl PlayerFeed {
+    /// Feeds `sim` for one render frame of `dt` with the root drawn at `drawn`.
+    fn feed(&mut self, sim: &mut Sim, drawn: sf_controller::CharacterFrame, dt: f32, intent: &LocomotionIntent) {
+        use sf_controller::Gait;
+        let moved = match self.last {
+            Some(last) if dt > 0.0 => {
+                let d = last.delta_to(&drawn);
+                // `TELEPORT_M` (avatar.rs:79).
+                if d.translation.length() > 3.0 { sf_anim::RootDelta::ZERO } else { d }
+            }
+            _ => sf_anim::RootDelta::ZERO,
+        };
+        self.last = Some(drawn);
+        if dt > 0.0 {
+            let raw = (Quat::from_rotation_y(-moved.yaw) * moved.translation / dt).with_y(0.0);
+            let turn = moved.yaw / dt;
+            let keep = 0.5f32.powf(dt / 0.025);
+            if raw.is_finite() && turn.is_finite() {
+                self.measured = raw.lerp(self.measured, keep);
+                self.turn = turn + (self.turn - turn) * keep;
+            }
+        }
+        let braking = intent.desired_velocity.length_squared() < 1e-6;
+        let flat = Vec2::new(-self.measured.x, self.measured.z);
+        let speed = flat.length();
+        self.moving = speed
+            > match (self.moving, braking) {
+                (false, _) => 0.3,
+                (true, false) => 0.15,
+                (true, true) => 0.25,
+            };
+        let running = self.moving && matches!(intent.gait, Gait::Run | Gait::Sprint);
+        sim.set(p::MOVING, if self.moving { 1.0 } else { 0.0 });
+        sim.set_vec2(p::MOVE, if speed > 1e-3 { flat / speed } else { Vec2::Y });
+        sim.set(p::RUNNING, if running { 1.0 } else { 0.0 });
+        sim.set(p::TURN, self.turn);
+        sim.velocity = self.measured;
+        sim.turn_rate = self.turn;
+        sim.moved = moved;
+    }
+}
+
+/// One render frame of [`gait_drive`].
+struct GaitFrame {
+    /// Seconds since the intent started.
+    t: f32,
+    dt: f32,
+    /// The fed (measured) speed, m/s.
+    fed: f32,
+    /// Angle between the mover's travel and its facing, rad, and its facing (yaw), rad.
+    off: f32,
+    yaw: f32,
+    state: String,
+    /// The heaviest player's lanes: clip reference, clip time, weight (player x lane).
+    lanes: Vec<(String, f32, f32)>,
+    /// Weights summed over every player by lane direction: forward, back, left, right.
+    dirs: [f32; 4],
+    /// Per leg: the contact curve.
+    contacts: Vec<f32>,
+    /// Clip seconds per second of the heaviest clip (NaN on a wrap or a clip change).
+    rate: f32,
+}
+
+impl GaitFrame {
+    /// The heaviest lane of the heaviest player.
+    fn top(&self) -> Option<&(String, f32, f32)> {
+        self.lanes.iter().max_by(|a, b| a.2.total_cmp(&b.2))
+    }
+
+    fn top_name(&self) -> &str {
+        self.top().map_or("?", |x| x.0.as_str())
+    }
+}
+
+/// A frame time in ns: steady at `fps`, or (`jitter`) +-20 % around it (a fixed LCG).
+fn frame_ns(fps: f32, jitter: bool, seed: &mut u64) -> u64 {
+    let base = 1e9 / f64::from(fps);
+    if !jitter {
+        return base.round() as u64;
+    }
+    *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+    let u = (*seed >> 33) as f64 / f64::from(1u32 << 31);
+    (base * (0.8 + 0.4 * u)).round() as u64
+}
+
+/// The player on the flat (start at the origin facing +X): the player's mover
+/// (`mover_params(true)`, `mw_player_bevy::feel`) on the 60 Hz fixed tick, drawn per render frame
+/// at `fps` by interpolating the last two ticks (`sf_action_bevy::interpolate`,
+/// `sf_action_bevy/src/lib.rs:547-557`, no correction offset on the flat), fed by
+/// [`PlayerFeed`], ground probes at the drawn root. `script(t)` gives the intent at `t` seconds
+/// after a 1 s stand. Frames from `t >= 0`.
+fn gait_drive(script: &dyn Fn(f32) -> LocomotionIntent, seconds: f32, fps: f32, jitter: bool) -> Vec<GaitFrame> {
+    let mut sim = humanoid_sim().unwrap();
+    let world = World::new();
+    let mut loco = Locomotion::new(WorldPos::ORIGIN, std::f32::consts::FRAC_PI_2);
+    let params = mover_params(true);
+    let mut stepper = KinematicMover::new();
+    let contacts: Vec<usize> = sim.graph.legs.iter().map(|l| usize::from(l.contact.expect("contact curve"))).collect();
+    let mut feed = PlayerFeed::default();
+    let (mut prev, mut curr) = (loco.frame(), loco.frame());
+    let (mut acc, mut ticks, mut now, mut seed) = (0u64, 0u64, 0u64, 7u64);
+    let end = ((seconds + 1.0) * 1e9) as u64;
+    let mut intent = LocomotionIntent::IDLE;
+    let mut out: Vec<GaitFrame> = Vec::new();
+    let mut last_top: Option<(String, f32)> = None;
+    while now < end {
+        let ns = frame_ns(fps, jitter, &mut seed);
+        now += ns;
+        acc += ns;
+        while acc >= TICK_NS {
+            acc -= TICK_NS;
+            let t = ticks as f32 * DT - 1.0;
+            ticks += 1;
+            intent = if t >= 0.0 { script(t) } else { LocomotionIntent::IDLE };
+            prev = loco.frame();
+            stepper.step(MoveInput { loco: &mut loco, intent, params: &params, root: RootMotion::default() }, &world, DT);
+            curr = loco.frame();
+        }
+        let alpha = acc as f32 / TICK_NS as f32;
+        let yaw = prev.yaw + sf_controller::wrap_angle(curr.yaw - prev.yaw) * alpha;
+        let drawn = sf_controller::CharacterFrame::new(prev.position.offset(prev.position.delta_f32(curr.position) * alpha), yaw);
+        let dt = ns as f32 * 1e-9;
+        feed.feed(&mut sim, drawn, dt, &intent);
+        let queries: Vec<_> = drawn.foot_queries(&sim.out.probe_origins, 0.5, 0.75).collect();
+        let mut hits = vec![None; queries.len()];
+        world.probe(&queries, &mut hits);
+        for (slot, hit) in sim.ground.iter_mut().zip(&hits) {
+            *slot = hit.as_ref().map(|h| {
+                let (point, normal) = drawn.ground_sample(h);
+                GroundSample { point, normal }
+            });
+        }
+        sim.run(dt, dt);
+        let t = now as f32 * 1e-9 - 1.0;
+        let (lanes, dirs) = player_lanes(&sim);
+        let top = lanes.iter().max_by(|a, b| a.2.total_cmp(&b.2)).map(|(c, time, _)| (c.clone(), *time));
+        let rate = match (&last_top, &top) {
+            (Some((pc, pt)), Some((c, time))) if pc == c && time > pt => (time - pt) / dt,
+            _ => f32::NAN,
+        };
+        last_top = top;
+        let v = loco.motion.velocity;
+        let fwd = Vec2::new(loco.motion.yaw.sin(), loco.motion.yaw.cos());
+        let off = if v.length() > 0.2 { Vec2::new(v.x, v.z).angle_to(fwd).abs() } else { 0.0 };
+        if t >= 0.0 {
+            out.push(GaitFrame {
+                t,
+                dt,
+                fed: Vec2::new(feed.measured.x, feed.measured.z).length(),
+                off,
+                yaw: loco.motion.yaw,
+                state: sim.state(mw_graphs::build::LOCOMOTION).unwrap_or("?").to_owned(),
+                lanes,
+                dirs,
+                contacts: contacts.iter().map(|&c| sim.out.curves[c]).collect(),
+                rate,
+            });
+        }
+    }
+    assert!(out.iter().all(|f| f.fed.is_finite() && f.off.is_finite() && f.contacts.iter().all(|c| c.is_finite())), "finite");
+    out
+}
+
+/// The heaviest player node's lanes (clip, time, player x lane weight), and every player's
+/// weight summed by lane direction (forward, back, left, right; from the clip names).
+fn player_lanes(sim: &Sim) -> (Vec<(String, f32, f32)>, [f32; 4]) {
+    use sf_anim_graph::NodeKind;
+    let mut best: (f32, Vec<(String, f32, f32)>) = (0.0, Vec::new());
+    let mut dirs = [0.0f32; 4];
+    for (i, n) in sim.graph.nodes.iter().enumerate() {
+        let NodeKind::Player(pl) = &n.kind else { continue };
+        let Some((lanes, w)) = sim.instance.player(u32::try_from(i).expect("node")) else { continue };
+        if w <= 1e-3 {
+            continue;
+        }
+        let single = lanes.len() == 1;
+        let list: Vec<(String, f32, f32)> = lanes
+            .iter()
+            .enumerate()
+            .map(|(k, &(time, lw))| (sim.graph.clips[usize::from(pl.lanes[k])].reference.clone(), time, w * if single { 1.0 } else { lw }))
+            .collect();
+        for (c, _, x) in &list {
+            if let Some(d) = ["Forward", "Back", "Left", "Right"].iter().position(|s| c.contains(s)) {
+                dirs[d] += x;
+            }
+        }
+        if w > best.0 {
+            best = (w, list);
+        }
+    }
+    (best.1, dirs)
+}
+
+/// A graph clip by reference: its natural (stride) speed, m/s, its loop span and index.
+fn clip_info(sim: &Sim, reference: &str) -> Option<(f32, (f32, f32), usize)> {
+    let index = sim.graph.clips.iter().position(|c| c.reference == reference)?;
+    let clip = &sim.clips[index];
+    let v = clip.meta.stride_velocity();
+    let span = match clip.loop_range {
+        Some((start, end)) if end > start => (start, end),
+        _ => (0.0, clip.duration),
+    };
+    Some((Vec2::new(v.x, v.z).length(), span, index))
+}
+
+/// Foot phase of `time` in a clip: 0 where leg 0's contact curve rises through 0.5 (its plant),
+/// so the phases of different clips compare; from the loop start if it has no such rise.
+fn foot_phase(sim: &Sim, reference: &str, time: f32) -> f32 {
+    const N: usize = 240;
+    let Some((_, (a, b), i)) = clip_info(sim, reference) else { return f32::NAN };
+    let clip = &sim.clips[i];
+    let leg0 = &sim.graph.curves[usize::from(sim.graph.legs[0].contact.expect("contact"))];
+    let len = (b - a).max(1e-6);
+    let plant = clip.curves.iter().position(|c| &c.name == leg0).and_then(|k| {
+        let at = |s: usize| clip.curve(k, a + len * (s % N) as f32 / N as f32);
+        (0..N).find(|&s| at(s + N - 1) < 0.5 && at(s) >= 0.5).map(|s| a + len * s as f32 / N as f32)
+    });
+    ((time - plant.unwrap_or(a)) / len).rem_euclid(1.0)
+}
+
+/// Plants per second (each leg's contact rising through 0.5) over `frames`.
+fn steps_per_second(frames: &[&GaitFrame]) -> f32 {
+    let plants: usize = frames.windows(2).map(|w| w[0].contacts.iter().zip(&w[1].contacts).filter(|(a, b)| **a < 0.5 && **b >= 0.5).count()).sum();
+    let secs: f32 = frames.iter().skip(1).map(|f| f.dt).sum();
+    plants as f32 / secs.max(1e-3)
+}
+
+fn median(mut v: Vec<f32>) -> f32 {
+    v.retain(|x| x.is_finite());
+    v.sort_by(f32::total_cmp);
+    v.get(v.len() / 2).copied().unwrap_or(f32::NAN)
+}
+
+/// Mean, standard deviation, largest frame-to-frame change and largest second difference
+/// (the step's own change: what a smooth ramp such as a start does not have) of the finite values.
+fn jitter(v: &[f32]) -> (f32, f32, f32, f32) {
+    let x: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    let n = x.len().max(1) as f32;
+    let mean = x.iter().sum::<f32>() / n;
+    let sd = (x.iter().map(|a| (a - mean).powi(2)).sum::<f32>() / n).sqrt();
+    let step = x.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+    let wobble = x.windows(3).map(|w| (w[2] - 2.0 * w[1] + w[0]).abs()).fold(0.0f32, f32::max);
+    (mean, sd, step, wobble)
+}
+
+/// An intent along `dir` at `speed`.
+fn going(dir: Vec3, speed: f32, gait: sf_controller::Gait) -> LocomotionIntent {
+    LocomotionIntent { desired_velocity: dir * speed, gait, ..LocomotionIntent::IDLE }
+}
+
+/// A1.1: per gait at full and part stick (60 fps, t 2-5 s): state and heaviest clip, its natural
+/// (stride) speed, fed speed / natural, play rate (clip s per s: `SpeedMatch`), `StrideWarp`'s
+/// stride scale (speed over natural x rate, applied clamped to the op's range), plants per second.
+fn gait_table(sim: &Sim) {
+    use sf_controller::Gait;
+    let (wmin, wmax) = sim
+        .graph
+        .ops
+        .iter()
+        .find_map(|o| match o.op {
+            sf_anim_graph::Op::StrideWarp { min, max, .. } => Some((min, max)),
+            _ => None,
+        })
+        .unwrap_or((1.0, 1.0));
+    eprintln!("--- A1.1 gaits on the flat (60 fps, t 2-5 s; StrideWarp range {wmin:.2}-{wmax:.2})");
+    eprintln!("gait (stick)             | fed m/s | state clip              | natural | ratio | rate | stride (raw) | steps/s (counted)");
+    let rows = [
+        ("walk (stick 0.3)", Gait::Walk, GAIT_WALK * 0.3 / RUN_THRESHOLD),
+        ("walk (stick 0.5)", Gait::Walk, GAIT_WALK * 0.5 / RUN_THRESHOLD),
+        ("walk (full)", Gait::Walk, GAIT_WALK),
+        ("run half* (transient)", Gait::Run, GAIT_RUN * 0.5),
+        ("run (stick >= 0.6)", Gait::Run, GAIT_RUN),
+        ("sprint half* (transient)", Gait::Sprint, GAIT_SPRINT * 0.5),
+        ("sprint (full)", Gait::Sprint, GAIT_SPRINT),
+    ];
+    for (label, gait, speed) in rows {
+        let frames = gait_drive(&|_| going(Vec3::X, speed, gait), 5.0, 60.0, false);
+        let w: Vec<&GaitFrame> = frames.iter().filter(|f| f.t >= 2.0).collect();
+        let last = w.last().expect("frames");
+        let top = last.top_name().to_owned();
+        let natural = clip_info(sim, &top).map_or(f32::NAN, |x| x.0);
+        let fed = median(w.iter().map(|f| f.fed).collect());
+        let rate = median(w.iter().map(|f| f.rate).collect());
+        let stride = fed / (natural * rate);
+        eprintln!(
+            "{label:24} | {fed:7.2} | {:5} {top:17} | {natural:7.2} | {:5.2} | {rate:4.2} | {:4.2} ({stride:4.2})  | {:4.2} ({:4.2})",
+            last.state,
+            fed / natural,
+            stride.clamp(wmin, wmax),
+            2.0 * rate / clip_info(sim, &top).map_or(f32::NAN, |x| x.1.1 - x.1.0),
+            steps_per_second(&w),
+        );
+    }
+    eprintln!("* the stick never asks for these: run and sprint are full speed from stick 0.6 (sf_action step.rs:891-893); seen only while speeding up");
+}
+
+/// A1.2: sharp turns at the player's turn rates (walk 720, run 1080 deg/s): the stick turns 90 or
+/// 180 deg at t = 2 s; over the 0.8 s after it, the peak side (left + right) and back lane weights
+/// of the directional blends, how long side + back stays over 0.25, the mover's travel-to-facing
+/// angle peak, the fed speed's low point, play rate range and the states visited.
+fn turn_table() {
+    use sf_controller::Gait;
+    eprintln!("--- A1.2 turns (60 fps; stick turns at t 2.0 s, window 0.8 s)");
+    for (label, gait, speed) in [("walk", Gait::Walk, GAIT_WALK), ("run", Gait::Run, GAIT_RUN)] {
+        for (turn, to) in [("90", Vec3::Z), ("180", -Vec3::X)] {
+            let frames = gait_drive(&|t| going(if t < 2.0 { Vec3::X } else { to }, speed, gait), 3.0, 60.0, false);
+            let w: Vec<&GaitFrame> = frames.iter().filter(|f| f.t >= 2.0 && f.t < 2.8).collect();
+            let peak = |f: &dyn Fn(&GaitFrame) -> f32| w.iter().map(|x| f(x)).fold(0.0f32, f32::max);
+            let side = peak(&|x| x.dirs[2] + x.dirs[3]);
+            let back = peak(&|x| x.dirs[1]);
+            let over: f32 = w.iter().filter(|x| x.dirs[1] + x.dirs[2] + x.dirs[3] > 0.25).map(|x| x.dt).sum();
+            let fed_min = w.iter().map(|x| x.fed).fold(f32::INFINITY, f32::min);
+            let rates: Vec<f32> = w.iter().map(|x| x.rate).filter(|r| r.is_finite()).collect();
+            let rmin = rates.iter().copied().fold(f32::INFINITY, f32::min);
+            let rmax = rates.iter().copied().fold(0.0f32, f32::max);
+            let mut states: Vec<String> = Vec::new();
+            for x in &w {
+                let s = format!("{}:{}", x.state, x.top_name());
+                if states.last() != Some(&s) {
+                    states.push(s);
+                }
+            }
+            // Turn: the facing's peak rate and the time until it is within 5 deg of the stick.
+            let goal = to.x.atan2(to.z);
+            let yaw_rate = w.windows(2).map(|p| sf_controller::wrap_angle(p[1].yaw - p[0].yaw).abs() / p[1].dt).fold(0.0f32, f32::max);
+            let done = w.iter().find(|x| sf_controller::wrap_angle(x.yaw - goal).abs() < 5f32.to_radians()).map_or(f32::NAN, |x| x.t - 2.0);
+            eprintln!(
+                "{label:4} {turn:>3} deg | facing {:4.0} deg/s peak, turned in {:3.0} ms | side peak {side:4.2} back peak {back:4.2} | side+back > 0.25 for {:3.0} ms | travel-facing peak {:5.1} deg | fed min {fed_min:4.2} m/s | rate {rmin:4.2}-{rmax:4.2} | {}",
+                yaw_rate.to_degrees(),
+                done * 1000.0,
+                over * 1000.0 + 0.0,
+                peak(&|x| x.off).to_degrees(),
+                states.join(" > "),
+            );
+        }
+    }
+}
+
+/// A1.3: walk <-> run switch (60 fps): the gait toggles at t = 3.0 + k x 0.2 s (k = 0..5, spread
+/// over the cycle). At the state change: the clip and foot phase (0 = leg 0's plant; see
+/// [`foot_phase`]) on the last frame before and the first after, the jump between them
+/// (wrapped to +-0.5 cycles), and both legs' contact curves before, after and 0.15 s later
+/// (the end of the inertialization).
+fn switch_table(sim: &Sim) {
+    use sf_controller::Gait;
+    eprintln!("--- A1.3 walk <-> run switch (60 fps; phase 0 = leg 0 plants; contacts L0/R1)");
+    let walk = (Gait::Walk, GAIT_WALK);
+    let run = (Gait::Run, GAIT_RUN);
+    for (label, from, to) in [("walk>run", walk, run), ("run>walk", run, walk)] {
+        for k in 0..5u8 {
+            let at = 3.0 + f32::from(k) * 0.2;
+            let frames = gait_drive(&|t| if t < at { going(Vec3::X, from.1, from.0) } else { going(Vec3::X, to.1, to.0) }, at + 1.0, 60.0, false);
+            let from_state = frames.iter().rfind(|f| f.t < at).map(|f| f.state.clone()).unwrap_or_default();
+            let Some(i) = frames.iter().position(|f| f.t >= at && f.state != from_state) else {
+                eprintln!("{label} at {at:.1}: no state change");
+                continue;
+            };
+            let (b, a) = (&frames[i - 1], &frames[i]);
+            let late = frames.iter().find(|f| f.t >= a.t + 0.15).unwrap_or(a);
+            let phase = |f: &GaitFrame| f.top().map_or(f32::NAN, |x| foot_phase(sim, &x.0, x.1));
+            let (pb, pa) = (phase(b), phase(a));
+            let jump = (pa - pb + 0.5).rem_euclid(1.0) - 0.5;
+            let c = |f: &GaitFrame| format!("{:.2}/{:.2}", f.contacts[0], f.contacts[1]);
+            eprintln!(
+                "{label} t {:.2} | before {:4} {:16} ph {pb:4.2} contacts {} | after {:4} {:16} ph {pa:4.2} contacts {} | jump {jump:+5.2} cycle | +0.15 s contacts {}",
+                a.t,
+                b.state,
+                b.top_name(),
+                c(b),
+                a.state,
+                a.top_name(),
+                c(a),
+                c(late),
+            );
+        }
+    }
+}
+
+/// A1.4 (P-IK1c): the play rate and fed speed frame to frame through the player's real feed
+/// path ([`PlayerFeed`] on the interpolated drawn root) at 60 fps, 144 fps and 144 fps with
+/// +-20 % frame times: walk and run straight (t 2-5 s), a run start from rest (t 0-0.6 s) and a
+/// 90 deg run turn (t 2-2.8 s).
+/// Mean, standard deviation, largest frame-to-frame step and second difference.
+fn jitter_table() {
+    use sf_controller::Gait;
+    eprintln!("--- A1.4 rate jitter through the player feed (mean / sd / max frame-to-frame step / max second difference)");
+    let rows = [("walk", Gait::Walk, GAIT_WALK, false, (2.0, 5.0)), ("run", Gait::Run, GAIT_RUN, false, (2.0, 5.0)), ("run start", Gait::Run, GAIT_RUN, false, (0.0, 0.6)), ("run 90 turn", Gait::Run, GAIT_RUN, true, (2.0, 2.8))];
+    for (label, gait, speed, turn, (t0, t1)) in rows {
+        for (fps, jit, fl) in [(60.0, false, "60"), (144.0, false, "144"), (144.0, true, "144+-20%")] {
+            let frames = gait_drive(&|t| going(if turn && t >= 2.0 { Vec3::Z } else { Vec3::X }, speed, gait), 5.0, fps, jit);
+            let w: Vec<&GaitFrame> = frames.iter().filter(|f| f.t >= t0 && f.t < t1).collect();
+            let (rm, rsd, rstep, rw) = jitter(&w.iter().map(|f| f.rate).collect::<Vec<_>>());
+            let (fm, fsd, fstep, fw) = jitter(&w.iter().map(|f| f.fed).collect::<Vec<_>>());
+            eprintln!("{label:11} {fl:8} | rate {rm:5.3} / {rsd:5.3} / {rstep:5.3} / {rw:5.3} | fed {fm:5.3} / {fsd:5.3} / {fstep:5.3} / {fw:5.3} m/s | {} frames", w.len());
+        }
+    }
+}
+
+/// A1 (locomotion rebuild, 3.4c): the player's gaits measured on the base pose, blend weights
+/// and play rates (the IK-vs-twin tests above cannot see clip speed, gait switch or turn blend
+/// causes). Tables: gaits (A1.1), turns (A1.2), walk <-> run switch (A1.3), rate jitter through
+/// the player's feed at 60/144 fps (A1.4, P-IK1c). Sanity only: finite.
+#[test]
+#[ignore = "measurement: player gaits (A1)"]
+fn player_gaits() {
+    let Some(sim) = humanoid_sim() else { return };
+    let names: Vec<&str> = sim.graph.legs.iter().map(|l| sim.skeleton.name(usize::from(l.effector()))).collect();
+    eprintln!("legs: 0 = {}, 1 = {}", names[0], names[1]);
+    gait_table(&sim);
+    turn_table();
+    switch_table(&sim);
+    jitter_table();
 }

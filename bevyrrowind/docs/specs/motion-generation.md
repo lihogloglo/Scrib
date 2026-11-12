@@ -133,8 +133,9 @@ is the path there). `python -m motiongen stats <bvh|dir>` prints skate/flight/ro
   rotation, two-handed second-hand point). Attach = a child entity on the hand bone; the second hand is a
   `FullBodyIk` effector (only in preview until the runtime activity system lands). Spawn/despawn at phase events.
 - `review.html` in the output folder: a grid of MP4s per activity/phase/band with id, prompt, seed; the owner writes
-  verdicts in `verdicts.toml` (`id = "keep" | "reject" | "note: ..."`), which MG9 (later) turns into sources.ron
-  candidates.
+  verdicts in `verdicts.toml` (`id = "keep" | "maybe" | "reject" | "note: ..."`, id = the clip's file stem), which MG9
+  (later) turns into sources.ron candidates. `clip-preview --browse` writes it in the browsed folder: Y keep, N reject,
+  M maybe (each advances), Backspace clear, U next unrated; sorted keys, existing entries kept, atomic save.
 
 ## Slices (one deliverable each)
 
@@ -151,6 +152,7 @@ is the path there). `python -m motiongen stats <bvh|dir>` prints skate/flight/ro
 | MG9 | verdicts → sources.ron candidates + review.html | MG5 | later |
 | MG10a | interactive browse: `clip-preview --browse <dir>` (keys, loop, orbit, prov overlay) | MG5 | done |
 | MG-C0 | combat/athletic feasibility run (`recipes/combat-feasibility.toml`, `stats`), 2026-11-05 | MG1 | done; results in research/combat-anim-generation-2026-11-05.md |
+| AG1 | `motiongen grade <dir>`: physical gates (skate, jerk, turn_mag, no_step; mirror_candidate flag) + prompt-group triage -> `grades.json` (design: research/animation/17-autograde) | MG1 | done 2026-11-12 (selftest fixtures) |
 
 Order: MG1, MG3, MG5 in parallel (Python / bake / app), then MG4, MG2, MG6, MG7, MG8.
 

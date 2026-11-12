@@ -193,13 +193,52 @@ Nothing in B6 is retuned before A3: tuning slope ops on clips we are about to re
 4. Yes: dedicated kick in both views, physics pushes.
 5. Movement keys choose the swing direction.
 
+6. (After CB-3, 2026-11-12) Quaternius clips are not good: generate first. Kimodo batch 1 (gait card `16-gait-card-2026-11-12.md`, 15 clips) runs before A3; A3 builds the gait lanes on the generated cycles, UAL stays a last fallback only. Right-side variants come from the graph's `Mirror` node (`sf_anim_graph/src/asset.rs:367`), so no slot flag is needed.
 Decided from the standard, not asked: rate clamp 0.8-1.25 (Lyra), offset-root spring, foot-IK gain curve, aim
 pitch shares, eye low-pass, host-side sweeps with commanded pitch.
 
+## 7. A1 measured (2026-11-12)
+
+`mw_graphs/tests/slope_walk.rs` `player_gaits` (ignored; `--release -- --ignored --nocapture`): the shipped
+humanoid graph on the player's mover (60 Hz tick, render interpolation) and a replica of the player's feed
+(`avatar.rs:230-252`, `FeedValues::measured`; the real system needs a Bevy app), flat ground. Gait speeds from
+`sf_action::GaitTable::default()` (no Morrowind override); the stick walks below 0.6 and runs/sprints at full
+speed above it (`sf_action/src/step.rs:876-896`), so half-stick run/sprint only exist while speeding up.
+
+| gait (stick) | m/s | clip | natural m/s | ratio | rate | stride | steps/s |
+|---|---|---|---|---|---|---|---|
+| walk 0.3 | 0.80 | WalkForward | 1.89 | 0.42 | 0.65 | 0.65 | 1.30 |
+| walk 0.5 | 1.33 | WalkForward | 1.89 | 0.70 | 0.84 | 0.84 | 1.68 |
+| walk full | 1.60 | WalkForward | 1.89 | 0.85 | 0.92 | 0.92 | 1.84 |
+| run (transient half) | 2.25 | RunForward | 2.67 | 0.84 | 0.92 | 0.92 | 1.97 |
+| run | 4.50 | RunForward | 2.67 | 1.69 | 1.41 | 1.20 (cap) | 3.01 |
+| sprint (transient half) | 3.50 | RunForward | 2.67 | 1.31 | 1.15 | 1.15 | 2.45 |
+| sprint | 7.00 | RunForward | 2.67 | 2.62 | 2.19 | 1.20 (cap) | 4.69 |
+
+Turns (stick turns at speed): walk 90/180 deg take 133/250 ms at 720 deg/s, run 83/167 ms at 1080 deg/s;
+travel-to-facing angle 0.0 deg (free movement: the motion follows the facing), side-lane peak 0.04-0.07, back
+0.00, never over 0.25; the state stays walk/run on the forward clip, rate unchanged (0.92-0.95, 1.40-1.50).
+Walk<->run switch at 5 points of the cycle each way: the run always enters at foot phase 0.31 and the walk at
+0.43 (clip start; the blends have `sync: None`), so the jump is spread over the whole cycle (walk>run +0.27,
++0.09, -0.09, -0.28, -0.46; run>walk -0.20, +0.49, +0.19, -0.11, -0.41), often swapping the planted foot.
+Rate jitter through the feed: walk and run straight at 60, 144 and 144 fps +-20 % frame times: sd 0.000;
+run 90 deg turn: sd 0.016 (60) / 0.006 (144), largest frame step 0.015; run start: steps of 0.5 are the
+idle-to-run entry, fed speed smooth (largest second difference 0.13 m/s at 60, 0.07 at 144).
+
+**Reading.** Cause 1 confirmed and the largest: outside the 0.8-1.25 band at walk stick 0.3 (rate 0.65,
+stride 0.65), run (1.41, stride at the 1.2 cap) and sprint (2.19 on the run clip, 4.7 steps/s); the walk
+natural speed is 1.89 m/s (not ~2.2), so the full walk is mild (0.92 x 0.92). Cause 3 confirmed: every gait
+switch restarts the new cycle at its clip start, phase error up to half a cycle. Cause 4 refuted as stated:
+free movement never leaves the forward lanes; the turn problem is a 0.08-0.25 s body spin on an unchanged
+forward cycle (no pivot or turn clip, no offset root), so A5's check "side-lane weight ~0" already holds and
+A5 should be judged on the spin. Cause 6 refuted on the flat (no rate jitter at 60/144 fps): A6 not needed
+unless the render correction spring (steps, slopes; not modelled here) shows it. UAL natural speeds not
+printed: their retarget runs in `mw_bake`, not reachable from this crate (gait card 16 covers them).
+
 ## Open
 
-- Causes 3 (phase at walk<->run) and 4 (strafe-lane bleed in turns) are read from code, not measured: A1.
-- Authored speeds of the UAL loops were not read; A2 does it.
+- Cause 6 off the flat: the render correction spring on steps and slopes is not in the A1 replica.
+- UAL loop speeds are not printed by A1 (retarget lives in `mw_bake`); gait card `16-gait-card-2026-11-12.md` has them.
 - `sf_action` step, `sf_combat` and `mw_actors` were audited through their specs, not line by line; the
   untracked working-tree changes in `sf_anim*` and `mw_graphs` (git status) were not diffed.
 - Lyra's exact clamp and UE 5.5 first-person fields are from memory (note 14 "Open").

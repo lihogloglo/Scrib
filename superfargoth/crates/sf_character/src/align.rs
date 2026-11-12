@@ -1,23 +1,43 @@
 //! Auto-align: the retarget pose that brings a rig's rest pose to the
-//! canonical T-pose (Y up, facing +Z, left = +X), as UE5's IK Retargeter
-//! "Auto Align" does per chain, but against fixed canonical directions
-//! instead of another rig, so each rig is aligned once (N maps, not N²).
+//! canonical pose (Y up, facing +Z, left = +X; limbs in a T-pose), as UE5's
+//! IK Retargeter "Auto Align" does per chain, but against fixed canonical
+//! directions instead of another rig, so each rig is aligned once (N maps,
+//! not N²).
 //!
 //! 1. **Facing**: the rig's left (left minus right limbs) and up (hips to
 //!    head) are snapped to the nearest axes; if they are not +X and +Y,
 //!    the topmost joint above the hips is turned so they are. A rig that
 //!    faces −Z (or is Z up) still lines up with the hub.
-//! 2. **Swing alignment**, parents first, by the shortest rotation that
-//!    points the bone at its child: hips, spine and neck joints up (+Y);
-//!    upper and lower legs down (−Y); feet keep their original (facing
-//!    corrected) direction to the toes, so they stay flat, unless that
-//!    direction is degenerate (within 30° of the bone above's line, as in
-//!    a mocap zero pose with every bone in one line), when they point
-//!    forward (+Z, flat) instead; upper arms,
-//!    lower arms and hands along ±X; non-thumb finger segments along ±X.
+//! 2. **Matched trunk**: the hips, spine and neck joints keep their
+//!    (facing-corrected) rest direction, so each rig keeps its own bind
+//!    curvature and a source at rest lands on the target at its bind (UE5's
+//!    matched retarget pose: both retarget poses show one posture). Every
+//!    standing rig's rest trunk is that posture already; straightening it
+//!    on both rigs made clips carry the source's rest curvature onto the
+//!    target in place of its own. A trunk bone more than 45° from up (a rig
+//!    not standing in its rest) points up (+Y) instead.
+//! 3. **Swing alignment** of the limbs, whose rests really differ (T against
+//!    A pose), parents first, by the shortest rotation that points the bone
+//!    at its child: upper and lower legs down (−Y); feet keep their original
+//!    (facing corrected) direction to the toes, so they stay flat, unless
+//!    that direction is degenerate (within 30° of the bone above's line, as
+//!    in a mocap zero pose with every bone in one line), when they point
+//!    forward (+Z, flat) instead; upper arms, lower arms and hands along ±X;
+//!    non-thumb finger segments along ±X.
 //!    Shoulders, thumbs, head, eyes and jaw keep their rest rotation.
 //!
 //! Twist about the bone axis is left alone: only directions are aligned.
+//!
+//! **Retarget-pose offsets** ([`PoseOffset`], [`offset_retarget_pose`]):
+//! afterwards a rig may edit its retarget pose per humanoid limb bone, as
+//! UE5's IK Retargeter "Edit Retarget Pose" does per chain: a rotation in
+//! the canonical frame, given for the left side and mirrored for the right,
+//! that turns the bone and everything below it. On a source it moves the
+//! posture its motion is measured from (a rig whose clips hold the
+//! clavicles lower than its rest: deltas then start from the lowered
+//! clavicle); on a target it moves where that posture lands. Offsets are
+//! data (the adapter's per-source and per-target settings); none leaves the
+//! retarget pose untouched.
 
 use glam::{Affine3A, Mat3, Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -50,7 +70,13 @@ enum Dir {
     /// Keep the facing-corrected rest direction, or this one when the rest
     /// direction is degenerate (collinear with the parent bone, either way).
     Rest(Vec3),
+    /// A trunk bone: keep the facing-corrected rest direction (the matched
+    /// retarget pose), or +Y when it lies more than 45° from up.
+    Trunk,
 }
+
+/// A trunk bone within 45° of up keeps its rest direction.
+const UPRIGHT_COS: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 /// A chain end whose rest direction lies within 30° of its parent bone's
 /// line (parallel or opposite) has no usable rest direction.
@@ -124,7 +150,8 @@ pub fn auto_align(skeleton: &Skeleton, map: &RigMap) -> (Vec<(JointName, Quat)>,
             targets.push(Target { joint, child, dir });
         }
     };
-    // Torso: hips, the spine path, the neck path, each pointing at the next joint.
+    // Trunk: hips, the spine path, the neck path, each keeping its rest
+    // direction to the next joint (module docs, step 2).
     let torso_top = [HumanoidBone::Neck, HumanoidBone::Head].into_iter().find_map(joint);
     if let (Some(hips), Some(top)) = (joint(HumanoidBone::Hips), torso_top) {
         let mut path = vec![top];
@@ -139,7 +166,7 @@ pub fn auto_align(skeleton: &Skeleton, map: &RigMap) -> (Vec<(JointName, Quat)>,
         if path.last() == Some(&hips) {
             path.reverse();
             for w in path.windows(2) {
-                push(Some(w[0]), Some(w[1]), Dir::Fixed(Vec3::Y));
+                push(Some(w[0]), Some(w[1]), Dir::Trunk);
             }
         }
     }
@@ -157,7 +184,7 @@ pub fn auto_align(skeleton: &Skeleton, map: &RigMap) -> (Vec<(JointName, Quat)>,
         }
         path.reverse();
         for w in path.windows(2) {
-            push(Some(w[0]), Some(w[1]), Dir::Fixed(Vec3::Y));
+            push(Some(w[0]), Some(w[1]), Dir::Trunk);
         }
     }
     for s in [Side::Left, Side::Right] {
@@ -193,6 +220,10 @@ pub fn auto_align(skeleton: &Skeleton, map: &RigMap) -> (Vec<(JointName, Quat)>,
             let above =
                 skeleton.parent(t.joint).map_or(Vec3::ZERO, |p| (pos(&rest_model, t.joint) - pos(&rest_model, p)).normalize_or_zero());
             if d.dot(above).abs() > DEGENERATE_COS { fallback } else { d }
+        }
+        Dir::Trunk => {
+            let d = (pos(&rest_model, t.child) - pos(&rest_model, t.joint)).normalize_or_zero();
+            if d.dot(Vec3::Y) >= UPRIGHT_COS { d } else { Vec3::Y }
         }
     };
     for t in &targets {
@@ -230,11 +261,79 @@ pub fn auto_align(skeleton: &Skeleton, map: &RigMap) -> (Vec<(JointName, Quat)>,
     (pose, report)
 }
 
+/// One retarget-pose edit (module docs): a rotation of a humanoid limb bone
+/// and its subtree in the canonical frame (Y up, facing +Z, left = +X), for
+/// the left side; the right side gets its mirror image (about the YZ plane).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PoseOffset {
+    pub limb: Limb,
+    /// Degrees about the forward axis, outer end up and out (+) or down and
+    /// in (−): raises a clavicle or a T-pose arm, abducts a leg.
+    #[serde(default)]
+    pub raise_deg: f32,
+    /// Degrees about the up axis, outer end forward (+) or back (−).
+    #[serde(default)]
+    pub forward_deg: f32,
+}
+
+impl PoseOffset {
+    /// The model-space rotation on `side` (identity on [`Side::Center`]).
+    /// Raise first, then forward.
+    pub fn rotation(&self, side: Side) -> Quat {
+        let s = side.sign();
+        Quat::from_rotation_y(-s * self.forward_deg.to_radians()) * Quat::from_rotation_z(s * self.raise_deg.to_radians())
+    }
+}
+
+/// The retarget pose of `map` with `offsets` applied (module docs), parents
+/// first: each edited joint's local rotation becomes `P⁻¹ · O · P · local`
+/// (`P` its parent's model rotation), so it and its subtree turn by `O` in
+/// model space. Joints `map` lacks are skipped; no non-zero offset returns
+/// `map.retarget_pose` unchanged.
+pub fn offset_retarget_pose(skeleton: &Skeleton, map: &RigMap, offsets: &[PoseOffset]) -> Vec<(JointName, Quat)> {
+    let mut edits: Vec<(usize, Quat)> = offsets
+        .iter()
+        .flat_map(|o| {
+            [Side::Left, Side::Right].map(|s| {
+                let j = HumanoidBone::limb(s, o.limb).and_then(|b| map.joint(b)).and_then(|n| skeleton.find(n))?;
+                Some((j, o.rotation(s)))
+            })
+        })
+        .flatten()
+        .filter(|(_, q)| q.angle_between(Quat::IDENTITY) > 1e-6)
+        .collect();
+    if edits.is_empty() {
+        return map.retarget_pose.clone();
+    }
+    edits.sort_by_key(|e| e.0);
+    let mut local = map.retarget_pose_local(skeleton);
+    for &(j, o) in &edits {
+        let model = model_of(skeleton, &local);
+        let parent = skeleton.parent(j).map_or(Quat::IDENTITY, |p| rotation_of(&model[p]));
+        local[j].rotation = (parent.inverse() * o * parent * local[j].rotation).normalize();
+    }
+    let mut pose = map.retarget_pose.clone();
+    for &(j, _) in &edits {
+        let name = skeleton.name(j);
+        match pose.iter_mut().find(|(n, _)| n == name) {
+            Some(entry) => entry.1 = local[j].rotation,
+            None => pose.push((name.to_owned(), local[j].rotation)),
+        }
+    }
+    pose
+}
+
 impl RigMap {
     /// Fills [`RigMap::retarget_pose`] with [`auto_align`].
     pub fn auto_align(&mut self, skeleton: &Skeleton) -> AlignReport {
         let (pose, report) = auto_align(skeleton, self);
         self.retarget_pose = pose;
         report
+    }
+
+    /// Applies retarget-pose offsets ([`offset_retarget_pose`]) to
+    /// [`RigMap::retarget_pose`]; call after [`RigMap::auto_align`].
+    pub fn offset_retarget_pose(&mut self, skeleton: &Skeleton, offsets: &[PoseOffset]) {
+        self.retarget_pose = offset_retarget_pose(skeleton, self, offsets);
     }
 }

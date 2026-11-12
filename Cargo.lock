@@ -5285,6 +5285,7 @@ dependencies = [
  "sf_character_bevy",
  "sf_console_bevy",
  "sf_controller",
+ "sf_controller_bevy",
  "sf_coords",
  "sf_diag_bevy",
  "sf_gi_bevy",
@@ -5841,6 +5842,7 @@ dependencies = [
  "sf_sky_bevy",
  "sf_vfs",
  "tes3",
+ "toml 0.9.12+spec-1.1.0",
  "workspace-hack",
 ]
 

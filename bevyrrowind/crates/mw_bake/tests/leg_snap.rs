@@ -188,7 +188,7 @@ fn layers(take: &Take, target: &HumanoidTarget, fk_rig: &sf_anim::RetargetRig, c
     let mut skeleton_rules = MwAnimRules::skeleton_rules();
     skeleton_rules.root_motion_joint.clone_from(&imported.root_motion);
     let (skeleton, _) = Skeleton::with_rules(joints_in, &skeleton_rules).map_err(|e| e.to_string())?;
-    let (map, source_rig) = library_rig(&skeleton).ok_or("no humanoid rig")?;
+    let (map, source_rig) = library_rig(&skeleton, take.source).ok_or("no humanoid rig")?;
     let hints = RigHints { profile: map.profile(&skeleton).ok(), ..RigHints::default() };
     let profile = sf_anim::detect_profile(&skeleton, &hints).map_err(|e| e.to_string())?;
     let rules = rules();

@@ -3,8 +3,13 @@
 //!
 //! Each skeleton has a [`RetargetRig`]: named chains (a humanoid hub bone
 //! is a one-joint chain; a spine is several joints) and a retarget pose
-//! (rest rotations overridden so every rig stands in the same T-pose,
-//! Y up, facing +Z). Chains pair across rigs by name. Per frame:
+//! (rest rotations overridden so every rig stands in the same posture,
+//! Y up, facing +Z: limbs in a T-pose, the trunk at each rig's own rest
+//! curvature, `sf_character` auto-align, then optional per-rig edits,
+//! `sf_character::PoseOffset`: UE5's "Edit Retarget Pose", e.g. a source
+//! whose motion holds its clavicles below its rest). Chains pair across
+//! rigs by name.
+//! Per frame:
 //!
 //! 1. Every mapped source joint's model-space rotation is turned into a
 //!    delta from its retarget pose, `D = qS · Rs⁻¹`, and the paired target
@@ -67,7 +72,7 @@ pub struct RetargetChain {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RetargetRig {
     pub chains: Vec<RetargetChain>,
-    /// Local rotations of the retarget pose (T-pose) where it differs from
+    /// Local rotations of the retarget pose (the shared posture) where it differs from
     /// the rest pose. They replace the rest rotation; joints not listed
     /// keep theirs.
     pub retarget_pose: Vec<(String, Quat)>,

@@ -340,3 +340,14 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   lets go after about 20° of turn and steps with the clip (no spread or crossed legs), with no pop or snap as it lets
   go; straight walking and gentle curves keep their planted feet as before. K off: the plain clip, for comparison.
 - Status: confirmed (owner 2026-11-11, level-anim-stairs: "seems ok").
+
+### WALK-0: A/B ladder on the player's walk, one op off at a time (3.4c A0, 2026-11-12)
+- Kind: synthetic. `cargo dev scene level-flat-slopes` (run `bevyrrowind bake` first: graph format 10), 10:00, camera `overview`
+  then `ramps`; F11 player, Tab third person, orbit to the side. Backquote console, one at a time, `on <name>` to restore:
+  `off speed_match` (clips at their authored rate: walk 0.92 -> 1, run 1.41 -> 1, the stride warp takes the rest up to its cap, feet may skate), `off stride_warp` (steps at
+  authored length), `off foot_placement` (= K: no foot IK, player and walkers), `off lean` (no slope trunk lean; ramps),
+  `off side_lanes` (forward lane only: no side/back clip during turns; turn sharply and circle).
+- Look for: which switch makes the flat walk and run look right (or least wrong), and on the ramps which one fixes the
+  tilted head and long downhill steps. Taste questions: does a stop feel too short or too long; should walking uphill
+  slow you down; where should the head look (ahead along the travel, a few metres down the slope, or the camera)?
+- Status: awaiting owner.

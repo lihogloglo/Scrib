@@ -414,6 +414,8 @@ pub enum Op {
         min: f32,
         max: f32,
         rate_share: f32,
+        /// The gate parameter (`Bool` or `Float`): the rate factor's exponent.
+        gate: Option<u16>,
     },
     StrideWarp {
         pelvis: u16,
@@ -466,6 +468,8 @@ pub enum Op {
         max_angle: f32,
         grade: GradeLean,
         halflife: f32,
+        /// The gate parameter (`Bool` or `Float`) scaling the angle goals.
+        gate: Option<u16>,
     },
     /// A limb (from the table, or a `HandIk` triple) to an IK target slot.
     LimbIk {
@@ -599,7 +603,7 @@ pub struct CompiledGraph {
 
 const MAGIC: &[u8; 4] = b"SFAG";
 /// Version of the compiled graph format.
-pub const GRAPH_FORMAT: u32 = 9;
+pub const GRAPH_FORMAT: u32 = 10;
 
 impl CompiledGraph {
     #[cfg(feature = "bake")]

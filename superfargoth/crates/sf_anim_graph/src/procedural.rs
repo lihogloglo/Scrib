@@ -36,7 +36,7 @@ use sf_anim::spring::{critical_spring, damper};
 use sf_anim::{LocalPose, ModelPose, Skeleton, update_subtree};
 
 use crate::asset::BodyFit;
-use crate::compiled::{CompiledGraph, GirdleSeg, Leg, Op, Value};
+use crate::compiled::{CompiledGraph, GirdleSeg, Leg, Op};
 use crate::instance::{FootStats, GroundSample, Params, UpdateInputs};
 use crate::secondary::{Hit, HitState, SpringState, hit_react, spring_bones};
 
@@ -212,10 +212,7 @@ fn legs_physics(cx: &ProceduralCx<'_>, legs: &[u16]) -> f32 {
 
 /// A gate parameter's value, 0-1 (non-finite: 0; no gate: 1).
 fn gate_value(cx: &ProceduralCx<'_>, gate: Option<u16>) -> f32 {
-    gate.map_or(1.0, |p| {
-        let v = cx.params.value(Value::Param(p, 0));
-        if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 }
-    })
+    cx.params.gate(gate)
 }
 
 /// Past its LOD cut-off a weighted foot op keeps running with its weight
@@ -519,12 +516,13 @@ pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: 
                     rotate_joint(s, local, model, &ROOT, usize::from(j), Quat::from_rotation_y(*angle * w));
                 }
             }
-            (Op::Lean { joints, gain, max_angle, grade, halflife }, OpState::Angles(roll, pitch)) => {
+            (Op::Lean { joints, gain, max_angle, grade, halflife, gate }, OpState::Angles(roll, pitch)) => {
+                let gated = gate_value(cx, *gate);
                 // Lateral acceleration: positive to the left (+X) leans left, into the turn.
-                let goal = (cx.inputs.acceleration.x * gain).clamp(-*max_angle, *max_angle);
+                let goal = (cx.inputs.acceleration.x * gain).clamp(-*max_angle, *max_angle) * gated;
                 *roll = damper(*roll, goal, *halflife, cx.dt);
                 // Ground grade: forward (+Z over +Y, about +X) uphill, back downhill.
-                *pitch = damper(*pitch, grade.pitch(cx.grade), *halflife, cx.dt);
+                *pitch = damper(*pitch, grade.pitch(cx.grade) * gated, *halflife, cx.dt);
                 if roll.abs() < 1e-5 && pitch.abs() < 1e-5 {
                     continue;
                 }

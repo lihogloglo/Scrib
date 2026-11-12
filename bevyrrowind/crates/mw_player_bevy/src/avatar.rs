@@ -62,7 +62,7 @@ use sf_character_bevy::{CharacterBody, RoleLayers, ViewModelSettings};
 use sf_controller::{CharacterFrame, Gait, GroundProbe};
 use sf_controller_bevy::{ControllerSettings, FeedGait, FeedValues, FootProbes, Mover};
 
-use mw_game_core::player::{PlayerAvatar, PlayerBody};
+use mw_game_core::player::{LocoAb, PlayerAvatar, PlayerBody};
 
 use crate::dummy::{DummyAvatar, TrainingDummy};
 use mw_graphs::build::params as gp;
@@ -214,6 +214,7 @@ pub(crate) fn feed<G: GroundProbe + Resource>(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     settings: Option<Res<ControllerSettings>>,
+    loco_ab: Option<Res<LocoAb>>,
     ground: Option<Res<G>>,
     mut probes: Local<FootProbes>,
     mut players: Query<(&ActionBody, &ActionCharacter, &Transform, &mut PlayerFeed), Or<(With<PlayerBody>, With<TrainingDummy>)>>,
@@ -224,6 +225,7 @@ pub(crate) fn feed<G: GroundProbe + Resource>(
     let slots = slots.as_deref().unwrap_or(&builtin);
     let fallback = ControllerSettings::default();
     let settings = settings.as_deref().unwrap_or(&fallback);
+    let ab = loco_ab.as_deref().copied().unwrap_or_default();
     let dt = time.delta_secs();
     let alpha = fixed.overstep_fraction().clamp(0.0, 1.0);
     probes.clear();
@@ -267,7 +269,13 @@ pub(crate) fn feed<G: GroundProbe + Resource>(
         moved.translation *= inv;
         a.drive.moved = a.drive.moved.then(moved);
         a.set_bool(gp::MOVING, v.moving);
-        a.set_vec2(gp::MOVE, v.direction);
+        // WALK-0 "forward lane only": free movement feeds straight ahead (locked on keeps it).
+        let forward_only = !ab.side_lanes && intent.desired_facing.is_none();
+        a.set_vec2(gp::MOVE, mw_graphs::build::lane_direction(v.direction, forward_only));
+        // WALK-0 op gates (1: on, the graph's default).
+        for (gate, on) in [(gp::SPEED_MATCH, ab.speed_match), (gp::STRIDE_WARP, ab.stride_warp), (gp::LEAN, ab.lean)] {
+            a.set_float(gate, if on { 1.0 } else { 0.0 });
+        }
         a.set_bool(gp::RUNNING, v.running);
         a.set_float(gp::TURN, v.turn);
         a.set_bool(gp::SNEAKING, intent.gait == Gait::Sneak);

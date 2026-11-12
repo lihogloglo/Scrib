@@ -130,6 +130,22 @@ pub mod params {
     /// arm animated.
     pub const HAND_IK_L: &str = "hand_ik_l";
     pub const HAND_IK_R: &str = "hand_ik_r";
+    /// Humanoids, 0..1 (default 1): the gates of the locomotion ops `SpeedMatch`,
+    /// `StrideWarp` and `Lean`, the owner's A/B ladder on the player's walk (WALK-0,
+    /// `mw_game_core::player::LocoAb`); 0 zeroes the op's output. Foot placement has
+    /// its own gate ([`ON_GROUND`]) and switch (the foot probes).
+    pub const SPEED_MATCH: &str = "speed_match";
+    pub const STRIDE_WARP: &str = "stride_warp";
+    pub const LEAN: &str = "lean";
+}
+
+/// The free-movement direction blends' input for `direction` (unit, character frame):
+/// `forward_only` (the A/B ladder's "forward lane only", WALK-0) feeds straight ahead
+/// while moving, so the walk and run blends play only their forward clip, with no
+/// side or back lane bleeding in while the body turns; a zero direction stays zero.
+#[must_use]
+pub fn lane_direction(direction: glam::Vec2, forward_only: bool) -> glam::Vec2 {
+    if forward_only && direction.length_squared() > 1e-6 { glam::Vec2::Y } else { direction }
 }
 
 /// IK target slots (character space).
@@ -932,9 +948,14 @@ impl Builder {
             // 2.67 m/s run at 2.2 (4.75 steps/s; a sprint cycle would calm it). Run strafes
             // plant at 0.75-0.9 m/s and outrun any rate (`gait_bands` in tests/slope_walk.rs).
             rate_share: if matches!(self.t, Template::Humanoid) { 0.5 } else { 1.0 },
+            gate: matches!(self.t, Template::Humanoid).then(|| params::SPEED_MATCH.into()),
             max_lod: 2,
         }];
         if matches!(self.t, Template::Humanoid) {
+            // The A/B ladder's op gates (WALK-0): 1, the shipped behaviour, unless a host lowers them.
+            for gate in [params::SPEED_MATCH, params::STRIDE_WARP, params::LEAN] {
+                self.param(gate, ParamKind::Float(1.0));
+            }
             // Feet on the ground (walkers, 2026-10-12): legs from the rig
             // profile (the humanoid rig map's), the pelvis by its humanoid
             // bone; the host probes the ground at the graph's `probe_origins`.
@@ -944,7 +965,7 @@ impl Builder {
             // by 20% at most (Lyra/GASP: ~1.1-1.15): longer steps need a pelvis drop (95 mm
             // at the old 1.6 cap, player run 4.5 m/s: a crouch; under 1 mm at 1.2, 26 at 1.3).
             // 1.15 let NPC run strafes skate (3.6 cm per stance).
-            self.a.procedural.push(ron::from_str("StrideWarp(pelvis: Rig(\"hips\"), max: 1.2, grade: (up: 0.45, down: 0.25))").expect("StrideWarp defaults"));
+            self.a.procedural.push(ron::from_str("StrideWarp(pelvis: Rig(\"hips\"), max: 1.2, grade: (up: 0.45, down: 0.25), gate: Some(\"stride_warp\"))").expect("StrideWarp defaults"));
             // Foot IK fades out in the air: the player feeds a debounced `on_ground`
             // (NPCs leave it at its default, true).
             // Turn unplant (P-IK5, UE Foot Placement's unplant angle): a planted foot lets go
@@ -971,7 +992,7 @@ impl Builder {
             // No speed term (the op has none): runs lean about 3/4 of the walk's.
             // No turn roll (gain 0): flat walking stays as authored.
             self.a.procedural.push(
-                ron::from_str("Lean(joints: [(Rig(\"chest\"), 0.45), (Rig(\"upperChest\"), 0.4), (Rig(\"neck\"), 0.15)], gain: 0.0, grade: (up: 0.8, down: 0.075, max: 0.45), halflife: 0.3)").expect("Lean defaults"),
+                ron::from_str("Lean(joints: [(Rig(\"chest\"), 0.45), (Rig(\"upperChest\"), 0.4), (Rig(\"neck\"), 0.15)], gain: 0.0, grade: (up: 0.8, down: 0.075, max: 0.45), halflife: 0.3, gate: Some(\"lean\"))").expect("Lean defaults"),
             );
             // Hands on the lip (B2b): two-bone arm IK onto the host's grip targets, after the
             // trunk lean (it moves the shoulders) and before the springs. At weight 0 (every

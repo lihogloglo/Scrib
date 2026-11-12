@@ -29,8 +29,9 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   machine (idle, walk, run, turn left/right, sneak, jump, swim, reactions) picked by parameter conditions
   (`:386-391`); nested stance machines (`hh`, `1h`, `2c`, `2w`); lock-on `strafe_walk`/`strafe_run` 8-way blends only
   if the manifest has `loco.*` slots (it has none, `:14-24`); `upper` and `full` slots; torch arm layer.
-  Op stack order: `SpeedMatch` (0.5-2.2, `rate_share` 0.5) `:925`, `StrideWarp` (max 1.2) `:947`, `FootPlacement`
-  (unplant 20 deg, `gate on_ground`) `:956`, `Lean` (chest .45, upperChest .4, neck .15) `:974`, `HandIk` x2 `:981`,
+  Op stack order: `SpeedMatch` (0.5-2.2, `rate_share` 0.5, `gate speed_match`) `:941`, `StrideWarp` (max 1.2, `gate
+  stride_warp`) `:968`, `FootPlacement` (unplant 20 deg, `gate on_ground`) `:977`, `Lean` (chest .45, upperChest .4, neck
+  .15, `gate lean`) `:995`, `HandIk` x2 `:1001`,
   then `HitReact` and `SpringBones` (not in first person).
 - **Foot IK** (`FootPlacement`, `procedural.rs`): needs ground samples; without them its weight is 0, so no lock, no
   pelvis drop and no grade. NPCs: `sf_controller_bevy::FootProbes` via `feed_animators`; player:
@@ -41,6 +42,18 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   `anim.retarget` (library clips onto the humanoid rig) and `animgraph.compile`. The manifest
   `bevyrrowind/crates/mw_graphs/data/animation/sources.ron` maps slots to `source:clip` chains; only the CC0
   Quaternius UAL1/UAL2 packs ship (LFS). The game reads the last bake: re-run it after changing slots.
+- **Retarget pose** (`superfargoth/crates/sf_character/src/align.rs:1-35`, rule at `:213`): auto-align turns limbs to the
+  canonical T-pose (arms ±X, legs −Y) but the trunk (hips, spine, neck, head) keeps each rig's own rest curvature
+  (UE5's matched retarget pose, 2026-11-12), so a clip carries the source's change from rest onto Morrowind's bind;
+  a trunk bone > 45° from up is straightened. The retargeter (`sf_anim/src/retarget.rs:1-40`) copies model-space
+  deltas from that pose (`D = qS · Rs⁻¹`, `qT = D · Rt`). `anim.retarget` step version 6.
+- **Retarget-pose offsets** (`sf_character/src/align.rs:268` `PoseOffset`, `:293` `offset_retarget_pose`; UE5 "Edit
+  Retarget Pose", 2026-11-12): after auto-align a rig may rotate a limb bone and its subtree (canonical frame, left
+  side given, right mirrored: `raise_deg` about forward, `forward_deg` about up). Data in `mw_graphs/data/animation/sources.ron`:
+  a source's `pose_offsets` (Kimodo `generated`: clavicle −10.5°, upper arm +10.5° to keep the arm at T: its walks hold the
+  clavicles that low) and `target_pose_offsets` for the Morrowind humanoid (upper arm +4° abduction, every source:
+  bulky arm and chest meshes). Applied in `mw_bake/src/anim.rs:96` `library_rig` and `:109` `humanoid_target_map`.
+  Measure: `mw_bake/tests/generated_arms.rs` (`measure_generated_clavicle_offset` sets the source value).
 - **Generated clips** (Kimodo, MotionBricks) come in through the clip factory (`specs/motion-generation.md`).
 
 ## Bevy features used
@@ -50,6 +63,11 @@ inertialization, ops or LOD budget). See [characters](characters.md).
 ## Switches and counters
 `anim/evaluate/ms`, `anim/evaluate_cpu/ms`, `anim/characters|evaluated|a0|a1|a2|a3/count` (`lib.rs:628-649`);
 `AnimStats.feet` guard counts. Key K: foot probes off. Perf `--off walkers` / `actors`.
+Walk A/B ladder (WALK-0, player only, live): console `off speed_match` (clips at rate 1), `off stride_warp`,
+`off foot_placement` (= K, walkers too), `off lean`, `off side_lanes` (free movement feeds `move` = forward,
+`mw_graphs::build::lane_direction`); `on <name>` restores. `mw_game_core::player::LocoAb` -> avatar feed -> the humanoid
+graph's gate params `speed_match`/`stride_warp`/`lean` (default 1; `SpeedMatch` raises its rate factor to the gate, `Lean`
+scales its goals, `StrideWarp` its weight).
 
 ## Known limits
 - Free-movement clips are Morrowind's 2002 cycles at the wrong speeds, with no start/stop/pivot clips; the

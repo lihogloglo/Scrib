@@ -49,6 +49,8 @@ any source (Morrowind KF, UAL, 100STYLE, LaFAN1, Mixamo, mocap) work inside thes
 | R11b | spec rewrite: `../../specs/action.md` (new), `../../specs/camera.md` (new), animation.md "Decided shape (R11b)", locomotion.md "Action-layer changes (R11b)" | synthesis of R1-R10 and the R11a decisions into a concrete spec (move taxonomy, action layer and chooser, data per clip, first/third person, combat timing, test courses), owner review | spec drafted, awaiting owner review, 2026-10-19 |
 | R14 | `14-rust-rewrites-and-fp-melee.md` | owner references re-read (sekiro-rs, spud, AC1, faith-runner, sinhonor: what, how, licence, takes), first-person melee practice (Dark Messiah, Dying Light, Mordhau), locomotion standard, Bevy 0.20 crates, corrections to the series | done 2026-11-12 |
 | R15 | `15-audit-and-plan-2026-11-12.md` | audit of the animation, locomotion and first-person stack (ranked causes of the wonky walk with `path:line`), slice plan: walk, locomotion base, third-person combat, first-person combat; owner questions | done 2026-11-12, awaiting orchestrator |
+| R16 | `16-gait-card-2026-11-12.md` | gait and transition dance card (A2 + B3a): industry gait sets, UAL authored speeds vs 1.6/4.5/7 m/s, Kimodo generation list (batch 1 = 15 clips), reuse and licences | done 2026-11-12, awaiting A1 numbers |
+| R17 | `17-autograde-2026-11-12.md` | AG0: automatic clip grader calibrated on 175 owner verdicts (loco1): research, which metrics predict rejects (skate, jerk, turn, arm swing; per-take ranking does not transfer across prompts), gate design, slices | done 2026-11-12, awaiting orchestrator |
 
 ### R11a seed: conflicts found so far
 
@@ -71,3 +73,6 @@ any source (Morrowind KF, UAL, 100STYLE, LaFAN1, Mixamo, mocap) work inside thes
   (combat, stealth, free-run)?
 
 Two research agents run at a time beside the build lanes (owner, 2026-10-18).
+- [18-kimodo-community-2026-11-12.md](18-kimodo-community-2026-11-12.md): who else uses Kimodo, tips, licence (little community material exists).
+- [19-kimodo-prompting-2026-11-12.md](19-kimodo-prompting-2026-11-12.md): Kimodo prompting guide, why path-forced loco takes failed, constraint recipes, batch-2 outline, style phrasing.
+- [20-ai-anim-eval-2026-11-12.md](20-ai-anim-eval-2026-11-12.md): learned critics (MotionCritic), VLM judges, preference learning from our verdicts; trial plan.

@@ -271,6 +271,8 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
     add_mode(&mut app, browsing, step);
     mw_actors_bevy::actors::add_content(&mut app, content);
     app.insert_resource(mw_actors_bevy::held::HeldDarkness::forced(Some(false)));
+    // Faces blink but never fake-talk: the scaffold talk key is Y, browse's keep (pose-diag 2026-11-12).
+    app.insert_resource(mw_actors_bevy::faces::NoTalkKey);
     mw_devtools_bevy::pipeline_watch::add(&mut app);
     let exit = app.run();
     exit.is_success()
@@ -525,7 +527,7 @@ fn drive(
     }
     item.capture = Duration::ZERO;
     p.started = Some(Instant::now());
-    if let Err(e) = play_full(&mut animator, &mut transform, root, late) {
+    if let Err(e) = play_full(&mut animator, &mut transform, root, late, 0.0) {
         eprintln!("error: {}: {e}", item.job.id);
         exit.write(AppExit::error());
         return;
@@ -535,7 +537,8 @@ fn drive(
 
 /// The actor back on the mark (origin, facing +Z) with root motion applied, and `late` from its
 /// first pose in the graph's full-body slot (no blend in). Capture and browse both start clips here.
-fn play_full(animator: &mut Animator, transform: &mut Transform, root: Option<Mut<AnimRootMotion>>, late: Arc<LateClip>) -> Result<(), String> {
+/// `blend_in`: inertialization time into the clip, seconds (0: a hard cut, for frame-exact captures).
+fn play_full(animator: &mut Animator, transform: &mut Transform, root: Option<Mut<AnimRootMotion>>, late: Arc<LateClip>, blend_in: f32) -> Result<(), String> {
     transform.translation = Vec3::ZERO;
     transform.rotation = Quat::IDENTITY;
     if let Some(mut root) = root {
@@ -544,7 +547,7 @@ fn play_full(animator: &mut Animator, transform: &mut Transform, root: Option<Mu
     let asset = Arc::clone(&animator.asset);
     animator.instance.set_variety(&asset.binding(), Variety::default());
     let slot = asset.graph.slot(mw_graphs::build::slots::FULL).ok_or_else(|| format!("the actor's graph has no {:?} slot", mw_graphs::build::slots::FULL))?;
-    let req = SlotRequest { blend_in: 0.0, priority: 9, ..SlotRequest::new(MontageClip::Late(late)) };
+    let req = SlotRequest { blend_in, priority: 9, ..SlotRequest::new(MontageClip::Late(late)) };
     animator.instance.play_slot(&asset.binding(), slot, req).map(|_| ()).map_err(|e| format!("the slot refused the clip ({e:?})"))
 }
 

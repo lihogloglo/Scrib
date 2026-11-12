@@ -54,6 +54,7 @@ use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param, VarId, VarSpec, V
 use sf_console_bevy::{ConsoleAppExt, ConsolePlugin, DevConsole, SetBy};
 
 use mw_game_core::exterior::ExteriorCamera;
+use mw_game_core::player::LocoAb;
 use crate::live_ab::{LiveAb, Switch, Switches};
 
 /// Name of the SSAO variable.
@@ -356,7 +357,7 @@ fn register(app: &mut App) {
         .insert_resource(GiGain { intensity: gi_intensity, ambient: gi_ambient, reported: None })
         .add_systems(Update, (apply_ssao, apply_contact_shadows, apply_bloom, apply_gi, apply_gi_gain, apply_terrain_reflectance));
     let vars = LiveVars { ssao, contact, gi };
-    let live = format!("live: ssao, contactshadows, gi, ambient, viewmodel, {}; other --off parts are startup only", Switch::names());
+    let live = format!("live: ssao, contactshadows, gi, ambient, viewmodel, {}, {}; other --off parts are startup only", LOCO_AB.join(", "), Switch::names());
     for (name, on) in [("on", Some(true)), ("off", Some(false)), ("flip", None)] {
         let verb = match on {
             Some(true) => "Turns on",
@@ -756,6 +757,38 @@ fn set_view_model(world: &mut World, on: Option<bool>) -> Result<String, String>
     text.ok_or_else(|| "viewmodel: no player camera in this run".to_owned())
 }
 
+/// The A/B ladder on the player's walk (WALK-0, `mw_game_core::player::LocoAb`).
+const LOCO_AB: [&str; 5] = ["speed_match", "stride_warp", "foot_placement", "lean", "side_lanes"];
+
+/// `speed_match`, `stride_warp`, `lean`, `side_lanes` (off: forward lane only) and
+/// `foot_placement`: one locomotion op of the player's graph off at a time (WALK-0). Foot
+/// placement is the foot probes' switch (`ControllerSettings::foot_probes`, key K: walkers too).
+fn set_loco_ab(world: &mut World, name: &str, on: Option<bool>) -> Result<String, String> {
+    if name == "foot_placement" {
+        let Some(mut settings) = world.get_resource_mut::<sf_controller_bevy::ControllerSettings>() else {
+            return Err("foot_placement: no character controller in this run".to_owned());
+        };
+        let v = on.unwrap_or(!settings.foot_probes);
+        settings.foot_probes = v;
+        return Ok(format!("foot placement {} (foot probes, player and walkers)", if v { "on" } else { "off" }));
+    }
+    let mut ab = world.get_resource_or_insert_with(LocoAb::default);
+    let (flag, label) = match name {
+        "speed_match" => (&mut ab.speed_match, "speed match"),
+        "stride_warp" => (&mut ab.stride_warp, "stride warp"),
+        "lean" => (&mut ab.lean, "lean"),
+        _ => (&mut ab.side_lanes, "side lanes"),
+    };
+    let v = on.unwrap_or(!*flag);
+    *flag = v;
+    let note = match (name, v) {
+        ("speed_match", false) => ": clips at their own rate",
+        ("side_lanes", false) => ": forward lane only",
+        _ => "",
+    };
+    Ok(format!("{label} {} (player{note})", if v { "on" } else { "off" }))
+}
+
 /// `on`/`off`/`flip <name>`: what happened, or why nothing did.
 fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on: Option<bool>) -> Result<String, String> {
     let var = match name {
@@ -780,6 +813,9 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
     if name == "viewmodel" {
         return set_view_model(world, on);
     }
+    if LOCO_AB.contains(&name) {
+        return set_loco_ab(world, name, on);
+    }
     if let Some(var) = var {
         if world.query_filtered::<(), With<ExteriorCamera>>().iter(world).next().is_none() {
             return Err(format!("{name}: no streaming camera in this run"));
@@ -798,7 +834,7 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
     }
     match mw_game_core::perf::Off::from_flags(&[name.to_owned()]) {
         Ok(_) => Err(format!("{name}: startup only, relaunch with --off {name}")),
-        Err(unknown) => Err(format!("{unknown}; live: ssao, contactshadows, gi, ambient, viewmodel, {}", Switch::names())),
+        Err(unknown) => Err(format!("{unknown}; live: ssao, contactshadows, gi, ambient, viewmodel, {}, {}", LOCO_AB.join(", "), Switch::names())),
     }
 }
 
@@ -1186,6 +1222,28 @@ mod tests {
         assert!(log(&app).iter().any(|l| l == "view model on (first person)"), "{:?}", log(&app));
         run(&mut app, "off viewmodel");
         assert!(!app.world().get::<sf_camera_bevy::PlayerCamera>(cam).unwrap().settings.view_model);
+    }
+
+    /// WALK-0: the walk ladder's switches set `LocoAb` (default all on) and the foot probes.
+    #[test]
+    fn walk_ladder_switches_set_the_player_ops() {
+        let mut app = app();
+        run(&mut app, "off speed_match");
+        assert!(log(&app).iter().any(|l| l == "speed match off (player: clips at their own rate)"), "{:?}", log(&app));
+        assert_eq!(*app.world().resource::<LocoAb>(), LocoAb { speed_match: false, ..LocoAb::default() });
+        run(&mut app, "on speed_match");
+        run(&mut app, "flip stride_warp");
+        run(&mut app, "off lean");
+        run(&mut app, "off side_lanes");
+        assert_eq!(*app.world().resource::<LocoAb>(), LocoAb { speed_match: true, stride_warp: false, lean: false, side_lanes: false });
+        run(&mut app, "off foot_placement");
+        assert!(log(&app).iter().any(|l| l.ends_with("foot_placement: no character controller in this run")), "{:?}", log(&app));
+        app.insert_resource(sf_controller_bevy::ControllerSettings::default());
+        run(&mut app, "off foot_placement");
+        assert!(!app.world().resource::<sf_controller_bevy::ControllerSettings>().foot_probes);
+        run(&mut app, "flip foot_placement");
+        assert!(app.world().resource::<sf_controller_bevy::ControllerSettings>().foot_probes);
+        assert!(log(&app).iter().any(|l| l == "foot placement on (foot probes, player and walkers)"), "{:?}", log(&app));
     }
 
     #[test]

@@ -230,3 +230,21 @@ ground before getting up, which delays the get-up (lying `still` check waits on 
 check on COM displacement + `roll_stall` timeout (head-right roll 3.0 -> 0.6 s); click-to-push F11 only, never on action
 characters (player, dummy). Owner confirmed live: no floor slide, capsule back under the body after the get-up (hidden
 while stumbling by design: Dormant). Status: confirmed. Open (later): a body landing crouched sinks/slides ~1.5 s first.
+
+### LOCO-2 Generated locomotion batch 1 (ROADMAP 3.4c B3b, awaiting owner)
+- Run (from `bevyrrowind/`): `cargo dev clip-preview --browse "../animation packs/generated/loco1"` (Up/Down = clip group, Left/Right
+  = sample; 228 Kimodo clips, 38 groups; `*.free` = same prompt without the speed path). Recipe `tools/motiongen/recipes/loco-batch1.toml`.
+- Look for: a natural gait at the right speed (walk 1.6, jog 4.5, sprint 7.0 m/s); feet not skating or hovering (measured: path-forced
+  run/sprint cycles skate 36-414 cm/s and lose ground contact for 0.4-2.1 s, walk 9-62; the `.free` takes are slow, 2.6 / 3.1 m/s, but
+  plant); starts and stops plant cleanly (no slide into the stand); pivots and turns turn the way named (some pivot/turn samples turn
+  right or not at all: mirror or reject); one consistent style across cycles and transitions. Rate in the browser: Y keep, N reject,
+  M maybe (each advances), Bksp clear, U next unrated; saved to `loco1/verdicts.toml` (overlay shows group tallies). Numbers: `16-gait-card` "As built (B3b)". Status: awaiting owner.
+
+### AL-TRUNK Matched retarget pose for the trunk (retarget-trunk 2026-11-12, browser confirmed by owner; in-game part open)
+- Needs `bevyrrowind bake` (anim.retarget v5). Run (from `bevyrrowind/`): `cargo dev clip-preview --browse "../animation packs/generated/loco1"`
+  (walk/run cycles), then a UAL clip (e.g. `Walk_Loop`, `Idle_Loop`); then `scene level-anim-ledges` (F11, mantle `ClimbUp_2m`) and `scene level-arena` (attacks).
+- Look for: trunk more upright than before (no arched lower back, neck not jutting forward, head level at rest); limbs, feet and
+  hands as before. What is left is the clip's own style (Kimodo walk arches ~8 deg, clavicles low; UAL walk leans its upper spine).
+  The game's retargeted mantle and combat clips no worse (hands still on the lip, no new twist). Measured: `mw_bake/tests/generated_pose.rs`.
+- Also (retarget-shoulders, anim.retarget v6): arms clear the chest in Kimodo walks (shoulders not pulled in, elbows out
+  like MW's own WalkForward); UAL arms ~4 deg wider, shoulders not shrugged in runs. Measured: `mw_bake/tests/generated_arms.rs`.

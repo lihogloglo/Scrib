@@ -40,9 +40,9 @@ use crate::sync::{loop_span, phase, sync_time, wrapped_delta};
 use crate::variety::Variety;
 
 const EPS: f32 = 1e-5;
-/// A running `SpeedMatch`: rate min, max, rate share, and the stride warp's
-/// min, max and grade scale (1, 1, 1 without a warp).
-type SpeedMatchRun = (f32, f32, f32, (f32, f32, f32));
+/// A running `SpeedMatch`: rate min, max, rate share, the stride warp's
+/// min, max and grade scale (1, 1, 1 without a warp), and the gate (0-1).
+type SpeedMatchRun = (f32, f32, f32, (f32, f32, f32), f32);
 /// Half-life of the ground grade filter, s: a step's worth, so stairs read as
 /// one slope and a single probe glitch doesn't jolt the stride.
 const GRADE_HALFLIFE: f32 = 0.25;
@@ -121,6 +121,14 @@ impl Params {
             Value::Const(c) => c,
             Value::Param(i, c) => self.values[usize::from(i)][usize::from(c)],
         }
+    }
+
+    /// An op's gate parameter, 0-1 (non-finite: 0; no gate: 1).
+    pub(crate) fn gate(&self, gate: Option<u16>) -> f32 {
+        gate.map_or(1.0, |p| {
+            let v = self.value(Value::Param(p, 0));
+            if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 }
+        })
     }
 
     fn clear_triggers(&mut self) {
@@ -891,8 +899,11 @@ impl GraphInstance {
             Op::StrideWarp { min, max, grade, .. } if lod <= usize::from(o.max_lod) => Some((min, max, grade.scale(self.grade))),
             _ => None,
         });
+        let params = &self.params;
         self.speed_match = g.ops.iter().find_map(|o| match o.op {
-            Op::SpeedMatch { min, max, rate_share } if lod <= usize::from(o.max_lod) => Some((min, max, if warp.is_some() { rate_share } else { 1.0 }, warp.unwrap_or((1.0, 1.0, 1.0)))),
+            Op::SpeedMatch { min, max, rate_share, gate } if lod <= usize::from(o.max_lod) => {
+                Some((min, max, if warp.is_some() { rate_share } else { 1.0 }, warp.unwrap_or((1.0, 1.0, 1.0)), params.gate(gate)))
+            }
             _ => None,
         });
         self.stride = (0.0, 0.0);
@@ -1524,12 +1535,15 @@ impl GraphInstance {
             // differs from the root's (sidesteps, backpedals), so a foot
             // lock holds; the body direction stays the root's.
             let natural = Vec2::new(stride_vel.x, stride_vel.z).length() * rate;
-            if let Some((min, max, share, (warp_min, warp_max, grade))) = speed_match
+            if let Some((min, max, share, (warp_min, warp_max, grade), gate)) = speed_match
                 && natural > 1e-3
             {
                 let speed = Vec2::new(inputs.velocity.x, inputs.velocity.z).length();
                 let ratio = speed / natural;
                 let m = (ratio.powf(share) / grade.max(EPS)).clamp(ratio / warp_max.max(EPS), ratio / warp_min.max(EPS)).clamp(min, max);
+                // The gate scales the factor in log space: 0 plays the clip at its own rate,
+                // the stride warp then taking the whole ratio (within its own limits).
+                let m = m.powf(gate);
                 rate *= m;
                 stride = Some(speed / (natural * m));
             }

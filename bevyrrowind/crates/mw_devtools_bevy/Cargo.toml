@@ -65,6 +65,8 @@ sf_camera_bevy.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
 sf_console_bevy = { workspace = true, features = ["overlay"] }
 sf_controller.workspace = true
+# console.rs `off foot_placement`: the foot probes switch (`ControllerSettings::foot_probes`, key K).
+sf_controller_bevy.workspace = true
 sf_coords.workspace = true
 sf_diag_bevy = { workspace = true, features = ["assets", "pipelines", "views"] }
 # console.rs `render.gi_intensity` / `render.gi_ambient`: they write `GiVolume`.

@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""`python -m motiongen selftest`: parse every recipe in recipes/, plan them, check the format rules. No GPU, no torch."""
+"""`python -m motiongen selftest`: parse every recipe in recipes/, plan them, check the format rules; `grade` gates on
+synthetic BVH fixtures. No GPU, no torch."""
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -45,6 +47,97 @@ BAD = {
     "hand list without at": ('id = "a.b"\npoint = "seat"\nphases = ["loop"]\nduration = 3.0\nprompt = "x"\nconstraints.loop = { hand_r = [{ height = 1.0 }] }', "needs 'at'"),
     "bad root": ('id = "a.b"\npoint = "seat"\nphases = ["loop"]\nduration = 3.0\nprompt = "x"\nconstraints.loop = { root = "pinned" }', "expected 'fixed'"),
 }
+
+
+# Minimal SOMA-named rig for `grade` fixtures (cm, Y up, facing +Z, left on +X): feet 7 cm (ankle) / 2 cm (toe) up.
+RIG = [("Hips", None, (0, 100, 0)), ("LeftLeg", "Hips", (10, -5, 0)), ("LeftShin", "LeftLeg", (0, -45, 0)),
+       ("LeftFoot", "LeftShin", (0, -43, 0)), ("LeftToeBase", "LeftFoot", (0, -5, 12)),
+       ("RightLeg", "Hips", (-10, -5, 0)), ("RightShin", "RightLeg", (0, -45, 0)),
+       ("RightFoot", "RightShin", (0, -43, 0)), ("RightToeBase", "RightFoot", (0, -5, 12)),
+       ("Head", "Hips", (0, 60, 0)), ("LeftHand", "Hips", (20, 20, 0)), ("RightHand", "Hips", (-20, 20, 0))]
+
+
+def fixture_bvh(frames: list[tuple[float, float, float, float]], fps: int = 30) -> str:
+    """BVH text; each frame = Hips (x, y, z cm, yaw deg about +Y, + = left); every other joint keeps its rest pose."""
+    def joint(i: int, depth: int) -> list[str]:
+        name, _, off = RIG[i]
+        pad = "  " * depth
+        head = "ROOT" if i == 0 else "JOINT"
+        ch = "6 Xposition Yposition Zposition Yrotation Xrotation Zrotation" if i == 0 else "3 Zrotation Yrotation Xrotation"
+        out = [f"{pad}{head} {name}", pad + "{", f"{pad}  OFFSET {off[0]} {off[1]} {off[2]}", f"{pad}  CHANNELS {ch}"]
+        for k, (_, parent, _) in enumerate(RIG):
+            if parent == name:
+                out += joint(k, depth + 1)
+        return out + [pad + "}"]
+    lines = ["HIERARCHY"] + joint(0, 0) + ["MOTION", f"Frames: {len(frames)}", f"Frame Time: {1 / fps:.6f}"]
+    rest = " ".join(["0"] * 3 * (len(RIG) - 1))
+    lines += [f"{x} {y} {z} {yaw} 0 0 {rest}" for x, y, z, yaw in frames]
+    return "\n".join(lines) + "\n"
+
+
+def write_fixture(root: Path, activity: str, take: int, frames, prov: bool = True) -> Path:
+    stem = f"{activity}.act.ground0.{take:02d}"
+    d = root / activity / "act"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{stem}.bvh").write_text(fixture_bvh(frames), encoding="utf-8")
+    if prov:
+        (d / f"{stem}.prov.json").write_text(json.dumps({"id": stem, "activity": activity, "phase": "act"}), encoding="utf-8")
+    return d / f"{stem}.bvh"
+
+
+def grade_checks(check) -> None:
+    from .grade import grade_clip, grade_dir, write_json_atomic
+
+    n = 60  # 2 s at 30 fps
+    still = [(0.0, 100.0, 0.0, 0.0)] * n
+    slide = [(0.0, 100.0, 100.0 * t / 30, 0.0) for t in range(n)]  # 1 m/s, feet planted on the floor: all skate
+    pop = [(0.0, 100.0, 10.0 if t == 30 else 0.0, 0.0) for t in range(n)]  # one-frame 10 cm pelvis pop
+    turn = lambda deg: [(0.0, 100.0, 0.0, deg * t / (n - 1)) for t in range(n)]  # spin on the spot, feet never lift
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        _, g = grade_clip(write_fixture(root, "t.walk.cycle.still", 0, still))
+        m = g["metrics"]
+        check(g["type"] == "cycle" and g["gates"] == [] and m["skate_cm_s"] == 0.0 and m["jerk_p99"] == 0.0 and m["steps"] == 0,
+              f"grade: still cycle has no gate, zero skate/jerk: {m}")
+        _, g = grade_clip(write_fixture(root, "t.walk.cycle.slide", 0, slide))
+        # 59 sliding steps of 3.33 cm per foot over 60 contact frames: 100 * 59 / 60 = 98.3 cm/s
+        check(g["gates"] == ["skate"] and g["metrics"]["skate_cm_s"] == 98.3,
+              f"grade: sliding feet at 1 m/s -> skate gate ({g['metrics']['skate_cm_s']} cm/s)")
+        _, g = grade_clip(write_fixture(root, "t.walk.cycle.pop", 0, pop))
+        check("jerk" in g["gates"], f"grade: one-frame pop -> jerk gate (p99 {g['metrics']['jerk_p99']} m/s^3)")
+        _, g = grade_clip(write_fixture(root, "t.turn.l90.a", 0, turn(90.0)))
+        m = g["metrics"]
+        check(g["type"] == "turn" and g["gates"] == ["no_step"] and not g["mirror_candidate"]
+              and m["turn_deg"] == 90.0 and m["turn_err_deg"] == 0.0 and m["turn_target_deg"] == 90.0,
+              f"grade: turn-in-place l90 on planted feet -> no_step only: {g['gates']} {m}")
+        _, g = grade_clip(write_fixture(root, "t.turn.l90.b", 0, turn(-90.0)))
+        check(g["gates"] == ["no_step"] and g["mirror_candidate"] and g["metrics"]["turn_deg"] == -90.0,
+              "grade: l90 prompt turning right -> mirror_candidate, not a gate")
+        _, g = grade_clip(write_fixture(root, "t.turn.r90.c", 0, turn(-90.0)))
+        check(not g["mirror_candidate"] and g["metrics"]["turn_target_deg"] == -90.0, "grade: r90 turning right is the right way")
+        _, g = grade_clip(write_fixture(root, "t.turn.l90.d", 0, turn(45.0)))
+        check(g["gates"] == ["turn_mag", "no_step"] and g["metrics"]["turn_err_deg"] == 45.0 and not g["mirror_candidate"],
+              f"grade: l90 prompt turning 45 deg -> turn_mag ({g['metrics']['turn_err_deg']} deg off)")
+        _, g = grade_clip(write_fixture(root, "t.walk.cycle.noprov", 0, slide, prov=False))
+        check(g["type"] == "cycle" and g["gates"] == ["skate"], "grade: no .prov.json -> type from the file stem")
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        for k in range(6):  # 4 of 6 gated -> failing; 3 of 6 -> not
+            write_fixture(root, "g.run.cycle.a", k, slide if k < 4 else still)
+            write_fixture(root, "g.run.cycle.b", k, slide if k < 3 else still)
+        grades = grade_dir(root)
+        out = root / "grades.json"
+        write_json_atomic(out, grades)
+        back = json.loads(out.read_text(encoding="utf-8"))
+        grp = back["_groups"]
+        check(grp == {"g.run.cycle.a.act.ground0": {"failing": True, "gated": 4, "total": 6},
+                      "g.run.cycle.b.act.ground0": {"failing": False, "gated": 3, "total": 6}},
+              f"grade: group triage 4/6 failing, 3/6 not: {grp}")
+        clip = back["g.run.cycle.a.act.ground0.00"]
+        check(len(back) == 13 and set(clip) == {"type", "gates", "mirror_candidate", "metrics", "source"} and clip["source"] == "py"
+              and list(back) == sorted(back) and not (root / "grades.json.tmp").exists(),
+              "grade: grades.json = 12 clips + _groups, sorted keys, per-clip fields, no temp file left")
 
 
 def main() -> int:
@@ -106,6 +199,8 @@ def main() -> int:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text("x")
         check(j.done(Path(d)) and not jobs[1].done(Path(d)), "resume: a job with all outputs present is done")
+
+    grade_checks(check)
 
     print(f"selftest: {'FAILED ' + str(fails) if fails else 'all ok'}")
     return 1 if fails else 0
