@@ -43,6 +43,8 @@ sf_anim_bevy.workspace = true
 sf_anim_graph.workspace = true
 # "smooth": smooth bodies at assembly (`smooth_outfit`; parry3d, already in the tree).
 sf_character = { workspace = true, features = ["smooth"] }
+# `crowd/*` gauges (crowd-lod.md CROWD-1).
+sf_diag_bevy.workspace = true
 sf_model = { path = "../sf_model", version = "0.1.0", default-features = false }
 sf_model_bevy.workspace = true
 sf_records.workspace = true

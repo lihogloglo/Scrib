@@ -7932,6 +7932,7 @@ dependencies = [
  "sf_anim_graph",
  "sf_bake",
  "sf_character",
+ "sf_diag_bevy",
  "sf_model",
  "sf_model_bevy",
  "sf_records",

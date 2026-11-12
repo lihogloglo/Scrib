@@ -50,8 +50,12 @@
 //! actor placements of `sf_world_bevy` streaming as characters, and every
 //! character follows its worldspace's render layer, parts and carried lights
 //! included (`world::follow_worldspace_layers`).
+//!
+//! Crowd LOD (module [`crowd`], `docs/specs/crowd-lod.md`): `crowd/*` gauges per would-be tier
+//! and the far-hide A/B ([`CrowdSettings::hide_far`]).
 
 mod cloth;
+pub mod crowd;
 mod held;
 mod mesh;
 mod morph;
@@ -65,6 +69,7 @@ mod tests;
 mod world;
 
 pub use cloth::{ClothJoint, ClothSettings, ClothStats};
+pub use crowd::{CrowdHidden, CrowdPin, CrowdSettings, CrowdStats};
 pub use sf_anim::cloth::ClothCollider;
 pub use held::{CharacterReadiness, HeldLightSlot, HeldModelAssets, HeldModelCache, HeldProp, HeldProps, HeldSkinAssets};
 pub use mesh::{OutfitMeshError, assembled_mesh_to_mesh, outfit_inverse_bindposes};
@@ -471,11 +476,16 @@ impl Plugin for SfCharacterPlugin {
             .add_systems(PostUpdate, drive_character_morphs.after(AnimSystems::Apply))
             .configure_sets(PostUpdate, CharacterLayerSystems.before(bevy_camera::visibility::VisibilitySystems::CheckVisibility))
             .add_systems(PostUpdate, (roles::sync_role_layers, roles::follow_view_copies).chain().in_set(CharacterLayerSystems));
+        crowd::add(app);
         #[cfg(feature = "world")]
         app.add_systems(
             PostUpdate,
             world::follow_worldspace_layers.before(bevy_camera::visibility::VisibilitySystems::CheckVisibility).before(CharacterLayerSystems),
         );
+    }
+
+    fn finish(&self, app: &mut App) {
+        crowd::finish(app);
     }
 }
 

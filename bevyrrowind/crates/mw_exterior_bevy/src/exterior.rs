@@ -225,6 +225,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // ROADMAP 2.6 (audio.md): sounds, music, listener, doors, emitters, footsteps.
     mw_audio_bevy::add(&mut app, options.actors.clone(), &vfs);
     app.insert_resource(sf_character_bevy::CharacterSettings { bodies: options.bodies });
+    // `--off farnpcs`: characters past the crowd C0 threshold hide (crowd-lod.md CROWD-1 ceiling).
+    app.insert_resource(sf_character_bevy::CrowdSettings { hide_far: perf.off.has(Part::FarNpcs) });
     if let (Some(db), false) = (options.actors.clone(), perf.off.has(Part::Actors) || perf.off.has(Part::Walkers)) {
         mw_walkers_bevy::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone(), !perf.off.has(Part::Physics));
     }

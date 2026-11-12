@@ -14,6 +14,7 @@ mod align;
 mod assemble;
 mod automap;
 mod cloth;
+pub mod crowd;
 #[cfg(all(test, feature = "smooth"))]
 mod cloth_tests;
 mod humanoid;

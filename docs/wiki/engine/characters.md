@@ -40,8 +40,15 @@ Skinned meshes and `SkinnedMesh`, `DynamicSkinnedMeshBounds`, `RenderLayers`, bi
 (view model). Patched: skin joint blocks (P5). See [render and visibility](../bevy/render-and-visibility.md).
 
 ## Switches and counters
-`--off actors` / `npcs` (`bevyrrowind/crates/mw_game_core/src/perf.rs:154`); `CharacterStats` (`lib.rs:360`);
-console `flip viewmodel` (view model on and off). Owner scene: CH-5 (shared joint blocks), FP-1/FP-1b/FP-2.
+`--off actors` / `npcs` (`bevyrrowind/crates/mw_game_core/src/perf.rs:158`); `CharacterStats` (`lib.rs:365`);
+console `flip viewmodel` (view model on and off).
+`--off farnpcs` (CROWD-1 ceiling A/B): characters below the crowd C0 threshold (20 reference px, back above 23 px;
+`sf_character/src/crowd.rs`) hide at their root, animator and gameplay still running; pinned ones (`CrowdPin`,
+forced anim tier, significance > 1, ragdoll) always show (`sf_character_bevy/src/crowd.rs`, `CrowdSettings::hide_far`,
+set in `mw_exterior_bevy/src/exterior.rs:229`). Gauges per frame (`CrowdStats`, plain bands, pins in C0):
+`crowd/c0|c1|c2/count`, `crowd/cN/meshes/count`, `crowd/cN/joints/count` (one palette per distinct binding),
+`crowd/pinned/count`, `crowd/hidden/count`; render world: `crowd/joints_extracted/count` (skin extract walk),
+`crowd/joints_uploaded/count`, `crowd/joint_blocks/count`. Owner scene: CH-5 (shared joint blocks), FP-1/FP-1b/FP-2.
 
 ## Known limits
 - P5 expected 0.5-0.9 ms on the Balmora walk; needs a perf run ([perf ledger](../../ledger/perf.md)).

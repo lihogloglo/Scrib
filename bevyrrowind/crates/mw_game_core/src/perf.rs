@@ -41,6 +41,10 @@ pub enum Part {
     SizeCull,
     /// Actor placements (NPCs, creatures) as characters.
     Actors,
+    /// Characters past the crowd `C0` threshold (below 20 reference px, ~93 m for a 1.8 m figure; back
+    /// above 23 px, ~81 m) hide at their root, animation and gameplay running: the crowd-LOD ceiling
+    /// A/B (superfargoth crowd-lod.md CROWD-1, `sf_character_bevy::CrowdSettings::hide_far`).
+    FarNpcs,
     /// NPCs walking (controller, avoidance, wander scaffold; `walkers.rs`).
     Walkers,
     /// Rigid-body physics (`physics.rs`, M4): no physics worlds, no colliders.
@@ -123,7 +127,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 56] = [
+    const ALL: [(&'static str, Part); 57] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -153,6 +157,7 @@ impl Part {
         ("sizecull", Part::SizeCull),
         ("actors", Part::Actors),
         ("npcs", Part::Actors),
+        ("farnpcs", Part::FarNpcs),
         ("walkers", Part::Walkers),
         ("ai", Part::Walkers),
         ("physics", Part::Physics),
@@ -242,6 +247,7 @@ mod tests {
         let off = Off::from_flags(&["statics".into(), "Shadows".into(), "near".into()]).expect("known parts");
         assert!(off.has(Part::Near) && off.has(Part::Shadows) && !off.has(Part::Sky));
         assert_eq!(off.label(), "near,shadows");
+        assert!(Off::from_flags(&["farnpcs".into()]).expect("known").has(Part::FarNpcs));
         assert!(Off::from_flags(&["nope".into()]).is_err());
     }
 }

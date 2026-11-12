@@ -993,3 +993,101 @@ fn meshes_on_one_skeleton_binding_share_one_joint_block() {
     assert_ne!(index(&blocks, pa[0]), index(&blocks, pa[1]), "other inverse bindposes: own block");
     assert_eq!(blocks.block_count(), 3);
 }
+
+/// Sets a character's projected size (no camera in these apps: the anim LOD leaves `pixels` alone).
+fn set_pixels(app: &mut App, root: Entity, pixels: f32) {
+    let body = app.world().get::<CharacterBody>(root).unwrap().body;
+    app.world_mut().get_mut::<sf_anim_bevy::AnimLod>(body).unwrap().pixels = pixels;
+}
+
+/// Four NPCs: near (C0), mid (C1), far (C2), and a far one pinned.
+fn crowd(app: &mut App) -> [Entity; 4] {
+    let roots = [(); 4].map(|()| app.world_mut().spawn(npc(CharacterState::default())).id());
+    run_until(app, |w| roots.iter().all(|&r| w.get::<CharacterBody>(r).is_some()));
+    app.world_mut().entity_mut(roots[3]).insert(crate::CrowdPin);
+    for (&root, px) in roots.iter().zip([50.0, 10.0, 2.0, 2.0]) {
+        set_pixels(app, root, px);
+    }
+    roots
+}
+
+#[test]
+fn far_hide_hides_only_characters_past_c0_and_never_pinned_ones() {
+    let mut app = app();
+    let [near, mid, far, pinned] = crowd(&mut app);
+    app.update();
+    let vis = |app: &App, e: Entity| *app.world().get::<Visibility>(e).unwrap();
+    assert!([near, mid, far, pinned].iter().all(|&e| vis(&app, e) == Visibility::Inherited), "switch off: nothing hides");
+
+    app.world_mut().resource_mut::<crate::CrowdSettings>().hide_far = true;
+    app.update();
+    assert_eq!(vis(&app, near), Visibility::Inherited);
+    assert_eq!(vis(&app, mid), Visibility::Hidden);
+    assert_eq!(vis(&app, far), Visibility::Hidden);
+    assert_eq!(vis(&app, pinned), Visibility::Inherited, "pinned always shows");
+    assert_eq!(app.world().resource::<crate::CrowdStats>().hidden, 2);
+
+    // Hysteresis: back above 20 px stays hidden until 23 px.
+    set_pixels(&mut app, mid, 21.0);
+    app.update();
+    assert_eq!(vis(&app, mid), Visibility::Hidden);
+    set_pixels(&mut app, mid, 24.0);
+    app.update();
+    assert_eq!(vis(&app, mid), Visibility::Inherited);
+    assert!(app.world().get::<crate::CrowdHidden>(mid).is_none());
+
+    // A root hidden by someone else is not the switch's: it stays hidden when it comes near.
+    app.world_mut().entity_mut(near).insert(Visibility::Hidden);
+    set_pixels(&mut app, near, 2.0);
+    app.update();
+    set_pixels(&mut app, near, 50.0);
+    app.update();
+    assert_eq!(vis(&app, near), Visibility::Hidden);
+
+    // Switch off again: the switch's hidden roots come back.
+    app.world_mut().resource_mut::<crate::CrowdSettings>().hide_far = false;
+    app.update();
+    assert_eq!(vis(&app, far), Visibility::Inherited);
+    assert_eq!(app.world().resource::<crate::CrowdStats>().hidden, 0);
+}
+
+#[test]
+fn crowd_gauges_count_characters_meshes_and_joints_per_band() {
+    let mut app = app();
+    app.insert_resource(sf_diag_bevy::DiagCounters::default());
+    let roots = crowd(&mut app);
+    app.update();
+    let w = app.world();
+    let cb = w.get::<CharacterBody>(roots[0]).unwrap();
+    let palette = w.get::<bevy::mesh::skinning::SkinnedMesh>(cb.meshes[0]).unwrap().joints.len();
+    let meshes = cb.meshes.len();
+    assert_eq!(meshes, 2, "two materials on one palette");
+    let stats = w.resource::<crate::CrowdStats>().clone();
+    assert_eq!(stats.characters, [2, 1, 1], "near and pinned in C0");
+    assert_eq!(stats.meshes, [2 * meshes, meshes, meshes]);
+    assert_eq!(stats.joints, [2 * palette, palette, palette], "one palette per character");
+    assert_eq!((stats.pinned, stats.hidden), (1, 0));
+
+    let counters = w.resource::<sf_diag_bevy::DiagCounters>();
+    let mut gauges = HashMap::new();
+    counters.drain(|_, def, value| {
+        if def.name.starts_with("crowd/") {
+            gauges.insert(def.name.clone(), value);
+        }
+    });
+    #[allow(clippy::cast_precision_loss)]
+    let expect = [
+        ("crowd/c0/count", 2.0),
+        ("crowd/c1/count", 1.0),
+        ("crowd/c2/count", 1.0),
+        ("crowd/c0/meshes/count", (2 * meshes) as f64),
+        ("crowd/c2/meshes/count", meshes as f64),
+        ("crowd/c0/joints/count", (2 * palette) as f64),
+        ("crowd/c1/joints/count", palette as f64),
+        ("crowd/pinned/count", 1.0),
+        ("crowd/hidden/count", 0.0),
+    ];
+    for (name, value) in expect {
+        assert_eq!(gauges.get(name).copied().flatten(), Some(value), "{name}");
+    }
+}
