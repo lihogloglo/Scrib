@@ -80,9 +80,10 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (55)
+### Awaiting owner (56)
 
-WE-13 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Local storm seen from outside: storm cell under its clouds, narrow ragged border, no ground-to-sky wall or edge shimmer (CW-1; A/B `--off stormshape`, 2026-11-12)
+WA-5 | awaiting owner | [terrain-water](visual-checks/terrain-water.md) | Gerstner shore waves rolling in and swash on the beach (`scene wa-seyda-noon`, `wa-bittercoast`, `wa-seyda-noon --water-wind 14`; A/B `--off shorewaves`, 2026-11-12)
+WE-13 | partial (2026-11-12: CW-1 worse on entry (rain on/off), no gain; both paths: extruded cloud, faint curtain short of the base, horizon-line shimmer, shimmer behind curtain, also at Seyda Neen) | [weather-sky](visual-checks/weather-sky.md) | Local storm seen from outside: storm cell under its clouds, narrow ragged border, no ground-to-sky wall or edge shimmer (CW-1; A/B `--off stormshape`, 2026-11-12)
 WA-4 | confirmed (2026-11-12: "that's perfect") | [terrain-water](visual-checks/terrain-water.md) | Wavelets at the shore (W-SHORE): ripples glint to the waterline, swell still dies on beaches, no flat strip, no moiré; A/B `--off shorenormals` (2026-11-12)
 WA-3 | confirmed (2026-11-12: day and night "very nice", night water no longer too bright; emissive in reflection unsure) | [terrain-water](visual-checks/terrain-water.md) | Water mirrors banks, buildings, ships and lit windows, wobbling with waves; edge fade, no flicker, nothing below the water (W-SSPR, A/B `--off waterssr`, 2026-11-12)
 FG-11 | confirmed (2026-11-12: "the fog is glorious") | [weather-sky](visual-checks/weather-sky.md) | Froxel fog smooth over near objects, still and panning; no trails or black bands (FOG-CLAMP, A/B `--off fogclamp`, 2026-11-12)
@@ -249,7 +250,7 @@ FG-1 | inconclusive | [weather-sky](visual-checks/weather-sky.md) | Volumetric f
 
 DL-2 | deferred | [rendering](visual-checks/rendering.md) | Super Resolution at 1440p
 SK-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Night and moon
-ST-2 | deferred (2026-11-12 owner: small flicker in distant terrain every ~200 m of travel; suspect far shadows at origin shifts) | [streaming](visual-checks/streaming.md) | No pop at origin shifts in flight
+ST-2 | confirmed (2026-11-12: periodic flicker gone, FLICKER-1) | [streaming](visual-checks/streaming.md) | No pop at origin shifts in flight
 ST-3 | deferred | [streaming](visual-checks/streaming.md) | Paced model loads arrive in time
 SC-2 | deferred | [streaming](visual-checks/streaming.md) | The cutoff fades, never pops
 SC-foliage | owner: OK in Balmora (2026-11-11) | [rendering](visual-checks/rendering.md) | Cutout candidates (foliage, fences, grates) drawn from the static table, and no candidate that should fade softly gaining hard edges

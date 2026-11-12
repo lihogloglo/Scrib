@@ -94,6 +94,10 @@ struct View {
     color_grading: ColorGrading,
     mip_bias: f32,
     frame_count: u32,
+    // superfargoth patch (own, FLICKER-1: origin rebase): `OriginRebase` (view/mod.rs). Adding it
+    // to a "previous = current" render-space position gives last frame's render-space position
+    // across a floating-origin shift; zero on every other frame and for views without one.
+    origin_rebase: vec3<f32>,
 };
 
 // -----------------

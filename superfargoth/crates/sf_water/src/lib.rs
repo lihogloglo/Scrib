@@ -8,6 +8,7 @@
 pub mod query;
 pub mod records;
 pub mod shore;
+pub mod shore_waves;
 pub mod spectrum;
 pub mod sspr;
 pub mod twin;
@@ -22,6 +23,7 @@ pub use records::{
     FoamTerms, RiverPoint, WaterBody, WaterKind, WaterOptics, WaterShape, WaveTerms,
 };
 pub use shore::{OpticsMap, ShoreField, ShoreSettings, ShoreStats, WetMask};
+pub use shore_waves::{ShoreWave, ShoreWaves};
 pub use spectrum::{Cascades, DEFAULT_CASCADES, GRAVITY, H0, REPEAT_PERIOD, SpectrumParams, WindInput};
 pub use sspr::{PlaneCandidate, reflection_plane};
 pub use twin::{CascadeTwin, WaveSample, WaveTwin, origin_phase, tile_coords};

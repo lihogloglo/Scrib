@@ -15,7 +15,14 @@ Open visual checks: streaming spikes, size-based draw distance, door links (ST, 
 - A/B: none at runtime (`StreamingConfig::origin_shift_guard_s = 0` in code).
 - Owner 2026-11-12 (Bitter Coast flight, also seen before): a little flicker in distant terrain every ~200 m of travel.
   Owner suspects distant shadows mishandling the origin shift (every 256 m); not diagnosed, check later.
-- Status: deferred 2026-10-19 (phase0): recheck in the Phase 1 perf pass.
+  Cause (FLICKER-DIAG + owner bisect 2026-11-12): DLSS/TAA history is reset at every origin shift (`sync_origin`);
+  seen on terrain and water, never when still, gone with F4 Off.
+- Fix FLICKER-1 (2026-11-12): shifts keep TAA/DLSS history, motion vectors rebased by the origin delta (`OriginRebase`).
+  Launch `bash bevyrrowind/tools/owner_launch.sh view "Seyda Neen" --hour 10`, fly west over the Bitter Coast high and
+  fast. Look for: no periodic pop on distant terrain, shadows or water. Must not: smears or ghost trails for one frame at
+  shifts. A/B `--off shiftrebase` brings the pop back. Log: `origin shift A -> B: rebase ... (history kept)` per shift.
+  Water's own motion vectors get the rebase after W-GERSTNER lands (until then water may still pop/smear at shifts).
+- Status: confirmed (owner 2026-11-12, Seyda Neen 10:00 flight west: "the flicker is gone"; `--off shiftrebase` A/B not run).
 - Source: spikes.
 
 ### ST-3: Paced model loads arrive in time

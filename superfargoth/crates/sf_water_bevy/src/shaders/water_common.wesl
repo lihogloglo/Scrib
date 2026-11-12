@@ -25,24 +25,182 @@ struct WaterParams {
     regions: vec4<f32>,
     // SSPR: (wave distortion; reflection texel scale, 0 = off for this surface; plane level; 0).
     reflection: vec4<f32>,
+    // Shore waves (W-GERSTNER, `sf_water::ShoreWaves`): (ω per train rad/s ×3, previous frame's time s);
+    // (offshore amplitude m, swash m, beach slope, band m); (land margin m, variation, noise origin
+    // x, z m: the floating origin modulo `sf_water::shore_waves::NOISE_PERIOD`).
+    swash: vec4<f32>,
+    swash2: vec4<f32>,
+    swash3: vec4<f32>,
     // Optics table for the map, 3 vec4 per entry: (absorption, whitecaps), (scattering, contact
     // depth), (roughness, shore foam, 0, 0).
     looks: array<vec4<f32>, 24>,
 }
 
-// Shore field sample at render-space `xz`: (signed distance to the shoreline m, openness); open
-// deep water outside the field or without one.
-fn shore_at(p: WaterParams, tex: texture_2d<f32>, s: sampler, xz: vec2<f32>) -> vec2<f32> {
+// Shore field sample at render-space `xz`: (signed distance to the shoreline m, openness,
+// shoreward direction xz; `sf_water::ShoreField::encode_rgba16f`); open deep water outside the
+// field or without one.
+fn shore_at(p: WaterParams, tex: texture_2d<f32>, s: sampler, xz: vec2<f32>) -> vec4<f32> {
     if p.waves.w < 0.5 {
-        return vec2(1e4, 1.0);
+        return vec4(1e4, 1.0, 0.0, 0.0);
     }
     let uv = (xz - p.shore.xy) * p.shore.zw;
     if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
-        return vec2(p.shore2.x, 1.0);
+        return vec4(p.shore2.x, 1.0, 0.0, 0.0);
     }
-    let t = textureSampleLevel(tex, s, uv, 0.0).rg;
-    let e = t.r * 2.0 - 1.0;
-    return vec2(sign(e) * e * e * p.shore2.x, t.g);
+    return textureSampleLevel(tex, s, uv, 0.0);
+}
+
+// ---- Shore waves (W-GERSTNER): `sf_water::shore_waves` is the CPU twin and the reference for
+// every constant and law (Eckart dispersion over the beach slope, Green's-law shoaling capped by
+// the McCowan breaker, finite-depth Gerstner orbits under a no-loop limit, Stockdon swash). ----
+
+const SW_SHARES = vec3(0.5, 0.3, 0.2);
+const SW_PHASE_SPREAD = vec3(1.0, -0.7, 1.3);
+const SW_BREAKER = 0.78;
+const SW_MICHE = 0.44610616;
+const SW_STEEPNESS = 0.75;
+const SW_MIN_DEPTH = 0.1;
+const SW_PHASE_NOISE = 0.8;
+const SW_SET_FLOOR = 0.6;
+const SW_SKEW = 0.5;
+const SW_ZONE = 0.3;
+const SW_ECKART_LINEAR = 4.0;
+const SW_GRAVITY = 9.81;
+const SW_REPEAT = 256.0;
+const SW_TAU = 6.2831853;
+
+fn sw_hash(x: u32, y: u32, seed: u32) -> f32 {
+    var h = (x * 0x8da6b343u) ^ (y * 0xd8163841u) ^ (seed * 0xcb1ab31fu);
+    h ^= h >> 16u;
+    h *= 0x7feb352du;
+    h ^= h >> 15u;
+    h *= 0x846ca68bu;
+    h ^= h >> 16u;
+    return f32(h >> 8u) / 16777216.0;
+}
+
+fn sw_noise(uv: vec2<f32>, cells: u32, seed: u32) -> f32 {
+    let g = uv * f32(cells);
+    let i = floor(g);
+    let f = g - i;
+    let x0 = u32(i.x) % cells;
+    let y0 = u32(i.y) % cells;
+    let x1 = (x0 + 1u) % cells;
+    let y1 = (y0 + 1u) % cells;
+    let s = f * f * (vec2(3.0) - 2.0 * f);
+    let top = sw_hash(x0, y0, seed) + (sw_hash(x1, y0, seed) - sw_hash(x0, y0, seed)) * s.x;
+    let bottom = sw_hash(x0, y1, seed) + (sw_hash(x1, y1, seed) - sw_hash(x0, y1, seed)) * s.x;
+    return top + (bottom - top) * s.y;
+}
+
+fn sw_eckart_closed(u: f32) -> f32 {
+    let v = sqrt(tanh(u));
+    return atanh(v) + atan(v);
+}
+
+fn sw_eckart(u: f32) -> f32 {
+    if u < SW_ECKART_LINEAR {
+        return sw_eckart_closed(u);
+    }
+    return sw_eckart_closed(SW_ECKART_LINEAR) + u - SW_ECKART_LINEAR;
+}
+
+// (local wave number rad/m, phase Φ rad) of `omega` at depth `h` on slope `beta`.
+fn sw_local_wave(omega: f32, h: f32, beta: f32) -> vec2<f32> {
+    let k0 = omega * omega / SW_GRAVITY;
+    let k = k0 / sqrt(tanh(k0 * max(h, SW_MIN_DEPTH)));
+    if h >= SW_MIN_DEPTH {
+        return vec2(k, sw_eckart(k0 * h) / beta);
+    }
+    return vec2(k, (sw_eckart(k0 * SW_MIN_DEPTH) - k * (SW_MIN_DEPTH - h)) / beta);
+}
+
+struct ShoreWave {
+    // Displacement (x, y, z), m.
+    offset: vec3<f32>,
+    // (∂y/∂x, ∂y/∂z, ∂Dx/∂x, ∂Dz/∂z), added to the FFT's slopes.
+    slope: vec4<f32>,
+    // sin of the main train's phase (1 on its crests).
+    crest: f32,
+}
+
+// The shore waves at Lagrangian render-space `xz` with shore sample `sh` (`shore_at`) at time `t`
+// (s mod 256). `lod_k`: trains whose wave number is above it are faded out (the clipmap's or the
+// pixel's resolution; a very large value keeps all). Zero outside the band and when off.
+fn shore_waves(p: WaterParams, sh: vec4<f32>, xz: vec2<f32>, t: f32, lod_k: f32) -> ShoreWave {
+    var out = ShoreWave(vec3(0.0), vec4(0.0), 0.0);
+    let d = sh.x;
+    let band = p.swash2.w;
+    let margin = p.swash3.x;
+    if !(d < band && d > -margin) || (p.swash2.x <= 0.0 && p.swash2.y <= 0.0) {
+        return out;
+    }
+    let o = sh.y;
+    let dir = sh.zw;
+    let beta = p.swash2.z;
+    let h = beta * max(d, 0.0);
+    let h_edge = beta * band;
+    let w = o * (1.0 - smoothstep(0.0, band, d));
+    let noise = fract((p.swash3.zw + xz) / 1024.0);
+    let fade = 0.5 - 0.5 * cos(SW_TAU * t / SW_REPEAT);
+    let n1 = sw_noise(noise, 32u, 1u);
+    let sets = n1 + (sw_noise(noise, 32u, 2u) - n1) * fade;
+    let variation = p.swash3.y;
+    let group = 1.0 - variation * (1.0 - SW_SET_FLOOR) * (1.0 - sets);
+    let psi = variation * SW_PHASE_NOISE * (2.0 * sw_noise(noise, 16u, 3u) - 1.0);
+    let shoal = p.swash2.x * pow(max(h_edge / max(h, SW_MIN_DEPTH), 1.0), 0.25);
+    let breaker = 0.5 * SW_BREAKER * h;
+    let env = shoal * breaker / pow(shoal * shoal * shoal * shoal + breaker * breaker * breaker * breaker + 1e-20, 0.25);
+    let amp = env * w * group;
+    var a = vec3(0.0);
+    var k = vec3(0.0);
+    var coth = vec3(0.0);
+    var theta = vec3(0.0);
+    var steep = 0.0;
+    let shares = SW_SHARES;
+    let spread = SW_PHASE_SPREAD;
+    for (var i = 0u; i < 3u; i++) {
+        let lw = sw_local_wave(p.swash[i], h, beta);
+        let th = tanh(lw.x * max(h, SW_MIN_DEPTH));
+        a[i] = min(shares[i] * amp, SW_MICHE * th / lw.x);
+        k[i] = lw.x;
+        coth[i] = 1.0 / th;
+        theta[i] = -(lw.y + p.swash[i] * t + psi * spread[i]);
+        steep += lw.x * a[i] / th;
+    }
+    let q = min(SW_STEEPNESS / max(steep, 1e-6), 1.0);
+    var y = 0.0;
+    var along = 0.0;
+    var dy = 0.0;
+    var dalong = 0.0;
+    for (var i = 0u; i < 3u; i++) {
+        // Resolution fade (the CPU twin keeps every train: lod_k = ∞).
+        let r = 1.0 - smoothstep(0.5 * lod_k, lod_k, k[i]);
+        let s = sin(theta[i]);
+        let c = cos(theta[i]);
+        y += r * a[i] * s;
+        along += r * q * a[i] * coth[i] * c;
+        dy += r * a[i] * k[i] * c;
+        dalong -= r * q * a[i] * coth[i] * k[i] * s;
+    }
+    let phi0 = sw_local_wave(p.swash.x, 0.0, beta).y;
+    let theta0 = -(phi0 + p.swash.x * t + psi * SW_PHASE_SPREAD.x);
+    let swash = p.swash2.y * o * group * (1.0 - smoothstep(0.0, SW_ZONE * band, d)) * smoothstep(-margin, -0.5 * margin, d);
+    y += swash * sin(theta0 - SW_SKEW * sin(theta0));
+    out.offset = vec3(dir.x * along, y, dir.y * along);
+    out.slope = vec4(dy * dir.x, dy * dir.y, dalong * dir.x * dir.x, dalong * dir.y * dir.y);
+    out.crest = sin(theta.x);
+    return out;
+}
+
+// The shore waves' vertex displacement at Lagrangian `x0`: faded with the camera distance as the
+// cascades are (`displacement_weight`: a train fades where the clipmap's ≈ d/48 spacing can no longer
+// carry it, at 10-16 wavelengths; `displaced`'s far fade).
+fn shore_wave_offset(p: WaterParams, sh: vec4<f32>, x0: vec2<f32>, camera: vec2<f32>, t: f32) -> vec3<f32> {
+    let d = distance(x0, camera);
+    let lod_k = SW_TAU * 16.0 / max(d, 1e-3);
+    let fade = 1.0 - smoothstep(p.misc.z * 0.75, p.misc.z, d);
+    return shore_waves(p, sh, x0, t, lod_k).offset * fade;
 }
 
 // (swell, chop) amplitude scales at a shore sample (`sf_water::ShoreField::swell_scale` and

@@ -176,6 +176,8 @@ impl Plugin for ViewPlugin {
             .add_plugins((
                 ExtractComponentPlugin::<Msaa>::default(),
                 ExtractComponentPlugin::<OcclusionCulling>::default(),
+                // superfargoth patch (own, FLICKER-1: origin rebase)
+                ExtractComponentPlugin::<OriginRebase>::default(),
                 RenderVisibilityRangePlugin,
             ));
 
@@ -221,6 +223,24 @@ impl Plugin for ViewPlugin {
         }
     }
 }
+
+// superfargoth patch (own, FLICKER-1: origin rebase)
+/// A floating-origin (world-origin rebasing) shift, as this camera's motion vectors see it.
+///
+/// When the app re-expresses every render-space position relative to a new origin `O_new`
+/// (large worlds), last frame's view and every Bevy-tracked previous transform are still in the
+/// old frame `O_old`, while geometry that writes "previous position = current position"
+/// (GPU-authored instances without a previous index, custom static prepasses) is in the new
+/// one. This is the offset that takes such a position into last frame's render space:
+/// `previous_render = current_render + origin_rebase`, i.e. `O_new - O_old` in render units on
+/// the one frame the origin moved, zero on every other frame. Static geometry then keeps a zero
+/// motion vector across the shift and temporal history (TAA, DLSS) need not be dropped (UE's
+/// world-origin rebasing offsets previous view and primitive data the same way). The app writes
+/// it on the camera every frame; absent = zero = stock. WGSL: `View::origin_rebase`.
+#[derive(Component, Default, Clone, Copy, ExtractComponent, Reflect, PartialEq, Debug)]
+#[reflect(Component, Default, PartialEq, Debug)]
+#[extract_app(RenderApp)]
+pub struct OriginRebase(pub Vec3);
 
 /// Component for configuring the number of samples for [Multi-Sample Anti-Aliasing](https://en.wikipedia.org/wiki/Multisample_anti-aliasing)
 /// for a [`Camera`].
@@ -755,6 +775,9 @@ pub struct ViewUniform {
     pub color_grading: ColorGradingUniform,
     pub mip_bias: f32,
     pub frame_count: u32,
+    // superfargoth patch (own, FLICKER-1: origin rebase)
+    /// [`OriginRebase`] of this view's camera (zero for views without one).
+    pub origin_rebase: Vec3,
 }
 
 #[derive(Resource)]
@@ -1193,6 +1216,8 @@ pub fn prepare_view_uniforms(
             Option<&TemporalJitter>,
             Option<&MipBias>,
             Option<&MainPassResolutionOverride>,
+            // superfargoth patch (own, FLICKER-1: origin rebase)
+            Option<&OriginRebase>,
         ),
         // superfargoth patch (own: skip view preprocessing)
         Without<SkipRootViewRendering>,
@@ -1217,6 +1242,7 @@ pub fn prepare_view_uniforms(
         temporal_jitter,
         mip_bias,
         resolution_override,
+        origin_rebase,
     ) in &views
     {
         let viewport = extracted_view.viewport.as_vec4();
@@ -1280,7 +1306,7 @@ pub fn prepare_view_uniforms(
                     .auxiliary_entity
                     .and_then(|entity| views.get(*entity).ok())
                 {
-                    Some((_, _, camera_view, _, _, _, _)) => {
+                    Some((_, _, camera_view, _, _, _, _, _)) => {
                         camera_view.world_from_view.translation()
                     }
                     None => shadow_lod_origin.0,
@@ -1308,6 +1334,8 @@ pub fn prepare_view_uniforms(
                 color_grading: extracted_view.color_grading.clone().into(),
                 mip_bias: mip_bias.unwrap_or(&MipBias(0.0)).0,
                 frame_count: frame_count.0,
+                // superfargoth patch (own, FLICKER-1: origin rebase)
+                origin_rebase: origin_rebase.map_or(Vec3::ZERO, |r| r.0),
             }),
         };
 

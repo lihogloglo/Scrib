@@ -574,12 +574,266 @@ fn shore_openness_falls_into_bays_and_lakes_use_their_own_fetch() {
     assert!(f.swell_scale(0.0, 1.0) == 0.0 && f.chop_scale(10.0, 0.0) >= settings.chop_floor);
     // Outside the baked area: open deep water.
     assert_eq!(f.sample(1e6, 0.0), (settings.range, 1.0));
-    // The GPU encoding round-trips the distance near the shore to a few cm.
-    let enc = f.encode_rg8();
-    let i = 100 * 200 + 148;
-    let e = f32::from(enc[i * 2]) / 255.0 * 2.0 - 1.0;
-    let back = e.signum() * e * e * settings.range;
-    assert!((back - f.distance[i]).abs() < 0.6, "{back} vs {}", f.distance[i]);
+    // The GPU encoding (half floats) round-trips distance, openness and direction to ~cm.
+    let enc = f.encode_rgba16f();
+    assert_eq!(enc.len(), f.distance.len() * 8);
+    for i in [100 * 200 + 148, 100 * 200 + 160, 5 * 200 + 5, 120 * 200 + 60] {
+        let half = |c: usize| f16_value(u16::from_le_bytes([enc[i * 8 + c * 2], enc[i * 8 + c * 2 + 1]]));
+        let want = [f.distance[i], f.openness[i], f.direction[i][0], f.direction[i][1]];
+        for (c, w) in want.iter().enumerate() {
+            let tol = 1e-3 + w.abs() * 1e-3;
+            assert!((half(c) - w).abs() <= tol, "texel {i} channel {c}: {} vs {w}", half(c));
+        }
+    }
+}
+
+/// Decodes IEEE half-float bits (test side of `shore::f16_bits`).
+fn f16_value(b: u16) -> f32 {
+    let sign = if b & 0x8000 == 0 { 1.0 } else { -1.0 };
+    let exp = i32::from((b >> 10) & 0x1f);
+    let man = f32::from(b & 0x3ff);
+    match exp {
+        0 => sign * man * 2f32.powi(-24),
+        31 => sign * f32::INFINITY,
+        _ => sign * (1.0 + man / 1024.0) * 2f32.powi(exp - 15),
+    }
+}
+
+#[test]
+fn half_floats_round_to_nearest() {
+    for x in [0.0f32, 1.0, -1.0, 0.5, 2.6, 255.9, -256.0, 1e-5, 6e-8, 65504.0, 0.1, 40.0, -0.0] {
+        let back = f16_value(shore::f16_bits(x));
+        assert!((back - x).abs() <= x.abs() / 2048.0 + 3e-8, "{x} -> {back}");
+    }
+    assert_eq!(shore::f16_bits(1e6), 0x7c00);
+}
+
+// ---- shore waves (W-GERSTNER) ----
+
+/// Land west of x = 0, water east, 2 m texels: a straight north-south shore.
+fn straight_shore() -> ShoreField {
+    let mut mask = WetMask::new(128, 64, 2.0, DVec2::new(-64.0, -64.0));
+    for y in 0..64 {
+        for x in 0..32 {
+            mask.wet[y * 128 + x] = false;
+        }
+    }
+    ShoreField::bake(&mask, ShoreSettings::default())
+}
+
+fn shore_waves(field: &ShoreField, wind: f32) -> ShoreWaves {
+    ShoreWaves::new(&sea(wind), &Cascades::default(), &field.settings)
+}
+
+/// The waves at world XZ (x, z) and time t on `field`.
+fn wave_at(field: &ShoreField, w: &ShoreWaves, x: f64, z: f64, t: f32) -> ShoreWave {
+    let (d, o) = field.sample(x, z);
+    w.eval(d, o, field.sample_direction(x, z), ShoreWaves::noise_coords(DVec2::new(x, z)), t)
+}
+
+#[test]
+fn shore_waves_follow_the_sea_state_and_point_shoreward() {
+    let field = straight_shore();
+    let (calm, windy) = (shore_waves(&field, 5.0), shore_waves(&field, 14.0));
+    assert!(calm.amplitude > 0.0 && windy.amplitude > 2.0 * calm.amplitude, "{} vs {}", calm.amplitude, windy.amplitude);
+    assert!(windy.omega[0] < calm.omega[0], "a stronger wind has a longer peak period");
+    // Whole cycles per repeat period, distinct and increasing.
+    for w in [calm, windy] {
+        for i in 0..3 {
+            let cycles = f64::from(w.omega[i]) * REPEAT_PERIOD / std::f64::consts::TAU;
+            assert!((cycles - cycles.round()).abs() < 1e-3, "{cycles}");
+        }
+        assert!(w.omega[0] < w.omega[1] && w.omega[1] < w.omega[2]);
+        assert!(w.swash > 0.0 && (2.0..=8.0).contains(&w.land_margin));
+    }
+    // The baked direction points at the shore (−x), unit on a straight shore.
+    let dir = field.sample_direction(20.0, 0.0);
+    assert!((dir - Vec2::new(-1.0, 0.0)).length() < 1e-3, "{dir}");
+    // Off: no amplitude, no swash, nothing anywhere.
+    let off = ShoreWaves::new(&sea(14.0), &Cascades::default(), &ShoreSettings { shore_waves: 0.0, ..ShoreSettings::default() });
+    for d in [-3.0, 0.0, 5.0, 20.0] {
+        assert_eq!(off.eval(d, 1.0, Vec2::NEG_X, Vec2::ZERO, 3.0), ShoreWave::default());
+    }
+}
+
+#[test]
+fn shore_waves_are_zero_beyond_the_band_and_finite_everywhere() {
+    let field = straight_shore();
+    let w = shore_waves(&field, 14.0);
+    for t in [0.0, 1.3, 77.7, 255.9] {
+        for d in [w.band, w.band + 0.01, 100.0, 1e4, -w.land_margin, -w.land_margin - 1.0, -50.0, f32::NAN] {
+            assert_eq!(w.eval(d, 1.0, Vec2::NEG_X, Vec2::new(0.3, 0.7), t), ShoreWave::default(), "d {d}");
+        }
+        // No NaN at or behind the shoreline, nor at a zero direction (medial axis) or openness.
+        for i in 0..=400 {
+            let d = -w.land_margin + (w.band + w.land_margin) * i as f32 / 400.0;
+            for (dir, o) in [(Vec2::NEG_X, 1.0), (Vec2::ZERO, 1.0), (Vec2::NEG_X, 0.0)] {
+                let g = w.eval(d, o, dir, Vec2::new(0.1, 0.9), t);
+                assert!(g.offset.is_finite() && g.slope.is_finite() && g.crest.is_finite(), "d {d}: {g:?}");
+            }
+        }
+        let g = w.eval(-0.0, 1.0, Vec2::NEG_X, Vec2::ZERO, t);
+        assert!(g.offset.is_finite());
+    }
+}
+
+/// The analytic waves take over exactly as the FFT swell fades: their weight is the swell's
+/// complement, and both the amplitude and the surface are continuous across the band (no pop).
+#[test]
+fn shore_waves_blend_continuously_with_the_fft_fade() {
+    let field = straight_shore();
+    let w = ShoreWaves { variation: 0.0, ..shore_waves(&field, 12.0) };
+    // Envelope near the band's edge goes to zero smoothly (C1: smoothstep), under the open swell.
+    let peak = |d: f32| (0..64).map(|i| w.eval(d, 1.0, Vec2::NEG_X, Vec2::ZERO, i as f32 * 0.37).offset.y.abs()).fold(0.0, f32::max);
+    assert!(peak(w.band - 0.05) < 1e-3, "{}", peak(w.band - 0.05));
+    assert!(peak(0.5 * w.band) > 0.02, "{}", peak(0.5 * w.band));
+    for d in [5.0, 15.0, 25.0, 35.0] {
+        let fft = field.swell_scale(d, 1.0);
+        assert!(peak(d) <= w.amplitude * (1.0 - fft) * 1.25 + 1e-4, "d {d}: {} vs {}", peak(d), w.amplitude);
+    }
+    // Lipschitz along the shore normal at a fine step: no seam or step anywhere in the band.
+    for t in [0.0, 3.1, 100.0] {
+        let mut last = w.eval(-w.land_margin + 1e-3, 1.0, Vec2::NEG_X, Vec2::ZERO, t).offset;
+        for i in 1..=2000 {
+            let d = -w.land_margin + (w.band + w.land_margin + 1.0) * i as f32 / 2000.0;
+            let g = w.eval(d, 1.0, Vec2::NEG_X, Vec2::ZERO, t).offset;
+            assert!((g - last).length() < 0.05, "step at d {d}: {last} -> {g}");
+            last = g;
+        }
+    }
+    // The clock wraps without a pop (whole cycles per repeat period).
+    let a = w.eval(10.0, 1.0, Vec2::NEG_X, Vec2::new(0.2, 0.4), 0.0).offset;
+    let b = w.eval(10.0, 1.0, Vec2::NEG_X, Vec2::new(0.2, 0.4), REPEAT_PERIOD as f32).offset;
+    assert!((a - b).length() < 2e-3, "{a} vs {b}");
+}
+
+/// On a straight shore, uniform waves have their crests parallel to the shoreline (the surface is
+/// the same all along it) and travel shoreward; the noise bends them only within its bound.
+#[test]
+fn shore_wave_crests_parallel_the_shoreline_and_roll_in() {
+    let field = straight_shore();
+    let uniform = ShoreWaves { variation: 0.0, ..shore_waves(&field, 10.0) };
+    for x in [2.0, 9.0, 17.0, 30.0] {
+        // (Openness varies along this small test field: hold it at 1 to isolate the geometry.)
+        let open = |z: f64| uniform.eval(field.sample(x, z).0, 1.0, field.sample_direction(x, z), ShoreWaves::noise_coords(DVec2::new(x, z)), 4.2).offset;
+        let first = open(-40.0);
+        for z in [-30.0, -11.0, 0.0, 13.0, 40.0] {
+            let g = open(z);
+            assert!((g - first).length() < 1e-4, "x {x} z {z}: {g} vs {first}");
+        }
+    }
+    // Phase increases away from the shore and the local wave number is the dispersion's.
+    let beta = uniform.beach_slope;
+    for omega in uniform.omega {
+        let mut last = f32::NEG_INFINITY;
+        for i in 0..=200 {
+            let d = uniform.band * i as f32 / 200.0;
+            let (k, phi) = shore_waves::local_wave(omega, beta * d, beta);
+            assert!(phi > last, "phase not increasing at d {d}");
+            last = phi;
+            if beta * d >= shore_waves::MIN_DEPTH {
+                // Exact root of ω² = g k tanh(k h) by Newton; Eckart is within 5 %.
+                let h = beta * d;
+                let mut ke = k;
+                for _ in 0..30 {
+                    let f = GRAVITY * ke * (ke * h).tanh() - omega * omega;
+                    let df = GRAVITY * ((ke * h).tanh() + ke * h / (ke * h).cosh().powi(2));
+                    ke -= f / df;
+                }
+                assert!((k - ke).abs() / ke < 0.05, "k {k} vs {ke} at h {h}");
+                let (_, ahead) = shore_waves::local_wave(omega, beta * (d + 0.01), beta);
+                assert!(((ahead - phi) / 0.01 - k).abs() / k < 0.02, "dΦ/dd vs k at d {d}");
+            }
+        }
+    }
+    // A crest moves shoreward: track the main train's crest (θ0 = π/2 mod 2π) between two times.
+    let crest_d = |t: f32, around: f32, half: f32| {
+        let mut best = (f32::MAX, 0.0);
+        for i in 0..4000 {
+            let d = around - half + 2.0 * half * i as f32 / 4000.0;
+            let (_, phi) = shore_waves::local_wave(uniform.omega[0], beta * d, beta);
+            let theta = -(phi + uniform.omega[0] * t);
+            let off = (theta - std::f32::consts::FRAC_PI_2).rem_euclid(std::f32::consts::TAU);
+            let dist = off.min(std::f32::consts::TAU - off);
+            if dist < best.0 {
+                best = (dist, d);
+            }
+        }
+        best.1
+    };
+    // (A ±12 m window holds a crest (λ ≈ 20 m there); in 0.1 s it moves ~0.3 m, inside ±2 m.)
+    let a = crest_d(10.0, 20.0, 12.0);
+    let b = crest_d(10.1, a, 2.0);
+    assert!(b < a - 0.01, "crest at {a} m then {b} m");
+    // With the noise the shore line still bounds the bend: the surface varies along the shore but
+    // stays within the envelope.
+    let varied = shore_waves(&field, 10.0);
+    let ys: Vec<f32> = (0..64u32).map(|i| wave_at(&field, &varied, 12.0, -60.0 + 1.8 * f64::from(i), 4.2).offset.y).collect();
+    let spread = ys.iter().fold(f32::MIN, |m, y| m.max(*y)) - ys.iter().fold(f32::MAX, |m, y| m.min(*y));
+    assert!(spread > 1e-3, "no variation along the shore");
+}
+
+/// The Gerstner map never folds (no loops on crests): along the shore normal the displaced
+/// position is strictly increasing for every sea state, time and noise position, and the
+/// steepness sum holds its limit.
+#[test]
+fn shore_waves_never_loop() {
+    let field = straight_shore();
+    for wind in [3.0, 8.0, 14.0, 25.0] {
+        let w = shore_waves(&field, wind);
+        for t in [0.0, 0.7, 2.9, 31.0, 140.5] {
+            for z in [-50.0, -7.0, 22.0] {
+                let mut last = f64::NEG_INFINITY;
+                for i in 0..=1500 {
+                    let x = -f64::from(w.land_margin) + f64::from(w.band + w.land_margin) * f64::from(i) / 1500.0;
+                    let g = wave_at(&field, &w, x, z, t);
+                    assert!(g.steepness <= shore_waves::STEEPNESS_LIMIT + 1e-4, "{}", g.steepness);
+                    let moved = x + f64::from(g.offset.x);
+                    assert!(moved > last, "wind {wind} t {t}: fold at x {x}");
+                    last = moved;
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn query_lifts_the_surface_with_the_shore_waves() {
+    let id = WorldspaceId::from("ws");
+    let mut ws = Worldspace::new("ws");
+    ws.has_terrain = true;
+    ws.sea_level = Some(0.0);
+    let params = sea(12.0);
+    let cascades = Cascades::default();
+    let field = Arc::new(straight_shore());
+    let mut water = WorldspaceWater::new(WaterBody::from_worldspace(&id, &ws).into_iter().collect());
+    water.set_waves(Some(WaveTwin::new(&params, &cascades, 7, 1, 32)));
+    water.set_shore(Some(field.clone()));
+    let mut world = WaterWorld::new();
+    world.insert(id.clone(), water);
+    world.step(12.0);
+    let at = WorldPos::from_f64(glam::DVec3::new(6.0, 0.0, 3.0));
+    let before = world.get(&id).unwrap().sample(at).unwrap();
+    let waves = ShoreWaves::new(&params, &cascades, &field.settings);
+    world.get_mut(&id).unwrap().set_shore_waves(Some(waves));
+    let mut moved = false;
+    for t in [12.0, 13.1, 14.7, 16.2] {
+        world.step(t);
+        let s = world.get(&id).unwrap().sample(at).unwrap();
+        assert!(s.height.is_finite() && s.normal.is_finite() && s.velocity.is_finite());
+        moved |= (s.height - before.height).abs() > 1e-3;
+    }
+    assert!(moved, "the shore waves never lifted the query's surface");
+    // Far offshore (beyond the band) the query is the FFT twin alone.
+    world.step(12.0);
+    let far = WorldPos::from_f64(glam::DVec3::new(60.0, 0.0, 3.0));
+    let mut plain = WorldspaceWater::new(WaterBody::from_worldspace(&id, &ws).into_iter().collect());
+    plain.set_waves(Some(WaveTwin::new(&params, &cascades, 7, 1, 32)));
+    plain.set_shore(Some(field));
+    let mut reference = WaterWorld::new();
+    reference.insert(id.clone(), plain);
+    reference.step(12.0);
+    assert_eq!(world.get(&id).unwrap().sample(far).unwrap().height, reference.get(&id).unwrap().sample(far).unwrap().height);
 }
 
 #[test]
@@ -637,5 +891,23 @@ fn shore_normals_keep_wavelets_where_the_displacement_settles() {
     let old = ShoreField::bake(&WetMask::new(4, 4, 2.0, DVec2::ZERO), ShoreSettings { normal_floor: 0.0, ..settings });
     for d in [0.0, 0.5, 1.5, 2.9, 10.0] {
         assert_eq!(old.normal_chop_scale(d, 0.6), old.chop_scale(d, 0.6));
+    }
+}
+
+/// Prints the shore-wave model for a few winds: offshore amplitude, periods, swash, and the peak
+/// crest height and local wavelength across the band.
+#[test]
+#[ignore = "measurement: shore wave model numbers (W-GERSTNER)"]
+fn shore_wave_model_numbers() {
+    let field = straight_shore();
+    for wind in [4.0, 7.0, 12.0, 20.0] {
+        let w = ShoreWaves { variation: 0.0, ..shore_waves(&field, wind) };
+        let periods: Vec<String> = w.omega.iter().map(|o| format!("{:.2}", std::f32::consts::TAU / o)).collect();
+        println!("wind {wind:4.1} m/s: A0 {:.2} m, T [{}] s, swash ±{:.2} m, land margin {:.1} m", w.amplitude, periods.join(", "), w.swash, w.land_margin);
+        for d in [0.0, 2.0, 5.0, 10.0, 20.0, 30.0, 38.0] {
+            let peak = (0..256).map(|i| w.eval(d, 1.0, Vec2::NEG_X, Vec2::ZERO, i as f32 * 0.25).offset.y).fold(f32::MIN, f32::max);
+            let (k, _) = shore_waves::local_wave(w.omega[0], w.beach_slope * d, w.beach_slope);
+            println!("  d {d:4.1} m: crest {peak:5.2} m, main λ {:5.1} m", std::f32::consts::TAU / k);
+        }
     }
 }

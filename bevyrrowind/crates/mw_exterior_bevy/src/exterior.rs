@@ -436,6 +436,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // weather.md "Wind" (WD1): one wind field; fog and cloud drift read it.
     app.add_plugins(sf_wind_bevy::WindPlugin::default())
         .add_systems(PostUpdate, wind_origin.after(sync_origin).before(sf_wind_bevy::WindSystems::Advance));
+    // FLICKER-1 (ST-2): origin shifts rebase motion vectors; `--off shiftrebase` resets history.
+    app.insert_resource(crate::origin_rebase::ShiftRebase(!perf.off.has(Part::ShiftRebase)));
     // The cascades keep Bevy's 2048² maps: 4096² measured +1.4 ms at 1440p
     // (weather.md A1, 2026-10-12); shadows F3 sharpens them with a 250 m range instead.
     // weather.md "Clouds" and "Fog": on by default; `--off clouds` or `--off fog` drops
@@ -563,7 +565,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
 
     // W-SSPR: `--off waterssr` keeps the environment-map-only water reflections (the old look).
     // W-SHORE: `--off shorenormals` flattens the water's normal with its displacement at the shore.
-    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals));
+    // W-GERSTNER: `--off shorewaves` drops the analytic shore waves (the FFT fades to flat).
+    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves));
     mw_environment_bevy::water::add(&mut app, options.water, options.quality, water_parts, &options.world.worldspaces);
     mw_doors_bevy::add(&mut app, options.world, options.use_door);
     mw_devtools_bevy::pipeline_watch::add(&mut app);
@@ -839,6 +842,8 @@ fn setup(
     if !off.has(Part::Sky) {
         camera.insert(SkyCamera { environment_light: !off.has(Part::Envmap), ..SkyCamera::default() });
         if !off.has(Part::Clouds) || !off.has(Part::Fog) {
+    // FLICKER-1: `sync_origin` writes the origin-shift rebase of its motion vectors here.
+    camera.insert(bevy::render::view::OriginRebase::default());
             camera.insert(sf_atmos_bevy::CloudCamera);
         }
     }
@@ -943,25 +948,52 @@ fn sync_origin(
     let terrain_cam = terrain_camera.iter().next();
     let by_camera = terrain_cam.and_then(|(_, parent)| roots.get(parent.parent()).ok());
     let by_active = || active.0.as_ref().and_then(|ws| roots.iter().find(|(r, _)| r.id == *ws));
-    let Some((_, grid)) = by_camera.or_else(by_active) else { return };
+    let Some((root, grid)) = by_camera.or_else(by_active) else { return };
+    let same_grid = last_grid.as_ref() == Some(&root.id);
+    if !same_grid {
+        *last_grid = Some(root.id.clone());
+    }
     let c = grid.local_floating_origin().cell();
     let origin = WorldPos::new(IVec3::new(c.x, c.y, c.z), Vec3::ZERO);
     if terrain_origin.0 != origin {
         // big_space moved every render-space position by whole cells: the lamp shadow
+    (rebase_on, mut rebase, mut last_grid): (
+        Res<crate::origin_rebase::ShiftRebase>,
+        Query<&mut bevy::render::view::OriginRebase>,
+        Local<Option<sf_world::WorldspaceId>>,
+    ),
         // cache moves what it remembers along instead of recapturing everything.
+    // FLICKER-1: no rebase unless this frame shifts (below).
+    for mut r in &mut rebase {
+        r.set_if_neq(bevy::render::view::OriginRebase::default());
+    }
         if let Some(mut shift) = shadow_shift {
             #[allow(clippy::cast_precision_loss)]
             let cells = (terrain_origin.0.cell - origin.cell).as_vec3();
             shift.0 += cells * sf_coords::GRID_CELL;
         }
         terrain_origin.0 = origin;
-        // The terrain's motion vectors pair this frame's positions with last
-        // frame's view: across a shift they are off by a cell, so temporal
-        // upscalers start over (one frame of plain anti-aliasing).
-        history.reset = true;
         // big_space re-expresses every resident transform: a hitch suspect.
         if let Some(c) = &counters {
             c.add_named("world/origin_shifts", "count", 1.0);
+        }
+        // FLICKER-1 (ST-2): the terrain, impostors and GPU-batched statics pair this frame's
+        // positions with last frame's view: the camera's `OriginRebase` moves their previous
+        // positions into last frame's render space, so temporal history (TAA/DLSS) is kept.
+        // A grid change (teleport), the first frame and `--off shiftrebase` start it over
+        // instead (one frame of plain anti-aliasing: the periodic pop of ST-2).
+        let edge = sf_coords::GRID_CELL;
+        match crate::origin_rebase::on_shift(terrain_origin.0.cell, origin.cell, edge, same_grid, *rebase_on) {
+            crate::origin_rebase::ShiftHandling::Rebase(v) => {
+                for mut r in &mut rebase {
+                    r.0 = v;
+                }
+                info!("origin shift {} -> {}: rebase {v} (history kept)", terrain_origin.0.cell, origin.cell);
+            }
+            crate::origin_rebase::ShiftHandling::Reset => {
+                history.reset = true;
+                info!("origin shift {} -> {}: history reset", terrain_origin.0.cell, origin.cell);
+            }
         }
     }
     #[allow(clippy::cast_precision_loss)]

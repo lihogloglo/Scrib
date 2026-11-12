@@ -30,6 +30,13 @@ pub struct ShoreSettings {
     /// the shore (W-SHORE): the vertices settle, the wind wavelets keep glinting up to the waterline.
     /// 0 = the normals flatten with the displacement (the old look).
     pub normal_floor: f32,
+    /// Seabed slope (rise per metre of shore distance) the analytic shore waves assume for their
+    /// depth, `depth = beach_slope · distance` (W-GERSTNER; [`crate::ShoreWaves`]): the field has
+    /// no bathymetry. 0.05 = 1:20, a typical sandy foreshore (Dean & Dalrymple 2002).
+    pub beach_slope: f32,
+    /// Strength of the analytic shore waves and swash (W-GERSTNER): 1 = the sea state's own
+    /// amplitude, 0 = off (`--off shorewaves`, the FFT simply fades to flat at the shore).
+    pub shore_waves: f32,
 }
 
 impl Default for ShoreSettings {
@@ -44,6 +51,8 @@ impl Default for ShoreSettings {
             chop_ramp: 3.0,
             chop_floor: 0.25,
             normal_floor: 0.5,
+            beach_slope: 0.05,
+            shore_waves: 1.0,
         }
     }
 }
@@ -95,6 +104,10 @@ pub struct ShoreField {
     pub distance: Vec<f32>,
     /// 0 (sheltered) … 1 (open sea); land takes its wettest neighbour's value.
     pub openness: Vec<f32>,
+    /// Shoreward direction (XZ, −∇distance), blurred over ~5 texels: unit where the shore is
+    /// coherent, shorter where two shores' gradients meet (the medial axis of a channel), 0 beyond
+    /// the distance range. The shore waves travel along it (W-GERSTNER).
+    pub direction: Vec<[f32; 2]>,
     pub settings: ShoreSettings,
     pub stats: ShoreStats,
 }
@@ -164,6 +177,86 @@ pub fn edt_squared(feature: &[bool], width: usize, height: usize) -> Vec<f64> {
         row.copy_from_slice(&d[..width]);
     }
     g
+}
+
+/// IEEE half-float bits of `x`, round to nearest even (the shore texture's encoding).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap, clippy::many_single_char_names)]
+pub fn f16_bits(x: f32) -> u16 {
+    let b = x.to_bits();
+    let sign = ((b >> 16) & 0x8000) as u16;
+    let exp = ((b >> 23) & 0xff) as i32;
+    let man = b & 0x7f_ffff;
+    if exp == 0xff {
+        return sign | 0x7c00 | if man == 0 { 0 } else { 0x200 };
+    }
+    let e = exp - 127 + 15;
+    if e >= 0x1f {
+        return sign | 0x7c00;
+    }
+    if e <= 0 {
+        if e < -10 {
+            return sign;
+        }
+        let m = man | 0x80_0000;
+        let shift = (14 - e) as u32;
+        let half = 1u32 << (shift - 1);
+        let rem = m & ((1u32 << shift) - 1);
+        let mut r = m >> shift;
+        if rem > half || (rem == half && r & 1 == 1) {
+            r += 1;
+        }
+        return sign | r as u16;
+    }
+    let mut r = ((e as u32) << 10) | (man >> 13);
+    let rem = man & 0x1fff;
+    if rem > 0x1000 || (rem == 0x1000 && r & 1 == 1) {
+        r += 1;
+    }
+    sign | r as u16
+}
+
+/// Shoreward unit direction (−∇distance, central differences), box-blurred twice over 5 texels so
+/// crests bend smoothly round headlands; where opposite gradients meet the blurred vector shortens.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::many_single_char_names)]
+fn shoreward(distance: &[f32], w: usize, h: usize, texel: f64) -> Vec<[f32; 2]> {
+    let at = |x: usize, y: usize| distance[y * w + x];
+    let mut dir: Vec<[f32; 2]> = (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            let (xl, xr) = (x.saturating_sub(1), (x + 1).min(w - 1));
+            let (yl, yr) = (y.saturating_sub(1), (y + 1).min(h - 1));
+            let gx = (at(xr, y) - at(xl, y)) / (((xr - xl).max(1)) as f32 * texel as f32);
+            let gz = (at(x, yr) - at(x, yl)) / (((yr - yl).max(1)) as f32 * texel as f32);
+            let g = glam::Vec2::new(-gx, -gz);
+            // |∇d| ≈ 1 on a distance field; flat (clamped) or degenerate texels carry no direction.
+            if g.length() > 0.25 { g.normalize().into() } else { [0.0, 0.0] }
+        })
+        .collect();
+    let mut tmp = dir.clone();
+    for _ in 0..2 {
+        box_pass(&dir, &mut tmp, w, h, true);
+        box_pass(&tmp, &mut dir, w, h, false);
+    }
+    dir
+}
+
+/// One 5-tap box blur along rows (`horizontal`) or columns.
+#[allow(clippy::cast_precision_loss, clippy::many_single_char_names)]
+fn box_pass(src: &[[f32; 2]], dst: &mut [[f32; 2]], w: usize, h: usize, horizontal: bool) {
+    for y in 0..h {
+        for x in 0..w {
+            let (c, len) = if horizontal { (x, w) } else { (y, h) };
+            let (lo, hi) = (c.saturating_sub(2), (c + 2).min(len - 1));
+            let mut s = [0.0f32; 2];
+            for t in lo..=hi {
+                let v = if horizontal { src[y * w + t] } else { src[t * w + x] };
+                s[0] += v[0];
+                s[1] += v[1];
+            }
+            let n = (hi - lo + 1) as f32;
+            dst[y * w + x] = [s[0] / n, s[1] / n];
+        }
+    }
 }
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
@@ -328,6 +421,7 @@ impl ShoreField {
             components: open.len(),
             open_components: open.iter().filter(|x| **x).count(),
         };
+        let direction = shoreward(&distance, w, h, texel);
         Self {
             width: w,
             height: h,
@@ -335,6 +429,7 @@ impl ShoreField {
             origin: mask.origin,
             distance,
             openness,
+            direction,
             settings,
             stats,
         }
@@ -359,6 +454,23 @@ impl ShoreField {
         (lerp2(&self.distance), lerp2(&self.openness))
     }
 
+    /// Bilinear shoreward direction ([`Self::direction`]) at world XZ; 0 outside the field.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    pub fn sample_direction(&self, x: f64, z: f64) -> glam::Vec2 {
+        let u = (x - self.origin.x) / self.texel;
+        let v = (z - self.origin.y) / self.texel;
+        if u < 0.0 || v < 0.0 || u > (self.width - 1) as f64 || v > (self.height - 1) as f64 {
+            return glam::Vec2::ZERO;
+        }
+        let (x0, y0) = (u.floor() as usize, v.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(self.width - 1), (y0 + 1).min(self.height - 1));
+        let (fx, fy) = ((u - x0 as f64) as f32, (v - y0 as f64) as f32);
+        let at = |x: usize, y: usize| glam::Vec2::from(self.direction[y * self.width + x]);
+        let top = at(x0, y0).lerp(at(x1, y0), fx);
+        let bottom = at(x0, y1).lerp(at(x1, y1), fx);
+        top.lerp(bottom, fy)
+    }
+
     /// Amplitude scale of the swell (long cascades) at shore distance `d` and openness `o`
     /// (`water_common.wesl` `shore_scales` is the GPU twin).
     pub fn swell_scale(&self, d: f32, o: f32) -> f32 {
@@ -379,16 +491,16 @@ impl ShoreField {
         (s.chop_floor + (1.0 - s.chop_floor) * o) * smoothstep(0.0, s.chop_ramp, d).max(s.normal_floor)
     }
 
-    /// The GPU texture (`Rg8Unorm`, rows +Z): r = 0.5 + 0.5·sign(d)·√(|d|/range) (fine near the
-    /// shoreline, where foam and attenuation need it), g = openness.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    pub fn encode_rg8(&self) -> Vec<u8> {
-        let range = self.settings.range.max(1e-3);
-        let mut out = Vec::with_capacity(self.distance.len() * 2);
-        for (d, o) in self.distance.iter().zip(&self.openness) {
-            let e = 0.5 + 0.5 * d.signum() * (d.abs() / range).min(1.0).sqrt();
-            out.push((e * 255.0).round().clamp(0.0, 255.0) as u8);
-            out.push((o * 255.0).round().clamp(0.0, 255.0) as u8);
+    /// The GPU texture (`Rgba16Float`, rows +Z, little-endian): (distance m, openness, shoreward
+    /// x, shoreward z). Half floats keep the distance to ≤ 3 cm inside the 40 m wave band, which
+    /// the shore waves' phase needs (W-GERSTNER; the old `Rg8Unorm` √-encoding was ~1 m there),
+    /// and carry the baked direction so the shaders need no finite differences.
+    pub fn encode_rgba16f(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.distance.len() * 8);
+        for ((d, o), dir) in self.distance.iter().zip(&self.openness).zip(&self.direction) {
+            for v in [*d, *o, dir[0], dir[1]] {
+                out.extend_from_slice(&f16_bits(v).to_le_bytes());
+            }
         }
         out
     }

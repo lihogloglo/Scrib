@@ -63,3 +63,14 @@ Look for: small wind ripples glinting and moving right up to the waterline on th
 banks; the swell (big slow waves) still dying out over the last tens of metres, the surface itself not bobbing at the
 sand; no flat mirror strip along the shore. Bad: shimmer, sparkle noise or moiré on the near-shore or far water; open-sea
 chop on the beach; a visible line where the ripples start. Foam and reflections should look unchanged.
+
+### WA-5: Gerstner shore waves (W-GERSTNER; `scene wa-seyda-noon`, `wa-bittercoast`; A/B `--off shorewaves`)
+
+Status: awaiting owner. Kind: real game locations, High preset, the scenes' own time and weather; windy variant `--water-wind 14`.
+Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-seyda-noon`, then `scene wa-bittercoast`, then `scene wa-seyda-noon --water-wind 14`;
+A/B: the same with `--off shorewaves` (the FFT alone fades to flat at the shore). Answers WA-1 swash wish.
+Look for: waves rolling in parallel to the beach and washing up and back over the sand (a few metres of run-up, faster up
+than down), rising from ripples at the waterline to the open swell over the last ~40 m, crests bending and sets varying
+along the shore, foam riding the breaking crests; stronger swash with `--water-wind 14`. Bad: conveyor-belt regularity,
+loops or spikes on crests, a seam where they meet the FFT swell, smearing when the camera moves (motion vectors), water
+showing through the beach behind the swash, W-SHORE ripples gone.

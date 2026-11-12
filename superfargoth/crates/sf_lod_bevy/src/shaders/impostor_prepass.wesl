@@ -82,7 +82,10 @@ fn fragment(in: PrepassOutput) -> PrepassFragmentOutput {
     out.normal = vec4<f32>(n * 0.5 + vec3<f32>(0.5), 1.0);
 @if(MOTION_VECTOR_PREPASS) {
     let clip = view.unjittered_clip_from_world * in.world_position;
-    let previous = previous_view_uniforms.unjittered_clip_from_world * in.world_position;
+    // Static: last frame's position is this one, moved into last frame's render space on a
+    // floating-origin shift frame (`origin_rebase`, vendored bevy_render, FLICKER-1).
+    let previous = previous_view_uniforms.unjittered_clip_from_world
+        * vec4<f32>(in.world_position.xyz + view.origin_rebase, 1.0);
     out.motion_vector = (clip.xy / clip.w - previous.xy / previous.w) * vec2<f32>(0.5, -0.5);
 }
 @if(UNCLIPPED_DEPTH_ORTHO_EMULATION)

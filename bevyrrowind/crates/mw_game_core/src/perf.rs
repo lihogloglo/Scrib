@@ -74,6 +74,10 @@ pub enum Part {
     /// fog in front of the deck dims it, the far weather ordered by distance; off, the whole fog
     /// column and the far weather in front of the clouds (the old order, an A/B).
     CloudFog,
+    /// The far storm's shape (CW-1, WE-13, `sf_atmos_bevy::FarStormShape`): distant rain under the
+    /// clouds' thick cores, a narrow noisy region edge, the far medium integrated analytically; off,
+    /// the `WE4d` far weather (the region column, 8 jittered steps; the old path, an A/B).
+    StormShape,
     /// Screen-space planar reflections on the water (W-SSPR, `sf_water_bevy::WaterReflections`): off,
     /// the environment map only (the old look, an A/B).
     WaterSsr,
@@ -81,6 +85,10 @@ pub enum Part {
     /// `sf_water::ShoreSettings::normal_floor`): off, the normal flattens with the displacement at the
     /// shore (the old look, an A/B).
     ShoreNormals,
+    /// Analytic Gerstner shore waves and swash where the FFT swell fades (W-GERSTNER,
+    /// `sf_water::ShoreSettings::shore_waves`): off, the FFT alone fades to flat at the shore (the old
+    /// look, an A/B).
+    ShoreWaves,
     /// Fog on blended and additive NIF materials (`sf_atmos_bevy::FogTranslucentsPlugin`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
@@ -142,10 +150,14 @@ pub enum Part {
     /// the baked cell tables (`sf_scene_bevy`) instead of the precombine; off, the precombine draws
     /// them again (an A/B).
     Scene,
+    /// Floating-origin shifts rebase motion vectors (FLICKER-1, ST-2, `bevy_render::view::OriginRebase`):
+    /// temporal history (TAA/DLSS) survives each 256 m cell crossing; off, every shift resets it
+    /// (the old periodic pop, an A/B).
+    ShiftRebase,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 62] = [
+    const ALL: [(&'static str, Part); 65] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -188,8 +200,10 @@ impl Part {
         ("fogbank", Part::FogBank),
         ("fogclamp", Part::FogClamp),
         ("cloudfog", Part::CloudFog),
+        ("stormshape", Part::StormShape),
         ("waterssr", Part::WaterSsr),
         ("shorenormals", Part::ShoreNormals),
+        ("shorewaves", Part::ShoreWaves),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
         ("foliagetransmission", Part::FoliageTransmission),
@@ -209,6 +223,7 @@ impl Part {
         ("trails", Part::Trails),
         ("kickup", Part::Kickup),
         ("scene", Part::Scene),
+        ("shiftrebase", Part::ShiftRebase),
     ];
 
     fn name(self) -> &'static str {
@@ -284,8 +299,17 @@ mod tests {
         let shore = Off::from_flags(&["shorenormals".into()]).expect("known");
         assert!(shore.has(Part::ShoreNormals) && !shore.has(Part::WaterSsr));
         assert_eq!(shore.label(), "shorenormals");
+        let waves = Off::from_flags(&["shorewaves".into()]).expect("known");
+        assert!(waves.has(Part::ShoreWaves) && !waves.has(Part::ShoreNormals));
+        assert_eq!(waves.label(), "shorewaves");
         let cloud = Off::from_flags(&["cloudfog".into()]).expect("known");
         assert!(cloud.has(Part::CloudFog) && !cloud.has(Part::FogBank) && !cloud.has(Part::Fog));
         assert_eq!(cloud.label(), "cloudfog");
+        let storm = Off::from_flags(&["stormshape".into()]).expect("known");
+        assert!(storm.has(Part::StormShape) && !storm.has(Part::CloudFog));
+        assert_eq!(storm.label(), "stormshape");
+        let shift = Off::from_flags(&["shiftrebase".into()]).expect("known");
+        assert!(shift.has(Part::ShiftRebase) && !shift.has(Part::Scene));
+        assert_eq!(shift.label(), "shiftrebase");
     }
 }

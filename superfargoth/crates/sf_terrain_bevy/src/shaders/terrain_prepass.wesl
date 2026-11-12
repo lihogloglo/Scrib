@@ -48,8 +48,11 @@ fn vertex(v: Vertex) -> PrepassOutput {
 }
     out.world_position = vec4<f32>(p, 1.0);
     out.position = position_world_to_clip(p);
+    // The ground is placed in this frame's render space; on a floating-origin shift frame last
+    // frame's view is in the old one: `origin_rebase` (vendored bevy_render, FLICKER-1) moves the
+    // previous position there, so the static ground keeps a zero motion vector.
 @if(MOTION_VECTOR_PREPASS)
-    out.previous_world_position = vec4<f32>(previous, 1.0);
+    out.previous_world_position = vec4<f32>(previous + view.origin_rebase, 1.0);
     out.lod = t.lod;
 @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
     out.unclipped_depth = out.position.z;

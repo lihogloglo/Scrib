@@ -27,7 +27,7 @@ use mw_water::{optics, optics_records, MwWaterSource, WaterIni};
 use mw_world::ids;
 use sf_records::RecordDb;
 use sf_terrain_bevy::{TerrainHeightsMap, TerrainOrigin, TerrainSystems};
-use sf_water::{BedHeights, Cascades, OpticsMap, ShoreField, WaterSource, WaterWorld, WaveTwin, WetMask, WorldspaceWater, TWIN_RESOLUTION};
+use sf_water::{BedHeights, Cascades, OpticsMap, ShoreField, ShoreWaves, WaterSource, WaterWorld, WaveTwin, WetMask, WorldspaceWater, TWIN_RESOLUTION};
 use sf_water_bevy::{
     OceanSpectrum, OceanSurface, WaterCamera, WaterFrame, WaterLook, WaterPlugin, WaterQuality, WaterReflections, WaterRegionsInput, WaterShoreInput,
     WaterSurface, WaterSystems,
@@ -138,7 +138,9 @@ fn water_quality(q: Quality) -> WaterQuality {
 /// `sspr`: local reflections on the water (W-SSPR; `--off waterssr` = the environment map only).
 /// `shore_normals`: wind wavelets in the shading normal up to the shoreline (W-SHORE; `--off
 /// shorenormals` = the normal flattens with the displacement, `ShoreSettings::normal_floor` 0).
-pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, (sspr, shore_normals): (bool, bool), worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>) {
+/// `shore_waves`: analytic Gerstner waves and swash in the shore band (W-GERSTNER; `--off shorewaves`
+/// = the FFT alone, fading to flat at the shore, `ShoreSettings::shore_waves` 0).
+pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, (sspr, shore_normals, shore_waves): (bool, bool, bool), worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>) {
     if mode() != WaterMode::On {
         return;
     }
@@ -172,6 +174,13 @@ pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, (sspr, shore_no
     let mut settings = mw_water::shore_settings();
     if !shore_normals {
         settings.normal_floor = 0.0;
+    }
+    if !shore_waves {
+        settings.shore_waves = 0.0;
+    }
+    // The CPU query lifts its surface with the same shore waves as the GPU (W-GERSTNER).
+    if let Some(ws) = world.get_mut(&exterior) {
+        ws.set_shore_waves(Some(ShoreWaves::new(&params, &cascades, &settings)));
     }
     let bake = inputs.mask.map(|mask| {
         let handle = std::thread::Builder::new()

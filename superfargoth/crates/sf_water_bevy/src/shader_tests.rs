@@ -159,3 +159,33 @@ fn water_params_layout() {
     });
     assert_eq!(span, Some(crate::WaterParams::min_size().get()), "WaterParams layout");
 }
+
+/// W-GERSTNER: the shore waves displace the water draw and its motion vectors alike (or DLSS/TAA
+/// smear them), shade the fragment, and the WGSL constants are `sf_water::shore_waves`'s.
+#[test]
+// (Exact: the WGSL literal must parse to the very constant.)
+#[allow(clippy::float_cmp)]
+fn shore_waves_reach_every_pass_with_the_twins_constants() {
+    use sf_water::shore_waves as sw;
+    let material = compile("sf_water_bevy::shaders::water_material", &[]).expect("compiles");
+    let velocity = compile("sf_water_bevy::shaders::water_velocity", &[]).expect("compiles");
+    assert!(material.contains("shore_wave_offset") && material.contains("sw_local_wave"), "no shore waves in the water draw");
+    assert!(velocity.contains("shore_wave_offset"), "no shore waves in the motion vectors");
+    // The previous frame's displacement uses the previous frame's time.
+    assert!(velocity.contains("swash.w"), "motion vectors without the previous time");
+    let src = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/water_common.wesl")).expect("source");
+    let constant = |name: &str| -> f32 {
+        let line = src.lines().find(|l| l.starts_with(&format!("const {name} = "))).unwrap_or_else(|| panic!("const {name}"));
+        line.split('=').nth(1).unwrap().trim().trim_end_matches(';').parse().unwrap_or_else(|_| panic!("{line}"))
+    };
+    assert_eq!(constant("SW_BREAKER"), sw::BREAKER_INDEX);
+    assert_eq!(constant("SW_STEEPNESS"), sw::STEEPNESS_LIMIT);
+    assert_eq!(constant("SW_MIN_DEPTH"), sw::MIN_DEPTH);
+    assert_eq!(constant("SW_GRAVITY"), sf_water::GRAVITY);
+    #[allow(clippy::cast_possible_truncation)]
+    let repeat = sf_water::REPEAT_PERIOD as f32;
+    assert_eq!(constant("SW_REPEAT"), repeat);
+    let shares = format!("const SW_SHARES = vec3({:?}, {:?}, {:?});", sw::SHARES[0], sw::SHARES[1], sw::SHARES[2]);
+    assert!(src.contains(&shares), "{shares}");
+    assert!(src.contains(&format!("/ {:?});", sw::NOISE_PERIOD)), "noise period");
+}

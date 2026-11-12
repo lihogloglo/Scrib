@@ -41,7 +41,7 @@ use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, Te
 use bevy_shader::load_shader_library;
 use bevy_transform::TransformSystems;
 use bevy_transform::components::GlobalTransform;
-use sf_water::{origin_phase, reflection_plane, Cascades, OpticsMap, PlaneCandidate, ShoreField, ShoreSettings, SpectrumParams, WaterOptics, H0, REPEAT_PERIOD};
+use sf_water::{origin_phase, reflection_plane, Cascades, OpticsMap, PlaneCandidate, ShoreField, ShoreSettings, ShoreWaves, SpectrumParams, WaterOptics, H0, REPEAT_PERIOD};
 
 pub use material::{WaterExt, WaterMaterial, WaterParams};
 
@@ -291,7 +291,7 @@ pub struct WaterImages {
     /// SSPR output (`Rgba16Float`, premultiplied colour + confidence), at the snapshot size / the
     /// tier's [`WaterQuality::sspr_scale`].
     pub reflection: Handle<Image>,
-    /// The shore field (`Rg8Unorm`) or a 1×1 open-sea stand-in.
+    /// The shore field (`Rgba16Float`: distance, openness, shoreward direction) or a 1×1 open-sea stand-in.
     pub shore: Handle<Image>,
     /// The optics map (`R8Uint`) or a 1×1 zero.
     pub regions: Handle<Image>,
@@ -418,8 +418,13 @@ fn wave_images(n: usize) -> [Image; 4] {
     [h0, displacement, prev, slopes]
 }
 
+/// One shore texel of open deep water (`sf_water::ShoreField::encode_rgba16f`: the range, open, no direction).
+fn open_sea_texel() -> Vec<u8> {
+    [ShoreSettings::default().range, 1.0, 0.0, 0.0].iter().flat_map(|v| sf_water::shore::f16_bits(*v).to_le_bytes()).collect()
+}
+
 fn shore_image(width: u32, height: u32, data: Vec<u8>) -> Image {
-    let mut i = image(Extent3d { width, height, depth_or_array_layers: 1 }, TextureDimension::D2, TextureFormat::Rg8Unorm, TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST, Some(data));
+    let mut i = image(Extent3d { width, height, depth_or_array_layers: 1 }, TextureDimension::D2, TextureFormat::Rgba16Float, TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST, Some(data));
     i.sampler = sampler(ImageAddressMode::ClampToEdge);
     i
 }
@@ -439,7 +444,7 @@ fn create_images(mut commands: Commands, mut images: ResMut<Assets<Image>>, qual
         snapshot_color: images.add(snapshot_image(UVec2::ONE, TextureFormat::Rgba16Float)),
         snapshot_depth: images.add(snapshot_image(UVec2::ONE, TextureFormat::R32Float)),
         reflection: images.add(reflection_image(UVec2::ONE)),
-        shore: images.add(shore_image(1, 1, vec![255, 255])),
+        shore: images.add(shore_image(1, 1, open_sea_texel())),
         regions: images.add(regions_image(1, 1, vec![0])),
         resolution: n,
         snapshot_size: UVec2::ONE,
@@ -519,8 +524,8 @@ fn upload_bakes(shore: Res<WaterShoreInput>, regions: Res<WaterRegionsInput>, im
     let Some(mut images) = images else { return };
     if shore.is_changed() {
         images.shore = match &shore.field {
-            Some(f) => assets.add(shore_image(f.width as u32, f.height as u32, f.encode_rg8())),
-            None => assets.add(shore_image(1, 1, vec![255, 255])),
+            Some(f) => assets.add(shore_image(f.width as u32, f.height as u32, f.encode_rgba16f())),
+            None => assets.add(shore_image(1, 1, open_sea_texel())),
         };
     }
     if regions.is_changed() {
@@ -597,6 +602,9 @@ struct Shared<'a> {
     cascades: usize,
     /// SSPR this frame: (plane level, texel scale, wave distortion).
     reflection: Option<(f32, u32, f32)>,
+    /// The shore waves of this sea state on the shore field (W-GERSTNER), and last frame's time.
+    shore_waves: Option<ShoreWaves>,
+    prev_time: f64,
 }
 
 /// Render-space XZ of world XZ `p` under the floating origin.
@@ -630,6 +638,8 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
     let shore_field = s.shore.field.as_ref().filter(|_| ocean);
     let st = shore_field.map_or_else(ShoreSettings::default, |f| f.settings);
     let shore2 = Vec4::new(st.range, st.swell_ramp, st.chop_ramp, st.chop_floor);
+    // Shore waves only on the ocean with a shore field, and only while on (`--off shorewaves`).
+    let sw = s.shore_waves.filter(|w| shore_field.is_some() && (w.amplitude > 0.0 || w.swash > 0.0));
     let shore = shore_field.map_or(Vec4::ZERO, |f| {
         let corner = render_xz(f.origin - DVec2::splat(f.texel * 0.5), frame.origin_cell);
         let extent = Vec2::new((f.width as f64 * f.texel) as f32, (f.height as f64 * f.texel) as f32);
@@ -656,6 +666,13 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
         shore,
         shore2,
         misc2: Vec4::new((frame.time.rem_euclid(REPEAT_PERIOD)) as f32, 6.0, st.normal_floor, look.shore_foam),
+        swash: sw.map_or(Vec4::ZERO, |w| Vec4::new(w.omega[0], w.omega[1], w.omega[2], s.prev_time.rem_euclid(REPEAT_PERIOD) as f32)),
+        swash2: sw.map_or(Vec4::ZERO, |w| Vec4::new(w.amplitude, w.swash, w.beach_slope, w.band)),
+        swash3: sw.map_or(Vec4::ZERO, |w| {
+            let g = f64::from(sf_coords::GRID_CELL);
+            let origin = |c: i32| (f64::from(c) * g).rem_euclid(sf_water::shore_waves::NOISE_PERIOD) as f32;
+            Vec4::new(w.land_margin, w.variation, origin(frame.origin_cell.x), origin(frame.origin_cell.z))
+        }),
         regions,
         reflection: match s.reflection {
             // Only the surface at the mirrored level reads the SSPR; others keep the environment map.
@@ -677,6 +694,7 @@ fn drive(
     mut materials: ResMut<Assets<WaterMaterial>>,
     mut state: ResMut<render::WaterRender>,
     mut clock: Local<(u64, [Option<f64>; MAX_CASCADES])>,
+    (mut last_time, mut shore_waves): (Local<Option<f64>>, Local<Option<(OceanSpectrum, ShoreSettings, ShoreWaves)>>),
 ) {
     let Some(images) = images else { return };
     let cascades = spectrum.cascades.len().min(MAX_CASCADES).min(quality.cascades());
@@ -687,9 +705,20 @@ fn drive(
         .map(|(_, surface, _, _, _)| surface.map_or(PlaneCandidate { level: frame.level, bounds: None }, |w| PlaneCandidate { level: w.level, bounds: w.bounds }))
         .collect();
     let plane = cameras.iter().next().and_then(|c| reflection_plane(c.translation(), &candidates));
+    // The shore waves follow the sea state and the field's settings (recomputed only on a change).
+    let sw = shore.field.as_ref().map(|f| {
+        let fresh = shore_waves.as_ref().is_some_and(|(sp, st, _)| *sp == *spectrum && *st == f.settings);
+        if !fresh {
+            *shore_waves = Some((spectrum.clone(), f.settings, ShoreWaves::new(&spectrum.params, &spectrum.cascades, &f.settings)));
+        }
+        shore_waves.as_ref().map_or_else(ShoreWaves::default, |(_, _, w)| *w)
+    });
+    let prev_time = last_time.replace(frame.time).unwrap_or(frame.time);
     let reflection = plane.zip(sspr_scale(*quality, *reflections)).map(|(level, scale)| (level, scale, reflections.wave_distortion));
     let shared = Shared {
         reflection,
+        shore_waves: sw,
+        prev_time,
         frame: &frame,
         spectrum: &spectrum,
         clip: &clip,

@@ -59,6 +59,14 @@ pub struct WaterParams {
     /// SSPR (W-SSPR): (wave distortion; texel scale of the reflection image, 1 or 2, 0 = this
     /// surface does not use it; mirrored plane level, render-space Y; 0).
     pub reflection: Vec4,
+    /// Shore waves (W-GERSTNER, `sf_water::ShoreWaves`): (ω of the three trains rad/s, the previous
+    /// frame's time s, for the motion vectors).
+    pub swash: Vec4,
+    /// (offshore amplitude m, swash amplitude m, beach slope, band m); amplitude and swash 0 = off.
+    pub swash2: Vec4,
+    /// (land margin m, variation 0-1, noise origin x, z m: the floating origin modulo
+    /// `sf_water::shore_waves::NOISE_PERIOD`).
+    pub swash3: Vec4,
     /// Optics table of the map, 3 per entry: (absorption, whitecaps), (scattering, contact depth),
     /// (roughness, shore foam, 0, 0).
     pub looks: [Vec4; 24],

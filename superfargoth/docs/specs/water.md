@@ -180,7 +180,8 @@ Far horizon: aerial perspective (Bevy) applies in the water pass (below).
 ## Shoreline and depth colour
 
 **`water.shore` bake** (per terrain tile, per body that reaches it; keyed by terrain tile + body):
-- signed shore distance (R16, 2 m texels), from the land/water mask at rest level by an exact EDT
+- signed shore distance (as built: one `Rgba16Float` with openness and the shoreward direction,
+  3.66 m texels in Morrowind; W-GERSTNER), from the land/water mask at rest level by an exact EDT
   (Felzenszwalb-Huttenlocher), ± 256 m range;
 - **openness** (R8): geodesic distance through water to open water (the body's "far" region),
   normalised. Enclosed water (swamp pools, canals, harbours) gets low openness: wave amplitude
@@ -213,6 +214,42 @@ height clipmap gives the bed.
     the 4 m cascade stays near full strength to ~2 m depth while the 16 m one shoals from ~8 m. One
     floor for both chop cascades, halfway (0.5), keeps wind ripples glinting to the waterline without
     open-sea chop on the beach, and survives the Low tier dropping the 4 m cascade.
+- **shore waves (W-GERSTNER, 2026-11-12):** where the FFT swell fades (`swell_ramp`, 40 m), three
+  analytic Gerstner trains take over and roll in along the baked shoreward direction, crests on the
+  shore-distance iso-lines (parallel to the shoreline), plus a **swash** that lifts and drops the water
+  on the beach; `--off shorewaves` (`ShoreSettings::shore_waves` 0) = the FFT alone. CPU twin and the
+  reference for every law: `sf_water::shore_waves` (module docs); GPU `water_common.wesl`
+  `shore_waves` in the vertex draw, the velocity redraw (now and at the previous frame's time) and the
+  fragment normal (slopes added to the cascades', trains filtered by the pixel footprint); the CPU
+  `WaterQuery` adds the same term (`set_shore_waves`).
+  - *Model:* depth `h = beach_slope·d` (0.05 = 1:20; no bathymetry in the field yet). Dispersion
+    `ω² = gk·tanh(kh)` by Eckart's form, whose phase over a linear slope is closed-form
+    (`Φ = (atanh v + atan v)/β`, `v = √tanh(k0h)`): crests slow and bunch toward the beach. Periods
+    1, 1.12 and 1.8 × the JONSWAP peak (sets every ~8 waves from the beat, a short wind-sea train),
+    rounded to whole cycles per 256 s. Amplitude: the FFT swell band's `Hs/2 = 2√m0` (so the same
+    wind/sea state drives both), Green's-law shoaling, smooth-min'd with the McCowan breaker
+    `H ≤ 0.78h` and Miche's limit; horizontal orbit `A·coth(kh)` with `Σ Q·k·A·coth ≤ 0.75` (no loops).
+    Weight `o·(1 − smoothstep(0, swell_ramp, d))`, the FFT swell's exact complement (no seam). Swash:
+    Stockdon 2006 incident swash `0.75·β·√(H0L0)`, half as amplitude, fast uprush / slow backwash,
+    over the beach up to a land margin of ≈ 2× the run-up (2-8 m; the fragment cull follows it).
+    Variation: world-space value noise bends crests (± 0.8 rad, 64 m) and varies sets (0.6-1, 32 m).
+    At 7 m/s: A0 0.77 m, T 5.6/4.9/3.1 s, swash ± 0.16 m, crests ~0.15-0.18 m over 5-20 m (breaker-
+    limited, so nearly wind-independent; the swash grows with the wind).
+  - *Field:* `water.shore` is now `Rgba16Float` (distance m, openness, shoreward xz): the 8-bit
+    √-distance was ~1 m coarse inside the band (phase error ~0.3 rad); the direction is baked
+    (central differences, 2× 5-texel box blur, shorter at medial axes) instead of 3-4 extra texture taps
+    per vertex and fragment. Shore foam bands ride the main train's crests while on.
+  - *Reuse check:* Bevy 0.20 has no water. `bevy_water` (Bevy ≤ 0.16) sums open-sea waves, no shore
+    model; `bevy-aqua` (0.19; we already port its spectrum and foam) has analytic open-sea waves and
+    coastal foam, no shore-directed trains. So our own, in our FFT surface.
+  - *Industry comparison:* Gerstner/trochoidal waves (Tessendorf 2001; GPU Gems 1 ch. 1, Finch 2004)
+    driven by a shore distance field is the shipped pattern: Crest's shoreline/depth inputs, UE5 Water's
+    shoreline wave masks on a distance field, AC IV Black Flag and Uncharted's shore wave trains,
+    Outerra's skewed trochoids by SDF gradient. Ours adds physical shoaling/breaking and a closed-form
+    shallow phase. Owner-provided prior art (mechanism only, constants recalibrated): the owner's own
+    Godotwind shore swash (MIT, `ocean_shore_common.gdshaderinc`, `docs/plans/shore_overhaul.md`).
+  - *Next (not built):* a bathymetry channel from the terrain heights (real depth instead of the slope
+    proxy: waves breaking on reefs); skewed (asymmetric) breaker profiles.
 - shore foam: a foam band at shore distance 0-6 m modulated by a wave-phase signal travelling shoreward
   (aqua's shoreline foam), plus **contact foam** where the scene depth behind the water is within a few
   cm of the surface (rocks, piers, boats, legs);

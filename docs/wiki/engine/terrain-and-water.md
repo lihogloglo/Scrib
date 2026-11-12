@@ -39,7 +39,10 @@ keyed by source height above the plane); the water draw swaps the environment-ma
 `WaterQuality::sspr_scale` Low off, Medium ½, High/Ultra full. Reflections are unfogged (fog is applied over the water after). `WaterQuery::sample`
 (`query.rs:294`). Shore: `ShoreField::bake` (`shore.rs`) runs on a thread at startup, not in the bake store
 (`mw_environment_bevy/src/water.rs:172-182`), then attenuates swell and foam. At the shore the displacement settles but the
-shading normal keeps the chop's wind wavelets at `ShoreSettings::normal_floor` (0.5; `shore_normal_scales`, W-SHORE). Morrowind wiring:
+shading normal keeps the chop's wind wavelets at `ShoreSettings::normal_floor` (0.5; `shore_normal_scales`, W-SHORE). Where the
+FFT swell fades, `sf_water::ShoreWaves` (`shore_waves.rs`; GPU `water_common.wesl` `shore_waves`, in the draw, the velocity redraw
+and the CPU query) adds three Gerstner trains rolling in along the baked shoreward direction plus a beach swash, scaled by the
+sea state (W-GERSTNER; the shore field is `Rgba16Float`: distance, openness, direction). Morrowind wiring:
 `mw_environment_bevy/src/water.rs:141` (`add`; fixed-tick `step`, `bed`, `pools`, `sync`); `mw_water` gives bodies (sea at 0,
 interiors at `WHGT`), optics by region (`optics::*`), `SEA_FETCH_M` 20 km, shore settings.
 
@@ -51,7 +54,7 @@ interiors at `WHGT`), optics by region (`optics::*`), `SEA_FETCH_M` 20 km, shore
 ## Switches and counters
 
 `--water on|scaffold|off` (`mw_environment_bevy/src/water.rs:46`; scaffold is a flat plane, `exterior.rs:881`), `--water-wind`;
-`--off waterssr` (environment map only), `--off shorenormals` (flat normal at the shore, the old look), `--off terrain` and `--off far` perf parts (`mw_game_core/src/perf.rs:127`). `TerrainSettings` `upload_budget`,
+`--off waterssr` (environment map only), `--off shorenormals` (flat normal at the shore, the old look), `--off shorewaves` (no Gerstner shore waves or swash), `--off terrain` and `--off far` perf parts (`mw_game_core/src/perf.rs:127`). `TerrainSettings` `upload_budget`,
 `max_loads`, `splat_range`, `raise_m`.
 
 ## Known limits

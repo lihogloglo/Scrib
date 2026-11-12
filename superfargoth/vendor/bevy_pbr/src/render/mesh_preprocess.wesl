@@ -269,6 +269,17 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
             previous_input[previous_input_index].world_from_local;
     } else {
         previous_world_from_local_affine_transpose = world_from_local_affine_transpose;
+        // superfargoth patch (own, FLICKER-1: origin rebase): a mesh written this frame with no
+        // previous slot (GPU-batched instances, #25978; meshes new this frame) is in this frame's
+        // render space; on a floating-origin shift frame its "previous = current" transform moves
+        // into last frame's render space, where the previous view is, so a static mesh keeps a
+        // zero motion vector (and the early occlusion test reads the right spot of last frame's
+        // depth). An unchanged mesh's transform did not move in render space: it is left alone.
+        if (mesh_changed_this_frame) {
+            previous_world_from_local_affine_transpose[0].w += view.origin_rebase.x;
+            previous_world_from_local_affine_transpose[1].w += view.origin_rebase.y;
+            previous_world_from_local_affine_transpose[2].w += view.origin_rebase.z;
+        }
     }
     let previous_world_from_local =
         maths::affine3_to_square(previous_world_from_local_affine_transpose);

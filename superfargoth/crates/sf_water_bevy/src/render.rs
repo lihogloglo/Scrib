@@ -369,7 +369,8 @@ fn queue_pipelines(views: Query<&Msaa, With<WaterView>>, pipelines: Option<Res<W
     }
 }
 
-type ViewItem<'a> = (Entity, &'a ExtractedView, &'a ViewTarget, &'a ViewDepthStencilTexture, &'a Msaa);
+// FLICKER-1: `OriginRebase` (O_new - O_old, render space) on origin-shift frames; zero otherwise.
+type ViewItem<'a> = (Entity, &'a ExtractedView, &'a ViewTarget, &'a ViewDepthStencilTexture, &'a Msaa, Option<&'a bevy_render::view::OriginRebase>);
 
 #[allow(clippy::too_many_arguments)]
 fn prepare(
@@ -440,7 +441,7 @@ fn prepare(
     let mut params = UniformBuffer::from(state.params);
     params.write_buffer(&device, &queue);
     let sspr = sspr_bindings(&state, &pipelines, &cache, &device, &queue, &images, &view_uniforms, &mut gpu, (snap_color, snap_depth));
-    for (entity, view, target, depth, msaa) in &views {
+    for (entity, view, target, depth, msaa, rebase) in &views {
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
         let ms = usize::from(msaa.samples() > 1);
         let snapshot = device.create_bind_group(
@@ -450,6 +451,9 @@ fn prepare(
         );
         let clip_from_world = view.clip_from_view * view.world_from_view.to_matrix().inverse();
         let prev_clip = gpu.prev.insert(entity, clip_from_world).unwrap_or(clip_from_world);
+        // Water writes previous = current in this frame's render space; last frame's matrix is in the old
+        // one, so shift by the origin delta on a shift frame (FLICKER-1) instead of resetting history.
+        let prev_clip = prev_clip * Mat4::from_translation(rebase.map_or(bevy_math::Vec3::ZERO, |r| r.0));
         let mut velocity_uniform =
             UniformBuffer::from(VelocityUniform { clip_from_world, prev_clip_from_world: prev_clip, camera: view.world_from_view.translation().extend(1.0) });
         velocity_uniform.write_buffer(&device, &queue);

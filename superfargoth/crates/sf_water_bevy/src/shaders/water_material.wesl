@@ -10,7 +10,7 @@
 // aerial perspective, clouds and fog run after the water by its depth (W-ORDER, render-order.md).
 // Optics shading follows bevy-aqua's structure (MIT OR Apache-2.0).
 
-import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_normal_scales, shore_scales};
+import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_normal_scales, shore_scales, shore_wave_offset, shore_waves};
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT;
 import bevy_pbr::render::pbr_types::{PbrInput, pbr_input_new};
@@ -47,8 +47,11 @@ struct WaterVarying {
 fn vertex(v: WaterVertex) -> WaterVarying {
     let camera = view.world_position.xz;
     let x0 = clipmap_xz(water, v.position.xz, v.position.y, camera);
-    let scales = shore_scales(water, shore_at(water, shore_field, shore_sampler, x0));
-    let p = displaced(water, displacement, wave_sampler, x0, camera, scales);
+    let sh = shore_at(water, shore_field, shore_sampler, x0);
+    let scales = shore_scales(water, sh.xy);
+    // FFT cascades, plus the shore waves where the swell fades (W-GERSTNER).
+    let g = shore_wave_offset(water, sh, x0, camera, water.misc2.x);
+    let p = displaced(water, displacement, wave_sampler, x0, camera, scales) + vec4(g, g.y);
     var out: WaterVarying;
     out.world_position = vec4(p.xyz, 1.0);
     out.position = view.clip_from_world * out.world_position;
@@ -180,12 +183,13 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     }
     // The sea under land is not shaded (it is behind the terrain anyway).
     let sh = shore_at(water, shore_field, shore_sampler, in.lagrangian);
-    if sh.x < -2.0 {
+    // (The swash lifts the water up to its land margin onto the beach, W-GERSTNER.)
+    if sh.x < -max(2.0, water.swash3.x) {
         discard;
     }
-    let scales = shore_scales(water, sh);
+    let scales = shore_scales(water, sh.xy);
     // The normal keeps wind wavelets up to the shoreline where the displacement settles (W-SHORE).
-    let nscales = shore_normal_scales(water, sh);
+    let nscales = shore_normal_scales(water, sh.xy);
     let look = look_at(in.world_position.xz);
     let to_camera = camera - in.world_position.xyz;
     let d = length(to_camera);
@@ -213,6 +217,10 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
         // (The displacement has no mips: foam fades out once it would alias.)
         whitecap += f32(c < 2u) * textureSampleLevel(displacement, wave_sampler, uv, i32(c), 0.0).w * scales.x * (1.0 - smoothstep(2.0, 5.0, lod));
     }
+    // Shore waves (W-GERSTNER): their analytic slopes, trains filtered out once a pixel's footprint
+    // can't carry them (λ < 4 footprints).
+    let gw = shore_waves(water, sh, in.lagrangian, water.misc2.x, 3.14159265 / max(footprint, 1e-4));
+    s += gw.slope;
     let far = smoothstep(water.misc.z * 2.0, water.misc.z * 16.0, d);
     var N = normalize(vec3(-s.x / max(1.0 + s.z, 0.2), 1.0, -s.y / max(1.0 + s.w, 0.2)));
     N = normalize(mix(N, vec3(0.0, 1.0, 0.0), far));
@@ -268,7 +276,8 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     if sh.x < band && look.shore_foam > 0.0 {
         let fade = 1.0 - smoothstep(0.0, band, max(sh.x, 0.0));
         let phase = sh.x * 0.8 + water.misc2.x * 1.3;
-        let wave = 0.5 + 0.5 * sin(phase);
+        // With the shore waves on, the bands ride their main train's breaking crests (W-GERSTNER).
+        let wave = select(0.5 + 0.5 * sin(phase), 0.5 + 0.5 * gw.crest, water.swash2.x > 0.0);
         foam = max(foam, look.shore_foam * fade * (0.35 + 0.65 * wave * wave) * (0.3 + 0.7 * sh.y));
     }
     if valid && path < 1e5 {

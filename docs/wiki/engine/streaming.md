@@ -27,6 +27,10 @@ rewrites every `GlobalTransform` and Bevy re-collects all mesh instances.
 `StreamingAnchor::visual()` (`mw_exterior_bevy/src/exterior.rs:804-807`); the player has `StreamingAnchor::gameplay()`
 (`exterior.rs:872`). `TransformPlugin` is disabled (`exterior.rs:291`). A streamed cell is a `Stationary` entity with
 `CellCoord` (`stream.rs:1250`). Shaders get world phases from the `WorldOrigin` uniform (`origin.rs:1-40`).
+On a shift frame `sync_origin` (`exterior.rs` ~:942) puts `O_new - O_old` on the camera's `OriginRebase` (vendored
+`bevy_render`, WGSL `View::origin_rebase`); "previous = current" motion-vector writers (`mesh_preprocess.wesl` for GPU
+batches, terrain and impostor prepasses) add it, so TAA/DLSS keep their history (FLICKER-1; before, every shift reset it:
+the ~256 m pop of ST-2). A grid change still resets; `--off shiftrebase` restores the reset. Log line `origin shift`.
 
 **Rings.** Defaults (`rings.rs:81`): active 192/256 m, near 768/896, far 3000/3250 (load/unload). With a far field,
 `far_streaming_config` (`sf_lod_bevy/src/lib.rs:136`) derives near/far from the handoffs (`exterior.rs:269`);
@@ -59,7 +63,8 @@ stale instance offsets in 0.20).
 
 - `--off near` (`statics`, `r1`), `--off far` (`r2`): spawners wrap and skip that level (`mw_devtools_bevy/src/perf.rs:259`).
   `--off nif`, `sizecull` (`exterior.rs:266`), `farfield` (`exterior.rs:217`), `actors`, `walkers`, `terrain`. Others:
-  `statics-and-lod.md`. Env `BEVYRROWIND_LOADING_MESHES` (`exterior.rs:1278`).
+  `statics-and-lod.md`. Env `BEVYRROWIND_LOADING_MESHES` (`exterior.rs:1278`). `--off shiftrebase`: origin shifts reset
+  temporal history instead of rebasing motion vectors (FLICKER-1 A/B).
 - Counters: `stream/drive/ms`, `stream/tick/ms`, `stream/<stage>/{items,ms,queue}` (+`bytes` for upload; `stream.rs:972-1010`),
   `stream/{requests,resident_cells,models,model_queue,page_cache/bytes,oldest_request/s,latency/s,shift_guard/frames}`,
   `bigspace/*/ms` (`lib.rs:188`), `world/meshes`, `world/point_lights` (`exterior.rs:1185`). `StreamStats` (`stream.rs:245`).

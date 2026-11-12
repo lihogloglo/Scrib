@@ -331,3 +331,19 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   Must not: the at-sea deck seen from below changed (horizon clouds may be slightly clearer: less fog past them,
   expected), the FG-11/FG-7 fog looks changed, a bright or dark halo at cloud silhouettes against terrain.
 - Status: confirmed (owner 2026-11-12, `scene fg-bittercoast-ridge`: "works perfectly"; `--off cloudfog` A/B not run).
+
+### WE-13: Local storm seen from outside (CW-1, distant-weather.md "CW-1 Storm shape"; follows WE-10)
+- Kind: game location. `bash bevyrrowind/tools/owner_launch.sh scene we3-ridge`, then BRP `bevyrrowind/set {"weather":
+  "thunderstorm", "region": "Ascadian Isles Region", "transition_hours": 0}` (look east/south-east) and `"ashstorm"` in
+  `"Ashlands Region"` (look north); still camera, then pan slowly. A/B: relaunch with `--off stormshape` (old region column).
+- Look for: a storm cell with a ragged, cloud-shaped rain curtain hanging under its thick clouds, thinner toward the
+  ground, gaps where the deck is thin; a narrow soft border (~64 m, wavering) instead of a straight wall; no
+  ground-to-sky pillar; no shimmer at the curtain's edge, still or panning.
+- Must not: fog scenes FG-7, FG-11, WE-11, WE-12 changed (Bitter Coast fog from the ridge, fog over sea, deck from above);
+  rain doubled or popping when walking into the storm.
+- Status: partial (owner 2026-11-12, `scene we3-ridge`, Ascadian Isles thunderstorm forced over BRP): the rain curtain is
+  barely visible; the cloud is still a cylinder (its base shape extruded straight up); a tiny shimmer exactly on the
+  horizon line; walking in, the rain appears suddenly at a threshold (on/off), worse than before CW-1. A/B `--off stormshape` (old path): rain fades in smoothly when
+  walking in (better); the shimmer is NOT at the storm edge but exactly on the horizon line where no fog is behind, in
+  both paths; cloud extruded upward in both (not an exact cylinder); curtain hard to see and not reaching the cloud base
+  in both; shimmer behind the curtain (old path, seen before too). CW-1 aimed at an edge flicker the owner does not see.

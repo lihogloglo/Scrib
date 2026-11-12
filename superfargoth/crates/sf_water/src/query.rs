@@ -220,6 +220,7 @@ pub struct WorldspaceWater {
     bed: Option<Arc<dyn BedHeights>>,
     waves: Option<WaveTwin>,
     shore: Option<Arc<crate::ShoreField>>,
+    shore_waves: Option<crate::ShoreWaves>,
 }
 
 impl WorldspaceWater {
@@ -241,6 +242,7 @@ impl WorldspaceWater {
             bed: None,
             waves: None,
             shore: None,
+            shore_waves: None,
         }
     }
 
@@ -264,6 +266,28 @@ impl WorldspaceWater {
 
     pub fn shore(&self) -> Option<&crate::ShoreField> {
         self.shore.as_deref()
+    }
+
+    /// The analytic shore waves (W-GERSTNER) on the shore product, as the GPU draws them: with
+    /// [`Self::set_shore`] and the twin's clock they lift the query's surface and normal too.
+    pub fn set_shore_waves(&mut self, waves: Option<crate::ShoreWaves>) {
+        self.shore_waves = waves;
+    }
+
+    /// The shore waves at world XZ `p` at twin time `t` (Eulerian: two fixed-point steps undo
+    /// their horizontal displacement), or `None` without a shore product or shore waves.
+    #[allow(clippy::cast_possible_truncation, clippy::many_single_char_names)]
+    fn shore_wave_at(&self, p: DVec2, t: f64) -> Option<crate::ShoreWave> {
+        let (f, w) = (self.shore.as_ref()?, self.shore_waves.as_ref()?);
+        let t = t.rem_euclid(crate::REPEAT_PERIOD) as f32;
+        let mut x0 = p;
+        let mut g = crate::ShoreWave::default();
+        for _ in 0..3 {
+            let (d, o) = f.sample(x0.x, x0.y);
+            g = w.eval(d, o, f.sample_direction(x0.x, x0.y), crate::ShoreWaves::noise_coords(x0), t);
+            x0 = p - DVec2::new(f64::from(g.offset.x), f64::from(g.offset.z));
+        }
+        Some(g)
     }
 
     pub fn waves(&self) -> Option<&WaveTwin> {
@@ -314,6 +338,20 @@ impl WorldspaceWater {
             height += f64::from(s.height * scale);
             normal = Vec3::Y.lerp(s.normal, shore).normalize_or(Vec3::Y);
             velocity += s.velocity * scale;
+            // The shore waves where the swell fades (W-GERSTNER), as `water_common.wesl` draws them.
+            let xz = DVec2::new(p.x, p.z);
+            if matches!(body.shape, WaterShape::Infinite)
+                && let Some(g) = self.shore_wave_at(xz, w.time())
+                && let Some(before) = self.shore_wave_at(xz, w.time() - 1.0 / 60.0)
+            {
+                let a = body.waves.amplitude;
+                height += f64::from(g.offset.y * a);
+                let ny = normal.y.max(1e-3);
+                let sx = -normal.x / ny + g.slope.x * a / (1.0 + g.slope.z * a).max(0.2);
+                let sz = -normal.z / ny + g.slope.y * a / (1.0 + g.slope.w * a).max(0.2);
+                normal = Vec3::new(-sx, 1.0, -sz).normalize_or(Vec3::Y);
+                velocity += (g.offset - before.offset) * 60.0 * a;
+            }
         }
         let depth = match &self.bed {
             Some(bed) => match bed.bed_height(at) {

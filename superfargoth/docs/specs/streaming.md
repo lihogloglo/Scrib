@@ -628,6 +628,39 @@ two-cell hysteresis, so shifts drop by half or more; the shift guard's
 prediction in `stream.rs` must follow it). The gate formulation is settled
 (diag.md "Frame pacing").
 
+### Origin shift and temporal history (FLICKER-1, 2026-11-12)
+
+A shift re-expresses every render-space position relative to the new cell. Last frame's view
+(`PreviousViewData`) and Bevy-tracked previous transforms stay in the old frame, which is right
+for them; but the terrain prepass, impostors and GPU-batched statics write "previous position =
+current position", now in the new frame, so their motion vectors were off by the 256 m delta and
+the game reset TAA/DLSS history at every shift: every temporal effect (bayer shadow fades, far
+dithers, water) showed raw for a few frames each ~256 m of travel (ST-2, owner bisect).
+
+**As built.** The camera carries `OriginRebase(O_new - O_old)` (render meters; zero on every
+other frame), vendored `bevy_render` `view/mod.rs` → WGSL `View::origin_rebase` (marker
+`superfargoth patch (own, FLICKER-1: origin rebase)`). Sign: render = world − O, so a static
+point's last-frame render position is `current + origin_rebase`. Readers: `mesh_preprocess.wesl`
+(previous = current branch, only for meshes written this frame: GPU batches and new meshes;
+unchanged meshes did not move in render space), `terrain_prepass.wesl`, `impostor_prepass.wesl`.
+Not needed: Bevy-tracked and skinned meshes (previous transform already old-frame), view model
+(reads the mesh's previous transform), sky motion (rotation only), clouds/froxels (own
+`origin_shift` reprojection). Water (`water_velocity.wesl`, own previous matrix, prev = current
+too) needs it folded into its `prev_clip_from_world` in `sf_water_bevy/src/render.rs` (pending,
+after W-GERSTNER). `mw_exterior_bevy` `sync_origin` writes it (`origin_rebase.rs`,
+math tests) and logs `origin shift A -> B: rebase … (history kept)` or `… history reset`; a
+grid change (teleport) and the first frame still reset. `--off shiftrebase` = the old reset.
+Risk: a motion-vector writer we missed draws a one-frame 256 m vector (a local smear, not a
+global pop); meshes outside the big_space hierarchy are unchanged in render space and get none.
+
+**Reuse check.** Bevy 0.20 has no floating origin and its prepass has no origin term;
+`big_space` rebases transforms only (no previous-frame data). **Industry:** UE world-origin
+rebasing (`ApplyWorldOffset`) offsets the scene's previous-frame view and primitive transforms
+by the delta and keeps history; UE5 LWC renders "translated world" with a per-frame
+`PreViewTranslation` and its previous one; HDRP camera-relative rendering keeps the previous
+camera position for motion vectors (from memory, not re-read). Ours is the same offset, applied
+where "previous = current" is written. Cost ~0 ms (three adds per vertex/mesh).
+
 ### Visibility range slots (lodaudit, 2026-10-19)
 
 Bevy 0.20 keeps one GPU slot per **distinct** `VisibilityRange` for the app's lifetime
@@ -720,6 +753,7 @@ them and adds what neither covered. "Unverified" marks claims from memory.
 | Time-budgeted integration, upload pacing | UE `s.LevelStreamingActorsUpdateTimeLimit`, texture/mesh pools; Unity async upload | yes / partial | audit rows 19–20 |
 | Size-based draw and load distance, per-category importance | UE cull distances, RAGE `lodDist`, Bethesda fade categories, OpenMW min size | J1 built, J3 planned | audit rows 1, 2, 34 |
 | Load doors + prefetch | Bethesda load doors, OpenMW preload; UE "loaded, hidden" | Prefetched state, fade | **match** (above) |
+| Origin rebasing keeps temporal history | UE `ApplyWorldOffset` offsets previous view/primitive data; HDRP previous camera position | `OriginRebase` (FLICKER-1, "Origin shift and temporal history") | **match** |
 | Fast I/O path | DirectStorage + GPU decompression (GDeflate), PS5 Kraken hardware decode (Ratchet & Clank), UE IoStore + Oodle; Unity async read manager | LZ4 `.sfmesh` decoded on the task pool, one file per product | **differ**: decode runs at GB/s and isn't the bottleneck (spikes are main/render-thread work); revisit only with HD texture packs (texture streaming, audit row 23) |
 | **Runtime-toggled placement groups** | UE World Partition **Data Layers** (runtime states Unloaded/Loaded/Activated, per-layer HLODs, unverified detail); Creation Engine **enable parents** (one marker toggles a group; previs/precombines are broken by toggled refs, hence the "don't disable precombined refs" rule, unverified); older Creation-era scripts toggle single refs | `DISABLED` flag + overlay "removed ids"; no group toggle, no re-enable state, far field baked without toggles | **GAP (P2)**: open question 2 |
 
