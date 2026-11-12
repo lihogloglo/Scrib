@@ -39,10 +39,17 @@ is a frame over 25 ms (report "hitches"). A/B differences under ~0.5 ms are run-
 [Frame and views](engine/frame-and-views.md): cameras and shadow views in an exterior frame, driving plugins, perf suite and report sections
 
 ### Bevy 0.20 (`bevy/`)
+[Render and visibility](bevy/render-and-visibility.md): extraction, visibility and culling (CPU/GPU, `NoCpuCulling`, ranges), retained bins, GPU preprocessing, views, shadow views; path:line in Bevy 0.20
 <!-- one line each -->
 
 ### Industry standards (`industry/`)
 <!-- one line each -->
+[Open-world streaming](industry/open-world-streaming.md): partitions, HLOD, async budgets, large-world coordinates, UE5/CDPR/RAGE/Decima
+[GPU-driven rendering](industry/gpu-driven-rendering.md): retained scenes, per-view GPU culling, indirect draws, CPU cost per entity
+[Shadows](industry/shadows.md): cascades, virtual and cached shadow maps, local-light budgets, contact and far shadows
+[Character animation](industry/character-animation.md): motion matching vs blend graphs, warping, foot placement, anim budget, crowds, modular merge
+[First person](industry/first-person.md): true first person vs arms rig, view model FOV, camera styles, first-person melee
+[Bevy projects](industry/bevy-projects.md): what other Bevy open-world projects do, and that none reach the target scale
 
 ## Ledgers (`../ledger/`)
 <!-- one line each: [system](../ledger/x.md): N entries, last YYYY-MM-DD -->
