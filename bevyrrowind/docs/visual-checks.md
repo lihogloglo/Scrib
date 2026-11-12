@@ -192,8 +192,8 @@ RO-11 | confirmed (owner 2026-11-01: gone) | [rendering](visual-checks/rendering
 RO-12 | known bug | [rendering](visual-checks/rendering.md) | Bright outline around characters (2026-10-30)
 RO-18 | known bug | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
 RO-19 | known bug | [rendering](visual-checks/rendering.md) | Very short shadow flickers in Balmora (2026-11-11)
-RO-20 | awaiting owner | [rendering](visual-checks/rendering.md) | Far terrain shadows keep following the player after the far-map upload stopped re-binding materials (2026-11-12)
-RO-21 | awaiting owner | [rendering](visual-checks/rendering.md) | Haze and ash tint change smoothly in weather transitions, same look as before, with the medium no longer re-baked on the CPU (perf-push P1, 2026-11-12)
+RO-20 | confirmed 2026-11-12 (subtle shadow swimming on hills while approaching, logged) | [rendering](visual-checks/rendering.md) | Far terrain shadows keep following the player after the far-map upload stopped re-binding materials (2026-11-12)
+RO-21 | confirmed 2026-11-12 | [rendering](visual-checks/rendering.md) | Haze and ash tint change smoothly in weather transitions, same look as before, with the medium no longer re-baked on the CPU (perf-push P1, 2026-11-12)
 RO-22 | awaiting owner | [rendering](visual-checks/rendering.md) | Near/far handoff band: no gaps or doubles with GPU-culled statics, A/B `--off cpuculltag` (perf-push P3, 2026-11-12)
 PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the Census Office floor (again 2026-10-30)
 PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)
@@ -247,7 +247,7 @@ SN-3 | deferred | [characters](visual-checks/characters.md) | Dark elf head morp
 CH-1 | deferred | [characters](visual-checks/characters.md) | The M3 lineup
 CH-3 | deferred | [characters](visual-checks/characters.md) | Balmora street with NPCs standing in place
 CH-4 | deferred | [characters](visual-checks/characters.md) | Census and Excise Office staff
-CH-5 | awaiting owner | [characters](visual-checks/characters.md) | Busy Balmora street: NPCs deform normally with shared skin joint blocks, no DLSS smear (perf-push P5, 2026-11-12)
+CH-5 | confirmed 2026-11-12 (new: idle NPCs float slightly above ground, logged) | [characters](visual-checks/characters.md) | Busy Balmora street: NPCs deform normally with shared skin joint blocks, no DLSS smear (perf-push P5, 2026-11-12)
 SB-1 | deferred | [character-gear](visual-checks/character-gear.md) | Lineup close-up at elbows and knees, walking
 SB-2 | deferred | [character-gear](visual-checks/character-gear.md) | Armored NPC
 SB-3 | deferred | [character-gear](visual-checks/character-gear.md) | Beast tails with greaves
@@ -261,5 +261,5 @@ NS-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Stars fade in at
 NS-3 | deferred | [weather-sky](visual-checks/weather-sky.md) | Masser and Secunda
 NS-4 | deferred | [weather-sky](visual-checks/weather-sky.md) | No red streaks at night
 WE-8 | confirmed (2026-11-06) | [weather-sky](visual-checks/weather-sky.md) | Rain leans with the wind, capped (Rain ~9-15°, thunderstorm ≤ ~25°), direction turns slowly, trees agree; `view "Balmora" --hour 12 --weather rain`, A/B `flip rain_slant_cap`
-WE-10 | fix 1 (history) failed 2026-11-06: shimmer stays, storm not over water | [weather-sky](visual-checks/weather-sky.md) | Local storm seen from outside: cloud curtain and noisy border (`scene we3-ridge` + BRP region force)
+WE-10 | fix 1 (history) failed 2026-11-06: shimmer stays, storm not over water; owner 2026-11-12: still a lot of shimmer on everything behind fog and clouds | [weather-sky](visual-checks/weather-sky.md) | Local storm seen from outside: cloud curtain and noisy border (`scene we3-ridge` + BRP region force)
 WE-9 | fog fix confirmed 2026-11-06; causes 1 (hour keys, re-seen) and 3 open | [weather-sky](visual-checks/weather-sky.md) | Forced fog and rain seem to go away at night: hour keys wrap to the same day (live force undone), fog unlit by the night ambient floor, rain drops unlit at night

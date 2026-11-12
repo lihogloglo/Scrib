@@ -106,7 +106,7 @@
             name: "balmora-sunset-shadows",
             cell: "Balmora",
             hour: 18.5,
-            flags: ["--resolution", "2560x1440"],
+            flags: ["--resolution", "2560x1440", "--weather", "clear"],
             description: "Balmora default camera at 18:30, 1440p (shadows agent's check 1)",
             look_for: "hills past ~400 m carry shadows; no straight shadow line crossing the terrain near 400-500 m",
             checks: ["SH-3", "SH-4"],

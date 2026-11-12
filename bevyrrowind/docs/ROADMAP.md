@@ -70,6 +70,7 @@ and effects. Every task reports its ms cost per preset.
 - [x] 1.11 Thin binary: app split slices 1-14a + 15 game crates, binary 2.3k lines (2026-10-26); `specs/app-split.md`.
 - [~] 1.12 Owner pass bugs built, awaiting owner: LT-4, SH-20, RO-B, TR-3, WE-5, DL-5, RO-16 (terrain "veil"). Logged, not diagnosed: RO-11, RO-12, PH-12, PH-13; not urgent: cap ash shelter distance.
 - [~] 1.13 Dev console (`sf_console_bevy`, `console.md`): Backquote, `ssao`/`contactshadows`, MWScript, `TCL`, `COC`, paste built (owner: CO-1); left: more `--off` parts, TGM/TAI/TFOW/TWF/COE, `set x to y`, click-to-pick a reference with visible selection and `kill`/`ref->` (owner 2026-11-05).
+- [ ] 1.13b Faster time-lapse preset (owner 2026-11-12, during RO-21): a faster speed step than T today for weather and day-cycle checks; dev tools `mw_devtools_bevy`.
 - [~] 1.14 Build churn: Bevy no longer rebuilds per `-p` (hakari, BS1c); left R1-R3 core splits, one test binary per crate, stale `debug/deps`; hot-crate gate (8 s) missed, fix = crate graph (split `sf_model`). `superfargoth/docs/build-perf.md`.
 - [ ] 1.15 Godotwind borrow pass (owner 2026-10-26, its own pass): `research/godotwind-borrow.md`; first entry FFT-to-analytic shore waves.
 - [p] 1.16 **Static scene** (owner go 2026-11-08; **frozen by owner 2026-11-12**: parity only, statics worth ~1 ms of the walk, duplicates Bevy retained bins + GPU culling per the architecture review; code kept, `--scene` opt-in; delete later unless a measurement beats the precombine): S3b code complete; `--scene` A/B still ~parity (11.23 -> 9.44 ms standing, 14.50 -> 11.10 walking vs old 9.31 / 10.71); ceiling: statics cost 2.0 / 3.7 ms. Owner: SC-scene, SC-lamps, call continue (fix 4, S3a3) or freeze; interiors table? `docs/wiki/engine/statics-and-lod.md`, `docs/ledger/statics.md`, spec `static-scene.md`.
@@ -117,7 +118,7 @@ in the world; only the release start path (or a session working on the menu) sho
 ## Phase 4: eye candy and the wider world (after phase 2)
 
 - [~] Weather polish (`surface-weather.md`): W1-W5a, W6b built, SW-2/3/4 and WE-8 confirmed; SW-6 awaiting owner, W7 next; open: cascade-0 shadows, POM; storm from Red Mountain (WE-5), tall clouds, ash, PR2, SU1/SU2, WD2/WD3. `docs/wiki/engine/sky-atmosphere-weather.md`.
-- [p] Water polish (WA-1, WISHLIST §12): shore swash, foam, whitecaps, wave height, crest SSS, W4 reflections, caustics, W7 rivers.
+- [p] Water polish (WA-1, WISHLIST §12; **owner 2026-11-12: "really look into the water rendering when we have time"**, so it is the next eye-candy item once Phase 2/3 allow): shore swash, foam, whitecaps, wave height, crest SSS, W4 reflections, caustics, W7 rivers.
 - [p] RT as the Ultra tier (decision 2): exterior RT, Solari sunset patch, `--rt` streamed view, characters, DL-4, DL-2.
 - [~] GI (owner 2026-11-01): ray-query probe volumes, slices 1-3 built (0.025-0.08 ms); verification pending. `superfargoth/docs/specs/gi.md`.
 - [ ] Light rules from openmw-rtx (owner 2026-11-05): L-A built (1.5x rejected, default 4x), L-B built (GI-lampbody awaiting owner); later L-E, L-F.

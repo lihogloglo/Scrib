@@ -276,7 +276,7 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Kind: game location. Run: `scene balmora-sunset-shadows` (Balmora 18:30), then fly (W, Shift) 2-3 km in one direction.
 - Look for: hills past ~400 m keep shadows that match the low sun as you go; after ~1 km of travel the far shadows around
   you refresh (no shadows left hanging where you were, no unshadowed hills ahead). A/B: `--off farshadows` drops them.
-- Status: awaiting owner.
+- Status: **confirmed 2026-11-12** (owner, clear weather): hills keep shadows, they update as you approach. New, logged: subtle shadow swimming on hills while approaching (cause unknown: far-map recentre texel shift or cascade handoff are the suspects; not chased).
 
 ### RO-21: Haze and ash change smoothly with no medium re-bake (perf-push P1, 2026-11-12)
 - Why: weather no longer re-bakes the sky medium on the CPU (a ~4.3 ms render-thread hitch about every 1.3 s); haze,
@@ -285,7 +285,7 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   ash storm. Then `scene fg-redmtn-foggy` and `scene fg-redmtn-ashstorm` as still references.
 - Look for: haze thickens and the grey-brown ash tint arrives smoothly, no step, flash or pop in sky or far hills; the
   still scenes look as before (foggy milky white, ash storm grey-brown with a dimmer, warmer sun).
-- Status: awaiting owner.
+- Status: **confirmed 2026-11-12** (owner): all weather transitions smooth. Owner wish: an even faster time-lapse preset.
 
 ### RO-22: Near/far handoff band with GPU-culled statics (perf-push P3, 2026-11-12)
 - Why: near statics are no longer culled by distance on the CPU (`NoCpuCulling`); their visibility ranges (LOD levels,
