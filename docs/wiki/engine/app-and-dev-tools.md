@@ -32,8 +32,9 @@ a console and BRP for agents.
 - **Scripts** (`bevyrrowind/tools/`): `cargo_turn.sh` runs cargo through a first-come queue (`.sessions/build-queue/`),
   BelowNormal, waiting while any rustc or other cargo runs (`bash tools/cargo_turn.sh build -p bevyrrowind --features
   dev`; `--queue` shows it). `owner_launch.sh scene|view ...` waits until the machine is free (no build, no game
-  window, owner not in a fullscreen app or call), copies the dev build to `%TEMP%\bw-owner-*`, starts it fullscreen;
-  `OWNER_LAUNCH_NO_WAIT=1` checks once. Others: `run_dev.ps1`, `perf_nsys.ps1` (Nsight to `perf nsys`), `ab_shots.ps1`,
+  window, owner not in a fullscreen app or call), copies the dev build to `%TEMP%\bw-owner-*`, starts it fullscreen
+  and muted (adds the `view`/`scene` flag `--mute`: master bus silent that run, saved volumes untouched; the script's
+  `--sound` opts out, owner 2026-11-12); `OWNER_LAUNCH_NO_WAIT=1` checks once. Others: `run_dev.ps1`, `perf_nsys.ps1` (Nsight to `perf nsys`), `ab_shots.ps1`,
   `pacing.awk`. Repo `tools/`: `doccheck.sh`, `decisions-index.mjs`.
 
 ## Bevy features used

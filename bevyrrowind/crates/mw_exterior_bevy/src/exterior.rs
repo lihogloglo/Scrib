@@ -95,6 +95,9 @@ pub struct ExteriorOptions {
     pub far_tint: bool,
     /// Depth + motion-vector prepass with occlusion culling (A/B experiment).
     pub prepass: bool,
+    /// `--mute`: the master bus stays muted for this run (`sf_audio_bevy::SessionMute`); the
+    /// player's saved volumes are untouched.
+    pub mute: bool,
     pub hour: f64,
     /// Game day for the clock (`--day`; moon phases).
     pub day: f64,
@@ -224,6 +227,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     mw_actors_bevy::actors::add_world(&mut app, options.actors.clone(), perf.off.has(Part::Actors), &vfs, &options.store, &manifest, options.cloth);
     // ROADMAP 2.6 (audio.md): sounds, music, listener, doors, emitters, footsteps.
     mw_audio_bevy::add(&mut app, options.actors.clone(), &vfs);
+    if options.mute {
+        app.insert_resource(sf_audio_bevy::SessionMute(true));
+    }
     app.insert_resource(sf_character_bevy::CharacterSettings { bodies: options.bodies });
     // `--off farnpcs`: characters past the crowd C0 threshold hide (crowd-lod.md CROWD-1 ceiling).
     app.insert_resource(sf_character_bevy::CrowdSettings { hide_far: perf.off.has(Part::FarNpcs) });

@@ -102,4 +102,30 @@ mod tests {
         assert!(Bus::ALL.iter().all(|b| gain(&app, *b) == 0.0), "master at the bottom is silence");
         assert_eq!(app.world().resource::<AudioVolumes>().0.get(Bus::Music).level, 0.5, "levels kept");
     }
+
+    #[test]
+    fn session_mute_silences_master_without_touching_the_store() {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(16)))
+            .add_plugins((SfAudioPlugin { bank: SoundBank::default(), playback: false }, SettingsAudioPlugin))
+            .insert_resource(crate::SessionMute(true));
+        let (registry, _) = UiRegistry::build(&RecordDb::new());
+        let store = SettingsStore::new(&registry);
+        let before = (store.to_profile(), store.to_machine());
+        app.insert_resource(UiSettingsStore(store));
+        app.update();
+        let mixer = |app: &App| app.world().resource::<AudioMixer>().0.clone();
+        assert!(mixer(&app).is_muted(Bus::Master));
+        assert!(Bus::ALL.iter().all(|b| mixer(&app).bus_gain(*b) == 0.0), "every bus is silent");
+        let store = &app.world().resource::<UiSettingsStore>().0;
+        assert_eq!((store.to_profile(), store.to_machine()), before, "the settings store is unchanged");
+        assert!(!store.has_changes(), "nothing written to the store");
+        assert_eq!(store.get_bool(&audio_muted_key("master")), Some(false));
+
+        // A settings reload (the store changes) can't unmute the run.
+        app.world_mut().resource_mut::<UiSettingsStore>().0.set(&audio_volume_key("music"), SettingValue::Float(0.5)).unwrap();
+        app.update();
+        assert!(mixer(&app).is_muted(Bus::Master), "a settings change keeps the run muted");
+    }
 }

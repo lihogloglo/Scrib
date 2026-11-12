@@ -359,6 +359,10 @@ struct ViewFlags {
     /// `--screenshot` then captures the other side. `--use-door 2` comes back out.
     #[arg(long, num_args = 0..=1, default_missing_value = "1")]
     use_door: Option<u32>,
+    /// Run without sound: the master bus is muted for this run only, the saved volume
+    /// settings are not touched (owner-check scenes, `tools/owner_launch.sh`).
+    #[arg(long)]
+    mute: bool,
     /// Exteriors and streamed interiors: once placements have streamed in,
     /// activate the placement under the crosshair N times, one a second (as
     /// pressing Space; mod scripts receive `activated`, M5 L2).
@@ -578,6 +582,7 @@ impl ViewFlags {
             no_lights: self.no_lights || perf.off.has(Part::Lights),
             far_tint: self.far_tint,
             prepass: self.prepass,
+            mute: self.mute,
             hour,
             day: self.day,
             sun_size: self.sun_size,

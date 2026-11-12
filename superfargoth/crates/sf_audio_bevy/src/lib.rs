@@ -55,6 +55,12 @@ pub struct AudioMixer(pub Mixer);
 #[derive(Resource, Default, Clone, Debug)]
 pub struct AudioVolumes(pub VolumeSettings);
 
+/// A run-only master mute (a `--mute` launch flag): while `true` the master bus stays muted
+/// whatever [`AudioVolumes`] say, so a settings reload can't unmute the run, and nothing is
+/// written to the player's settings. Absent or `false` changes nothing.
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SessionMute(pub bool);
+
 /// Ducking rules and holds (audio.md "Volume mixer"): add rules (speech ducking music), switch
 /// named holds from game state (`set_hold("menu", true)`). Bus triggers follow the playing voices.
 #[derive(Resource, Default, Clone, Debug)]
@@ -532,9 +538,14 @@ fn drive_music(
 }
 
 /// Writes the player's volumes into the mixer when they change.
-fn apply_volumes(volumes: Res<AudioVolumes>, mut mixer: ResMut<AudioMixer>) {
-    if volumes.is_changed() {
+/// A [`SessionMute`] keeps the master bus muted over them.
+fn apply_volumes(volumes: Res<AudioVolumes>, session: Option<Res<SessionMute>>, mut mixer: ResMut<AudioMixer>) {
+    let session_changed = session.as_ref().is_some_and(DetectChanges::is_changed);
+    if volumes.is_changed() || session_changed {
         volumes.0.apply(&mut mixer.0);
+        if session.is_some_and(|s| s.0) {
+            mixer.0.set_muted(Bus::Master, true);
+        }
     }
 }
 

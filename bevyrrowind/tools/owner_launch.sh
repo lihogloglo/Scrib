@@ -13,7 +13,15 @@
 #     no call or recording app running a session (Zoom meeting, OBS) and none of Teams/Webex/Skype focused.
 # Prints what it waits for, once per reason. `OWNER_LAUNCH_NO_WAIT=1` checks once and exits 3 if busy.
 # The dev build must exist (`cargo build -p bevyrrowind --features dev`); this script never builds.
+# Muted by default (owner 2026-11-12): the game gets `--mute` (master bus silent for that run, saved volumes
+# untouched) unless the check is about audio or the whole game; pass `--sound` (anywhere; the script consumes it)
+# to keep sound, e.g. `owner_launch.sh --sound scene <name>`.
 set -u
+# `--sound` is ours, not the game's: drop it and skip the default `--mute`.
+sound=0; kept=()
+for a in "$@"; do if [ "$a" = "--sound" ]; then sound=1; else kept+=("$a"); fi; done
+[ "$sound" = 1 ] || kept+=("--mute")
+set -- "${kept[@]}"
 TARGET=/c/cargo-target/scrib/debug
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"   # bevyrrowind/, the game's working dir
 
