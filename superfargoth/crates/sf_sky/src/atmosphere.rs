@@ -123,12 +123,19 @@ impl MediumTerm {
 
     /// Scattering and absorption under the weather `scales`.
     pub fn scaled(&self, scales: &MediumScales) -> (Vec3, Vec3) {
+        let (scattering, absorption) = self.weather_factors(scales);
+        (self.scattering * scattering, self.absorption * absorption)
+    }
+
+    /// The weather's multipliers on [`Self::scattering`] and [`Self::absorption`] (per RGB
+    /// channel): what the GPU medium takes as live scales, so weather never re-bakes it.
+    pub fn weather_factors(&self, scales: &MediumScales) -> (Vec3, Vec3) {
         match self.weather {
-            WeatherScale::None => (self.scattering, self.absorption),
-            WeatherScale::Haze => (self.scattering * scales.haze, self.absorption * scales.haze),
+            WeatherScale::None => (Vec3::ONE, Vec3::ONE),
+            WeatherScale::Haze => (Vec3::splat(scales.haze), Vec3::splat(scales.haze)),
             WeatherScale::Dust => {
                 let d = scales.dust.max(0.0);
-                (self.scattering * d, self.absorption * scales.dust_tint.max(Vec3::ZERO) * d)
+                (Vec3::splat(d), scales.dust_tint.max(Vec3::ZERO) * d)
             }
         }
     }

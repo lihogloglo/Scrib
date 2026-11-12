@@ -226,3 +226,47 @@ fn atmosphere_settings_layout_matches_between_rust_and_wgsl() {
     let rust = bevy_pbr::GpuAtmosphereSettings::min_size().get();
     assert_eq!(u64::from(layouter[handle].size), rust, "WGSL vs Rust size");
 }
+
+/// Patch P1 (live medium scales, `ScatteringMediumScales`): every atmosphere pass that samples
+/// the medium links and validates with the per-term LUTs and the uniform's term arrays.
+#[test]
+fn atmosphere_passes_compile_with_live_medium_scales() {
+    let jobs: [(&str, &[&str]); 6] = [
+        ("bevy_pbr::atmosphere::transmittance_lut", &[]),
+        ("bevy_pbr::atmosphere::multiscattering_lut", &[]),
+        ("bevy_pbr::atmosphere::sky_view_lut", &[]),
+        ("bevy_pbr::atmosphere::aerial_view_lut", &[]),
+        ("bevy_pbr::atmosphere::render_sky", &[]),
+        ("bevy_pbr::atmosphere::environment", &[]),
+    ];
+    let mut failures = Vec::new();
+    for (module, defs) in jobs {
+        match compile(module, defs) {
+            Ok(wgsl) if module.ends_with("transmittance_lut") && !wgsl.contains("medium_absorption") => {
+                failures.push(format!("{module}: the per-term medium is not linked"));
+            }
+            Ok(_) => {}
+            Err(e) => failures.push(e),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// Patch P1: the Rust atmosphere uniform (`GpuAtmosphere` with the medium term arrays,
+/// `MAX_MEDIUM_TERMS` long) and the WGSL `Atmosphere` struct have the same size.
+#[test]
+fn atmosphere_uniform_layout_matches_between_rust_and_wgsl() {
+    use bevy_render::render_resource::ShaderType;
+    let wgsl = compile("bevy_pbr::atmosphere::transmittance_lut", &[]).expect("compiles");
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("parses");
+    let (handle, _) = module
+        .types
+        .iter()
+        .find(|(_, t)| t.name.as_deref().is_some_and(|n| n.contains("Atmosphere") && !n.contains("Settings") && !n.contains("Transform")))
+        .unwrap_or_else(|| panic!("Atmosphere in the linked module: {:?}", module.types.iter().filter_map(|(_, t)| t.name.clone()).collect::<Vec<_>>()));
+    let mut layouter = naga::proc::Layouter::default();
+    layouter.update(module.to_ctx()).expect("layout");
+    let rust = bevy_pbr::resources::GpuAtmosphere::min_size().get();
+    assert_eq!(u64::from(layouter[handle].size), rust, "WGSL vs Rust size");
+    assert_eq!(bevy_pbr::MAX_MEDIUM_TERMS, 8, "types.wesl declares array<vec4<f32>, 8>");
+}

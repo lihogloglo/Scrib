@@ -44,7 +44,7 @@ use bevy_light::{
     DirectionalLight, SunDisk,
 };
 use bevy_math::{Dir3, Vec3};
-use bevy_pbr::AtmosphereSettings;
+use bevy_pbr::{AtmosphereSettings, MediumTermScale, ScatteringMediumScales};
 use bevy_time::{Fixed, Real, Time};
 use bevy_transform::components::{GlobalTransform, Transform};
 use bevy_transform::TransformSystems;
@@ -130,10 +130,11 @@ pub struct SkyRenderOptions {
     pub night_sky_glow: bool,
     /// Resolution of the medium's density and phase LUTs.
     pub medium_resolution: u32,
-    /// Shortest time between two rebuilds of the medium's LUTs, seconds of
-    /// real time (weather.md N1): a blending or time-lapsed weather changes
-    /// haze and dust every frame, a rebuild costs a CPU LUT bake on the
-    /// render thread and an upload.
+    /// Shortest time between two updates of the medium's weather scales,
+    /// seconds of real time (weather.md N1): a blending or time-lapsed weather
+    /// changes haze and dust every frame, and each update recomputes the
+    /// atmosphere's static transmittance and multiscattering LUTs on the GPU
+    /// once. Scale updates never re-bake the medium on the CPU.
     pub medium_min_interval: f32,
     /// Every `PointLight` gets a [`PointLightProxy`] unless it has
     /// [`NoLightProxy`].
@@ -345,39 +346,60 @@ impl Plugin for SkyPlugin {
     }
 }
 
-/// The medium asset and the inputs it was built from.
+/// The medium asset, the model it was built from, and the weather scales on
+/// the GPU (weather.md N1, "As built 2026-11-12").
 #[derive(Resource, Default)]
 struct MediumState {
     handle: Handle<ScatteringMedium>,
-    built_from: Option<(sf_sky::AtmosphereModel, MediumScales)>,
-    /// Real time of the last rebuild, seconds.
-    built_at: f64,
+    built_from: Option<sf_sky::AtmosphereModel>,
+    /// The weather inputs of the last [`ScatteringMediumScales`] update.
+    scaled_to: MediumScales,
+    /// Real time of the last scale update, seconds.
+    scaled_at: f64,
 }
 
-/// How often the medium was rebuilt (weather.md N1: rebuilds are rate
-/// limited; `sf_diag` and benches read this).
+/// Medium rebuilds and weather-scale updates (weather.md N1; `sf_diag` and
+/// benches read this).
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct MediumStats {
-    /// Rebuilds since startup, the first build included.
+    /// Asset rebuilds since startup, the first build included: only the
+    /// atmosphere model changing rebuilds (a CPU LUT bake on the render thread).
     pub rebuilds: u32,
+    /// Weather-scale updates since startup ([`ScatteringMediumScales`],
+    /// uniform data: no CPU bake).
+    pub scale_updates: u32,
     /// The weather inputs of the medium on the GPU.
     pub built: MediumScales,
 }
 
-/// Weather changes smaller than this (haze, dust, dust tint) don't rebuild
-/// the medium's LUTs: below what the eye sees in a 10 km view.
-const MEDIUM_REBUILD_STEPS: Vec3 = Vec3::new(0.05, 0.02, 0.02);
+/// Weather changes smaller than this (haze, dust, dust tint) don't update
+/// the medium's scales: below what the eye sees in a 10 km view.
+const MEDIUM_UPDATE_STEPS: Vec3 = Vec3::new(0.05, 0.02, 0.02);
 
-fn build_medium(model: &sf_sky::AtmosphereModel, scales: &MediumScales, resolution: u32) -> ScatteringMedium {
-    let terms = model.terms.iter().filter_map(|t| {
-        let (scattering, absorption) = t.scaled(scales);
-        // Empty terms (no dust today) only cost LUT bake time.
-        if scattering.max_element() <= 0.0 && absorption.max_element() <= 0.0 {
-            return None;
-        }
-        Some(ScatteringTerm {
-            absorption,
-            scattering,
+/// The model's terms the GPU medium carries, in order: every term with a
+/// coefficient (a term that is zero at scale one stays zero at any scale).
+/// Weather-scaled terms stay in at scale zero (dust on a clear day), so dust
+/// arriving changes only the scales, never the asset.
+fn medium_terms(model: &sf_sky::AtmosphereModel) -> impl Iterator<Item = &sf_sky::MediumTerm> {
+    model.terms.iter().filter(|t| t.scattering.max_element() > 0.0 || t.absorption.max_element() > 0.0)
+}
+
+/// The weather's live multipliers on [`build_medium`]'s terms.
+fn medium_scales(model: &sf_sky::AtmosphereModel, scales: &MediumScales) -> ScatteringMediumScales {
+    let mut out = ScatteringMediumScales::default();
+    for (slot, term) in out.0.iter_mut().zip(medium_terms(model)) {
+        let (scattering, absorption) = term.weather_factors(scales);
+        *slot = MediumTermScale { scattering, absorption };
+    }
+    out
+}
+
+/// The model's medium at unit weather scale (base coefficients): weather
+/// reaches it through [`medium_scales`].
+fn build_medium(model: &sf_sky::AtmosphereModel, resolution: u32) -> ScatteringMedium {
+    let terms = medium_terms(model).map(|t| ScatteringTerm {
+            absorption: t.absorption,
+            scattering: t.scattering,
             falloff: match t.falloff {
                 sf_sky::Falloff::Linear => Falloff::Linear,
                 sf_sky::Falloff::Exponential { scale } => Falloff::Exponential { scale },
@@ -388,7 +410,6 @@ fn build_medium(model: &sf_sky::AtmosphereModel, scales: &MediumScales, resoluti
                 sf_sky::Phase::Rayleigh => PhaseFunction::Rayleigh,
                 sf_sky::Phase::Mie { asymmetry } => PhaseFunction::Mie { asymmetry },
             },
-        })
     });
     ScatteringMedium::new(resolution, resolution, terms).with_label("sf_sky")
 }
@@ -411,9 +432,11 @@ fn spawn_sky(
     let settings = &config.0;
     let model = &settings.atmosphere;
     let scales = weather.0.medium();
-    medium.handle = media.add(build_medium(model, &scales, options.medium_resolution));
-    medium.built_from = Some((model.clone(), scales));
+    medium.handle = media.add(build_medium(model, options.medium_resolution));
+    medium.built_from = Some(model.clone());
+    medium.scaled_to = scales;
     stats.rebuilds += 1;
+    stats.scale_updates += 1;
     stats.built = scales;
     if !has_atmosphere {
         commands.spawn((
@@ -424,6 +447,7 @@ fn spawn_sky(
                 ground_albedo: model.ground_albedo,
                 medium: medium.handle.clone(),
             },
+            medium_scales(model, &scales),
             atmosphere_transform(model.inner_radius, options.sea_level),
         ));
     }
@@ -501,8 +525,10 @@ fn evaluate_sky(
     sky.0 = config.0.evaluate(&config.sky_clock(&clock), &weather.0);
 }
 
-/// Rebuilds the medium when the atmosphere description changes, or when the
-/// weather's haze or dust moved by a step and the last rebuild is at least
+/// Rebuilds the medium asset only when the atmosphere model changes. Weather
+/// (haze, dust, dust tint) moves the atmosphere's [`ScatteringMediumScales`]
+/// instead (uniform data, no CPU bake; vendored `bevy_pbr` patch P1), once it
+/// moved by a step and the last update is at least
 /// [`SkyRenderOptions::medium_min_interval`] old.
 #[expect(clippy::too_many_arguments, reason = "system parameters")]
 fn update_medium(
@@ -513,28 +539,42 @@ fn update_medium(
     mut medium: ResMut<MediumState>,
     mut stats: ResMut<MediumStats>,
     mut media: ResMut<Assets<ScatteringMedium>>,
-    mut atmospheres: Query<&mut Atmosphere, With<SkyAtmosphere>>,
+    mut atmospheres: Query<(Entity, &mut Atmosphere, Option<&mut ScatteringMediumScales>), With<SkyAtmosphere>>,
+    mut commands: Commands,
 ) {
     let model = &config.0.atmosphere;
     let scales = weather.0.medium();
     let now = time.elapsed_secs_f64();
-    let stale = match &medium.built_from {
-        Some((built, built_scales)) => {
-            built != model
-                || (scales.change(built_scales, MEDIUM_REBUILD_STEPS) >= 1.0
-                    && now - medium.built_at >= f64::from(options.medium_min_interval))
-        }
-        None => true,
-    };
-    if stale && let Some(mut asset) = media.get_mut(&medium.handle) {
-        *asset = build_medium(model, &scales, options.medium_resolution);
-        medium.built_from = Some((model.clone(), scales));
-        medium.built_at = now;
+    let rebuild = medium.built_from.as_ref() != Some(model);
+    if rebuild && let Some(mut asset) = media.get_mut(&medium.handle) {
+        *asset = build_medium(model, options.medium_resolution);
+        medium.built_from = Some(model.clone());
         stats.rebuilds += 1;
+    }
+    let rescale = rebuild
+        || (scales.change(&medium.scaled_to, MEDIUM_UPDATE_STEPS) >= 1.0
+            && now - medium.scaled_at >= f64::from(options.medium_min_interval));
+    if rescale {
+        let live = medium_scales(model, &scales);
+        // Only atmospheres on our medium: the scales follow its terms.
+        for (entity, atmosphere, current) in &mut atmospheres {
+            match current {
+                Some(mut current) if atmosphere.medium == medium.handle => {
+                    current.set_if_neq(live);
+                }
+                None if atmosphere.medium == medium.handle => {
+                    commands.entity(entity).insert(live);
+                }
+                _ => {}
+            }
+        }
+        medium.scaled_to = scales;
+        medium.scaled_at = now;
+        stats.scale_updates += 1;
         stats.built = scales;
     }
     if config.is_changed() {
-        for mut atmosphere in &mut atmospheres {
+        for (_, mut atmosphere, _) in &mut atmospheres {
             atmosphere.inner_radius = model.inner_radius;
             atmosphere.outer_radius = model.outer_radius;
             atmosphere.ground_albedo = model.ground_albedo;

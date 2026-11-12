@@ -1,5 +1,6 @@
 use crate::{
     ExtractedAtmosphere, GpuLights, GpuScatteringMedium, LightMeta, ScatteringMediumSampler,
+    MAX_MEDIUM_TERMS,
 };
 use bevy_asset::{load_embedded_asset, AssetId, Handle};
 use bevy_camera::{Camera, Camera3d};
@@ -16,7 +17,7 @@ use bevy_ecs::{
 };
 use bevy_image::ToExtents;
 use bevy_light::atmosphere::ScatteringMedium;
-use bevy_math::{Affine3A, Mat4, Vec3, Vec3A};
+use bevy_math::{Affine3A, Mat4, Vec3, Vec3A, Vec4};
 use bevy_render::{
     extract_component::ComponentUniforms,
     render_asset::RenderAssets,
@@ -480,18 +481,46 @@ pub struct GpuAtmosphere {
     pub inner_radius: f32,
     pub outer_radius: f32,
     pub world_to_atmosphere: Mat4,
+    /// superfargoth patch (own, P1: live medium scales): the medium's terms on the GPU
+    /// (at most [`MAX_MEDIUM_TERMS`]) and each term's coefficients (m^-1, `xyz`) times its
+    /// [`crate::ScatteringMediumScales`]: the shaders multiply them into the unit falloff and
+    /// phase LUTs (`functions::sample_density_lut`, `sample_scattering_lut`).
+    pub medium_term_count: u32,
+    pub medium_scattering: [Vec4; MAX_MEDIUM_TERMS],
+    pub medium_absorption: [Vec4; MAX_MEDIUM_TERMS],
 }
 
 pub fn prepare_atmosphere_uniforms(
     mut commands: Commands,
     atmospheres: Query<(Entity, &ExtractedAtmosphere)>,
+    // superfargoth patch (own, P1: live medium scales)
+    gpu_media: Res<RenderAssets<GpuScatteringMedium>>,
 ) -> Result<(), BevyError> {
     for (entity, atmosphere) in atmospheres {
+        // superfargoth patch (own, P1: live medium scales): coefficients x live scales.
+        let mut medium_term_count = 0;
+        let mut medium_scattering = [Vec4::ZERO; MAX_MEDIUM_TERMS];
+        let mut medium_absorption = [Vec4::ZERO; MAX_MEDIUM_TERMS];
+        if let Some(medium) = gpu_media.get(atmosphere.medium) {
+            for (i, (term, scale)) in medium
+                .terms
+                .iter()
+                .zip(atmosphere.medium_scales.0.iter())
+                .enumerate()
+            {
+                medium_scattering[i] = (term.scattering * scale.scattering).extend(0.0);
+                medium_absorption[i] = (term.absorption * scale.absorption).extend(0.0);
+                medium_term_count = i as u32 + 1;
+            }
+        }
         commands.entity(entity).insert(GpuAtmosphere {
             ground_albedo: atmosphere.ground_albedo,
             inner_radius: atmosphere.inner_radius,
             outer_radius: atmosphere.outer_radius,
             world_to_atmosphere: atmosphere.world_to_atmosphere,
+            medium_term_count,
+            medium_scattering,
+            medium_absorption,
         });
     }
     Ok(())
@@ -705,6 +734,13 @@ pub(super) fn prepare_atmosphere_bind_groups(
         }
         gpu_medium.density_lut.id().hash(&mut key_hasher);
         gpu_medium.scattering_lut.id().hash(&mut key_hasher);
+        // superfargoth patch (own, P1: live medium scales): a scale change is a medium change
+        // (the LUT textures above hold only falloff and phase now).
+        for scale in &atmosphere.medium_scales.0 {
+            for c in scale.scattering.to_array().into_iter().chain(scale.absorption.to_array()) {
+                c.to_bits().hash(&mut key_hasher);
+            }
+        }
         lut_settings.transmittance_lut_size.hash(&mut key_hasher);
         lut_settings.transmittance_lut_samples.hash(&mut key_hasher);
         lut_settings.multiscattering_lut_size.hash(&mut key_hasher);

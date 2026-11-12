@@ -303,12 +303,18 @@ because the medium is a clean Earth sky and Vvardenfell views are ≤ 10 km.
   (0.25 s real time); `MediumStats` counts them. Cost: GPU unchanged (same LUT sizes and passes; terms are baked into
   the LUTs); a rebuild is a ~2.8 ms CPU LUT bake at 256² on the render thread (release, `medium_rebuild_cost`,
   shared machine) plus a 1 MB upload, so ≤ 4 short hitches per second while the weather moves, none when it is still.
-  F2/WE3: lower the phase LUT resolution or bake off-thread if the hitch shows in time-lapses.
   **Calibration changed:** "2-3 on clear days" assumed Earth-scale views. Morrowind's far field is 1-5 km away, where
   haze 2-3 is invisible (shots/f1/redmtn_old vs clear); the app now uses haze 20 for clear (aerosol optical depth
   ~0.18, a typical clear continental day), 60 foggy, dust 4 for ash storms (weather-adapter.md "Haze and dust"). Near
   fog at game distances stays F2's analytic height fog, not more haze. Known issue: a purple/white seam on the sea
   horizon at noon with dust (sky-view LUT vs aerial LUT; visual check FG-1).
+- **As built 2026-11-12 (P1, superseding the rebuilds above).** Traced Balmora walk: the bake ran ~51 times in 65 s at
+  ~4.3 ms each. Weather now never re-bakes: vendored `bevy_pbr` patch P1 (`vendor/README.md`) makes medium coefficients
+  live, as UE `SkyAtmosphere`'s scattering/absorption scales. The LUTs hold each term's unit falloff and phase (baked once
+  per model); `ScatteringMediumScales` on the atmosphere (`MediumTerm::weather_factors`) multiplies each term's
+  coefficients in the uniform. All four terms stay in the asset (dust at scale 0). Same step and interval gate, now on
+  the scales (`MediumStats::scale_updates`); each update recomputes transmittance/multiscattering on the GPU once.
+  Only an `AtmosphereModel` change rebuilds. Same look by construction (sum of separable per-term products).
 - **N3 (optional prototype, owner's eyes only).** God rays now with Bevy's own volumetrics:
   `VolumetricLight` on the sun, `VolumetricFog { jitter, step_count: 32 }` on the exterior camera, and
   one camera-following `FogVolume` (≈ 300×60×300 m, low density). Megalophobia found large boxes go

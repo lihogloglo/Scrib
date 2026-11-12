@@ -277,3 +277,12 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Look for: hills past ~400 m keep shadows that match the low sun as you go; after ~1 km of travel the far shadows around
   you refresh (no shadows left hanging where you were, no unshadowed hills ahead). A/B: `--off farshadows` drops them.
 - Status: awaiting owner.
+
+### RO-21: Haze and ash change smoothly with no medium re-bake (perf-push P1, 2026-11-12)
+- Why: weather no longer re-bakes the sky medium on the CPU (a ~4.3 ms render-thread hitch about every 1.3 s); haze,
+  dust and dust tint are now live scales in the atmosphere uniform (vendored `bevy_pbr` patch P1). Same look by design.
+- Kind: game location. Run: `scene fg-redmtn-clear`, press P (clock on) and T (time-lapse), then C until foggy, then
+  ash storm. Then `scene fg-redmtn-foggy` and `scene fg-redmtn-ashstorm` as still references.
+- Look for: haze thickens and the grey-brown ash tint arrives smoothly, no step, flash or pop in sky or far hills; the
+  still scenes look as before (foggy milky white, ash storm grey-brown with a dimmer, warmer sun).
+- Status: awaiting owner.

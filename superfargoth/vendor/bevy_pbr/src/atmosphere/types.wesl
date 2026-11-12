@@ -8,6 +8,12 @@ struct Atmosphere {
     outer_radius: f32,
     /// Transform from world space to atmosphere space, inverse of the atmosphere entity's transform
     world_to_atmosphere: mat4x4<f32>,
+    // superfargoth patch (own, P1: live medium scales): the medium's terms (at most
+    // `MAX_MEDIUM_TERMS` = 8, `medium.rs`) and each term's coefficients (m^-1, xyz) times its
+    // live `ScatteringMediumScales`, multiplied into the unit falloff and phase LUTs.
+    medium_term_count: u32,
+    medium_scattering: array<vec4<f32>, 8>,
+    medium_absorption: array<vec4<f32>, 8>,
 }
 
 struct AtmosphereSettings {

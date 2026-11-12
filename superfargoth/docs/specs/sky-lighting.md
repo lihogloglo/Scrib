@@ -224,8 +224,8 @@ Moved to [history](archive/sky-lighting-history.md#environment-map-refresh-light
   transmittance and shadow flag; plus EV100 and the ambient floor.
 - `Weather { cloud_cover, overcast_dimming, haze, ambient_tint, wind }` (M6 hook; ambient tint:
   `sky-lighting-as-built.md` "Ambient tint from the weather"): cover
-  dims direct light; haze scales aerosol density (the GPU medium is rebuilt
-  when it moves by ≥ 0.02). `Wind::velocity_at(pos, t)` is the one wind
+  dims direct light; haze scales aerosol density (live medium scales, no
+  rebuild: weather/distant-shadows.md N1 "As built 2026-11-12"). `Wind::velocity_at(pos, t)` is the one wind
   API for grass, cloth, particles and clouds; M6 swaps its analytic gusts
   for a sampled field without changing callers. Positions passed in must
   be origin-stable (world-coordinates.md phase).

@@ -211,6 +211,8 @@ pub fn extract_atmosphere(
     cameras: Extract<
         Query<(RenderEntity, Option<&AtmosphereSettings>, &GlobalTransform), With<Camera3d>>,
     >,
+    // superfargoth patch (own, P1: live medium scales)
+    medium_scales: Extract<Query<&crate::ScatteringMediumScales>>,
 ) {
     let candidates: Vec<(Entity, &Atmosphere, &GlobalTransform)> =
         atmosphere_entities.iter().collect();
@@ -255,6 +257,8 @@ pub fn extract_atmosphere(
                 translation,
             )
             .inverse(),
+            // superfargoth patch (own, P1: live medium scales)
+            medium_scales: medium_scales.get(selected.0).copied().unwrap_or_default(),
         };
         commands.entity(render_entity).insert(extracted);
         commands
@@ -272,6 +276,9 @@ pub struct ExtractedAtmosphere {
     pub ground_albedo: Vec3,
     pub medium: AssetId<ScatteringMedium>,
     pub world_to_atmosphere: Mat4,
+    /// superfargoth patch (own, P1: live medium scales): the atmosphere entity's
+    /// [`crate::ScatteringMediumScales`] (all one when it has none).
+    pub medium_scales: crate::ScatteringMediumScales,
 }
 
 /// This component controls the resolution of the atmosphere LUTs, and

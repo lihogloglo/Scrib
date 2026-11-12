@@ -2,7 +2,8 @@
 
 use bevy::MinimalPlugins;
 use bevy::asset::{AssetApp, AssetPlugin};
-use bevy_app::App;
+use bevy_app::{App, Last};
+use bevy_asset::AssetEvent;
 use bevy_camera::Exposure;
 use bevy_ecs::prelude::*;
 use bevy_light::DirectionalLight;
@@ -335,43 +336,103 @@ fn reach_follows_the_shadow_fade() {
     assert!((range(&app, lights[3]) - untouched).abs() < 1e-6);
 }
 
+/// `AssetEvent::Modified` count of the sky's `ScatteringMedium`.
+#[derive(Resource, Default)]
+struct MediumModified(u32);
+
+fn count_medium_modified(mut events: MessageReader<AssetEvent<ScatteringMedium>>, mut count: ResMut<MediumModified>) {
+    for event in events.read() {
+        if matches!(event, AssetEvent::Modified { .. }) {
+            count.0 += 1;
+        }
+    }
+}
+
+fn atmosphere_scales(app: &mut App) -> ScatteringMediumScales {
+    let mut q = app.world_mut().query_filtered::<&ScatteringMediumScales, With<SkyAtmosphere>>();
+    *q.single(app.world()).expect("one sky atmosphere")
+}
+
+/// Weather (P1, weather.md N1): haze, dust and dust tint drifting over many frames never touch
+/// the `ScatteringMedium` asset (no CPU LUT bake); the live scales follow the weather, rate
+/// limited; only an atmosphere model change rebuilds.
 #[test]
-fn medium_rebuilds_on_weather_steps_rate_limited() {
+#[expect(clippy::float_cmp, reason = "scales are copied from the weather, not computed")]
+fn medium_weather_moves_scales_not_the_asset() {
     let mut app = app(12.0);
-    app.update();
-    let rebuilds = |app: &App| app.world().resource::<MediumStats>().rebuilds;
-    let first = rebuilds(&app);
-    assert_eq!(first, 1, "built once at startup");
-    // Below a step: no rebuild.
-    app.world_mut().resource_mut::<WeatherState>().0.haze += 0.01;
-    app.update();
-    assert_eq!(rebuilds(&app), first);
-    // A dust storm arrives, but the last build is too recent.
-    app.world_mut().resource_mut::<SkyRenderOptions>().medium_min_interval = 1.0e6;
-    app.world_mut().resource_mut::<WeatherState>().0.dust = 4.0;
-    app.update();
-    assert_eq!(rebuilds(&app), first);
-    // Once the interval allows it, one rebuild with the new dust.
-    app.world_mut().resource_mut::<SkyRenderOptions>().medium_min_interval = 0.0;
+    app.init_resource::<MediumModified>().add_systems(Last, count_medium_modified);
     app.update();
     app.update();
-    assert_eq!(rebuilds(&app), first + 1);
-    let stats = *app.world().resource::<MediumStats>();
-    assert!((stats.built.dust - 4.0).abs() < 1e-6);
-    // The dust term is in the GPU medium only while there is dust.
+    let stats = |app: &App| *app.world().resource::<MediumStats>();
+    let modified = |app: &App| app.world().resource::<MediumModified>().0;
     let terms = |app: &App| {
         let handle = app.world().resource::<MediumState>().handle.clone();
         app.world().resource::<Assets<ScatteringMedium>>().get(&handle).expect("medium").terms.len()
     };
+    assert_eq!(stats(&app).rebuilds, 1, "built once at startup");
+    // Rayleigh, Mie (haze), ozone, dust: the dust term is there at scale zero on a clear day.
     assert_eq!(terms(&app), 4);
+    let first = atmosphere_scales(&mut app);
+    assert_eq!(first.0[3].scattering, Vec3::ZERO);
+    assert_eq!(first.0[0], MediumTermScale::default(), "Rayleigh is not weather-scaled");
+
+    // Below a step: no update.
+    let updates = stats(&app).scale_updates;
+    app.world_mut().resource_mut::<WeatherState>().0.haze += 0.01;
+    app.update();
+    assert_eq!(stats(&app).scale_updates, updates);
+
+    // A storm drifts in over 200 frames: haze 1 -> 21, dust 0 -> 4, tint to ash brown.
+    app.world_mut().resource_mut::<SkyRenderOptions>().medium_min_interval = 0.0;
+    for i in 1..=200u8 {
+        let k = f32::from(i) / 200.0;
+        {
+            let mut weather = app.world_mut().resource_mut::<WeatherState>();
+            weather.0.haze = 1.0 + 20.0 * k;
+            weather.0.dust = 4.0 * k;
+            weather.0.dust_tint = Vec3::ONE.lerp(Vec3::new(0.6, 0.8, 1.4), k);
+        }
+        app.update();
+    }
+    app.update();
+    assert_eq!(stats(&app).rebuilds, 1, "weather never rebuilds the medium");
+    assert_eq!(modified(&app), 0, "weather never modifies the medium asset");
+    assert_eq!(terms(&app), 4);
+    assert!(stats(&app).scale_updates > updates + 50, "{:?}", stats(&app));
+    let live = atmosphere_scales(&mut app);
+    assert_eq!(live.0[1].scattering, Vec3::splat(21.0));
+    assert_eq!(live.0[1].absorption, Vec3::splat(21.0));
+    assert_eq!(live.0[3].scattering, Vec3::splat(4.0));
+    let tint = app.world().resource::<WeatherState>().0.dust_tint;
+    assert_eq!(live.0[3].absorption, tint * 4.0);
+    assert_eq!(live.0[2], MediumTermScale::default(), "ozone is not weather-scaled");
+    assert_eq!(stats(&app).built.dust, 4.0);
+
+    // Rate limit: a jump waits for the interval, then lands in one update.
+    app.world_mut().resource_mut::<SkyRenderOptions>().medium_min_interval = 1.0e6;
+    let updates = stats(&app).scale_updates;
     app.world_mut().resource_mut::<WeatherState>().0.dust = 0.0;
     app.update();
-    assert_eq!(terms(&app), 3);
+    assert_eq!(stats(&app).scale_updates, updates);
+    assert_eq!(atmosphere_scales(&mut app).0[3].scattering, Vec3::splat(4.0));
+    app.world_mut().resource_mut::<SkyRenderOptions>().medium_min_interval = 0.0;
+    app.update();
+    assert_eq!(stats(&app).scale_updates, updates + 1);
+    assert_eq!(atmosphere_scales(&mut app).0[3].scattering, Vec3::ZERO);
+    assert_eq!(terms(&app), 4, "dust leaving keeps its term");
+    assert_eq!(modified(&app), 0);
+
+    // The atmosphere model changing rebuilds the asset, once.
+    app.world_mut().resource_mut::<SkyConfig>().0.atmosphere.terms[0].scattering *= 1.1;
+    app.update();
+    app.update();
+    assert_eq!(stats(&app).rebuilds, 2);
+    assert_eq!(modified(&app), 1);
 }
 
-/// The CPU half of a medium rebuild: the LUT bake Bevy's
-/// `GpuScatteringMedium::prepare_asset` runs on the render thread (same
-/// loops, public sampling API), for the default 256² resolution.
+/// The CPU bake of a medium rebuild (only an atmosphere model change now): P1's per-term unit
+/// LUTs (`bevy_pbr::MediumLutData::bake`, what `GpuScatteringMedium::prepare_asset` runs on the
+/// render thread) against stock Bevy's `falloff x phase x terms` loops, at the default 256².
 /// `cargo test --release -p sf_sky_bevy medium_rebuild_cost -- --ignored --nocapture`
 #[test]
 #[ignore = "timing; run in release"]
@@ -380,39 +441,33 @@ fn medium_rebuild_cost() {
     use bevy_color::ColorToComponents;
     use bevy_math::Vec4;
     let model = sf_sky::AtmosphereModel::earth();
-    for (label, scales) in [
-        ("clear", MediumScales::haze(20.0)),
-        ("dust", MediumScales { dust: 4.0, ..MediumScales::haze(24.0) }),
-    ] {
-        let runs = 20;
-        let start = std::time::Instant::now();
-        let mut sink = 0.0;
-        for _ in 0..runs {
-            let medium = build_medium(&model, &scales, 256);
-            let (nf, np) = (medium.falloff_resolution, medium.phase_resolution);
-            let mut density = Vec4::ZERO;
-            for i in 0..nf {
-                let f = (i as f32 + 0.5) / nf as f32;
-                for t in &medium.terms {
-                    density += (t.absorption + t.scattering).extend(0.0) * t.falloff.sample(f);
-                }
-            }
-            let mut scattering = Vec4::ZERO;
-            for raw in 0..nf * np {
-                let f = ((raw % np) as f32 + 0.5) / nf as f32;
-                let s = 2.0 * ((raw / np) as f32 + 0.5) / np as f32 - 1.0;
-                let neg_l_dot_v = s.signum() * (1.0 - (1.0 - s.abs()).powf(2.0));
-                for t in &medium.terms {
-                    if let Some(p) = t.phase.sample(neg_l_dot_v) {
-                        scattering += (t.scattering * p.to_vec3() * t.falloff.sample(f)).extend(0.0);
-                    }
-                }
-            }
-            sink += density.x + scattering.x;
-        }
-        let ms = start.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
-        println!("medium rebuild CPU ({label}, {} terms): {ms:.2} ms (sink {sink:e})", build_medium(&model, &scales, 256).terms.len());
+    let medium = build_medium(&model, 256);
+    let runs = 20;
+    let start = std::time::Instant::now();
+    let mut sink = 0.0;
+    for _ in 0..runs {
+        let data = bevy_pbr::MediumLutData::bake(&medium);
+        sink += data.density[7].x + data.phase[7].x;
     }
+    let p1 = start.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
+    let start = std::time::Instant::now();
+    for _ in 0..runs {
+        let (nf, np) = (medium.falloff_resolution, medium.phase_resolution);
+        let mut scattering = Vec4::ZERO;
+        for raw in 0..nf * np {
+            let f = ((raw % np) as f32 + 0.5) / nf as f32;
+            let s = 2.0 * ((raw / np) as f32 + 0.5) / np as f32 - 1.0;
+            let neg_l_dot_v = s.signum() * (1.0 - (1.0 - s.abs()).powf(2.0));
+            for t in &medium.terms {
+                if let Some(p) = t.phase.sample(neg_l_dot_v) {
+                    scattering += (t.scattering * p.to_vec3() * t.falloff.sample(f)).extend(0.0);
+                }
+            }
+        }
+        sink += scattering.x;
+    }
+    let stock = start.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
+    println!("medium bake CPU ({} terms): P1 {p1:.3} ms, stock {stock:.2} ms (sink {sink:e})", medium.terms.len());
 }
 
 #[test]
