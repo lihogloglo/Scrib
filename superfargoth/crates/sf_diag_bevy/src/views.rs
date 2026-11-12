@@ -151,6 +151,9 @@ where
         instance_batches: small(phase.instance_batch_draw_count()),
         instance_draws: small(phase.instance_batch_indirect_draw_count()),
         instance_slots: phase.instance_batch_slot_count(),
+        // One draw call per entity (`render_unbatchable_meshes` / `render_non_meshes`).
+        unbatchable: small(phase.unbatchable_meshes.values().map(|bin| bin.entities.len()).sum()),
+        non_mesh: small(phase.non_mesh_items.values().map(|bin| bin.entities.len()).sum()),
     })
 }
 
@@ -200,6 +203,7 @@ fn count_views(
     let mut frame = ViewFrame {
         bind_groups: bind_groups.map(|b| BindGroups {
             created: b.created,
+            reused: b.reused,
             ranges: b.ranges,
             materialize: b.materialize,
         }),

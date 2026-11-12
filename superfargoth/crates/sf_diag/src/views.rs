@@ -17,11 +17,13 @@
 //!   GPU-authored instance batches (static-scene.md S3a2) inside those sums.
 //! - `views/all/pipelines_distinct`: distinct pipelines across all views.
 //! - `phases/<phase>/<metric>` for every metric in [`PHASE_METRICS`]: one
-//!   phase summed over all views.
+//!   phase summed over all views. `unbatchable` and `non_mesh` count the
+//!   entities recorded as one draw call each, outside the batch sets.
 //! - `preprocess/bind_groups`: every preprocessing bind group created this
 //!   frame, when the renderer reports it, with
 //!   `preprocess/bind_groups_created|_ranges|_materialize` as its parts
-//!   ([`BindGroups`]).
+//!   ([`BindGroups`]), and `preprocess/bind_groups_reused` (cache hits, not
+//!   in the sum).
 //!
 //! Static materials (slice S2, [`StaticMaterials`], [`StaticBindGroups`]; names in [`statics`]),
 //! over the live static mesh parts, every frame while the engine counts them:
@@ -66,7 +68,7 @@ impl ViewKind {
 }
 
 /// Metrics reported per phase: the length of [`PHASE_METRICS`].
-pub const PHASE_METRIC_COUNT: usize = 7;
+pub const PHASE_METRIC_COUNT: usize = 9;
 
 /// Metric names of [`PhaseCounts`], in the order of [`PhaseCounts::values`]
 /// and of the arrays [`ViewFrame::phase_totals`] returns.
@@ -78,6 +80,8 @@ pub const PHASE_METRICS: [&str; PHASE_METRIC_COUNT] = [
     "instance_batches",
     "instance_draws",
     "instance_slots",
+    "unbatchable",
+    "non_mesh",
 ];
 
 /// One binned phase of one view.
@@ -109,6 +113,13 @@ pub struct PhaseCounts {
     /// survived the GPU cull exists only in `early_instance_count` on the GPU
     /// and is not reported.
     pub instance_slots: u32,
+    /// Entities in the phase's unbatchable bins (skinned, morphed or otherwise
+    /// not batchable): each is recorded as its own draw call, outside the
+    /// multi-draw batch sets. A subset of [`Self::items`].
+    pub unbatchable: u32,
+    /// Non-mesh items in the phase (custom draw functions), also one draw each.
+    /// A subset of [`Self::items`].
+    pub non_mesh: u32,
 }
 
 impl PhaseCounts {
@@ -122,6 +133,8 @@ impl PhaseCounts {
             self.instance_batches,
             self.instance_draws,
             self.instance_slots,
+            self.unbatchable,
+            self.non_mesh,
         ]
     }
 }
@@ -149,8 +162,8 @@ impl ViewCounts {
     }
 
     /// The view's metrics by name: `items`, `bins`, `batch_sets`,
-    /// `instance_batches`, `instance_draws`, `instance_slots`, `work_items`,
-    /// `pipelines`, then `<phase>/<metric>` per phase (every name in
+    /// `instance_batches`, `instance_draws`, `instance_slots`, `unbatchable`,
+    /// `non_mesh`, `work_items`, `pipelines`, then `<phase>/<metric>` per phase (every name in
     /// [`PHASE_METRICS`]).
     pub fn metrics(&self) -> Vec<(String, u64)> {
         let mut out = vec![
@@ -160,6 +173,8 @@ impl ViewCounts {
             ("instance_batches".to_owned(), self.phase_sum(|p| p.instance_batches)),
             ("instance_draws".to_owned(), self.phase_sum(|p| p.instance_draws)),
             ("instance_slots".to_owned(), self.phase_sum(|p| p.instance_slots)),
+            ("unbatchable".to_owned(), self.phase_sum(|p| p.unbatchable)),
+            ("non_mesh".to_owned(), self.phase_sum(|p| p.non_mesh)),
             ("work_items".to_owned(), u64::from(self.work_items)),
             ("pipelines".to_owned(), u64::from(self.pipelines)),
         ];
@@ -179,8 +194,13 @@ impl ViewCounts {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BindGroups {
     /// Mesh preprocessing, indirect-parameter building, bin unpacking and
-    /// uniform allocation (the renderer rebuilds all of them every frame).
+    /// uniform allocation groups the renderer had to create (cache misses:
+    /// about 0 on a frame where no bound buffer or work-item count changed).
     pub created: u32,
+    /// The same families taken from the renderer's caches instead (not part
+    /// of [`Self::total`]); `created + reused` is the per-frame rebuild count
+    /// from before the bind group cache.
+    pub reused: u32,
     /// Range unpacking for the instance batches: one per view, phase and
     /// indexed/non-indexed buffer that has ranges. Rebuilt every frame.
     pub ranges: u32,
@@ -313,6 +333,7 @@ impl ViewFrame {
             for (name, v) in [
                 ("preprocess/bind_groups", b.total()),
                 ("preprocess/bind_groups_created", b.created),
+                ("preprocess/bind_groups_reused", b.reused),
                 ("preprocess/bind_groups_ranges", b.ranges),
                 ("preprocess/bind_groups_materialize", b.materialize),
             ] {
@@ -498,7 +519,17 @@ mod tests {
         pipelines: u32,
         (instance_batches, instance_draws, instance_slots): (u32, u32, u32),
     ) -> PhaseCounts {
-        PhaseCounts { phase, items, bins, batch_sets, pipelines, instance_batches, instance_draws, instance_slots }
+        PhaseCounts {
+            phase,
+            items,
+            bins,
+            batch_sets,
+            pipelines,
+            instance_batches,
+            instance_draws,
+            instance_slots,
+            ..PhaseCounts::default()
+        }
     }
 
     fn view(label: &str, kind: ViewKind, phases: Vec<PhaseCounts>, work_items: u32, pipelines: u32) -> ViewCounts {
@@ -506,7 +537,7 @@ mod tests {
     }
 
     fn bind_groups(created: u32, ranges: u32, materialize: u32) -> BindGroups {
-        BindGroups { created, ranges, materialize }
+        BindGroups { created, reused: 0, ranges, materialize }
     }
 
     /// Main view with two phases, two cascades, two faces of two lamps
@@ -545,7 +576,7 @@ mod tests {
                 view("lamp.face0", ViewKind::LampFace, vec![phase_with_batches("shadow", 4, 3, 2, 1, (1, 1, 3000))], 3003, 1),
             ],
             distinct_pipelines: 5,
-            bind_groups: Some(bind_groups(12, 4, 3)),
+            bind_groups: Some(BindGroups { reused: 150, ..bind_groups(12, 4, 3) }),
         }
     }
 
@@ -595,18 +626,18 @@ mod tests {
         assert_eq!(
             totals,
             vec![
-                ("opaque3d", [100, 40, 10, 3, 0, 0, 0]),
-                ("alpha_mask3d", [20, 8, 2, 1, 0, 0, 0]),
-                ("shadow", [130, 72, 14, 6, 0, 0, 0]),
+                ("opaque3d", [100, 40, 10, 3, 0, 0, 0, 0, 0]),
+                ("alpha_mask3d", [20, 8, 2, 1, 0, 0, 0, 0, 0]),
+                ("shadow", [130, 72, 14, 6, 0, 0, 0, 0, 0]),
             ]
         );
         let statics = frame_with_statics().phase_totals();
         assert_eq!(
             statics,
             vec![
-                ("opaque3d", [103, 43, 13, 3, 3, 4, 9000]),
-                ("alpha_mask3d", [20, 8, 2, 1, 0, 0, 0]),
-                ("shadow", [12, 9, 5, 2, 2, 2, 6000]),
+                ("opaque3d", [103, 43, 13, 3, 3, 4, 9000, 0, 0]),
+                ("alpha_mask3d", [20, 8, 2, 1, 0, 0, 0, 0, 0]),
+                ("shadow", [12, 9, 5, 2, 2, 2, 6000, 0, 0]),
             ]
         );
     }
@@ -615,14 +646,16 @@ mod tests {
     /// gauge names and the arrays `phase_totals` returns are zipped.
     #[test]
     fn phase_metric_names_match_the_values() {
-        let p = phase_with_batches("opaque3d", 1, 2, 3, 4, (5, 6, 7));
-        assert_eq!(p.values(), [1, 2, 3, 4, 5, 6, 7]);
+        let p = PhaseCounts { unbatchable: 8, non_mesh: 9, ..phase_with_batches("opaque3d", 1, 2, 3, 4, (5, 6, 7)) };
+        assert_eq!(p.values(), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
         assert_eq!(PHASE_METRICS.len(), p.values().len());
         let by_name: BTreeMap<&str, u32> = PHASE_METRICS.into_iter().zip(p.values()).collect();
         assert_eq!(by_name["batch_sets"], 3);
         assert_eq!(by_name["instance_batches"], 5);
         assert_eq!(by_name["instance_draws"], 6);
         assert_eq!(by_name["instance_slots"], 7);
+        assert_eq!(by_name["unbatchable"], 8);
+        assert_eq!(by_name["non_mesh"], 9);
     }
 
     #[test]
@@ -673,8 +706,9 @@ mod tests {
         assert_eq!(get("phases/opaque3d/instance_draws"), Some(4.0));
         assert_eq!(get("phases/shadow/instance_slots"), Some(6000.0));
         assert_eq!(get("views/all/batch_sets"), Some(20.0), "15 main + 3 + 2 lamp faces");
-        assert_eq!(get("preprocess/bind_groups"), Some(19.0));
+        assert_eq!(get("preprocess/bind_groups"), Some(19.0), "cache hits are not in the total");
         assert_eq!(get("preprocess/bind_groups_created"), Some(12.0));
+        assert_eq!(get("preprocess/bind_groups_reused"), Some(150.0));
         assert_eq!(get("preprocess/bind_groups_ranges"), Some(4.0));
         assert_eq!(get("preprocess/bind_groups_materialize"), Some(3.0));
     }

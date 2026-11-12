@@ -287,6 +287,8 @@ fn render_view_counts_reach_the_report() {
                     instance_batches: 1,
                     instance_draws: 1,
                     instance_slots: 1000,
+                    unbatchable: 0,
+                    non_mesh: 0,
                 }],
                 work_items: items,
                 pipelines: 2,
@@ -298,7 +300,7 @@ fn render_view_counts_reach_the_report() {
                     view("lamp.face0", ViewKind::LampFace, "shadow", 20),
                 ],
                 distinct_pipelines: 3,
-                bind_groups: Some(BindGroups { created: 9, ranges: 2, materialize: 1 }),
+                bind_groups: Some(BindGroups { created: 9, reused: 0, ranges: 2, materialize: 1 }),
             };
             frame.record(&counters);
             views.put(frame);

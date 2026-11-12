@@ -57,7 +57,10 @@ use bevy_render::{
     render_resource::{
         binding_types::{storage_buffer, storage_buffer_read_only, texture_2d, uniform_buffer},
         BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-        BindingResource, Buffer, BufferBinding, BufferVec, CachedComputePipelineId,
+        // superfargoth patch (bevyengine/bevy#26418): `BufferId`
+        BindingResource, Buffer, BufferBinding, BufferId, BufferVec, CachedComputePipelineId,
+        // superfargoth patch (own: preprocess bind group memo)
+        BindGroupEntry, BindGroupLayout, BindGroupLayoutId, WgpuSampler, WgpuTextureView,
         // superfargoth patch (own, GS: range unpack in preprocess)
         CommandEncoder, ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor,
         DynamicBindGroupLayoutEntries,
@@ -345,7 +348,8 @@ bitflags! {
 /// The bind groups the GPU preprocessing stages created this frame, for
 /// diagnostics, by owner: [`prepare_preprocess_bind_groups`] (mesh
 /// preprocessing, indirect parameter building, bin unpacking and uniform
-/// allocation - it rebuilds all of them every frame) and, since patch GS,
+/// allocation; cached across frames since the bind group cache patch, so
+/// only rebuilt when a bound buffer or range changes) and, since patch GS,
 /// instance-batch range unpacking and materialization.
 ///
 /// Each field is set by its own system; they are never summed here, so
@@ -353,8 +357,16 @@ bitflags! {
 /// baseline (where both GS fields are 0) stays comparable.
 #[derive(Resource, Clone, Copy, Default, Debug)]
 pub struct PreprocessBindGroupCount {
-    /// Bind groups created by the last run of [`prepare_preprocess_bind_groups`].
+    /// Bind groups created by the last run of [`prepare_preprocess_bind_groups`]:
+    /// cache misses only ([`PreprocessBindGroupMemo`] and bevy #26418's
+    /// scene-unpacking cache), so about 0 on a frame where no bound buffer was
+    /// reallocated and no work-item count changed.
     pub created: u32,
+    // superfargoth patch (own: preprocess bind group memo)
+    /// Bind groups the last run of [`prepare_preprocess_bind_groups`] used from
+    /// its caches instead of creating them. `created + reused` is what it
+    /// rebuilt every frame before the cache.
+    pub reused: u32,
     // superfargoth patch (own, GS: counters)
     /// Bind groups created by the last run of
     /// [`prepare_range_unpacking_bind_groups`]: one per view, phase and
@@ -369,30 +381,6 @@ pub struct PreprocessBindGroupCount {
     /// 0 after a batch's first frame and non-zero again when its output buffer
     /// is resized. Stays 0 without `GpuInstanceBatchPlugin`.
     pub materialize: u32,
-}
-
-// superfargoth patch (own: preprocess bind group count)
-fn bind_group_count<'a>(groups: impl IntoIterator<Item = &'a Option<BindGroup>>) -> u32 {
-    groups.into_iter().map(|g| u32::from(g.is_some())).sum()
-}
-
-// superfargoth patch (own: preprocess bind group count)
-impl PhasePreprocessBindGroups {
-    fn bind_group_count(&self) -> u32 {
-        match self {
-            Self::Direct(_) => 1,
-            Self::IndirectFrustumCulling {
-                indexed,
-                non_indexed,
-            } => bind_group_count([indexed, non_indexed]),
-            Self::IndirectOcclusionCulling {
-                early_indexed,
-                early_non_indexed,
-                late_indexed,
-                late_non_indexed,
-            } => bind_group_count([early_indexed, early_non_indexed, late_indexed, late_non_indexed]),
-        }
-    }
 }
 
 /// The compute shader bind group for the mesh preprocessing pass for each
@@ -496,12 +484,16 @@ pub struct BinUnpackingBindGroups(
 
 /// The bind groups for the `unpack_bins` shader for a single (view, phase)
 /// combination.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ViewPhaseBinUnpackingBindGroups {
     /// The bind groups for the indexed meshes, one for each batch set.
     indexed: Vec<ViewPhaseBinUnpackingBindGroup>,
     /// The bind groups for the non-indexed meshes, one for each batch set.
     non_indexed: Vec<ViewPhaseBinUnpackingBindGroup>,
+    /// The cached bind groups for the indexed meshes, keyed by bound buffers.
+    indexed_cache: SceneUnpackingBindGroupCache<5>,
+    /// The cached bind groups for the non-indexed meshes, keyed by bound buffers.
+    non_indexed_cache: SceneUnpackingBindGroupCache<5>,
 }
 
 /// The bind group for the `unpack_bins` shader for a single combination of
@@ -530,12 +522,16 @@ pub struct UniformAllocationBindGroups(
 
 /// The bind groups for the `allocate_uniforms` shader for a single (view,
 /// phase) combination.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ViewPhaseUniformAllocationBindGroups {
     /// The bind groups for the indexed meshes, one for each batch set.
     indexed: Vec<ViewPhaseUniformAllocationBindGroup>,
     /// The bind groups for the non-indexed meshes, one for each batch set.
     non_indexed: Vec<ViewPhaseUniformAllocationBindGroup>,
+    /// The cached bind groups for the indexed meshes, keyed by bound buffers.
+    indexed_cache: SceneUnpackingBindGroupCache<4>,
+    /// The cached bind groups for the non-indexed meshes, keyed by bound buffers.
+    non_indexed_cache: SceneUnpackingBindGroupCache<4>,
 }
 
 /// The bind group for the `allocate_uniforms` shader for a single combination
@@ -549,6 +545,205 @@ pub struct ViewPhaseUniformAllocationBindGroup {
     pub bind_group: BindGroup,
     /// The total number of bins in this batch set.
     pub bin_count: u32,
+}
+
+// superfargoth patch (bevyengine/bevy#26418, head 6d46e7df): the scene-unpacking bind group
+// cache, verbatim except for the `created` counter (own: preprocess bind group count). The PR's
+// `scene_unpacking_cache_tests` module is not carried: vendored crates are outside the workspace
+// and never tested here, and its `wgpu/noop` dev-dependency would be dead weight. Its layout
+// half is kept as compile-time asserts below.
+/// Bind groups are keyed by every bound buffer. Metadata offsets and dispatch
+/// counts are deliberately not cached: both can change without reallocating a buffer.
+#[derive(Clone)]
+struct SceneUnpackingBindGroupCache<const N: usize> {
+    entries: HashMap<[BufferId; N], (BindGroup, u8)>,
+    // superfargoth patch (own: preprocess bind group count)
+    /// Bind groups created (cache misses) since the last [`Self::begin_frame`].
+    created: u32,
+}
+
+impl<const N: usize> Default for SceneUnpackingBindGroupCache<N> {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::default(),
+            created: 0,
+        }
+    }
+}
+
+impl<const N: usize> SceneUnpackingBindGroupCache<N> {
+    fn begin_frame(&mut self) {
+        self.created = 0;
+        for (_, age) in self.entries.values_mut() {
+            *age = age.saturating_add(1);
+        }
+    }
+
+    fn get_or_create(
+        &mut self,
+        buffers: [BufferId; N],
+        create: impl FnOnce() -> BindGroup,
+    ) -> BindGroup {
+        let created = &mut self.created;
+        let (bind_group, age) = self.entries.entry(buffers).or_insert_with(|| {
+            *created += 1;
+            (create(), 0)
+        });
+        *age = 0;
+        bind_group.clone()
+    }
+
+    fn finish_frame(&mut self) {
+        // Phase instance and indirect parameter buffers alternate between two
+        // allocations. Keep the other frame's bind groups for their next use.
+        // The enclosing maps still remove inactive views and phases immediately.
+        self.entries.retain(|_, (_, age)| *age < 2);
+    }
+}
+
+// superfargoth patch (bevyengine/bevy#26418): the metadata bindings are dynamic uniform offsets
+// now, which wgpu requires to be multiples of `min_uniform_buffer_offset_alignment` (256 on
+// every backend we ship). `uniform_offset()` is `index * size_of::<T>()`, so the size must be.
+const _: () = assert!(size_of::<GpuBinUnpackingMetadata>() % 256 == 0);
+const _: () = assert!(size_of::<GpuUniformAllocationMetadata>() % 256 == 0);
+
+// superfargoth patch (own: preprocess bind group memo)
+/// Rust handle of a wgpu buffer, named through the deref of Bevy's wrapper
+/// (`bevy_pbr` has no direct `wgpu` dependency).
+type WgpuBuffer = <Buffer as core::ops::Deref>::Target;
+
+// superfargoth patch (own: preprocess bind group memo)
+/// One bound resource of a memoized bind group, held by handle. wgpu compares
+/// and hashes handles by resource identity, and holding a clone keeps that
+/// identity alive, so a freed buffer's slot can never be mistaken for a live one.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum MemoBinding {
+    Buffer {
+        buffer: WgpuBuffer,
+        offset: u64,
+        size: Option<NonZeroU64>,
+    },
+    TextureView(WgpuTextureView),
+    Sampler(WgpuSampler),
+}
+
+// superfargoth patch (own: preprocess bind group memo)
+/// The whole descriptor of a bind group: its layout and every `(binding,
+/// resource, offset, size)`. Two descriptors with equal keys create
+/// interchangeable bind groups, so a hit can never be stale.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct MemoKey {
+    layout: BindGroupLayoutId,
+    entries: Vec<(u32, MemoBinding)>,
+}
+
+impl MemoKey {
+    /// `None` when an entry binds a resource kind the memo does not key
+    /// (arrays, acceleration structures, ...): such a group is created uncached.
+    fn new(layout: &BindGroupLayout, entries: &[BindGroupEntry<'_>]) -> Option<Self> {
+        let entries = entries
+            .iter()
+            .map(|entry| {
+                let binding = match &entry.resource {
+                    BindingResource::Buffer(b) => MemoBinding::Buffer {
+                        buffer: b.buffer.clone(),
+                        offset: b.offset,
+                        size: b.size,
+                    },
+                    BindingResource::TextureView(view) => {
+                        MemoBinding::TextureView((*view).clone())
+                    }
+                    BindingResource::Sampler(sampler) => MemoBinding::Sampler((*sampler).clone()),
+                    _ => return None,
+                };
+                Some((entry.binding, binding))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            layout: layout.id(),
+            entries,
+        })
+    }
+}
+
+// superfargoth patch (own: preprocess bind group memo)
+#[derive(Default)]
+struct MemoState {
+    entries: HashMap<MemoKey, (BindGroup, u8)>,
+    created: u32,
+    reused: u32,
+}
+
+// superfargoth patch (own: preprocess bind group memo)
+/// Bind groups of the mesh preprocessing and indirect-parameter building
+/// shaders, kept across frames and keyed on their entire descriptor
+/// ([`MemoKey`]). Upstream rebuilds them every frame (no upstream issue or PR
+/// as of 2026-11-12; #26418 covers only the scene-unpacking groups). A group is
+/// rebuilt only when a bound buffer is reallocated, a bound range or offset
+/// changes (work-item counts), or a view's depth pyramid is recreated. Entries
+/// unused for two frames are evicted, like #26418's cache: the current and
+/// previous input buffers swap every frame, so each group alternates between
+/// two keys.
+///
+/// The mutex is only ever locked by [`prepare_preprocess_bind_groups`] itself
+/// (uncontended); it lets the `&self` bind group builders share the memo.
+#[derive(Resource, Default)]
+pub struct PreprocessBindGroupMemo(std::sync::Mutex<MemoState>);
+
+impl PreprocessBindGroupMemo {
+    fn state(&mut self) -> &mut MemoState {
+        self.0
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn begin_frame(&mut self) {
+        let state = self.state();
+        state.created = 0;
+        state.reused = 0;
+        for (_, age) in state.entries.values_mut() {
+            *age = age.saturating_add(1);
+        }
+    }
+
+    /// Evicts stale entries; returns `(created, reused)` for the frame.
+    fn finish_frame(&mut self) -> (u32, u32) {
+        let state = self.state();
+        state.entries.retain(|_, (_, age)| *age < 2);
+        (state.created, state.reused)
+    }
+
+    /// [`RenderDevice::create_bind_group`], memoized on the descriptor.
+    fn create_bind_group(
+        &self,
+        render_device: &RenderDevice,
+        label: &'static str,
+        layout: &BindGroupLayout,
+        entries: &[BindGroupEntry<'_>],
+    ) -> BindGroup {
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(key) = MemoKey::new(layout, entries) else {
+            state.created += 1;
+            return render_device.create_bind_group(label, layout, entries);
+        };
+        let MemoState {
+            entries: cache,
+            created,
+            reused,
+        } = &mut *state;
+        if let Some((bind_group, age)) = cache.get_mut(&key) {
+            *reused += 1;
+            *age = 0;
+            return bind_group.clone();
+        }
+        *created += 1;
+        let bind_group = render_device.create_bind_group(label, layout, entries);
+        cache.insert(key, (bind_group.clone(), 0));
+        bind_group
+    }
 }
 
 /// Stops the `GpuPreprocessNode` attempting to generate the buffer for this view
@@ -589,6 +784,9 @@ impl Plugin for GpuMeshPreprocessPlugin {
         render_app
             // superfargoth patch (own: preprocess bind group count)
             .init_resource::<PreprocessBindGroupCount>()
+            // superfargoth patch (own: preprocess bind group memo): a GPU resource, so a
+            // recovered device starts with an empty memo.
+            .init_gpu_resource::<PreprocessBindGroupMemo>()
             .init_gpu_resource::<BinUnpackingBindGroups>()
             .init_gpu_resource::<UniformAllocationBindGroups>()
             .init_gpu_resource::<PreprocessPipelines>()
@@ -784,7 +982,13 @@ pub fn allocate_uniforms(
             {
                 // Invoke the local scan (step 1).
                 compute_pass.set_pipeline(uniform_allocation_local_scan_pipeline);
-                compute_pass.set_bind_group(0, &uniform_allocation_bind_group.bind_group, &[]);
+                compute_pass.set_bind_group(
+                    0,
+                    &uniform_allocation_bind_group.bind_group,
+                    &[uniform_allocation_bind_group
+                        .metadata_index
+                        .uniform_offset()],
+                );
                 let local_scan_workgroup_count = uniform_allocation_bind_group
                     .bin_count
                     .div_ceil(UNIFORM_ALLOCATION_WORKGROUP_SIZE);
@@ -880,7 +1084,11 @@ pub fn unpack_bins(
                     .iter()
                     .chain(phase_bin_unpacking_bind_groups.non_indexed.iter())
                 {
-                    compute_pass.set_bind_group(0, &bin_unpacking_bind_group.bind_group, &[]);
+                    compute_pass.set_bind_group(
+                        0,
+                        &bin_unpacking_bind_group.bind_group,
+                        &[bin_unpacking_bind_group.metadata_index.uniform_offset()],
+                    );
                     let workgroup_count = (bin_unpacking_bind_group.mesh_instance_count as usize)
                         .div_ceil(WORKGROUP_SIZE);
                     if workgroup_count > 0 {
@@ -2071,7 +2279,7 @@ fn bin_unpacking_bind_group_layout_entries() -> BindGroupLayoutEntries<5> {
         (
             // @group(0) @binding(0) var<uniform> bin_unpacking_metadata:
             // BinUnpackingMetadata;
-            uniform_buffer::<GpuBinUnpackingMetadata>(false),
+            uniform_buffer::<GpuBinUnpackingMetadata>(true),
             // @group(0) @binding(1) var<storage> binned_mesh_instances:
             // array<BinnedMeshInstance>;
             storage_buffer_read_only::<GpuRenderBinnedMeshInstance>(false),
@@ -2096,7 +2304,7 @@ fn uniform_allocation_bind_group_layout_entries() -> BindGroupLayoutEntries<4> {
         (
             // @group(0) @binding(0) var<uniform> allocate_uniforms_metadata:
             // AllocateUniformsMetadata;
-            uniform_buffer::<GpuUniformAllocationMetadata>(false),
+            uniform_buffer::<GpuUniformAllocationMetadata>(true),
             // @group(0) @binding(1) var<storage> bin_metadata: array<BinMetadata>;
             storage_buffer_read_only::<GpuBinMetadata>(false),
             // @group(0) @binding(2) var<storage, read_write>
@@ -2557,16 +2765,32 @@ pub fn prepare_preprocess_bind_groups(
     mut bin_unpacking_bind_groups: ResMut<BinUnpackingBindGroups>,
     // superfargoth patch (own: preprocess bind group count): paired with the counter in one tuple
     // parameter, since a system takes at most 16 parameters.
-    (mut uniform_allocation_bind_groups, mut bind_group_count): (
+    // superfargoth patch (own: preprocess bind group memo): the memo joins the same tuple.
+    (mut uniform_allocation_bind_groups, mut bind_group_count, mut memo): (
         ResMut<UniformAllocationBindGroups>,
         ResMut<PreprocessBindGroupCount>,
+        ResMut<PreprocessBindGroupMemo>,
     ),
 ) {
     bind_group_count.created = 0;
-    // superfargoth patch (bevyengine/bevy#26095)
-    // Clear out old bind groups, since they may refer to stale metadata.
-    bin_unpacking_bind_groups.clear();
-    uniform_allocation_bind_groups.clear();
+    bind_group_count.reused = 0;
+    memo.begin_frame();
+    // superfargoth patch (bevyengine/bevy#26095, superseded by bevyengine/bevy#26418)
+    // #26095 cleared both maps here, since their bind groups baked in per-frame metadata
+    // offsets. #26418 binds those offsets dynamically instead, so only this frame's job lists
+    // are cleared and the bind groups stay cached on the buffers they bind.
+    for groups in bin_unpacking_bind_groups.values_mut() {
+        groups.indexed.clear();
+        groups.non_indexed.clear();
+        groups.indexed_cache.begin_frame();
+        groups.non_indexed_cache.begin_frame();
+    }
+    for groups in uniform_allocation_bind_groups.values_mut() {
+        groups.indexed.clear();
+        groups.non_indexed.clear();
+        groups.indexed_cache.begin_frame();
+        groups.non_indexed_cache.begin_frame();
+    }
 
     // Grab the `BatchedInstanceBuffers`.
     let BatchedInstanceBuffers {
@@ -2579,8 +2803,15 @@ pub fn prepare_preprocess_bind_groups(
         current_input_buffer_vec.buffer().buffer(),
         previous_input_buffer_vec.buffer(),
     ) else {
+        // superfargoth patch (bevyengine/bevy#26418)
+        bin_unpacking_bind_groups.clear();
+        uniform_allocation_bind_groups.clear();
+        // superfargoth patch (own: preprocess bind group memo)
+        memo.finish_frame();
         return;
     };
+    // superfargoth patch (own: preprocess bind group memo): shared by the `&self` builders.
+    let memo_ref: &PreprocessBindGroupMemo = &memo;
 
     // Record whether we have any meshes that are to be drawn indirectly. If we
     // don't, then we can skip building indirect parameters.
@@ -2620,6 +2851,8 @@ pub fn prepare_preprocess_bind_groups(
                 late_indexed_indirect_parameters_buffer,
                 late_non_indexed_indirect_parameters_buffer,
                 render_device: &render_device,
+                // superfargoth patch (own: preprocess bind group memo)
+                memo: memo_ref,
                 pipeline_cache: &pipeline_cache,
                 phase_indirect_parameters_buffers,
                 mesh_culling_data_buffer: &mesh_culling_data_buffer,
@@ -2677,8 +2910,8 @@ pub fn prepare_preprocess_bind_groups(
             // Write that bind group in.
             if let Some(bind_group) = bind_group {
                 any_indirect = any_indirect || was_indirect;
-                // superfargoth patch (own: preprocess bind group count)
-                bind_group_count.created += bind_group.bind_group_count();
+                // superfargoth patch (own: preprocess bind group memo): created and reused
+                // groups are counted by the memo now.
                 bind_groups.insert(*phase_type_id, bind_group);
             }
         }
@@ -2692,10 +2925,11 @@ pub fn prepare_preprocess_bind_groups(
     // Now, if there were any indirect draw commands, create the bind groups for
     // the indirect parameters building shader.
     if any_indirect {
-        // superfargoth patch (own: preprocess bind group count)
-        bind_group_count.created += create_build_indirect_parameters_bind_groups(
+        // superfargoth patch (own: preprocess bind group memo): counted by the memo now.
+        create_build_indirect_parameters_bind_groups(
             &mut commands,
             &render_device,
+            memo_ref,
             &pipeline_cache,
             &pipelines,
             current_input_buffer,
@@ -2727,16 +2961,44 @@ pub fn prepare_preprocess_bind_groups(
             &view.retained_view_entity,
         );
     }
+    // superfargoth patch (own: preprocess bind group count): groups in use this frame, and the
+    // ones the #26418 caches had to create.
+    let in_use: usize = bin_unpacking_bind_groups
+        .values()
+        .map(|g| g.indexed.len() + g.non_indexed.len())
+        .chain(
+            uniform_allocation_bind_groups
+                .values()
+                .map(|g| g.indexed.len() + g.non_indexed.len()),
+        )
+        .sum();
+    let unpacking_created: u32 = bin_unpacking_bind_groups
+        .values()
+        .map(|g| g.indexed_cache.created + g.non_indexed_cache.created)
+        .chain(
+            uniform_allocation_bind_groups
+                .values()
+                .map(|g| g.indexed_cache.created + g.non_indexed_cache.created),
+        )
+        .sum();
+
+    // superfargoth patch (bevyengine/bevy#26418)
+    bin_unpacking_bind_groups.retain(|_, groups| {
+        groups.indexed_cache.finish_frame();
+        groups.non_indexed_cache.finish_frame();
+        !groups.indexed.is_empty() || !groups.non_indexed.is_empty()
+    });
+    uniform_allocation_bind_groups.retain(|_, groups| {
+        groups.indexed_cache.finish_frame();
+        groups.non_indexed_cache.finish_frame();
+        !groups.indexed.is_empty() || !groups.non_indexed.is_empty()
+    });
+
     // superfargoth patch (own: preprocess bind group count)
-    let unpacking: usize = bin_unpacking_bind_groups
-        .values()
-        .map(|g| g.indexed.len() + g.non_indexed.len())
-        .sum();
-    let allocation: usize = uniform_allocation_bind_groups
-        .values()
-        .map(|g| g.indexed.len() + g.non_indexed.len())
-        .sum();
-    bind_group_count.created += u32::try_from(unpacking + allocation).unwrap_or(u32::MAX);
+    let (memo_created, memo_reused) = memo.finish_frame();
+    let in_use = u32::try_from(in_use).unwrap_or(u32::MAX);
+    bind_group_count.created = memo_created.saturating_add(unpacking_created);
+    bind_group_count.reused = memo_reused.saturating_add(in_use.saturating_sub(unpacking_created));
 }
 
 /// A temporary structure that stores all the information needed to construct
@@ -2754,6 +3016,9 @@ struct PreprocessBindGroupBuilder<'a> {
         &'a RawBufferVec<LatePreprocessWorkItemIndirectParameters>,
     /// The device.
     render_device: &'a RenderDevice,
+    // superfargoth patch (own: preprocess bind group memo)
+    /// Every bind group below is created through it, cached on its descriptor.
+    memo: &'a PreprocessBindGroupMemo,
     /// The pipeline cache
     pipeline_cache: &'a PipelineCache,
     /// The buffers that store indirect draw parameters.
@@ -2799,7 +3064,8 @@ impl<'a> PreprocessBindGroupBuilder<'a> {
         .ok();
 
         Some(PhasePreprocessBindGroups::Direct(
-            self.render_device.create_bind_group(
+            self.memo.create_bind_group(
+                self.render_device,
                 "preprocess_direct_bind_group",
                 &self
                     .pipeline_cache
@@ -2907,7 +3173,8 @@ impl<'a> PreprocessBindGroupBuilder<'a> {
                 .ok();
 
                 Some(
-                    self.render_device.create_bind_group(
+                    self.memo.create_bind_group(
+                self.render_device,
                         "preprocess_early_indexed_gpu_occlusion_culling_bind_group",
                         &self.pipeline_cache.get_bind_group_layout(
                             &self
@@ -3030,7 +3297,8 @@ impl<'a> PreprocessBindGroupBuilder<'a> {
                 .ok();
 
                 Some(
-                    self.render_device.create_bind_group(
+                    self.memo.create_bind_group(
+                self.render_device,
                         "preprocess_early_non_indexed_gpu_occlusion_culling_bind_group",
                         &self.pipeline_cache.get_bind_group_layout(
                             &self
@@ -3148,7 +3416,8 @@ impl<'a> PreprocessBindGroupBuilder<'a> {
                 .ok();
 
                 Some(
-                    self.render_device.create_bind_group(
+                    self.memo.create_bind_group(
+                self.render_device,
                         "preprocess_late_indexed_gpu_occlusion_culling_bind_group",
                         &self.pipeline_cache.get_bind_group_layout(
                             &self
@@ -3257,7 +3526,8 @@ impl<'a> PreprocessBindGroupBuilder<'a> {
                 .ok();
 
                 Some(
-                    self.render_device.create_bind_group(
+                    self.memo.create_bind_group(
+                self.render_device,
                         "preprocess_late_non_indexed_gpu_occlusion_culling_bind_group",
                         &self.pipeline_cache.get_bind_group_layout(
                             &self
@@ -3374,7 +3644,8 @@ impl<'a> PreprocessBindGroupBuilder<'a> {
                 .ok();
 
                 Some(
-                    self.render_device.create_bind_group(
+                    self.memo.create_bind_group(
+                self.render_device,
                         "preprocess_gpu_indexed_frustum_culling_bind_group",
                         &self.pipeline_cache.get_bind_group_layout(
                             &self
@@ -3433,7 +3704,8 @@ impl<'a> PreprocessBindGroupBuilder<'a> {
                 .ok();
 
                 Some(
-                    self.render_device.create_bind_group(
+                    self.memo.create_bind_group(
+                self.render_device,
                         "preprocess_gpu_non_indexed_frustum_culling_bind_group",
                         &self.pipeline_cache.get_bind_group_layout(
                             &self
@@ -3488,12 +3760,14 @@ impl<'a> PreprocessBindGroupBuilder<'a> {
 fn create_build_indirect_parameters_bind_groups(
     commands: &mut Commands,
     render_device: &RenderDevice,
+    // superfargoth patch (own: preprocess bind group memo)
+    memo: &PreprocessBindGroupMemo,
     pipeline_cache: &PipelineCache,
     pipelines: &PreprocessPipelines,
     current_input_buffer: &Buffer,
     indirect_parameters_buffers: &IndirectParametersBuffers,
     indirect_parameters_build_jobs: &IndirectParametersBuildJobs,
-) -> u32 {
+) {
     let mut build_indirect_parameters_bind_groups = BuildIndirectParametersBindGroups::new();
 
     for (phase_type_id, phase_indirect_parameters_buffer) in indirect_parameters_buffers.iter() {
@@ -3504,7 +3778,8 @@ fn create_build_indirect_parameters_bind_groups(
                     .indexed
                     .batch_sets_buffer()
                     .map(|indexed_batch_sets_buffer| {
-                        render_device.create_bind_group(
+                        memo.create_bind_group(
+                            render_device,
                             "reset_indexed_indirect_batch_sets_bind_group",
                             // The early bind group is good for the main phase and late
                             // phase too. They bind the same buffers.
@@ -3524,7 +3799,8 @@ fn create_build_indirect_parameters_bind_groups(
                     .non_indexed
                     .batch_sets_buffer()
                     .map(|non_indexed_batch_sets_buffer| {
-                        render_device.create_bind_group(
+                        memo.create_bind_group(
+                            render_device,
                             "reset_non_indexed_indirect_batch_sets_bind_group",
                             // The early bind group is good for the main phase and late
                             // phase too. They bind the same buffers.
@@ -3552,7 +3828,8 @@ fn create_build_indirect_parameters_bind_groups(
                         Some(indexed_batch_sets_buffer),
                         Some(indirect_parameters_build_job_buffer),
                     ) => Some(
-                        render_device.create_bind_group(
+                        memo.create_bind_group(
+                            render_device,
                             "build_indexed_indirect_parameters_bind_group",
                             // The frustum culling bind group is good for occlusion culling
                             // too. They bind the same buffers.
@@ -3618,7 +3895,8 @@ fn create_build_indirect_parameters_bind_groups(
                         Some(non_indexed_batch_sets_buffer),
                         Some(indirect_parameters_build_job_buffer),
                     ) => Some(
-                        render_device.create_bind_group(
+                        memo.create_bind_group(
+                            render_device,
                             "build_non_indexed_indirect_parameters_bind_group",
                             // The frustum culling bind group is good for occlusion culling
                             // too. They bind the same buffers.
@@ -3684,20 +3962,8 @@ fn create_build_indirect_parameters_bind_groups(
         );
     }
 
-    // superfargoth patch (own: preprocess bind group count)
-    let created = build_indirect_parameters_bind_groups
-        .values()
-        .map(|g| {
-            bind_group_count([
-                &g.reset_indexed_indirect_batch_sets,
-                &g.reset_non_indexed_indirect_batch_sets,
-                &g.build_indexed_indirect,
-                &g.build_non_indexed_indirect,
-            ])
-        })
-        .sum();
+    // superfargoth patch (own: preprocess bind group memo): the memo counts these now.
     commands.insert_resource(build_indirect_parameters_bind_groups);
-    created
 }
 
 /// Creates all bind groups needed to run the `unpack_bins` shader for all the
@@ -3752,51 +4018,43 @@ fn create_bin_unpacking_bind_groups(
             } => non_indexed.buffer(),
         };
 
-        // Create the actual bind groups.
-        bin_unpacking_bind_groups.insert(
-            SceneUnpackingBuffersKey {
+        let groups = bin_unpacking_bind_groups
+            .entry(SceneUnpackingBuffersKey {
                 phase: *phase_type_id,
                 view: *view_entity,
-            },
-            ViewPhaseBinUnpackingBindGroups {
-                indexed: match maybe_indexed_work_item_buffer {
-                    Some(indexed_work_item_buffer) => view_phase_bin_unpacking_buffers
-                        .indexed_unpacking_jobs
-                        .iter()
-                        .map(|job| {
-                            create_bin_unpacking_bind_group(
-                                render_device,
-                                preprocess_pipelines,
-                                pipeline_cache,
-                                job,
-                                bin_unpacking_metadata_buffer,
-                                indexed_work_item_buffer,
-                                true,
-                            )
-                        })
-                        .collect(),
-                    None => vec![],
-                },
-                non_indexed: match maybe_non_indexed_work_item_buffer {
-                    Some(non_indexed_work_item_buffer) => view_phase_bin_unpacking_buffers
-                        .non_indexed_unpacking_jobs
-                        .iter()
-                        .map(|job| {
-                            create_bin_unpacking_bind_group(
-                                render_device,
-                                preprocess_pipelines,
-                                pipeline_cache,
-                                job,
-                                bin_unpacking_metadata_buffer,
-                                non_indexed_work_item_buffer,
-                                false,
-                            )
-                        })
-                        .collect(),
-                    None => vec![],
-                },
-            },
-        );
+            })
+            .or_default();
+        for (work_items, jobs, output, cache, indexed) in [
+            (
+                maybe_indexed_work_item_buffer,
+                &view_phase_bin_unpacking_buffers.indexed_unpacking_jobs,
+                &mut groups.indexed,
+                &mut groups.indexed_cache,
+                true,
+            ),
+            (
+                maybe_non_indexed_work_item_buffer,
+                &view_phase_bin_unpacking_buffers.non_indexed_unpacking_jobs,
+                &mut groups.non_indexed,
+                &mut groups.non_indexed_cache,
+                false,
+            ),
+        ] {
+            if let Some(work_items) = work_items {
+                output.extend(jobs.iter().map(|job| {
+                    create_bin_unpacking_bind_group(
+                        render_device,
+                        preprocess_pipelines,
+                        pipeline_cache,
+                        job,
+                        bin_unpacking_metadata_buffer,
+                        work_items,
+                        indexed,
+                        cache,
+                    )
+                }));
+            }
+        }
     }
 }
 
@@ -3810,41 +4068,51 @@ fn create_bin_unpacking_bind_group(
     bin_unpacking_metadata_buffer: &Buffer,
     work_item_buffer: &Buffer,
     indexed: bool,
+    cache: &mut SceneUnpackingBindGroupCache<5>,
 ) -> ViewPhaseBinUnpackingBindGroup {
-    let bind_group = render_device.create_bind_group(
-        if indexed {
-            "bin unpacking indexed bind group"
-        } else {
-            "bin unpacking non-indexed bind group"
-        },
-        &pipeline_cache
-            .get_bind_group_layout(&preprocess_pipelines.bin_unpacking.bind_group_layout),
-        &BindGroupEntries::sequential((
-            // @group(0) @binding(0) var<uniform>
-            // bin_unpacking_metadata:
-            // BinUnpackingMetadata;
-            BindingResource::Buffer(BufferBinding {
-                buffer: bin_unpacking_metadata_buffer,
-                offset: job.bin_unpacking_metadata_index.uniform_offset() as u64,
-                size: NonZeroU64::new(size_of::<GpuBinUnpackingMetadata>() as u64),
-            }),
-            // @group(0) @binding(1) var<storage>
-            // binned_mesh_instances:
-            // array<BinnedMeshInstance>;
-            job.render_binned_mesh_instance_buffer.as_entire_binding(),
-            // @group(0) @binding(2) var<storage,
-            // read_write> preprocess_work_items:
-            // array<PreprocessWorkItem>;
-            work_item_buffer.as_entire_binding(),
-            // @group(0) @binding(3) var<storage> bin_metadata:
-            // array<BinMetadata>;
-            job.bin_metadata_buffer.as_entire_binding(),
-            // @group(0) @binding(4) var<storage>
-            // bin_index_to_bin_metadata_index: array<u32>;
-            job.bin_index_to_bin_metadata_index_buffer
-                .as_entire_binding(),
-        )),
-    );
+    let buffers = [
+        bin_unpacking_metadata_buffer.id(),
+        job.render_binned_mesh_instance_buffer.id(),
+        work_item_buffer.id(),
+        job.bin_metadata_buffer.id(),
+        job.bin_index_to_bin_metadata_index_buffer.id(),
+    ];
+    let bind_group = cache.get_or_create(buffers, || {
+        render_device.create_bind_group(
+            if indexed {
+                "bin unpacking indexed bind group"
+            } else {
+                "bin unpacking non-indexed bind group"
+            },
+            &pipeline_cache
+                .get_bind_group_layout(&preprocess_pipelines.bin_unpacking.bind_group_layout),
+            &BindGroupEntries::sequential((
+                // @group(0) @binding(0) var<uniform>
+                // bin_unpacking_metadata:
+                // BinUnpackingMetadata;
+                BindingResource::Buffer(BufferBinding {
+                    buffer: bin_unpacking_metadata_buffer,
+                    offset: 0,
+                    size: NonZeroU64::new(size_of::<GpuBinUnpackingMetadata>() as u64),
+                }),
+                // @group(0) @binding(1) var<storage>
+                // binned_mesh_instances:
+                // array<BinnedMeshInstance>;
+                job.render_binned_mesh_instance_buffer.as_entire_binding(),
+                // @group(0) @binding(2) var<storage,
+                // read_write> preprocess_work_items:
+                // array<PreprocessWorkItem>;
+                work_item_buffer.as_entire_binding(),
+                // @group(0) @binding(3) var<storage> bin_metadata:
+                // array<BinMetadata>;
+                job.bin_metadata_buffer.as_entire_binding(),
+                // @group(0) @binding(4) var<storage>
+                // bin_index_to_bin_metadata_index: array<u32>;
+                job.bin_index_to_bin_metadata_index_buffer
+                    .as_entire_binding(),
+            )),
+        )
+    });
     ViewPhaseBinUnpackingBindGroup {
         metadata_index: job.bin_unpacking_metadata_index,
         bind_group,
@@ -3880,58 +4148,45 @@ fn create_uniform_allocation_bind_groups(
             continue;
         };
 
-        // Create the actual bind groups.
-        uniform_allocation_bind_groups.insert(
-            SceneUnpackingBuffersKey {
+        let groups = uniform_allocation_bind_groups
+            .entry(SceneUnpackingBuffersKey {
                 phase: *phase_type_id,
                 view: *view_entity,
-            },
-            ViewPhaseUniformAllocationBindGroups {
-                indexed: match phase_indirect_parameters_buffers.indexed.metadata_buffer() {
-                    None => vec![],
-                    Some(indexed_indirect_parameters_metadata_buffer) => {
-                        view_phase_bin_unpacking_buffers
-                            .indexed_unpacking_jobs
-                            .iter()
-                            .map(|job| {
-                                create_uniform_allocation_bind_group(
-                                    render_device,
-                                    preprocess_pipelines,
-                                    pipeline_cache,
-                                    job,
-                                    uniform_allocation_metadata_buffer,
-                                    indexed_indirect_parameters_metadata_buffer,
-                                    true,
-                                )
-                            })
-                            .collect()
-                    }
-                },
-                non_indexed: match phase_indirect_parameters_buffers
+            })
+            .or_default();
+        for (metadata, jobs, output, cache, indexed) in [
+            (
+                phase_indirect_parameters_buffers.indexed.metadata_buffer(),
+                &view_phase_bin_unpacking_buffers.indexed_unpacking_jobs,
+                &mut groups.indexed,
+                &mut groups.indexed_cache,
+                true,
+            ),
+            (
+                phase_indirect_parameters_buffers
                     .non_indexed
-                    .metadata_buffer()
-                {
-                    None => vec![],
-                    Some(non_indexed_indirect_parameters_metadata_buffer) => {
-                        view_phase_bin_unpacking_buffers
-                            .non_indexed_unpacking_jobs
-                            .iter()
-                            .map(|job| {
-                                create_uniform_allocation_bind_group(
-                                    render_device,
-                                    preprocess_pipelines,
-                                    pipeline_cache,
-                                    job,
-                                    uniform_allocation_metadata_buffer,
-                                    non_indexed_indirect_parameters_metadata_buffer,
-                                    false,
-                                )
-                            })
-                            .collect()
-                    }
-                },
-            },
-        );
+                    .metadata_buffer(),
+                &view_phase_bin_unpacking_buffers.non_indexed_unpacking_jobs,
+                &mut groups.non_indexed,
+                &mut groups.non_indexed_cache,
+                false,
+            ),
+        ] {
+            if let Some(metadata) = metadata {
+                output.extend(jobs.iter().map(|job| {
+                    create_uniform_allocation_bind_group(
+                        render_device,
+                        preprocess_pipelines,
+                        pipeline_cache,
+                        job,
+                        uniform_allocation_metadata_buffer,
+                        metadata,
+                        indexed,
+                        cache,
+                    )
+                }));
+            }
+        }
     }
 }
 
@@ -3945,39 +4200,48 @@ fn create_uniform_allocation_bind_group(
     uniform_allocation_metadata_buffer: &Buffer,
     indirect_parameters_metadata_buffer: &Buffer,
     indexed: bool,
+    cache: &mut SceneUnpackingBindGroupCache<4>,
 ) -> ViewPhaseUniformAllocationBindGroup {
-    let bind_group = render_device.create_bind_group(
-        if indexed {
-            "uniform allocation indexed bind group"
-        } else {
-            "uniform allocation non-indexed bind group"
-        },
-        &pipeline_cache.get_bind_group_layout(
-            // All the pipelines' bind group layouts should be identical.
-            &preprocess_pipelines
-                .uniform_allocation
-                .local_scan
-                .bind_group_layout,
-        ),
-        &BindGroupEntries::sequential((
-            // @group(0) @binding(0) var<uniform> allocate_uniforms_metadata:
-            // AllocateUniformsMetadata;
-            BindingResource::Buffer(BufferBinding {
-                buffer: uniform_allocation_metadata_buffer,
-                offset: job.uniform_allocation_metadata_index.uniform_offset() as u64,
-                size: NonZeroU64::new(size_of::<GpuUniformAllocationMetadata>() as u64),
-            }),
-            // @group(0) @binding(1) var<storage> bin_metadata:
-            // array<BinMetadata>;
-            job.bin_metadata_buffer.as_entire_binding(),
-            // @group(0) @binding(2) var<storage, read_write>
-            // indirect_parameters_metadata: array<IndirectParametersMetadata>;
-            indirect_parameters_metadata_buffer.as_entire_binding(),
-            // @group(0) @binding(3) var<storage, read_write> fan_buffer:
-            // array<u32>;
-            job.fan_buffer.as_entire_binding(),
-        )),
-    );
+    let buffers = [
+        uniform_allocation_metadata_buffer.id(),
+        job.bin_metadata_buffer.id(),
+        indirect_parameters_metadata_buffer.id(),
+        job.fan_buffer.id(),
+    ];
+    let bind_group = cache.get_or_create(buffers, || {
+        render_device.create_bind_group(
+            if indexed {
+                "uniform allocation indexed bind group"
+            } else {
+                "uniform allocation non-indexed bind group"
+            },
+            &pipeline_cache.get_bind_group_layout(
+                // All the pipelines' bind group layouts should be identical.
+                &preprocess_pipelines
+                    .uniform_allocation
+                    .local_scan
+                    .bind_group_layout,
+            ),
+            &BindGroupEntries::sequential((
+                // @group(0) @binding(0) var<uniform> allocate_uniforms_metadata:
+                // AllocateUniformsMetadata;
+                BindingResource::Buffer(BufferBinding {
+                    buffer: uniform_allocation_metadata_buffer,
+                    offset: 0,
+                    size: NonZeroU64::new(size_of::<GpuUniformAllocationMetadata>() as u64),
+                }),
+                // @group(0) @binding(1) var<storage> bin_metadata:
+                // array<BinMetadata>;
+                job.bin_metadata_buffer.as_entire_binding(),
+                // @group(0) @binding(2) var<storage, read_write>
+                // indirect_parameters_metadata: array<IndirectParametersMetadata>;
+                indirect_parameters_metadata_buffer.as_entire_binding(),
+                // @group(0) @binding(3) var<storage, read_write> fan_buffer:
+                // array<u32>;
+                job.fan_buffer.as_entire_binding(),
+            )),
+        )
+    });
     ViewPhaseUniformAllocationBindGroup {
         metadata_index: job.uniform_allocation_metadata_index,
         bind_group,
