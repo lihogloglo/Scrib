@@ -91,6 +91,10 @@ pub struct ScreenLabels {
     /// `options-on`, `options-off`: a toggle's value.
     pub on: String,
     pub off: String,
+    /// `options-restart`: the description pane's badge on an `apply = Restart` setting.
+    pub restart: String,
+    /// `options-default`: the pane's default-value heading ("Default: 80%").
+    pub default: String,
 }
 
 impl Default for ScreenLabels {
@@ -153,6 +157,8 @@ impl Default for ScreenLabels {
             keybinds: s("Key bindings"),
             on: s("On"),
             off: s("Off"),
+            restart: s("Applies after restart"),
+            default: s("Default"),
         }
     }
 }

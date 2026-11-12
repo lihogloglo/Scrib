@@ -53,8 +53,8 @@ use crate::inventory::{SplitDialog, Tooltip, move_ghost, spawn_ghost};
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, StatBar, classes, label, label_in, panel, part, relabel, set_disabled, show,
-    spawn_button,
+    ScreenColors, StatBar, classes, label, label_in, panel_as, part, part_as, relabel, role,
+    set_disabled, show, spawn_button, spawn_framed_button,
 };
 use crate::{is_target, screen_of};
 
@@ -390,7 +390,7 @@ fn column(grow: bool) -> Node {
 fn spawn_list(commands: &mut Commands, parent: Entity, name: &'static str) -> Entity {
     commands
         .spawn((
-            part(name),
+            part_as(name, role::BOX),
             Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(2.0),
@@ -511,8 +511,9 @@ pub(crate) fn spawn_trade(
 ) {
     let colors = &*colors;
     for root in &roots {
-        commands.entity(root).insert(panel(
+        commands.entity(root).insert(panel_as(
             "sf-trade",
+            role::WINDOW,
             Node {
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(Val::Px(12.0)),
@@ -590,7 +591,12 @@ pub(crate) fn spawn_trade(
             ("sf-trade-offer-more", "+".to_owned(), TradeButton::OfferMore),
             ("sf-trade-offer-reset", service.reset_offer.clone(), TradeButton::OfferReset),
         ] {
-            let (e, _) = spawn_button(&mut commands, Some(offer_row), name, text, colors);
+            // Reset is a framed button; the -/+ steppers and the offer itself are bare.
+            let (e, _) = if kind == TradeButton::OfferReset {
+                spawn_framed_button(&mut commands, Some(offer_row), name, text, colors)
+            } else {
+                spawn_button(&mut commands, Some(offer_row), name, text, colors)
+            };
             commands.entity(e).insert(kind);
             if kind == TradeButton::Offer {
                 offer = e;
@@ -616,7 +622,7 @@ pub(crate) fn spawn_trade(
                 ChildOf(bar),
             ))
             .id();
-        let (accept, _) = spawn_button(
+        let (accept, _) = spawn_framed_button(
             &mut commands,
             Some(buttons),
             "sf-trade-accept",
@@ -624,7 +630,7 @@ pub(crate) fn spawn_trade(
             colors,
         );
         commands.entity(accept).insert(TradeButton::Accept);
-        let (cancel, _) = spawn_button(
+        let (cancel, _) = spawn_framed_button(
             &mut commands,
             Some(buttons),
             "sf-trade-cancel",
@@ -914,7 +920,7 @@ pub(crate) fn sync_trade(
             set_disabled(&mut commands, parts.accept, disabled);
             commands
                 .entity(parts.accept)
-                .insert(classes("sf-trade-accept", &[("disabled", disabled)]));
+                .insert(classes("sf-trade-accept sf-framed", &[("disabled", disabled)]));
             parts.seen = Some(deal_key);
         }
 

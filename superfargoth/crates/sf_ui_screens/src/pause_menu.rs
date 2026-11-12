@@ -29,7 +29,8 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    Question, ScreenColors, button, centred_window, classes, label, part, relabel, set_disabled,
+    Question, ScreenColors, button, centred_window, classes, label, part, part_as, relabel, role,
+    set_disabled,
 };
 use crate::{is_target, screen_of};
 
@@ -319,7 +320,7 @@ pub(crate) fn spawn_pause_menu(
 ) {
     for root in &roots {
         commands.entity(root).insert((
-            part("sf-pause"),
+            part_as("sf-pause", role::WINDOW),
             centred_window(Node {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Stretch,

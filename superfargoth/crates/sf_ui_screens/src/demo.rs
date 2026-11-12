@@ -1,4 +1,4 @@
-//! Synthetic data and a tiny host for every stock screen (feature `demo`; the `screens`
+//! Synthetic data and a tiny host for every stock screen (always compiled; the `screens`
 //! example and the tests). No game content: invented names, a few rules, generated items.
 
 use std::collections::HashMap;
@@ -78,17 +78,17 @@ pub const SETTINGS: &str = r#"
 [[define]]
 kind = "ui.setting"
 id = "demo.difficulty"
-value = { label = "set-demo-difficulty", page = "gameplay", kind = { Int = { default = 50, min = 0, max = 100, step = 25 } } }
+value = { label = "set-demo-difficulty", description = "set-demo-difficulty-desc", page = "gameplay", kind = { Int = { default = 50, min = 0, max = 100, step = 25 } } }
 
 [[define]]
 kind = "ui.setting"
 id = "demo.subtitles"
-value = { label = "set-demo-subtitles", page = "gameplay", kind = { Bool = { default = true } } }
+value = { label = "set-demo-subtitles", page = "gameplay", kind = { Bool = { default = true } }, disabled_reason = "set-demo-subtitles-off" }
 
 [[define]]
 kind = "ui.setting"
 id = "demo.quality"
-value = { label = "set-demo-quality", page = "display", kind = { Choice = { default = "medium", options = ["low", "medium", "high"] } } }
+value = { label = "set-demo-quality", page = "display", kind = { Choice = { default = "medium", options = ["low", "medium", "high"] } }, apply = "Restart" }
 
 [[define]]
 kind = "ui.setting"

@@ -10,9 +10,9 @@
 }
 
 :root {
-    /* Not ini values: Morrowind draws menus black at menu transparency, framed in bronze. */
+    /* Not ini values: Morrowind draws menus black at menu transparency (`BlackBG`); the frames
+       are the install's art (frames.css). `--mw-frame-thin`: the HUD bars' CSS border. */
     --mw-panel: rgba(0, 0, 0, 0.78);
-    --mw-frame: rgb(128, 102, 60);
     --mw-frame-thin: rgb(96, 78, 48);
     font-family: "Mystic Cards";
     font-size: 20px;
@@ -25,8 +25,7 @@
    text that changes colour, ini [FontColor] normal / over / pressed: `:hover` and the pad or
    keyboard focus (`:focus-visible`) take "over", the press (`:active`) takes "pressed".
    `.sf-button` alone is the bare text button (topics, tabs, rows); a framed one (Goodbye, OK,
-   menu entries) adds the thin bronze frame of the part rules below (vanilla draws those with
-   the eight `menu_button_frame_*` pieces). */
+   Back: `.sf-framed`) adds the `menu_button_frame` art below. */
 
 .sf-button {
     color: var(--mw-normal);
@@ -46,13 +45,104 @@
     }
 }
 
+/* ---------------------------------------------------------------- frames by role
+   The framework's role classes (ui.md "Role classes") take OpenMW's skin per role. The frame
+   images come from frames.css, generated at start from the install's `menu_*` pieces
+   (mw_boot_bevy ui_frames.rs): `.sf-window` the thick frame (`MW_Window` / `MW_Dialog`),
+   `.sf-box` the thin one (`MW_Box`), `.sf-framed` the button frame (`MW_Button`). These rules
+   are what's inside: windows are `BlackBG` at menu transparency (the colour draws under the
+   frame image), boxes are clear over it, and the padding keeps content off the frame. Without
+   the pieces (no install) the windows stay black and unframed. */
+
+.sf-window {
+    background-color: var(--mw-panel);
+    padding: 8px;
+}
+
+.sf-box {
+    background-color: transparent;
+    padding: 4px;
+}
+
+/* `MW_Button`: 136x24 minimum, label centred. */
+.sf-framed,
+#sf-message-box-button {
+    min-width: 136px;
+    min-height: 24px;
+    padding: 3px 12px;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Popups over other parts stay readable: opaque (`MW_DialogNoTransp`) or panel black. */
+.sf-dialogue-submenu-panel {
+    background-color: rgb(0, 0, 0);
+}
+
+.sf-tooltip {
+    background-color: var(--mw-panel);
+}
+
+/* The loading bar's fill is absolute (the sweep moves it): keep it off the 2 px frame's top and
+   bottom (its ends may still touch the side edges at 0 / 100 %). */
+.sf-loading-bar {
+    height: 12px;
+    padding: 0px;
+}
+
+.sf-loading-bar-fill {
+    top: 2px;
+    bottom: 2px;
+    height: auto;
+}
+
 /* ---------------------------------------------------------------- dialogue window */
 
-.sf-dialogue {
-    padding: 14px;
-    border: 4px;
-    border-color: var(--mw-frame);
-    background-color: var(--mw-panel);
+/* ---------------------------------------------------------------- main menu
+   OpenMW's title menu (`mainmenu.cpp`; research openmw-ui-look-2026-11-11.md §2): no window or
+   frame, a column of image buttons centred and 24 px off the bottom. An `.image` entry shows its
+   `menu_<id>.dds` art stretched to 128x64 (HD art scales down to it); the art carries 16 px of
+   transparent padding, so neighbours overlap by 16 px (a 48 px step). Entries without art
+   (Continue, or a missing file) are text centred in the same 128 px column. The version text is
+   bottom-right in OpenMW's 280x50 box, right-aligned, black shadow. */
+
+.sf-main-menu {
+    justify-content: flex-end;
+    padding-bottom: 24px;
+}
+
+.sf-main-menu-entries {
+    background-color: transparent;
+    padding: 0px;
+    row-gap: 0px;
+    min-width: 0px;
+    align-items: center;
+}
+
+.sf-main-menu-entry {
+    width: 128px;
+    justify-content: center;
+    align-items: center;
+}
+
+.sf-main-menu-entry.image {
+    height: 64px;
+    padding: 0px;
+    margin-top: -16px;
+}
+
+.sf-main-menu-entry-image {
+    width: 128px;
+    height: 64px;
+}
+
+.sf-main-menu-version {
+    right: 0px;
+    bottom: 0px;
+    width: 280px;
+    height: 50px;
+    text-align: right;
+    text-shadow: 1px 1px black;
 }
 
 .sf-dialogue-speaker {
@@ -62,8 +152,6 @@
 .sf-dialogue-log,
 .sf-dialogue-side {
     padding: 8px;
-    border: 2px;
-    border-color: var(--mw-frame-thin);
 }
 
 .sf-dialogue-heading {
@@ -104,8 +192,6 @@
 }
 
 .sf-dialogue-goodbye {
-    border: 2px;
-    border-color: var(--mw-frame-thin);
     justify-content: center;
 }
 
@@ -190,9 +276,6 @@
     height: 525px;
     flex-shrink: 0;
     padding: 10px;
-    border: 4px;
-    border-color: var(--mw-frame);
-    background-color: var(--mw-panel);
     color: var(--mw-normal);
 }
 
@@ -212,19 +295,13 @@
     background-color: transparent;
 }
 
+/* The panel and its buttons carry no class: frames.css frames them by `#name` (thick, button). */
 #sf-message-box-panel {
-    border: 4px;
-    border-color: var(--mw-frame);
     background-color: var(--mw-panel);
 }
 
 #sf-message-box-text {
     color: var(--mw-normal);
-}
-
-#sf-message-box-button {
-    border: 2px;
-    border-color: var(--mw-frame-thin);
 }
 
 /* ---------------------------------------------------------------- HUD

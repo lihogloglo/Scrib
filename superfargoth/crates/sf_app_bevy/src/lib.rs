@@ -10,20 +10,24 @@
 //! the phase. Its `OnEnter`/`OnExit` run once per world: `Loading` → `InGame` keeps the same value
 //! and runs neither ([`WorldAlive::ALLOW_SAME_STATE_TRANSITIONS`] is off).
 //!
-//! Who leaves which phase: `Boot` ends after `PostStartup` (this plugin; the intro videos of I1
-//! will hold it later); `Frontend` → `Loading` is the menu's New game / Continue / Load (the game);
-//! `Loading` → `InGame` is the game's streaming signal (start area resident).
+//! Who leaves which phase: `Boot` ends after `PostStartup` (this plugin), unless something holds it
+//! ([`BootHolds`]: the game's intro videos, menus.md §3); then it ends in the update the last hold
+//! is released (asked in `PostUpdate`, applied at the next update's `StateTransition`). `Frontend`
+//! → `Loading` is the menu's New game / Continue / Load (the game); `Loading` → `InGame` is the
+//! game's streaming signal (start area resident).
 
-use bevy_app::{App, Plugin, PostStartup};
+use std::collections::BTreeSet;
+
+use bevy_app::{App, Plugin, PostStartup, PostUpdate};
 use bevy_ecs::prelude::*;
 pub use bevy_state;
 use bevy_state::app::{AppExtStates, StatesPlugin};
-use bevy_state::prelude::{ComputedStates, NextState, State, States};
+use bevy_state::prelude::{ComputedStates, NextState, State, States, in_state};
 
 /// The app's phase (menus.md §1 table).
 #[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AppPhase {
-    /// Profile, mods and records load; settings apply; intro videos (later).
+    /// Profile, mods and records load; settings apply; intro videos ([`BootHolds`]).
     #[default]
     Boot,
     /// Main menu, options, save list. No world: no streaming, player or world camera.
@@ -49,8 +53,36 @@ impl ComputedStates for WorldAlive {
     }
 }
 
+/// Named holds that keep the app in [`AppPhase::Boot`] (intro videos, a splash, a first-run
+/// prompt). Place one at build or in `Startup` (before `PostStartup` looks) and release it when
+/// done; with none, `Boot` ends after `PostStartup` exactly as without this resource.
+#[derive(Resource, Default, Clone, Debug, PartialEq, Eq)]
+pub struct BootHolds(BTreeSet<String>);
+
+impl BootHolds {
+    /// Holds `Boot` under `name` (again: no change).
+    pub fn hold(&mut self, name: impl Into<String>) {
+        self.0.insert(name.into());
+    }
+
+    /// Releases `name`; whether it was held.
+    pub fn release(&mut self, name: &str) -> bool {
+        self.0.remove(name)
+    }
+
+    /// Whether `name` holds `Boot`.
+    pub fn is_held(&self, name: &str) -> bool {
+        self.0.contains(name)
+    }
+
+    /// No hold: `Boot` may end.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 /// Adds the states (and Bevy's `StatesPlugin` if `DefaultPlugins` didn't) and leaves `Boot`
-/// for [`Self::after_boot`] once startup has run.
+/// for [`Self::after_boot`] once startup has run and no [`BootHolds`] remain.
 #[derive(Clone, Copy, Debug)]
 pub struct AppPhasePlugin {
     /// `Frontend` for a release start, `Loading` for dev runs.
@@ -69,20 +101,23 @@ impl Plugin for AppPhasePlugin {
             app.add_plugins(StatesPlugin);
         }
         let after_boot = self.after_boot;
-        app.init_state::<AppPhase>().add_computed_state::<WorldAlive>().add_systems(
-            PostStartup,
-            move |phase: Res<State<AppPhase>>, mut next: ResMut<NextState<AppPhase>>| {
-                if *phase.get() == AppPhase::Boot {
-                    next.set(after_boot);
-                }
-            },
-        );
+        let leave_boot = move |phase: Res<State<AppPhase>>, holds: Res<BootHolds>, mut next: ResMut<NextState<AppPhase>>| {
+            if *phase.get() == AppPhase::Boot && holds.is_empty() {
+                next.set(after_boot);
+            }
+        };
+        // `PostUpdate`: after every `Update` system that may release the last hold.
+        app.init_state::<AppPhase>()
+            .add_computed_state::<WorldAlive>()
+            .init_resource::<BootHolds>()
+            .add_systems(PostStartup, leave_boot)
+            .add_systems(PostUpdate, leave_boot.run_if(in_state(AppPhase::Boot)));
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use bevy_state::prelude::{OnEnter, OnExit, in_state};
+    use bevy_state::prelude::{OnEnter, OnExit};
 
     use super::*;
 
@@ -167,6 +202,35 @@ mod tests {
         assert_eq!(phase(&app), AppPhase::Loading);
         assert!(alive(&app));
         assert_eq!(counts(&app).0, 1);
+    }
+
+    #[test]
+    fn a_boot_hold_keeps_boot_until_released() {
+        let mut app = app(AppPhase::Frontend);
+        app.add_systems(bevy_app::Startup, |mut holds: ResMut<BootHolds>| {
+            holds.hold("intro");
+            holds.hold("splash");
+        });
+        frames_in_boot(&mut app, 3);
+        assert!(app.world().resource::<BootHolds>().is_held("intro"));
+        app.world_mut().resource_mut::<BootHolds>().release("splash");
+        frames_in_boot(&mut app, 2);
+        assert!(app.world_mut().resource_mut::<BootHolds>().release("intro"));
+        // Released between updates: this update's PostUpdate asks, the next one's transition applies.
+        app.update();
+        assert_eq!(phase(&app), AppPhase::Boot);
+        app.update();
+        assert_eq!(phase(&app), AppPhase::Frontend);
+        assert!(!alive(&app));
+        assert_eq!(counts(&app), (0, 0, 0));
+        assert!(!app.world_mut().resource_mut::<BootHolds>().release("intro"), "released once");
+    }
+
+    fn frames_in_boot(app: &mut App, n: usize) {
+        for _ in 0..n {
+            app.update();
+            assert_eq!(phase(app), AppPhase::Boot, "held");
+        }
     }
 
     #[test]

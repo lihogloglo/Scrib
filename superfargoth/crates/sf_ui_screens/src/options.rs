@@ -17,19 +17,36 @@
 //! disabled row (the app sets `enabled = false`; `ui.setting` has no condition yet) is shown
 //! greyed and skipped.
 //!
+//! Widgets (`bevy_ui_widgets`): a slider row's bar is a [`Slider`] (drag the thumb or the
+//! track, click the track to jump; the value snaps to the row's step grid and goes out as a
+//! `Set` like a step), a toggle row's box a [`Checkbox`]; both follow the model (a step moves
+//! the thumb, a flip checks the box) and carry `InteractionDisabled` on a disabled row.
+//!
+//! Description pane (right of the rows): the row under the pointer, else the focused row
+//! ([`OptionsScreen::described`]; hover never moves the focus): its label, the record's
+//! `description`, its `disabled_reason` while disabled, an "Applies after restart" badge for
+//! `apply = Restart`, and the default value; empty lines are hidden.
+//!
 //! Strings: a row's label is its record's Fluent `label`, a choice option's is
 //! `<label>-<option>`, a page's `set-page-<page>`; a missing string reads as the id made
-//! readable (`move_speed` reads "Move speed").
+//! readable (`move_speed` reads "Move speed"), except a description or a disabled reason,
+//! which reads as none.
 
 use std::collections::HashMap;
 
+use bevy_color::Color;
 use bevy_ecs::prelude::*;
 use bevy_input_focus::{FocusCause, InputFocus};
 use bevy_math::CompassOctant;
+use bevy_picking::events::{PointerEnter, PointerLeave};
 use bevy_text::TextColor;
 use bevy_ui::prelude::*;
-use bevy_ui_widgets::Activate;
-use sf_ui::records::SettingKind;
+use bevy_ui::Checked;
+use bevy_ui_widgets::{
+    Activate, Checkbox, Slider, SliderOrientation, SliderRange, SliderStep, SliderThumb,
+    SliderValue, TrackClick, ValueChange,
+};
+use sf_ui::records::{SettingApply, SettingKind};
 use sf_ui::{Localizer, SettingValue, SettingsStore, UiRegistry};
 use sf_ui_bevy::{
     ScreenStackRes, UiAction, UiActionEvent, UiHandlesBack, UiNavEvent, UiOwnsFocus, UiScreenRoot,
@@ -38,13 +55,19 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, StatBar, button, centred_window, classes, label, part, relabel, set_disabled,
-    spawn_bar, spawn_button,
+    ScreenColors, StatBar, button, centred_window, classes, framed_button, label, part, part_as,
+    relabel, role, set_disabled, spawn_bar, spawn_button,
 };
 use crate::{is_target, screen_of};
 
 /// Steps of a float slider whose record gives no step.
 pub const DEFAULT_FLOAT_STEPS: f64 = 20.0;
+
+/// The slider thumb's width (px); it travels the track less its width, so it never overhangs.
+const THUMB_WIDTH: f32 = 10.0;
+
+/// The description pane's width (px).
+const PANE_WIDTH: f32 = 280.0;
 
 /// How a row edits its value.
 #[derive(Clone, Debug, PartialEq)]
@@ -74,6 +97,14 @@ pub struct OptionRow {
     pub value: SettingValue,
     /// Disabled rows are shown (class `disabled`), skipped by navigation and not changed.
     pub enabled: bool,
+    /// The record's localized `description`; `None` without one or without its string.
+    pub description: Option<String>,
+    /// The record's localized `disabled_reason`, shown while the row is disabled.
+    pub disabled_reason: Option<String>,
+    /// `apply = Restart`: the value is read at the next start.
+    pub restart: bool,
+    /// The record's default value.
+    pub default: SettingValue,
 }
 
 impl OptionRow {
@@ -115,10 +146,66 @@ impl OptionRow {
         (next != self.value).then_some(next)
     }
 
+    /// A slider's value nearest `value` on its step grid from `min`, clamped to its range (a
+    /// drag or a track click lands here); `None` for toggles and choices.
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    pub fn snapped(&self, value: f64) -> Option<SettingValue> {
+        match &self.kind {
+            OptionKind::Int { min, max, step } => {
+                let n = ((value - *min as f64) / *step as f64).round() as i64;
+                Some(SettingValue::Int(
+                    min.saturating_add(n.saturating_mul(*step))
+                        .clamp(*min, *max),
+                ))
+            }
+            OptionKind::Float { min, max, step } => {
+                let n = ((value - min) / step).round();
+                let next = (min + n * step).clamp(*min, *max);
+                Some(SettingValue::Float((next * 1e9).round() / 1e9))
+            }
+            OptionKind::Toggle | OptionKind::Choice(_) => None,
+        }
+    }
+
+    /// A slider's widget state: range, step and value, in f32 (the widget's unit).
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    fn slider(&self) -> Option<(SliderRange, SliderStep, SliderValue)> {
+        match (&self.kind, &self.value) {
+            (OptionKind::Int { min, max, step }, SettingValue::Int(v)) => Some((
+                SliderRange::new(*min as f32, *max as f32),
+                SliderStep(*step as f32),
+                SliderValue(*v as f32),
+            )),
+            (OptionKind::Float { min, max, step }, SettingValue::Float(v)) => Some((
+                SliderRange::new(*min as f32, *max as f32),
+                SliderStep(*step as f32),
+                SliderValue(*v as f32),
+            )),
+            _ => None,
+        }
+    }
+
+    /// A toggle's state; `None` for the other kinds.
+    fn checked(&self) -> Option<bool> {
+        match (&self.kind, &self.value) {
+            (OptionKind::Toggle, SettingValue::Bool(on)) => Some(*on),
+            _ => None,
+        }
+    }
+
     /// The value as shown: on / off, the option's label, the number (a 0..1 slider as a
     /// percentage).
     pub fn value_text(&self, labels: &ScreenLabels) -> String {
-        match (&self.kind, &self.value) {
+        self.format(&self.value, labels)
+    }
+
+    /// The default value as shown (as [`OptionRow::value_text`]).
+    pub fn default_text(&self, labels: &ScreenLabels) -> String {
+        self.format(&self.default, labels)
+    }
+
+    fn format(&self, value: &SettingValue, labels: &ScreenLabels) -> String {
+        match (&self.kind, value) {
             (OptionKind::Toggle, SettingValue::Bool(on)) => {
                 if *on {
                     labels.on.clone()
@@ -199,10 +286,13 @@ impl OptionsModel {
         store: Option<&SettingsStore>,
         localizer: Option<&Localizer>,
     ) -> Self {
-        let text = |key: &str, fallback: &str| match localizer {
-            Some(l) if !key.is_empty() && l.has(key) => l.format(key, None).into_owned(),
-            _ => readable(fallback),
+        let string = |key: &str| match localizer {
+            Some(l) if !key.is_empty() && l.has(key) => Some(l.format(key, None).into_owned()),
+            _ => None,
         };
+        let text = |key: &str, fallback: &str| string(key).unwrap_or_else(|| readable(fallback));
+        // Descriptions and reasons have no readable-id fallback: a missing string reads as none.
+        let optional = |key: Option<&str>| key.and_then(string);
         let mut pages: Vec<OptionsPage> = Vec::new();
         for def in registry.settings() {
             let key = def.id.as_str();
@@ -261,8 +351,15 @@ impl OptionsModel {
                 key: key.to_owned(),
                 label: text(&def.def.label, local),
                 kind,
-                value: store.and_then(|s| s.get(key)).cloned().unwrap_or(default),
+                value: store
+                    .and_then(|s| s.get(key))
+                    .cloned()
+                    .unwrap_or_else(|| default.clone()),
                 enabled: true,
+                description: optional(def.def.description.as_deref()),
+                disabled_reason: optional(def.def.disabled_reason.as_deref()),
+                restart: def.def.apply == SettingApply::Restart,
+                default,
             };
             let page_id = def
                 .def
@@ -352,6 +449,8 @@ pub struct OptionsScreen {
     pub model: OptionsModel,
     page: usize,
     focus: OptionsFocus,
+    /// The row under the pointer, by setting key.
+    hovered: Option<String>,
 }
 
 impl OptionsScreen {
@@ -375,6 +474,31 @@ impl OptionsScreen {
     pub fn set_page(&mut self, page: usize) {
         self.page = page.min(self.model.pages.len().saturating_sub(1));
         self.focus = self.home();
+        self.hovered = None;
+    }
+
+    /// The row under the pointer (the screen's pointer observers set it), by setting key.
+    pub fn hovered(&self) -> Option<&str> {
+        self.hovered.as_deref()
+    }
+
+    /// Sets the row under the pointer (`None`: none). It never moves the focus.
+    pub fn set_hovered(&mut self, key: Option<String>) {
+        self.hovered = key;
+    }
+
+    /// The row the description pane shows: the hovered row of the current page (a disabled
+    /// one included, so its reason can be read), else the focused row; `None` on Key bindings
+    /// and Back.
+    pub fn described(&self) -> Option<&OptionRow> {
+        let hovered = self
+            .hovered
+            .as_deref()
+            .and_then(|key| self.rows().iter().find(|r| r.key == key));
+        hovered.or_else(|| match &self.focus {
+            OptionsFocus::Row(key) => self.rows().iter().find(|r| r.key == *key),
+            _ => None,
+        })
     }
 
     fn rows(&self) -> &[OptionRow] {
@@ -419,7 +543,26 @@ impl OptionsScreen {
         row.value = value.clone();
         Some(OptionsChange::Set(key.to_owned(), value))
     }
+
+    /// Sets an enabled row of the current page (a widget's value); the change, when it changed.
+    fn set(&mut self, key: &str, value: SettingValue) -> Option<OptionsChange> {
+        let page = self.model.pages.get_mut(self.page)?;
+        let row = page.rows.iter_mut().find(|r| r.key == key && r.enabled)?;
+        if row.value == value {
+            return None;
+        }
+        row.value = value.clone();
+        Some(OptionsChange::Set(key.to_owned(), value))
+    }
 }
+
+/// On a slider row's [`Slider`]: the setting it edits.
+#[derive(Component, Clone, Debug)]
+pub(crate) struct OptionsSlider(String);
+
+/// On a toggle row's [`Checkbox`]: the setting it edits.
+#[derive(Component, Clone, Debug)]
+pub(crate) struct OptionsCheckbox(String);
 
 /// A clickable part of the options screen.
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
@@ -437,9 +580,64 @@ pub enum OptionsPart {
 #[derive(Debug, Clone, Copy)]
 struct RowParts {
     value: Entity,
-    /// Left, right.
-    arrows: [Entity; 2],
-    bar: Option<Entity>,
+    /// Left, right (sliders and choices; a toggle has its checkbox instead).
+    arrows: Option<[Entity; 2]>,
+    /// A slider row's [`Slider`] (also its [`StatBar`]) and thumb.
+    slider: Option<(Entity, Entity)>,
+    /// A toggle row's [`Checkbox`].
+    checkbox: Option<Entity>,
+}
+
+/// The description pane's text parts (right of the rows). An empty one is hidden
+/// (`Display::None`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OptionsPane {
+    /// The pane itself.
+    pub root: Entity,
+    pub label: Entity,
+    pub description: Entity,
+    /// The disabled reason, while the row is disabled.
+    pub reason: Entity,
+    /// "Applies after restart" (`apply = Restart`).
+    pub restart: Entity,
+    /// "Default: <value>".
+    pub default: Entity,
+}
+
+/// What the pane shows, in [`OptionsPane`] order.
+type PaneText = [String; 5];
+
+impl OptionsPane {
+    fn texts(&self) -> [Entity; 5] {
+        [
+            self.label,
+            self.description,
+            self.reason,
+            self.restart,
+            self.default,
+        ]
+    }
+}
+
+/// The pane's text for `row` (all empty without one).
+fn pane_text(row: Option<&OptionRow>, labels: &ScreenLabels) -> PaneText {
+    let Some(row) = row else {
+        return PaneText::default();
+    };
+    [
+        row.label.clone(),
+        row.description.clone().unwrap_or_default(),
+        row.disabled_reason
+            .clone()
+            .filter(|_| !row.enabled)
+            .unwrap_or_default(),
+        if row.restart {
+            labels.restart.clone()
+        } else {
+            String::new()
+        },
+        format!("{}: {}", labels.default, row.default_text(labels)),
+    ]
 }
 
 /// The screen's parts and what they show.
@@ -454,10 +652,18 @@ pub struct OptionsParts {
     active_tab: Option<usize>,
     keybinds: Entity,
     back: Entity,
+    pane: OptionsPane,
+    /// The pane's text on screen.
+    pane_shown: Option<PaneText>,
     seen: Option<(usize, OptionsModel)>,
 }
 
 impl OptionsParts {
+    /// The description pane.
+    pub fn pane(&self) -> OptionsPane {
+        self.pane
+    }
+
     /// The tab of page `page`.
     pub fn tab(&self, page: usize) -> Option<Entity> {
         self.tabs.get(&page)
@@ -473,9 +679,24 @@ impl OptionsParts {
         self.row_parts.get(key).map(|p| p.value)
     }
 
-    /// A row's left and right arrows.
+    /// A row's left and right arrows (sliders and choices; `None` for a toggle).
     pub fn arrows(&self, key: &str) -> Option<[Entity; 2]> {
-        self.row_parts.get(key).map(|p| p.arrows)
+        self.row_parts.get(key).and_then(|p| p.arrows)
+    }
+
+    /// A slider row's [`Slider`] (`bevy_ui_widgets`).
+    pub fn slider(&self, key: &str) -> Option<Entity> {
+        self.row_parts.get(key).and_then(|p| p.slider).map(|(s, _)| s)
+    }
+
+    /// A slider row's thumb ([`SliderThumb`]).
+    pub fn thumb(&self, key: &str) -> Option<Entity> {
+        self.row_parts.get(key).and_then(|p| p.slider).map(|(_, t)| t)
+    }
+
+    /// A toggle row's [`Checkbox`] (`bevy_ui_widgets`).
+    pub fn checkbox(&self, key: &str) -> Option<Entity> {
+        self.row_parts.get(key).and_then(|p| p.checkbox)
     }
 
     /// The setting keys of the rows shown, in order.
@@ -509,7 +730,7 @@ pub(crate) fn spawn_options(
 ) {
     for root in &roots {
         commands.entity(root).insert((
-            part("sf-options"),
+            part_as("sf-options", role::WINDOW),
             centred_window(Node {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Stretch,
@@ -531,11 +752,7 @@ pub(crate) fn spawn_options(
                 .spawn((
                     part(name),
                     Node {
-                        flex_direction: if name == "sf-options-rows" {
-                            FlexDirection::Column
-                        } else {
-                            FlexDirection::Row
-                        },
+                        flex_direction: FlexDirection::Row,
                         column_gap: Val::Px(gap),
                         row_gap: Val::Px(4.0),
                         ..Node::default()
@@ -545,18 +762,33 @@ pub(crate) fn spawn_options(
                 .id()
         };
         let tabs = row_of(&mut commands, "sf-options-tabs", 4.0);
-        let rows = row_of(&mut commands, "sf-options-rows", 8.0);
+        // The body: the rows, then the description pane to their right (a bottom pane by
+        // layout preset comes with the presets).
+        let body = row_of(&mut commands, "sf-options-body", 16.0);
+        let rows = commands
+            .spawn((
+                part_as("sf-options-rows", role::BOX),
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0,
+                    row_gap: Val::Px(4.0),
+                    ..Node::default()
+                },
+                ChildOf(body),
+            ))
+            .id();
+        let pane = spawn_pane(&mut commands, body, &colors);
         let footer = row_of(&mut commands, "sf-options-footer", 8.0);
         let keybinds = commands
             .spawn((
-                button("sf-options-keybinds", labels.keybinds.clone(), &colors),
+                framed_button("sf-options-keybinds", labels.keybinds.clone(), &colors),
                 OptionsPart::Keybinds,
                 ChildOf(footer),
             ))
             .id();
         let back = commands
             .spawn((
-                button("sf-options-back", labels.back.clone(), &colors),
+                framed_button("sf-options-back", labels.back.clone(), &colors),
                 OptionsPart::Back,
                 ChildOf(footer),
             ))
@@ -569,8 +801,53 @@ pub(crate) fn spawn_options(
             active_tab: None,
             keybinds,
             back,
+            pane,
+            pane_shown: None,
             seen: None,
         });
+    }
+}
+
+/// The description pane under `body`: label, description, disabled reason, restart badge,
+/// default value, each hidden until it has text.
+fn spawn_pane(commands: &mut Commands, body: Entity, colors: &ScreenColors) -> OptionsPane {
+    let root = commands
+        .spawn((
+            part_as("sf-options-pane", role::BOX),
+            Node {
+                flex_direction: FlexDirection::Column,
+                width: Val::Px(PANE_WIDTH),
+                flex_shrink: 0.0,
+                row_gap: Val::Px(6.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                ..Node::default()
+            },
+            BackgroundColor(colors.cell),
+            ChildOf(body),
+        ))
+        .id();
+    let mut text = |name: &'static str, color: Color| {
+        commands
+            .spawn((
+                part(name),
+                Text::new(String::new()),
+                colors.font(1.0),
+                TextColor(color),
+                Node {
+                    display: Display::None,
+                    ..Node::default()
+                },
+                ChildOf(root),
+            ))
+            .id()
+    };
+    OptionsPane {
+        root,
+        label: text("sf-options-pane-label", colors.highlight),
+        description: text("sf-options-pane-description", colors.text),
+        reason: text("sf-options-pane-reason", colors.unavailable),
+        restart: text("sf-options-pane-restart", colors.new),
+        default: text("sf-options-pane-default", colors.muted),
     }
 }
 
@@ -606,16 +883,39 @@ fn spawn_row(
             ChildOf(row_node),
         ))
         .id();
-    let (less, _) = spawn_button(
-        commands,
-        Some(controls),
-        "sf-options-less",
-        &labels.prev,
-        colors,
-    );
-    commands
-        .entity(less)
-        .insert(OptionsPart::Less(row.key.clone()));
+    // A toggle: its checkbox, then the value; no arrows.
+    let checkbox = row.checked().map(|_| {
+        commands
+            .spawn((
+                part("sf-options-check"),
+                Checkbox,
+                OptionsCheckbox(row.key.clone()),
+                Node {
+                    width: Val::Px(18.0),
+                    height: Val::Px(18.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    flex_shrink: 0.0,
+                    ..Node::default()
+                },
+                BorderColor::all(colors.text),
+                BackgroundColor(colors.bar_track),
+                ChildOf(controls),
+            ))
+            .id()
+    });
+    let less = checkbox.is_none().then(|| {
+        let (less, _) = spawn_button(
+            commands,
+            Some(controls),
+            "sf-options-less",
+            &labels.prev,
+            colors,
+        );
+        commands
+            .entity(less)
+            .insert(OptionsPart::Less(row.key.clone()));
+        less
+    });
     let value = commands
         .spawn((
             label("sf-options-value", String::new(), colors),
@@ -626,38 +926,110 @@ fn spawn_row(
             ChildOf(controls),
         ))
         .id();
-    let bar = row.fraction().map(|(current, max)| {
-        spawn_bar(
-            commands,
-            controls,
-            "sf-options-bar",
-            StatBar {
-                current,
-                max,
-                kind: "setting".into(),
-            },
-            colors,
-        )
+    let slider = row.fraction().zip(row.slider()).map(|((current, max), widget)| {
+        spawn_slider(commands, controls, &row.key, (current, max), widget, colors)
     });
-    let (more, _) = spawn_button(
-        commands,
-        Some(controls),
-        "sf-options-more",
-        &labels.next,
-        colors,
-    );
-    commands
-        .entity(more)
-        .insert(OptionsPart::More(row.key.clone()));
+    let arrows = less.map(|less| {
+        let (more, _) = spawn_button(
+            commands,
+            Some(controls),
+            "sf-options-more",
+            &labels.next,
+            colors,
+        );
+        commands
+            .entity(more)
+            .insert(OptionsPart::More(row.key.clone()));
+        [less, more]
+    });
     (
         row_node,
         RowParts {
             value,
-            arrows: [less, more],
-            bar,
+            arrows,
+            slider,
+            checkbox,
         },
     )
 }
+
+/// A slider row's bar as a [`Slider`]: the [`StatBar`] track (its fill shows the value), a
+/// travel node inset by the thumb's width, and the [`SliderThumb`] in it (slider.rs: the
+/// widget measures the thumb and reduces the travel by it). Returns the slider and the thumb.
+fn spawn_slider(
+    commands: &mut Commands,
+    controls: Entity,
+    key: &str,
+    (current, max): (f32, f32),
+    (range, step, value): (SliderRange, SliderStep, SliderValue),
+    colors: &ScreenColors,
+) -> (Entity, Entity) {
+    let slider = spawn_bar(
+        commands,
+        controls,
+        "sf-options-slider",
+        StatBar {
+            current,
+            max,
+            kind: "setting".into(),
+        },
+        colors,
+    );
+    commands.entity(slider).insert((
+        Slider {
+            // Click the track to jump there (the settings-slider norm), then drag on.
+            track_click: TrackClick::Snap,
+            orientation: SliderOrientation::Horizontal,
+        },
+        range,
+        step,
+        value,
+        OptionsSlider(key.to_owned()),
+    ));
+    let travel = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                right: Val::Px(THUMB_WIDTH),
+                top: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                ..Node::default()
+            },
+            ChildOf(slider),
+        ))
+        .id();
+    let thumb = commands
+        .spawn((
+            part("sf-options-thumb"),
+            SliderThumb,
+            Node {
+                position_type: PositionType::Absolute,
+                left: thumb_left(range, value),
+                top: Val::Px(-4.0),
+                width: Val::Px(THUMB_WIDTH),
+                height: Val::Px(18.0),
+                ..Node::default()
+            },
+            BackgroundColor(colors.text),
+            ChildOf(travel),
+        ))
+        .id();
+    (slider, thumb)
+}
+
+/// The thumb's offset in its travel node.
+fn thumb_left(range: SliderRange, value: SliderValue) -> Val {
+    Val::Percent(range.thumb_position(value.0).clamp(0.0, 1.0) * 100.0)
+}
+
+/// The row widgets `sync_options` writes: bars, slider values, thumbs, checkbox states.
+type RowWidgets<'w, 's> = (
+    Query<'w, 's, &'static mut StatBar>,
+    Query<'w, 's, &'static SliderValue>,
+    Query<'w, 's, &'static mut Node, With<SliderThumb>>,
+    Query<'w, 's, Has<Checked>, With<Checkbox>>,
+);
 
 /// Model and page → tabs, rows (keyed by setting key), values, and focus. Writes only what
 /// changed.
@@ -668,7 +1040,7 @@ pub(crate) fn sync_options(
     colors: Res<ScreenColors>,
     labels: Res<ScreenLabels>,
     mut screens: Query<(&UiScreenRoot, &mut OptionsScreen, &mut OptionsParts)>,
-    mut bars: Query<&mut StatBar>,
+    (mut bars, sliders, mut thumbs, checks): RowWidgets,
     mut focus: ResMut<InputFocus>,
 ) {
     for (root, mut screen, mut parts) in &mut screens {
@@ -749,15 +1121,45 @@ pub(crate) fn sync_options(
                     commands
                         .entity(made.value)
                         .insert((Text::new(text.clone()), TextColor(color)));
-                    if let (Some(bar), Some((current, max))) = (made.bar, row.fraction())
-                        && let Ok(mut b) = bars.get_mut(bar)
+                }
+                // The widgets follow the model (a step, a flip, an app's new model).
+                if let (Some((slider, thumb)), Some((current, max)), Some((range, _, value))) =
+                    (made.slider, row.fraction(), row.slider())
+                {
+                    if let Ok(mut b) = bars.get_mut(slider)
+                        && (b.current, b.max) != (current, max)
                     {
                         b.current = current;
                         b.max = max;
                     }
+                    if sliders.get(slider).ok() != Some(&value) {
+                        commands.entity(slider).insert(value);
+                    }
+                    let left = thumb_left(range, value);
+                    if let Ok(mut node) = thumbs.get_mut(thumb)
+                        && node.left != left
+                    {
+                        node.left = left;
+                    }
+                }
+                if let (Some(checkbox), Some(on)) = (made.checkbox, row.checked())
+                    && checks.get(checkbox).ok() != Some(on)
+                {
+                    if on {
+                        commands.entity(checkbox).insert(Checked);
+                    } else {
+                        commands.entity(checkbox).remove::<Checked>();
+                    }
+                    commands.entity(checkbox).insert((
+                        classes("sf-options-check", &[("checked", on)]),
+                        BackgroundColor(if on { colors.text } else { colors.bar_track }),
+                    ));
                 }
                 if was.as_ref().map(|(_, e)| *e) != Some(row.enabled) {
                     set_disabled(&mut commands, entity, !row.enabled);
+                    for widget in made.slider.map(|(s, _)| s).into_iter().chain(made.checkbox) {
+                        set_disabled(&mut commands, widget, !row.enabled);
+                    }
                     commands.entity(entity).insert(classes(
                         "sf-options-row",
                         &[(row.kind_class(), true), ("disabled", !row.enabled)],
@@ -778,6 +1180,30 @@ pub(crate) fn sync_options(
         // Focus: a stop of the current page, else its home.
         if !screen.stops().contains(&screen.focus) {
             screen.focus = screen.home();
+        }
+        // The pane: the hovered row, else the focused one.
+        let pane = pane_text(screen.described(), labels);
+        if parts.pane_shown.as_ref() != Some(&pane) {
+            // Spawned empty and hidden, so "nothing shown yet" compares as all empty.
+            let was = parts.pane_shown.take().unwrap_or_default();
+            for ((entity, text), old) in parts.pane.texts().into_iter().zip(&pane).zip(&was) {
+                if text == old {
+                    continue;
+                }
+                let display = if text.is_empty() {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+                commands.entity(entity).insert((
+                    Text::new(text.clone()),
+                    Node {
+                        display,
+                        ..Node::default()
+                    },
+                ));
+            }
+            parts.pane_shown = Some(pane);
         }
         if !is_target(&stack, root) {
             continue;
@@ -914,6 +1340,112 @@ pub(crate) fn on_options_part(
         }
     };
     if let Some(change) = change {
+        out.write(OptionsEvent {
+            screen: entity,
+            change,
+        });
+    }
+}
+
+/// The pointer entered a row (or a part of it, from outside the row): the pane shows that row,
+/// the focus stays.
+pub(crate) fn on_options_enter(
+    enter: On<PointerEnter>,
+    kinds: Query<&OptionsPart>,
+    parents: Query<&ChildOf>,
+    mut screens: Query<&mut OptionsScreen>,
+) {
+    let Ok(OptionsPart::Row(key)) = kinds.get(enter.entity) else {
+        return;
+    };
+    let Some(root) = screen_of(enter.entity, &parents, |e| screens.contains(e)) else {
+        return;
+    };
+    if let Ok(mut screen) = screens.get_mut(root)
+        && screen.hovered() != Some(key.as_str())
+    {
+        screen.set_hovered(Some(key.clone()));
+    }
+}
+
+/// The pointer left a row and its parts: the pane falls back to the focused row.
+pub(crate) fn on_options_leave(
+    leave: On<PointerLeave>,
+    kinds: Query<&OptionsPart>,
+    parents: Query<&ChildOf>,
+    mut screens: Query<&mut OptionsScreen>,
+) {
+    let Ok(OptionsPart::Row(key)) = kinds.get(leave.entity) else {
+        return;
+    };
+    let Some(root) = screen_of(leave.entity, &parents, |e| screens.contains(e)) else {
+        return;
+    };
+    if let Ok(mut screen) = screens.get_mut(root)
+        && screen.hovered() == Some(key.as_str())
+    {
+        screen.set_hovered(None);
+    }
+}
+
+/// A slider dragged or its track clicked: snap to the row's step grid, show it and send it
+/// (a disabled row ignores it; `InteractionDisabled` already stops the widget's own input).
+pub(crate) fn on_options_slider(
+    change: On<ValueChange<f32>>,
+    sliders: Query<&OptionsSlider>,
+    parents: Query<&ChildOf>,
+    mut screens: Query<&mut OptionsScreen>,
+    mut commands: Commands,
+    mut out: MessageWriter<OptionsEvent>,
+) {
+    let Ok(OptionsSlider(key)) = sliders.get(change.source) else {
+        return;
+    };
+    let Some(entity) = screen_of(change.source, &parents, |e| screens.contains(e)) else {
+        return;
+    };
+    let Ok(mut screen) = screens.get_mut(entity) else {
+        return;
+    };
+    let Some(row) = screen.rows().iter().find(|r| r.key == *key && r.enabled) else {
+        return;
+    };
+    let Some(value) = row.snapped(f64::from(change.value)) else {
+        return;
+    };
+    focus_row(&mut screen, key);
+    let set = screen.set(key, value);
+    // At once, not at the next sync: a drag starts from the widget's value.
+    if let Some((_, _, value)) = screen.model.row(key).and_then(OptionRow::slider) {
+        commands.entity(change.source).insert(value);
+    }
+    if let Some(change) = set {
+        out.write(OptionsEvent {
+            screen: entity,
+            change,
+        });
+    }
+}
+
+/// A checkbox clicked: flip the row and send it (the sync checks the box).
+pub(crate) fn on_options_checkbox(
+    change: On<ValueChange<bool>>,
+    checkboxes: Query<&OptionsCheckbox>,
+    parents: Query<&ChildOf>,
+    mut screens: Query<&mut OptionsScreen>,
+    mut out: MessageWriter<OptionsEvent>,
+) {
+    let Ok(OptionsCheckbox(key)) = checkboxes.get(change.source) else {
+        return;
+    };
+    let Some(entity) = screen_of(change.source, &parents, |e| screens.contains(e)) else {
+        return;
+    };
+    let Ok(mut screen) = screens.get_mut(entity) else {
+        return;
+    };
+    focus_row(&mut screen, key);
+    if let Some(change) = screen.set(key, SettingValue::Bool(change.value)) {
         out.write(OptionsEvent {
             screen: entity,
             change,

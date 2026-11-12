@@ -62,15 +62,29 @@ From `Morrowind.bsa` (checked by listing the archive):
 | Icons and markers | `menu_icon_{barter,equip,magic,...}`, `menu_map_*`, `compass`, `menu_compass_large`, `menu_on_dot`/`menu_off_dot`, `menu_number_inc/dec`, `menu_divider` |
 | Other | `tx_cursor`, `tx_menu_*` fills/bevels, `levelup\*.dds` class art, `bookart\*.dds`, loose `Splash\` loading screens |
 
-- Bevy's nine-slice (`TextureSlicer`) takes one image; Morrowind frames are separate pieces.
-  A **`ui.frames` bake step** packs each 8-piece set (plus an optional center) into one image
-  with slice insets, edges marked `SliceScaleMode::Tile` as the original tiles them, and emits
-  `frames.css` (`background-image` + `-bevy-image-mode: sliced(..)`). Content-hashed, so an HD
-  menu texture pack in the VFS is picked up on the next bake. Linear filtering and mips (the
-  2002 art is small; at 200 % it must not go nearest-neighbour as in OpenMW #8221).
+- **Frames (as built, L1a):** `mw_bake::ui_frames::pack` puts each 8-piece set (+ optional centre) into one
+  RGBA image, insets = piece thickness; `mw_boot_bevy::ui_frames::mount` runs at start (not a bake: pieces are
+  tiny, an HD pack is picked up on the next start), a top VFS layer with `ui/themes/morrowind/frames/*.png` and
+  `frames.css` (`.mw-frame-thick` 4 px, `-thin` 2, `-button` 4, `-head` 2 + tiled middle; `sliced(..)`, sides
+  `tile(1.0)`), imported first by the theme sheet. Missing set: skipped with one line. Linear: UI images take
+  `ImagePlugin`'s default sampler (linear), no mips. Measured 3.7 ms (release, owner's install, all 4 sets). Rule 0: Bevy's `TextureSlicer` takes one image; no crate
+  packs pieces (bevy_flair parses `sliced`); MyGUI composes 8 sub-widgets at runtime, Unity/UE atlas 9-slices.
+- **Frames by role (as built, L1b):** `FrameSet.roles` adds selectors to each generated rule: thick =
+  `.sf-window` + `#sf-message-box-panel`, thin = `.sf-box`, button = `.sf-framed` + `#sf-message-box-button` (the
+  message box lives in `sf_ui_bevy`, no `UiClass`). theme.css styles the inside: windows `--mw-panel` (Bevy draws
+  `BackgroundColor` at z 0.00 under `ImageNode` at 0.04, so both show), padding 8; boxes clear, 4; framed 136x24 min.
+  Bronze CSS borders gone except the HUD bars (their class is rewritten by the bar sync: follow-up). No captions yet.
+- **Main menu image entries (as built, L2):** title order Continue (only with a save; ours, text), New game, Load (only
+  with a save: hidden, not disabled, as OpenMW), Options, Quit; no Credits (no screen). New/Load/Options/Quit take
+  `textures/menu_<newgame|loadgame|options|exitgame>{,_over,_pressed}.dds` only when all three exist (else the label);
+  theme.css: no window, 128x64 entries, -16 px overlap, column centred 24 px off the bottom, version `Bevyrrowind <ver>`
+  bottom-right 280x50. Focus starts on the first entry (OpenMW: loadgame). Reuse check: bevy_flair 0.9 can swap
+  `background-image`/`-bevy-image` per `:hover`/`:active`/`:focus-visible`, but CSS can't know which files exist, so
+  label fallback would need a generated per-id sheet; the framework slot keeps art and fallback in one place.
 - `_idle/_over/_pressed` variants map to `:hover`, `:active` and `:focus-visible` rules, so
   gamepad focus shows the "over" art.
-- Art is borrowed, layouts are not: the classic look applies to the framework's preset layouts.
+- Classic = OpenMW exactly (owner 2026-11-11): its window layouts as well as the art (OpenMW MyGUI `.layout` files, GPL-3,
+  portable with a citation); the modern preset takes its layouts from UI overhaul mods (SkyUI-Community, modern-morrow).
 
 ## Menus and front end
 

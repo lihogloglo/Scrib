@@ -6,8 +6,9 @@
 //!   as CSS custom properties `--mw-normal`, `--mw-link`, `--mw-answer`, ... generated at mount
 //!   from the install's ini, vanilla values where a key is missing ([`VANILLA_COLORS`]).
 //! - **Textures**: the journal book is the BSA's `textures/tx_menubook.dds`. Morrowind's frames
-//!   (`menu_thick_border_*`, `menu_button_frame_*`) are eight separate pieces, which Bevy's
-//!   9-slice (one image) can't take yet; the sheet draws them as bronze CSS borders for now.
+//!   (`menu_thick_border_*`, `menu_button_frame_*`) are eight separate pieces, packed into one
+//!   image each at start by [`crate::ui_frames`] (`.mw-frame-*` classes, imported first); the
+//!   screens draw bronze CSS borders until they take those classes (look pass L1b).
 //! - **Font**: `OpenMW`'s Mystic Cards (SIL OFL 1.1, derived from Isak Larborn's Pelagiad), a
 //!   TrueType lookalike of Morrowind's "Magic Cards" bitmap font, shipped unmodified with its
 //!   licence next to it (`ui/morrowind/fonts/`).
@@ -95,12 +96,17 @@ pub fn tokens(ini: Option<&MorrowindIni>) -> String {
     css
 }
 
-/// The builtin mod's theme layer: the stylesheet (tokens from `ini`, then the shipped rules),
-/// the font and its licence.
+/// The sheet's first line: the packed menu frames' classes ([`crate::ui_frames`], a top layer
+/// mounted at start; the builtin mod serves an empty sheet under it so the import always resolves).
+const FRAMES_IMPORT: &str = "@import url(\"sf_ui_content://ui/themes/morrowind/frames.css\");\n";
+
+/// The builtin mod's theme layer: the stylesheet (the frames import, tokens from `ini`, then the
+/// shipped rules), an empty frames sheet, the font and its licence.
 pub fn source(ini: Option<&MorrowindIni>) -> MemSource {
-    let sheet = tokens(ini) + include_str!("../ui/morrowind/theme.css");
+    let sheet = String::from(FRAMES_IMPORT) + &tokens(ini) + include_str!("../ui/morrowind/theme.css");
     MemSource::new("builtin:mw_ui_theme")
         .with(STYLESHEET, sheet)
+        .with(crate::ui_frames::FRAMES_CSS, "/* Menu frames: generated at start (mw_boot_bevy::ui_frames). */\n")
         .with(FONT, include_bytes!("../ui/morrowind/fonts/MysticCards.ttf").as_slice())
         .with(FONT_LICENSE, include_str!("../ui/morrowind/fonts/MysticCardsFontLicense.txt"))
 }
@@ -144,5 +150,23 @@ mod tests {
         assert!(css.contains("--mw-link: rgb(112, 126, 207);"), "malformed falls back: {css}");
         assert!(css.contains("--mw-journal-link-over: rgb(58, 77, 175);"));
         assert_eq!(tokens(None).matches("--mw-").count(), VANILLA_COLORS.len());
+    }
+
+    /// Windows, boxes and framed buttons are styled by role (the frame art comes from
+    /// frames.css); the bronze CSS borders they replaced are gone.
+    #[test]
+    fn sheet_styles_roles_not_bronze_borders() {
+        let sheet = include_str!("../ui/morrowind/theme.css");
+        for role in [".sf-window {", ".sf-box {", ".sf-framed,"] {
+            assert!(sheet.contains(role), "no {role} rule");
+        }
+        assert!(!sheet.contains("var(--mw-frame)"), "thick bronze border left");
+        assert!(!sheet.contains("--mw-frame:"), "bronze token left");
+        // Only the HUD bars keep a CSS border (not role-tagged yet).
+        assert_eq!(sheet.matches("border-color:").count(), 1, "border-color outside the HUD");
+        let frames: Vec<_> = crate::ui_frames::FRAME_SETS.iter().flat_map(|s| s.roles).collect();
+        for role in [".sf-window", ".sf-box", ".sf-framed"] {
+            assert!(frames.contains(&&role), "no frame draws {role}");
+        }
     }
 }

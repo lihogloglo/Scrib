@@ -1,6 +1,6 @@
-//! Every stock screen over synthetic data (`--features demo`), unthemed (the fallback look).
+//! Every stock screen over synthetic data, unthemed (the fallback look).
 //!
-//! `cargo run -p sf_ui_screens --features demo --example screens` opens a window with the HUD.
+//! `cargo run -p sf_ui_screens --example screens` opens a window with the HUD.
 //! F1 dialogue, F2 journal, F3 inventory (1,000 stacks), F4 keybinds, F5 pause menu (Save
 //! disabled, to show a disabled entry), F6 options (the demo settings and the audio page;
 //! changes are only shown), F7 main menu (Continue disabled; choices are logged, Quit or

@@ -25,7 +25,9 @@ use sf_ui_bevy::{
 
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
-use crate::widgets::{ScreenColors, button, classes, label, panel, part, show};
+use crate::widgets::{
+    ScreenColors, button, classes, framed_button, label, panel_as, part, part_as, role, show,
+};
 use crate::{is_target, screen_of};
 
 /// On a screen root: the keybinds screen for one keymap context (`None`: every action).
@@ -210,8 +212,9 @@ pub(crate) fn spawn_keybinds(
     roots: Query<Entity, Added<KeybindsScreen>>,
 ) {
     for root in &roots {
-        commands.entity(root).insert((panel(
+        commands.entity(root).insert((panel_as(
             "sf-keybinds",
+            role::WINDOW,
             Node {
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(Val::Px(16.0)),
@@ -250,7 +253,7 @@ pub(crate) fn spawn_keybinds(
         });
         let rows = commands
             .spawn((
-                part("sf-keybinds-rows"),
+                part_as("sf-keybinds-rows", role::BOX),
                 Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(2.0),
@@ -265,7 +268,7 @@ pub(crate) fn spawn_keybinds(
             .id();
         let reset_all = commands
             .spawn((
-                button("sf-keybinds-reset-all", labels.reset_all.clone(), &colors),
+                framed_button("sf-keybinds-reset-all", labels.reset_all.clone(), &colors),
                 KeybindCell(KeybindCellKind::ResetAll),
                 ChildOf(root),
             ))
@@ -275,8 +278,9 @@ pub(crate) fn spawn_keybinds(
             .id();
         let overlay = commands
             .spawn((
-                panel(
+                panel_as(
                     "sf-keybinds-overlay",
+                    role::WINDOW,
                     Node {
                         position_type: PositionType::Absolute,
                         left: Val::Percent(20.0),
@@ -320,7 +324,7 @@ pub(crate) fn spawn_keybinds(
                 };
                 commands
                     .spawn((
-                        button("sf-keybinds-choice", text.clone(), &colors),
+                        framed_button("sf-keybinds-choice", text.clone(), &colors),
                         KeybindCell(KeybindCellKind::Choice(*choice)),
                         ChildOf(choices),
                     ))

@@ -213,7 +213,7 @@ fn audio_volume_settings_are_built_in_and_retunable() {
     let (reg, conflicts) = UiRegistry::build(&RecordDb::new());
     assert_eq!(conflicts, []);
     let keys: Vec<&str> = reg.settings().map(|d| d.id.as_str()).collect();
-    assert_eq!(keys.len(), 2 * AUDIO_BUSES.len());
+    assert_eq!(keys.len(), 2 * AUDIO_BUSES.len() + 1, "the buses, then the intro videos");
     assert_eq!(
         &keys[..2],
         ["sf.audio_master_volume", "sf.audio_master_muted"]
@@ -248,7 +248,7 @@ value = { label = "music", page = "audio", kind = { Float = { default = 0.7, min
     assert_eq!((music.owner.as_str(), music.source), ("sf", Some(pack)));
     assert_eq!(
         reg.settings().count(),
-        2 * AUDIO_BUSES.len(),
+        2 * AUDIO_BUSES.len() + 1,
         "replaced in place"
     );
     let mut store = SettingsStore::new(&reg);
@@ -269,6 +269,36 @@ value = { label = "music", page = "audio", kind = { Float = { default = 0.7, min
     assert_eq!(saved.len(), 1, "{saved:?}");
     assert_eq!(saved["sf"]["audio_voice_muted"], toml::Value::Boolean(true));
     assert!(saved["sf"].contains_key("audio_sfx_volume"));
+}
+
+#[test]
+fn intro_videos_choice_is_built_in() {
+    let (reg, _) = UiRegistry::build(&RecordDb::new());
+    let intro = reg.setting(INTRO_VIDEOS_KEY).unwrap();
+    assert_eq!(INTRO_VIDEOS_KEY, format!("{}.intro_videos", registry::FRAMEWORK_MOD));
+    assert_eq!(intro.owner.as_str(), "sf");
+    assert_eq!(intro.def.page.as_deref(), Some("interface"));
+    assert_eq!(
+        intro.def.kind,
+        SettingKind::Choice {
+            default: "first_launch".into(),
+            options: vec!["first_launch".into(), "always".into(), "off".into()],
+            options_from: None,
+        }
+    );
+    let mut store = SettingsStore::new(&reg);
+    assert_eq!(IntroVideos::from_store(&store), IntroVideos::FirstLaunch);
+    store
+        .set(INTRO_VIDEOS_KEY, SettingValue::Text("off".into()))
+        .unwrap();
+    assert_eq!(IntroVideos::from_store(&store), IntroVideos::Off);
+    assert!(store
+        .set(INTRO_VIDEOS_KEY, SettingValue::Text("sometimes".into()))
+        .is_err());
+    assert_eq!(IntroVideos::from_id("always"), Some(IntroVideos::Always));
+    assert_eq!(IntroVideos::from_id("never"), None);
+    let empty = SettingsStore::new(&UiRegistry::default());
+    assert_eq!(IntroVideos::from_store(&empty), IntroVideos::FirstLaunch);
 }
 
 #[test]

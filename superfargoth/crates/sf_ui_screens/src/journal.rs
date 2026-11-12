@@ -37,8 +37,8 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, centred_window, classes, panel, part, part_with, relabel, set_disabled, show,
-    spawn_button,
+    ScreenColors, centred_window, classes, panel_as, part, part_with, relabel, role, set_disabled,
+    show, spawn_button,
 };
 use crate::{ScreenSystems, screen_of};
 
@@ -314,8 +314,9 @@ pub(crate) fn spawn_journal(
 
         let side = commands
             .spawn((
-                panel(
+                panel_as(
                     "sf-journal-index",
+                    role::WINDOW,
                     Node {
                         flex_direction: FlexDirection::Column,
                         width: Val::Px(280.0),

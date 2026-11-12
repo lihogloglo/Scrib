@@ -28,8 +28,8 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    Question, ScreenColors, button, centred_window, classes, label, label_in, part, relabel,
-    set_disabled, show,
+    Question, ScreenColors, centred_window, classes, framed_button, label, label_in, part, part_as,
+    relabel, role, set_disabled, show,
 };
 use crate::{is_target, screen_of};
 
@@ -308,7 +308,7 @@ pub(crate) fn spawn_saveload(
 ) {
     for root in &roots {
         commands.entity(root).insert((
-            part("sf-saveload"),
+            part_as("sf-saveload", role::WINDOW),
             centred_window(Node {
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(Val::Px(16.0)),
@@ -325,7 +325,7 @@ pub(crate) fn spawn_saveload(
             .id();
         let list = commands
             .spawn((
-                part("sf-saveload-list"),
+                part_as("sf-saveload-list", role::BOX),
                 Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(4.0),
@@ -362,7 +362,7 @@ pub(crate) fn spawn_saveload(
         ]
         .map(|(name, text, kind)| {
             commands
-                .spawn((button(name, text.clone(), &colors), kind, ChildOf(footer)))
+                .spawn((framed_button(name, text.clone(), &colors), kind, ChildOf(footer)))
                 .id()
         });
         let question = Question::spawn(
@@ -614,9 +614,9 @@ pub(crate) fn sync_saveload(
                 set_disabled(&mut commands, parts.buttons[i], off);
                 commands.entity(parts.buttons[i]).insert(classes(
                     if i == 0 {
-                        "sf-saveload-primary"
+                        "sf-saveload-primary sf-framed"
                     } else {
-                        "sf-saveload-delete"
+                        "sf-saveload-delete sf-framed"
                     },
                     &[("disabled", off)],
                 ));

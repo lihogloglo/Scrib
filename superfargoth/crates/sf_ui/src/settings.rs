@@ -7,7 +7,8 @@
 //!
 //! The framework's own settings are built in (owner `sf`, stored under
 //! `[settings.sf]`): the audio page's per-bus volume sliders and mutes
-//! ([`AUDIO_BUSES`], audio.md "Volume mixer").
+//! ([`AUDIO_BUSES`], audio.md "Volume mixer"), and the interface page's
+//! [`INTRO_VIDEOS_KEY`] (menus.md "Intro videos and loading screen").
 //!
 //! **Scope** (menus.md "Settings v2"): `Machine` settings (display, graphics)
 //! are not in the profile but in a per-machine TOML file ([`SettingsStore::load_machine`],
@@ -48,14 +49,60 @@ pub fn audio_muted_key(bus: &str) -> String {
 /// Step of the volume sliders: 20 steps, a few presses on a gamepad.
 pub const AUDIO_VOLUME_STEP: f64 = 0.05;
 
+/// Key of the intro videos choice (menus.md §3; label `set-intro-videos`, options
+/// `set-intro-videos-<option>`): when the boot plays the content's intro videos.
+pub const INTRO_VIDEOS_KEY: &str = "sf.intro_videos";
+
+/// The values of [`INTRO_VIDEOS_KEY`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IntroVideos {
+    /// Until they have played once on this machine (owner 2026-11-11).
+    #[default]
+    FirstLaunch,
+    /// Every start.
+    Always,
+    /// Never.
+    Off,
+}
+
+impl IntroVideos {
+    /// Every value, in option order.
+    pub const ALL: [Self; 3] = [Self::FirstLaunch, Self::Always, Self::Off];
+
+    /// The option id.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::FirstLaunch => "first_launch",
+            Self::Always => "always",
+            Self::Off => "off",
+        }
+    }
+
+    /// The value of an option id.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.id() == id)
+    }
+
+    /// The store's value (the default when the store lacks the setting).
+    pub fn from_store(store: &SettingsStore) -> Self {
+        match store.get(INTRO_VIDEOS_KEY) {
+            Some(SettingValue::Text(id)) => Self::from_id(id).unwrap_or_default(),
+            _ => Self::default(),
+        }
+    }
+}
+
 impl SettingDef {
     /// The framework's built-in settings, in page order: a volume slider and a
     /// mute per [`AUDIO_BUSES`] entry (page `audio`, group `volume`; labels
-    /// `set-audio-<bus>-volume` / `-muted`, which the content's strings give).
+    /// `set-audio-<bus>-volume` / `-muted`, which the content's strings give),
+    /// then the [`INTRO_VIDEOS_KEY`] choice (page `interface`, group `startup`).
+    /// Each describes itself as `<label>-desc`.
     /// A record with the same id replaces the definition (range, default),
     /// and the value stays in `[settings.sf]`.
     pub fn builtins() -> Vec<(SettingKey, SettingDef)> {
         let def = |label: String, kind| SettingDef {
+            description: Some(format!("{label}-desc")),
             page: Some("audio".into()),
             group: Some("volume".into()),
             ..SettingDef::new(label, kind)
@@ -86,6 +133,22 @@ impl SettingDef {
                     ),
                 ]
             })
+            .chain([(
+                SettingKey::new(INTRO_VIDEOS_KEY),
+                SettingDef {
+                    description: Some("set-intro-videos-desc".into()),
+                    page: Some("interface".into()),
+                    group: Some("startup".into()),
+                    ..SettingDef::new(
+                        "set-intro-videos",
+                        SettingKind::Choice {
+                            default: IntroVideos::default().id().to_owned(),
+                            options: IntroVideos::ALL.iter().map(|v| v.id().to_owned()).collect(),
+                            options_from: None,
+                        },
+                    )
+                },
+            )])
             .collect()
     }
 }

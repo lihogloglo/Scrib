@@ -2,7 +2,8 @@
 //! engine. The content pack lists ordered candidates (adapter hook `MenuBackdropCandidates`);
 //! the first whose file exists wins, and a video that fails to open falls through to the rest
 //! (the caller resolves again from the next index). [`cover_size`] is the `cover` fit (the
-//! default): the media fills the container keeping its aspect, cropped, centred.
+//! default): the media fills the container keeping its aspect, cropped, centred; [`contain_size`]
+//! the `contain` fit (letterbox: the whole media, black bars).
 
 /// What a backdrop candidate holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -46,5 +47,18 @@ pub fn cover_size(container: (f32, f32), media: (f32, f32)) -> (f32, f32) {
         return container;
     }
     let scale = (cw / mw).max(ch / mh);
+    (mw * scale, mh * scale)
+}
+
+/// The `contain` fit (letterbox): the size (same units as `container`) of media of size `media`
+/// shown whole inside `container`, aspect kept, centred by the caller over black. A degenerate
+/// size gives `container` (stretch), never a NaN.
+pub fn contain_size(container: (f32, f32), media: (f32, f32)) -> (f32, f32) {
+    let (cw, ch) = container;
+    let (mw, mh) = media;
+    if !(cw > 0.0 && ch > 0.0 && mw > 0.0 && mh > 0.0) {
+        return container;
+    }
+    let scale = (cw / mw).min(ch / mh);
     (mw * scale, mh * scale)
 }

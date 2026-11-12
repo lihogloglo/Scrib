@@ -41,8 +41,8 @@ use sf_ui_inventory::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, StatBar, classes, label, panel, part, place, relabel, show, spawn_bar,
-    spawn_button,
+    ScreenColors, StatBar, classes, label, panel_as, part, part_as, place, relabel, role,
+    show, spawn_bar, spawn_button, spawn_framed_button,
 };
 use crate::{is_target, screen_of};
 
@@ -235,7 +235,7 @@ impl GridPane {
     pub(crate) fn spawn(commands: &mut Commands, body: Entity, colors: &ScreenColors) -> Self {
         let viewport = commands
             .spawn((
-                part("sf-inventory-grid"),
+                part_as("sf-inventory-grid", role::BOX),
                 Node {
                     flex_grow: 1.0,
                     overflow: Overflow::clip(),
@@ -442,8 +442,9 @@ impl Tooltip {
     pub(crate) fn spawn(commands: &mut Commands, screen: Entity, colors: &ScreenColors) -> Self {
         let root = commands
             .spawn((
-                panel(
+                panel_as(
                     "sf-tooltip",
+                    role::BOX,
                     Node {
                         position_type: PositionType::Absolute,
                         display: Display::None,
@@ -611,8 +612,9 @@ impl SplitDialog {
     ) -> Self {
         let root = commands
             .spawn((
-                panel(
+                panel_as(
                     "sf-inventory-split",
+                    role::WINDOW,
                     Node {
                         position_type: PositionType::Absolute,
                         left: Val::Percent(25.0),
@@ -666,7 +668,12 @@ impl SplitDialog {
             ("sf-inventory-split-cancel", labels.cancel.clone()),
         ];
         for (i, ((name, text), b)) in names.into_iter().zip(buttons).enumerate() {
-            let (e, _) = spawn_button(commands, Some(row), name, text, colors);
+            // OK / Cancel are framed; the -/+ steppers are bare (they become slider arrows).
+            let (e, _) = if i >= 2 {
+                spawn_framed_button(commands, Some(row), name, text, colors)
+            } else {
+                spawn_button(commands, Some(row), name, text, colors)
+            };
             commands.entity(e).insert(b);
             if i == 2 {
                 ok = e;
@@ -760,8 +767,9 @@ pub(crate) fn spawn_inventory(
     roots: Query<Entity, Added<InventoryScreen>>,
 ) {
     for root in &roots {
-        commands.entity(root).insert((panel(
+        commands.entity(root).insert((panel_as(
             "sf-inventory",
+            role::WINDOW,
             Node {
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(Val::Px(12.0)),

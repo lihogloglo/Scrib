@@ -230,6 +230,12 @@ overrides are saved; the rebinding sample offers swap on duplicates).
 - Layout in `Rem`/`Em`; root size = reference (1080p) × UI scale × text scale; separate HUD,
   menu and text scales. Defaults meet XAG 101 (18 px PC, 26 px controller preset); every screen
   lays out at 1280×720 with 200 % text (a test). Icons mipmapped.
+- **Role classes** (2026-11-11, `widgets::role`): after its part name a stock part may carry `sf-window` (a
+  screen's main framed panel, modals, popups), `sf-box` (a framed area inside: lists, panes, text areas) or
+  `sf-framed` (a button drawn with a frame; bare text buttons: topics, rows, tabs, have none), so a theme frames
+  every window with one rule. Helpers `part_as`, `panel_as`, `framed_button`; state rewrites keep the role.
+  Reuse: the BEM/utility-class idiom; OpenMW assigns one frame skin per widget role. Gap: frames draw at image
+  pixels (1 px = 1 logical px), so an HD pack's thicker pieces draw thicker (pixel density, follow-up).
 - Fluent strings; parley bidi + `complex_script_segmentation`; RTL mirroring later.
 - AccessKit roles from headless widgets; high-contrast and colorblind token sets;
   reduce-motion turns off transitions and animations (root class); screen-reader pass with
@@ -349,7 +355,9 @@ doesn't hide lower layers). `UsePrompt::action` is optional: `None` is a name-on
 Main menu (2026-10-26, framework only): `MainMenuScreen` over `MainMenuModel` (app-ordered `MainMenuEntry { id,
 label (localized), enabled }`, optional `quit` id that asks Yes/No first, optional `back` id Back chooses (else Back
 does nothing), `title_image` / `background` image slots, `title_text`). Sends `MainMenuEvent { screen, id }`; never
-closes itself. Parts `sf-main-menu-*`, each entry classed by its id.
+closes itself. Parts `sf-main-menu-*`, each entry classed by its id. L2: optional per-entry `MainMenuImages` (normal,
+over = hover or visible focus, pressed) shown in `-entry-image` instead of the label (class `image`; no art: the label),
+and a `version` text part `-version`.
 Container (2026-10-26, framework only): `ContainerScreen` over two `InventoryView`s (container left, player right) on
 the inventory's shared grid/tooltip/count-dialog parts. A or click moves a stack whole, X asks how many (>1), Y or
 "Take all" takes all, drag onto the other pane moves, LB/RB or the side edge switch panes; `owned` classes the pane.

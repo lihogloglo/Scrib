@@ -60,6 +60,33 @@ set-audio-ui-volume = Menu Volume
 set-audio-ui-muted = Mute Menus
 set-audio-movie-volume = Movie Volume
 set-audio-movie-muted = Mute Movies
+## Descriptions (`<label>-desc`), shown in the options screen's description pane.
+set-audio-master-volume-desc = The loudness of every sound in the game.
+set-audio-master-muted-desc = Silences every sound in the game.
+set-audio-music-volume-desc = The loudness of the music.
+set-audio-music-muted-desc = Silences the music.
+set-audio-sfx-volume-desc = The loudness of combat, spells, footsteps and other world sounds.
+set-audio-sfx-muted-desc = Silences combat, spells, footsteps and other world sounds.
+set-audio-voice-volume-desc = The loudness of spoken dialogue and greetings.
+set-audio-voice-muted-desc = Silences spoken dialogue and greetings.
+set-audio-ambience-volume-desc = The loudness of wind, water, crowds and other background sounds.
+set-audio-ambience-muted-desc = Silences wind, water, crowds and other background sounds.
+set-audio-ui-volume-desc = The loudness of menu clicks and interface sounds.
+set-audio-ui-muted-desc = Silences menu clicks and interface sounds.
+set-audio-movie-volume-desc = The loudness of the intro and other videos.
+set-audio-movie-muted-desc = Silences the intro and other videos.
+
+## The options screen's description pane (sf_ui_screens `ScreenLabels`; pause_menu.rs).
+options-restart = Applies after restart
+options-default = Default
+
+## The interface page: the intro videos choice (sf_ui `INTRO_VIDEOS_KEY`; options `-<id>`).
+set-page-interface = Interface
+set-intro-videos = Intro Videos
+set-intro-videos-first_launch = First Launch Only
+set-intro-videos-always = Always
+set-intro-videos-off = Off
+set-intro-videos-desc = Whether the studio and intro videos play when the game starts.
 
 ## Save/load screen (mw_saves_bevy menu.rs; fields after OpenMW's savegame dialog). The default
 ## name is OpenMW's "Day 24 - 16 Last Seed 7 p.m."; reasons `saves-reason-<SaveReason token>`.

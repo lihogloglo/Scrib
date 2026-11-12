@@ -120,6 +120,13 @@ to Frontend. The save screen opens over the main menu (`DeferLoads` → `LoadCho
 - Loading screen (`LoadingScreen`, `Layer::Modal`): a splash image from the adapter's list (random pick), a
   progress bar from the streaming burst's resident/requested counts, an optional hint line (Fluent keys).
 
+*As built (I1):* `sf_app_bevy::BootHolds` (named holds; none: Boot ends after `PostStartup` as before, else in the
+`PostUpdate` the last is released). `sf.intro_videos` is a framework built-in (`sf_ui::IntroVideos`, page
+`interface`). Playback is the game's `mw_exterior_bevy/src/intro.rs` (adapter list `IntroVideos`, letterboxed with
+`sf_ui::contain_size`, own UI camera). Rule 0: Bevy has no movie player (`sf_video_bevy`); UE Startup Movies and
+Bethesda play logos skippable, one by one. First-run flag: a marker file `<user dir>/intro_seen` written after the
+first played sequence (UE/Unity keep such flags in the user config; a file of its own is not a fake setting).
+
 ### 4. Settings v2
 
 `SettingDef` (`sf_ui/src/records.rs:224`) gains, all optional with today's behaviour as default:
@@ -178,6 +185,17 @@ to Frontend. The save screen opens over the main menu (`DeferLoads` → `LoadCho
 - **Two entry points, one screen**: conditions (`phase`) hide or disable what doesn't apply (e.g. language only
   in the front end). In game the panel is translucent over the paused world, so `Live` graphics settings
   preview; in the front end it sits over the backdrop.
+
+*As built (S2a, 2026-11-11):* rule 0: Bevy's `bevy_ui_widgets` 0.20 `Slider` (drag, `TrackClick::Snap`) and
+`Checkbox` cover it, no crate; UE CommonUI / Unity UI Toolkit sliders also take drag + click + step + pad. A slider
+row's `StatBar` is the `Slider` (thumb in a travel node inset by its width); `ValueChange` snaps to the step grid
+(`OptionRow::snapped`), one `Set` per grid change; steps move `SliderValue`/thumb, flips `Checked`. Toggles have a
+checkbox, no arrows; disabled rows carry `InteractionDisabled`. Parts: `slider`, `thumb`, `checkbox`; no theme CSS.
+
+*As built (S2b1, 2026-11-11):* rule 0: Bevy has no detail pane (plain nodes; `PointerEnter`/`PointerLeave` for hover);
+CommonUI and most PC ports (Nixxes, Cyberpunk 2.0) show a right-side pane on focus/hover. `sf-options-pane` (right;
+bottom-by-preset later): label, description, reason (while disabled), restart badge, "Default: <value>"; empty lines hidden.
+Hovered row, else focused (`OptionsScreen::described`); hover never moves focus and alone reaches a disabled row's reason.
 
 ### 6. Framework settings shipped (built-in, owner `sf`)
 

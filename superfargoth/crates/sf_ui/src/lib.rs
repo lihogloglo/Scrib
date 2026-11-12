@@ -32,8 +32,8 @@
 //!   with per-device slots, conflicts per scope, swap/unbind resolution,
 //!   resets, the profile's `[bindings.<context>]` tables; [`glyph`] labels
 //!   input names per device and pad family.
-//! - [`resolve_backdrop`] and [`cover_size`]: the menu backdrop's candidate pick and its
-//!   `cover` fit (menus.md "Backdrop and title").
+//! - [`resolve_backdrop`], [`cover_size`] and [`contain_size`]: the menu backdrop's candidate pick and its
+//!   `cover` fit, and the intro videos' `contain` fit (menus.md "Backdrop and title").
 //! - [`apply_level`], [`derived_level`] and [`sync_driver`]: `ui.setting_preset`
 //!   levels behind a Choice driver that reads "custom" when no level matches
 //!   (menus.md "Settings v2").
@@ -80,7 +80,7 @@ mod tests_presets;
 mod tests_settings_store;
 
 pub use conditions::{Condition, PHASE_FRONTEND, PHASE_IN_GAME, SettingValueMatch, evaluate};
-pub use backdrop::{BackdropCandidate, BackdropKind, cover_size, resolve_backdrop};
+pub use backdrop::{BackdropCandidate, BackdropKind, contain_size, cover_size, resolve_backdrop};
 pub use ids::{
     ColumnId, InputContextId, ListId, ModId, PresetId, ScreenId, SettingKey, SlotId, TemplateId,
     ThemeId,
@@ -112,7 +112,7 @@ pub use rich_text::{
 };
 pub use settings::{
     AUDIO_BUSES, AUDIO_VOLUME_STEP, MachineFileError, SettingChange, SettingError, SettingValue,
-    SettingsStore, audio_muted_key,
+    INTRO_VIDEOS_KEY, IntroVideos, SettingsStore, audio_muted_key,
     audio_volume_key,
 };
 pub use stack::{OpenScreen, ScreenStack, StackError};

@@ -124,6 +124,8 @@ fn localize_labels(localizer: Option<Res<UiLocalizer>>, mut labels: ResMut<Scree
     let labels = &mut *labels;
     set(&mut labels.main_menu, "pause-main-menu");
     set(&mut labels.confirm_main_menu, "pause-confirm-main-menu");
+    set(&mut labels.restart, "options-restart");
+    set(&mut labels.default, "options-default");
 }
 
 /// Keeps the HUD screen open (a load clears only the Menu and Modal layers).

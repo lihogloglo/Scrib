@@ -65,7 +65,6 @@ pub mod service_list;
 pub mod trade;
 pub mod widgets;
 
-#[cfg(feature = "demo")]
 pub mod demo;
 
 #[cfg(test)]
@@ -90,8 +89,8 @@ pub use keyed::{KeyedChildren, KeyedSync};
 pub use labels::ScreenLabels;
 pub use loading::{LoadingModel, LoadingParts, LoadingScreen, loading_z};
 pub use main_menu::{
-    MainMenuEntry, MainMenuEvent, MainMenuFocus, MainMenuModel, MainMenuPart, MainMenuParts,
-    MainMenuScreen,
+    MainMenuEntry, MainMenuEntryArt, MainMenuEvent, MainMenuFocus, MainMenuImages, MainMenuModel,
+    MainMenuPart, MainMenuParts, MainMenuScreen,
 };
 pub use options::{
     OptionKind, OptionRow, OptionsChange, OptionsEvent, OptionsFocus, OptionsModel, OptionsPage,
@@ -133,6 +132,13 @@ impl Plugin for SfScreensPlugin {
         if !app.is_plugin_added::<bevy_ui_widgets::ScrollAreaPlugin>() {
             app.add_plugins(bevy_ui_widgets::ScrollAreaPlugin);
         }
+        // The options screen's sliders and checkboxes (`DefaultPlugins` has them already).
+        if !app.is_plugin_added::<bevy_ui_widgets::SliderPlugin>() {
+            app.add_plugins(bevy_ui_widgets::SliderPlugin);
+        }
+        if !app.is_plugin_added::<bevy_ui_widgets::CheckboxPlugin>() {
+            app.add_plugins(bevy_ui_widgets::CheckboxPlugin);
+        }
         app.init_resource::<ScreenColors>()
             .init_resource::<ScreenLabels>()
             .init_resource::<InventoryGridStyle>()
@@ -153,6 +159,10 @@ impl Plugin for SfScreensPlugin {
             .add_observer(pause_menu::on_pause_menu_part)
             .add_observer(main_menu::on_main_menu_part)
             .add_observer(options::on_options_part)
+            .add_observer(options::on_options_slider)
+            .add_observer(options::on_options_checkbox)
+            .add_observer(options::on_options_enter)
+            .add_observer(options::on_options_leave)
             .add_observer(inventory::on_inventory_button)
             .add_observer(inventory::on_cell_over)
             .add_observer(inventory::on_cell_drag_start)
@@ -235,6 +245,7 @@ impl Plugin for SfScreensPlugin {
                     saveload::sync_saveload,
                     pause_menu::sync_pause_menu,
                     main_menu::sync_main_menu,
+                    main_menu::main_menu_entry_art,
                     options::sync_options,
                     loading::sync_loading,
                     widgets::sync_bars,

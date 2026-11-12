@@ -15,8 +15,14 @@
 //!   player's controls pause through the Menu-layer seam; the HUD hides under Menu screens.
 //! - **Entries**, in Morrowind's order (`OpenMW` `apps/openmw/mwgui/mainmenu.cpp`, commit
 //!   675146bd: return/new game/save/load/options/credits/exit): Continue, New game, Load,
-//!   Options, Quit. Continue and Load are enabled while a single-player save of any world exists
-//!   (checked at open and again when the save/load screen closes, a delete may have emptied it).
+//!   Options, Quit. Continue and Load are listed only while a single-player save of any world
+//!   exists (`OpenMW` hides `loadgame` rather than disabling it; checked at open and again when the
+//!   save/load screen closes, a delete may have emptied it). No Credits (no credits screen yet).
+//! - **Art** (look pass L2, `OpenMW`'s `ImageButton`): New game, Load, Options and Quit show
+//!   `textures/menu_<newgame|loadgame|options|exitgame>.dds` with `_over` and `_pressed` instead
+//!   of their labels when all three files are in the VFS (else the label, never an empty entry);
+//!   Continue (ours, no art) stays text. The version text (`Bevyrrowind <version>`) sits
+//!   bottom-right; the theme sheet sizes and places both (`theme.css` "main menu").
 //!   Continue loads the newest save of any reason (`mw_saves_bevy::newest_save`, quickload's
 //!   search; `OpenMW`'s "return" does the same); Load opens the save/load screen in Load mode
 //!   over the menu (`mw_saves_bevy::menu`; its Back pops it, back to the menu), whose Load
@@ -47,7 +53,7 @@ use sf_save_bevy::{SaveConfig, SaveStorage};
 use crate::phase::LoadingSave;
 use sf_ui::{BackdropCandidate, BackdropKind, UiRegistry, cover_size, resolve_backdrop};
 use sf_ui_bevy::{ScreenStackRes, UiLocalizer, UiRegistryRes, UiScreenRoot, UiSettingsStore};
-use sf_ui_screens::{MainMenuEntry, MainMenuEvent, MainMenuModel, MainMenuScreen, SaveLoadMode, ScreenSystems};
+use sf_ui_screens::{MainMenuEntry, MainMenuEvent, MainMenuImages, MainMenuModel, MainMenuScreen, SaveLoadMode, ScreenSystems};
 use sf_vfs::{Vfs, VfsPath};
 use sf_video_bevy::{VideoFinished, VideoPlayer, VideoSystems};
 
@@ -116,9 +122,45 @@ fn screens() -> UiRegistry {
     UiRegistry::build(&db).0
 }
 
-/// The menu's model: the entries, labels localized (English fallbacks); Continue and Load
-/// enabled when `saves` exist.
-fn model(localizer: Option<&UiLocalizer>, saves: bool) -> MainMenuModel {
+/// `OpenMW`'s art id of an entry (`mainmenu.cpp` `updateMenu`); Continue has none.
+fn art_id(id: &str) -> Option<&'static str> {
+    match id {
+        NEW_GAME => Some("newgame"),
+        LOAD => Some("loadgame"),
+        OPTIONS => Some("options"),
+        QUIT => Some("exitgame"),
+        _ => None,
+    }
+}
+
+/// On the menu's root: the entries' art, each entry's three images loaded only when all three
+/// files are in the VFS (a missing one leaves the entry its label).
+#[derive(Component, Clone, Debug, Default)]
+struct MenuArt(Vec<(&'static str, MainMenuImages)>);
+
+impl MenuArt {
+    fn find(vfs: &Vfs, assets: &AssetServer) -> Self {
+        let entries = [NEW_GAME, LOAD, OPTIONS, QUIT].into_iter().filter_map(|id| {
+            let art = art_id(id)?;
+            let paths = ["", "_over", "_pressed"].map(|state| format!("textures/menu_{art}{state}.dds"));
+            if !paths.iter().all(|p| exists(vfs, p)) {
+                info!("main menu: no art for {id} (textures/menu_{art}*.dds), the label shows");
+                return None;
+            }
+            let [normal, over, pressed] = paths.map(|p| assets.load(p));
+            Some((id, MainMenuImages::new(normal, over, pressed)))
+        });
+        Self(entries.collect())
+    }
+
+    fn get(&self, id: &str) -> Option<MainMenuImages> {
+        self.0.iter().find(|(i, _)| *i == id).map(|(_, images)| images.clone())
+    }
+}
+
+/// The menu's model: the entries in `OpenMW`'s title order, labels localized (English
+/// fallbacks), Continue and Load listed when `saves` exist, art where `art` has it; the version.
+fn model(localizer: Option<&UiLocalizer>, saves: bool, art: &MenuArt) -> MainMenuModel {
     let label = |id: &str, fallback: &str| {
         let key = format!("main-menu-{id}");
         match localizer {
@@ -126,14 +168,19 @@ fn model(localizer: Option<&UiLocalizer>, saves: bool) -> MainMenuModel {
             _ => fallback.to_owned(),
         }
     };
-    MainMenuModel::new([
-        MainMenuEntry::new(CONTINUE, label(CONTINUE, "Continue")).enabled(saves),
-        MainMenuEntry::new(NEW_GAME, label(NEW_GAME, "New Game")),
-        MainMenuEntry::new(LOAD, label(LOAD, "Load Game")).enabled(saves),
-        MainMenuEntry::new(OPTIONS, label(OPTIONS, "Options")),
-        MainMenuEntry::new(QUIT, label(QUIT, "Quit")),
-    ])
-    .with_quit(QUIT)
+    let entry = |id: &str, fallback: &str| MainMenuEntry::new(id, label(id, fallback)).images(art.get(id));
+    let mut entries = Vec::with_capacity(5);
+    if saves {
+        entries.push(entry(CONTINUE, "Continue"));
+    }
+    entries.push(entry(NEW_GAME, "New Game"));
+    if saves {
+        entries.push(entry(LOAD, "Load Game"));
+    }
+    entries.extend([entry(OPTIONS, "Options"), entry(QUIT, "Quit")]);
+    let mut model = MainMenuModel::new(entries).with_quit(QUIT);
+    model.version = format!("Bevyrrowind {}", env!("CARGO_PKG_VERSION"));
+    model
 }
 
 #[allow(clippy::needless_pass_by_value)] // system parameters
@@ -147,11 +194,16 @@ fn open_main_menu(
     backdrop: (Res<MenuBackdropCandidates>, Option<Res<mw_assets::SharedVfs>>, Option<Res<AssetServer>>),
 ) {
     let saves = newest(storage.as_deref(), config.as_deref()).is_some();
-    let root = commands.spawn((UiScreenRoot(MAIN_MENU.into()), MainMenuScreen::new(model(localizer.as_deref(), saves)))).id();
+    let (candidates, vfs, assets) = backdrop;
+    let art = match (vfs.as_deref(), assets.as_deref()) {
+        (Some(vfs), Some(assets)) => MenuArt::find(&vfs.0, assets),
+        _ => MenuArt::default(),
+    };
+    let screen = MainMenuScreen::new(model(localizer.as_deref(), saves, &art));
+    let root = commands.spawn((UiScreenRoot(MAIN_MENU.into()), screen, art)).id();
     if let Err(e) = stack.0.push(&registry.0, MAIN_MENU) {
         warn!("main menu: {e:?}");
     }
-    let (candidates, vfs, assets) = backdrop;
     if let Some(vfs) = vfs {
         spawn_backdrop(&mut commands, root, &candidates.0, &vfs.0, assets.as_deref());
     }
@@ -165,6 +217,33 @@ pub struct MenuBackdropCandidates(pub Vec<BackdropCandidate>);
 impl Default for MenuBackdropCandidates {
     fn default() -> Self {
         Self(backdrop_candidates(None))
+    }
+}
+
+/// `Morrowind.ini`'s `[Movies]` names (ui-adapter.md "Menus and front end"), read by the app
+/// from the install (`None`: no ini, or the key absent or blank). Bare file names under `video/`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MenuMovies {
+    /// `Options Menu=`: the menu backdrop video (vanilla `mw_menu.bik`).
+    pub options_menu: Option<String>,
+    /// `Company Logo=` (vanilla `bethesda logo.bik`), the first intro video.
+    pub company_logo: Option<String>,
+    /// `Morrowind Logo=` (vanilla `mw_logo.bik`), the second intro video.
+    pub morrowind_logo: Option<String>,
+    /// `New Game=` (vanilla `mw_intro.bik`), played for New game.
+    pub new_game: Option<String>,
+}
+
+impl MenuMovies {
+    /// From a `[Movies] key` lookup (the app passes `MorrowindIni::get` for section `Movies`).
+    pub fn from_ini<'a>(get: impl Fn(&str) -> Option<&'a str>) -> Self {
+        let value = |key| get(key).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+        Self {
+            options_menu: value("Options Menu"),
+            company_logo: value("Company Logo"),
+            morrowind_logo: value("Morrowind Logo"),
+            new_game: value("New Game"),
+        }
     }
 }
 
@@ -373,7 +452,8 @@ fn refresh_saves(
     stack: Res<ScreenStackRes>,
     storage: Option<Res<SaveStorage>>,
     config: Option<Res<SaveConfig>>,
-    mut menus: Query<&mut MainMenuScreen>,
+    localizer: Option<Res<UiLocalizer>>,
+    mut menus: Query<(&mut MainMenuScreen, &MenuArt)>,
     mut was_open: Local<bool>,
 ) {
     let open = stack.0.is_open(SAVELOAD);
@@ -383,9 +463,10 @@ fn refresh_saves(
         return;
     }
     let saves = newest(storage.as_deref(), config.as_deref()).is_some();
-    for mut menu in &mut menus {
-        if menu.model.is_enabled(CONTINUE) != saves || menu.model.is_enabled(LOAD) != saves {
-            menu.model.set_enabled(CONTINUE, saves).set_enabled(LOAD, saves);
+    for (mut menu, art) in &mut menus {
+        let next = model(localizer.as_deref(), saves, art);
+        if menu.model != next {
+            menu.model = next;
         }
     }
 }
@@ -490,15 +571,14 @@ mod tests {
         assert_eq!(roots(&mut app, MAIN_MENU), 1);
         assert!(paused(&app), "the game is paused under the menu");
         let screen = menu(&mut app);
-        assert_eq!(screen.model.ids(), [CONTINUE, NEW_GAME, LOAD, OPTIONS, QUIT]);
-        assert!(!screen.model.is_enabled(CONTINUE) && !screen.model.is_enabled(LOAD), "no save plugin, no saves");
+        assert_eq!(screen.model.ids(), [NEW_GAME, OPTIONS, QUIT], "no save plugin, no saves: no Continue or Load");
         assert_eq!(screen.model.entry(NEW_GAME).map(|e| e.label.as_str()), Some("New Game"), "the Fluent string");
 
         // Esc is the menu's Back: nothing at the top level, and no pause menu over it.
         tap(&mut app, KeyCode::Escape);
         assert!(open(&app, MAIN_MENU) && !open(&app, PAUSE) && paused(&app));
 
-        // Focus starts on New game (Continue is disabled); confirm.
+        // Focus starts on New game (the first entry); confirm.
         tap(&mut app, KeyCode::Enter);
         assert!(!open(&app, MAIN_MENU), "New game closes the menu");
         assert_eq!(roots(&mut app, MAIN_MENU), 0);
@@ -514,7 +594,7 @@ mod tests {
     #[test]
     fn options_open_on_top_and_quit_exits_after_yes() {
         let mut app = release();
-        // New game -> (Load, disabled, skipped) -> Options.
+        // New game -> (no Load without saves) -> Options.
         tap(&mut app, KeyCode::ArrowDown);
         tap(&mut app, KeyCode::Enter);
         assert!(open(&app, OPTIONS_SCREEN) && open(&app, MAIN_MENU), "options over the menu");
@@ -559,13 +639,27 @@ mod tests {
         app_with(|app| {
             app.add_plugins(SfSavePlugin { config })
                 .insert_resource(sf_world_bevy::WorldOverlay::default())
-                .insert_resource(sf_sky_bevy::GameClock::default());
+                .insert_resource(sf_sky_bevy::GameClock::default())
+                .insert_resource(sf_world_bevy::Streaming::new(sf_world_bevy::StreamingConfig::default()))
+                .init_resource::<sf_world_bevy::ActiveWorldspace>()
+                .init_resource::<sf_world_bevy::FadeTransition>();
             mw_saves_bevy::register(app);
             mw_saves_bevy::menu::add(app);
-            app.add_plugins(AppPhasePlugin::default());
+            crate::phase::add(app, true);
             add(app, true);
-            app.init_resource::<Loads>().add_systems(Update, record_loads);
+            app.init_resource::<Loads>()
+                .init_resource::<Requests>()
+                .init_resource::<DriveRuns>()
+                .add_systems(Update, (record_loads, record_requests.before(sf_world_bevy::StreamingSystems::Drive)))
+                .add_systems(
+                    Update,
+                    (|mut runs: ResMut<DriveRuns>| runs.0 += 1).in_set(sf_world_bevy::StreamingSystems::Drive),
+                );
         })
+    }
+
+    fn fade_secs(app: &App) -> f32 {
+        app.world().resource::<sf_world_bevy::FadeTransition>().fade_secs
     }
 
     /// A quicksave, then a manual save (the newest: Continue takes any reason, quickload only
@@ -600,11 +694,11 @@ mod tests {
     }
 
     #[test]
-    fn no_saves_leave_continue_and_load_disabled() {
+    fn no_saves_hide_continue_and_load() {
         let root = temp_root("empty");
         let mut app = release_with_saves(&root);
         let screen = menu(&mut app);
-        assert!(!screen.model.is_enabled(CONTINUE) && !screen.model.is_enabled(LOAD));
+        assert_eq!(screen.model.ids(), [NEW_GAME, OPTIONS, QUIT], "hidden, not disabled (OpenMW)");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -621,7 +715,7 @@ mod tests {
         let (storage, config) = (app.world().resource::<SaveStorage>(), app.world().resource::<SaveConfig>());
         assert_eq!(mw_saves_bevy::newest_save(storage, config, Some(SaveReason::Quick)), Some(quick), "quickload's target");
         let screen = menu(&mut app);
-        assert!(screen.model.is_enabled(CONTINUE) && screen.model.is_enabled(LOAD));
+        assert_eq!(screen.model.ids(), [CONTINUE, NEW_GAME, LOAD, OPTIONS, QUIT], "OpenMW order, Continue first");
         assert!(open(&app, MAIN_MENU) && paused(&app));
         assert_eq!(app.world().resource::<DriveRuns>().0, 0, "no streaming in the front end");
 
@@ -795,6 +889,22 @@ mod tests {
     }
 
     #[test]
+    fn menu_movies_read_the_ini_keys_and_drop_blanks() {
+        let ini = |key: &str| match key {
+            "Options Menu" => Some(" mw_menu.bik "),
+            "Company Logo" => Some("bethesda logo.bik"),
+            "Morrowind Logo" => Some("  "),
+            _ => None,
+        };
+        let movies = MenuMovies::from_ini(ini);
+        assert_eq!(movies.options_menu.as_deref(), Some("mw_menu.bik"));
+        assert_eq!(movies.company_logo.as_deref(), Some("bethesda logo.bik"));
+        assert_eq!(movies.morrowind_logo, None, "blank");
+        assert_eq!(movies.new_game, None, "absent");
+        assert_eq!(MenuMovies::from_ini(|_| None), MenuMovies::default());
+    }
+
+    #[test]
     fn the_menu_video_plays_behind_the_menu_and_stops_with_it() {
         // No players: the video stays pending (no decode in a headless test).
         let mut app = release_with_vfs(&[("video/mw_menu.bik", b"BIKi"), (DDS, b"dds")], false);
@@ -858,5 +968,56 @@ mod tests {
         let mut app = app_with(|app| add(app, false));
         assert!(!open(&app, MAIN_MENU) && !paused(&app));
         assert_eq!(roots(&mut app, MAIN_MENU), 0);
+    }
+
+    /// The art's asset path of each state, normal, over, pressed.
+    fn art_paths(images: &MainMenuImages) -> [String; 3] {
+        [&images.normal, &images.over, &images.pressed]
+            .map(|h| h.path().map(|p| p.path().to_string_lossy().replace('\\', "/")).unwrap_or_default())
+    }
+
+    /// L2: an entry takes `OpenMW`'s art only when all three files exist; else its label.
+    #[test]
+    fn entries_take_their_art_only_when_all_three_files_exist() {
+        let files: &[(&str, &[u8])] = &[
+            ("textures/menu_newgame.dds", b"dds"),
+            ("textures/menu_newgame_over.dds", b"dds"),
+            ("textures/menu_newgame_pressed.dds", b"dds"),
+            // Options lacks its pressed image.
+            ("textures/menu_options.dds", b"dds"),
+            ("textures/menu_options_over.dds", b"dds"),
+            ("textures/menu_exitgame.dds", b"dds"),
+            ("textures/menu_exitgame_over.dds", b"dds"),
+            ("textures/menu_exitgame_pressed.dds", b"dds"),
+        ];
+        let mut app = release_with_vfs(files, false);
+        let screen = menu(&mut app);
+        assert_eq!(screen.model.ids(), [NEW_GAME, OPTIONS, QUIT]);
+        let images = |id: &str| screen.model.entry(id).and_then(|e| e.images.clone());
+        assert_eq!(
+            images(NEW_GAME).as_ref().map(art_paths),
+            Some(["textures/menu_newgame.dds", "textures/menu_newgame_over.dds", "textures/menu_newgame_pressed.dds"].map(String::from))
+        );
+        assert_eq!(images(QUIT).as_ref().map(|i| art_paths(i)[0].clone()).as_deref(), Some("textures/menu_exitgame.dds"));
+        assert!(images(OPTIONS).is_none(), "a missing file: the label, not an empty entry");
+        assert_eq!(screen.model.entry(OPTIONS).map(|e| e.label.as_str()), Some("Options"));
+        assert!(screen.model.version.starts_with("Bevyrrowind "), "the version text: {}", screen.model.version);
+
+        // The art the menu found stays with it (Load, listed once saves exist, would take its own).
+        let mut q = app.world_mut().query::<&MenuArt>();
+        let art = q.single(app.world()).expect("the menu's art");
+        let ids: Vec<_> = art.0.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [NEW_GAME, QUIT]);
+    }
+
+    /// Without a VFS (or art) every entry shows its label.
+    #[test]
+    fn without_art_every_entry_is_text() {
+        let mut app = release_with_vfs(&[], false);
+        let screen = menu(&mut app);
+        assert!(screen.model.entries.iter().all(|e| e.images.is_none()));
+        let saves = model(None, true, &MenuArt::default());
+        assert_eq!(saves.ids(), [CONTINUE, NEW_GAME, LOAD, OPTIONS, QUIT]);
+        assert!(saves.entries.iter().all(|e| e.enabled && e.images.is_none()));
     }
 }

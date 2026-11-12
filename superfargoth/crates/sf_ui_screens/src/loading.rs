@@ -27,7 +27,7 @@ use bevy_ui::prelude::*;
 use sf_ui::Layer;
 use sf_ui_bevy::screen_z;
 
-use crate::widgets::{ScreenColors, classes, label, part, show};
+use crate::widgets::{ScreenColors, classes, label, part, part_as, role, show};
 
 /// Seconds for one sweep of the indeterminate bar.
 const SWEEP_SECONDS: f32 = 1.5;
@@ -154,7 +154,7 @@ pub(crate) fn spawn_loading(
             .id();
         let footer = commands
             .spawn((
-                part("sf-loading-footer"),
+                part_as("sf-loading-footer", role::WINDOW),
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
@@ -177,7 +177,7 @@ pub(crate) fn spawn_loading(
             .id();
         let bar = commands
             .spawn((
-                part("sf-loading-bar"),
+                part_as("sf-loading-bar", role::BOX),
                 Node {
                     width: Val::Percent(100.0),
                     height: Val::Px(10.0),

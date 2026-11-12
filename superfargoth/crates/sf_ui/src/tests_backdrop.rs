@@ -1,6 +1,6 @@
 //! The backdrop resolver and the cover fit (`backdrop.rs`).
 
-use crate::{BackdropCandidate, BackdropKind, cover_size, resolve_backdrop};
+use crate::{BackdropCandidate, BackdropKind, contain_size, cover_size, resolve_backdrop};
 
 fn list() -> Vec<BackdropCandidate> {
     vec![
@@ -41,4 +41,14 @@ fn cover_fills_and_keeps_the_aspect() {
     // Degenerate: stretch, no NaN.
     assert_eq!(cover_size((1920.0, 1080.0), (0.0, 480.0)), (1920.0, 1080.0));
     assert_eq!(cover_size((0.0, 0.0), (640.0, 480.0)), (0.0, 0.0));
+}
+
+#[test]
+fn contain_shows_all_and_keeps_the_aspect() {
+    // 640x480 in 16:9: full height, black bars at the sides.
+    assert_eq!(contain_size((1920.0, 1080.0), (640.0, 480.0)), (1440.0, 1080.0));
+    // In a tall window: full width, bars above and below.
+    assert_eq!(contain_size((960.0, 1280.0), (640.0, 480.0)), (960.0, 720.0));
+    assert_eq!(contain_size((1280.0, 960.0), (640.0, 480.0)), (1280.0, 960.0));
+    assert_eq!(contain_size((1920.0, 1080.0), (640.0, 0.0)), (1920.0, 1080.0));
 }

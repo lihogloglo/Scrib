@@ -38,7 +38,9 @@ use crate::inventory::{
     weight_text,
 };
 use crate::labels::ScreenLabels;
-use crate::widgets::{ScreenColors, StatBar, classes, label, panel, part, show, spawn_button};
+use crate::widgets::{
+    ScreenColors, StatBar, classes, label, panel_as, part, role, show, spawn_framed_button,
+};
 use crate::{is_target, screen_of};
 
 /// Which pane: the container (left) or the player (right).
@@ -290,8 +292,9 @@ pub(crate) fn spawn_container(
     roots: Query<Entity, Added<ContainerScreen>>,
 ) {
     for root in &roots {
-        commands.entity(root).insert(panel(
+        commands.entity(root).insert(panel_as(
             "sf-container",
+            role::WINDOW,
             Node {
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(Val::Px(12.0)),
@@ -370,7 +373,7 @@ pub(crate) fn spawn_container(
             },
             ChildOf(footer),
         ));
-        let (take_all, _) = spawn_button(
+        let (take_all, _) = spawn_framed_button(
             &mut commands,
             Some(footer),
             "sf-container-take-all",
@@ -378,7 +381,7 @@ pub(crate) fn spawn_container(
             &colors,
         );
         commands.entity(take_all).insert(ContainerButton::TakeAll);
-        let (close, _) = spawn_button(
+        let (close, _) = spawn_framed_button(
             &mut commands,
             Some(footer),
             "sf-container-close",

@@ -27,6 +27,24 @@ pub fn part_with(name: &'static str, class: UiClass) -> (Name, UiPart, UiClass) 
     (Name::new(name), UiPart(name), class)
 }
 
+/// Role classes (ui.md "Role classes"): what a part is, for themes that draw by role rather
+/// than naming every part (`.sf-window { .. }` frames every window). A part's name stays its
+/// first class; the role follows it.
+pub mod role {
+    /// A screen's main framed panel (a window, a modal, a popup panel).
+    pub const WINDOW: &str = "sf-window";
+    /// A framed area inside a window: a list, a pane, a text area.
+    pub const BOX: &str = "sf-box";
+    /// A button drawn with a frame (OK, Back, Goodbye), as opposed to the bare text buttons of
+    /// topic lists, rows and tabs.
+    pub const FRAMED: &str = "sf-framed";
+}
+
+/// Name and part of `name`, classed `name role` (a [`role`] class).
+pub fn part_as(name: &'static str, role: &str) -> (Name, UiPart, UiClass) {
+    part_with(name, UiClass(format!("{name} {role}")))
+}
+
 /// The class list of a part: its name, then each state class that is on.
 pub fn classes(name: &str, states: &[(&str, bool)]) -> UiClass {
     let mut out = name.to_owned();
@@ -119,8 +137,30 @@ pub fn label(name: &'static str, text: impl Into<String>, colors: &ScreenColors)
 /// A focusable button part with a text label (`Activate` on click, Enter, or the router's
 /// confirm).
 pub fn button(name: &'static str, text: impl Into<String>, colors: &ScreenColors) -> impl Bundle {
+    button_with(part(name), text, colors)
+}
+
+/// A [`button`] drawn with a frame ([`role::FRAMED`]).
+pub fn framed_button(name: &'static str, text: impl Into<String>, colors: &ScreenColors) -> impl Bundle {
+    button_with(part_as(name, role::FRAMED), text, colors)
+}
+
+/// [`spawn_button`] drawn with a frame ([`role::FRAMED`]).
+pub fn spawn_framed_button(
+    commands: &mut Commands,
+    parent: Option<Entity>,
+    name: &'static str,
+    text: impl Into<String>,
+    colors: &ScreenColors,
+) -> (Entity, Entity) {
+    let (button, text) = spawn_button(commands, parent, name, text, colors);
+    commands.entity(button).insert(UiClass(format!("{name} {}", role::FRAMED)));
+    (button, text)
+}
+
+fn button_with(part: (Name, UiPart, UiClass), text: impl Into<String>, colors: &ScreenColors) -> impl Bundle {
     (
-        part(name),
+        part,
         Node {
             padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
             ..Node::default()
@@ -186,6 +226,11 @@ pub fn panel(name: &'static str, node: Node, colors: &ScreenColors) -> impl Bund
     (part(name), node, BackgroundColor(colors.panel))
 }
 
+/// A [`panel`] with a [`role`] class (`sf-window` for a screen's main panel, `sf-box` inside).
+pub fn panel_as(name: &'static str, role: &str, node: Node, colors: &ScreenColors) -> impl Bundle {
+    (part_as(name, role), node, BackgroundColor(colors.panel))
+}
+
 /// The default place of a window screen root: centred on the screen whatever its size (the CSS
 /// `left: 50%; top: 50%; transform: translate(-50%, -50%)` idiom; the translation is a
 /// fraction of the node's own size). A theme may still size or move it.
@@ -223,7 +268,7 @@ impl Question {
     ) -> Self {
         let overlay = commands
             .spawn((
-                part(names[0]),
+                part_as(names[0], role::WINDOW),
                 centred_window(Node {
                     padding: UiRect::all(Val::Px(16.0)),
                     row_gap: Val::Px(8.0),
@@ -251,7 +296,7 @@ impl Question {
             .id();
         let buttons = answers.map(|(name, text, kind)| {
             commands
-                .spawn((button(name, text, colors), kind, ChildOf(choices)))
+                .spawn((framed_button(name, text, colors), kind, ChildOf(choices)))
                 .id()
         });
         Self {

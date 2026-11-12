@@ -219,6 +219,38 @@ fn trade_parts(ui: &Ui, root: Entity) -> &TradeParts {
 }
 
 #[test]
+fn trade_screen_roles() {
+    use crate::widgets::role;
+    let (mut ui, _) = open_trade();
+    ui.frames(2);
+    let parts: Vec<(&str, String)> = ui
+        .world_mut()
+        .query::<(&sf_ui_bevy::UiPart, &sf_ui_css::UiClass)>()
+        .iter(ui.world())
+        .map(|(p, c)| (p.0, c.0.clone()))
+        .collect();
+    let class = |name: &str| -> Vec<String> {
+        parts
+            .iter()
+            .filter(|(p, _)| *p == name)
+            .map(|(_, c)| c.clone())
+            .collect()
+    };
+    let has = |name: &str, role: &str| {
+        let all = class(name);
+        !all.is_empty() && all.iter().all(|c| c.split_whitespace().any(|x| x == role))
+    };
+    assert!(has("sf-trade", role::WINDOW));
+    assert!(has("sf-trade-list", role::BOX));
+    // Accept keeps its frame through the disabled-state rewrite.
+    assert!(has("sf-trade-accept", role::FRAMED));
+    assert!(has("sf-trade-cancel", role::FRAMED));
+    assert!(has("sf-trade-offer-reset", role::FRAMED));
+    assert!(!class("sf-trade-offer-more").is_empty());
+    assert!(!has("sf-trade-offer-more", role::FRAMED));
+}
+
+#[test]
 fn trade_screen_binds_both_panes_and_stages_by_pad() {
     let (mut ui, root) = open_trade();
     let provider = shown(&mut ui, root, TradePane::Provider);

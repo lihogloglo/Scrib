@@ -1790,12 +1790,23 @@ fn collect_options(mut events: MessageReader<OptionsEvent>, mut out: ResMut<Opti
     out.0.extend(events.read().map(|e| e.change.clone()));
 }
 
+/// The options screen's description pane.
+#[path = "tests_options_pane.rs"]
+mod options_pane;
+
+/// Role classes on the stock screens' windows, boxes and framed buttons.
+#[path = "tests_roles.rs"]
+mod roles;
+
 fn open_options() -> (Ui, Entity) {
+    open_options_with(OptionsModel::from_settings(&demo::registry(), None, None))
+}
+
+fn open_options_with(model: OptionsModel) -> (Ui, Entity) {
     let mut ui = Ui::with(|app| {
         app.init_resource::<OptionChanges>()
             .add_systems(Update, collect_options.after(ScreenSystems::Sync));
     });
-    let model = OptionsModel::from_settings(&demo::registry(), None, None);
     let root = ui.open("options", OptionsScreen::new(model));
     ui.frames(2);
     (ui, root)
@@ -1835,6 +1846,7 @@ fn options_builds_pages_from_records_and_tabs_switch_pages() {
         pages,
         [
             ("audio", "Audio"),
+            ("interface", "Interface"),
             ("gameplay", "Gameplay"),
             ("display", "Display")
         ],
@@ -1845,15 +1857,21 @@ fn options_builds_pages_from_records_and_tabs_switch_pages() {
     assert_eq!(keys.len(), 2 * sf_ui::AUDIO_BUSES.len());
     assert_eq!(keys[0], sf_ui::audio_volume_key("master"));
     let first = parts.row(&keys[0]).unwrap();
-    let tabs = [0, 1, 2].map(|i| parts.tab(i).unwrap());
+    let tabs = [0, 1, 2, 3].map(|i| parts.tab(i).unwrap());
     assert_eq!(ui.focus(), Some(first), "focus starts on the first row");
     assert!(ui.text_of(first).starts_with("Audio master volume"));
     assert_eq!(option_value(&ui, root, &keys[0]), "100%");
     assert!(ui.class_of(first).contains("slider"));
-    assert_eq!(ui.text_of(tabs[1]), "Gameplay");
+    assert_eq!(ui.text_of(tabs[2]), "Gameplay");
     assert!(ui.class_of(tabs[0]).contains("active"));
 
-    // Tab next (right trigger): the gameplay page, focus on its first row.
+    // Tab next (right trigger): the built-in interface page (the intro videos choice).
+    ui.tap(GamepadButton::RightTrigger);
+    assert_eq!(
+        options_parts(&ui, root).row_keys(),
+        [sf_ui::INTRO_VIDEOS_KEY]
+    );
+    // Again: the gameplay page, focus on its first row.
     ui.tap(GamepadButton::RightTrigger);
     let parts = options_parts(&ui, root);
     assert_eq!(parts.row_keys(), ["demo.difficulty", "demo.subtitles"]);
@@ -1861,7 +1879,7 @@ fn options_builds_pages_from_records_and_tabs_switch_pages() {
     let subtitles = parts.row("demo.subtitles").unwrap();
     let keybinds = parts.keybinds();
     assert_eq!(ui.focus(), Some(difficulty));
-    assert!(ui.class_of(tabs[1]).contains("active"));
+    assert!(ui.class_of(tabs[2]).contains("active"));
     assert!(!ui.class_of(tabs[0]).contains("active"));
     assert_eq!(option_value(&ui, root, "demo.difficulty"), "50");
     assert_eq!(option_value(&ui, root, "demo.subtitles"), "On");
@@ -1880,10 +1898,11 @@ fn options_builds_pages_from_records_and_tabs_switch_pages() {
     ui.tap(GamepadButton::DPadUp);
     assert_eq!(ui.focus(), Some(difficulty));
 
-    // Tab prev twice wraps to the last page; a click on a tab switches too.
-    ui.tap(GamepadButton::LeftTrigger);
-    ui.tap(GamepadButton::LeftTrigger);
-    assert_eq!(ui.world().get::<OptionsScreen>(root).unwrap().page(), 2);
+    // Tab prev three times wraps to the last page; a click on a tab switches too.
+    for _ in 0..3 {
+        ui.tap(GamepadButton::LeftTrigger);
+    }
+    assert_eq!(ui.world().get::<OptionsScreen>(root).unwrap().page(), 3);
     assert_eq!(
         options_parts(&ui, root).row_keys(),
         ["demo.quality", "demo.brightness"]
@@ -1898,6 +1917,8 @@ fn options_builds_pages_from_records_and_tabs_switch_pages() {
 fn options_left_right_step_values_within_bounds() {
     use sf_ui::SettingValue::{Bool, Float, Int, Text};
     let (mut ui, root) = open_options();
+    // Past the built-in interface page to the gameplay page.
+    ui.tap(GamepadButton::RightTrigger);
     ui.tap(GamepadButton::RightTrigger);
 
     // Int slider 0..=100 by 25, from 50.
@@ -1972,9 +1993,160 @@ fn options_left_right_step_values_within_bounds() {
     assert!(take_options(&mut ui).is_empty());
 }
 
+fn slider_value(ui: &Ui, slider: Entity) -> bevy_ui_widgets::SliderValue {
+    *ui.world().get::<bevy_ui_widgets::SliderValue>(slider).unwrap()
+}
+
+/// What the widget sends on a drag or a track click.
+fn drag_slider(ui: &mut Ui, slider: Entity, value: f32) {
+    ui.world_mut().trigger(bevy_ui_widgets::ValueChange {
+        source: slider,
+        value,
+        is_final: false,
+    });
+    ui.frames(1);
+}
+
+/// Shows the page `id` (whatever built-in pages come before it).
+fn show_options_page(ui: &mut Ui, root: Entity, id: &str) {
+    let mut screen = ui.world_mut().get_mut::<OptionsScreen>(root).unwrap();
+    let page = screen.model.pages.iter().position(|p| p.id == id).unwrap();
+    screen.set_page(page);
+    ui.frames(1);
+}
+
+#[test]
+fn options_slider_drag_snaps_to_steps_and_steps_move_the_thumb() {
+    use sf_ui::SettingValue::{Float, Int};
+    let (mut ui, root) = open_options();
+    show_options_page(&mut ui, root, "gameplay");
+    let parts = options_parts(&ui, root);
+    let slider = parts.slider("demo.difficulty").unwrap();
+    let thumb = parts.thumb("demo.difficulty").unwrap();
+    assert!(parts.checkbox("demo.difficulty").is_none());
+    assert!(ui.world().get::<bevy_ui_widgets::Slider>(slider).is_some());
+    assert!(ui.class_of(slider).contains("sf-options-slider"));
+    assert_eq!(slider_value(&ui, slider), bevy_ui_widgets::SliderValue(50.0));
+    let range = *ui
+        .world()
+        .get::<bevy_ui_widgets::SliderRange>(slider)
+        .unwrap();
+    assert_eq!((range.start(), range.end()), (0.0, 100.0));
+
+    // A drag to 62 (int 0..=100 by 25): still 50, nothing sent, the thumb back on the grid.
+    drag_slider(&mut ui, slider, 62.0);
+    assert!(take_options(&mut ui).is_empty());
+    assert_eq!(slider_value(&ui, slider), bevy_ui_widgets::SliderValue(50.0));
+    // On to 70: 75, sent once, shown, thumb at 75 %.
+    drag_slider(&mut ui, slider, 70.0);
+    assert_eq!(take_options(&mut ui), [set("demo.difficulty", Int(75))]);
+    assert_eq!(option_value(&ui, root, "demo.difficulty"), "75");
+    assert_eq!(slider_value(&ui, slider), bevy_ui_widgets::SliderValue(75.0));
+    assert_eq!(ui.world().get::<Node>(thumb).unwrap().left, Val::Percent(75.0));
+    // The widget's own event (a pad or a console): clamped to the range.
+    ui.world_mut().trigger(bevy_ui_widgets::SetSliderValue {
+        entity: slider,
+        change: bevy_ui_widgets::SliderValueChange::Absolute(1000.0),
+    });
+    ui.frames(1);
+    assert_eq!(take_options(&mut ui), [set("demo.difficulty", Int(100))]);
+
+    // Left steps the row and moves the slider with it.
+    ui.tap(GamepadButton::DPadLeft);
+    assert_eq!(take_options(&mut ui), [set("demo.difficulty", Int(75))]);
+    assert_eq!(slider_value(&ui, slider), bevy_ui_widgets::SliderValue(75.0));
+    assert_eq!(ui.world().get::<Node>(thumb).unwrap().left, Val::Percent(75.0));
+
+    // Float 0.5..=1.5 by 0.25: a drag to 1.3 lands on 1.25.
+    show_options_page(&mut ui, root, "display");
+    let slider = options_parts(&ui, root).slider("demo.brightness").unwrap();
+    drag_slider(&mut ui, slider, 1.3);
+    assert_eq!(take_options(&mut ui), [set("demo.brightness", Float(1.25))]);
+    assert_eq!(option_value(&ui, root, "demo.brightness"), "1.25");
+    assert_eq!(slider_value(&ui, slider), bevy_ui_widgets::SliderValue(1.25));
+    assert_eq!(
+        ui.world().get::<OptionsScreen>(root).unwrap().focus(),
+        &OptionsFocus::Row("demo.brightness".into()),
+        "a drag focuses its row"
+    );
+}
+
+#[test]
+fn options_checkbox_click_and_confirm_flip_the_toggle() {
+    use sf_ui::SettingValue::Bool;
+    let (mut ui, root) = open_options();
+    show_options_page(&mut ui, root, "gameplay");
+    let parts = options_parts(&ui, root);
+    let checkbox = parts.checkbox("demo.subtitles").unwrap();
+    let row = parts.row("demo.subtitles").unwrap();
+    assert!(parts.arrows("demo.subtitles").is_none(), "a toggle has no arrows");
+    assert!(parts.slider("demo.subtitles").is_none());
+    let checked = |ui: &Ui| ui.world().get::<bevy::ui::Checked>(checkbox).is_some();
+    assert!(checked(&ui));
+    assert!(ui.class_of(checkbox).contains("checked"));
+
+    // A click (the widget's toggle): unchecked, sent, shown, the row focused.
+    ui.world_mut()
+        .trigger(bevy_ui_widgets::ToggleChecked { entity: checkbox });
+    ui.frames(1);
+    assert_eq!(take_options(&mut ui), [set("demo.subtitles", Bool(false))]);
+    assert!(!checked(&ui));
+    assert!(!ui.class_of(checkbox).contains("checked"));
+    assert_eq!(option_value(&ui, root, "demo.subtitles"), "Off");
+    assert_eq!(ui.focus(), Some(row));
+
+    // Confirm and right flip it too, and the box follows.
+    ui.tap(GamepadButton::South);
+    assert_eq!(take_options(&mut ui), [set("demo.subtitles", Bool(true))]);
+    assert!(checked(&ui));
+    ui.tap(GamepadButton::DPadRight);
+    assert_eq!(take_options(&mut ui), [set("demo.subtitles", Bool(false))]);
+    assert!(!checked(&ui));
+}
+
+#[test]
+fn options_disabled_rows_ignore_their_widgets() {
+    let (mut ui, root) = open_options();
+    show_options_page(&mut ui, root, "gameplay");
+    {
+        let mut screen = ui.world_mut().get_mut::<OptionsScreen>(root).unwrap();
+        screen
+            .model
+            .set_enabled("demo.difficulty", false)
+            .set_enabled("demo.subtitles", false);
+    }
+    ui.frames(1);
+    let parts = options_parts(&ui, root);
+    let slider = parts.slider("demo.difficulty").unwrap();
+    let checkbox = parts.checkbox("demo.subtitles").unwrap();
+    for widget in [slider, checkbox] {
+        assert!(ui.world().get::<bevy_ui::InteractionDisabled>(widget).is_some());
+    }
+
+    drag_slider(&mut ui, slider, 100.0);
+    ui.world_mut().trigger(bevy_ui_widgets::SetSliderValue {
+        entity: slider,
+        change: bevy_ui_widgets::SliderValueChange::Absolute(0.0),
+    });
+    ui.world_mut()
+        .trigger(bevy_ui_widgets::ToggleChecked { entity: checkbox });
+    ui.world_mut().trigger(bevy_ui_widgets::ValueChange {
+        source: checkbox,
+        value: false,
+        is_final: true,
+    });
+    ui.frames(1);
+    assert!(take_options(&mut ui).is_empty());
+    assert_eq!(slider_value(&ui, slider), bevy_ui_widgets::SliderValue(50.0));
+    assert_eq!(option_value(&ui, root, "demo.difficulty"), "50");
+    assert_eq!(option_value(&ui, root, "demo.subtitles"), "On");
+}
+
 #[test]
 fn options_open_keybinds_and_back_closes() {
     let (mut ui, root) = open_options();
+    // Past the built-in interface page to the gameplay page.
+    ui.tap(GamepadButton::RightTrigger);
     ui.tap(GamepadButton::RightTrigger);
     for _ in 0..2 {
         ui.tap(GamepadButton::DPadDown);
@@ -2304,3 +2476,7 @@ fn dialogue_action_buttons_and_submenu() {
     assert_eq!(parts.actions().count(), 1);
     assert_eq!(parts.action(&id("barter")), Some(barter));
 }
+
+/// Main menu entry art and the version slot.
+#[path = "tests_main_menu_art.rs"]
+mod main_menu_art;

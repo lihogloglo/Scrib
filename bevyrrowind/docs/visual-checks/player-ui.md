@@ -259,8 +259,37 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   the menu (Back returns to it). Log: `app phase: loading`, `app phase: save loaded`, then `start area resident, in game`.
 - Pause menu (F2c): "Main menu" between Options and Quit asks Yes/No (No focused); Yes returns to the menu over the
   video with no world left; New game from there starts fresh (log `main menu: new game from baseline`).
-- Dev runs (`view`, `scene`) unchanged: no menu, the world at once. Known: no loading screen (F4), video has no sound path yet (V3).
-- Owner 2026-10-30: rejected the menu over the live world (wants title art/video). Status: awaiting owner (F1 + B1).
+- Loading screen (F4): New game, Continue and Load show a random Morrowind splash (`splash/`, a new one each time)
+  with a progress bar that only moves forward (a sweep until the first loads), gone the moment the world shows.
+- Dev runs (`view`, `scene`) unchanged: no menu, no loading screen, the world at once.
+- Intro (I1): first launch plays the Bethesda then Morrowind logo with sound, letterboxed; Esc, Enter or a click skips
+  one. Next launch none (`intro: already seen`; delete `<user data>/intro_seen` to replay). Options > Interface.
+- Owner 2026-10-30: rejected the menu over the live world (wants title art/video). Owner 2026-11-11: flow confirmed (intro, menu, New game, Continue/Load, Main menu); look crude ("text over a gray box", "a bad html webpage"), nothing like OpenMW or Morrowind. Status: confirmed with follow-up.
+
+### OP-1: Options screen rows on stock widgets (S2a, PM-1 follow-up)
+- Same run, Options from the main or pause menu. Audio page: drag a volume thumb, it follows the mouse in 5 % steps,
+  the % text and the volume change live; a click on the track jumps there; left/right and the arrows still step it.
+- Mute rows are checkboxes (click, Enter or left/right flips; no arrows); greyed rows ignore the mouse; the thumb never
+  sticks out past the track. S2b1: a pane right of the rows shows the hovered (else focused) row: label, description,
+  disabled reason, "Default: 100%"; hover never moves the keyboard highlight. Fallback colours. Owner 2026-11-11: works; "just a list", keybinds worse (separate window, not centred). Status: confirmed with follow-up.
+
+### LK-1: OpenMW frames on the stock screens (look pass L1a + L1b, 2026-11-11)
+- Release start on the real install (frames come from its `menu_*` pieces; log `ui.frames: ... skipped []`).
+- Windows (options, keybinds, pause, save/load, yes/no modal, inventory, container, trade, dialogue, journal index):
+  OpenMW's thick bronze frame, crisp, no blur or seams, over translucent black (world or video shows through).
+- Inner boxes (option rows, description pane, save list, item grid, trade lists, dialogue log): the thin frame, nothing over it.
+- Framed buttons (Back, Keybinds, Yes/No, Load/Save/Delete, Goodbye, OK, Take All, Accept): button frame, at least 136 px wide, label centred.
+  Bare text buttons (option rows, tabs, topics, pause entries) have no frame. Dialogue submenu opaque.
+- Loading screen: the footer framed, the bar's fill inside its frame. Main-menu buttons still text (L2 next); HUD bars keep CSS borders.
+- Owner 2026-11-11: opening a submenu (e.g. Options) does not hide the menu it came from: both draw on top of each other, unreadable. Logged, not fixed.
+
+### LK-2: Title menu as OpenMW's image buttons (look pass L2, 2026-11-11)
+- Same release start as LK-1 (no arguments), on the title screen; art from the install's `menu_<id>{,_over,_pressed}.dds`.
+- No panel or frame: a column of New Game / Load Game (only with a save) / Options / Exit art, centred, 24 px from the
+  bottom, neighbours an even ~48 px apart, no art clipped. Continue (only with a save) is gold text above, same width.
+- Mouse hover or arrows/d-pad show the "over" art, holding the button the "pressed" art. "Bevyrrowind 0.1.0" bottom-right
+  (a black shadow may be missing). Without the art, entries fall back to text, none blank. Owner question: keep Continue?
+- Owner 2026-11-11: keep Continue, but it must match the other entries' style (or the others align to Continue; prettier later). Logged, not fixed.
 
 ### PL-6: Recovery delay after jumping down from a high box (owner report)
 - Kind: synthetic. `scene level-anim-ledges`, F11; stand on a high box, Space off it toward the ground, keep W held.
@@ -284,7 +313,13 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   say if you see it), planted feet staying put on stops and quick turns, the hips
   dropping onto the lower foot, the trunk leaning uphill; K off brings back the old floating feet.
 - Not this slice: a once-per-step hip bob on ramps, worse downhill (walker cause 2, slice P-IK3), now shows on the
-  player too. Mantles, attacks and rolls drop the probes (their clips place the feet). Status: awaiting owner.
+  player too. Mantles, attacks and rolls drop the probes (their clips place the feet).
+- Status: failed (owner 2026-11-11): the IK overrides the animation, legs spread a lot; the slope lean is far too strong on the player (head very tilted), though AN-21 on Fargoth was fine. Diagnosis P-IK1b.
+- Re-test (owner 2026-11-11, later): feet ARE placed correctly on the ground. Wrong: on stopping a leg (often the right)
+  pops back brutally and the blend looks odd; sometimes the whole body rises from the hips as if standing up; on slopes
+  the arms stay straight and point backwards on steep ones; the head is too tilted (people look a few metres ahead).
+  Walking down a steep slope the steps get outrageously long. Owner wants a deep rethink of stops (distance-matched
+  stop steps or a Sekiro-like system), not symptom fixes.
 
 ### PL-8: Nothing animates in the pause menu (P-IK2, 2026-11-11)
 - Kind: synthetic. `cargo dev scene level-anim-stairs` (walkers on the stairs), then `cargo dev scene level-flat-slopes`,
@@ -293,3 +328,15 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   the player's wall brace re-probed every frame).
 - Look for: while the menu is open nothing in the world moves (walker feet, hips, hands, the player's hands on the
   wall); close it: walking resumes from the held pose with no pop or snap on the first frame. Status: awaiting owner.
+- Owner 2026-11-11 (stairs scene): pause not tested. Other IK still wrong there: a leg still snaps into place, steps too
+  wide going up or down stairs, arms still behind the back. Logged, not fixed (see PL-7, locomotion rethink).
+
+### PL-9: A planted foot lets go on sharp turns (P-IK5, 2026-11-11)
+- Kind: synthetic. `cargo dev scene level-flat-slopes` (cameras `ramps`), F11 player, Tab third person, 12:00. K is the
+  A/B (foot placement on/off, walkers and player).
+- Before: a foot planted when the stick turned stayed locked in the world while the body spun (720 deg/s walk turn)
+  until it drifted 0.3 of the leg's reach: legs spread or crossed, the planted foot up to 34 cm off the clip.
+- Do sharp 90° and 180° turns at walk and at run, on the flat and on the 20° and 30° ramps. Look for: the planted foot
+  lets go after about 20° of turn and steps with the clip (no spread or crossed legs), with no pop or snap as it lets
+  go; straight walking and gentle curves keep their planted feet as before. K off: the plain clip, for comparison.
+- Status: confirmed (owner 2026-11-11, level-anim-stairs: "seems ok").

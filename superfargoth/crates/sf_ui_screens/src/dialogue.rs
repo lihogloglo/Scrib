@@ -44,8 +44,8 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, centred_window, classes, label, label_in, part, part_with, relabel, set_disabled,
-    spawn_button,
+    ScreenColors, centred_window, classes, label, label_in, part, part_as, part_with, relabel, role,
+    set_disabled, spawn_button, spawn_framed_button,
 };
 use crate::{is_target, screen_of};
 
@@ -210,7 +210,7 @@ fn spawn_submenu(
         .id();
     let panel = commands
         .spawn((
-            part("sf-dialogue-submenu-panel"),
+            part_as("sf-dialogue-submenu-panel", role::WINDOW),
             Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(4.0),
@@ -266,7 +266,7 @@ pub(crate) fn spawn_dialogue(
 ) {
     for (root, screen) in &roots {
         commands.entity(root).insert((
-            part("sf-dialogue"),
+            part_as("sf-dialogue", role::WINDOW),
             centred_window(Node {
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(12.0),
@@ -299,7 +299,7 @@ pub(crate) fn spawn_dialogue(
             .id();
         let log = commands
             .spawn((
-                part("sf-dialogue-log"),
+                part_as("sf-dialogue-log", role::BOX),
                 Node {
                     flex_direction: FlexDirection::Column,
                     flex_grow: 1.0,
@@ -324,7 +324,7 @@ pub(crate) fn spawn_dialogue(
             .id();
         let side = commands
             .spawn((
-                part("sf-dialogue-side"),
+                part_as("sf-dialogue-side", role::BOX),
                 Node {
                     flex_direction: FlexDirection::Column,
                     width: Val::Px(220.0),
@@ -361,7 +361,7 @@ pub(crate) fn spawn_dialogue(
                 ChildOf(side),
             ))
             .id();
-        let (goodbye, _) = spawn_button(
+        let (goodbye, _) = spawn_framed_button(
             &mut commands,
             Some(side),
             "sf-dialogue-goodbye",
@@ -522,7 +522,7 @@ pub(crate) fn sync_dialogue(
                 .insert(Text::new(view.speaker()));
             commands
                 .entity(root_entity)
-                .insert(classes("sf-dialogue", &[(view.mode().as_str(), true)]));
+                .insert(classes("sf-dialogue sf-window", &[(view.mode().as_str(), true)]));
 
             // Scrollback: new entries spawn, trimmed ones go, changed ones redraw inside.
             let ids: Vec<EntryId> = view.entries().map(|e| e.id).collect();
@@ -679,7 +679,7 @@ pub(crate) fn sync_dialogue(
                 });
             set_disabled(&mut commands, parts.goodbye, !view.can_goodbye());
             commands.entity(parts.goodbye).insert(classes(
-                "sf-dialogue-goodbye",
+                "sf-dialogue-goodbye sf-framed",
                 &[("disabled", !view.can_goodbye())],
             ));
         }

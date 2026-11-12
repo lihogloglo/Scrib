@@ -11,18 +11,26 @@
 //! returns to it. Back otherwise does nothing (the top level), unless the model names a
 //! [`MainMenuModel::back`] entry: Back then chooses it as a confirm on it would.
 //!
+//! An entry may carry art ([`MainMenuImages`]: normal, over, pressed, as `OpenMW`'s
+//! `ImageButton`): the screen then shows the image instead of the label and swaps it on hover
+//! or visible focus (over) and while pressed; an entry without art shows its label, so a game
+//! fills the slot only when its art exists and a missing file never hides an entry. An optional
+//! version text sits apart from the column (the theme places it).
+//!
 //! Parts: `sf-main-menu`, `-background`, `-title-image`, `-title`, `-entries`, `-entry` (with
-//! the entry's id and `disabled` as classes), `-confirm`, `-confirm-text`, `-confirm-choices`,
-//! `-yes`, `-no`.
+//! the entry's id, `image` while it shows art and `disabled` as classes), `-entry-image`,
+//! `-version`, `-confirm`, `-confirm-text`, `-confirm-choices`, `-yes`, `-no`.
 
 use std::collections::HashMap;
 
 use bevy_asset::Handle;
 use bevy_ecs::prelude::*;
 use bevy_image::Image;
-use bevy_input_focus::{FocusCause, InputFocus};
+use bevy_input_focus::{FocusCause, InputFocus, InputFocusVisible};
 use bevy_math::CompassOctant;
+use bevy_picking::hover::Hovered;
 use bevy_text::TextColor;
+use bevy_ui::Pressed;
 use bevy_ui::prelude::*;
 use bevy_ui_widgets::Activate;
 use sf_ui_bevy::{
@@ -35,6 +43,38 @@ use crate::labels::ScreenLabels;
 use crate::widgets::{Question, ScreenColors, button, label, part, relabel, set_disabled, show};
 use crate::{is_target, screen_of};
 
+/// An entry's art, one image per state, drawn stretched to the entry's image part (sized by
+/// the theme; unsized, the image's own size).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MainMenuImages {
+    pub normal: Handle<Image>,
+    /// Hovered, or focused while focus is visible (pad or keys).
+    pub over: Handle<Image>,
+    /// Held down by the pointer.
+    pub pressed: Handle<Image>,
+}
+
+impl MainMenuImages {
+    pub fn new(normal: Handle<Image>, over: Handle<Image>, pressed: Handle<Image>) -> Self {
+        Self {
+            normal,
+            over,
+            pressed,
+        }
+    }
+
+    /// The image for a state: pressed beats over beats normal.
+    pub fn pick(&self, over: bool, pressed: bool) -> &Handle<Image> {
+        if pressed {
+            &self.pressed
+        } else if over {
+            &self.over
+        } else {
+            &self.normal
+        }
+    }
+}
+
 /// One entry as the app lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainMenuEntry {
@@ -44,6 +84,8 @@ pub struct MainMenuEntry {
     pub label: String,
     /// Disabled entries are shown (class `disabled`), skipped by navigation and not chosen.
     pub enabled: bool,
+    /// Art shown instead of the label; none: the label.
+    pub images: Option<MainMenuImages>,
 }
 
 impl MainMenuEntry {
@@ -52,7 +94,15 @@ impl MainMenuEntry {
             id: id.into(),
             label: label.into(),
             enabled: true,
+            images: None,
         }
+    }
+
+    /// Shows `images` instead of the label (none: the label).
+    #[must_use]
+    pub fn images(mut self, images: Option<MainMenuImages>) -> Self {
+        self.images = images;
+        self
     }
 
     #[must_use]
@@ -77,6 +127,8 @@ pub struct MainMenuModel {
     pub title_text: String,
     /// Full-screen image behind the menu.
     pub background: Option<Handle<Image>>,
+    /// Version text (already formatted; empty: hidden), apart from the entries.
+    pub version: String,
 }
 
 impl MainMenuModel {
@@ -250,10 +302,11 @@ pub struct MainMenuParts {
     background: Entity,
     title_image: Entity,
     title: Entity,
+    version: Entity,
     entries: KeyedChildren<String>,
     order: Vec<String>,
-    /// What each entry shows: enabled, label.
-    shown: HashMap<String, (bool, String)>,
+    /// What each entry shows: enabled, label, art.
+    shown: HashMap<String, (bool, String, Option<MainMenuImages>)>,
     seen: Option<MainMenuModel>,
     /// Quit: yes, no.
     question: Question,
@@ -282,6 +335,10 @@ impl MainMenuParts {
         self.title
     }
 
+    pub fn version(&self) -> Entity {
+        self.version
+    }
+
     pub fn overlay(&self) -> Entity {
         self.question.overlay
     }
@@ -300,18 +357,37 @@ impl MainMenuParts {
     }
 }
 
-/// The entry's classes: `sf-main-menu-entry <id> [disabled]` (an id that is not a valid class
-/// name is left out).
-fn entry_class(id: &str, enabled: bool) -> UiClass {
+/// The entry's classes: `sf-main-menu-entry <id> [image] [disabled]` (an id that is not a
+/// valid class name is left out).
+fn entry_class(id: &str, enabled: bool, image: bool) -> UiClass {
     let mut out = String::from("sf-main-menu-entry");
     if !id.is_empty() && !id.contains(char::is_whitespace) {
         out.push(' ');
         out.push_str(id);
     }
+    if image {
+        out.push_str(" image");
+    }
     if !enabled {
         out.push_str(" disabled");
     }
     UiClass::new(out)
+}
+
+/// On an entry button: its art and its image part (the label is the button's first child).
+#[derive(Component, Debug)]
+pub struct MainMenuEntryArt {
+    image: Entity,
+    images: Option<MainMenuImages>,
+    /// The state last drawn (over, pressed); none: redraw.
+    drawn: Option<(bool, bool)>,
+}
+
+impl MainMenuEntryArt {
+    /// The entry's image part.
+    pub fn image(&self) -> Entity {
+        self.image
+    }
 }
 
 /// A hidden image part.
@@ -325,6 +401,7 @@ fn image_part(name: &'static str, node: Node) -> impl Bundle {
     )
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn spawn_main_menu(
     mut commands: Commands,
     colors: Res<ScreenColors>,
@@ -387,6 +464,20 @@ pub(crate) fn spawn_main_menu(
                 ChildOf(root),
             ))
             .id();
+        // Out of the column's flow, bottom-right unless the theme says otherwise.
+        let version = commands
+            .spawn((
+                label("sf-main-menu-version", "", &colors),
+                Node {
+                    display: Display::None,
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(8.0),
+                    bottom: Val::Px(8.0),
+                    ..Node::default()
+                },
+                ChildOf(root),
+            ))
+            .id();
         let list = commands
             .spawn((
                 part("sf-main-menu-entries"),
@@ -421,6 +512,7 @@ pub(crate) fn spawn_main_menu(
             background,
             title_image,
             title,
+            version,
             entries: KeyedChildren::new(list),
             order: Vec::new(),
             shown: HashMap::new(),
@@ -444,6 +536,50 @@ fn set_image(
     }
     if let Ok(mut node) = nodes.get_mut(entity) {
         show(&mut node, image.is_some());
+    }
+}
+
+/// An entry's art and what decides its state: hover, the press, its label (first child).
+type EntryArtState = (
+    Entity,
+    &'static mut MainMenuEntryArt,
+    Option<&'static Hovered>,
+    Has<Pressed>,
+    Option<&'static Children>,
+);
+
+/// Entry art: the image for the entry's state (pressed, else hovered or visibly focused: over,
+/// else normal) on its image part, the label hidden while art shows; an entry without art shows
+/// its label. Writes only when the state or the art changes.
+pub(crate) fn main_menu_entry_art(
+    mut commands: Commands,
+    focus: Res<InputFocus>,
+    visible: Option<Res<InputFocusVisible>>,
+    mut entries: Query<EntryArtState>,
+    mut nodes: Query<&mut Node>,
+) {
+    let visible = visible.is_some_and(|v| v.0);
+    for (entity, mut art, hovered, pressed, children) in &mut entries {
+        let over = hovered.is_some_and(Hovered::get) || (visible && focus.get() == Some(entity));
+        let state = (over, pressed);
+        if art.drawn == Some(state) {
+            continue;
+        }
+        art.drawn = Some(state);
+        if let Some(images) = &art.images {
+            commands
+                .entity(art.image)
+                .insert(ImageNode::new(images.pick(over, pressed).clone()));
+        }
+        let shows_art = art.images.is_some();
+        if let Ok(mut node) = nodes.get_mut(art.image) {
+            show(&mut node, shows_art);
+        }
+        if let Some(label) = children.and_then(|c| c.first().copied())
+            && let Ok(mut node) = nodes.get_mut(label)
+        {
+            show(&mut node, !shows_art);
+        }
     }
 }
 
@@ -491,6 +627,14 @@ pub(crate) fn sync_main_menu(
                     show(&mut node, !model.title_text.is_empty());
                 }
             }
+            if first || was.version != model.version {
+                commands
+                    .entity(parts.version)
+                    .insert((Text::new(model.version.clone()), TextColor(colors.text)));
+                if let Ok(mut node) = nodes.get_mut(parts.version) {
+                    show(&mut node, !model.version.is_empty());
+                }
+            }
 
             parts.order = model.ids();
             parts.entries.sync(
@@ -498,12 +642,26 @@ pub(crate) fn sync_main_menu(
                 parts.order.iter().cloned(),
                 |commands, id| {
                     let text = model.entry(id).map(|e| e.label.clone()).unwrap_or_default();
-                    commands
+                    let entry = commands
                         .spawn((
                             button("sf-main-menu-entry", text, colors),
                             MainMenuPart::Entry(id.clone()),
+                            Hovered::default(),
                         ))
-                        .id()
+                        .id();
+                    // After the label (the first child, which `relabel` writes).
+                    let image = commands
+                        .spawn((
+                            image_part("sf-main-menu-entry-image", Node::default()),
+                            ChildOf(entry),
+                        ))
+                        .id();
+                    commands.entity(entry).insert(MainMenuEntryArt {
+                        image,
+                        images: None,
+                        drawn: None,
+                    });
+                    entry
                 },
             );
             parts.shown.retain(|id, _| parts.order.contains(id));
@@ -511,7 +669,7 @@ pub(crate) fn sync_main_menu(
                 let Some(entry) = model.entry(id) else {
                     continue;
                 };
-                let now = (entry.enabled, entry.label.clone());
+                let now = (entry.enabled, entry.label.clone(), entry.images.clone());
                 if parts.shown.get(id) == Some(&now) {
                     continue;
                 }
@@ -520,9 +678,18 @@ pub(crate) fn sync_main_menu(
                     continue;
                 };
                 set_disabled(&mut commands, button, !entry.enabled);
-                commands
-                    .entity(button)
-                    .insert(entry_class(id, entry.enabled));
+                commands.entity(button).insert(entry_class(
+                    id,
+                    entry.enabled,
+                    entry.images.is_some(),
+                ));
+                let images = entry.images.clone();
+                commands.queue(move |world: &mut World| {
+                    if let Some(mut art) = world.get_mut::<MainMenuEntryArt>(button) {
+                        art.images = images;
+                        art.drawn = None;
+                    }
+                });
                 relabel(
                     &mut commands,
                     button,
