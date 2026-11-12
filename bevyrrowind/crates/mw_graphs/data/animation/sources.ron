@@ -83,7 +83,7 @@
       attribution: Some("Generated with NVIDIA Kimodo (NVIDIA Open Model License)"),
       private_only: true,
       files: [
-        (name: "loco1/loco.walk.cycle.free/act/loco.walk.cycle.free.act.ground0.05.bvh", sha256: "b63c7493028b523ab6e66d3a20f8ca30fa6ca6942d0cd34ba1167d7880747cd8"),
+        (name: "loco1/loco.walk.cycle.1/act/loco.walk.cycle.1.act.ground0.05.bvh", sha256: "7617ceb450bab7fd2bb59373c010de99ff1c215941ec0bdbac362cef143f60f8"),
         (name: "loco1/loco.run.cycle.3/act/loco.run.cycle.3.act.ground0.04.bvh", sha256: "70b20ce399043ffbf6c8ef42d064b6c5ec0417562718b7a625c6430c418bf1a1"),
         (name: "loco1/loco.sprint.cycle.1/act/loco.sprint.cycle.1.act.ground0.05.bvh", sha256: "601987d41cbc1e718ec9d83bc11c6de0c33433ac704abe0ed3bf7cd2baa11435"),
       ],
@@ -120,7 +120,7 @@
     "loco.walk.cycle": (
       graph: "humanoid",
       candidates: [
-        (source: "generated", file: Some("loco1/loco.walk.cycle.free/act/loco.walk.cycle.free.act.ground0.05.bvh"), clip: "loco.walk.cycle.free.act.ground0.05"),
+        (source: "generated", file: Some("loco1/loco.walk.cycle.1/act/loco.walk.cycle.1.act.ground0.05.bvh"), clip: "loco.walk.cycle.1.act.ground0.05"),
       ],
       root: Match,
       loop_cut: Some(()),

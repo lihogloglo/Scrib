@@ -226,7 +226,7 @@
     "hold:Jumphh@head": (source: "Jumphh@head", optional: true, fallback: Some(Clip("hold:Jump@head"))),
     "loco.jog.cycle": (source: "generated:loco1/loco.run.cycle.3/act/loco.run.cycle.3.act.ground0.04.bvh:loco.run.cycle.3.act.ground0.04", optional: true, fallback: Some(Drop)),
     "loco.sprint.cycle": (source: "generated:loco1/loco.sprint.cycle.1/act/loco.sprint.cycle.1.act.ground0.05.bvh:loco.sprint.cycle.1.act.ground0.05", optional: true, fallback: Some(Drop)),
-    "loco.walk.cycle": (source: "generated:loco1/loco.walk.cycle.free/act/loco.walk.cycle.free.act.ground0.05.bvh:loco.walk.cycle.free.act.ground0.05", optional: true, fallback: Some(Drop)),
+    "loco.walk.cycle": (source: "generated:loco1/loco.walk.cycle.1/act/loco.walk.cycle.1.act.ground0.05.bvh:loco.walk.cycle.1.act.ground0.05", optional: true, fallback: Some(Drop)),
     "react.large.front": (source: "quaternius_ual2:Hit_Knockback", optional: true, fallback: Some(Clip("Hit5"))),
     "react.medium.front": (source: "quaternius_ual2:Hit_Knockback", optional: true, fallback: Some(Clip("Hit5"))),
     "react.small.back": (source: "quaternius_ual1:Hit_Stomach", optional: true, fallback: Some(Clip("Hit4"))),

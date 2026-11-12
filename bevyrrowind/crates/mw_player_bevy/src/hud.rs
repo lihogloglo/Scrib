@@ -14,9 +14,11 @@
 //!   vanilla draws none.
 //! - **Compass**: the camera's heading (`heading_label`) in the `hud.compass` slot, bottom right
 //!   where vanilla draws its minimap. Scaffold until the local map lands.
-//! - **Crosshair**: shown whenever the HUD is, first and third person alike: the focus ray goes
-//!   through the screen centre in both views (`OpenMW` `World::getFocusObject`, see
-//!   [`crate::Focus`]), so the centre dot is where Use acts. Hidden while the lock-on marker is on
+//! - **Crosshair**: first person only (owner 2026-11-12, as souls-likes: no reticle in free
+//!   third-person movement, where the shoulder framing made the centre dot read as the body walking
+//!   diagonally). The focus ray still goes through the screen centre in both views (`OpenMW`
+//!   `World::getFocusObject`, see [`crate::Focus`]): in third person the use prompt names what Use
+//!   acts on. TODO: a reticle while aiming (bow, spell) in third person. Hidden while the lock-on marker is on
 //!   screen (`sf_combat_bevy::LockMarkerShown`): the marker is the same dot moved onto the target
 //!   (`crate::combat`).
 //! - **Use prompt**: from [`crate::Focus`] (the game's `OpenMW` focus ray; the action layer's own
@@ -30,6 +32,7 @@ use bevy_math::Vec3;
 use bevy_camera::visibility::Visibility;
 use bevy_transform::prelude::*;
 use mw_game_core::player::{HOST_KEY, PlayerCharacter};
+use sf_camera::ViewChoice;
 use sf_camera_bevy::PlayerCamera;
 use sf_console_bevy::ConsoleOpen;
 use sf_stats_bevy::sf_stats::{Role, StatTable};
@@ -102,7 +105,7 @@ fn drive_hud(
     (table, players): (Option<Res<StatTableRes>>, Query<(&PlayerCharacter, &Stats)>),
     localizer: Option<Res<UiLocalizer>>,
     lock_shown: Option<Res<LockMarkerShown>>,
-    cams: Query<&GlobalTransform, With<PlayerCamera>>,
+    cams: Query<(&GlobalTransform, &PlayerCamera)>,
     mut view: ResMut<HudView>,
 ) {
     let localizer = localizer.as_deref();
@@ -113,7 +116,7 @@ fn drive_hud(
         .map(|(id, current, max)| HudBar { id: id.to_owned(), label: localized(localizer, &format!("hud-bar-{id}"), id), current, max })
         .collect();
     // Whole degrees: the label shows no more, and the HUD resyncs only when it changes.
-    let heading = cams.iter().next().and_then(|t| heading_degrees(*t.forward())).map(|d| d.round().rem_euclid(360.0));
+    let heading = cams.iter().next().and_then(|(t, _)| heading_degrees(*t.forward())).map(|d| d.round().rem_euclid(360.0));
     let prompt = focus.target.as_ref().map(|t| match t.verb {
         Some(verb) => UsePrompt {
             verb: localized(localizer, &format!("hud-use-{}", verb.to_lowercase()), verb),
@@ -125,7 +128,10 @@ fn drive_hud(
     });
     // While the lock marker is on screen it is the cursor: one reticle, not two.
     let locked = lock_shown.is_some_and(|s| s.0);
-    let want = HudView { bars, heading, crosshair: mode.body.is_some() && !locked, prompt };
+    // Third person shows no centre dot (souls-likes: no reticle in free movement; the off-centre
+    // shoulder framing makes a centre dot read as the body walking diagonally, WALK-1 2026-11-12).
+    let first_person = cams.iter().next().is_none_or(|(_, c)| c.view() == ViewChoice::FirstPerson);
+    let want = HudView { bars, heading, crosshair: mode.body.is_some() && first_person && !locked, prompt };
     view.set_if_neq(want);
 }
 
@@ -246,6 +252,15 @@ value = { layer = "Menu", implementation = { Template = "pause" } }
         }
     }
 
+    /// The player camera switched to `view` (the rig starts third person).
+    fn set_view(app: &mut App, view: ViewChoice) {
+        let mut cams = app.world_mut().query::<&mut PlayerCamera>();
+        for mut c in cams.iter_mut(app.world_mut()) {
+            c.set_view(view);
+        }
+        frames(app, 1);
+    }
+
     fn hud_root(app: &mut App) -> (Entity, Visibility) {
         let mut q = app.world_mut().query_filtered::<(Entity, &Visibility), (With<HudScreen>, With<HudParts>)>();
         let (e, v) = q.single(app.world()).expect("one built HUD root");
@@ -269,7 +284,9 @@ value = { layer = "Menu", implementation = { Template = "pause" } }
         assert_eq!(labels, ["Health", "Magicka", "Fatigue"], "localized");
         assert!(view.bars.iter().all(|b| b.max > 0.0 && b.current == b.max), "{:?}", view.bars);
         assert_eq!(view.heading, Some(90.0), "camera faces east");
-        assert!(view.crosshair && view.prompt.is_none());
+        assert!(!view.crosshair && view.prompt.is_none(), "third person: no centre dot");
+        set_view(&mut app, ViewChoice::FirstPerson);
+        assert!(app.world().resource::<HudView>().crosshair, "first person: the centre dot");
         let parts = app.world().get::<HudParts>(root).expect("parts");
         assert!(BAR_IDS.iter().all(|id| parts.bar(id).is_some()), "a bar entity per id");
 
@@ -323,6 +340,7 @@ value = { layer = "Menu", implementation = { Template = "pause" } }
         use sf_combat_bevy::{LockMarker, LockMarkerShown, LockMarkerStyle};
 
         let mut app = app();
+        set_view(&mut app, ViewChoice::FirstPerson);
         let (root, _) = hud_root(&mut app);
         let crosshair = app.world().get::<HudParts>(root).expect("parts").crosshair();
         let shown = |app: &App, e: Entity| app.world().get::<Node>(e).is_some_and(|n| n.display != Display::None);
