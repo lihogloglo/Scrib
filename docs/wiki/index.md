@@ -37,6 +37,9 @@ is a frame over 25 ms (report "hitches"). A/B differences under ~0.5 ms are run-
 [Streaming](engine/streaming.md): exterior cell streaming, spawning, floating origin, what a placement becomes, origin-shift guard, `--off` parts and stream counters
 [Statics and LOD](engine/statics-and-lod.md): precombine, far field, experimental static scene (`--scene`), opt-in `NoCpuCulling` path
 [Frame and views](engine/frame-and-views.md): cameras and shadow views in an exterior frame, driving plugins, perf suite and report sections
+[Characters](engine/characters.md): NPC and player assembly, merged parts, skin joint blocks (P5), first-person roles and view copies
+[Animation](engine/animation.md): graph runtime, ops, humanoid graph, LOD tiers A0-A3, foot IK, clip sources and bake
+[Locomotion, action, camera](engine/locomotion-and-action.md): fixed tick, mover, action chooser, player feel, camera, first-person eye
 
 ### Bevy 0.20 (`bevy/`)
 [Render and visibility](bevy/render-and-visibility.md): extraction, visibility and culling (CPU/GPU, `NoCpuCulling`, ranges), retained bins, GPU preprocessing, views, shadow views; path:line in Bevy 0.20
@@ -58,3 +61,5 @@ is a frame over 25 ms (report "hitches"). A/B differences under ~0.5 ms are run-
 [perf](../ledger/perf.md): 27 entries, last 2026-11-12 (frame time: culling, bind groups, skinning, ceilings, A/B)
 [streaming](../ledger/streaming.md): 16 entries, last 2026-11-12 (cell streaming, origin shift, stutters)
 [statics](../ledger/statics.md): 21 entries, last 2026-11-12 (precombine, static scene, far field, LOD, NoCpuCulling)
+[animation](../ledger/animation.md): 15 entries, last 2026-11-12 (IK P-IK1..5, gaits, foot lock, anim LOD, 2026-11-12 audit, AN-/AL-/PL- verdicts)
+[combat-feel](../ledger/combat-feel.md): 13 entries, last 2026-11-12 (combat C1-C4, guard, lock-on, first-person melee and view model, CB-/FP- verdicts)
