@@ -71,3 +71,93 @@ Vec<BuildConfig> (tile size per class), max_tiles (≤ 2^13 per mesh), max_nodes
   the NV0 calibration (0.15 m voxels, 128 per tile = 19.2 m; houses with roof ramps): 4.6 ms per tile mean,
   5.6 ms worst, 4.8 KiB DNAV per tile, `add_tile` 24 µs; `nearest` 1.2 µs, a 115 m diagonal path 48 µs (57
   polygons, 443 expansions, 7 slices of 64), raycast 2.0 µs. Real cells are denser (NV0: Balmora).
+
+## NV3 as built (2026-11-11)
+
+`sf_nav_bevy` (thin Bevy shell: `bevy_app`, `bevy_ecs`, `sf_console_bevy`, `serde_json`; feature `debug` adds
+`bevy_gizmos` + `bevy_color`; the backend is a `dyn NavBackend`, so no navmesh code compiles in it).
+- **Trait** (`sf_nav`): `tile_summaries() -> Vec<TileSummary { key, bytes, polys }>` and `tile_geometry(key) ->
+  Option<TileGeometry { origin, verts, polys: Vec<DebugPoly { verts, walls, state }> }>`, default empty / `None`.
+  Recast: DNAV bytes, ground polygons only (off-mesh connections are the links layer), a wall is `neis == 0`
+  (Detour's `duDebugDrawNavMeshPolyBoundaries`). `GridBackend`: one square per walkable cell, a side is a wall when
+  the cell across isn't walkable or resident.
+- **Resources**: `NavMeshes`, `NavCounters` (queue depth, ms per tick, rebuilds: `None` = `n/a` until NV6 / NV10),
+  `NavDebugPaths` (actor label -> waypoints, `record(actor, &PathResult)`), `NavDraw` (layers), `NavDrawFrame`
+  (render origin `WorldPos` + worldspace shown, the game updates it from its floating origin), `NavDrawn`.
+- **Console**: `nav.stats` -> `nav: 5 tiles (class 0: 4, class 1: 1), N polys, X MiB, queue n/a, tick n/a ms,
+  rebuilds n/a`; `nav.draw tiles` / `paths [actor]` toggle, `off` clears; links (NV9), doors (NV4), obstacles (NV10),
+  boundary (NV7b), coarse (NV12), graph (NV11) warn `not built yet (NVx)`.
+- **Gizmos**: rebuilt from the backend every frame in `PostUpdate` (tiles stream and door patches change state, so no
+  retained mesh), area colour by golden-angle hue, inner edges alpha 0.35, walls solid, disabled grey, 5 cm lift;
+  paths yellow with a 0.3 m tick per waypoint. Runs only with a `GizmoConfigStore` and a layer on.
+- **BRP**: `brp_stats_system(In<Option<Value>>, &World) -> Result<Value, String>`, the sf_ai_bevy shape; the app that
+  owns `RemotePlugin` maps the error (not registered in the game yet).
+- **Tests** (3): smoke over a test bake (floor, box, ramp; 4 humanoid + 1 large tile): exact stats line and BRP
+  JSON, gizmos drawn for a few frames (`NavDrawn` = 5 tiles, every polygon, every waypoint), worldspace filter,
+  not-built layers, `off`; Recast tile geometry finite and inside its tile; grid double's walls exact.
+
+## NV4a as built (2026-11-11)
+
+- **Crate** `sf_nav_bake` (Bevy-free, hakari final-excludes; deps `sf_bake`, `sf_nav`, `sf_world`, `sf_coords`, glam,
+  postcard, serde; dev `sf_nav_recast`, tempfile). `NavBake::new(source, backend, NavBakeConfig { classes, areas,
+  backend_tag })`, `register(&mut Baker)`, `tile_keys(ws, class)`, `class_products`, `products(worldspaces)` (the
+  host's bake roots: links, then per class every tile over the source's region extents, then the coarse graph).
+- **Subjects**: `nav.tiles` `class/region/x/z/worldspace`, `nav.links` `worldspace`, `nav.coarse` `class/worldspace`
+  (worldspace last: ids may hold `/`). Params: the class's `BuildConfig`, the `AreaTable`, `backend_tag`
+  (`sf_nav_recast::BAKE_TAG`); `nav.coarse` also the sorted regions and plans every tile + the links as product
+  inputs (scheduled first, so its reads are hits).
+- **`nav.tiles` run**: bounds = tile ± `BuildConfig::border()` (radius in cells + 3, now shared with `build.rs`);
+  `source.tile_input(cx, ws, class, bounds)`; door volumes sorted by id and appended last to `TileInput::volumes`;
+  `build_tile`; empty blob → zero bytes; else `read_tile_blob` and door polygons = polygons with the door's area whose
+  centroid lies in its footprint (y range ± 2 cell heights), first door by id wins; `BakedTile { blob, doors }`.
+- **`nav.coarse`** (stub for NV12): per tile, connected polygon sets by union-find over in-tile edge links; per (set,
+  side) portal edges merged into runs (1 cm join) → one entrance node at the run's middle on the tile border; door
+  approach points placed on the covering polygon nearest in height (≤ class height), else listed in `unplaced`;
+  edges = every pair within one (tile, set) plus +x/+z entrances to the neighbour's opposite entrances whose spans
+  overlap (height ≤ class height); costs straight-line meters.
+- **`sf_nav` additions**: `NavDoorId`, `BuildConfig::border_cells/border`, `TileSide`, `PolyEdge`, `BlobPoly`,
+  `BlobTile`, `NavBackend::read_tile_blob` (default `Unsupported`; Recast decodes with `MeshTile::parse`, Detour
+  `neis` → wall / poly / portal side), module `baked` (`BakedTile` with `encode`/`decode`, `DoorPolys`,
+  `DoorApproach`, `NavLinks`, `CoarseGraph` / `CoarseNode` / `CoarseEdge` / `CoarseNodeKind`).
+- **Tests** (6, `sf_nav_bake`): a bucketed synthetic town in in-memory files (10 m buckets; a tile reads the buckets
+  under its bounds): subject round trip; rerun = full hit (10 tiles, 2 coarse); empty tiles exactly the void column;
+  two doorways each with their own `DOOR` polygons, every door-area polygon listed once, approach points placed,
+  cross-tile and door edges present; moving one crate re-bakes exactly the tiles that read its bucket (2 of 10).
+  Measurement (dev profile, other builds running): 8×8 houses, 122 m square, humanoid cs 0.15 / 128 cells: 49 tiles,
+  wall 183 ms, 14.7 ms CPU per tile, 0.26 MiB (uncompressed); large: 16 tiles, 33 ms, 4.7 ms per tile, 0.08 MiB;
+  coarse graph 488 nodes, 1,600 edges.
+
+## Industry comparison table (moved from nav.md at NV4a)
+
+"Unverified" marks claims from memory not re-read on 2026-11-08.
+
+| Technique | Industry | Ours | Verdict |
+|---|---|---|---|
+| Navmesh generation | Recast voxelisation: UE `RecastNavMesh`, Unity AI Navigation (`NavMeshSurface` per agent type), Godot `NavigationServer3D`, OpenMW `detournavigator` | Recast via backend trait | **match** |
+| When it's built | UE static/dynamic tiles, nav invokers; OpenMW async around the player + disk cache + `navmeshtool`; Bethesda authored per cell | baked per tile, mod-aware, patched at runtime | **match** UE static + dynamic modifiers; differ from OpenMW (nothing bakes during play) |
+| Agent sizes | UE supported agents, Unity agent types, OpenMW one mesh per agent bounds | 2 classes as data | **match** |
+| Area costs | UE `NavArea` + filters, Unity areas, OpenMW ground/water/door/pathgrid (door 2) | area table + per-query filters | **match** |
+| Runtime obstacles | Detour TileCache, Unity `NavMeshObstacle` carving, UE dynamic obstacles / modifiers | door poly area/flags (Recast demo, OpenMW door area); TileCache carving opt-in, at rest | **match** |
+| Off-mesh links | UE `NavLinkProxy`, Unity `NavMeshLink`, OpenMW pathgrid edges, Bethesda door triangles | jump/drop/ladder/pathgrid/door links | **match** |
+| Across load doors | Bethesda: teleport out of view; OpenMW: none (followers teleport); UE WP streams nav with cells | `WorldGraph` + traverse; fade links only unseen | **match** Bethesda; **ahead** of OpenMW |
+| Hierarchical routing | HPA* (Botea 2004); Killzone/Decima graph abstraction (unverified) | worldspace + coarse graph + Detour | **match** |
+| Path following | Detour `dtPathCorridor`, UE `UPathFollowingComponent` | Detour corridor + our `PathFollower` | **match** |
+| Local avoidance | DetourCrowd (sampled RVO), UE RVO, Unity agents, Godot RVO2 | our ORCA + navmesh walls, fixed tick | **match**; deterministic |
+| Debug | UE nav display + Visual Logger, Recast demo, OpenMW navmesh render | gizmos + `nav.*` + BRP | **match** |
+| Scaling cost | tiles: ring area × classes present × anchors; queries: path length (coarse graph bounds it); rebuilds: carving props; avoidance: tier 1-2 agents | caps per CPU tier | checked |
+
+**Sources**: Mononen, recastnavigation (https://github.com/recastnavigation/recastnavigation); Botea, Müller, Schaeffer,
+"Near Optimal Hierarchical Path-Finding" (JoGD 2004); van den Berg et al., ORCA (2011); Unity AI Navigation docs;
+UE navigation docs; OpenMW `components/detournavigator/` at `b8285cc9` and the navigator settings page (research
+"Sources").
+
+## Done build-plan rows (moved from nav.md at NV4a)
+
+| Slice | Deliverable | Test |
+|---|---|---|
+| **NV0** spike (**done 2026-11-11**) | `navmesh-rs` verdict on our cooked collision (parity, ms per tile, MiB, query µs, code read, tile format, setters) | [report](../research/navmesh-spike-nv0-2026-11-11.md): adopt |
+| **NV0b** (not needed) | FFI fallback spike (recastnavigation bindings) | same |
+| **NV1** core (**done 2026-11-11**) | `sf_nav`: types, `NavBackend`, `GridBackend` double, `Goal`, filters | exact paths on synthetic grids (17 tests) |
+| **NV2** backend (**done 2026-11-11**) | `sf_nav_recast`: `build_tile`, tiles, `nearest`, sliced `find_path`, `raycast` | paths on synthetic boxes, ramps, two floors; no NaN (18 tests + measurement) |
+| **NV3** debug draw (**done 2026-11-11**) | `sf_nav_bevy` gizmos + `nav.draw` / `nav.stats` + BRP over a test bake | headless plugin smoke; stats line counts tiles |
+| **NV4a** bake steps (**done 2026-11-11**) | `nav.tiles`, `nav.links`, `nav.coarse` steps + `NavGeometrySource`, door polygons (`sf_nav_bake`) | synthetic: cache hit on rerun; moving one box re-bakes only its tiles; each doorway has its own polys; empty tiles empty; ms and MiB printed per class |

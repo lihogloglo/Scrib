@@ -54,6 +54,15 @@ ported code cites file + commit in its module docs, gets a `superfargoth/THIRD_P
   has no navmesh: the pathgrid route, as OpenMW `pathfinding.cpp` 150-210 does.
 - **Geometry**: exactly the cooked collision the mover uses (`collision.cook`), terrain from LAND, water level per
   worldspace; NIF collision quirks are the bake's (actors-adapter "Static collision").
+- **As built (NV4b, 2026-11-11, `mw_bake::nav`)**: `MwNavSource` reads, per tile, the `mw.nav.cell` products (64 m
+  squares listing every static/item/door whose world bounds touch them, plus the level-0 `terrain.tile`s under them;
+  bytes = plan param, so a moved wall re-bakes only its cells' tiles), then `collision.cook` per model and the baked
+  terrain heights (what the physics heightfield uses, not raw LAND). Actors, lights, markers, editor-only and
+  start-disabled references are not geometry. Water: one quad at OpenMW's swim level (`getSwimLevel`: water −
+  (`fSwimHeightScale` + 1) × half height, GMST read from the records), area `water`, only over tiles with terrain or
+  objects; seabed kept. Doors: leaf excluded, `DoorVolume` = leaf footprint widened to 0.75 m each side, id = the
+  reference's `PlacementId` folded to 64 bits; approach = nearest pathgrid node ≤ 6 m (`mw.nav.links`). Areas
+  ground 1 / door 2 / water 3 (water cost 2); humanoid swims, `large` doesn't. Pathgrid off-mesh links: NV9.
 
 ## Packages → directives
 

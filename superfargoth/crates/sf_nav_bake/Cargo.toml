@@ -1,0 +1,26 @@
+[package]
+name = "sf_nav_bake"
+description = "Bevy-free navmesh bake steps for superfargoth (nav.md \"Bake\"): nav.tiles, nav.links and nav.coarse on sf_bake, over the adapter's NavGeometrySource"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Bevy-free bake-side crate (build-perf.md rule 1): in hakari's final-excludes. Backend-agnostic: the
+# host passes a `NavBackend` (sf_nav_recast in the game), so the runtime core `sf_nav` never links
+# the bake and the bake never names a backend.
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+postcard.workspace = true
+serde.workspace = true
+sf_bake.workspace = true
+sf_coords.workspace = true
+sf_nav.workspace = true
+sf_world.workspace = true
+
+[dev-dependencies]
+sf_nav_recast.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

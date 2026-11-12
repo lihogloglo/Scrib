@@ -213,6 +213,12 @@ pub struct TileKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NavLinkId(pub u64);
 
+/// A doorway the bake gave its own polygons (nav.md "Doors"): the adapter's stable id (a hash of
+/// the door's record and placement), so the runtime door overlay finds its polygons. Joins the
+/// `sf_world::LinkId` ends with NV11.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct NavDoorId(pub u64);
+
 /// How an agent crosses an off-mesh link. `Door(LinkId)` arrives with `sf_world::LinkId` (NV11).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TraverseKind {

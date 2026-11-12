@@ -44,13 +44,18 @@ use glam::Vec3;
 use navmesh_rs::detour::{self, DetachedQuery, NavMesh, NavMeshParams, NavMeshQuery};
 use sf_coords::WorldPos;
 use sf_nav::{
-    AgentClassId, AreaId, AreaTable, BuildConfig, JobState, NavBackend, NavError, NavPoint, NavRay,
-    PathJob, PolyFlags, PolyRef, PolyState, QueryFilter, SliceBudget, TileInput, TileKey, TileRef,
+    AgentClassId, AreaId, AreaTable, BlobPoly, BlobTile, BuildConfig, DebugPoly, JobState,
+    NavBackend, NavError, NavPoint, NavRay, PathJob, PolyEdge, PolyFlags, PolyRef, PolyState,
+    QueryFilter, SliceBudget, TileGeometry, TileInput, TileKey, TileRef, TileSide, TileSummary,
 };
 use sf_world::{Location, WorldspaceId};
 
 use crate::filter::DtFilter;
 use crate::refs::MeshTag;
+
+/// Names this backend's tile format and bake settings for the bake's cache key (`sf_nav_bake`
+/// `NavBakeConfig::backend_tag`). Bump the suffix when `build.rs` changes what a tile holds.
+pub const BAKE_TAG: &str = "navmesh-rs 0.2.2 dnav7 poly64; sf_nav_recast build 1";
 
 /// Most tiles one mesh holds at once (Detour slots): 2^13 = 8,192 tiles, ~120 MiB of humanoid
 /// tiles at NV0's ~15 KiB each, past the High residency budget (nav.md "Budgets").
@@ -389,6 +394,50 @@ impl NavBackend for RecastBackend {
         build::build_tile(input, cfg, areas)
     }
 
+    /// Decodes the DNAV bytes (navmesh-rs `MeshTile::parse`, which validates every index). Edge
+    /// links are Detour's `neis`: 0 a wall, `i + 1` polygon `i`, `EXT_LINK | side` a portal
+    /// (side 0 = +x, 2 = +z, 4 = -x, 6 = -z; `dtNavMesh` sides, our Z is Detour's Y).
+    fn read_tile_blob(&self, blob: &[u8]) -> Result<BlobTile, NavError> {
+        let t = detour::MeshTile::parse(blob.to_vec()).map_err(backend)?;
+        let verts = t
+            .verts
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|&v| Vec3::from_array(v))
+            .collect();
+        let edge = |nei: u16| {
+            if nei & detour::EXT_LINK != 0 {
+                match nei & 0xff {
+                    0 => PolyEdge::Portal(TileSide::PosX),
+                    2 => PolyEdge::Portal(TileSide::PosZ),
+                    4 => PolyEdge::Portal(TileSide::NegX),
+                    _ => PolyEdge::Portal(TileSide::NegZ),
+                }
+            } else if nei == 0 {
+                PolyEdge::Wall
+            } else {
+                PolyEdge::Poly(u32::from(nei - 1))
+            }
+        };
+        let polys = t
+            .polys
+            .iter()
+            .map(|p| {
+                let n = usize::from(p.vert_count);
+                BlobPoly {
+                    verts: p.verts[..n].iter().map(|&v| u32::from(v)).collect(),
+                    edges: p.neis[..n].iter().map(|&e| edge(e)).collect(),
+                    state: PolyState {
+                        area: AreaId(p.area()),
+                        flags: PolyFlags::from_bits_retain(p.flags),
+                    },
+                }
+            })
+            .collect();
+        Ok(BlobTile { verts, polys })
+    }
+
     fn add_tile(&mut self, key: TileKey, blob: &[u8]) -> Result<TileRef, NavError> {
         let size = self
             .class_config(key.class)
@@ -459,6 +508,70 @@ impl NavBackend for RecastBackend {
     fn tile(&self, key: &TileKey) -> Option<TileRef> {
         let m = self.mesh_of_key(&MeshKey::of(key))?;
         m.tiles.get(&(key.x, key.z)).map(|&t| refs::tile(m.tag, t))
+    }
+
+    fn tile_summaries(&self) -> Vec<TileSummary> {
+        self.live_meshes()
+            .flat_map(|m| {
+                m.tiles.iter().filter_map(|(&(x, z), &tr)| {
+                    let t = m.nav.tile_by_ref(tr)?;
+                    Some(TileSummary {
+                        key: TileKey {
+                            ws: m.key.ws.clone(),
+                            class: m.key.class,
+                            region: m.key.region,
+                            x,
+                            z,
+                        },
+                        bytes: t.data.len(),
+                        polys: t
+                            .polys
+                            .iter()
+                            .filter(|p| p.poly_type() != detour::POLYTYPE_OFFMESH_CONNECTION)
+                            .count(),
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// The tile's ground polygons (off-mesh connections are links, drawn by their own layer);
+    /// an edge is a wall where Detour stores no neighbour (`neis == 0`), as Detour's
+    /// `duDebugDrawNavMeshPolyBoundaries` draws outer edges.
+    fn tile_geometry(&self, key: &TileKey) -> Option<TileGeometry> {
+        let m = self.mesh_of_key(&MeshKey::of(key))?;
+        let t = m.nav.tile_by_ref(*m.tiles.get(&(key.x, key.z))?)?;
+        let verts = t
+            .verts
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|&v| Vec3::from_array(v))
+            .collect();
+        let polys = t
+            .polys
+            .iter()
+            .filter(|p| p.poly_type() != detour::POLYTYPE_OFFMESH_CONNECTION)
+            .map(|p| {
+                let n = usize::from(p.vert_count);
+                let walls = (0..n.min(8))
+                    .filter(|&i| p.neis[i] == 0)
+                    .fold(0u8, |w, i| w | 1 << i);
+                DebugPoly {
+                    verts: p.verts[..n].iter().map(|&v| u32::from(v)).collect(),
+                    walls,
+                    state: PolyState {
+                        area: AreaId(p.area()),
+                        flags: PolyFlags::from_bits_retain(p.flags),
+                    },
+                }
+            })
+            .collect();
+        Some(TileGeometry {
+            origin: m.origin,
+            verts,
+            polys,
+        })
     }
 
     fn nearest(

@@ -41,6 +41,7 @@ ZoneGraph; later if measured), navmesh authoring tools (data comes from the bake
 | No multiplayer ceiling; gameplay never depends on graphics settings | "Streaming" (fixed nav ring), "Co-op" |
 | Steam Deck is the floor | "Budgets" |
 | Delegated 2026-11-08: two agent classes; doors by poly flags, no prop carving by default; client UI routes | "Data model", "Runtime patches", "Co-op" |
+| Owner 2026-11-11: NPCs climb, mantle and vault with the player's own moves (guards can follow onto roofs); later, after NV9: bake-time auto links from ledges in the mover's mantle/vault/drop envelopes, per class (UE NavLink generation, Unity auto off-mesh links) | NV9b (planned) |
 
 ## Canonical technique
 
@@ -104,15 +105,20 @@ ends' worldspace and frame) in NV11, since the AI saves routes by link.
 
 `NavBackend` (`sf_nav::backend`, built NV1; the code is the reference): `build_tile(input, cfg, areas)` (bake only),
 `add_tile` / `remove_tile` / `tile`, `nearest`, sliced `find_path(&self, &mut PathJob, &mut SliceBudget)`, `raycast`,
-`poly_state` / `set_poly_state` (doors: `setPolyArea`/`setPolyFlags`, no rebuild). Still to add: corridor moves
+`poly_state` / `set_poly_state` (doors: `setPolyArea`/`setPolyFlags`, no rebuild), and read-only debug accessors
+(NV3) `tile_summaries` (key, bytes, polygons per resident tile) and `tile_geometry` (a tile's polygons with wall
+edges, region-local, built on request). Still to add: corridor moves
 (`dtPathCorridor`, NV8), local boundary (`dtLocalBoundary`, NV7b), `set_obstacle` / `clear_obstacle` /
-`rebuild_dirty` (TileCache, NV10, opt-in). The bake's adapter seam (NV4):
+`rebuild_dirty` (TileCache, NV10, opt-in), and bake-side `read_tile_blob` (NV4a: a blob's polygons with edge links:
+wall, in-tile polygon, or portal to a tile side). The bake's adapter seam (`sf_nav_bake`, built NV4a):
 
 ```rust
-/// The adapter's geometry for the bake: the same cooked collision the mover uses.
+/// The adapter's geometry for the bake: the same cooked collision the mover uses. Reads go through `cx`.
 pub trait NavGeometrySource: Send + Sync {
-    fn tile_input(&self, cx: &mut RunCx, ws: WorldspaceId, bounds: Aabb) -> TileInput;   // triangles + area marks + water
-    fn links(&self, cx: &mut RunCx, ws: WorldspaceId) -> Vec<OffMeshLink>;
+    fn regions(&self, ws: &WorldspaceId) -> Vec<NavRegion>;            // plan time: origin + XZ extent per region
+    fn tile_input(&self, cx: &mut RunCx, ws: &WorldspaceId, class: &AgentClass, bounds: &NavTileBounds)
+        -> Result<NavTileSource, BakeError>;                            // TileInput + DoorVolume { door, volume }
+    fn links(&self, cx: &mut RunCx, ws: &WorldspaceId) -> Result<NavLinks, BakeError>; // links + door approaches
 }
 ```
 
@@ -151,7 +157,14 @@ markers (seamless §4.2; it replaces OpenMW's scattered `positionFor` calls).
   are recorded as dynamic dependencies. A mod that moves one wall changes only the tiles whose inputs it touched.
 - Step **`nav.links`** per worldspace (off-mesh links, door approach points) and **`nav.coarse`** per (worldspace,
   class) (border nodes and costs; depends on that worldspace's tile products).
-- Parallel per tile (`sf_bake` execution); empty tiles (open sea, void) produce no object.
+- Parallel per tile (`sf_bake` execution); empty tiles (open sea, void) produce no object of their own (zero bytes:
+  every empty tile shares the store's one empty object).
+- **Where** (NV4a): `sf_nav_bake`, a Bevy-free crate on `sf_bake` + `sf_nav`, backend-agnostic (the host passes a
+  `NavBackend`). Not in `sf_nav` (the runtime core must not link the bake) nor `sf_nav_recast` (steps would name a
+  backend); product types (`BakedTile`, `NavLinks`, `CoarseGraph`) live in `sf_nav::baked` so the runtime reads them
+  without the bake. Re-bake granularity is the adapter's read granularity: a moved wall re-bakes the tiles whose
+  reads (e.g. a cell's placement list) changed. Finer early cutoff (a stored per-tile input product) was rejected: it
+  would store the triangle soup, ~3× the navmesh on disk.
 - **Gate**: a cold bake of every navmesh for the first pack, both classes, stays within the "few minutes" rule on the
   High reference; measured in NV4; over it, coarsen exterior humanoid tiles (`large` is cheap).
 
@@ -228,7 +241,9 @@ resident: `Partial` to the ring edge plus the coarse route. Tests use a synchron
 
 Bevy gizmos, off by default: `nav.draw tiles|links|doors|obstacles|paths <actor>|boundary <actor>|coarse|graph`.
 `nav.stats` prints tiles resident per class, MiB, queue depth, ms per tick, rebuilds; BRP serves the same as JSON.
-Automated checks use log lines only (no visual judgement by agents).
+Automated checks use log lines only (no visual judgement by agents). Built in NV3: `tiles`, `paths [actor]`, `off`,
+`nav.stats`, BRP `sf_nav/stats`; the other layers print the slice that builds their data, counters not yet kept
+print `n/a`.
 
 ## Co-op and saves (net-ready rules)
 
@@ -256,27 +271,12 @@ These scale with the host's CPU tier (ai.md "Tiers and budget"), never with the 
 
 ## Industry comparison
 
-"Unverified" marks claims from memory not re-read on 2026-11-08.
-
-| Technique | Industry | Ours | Verdict |
-|---|---|---|---|
-| Navmesh generation | Recast voxelisation: UE `RecastNavMesh`, Unity AI Navigation (`NavMeshSurface` per agent type), Godot `NavigationServer3D`, OpenMW `detournavigator` | Recast via backend trait | **match** |
-| When it's built | UE static/dynamic tiles, nav invokers; OpenMW async around the player + disk cache + `navmeshtool`; Bethesda authored per cell | baked per tile, mod-aware, patched at runtime | **match** UE static + dynamic modifiers; differ from OpenMW (nothing bakes during play) |
-| Agent sizes | UE supported agents, Unity agent types, OpenMW one mesh per agent bounds | 2 classes as data | **match** |
-| Area costs | UE `NavArea` + filters, Unity areas, OpenMW ground/water/door/pathgrid (door 2) | area table + per-query filters | **match** |
-| Runtime obstacles | Detour TileCache, Unity `NavMeshObstacle` carving, UE dynamic obstacles / modifiers | door poly area/flags (Recast demo, OpenMW door area); TileCache carving opt-in, at rest | **match** |
-| Off-mesh links | UE `NavLinkProxy`, Unity `NavMeshLink`, OpenMW pathgrid edges, Bethesda door triangles | jump/drop/ladder/pathgrid/door links | **match** |
-| Across load doors | Bethesda: teleport out of view; OpenMW: none (followers teleport); UE WP streams nav with cells | `WorldGraph` + traverse; fade links only unseen | **match** Bethesda; **ahead** of OpenMW |
-| Hierarchical routing | HPA* (Botea 2004); Killzone/Decima graph abstraction (unverified) | worldspace + coarse graph + Detour | **match** |
-| Path following | Detour `dtPathCorridor`, UE `UPathFollowingComponent` | Detour corridor + our `PathFollower` | **match** |
-| Local avoidance | DetourCrowd (sampled RVO), UE RVO, Unity agents, Godot RVO2 | our ORCA + navmesh walls, fixed tick | **match**; deterministic |
-| Debug | UE nav display + Visual Logger, Recast demo, OpenMW navmesh render | gizmos + `nav.*` + BRP | **match** |
-| Scaling cost | tiles: ring area × classes present × anchors; queries: path length (coarse graph bounds it); rebuilds: carving props; avoidance: tier 1-2 agents | caps per CPU tier | checked |
-
-**Sources**: Mononen, recastnavigation (https://github.com/recastnavigation/recastnavigation); Botea, Müller, Schaeffer,
-"Near Optimal Hierarchical Path-Finding" (JoGD 2004); van den Berg et al., ORCA (2011); Unity AI Navigation docs;
-UE navigation docs; OpenMW `components/detournavigator/` at `b8285cc9` and the navigator settings page (research
-"Sources").
+**Match** UE, Unity, Godot and OpenMW on Recast generation, agent classes as data, area costs and filters, runtime
+obstacles (door poly state, carving opt-in), off-mesh links, HPA*-style hierarchical routing, Detour corridor
+following, RVO-family avoidance (ours ORCA, deterministic) and debug display. **Differ** from OpenMW on when it is
+built (baked per tile, mod-aware; nothing bakes during play); **ahead** of OpenMW across load doors (`WorldGraph`,
+fade links only unseen; Bethesda's out-of-view teleport). Full table and sources:
+[archive](archive/nav-history.md#industry-comparison-table-moved-from-navmd-at-nv4a).
 
 ## Build plan
 
@@ -284,12 +284,9 @@ One deliverable plus its test per slice; research and building are separate.
 
 | Slice | Deliverable | Test |
 |---|---|---|
-| **NV0** spike (**done 2026-11-11**) | `navmesh-rs` verdict on our cooked collision (parity, ms per tile, MiB, query µs, code read, tile format, setters) | [report](../research/navmesh-spike-nv0-2026-11-11.md): adopt |
-| **NV0b** (not needed) | FFI fallback spike (recastnavigation bindings) | same |
-| **NV1** core (**done 2026-11-11**) | `sf_nav`: types, `NavBackend`, `GridBackend` double, `Goal`, filters | exact paths on synthetic grids (17 tests) |
-| **NV2** backend (**done 2026-11-11**) | `sf_nav_recast`: `build_tile`, tiles, `nearest`, sliced `find_path`, `raycast` | paths on synthetic boxes, ramps, two floors; no NaN (18 tests + measurement) |
-| **NV3** debug draw | `sf_nav_bevy` gizmos + `nav.draw` / `nav.stats` + BRP over a test bake | headless plugin smoke; stats line counts tiles |
-| **NV4** bake step | `nav.tiles`, `nav.links`, `nav.coarse` steps + `NavGeometrySource`, door polygons | cache hit on rerun; moving one box re-bakes only its tiles; each doorway has its own polys; cold bake time and MiB printed per class |
+| **NV0-NV4a** (**done 2026-11-11**) | spike, `sf_nav` core, `sf_nav_recast`, `sf_nav_bevy`, `sf_nav_bake` steps | rows with their tests: [archive](archive/nav-history.md#done-build-plan-rows-moved-from-navmd-at-nv4a) |
+| **NV4b** Morrowind bake (**done 2026-11-11**) | adapter `NavGeometrySource` (cooked collision, terrain, water, doors), `bevyrrowind bake` wiring | cold bake time and MiB per class on the first pack (the "Bake" gate) |
+| **NV4c** game wiring | `sf_nav_bevy` in the game: `NavPlugin`, baked tiles into `NavMeshes`, draw frame from the floating origin, BRP `sf_nav/stats` | owner check NV-1 (tiles drawn over Seyda Neen) |
 | **NV5** streaming | nav ring residency per gameplay anchor and open portal, per class on demand (needs seamless SI3) | residency set exact for scripted anchor paths; `large` tiles absent with no large actor; unload hysteresis |
 | **NV6** query service | worker queue, slicing, tick-boundary results, partial results at the ring edge | ordering and budget exact; sync mode equals async results |
 | **NV7a** fixed tick | NPC drive (path follower, ORCA, mover) in `FixedUpdate` + render interpolation | headless: walker positions identical at 30 and 144 fps for the same ticks |
@@ -301,19 +298,15 @@ One deliverable plus its test per slice; research and building are separate.
 | **NV12** coarse graph | HPA* legs, travel time for tier 0 | coarse cost within the measured band of Detour path length on test levels |
 | **NVM** measurement | Floor and High sweep: bake time and MiB per class, query and ORCA ms at 60 Hz (Balmora, Vivec canton, Census Office); stuck counts near props | owner runs; numbers into "Budgets"; class or carving revisits |
 
-Order: NV0 → NV1 → NV2 → NV3 → NV4 → (seamless SI3) → NV5 → NV6 → NV7a → NV7b → NV8 → NV9 → NV10 → NV11 → NV12; NVM
+Order: NV0 → NV1 → NV2 → NV3 → NV4a → NV4b → NV4c → (seamless SI3) → NV5 → NV6 → NV7a → NV7b → NV8 → NV9 → NV10 → NV11 → NV12; NVM
 after NV8. NV11 replaces seamless SI13 (M9b); NV7a lands before AI6.
 
-**As built** (full notes: [archive/nav-history.md](archive/nav-history.md)). **NV1**: the trait as sketched in
-"Interfaces" with `build_tile(input, cfg, areas)` (flags from our `AreaTable`), `add_tile -> TileRef`, sliced
-`find_path(&self, &mut PathJob, &mut SliceBudget)` (search state in the job, so one backend serves many workers),
-`raycast(from, to: &Location)`, `poly_state` / `set_poly_state` (doors); corridor, boundary and obstacle methods come
-with NV7b, NV8, NV10. **NV2**: one Detour mesh per (worldspace, class, region), region-local f32 from each region's
-`WorldPos` origin; our `PolyRef` = the Detour 64-bit ref + mesh slot and generation in unused tile bits; the Recast
-demo's tile pipeline with flags from `AreaTable`; each job owns a Detour `DetachedQuery` attached per step (vendored
-navmesh-rs patch: made public); a removed tile fails only jobs that touched it; `Near` cuts the string-pulled path at
-the radius, `AnyOf` = one A* per candidate with a straight-distance prune, `Away` = resumable Dijkstra. Measured on a
-synthetic town at the NV0 calibration: 4.6 ms per tile, `nearest` 1.2 µs, a 115 m path 48 µs, raycast 2 µs.
+**As built** (full notes: [archive/nav-history.md](archive/nav-history.md)). **NV1**: the trait as in "Interfaces",
+search state in the job (one backend serves many workers). **NV2**: one Detour mesh per (worldspace, class, region),
+region-local f32; per-job `DetachedQuery` (vendored patch); synthetic town at the NV0 calibration: 4.6 ms per tile,
+`nearest` 1.2 µs, a 115 m path 48 µs. **NV3**: `sf_nav_bevy` (`NavMeshes`, `nav.stats` / `nav.draw`, BRP
+`sf_nav/stats`, gizmos behind `debug`); not wired into the game yet. **NV4a**: `sf_nav_bake` steps as in "Bake";
+door polygons by area + centroid in the door volume; `nav.coarse` is an HPA* stub (straight-line costs until NV12).
 
 ## Open questions
 

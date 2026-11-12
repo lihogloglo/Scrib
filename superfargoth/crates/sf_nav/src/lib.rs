@@ -10,7 +10,11 @@
 //! - [`query`]: [`Goal`] (point, near, away, any of), [`PathQuery`], the sliced [`PathJob`] with
 //!   its [`SliceBudget`] of expansions, [`PathResult`], [`NavRay`].
 //! - [`backend`]: the [`NavBackend`] trait (bake a tile, tile residency, `nearest`, sliced
-//!   `find_path`, `raycast`, polygon state patches) and [`NavError`].
+//!   `find_path`, `raycast`, polygon state patches) and [`NavError`]; NV3 adds the read-only
+//!   [`TileSummary`] and [`TileGeometry`] accessors for stats and debug draw (`sf_nav_bevy`).
+//! - [`baked`] (NV4a): the bake's products as the runtime reads them ([`BakedTile`] with its
+//!   [`DoorPolys`], [`NavLinks`], [`CoarseGraph`]); the steps are `sf_nav_bake`. The trait's
+//!   bake-side [`NavBackend::read_tile_blob`] decodes a blob into [`BlobTile`].
 //! - [`grid`]: [`GridBackend`], an exact-A* 2.5D grid implementing [`NavBackend`] for tests.
 //!
 //! Later slices add to the trait: corridor and local boundary (NV7-NV8), `TileCache` obstacles
@@ -18,12 +22,20 @@
 //! backend is `sf_nav_recast` (NV2).
 
 pub mod backend;
+pub mod baked;
 pub mod filter;
 pub mod grid;
 pub mod query;
 pub mod types;
 
-pub use backend::{AreaVolume, BuildConfig, NavBackend, NavError, TileInput};
+pub use backend::{
+    AreaVolume, BlobPoly, BlobTile, BuildConfig, DebugPoly, NavBackend, NavError, PolyEdge,
+    TileGeometry, TileInput, TileSide, TileSummary,
+};
+pub use baked::{
+    BakedTile, CoarseEdge, CoarseGraph, CoarseNode, CoarseNodeKind, DoorApproach, DoorPolys,
+    NavLinks,
+};
 pub use filter::QueryFilter;
 pub use grid::{GridBackend, GridCell, GridConfig};
 pub use query::{
@@ -31,7 +43,7 @@ pub use query::{
 };
 pub use types::{
     AgentClass, AgentClassId, AreaDef, AreaId, AreaTable, ClassMask, MAX_AREAS, MAX_CLASSES,
-    NavLinkId, NavPoint, OffMeshLink, PolyFlags, PolyRef, PolyState, TileKey, TileRef,
+    NavDoorId, NavLinkId, NavPoint, OffMeshLink, PolyFlags, PolyRef, PolyState, TileKey, TileRef,
     TraverseKind,
 };
 

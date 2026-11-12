@@ -4,6 +4,7 @@
 
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
+use sf_coords::WorldPos;
 use sf_world::{Location, WorldspaceId};
 use thiserror::Error;
 
@@ -105,6 +106,23 @@ impl BuildConfig {
         f32::from(self.tile_cells) * self.cell_size
     }
 
+    /// Cells of geometry rasterized around each tile so polygons meet at tile edges (Recast demo:
+    /// the walkable radius in cells plus 3).
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "an agent radius over a voxel size is a small positive count"
+    )]
+    pub fn border_cells(&self) -> u32 {
+        (self.class.radius.max(0.0) / self.cell_size).ceil() as u32 + 3
+    }
+
+    /// [`BuildConfig::border_cells`] in meters: how far past its edges a tile's input must reach.
+    #[allow(clippy::cast_precision_loss, reason = "a small cell count")]
+    pub fn border(&self) -> f32 {
+        self.border_cells() as f32 * self.cell_size
+    }
+
     pub fn validate(&self) -> Result<(), NavError> {
         if !(self.cell_size > 0.0 && self.cell_height > 0.0 && self.tile_cells > 0) {
             return Err(NavError::InvalidConfig(format!(
@@ -114,6 +132,116 @@ impl BuildConfig {
         }
         Ok(())
     }
+}
+
+/// One resident tile, for stats and debug draw ([`NavBackend::tile_summaries`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TileSummary {
+    pub key: TileKey,
+    /// Bytes of the tile's resident data (for Detour, the tile blob).
+    pub bytes: usize,
+    /// Walkable polygons (off-mesh connections excluded).
+    pub polys: usize,
+}
+
+/// One polygon of a [`TileGeometry`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct DebugPoly {
+    /// Indices into [`TileGeometry::verts`], in the backend's winding.
+    pub verts: Vec<u32>,
+    /// Bit `i`: the edge from `verts[i]` to `verts[i + 1]` (wrapping) has no neighbour: a wall or
+    /// the mesh's outer edge (Detour's polygon boundaries). Only the first 8 edges carry a bit;
+    /// Detour polygons have at most 6.
+    pub walls: u8,
+    pub state: PolyState,
+}
+
+/// A resident tile's polygons for debug draw ([`NavBackend::tile_geometry`]): read-only, built on
+/// request, never on a query path.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TileGeometry {
+    /// The frame of [`TileGeometry::verts`]: the tile's nav region origin.
+    pub origin: WorldPos,
+    /// Meters from `origin`, Y up.
+    pub verts: Vec<Vec3>,
+    pub polys: Vec<DebugPoly>,
+}
+
+/// A side of a tile, where a polygon edge can continue into the neighbouring tile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum TileSide {
+    PosX,
+    PosZ,
+    NegX,
+    NegZ,
+}
+
+impl TileSide {
+    pub const ALL: [Self; 4] = [Self::PosX, Self::PosZ, Self::NegX, Self::NegZ];
+
+    /// The tile across this side of tile (`x`, `z`).
+    pub fn step(self, x: i32, z: i32) -> (i32, i32) {
+        match self {
+            Self::PosX => (x + 1, z),
+            Self::PosZ => (x, z + 1),
+            Self::NegX => (x - 1, z),
+            Self::NegZ => (x, z - 1),
+        }
+    }
+
+    #[must_use]
+    pub fn opposite(self) -> Self {
+        match self {
+            Self::PosX => Self::NegX,
+            Self::PosZ => Self::NegZ,
+            Self::NegX => Self::PosX,
+            Self::NegZ => Self::PosZ,
+        }
+    }
+}
+
+/// What lies across one edge of a [`BlobPoly`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PolyEdge {
+    /// A wall or the mesh's outer edge.
+    Wall,
+    /// Another polygon of the same tile (index into [`BlobTile::polys`]).
+    Poly(u32),
+    /// The tile's border: the edge continues into the neighbouring tile on that side.
+    Portal(TileSide),
+}
+
+/// One polygon of a [`BlobTile`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlobPoly {
+    /// Indices into [`BlobTile::verts`].
+    pub verts: Vec<u32>,
+    /// `edges[i]` is the edge from `verts[i]` to `verts[i + 1]` (wrapping).
+    pub edges: Vec<PolyEdge>,
+    pub state: PolyState,
+}
+
+impl BlobPoly {
+    /// The polygon's vertices in order.
+    pub fn points<'a>(&'a self, tile: &'a BlobTile) -> impl Iterator<Item = Vec3> + 'a {
+        self.verts.iter().map(|&v| tile.verts[v as usize])
+    }
+
+    /// The mean of its vertices.
+    #[allow(clippy::cast_precision_loss, reason = "a handful of vertices")]
+    pub fn centroid(&self, tile: &BlobTile) -> Vec3 {
+        let n = self.verts.len().max(1) as f32;
+        self.points(tile).sum::<Vec3>() / n
+    }
+}
+
+/// A tile blob decoded on the bake side ([`NavBackend::read_tile_blob`]). Polygon indices are the
+/// backend's in-tile indices (Detour's), which the runtime turns into [`PolyRef`]s.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BlobTile {
+    /// Region-local meters, Y up.
+    pub verts: Vec<Vec3>,
+    pub polys: Vec<BlobPoly>,
 }
 
 /// A navmesh backend (Detour `dtNavMesh` + `dtNavMeshQuery`). Thread-safe for queries: every
@@ -130,6 +258,13 @@ pub trait NavBackend: Send + Sync {
         cfg: &BuildConfig,
         areas: &AreaTable,
     ) -> Result<Vec<u8>, NavError>;
+
+    /// Decodes a tile blob from [`NavBackend::build_tile`] without making it resident (bake side:
+    /// door polygons and the coarse graph's border nodes, nav.md "Bake").
+    fn read_tile_blob(&self, blob: &[u8]) -> Result<BlobTile, NavError> {
+        let _ = blob;
+        Err(NavError::Unsupported("read_tile_blob"))
+    }
 
     /// Makes a baked tile resident.
     fn add_tile(&mut self, key: TileKey, blob: &[u8]) -> Result<TileRef, NavError>;
@@ -166,6 +301,19 @@ pub trait NavBackend: Send + Sync {
     /// Sets polygons' area and flags without a rebuild (doors: Detour `setPolyArea` and
     /// `setPolyFlags`).
     fn set_poly_state(&mut self, polys: &[PolyRef], state: PolyState) -> Result<(), NavError>;
+
+    /// Every resident tile (stats, debug draw), in no particular order. A backend without
+    /// residency data returns none.
+    fn tile_summaries(&self) -> Vec<TileSummary> {
+        Vec::new()
+    }
+
+    /// A resident tile's polygons for debug draw (`sf_nav_bevy`, nav.md "Debug draw"); `None`
+    /// when the tile isn't resident or the backend has no polygon geometry to show.
+    fn tile_geometry(&self, key: &TileKey) -> Option<TileGeometry> {
+        let _ = key;
+        None
+    }
 
     /// The whole search at once (tests, tools): [`NavBackend::find_path`] with no budget.
     fn find_path_now(&self, query: PathQuery) -> Result<PathResult, NavError> {

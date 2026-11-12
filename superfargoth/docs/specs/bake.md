@@ -8,7 +8,7 @@ Crates: `sf_bake` (new, Bevy-free: step graph, cache, CLI helpers),
 
 <!-- agent-summary -->
 > **Agent summary (2026-11-11).** Built: step graph, content-addressed cache with traces, planner on rayon, CLI helpers, `.sfmesh`, `baked://` source. Policy ("What bakes when"): four tiers, runtime / setup bake / incremental at start / never lazy; every derived artifact is in "Inventory" with its cost, class (gameplay or presentation) and what happens when it's missing. Budget: first bake <= 3 min on the owner's laptop (ceiling 5), then nothing at start; a mod change rebakes only what it touches, behind the start screen, never in play.
-> Crates / key types: `sf_bake` (Bevy-free), `sf_model`, `sf_model_bevy`; `BakeStep` (`ID`, `VERSION`, `plan`, `run`). Decisions: constructive-trace build system over a blake3 object store, LZ4 objects; Bevy `AssetProcessor` is not the engine; one file per trace; meshopt for LODs. Co-op compares a gameplay digest, never files.
+> Crates / key types: `sf_bake` (Bevy-free), `sf_model`, `sf_model_bevy`; `BakeStep` (`ID`, `VERSION`, `plan`, `run`). Decisions: constructive-trace build system over a blake3 object store, LZ4 objects; Bevy `AssetProcessor` is not the engine; one append-only trace log (was one file per trace until 2026-11-11); meshopt for LODs. Co-op compares a gameplay digest, never files.
 > Read next: "Inventory"; "What bakes when"; "Data model" for keys and traces; "Execution" for scheduling and the concurrency rule; `bake-mesh-cook.md`; game side `bevyrrowind/docs/specs/bake-adapter.md` "What bakes when (Morrowind)"; "Gaps and owner questions".
 <!-- /agent-summary -->
 
@@ -77,7 +77,7 @@ when the static key matches and every dynamic input still has its fingerprint.
 
 **Store**, under a game-chosen cache root (never inside a mod folder; Morrowind: `%LOCALAPPDATA%/bevyrrowind/bake`):
 `objects/ab/cdef…` (blake3-addressed, LZ4 via `lz4_flex` unless already compressed: decode speed over ratio, since
-streaming reads them in play); `traces/<step>/<subject hash>` (one file per trace, atomic rename);
+streaming reads them in play); `traces.log` (every trace in one append-only log, last record per key wins, loaded into memory on first use, compacted when half dead; Ninja `.ninja_log` / Bazel action cache; legacy `traces/<step>/` files are read and migrated, 2026-11-11 NV4f);
 `profiles/<profile>.manifest` ((step, subject) → object, loaded once at startup) and `.fingerprint` beside it;
 `filehash.memo` (stat → blake3). Planned: `profiles/<profile>.gameplay` (gameplay digest, "Co-op"),
 `stats/<step>.ron` (ms per product for the progress estimate), `gpu/<adapter key>/` (pipeline-warmup.md). Objects
@@ -119,7 +119,7 @@ runtime's behaviour when the product is absent or stale ("Missing or stale at ru
 | Animation (`skeleton.cook`, `rig.profile`, `anim.cook`, `anim.retarget`, `animgraph.compile`, `mw.anim.groups`, `mw.anim.source_clips`) *(tests bake their own cache)* | `sf_anim`, `sf_anim_graph`, `mw_bake::anim` | skeletons, KF files, graphs, BYO clip libraries → clips, compiled graphs | 9.0 s wall (was 13.5) | unmeasured | KF/skeleton bytes, graph files, BYO library contents | G (root motion, hit windows) | required |
 | Legacy scripts (`mwscript.translate`, `mwscript.coverage`) | `mw_bake::script` | MWScript + dialogue results → Luau + bytecode | gate ≤ 2 s, unmeasured | small | script records, translator version | G | required |
 | De-lit albedo + alpha classes (`texture.roles`, `texture.delight(.index)`, `texture.alpha_class(.index)`) | `mw_bake::delight`, `sf_texture` | albedo textures → de-lit BC7 KTX2 with coverage mips | 34 s wall (395 CPU-s) | unmeasured (estimate 0.3-0.6 GB) | texture bytes, strength, cutoff, algorithm version | P | originals (built: fingerprint-gated layer) |
-| Navmesh (`nav.tiles`, `nav.links`, `nav.coarse`) *(not built)* | `sf_nav` (unbuilt, NV4) | cooked collision + terrain + water + doors → Detour tiles, links, HPA* graph | estimate 30-60 s, both classes (NV4 measures) | unmeasured | collision products, heights, door records, class config | G | AI without navmesh (nav.md must define: pathgrid or direct steer) |
+| Navmesh (`nav.tiles`, `nav.links`, `nav.coarse`) *(framework steps built NV4a; game wiring NV4b)* | `sf_nav_bake` | cooked collision + terrain + water + doors → Detour tiles, links, HPA* graph | estimate 30-60 s, both classes (NV4 measures) | unmeasured | collision products, heights, door records, class config | G | AI without navmesh (nav.md must define: pathgrid or direct steer) |
 | Reserved: pipeline warm-up *(not built (first-sight specialisation))* | wgpu / Bevy, `pipeline-warmup.md` (parallel session) | material/mesh key catalog → driver pipeline blobs | unmeasured; budget slot 20 s | per GPU | GPU, driver, wgpu version, shader set, material catalog | P, per machine | compile on first sight (hitch) |
 | Planned, unbuilt | | shoreline field (water M6), erosion and PBR maps (M7) | | | | P | |
 

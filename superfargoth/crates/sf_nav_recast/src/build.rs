@@ -90,7 +90,9 @@ pub(crate) fn build_tile(
     let walkable_height = (class.height / ch).ceil() as i32;
     let walkable_climb = (class.max_climb / ch).floor() as i32;
     let walkable_radius = (class.radius / cs).ceil() as i32;
-    let border = walkable_radius + 3;
+    // Same as `BuildConfig::border`, which the bake uses to size the tile's input.
+    let border =
+        i32::try_from(cfg.border_cells()).map_err(|_| stage("border")(Error::SizeOverflow))?;
     let cells = i32::from(cfg.tile_cells) + 2 * border;
     let size = cfg.tile_size();
 

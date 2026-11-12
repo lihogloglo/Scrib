@@ -1,0 +1,46 @@
+[package]
+name = "sf_nav_bevy"
+description = "Bevy shell for sf_nav (nav.md): the resident navmesh backend as a resource, the nav.stats / nav.draw console commands, a BRP-shaped stats handler and (feature debug) navmesh gizmos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+# Debug draw (nav.md "Debug draw"): tile polygons and recorded paths as immediate-mode gizmos,
+# off until `nav.draw` turns a layer on. Needs the app's gizmo plugin; dev builds only.
+debug = ["dep:bevy_color", "dep:bevy_gizmos"]
+
+# Minimal Bevy (build-perf.md rules 1, 2 and 6: a thin shell over the Bevy-free sf_nav; the
+# backend is a `dyn NavBackend`, so no navmesh code compiles here).
+[dependencies]
+# App, Plugin, schedules.
+bevy_app = { workspace = true, features = ["std"] }
+# Resource, systems, run conditions.
+bevy_ecs = { workspace = true, features = ["std"] }
+serde.workspace = true
+# The BRP answer (`sf_nav/stats`).
+serde_json.workspace = true
+sf_console_bevy.workspace = true
+# WorldPos: the draw frame's origin.
+sf_coords.workspace = true
+sf_nav.workspace = true
+# Vec3 (the same glam Bevy re-exports).
+glam.workspace = true
+# Location, WorldspaceId.
+sf_world.workspace = true
+# debug: colours; immediate-mode gizmos (tiles stream and polygon state changes, so nothing is
+# retained).
+bevy_color = { workspace = true, features = ["std"], optional = true }
+bevy_gizmos = { workspace = true, optional = true }
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# MinimalPlugins, AssetPlugin and GizmoPlugin for the headless smoke test (same features as the
+# other framework shells, so hakari keeps one Bevy build).
+bevy = { workspace = true, features = ["3d", "ui", "tonemapping_luts"] }
+# The test bake: synthetic boxes and ramps through the real backend.
+sf_nav_recast.workspace = true
+
+[lints]
+workspace = true

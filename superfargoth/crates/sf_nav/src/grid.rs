@@ -442,6 +442,61 @@ impl NavBackend for GridBackend {
         ))
     }
 
+    fn tile_summaries(&self) -> Vec<crate::TileSummary> {
+        self.by_key
+            .iter()
+            .filter_map(|(key, &slot)| {
+                let tile = self.slots[slot as usize].tile.as_ref()?;
+                Some(crate::TileSummary {
+                    key: key.clone(),
+                    bytes: tile.cells.len() * size_of::<Option<GridCell>>(),
+                    polys: tile.cells.iter().flatten().count(),
+                })
+            })
+            .collect()
+    }
+
+    /// One square per walkable cell at its height; a side is a wall when the neighbour across it
+    /// isn't walkable or resident.
+    fn tile_geometry(&self, key: &TileKey) -> Option<crate::TileGeometry> {
+        let slot = *self.by_key.get(key)?;
+        let tile = self.slots[slot as usize].tile.as_ref()?;
+        let n = i32::from(self.cfg.tile_cells);
+        let cs = self.cfg.cell_size;
+        let mut geo = crate::TileGeometry {
+            origin: WorldPos::ORIGIN,
+            verts: Vec::new(),
+            polys: Vec::new(),
+        };
+        for (idx, cell) in tile.cells.iter().enumerate() {
+            let Some(cell) = cell else { continue };
+            let at = IVec2::new(key.x * n + idx as i32 % n, key.z * n + idx as i32 / n);
+            let (x0, z0) = (at.x as f32 * cs, at.y as f32 * cs);
+            let (x1, z1) = (x0 + cs, z0 + cs);
+            let base = geo.verts.len() as u32;
+            geo.verts.extend([
+                Vec3::new(x0, cell.y, z0),
+                Vec3::new(x0, cell.y, z1),
+                Vec3::new(x1, cell.y, z1),
+                Vec3::new(x1, cell.y, z0),
+            ]);
+            // Edge i runs from corner i to i + 1: -x, +z, +x, -z.
+            let sides = [IVec2::NEG_X, IVec2::Y, IVec2::X, IVec2::NEG_Y];
+            let mut walls = 0u8;
+            for (i, d) in sides.iter().enumerate() {
+                if self.locate(&key.ws, key.class, at + *d).is_none() {
+                    walls |= 1 << i;
+                }
+            }
+            geo.polys.push(crate::DebugPoly {
+                verts: (base..base + 4).collect(),
+                walls,
+                state: cell.state,
+            });
+        }
+        Some(geo)
+    }
+
     fn nearest(
         &self,
         at: &Location,
