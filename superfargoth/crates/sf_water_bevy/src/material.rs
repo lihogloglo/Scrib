@@ -51,7 +51,8 @@ pub struct WaterParams {
     pub shore: Vec4,
     /// (range m, swell ramp m, chop ramp m, chop floor): `sf_water::ShoreSettings`.
     pub shore2: Vec4,
-    /// (time s, shore foam band m, 0, shore foam of the body's own look).
+    /// (time s, shore foam band m, shore normal floor (`sf_water::ShoreSettings::normal_floor`),
+    /// shore foam of the body's own look).
     pub misc2: Vec4,
     /// Optics map: render-space XZ of cell (0, 0)'s centre, 1 / cell size, on 0/1.
     pub regions: Vec4,

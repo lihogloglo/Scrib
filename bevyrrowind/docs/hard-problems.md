@@ -11,7 +11,7 @@ Status: `open`, `running <session>`, `done <date>`.
 
 Paste the entry plus this:
 
-> Workspace `D:\Gamedev\Bevyrrowind` (`superfargoth` framework + `bevyrrowind` game; read both CLAUDE.md files,
+> Workspace `D:\Gamedev\Bevyrrowind` (`superfargoth` framework + `bevyrrowind` game; read CONTRIBUTING.md,
 > "Parallel sessions" and "Hard rules"). Register in `.sessions/<name>.md`. Every cargo command through
 > `bash bevyrrowind/tools/cargo_turn.sh <args> -j 4`. The owner's game window (`%TEMP%\bw-owner-*`, BRP 15730) is
 > off-limits; your runs exit on their own. Bevy changes go in as vendored patches (`superfargoth/vendor/`, ideally

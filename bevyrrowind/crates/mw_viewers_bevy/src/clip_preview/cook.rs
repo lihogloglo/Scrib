@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use mw_bake::anim::HumanoidTarget;
 use mw_bake::sources::AnimSources;
 use mw_graphs::sources::SourcesManifest;
-use sf_anim::{Clip, ClipRules, Looping, RootMotionMode, RootMotionRules};
+use sf_anim::{Clip, ClipRules, LoopCut, LoopCutError, LoopCutRules, Looping, RootMotionMode, RootMotionRules};
 
 /// One clip to preview, as the command line or a `--batch` line names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,6 +112,51 @@ pub fn preview_rules() -> ClipRules {
 /// As [`mw_bake::anim::cook_library_clip`]: import, skeleton map, missing clip, retarget.
 pub fn cook(job: &Resolved, target: &HumanoidTarget) -> Result<Clip, String> {
     mw_bake::anim::cook_library_clip(&job.source, &job.path, job.name.as_deref(), &preview_rules(), target)
+}
+
+/// Whether the browser loop-cuts this take by default: a generated cycle (`loco.walk.cycle.1/...`).
+pub fn is_cycle(rel: &str) -> bool {
+    rel.contains(".cycle.")
+}
+
+/// The loop cutter's verdict on one cook: the window and seam errors, or why no loop was cut.
+pub type CutReport = Result<LoopCut, LoopCutError>;
+
+/// [`cook`], optionally through the loop cutter ([`ClipRules::loop_cut`] at its defaults, as a
+/// cycle slot's): the cut clip loops whole (its `loop_range` set), the report says how the seam
+/// closes. Without the cut, or when no loop fits, the clip is the raw take, played once.
+///
+/// # Errors
+/// As [`cook`].
+pub fn cook_report(job: &Resolved, target: &HumanoidTarget, loop_cut: bool) -> Result<(Clip, Option<CutReport>), String> {
+    let rules = ClipRules { loop_cut: loop_cut.then(LoopCutRules::default), ..preview_rules() };
+    mw_bake::anim::cook_library_clip_report(&job.source, &job.path, job.name.as_deref(), &rules, target).map(|(clip, report)| (clip, report.loop_cut))
+}
+
+/// The overlay's loop line: what the cutter chose and how well the seam closes (cm, m/s, degrees).
+pub fn cut_text(report: Option<&CutReport>) -> String {
+    match report {
+        None => "raw take, played once".to_owned(),
+        Some(Err(e)) => format!("no loop cut ({e}): raw take"),
+        Some(Ok(c)) => format!(
+            "loop cut {:.2}-{:.2} s, {} stride(s) on {}, {}-frame fade   seam pose {:.1} cm  foot {:.1} cm/frame  speed {:.2} m/s   \
+             (hard cut: pose {:.1} cm  foot {:.1} cm  speed {:.2} m/s)   speed {:.2} m/s (steady {:.2})  turn {:+.1} deg/loop",
+            c.start,
+            c.end,
+            c.strides,
+            c.foot,
+            c.blend_frames,
+            c.seam_pose_error * 100.0,
+            c.seam_foot_jump * 100.0,
+            c.seam_speed_jump,
+            c.cut_pose_error * 100.0,
+            c.cut_foot_jump * 100.0,
+            c.cut_speed_jump,
+            c.speed,
+            c.plateau_speed,
+            c.turn.to_degrees(),
+        ),
+    }
 }
 
 /// Frames rendered for a clip of `duration` seconds at `fps`: one per `1/fps` step from 0,
@@ -267,6 +312,23 @@ mod tests {
         let m = near_matches("de_p_chair", ids, 2);
         assert_eq!(m, ["furn_de_p_chair_01", "furn_de_p_chair_02"]);
         assert_eq!(near_matches("furn_de_p_chiar_01", ids, 1), ["furn_de_p_chair_01"]);
+    }
+
+    #[test]
+    fn cycles_are_named_takes() {
+        assert!(is_cycle("loco.walk.cycle.1/act/loco.walk.cycle.1.act.ground0.00.bvh"));
+        assert!(is_cycle("loco.run.cycle.free/x.bvh"));
+        assert!(!is_cycle("loco.run.pivot.l180.1/x.bvh"));
+    }
+
+    #[test]
+    fn cut_text_names_each_outcome() {
+        assert_eq!(cut_text(None), "raw take, played once");
+        assert!(cut_text(Some(&Err(LoopCutError::NoContacts))).starts_with("no loop cut (no foot contacts"));
+        let c = LoopCut { start: 1.0, end: 2.1, strides: 1, foot: "L".into(), blend_frames: 4, seam_pose_error: 0.012, turn: 0.05, ..LoopCut::default() };
+        let t = cut_text(Some(&Ok(c)));
+        assert!(t.starts_with("loop cut 1.00-2.10 s, 1 stride(s) on L, 4-frame fade   seam pose 1.2 cm"), "{t}");
+        assert!(t.ends_with("turn +2.9 deg/loop"), "{t}");
     }
 
     #[test]

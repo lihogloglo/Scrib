@@ -1,6 +1,6 @@
 # Visual checks
 
-The owner's eyes judge rendering work (CLAUDE.md rule 5). Agents take a few
+The owner's eyes judge rendering work (CONTRIBUTING.md "Tests and visual checks"). Agents take a few
 sanity screenshots, then add an entry here with status **awaiting owner**
 and move on. The owner confirms in batched passes.
 
@@ -80,8 +80,9 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (53)
+### Awaiting owner (54)
 
+WA-4 | awaiting owner | [terrain-water](visual-checks/terrain-water.md) | Wavelets at the shore (W-SHORE): ripples glint to the waterline, swell still dies on beaches, no flat strip, no moiré; A/B `--off shorenormals` (2026-11-12)
 WA-3 | confirmed (2026-11-12: day and night "very nice", night water no longer too bright; emissive in reflection unsure) | [terrain-water](visual-checks/terrain-water.md) | Water mirrors banks, buildings, ships and lit windows, wobbling with waves; edge fade, no flicker, nothing below the water (W-SSPR, A/B `--off waterssr`, 2026-11-12)
 FG-11 | confirmed (2026-11-12: "the fog is glorious") | [weather-sky](visual-checks/weather-sky.md) | Froxel fog smooth over near objects, still and panning; no trails or black bands (FOG-CLAMP, A/B `--off fogclamp`, 2026-11-12)
 WE-11 | confirmed (2026-11-12: fog, rain, storm over sea; clouds at sea; wish: visible lightning bolt) | [weather-sky](visual-checks/weather-sky.md) | Weather covers water like land (W-ORDER): fog/rain/storm over the far sea, cloud over the ocean from high, no double fog or shore halo (2026-11-12)
@@ -144,6 +145,7 @@ AN-21 | confirmed (2026-11-05: slope lean works) | [anim-lab](visual-checks/anim
 DE-1 | confirmed with follow-up (2026-10-27: floor slide fixed, push in F11 only; a crouched landing sinks ~1.5 s, later) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
 LOCO-2 | rated 2026-11-12 (229 takes: 38 keep, 61 maybe, 130 reject; verdicts.toml) | [anim-lab](visual-checks/anim-lab.md) | Generated locomotion batch 1 (Kimodo): gait, speed, skate, clean starts/stops, one style; pick keepers
 AL-TRUNK | confirmed in the browser 2026-11-12 (arms clear the chest, trunk upright); in-game mantle/combat clips not yet looked at | [anim-lab](visual-checks/anim-lab.md) | Matched retarget pose: retargeted clips keep Morrowind's trunk curvature (upright vs before), mantle/combat no worse
+LOOP-1 | confirmed 2026-11-12 (owner: "working"; no per-clip pick, seam numbers decide) | [anim-lab](visual-checks/anim-lab.md) | Loop-cut cycles in the clip browser: seam hitch/foot pop/speed surge per gait, L = raw take A/B
 AU-3 | partial (2026-10-30: greets only very close; NPCs don't stop or turn) | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
 AU-4 | confirmed (2026-10-30) | [audio](visual-checks/audio.md) | Footsteps by boots
 AU-5 | rejected (2026-10-30: no swing, no sound, prompt only) | [audio](visual-checks/audio.md) | Swinging-door sounds

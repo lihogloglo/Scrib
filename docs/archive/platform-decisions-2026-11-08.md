@@ -1,7 +1,7 @@
 # Platform decisions (2026-11-08, delegated to agent)
 
 Status: decided by an agent, as the owner delegated: "decide based on the industry-standard way, and really think this
-through." It covers questions 4-10 of `docs/vision-and-platform-2026-11-08.md` §9, plus DCO or CLA from question 1.
+through." It covers questions 4-10 of `docs/archive/vision-and-platform-2026-11-08.md` §9, plus DCO or CLA from question 1.
 Docs only: nothing was built or run, and no shared doc was edited. The shared-doc edits are at the end, ready to paste.
 Binding inputs are the owner answers of 2026-11-08 (GPL-3.0-or-later stays, no multiplayer ceiling, Steam Deck floor,
 web is a bonus, mobile is a non-goal, seamless interiors optional, `sf_ai` first), CONTRIBUTING, and the owner's
@@ -485,7 +485,7 @@ None of these were applied. Each is old text → new text, exact as of 2026-11-0
 ### `superfargoth/docs/DECISIONS.md` (append)
 
 ```
-- 2026-11-08 (agent, delegated by owner; `docs/platform-decisions-2026-11-08.md`): **scope**: an engine for systemic,
+- 2026-11-08 (agent, delegated by owner; `docs/archive/platform-decisions-2026-11-08.md`): **scope**: an engine for systemic,
   persistent 3D open worlds with characters; the ARPG is the first L3 kit, Morrowind the first pack. L0/L1 never
   depend on L3 (CI `cargo metadata` check). No 2D/RTS/racing, no own editor.
 - 2026-11-08 (agent, delegated): **sample pack** S0 now: `samples/greybox` (CC0 data) + an `sf_*`-only headless app in
@@ -520,7 +520,7 @@ flagship content pack. Not a faithful port: "Morrowind if Bethesda made it in
 new:
 ```
 An engine on Bevy for systemic, persistent 3D open worlds with characters
-(`docs/platform-decisions-2026-11-08.md` Q4). The action-RPG kit (`sf_rpg`,
+(`docs/archive/platform-decisions-2026-11-08.md` Q4). The action-RPG kit (`sf_rpg`,
 `sf_stats`, `sf_combat`, `sf_action`) is its first genre kit, and Morrowind is
 its first and flagship content pack: "Morrowind if Bethesda made it in 2026".
 Morrowind's 2002 feature set is a floor, not a ceiling. Engine layers (L0 core,
@@ -541,7 +541,7 @@ new:
 - Proprietary platform SDKs (Steamworks, EOS, Galaxy) never enter the game
   process: they live in separate, permissively licensed helper executables over
   a generic IPC (`sf_platform_ipc`), because third-party GPL code in the binary
-  can't carry a §7 exception (`docs/platform-decisions-2026-11-08.md` Q9).
+  can't carry a §7 exception (`docs/archive/platform-decisions-2026-11-08.md` Q9).
 ```
 
 §4, old:
@@ -635,7 +635,7 @@ Lines 3.2 and 3.2b: unchanged (owner 2026-11-08: Delirium stays default). Add on
 
 Add after the "Owner decisions" block, before "Still open":
 ```
-Decided 2026-11-08 (owner + delegated, `docs/vision-and-platform-2026-11-08.md` §9, `docs/platform-decisions-2026-11-08.md`):
+Decided 2026-11-08 (owner + delegated, `docs/archive/vision-and-platform-2026-11-08.md` §9, `docs/archive/platform-decisions-2026-11-08.md`):
 5. **Platform:** GPL stays; no MP ceiling; Steam Deck floor tier with its own gate; engine for systemic open worlds,
    ARPG as the first kit. P-lane: P0 Delirium re-pin on a project fork, P1 CI + DCO + layer check, P2 sample pack S0
    (headless, CI) + loopback co-op test, P3 `sf_scalability` + floor gate, P4 format registry (`docs/formats.md`).
@@ -668,7 +668,7 @@ new:
   bump. Deprecated bindings log once per mod and are kept for at least one major and 12 months.
   Bindings newer than the mod's requirement are still visible (additive). Until the first
   public mod release it stays `0.x` (no promises); target `1.0` once Luau is unparked and M7's
-  RPG modules exist (`docs/platform-decisions-2026-11-08.md` Q10).
+  RPG modules exist (`docs/archive/platform-decisions-2026-11-08.md` Q10).
 - **Registry source of truth (on unpark):** a structured API dump (`sf_api.json`: modules,
   functions, types, `since`/`deprecated`), the Godot `extension_api.json` / Roblox API dump
   pattern. `.d.luau`, docs, JSON Schemas and a later WIT world are generated from it;
@@ -681,13 +681,13 @@ new:
 
 Old:
 ```
-Later: `@sf/rules` (formula overrides, [rule-hooks.md](rule-hooks.md); unparks first if the owner agrees),
+Later: `@sf/rules` (formula overrides, [rule-hooks.md](../rule-hooks.md); unparks first if the owner agrees),
 ```
 new:
 ```
 Unpark trigger (platform decisions Q7): the first of sample pack S1's quest, the Phase 2.7
 formulas built, or mod API 1.0 needed; then `@sf/records`, `@sf/rules`, events, in that order.
-Later: `@sf/rules` (formula overrides, [rule-hooks.md](rule-hooks.md)),
+Later: `@sf/rules` (formula overrides, [rule-hooks.md](../rule-hooks.md)),
 ```
 
 ### `superfargoth/docs/specs/net.md`
@@ -703,7 +703,7 @@ new:
   (N2 decides). **Steam** (lobbies, invites, presence; relay optional) is N8, through a separate,
   permissively licensed helper executable (`scrib-platform-steam`) over a generic IPC
   (`sf_platform_ipc`): the game binary carries third-party GPL code, so Steamworks can never be
-  linked into it (`docs/platform-decisions-2026-11-08.md` Q9). Gameplay packets stay on our UDP stack.
+  linked into it (`docs/archive/platform-decisions-2026-11-08.md` Q9). Gameplay packets stay on our UDP stack.
 ```
 
 ### `LICENSE-EXCEPTION.md`

@@ -23,7 +23,7 @@ fog history/jitter/froxels and the rest (owner 2026-10-21; owner checks SH-16 an
 Non-goals here: saving variables, and cheat or network policy (below). The front end only draws the
 `Log`, edits a `Prompt` and calls `complete`/`History`: another one (egui in `sf_devui`) can reuse all of it.
 
-## Reuse check (CLAUDE.md rule 8)
+## Reuse check (CONTRIBUTING.md "How we decide what to build" 2)
 
 1. **Bevy 0.20**: no console. `bevy_dev_tools` has FPS and debug overlays and states, no command line.
 2. **Crates** (checked 2026-10-22 on crates.io):

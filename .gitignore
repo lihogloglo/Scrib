@@ -22,5 +22,7 @@
 !/bevyrrowind/
 # Repo-wide scripts (doccheck.sh: no-loss check for doc cleanup slices).
 !/tools/
+# History hidden from default searches (CONTRIBUTING.md "Find your way").
+!/.ignore
 # Systems map (docs/SYSTEMS.md): the one-grep index of every system, spec, crate and ID.
 !/docs/

@@ -26,6 +26,10 @@ pub struct ShoreSettings {
     pub chop_ramp: f32,
     /// ... and never drops below this share in enclosed water (wind ripples stay).
     pub chop_floor: f32,
+    /// The chop's **shading normal** never drops below this share of its open-water strength near
+    /// the shore (W-SHORE): the vertices settle, the wind wavelets keep glinting up to the waterline.
+    /// 0 = the normals flatten with the displacement (the old look).
+    pub normal_floor: f32,
 }
 
 impl Default for ShoreSettings {
@@ -39,6 +43,7 @@ impl Default for ShoreSettings {
             swell_ramp: 40.0,
             chop_ramp: 3.0,
             chop_floor: 0.25,
+            normal_floor: 0.5,
         }
     }
 }
@@ -364,6 +369,14 @@ impl ShoreField {
     pub fn chop_scale(&self, d: f32, o: f32) -> f32 {
         let s = &self.settings;
         (s.chop_floor + (1.0 - s.chop_floor) * o) * smoothstep(0.0, s.chop_ramp, d)
+    }
+
+    /// Scale of the chop cascades' slopes in the shading normal (W-SHORE; `water_common.wesl`
+    /// `shore_normal_scales` is the GPU twin): the chop's shore ramp held at `normal_floor`, so the
+    /// wavelets stay where the displacement has settled; never above the open-water chop here.
+    pub fn normal_chop_scale(&self, d: f32, o: f32) -> f32 {
+        let s = &self.settings;
+        (s.chop_floor + (1.0 - s.chop_floor) * o) * smoothstep(0.0, s.chop_ramp, d).max(s.normal_floor)
     }
 
     /// The GPU texture (`Rg8Unorm`, rows +Z): r = 0.5 + 0.5·sign(d)·√(|d|/range) (fine near the

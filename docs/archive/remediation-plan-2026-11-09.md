@@ -97,7 +97,7 @@ but care.
   GPL-derived H2 PCSS hunk in `vendor/bevy_pbr/src/render/shadow_sampling.wesl`, which must never be
   offered upstream and must be stripped before any upstream PR from that file. State that any new vendored
   hunk carrying ported GPL code must be marked in `vendor/README.md` and excluded from upstreaming.
-  Ready-to-paste wording: `docs/platform-decisions-2026-11-08.md`, end section.
+  Ready-to-paste wording: `docs/archive/platform-decisions-2026-11-08.md`, end section.
 - **Verify:** `grep -n "GPL-derived" superfargoth/docs/ARCHITECTURE.md superfargoth/vendor/README.md`
   shows the hunk named in both and no blanket "no GPL-derived lines" claim remains.
 
@@ -123,8 +123,8 @@ but care.
   exists. `grep -c "systemic, persistent\|L0/L1\|sample pack\|Signed-off-by\|scrib-platform-steam\|
   formats.md\|Script surface\|adopt every minor" superfargoth/docs/DECISIONS.md` returns 0 for each.
 - **Do:** append one dated bullet (<= 3 lines) per decision 1, 1b, 2, 3, 4, 5, 6, 7, 9, 10 from
-  `docs/vision-and-platform-2026-11-08.md` §9 "Owner answers". **Append only** — never edit existing
-  bullets. Exact text is pre-written at the end of `docs/platform-decisions-2026-11-08.md`.
+  `docs/archive/vision-and-platform-2026-11-08.md` §9 "Owner answers". **Append only** — never edit existing
+  bullets. Exact text is pre-written at the end of `docs/archive/platform-decisions-2026-11-08.md`.
 - **Note:** `DECISIONS.md` is ~160 KB. The vision doc sets a ~200 KB split trigger. Do not split in this
   slice; log it as a follow-up.
 - **Verify:** each decision number appears once with its 2026-11-08 date; file still parses as a flat
@@ -214,7 +214,7 @@ but care.
 ### A10. Reconcile the two GI plans and remove the automated-screenshot workflow
 
 - **Build:** none. **Severity:** high — it instructs agents to break a standing owner rule.
-- **Evidence (verified):** `docs/next-gen-pbr-gi-rt-plan.md` contains a section
+- **Evidence (verified):** `docs/archive/next-gen-pbr-gi-rt-plan.md` contains a section
   `# 5. Automated ReadyGate visual regression screenshots (Raster vs RT)` with
   `cargo run ... --screenshot interior_raster.png` / `--screenshot interior_rt.png` command lines, and
   `grep -c "superseded" ` over that file returns 0. It also plans baked `IrradianceVolume` per cell where
@@ -224,7 +224,7 @@ but care.
   which contradicts "no automated visual checks" and must be struck, not merely annotated; (c) keep Track 1
   (PBR materials and tangents), which every tier needs and nothing supersedes; (d) record the no-RT GI
   fallback as a named gap (see F7).
-- **Verify:** `grep -rn "screenshot" docs/next-gen-pbr-gi-rt-plan.md` returns nothing that decides whether a
+- **Verify:** `grep -rn "screenshot" docs/archive/next-gen-pbr-gi-rt-plan.md` returns nothing that decides whether a
   feature looks right; `grep -n "canonical" superfargoth/docs/specs/gi.md` names itself as such.
 
 ### A11. `docs/SYSTEMS.md` — add the missing rows

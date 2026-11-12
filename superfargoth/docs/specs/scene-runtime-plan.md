@@ -590,7 +590,7 @@ Dependencies, all already in the app graph — **no new external dependency**: `
 `bevy_render`, `bevy_transform`, `glam`, `log`, `sf_coords`, `sf_diag_bevy`, `sf_model_bevy`,
 `sf_scene`, `sf_world`, `sf_world_bevy`, `workspace-hack`. Unavoidable cost, flagged: a new
 workspace member changes the root `Cargo.toml` and `Cargo.lock` and needs
-`cargo hakari generate && cargo hakari manage-deps` (`superfargoth/CLAUDE.md` "Commands") — **one
+`cargo hakari generate && cargo hakari manage-deps` (`CONTRIBUTING.md` "Building") — **one
 cold rebuild**, so create the crate in the same build slot as its first real code (§10 B1+B2).
 
 ```rust

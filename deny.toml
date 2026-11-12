@@ -26,7 +26,7 @@ ignore = [
 
 [licenses]
 version = 2
-# Ours is GPL-3.0-or-later (CLAUDE.md hard rule 8, owner 2026-10-25): GPL-3.0-compatible licences
+# Ours is GPL-3.0-or-later (superfargoth/CLAUDE.md "Crate licences", owner 2026-10-25): GPL-3.0-compatible licences
 # only. GPL-2.0-only (incompatible) and AGPL (network clause) are never listed.
 allow = [
     "GPL-3.0-only",

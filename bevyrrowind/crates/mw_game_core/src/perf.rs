@@ -73,6 +73,10 @@ pub enum Part {
     /// Screen-space planar reflections on the water (W-SSPR, `sf_water_bevy::WaterReflections`): off,
     /// the environment map only (the old look, an A/B).
     WaterSsr,
+    /// Wind wavelets in the water's shading normal up to the shoreline (W-SHORE,
+    /// `sf_water::ShoreSettings::normal_floor`): off, the normal flattens with the displacement at the
+    /// shore (the old look, an A/B).
+    ShoreNormals,
     /// Fog on blended and additive NIF materials (`sf_atmos_bevy::FogTranslucentsPlugin`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
@@ -137,7 +141,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 60] = [
+    const ALL: [(&'static str, Part); 61] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -180,6 +184,7 @@ impl Part {
         ("fogbank", Part::FogBank),
         ("fogclamp", Part::FogClamp),
         ("waterssr", Part::WaterSsr),
+        ("shorenormals", Part::ShoreNormals),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
         ("foliagetransmission", Part::FoliageTransmission),
@@ -271,5 +276,8 @@ mod tests {
         let ssr = Off::from_flags(&["waterssr".into()]).expect("known");
         assert!(ssr.has(Part::WaterSsr) && !ssr.has(Part::FogClamp));
         assert_eq!(ssr.label(), "waterssr");
+        let shore = Off::from_flags(&["shorenormals".into()]).expect("known");
+        assert!(shore.has(Part::ShoreNormals) && !shore.has(Part::WaterSsr));
+        assert_eq!(shore.label(), "shorenormals");
     }
 }

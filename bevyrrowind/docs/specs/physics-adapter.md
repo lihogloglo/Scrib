@@ -13,7 +13,7 @@ Make Morrowind's loose items physical, its NPCs and creatures ragdoll, and its r
 with no new art. Morrowind itself has none of this: items never move unless picked up or dropped
 (dropped items land at the actor's feet), deaths are clips, and robes are rigid or skinned meshes with
 no simulation. OpenMW (Bullet) keeps the same behavior; it uses physics for actor collision only.
-This is a modern-behavior change (CLAUDE.md rule 6), kept data-driven so mods can turn parts off.
+This is a modern-behavior change (CONTRIBUTING.md "Design constraints", not a 1:1 port), kept data-driven so mods can turn parts off.
 
 ## Items
 

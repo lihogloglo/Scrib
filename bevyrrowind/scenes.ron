@@ -1,4 +1,4 @@
-// Test scenes for visual checks (CLAUDE.md rule 5; docs/visual-checks.md).
+// Test scenes for visual checks (CONTRIBUTING.md "Tests and visual checks"; docs/visual-checks.md).
 // `bevyrrowind scene <name> [more view flags]` opens the interactive viewer here;
 // `bevyrrowind scene --list` lists them. Fields:
 //   name, cell (view's cell: interior name, exterior name or grid "x,y"),

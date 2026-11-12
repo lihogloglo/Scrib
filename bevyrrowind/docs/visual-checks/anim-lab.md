@@ -248,3 +248,12 @@ while stumbling by design: Dormant). Status: confirmed. Open (later): a body lan
   The game's retargeted mantle and combat clips no worse (hands still on the lip, no new twist). Measured: `mw_bake/tests/generated_pose.rs`.
 - Also (retarget-shoulders, anim.retarget v6): arms clear the chest in Kimodo walks (shoulders not pulled in, elbows out
   like MW's own WalkForward); UAL arms ~4 deg wider, shoulders not shrugged in runs. Measured: `mw_bake/tests/generated_arms.rs`.
+
+### LOOP-1 Loop-cut cycles in the clip browser (loco-coord 2026-11-12, awaiting owner)
+- Run: `bash bevyrrowind/tools/owner_launch.sh clip-preview --browse "animation packs/generated/loco1"`; Up/Down to a
+  `loco.walk.cycle.*` / `loco.run.cycle.*` / `loco.sprint.cycle.*` group. Cycle takes now cook through the loop cutter and loop in
+  the slot (no re-blend); the overlay's loop line gives the window, strides and seam errors (pose, foot, speed; hard-cut values in
+  brackets). L toggles cut loop vs raw take (A/B). A cut loop walks on: camera and floor follow (the floor steps by whole 2 m checker periods, so it reads as endless).
+- Look for: walks loop with no hitch, foot pop or speed surge at the seam (measured residue 0.2-0.6 cm/frame); runs mostly clean
+  (0.6-3.2); sprints expected to show the seam (4.9-6.3, poor sources); the slow heading drift per loop is the take's own (±4 deg).
+  Say which cut loops are good enough to give slots. Status: confirmed 2026-11-12 (owner: "this is working"; no per-clip pick).

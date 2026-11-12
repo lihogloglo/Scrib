@@ -1,6 +1,6 @@
 # cargo-hakari settings (https://docs.rs/cargo-hakari/latest/cargo_hakari/config): the
 # `workspace-hack` crate pins one feature set per third-party dependency, so `cargo test -p A` and
-# `-p B` reuse the same Bevy build instead of each compiling its own variant. superfargoth/CLAUDE.md "Commands".
+# `-p B` reuse the same Bevy build instead of each compiling its own variant. CONTRIBUTING.md "Building".
 hakari-package = "workspace-hack"
 dep-format-version = "4"
 resolver = "3"
@@ -109,7 +109,7 @@ workspace-members = [
 #
 # Game-only TES3 format crates (one git repo): traversed, so what they turn on in Bevy's own
 # dependencies (`half/nightly`, `hashbrown/rayon`, `slotmap/default`) is in the hack and every
-# selection builds one Bevy, but never named in it (superfargoth/CLAUDE.md hard rule 1: the hack lives
+# selection builds one Bevy, but never named in it (CONTRIBUTING.md "Framework/game split": the hack lives
 # in superfargoth). Until 2026-11-11 they were traversal-excluded on the belief that only Bevy-free
 # cores use them; ten mw_*_bevy crates do, so `-p mw_exterior_bevy` and `-p sf_ui_bevy` built two Bevys.
 third-party = [

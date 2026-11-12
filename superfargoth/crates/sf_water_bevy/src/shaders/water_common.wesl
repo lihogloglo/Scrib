@@ -19,7 +19,7 @@ struct WaterParams {
     shore: vec4<f32>,
     // (range m, swell ramp m, chop ramp m, chop floor).
     shore2: vec4<f32>,
-    // (time s, shore foam band m, 0, shore foam of the body's own look).
+    // (time s, shore foam band m, shore normal floor, shore foam of the body's own look).
     misc2: vec4<f32>,
     // Optics map: render-space XZ of cell (0, 0)'s centre, 1 / cell size, on 0/1.
     regions: vec4<f32>,
@@ -50,6 +50,15 @@ fn shore_at(p: WaterParams, tex: texture_2d<f32>, s: sampler, xz: vec2<f32>) -> 
 fn shore_scales(p: WaterParams, sh: vec2<f32>) -> vec2<f32> {
     let swell = sh.y * smoothstep(0.0, p.shore2.y, sh.x);
     let chop = (p.shore2.w + (1.0 - p.shore2.w) * sh.y) * smoothstep(0.0, p.shore2.z, sh.x);
+    return vec2(swell, chop) * p.waves.xy;
+}
+
+// The same for the shading normal (W-SHORE; `sf_water::ShoreField::normal_chop_scale` is the CPU
+// twin): the swell fades as above, the chop's shore ramp holds at the normal floor (`misc2.z`) so
+// wind wavelets stay where the vertices have settled. Floor 0 = `shore_scales`.
+fn shore_normal_scales(p: WaterParams, sh: vec2<f32>) -> vec2<f32> {
+    let swell = sh.y * smoothstep(0.0, p.shore2.y, sh.x);
+    let chop = (p.shore2.w + (1.0 - p.shore2.w) * sh.y) * max(smoothstep(0.0, p.shore2.z, sh.x), p.misc2.z);
     return vec2(swell, chop) * p.waves.xy;
 }
 

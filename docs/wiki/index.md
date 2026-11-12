@@ -2,7 +2,8 @@
 
 The on-demand reference for how Scrib works **now**, how Bevy 0.20 works, and what the industry does. Read this
 index, then only the page you need. Pages are current truth, never history: what was tried and how it went lives
-in the ledger (`../ledger/`), old reasoning in the archives.
+in the ledger (`../ledger/`), old reasoning in history (research, briefs, `archive/` folders: hidden from default
+searches by the root `.ignore`, open by path when a page sends you there).
 
 ## Rules for pages
 
@@ -67,13 +68,14 @@ is a frame over 25 ms (report "hitches"). A/B differences under ~0.5 ms are run-
 [Character animation](industry/character-animation.md): motion matching vs blend graphs, warping, foot placement, anim budget, crowds, modular merge
 [First person](industry/first-person.md): true first person vs arms rig, view model FOV, camera styles, first-person melee
 [Bevy projects](industry/bevy-projects.md): what other Bevy open-world projects do, and that none reach the target scale
+[Clouds and weather](industry/clouds-and-weather.md): Nubis/HZD coverage maps, regional influence, envelope clouds, rain under cloud density, UE local fog, why local storms must not be pillars
 
 ## Ledgers (`../ledger/`)
 <!-- one line each: link to ../ledger/NAME.md, N entries, last date -->
 [shadows](../ledger/shadows.md): 22 entries, last 2026-11-12 (sun cascades, lamp cache, resets A1-B2, PCSS, lamp reach)
 [sky-weather](../ledger/sky-weather.md): 17 entries, last 2026-11-12 (atmosphere medium P1, clouds, fog, night lighting, rain)
-[perf](../ledger/perf.md): 27 entries, last 2026-11-12 (frame time: culling, bind groups, skinning, ceilings, A/B)
 [water](../ledger/water.md): 1 entry, last 2026-11-12 (water pass, SSPR reflections; older water lines in sky-weather)
+[perf](../ledger/perf.md): 27 entries, last 2026-11-12 (frame time: culling, bind groups, skinning, ceilings, A/B)
 [streaming](../ledger/streaming.md): 16 entries, last 2026-11-12 (cell streaming, origin shift, stutters)
 [statics](../ledger/statics.md): 21 entries, last 2026-11-12 (precombine, static scene, far field, LOD, NoCpuCulling)
 [animation](../ledger/animation.md): 15 entries, last 2026-11-12 (IK P-IK1..5, gaits, foot lock, anim LOD, 2026-11-12 audit, AN-/AL-/PL- verdicts)

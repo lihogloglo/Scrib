@@ -655,7 +655,7 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
         bounds: bounds.map_or(Vec4::ZERO, |[lo, hi]| Vec4::new(lo.x, lo.y, hi.x, hi.y)),
         shore,
         shore2,
-        misc2: Vec4::new((frame.time.rem_euclid(REPEAT_PERIOD)) as f32, 6.0, 0.0, look.shore_foam),
+        misc2: Vec4::new((frame.time.rem_euclid(REPEAT_PERIOD)) as f32, 6.0, st.normal_floor, look.shore_foam),
         regions,
         reflection: match s.reflection {
             // Only the surface at the mirrored level reads the SSPR; others keep the environment map.

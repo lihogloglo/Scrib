@@ -35,7 +35,8 @@ a console and BRP for agents.
   window, owner not in a fullscreen app or call), copies the dev build to `%TEMP%\bw-owner-*`, starts it fullscreen
   and muted (adds the `view`/`scene` flag `--mute`: master bus silent that run, saved volumes untouched; the script's
   `--sound` opts out, owner 2026-11-12); `OWNER_LAUNCH_NO_WAIT=1` checks once. Others: `run_dev.ps1`, `perf_nsys.ps1` (Nsight to `perf nsys`), `ab_shots.ps1`,
-  `pacing.awk`. Repo `tools/`: `doccheck.sh`, `decisions-index.mjs`.
+  `pacing.awk`. Repo `tools/`: `doccheck.sh`, `decisions-index.mjs`, `bevy_variants.sh` (how many Bevy builds a set of
+  cargo selections needs, from `cargo tree`; CONTRIBUTING "Building").
 
 ## Bevy features used
 `bevy_remote` (BRP, via `bevy_brp_mcp`/`bevy_brp_extras`), `bevy_diagnostic`, gizmos, `PipelineCache::waiting_pipelines`

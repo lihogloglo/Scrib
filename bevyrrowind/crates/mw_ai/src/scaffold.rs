@@ -1,6 +1,6 @@
 //! `PathWalkScaffold`: the named scaffold that drives NPC locomotion intents
 //! from pathgrids and `AI_W` until `sf_ai` (M7) owns the intent
-//! (locomotion.md "NPC drivers"; bevyrrowind CLAUDE.md rule 4).
+//! (locomotion.md "NPC drivers"; CONTRIBUTING.md "How we decide what to build" 3).
 //!
 //! Removal path: delete this module and its `sf_controller_bevy` wiring once
 //! `sf_ai` writes `LocomotionIntent`; `pathgrid` and `wander` stay as the

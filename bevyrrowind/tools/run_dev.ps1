@@ -1,6 +1,6 @@
 # Starts the dev exe (`--features dev`, Bevy dynamically linked, BRP on) without
 # `cargo run`, so no cargo process lingers while the game is open: other
-# sessions' "is a build running?" checks look for cargo/rustc (CLAUDE.md).
+# sessions' "is a build running?" checks look for cargo/rustc (CONTRIBUTING.md "Building").
 # Build first: `cargo build -p bevyrrowind --features dev`.
 #
 #   powershell -File tools/run_dev.ps1 view "Seyda Neen, Census and Excise Office"

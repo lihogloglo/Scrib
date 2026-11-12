@@ -8,7 +8,15 @@
 // pixel's own depth (full resolution, so depth edges are exact), the bank
 // layer scaled by the traced bank modulation; lit by the key light (HG
 // lobe) and the sky fill, both read from the per-frame `fog_light` texture. Sky pixels are fogged
-// to `sky_distance`, which also dims the stars, moons and clouds behind.
+// to `sky_distance`, which also dims the stars and moons behind.
+//
+// The cloud sits inside that fog column (WE12-FIX; UE5 Volumetric Cloud,
+// Hillaire 2016/2020): the fog is evaluated a second time to the cloud's
+// transmittance-weighted depth `tc`, which dims and lights the cloud; the
+// rest of the column only reaches the scene behind it (`sf_atmos::fog::
+// compose_fog_split`, the CPU twin). `clouds.cloud_fog == 0` (`--off cloudfog`)
+// is the old order: the whole column in front of the cloud, which hid the
+// deck from above behind the low fog under it.
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import bevy_pbr::atmosphere::bindings::view;
@@ -33,6 +41,24 @@ import super::bank_edges::{bank_decode, bank_tap};
 @group(1) @binding(4) var<uniform> froxels: Froxels;
 @group(1) @binding(5) var froxel_volume: texture_3d<f32>;
 @group(1) @binding(6) var froxel_sampler: sampler;
+
+// The fog from the camera to `dist` along this pixel's ray: (in-scatter,
+// pre-exposed; transmittance). Near: the froxels; the analytic layers from
+// their end on, so the near fog isn't counted twice. `h_cam` is the camera's
+// altitude over the planet, `ratio` the bank modulation, `src` the analytic
+// layers' source radiance (albedo × lights × exposure).
+fn fog_to(uv: vec2<f32>, h_cam: f32, mu: f32, ratio: f32, src: vec3<f32>, dist: f32) -> vec4<f32> {
+    var front = vec4(0.0, 0.0, 0.0, 1.0);
+    var start = 0.0;
+    if froxels.enabled != 0u {
+        start = min(dist, froxels.far);
+        front = froxel_fog(froxels, froxel_volume, froxel_sampler, uv, start);
+    }
+    let tau = fog_depths(clouds.fog, h_cam + mu * start, mu, dist - start);
+    let t = exp(-(tau.x + tau.y * ratio));
+    let far_light = select(vec3(0.0), src * (1.0 - t), t < 0.9999);
+    return vec4(front.rgb + front.a * far_light, front.a * t);
+}
 
 @fragment
 fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
@@ -64,6 +90,10 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     var acc_sets = array<vec4<f32>, 3>(vec4(0.0), vec4(0.0), vec4(0.0));
     var bank_sets = vec3(0.0);
     var w_sets = vec3(0.0);
+    // The cloud's depth per set: tap distances weighted by weight × opacity
+    // (a dropped tap, transmittance 1, adds nothing).
+    var dist_sets = vec3(0.0);
+    var op_sets = vec3(0.0);
     for (var i = 0; i < 4; i += 1) {
         let o = vec2(i & 1, i >> 1u);
         let q = clamp(vec2<i32>(base) + o, vec2(0), hmax);
@@ -87,6 +117,9 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         }
         bank_sets += d.y * ws;
         w_sets += ws;
+        let op = ws * (1.0 - c.a);
+        dist_sets += d.x * op;
+        op_sets += op;
     }
     var pick = 2;
     if w_sets.x > 1e-4 {
@@ -110,29 +143,31 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let rd = uv_to_ray_direction(in.uv);
         let mu = dot(up, rd);
         let d = select(fog.sky_distance, scene_t, depth > 0.0);
-        // Near: the froxels (in-scatter pre-exposed, transmittance); the analytic
-        // layers from their end on, so the near fog isn't counted twice.
-        var front = vec4(0.0, 0.0, 0.0, 1.0);
-        var start = 0.0;
-        if froxels.enabled != 0u {
-            start = min(d, froxels.far);
-            front = froxel_fog(froxels, froxel_volume, froxel_sampler, in.uv, start);
+        let key_seen = textureLoad(fog_light, vec2(1, 0), 0).rgb;
+        let key_dir = textureLoad(fog_light, vec2(2, 0), 0).xyz;
+        let sun = key_seen * fog_phase(fog.phase_g, dot(rd, key_dir));
+        // The isotropic sky fill (the froxels' too: no seam at their range).
+        let ambient = textureLoad(fog_light, vec2(0, 0), 0).rgb * fog.ambient;
+        let src = fog.albedo * (sun + ambient) * view.exposure;
+        let h_cam = r - clouds.inner_radius;
+        let ratio = bank / bank_w;
+        // The whole column: what the scene behind the clouds sees through.
+        let full = fog_to(in.uv, h_cam, mu, ratio, src, d);
+        var tc = d;
+        if op_sets[pick] > 1e-4 {
+            tc = min(dist_sets[pick] / op_sets[pick], d);
         }
-        var far_light = vec3(0.0);
-        let tau = fog_depths(fog, r - clouds.inner_radius + mu * start, mu, d - start);
-        let t = exp(-(tau.x + tau.y * bank / bank_w));
-        if t < 0.9999 {
-            let key_seen = textureLoad(fog_light, vec2(1, 0), 0).rgb;
-            let key_dir = textureLoad(fog_light, vec2(2, 0), 0).xyz;
-            let sun = key_seen * fog_phase(fog.phase_g, dot(rd, key_dir));
-            // The isotropic sky fill (the froxels' too: no seam at their range).
-            let ambient = textureLoad(fog_light, vec2(0, 0), 0).rgb * fog.ambient;
-            far_light = fog.albedo * (sun + ambient) * (1.0 - t) * view.exposure;
+        if clouds.cloud_fog != 0u && tc < d {
+            // The cloud inside the column: the fog to `tc` in front of it, the
+            // rest (full − front, already seen through the front) behind it.
+            let front = fog_to(in.uv, h_cam, mu, ratio, src, tc);
+            let behind = max(full.rgb - front.rgb, vec3(0.0));
+            acc = vec4(front.rgb + front.a * acc.rgb + acc.a * behind, acc.a * full.a);
+        } else {
+            // No cloud in front of this depth (or `--off cloudfog`): the whole
+            // column in front of the clouds.
+            acc = vec4(acc.rgb * full.a + full.rgb, acc.a * full.a);
         }
-        // Behind = clouds over the scene: dimmed by both, lit by the froxels and
-        // by the far layers as the froxels let them through.
-        let tt = front.a * t;
-        acc = vec4(acc.rgb * tt + front.rgb + front.a * far_light, acc.a * tt);
     }
 
     if acc.a > 0.9995 && max(acc.r, max(acc.g, acc.b)) < 1e-6 {

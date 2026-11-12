@@ -64,7 +64,7 @@ Game plugin crates (`bevyrrowind/crates`, app split 2026-10-26; the binary `apps
 | Optimized build scripts and proc macros | `[profile.dev.build-override]` | Derive macros run on every build of their users. |
 | Pinned toolchain | root `rust-toolchain.toml` | Same compiler everywhere; a compiler change invalidates every cache. |
 | `profiling` / `dist` profiles | root `Cargo.toml` | Release with symbols for Tracy; thin LTO + 1 codegen unit only for shipping. |
-| Feature unification (`cargo hakari`) | root `.config/hakari.toml`, `superfargoth/crates/workspace-hack` | One feature set per dependency, so any `cargo test -p A`, `-p B`, `--workspace` and `build -p bevyrrowind` share one Bevy build ("Feature unification" below). Bevy-free cores (`sf_*` and `mw_*`) and the game app stay out of the hack; the tes3 crates are traversed but never named in it; superfargoth/CLAUDE.md "Commands". |
+| Feature unification (`cargo hakari`) | root `.config/hakari.toml`, `superfargoth/crates/workspace-hack` | One feature set per dependency, so any `cargo test -p A`, `-p B`, `--workspace` and `build -p bevyrrowind` share one Bevy build ("Feature unification" below). Bevy-free cores (`sf_*` and `mw_*`) and the game app stay out of the hack; the tes3 crates are traversed but never named in it; CONTRIBUTING.md "Building". |
 | Dependency policy (`cargo deny`) | root `deny.toml` | Licences, advisories, duplicates, sources; superfargoth/README.md "Dependency policy". |
 
 Checked against Bevy 0.20's `.cargo/config_fast_builds.toml` (2026-10-12): its Windows section is

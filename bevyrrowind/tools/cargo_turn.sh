@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs cargo in turn: a first-come, first-served queue shared by every session, then cargo at BelowNormal
-# priority (CLAUDE.md "Parallel sessions"). The queue is `<repo>/.sessions/build-queue/`, one ticket per waiting
+# priority (CONTRIBUTING.md "Building"). The queue is `<repo>/.sessions/build-queue/`, one ticket per waiting
 # or running command; the oldest ticket builds. Builds outside the queue (other projects, a bare cargo) still
 # hold everyone: the slot is also busy while any rustc.exe runs, or any cargo.exe other than one that only runs a
 # finished program (`cargo run` / `cargo dev`, e.g. a game left open; owner 2026-10-26).

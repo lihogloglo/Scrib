@@ -36,7 +36,7 @@ import (open question 6), cross-version co-op, incremental or chained saves.
 | Shared world, own characters; host world save + per-player character save; host copy wins in its world (net.md, 2026-10-19) | "Co-op" |
 | Co-op world saves live apart from single-player saves (net.md) | "Slots and files" |
 | Everything is a mod; stable ids, absolute positions (net rule 7) | "Mod-list changes" |
-| Bevy, then crates, then our own (CLAUDE.md rule 8) | "Reuse" |
+| Bevy, then crates, then our own (CONTRIBUTING.md "How we decide" 2) | "Reuse" |
 
 ## Reuse (Bevy → crates → own)
 

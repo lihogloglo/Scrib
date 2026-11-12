@@ -136,7 +136,9 @@ fn water_quality(q: Quality) -> WaterQuality {
 }
 
 /// `sspr`: local reflections on the water (W-SSPR; `--off waterssr` = the environment map only).
-pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, sspr: bool, worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>) {
+/// `shore_normals`: wind wavelets in the shading normal up to the shoreline (W-SHORE; `--off
+/// shorenormals` = the normal flattens with the displacement, `ShoreSettings::normal_floor` 0).
+pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, (sspr, shore_normals): (bool, bool), worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>) {
     if mode() != WaterMode::On {
         return;
     }
@@ -167,10 +169,14 @@ pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, sspr: bool, wor
     let looks: Vec<WaterLook> = records.iter().map(|(_, o)| WaterLook::from_optics(o)).collect();
     let levels: HashMap<WorldspaceId, f32> =
         worldspaces.iter().filter(|(id, ws)| !ws.has_terrain && **id != exterior).filter_map(|(id, ws)| Some((id.clone(), ws.sea_level?))).collect();
+    let mut settings = mw_water::shore_settings();
+    if !shore_normals {
+        settings.normal_floor = 0.0;
+    }
     let bake = inputs.mask.map(|mask| {
         let handle = std::thread::Builder::new()
             .name("water-shore-bake".into())
-            .spawn(move || ShoreField::bake(&mask, mw_water::shore_settings()))
+            .spawn(move || ShoreField::bake(&mask, settings))
             .expect("spawn the shore bake thread");
         (handle, Instant::now())
     });

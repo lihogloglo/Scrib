@@ -13,7 +13,7 @@ the spec stands until the owner decides. "Proposed doc changes" (§10) lists the
 > follows). The gaps are platform-level, not system-level: licence model, no CI or mechanical guardrails, the quality
 > presets live in the game, no second content pack proving the split, a deep `bevy_pbr` fork, and a multiplayer
 > design that nothing tests yet. Read §1 (philosophy), §8 (roadmap), §9 (owner decisions). All §9 items are now
-> decided (1-3 by the owner, 4-10 delegated: `docs/platform-decisions-2026-11-08.md`).
+> decided (1-3 by the owner, 4-10 delegated: `docs/archive/platform-decisions-2026-11-08.md`).
 <!-- /agent-summary -->
 
 ## 0. Where we stand (facts)
@@ -319,7 +319,7 @@ perf.md "Frame budget" for High and Low, and gate both.
 ### 5.5 How the GI/RT plan fits
 
 - `superfargoth/docs/specs/gi.md` (dynamic ray-query probe volumes, no bake, Tier A on RT hardware, "off" without)
-  and `docs/next-gen-pbr-gi-rt-plan.md` (baked `IrradianceVolume` per cell, SSR, SSGI, and "automated ReadyGate
+  and `docs/archive/next-gen-pbr-gi-rt-plan.md` (baked `IrradianceVolume` per cell, SSR, SSGI, and "automated ReadyGate
   visual regression screenshots") disagree. The second also breaks the owner rule "no automated visual checks".
   Proposal: gi.md is the source of truth. Keep the next-gen plan's **Track 1 (PBR materials and tangents)**,
   which every tier needs. Mark Tracks 2-3 superseded where they conflict.
@@ -496,7 +496,7 @@ Authors need knobs to keep emergent behaviour from breaking quests.
 - **10 Stability (delegated to agent):** promises go to data, not Rust: saves from the first public build, records/
   `mod.toml`/Luau API from mod API 1.0; `sf_*` crates `0.N`, unpromised before Bevy 1.0; a format registry. High.
 - **1b DCO/CLA (delegated to agent):** DCO with inbound = outbound, plus consent to future §7 permissions. High.
-- Full reasoning, evidence and ready-to-paste edits: `docs/platform-decisions-2026-11-08.md`.
+- Full reasoning, evidence and ready-to-paste edits: `docs/archive/platform-decisions-2026-11-08.md`.
 
 ## 10. Proposed doc changes
 
@@ -514,11 +514,11 @@ Authors need knobs to keep emergent behaviour from breaking quests.
 | `CONTRIBUTING.md` | Tie-breaker per tier (§2.1); "Net-ready" points to the lints once they exist; ~~licence quarantine rule~~ (dropped); scope wording (decision 4); "Script-ready" rule (7); DCO + no game-derived code (1b, 8); frame target becomes the tier matrix |
 | `superfargoth/docs/specs/net.md` | Non-goals: reword "dedicated servers" per decision 2; player count not fixed at 4; one state registry; R0 not scaled by preset; Steam via the separate helper process under "Topology and transport" (decision 9) |
 | `superfargoth/docs/specs/streaming.md` | "Ring radii scale with the quality preset": exclude R0 (simulation) |
-| `superfargoth/docs/specs/gi.md` + `docs/next-gen-pbr-gi-rt-plan.md` | gi.md is canonical. Mark next-gen Tracks 2-3 superseded where they conflict (baked volumes vs dynamic probes, automated screenshot checks); add the no-RT fallback tier |
+| `superfargoth/docs/specs/gi.md` + `docs/archive/next-gen-pbr-gi-rt-plan.md` | gi.md is canonical. Mark next-gen Tracks 2-3 superseded where they conflict (baked volumes vs dynamic probes, automated screenshot checks); add the no-RT fallback tier |
 | `superfargoth/docs/specs/scripting.md` | ~~The API-per-system rule~~ (superseded by decision 7): deprecation window, JSON API dump as the registry's truth on unpark, the unpark trigger, host-only gameplay scripts in MP. Exact text in `platform-decisions-2026-11-08.md` |
 | `docs/SYSTEMS.md` | Rows for Scalability, Interaction, Persistence/sim LOD; the AI row points to the planned spec |
 | `superfargoth/vendor/README.md` | Mark the GPL-derived hunk (H2); the move to a git fork branch; the upgrade cadence (decision 6). Exact text in `platform-decisions-2026-11-08.md` |
-| **Decisions 4-10 (2026-11-08)** | Ready-to-paste old→new text for DECISIONS (8 bullets), ARCHITECTURE §1/§3/§4/§6.1, CONTRIBUTING (scope wording, net-ready, script-ready, licence + DCO), ROADMAP (Delirium re-pin line, decision 5 + P-lane, co-op line), scripting.md, net.md (Steam helper), `LICENSE-EXCEPTION.md` (Delirium paragraph) and the vendor README: end of `docs/platform-decisions-2026-11-08.md`. Not applied |
+| **Decisions 4-10 (2026-11-08)** | Ready-to-paste old→new text for DECISIONS (8 bullets), ARCHITECTURE §1/§3/§4/§6.1, CONTRIBUTING (scope wording, net-ready, script-ready, licence + DCO), ROADMAP (Delirium re-pin line, decision 5 + P-lane, co-op line), scripting.md, net.md (Steam helper), `LICENSE-EXCEPTION.md` (Delirium paragraph) and the vendor README: end of `docs/archive/platform-decisions-2026-11-08.md`. Not applied |
 | `LICENSE-EXCEPTION.md` | Scope paragraph → third-party GPL code (Delirium included, still default) + "platform SDKs never enter the game process" (decision 9). No Steamworks extension |
 | new `superfargoth/docs/formats.md` | Format registry (decision 10): every on-disk/wire format, version, owner, spec, regenerable, guarantee trigger |
 

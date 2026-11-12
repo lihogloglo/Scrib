@@ -296,11 +296,28 @@ fn add_mode(app: &mut App, browsing: bool, step: Duration) {
         app.init_resource::<live::OrbitCam>()
             .add_systems(Startup, live::spawn_overlay)
             .add_systems(Update, live::browse_step.after(drive))
-            .add_systems(PostUpdate, live::orbit.after(sf_anim_bevy::AnimSystems::Apply).before(TransformSystems::Propagate));
+            .add_systems(PostUpdate, (live::orbit, floor_follows).after(sf_anim_bevy::AnimSystems::Apply).before(TransformSystems::Propagate));
     } else {
         app.insert_resource(TimeUpdateStrategy::ManualDuration(step))
             .add_systems(PostUpdate, follow.after(sf_anim_bevy::AnimSystems::Apply).before(TransformSystems::Propagate))
             .add_systems(Last, shoot);
+    }
+}
+
+/// The stage's checker floor (24 m across), parent of its tiles.
+#[derive(Component)]
+struct Floor;
+
+/// Checker period, meters: the floor moves in whole periods, so the pattern under the actor never shifts.
+const FLOOR_PERIOD: f32 = 2.0;
+
+/// The browser's floor stays under a clip walking on (a cut loop never returns to the mark): it steps
+/// by whole checker periods, which leaves every tile's look in place, so the floor reads as endless.
+fn floor_follows(actors: Query<&Transform, With<Animator>>, mut floors: Query<&mut Transform, (With<Floor>, Without<Animator>)>) {
+    let Some(at) = actors.iter().next().map(|t| t.translation) else { return };
+    let snap = |v: f32| (v / FLOOR_PERIOD).round() * FLOOR_PERIOD;
+    for mut t in &mut floors {
+        t.translation = Vec3::new(snap(at.x), 0.0, snap(at.z));
     }
 }
 
@@ -309,12 +326,14 @@ fn add_mode(app: &mut App, browsing: bool, step: Duration) {
 fn stage(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, npc: RecordId) {
     let tile = meshes.add(Plane3d::default().mesh().size(1.0, 1.0));
     let shades = [0.36, 0.30].map(|v| materials.add(StandardMaterial { base_color: Color::srgb(v, v * 0.95, v * 0.88), perceptual_roughness: 0.9, ..default() }));
-    for x in -12..12_i16 {
-        for z in -12..12_i16 {
-            let shade = &shades[usize::from((x + z).rem_euclid(2) == 1)];
-            commands.spawn((Mesh3d(tile.clone()), MeshMaterial3d(shade.clone()), Transform::from_xyz(f32::from(x) + 0.5, 0.0, f32::from(z) + 0.5)));
+    commands.spawn((Floor, Transform::IDENTITY, Visibility::default())).with_children(|floor| {
+        for x in -12..12_i16 {
+            for z in -12..12_i16 {
+                let shade = &shades[usize::from((x + z).rem_euclid(2) == 1)];
+                floor.spawn((Mesh3d(tile.clone()), MeshMaterial3d(shade.clone()), Transform::from_xyz(f32::from(x) + 0.5, 0.0, f32::from(z) + 0.5)));
+            }
         }
-    }
+    });
     commands.spawn((
         DirectionalLight { illuminance: 600.0, shadow_maps_enabled: true, ..default() },
         Transform::from_xyz(2.0, 10.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
@@ -527,7 +546,7 @@ fn drive(
     }
     item.capture = Duration::ZERO;
     p.started = Some(Instant::now());
-    if let Err(e) = play_full(&mut animator, &mut transform, root, late, 0.0) {
+    if let Err(e) = play_full(&mut animator, &mut transform, root, late, 0.0, 0) {
         eprintln!("error: {}: {e}", item.job.id);
         exit.write(AppExit::error());
         return;
@@ -538,7 +557,8 @@ fn drive(
 /// The actor back on the mark (origin, facing +Z) with root motion applied, and `late` from its
 /// first pose in the graph's full-body slot (no blend in). Capture and browse both start clips here.
 /// `blend_in`: inertialization time into the clip, seconds (0: a hard cut, for frame-exact captures).
-fn play_full(animator: &mut Animator, transform: &mut Transform, root: Option<Mut<AnimRootMotion>>, late: Arc<LateClip>, blend_in: f32) -> Result<(), String> {
+/// `loops`: times the clip's loop range repeats ([`SlotRequest::loops`]; 0 for a raw take).
+fn play_full(animator: &mut Animator, transform: &mut Transform, root: Option<Mut<AnimRootMotion>>, late: Arc<LateClip>, blend_in: f32, loops: u32) -> Result<(), String> {
     transform.translation = Vec3::ZERO;
     transform.rotation = Quat::IDENTITY;
     if let Some(mut root) = root {
@@ -547,7 +567,7 @@ fn play_full(animator: &mut Animator, transform: &mut Transform, root: Option<Mu
     let asset = Arc::clone(&animator.asset);
     animator.instance.set_variety(&asset.binding(), Variety::default());
     let slot = asset.graph.slot(mw_graphs::build::slots::FULL).ok_or_else(|| format!("the actor's graph has no {:?} slot", mw_graphs::build::slots::FULL))?;
-    let req = SlotRequest { blend_in, priority: 9, ..SlotRequest::new(MontageClip::Late(late)) };
+    let req = SlotRequest { blend_in, priority: 9, loops, ..SlotRequest::new(MontageClip::Late(late)) };
     animator.instance.play_slot(&asset.binding(), slot, req).map(|_| ()).map_err(|e| format!("the slot refused the clip ({e:?})"))
 }
 

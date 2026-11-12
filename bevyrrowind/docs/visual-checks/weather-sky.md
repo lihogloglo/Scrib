@@ -321,4 +321,6 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   would hit the same path.
 - Suspect (not tested): the cloud march assumes a camera below or inside the deck, or stops at geometry depth when looking
   down, or at the deck's entry point.
-- Status: known bug: not diagnosed.
+- Cause (2026-11-12, WE12-DIAG, code): the composite applies the fog of the pixel's whole column over the cloud, so
+  the dense low fog and banks *behind* the cloud hide it from above (`cloud_composite.wesl:112-135`). Fix: WE12-FIX.
+- Status: known bug: diagnosed, fix being built.

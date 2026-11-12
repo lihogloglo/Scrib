@@ -610,3 +610,32 @@ fn query_swell_is_attenuated_by_the_shore_product() {
     let calm = world.get(&id).unwrap().sample(at).unwrap();
     assert!(calm.height.abs() < 1e-5, "{} vs {open}", calm.height);
 }
+
+/// W-SHORE: the chop's shading normal keeps `normal_floor` of its open-water strength at the
+/// shoreline while the displacement settles to zero; far out both agree; floor 0 is the old look.
+#[test]
+fn shore_normals_keep_wavelets_where_the_displacement_settles() {
+    let settings = ShoreSettings::default();
+    let field = ShoreField::bake(&WetMask::new(4, 4, 2.0, DVec2::ZERO), settings);
+    let open = |o: f32| settings.chop_floor + (1.0 - settings.chop_floor) * o;
+    // At the shoreline: no chop displacement, the normal at its floor.
+    assert_eq!(field.chop_scale(0.0, 1.0), 0.0);
+    assert_eq!(field.normal_chop_scale(0.0, 1.0), settings.normal_floor);
+    assert_eq!(field.normal_chop_scale(0.0, 0.0), settings.chop_floor * settings.normal_floor);
+    // Past the chop ramp both are the open-water chop (never above it).
+    for o in [0.0, 0.4, 1.0] {
+        assert_eq!(field.normal_chop_scale(settings.chop_ramp, o), open(o));
+        assert_eq!(field.normal_chop_scale(settings.chop_ramp, o), field.chop_scale(settings.chop_ramp, o));
+    }
+    // In between: the larger of the ramp and the floor, continuous, never below the displacement's.
+    for i in 0..=30 {
+        let d = settings.chop_ramp * i as f32 / 30.0;
+        let n = field.normal_chop_scale(d, 0.7);
+        assert!(n >= field.chop_scale(d, 0.7) && n >= settings.normal_floor * open(0.7) && n <= open(0.7));
+    }
+    // `--off shorenormals`: floor 0 is exactly the displacement's scale.
+    let old = ShoreField::bake(&WetMask::new(4, 4, 2.0, DVec2::ZERO), ShoreSettings { normal_floor: 0.0, ..settings });
+    for d in [0.0, 0.5, 1.5, 2.9, 10.0] {
+        assert_eq!(old.normal_chop_scale(d, 0.6), old.chop_scale(d, 0.6));
+    }
+}

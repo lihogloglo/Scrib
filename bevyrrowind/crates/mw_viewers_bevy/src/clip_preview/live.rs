@@ -6,6 +6,9 @@
 //! drag orbits the camera, the wheel zooms; an overlay shows the clip and its `.prov.json`.
 //! Y / N / M record keep / reject / maybe for the clip in `verdicts.toml` and advance
 //! ([`BrowseList::rate`]), Backspace clears it, U jumps to the next unrated clip.
+//! Cycle takes (`*.cycle.*`) cook through the loop cutter ([`cook::cook_report`]) and loop in the
+//! slot with no re-blend, so the seam shows as the game would play it; the overlay gives the cut's
+//! window and seam errors, and L switches between the cut loop and the raw take (A/B).
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -15,6 +18,7 @@ use bevy::prelude::*;
 use mw_bake::anim::HumanoidTarget;
 use sf_anim_bevy::Animator;
 use sf_anim_graph::LateClip;
+use sf_anim_graph::slot::LOOP_FOREVER;
 
 use super::browse::{BrowseList, Prov, Tally, Verdict, Verdicts};
 use super::cook::{self, ClipJob};
@@ -40,8 +44,13 @@ pub(super) struct Browse {
     /// The last cook's status line, and the last verdict key's message.
     status: String,
     message: String,
-    /// The looping clip and when it last started (seconds of `Time`).
-    playing: Option<(Arc<LateClip>, f32)>,
+    /// The playing clip and when it last started (seconds of `Time`); `None` once it loops in the slot
+    /// (a cut loop, never replayed).
+    playing: Option<(Arc<LateClip>, Option<f32>)>,
+    /// Cut cycle takes into loops (L toggles; the raw take otherwise).
+    loop_cut: bool,
+    /// The last cook's loop line ([`cook::cut_text`]); empty for a clip that isn't a cycle.
+    cut: String,
 }
 
 impl Browse {
@@ -50,7 +59,18 @@ impl Browse {
         if let Err(e) = &verdicts {
             eprintln!("error: verdicts off: {e}");
         }
-        Self { list, verdicts, source, target: None, pending: true, status: String::new(), message: String::new(), playing: None }
+        Self {
+            list,
+            verdicts,
+            source,
+            target: None,
+            pending: true,
+            status: String::new(),
+            message: String::new(),
+            playing: None,
+            loop_cut: true,
+            cut: String::new(),
+        }
     }
 
     /// Y / N / M / Backspace / U; `true` if the overlay needs a refresh.
@@ -94,9 +114,11 @@ impl Browse {
             Ok(v) => (v.get(&clip.id).unwrap_or("unrated").to_owned(), tally_text(v.tally(&activity.clips)), tally_text(v.tally(self.list.activities.iter().flat_map(|a| &a.clips)))),
             Err(_) => ("(verdicts off)".to_owned(), String::new(), String::new()),
         };
+        let cut = if self.cut.is_empty() { String::new() } else { format!("{}\n", self.cut) };
+        let l = if self.loop_cut { "L: raw take" } else { "L: loop cut" };
         format!(
-            "{} ({}/{})   clip {}/{} of {} in all\n{}   band: {}   {}\nprompt: {}\nverdict: {verdict}   activity: {tally}   all: {all}   {}\n\
-             Y keep  N reject  M maybe  Bksp clear  U next unrated   Left/Right: clip   Up/Down: activity   drag: orbit   wheel: zoom",
+            "{} ({}/{})   clip {}/{} of {} in all\n{}   band: {}   {}\n{cut}prompt: {}\nverdict: {verdict}   activity: {tally}   all: {all}   {}\n\
+             Y keep  N reject  M maybe  Bksp clear  U next unrated   {l}   Left/Right: clip   Up/Down: activity   drag: orbit   wheel: zoom",
             activity.name,
             self.list.activity + 1,
             self.list.activities.len(),
@@ -156,6 +178,11 @@ pub(super) fn browse_step(
             b.message.clear();
         }
     }
+    if keys.just_pressed(KeyCode::KeyL) {
+        b.loop_cut = !b.loop_cut;
+        b.pending = true;
+        b.message = format!("loop cut {}", if b.loop_cut { "on" } else { "off: raw takes" });
+    }
     let refresh = b.verdict_keys(&keys);
     if refresh && !b.pending {
         let text = b.overlay_text();
@@ -172,16 +199,29 @@ pub(super) fn browse_step(
         let t = Instant::now();
         let job = ClipJob { file: clip.path.to_string_lossy().into_owned(), name: None, source: Some(b.source.clone()) };
         let asset = Arc::clone(&animator.asset);
+        let cycle = cook::is_cycle(&clip.rel);
+        let mut report = None;
         let cooked = cook::resolve(&job)
-            .and_then(|r| cook::cook(&r, target))
-            .and_then(|c| LateClip::new(&asset.graph, &asset.skeleton, Arc::new(c)).map_err(|e| format!("late clip: {e:?}")))
+            .and_then(|r| cook::cook_report(&r, target, b.loop_cut && cycle))
+            .and_then(|(c, r)| {
+                report = r;
+                LateClip::new(&asset.graph, &asset.skeleton, Arc::new(c)).map_err(|e| format!("late clip: {e:?}"))
+            })
             .map(Arc::new)
-            .and_then(|late| play_full(&mut animator, &mut transform, root, Arc::clone(&late), BROWSE_BLEND_IN).map(|()| late));
+            .and_then(|late| {
+                // A cut loop has a loop range: the slot loops it (the seam as the game plays it); a raw take replays below.
+                let loops = if late.clip.loop_range.is_some() { LOOP_FOREVER } else { 0 };
+                play_full(&mut animator, &mut transform, root, Arc::clone(&late), BROWSE_BLEND_IN, loops).map(|()| (late, loops > 0))
+            });
+        b.cut = if cycle { cook::cut_text(report.as_ref()) } else { String::new() };
+        if !b.cut.is_empty() {
+            println!("browse {}: {}", clip.rel, b.cut);
+        }
         b.status = match cooked {
-            Ok(late) => {
+            Ok((late, looped)) => {
                 animator.time_scale = 1.0;
                 let s = format!("{:.2} s, cooked + retargeted in {:.0} ms", late.clip.duration, t.elapsed().as_secs_f32() * 1000.0);
-                b.playing = Some((late, now));
+                b.playing = Some((late, (!looped).then_some(now)));
                 s
             }
             Err(e) => {
@@ -206,8 +246,10 @@ pub(super) fn browse_step(
     // The loop: replay from the mark just before the clip ends, inertialized from its last pose (a raw take has no
     // loop range; replaying after the end would first blend out to the idle, then cut to frame 0).
     let Some((late, started)) = b.playing.as_mut() else { return };
+    // A cut loop walks on in the slot (the floor and camera follow it); only a raw take replays.
+    let Some(started) = started else { return };
     if now - *started >= (late.clip.duration - BROWSE_REPLAY_LEAD).max(0.1) {
-        if let Err(e) = play_full(&mut animator, &mut transform, root, Arc::clone(late), BROWSE_BLEND_IN) {
+        if let Err(e) = play_full(&mut animator, &mut transform, root, Arc::clone(late), BROWSE_BLEND_IN, 0) {
             eprintln!("error: {e}");
         }
         *started = now;

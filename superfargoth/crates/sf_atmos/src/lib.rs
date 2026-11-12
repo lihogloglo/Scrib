@@ -36,7 +36,10 @@ pub mod temporal;
 mod tests;
 
 pub use density::{cirrus_at, combine_density, erode_density, evolve_field, height_gradient, weather_at, WeatherSample};
-pub use fog::{fog_fill, sky_fill, sky_fill_direction, FogBanks, FogDrift, FogLayer, FogOffsets, FogSettings, SKY_FILL_SAMPLES, VIEW_AMBIENT_IN_FOG};
+pub use fog::{
+    compose_fog_in_front, compose_fog_split, fog_fill, sky_fill, sky_fill_direction, FogBanks, FogDrift, FogLayer, FogOffsets, FogSegment, FogSettings,
+    SKY_FILL_SAMPLES, VIEW_AMBIENT_IN_FOG,
+};
 pub use froxel::{FroxelJitter, FroxelSettings, MAX_FOG_LIGHTS};
 pub use noise::{NoiseVolumes, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
 pub use scroll::CloudScroll;

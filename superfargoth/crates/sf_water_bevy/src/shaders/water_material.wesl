@@ -10,7 +10,7 @@
 // aerial perspective, clouds and fog run after the water by its depth (W-ORDER, render-order.md).
 // Optics shading follows bevy-aqua's structure (MIT OR Apache-2.0).
 
-import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_scales};
+import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_normal_scales, shore_scales};
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT;
 import bevy_pbr::render::pbr_types::{PbrInput, pbr_input_new};
@@ -184,6 +184,8 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
         discard;
     }
     let scales = shore_scales(water, sh);
+    // The normal keeps wind wavelets up to the shoreline where the displacement settles (W-SHORE).
+    let nscales = shore_normal_scales(water, sh);
     let look = look_at(in.world_position.xz);
     let to_camera = camera - in.world_position.xyz;
     let d = length(to_camera);
@@ -204,9 +206,9 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     for (var c = 0u; c < n_cascades; c++) {
         let texel = water.sizes[c] / res;
         let lod = clamp(log2(max(footprint / texel, 1e-3)), 0.0, top);
-        lost += smoothstep(0.0, 4.0, lod) * cascade_scale(c, scales);
+        lost += smoothstep(0.0, 4.0, lod) * cascade_scale(c, nscales);
         let uv = cascade_uv(water, c, in.lagrangian);
-        s += cascade_scale(c, scales) * textureSampleLevel(slopes, wave_sampler, uv, i32(c), lod);
+        s += cascade_scale(c, nscales) * textureSampleLevel(slopes, wave_sampler, uv, i32(c), lod);
         // Whitecaps from the long cascades only (the short ones fold constantly at chop scale).
         // (The displacement has no mips: foam fades out once it would alias.)
         whitecap += f32(c < 2u) * textureSampleLevel(displacement, wave_sampler, uv, i32(c), 0.0).w * scales.x * (1.0 - smoothstep(2.0, 5.0, lod));

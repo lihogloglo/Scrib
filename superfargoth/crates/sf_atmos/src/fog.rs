@@ -309,6 +309,42 @@ pub fn fog_fill(sky_fill: Vec3, view_ambient: Vec3, scale: f32) -> Vec3 {
     sky_fill + view_ambient.max(Vec3::ZERO) * scale.max(0.0)
 }
 
+/// Fog along a view ray from the camera to some distance: the radiance it in-scatters toward the
+/// eye (premultiplied) and its transmittance, as `clouds_composite` evaluates it per pixel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FogSegment {
+    /// In-scattered radiance reaching the eye.
+    pub light: Vec3,
+    /// Transmittance, 0..1.
+    pub transmittance: f32,
+}
+
+impl FogSegment {
+    /// No fog.
+    pub const CLEAR: Self = Self { light: Vec3::ZERO, transmittance: 1.0 };
+}
+
+/// The composite's output over a cloud layer (CPU twin of `cloud_composite.wesl`, WE12-FIX):
+/// `(rgb, alpha)` for the blend `rgb + alpha · scene`. `cloud` is the cloud's premultiplied
+/// radiance and `cloud_t` its transmittance; `full` is the fog to the pixel's depth, `front`
+/// the fog to the cloud's transmittance-weighted depth (`tc`, never past the pixel's depth).
+///
+/// The cloud sits inside the fog column (UE5 Volumetric Cloud, Hillaire 2016/2020): the fog in
+/// front of it dims and lights it, and only the scene behind gets the rest of the column, seen
+/// through both. With `full = front + T_f · back`, the three layers compose to
+/// `L_f + T_f · C + T_c · (L − L_f)`, alpha `T_c · T`. At `tc ≥ d` (`front == full`) this is
+/// [`compose_fog_in_front`] exactly.
+pub fn compose_fog_split(cloud: Vec3, cloud_t: f32, full: FogSegment, front: FogSegment) -> (Vec3, f32) {
+    let behind = (full.light - front.light).max(Vec3::ZERO);
+    (front.light + cloud * front.transmittance + behind * cloud_t, cloud_t * full.transmittance)
+}
+
+/// The old order (`--off cloudfog`): the whole fog column in front of the cloud,
+/// `T · C + L`, alpha `T_c · T`. Wrong from above the deck: the fog behind the cloud hides it.
+pub fn compose_fog_in_front(cloud: Vec3, cloud_t: f32, full: FogSegment) -> (Vec3, f32) {
+    (cloud * full.transmittance + full.light, cloud_t * full.transmittance)
+}
+
 #[cfg(test)]
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::float_cmp)]
 mod tests {
@@ -471,5 +507,71 @@ mod tests {
             (prev, worst) = (e, worst.max(e.abs()));
         }
         println!("sun 0-0.5 rad: worst error {:.1} %, worst change per 0.005 rad {:.2} %", worst * 100.0, step * 100.0);
+    }
+
+    /// Three explicit layers (fog to the cloud, the cloud, fog behind it) composed back to
+    /// front: the reference for the split.
+    fn layered(front: FogSegment, cloud: Vec3, cloud_t: f32, back: FogSegment) -> (Vec3, f32) {
+        let light = front.light + front.transmittance * (cloud + cloud_t * back.light);
+        (light, front.transmittance * cloud_t * back.transmittance)
+    }
+
+    fn joined(front: FogSegment, back: FogSegment) -> FogSegment {
+        FogSegment { light: front.light + front.transmittance * back.light, transmittance: front.transmittance * back.transmittance }
+    }
+
+    /// No cloud in front of the pixel's depth (`tc >= d`, so `front == full`): the old order exactly.
+    #[test]
+    fn split_reduces_to_the_old_order_without_a_cloud_in_front() {
+        let fogs = [
+            FogSegment::CLEAR,
+            FogSegment { light: Vec3::new(0.2, 0.25, 0.3), transmittance: 0.4 },
+            FogSegment { light: Vec3::splat(0.8), transmittance: 0.0 },
+        ];
+        for (cloud, cloud_t) in [(Vec3::new(0.4, 0.5, 0.6), 0.3), (Vec3::ZERO, 1.0), (Vec3::splat(2.0), 0.0)] {
+            for full in fogs {
+                assert_eq!(compose_fog_split(cloud, cloud_t, full, full), compose_fog_in_front(cloud, cloud_t, full));
+            }
+        }
+    }
+
+    /// From above the deck (WE-12): opaque fog behind the cloud keeps the cloud, dimmed only by
+    /// the fog in front of it; the old order lost it entirely.
+    #[test]
+    fn opaque_fog_behind_the_cloud_keeps_it() {
+        let cloud = Vec3::new(0.9, 0.9, 1.0);
+        let front = FogSegment { light: Vec3::splat(0.05), transmittance: 0.9 };
+        let back = FogSegment { light: Vec3::splat(0.6), transmittance: 0.0 };
+        let full = joined(front, back);
+        let (rgb, alpha) = compose_fog_split(cloud, 0.0, full, front);
+        assert_eq!(alpha, 0.0);
+        assert!((rgb - (front.light + front.transmittance * cloud)).abs().max_element() <= 1e-6, "{rgb}");
+        let (old, _) = compose_fog_in_front(cloud, 0.0, full);
+        assert!((old - full.light).abs().max_element() <= 1e-6, "old order: the cloud is gone");
+    }
+
+    /// The split equals the three layers composed explicitly, for any segments.
+    #[test]
+    fn split_matches_the_layered_composite() {
+        for i in 0..200_u32 {
+            let u = |k: u32| ((i * 37 + k * 101) % 97) as f32 / 96.0;
+            let front = FogSegment { light: Vec3::new(u(1), u(2), u(3)) * 0.5, transmittance: u(4) };
+            let back = FogSegment { light: Vec3::new(u(5), u(6), u(7)), transmittance: u(8) };
+            let (cloud, cloud_t) = (Vec3::new(u(9), u(10), u(11)) * (1.0 - u(12)), u(12));
+            let got = compose_fog_split(cloud, cloud_t, joined(front, back), front);
+            let want = layered(front, cloud, cloud_t, back);
+            assert!((got.0 - want.0).abs().max_element() <= 1e-6 && (got.1 - want.1).abs() <= 1e-6, "{got:?} vs {want:?}");
+            assert!(got.0.is_finite() && (0.0..=1.0).contains(&got.1));
+        }
+    }
+
+    /// Sanity: a front pair a hair brighter than the full one (shader rounding) never gives
+    /// negative light behind the cloud, and nothing is NaN.
+    #[test]
+    fn split_is_finite_and_never_negative() {
+        let full = FogSegment { light: Vec3::splat(0.3), transmittance: 0.5 };
+        let front = FogSegment { light: Vec3::splat(0.300_01), transmittance: 0.5 };
+        let (rgb, alpha) = compose_fog_split(Vec3::splat(0.2), 0.5, full, front);
+        assert!(rgb.is_finite() && rgb.min_element() >= 0.0 && (0.0..=1.0).contains(&alpha));
     }
 }

@@ -196,6 +196,23 @@ height clipmap gives the bed.
 **Shore effects** in the water pass and vertex shader:
 - wave attenuation: displacement × `smoothstep(0, d_shore, depth)` × openness; TMA already shortens
   waves in shallows;
+- **shore normals (W-SHORE, 2026-11-12):** the shading normal does not follow the displacement to
+  zero. The swell cascades' slopes fade with the swell; the chop cascades' slopes use
+  `normal_chop_scale = chop_open(o) · max(smoothstep(0, chop_ramp, d), normal_floor)` (`chop_open` =
+  the chop's openness factor, so a normal never beats the open-water chop of the same spot), while the
+  vertices keep `chop_scale`. `ShoreSettings::normal_floor` = 0.5; 0 is the old look
+  (`--off shorenormals`). The mip footprint (`lod`, `lost`) is unchanged and `lost` uses the normal
+  scales, so the WA-1 filtering holds. Cost: one `max` per fragment. Foam, SSPR, velocity untouched.
+  - *Reuse check:* Bevy 0.20 has no water material; the crates (`bevy_water`, Gerstner) have no shore
+    model to borrow; this is two lines in our own normal loop.
+  - *Industry comparison:* shipped oceans attenuate the **displacement** by depth or shore distance and
+    keep a **detail normal** layer near the shore: Crest's depth attenuation scales the wave shapes
+    while its normal-map detail stays; UE5's Water attenuates Gerstner waves by water depth while the
+    material's detail normals keep running; Sea of Thieves and Atlas/aqua likewise keep fine normals at
+    the waterline. Physics agrees: a wave feels the bed only where depth < λ/2 (deep-water limit), so
+    the 4 m cascade stays near full strength to ~2 m depth while the 16 m one shoals from ~8 m. One
+    floor for both chop cascades, halfway (0.5), keeps wind ripples glinting to the waterline without
+    open-sea chop on the beach, and survives the Low tier dropping the 4 m cascade.
 - shore foam: a foam band at shore distance 0-6 m modulated by a wave-phase signal travelling shoreward
   (aqua's shoreline foam), plus **contact foam** where the scene depth behind the water is within a few
   cm of the surface (rocks, piers, boats, legs);

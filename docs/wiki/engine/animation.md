@@ -51,7 +51,9 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   so the last frame is exactly the first moved by the loop's root delta. `cook_clip_report` (`cook.rs:341`) returns
   `LoopCut` (window, strides, seam errors before/after the fade, speed, turn) or a `LoopCutError` (clip left
   unlooped); `mw_bake::anim::cook_library_clip_report` (`anim.rs:157`). Rule absent: byte-identical cook. No slot
-  uses it yet. `anim.cook` step version 12. Measure: `mw_bake/tests/loop_cut.rs` (loco1 keep/maybe cycles).
+  uses it yet. `anim.cook` step version 12. Measure: `mw_bake/tests/loop_cut.rs` (loco1 keep/maybe cycles). Preview:
+  `clip-preview --browse` cooks `*.cycle.*` takes with the cut (`clip_preview/cook.rs` `cook_report`), loops them in the slot
+  (`LOOP_FOREVER`, no re-blend), overlay = `cut_text`, L = raw take A/B (`clip_preview/live.rs`).
 - **Retarget pose** (`superfargoth/crates/sf_character/src/align.rs:1-35`, rule at `:213`): auto-align turns limbs to the
   canonical T-pose (arms ±X, legs −Y) but the trunk (hips, spine, neck, head) keeps each rig's own rest curvature
   (UE5's matched retarget pose, 2026-11-12), so a clip carries the source's change from rest onto Morrowind's bind;

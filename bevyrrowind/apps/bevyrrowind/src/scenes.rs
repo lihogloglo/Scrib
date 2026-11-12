@@ -1,4 +1,4 @@
-//! Named test scenes for visual checks (CLAUDE.md rule 5,
+//! Named test scenes for visual checks (CONTRIBUTING.md "Tests and visual checks",
 //! `docs/visual-checks.md`): `bevyrrowind scene <name>` opens the
 //! interactive viewer at a scene from `scenes.ron`, `scene --list` lists them.
 //!

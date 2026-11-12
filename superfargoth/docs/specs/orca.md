@@ -91,7 +91,7 @@ The static query world isn't used (it holds no dynamic agents).
   0.054–0.056 ms median (≤ 0.068 p95); 150 in a 12 × 12 m square 0.087–0.089 ms median (≤ 0.112
   p95). Budget 0.1 ms; the test asserts the median, so it fails while another build loads the machine.
 
-**Reuse order** (superfargoth CLAUDE.md rule 8). Bevy 0.20 has no avoidance. Crates: `dodgy_2d`
+**Reuse order** (CONTRIBUTING.md "How we decide what to build" 2). Bevy 0.20 has no avoidance. Crates: `dodgy_2d`
 0.5.5 (MIT/Apache, a tested ORCA port of RVO2 with obstacles) was evaluated and not taken: it
 pins glam 0.29 and rand 0.9 (we are on glam 0.33 and rand 0.10: two extra crate families in both
 workspaces, against the compile-time rule §8b), calls `rand::random()` for coincident agents

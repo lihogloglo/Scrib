@@ -1,0 +1,12 @@
+# History: design docs that are no longer current truth (CONTRIBUTING.md "Find your way", step 5).
+# Hidden from default searches (ripgrep, VS Code search, agent Grep/Glob tools) so they don't drown the wiki and
+# ledger. Still there on demand: open a file by path, search inside one of these folders by path, or search
+# everything with `git grep` / `rg --no-ignore-dot`. Nothing here is deleted; superseded docs move to `archive/`.
+**/archive/
+**/research/
+docs/briefs/
+bevyrrowind/docs/test-pass-handoffs/
+**/*-history.md
+superfargoth/docs/specs/weather/history.md
+superfargoth/docs/DECISIONS-superseded.md
+bevyrrowind/docs/CHANGELOG.md

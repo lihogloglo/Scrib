@@ -20,7 +20,7 @@ too milky turquoise (W1 placeholder optics, tuned at W3), whitecaps at storm win
 - Owner 2026-10-30 (`scene wa-seyda-noon`): distant moiré gone (fixed). Still missing: rain ripples on the water and
   ripples from moving bodies (Phase 4 water polish / PR2 splashes).
 - Owner 2026-11-12 (Seyda Neen thunderstorm): (2) shore foam still bad, (3) water fully flat next to the shore: wants
-  wavelets from the normals even where vertex displacement stops. Code: the shading normal uses the same shore scales as
+  wavelets from the normals even where vertex displacement stops (fix W-SHORE, check WA-4). Code: the shading normal uses the same shore scales as
   the displacement (`water_material.wesl:207-209`, `shore_scales` chop -> 0 at the line, `water_common.wesl:52`). Rain
   goes over the water but makes no ripples; floating or wading bodies make none either.
 
@@ -53,3 +53,13 @@ Bad: smeared streaks or stretched copies at screen edges; a hard cut where a ref
 to the sky reflection); flicker or crawling when still or panning; anything under the water (seabed, hull bottoms)
 mirrored; reflections on a lake or pool at another level than the nearest one. Known: reflections are unfogged (the fog
 over the water covers them), off-screen and occluded things fall back to the sky.
+
+### WA-4: Wavelets at the shore (W-SHORE; `scene wa-seyda-noon`, `wa-bittercoast`; A/B `--off shorenormals`)
+
+Status: awaiting owner. Kind: real game locations, High preset, the scenes' own time and weather.
+Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-seyda-noon`, then `scene wa-bittercoast`; A/B: the same with
+`--off shorenormals` (the old look: the normal flattens with the displacement). Fixes WA-1 (3) "100 % flat at the shore".
+Look for: small wind ripples glinting and moving right up to the waterline on the Seyda Neen beach and the Bitter Coast
+banks; the swell (big slow waves) still dying out over the last tens of metres, the surface itself not bobbing at the
+sand; no flat mirror strip along the shore. Bad: shimmer, sparkle noise or moiré on the near-shore or far water; open-sea
+chop on the beach; a visible line where the ripples start. Foam and reflections should look unchanged.
