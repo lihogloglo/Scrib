@@ -186,6 +186,16 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Strength 0.5 (owner 2026-11-05) is baked in: a new strength needs a re-bake.
 - Status: awaiting owner. Source: rtx-borrow D-2b.
 
+### TX-1: Normal maps from packs (textures T4, 2026-11-11)
+- Kind: game location. Needs a normal-map pack installed as a mod (MVR PBR v2 Beta or Tamrielic PBR West Gash; census in
+  `textures-adapter.md` §7) and a fresh `bevyrrowind bake` (line `texture.cook: ... N normal companions`, N > 0).
+- Runs: `view "Balmora" --hour 7` and `--hour 18` (low sun raking across house walls and paving), then
+  `view "Seyda Neen, Census and Excise Office"` (lamp light on walls). No `--off normals` A/B yet (needs main.rs/perf.rs).
+- Look for: relief that moves with the light on pack-textured walls/floors; bumps not inverted (lit side faces the sun);
+  no shimmer or sparkle at distance; no hard seams where a texture is mirrored (symmetric trims, statues).
+- Not covered: NPC/creature bodies (assembly carries no tangents yet), terrain (T5/T6).
+- Status: awaiting owner. Source: textures T4.
+
 ### SS-matclass: Static material classes look unchanged (static-scene S2, 2026-11-08)
 - Kind: game location, A/B. Runs: `view "Balmora" --hour 14` and `view "Seyda Neen" --hour 14`, each default and
   restarted with `--off matclass` (old materials, one sampler per image). Default should look identical.
@@ -223,7 +233,6 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Look for: every building, rock, fence and tree present with `--scene` (none missing, none flickering or z-fighting
   as a double draw); after crossing ~256 m nothing jumps or drifts (origin shift, O1); doors, containers, lights and
   scripted objects still entities (interactable); cutouts as SC-foliage. Log: no `sf_scene_bevy` errors, no `is full` warning.
-- Status: awaiting owner.
 - Status: owner 2026-11-11: "seems perfect": nothing missing or popping; a subtle flicker now and then, maybe shadows or fog
   (unattributed: compare in sc-noscene); felt faster, no FPS counter in the overlay to tell. Log: 883 `batch ... @exterior is
   full (4096 slots)` warnings (the overflow spawns as entities, so the batch is undersized for Balmora, and the warn-once
@@ -247,6 +256,7 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Kind: game location, A/B. Run: `scene sc-scene-night` (Balmora 22:00, `--scene`); A/B: `scene sc-noscene` then `[`/`]` to night.
 - Look for: lamps cast shadows of buildings and walls, steady (no flicker or popping); walk into a new cell: its statics cast
   lamp shadows within ~2 s; shadows of cells left behind clear. Same shadows as without `--scene`.
+- Status: awaiting owner.
 
 ### RO-18: Grass and foliage floating in the sky (owner report 2026-11-11)
 - Seen in `scene sc-scene` and `scene sc-noscene` (Balmora 14:00), so not the static scene: fly up high and grass/foliage

@@ -1580,6 +1580,215 @@ mod tests {
         }
     }
 
+    /// Resolves a chain's slabs from its mesh key: two slab pairs, so each material class splits
+    /// over two batches, as the dense-town gauges showed (2026-11-12).
+    struct TwoSlabPairs;
+
+    impl ChainSlabs for TwoSlabPairs {
+        fn slabs(&self, _chain: ChainSlot, _level: u8) -> Option<DrawSlabs> {
+            None
+        }
+        fn slabs_keyed(&self, key: ChainKey, _chain: ChainSlot, _level: u8) -> Option<DrawSlabs> {
+            let pair = u32::from(key & 2 == 2);
+            Some(DrawSlabs { vertex_slab: pair, index_slab: pair, bind_group: 0 })
+        }
+    }
+
+    fn xorshift(seed: u64) -> impl FnMut() -> u64 {
+        let mut state = seed | 1;
+        move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        }
+    }
+
+    fn cell_hash(x: i32, y: i32) -> u64 {
+        let x = u64::from(u32::from_ne_bytes(x.to_ne_bytes()));
+        let y = u64::from(u32::from_ne_bytes(y.to_ne_bytes()));
+        (x.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ y.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)).rotate_left(29) | 1
+    }
+
+    /// Distinct meshes of the synthetic town.
+    const TOWN_CHAINS: u64 = 2200;
+
+    /// A dense-town cell, shaped on the Balmora walk of 2026-11-12 (~770 instances and ~236
+    /// (chain, level) buckets per cell, ~3.3 instances per bucket, ~1.6k chains live over 25
+    /// cells, four batches): `distinct` meshes whose rank is log-uniform over the town's meshes
+    /// (density ~1/rank, as mesh reuse is), 40 % of them shifted by a per-4x4-district offset so
+    /// neighbouring cells share their district's meshes; 1 + geometric(0.7) instances of each;
+    /// every seventh mesh masked, the rest opaque.
+    fn town_cell(x: i32, y: i32) -> Vec<u8> {
+        let mut rng = xorshift(cell_hash(x, y));
+        let district = cell_hash(x.div_euclid(4), y.div_euclid(4)) % TOWN_CHAINS;
+        let distinct = usize::try_from(160 + rng() % 151).unwrap();
+        let mut counts: BTreeMap<u64, u32> = BTreeMap::new();
+        while counts.len() < distinct {
+            let bits = rng() % 12;
+            let rank = ((1u64 << bits) + rng() % (1u64 << bits) - 1) % TOWN_CHAINS;
+            let id = if rng() % 10 < 4 { (rank + district) % TOWN_CHAINS } else { rank };
+            if counts.contains_key(&id) {
+                continue;
+            }
+            let mut n = 1;
+            while rng() % 100 < 70 && n < 40 {
+                n += 1;
+            }
+            counts.insert(id, n);
+        }
+        let chains: Vec<ChainSpec> = counts
+            .keys()
+            .map(|&id| {
+                let class = if id % 7 == 0 { MaterialClass::Masked } else { MaterialClass::Opaque };
+                (0x1000 + id, 0, u32::try_from(id).unwrap(), class)
+            })
+            .collect();
+        let mut instances: Vec<(PlacementId, u32)> = Vec::new();
+        for (local, &n) in (0u32..).zip(counts.values()) {
+            for _ in 0..n {
+                instances.push((u32::try_from(instances.len()).unwrap(), local));
+            }
+        }
+        table_bytes(&["meshes/town.mdl"], &chains, &instances)
+    }
+
+    /// What one town walk measured, each sampled after every step past the first 50.
+    #[derive(Debug, Default)]
+    struct TownWalk {
+        /// Opaque and masked high water, each summed over its two batches.
+        class_high_water: [u32; 2],
+        /// Mean and peak of the range lists' lengths, summed over the batches.
+        ranges_mean: f64,
+        ranges_max: u32,
+        /// Mean of the live blocks (one per (cell, chain, level)), summed over the batches.
+        blocks_mean: f64,
+        /// Mean of the live chain levels (one batch each).
+        chains_mean: f64,
+        peak_live: u32,
+        high_water: u32,
+        overflow_instances: u32,
+        batches: u32,
+    }
+
+    /// Every live instance's slot lies in a range of its own chain level, and the live blocks of
+    /// a batch are disjoint: what `batch_ranges` must keep whatever the allocator does.
+    fn assert_instances_draw_their_chain(s: &SceneSpace) {
+        let ranges: Vec<Vec<RangeSpec>> = (0..s.stats().batches).map(|b| s.batch_ranges(b)).collect();
+        for (batch, list) in (0u32..).zip(&ranges) {
+            assert_partitions(list, s.batch_capacity(batch));
+        }
+        let mut taken: BTreeMap<(BatchId, u32), IVec3> = BTreeMap::new();
+        for (cell, residency) in s.cells() {
+            for &(batch, block, chain, level) in &residency.blocks {
+                let list = &ranges[batch as usize];
+                for slot in block.start..block.end() {
+                    assert!(taken.insert((batch, slot), cell).is_none(), "slot {slot} of batch {batch} taken twice");
+                    let range = list
+                        .iter()
+                        .find(|r| r.first_slot <= slot && slot < r.first_slot + r.slot_count)
+                        .expect("a partition covers every slot");
+                    assert_eq!((range.chain, range.level), (chain, level), "slot {slot} of batch {batch}");
+                }
+            }
+            let in_blocks = residency.batch_slots.iter().filter(|&&slot| slot != NO_SLOT).count();
+            let block_slots: u32 = residency.blocks.iter().map(|&(_, block, ..)| block.len).sum();
+            assert_eq!(in_blocks, block_slots as usize, "every slotted instance is in one of its cell's blocks");
+        }
+    }
+
+    /// A 5x5 ring around a player walking a 40x40 town for `steps` steps (a step moves one cell,
+    /// turning one time in four, bouncing off the edges): five cells in and five out per step,
+    /// one frame each, `PerClass` batches at the default capacities.
+    fn town_walk(steps: u32, check: bool) -> TownWalk {
+        let mut tables: BTreeMap<[i32; 2], Vec<u8>> = BTreeMap::new();
+        let mut s = SceneSpace::new(SpaceConfig::default());
+        let mut rng = xorshift(0x5EED);
+        let (mut x, mut y, mut dx, mut dy) = (20i32, 20i32, 1i32, 0i32);
+        let mut walk = TownWalk::default();
+        let (mut ranges_sum, mut blocks_sum, mut chains_sum, mut samples) = (0u64, 0u64, 0u64, 0u32);
+        for step in 0..steps {
+            s.advance(u64::from(step));
+            if rng() % 4 == 0 {
+                (dx, dy) = [(1, 0), (-1, 0), (0, 1), (0, -1)][usize::try_from(rng() % 4).unwrap()];
+            }
+            if !(2..38).contains(&(x + dx)) || !(2..38).contains(&(y + dy)) {
+                (dx, dy) = (-dx, -dy);
+            }
+            (x, y) = (x + dx, y + dy);
+            let out: Vec<IVec3> = s.cells().map(|(c, _)| c).filter(|c| (c.x - x).abs() > 2 || (c.y - y).abs() > 2).collect();
+            for cell in out {
+                s.plan_out(cell).expect("a resident cell");
+            }
+            for cy in y - 2..=y + 2 {
+                for cx in x - 2..=x + 2 {
+                    let cell = IVec3::new(cx, cy, 0);
+                    if s.resident(cell).is_some() {
+                        continue;
+                    }
+                    let bytes = tables.entry([cx, cy]).or_insert_with(|| town_cell(cx, cy));
+                    let view = StaticCellTableView::parse(bytes).expect("a valid table");
+                    let plan = s.plan_in(cell, &view, &TwoSlabPairs).expect("the walk never fails");
+                    s.commit_in(cell, &plan);
+                }
+            }
+            if check {
+                assert_instances_draw_their_chain(&s);
+            }
+            let stats = s.stats();
+            walk.peak_live = walk.peak_live.max(stats.batch_live_slots);
+            if step >= 50 {
+                let ranges: u32 = (0..stats.batches).map(|b| u32::try_from(s.batch_ranges(b).len()).unwrap()).sum();
+                let blocks: u32 = s.batches.iter().map(|b| b.slots.stats().live_ranges).sum();
+                walk.ranges_max = walk.ranges_max.max(ranges);
+                ranges_sum += u64::from(ranges);
+                blocks_sum += u64::from(blocks);
+                chains_sum += u64::from(stats.chains.live);
+                samples += 1;
+            }
+        }
+        let stats = s.stats();
+        let mean = |sum: u64| if samples == 0 { 0.0 } else { f64::from(u32::try_from(sum).unwrap()) / f64::from(samples) };
+        walk.ranges_mean = mean(ranges_sum);
+        walk.blocks_mean = mean(blocks_sum);
+        walk.chains_mean = mean(chains_sum);
+        walk.high_water = stats.batch_high_water;
+        walk.overflow_instances = stats.overflow_instances;
+        walk.class_high_water = [MaterialClass::Opaque, MaterialClass::Masked].map(|c| stats.classes[c as usize].high_water);
+        walk.batches = stats.batches;
+        walk
+    }
+
+    #[test]
+    fn a_town_walk_keeps_every_instance_on_its_chain() {
+        let walk = town_walk(120, true);
+        assert_eq!(walk.overflow_instances, 0, "{walk:?}");
+        assert_eq!(walk.batches, 4, "two classes over two slab pairs");
+        assert!(walk.ranges_mean > 0.0 && walk.chains_mean > 0.0);
+    }
+
+    #[test]
+    #[ignore = "measurement: geometry ranges per batch on a town walk (prints them)"]
+    fn town_walk_ranges() {
+        for steps in [300u32, 2_000, 10_000] {
+            let w = town_walk(steps, false);
+            println!(
+                "{steps:>6} steps: ranges mean {:>7.1} max {:>5}  blocks mean {:>7.1}  live chains {:>7.1}  \
+                 ranges/chain {:.2}  high water {:>6}  peak live {:>6} ({:.2}x)  overflow {}  opaque/masked high water {:?}",
+                w.ranges_mean,
+                w.ranges_max,
+                w.blocks_mean,
+                w.chains_mean,
+                w.ranges_mean / w.chains_mean,
+                w.high_water,
+                w.peak_live,
+                f64::from(w.high_water) / f64::from(w.peak_live),
+                w.overflow_instances,
+                w.class_high_water
+            );
+        }
+    }
+
     #[test]
     fn an_empty_table_is_resident_without_a_slot() {
         // A cell with no instance and no chain: valid (a cell of nothing but terrain).

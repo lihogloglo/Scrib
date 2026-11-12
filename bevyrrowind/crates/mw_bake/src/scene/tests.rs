@@ -160,7 +160,7 @@ fn fingerprint_follows_scripts_rules_and_texture_classes() {
 /// stays an entity under the same placement id; a plain rock goes in whole.
 #[test]
 fn mixed_opaque_and_blended_model_splits() {
-    let sub = |material, vertex_count, index_count| CookedSubmesh { material, vertex_count, index_count, vertices: Vec::new(), indices: Vec::new() };
+    let sub = |material, vertex_count, index_count| CookedSubmesh { material, vertex_count, index_count, vertices: Vec::new(), indices: Vec::new(), tangents: Vec::new() };
     let cooked = |materials, submeshes| CookedModel {
         bounds: Aabb { min: [-1.0; 3], max: [1.0; 3] },
         has_normals: true,
@@ -275,7 +275,7 @@ fn bake_scene_refuses_to_run_before_the_textures() {
 /// assumption before the classes existed — the gauze would be in the table drawn alpha-tested.
 #[test]
 fn the_texture_class_decides_which_candidates_reach_the_table() {
-    let sub = |material, vertex_count, index_count| CookedSubmesh { material, vertex_count, index_count, vertices: Vec::new(), indices: Vec::new() };
+    let sub = |material, vertex_count, index_count| CookedSubmesh { material, vertex_count, index_count, vertices: Vec::new(), indices: Vec::new(), tangents: Vec::new() };
     let one_part = |m: Material| CookedModel {
         bounds: Aabb { min: [-1.0; 3], max: [1.0; 3] },
         has_normals: true,

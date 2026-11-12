@@ -49,7 +49,7 @@ A frame costs about the slower CPU lane plus extract (~1.5 ms), or the GPU, whic
   groups per frame (`vendor/bevy_pbr/src/render/gpu_preprocess.rs:2560`). Suspicion, unconfirmed: cached lamp faces
   that lost `RootNonCameraView` (`sf_shadow_cache_bevy/src/render.rs:277`) never get `SkipRootViewRendering`
   (`light.rs:1445` filters on that marker), so they may still pay view uniforms and bind groups.
-- **GPU**: forward, MSAA off, full depth prepass, 3 PCSS cascades with the temporal filter, 16-step contact shadows
+- **GPU**: forward, MSAA off, full depth prepass (no occlusion culling by default: `OcclusionCulling` is behind `--prepass`, `exterior.rs:782`), 3 PCSS cascades with the temporal filter, 16-step contact shadows
   for the sun and the 8 budgeted lamps, GTAO medium. The sky env map refreshes every 8th frame but
   `sf_diag::pacing::derive_work` forward-fills it, so **"timed GPU" reads ~0.6 ms too high** (and the per-pass mean
   is over frames where the pass ran). Sun cascades are not timed usefully (`per_view_shadow_pass` 0.02 ms).
@@ -160,3 +160,10 @@ night. Free; the 0.3-0.8 ms guess (item 11) was wrong. Not checked: that the ima
 - **Lamp shadows move up**: 1.8 ms at night, main thread included, so options 2 and 5 both matter.
 - Option 11 is dropped. Order by measured ms on the walk: static scene (≤ 3), actors (≤ 2.2), lamp shadows at night
   (≤ 1.8), sun cascades (≤ 1.5, option 1).
+
+**Occlusion culling** (`--prepass` = Bevy `OcclusionCulling` on the main view; `balmora_walk`, 2 interleaved runs each,
+`target/perf/au_occ/`): frame 10.91 / 11.94 without, 12.01 / 11.60 with; main opaque 1.41-1.46 → 1.41-1.44 ms, early
+prepass 0.52 → 0.50, plus 0.15 ms of new passes (depth downsample 0.09, late preprocessing 0.05). **No gain at eye
+height either**: the depth prepass already removes hidden shading, and Bevy's occlusion cull runs after the CPU has
+queued every item, so it cannot help the CPU lanes. Occlusion only pays here if it removes CPU work (static scene S6
+on the table, or a CPU-side cell/portal cull).

@@ -54,7 +54,7 @@ fn material(alpha: AlphaMode, double_sided: bool) -> Material {
 /// A submesh with counts only (no vertex data: these tests hand [`build_cell_table`] the part
 /// spheres; [`part_spheres`] is tested on a real cook).
 fn sub(material: u32, vertex_count: u32, index_count: u32) -> CookedSubmesh {
-    CookedSubmesh { material, vertex_count, index_count, vertices: Vec::new(), indices: Vec::new() }
+    CookedSubmesh { material, vertex_count, index_count, vertices: Vec::new(), indices: Vec::new(), tangents: Vec::new() }
 }
 
 fn model(materials: Vec<Material>, lods: Vec<(f32, Vec<CookedSubmesh>)>) -> CookedModel {
