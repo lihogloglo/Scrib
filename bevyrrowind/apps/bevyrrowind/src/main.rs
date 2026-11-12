@@ -442,9 +442,11 @@ impl ViewFlags {
         self.hour.unwrap_or(10.0)
     }
 
-    /// `vfs` with the de-lit texture layer on top unless `--off delight` (`mw_boot_bevy::delight`).
+    /// `vfs` with the packed menu frames (`mw_boot_bevy::ui_frames`, from the mods' pieces) and
+    /// the de-lit texture layer on top unless `--off delight` (`mw_boot_bevy::delight`).
     fn delight(&self, install: &MorrowindInstall, vfs: Vfs) -> Result<Vfs> {
         let enabled = !Off::from_flags(&self.perf.off)?.has(Part::Delight);
+        let vfs = mw_boot_bevy::ui_frames::mount(vfs);
         Ok(mw_boot_bevy::delight::mount(install, vfs, self.cache.clone(), enabled))
     }
 
@@ -595,6 +597,9 @@ impl ViewFlags {
             actors: None,
             level: None,
             start_in_main_menu: false,
+            movies: mw_exterior_bevy::main_menu::MenuMovies::from_ini(|key| {
+                install.ini.as_ref().and_then(|ini| ini.get("Movies", key))
+            }),
             bodies: self.bodies,
             cloth: self.cloth,
             worldspace,
@@ -888,10 +893,11 @@ struct DefaultFlags {
     flags: ViewFlags,
 }
 
-/// `vfs` with the de-lit texture layer unless `BEVYRROWIND_OFF` names `delight` (commands
-/// without `--off`).
+/// `vfs` with the packed menu frames (`mw_boot_bevy::ui_frames`) and the de-lit texture layer
+/// unless `BEVYRROWIND_OFF` names `delight` (commands without `--off`).
 fn delight_from_env(install: &MorrowindInstall, vfs: Vfs, cache: Option<PathBuf>) -> Result<Vfs> {
     let enabled = !Off::from_flags(&[])?.has(Part::Delight);
+    let vfs = mw_boot_bevy::ui_frames::mount(vfs);
     Ok(mw_boot_bevy::delight::mount(install, vfs, cache, enabled))
 }
 

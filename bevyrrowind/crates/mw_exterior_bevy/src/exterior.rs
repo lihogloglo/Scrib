@@ -143,6 +143,8 @@ pub struct ExteriorOptions {
     /// game builds it (`phase.rs`, `main_menu.rs`). Dev runs (`view`, `scene`) leave it off and
     /// go straight to loading.
     pub start_in_main_menu: bool,
+    /// `Morrowind.ini` `[Movies]` names: the menu backdrop video (and later the intro videos).
+    pub movies: crate::main_menu::MenuMovies,
 }
 
 #[derive(Resource)]
@@ -312,7 +314,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
 
     // Cooked materials map exactly like the NIF path's.
     let mapper_vfs = vfs.clone();
-    app.insert_resource(ModelMaterials(Arc::new(move |m, server| mw_assets::cooked::cooked_material(m, &mapper_vfs, server))));
+    app.insert_resource(ModelMaterials(Arc::new(mw_assets::cooked::material_mapper(mapper_vfs))));
 
     // The night exposure floor and ambient (LightCalibration, owner option A).
     let mut settings = SkySettings::default();
@@ -546,10 +548,16 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     mw_rpg_bevy::inventory_ui::add(&mut app, options.open_ui.as_deref() == Some(mw_rpg_bevy::inventory_ui::SCREEN));
     // The pause (escape) menu and the options screen (`pause_menu.rs`; after the UI plugins).
     crate::pause_menu::add(&mut app);
-    // Video players (video.md): the main menu's backdrop video.
+    // Video players (video.md): the intro videos and the main menu's backdrop video.
     app.add_plugins(sf_video_bevy::VideoPlugin);
-    // The release start's main menu (`main_menu.rs`; after the pause menu, whose clock it shares).
+    // The release start's main menu (`main_menu.rs`; after the pause menu, whose clock it shares),
+    // over the backdrop the ini names.
+    app.insert_resource(crate::main_menu::MenuBackdropCandidates(crate::main_menu::backdrop_candidates(
+        options.movies.options_menu.as_deref(),
+    )));
     crate::main_menu::add(&mut app, options.start_in_main_menu);
+    // Its intro videos in Boot, before the menu (`intro.rs`; release start only).
+    crate::intro::add(&mut app, options.start_in_main_menu, &options.movies);
     // Its loading screen while the world builds (`loading_screen.rs`; release start only).
     crate::loading_screen::add(&mut app, options.start_in_main_menu);
     // ROADMAP 2.5: quicksave / quickload (`saves.rs`; after the RPG host, the overlay and the keymap).

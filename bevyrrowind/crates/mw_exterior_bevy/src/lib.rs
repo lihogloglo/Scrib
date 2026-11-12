@@ -6,6 +6,7 @@
 
 pub mod exterior;
 mod gi_volume;
+mod intro;
 mod teardown;
 pub mod level;
 mod loading_screen;

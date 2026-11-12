@@ -102,6 +102,7 @@ RO-15 | confirmed (2026-11-02: 0.3 too faint, 1.0 liked, kept 0.5) | [rendering]
 RO-16 | 2026-11-06: ground better (fix 1, N1), moonlight OK (N3); night too lit (closer to OpenMW), Secunda not visible; fix 2, N2 unconfirmed; noon not checked | [rendering](visual-checks/rendering.md) | Terrain "veil" at grazing angles, blue-grey at night: name the console switch that lifts it (`scene ro16-terrain-veil`)
 RO-17 | parked (owner 2026-11-06) | [rendering](visual-checks/rendering.md) | Tree leaves reflect as one flat panel in the light colour, leaf texture lost (2026-11-05)
 TX-delight | awaiting owner | [rendering](visual-checks/rendering.md) | De-lit albedo textures: no double-dark corners, no colour shift or BC7 blocks, cutouts keep coverage (`--off delight` A/B)
+TX-1 | awaiting owner | [rendering](visual-checks/rendering.md) | Normal maps from packs: relief under low sun / lamp light, no inverted bumps, no shimmer, no mirrored-UV seams (pack installed + re-bake; no A/B yet)
 SS-matclass | awaiting owner | [rendering](visual-checks/rendering.md) | Static material classes: every static looks as with `--off matclass` (textures, cutout edges, two-sided leaves, glow) in Balmora and Seyda Neen
 SC-scene | owner: matches sc-noscene (2026-11-11); floating foliage + shadow flicker are not from --scene; 883 batch-full warnings; perf: ~2-3 ms SLOWER on (batch overflow) | [rendering](visual-checks/rendering.md) | Static scene (`--scene`): every static present, no double draw, nothing jumps after a 256 m walk; doors/lights stay entities
 SC-lamps | awaiting owner | [rendering](visual-checks/rendering.md) | Lamp shadows of `--scene` statics at night: present, steady, recapture after a new cell (scene sc-scene-night)
@@ -147,7 +148,10 @@ PM-1 | confirmed with follow-up (2026-10-30: mouse sliders, mute icon, Main menu
 SV-2 | confirmed with follow-up (2026-10-30: thumbnails missing) | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)
 HD-1 | confirmed (2026-10-30) | [player-ui](visual-checks/player-ui.md) | Minimal HUD: bars, compass, crosshair, use prompt
 HD-2 | confirmed (2026-11-05: bars ok; dummy health log to re-confirm) | [player-ui](visual-checks/player-ui.md) | Bars follow damage and regen (stats S5: bars from the player's sheet)
-MM-1 | awaiting owner (F1 2026-11-11: menu with no world; was rejected 2026-10-30) | [player-ui](visual-checks/player-ui.md) | Release start: main menu with no world behind it, New game
+MM-1 | confirmed with follow-up (2026-11-11: flow works; look crude, text over grey boxes, not Morrowind/OpenMW) | [player-ui](visual-checks/player-ui.md) | Release start: intro logos, main menu with no world behind it, New game
+OP-1 | confirmed with follow-up (2026-11-11: works; a plain list, needs real widget art); S2b1 description pane awaiting owner | [player-ui](visual-checks/player-ui.md) | Options rows: mouse-drag sliders, checkboxes (S2a, PM-1 follow-up)
+LK-1 | owner: issues (submenus overlap) | [player-ui](visual-checks/player-ui.md) | Look pass L1: OpenMW frames on windows, boxes, framed buttons
+LK-2 | owner: issues (Continue style) | [player-ui](visual-checks/player-ui.md) | Look pass L2: title menu as OpenMW image buttons, version text
 FG-9 | confirmed (2026-11-02: no pillar; god rays still not visible, FG-10) | [weather-sky](visual-checks/weather-sky.md) | Vertical light pillar toward a low sun in fog: isotropic sky fill (fix built 2026-11-02)
 FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)
@@ -185,18 +189,19 @@ GF-1 | known bug | [rendering](visual-checks/rendering.md) | Ghostfence appears 
 DL-4 | known bug | [rendering](visual-checks/rendering.md) | Rug-edge black bands under RT
 RO-11 | confirmed (owner 2026-11-01: gone) | [rendering](visual-checks/rendering.md) | Black ground bands that move with the camera (2026-10-30)
 RO-12 | known bug | [rendering](visual-checks/rendering.md) | Bright outline around characters (2026-10-30)
+RO-18 | known bug | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
+RO-19 | known bug | [rendering](visual-checks/rendering.md) | Very short shadow flickers in Balmora (2026-11-11)
 PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the Census Office floor (again 2026-10-30)
 PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)
 CB-3 | confirmed (2026-11-05; follow-up: new sword attack clips) | [combat](visual-checks/combat.md) | F draws a visible sword; sheathed clicks do nothing; draw / sheathe clips, sword at the attach key (2026-11-05)
 CB-3a | awaiting owner | [combat](visual-checks/combat.md) | Sparring dummy strikes on a beat; player hit reactions by side in third and first person, free look in a reaction (scene level-sparring, 2026-11-10)
-RO-18 | known bug | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
-RO-19 | known bug | [rendering](visual-checks/rendering.md) | Very short shadow flickers in Balmora (2026-11-11)
 CB-3b | awaiting owner | [combat](visual-checks/combat.md) | Guard (hold right mouse / L1) in third and first person: front hits guarded (no reaction, stamina dip), back hits not, guard break at 0 stamina; body follows the view in first person (scene level-sparring, 2026-11-10)
 CB-5 | awaiting owner | [combat](visual-checks/combat.md) | First-person melee: swings where you look, soft aim bends onto the dummy, no lock in first person (scene level-arena, 2026-11-10)
 CB-5b | awaiting owner | [combat](visual-checks/combat.md) | First-person attack look limits: the view stops ~45 deg off the body mid-swing, released at recovery; view model on and off (scene level-arena, 2026-11-10)
 PL-6 | awaiting owner (2026-10-30: hard-landing lock removed until fall damage) | [player-ui](visual-checks/player-ui.md) | Recovery delay after jumping down from a high box (2026-10-30)
-PL-7 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Player foot placement on slopes and stairs, K A/B (P-IK1, 2026-11-11)
-PL-8 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Pause menu freezes all animation (walkers on stairs, the player at a wall), no pop on resume (P-IK2, 2026-11-11)
+PL-7 | partial (owner 2026-11-11 re-test: feet on the ground OK; stop pops a leg back + hip rise, arms point back on slopes, head too tilted; locomotion rethink) | [player-ui](visual-checks/player-ui.md) | Player foot placement on slopes and stairs, K A/B (P-IK1, 2026-11-11)
+PL-8 | awaiting owner (pause not tested 2026-11-11; stairs IK issues logged: leg snap, wide steps on stairs, arms behind back) | [player-ui](visual-checks/player-ui.md) | Pause menu freezes all animation (walkers on stairs, the player at a wall), no pop on resume (P-IK2, 2026-11-11)
+PL-9 | confirmed (owner 2026-11-11: "seems ok") | [player-ui](visual-checks/player-ui.md) | Sharp 90/180° turns at walk and run on flat and ramps: the planted foot lets go instead of the legs spreading, K A/B (P-IK5, 2026-11-11)
 FP-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person shows body, arms and weapon with the head hidden (2026-11-10)
 FP-1b | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person: the player's shadow keeps its head under sun, lamps and a torch, raster and RT (2026-11-10)
 FP-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First-person view model (`flip viewmodel`): weapon and arms at the body FOV, never in walls, lit like the world, no DLSS/TAA smear; shader-compile log line (2026-11-10)

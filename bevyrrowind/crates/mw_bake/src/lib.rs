@@ -22,9 +22,11 @@ pub mod anim;
 pub mod body;
 pub mod census;
 pub mod collision;
+pub mod cook;
 pub mod delight;
 mod importer;
 mod inputs;
+pub mod nav;
 mod summary;
 pub mod far;
 pub mod script;
@@ -33,6 +35,7 @@ pub mod sources;
 pub mod ragdoll;
 pub mod texture_profiles;
 pub mod textures;
+pub mod ui_frames;
 pub mod world;
 
 pub use importer::{DROP_FRACTION, Dynamic, NifImporter, dynamic_parts, extras, to_model};
@@ -149,9 +152,9 @@ pub fn model_baker(store: Store, inputs: Arc<VfsInputs>) -> Baker {
     let mut baker = Baker::new(store, inputs);
     baker
         .register(ModelInfoStep { importers: importers() })
-        .register(MeshCookStep { importers: importers(), settings: CookSettings::default() })
-        .register(MeshRestStep { importers: importers(), settings: CookSettings::default() })
-        .register(MeshRigStep { importers: importers(), settings: CookSettings::default() });
+        .register(MeshCookStep { importers: importers(), settings: CookSettings::default(), tangents: Some(cook::tangent_rule()) })
+        .register(MeshRestStep { importers: importers(), settings: CookSettings::default(), tangents: Some(cook::tangent_rule()) })
+        .register(MeshRigStep { importers: importers(), settings: CookSettings::default(), tangents: Some(cook::tangent_rule()) });
     collision::register(&mut baker);
     body::register(&mut baker);
     baker

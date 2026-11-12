@@ -1809,9 +1809,20 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-11 (static scene O1): an origin shift rewrites every resident cell's batch slots **in the shift frame**
   (`sf_scene_bevy::rewrite_on_origin_shift`, ~3.5 MB at 55k instances), not spread over frames (plan §5.4's
   `shift_rewrite_bytes`, removed: it would tear). A per-batch origin delta in `materialize.wesl` is the later O(1) fix.
+- 2026-11-11 (nav, owner): NPCs will climb, mantle and vault with the player's own moves, so guards can follow onto
+  roofs. Later (after NV9): bake-time auto traversal links from ledges in the mover's envelopes, per agent class.
+- 2026-11-11 (menus look, owner): the vanilla/classic UI looks exactly like OpenMW (its layouts as well as Morrowind's art;
+  supersedes "art is borrowed, layouts are not"); the extended/modern UI takes its layouts from recent UI overhaul mods
+  (SkyUI-Community, modern-morrow). The look pass comes before options S2b2-S5 (after S2b1).
 - 2026-11-11 (static scene C2): no `suppress_scene_placements` spawner wrapper (plan §8's "belt to the braces"):
   `CellScene::covered` already stops spawns and model loads, and a wrapper would also block a promoted placement's
   entity spawn (B5a-2). `--scene` and the precombine are exclusive (`mw_exterior_bevy::static_paths`).
 - 2026-11-11 (world reactions, owner): NPCs are full culprits (theft, looting, vandalism; Classic preset player-only);
   unwitnessed harm raises evidence-scored suspicion, never bounty alone; consequences, suspicion weights and reset timings
   are data records, not code. Reference games for AI: Cyberpunk 2077, KCD II, RDR2, Nemesis (not Oblivion Radiant).
+- 2026-11-11 (build speed BS1): the tes3 git crates move from hakari `traversal-excludes` to `final-excludes`
+  (their features on Bevy's deps are unified, the hack never names them), and the app's default build adds no Bevy
+  feature: each is asked for by the library crate that uses it (build-perf.md "Feature unification").
+- 2026-11-11 (bake store, NV4e/NV4f): traces move from one file per trace to one append-only `traces.log` per store
+  plus an in-memory object index (Ninja/Bazel action cache): a warm bake opened 2 files per product (154k nav tiles:
+  118 s, ~6 ms per cold open with Defender); synthetic warm re-plan 1.22 s -> 0.45 s. Legacy trace files migrate on read.

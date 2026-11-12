@@ -7,6 +7,7 @@ pub mod bake;
 pub mod delight;
 pub mod hot_reload;
 pub mod mods;
+pub mod ui_frames;
 pub mod ui_theme;
 
 use mw_install::MorrowindInstall;
