@@ -158,6 +158,10 @@ pub fn skinned_submesh_to_mesh(
     } else {
         mesh.compute_smooth_normals();
     }
+    // Cooked `MikkTSpace` tangents (normal-mapped materials only).
+    if !sub.tangents.is_empty() {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, std::mem::take(&mut sub.tangents));
+    }
     if !sub.targets.is_empty() {
         mesh.set_morph_targets(morph_attributes(&sub));
         mesh.set_morph_target_names(

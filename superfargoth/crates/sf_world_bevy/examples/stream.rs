@@ -508,7 +508,7 @@ fn bake() -> World {
     let mut baker = Baker::new(store.clone(), Arc::new(Files(files)));
     let importers = Importers::new().with(Arc::new(PostcardImporter));
     baker.register(ModelInfoStep { importers: importers.clone() });
-    baker.register(MeshCookStep { importers, settings: CookSettings::default() });
+    baker.register(MeshCookStep { importers, settings: CookSettings::default(), tangents: None });
     let count = generated.count;
     WorldBake::new(Arc::new(Source(generated.regions)), IndexParams::default()).register(&mut baker);
     let keys: Vec<ProductKey> = model_paths.iter().map(|p| ProductKey::new(MeshCookStep::ID, p.as_str())).collect();

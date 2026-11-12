@@ -4,6 +4,7 @@ use sf_bake::{BakeError, Baker, Digest, Input, Inputs, ProductKey, Store};
 use sf_vfs::{MemSource, Vfs, VfsPath};
 
 use super::*;
+use crate::cook::{CookedTextureLayer, LayerStats};
 
 fn albedo(texture: &str) -> TextureUse {
     TextureUse { texture: texture.to_owned(), role: Role::Albedo, clamp: [false; 2], cutoff: None, candidate: false }
@@ -24,8 +25,8 @@ fn plan(uses: Vec<TextureUse>, files: &[&str]) -> (BTreeMap<String, TextureJob>,
     let vfs = Vfs::builder().mount(source).build();
     let resolve =
         |r: &str| vfs.resolve_preferring(&VfsPath::new(r).ok()?, TEXTURE_ALTERNATES).map(|(p, _)| p.as_str().to_owned());
-    let exists = |p: &str| VfsPath::new(p).is_ok_and(|p| vfs.contains(&p));
-    plan_jobs(uses, resolve, exists)
+    let source_of = |p: &str| VfsPath::new(p).ok().and_then(|p| vfs.resolve(&p));
+    plan_jobs(uses, resolve, source_of)
 }
 
 #[test]
@@ -66,6 +67,38 @@ fn exclusion_policy() {
 fn glow_only_textures_are_not_counted() {
     let (jobs, skipped) = plan(vec![with("textures/g.dds", Role::Glow)], &["textures/g.dds"]);
     assert!(jobs.is_empty() && skipped.is_empty());
+}
+
+/// Textures-adapter §3 (T4): a normals-only pack over another source's albedo still de-lights it;
+/// a pack shipping the albedo and its companion together is left as authored.
+#[test]
+fn companion_skips_de_lighting_only_from_the_albedo_source() {
+    let mount = |base: &[&str], pack: &[&str]| {
+        let (mut data, mut mods) = (MemSource::new("data"), MemSource::new("pack"));
+        for f in base {
+            data.insert(f, *f).unwrap();
+        }
+        for f in pack {
+            mods.insert(f, *f).unwrap();
+        }
+        Vfs::builder().mount(data).mount(mods).build()
+    };
+    let run = |vfs: &Vfs| {
+        let resolve =
+            |r: &str| vfs.resolve_preferring(&VfsPath::new(r).ok()?, TEXTURE_ALTERNATES).map(|(p, _)| p.as_str().to_owned());
+        let source_of = |p: &str| VfsPath::new(p).ok().and_then(|p| vfs.resolve(&p));
+        plan_jobs([albedo("textures/a.tga")], resolve, source_of)
+    };
+    // Normals-only pack over vanilla albedo: de-lit.
+    let (jobs, skipped) = run(&mount(&["textures/a.dds"], &["textures/a_n.dds"]));
+    assert_eq!(jobs.keys().collect::<Vec<_>>(), ["textures/a.dds"], "{skipped:?}");
+    // Same for `_nh` and `_spec`.
+    let (jobs, _) = run(&mount(&["textures/a.dds"], &["textures/a_nh.dds", "textures/a_spec.dds"]));
+    assert_eq!(jobs.len(), 1);
+    // The pack ships both: left as authored.
+    let (jobs, skipped) = run(&mount(&["textures/a.dds"], &["textures/a.dds", "textures/a_n.dds"]));
+    assert!(jobs.is_empty());
+    assert_eq!(skipped, BTreeMap::from([(Skip::Companion, 1)]));
 }
 
 #[test]
@@ -125,8 +158,8 @@ impl Inputs for TestInputs {
 fn bake(store: &Store, vfs: &Arc<Vfs>, refs: &[&str], strength: f32) -> (u32, DelightIndex) {
     let resolve =
         |r: &str| vfs.resolve_preferring(&VfsPath::new(r).ok()?, TEXTURE_ALTERNATES).map(|(p, _)| p.as_str().to_owned());
-    let exists = |p: &str| VfsPath::new(p).is_ok_and(|p| vfs.contains(&p));
-    let (jobs, _) = plan_jobs(refs.iter().map(|r| albedo(r)), resolve, exists);
+    let source_of = |p: &str| VfsPath::new(p).ok().and_then(|p| vfs.resolve(&p));
+    let (jobs, _) = plan_jobs(refs.iter().map(|r| albedo(r)), resolve, source_of);
     let jobs = Arc::new(jobs);
     let mut baker = Baker::new(store.clone(), Arc::new(TestInputs(vfs.clone())));
     baker.register(DelightStep { strength, jobs: jobs.clone() }).register(IndexStep { jobs });
@@ -172,14 +205,14 @@ fn layer_precedence() {
     let base = Arc::new(Vfs::builder().mount(data()).build());
     let (_, index) = bake(&store, &base, &["textures/a.tga", "textures/b.tga"], 0.5);
     let mount = |vfs: &Arc<Vfs>| {
-        let (layer, stats) = DelightLayer::build(store.clone(), &index, vfs, &TestInputs(vfs.clone()));
+        let (layer, stats) = CookedTextureLayer::build(store.clone(), Some(&index), None, vfs, &TestInputs(vfs.clone()));
         (vfs.with_top_layer(Arc::new(layer)), stats)
     };
     let resolve = |vfs: &Vfs, r: &str| vfs.resolve_preferring(&VfsPath::new(r).unwrap(), TEXTURE_ALTERNATES).unwrap().0;
 
     // Current winners are served from the cache, as KTX2.
     let (vfs, stats) = mount(&base);
-    assert_eq!(stats, LayerStats { served: 2, stale: 0 });
+    assert_eq!(stats, LayerStats { delit: 2, ..LayerStats::default() });
     assert_eq!(resolve(&vfs, "textures/a.tga").as_str(), "textures/a.ktx2");
     assert_eq!(&vfs.read(&VfsPath::new("textures/a.ktx2").unwrap()).unwrap()[..6], b"\xABKTX 2");
     assert_eq!(layer_index(&vfs), Some(sf_vfs::SourceIndex(1)));
@@ -189,7 +222,7 @@ fn layer_precedence() {
     let modded =
         Arc::new(Vfs::builder().mount(data()).mount(MemSource::new("mod").with("textures/a.png", png(64, 64, 5))).build());
     let (vfs, stats) = mount(&modded);
-    assert_eq!(stats, LayerStats { served: 1, stale: 1 });
+    assert_eq!(stats, LayerStats { delit: 1, stale: 1, ..LayerStats::default() });
     assert_eq!(resolve(&vfs, "textures/a.tga").as_str(), "textures/a.png");
     assert_eq!(vfs.read(&VfsPath::new("textures/a.png").unwrap()).unwrap(), png(64, 64, 5));
     assert_eq!(resolve(&vfs, "textures/b.tga").as_str(), "textures/b.ktx2");
@@ -198,7 +231,7 @@ fn layer_precedence() {
     for file in ["textures/a.dds", "textures/a.ktx2"] {
         let modded = Arc::new(Vfs::builder().mount(data()).mount(MemSource::new("mod").with(file, "authored")).build());
         let (vfs, stats) = mount(&modded);
-        assert_eq!(stats, LayerStats { served: 1, stale: 1 }, "{file}");
+        assert_eq!(stats, LayerStats { delit: 1, stale: 1, ..LayerStats::default() }, "{file}");
         assert_eq!(resolve(&vfs, "textures/a.tga").as_str(), file);
         assert_eq!(vfs.read(&VfsPath::new(file).unwrap()).unwrap(), b"authored", "{file}");
     }

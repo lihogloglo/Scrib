@@ -17,7 +17,8 @@
 //!   reads it to classify candidate materials the way the loader does (`mw_bake::scene`) — but
 //!   baked here, where every referenced model's texture uses are already resolved.
 //!
-//! Runtime ([`DelightLayer`]): a VFS source mounted above every other layer that serves
+//! Runtime ([`crate::cook::CookedTextureLayer`], shared with the texture cook): a VFS source
+//! mounted above every other layer that serves
 //! `<stem>.ktx2` for an index entry only while its source is still the winning file with the
 //! fingerprint the bake saw and the only variant of its stem ([`sole_variant`]). A mod's newer
 //! `.dds`/`.ktx2`/`.tga` changes the winner or the fingerprint, so the stale entry is not served
@@ -26,12 +27,14 @@
 //! Selection policy ([`plan_jobs`], counts per [`Skip`]): base-slot textures of referenced models;
 //! skipped when any use is not plain albedo (glow, detail/dark/decal slots, base colour glowing
 //! through emissive or unlit materials, particles and effect models, translucent blends), when a
-//! `_n`/`_nh`/`_spec` companion exists (a PBR replacer: leave it as authored), for sky and UI
+//! `_n`/`_nh`/`_spec` companion comes from the albedo's own VFS source (a PBR replacer shipping both:
+//! leave it as authored; a normals-only pack over another source's albedo still de-lights it,
+//! textures-adapter.md §3), for sky and UI
 //! names, a winner already in KTX2, more than one variant of the stem, and at decode time for
 //! sides under [`MIN_SIDE`], non-4-aligned sizes and undecodable files. Terrain layer textures are
 //! not model textures and are not de-lit yet (their arrays bake from the originals).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -39,10 +42,10 @@ use std::time::{Duration, Instant};
 use mw_nif::{AlphaMode, Cutout, VertexColorMode};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use sf_bake::{BakeError, Baker, Digest, Inputs, Manifest, PlanCx, ProductKey, RunCx, Step, Store};
+use sf_bake::{BakeError, Baker, Digest, Manifest, PlanCx, ProductKey, RunCx, Step, Store};
 use sf_texture::ktx2_out::is_block_aligned;
 use sf_texture::{Bc7Quality, bc7_ktx2_cutout, delight, shading_grid};
-use sf_vfs::{Vfs, VfsPath, VfsSource};
+use sf_vfs::{Vfs, VfsPath};
 
 use crate::textures::{TEXTURE_ALTERNATES, alpha_is_cutout, decode_rgba};
 
@@ -54,8 +57,6 @@ pub const DELIGHT_STEP: &str = "texture.delight";
 pub const INDEX_STEP: &str = "texture.delight.index";
 /// The index's only subject.
 pub const INDEX_SUBJECT: &str = "all";
-/// The runtime layer's VFS label.
-pub const LAYER_LABEL: &str = "delight (bake)";
 /// The owner's strength (DECISIONS 2026-11-05): half the estimated shading divided out.
 pub const DEFAULT_STRENGTH: f32 = delight::DEFAULT_STRENGTH;
 /// Smallest side de-lit: small detailed textures (icons, trims) don't come back neutral (D-1).
@@ -163,7 +164,7 @@ pub enum Skip {
     SkyUi,
     /// Used in a role other than albedo by some material.
     Role(Role),
-    /// A `_n`/`_nh`/`_spec` companion exists.
+    /// A `_n`/`_nh`/`_spec` companion from the albedo's own VFS source exists.
     Companion,
     /// A side under [`MIN_SIDE`].
     Small,
@@ -218,7 +219,7 @@ pub fn is_sky_or_ui(path: &str) -> bool {
 }
 
 /// `path` without its extension.
-fn stem(path: &str) -> &str {
+pub(crate) fn stem(path: &str) -> &str {
     match path.rsplit_once('.') {
         Some((stem, ext)) if !ext.contains('/') => stem,
         _ => path,
@@ -236,20 +237,27 @@ pub fn sole_variant(source: &str, exists: impl Fn(&str) -> bool) -> bool {
     exists(source) && VARIANTS.iter().filter(|v| **v != ext).all(|v| !exists(&format!("{stem}.{v}")))
 }
 
-/// Whether a `_n`/`_nh`/`_spec` companion of `source` exists in any variant format.
-pub fn has_companion(source: &str, exists: impl Fn(&str) -> bool) -> bool {
+/// Whether a `_n`/`_nh`/`_spec` companion of `source` exists in any variant format in the same VFS
+/// source as `source` (`source_of`: the winning source of an exact path, `None` when absent): a
+/// pack that ships both was authored together (textures-adapter.md §3).
+pub fn has_companion<S: PartialEq>(source: &str, source_of: impl Fn(&str) -> Option<S>) -> bool {
     let stem = stem(source);
-    COMPANIONS.iter().any(|c| VARIANTS.iter().any(|v| exists(&format!("{stem}{c}.{v}"))))
+    let Some(own) = source_of(source) else { return false };
+    COMPANIONS
+        .iter()
+        .any(|c| VARIANTS.iter().any(|v| source_of(&format!("{stem}{c}.{v}")).is_some_and(|s| s == own)))
 }
 
 /// The textures to de-lit, by winning file, and the skip counts (per texture, by first reason in
 /// [`Skip`]'s order). `resolve` maps a reference to its winning file (the runtime's rule,
-/// [`TEXTURE_ALTERNATES`]); `exists` says whether a VFS path exists.
-pub fn plan_jobs(
+/// [`TEXTURE_ALTERNATES`]); `source_of` gives the winning VFS source of an exact path (`None`: no
+/// such file).
+pub fn plan_jobs<S: PartialEq>(
     uses: impl IntoIterator<Item = TextureUse>,
     resolve: impl Fn(&str) -> Option<String>,
-    exists: impl Fn(&str) -> bool,
+    source_of: impl Fn(&str) -> Option<S>,
 ) -> (BTreeMap<String, TextureJob>, BTreeMap<Skip, u32>) {
+    let exists = |p: &str| source_of(p).is_some();
     let mut by_ref: BTreeMap<String, Vec<TextureUse>> = BTreeMap::new();
     for u in uses {
         by_ref.entry(u.texture.clone()).or_default().push(u);
@@ -270,7 +278,7 @@ pub fn plan_jobs(
             continue; // Only glow/detail slots: not a base-colour texture.
         }
         let other_role = uses.iter().map(|u| u.role).filter(|r| *r != Role::Albedo).min();
-        let skip = if !sole_variant(&winner, &exists) {
+        let skip = if !sole_variant(&winner, exists) {
             Some(Skip::Ambiguous)
         } else if extension(&winner) == "ktx2" {
             Some(Skip::AuthoredKtx2)
@@ -278,7 +286,7 @@ pub fn plan_jobs(
             Some(Skip::SkyUi)
         } else if let Some(role) = other_role {
             Some(Skip::Role(role))
-        } else if has_companion(&winner, &exists) {
+        } else if has_companion(&winner, &source_of) {
             Some(Skip::Companion)
         } else {
             None
@@ -413,7 +421,8 @@ impl Step for IndexStep {
     }
 
     fn version(&self) -> u32 {
-        1
+        // 2: a companion skips de-lighting only from the albedo's own source (T4, adapter §3).
+        2
     }
 
     fn plan(&self, _subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
@@ -608,6 +617,11 @@ pub struct DelightReport {
     /// Products that failed (roles of models that don't parse, unreadable textures).
     pub failures: Vec<(ProductKey, String)>,
     pub elapsed: Duration,
+    /// Every texture use of the referenced models (`texture.roles`): the texture cook plans from
+    /// them ([`crate::cook::bake_cook`]).
+    pub uses: Vec<TextureUse>,
+    /// The sources the de-light index serves: the cook leaves them to de-light.
+    pub delit: BTreeSet<String>,
 }
 
 impl fmt::Display for DelightReport {
@@ -662,7 +676,6 @@ pub fn bake_delight(baker: &mut Baker, vfs: &Vfs, models: &[String], strength: f
         let path = VfsPath::new(r).ok()?;
         vfs.resolve_preferring(&path, TEXTURE_ALTERNATES).map(|(p, _)| p.as_str().to_owned())
     };
-    let exists = |p: &str| VfsPath::new(p).is_ok_and(|p| vfs.contains(&p));
     // Cutout candidates' alpha classes (`AlphaClassStep`), the fact `scene.cells` reads. Not a
     // de-lighting product: baked here because this is where every model's texture uses are
     // resolved, and it must cover candidates de-lighting skips.
@@ -674,7 +687,8 @@ pub fn bake_delight(baker: &mut Baker, vfs: &Vfs, models: &[String], strength: f
     }
     report.alpha_classes = textures.len();
     report.alpha_built = classes.steps.get(ALPHA_CLASS_STEP).map_or(0, |s| s.built);
-    let (jobs, skipped) = plan_jobs(uses, resolve, exists);
+    let source_of = |p: &str| VfsPath::new(p).ok().and_then(|p| vfs.resolve(&p));
+    let (jobs, skipped) = plan_jobs(uses.iter().cloned(), resolve, source_of);
     report.skipped = skipped;
     let jobs = Arc::new(jobs);
     baker.register(DelightStep { strength, jobs: jobs.clone() }).register(IndexStep { jobs });
@@ -692,9 +706,11 @@ pub fn bake_delight(baker: &mut Baker, vfs: &Vfs, models: &[String], strength: f
         .and_then(|bytes| postcard::from_bytes::<DelightIndex>(&bytes).ok())
         .unwrap_or_default();
     report.textures = index.entries.len();
+    report.delit = index.entries.iter().map(|e| e.source.clone()).collect();
     for (skip, n) in index.skipped {
         *report.skipped.entry(skip).or_default() += n;
     }
+    report.uses = uses;
     report.elapsed = started.elapsed();
     report
 }
@@ -705,67 +721,9 @@ pub fn load_index(store: &Store, manifest: &Manifest) -> Option<DelightIndex> {
     postcard::from_bytes(&store.get(&digest).ok()?).ok()
 }
 
-/// The runtime layer: serves `<stem>.ktx2` for the index entries that are still current.
-pub struct DelightLayer {
-    store: Store,
-    files: BTreeMap<VfsPath, Digest>,
-}
-
-/// What [`DelightLayer::build`] found.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct LayerStats {
-    /// Entries served.
-    pub served: usize,
-    /// Entries whose source is no longer the sole winner with the baked fingerprint.
-    pub stale: usize,
-}
-
-impl DelightLayer {
-    /// The layer over `vfs` (which must not contain it): every index entry whose source is still
-    /// the sole variant of its stem in `vfs` ([`sole_variant`]) and has the fingerprint the bake
-    /// recorded (`inputs` over the same `vfs`).
-    pub fn build(store: Store, index: &DelightIndex, vfs: &Vfs, inputs: &dyn Inputs) -> (Self, LayerStats) {
-        let exists = |p: &str| VfsPath::new(p).is_ok_and(|p| vfs.contains(&p));
-        let mut files = BTreeMap::new();
-        let mut stats = LayerStats::default();
-        for entry in &index.entries {
-            let current = sole_variant(&entry.source, exists)
-                && inputs.file_fingerprint(&entry.source).ok().flatten() == Some(entry.fingerprint);
-            match VfsPath::new(&format!("{}.ktx2", stem(&entry.source))) {
-                Ok(path) if current => {
-                    files.insert(path, entry.ktx2);
-                    stats.served += 1;
-                }
-                _ => stats.stale += 1,
-            }
-        }
-        (Self { store, files }, stats)
-    }
-}
-
-impl VfsSource for DelightLayer {
-    fn label(&self) -> &str {
-        LAYER_LABEL
-    }
-
-    fn visit_files(&self, visit: &mut dyn FnMut(VfsPath)) {
-        for path in self.files.keys() {
-            visit(path.clone());
-        }
-    }
-
-    fn read(&self, path: &VfsPath) -> std::io::Result<Vec<u8>> {
-        let digest = self.files.get(path).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, path.to_string()))?;
-        self.store.get(digest)
-    }
-}
-
-/// The source index of the de-lit layer in `vfs`, if mounted (always the top-most source).
-pub fn layer_index(vfs: &Vfs) -> Option<sf_vfs::SourceIndex> {
-    let top = vfs.source_count().checked_sub(1)?;
-    let index = sf_vfs::SourceIndex(u16::try_from(top).ok()?);
-    (vfs.source(index).label() == LAYER_LABEL).then_some(index)
-}
+/// The runtime layer moved to [`crate::cook`]: one layer serves the de-lit and the cooked textures
+/// (textures.md §5 "Serving"). Kept here for the callers that ask about the de-lit layer.
+pub use crate::cook::{LAYER_LABEL, layer_index};
 
 #[cfg(test)]
 mod tests;

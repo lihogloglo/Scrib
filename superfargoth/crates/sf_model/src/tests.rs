@@ -292,7 +292,7 @@ fn steps_bake_cook_and_info_through_sf_bake() {
     let make = || {
         let mut b = Baker::new(Store::open(dir.path()).unwrap(), inputs.clone());
         b.register(ModelInfoStep { importers: importers.clone() })
-            .register(MeshCookStep { importers: importers.clone(), settings: CookSettings::default() });
+            .register(MeshCookStep { importers: importers.clone(), settings: CookSettings::default(), tangents: None });
         b
     };
     let keys = [ProductKey::new("mesh.cook", "meshes/rock.pcm"), ProductKey::new("model.info", "meshes/rock.pcm")];
@@ -449,31 +449,152 @@ fn header_version(bytes: &[u8]) -> u32 {
 }
 
 #[test]
-fn skinned_container_round_trips_as_v3_and_static_stays_v1() {
+fn containers_round_trip_as_v4_and_older_versions_are_retired() {
     let s = Cooked::Skinned(skinned(&arm_model(24, 12)));
     let bytes = s.to_bytes();
-    assert_eq!(header_version(&bytes), 3);
+    assert_eq!(header_version(&bytes), 4);
     assert_eq!(Cooked::from_bytes(&bytes).unwrap(), s);
-
-    // Static cooks keep the v1 header and body, so v1 caches stay valid.
     let st = Cooked::Static(cooked(&sample_model()));
-    let v1 = st.to_bytes();
-    assert_eq!(header_version(&v1), 1);
-    assert_eq!(Cooked::from_bytes(&v1).unwrap(), st);
-    // A v1 body under a v3 header is the same value.
-    let mut as_v3 = v1.clone();
-    as_v3[8..12].copy_from_slice(&3u32.to_le_bytes());
-    assert_eq!(Cooked::from_bytes(&as_v3).unwrap(), st);
-    // v2 (the dense morph layout) is retired, whatever the body.
-    as_v3[8..12].copy_from_slice(&2u32.to_le_bytes());
-    assert!(matches!(Cooked::from_bytes(&as_v3), Err(FormatError::Version(2))));
-    // A skinned body under a v1 header, and unknown versions, are rejected cleanly.
-    let mut lying = bytes.clone();
-    lying[8..12].copy_from_slice(&1u32.to_le_bytes());
-    assert!(matches!(Cooked::from_bytes(&lying), Err(FormatError::Body(_))));
+    let v4 = st.to_bytes();
+    assert_eq!(header_version(&v4), 4);
+    assert_eq!(Cooked::from_bytes(&v4).unwrap(), st);
+    // v1-v3 bodies lack the tangent stream: retired, whatever the body (everything re-cooks once).
+    for old in 1..4u32 {
+        let mut retired = v4.clone();
+        retired[8..12].copy_from_slice(&old.to_le_bytes());
+        assert!(matches!(Cooked::from_bytes(&retired), Err(FormatError::Version(v)) if v == old));
+    }
     let mut future = bytes;
-    future[8..12].copy_from_slice(&4u32.to_le_bytes());
-    assert!(matches!(Cooked::from_bytes(&future), Err(FormatError::Version(4))));
+    future[8..12].copy_from_slice(&5u32.to_le_bytes());
+    assert!(matches!(Cooked::from_bytes(&future), Err(FormatError::Version(5))));
+}
+
+/// A wavy grid whose U coordinate mirrors at the middle column (u = |2x - 1|):
+/// the mirrored-UV layout DCC tools use for symmetric textures.
+fn mirrored_grid(n: u32, material: u32) -> MeshData {
+    let mut mesh = terrain_like(n, material);
+    for uv in mesh.uvs.as_mut().unwrap() {
+        uv[0] = (uv[0] * 2.0 - 1.0).abs();
+    }
+    mesh
+}
+
+fn tangent_model() -> Model {
+    let mut root = Node::new("root");
+    root.mesh = Some(0);
+    let mut plain = Node::new("plain");
+    plain.parent = Some(0);
+    plain.translation = [5.0, 0.0, 0.0];
+    plain.mesh = Some(1);
+    Model {
+        nodes: vec![root, plain],
+        meshes: vec![mirrored_grid(16, 0), terrain_like(16, 1)],
+        materials: vec![Material { name: "bumpy".into(), ..Material::default() }, Material::default()],
+    }
+}
+
+/// Sanity of a tangent stream: finite, unit-length, handedness ±1.
+fn assert_sane(tangents: &[Tangent]) {
+    for &[x, y, z, w] in tangents {
+        let len = (x * x + y * y + z * z).sqrt();
+        assert!(len.is_finite() && (len - 1.0).abs() < 1e-4, "tangent length {len}");
+        assert!(w == 1.0 || w == -1.0, "handedness {w}");
+    }
+}
+
+#[test]
+fn tangents_exactly_on_normal_mapped_materials_and_mirrored_seams_split() {
+    let settings = CookSettings::default();
+    let Cooked::Static(c) = cook_with(&tangent_model(), &settings, &[true, false]).unwrap() else { panic!("static") };
+    assert!(c.lods.len() > 1, "a real LOD chain");
+    let mut signs = [false; 2];
+    for lod in &c.lods {
+        for sub in &lod.submeshes {
+            let tangents = sub.decode_tangents().unwrap();
+            assert_eq!(tangents.is_some(), sub.material == 0, "tangents iff the material binds a normal map");
+            if let Some(t) = tangents {
+                assert_eq!(t.len(), sub.vertex_count as usize);
+                assert_sane(&t);
+                for [.., w] in t {
+                    signs[usize::from(w > 0.0)] = true;
+                }
+            }
+        }
+    }
+    assert_eq!(signs, [true, true], "the mirrored half flips handedness");
+    // The seam column splits into one vertex per side; without tangents it stays welded.
+    let Cooked::Static(plain) = cook(&tangent_model(), &settings).unwrap() else { panic!("static") };
+    let count = |c: &CookedModel| c.lods[0].submeshes.iter().find(|s| s.material == 0).unwrap().vertex_count;
+    assert_eq!(count(&plain), 17 * 17);
+    assert_eq!(count(&c), 17 * 17 + 17, "the 17 seam vertices split");
+    assert!(plain.lods.iter().flat_map(|l| &l.submeshes).all(|s| !s.has_tangents()));
+}
+
+#[test]
+fn skinned_and_rig_cooks_carry_tangents_through_every_stream() {
+    let settings = CookSettings::default();
+    let arm = arm_model(24, 12);
+    let wants = vec![true; arm.materials.len()];
+    let Cooked::Skinned(s) = cook_with(&arm, &settings, &wants).unwrap() else { panic!("skinned") };
+    for (level, lod) in s.model.lods.iter().enumerate() {
+        for i in 0..lod.submeshes.len() {
+            let sub = s.decode_submesh(level, i).unwrap();
+            // The arm (UVs) gets tangents; the ring triangle has no UVs, so no tangent space.
+            let expected = if sub.material == 0 { sub.vertices.len() } else { 0 };
+            assert_eq!(sub.tangents.len(), expected);
+            assert_eq!(sub.skin.len(), sub.vertices.len());
+            assert_sane(&sub.tangents);
+        }
+    }
+    let Cooked::Skinned(rig) = cook_rig_with(&tangent_model(), &settings, &[true, false]).unwrap() else { panic!("rig") };
+    for (level, lod) in rig.model.lods.iter().enumerate() {
+        for i in 0..lod.submeshes.len() {
+            let sub = rig.decode_submesh(level, i).unwrap();
+            assert_eq!(sub.tangents.is_empty(), sub.material != 0);
+            assert_sane(&sub.tangents);
+        }
+    }
+}
+
+/// `mesh.cook` with a tangent rule (a test convention: a base texture `x.png`
+/// pairs with `x_n.png`) re-cooks exactly the models whose material gains a
+/// normal map when a pack adds one.
+#[test]
+fn tangent_rule_dependencies_recook_only_affected_models() {
+    let dir = tempfile::tempdir().unwrap();
+    let with_texture = |texture: &str| {
+        let mut m = tangent_model();
+        m.materials[0].base_color_texture = Some(texture.to_owned());
+        postcard::to_stdvec(&m).unwrap()
+    };
+    let mut files = HashMap::new();
+    files.insert("meshes/a.pcm".to_owned(), with_texture("textures/a.png"));
+    files.insert("meshes/b.pcm".to_owned(), with_texture("textures/b.png"));
+    let rule = steps::TangentRule {
+        version: 1,
+        wants: Arc::new(|m: &Material, cx: &mut sf_bake::RunCx<'_>| match &m.base_color_texture {
+            Some(t) => cx.file_exists(&t.replace(".png", "_n.png")),
+            None => Ok(false),
+        }),
+    };
+    let importers = Importers::new().with(Arc::new(PostcardImporter));
+    let keys = [ProductKey::new("mesh.cook", "meshes/a.pcm"), ProductKey::new("mesh.cook", "meshes/b.pcm")];
+    let bake = |files: &HashMap<String, Vec<u8>>| {
+        let mut b = Baker::new(Store::open(dir.path()).unwrap(), Arc::new(Files(files.clone())));
+        b.register(MeshCookStep { importers: importers.clone(), settings: CookSettings::default(), tangents: Some(rule.clone()) });
+        let report = b.bake(&keys);
+        assert_eq!(report.failures().count(), 0, "{:?}", report.products);
+        let tangents = [0, 1].map(|i| {
+            let Cooked::Static(c) = Cooked::from_bytes(&b.store().get(&b.product(&keys[i]).unwrap()).unwrap()).unwrap() else { panic!() };
+            c.lods[0].submeshes.iter().any(CookedSubmesh::has_tangents)
+        });
+        (tangents, b.step_stats()["mesh.cook"].built)
+    };
+    assert_eq!(bake(&files), ([false, false], 2));
+    // A pack adds b's normal map: only b re-cooks, and gains tangents.
+    files.insert("textures/b_n.png".to_owned(), vec![1, 2, 3]);
+    assert_eq!(bake(&files), ([false, true], 1));
+    assert_eq!(bake(&files), ([false, true], 0));
 }
 
 #[test]

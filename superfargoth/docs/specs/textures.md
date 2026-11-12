@@ -216,22 +216,16 @@ shader constant exists for a specific pack; a pack without a profile falls back 
 via `ktx2`; colour space follows the role; shipped levels unchanged, missing ones filled in the source format);
 detail: `archive/textures-history.md`.
 
-**T2b as built** (2026-11-11): `sf_texture::remap`: `ChannelMap([Src; 4])` (output ← `Channel(c)` / `Inverted(c)` /
-`Unused` = keep the cheapest: colour keeps its own channel, alpha drops where it can), `then` (composition),
-`apply_rgba` (same map on decoded texels for the cook path), `plan(format, map) -> Remap | RemapError`, `Remap::level`.
-**Exact on the blocks**: BC1 / BC2-BC3 colour R↔B swap and any-channel complement (565 fields; endpoint order
-restored, indices remapped), BC2/BC3 → BC1 (alpha dropped, four-colour order forced), BC3 alpha → BC4 and BC5 half →
-BC4 (± complement), BC4/BC5 complement and half swap, BC7 any RGB permutation (fields + rotation). **Fallbacks**
-(`CookReason::NotBlockExact`): any BC7 complement (shared p-bits; integer interpolation off by one at ties), a BC1
-three-colour block using transparent black under a complement (`PunchThroughInvert`); moves across widths/kinds →
-`FormatForRole`. `rewrap` now runs every role through its canonical map (`canonical(role)`: Down normal → G
-complemented; normal alpha unused, so BC2/BC3 normals become BC1; mask channel → R) and `rewrap_mapped(bytes, layout,
-role)` composes a pack layout first; `Rewrapped.remapped` flags it. `sf_texture::profile`: `PackProfile { name,
-suffixes: [SuffixRule { suffix, role: PackRole, layout }], normal_y, height_neutral, quirks: [Quirk] }` (serde;
-`Quirk` has no variant yet), `rule_for(stem)` (longest suffix), `companions(base)` (lookup order), `apply(profile,
-rule, bytes, alpha) -> [Product { slot, map, role, result }]` (`_nh` → Normal + Depth). Exactness tests:
-integer reference decoders (BC1 ×6, BC4 ×35) on random blocks; BC7 bit-exact vs `block_compression`,
-8 modes × 6 perms. Instances: `mw_bake::texture_profiles`.
+**T2b as built** (2026-11-11): `sf_texture::remap` (block-exact channel remaps, fallbacks `NotBlockExact` /
+`FormatForRole`), `rewrap_mapped`, `sf_texture::profile` (`PackProfile`); detail: `archive/textures-history.md`.
+
+**T3 as built** (2026-11-11): `texture.cook` + `.meta` + `.index` steps, paths in place / rewrapped / encoded / skipped,
+one `CookedTextureLayer`, bake line `texture.cook:`; detail: `archive/textures-history.md`.
+
+**T4 as built** (2026-11-11, three parts): bake-side companions (`mw_bake::cook::normal_companion`, BC5 / rewrapped
+linear with the profile's Y flip, `cooked/texture_normals.postcard`), the runtime material (`cooked_material_with`), and
+MikkTSpace tangents in `mesh.cook`/`mesh.rest`/`mesh.rig` (adapter hook `sf_model::steps::TangentRule`, `.sfmesh` v4).
+Actors (sf_character assembly) don't carry tangents yet. Detail: `archive/textures-history.md` "T4".
 
 ## 10. Risks
 

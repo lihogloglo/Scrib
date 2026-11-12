@@ -284,6 +284,11 @@ pub fn submesh_to_mesh(
         // Lit materials need normals; source without them gets smooth ones.
         mesh.compute_smooth_normals();
     }
+    // Cooked `MikkTSpace` tangents, only on submeshes whose material binds a
+    // normal map (Bevy's `StandardMaterial` needs them for one).
+    if let Some(tangents) = sub.decode_tangents()? {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
+    }
     if compress {
         // A failed attribute leaves that attribute uncompressed; the mesh
         // stays valid either way.
@@ -325,7 +330,10 @@ pub fn submesh_to_ray_tracing_mesh(
     } else {
         mesh.compute_smooth_normals();
     }
-    if mesh.generate_tangents().is_err() {
+    if let Some(tangents) = sub.decode_tangents()? {
+        // The cooked `MikkTSpace` frame, split at mirrored-UV seams.
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
+    } else if mesh.generate_tangents().is_err() {
         // Degenerate UVs: any unit tangent perpendicular to the normal will
         // do, since such surfaces can't carry a usable normal map.
         let normals: Vec<[f32; 4]> = match mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {

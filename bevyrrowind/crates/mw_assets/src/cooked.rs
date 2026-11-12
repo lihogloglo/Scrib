@@ -9,7 +9,8 @@
 //! bake skipped (animated, skinned) or that fails to load falls back to
 //! the source NIF.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Weak};
 
 use bevy::asset::LoadState;
 use bevy::camera::visibility::VisibilityRange;
@@ -95,6 +96,7 @@ struct SurfaceKey {
     base_texture: Option<String>,
     base_clamp: [bool; 2],
     glow_texture: Option<String>,
+    normal_texture: Option<String>,
     emissive: [u32; 3],
     alpha: (u8, u32),
     double_sided: bool,
@@ -110,11 +112,50 @@ pub struct CookedMaterials {
     /// (model, tinted level or `None`) -> one material per model material.
     by_model: HashMap<MaterialKey, Vec<Handle<StandardMaterial>>>,
     by_surface: HashMap<SurfaceKey, Handle<StandardMaterial>>,
-    texture_cache: HashMap<(String, [bool; 2]), Handle<Image>>,
+    /// (resolved path, clamp, sRGB) -> the loading texture.
+    texture_cache: HashMap<(String, [bool; 2], bool), Handle<Image>>,
     textures: Vec<Handle<Image>>,
+    /// The companions of the VFS they were read from (re-read if [`SharedVfs`] is replaced).
+    companions: Option<(Weak<sf_vfs::Vfs>, NormalCompanions)>,
+}
+
+/// The normal-map companions the mounted bake layer lists ([`mw_bake::cook::read_companions`]),
+/// read once per VFS instead of per material: base texture stem -> companion file. Empty without
+/// a bake or without a pack shipping `_n`/`_nh` maps.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NormalCompanions(Arc<BTreeMap<String, String>>);
+
+impl NormalCompanions {
+    /// The companions `vfs` serves (one read and decode of the layer's map).
+    pub fn read(vfs: &sf_vfs::Vfs) -> Self {
+        Self(Arc::new(mw_bake::cook::read_companions(vfs)))
+    }
+
+    /// The companion of a base texture reference ([`mw_bake::cook::companion_of`]).
+    pub fn of(&self, reference: &str) -> Option<&str> {
+        mw_bake::cook::companion_of(&self.0, reference)
+    }
+}
+
+impl From<BTreeMap<String, String>> for NormalCompanions {
+    fn from(map: BTreeMap<String, String>) -> Self {
+        Self(Arc::new(map))
+    }
 }
 
 impl CookedMaterials {
+    fn companions(&mut self, vfs: &Arc<sf_vfs::Vfs>) -> NormalCompanions {
+        let current = Arc::downgrade(vfs);
+        match &self.companions {
+            Some((read_from, companions)) if Weak::ptr_eq(read_from, &current) => companions.clone(),
+            _ => {
+                let companions = NormalCompanions::read(vfs);
+                self.companions = Some((current, companions.clone()));
+                companions
+            }
+        }
+    }
+
     /// Textures still loading (for "everything is loaded" checks).
     pub fn pending_textures(&self, server: &AssetServer) -> usize {
         self.textures
@@ -126,8 +167,9 @@ impl CookedMaterials {
     }
 }
 
-/// The NIF surface a cooked material describes (inverse of the importer's mapping).
-fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs) -> Surface<'a> {
+/// The NIF surface a cooked material describes (inverse of the importer's mapping), with the base
+/// texture's normal-map companion if the bake serves one.
+fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs, companions: &'a NormalCompanions) -> Surface<'a> {
     let [red, green, blue, alpha] = m.base_color;
     let [emissive_r, emissive_g, emissive_b] = m.emissive;
     let additive = m.extras.get(extras::BLEND).is_some_and(|mode| mode == "additive");
@@ -154,6 +196,7 @@ fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs) -> Surface<'a> {
         base_texture: m.base_color_texture.as_deref(),
         base_clamp,
         glow_texture: m.extras.get(extras::GLOW_TEXTURE).map(String::as_str),
+        normal_texture: m.base_color_texture.as_deref().and_then(|base| companions.of(base)),
         emissive: LinearRgba::rgb(emissive_r, emissive_g, emissive_b),
         // The leaf rule, as the NIF path's (`Surface::foliage`).
         foliage: matches!(cutout, Some("cutout" | "cutout_candidate")) && matches!(alpha_mode, AlphaMode::Mask(_)),
@@ -243,15 +286,39 @@ fn fallback(commands: &mut Commands, server: &AssetServer, entity: Entity, root:
 
 /// One cooked material as Bevy's, mapped like the NIF path's: the material
 /// mapper for streamed statics (`sf_world_bevy::ModelMaterials`). Textures
-/// resolve through `vfs` and load from the default asset source.
+/// resolve through `vfs` and load from the default asset source. No normal maps: callers that
+/// want them read [`NormalCompanions`] once and use [`cooked_material_with`] or [`material_mapper`].
 pub fn cooked_material(m: &sf_model::Material, vfs: &sf_vfs::Vfs, server: &AssetServer) -> StandardMaterial {
-    surface(m, vfs).to_material(|path, clamp| {
+    cooked_material_with(m, vfs, &NormalCompanions::default(), server)
+}
+
+/// [`cooked_material`] with the base texture's normal-map companion from `companions`.
+pub fn cooked_material_with(
+    m: &sf_model::Material,
+    vfs: &sf_vfs::Vfs,
+    companions: &NormalCompanions,
+    server: &AssetServer,
+) -> StandardMaterial {
+    surface(m, vfs, companions).to_material(|path, clamp, srgb| {
         let resolved = resolve_texture(path, vfs, "cooked model")?;
-        Some(server.load_builder().with_settings(move |s| image_settings_clamped(s, clamp)).load(resolved))
+        Some(server.load_builder().with_settings(move |s| image_settings_clamped(s, clamp, srgb)).load(resolved))
     })
 }
 
-fn surface_key(s: &Surface<'_>, base_resolved: Option<String>, glow_resolved: Option<String>, tint: Option<usize>) -> SurfaceKey {
+/// The material mapper for streamed statics (`sf_world_bevy::ModelMaterials`, wrap it in an `Arc`):
+/// [`cooked_material_with`] over the companions `vfs` serves, read once here.
+pub fn material_mapper(vfs: Arc<sf_vfs::Vfs>) -> impl Fn(&sf_model::Material, &AssetServer) -> StandardMaterial + Send + Sync + 'static {
+    let companions = NormalCompanions::read(&vfs);
+    move |m, server| cooked_material_with(m, &vfs, &companions, server)
+}
+
+fn surface_key(
+    s: &Surface<'_>,
+    base_resolved: Option<String>,
+    glow_resolved: Option<String>,
+    normal_resolved: Option<String>,
+    tint: Option<usize>,
+) -> SurfaceKey {
     let bc = s.base_color.to_linear();
     let alpha = match s.alpha_mode {
         AlphaMode::Opaque => (0, 0),
@@ -267,6 +334,7 @@ fn surface_key(s: &Surface<'_>, base_resolved: Option<String>, glow_resolved: Op
         base_texture: base_resolved,
         base_clamp: s.base_clamp,
         glow_texture: glow_resolved,
+        normal_texture: normal_resolved,
         emissive: [s.emissive.red.to_bits(), s.emissive.green.to_bits(), s.emissive.blue.to_bits()],
         alpha,
         double_sided: s.double_sided,
@@ -285,27 +353,33 @@ fn make_materials(
     cache: &mut CookedMaterials,
     materials: &mut Assets<StandardMaterial>,
 ) -> Vec<Handle<StandardMaterial>> {
+    let companions = cache.companions(&vfs.0);
     model
         .materials
         .iter()
         .map(|m| {
-            let s = surface(m, &vfs.0);
-            let base_resolved = s.base_texture.and_then(|p| resolve_texture(p, &vfs.0, source));
-            let glow_resolved = s.glow_texture.and_then(|p| resolve_texture(p, &vfs.0, source));
-            let key = surface_key(&s, base_resolved, glow_resolved, tint);
+            let s = surface(m, &vfs.0, &companions);
+            let resolve = |p: &str| resolve_texture(p, &vfs.0, source);
+            let key = surface_key(
+                &s,
+                s.base_texture.and_then(resolve),
+                s.glow_texture.and_then(resolve),
+                s.normal_texture.and_then(resolve),
+                tint,
+            );
             if let Some(existing) = cache.by_surface.get(&key) {
                 return existing.clone();
             }
-            let mut material = s.to_material(|path, clamp| {
+            let mut material = s.to_material(|path, clamp, srgb| {
                 let resolved = resolve_texture(path, &vfs.0, source)?;
-                if let Some(h) = cache.texture_cache.get(&(resolved.clone(), clamp)) {
+                if let Some(h) = cache.texture_cache.get(&(resolved.clone(), clamp, srgb)) {
                     return Some(h.clone());
                 }
                 let handle: Handle<Image> = server
                     .load_builder()
-                    .with_settings(move |st| image_settings_clamped(st, clamp))
+                    .with_settings(move |st| image_settings_clamped(st, clamp, srgb))
                     .load(resolved.clone());
-                cache.texture_cache.insert((resolved, clamp), handle.clone());
+                cache.texture_cache.insert((resolved, clamp, srgb), handle.clone());
                 cache.textures.push(handle.clone());
                 Some(handle)
             });
@@ -321,4 +395,54 @@ fn make_materials(
             handle
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn material(base: &str, unlit: bool) -> sf_model::Material {
+        sf_model::Material { base_color_texture: Some(base.to_owned()), unlit, ..sf_model::Material::default() }
+    }
+
+    /// T4: a cooked material gets `normal_map_texture` iff the bake lists a companion for its base
+    /// texture (any spelling of the reference), loaded linear with the base slot's clamp; the base
+    /// texture stays sRGB. Unlit surfaces take none.
+    #[test]
+    fn normal_map_iff_the_base_texture_has_a_companion() {
+        let vfs = sf_vfs::Vfs::builder().build();
+        assert_eq!(NormalCompanions::read(&vfs), NormalCompanions::default(), "no bake layer, no companions");
+        let companions =
+            NormalCompanions::from(BTreeMap::from([("textures/tx_wall".to_owned(), "textures/tx_wall_n.png".to_owned())]));
+        let build = |m: &sf_model::Material| {
+            let mut loads = Vec::new();
+            let made = surface(m, &vfs, &companions).to_material(|path, clamp, srgb| {
+                loads.push((path.to_owned(), clamp, srgb));
+                Some(Handle::default())
+            });
+            (made, loads)
+        };
+
+        let (wall, loads) = build(&material("Textures\\TX_Wall.dds", false));
+        assert!(wall.normal_map_texture.is_some());
+        assert!(!wall.flip_normal_map_y, "the cook wrote OpenGL Y");
+        assert_eq!(
+            loads,
+            [
+                ("Textures\\TX_Wall.dds".to_owned(), [false, false], true),
+                ("textures/tx_wall_n.png".to_owned(), [false, false], false),
+            ]
+        );
+
+        let (other, loads) = build(&material("textures/tx_other.dds", false));
+        assert!(other.normal_map_texture.is_none());
+        assert_eq!(loads, [("textures/tx_other.dds".to_owned(), [false, false], true)]);
+
+        let (unlit, _) = build(&material("textures/tx_wall.dds", true));
+        assert!(unlit.normal_map_texture.is_none());
+
+        // Without companions (the plain `cooked_material` path) nothing changes.
+        let none = NormalCompanions::default();
+        assert!(surface(&material("textures/tx_wall.dds", false), &vfs, &none).normal_texture.is_none());
+    }
 }

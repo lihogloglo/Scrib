@@ -8,8 +8,8 @@
 //! [`Cooked::Skinned`] as a new trailing variant, so a v1 body is a valid v2
 //! body; 3 changed `Skinned`'s morph layout (per-submesh target lists), so v2
 //! is retired (no reader takes it; skinned products re-cook) while v1 still
-//! reads. Files are written with the lowest version that holds them (static
-//! cooks stay byte-identical to v1).
+//! reads. 4 added a per-vertex tangent stream to every [`CookedSubmesh`] (T4:
+//! normal maps), so everything before it is retired and re-cooks once.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,17 +19,22 @@ pub const MAGIC: [u8; 8] = *b"SFMESH\0\0";
 /// The newest format version; readers accept [`MIN_FORMAT_VERSION`]..=this.
 /// Bump on a layout change; when old bodies no longer decode, raise
 /// [`MIN_FORMAT_VERSION`] too.
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 /// The oldest format version still read.
-pub const MIN_FORMAT_VERSION: u32 = 1;
+pub const MIN_FORMAT_VERSION: u32 = 4;
 /// The format part of the `mesh.cook` / `mesh.rest` bake keys. Bump only when
 /// cooking the same input writes different bytes (cached products are then
 /// stale); a version that only adds new content (v2) leaves it alone, so
 /// caches stay valid and no full re-cook is needed. 2: v3's morph layout.
-pub const KEY_FORMAT: u32 = 2;
-/// Versions in `MIN_FORMAT_VERSION..=FORMAT_VERSION` that are no longer read:
-/// 2 (the first skinned layout, dense model-wide morph blocks).
-pub const RETIRED_FORMAT_VERSIONS: [u32; 1] = [2];
+/// 3: v4's tangent stream.
+pub const KEY_FORMAT: u32 = 3;
+/// Versions in `MIN_FORMAT_VERSION..=FORMAT_VERSION` that are no longer read
+/// (none since v4 raised the minimum).
+pub const RETIRED_FORMAT_VERSIONS: [u32; 0] = [];
+
+/// A cooked tangent: `MikkTSpace` `xyz` (unit) and handedness `w` (±1), the
+/// layout of glTF's `TANGENT` and Bevy's `Mesh::ATTRIBUTE_TANGENT`.
+pub type Tangent = [f32; 4];
 
 /// The cooked vertex. Fixed layout, 36 bytes, no padding: the meshopt codec
 /// and the vertex remap both work on raw bytes.
@@ -90,6 +95,9 @@ pub struct CookedSubmesh {
     pub vertices: Vec<u8>,
     /// meshopt-encoded `u32` index buffer.
     pub indices: Vec<u8>,
+    /// meshopt-encoded [`Tangent`] buffer, one per vertex; empty when the
+    /// submesh has none (its material binds no normal map).
+    pub tangents: Vec<u8>,
 }
 
 impl CookedSubmesh {
@@ -104,17 +112,40 @@ impl CookedSubmesh {
         Ok((vertices, indices))
     }
 
-    /// A submesh from raw buffers, meshopt-encoded. Public for the bake steps that build a
-    /// cooked model from decoded geometry rather than from a source import (`sf_scene`'s
-    /// `scene.chains` concatenates one material's submeshes per LOD level).
+    /// The tangent stream, one per vertex; `None` when the submesh has none.
+    pub fn decode_tangents(&self) -> Result<Option<Vec<Tangent>>, FormatError> {
+        if self.tangents.is_empty() {
+            return Ok(None);
+        }
+        meshopt::decode_vertex_buffer::<Tangent>(&self.tangents, self.vertex_count as usize)
+            .map(Some)
+            .map_err(|e| FormatError::Codec(e.to_string()))
+    }
+
+    pub fn has_tangents(&self) -> bool {
+        !self.tangents.is_empty()
+    }
+
+    /// A submesh from raw buffers, meshopt-encoded, without tangents. Public for the bake steps
+    /// that build a cooked model from decoded geometry rather than from a source import
+    /// (`sf_scene`'s `scene.chains` concatenates one material's submeshes per LOD level).
     pub fn encode(material: u32, vertices: &[Vertex], indices: &[u32]) -> Result<Self, FormatError> {
+        Self::encode_with_tangents(material, vertices, &[], indices)
+    }
+
+    /// [`Self::encode`] with a tangent stream: one per vertex, or empty for none.
+    pub fn encode_with_tangents(material: u32, vertices: &[Vertex], tangents: &[Tangent], indices: &[u32]) -> Result<Self, FormatError> {
         let codec = |e: meshopt::Error| FormatError::Codec(e.to_string());
+        if !tangents.is_empty() && tangents.len() != vertices.len() {
+            return Err(FormatError::Codec(format!("{} tangents for {} vertices", tangents.len(), vertices.len())));
+        }
         Ok(Self {
             material,
             vertex_count: u32::try_from(vertices.len()).map_err(|_| FormatError::TooLarge)?,
             index_count: u32::try_from(indices.len()).map_err(|_| FormatError::TooLarge)?,
             vertices: meshopt::encode_vertex_buffer(vertices).map_err(codec)?,
             indices: meshopt::encode_index_buffer(indices, vertices.len()).map_err(codec)?,
+            tangents: if tangents.is_empty() { Vec::new() } else { meshopt::encode_vertex_buffer(tangents).map_err(codec)? },
         })
     }
 }
@@ -171,12 +202,10 @@ impl CookedModel {
 }
 
 impl Cooked {
-    /// The lowest format version that holds this value (see the module docs).
+    /// The format version this value is written with.
     pub fn format_version(&self) -> u32 {
-        match self {
-            Self::Static(_) | Self::Skipped { .. } => 1,
-            Self::Skinned(_) => 3,
-        }
+        // Every variant carries v4's submesh layout (the tangent stream).
+        FORMAT_VERSION
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {

@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 use glam::{Affine3A, Mat3, Vec3};
 use meshopt::{SimplifyOptions, VertexDataAdapter};
 
-use crate::cooked::{Cooked, CookedLod, CookedModel, CookedSubmesh, FormatError, Vertex};
+use crate::cooked::{Cooked, CookedLod, CookedModel, CookedSubmesh, FormatError, Tangent, Vertex};
+use crate::tangent::{corner_tangents, per_corner};
 use crate::{Aabb, LodPolicy, MeshData, Model};
 
 /// Tunables for [`cook`]. Part of the bake key: changing them re-cooks.
@@ -100,9 +101,31 @@ pub(crate) struct Group {
     /// Simplifier attributes, one weight's worth of floats per vertex
     /// (filled after welding).
     pub attributes: Vec<f32>,
+    /// `MikkTSpace` tangents, one per vertex; empty when the material binds no
+    /// normal map ([`Group::add_corner_tangents`]).
+    pub tangents: Vec<Tangent>,
+    /// The group gets tangents ([`wants_tangents`] for one of its meshes).
+    pub tangent_space: bool,
 }
 
 impl Group {
+    /// Generates `MikkTSpace` tangents per corner and un-indexes the group to
+    /// one vertex per corner (every per-vertex stream follows), for the weld
+    /// to merge back: corners that agree on vertex and tangent become one
+    /// vertex again, a mirrored-UV seam splits. Call before welding.
+    pub fn add_corner_tangents(&mut self) {
+        self.tangents = corner_tangents(&self.vertices, &self.indices);
+        self.vertices = per_corner(&self.vertices, &self.indices);
+        self.locked = per_corner(&self.locked, &self.indices);
+        self.indices = (0..u32::try_from(self.indices.len()).unwrap_or(u32::MAX)).collect();
+    }
+
+    /// The tangents of the vertices `order` picks ([`fetch_order`]); empty
+    /// when the group has none.
+    pub fn tangents_in(&self, order: &[usize]) -> Vec<Tangent> {
+        if self.tangents.is_empty() { Vec::new() } else { order.iter().map(|&o| self.tangents[o]).collect() }
+    }
+
     /// Normal, uv and color as simplifier attributes ([`ATTRS`] floats).
     pub fn base_attributes(v: &Vertex) -> [f32; ATTRS] {
         let [red, green, blue, alpha] = v.color.map(|c| f32::from(c) / 255.0);
@@ -127,13 +150,26 @@ impl Group {
 /// other animated nodes, and skinned meshes without skin data, come back as
 /// [`Cooked::Skipped`]; they keep the runtime import path.
 pub fn cook(model: &Model, settings: &CookSettings) -> Result<Cooked, CookError> {
+    cook_with(model, settings, &[])
+}
+
+/// [`cook`] with `MikkTSpace` tangents on the submeshes of every material
+/// whose entry in `tangents` is true (indexed like [`Model::materials`];
+/// missing entries are false): the materials that bind a normal map. Only
+/// meshes with UVs get tangents (no UVs, no tangent space).
+pub fn cook_with(model: &Model, settings: &CookSettings, tangents: &[bool]) -> Result<Cooked, CookError> {
     if model.meshes.iter().any(MeshData::deforms) {
-        return crate::skin::cook_skinned(model, settings);
+        return crate::skin::cook_skinned(model, settings, tangents);
     }
     if let Some(node) = model.nodes.iter().find(|n| n.animated) {
         return Ok(Cooked::Skipped { reason: format!("animated node {:?}", node.name) });
     }
-    cook_rest(model, settings)
+    cook_rest_with(model, settings, tangents)
+}
+
+/// Whether `mesh` gets tangents under `tangents` ([`cook_with`]).
+pub(crate) fn wants_tangents(mesh: &MeshData, tangents: &[bool]) -> bool {
+    mesh.uvs.is_some() && tangents.get(mesh.material as usize).copied().unwrap_or(false)
 }
 
 /// Cooks a model as a character body driven by a rig from outside the
@@ -151,11 +187,16 @@ pub fn cook(model: &Model, settings: &CookSettings) -> Result<Cooked, CookError>
 /// morph, a material, visibility): rigs are made of transform nodes, so the
 /// mesh follows its transform parent instead of a joint no rig has.
 pub fn cook_rig(model: &Model, settings: &CookSettings) -> Result<Cooked, CookError> {
+    cook_rig_with(model, settings, &[])
+}
+
+/// [`cook_rig`] with tangents, as in [`cook_with`].
+pub fn cook_rig_with(model: &Model, settings: &CookSettings, tangents: &[bool]) -> Result<Cooked, CookError> {
     let mut rig = model.clone();
     for node in &mut rig.nodes {
         node.animated = node.mesh.is_none();
     }
-    crate::skin::cook_skinned(&rig, settings)
+    crate::skin::cook_skinned(&rig, settings, tangents)
 }
 
 /// Cooks a model frozen in its rest pose, for far use (the `mesh.rest`
@@ -165,13 +206,21 @@ pub fn cook_rig(model: &Model, settings: &CookSettings) -> Result<Cooked, CookEr
 /// mesh, inactive switch children are hidden). Skinned meshes are still
 /// [`Cooked::Skipped`]: their rest pose isn't a pose anyone sees.
 pub fn cook_rest(model: &Model, settings: &CookSettings) -> Result<Cooked, CookError> {
+    cook_rest_with(model, settings, &[])
+}
+
+/// [`cook_rest`] with tangents, as in [`cook_with`].
+pub fn cook_rest_with(model: &Model, settings: &CookSettings, tangents: &[bool]) -> Result<Cooked, CookError> {
     if model.meshes.iter().any(MeshData::is_skinned) {
         return Ok(Cooked::Skipped { reason: "skinned mesh".into() });
     }
 
-    let (mut groups, flags) = flatten(model)?;
+    let (mut groups, flags) = flatten(model, tangents)?;
     let mut bounds = Aabb::EMPTY;
     for group in groups.values_mut() {
+        if group.tangent_space {
+            group.add_corner_tangents();
+        }
         weld(group);
         group.attributes = group.vertices.iter().flat_map(Group::base_attributes).collect();
         for v in &group.vertices {
@@ -344,7 +393,7 @@ pub(crate) fn vertex(mesh: &MeshData, i: usize, transform: &Affine3A, normal_mat
 }
 
 /// Transforms every mesh into model space and merges per material.
-fn flatten(model: &Model) -> Result<(BTreeMap<u32, Group>, Flags), CookError> {
+fn flatten(model: &Model, tangents: &[bool]) -> Result<(BTreeMap<u32, Group>, Flags), CookError> {
     let transforms = model.node_transforms();
     let mut groups: BTreeMap<u32, Group> = BTreeMap::new();
     let mut flags = Flags::default();
@@ -363,6 +412,7 @@ fn flatten(model: &Model) -> Result<(BTreeMap<u32, Group>, Flags), CookError> {
         let normal_matrix = Mat3::from(transform.matrix3).inverse().transpose();
         let mirrored = transform.matrix3.determinant() < 0.0;
         let group = groups.entry(mesh.material).or_insert_with(|| Group { material: mesh.material, ..Group::default() });
+        group.tangent_space |= wants_tangents(mesh, tangents);
         let base = u32::try_from(group.vertices.len()).map_err(|_| CookError::Malformed("too many vertices".into()))?;
         for i in 0..n {
             group.vertices.push(vertex(mesh, i, transform, &normal_matrix));
@@ -378,9 +428,26 @@ fn flatten(model: &Model) -> Result<(BTreeMap<u32, Group>, Flags), CookError> {
     Ok((groups, flags))
 }
 
-/// Merges bit-identical vertices (shared positions with equal attributes).
+/// A vertex and its tangent as one weld key (52 bytes, no padding).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct TangentVertex {
+    vertex: Vertex,
+    tangent: Tangent,
+}
+
+/// Merges bit-identical vertices (shared positions with equal attributes,
+/// tangent included when the group has one).
 fn weld(group: &mut Group) {
-    let (count, remap) = meshopt::generate_vertex_remap(&group.vertices, Some(&group.indices));
+    let (count, remap) = if group.tangents.is_empty() {
+        meshopt::generate_vertex_remap(&group.vertices, Some(&group.indices))
+    } else {
+        let keyed: Vec<TangentVertex> =
+            group.vertices.iter().zip(&group.tangents).map(|(&vertex, &tangent)| TangentVertex { vertex, tangent }).collect();
+        let welded = meshopt::generate_vertex_remap(&keyed, Some(&group.indices));
+        group.tangents = meshopt::remap_vertex_buffer(&group.tangents, welded.0, &welded.1);
+        welded
+    };
     let mut locked = vec![false; count];
     for (old, &new) in remap.iter().enumerate() {
         if new != u32::MAX {
@@ -450,8 +517,28 @@ pub(crate) fn simplify(
 /// buffer for this level, then encoding.
 fn finish(group: &Group, mut indices: Vec<u32>, settings: &CookSettings) -> Result<CookedSubmesh, CookError> {
     optimize_indices(group, &mut indices, settings)?;
-    let vertices = meshopt::optimize_vertex_fetch(&mut indices, &group.vertices);
-    Ok(CookedSubmesh::encode(group.material, &vertices, &indices)?)
+    let order = fetch_order(&mut indices, group.vertices.len())?;
+    let vertices: Vec<Vertex> = order.iter().map(|&o| group.vertices[o]).collect();
+    let tangents = group.tangents_in(&order);
+    Ok(CookedSubmesh::encode_with_tangents(group.material, &vertices, &tangents, &indices)?)
+}
+
+/// Vertex fetch order: each vertex in order of first use in `indices`, which
+/// are rewritten to it (what `meshopt::optimize_vertex_fetch` does, as a
+/// remap every per-vertex stream can follow). Returns the old index of each
+/// new vertex.
+pub(crate) fn fetch_order(indices: &mut [u32], vertex_count: usize) -> Result<Vec<usize>, CookError> {
+    let mut remap = vec![u32::MAX; vertex_count];
+    let mut order = Vec::new();
+    for i in indices {
+        let slot = &mut remap[*i as usize];
+        if *slot == u32::MAX {
+            *slot = u32::try_from(order.len()).map_err(|_| CookError::Malformed("too many vertices".into()))?;
+            order.push(*i as usize);
+        }
+        *i = *slot;
+    }
+    Ok(order)
 }
 
 /// Vertex cache and overdraw optimization of one level's index buffer.

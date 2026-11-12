@@ -13,12 +13,13 @@ mod cook;
 mod cooked;
 mod lod;
 mod skin;
+mod tangent;
 #[cfg(feature = "gltf")]
 mod gltf_import;
 pub mod steps;
 
-pub use cook::{CookError, CookSettings, cook, cook_rest, cook_rig};
-pub use cooked::{Cooked, CookedLod, CookedModel, CookedSubmesh, FormatError, Vertex};
+pub use cook::{CookError, CookSettings, cook, cook_rest, cook_rest_with, cook_rig, cook_rig_with, cook_with};
+pub use cooked::{Cooked, CookedLod, CookedModel, CookedSubmesh, FormatError, Tangent, Vertex};
 pub use skin::{
     CookedJoint, CookedPart, CookedSkinStreams, CookedSkinned, DecodedSubmesh, MAX_INFLUENCES, MORPH_EPSILON, MorphDelta,
     MorphTargetInfo, RUNTIME_MORPH_LODS, SkinVertex,

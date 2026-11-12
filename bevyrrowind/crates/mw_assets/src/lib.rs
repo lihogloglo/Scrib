@@ -324,6 +324,8 @@ fn standard_material(m: &mw_nif::Material, vfs: &Vfs, load_context: &mut LoadCon
         base_texture: m.base_texture.as_deref(),
         base_clamp: m.base_clamp,
         glow_texture: m.glow_texture.as_deref(),
+        // No normal map on the runtime NIF path: its meshes carry no tangents (T4 cooks them).
+        normal_texture: None,
         emissive: Color::srgb(er, eg, eb).to_linear(),
         // The leaf rule: an authored blend drawn as a cutout (`mw_nif::Cutout`).
         foliage: m.cutout != mw_nif::Cutout::No && matches!(alpha_mode, AlphaMode::Mask(_)),
@@ -332,9 +334,9 @@ fn standard_material(m: &mw_nif::Material, vfs: &Vfs, load_context: &mut LoadCon
         unlit: vtx_emissive_unlit,
     };
     let source = load_context.path().to_string();
-    surface.to_material(|path, clamp| {
+    surface.to_material(|path, clamp, srgb| {
         let resolved = resolve_texture(path, vfs, &source)?;
-        Some(load_context.load_builder().with_settings(move |s| image_settings_clamped(s, clamp)).load(resolved))
+        Some(load_context.load_builder().with_settings(move |s| image_settings_clamped(s, clamp, srgb)).load(resolved))
     })
 }
 
@@ -388,6 +390,9 @@ pub(crate) struct Surface<'a> {
     pub base_texture: Option<&'a str>,
     pub base_clamp: [bool; 2],
     pub glow_texture: Option<&'a str>,
+    /// The base texture's tangent-space normal map (T4 companion, `mw_bake::cook::read_companions`):
+    /// linear, OpenGL Y (the cook converted it), sampled with the base slot's clamp.
+    pub normal_texture: Option<&'a str>,
     /// Linear emissive color (before exposure scaling).
     pub emissive: LinearRgba,
     pub alpha_mode: AlphaMode,
@@ -444,11 +449,12 @@ pub const LEAF_DIFFUSE_TRANSMISSION: f32 = 0.5;
 pub const LEAF_THICKNESS: f32 = 0.05;
 
 impl Surface<'_> {
-    /// `texture` resolves a VFS texture reference (with `(clamp_s, clamp_t)`) and starts loading it.
-    pub fn to_material(&self, mut texture: impl FnMut(&str, [bool; 2]) -> Option<Handle<Image>>) -> StandardMaterial {
+    /// `texture` resolves a VFS texture reference (with `(clamp_s, clamp_t)` and whether it holds
+    /// sRGB colour, false for normal maps) and starts loading it.
+    pub fn to_material(&self, mut texture: impl FnMut(&str, [bool; 2], bool) -> Option<Handle<Image>>) -> StandardMaterial {
         let mut material = StandardMaterial {
             base_color: self.base_color,
-            base_color_texture: self.base_texture.and_then(|p| texture(p, self.base_clamp)),
+            base_color_texture: self.base_texture.and_then(|p| texture(p, self.base_clamp, true)),
             // 2002 assets carry no PBR data: matte, low reflectance until
             // generated or replacement maps exist.
             perceptual_roughness: 0.85,
@@ -463,6 +469,12 @@ impl Surface<'_> {
             material.diffuse_transmission = LEAF_DIFFUSE_TRANSMISSION;
             material.thickness = LEAF_THICKNESS;
         }
+        // Unlit surfaces skip lighting, so a normal map would only cost a fetch. Bevy uses it only
+        // on meshes with tangents; `flip_normal_map_y` stays false (the cook wrote OpenGL Y), and
+        // BC5 reconstructs Z (`TWO_COMPONENT_NORMAL_MAP`).
+        if !self.unlit {
+            material.normal_map_texture = self.normal_texture.and_then(|p| texture(p, self.base_clamp, false));
+        }
 
         // Fixed-function NIF shading is `texture * (emissive + lighting)`: the
         // emissive color glows *through the base texture*. Bevy adds
@@ -472,7 +484,7 @@ impl Surface<'_> {
         // exposure. A glow map replaces both. Unlit surfaces bypass PBR lighting.
         if !self.unlit {
             let emissive = self.emissive;
-            if let Some(glow) = self.glow_texture.and_then(|p| texture(p, [false, false])) {
+            if let Some(glow) = self.glow_texture.and_then(|p| texture(p, [false, false], true)) {
                 material.emissive_texture = Some(glow);
                 set_emissive(&mut material, LinearRgba::WHITE);
             } else if emissive.red + emissive.green + emissive.blue > 0.0 {
@@ -494,8 +506,9 @@ pub(crate) fn resolve_texture(path: &str, vfs: &Vfs, model: &str) -> Option<Stri
     Some(resolved.as_str().to_owned())
 }
 
-/// Loader settings for model textures: sRGB, linear filtering, optional S/T clamp.
-pub(crate) fn image_settings_clamped(settings: &mut ImageLoaderSettings, clamp: [bool; 2]) {
+/// Loader settings for model textures: sRGB colour (`srgb`; false for normal maps, and the
+/// loader's flag overrides the file's own format), linear filtering, optional S/T clamp.
+pub(crate) fn image_settings_clamped(settings: &mut ImageLoaderSettings, clamp: [bool; 2], srgb: bool) {
     let mode = |clamped: bool| {
         if clamped {
             ImageAddressMode::ClampToEdge
@@ -503,7 +516,7 @@ pub(crate) fn image_settings_clamped(settings: &mut ImageLoaderSettings, clamp: 
             ImageAddressMode::Repeat
         }
     };
-    settings.is_srgb = true;
+    settings.is_srgb = srgb;
     settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: mode(clamp[0]),
         address_mode_v: mode(clamp[1]),
@@ -521,6 +534,7 @@ mod tests {
             base_texture: None,
             base_clamp: [false, false],
             glow_texture: None,
+            normal_texture: None,
             emissive: LinearRgba::BLACK,
             alpha_mode,
             double_sided: true,
@@ -534,14 +548,14 @@ mod tests {
     #[test]
     fn only_lit_leaf_surfaces_get_diffuse_transmission() {
         assert!(foliage_transmission(), "on by default");
-        let leaf = surface(true, AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF), false).to_material(|_, _| None);
+        let leaf = surface(true, AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF), false).to_material(|_, _, _| None);
         assert!((leaf.diffuse_transmission - LEAF_DIFFUSE_TRANSMISSION).abs() < f32::EPSILON);
         assert!((leaf.thickness - LEAF_THICKNESS).abs() < f32::EPSILON);
         assert!(leaf.diffuse_transmission > 0.0 && leaf.diffuse_transmission <= 1.0, "a share of the diffuse light");
         assert!(leaf.specular_transmission.abs() < f32::EPSILON, "no refraction path");
-        let wall = surface(false, AlphaMode::Opaque, false).to_material(|_, _| None);
+        let wall = surface(false, AlphaMode::Opaque, false).to_material(|_, _, _| None);
         assert!(wall.diffuse_transmission.abs() < f32::EPSILON && wall.thickness.abs() < f32::EPSILON);
-        let unlit = surface(true, AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF), true).to_material(|_, _| None);
+        let unlit = surface(true, AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF), true).to_material(|_, _, _| None);
         assert!(unlit.diffuse_transmission.abs() < f32::EPSILON);
     }
 }

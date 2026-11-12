@@ -5,7 +5,7 @@ use std::sync::Arc;
 use sf_bake::{BakeError, PlanCx, ProductKey, RunCx, Step};
 
 use crate::cooked::KEY_FORMAT;
-use crate::{CookSettings, Model, ModelImporter, ModelInfo, cook, cook_rest, cook_rig};
+use crate::{CookSettings, Material, Model, ModelImporter, ModelInfo, cook_rest_with, cook_rig_with, cook_with};
 
 /// The registered importers, chosen by file extension.
 #[derive(Clone, Default)]
@@ -39,6 +39,35 @@ impl Importers {
         cx.file(path);
         let version = self.for_path(path).map_or(0, |i| i.version());
         cx.param("importer", version.to_le_bytes().to_vec());
+    }
+}
+
+/// Which materials of a model bind a normal map, so the mesh steps give their
+/// submeshes `MikkTSpace` tangents. An adapter hook: the rule that pairs a base
+/// texture with its normal map is the game's (a suffix convention, a material
+/// record, ...), not the framework's. Asked once per material while a step
+/// runs: check files through `cx` ([`RunCx::file_exists`]) so they become the
+/// product's dependencies, and a pack that adds a normal map re-cooks only
+/// the models whose materials it pairs with.
+#[derive(Clone)]
+pub struct TangentRule {
+    /// Bump when the rule changes: it is part of the bake key.
+    pub version: u32,
+    pub wants: Arc<TangentFn>,
+}
+
+/// [`TangentRule::wants`]: true when `material` binds a normal map.
+pub type TangentFn = dyn Fn(&Material, &mut RunCx<'_>) -> Result<bool, BakeError> + Send + Sync;
+
+impl TangentRule {
+    fn plan(rule: Option<&Self>, cx: &mut PlanCx) {
+        cx.param("tangents", rule.map_or(0, |r| u64::from(r.version) + 1).to_le_bytes().to_vec());
+    }
+
+    /// Per material of `model`: whether it gets tangents (all false without a rule).
+    fn materials(rule: Option<&Self>, model: &Model, cx: &mut RunCx<'_>) -> Result<Vec<bool>, BakeError> {
+        let Some(rule) = rule else { return Ok(Vec::new()) };
+        model.materials.iter().map(|m| (rule.wants)(m, cx)).collect()
     }
 }
 
@@ -77,6 +106,8 @@ impl Step for ModelInfoStep {
 pub struct MeshCookStep {
     pub importers: Importers,
     pub settings: CookSettings,
+    /// Tangents for normal-mapped materials; `None`: no tangents.
+    pub tangents: Option<TangentRule>,
 }
 
 impl MeshCookStep {
@@ -93,11 +124,13 @@ impl Step for MeshCookStep {
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         self.importers.plan(subject, cx);
         cx.param("settings", self.settings.key_bytes()).param("format", KEY_FORMAT.to_le_bytes().to_vec());
+        TangentRule::plan(self.tangents.as_ref(), cx);
         Ok(())
     }
     fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
         let model = self.importers.import(Self::ID, subject, cx)?;
-        let cooked = cook(&model, &self.settings).map_err(|e| BakeError::step(&ProductKey::new(Self::ID, subject), e))?;
+        let tangents = TangentRule::materials(self.tangents.as_ref(), &model, cx)?;
+        let cooked = cook_with(&model, &self.settings, &tangents).map_err(|e| BakeError::step(&ProductKey::new(Self::ID, subject), e))?;
         Ok(cooked.to_bytes())
     }
     fn override_path(&self, subject: &str) -> Option<String> {
@@ -113,6 +146,8 @@ impl Step for MeshCookStep {
 pub struct MeshRestStep {
     pub importers: Importers,
     pub settings: CookSettings,
+    /// Tangents for normal-mapped materials; `None`: no tangents.
+    pub tangents: Option<TangentRule>,
 }
 
 impl MeshRestStep {
@@ -129,11 +164,13 @@ impl Step for MeshRestStep {
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         self.importers.plan(subject, cx);
         cx.param("settings", self.settings.key_bytes()).param("format", KEY_FORMAT.to_le_bytes().to_vec());
+        TangentRule::plan(self.tangents.as_ref(), cx);
         Ok(())
     }
     fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
         let model = self.importers.import(Self::ID, subject, cx)?;
-        let cooked = cook_rest(&model, &self.settings).map_err(|e| BakeError::step(&ProductKey::new(Self::ID, subject), e))?;
+        let tangents = TangentRule::materials(self.tangents.as_ref(), &model, cx)?;
+        let cooked = cook_rest_with(&model, &self.settings, &tangents).map_err(|e| BakeError::step(&ProductKey::new(Self::ID, subject), e))?;
         Ok(cooked.to_bytes())
     }
 }
@@ -146,6 +183,8 @@ impl Step for MeshRestStep {
 pub struct MeshRigStep {
     pub importers: Importers,
     pub settings: CookSettings,
+    /// Tangents for normal-mapped materials; `None`: no tangents.
+    pub tangents: Option<TangentRule>,
 }
 
 impl MeshRigStep {
@@ -162,11 +201,13 @@ impl Step for MeshRigStep {
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         self.importers.plan(subject, cx);
         cx.param("settings", self.settings.key_bytes()).param("format", KEY_FORMAT.to_le_bytes().to_vec());
+        TangentRule::plan(self.tangents.as_ref(), cx);
         Ok(())
     }
     fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
         let model = self.importers.import(Self::ID, subject, cx)?;
-        let cooked = cook_rig(&model, &self.settings).map_err(|e| BakeError::step(&ProductKey::new(Self::ID, subject), e))?;
+        let tangents = TangentRule::materials(self.tangents.as_ref(), &model, cx)?;
+        let cooked = cook_rig_with(&model, &self.settings, &tangents).map_err(|e| BakeError::step(&ProductKey::new(Self::ID, subject), e))?;
         Ok(cooked.to_bytes())
     }
 }

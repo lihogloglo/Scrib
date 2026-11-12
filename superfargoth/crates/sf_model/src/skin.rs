@@ -27,8 +27,10 @@ use std::collections::{BTreeMap, HashMap};
 use glam::{Affine3A, Mat3, Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::cook::{CookError, CookSettings, Flags, Group, base_weights, lod_chain, optimize_indices, validate, vertex};
-use crate::cooked::{Cooked, CookedLod, CookedModel, CookedSubmesh, FormatError, Vertex};
+use crate::cook::{
+    CookError, CookSettings, Flags, Group, base_weights, fetch_order, lod_chain, optimize_indices, validate, vertex, wants_tangents,
+};
+use crate::cooked::{Cooked, CookedLod, CookedModel, CookedSubmesh, FormatError, Tangent, Vertex};
 use crate::{Aabb, LodPolicy, MeshData, Model, MorphKind};
 
 /// Influences per vertex in cooked data (glTF's one `JOINTS_0`/`WEIGHTS_0`
@@ -166,6 +168,7 @@ impl CookedSkinned {
         Ok(DecodedSubmesh {
             material: sub.material,
             part: self.streams[level][submesh].part,
+            tangents: sub.decode_tangents()?.unwrap_or_default(),
             vertices,
             indices,
             skin,
@@ -207,10 +210,11 @@ impl CookedSkinned {
             for (i, (sub, (targets, morphs))) in lod.submeshes.iter_mut().zip(morphs).enumerate() {
                 if mirrored {
                     let (vertices, mut indices) = sub.decode()?;
+                    let tangents = sub.decode_tangents()?.unwrap_or_default();
                     for tri in indices.as_chunks_mut::<3>().0 {
                         tri.swap(1, 2);
                     }
-                    *sub = CookedSubmesh::encode(sub.material, &vertices, &indices)?;
+                    *sub = CookedSubmesh::encode_with_tangents(sub.material, &vertices, &tangents, &indices)?;
                 }
                 let skin = vec![SkinVertex { joints: [0; MAX_INFLUENCES], weights: [1.0, 0.0, 0.0, 0.0] }; sub.vertex_count as usize];
                 out.push(CookedSkinStreams {
@@ -235,6 +239,9 @@ pub struct DecodedSubmesh {
     pub material: u32,
     /// Index into [`CookedSkinned::parts`].
     pub part: u32,
+    /// `MikkTSpace` tangents, one per vertex; empty when the material binds no
+    /// normal map.
+    pub tangents: Vec<Tangent>,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     /// One per vertex; joints index the model's palette.
@@ -334,7 +341,7 @@ impl Palette {
 }
 
 /// Cooks a model with skins or morph targets ([`crate::cook`] dispatches here).
-pub(crate) fn cook_skinned(model: &Model, settings: &CookSettings) -> Result<Cooked, CookError> {
+pub(crate) fn cook_skinned(model: &Model, settings: &CookSettings, tangents: &[bool]) -> Result<Cooked, CookError> {
     if model.meshes.iter().any(|m| m.skinned && m.skin.is_none()) {
         return Ok(Cooked::Skipped { reason: "skinned mesh without skin data".into() });
     }
@@ -380,7 +387,7 @@ pub(crate) fn cook_skinned(model: &Model, settings: &CookSettings) -> Result<Coo
 
         let part = u32::try_from(parts.len()).map_err(|_| CookError::Malformed("too many parts".into()))?;
         parts.push(CookedPart { node_path: node_path(model, node_index) });
-        let (group, extra) = deforming_group(model, &rest, &movers, node_index, mesh, &targets, &mut palette, part)?;
+        let (group, extra) = deforming_group(model, &rest, &movers, node_index, mesh, &targets, &mut palette, part, wants_tangents(mesh, tangents))?;
         groups.insert(part, group);
         extras.insert(part, extra);
     }
@@ -532,6 +539,7 @@ fn deforming_group(
     targets: &[MorphTargetInfo],
     palette: &mut Palette,
     part: u32,
+    tangent_space: bool,
 ) -> Result<(Group, Extra), CookError> {
     let node = &model.nodes[node_index];
     let n = mesh.positions.len();
@@ -590,6 +598,13 @@ fn deforming_group(
         group.indices.extend(if mirrored { [tri[0], tri[2], tri[1]] } else { *tri });
         group.lod0_only.push(node.lod == LodPolicy::Drop);
     }
+    if tangent_space {
+        // One vertex per corner in every stream; the weld merges them back.
+        let per = if extra.morphs.is_empty() { 0 } else { targets.len() };
+        extra.skin = crate::tangent::per_corner(&extra.skin, &group.indices);
+        extra.morphs = group.indices.iter().flat_map(|&i| extra.morphs[i as usize * per..(i as usize + 1) * per].iter().copied()).collect();
+        group.add_corner_tangents();
+    }
     weld(&mut group, &mut extra, targets.len());
     Ok((group, extra))
 }
@@ -630,20 +645,27 @@ fn influences(source: &[(u16, f32)], slots: &[u16]) -> Result<SkinVertex, CookEr
 /// Merges vertices identical in every stream.
 fn weld(group: &mut Group, extra: &mut Extra, targets: usize) {
     let morphs = !extra.morphs.is_empty();
+    let tangents = !group.tangents.is_empty();
     let mut index: HashMap<Vec<u8>, u32> = HashMap::new();
     let mut remap = Vec::with_capacity(group.vertices.len());
-    let mut kept = Group { material: group.material, ..Group::default() };
+    let mut kept = Group { material: group.material, tangent_space: group.tangent_space, ..Group::default() };
     let mut kept_extra = Extra { part: extra.part, ..Extra::default() };
     for i in 0..group.vertices.len() {
         let mut key = Vec::with_capacity(64);
         key.extend_from_slice(meshopt::typed_to_bytes(std::slice::from_ref(&group.vertices[i])));
         key.extend_from_slice(meshopt::typed_to_bytes(std::slice::from_ref(&extra.skin[i])));
+        if tangents {
+            key.extend_from_slice(meshopt::typed_to_bytes(std::slice::from_ref(&group.tangents[i])));
+        }
         if morphs {
             key.extend_from_slice(meshopt::typed_to_bytes(&extra.morphs[i * targets..(i + 1) * targets]));
         }
         let next = u32::try_from(kept.vertices.len()).unwrap_or(u32::MAX);
         let new = *index.entry(key).or_insert_with(|| {
             kept.vertices.push(group.vertices[i]);
+            if tangents {
+                kept.tangents.push(group.tangents[i]);
+            }
             kept.locked.push(false);
             kept_extra.skin.push(extra.skin[i]);
             if morphs {
@@ -672,19 +694,9 @@ fn finish_skinned(
 ) -> Result<(CookedSubmesh, CookedSkinStreams), CookError> {
     let targets = infos.len();
     optimize_indices(group, &mut indices, settings)?;
-    // Vertex fetch order: first use in the index buffer (what
-    // `meshopt::optimize_vertex_fetch` does, applied to every stream).
-    let mut remap = vec![u32::MAX; group.vertices.len()];
-    let mut order = Vec::new();
-    for i in &mut indices {
-        let slot = &mut remap[*i as usize];
-        if *slot == u32::MAX {
-            *slot = u32::try_from(order.len()).map_err(|_| CookError::Malformed("too many vertices".into()))?;
-            order.push(*i as usize);
-        }
-        *i = *slot;
-    }
+    let order = fetch_order(&mut indices, group.vertices.len())?;
     let vertices: Vec<Vertex> = order.iter().map(|&o| group.vertices[o]).collect();
+    let tangents = group.tangents_in(&order);
     let skin: Vec<SkinVertex> = order.iter().map(|&o| extra.skin[o]).collect();
     // The targets this level of the part carries: those that move one of
     // its vertices, minus expression targets on coarse levels.
@@ -706,5 +718,5 @@ fn finish_skinned(
         targets: carried.iter().map(|&t| u16::try_from(t).map_err(|_| CookError::Malformed("more than 65536 morph targets".into()))).collect::<Result<_, _>>()?,
         morphs: (!carried.is_empty()).then(|| meshopt::encode_vertex_buffer(&morphs)).transpose().map_err(codec)?,
     };
-    Ok((CookedSubmesh::encode(group.material, &vertices, &indices)?, streams))
+    Ok((CookedSubmesh::encode_with_tangents(group.material, &vertices, &tangents, &indices)?, streams))
 }

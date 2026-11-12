@@ -234,6 +234,8 @@ pub fn encode_submesh(material: u32, vertices: &[Vertex], indices: &[u32]) -> Re
         index_count: u32::try_from(indices.len()).map_err(|_| FormatError::TooLarge)?,
         vertices: meshopt::encode_vertex_buffer(vertices).map_err(codec)?,
         indices: meshopt::encode_index_buffer(indices, vertices.len()).map_err(codec)?,
+        // Far proxies bind no normal map.
+        tangents: Vec::new(),
     })
 }
 

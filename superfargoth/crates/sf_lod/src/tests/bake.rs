@@ -154,8 +154,8 @@ fn bake(threads: usize, dir: &std::path::Path) -> (Store, Manifest) {
     let mut baker = Baker::new(store.clone(), Arc::new(Files(files)));
     let importers = Importers::new().with(Arc::new(PostcardImporter));
     baker.register(ModelInfoStep { importers: importers.clone() });
-    baker.register(MeshCookStep { importers: importers.clone(), settings: CookSettings::default() });
-    baker.register(MeshRestStep { importers, settings: CookSettings::default() });
+    baker.register(MeshCookStep { importers: importers.clone(), settings: CookSettings::default(), tangents: None });
+    baker.register(MeshRestStep { importers, settings: CookSettings::default(), tangents: None });
     WorldBake::new(Arc::new(world()), IndexParams::default()).register(&mut baker);
     FarBake::with_textures(Arc::new(crate::DefaultFarSource), FarBakeSettings::default(), Arc::new(RawDecoder)).register(&mut baker);
     let ws = WorldspaceId::new("t/ext");
