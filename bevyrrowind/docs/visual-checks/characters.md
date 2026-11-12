@@ -83,6 +83,16 @@ idles.
   15-25 m); owner asks for a general shadows pass (ROADMAP backlog).
 - Source: charbevy.
 
+### CH-5: Busy Balmora street, NPCs deform with shared joint blocks (perf-push P5, 2026-11-12)
+- Why: an NPC's meshes (one per material, + face) now share ONE joint block in the skin buffer (vendored `bevy_pbr`
+  patch P5); matrices are identical by design, so nothing should change.
+- Kind: game location. Run: `scene char-balmora` (walkers on), DLSS Quality; fly down to a crowded street, then walk
+  past NPCs and turn the camera fast.
+- Look for: NPCs idle and walk normally; clothes, armour, robes and heads stay on the body (no torn seams, no part
+  stuck in a T-pose or at the origin); held weapons/torches follow the hand; no smearing or ghosting on moving
+  limbs under DLSS (motion vectors). NPCs that walk into view look right on their first frame.
+- Status: awaiting owner.
+
 ## Node-animated creatures (superfargoth `character.md`, "Node-animated creatures"; `.sessions/nodecreatures.md`)
 
 Creature bodies are cooked for their rig (`mesh.rig`, `sf_model::cook_rig`):

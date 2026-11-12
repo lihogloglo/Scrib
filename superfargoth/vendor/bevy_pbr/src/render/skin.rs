@@ -1,10 +1,12 @@
 use core::mem::{self, size_of};
 
-use bevy_asset::{prelude::AssetChanged, Assets};
+use bevy_asset::{prelude::AssetChanged, AssetId, Assets};
 use bevy_camera::visibility::ViewVisibility;
 use bevy_ecs::prelude::*;
-use bevy_math::Mat4;
+use bevy_math::{Affine3A, Mat4};
 use bevy_mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
+// superfargoth patch (own, P5: shared skin joint blocks): block lookup by binding.
+use bevy_platform::collections::HashMap;
 use bevy_render::render_resource::{Buffer, BufferDescriptor};
 use bevy_render::settings::WgpuLimits;
 use bevy_render::sync_world::{MainEntity, MainEntityHashMap};
@@ -72,27 +74,21 @@ impl SkinByteOffset {
 /// frame.
 ///
 /// Notes on implementation: see comment on top of the `extract_skins` system.
+///
+/// superfargoth patch (own, P5: shared skin joint blocks): the CPU side (staging
+/// buffer, allocator, per-skin info) moved into [`SkinJointBlocks`], where
+/// skinned meshes with the same skeleton binding share one joint block.
 #[derive(Resource)]
 pub struct SkinUniforms {
-    /// The CPU-side buffer that stores the joint matrices for skinned meshes in
-    /// the current frame.
-    pub current_staging_buffer: Vec<Mat4>,
     /// The GPU-side buffer that stores the joint matrices for skinned meshes in
     /// the current frame.
     pub current_buffer: Buffer,
     /// The GPU-side buffer that stores the joint matrices for skinned meshes in
     /// the previous frame.
     pub prev_buffer: Buffer,
-    /// The offset allocator that manages the placement of the joints within the
-    /// [`Self::current_buffer`].
-    allocator: Allocator,
-    /// Allocation information that we keep about each skin.
-    skin_uniform_info: MainEntityHashMap<SkinUniformInfo>,
-    /// The total number of joints in the scene.
-    ///
-    /// We use this as part of our heuristic to decide whether to use
-    /// fine-grained change detection.
-    total_joints: usize,
+    /// superfargoth patch (own, P5: shared skin joint blocks): joint blocks,
+    /// their placement in [`Self::current_buffer`] and the CPU staging copy.
+    pub blocks: SkinJointBlocks,
 }
 
 pub fn skin_uniforms_from_world(device: Res<RenderDevice>, mut commands: Commands) {
@@ -119,12 +115,9 @@ pub fn skin_uniforms_from_world(device: Res<RenderDevice>, mut commands: Command
     });
 
     let res = SkinUniforms {
-        current_staging_buffer: vec![],
         current_buffer,
         prev_buffer,
-        allocator: Allocator::new(MAX_TOTAL_JOINTS),
-        skin_uniform_info: MainEntityHashMap::default(),
-        total_joints: 0,
+        blocks: SkinJointBlocks::default(),
     };
 
     commands.insert_resource(res);
@@ -133,38 +126,301 @@ pub fn skin_uniforms_from_world(device: Res<RenderDevice>, mut commands: Command
 impl SkinUniforms {
     /// Returns the current offset in joints of the skin in the buffer.
     pub fn skin_index(&self, skin: MainEntity) -> Option<u32> {
-        self.skin_uniform_info
-            .get(&skin)
-            .map(SkinUniformInfo::offset)
+        self.blocks.skin_index(skin)
     }
 
     /// Returns the current offset in bytes of the skin in the buffer.
     pub fn skin_byte_offset(&self, skin: MainEntity) -> Option<SkinByteOffset> {
-        self.skin_uniform_info.get(&skin).map(|skin_uniform_info| {
-            SkinByteOffset::from_index(skin_uniform_info.offset() as usize)
-        })
+        self.blocks
+            .skin_index(skin)
+            .map(|index| SkinByteOffset::from_index(index as usize))
     }
 
     /// Returns an iterator over all skins in the scene.
     pub fn all_skins(&self) -> impl Iterator<Item = &MainEntity> {
-        self.skin_uniform_info.keys()
+        self.blocks.skins()
     }
 }
 
-/// Allocation information about each skin.
-struct SkinUniformInfo {
-    /// The allocation of the joints within the [`SkinUniforms::current_buffer`].
-    allocation: Allocation,
-    /// The entities that comprise the joints.
-    joints: Vec<MainEntity>,
+// superfargoth patch (own, P5: shared skin joint blocks) begin.
+//
+// Stock Bevy 0.20 (and main as of bevyengine/bevy#23283) keeps one joint block
+// per skinned-mesh entity. A character split into several meshes (one per
+// material) on one skeleton then extracts, stores and uploads the same joint
+// matrices once per mesh. Here a block is keyed by its skeleton binding: the
+// inverse-bindposes asset and the joint entities in order. Equal keys give
+// bit-identical matrices, so the meshes share one block (refcounted), the joint
+// loop runs once per block and the staging buffer (uploaded whole every frame)
+// shrinks accordingly. Previous-frame matrices (motion vectors) are read at the
+// same offset in `prev_buffer`, so sharing keeps them correct.
+
+/// What makes two skins' joint matrices identical: the same inverse-bindposes
+/// asset and the same joint entities in the same order.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct SkinBindingKey {
+    inverse_bindposes: AssetId<SkinnedMeshInverseBindposes>,
+    joints: Box<[Entity]>,
 }
 
-impl SkinUniformInfo {
-    /// The offset in joints within the [`SkinUniforms::current_staging_buffer`].
+/// One joint block in the buffers, shared by every skin with its binding.
+struct SkinBlock {
+    /// The allocation of the joints within the [`SkinUniforms::current_buffer`].
+    allocation: Allocation,
+    /// The binding, which also holds the joint entities.
+    key: SkinBindingKey,
+    /// Skins (visible skinned-mesh entities) using this block.
+    users: u32,
+    /// Filled from the full joint transforms this frame, so the changed-joint
+    /// pass can skip it.
+    fresh: bool,
+}
+
+impl SkinBlock {
+    /// The offset in joints within the staging buffer.
     fn offset(&self) -> u32 {
         self.allocation.offset * JOINTS_PER_ALLOCATION_UNIT
     }
 }
+
+/// Allocation information about each skin.
+#[derive(Clone, Copy)]
+struct SkinUniformInfo {
+    /// Index of the skin's block in [`SkinJointBlocks::blocks`].
+    block: u32,
+    /// The block's offset in joints (cached for the hot lookups).
+    offset: u32,
+}
+
+/// The CPU side of [`SkinUniforms`]: joint blocks shared by skins with the same
+/// skeleton binding, their allocation, and the staging buffer that
+/// [`prepare_skins`] uploads.
+pub struct SkinJointBlocks {
+    /// The CPU-side buffer that stores the joint matrices for skinned meshes in
+    /// the current frame.
+    staging: Vec<Mat4>,
+    /// The offset allocator that manages the placement of the joints within the
+    /// [`SkinUniforms::current_buffer`].
+    allocator: Allocator,
+    /// The block of each visible skin.
+    skin_uniform_info: MainEntityHashMap<SkinUniformInfo>,
+    /// Block slots; `None` is free (listed in `free_blocks`).
+    blocks: Vec<Option<SkinBlock>>,
+    free_blocks: Vec<u32>,
+    block_by_key: HashMap<SkinBindingKey, u32>,
+    /// The total number of joints in all blocks.
+    total_joints: usize,
+    /// Joints visited (matrix lookups) since [`Self::begin_extract`].
+    joints_visited: usize,
+}
+
+impl Default for SkinJointBlocks {
+    fn default() -> Self {
+        Self {
+            staging: Vec::new(),
+            allocator: Allocator::new(MAX_TOTAL_JOINTS),
+            skin_uniform_info: MainEntityHashMap::default(),
+            blocks: Vec::new(),
+            free_blocks: Vec::new(),
+            block_by_key: HashMap::default(),
+            total_joints: 0,
+            joints_visited: 0,
+        }
+    }
+}
+
+impl SkinJointBlocks {
+    /// The current offset in joints of the skin's block in the buffer.
+    pub fn skin_index(&self, skin: MainEntity) -> Option<u32> {
+        self.skin_uniform_info.get(&skin).map(|info| info.offset)
+    }
+
+    /// All skins (visible skinned-mesh entities) with a block.
+    pub fn skins(&self) -> impl Iterator<Item = &MainEntity> {
+        self.skin_uniform_info.keys()
+    }
+
+    /// Number of skins with a block.
+    pub fn skin_count(&self) -> usize {
+        self.skin_uniform_info.len()
+    }
+
+    /// Number of live joint blocks (distinct skeleton bindings).
+    pub fn block_count(&self) -> usize {
+        self.block_by_key.len()
+    }
+
+    /// Joints in all live blocks.
+    pub fn total_joints(&self) -> usize {
+        self.total_joints
+    }
+
+    /// Joints visited since the last [`Self::begin_extract`] (one per joint per
+    /// block, not per skin).
+    pub fn joints_visited(&self) -> usize {
+        self.joints_visited
+    }
+
+    /// The staging copy of the joint matrices, uploaded whole each frame.
+    pub fn staging_buffer(&self) -> &[Mat4] {
+        &self.staging
+    }
+
+    /// Starts a frame's extraction (resets [`Self::joints_visited`]).
+    pub fn begin_extract(&mut self) {
+        self.joints_visited = 0;
+    }
+
+    /// Gives `skin` the block of its binding, creating it if needed, and
+    /// (re)fills that block from `joint_transform` (the joint's current global
+    /// transform). Refilling on every add keeps a block current when its
+    /// inverse-bindposes asset changed: its users are removed and re-added.
+    pub fn add_skin(
+        &mut self,
+        skin: MainEntity,
+        skinned_mesh: &SkinnedMesh,
+        inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
+        joint_transform: impl Fn(Entity) -> Option<Affine3A>,
+    ) {
+        self.remove_skin(skin);
+        let key = SkinBindingKey {
+            inverse_bindposes: skinned_mesh.inverse_bindposes.id(),
+            joints: skinned_mesh.joints.as_slice().into(),
+        };
+        let block_index = if let Some(&index) = self.block_by_key.get(&key) {
+            index
+        } else {
+            // Allocate space for the joints.
+            let Some(allocation) = self.allocator.allocate(
+                key.joints
+                    .len()
+                    .div_ceil(JOINTS_PER_ALLOCATION_UNIT as usize) as u32,
+            ) else {
+                error!(
+                    "Out of space for skin: {:?}. Tried to allocate space for {:?} joints.",
+                    skin,
+                    key.joints.len()
+                );
+                return;
+            };
+            self.total_joints += key.joints.len();
+            let block = SkinBlock {
+                allocation,
+                key: key.clone(),
+                users: 0,
+                fresh: false,
+            };
+            let index = match self.free_blocks.pop() {
+                Some(index) => {
+                    self.blocks[index as usize] = Some(block);
+                    index
+                }
+                None => {
+                    self.blocks.push(Some(block));
+                    (self.blocks.len() - 1) as u32
+                }
+            };
+            self.block_by_key.insert(key, index);
+            index
+        };
+
+        let Some(block) = self.blocks[block_index as usize].as_mut() else {
+            return;
+        };
+        block.users += 1;
+        block.fresh = true;
+        let offset = block.offset();
+        let inverse_bindposes = inverse_bindposes.get(block.key.inverse_bindposes);
+        for (joint_index, &joint) in block.key.joints.iter().enumerate() {
+            // Calculate the initial joint matrix.
+            let inverse_bindpose = inverse_bindposes
+                .and_then(|inverse_bindposes| inverse_bindposes.get(joint_index));
+            let joint_matrix = match (inverse_bindpose, joint_transform(joint)) {
+                (Some(inverse_bindpose), Some(transform)) => transform * *inverse_bindpose,
+                _ => Mat4::IDENTITY,
+            };
+
+            // Write in the new joint matrix, growing the staging buffer if
+            // necessary.
+            let buffer_index = offset as usize + joint_index;
+            if self.staging.len() < buffer_index + 1 {
+                self.staging.resize(buffer_index + 1, Mat4::IDENTITY);
+            }
+            self.staging[buffer_index] = joint_matrix;
+        }
+        self.joints_visited += block.key.joints.len();
+
+        self.skin_uniform_info.insert(
+            skin,
+            SkinUniformInfo {
+                block: block_index,
+                offset,
+            },
+        );
+    }
+
+    /// Takes `skin` off its block; the block is freed with its last user.
+    pub fn remove_skin(&mut self, skin: MainEntity) {
+        let Some(info) = self.skin_uniform_info.remove(&skin) else {
+            return;
+        };
+        let slot = &mut self.blocks[info.block as usize];
+        let Some(block) = slot.as_mut() else {
+            return;
+        };
+        block.users -= 1;
+        if block.users > 0 {
+            return;
+        }
+        let Some(block) = slot.take() else {
+            return;
+        };
+        // Free the allocation.
+        self.allocator.free(block.allocation);
+        // Update the total number of joints.
+        self.total_joints -= block.key.joints.len();
+        self.block_by_key.remove(&block.key);
+        self.free_blocks.push(info.block);
+    }
+
+    /// Rewrites, once per block, the matrices of joints whose global transform
+    /// changed (`changed_transform` returns `None` for unchanged joints).
+    /// Blocks filled by [`Self::add_skin`] this frame are skipped.
+    pub fn extract_changed_joints(
+        &mut self,
+        inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
+        changed_transform: impl Fn(Entity) -> Option<Affine3A>,
+    ) {
+        for block in self.blocks.iter_mut().flatten() {
+            // If we initialized the block this frame, we already populated all
+            // the joints, so there's no need to populate them again.
+            if mem::take(&mut block.fresh) {
+                continue;
+            }
+            let Some(inverse_bindposes) = inverse_bindposes.get(block.key.inverse_bindposes)
+            else {
+                continue;
+            };
+            let offset = block.offset() as usize;
+            // Calculate and write in the new joint matrices, if they changed
+            // this frame.
+            for (joint_index, (&joint, inverse_bindpose)) in block
+                .key
+                .joints
+                .iter()
+                .zip(inverse_bindposes.iter())
+                .enumerate()
+            {
+                // Skip if the global transform for this joint didn't change.
+                let Some(transform) = changed_transform(joint) else {
+                    continue;
+                };
+                self.staging[offset + joint_index] = transform * *inverse_bindpose;
+            }
+            self.joints_visited += block.key.joints.len().min(inverse_bindposes.len());
+        }
+    }
+}
+// superfargoth patch (own, P5: shared skin joint blocks) end.
 
 /// Returns true if skinning must use uniforms (and dynamic offsets) because
 /// storage buffers aren't supported on the current platform.
@@ -179,8 +435,10 @@ pub fn prepare_skins(
     uniform: ResMut<SkinUniforms>,
 ) {
     let uniform = uniform.into_inner();
+    // superfargoth patch (own, P5: shared skin joint blocks): the staging buffer
+    // lives in `SkinJointBlocks`.
 
-    if uniform.current_staging_buffer.is_empty() {
+    if uniform.blocks.staging.is_empty() {
         return;
     }
 
@@ -190,7 +448,7 @@ pub fn prepare_skins(
     // Resize the buffers if necessary. Include extra space equal to `MAX_JOINTS`
     // because we need to be able to bind a full uniform buffer's worth of data
     // if skins use uniform buffers on this platform.
-    let needed_size = (uniform.current_staging_buffer.len() as u64 + MAX_JOINTS as u64)
+    let needed_size = (uniform.blocks.staging.len() as u64 + MAX_JOINTS as u64)
         * size_of::<Mat4>() as u64;
     if uniform.current_buffer.size() < needed_size {
         let mut new_size = uniform.current_buffer.size();
@@ -227,16 +485,16 @@ pub fn prepare_skins(
         render_queue.write_buffer(
             &uniform.prev_buffer,
             0,
-            bytemuck::must_cast_slice(&uniform.current_staging_buffer[..]),
+            bytemuck::must_cast_slice(&uniform.blocks.staging[..]),
         );
     }
 
-    // Write the data from `uniform.current_staging_buffer` into
+    // Write the data from `uniform.blocks.staging` into
     // `uniform.current_buffer`.
     render_queue.write_buffer(
         &uniform.current_buffer,
         0,
-        bytemuck::must_cast_slice(&uniform.current_staging_buffer[..]),
+        bytemuck::must_cast_slice(&uniform.blocks.staging[..]),
     );
 
     // We don't need to write `uniform.prev_buffer` because we already wrote it
@@ -269,9 +527,12 @@ pub fn prepare_skins(
 // In this way, we can pack ‘variable sized arrays’ into uniform buffer bindings
 // which normally only support fixed size arrays. You just have to make sure
 // in the shader that you only read the values that are valid for that binding.
+//
+// superfargoth patch (own, P5: shared skin joint blocks): joints are extracted
+// per shared block (`SkinJointBlocks`), not per skinned-mesh entity, so the
+// all-skinned-meshes query is gone.
 pub fn extract_skins(
     skin_uniforms: ResMut<SkinUniforms>,
-    skinned_meshes: Extract<Query<(Entity, &SkinnedMesh)>>,
     changed_skinned_meshes: Extract<
         Query<
             (Entity, &ViewVisibility, &SkinnedMesh),
@@ -287,214 +548,50 @@ pub fn extract_skins(
     joints: Extract<Query<&GlobalTransform>>,
     mut removed_skinned_meshes_query: Extract<RemovedComponents<SkinnedMesh>>,
 ) {
-    let skin_uniforms = skin_uniforms.into_inner();
+    let blocks = &mut skin_uniforms.into_inner().blocks;
+    blocks.begin_extract();
 
-    // Find skins that have become visible or invisible on this frame. Allocate,
-    // reallocate, or free space for them as necessary.
-    add_or_delete_skins(
-        skin_uniforms,
-        &changed_skinned_meshes,
-        &skinned_mesh_inverse_bindposes,
-        &joints,
-    );
-
-    // Extract the transforms for all joints from the scene, and write them into
-    // the staging buffer at the appropriate spot.
-    for (skin_entity, skin) in &skinned_meshes {
-        extract_joints_for_skin(
-            skin_entity.into(),
-            skin,
-            skin_uniforms,
-            &changed_skinned_meshes,
-            &skinned_mesh_inverse_bindposes,
-            &changed_transforms,
-        );
-    }
-
-    // Delete skins that became invisible.
-    for skinned_mesh_entity in removed_skinned_meshes_query.read() {
-        // Only remove a skin if we didn't pick it up in `add_or_delete_skins`.
-        // It's possible that a necessary component was removed and re-added in
-        // the same frame.
-        if !changed_skinned_meshes.contains(skinned_mesh_entity) {
-            remove_skin(skin_uniforms, skinned_mesh_entity.into());
-        }
-    }
-}
-
-/// Searches for all skins that have become visible or invisible this frame and
-/// allocations for them as necessary.
-fn add_or_delete_skins(
-    skin_uniforms: &mut SkinUniforms,
-    changed_skinned_meshes: &Query<
-        (Entity, &ViewVisibility, &SkinnedMesh),
-        Or<(
-            Changed<ViewVisibility>,
-            Changed<SkinnedMesh>,
-            AssetChanged<SkinnedMesh>,
-        )>,
-    >,
-    skinned_mesh_inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
-    joints: &Query<&GlobalTransform>,
-) {
     // Find every skinned mesh that changed one of (1) visibility; (2) joint
     // entities (part of `SkinnedMesh`); (3) the associated
-    // `SkinnedMeshInverseBindposes` asset.
-    for (skinned_mesh_entity, skinned_mesh_view_visibility, skinned_mesh) in changed_skinned_meshes
+    // `SkinnedMeshInverseBindposes` asset. Allocate, reallocate, or free space
+    // for them as necessary.
+    for (skinned_mesh_entity, skinned_mesh_view_visibility, skinned_mesh) in &changed_skinned_meshes
     {
         // Remove the skin if it existed last frame.
         let skinned_mesh_entity = MainEntity::from(skinned_mesh_entity);
-        remove_skin(skin_uniforms, skinned_mesh_entity);
+        blocks.remove_skin(skinned_mesh_entity);
 
         // If the skin is invisible, we're done.
         if !(*skinned_mesh_view_visibility).get() {
             continue;
         }
 
-        // Initialize the skin.
-        add_skin(
+        // Initialize the skin (or join the block of its binding).
+        blocks.add_skin(
             skinned_mesh_entity,
             skinned_mesh,
-            skin_uniforms,
-            skinned_mesh_inverse_bindposes,
-            joints,
+            &skinned_mesh_inverse_bindposes,
+            |joint| joints.get(joint).ok().map(GlobalTransform::affine),
         );
     }
-}
 
-/// Extracts all joints for a single skin and writes their transforms into the
-/// CPU staging buffer.
-fn extract_joints_for_skin(
-    skin_entity: MainEntity,
-    skin: &SkinnedMesh,
-    skin_uniforms: &mut SkinUniforms,
-    changed_skinned_meshes: &Query<
-        (Entity, &ViewVisibility, &SkinnedMesh),
-        Or<(
-            Changed<ViewVisibility>,
-            Changed<SkinnedMesh>,
-            AssetChanged<SkinnedMesh>,
-        )>,
-    >,
-    skinned_mesh_inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
-    changed_transforms: &Query<(Entity, &GlobalTransform), Changed<GlobalTransform>>,
-) {
-    // If we initialized the skin this frame, we already populated all
-    // the joints, so there's no need to populate them again.
-    if changed_skinned_meshes.contains(*skin_entity) {
-        return;
-    }
+    // Extract the transforms of changed joints, once per block, and write them
+    // into the staging buffer at the appropriate spot.
+    blocks.extract_changed_joints(&skinned_mesh_inverse_bindposes, |joint| {
+        changed_transforms
+            .get(joint)
+            .ok()
+            .map(|(_, transform)| transform.affine())
+    });
 
-    // Fetch information about the skin.
-    let Some(skin_uniform_info) = skin_uniforms.skin_uniform_info.get(&skin_entity) else {
-        return;
-    };
-    let Some(skinned_mesh_inverse_bindposes) =
-        skinned_mesh_inverse_bindposes.get(&skin.inverse_bindposes)
-    else {
-        return;
-    };
-
-    // Calculate and write in the new joint matrices, if they changed this frame.
-    for (joint_index, (&joint, skinned_mesh_inverse_bindpose)) in skin
-        .joints
-        .iter()
-        .zip(skinned_mesh_inverse_bindposes.iter())
-        .enumerate()
-    {
-        // Skip if the global transform for this joint didn't change.
-        let Ok((_, joint_transform)) = changed_transforms.get(joint) else {
-            continue;
-        };
-
-        let joint_matrix = joint_transform.affine() * *skinned_mesh_inverse_bindpose;
-        skin_uniforms.current_staging_buffer[skin_uniform_info.offset() as usize + joint_index] =
-            joint_matrix;
-    }
-}
-
-/// Allocates space for a new skin in the buffers, and populates its joints.
-fn add_skin(
-    skinned_mesh_entity: MainEntity,
-    skinned_mesh: &SkinnedMesh,
-    skin_uniforms: &mut SkinUniforms,
-    skinned_mesh_inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
-    joints: &Query<&GlobalTransform>,
-) {
-    // Allocate space for the joints.
-    let Some(allocation) = skin_uniforms.allocator.allocate(
-        skinned_mesh
-            .joints
-            .len()
-            .div_ceil(JOINTS_PER_ALLOCATION_UNIT as usize) as u32,
-    ) else {
-        error!(
-            "Out of space for skin: {:?}. Tried to allocate space for {:?} joints.",
-            skinned_mesh_entity,
-            skinned_mesh.joints.len()
-        );
-        return;
-    };
-
-    // Store that allocation.
-    let skin_uniform_info = SkinUniformInfo {
-        allocation,
-        joints: skinned_mesh
-            .joints
-            .iter()
-            .map(|entity| MainEntity::from(*entity))
-            .collect(),
-    };
-
-    let skinned_mesh_inverse_bindposes =
-        skinned_mesh_inverse_bindposes.get(&skinned_mesh.inverse_bindposes);
-
-    for (joint_index, &joint) in skinned_mesh.joints.iter().enumerate() {
-        // Calculate the initial joint matrix.
-        let skinned_mesh_inverse_bindpose =
-            skinned_mesh_inverse_bindposes.and_then(|skinned_mesh_inverse_bindposes| {
-                skinned_mesh_inverse_bindposes.get(joint_index)
-            });
-        let joint_matrix = match (skinned_mesh_inverse_bindpose, joints.get(joint)) {
-            (Some(skinned_mesh_inverse_bindpose), Ok(transform)) => {
-                transform.affine() * *skinned_mesh_inverse_bindpose
-            }
-            _ => Mat4::IDENTITY,
-        };
-
-        // Write in the new joint matrix, growing the staging buffer if
-        // necessary.
-        let buffer_index = skin_uniform_info.offset() as usize + joint_index;
-        if skin_uniforms.current_staging_buffer.len() < buffer_index + 1 {
-            skin_uniforms
-                .current_staging_buffer
-                .resize(buffer_index + 1, Mat4::IDENTITY);
+    // Delete skins that became invisible.
+    for skinned_mesh_entity in removed_skinned_meshes_query.read() {
+        // Only remove a skin if we didn't pick it up above. It's possible that
+        // a necessary component was removed and re-added in the same frame.
+        if !changed_skinned_meshes.contains(skinned_mesh_entity) {
+            blocks.remove_skin(skinned_mesh_entity.into());
         }
-        skin_uniforms.current_staging_buffer[buffer_index] = joint_matrix;
     }
-
-    // Record the number of joints.
-    skin_uniforms.total_joints += skinned_mesh.joints.len();
-
-    skin_uniforms
-        .skin_uniform_info
-        .insert(skinned_mesh_entity, skin_uniform_info);
-}
-
-/// Deallocates a skin and removes it from the [`SkinUniforms`].
-fn remove_skin(skin_uniforms: &mut SkinUniforms, skinned_mesh_entity: MainEntity) {
-    let Some(old_skin_uniform_info) = skin_uniforms.skin_uniform_info.remove(&skinned_mesh_entity)
-    else {
-        return;
-    };
-
-    // Free the allocation.
-    skin_uniforms
-        .allocator
-        .free(old_skin_uniform_info.allocation);
-
-    // Update the total number of joints.
-    skin_uniforms.total_joints -= old_skin_uniform_info.joints.len();
 }
 
 // NOTE: The skinned joints uniform buffer has to be bound at a dynamic offset per

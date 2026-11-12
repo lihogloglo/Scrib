@@ -290,6 +290,12 @@ assembly (a `BodyPart::keeps_node(path)` call per part).
 An equipment change re-runs 1–4 for the body only, behind a one-frame
 swap. The old mesh stays until the new one is ready, so it never pops.
 
+As built (perf-push P5, 2026-11-12): the meshes sharing a joint list share ONE joint block in the skin buffer
+(UE's one bone buffer per skeletal mesh object): vendored `bevy_pbr` `skin.rs` `SkinJointBlocks` keys blocks by
+(inverse-bindposes asset id, joint entities in order), refcounted per visible mesh; joints extract and upload once
+per block (stock Bevy: once per mesh). Held skinned props get their own key. Test
+`meshes_on_one_skeleton_binding_share_one_joint_block`; owner check CH-5.
+
 Moved to [history](archive/character-history.md#morph-bearing-parts-m3-a-as-built-2026-10-12).
 
 ## Retargeting (`anim.retarget`, at bake)

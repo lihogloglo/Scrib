@@ -921,3 +921,75 @@ fn view_copies_draw_the_view_model_material_derived_from_their_parts() {
     let derived = app.world().resource::<ViewModelMaterials>();
     assert!(derived.by_source_handles().all(|h| materials.get(h).is_some_and(|m| m.extension == ViewModel { fov_scale: 1.5, depth: 0.6 })));
 }
+
+/// Perf slice P5 (`vendor/bevy_pbr` skin.rs, `superfargoth patch (own, P5: shared skin joint blocks)`): a
+/// character's meshes (one per material, same palette) share one joint block in the skin buffer.
+#[test]
+fn meshes_on_one_skeleton_binding_share_one_joint_block() {
+    use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
+    use bevy::pbr::SkinJointBlocks;
+    use bevy::render::sync_world::MainEntity;
+    let mut app = app();
+    let a = app.world_mut().spawn(npc(CharacterState::default())).id();
+    let b = app.world_mut().spawn(npc(CharacterState::default())).id();
+    run_until(&mut app, |w| w.get::<CharacterBody>(a).is_some() && w.get::<CharacterBody>(b).is_some());
+    app.update();
+    // The same binding under another inverse-bindposes asset (equal contents, other id).
+    let first = app.world().get::<CharacterBody>(a).unwrap().meshes[0];
+    let poses = app.world().get::<SkinnedMesh>(first).unwrap().inverse_bindposes.clone();
+    let copy = app.world().resource::<Assets<SkinnedMeshInverseBindposes>>().get(&poses).unwrap().to_vec();
+    let other = app.world_mut().resource_mut::<Assets<SkinnedMeshInverseBindposes>>().add(SkinnedMeshInverseBindposes::from(copy));
+
+    let w = app.world();
+    let (pa, pb) = (w.get::<CharacterBody>(a).unwrap().meshes.clone(), w.get::<CharacterBody>(b).unwrap().meshes.clone());
+    assert_eq!((pa.len(), pb.len()), (2, 2), "two meshes per character (skin, cloth)");
+    let assets = w.resource::<Assets<SkinnedMeshInverseBindposes>>();
+    let transform = |j: Entity| w.get::<GlobalTransform>(j).map(GlobalTransform::affine);
+    let skin = |m: Entity| w.get::<SkinnedMesh>(m).unwrap();
+    let palette = skin(pa[0]).joints.len();
+    assert!(palette > 0);
+
+    let mut blocks = SkinJointBlocks::default();
+    blocks.begin_extract();
+    for &m in pa.iter().chain(&pb) {
+        blocks.add_skin(m.into(), skin(m), assets, transform);
+    }
+    let index = |blocks: &SkinJointBlocks, m: Entity| blocks.skin_index(MainEntity::from(m)).unwrap();
+    assert_eq!(index(&blocks, pa[0]), index(&blocks, pa[1]), "one character's meshes: one block");
+    assert_eq!(index(&blocks, pb[0]), index(&blocks, pb[1]));
+    assert_ne!(index(&blocks, pa[0]), index(&blocks, pb[0]), "another character's joints: its own block");
+    assert_eq!((blocks.skin_count(), blocks.block_count(), blocks.total_joints()), (4, 2, 2 * palette));
+    assert_eq!(blocks.joints_visited(), 4 * palette, "adding fills the block per add (visibility changes only)");
+    // The shared block holds exactly the matrices each mesh would have had on its own.
+    for &m in pa.iter().chain(&pb) {
+        let at = index(&blocks, m) as usize;
+        let inverse = assets.get(&skin(m).inverse_bindposes).unwrap();
+        for (k, (&joint, inv)) in skin(m).joints.iter().zip(inverse.iter()).enumerate() {
+            assert_eq!(blocks.staging_buffer()[at + k], transform(joint).unwrap() * *inv, "joint {k}");
+        }
+    }
+
+    // Per frame: joints are visited once per block, not per mesh (stock Bevy: 4 x palette).
+    blocks.begin_extract();
+    blocks.extract_changed_joints(assets, transform);
+    assert_eq!(blocks.joints_visited(), 0, "blocks filled this frame are not re-extracted");
+    blocks.begin_extract();
+    blocks.extract_changed_joints(assets, transform);
+    assert_eq!(blocks.joints_visited(), 2 * palette);
+
+    // The block lives until its last user goes; its offset is then free again.
+    let shared = index(&blocks, pa[0]);
+    blocks.remove_skin(pa[0].into());
+    assert_eq!((index(&blocks, pa[1]), blocks.block_count()), (shared, 2));
+    blocks.remove_skin(pa[1].into());
+    assert!(blocks.skin_index(pa[1].into()).is_none());
+    assert_eq!((blocks.skin_count(), blocks.block_count(), blocks.total_joints()), (2, 1, palette));
+
+    // Same joints, other inverse bindposes: not shared.
+    let mut rebound = skin(pa[0]).clone();
+    rebound.inverse_bindposes = other;
+    blocks.add_skin(pa[0].into(), skin(pa[0]), assets, transform);
+    blocks.add_skin(pa[1].into(), &rebound, assets, transform);
+    assert_ne!(index(&blocks, pa[0]), index(&blocks, pa[1]), "other inverse bindposes: own block");
+    assert_eq!(blocks.block_count(), 3);
+}
