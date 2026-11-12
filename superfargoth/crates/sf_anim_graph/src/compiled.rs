@@ -107,6 +107,9 @@ pub struct PlayerNode {
     pub root_motion: RootMotionMode,
     /// `None` for a single clip.
     pub space: Option<BlendSpace>,
+    /// `SpeedMatch`'s rate range for this player (`None`: the op's `min..=max`).
+    #[serde(default)]
+    pub rate_clamp: Option<(f32, f32)>,
 }
 
 /// A triangulated blend space over normalized coordinates.
@@ -603,7 +606,7 @@ pub struct CompiledGraph {
 
 const MAGIC: &[u8; 4] = b"SFAG";
 /// Version of the compiled graph format.
-pub const GRAPH_FORMAT: u32 = 10;
+pub const GRAPH_FORMAT: u32 = 11;
 
 impl CompiledGraph {
     #[cfg(feature = "bake")]

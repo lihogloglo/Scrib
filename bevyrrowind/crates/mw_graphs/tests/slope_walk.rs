@@ -32,11 +32,65 @@ const SPEED: f32 = 2.1;
 
 // --- The game data ------------------------------------------------------------------------
 
+/// The shipped humanoid graph on `base_anim` with the Morrowind clips only: the gait set's
+/// library clips are missing, so it drops and free movement plays the Morrowind sets (as a
+/// game without the library, or Classic).
 fn humanoid_sim() -> Option<Sim> {
     humanoid_sim_of(0)
 }
 
 fn humanoid_sim_of(index: usize) -> Option<Sim> {
+    humanoid_sim_with(index, false)
+}
+
+/// [`humanoid_sim`] with the gait set (`gaits`, A3): its library clips cooked the bake's way
+/// (`mw_bake::anim::cook_library_clip` with the slot's rules: the loop cut) from the user's
+/// library. Without them the set drops, as in [`humanoid_sim`].
+fn humanoid_sim_gait() -> Option<Sim> {
+    humanoid_sim_with(0, true)
+}
+
+/// Cooks the manifest's gait slots onto `set`'s skeleton (once per test binary: `base_anim`
+/// only) and adds them under their references; returns the slots cooked.
+fn add_gait_clips(set: &mut AnimSet) -> Vec<String> {
+    static COOKED: std::sync::OnceLock<Vec<(String, String, Arc<sf_anim::Clip>)>> = std::sync::OnceLock::new();
+    let cooked = COOKED.get_or_init(|| cook_gait_clips(&set.skeleton));
+    for (_, reference, clip) in cooked {
+        set.insert_cooked(reference.clone(), clip.clone());
+    }
+    cooked.iter().map(|(slot, _, _)| slot.clone()).collect()
+}
+
+/// `(slot, reference, clip)` per gait candidate present in the library.
+fn cook_gait_clips(skeleton: &sf_anim::Skeleton) -> Vec<(String, String, Arc<sf_anim::Clip>)> {
+    use mw_bake::sources::AnimSources;
+    use mw_graphs::build::gaits;
+    let manifest = mw_graphs::sources::SourcesManifest::builtin();
+    let library = AnimSources::local();
+    let target = mw_bake::anim::HumanoidTarget::new(skeleton.clone()).expect("humanoid retarget target");
+    let mut cooked = Vec::new();
+    for (gait, _) in gaits::SET {
+        let Some(name) = manifest.gait_slot("humanoid", gaits::STYLE, gait, "cycle") else { continue };
+        let slot = &manifest.slots[&name];
+        for c in &slot.candidates {
+            let file = c.file.clone().or_else(|| manifest.sources[&c.source].files.first().map(|f| f.name.clone())).expect("a file");
+            let Some(path) = library.real_path(&AnimSources::virtual_path(&c.source, &file)) else {
+                eprintln!("{name}: {file} not in the library ({}); the lane drops", library.dir.display());
+                continue;
+            };
+            match mw_bake::anim::cook_library_clip(&c.source, &path, Some(&c.clip), &slot.rules(c), &target) {
+                Ok(mut clip) => {
+                    clip.name = c.reference();
+                    cooked.push((name.clone(), c.reference(), Arc::new(clip)));
+                }
+                Err(e) => eprintln!("{name}: {e}"),
+            }
+        }
+    }
+    cooked
+}
+
+fn humanoid_sim_with(index: usize, gait: bool) -> Option<Sim> {
     let Ok((install, _)) = MorrowindInstall::detect(None) else {
         eprintln!("no Morrowind install detected; skipping");
         return None;
@@ -55,6 +109,9 @@ fn humanoid_sim_of(index: usize) -> Option<Sim> {
         }
     }
     let mut set = AnimSet::new(set.name, skeleton, anims).with_humanoid_rig();
+    if gait {
+        eprintln!("gait set: {:?}", add_gait_clips(&mut set));
+    }
     let mut v = mw_graphs::validate(&mut set, Template::Humanoid).unwrap();
     if let Some(deg) = std::env::var("IK_UNPLANT_ANGLE").ok().and_then(|s| s.parse::<f32>().ok()) {
         // Measurement sweep (P-IK5): the shipped graph with another turn unplant angle (degrees;
@@ -1767,6 +1824,7 @@ impl PlayerFeed {
         sim.set(p::MOVING, if self.moving { 1.0 } else { 0.0 });
         sim.set_vec2(p::MOVE, if speed > 1e-3 { flat / speed } else { Vec2::Y });
         sim.set(p::RUNNING, if running { 1.0 } else { 0.0 });
+        sim.set(p::SPEED, speed);
         sim.set(p::TURN, self.turn);
         sim.velocity = self.measured;
         sim.turn_rate = self.turn;
@@ -1824,7 +1882,7 @@ fn frame_ns(fps: f32, jitter: bool, seed: &mut u64) -> u64 {
 /// [`PlayerFeed`], ground probes at the drawn root. `script(t)` gives the intent at `t` seconds
 /// after a 1 s stand. Frames from `t >= 0`.
 fn gait_drive(script: &dyn Fn(f32) -> LocomotionIntent, seconds: f32, fps: f32, jitter: bool) -> Vec<GaitFrame> {
-    let mut sim = humanoid_sim().unwrap();
+    let mut sim = a1_sim().unwrap();
     let world = World::new();
     let mut loco = Locomotion::new(WorldPos::ORIGIN, std::f32::consts::FRAC_PI_2);
     let params = mover_params(true);
@@ -2130,6 +2188,11 @@ fn jitter_table() {
     }
 }
 
+/// The A1 tables' graph: the gait set (A3), or with `A1_CLASSIC=1` the Morrowind sets only.
+fn a1_sim() -> Option<Sim> {
+    if std::env::var_os("A1_CLASSIC").is_some() { humanoid_sim() } else { humanoid_sim_gait() }
+}
+
 /// A1 (locomotion rebuild, 3.4c): the player's gaits measured on the base pose, blend weights
 /// and play rates (the IK-vs-twin tests above cannot see clip speed, gait switch or turn blend
 /// causes). Tables: gaits (A1.1), turns (A1.2), walk <-> run switch (A1.3), rate jitter through
@@ -2137,7 +2200,7 @@ fn jitter_table() {
 #[test]
 #[ignore = "measurement: player gaits (A1)"]
 fn player_gaits() {
-    let Some(sim) = humanoid_sim() else { return };
+    let Some(sim) = a1_sim() else { return };
     let names: Vec<&str> = sim.graph.legs.iter().map(|l| sim.skeleton.name(usize::from(l.effector()))).collect();
     eprintln!("legs: 0 = {}, 1 = {}", names[0], names[1]);
     gait_table(&sim);

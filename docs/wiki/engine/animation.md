@@ -33,6 +33,20 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   stride_warp`) `:968`, `FootPlacement` (unplant 20 deg, `gate on_ground`) `:977`, `Lean` (chest .45, upperChest .4, neck
   .15, `gate lean`) `:995`, `HandIk` x2 `:1001`,
   then `HitReact` and `SpringBones` (not in first person).
+- **Gait set** (A3, 2026-11-12; `mw_graphs/src/build.rs:156-190` `Preset`, `gaits`; `:703-725`): humanoid free
+  movement in `walk` and `run` (sheathed and spell stances) is one `BlendSpace1D` over `speed` (`params::SPEED`, fed by
+  `mw_player_bevy/src/avatar.rs:281` and walkers' `AnimParamNames.speed`, `mw_walkers_bevy/src/walkers.rs:738`) of the
+  slots `loco.walk|jog|sprint.cycle` at 1.6 / 4.5 / 7.0 m/s (`sources.ron:120`, Kimodo loco1 takes, `loop_cut` at defaults,
+  `root: Match`: the take's heading drift is never applied). Both states' sets are in sync group `gait`;
+  `rate_clamp` 0.8-1.25 (`sf_anim_graph/src/asset.rs:320`, `instance.rs:1560`) replaces `SpeedMatch`'s 0.5-2.2 on its
+  lanes. A `Blend` on `strafing` fades to the Morrowind directional set while locked on (`walk.none.directional`).
+  Without the library the slots drop and the Morrowind sets play; weapon stances, sneak and swim keep them.
+  `Preset::Classic` (`asset_for`, `:1133`) builds the pre-A3 graph (digest pinned in `mw_graphs/src/tests.rs`); nothing
+  selects it yet. Style seam: `SourcesManifest::gait_slot` (`sources.rs:294`) looks up `loco.<style>.<gait>.<part>`,
+  then the base set. Tests: `mw_graphs/tests/gait_set.rs`; A1 tables `slope_walk player_gaits` (`A1_CLASSIC=1`: Morrowind).
+- **Sync groups across states** (`instance.rs:1489-1503`, `join` `:1611`): a member entering alone (an inertialized
+  switch stops the old state at once) joins the last update's leader by markers or phase (UE sync groups keep their
+  position across updates); with no member for an update the group forgets.
 - **Foot IK** (`FootPlacement`, `procedural.rs`): needs ground samples; without them its weight is 0, so no lock, no
   pelvis drop and no grade. NPCs: `sf_controller_bevy::FootProbes` via `feed_animators`; player:
   `bevyrrowind/crates/mw_player_bevy/src/avatar.rs:213-289` (drawn root frame, dropped under Warp/Clip moves and with
@@ -50,8 +64,8 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   ties; trims to `[a, b]` and fades the last 0.12 s (4 frames at 30 Hz) into the frames before `a` moved by one cycle,
   so the last frame is exactly the first moved by the loop's root delta. `cook_clip_report` (`cook.rs:341`) returns
   `LoopCut` (window, strides, seam errors before/after the fade, speed, turn) or a `LoopCutError` (clip left
-  unlooped); `mw_bake::anim::cook_library_clip_report` (`anim.rs:157`). Rule absent: byte-identical cook. No slot
-  uses it yet. `anim.cook` step version 12. Measure: `mw_bake/tests/loop_cut.rs` (loco1 keep/maybe cycles). Preview:
+  unlooped); `mw_bake::anim::cook_library_clip_report` (`anim.rs:157`). Rule absent: byte-identical cook. Used by
+  the gait slots (below). `anim.cook` step version 12. Measure: `mw_bake/tests/loop_cut.rs` (loco1 keep/maybe cycles). Preview:
   `clip-preview --browse` cooks `*.cycle.*` takes with the cut (`clip_preview/cook.rs` `cook_report`), loops them in the slot
   (`LOOP_FOREVER`, no re-blend), overlay = `cut_text`, L = raw take A/B (`clip_preview/live.rs`).
 - **Retarget pose** (`superfargoth/crates/sf_character/src/align.rs:1-35`, rule at `:213`): auto-align turns limbs to the
@@ -82,8 +96,8 @@ graph's gate params `speed_match`/`stride_warp`/`lean` (default 1; `SpeedMatch` 
 scales its goals, `StrideWarp` its weight).
 
 ## Known limits
-- Free-movement clips are Morrowind's 2002 cycles at the wrong speeds, with no start/stop/pivot clips; the
-  modern preset is moving to generated cycles ([animation ledger](../../ledger/animation.md)).
+- Free movement plays generated walk/jog/sprint loops (A3, WALK-1 awaiting owner); still no start/stop/pivot clips,
+  and the sprint take is a "maybe" (retimed free sprint next) ([animation ledger](../../ledger/animation.md)).
 - Slope ops over-correct on steep ramps and at speed (head pitch, pelvis drop); P-IK3/P-IK4 not built.
 - Nothing is signed off on the player's walk: AL-2, AL-3 awaiting owner, PL-7 partial, PL-8 awaiting.
 

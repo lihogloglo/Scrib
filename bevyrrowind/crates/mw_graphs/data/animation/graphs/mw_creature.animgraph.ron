@@ -1,3 +1,4 @@
+#![enable(unwrap_variant_newtypes)]
 (
   params: [
     (name: "move", kind: Vec2(0.0, 1.0)),

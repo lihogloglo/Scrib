@@ -60,7 +60,8 @@ fn dump(sim: &Sim, path: &str) {
 #[test]
 fn turning_walkers_keep_every_walk_lane_cycling() {
     let Some(mut sim) = humanoid_sim() else { return };
-    let walk = sim.graph.nodes.iter().position(|n| n.name.ends_with("walk.none")).unwrap();
+    // The Morrowind walk set (the gait set has its own node, dropped here without the library).
+    let walk = sim.graph.nodes.iter().position(|n| n.name.ends_with("walk.none.directional")).unwrap();
     let path = sim.graph.nodes[walk].name.clone();
     if std::env::var_os("TORCH_WALK_TRACE").is_some() {
         dump(&sim, &path);

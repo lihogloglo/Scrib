@@ -504,13 +504,23 @@ impl Compiler<'_> {
                     sync: self.sync(sync.as_ref()).map_err(at)?,
                     root_motion: mode,
                     space: None,
+                    rate_clamp: None,
                 };
                 Some((NodeKind::Player(player), additive))
             }
-            NodeSpec::BlendSpace1D { x, samples, rate, smoothing, looping, sync, root_motion } => {
+            NodeSpec::BlendSpace1D { x, samples, rate, smoothing, looping, sync, root_motion, rate_clamp } => {
+                if let Some((lo, hi)) = rate_clamp
+                    && !(*lo > 0.0 && lo <= hi)
+                {
+                    return Err(at(format!("rate_clamp ({lo}, {hi}) needs 0 < min <= max")));
+                }
                 let pts: Vec<(String, Vec2, f32)> = samples.iter().map(|s| (s.clip.clone(), Vec2::new(s.at, 0.0), s.rate)).collect();
                 let space = (self.value(x).map_err(at)?, None, *smoothing);
-                self.blend_space(scope, &pts, space, rate, *looping, sync.as_ref(), root_motion.or(inherited)).map_err(at)?
+                let mut node = self.blend_space(scope, &pts, space, rate, *looping, sync.as_ref(), root_motion.or(inherited)).map_err(at)?;
+                if let Some((NodeKind::Player(p), _)) = &mut node {
+                    p.rate_clamp = *rate_clamp;
+                }
+                node
             }
             NodeSpec::BlendSpace2D { x, y, samples, rate, smoothing, looping, sync, root_motion } => {
                 let pts: Vec<(String, Vec2, f32)> = samples.iter().map(|s| (s.clip.clone(), Vec2::new(s.at.0, s.at.1), s.rate)).collect();
@@ -729,6 +739,7 @@ impl Compiler<'_> {
             sync: self.sync(sync)?,
             root_motion: mode,
             space: Some(space),
+            rate_clamp: None,
         };
         Ok(Some((NodeKind::Player(player), additive)))
     }

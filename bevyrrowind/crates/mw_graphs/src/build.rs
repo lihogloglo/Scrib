@@ -22,6 +22,12 @@
 //!   keeps the stride's phase. Free movement keeps the Morrowind sets. The
 //!   shipped manifest has no such slots (owner 2026-10-27: the UAL loops felt
 //!   unnatural), so locked-on movement plays the Morrowind sets too.
+//! - **Gait set** (humanoids, [`Preset::Modern`], when the manifest has the
+//!   `loco.<gait>.cycle` slots): free movement in walk and run (sheathed and
+//!   spell stances) plays one 1D blend of walk / jog / sprint loops over
+//!   `speed` ([`gaits`]), synced across the two states so a gait switch keeps
+//!   the foot phase; locked on, it fades to the Morrowind directional sets.
+//!   [`Preset::Classic`] builds the graph without it.
 //! - **Slots**: `upper` (masked: attacks, casts, equip, block) and `full`
 //!   (scripted `PlayGroup`, `LoopGroup`) for humanoids; `full` for creatures.
 //! - **Torch arm** (humanoids): the `Torch` group loops on the left arm
@@ -40,7 +46,7 @@ use std::collections::BTreeMap;
 use sf_anim::RootMotionMode;
 use sf_anim_graph::asset::{
     BlendMode, ClipFallback, ClipRef, ConditionSpec as C, GraphAsset, JointRef, LayerMode, LayerSpec, MaskRule, MaskSpec, NodeSpec, OpSpec,
-    ParamKind, ParamSpec, Sample2D, StateSpec, TransitionSpec, ValueSpec,
+    ParamKind, ParamSpec, Sample1D, Sample2D, StateSpec, SyncRole, SyncSpec, TransitionSpec, ValueSpec,
 };
 
 /// Which graph to build.
@@ -137,6 +143,50 @@ pub mod params {
     pub const SPEED_MATCH: &str = "speed_match";
     pub const STRIDE_WARP: &str = "stride_warp";
     pub const LEAN: &str = "lean";
+    /// Humanoids with the gait set ([`super::gaits`]), Float: horizontal speed, m/s (the
+    /// mover's, unscaled by the race). Picks the walk / jog / sprint lanes.
+    pub const SPEED: &str = "speed";
+}
+
+/// Which locomotion free movement plays (owner 2026-11-12, ROADMAP 3.4c): the modern gait
+/// set ([`gaits`]) where the manifest has its slots, or Classic, the Morrowind walk and run
+/// sets with the graph exactly as before the gait set. The seam for the Classic option
+/// (ROADMAP `[p]`): nothing ships or selects a Classic graph yet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Preset {
+    #[default]
+    Modern,
+    Classic,
+}
+
+/// The modern gait set (ROADMAP 3.4c A3, animation-sources.md "Gait set"): humanoid free
+/// movement is one 1D blend over [`params::SPEED`] of the manifest's `loco.<gait>.cycle`
+/// loops (walk, jog, sprint), in sync group [`SYNC_GROUP`] so a walk <-> run state switch
+/// keeps the foot phase, with `SpeedMatch` clamped to [`RATE_CLAMP`] on its lanes. While
+/// locked on (`strafing`) walk and run blend back to the Morrowind directional sets.
+pub mod gaits {
+    /// Gait name in the manifest and the lane's place on the speed axis, m/s: the walk,
+    /// run and sprint speeds of `sf_action::GaitTable::default()` (the jog is the run gait),
+    /// so at each gait speed exactly one lane plays and `SpeedMatch` takes the rest.
+    pub const SET: [(&str, f32); 3] = [("walk", 1.6), ("jog", 4.5), ("sprint", 7.0)];
+    /// `SpeedMatch`'s rate range on the gait lanes (shipped practice 0.8-1.25, Lyra).
+    pub const RATE_CLAMP: (f32, f32) = (0.8, 1.25);
+    pub const SYNC_GROUP: &str = "gait";
+    /// The locomotion style (ROADMAP 3.4d): `loco.<style>.<gait>.*` slots, falling back to
+    /// the base set's (`SourcesManifest::gait_slot`). Base set only for now.
+    pub const STYLE: Option<&str> = None;
+    /// Smoothing of the speed input, seconds (the feed already smooths the measured speed).
+    pub const SPEED_SMOOTHING: f32 = 0.05;
+    /// Fade between the gait set and the locked-on directional sets, seconds.
+    pub const LOCK_BLEND: f32 = 0.1;
+
+    /// Whether graph clip `clip` belongs to a gait slot (`loco.[<style>.]<gait>.cycle`,
+    /// or its `.alt<i>` candidates).
+    #[must_use]
+    pub fn is_gait_clip(clip: &str) -> bool {
+        let slot = clip.rsplit_once(".alt").filter(|(_, i)| i.parse::<u32>().is_ok()).map_or(clip, |(s, _)| s);
+        slot.starts_with("loco.") && slot.rsplit('.').next() == Some("cycle")
+    }
 }
 
 /// The free-movement direction blends' input for `direction` (unit, character frame):
@@ -428,7 +478,10 @@ fn movements(t: Template) -> Vec<Movement> {
 
 struct Builder {
     t: Template,
+    preset: Preset,
     a: GraphAsset,
+    /// The gait set's lanes (empty: none, the Morrowind sets play).
+    gait: Vec<Sample1D>,
 }
 
 impl Builder {
@@ -627,15 +680,50 @@ impl Builder {
         )
     }
 
-    /// Walk, run or sneak: directional per stance.
-    fn moving(&mut self, name: &str, prefix: &str) -> String {
-        self.by_stance(name, |b, s, n| match s.overlay() {
-            Some(idle) => {
-                let base = b.directional(&format!("{n}.lower"), prefix, s.suffix());
-                b.overlay(n, base, idle)
+    /// Walk, run or sneak: directional per stance. With `gait` (walk and run), the
+    /// base-set stances (sheathed, spell) play the gait set while not locked on.
+    fn moving(&mut self, name: &str, prefix: &str, gait: bool) -> String {
+        let gait = gait && !self.gait.is_empty();
+        self.by_stance(name, |b, s, n| {
+            let free = gait && s.suffix().is_empty();
+            match s.overlay() {
+                Some(idle) => {
+                    let base = b.locomotion(&format!("{n}.lower"), prefix, s.suffix(), free);
+                    b.overlay(n, base, idle)
+                }
+                None => b.locomotion(n, prefix, s.suffix(), free),
             }
-            None => b.directional(n, prefix, s.suffix()),
         })
+    }
+
+    /// A moving state's legs: the Morrowind directional set, or (`free`) the gait set
+    /// fading to the directional set while locked on ([`params::STRAFING`]: backpedals and
+    /// sidesteps keep Morrowind's clips). An unresolved gait set drops, leaving the
+    /// directional set alone.
+    fn locomotion(&mut self, name: &str, prefix: &str, suffix: &str, free: bool) -> String {
+        if !free {
+            return self.directional(name, prefix, suffix);
+        }
+        let set = self.gait_set(&format!("{name}.gait"));
+        let locked = self.directional(&format!("{name}.directional"), prefix, suffix);
+        self.node(name, NodeSpec::Blend { a: set, b: locked, alpha: ValueSpec::Param(params::STRAFING.into()), smoothing: gaits::LOCK_BLEND, mask: None })
+    }
+
+    /// The gait set's 1D blend over speed, in the gait sync group.
+    fn gait_set(&mut self, name: &str) -> String {
+        self.node(
+            name,
+            NodeSpec::BlendSpace1D {
+                x: ValueSpec::Param(params::SPEED.into()),
+                samples: self.gait.clone(),
+                rate: ValueSpec::default(),
+                smoothing: gaits::SPEED_SMOOTHING,
+                looping: None,
+                sync: Some(SyncSpec { group: gaits::SYNC_GROUP.into(), role: SyncRole::CanLead }),
+                root_motion: None,
+                rate_clamp: Some(gaits::RATE_CLAMP),
+            },
+        )
     }
 
     /// One clip per stance (`Turn<Side>`, `Jump`).
@@ -720,12 +808,26 @@ impl Builder {
         // Clip slots of the animation-sources manifest (libraries the user
         // brings): optional chains, dropped when no library is present.
         // Registered first: the strafe sets and the get-ups build on them.
-        let (source_clips, source_slots) = crate::sources::SourcesManifest::builtin().graph_clips(self.t.sources_name());
+        let manifest = crate::sources::SourcesManifest::builtin();
+        let (source_clips, source_slots) = manifest.graph_clips(self.t.sources_name());
+        let classic = self.preset == Preset::Classic;
         for (name, clip) in source_clips {
+            if classic && gaits::is_gait_clip(&name) {
+                continue;
+            }
             self.a.clips.entry(name).or_insert(clip);
         }
         let strafe = has_strafe(self.t);
-        if strafe {
+        if self.t == Template::Humanoid && !classic {
+            self.gait = gaits::SET
+                .iter()
+                .filter_map(|&(gait, at)| manifest.gait_slot(self.t.sources_name(), gaits::STYLE, gait, "cycle").map(|clip| Sample1D { clip, at, rate: 1.0 }))
+                .collect();
+        }
+        if !self.gait.is_empty() {
+            self.param(params::SPEED, ParamKind::Float(0.0));
+        }
+        if strafe || !self.gait.is_empty() {
             self.param(params::STRAFING, ParamKind::Bool(false));
         }
 
@@ -734,9 +836,9 @@ impl Builder {
         let mut state = |name: &str, node: String, rm: Option<RootMotionMode>| st.push(StateSpec { name: name.into(), node, root_motion: rm });
         let idle = self.idle();
         state(states::IDLE, idle, None);
-        let walk = self.moving("walk", "Walk");
+        let walk = self.moving("walk", "Walk", true);
         state(states::WALK, walk, None);
-        let run = self.moving("run", "Run");
+        let run = self.moving("run", "Run", true);
         state(states::RUN, run, None);
         if strafe {
             let sw = self.strafing("walk.locked", "walk");
@@ -749,7 +851,7 @@ impl Builder {
         let tr = self.single("turn_right", "TurnRight", Some("SpellTurnRight"), Some(true));
         state(states::TURN_RIGHT, tr, None);
         if humanoid {
-            let sneak = self.moving("sneak", "Sneak");
+            let sneak = self.moving("sneak", "Sneak", false);
             state(states::SNEAK, sneak, None);
             let si = self.plain("sneak_idle", "IdleSneak", Some("Idle"), Some(true));
             state(states::SNEAK_IDLE, si, None);
@@ -944,8 +1046,9 @@ impl Builder {
             // Humanoids shorten their steps as they slow down (AN-16; owner 0.3, 2026-10-22),
             // cadence and step length about evenly (0.5, gait bands 2026-10-26: an NPC at
             // 2.2 m/s on the 1.9 m/s walk drops the pelvis 21 mm, 32 at 0.3). Speed-ups past
-            // the stride warp's 1.2 go to the rate: the player's 7 m/s sprint plays the
-            // 2.67 m/s run at 2.2 (4.75 steps/s; a sprint cycle would calm it). Run strafes
+            // the stride warp's 1.2 go to the rate (the Morrowind sets: Classic's 7 m/s sprint
+            // plays the 2.67 m/s run at 2.2, 4.75 steps/s); the gait set's lanes clamp to
+            // `gaits::RATE_CLAMP` (`rate_clamp`) and have their own sprint cycle. Run strafes
             // plant at 0.75-0.9 m/s and outrun any rate (`gait_bands` in tests/slope_walk.rs).
             rate_share: if matches!(self.t, Template::Humanoid) { 0.5 } else { 1.0 },
             gate: matches!(self.t, Template::Humanoid).then(|| params::SPEED_MATCH.into()),
@@ -1021,14 +1124,25 @@ impl Builder {
     }
 }
 
-/// Builds a template's graph asset.
+/// Builds a template's graph asset (the shipped one: [`Preset::Modern`]).
 pub fn asset(t: Template) -> GraphAsset {
-    Builder { t, a: GraphAsset { clips: BTreeMap::new(), ..GraphAsset::default() } }.build()
+    asset_for(t, Preset::Modern)
 }
 
-/// The asset as RON, as shipped in `data/`.
+/// Builds a template's graph asset for a locomotion preset.
+pub fn asset_for(t: Template, preset: Preset) -> GraphAsset {
+    Builder { t, preset, a: GraphAsset { clips: BTreeMap::new(), ..GraphAsset::default() }, gait: Vec::new() }.build()
+}
+
+/// The asset as RON, as shipped in `data/`. Written with `unwrap_variant_newtypes`, which
+/// `sf_anim_graph::asset::parse_graph` reads with: an `Option` of a struct or tuple
+/// (`sync`, `rate_clamp`) is `Some(group: ..)`, not `Some((group: ..))`.
 pub fn to_ron(asset: &GraphAsset) -> String {
-    let config = ron::ser::PrettyConfig::new().depth_limit(2).indentor("  ").new_line("\n");
+    let config = ron::ser::PrettyConfig::new()
+        .depth_limit(2)
+        .indentor("  ")
+        .new_line("\n")
+        .extensions(ron::extensions::Extensions::UNWRAP_VARIANT_NEWTYPES);
     let mut text = ron::ser::to_string_pretty(asset, config).expect("graph assets serialize");
     text.push('\n');
     text

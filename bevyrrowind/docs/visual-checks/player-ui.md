@@ -351,3 +351,13 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   tilted head and long downhill steps. Taste questions: does a stop feel too short or too long; should walking uphill
   slow you down; where should the head look (ahead along the travel, a few metres down the slope, or the camera)?
 - Status: awaiting owner.
+
+### WALK-1: speed gait set, walk / jog / sprint on the flat (3.4c A3, 2026-11-12)
+- Kind: synthetic. Run `bevyrrowind bake` first (new gait slots, graph format 11). `cargo dev scene level-flat-slopes`, 10:00,
+  camera `overview`; F11 player, Tab third person, orbit to the side. Free movement now plays generated loops (Kimodo
+  loco1: walk `walk.cycle.free` 05, jog `run.cycle.3` 04, sprint `sprint.cycle.1` 05, loop-cut at the bake).
+- Look for: walk at a light stick push and full (analog: cadence stays natural, steps shorten at a slow push), jog (run),
+  sprint: no foot skating on the flat, no pop of the feet when switching walk <-> run <-> sprint (the foot phase now carries
+  over), no hitch at the loop seam. Sprint is the "maybe" take (a retimed free sprint is the next A/B). Locked on: backpedal
+  and sidesteps still play the Morrowind sets. The WALK-0 `off ...` ladder still works (`off speed_match` = clips at rate 1).
+- Status: awaiting owner.

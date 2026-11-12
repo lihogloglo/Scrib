@@ -277,6 +277,8 @@ pub(crate) fn feed<G: GroundProbe + Resource>(
             a.set_float(gate, if on { 1.0 } else { 0.0 });
         }
         a.set_bool(gp::RUNNING, v.running);
+        // The gait set's lanes (walk / jog / sprint) by the measured speed, m/s.
+        a.set_float(gp::SPEED, v.speed);
         a.set_float(gp::TURN, v.turn);
         a.set_bool(gp::SNEAKING, intent.gait == Gait::Sneak);
         // Locked on (not sprinting): the body holds a facing apart from its travel, so the

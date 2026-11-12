@@ -445,6 +445,9 @@ pub struct GraphInstance {
     nodes: Vec<NodeState>,
     ticks: Vec<u32>,
     groups: Vec<Vec<u32>>,
+    /// Per sync group, the leader of the last update in which a member played
+    /// (`None` after an update with no member), for a member joining alone.
+    group_leaders: Vec<Option<u32>>,
     request: Option<f32>,
     inertial: Inertializer,
     prev: LocalPose,
@@ -518,6 +521,7 @@ impl GraphInstance {
             nodes,
             ticks: Vec::new(),
             groups: vec![Vec::new(); g.sync_groups.len()],
+            group_leaders: vec![None; g.sync_groups.len()],
             request: None,
             inertial: Inertializer::default(),
             prev: LocalPose::new(n),
@@ -1480,10 +1484,23 @@ impl GraphInstance {
                 _ => self.advance_own(cx, n as usize, inputs),
             }
         }
-        for members in &groups {
+        for (g, members) in groups.iter().enumerate() {
             let Some(leader) = self.choose_leader(cx, members) else {
+                self.group_leaders[g] = None;
                 continue;
             };
+            // A member entering while the last update's leader no longer plays (an
+            // inertialized state switch stops the old state at once) joins at the group's
+            // position, as UE sync groups carry their marker position across updates: a
+            // walk <-> run switch keeps the foot phase instead of restarting the cycle.
+            if let Some(prev) = self.group_leaders[g]
+                && prev as usize != leader
+                && !members.contains(&prev)
+                && matches!(&self.nodes[leader], NodeState::Player(p) if p.fresh)
+            {
+                self.join(cx, leader, prev as usize);
+            }
+            self.group_leaders[g] = u32::try_from(leader).ok();
             self.advance_own(cx, leader, inputs);
             for &f in members {
                 if f as usize != leader {
@@ -1540,6 +1557,7 @@ impl GraphInstance {
             {
                 let speed = Vec2::new(inputs.velocity.x, inputs.velocity.z).length();
                 let ratio = speed / natural;
+                let (min, max) = def.rate_clamp.unwrap_or((min, max));
                 let m = (ratio.powf(share) / grade.max(EPS)).clamp(ratio / warp_max.max(EPS), ratio / warp_min.max(EPS)).clamp(min, max);
                 // The gate scales the factor in log space: 0 plays the clip at its own rate,
                 // the stride warp then taking the whole ratio (within its own limits).
@@ -1585,6 +1603,29 @@ impl GraphInstance {
             self.stride.1 += w;
         }
         self.anim_velocity += anim_vel * w;
+    }
+
+    /// Places fresh player `n`'s lanes where `prev` (a group member that played last
+    /// update and no longer does) left off, by markers or phase, without firing the
+    /// events in between; `n` then advances from there as the group's leader.
+    fn join(&mut self, cx: &Cx<'_>, n: usize, prev: usize) {
+        let (NodeKind::Player(pdef), NodeKind::Player(def)) = (&cx.g.nodes[prev].kind, &cx.g.nodes[n].kind) else {
+            return;
+        };
+        let NodeState::Player(pst) = &self.nodes[prev] else {
+            return;
+        };
+        let Some(i) = pst.lanes.len().checked_sub(1).map(|last| pst.leader.min(last)) else {
+            return;
+        };
+        let (p_clip, p_time) = (&cx.clips[usize::from(pdef.lanes[i])], pst.lanes[i].time);
+        let st = self.player_mut(n);
+        for (lane, &c) in st.lanes.iter_mut().zip(&def.lanes) {
+            let clip = &cx.clips[usize::from(c)];
+            let t = sync_time(clip, def.looping, lane.time, p_clip, pdef.looping, p_time);
+            lane.time = t;
+            lane.prev = t;
+        }
     }
 
     fn follow(&mut self, cx: &Cx<'_>, f: usize, leader: usize) {

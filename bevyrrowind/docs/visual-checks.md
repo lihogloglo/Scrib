@@ -80,8 +80,9 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (54)
+### Awaiting owner (55)
 
+WE-13 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Local storm seen from outside: storm cell under its clouds, narrow ragged border, no ground-to-sky wall or edge shimmer (CW-1; A/B `--off stormshape`, 2026-11-12)
 WA-4 | confirmed (2026-11-12: "that's perfect") | [terrain-water](visual-checks/terrain-water.md) | Wavelets at the shore (W-SHORE): ripples glint to the waterline, swell still dies on beaches, no flat strip, no moiré; A/B `--off shorenormals` (2026-11-12)
 WA-3 | confirmed (2026-11-12: day and night "very nice", night water no longer too bright; emissive in reflection unsure) | [terrain-water](visual-checks/terrain-water.md) | Water mirrors banks, buildings, ships and lit windows, wobbling with waves; edge fade, no flicker, nothing below the water (W-SSPR, A/B `--off waterssr`, 2026-11-12)
 FG-11 | confirmed (2026-11-12: "the fog is glorious") | [weather-sky](visual-checks/weather-sky.md) | Froxel fog smooth over near objects, still and panning; no trails or black bands (FOG-CLAMP, A/B `--off fogclamp`, 2026-11-12)
@@ -215,6 +216,7 @@ PL-6 | awaiting owner (2026-10-30: hard-landing lock removed until fall damage) 
 PL-7 | partial (owner 2026-11-11 re-test: feet on the ground OK; stop pops a leg back + hip rise, arms point back on slopes, head too tilted; locomotion rethink) | [player-ui](visual-checks/player-ui.md) | Player foot placement on slopes and stairs, K A/B (P-IK1, 2026-11-11)
 PL-8 | awaiting owner (pause not tested 2026-11-11; stairs IK issues logged: leg snap, wide steps on stairs, arms behind back) | [player-ui](visual-checks/player-ui.md) | Pause menu freezes all animation (walkers on stairs, the player at a wall), no pop on resume (P-IK2, 2026-11-11)
 WALK-0 | awaiting owner | [player-ui](visual-checks/player-ui.md) | A/B ladder on the player's walk: speed_match, stride_warp, foot_placement, lean, side_lanes off one at a time (3.4c A0)
+WALK-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Speed gait set: generated walk / jog / sprint loops on speed, foot phase kept on gait switches, no skating (3.4c A3)
 PL-9 | confirmed (owner 2026-11-11: "seems ok") | [player-ui](visual-checks/player-ui.md) | Sharp 90/180° turns at walk and run on flat and ramps: the planted foot lets go instead of the legs spreading, K A/B (P-IK5, 2026-11-11)
 FP-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person shows body, arms and weapon with the head hidden (2026-11-10)
 FP-1b | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person: the player's shadow keeps its head under sun, lamps and a torch, raster and RT (2026-11-10)

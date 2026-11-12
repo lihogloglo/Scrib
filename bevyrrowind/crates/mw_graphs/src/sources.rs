@@ -287,6 +287,15 @@ impl SourcesManifest {
         Ok(out)
     }
 
+    /// The slot of locomotion part `part` (`cycle`, later `start`, `stop`, ...) of gait
+    /// `gait` (`walk`, `jog`, `sprint`) for graph `graph` in style `style` (ROADMAP 3.4d:
+    /// `loco.<style>.<gait>.<part>`), falling back to the base set's `loco.<gait>.<part>`;
+    /// `None` when neither is in the manifest with a candidate.
+    pub fn gait_slot(&self, graph: &str, style: Option<&str>, gait: &str, part: &str) -> Option<String> {
+        let has = |name: &String| self.slots.get(name).is_some_and(|s| s.graph == graph && !s.candidates.is_empty());
+        style.map(|s| format!("loco.{s}.{gait}.{part}")).into_iter().chain([format!("loco.{gait}.{part}")]).find(has)
+    }
+
     /// The optional clips a graph template gets: `(clip name, clip ref)`
     /// chains per slot, and the slot names (montage `slot_clips`).
     pub fn graph_clips(&self, graph: &str) -> (Vec<(String, ClipRef)>, Vec<String>) {
@@ -330,7 +339,9 @@ mod tests {
         // Get-ups: in place, re-based on the last frame (no root track).
         let getup = refs.iter().find(|r| r.reference.contains("fallAndGetUp2_subject3")).and_then(|r| r.retarget_root.clone()).unwrap();
         assert!(!getup.extract && getup.anchor_end);
-        assert!(refs.iter().filter(|r| r.source != "lafan1").all(|r| r.retarget_root.is_none()));
+        assert!(refs.iter().filter(|r| r.source != "lafan1" && r.source != "generated").all(|r| r.retarget_root.is_none()));
+        // Generated takes (Kimodo): root motion from the target pelvis, as LAFAN1's.
+        assert!(refs.iter().filter(|r| r.source == "generated").all(|r| r.retarget_root.as_ref().is_some_and(|m| m.extract && m.mode == RootMotionMode::Match)));
         assert_eq!(m.slots["traverse.climb.up"].candidates[0].reference(), "quaternius_ual1:ClimbLedge");
         assert_eq!(m.slots["traverse.mantle.high"].candidates[0].reference(), "quaternius_ual2:ClimbUp_2m");
         let rules = slot.rules(&slot.candidates[0]);
@@ -361,6 +372,9 @@ mod tests {
                 "guard.sword_1h.break",
                 "guard.sword_1h.idle",
                 "guard.sword_1h.raise",
+                "loco.jog.cycle",
+                "loco.sprint.cycle",
+                "loco.walk.cycle",
                 "react.large.front",
                 "react.medium.front",
                 "react.small.back",

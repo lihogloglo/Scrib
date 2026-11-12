@@ -149,14 +149,16 @@ fn torch_arm_layers_over_weapon_actions_and_under_scripted_groups() {
 
 /// Lock-on strafe (combat.md CB-2): locked on, walk and run keep Morrowind's 4-way
 /// directional sets (owner, live 2026-10-27: the UAL strafe loops leaned back and felt slow).
-/// The shipped manifest has no `loco.*` strafe slots, so no template gets the `strafing`
-/// parameter or the strafe states.
+/// The shipped manifest has no `loco.*` strafe slots, so no template gets the strafe states;
+/// the humanoid's `strafing` parameter only fades the gait set to those directional sets.
 #[test]
 fn locked_strafing_plays_the_morrowind_directional_sets() {
-    use sf_anim_graph::asset::NodeSpec;
+    use sf_anim_graph::asset::{NodeSpec, ValueSpec};
     let a = build::asset(Template::Humanoid);
     for (state, base) in [("walk", "Walk"), ("run", "Run")] {
-        let NodeSpec::BlendSpace2D { samples, .. } = &a.nodes[&format!("{state}.none")] else { panic!("{state}: Morrowind set") };
+        let NodeSpec::Blend { b, alpha, .. } = &a.nodes[&format!("{state}.none")] else { panic!("{state}: gait / locked blend") };
+        assert_eq!(*alpha, ValueSpec::Param(p::STRAFING.into()), "{state}: locked on = 1");
+        let NodeSpec::BlendSpace2D { samples, .. } = &a.nodes[b] else { panic!("{state}: Morrowind set") };
         let mut clips: Vec<String> = samples.iter().map(|s| s.clip.clone()).collect();
         clips.sort_unstable();
         let mut want = ["Back", "Forward", "Left", "Right"].map(|d| format!("{base}{d}"));
@@ -165,8 +167,112 @@ fn locked_strafing_plays_the_morrowind_directional_sets() {
     }
     for t in [Template::Humanoid, Template::FirstPerson, Template::Creature] {
         let a = build::asset(t);
-        assert!(!a.params.iter().any(|q| q.name == p::STRAFING), "{t:?}");
+        assert_eq!(a.params.iter().any(|q| q.name == p::STRAFING), t == Template::Humanoid, "{t:?}");
         assert!(!a.nodes.keys().any(|n| n.contains(".locked")), "{t:?}");
-        assert!(!a.clips.keys().any(|c| c.starts_with("loco.")), "{t:?}");
+        assert!(!a.clips.keys().any(|c| c.starts_with("loco.") && !build::gaits::is_gait_clip(c)), "{t:?}: no strafe slots");
     }
 }
+
+/// The gait set (A3): walk and run of the base-set stances (sheathed, spell) play one 1D
+/// blend over `speed` of the manifest's walk / jog / sprint loops at the gait speeds, in one
+/// sync group across both states, `SpeedMatch` clamped to 0.8-1.25 on its lanes; weapon
+/// stances, sneak and swim keep the Morrowind sets; first person and creatures have none.
+#[test]
+fn free_movement_plays_the_synced_gait_set_on_speed() {
+    use sf_anim_graph::asset::{NodeSpec, ValueSpec};
+    let a = build::asset(Template::Humanoid);
+    let want: Vec<(String, f32)> = vec![("loco.walk.cycle".into(), 1.6), ("loco.jog.cycle".into(), 4.5), ("loco.sprint.cycle".into(), 7.0)];
+    let mut sets = 0;
+    for (name, node) in &a.nodes {
+        let NodeSpec::BlendSpace1D { x, samples, sync, rate_clamp, .. } = node else { continue };
+        sets += 1;
+        assert!(["walk.none.gait", "run.none.gait", "walk.spell.lower.gait", "run.spell.lower.gait"].contains(&name.as_str()), "{name}");
+        assert_eq!(*x, ValueSpec::Param(p::SPEED.into()), "{name}");
+        assert_eq!(samples.iter().map(|s| (s.clip.clone(), s.at)).collect::<Vec<_>>(), want, "{name}");
+        assert_eq!(sync.as_ref().map(|s| s.group.as_str()), Some(build::gaits::SYNC_GROUP), "{name}");
+        assert_eq!(*rate_clamp, Some((0.8, 1.25)), "{name}");
+    }
+    assert_eq!(sets, 4);
+    // The slots: optional, the loop cut at its defaults, dropped without the library.
+    for (clip, _) in &want {
+        let r = &a.clips[clip];
+        assert!(r.optional && r.fallback == Some(sf_anim_graph::asset::ClipFallback::Drop), "{clip}");
+        let slot = &crate::sources::SourcesManifest::builtin().slots[clip];
+        let rules = slot.rules(&slot.candidates[0]);
+        assert_eq!(rules.loop_cut, Some(sf_anim::LoopCutRules::default()), "{clip}");
+        assert_eq!(rules.root_motion.mode, sf_anim::RootMotionMode::Match, "{clip}: capsule-driven, the take's heading drift is not applied");
+    }
+    for weapon in ["walk.1h", "run.2c", "walk.hh", "run.crossbow.lower", "sneak.none"] {
+        assert!(matches!(a.nodes[weapon], NodeSpec::BlendSpace2D { .. }), "{weapon}: Morrowind set");
+    }
+    assert!(a.params.iter().any(|q| q.name == p::SPEED));
+    for t in [Template::FirstPerson, Template::Creature] {
+        let a = build::asset(t);
+        assert!(!a.nodes.values().any(|n| matches!(n, NodeSpec::BlendSpace1D { .. })) && !a.params.iter().any(|q| q.name == p::SPEED), "{t:?}");
+    }
+    // The gait speeds are sf_action's walk, run and sprint (the same literals).
+    let g = sf_action::GaitTable::default();
+    #[allow(clippy::float_cmp)]
+    let same = build::gaits::SET.map(|(_, at)| at) == [g.walk.forward, g.run.forward, g.sprint.forward];
+    assert!(same, "gait speeds");
+}
+
+/// The style seam (ROADMAP 3.4d): `loco.<style>.<gait>.<part>` first, else the base set's
+/// `loco.<gait>.<part>`, else nothing; only slots of the asked graph with candidates count.
+#[test]
+fn gait_slots_look_up_the_style_then_the_base_set() {
+    use crate::sources::SourcesManifest;
+    let text = r#"(
+      sources: { "g": (license: CC0, page: "", files: [(name: "a.bvh", sha256: "")]) },
+      slots: {
+        "loco.walk.cycle": (graph: "humanoid", candidates: [(source: "g", clip: "w")]),
+        "loco.jog.cycle": (graph: "humanoid", candidates: [(source: "g", clip: "j")]),
+        "loco.tired.walk.cycle": (graph: "humanoid", candidates: [(source: "g", clip: "tw")]),
+        "loco.tired.jog.cycle": (graph: "humanoid", candidates: []),
+        "loco.sprint.cycle": (graph: "creature", candidates: [(source: "g", clip: "s")]),
+      },
+    )"#;
+    let m = SourcesManifest::parse(text).unwrap();
+    let slot = |style, gait| m.gait_slot("humanoid", style, gait, "cycle");
+    assert_eq!(slot(Some("tired"), "walk").as_deref(), Some("loco.tired.walk.cycle"));
+    assert_eq!(slot(Some("tired"), "jog").as_deref(), Some("loco.jog.cycle"), "no candidate: the base set");
+    assert_eq!(slot(Some("drunk"), "walk").as_deref(), Some("loco.walk.cycle"), "unknown style: the base set");
+    assert_eq!(slot(None, "walk").as_deref(), Some("loco.walk.cycle"));
+    assert_eq!(slot(Some("tired"), "sprint"), None, "another graph's slot");
+    assert_eq!(m.gait_slot("creature", None, "sprint", "cycle").as_deref(), Some("loco.sprint.cycle"));
+    // The shipped manifest: base set only.
+    let shipped = SourcesManifest::builtin();
+    assert_eq!(build::gaits::STYLE, None);
+    for (gait, _) in build::gaits::SET {
+        assert_eq!(shipped.gait_slot("humanoid", Some("any"), gait, "cycle"), Some(format!("loco.{gait}.cycle")));
+    }
+    assert!(build::gaits::is_gait_clip("loco.tired.walk.cycle.alt2") && !build::gaits::is_gait_clip("loco.walk.fwd"));
+}
+
+/// Classic (the seam for the Classic option) is the graph as before the gait set: the
+/// Morrowind walk and run sets, no gait clips, params or nodes; its digest is pinned
+/// (pre-A3 shipped humanoid graph). Change it only on purpose.
+#[test]
+fn classic_keeps_the_morrowind_graph() {
+    use sf_anim_graph::asset::NodeSpec;
+    let a = build::asset_for(Template::Humanoid, build::Preset::Classic);
+    assert!(!a.clips.keys().any(|c| c.starts_with("loco.")));
+    assert!(!a.params.iter().any(|q| q.name == p::SPEED || q.name == p::STRAFING));
+    assert!(!a.nodes.values().any(|n| matches!(n, NodeSpec::BlendSpace1D { .. })));
+    for state in ["walk.none", "run.none"] {
+        assert!(matches!(a.nodes[state], NodeSpec::BlendSpace2D { .. }), "{state}");
+    }
+    assert_eq!(a.slot_clips, build::asset(Template::Humanoid).slot_clips, "the montage slots are the same");
+    for t in [Template::FirstPerson, Template::Creature] {
+        assert_eq!(build::asset_for(t, build::Preset::Classic), build::asset(t), "{t:?}");
+    }
+    // FNV-1a 64 of the asset's Debug text.
+    let digest = format!("{a:?}").bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    if let Some(path) = std::env::var_os("MW_GRAPHS_PRE_A3") {
+        let pre = parse_graph(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(pre, a, "Classic vs the pre-A3 shipped graph");
+    }
+    assert_eq!(digest, CLASSIC_DIGEST, "Classic humanoid graph changed: digest {digest:#x}");
+}
+
+const CLASSIC_DIGEST: u64 = 0xe03c_50a5_73ac_8c28;

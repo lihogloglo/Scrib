@@ -734,7 +734,8 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
         direction: Some(gp::MOVE.into()),
         running: Some(gp::RUNNING.into()),
         turn: Some(gp::TURN.into()),
-        speed: None,
+        // The humanoid gait set's walk / jog lanes (creature graphs have no such param).
+        speed: Some(gp::SPEED.into()),
     };
     // The mover probes physics when it runs (P5), else the `StaticWorld`.
     if physics {

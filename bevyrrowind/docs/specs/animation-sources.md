@@ -257,3 +257,27 @@ play rate clamped 0.8-1.25. Gaits 1.6 / 4.5 / 7.0 m/s. Dance card: `superfargoth
 - Slot chain per gait: generated `loco.<gait>.cycle`, then UAL jog/sprint, then Morrowind. Starts, stops, pivots, turns in
   place: `loco.<gait>.start|stop|pivot.*`, `loco.turn.*`; generated left/straight variants, the right side by mirror.
 - Kimodo batch 1 is 15 clips (3 cycles, 6 starts, 2 stops, 2 pivots, 2 turns); the bake retimes speed and closes loop seams.
+
+### Speed gait set (A3, as built 2026-11-12)
+
+- **Reuse check.** Ours first: `sf_anim_graph` already had `BlendSpace1D`, sync groups and markers (`sync.rs`) and
+  `SpeedMatch`; missing were a per-player rate clamp and sync across an inertialized state switch (the old state
+  stops at once, so the new one led alone from its clip start: A1's ±0.5 cycle jump). Both added in `sf_anim_graph`
+  (`BlendSpace1D.rate_clamp`, sync-group join; GRAPH_FORMAT 11). Bevy 0.20's `AnimationGraph` has blend nodes but no
+  sync groups, markers or speed matching (`docs/wiki/bevy/`); no maintained crate offers them on 0.20.
+- **Industry comparison.** UE5: a 1D blendspace on speed with walk/jog samples at their authored speeds, sync groups
+  with foot markers (the group's marker position carries across a state switch), play-rate clamp and stride warping
+  (Lyra clamps ~0.8-1.2, then warps). Unity Mecanim: 1D blend tree on speed, normalized-time sync of its children,
+  `Animator.CrossFade` keeps normalized time only on request. FromSoft (Elden Ring): discrete walk/jog/sprint sets
+  with short phase-matched transitions, play rate near 1. We match UE: lanes at the gait speeds (one lane per gait
+  speed, `SpeedMatch` takes the difference inside 0.8-1.25), synced by `down.*` markers, phase kept across states.
+- **Slots** (`sources.ron`): `loco.walk.cycle` = `loco.walk.cycle.free` take 05, `loco.jog.cycle` = `loco.run.cycle.3`
+  take 04, `loco.sprint.cycle` = `loco.sprint.cycle.1` take 05 (owner "maybe"; next slice: A/B a retimed
+  `sprint.cycle.free` take 05 at a lower sprint speed), each `loop_cut: Some(())`, `root: Match`, fallback `Drop`. UAL
+  candidates not added (the gait card's last fallback; their loops would need a loop-cut opt-out).
+- **Graph** (`mw_graphs::build::gaits`, `Preset`): walk and run of the base-set stances blend the gait set over `speed`
+  with the Morrowind directional set by `strafing` (locked on keeps backpedals/sidesteps); `Preset::Classic` builds the
+  pre-A3 graph. Style seam (3.4d): `SourcesManifest::gait_slot` looks up `loco.<style>.<gait>.<part>`, then the base set.
+- **Measured** (`mw_graphs/tests/slope_walk.rs player_gaits`, retargeted onto `base_anim`): natural speeds walk 1.61,
+  jog 5.32, sprint 7.85 m/s; rates walk 1.00, jog 0.92, sprint 0.94, walk stick 0.3 0.80 (clamp; stride 0.62); walk<->run
+  switch +0.02/+0.03 cycle (one frame) at all 5 points. Heading drift per loop is not applied (`Match`: capsule-driven).

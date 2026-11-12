@@ -149,6 +149,13 @@ impl AnimSet {
         Ok(clip)
     }
 
+    /// Adds a clip cooked elsewhere under `reference`: a library clip (`source:file:clip`),
+    /// which the bake retargets (`mw_bake::anim::cook_library_clip`), so graphs naming it
+    /// resolve in headless runs.
+    pub fn insert_cooked(&mut self, reference: impl Into<String>, clip: Arc<Clip>) {
+        self.cooked.insert(reference.into(), clip);
+    }
+
     /// The clips of a compiled graph, in its clip-slot order (for a `Binding`).
     pub fn binding_clips(&mut self, graph: &CompiledGraph) -> Result<Vec<Arc<Clip>>, String> {
         graph.clips.iter().map(|c| self.cooked(&c.reference)).collect()
@@ -168,7 +175,7 @@ impl CompileSource for AnimSet {
     }
 
     fn available(&mut self, reference: &str) -> Result<bool, String> {
-        Ok(self.resolve(reference).is_ok())
+        Ok(self.cooked.contains_key(reference) || self.resolve(reference).is_ok())
     }
 
     fn subgraph(&mut self, path: &str) -> Result<GraphAsset, String> {

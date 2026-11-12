@@ -312,6 +312,12 @@ pub enum NodeSpec {
         sync: Option<SyncSpec>,
         #[serde(default)]
         root_motion: Option<RootMotionMode>,
+        /// `SpeedMatch`'s rate range for this space, in place of the op's `min..=max`: a
+        /// gait set of clips authored near their gait speeds keeps its cadence near 1
+        /// (Lyra's play-rate clamp), while other players keep the op's wider range.
+        /// `None`: the op's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rate_clamp: Option<(f32, f32)>,
     },
     /// Clips placed on a plane, Delaunay-triangulated at compile; at most
     /// three play. Outside the samples' hull the input is projected onto it.

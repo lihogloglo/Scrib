@@ -107,10 +107,11 @@ fn pose_gap(a: &Sim, b: &Sim) -> f32 {
         .fold(0.0, f32::max)
 }
 
-/// The walk blend's lanes (clip reference, weight) in the last update.
+/// The Morrowind walk blend's lanes (clip reference, weight) in the last update (without the
+/// library the gait set drops and this set plays).
 fn walk_lanes(sim: &Sim) -> Vec<(String, f32)> {
-    let n = sim.graph.nodes.iter().position(|n| n.name.ends_with("walk.none")).expect("walk.none");
-    let NodeKind::Player(def) = &sim.graph.nodes[n].kind else { panic!("walk.none: not a player") };
+    let n = sim.graph.nodes.iter().position(|n| n.name.ends_with("walk.none.directional")).expect("walk.none.directional");
+    let NodeKind::Player(def) = &sim.graph.nodes[n].kind else { panic!("walk.none.directional: not a player") };
     let (lanes, _) = sim.instance.player(u32::try_from(n).unwrap()).unwrap();
     def.lanes.iter().zip(lanes).map(|(&c, (_, w))| (sim.graph.clips[usize::from(c)].reference.clone(), w)).collect()
 }

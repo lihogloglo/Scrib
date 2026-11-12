@@ -695,6 +695,78 @@ fn sync_groups_align_markers_and_fire_footsteps_once() {
     assert!((ti / 2.0 - tw / 1.0).abs() < 1e-4, "idle {ti} vs wave {tw}");
 }
 
+/// An inertialized switch stops the old state at once, so the entering state is the
+/// group's only member: it joins where the last leader left off (same marker fraction),
+/// not at its clip start, both ways and at any point of the cycle. With no member for an
+/// update (idle in between) the group forgets: the next entry starts at its start.
+#[test]
+fn a_state_entering_a_sync_group_alone_joins_the_last_leader() {
+    let ron = r#"(
+        params: [(name: "run", kind: Bool(false)), (name: "stop", kind: Bool(false))],
+        nodes: {
+            "m": StateMachine(
+                states: [(name: "walk", node: "w"), (name: "run", node: "r"), (name: "idle", node: "i")],
+                transitions: [
+                    (from: "*", to: "idle", when: [IsTrue("stop")], blend: Inertialize(0.15)),
+                    (from: "idle", to: "walk", when: [IsFalse("stop"), IsFalse("run")], blend: Inertialize(0.15)),
+                    (from: "idle", to: "run", when: [IsFalse("stop"), IsTrue("run")], blend: Inertialize(0.15)),
+                    (from: "walk", to: "run", when: [IsTrue("run")], blend: Inertialize(0.15)),
+                    (from: "run", to: "walk", when: [IsFalse("run")], blend: Inertialize(0.15)),
+                ],
+            ),
+            "w": Clip(clip: "walk", sync: (group: "feet")),
+            "r": Clip(clip: "run", sync: (group: "feet")),
+            "i": Clip(clip: "idle"),
+        },
+        layers: [(node: "m")],
+    )"#;
+    let rig = Rig::new(ron);
+    let b = rig.binding();
+    let (w, r) = (rig.graph.node("w").unwrap(), rig.graph.node("r").unwrap());
+    let time = |inst: &GraphInstance, n: u32| inst.player(n).unwrap().0[0].0;
+    // walk: down.l 0.0, down.r 0.5 (1.0 s); run: down.l 0.0, down.r 0.2 (0.6 s).
+    let run_at = |tw: f32| if tw < 0.5 { tw / 0.5 * 0.2 } else { 0.2 + (tw - 0.5) / 0.5 * 0.4 };
+    let walk_at = |tr: f32| if tr < 0.2 { tr / 0.2 * 0.5 } else { 0.5 + (tr - 0.2) / 0.4 * 0.5 };
+    let near = |a: f32, b: f32, period: f32| {
+        let d = (a - b).rem_euclid(period);
+        d.min(period - d) < 1e-3
+    };
+    let dt = 1.0 / 60.0;
+    for frames in [7, 20, 33, 47, 58] {
+        let mut inst = GraphInstance::new(&b);
+        let mut out = GraphOutput::new(&rig.graph);
+        for _ in 0..frames {
+            inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+        }
+        let tw = time(&inst, w);
+        inst.params.set_bool(rig.param("run"), true);
+        inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+        // Joined at the walk's place, then advanced one frame at the run's own rate.
+        let tr = time(&inst, r);
+        assert!(near(tr, run_at(tw) + dt, 0.6), "walk {tw} -> run {tr} (want {})", run_at(tw) + dt);
+        for _ in 0..frames {
+            inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+        }
+        let tr = time(&inst, r);
+        inst.params.set_bool(rig.param("run"), false);
+        inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+        let tw = time(&inst, w);
+        assert!(near(tw, walk_at(tr) + dt, 1.0), "run {tr} -> walk {tw} (want {})", walk_at(tr) + dt);
+    }
+    // Through idle (no member for an update): the run starts at its own start.
+    let mut inst = GraphInstance::new(&b);
+    let mut out = GraphOutput::new(&rig.graph);
+    for _ in 0..20 {
+        inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+    }
+    inst.params.set_bool(rig.param("stop"), true);
+    inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+    inst.params.set_bool(rig.param("stop"), false);
+    inst.params.set_bool(rig.param("run"), true);
+    inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+    assert!((time(&inst, r) - dt).abs() < 1e-4, "fresh run {}", time(&inst, r));
+}
+
 #[test]
 fn layers_masks_and_additive_compose() {
     let rig = Rig::new(MAIN);
@@ -915,6 +987,34 @@ fn speed_match_scales_playback_within_limits() {
         inst.update(&b, 0.1, 3, &inputs, &mut out);
         assert!((inst.player(w).unwrap().0[0].0 - 0.1).abs() < 1e-6);
     }
+}
+
+/// A 1D space's `rate_clamp` replaces the op's `min..=max` for its lanes (a gait set at
+/// 0.8-1.25 beside clips that keep the op's range); a bad range fails the compile.
+#[test]
+fn blend_space_rate_clamp_overrides_the_speed_match_range() {
+    let space = r#"BlendSpace1D(x: "hand", samples: [(clip: "walk", at: 1.0)], sync: (group: "g"), rate_clamp: (0.8, 1.25))"#;
+    let ron = PROC.replace(r#"Clip(clip: "walk")"#, space).replace("OPS", "SpeedMatch()");
+    let rig = Rig::new(&ron);
+    let b = rig.binding();
+    let w = rig.graph.node("w").unwrap();
+    // The walk is 1.2 m/s; the op alone gives 1.25 / 1.3 (its max) / 0.75 (above its 0.5 min).
+    for (speed, rate) in [(1.5, 1.25), (3.0, 1.25), (0.3, 0.8), (1.2, 1.0)] {
+        let mut inst = GraphInstance::new(&b);
+        let mut out = GraphOutput::new(&rig.graph);
+        let inputs = UpdateInputs { velocity: Vec3::new(0.0, 0.0, speed), ..UpdateInputs::default() };
+        inst.update(&b, 0.1, 0, &inputs, &mut out);
+        let t = inst.player(w).unwrap().0[0].0;
+        assert!((t - 0.1 * rate).abs() < 1e-4, "speed {speed}: time {t}");
+    }
+    let parsed = parse_graph(&ron).unwrap();
+    // Round trip through the pretty printer the shipped graphs use.
+    let text = ron::ser::to_string_pretty(&parsed, ron::ser::PrettyConfig::new().depth_limit(2).extensions(ron::extensions::Extensions::UNWRAP_VARIANT_NEWTYPES)).unwrap();
+    assert_eq!(parse_graph(&text).unwrap_or_else(|e| panic!("{e}
+{text}")), parsed, "{text}");
+    assert!(matches!(&parsed.nodes["w"], asset::NodeSpec::BlendSpace1D { rate_clamp: Some((lo, hi)), .. } if *lo == 0.8 && *hi == 1.25));
+    let mut src = source(&rig.skeleton);
+    assert!(compile_str("bad", &ron.replace("(0.8, 1.25)", "(1.3, 1.25)"), &rig.skeleton, &mut src).is_err());
 }
 
 #[test]
