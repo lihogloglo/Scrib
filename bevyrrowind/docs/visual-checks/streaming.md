@@ -13,6 +13,8 @@ Open visual checks: streaming spikes, size-based draw distance, door links (ST, 
 - Look for: no terrain flicker or one-frame holes when crossing 256 m borders; no
   objects arriving visibly late (pop-in in front of the camera) compared with before.
 - A/B: none at runtime (`StreamingConfig::origin_shift_guard_s = 0` in code).
+- Owner 2026-11-12 (Bitter Coast flight, also seen before): a little flicker in distant terrain every ~200 m of travel.
+  Owner suspects distant shadows mishandling the origin shift (every 256 m); not diagnosed, check later.
 - Status: deferred 2026-10-19 (phase0): recheck in the Phase 1 perf pass.
 - Source: spikes.
 

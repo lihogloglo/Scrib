@@ -82,11 +82,11 @@ One line per open ID: `ID | status | file | title`. Entries live in [`visual-che
 
 ### Awaiting owner (54)
 
-WA-4 | awaiting owner | [terrain-water](visual-checks/terrain-water.md) | Wavelets at the shore (W-SHORE): ripples glint to the waterline, swell still dies on beaches, no flat strip, no moiré; A/B `--off shorenormals` (2026-11-12)
+WA-4 | confirmed (2026-11-12: "that's perfect") | [terrain-water](visual-checks/terrain-water.md) | Wavelets at the shore (W-SHORE): ripples glint to the waterline, swell still dies on beaches, no flat strip, no moiré; A/B `--off shorenormals` (2026-11-12)
 WA-3 | confirmed (2026-11-12: day and night "very nice", night water no longer too bright; emissive in reflection unsure) | [terrain-water](visual-checks/terrain-water.md) | Water mirrors banks, buildings, ships and lit windows, wobbling with waves; edge fade, no flicker, nothing below the water (W-SSPR, A/B `--off waterssr`, 2026-11-12)
 FG-11 | confirmed (2026-11-12: "the fog is glorious") | [weather-sky](visual-checks/weather-sky.md) | Froxel fog smooth over near objects, still and panning; no trails or black bands (FOG-CLAMP, A/B `--off fogclamp`, 2026-11-12)
 WE-11 | confirmed (2026-11-12: fog, rain, storm over sea; clouds at sea; wish: visible lightning bolt) | [weather-sky](visual-checks/weather-sky.md) | Weather covers water like land (W-ORDER): fog/rain/storm over the far sea, cloud over the ocean from high, no double fog or shore halo (2026-11-12)
-WE-12 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Deck from above/inside: fog split at the clouds' depth (WE12-FIX); `scene fg-bittercoast-ridge`, fly ~100 m over the deck, look down, then into it; A/B `--off cloudfog` (2026-11-12)
+WE-12 | confirmed (2026-11-12: "works perfectly") | [weather-sky](visual-checks/weather-sky.md) | Deck from above/inside: fog split at the clouds' depth (WE12-FIX); `scene fg-bittercoast-ridge`, fly ~100 m over the deck, look down, then into it; A/B `--off cloudfog` (2026-11-12)
 FG-7 | confirmed (2026-11-12: blockiness gone) | [weather-sky](visual-checks/weather-sky.md) | Blocky edges on distant land in fog: FOG-BANK fix, A/B `--off fogbank` (2026-11-12)
 SH-11 | confirmed (2026-10-30) | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
 SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player and torches cast none; fixes built 2026-11-01: SH-21) | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
@@ -247,7 +247,7 @@ FG-1 | inconclusive | [weather-sky](visual-checks/weather-sky.md) | Volumetric f
 
 DL-2 | deferred | [rendering](visual-checks/rendering.md) | Super Resolution at 1440p
 SK-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Night and moon
-ST-2 | deferred | [streaming](visual-checks/streaming.md) | No pop at origin shifts in flight
+ST-2 | deferred (2026-11-12 owner: small flicker in distant terrain every ~200 m of travel; suspect far shadows at origin shifts) | [streaming](visual-checks/streaming.md) | No pop at origin shifts in flight
 ST-3 | deferred | [streaming](visual-checks/streaming.md) | Paced model loads arrive in time
 SC-2 | deferred | [streaming](visual-checks/streaming.md) | The cutoff fades, never pops
 SC-foliage | owner: OK in Balmora (2026-11-11) | [rendering](visual-checks/rendering.md) | Cutout candidates (foliage, fences, grates) drawn from the static table, and no candidate that should fade softly gaining hard edges

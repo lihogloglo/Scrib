@@ -56,7 +56,7 @@ over the water covers them), off-screen and occluded things fall back to the sky
 
 ### WA-4: Wavelets at the shore (W-SHORE; `scene wa-seyda-noon`, `wa-bittercoast`; A/B `--off shorenormals`)
 
-Status: awaiting owner. Kind: real game locations, High preset, the scenes' own time and weather.
+Status: confirmed (owner 2026-11-12, `scene wa-seyda-noon`: "that's perfect"; `--off shorenormals` A/B not run). Kind: real game locations, High preset, the scenes' own time and weather.
 Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-seyda-noon`, then `scene wa-bittercoast`; A/B: the same with
 `--off shorenormals` (the old look: the normal flattens with the displacement). Fixes WA-1 (3) "100 % flat at the shore".
 Look for: small wind ripples glinting and moving right up to the waterline on the Seyda Neen beach and the Bitter Coast

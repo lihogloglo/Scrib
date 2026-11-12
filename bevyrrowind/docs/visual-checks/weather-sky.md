@@ -330,4 +330,4 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   terrain/fog from above, and its bottom still drawn when inside. A/B `--off cloudfog` (old: the bottom vanishes).
   Must not: the at-sea deck seen from below changed (horizon clouds may be slightly clearer: less fog past them,
   expected), the FG-11/FG-7 fog looks changed, a bright or dark halo at cloud silhouettes against terrain.
-- Status: awaiting owner.
+- Status: confirmed (owner 2026-11-12, `scene fg-bittercoast-ridge`: "works perfectly"; `--off cloudfog` A/B not run).
