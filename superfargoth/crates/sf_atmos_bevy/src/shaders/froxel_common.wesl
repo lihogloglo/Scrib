@@ -50,9 +50,10 @@ struct Froxels {
     enabled: u32,
     // The shadowed directional light the cloud and far maps were made for.
     shadow_light: vec3<f32>,
-    // 1: per-froxel sample rotation, history read at the froxel centre
-    // (`sf_atmos::FroxelJitter::PerFroxel`); 0: `jitter` as is.
-    jitter_mode: u32,
+    // Bit 0: per-froxel sample rotation, history read at the froxel centre
+    // (`sf_atmos::FroxelJitter::PerFroxel`; clear: `jitter` as is). Bit 1: the
+    // history is clipped to the neighbourhood (`FroxelSettings::clamp`).
+    flags: u32,
     fog: Fog,
     lights: array<FogLight, MAX_FOG_LIGHTS>,
 };

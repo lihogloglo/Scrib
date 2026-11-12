@@ -80,8 +80,11 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (49)
+### Awaiting owner (52)
 
+FG-11 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Froxel fog smooth over near objects, still and panning; no trails or black bands (FOG-CLAMP, A/B `--off fogclamp`, 2026-11-12)
+WE-11 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Weather covers water like land (W-ORDER): fog/rain/storm over the far sea, cloud over the ocean from high, no double fog or shore halo (2026-11-12)
+FG-7 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Blocky edges on distant land in fog: FOG-BANK fix, A/B `--off fogbank` (2026-11-12)
 SH-11 | confirmed (2026-10-30) | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
 SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player and torches cast none; fixes built 2026-11-01: SH-21) | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
 SH-21 | partial (2026-11-01: torches cast; flicker, cut faces, choppy: SH-20b in progress) | [shadows](visual-checks/shadows.md) | Lamp and torch shadows on the player and torch-bearers; shadowed-lamp pick by view visibility (2026-11-01)
@@ -221,7 +224,6 @@ SW-5 | coverage OK 2026-11-06; resets fix failed 2026-11-06 (tree canopy shelter
 SW-4 | confirmed (2026-11-06 retune: faster fill, 6° slope) | [weather-sky](visual-checks/weather-sky.md) | Puddles, Balmora in rain: `surface set puddle 1`, flat sky-mirror water in hollows and grout, rings while raining that stop with the rain, none under roofs; A/B `--off puddles`
 SW-3 | confirmed (owner 2026-11-05: works great, dries in a satisfying pattern; ground look a bit weird, see terrain roughness bug) | [weather-sky](visual-checks/weather-sky.md) | Wetness after rain, Seyda Neen: `surface set wet 1`, darker/glossier ground and walls, streaks, dry under roofs; A/B `--off wet`
 SW-2 | confirmed (2026-11-06, after the render-layer fix) | [weather-sky](visual-checks/weather-sky.md) | Surface weather shelter at night (own top-down pass): roofs full, trees partial (`surface debug exposure`), 32 m cells, Balmora 23:00
-FG-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Blocky crenellated edges on distant land in fog (2026-10-30)
 PH-14 | confirmed (2026-11-05) | [physics](visual-checks/physics.md) | Dev kill key I kills the player in third person and opens the inventory (2026-10-30)
 AU-6 | known bug | [audio](visual-checks/audio.md) | Third-person listener in the character head, not the camera (2026-10-30)
 FG-8 | known bug | [weather-sky](visual-checks/weather-sky.md) | Weather fog vanishes at night (2026-10-30)

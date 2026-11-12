@@ -26,14 +26,25 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   frames (`sf_sky_bevy/src/env_refresh.rs:24`), so it costs ~0.09 ms a frame. Bevy timings appear only on frames a pass
   runs: the perf report shows `GPU ms/run` and `runs/frame` and sums the per-frame share (`sf_diag` `PassTiming`).
   A run still lands on one frame (a ~0.7 ms spike every 8th); spreading it over frames (UE-style) is not done.
-- **Night sky.** Stars, textured moons and sun glare are drawn before the cloud composite (`night.rs`); the moon
+- **Night sky.** Stars, textured moons and sun glare are drawn after the water and before the cloud composite (`night.rs`); the moon
   light is separate from the drawn disks. Raster or Solari path switch: `path.rs`; DLSS/TAA: `upscale.rs`.
 - **Clouds and fog.** `CloudsPlugin` (`sf_atmos_bevy/src/lib.rs:229`): a half-res raymarch lit through the atmosphere
-  LUTs, temporal resolve, depth-aware composite after Bevy's `render_sky` and before transparents
+  LUTs, temporal resolve, depth-aware composite after the water (Bevy's transmissive pass) and `render_sky`, before
+  transparents; the trace and composite read a depth that holds the water, so weather covers sea like land (W-ORDER,
+  [render-order](../../../superfargoth/docs/specs/render-order.md) "Frame graph")
   (`render.rs:53`-`:67`). Cloud shadows: a 1024^2 toroidal map given to `CloudShadowLight` as a
   `DirectionalLightTexture` (module doc `lib.rs:1`). `Fog` (`:112`): analytic height fog and ground banks in the same
   node, plus a froxel volume near the camera (god rays, shadowed and point-lit fog; `render.rs:1069`) that reads the
   terrain's far shadow heights (`FogShadowHeights` `:129`). Fog fill adds the camera's ambient (`view_ambient` `:457`).
+  Ground-fog banks: the half-res trace (`shaders/cloud_trace.wesl`, 6x6-window depth) records the bank ratio at the
+  window's nearest and furthest depth as packed (distance, bank) pairs in `dist` G/A; the resolve keeps the far pair's
+  history by open/cut population, the near pair's by near distance; the composite blends them by each pixel's
+  log-depth with bilateral depth weights (FOG-BANK, `sf_atmos::bank_edges`, `FogBankEdges`; spec `weather/fog.md`).
+  Froxel history (`shaders/froxel_inject.wesl`): per-froxel R3 jitter, history reprojected with last frame's
+  clip-from-world and read at the froxel centre (off screen or past `far`: this frame alone), then clipped to the
+  min/max box of this frame's 3x3 samples in the slice (Karis 2014 TAA clip; 16x16 workgroups write 14x14 tiles,
+  the apron is the box) at weight 0.95 (`FroxelSettings::clamp`, `HISTORY_CLAMPED`; FOG-CLAMP, `--off fogclamp` =
+  unclipped 0.9).
   Translucents use `FroxelFogMaterial` (`transparent.rs`, `fog_translucents.rs`).
 - **Weather.** `WeatherPlugin` (`superfargoth/crates/sf_weather_bevy/src/lib.rs:184`): `evaluate` into
   `CurrentWeather` (`:223`), then `apply_sky` (`:318`), `apply_clouds` (`:354`), `apply_fog` (`:379`), `apply_wind` (`:427`),
@@ -50,7 +61,7 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
 
 ## Switches and counters
 
-`--off clouds|fog|froxels|godrays|fogdither|fogjitter|foghistory|transfog|envslice|skymotion|surface`
+`--off clouds|fog|froxels|godrays|fogdither|fogjitter|foghistory|fogbank|fogclamp|transfog|envslice|skymotion|surface`
 (`mw_game_core/src/perf.rs:135`); live `flip ambient_specular`, console `surface set|dump|clear`, weather overrides
 (`WeatherOverrides`). GPU spans `clouds_shadow|trace|resolve|composite`, Bevy `atmosphere_luts`; `MediumStats`
 (`rebuilds`, `scale_updates`), `WeatherStats`.
@@ -59,8 +70,8 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
 
 - `atmosphere_luts` rose 0.36 -> 0.84-0.93 ms with P1 (per-sample term sums); P1b restores stock single fetches, expected
   back near 0.36 ms, not yet measured ([ledger](../../ledger/sky-weather.md)).
-- Local storms seen from outside look like a wall with a shimmering border (WE-10); rain and clouds do not draw over
-  distant water (WE-7); no visible god rays at sunrise in fog (FG-10); weather fog vanishes at night (FG-8, WE-9 causes 1 and 3).
+- Local storms seen from outside look like a wall with a shimmering border (WE-10); rain and clouds not drawing over
+  distant water (WE-7, cause: water drawn after the weather) is fixed by W-ORDER, awaiting owner (WE-11); no visible god rays at sunrise in fog (FG-10); weather fog vanishes at night (FG-8, WE-9 causes 1 and 3).
 - A weather medium change moves the sky through the GPU LUTs (no CPU bake); a model change still bakes on the render thread.
 
 ## Specs

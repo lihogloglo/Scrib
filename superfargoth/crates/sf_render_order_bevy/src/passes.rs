@@ -1,12 +1,20 @@
 //! The order of the passes between Bevy's opaque and transparent passes
-//! (render-order.md RO-8), declared once.
+//! (render-order.md RO-8, "Frame graph"), declared once.
+//!
+//! The water draws in Bevy's `main_transmissive_pass_3d`, between the opaque and
+//! the transparent pass (W-ORDER; UE5 Single Layer Water's placement): the
+//! [`PassStage::Snapshot`] runs before it (after the opaque pass only), every
+//! later stage after it, so the sky, clouds and fog read the water's depth and
+//! cover it as they cover land.
 //!
 //! `render_sky` is private to `bevy_pbr`, so its system set can't be named. A
-//! pass added here is ordered after every system set already ordered before
-//! `main_transparent_pass_3d` (Bevy's sky included), found when the pass is
-//! added, and after the earlier [`PassStage`]s through the sets themselves, so
-//! the order is the enum's, not the plugin add order. Scaffold
-//! `SkyOrderScaffold`; removal path: a public `render_sky` set upstream.
+//! stage after the water is ordered after every system set already ordered
+//! before `main_transparent_pass_3d` (Bevy's sky and the transmissive pass
+//! included; the vendored `bevy_pbr` orders `render_sky` after the transmissive
+//! pass), found when the pass is added, and after the earlier [`PassStage`]s
+//! through the sets themselves, so the order is the enum's, not the plugin add
+//! order. Scaffold `SkyOrderScaffold`; removal path: a public `render_sky` set
+//! upstream.
 
 use std::collections::HashMap;
 
@@ -16,26 +24,30 @@ use bevy_core_pipeline::schedule::Core3d;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedSystemSet, IntoScheduleConfigs, NodeId, Schedules};
 use bevy_ecs::system::ScheduleSystem;
+use bevy_pbr::main_transmissive_pass_3d;
 use bevy_render::RenderApp;
 
 /// The passes between the opaque and the transparent pass, in draw order.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PassStage {
-    /// Night sky: stars and moons (`sf_sky_bevy`).
-    Night,
-    /// Cloud and fog composite (`sf_atmos_bevy`).
-    Clouds,
-    /// The refraction snapshot (`sf_water_bevy`).
+    /// The refraction snapshot (`sf_water_bevy`): the opaque scene, taken before
+    /// the water draws in the transmissive pass.
     Snapshot,
+    /// Night sky: stars and moons (`sf_sky_bevy`), after the water and `render_sky`.
+    Night,
+    /// Cloud and fog composite (`sf_atmos_bevy`), after the water and `render_sky`.
+    Clouds,
 }
 
 /// The passes added through [`add_pass`] (their own function sets).
 #[derive(Resource, Default)]
 struct Registered(Vec<InternedSystemSet>);
 
-/// Adds `pass` to the render app's `Core3d` schedule in `stage`: after the
-/// opaque pass and everything already ordered before the transparent pass,
-/// after earlier stages, before the transparent pass. `own` is the pass's own
+/// Adds `pass` to the render app's `Core3d` schedule in `stage`. The snapshot
+/// goes after the opaque pass, before the transmissive (water) pass; every
+/// other stage after the transmissive pass, everything already ordered before
+/// the transparent pass and the earlier stages, before the transparent pass.
+/// `own` is the pass's own
 /// system set (`pass.into_system_set().intern()`), `ignore` any other sets of
 /// the crate that must not be waited for (they would form a cycle).
 pub fn add_pass<M>(app: &mut App, stage: PassStage, own: InternedSystemSet, ignore: &[InternedSystemSet], pass: impl IntoScheduleConfigs<ScheduleSystem, M>) {
@@ -49,8 +61,13 @@ fn add_pass_to<M>(render_app: &mut SubApp, stage: PassStage, own: InternedSystem
     skip.extend(render_app.world().get_resource::<Registered>().map(|r| r.0.clone()).unwrap_or_default());
     let found = sets_before_transparent(render_app, &skip);
     render_app.init_resource::<Registered>().world_mut().resource_mut::<Registered>().0.push(own);
-    render_app.configure_sets(Core3d, (PassStage::Night.before(PassStage::Clouds), PassStage::Clouds.before(PassStage::Snapshot)));
-    let mut config = pass.in_set(stage).after(main_opaque_pass_3d).before(main_transparent_pass_3d);
+    render_app.configure_sets(Core3d, (PassStage::Snapshot.before(PassStage::Night), PassStage::Night.before(PassStage::Clouds)));
+    let config = pass.in_set(stage).after(main_opaque_pass_3d);
+    if stage == PassStage::Snapshot {
+        render_app.add_systems(Core3d, config.before(main_transmissive_pass_3d));
+        return;
+    }
+    let mut config = config.after(main_transmissive_pass_3d).before(main_transparent_pass_3d);
     for set in found {
         config = config.after(set);
     }
@@ -95,9 +112,16 @@ mod tests {
         l.0.push("snapshot");
     }
 
-    fn run(order: [usize; 3]) -> Vec<&'static str> {
+    /// Stands in for Bevy's private `render_sky` (ordered like it: after the
+    /// opaque pass, before the transparent pass).
+    fn sky(mut l: ResMut<Log>) {
+        l.0.push("sky");
+    }
+
+    fn setup(order: [usize; 3]) -> SubApp {
         let mut sub = SubApp::new();
         sub.init_resource::<Log>();
+        sub.add_systems(Core3d, sky.after(main_opaque_pass_3d).before(main_transparent_pass_3d));
         for i in order {
             match i {
                 0 => add_pass_to(&mut sub, PassStage::Night, night.into_system_set().intern(), &[], night),
@@ -105,15 +129,53 @@ mod tests {
                 _ => add_pass_to(&mut sub, PassStage::Snapshot, snapshot.into_system_set().intern(), &[], snapshot),
             }
         }
+        sub
+    }
+
+    fn run(order: [usize; 3]) -> Vec<&'static str> {
+        let mut sub = setup(order);
         sub.world_mut().run_schedule(Core3d);
         sub.world().resource::<Log>().0.clone()
     }
 
-    /// The declared order holds for every plugin add order (RO-8).
+    /// The declared order holds for every plugin add order (RO-8), and the
+    /// stages after the water also wait for the sky.
     #[test]
     fn order_is_the_enums_for_any_add_order() {
         for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
-            assert_eq!(run(order), ["night", "clouds", "snapshot"], "added in order {order:?}");
+            let log = run(order);
+            let at = |name| log.iter().position(|s| *s == name).unwrap();
+            assert!(at("snapshot") < at("night") && at("night") < at("clouds"), "added in order {order:?}: {log:?}");
+            assert!(at("sky") < at("night"), "added in order {order:?}: {log:?}");
         }
+    }
+
+    /// The snapshot runs before the transmissive (water) pass, the night sky
+    /// and the cloud/fog composite after it (W-ORDER: weather covers water).
+    #[test]
+    fn water_draws_between_snapshot_and_weather() {
+        let mut sub = setup([2, 0, 1]);
+        let transmissive = main_transmissive_pass_3d.into_system_set().intern();
+        let world = sub.world_mut();
+        let schedules = world.resource::<Schedules>();
+        let graph = schedules.get(Core3d).unwrap().graph();
+        let key = graph.system_sets.get_key(transmissive).expect("the transmissive pass is named");
+        // Each system by its own function set (names need bevy_ecs's `debug` feature).
+        let sets: HashMap<_, _> = graph.systems.iter().map(|(k, system, _)| (k, system.default_system_sets())).collect();
+        let linked = |direction| -> Vec<InternedSystemSet> {
+            graph
+                .dependency()
+                .graph()
+                .neighbors_directed(NodeId::Set(key), direction)
+                .filter_map(|node| if let NodeId::System(k) = node { sets.get(&k).cloned() } else { None })
+                .flatten()
+                .collect()
+        };
+        let before = linked(bevy_ecs::schedule::graph::Direction::Incoming);
+        let after = linked(bevy_ecs::schedule::graph::Direction::Outgoing);
+        let (snap, nig, clo) = (snapshot.into_system_set().intern(), night.into_system_set().intern(), clouds.into_system_set().intern());
+        assert!(before.contains(&snap), "snapshot before the water: {before:?}");
+        assert!(after.contains(&nig) && after.contains(&clo), "weather after the water: {after:?}");
+        assert!(!after.contains(&snap) && !before.contains(&nig) && !before.contains(&clo));
     }
 }

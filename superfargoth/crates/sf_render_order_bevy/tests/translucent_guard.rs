@@ -24,11 +24,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // `Missing`: no framework site is unfogged today.
+#[allow(dead_code)] // `Missing`, `Own`: no framework site is unfogged or self-fogged today.
 enum Fog {
     /// The material binds `TranslucentFog` and its shader imports
     /// `sf_render_order_bevy::translucent_fog` (render-order.md rule 1).
     Froxel,
+    /// Drawn in the transmissive phase (before the sky and the fog composite) and depth-writing:
+    /// fogged by the composite like opaque geometry (render-order.md "Frame graph", W-ORDER).
+    Composite,
     /// The crate fogs it its own way (documented in its spec).
     Own,
     /// The host must fog it (e.g. swap to `FroxelFogMaterial`): a tracked gap.
@@ -63,7 +66,7 @@ const SITES: &[Site] = &[
     Site { file: "sf_lod_bevy/src/materials.rs", what: "LightSpriteMaterial (additive distant light glows)", fog: Fog::Froxel, placement: Placement::World, violation: None },
     Site { file: "sf_precip_bevy/src/lib.rs", what: "PrecipMaterial (camera-wrapped rain/snow boxes)", fog: Fog::Froxel, placement: Placement::ShaderPlaced, violation: None },
     Site { file: "sf_surface_bevy/src/kickup.rs", what: "KickupMaterial (shader-flown snow/ash puffs, one fixed mesh)", fog: Fog::Froxel, placement: Placement::ShaderPlaced, violation: None },
-    Site { file: "sf_water_bevy/src/lib.rs", what: "WaterMaterial (clipmap, refractive)", fog: Fog::Own, placement: Placement::ShaderPlaced, violation: None },
+    Site { file: "sf_water_bevy/src/lib.rs", what: "WaterMaterial (clipmap, refractive)", fog: Fog::Composite, placement: Placement::ShaderPlaced, violation: None },
     Site { file: "sf_world_bevy/src/spawn.rs", what: "generic model spawn, sf_model Blend -> StandardMaterial", fog: Fog::Host, placement: Placement::World, violation: Some("RO-4") },
 ];
 
@@ -185,6 +188,17 @@ fn every_translucent_is_fogged_or_a_tracked_violation() {
                 let imports = shaders.iter().any(|f| fs::read_to_string(f).is_ok_and(|t| t.contains("import sf_render_order_bevy::translucent_fog::") && t.contains("froxel_fog_lookup(")));
                 if !binds || !imports {
                     errors.push(format!("{}: declared Froxel but its crate doesn't bind TranslucentFog ({binds}) and call the translucent_fog module's froxel_fog_lookup ({imports})", site.file));
+                }
+            }
+            Fog::Composite => {
+                let krate = site.file.split('/').next().unwrap_or_default();
+                let mut files = Vec::new();
+                rust_files(&root.join(krate).join("src"), &mut files);
+                let text: Vec<String> = files.iter().filter_map(|f| fs::read_to_string(f).ok()).collect();
+                let transmissive = text.iter().any(|t| t.contains("specular_transmission:"));
+                let depth = text.iter().any(|t| t.contains("depth_write_enabled = Some(true)"));
+                if !transmissive || !depth {
+                    errors.push(format!("{}: declared Composite but its material isn't transmissive ({transmissive}) and depth-writing ({depth})", site.file));
                 }
             }
             Fog::Own => {

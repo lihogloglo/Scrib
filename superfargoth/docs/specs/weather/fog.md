@@ -172,3 +172,37 @@ Revisit `FogVolume` only for small local volumes in interiors (M9 environment vo
   12:00 / 21:00 / 23:30, exposed 0.15-0.19 (grey stone under the same floor 0.06-0.08). Tests: `sf_atmos_bevy`
   `fog_ambient_is_the_surfaces_ambient` (exact), `fog_passes_compile_and_read_the_view_ambient` (wesl + naga).
   A/B: console `flip fog_night_light`. Visual check WE-9.
+
+### Depth-aware bank as built (FOG-BANK, FG-7 + WE-10 edges, 2026-11-12)
+- Problem: the trace stops each half-res texel at the **furthest** depth of its 6x6 window, so at a silhouette
+  (land against sky) full-res land pixels took a bank modulation marched to the sky's depth; edge texels flip
+  open/cut with the sub-pixel rotation and DLSS jitter, history drops, the block-mate is copied: grid steps.
+- Fix (UE5 volumetric clouds / Nubis min-max depth upsample, Hillaire 2020): the trace also takes the window's
+  **nearest** depth and records the bank ratio to both in one march (each sample counts toward the near ratio by
+  its interval's share before the near depth). The `dist` target's G and A hold (distance, bank) pairs packed as
+  `2k + bank` (k = log2 distance in 1/32 octave; `sf_atmos::bank_edges`, `bank_edges.wesl`). The resolve keeps the
+  far pair's history by population, the near pair's by matching near distance (stable across open/cut flips).
+  The composite blends each tap's pairs by the pixel's own log-depth and weighs the taps bilaterally (Gaussian in
+  octaves outside the tap's [near, far], σ 0.25, floor 1e-4 → bilinear fallback). Cloud colour and the far
+  weather keep the population pick (separating far weather from the cloud colour needs another target).
+- Switch: `sf_atmos_bevy::FogBankEdges` (default on); game `--off fogbank` = old path. Expected cost ~0.05 ms
+  (one more depth max, the near accumulation, decode/encode), not measured. Tests: `sf_atmos::bank_edges` (CPU
+  twin, exact), `fog_bank_edges_compile_and_keep_the_layout` (wesl + naga, `Fog`/`Clouds` sizes unchanged),
+  `fog_bank_edges_reach_the_frame`. Visual check FG-7.
+
+### Froxel history clip as built (FOG-CLAMP, WE-10, 2026-11-12)
+- Problem: the inject already reprojected (last frame's clip-from-world, read at the froxel centre, current-only
+  off screen) but blended the history at 0.9 unclipped: ~23 % of a froxel's per-sample spread stays as temporal
+  noise, a ~10 output-px blob DLSS's 3x3 clamp can't average; and stale light (moved shadow, light gone) trails.
+- Fix (the TAA history clip, Karis 2014 / UE4 TAA, applied to the volume as Wronski 2014 and Hillaire 2015 do
+  reprojection; UE5's volumetric fog keeps 0.9 unclipped): the history is clipped toward the centre of the min/max
+  box of this frame's 3x3 samples in its slice (`clip_history`), which bounds stale history, so the weight rises to
+  0.95 (`HISTORY_CLAMPED`). Inject workgroups are 16x16, sample the tile plus a one-froxel apron (clamped at the
+  grid edge) into workgroup memory and write the inner 14x14 (`inject_groups`, `inject_cell`; ~1.31x froxels
+  sampled). No uniform growth: `Froxels::jitter_mode` became `flags` (bit 0 per-froxel jitter, bit 1 clip).
+- Model (`sf_atmos::froxel` estimator test, 32x32 slice, slanted shadow edge + depth ramp, light off at frame 300):
+  temporal std 0.0085 unclipped 0.9 -> 0.0050 clipped 0.95 (0.0086 clipped 0.9); light gone in 1 frame vs 40.
+- Switch: `FroxelSettings::clamp` (default on); game `--off fogclamp` = unclipped 0.9 (`without_clamp`).
+  Expected cost ≤ 0.05 ms (inject ≈ 0.1 ms of the froxels' 0.13 ms, x1.31), not measured. Not done: UE5's
+  history-miss supersampling. Tests: `froxel_clamp_compiles_and_keeps_the_layout`, the `sf_atmos::froxel` tile,
+  clip and estimator tests. Visual check FG-11.

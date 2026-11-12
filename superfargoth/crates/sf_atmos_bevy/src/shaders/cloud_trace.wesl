@@ -22,6 +22,7 @@ import super::cloud_common::{PI, WeatherSample, ramp, multi_scatter, powder, she
 import super::fog::fog_phase;
 import super::cloud_density::{clouds, weather_sample_a, map_a, map_layer, ray_a, ray_b, ray_local_a, ray_local_b, height_fraction, cloud_density, cirrus_hit, bank_mask};
 import super::key_light::{key_light, planet_lit_at};
+import super::bank_edges::{bank_encode, bank_near_share};
 
 @if(MULTISAMPLED)
 @group(0) @binding(13) var depth_texture: texture_depth_multisampled_2d;
@@ -38,6 +39,8 @@ struct TraceOutput {
     // upsampling). G: the ground-fog bank modulation (`bank_modulation`).
     // B: the cut depth (the scene distance that stopped the march), or
     // `clouds.far` for an open texel that saw sky. A: spare.
+    // With `fog.bank_edges` (FOG-BANK), G and A are `bank_encode` pairs: G the
+    // bank to the window's furthest depth, A to its nearest.
     @location(1) dist: vec4<f32>,
 };
 
@@ -89,26 +92,29 @@ fn planet_lit(r: f32, mu: f32) -> f32 {
 // The composite multiplies the layer's closed form by it at full resolution,
 // so depth edges stay exact. Steps are quadratic in distance (fine near the
 // eye, where shapes are read); the march stops where the fog turns opaque.
-fn bank_modulation(ro: vec3<f32>, rd: vec3<f32>, h0: f32, mu: f32, d_max: f32, jitter: f32) -> f32 {
+// Returns (x) the ratio up to `d_near` and (y) up to `d_max`, from one march:
+// each sample's interval counts toward the near ratio by its share before
+// `d_near` (FOG-BANK, `sf_atmos::bank_edges`; y alone is the old value).
+fn bank_modulation(ro: vec3<f32>, rd: vec3<f32>, h0: f32, mu: f32, d_near: f32, d_max: f32, jitter: f32) -> vec2<f32> {
     let f = clouds.fog;
     let top = f.bank_base + 6.0 * f.bank_falloff;
     var t0 = 0.0;
     var t1 = d_max;
     if h0 > top {
         if mu > -1e-4 {
-            return 1.0;
+            return vec2(1.0);
         }
         t0 = (top - h0) / mu;
     } else if mu > 1e-4 {
         t1 = min(t1, (top - h0) / mu);
     }
     if t1 <= t0 {
-        return 1.0;
+        return vec2(1.0);
     }
     let n = f32(max(f.steps, 1u));
     let span = t1 - t0;
-    var plain = 0.0;
-    var noisy = 0.0;
+    var plain = vec2(0.0);
+    var noisy = vec2(0.0);
     var tau = 0.0;
     for (var i = 0u; i < f.steps; i += 1u) {
         let u = (f32(i) + jitter) / n;
@@ -118,17 +124,17 @@ fn bank_modulation(ro: vec3<f32>, rd: vec3<f32>, h0: f32, mu: f32, d_max: f32, j
         let sigma = f.bank_density * exp(-max(h - f.bank_base, 0.0) / f.bank_falloff);
         let mask = bank_mask(ro + rd * t);
         let w = sigma * ds * exp(-tau);
-        plain += w;
-        noisy += w * mask;
+        let a = f32(i) / n;
+        let b = (f32(i) + 1.0) / n;
+        let share = bank_near_share(t0 + span * a * a, t0 + span * b * b, d_near);
+        plain += w * vec2(share, 1.0);
+        noisy += w * mask * vec2(share, 1.0);
         tau += sigma * mask * ds;
         if tau > 8.0 {
             break;
         }
     }
-    if plain <= 1e-7 {
-        return 1.0;
-    }
-    return noisy / plain;
+    return select(vec2(1.0), noisy / max(plain, vec2(1e-30)), plain > vec2(1e-7));
 }
 
 // Distant weather (weather.md WE4d): precipitation shafts under wet map
@@ -272,15 +278,24 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     // Reverse-Z: the smallest depth is the furthest, 0 is the sky.
     let full_px = clamp(vec2<i32>(uv * clouds.full_size), vec2(0), vec2<i32>(clouds.full_size) - 1);
     let full_max = vec2<i32>(clouds.full_size) - 1;
+    // The window's NEAREST depth too (the largest), for the bank's near value
+    // (FOG-BANK: the min/max depth pair of UE's and Nubis' depth-aware upsample).
     var depth = 1.0;
+    var depth_near = 0.0;
     for (var dy = -3; dy <= 2; dy += 1) {
         for (var dx = -3; dx <= 2; dx += 1) {
-            depth = min(depth, textureLoad(depth_texture, clamp(full_px + vec2(dx, dy), vec2(0), full_max), 0));
+            let z = textureLoad(depth_texture, clamp(full_px + vec2(dx, dy), vec2(0), full_max), 0);
+            depth = min(depth, z);
+            depth_near = max(depth_near, z);
         }
     }
     var scene_t = 1e30;
     if depth > 0.0 {
         scene_t = ndc_to_camera_dist(vec3(uv_to_ndc(uv), depth));
+    }
+    var near_t = 1e30;
+    if depth_near > 0.0 {
+        near_t = ndc_to_camera_dist(vec3(uv_to_ndc(uv), depth_near));
     }
 
     let rd = uv_to_ray_direction(uv);
@@ -293,18 +308,27 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let end = min(seg.y, min(scene_t, clouds.far));
 
     // The ground-fog banks (F2): marched for the fog even where no cloud is.
-    var bank = 1.0;
+    // With `bank_edges`, also to the window's nearest depth (one march, split).
+    var banks = vec2(1.0);
     let fog = clouds.fog;
+    let bank_far_t = min(scene_t, fog.far);
+    let bank_near_t = min(near_t, bank_far_t);
     if fog.enabled != 0u && fog.bank_density > 0.0 {
         let r0 = length(ro_c);
-        bank = bank_modulation(ro, rd, r0 - clouds.inner_radius, dot(ro_c / r0, rd), min(scene_t, fog.far), jitter);
+        banks = bank_modulation(ro, rd, r0 - clouds.inner_radius, dot(ro_c / r0, rd), bank_near_t, bank_far_t, jitter);
+    }
+    var bank = banks.y;
+    var bank_near = 0.0;
+    if fog.bank_edges != 0u {
+        bank = bank_encode(bank_far_t, banks.y);
+        bank_near = bank_encode(bank_near_t, banks.x);
     }
 
     var out: TraceOutput;
     out.color = vec4(0.0, 0.0, 0.0, 1.0);
     // Open (no geometry before the shell exit or the far limit) or cut at scene_t.
     let cut = select(scene_t, clouds.far, scene_t >= min(max(seg.y, 0.0), clouds.far));
-    out.dist = vec4(min(scene_t, clouds.far), bank, cut, 0.0);
+    out.dist = vec4(min(scene_t, clouds.far), bank, cut, bank_near);
     let clouds_on = clouds.clouds_on != 0u;
     let has_low = end > start && clouds_on;
     let far_on = clouds.far_weather != 0u && clouds_on;
@@ -475,7 +499,7 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         }
     }
     out.color = vec4(color * view.exposure, transmittance);
-    out.dist = vec4(dist, bank, cut, 0.0);
+    out.dist = vec4(dist, bank, cut, bank_near);
     return out;
 }
 

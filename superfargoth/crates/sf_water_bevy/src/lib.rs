@@ -1,12 +1,13 @@
 //! Bevy plugin for `sf_water` (water.md "Ocean surface", "Water pass", "Shoreline and depth
 //! colour", "Water bodies at any height"): GPU FFT ocean cascades from the same `h0` as the CPU
 //! twin, a camera-centred clipmap surface with a horizon skirt, shore attenuation from the
-//! `water.shore` field, optics by region, and the water pass (a colour + depth snapshot after the
-//! sky, clouds and fog, the water draw, a motion-vector redraw for DLSS/TAA).
+//! `water.shore` field, optics by region, and the water pass (a colour + depth snapshot of the
+//! opaque scene, the water draw in Bevy's transmissive phase, so the sky, clouds and fog cover it
+//! afterwards by its depth, render-order.md "Frame graph"; a motion-vector redraw for DLSS/TAA).
 //!
 //! The host (an app or adapter) owns the inputs: [`OceanSpectrum`] (sea state, seed, cascades:
 //! the twin's), [`WaterFrame`] (time, floating-origin cell, rest level), [`WaterLook`] (optics),
-//! [`WaterFogInput`] (the froxel volume, or the analytic height fog), [`WaterShoreInput`] and
+//! [`WaterShoreInput`] and
 //! [`WaterRegionsInput`] (bake products), [`WaterQuality`]; it marks the camera ([`WaterCamera`])
 //! and surface entities ([`OceanSurface`] for the ocean, [`WaterSurface`] for lakes, pools and
 //! interior water at their own level), with the camera's render layers. Systems in
@@ -29,10 +30,10 @@ use bevy_ecs::prelude::*;
 use bevy_image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy_light::NotShadowCaster;
 use bevy_material::AlphaMode;
-use bevy_math::{DVec2, IVec3, UVec2, UVec3, Vec2, Vec3, Vec4};
+use bevy_math::{DVec2, IVec3, UVec2, Vec2, Vec3, Vec4};
 use bevy_mesh::{Mesh, Mesh3d};
 use sf_render_order_bevy::{DrawBand, RenderOrderPlugin};
-use bevy_pbr::{AtmosphereSettings, MaterialPlugin, MeshMaterial3d, StandardMaterial};
+use bevy_pbr::{MaterialPlugin, MeshMaterial3d, ScreenSpaceTransmission, StandardMaterial};
 use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension};
 use bevy_shader::load_shader_library;
 use bevy_transform::TransformSystems;
@@ -132,8 +133,6 @@ pub struct WaterLook {
     pub foam_threshold: f32,
     pub foam_gain: f32,
     pub foam_decay: f32,
-    /// Air extinction per metre for the aerial transmittance (Bevy's Earth-like sea level).
-    pub aerial_extinction: Vec3,
 }
 
 impl Default for WaterLook {
@@ -156,7 +155,6 @@ impl WaterLook {
             foam_threshold: 0.35,
             foam_gain: 1.5,
             foam_decay: 2.5,
-            aerial_extinction: Vec3::new(9.8e-6, 1.75e-5, 3.7e-5),
         }
     }
 
@@ -165,18 +163,6 @@ impl WaterLook {
     }
 }
 
-/// Fog the water applies in front of itself: the froxel volume (`sf_atmos_bevy::FroxelVolume`,
-/// wired by the host), or when there is none the analytic height fog layer.
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct WaterFogInput {
-    pub froxels: Option<Handle<Image>>,
-    /// (near, far, slices, enabled).
-    pub params: Vec4,
-    /// Height fog: (extinction at base 1/m, falloff m, base render-space Y, on 0/1).
-    pub height: Vec4,
-    /// The height fog's in-scattered radiance (rgb, before exposure).
-    pub height_color: Vec3,
-}
 
 /// The `water.shore` bake product of the ocean (`sf_water::ShoreField`), world coordinates.
 #[derive(Resource, Clone, Debug, Default)]
@@ -209,9 +195,17 @@ impl Default for ClipmapSettings {
     }
 }
 
-/// The camera that draws the water (snapshot, water pass, velocity).
+/// The camera that draws the water (snapshot, water pass, velocity). It requires Bevy's
+/// [`ScreenSpaceTransmission`] with 0 steps: the water draws in the transmissive phase (W-ORDER)
+/// without Bevy's colour copy (the water reads its own snapshot).
 #[derive(Component, Clone, Copy, Debug, Default)]
+#[require(ScreenSpaceTransmission = water_transmission())]
 pub struct WaterCamera;
+
+/// No transmission copy (`steps: 0`): only the phase placement is used.
+fn water_transmission() -> ScreenSpaceTransmission {
+    ScreenSpaceTransmission { steps: 0, ..ScreenSpaceTransmission::default() }
+}
 
 /// The ocean surface entity: the plugin adds the clipmap mesh and the material. Give it the
 /// camera's render layers.
@@ -261,10 +255,6 @@ pub struct WaterImages {
     pub slopes: Handle<Image>,
     pub snapshot_color: Handle<Image>,
     pub snapshot_depth: Handle<Image>,
-    /// Copy of the camera's aerial-view LUT.
-    pub aerial: Handle<Image>,
-    /// A 1³ clear volume standing in when there are no froxels.
-    pub froxels: Handle<Image>,
     /// The shore field (`Rg8Unorm`) or a 1×1 open-sea stand-in.
     pub shore: Handle<Image>,
     /// The optics map (`R8Uint`) or a 1×1 zero.
@@ -272,7 +262,6 @@ pub struct WaterImages {
     /// FFT grid of the wave images.
     pub resolution: usize,
     snapshot_size: UVec2,
-    aerial_size: UVec3,
 }
 
 pub struct WaterPlugin;
@@ -288,12 +277,10 @@ impl Plugin for WaterPlugin {
         embedded_asset!(app, "shaders/water_fft.wesl");
         embedded_asset!(app, "shaders/water_mips.wesl");
         embedded_asset!(app, "shaders/water_snapshot.wesl");
-        embedded_asset!(app, "shaders/water_aerial.wesl");
         embedded_asset!(app, "shaders/water_velocity.wesl");
         app.init_resource::<OceanSpectrum>()
             .init_resource::<WaterFrame>()
             .init_resource::<WaterLook>()
-            .init_resource::<WaterFogInput>()
             .init_resource::<WaterShoreInput>()
             .init_resource::<WaterRegionsInput>()
             .init_resource::<WaterQuality>()
@@ -366,10 +353,6 @@ pub fn f16_to_f32(h: u16) -> f32 {
     }
 }
 
-fn fill_rgba16(texels: usize, value: [f32; 4]) -> Vec<u8> {
-    let one: Vec<u8> = value.iter().flat_map(|v| f16_bits(*v).to_le_bytes()).collect();
-    one.repeat(texels)
-}
 
 /// Mip levels of the slopes image: down to 8×8 (each level is a dispatch).
 #[must_use]
@@ -409,9 +392,6 @@ fn regions_image(width: u32, height: u32, data: Vec<u8>) -> Image {
 fn create_images(mut commands: Commands, mut images: ResMut<Assets<Image>>, quality: Res<WaterQuality>) {
     let n = quality.resolution();
     let [h0, displacement, prev, slopes] = wave_images(n);
-    let one = Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
-    let mut froxels = image(one, TextureDimension::D3, TextureFormat::Rgba16Float, TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST, Some(fill_rgba16(1, [0.0, 0.0, 0.0, 1.0])));
-    froxels.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
     let water_images = WaterImages {
         h0: images.add(h0),
         displacement: images.add(displacement),
@@ -419,13 +399,10 @@ fn create_images(mut commands: Commands, mut images: ResMut<Assets<Image>>, qual
         slopes: images.add(slopes),
         snapshot_color: images.add(snapshot_image(UVec2::ONE, TextureFormat::Rgba16Float)),
         snapshot_depth: images.add(snapshot_image(UVec2::ONE, TextureFormat::R32Float)),
-        aerial: images.add(aerial_image(UVec3::ONE)),
-        froxels: images.add(froxels),
         shore: images.add(shore_image(1, 1, vec![255, 255])),
         regions: images.add(regions_image(1, 1, vec![0])),
         resolution: n,
         snapshot_size: UVec2::ONE,
-        aerial_size: UVec3::ONE,
     };
     commands.insert_resource(water_images);
 }
@@ -440,19 +417,6 @@ fn snapshot_image(size: UVec2, format: TextureFormat) -> Image {
     )
 }
 
-/// Filled with log(1e-6) (no in-scatter) until the first copy, so an unwritten LUT adds nothing.
-fn aerial_image(size: UVec3) -> Image {
-    let texels = (size.x * size.y * size.z) as usize;
-    let mut image = image(
-        Extent3d { width: size.x, height: size.y, depth_or_array_layers: size.z },
-        TextureDimension::D3,
-        TextureFormat::Rgba16Float,
-        TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-        Some(fill_rgba16(texels, [-13.8, -13.8, -13.8, 0.0])),
-    );
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
-    image
-}
 
 // -- systems ----------------------------------------------------------------------------
 
@@ -513,16 +477,15 @@ fn upload_bakes(shore: Res<WaterShoreInput>, regions: Res<WaterRegionsInput>, im
     }
 }
 
-/// Keeps the snapshot targets at the active main-pass size (matching DLSS sub-viewports)
-/// and the aerial copy at its LUT size.
+/// Keeps the snapshot targets at the active main-pass size (matching DLSS sub-viewports).
 #[allow(clippy::type_complexity)]
 fn size_targets(
-    cameras: Query<(&Camera, Option<&MainPassResolutionOverride>, Option<&AtmosphereSettings>), With<WaterCamera>>,
+    cameras: Query<(&Camera, Option<&MainPassResolutionOverride>), With<WaterCamera>>,
     images: Option<ResMut<WaterImages>>,
     mut assets: ResMut<Assets<Image>>,
 ) {
     let Some(mut images) = images else { return };
-    let Some((camera, resolution, atmosphere)) = cameras.iter().next() else { return };
+    let Some((camera, resolution)) = cameras.iter().next() else { return };
     let target_size = camera.physical_target_size().unwrap_or(UVec2::ONE);
     let size = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution)
         .map_or(target_size, |v| (v.physical_position + v.physical_size).min(target_size))
@@ -531,11 +494,6 @@ fn size_targets(
         images.snapshot_color = assets.add(snapshot_image(size, TextureFormat::Rgba16Float));
         images.snapshot_depth = assets.add(snapshot_image(size, TextureFormat::R32Float));
         images.snapshot_size = size;
-    }
-    let lut = atmosphere.map_or(UVec3::ONE, |a| a.aerial_view_lut_size).max(UVec3::ONE);
-    if lut != images.aerial_size {
-        images.aerial = assets.add(aerial_image(lut));
-        images.aerial_size = lut;
     }
 }
 
@@ -552,7 +510,11 @@ fn attach_surface(
     let Some(images) = images else { return };
     for e in &surfaces {
         let material = WaterMaterial {
-            base: StandardMaterial { alpha_mode: AlphaMode::Blend, ..StandardMaterial::default() },
+            // `specular_transmission` > 0 puts the water in Bevy's transmissive phase on a
+            // `WaterCamera` (W-ORDER: after the opaque pass, before the sky, clouds and fog); the
+            // water shader never reads it. `DrawBand::Refractive` keeps it first among the
+            // translucents on a camera without `ScreenSpaceTransmission` (the fallback phase).
+            base: StandardMaterial { alpha_mode: AlphaMode::Blend, specular_transmission: 1.0, ..StandardMaterial::default() },
             extension: WaterExt::new(&images, WaterParams::default()),
         };
         commands.entity(e).try_insert((Mesh3d(meshes.add(mesh::clipmap(&clip))), MeshMaterial3d(materials.add(material)), NotShadowCaster, NoFrustumCulling, DrawBand::Refractive));
@@ -563,12 +525,10 @@ fn attach_surface(
 struct Shared<'a> {
     frame: &'a WaterFrame,
     spectrum: &'a OceanSpectrum,
-    fog: &'a WaterFogInput,
     clip: &'a ClipmapSettings,
     shore: &'a WaterShoreInput,
     regions: &'a WaterRegionsInput,
     cascades: usize,
-    aerial_range: f32,
 }
 
 /// Render-space XZ of world XZ `p` under the floating origin.
@@ -613,7 +573,6 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
     for (i, l) in s.regions.looks.iter().take(MAX_LOOKS).enumerate() {
         looks[i * 3..i * 3 + 3].copy_from_slice(&l.table());
     }
-    let fog_on = s.fog.froxels.is_some() && s.fog.params.w > 0.0;
     WaterParams {
         phase01: Vec4::new(phase[0].x, phase[0].y, phase[1].x, phase[1].y),
         phase23: Vec4::new(phase[2].x, phase[2].y, phase[3].x, phase[3].y),
@@ -621,8 +580,6 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
         lambda_min,
         absorption: look.absorption.extend(0.0),
         scattering: look.scattering.extend(0.0),
-        aerial: look.aerial_extinction.extend(s.aerial_range),
-        froxel: if fog_on { s.fog.params } else { Vec4::new(0.5, 1.0, 1.0, 0.0) },
         clip: Vec4::new(s.clip.base_spacing, (s.clip.quads.max(8) & !3) as f32, s.clip.rings.max(1) as f32, level),
         foam: Vec4::new(look.whitecaps, look.contact_depth, look.refraction, look.roughness),
         misc: Vec4::new(s.cascades as f32, s.clip.skirt, s.clip.displacement_range, 1.0),
@@ -632,8 +589,6 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
         shore2,
         misc2: Vec4::new((frame.time.rem_euclid(REPEAT_PERIOD)) as f32, 6.0, 0.0, look.shore_foam),
         regions,
-        fog_height: if fog_on { Vec4::ZERO } else { Vec4::new(s.fog.height.x, 1.0 / s.fog.height.y.max(1e-3), s.fog.height.z, s.fog.height.w) },
-        fog_color: s.fog.height_color.extend(0.0),
         looks,
     }
 }
@@ -641,29 +596,24 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
 /// Material parameters, and the render world's per-frame state (FFT tier and amortisation).
 #[allow(clippy::too_many_arguments, clippy::similar_names, clippy::type_complexity)]
 fn drive(
-    (frame, spectrum, look, fog, clip, quality): (Res<WaterFrame>, Res<OceanSpectrum>, Res<WaterLook>, Res<WaterFogInput>, Res<ClipmapSettings>, Res<WaterQuality>),
+    (frame, spectrum, look, clip, quality): (Res<WaterFrame>, Res<OceanSpectrum>, Res<WaterLook>, Res<ClipmapSettings>, Res<WaterQuality>),
     (shore, regions): (Res<WaterShoreInput>, Res<WaterRegionsInput>),
     images: Option<Res<WaterImages>>,
-    cameras: Query<Option<&AtmosphereSettings>, With<WaterCamera>>,
     mut surfaces: Query<(&MeshMaterial3d<WaterMaterial>, Option<&WaterSurface>, Has<OceanSurface>, &mut Visibility, &bevy_camera::visibility::InheritedVisibility)>,
     mut materials: ResMut<Assets<WaterMaterial>>,
     mut state: ResMut<render::WaterRender>,
     mut clock: Local<(u64, [Option<f64>; MAX_CASCADES])>,
 ) {
     let Some(images) = images else { return };
-    let atmosphere = cameras.iter().next().flatten();
     let cascades = spectrum.cascades.len().min(MAX_CASCADES).min(quality.cascades());
     let shared = Shared {
         frame: &frame,
         spectrum: &spectrum,
-        fog: &fog,
         clip: &clip,
         shore: &shore,
         regions: &regions,
         cascades,
-        aerial_range: atmosphere.map_or(0.0, |a| a.aerial_view_lut_max_distance),
     };
-    let froxels = fog.froxels.clone().unwrap_or_else(|| images.froxels.clone());
     let mut primary: Option<WaterParams> = None;
     let mut any = false;
     for (handle, surface, ocean, mut visibility, inherited) in &mut surfaces {
@@ -689,14 +639,12 @@ fn drive(
             let e = &m.extension;
             e.params != p
                 || e.snapshot_color != images.snapshot_color
-                || e.aerial != images.aerial
-                || e.froxels != froxels
                 || e.displacement != images.displacement
                 || e.shore != images.shore
                 || e.regions != images.regions
         });
         if stale && let Some(mut m) = materials.get_mut(&handle.0) {
-            m.extension = WaterExt { froxels: froxels.clone(), ..WaterExt::new(&images, p) };
+            m.extension = WaterExt::new(&images, p);
         }
     }
     // FFT tier: the cascades this frame. On High the two swell cascades (256 m, 64 m) alternate,

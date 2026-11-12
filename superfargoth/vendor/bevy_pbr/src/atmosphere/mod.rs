@@ -199,6 +199,9 @@ impl Plugin for AtmospherePlugin {
                         .before(Core3dSystems::MainPass),
                     render_sky
                         .after(main_opaque_pass_3d)
+                        // superfargoth patch (own: sky after water): the sky and the aerial
+                        // perspective read the depth of transmissive draws too (the water, W-ORDER).
+                        .after(crate::transmission::main_transmissive_pass_3d)
                         .before(main_transparent_pass_3d),
                 ),
             );

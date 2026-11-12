@@ -1,6 +1,6 @@
 # Render order: the frame graph, its rules and its guard
 
-Status: audit + rules (renderorder, 2026-10-19); RO-1, RO-2, RO-3 fixed (rofix1, 2026-10-19); RO-4, RO-7, RO-8, RO-9 fixed or gone (see "Violations"); RO-5, RO-6 open. Crates: every `*_bevy` crate that draws;
+Status: audit + rules (renderorder, 2026-10-19); W-ORDER (2026-11-12): water in the transmissive pass, before sky/clouds/fog (awaiting owner, WE-11); RO-1, RO-2, RO-3 fixed (rofix1, 2026-10-19); RO-4, RO-7, RO-8, RO-9 fixed or gone (see "Violations"); RO-5, RO-6 open. Crates: every `*_bevy` crate that draws;
 `sf_render_order_bevy` owns the transparent-band policy and the guard test.
 
 **Why this spec.** On 2026-10-19 the owner found four render-order bugs, each fixed on its own:
@@ -32,23 +32,37 @@ water plugin gets all of it; interiors skip clouds, fog volume and water.
 | 0d | `fft_pass` (same slot) | `sf_water_bevy` | ocean FFT cascades | spectrum | displacement arrays (current + previous) |
 | 1 | `Core3dSystems::Prepass` | Bevy + material prepass shaders | depth (`DepthPrepass`, for `OcclusionCulling`); motion vectors + jitter when DLSS SR is on (`MotionVectorPrepass`, `TemporalJitter`, `MipBias`, `upscale.rs`); deferred G-buffer only on the Solari path (`path.rs`) | — | depth, motion vectors |
 | 2 | `main_opaque_pass_3d`: `Opaque3d`, `AlphaMask3d` (binned) | Bevy | NIF statics/actors, terrain, LOD proxies, impostors, sea-plane scaffold | shadow maps, cloud shadow, far shadow map | colour, depth |
-| 3 | `render_sky` (private set; `SkyOrderScaffold`) | Bevy `Atmosphere` | sky on depth = far | atmosphere LUTs | colour |
-| 4 | `night_pass` (after `render_sky`) | `sf_sky_bevy` | stars, moons; no depth write | depth | colour |
-| 5 | `trace_pass` (after opaque, before transparent) | `sf_atmos_bevy` | clouds half-res raymarch + temporal resolve; ground-fog bank march; froxel inject + integrate (per-froxel jitter, own history) | opaque depth, LUTs, shadow maps, own histories | cloud/fog textures, `FroxelVolume` |
-| 6 | `composite_pass` (after 3-5) | `sf_atmos_bevy` | clouds + height fog + bank fog + froxels on every **opaque** pixel by its depth | opaque depth, step 5 outputs | colour |
-| 7 | `snapshot_pass` (after everything before transparent) | `sf_water_bevy` | **the only scene-colour read**: colour + depth copy for refraction/SSPR | colour, depth | snapshot textures |
-| 8 | `main_transparent_pass_3d`: `Transparent3d`, three bands | Bevy + `sf_render_order_bevy` | **Refractive** (water, depth-write) → **Sorted** (back to front by AABB centre + `depth_bias`: blended/additive NIF meshes and particles as `FroxelFogMaterial`, light sprites) → **Overlay** (precipitation boxes, far box first) | snapshot (water), `FroxelVolume`, depth (test) | colour (+ depth for water) |
-| 9 | `velocity_pass` (after transparent, before `EarlyPostProcess`) | `sf_water_bevy` | water motion vectors (current vs previous displacement) | depth | motion vectors |
-| 10 | post | Bevy | DLSS Super Resolution (raster) or DLSS Ray Reconstruction (Solari); tonemapping (camera default); no bloom, SSAO, SSR, DOF components today | colour, depth, motion vectors | output |
-| 11 | UI | Bevy UI | HUD, dev overlays | — | swapchain |
+| 3 | `snapshot_pass` (`PassStage::Snapshot`: after opaque, before the transmissive pass) | `sf_water_bevy` | **the only scene-colour read**: colour + depth copy of the **opaque** scene for refraction (no sky, clouds or fog yet: the composite fogs camera → water surface, the water's Beer-Lambert the path below it) | colour, depth | snapshot textures |
+| 4 | `main_transmissive_pass_3d`: `Transmissive3d` (W-ORDER) | Bevy + `sf_water_bevy` | **the water** (base `specular_transmission` > 0 routes it here; `WaterCamera` requires `ScreenSpaceTransmission { steps: 0 }`, so Bevy makes no colour copy), alpha 1, **depth-write**; no fog of its own | snapshot | colour, depth |
+| 5 | `render_sky` (private set; `SkyOrderScaffold`; vendored `own: sky after water`: after the transmissive pass) | Bevy `Atmosphere` | sky on depth = far; aerial perspective on every other pixel by its depth, the water's included | depth (opaque + water), atmosphere LUTs | colour |
+| 6 | `night_pass` (`PassStage::Night`: after 4-5) | `sf_sky_bevy` | stars, moons; no depth write (the water hides them by depth) | depth | colour |
+| 7 | `trace_pass` (after the transmissive pass, before transparent) | `sf_atmos_bevy` | clouds half-res raymarch + temporal resolve; ground-fog bank march; froxel inject + integrate (per-froxel jitter, own history); the march stops at the water like at land | depth (opaque + water), LUTs, shadow maps, own histories | cloud/fog textures, `FroxelVolume` |
+| 8 | `composite_pass` (`PassStage::Clouds`: after 5-7) | `sf_atmos_bevy` | clouds + height fog + bank fog + froxels + far rain curtain on every opaque **and water** pixel by its depth | depth, step 7 outputs | colour |
+| 9 | `main_transparent_pass_3d`: `Transparent3d`, three bands | Bevy + `sf_render_order_bevy` | **Refractive** (only the water's fallback, on a camera without `ScreenSpaceTransmission`) → **Sorted** (back to front by AABB centre + `depth_bias`: blended/additive NIF meshes and particles as `FroxelFogMaterial`, light sprites) → **Overlay** (precipitation boxes, far box first) | `FroxelVolume`, depth (test; water included) | colour |
+| 10 | `velocity_pass` (after transparent, before `EarlyPostProcess`) | `sf_water_bevy` | water motion vectors (current vs previous displacement) | depth | motion vectors |
+| 11 | post | Bevy | DLSS Super Resolution (raster) or DLSS Ray Reconstruction (Solari); tonemapping (camera default); no bloom, SSAO, SSR, DOF components today | colour, depth, motion vectors | output |
+| 12 | UI | Bevy UI | HUD, dev overlays | — | swapchain |
+
+**Depth contract (W-ORDER, H3 "done when" for water).** Every pass from step 5 on reads one depth
+buffer that holds opaque geometry **and the water** (alpha 1, depth-writing, step 4), so the sky,
+aerial perspective, clouds, froxels, bank and height fog and the far rain curtain cover water
+exactly as they cover land, beyond the froxel range too (the composite's analytic layers). The
+water applies no fog itself; its refraction reads the step-3 snapshot (opaque only). Industry:
+UE5 Single Layer Water renders after opaque lighting and before fog/translucency composition,
+reading a pre-water scene-colour copy; Bevy's transmissive phase is the stock slot between opaque
+and transparent, used here without Bevy's copy (`steps: 0`). Cost: the old aerial-LUT copy pass and
+the water's per-pixel fog are gone (inferred ~0 ms; one more texture binding in Bevy's view
+layout from `ScreenSpaceTransmission`, one pipeline re-specialisation at load). Order checks:
+`sf_render_order_bevy` `passes.rs` tests (snapshot before the transmissive pass, night and clouds
+after it, sky before them).
 
 Ray-traced path (`--rt`): step 1 becomes Bevy's deferred prepass + Solari lighting (ReSTIR or DLSS
-RR), `Msaa::Off`, no occlusion culling; steps 3-9 are unchanged; raster shadow maps are dropped
+RR), `Msaa::Off`, no occlusion culling; steps 3-10 are unchanged; raster shadow maps are dropped
 (`apply_lights`). `portal_spike.rs` (bevyrrowind) renders a second camera to a texture; spike only.
 
 ## Material inventory
 
-"Fog" is how a draw gets fog: *composite* = it writes depth before step 6; *froxel* = its fragment
+"Fog" is how a draw gets fog: *composite* = it writes depth before step 8; *froxel* = its fragment
 shader calls `froxel_fog_apply` (`sf_atmos_bevy` `FroxelFogMaterial`); *own* = documented in its
 spec. "Shadow" = casts / receives / alpha test in the shadow pass.
 
@@ -64,7 +78,7 @@ spec. "Shadow" = casts / receives / alpha test in the shadow pass.
 | LOD proxies (`StandardMaterial` + `FarShadowExt`) | Opaque3d | world, baked AABB (`NoAutoAabb`) | write | std | composite | cast only L1 with `l1_shadows` / far shadow map |
 | `ImpostorMaterial` (`sf_lod_bevy`, `Mask(tint.w)`, forward) | AlphaMask3d | world, baked AABB | write | custom `impostor_prepass.wesl` with MV | composite | per LOD settings, alpha-tested |
 | `LightSpriteMaterial` (`sf_lod_bevy`, Add) | Sorted | world, baked AABB; billboard grows in the shader inside it | test only | disabled | froxel via `TranslucentFog`, transmittance only | none (`enable_shadows` false) |
-| `WaterMaterial` (`StandardMaterial` Blend + `WaterExt`) | Refractive | shader-placed clipmap at the origin, `NoFrustumCulling`, `DrawBand::Refractive` | **write** + test, no culling | none; MV by step 9 | own (froxels, else analytic height fog) | `NotShadowCaster` / receive |
+| `WaterMaterial` (`StandardMaterial` Blend, `specular_transmission` 1 + `WaterExt`) | Transmissive3d (step 4; fallback Transparent3d Refractive) | shader-placed clipmap at the origin, `NoFrustumCulling`, `DrawBand::Refractive` (fallback) | **write** + test, no culling | none; MV by step 10 | composite (since W-ORDER; was own froxel/height fog) | `NotShadowCaster` / receive |
 | `PrecipMaterial` (`sf_precip_bevy`, Blend) | Overlay | shader-placed camera-wrapped boxes, `NoFrustumCulling`, `DrawBand::Overlay` | test only | disabled | froxel via `TranslucentFog` (blend) | none |
 | `KickupMaterial` (`sf_surface_bevy` `kickup.rs`, Blend) | Overlay | shader-placed sprites of one fixed mesh, `NoFrustumCulling`, `DrawBand::Overlay { order: -3 }` | test only; fades against the depth prepass | disabled | froxel via `TranslucentFog` (blend) | none |
 | Sea plane scaffold (`exterior.rs`) | Opaque3d | world | write | std | composite | `NotShadowCaster` |
@@ -75,8 +89,9 @@ spec. "Shadow" = casts / receives / alpha test in the shadow pass.
    material binds `sf_render_order_bevy::TranslucentFog` (the fog owner, `sf_atmos_bevy`, writes it;
    without one it is a clear 1³ volume) and its shader imports `sf_render_order_bevy::translucent_fog`
    (`froxel_fog_lookup` + `froxel_fog_apply`; additive: transmittance only), or fogs
-   itself as documented in its spec (water), or is a listed violation. The opaque fog is the
-   composite (step 6); nothing translucent may rely on it.
+   itself as documented in its spec, or is a listed violation. The water draws before the fog
+   (step 4) and is fogged by the composite like opaque. The opaque fog is the
+   composite (step 8); nothing in the transparent pass may rely on it.
 2. **Every shader-placed or camera-local translucent has a `DrawBand`.** Bevy's key is the view depth
    of the mesh AABB centre; without a true AABB (`NoFrustumCulling`, geometry from the shader,
    camera child) the key is the entity origin and the order is arbitrary. World-placed translucents
@@ -92,8 +107,8 @@ spec. "Shadow" = casts / receives / alpha test in the shadow pass.
    (`enable_shadows() -> false`): `FroxelFogExt` (every NIF blended/additive surface and particle after
    the host swap), `LightSpriteMaterial`, `PrecipMaterial`. An opt-in class (e.g. blended foliage
    on `--leaves blend`) needs its own material type with a shadow cutoff in a prepass fragment.
-5. **Scene-colour and depth reads happen at named points only.** Colour: `snapshot_pass` (step 7).
-   Opaque depth: clouds/fog trace and composite (5-6), water snapshot (7), velocity (9). History
+5. **Scene-colour and depth reads happen at named points only.** Colour: `snapshot_pass` (step 3).
+   Depth: water snapshot (3, opaque only); sky, clouds/fog trace and composite (5-8, opaque + water), velocity (10). History
    buffers: clouds, froxels (own), DLSS. A new reader names its point here.
 6. **Order between the opaque and transparent passes is declared**, in the table above
    (`render_sky` → night → trace → composite → snapshot). The discovery scaffold
@@ -142,7 +157,7 @@ Severity: **High** visible every play session; **Medium** visible in common cond
   pass (like water's velocity redraw) writes the camera's rotation-only motion (unjittered current vs previous
   `clip_from_world`, translation zeroed: the sky is at infinity) into the prepass motion-vector target wherever depth
   is still at the far plane (reverse-Z 0). Single-sample views only. Scaffold; removal path: Bevy's `Atmosphere` writes MVs.
-- **RO-8** (FIXED 2026-10-19 ro48: `sf_render_order_bevy::add_pass` + `PassStage` {Night, Clouds, Snapshot}, ordered by set, test for all add orders; was: `SkyOrderScaffold` is copied in three crates (`night.rs`,
+- **RO-8** (FIXED 2026-10-19 ro48: `sf_render_order_bevy::add_pass` + `PassStage` (since W-ORDER {Snapshot before the transmissive pass; Night, Clouds after it}), ordered by set, test for all add orders; was: `SkyOrderScaffold` is copied in three crates (`night.rs`,
   `sf_atmos_bevy` `render.rs`, `sf_water_bevy` `render.rs`) and the resulting order depends on
   plugin add order (Sky → Clouds → Water); a wrong order silently reorders steps 4-7. *Slice*: one
   helper in `sf_render_order_bevy` plus a startup check that asserts the declared order; delete it

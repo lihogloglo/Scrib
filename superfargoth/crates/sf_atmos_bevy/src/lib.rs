@@ -121,6 +121,19 @@ pub struct Fog {
     pub view_ambient: f32,
 }
 
+/// The fog bank modulation is depth-aware at depth edges (FOG-BANK, FG-7; on by default): the
+/// trace records it at the nearest and furthest depth of its window and the composite
+/// interpolates by each pixel's depth ([`sf_atmos::bank_edges`]). `false`: the furthest-depth
+/// value alone, picked by population (the old path, an A/B).
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FogBankEdges(pub bool);
+
+impl Default for FogBankEdges {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 /// A height-field shadow for the froxels' sun light past the cascades (the
 /// terrain's shadow-height map, handed over by the app): `Rg16Float` texels of
 /// (shadow height − base, occluder distance), meters; `params` = render-space
@@ -193,6 +206,8 @@ pub(crate) struct CloudFrame {
     pub temporal: CloudTemporal,
     /// The fog, when it draws.
     pub fog: Option<FogSettings>,
+    /// [`FogBankEdges`].
+    pub fog_bank_edges: bool,
     /// The camera's ambient radiance × [`Fog::view_ambient`] (linear RGB),
     /// added to the fog's sky fill.
     pub fog_ambient: Vec3,
@@ -233,6 +248,7 @@ impl Plugin for CloudsPlugin {
         load_shader_library!(app, "shaders/fog.wesl");
         load_shader_library!(app, "shaders/key_light.wesl");
         load_shader_library!(app, "shaders/fog_bank.wesl");
+        load_shader_library!(app, "shaders/bank_edges.wesl");
         load_shader_library!(app, "shaders/froxel_common.wesl");
         embedded_asset!(app, "shaders/transparent_fog.wesl");
         embedded_asset!(app, "shaders/cloud_trace.wesl");
@@ -264,6 +280,7 @@ impl Plugin for CloudsPlugin {
         }
         app.insert_resource(Clouds { settings: self.settings, enabled: true, shadows: true, glows: [Vec4::ZERO; GLOWS], temporal: CloudTemporal::default() })
             .insert_resource(Fog { settings: self.fog, enabled: true, froxels: Some(FroxelSettings::high()), view_ambient: sf_atmos::VIEW_AMBIENT_IN_FOG })
+            .init_resource::<FogBankEdges>()
             .init_resource::<FogShadowHeights>()
             .init_resource::<FroxelVolume>()
             .add_plugins(bevy_pbr::MaterialPlugin::<FroxelFogMaterial>::default())
@@ -357,7 +374,7 @@ fn drive(
     mut commands: Commands,
     time: Res<Time>,
     clouds: Res<Clouds>,
-    fog: Res<Fog>,
+    (fog, bank_edges): (Res<Fog>, Res<FogBankEdges>),
     origin: Res<CloudsOrigin>,
     images: Res<CloudImages>,
     mut scroll: ResMut<Scroll>,
@@ -431,6 +448,7 @@ fn drive(
         active,
         clouds: clouds.enabled,
         fog: fog_on.then_some(fog.settings),
+        fog_bank_edges: bank_edges.0,
         fog_ambient: sf_atmos::fog_fill(Vec3::ZERO, ambient, fog.view_ambient),
         fog_offsets: drift.0.offsets([origin.0.x, origin.0.z], &fog.settings.banks),
         glows: clouds.glows,

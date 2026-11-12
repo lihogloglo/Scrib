@@ -1,11 +1,13 @@
 //! The water draw (water.md "Water pass, refraction, reflections" step 3): an
-//! `ExtendedMaterial<StandardMaterial, WaterExt>` in the transparent phase, sorted with the
-//! blended surfaces but **depth-writing** (precipitation and particles sort against it), so it
-//! keeps Bevy's view bindings (directional and clustered lights, shadows, the environment map)
-//! with the least code (water.md open question 1, decided at W2). Its own vertex shader displaces
-//! the clipmap; its fragment shader reads the colour + depth snapshot taken after the sky, clouds
-//! and fog (`render.rs`) for refraction and depth colour, then fogs itself (aerial perspective
-//! from a copy of Bevy's aerial-view LUT, then the froxels).
+//! `ExtendedMaterial<StandardMaterial, WaterExt>` in Bevy's transmissive phase (W-ORDER: the
+//! base's `specular_transmission` > 0 routes it there; the shader never reads it), drawn after
+//! the opaque pass and **depth-writing**, so the sky, aerial perspective, clouds and fog that
+//! follow cover it by its depth like land, and later translucents sort against it. It keeps
+//! Bevy's view bindings (directional and clustered lights, shadows, the environment map) with
+//! the least code (water.md open question 1, decided at W2). Its own vertex shader displaces the
+//! clipmap; its fragment shader reads the colour + depth snapshot of the opaque scene
+//! (`render.rs`) for refraction and depth colour. It does not fog itself (render-order.md
+//! "Frame graph").
 
 use bevy_asset::{Asset, Handle};
 use bevy_image::Image;
@@ -35,11 +37,6 @@ pub struct WaterParams {
     pub absorption: Vec4,
     /// Scattering per metre (rgb).
     pub scattering: Vec4,
-    /// Air extinction per metre (rgb) for the aerial transmittance, w = the aerial-view LUT's
-    /// range in metres (0: no LUT, no aerial perspective).
-    pub aerial: Vec4,
-    /// Froxel volume (near, far, slices, enabled): `sf_atmos_bevy::FroxelVolume::params`.
-    pub froxel: Vec4,
     /// Clipmap (base spacing m, quads per ring side, rings, rest level: render-space Y).
     pub clip: Vec4,
     /// (whitecap intensity, contact-foam depth m, refraction strength m, roughness).
@@ -58,16 +55,12 @@ pub struct WaterParams {
     pub misc2: Vec4,
     /// Optics map: render-space XZ of cell (0, 0)'s centre, 1 / cell size, on 0/1.
     pub regions: Vec4,
-    /// Analytic height fog when the froxels are off: (extinction at base 1/m, 1 / falloff m, base
-    /// render-space Y, on 0/1) and its in-scattered radiance (rgb, before exposure).
-    pub fog_height: Vec4,
-    pub fog_color: Vec4,
     /// Optics table of the map, 3 per entry: (absorption, whitecaps), (scattering, contact depth),
     /// (roughness, shore foam, 0, 0).
     pub looks: [Vec4; 24],
 }
 
-/// The water half of [`WaterMaterial`] (bindings 100-111 of the material group).
+/// The water half of [`WaterMaterial`] (bindings 100-105 and 110-112 of the material group).
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct WaterExt {
     #[uniform(100)]
@@ -79,19 +72,12 @@ pub struct WaterExt {
     /// Per cascade: (∂h/∂x, ∂h/∂z, ∂Dx/∂x, ∂Dz/∂z).
     #[texture(103, dimension = "2d_array")]
     pub slopes: Handle<Image>,
-    /// Scene colour after the sky and fog (HDR, pre-exposed).
+    /// The opaque scene colour before the water (HDR, pre-exposed; no sky, clouds or fog yet).
     #[texture(104, sample_type = "float", filterable = false)]
     pub snapshot_color: Handle<Image>,
     /// Scene depth (reverse Z, R32F).
     #[texture(105, sample_type = "float", filterable = false)]
     pub snapshot_depth: Handle<Image>,
-    #[texture(106, dimension = "3d")]
-    #[sampler(107)]
-    pub froxels: Handle<Image>,
-    /// Copy of Bevy's aerial-view LUT (log in-scatter).
-    #[texture(108, dimension = "3d")]
-    #[sampler(109)]
-    pub aerial: Handle<Image>,
     /// `sf_water::ShoreField::encode_rg8` (`Rg8Unorm`), or a 1x1 open-sea texel.
     #[texture(110, visibility(vertex, fragment))]
     #[sampler(111, visibility(vertex, fragment))]
@@ -110,8 +96,6 @@ impl WaterExt {
             slopes: images.slopes.clone(),
             snapshot_color: images.snapshot_color.clone(),
             snapshot_depth: images.snapshot_depth.clone(),
-            froxels: images.froxels.clone(),
-            aerial: images.aerial.clone(),
             shore: images.shore.clone(),
             regions: images.regions.clone(),
         }
@@ -135,7 +119,8 @@ impl MaterialExtension for WaterExt {
     ) -> Result<(), SpecializedMeshPipelineError> {
         // Waves show their back faces at grazing angles (and from below, W5).
         descriptor.primitive.cull_mode = None;
-        // Depth-writing in the transparent phase: later blended surfaces sort against the water,
+        // Depth-writing in the transmissive phase: the sky, clouds and fog after it read the
+        // water's depth (W-ORDER), later blended surfaces sort against it,
         // and DLSS/TAA read the water's depth.
         if let Some(depth) = descriptor.depth_stencil.as_mut() {
             depth.depth_write_enabled = Some(true);

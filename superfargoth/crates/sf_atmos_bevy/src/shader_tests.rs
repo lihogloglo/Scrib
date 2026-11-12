@@ -137,3 +137,57 @@ fn cloud_history_passes_compile() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+/// The depth-aware fog bank (FOG-BANK): trace, resolve and composite compile with and without
+/// MSAA and read `bank_edges`; the flag sits in `Fog`'s padding, so the WGSL `Fog` and `Clouds`
+/// structs keep the size of their Rust mirrors (`FogUniform`, `CloudUniform`).
+#[test]
+fn fog_bank_edges_compile_and_keep_the_layout() {
+    use bevy_render::render_resource::ShaderType;
+    let mut failures = Vec::new();
+    let jobs: [(&str, &[&str]); 5] = [
+        ("sf_atmos_bevy::shaders::cloud_trace", &[]),
+        ("sf_atmos_bevy::shaders::cloud_trace", &["MULTISAMPLED"]),
+        ("sf_atmos_bevy::shaders::cloud_resolve", &[]),
+        ("sf_atmos_bevy::shaders::cloud_composite", &[]),
+        ("sf_atmos_bevy::shaders::cloud_composite", &["MULTISAMPLED"]),
+    ];
+    for (module, defs) in jobs {
+        match compile(module, defs) {
+            Ok(wgsl) if !wgsl.contains(".bank_edges") => failures.push(format!("{module} {defs:?}: never reads bank_edges")),
+            Ok(_) => {}
+            Err(e) => failures.push(e),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+
+    let wgsl = compile("sf_atmos_bevy::shaders::cloud_composite", &[]).expect("compiles");
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("parses");
+    let span_with = |member: &str| {
+        module.types.iter().find_map(|(_, ty)| match &ty.inner {
+            naga::TypeInner::Struct { members, span } if members.iter().any(|m| m.name.as_deref() == Some(member)) => Some(u64::from(*span)),
+            _ => None,
+        })
+    };
+    assert_eq!(span_with("bank_edges"), Some(crate::render::FogUniform::min_size().get()), "Fog layout");
+    assert_eq!(span_with("glows"), Some(crate::render::CloudUniform::min_size().get()), "Clouds layout");
+}
+
+/// The froxel history clip (FOG-CLAMP): the inject compiles and reads `flags`, its workgroup is
+/// `sf_atmos::froxel::INJECT_GROUP` square (the dispatch's tile math), and the WGSL `Froxels`
+/// keeps the size of its Rust mirror (`FroxelUniform`).
+#[test]
+fn froxel_clamp_compiles_and_keeps_the_layout() {
+    use bevy_render::render_resource::ShaderType;
+    let wgsl = compile("sf_atmos_bevy::shaders::froxel_inject", &[]).expect("compiles");
+    assert!(wgsl.contains(".flags"), "the inject never reads flags");
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("parses");
+    let inject = module.entry_points.iter().find(|e| e.name == "inject").expect("inject entry point");
+    let g = sf_atmos::froxel::INJECT_GROUP;
+    assert_eq!(inject.workgroup_size, [g, g, 1], "workgroup vs INJECT_GROUP");
+    let span = module.types.iter().find_map(|(_, ty)| match &ty.inner {
+        naga::TypeInner::Struct { members, span } if members.iter().any(|m| m.name.as_deref() == Some("shadow_light")) => Some(u64::from(*span)),
+        _ => None,
+    });
+    assert_eq!(span, Some(crate::render::FroxelUniform::min_size().get()), "Froxels layout");
+}

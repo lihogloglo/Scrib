@@ -5,7 +5,8 @@
 // shadow map with the fog's phase lobe, the sky fill, and the nearest point
 // lights. A sun shaft is a froxel lit through a gap. Then temporal
 // reprojection: a jittered sample per frame, blended with last frame's
-// volume (Wronski 2014, Hillaire 2015).
+// volume (Wronski 2014, Hillaire 2015), the history clipped to this frame's
+// 3×3 neighbourhood (FOG-CLAMP; Karis 2014).
 
 import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT};
 import super::fog::{MAX_EXPONENT, fog_phase};
@@ -112,18 +113,88 @@ fn froxel_hash(cell: vec3<u32>) -> vec3<f32> {
     return vec3<f32>(v >> vec3(8u)) * (1.0 / 16777216.0);
 }
 
-@compute @workgroup_size(8, 8, 1)
-fn inject(@builtin(global_invocation_id) id: vec3<u32>) {
+// `Froxels::flags` bits (render.rs `FroxelUniform`).
+// Per-froxel sample rotation, history read at the froxel centre (`FroxelJitter::PerFroxel`).
+const FLAG_PER_FROXEL: u32 = 1u;
+// Clip the history to this frame's 3×3 neighbourhood (FOG-CLAMP, `FroxelSettings::clamp`).
+const FLAG_CLAMP: u32 = 2u;
+
+// Threads per workgroup along x and y: `sf_atmos::froxel::INJECT_GROUP` (keep
+// in step). Each group samples a GROUP² block of one slice into `current` and
+// writes its inner TILE², so every written froxel has its 3×3 at hand.
+const GROUP: u32 = 16u;
+const TILE: u32 = GROUP - 2u;
+var<workgroup> current: array<vec4<f32>, 256>;
+
+// Clips `prev` to the box `lo..hi` along the line to its centre (Karis 2014).
+// CPU twin: `sf_atmos::froxel::clip_history` (keep in step).
+fn clip_history(prev: vec4<f32>, lo: vec4<f32>, hi: vec4<f32>) -> vec4<f32> {
+    let c = 0.5 * (hi + lo);
+    let a = abs(prev - c) / (0.5 * (hi - lo) + 1e-7);
+    let m = max(1.0, max(max(a.x, a.y), max(a.z, a.w)));
+    return c + (prev - c) / m;
+}
+
+@compute @workgroup_size(16, 16, 1)
+fn inject(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) local: vec3<u32>) {
     let size = vec3<u32>(fx.size);
-    if any(id >= size) {
+    // This thread's froxel: the tile plus a one-froxel apron, clamped into the
+    // grid (edge froxels repeat). CPU twin: `sf_atmos::froxel::inject_cell`.
+    let raw = vec2<i32>(group.xy * TILE + local.xy) - 1;
+    let id = vec3(vec2<u32>(clamp(raw, vec2(0), vec2<i32>(size.xy) - 1)), group.z);
+    var value = sample_froxel(id);
+    current[local.y * GROUP + local.x] = value;
+    workgroupBarrier();
+    if any(local.xy < vec2(1u)) || any(local.xy > vec2(TILE)) || any(raw >= vec2<i32>(size.xy)) {
         return;
     }
+
+    // Temporal reprojection: where this froxel was in last frame's volume. The
+    // history holds the froxel's mean, so it is read at the froxel's centre
+    // (a still camera reads texel centres: no drift, no blur), not at the
+    // jittered sample, which would shift the whole history by the jitter.
+    // Off screen or past the volume: this frame's sample alone.
+    if fx.history_valid != 0u && fx.history > 0.0 {
+        let mid = vec3<f32>(id) + select(fx.jitter, vec3(0.5), (fx.flags & FLAG_PER_FROXEL) != 0u);
+        let q = fx.camera + froxel_ray(fx, mid.xy / fx.size.xy) * slice_distance(fx, mid.z / fx.size.z);
+        let pp = q + fx.origin_shift;
+        let clip = fx.prev_clip_from_world * vec4(pp, 1.0);
+        if clip.w > 0.0 {
+            let puv = clip.xy / clip.w * vec2(0.5, -0.5) + 0.5;
+            let pd = length(pp - fx.prev_camera);
+            if all(puv >= vec2(0.0)) && all(puv <= vec2(1.0)) && pd < fx.far {
+                var prev = textureSampleLevel(history, linear_sampler, vec3(puv, slice_coord(fx, pd)), 0.0);
+                // FOG-CLAMP: history the neighbourhood's samples don't allow
+                // (a moved shadow, a light gone, a disocclusion) is clipped
+                // to their box (UE4 TAA, Karis 2014), so stale light can't
+                // trail and the history can weigh more.
+                if (fx.flags & FLAG_CLAMP) != 0u {
+                    var lo = value;
+                    var hi = value;
+                    for (var dy = 0u; dy < 3u; dy += 1u) {
+                        for (var dx = 0u; dx < 3u; dx += 1u) {
+                            let n = current[(local.y + dy - 1u) * GROUP + local.x + dx - 1u];
+                            lo = min(lo, n);
+                            hi = max(hi, n);
+                        }
+                    }
+                    prev = clip_history(prev, lo, hi);
+                }
+                value = mix(value, prev, fx.history);
+            }
+        }
+    }
+    textureStore(volume, vec3<i32>(id), value);
+}
+
+// This frame's (in-scatter, extinction) of froxel `id`.
+fn sample_froxel(id: vec3<u32>) -> vec4<f32> {
     // This frame's sample inside the froxel (weather.md "Temporal sampling"):
     // per froxel, the frame's R3 offset rotated by the froxel's hash, so
     // neighbours err independently (noise the history and TAA average) instead
     // of in step (a pulse of the whole volume).
     var j = fx.jitter;
-    if fx.jitter_mode == 1u {
+    if (fx.flags & FLAG_PER_FROXEL) != 0u {
         j = fract(j + froxel_hash(id));
     }
     let cell = vec3<f32>(id) + j;
@@ -168,28 +239,5 @@ fn inject(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         scatter = f.albedo * sigma * (key + sky_fill * f.ambient + local) * fx.exposure;
     }
-    var value = vec4(scatter, sigma);
-
-    // Temporal reprojection: where this froxel was in last frame's volume. The
-    // history holds the froxel's mean, so it is read at the froxel's centre
-    // (a still camera reads texel centres: no drift, no blur), not at the
-    // jittered sample, which would shift the whole history by the jitter.
-    if fx.history_valid != 0u && fx.history > 0.0 {
-        var q = p;
-        if fx.jitter_mode == 1u {
-            let mid = vec3<f32>(id) + 0.5;
-            q = fx.camera + froxel_ray(fx, mid.xy / fx.size.xy) * slice_distance(fx, mid.z / fx.size.z);
-        }
-        let pp = q + fx.origin_shift;
-        let clip = fx.prev_clip_from_world * vec4(pp, 1.0);
-        if clip.w > 0.0 {
-            let puv = clip.xy / clip.w * vec2(0.5, -0.5) + 0.5;
-            let pd = length(pp - fx.prev_camera);
-            if all(puv >= vec2(0.0)) && all(puv <= vec2(1.0)) && pd < fx.far {
-                let prev = textureSampleLevel(history, linear_sampler, vec3(puv, slice_coord(fx, pd)), 0.0);
-                value = mix(value, prev, fx.history);
-            }
-        }
-    }
-    textureStore(volume, vec3<i32>(id), value);
+    return vec4(scatter, sigma);
 }

@@ -30,7 +30,9 @@ fetch), the terrain marches the clipmap itself. `update_far_map` runs before `up
 `WaterShoreInput`, `WaterRegionsInput`, `WaterQuality` and marks `WaterCamera`, `OceanSurface`, `WaterSurface`. GPU FFT
 cascades share `h0` with the CPU twin (`sf_water/src/twin.rs`, `spectrum.rs`): waves are a pure function of seed, inputs,
 time and absolute XZ. Surface is a camera-centred clipmap with a horizon skirt (`mesh.rs`); the water pass takes a colour
-and depth snapshot after sky, clouds and fog, then redraws motion vectors for DLSS/TAA (`render.rs`). `WaterQuery::sample`
+and depth snapshot of the opaque scene, draws in Bevy's transmissive pass (alpha 1, depth-write, no fog of its own; the
+sky, aerial perspective, clouds and fog run after it by its depth, W-ORDER), then redraws motion vectors for DLSS/TAA
+(`render.rs`, `lib.rs` `WaterCamera`). `WaterQuery::sample`
 (`query.rs:294`). Shore: `ShoreField::bake` (`shore.rs`) runs on a thread at startup, not in the bake store
 (`mw_environment_bevy/src/water.rs:178-183`), then attenuates swell and foam. Morrowind wiring:
 `mw_environment_bevy/src/water.rs:141` (`add`; fixed-tick `step`, `bed`, `pools`, `sync`); `mw_water` gives bodies (sea at 0,

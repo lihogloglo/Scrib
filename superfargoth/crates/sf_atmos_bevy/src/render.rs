@@ -1,6 +1,7 @@
 //! Render world: pipelines, per-view textures and bind groups, and the
 //! Core3d passes (shadow map before the main pass; trace + resolve after
-//! the opaque pass; composite after Bevy's `render_sky`, before transparents).
+//! the opaque and the transmissive (water) pass; composite after Bevy's `render_sky`,
+//! before transparents).
 
 use std::collections::HashMap;
 
@@ -16,7 +17,7 @@ use bevy_ecs::schedule::{IntoSystemSet, SystemSet};
 use bevy_image::Image;
 use bevy_math::{DVec2, IVec2, Mat4, UVec2, Vec2, Vec3, Vec4};
 use bevy_pbr::resources::{AtmosphereSampler, AtmosphereTextures, AtmosphereTransform, AtmosphereTransforms, AtmosphereTransformsOffset, GpuAtmosphere};
-use bevy_pbr::{ExtractedAtmosphere, GpuAtmosphereSettings, GpuLights, GpuScatteringMedium, LightMeta, ScatteringMediumSampler, ShadowSamplers, ViewLightsUniformOffset, ViewShadowBindings};
+use bevy_pbr::{main_transmissive_pass_3d, ExtractedAtmosphere, GpuAtmosphereSettings, GpuLights, GpuScatteringMedium, LightMeta, ScatteringMediumSampler, ShadowSamplers, ViewLightsUniformOffset, ViewShadowBindings};
 use bevy_render::camera::{ExtractedCamera, TemporalJitter};
 use bevy_render::diagnostic::RecordDiagnostics;
 use bevy_render::extract_component::{ComponentUniforms, DynamicUniformIndex};
@@ -54,7 +55,8 @@ pub(crate) fn build(app: &mut App) {
             (
                 crate::weather_map::map_pass.after(Core3dSystems::Prepass).before(shadow_pass),
                 shadow_pass.after(Core3dSystems::Prepass).before(Core3dSystems::MainPass),
-                trace_pass.after(main_opaque_pass_3d).before(main_transparent_pass_3d),
+                // After the water (transmissive pass): the march and the composite stop at its depth (W-ORDER).
+                trace_pass.after(main_opaque_pass_3d).after(main_transmissive_pass_3d).before(main_transparent_pass_3d),
             ),
         );
 }
@@ -71,7 +73,7 @@ pub(crate) fn finish(app: &mut App) {
 
 /// GPU layout of `Clouds` in `cloud_common.wesl` (field order is the layout).
 #[derive(Clone, Copy, Default, ShaderType)]
-struct CloudUniform {
+pub(crate) struct CloudUniform {
     planet_center: Vec3,
     inner_radius: f32,
     ground_albedo: Vec3,
@@ -156,7 +158,7 @@ struct CloudUniform {
 
 /// GPU layout of `Fog` in `fog.wesl` (weather.md "Fog", F2).
 #[derive(Clone, Copy, Default, ShaderType)]
-struct FogUniform {
+pub(crate) struct FogUniform {
     albedo: Vec3,
     phase_g: f32,
     height_density: f32,
@@ -182,10 +184,14 @@ struct FogUniform {
     enabled: u32,
     /// The view's ambient radiance the fog adds to its sky fill (`CloudFrame::fog_ambient`).
     view_ambient: Vec3,
+    /// 1: the bank modulation is depth-aware (`FogBankEdges`, FOG-BANK): `dist` G and A hold
+    /// (distance, bank) pairs at the window's furthest and nearest depth (`sf_atmos::bank_edges`).
+    /// Fills `view_ambient`'s padding: the layout doesn't grow.
+    bank_edges: u32,
 }
 
 impl FogUniform {
-    fn new(fog: Option<&sf_atmos::FogSettings>, offsets: &sf_atmos::FogOffsets, view_ambient: Vec3, steps: u32) -> Self {
+    fn new(fog: Option<&sf_atmos::FogSettings>, offsets: &sf_atmos::FogOffsets, view_ambient: Vec3, steps: u32, bank_edges: bool) -> Self {
         let Some(f) = fog else { return Self::default() };
         Self {
             albedo: f.albedo,
@@ -211,6 +217,7 @@ impl FogUniform {
             steps,
             enabled: 1,
             view_ambient,
+            bank_edges: u32::from(bank_edges),
         }
     }
 }
@@ -224,7 +231,7 @@ struct FogLightGpu {
 
 /// GPU layout of `Froxels` in `froxel_common.wesl` (field order is the layout).
 #[derive(Clone, Copy, Default, ShaderType)]
-struct FroxelUniform {
+pub(crate) struct FroxelUniform {
     world_from_clip: Mat4,
     prev_clip_from_world: Mat4,
     camera: Vec3,
@@ -249,8 +256,9 @@ struct FroxelUniform {
     jitter: Vec3,
     enabled: u32,
     shadow_light: Vec3,
-    /// 1: `FroxelJitter::PerFroxel` (per-froxel rotation, history at the froxel centre).
-    jitter_mode: u32,
+    /// Bit 0: `FroxelJitter::PerFroxel` (per-froxel rotation, history at the froxel centre);
+    /// bit 1: `FroxelSettings::clamp` (history clipped to the neighbourhood, FOG-CLAMP).
+    flags: u32,
     fog: FogUniform,
     lights: [FogLightGpu; sf_atmos::MAX_FOG_LIGHTS],
 }
@@ -646,8 +654,8 @@ fn froxel_uniform(frame: &CloudFrame, view: &ExtractedView, exposure: f32, setti
         enabled: u32::from(settings.is_some()),
         // The sun the cloud and terrain shadow maps were made for (none: neither applies).
         shadow_light: frame.shadow.map_or(Vec3::ZERO, |b| b.light_dir),
-        jitter_mode: u32::from(s.jitter == sf_atmos::FroxelJitter::PerFroxel),
-        fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, frame.fog_ambient, FOG_STEPS),
+        flags: u32::from(s.jitter == sf_atmos::FroxelJitter::PerFroxel) | (u32::from(s.clamp) << 1),
+        fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, frame.fog_ambient, FOG_STEPS, frame.fog_bank_edges),
         lights,
     }
 }
@@ -802,7 +810,7 @@ fn prepare_views(
             cirrus_depth: s.look.cirrus_depth,
             rise: frame.offsets.rise,
             shadow_camera: shadow.map_or(Vec3::ZERO, |b| b.camera),
-            fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, frame.fog_ambient, FOG_STEPS),
+            fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, frame.fog_ambient, FOG_STEPS, frame.fog_bank_edges),
             clouds_on: u32::from(frame.clouds),
             map_on,
             map_size,
@@ -1069,8 +1077,10 @@ fn trace_pass(
     // The froxels (F3), after the fog light they read: inject, then integrate.
     let froxel_pipelines = froxel_ids.0.and_then(|(a, b)| cache.get_compute_pipeline(a).zip(cache.get_compute_pipeline(b)));
     if let (Some(froxels), Some((inject, integrate))) = (cloud.froxels.as_ref(), froxel_pipelines) {
-        let [x, y, z] = froxels.size;
-        compute(&mut ctx, "atmos_froxel_inject", inject, (&froxels.inject, &offsets[4..5]), [x.div_ceil(8), y.div_ceil(8), z]);
+        let [x, y, _] = froxels.size;
+        // A 14×14 tile per workgroup (its apron is the history clip's neighbourhood, FOG-CLAMP).
+        let [gx, gy, gz] = sf_atmos::froxel::inject_groups(froxels.size);
+        compute(&mut ctx, "atmos_froxel_inject", inject, (&froxels.inject, &offsets[4..5]), [gx, gy, gz]);
         compute(&mut ctx, "atmos_froxel_integrate", integrate, (&froxels.integrate, &[]), [x.div_ceil(8), y.div_ceil(8), 1]);
     }
     fullscreen(

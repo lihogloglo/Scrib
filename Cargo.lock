@@ -8470,6 +8470,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_image",
  "bevy_math",
+ "bevy_pbr",
  "bevy_render",
  "bevy_shader",
  "workspace-hack",

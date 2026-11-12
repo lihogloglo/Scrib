@@ -22,6 +22,7 @@
 //! (ARCHITECTURE §10, 2026-10-12). Those files cite papers only (Schneider
 //! 2015/2017, Hillaire 2016, Wrenninge); no third-party code is included.
 
+pub mod bank_edges;
 pub mod density;
 pub mod fog;
 pub mod froxel;

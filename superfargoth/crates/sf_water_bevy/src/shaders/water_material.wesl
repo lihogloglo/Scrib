@@ -5,9 +5,9 @@
 // highlight), refraction from the scene snapshot (rejected where the refracted sample is in front
 // of the water), Beer-Lambert absorption + single scattering over the view path with optics
 // blended from the region map, Bevy PBR lighting (GGX sun/moon, clustered lights, shadows,
-// environment map) with water's F0 0.02, whitecap, shore and contact foam, then aerial
-// perspective (Bevy's aerial-view LUT) and the froxel fog, or the analytic height fog when the
-// froxels are off. Optics shading follows bevy-aqua's structure (MIT OR Apache-2.0).
+// environment map) with water's F0 0.02, whitecap, shore and contact foam. No fog: the sky,
+// aerial perspective, clouds and fog run after the water by its depth (W-ORDER, render-order.md).
+// Optics shading follows bevy-aqua's structure (MIT OR Apache-2.0).
 
 import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_scales};
 import bevy_pbr::render::mesh_view_bindings::view;
@@ -21,10 +21,6 @@ import bevy_pbr::render::pbr_functions::apply_pbr_lighting;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var slopes: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var snapshot_color: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var snapshot_depth: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(106) var froxels: texture_3d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(107) var froxel_sampler: sampler;
-@group(constants::MATERIAL_BIND_GROUP) @binding(108) var aerial: texture_3d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(109) var aerial_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(110) var shore_field: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(111) var shore_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(112) var region_map: texture_2d<u32>;
@@ -109,19 +105,6 @@ fn look_at(xz: vec2<f32>) -> Look {
     return out;
 }
 
-// Optical depth of the analytic height fog layer along a ray from altitude `h0` with vertical
-// cosine `mu` over `d` metres (`sf_atmos::FogLayer::optical_depth` is the CPU twin).
-fn layer_depth(h0: f32, mu: f32, d: f32) -> f32 {
-    let k = water.fog_height.y;
-    let base = water.fog_height.z;
-    let e0 = exp(min(-(h0 - base) * k, 2.0));
-    let x = k * mu * d;
-    if abs(x) < 1e-3 {
-        return water.fog_height.x * d * e0 * (1.0 - 0.5 * x);
-    }
-    let e1 = exp(min(-(h0 + mu * d - base) * k, 2.0));
-    return water.fog_height.x * (e0 - e1) / (k * mu);
-}
 
 @fragment
 fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
@@ -173,7 +156,7 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     }
     let roughness = clamp(look.roughness + 0.06 * lost + 0.22 * far, 0.02, 0.65);
 
-    // The scene behind the water (snapshot after sky, clouds and fog).
+    // The scene behind the water (snapshot of the opaque scene, before the sky, clouds and fog).
     let px = vec2<i32>(in.position.xy);
     let vp_min = vec2<i32>(view.main_pass_viewport.xy);
     let dims = min(vec2<i32>(textureDimensions(snapshot_depth)), vp_min + vec2<i32>(view.main_pass_viewport.zw));
@@ -245,29 +228,5 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     let fresnel = 0.02 + 0.98 * pow(1.0 - saturate(dot(N, V)), 5.0);
     color += (1.0 - fresnel) * (1.0 - foam) * behind * transmittance;
 
-    // Fog in front of the water: aerial perspective (as Bevy's render_sky applies to opaque
-    // geometry), then the froxels (as `sf_atmos_bevy`'s transparent fog), or without froxels the
-    // analytic height fog (the Low/Medium path, as the `sf_atmos` composite fogs the land).
-    let uv = (in.position.xy - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
-    if water.aerial.w > 0.0 {
-        let slices = f32(textureDimensions(aerial).z);
-        let lut = textureSampleLevel(aerial, aerial_sampler, vec3(uv, saturate(d / water.aerial.w - 0.5 / slices)), 0.0);
-        let inscatter = exp(lut.rgb) * saturate(d / (water.aerial.w / slices)) * view.exposure;
-        color = color * exp(-water.aerial.rgb * d) + inscatter;
-    }
-    if water.froxel.w > 0.0 && d > 0.0 {
-        let near = water.froxel.x;
-        let n = water.froxel.z;
-        var c = 0.0;
-        if d > near {
-            c = clamp(log(d / near) / log(water.froxel.y / near), 0.0, 1.0) * n;
-        }
-        let v = textureSampleLevel(froxels, froxel_sampler, vec3(uv, max(c - 0.5, 0.5) / n), 0.0);
-        let fog = mix(vec4(0.0, 0.0, 0.0, 1.0), v, saturate(c));
-        color = color * fog.a + fog.rgb;
-    } else if water.fog_height.w > 0.0 && d > 0.0 {
-        let t = exp(-layer_depth(camera.y, -V.y, d));
-        color = color * t + water.fog_color.rgb * view.exposure * (1.0 - t);
-    }
     return vec4(color, 1.0);
 }

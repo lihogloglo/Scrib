@@ -27,6 +27,7 @@ fn app(fog_scale: f32) -> App {
         .init_resource::<Slicer>()
         .init_resource::<Drift>()
         .init_resource::<CloudFrame>()
+        .init_resource::<FogBankEdges>()
         .init_resource::<FogShadowHeights>()
         .init_resource::<FroxelVolume>();
     app
@@ -63,4 +64,18 @@ fn fog_ambient_is_the_surfaces_ambient() {
     // The A/B off (`flip fog_night_light`): the sky-only fill.
     app.world_mut().resource_mut::<Fog>().view_ambient = 0.0;
     assert_eq!(fog_ambient(&mut app), Vec3::ZERO);
+}
+
+/// Logic: the depth-aware fog bank (FOG-BANK) is on by default and its switch reaches the
+/// render world's frame (`--off fogbank` sets it false).
+#[test]
+fn fog_bank_edges_reach_the_frame() {
+    let mut app = app(VIEW_AMBIENT_IN_FOG);
+    app.world_mut().spawn((CloudCamera, Camera::default(), GlobalTransform::default()));
+    app.world_mut().run_system_once(drive).unwrap();
+    assert!(app.world().resource::<FogBankEdges>().0);
+    assert!(app.world().resource::<CloudFrame>().fog_bank_edges);
+    app.insert_resource(FogBankEdges(false));
+    app.world_mut().run_system_once(drive).unwrap();
+    assert!(!app.world().resource::<CloudFrame>().fog_bank_edges);
 }

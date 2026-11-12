@@ -8,8 +8,6 @@ struct WaterParams {
     lambda_min: vec4<f32>,
     absorption: vec4<f32>,
     scattering: vec4<f32>,
-    aerial: vec4<f32>,
-    froxel: vec4<f32>,
     clip: vec4<f32>,
     foam: vec4<f32>,
     misc: vec4<f32>,
@@ -25,10 +23,6 @@ struct WaterParams {
     misc2: vec4<f32>,
     // Optics map: render-space XZ of cell (0, 0)'s centre, 1 / cell size, on 0/1.
     regions: vec4<f32>,
-    // Analytic height fog when the froxels are off: (extinction at base 1/m, 1 / falloff m,
-    // base render-space Y, on 0/1), and its in-scattered radiance (rgb, before exposure).
-    fog_height: vec4<f32>,
-    fog_color: vec4<f32>,
     // Optics table for the map, 3 vec4 per entry: (absorption, whitecaps), (scattering, contact
     // depth), (roughness, shore foam, 0, 0).
     looks: array<vec4<f32>, 24>,

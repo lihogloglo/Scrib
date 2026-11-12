@@ -63,6 +63,13 @@ pub enum Part {
     /// The froxels' temporal history (reprojected last frame): off, each frame stands
     /// alone (FG-1 diagnosis: bands on fast turns that vanish here are the history's).
     FogHistory,
+    /// The depth-aware ground-fog bank (FOG-BANK, FG-7): the cloud trace records the bank at the
+    /// nearest and furthest depth of its window and the composite interpolates by each pixel's
+    /// depth; off, the single furthest-depth value picked by population (the old path, an A/B).
+    FogBank,
+    /// The froxels' history clip (FOG-CLAMP, WE-10): reprojected history clipped to this frame's 3x3
+    /// neighbourhood, history weight 0.95; off, unclipped at 0.9 (the old path, an A/B).
+    FogClamp,
     /// Fog on blended and additive NIF materials (`sf_atmos_bevy::FogTranslucentsPlugin`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
@@ -127,7 +134,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 57] = [
+    const ALL: [(&'static str, Part); 59] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -167,6 +174,8 @@ impl Part {
         ("fogdither", Part::FogDither),
         ("fogjitter", Part::FogJitter),
         ("foghistory", Part::FogHistory),
+        ("fogbank", Part::FogBank),
+        ("fogclamp", Part::FogClamp),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
         ("foliagetransmission", Part::FoliageTransmission),
@@ -249,5 +258,11 @@ mod tests {
         assert_eq!(off.label(), "near,shadows");
         assert!(Off::from_flags(&["farnpcs".into()]).expect("known").has(Part::FarNpcs));
         assert!(Off::from_flags(&["nope".into()]).is_err());
+        let fog = Off::from_flags(&["fogbank".into()]).expect("known");
+        assert!(fog.has(Part::FogBank) && !fog.has(Part::FogHistory) && !fog.has(Part::Fog));
+        assert_eq!(fog.label(), "fogbank");
+        let clamp = Off::from_flags(&["fogclamp".into()]).expect("known");
+        assert!(clamp.has(Part::FogClamp) && !clamp.has(Part::FogHistory) && !clamp.has(Part::FogBank));
+        assert_eq!(clamp.label(), "fogclamp");
     }
 }

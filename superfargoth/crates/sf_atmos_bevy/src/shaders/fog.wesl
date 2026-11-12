@@ -31,6 +31,9 @@ struct Fog {
     // The view's ambient radiance (the surfaces' flat ambient × `Fog::view_ambient`), added
     // to the sky fill in `fog_light.wesl` and to the far weather's fog fill (WE-9).
     view_ambient: vec3<f32>,
+    // 1: the bank modulation is depth-aware (FOG-BANK): the cloud `dist` target's G and A hold
+    // (distance, bank) pairs at the trace window's furthest and nearest depth (`bank_edges.wesl`).
+    bank_edges: u32,
 };
 
 // Below a layer's base its density stops growing past e^2 × (`sf_atmos::fog::MAX_EXPONENT`).

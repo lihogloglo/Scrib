@@ -7,8 +7,8 @@
 //! W3 (water-adapter.md "Openness and fetch on one sea plane", "Optics by region", "Interiors"):
 //! the `water.shore` product baked at startup on a worker thread from the `LAND` wet mask (CPU
 //! query and GPU waves calm toward shores and in enclosed water), the region optics map, interior
-//! water as a `WaterSurface` pool at the cell's `WHGT`, and the analytic height fog in front of the
-//! water when the froxels are off. The FFT tier follows `--quality`.
+//! water as a `WaterSurface` pool at the cell's `WHGT`. The water has no fog of its own: the sky,
+//! clouds and fog cover it after its draw (W-ORDER). The FFT tier follows `--quality`.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
@@ -18,21 +18,18 @@ use std::time::{Duration, Instant};
 
 use bevy_app::{App, FixedUpdate, PostUpdate, Update};
 use bevy_camera::visibility::{RenderLayers, Visibility};
-use bevy_color::ColorToComponents;
 use bevy_ecs::prelude::*;
-use bevy_light::{AmbientLight, DirectionalLight, GlobalAmbientLight};
 use bevy_log::{error, info};
-use bevy_math::{Vec2, Vec3, Vec4};
+use bevy_math::Vec2;
 use bevy_time::{Fixed, Time, Virtual};
 use bevy_transform::components::Transform;
 use mw_water::{optics, optics_records, MwWaterSource, WaterIni};
 use mw_world::ids;
 use sf_records::RecordDb;
-use sf_sky_bevy::SunLight;
 use sf_terrain_bevy::{TerrainHeightsMap, TerrainOrigin, TerrainSystems};
 use sf_water::{BedHeights, Cascades, OpticsMap, ShoreField, WaterSource, WaterWorld, WaveTwin, WetMask, WorldspaceWater, TWIN_RESOLUTION};
 use sf_water_bevy::{
-    OceanSpectrum, OceanSurface, WaterCamera, WaterFogInput, WaterFrame, WaterLook, WaterPlugin, WaterQuality, WaterRegionsInput, WaterShoreInput,
+    OceanSpectrum, OceanSurface, WaterCamera, WaterFrame, WaterLook, WaterPlugin, WaterQuality, WaterRegionsInput, WaterShoreInput,
     WaterSurface, WaterSystems,
 };
 use sf_world::{Worldspace, WorldspaceId};
@@ -186,7 +183,7 @@ pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, worldspaces: &s
         .insert_resource(Water { world, time: 0.0 })
         .add_systems(FixedUpdate, step.before(sf_physics_bevy::PhysicsSystems::Step))
         .add_systems(Update, (spawn_ocean, mark_camera, bed, shore_done, pools))
-        .add_systems(PostUpdate, (sync, fog_input).after(TerrainSystems::Update).before(WaterSystems::Drive));
+        .add_systems(PostUpdate, sync.after(TerrainSystems::Update).before(WaterSystems::Drive));
 }
 
 /// Hands the finished shore bake to the GPU waves and the CPU query.
@@ -318,31 +315,3 @@ fn sync(
     }
 }
 
-/// The fog in front of the water: the froxel volume, and the analytic height fog layer (used when
-/// the froxels are off, `--off froxels`). Its in-scattering is the CPU closed form of the fog
-/// composite's: albedo × (sun / 4π (isotropic) + sky fill × ambient), the sky fill taken from the
-/// camera's ambient light. Exterior only (interiors keep their `AMBI` fog).
-#[allow(clippy::type_complexity)]
-fn fog_input(
-    (origin, active): (Res<TerrainOrigin>, Res<ActiveWorldspace>),
-    (volume, atmos): (Option<Res<sf_atmos_bevy::FroxelVolume>>, Option<Res<sf_atmos_bevy::Fog>>),
-    sun: Query<&DirectionalLight, With<SunLight>>,
-    ambient: (Query<&AmbientLight, With<ExteriorCamera>>, Res<GlobalAmbientLight>),
-    mut fog: ResMut<WaterFogInput>,
-) {
-    let mut want = volume.map_or_else(WaterFogInput::default, |v| WaterFogInput { froxels: Some(v.image.clone()), params: v.params, ..WaterFogInput::default() });
-    let in_exterior = active.0.as_ref().is_none_or(|ws| *ws == ids::exterior());
-    if let Some(a) = atmos.filter(|a| a.enabled && in_exterior && a.settings.height.density > 0.0) {
-        let layer = a.settings.height;
-        #[allow(clippy::cast_precision_loss)]
-        let sea = -(origin.0.cell.y as f32) * sf_coords::GRID_CELL;
-        let key: Vec3 = sun.iter().map(|l| l.color.to_linear().to_vec3() * l.illuminance).sum::<Vec3>() / (4.0 * std::f32::consts::PI);
-        let (color, brightness) = ambient.0.iter().next().map_or((ambient.1.color, ambient.1.brightness), |l| (l.color, l.brightness));
-        let fill = color.to_linear().to_vec3() * brightness * a.settings.ambient;
-        want.height = Vec4::new(layer.density, layer.falloff, layer.base + sea, 1.0);
-        want.height_color = a.settings.albedo * (key + fill);
-    }
-    if *fog != want {
-        *fog = want;
-    }
-}

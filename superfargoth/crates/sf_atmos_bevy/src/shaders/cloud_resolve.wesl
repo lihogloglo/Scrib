@@ -12,10 +12,16 @@
 // uncovered drops the tower's history, and clouds of different distances in
 // the open sky still accumulate (rejecting on cloud distance made their edges
 // crawl as the camera moved).
+//
+// With `fog.bank_edges` (FOG-BANK) the bank comes as two (distance, bank) pairs, at the
+// trace window's furthest and nearest depth: the far one follows the population above, the
+// near one any tap whose near distance matches (the nearest surface stays the same when an
+// edge texel flips between open and cut, so its bank keeps its history).
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import bevy_pbr::atmosphere::{bindings::view, functions::uv_to_ray_direction};
 import super::cloud_common::{Clouds, sub_pixel};
+import super::bank_edges::{bank_decode, bank_encode, bank_same_depth};
 
 @group(1) @binding(0) var<uniform> clouds: Clouds;
 @group(1) @binding(1) var trace_color: texture_2d<f32>;
@@ -27,6 +33,7 @@ import super::cloud_common::{Clouds, sub_pixel};
 struct ResolveOutput {
     @location(0) color: vec4<f32>,
     // R: cloud distance; G: the fog bank modulation; B: the cut depth (far: open).
+    // A: spare. With `fog.bank_edges` G and A are the far and near `bank_encode` pairs.
     @location(1) dist: vec4<f32>,
 };
 
@@ -63,6 +70,11 @@ fn clip_toward_center(h: vec4<f32>, lo: vec4<f32>, hi: vec4<f32>) -> vec4<f32> {
     return select(h, c + v / reach, reach > 1.0);
 }
 
+// The far bank as stored: a pair at this frame's far distance (FOG-BANK), or the plain value.
+fn store_bank(t: f32, bank: f32, edges: bool) -> f32 {
+    return select(bank, bank_encode(t, bank), edges);
+}
+
 @fragment
 fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
     let px = vec2<u32>(in.position.xy);
@@ -79,6 +91,14 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
     let current_d = textureLoad(trace_dist, tp, 0);
     let current_dist = current_d.x;
     let cut = current_d.z;
+    // The bank pairs (FOG-BANK): (distance, bank) to the window's far and near depth.
+    let edges = clouds.fog.bank_edges != 0u;
+    var current_far = vec2(0.0, current_d.y);
+    var current_near = vec2(0.0);
+    if edges {
+        current_far = bank_decode(current_d.y);
+        current_near = bank_decode(current_d.w);
+    }
 
     // Neighborhood of this frame's samples of the same population, for the
     // history clip (the center tap always qualifies): min/max and, for the
@@ -92,10 +112,27 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
     var bank_hi = -1e9;
     var bank_m1 = 0.0;
     var bank_m2 = 0.0;
+    // The near bank's neighborhood: taps whose near distance matches this texel's.
+    var near_lo = 1e9;
+    var near_hi = -1e9;
+    var near_m1 = 0.0;
+    var near_m2 = 0.0;
+    var near_n = 0.0;
     for (var y = -1; y <= 1; y += 1) {
         for (var x = -1; x <= 1; x += 1) {
             let q = clamp(tp + vec2(x, y), vec2(0), trace_max);
-            let d = textureLoad(trace_dist, q, 0);
+            var d = textureLoad(trace_dist, q, 0);
+            if edges {
+                let near = bank_decode(d.w);
+                if bank_same_depth(near.x, current_near.x) {
+                    near_lo = min(near_lo, near.y);
+                    near_hi = max(near_hi, near.y);
+                    near_m1 += near.y;
+                    near_m2 += near.y * near.y;
+                    near_n += 1.0;
+                }
+                d.y = bank_decode(d.y).y;
+            }
             if !same_population(d.z, cut) {
                 continue;
             }
@@ -122,6 +159,12 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
         let bank_sigma = sqrt(max(bank_m2 / n - bank_mean * bank_mean, 0.0));
         bank_lo = max(bank_lo, bank_mean - clouds.clip_gamma * bank_sigma);
         bank_hi = min(bank_hi, bank_mean + clouds.clip_gamma * bank_sigma);
+        if near_n > 0.0 {
+            let near_mean = near_m1 / near_n;
+            let near_sigma = sqrt(max(near_m2 / near_n - near_mean * near_mean, 0.0));
+            near_lo = max(near_lo, near_mean - clouds.clip_gamma * near_sigma);
+            near_hi = min(near_hi, near_mean + clouds.clip_gamma * near_sigma);
+        }
     }
 
     // Where this pixel's cloud was last frame: same world point, minus this
@@ -142,18 +185,37 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
     var history_dist_sum = 0.0;
     var history_bank_sum = 0.0;
     var history_w = 0.0;
+    var history_near_sum = 0.0;
+    var history_near_w = 0.0;
     for (var i = 0; i < 4; i += 1) {
         let o = vec2(i & 1, i >> 1u);
         let q = clamp(vec2<i32>(hbase) + o, vec2(0), hmax);
-        let d = textureLoad(history_dist, q, 0);
-        let w = mix(1.0 - hf.x, hf.x, f32(o.x)) * mix(1.0 - hf.y, hf.y, f32(o.y)) * select(0.0, 1.0, same_population(d.z, cut));
+        var d = textureLoad(history_dist, q, 0);
+        let bilinear = mix(1.0 - hf.x, hf.x, f32(o.x)) * mix(1.0 - hf.y, hf.y, f32(o.y));
+        if edges {
+            let near = bank_decode(d.w);
+            let wn = bilinear * select(0.0, 1.0, bank_same_depth(near.x, current_near.x));
+            history_near_sum += near.y * wn;
+            history_near_w += wn;
+            d.y = bank_decode(d.y).y;
+        }
+        let w = bilinear * select(0.0, 1.0, same_population(d.z, cut));
         history_sum += textureLoad(history_color, q, 0) * w;
         history_dist_sum += d.x * w;
         history_bank_sum += d.y * w;
         history_w += w;
     }
-    let valid = clouds.history_valid != 0u && clip.w > 0.0
-        && all(prev_uv >= vec2(0.0)) && all(prev_uv <= vec2(1.0)) && history_w > 1e-3;
+    let reprojected = clouds.history_valid != 0u && clip.w > 0.0
+        && all(prev_uv >= vec2(0.0)) && all(prev_uv <= vec2(1.0));
+    let valid = reprojected && history_w > 1e-3;
+
+    // The near bank: its own history (by near distance), else this frame's.
+    var near_bank = current_near.y;
+    if edges && reprojected && history_near_w > 1e-3 {
+        let history_near = clamp(history_near_sum / history_near_w, near_lo, near_hi);
+        near_bank = select(history_near, mix(history_near, current_near.y, clouds.history_weight), fresh);
+    }
+    let near_out = select(0.0, bank_encode(current_near.x, near_bank), edges);
 
     var out: ResolveOutput;
     if valid {
@@ -170,17 +232,17 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
             // Exponential history: the fresh sample weighs `history_weight`
             // (`sf_atmos::temporal::accumulate`).
             out.color = mix(rgb_history, current, clouds.history_weight);
-            out.dist = vec4(current_dist, mix(history_bank, current_d.y, clouds.history_weight), cut, 0.0);
+            out.dist = vec4(current_dist, store_bank(current_far.x, mix(history_bank, current_far.y, clouds.history_weight), edges), cut, near_out);
         } else {
             out.color = rgb_history;
-            out.dist = vec4(history_dist_sum / history_w, history_bank, cut, 0.0);
+            out.dist = vec4(history_dist_sum / history_w, store_bank(current_far.x, history_bank, edges), cut, near_out);
         }
     } else {
         // No usable history: this frame's own sample of the same population
         // (nearest; a checkerboard block-mate of an open texel is open too,
         // thanks to the trace's 6x6 furthest-depth window).
         out.color = current;
-        out.dist = vec4(current_dist, current_d.y, cut, 0.0);
+        out.dist = vec4(current_dist, current_d.y, cut, near_out);
     }
     return out;
 }

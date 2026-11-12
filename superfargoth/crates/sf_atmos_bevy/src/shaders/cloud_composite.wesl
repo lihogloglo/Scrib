@@ -16,6 +16,7 @@ import bevy_pbr::atmosphere::functions::{uv_to_ndc, ndc_to_camera_dist, uv_to_ra
 import super::cloud_common::Clouds;
 import super::fog::{fog_depths, fog_phase};
 import super::froxel_common::{Froxels, froxel_fog};
+import super::bank_edges::{bank_decode, bank_tap};
 
 @if(MULTISAMPLED)
 @group(0) @binding(13) var depth_texture: texture_depth_multisampled_2d;
@@ -48,7 +49,18 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     // open texels only (they traced the whole sky layer), a geometry pixel
     // prefers texels cut at its own depth, else open ones behind the occlusion
     // test, else plain bilinear. Color and bank share the weights.
+    //
+    // The bank with `fog.bank_edges` (FOG-BANK, `sf_atmos::bank_edges`): each tap
+    // holds it at its trace window's nearest and furthest depth; the pixel blends
+    // them by its own log-depth, and the taps weigh bilaterally by how far that
+    // depth lies outside each tap's range (UE's and Nubis' min/max-depth upsample),
+    // so a land pixel at a silhouette takes the land's bank whichever population
+    // its taps fell in.
     let sky = depth <= 0.0;
+    let edges = clouds.fog.bank_edges != 0u;
+    let bank_t = min(scene_t, clouds.fog.far);
+    var edge_bank = 0.0;
+    var edge_w = 0.0;
     var acc_sets = array<vec4<f32>, 3>(vec4(0.0), vec4(0.0), vec4(0.0));
     var bank_sets = vec3(0.0);
     var w_sets = vec3(0.0);
@@ -61,6 +73,11 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
             c = vec4(0.0, 0.0, 0.0, 1.0);
         }
         let w = mix(1.0 - f.x, f.x, f32(o.x)) * mix(1.0 - f.y, f.y, f32(o.y));
+        if edges {
+            let tap = bank_tap(bank_t, bank_decode(d.w), bank_decode(d.y));
+            edge_bank += tap.x * tap.y * w;
+            edge_w += tap.y * w;
+        }
         let open = d.z >= clouds.far;
         let own_cut = !open && abs(d.z - scene_t) <= 0.1 * scene_t + 5.0;
         // Set 0: preferred (sky: open; geometry: cut at this depth). 1: open. 2: all.
@@ -78,8 +95,12 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         pick = 1;
     }
     var acc = acc_sets[pick] / w_sets[pick];
-    let bank = bank_sets[pick];
-    let bank_w = w_sets[pick];
+    var bank = bank_sets[pick];
+    var bank_w = w_sets[pick];
+    if edges {
+        bank = edge_bank;
+        bank_w = max(edge_w, 1e-12);
+    }
 
     let fog = clouds.fog;
     if fog.enabled != 0u {

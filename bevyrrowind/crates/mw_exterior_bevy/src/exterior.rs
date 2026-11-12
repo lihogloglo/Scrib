@@ -467,11 +467,17 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             } else if perf.off.has(Part::FogDither) {
                 f.jitter = FroxelJitter::Shared;
             }
+            // FOG-CLAMP (WE-10): `--off fogclamp` keeps the old unclipped history at 0.9.
+            if perf.off.has(Part::FogClamp) {
+                *f = f.without_clamp();
+            }
             // `--off foghistory`: no temporal reprojection (FG-1 A/B).
             if perf.off.has(Part::FogHistory) {
                 f.history = 0.0;
             }
         }
+        // FOG-BANK (FG-7): `--off fogbank` keeps the old furthest-depth bank, picked by population.
+        app.insert_resource(sf_atmos_bevy::FogBankEdges(!perf.off.has(Part::FogBank)));
         if !perf.off.has(Part::FarShadows) {
             app.add_systems(
                 PostUpdate,

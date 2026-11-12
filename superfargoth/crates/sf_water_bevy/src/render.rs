@@ -1,5 +1,5 @@
-//! Render world: the FFT compute chain (before the main pass), the snapshot (after the sky and
-//! the `sf_atmos` composite, before the transparent pass) with the aerial-view LUT copy, and the
+//! Render world: the FFT compute chain (before the main pass), the snapshot of the opaque scene
+//! (after the opaque pass, before the water draws in the transmissive pass, W-ORDER), and the
 //! velocity redraw (after the transparent pass, before post-processing).
 
 use std::collections::HashMap;
@@ -15,13 +15,12 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::IntoSystemSet;
 use bevy_image::Image;
 use bevy_math::{Mat4, Vec4};
-use bevy_pbr::resources::AtmosphereTextures;
 use bevy_render::camera::ExtractedCamera;
 use bevy_render::diagnostic::RecordDiagnostics;
 use bevy_render::render_asset::RenderAssets;
 use bevy_render::render_resource::binding_types::{
-    sampler, storage_buffer_sized, texture_2d, texture_2d_array, texture_3d, texture_depth_2d, texture_depth_2d_multisampled, texture_storage_2d_array,
-    texture_storage_3d, uniform_buffer,
+    sampler, storage_buffer_sized, texture_2d, texture_2d_array, texture_depth_2d, texture_depth_2d_multisampled, texture_storage_2d_array,
+    uniform_buffer,
 };
 use bevy_render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferUsages, CachedComputePipelineId,
@@ -70,7 +69,6 @@ pub(crate) struct ImageIds {
     slopes: AssetId<Image>,
     snapshot_color: AssetId<Image>,
     snapshot_depth: AssetId<Image>,
-    aerial: AssetId<Image>,
     shore: AssetId<Image>,
 }
 
@@ -83,7 +81,6 @@ impl ImageIds {
             slopes: i.slopes.id(),
             snapshot_color: i.snapshot_color.id(),
             snapshot_depth: i.snapshot_depth.id(),
-            aerial: i.aerial.id(),
             shore: i.shore.id(),
         }
     }
@@ -109,7 +106,6 @@ struct WaterView;
 struct WaterViewBindings {
     samples: u32,
     snapshot: BindGroup,
-    aerial: Option<(BindGroup, [u32; 3])>,
     velocity: BindGroup,
 }
 
@@ -127,11 +123,9 @@ struct WaterGpu {
 struct WaterPipelines {
     fft: BindGroupLayoutDescriptor,
     snapshot: [BindGroupLayoutDescriptor; 2],
-    aerial: BindGroupLayoutDescriptor,
     velocity: [BindGroupLayoutDescriptor; 2],
     fft_shader: Handle<Shader>,
     snapshot_shader: Handle<Shader>,
-    aerial_shader: Handle<Shader>,
     mips: BindGroupLayoutDescriptor,
     mips_shader: Handle<Shader>,
     velocity_shader: Handle<Shader>,
@@ -185,17 +179,9 @@ impl FromWorld for WaterPipelines {
                 ),
             ),
             snapshot: [snapshot(false), snapshot(true)],
-            aerial: BindGroupLayoutDescriptor::new(
-                "water_aerial",
-                &BindGroupLayoutEntries::sequential(
-                    ShaderStages::COMPUTE,
-                    (texture_3d(unfiltered), texture_storage_3d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly)),
-                ),
-            ),
             velocity: [velocity(false), velocity(true)],
             fft_shader: load_embedded_asset!(world, "shaders/water_fft.wesl"),
             snapshot_shader: load_embedded_asset!(world, "shaders/water_snapshot.wesl"),
-            aerial_shader: load_embedded_asset!(world, "shaders/water_aerial.wesl"),
             mips: BindGroupLayoutDescriptor::new(
                 "water_mips",
                 &BindGroupLayoutEntries::sequential(
@@ -216,7 +202,6 @@ const FFT_ENTRIES: [&str; 2] = ["fft_rows", "fft_cols"];
 struct WaterPipelineIds {
     fft: Option<[CachedComputePipelineId; 2]>,
     mips: Option<CachedComputePipelineId>,
-    aerial: Option<CachedComputePipelineId>,
     snapshot: HashMap<u32, CachedRenderPipelineId>,
     velocity: HashMap<u32, CachedRenderPipelineId>,
 }
@@ -239,9 +224,9 @@ pub(crate) fn build(app: &mut App) {
         );
 }
 
-/// The snapshot ([`PassStage::Snapshot`]) goes after everything ordered before the
-/// transparent pass (Bevy's `render_sky`, the sky and cloud passes), whatever the
-/// plugin add order (render-order.md RO-8).
+/// The snapshot ([`PassStage::Snapshot`]) goes after the opaque pass and before the water draws
+/// in Bevy's transmissive pass; the sky, clouds and fog run after the water (render-order.md
+/// "Frame graph", W-ORDER).
 pub(crate) fn finish(app: &mut App) {
     let mine = [fft_pass.into_system_set().intern(), velocity_pass.into_system_set().intern()];
     sf_render_order_bevy::add_pass(app, PassStage::Snapshot, snapshot_pass.into_system_set().intern(), &mine, snapshot_pass);
@@ -328,9 +313,6 @@ fn queue_pipelines(views: Query<&Msaa, With<WaterView>>, pipelines: Option<Res<W
     if ids.mips.is_none() {
         ids.mips = Some(cache.queue_compute_pipeline(p.compute(&p.mips, &p.mips_shader, "downsample")));
     }
-    if ids.aerial.is_none() {
-        ids.aerial = Some(cache.queue_compute_pipeline(p.compute(&p.aerial, &p.aerial_shader, "copy_aerial")));
-    }
     let warm = std::iter::once(1);
     for s in views.iter().map(Msaa::samples).chain(warm) {
         ids.snapshot.entry(s).or_insert_with(|| cache.queue_render_pipeline(p.snapshot_descriptor(s)));
@@ -338,7 +320,7 @@ fn queue_pipelines(views: Query<&Msaa, With<WaterView>>, pipelines: Option<Res<W
     }
 }
 
-type ViewItem<'a> = (Entity, &'a ExtractedView, &'a ViewTarget, &'a ViewDepthStencilTexture, &'a Msaa, Option<&'a AtmosphereTextures>);
+type ViewItem<'a> = (Entity, &'a ExtractedView, &'a ViewTarget, &'a ViewDepthStencilTexture, &'a Msaa);
 
 #[allow(clippy::too_many_arguments)]
 fn prepare(
@@ -355,14 +337,13 @@ fn prepare(
     gpu.fft = None;
     let Some(pipelines) = pipelines else { return };
     let Some(ids) = state.images.filter(|_| state.active) else { return };
-    let (Some(h0), Some(disp), Some(prev), Some(slopes), Some(snap_color), Some(snap_depth), Some(aerial)) = (
+    let (Some(h0), Some(disp), Some(prev), Some(slopes), Some(snap_color), Some(snap_depth)) = (
         images.get(ids.h0),
         images.get(ids.displacement),
         images.get(ids.prev_displacement),
         images.get(ids.slopes),
         images.get(ids.snapshot_color),
         images.get(ids.snapshot_depth),
-        images.get(ids.aerial),
     ) else {
         return;
     };
@@ -409,7 +390,7 @@ fn prepare(
     }
     let mut params = UniformBuffer::from(state.params);
     params.write_buffer(&device, &queue);
-    for (entity, view, target, depth, msaa, atmosphere) in &views {
+    for (entity, view, target, depth, msaa) in &views {
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
         let ms = usize::from(msaa.samples() > 1);
         let snapshot = device.create_bind_group(
@@ -417,19 +398,6 @@ fn prepare(
             &cache.get_bind_group_layout(&pipelines.snapshot[ms]),
             &BindGroupEntries::sequential((target.main_texture_view(), depth_view)),
         );
-        let aerial_group = atmosphere.and_then(|a| {
-            let size = a.aerial_view_lut.texture.size();
-            (size == aerial.texture.size()).then(|| {
-                (
-                    device.create_bind_group(
-                        "water_aerial",
-                        &cache.get_bind_group_layout(&pipelines.aerial),
-                        &BindGroupEntries::sequential((&a.aerial_view_lut.default_view, &aerial.texture_view)),
-                    ),
-                    [size.width, size.height, size.depth_or_array_layers],
-                )
-            })
-        });
         let clip_from_world = view.clip_from_view * view.world_from_view.to_matrix().inverse();
         let prev_clip = gpu.prev.insert(entity, clip_from_world).unwrap_or(clip_from_world);
         let mut velocity_uniform =
@@ -441,7 +409,7 @@ fn prepare(
             &cache.get_bind_group_layout(&pipelines.velocity[ms]),
             &BindGroupEntries::sequential((params_binding, velocity_binding, &disp.texture_view, &prev.texture_view, &disp.sampler, depth_view, &shore.texture_view, &shore.sampler)),
         );
-        commands.entity(entity).insert(WaterViewBindings { samples: msaa.samples(), snapshot, aerial: aerial_group, velocity });
+        commands.entity(entity).insert(WaterViewBindings { samples: msaa.samples(), snapshot, velocity });
     }
 }
 
@@ -510,12 +478,6 @@ fn snapshot_pass(
     let Some(pipeline) = ids.snapshot.get(&bindings.samples).and_then(|id| cache.get_render_pipeline(*id)) else { return };
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
-    if let (Some((group, size)), Some(copy)) = (bindings.aerial.as_ref(), ids.aerial.and_then(|id| cache.get_compute_pipeline(id))) {
-        let mut pass = ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor { label: Some("water_aerial"), timestamp_writes: None });
-        pass.set_pipeline(copy);
-        pass.set_bind_group(0, group, &[]);
-        pass.dispatch_workgroups(size[0].div_ceil(4), size[1].div_ceil(4), size[2].div_ceil(4));
-    }
     #[allow(clippy::default_trait_access)]
     let load = if camera.viewport.is_none() {
         LoadOp::Clear(Default::default())

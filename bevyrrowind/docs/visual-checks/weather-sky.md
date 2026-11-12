@@ -152,12 +152,26 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Owner 2026-11-06 (ash, north): shimmer still there with fix 1; the region storm's cloud/rain still not drawn over the water (WE-7).
 - Status: fix 1 failed; slices 2-3 (far rain shaped by clouds, deck edges) wait for the owner.
 
+### WE-11: Weather covers water like land (W-ORDER, render-order.md "Frame graph"; fixes WE-7, WE-10 over sea)
+- Kind: game location. `bash bevyrrowind/tools/owner_launch.sh view "Seyda Neen" --hour 9 --weather foggy`, then
+  `--weather rain` and `--weather thunderstorm`; face the open sea (south-west, off the dock), still camera, then pan.
+  High-up clouds: same `--weather rain`, free camera up ~300 m over the sea. A/B per effect: `--off fog`, `--off froxels`, `--off clouds`.
+- Look for: fog thickening over the far sea as over land (no clear band at the horizon); the far rain curtain and storm
+  continuing over water instead of stopping at the shore; from high up, a cloud between camera and ocean shows.
+- Must not: water looking double-fogged (milkier/greyer than the land beside it); a halo or seam at the shoreline;
+  refraction of the seabed and shore foam changed; stars drawn over water at night (`--hour 23 --weather clear`).
+- Status: awaiting owner (built 2026-11-12).
+
 ### FG-7: Blocky crenellated edges on distant land in fog (owner report)
-- Kind: game location. Distant landmasses with fog around or behind them (seen 2026-10-30, `scene balmora`).
-- Look for: stair-stepped blocky shapes along land silhouettes, only where fog is rendered; present when still, worse
-  when moving.
-- Suspect (not tested): froxel fog sampled at low resolution without a depth-aware upsample at silhouettes.
-- Status: known bug: not diagnosed (owner pass 2026-10-30).
+- Kind: game location. Seen 2026-10-30 (`scene balmora`): stair-stepped land silhouettes in fog, worse moving.
+- Cause (2026-11-12, code): the half-res bank modulation is marched to the furthest depth of each trace window, so
+  land pixels at a silhouette took the sky's value; open/cut flips under jitter dropped history (grid steps). Not froxels.
+- Fix FOG-BANK (2026-11-12): bank at the window's nearest and furthest depth, blended per pixel by depth (fog.md
+  "Depth-aware bank"). Run: `bash bevyrrowind/tools/owner_launch.sh scene fg-bittercoast-ridge` (6:30, foggy, 160 m up),
+  then `scene balmora --weather foggy --hour 6.5`; still, then pan and walk. A/B: same with `--off fogbank`.
+- Look for: land and hill silhouettes in fog smooth, no stair steps still or moving, no bright/dark halo along them,
+  fog density and bank shapes unchanged elsewhere. `--off fogbank` should show the old steps.
+- Status: awaiting owner (FOG-BANK built 2026-11-12).
 
 ### FG-8: Weather fog vanishes at night (owner report)
 - Kind: game location. Foggy weathers (fog, overcast, ash), compare 20:00 and 01:00 (`--hour`).
@@ -185,6 +199,16 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   is built (`froxel_inject.wesl:156-165`, fog.md "Froxel fog as built"). Suspects (not tested): froxel slices too
   coarse at 160x90x64 / 384 m, in-scatter too weak against the fog's ambient, shadow term not reaching the froxels.
 - Status: known bug: not diagnosed (owner pass 2026-11-02).
+
+### FG-11: Froxel fog stays smooth over near objects (FOG-CLAMP, part of WE-10 shimmer)
+- Kind: game location. Fix FOG-CLAMP (2026-11-12): froxel history clipped to this frame's 3x3 neighbourhood,
+  weight 0.9 -> 0.95 (fog.md "Froxel history clip as built").
+- Run: `bash bevyrrowind/tools/owner_launch.sh scene balmora --weather foggy --hour 6.5`; hold still 5 s on houses and
+  hills 50-300 m away, then pan slowly, turn fast, and watch NPCs walking past. A/B: same with `--off fogclamp`.
+- Look for: fog over near buildings and land smooth, no crawling grain still or panning; no ghost trails behind
+  moving NPCs or their shadows, none on fast turns; no black bands (FG-1); fog density/colour as before.
+  `--off fogclamp` should crawl more when still.
+- Status: awaiting owner (FOG-CLAMP built 2026-11-12).
 
 ### SW-2: Surface weather shelter, night and trees (surface-weather.md W2, W2b)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 23 --weather clear` (night: no
