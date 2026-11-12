@@ -1,0 +1,6337 @@
+{
+  "format": 1,
+  "scenario": "exterior_balmora_walk",
+  "meta": {
+    "bench_ground": "false",
+    "build": "release",
+    "camera": "[-202.6, 90.2, 324.8] -> [-292.6, 2.2, 204.8]",
+    "cell": "Bevyrrowind - Balmora (4 cells)",
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU (Vulkan, 617.42)",
+    "off": "near,sky",
+    "prepass": "false",
+    "present": "AutoNoVsync",
+    "render": "raster dlss=quality",
+    "resolution": "2560x1440",
+    "rings": "near None far None"
+  },
+  "duration_s": 65.63884410000003,
+  "frames": {
+    "stats": {
+      "count": 12636,
+      "mean": 5.194590384615393,
+      "min": 3.5872,
+      "median": 5.179600000000001,
+      "p95": 6.080825,
+      "p99": 6.593454999999999,
+      "max": 12.109399999999999
+    },
+    "fps_median": 193.0651015522434,
+    "fps_p1": 151.66555318873037,
+    "spike_factor": 1.5,
+    "spikes": 10,
+    "stutters_per_min": 9.140928793412431,
+    "work_stutters_per_min": 3.6563715173649727
+  },
+  "counters": {
+    "anim/a0/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "anim/a1/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "anim/a2/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "anim/a3/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "anim/apply/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 6.978000107347906,
+      "last": 0.0006000000238418579,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0005522317273938343,
+        "min": 0.00020000000298023223,
+        "median": 0.0005,
+        "p95": 0.0008999999761581421,
+        "p99": 0.0012000000476837158,
+        "max": 0.020599998474121094
+      }
+    },
+    "anim/bones_written/count": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "anim/characters/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "anim/evaluate/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 25.43569999999694,
+      "last": 0.0017000000000000001,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.002012955049066044,
+        "min": 0.0013,
+        "median": 0.0019,
+        "p95": 0.0026,
+        "p99": 0.0034000000000000002,
+        "max": 0.1718
+      }
+    },
+    "anim/evaluate_cpu/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "anim/evaluated/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "anim/events/count": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "assets/Image/added": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 125.0,
+      "last": 11.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.009892371003482114,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 18.0
+      }
+    },
+    "assets/Image/modified": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "assets/Image/removed": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "assets/Mesh/added": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 2087.0,
+      "last": 5.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.1651630262741374,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 213.0
+      }
+    },
+    "assets/Mesh/removed": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 4426.0,
+      "last": 1162.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.3502690724912947,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 1162.0
+      }
+    },
+    "assets/StandardMaterial/added": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 128.0,
+      "last": 11.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.010129787907565685,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 18.0
+      }
+    },
+    "bigspace/high_precision/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 1357.927099999994,
+      "last": 0.0902,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.10746494935106057,
+        "min": 0.0672,
+        "median": 0.0887,
+        "p95": 0.23995,
+        "p99": 0.41122999999999993,
+        "max": 0.9541000000000001
+      }
+    },
+    "bigspace/low_precision/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 495.5023999999989,
+      "last": 0.0263,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.03921354859132642,
+        "min": 0.013900000000000001,
+        "median": 0.0309,
+        "p95": 0.064025,
+        "p99": 0.26307999999999954,
+        "max": 1.1736
+      }
+    },
+    "bigspace/total/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 2706.6278000000007,
+      "last": 0.15510000000000002,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.21419973092750927,
+        "min": 0.12589999999999998,
+        "median": 0.17300000000000001,
+        "p95": 0.42732499999999995,
+        "p99": 0.5942649999999994,
+        "max": 1.3259999999999998
+      }
+    },
+    "controller/avoid/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 1.5779000250102173,
+      "last": 0.00010000000149011611,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.00012487337963043896,
+        "min": 0.0,
+        "median": 0.00010000000149011611,
+        "p95": 0.00030000001192092895,
+        "p99": 0.00040000000596046445,
+        "max": 0.02929999923706055
+      }
+    },
+    "controller/feed/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 3.1906000673697017,
+      "last": 0.00010000000149011611,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0002525007967212478,
+        "min": 0.00010000000149011611,
+        "median": 0.00020000000298023223,
+        "p95": 0.0005,
+        "p99": 0.000699999988079071,
+        "max": 0.01140000057220459
+      }
+    },
+    "controller/move/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 27.24679982340284,
+      "last": 0.002299999952316284,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0021562836200857143,
+        "min": 0.0006000000238418579,
+        "median": 0.002199999809265137,
+        "p95": 0.003,
+        "p99": 0.004300000190734864,
+        "max": 0.05
+      }
+    },
+    "controller/movers/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "controller/write/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 0.47270000723005595,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.00003740899075894676,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.00010000000149011611,
+        "p99": 0.00020000000298023223,
+        "max": 0.000699999988079071
+      }
+    },
+    "draws/skipped_late": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "ecs/entities": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 7927.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 8083.101535295979,
+        "min": 7890.0,
+        "median": 8042.0,
+        "p95": 8374.0,
+        "p99": 8387.0,
+        "max": 8395.0
+      }
+    },
+    "ecs/entities_delta": {
+      "unit": "count",
+      "kind": "sum",
+      "total": -32.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": -0.0025324469768914213,
+        "min": -134.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 3.0,
+        "max": 137.0
+      }
+    },
+    "far/entities": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 2681.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 2681.0,
+        "min": 2681.0,
+        "median": 2681.0,
+        "p95": 2681.0,
+        "p99": 2681.0,
+        "max": 2681.0
+      }
+    },
+    "far/forced": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "far/impostors": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 60998.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 60998.0,
+        "min": 60998.0,
+        "median": 60998.0,
+        "p95": 60998.0,
+        "p99": 60998.0,
+        "max": 60998.0
+      }
+    },
+    "far/lights": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 7115.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 7115.0,
+        "min": 7115.0,
+        "median": 7115.0,
+        "p95": 7115.0,
+        "p99": 7115.0,
+        "max": 7115.0
+      }
+    },
+    "far/nodes/l1": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1100.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 1100.0,
+        "min": 1100.0,
+        "median": 1100.0,
+        "p95": 1100.0,
+        "p99": 1100.0,
+        "max": 1100.0
+      }
+    },
+    "far/nodes/l2": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 25.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 25.0,
+        "min": 25.0,
+        "median": 25.0,
+        "p95": 25.0,
+        "p99": 25.0,
+        "max": 25.0
+      }
+    },
+    "far/nodes/l3": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 4.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 4.0,
+        "min": 4.0,
+        "median": 4.0,
+        "p95": 4.0,
+        "p99": 4.0,
+        "max": 4.0
+      }
+    },
+    "far/resident/bytes": {
+      "unit": "bytes",
+      "kind": "gauge",
+      "last": 203414733.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 203414733.0,
+        "min": 203414733.0,
+        "median": 203414733.0,
+        "p95": 203414733.0,
+        "p99": 203414733.0,
+        "max": 203414733.0
+      }
+    },
+    "far/select/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 2132.3025,
+      "last": 0.1405,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.16874821937321954,
+        "min": 0.1218,
+        "median": 0.15880000000000002,
+        "p95": 0.233625,
+        "p99": 0.2977949999999999,
+        "max": 0.5132
+      }
+    },
+    "far/triangles": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 5042094.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 5042094.0,
+        "min": 5042094.0,
+        "median": 5042094.0,
+        "p95": 5042094.0,
+        "p99": 5042094.0,
+        "max": 5042094.0
+      }
+    },
+    "frame/work/ms": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 5.2367360000000005,
+      "per_frame": {
+        "count": 12636,
+        "mean": 4.6554107926558945,
+        "min": 3.4548,
+        "median": 4.653568,
+        "p95": 5.269503999999999,
+        "p99": 5.47328,
+        "max": 9.753499999999999
+      }
+    },
+    "gpu/timed/ms": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 5.2367360000000005,
+      "per_frame": {
+        "count": 12636,
+        "mean": 4.490727891104771,
+        "min": 2.4627200000000005,
+        "median": 4.619264,
+        "p95": 5.259263999999999,
+        "p99": 5.452800000000001,
+        "max": 7.567359999999999
+      }
+    },
+    "main/busy/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 52939.88719999987,
+      "last": 4.2188,
+      "per_frame": {
+        "count": 12636,
+        "mean": 4.189608040519145,
+        "min": 3.4548,
+        "median": 4.1526499999999995,
+        "p95": 4.722424999999999,
+        "p99": 5.070594999999999,
+        "max": 9.7201
+      }
+    },
+    "mesh_allocator_allocations": {
+      "unit": " meshes",
+      "kind": "gauge",
+      "last": 8524.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 9033.625039569484,
+        "min": 8433.0,
+        "median": 9048.0,
+        "p95": 9822.0,
+        "p99": 9822.0,
+        "max": 9822.0
+      }
+    },
+    "mesh_allocator_slabs": {
+      "unit": " slabs",
+      "kind": "gauge",
+      "last": 11.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 11.155824628046851,
+        "min": 11.0,
+        "median": 11.0,
+        "p95": 12.0,
+        "p99": 12.0,
+        "max": 12.0
+      }
+    },
+    "mesh_allocator_slabs_size": {
+      "unit": " bytes",
+      "kind": "gauge",
+      "last": 298978656.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 299142054.95156693,
+        "min": 298978656.0,
+        "median": 298978656.0,
+        "p95": 300027264.0,
+        "p99": 300027264.0,
+        "max": 300027264.0
+      }
+    },
+    "phases/alpha_mask3d/batch_sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 2.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 2.0,
+        "min": 2.0,
+        "median": 2.0,
+        "p95": 2.0,
+        "p99": 2.0,
+        "max": 2.0
+      }
+    },
+    "phases/alpha_mask3d/bins": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 361.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 186.5169766521567,
+        "min": 30.0,
+        "median": 125.0,
+        "p95": 363.0,
+        "p99": 365.0,
+        "max": 368.0
+      }
+    },
+    "phases/alpha_mask3d/instance_batches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/alpha_mask3d/instance_draws": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/alpha_mask3d/instance_slots": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/alpha_mask3d/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 361.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 186.5169766521567,
+        "min": 30.0,
+        "median": 125.0,
+        "p95": 363.0,
+        "p99": 365.0,
+        "max": 368.0
+      }
+    },
+    "phases/alpha_mask3d/non_mesh": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/alpha_mask3d/pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 1.0,
+        "min": 1.0,
+        "median": 1.0,
+        "p95": 1.0,
+        "p99": 1.0,
+        "max": 1.0
+      }
+    },
+    "phases/alpha_mask3d/unbatchable": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/alpha_mask3d_prepass/batch_sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 2.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 2.0,
+        "min": 2.0,
+        "median": 2.0,
+        "p95": 2.0,
+        "p99": 2.0,
+        "max": 2.0
+      }
+    },
+    "phases/alpha_mask3d_prepass/bins": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 361.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 186.5169766521567,
+        "min": 30.0,
+        "median": 125.0,
+        "p95": 363.0,
+        "p99": 365.0,
+        "max": 368.0
+      }
+    },
+    "phases/alpha_mask3d_prepass/instance_batches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/alpha_mask3d_prepass/instance_draws": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/alpha_mask3d_prepass/instance_slots": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/alpha_mask3d_prepass/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 361.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 186.5169766521567,
+        "min": 30.0,
+        "median": 125.0,
+        "p95": 363.0,
+        "p99": 365.0,
+        "max": 368.0
+      }
+    },
+    "phases/alpha_mask3d_prepass/non_mesh": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/alpha_mask3d_prepass/pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 1.0,
+        "min": 1.0,
+        "median": 1.0,
+        "p95": 1.0,
+        "p99": 1.0,
+        "max": 1.0
+      }
+    },
+    "phases/alpha_mask3d_prepass/unbatchable": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/opaque3d/batch_sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 4.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 3.8238227146814405,
+        "min": 3.0,
+        "median": 4.0,
+        "p95": 4.0,
+        "p99": 4.0,
+        "max": 4.0
+      }
+    },
+    "phases/opaque3d/bins": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 419.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 214.41630391768896,
+        "min": 33.0,
+        "median": 147.0,
+        "p95": 423.0,
+        "p99": 425.0,
+        "max": 429.0
+      }
+    },
+    "phases/opaque3d/instance_batches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/opaque3d/instance_draws": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/opaque3d/instance_slots": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/opaque3d/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 603.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 388.62445587653343,
+        "min": 124.0,
+        "median": 328.0,
+        "p95": 607.0,
+        "p99": 612.0,
+        "max": 617.0
+      }
+    },
+    "phases/opaque3d/non_mesh": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/opaque3d/pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 3.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 3.0,
+        "min": 3.0,
+        "median": 3.0,
+        "p95": 3.0,
+        "p99": 3.0,
+        "max": 3.0
+      }
+    },
+    "phases/opaque3d/unbatchable": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/opaque3d_prepass/batch_sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 4.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 3.8238227146814405,
+        "min": 3.0,
+        "median": 4.0,
+        "p95": 4.0,
+        "p99": 4.0,
+        "max": 4.0
+      }
+    },
+    "phases/opaque3d_prepass/bins": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 419.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 214.41630391768896,
+        "min": 33.0,
+        "median": 147.0,
+        "p95": 423.0,
+        "p99": 425.0,
+        "max": 429.0
+      }
+    },
+    "phases/opaque3d_prepass/instance_batches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/opaque3d_prepass/instance_draws": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/opaque3d_prepass/instance_slots": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/opaque3d_prepass/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 603.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 388.62445587653343,
+        "min": 124.0,
+        "median": 328.0,
+        "p95": 607.0,
+        "p99": 612.0,
+        "max": 617.0
+      }
+    },
+    "phases/opaque3d_prepass/non_mesh": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/opaque3d_prepass/pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 3.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 3.0,
+        "min": 3.0,
+        "median": 3.0,
+        "p95": 3.0,
+        "p99": 3.0,
+        "max": 3.0
+      }
+    },
+    "phases/opaque3d_prepass/unbatchable": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/shadow/batch_sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 6,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/shadow/bins": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 6,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/shadow/instance_batches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 6,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/shadow/instance_draws": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 6,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/shadow/instance_slots": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 6,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/shadow/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 6,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/shadow/non_mesh": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 6,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/shadow/pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 6,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "phases/shadow/unbatchable": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 6,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "physics/awake": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "physics/bodies": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 2329.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 2749.6509971509972,
+        "min": 2296.0,
+        "median": 2727.0,
+        "p95": 3149.0,
+        "p99": 3248.0,
+        "max": 3248.0
+      }
+    },
+    "physics/insert/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 177.2671999577433,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.014028743269843566,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.4157649993896484,
+        "max": 0.9484000205993652
+      }
+    },
+    "physics/inserts": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 2369.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.18748021525799305,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 3.0,
+        "max": 101.0
+      }
+    },
+    "physics/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 19.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 223.9505381449826,
+        "min": 19.0,
+        "median": 255.0,
+        "p95": 476.0,
+        "p99": 476.0,
+        "max": 476.0
+      }
+    },
+    "physics/pending": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 1.547483380816714,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 53.0,
+        "max": 191.0
+      }
+    },
+    "physics/rebases": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "physics/removals": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 2335.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.1847894903450459,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 161.0
+      }
+    },
+    "physics/step/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 103.97179989796132,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.008228220947923498,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.030225000344216824,
+        "p99": 0.043299999088048935,
+        "max": 0.6006999611854553
+      }
+    },
+    "physics/steps": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 3938.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.31164925609370053,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 1.0,
+        "p99": 1.0,
+        "max": 1.0
+      }
+    },
+    "physics/steps_dropped": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "physics/terrain/chunks": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 64.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 70.15099715099716,
+        "min": 60.0,
+        "median": 72.0,
+        "p95": 76.0,
+        "p99": 76.0,
+        "max": 76.0
+      }
+    },
+    "pipelines/after_reveal": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "pipelines/compile_ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "pipelines/created": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "pipelines/driver_ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "pipelines/front_ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "pipelines/total": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 93.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 93.0,
+        "min": 93.0,
+        "median": 93.0,
+        "p95": 93.0,
+        "p99": 93.0,
+        "max": 93.0
+      }
+    },
+    "pipelines/wait_ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "pipelines/waiting": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "preprocess/bind_groups": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 2.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 2.6189948555599525,
+        "min": 0.0,
+        "median": 2.0,
+        "p95": 12.0,
+        "p99": 28.659999999999854,
+        "max": 35.0
+      }
+    },
+    "preprocess/bind_groups_created": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 2.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 2.6189948555599525,
+        "min": 0.0,
+        "median": 2.0,
+        "p95": 12.0,
+        "p99": 28.659999999999854,
+        "max": 35.0
+      }
+    },
+    "preprocess/bind_groups_materialize": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "preprocess/bind_groups_ranges": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "preprocess/bind_groups_reused": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 39.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 36.67637514839731,
+        "min": 5.0,
+        "median": 38.0,
+        "p95": 41.0,
+        "p99": 41.0,
+        "max": 41.0
+      }
+    },
+    "process/cpu_usage": {
+      "unit": "%",
+      "kind": "gauge",
+      "last": 29.611650466918945,
+      "per_frame": {
+        "count": 324,
+        "mean": 26.588360371413053,
+        "min": 15.384615898132324,
+        "median": 25.97096538543701,
+        "p95": 36.94711761474608,
+        "p99": 40.423078460693326,
+        "max": 45.67307662963867
+      }
+    },
+    "process/mem_usage": {
+      "unit": "GiB",
+      "kind": "gauge",
+      "last": 1.9851646423339844,
+      "per_frame": {
+        "count": 324,
+        "mean": 1.8845353891820082,
+        "min": 1.5466651916503906,
+        "median": 1.903900146484375,
+        "p95": 1.97808780670166,
+        "p99": 1.9839221954345703,
+        "max": 1.9851646423339844
+      }
+    },
+    "render/acquire/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 5177.989300000002,
+      "last": 0.6818,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.4097807296612851,
+        "min": 0.0,
+        "median": 0.1753,
+        "p95": 1.20835,
+        "p99": 1.4332249999999997,
+        "max": 3.1443
+      }
+    },
+    "render/auxiliary_views/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0038,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.003324989653174195,
+        "min": 0.0022,
+        "median": 0.0031,
+        "p95": 0.004,
+        "p99": 0.0049,
+        "max": 0.2987
+      }
+    },
+    "render/auxiliary_views/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.001024,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.0011391057031702619,
+        "min": 0.0,
+        "median": 0.001024,
+        "p95": 0.002048,
+        "p99": 0.003072,
+        "max": 0.352256
+      }
+    },
+    "render/bin_unpacking/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 2432.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 1684.2473305189967,
+        "min": 768.0,
+        "median": 1408.0,
+        "p95": 2432.0,
+        "p99": 2432.0,
+        "max": 2432.0
+      }
+    },
+    "render/bin_unpacking/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0084,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.006162685208178055,
+        "min": 0.0026,
+        "median": 0.0059,
+        "p95": 0.0088,
+        "p99": 0.010920000000000072,
+        "max": 0.4015
+      }
+    },
+    "render/bin_unpacking/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.024576,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.022918071020607965,
+        "min": 0.018432,
+        "median": 0.022528,
+        "p95": 0.024576,
+        "p99": 0.024576,
+        "max": 0.382976
+      }
+    },
+    "render/blas_build/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.004,
+      "per_frame": {
+        "count": 49,
+        "mean": 0.004181632653061224,
+        "min": 0.0031,
+        "median": 0.0040999999999999995,
+        "p95": 0.00546,
+        "p99": 0.005751999999999999,
+        "max": 0.0058000000000000005
+      }
+    },
+    "render/blas_build/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.002048,
+      "per_frame": {
+        "count": 49,
+        "mean": 0.0014001632653061228,
+        "min": 0.0,
+        "median": 0.001024,
+        "p95": 0.002048,
+        "p99": 0.002048,
+        "max": 0.002048
+      }
+    },
+    "render/bloom/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.06899999999999999,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.05725411803658644,
+        "min": 0.041999999999999996,
+        "median": 0.054,
+        "p95": 0.076,
+        "p99": 0.0929,
+        "max": 0.575
+      }
+    },
+    "render/bloom/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.319488,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.3397437218773408,
+        "min": 0.294912,
+        "median": 0.321536,
+        "p95": 0.484352,
+        "p99": 0.704512,
+        "max": 0.801792
+      }
+    },
+    "render/busy/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 45183.73720000014,
+      "last": 4.3292,
+      "per_frame": {
+        "count": 12636,
+        "mean": 3.575794333649892,
+        "min": 0.0,
+        "median": 3.4879,
+        "p95": 4.39625,
+        "p99": 4.874734999999999,
+        "max": 9.753499999999999
+      }
+    },
+    "render/clustering/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.02,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.01997559804651959,
+        "min": 0.0147,
+        "median": 0.0191,
+        "p95": 0.0251,
+        "p99": 0.0318,
+        "max": 0.264
+      }
+    },
+    "render/clustering/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.060416,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.06377033954141814,
+        "min": 0.05632,
+        "median": 0.060416,
+        "p95": 0.07168,
+        "p99": 0.077824,
+        "max": 0.514048
+      }
+    },
+    "render/early prepass/clipper_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 2218999.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 1137216.1948514197,
+        "min": 267841.0,
+        "median": 762586.0,
+        "p95": 2244237.0,
+        "p99": 2255090.4000000004,
+        "max": 2274184.0
+      }
+    },
+    "render/early prepass/clipper_primitives_out": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 1861715.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 909393.1424550947,
+        "min": 70350.0,
+        "median": 550949.0,
+        "p95": 1878619.0,
+        "p99": 1888081.0,
+        "max": 1894440.0
+      }
+    },
+    "render/early prepass/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0357,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.03440263223243098,
+        "min": 0.0255,
+        "median": 0.0329,
+        "p95": 0.0434,
+        "p99": 0.054020000000000075,
+        "max": 0.4212
+      }
+    },
+    "render/early prepass/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.709632,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.4512455485473084,
+        "min": 0.159744,
+        "median": 0.355328,
+        "p95": 0.730112,
+        "p99": 1.0876928000000008,
+        "max": 1.222656
+      }
+    },
+    "render/early prepass/fragment_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 5326005.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 4717669.879728499,
+        "min": 4105067.0,
+        "median": 4675979.0,
+        "p95": 5280136.0,
+        "p99": 5424131.2,
+        "max": 5906482.0
+      }
+    },
+    "render/early prepass/vertex_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 3869972.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 1892440.3458322987,
+        "min": 376690.0,
+        "median": 1176020.0,
+        "p95": 3921671.0,
+        "p99": 3942799.0,
+        "max": 3973517.0
+      }
+    },
+    "render/early_mesh_preprocessing/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 2304.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 1459.0103468255938,
+        "min": 448.0,
+        "median": 1152.0,
+        "p95": 2304.0,
+        "p99": 2304.0,
+        "max": 2304.0
+      }
+    },
+    "render/early_mesh_preprocessing/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0044,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.003484744640344411,
+        "min": 0.0015,
+        "median": 0.0031,
+        "p95": 0.0056,
+        "p99": 0.0068000000000000005,
+        "max": 0.07629999999999999
+      }
+    },
+    "render/early_mesh_preprocessing/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.01536,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.014535612614846621,
+        "min": 0.012288,
+        "median": 0.014336,
+        "p95": 0.01536,
+        "p99": 0.016384,
+        "max": 0.365568
+      }
+    },
+    "render/graph/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 24632.87490000009,
+      "last": 2.382,
+      "per_frame": {
+        "count": 12636,
+        "mean": 1.9494202991453151,
+        "min": 0.0,
+        "median": 1.8542,
+        "p95": 2.674725,
+        "p99": 3.089519999999999,
+        "max": 8.2851
+      }
+    },
+    "render/main_opaque_pass_3d/clipper_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 2218998.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 1137215.1948514197,
+        "min": 267840.0,
+        "median": 762585.0,
+        "p95": 2244236.0,
+        "p99": 2255089.4000000004,
+        "max": 2274183.0
+      }
+    },
+    "render/main_opaque_pass_3d/clipper_primitives_out": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 1861714.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 909392.1424550947,
+        "min": 70349.0,
+        "median": 550948.0,
+        "p95": 1878618.0,
+        "p99": 1888080.0,
+        "max": 1894439.0
+      }
+    },
+    "render/main_opaque_pass_3d/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0217,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.02281513947520902,
+        "min": 0.012,
+        "median": 0.022099999999999998,
+        "p95": 0.030199999999999998,
+        "p99": 0.0383,
+        "max": 0.2497
+      }
+    },
+    "render/main_opaque_pass_3d/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 2.617344,
+      "per_frame": {
+        "count": 12081,
+        "mean": 1.9958136339706973,
+        "min": 0.54784,
+        "median": 2.052096,
+        "p95": 2.620416,
+        "p99": 2.8950528000000006,
+        "max": 3.345408
+      }
+    },
+    "render/main_opaque_pass_3d/fragment_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 2922053.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 2674178.572551941,
+        "min": 916362.0,
+        "median": 2797896.0,
+        "p95": 3439337.0,
+        "p99": 3717241.2,
+        "max": 3842376.0
+      }
+    },
+    "render/main_opaque_pass_3d/vertex_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 3869974.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 1892469.501779654,
+        "min": 376687.0,
+        "median": 1176012.0,
+        "p95": 3921668.0,
+        "p99": 3942792.0,
+        "max": 3973514.0
+      }
+    },
+    "render/main_transparent_pass_3d/clipper_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 190304.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 188776.7699693734,
+        "min": 186758.0,
+        "median": 188372.0,
+        "p95": 190462.0,
+        "p99": 190526.0,
+        "max": 190596.0
+      }
+    },
+    "render/main_transparent_pass_3d/clipper_primitives_out": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 53410.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 48782.56369505836,
+        "min": 0.0,
+        "median": 51640.0,
+        "p95": 54584.0,
+        "p99": 55669.600000000006,
+        "max": 56432.0
+      }
+    },
+    "render/main_transparent_pass_3d/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0104,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.012329492591672892,
+        "min": 0.0067,
+        "median": 0.0125,
+        "p95": 0.0165,
+        "p99": 0.01922000000000007,
+        "max": 0.2519
+      }
+    },
+    "render/main_transparent_pass_3d/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.048128,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.09754716728747478,
+        "min": 0.029696,
+        "median": 0.052224,
+        "p95": 0.328704,
+        "p99": 0.523264,
+        "max": 0.9472
+      }
+    },
+    "render/main_transparent_pass_3d/fragment_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 4781.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 189318.96150980878,
+        "min": 0.0,
+        "median": 23156.0,
+        "p95": 976981.0,
+        "p99": 1569029.6000000008,
+        "max": 1803111.0
+      }
+    },
+    "render/main_transparent_pass_3d/vertex_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 209039.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 205985.0607565599,
+        "min": 201947.0,
+        "median": 205175.0,
+        "p95": 209355.0,
+        "p99": 209483.0,
+        "max": 209623.0
+      }
+    },
+    "render/per_view_shadow_pass/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0011,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.0009654333250558651,
+        "min": 0.00019999999999999998,
+        "median": 0.0009,
+        "p95": 0.0018,
+        "p99": 0.0026,
+        "max": 0.022099999999999998
+      }
+    },
+    "render/per_view_shadow_pass/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.002048,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.0008948239384156113,
+        "min": 0.0,
+        "median": 0.001024,
+        "p95": 0.001024,
+        "p99": 0.002048,
+        "max": 0.00512
+      }
+    },
+    "render/present/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 5462.674599999973,
+      "last": 0.4683999999999999,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.43231043051598567,
+        "min": 0.0,
+        "median": 0.40100000000000025,
+        "p95": 0.6027999999999997,
+        "p99": 0.9924099999999993,
+        "max": 1.85
+      }
+    },
+    "render/sparse buffer updates/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0034000000000000002,
+      "per_frame": {
+        "count": 12078,
+        "mean": 0.0027569051167411368,
+        "min": 0.0015999999999999999,
+        "median": 0.0026,
+        "p95": 0.0034000000000000002,
+        "p99": 0.0040999999999999995,
+        "max": 0.3062
+      }
+    },
+    "render/sparse buffer updates/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.006144,
+      "per_frame": {
+        "count": 12078,
+        "mean": 0.006238701771815182,
+        "min": 0.004096,
+        "median": 0.006144,
+        "p95": 0.007168,
+        "p99": 0.007168,
+        "max": 0.33792
+      }
+    },
+    "render/ssao/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0054,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.006864423474877869,
+        "min": 0.0038,
+        "median": 0.0066,
+        "p95": 0.009000000000000001,
+        "p99": 0.0108,
+        "max": 0.3285
+      }
+    },
+    "render/ssao/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.70656,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.7466941716744823,
+        "min": 0.666624,
+        "median": 0.702464,
+        "p95": 1.072128,
+        "p99": 1.088512,
+        "max": 3.06176
+      }
+    },
+    "render/surface_trail/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 1048576.0,
+      "per_frame": {
+        "count": 4423,
+        "mean": 1048576.0,
+        "min": 1048576.0,
+        "median": 1048576.0,
+        "p95": 1048576.0,
+        "p99": 1048576.0,
+        "max": 1048576.0
+      }
+    },
+    "render/surface_trail/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0026,
+      "per_frame": {
+        "count": 4423,
+        "mean": 0.002546122541261613,
+        "min": 0.0009,
+        "median": 0.0025,
+        "p95": 0.0034000000000000002,
+        "p99": 0.0042,
+        "max": 0.0269
+      }
+    },
+    "render/surface_trail/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.05632,
+      "per_frame": {
+        "count": 4423,
+        "mean": 0.058303869771648,
+        "min": 0.055296,
+        "median": 0.05632,
+        "p95": 0.057344,
+        "p99": 0.059392,
+        "max": 0.470016
+      }
+    },
+    "render/thread/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 55824.40109999989,
+      "last": 5.4794,
+      "per_frame": {
+        "count": 12636,
+        "mean": 4.417885493827147,
+        "min": 0.0,
+        "median": 4.4166,
+        "p95": 5.3364,
+        "p99": 5.740969999999998,
+        "max": 11.4687
+      }
+    },
+    "render/tonemapping/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0023,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.003379066302458485,
+        "min": 0.0014,
+        "median": 0.0033,
+        "p95": 0.0051,
+        "p99": 0.0061,
+        "max": 0.1671
+      }
+    },
+    "render/tonemapping/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.095232,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.10450207764258101,
+        "min": 0.084992,
+        "median": 0.096256,
+        "p95": 0.123904,
+        "p99": 0.482304,
+        "max": 0.56832
+      }
+    },
+    "render/uniform_allocation/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 6144.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 4070.105454846453,
+        "min": 2560.0,
+        "median": 3072.0,
+        "p95": 6144.0,
+        "p99": 6144.0,
+        "max": 6144.0
+      }
+    },
+    "render/uniform_allocation/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0096,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.008448961178710686,
+        "min": 0.0044,
+        "median": 0.008,
+        "p95": 0.0112,
+        "p99": 0.014720000000000073,
+        "max": 0.27399999999999997
+      }
+    },
+    "render/uniform_allocation/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.043008,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.03171916496978796,
+        "min": 0.02048,
+        "median": 0.026624,
+        "p95": 0.043008,
+        "p99": 0.043008,
+        "max": 0.406528
+      }
+    },
+    "render/upscaling/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0021,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.003657876003642165,
+        "min": 0.0015999999999999999,
+        "median": 0.0036,
+        "p95": 0.0052,
+        "p99": 0.0063,
+        "max": 0.2141
+      }
+    },
+    "render/upscaling/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.164864,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.1740941551196117,
+        "min": 0.119808,
+        "median": 0.16384,
+        "p95": 0.210944,
+        "p99": 0.57856,
+        "max": 0.692224
+      }
+    },
+    "render/water_fft/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 196608.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 196608.0,
+        "min": 196608.0,
+        "median": 196608.0,
+        "p95": 196608.0,
+        "p99": 196608.0,
+        "max": 196608.0
+      }
+    },
+    "render/water_fft/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0028,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.0025361807797367147,
+        "min": 0.0009,
+        "median": 0.0025,
+        "p95": 0.0036,
+        "p99": 0.0043,
+        "max": 0.0477
+      }
+    },
+    "render/water_fft/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.124928,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.1298660177137646,
+        "min": 0.120832,
+        "median": 0.124928,
+        "p95": 0.126976,
+        "p99": 0.480256,
+        "max": 0.521216
+      }
+    },
+    "render/water_mips/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 87296.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 87296.0,
+        "min": 87296.0,
+        "median": 87296.0,
+        "p95": 87296.0,
+        "p99": 87296.0,
+        "max": 87296.0
+      }
+    },
+    "render/water_mips/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0015999999999999999,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.0018448969456170306,
+        "min": 0.0007999999999999999,
+        "median": 0.0018,
+        "p95": 0.0026,
+        "p99": 0.0031,
+        "max": 0.1025
+      }
+    },
+    "render/water_mips/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.022528,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.022951636453931543,
+        "min": 0.02048,
+        "median": 0.022528,
+        "p95": 0.022528,
+        "p99": 0.024576,
+        "max": 0.39936
+      }
+    },
+    "render/water_snapshot/clipper_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 1.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 1.0,
+        "min": 1.0,
+        "median": 1.0,
+        "p95": 1.0,
+        "p99": 1.0,
+        "max": 1.0
+      }
+    },
+    "render/water_snapshot/clipper_primitives_out": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 1.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 1.0,
+        "min": 1.0,
+        "median": 1.0,
+        "p95": 1.0,
+        "p99": 1.0,
+        "max": 1.0
+      }
+    },
+    "render/water_snapshot/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.002,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.0019919460309577824,
+        "min": 0.0006,
+        "median": 0.0021,
+        "p95": 0.003,
+        "p99": 0.0035,
+        "max": 0.1163
+      }
+    },
+    "render/water_snapshot/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.128,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.1361127482824217,
+        "min": 0.09728,
+        "median": 0.125952,
+        "p95": 0.162816,
+        "p99": 0.510976,
+        "max": 0.625664
+      }
+    },
+    "render/water_snapshot/fragment_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 3686400.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 3686400.0,
+        "min": 3686400.0,
+        "median": 3686400.0,
+        "p95": 3686400.0,
+        "p99": 3686400.0,
+        "max": 3686400.0
+      }
+    },
+    "render/water_snapshot/vertex_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 3.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 3.0,
+        "min": 3.0,
+        "median": 3.0,
+        "p95": 3.0,
+        "p99": 3.0,
+        "max": 3.0
+      }
+    },
+    "render/water_velocity/clipper_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 229376.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 229376.0,
+        "min": 229376.0,
+        "median": 229376.0,
+        "p95": 229376.0,
+        "p99": 229376.0,
+        "max": 229376.0
+      }
+    },
+    "render/water_velocity/clipper_primitives_out": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 96453.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 91837.36809866733,
+        "min": 43200.0,
+        "median": 94691.0,
+        "p95": 97633.0,
+        "p99": 98716.0,
+        "max": 99482.0
+      }
+    },
+    "render/water_velocity/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0007999999999999999,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.0017547471235825481,
+        "min": 0.0005,
+        "median": 0.0018,
+        "p95": 0.0029000000000000002,
+        "p99": 0.0035,
+        "max": 0.11620000000000001
+      }
+    },
+    "render/water_velocity/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.089088,
+      "per_frame": {
+        "count": 12081,
+        "mean": 0.09800434798443577,
+        "min": 0.075776,
+        "median": 0.09216,
+        "p95": 0.105472,
+        "p99": 0.477184,
+        "max": 0.587776
+      }
+    },
+    "render/water_velocity/fragment_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 1952525.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 1997874.8117705488,
+        "min": 0.0,
+        "median": 2015219.0,
+        "p95": 2955401.0,
+        "p99": 3450100.0000000005,
+        "max": 3652461.0
+      }
+    },
+    "render/water_velocity/vertex_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 688128.0,
+      "per_frame": {
+        "count": 12081,
+        "mean": 688128.0,
+        "min": 688128.0,
+        "median": 688128.0,
+        "p95": 688128.0,
+        "p99": 688128.0,
+        "max": 688128.0
+      }
+    },
+    "scene/batch/chain/capacity": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/chain/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/chain/high_water": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/chain/live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/chain/overflow": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked/capacity": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked/high_water": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked/live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked/overflow": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_two_sided/capacity": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_two_sided/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_two_sided/high_water": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_two_sided/live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_two_sided/overflow": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_wind/capacity": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_wind/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_wind/high_water": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_wind/live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_wind/overflow": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_wind_two_sided/capacity": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_wind_two_sided/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_wind_two_sided/high_water": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_wind_two_sided/live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/masked_wind_two_sided/overflow": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque/capacity": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque/high_water": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque/live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque/overflow": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_two_sided/capacity": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_two_sided/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_two_sided/high_water": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_two_sided/live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_two_sided/overflow": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_wind/capacity": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_wind/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_wind/high_water": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_wind/live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_wind/overflow": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_wind_two_sided/capacity": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_wind_two_sided/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_wind_two_sided/high_water": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_wind_two_sided/live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batch/opaque_wind_two_sided/overflow": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/batches/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/cells/resident": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/chains/high_water": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/chains/live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/chains/pending": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/overflow/instances": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/promoted": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/slots/batch_bump": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/slots/batch_capacity": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/slots/batch_capacity_bytes": {
+      "unit": "bytes",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/slots/batch_live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/slots/scene_bump": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/slots/scene_live": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "scene/slots/waste": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "script/ctx/mw.legacy/mib": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.41831207275390625,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.41831207275390625,
+        "min": 0.41831207275390625,
+        "median": 0.41831207275390625,
+        "p95": 0.41831207275390625,
+        "p99": 0.41831207275390625,
+        "max": 0.41831207275390625
+      }
+    },
+    "script/input/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 54.325599999999405,
+      "last": 0.0042,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.004299271921494615,
+        "min": 0.0025,
+        "median": 0.0040999999999999995,
+        "p95": 0.0056,
+        "p99": 0.0066,
+        "max": 0.1157
+      }
+    },
+    "script/ui/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 48.037700000000264,
+      "last": 0.0028,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0038016540044315196,
+        "min": 0.0018,
+        "median": 0.0035,
+        "p95": 0.0055,
+        "p99": 0.0078,
+        "max": 0.20900000000000002
+      }
+    },
+    "script/update/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 91.28740000000147,
+      "last": 0.0072,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.007224390629946222,
+        "min": 0.0040999999999999995,
+        "median": 0.0066,
+        "p95": 0.009725000000000001,
+        "p99": 0.018664999999999966,
+        "max": 0.176
+      }
+    },
+    "shapes/activate/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 8.002800050332842,
+      "last": 0.0005,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0006333333373166332,
+        "min": 0.00020000000298023225,
+        "median": 0.0006000000238418579,
+        "p95": 0.0008999999761581421,
+        "p99": 0.0012999999523162842,
+        "max": 0.024399999618530274
+      }
+    },
+    "shapes/activations": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "shapes/impacts": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "shapes/proxies": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "shapes/removals": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "shapes/sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "shapes/sync/ms": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "started_load_count": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 3032.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 2915.290598290598,
+        "min": 2657.0,
+        "median": 2998.0,
+        "p95": 3030.0,
+        "p99": 3032.0,
+        "max": 3032.0
+      }
+    },
+    "statics/bindless": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 1.0,
+        "min": 1.0,
+        "median": 1.0,
+        "p95": 1.0,
+        "p99": 1.0,
+        "max": 1.0
+      }
+    },
+    "statics/material_bind_groups": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "statics/material_classes": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "statics/material_keys": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "statics/material_pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "statics/materials": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "statics/materials_bound": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "statics/materials_unclassed": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "stream/activate/items": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 219.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.017331433998100665,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 21.0
+      }
+    },
+    "stream/activate/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 5.577500000000001,
+      "last": 0.20829999999999999,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.000441397594175372,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.5074
+      }
+    },
+    "stream/activate/queue": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.00007913896802785692,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 1.0
+      }
+    },
+    "stream/assets/queue": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.014719848053181387,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 1.0,
+        "max": 2.0
+      }
+    },
+    "stream/deactivate/items": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 223.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.017647989870212093,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 21.0
+      }
+    },
+    "stream/deactivate/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 12.254800000000003,
+      "last": 0.3285,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0009698322253877809,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.5892999999999999
+      }
+    },
+    "stream/deactivate/queue": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0006331117442228553,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 1.0
+      }
+    },
+    "stream/despawn/items": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 222.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.017568850902184234,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 21.0
+      }
+    },
+    "stream/despawn/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 2.524,
+      "last": 0.0262,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.00019974675530231087,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.1776
+      }
+    },
+    "stream/despawn/queue": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "stream/drive/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 2888.5461000000096,
+      "last": 0.1652,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.22859655745488994,
+        "min": 0.15760000000000002,
+        "median": 0.21780000000000002,
+        "p95": 0.31545,
+        "p99": 0.44882999999999995,
+        "max": 2.1767000000000003
+      }
+    },
+    "stream/fetch/items": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 83.0,
+      "last": 1.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.006568534346312124,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 1.0
+      }
+    },
+    "stream/fetch/queue": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.006568534346312124,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 1.0
+      }
+    },
+    "stream/latency/s": {
+      "unit": "s",
+      "kind": "gauge",
+      "last": 0.015981095644633313,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.014775473286407053,
+        "min": 0.010729047736888115,
+        "median": 0.013994294618423886,
+        "p95": 0.020350420180062865,
+        "p99": 0.030153896144050334,
+        "max": 0.030743594739256207
+      }
+    },
+    "stream/model_queue": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.04542576764798987,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 45.0
+      }
+    },
+    "stream/models": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 683.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 750.8846945235834,
+        "min": 677.0,
+        "median": 758.0,
+        "p95": 851.0,
+        "p99": 851.0,
+        "max": 851.0
+      }
+    },
+    "stream/oldest_request/s": {
+      "unit": "s",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0002462244064577443,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.008922975000001518,
+        "max": 0.0975318999999999
+      }
+    },
+    "stream/page_cache/bytes": {
+      "unit": "bytes",
+      "kind": "gauge",
+      "last": 23684804.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 23556017.704020258,
+        "min": 23196620.0,
+        "median": 23684804.0,
+        "p95": 23684804.0,
+        "p99": 23684804.0,
+        "max": 23684804.0
+      }
+    },
+    "stream/requests": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.022000633111744224,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 1.0,
+        "max": 2.0
+      }
+    },
+    "stream/resident_cells": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1124.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 1127.9791073124406,
+        "min": 1124.0,
+        "median": 1128.0,
+        "p95": 1133.0,
+        "p99": 1135.0,
+        "max": 1135.0
+      }
+    },
+    "stream/spawn/items": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 351.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.027777777777777776,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 27.0
+      }
+    },
+    "stream/spawn/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 3.825899999999999,
+      "last": 0.055099999999999996,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.00030277777777777773,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.187
+      }
+    },
+    "stream/spawn/queue": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "stream/tick/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 2458.074899999998,
+      "last": 0.1402,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.1945295109211774,
+        "min": 0.1323,
+        "median": 0.1868,
+        "p95": 0.2696,
+        "p99": 0.3647549999999997,
+        "max": 0.6757
+      }
+    },
+    "stream/upload/bytes": {
+      "unit": "bytes",
+      "kind": "sum",
+      "total": 33852312.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 2679.037037037037,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 2825130.0
+      }
+    },
+    "stream/upload/items": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 57.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.004510921177587844,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 1.0
+      }
+    },
+    "stream/upload/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 0.6302999999999999,
+      "last": 0.0115,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.00004988129154795822,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.022099999999999998
+      }
+    },
+    "stream/upload/queue": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "surface/active_cells": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "surface/advance_cpu_ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "surface/cell_upload_ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 0.192,
+      "last": 0.019899999999999998,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.000015194681861348528,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.025599999999999998
+      }
+    },
+    "surface/shelter_redraws": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 15.0,
+      "last": 1.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0011870845204178537,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 1.0
+      }
+    },
+    "surface/steps": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "system/cpu_usage": {
+      "unit": "%",
+      "kind": "gauge",
+      "last": 29.132835388183594,
+      "per_frame": {
+        "count": 324,
+        "mean": 33.89140240940047,
+        "min": 27.634742736816406,
+        "median": 32.06557846069336,
+        "p95": 43.004282760620114,
+        "p99": 44.48808776855468,
+        "max": 46.101558685302734
+      }
+    },
+    "system/mem_usage": {
+      "unit": "%",
+      "kind": "gauge",
+      "last": 51.421704587740194,
+      "per_frame": {
+        "count": 324,
+        "mean": 51.11727169157298,
+        "min": 50.540332140267694,
+        "median": 51.169460876270264,
+        "p95": 51.39932141993993,
+        "p99": 51.418667856855144,
+        "max": 51.426763608045334
+      }
+    },
+    "terrain/patches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 514.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 511.0546058879392,
+        "min": 493.0,
+        "median": 511.0,
+        "p95": 517.0,
+        "p99": 520.0,
+        "max": 523.0
+      }
+    },
+    "terrain/select/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 3266.106804192066,
+      "last": 0.3077999949455261,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.25847632195252185,
+        "min": 0.21850000321865082,
+        "median": 0.24540001153945923,
+        "p95": 0.32660001516342163,
+        "p99": 0.42489500492811194,
+        "max": 0.744100034236908
+      }
+    },
+    "terrain/update/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 3662.632400095463,
+      "last": 0.3497999906539917,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.28985694840894766,
+        "min": 0.24689999222755432,
+        "median": 0.2744999825954437,
+        "p95": 0.3651999831199646,
+        "p99": 0.481964997947216,
+        "max": 1.7635000944137573
+      }
+    },
+    "terrain/upload/bytes": {
+      "unit": "bytes",
+      "kind": "sum",
+      "total": 7421952.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 587.3656220322887,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 573440.0
+      }
+    },
+    "views/all/batch_sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 12.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 11.64764542936288,
+        "min": 10.0,
+        "median": 12.0,
+        "p95": 12.0,
+        "p99": 12.0,
+        "max": 12.0
+      }
+    },
+    "views/all/bins": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1560.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 801.8665611396914,
+        "min": 128.0,
+        "median": 544.0,
+        "p95": 1572.0,
+        "p99": 1578.0,
+        "max": 1586.0
+      }
+    },
+    "views/all/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 1.0009497427779976,
+        "min": 1.0,
+        "median": 1.0,
+        "p95": 1.0,
+        "p99": 1.0,
+        "max": 3.0
+      }
+    },
+    "views/all/instance_batches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/all/instance_draws": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/all/instance_slots": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/all/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1928.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 1150.2828650573804,
+        "min": 310.0,
+        "median": 908.0,
+        "p95": 1940.0,
+        "p99": 1948.0,
+        "max": 1960.0
+      }
+    },
+    "views/all/pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 8.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 8.0,
+        "min": 8.0,
+        "median": 8.0,
+        "p95": 8.0,
+        "p99": 8.0,
+        "max": 8.0
+      }
+    },
+    "views/all/pipelines_distinct": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 8.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 8.0,
+        "min": 8.0,
+        "median": 8.0,
+        "p95": 8.0,
+        "p99": 8.0,
+        "max": 8.0
+      }
+    },
+    "views/all/work_items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 2129.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 1276.0146418678275,
+        "min": 317.0,
+        "median": 1010.0,
+        "p95": 2145.0,
+        "p99": 2156.0,
+        "max": 2172.0
+      }
+    },
+    "views/cascade/batch_sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/cascade/bins": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/cascade/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0009497427779976257,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 2.0
+      }
+    },
+    "views/cascade/instance_batches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/cascade/instance_draws": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/cascade/instance_slots": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/cascade/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/cascade/pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/cascade/work_items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/lamp_face/batch_sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/lamp_face/bins": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/lamp_face/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/lamp_face/instance_batches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/lamp_face/instance_draws": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/lamp_face/instance_slots": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/lamp_face/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/lamp_face/pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/lamp_face/work_items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/main/batch_sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 12.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 11.64764542936288,
+        "min": 10.0,
+        "median": 12.0,
+        "p95": 12.0,
+        "p99": 12.0,
+        "max": 12.0
+      }
+    },
+    "views/main/bins": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1560.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 801.8665611396914,
+        "min": 128.0,
+        "median": 544.0,
+        "p95": 1572.0,
+        "p99": 1578.0,
+        "max": 1586.0
+      }
+    },
+    "views/main/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 1.0,
+        "min": 1.0,
+        "median": 1.0,
+        "p95": 1.0,
+        "p99": 1.0,
+        "max": 1.0
+      }
+    },
+    "views/main/instance_batches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/main/instance_draws": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/main/instance_slots": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/main/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 1928.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 1150.2828650573804,
+        "min": 310.0,
+        "median": 908.0,
+        "p95": 1940.0,
+        "p99": 1948.0,
+        "max": 1960.0
+      }
+    },
+    "views/main/pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 8.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 8.0,
+        "min": 8.0,
+        "median": 8.0,
+        "p95": 8.0,
+        "p99": 8.0,
+        "max": 8.0
+      }
+    },
+    "views/main/work_items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 2129.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 1276.0146418678275,
+        "min": 317.0,
+        "median": 1010.0,
+        "p95": 2145.0,
+        "p99": 2156.0,
+        "max": 2172.0
+      }
+    },
+    "views/other/batch_sets": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/other/bins": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/other/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/other/instance_batches": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/other/instance_draws": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/other/instance_slots": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/other/items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/other/pipelines": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "views/other/work_items": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12635,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "weather/apply/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 4.073000000000519,
+      "last": 0.00039999999999999996,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.00032233301677747595,
+        "min": 0.00009999999999999999,
+        "median": 0.0003,
+        "p95": 0.0005,
+        "p99": 0.0007999999999999999,
+        "max": 0.0404
+      }
+    },
+    "weather/eval/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 134.39730029553175,
+      "last": 0.010200000368058681,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.010636063651118372,
+        "min": 0.005200000014156103,
+        "median": 0.009700000286102295,
+        "p95": 0.01510000042617321,
+        "p99": 0.022199999541044235,
+        "max": 0.25049999356269836
+      }
+    },
+    "weather/fx/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 11.614299999999906,
+      "last": 0.0007999999999999999,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0009191437163659113,
+        "min": 0.0003,
+        "median": 0.0007999999999999999,
+        "p95": 0.0014,
+        "p99": 0.0022,
+        "max": 0.0596
+      }
+    },
+    "weather/strikes": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "world/meshes": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 3203.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 3200.054605887939,
+        "min": 3182.0,
+        "median": 3200.0,
+        "p95": 3206.0,
+        "p99": 3209.0,
+        "max": 3212.0
+      }
+    },
+    "world/origin_shifts": {
+      "unit": "count",
+      "kind": "sum",
+      "total": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "world/point_lights": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 12636,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    }
+  },
+  "spikes": [
+    {
+      "frame": 935,
+      "t_s": 5.0340500999999955,
+      "frame_ms": 12.109399999999999,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 11.4687
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 9.753499999999999
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 8.2851
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.3503
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.591744
+        }
+      ],
+      "work_ms": 9.753499999999999
+    },
+    {
+      "frame": 8194,
+      "t_s": 41.270880299999924,
+      "frame_ms": 10.62,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 4.6401
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.244999999999999
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 4.1568000000000005
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 2.1692
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.900544
+        }
+      ],
+      "work_ms": 4.244999999999999
+    },
+    {
+      "frame": 3102,
+      "t_s": 16.09099559999995,
+      "frame_ms": 8.9717,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 8.2874
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 7.545099999999999
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 5.933199999999999
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.2105
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.112512
+        }
+      ],
+      "work_ms": 7.545099999999999
+    },
+    {
+      "frame": 8946,
+      "t_s": 45.14985349999991,
+      "frame_ms": 8.6615,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 8.075000000000001
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 6.112000000000001
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.6394
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 4.5004
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.021376
+        }
+      ],
+      "work_ms": 6.112000000000001
+    },
+    {
+      "frame": 3056,
+      "t_s": 15.819889499999952,
+      "frame_ms": 8.3796,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 5.4902
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 4.9776
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.8626
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 3.1722
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.188288
+        }
+      ],
+      "work_ms": 4.9776
+    },
+    {
+      "frame": 136,
+      "t_s": 0.7148884999999998,
+      "frame_ms": 8.1578,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 5.5071
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 4.9419
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.3352
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.14016
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 2.0829
+        }
+      ],
+      "work_ms": 4.9419
+    },
+    {
+      "frame": 9589,
+      "t_s": 48.692678699999924,
+      "frame_ms": 8.034899999999999,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 7.3491
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.0239
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 3.802700000000001
+        },
+        {
+          "counter": "render/acquire/ms",
+          "value": 3.1443
+        },
+        {
+          "counter": "render/ssao/elapsed_gpu",
+          "value": 2.70848
+        }
+      ],
+      "work_ms": 7.165951999999999
+    },
+    {
+      "frame": 3065,
+      "t_s": 15.877473599999952,
+      "frame_ms": 8.0278,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 5.1978
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.9615
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 4.624500000000001
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 2.7702
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.19136
+        }
+      ],
+      "work_ms": 4.9615
+    },
+    {
+      "frame": 139,
+      "t_s": 0.7326961999999998,
+      "frame_ms": 7.9775,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 4.8383
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.453600000000001
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 4.2042
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 2.419
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.144256
+        }
+      ],
+      "work_ms": 4.751359999999998
+    },
+    {
+      "frame": 3444,
+      "t_s": 17.87159329999998,
+      "frame_ms": 7.861,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 4.7265
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.3209
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 3.7329
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 2.039
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.624064
+        }
+      ],
+      "work_ms": 4.3209
+    }
+  ],
+  "work_spikes": [
+    {
+      "frame": 935,
+      "t_s": 5.0340500999999955,
+      "frame_ms": 12.109399999999999,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 11.4687
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 9.753499999999999
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 8.2851
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.3503
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.591744
+        }
+      ],
+      "work_ms": 9.753499999999999
+    },
+    {
+      "frame": 8193,
+      "t_s": 41.26026029999992,
+      "frame_ms": 5.067699999999999,
+      "culprits": [
+        {
+          "counter": "main/busy/ms",
+          "value": 9.7201
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.906688
+        },
+        {
+          "counter": "render/ssao/elapsed_gpu",
+          "value": 0.700416
+        },
+        {
+          "counter": "render/water_snapshot/elapsed_gpu",
+          "value": 0.494592
+        },
+        {
+          "counter": "render/early prepass/elapsed_gpu",
+          "value": 0.463872
+        }
+      ],
+      "work_ms": 9.7201
+    },
+    {
+      "frame": 9590,
+      "t_s": 48.700410999999924,
+      "frame_ms": 7.7323,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 7.1034999999999995
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.5838
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 3.8377
+        },
+        {
+          "counter": "render/acquire/ms",
+          "value": 2.8777
+        },
+        {
+          "counter": "render/ssao/elapsed_gpu",
+          "value": 2.69824
+        }
+      ],
+      "work_ms": 7.567359999999999
+    },
+    {
+      "frame": 3102,
+      "t_s": 16.09099559999995,
+      "frame_ms": 8.9717,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 8.2874
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 7.545099999999999
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 5.933199999999999
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.2105
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.112512
+        }
+      ],
+      "work_ms": 7.545099999999999
+    },
+    {
+      "frame": 9591,
+      "t_s": 48.708032599999925,
+      "frame_ms": 7.6216,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 6.9395999999999995
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.3745
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 3.76
+        },
+        {
+          "counter": "render/ssao/elapsed_gpu",
+          "value": 2.860032
+        },
+        {
+          "counter": "render/acquire/ms",
+          "value": 2.7041
+        }
+      ],
+      "work_ms": 7.333888
+    },
+    {
+      "frame": 3055,
+      "t_s": 15.811509899999951,
+      "frame_ms": 5.701300000000001,
+      "culprits": [
+        {
+          "counter": "main/busy/ms",
+          "value": 7.2359
+        },
+        {
+          "counter": "render/thread/ms",
+          "value": 5.061999999999999
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 4.509499999999999
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 2.7182999999999997
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.18112
+        }
+      ],
+      "work_ms": 7.2359
+    },
+    {
+      "frame": 9593,
+      "t_s": 48.72327679999993,
+      "frame_ms": 7.4808,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 6.7315
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 3.7975
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 3.7735000000000007
+        },
+        {
+          "counter": "render/ssao/elapsed_gpu",
+          "value": 2.700288
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.598912
+        }
+      ],
+      "work_ms": 7.17824
+    },
+    {
+      "frame": 8192,
+      "t_s": 41.25519259999992,
+      "frame_ms": 5.0891,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 8.8326
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 7.171
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 3.8995
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 3.6821
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.323456
+        }
+      ],
+      "work_ms": 7.171
+    },
+    {
+      "frame": 9589,
+      "t_s": 48.692678699999924,
+      "frame_ms": 8.034899999999999,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 7.3491
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.0239
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 3.802700000000001
+        },
+        {
+          "counter": "render/acquire/ms",
+          "value": 3.1443
+        },
+        {
+          "counter": "render/ssao/elapsed_gpu",
+          "value": 2.70848
+        }
+      ],
+      "work_ms": 7.165951999999999
+    },
+    {
+      "frame": 9592,
+      "t_s": 48.715795999999926,
+      "frame_ms": 7.7634,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 7.1007
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.0305
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 3.8582000000000005
+        },
+        {
+          "counter": "render/acquire/ms",
+          "value": 2.7982
+        },
+        {
+          "counter": "render/ssao/elapsed_gpu",
+          "value": 2.699264
+        }
+      ],
+      "work_ms": 7.1024639999999994
+    },
+    {
+      "frame": 9594,
+      "t_s": 48.730716099999924,
+      "frame_ms": 7.4393,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 6.7917000000000005
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.1085
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 3.8456
+        },
+        {
+          "counter": "render/ssao/elapsed_gpu",
+          "value": 3.06176
+        },
+        {
+          "counter": "render/acquire/ms",
+          "value": 2.5587
+        }
+      ],
+      "work_ms": 7.095295999999999
+    },
+    {
+      "frame": 9595,
+      "t_s": 48.736782499999926,
+      "frame_ms": 6.0664,
+      "culprits": [
+        {
+          "counter": "render/thread/ms",
+          "value": 5.2886
+        },
+        {
+          "counter": "main/busy/ms",
+          "value": 4.1342
+        },
+        {
+          "counter": "render/busy/ms",
+          "value": 3.8937
+        },
+        {
+          "counter": "render/ssao/elapsed_gpu",
+          "value": 3.052544
+        },
+        {
+          "counter": "render/graph/ms",
+          "value": 2.3689
+        }
+      ],
+      "work_ms": 7.088128
+    }
+  ],
+  "gates": [
+    {
+      "gate": {
+        "gate": "max_frame_stat",
+        "stat": "median",
+        "ms": 11.0
+      },
+      "value": 5.179600000000001,
+      "passed": true,
+      "detail": "Median frame 5.18 ms, limit 11 ms"
+    },
+    {
+      "gate": {
+        "gate": "max_stutters",
+        "factor": 1.5,
+        "window": 60,
+        "per_minute": 1.0
+      },
+      "value": 9.140928793412431,
+      "passed": false,
+      "detail": "frame_ms: 10 stutters (> 1.5x moving median of 60) in 1.09 min = 9.14/min, limit 1/min"
+    },
+    {
+      "gate": {
+        "gate": "max_frame_ms",
+        "ms": 33.0
+      },
+      "value": 12.109399999999999,
+      "passed": true,
+      "detail": "worst frame 12.11 ms, limit 33 ms"
+    }
+  ],
+  "regressions": [],
+  "improvements": [],
+  "passed": false,
+  "hitches": {
+    "threshold_ms": 25.0,
+    "measured": 0,
+    "warmup": 5,
+    "rows": [
+      {
+        "phase": "warmup",
+        "frame": 0,
+        "t_s": 0.5775002,
+        "frame_ms": 577.5002000000001,
+        "churn": [
+          {
+            "counter": "main/busy/ms",
+            "value": 557.1819
+          },
+          {
+            "counter": "surface/advance_cpu_ms",
+            "value": 65.3889
+          },
+          {
+            "counter": "surface/cell_upload_ms",
+            "value": 0.7001000000000001
+          },
+          {
+            "counter": "stream/drive/ms",
+            "value": 0.4328
+          },
+          {
+            "counter": "bigspace/total/ms",
+            "value": 0.1185
+          },
+          {
+            "counter": "stream/tick/ms",
+            "value": 0.0868
+          },
+          {
+            "counter": "bigspace/high_precision/ms",
+            "value": 0.0539
+          },
+          {
+            "counter": "weather/eval/ms",
+            "value": 0.029400000348687172
+          },
+          {
+            "counter": "script/update/ms",
+            "value": 0.0207
+          },
+          {
+            "counter": "script/input/ms",
+            "value": 0.0094
+          },
+          {
+            "counter": "far/select/ms",
+            "value": 0.0084
+          },
+          {
+            "counter": "anim/evaluate/ms",
+            "value": 0.0070999999999999995
+          }
+        ]
+      },
+      {
+        "phase": "warmup",
+        "frame": 1,
+        "t_s": 0.9470945000000001,
+        "frame_ms": 369.5943,
+        "churn": [
+          {
+            "counter": "main/busy/ms",
+            "value": 589.6966
+          },
+          {
+            "counter": "render/thread/ms",
+            "value": 330.7214
+          },
+          {
+            "counter": "render/busy/ms",
+            "value": 300.73940000000005
+          },
+          {
+            "counter": "surface/advance_cpu_ms",
+            "value": 65.3889
+          },
+          {
+            "counter": "render/acquire/ms",
+            "value": 17.4154
+          },
+          {
+            "counter": "render/present/ms",
+            "value": 12.566600000000001
+          },
+          {
+            "counter": "render/graph/ms",
+            "value": 4.1024
+          },
+          {
+            "counter": "stream/drive/ms",
+            "value": 1.1545
+          },
+          {
+            "counter": "surface/cell_upload_ms",
+            "value": 0.7001000000000001
+          },
+          {
+            "counter": "terrain/update/ms",
+            "value": 0.5443000197410583
+          },
+          {
+            "counter": "stream/tick/ms",
+            "value": 0.4981
+          },
+          {
+            "counter": "terrain/select/ms",
+            "value": 0.37560001015663147
+          }
+        ]
+      },
+      {
+        "phase": "warmup",
+        "frame": 3,
+        "t_s": 0.9929728,
+        "frame_ms": 32.4249,
+        "churn": [
+          {
+            "counter": "pipelines/wait_ms",
+            "value": 151.5145
+          },
+          {
+            "counter": "render/thread/ms",
+            "value": 38.106500000000004
+          },
+          {
+            "counter": "render/busy/ms",
+            "value": 35.0739
+          },
+          {
+            "counter": "main/busy/ms",
+            "value": 31.538800000000002
+          },
+          {
+            "counter": "terrain/update/ms",
+            "value": 23.70430088043213
+          },
+          {
+            "counter": "pipelines/compile_ms",
+            "value": 22.5907
+          },
+          {
+            "counter": "render/graph/ms",
+            "value": 21.703899999999997
+          },
+          {
+            "counter": "pipelines/front_ms",
+            "value": 13.662600000000001
+          },
+          {
+            "counter": "pipelines/driver_ms",
+            "value": 8.928099999999999
+          },
+          {
+            "counter": "stream/drive/ms",
+            "value": 2.8313000000000006
+          },
+          {
+            "counter": "render/present/ms",
+            "value": 2.6097
+          },
+          {
+            "counter": "stream/tick/ms",
+            "value": 2.4228
+          }
+        ]
+      },
+      {
+        "phase": "warmup",
+        "frame": 17,
+        "t_s": 1.2178598000000003,
+        "frame_ms": 86.3713,
+        "churn": [
+          {
+            "counter": "pipelines/compile_ms",
+            "value": 205.9651
+          },
+          {
+            "counter": "pipelines/front_ms",
+            "value": 193.8666
+          },
+          {
+            "counter": "main/busy/ms",
+            "value": 65.861
+          },
+          {
+            "counter": "render/thread/ms",
+            "value": 54.55329999999999
+          },
+          {
+            "counter": "render/busy/ms",
+            "value": 53.1392
+          },
+          {
+            "counter": "pipelines/driver_ms",
+            "value": 12.0985
+          },
+          {
+            "counter": "stream/drive/ms",
+            "value": 3.1692
+          },
+          {
+            "counter": "stream/tick/ms",
+            "value": 2.5644
+          },
+          {
+            "counter": "render/graph/ms",
+            "value": 2.2686
+          },
+          {
+            "counter": "render/present/ms",
+            "value": 1.1857
+          },
+          {
+            "counter": "terrain/update/ms",
+            "value": 1.0923000574111938
+          },
+          {
+            "counter": "terrain/select/ms",
+            "value": 0.9092999994754791
+          }
+        ]
+      },
+      {
+        "phase": "warmup",
+        "frame": 19,
+        "t_s": 1.2525011000000004,
+        "frame_ms": 26.134500000000003,
+        "churn": [
+          {
+            "counter": "pipelines/wait_ms",
+            "value": 193.8837
+          },
+          {
+            "counter": "pipelines/compile_ms",
+            "value": 99.3904
+          },
+          {
+            "counter": "pipelines/front_ms",
+            "value": 92.9749
+          },
+          {
+            "counter": "render/thread/ms",
+            "value": 30.462000000000003
+          },
+          {
+            "counter": "render/busy/ms",
+            "value": 28.9859
+          },
+          {
+            "counter": "main/busy/ms",
+            "value": 18.5414
+          },
+          {
+            "counter": "pipelines/driver_ms",
+            "value": 6.4155
+          },
+          {
+            "counter": "stream/drive/ms",
+            "value": 2.8728
+          },
+          {
+            "counter": "render/graph/ms",
+            "value": 2.2781
+          },
+          {
+            "counter": "stream/tick/ms",
+            "value": 1.5995
+          },
+          {
+            "counter": "render/present/ms",
+            "value": 1.262
+          },
+          {
+            "counter": "terrain/update/ms",
+            "value": 0.8643999993801117
+          }
+        ]
+      }
+    ]
+  },
+  "warmup": {
+    "frames": 334,
+    "duration_s": 3.1417326999999995,
+    "worst_ms": 577.5002000000001
+  },
+  "wall_start_unix_s": 1794465516.6373243,
+  "wall_end_unix_s": 1794465582.2785935,
+  "views": {
+    "cascade0": {
+      "kind": "cascade",
+      "frames": 6,
+      "views_per_frame": 2.0,
+      "metrics": {
+        "batch_sets": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "bins": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "instance_batches": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "instance_draws": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "instance_slots": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "items": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "non_mesh": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "pipelines": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "shadow/batch_sets": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "shadow/bins": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "shadow/instance_batches": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "shadow/instance_draws": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "shadow/instance_slots": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "shadow/items": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "shadow/non_mesh": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "shadow/pipelines": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "shadow/unbatchable": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "unbatchable": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "work_items": {
+          "mean": 0.0,
+          "max": 0.0
+        }
+      }
+    },
+    "main": {
+      "kind": "main",
+      "frames": 12636,
+      "views_per_frame": 1.0,
+      "metrics": {
+        "alpha_mask3d/batch_sets": {
+          "mean": 2.0,
+          "max": 2.0
+        },
+        "alpha_mask3d/bins": {
+          "mean": 186.5209718265274,
+          "max": 368.0
+        },
+        "alpha_mask3d/instance_batches": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "alpha_mask3d/instance_draws": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "alpha_mask3d/instance_slots": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "alpha_mask3d/items": {
+          "mean": 186.5209718265274,
+          "max": 368.0
+        },
+        "alpha_mask3d/non_mesh": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "alpha_mask3d/pipelines": {
+          "mean": 1.0,
+          "max": 1.0
+        },
+        "alpha_mask3d/unbatchable": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "alpha_mask3d_prepass/batch_sets": {
+          "mean": 2.0,
+          "max": 2.0
+        },
+        "alpha_mask3d_prepass/bins": {
+          "mean": 186.5209718265274,
+          "max": 368.0
+        },
+        "alpha_mask3d_prepass/instance_batches": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "alpha_mask3d_prepass/instance_draws": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "alpha_mask3d_prepass/instance_slots": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "alpha_mask3d_prepass/items": {
+          "mean": 186.5209718265274,
+          "max": 368.0
+        },
+        "alpha_mask3d_prepass/non_mesh": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "alpha_mask3d_prepass/pipelines": {
+          "mean": 1.0,
+          "max": 1.0
+        },
+        "alpha_mask3d_prepass/unbatchable": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "batch_sets": {
+          "mean": 11.64767331433998,
+          "max": 12.0
+        },
+        "bins": {
+          "mean": 801.8825577714466,
+          "max": 1586.0
+        },
+        "instance_batches": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "instance_draws": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "instance_slots": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "items": {
+          "mean": 1150.3005698005697,
+          "max": 1960.0
+        },
+        "non_mesh": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "opaque3d/batch_sets": {
+          "mean": 3.8238366571699904,
+          "max": 4.0
+        },
+        "opaque3d/bins": {
+          "mean": 214.42030705919595,
+          "max": 429.0
+        },
+        "opaque3d/instance_batches": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "opaque3d/instance_draws": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "opaque3d/instance_slots": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "opaque3d/items": {
+          "mean": 388.62931307375754,
+          "max": 617.0
+        },
+        "opaque3d/non_mesh": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "opaque3d/pipelines": {
+          "mean": 3.0,
+          "max": 3.0
+        },
+        "opaque3d/unbatchable": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "opaque3d_prepass/batch_sets": {
+          "mean": 3.8238366571699904,
+          "max": 4.0
+        },
+        "opaque3d_prepass/bins": {
+          "mean": 214.42030705919595,
+          "max": 429.0
+        },
+        "opaque3d_prepass/instance_batches": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "opaque3d_prepass/instance_draws": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "opaque3d_prepass/instance_slots": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "opaque3d_prepass/items": {
+          "mean": 388.62931307375754,
+          "max": 617.0
+        },
+        "opaque3d_prepass/non_mesh": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "opaque3d_prepass/pipelines": {
+          "mean": 3.0,
+          "max": 3.0
+        },
+        "opaque3d_prepass/unbatchable": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "pipelines": {
+          "mean": 8.0,
+          "max": 8.0
+        },
+        "unbatchable": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "work_items": {
+          "mean": 1276.036878759101,
+          "max": 2172.0
+        }
+      }
+    }
+  }
+}
