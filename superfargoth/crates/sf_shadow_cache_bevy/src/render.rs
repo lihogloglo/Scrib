@@ -92,6 +92,8 @@ pub(crate) fn build(app: &mut App, shared: SharedCaptures) {
         .init_resource::<Detached>()
         .init_resource::<CleanLayers>()
         .insert_resource(shared)
+        // Point faces take no GPU-culled meshes: the main world lists them (`add_gpu_culled_casters`).
+        .insert_resource(bevy_pbr::CpuListedPointShadowCasters)
         .add_systems(ExtractSchedule, extract)
         .add_systems(RenderStartup, bevy_render::init_gpu_resource::<CopyPipeline>)
         .add_systems(

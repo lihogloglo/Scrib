@@ -101,6 +101,15 @@ pub struct StreamingConfig {
     /// bindless slabs half as fast. Off: the mapper's materials as they come and
     /// one sampler per image (the app's `--off matclass` A/B).
     pub material_classes: bool,
+    /// Static parts (cooked `Static` placements and precombine buckets) carry
+    /// Bevy's `NoCpuCulling`: no per-view CPU frustum, range and light scans;
+    /// the GPU preprocess culls them by frustum and visibility range in every
+    /// view, and the lamp shadow cache lists them for its lights
+    /// ([`crate::StaticGpuCulling`]; research statics-cpu-cost-2026-11-12.md
+    /// slice 1). Off:
+    /// Bevy's CPU culling for them as for everything else (the app's
+    /// `--off cpuculltag` A/B).
+    pub gpu_cull_statics: bool,
 }
 
 impl Default for StreamingConfig {
@@ -116,6 +125,7 @@ impl Default for StreamingConfig {
             max_loading_meshes: 64,
             precombine: true,
             material_classes: true,
+            gpu_cull_statics: false,
         }
     }
 }
@@ -1319,6 +1329,8 @@ impl Runtime {
         let Some(center) = world.resource::<Assets<CellPrecombine>>().get(handle).map(|c| c.center) else { return 0 };
         let batch = world.spawn((Transform::IDENTITY, Visibility::Inherited, ChildOf(group))).id();
         let mut n = 1;
+        // Precombined buckets are statics: GPU-culled when the app allows it.
+        let gpu_culled = crate::StaticGpuCulling::on(world);
         for (template, ranges, end, band) in &buckets {
             let cx = SpawnCx {
                 worldspace: &request.worldspace,
@@ -1332,7 +1344,7 @@ impl Runtime {
                 end_band: *band,
                 lod: &ends.lod,
             };
-            n += spawn_template_ranges(world, &cx, template, ranges);
+            n += spawn_template_ranges(world, &cx, template, ranges, gpu_culled);
         }
         n
     }

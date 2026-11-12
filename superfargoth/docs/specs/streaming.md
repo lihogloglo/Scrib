@@ -207,7 +207,9 @@ small-feature culling (2 px). Planned fixes (ROADMAP Next up 6):
   it, and R0 activation is decoupled from visual tiers.
 - **J2**: streamed statics try `NoCpuCulling`. Bevy then culls frustum and
   `VisibilityRange` on the GPU in every view, cascades included, and the
-  per-frame CPU visibility passes (O(entities × views)) drop out.
+  per-frame CPU visibility passes (O(entities × views)) drop out. Built
+  2026-11-12 for cooked `Static` parts and precombine buckets
+  (`StreamingConfig::gpu_cull_statics`, `--off cpuculltag`; lamps: shadows.md "Caching").
 
 **Anchors**: `Anchor { id, role: Gameplay | Visual, location, velocity,
 view_dir, radius_scale }`. The player is `Gameplay` (drives R0). The camera

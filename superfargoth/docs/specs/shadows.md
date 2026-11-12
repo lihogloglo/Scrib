@@ -253,6 +253,12 @@ home (raise it upstream with this design, adopt if it lands). Crates: none found
 2026-10-19: Bevy tracker has no shadow-caching issue/PR; other engines' code is not reusable here). Clockwork is
 GPL and a different renderer: behaviour only.
 
+**As built 2026-11-12 (GPU-culled statics, `research/statics-cpu-cost-2026-11-12.md` slice 1):** cooked `Static`
+parts carry `NoCpuCulling` (`sf_world_bevy` `StaticGpuCulling`, `--off cpuculltag`), so Bevy's point scan skips them
+and the vendored `CpuListedPointShadowCasters` keeps them out of point faces. The cache lists them per lamp
+(`GpuCulledLists`: range + 25 % margin, updated from changed casters) and adds the ones in each face frustum and
+LOD range to `CubemapVisibleEntities` before `classify_lights`; they bake at once (no settle).
+
 ## Lamp slices (F6, before v2)
 
 Superseded by the shadow reset (2026-10-21); moved verbatim to [archive/shadows-history.md](archive/shadows-history.md#lamp-slices-f6-before-v2).

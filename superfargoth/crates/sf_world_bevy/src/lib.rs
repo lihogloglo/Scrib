@@ -46,7 +46,7 @@ pub use precombine::{CellPrecombine, PrecombineBucket, PrecombinePath, Precombin
 pub use scene::{CellScene, SceneCellCx, SceneCells};
 pub use spawn::{
     ActivateCx, LoadedModel, MaterialMapper, ModelMaterials, ModelTemplate, PlacementSpawner, PlacementSpawners, SubtreeLayers,
-    SubtreeRange, SpawnCx, StaticSpawner, RANGE_STEPS_PER_OCTAVE, shared_range, TemplateLod, apply_subtree_layers, apply_subtree_ranges, chain_ranges, model_aabb, size_culled_end, spawn_template, spawn_template_ranges, standard_material,
+    SubtreeRange, SpawnCx, StaticGpuCulling, StaticSpawner, RANGE_STEPS_PER_OCTAVE, shared_range, TemplateLod, apply_subtree_layers, apply_subtree_ranges, chain_ranges, model_aabb, size_culled_end, spawn_template, spawn_template_ranges, standard_material,
     visibility_range,
 };
 pub use stream::{
@@ -58,6 +58,7 @@ pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceLayers, WorldspaceR
 use bevy_app::{App, Last, Plugin, PostStartup, PostUpdate, Update};
 use bevy_asset::AssetApp;
 use bevy_ecs::prelude::*;
+use bevy_render::batching::gpu_preprocessing::GpuPreprocessingSupport;
 use bevy_render::extract_resource::extract_resource;
 use bevy_render::render_asset::RenderAssetBytesPerFrame;
 use bevy_render::renderer::render_system;
@@ -114,6 +115,7 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<RevealGate>()
             .init_asset::<CellPrecombine>()
             .insert_resource(Streaming::new(self.config.clone()))
+            .insert_resource(StaticGpuCulling(self.config.gpu_cull_statics))
             .add_message::<CellLoaded>()
             .add_message::<CellUnloaded>()
             .add_message::<PromoteToEntity>()
@@ -154,6 +156,15 @@ impl Plugin for WorldStreamingPlugin {
         // re-extracts such instances.
         if let Some(mut limit) = app.world_mut().get_resource_mut::<RenderAssetBytesPerFrame>() {
             limit.max_bytes = None;
+        }
+        // GPU-culled statics need GPU culling in every view ([`StaticGpuCulling`]).
+        let support = app
+            .get_sub_app(RenderApp)
+            .and_then(|r| r.world().get_resource::<GpuPreprocessingSupport>())
+            .map(GpuPreprocessingSupport::is_culling_supported);
+        if self.config.gpu_cull_statics && support == Some(false) {
+            log::info!("streaming: no GPU culling on this adapter, statics stay CPU-culled");
+            app.insert_resource(StaticGpuCulling(false));
         }
         let counters = app.world().get_resource::<DiagCounters>().cloned();
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {

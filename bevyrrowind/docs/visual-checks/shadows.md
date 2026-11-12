@@ -168,3 +168,13 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Cascade debug view (`DIRECTIONAL_LIGHT_SHADOW_MAP_DEBUG_CASCADES`): no game switch sets it; unchanged by construction
   (overlay never 0, so it still fetches everywhere), naga-validated only. Perf A/B: `test-pass-2026-11-10.md` "Rendering".
 - Status: awaiting owner (naga-validated, never run). Source: sun-shadow-early-out; spec `shadows.md` "Reset B2 as built".
+
+### SH-24: Statics still cast into cached lamp shadows with GPU-culled statics (perf-push P3, 2026-11-12)
+- Why: near statics now carry `NoCpuCulling` (Bevy's lamp scan no longer sees them); the lamp shadow cache lists them
+  itself and bakes them at capture (`superfargoth/docs/specs/shadows.md` "Caching", As built 2026-11-12).
+- Kind: game location. Run: `scene hi-balmora-night` (Balmora 21:30, torches), then `scene lamps-handoff` (22:00) and walk
+  the street; A/B with `--off cpuculltag` (old CPU culling).
+- Look for: lamp light on walls, stairs and props throws the same static shadows as with `--off cpuculltag` (rails,
+  barrels, awnings, door frames), no shadow missing for a second after a cell streams in, no static shadow that
+  lingers or doubles; torch-bearers and NPCs still cast moving shadows over them.
+- Status: awaiting owner.

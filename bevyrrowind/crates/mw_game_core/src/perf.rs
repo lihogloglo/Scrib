@@ -79,6 +79,11 @@ pub enum Part {
     /// slabs); off, the mapper's materials as they come and one sampler per image (an A/B; the look
     /// should not change).
     MatClass,
+    /// Near statics skip Bevy's CPU culling (`NoCpuCulling`, superfargoth
+    /// `docs/research/statics-cpu-cost-2026-11-12.md` slice 1): the GPU preprocess culls them by frustum
+    /// and range in every view, lamps take them from the shadow cache's lists. Off: the old behaviour,
+    /// every static re-culled on the CPU per view each frame (an A/B; the look should not change).
+    CpuCullTag,
     /// Point/spot (lamp) shadows filtered with 2x2 hardware PCF while the sun keeps the preset's filter
     /// (vendored `bevy_pbr::PointSpotShadowsHardware2x2`, shadow reset B2); off, lamps use the camera's
     /// filter as stock Bevy does (an A/B).
@@ -118,7 +123,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 55] = [
+    const ALL: [(&'static str, Part); 56] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -163,6 +168,7 @@ impl Part {
         ("skymotion", Part::SkyMotion),
         ("precombine", Part::Precombine),
         ("matclass", Part::MatClass),
+        ("cpuculltag", Part::CpuCullTag),
         ("lampfilter", Part::LampFilter),
         ("movershadows", Part::MoverShadows),
         ("precipocc", Part::PrecipOcc),

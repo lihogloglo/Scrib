@@ -215,7 +215,7 @@ fn streaming_app_radius(dir: &std::path::Path, far_min_radius: f32) -> App {
     );
     app.add_plugins((MinimalPlugins, AssetPlugin::default(), MeshPlugin))
         .init_asset::<StandardMaterial>()
-        .add_plugins(WorldStreamingPlugin::default())
+        .add_plugins(WorldStreamingPlugin { config: StreamingConfig { gpu_cull_statics: true, ..StreamingConfig::default() } })
         .insert_resource(WorldIndexSource(Arc::new(index)))
         .insert_resource(ActiveWorldspace(Some(ws())));
     app.finish();
@@ -268,6 +268,18 @@ fn streams_in_around_an_anchor_and_out_when_it_leaves() {
     assert!(parts > 1000, "{parts} LOD parts");
     // Every part has an Aabb (no CPU mesh needed) and a visibility range.
     assert_eq!(count::<(With<Mesh3d>, With<bevy::camera::primitives::Aabb>, With<bevy::camera::visibility::VisibilityRange>)>(&mut app), parts);
+    // Statics are GPU-culled; the two dynamic placements (item, crate) are not.
+    let untagged: Vec<Vec3> = app
+        .world_mut()
+        .query_filtered::<&GlobalTransform, (With<Mesh3d>, Without<bevy::camera::visibility::NoCpuCulling>)>()
+        .iter(app.world())
+        .map(GlobalTransform::translation)
+        .collect();
+    assert!(!untagged.is_empty(), "the dynamic placements keep CPU culling");
+    for at in &untagged {
+        let near = |x: f32| (at.x - x).abs() < 0.5 && (at.z - 5.0).abs() < 0.5;
+        assert!(near(5.0) || near(15.0), "only the dynamic placements are CPU-culled, not one at {at}");
+    }
     // All groups were revealed.
     let hidden = app
         .world_mut()
@@ -517,6 +529,65 @@ fn subtree_ranges_reach_late_meshes() {
     let near = |v: f32, want: f32| v >= want && v < want * 1.022;
     assert!(near(range.end_margin.start, 110.0) && near(range.end_margin.end, 120.0), "{:?}", range.end_margin);
     assert!(world.get::<VisibilityRange>(loose).is_none(), "meshes outside a subtree keep no range");
+}
+
+/// GPU-culled statics (statics-cpu-cost-2026-11-12.md slice 1): the framework's
+/// spawner tags `Static` placements' parts with `NoCpuCulling` when the app
+/// allows it, never other classes (doors, items, lights, actors move or are
+/// carried), and nothing when it's off.
+#[test]
+fn static_parts_skip_cpu_culling_other_classes_keep_it() {
+    use bevy::camera::visibility::NoCpuCulling;
+
+    let template = ModelTemplate {
+        lods: vec![
+            TemplateLod { error: 0.0, parts: vec![(Handle::default(), Handle::default()), (Handle::default(), Handle::default())] },
+            TemplateLod { error: 0.5, parts: vec![(Handle::default(), Handle::default())] },
+        ],
+        aabb: bevy::camera::primitives::Aabb::from_min_max(Vec3::splat(-1.0), Vec3::splat(1.0)),
+        ray_tracing: None,
+    };
+    let model = LoadedModel::Cooked(Arc::new(template));
+    let lod = sf_model::LodScreen::default();
+    let layers = bevy::camera::visibility::RenderLayers::default();
+    let spawn = |gpu: bool, class: PlacementClass| -> (usize, usize) {
+        let mut world = World::new();
+        world.insert_resource(StaticGpuCulling(gpu));
+        let parent = world.spawn(Transform::IDENTITY).id();
+        let cx = SpawnCx {
+            worldspace: &ws(),
+            cell: IVec3::ZERO,
+            level: Level::Near,
+            parent,
+            layers: &layers,
+            local: Transform::IDENTITY,
+            model: Some(&model),
+            max_distance: 200.0,
+            end_band: 0.0,
+            lod: &lod,
+        };
+        let placement = Placement {
+            id: PlacementId::from_key("test", b"p"),
+            base: RecordRef::new("thing", "p"),
+            model: Some(VfsPath::new("plate.mdl").unwrap()),
+            transform: WorldTransform::from_pos(WorldPos::ORIGIN),
+            class,
+            flags: PlacementFlags::empty(),
+        };
+        let n = StaticSpawner.spawn(&mut world, &cx, &IndexedPlacement { placement, radius: 1.0 });
+        let tagged = world.query_filtered::<(), (With<Mesh3d>, With<NoCpuCulling>)>().iter(&world).count();
+        assert_eq!(world.query_filtered::<(), With<Mesh3d>>().iter(&world).count(), n as usize);
+        (n as usize, tagged)
+    };
+    let (parts, tagged) = spawn(true, PlacementClass::Static);
+    assert!(parts >= 2, "{parts} parts");
+    assert_eq!(tagged, parts, "every LOD part of a static is GPU-culled");
+    for class in [PlacementClass::Dynamic, PlacementClass::Door, PlacementClass::Light, PlacementClass::Actor, PlacementClass::Custom(1)] {
+        assert_eq!(spawn(true, class).1, 0, "{class:?} stays CPU-culled");
+    }
+    assert_eq!(spawn(false, PlacementClass::Static).1, 0, "off (`--off cpuculltag`): nothing tagged");
+    // Off by default until the lamp capture lists are fixed (perf-push 2026-11-12).
+    assert!(!StreamingConfig::default().gpu_cull_statics);
 }
 
 /// Size-based draw distance (industry-audit.md J1): small placements end at

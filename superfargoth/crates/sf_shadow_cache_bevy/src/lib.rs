@@ -40,7 +40,20 @@
 //! producer reports where their instances changed (slots written or released)
 //! with [`ShadowCastersChanged`], which recaptures the lights that sphere
 //! touches; a batch whose instances move every frame must be `NotShadowCaster`.
-
+//!
+//! **GPU-culled casters** (`NoCpuCulling`, the streamed statics): Bevy's
+//! point-light scan skips them, and with the vendored
+//! `bevy_pbr::CpuListedPointShadowCasters` (inserted here) its GPU-culled path
+//! leaves them out of point faces too. The cache lists them itself: each
+//! shadowed point light keeps the GPU-culled casters within its range plus a
+//! margin ([`GpuCulledLists`], rebuilt when the light moves past the margin,
+//! updated from the casters that changed), and [`add_gpu_culled_casters`]
+//! adds the ones in each face's frustum and in LOD range of Bevy's shadow LOD
+//! origin to the face lists before [`classify_lights`], so every rule above
+//! (captures take the statics, cached faces keep the movers, uncached lights
+//! draw everything) holds unchanged. A GPU-culled caster is a known static: it
+//! is baked when first seen, with no settle time
+//! (`docs/research/statics-cpu-cost-2026-11-12.md`, slice 1).
 
 mod render;
 
@@ -49,11 +62,12 @@ use std::sync::{Arc, Mutex};
 
 use bevy_app::{App, Plugin, PostUpdate};
 use bevy_asset::embedded_asset;
-use bevy_camera::primitives::Aabb;
-use bevy_camera::visibility::{CubemapVisibleEntities, InheritedVisibility, ViewVisibility, VisibilitySystems};
+use bevy_camera::primitives::{Aabb, CubemapFrusta, Sphere as BevySphere};
+use bevy_camera::{Camera, RenderTarget, ShadowLodOrigin};
+use bevy_camera::visibility::{CubemapVisibleEntities, InheritedVisibility, NoCpuCulling, RenderLayers, ViewVisibility, VisibilityRange, VisibilitySystems};
 use bevy_ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy_ecs::prelude::*;
-use bevy_light::{NotShadowCaster, PointLight, PointLightShadowMap, SimulationLightSystems};
+use bevy_light::{NotShadowCaster, PointLight, PointLightShadowMap, SimulationLightSystems, SpotLight};
 use bevy_math::{Affine3A, Vec3, Vec3A};
 use bevy_mesh::skinning::SkinnedMesh;
 use bevy_mesh::Mesh3d;
@@ -214,6 +228,7 @@ fn add_main_world(app: &mut App, shared: SharedCaptures) {
         .init_resource::<ShadowOriginShift>()
         .add_message::<ShadowCastersChanged>()
         .init_resource::<Casters>()
+        .init_resource::<GpuCulledLists>()
         .init_resource::<Lights>()
         .init_resource::<render::CacheFrame>()
         .insert_resource(shared)
@@ -224,8 +239,9 @@ fn add_main_world(app: &mut App, shared: SharedCaptures) {
                     .after(TransformSystems::Propagate)
                     .after(VisibilitySystems::VisibilityPropagate)
                     .after(VisibilitySystems::CalculateBounds),
-                // After the GPU instance batches joined the face lists: they are statics.
-                classify_lights.after(SimulationLightSystems::CheckLightVisibility).after(GpuBatchedLightVisibility),
+                // After Bevy's lists and the GPU instance batches joined them (both statics).
+                add_gpu_culled_casters.after(SimulationLightSystems::CheckLightVisibility).after(GpuBatchedLightVisibility),
+                classify_lights,
             )
                 .chain()
                 .in_set(ShadowCacheSystems),
@@ -273,6 +289,23 @@ struct Caster {
     why: u8,
     /// When it last settled (baked); a light captured before that still draws it as a mover.
     settled_at: f32,
+    /// `NoCpuCulling`: Bevy's light scan never lists it, [`GpuCulledLists`] does.
+    gpu_culled: bool,
+    /// Its `VisibilityRange` as `(start, end, use_aabb)`: drawn from `start` to
+    /// `end` meters of the LOD origin (`is_visible_at_all`).
+    lod: Option<(f32, f32, bool)>,
+    /// Its render layers (GPU-culled casters only; `None`: layer 0): a light lists it only if they meet.
+    layers: Option<RenderLayers>,
+}
+
+impl Caster {
+    /// Whether its visibility range shows it (at all) from `origin`.
+    fn in_lod_range(&self, origin: Option<Vec3>) -> bool {
+        let (Some((start, end, use_aabb)), Some(origin)) = (self.lod, origin) else { return true };
+        let at = if use_aabb { self.sphere.center } else { Vec3::from(self.at.translation) };
+        let d = at.distance(origin);
+        d >= start && d < end
+    }
 }
 
 #[derive(Resource, Default)]
@@ -284,10 +317,24 @@ struct Casters {
     /// Dirty events since start: removed, moved after bake, static changed, settled,
     /// reported ([`ShadowCastersChanged`]).
     kinds: [u64; 5],
+    /// GPU-culled casters added, changed or removed this frame ([`GpuCulledLists`]).
+    gpu_changed: Vec<Entity>,
 }
 
-type CasterItem<'a> = (Entity, &'a GlobalTransform, Option<Ref<'a, Aabb>>, Option<&'a ShadowMobility>, Has<SkinnedMesh>, &'a InheritedVisibility);
-type CasterChanged = (With<Mesh3d>, Without<NotShadowCaster>, Or<(Changed<GlobalTransform>, Changed<InheritedVisibility>, Changed<Aabb>)>);
+type CasterItem<'a> = (
+    Entity,
+    &'a GlobalTransform,
+    Option<Ref<'a, Aabb>>,
+    Option<&'a ShadowMobility>,
+    Has<SkinnedMesh>,
+    &'a InheritedVisibility,
+    (Has<NoCpuCulling>, Option<&'a VisibilityRange>, Option<&'a RenderLayers>),
+);
+type CasterChanged = (
+    With<Mesh3d>,
+    Without<NotShadowCaster>,
+    Or<(Changed<GlobalTransform>, Changed<InheritedVisibility>, Changed<Aabb>, Added<NoCpuCulling>, Changed<VisibilityRange>, Changed<RenderLayers>)>,
+);
 
 /// Classifies casters (moving or baked) and collects the spheres whose baked
 /// depth changed: a baked caster that moved (old and new place), a caster
@@ -308,6 +355,7 @@ fn track_casters(
     let now = time.elapsed_secs();
     let c = &mut *casters;
     c.dirty.clear();
+    c.gpu_changed.clear();
     if shift.0 != Vec3::ZERO {
         for k in c.map.values_mut() {
             k.sphere.center += shift.0;
@@ -321,33 +369,44 @@ fn track_casters(
     for entity in removed.read() {
         if let Some(old) = c.map.remove(&entity) {
             c.moving.remove(&entity);
+            if old.gpu_culled {
+                c.gpu_changed.push(entity);
+            }
             if !old.moving {
                 c.dirty.push((old.sphere, entity));
                 c.kinds[0] += 1;
             }
         }
     }
-    for (entity, transform, aabb, mobility, skinned, visibility) in &changed {
+    for (entity, transform, aabb, mobility, skinned, visibility, (gpu_culled, range, render_layers)) in &changed {
         let (at, visible) = (transform.affine(), visibility.get());
+        let lod = range.map(|r| (r.start_margin.start, r.end_margin.end, r.use_aabb));
+        let layers = render_layers.filter(|_| gpu_culled).cloned();
+        let same = |k: &Caster| k.visible == visible && k.gpu_culled == gpu_culled && k.lod == lod && k.layers == layers && k.at.abs_diff_eq(at, 1e-3);
         let aabb_changed = aabb.as_ref().is_some_and(DetectChanges::is_changed);
-        if !aabb_changed
-            && c.map
-                .get(&entity)
-                .is_some_and(|k| k.visible == visible && k.at.abs_diff_eq(at, 1e-3))
-        {
+        if !aabb_changed && c.map.get(&entity).is_some_and(same) {
             continue;
         }
         let sphere = Sphere::of(transform, aabb.as_deref());
         // Change detection fires on writes, not moves (animation and propagation rewrite
         // unchanged transforms every frame): only a real change counts.
-        if c.map.get(&entity).is_some_and(|k| k.visible == visible && (k.sphere.radius - sphere.radius).abs() < 1e-4 && k.at.abs_diff_eq(at, 1e-3)) {
+        if c.map.get(&entity).is_some_and(|k| same(k) && (k.sphere.radius - sphere.radius).abs() < 1e-4) {
             continue;
         }
         // Own marker, else the nearest ancestor's (hosts mark an actor's root: its held
         // items and attachments move with it even when they aren't skinned).
         let mobility = mobility.copied().or_else(|| ancestor_mobility(entity, &ancestors)).unwrap_or_default();
+        // A GPU-culled mesh is a known static (the host tags statics only): baked at once, and a
+        // change (a cell's reveal, a LOD range) recaptures the lights it touches.
+        let mobility = if gpu_culled && !skinned && mobility == ShadowMobility::Auto { ShadowMobility::Static } else { mobility };
+        if gpu_culled || c.map.get(&entity).is_some_and(|k| k.gpu_culled) {
+            c.gpu_changed.push(entity);
+        }
         let was_baked = c.map.get(&entity).filter(|k| !k.moving).map(|k| k.sphere);
-        if let Some(old) = was_baked {
+        // A GPU-culled static that stays hidden (spawned under a level not yet revealed)
+        // changes no light's depth: no recapture for it.
+        let unseen = gpu_culled && !visible && c.map.get(&entity).is_none_or(|k| !k.visible);
+        if let Some(old) = was_baked.filter(|_| !unseen) {
             c.dirty.push((old, entity));
             c.kinds[1] += 1;
         }
@@ -356,19 +415,21 @@ fn track_casters(
         // intermittent movers can't keep the lights recapturing.
         let always = mobility == ShadowMobility::Movable || (mobility == ShadowMobility::Auto && (skinned || was_baked.is_some()));
         let caster = if mobility == ShadowMobility::Static {
-            c.dirty.push((sphere, entity));
-            c.kinds[2] += 1;
+            if !unseen {
+                c.dirty.push((sphere, entity));
+                c.kinds[2] += 1;
+            }
             c.moving.remove(&entity);
-            Caster { sphere, until: now, moving: false, at, visible, why: 0, settled_at: now }
+            Caster { sphere, until: now, moving: false, at, visible, why: 0, settled_at: now, gpu_culled, lod, layers }
         } else {
             c.moving.insert(entity);
             let why = if mobility == ShadowMobility::Movable { 3 } else if skinned { 1 } else if was_baked.is_some() { 2 } else { 0 };
             let settle = if settings.warmup { settings.warmup_settle_time } else { settings.settle_time };
-            Caster { sphere, until: if always { f32::INFINITY } else { now + settle }, moving: true, at, visible, why, settled_at: f32::INFINITY }
+            Caster { sphere, until: if always { f32::INFINITY } else { now + settle }, moving: true, at, visible, why, settled_at: f32::INFINITY, gpu_culled, lod, layers }
         };
         c.map.insert(entity, caster);
     }
-    let Casters { map, moving, dirty, kinds } = c;
+    let Casters { map, moving, dirty, kinds, .. } = c;
 
     moving.retain(|entity| {
         let Some(k) = map.get_mut(entity) else { return false };
@@ -395,6 +456,115 @@ fn ancestor_mobility(entity: Entity, ancestors: &Query<(Option<&ShadowMobility>,
         at = parent.map(ChildOf::parent);
     }
     None
+}
+
+/// A shadowed point light's GPU-culled casters: those whose sphere reaches
+/// `reach` meters around `center` (the light's range plus a margin, so a light
+/// that moves a little keeps its list).
+struct GpuCulledList {
+    center: Vec3,
+    range: f32,
+    reach: f32,
+    members: EntityHashSet,
+}
+
+impl GpuCulledList {
+    /// Margin around a light's range (world units): a light moving less keeps its list.
+    fn margin(range: f32) -> f32 {
+        (range * 0.25).max(1.0)
+    }
+
+    /// Whether it still covers a light at `position` with `range`.
+    fn covers(&self, position: Vec3, range: f32) -> bool {
+        (self.range - range).abs() <= f32::EPSILON && self.center.distance(position) + range <= self.reach
+    }
+
+    fn admits(&self, k: &Caster) -> bool {
+        k.gpu_culled && k.sphere.touches(self.center, self.reach)
+    }
+}
+
+/// Each shadowed point light's [`GpuCulledList`] (by light entity).
+#[derive(Resource, Default)]
+struct GpuCulledLists(EntityHashMap<GpuCulledList>);
+
+/// Bevy's point-light scan never sees GPU-culled (`NoCpuCulling`) casters: adds
+/// those each shadowed point light reaches to its face lists (per face: sphere
+/// in the face's frustum, in the light's range, shown by its visibility range
+/// from Bevy's shadow LOD origin, visible), so [`classify_lights`] treats them
+/// as Bevy's own. The lists are kept per light and updated from this frame's
+/// changed casters; a light rebuilds its list (one pass over the casters) when
+/// it first gains shadows or moves past the margin.
+#[allow(clippy::type_complexity)]
+fn add_gpu_culled_casters(
+    casters: Res<Casters>,
+    mut lists: ResMut<GpuCulledLists>,
+    mut lights: Query<(Entity, &PointLight, &GlobalTransform, &CubemapFrusta, &ViewVisibility, &mut CubemapVisibleEntities, Option<&RenderLayers>)>,
+    mut removed: RemovedComponents<PointLight>,
+    (mut cameras, mut origins, mut lamps, transforms): (
+        Query<(Entity, &RenderTarget), With<Camera>>,
+        Query<Entity, With<ShadowLodOrigin>>,
+        Query<Entity, Or<(With<PointLight>, With<SpotLight>)>>,
+        Query<&GlobalTransform>,
+    ),
+) {
+    for entity in removed.read() {
+        lists.0.remove(&entity);
+    }
+    // Bevy's rule for point and spot shadow LODs (`bevy_light::get_shadow_lod_origin`).
+    let origin = bevy_light::get_shadow_lod_origin(cameras.transmute_lens_filtered(), origins.transmute_lens_filtered(), lamps.transmute_lens_filtered())
+        .and_then(|e| transforms.get(e).ok())
+        .map(GlobalTransform::translation);
+    let layer_zero = RenderLayers::default();
+    for (entity, light, transform, frusta, view_visibility, mut faces, light_layers) in &mut lights {
+        let light_layers = light_layers.unwrap_or(&layer_zero);
+        if !light.shadow_maps_enabled {
+            lists.0.remove(&entity);
+            continue;
+        }
+        let position = transform.translation();
+        let list = lists.0.entry(entity).or_insert_with(|| GpuCulledList { center: position, range: -1.0, reach: 0.0, members: EntityHashSet::default() });
+        if list.covers(position, light.range) {
+            for e in &casters.gpu_changed {
+                if casters.map.get(e).is_some_and(|k| list.admits(k)) {
+                    list.members.insert(*e);
+                } else {
+                    list.members.remove(e);
+                }
+            }
+        } else {
+            list.center = position;
+            list.range = light.range;
+            list.reach = light.range + GpuCulledList::margin(light.range);
+            let members = casters.map.iter().filter(|(_, k)| list.admits(k)).map(|(e, _)| *e).collect();
+            list.members = members;
+        }
+        // Bevy fills the faces of lights in view only.
+        if !view_visibility.get() || list.members.is_empty() {
+            continue;
+        }
+        let shown: Vec<(Entity, BevySphere)> = list
+            .members
+            .iter()
+            .filter_map(|e| casters.map.get(e).map(|k| (*e, k)))
+            .filter(|(_, k)| k.visible && k.sphere.touches(position, light.range) && k.in_lod_range(origin))
+            // Bevy's scan: a caster casts only into lights it shares a render layer with.
+            .filter(|(_, k)| light_layers.intersects(k.layers.as_ref().unwrap_or(&layer_zero)))
+            .map(|(e, k)| (e, BevySphere { center: Vec3A::from(k.sphere.center), radius: k.sphere.radius }))
+            .collect();
+        if shown.is_empty() {
+            continue;
+        }
+        for (frustum, face) in frusta.iter().zip(faces.iter_mut()) {
+            let before = face.entities.len();
+            face.entities.extend(shown.iter().filter(|(_, s)| frustum.intersects_sphere(s, true)).map(|(e, _)| *e));
+            if face.entities.len() != before {
+                // Sorted like Bevy's lists; a list Bevy left as it was (it skipped the light) holds ours.
+                face.entities.sort_unstable();
+                face.entities.dedup();
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -839,6 +1009,87 @@ mod tests {
         assert_eq!(app.world().resource::<ShadowCacheStats>().touched, 1);
         assert!(frame(&app).captures.iter().any(|c| c.light == light), "recapturing");
         assert!(!is_valid(&app, light));
+    }
+
+
+    /// A GPU-culled (`NoCpuCulling`) static at `x` on the lamp's +X axis.
+    fn gpu_static(app: &mut App, x: f32) -> Entity {
+        app.world_mut()
+            .spawn((
+                Mesh3d::default(),
+                GlobalTransform::from_xyz(x, 0.0, 0.0),
+                Aabb::from_min_max(Vec3::splat(-0.5), Vec3::splat(0.5)),
+                InheritedVisibility::VISIBLE,
+                NoCpuCulling,
+            ))
+            .id()
+    }
+
+    /// Statics-cpu-cost slice 1: Bevy's light scan never lists a `NoCpuCulling` caster; the
+    /// cache's own list for the lamp holds the ones in range, its capture draws them, and its
+    /// cached faces leave them out (they are in the cached depth).
+    #[test]
+    fn gpu_culled_statics_are_listed_captured_and_kept_out_of_cached_faces() {
+        let (mut app, light, _) = lamp_and_batch();
+        // Bevy's face frusta (the scan itself isn't run here: it would skip these casters).
+        app.add_systems(PostUpdate, bevy_light::update_point_light_frusta.before(ShadowCacheSystems));
+        let near = gpu_static(&mut app, 3.0);
+        let far = gpu_static(&mut app, 30.0);
+        app.update();
+        app.update();
+        let lists = app.world().resource::<GpuCulledLists>();
+        let members = &lists.0[&light].members;
+        assert!(members.contains(&near), "the static in range is on the lamp's list");
+        assert!(!members.contains(&far), "the one 30 m out (range 10) is not");
+        assert!(app.world().resource::<Casters>().map[&near].gpu_culled);
+        assert!(!app.world().resource::<Casters>().moving.contains(&near), "a GPU-culled static is baked at once");
+        let request = frame(&app).captures.iter().find(|c| c.light == light).expect("the lamp captures");
+        let in_capture = |e: Entity| request.faces.iter().filter(|f| f.iter().any(|(_, m)| m.id() == e)).count();
+        assert!(in_capture(near) >= 1, "the capture draws the static (in the +X face at least)");
+        assert!(in_capture(near) < 6, "only in the faces whose frustum holds it");
+        assert_eq!(in_capture(far), 0);
+        confirm(&mut app, light);
+        app.update();
+        assert!(is_valid(&app, light), "cached after the confirmed capture");
+        let faces = app.world().get::<CubemapVisibleEntities>(light).unwrap();
+        assert!(faces.iter().all(|f| !f.entities.contains(&near)), "drawn from the cache, not live");
+        assert_eq!(frame(&app).lights.iter().find(|l| l.light == light).unwrap().movers, 0);
+    }
+
+    /// With the cache off, Bevy draws the lamp whole: its faces must hold the GPU-culled statics.
+    #[test]
+    fn gpu_culled_statics_join_the_faces_of_lamps_bevy_draws_whole() {
+        let (mut app, light, _) = lamp_and_batch();
+        app.add_systems(PostUpdate, bevy_light::update_point_light_frusta.before(ShadowCacheSystems));
+        app.world_mut().resource_mut::<ShadowCacheSettings>().enabled = false;
+        let near = gpu_static(&mut app, 3.0);
+        app.update();
+        let faces = app.world().get::<CubemapVisibleEntities>(light).unwrap();
+        assert!(faces.iter().any(|f| f.entities.contains(&near)));
+        assert!(faces.iter().all(|f| f.entities.windows(2).all(|w| w[0] < w[1])), "lists stay sorted, no duplicates");
+        app.update();
+        let faces = app.world().get::<CubemapVisibleEntities>(light).unwrap();
+        assert_eq!(faces.iter().map(|f| f.entities.iter().filter(|e| **e == near).count()).max(), Some(1), "added once per face");
+    }
+
+    #[test]
+    fn lod_range_is_measured_from_the_shadow_lod_origin() {
+        let k = Caster {
+            sphere: Sphere { center: Vec3::new(0.0, 5.0, 0.0), radius: 1.0 },
+            until: 0.0,
+            moving: false,
+            at: Affine3A::from_translation(Vec3::new(10.0, 0.0, 0.0)),
+            visible: true,
+            why: 0,
+            settled_at: 0.0,
+            gpu_culled: true,
+            lod: Some((5.0, 20.0, false)),
+            layers: None,
+        };
+        assert!(k.in_lod_range(None), "no origin: no LOD test (the GPU still range-culls)");
+        assert!(k.in_lod_range(Some(Vec3::ZERO)), "10 m: shown");
+        assert!(!k.in_lod_range(Some(Vec3::new(8.0, 0.0, 0.0))), "2 m: before its start");
+        assert!(!k.in_lod_range(Some(Vec3::new(-15.0, 0.0, 0.0))), "25 m: past its end");
     }
 
     #[test]

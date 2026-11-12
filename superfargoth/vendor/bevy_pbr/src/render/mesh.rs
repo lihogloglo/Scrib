@@ -2499,6 +2499,55 @@ impl<'a> Iterator for AtomicU64ZeroBitIter<'a> {
     }
 }
 
+// superfargoth patch (own: CPU-listed shadow views)
+/// Render-world resource: point-light cube faces take no [`NoCpuCulling`]
+/// meshes, because the app lists every caster of each point light in its
+/// `CubemapVisibleEntities` itself (`sf_shadow_cache_bevy`: its static casters
+/// come from the cache's own lists, so cached faces don't redraw them and each
+/// capture doesn't queue every GPU-culled mesh). Absent: stock (every
+/// GPU-culled mesh joins every face). Spot lights and cascades are unaffected.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct CpuListedPointShadowCasters;
+
+// superfargoth patch (own: CPU-listed shadow views)
+/// Whether a shadow subview is one Bevy made for its light (a point light's
+/// six faces, a spot light's view, a directional light's cascades) and so
+/// takes the GPU-culled meshes. A subview a plugin added to the light's (or a
+/// view anchor's) tables carries its caster list itself (the cache's capture
+/// faces, `sf_sky_bevy::sun_view`'s depth views); being fresh each time, it
+/// would otherwise have every GPU-culled mesh queued into it on each redraw.
+fn takes_gpu_culled_meshes(
+    key: &RetainedViewEntity,
+    point: Option<&ExtractedPointLight>,
+    directional: Option<&ExtractedDirectionalLight>,
+    cpu_listed_points: bool,
+) -> bool {
+    match (point, directional) {
+        (Some(point), _) if point.spot_light_angles.is_some() => key.subview_index == 0,
+        (Some(_), _) => !cpu_listed_points && key.subview_index < 6,
+        (None, Some(directional)) => {
+            (key.subview_index as usize) < directional.cascade_shadow_config.bounds.len()
+        }
+        (None, None) => false,
+    }
+}
+
+// superfargoth patch (own: CPU-listed shadow views)
+/// Takes every GPU-culled mesh out of a subview that must not hold them (one
+/// collected before the rule applied to it).
+fn drain_gpu_culled_meshes(render_visible_entities: &mut RenderVisibleEntities) {
+    let Some(class) = render_visible_entities.classes.get_mut(&TypeId::of::<Mesh3d>()) else {
+        return;
+    };
+    if class.entities_gpu_culling.is_empty() {
+        return;
+    }
+    for (main_entity, _) in class.entities_gpu_culling.drain() {
+        class.removed_entities.push((Entity::PLACEHOLDER, main_entity));
+    }
+    class.removed_entities.sort_unstable();
+}
+
 /// Transfers entities from [`RenderGpuCulledEntities`] to the
 /// [`RenderVisibleEntities`] and [`RenderShadowMapVisibleEntities`] components
 /// on each view.
@@ -2507,8 +2556,15 @@ impl<'a> Iterator for AtomicU64ZeroBitIter<'a> {
 /// views and entities might belong to different render layers.
 pub fn collect_gpu_culled_meshes(
     mut cameras: Query<(Option<&RenderLayers>, &mut RenderVisibleEntities), With<ExtractedView>>,
-    mut lights: Query<(Option<&RenderLayers>, &mut RenderShadowMapVisibleEntities)>,
+    // superfargoth patch (own: CPU-listed shadow views): the light's kind.
+    mut lights: Query<(
+        Option<&RenderLayers>,
+        &mut RenderShadowMapVisibleEntities,
+        Option<&ExtractedPointLight>,
+        Option<&ExtractedDirectionalLight>,
+    )>,
     render_gpu_culled_entities: Res<RenderGpuCulledEntities>,
+    cpu_listed_points: Option<Res<CpuListedPointShadowCasters>>,
 ) {
     let default_render_layers = RenderLayers::default();
 
@@ -2524,13 +2580,20 @@ pub fn collect_gpu_culled_meshes(
     }
 
     // Collect shadow maps.
-    for (maybe_render_layers, mut render_shadow_map_visible_entities) in &mut lights {
+    for (maybe_render_layers, mut render_shadow_map_visible_entities, point, directional) in
+        &mut lights
+    {
         let last_run = render_shadow_map_visible_entities.last_run();
         let this_run = render_shadow_map_visible_entities.this_run();
 
-        for (render_visible_entities_added_tick, render_visible_entities) in
-            render_shadow_map_visible_entities.subviews.values_mut()
+        for (key, (render_visible_entities_added_tick, render_visible_entities)) in
+            render_shadow_map_visible_entities.subviews.iter_mut()
         {
+            // superfargoth patch (own: CPU-listed shadow views)
+            if !takes_gpu_culled_meshes(key, point, directional, cpu_listed_points.is_some()) {
+                drain_gpu_culled_meshes(render_visible_entities);
+                continue;
+            }
             collect_gpu_culled_meshes_for_subview(
                 maybe_render_layers.unwrap_or(&default_render_layers),
                 render_visible_entities,

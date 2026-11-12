@@ -16,8 +16,9 @@ use std::sync::Arc;
 
 use bevy_asset::{AssetServer, Handle, UntypedHandle};
 use bevy_camera::primitives::Aabb;
-use bevy_camera::visibility::{NoAutoAabb, RenderLayers, VisibilityRange};
+use bevy_camera::visibility::{NoAutoAabb, NoCpuCulling, RenderLayers, VisibilityRange};
 use bevy_color::{Color, LinearRgba};
+use bevy_ecs::bundle::{DynamicBundle, NoBundleEffect};
 use bevy_ecs::prelude::*;
 use bevy_material::AlphaMode;
 use bevy_math::{IVec3, Vec3};
@@ -272,23 +273,50 @@ pub fn apply_subtree_layers(
     }
 }
 
+/// Whether this app's static parts skip Bevy's CPU culling (`NoCpuCulling`):
+/// [`StreamingConfig::gpu_cull_statics`](crate::StreamingConfig::gpu_cull_statics),
+/// and only where every view culls on the GPU (the render world's
+/// `GpuPreprocessingSupport` is `Culling`). A view without GPU culling
+/// (`NoIndirectDrawing`, or an adapter limited to `PreprocessingOnly`) would
+/// cull these parts nowhere and draw every LOD level of every static: the
+/// 81 ms walk of 2026-10-19 (static-scene.md). Absent: off.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StaticGpuCulling(pub bool);
+
+impl StaticGpuCulling {
+    /// The world's setting (off without the resource).
+    pub fn on(world: &World) -> bool {
+        world.get_resource::<Self>().is_some_and(|g| g.0)
+    }
+}
+
 /// The framework's spawner for static visuals: the cooked LOD chain.
+/// `Static`-class placements are GPU-culled when [`StaticGpuCulling`] is on;
+/// every other class (doors, items, lights, actors: they move, open or are
+/// carried) keeps Bevy's CPU culling.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StaticSpawner;
 
 impl PlacementSpawner for StaticSpawner {
-    fn spawn(&self, world: &mut World, cx: &SpawnCx<'_>, _placement: &IndexedPlacement) -> u32 {
+    fn spawn(&self, world: &mut World, cx: &SpawnCx<'_>, placement: &IndexedPlacement) -> u32 {
         let Some(LoadedModel::Cooked(template)) = cx.model else { return 0 };
-        spawn_template(world, cx, template)
+        let gpu_culled = placement.placement.class == PlacementClass::Static && StaticGpuCulling::on(world);
+        let ranges = template_ranges(cx, template);
+        spawn_template_ranges(world, cx, template, &ranges, gpu_culled)
     }
 }
 
-/// Spawns every visible LOD part of a template under `cx.parent`.
+/// Spawns every visible LOD part of a template under `cx.parent` (CPU-culled).
 pub fn spawn_template(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTemplate) -> u32 {
+    let ranges = template_ranges(cx, template);
+    spawn_template_ranges(world, cx, template, &ranges, false)
+}
+
+/// The levels' ranges of a template placed with `cx`.
+fn template_ranges(cx: &SpawnCx<'_>, template: &ModelTemplate) -> Vec<LodRange> {
     let scale = cx.local.scale.abs().max_element();
     let errors: Vec<f32> = template.lods.iter().map(|l| l.error * scale).collect();
-    let ranges = chain_ranges(&errors, cx.lod, cx.max_distance, cx.end_band);
-    spawn_template_ranges(world, cx, template, &ranges)
+    chain_ranges(&errors, cx.lod, cx.max_distance, cx.end_band)
 }
 
 /// [`spawn_template`] with the levels' ranges given (one per level).
@@ -297,7 +325,12 @@ pub fn spawn_template(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTempl
 /// level's parts carry their [`RayTracingMesh`] and the other levels
 /// [`NoRayTracing`]: the ray tracer ignores visibility ranges and sees
 /// exactly one level.
-pub fn spawn_template_ranges(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTemplate, ranges: &[LodRange]) -> u32 {
+///
+/// `gpu_culled`: the parts carry `NoCpuCulling` (statics only, see
+/// [`StaticGpuCulling`]). Every LOD level stays alive and the GPU preprocess
+/// range-culls it per view (vendored `mesh_preprocess.wesl`, visibility
+/// range cull under `FRUSTUM_CULLING`), as Bevy's CPU range check did.
+pub fn spawn_template_ranges(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTemplate, ranges: &[LodRange], gpu_culled: bool) -> u32 {
     let mut plain = Vec::new();
     let mut traced = Vec::new();
     let mut untraced = Vec::new();
@@ -327,10 +360,25 @@ pub fn spawn_template_ranges(world: &mut World, cx: &SpawnCx<'_>, template: &Mod
         }
     }
     let n = u32::try_from(plain.len() + traced.len() + untraced.len()).unwrap_or(u32::MAX);
-    world.spawn_batch(plain);
-    world.spawn_batch(traced);
-    world.spawn_batch(untraced);
+    if gpu_culled {
+        spawn_parts::<NoCpuCulling, _, _, _>(world, plain, traced, untraced);
+    } else {
+        spawn_parts::<(), _, _, _>(world, plain, traced, untraced);
+    }
     n
+}
+
+/// Spawns the three part lists, each part with an extra `T` (a marker or `()`).
+fn spawn_parts<T: Bundle + Default, A: Bundle, B: Bundle, C: Bundle>(world: &mut World, plain: Vec<A>, traced: Vec<B>, untraced: Vec<C>)
+where
+    <T as DynamicBundle>::Effect: NoBundleEffect,
+    <A as DynamicBundle>::Effect: NoBundleEffect,
+    <B as DynamicBundle>::Effect: NoBundleEffect,
+    <C as DynamicBundle>::Effect: NoBundleEffect,
+{
+    world.spawn_batch(plain.into_iter().map(|b| (b, T::default())));
+    world.spawn_batch(traced.into_iter().map(|b| (b, T::default())));
+    world.spawn_batch(untraced.into_iter().map(|b| (b, T::default())));
 }
 
 /// Where a placement stops being drawn, with the size-based draw distance

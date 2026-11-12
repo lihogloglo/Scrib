@@ -276,6 +276,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     streaming.lod = screen;
     // Static material classes (static-scene.md S2); `--off matclass` keeps the mapper's materials.
     streaming.material_classes = !perf.off.has(Part::MatClass);
+    // Near statics culled on the GPU only (`NoCpuCulling`): opt-in until its lamp capture lists are fixed
+    // (perf-push 2026-11-12: on, the walk stutters 113/min, lamp faces 64k work items). A/B with
+    // `--env BEVYRROWIND_GPU_CULL_STATICS=1`; `--off cpuculltag` forces it off.
+    streaming.gpu_cull_statics = std::env::var_os("BEVYRROWIND_GPU_CULL_STATICS").is_some_and(|v| v == "1")
+        && !perf.off.has(Part::CpuCullTag);
     // The static scene (`--scene`) or the precombine draws the near statics, never both.
     let (scene, precombine) = static_paths(options.scene, &perf.off, options.lod_tint);
     streaming.precombine = precombine;
