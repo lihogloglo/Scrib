@@ -269,3 +269,11 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 ### RO-19: Very short shadow flickers here and there (owner report 2026-11-11)
 - Balmora 14:00, same in sc-scene and sc-noscene: brief, subtle flickers, the owner thinks shadows (maybe fog).
 - Status: known bug, not diagnosed (see the shadows checks SH-* for related cases).
+
+### RO-20: Far terrain shadows keep following after the far-map upload fix (perf-push P2, 2026-11-12)
+- Why: the far shadow map upload no longer touches every terrain, proxy and impostor material to "re-bind" (Bevy writes the
+  same texture in place, so bind groups stay valid); risk is a stale far map if that reasoning is wrong.
+- Kind: game location. Run: `scene balmora-sunset-shadows` (Balmora 18:30), then fly (W, Shift) 2-3 km in one direction.
+- Look for: hills past ~400 m keep shadows that match the low sun as you go; after ~1 km of travel the far shadows around
+  you refresh (no shadows left hanging where you were, no unshadowed hills ahead). A/B: `--off farshadows` drops them.
+- Status: awaiting owner.

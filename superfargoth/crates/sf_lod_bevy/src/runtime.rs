@@ -720,7 +720,10 @@ pub fn node_center(dir: &FarDirectory, key: &NodeKey) -> Option<WorldPos> {
 }
 
 /// Hands the far shadow map to the proxy and impostor materials whenever
-/// it changes (new contents, origin move) or impostor sets appear.
+/// its handle or params change (new center, origin move) or impostor sets
+/// appear. New contents alone ([`crate::FarShadowInput::generation`]) need
+/// nothing: the host writes the same texture in place, so the materials'
+/// bind groups stay valid, and touching them would rebuild every one.
 pub(crate) fn update_far_shadow(
     input: Res<crate::FarShadowInput>,
     far: Option<Res<FarMaterials>>,
@@ -734,7 +737,7 @@ pub(crate) fn update_far_shadow(
     let sets: Vec<Handle<ImpostorMaterial>> =
         state.worlds.values().filter_map(|w| w.impostors.as_ref()).flat_map(|s| s.materials.iter().cloned()).collect();
     drop(state);
-    if applied.as_ref().is_some_and(|(i, n)| i == &*input && *n == sets.len()) {
+    if applied.as_ref().is_some_and(|(i, n)| i.image == input.image && i.params == input.params && *n == sets.len()) {
         return;
     }
     *applied = Some((input.clone(), sets.len()));

@@ -42,7 +42,8 @@ pub struct FarShadowMap {
     /// Render space: (x, z) of the min corner, 1 / extent (1/m; 0 = no map
     /// yet), base height (render y). Follows the floating origin.
     pub params: Vec4,
-    /// Bumps with every upload (consumers re-bind the image).
+    /// Bumps with every upload. Consumers need not re-bind: the upload
+    /// writes the same GPU texture in place (see `update_far_map`).
     pub generation: u32,
 }
 
@@ -53,7 +54,9 @@ struct Computed {
     ms: f32,
 }
 
-#[derive(Default)]
+/// A resource rather than a `Local` so tests can hand the system a
+/// finished map.
+#[derive(Resource, Default)]
 pub(crate) struct FarMapState {
     task: Option<Task<Computed>>,
     /// Center and light of the uploaded (or in-flight) map, and when.
@@ -75,13 +78,21 @@ pub(crate) fn setup_far_map(mut commands: Commands, mut images: ResMut<Assets<Im
     );
     image.sampler = ImageSampler::linear();
     commands.insert_resource(FarShadowMap { image: images.add(image), params: Vec4::ZERO, generation: 0 });
+    commands.insert_resource(FarMapState::default());
 }
 
 /// Uploads finished maps, keeps the params on the floating origin, and
 /// starts a refresh when the light or camera has moved.
+///
+/// The upload only rewrites `image.data`: the descriptor (size, format,
+/// `COPY_DST` usage from `Image::new_fill`) never changes, so Bevy's
+/// `GpuImage::prepare_asset` writes the existing texture in place and keeps
+/// its view (`vendor/bevy_render/src/texture/gpu_image.rs`, the reuse
+/// branches), and every material bind group holding that view stays valid.
+/// Touching the materials to "re-bind" would only rebuild their bind groups.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_far_map(
-    mut local: Local<FarMapState>,
+    local: Option<ResMut<FarMapState>>,
     map: Option<ResMut<FarShadowMap>>,
     mut images: ResMut<Assets<Image>>,
     state: Option<Res<TerrainState>>,
@@ -89,9 +100,8 @@ pub(crate) fn update_far_map(
     origin: Res<TerrainOrigin>,
     camera: Query<&GlobalTransform, With<TerrainCamera>>,
     lights: Query<(&DirectionalLight, &GlobalTransform)>,
-    mut terrain_materials: ResMut<Assets<crate::TerrainMaterial>>,
 ) {
-    let (Some(mut map), Some(state)) = (map, state) else { return };
+    let (Some(mut local), Some(mut map)) = (local, map) else { return };
     let local = &mut *local;
 
     // 1. A finished map: upload it.
@@ -101,6 +111,8 @@ pub(crate) fn update_far_map(
         local.task = None;
         let base = done.center.to_f64().y;
         if let Some(mut image) = images.get_mut(&map.image) {
+            // The texture's size, so the in-place write path holds.
+            debug_assert_eq!(done.map.data.len(), FAR_MAP_SIZE * FAR_MAP_SIZE);
             let mut bytes = Vec::with_capacity(done.map.data.len() * 4);
             for [hs, occ] in &done.map.data {
                 #[allow(clippy::cast_possible_truncation)]
@@ -111,13 +123,6 @@ pub(crate) fn update_far_map(
         }
         local.uploaded = Some(done.center);
         map.generation = map.generation.wrapping_add(1);
-        // Re-bind the re-created texture.
-        let ids: Vec<_> = terrain_materials.ids().collect();
-        for id in ids {
-            if let Some(mut m) = terrain_materials.get_mut(id) {
-                let _: &mut crate::TerrainMaterial = &mut m;
-            }
-        }
         log::debug!("far shadow map: {:.0} ms", done.ms);
     }
 
@@ -134,6 +139,7 @@ pub(crate) fn update_far_map(
     }
 
     // 3. Start a refresh when due.
+    let Some(state) = state else { return };
     if local.task.is_some() {
         return;
     }
@@ -192,7 +198,74 @@ fn f16_bits(v: f32) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::f16_bits;
+    use super::*;
+    use bevy::prelude::{App, AssetApp, AssetPlugin, MinimalPlugins, Startup, Update};
+    use bevy_asset::AssetEvent;
+    use bevy_ecs::message::Messages;
+    use bevy_render::storage::ShaderBuffer;
+
+    use crate::TerrainMaterial;
+
+    /// P2 (perf-push 2026-11-12): a far-map upload writes the image in place and
+    /// leaves the terrain materials alone (no bind group rebuilds), with the
+    /// image's descriptor unchanged so Bevy reuses the GPU texture and its view.
+    #[test]
+    fn upload_writes_the_image_and_leaves_materials_alone() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>()
+            .init_asset::<TerrainMaterial>()
+            .init_resource::<TerrainHeightsMap>()
+            .init_resource::<TerrainOrigin>()
+            .add_systems(Startup, setup_far_map)
+            .add_systems(Update, update_far_map);
+        let h = Handle::<Image>::default;
+        let material = app.world_mut().resource_mut::<Assets<TerrainMaterial>>().add(TerrainMaterial {
+            params: Handle::<ShaderBuffer>::default(),
+            heights: h(),
+            layer_ids: h(),
+            layer_weights: h(),
+            macro_albedo: h(),
+            albedo_height: h(),
+            normal_ao_roughness: h(),
+            normals: h(),
+            far_map: h(),
+        });
+        app.update();
+        let image = app.world().resource::<FarShadowMap>().image.clone();
+        let descriptor = app.world().resource::<Assets<Image>>().get(&image).unwrap().texture_descriptor.clone();
+        // Two frames: the material's `Added` leaves both message buffers.
+        app.update();
+        app.update();
+
+        let map = ShadowHeights {
+            size: FAR_MAP_SIZE,
+            texel: FAR_MAP_TEXEL,
+            min: [0.0; 2],
+            data: vec![[1.0, 2.0]; FAR_MAP_SIZE * FAR_MAP_SIZE],
+        };
+        let center = WorldPos::default();
+        app.world_mut().resource_mut::<FarMapState>().task =
+            Some(AsyncComputeTaskPool::get().spawn(async move { Computed { map, center, ms: 0.0 } }));
+        let started = Instant::now();
+        while app.world().resource::<FarShadowMap>().generation == 0 {
+            assert!(started.elapsed() < Duration::from_secs(10), "the upload never happened");
+            app.update();
+        }
+
+        let images = app.world().resource::<Assets<Image>>();
+        let uploaded = images.get(&image).unwrap();
+        assert_eq!(uploaded.texture_descriptor, descriptor);
+        assert_eq!(uploaded.data.as_ref().map(Vec::len), Some(FAR_MAP_SIZE * FAR_MAP_SIZE * 4));
+        assert_eq!(&uploaded.data.as_ref().unwrap()[..4], &[0x00, 0x3c, 0x00, 0x40]);
+        let image_events = app.world().resource::<Messages<AssetEvent<Image>>>();
+        assert!(image_events.iter_current_update_messages().any(|e| e.is_modified(&image)));
+        let material_events = app.world().resource::<Messages<AssetEvent<TerrainMaterial>>>();
+        assert!(
+            !material_events.iter_current_update_messages().any(|e| e.is_modified(&material)),
+            "the upload modified a terrain material"
+        );
+    }
 
     #[test]
     fn half_bits() {
