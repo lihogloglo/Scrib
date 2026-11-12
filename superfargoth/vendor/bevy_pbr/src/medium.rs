@@ -81,8 +81,8 @@ pub struct GpuScatteringMedium {
     /// superfargoth patch (own, P1: live medium scales): the `density_lut`, a 2D
     /// `falloff_resolution x ceil(terms / 4)` LUT of each term's unit falloff (channel `k` of
     /// row `j` is term `4j + k`) against the atmosphere's "falloff parameter", a linear value
-    /// which is 1.0 at the planet's surface and 0.0 at the edge of space. The shaders multiply
-    /// in each term's absorption and scattering from the atmosphere uniform (stock Bevy baked
+    /// which is 1.0 at the planet's surface and 0.0 at the edge of space. `medium_lut.wesl` (P1b) multiplies
+    /// in each term's absorption and scattering from the atmosphere uniform on the GPU (stock Bevy baked
     /// the coefficient sums here, so any coefficient change re-baked it on the CPU).
     pub density_lut: Texture,
     /// The default [`TextureView`] of the `density_lut`

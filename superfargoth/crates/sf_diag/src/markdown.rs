@@ -16,9 +16,15 @@ const CPU_SUFFIX: &str = "/elapsed_cpu";
 pub struct PassTiming {
     /// The span path below `render/`; nested spans contain `/`.
     pub span: String,
-    /// Mean GPU milliseconds per sample.
+    /// Mean GPU milliseconds per sample (per run of the pass).
     pub gpu_ms: Option<f64>,
     pub gpu_p95_ms: Option<f64>,
+    /// Mean GPU milliseconds per measured frame: [`Self::gpu_ms`] x [`Self::runs_per_frame`].
+    /// A pass that runs every Nth frame (the time-sliced env map) records a sample only then,
+    /// so its per-sample mean is the cost of one run, not its share of a frame.
+    pub gpu_frame_ms: Option<f64>,
+    /// GPU samples per measured frame (1 for an every-frame pass).
+    pub runs_per_frame: Option<f64>,
     /// Mean CPU (encoding) milliseconds per sample.
     pub cpu_ms: Option<f64>,
 }
@@ -49,16 +55,25 @@ impl Report {
                 .get(&format!("{RENDER_PREFIX}{span}{suffix}"))
                 .and_then(|c| c.per_frame)
         };
+        #[allow(clippy::cast_precision_loss)] // sample counts are far below 2^52
+        let frames = self.frames.as_ref().map(|f| f.stats.count as f64).filter(|n| *n > 0.0);
         let mut rows: Vec<PassTiming> = spans
             .into_iter()
-            .map(|span| PassTiming {
-                span: span.to_owned(),
-                gpu_ms: stat(span, GPU_SUFFIX).map(|s| s.mean),
-                gpu_p95_ms: stat(span, GPU_SUFFIX).map(|s| s.p95),
-                cpu_ms: stat(span, CPU_SUFFIX).map(|s| s.mean),
+            .map(|span| {
+                let gpu = stat(span, GPU_SUFFIX);
+                #[allow(clippy::cast_precision_loss)]
+                let runs = gpu.zip(frames).map(|(s, n)| (s.count as f64 / n).min(1.0));
+                PassTiming {
+                    span: span.to_owned(),
+                    gpu_ms: gpu.map(|s| s.mean),
+                    gpu_p95_ms: gpu.map(|s| s.p95),
+                    gpu_frame_ms: gpu.map(|s| s.mean * runs.unwrap_or(1.0)),
+                    runs_per_frame: runs,
+                    cpu_ms: stat(span, CPU_SUFFIX).map(|s| s.mean),
+                }
             })
             .collect();
-        rows.sort_by(|a, b| b.gpu_ms.unwrap_or(0.0).total_cmp(&a.gpu_ms.unwrap_or(0.0)));
+        rows.sort_by(|a, b| b.gpu_frame_ms.unwrap_or(0.0).total_cmp(&a.gpu_frame_ms.unwrap_or(0.0)));
         rows
     }
 
@@ -68,7 +83,7 @@ impl Report {
         let top: Vec<f64> = rows
             .iter()
             .filter(|r| r.is_top_level())
-            .filter_map(|r| r.gpu_ms)
+            .filter_map(|r| r.gpu_frame_ms)
             .collect();
         (!top.is_empty()).then(|| top.iter().sum())
     }
@@ -182,14 +197,17 @@ impl Report {
         if rows.is_empty() {
             return;
         }
-        let _ = writeln!(out, "\n## GPU passes (Bevy-timed, mean per frame)\n");
-        let _ = writeln!(out, "| pass | GPU ms | GPU p95 | CPU ms |");
-        let _ = writeln!(out, "|---|---:|---:|---:|");
+        let _ = writeln!(out, "\n## GPU passes (Bevy-timed)\n");
+        let _ = writeln!(out, "Per frame = per run x runs per frame (a time-sliced pass runs every Nth frame).\n");
+        let _ = writeln!(out, "| pass | GPU ms/frame | GPU ms/run | GPU p95/run | runs/frame | CPU ms |");
+        let _ = writeln!(out, "|---|---:|---:|---:|---:|---:|");
         for r in rows {
+            let runs = r.runs_per_frame.map_or_else(|| "-".to_owned(), |v| format!("{v:.2}"));
             let _ = writeln!(
                 out,
-                "| {} | {} | {} | {} |",
+                "| {} | {} | {} | {} | {runs} | {} |",
                 r.span,
+                opt_ms(r.gpu_frame_ms),
                 opt_ms(r.gpu_ms),
                 opt_ms(r.gpu_p95_ms),
                 opt_ms(r.cpu_ms)

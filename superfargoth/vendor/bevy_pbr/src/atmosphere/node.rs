@@ -50,11 +50,13 @@ pub fn atmosphere_luts(
         Some(multiscattering_lut_pipeline),
         Some(sky_view_lut_pipeline),
         Some(aerial_view_lut_pipeline),
+        Some(medium_lut_pipeline),
     ) = (
         pipeline_cache.get_compute_pipeline(pipelines.transmittance_lut),
         pipeline_cache.get_compute_pipeline(pipelines.multiscattering_lut),
         pipeline_cache.get_compute_pipeline(pipelines.sky_view_lut),
         pipeline_cache.get_compute_pipeline(pipelines.aerial_view_lut),
+        pipeline_cache.get_compute_pipeline(pipelines.medium_lut),
     )
     else {
         return;
@@ -82,6 +84,13 @@ pub fn atmosphere_luts(
     }
 
     if need_static_luts {
+        // superfargoth patch (own, P1b): the combined medium LUTs first (unit LUTs x the live
+        // coefficients), so every LUT below samples one texel per lookup like stock Bevy. The
+        // key already covers the medium and its scales.
+        luts_pass.set_pipeline(medium_lut_pipeline);
+        luts_pass.set_bind_group(0, &bind_groups.medium_lut, &[atmosphere_uniforms_offset.index()]);
+        dispatch_2d(&mut luts_pass, bind_groups.medium_lut_size);
+
         // Transmittance LUT
         luts_pass.set_pipeline(transmittance_lut_pipeline);
         luts_pass.set_bind_group(

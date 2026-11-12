@@ -189,31 +189,14 @@ const SCATTERING_DENSITY: f32 = 1.0;
 /// calling with `component = 0.0` will return the atmosphere's absorption density,
 /// while calling with `component = 1.0` will return the atmosphere's scattering density.
 ///
-/// superfargoth patch (own, P1: live medium scales): the LUT holds each term's unit falloff,
-/// four terms per texel (`medium.rs` `GpuScatteringMedium::density_lut`); the coefficients
-/// (times the live `ScatteringMediumScales`) come from the atmosphere uniform.
+/// superfargoth patch (own, P1b): stock single fetch. The LUT is the view's combined medium
+/// LUT (`AtmosphereTextures::medium_density_lut`), written on the GPU from the unit LUTs and the
+/// live scales by `medium_lut.wesl` whenever the static LUTs recompute.
 fn sample_density_lut(r: f32, component: f32) -> vec3<f32> {
     // sampler clamps to [0, 1] anyways, no need to clamp the altitude
     let normalized_altitude = (r - atmosphere.inner_radius) / (atmosphere.outer_radius - atmosphere.inner_radius);
-    let u = 1.0 - normalized_altitude;
-    var density = vec3(0.0);
-    var falloff = vec4(0.0);
-    for (var t = 0u; t < atmosphere.medium_term_count; t++) {
-        if t % 4u == 0u {
-            falloff = sample_medium_falloff(u, t / 4u);
-        }
-        let coefficient = select(atmosphere.medium_absorption[t].xyz, atmosphere.medium_scattering[t].xyz, component > 0.5);
-        density += coefficient * falloff[t % 4u];
-    }
-    return density;
-}
-
-/// superfargoth patch (own, P1: live medium scales): the unit falloff of terms `4 * row` to
-/// `4 * row + 3` at the falloff coordinate `u` (texel centres in V: no blend between rows).
-fn sample_medium_falloff(u: f32, row: u32) -> vec4<f32> {
-    let rows = max((atmosphere.medium_term_count + 3u) / 4u, 1u);
-    let v = (f32(row) + 0.5) / f32(rows);
-    return textureSampleLevel(medium_density_lut, medium_sampler, vec2(u, v), 0.0);
+    let uv = vec2(1.0 - normalized_altitude, component);
+    return textureSampleLevel(medium_density_lut, medium_sampler, uv, 0.0).xyz;
 }
 
 
@@ -223,28 +206,13 @@ const PHASE_MAPPING_N: f32 = 0.5;
 /// of the light direction and the incoming view vector.
 /// Nonlinear phase mapping to mitigate banding in low-resolution LUTs.
 ///
-/// superfargoth patch (own, P1: live medium scales): sum over terms of scattering (uniform, with
-/// the live scales) x unit falloff x phase (one LUT row per term); a term with no scattering
-/// (ozone, dust at zero) skips its phase fetch.
+/// superfargoth patch (own, P1b): stock single fetch of the view's combined LUT
+/// (`AtmosphereTextures::medium_scattering_lut`, `medium_lut.wesl`).
 fn sample_scattering_lut(r: f32, neg_LdotV: f32) -> vec3<f32> {
     let normalized_altitude = (r - atmosphere.inner_radius) / (atmosphere.outer_radius - atmosphere.inner_radius);
     let phase_uv = 0.5 + 0.5 * sign(neg_LdotV) * (1.0 - pow(1.0 - abs(neg_LdotV), PHASE_MAPPING_N));
-    let u = 1.0 - normalized_altitude;
-    let terms = atmosphere.medium_term_count;
-    var scattering = vec3(0.0);
-    var falloff = vec4(0.0);
-    for (var t = 0u; t < terms; t++) {
-        if t % 4u == 0u {
-            falloff = sample_medium_falloff(u, t / 4u);
-        }
-        let coefficient = atmosphere.medium_scattering[t].xyz;
-        if any(coefficient > vec3(0.0)) {
-            let uv = vec2(phase_uv, (f32(t) + 0.5) / f32(terms));
-            let phase = textureSampleLevel(medium_scattering_lut, medium_sampler, uv, 0.0).xyz;
-            scattering += coefficient * falloff[t % 4u] * phase;
-        }
-    }
-    return scattering;
+    let uv = vec2(1.0 - normalized_altitude, phase_uv);
+    return textureSampleLevel(medium_scattering_lut, medium_sampler, uv, 0.0).xyz;
 }
 
 /// evaluates L_scat, equation 3 in the paper, which gives the total single-order scattering towards the view at a single point

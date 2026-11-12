@@ -227,11 +227,14 @@ fn atmosphere_settings_layout_matches_between_rust_and_wgsl() {
     assert_eq!(u64::from(layouter[handle].size), rust, "WGSL vs Rust size");
 }
 
-/// Patch P1 (live medium scales, `ScatteringMediumScales`): every atmosphere pass that samples
-/// the medium links and validates with the per-term LUTs and the uniform's term arrays.
+/// Patches P1 + P1b (live medium scales, `ScatteringMediumScales`): every atmosphere pass that
+/// samples the medium links and validates. The term sum lives only in the combine pass
+/// (`medium_lut`, run with the static LUTs); the per-sample passes do stock single fetches
+/// (P1b: summing per sample doubled `atmosphere_luts`, 0.36 -> 0.84 ms).
 #[test]
 fn atmosphere_passes_compile_with_live_medium_scales() {
-    let jobs: [(&str, &[&str]); 6] = [
+    let jobs: [(&str, &[&str]); 7] = [
+        ("bevy_pbr::atmosphere::medium_lut", &[]),
         ("bevy_pbr::atmosphere::transmittance_lut", &[]),
         ("bevy_pbr::atmosphere::multiscattering_lut", &[]),
         ("bevy_pbr::atmosphere::sky_view_lut", &[]),
@@ -242,8 +245,11 @@ fn atmosphere_passes_compile_with_live_medium_scales() {
     let mut failures = Vec::new();
     for (module, defs) in jobs {
         match compile(module, defs) {
-            Ok(wgsl) if module.ends_with("transmittance_lut") && !wgsl.contains("medium_absorption") => {
-                failures.push(format!("{module}: the per-term medium is not linked"));
+            Ok(wgsl) if module.ends_with("medium_lut") && !wgsl.contains("medium_term_count") => {
+                failures.push(format!("{module}: the combine pass does not read the live terms"));
+            }
+            Ok(wgsl) if !module.ends_with("medium_lut") && wgsl.contains("sample_medium_falloff") => {
+                failures.push(format!("{module}: per-sample term sum is back (P1b)"));
             }
             Ok(_) => {}
             Err(e) => failures.push(e),

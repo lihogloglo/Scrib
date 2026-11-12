@@ -16,12 +16,16 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
 - **Medium and weather scales.** `build_medium` (`:399`) bakes the density and phase LUTs (256^2,
   `SkyRenderOptions::medium_resolution` `:132`) only when the atmosphere model changes. Haze and dust are live
   `ScatteringMediumScales` (`update_medium` `:534`, steps 0.05/0.02/0.02, at most every 0.25 s,
-  `MediumStats`). The static transmittance and multiscattering LUTs recompute once per scale change on the GPU.
+  `MediumStats`). On a scale change the cached static pass recomputes once on the GPU: the combined medium LUTs (P1b
+  `medium_lut.wesl`: unit falloff and phase x live coefficients, stock layout), then transmittance and multiscattering;
+  every other pass samples the combined LUTs with stock single fetches.
 - **Vendored `bevy_pbr` atmosphere patches** (`superfargoth/vendor/README.md`): `AtmosphereStaticLutCache` (`:23`),
   P1 live medium scales (`:24`, `vendor/bevy_pbr/src/medium.rs`), N2 airglow (`:29`: night sky glow in the sky-view LUT, so
   sky, env map, fog and clouds all see it), N1 ambient-specular toggle (`:27`), surface weather hook (`:26`).
-- **Env map.** Bevy refilters the sky env map every frame (~0.8 ms); `EnvMapRefresh` keeps the result for N frames
-  (`sf_sky_bevy/src/env_refresh.rs:24`).
+- **Env map.** Bevy refilters the sky env map every frame (~0.7 ms a run); `EnvMapRefresh` keeps the result for N = 8
+  frames (`sf_sky_bevy/src/env_refresh.rs:24`), so it costs ~0.09 ms a frame. Bevy timings appear only on frames a pass
+  runs: the perf report shows `GPU ms/run` and `runs/frame` and sums the per-frame share (`sf_diag` `PassTiming`).
+  A run still lands on one frame (a ~0.7 ms spike every 8th); spreading it over frames (UE-style) is not done.
 - **Night sky.** Stars, textured moons and sun glare are drawn before the cloud composite (`night.rs`); the moon
   light is separate from the drawn disks. Raster or Solari path switch: `path.rs`; DLSS/TAA: `upscale.rs`.
 - **Clouds and fog.** `CloudsPlugin` (`sf_atmos_bevy/src/lib.rs:229`): a half-res raymarch lit through the atmosphere
@@ -53,8 +57,8 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
 
 ## Known limits
 
-- `atmosphere_luts` costs +0.57 ms GPU standing since P1 (0.36 -> 0.93 ms); follow-up not done
-  ([ledger](../../ledger/sky-weather.md)).
+- `atmosphere_luts` rose 0.36 -> 0.84-0.93 ms with P1 (per-sample term sums); P1b restores stock single fetches, expected
+  back near 0.36 ms, not yet measured ([ledger](../../ledger/sky-weather.md)).
 - Local storms seen from outside look like a wall with a shimmering border (WE-10); rain and clouds do not draw over
   distant water (WE-7); no visible god rays at sunrise in fog (FG-10); weather fog vanishes at night (FG-8, WE-9 causes 1 and 3).
 - A weather medium change moves the sky through the GPU LUTs (no CPU bake); a model change still bakes on the render thread.

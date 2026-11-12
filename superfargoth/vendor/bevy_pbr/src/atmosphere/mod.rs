@@ -109,6 +109,8 @@ impl Plugin for AtmospherePlugin {
         embedded_asset!(app, "aerial_view_lut.wesl");
         embedded_asset!(app, "render_sky.wesl");
         embedded_asset!(app, "environment.wesl");
+        // superfargoth patch (own, P1b): combined medium LUTs on the GPU.
+        embedded_asset!(app, "medium_lut.wesl");
 
         app.add_plugins((
             ExtractComponentPlugin::<AtmosphereEnvironmentMap>::default(),

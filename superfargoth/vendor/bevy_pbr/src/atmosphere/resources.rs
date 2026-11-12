@@ -37,6 +37,8 @@ pub(crate) struct AtmosphereBindGroupLayouts {
     pub multiscattering_lut: BindGroupLayoutDescriptor,
     pub sky_view_lut: BindGroupLayoutDescriptor,
     pub aerial_view_lut: BindGroupLayoutDescriptor,
+    /// superfargoth patch (own, P1b): `medium_lut.wesl`, the combined medium LUTs.
+    pub medium_lut: BindGroupLayoutDescriptor,
 }
 
 #[derive(Resource)]
@@ -157,11 +159,40 @@ impl AtmosphereBindGroupLayouts {
             ),
         );
 
+        // superfargoth patch (own, P1b): unit falloff and phase LUTs in (read with
+        // `textureLoad`), the stock combined density and scattering LUTs out.
+        let medium_lut = BindGroupLayoutDescriptor::new(
+            "medium_lut_bind_group_layout",
+            &BindGroupLayoutEntries::with_indices(
+                ShaderStages::COMPUTE,
+                (
+                    (0, uniform_buffer::<GpuAtmosphere>(true)),
+                    (1, texture_2d(TextureSampleType::Float { filterable: false })),
+                    (2, texture_2d(TextureSampleType::Float { filterable: false })),
+                    (
+                        3,
+                        texture_storage_2d(
+                            TextureFormat::Rgba32Float,
+                            StorageTextureAccess::WriteOnly,
+                        ),
+                    ),
+                    (
+                        4,
+                        texture_storage_2d(
+                            TextureFormat::Rgba32Float,
+                            StorageTextureAccess::WriteOnly,
+                        ),
+                    ),
+                ),
+            ),
+        );
+
         Self {
             transmittance_lut,
             multiscattering_lut,
             sky_view_lut,
             aerial_view_lut,
+            medium_lut,
         }
     }
 }
@@ -253,6 +284,8 @@ pub(crate) struct AtmosphereLutPipelines {
     pub multiscattering_lut: CachedComputePipelineId,
     pub sky_view_lut: CachedComputePipelineId,
     pub aerial_view_lut: CachedComputePipelineId,
+    /// superfargoth patch (own, P1b).
+    pub medium_lut: CachedComputePipelineId,
 }
 
 impl FromWorld for AtmosphereLutPipelines {
@@ -289,11 +322,19 @@ impl FromWorld for AtmosphereLutPipelines {
             ..default()
         });
 
+        let medium_lut = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            label: Some("medium_lut_pipeline".into()),
+            layout: vec![layouts.medium_lut.clone()],
+            shader: load_embedded_asset!(world, "medium_lut.wesl"),
+            ..default()
+        });
+
         Self {
             transmittance_lut,
             multiscattering_lut,
             sky_view_lut,
             aerial_view_lut,
+            medium_lut,
         }
     }
 }
@@ -393,15 +434,56 @@ pub struct AtmosphereTextures {
     pub multiscattering_lut: CachedTexture,
     pub sky_view_lut: CachedTexture,
     pub aerial_view_lut: CachedTexture,
+    /// superfargoth patch (own, P1b): the stock combined medium density LUT
+    /// (`falloff x 2`: absorption row, scattering row), coefficients times the view's live
+    /// `ScatteringMediumScales`; written by `medium_lut.wesl` with the static LUTs.
+    pub medium_density_lut: CachedTexture,
+    /// superfargoth patch (own, P1b): the stock combined medium scattering LUT
+    /// (`falloff x phase`, scattering x phase summed over the terms).
+    pub medium_scattering_lut: CachedTexture,
 }
 
 pub(super) fn prepare_atmosphere_textures(
-    views: Query<(Entity, &GpuAtmosphereSettings), With<ExtractedAtmosphere>>,
+    views: Query<(Entity, &GpuAtmosphereSettings, &ExtractedAtmosphere)>,
+    gpu_media: Res<RenderAssets<GpuScatteringMedium>>,
     render_device: Res<RenderDevice>,
     mut texture_cache: ResMut<TextureCache>,
     mut commands: Commands,
 ) {
-    for (entity, lut_settings) in &views {
+    for (entity, lut_settings, atmosphere) in &views {
+        // superfargoth patch (own, P1b): the combined medium LUTs match the medium's
+        // resolution (stock `GpuScatteringMedium` sizes). No medium yet: the bind groups
+        // fail on the same missing asset this frame.
+        let Some(gpu_medium) = gpu_media.get(atmosphere.medium) else {
+            continue;
+        };
+        let medium_texture = |label: &'static str, width: u32, height: u32| TextureDescriptor {
+            label: Some(label),
+            size: Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba32Float,
+            usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        };
+        let medium_density_lut = texture_cache.get(
+            &render_device,
+            medium_texture("medium_density_lut", gpu_medium.falloff_resolution, 2),
+        );
+        let medium_scattering_lut = texture_cache.get(
+            &render_device,
+            medium_texture(
+                "medium_scattering_lut",
+                gpu_medium.falloff_resolution,
+                gpu_medium.phase_resolution,
+            ),
+        );
+
         let transmittance_lut = texture_cache.get(
             &render_device,
             TextureDescriptor {
@@ -464,6 +546,8 @@ pub(super) fn prepare_atmosphere_textures(
                 multiscattering_lut,
                 sky_view_lut,
                 aerial_view_lut,
+                medium_density_lut,
+                medium_scattering_lut,
             }
         });
     }
@@ -629,7 +713,7 @@ pub(super) fn prepare_atmosphere_transforms(
 /// bit-identical output and instant invalidation on weather/medium changes.
 #[derive(Resource, Default)]
 pub(crate) struct AtmosphereStaticLutCache(
-    pub bevy_platform::collections::HashMap<(TextureId, TextureId), u64>,
+    pub bevy_platform::collections::HashMap<[TextureId; 4], u64>,
 );
 
 #[derive(Component)]
@@ -639,7 +723,13 @@ pub(crate) struct AtmosphereBindGroups {
     pub sky_view_lut: BindGroup,
     pub aerial_view_lut: BindGroup,
     pub render_sky: BindGroup,
-    pub static_lut_textures: (TextureId, TextureId),
+    /// superfargoth patch (own, P1b): writes the combined medium LUTs (`medium_lut.wesl`).
+    pub medium_lut: BindGroup,
+    /// Threads of the `medium_lut` dispatch: `falloff x max(phase, 2)`.
+    pub medium_lut_size: bevy_math::UVec2,
+    /// Transmittance, multiscattering and (P1b) the combined medium density and scattering
+    /// LUTs: everything the cached static pass writes.
+    pub static_lut_textures: [TextureId; 4],
     pub static_lut_key: u64,
 }
 
@@ -747,9 +837,27 @@ pub(super) fn prepare_atmosphere_bind_groups(
         lut_settings.multiscattering_lut_dirs.hash(&mut key_hasher);
         lut_settings.multiscattering_lut_samples.hash(&mut key_hasher);
         let static_lut_key = key_hasher.finish();
-        let static_lut_textures = (
+        let static_lut_textures = [
             textures.transmittance_lut.texture.id(),
             textures.multiscattering_lut.texture.id(),
+            textures.medium_density_lut.texture.id(),
+            textures.medium_scattering_lut.texture.id(),
+        ];
+
+        let medium_lut_size = bevy_math::UVec2::new(
+            gpu_medium.falloff_resolution,
+            gpu_medium.phase_resolution.max(2),
+        );
+        let medium_lut = render_device.create_bind_group(
+            "medium_lut_bind_group",
+            &pipeline_cache.get_bind_group_layout(&layouts.medium_lut),
+            &BindGroupEntries::with_indices((
+                (0, atmosphere_binding.clone()),
+                (1, &gpu_medium.density_lut_view),
+                (2, &gpu_medium.scattering_lut_view),
+                (3, &textures.medium_density_lut.default_view),
+                (4, &textures.medium_scattering_lut.default_view),
+            )),
         );
 
         let transmittance_lut = render_device.create_bind_group(
@@ -760,8 +868,8 @@ pub(super) fn prepare_atmosphere_bind_groups(
                 (0, atmosphere_binding.clone()),
                 (1, settings_binding.clone()),
                 // scattering medium luts and sampler
-                (5, &gpu_medium.density_lut_view),
-                (6, &gpu_medium.scattering_lut_view),
+                (5, &textures.medium_density_lut.default_view),
+                (6, &textures.medium_scattering_lut.default_view),
                 (7, medium_sampler.sampler()),
                 // transmittance lut storage texture
                 (13, &textures.transmittance_lut.default_view),
@@ -776,8 +884,8 @@ pub(super) fn prepare_atmosphere_bind_groups(
                 (0, atmosphere_binding.clone()),
                 (1, settings_binding.clone()),
                 // scattering medium luts and sampler
-                (5, &gpu_medium.density_lut_view),
-                (6, &gpu_medium.scattering_lut_view),
+                (5, &textures.medium_density_lut.default_view),
+                (6, &textures.medium_scattering_lut.default_view),
                 (7, medium_sampler.sampler()),
                 // atmosphere luts and sampler
                 (8, &textures.transmittance_lut.default_view),
@@ -798,8 +906,8 @@ pub(super) fn prepare_atmosphere_bind_groups(
                 (3, view_binding.clone()),
                 (4, lights_binding.clone()),
                 // scattering medium luts and sampler
-                (5, &gpu_medium.density_lut_view),
-                (6, &gpu_medium.scattering_lut_view),
+                (5, &textures.medium_density_lut.default_view),
+                (6, &textures.medium_scattering_lut.default_view),
                 (7, medium_sampler.sampler()),
                 // atmosphere luts and sampler
                 (8, &textures.transmittance_lut.default_view),
@@ -820,8 +928,8 @@ pub(super) fn prepare_atmosphere_bind_groups(
                 (3, view_binding.clone()),
                 (4, lights_binding.clone()),
                 // scattering medium luts and sampler
-                (5, &gpu_medium.density_lut_view),
-                (6, &gpu_medium.scattering_lut_view),
+                (5, &textures.medium_density_lut.default_view),
+                (6, &textures.medium_scattering_lut.default_view),
                 (7, medium_sampler.sampler()),
                 // atmosphere luts and sampler
                 (8, &textures.transmittance_lut.default_view),
@@ -847,8 +955,8 @@ pub(super) fn prepare_atmosphere_bind_groups(
                 (3, view_binding.clone()),
                 (4, lights_binding.clone()),
                 // scattering medium luts and sampler
-                (5, &gpu_medium.density_lut_view),
-                (6, &gpu_medium.scattering_lut_view),
+                (5, &textures.medium_density_lut.default_view),
+                (6, &textures.medium_scattering_lut.default_view),
                 (7, medium_sampler.sampler()),
                 // atmosphere luts and sampler
                 (8, &textures.transmittance_lut.default_view),
@@ -867,6 +975,8 @@ pub(super) fn prepare_atmosphere_bind_groups(
             sky_view_lut,
             aerial_view_lut,
             render_sky,
+            medium_lut,
+            medium_lut_size,
             static_lut_textures,
             static_lut_key,
         });

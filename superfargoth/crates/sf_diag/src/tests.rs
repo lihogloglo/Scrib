@@ -840,3 +840,24 @@ fn max_stutters_gate_counts_per_minute() {
     let parsed: Gate = serde_json::from_str(json).unwrap();
     assert_eq!(parsed, Gate::wishlist_streaming_stutters()[0]);
 }
+
+/// A pass that runs every 8th frame (the time-sliced sky env map) records 1 sample in 8: the
+/// table shows its per-run cost and its per-frame share, and the timed sum uses the share.
+#[test]
+fn time_sliced_pass_is_amortised_per_frame() {
+    let counters = Counters::new();
+    let mut rec = Recorder::new();
+    for i in 0..64 {
+        counters.set_named("render/opaque/elapsed_gpu", "ms", 2.0);
+        if i % 8 == 0 {
+            counters.set_named("render/lightprobe_irradiance_map/elapsed_gpu", "ms", 0.4);
+        }
+        rec.commit_frame(10.0, &counters);
+    }
+    let report = Report::build("sliced", &rec, &Gate::wishlist_streaming(), 1.5, BTreeMap::new());
+    let probe = report.pass_timings().into_iter().find(|r| r.span == "lightprobe_irradiance_map").unwrap();
+    assert!(approx(probe.gpu_ms.unwrap(), 0.4), "per run: {probe:?}");
+    assert!(approx(probe.runs_per_frame.unwrap(), 0.125), "runs: {probe:?}");
+    assert!(approx(probe.gpu_frame_ms.unwrap(), 0.05), "per frame: {probe:?}");
+    assert!(approx(report.timed_gpu_ms().unwrap(), 2.05), "timed sum uses the per-frame share");
+}

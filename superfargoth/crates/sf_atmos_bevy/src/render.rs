@@ -725,7 +725,7 @@ fn prepare_views(
         far_weather = u32::from(map_on == 1 && s.quality.far_weather && v.envelope[3] > 0.5);
     }
     for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps, jitter) in &views {
-        let Some(medium) = media.get(atmosphere.medium) else { continue };
+        if media.get(atmosphere.medium).is_none() { continue }
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
         let full = resolution.map_or(UVec2::new(view.viewport.z, view.viewport.w), |r| r.0).max(UVec2::ONE);
         let half = (full + 1) / 2;
@@ -850,8 +850,8 @@ fn prepare_views(
                 (2, a2.clone()),
                 (3, a3.clone()),
                 (4, a4.clone()),
-                (5, &medium.density_lut_view),
-                (6, &medium.scattering_lut_view),
+                (5, &luts.medium_density_lut.default_view),
+                (6, &luts.medium_scattering_lut.default_view),
                 (7, medium_sampler.sampler()),
                 (8, &luts.transmittance_lut.default_view),
                 (9, &luts.multiscattering_lut.default_view),
