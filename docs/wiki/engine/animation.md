@@ -42,6 +42,16 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   `anim.retarget` (library clips onto the humanoid rig) and `animgraph.compile`. The manifest
   `bevyrrowind/crates/mw_graphs/data/animation/sources.ron` maps slots to `source:clip` chains; only the CC0
   Quaternius UAL1/UAL2 packs ship (LFS). The game reads the last bake: re-run it after changing slots.
+- **Loop cutter** (`superfargoth/crates/sf_anim/src/loop_cut.rs:1-39`, rules `:53` `LoopCutRules`, cut `:199`): opt-in
+  `ClipRules::loop_cut` (`cook.rs:242`; a slot's `loop_cut: Some((...))` in `sources.ron`, `mw_graphs/src/sources.rs:187`)
+  turns a non-periodic take (Kimodo ramps up, holds, slows) into a seamless loop: Kovar 2002 transition-point search
+  between same-foot touchdowns (the unlooped cook's `down.<foot>` markers) inside the steady part (within 10% of the
+  median stride-averaged speed), joint position + velocity distance in a stride-smoothed character frame, fewest strides (1-2) on
+  ties; trims to `[a, b]` and fades the last 0.12 s (4 frames at 30 Hz) into the frames before `a` moved by one cycle,
+  so the last frame is exactly the first moved by the loop's root delta. `cook_clip_report` (`cook.rs:341`) returns
+  `LoopCut` (window, strides, seam errors before/after the fade, speed, turn) or a `LoopCutError` (clip left
+  unlooped); `mw_bake::anim::cook_library_clip_report` (`anim.rs:157`). Rule absent: byte-identical cook. No slot
+  uses it yet. `anim.cook` step version 12. Measure: `mw_bake/tests/loop_cut.rs` (loco1 keep/maybe cycles).
 - **Retarget pose** (`superfargoth/crates/sf_character/src/align.rs:1-35`, rule at `:213`): auto-align turns limbs to the
   canonical T-pose (arms ±X, legs −Y) but the trunk (hips, spine, neck, head) keeps each rig's own rest curvature
   (UE5's matched retarget pose, 2026-11-12), so a clip carries the source's change from rest onto Morrowind's bind;

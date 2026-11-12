@@ -318,7 +318,8 @@ impl Step for AnimCookStep {
         //    (`cook::start_anchor`: split-take clips no longer draw the body off its capsule).
         // 10: hand and foot contacts, `ClipMeta::contacts` (`annotate_contacts`, action.md B2b).
         // 11: contact speeds per frame step; hands also plant as pivots (`HAND_SPEED`, `HAND_PIVOT`): mantle grips.
-        11
+        // 12: `ClipRules::loop_cut` (a seamless loop cut from a non-periodic take, `loop_cut.rs`); the rules gain the field.
+        12
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (skeleton, file, clip) = Self::parse(subject)?;

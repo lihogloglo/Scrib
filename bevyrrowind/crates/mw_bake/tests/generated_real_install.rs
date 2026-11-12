@@ -77,6 +77,7 @@ fn slot(file: &str) -> Slot {
         root: RootMotionMode::Drive,
         vertical: false,
         in_place: false,
+        loop_cut: None,
         fallback: ClipFallback::Drop,
     }
 }

@@ -30,6 +30,7 @@ pub mod fixtures;
 mod gltf_import;
 pub mod ik;
 mod import;
+mod loop_cut;
 mod math;
 mod pose;
 mod retarget;
@@ -52,7 +53,8 @@ pub use clip::{
     attitude_rotation,
 };
 pub use cook::{
-    AdditiveBase, ClipRules, ContactRules, CookError, CookSettings, FrameClip, Looping, RootMotionRules, cook_clip, cook_clip_for, cook_frames,
+    AdditiveBase, ClipRules, ContactRules, CookError, CookReport, CookSettings, FrameClip, Looping, RootMotionRules, cook_clip, cook_clip_for, cook_clip_report,
+    cook_frames,
 };
 #[cfg(feature = "fbx")]
 pub use fbx_import::FbxAnimImporter;
@@ -60,6 +62,7 @@ pub use fbx_import::FbxAnimImporter;
 pub use gltf_import::{GltfAnimImporter, list_gltf_clips};
 pub use ik::LimbSolver;
 pub use import::{Axis, SourceSpace, SpaceConverter, detect_root_motion_joint};
+pub use loop_cut::{LoopCut, LoopCutError, LoopCutRules};
 pub use math::{Trs, angle_between, nlerp, twist_angle};
 pub use pose::{
     BlendLayer, JointWeights, LocalPose, ModelPose, SoaTrs, apply_additive, blend, blend_in_place, blend_layers, local_to_model, make_additive,
@@ -141,6 +144,8 @@ mod annotate_tests;
 mod fbik_tests;
 #[cfg(test)]
 mod import_tests;
+#[cfg(test)]
+mod loop_cut_tests;
 #[cfg(test)]
 mod rig_tests;
 #[cfg(test)]

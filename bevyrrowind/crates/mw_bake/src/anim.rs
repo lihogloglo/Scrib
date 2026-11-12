@@ -149,6 +149,18 @@ impl HumanoidTarget {
 /// (`clip-preview`, motion-generation.md MG5); the bake itself goes through
 /// the steps.
 pub fn cook_library_clip(source: &str, path: &Path, clip: Option<&str>, rules: &ClipRules, target: &HumanoidTarget) -> Result<Clip, String> {
+    cook_library_clip_report(source, path, clip, rules, target).map(|(clip, _)| clip)
+}
+
+/// [`cook_library_clip`] with the cook's report (the loop cut of
+/// [`ClipRules::loop_cut`]: its window and seam errors, or why none was cut).
+pub fn cook_library_clip_report(
+    source: &str,
+    path: &Path,
+    clip: Option<&str>,
+    rules: &ClipRules,
+    target: &HumanoidTarget,
+) -> Result<(Clip, sf_anim::CookReport), String> {
     let manifest = mw_graphs::sources::SourcesManifest::builtin();
     let library = manifest.sources.get(source).ok_or_else(|| format!("no animation source {source:?}"))?;
     let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| format!("{}: no file name", path.display()))?;
@@ -179,7 +191,7 @@ pub fn cook_library_clip(source: &str, path: &Path, clip: Option<&str>, rules: &
     }
     .ok_or_else(|| format!("{name}: no clip {}", clip.unwrap_or("(the file has none)")))?;
     let settings = CookSettings::default();
-    let cooked = sf_anim::cook_clip_for(&skeleton, Some(&profile), src, &cook_rules, &settings).map_err(|e| e.to_string())?;
+    let (cooked, report) = sf_anim::cook_clip_report(&skeleton, Some(&profile), src, &cook_rules, &settings).map_err(|e| e.to_string())?;
     // anim.retarget
     let retargeter = sf_anim::Retargeter::new(&skeleton, &source_rig, &target.skeleton, &target.rig).map_err(|e| e.to_string())?;
     let mut out = match &retarget_root {
@@ -189,7 +201,7 @@ pub fn cook_library_clip(source: &str, path: &Path, clip: Option<&str>, rules: &
     .map_err(|e| e.to_string())?;
     sf_anim::transfer_contacts(&cooked.meta.contacts, &target.skeleton, &target.profile, &mut out);
     out.name.clone_from(&src.name);
-    Ok(out)
+    Ok((out, report))
 }
 
 // ---------------------------------------------------------------------------

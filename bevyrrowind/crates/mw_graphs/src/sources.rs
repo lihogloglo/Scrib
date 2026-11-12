@@ -15,7 +15,7 @@ use std::fmt::Write as _;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
-use sf_anim::{ClipRules, Looping, RootMotionMode, RootMotionRules};
+use sf_anim::{ClipRules, LoopCutRules, Looping, RootMotionMode, RootMotionRules};
 use sf_anim_graph::asset::{ClipFallback, ClipRef};
 use sf_character::PoseOffset;
 
@@ -181,6 +181,10 @@ pub struct Slot {
     /// the body fell and end standing over the character's frame.
     #[serde(default)]
     pub in_place: bool,
+    /// Cut a seamless loop out of each candidate (generated takes ramp up and
+    /// slow down: `sf_anim` `loop_cut.rs`). Overrides `looping`.
+    #[serde(default)]
+    pub loop_cut: Option<LoopCutRules>,
     /// After the last candidate: another graph clip (a Morrowind group) or drop.
     #[serde(default = "drop")]
     pub fallback: ClipFallback,
@@ -207,6 +211,7 @@ impl Slot {
                 anchor_end: self.in_place,
                 ..RootMotionRules::default()
             },
+            loop_cut: self.loop_cut.clone(),
             ..ClipRules::default()
         }
     }
@@ -380,6 +385,20 @@ mod tests {
         assert_eq!(fallback("attack.sword_1h.light1"), Some(ClipFallback::Clip("attack.sword_1h.light1.alt1".into())));
         // The heavy chain: UAL2 only, then Morrowind's one-hand chop.
         assert_eq!(fallback("attack.sword_1h.heavy1"), Some(ClipFallback::Clip("WeaponOneHand@chop".into())));
+    }
+
+    #[test]
+    fn a_slot_passes_its_loop_cut_to_the_cook() {
+        let text = r#"(
+          sources: { "g": (license: CC0, page: "", files: [(name: "w.bvh", sha256: "")]) },
+          slots: { "cut": (graph: "humanoid", candidates: [(source: "g", clip: "w")], looping: Whole, loop_cut: Some((max_strides: 3))),
+                   "plain": (graph: "humanoid", candidates: [(source: "g", clip: "w", range: Some((0.0, 1.0)))], looping: Whole) },
+        )"#;
+        let m = SourcesManifest::parse(text).unwrap();
+        let slot = &m.slots["cut"];
+        assert_eq!(slot.rules(&slot.candidates[0]).loop_cut, Some(LoopCutRules { max_strides: 3, ..LoopCutRules::default() }));
+        let plain = &m.slots["plain"];
+        assert_eq!(plain.rules(&plain.candidates[0]).loop_cut, None);
     }
 
     #[test]

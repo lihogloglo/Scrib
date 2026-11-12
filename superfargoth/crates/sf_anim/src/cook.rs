@@ -27,6 +27,7 @@ use glam::{Affine3A, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::clip::{RAW, RotTrack, VecChannel, VecTrack, rebuild};
+use crate::loop_cut::{LoopCut, LoopCutError, LoopCutRules};
 use crate::source::BoundSource;
 use crate::{
     Clip, CurveTrack, Event, LocalPose, ModelPose, RigProfile, RootMotionMode, RootMotionTrack, Skeleton, SourceClip, SyncMarker, Trs,
@@ -234,6 +235,11 @@ pub struct ClipRules {
     pub events: Vec<Event>,
     pub markers: Vec<SyncMarker>,
     pub contacts: ContactRules,
+    /// Cut a seamless loop out of a take that is not periodic (a generated
+    /// walk with its ramps): `loop_cut.rs`. Overrides `looping`; the window is
+    /// searched inside `range`. Absent: the clip cooks as before.
+    #[serde(default)]
+    pub loop_cut: Option<LoopCutRules>,
 }
 
 impl ClipRules {
@@ -317,6 +323,43 @@ pub fn cook_clip_for(
     rules: &ClipRules,
     settings: &CookSettings,
 ) -> Result<Clip, CookError> {
+    cook_clip_report(skeleton, profile, source, rules, settings).map(|(clip, _)| clip)
+}
+
+/// What [`cook_clip_report`] did besides cooking.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CookReport {
+    /// [`ClipRules::loop_cut`]: the window and seam errors, or why no loop
+    /// was cut (the clip is then cooked unlooped). `None` without the rule.
+    pub loop_cut: Option<Result<LoopCut, LoopCutError>>,
+}
+
+/// [`cook_clip_for`] with its report. With [`ClipRules::loop_cut`], the clip
+/// is cooked unlooped first (its contacts give the touchdowns), the loop is
+/// cut from the source (`loop_cut.rs`) and the cut source is cooked looping
+/// whole; when no loop can be cut, the unlooped clip is returned.
+pub fn cook_clip_report(
+    skeleton: &Skeleton,
+    profile: Option<&RigProfile>,
+    source: &SourceClip,
+    rules: &ClipRules,
+    settings: &CookSettings,
+) -> Result<(Clip, CookReport), CookError> {
+    let Some(cut) = &rules.loop_cut else {
+        return cook_plain(skeleton, profile, source, rules, settings).map(|clip| (clip, CookReport::default()));
+    };
+    let once = ClipRules { looping: Looping::Once, loop_cut: None, ..rules.clone() };
+    let plain = cook_plain(skeleton, profile, source, &once, settings)?;
+    match crate::loop_cut::cut(skeleton, source, rules, &plain, cut) {
+        Ok(c) => {
+            let clip = cook_plain(skeleton, profile, &c.source, &c.rules, settings)?;
+            Ok((clip, CookReport { loop_cut: Some(Ok(c.stats)) }))
+        }
+        Err(e) => Ok((plain, CookReport { loop_cut: Some(Err(e)) })),
+    }
+}
+
+fn cook_plain(skeleton: &Skeleton, profile: Option<&RigProfile>, source: &SourceClip, rules: &ClipRules, settings: &CookSettings) -> Result<Clip, CookError> {
     for t in &source.tracks {
         let ok = t.translation.as_ref().is_none_or(crate::Curve::is_valid)
             && t.rotation.as_ref().is_none_or(crate::Curve::is_valid)
@@ -1195,7 +1238,7 @@ fn measure(
     worst
 }
 
-fn shift_events<'a>(events: impl Iterator<Item = &'a Event>, start: f32, duration: f32) -> Vec<Event> {
+pub(crate) fn shift_events<'a>(events: impl Iterator<Item = &'a Event>, start: f32, duration: f32) -> Vec<Event> {
     let mut out: Vec<Event> = events
         .filter(|e| e.time >= start - 1e-5 && e.time <= start + duration + 1e-5)
         .map(|e| Event {
@@ -1209,7 +1252,7 @@ fn shift_events<'a>(events: impl Iterator<Item = &'a Event>, start: f32, duratio
     out
 }
 
-fn shift_markers<'a>(markers: impl Iterator<Item = &'a SyncMarker>, start: f32, duration: f32) -> Vec<SyncMarker> {
+pub(crate) fn shift_markers<'a>(markers: impl Iterator<Item = &'a SyncMarker>, start: f32, duration: f32) -> Vec<SyncMarker> {
     markers
         .filter(|m| m.time >= start - 1e-5 && m.time <= start + duration + 1e-5)
         .map(|m| SyncMarker { time: (m.time - start).clamp(0.0, duration), name: m.name.clone() })
