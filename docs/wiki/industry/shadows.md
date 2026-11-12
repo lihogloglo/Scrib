@@ -20,10 +20,10 @@
 | Engine | What it does | Source |
 |---|---|---|
 | UE5 | VSM with page cache, distance-field far shadows, contact shadows, optional hardware RT shadows | UE docs above |
-| Cyberpunk 2077 | Sun cascades, budgeted local-light shadows, optional RT shadows | unverified (memory) |
-| RDR2 | Cascaded sun shadows, cached far content, local-light budget | unverified (memory) |
-| Decima | Not verified | unverified |
-| Unity HDRP | Shadow atlas, cached shadows, max shadowed lights and fade distance | our spec table, unverified detail |
+| Cyberpunk 2077 | Sun and moon: up to 4 per-frame cascades (interval-based selection, culling shape of up to 8 planes, main-view and shadow-view occlusion) plus up to 4 "distant" cascades refreshed over several frames, the last covering the whole 256 km2 map. Offline time-of-day visibility (12 steps, 2 h) drops casters wholly inside others' shadows. Local lights: a fixed shadow-map budget per frame picked by visibility and distance, throttled refresh, static and dynamic slices per map. RT shadows are optional (NVIDIA) | [Dybisz and Witanowski, CDPR, SIGGRAPH 2021](https://history.siggraph.org/wp-content/uploads/2022/06/2021-Talks-Dybisz_Shadows-Optimizations-in-Cyberpunk-2077.pdf); [NVIDIA](https://www.nvidia.com/en-us/geforce/news/cyberpunk-2077-ray-tracing-dlss-geforce-now-screenshots-trailer.md) |
+| RDR2 | Sun: 4 cascades in one atlas (1024 px tiles at medium). Local lights: spot and point shadow arrays in three resolution tiers (up to 2048x3072 spot at high); most static point lights use baked shadow cubemaps, runtime maps only near the player | [imgeself, RDR2 graphics study, 2020](https://imgeself.github.io/posts/2020-06-19-graphics-study-rdr2) (frame capture, third party) |
+| Decima | Shadow technique not found in public slides we could read; talks cover area lights and AA ([Guerrilla/Kojima, SIGGRAPH 2017](https://www.advances.realtimerendering.com/s2017/DecimaSiggraph2017.pdf)). Visibility queries for shadow maps are separate from the camera query and skip occlusion ([Guerrilla, GCAP 2017](https://www.guerrilla-games.com/read/decima-engine-visibility-in-horizon-zero-dawn)) | see links |
+| Unity HDRP | Cached shadow maps with an On Demand update mode; point and area lights have their own cached atlas, directional cached shadows share the directional atlas | [HDRP shadow update mode](https://docs.unity3d.com/Packages/com.unity.render-pipelines.high-definition@16.0/manual/shadow-update-mode.html) |
 | bevy_terrain | Heightfield-raymarched terrain shadow, called "RDR2-style" in its source | `docs/research/bevy-open-world-projects-2026-11-12.md` |
 
 ## Key numbers
@@ -44,4 +44,4 @@ shadows beyond terrain, no cascade cache in Bevy. Contact shadows: sun and moon 
 ## Sources
 - `superfargoth/docs/specs/shadows.md` "Industry comparison"; `superfargoth/docs/research/shadows/README.md` s3;
   `superfargoth/docs/specs/industry-audit.md` rows 13-14.
-- No web search was run; CDPR, RDR2 and Decima rows are unverified.
+- Web research done 2026-11-12. Not found: RDR2 cached far-cascade detail, Decima shadow cascade and local-light detail, HDRP max shadowed lights.

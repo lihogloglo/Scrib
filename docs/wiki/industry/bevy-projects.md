@@ -24,8 +24,8 @@ draw with GPU LOD" while keeping `StandardMaterial` so lighting, shadows and def
 | rust-gta-3 | custom, 0.20 | **Closest Bevy architecture to ours (entity per instance)**, nothing more. It works because GTA III's visible set is a few hundred objects, unlit, with blob shadows. Not a target or quality reference |
 
 Bevy's own `bevy_city`, `many_cubes` and `many_foxes` are stress scenes (flags `--no-cpu-culling`, GPU culling
-switches; `many_foxes` has 1000 skinned foxes). Tiny Glade uses Bevy ECS with its own renderer (from public talks,
-unverified).
+switches; `many_foxes` has 1000 skinned foxes). Tiny Glade is built on Bevy ([80.lv interview](https://80.lv/articles/exclusive-tiny-glade-developers-discuss-bevy-proceduralism-publishers-cozy-games)); that it has its own renderer is only community-reported.
+
 
 ## Key numbers
 - None published by these projects. Scrib's own numbers are in `ledger/perf.md`; our target is at most 11 ms median

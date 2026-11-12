@@ -27,8 +27,8 @@
 
 ## Who ships it
 Dying Light, Cyberpunk 2077, KCD (true first person); Skyrim, Dishonored (arms rig); Mirror's Edge (camera authored in
-the clip); UE 5.5 (engine support). RDR2 has a first-person mode on a full body (unverified, memory). Unity has no
-built-in equivalent (unverified).
+the clip); UE 5.5 (engine support). RDR2 can be played start to finish in first person except cutscenes ([GamesRadar, 2018](https://gamesradar.com/red-dead-redemption-2-has-a-full-first-person-mode-just-like-gta-5)); whether it uses a full body is not stated in sources found.
+Unity: no built-in equivalent found, so no claim.
 
 ## Key numbers
 - Dying Light 2 run about 7 m/s with jumps a little higher than real (TechRaptor, via search summary).
@@ -45,4 +45,4 @@ kick and view punch, turn cap during swing. See `superfargoth/docs/specs/first-p
 
 ## Sources
 - `superfargoth/docs/specs/first-person.md` "Industry comparison"; animation research 07, 08, 11 s5-6, 14 s2, 15 s4.
-- No web search was run; unverified items are marked.
+- Web research done 2026-11-12 for the RDR2 and Unity rows only; other rows keep their links above.

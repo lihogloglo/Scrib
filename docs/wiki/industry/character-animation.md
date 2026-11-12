@@ -26,7 +26,8 @@
 | Engine | What it does | Source |
 |---|---|---|
 | UE5 | Lyra, GASP motion matching, Control Rig, Animation Sharing, URO | UE docs above |
-| Cyberpunk 2077, RDR2 | Not verified at the technique level; RDR2 uses RAGE plus Euphoria physical animation (evolved from GTA IV) | [Wccftech](https://wccftech.com/rockstar-euphoria-evolved-rdr2/amp/); rest unverified |
+| Cyberpunk 2077 | Animation components register with an animation system and update in parallel per bucket; instancing for massive standing crowds; no update when occluded (except within 5 m of the player); sleep mode for doors and vehicles; animation streaming under a 40 MB budget, 3k-4k animations in the game | [Tremblay, CDPR, GDC 2024 slides](https://media.gdcvault.com/gdc2024/Slides/GDC+slide+presentations/Tremblay_Charles_Anatomy_of_a.pdf) |
+| RDR2 | RAGE plus Euphoria physical animation (evolved from GTA IV); no talk on its locomotion technique found | [Wccftech](https://wccftech.com/rockstar-euphoria-evolved-rdr2/amp/) (press, secondary) |
 | Decima | No public source found that Guerrilla uses motion matching | audit `animation` table |
 | Naughty Dog | Motion matching in TLOU2 | GDC 2021 |
 | Unity | Mecanim state machines; Kinematica motion matching was preview only (0.8.0-preview, 2020) | Unity changelog |
@@ -48,4 +49,4 @@ matching is deferred (right call with our clip supply). See `superfargoth/docs/s
 ## Sources
 - `superfargoth/docs/specs/archive/animation-history.md` "Industry comparison" (UE and Unity links, checked 2026-10-12),
   `superfargoth/docs/specs/locomotion.md`, `superfargoth/docs/research/locomotion-rethink-2026-11-11.md`.
-- No web search was run. Unverified: City Sample use of AnimToTexture, GASP 5.8 Chooser details.
+- Web research done 2026-11-12. UE City Sample: AnimToTexture shipped with it and is used for mid and far crowd characters ([UE forum tutorial](https://forums.unrealengine.com/t/community-tutorial-animtotexture-plugin-how-to-use-it-to-make-vertex-animation-textures-for-crowds/746648), community, secondary). Not verified: GASP 5.8 Chooser details, Decima animation technique.
