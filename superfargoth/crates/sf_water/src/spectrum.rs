@@ -35,8 +35,9 @@ pub const GRAVITY: f32 = 9.81;
 /// frequency by ≤ 5 % and is far longer than any period anyone watches for.
 pub const REPEAT_PERIOD: f64 = 256.0;
 
-/// Wind input for the spectrum. Scaffold until `sf_wind::WindState` lands (ROADMAP M6 WD1): the
-/// spectrum only needs the 10 m wind speed and the direction the wind blows toward.
+/// Wind input for the spectrum: the 10 m wind speed and the direction the wind blows toward. A host
+/// feeds the weather's mean wind through [`crate::SeaWind`] (W-WIND), which low-passes it and blends
+/// sea states of one seed.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WindInput {
     /// Wind speed 10 m above the surface, m/s.

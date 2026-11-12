@@ -31,6 +31,9 @@ struct WaterParams {
     swash: vec4<f32>,
     swash2: vec4<f32>,
     swash3: vec4<f32>,
+    // A sea-state transition (W-WIND, `sf_water::ShoreWaves::blend`): (ω of the trains crossfaded
+    // from ×3, weight of `swash.xyz` against them; 1 = none).
+    swash4: vec4<f32>,
     // Optics table for the map, 3 vec4 per entry: (absorption, whitecaps), (scattering, contact
     // depth), (roughness, shore foam, 0, 0).
     looks: array<vec4<f32>, 24>,
@@ -128,6 +131,18 @@ struct ShoreWave {
 // (s mod 256). `lod_k`: trains whose wave number is above it are faded out (the clipmap's or the
 // pixel's resolution; a very large value keeps all). Zero outside the band and when off.
 fn shore_waves(p: WaterParams, sh: vec4<f32>, xz: vec2<f32>, t: f32, lod_k: f32) -> ShoreWave {
+    let to = shore_trains(p, p.swash.xyz, sh, xz, t, lod_k);
+    if p.swash4.w >= 1.0 || all(p.swash4.xyz == p.swash.xyz) {
+        return to;
+    }
+    // A sea-state transition (W-WIND): crossfade the trains it comes from (`ShoreWaves::eval`).
+    let from = shore_trains(p, p.swash4.xyz, sh, xz, t, lod_k);
+    let w = max(p.swash4.w, 0.0);
+    return ShoreWave(mix(from.offset, to.offset, w), mix(from.slope, to.slope, w), mix(from.crest, to.crest, w));
+}
+
+// One set of trains with angular frequencies `om` (rad/s) for `shore_waves`.
+fn shore_trains(p: WaterParams, om: vec3<f32>, sh: vec4<f32>, xz: vec2<f32>, t: f32, lod_k: f32) -> ShoreWave {
     var out = ShoreWave(vec3(0.0), vec4(0.0), 0.0);
     let d = sh.x;
     let band = p.swash2.w;
@@ -160,12 +175,12 @@ fn shore_waves(p: WaterParams, sh: vec4<f32>, xz: vec2<f32>, t: f32, lod_k: f32)
     let shares = SW_SHARES;
     let spread = SW_PHASE_SPREAD;
     for (var i = 0u; i < 3u; i++) {
-        let lw = sw_local_wave(p.swash[i], h, beta);
+        let lw = sw_local_wave(om[i], h, beta);
         let th = tanh(lw.x * max(h, SW_MIN_DEPTH));
         a[i] = min(shares[i] * amp, SW_MICHE * th / lw.x);
         k[i] = lw.x;
         coth[i] = 1.0 / th;
-        theta[i] = -(lw.y + p.swash[i] * t + psi * spread[i]);
+        theta[i] = -(lw.y + om[i] * t + psi * spread[i]);
         steep += lw.x * a[i] / th;
     }
     let q = min(SW_STEEPNESS / max(steep, 1e-6), 1.0);
@@ -183,8 +198,8 @@ fn shore_waves(p: WaterParams, sh: vec4<f32>, xz: vec2<f32>, t: f32, lod_k: f32)
         dy += r * a[i] * k[i] * c;
         dalong -= r * q * a[i] * coth[i] * k[i] * s;
     }
-    let phi0 = sw_local_wave(p.swash.x, 0.0, beta).y;
-    let theta0 = -(phi0 + p.swash.x * t + psi * SW_PHASE_SPREAD.x);
+    let phi0 = sw_local_wave(om.x, 0.0, beta).y;
+    let theta0 = -(phi0 + om.x * t + psi * SW_PHASE_SPREAD.x);
     let swash = p.swash2.y * o * group * (1.0 - smoothstep(0.0, SW_ZONE * band, d)) * smoothstep(-margin, -0.5 * margin, d);
     y += swash * sin(theta0 - SW_SKEW * sin(theta0));
     out.offset = vec3(dir.x * along, y, dir.y * along);

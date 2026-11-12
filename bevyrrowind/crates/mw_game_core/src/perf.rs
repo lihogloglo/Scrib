@@ -78,6 +78,14 @@ pub enum Part {
     /// clouds' thick cores, a narrow noisy region edge, the far medium integrated analytically; off,
     /// the `WE4d` far weather (the region column, 8 jittered steps; the old path, an A/B).
     StormShape,
+    /// Stable cloud silhouettes (S1, WE-14, `sf_atmos_bevy::CloudEdgeStable`): the cloud trace's depth
+    /// window over the whole checkerboard block, the resolve's same-population neighbour fallback and
+    /// accumulated cloud distance; off, the window on the traced pixel and the raw sample (an A/B).
+    CloudEdge,
+    /// The storm cloud shape (S3, WE-15, `sf_atmos_bevy::CumulonimbusShape`): in a storm the shape noise
+    /// in world altitude, tops that follow coverage, an anvil, a ragged base, cells shrinking by
+    /// threshold at the region edge; off, the old storm profile (the extruded footprint, an A/B).
+    CbShape,
     /// Screen-space planar reflections on the water (W-SSPR, `sf_water_bevy::WaterReflections`): off,
     /// the environment map only (the old look, an A/B).
     WaterSsr,
@@ -157,7 +165,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 65] = [
+    const ALL: [(&'static str, Part); 67] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -201,6 +209,8 @@ impl Part {
         ("fogclamp", Part::FogClamp),
         ("cloudfog", Part::CloudFog),
         ("stormshape", Part::StormShape),
+        ("cloudedge", Part::CloudEdge),
+        ("cbshape", Part::CbShape),
         ("waterssr", Part::WaterSsr),
         ("shorenormals", Part::ShoreNormals),
         ("shorewaves", Part::ShoreWaves),
@@ -308,6 +318,12 @@ mod tests {
         let storm = Off::from_flags(&["stormshape".into()]).expect("known");
         assert!(storm.has(Part::StormShape) && !storm.has(Part::CloudFog));
         assert_eq!(storm.label(), "stormshape");
+        let edge = Off::from_flags(&["cloudedge".into()]).expect("known");
+        assert!(edge.has(Part::CloudEdge) && !edge.has(Part::CloudFog) && !edge.has(Part::StormShape));
+        assert_eq!(edge.label(), "cloudedge");
+        let cb = Off::from_flags(&["cbshape".into()]).expect("known");
+        assert!(cb.has(Part::CbShape) && !cb.has(Part::StormShape) && !cb.has(Part::CloudEdge));
+        assert_eq!(cb.label(), "cbshape");
         let shift = Off::from_flags(&["shiftrebase".into()]).expect("known");
         assert!(shift.has(Part::ShiftRebase) && !shift.has(Part::Scene));
         assert_eq!(shift.label(), "shiftrebase");

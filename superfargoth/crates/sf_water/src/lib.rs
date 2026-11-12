@@ -7,6 +7,9 @@
 
 pub mod query;
 pub mod records;
+pub mod sea_wind;
+#[cfg(test)]
+mod sea_wind_tests;
 pub mod shore;
 pub mod shore_waves;
 pub mod spectrum;
@@ -22,6 +25,7 @@ pub use query::{
 pub use records::{
     FoamTerms, RiverPoint, WaterBody, WaterKind, WaterOptics, WaterShape, WaveTerms,
 };
+pub use sea_wind::{SeaTransition, SeaWind, SeaWindSettings, wind_input};
 pub use shore::{OpticsMap, ShoreField, ShoreSettings, ShoreStats, WetMask};
 pub use shore_waves::{ShoreWave, ShoreWaves};
 pub use spectrum::{Cascades, DEFAULT_CASCADES, GRAVITY, H0, REPEAT_PERIOD, SpectrumParams, WindInput};
@@ -51,6 +55,37 @@ impl WaveTwin {
             .map(|i| CascadeTwin::new(&H0::generate(params, cascades, i, n, seed), params))
             .collect();
         Self { cascades }
+    }
+
+    /// The twin of a spectrum transition (W-WIND, [`SeaWind`]): `mix(from, to, w)` with `w` from
+    /// [`Self::set_mix`] (0 = the `from` sea). Same seed, so the phases are the same in both.
+    pub fn blended(
+        from: &SpectrumParams,
+        to: &SpectrumParams,
+        cascades: &Cascades,
+        seed: u32,
+        count: usize,
+        n: usize,
+    ) -> Self {
+        assert!(
+            (1..=4).contains(&count) && count <= cascades.len(),
+            "the twin evaluates 1-4 cascades"
+        );
+        let cascades = (0..count)
+            .map(|i| {
+                let a = H0::generate(from, cascades, i, n, seed);
+                let b = H0::generate(to, cascades, i, n, seed);
+                CascadeTwin::blended(&a, &b, to)
+            })
+            .collect();
+        Self { cascades }
+    }
+
+    /// The transition weight of every cascade ([`SeaTransition::weight`]).
+    pub fn set_mix(&mut self, w: f32) {
+        for c in &mut self.cascades {
+            c.set_mix(w);
+        }
     }
 
     /// Twin from already generated (e.g. blended) amplitudes.

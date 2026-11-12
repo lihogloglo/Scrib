@@ -153,10 +153,23 @@ pub(crate) struct CloudUniform {
     history_weight: f32,
     clip_gamma: f32,
     blue_noise: u32,
+    /// 1: stable silhouette history (S1, `CloudEdgeStable`): block-footprint depth window, the
+    /// same-population neighbour mean on a population mismatch, a filtered cloud distance.
+    stable_edges: u32,
     /// 1: the composite splits the fog at the cloud's depth and the trace composes the far
     /// weather by distance (WE12-FIX, `FogCloudSplit`); 0: the old order.
     cloud_fog: u32,
+    /// The far storm's shape (CW-1, `sf_atmos::StormShape`): 1 on (`--off stormshape`: 0, the
+    /// `WE4d` far weather), the edge width and noise amplitude (m, fitted inside the band), the
+    /// rain left at sea level, and the map's border band (m).
+    storm_shape: u32,
+    storm_edge_m: f32,
+    storm_edge_noise_m: f32,
+    storm_ground: f32,
+    storm_band_m: f32,
     glows: [Vec4; 4],
+    /// 1: the storm cloud shape (S3, `CumulonimbusShape`); 0 (`--off cbshape`): the old profile.
+    cb_shape: u32,
 }
 
 /// GPU layout of `Fog` in `fog.wesl` (weather.md "Fog", F2).
@@ -731,6 +744,8 @@ fn prepare_views(
     };
     let mut shell = (s.weather.base, s.weather.base + s.weather.thickness.max(1.0), s.weather.cirrus);
     let mut far_weather = 0;
+    let band_m = map.active.map_or(sf_weather::BORDER_BAND_M, |v| v.band_m);
+    let storm = frame.storm_shape.fitted(band_m);
     if let Some(v) = map.active {
         shell = (shell.0.min(v.envelope[0]), shell.1.max(v.envelope[1]), shell.2.max(v.envelope[2]));
         far_weather = u32::from(map_on == 1 && s.quality.far_weather && v.envelope[3] > 0.5);
@@ -827,8 +842,15 @@ fn prepare_views(
             history_weight: frame.temporal.fresh_weight.clamp(0.01, 1.0),
             clip_gamma: frame.temporal.clip_gamma.max(0.0),
             blue_noise: u32::from(frame.temporal.blue_noise),
+            stable_edges: u32::from(frame.cloud_edge_stable),
             cloud_fog: u32::from(frame.fog_cloud_split),
+            storm_shape: u32::from(storm.enabled),
+            storm_edge_m: storm.edge_m,
+            storm_edge_noise_m: storm.edge_noise_m,
+            storm_ground: storm.ground_fraction,
+            storm_band_m: band_m,
             glows: frame.glows,
+            cb_shape: u32::from(frame.cb_shape),
         };
         h.prev_clip_from_world = clip_from_world;
         h.origin = frame.origin;

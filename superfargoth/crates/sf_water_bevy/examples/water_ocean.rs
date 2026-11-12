@@ -63,6 +63,7 @@ fn spectrum(a: &Args) -> OceanSpectrum {
         params: SpectrumParams { wind: WindInput { speed: a.wind, toward: Vec2::new(0.8, 0.6) }, ..SpectrumParams::default() },
         cascades: Cascades::default(),
         seed: SEED,
+        transition: None,
     }
 }
 

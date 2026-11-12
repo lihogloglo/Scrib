@@ -347,3 +347,28 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   walking in (better); the shimmer is NOT at the storm edge but exactly on the horizon line where no fog is behind, in
   both paths; cloud extruded upward in both (not an exact cylinder); curtain hard to see and not reaching the cloud base
   in both; shimmer behind the curtain (old path, seen before too). CW-1 aimed at an edge flicker the owner does not see.
+- Fix S2 (2026-11-13; distant-weather.md "S2 fixes as built"): the far edge is pre-filtered to the march's sample spacing
+  and is the map's own 256 m band within ~128-256 m (the near FX's ramp); the curtain reaches the cloud's visible base;
+  rain falls under ordinary thick storm cloud, not only cells. Same launch and BRP as above (Ascadian Isles thunderstorm),
+  then walk slowly into the storm and back out. Look for: the rain fading in smoothly as you walk in, no on/off threshold,
+  as smooth as `--off stormshape`; from outside, a curtain clearly visible and meeting the cloud base (no gap of sky
+  between rain top and cloud); dry gaps still where the deck is thin. Status: awaiting owner.
+
+### WE-14: Stable cloud silhouettes (S1, clouds.md "Stable silhouette history"; follows WE-10, WE-13 horizon shimmer)
+- Scene: `scene we3-ridge` at 14:00, clear-to-cloudy weather; then Seyda Neen rooftops against cloud. Still camera, then a
+  slow pan. A/B: relaunch with `--off cloudedge` (old trace window on the traced pixel, raw sample on a history miss).
+- Look at: the horizon line where no fog is behind it, and any ridge, rooftop or tree silhouette against cloud.
+- Look for: no shimmering 1-2 px strip along the horizon or along silhouettes, still or panning; clouds near silhouettes
+  as calm as the open sky.
+- Must not: a halo or sky bleeding past silhouettes (bright cloud/sky fringe on the land side); FG-7 (fog behind ridges)
+  or WE-12 (deck from above, fog split) looking changed.
+- Status: awaiting owner.
+
+### WE-15: Storm cloud shape (S3, clouds.md "Storm cloud shape"; follows WE-13 "cylinder")
+- Scene: `scene we3-ridge` at 14:00, then BRP `bevyrrowind/set {"weather":"thunderstorm","region":"Ascadian Isles Region",
+  "transition_hours":0}`; look east/south-east. Still camera, then a slow pan. A/B: relaunch with `--off cbshape` (old profile).
+- Look for: towering, domed storm cells whose tops taper toward their rims, flat anvil shelves spreading near the top of
+  the big cores, a ragged (wispy) base, sides that slope down at the region edge; not the footprint extruded straight up.
+- Must not: fair or overcast decks changed (a calm region beside the storm, then `"weather":"cloudy"` / `"overcast"`);
+  FG-7, WE-11, WE-12 looks changed (fog behind ridges, fog over sea, deck from above).
+- Status: awaiting owner.

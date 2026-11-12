@@ -67,6 +67,9 @@ pub struct WaterParams {
     /// (land margin m, variation 0-1, noise origin x, z m: the floating origin modulo
     /// `sf_water::shore_waves::NOISE_PERIOD`).
     pub swash3: Vec4,
+    /// A sea-state transition (W-WIND, `ShoreWaves::blend`): (ω of the trains crossfaded from ×3,
+    /// weight of `swash.xyz` against them; 1 = none).
+    pub swash4: Vec4,
     /// Optics table of the map, 3 per entry: (absorption, whitecaps), (scattering, contact depth),
     /// (roughness, shore foam, 0, 0).
     pub looks: [Vec4; 24],

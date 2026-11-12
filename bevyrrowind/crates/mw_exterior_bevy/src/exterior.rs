@@ -482,6 +482,19 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         app.insert_resource(sf_atmos_bevy::FogBankEdges(!perf.off.has(Part::FogBank)));
         // WE12-FIX (WE-12): `--off cloudfog` keeps the old order, the whole fog column in front of the clouds.
         app.insert_resource(sf_atmos_bevy::FogCloudSplit(!perf.off.has(Part::CloudFog)));
+        // S1 (WE-14): `--off cloudedge` keeps the old cloud trace window (on the traced pixel) and raw sample.
+        app.insert_resource(sf_atmos_bevy::CloudEdgeStable(!perf.off.has(Part::CloudEdge)));
+        // S3 (WE-15): `--off cbshape` keeps the old storm cloud profile (the extruded footprint).
+        app.insert_resource(sf_atmos_bevy::CumulonimbusShape(!perf.off.has(Part::CbShape)));
+        // CW-1 (WE-13): the far storm reads as a cell under its clouds, its region edge ~half a
+        // 117 m cell wide with ±48 m noise (owner 2026-11-12: borders stay fairly abrupt in a small
+        // world); `--off stormshape` keeps the WE4d region column.
+        app.insert_resource(sf_atmos_bevy::FarStormShape(sf_atmos_bevy::sf_atmos::StormShape {
+            enabled: !perf.off.has(Part::StormShape),
+            edge_m: 64.0,
+            edge_noise_m: 48.0,
+            ..sf_atmos_bevy::sf_atmos::StormShape::default()
+        }));
         if !perf.off.has(Part::FarShadows) {
             app.add_systems(
                 PostUpdate,
@@ -833,6 +846,8 @@ fn setup(
         DespawnOnExit(WorldAlive),
     ));
     let camera_id = camera.id();
+    // FLICKER-1: `sync_origin` writes the origin-shift rebase of its motion vectors here.
+    camera.insert(bevy::render::view::OriginRebase::default());
     // A/B runs (`--off`) leave the terrain or the sky out entirely.
     // Only the exterior has land (`doors::worldspace_look` keeps this as the
     // camera changes worldspace).
@@ -842,8 +857,6 @@ fn setup(
     if !off.has(Part::Sky) {
         camera.insert(SkyCamera { environment_light: !off.has(Part::Envmap), ..SkyCamera::default() });
         if !off.has(Part::Clouds) || !off.has(Part::Fog) {
-    // FLICKER-1: `sync_origin` writes the origin-shift rebase of its motion vectors here.
-    camera.insert(bevy::render::view::OriginRebase::default());
             camera.insert(sf_atmos_bevy::CloudCamera);
         }
     }
@@ -944,7 +957,16 @@ fn sync_origin(
     ),
     mut sea: Query<&mut GlobalTransform, (With<SeaPlaneScaffold>, Without<ExteriorCamera>)>,
     counters: Option<Res<DiagCounters>>,
+    (rebase_on, mut rebase, mut last_grid): (
+        Res<crate::origin_rebase::ShiftRebase>,
+        Query<&mut bevy::render::view::OriginRebase>,
+        Local<Option<sf_world::WorldspaceId>>,
+    ),
 ) {
+    // FLICKER-1: no rebase unless this frame shifts (below).
+    for mut r in &mut rebase {
+        r.set_if_neq(bevy::render::view::OriginRebase::default());
+    }
     let terrain_cam = terrain_camera.iter().next();
     let by_camera = terrain_cam.and_then(|(_, parent)| roots.get(parent.parent()).ok());
     let by_active = || active.0.as_ref().and_then(|ws| roots.iter().find(|(r, _)| r.id == *ws));
@@ -957,25 +979,11 @@ fn sync_origin(
     let origin = WorldPos::new(IVec3::new(c.x, c.y, c.z), Vec3::ZERO);
     if terrain_origin.0 != origin {
         // big_space moved every render-space position by whole cells: the lamp shadow
-    (rebase_on, mut rebase, mut last_grid): (
-        Res<crate::origin_rebase::ShiftRebase>,
-        Query<&mut bevy::render::view::OriginRebase>,
-        Local<Option<sf_world::WorldspaceId>>,
-    ),
         // cache moves what it remembers along instead of recapturing everything.
-    // FLICKER-1: no rebase unless this frame shifts (below).
-    for mut r in &mut rebase {
-        r.set_if_neq(bevy::render::view::OriginRebase::default());
-    }
         if let Some(mut shift) = shadow_shift {
             #[allow(clippy::cast_precision_loss)]
             let cells = (terrain_origin.0.cell - origin.cell).as_vec3();
             shift.0 += cells * sf_coords::GRID_CELL;
-        }
-        terrain_origin.0 = origin;
-        // big_space re-expresses every resident transform: a hitch suspect.
-        if let Some(c) = &counters {
-            c.add_named("world/origin_shifts", "count", 1.0);
         }
         // FLICKER-1 (ST-2): the terrain, impostors and GPU-batched statics pair this frame's
         // positions with last frame's view: the camera's `OriginRebase` moves their previous
@@ -994,6 +1002,11 @@ fn sync_origin(
                 history.reset = true;
                 info!("origin shift {} -> {}: history reset", terrain_origin.0.cell, origin.cell);
             }
+        }
+        terrain_origin.0 = origin;
+        // big_space re-expresses every resident transform: a hitch suspect.
+        if let Some(c) = &counters {
+            c.add_named("world/origin_shifts", "count", 1.0);
         }
     }
     #[allow(clippy::cast_precision_loss)]

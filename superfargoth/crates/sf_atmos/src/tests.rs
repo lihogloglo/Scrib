@@ -263,3 +263,133 @@ fn shadow_slices() {
     assert_eq!(s.rows(1000, 8, [1, 0], turned, &jump, 3_000.0), full, "time-of-day jump");
     assert_eq!(s.rows(1000, 1, [1, 0], turned, &jump, 3_000.0), full, "one slice is every frame");
 }
+
+/// Storm shape (S3, `cbshape`): weather with the storm shape (cells by threshold, gate, anvil term).
+fn storm_weather(storm: f32) -> CloudWeather {
+    CloudWeather { coverage: 0.0, cloud_type: 1.0, storm, ..CloudWeather::preset(CloudPreset::Storm) }
+}
+
+/// The gate: without storm every shaped function is the old one, bit for bit.
+#[test]
+fn storm_shape_leaves_calm_decks_unchanged() {
+    use crate::density::{combine_density_shaped, erode_density_shaped, shape_height, storm_gradient, weather_at_shaped};
+    let steps = |n: usize| (0..=n).map(move |i| i as f32 / n as f32);
+    for h in steps(20) {
+        assert_eq!(shape_height(h, 1_600.0, 1_024.0, 0.0), h);
+        for kind in steps(4) {
+            for cov in steps(5) {
+                assert_eq!(storm_gradient(h, kind, cov, 0.0, 1.0), height_gradient(h, kind));
+                for r in steps(4) {
+                    let (a, b) = (combine_density_shaped(r, 0.6, h, kind, cov, 0.0, 1.0), combine_density(r, 0.6, h, kind, cov));
+                    assert_eq!(a.to_bits(), b.to_bits(), "combine h {h} kind {kind} cov {cov} r {r}");
+                    assert_eq!(erode_density_shaped(r, cov, h, kind, 0.0).to_bits(), erode_density(r, cov, h, kind).to_bits());
+                }
+            }
+        }
+    }
+    let map = weather_noise(5);
+    for preset in [CloudPreset::Clear, CloudPreset::Fair, CloudPreset::Cumulus, CloudPreset::Overcast, CloudPreset::Altostratus] {
+        let w = CloudWeather::preset(preset);
+        for i in (0..(WEATHER_SIZE * WEATHER_SIZE) as usize).step_by(97) {
+            let texel = [0, 1, 2, 3].map(|c| f32::from(map[i * 4 + c]) / 255.0);
+            let (old, new) = (weather_at(texel, &w), weather_at_shaped(texel, &w, true));
+            assert_eq!(new, old, "{preset:?} texel {i}");
+            assert_eq!(new.storm, 0.0);
+        }
+    }
+    // Full storm: the cells are the old cells.
+    for c in steps(20) {
+        let noise = [0.3, 0.5, c, 0.0];
+        assert_eq!(weather_at_shaped(noise, &storm_weather(1.0), true).coverage, weather_at(noise, &storm_weather(1.0)).coverage);
+    }
+}
+
+/// Highest height fraction with profile > 0.01.
+fn storm_top(kind: f32, cov: f32, cb: f32, anvil: f32) -> f32 {
+    (0..=200).map(|i| i as f32 / 200.0).filter(|&h| crate::density::storm_gradient(h, kind, cov, cb, anvil) > 0.01).fold(0.0, f32::max)
+}
+
+#[test]
+fn storm_top_follows_coverage_and_anvil_spreads() {
+    use crate::density::{combine_density_shaped, erode_density_shaped, weather_at_shaped};
+    // Domed cells: lower tops at the rim.
+    assert!(storm_top(1.0, 0.2, 1.0, 0.0) + 0.3 < storm_top(1.0, 1.0, 1.0, 0.0));
+    assert!(storm_top(1.0, 0.2, 0.0, 0.0) > 0.95, "the old storm profile is flat-topped");
+    // Anvil: beyond the tower (low coverage) the cloud reaches out above 0.75, not at mid height.
+    let (mid, high) = (combine_density_shaped(0.8, 0.8, 0.55, 1.0, 0.15, 1.0, 1.0), combine_density_shaped(0.8, 0.8, 0.85, 1.0, 0.15, 1.0, 1.0));
+    assert!(high > 0.05 && high > mid + 0.05, "anvil {high} vs mid {mid}");
+    // Region edge: a weaker storm shrinks cells (rims gone, cores stay) instead of scaling them.
+    let rim = [0.0, 0.5, 0.7, 0.0];
+    let core = [0.0, 0.5, 1.0, 0.0];
+    let edge = storm_weather(0.7);
+    assert!(weather_at(rim, &edge).coverage > 0.3);
+    assert!(weather_at_shaped(rim, &edge, true).coverage < 0.05);
+    assert!(weather_at_shaped(core, &edge, true).coverage > 0.3);
+    // Ragged base: more erosion low in a storm, none above the base band.
+    assert!(erode_density_shaped(0.5, 0.3, 0.02, 0.35, 1.0) < erode_density(0.5, 0.3, 0.02, 0.35) - 0.05);
+    assert_eq!(erode_density_shaped(0.5, 0.3, 0.3, 0.35, 1.0), erode_density(0.5, 0.3, 0.3, 0.35));
+}
+
+#[test]
+fn storm_shape_is_finite_and_bounded() {
+    use crate::density::{combine_density_shaped, erode_density_shaped, shape_height, storm_gradient};
+    let steps = |n: usize| (0..=n).map(move |i| i as f32 / n as f32);
+    for h in steps(40) {
+        assert!(shape_height(h, 1_600.0, 1_024.0, 1.0).is_finite());
+        for cb in steps(4) {
+            for cov in steps(5) {
+                for anvil in steps(4) {
+                    let g = storm_gradient(h, 1.0, cov, cb, anvil);
+                    assert!((0.0..=1.0).contains(&g), "gradient {g}");
+                    for r in steps(4) {
+                        let d = combine_density_shaped(r, 0.7, h, 1.0, cov, cb, anvil);
+                        let e = erode_density_shaped(d, r, h, 0.35, cb);
+                        assert!(d.is_finite() && d <= 1.0 + 1e-6 && e.is_finite() && e <= 1.0 + 1e-6, "d {d} e {e}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Prints the storm's vertical profile through a cell (rim to core) and toward the region edge:
+/// per height the fraction of the shape volume's layer with density > 0.1, old (`--off cbshape`) / new.
+#[test]
+#[ignore = "measurement: storm profile table"]
+#[allow(clippy::cast_sign_loss, reason = "a height fraction in 0..1")]
+fn storm_profile_table() {
+    use crate::density::{combine_density_shaped, shape_height, weather_at_shaped};
+    use crate::noise::shape_volume;
+    let vol = shape_volume(0xC10D);
+    let size = SHAPE_SIZE as usize;
+    let (thickness, tile) = (1_600.0, 1_024.0);
+    let layer = |y: f32| ((y.rem_euclid(1.0) * size as f32) as usize).min(size - 1);
+    let footprint = |noise: [f32; 4], storm: f32, h: f32, shaped: bool| {
+        let sample = if shaped { weather_at_shaped(noise, &storm_weather(storm), true) } else { weather_at(noise, &storm_weather(storm)) };
+        let iy = layer(shape_height(h, thickness, tile, sample.storm));
+        let mut hit = 0;
+        let mut total = 0;
+        for iz in (0..size).step_by(2) {
+            for ix in (0..size).step_by(2) {
+                let i = ((iz * size + iy) * size + ix) * 2;
+                let (r, g) = (f32::from(vol[i]) / 255.0, f32::from(vol[i + 1]) / 255.0);
+                hit += usize::from(combine_density_shaped(r, g, h, sample.kind, sample.coverage, sample.storm, sample.anvil) > 0.1);
+                total += 1;
+            }
+        }
+        hit as f32 / total as f32
+    };
+    let heights: Vec<f32> = (0..10).map(|i| 0.05 + i as f32 * 0.1).collect();
+    let print = |title: &str, cols: &[(String, [f32; 4], f32)]| {
+        println!("\n{title} (cloud fraction old/new per height fraction; storm deck {thickness} m, shape tile {tile} m)");
+        println!("{:>5} | {}", "h", cols.iter().map(|c| format!("{:>11}", c.0)).collect::<Vec<_>>().join(" "));
+        for &h in heights.iter().rev() {
+            let row: Vec<String> = cols.iter().map(|(_, noise, s)| format!("{:>5.2}/{:<5.2}", footprint(*noise, *s, h, false), footprint(*noise, *s, h, true))).collect();
+            println!("{h:>5.2} | {}", row.join(" "));
+        }
+    };
+    let cells: Vec<(String, [f32; 4], f32)> = [1.0, 0.85, 0.75, 0.65, 0.55, 0.45, 0.35].iter().map(|&c| (format!("cell {c:.2}"), [0.0, 0.5, c, 0.0], 1.0)).collect();
+    print("Through a storm cell, core (cell 1.0) to beyond the rim (0.35), storm 1", &cells);
+    let edge: Vec<(String, [f32; 4], f32)> = [1.0, 0.85, 0.7, 0.55, 0.4].iter().map(|&s| (format!("storm {s:.2}"), [0.0, 0.5, 0.8, 0.0], s)).collect();
+    print("Toward the region edge (storm scalar falls over the band), cell value 0.8", &edge);
+}

@@ -67,6 +67,9 @@ struct Bin {
     h0: Complex32,
     /// `conj(h0(−k))`.
     h0_mirror_conj: Complex32,
+    /// The same of the sea state a transition comes from (W-WIND; equal to the above without one).
+    from: Complex32,
+    from_mirror_conj: Complex32,
 }
 
 /// Wave state at one time: displacement, slopes and their rates on the grid.
@@ -93,18 +96,28 @@ pub struct CascadeTwin {
     buffers: [Vec<Complex32>; 4],
     grids: WaveGrids,
     time: f64,
+    /// Weight of `h0` against the transition's `from` (1 = no transition).
+    mix: f32,
 }
 
 impl CascadeTwin {
     pub fn new(h0: &H0, params: &SpectrumParams) -> Self {
+        Self::blended(h0, h0, params)
+    }
+
+    /// A transition's twin (W-WIND): `mix(from, h0, w)` with `w` from [`Self::set_mix`] (starts at
+    /// 0, the `from` sea). Both must come from one seed and grid, so they share every phase.
+    pub fn blended(from: &H0, h0: &H0, params: &SpectrumParams) -> Self {
+        assert!(from.n == h0.n && from.size == h0.size && from.cascade == h0.cascade);
         let n = h0.n;
         let dk = std::f32::consts::TAU / h0.size as f32;
         let mut bins = Vec::new();
+        let zero = |x: &H0, i: usize, m: usize| x.h0[i] == Complex32::ZERO && x.h0[m] == Complex32::ZERO;
         for iz in 0..n {
             for ix in 0..n {
                 let i = iz * n + ix;
                 let m = ((n - iz) % n) * n + (n - ix) % n;
-                if h0.h0[i] == Complex32::ZERO && h0.h0[m] == Complex32::ZERO {
+                if zero(h0, i, m) && zero(from, i, m) {
                     continue;
                 }
                 #[allow(clippy::cast_precision_loss)]
@@ -116,6 +129,8 @@ impl CascadeTwin {
                     k_hat: k.normalize_or_zero(),
                     h0: h0.h0[i],
                     h0_mirror_conj: h0.h0[m].conj(),
+                    from: from.h0[i],
+                    from_mirror_conj: from.h0[m].conj(),
                 });
             }
         }
@@ -142,7 +157,18 @@ impl CascadeTwin {
                 slope_z: grid,
             },
             time: f64::NAN,
+            mix: if std::ptr::eq(from, h0) { 1.0 } else { 0.0 },
         }
+    }
+
+    /// The transition's weight (`SeaTransition::weight`), `[0, 1]`; takes effect at the next
+    /// [`Self::evaluate`].
+    pub fn set_mix(&mut self, w: f32) {
+        self.mix = if w.is_finite() { w.clamp(0.0, 1.0) } else { 1.0 };
+    }
+
+    pub fn mix(&self) -> f32 {
+        self.mix
     }
 
     pub fn size(&self) -> u32 {
@@ -175,12 +201,18 @@ impl CascadeTwin {
         }
         let i = Complex32::new(0.0, 1.0);
         let lambda = self.choppiness;
+        let w = self.mix;
         for bin in &self.bins {
             let phase = (bin.omega * t).rem_euclid(TAU) as f32;
             let (s, c) = phase.sin_cos();
             let e = Complex32::new(c, s);
-            let a = bin.h0 * e;
-            let b = bin.h0_mirror_conj * e.conj();
+            let (h0, h0m) = if w >= 1.0 {
+                (bin.h0, bin.h0_mirror_conj)
+            } else {
+                (bin.from + (bin.h0 - bin.from) * w, bin.from_mirror_conj + (bin.h0_mirror_conj - bin.from_mirror_conj) * w)
+            };
+            let a = h0 * e;
+            let b = h0m * e.conj();
             let h = a + b;
             let rate = i * (bin.omega as f32) * (a - b);
             let idx = bin.index as usize;

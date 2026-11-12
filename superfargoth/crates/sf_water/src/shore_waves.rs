@@ -89,6 +89,11 @@ pub struct ShoreWaves {
     pub land_margin: f32,
     /// 1 = noise-varied sets and crests, 0 = uniform (tests).
     pub variation: f32,
+    /// A sea-state transition (W-WIND, [`Self::blend`]): the trains of the sea it comes from, and the
+    /// weight of [`Self::omega`] against them (1 = no transition). The amplitudes above are already
+    /// blended; the two train sets are crossfaded (their phases differ, so they cannot be lerped).
+    pub omega_from: [f32; TRAINS],
+    pub mix: f32,
 }
 
 /// One evaluation.
@@ -202,6 +207,8 @@ impl ShoreWaves {
             band: settings.swell_ramp.max(1e-3),
             land_margin: (2.0 * swash / beta).clamp(2.0, 8.0),
             variation: 1.0,
+            omega_from: omega,
+            mix: 1.0,
         }
     }
 
@@ -218,6 +225,41 @@ impl ShoreWaves {
     /// ([`Self::noise_coords`]) and time `t` (s, any multiple of [`REPEAT_PERIOD`] apart is the same).
     /// Zero outside `(−land_margin, band)` and when off.
     pub fn eval(&self, d: f32, o: f32, dir: Vec2, noise: Vec2, t: f32) -> ShoreWave {
+        let to = self.eval_trains(&self.omega, d, o, dir, noise, t);
+        if self.mix >= 1.0 || self.omega_from == self.omega {
+            return to;
+        }
+        let from = self.eval_trains(&self.omega_from, d, o, dir, noise, t);
+        let w = self.mix.max(0.0);
+        ShoreWave {
+            offset: from.offset.lerp(to.offset, w),
+            slope: from.slope.lerp(to.slope, w),
+            crest: from.crest + (to.crest - from.crest) * w,
+            steepness: from.steepness + (to.steepness - from.steepness) * w,
+        }
+    }
+
+    /// `pair` blended at `w` (W-WIND): amplitudes, swash and land margin lerped, `from`'s trains
+    /// crossfaded into `to`'s. `from` must not itself be mid-transition (one transition at a time).
+    #[must_use]
+    pub fn blend(from: &Self, to: &Self, w: f32) -> Self {
+        let w = if w.is_finite() { w.clamp(0.0, 1.0) } else { 1.0 };
+        let lerp = |a: f32, b: f32| a + (b - a) * w;
+        Self {
+            omega: to.omega,
+            amplitude: lerp(from.amplitude, to.amplitude),
+            swash: lerp(from.swash, to.swash),
+            beach_slope: to.beach_slope,
+            band: lerp(from.band, to.band),
+            land_margin: lerp(from.land_margin, to.land_margin),
+            variation: to.variation,
+            omega_from: from.omega,
+            mix: w,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn eval_trains(&self, omega: &[f32; TRAINS], d: f32, o: f32, dir: Vec2, noise: Vec2, t: f32) -> ShoreWave {
         // (`!(a && b)` also rejects a NaN distance.)
         if !(d < self.band && d > -self.land_margin) || (self.amplitude <= 0.0 && self.swash <= 0.0) {
             return ShoreWave::default();
@@ -239,10 +281,10 @@ impl ShoreWaves {
         let mut trains = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); TRAINS];
         let mut steep = 0.0;
         for (i, train) in trains.iter_mut().enumerate() {
-            let (k, phi) = local_wave(self.omega[i], h, beta);
+            let (k, phi) = local_wave(omega[i], h, beta);
             let th = (k * h.max(MIN_DEPTH)).tanh();
             let a = (SHARES[i] * common).min(MICHE * th / k);
-            let theta = -(phi + self.omega[i] * t + psi * PHASE_SPREAD[i]);
+            let theta = -(phi + omega[i] * t + psi * PHASE_SPREAD[i]);
             steep += k * a / th;
             *train = (a, k, 1.0 / th, theta);
         }
@@ -256,8 +298,8 @@ impl ShoreWaves {
             dalong -= q * a * coth * k * s;
         }
         // Swash: the whole beach at the main train's shoreline phase.
-        let (_, phi0) = local_wave(self.omega[0], 0.0, beta);
-        let theta0 = -(phi0 + self.omega[0] * t + psi * PHASE_SPREAD[0]);
+        let (_, phi0) = local_wave(omega[0], 0.0, beta);
+        let theta0 = -(phi0 + omega[0] * t + psi * PHASE_SPREAD[0]);
         let swash = self.swash
             * o
             * set

@@ -112,6 +112,12 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
     var bank_hi = -1e9;
     var bank_m1 = 0.0;
     var bank_m2 = 0.0;
+    // S1 (`clouds.stable_edges`): the same taps' cloud distances, to clamp and
+    // accumulate the stored distance like the colour, and for the fallback mean.
+    let stable = clouds.stable_edges != 0u;
+    var dist_lo = 1e30;
+    var dist_hi = 0.0;
+    var dist_m1 = 0.0;
     // The near bank's neighborhood: taps whose near distance matches this texel's.
     var near_lo = 1e9;
     var near_hi = -1e9;
@@ -146,6 +152,9 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
             bank_hi = max(bank_hi, d.y);
             bank_m1 += d.y;
             bank_m2 += d.y * d.y;
+            dist_lo = min(dist_lo, d.x);
+            dist_hi = max(dist_hi, d.x);
+            dist_m1 += d.x;
         }
     }
     // Variance clip (Salvi 2016): mean ± γσ inside the min/max box; γ = 0
@@ -228,15 +237,33 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
         }
         history_bank = clamp(history_bank, bank_lo, bank_hi);
         let rgb_history = from_clip_space(history);
+        // The cloud distance: with S1 accumulated like the colour, its history
+        // clamped to the neighbourhood (`sf_atmos::temporal::accumulate_distance`),
+        // so the composite's occlusion test reads a settled distance, not the last
+        // jittered march; 0: the last fresh sample's.
+        var history_d = history_dist_sum / history_w;
+        var fresh_d = current_dist;
+        if stable {
+            history_d = clamp(history_d, dist_lo, dist_hi);
+            fresh_d = mix(history_d, current_dist, clouds.history_weight);
+        }
         if fresh {
             // Exponential history: the fresh sample weighs `history_weight`
             // (`sf_atmos::temporal::accumulate`).
             out.color = mix(rgb_history, current, clouds.history_weight);
-            out.dist = vec4(current_dist, store_bank(current_far.x, mix(history_bank, current_far.y, clouds.history_weight), edges), cut, near_out);
+            out.dist = vec4(fresh_d, store_bank(current_far.x, mix(history_bank, current_far.y, clouds.history_weight), edges), cut, near_out);
         } else {
             out.color = rgb_history;
-            out.dist = vec4(history_dist_sum / history_w, store_bank(current_far.x, history_bank, edges), cut, near_out);
+            out.dist = vec4(history_d, store_bank(current_far.x, history_bank, edges), cut, near_out);
         }
+    } else if stable && reprojected {
+        // S1: the history held only the other population (the block just
+        // changed class): the mean of this frame's same-population 3x3
+        // neighbours (`sf_atmos::temporal::mismatch_fallback`; the centre always
+        // counts), not one raw jittered sample, so a silhouette strip doesn't
+        // flash a single noisy march (Nubis', UE's neighbourhood fallback).
+        out.color = from_clip_space(m1 / n);
+        out.dist = vec4(dist_m1 / n, store_bank(current_far.x, bank_m1 / n, edges), cut, near_out);
     } else {
         // No usable history: this frame's own sample of the same population
         // (nearest; a checkerboard block-mate of an open texel is open too,

@@ -79,9 +79,20 @@ struct Clouds {
     history_weight: f32,
     clip_gamma: f32,
     blue_noise: u32,
+    // 1: the trace classes a checkerboard block by its whole footprint and the resolve falls back to
+    // same-population neighbours (S1, `CloudEdgeStable`); 0: the old window and raw sample.
+    stable_edges: u32,
     // 1: fog and far weather split at the cloud's depth (WE12-FIX, `FogCloudSplit`); 0: the old order.
     cloud_fog: u32,
+    // The far storm's shape (CW-1, `sf_atmos::StormShape`): on, edge and noise (m), rain at sea level, band (m).
+    storm_shape: u32,
+    storm_edge_m: f32,
+    storm_edge_noise_m: f32,
+    storm_ground: f32,
+    storm_band_m: f32,
     glows: array<vec4<f32>, 4>,
+    // 1: the storm cloud shape (S3, `CumulonimbusShape`; `--off cbshape`: 0, the old profile).
+    cb_shape: u32,
 };
 
 const PI: f32 = 3.14159265;
@@ -113,18 +124,90 @@ fn erode_density(d: f32, detail: f32, h: f32, erosion: f32) -> f32 {
     return remap(d, erode * erosion, 1.0, 0.0, 1.0);
 }
 
+// Storm cloud shape (S3, `cbshape`): `sf_atmos::density`'s `CB_*` and the
+// `*_shaped` functions. Gated by the local storm scalar `cb` (0: the old
+// functions, so calm decks never change).
+const CB_TOP_MIN: f32 = 0.35;
+const CB_TOP_EXP: f32 = 1.5;
+const CB_CELL_SHIFT: f32 = 0.8;
+const CB_ANVIL_WIDEN: f32 = 0.15;
+const CB_ANVIL_LO: f32 = 0.72;
+const CB_ANVIL_RISE: f32 = 0.08;
+const CB_ANVIL_COVER: f32 = 0.6;
+const CB_RAG_H: f32 = 0.1;
+const CB_RAG_BOOST: f32 = 1.0;
+
+// `sf_atmos::shape_height`: the shape volume's vertical coordinate, world altitude in shape tiles in a storm.
+fn shape_height(h: f32, thickness: f32, shape_tile: f32, cb: f32) -> f32 {
+    if cb <= 0.0 {
+        return h;
+    }
+    return h * (1.0 + cb * (thickness / max(shape_tile, 1.0) - 1.0));
+}
+
+fn anvil_lift(h: f32, cb: f32, anvil: f32) -> f32 {
+    return cb * anvil * ramp(CB_ANVIL_LO, CB_ANVIL_LO + CB_ANVIL_RISE, h) * ramp(1.0, 0.92, h);
+}
+
+// `sf_atmos::storm_gradient`: the top follows coverage (domed cells), plus the anvil layer.
+fn storm_gradient(h: f32, kind: f32, coverage: f32, cb: f32, anvil: f32) -> f32 {
+    let top_h = 1.0 - cb * (1.0 - (CB_TOP_MIN + (1.0 - CB_TOP_MIN) * pow(saturate(coverage), CB_TOP_EXP)));
+    let bottom = ramp(0.0, mix(0.07, 0.22, kind), h);
+    let top = ramp(top_h, top_h * mix(0.5, 0.85, kind), h);
+    return max(bottom * top, anvil_lift(h, cb, anvil));
+}
+
+// `sf_atmos::combine_density_shaped`: the storm profile, the anvil's lent
+// coverage and the Nubis anvil bias (Schneider 2017).
+fn combine_density_shaped(shape_r: f32, shape_g: f32, h: f32, kind: f32, coverage: f32, cb: f32, anvil: f32) -> f32 {
+    if cb <= 0.0 {
+        return combine_density(shape_r, shape_g, h, kind, coverage);
+    }
+    let d = remap(shape_r, shape_g - 1.0, 1.0, 0.0, 1.0) * storm_gradient(h, kind, coverage, cb, anvil);
+    let bias = remap(clamp(h, 0.7, 0.8), 0.7, 0.8, 1.0, 1.0 - 0.5 * anvil * cb);
+    let cov = pow(saturate(max(coverage, anvil_lift(h, cb, anvil) * CB_ANVIL_COVER)), bias);
+    return remap(d, 1.0 - cov, 1.0, 0.0, 1.0) * cov;
+}
+
+// `sf_atmos::erode_density_shaped`: the ragged storm base.
+fn erode_density_shaped(d: f32, detail: f32, h: f32, erosion: f32, cb: f32) -> f32 {
+    if cb <= 0.0 {
+        return erode_density(d, detail, h, erosion);
+    }
+    let rag = cb * ramp(CB_RAG_H, 0.0, h);
+    let erode = mix(mix(detail, 1.0 - detail, saturate(h * 4.0)), 1.0 - detail, rag);
+    return remap(d, erode * erosion * (1.0 + CB_RAG_BOOST * rag), 1.0, 0.0, 1.0);
+}
+
 struct WeatherSample {
     coverage: f32,
     kind: f32,
     wetness: f32,
+    // The storm-shape gate `cb` and the anvil's wide cell term (S3); 0 without the storm shape.
+    storm: f32,
+    anvil: f32,
 };
 
 // `sf_atmos::weather_at`: fixed weather noise, thresholded by the weather scalars.
 fn weather_at(noise: vec4<f32>, coverage: f32, cloud_type: f32, wetness: f32, storm_amount: f32) -> WeatherSample {
+    return weather_at_shaped(noise, coverage, cloud_type, wetness, storm_amount, false);
+}
+
+// `sf_atmos::weather_at_shaped`: with `shaped`, storm cells shrink by threshold toward a weaker storm.
+fn weather_at_shaped(noise: vec4<f32>, coverage: f32, cloud_type: f32, wetness: f32, storm_amount: f32, shaped: bool) -> WeatherSample {
     let threshold = 1.25 - 1.5 * saturate(coverage);
     let base = ramp(threshold - 0.2, threshold + 0.2, noise.r);
-    let storm = saturate(storm_amount) * ramp(0.45, 0.85, noise.b);
+    let s = saturate(storm_amount);
+    var storm = s * ramp(0.45, 0.85, noise.b);
     var w: WeatherSample;
+    w.storm = 0.0;
+    w.anvil = 0.0;
+    if shaped {
+        let lo = 0.45 + CB_CELL_SHIFT * (1.0 - s);
+        storm = ramp(lo, lo + 0.4, noise.b);
+        w.storm = s;
+        w.anvil = ramp(lo - CB_ANVIL_WIDEN, lo + 0.4 - CB_ANVIL_WIDEN, noise.b);
+    }
     w.coverage = max(base, storm);
     w.kind = saturate(cloud_type + (noise.g - 0.5) * 0.4 + storm * 0.5);
     w.wetness = saturate(wetness + storm * 0.5);

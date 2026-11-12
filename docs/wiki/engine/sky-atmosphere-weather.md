@@ -33,7 +33,10 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   transparents; the trace and composite read a depth that holds the water, so weather covers sea like land (W-ORDER,
   [render-order](../../../superfargoth/docs/specs/render-order.md) "Frame graph")
   (`render.rs:53`-`:67`). Cloud shadows: a 1024^2 toroidal map given to `CloudShadowLight` as a
-  `DirectionalLightTexture` (module doc `lib.rs:1`). `Fog` (`:112`): analytic height fog and ground banks in the same
+  `DirectionalLightTexture` (module doc `lib.rs:1`). In a storm (map storm scalar > 0) the density samples the shape noise
+  in world altitude, tops follow coverage (domed cells), an anvil shelf spreads above h 0.72, the base erodes ragged and
+  cells shrink by threshold at the region edge; calm decks run the old functions (S3, `CumulonimbusShape`,
+  `sf_atmos::combine_density_shaped`; `--off cbshape` = old profile). `Fog` (`:112`): analytic height fog and ground banks in the same
   node, plus a froxel volume near the camera (god rays, shadowed and point-lit fog; `render.rs:1069`) that reads the
   terrain's far shadow heights (`FogShadowHeights` `:129`). Fog fill adds the camera's ambient (`view_ambient` `:457`).
   Ground-fog banks: the half-res trace (`shaders/cloud_trace.wesl`, 6x6-window depth) records the bank ratio at the
@@ -43,6 +46,13 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   The clouds sit inside the fog column: the composite evaluates the fog again to the clouds' tap-weighted depth and
   puts only that part in front of them, the rest behind (`rgb = L_f + T_f·C + T_c·(L − L_f)`, UE5/Frostbite; WE12-FIX,
   `FogCloudSplit`, `sf_atmos::compose_fog_split`), and the trace orders the far weather by distance.
+  Under the checkerboard the trace takes that window over the whole 2x2 block (plus the composite's 1-px bilinear reach)
+  and classes it along the block's centre ray, so silhouette blocks keep one open/cut class across phases; a texel whose
+  history held only the other population shows its same-population 3x3 mean, and the stored cloud distance accumulates
+  like the colour (S1, `CloudEdgeStable`, `sf_atmos::temporal::depth_window`; `--off cloudedge` = old window, raw sample).
+  Far rain (CW-1, `far_weather_shaped`, CPU twin `sf_atmos::storm`): map precipitation × the clouds' rain cores ×
+  a profile hanging under the base, its region edge re-blended over `StormShape::edge_m` (64 m, ±48 m noise) from 4
+  map taps at ±band, integrated in closed form over 16 fixed segments (no jitter: a smooth function of the ray).
   Froxel history (`shaders/froxel_inject.wesl`): per-froxel R3 jitter, history reprojected with last frame's
   clip-from-world and read at the froxel centre (off screen or past `far`: this frame alone), then clipped to the
   min/max box of this frame's 3x3 samples in the slice (Karis 2014 TAA clip; 16x16 workgroups write 14x14 tiles,
@@ -64,7 +74,7 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
 
 ## Switches and counters
 
-`--off clouds|fog|froxels|godrays|fogdither|fogjitter|foghistory|fogbank|fogclamp|cloudfog|transfog|envslice|skymotion|surface`
+`--off clouds|fog|froxels|godrays|fogdither|fogjitter|foghistory|fogbank|fogclamp|cloudfog|stormshape|cloudedge|cbshape|transfog|envslice|skymotion|surface`
 (`mw_game_core/src/perf.rs:135`); live `flip ambient_specular`, console `surface set|dump|clear`, weather overrides
 (`WeatherOverrides`). GPU spans `clouds_shadow|trace|resolve|composite`, Bevy `atmosphere_luts`; `MediumStats`
 (`rebuilds`, `scale_updates`), `WeatherStats`.

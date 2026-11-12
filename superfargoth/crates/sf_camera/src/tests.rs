@@ -117,7 +117,9 @@ fn a_traversal_lead_eases_in_and_never_teleports() {
 
 #[test]
 fn orbit_pitch_limits_mode_distance_and_shoulder_swap() {
-    let p = OrbitParams::default();
+    assert!(OrbitParams::default().shoulder_offset.abs() < f32::EPSILON, "centred by default");
+    // An over-the-shoulder framing, so the swap has something to move.
+    let p = OrbitParams { shoulder_offset: 0.45, ..OrbitParams::default() };
     let mut rig = OrbitRig::new(Shoulder::Right);
     let dt = 1.0 / 60.0;
     let pose = rig.update(&p, WorldPos::ORIGIN, Vec3::ZERO, Look::new(0.0, -1.5), RigMode::Normal, dt);

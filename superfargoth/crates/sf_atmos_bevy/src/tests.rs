@@ -29,6 +29,9 @@ fn app(fog_scale: f32) -> App {
         .init_resource::<CloudFrame>()
         .init_resource::<FogBankEdges>()
         .init_resource::<FogCloudSplit>()
+        .init_resource::<CloudEdgeStable>()
+        .init_resource::<CumulonimbusShape>()
+        .init_resource::<FarStormShape>()
         .init_resource::<FogShadowHeights>()
         .init_resource::<FroxelVolume>();
     app
@@ -93,4 +96,46 @@ fn fog_cloud_split_reaches_the_frame() {
     app.insert_resource(FogCloudSplit(false));
     app.world_mut().run_system_once(drive).unwrap();
     assert!(!app.world().resource::<CloudFrame>().fog_cloud_split);
+}
+
+/// Logic: stable cloud silhouettes (S1) are on by default and the switch reaches the render
+/// world's frame (`--off cloudedge` sets it false).
+#[test]
+fn cloud_edge_stable_reaches_the_frame() {
+    let mut app = app(VIEW_AMBIENT_IN_FOG);
+    app.world_mut().spawn((CloudCamera, Camera::default(), GlobalTransform::default()));
+    app.world_mut().run_system_once(drive).unwrap();
+    assert!(app.world().resource::<CloudEdgeStable>().0);
+    assert!(app.world().resource::<CloudFrame>().cloud_edge_stable);
+    app.insert_resource(CloudEdgeStable(false));
+    app.world_mut().run_system_once(drive).unwrap();
+    assert!(!app.world().resource::<CloudFrame>().cloud_edge_stable);
+}
+
+/// The storm shape (CW-1) is on by default and reaches the render world's frame with the game's
+/// metres (`--off stormshape` turns it off).
+#[test]
+fn storm_shape_reaches_the_frame() {
+    let mut app = app(VIEW_AMBIENT_IN_FOG);
+    app.world_mut().spawn((CloudCamera, Camera::default(), GlobalTransform::default()));
+    app.world_mut().run_system_once(drive).unwrap();
+    assert!(app.world().resource::<CloudFrame>().storm_shape.enabled);
+    let game = sf_atmos::StormShape { enabled: false, edge_m: 40.0, ..sf_atmos::StormShape::default() };
+    app.insert_resource(FarStormShape(game));
+    app.world_mut().run_system_once(drive).unwrap();
+    assert_eq!(app.world().resource::<CloudFrame>().storm_shape, game);
+}
+
+/// Logic: the storm cloud shape (S3) is on by default and the switch reaches the render world's
+/// frame (`--off cbshape` sets it false).
+#[test]
+fn cb_shape_reaches_the_frame() {
+    let mut app = app(VIEW_AMBIENT_IN_FOG);
+    app.world_mut().spawn((CloudCamera, Camera::default(), GlobalTransform::default()));
+    app.world_mut().run_system_once(drive).unwrap();
+    assert!(app.world().resource::<CumulonimbusShape>().0);
+    assert!(app.world().resource::<CloudFrame>().cb_shape);
+    app.insert_resource(CumulonimbusShape(false));
+    app.world_mut().run_system_once(drive).unwrap();
+    assert!(!app.world().resource::<CloudFrame>().cb_shape);
 }

@@ -424,6 +424,12 @@ pub struct MapGpuGeometry {
 }
 
 impl MapGpuGeometry {
+    /// Border band width, meters (the raster's).
+    #[must_use]
+    pub fn band_m(&self) -> f32 {
+        self.band_m
+    }
+
     /// The resolve uniform (24 words, `MapParams` in `map.wgsl`): `window`
     /// plus up to two texel rects `(min x, min z, width, height)` to write.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

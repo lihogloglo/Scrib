@@ -224,6 +224,54 @@ now cirrus: anvils need a written map), a cheaper composite (0.19 ms, a constant
 cost), far fog in the cloud node (no budget left on fair: trim the trace first), Low/Medium
 presets measured.
 
+#### Storm cloud shape (S3, `cbshape`, 2026-11-13)
+
+Owner (2026-11-12, `scene we3-ridge`, thunderstorm over the Ascadian Isles): the storm cloud is "very extruded",
+its base footprint pushed straight up. STORM-DIAG: coverage only thresholds density (the profile ignores it), the
+storm kind's top is flat at h 0.85, the shape noise is sampled in height fraction (the 1 600 m storm deck, WE-5
+cap, over the 1 024 m shape tile stretches features 1.56:1 vertically), and the 256 m region band under a 1.6 km
+tower is a ~80° wall.
+
+**Reuse check.** Bevy 0.20 has no volumetric cloud model (its atmosphere is sky and aerial perspective only;
+`FogVolume` is a box medium). Crates (`bevy_volumetric_clouds` and similar demos) use one global profile with no
+type/coverage coupling, no anvils, no weather map. The fix is a few lines inside our own Nubis port: our code.
+
+**Industry comparison.** HZD (Schneider 2015/2017): the vertical profile depends on cloud type *and* coverage;
+coverage is biased up with height for anvils, `pow(cov, remap(h, 0.7, 0.8, 1, mix(1, 0.5, anvil)))`; erosion
+inverts with height (billowy base, wispy top). Nubis Evolved (HFW 2022): an envelope (bottom x top x edge
+gradient) so cells taper at their rims; regional masks with wide soft falloffs. UE5 Volumetric Cloud and
+Frostbite (Hillaire 2016) use the same height-gradient x coverage model in world-space altitude, so noise stays
+isotropic in tall decks. Gaps kept: the region band is still 256 m (`sf_weather`; a wide soft falloff is its own
+slice); the anvil is a coverage/profile bias, not an advected anvil field (as in HZD).
+
+**Design.** Everything is gated by the local storm scalar `s` (map layer A `w`): `cb = s` when on, 0 when off
+(`--off cbshape`), so fair, overcast and every non-storm deck are bit-for-bit unchanged.
+1. *Shape noise in world altitude:* the shape volume's vertical coordinate is `h * mix(1, thickness / shape_tile,
+   cb)`; the detail octave already was world-space.
+2. *Storm cells by threshold:* the cell term is `ramp(0.45 + 0.8(1 - s), 0.85 + 0.8(1 - s), cells)` instead of
+   `s * ramp(0.45, 0.85, cells)` (equal at s 0 and 1): toward the region edge cells shrink to their cores.
+3. *Top follows coverage:* `T = mix(1, mix(T_MIN, 1, cov^TOP_EXP), cb)`, the old top ramp scaled into `T`:
+   domed cells whose towers taper toward their rims.
+4. *Anvil:* a wider cell term `a` (thresholds `ANVIL_WIDEN` lower) lifts profile and coverage in a band near
+   the top, with the Nubis bias above h 0.7: the cloud widens above ~0.75.
+5. *Ragged base:* below h ~0.1 the erosion uses the inverted (wispy) detail and erodes harder.
+Constants come from the CPU twin's printed measurement (`sf_atmos` `storm_profile_table`), not by guess.
+
+**As built (S3, 2026-11-13).** CPU twin `sf_atmos::density` (`CB_*`, `weather_at_shaped`, `storm_gradient`,
+`combine_density_shaped`, `erode_density_shaped`, `shape_height`); GPU `cloud_common.wesl` (same names) and
+`cloud_density.wesl` (`weather_sample_a`, `cloud_density`; the coverage early-out lets the anvil through).
+`WeatherSample` carries `storm` (the gate) and `anvil`. Switch `sf_atmos_bevy::CumulonimbusShape` (uniform
+`Clouds.cb_shape`, last field), game `--off cbshape`. Constants: `T_MIN` 0.35, `TOP_EXP` 1.5, cell shift 0.8,
+`ANVIL_WIDEN` 0.15 (0.2 hung the shelf over cells 0.55, too far out), anvil 0.72 + 0.08, lent cover 0.6, rag below
+0.1 with up to 2x erosion. Measured (fraction of the shape layer with density > 0.1, 1 600 m deck): old storm
+cells >= 0.65 are full columns from h 0.15 to 0.95; new tops ~0.95 / 0.95 / 0.8 / 0.5 / 0 for cell values 1.0 /
+0.85 / 0.75 / 0.65 / 0.55, the anvil shelf at h 0.85-0.95 over cells 0.55-0.65; toward the edge (cell 0.8) the
+column stays full at storm 1, a 0.65 dome + shelf at 0.85, a low dome at 0.7, nothing by 0.55. The CW-1 rain
+shading (`cloud_trace.wesl` far weather) still calls the unshaped `weather_at`. Cost: inferred ±0.1 ms (taller
+cell cores, fewer rim hits), not measured. Tests: `storm_shape_leaves_calm_decks_unchanged` (bit-exact gate),
+`storm_top_follows_coverage_and_anvil_spreads`, `storm_shape_is_finite_and_bounded`, shader
+`storm_cloud_shape_compiles`. Owner check WE-15.
+
 
 ### Temporal accumulation as built (WE-10 fix 1, cloud-history session, 2026-11-06)
 
@@ -242,3 +290,24 @@ mean |Δ| RGB between screenshots of a still view, 4 pairs, a debugging aid): le
 weight 0.15 + 1σ 2.8 / 2.2; 0.1 + 1.5σ 2.05 / 1.5; **shipped 0.06 + 1.5σ 1.55 / 1.54** (legacy in the same run 4.15 / 2.24); a frozen history 1.24 / 1.26
 (the floor: TAA jitter and reprojection). The frame-to-frame change scales with the weight, the clip width
 matters little. Cost (`--bench exterior_red_mountain` at 1707×960, the DLSS Quality input of 1440p, ashstorm forced, Bevy GPU spans): trace 0.146 / 0.146 ms, resolve 0.075 / 0.074 ms (new / legacy): ≈ +0.001 ms.
+
+#### Stable silhouette history (S1, `cloudedge`, 2026-11-13)
+
+STORM-DIAG (2026-11-12): under the checkerboard the trace's 6×6 furthest-depth window was centred on the
+sub-pixel traced this frame, so it moved two full-res pixels with each phase (on top of DLSS-jittered depth) and
+a block on a silhouette flipped open/cut (or "cut at the ridge"/"cut at far land") frame to frame; each flip
+rejected its history and the block showed one raw STBN sample: a strip along every silhouette that never
+accumulated (the horizon shimmer where no fog is behind; WE-10's "shimmer behind fog and clouds"). As built
+(`CloudEdgeStable`, `clouds.stable_edges`; CPU twin `sf_atmos::temporal::{depth_window, mismatch_fallback,
+accumulate_distance}`): (1) the window covers the whole block, its 4×4 full-res pixels plus the one-pixel
+bilinear reach of the composite (`4b−1 … 4b+4`, still 36 loads), and the open/cut class is taken along the
+block's centre ray, both phase-independent; (2) a texel whose reprojected history held only the other
+population shows the mean of its same-population 3×3 neighbours (colour, far bank, distance), not the raw
+sample; (3) the stored cloud distance accumulates like the colour (history clamped to the neighbourhood's
+range), so the composite's occlusion test at the horizon (grazing deck ≈ far-land distance) reads a settled
+distance instead of the last jittered march; with (1) the composite's set pick (`d.z`) is stable too.
+`--off cloudedge`: the old window, raw sample, last-sample distance. Industry: Nubis/HZD (Schneider 2015-2017)
+and UE5 Volumetric Cloud reconstruct the cloud layer at a fixed low-res footprint (min/max depth of the
+covered pixels) and reject history by depth discontinuity with a neighbourhood fallback, which is what this
+does. Expected cost ≈ 0 ms (same loads; one extra shell intersection per traced texel). Risk: a little sky
+bleeding at silhouettes from the wider far side of the window (WE-14).

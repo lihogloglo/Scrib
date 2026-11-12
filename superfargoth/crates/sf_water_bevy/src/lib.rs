@@ -41,7 +41,7 @@ use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, Te
 use bevy_shader::load_shader_library;
 use bevy_transform::TransformSystems;
 use bevy_transform::components::GlobalTransform;
-use sf_water::{origin_phase, reflection_plane, Cascades, OpticsMap, PlaneCandidate, ShoreField, ShoreSettings, ShoreWaves, SpectrumParams, WaterOptics, H0, REPEAT_PERIOD};
+use sf_water::{origin_phase, reflection_plane, Cascades, OpticsMap, PlaneCandidate, SeaTransition, SeaWind, ShoreField, ShoreSettings, ShoreWaves, SpectrumParams, WaterOptics, H0, REPEAT_PERIOD};
 
 pub use material::{WaterExt, WaterMaterial, WaterParams};
 
@@ -56,15 +56,42 @@ pub const MAX_LOOKS: usize = 8;
 /// with this seed and cascades): the twin is then the GPU's cascade 0 by construction.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct OceanSpectrum {
+    /// The sea state (with a transition: the one it is heading to).
     pub params: SpectrumParams,
     pub cascades: Cascades,
     pub seed: u32,
+    /// A running weather transition (W-WIND): the sea is `mix(from, params, weight(t))` on the
+    /// [`WaterFrame`] clock. Set by [`WaterWind`]'s system, or by the host.
+    pub transition: Option<SeaTransition>,
 }
 
 impl Default for OceanSpectrum {
     fn default() -> Self {
-        Self { params: SpectrumParams::default(), cascades: Cascades::default(), seed: 1 }
+        Self { params: SpectrumParams::default(), cascades: Cascades::default(), seed: 1, transition: None }
     }
+}
+
+impl OceanSpectrum {
+    /// The sea state the transition comes from.
+    pub fn from_params(&self) -> Option<SpectrumParams> {
+        self.transition.map(|t| SpectrumParams { wind: t.from, ..self.params })
+    }
+
+    /// The transition's weight at `t` (1 without one).
+    pub fn weight(&self, t: f64) -> f32 {
+        self.transition.map_or(1.0, |tr| tr.weight(t))
+    }
+}
+
+/// The weather's wind for the sea (W-WIND, water.md "Weather coupling"). The host writes `weather`
+/// (the mean wind 10 m above the sea, m/s, as the velocity it blows toward) every frame and
+/// inserts `sea` (the low-pass and transition state, with its override); a system then keeps
+/// [`OceanSpectrum`]'s wind and transition on it. `sea: None` (the default) leaves
+/// [`OceanSpectrum`] as the host set it.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct WaterWind {
+    pub weather: Option<Vec2>,
+    pub sea: Option<SeaWind>,
 }
 
 /// The FFT's quality tier (water.md "Performance budgets"): Low 2 × 128², Medium 3 × 128², High
@@ -278,7 +305,8 @@ pub enum WaterSystems {
 /// The plugin's images (GPU-written ones too, so materials and readbacks can hold handles).
 #[derive(Resource, Clone, Debug)]
 pub struct WaterImages {
-    /// `h0` upload (`sf_water::H0::gpu_texels`), one layer per cascade.
+    /// `h0` upload (`sf_water::H0::gpu_texels`), one layer per cascade, then the same for a
+    /// transition's `from` sea state (W-WIND).
     pub h0: Handle<Image>,
     /// (Dx, h, Dz, foam) per cascade, written by the FFT pass every frame, with mips.
     pub displacement: Handle<Image>,
@@ -318,6 +346,7 @@ impl Plugin for WaterPlugin {
         embedded_asset!(app, "shaders/water_velocity.wesl");
         app.init_resource::<OceanSpectrum>()
             .init_resource::<WaterFrame>()
+            .init_resource::<WaterWind>()
             .init_resource::<WaterLook>()
             .init_resource::<WaterShoreInput>()
             .init_resource::<WaterRegionsInput>()
@@ -330,7 +359,7 @@ impl Plugin for WaterPlugin {
             .add_systems(PreStartup, create_images)
             .add_systems(
                 PostUpdate,
-                (depth_usages, size_waves, upload_spectrum, upload_bakes, size_targets, attach_surface, drive).chain().in_set(WaterSystems::Drive),
+                (depth_usages, size_waves, follow_wind, upload_spectrum, upload_bakes, size_targets, attach_surface, drive).chain().in_set(WaterSystems::Drive),
             );
         render::build(app);
     }
@@ -405,7 +434,9 @@ fn wave_images(n: usize) -> [Image; 4] {
     let n32 = n as u32;
     let layers = MAX_CASCADES as u32;
     let array = Extent3d { width: n32, height: n32, depth_or_array_layers: layers };
-    let h0 = image(array, TextureDimension::D2, TextureFormat::Rgba32Float, TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST, Some(vec![0; n * n * MAX_CASCADES * 16]));
+    // h0: the sea state, then a transition's `from` (W-WIND), MAX_CASCADES layers each.
+    let pair = Extent3d { depth_or_array_layers: 2 * layers, ..array };
+    let h0 = image(pair, TextureDimension::D2, TextureFormat::Rgba32Float, TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST, Some(vec![0; n * n * MAX_CASCADES * 2 * 16]));
     let gpu = TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC;
     let mut displacement = image(array, TextureDimension::D2, TextureFormat::Rgba16Float, gpu, None);
 
@@ -494,28 +525,65 @@ fn size_waves(quality: Res<WaterQuality>, images: Option<ResMut<WaterImages>>, m
     images.resolution = n;
 }
 
-/// Generates and uploads `h0` for every cascade when the sea state or the grid changes (water.md
-/// "Weather changes": the host blends spectra with `H0::blend` and sets the result here later).
-fn upload_spectrum(spectrum: Res<OceanSpectrum>, images: Option<Res<WaterImages>>, mut assets: ResMut<Assets<Image>>, mut done: Local<Option<(OceanSpectrum, usize)>>) {
-    let Some(images) = images else { return };
-    let n = images.resolution;
-    if done.as_ref().is_some_and(|(s, r)| s == &*spectrum && *r == n) {
+/// The sea follows [`WaterWind`] (W-WIND): low-passed weather wind, one transition at a time.
+fn follow_wind(frame: Res<WaterFrame>, mut wind: ResMut<WaterWind>, mut spectrum: ResMut<OceanSpectrum>) {
+    let weather = wind.weather;
+    let Some(sea) = wind.bypass_change_detection().sea.as_mut() else { return };
+    if !sea.update(weather, frame.time) {
         return;
     }
+    let (w, transition) = (sea.wind(), sea.transition());
+    if spectrum.params.wind != w || spectrum.transition != transition {
+        spectrum.params.wind = w;
+        spectrum.transition = transition;
+    }
+}
+
+/// One sea state's `h0` layers (`MAX_CASCADES` × n² texels of 16 bytes, `H0::gpu_texels`).
+fn h0_layers(params: &SpectrumParams, cascades: &Cascades, n: usize, seed: u32) -> Vec<u8> {
     let mut data = vec![0u8; n * n * MAX_CASCADES * 16];
-    for c in 0..spectrum.cascades.len().min(MAX_CASCADES) {
-        let h0 = H0::generate(&spectrum.params, &spectrum.cascades, c, n, spectrum.seed);
-        for (i, t) in h0.gpu_texels(&spectrum.params).iter().enumerate() {
+    for c in 0..cascades.len().min(MAX_CASCADES) {
+        let h0 = H0::generate(params, cascades, c, n, seed);
+        for (i, t) in h0.gpu_texels(params).iter().enumerate() {
             let at = (c * n * n + i) * 16;
             for (j, v) in t.iter().enumerate() {
                 data[at + j * 4..at + j * 4 + 4].copy_from_slice(&v.to_le_bytes());
             }
         }
     }
+    data
+}
+
+/// Generates and uploads `h0` when the sea state or the grid changes: layers `0..MAX_CASCADES`
+/// the sea state, `MAX_CASCADES..` the one a transition comes from (water.md "Weather changes":
+/// the FFT blends them, `FftParams::blend`). A transition's `from` is usually the last sea state:
+/// its layers are reused, so a re-init generates one spectrum.
+fn upload_spectrum(
+    spectrum: Res<OceanSpectrum>,
+    images: Option<Res<WaterImages>>,
+    mut assets: ResMut<Assets<Image>>,
+    mut done: Local<Option<(OceanSpectrum, usize, Vec<u8>)>>,
+) {
+    let Some(images) = images else { return };
+    let n = images.resolution;
+    if done.as_ref().is_some_and(|(s, r, _)| s == &*spectrum && *r == n) {
+        return;
+    }
+    let to = h0_layers(&spectrum.params, &spectrum.cascades, n, spectrum.seed);
+    let from = match spectrum.from_params() {
+        None => None,
+        Some(f) => Some(match done.take() {
+            Some((last, r, bytes)) if r == n && last.params == f && last.cascades == spectrum.cascades && last.seed == spectrum.seed => bytes,
+            _ => h0_layers(&f, &spectrum.cascades, n, spectrum.seed),
+        }),
+    };
+    let mut data = Vec::with_capacity(to.len() * 2);
+    data.extend_from_slice(&to);
+    data.extend_from_slice(from.as_deref().unwrap_or(&to));
     if let Some(mut image) = assets.get_mut(&images.h0) {
         image.data = Some(data);
     }
-    *done = Some((spectrum.clone(), n));
+    *done = Some((spectrum.clone(), n, to));
 }
 
 /// Uploads the shore field and the optics map when the host changes them.
@@ -673,6 +741,7 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
             let origin = |c: i32| (f64::from(c) * g).rem_euclid(sf_water::shore_waves::NOISE_PERIOD) as f32;
             Vec4::new(w.land_margin, w.variation, origin(frame.origin_cell.x), origin(frame.origin_cell.z))
         }),
+        swash4: sw.map_or(Vec4::W, |w| Vec4::new(w.omega_from[0], w.omega_from[1], w.omega_from[2], w.mix)),
         regions,
         reflection: match s.reflection {
             // Only the surface at the mirrored level reads the SSPR; others keep the environment map.
@@ -694,7 +763,7 @@ fn drive(
     mut materials: ResMut<Assets<WaterMaterial>>,
     mut state: ResMut<render::WaterRender>,
     mut clock: Local<(u64, [Option<f64>; MAX_CASCADES])>,
-    (mut last_time, mut shore_waves): (Local<Option<f64>>, Local<Option<(OceanSpectrum, ShoreSettings, ShoreWaves)>>),
+    (mut last_time, mut shore_waves): (Local<Option<f64>>, Local<Option<(OceanSpectrum, ShoreSettings, [ShoreWaves; 2])>>),
 ) {
     let Some(images) = images else { return };
     let cascades = spectrum.cascades.len().min(MAX_CASCADES).min(quality.cascades());
@@ -705,13 +774,17 @@ fn drive(
         .map(|(_, surface, _, _, _)| surface.map_or(PlaneCandidate { level: frame.level, bounds: None }, |w| PlaneCandidate { level: w.level, bounds: w.bounds }))
         .collect();
     let plane = cameras.iter().next().and_then(|c| reflection_plane(c.translation(), &candidates));
-    // The shore waves follow the sea state and the field's settings (recomputed only on a change).
+    // The shore waves follow the sea state and the field's settings (recomputed only on a change),
+    // blended through a transition as the FFT is (W-WIND).
+    let weight = spectrum.weight(frame.time);
     let sw = shore.field.as_ref().map(|f| {
         let fresh = shore_waves.as_ref().is_some_and(|(sp, st, _)| *sp == *spectrum && *st == f.settings);
         if !fresh {
-            *shore_waves = Some((spectrum.clone(), f.settings, ShoreWaves::new(&spectrum.params, &spectrum.cascades, &f.settings)));
+            let to = ShoreWaves::new(&spectrum.params, &spectrum.cascades, &f.settings);
+            let from = spectrum.from_params().map_or(to, |p| ShoreWaves::new(&p, &spectrum.cascades, &f.settings));
+            *shore_waves = Some((spectrum.clone(), f.settings, [from, to]));
         }
-        shore_waves.as_ref().map_or_else(ShoreWaves::default, |(_, _, w)| *w)
+        shore_waves.as_ref().map_or_else(ShoreWaves::default, |(_, _, [from, to])| ShoreWaves::blend(from, to, weight))
     });
     let prev_time = last_time.replace(frame.time).unwrap_or(frame.time);
     let reflection = plane.zip(sspr_scale(*quality, *reflections)).map(|(level, scale)| (level, scale, reflections.wave_distortion));
@@ -787,6 +860,7 @@ fn drive(
             count: count - u32::from(skip < count),
             cycles_t,
             choppiness: spectrum.params.choppiness,
+            blend: weight,
             foam_decay: look.foam_decay,
             foam_threshold: look.foam_threshold,
             foam_gain: look.foam_gain,

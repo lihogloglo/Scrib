@@ -66,7 +66,11 @@ chop on the beach; a visible line where the ripples start. Foam and reflections 
 
 ### WA-5: Gerstner shore waves (W-GERSTNER; `scene wa-seyda-noon`, `wa-bittercoast`; A/B `--off shorewaves`)
 
-Status: awaiting owner. Kind: real game locations, High preset, the scenes' own time and weather; windy variant `--water-wind 14`.
+Owner 2026-11-12 (`scene wa-seyda-noon`): hard to judge, the waves are never big; asked whether waves follow the weather.
+They don't yet: the ocean wind is a fixed 7 m/s scaffold (`mw_environment_bevy/src/water.rs:72` `DEFAULT_WIND`, WA-1 item 4),
+and near the shore the 1:20 stand-in slope caps breakers at ~0.15-0.18 m. Owner 2026-11-12 (`--water-wind 14`, then `30`): the open sea responds
+and looks nice at 30 (wants whitecap foam on crests, and contact foam around objects reworked); the Gerstner shore waves
+are not visible at all (owner suspects the damping). Status: failed so far (not visible); diagnosis W-GERSTNER-DIAG. Status: awaiting owner. Kind: real game locations, High preset, the scenes' own time and weather; windy variant `--water-wind 14`.
 Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-seyda-noon`, then `scene wa-bittercoast`, then `scene wa-seyda-noon --water-wind 14`;
 A/B: the same with `--off shorewaves` (the FFT alone fades to flat at the shore). Answers WA-1 swash wish.
 Look for: waves rolling in parallel to the beach and washing up and back over the sand (a few metres of run-up, faster up

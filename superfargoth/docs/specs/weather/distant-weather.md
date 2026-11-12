@@ -133,6 +133,79 @@ coast's storm continues out to sea instead of stopping at a clear ocean. `Change
 already act per climate, so a scripted storm in a neighbouring region shows from afar for free. Debug: BRP
 `weather.force {region, weather}` and `--force-region <id>=<weather>` for the WE-3 check.
 
+### CW-1 Storm shape (2026-11-12): a storm cell, not a region column
+
+Owner 2026-11-12: a local storm seen from outside was a ground-to-sky pillar with a shimmering edge; borders stay
+fairly abrupt (a game setting in metres, with noise); far curtains are kept. Audit C2/C3 (`industry-audit.md`).
+
+**Reuse check.** *Bevy 0.20*: the atmosphere (`bevy_pbr::atmosphere`) has no local media; `FogVolume` is a
+froxel box (near range, hard box edge: the C3 shape). No engine feature for far precipitation. *Crates*: none
+for Bevy 0.20 (volumetric-cloud crates march a uniform layer: no weather map, no rain). *Ours*: the WE4 map,
+the clouds' weather noise and the WE4d march carry everything; this slice reshapes their terms.
+
+**Industry comparison.** HZD/Nubis: precipitation from the weather map's coverage × precipitation under the
+cloud base, coverage noise-modulated; HFW blends regional influence NDFs (soft masks); RDR2 (unverified): rain
+fog density tied to the cloud map; UE5 Local Fog Volumes: soft-edged primitives with falloff. Media integrate
+with the energy-conserving per-segment form (Hillaire 2015, Frostbite): `exp(-τ)` per segment, in-scatter
+`J·(1 - exp(-τ))`. Deviation: our edge is far narrower than the industry's km falloff (owner: small world); the
+noise keeps it ragged, the analytic march keeps it stable.
+
+**Design** (`sf_atmos::storm`, CPU twin; `cloud_trace.wesl` `far_weather_shaped`; `--off stormshape` = WE4d).
+1. *Rain where the cloud is.* Shaft extinction = the map's precipitation (minus the camera's) × **rain cores**
+   (the clouds' weather noise above the coverage threshold by a margin, max the storm cells: rain under thick
+   cells, none under thin cloud or gaps) × a **vertical profile** (fades in under the base, thins toward sea
+   level to `ground_fraction`).
+2. *Narrow noisy border.* The map blends climates over the band (`border_weight`: smoothstep over ±half band).
+   Per sample, four map taps at ±band (x, z) give the local min/max precipitation; the sample's fraction
+   between them inverts the smoothstep to a signed distance to the border, displaced by world-anchored noise
+   (±`edge_noise_m`) and re-blended over `edge_m`. Where the map is uniform it changes nothing.
+3. *Analytic march.* 16 segments at fixed (unjittered) quadratic positions out to the map's half width, density
+   linear between samples, the closed form above per segment: the result is a continuous function of the ray,
+   so the edge no longer flips per pixel per frame and the history holds a smooth image.
+4. *Default border.* `edge_m` 64 m, `edge_noise_m` 48 m: the map texel (64 m at the 256 m band) is the
+   narrowest edge the map places without aliasing, and |noise| + edge/2 < band/2 keeps the displaced edge
+   inside the band. The game overrides in metres through its adapter.
+
+**As built (cw-1, 2026-11-12), part A.** `sf_atmos::storm` (`StormShape`, `fitted(band)`, `sharpen_border`,
+`rain_core`, `curtain_profile`, `integrate`; exact tests); `sf_atmos_bevy::FarStormShape` → `CloudFrame` →
+`Clouds.storm_*` (band from `MapGpuGeometry::band_m`); trace `far_weather_shaped` (WE4d `far_weather` kept for
+`--off stormshape`, `mw_game_core` `Part::StormShape`, set in `mw_exterior_bevy` with 64 m / ±48 m). Per sample:
+B, D, 4 D taps, A, 2 weather-noise fetches, 1 edge-noise fetch, C, transmittance LUT; 17 samples (WE4d: 8).
+Far fog (`sigma_f`) unchanged in form, now on the same analytic march. Expected +0.02-0.08 ms, not measured.
+**Part B (not built, next slice):** fall streaks hanging from the base (detail volume stretched vertically,
+ragged bottom), High/Ultra only (Low off), cost measured with the A/B.
+
+**S2 fixes as built (s2-stormfix, 2026-11-13; owner WE-13 2026-11-12: rain on/off walking in, curtain faint and short
+of the base).** (1) *Edge pre-filter:* the edge's half-width is `h = max(edge/2, ds(t)·along)`, `ds = 2·span·u/n` the
+march's own sample spacing at `t` and `along` = |horizontal ray · border normal| (normal from the four taps' gradient;
+1 when it is unclear), so density linear between samples resolves the edge (a grazing ray keeps the narrow
+silhouette); capped at half the band (the widest edge the map encodes), the noise shrinking so `|noise| + h ≤ band/2`.
+The edge profile is `border_weight`'s own shape, so `h` = half the band is the map's blend exactly. (2) *Near
+hand-off:* `h` is half the band within 128 m, sharpening to the narrow edge by 256 m (the near FX ramp over the band;
+the camera term was already the raw band), so the far rain fades in with the near FX. (3) *Curtain top:* full to the
+base, fading out up to the visible base `base + ½·mix(.07,.22,kind)·thickness` (440 m above the base on a 4 km storm
+deck). (4) *Cores:* `lo = max(threshold − 0.05, 0.4)` (was `max(threshold + 0.2, 0.5)`): at map coverage 0.45 field
+0.7 rains half, 0.8 full; field 0.5 (under a third of cover) stays dry. Tests (`sf_atmos::storm`): edge ≥ spacing up to
+the band, the band exactly at half-width, density at each fixed sample changes no faster than the near FX walking in
+(CW-1: 4×), march error vs a fine reference halved near the edge (far, where the spacing outgrows the band, only ~20 %
+less: the residual), curtain to the visible base, core gate at 0.45. Expected < 0.02 ms (a few ALU per sample), not
+measured. `--off stormshape` unchanged.
+**S2 fixes as built (s2-stormfix, 2026-11-13; owner WE-13 2026-11-12: rain on/off walking in, curtain faint and short
+of the base).** (1) *Edge pre-filter:* the edge's half-width is `h = max(edge/2, ds(t)·along)`, `ds = 2·span·u/n` the
+march's own sample spacing at `t` and `along` = |horizontal ray · border normal| (normal from the four taps' gradient;
+1 when it is unclear), so density linear between samples resolves the edge (a grazing ray keeps the narrow
+silhouette); capped at half the band (the widest edge the map encodes), the noise shrinking so `|noise| + h ≤ band/2`.
+The edge profile is `border_weight`'s own shape, so `h` = half the band is the map's blend exactly. (2) *Near
+hand-off:* `h` is half the band within 128 m, sharpening to the narrow edge by 256 m (the near FX ramp over the band;
+the camera term was already the raw band), so the far rain fades in with the near FX. (3) *Curtain top:* full to the
+base, fading out up to the visible base `base + ½·mix(.07,.22,kind)·thickness` (440 m above the base on a 4 km storm
+deck). (4) *Cores:* `lo = max(threshold − 0.05, 0.4)` (was `max(threshold + 0.2, 0.5)`): at map coverage 0.45 field
+0.7 rains half, 0.8 full; field 0.5 (under a third of cover) stays dry. Tests (`sf_atmos::storm`): edge ≥ spacing up to
+the band, the band exactly at half-width, density at each fixed sample changes no faster than the near FX walking in
+(CW-1: 4×), march error vs a fine reference halved near the edge (far, where the spacing outgrows the band, only ~20 %
+less: the residual), curtain to the visible base, core gate at 0.45. Expected < 0.02 ms (a few ALU per sample), not
+measured. `--off stormshape` unchanged.
+
 ### Cost (estimates; GPU ms at 1440p, RTX 4060 Laptop, High)
 
 | Part | Estimate | Note |

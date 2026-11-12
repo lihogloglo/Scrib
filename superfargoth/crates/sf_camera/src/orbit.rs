@@ -69,6 +69,9 @@ pub struct OrbitParams {
     /// Pivot above the render body's root (chest height).
     pub pivot_height: f32,
     /// Lateral pivot offset toward the active shoulder (screen right for [`Shoulder::Right`]).
+    /// Default 0: the character centred on screen, as souls-likes frame free third-person
+    /// movement (an off-centre body reads as walking diagonally against the screen centre;
+    /// owner 2026-11-13). Over-the-shoulder framing (e.g. 0.45 m) is for aiming.
     pub shoulder_offset: f32,
     pub pitch_min: f32,
     pub pitch_max: f32,
@@ -88,7 +91,7 @@ impl Default for OrbitParams {
     fn default() -> Self {
         Self {
             pivot_height: 1.45,
-            shoulder_offset: 0.45,
+            shoulder_offset: 0.0,
             pitch_min: -70f32.to_radians(),
             pitch_max: 60f32.to_radians(),
             distance: ModeDistances::default(),

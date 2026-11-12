@@ -148,6 +148,42 @@ impl Default for FogCloudSplit {
     }
 }
 
+/// Stable cloud silhouettes (S1, WE-14; on by default): under the checkerboard the trace takes
+/// its depth window over the whole block ([`sf_atmos::temporal::depth_window`]) and classes the
+/// block along its centre ray, so a block's open/cut class doesn't flip with the checkerboard
+/// phase; a texel whose history was rejected shows the mean of its same-population neighbours
+/// ([`sf_atmos::temporal::mismatch_fallback`]) and the stored cloud distance is accumulated like
+/// the colour (the composite's occlusion test reads it). `false` (`--off cloudedge`): the old
+/// window centred on the traced pixel, the raw sample and the last sample's distance (the A/B).
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CloudEdgeStable(pub bool);
+
+impl Default for CloudEdgeStable {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// The storm cloud shape (S3, WE-15; on by default): in a storm the shape noise runs in world
+/// altitude, the top follows coverage (domed cells), an anvil spreads near the top, the base is
+/// ragged and cells shrink by threshold toward the region edge (`sf_atmos::combine_density_shaped`).
+/// Calm decks never change. `false` (`--off cbshape`): the old storm profile (the A/B).
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CumulonimbusShape(pub bool);
+
+impl Default for CumulonimbusShape {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// The far storm's shape (CW-1, [`sf_atmos::StormShape`]; on by default): distant rain hangs
+/// under the clouds' thick cores, its region edge is re-blended over `edge_m` with noise, and
+/// the far medium is integrated analytically. `enabled: false` (`--off stormshape`): the `WE4d`
+/// far weather (the region column, the A/B). A game sets the edge in metres through its adapter.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct FarStormShape(pub sf_atmos::StormShape);
+
 /// A height-field shadow for the froxels' sun light past the cascades (the
 /// terrain's shadow-height map, handed over by the app): `Rg16Float` texels of
 /// (shadow height − base, occluder distance), meters; `params` = render-space
@@ -225,6 +261,12 @@ pub(crate) struct CloudFrame {
     pub fog_bank_edges: bool,
     /// [`FogCloudSplit`].
     pub fog_cloud_split: bool,
+    /// [`CloudEdgeStable`].
+    pub cloud_edge_stable: bool,
+    /// [`CumulonimbusShape`].
+    pub cb_shape: bool,
+    /// [`FarStormShape`].
+    pub storm_shape: sf_atmos::StormShape,
     /// The camera's ambient radiance × [`Fog::view_ambient`] (linear RGB),
     /// added to the fog's sky fill.
     pub fog_ambient: Vec3,
@@ -299,6 +341,9 @@ impl Plugin for CloudsPlugin {
             .insert_resource(Fog { settings: self.fog, enabled: true, froxels: Some(FroxelSettings::high()), view_ambient: sf_atmos::VIEW_AMBIENT_IN_FOG })
             .init_resource::<FogBankEdges>()
             .init_resource::<FogCloudSplit>()
+            .init_resource::<CloudEdgeStable>()
+            .init_resource::<CumulonimbusShape>()
+            .init_resource::<FarStormShape>()
             .init_resource::<FogShadowHeights>()
             .init_resource::<FroxelVolume>()
             .add_plugins(bevy_pbr::MaterialPlugin::<FroxelFogMaterial>::default())
@@ -383,6 +428,8 @@ type ShadowLightItem = (Entity, &'static mut GlobalTransform, Has<DirectionalLig
 type ShadowLightFilter = (With<CloudShadowLight>, With<DirectionalLight>, Without<CloudCamera>);
 /// Point lights the froxels may light (disjoint from the shadow light's mutable transform).
 type FogLightQuery<'w, 's> = Query<'w, 's, (&'static PointLight, &'static GlobalTransform, &'static ViewVisibility), Without<DirectionalLight>>;
+/// The fog and its A/B switches, as one [`drive`] parameter (Bevy's 16-parameter limit).
+type FogSwitches<'w> = (Res<'w, Fog>, Res<'w, FogBankEdges>, Res<'w, FogCloudSplit>, Res<'w, FarStormShape>, Res<'w, CloudEdgeStable>, Res<'w, CumulonimbusShape>);
 
 /// Advances the wind, computes the texture offsets, places the shadow
 /// light's texture around the camera, and fills [`CloudFrame`]. Runs after
@@ -392,7 +439,7 @@ fn drive(
     mut commands: Commands,
     time: Res<Time>,
     clouds: Res<Clouds>,
-    (fog, bank_edges, cloud_split): (Res<Fog>, Res<FogBankEdges>, Res<FogCloudSplit>),
+    (fog, bank_edges, cloud_split, storm_shape, edge_stable, cb_shape): FogSwitches,
     origin: Res<CloudsOrigin>,
     images: Res<CloudImages>,
     mut scroll: ResMut<Scroll>,
@@ -468,6 +515,9 @@ fn drive(
         fog: fog_on.then_some(fog.settings),
         fog_bank_edges: bank_edges.0,
         fog_cloud_split: cloud_split.0,
+        cloud_edge_stable: edge_stable.0,
+        cb_shape: cb_shape.0,
+        storm_shape: storm_shape.0,
         fog_ambient: sf_atmos::fog_fill(Vec3::ZERO, ambient, fog.view_ambient),
         fog_offsets: drift.0.offsets([origin.0.x, origin.0.z], &fog.settings.banks),
         glows: clouds.glows,

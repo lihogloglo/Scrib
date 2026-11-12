@@ -99,6 +99,10 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let q = clamp(vec2<i32>(base) + o, vec2(0), hmax);
         var c = textureLoad(cloud_color, q, 0);
         let d = textureLoad(cloud_dist, q, 0);
+        // With S1 (`stable_edges`) `d.x` is the resolve's accumulated distance and
+        // `d.z` the block's phase-stable class, so at the horizon (grazing deck at
+        // about the far terrain's distance) a tap no longer flips in and out of
+        // this test or between sets with each jittered march.
         if d.x > scene_t * 1.02 + 10.0 {
             c = vec4(0.0, 0.0, 0.0, 1.0);
         }

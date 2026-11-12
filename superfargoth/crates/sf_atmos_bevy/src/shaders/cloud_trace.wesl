@@ -18,9 +18,9 @@ import bevy_pbr::atmosphere::{
     },
     bruneton_functions::sample_transmittance_lut_segment,
 };
-import super::cloud_common::{PI, WeatherSample, ramp, multi_scatter, powder, shell_segment, sub_pixel, ign, henyey_greenstein, ray_sphere};
+import super::cloud_common::{PI, WeatherSample, ramp, weather_at, evolve_field, multi_scatter, powder, shell_segment, sub_pixel, ign, henyey_greenstein, ray_sphere};
 import super::fog::fog_phase;
-import super::cloud_density::{clouds, weather_sample_a, map_a, map_layer, ray_a, ray_b, ray_local_a, ray_local_b, height_fraction, cloud_density, cirrus_hit, bank_mask};
+import super::cloud_density::{clouds, weather_texture, noise_sampler, weather_sample_a, map_a, map_layer, ray_a, ray_b, ray_local_a, ray_local_b, height_fraction, cloud_density, cirrus_hit, bank_mask};
 import super::key_light::{key_light, planet_lit_at};
 import super::bank_edges::{bank_encode, bank_near_share};
 
@@ -158,6 +158,7 @@ const FAR_STEPS: u32 = 8u;
 // Horizontal drift of the rain per meter of fall (slanted curtains).
 const FAR_SHEAR: f32 = 0.35;
 
+// The WE4d march (`--off stormshape`, the A/B): 8 jittered steps over the region column.
 fn far_weather(ro: vec3<f32>, rd: vec3<f32>, scene_t: f32, jitter: f32, light_color: vec3<f32>, l: vec3<f32>, cos_t: f32, fill0: vec3<f32>) -> FarWeather {
     var out: FarWeather;
     out.color = vec3(0.0);
@@ -242,6 +243,208 @@ fn far_weather(ro: vec3<f32>, rd: vec3<f32>, scene_t: f32, jitter: f32, light_co
     return out;
 }
 
+// The storm shape (CW-1, weather/distant-weather.md "CW-1 Storm shape"; CPU twin
+// `sf_atmos::storm`): the medium of `far_weather`, but the rain hangs under the clouds'
+// thick cores (not the whole region column), its region edge is re-blended over
+// `storm_edge_m` with world-anchored noise (not the band at in-storm extinction), and the
+// march is analytic: fixed quadratic samples, density linear between them, closed form per
+// segment (Hillaire 2015). The result is a continuous function of the ray, so an edge pixel
+// no longer flips in and out per frame.
+const STORM_SEGMENTS: u32 = 16u;
+const CORE_FIELD: f32 = 0.4;
+const CORE_RAMP: f32 = 0.25;
+const STORM_T0: f32 = 32.0;
+// Distances (m) where the edge sharpens from the map's band to the narrow edge (S2: the near FX hand-off).
+const STORM_NEAR_SHARP: vec2<f32> = vec2(128.0, 256.0);
+// Edge-noise periods per map window (an integer: seamless across the toroidal wrap).
+const EDGE_NOISE_TILES: f32 = 24.0;
+
+fn inverse_smoothstep(y: f32) -> f32 {
+    return 0.5 - sin(asin(1.0 - 2.0 * saturate(y)) / 3.0);
+}
+
+// Signed distance (m, + on the wetter side) to the border from the fraction `s` of the map's
+// band blend (`sf_weather::border_weight`, a smoothstep over ±half the band).
+fn border_distance(s: f32, band_m: f32) -> f32 {
+    let half = 0.5 * max(band_m, 1.0);
+    let x = 2.0 * saturate(s) - 1.0;
+    return half * sign(x) * inverse_smoothstep(abs(x));
+}
+
+// `sf_atmos::storm::edge_profile`: `border_weight`'s shape at half-width `h` (h = half the
+// band, no noise: the map's own blend).
+fn edge_profile(d: f32, h: f32) -> f32 {
+    let t = min(abs(d) / max(h, 1e-3), 1.0);
+    return 0.5 + 0.5 * sign(d) * t * t * (3.0 - 2.0 * t);
+}
+
+// `sf_atmos::storm::edge_half_width` (S2): the edge widened to the march's sample spacing at
+// `t` × `along` (|horizontal ray · border normal|), back to half the band near the camera
+// (the near FX's ramp), capped at half the band.
+fn edge_half_width(t: f32, span: f32, along: f32) -> f32 {
+    let half = 0.5 * max(clouds.storm_band_m, 1.0);
+    let edge = 0.5 * max(clouds.storm_edge_m, 1e-3);
+    let near = half * (1.0 - ramp(STORM_NEAR_SHARP.x, STORM_NEAR_SHARP.y, t));
+    let spacing = 2.0 * sqrt(max(span, 0.0) * max(t - STORM_T0, 0.0)) / f32(STORM_SEGMENTS) * saturate(along);
+    return min(max(max(edge, spacing), near), max(half, edge));
+}
+
+// `sf_atmos::storm::sharpen_border_width`.
+fn sharpen_border(p: f32, lo: f32, hi: f32, noise: f32, h: f32) -> f32 {
+    let range = hi - lo;
+    if range <= 1e-6 * max(abs(hi), 1e-6) {
+        return p;
+    }
+    let amp = min(clouds.storm_edge_noise_m, max(0.5 * max(clouds.storm_band_m, 1.0) - h, 0.0));
+    let d = border_distance((p - lo) / range, clouds.storm_band_m) + amp * (2.0 * noise - 1.0);
+    return lo + range * edge_profile(d, h);
+}
+
+fn rain_core(field: f32, cells: f32, coverage: f32, storm: f32) -> f32 {
+    let threshold = 1.25 - 1.5 * saturate(coverage);
+    let lo = max(threshold - 0.05, CORE_FIELD);
+    return max(ramp(lo, lo + CORE_RAMP, field), saturate(storm) * ramp(0.55, 0.85, cells));
+}
+
+// `sf_atmos::storm::visible_base`: halfway up the bottom ramp of `height_gradient` (cloud_common).
+fn visible_base(base: f32, thickness: f32, kind: f32) -> f32 {
+    return base + 0.5 * mix(0.07, 0.22, saturate(kind)) * max(thickness, 0.0);
+}
+
+// Full up to the base, fading out inside the cloud to its visible base (S2), thinning to `ground` at sea level.
+fn curtain_profile(alt: f32, base: f32, thickness: f32, kind: f32, ground: f32) -> f32 {
+    let top_m = max(visible_base(base, thickness, kind), base + 1.0);
+    if alt >= top_m {
+        return 0.0;
+    }
+    let top = 1.0 - ramp(base, top_m, alt);
+    return top * (ground + (1.0 - ground) * ramp(0.0, 0.7 * max(base, 1.0), alt));
+}
+
+// World-anchored noise in [0, 1] for the edge: the map's world texel modulo its size (the
+// origin phase, `map_offset` + `map_wrap`), so floating-origin shifts and recenters move nothing.
+fn edge_noise(p: vec3<f32>) -> f32 {
+    let w = (p.xz * clouds.map_inv_texel + clouds.map_offset + clouds.map_wrap) / clouds.map_size;
+    return textureSampleLevel(weather_texture, noise_sampler, w * EDGE_NOISE_TILES, 0.0).g;
+}
+
+// The map's precipitation extinction `here` at `p` (distance `t` along `rd` of a march over
+// `span`), re-blended over the edge: the local min/max from four taps at ±band (past the
+// band's half width at any border angle). The taps' gradient gives the border normal, so the
+// edge widens only as fast as the ray crosses it (S2 pre-filter; a grazing ray keeps the
+// narrow silhouette); an unclear normal (|gradient| small against the range) widens fully.
+fn storm_precip(p: vec3<f32>, here: f32, rd: vec3<f32>, t: f32, span: f32) -> f32 {
+    let r = clouds.storm_band_m;
+    let e = map_layer(p + vec3(r, 0.0, 0.0), 3).x;
+    let w = map_layer(p - vec3(r, 0.0, 0.0), 3).x;
+    let n = map_layer(p + vec3(0.0, 0.0, r), 3).x;
+    let s = map_layer(p - vec3(0.0, 0.0, r), 3).x;
+    let lo = min(min(min(e, w), min(n, s)), here);
+    let hi = max(max(max(e, w), max(n, s)), here);
+    let g = vec2(e - w, n - s);
+    let gl = length(g);
+    let clear = ramp(0.25, 0.5, gl / max(hi - lo, 1e-9));
+    let along = mix(1.0, abs(dot(rd.xz, g / max(gl, 1e-9))), clear);
+    return sharpen_border(here, lo, hi, edge_noise(p), edge_half_width(t, span, along));
+}
+
+// One sample of the shaped medium at distance `t`: (in-scattered radiance × extinction, extinction).
+fn storm_point(ro: vec3<f32>, rd: vec3<f32>, t: f32, span: f32, cam_c: vec4<f32>, cam_d: vec4<f32>, fog_on: bool, shear: vec2<f32>, sun_phase: f32, light_color: vec3<f32>, l: vec3<f32>, fill0: vec3<f32>) -> vec4<f32> {
+    let p = ro + rd * t;
+    let pc = p - clouds.planet_center;
+    let r = length(pc);
+    let alt = r - clouds.inner_radius;
+    let b = map_layer(p, 1);
+    let d = map_layer(p, 3);
+    let f = clouds.fog;
+    var sigma_p = 0.0;
+    var sigma_f = 0.0;
+    var shadow = 1.0;
+    var dim = 1.0;
+    var grey = 0.0;
+    // Up to the highest visible base (kind 1); the curtain profile cuts at this cloud's own.
+    if alt < visible_base(b.x, b.y, 1.0) && d.x > 0.0 {
+        let dp = max(storm_precip(p, d.x, rd, t, span) - cam_d.x, 0.0) * 1e-3;
+        if dp > 0.0 {
+            // The rain at `p` left the base upwind (slanted curtains), under the cell above it.
+            let q = p + vec3(shear.x, 0.0, shear.y) * max(b.x - alt, 0.0);
+            let a = map_a(q);
+            var noise = textureSampleLevel(weather_texture, noise_sampler, q.xz / clouds.weather_tile + clouds.weather_off, 0.0);
+            let second = textureSampleLevel(weather_texture, noise_sampler, (q.xz / clouds.weather_tile).yx + clouds.weather2_off, 0.0).r;
+            noise.r = evolve_field(noise.r, second);
+            let w = weather_at(noise, a.x, a.y, a.z, a.w);
+            sigma_p = dp * rain_core(noise.r, noise.b, a.x, a.w) * curtain_profile(alt, b.x, b.y, w.kind, clouds.storm_ground) * ramp(32.0, 128.0, t);
+            shadow = exp(-w.coverage * b.z * b.y * clouds.extinction * 0.3);
+            dim = 1.0 - 0.6 * w.wetness;
+            grey = w.coverage;
+        }
+    }
+    if fog_on {
+        let c = map_layer(p, 2);
+        sigma_f = max(c.z - cam_c.z, 0.0) * exp(min(-(alt - f.height_base) / f.height_falloff, 2.0));
+    }
+    let sigma = sigma_p + sigma_f;
+    if sigma <= 1e-9 {
+        return vec4(0.0);
+    }
+    let mu_l = dot(pc / r, l);
+    let sun = light_color * sample_transmittance_lut(r, mu_l) * planet_lit(r, mu_l) * sun_phase;
+    let tint = d.yzw / max(d.x, 1e-6);
+    let fill = mix(fill0, vec3(dot(fill0, vec3(0.2126, 0.7152, 0.0722))), grey);
+    var scattered = sigma_p * tint * (sun * shadow + fill * dim);
+    if sigma_f > 0.0 {
+        scattered += sigma_f * f.albedo * (sun + (fill0 + f.view_ambient) * f.ambient);
+    }
+    return vec4(scattered, sigma);
+}
+
+fn far_weather_shaped(ro: vec3<f32>, rd: vec3<f32>, scene_t: f32, light_color: vec3<f32>, l: vec3<f32>, cos_t: f32, fill0: vec3<f32>) -> FarWeather {
+    var out: FarWeather;
+    out.color = vec3(0.0);
+    out.transmittance = 1.0;
+    out.dist_sum = 0.0;
+    out.weight = 0.0;
+    let t0 = STORM_T0;
+    let t1 = min(scene_t, 0.5 * clouds.map_size / max(clouds.map_inv_texel, 1e-9));
+    if t1 <= t0 {
+        return out;
+    }
+    let cam_c = map_layer(ro, 2);
+    let cam_d = map_layer(ro, 3);
+    let fog_on = clouds.fog.enabled != 0u && clouds.fog.height_falloff > 0.0;
+    let wl = length(clouds.wind_step.xz);
+    let shear = select(vec2(0.0), clouds.wind_step.xz / max(wl, 1e-9) * FAR_SHEAR, wl > 1e-6);
+    let sun_phase = fog_phase(0.6, cos_t);
+    let n = f32(STORM_SEGMENTS);
+    let span = t1 - t0;
+    var tr = 1.0;
+    var prev = storm_point(ro, rd, t0, span, cam_c, cam_d, fog_on, shear, sun_phase, light_color, l, fill0);
+    var prev_t = t0;
+    for (var i = 1u; i <= STORM_SEGMENTS; i += 1u) {
+        let u = f32(i) / n;
+        let t = t0 + span * u * u;
+        let cur = storm_point(ro, rd, t, span, cam_c, cam_d, fog_on, shear, sun_phase, light_color, l, fill0);
+        let sum = prev.w + cur.w;
+        let tau = 0.5 * sum * (t - prev_t);
+        if tau > 1e-9 {
+            let step_t = exp(-tau);
+            let absorbed = tr * (1.0 - step_t);
+            // Source per unit extinction, extinction-weighted over the segment.
+            out.color += absorbed * (prev.xyz + cur.xyz) / sum;
+            out.dist_sum += 0.5 * (t + prev_t) * absorbed;
+            out.weight += absorbed;
+            tr *= step_t;
+            if tr < 0.01 {
+                break;
+            }
+        }
+        prev = cur;
+        prev_t = t;
+    }
+    out.transmittance = tr;
+    return out;
+}
+
 // The march jitter (WE-10 fix 1): spatio-temporal blue noise (STBN, Wolfe et al. 2022) at the
 // traced pixel, one layer per visit of this half-resolution pixel (consecutive layers under the
 // checkerboard, where a pixel is traced one frame in four), shifted by the golden ratio each
@@ -276,7 +479,17 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     // passes: a texel that touches any sky traces the whole sky layer (open),
     // so sky pixels beside a silhouette never upsample a cloud-free texel.
     // Reverse-Z: the smallest depth is the furthest, 0 is the sky.
-    let full_px = clamp(vec2<i32>(uv * clouds.full_size), vec2(0), vec2<i32>(clouds.full_size) - 1);
+    //
+    // S1 (`clouds.stable_edges`, `sf_atmos::temporal::depth_window`): under the
+    // checkerboard the window sits on the whole block (its 4x4 full-resolution
+    // pixels plus the composite's one-pixel bilinear reach), not on this frame's
+    // traced sub-pixel, so a block's open/cut class no longer flips with the
+    // checkerboard phase (each flip threw its history away). 0: the old window,
+    // centred on the traced pixel.
+    let checker = clouds.checkerboard != 0u;
+    let stable = clouds.stable_edges != 0u && checker;
+    let window_uv = select(uv, (vec2<f32>(block * 2u) + 1.0) / clouds.half_size, stable);
+    let full_px = clamp(vec2<i32>(window_uv * clouds.full_size), vec2(0), vec2<i32>(clouds.full_size) - 1);
     let full_max = vec2<i32>(clouds.full_size) - 1;
     // The window's NEAREST depth too (the largest), for the bank's near value
     // (FOG-BANK: the min/max depth pair of UE's and Nubis' depth-aware upsample).
@@ -327,7 +540,18 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     var out: TraceOutput;
     out.color = vec4(0.0, 0.0, 0.0, 1.0);
     // Open (no geometry before the shell exit or the far limit) or cut at scene_t.
-    let cut = select(scene_t, clouds.far, scene_t >= min(max(seg.y, 0.0), clouds.far));
+    // With S1, classed along the block's centre ray, so the class is the block's
+    // whatever sub-pixel this frame traces (at the horizon the shell exit moves
+    // fast with the ray's elevation).
+    var class_t = scene_t;
+    var class_exit = seg.y;
+    if stable {
+        if depth > 0.0 {
+            class_t = ndc_to_camera_dist(vec3(uv_to_ndc(window_uv), depth));
+        }
+        class_exit = shell_segment(ro_c, uv_to_ray_direction(window_uv), clouds.inner_radius, clouds.shell_base, clouds.shell_thickness).y;
+    }
+    let cut = select(class_t, clouds.far, class_t >= min(max(class_exit, 0.0), clouds.far));
     out.dist = vec4(min(scene_t, clouds.far), bank, cut, bank_near);
     let clouds_on = clouds.clouds_on != 0u;
     let has_low = end > start && clouds_on;
@@ -490,7 +714,14 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     // their transmittance-weighted distances. `--off cloudfog`: always in front.
     // With no cloud both orders are the same (color 0, transmittance 1).
     if far_on {
-        let fw = far_weather(ro, rd, scene_t, fract(jitter + 0.5), light_color, l, cos_t, mix(bounce, sky_up, 0.6));
+        // CW-1: the storm shape (analytic, unjittered); `--off stormshape`: the WE4d march.
+        let fill = mix(bounce, sky_up, 0.6);
+        var fw: FarWeather;
+        if clouds.storm_shape != 0u {
+            fw = far_weather_shaped(ro, rd, scene_t, light_color, l, cos_t, fill);
+        } else {
+            fw = far_weather(ro, rd, scene_t, fract(jitter + 0.5), light_color, l, cos_t, fill);
+        }
         if fw.weight > 1e-4 {
             let fw_dist = fw.dist_sum / fw.weight;
             let air = aerial(uv, r_cam, mu_v, rd, fw_dist);

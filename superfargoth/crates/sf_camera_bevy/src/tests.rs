@@ -352,6 +352,9 @@ fn walk_past_the_pillar(fps: u32) -> (Vec<(Vec3, Quat)>, bool, bool) {
     let mut app = app(fps);
     app.add_systems(FixedUpdate, walk_east.in_set(ActionSystems::Command));
     let (player, cam) = spawn_body(&mut app, Vec3::new(5.5, 0.0, -2.5), PI);
+    // The scene was laid out for an over-the-shoulder arm (the default is centred): it puts the
+    // arm behind the pillar on this walk.
+    camera_mut(&mut app, cam).params.orbit.shoulder_offset = 0.45;
     let target = spawn_target(&mut app, Vec3::new(14.0, 0.0, -10.0));
     let mut out = Vec::new();
     let (mut blocked, mut locked) = (false, false);

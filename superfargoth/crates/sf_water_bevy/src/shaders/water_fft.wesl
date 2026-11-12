@@ -22,13 +22,16 @@ struct FftParams {
     // (t mod T) / T.
     cycles_t: f32,
     choppiness: f32,
+    // Weight of layers 0..4 (the sea state) against 4..8 (a transition's `from`, W-WIND); 1 = none.
+    blend: f32,
     foam_decay: f32,
     foam_threshold: f32,
     foam_gain: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: FftParams;
-// (h0.re, h0.im, cycles per period, 0) per texel and cascade.
+// (h0.re, h0.im, cycles per period, 0) per texel and cascade; layers 4-7: the same for the sea
+// state a transition comes from (W-WIND; same seed, so same phases: mix(from, to, blend)).
 @group(0) @binding(1) var h0: texture_2d_array<f32>;
 // Two vec4 (four complex) per texel: [h + i Dx, Dz + i Sx], [Sz + i Jxx, Jzz + i Jxz].
 @group(0) @binding(2) var<storage, read_write> spec: array<vec4<f32>>;
@@ -75,8 +78,15 @@ struct Packed {
 // The spectrum of texel (x, z) of cascade c at time t, packed.
 fn spectrum_at(c: u32, x: u32, z: u32) -> Packed {
     let n = params.n;
-    let t0 = textureLoad(h0, vec2<i32>(i32(x), i32(z)), i32(c), 0);
-    let t1 = textureLoad(h0, vec2<i32>(i32((n - x) % n), i32((n - z) % n)), i32(c), 0);
+    let p0 = vec2<i32>(i32(x), i32(z));
+    let p1 = vec2<i32>(i32((n - x) % n), i32((n - z) % n));
+    var t0 = textureLoad(h0, p0, i32(c), 0);
+    var t1 = textureLoad(h0, p1, i32(c), 0);
+    if params.blend < 1.0 {
+        let w = max(params.blend, 0.0);
+        t0 = vec4(mix(textureLoad(h0, p0, i32(c + 4u), 0).xy, t0.xy, w), t0.zw);
+        t1 = vec4(mix(textureLoad(h0, p1, i32(c + 4u), 0).xy, t1.xy, w), t1.zw);
+    }
     let k = vec2(signed_freq(x), signed_freq(z)) * (TAU / params.sizes[c]);
     let kl = length(k);
     var khat = vec2(0.0);

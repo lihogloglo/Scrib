@@ -1,7 +1,7 @@
 // Cloud density sampling: the uniform and noise bindings (group 1) shared by
 // the trace and the cloud shadow map, so both agree on where cloud is.
 
-import super::cloud_common::{Clouds, WeatherSample, combine_density, erode_density, weather_at, evolve_field, cirrus_at, ray_sphere};
+import super::cloud_common::{Clouds, WeatherSample, combine_density_shaped, erode_density_shaped, shape_height, weather_at_shaped, evolve_field, cirrus_at, ray_sphere};
 import super::fog_bank::fog_bank_mask;
 
 @group(1) @binding(0) var<uniform> clouds: Clouds;
@@ -110,7 +110,7 @@ fn weather_sample_a(p: vec3<f32>, a: vec4<f32>) -> WeatherSample {
     let uv2 = (p.xz / clouds.weather_tile).yx + clouds.weather2_off;
     let second = textureSampleLevel(weather_texture, noise_sampler, uv2, 0.0).r;
     noise.r = evolve_field(noise.r, second);
-    return weather_at(noise, a.x, a.y, a.z, a.w);
+    return weather_at_shaped(noise, a.x, a.y, a.z, a.w, clouds.cb_shape != 0u);
 }
 
 // Height fraction at `p` through the local layer `b` (map layer B: base,
@@ -122,12 +122,15 @@ fn height_fraction(p: vec3<f32>, b: vec4<f32>) -> f32 {
 // Density at `p` (height fraction `h` in the local layer `b`). `detailed`
 // off skips the erosion sample: light and shadow marches don't need it.
 fn cloud_density(p: vec3<f32>, h: f32, w: WeatherSample, b: vec4<f32>, detailed: bool) -> f32 {
-    if w.coverage <= 0.0 || h < 0.0 || h > 1.0 {
+    // The anvil (S3, `w.anvil`) reaches past the storm cell's coverage.
+    if (w.coverage <= 0.0 && w.anvil <= 0.0) || h < 0.0 || h > 1.0 {
         return 0.0;
     }
-    let suv = vec3(p.x / clouds.shape_tile + clouds.shape_off.x, h + clouds.rise, p.z / clouds.shape_tile + clouds.shape_off.y);
+    // The storm (`w.storm`) samples the shape in world altitude (`shape_height`).
+    let sy = shape_height(h, b.y, clouds.shape_tile, w.storm);
+    let suv = vec3(p.x / clouds.shape_tile + clouds.shape_off.x, sy + clouds.rise, p.z / clouds.shape_tile + clouds.shape_off.y);
     let shape = textureSampleLevel(shape_texture, noise_sampler, suv, 0.0);
-    var d = combine_density(shape.r, shape.g, h, w.kind, w.coverage);
+    var d = combine_density_shaped(shape.r, shape.g, h, w.kind, w.coverage, w.storm, w.anvil);
     if d <= 0.0 {
         return 0.0;
     }
@@ -138,7 +141,7 @@ fn cloud_density(p: vec3<f32>, h: f32, w: WeatherSample, b: vec4<f32>, detailed:
             p.z / clouds.detail_tile + clouds.detail_off.y,
         );
         let detail = textureSampleLevel(detail_texture, noise_sampler, duv, 0.0).r;
-        d = erode_density(d, detail, h, b.w);
+        d = erode_density_shaped(d, detail, h, b.w, w.storm);
     }
     return saturate(d) * b.z;
 }

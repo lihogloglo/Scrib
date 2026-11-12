@@ -51,6 +51,8 @@ pub(crate) struct FftUniform {
     pub count: u32,
     pub cycles_t: f32,
     pub choppiness: f32,
+    /// Weight of the sea state's `h0` layers against a transition's `from` layers (W-WIND; 1 = none).
+    pub blend: f32,
     pub foam_decay: f32,
     pub foam_threshold: f32,
     pub foam_gain: f32,

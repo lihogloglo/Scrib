@@ -30,12 +30,16 @@ pub mod noise;
 pub mod scroll;
 pub mod settings;
 pub mod shadow;
+pub mod storm;
 pub mod temporal;
 
 #[cfg(test)]
 mod tests;
 
-pub use density::{cirrus_at, combine_density, erode_density, evolve_field, height_gradient, weather_at, WeatherSample};
+pub use density::{
+    cirrus_at, combine_density, combine_density_shaped, erode_density, erode_density_shaped, evolve_field, height_gradient, shape_height,
+    storm_gradient, weather_at, weather_at_shaped, WeatherSample,
+};
 pub use fog::{
     compose_fog_in_front, compose_fog_split, fog_fill, sky_fill, sky_fill_direction, FogBanks, FogDrift, FogLayer, FogOffsets, FogSegment, FogSettings,
     SKY_FILL_SAMPLES, VIEW_AMBIENT_IN_FOG,
@@ -45,4 +49,5 @@ pub use noise::{NoiseVolumes, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
 pub use scroll::CloudScroll;
 pub use settings::{CloudLook, CloudPreset, CloudQuality, CloudSettings, CloudWeather};
 pub use shadow::{ShadowRows, ShadowSlicer};
+pub use storm::StormShape;
 pub use temporal::CloudTemporal;

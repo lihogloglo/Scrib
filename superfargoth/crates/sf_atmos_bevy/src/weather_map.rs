@@ -109,6 +109,8 @@ pub(crate) struct MapView {
     pub window: IVec2,
     pub size: i32,
     pub texel_m: f64,
+    /// The climates' border band, m (CW-1 re-blends the far curtain inside it).
+    pub band_m: f32,
     /// Lowest base, highest top, most cirrus over the map's climates; 1 when
     /// distant precipitation or fog differences exist (`WE4d`).
     pub envelope: [f32; 4],
@@ -245,7 +247,7 @@ fn prepare(map: Res<ExtractedMap>, gpu: Option<ResMut<WeatherMapGpu>>, device: R
         gpu.pending = Some((group, n));
     }
     gpu.resolved = Some(m.window);
-    gpu.active = Some(MapView { window: m.window, size: geometry.size, texel_m: geometry.texel_m, envelope: m.envelope });
+    gpu.active = Some(MapView { window: m.window, size: geometry.size, texel_m: geometry.texel_m, band_m: geometry.band_m(), envelope: m.envelope });
 }
 
 /// The resolve dispatch (GPU timer `render/weather_map/elapsed_gpu`); once

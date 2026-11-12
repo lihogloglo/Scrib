@@ -27,9 +27,9 @@ use mw_water::{optics, optics_records, MwWaterSource, WaterIni};
 use mw_world::ids;
 use sf_records::RecordDb;
 use sf_terrain_bevy::{TerrainHeightsMap, TerrainOrigin, TerrainSystems};
-use sf_water::{BedHeights, Cascades, OpticsMap, ShoreField, ShoreWaves, WaterSource, WaterWorld, WaveTwin, WetMask, WorldspaceWater, TWIN_RESOLUTION};
+use sf_water::{BedHeights, Cascades, OpticsMap, SeaWind, SeaWindSettings, ShoreField, ShoreSettings, ShoreWaves, WaterSource, WaterWorld, WaveTwin, WetMask, WindInput, WorldspaceWater, TWIN_RESOLUTION};
 use sf_water_bevy::{
-    OceanSpectrum, OceanSurface, WaterCamera, WaterFrame, WaterLook, WaterPlugin, WaterQuality, WaterReflections, WaterRegionsInput, WaterShoreInput,
+    OceanSpectrum, OceanSurface, WaterCamera, WaterFrame, WaterLook, WaterPlugin, WaterQuality, WaterReflections, WaterRegionsInput, WaterShoreInput, WaterWind,
     WaterSurface, WaterSystems,
 };
 use sf_world::{Worldspace, WorldspaceId};
@@ -140,20 +140,30 @@ fn water_quality(q: Quality) -> WaterQuality {
 /// shorenormals` = the normal flattens with the displacement, `ShoreSettings::normal_floor` 0).
 /// `shore_waves`: analytic Gerstner waves and swash in the shore band (W-GERSTNER; `--off shorewaves`
 /// = the FFT alone, fading to flat at the shore, `ShoreSettings::shore_waves` 0).
-pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, (sspr, shore_normals, shore_waves): (bool, bool, bool), worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>) {
+/// `sea_wind`: the sea follows the weather's wind (W-WIND, `sf_water::SeaWind`; `--off seawind` =
+/// the fixed [`DEFAULT_WIND`]); `--water-wind` overrides both.
+pub fn add(
+    app: &mut App,
+    inputs: WaterInputs,
+    quality: Quality,
+    (sspr, shore_normals, shore_waves, sea_wind): (bool, bool, bool, bool),
+    worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>,
+) {
     if mode() != WaterMode::On {
         return;
     }
-    let wind = match WIND.load(Ordering::Relaxed) {
-        0 => DEFAULT_WIND,
+    let fixed = match WIND.load(Ordering::Relaxed) {
+        0 => None,
         #[allow(clippy::cast_precision_loss)]
-        mm => mm as f32 / 1000.0,
+        mm => Some(mm as f32 / 1000.0),
     };
     let exterior = ids::exterior();
     let source = MwWaterSource;
     let mut params = source.ocean_spectrum(&exterior);
-    params.wind.speed = wind;
-    params.wind.toward = Vec2::new(0.6, 0.8);
+    params.wind = WindInput { speed: fixed.unwrap_or(DEFAULT_WIND), toward: Vec2::new(0.6, 0.8) };
+    // W-WIND: the weather's 10 m wind drives the sea (the exterior copies `WindField` into
+    // `WaterWind::weather`); the command-line wind pins it.
+    let sea = sea_wind.then(|| SeaWind { fixed: fixed.map(|_| params.wind), ..SeaWind::new(params.wind, SeaWindSettings::default()) });
     let cascades = Cascades::default();
     let mut ws = Worldspace::new("exterior");
     ws.has_terrain = true;
@@ -179,9 +189,12 @@ pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, (sspr, shore_no
         settings.shore_waves = 0.0;
     }
     // The CPU query lifts its surface with the same shore waves as the GPU (W-GERSTNER).
+    let shore_pair = ShoreWaves::new(&params, &cascades, &settings);
     if let Some(ws) = world.get_mut(&exterior) {
-        ws.set_shore_waves(Some(ShoreWaves::new(&params, &cascades, &settings)));
+        ws.set_shore_waves(Some(shore_pair));
     }
+    let spectrum = OceanSpectrum { params, cascades: cascades.clone(), seed: SEED, transition: None };
+    let sync = SeaSync { spectrum: spectrum.clone(), settings, shore: [shore_pair; 2] };
     let bake = inputs.mask.map(|mask| {
         let handle = std::thread::Builder::new()
             .name("water-shore-bake".into())
@@ -190,7 +203,9 @@ pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, (sspr, shore_no
         (handle, Instant::now())
     });
     app.add_plugins(WaterPlugin)
-        .insert_resource(OceanSpectrum { params, cascades, seed: SEED })
+        .insert_resource(spectrum)
+        .insert_resource(WaterWind { weather: None, sea })
+        .insert_resource(sync)
         .insert_resource(look)
         .insert_resource(water_quality(quality))
         .insert_resource(WaterReflections { sspr, ..WaterReflections::default() })
@@ -251,9 +266,41 @@ fn pools(mut commands: Commands, active: Res<ActiveWorldspace>, registry: Res<Wo
     pools.current = Some((ws, e));
 }
 
-/// The query's state for this physics step (water.md "The water query": same 60 Hz step).
-fn step(time: Res<Time<Fixed>>, mut water: ResMut<Water>) {
+/// The CPU query's copy of the GPU sea state (W-WIND): rebuilt when [`OceanSpectrum`] changes,
+/// blended at the twin's own time like the GPU.
+#[derive(Resource)]
+struct SeaSync {
+    spectrum: OceanSpectrum,
+    settings: ShoreSettings,
+    /// Shore waves of the transition's `from` and of the sea state.
+    shore: [ShoreWaves; 2],
+}
+
+/// The query's state for this physics step (water.md "The water query": same 60 Hz step). The
+/// twin and the shore waves follow the GPU's sea state and transition (W-WIND).
+fn step(time: Res<Time<Fixed>>, spectrum: Res<OceanSpectrum>, shore: Res<WaterShoreInput>, mut sync: ResMut<SeaSync>, mut water: ResMut<Water>) {
     let t = time.elapsed_secs_f64();
+    let exterior = ids::exterior();
+    let settings = shore.field.as_ref().map_or(sync.settings, |f| f.settings);
+    if sync.spectrum != *spectrum || sync.settings != settings {
+        let s = &*spectrum;
+        let from = s.from_params().unwrap_or(s.params);
+        let to = ShoreWaves::new(&s.params, &s.cascades, &settings);
+        sync.shore = [s.from_params().map_or(to, |p| ShoreWaves::new(&p, &s.cascades, &settings)), to];
+        sync.spectrum = s.clone();
+        sync.settings = settings;
+        if let Some(ws) = water.world.get_mut(&exterior) {
+            ws.set_waves(Some(WaveTwin::blended(&from, &s.params, &s.cascades, s.seed, 1, TWIN_RESOLUTION)));
+        }
+    }
+    let w = spectrum.weight(t);
+    let [from, to] = sync.shore;
+    if let Some(ws) = water.world.get_mut(&exterior) {
+        if let Some(twin) = ws.waves_mut() {
+            twin.set_mix(w);
+        }
+        ws.set_shore_waves(Some(ShoreWaves::blend(&from, &to, w)));
+    }
     water.time = t;
     water.world.step(t);
 }

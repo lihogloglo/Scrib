@@ -208,3 +208,48 @@ fn froxel_clamp_compiles_and_keeps_the_layout() {
     });
     assert_eq!(span, Some(crate::render::FroxelUniform::min_size().get()), "Froxels layout");
 }
+
+/// The storm shape (CW-1): the trace compiles with and without MSAA, reads `storm_shape` and its
+/// edge settings, and keeps both far-weather paths (the A/B); the `Clouds` layout is checked in
+/// `fog_bank_edges_compile_and_keep_the_layout`.
+#[test]
+fn storm_shape_compiles() {
+    let mut failures = Vec::new();
+    for defs in [&[][..], &["MULTISAMPLED"][..]] {
+        match compile("sf_atmos_bevy::shaders::cloud_trace", defs) {
+            Ok(wgsl) => failures.extend(
+                [".storm_shape", ".storm_edge_m", ".storm_edge_noise_m", ".storm_ground", ".storm_band_m", "far_weather_shaped", "far_weather("]
+                    .iter()
+                    .filter(|r| !wgsl.contains(*r))
+                    .map(|r| format!("cloud_trace {defs:?}: never reads {r}")),
+            ),
+            Err(e) => failures.push(e),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The storm cloud shape (S3, `cbshape`): the trace (with and without MSAA) and the cloud shadow
+/// compile, read `cb_shape` and sample the shaped density; the `Clouds` layout is checked in
+/// `fog_bank_edges_compile_and_keep_the_layout`.
+#[test]
+fn storm_cloud_shape_compiles() {
+    let mut failures = Vec::new();
+    let jobs: [(&str, &[&str]); 3] = [
+        ("sf_atmos_bevy::shaders::cloud_trace", &[]),
+        ("sf_atmos_bevy::shaders::cloud_trace", &["MULTISAMPLED"]),
+        ("sf_atmos_bevy::shaders::cloud_shadow", &[]),
+    ];
+    for (module, defs) in jobs {
+        match compile(module, defs) {
+            Ok(wgsl) => failures.extend(
+                [".cb_shape", "combine_density_shaped", "erode_density_shaped", "shape_height"]
+                    .iter()
+                    .filter(|r| !wgsl.contains(*r))
+                    .map(|r| format!("{module} {defs:?}: never reads {r}")),
+            ),
+            Err(e) => failures.push(e),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}

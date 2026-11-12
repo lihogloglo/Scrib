@@ -259,6 +259,11 @@ impl WorldspaceWater {
         self.waves = waves;
     }
 
+    /// The wave twin, e.g. to set a transition's weight (`WaveTwin::set_mix`, W-WIND).
+    pub fn waves_mut(&mut self) -> Option<&mut WaveTwin> {
+        self.waves.as_mut()
+    }
+
     /// The ocean's shore product (`water.shore`): attenuates the twin's swell as the GPU does.
     pub fn set_shore(&mut self, shore: Option<Arc<crate::ShoreField>>) {
         self.shore = shore;
