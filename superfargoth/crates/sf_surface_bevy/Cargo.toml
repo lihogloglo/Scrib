@@ -41,7 +41,7 @@ sf_coords.workspace = true
 # TranslucentFog, DrawBand: the kick-up puffs fog themselves and draw in the overlay band (W7).
 sf_render_order_bevy.workspace = true
 # The shelter subview (`sun_view`, as WE-5's precipitation occlusion map).
-sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
+sf_sky_bevy.workspace = true
 sf_surface.workspace = true
 # `mip_chain` (the terrain layer arrays' filter) packs the cover layer array (W5a).
 sf_terrain = { workspace = true, features = ["bake"] }

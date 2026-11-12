@@ -1,5 +1,5 @@
-//! Synthetic test skeletons and gait clips (feature `fixtures`, tests
-//! only): a biped, a guar-like quadruped with digitigrade hind legs, an
+//! Synthetic test skeletons and gait clips (for tests; always
+//! compiled): a biped, a guar-like quadruped with digitigrade hind legs, an
 //! insect-like hexapod and a cliff-racer-like flyer. Y up, facing +Z, +X
 //! left, meters at `scale` 1.
 

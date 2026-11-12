@@ -31,7 +31,7 @@ workspace-hack.workspace = true
 [dev-dependencies]
 bevy_ecs = { workspace = true, features = ["std", "multi_threaded"] }
 # A synthetic walk clip for the feed's animator tests.
-sf_anim = { workspace = true, features = ["fixtures"] }
+sf_anim.workspace = true
 sf_bake.workspace = true
 sf_anim_graph = { workspace = true, features = ["bake"] }
 

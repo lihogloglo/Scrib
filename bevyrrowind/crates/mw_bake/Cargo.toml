@@ -17,6 +17,8 @@ image = { version = "0.25", default-features = false, features = ["tga", "bmp", 
 mw_actors.workspace = true
 mw_anim.workspace = true
 mw_graphs.workspace = true
+# `nav`: pathgrid nodes for door approach points.
+mw_ai.workspace = true
 mw_install.workspace = true
 mw_nif.workspace = true
 # Item rules and mass (`body.cook` report, `items.check` rules).
@@ -40,8 +42,14 @@ sf_bake.workspace = true
 sf_character.workspace = true
 # `collision.cook`: static collision for `StaticProbe` (actors-adapter.md).
 sf_controller = { workspace = true, features = ["bake"] }
+# `nav`: region-local positions.
+sf_coords.workspace = true
 sf_lod = { workspace = true, features = ["bake"] }
 sf_model.workspace = true
+# `nav`: the navmesh adapter (nav.md "Bake"): sf_nav_bake steps on the Recast backend.
+sf_nav.workspace = true
+sf_nav_bake.workspace = true
+sf_nav_recast.workspace = true
 # `body.cook` and `items.check` (physics-adapter.md "Items").
 sf_physics = { workspace = true, features = ["bake"] }
 # `ragdoll.cook` (physics-adapter.md "Ragdolls").
@@ -62,8 +70,6 @@ texpresso = "2"
 
 [dev-dependencies]
 mw_vfs.workspace = true
-# `scene` tests build placements.
-sf_coords.workspace = true
 tempfile.workspace = true
 # The mantle grip end-to-end test plans its warps with the shipped rules.
 sf_action.workspace = true

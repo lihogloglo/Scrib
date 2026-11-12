@@ -15,17 +15,14 @@ workspace-hack-line-style = "workspace-dotted"
 # `--all-features` simulation. Excluded from traversal, it gets no hack line either; its build still
 # gets the hack's features through its library dependencies, plus its own.
 workspace-members = ["bevyrrowind"]
-# Game-only TES3 format crates (one git repo), with what they alone turn on (glam 0.30, `half/nightly`):
-# the hack lives in superfargoth, whose crates never pull Morrowind formats (superfargoth/CLAUDE.md
-# hard rule 1). Their users are the Bevy-free mw_* cores, which don't take the hack anyway.
+# The app's default build must add nothing the hack lacks, or `cargo build -p bevyrrowind` compiles its
+# own Bevy (build-speed BS1, 2026-11-11): every Bevy feature it needs is asked for by the library crate
+# that uses it (audio by mw_exterior_bevy's DefaultPlugins, codecs by mw_audio_bevy, PCSS by
+# mw_exterior_bevy), and the app's own lines stay a subset. Check: build-perf.md "Feature unification".
 third-party = [
-    { name = "tes3", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
-    { name = "bytes_io", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
-    { name = "esp", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
-    { name = "esp_macros", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
-    { name = "nif", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
     # BRP for agents (`mw_devtools_bevy` `remote`, on only through the app's `remote`/`dev`): same reason as the
-    # app above; simulated, its HTTP server and `bevy/serialize` would reach every build.
+    # app above; simulated, its HTTP server, `bevy/serialize` and `bevy_tasks/async-io` (the executor blocks on
+    # async-io's reactor: a shipped hot-path change) would reach every build. So `dev` keeps its own Bevy (BS1b).
     { name = "bevy_brp_extras" },
     { name = "bevy_remote" },
 ]
@@ -58,6 +55,7 @@ workspace-members = [
     "sf_model",
     "sf_mods",
     "sf_nav",
+    "sf_nav_bake",
     "sf_nav_recast",
     "sf_physics",
     "sf_ragdoll",
@@ -108,7 +106,18 @@ workspace-members = [
 # default builds stay per crate: DLSS (its build needs the DLSS SDK), the Luau JIT (`sf_script/jit`)
 # and rayon-parallel physics (`sf_physics/parallel`: off by spec, physics.md "Determinism"). Cost:
 # Bevy crates that don't use physics build their own nalgebra/glamx (one extra variant, no Bevy).
+#
+# Game-only TES3 format crates (one git repo): traversed, so what they turn on in Bevy's own
+# dependencies (`half/nightly`, `hashbrown/rayon`, `slotmap/default`) is in the hack and every
+# selection builds one Bevy, but never named in it (superfargoth/CLAUDE.md hard rule 1: the hack lives
+# in superfargoth). Until 2026-11-11 they were traversal-excluded on the belief that only Bevy-free
+# cores use them; ten mw_*_bevy crates do, so `-p mw_exterior_bevy` and `-p sf_ui_bevy` built two Bevys.
 third-party = [
+    { name = "tes3", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
+    { name = "bytes_io", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
+    { name = "esp", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
+    { name = "esp_macros", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
+    { name = "nif", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
     { name = "bevy_anti_alias" },
     { name = "bevy_solari", path = "superfargoth/vendor/bevy_solari" },
     { name = "mlua" },

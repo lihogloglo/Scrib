@@ -51,7 +51,9 @@ working tree**. Protocol:
    sleeping. **Run every cargo command through `bash tools/cargo_turn.sh <cargo args>`**
    (from the repo root: `bash bevyrrowind/tools/cargo_turn.sh ...`; from superfargoth:
    `bash ../bevyrrowind/tools/cargo_turn.sh ...`; same workspace from anywhere): it waits for the
-   slot and runs at BelowNormal priority, so a check and its build can't drift apart.
+   slot and runs at BelowNormal priority, so a check and its build can't drift apart. It is a first-come,
+   first-served queue (tickets in `../.sessions/build-queue/`; `bash tools/cargo_turn.sh --queue` lists it); a
+   headless bake/census holds the slot, a game window doesn't; `-j` only applies while the owner plays.
    Keep the build/test/run cycle short so you don't hold the
    machine for long; spec-only sessions shouldn't need to build at all.
 3. **Shared files.** `docs/ROADMAP.md`: edit only your task's lines plus
@@ -146,7 +148,8 @@ window title. Code: `bevyrrowind/crates/mw_devtools_bevy/src/remote.rs`.
 
 - **Windows:** interactive runs open borderless fullscreen on the primary monitor (owner 2026-10-30). Agent runs pass
   `--resolution 1280x720` (a centred window) so they don't cover the owner's screen; owner check scripts pass nothing.
-- **Agents never launch the game (owner 2026-11-01).** No `run_dev.ps1`, no `bevyrrowind.exe`, not for log lines, not for BRP: build, then write the exact run command and the log lines or BRP checks to look for in your handoff; the owner launches and tells you the port. The attach-only notes below apply to a window the owner started.
+- **Sub-agents never launch the game (owner 2026-11-01).** No `run_dev.ps1`, no `bevyrrowind.exe`, not for log lines, not for BRP: build, then write the exact run command and the log lines or BRP checks to look for in your handoff. The attach-only notes below apply to a window the owner started.
+- **Owner-check scenes launch themselves (owner 2026-11-11).** The session talking to the owner launches every scene that needs the owner's eyes, unasked, through `bash tools/owner_launch.sh scene <name>` (from the repo root `bash bevyrrowind/tools/owner_launch.sh ...`): it waits for no build (any project), no open game window and an owner who isn't busy (fullscreen app in front, meeting, recording), then starts a private copy fullscreen. One at a time; never close it (`../CONTRIBUTING.md` "Tests and visual checks").
 - **Attach only.** Build (`cargo build -p bevyrrowind --features dev`); the owner
   starts it with `powershell -File tools/run_dev.ps1 view "<cell>" > target/run_dev.pid`
   (or `scene <name>`; it prints the pid; from bash redirect to a file, since a

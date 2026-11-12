@@ -1378,7 +1378,6 @@ dependencies = [
  "bevy_asset",
  "bevy_audio",
  "bevy_camera",
- "bevy_camera_controller",
  "bevy_clipboard",
  "bevy_color",
  "bevy_core_pipeline",
@@ -5078,6 +5077,7 @@ dependencies = [
  "glam 0.33.12",
  "image",
  "mw_actors",
+ "mw_ai",
  "mw_anim",
  "mw_graphs",
  "mw_install",
@@ -5101,6 +5101,9 @@ dependencies = [
  "sf_coords",
  "sf_lod",
  "sf_model",
+ "sf_nav",
+ "sf_nav_bake",
+ "sf_nav_recast",
  "sf_physics",
  "sf_ragdoll",
  "sf_records",
@@ -7711,6 +7714,7 @@ dependencies = [
  "rayon",
  "ron",
  "serde",
+ "sf_anim",
  "sf_bake",
  "tempfile",
  "thiserror 2.0.21",
@@ -8240,6 +8244,7 @@ dependencies = [
 name = "sf_model"
 version = "0.1.0"
 dependencies = [
+ "bevy_mikktspace",
  "glam 0.33.12",
  "gltf",
  "meshopt",
@@ -8298,6 +8303,41 @@ dependencies = [
  "sf_coords",
  "sf_world",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_nav_bake"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "postcard",
+ "serde",
+ "sf_bake",
+ "sf_coords",
+ "sf_nav",
+ "sf_nav_recast",
+ "sf_world",
+ "tempfile",
+]
+
+[[package]]
+name = "sf_nav_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_app",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_gizmos",
+ "glam 0.33.12",
+ "serde",
+ "serde_json",
+ "sf_console_bevy",
+ "sf_coords",
+ "sf_nav",
+ "sf_nav_recast",
+ "sf_world",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -8882,7 +8922,6 @@ dependencies = [
  "sf_ui_bevy",
  "sf_ui_css",
  "sf_ui_inventory",
- "sf_ui_screens",
  "workspace-hack",
 ]
 
@@ -10969,6 +11008,7 @@ name = "workspace-hack"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "approx",
  "arboard",
  "arrayvec",
  "async-task",
@@ -10976,6 +11016,7 @@ dependencies = [
  "bevy_animation",
  "bevy_app",
  "bevy_asset",
+ "bevy_audio",
  "bevy_camera",
  "bevy_clipboard",
  "bevy_core_pipeline",
@@ -11012,6 +11053,7 @@ dependencies = [
  "bevy_winit",
  "bitflags 2.13.2",
  "blake3",
+ "bstr",
  "bytemuck",
  "byteorder",
  "cc",
@@ -11034,6 +11076,7 @@ dependencies = [
  "futures-core",
  "futures-lite",
  "getrandom 0.4.3",
+ "glam 0.30.10",
  "glam 0.33.12",
  "glamx",
  "gltf",
@@ -11067,6 +11110,7 @@ dependencies = [
  "quote",
  "regex-automata",
  "regex-syntax",
+ "rodio",
  "ron",
  "rustix 0.38.44",
  "rustix 1.1.5",

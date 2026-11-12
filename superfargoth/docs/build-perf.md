@@ -58,18 +58,40 @@ Game plugin crates (`bevyrrowind/crates`, app split 2026-10-26; the binary `apps
 | Setting | Where | Why |
 |---|---|---|
 | `rust-lld` linker | root `.cargo/config.toml` | Linking is the slowest step of an incremental Bevy build; lld is several times faster than `link.exe`. Ships with Rust. |
-| `bevy/dynamic_linking` | app `dev` feature, `cargo dev` alias | Bevy becomes a shared library, so a relink no longer re-links Bevy. The biggest incremental win. Never in shipped builds. |
+| `bevy/dynamic_linking` | app `dev` feature, `cargo dev` alias | Bevy becomes a shared library, so a relink no longer re-links Bevy. The biggest incremental win. Never in shipped builds. Not only the top crate: it also sets `bevy_diagnostic/dynamic_linking` (drops sysinfo diagnostics), so `dev` is its own full Bevy ("Feature unification"). |
 | Deps at `opt-level = 3`, ours at `1` | `[profile.dev]` | Dependencies build once; Bevy at opt-level 0 is too slow to run. |
 | `debug = "line-tables-only"`, deps `debug = false` | `[profile.dev]` | Readable backtraces with far less debug info to generate and link. `--profile debugging` for a full debugger build. |
 | Optimized build scripts and proc macros | `[profile.dev.build-override]` | Derive macros run on every build of their users. |
 | Pinned toolchain | root `rust-toolchain.toml` | Same compiler everywhere; a compiler change invalidates every cache. |
 | `profiling` / `dist` profiles | root `Cargo.toml` | Release with symbols for Tracy; thin LTO + 1 codegen unit only for shipping. |
-| Feature unification (`cargo hakari`) | root `.config/hakari.toml`, `superfargoth/crates/workspace-hack` | One feature set per dependency, so `cargo test -p A` and `-p B` share one Bevy build. Bevy-free cores (`sf_*` and `mw_*`) and the game app stay out; superfargoth/CLAUDE.md "Commands". |
+| Feature unification (`cargo hakari`) | root `.config/hakari.toml`, `superfargoth/crates/workspace-hack` | One feature set per dependency, so any `cargo test -p A`, `-p B`, `--workspace` and `build -p bevyrrowind` share one Bevy build ("Feature unification" below). Bevy-free cores (`sf_*` and `mw_*`) and the game app stay out of the hack; the tes3 crates are traversed but never named in it; superfargoth/CLAUDE.md "Commands". |
 | Dependency policy (`cargo deny`) | root `deny.toml` | Licences, advisories, duplicates, sources; superfargoth/README.md "Dependency policy". |
 
 Checked against Bevy 0.20's `.cargo/config_fast_builds.toml` (2026-10-12): its Windows section is
 exactly `rust-lld.exe` + `rustdocflags`, with every other flag nightly-only. rust-lld is not the
 default linker on Windows MSVC (it is on x86_64 Linux), so the config line stays.
+
+**Feature unification** (build-speed BS1, 2026-11-11). Cargo resolves features per command, so a
+selection that turns on one more feature anywhere in Bevy's dependency closure (`half/nightly`,
+`slotmap/default`, an audio codec) rebuilds all of Bevy; 9 Bevy rebuilds a day were measured. Rules:
+every crate that pulls a feature into Bevy's closure is traversed by hakari (the tes3 crates sit in
+`final-excludes`, not `traversal-excludes`); the app (traversal-excluded for its opt-ins) asks for no
+Bevy feature its libraries don't (audio: `mw_exterior_bevy`, codecs: `mw_audio_bevy`, PCSS:
+`mw_exterior_bevy`). `cargo hakari verify` never passed here (the final-excluded cores build Bevy
+crates with fewer features, by design); the check is a per-selection `cargo tree -f '{p}|{f}'` diff over
+`bevy_internal`'s closure. Measured: `test -p sf_ui_bevy --no-run`, then `test -p mw_exterior_bevy
+--no-run`, then `build -p bevyrrowind`: 54 s, 91 s, 42 s wall; bevy_render/wgpu/naga `Fresh` in all
+three, and the 2nd and 3rd compiled no third-party crate at all. Left by design: each app opt-in
+(`dev`, `dlss`, `solari`, `trace`) is its own Bevy, and clippy/check keeps one check-mode Bevy.
+`dev` (BS1b) forks from Bevy's root and cannot be unified: `remote` turns on `bevy_platform`/`bevy_tasks`
+`async-io` (worker threads and `TaskPool::scope` then block on async-io's IOCP reactor: a hot-path change,
+no for shipped builds) and `windows-sys` networking, `dynamic_linking` drops sysinfo (benchmarks record
+it), `file_watcher` forks `bevy_asset`. The variants coexist in `target/` (different hashes): measured, ext
+test, `build --features dev`, ui test: Bevy all `Fresh` after one build of each; the cost is per Bevy change.
+Our crates (BS1c): hakari skips workspace members, so a Bevy crate's game features are set once on its root
+`[workspace.dependencies]` entry (members use `.workspace = true`, not `path`), no `default` list feeds only
+`--workspace`, and no feature exists only for dev-deps. ext test -> app build recompiled 18 of our crates, now 2
+(app-only `mw_viewers_bevy`, the app); ws/viewers/devtools match the app exactly. Left: core features (`sf_vfs`/`sf_ids` `bevy`, bake ones; up to 22 crates under `-p mw_boot_bevy`).
 
 Since the merge into one workspace (2026-10-25), framework crates are workspace members like the
 game's, so `[profile.dev.package."*"]` no longer applies to them: they build at opt-level 1 with
@@ -85,9 +107,9 @@ crate is added to the app's graph or Bevy is upgraded; a gate miss is a bug.
 
 | Gate | Limit | Measured |
 |---|---|---|
-| No-op build | ≤ 1 s | 0.83 s |
-| Touch the app or a leaf plugin crate | ≤ 5 s | 3.3-4.7 s |
-| Touch any hot crate (`sf_world_bevy`, `sf_model_bevy`, `mw_nif`, `sf_model`) | ≤ 8 s | 5.2-8.1 s (`sf_model`: 13 dependents, at the limit) |
+| No-op build | ≤ 1 s | 0.83 s; 2026-11-11: 1.08 s |
+| Touch the app or a leaf plugin crate | ≤ 5 s | 3.3-4.7 s; 2026-11-11 app: 6.1 s (miss) |
+| Touch any hot crate (`sf_world_bevy`, `sf_model_bevy`, `mw_nif`, `sf_model`) | ≤ 8 s | 5.2-8.1 s (`sf_model`: 13 dependents, at the limit); 2026-11-11 (warm, after the incremental wipe): `sf_world_bevy` 15.5 s, `mw_doors_bevy` 12.2 s, `sf_model` 29.4 s (now 111 dependents): misses, see ROADMAP 1.14 |
 | Edit a function body in a hot crate | ≤ 10 s | 6.2-10.3 s |
 | Clean dev build | ≤ 12 min | 8 min 38 s (M1: 11 min) |
 | Cold bake (Morrowind, fresh store) | ≤ 2 min | 47.7 s |

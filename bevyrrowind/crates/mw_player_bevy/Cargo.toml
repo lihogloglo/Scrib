@@ -75,7 +75,7 @@ sf_level.workspace = true
 sf_mods.workspace = true
 sf_vfs.workspace = true
 # The avatar feed test: a tiny graph from the fixture skeleton.
-sf_anim = { workspace = true, features = ["fixtures"] }
+sf_anim.workspace = true
 sf_bake.workspace = true
 
 [lints]

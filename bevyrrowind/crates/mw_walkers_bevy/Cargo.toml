@@ -51,7 +51,7 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 # The knockdown routing test: an animator on the fixture biped (a compiled one-clip graph).
-sf_anim = { workspace = true, features = ["fixtures"] }
+sf_anim.workspace = true
 sf_anim_graph = { workspace = true, features = ["bake"] }
 sf_character.workspace = true
 

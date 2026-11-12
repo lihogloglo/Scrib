@@ -7,8 +7,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
-# The umbrella crate: `exterior::run` builds the game `App` with `DefaultPlugins` (as the binary did).
-bevy = { workspace = true, features = ["3d", "ui"] }
+# The umbrella crate: `exterior::run` builds the game `App` with `DefaultPlugins` (as the binary did);
+# `audio` puts `AudioPlugin` in it. Asked for here, not in the app, so the hack carries it
+# (.config/hakari.toml, superfargoth/docs/build-perf.md "Feature unification").
+bevy = { workspace = true, features = ["3d", "ui", "audio"] }
 bevy_camera_controller = { workspace = true, features = ["free_camera"] }
 bevy_enhanced_input.workspace = true
 glam.workspace = true
@@ -59,7 +61,8 @@ sf_render_order_bevy.workspace = true
 sf_save_bevy.workspace = true
 sf_scene_bevy.workspace = true
 sf_shadow_cache_bevy.workspace = true
-sf_sky_bevy.workspace = true
+# PCSS soft sun shadows (`QualityRender::soft_shadow_size`, shadows F5).
+sf_sky_bevy = { workspace = true, features = ["pcss"] }
 sf_terrain_bevy.workspace = true
 sf_ui.workspace = true
 sf_ui_bevy.workspace = true

@@ -15,7 +15,8 @@ dev = ["dep:bevy_tasks", "dep:mw_actors", "dep:mw_rpg", "dep:sf_character_bevy",
 # Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
 bevy_app = { workspace = true, features = ["std"] }
 bevy_asset.workspace = true
-bevy_audio.workspace = true
+# Morrowind's sound formats (Sound/*.wav, Music/*.mp3).
+bevy_audio = { workspace = true, features = ["wav", "mp3"] }
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_log.workspace = true
 bevy_math = { workspace = true, features = ["std"] }

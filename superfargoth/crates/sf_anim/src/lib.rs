@@ -22,7 +22,8 @@ mod cook;
 #[cfg(feature = "fbx")]
 mod fbx_import;
 pub mod foot_metrics;
-#[cfg(any(test, feature = "fixtures"))]
+// Always compiled (no feature): a dev-dependency-only feature makes `test --workspace` build sf_anim and
+// everything above it differently from the game (build-perf.md "Feature unification"). Small, pure data.
 #[doc(hidden)]
 pub mod fixtures;
 #[cfg(feature = "gltf")]

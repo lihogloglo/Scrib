@@ -30,7 +30,8 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
-sf_anim = { workspace = true, features = ["gltf", "fixtures"] }
+# `bvh` too: the game builds sf_anim with it (mw_bake), so `test -p sf_anim_bevy` reuses that build.
+sf_anim = { workspace = true, features = ["gltf", "bvh"] }
 sf_anim_graph = { workspace = true, features = ["bake"] }
 sf_bake.workspace = true
 sf_model.workspace = true

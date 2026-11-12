@@ -10,6 +10,11 @@ publish = false
 # Fast iteration: Bevy as a shared library, so relinking after a change
 # skips Bevy entirely, plus Bevy's dev tools and asset hot reloading.
 # `cargo dev ...` (alias in .cargo/config.toml) turns it on. Never ship it.
+# It builds its own full Bevy, beside the one `cargo test -p <any>` and `build -p bevyrrowind` share (both stay
+# cached: switching rebuilds nothing). Not unifiable without changing shipped builds: `remote` sets
+# `bevy_tasks`/`bevy_platform` `async-io` (Bevy's executor then blocks on async-io's reactor) at Bevy's root,
+# `bevy/dynamic_linking` also sets `bevy_diagnostic/dynamic_linking` (no sysinfo), `bevy/dev` sets `file_watcher`
+# and `debug`. superfargoth/docs/build-perf.md "Feature unification" (build-speed BS1b, 2026-11-11).
 dev = ["bevy/dynamic_linking", "bevy/dev", "mw_viewers_bevy/clip_preview", "mw_game_core/dev", "mw_player_bevy/debug", "mw_boot_bevy/dev", "mw_audio_bevy/dev", "sf_vfs/watch", "remote"]
 # Off by default (owner 2026-11-10): delirium-physics 0.5+ reads its numbers from the player's own GTA IV program
 # (`kv::unlock`), so every takeover panics without one. Opt in with `--features delirium` (or `delirium_push`).
@@ -40,7 +45,10 @@ tracy = ["bevy/trace_tracy"]
 [dependencies]
 # Only what `src/` names directly; the game's systems come in through the `mw_*_bevy` crates
 # below (app-split.md slice 14a pruned the rest).
-bevy = { workspace = true, features = ["3d", "ui", "audio", "wav", "mp3", "free_camera", "dds", "tga", "bmp"] }
+# No Bevy feature the library crates don't already ask for (audio: mw_exterior_bevy, codecs: mw_audio_bevy):
+# the app is outside the hack, so one more here makes `build -p bevyrrowind` compile its own Bevy
+# (.config/hakari.toml, superfargoth/docs/build-perf.md "Feature unification").
+bevy = { workspace = true, features = ["3d", "ui", "dds", "tga", "bmp"] }
 clap.workspace = true
 glam.workspace = true
 mw_anim.workspace = true
@@ -77,7 +85,8 @@ sf_diag_bevy = { workspace = true, features = ["assets", "render"] }
 sf_level.workspace = true
 sf_mods.workspace = true
 sf_records.workspace = true
-sf_sky_bevy = { workspace = true, features = ["pcss"] }
+# `pcss`, `solari`: on for every member at the root workspace entry (feature unification).
+sf_sky_bevy.workspace = true
 sf_vfs.workspace = true
 sf_world = { workspace = true, features = ["bake"] }
 tes3 = { workspace = true, features = ["esp"] }

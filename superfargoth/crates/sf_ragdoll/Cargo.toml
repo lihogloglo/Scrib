@@ -22,7 +22,7 @@ sf_physics.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-sf_anim = { workspace = true, features = ["fixtures"] }
+sf_anim.workspace = true
 
 [lints]
 workspace = true

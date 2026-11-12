@@ -93,6 +93,13 @@ and `superfargoth/docs/DECISIONS.md`.
   `visual-checks.md` (status "awaiting owner", with camera, time, flags and concretely what to look for),
   and a question to the owner, who signs off visuals in batches. `--screenshot` runs exist for the
   owner's own checks and baselines, not for agents to assess the look.
+- **Owner-check scenes launch themselves (owner 2026-11-11).** When a scene needs the owner's eyes, the
+  session talking to the owner launches it, without being asked:
+  `bash bevyrrowind/tools/owner_launch.sh scene <name>` (or `view "<cell>" ...`). The script waits until no
+  build runs (any project), no game window is open and the owner isn't busy (no fullscreen app in front, no
+  meeting or recording), copies the dev build to a private `%TEMP%\bw-owner-*` folder and starts it
+  fullscreen. One scene at a time; never close the owner's window. Sub-agents still never launch the game,
+  not for log lines nor BRP: they build and hand the scene name to the orchestrator.
 - Changed animation slots or sources? Re-run `bevyrrowind bake` before checking in the live game: headless
   tests bake their own cache, the game reads the last bake.
 - Before a PR: `cargo test --workspace`, clippy (pedantic, `-D warnings`), `cargo deny check` and the

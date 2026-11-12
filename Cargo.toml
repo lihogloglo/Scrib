@@ -176,18 +176,24 @@ petgraph = { version = "0.8.3", default-features = false, features = ["std"] }
 winreg = "0.55"
 
 # Framework crates: `version` matches `workspace.package.version` (cargo-deny `wildcards`; crates.io needs it).
-sf_action = { path = "superfargoth/crates/sf_action", version = "0.1.0" }
+# Feature unification (build-perf.md "Feature unification", BS1c): a feature of a Bevy-using crate that the game
+# turns on anywhere is also turned on here, so every dependent asks for the same set and `test -p A`, `test
+# --workspace` and `build -p bevyrrowind` share one build of it (a different set rebuilds the crate and all above
+# it). Features that would pull Bevy or bake deps into a Bevy-free core stay on the crates that use them.
+sf_action ={ path = "superfargoth/crates/sf_action", version = "0.1.0" }
 sf_action_bevy = { path = "superfargoth/crates/sf_action_bevy", version = "0.1.0" }
 sf_ai = { path = "superfargoth/crates/sf_ai", version = "0.1.0" }
 sf_ai_bevy = { path = "superfargoth/crates/sf_ai_bevy", version = "0.1.0" }
-sf_anim = { path = "superfargoth/crates/sf_anim", version = "0.1.0", default-features = false }
-sf_anim_bevy = { path = "superfargoth/crates/sf_anim_bevy", version = "0.1.0" }
+# Default features on (sf_anim's `default` is empty): `--workspace` always enables a member's `default`.
+sf_anim = { path = "superfargoth/crates/sf_anim", version = "0.1.0" }
+# Skeleton gizmos: drawn only while `AnimGizmos.enabled` and the app has Bevy's gizmo plugin.
+sf_anim_bevy = { path = "superfargoth/crates/sf_anim_bevy", version = "0.1.0", features = ["debug"] }
 sf_app_bevy = { path = "superfargoth/crates/sf_app_bevy", version = "0.1.0" }
 sf_anim_graph = { path = "superfargoth/crates/sf_anim_graph", version = "0.1.0" }
 sf_atmos = { path = "superfargoth/crates/sf_atmos", version = "0.1.0" }
 sf_atmos_bevy = { path = "superfargoth/crates/sf_atmos_bevy", version = "0.1.0" }
 sf_audio = { path = "superfargoth/crates/sf_audio", version = "0.1.0" }
-sf_audio_bevy = { path = "superfargoth/crates/sf_audio_bevy", version = "0.1.0" }
+sf_audio_bevy = { path = "superfargoth/crates/sf_audio_bevy", version = "0.1.0", features = ["settings", "weather"] }
 sf_bake = { path = "superfargoth/crates/sf_bake", version = "0.1.0" }
 sf_camera = { path = "superfargoth/crates/sf_camera", version = "0.1.0" }
 sf_camera_bevy = { path = "superfargoth/crates/sf_camera_bevy", version = "0.1.0" }
@@ -196,12 +202,13 @@ sf_character_bevy = { path = "superfargoth/crates/sf_character_bevy", version = 
 sf_combat = { path = "superfargoth/crates/sf_combat", version = "0.1.0" }
 sf_combat_bevy = { path = "superfargoth/crates/sf_combat_bevy", version = "0.1.0" }
 sf_console = { path = "superfargoth/crates/sf_console", version = "0.1.0" }
-sf_console_bevy = { path = "superfargoth/crates/sf_console_bevy", version = "0.1.0" }
+sf_console_bevy = { path = "superfargoth/crates/sf_console_bevy", version = "0.1.0", features = ["overlay"] }
 sf_controller = { path = "superfargoth/crates/sf_controller", version = "0.1.0" }
 sf_controller_bevy = { path = "superfargoth/crates/sf_controller_bevy", version = "0.1.0" }
 sf_coords = { path = "superfargoth/crates/sf_coords", version = "0.1.0" }
 sf_diag = { path = "superfargoth/crates/sf_diag", version = "0.1.0" }
-sf_diag_bevy = { path = "superfargoth/crates/sf_diag_bevy", version = "0.1.0" }
+# Every counter plugin compiled in; each still runs only when the app adds it.
+sf_diag_bevy = { path = "superfargoth/crates/sf_diag_bevy", version = "0.1.0", features = ["assets", "pipelines", "render", "views"] }
 sf_effects = { path = "superfargoth/crates/sf_effects", version = "0.1.0" }
 sf_effects_bevy = { path = "superfargoth/crates/sf_effects_bevy", version = "0.1.0" }
 sf_gi = { path = "superfargoth/crates/sf_gi", version = "0.1.0" }
@@ -214,6 +221,8 @@ sf_model = { path = "superfargoth/crates/sf_model", version = "0.1.0" }
 sf_model_bevy = { path = "superfargoth/crates/sf_model_bevy", version = "0.1.0" }
 sf_mods = { path = "superfargoth/crates/sf_mods", version = "0.1.0" }
 sf_nav = { path = "superfargoth/crates/sf_nav", version = "0.1.0" }
+sf_nav_bake = { path = "superfargoth/crates/sf_nav_bake", version = "0.1.0" }
+sf_nav_bevy = { path = "superfargoth/crates/sf_nav_bevy", version = "0.1.0" }
 sf_nav_recast = { path = "superfargoth/crates/sf_nav_recast", version = "0.1.0" }
 sf_physics = { path = "superfargoth/crates/sf_physics", version = "0.1.0" }
 sf_physics_bevy = { path = "superfargoth/crates/sf_physics_bevy", version = "0.1.0" }
@@ -231,7 +240,8 @@ sf_script = { path = "superfargoth/crates/sf_script", version = "0.1.0" }
 sf_script_bevy = { path = "superfargoth/crates/sf_script_bevy", version = "0.1.0" }
 sf_shadow_cache_bevy = { path = "superfargoth/crates/sf_shadow_cache_bevy", version = "0.1.0" }
 sf_sky = { path = "superfargoth/crates/sf_sky", version = "0.1.0" }
-sf_sky_bevy = { path = "superfargoth/crates/sf_sky_bevy", version = "0.1.0" }
+# `solari` is on in every game build already (sf_gi_bevy needs it); the raster path stays the default without `--rt`.
+sf_sky_bevy = { path = "superfargoth/crates/sf_sky_bevy", version = "0.1.0", features = ["pcss", "solari"] }
 sf_stats = { path = "superfargoth/crates/sf_stats", version = "0.1.0" }
 sf_stats_bevy = { path = "superfargoth/crates/sf_stats_bevy", version = "0.1.0" }
 sf_surface = { path = "superfargoth/crates/sf_surface", version = "0.1.0" }

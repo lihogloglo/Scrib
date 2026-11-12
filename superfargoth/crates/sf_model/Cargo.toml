@@ -11,6 +11,8 @@ default = ["gltf"]
 gltf = ["dep:gltf"]
 
 [dependencies]
+# MikkTSpace tangents for normal-mapped materials (Bevy's own Bevy-free port; already in the lock via bevy_mesh).
+bevy_mikktspace = "1"
 glam.workspace = true
 # "extras": morph target names live in `mesh.extras.targetNames` (bevy_gltf reads them the same way).
 gltf = { workspace = true, optional = true, features = ["extras"] }

@@ -37,7 +37,7 @@ workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
-sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
+sf_sky_bevy.workspace = true
 # Shader compile checks (no GPU, no picture): wesl links the real modules (vendored bevy_pbr,
 # ours) per def set, as Bevy's shader cache does; naga validates (as sf_surface_bevy's).
 naga = { workspace = true, features = ["wgsl-in"] }

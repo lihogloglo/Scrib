@@ -55,7 +55,7 @@ workspace-hack.workspace = true
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d"] }
 glam.workspace = true
-sf_anim = { workspace = true, features = ["fixtures"] }
+sf_anim.workspace = true
 sf_anim_graph = { workspace = true, features = ["bake"] }
 sf_bake.workspace = true
 # Shader compile checks (no GPU, no picture): wesl links the view-model stages against the

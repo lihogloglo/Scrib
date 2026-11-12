@@ -45,7 +45,7 @@ rayon.workspace = true
 sf_bake.workspace = true
 sf_diag_bevy.workspace = true
 sf_records.workspace = true
-sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
+sf_sky_bevy.workspace = true
 
 [lints]
 workspace = true

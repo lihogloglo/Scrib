@@ -6,15 +6,16 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["gltf"]
+# Empty: the workspace dependency keeps default features on, and `--workspace` always enables a member's
+# `default`, so a non-empty list here would make `test --workspace` build sf_anim (and all above it) differently
+# from `build -p bevyrrowind` (build-perf.md "Feature unification"). Crates ask for `gltf` by name.
+default = []
 # The framework's glTF / GLB skeleton and clip importer.
 gltf = ["dep:gltf"]
 # The framework's BVH skeleton and clip importer (own parser, no dependencies). Bake only.
 bvh = []
 # The framework's FBX skeleton and clip importer, on ufbx (needs a C compiler). Bake only.
 fbx = ["dep:ufbx"]
-# Synthetic test skeletons (biped, quadruped, hexapod, flyer) and gait clips for other crates' tests.
-fixtures = []
 
 [dependencies]
 glam = { workspace = true, features = ["serde"] }
@@ -26,6 +27,8 @@ thiserror.workspace = true
 ufbx = { workspace = true, optional = true }
 
 [dev-dependencies]
+# This crate's own tests keep the glTF importer (`default` used to carry it).
+sf_anim = { path = ".", features = ["gltf"] }
 rayon.workspace = true
 ron.workspace = true
 tempfile.workspace = true

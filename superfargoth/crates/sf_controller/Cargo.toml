@@ -28,7 +28,7 @@ thiserror.workspace = true
 [dev-dependencies]
 rayon.workspace = true
 # Rig-profile fixtures for `MoverParams::from_profile`.
-sf_anim = { workspace = true, features = ["fixtures"] }
+sf_anim.workspace = true
 # The integration test drives a real graph from the controller (bake: compile from RON).
 sf_anim_graph = { workspace = true, features = ["bake"] }
 sf_model = { path = "../sf_model", version = "0.1.0", default-features = false }
