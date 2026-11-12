@@ -352,7 +352,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   rain falls under ordinary thick storm cloud, not only cells. Same launch and BRP as above (Ascadian Isles thunderstorm),
   then walk slowly into the storm and back out. Look for: the rain fading in smoothly as you walk in, no on/off threshold,
   as smooth as `--off stormshape`; from outside, a curtain clearly visible and meeting the cloud base (no gap of sky
-  between rain top and cloud); dry gaps still where the deck is thin. Status: awaiting owner.
+  between rain top and cloud); dry gaps still where the deck is thin. Status: confirmed with follow-up (owner 2026-11-13, we3-ridge thunderstorm: rain transition smooth walking in, the curtain is visible now, shimmer of objects behind the curtain much better with some left (later)).
 
 ### WE-14: Stable cloud silhouettes (S1, clouds.md "Stable silhouette history"; follows WE-10, WE-13 horizon shimmer)
 - Scene: `scene we3-ridge` at 14:00, clear-to-cloudy weather; then Seyda Neen rooftops against cloud. Still camera, then a
@@ -362,7 +362,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   as calm as the open sky.
 - Must not: a halo or sky bleeding past silhouettes (bright cloud/sky fringe on the land side); FG-7 (fog behind ridges)
   or WE-12 (deck from above, fog split) looking changed.
-- Status: awaiting owner.
+- Status: confirmed (owner 2026-11-13, `scene we3-ridge` 14:00: "no shimmering whatsoever"; `--off cloudedge` A/B not run).
 
 ### WE-15: Storm cloud shape (S3, clouds.md "Storm cloud shape"; follows WE-13 "cylinder")
 - Scene: `scene we3-ridge` at 14:00, then BRP `bevyrrowind/set {"weather":"thunderstorm","region":"Ascadian Isles Region",
@@ -371,4 +371,4 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   the big cores, a ragged (wispy) base, sides that slope down at the region edge; not the footprint extruded straight up.
 - Must not: fair or overcast decks changed (a calm region beside the storm, then `"weather":"cloudy"` / `"overcast"`);
   FG-7, WE-11, WE-12 looks changed (fog behind ridges, fog over sea, deck from above).
-- Status: awaiting owner.
+- Status: partial (owner 2026-11-13: shimmer better, but the clouds "still look goofy and a bit weird"; a bigger cloud-shape pass later).
