@@ -14,7 +14,7 @@ use sf_bake::ProductKey;
 
 use crate::{
     AnimAsset, AnimEvent, AnimJoint, AnimLod, AnimNotify, AnimRootMotion, AnimStats, AnimTier,
-    AnimateWhilePaused, Animator, SfAnimPlugin, spawn_rig,
+    AnimateWhilePaused, Animator, PhysicsPose, SfAnimPlugin, spawn_rig,
 };
 
 struct Walk(sf_anim::Clip);
@@ -259,4 +259,80 @@ fn pause_holds_the_pose_and_resume_does_not_pop() {
     assert!(turn > 0.0 && turn < 0.15, "first resumed frame continues the pose: {turn} rad");
     let step = app.world().get::<Transform>(walker).unwrap().translation - root_before.translation;
     assert!(step.length() < 0.05, "one frame of root motion, no catch-up: {step}");
+}
+
+/// Bones whose `Transform` changed this frame, as `(character, joint)` (change ticks since this
+/// system's last run, i.e. the previous frame).
+#[derive(Resource, Default)]
+struct ChangedBones(Vec<(Entity, u16)>);
+
+fn record_changed(bones: Query<(&AnimJoint, Ref<Transform>)>, mut out: ResMut<ChangedBones>) {
+    out.0 = bones
+        .iter()
+        .filter(|(_, t)| t.is_changed())
+        .map(|(j, _)| (j.character, j.joint))
+        .collect();
+}
+
+/// Slice P6: `write_bones` visits characters, not bones. A posed character's bones hold exactly
+/// the evaluated local pose (the values the per-bone pass wrote); a frozen character's bones are
+/// never touched, so change detection (and transform propagation) stays quiet for them; a
+/// physics pose still drives its fully physical joints on a frame the graph doesn't pose.
+#[test]
+fn write_bones_writes_posed_characters_only() {
+    let asset = walk_asset();
+    let mut app = app();
+    app.init_resource::<ChangedBones>().add_systems(
+        PostUpdate,
+        record_changed
+            .after(crate::AnimSystems::Apply)
+            .before(TransformSystems::Propagate),
+    );
+    let walker = spawn(&mut app, &asset, AnimTier::A0);
+    let frozen = spawn(&mut app, &asset, AnimTier::A3);
+    let ragdoll = spawn(&mut app, &asset, AnimTier::A3);
+    let thigh = asset.skeleton.find("thigh_l").unwrap();
+    let mut pose = asset.skeleton.rest().to_vec();
+    pose[thigh].rotation = Quat::from_rotation_x(0.5) * pose[thigh].rotation;
+    app.world_mut().entity_mut(ragdoll).insert(PhysicsPose {
+        pose: pose.clone(),
+        weight: 1.0,
+        weights: Vec::new(),
+    });
+    let joints = asset.skeleton.len();
+    for frame in 0..10 {
+        app.update();
+        let a = app.world().get::<Animator>(walker).unwrap();
+        assert!(a.posed());
+        let expected: Vec<(u16, Transform)> = (0..joints)
+            .map(|j| (u16::try_from(j).unwrap(), crate::trs_transform(a.output.pose.get(j))))
+            .collect();
+        assert_eq!(bones(&mut app, walker), expected, "frame {frame}: the evaluated pose");
+        if frame == 0 {
+            continue; // Spawned bones read as changed on the recorder's first run.
+        }
+        let changed = &app.world().resource::<ChangedBones>().0;
+        assert!(
+            changed.iter().any(|(c, _)| *c == walker),
+            "frame {frame}: the walking character's bones change"
+        );
+        assert!(
+            !changed.iter().any(|(c, _)| *c == frozen),
+            "frame {frame}: no frozen bone is marked changed"
+        );
+        assert!(!app.world().get::<Animator>(frozen).unwrap().posed());
+    }
+    let rest = asset.skeleton.rest();
+    let frozen_bones = bones(&mut app, frozen);
+    assert!(
+        frozen_bones.iter().all(|(j, t)| *t == crate::trs_transform(rest[usize::from(*j)])),
+        "the frozen character keeps its rest pose"
+    );
+    let held = bones(&mut app, ragdoll)[thigh].1;
+    let want = crate::trs_transform(pose[thigh]);
+    assert!(
+        held.rotation.angle_between(want.rotation) < 1e-4
+            && held.translation.distance(want.translation) < 1e-4,
+        "a fully physical joint follows the physics pose: {held:?} vs {want:?}"
+    );
 }

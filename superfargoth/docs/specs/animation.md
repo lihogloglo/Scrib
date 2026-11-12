@@ -442,6 +442,10 @@ scenario is our M3 floor, not the ceiling.
   is due, and `Evaluate`/`Apply` are skipped unless an `AnimateWhilePaused` character exists (UE
   `bTickEvenWhenPaused`, Unity unscaled-time Animator: menu previews, on real time). Hosts gate
   feeds outside `Probe` on `not(sf_anim_bevy::world_paused)`.
+- Bone write-back, as built (perf P6, 2026-11-12): `write_bones` loops characters, not bones (UE URO,
+  Unity `CullUpdateTransforms`): only posed ones or those with a `PhysicsPose`, via `SkeletonBinding`
+  (`iter_many_mut`, serial: ~20 posed on the Balmora walk; `get_unchecked` is barred by `forbid(unsafe)`).
+  Frozen characters' bones are never touched; visited bones are written only on change (same values as before).
 - Bone entities stay, because Bevy's `SkinnedMesh` reads their
   `GlobalTransform`. If profiling shows propagation or skin extraction
   dominating, the fallback is writing bone `GlobalTransform`s directly

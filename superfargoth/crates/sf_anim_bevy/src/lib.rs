@@ -16,8 +16,9 @@
 //!    [`sf_anim_graph::GraphInstance::update`] is pure, so this is
 //!    deterministic on any thread count.
 //! 4. [`AnimSystems::Apply`]: bone `Transform`s from the local pose
-//!    (`par_iter` over bone entities, written only when they change so a
-//!    frozen character costs no propagation), root motion, events as
+//!    (per posed character through its [`SkeletonBinding`], written only
+//!    when they change; a frozen character's bones are never visited, so
+//!    they cost no propagation), root motion, events as
 //!    [`AnimEvent`] messages and [`AnimNotify`] entity events for observers.
 //!
 //! Bevy then propagates transforms and skins on the GPU, as for glTF.
@@ -657,38 +658,55 @@ fn evaluate(
     }
 }
 
-/// Bone write-back, one `par_iter` over bone entities (the shape of
-/// `bevy_animation::animate_targets`): each reads its character's pose and
-/// writes its `Transform` only when the value changed, so unchanged and
-/// frozen bones never mark their subtree for propagation.
+/// Bone write-back per character, not per bone (UE's update-rate optimisation, Unity's
+/// `CullUpdateTransforms`): only characters the last Evaluate posed, or that carry a
+/// [`PhysicsPose`] (its fully physical joints follow it on frames the graph doesn't pose), are
+/// visited, through their [`SkeletonBinding`]. A frozen character costs one flag check: its
+/// bones' `Transform`s are never touched, so change detection stays quiet and propagation skips
+/// them. Visited bones are still written only when the value changed.
+///
+/// Serial: with tiers and the budget only a few dozen characters pose per frame (~20 on the
+/// Balmora walk, ~700 bone writes), below the cost of a parallel split; a parallel version would
+/// need `Query::get_unchecked` (the workspace forbids `unsafe`) or a per-frame unique entity set.
 fn write_bones(
-    animators: Query<(&Animator, Option<&PhysicsPose>)>,
+    chars: Query<(Entity, &Animator, Option<&PhysicsPose>, &SkeletonBinding)>,
     mut bones: Query<(&AnimJoint, &mut Transform)>,
     mut stats: ResMut<AnimStats>,
 ) {
     let start = Instant::now();
-    let written = AtomicU64::new(0);
-    bones.par_iter_mut().for_each(|(joint, mut transform)| {
-        let Ok((animator, physics)) = animators.get(joint.character) else {
-            return;
-        };
-        let j = usize::from(joint.joint);
-        // The graph blends the physics pose in (`GraphInstance::set_physics`);
-        // frames it doesn't pose still follow a fully physical joint.
-        let t = if animator.posed {
-            trs_transform(animator.output.pose.get(j))
-        } else {
-            match physics.filter(|p| j < p.pose.len() && p.joint_weight(j) >= 1.0) {
-                Some(p) => trs_transform(p.pose[j]),
-                None => return,
-            }
-        };
-        if *transform != t {
-            *transform = t;
-            written.fetch_add(1, Ordering::Relaxed);
+    let mut written = 0;
+    for (character, animator, physics, binding) in &chars {
+        let physics = physics.filter(|p| p.weight > 0.0 && !p.pose.is_empty());
+        if !animator.posed && physics.is_none() {
+            continue;
         }
-    });
-    stats.bones_written = usize::try_from(written.into_inner()).unwrap_or(usize::MAX);
+        let mut joints = bones.iter_many_mut(binding.joints.iter().copied());
+        while let Some(bone) = joints.fetch_next() {
+            // A binding lists its own bones (`spawn_rig`); the index is the bone's own.
+            let Ok((joint, mut transform)) = bone else {
+                continue;
+            };
+            if joint.character != character {
+                continue;
+            }
+            let j = usize::from(joint.joint);
+            // The graph blends the physics pose in (`GraphInstance::set_physics`);
+            // frames it doesn't pose still follow a fully physical joint.
+            let t = if animator.posed {
+                trs_transform(animator.output.pose.get(j))
+            } else {
+                match physics.filter(|p| j < p.pose.len() && p.joint_weight(j) >= 1.0) {
+                    Some(p) => trs_transform(p.pose[j]),
+                    None => continue,
+                }
+            };
+            if *transform != t {
+                *transform = t;
+                written += 1;
+            }
+        }
+    }
+    stats.bones_written = written;
     stats.apply_us = start.elapsed().as_secs_f32() * 1e6;
 }
 
