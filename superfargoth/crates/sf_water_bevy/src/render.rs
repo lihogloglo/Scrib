@@ -1,6 +1,7 @@
 //! Render world: the FFT compute chain (before the main pass), the snapshot of the opaque scene
-//! (after the opaque pass, before the water draws in the transmissive pass, W-ORDER), and the
-//! velocity redraw (after the transparent pass, before post-processing).
+//! (after the opaque pass, before the water draws in the transmissive pass, W-ORDER), the SSPR
+//! compute of that snapshot (W-SSPR, between the two: `sf_water::sspr`), and the velocity redraw
+//! (after the transparent pass, before post-processing).
 
 use std::collections::HashMap;
 
@@ -19,8 +20,8 @@ use bevy_render::camera::ExtractedCamera;
 use bevy_render::diagnostic::RecordDiagnostics;
 use bevy_render::render_asset::RenderAssets;
 use bevy_render::render_resource::binding_types::{
-    sampler, storage_buffer_sized, texture_2d, texture_2d_array, texture_depth_2d, texture_depth_2d_multisampled, texture_storage_2d_array,
-    uniform_buffer,
+    sampler, storage_buffer_sized, texture_2d, texture_2d_array, texture_depth_2d, texture_depth_2d_multisampled, texture_storage_2d,
+    texture_storage_2d_array, uniform_buffer,
 };
 use bevy_render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferUsages, CachedComputePipelineId,
@@ -32,7 +33,7 @@ use bevy_render::render_resource::{
 use bevy_render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy_render::sync_world::RenderEntity;
 use bevy_render::texture::GpuImage;
-use bevy_render::view::{ExtractedView, Msaa, ViewDepthStencilTexture, ViewTarget};
+use bevy_render::view::{ExtractedView, Msaa, ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms};
 use sf_render_order_bevy::PassStage;
 use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
@@ -54,6 +55,20 @@ pub(crate) struct FftUniform {
     pub foam_threshold: f32,
     pub foam_gain: f32,
 }
+/// The SSPR passes' uniform (`water_sspr.wesl` `Sspr`).
+#[derive(Clone, Copy, Debug, Default, ShaderType)]
+pub(crate) struct SsprUniform {
+    /// (plane level, texel scale, reflection width, reflection height).
+    plane: Vec4,
+}
+
+/// SSPR this frame: the mirrored level (render-space Y) and the texel scale.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SsprState {
+    pub level: f32,
+    pub scale: u32,
+}
+
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
 struct VelocityUniform {
     clip_from_world: Mat4,
@@ -69,6 +84,7 @@ pub(crate) struct ImageIds {
     slopes: AssetId<Image>,
     snapshot_color: AssetId<Image>,
     snapshot_depth: AssetId<Image>,
+    reflection: AssetId<Image>,
     shore: AssetId<Image>,
 }
 
@@ -81,6 +97,7 @@ impl ImageIds {
             slopes: i.slopes.id(),
             snapshot_color: i.snapshot_color.id(),
             snapshot_depth: i.snapshot_depth.id(),
+            reflection: i.reflection.id(),
             shore: i.shore.id(),
         }
     }
@@ -95,6 +112,8 @@ pub(crate) struct WaterRender {
     pub mips: u32,
     pub layers: u32,
     pub params: WaterParams,
+    /// SSPR plane and scale (`None`: off, or no body below the camera).
+    pub sspr: Option<SsprState>,
     pub images: Option<ImageIds>,
 }
 
@@ -107,11 +126,15 @@ struct WaterViewBindings {
     samples: u32,
     snapshot: BindGroup,
     velocity: BindGroup,
+    /// The SSPR bind group and its dispatch size (reflection texels).
+    sspr: Option<(BindGroup, [u32; 2])>,
 }
 
 #[derive(Resource, Default)]
 struct WaterGpu {
     buffers: Option<(Buffer, Buffer)>,
+    /// SSPR hash (one u32 key per reflection texel) and its size in bytes.
+    hash: Option<(Buffer, u64)>,
     fft: Option<BindGroup>,
     /// Per wave image and level: (bind group, dispatch size).
     mips: Vec<(BindGroup, [u32; 3])>,
@@ -124,6 +147,8 @@ struct WaterPipelines {
     fft: BindGroupLayoutDescriptor,
     snapshot: [BindGroupLayoutDescriptor; 2],
     velocity: [BindGroupLayoutDescriptor; 2],
+    sspr: BindGroupLayoutDescriptor,
+    sspr_shader: Handle<Shader>,
     fft_shader: Handle<Shader>,
     snapshot_shader: Handle<Shader>,
     mips: BindGroupLayoutDescriptor,
@@ -179,6 +204,21 @@ impl FromWorld for WaterPipelines {
                 ),
             ),
             snapshot: [snapshot(false), snapshot(true)],
+            sspr: BindGroupLayoutDescriptor::new(
+                "water_sspr",
+                &BindGroupLayoutEntries::sequential(
+                    ShaderStages::COMPUTE,
+                    (
+                        uniform_buffer::<ViewUniform>(true),
+                        uniform_buffer::<SsprUniform>(false),
+                        texture_2d(unfiltered),
+                        texture_2d(unfiltered),
+                        storage_buffer_sized(false, None),
+                        texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+                    ),
+                ),
+            ),
+            sspr_shader: load_embedded_asset!(world, "shaders/water_sspr.wesl"),
             velocity: [velocity(false), velocity(true)],
             fft_shader: load_embedded_asset!(world, "shaders/water_fft.wesl"),
             snapshot_shader: load_embedded_asset!(world, "shaders/water_snapshot.wesl"),
@@ -197,11 +237,15 @@ impl FromWorld for WaterPipelines {
 }
 
 const FFT_ENTRIES: [&str; 2] = ["fft_rows", "fft_cols"];
+pub(crate) const SSPR_ENTRIES: [&str; 2] = ["project", "resolve"];
+/// The SSPR passes' workgroup side (`water_sspr.wesl`).
+pub(crate) const SSPR_GROUP: u32 = 8;
 
 #[derive(Resource, Default)]
 struct WaterPipelineIds {
     fft: Option<[CachedComputePipelineId; 2]>,
     mips: Option<CachedComputePipelineId>,
+    sspr: Option<[CachedComputePipelineId; 2]>,
     snapshot: HashMap<u32, CachedRenderPipelineId>,
     velocity: HashMap<u32, CachedRenderPipelineId>,
 }
@@ -224,12 +268,14 @@ pub(crate) fn build(app: &mut App) {
         );
 }
 
-/// The snapshot ([`PassStage::Snapshot`]) goes after the opaque pass and before the water draws
-/// in Bevy's transmissive pass; the sky, clouds and fog run after the water (render-order.md
-/// "Frame graph", W-ORDER).
+/// The snapshot ([`PassStage::Snapshot`]) and the SSPR ([`PassStage::Reflection`]) go after the
+/// opaque pass and before the water draws in Bevy's transmissive pass; the sky, clouds and fog
+/// run after the water (render-order.md "Frame graph", W-ORDER).
 pub(crate) fn finish(app: &mut App) {
     let mine = [fft_pass.into_system_set().intern(), velocity_pass.into_system_set().intern()];
     sf_render_order_bevy::add_pass(app, PassStage::Snapshot, snapshot_pass.into_system_set().intern(), &mine, snapshot_pass);
+    // SSPR (W-SSPR): after the snapshot it reads, before the water samples it.
+    sf_render_order_bevy::add_pass(app, PassStage::Reflection, sspr_pass.into_system_set().intern(), &mine, sspr_pass);
 }
 
 #[allow(clippy::type_complexity)]
@@ -313,6 +359,9 @@ fn queue_pipelines(views: Query<&Msaa, With<WaterView>>, pipelines: Option<Res<W
     if ids.mips.is_none() {
         ids.mips = Some(cache.queue_compute_pipeline(p.compute(&p.mips, &p.mips_shader, "downsample")));
     }
+    if ids.sspr.is_none() {
+        ids.sspr = Some(SSPR_ENTRIES.map(|e| cache.queue_compute_pipeline(p.compute(&p.sspr, &p.sspr_shader, e))));
+    }
     let warm = std::iter::once(1);
     for s in views.iter().map(Msaa::samples).chain(warm) {
         ids.snapshot.entry(s).or_insert_with(|| cache.queue_render_pipeline(p.snapshot_descriptor(s)));
@@ -332,6 +381,7 @@ fn prepare(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     images: Res<RenderAssets<GpuImage>>,
+    view_uniforms: Res<ViewUniforms>,
     mut gpu: ResMut<WaterGpu>,
 ) {
     gpu.fft = None;
@@ -347,7 +397,6 @@ fn prepare(
     ) else {
         return;
     };
-    let _ = (snap_color, snap_depth);
     let Some(shore) = images.get(ids.shore) else { return };
     let n = RESOLUTION as u64;
     let (spec, foam) = gpu.buffers.get_or_insert_with(|| {
@@ -390,6 +439,7 @@ fn prepare(
     }
     let mut params = UniformBuffer::from(state.params);
     params.write_buffer(&device, &queue);
+    let sspr = sspr_bindings(&state, &pipelines, &cache, &device, &queue, &images, &view_uniforms, &mut gpu, (snap_color, snap_depth));
     for (entity, view, target, depth, msaa) in &views {
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
         let ms = usize::from(msaa.samples() > 1);
@@ -409,8 +459,73 @@ fn prepare(
             &cache.get_bind_group_layout(&pipelines.velocity[ms]),
             &BindGroupEntries::sequential((params_binding, velocity_binding, &disp.texture_view, &prev.texture_view, &disp.sampler, depth_view, &shore.texture_view, &shore.sampler)),
         );
-        commands.entity(entity).insert(WaterViewBindings { samples: msaa.samples(), snapshot, velocity });
+        commands.entity(entity).insert(WaterViewBindings { samples: msaa.samples(), snapshot, velocity, sspr: sspr.clone() });
     }
+}
+
+/// The SSPR bind group (one for every water view: the bindings are the view-independent
+/// snapshot, hash and output; the view uniform comes by dynamic offset), and its dispatch size.
+#[allow(clippy::too_many_arguments)]
+fn sspr_bindings(
+    state: &WaterRender,
+    pipelines: &WaterPipelines,
+    cache: &PipelineCache,
+    device: &RenderDevice,
+    queue: &RenderQueue,
+    images: &RenderAssets<GpuImage>,
+    view_uniforms: &ViewUniforms,
+    gpu: &mut WaterGpu,
+    (color, depth): (&GpuImage, &GpuImage),
+) -> Option<(BindGroup, [u32; 2])> {
+    let sspr = state.sspr?;
+    let out = images.get(state.images?.reflection)?;
+    let (w, h) = (out.texture.width(), out.texture.height());
+    if w <= 1 && h <= 1 {
+        return None;
+    }
+    let bytes = u64::from(w) * u64::from(h) * 4;
+    if gpu.hash.as_ref().is_none_or(|(_, size)| *size != bytes) {
+        let buffer = device.create_buffer(&BufferDescriptor { label: Some("water_sspr_hash"), size: bytes, usage: BufferUsages::STORAGE | BufferUsages::COPY_DST, mapped_at_creation: false });
+        gpu.hash = Some((buffer, bytes));
+    }
+    let (hash, _) = gpu.hash.as_ref()?;
+    #[allow(clippy::cast_precision_loss)]
+    let mut uniform = UniformBuffer::from(SsprUniform { plane: Vec4::new(sspr.level, sspr.scale as f32, w as f32, h as f32) });
+    uniform.write_buffer(device, queue);
+    let group = device.create_bind_group(
+        "water_sspr",
+        &cache.get_bind_group_layout(&pipelines.sspr),
+        &BindGroupEntries::sequential((view_uniforms.uniforms.binding()?, uniform.binding()?, &depth.texture_view, &color.texture_view, hash.as_entire_binding(), &out.texture_view)),
+    );
+    Some((group, [w.div_ceil(SSPR_GROUP), h.div_ceil(SSPR_GROUP)]))
+}
+
+/// SSPR (water.md "Water pass" step 2, `water_sspr.wesl`): clear the hash, project the snapshot's
+/// pixels above the plane to their mirror texels, resolve colour + confidence. GPU-timed as
+/// `render/water_sspr/elapsed_gpu`.
+fn sspr_pass(view: ViewQuery<(&WaterViewBindings, &ViewUniformOffset)>, gpu: Res<WaterGpu>, ids: Res<WaterPipelineIds>, cache: Res<PipelineCache>, mut ctx: RenderContext) {
+    let (bindings, offset) = view.into_inner();
+    let Some((group, groups)) = bindings.sspr.as_ref() else { return };
+    let Some((hash, _)) = gpu.hash.as_ref() else { return };
+    let Some(pipelines) = ids.sspr.and_then(|ids| {
+        let p: Option<Vec<_>> = ids.iter().map(|id| cache.get_compute_pipeline(*id)).collect();
+        p
+    }) else {
+        return;
+    };
+    // 0 = empty (keys are inverted heights, `sf_water::sspr::height_key`).
+    ctx.command_encoder().clear_buffer(hash, 0, None);
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
+    let mut pass = ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor { label: Some("water_sspr"), timestamp_writes: None });
+    let span = diagnostics.pass_span(&mut pass, "water_sspr");
+    pass.set_bind_group(0, group, &[offset.offset]);
+    // Each dispatch is its own usage scope: the resolve sees every projection's atomics.
+    for pipeline in &pipelines {
+        pass.set_pipeline(pipeline);
+        pass.dispatch_workgroups(groups[0], groups[1], 1);
+    }
+    span.end(&mut pass);
 }
 
 /// GPU-timed compute pass (`render/<label>/elapsed_gpu`).

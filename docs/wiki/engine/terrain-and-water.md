@@ -32,7 +32,11 @@ cascades share `h0` with the CPU twin (`sf_water/src/twin.rs`, `spectrum.rs`): w
 time and absolute XZ. Surface is a camera-centred clipmap with a horizon skirt (`mesh.rs`); the water pass takes a colour
 and depth snapshot of the opaque scene, draws in Bevy's transmissive pass (alpha 1, depth-write, no fog of its own; the
 sky, aerial perspective, clouds and fog run after it by its depth, W-ORDER), then redraws motion vectors for DLSS/TAA
-(`render.rs`, `lib.rs` `WaterCamera`). `WaterQuery::sample`
+(`render.rs`, `lib.rs` `WaterCamera`). Local reflections: SSPR of the snapshot (`water_sspr.wesl`, `sspr_pass` in
+`PassStage::Reflection` between snapshot and water; plane = nearest shown body below the camera, `sf_water/src/sspr.rs`,
+keyed by source height above the plane); the water draw swaps the environment-map specular for it where it hits
+(`water_material.wesl` `sspr_sample`, `environment_specular`). `WaterReflections` (on, `wave_distortion` 0.6);
+`WaterQuality::sspr_scale` Low off, Medium ½, High/Ultra full. Reflections are unfogged (fog is applied over the water after). `WaterQuery::sample`
 (`query.rs:294`). Shore: `ShoreField::bake` (`shore.rs`) runs on a thread at startup, not in the bake store
 (`mw_environment_bevy/src/water.rs:178-183`), then attenuates swell and foam. Morrowind wiring:
 `mw_environment_bevy/src/water.rs:141` (`add`; fixed-tick `step`, `bed`, `pools`, `sync`); `mw_water` gives bodies (sea at 0,
@@ -46,13 +50,15 @@ interiors at `WHGT`), optics by region (`optics::*`), `SEA_FETCH_M` 20 km, shore
 ## Switches and counters
 
 `--water on|scaffold|off` (`mw_environment_bevy/src/water.rs:46`; scaffold is a flat plane, `exterior.rs:881`), `--water-wind`;
-`--off terrain` and `--off far` perf parts (`mw_game_core/src/perf.rs:127`). `TerrainSettings` `upload_budget`,
+`--off waterssr` (environment map only), `--off terrain` and `--off far` perf parts (`mw_game_core/src/perf.rs:127`). `TerrainSettings` `upload_budget`,
 `max_loads`, `splat_range`, `raise_m`.
 
 ## Known limits
 
-Far shadow map upload cost was a walk stutter source (see [perf ledger](../../ledger/perf.md)). Rivers, underwater and
-wading are specced (`water.md`); check the code before assuming they are wired.
+Far shadow map upload cost was a walk stutter source (see [perf ledger](../../ledger/perf.md); water history in the
+[water ledger](../../ledger/water.md)). Rivers, underwater and
+wading are specced (`water.md`); check the code before assuming they are wired. SSPR only mirrors what is on screen
+and opaque (no translucents, nothing off screen: the environment map fills in; the dynamic probe is specced, not built).
 
 ## Specs
 

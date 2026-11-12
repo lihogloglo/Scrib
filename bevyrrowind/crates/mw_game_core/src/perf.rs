@@ -70,6 +70,9 @@ pub enum Part {
     /// The froxels' history clip (FOG-CLAMP, WE-10): reprojected history clipped to this frame's 3x3
     /// neighbourhood, history weight 0.95; off, unclipped at 0.9 (the old path, an A/B).
     FogClamp,
+    /// Screen-space planar reflections on the water (W-SSPR, `sf_water_bevy::WaterReflections`): off,
+    /// the environment map only (the old look, an A/B).
+    WaterSsr,
     /// Fog on blended and additive NIF materials (`sf_atmos_bevy::FogTranslucentsPlugin`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
@@ -134,7 +137,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 59] = [
+    const ALL: [(&'static str, Part); 60] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -176,6 +179,7 @@ impl Part {
         ("foghistory", Part::FogHistory),
         ("fogbank", Part::FogBank),
         ("fogclamp", Part::FogClamp),
+        ("waterssr", Part::WaterSsr),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
         ("foliagetransmission", Part::FoliageTransmission),
@@ -264,5 +268,8 @@ mod tests {
         let clamp = Off::from_flags(&["fogclamp".into()]).expect("known");
         assert!(clamp.has(Part::FogClamp) && !clamp.has(Part::FogHistory) && !clamp.has(Part::FogBank));
         assert_eq!(clamp.label(), "fogclamp");
+        let ssr = Off::from_flags(&["waterssr".into()]).expect("known");
+        assert!(ssr.has(Part::WaterSsr) && !ssr.has(Part::FogClamp));
+        assert_eq!(ssr.label(), "waterssr");
     }
 }

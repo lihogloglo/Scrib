@@ -9009,9 +9009,11 @@ dependencies = [
  "bevy_shader",
  "bevy_transform",
  "log",
+ "naga",
  "sf_coords",
  "sf_render_order_bevy",
  "sf_water",
+ "wesl",
  "workspace-hack",
 ]
 

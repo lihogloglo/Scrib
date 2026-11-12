@@ -53,7 +53,7 @@ Moved to [history](archive/water-history.md#research-summary-2026-10-13).
 | CPU wave twin | n/a | `rustfft` | **`rustfft`** for the lowest cascade(s) |
 | Water shading (absorption, scattering, refraction) | transmission (colour only, no depth, no MVs) | aqua's optics | **Ours**: a water material drawn after a colour + depth snapshot (UE Single Layer Water structure) using Bevy's PBR lighting functions |
 | Sky reflection | `AtmosphereEnvironmentMapLight` (used) | n/a | n/a |
-| Local reflections | SSR (needs deferred + depth prepass) | aqua planar cameras | **Ours: SSPR** for the water plane, environment map and light probes as fallback |
+| Local reflections | SSR (needs deferred + depth prepass) | aqua planar cameras | **Ours: SSPR** for the water plane (built W-SSPR, "SSPR as built"), environment map and light probes as fallback |
 | Water bodies, query | none | aqua (one sea level, GPU) | **Ours** (§10 decision 4) |
 | Rivers without data | none | none (WhiteboxTools is an MIT application, not a library) | **Ours**: priority-flood + D8 in `water.hydro` (~300 lines) |
 | Buoyancy | none | none on rapier | **Ours**: pontoons over `body.cook` shapes, forces through `sf_physics` |
@@ -72,9 +72,9 @@ CPU:   WeatherFrame.wind ─► Spectrum (h0) ─► GPU upload + CPU twin (casc
 GPU:   compute: FFT cascades (amortized) · foam accumulate · water-level clipmap (on move)
                 · dynamic ripples (iWave, 32 m around the camera)
        opaque (terrain/WorldMaterial hook: caustics + wet band below/at the waterline)
-       Bevy render_sky · sf_atmos composite (clouds, froxel fog)
-       water snapshot (copy colour + depth) · SSPR (compute, 1 pass)
-       water pass: clipmap surface, refraction, absorption/scattering, reflections, foam, fog
+       water snapshot (opaque colour + depth) · SSPR (compute: project + resolve)
+       water pass (Bevy transmissive phase): clipmap surface, refraction, absorption/scattering, reflections, foam
+       Bevy render_sky · sf_atmos composite (clouds, froxel fog) over opaque and water by depth
        water velocity (motion vectors) · underwater post (when the camera is below or split)
        transparents (precipitation, particles) · post (bloom, tonemap, DLSS/TAA)
 ```
@@ -211,35 +211,60 @@ displacement height) gives the green-blue backlit look.
 
 ## Water pass, refraction, reflections
 
-**Pass structure (UE Single Layer Water, Bevy terms).** After `render_sky` and the `sf_atmos` composite:
-1. **Snapshot**: copy scene colour (HDR) and depth into two textures (1440p: ≈ 0.1 ms). The colour copy
-   is also what Bevy's transmission would take; we take it after the sky and fog so the bed behind the
-   water is already fogged.
+**Pass structure (UE Single Layer Water, Bevy terms).** As built since W-ORDER (2026-11-12): the
+order and depth contract are `render-order.md` "Frame graph" (steps 3-4); the sky, aerial
+perspective, clouds and fog run after the water and cover it by its depth.
+1. **Snapshot**: copy scene colour (HDR) and depth into two textures (1440p: ≈ 0.1 ms) after the
+   opaque pass, before the water: opaque geometry only (no sky, clouds or fog yet).
 2. **SSPR** (compute, Cichocki 2017) for the dominant plane: the camera's nearest body's level (the sea
    level covers most exterior views; interior pools their own). Each opaque pixel above the plane is
-   projected to its mirror pixel with an atomic-min depth hash; a resolve pass fills holes. One pass,
-   resolution ½ on Medium. Waves perturb the lookup by the normal; misses fall back.
-3. **Water draw**: the surface meshes as a Bevy material (`ExtendedMaterial` or a full `Material` in
-   our own phase, decided at W2 by what keeps the view bindings: lights, shadows, environment map),
+   projected to its mirror pixel with an atomic hash; a resolve pass fills holes. Resolution ½ on
+   Medium, full on High. Waves perturb the lookup by the normal; misses fall back. As built below.
+3. **Water draw**: the surface meshes as an `ExtendedMaterial` in Bevy's transmissive phase
+   (W-ORDER; it keeps the view bindings: lights, shadows, environment map),
    depth-tested against the scene and **depth-writing**, so precipitation and particles sort against
    it. Shading: GGX sun and moon specular (Bevy's functions, slope-variance roughness), clustered point
    lights, reflection = SSPR hit → local light probe (where content has one) → environment map, with
    Fresnel; refraction = snapshot colour at `uv + normal.xz·strength·saturate(depth_behind)`, rejected
    (falls back to the unrefracted uv) when the sampled depth is in front of the water; depth colour;
    foam; rain ripple normals (weather/precipitation-surface.md's ripple atlas × rain intensity); dynamic ripple normals;
-   flow-advected normals (rivers). Then fog: aerial perspective from Bevy's aerial-view LUT and the
-   froxel fog through `sf_atmos::fog` (weather/fog.md "Fog", step 4), so far water fades like terrain.
+   flow-advected normals (rivers). No fog of its own: aerial perspective and `sf_atmos` fog are
+   applied after it by its depth, like terrain (render-order.md "Depth contract").
 4. **Velocity**: the water mesh is drawn again into the motion-vector texture (displacement now vs the
    previous frame's, kept one frame), depth-tested, colour off. Without it DLSS/TAA would smear waves
    with the bed's motion. Foam and sparkle also write the reactive/bias mask once weather.md open
    question 9's upstream patch exists.
 5. **Underwater post** (only when the camera is below or split, next section).
 
-Not chosen: Bevy `Transmissive3d` (no depth, no MVs, unordered vs the sky); planar reflection cameras
+Not chosen: our own phase after the sky and fog (the pre-W-ORDER build; it needed its own fog and a
+copy pass, render-order.md "Frame graph"); planar reflection cameras
 (aqua's default: a second render of the streamed world, ≈ the cost of the main opaque pass; kept as a
 possible Ultra option for small interior pools only, not planned); Bevy SSR (needs deferred + depth
 prepass on the exterior camera, weather.md open question 4: if that resolves, water can use it for
 non-planar hits).
+
+**SSPR as built (W-SSPR, 2026-11-12).** Reuse check: Bevy 0.20 has SSR only on the deferred path
+and no planar reflections; no maintained Bevy SSPR crate (aqua renders planar cameras). Industry:
+CoD Infinite Warfare (Cichocki 2017) and the Unity URP SSPR sample (ColinLeung, MIT) use one
+projection hash + resolve; UE5 uses SSR + optional planar captures. Ours differs in the key: Cichocki
+packs the source offset with screen-Y order (needs an upright camera, and too few bits beside
+source coordinates at 1440p+); we store the source's **height above the plane** (inverted float
+bits, `atomicMax`), exact at any resolution since every source of a target lies on one reflected
+ray whose height grows with distance, and the resolve rebuilds the source from the target's own
+ray and that height (`sf_water::sspr`, CPU reference + tests). Passes (`sf_water_bevy`
+`water_sspr.wesl`, `PassStage::Reflection`): clear the hash, `project`, `resolve` (hole fill from
+the 4-neighbours, then ±2 rows; screen-edge fade of the source as confidence; output premultiplied
+`Rgba16Float`). Plane: `sf_water::reflection_plane` (nearest shown body below the camera; none
+underwater); only the surface at that level reads it. Water draw: the reflected ray of a normal
+blended 0.6 toward the wave normal (`WaterReflections::wave_distortion`) is looked up at the pixel of
+its mirror direction, blurred vertically with roughness², faded out at roughness 0.45-0.65 and
+under foam; where it hits, its colour replaces the environment specular with the same split-sum
+Fresnel (Bevy SSR's composition, `environment_specular` recomputes the env term). Reflections are
+of the opaque snapshot, so unfogged; the fog composite fogs camera → water surface afterwards
+(accepted). Tiers: Low off, Medium ½, High/Ultra full (`WaterQuality::sspr_scale`); switch
+`WaterReflections::sspr`, game `--off waterssr`. GPU timer `render/water_sspr/elapsed_gpu`
+(expected 0.1-0.25 ms at High, 1707×960). Not handled: reflections of what is off screen or
+occluded on screen (the dynamic probe below is the fallback), translucents (not in the snapshot).
 
 **Off-screen reflections.** SSPR only knows what is on screen; the environment map knows only the sky.
 For the far shore and mountains that leave the screen (looking down at the sea), a **camera-centred

@@ -1,0 +1,5 @@
+# Ledger: water (ocean, lakes, pools, water pass, reflections)
+
+Format: `date | tried | result | verdict | commit or doc`. Newest first. Owner checks are WA- ids in `bevyrrowind/docs/visual-checks.md`; earlier water lines (W-ORDER, the water-at-night diagnosis) are in [sky-weather](sky-weather.md).
+
+2026-11-12 | W-SSPR: screen-space planar reflections of the opaque snapshot (Cichocki 2017 project + resolve, keyed by source height above the plane via inverted float bits + atomicMax instead of screen-Y packing), plane = nearest shown body below the camera, wave-perturbed lookup, swaps the env-map specular where it hits (Bevy SSR composition); Low off, Medium 1/2, High full; `--off waterssr` = env map only | built; tests (sf_water sspr math 6, water shader compile + layout 3, pass order) + clippy green; cost not measured (expected 0.1-0.25 ms at High, 1707x960; GPU timer `water_sspr`) | confirmed by owner 2026-11-12 (WA-3, day + night; night water no longer too bright, so W-SPECOCC not needed now); emissive-in-reflection unsure, A/B and cost not run | water.md "SSPR as built"

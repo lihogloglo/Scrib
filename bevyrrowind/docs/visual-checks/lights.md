@@ -41,7 +41,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Fix (render-opt 2026-10-28): propagated NetImmerse `NiVertexColorProperty::LightingMode` (`Emissive` vs `EmissiveAmbientDiffuse`) and `NiTexturingProperty::ClampMode` through `mw_nif`, `sf_model`, `mw_bake`, and `mw_assets`, and added 16-bit `A1R5G5B5`/`A4R4G4B4`/`B5G6R5` DDS decoding in `mw_bake/src/textures.rs` for cutout promotion. Re-bake `mesh.cook` / `tex.meta` if using an older bake store; check `view Balmora --hour 22`.
 - Status: awaiting owner (2026-10-28).
 - Owner 2026-10-30 (`scene hi-balmora-night`): leaves look okay; the water is still brighter than the rest at night (not
-  a moon effect). Status: partial (water at night open).
+  a moon effect). Status: partial (water at night open). 2026-11-12: water at night correct after W-SSPR (owner, `ebonheart-night`, WA-3).
 
 ### LT-reach: Lamp reach follows shadow state (L-A, 2026-11-05; spec lights.md "Reach follows shadow state")
 - Kind: game location, High preset (8 lamp shadows). Run (dev exe): `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen, Census and Excise Office"`,

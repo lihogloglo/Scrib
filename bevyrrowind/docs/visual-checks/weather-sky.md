@@ -160,7 +160,9 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   continuing over water instead of stopping at the shore; from high up, a cloud between camera and ocean shows.
 - Must not: water looking double-fogged (milkier/greyer than the land beside it); a halo or seam at the shoreline;
   refraction of the seabed and shore foam changed; stars drawn over water at night (`--hour 23 --weather clear`).
-- Status: awaiting owner (built 2026-11-12).
+- Status: confirmed (owner 2026-11-12: fog over the water (`scene fg-bittercoast-ridge`); thunderstorm at Seyda Neen: fog,
+  rain and lightning flashes carry on over the sea; clouds right seen from up at sea). Follow-up wish (later): show the
+  lightning bolt itself, not only the flash.
 
 ### FG-7: Blocky crenellated edges on distant land in fog (owner report)
 - Kind: game location. Seen 2026-10-30 (`scene balmora`): stair-stepped land silhouettes in fog, worse moving.
@@ -171,7 +173,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   then `scene balmora --weather foggy --hour 6.5`; still, then pan and walk. A/B: same with `--off fogbank`.
 - Look for: land and hill silhouettes in fog smooth, no stair steps still or moving, no bright/dark halo along them,
   fog density and bank shapes unchanged elsewhere. `--off fogbank` should show the old steps.
-- Status: awaiting owner (FOG-BANK built 2026-11-12).
+- Status: confirmed (owner 2026-11-12, `scene fg-bittercoast-ridge`: blockiness gone).
 
 ### FG-8: Weather fog vanishes at night (owner report)
 - Kind: game location. Foggy weathers (fog, overcast, ash), compare 20:00 and 01:00 (`--hour`).
@@ -208,7 +210,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Look for: fog over near buildings and land smooth, no crawling grain still or panning; no ghost trails behind
   moving NPCs or their shadows, none on fast turns; no black bands (FG-1); fog density/colour as before.
   `--off fogclamp` should crawl more when still.
-- Status: awaiting owner (FOG-CLAMP built 2026-11-12).
+- Status: confirmed (owner 2026-11-12, `scene balmora --weather foggy --hour 6.5`: "the fog is glorious"; `--off fogclamp` A/B not run).
 
 ### SW-2: Surface weather shelter, night and trees (surface-weather.md W2, W2b)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 23 --weather clear` (night: no
@@ -308,3 +310,15 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - At 0.5: patchy drying (metre-scale patches), no tiling visible. Characters stay dry (W8). Far proxies darken a bit.
 - `surface debug porosity`: metal and polish black, stone, earth, plaster white. `--off wet`: exactly the dry look.
 - Status: awaiting owner (built 2026-11-05).
+
+### WE-12: From very high, the lower part of the clouds disappears (owner 2026-11-12)
+- Kind: game location. Seen in `scene fg-bittercoast-ridge` after flying far above the cloud deck (after W-ORDER).
+- Seen: high enough, the bottom of the clouds vanishes, as if clouds draw only against the sky. Re-seen 2026-11-12
+  flying up into the cloud layer and trying to enter the clouds: their bottom part is missing. Clouds seen from up at sea
+  (below the deck) are fine, so it is not WE-11's high-cloud item. Owner's precise case: deck at ~500 m, camera at
+  ~600 m looking down: the cloud between the camera and the terrain/fog/objects behind it is not drawn; from below it
+  is perfect. Flying into clouds is not a game feature, but very low clouds (and a volcano smoke plume, WISHLIST §5)
+  would hit the same path.
+- Suspect (not tested): the cloud march assumes a camera below or inside the deck, or stops at geometry depth when looking
+  down, or at the deck's entry point.
+- Status: known bug: not diagnosed.

@@ -6,7 +6,7 @@
 //! Bevy's view bindings (directional and clustered lights, shadows, the environment map) with
 //! the least code (water.md open question 1, decided at W2). Its own vertex shader displaces the
 //! clipmap; its fragment shader reads the colour + depth snapshot of the opaque scene
-//! (`render.rs`) for refraction and depth colour. It does not fog itself (render-order.md
+//! (`render.rs`) for refraction and depth colour, and its SSPR image for local reflections. It does not fog itself (render-order.md
 //! "Frame graph").
 
 use bevy_asset::{Asset, Handle};
@@ -55,12 +55,15 @@ pub struct WaterParams {
     pub misc2: Vec4,
     /// Optics map: render-space XZ of cell (0, 0)'s centre, 1 / cell size, on 0/1.
     pub regions: Vec4,
+    /// SSPR (W-SSPR): (wave distortion; texel scale of the reflection image, 1 or 2, 0 = this
+    /// surface does not use it; mirrored plane level, render-space Y; 0).
+    pub reflection: Vec4,
     /// Optics table of the map, 3 per entry: (absorption, whitecaps), (scattering, contact depth),
     /// (roughness, shore foam, 0, 0).
     pub looks: [Vec4; 24],
 }
 
-/// The water half of [`WaterMaterial`] (bindings 100-105 and 110-112 of the material group).
+/// The water half of [`WaterMaterial`] (bindings 100-107 and 110-112 of the material group).
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct WaterExt {
     #[uniform(100)]
@@ -78,6 +81,10 @@ pub struct WaterExt {
     /// Scene depth (reverse Z, R32F).
     #[texture(105, sample_type = "float", filterable = false)]
     pub snapshot_depth: Handle<Image>,
+    /// SSPR of the snapshot (premultiplied colour, confidence in alpha; `render.rs`), linear clamp.
+    #[texture(106)]
+    #[sampler(107)]
+    pub reflection: Handle<Image>,
     /// `sf_water::ShoreField::encode_rg8` (`Rg8Unorm`), or a 1x1 open-sea texel.
     #[texture(110, visibility(vertex, fragment))]
     #[sampler(111, visibility(vertex, fragment))]
@@ -96,6 +103,7 @@ impl WaterExt {
             slopes: images.slopes.clone(),
             snapshot_color: images.snapshot_color.clone(),
             snapshot_depth: images.snapshot_depth.clone(),
+            reflection: images.reflection.clone(),
             shore: images.shore.clone(),
             regions: images.regions.clone(),
         }

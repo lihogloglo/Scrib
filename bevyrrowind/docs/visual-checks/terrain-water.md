@@ -19,6 +19,10 @@ Known: reflections are the environment map only (SSPR/probe at W4), no shore wav
 too milky turquoise (W1 placeholder optics, tuned at W3), whitecaps at storm winds untuned.
 - Owner 2026-10-30 (`scene wa-seyda-noon`): distant moiré gone (fixed). Still missing: rain ripples on the water and
   ripples from moving bodies (Phase 4 water polish / PR2 splashes).
+- Owner 2026-11-12 (Seyda Neen thunderstorm): (2) shore foam still bad, (3) water fully flat next to the shore: wants
+  wavelets from the normals even where vertex displacement stops. Code: the shading normal uses the same shore scales as
+  the displacement (`water_material.wesl:207-209`, `shore_scales` chop -> 0 at the line, `water_common.wesl:52`). Rain
+  goes over the water but makes no ripples; floating or wading bodies make none either.
 
 ### WA-2: Shore and region optics, W3 (`scene wa-seyda-noon`, `wa-bittercoast`, `wa-vivec-waterfront`, `wa-sunset-sea`, `wa-night-moons`)
 
@@ -35,3 +39,17 @@ shore line is a thin broken foam band, not a white outline; swell dies on beache
 under land. Known: from above (`wa-bittercoast`) the swamp reads grey (sky reflection dominates at that angle; SSPR at
 W4); at night the water reads lighter than the land (env-map reflection, W4); the shore foam band shape is still the
 generic travelling band (wet sand band waits for SU1); waves by weather are WE3.
+
+### WA-3: Local reflections, SSPR (W-SSPR; `scene wa-vivec-waterfront` 15:00, `ebonheart-night` 22:00, `wa-seyda-noon`, `wa-night-moons` 23:30; A/B `--off waterssr`)
+
+Status: confirmed (owner 2026-11-12: Seyda Neen thunderstorm 9:00 "very nice"; `ebonheart-night` 22:00: "the water is
+correct now", no longer brighter than the land (LM-2), "very nice"). Open: owner unsure emissive surfaces (lit windows)
+show in the reflection; `--off waterssr` A/B not run. Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-vivec-waterfront`, then
+`scene ebonheart-night`; A/B: the same with `--off waterssr` (environment map only, the old look). High preset.
+Look for: Vivec's cantons, Ebonheart's walls and docks, ships and the dark banks mirrored in the water below them and
+wobbling with the waves (vertical streaks on rougher far water, not a hard mirror); at 22:00 lit windows, lamps and light
+sprites reflected (the sprites are translucent: not in the reflection, known), water near dark banks dark, not airglow-bright.
+Bad: smeared streaks or stretched copies at screen edges; a hard cut where a reflection leaves the screen (it should fade
+to the sky reflection); flicker or crawling when still or panning; anything under the water (seabed, hull bottoms)
+mirrored; reflections on a lake or pool at another level than the nearest one. Known: reflections are unfogged (the fog
+over the water covers them), off-screen and occluded things fall back to the sky.

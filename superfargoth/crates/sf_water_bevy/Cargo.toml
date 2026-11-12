@@ -30,6 +30,10 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+# Shader compile checks (no GPU, no picture), as sf_atmos_bevy's: wesl links the real modules
+# (vendored bevy_pbr, ours) per def set, naga validates.
+naga = { workspace = true, features = ["wgsl-in"] }
+wesl = { workspace = true, features = ["naga-ext"] }
 
 [lints]
 workspace = true

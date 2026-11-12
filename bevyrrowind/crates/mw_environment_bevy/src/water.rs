@@ -29,7 +29,7 @@ use sf_records::RecordDb;
 use sf_terrain_bevy::{TerrainHeightsMap, TerrainOrigin, TerrainSystems};
 use sf_water::{BedHeights, Cascades, OpticsMap, ShoreField, WaterSource, WaterWorld, WaveTwin, WetMask, WorldspaceWater, TWIN_RESOLUTION};
 use sf_water_bevy::{
-    OceanSpectrum, OceanSurface, WaterCamera, WaterFrame, WaterLook, WaterPlugin, WaterQuality, WaterRegionsInput, WaterShoreInput,
+    OceanSpectrum, OceanSurface, WaterCamera, WaterFrame, WaterLook, WaterPlugin, WaterQuality, WaterReflections, WaterRegionsInput, WaterShoreInput,
     WaterSurface, WaterSystems,
 };
 use sf_world::{Worldspace, WorldspaceId};
@@ -135,7 +135,8 @@ fn water_quality(q: Quality) -> WaterQuality {
     }
 }
 
-pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>) {
+/// `sspr`: local reflections on the water (W-SSPR; `--off waterssr` = the environment map only).
+pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, sspr: bool, worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>) {
     if mode() != WaterMode::On {
         return;
     }
@@ -177,6 +178,7 @@ pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, worldspaces: &s
         .insert_resource(OceanSpectrum { params, cascades, seed: SEED })
         .insert_resource(look)
         .insert_resource(water_quality(quality))
+        .insert_resource(WaterReflections { sspr, ..WaterReflections::default() })
         .insert_resource(WaterRegionsInput { map: inputs.regions.map(Arc::new), looks })
         .insert_resource(ShoreBake(bake))
         .insert_resource(Pools { levels, look: look_of(optics::INTERIOR), current: None })

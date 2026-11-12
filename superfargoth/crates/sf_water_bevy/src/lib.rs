@@ -3,12 +3,13 @@
 //! twin, a camera-centred clipmap surface with a horizon skirt, shore attenuation from the
 //! `water.shore` field, optics by region, and the water pass (a colour + depth snapshot of the
 //! opaque scene, the water draw in Bevy's transmissive phase, so the sky, clouds and fog cover it
-//! afterwards by its depth, render-order.md "Frame graph"; a motion-vector redraw for DLSS/TAA).
+//! afterwards by its depth, render-order.md "Frame graph"; SSPR local reflections of the snapshot,
+//! W-SSPR; a motion-vector redraw for DLSS/TAA).
 //!
 //! The host (an app or adapter) owns the inputs: [`OceanSpectrum`] (sea state, seed, cascades:
 //! the twin's), [`WaterFrame`] (time, floating-origin cell, rest level), [`WaterLook`] (optics),
 //! [`WaterShoreInput`] and
-//! [`WaterRegionsInput`] (bake products), [`WaterQuality`]; it marks the camera ([`WaterCamera`])
+//! [`WaterRegionsInput`] (bake products), [`WaterQuality`], [`WaterReflections`]; it marks the camera ([`WaterCamera`])
 //! and surface entities ([`OceanSurface`] for the ocean, [`WaterSurface`] for lakes, pools and
 //! interior water at their own level), with the camera's render layers. Systems in
 //! [`WaterSystems::Drive`] (`PostUpdate`) turn them into GPU state; order the host's systems
@@ -19,6 +20,8 @@
 mod material;
 pub mod mesh;
 mod render;
+#[cfg(test)]
+mod shader_tests;
 
 use std::sync::Arc;
 
@@ -37,7 +40,8 @@ use bevy_pbr::{MaterialPlugin, MeshMaterial3d, ScreenSpaceTransmission, Standard
 use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension};
 use bevy_shader::load_shader_library;
 use bevy_transform::TransformSystems;
-use sf_water::{origin_phase, Cascades, OpticsMap, ShoreField, ShoreSettings, SpectrumParams, WaterOptics, H0, REPEAT_PERIOD};
+use bevy_transform::components::GlobalTransform;
+use sf_water::{origin_phase, reflection_plane, Cascades, OpticsMap, PlaneCandidate, ShoreField, ShoreSettings, SpectrumParams, WaterOptics, H0, REPEAT_PERIOD};
 
 pub use material::{WaterExt, WaterMaterial, WaterParams};
 
@@ -99,6 +103,35 @@ impl WaterQuality {
     #[must_use]
     pub fn amortised(self) -> bool {
         self == Self::High
+    }
+
+    /// SSPR texel size in render pixels (water.md "Performance budgets"): none on Low (the
+    /// environment map only), ½ resolution on Medium, full on High and Ultra.
+    #[must_use]
+    pub fn sspr_scale(self) -> Option<u32> {
+        match self {
+            Self::Low => None,
+            Self::Medium => Some(2),
+            Self::High | Self::Ultra => Some(1),
+        }
+    }
+}
+
+/// Local reflections on the water (water.md "Water pass, refraction, reflections"): screen-space
+/// planar reflections (SSPR, Cichocki 2017) of the opaque snapshot in the plane of the nearest
+/// body below the camera ([`sf_water::reflection_plane`]); the environment map where SSPR misses
+/// (sky, off screen) and on surfaces at another level.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct WaterReflections {
+    /// SSPR on, where the [`WaterQuality`] tier has it; off: the environment map only.
+    pub sspr: bool,
+    /// How far the wave normal tilts the reflection lookup: 1 = the mirror law, 0 = a flat mirror.
+    pub wave_distortion: f32,
+}
+
+impl Default for WaterReflections {
+    fn default() -> Self {
+        Self { sspr: true, wave_distortion: 0.6 }
     }
 }
 
@@ -255,6 +288,9 @@ pub struct WaterImages {
     pub slopes: Handle<Image>,
     pub snapshot_color: Handle<Image>,
     pub snapshot_depth: Handle<Image>,
+    /// SSPR output (`Rgba16Float`, premultiplied colour + confidence), at the snapshot size / the
+    /// tier's [`WaterQuality::sspr_scale`].
+    pub reflection: Handle<Image>,
     /// The shore field (`Rg8Unorm`) or a 1×1 open-sea stand-in.
     pub shore: Handle<Image>,
     /// The optics map (`R8Uint`) or a 1×1 zero.
@@ -262,6 +298,7 @@ pub struct WaterImages {
     /// FFT grid of the wave images.
     pub resolution: usize,
     snapshot_size: UVec2,
+    reflection_size: UVec2,
 }
 
 pub struct WaterPlugin;
@@ -277,6 +314,7 @@ impl Plugin for WaterPlugin {
         embedded_asset!(app, "shaders/water_fft.wesl");
         embedded_asset!(app, "shaders/water_mips.wesl");
         embedded_asset!(app, "shaders/water_snapshot.wesl");
+        embedded_asset!(app, "shaders/water_sspr.wesl");
         embedded_asset!(app, "shaders/water_velocity.wesl");
         app.init_resource::<OceanSpectrum>()
             .init_resource::<WaterFrame>()
@@ -284,6 +322,7 @@ impl Plugin for WaterPlugin {
             .init_resource::<WaterShoreInput>()
             .init_resource::<WaterRegionsInput>()
             .init_resource::<WaterQuality>()
+            .init_resource::<WaterReflections>()
             .init_resource::<ClipmapSettings>()
             .init_resource::<render::WaterRender>()
             .add_plugins(MaterialPlugin::<WaterMaterial>::default())
@@ -399,10 +438,12 @@ fn create_images(mut commands: Commands, mut images: ResMut<Assets<Image>>, qual
         slopes: images.add(slopes),
         snapshot_color: images.add(snapshot_image(UVec2::ONE, TextureFormat::Rgba16Float)),
         snapshot_depth: images.add(snapshot_image(UVec2::ONE, TextureFormat::R32Float)),
+        reflection: images.add(reflection_image(UVec2::ONE)),
         shore: images.add(shore_image(1, 1, vec![255, 255])),
         regions: images.add(regions_image(1, 1, vec![0])),
         resolution: n,
         snapshot_size: UVec2::ONE,
+        reflection_size: UVec2::ONE,
     };
     commands.insert_resource(water_images);
 }
@@ -415,6 +456,19 @@ fn snapshot_image(size: UVec2, format: TextureFormat) -> Image {
         TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
         None,
     )
+}
+
+/// The SSPR output: written by the resolve (storage), sampled by the water draw.
+fn reflection_image(size: UVec2) -> Image {
+    let mut i = image(
+        Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        TextureFormat::Rgba16Float,
+        TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+        None,
+    );
+    i.sampler = sampler(ImageAddressMode::ClampToEdge);
+    i
 }
 
 
@@ -477,10 +531,12 @@ fn upload_bakes(shore: Res<WaterShoreInput>, regions: Res<WaterRegionsInput>, im
     }
 }
 
-/// Keeps the snapshot targets at the active main-pass size (matching DLSS sub-viewports).
+/// Keeps the snapshot targets at the active main-pass size (matching DLSS sub-viewports), and the
+/// SSPR image at that size / the tier's texel scale (1×1 without SSPR).
 #[allow(clippy::type_complexity)]
 fn size_targets(
     cameras: Query<(&Camera, Option<&MainPassResolutionOverride>), With<WaterCamera>>,
+    (quality, reflections): (Res<WaterQuality>, Res<WaterReflections>),
     images: Option<ResMut<WaterImages>>,
     mut assets: ResMut<Assets<Image>>,
 ) {
@@ -495,6 +551,16 @@ fn size_targets(
         images.snapshot_depth = assets.add(snapshot_image(size, TextureFormat::R32Float));
         images.snapshot_size = size;
     }
+    let reflection = sspr_scale(*quality, *reflections).map_or(UVec2::ONE, |s| UVec2::new(size.x.div_ceil(s), size.y.div_ceil(s)));
+    if reflection != images.reflection_size {
+        images.reflection = assets.add(reflection_image(reflection));
+        images.reflection_size = reflection;
+    }
+}
+
+/// The SSPR texel scale in use (`None`: off by setting or tier).
+fn sspr_scale(quality: WaterQuality, reflections: WaterReflections) -> Option<u32> {
+    quality.sspr_scale().filter(|_| reflections.sspr)
 }
 
 /// Gives [`OceanSurface`] and [`WaterSurface`] entities the clipmap mesh and the water material.
@@ -529,6 +595,8 @@ struct Shared<'a> {
     shore: &'a WaterShoreInput,
     regions: &'a WaterRegionsInput,
     cascades: usize,
+    /// SSPR this frame: (plane level, texel scale, wave distortion).
+    reflection: Option<(f32, u32, f32)>,
 }
 
 /// Render-space XZ of world XZ `p` under the floating origin.
@@ -589,6 +657,11 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
         shore2,
         misc2: Vec4::new((frame.time.rem_euclid(REPEAT_PERIOD)) as f32, 6.0, 0.0, look.shore_foam),
         regions,
+        reflection: match s.reflection {
+            // Only the surface at the mirrored level reads the SSPR; others keep the environment map.
+            Some((plane, scale, distortion)) if (level - plane).abs() < 0.01 => Vec4::new(distortion, scale as f32, plane, 0.0),
+            _ => Vec4::ZERO,
+        },
         looks,
     }
 }
@@ -597,7 +670,8 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
 #[allow(clippy::too_many_arguments, clippy::similar_names, clippy::type_complexity)]
 fn drive(
     (frame, spectrum, look, clip, quality): (Res<WaterFrame>, Res<OceanSpectrum>, Res<WaterLook>, Res<ClipmapSettings>, Res<WaterQuality>),
-    (shore, regions): (Res<WaterShoreInput>, Res<WaterRegionsInput>),
+    (shore, regions, reflections): (Res<WaterShoreInput>, Res<WaterRegionsInput>, Res<WaterReflections>),
+    cameras: Query<&GlobalTransform, With<WaterCamera>>,
     images: Option<Res<WaterImages>>,
     mut surfaces: Query<(&MeshMaterial3d<WaterMaterial>, Option<&WaterSurface>, Has<OceanSurface>, &mut Visibility, &bevy_camera::visibility::InheritedVisibility)>,
     mut materials: ResMut<Assets<WaterMaterial>>,
@@ -606,7 +680,16 @@ fn drive(
 ) {
     let Some(images) = images else { return };
     let cascades = spectrum.cascades.len().min(MAX_CASCADES).min(quality.cascades());
+    // SSPR plane: the nearest shown body below the camera (sf_water::reflection_plane).
+    let candidates: Vec<PlaneCandidate> = surfaces
+        .iter()
+        .filter(|(_, surface, ocean, _, inherited)| if *ocean && surface.is_none() { frame.enabled } else { inherited.get() })
+        .map(|(_, surface, _, _, _)| surface.map_or(PlaneCandidate { level: frame.level, bounds: None }, |w| PlaneCandidate { level: w.level, bounds: w.bounds }))
+        .collect();
+    let plane = cameras.iter().next().and_then(|c| reflection_plane(c.translation(), &candidates));
+    let reflection = plane.zip(sspr_scale(*quality, *reflections)).map(|(level, scale)| (level, scale, reflections.wave_distortion));
     let shared = Shared {
+        reflection,
         frame: &frame,
         spectrum: &spectrum,
         clip: &clip,
@@ -639,6 +722,7 @@ fn drive(
             let e = &m.extension;
             e.params != p
                 || e.snapshot_color != images.snapshot_color
+                || e.reflection != images.reflection
                 || e.displacement != images.displacement
                 || e.shore != images.shore
                 || e.regions != images.regions
@@ -681,6 +765,7 @@ fn drive(
         mips: wave_mips(n),
         layers: count,
         params: p,
+        sspr: reflection.map(|(level, scale, _)| render::SsprState { level, scale }),
         images: Some(render::ImageIds::new(&images)),
     };
     *state = next;

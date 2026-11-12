@@ -80,11 +80,13 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (52)
+### Awaiting owner (53)
 
-FG-11 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Froxel fog smooth over near objects, still and panning; no trails or black bands (FOG-CLAMP, A/B `--off fogclamp`, 2026-11-12)
-WE-11 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Weather covers water like land (W-ORDER): fog/rain/storm over the far sea, cloud over the ocean from high, no double fog or shore halo (2026-11-12)
-FG-7 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Blocky edges on distant land in fog: FOG-BANK fix, A/B `--off fogbank` (2026-11-12)
+WA-3 | confirmed (2026-11-12: day and night "very nice", night water no longer too bright; emissive in reflection unsure) | [terrain-water](visual-checks/terrain-water.md) | Water mirrors banks, buildings, ships and lit windows, wobbling with waves; edge fade, no flicker, nothing below the water (W-SSPR, A/B `--off waterssr`, 2026-11-12)
+FG-11 | confirmed (2026-11-12: "the fog is glorious") | [weather-sky](visual-checks/weather-sky.md) | Froxel fog smooth over near objects, still and panning; no trails or black bands (FOG-CLAMP, A/B `--off fogclamp`, 2026-11-12)
+WE-11 | confirmed (2026-11-12: fog, rain, storm over sea; clouds at sea; wish: visible lightning bolt) | [weather-sky](visual-checks/weather-sky.md) | Weather covers water like land (W-ORDER): fog/rain/storm over the far sea, cloud over the ocean from high, no double fog or shore halo (2026-11-12)
+WE-12 | known bug | [weather-sky](visual-checks/weather-sky.md) | Camera above the cloud deck looking down: cloud in front of terrain/fog/objects not drawn; fine from below (2026-11-12)
+FG-7 | confirmed (2026-11-12: blockiness gone) | [weather-sky](visual-checks/weather-sky.md) | Blocky edges on distant land in fog: FOG-BANK fix, A/B `--off fogbank` (2026-11-12)
 SH-11 | confirmed (2026-10-30) | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
 SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player and torches cast none; fixes built 2026-11-01: SH-21) | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
 SH-21 | partial (2026-11-01: torches cast; flicker, cut faces, choppy: SH-20b in progress) | [shadows](visual-checks/shadows.md) | Lamp and torch shadows on the player and torch-bearers; shadowed-lamp pick by view visibility (2026-11-01)
@@ -98,7 +100,7 @@ GI-lampbody | awaiting owner | [gi](visual-checks/gi.md) | Lamp bodies don't lig
 PH-15 | confirmed (2026-11-05: knee sink fixed; rapid balls push held bodies each time, S3) | [physics](visual-checks/physics.md) | Knockdowns of human NPCs are Delirium falls + get-ups (V ball, `@impact`); beasts and creatures keep the old ragdoll
 PH-16 | confirmed for console kill (2026-11-05); hit deaths unseen until C6 | [physics](visual-checks/physics.md) | A killed human NPC falls and stays dead under Delirium (console `kill`); beasts and creatures keep the clip + limp ragdoll
 LT-reach | rejected 2026-11-05 (default back to 4 x) | [lights](visual-checks/lights.md) | Lamp reach follows shadow state: no light through walls, no ring or pop at pool edges, GI visible next to lamps (`flip gi` A/B; old reach `--range-unshadowed 4`)
-LM-2 | partial (2026-10-30: leaves OK, water still too bright at night) | [lights](visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
+LM-2 | confirmed (2026-11-12: leaves OK; night water correct after W-SSPR) | [lights](visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
 FF-2 | rejected (2026-10-30: all green to the horizon, L2/L3 never shown) | [rendering](visual-checks/rendering.md) | Far-field L1/L2/L3 F5 debug tint on proxies and impostors
 DL-5 | awaiting owner | [rendering](visual-checks/rendering.md) | Interior `--rt --off denoiser` runs without `sky_motion` validation crash
 RO-14 | confirmed (2026-11-02: sun at dusk; lamps and candles runs not checked) | [rendering](visual-checks/rendering.md) | Bloom on the game camera: sun, lamps, candles glow, lit walls stay crisp (`--off bloom` A/B)
@@ -171,7 +173,7 @@ DR-2 | partial | [streaming](visual-checks/streaming.md) | Back out
 LT-2 | partial | [lights](visual-checks/lights.md) | Dark interior keeps its lights
 PH-7 | partial | [physics](visual-checks/physics.md) | Item body shapes
 PH-9 | partial | [physics](visual-checks/physics.md) | knockdown and get-up
-WA-1 | partial (2026-10-30: moiré fixed; no rain or wake ripples; shore/whitecaps Phase 4) | [terrain-water](visual-checks/terrain-water.md) | Open sea, W2 FFT ocean
+WA-1 | partial (2026-11-12: still flat at the shore (normals scaled with displacement), bad foam, no rain or wake ripples; Phase 4) | [terrain-water](visual-checks/terrain-water.md) | Open sea, W2 FFT ocean
 IV-1 | partial | [player-ui](visual-checks/player-ui.md) | Take items and Fargoth's ring; inventory layout, hover, drop, paper doll missing
 IV-2 | confirmed with follow-up (2026-10-30: icons only on hover, E should close) | [player-ui](visual-checks/player-ui.md) | Container window: the ring barrel outside the Census office (ring), move both ways, Take all closes
 CO-1 | confirmed (2026-10-30) | [player-ui](visual-checks/player-ui.md) | Console: exterior COC, paste, Down/Enter on suggestions (2026-10-26)

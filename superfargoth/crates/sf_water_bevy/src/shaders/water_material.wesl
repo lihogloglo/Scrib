@@ -5,15 +5,19 @@
 // highlight), refraction from the scene snapshot (rejected where the refracted sample is in front
 // of the water), Beer-Lambert absorption + single scattering over the view path with optics
 // blended from the region map, Bevy PBR lighting (GGX sun/moon, clustered lights, shadows,
-// environment map) with water's F0 0.02, whitecap, shore and contact foam. No fog: the sky,
+// environment map) with water's F0 0.02, local reflections from the SSPR image where it hits
+// (W-SSPR, the environment map elsewhere), whitecap, shore and contact foam. No fog: the sky,
 // aerial perspective, clouds and fog run after the water by its depth (W-ORDER, render-order.md).
 // Optics shading follows bevy-aqua's structure (MIT OR Apache-2.0).
 
 import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_scales};
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT;
-import bevy_pbr::render::pbr_types::pbr_input_new;
-import bevy_pbr::render::pbr_functions::apply_pbr_lighting;
+import bevy_pbr::render::pbr_types::{PbrInput, pbr_input_new};
+import bevy_pbr::render::pbr_functions::{apply_pbr_lighting, calculate_F0_dielectric};
+import bevy_pbr::render::pbr_lighting::{F_AB, LAYER_BASE, LightingInput, perceptualRoughnessToRoughness};
+import bevy_pbr::render::clustered_forward::{view_fragment_cluster_index, unpack_clusterable_object_index_ranges};
+@if(ENVIRONMENT_MAP) import bevy_pbr::light_probe::environment_map;
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> water: WaterParams;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var displacement: texture_2d_array<f32>;
@@ -21,6 +25,8 @@ import bevy_pbr::render::pbr_functions::apply_pbr_lighting;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var slopes: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var snapshot_color: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var snapshot_depth: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var reflection: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var reflection_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(110) var shore_field: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(111) var shore_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(112) var region_map: texture_2d<u32>;
@@ -103,6 +109,63 @@ fn look_at(xz: vec2<f32>) -> Look {
         out = added(out, scaled(table_look(textureLoad(region_map, q, 0).r), w));
     }
     return out;
+}
+
+// The environment-map specular `apply_pbr_lighting` added for `pbr` (pre-exposure), recomputed as
+// Bevy's SSR pass does (`bevy_pbr` `ssr.wesl`), so the SSPR can take its place where it hits.
+fn environment_specular(pbr: PbrInput) -> vec3<f32> {
+    var out = vec3(0.0);
+    @if(ENVIRONMENT_MAP) {
+        let NdotV = max(dot(pbr.N, pbr.V), 0.0001);
+        var input: LightingInput;
+        input.layers[LAYER_BASE].NdotV = NdotV;
+        input.layers[LAYER_BASE].N = pbr.N;
+        input.layers[LAYER_BASE].R = reflect(-pbr.V, pbr.N);
+        input.layers[LAYER_BASE].perceptual_roughness = pbr.material.perceptual_roughness;
+        input.layers[LAYER_BASE].roughness = perceptualRoughnessToRoughness(pbr.material.perceptual_roughness);
+        input.P = pbr.world_position.xyz;
+        input.V = pbr.V;
+        input.diffuse_color = vec3(0.0);
+        input.metallic = 0.0;
+        input.F0_dielectric = calculate_F0_dielectric(pbr.material.reflectance);
+        input.F0_metallic = pbr.material.base_color.rgb;
+        input.F_ab = F_AB(pbr.material.perceptual_roughness, NdotV);
+        let view_z = dot(vec4(view.view_from_world[0].z, view.view_from_world[1].z, view.view_from_world[2].z, view.view_from_world[3].z), pbr.world_position);
+        var ranges = unpack_clusterable_object_index_ranges(view_fragment_cluster_index(pbr.frag_coord.xy, view_z, false));
+        out = environment_map::environment_map_light(&input, &ranges, true).specular * pbr.specular_occlusion;
+    }
+    return out;
+}
+
+// SSPR at the wave-perturbed reflection (W-SSPR): the reflected ray R is looked up at the screen
+// pixel of its mirror direction (sf_water::sspr::lookup_direction; a flat surface reads its own
+// pixel), blurred vertically with roughness (glossy water stretches reflections along the view).
+// Premultiplied colour, confidence in alpha; 0 where SSPR missed.
+fn sspr_sample(N: vec3<f32>, V: vec3<f32>, roughness: f32) -> vec4<f32> {
+    let n = normalize(mix(vec3(0.0, 1.0, 0.0), N, water.reflection.x));
+    let R = reflect(-V, n);
+    if R.y <= 0.0 {
+        return vec4(0.0);
+    }
+    let clip = view.clip_from_world * vec4(R.x, -R.y, R.z, 0.0);
+    if clip.w <= 1e-6 {
+        return vec4(0.0);
+    }
+    let ndc = clip.xy / clip.w;
+    let uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
+        return vec4(0.0);
+    }
+    let texels = vec2<f32>(textureDimensions(reflection)) * water.reflection.y;
+    let at = (view.main_pass_viewport.xy + uv * view.main_pass_viewport.zw) / texels;
+    let spread = roughness * roughness * 0.04;
+    var sum = vec4(0.0);
+    for (var k = 0; k < 4; k++) {
+        let o = (f32(k) - 1.5) * spread;
+        sum += textureSampleLevel(reflection, reflection_sampler, at + vec2(0.0, o), 0.0);
+    }
+    // Rough water (far, foamy) keeps the environment map.
+    return sum * 0.25 * (1.0 - smoothstep(0.45, 0.65, roughness));
 }
 
 
@@ -225,6 +288,19 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     pbr.is_orthographic = false;
     pbr.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT;
     var color = apply_pbr_lighting(pbr).rgb;
+    // Local reflections (W-SSPR): where SSPR hits, its colour replaces the environment map's
+    // specular with the same split-sum Fresnel (Bevy SSR's composition: env × (1 − hit)). The
+    // snapshot is pre-exposed, the environment term is not.
+    if water.reflection.y > 0.0 && is_front && valid {
+        let hit = sspr_sample(N, V, pbr.material.perceptual_roughness) * (1.0 - foam);
+        if hit.a > 0.0 {
+            let NdotV = max(dot(N, V), 0.0001);
+            let F0 = calculate_F0_dielectric(pbr.material.reflectance);
+            let F_ab = F_AB(pbr.material.perceptual_roughness, NdotV);
+            let FssEss = (F0 * F_ab.x + F_ab.y) * saturate(dot(F0, vec3(50.0 * 0.33)));
+            color += FssEss * hit.rgb - hit.a * view.exposure * environment_specular(pbr);
+        }
+    }
     let fresnel = 0.02 + 0.98 * pow(1.0 - saturate(dot(N, V)), 5.0);
     color += (1.0 - fresnel) * (1.0 - foam) * behind * transmittance;
 

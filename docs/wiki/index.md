@@ -73,6 +73,7 @@ is a frame over 25 ms (report "hitches"). A/B differences under ~0.5 ms are run-
 [shadows](../ledger/shadows.md): 22 entries, last 2026-11-12 (sun cascades, lamp cache, resets A1-B2, PCSS, lamp reach)
 [sky-weather](../ledger/sky-weather.md): 17 entries, last 2026-11-12 (atmosphere medium P1, clouds, fog, night lighting, rain)
 [perf](../ledger/perf.md): 27 entries, last 2026-11-12 (frame time: culling, bind groups, skinning, ceilings, A/B)
+[water](../ledger/water.md): 1 entry, last 2026-11-12 (water pass, SSPR reflections; older water lines in sky-weather)
 [streaming](../ledger/streaming.md): 16 entries, last 2026-11-12 (cell streaming, origin shift, stutters)
 [statics](../ledger/statics.md): 21 entries, last 2026-11-12 (precombine, static scene, far field, LOD, NoCpuCulling)
 [animation](../ledger/animation.md): 15 entries, last 2026-11-12 (IK P-IK1..5, gaits, foot lock, anim LOD, 2026-11-12 audit, AN-/AL-/PL- verdicts)

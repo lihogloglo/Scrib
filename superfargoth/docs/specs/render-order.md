@@ -33,7 +33,8 @@ water plugin gets all of it; interiors skip clouds, fog volume and water.
 | 1 | `Core3dSystems::Prepass` | Bevy + material prepass shaders | depth (`DepthPrepass`, for `OcclusionCulling`); motion vectors + jitter when DLSS SR is on (`MotionVectorPrepass`, `TemporalJitter`, `MipBias`, `upscale.rs`); deferred G-buffer only on the Solari path (`path.rs`) | — | depth, motion vectors |
 | 2 | `main_opaque_pass_3d`: `Opaque3d`, `AlphaMask3d` (binned) | Bevy | NIF statics/actors, terrain, LOD proxies, impostors, sea-plane scaffold | shadow maps, cloud shadow, far shadow map | colour, depth |
 | 3 | `snapshot_pass` (`PassStage::Snapshot`: after opaque, before the transmissive pass) | `sf_water_bevy` | **the only scene-colour read**: colour + depth copy of the **opaque** scene for refraction (no sky, clouds or fog yet: the composite fogs camera → water surface, the water's Beer-Lambert the path below it) | colour, depth | snapshot textures |
-| 4 | `main_transmissive_pass_3d`: `Transmissive3d` (W-ORDER) | Bevy + `sf_water_bevy` | **the water** (base `specular_transmission` > 0 routes it here; `WaterCamera` requires `ScreenSpaceTransmission { steps: 0 }`, so Bevy makes no colour copy), alpha 1, **depth-write**; no fog of its own | snapshot | colour, depth |
+| 3b | `sspr_pass` (`PassStage::Reflection`: after the snapshot, before the transmissive pass; W-SSPR) | `sf_water_bevy` | screen-space planar reflections of the snapshot in the nearest body's plane: clear hash, `project` (atomic, keyed by height above the plane), `resolve` (Low off, Medium ½, High full) | snapshot, view uniform | SSPR image (read by step 4) |
+| 4 | `main_transmissive_pass_3d`: `Transmissive3d` (W-ORDER) | Bevy + `sf_water_bevy` | **the water** (base `specular_transmission` > 0 routes it here; `WaterCamera` requires `ScreenSpaceTransmission { steps: 0 }`, so Bevy makes no colour copy), alpha 1, **depth-write**; no fog of its own | snapshot, SSPR image (3b) | colour, depth |
 | 5 | `render_sky` (private set; `SkyOrderScaffold`; vendored `own: sky after water`: after the transmissive pass) | Bevy `Atmosphere` | sky on depth = far; aerial perspective on every other pixel by its depth, the water's included | depth (opaque + water), atmosphere LUTs | colour |
 | 6 | `night_pass` (`PassStage::Night`: after 4-5) | `sf_sky_bevy` | stars, moons; no depth write (the water hides them by depth) | depth | colour |
 | 7 | `trace_pass` (after the transmissive pass, before transparent) | `sf_atmos_bevy` | clouds half-res raymarch + temporal resolve; ground-fog bank march; froxel inject + integrate (per-froxel jitter, own history); the march stops at the water like at land | depth (opaque + water), LUTs, shadow maps, own histories | cloud/fog textures, `FroxelVolume` |
@@ -53,8 +54,9 @@ reading a pre-water scene-colour copy; Bevy's transmissive phase is the stock sl
 and transparent, used here without Bevy's copy (`steps: 0`). Cost: the old aerial-LUT copy pass and
 the water's per-pixel fog are gone (inferred ~0 ms; one more texture binding in Bevy's view
 layout from `ScreenSpaceTransmission`, one pipeline re-specialisation at load). Order checks:
-`sf_render_order_bevy` `passes.rs` tests (snapshot before the transmissive pass, night and clouds
-after it, sky before them).
+`sf_render_order_bevy` `passes.rs` tests (snapshot, then SSPR, before the transmissive pass; night and
+clouds after it, sky before them). The SSPR reads the same opaque-only snapshot, so reflections are
+unfogged; the composite fogs camera → water surface (accepted, water.md "SSPR as built").
 
 Ray-traced path (`--rt`): step 1 becomes Bevy's deferred prepass + Solari lighting (ReSTIR or DLSS
 RR), `Msaa::Off`, no occlusion culling; steps 3-10 are unchanged; raster shadow maps are dropped

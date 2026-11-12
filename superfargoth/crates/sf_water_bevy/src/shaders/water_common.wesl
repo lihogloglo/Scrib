@@ -23,6 +23,8 @@ struct WaterParams {
     misc2: vec4<f32>,
     // Optics map: render-space XZ of cell (0, 0)'s centre, 1 / cell size, on 0/1.
     regions: vec4<f32>,
+    // SSPR: (wave distortion; reflection texel scale, 0 = off for this surface; plane level; 0).
+    reflection: vec4<f32>,
     // Optics table for the map, 3 vec4 per entry: (absorption, whitecaps), (scattering, contact
     // depth), (roughness, shore foam, 0, 0).
     looks: array<vec4<f32>, 24>,

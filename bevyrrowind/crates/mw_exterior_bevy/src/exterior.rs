@@ -559,7 +559,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
                 .before(sf_shadow_cache_bevy::ShadowCacheSystems),
         );
 
-    mw_environment_bevy::water::add(&mut app, options.water, options.quality, &options.world.worldspaces);
+    // W-SSPR: `--off waterssr` keeps the environment-map-only water reflections (the old look).
+    mw_environment_bevy::water::add(&mut app, options.water, options.quality, !perf.off.has(Part::WaterSsr), &options.world.worldspaces);
     mw_doors_bevy::add(&mut app, options.world, options.use_door);
     mw_devtools_bevy::pipeline_watch::add(&mut app);
     mw_scripts_bevy::add(&mut app, vfs.clone(), options.activate);
