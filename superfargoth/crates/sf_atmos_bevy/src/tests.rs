@@ -28,6 +28,7 @@ fn app(fog_scale: f32) -> App {
         .init_resource::<Drift>()
         .init_resource::<CloudFrame>()
         .init_resource::<FogBankEdges>()
+        .init_resource::<FogCloudSplit>()
         .init_resource::<FogShadowHeights>()
         .init_resource::<FroxelVolume>();
     app
@@ -78,4 +79,18 @@ fn fog_bank_edges_reach_the_frame() {
     app.insert_resource(FogBankEdges(false));
     app.world_mut().run_system_once(drive).unwrap();
     assert!(!app.world().resource::<CloudFrame>().fog_bank_edges);
+}
+
+/// Logic: the fog split at the cloud's depth (WE12-FIX) is on by default and its switch reaches
+/// the render world's frame (`--off cloudfog` sets it false).
+#[test]
+fn fog_cloud_split_reaches_the_frame() {
+    let mut app = app(VIEW_AMBIENT_IN_FOG);
+    app.world_mut().spawn((CloudCamera, Camera::default(), GlobalTransform::default()));
+    app.world_mut().run_system_once(drive).unwrap();
+    assert!(app.world().resource::<FogCloudSplit>().0);
+    assert!(app.world().resource::<CloudFrame>().fog_cloud_split);
+    app.insert_resource(FogCloudSplit(false));
+    app.world_mut().run_system_once(drive).unwrap();
+    assert!(!app.world().resource::<CloudFrame>().fog_cloud_split);
 }

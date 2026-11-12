@@ -79,6 +79,8 @@ struct Clouds {
     history_weight: f32,
     clip_gamma: f32,
     blue_noise: u32,
+    // 1: fog and far weather split at the cloud's depth (WE12-FIX, `FogCloudSplit`); 0: the old order.
+    cloud_fog: u32,
     glows: array<vec4<f32>, 4>,
 };
 

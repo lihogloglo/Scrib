@@ -323,4 +323,11 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   down, or at the deck's entry point.
 - Cause (2026-11-12, WE12-DIAG, code): the composite applies the fog of the pixel's whole column over the cloud, so
   the dense low fog and banks *behind* the cloud hide it from above (`cloud_composite.wesl:112-135`). Fix: WE12-FIX.
-- Status: known bug: diagnosed, fix being built.
+- Fix WE12-FIX (2026-11-12): only the fog in front of the clouds dims them, the rest lies behind (UE5/Frostbite);
+  far rain/fog under the deck now draws behind it when seen from above. Run
+  `bash bevyrrowind/tools/owner_launch.sh scene fg-bittercoast-ridge`, fly ~100 m above the deck and look down at the
+  cloud tops against the foggy ground, then fly down into the deck. Look for: the deck's full body visible over the
+  terrain/fog from above, and its bottom still drawn when inside. A/B `--off cloudfog` (old: the bottom vanishes).
+  Must not: the at-sea deck seen from below changed (horizon clouds may be slightly clearer: less fog past them,
+  expected), the FG-11/FG-7 fog looks changed, a bright or dark halo at cloud silhouettes against terrain.
+- Status: awaiting owner.

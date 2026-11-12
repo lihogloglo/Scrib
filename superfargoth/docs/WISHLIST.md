@@ -151,7 +151,8 @@ One **surface state** system, not one hack per effect:
   blight) driving clouds, fog, particles, wind, and accumulation.
 - Clouds and skies (owner 2026-11-12): very low clouds (layers down near the
   ground, seen from above and inside), local volumetric plumes as cloud density
-  sources (a volcano's smoke column), and visible lightning bolts, not only flashes.
+  sources (a volcano's smoke column: always present, strength varies, can be
+  entered from inside), and visible lightning bolts, not only flashes.
 
 ## 6. Seamless interior/exterior transitions
 

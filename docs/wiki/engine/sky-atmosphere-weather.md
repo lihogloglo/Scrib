@@ -40,6 +40,9 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   window's nearest and furthest depth as packed (distance, bank) pairs in `dist` G/A; the resolve keeps the far pair's
   history by open/cut population, the near pair's by near distance; the composite blends them by each pixel's
   log-depth with bilateral depth weights (FOG-BANK, `sf_atmos::bank_edges`, `FogBankEdges`; spec `weather/fog.md`).
+  The clouds sit inside the fog column: the composite evaluates the fog again to the clouds' tap-weighted depth and
+  puts only that part in front of them, the rest behind (`rgb = L_f + T_f·C + T_c·(L − L_f)`, UE5/Frostbite; WE12-FIX,
+  `FogCloudSplit`, `sf_atmos::compose_fog_split`), and the trace orders the far weather by distance.
   Froxel history (`shaders/froxel_inject.wesl`): per-froxel R3 jitter, history reprojected with last frame's
   clip-from-world and read at the froxel centre (off screen or past `far`: this frame alone), then clipped to the
   min/max box of this frame's 3x3 samples in the slice (Karis 2014 TAA clip; 16x16 workgroups write 14x14 tiles,
@@ -61,7 +64,7 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
 
 ## Switches and counters
 
-`--off clouds|fog|froxels|godrays|fogdither|fogjitter|foghistory|fogbank|fogclamp|transfog|envslice|skymotion|surface`
+`--off clouds|fog|froxels|godrays|fogdither|fogjitter|foghistory|fogbank|fogclamp|cloudfog|transfog|envslice|skymotion|surface`
 (`mw_game_core/src/perf.rs:135`); live `flip ambient_specular`, console `surface set|dump|clear`, weather overrides
 (`WeatherOverrides`). GPU spans `clouds_shadow|trace|resolve|composite`, Bevy `atmosphere_luts`; `MediumStats`
 (`rebuilds`, `scale_updates`), `WeatherStats`.

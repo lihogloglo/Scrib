@@ -72,8 +72,9 @@ maintained crate targets 0.20, so the fog is ours, in the cloud node as planned.
      direction-dependent far-fog tint (UE's inscattering cubemap), a follow-up if the fog/horizon colour match is missed.
   3. `clouds_composite`, full resolution: both layers' closed-form optical depth to **this pixel's own depth**
      (sky pixels: `sky_distance`, 20 km), the bank layer × the bilaterally upsampled modulation, lit by the key
-     light (HG g 0.6 over an isotropic floor) and the sky fill × albedo; composed as `T·(clouds) + L` in front of
-     the clouds, so stars, moons and clouds behind dim with it. Depth edges are exact (the analytic part is per
+     light (HG g 0.6 over an isotropic floor) and the sky fill × albedo. The clouds sit **inside** that column
+     (WE12-FIX, below): only the fog to the clouds' depth dims and lights them; the rest reaches the scene behind
+     them; stars and moons behind dim with the whole column. Depth edges are exact (the analytic part is per
      pixel); the reduced-resolution part only shapes the banks.
 - Bevy `DistanceFog` was already off on the exterior camera; interiors keep their look. The sea scaffold became
   opaque (the composite runs before transparents and fogs by depth). **Transparents (particles, glass) are not
@@ -206,3 +207,32 @@ Revisit `FogVolume` only for small local volumes in interiors (M9 environment vo
   Expected cost ≤ 0.05 ms (inject ≈ 0.1 ms of the froxels' 0.13 ms, x1.31), not measured. Not done: UE5's
   history-miss supersampling. Tests: `froxel_clamp_compiles_and_keeps_the_layout`, the `sf_atmos::froxel` tile,
   clip and estimator tests. Visual check FG-11.
+
+### Fog split at the clouds' depth as built (WE12-FIX, WE-12, 2026-11-12)
+- Problem: the composite put the clouds behind the pixel's **whole** fog column (`T·C + L`). From above or inside
+  the deck the ray crosses the cloud first, then the dense low fog and banks, then the terrain: the cloud was
+  multiplied by fog that lies behind it (≈ 0 at Bitter Coast 6:30 foggy) and vanished. The far weather (WE4d) was
+  likewise always composed in front of the deck.
+- Reuse check: Bevy 0.20 has no cloud layer; its atmosphere (`render_sky`) and `VolumetricFog` each apply one
+  `scene·T + L` over the opaque scene, so there is no split to reuse. No maintained Bevy crate composes fog with a
+  volumetric cloud layer.
+- Industry comparison: UE5 Volumetric Cloud and Frostbite (Hillaire 2016, 2020) evaluate height fog and aerial
+  perspective at the cloud's transmittance-weighted depth and apply them in front of the cloud only; the scene
+  behind gets the full column. Our trace already did this for aerial perspective (`aerial()` at the cloud distance).
+- Fix: `cloud_composite.wesl` also averages the tap distances (`dist` R) weighted by weight × opacity in the picked
+  set: the clouds' depth `tc = min(that, d)`. The fog is evaluated twice by one helper (`fog_to`: froxels to
+  `min(t, froxels.far)`, analytic layers on to `t`, same bank ratio): full pair `(L, T)` to `d`, front pair
+  `(L_f, T_f)` to `tc`. With `C` the premultiplied cloud radiance and `T_c` its transmittance, the blend
+  (`rgb + alpha·scene`) is `rgb = L_f + T_f·C + T_c·max(L − L_f, 0)`, `alpha = T_c·T` (`L − L_f` is the fog behind
+  the cloud already seen through the front, `T_f·L_back`). At `tc ≥ d` the old path runs, so pixels with no cloud in
+  front of their depth are unchanged. The trace composes the far weather behind the cloud when its weighted distance
+  exceeds the cloud's (`color += T·fw`), else in front as before (one split by mean distance, not per sample).
+- CPU twin `sf_atmos::fog::{compose_fog_split, compose_fog_in_front, FogSegment}`; tests: reduces to the old order
+  at `front == full`, opaque fog behind the cloud keeps `L_f + T_f·C`, equals three explicitly layered segments,
+  finite and never negative. Shader test `cloud_fog_split_compiles`; switch test `fog_cloud_split_reaches_the_frame`.
+- Switch: `sf_atmos_bevy::FogCloudSplit` (default on) → `Clouds::cloud_fog`; game `--off cloudfog` = old order.
+- Expected: horizon clouds closer than `sky_distance` (20 km) get less fog than before (physically right: the fog
+  past them was hiding them); silhouettes use tap distances (taps behind the pixel were already dropped); the far
+  weather's reorder re-converges the history in ~16 frames; FOG-BANK and the froxel history are untouched.
+  Cost: one extra froxel tap + one analytic evaluation per pixel with cloud in front, +0.02-0.05 ms at 1440p
+  (inferred, not measured). Visual check WE-12.

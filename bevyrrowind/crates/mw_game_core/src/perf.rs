@@ -70,6 +70,10 @@ pub enum Part {
     /// The froxels' history clip (FOG-CLAMP, WE-10): reprojected history clipped to this frame's 3x3
     /// neighbourhood, history weight 0.95; off, unclipped at 0.9 (the old path, an A/B).
     FogClamp,
+    /// The fog split at the clouds' depth (WE12-FIX, WE-12, `sf_atmos_bevy::FogCloudSplit`): only the
+    /// fog in front of the deck dims it, the far weather ordered by distance; off, the whole fog
+    /// column and the far weather in front of the clouds (the old order, an A/B).
+    CloudFog,
     /// Screen-space planar reflections on the water (W-SSPR, `sf_water_bevy::WaterReflections`): off,
     /// the environment map only (the old look, an A/B).
     WaterSsr,
@@ -141,7 +145,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 61] = [
+    const ALL: [(&'static str, Part); 62] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -183,6 +187,7 @@ impl Part {
         ("foghistory", Part::FogHistory),
         ("fogbank", Part::FogBank),
         ("fogclamp", Part::FogClamp),
+        ("cloudfog", Part::CloudFog),
         ("waterssr", Part::WaterSsr),
         ("shorenormals", Part::ShoreNormals),
         ("transfog", Part::TransFog),
@@ -279,5 +284,8 @@ mod tests {
         let shore = Off::from_flags(&["shorenormals".into()]).expect("known");
         assert!(shore.has(Part::ShoreNormals) && !shore.has(Part::WaterSsr));
         assert_eq!(shore.label(), "shorenormals");
+        let cloud = Off::from_flags(&["cloudfog".into()]).expect("known");
+        assert!(cloud.has(Part::CloudFog) && !cloud.has(Part::FogBank) && !cloud.has(Part::Fog));
+        assert_eq!(cloud.label(), "cloudfog");
     }
 }

@@ -153,6 +153,9 @@ pub(crate) struct CloudUniform {
     history_weight: f32,
     clip_gamma: f32,
     blue_noise: u32,
+    /// 1: the composite splits the fog at the cloud's depth and the trace composes the far
+    /// weather by distance (WE12-FIX, `FogCloudSplit`); 0: the old order.
+    cloud_fog: u32,
     glows: [Vec4; 4],
 }
 
@@ -824,6 +827,7 @@ fn prepare_views(
             history_weight: frame.temporal.fresh_weight.clamp(0.01, 1.0),
             clip_gamma: frame.temporal.clip_gamma.max(0.0),
             blue_noise: u32::from(frame.temporal.blue_noise),
+            cloud_fog: u32::from(frame.fog_cloud_split),
             glows: frame.glows,
         };
         h.prev_clip_from_world = clip_from_world;

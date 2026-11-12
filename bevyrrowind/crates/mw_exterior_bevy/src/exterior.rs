@@ -478,6 +478,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         }
         // FOG-BANK (FG-7): `--off fogbank` keeps the old furthest-depth bank, picked by population.
         app.insert_resource(sf_atmos_bevy::FogBankEdges(!perf.off.has(Part::FogBank)));
+        // WE12-FIX (WE-12): `--off cloudfog` keeps the old order, the whole fog column in front of the clouds.
+        app.insert_resource(sf_atmos_bevy::FogCloudSplit(!perf.off.has(Part::CloudFog)));
         if !perf.off.has(Part::FarShadows) {
             app.add_systems(
                 PostUpdate,

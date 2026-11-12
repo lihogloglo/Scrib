@@ -485,15 +485,26 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         }
         transmittance *= 1.0 - alpha;
     }
-    // Distant shafts and far fog (WE4d): below the deck, so in front of it.
+    // Distant shafts and far fog (WE4d): below the deck, so in front of it seen
+    // from under it, behind it seen from above or inside (WE12-FIX): ordered by
+    // their transmittance-weighted distances. `--off cloudfog`: always in front.
+    // With no cloud both orders are the same (color 0, transmittance 1).
     if far_on {
         let fw = far_weather(ro, rd, scene_t, fract(jitter + 0.5), light_color, l, cos_t, mix(bounce, sky_up, 0.6));
         if fw.weight > 1e-4 {
             let fw_dist = fw.dist_sum / fw.weight;
             let air = aerial(uv, r_cam, mu_v, rd, fw_dist);
-            color = fw.color * air.transmittance + air.inscatter * (1.0 - fw.transmittance) + fw.transmittance * color;
-            if 1.0 - fw.transmittance > (1.0 - transmittance) * fw.transmittance {
-                dist = fw_dist;
+            let fw_rgb = fw.color * air.transmittance + air.inscatter * (1.0 - fw.transmittance);
+            if clouds.cloud_fog != 0u && fw_dist > dist {
+                color += transmittance * fw_rgb;
+                if (1.0 - fw.transmittance) * transmittance > 1.0 - transmittance {
+                    dist = fw_dist;
+                }
+            } else {
+                color = fw_rgb + fw.transmittance * color;
+                if 1.0 - fw.transmittance > (1.0 - transmittance) * fw.transmittance {
+                    dist = fw_dist;
+                }
             }
             transmittance *= fw.transmittance;
         }

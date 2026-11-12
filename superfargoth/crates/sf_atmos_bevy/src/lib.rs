@@ -134,6 +134,20 @@ impl Default for FogBankEdges {
     }
 }
 
+/// The clouds sit inside the fog column (WE12-FIX, WE-12; on by default): the composite
+/// evaluates the fog to the cloud's depth too and puts only that part in front of the clouds
+/// ([`sf_atmos::compose_fog_split`]), and the trace composes the far weather in front of the
+/// deck or behind it by distance. `false`: the old order, the whole column and the far weather
+/// in front of the clouds (wrong from above or inside the deck; the A/B).
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FogCloudSplit(pub bool);
+
+impl Default for FogCloudSplit {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 /// A height-field shadow for the froxels' sun light past the cascades (the
 /// terrain's shadow-height map, handed over by the app): `Rg16Float` texels of
 /// (shadow height − base, occluder distance), meters; `params` = render-space
@@ -197,6 +211,7 @@ struct Drift(FogDrift);
 
 /// Per-frame values the render world needs (extracted).
 #[derive(Resource, Clone, Debug, Default)]
+#[allow(clippy::struct_excessive_bools, reason = "independent per-frame switches")]
 pub(crate) struct CloudFrame {
     pub active: bool,
     /// The clouds draw (`active` may hold for the fog alone).
@@ -208,6 +223,8 @@ pub(crate) struct CloudFrame {
     pub fog: Option<FogSettings>,
     /// [`FogBankEdges`].
     pub fog_bank_edges: bool,
+    /// [`FogCloudSplit`].
+    pub fog_cloud_split: bool,
     /// The camera's ambient radiance × [`Fog::view_ambient`] (linear RGB),
     /// added to the fog's sky fill.
     pub fog_ambient: Vec3,
@@ -281,6 +298,7 @@ impl Plugin for CloudsPlugin {
         app.insert_resource(Clouds { settings: self.settings, enabled: true, shadows: true, glows: [Vec4::ZERO; GLOWS], temporal: CloudTemporal::default() })
             .insert_resource(Fog { settings: self.fog, enabled: true, froxels: Some(FroxelSettings::high()), view_ambient: sf_atmos::VIEW_AMBIENT_IN_FOG })
             .init_resource::<FogBankEdges>()
+            .init_resource::<FogCloudSplit>()
             .init_resource::<FogShadowHeights>()
             .init_resource::<FroxelVolume>()
             .add_plugins(bevy_pbr::MaterialPlugin::<FroxelFogMaterial>::default())
@@ -374,7 +392,7 @@ fn drive(
     mut commands: Commands,
     time: Res<Time>,
     clouds: Res<Clouds>,
-    (fog, bank_edges): (Res<Fog>, Res<FogBankEdges>),
+    (fog, bank_edges, cloud_split): (Res<Fog>, Res<FogBankEdges>, Res<FogCloudSplit>),
     origin: Res<CloudsOrigin>,
     images: Res<CloudImages>,
     mut scroll: ResMut<Scroll>,
@@ -449,6 +467,7 @@ fn drive(
         clouds: clouds.enabled,
         fog: fog_on.then_some(fog.settings),
         fog_bank_edges: bank_edges.0,
+        fog_cloud_split: cloud_split.0,
         fog_ambient: sf_atmos::fog_fill(Vec3::ZERO, ambient, fog.view_ambient),
         fog_offsets: drift.0.offsets([origin.0.x, origin.0.z], &fog.settings.banks),
         glows: clouds.glows,

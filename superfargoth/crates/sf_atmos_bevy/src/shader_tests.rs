@@ -138,6 +138,23 @@ fn cloud_history_passes_compile() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// The fog split at the cloud's depth (WE12-FIX): the composite and the trace (with and without
+/// MSAA) compile and read `cloud_fog` (the `Clouds` layout is checked below).
+#[test]
+fn cloud_fog_split_compiles() {
+    let mut failures = Vec::new();
+    for module in ["sf_atmos_bevy::shaders::cloud_composite", "sf_atmos_bevy::shaders::cloud_trace"] {
+        for defs in [&[][..], &["MULTISAMPLED"][..]] {
+            match compile(module, defs) {
+                Ok(wgsl) if !wgsl.contains(".cloud_fog") => failures.push(format!("{module} {defs:?}: never reads cloud_fog")),
+                Ok(_) => {}
+                Err(e) => failures.push(e),
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
 /// The depth-aware fog bank (FOG-BANK): trace, resolve and composite compile with and without
 /// MSAA and read `bank_edges`; the flag sits in `Fog`'s padding, so the WGSL `Fog` and `Clouds`
 /// structs keep the size of their Rust mirrors (`FogUniform`, `CloudUniform`).
