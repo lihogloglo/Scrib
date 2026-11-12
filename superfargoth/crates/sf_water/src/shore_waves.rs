@@ -224,6 +224,7 @@ impl ShoreWaves {
     /// `dir` ([`crate::ShoreField::sample_direction`]), noise coordinates `noise`
     /// ([`Self::noise_coords`]) and time `t` (s, any multiple of [`REPEAT_PERIOD`] apart is the same).
     /// Zero outside `(−land_margin, band)` and when off.
+    #[allow(clippy::float_cmp)] // the same trains exactly: no crossfade
     pub fn eval(&self, d: f32, o: f32, dir: Vec2, noise: Vec2, t: f32) -> ShoreWave {
         let to = self.eval_trains(&self.omega, d, o, dir, noise, t);
         if self.mix >= 1.0 || self.omega_from == self.omega {

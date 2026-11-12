@@ -50,9 +50,11 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   and classes it along the block's centre ray, so silhouette blocks keep one open/cut class across phases; a texel whose
   history held only the other population shows its same-population 3x3 mean, and the stored cloud distance accumulates
   like the colour (S1, `CloudEdgeStable`, `sf_atmos::temporal::depth_window`; `--off cloudedge` = old window, raw sample).
-  Far rain (CW-1, `far_weather_shaped`, CPU twin `sf_atmos::storm`): map precipitation × the clouds' rain cores ×
-  a profile hanging under the base, its region edge re-blended over `StormShape::edge_m` (64 m, ±48 m noise) from 4
-  map taps at ±band, integrated in closed form over 16 fixed segments (no jitter: a smooth function of the ray).
+  Far rain (CW-1 + S2 fixes, `far_weather_shaped`, CPU twin `sf_atmos::storm`): map precipitation × the clouds' rain
+  cores (from just under the coverage threshold) × a profile reaching up to the visible base, its region edge re-blended over
+  `StormShape::edge_m` (64 m, ±48 m noise) from 4 map taps at ±band, widened to the sample spacing along the ray
+  (`edge_half_width`) and back to the band within 128-256 m of the camera (the near FX hand-off),
+  integrated in closed form over 16 fixed segments (no jitter: a smooth function of the ray).
   Froxel history (`shaders/froxel_inject.wesl`): per-froxel R3 jitter, history reprojected with last frame's
   clip-from-world and read at the froxel centre (off screen or past `far`: this frame alone), then clipped to the
   min/max box of this frame's 3x3 samples in the slice (Karis 2014 TAA clip; 16x16 workgroups write 14x14 tiles,

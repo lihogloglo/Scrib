@@ -347,6 +347,7 @@ impl Plugin for WaterPlugin {
         app.init_resource::<OceanSpectrum>()
             .init_resource::<WaterFrame>()
             .init_resource::<WaterWind>()
+            .init_resource::<H0Cache>()
             .init_resource::<WaterLook>()
             .init_resource::<WaterShoreInput>()
             .init_resource::<WaterRegionsInput>()
@@ -525,65 +526,154 @@ fn size_waves(quality: Res<WaterQuality>, images: Option<ResMut<WaterImages>>, m
     images.resolution = n;
 }
 
-/// The sea follows [`WaterWind`] (W-WIND): low-passed weather wind, one transition at a time.
-fn follow_wind(frame: Res<WaterFrame>, mut wind: ResMut<WaterWind>, mut spectrum: ResMut<OceanSpectrum>) {
-    let weather = wind.weather;
-    let Some(sea) = wind.bypass_change_detection().sea.as_mut() else { return };
-    if !sea.update(weather, frame.time) {
-        return;
+/// One sea state's `h0` layers on the GPU grid (the key of [`H0Cache`]).
+#[derive(Clone, Debug, PartialEq)]
+struct H0Key {
+    params: SpectrumParams,
+    cascades: Cascades,
+    seed: u32,
+    n: usize,
+}
+
+impl H0Key {
+    fn of(spectrum: &OceanSpectrum, params: SpectrumParams, n: usize) -> Self {
+        Self { params, cascades: spectrum.cascades.clone(), seed: spectrum.seed, n }
     }
-    let (w, transition) = (sea.wind(), sea.transition());
-    if spectrum.params.wind != w || spectrum.transition != transition {
-        spectrum.params.wind = w;
-        spectrum.transition = transition;
+
+    /// `MAX_CASCADES` layers of n² texels, 16 bytes each (`H0::gpu_texels`).
+    fn generate(&self) -> Vec<u8> {
+        let n = self.n;
+        let mut data = vec![0u8; n * n * MAX_CASCADES * 16];
+        for c in 0..self.cascades.len().min(MAX_CASCADES) {
+            let h0 = H0::generate(&self.params, &self.cascades, c, n, self.seed);
+            for (i, t) in h0.gpu_texels(&self.params).iter().enumerate() {
+                let at = (c * n * n + i) * 16;
+                for (j, v) in t.iter().enumerate() {
+                    data[at + j * 4..at + j * 4 + 4].copy_from_slice(&v.to_le_bytes());
+                }
+            }
+        }
+        data
     }
 }
 
-/// One sea state's `h0` layers (`MAX_CASCADES` × n² texels of 16 bytes, `H0::gpu_texels`).
-fn h0_layers(params: &SpectrumParams, cascades: &Cascades, n: usize, seed: u32) -> Vec<u8> {
-    let mut data = vec![0u8; n * n * MAX_CASCADES * 16];
-    for c in 0..cascades.len().min(MAX_CASCADES) {
-        let h0 = H0::generate(params, cascades, c, n, seed);
-        for (i, t) in h0.gpu_texels(params).iter().enumerate() {
-            let at = (c * n * n + i) * 16;
-            for (j, v) in t.iter().enumerate() {
-                data[at + j * 4..at + j * 4 + 4].copy_from_slice(&v.to_le_bytes());
+/// The last few sea states' `h0` layers: a transition's `from` is the previous sea state, and the
+/// wind worker hands its result to [`upload_spectrum`] here.
+#[derive(Resource, Default)]
+struct H0Cache(Vec<(H0Key, Arc<Vec<u8>>)>);
+
+impl H0Cache {
+    const KEEP: usize = 3;
+
+    fn get_or_generate(&mut self, key: &H0Key) -> Arc<Vec<u8>> {
+        if let Some((_, bytes)) = self.0.iter().find(|(k, _)| k == key) {
+            return bytes.clone();
+        }
+        let bytes = Arc::new(key.generate());
+        self.put(key.clone(), bytes.clone());
+        bytes
+    }
+
+    fn put(&mut self, key: H0Key, bytes: Arc<Vec<u8>>) {
+        self.0.retain(|(k, _)| *k != key);
+        self.0.push((key, bytes));
+        if self.0.len() > Self::KEEP {
+            self.0.remove(0);
+        }
+    }
+}
+
+/// The wind worker's state: a sea state being generated off the main thread, then waiting for the
+/// running transition to finish.
+#[derive(Default)]
+struct SeaWork {
+    job: Option<(H0Key, std::thread::JoinHandle<Vec<u8>>)>,
+    pending: Option<SpectrumParams>,
+}
+
+/// The sea follows [`WaterWind`] (W-WIND): [`SeaWind`] decides when a new sea state starts; its
+/// `h0` (~9 ms of CPU for 4 × 256²) is generated on a worker thread, and the transition is
+/// committed to [`OceanSpectrum`] (start = now) once the layers are ready and the last transition
+/// is done, so the GPU, the CPU twin and the shore waves switch together. A snap (the first
+/// weather, a clock reset, the override) commits at once.
+fn follow_wind(
+    frame: Res<WaterFrame>,
+    mut wind: ResMut<WaterWind>,
+    mut spectrum: ResMut<OceanSpectrum>,
+    images: Option<Res<WaterImages>>,
+    mut cache: ResMut<H0Cache>,
+    mut work: Local<SeaWork>,
+) {
+    let t = frame.time;
+    if let Some((key, handle)) = work.job.take() {
+        if !handle.is_finished() {
+            work.job = Some((key, handle));
+            return;
+        }
+        if let Ok(bytes) = handle.join() {
+            cache.put(key.clone(), Arc::new(bytes));
+        }
+        // (A panicked worker: the upload regenerates the layers on this thread.)
+        work.pending = Some(key.params);
+    }
+    let weather = wind.weather;
+    let Some(sea) = wind.bypass_change_detection().sea.as_mut() else { return };
+    if let Some(next) = work.pending {
+        if spectrum.weight(t) >= 1.0 {
+            let from = spectrum.params.wind;
+            spectrum.params = next;
+            spectrum.transition = Some(SeaTransition { from, start: t, duration: f64::from(sea.settings.blend_s.max(1e-3)) });
+            work.pending = None;
+        }
+        return;
+    }
+    if !sea.update(weather, t) {
+        return;
+    }
+    let next = SpectrumParams { wind: sea.wind(), ..spectrum.params };
+    match (sea.transition(), images) {
+        (Some(_), Some(images)) => {
+            let key = H0Key::of(&spectrum, next, images.resolution);
+            let job = key.clone();
+            match std::thread::Builder::new().name("water-sea-state".into()).spawn(move || job.generate()) {
+                Ok(handle) => work.job = Some((key, handle)),
+                Err(_) => work.pending = Some(next),
+            }
+        }
+        _ => {
+            if spectrum.params != next || spectrum.transition.is_some() {
+                spectrum.params = next;
+                spectrum.transition = None;
             }
         }
     }
-    data
 }
 
-/// Generates and uploads `h0` when the sea state or the grid changes: layers `0..MAX_CASCADES`
-/// the sea state, `MAX_CASCADES..` the one a transition comes from (water.md "Weather changes":
-/// the FFT blends them, `FftParams::blend`). A transition's `from` is usually the last sea state:
-/// its layers are reused, so a re-init generates one spectrum.
+/// Uploads `h0` when the sea state or the grid changes: layers `0..MAX_CASCADES` the sea state,
+/// `MAX_CASCADES..` the one a transition comes from (water.md "Weather changes": the FFT blends
+/// them, `FftParams::blend`). Layers come from [`H0Cache`] (the wind worker's, the last sea state)
+/// or are generated here.
 fn upload_spectrum(
     spectrum: Res<OceanSpectrum>,
     images: Option<Res<WaterImages>>,
     mut assets: ResMut<Assets<Image>>,
-    mut done: Local<Option<(OceanSpectrum, usize, Vec<u8>)>>,
+    mut cache: ResMut<H0Cache>,
+    mut done: Local<Option<(OceanSpectrum, usize)>>,
 ) {
     let Some(images) = images else { return };
     let n = images.resolution;
-    if done.as_ref().is_some_and(|(s, r, _)| s == &*spectrum && *r == n) {
+    if done.as_ref().is_some_and(|(s, r)| s == &*spectrum && *r == n) {
         return;
     }
-    let to = h0_layers(&spectrum.params, &spectrum.cascades, n, spectrum.seed);
-    let from = match spectrum.from_params() {
-        None => None,
-        Some(f) => Some(match done.take() {
-            Some((last, r, bytes)) if r == n && last.params == f && last.cascades == spectrum.cascades && last.seed == spectrum.seed => bytes,
-            _ => h0_layers(&f, &spectrum.cascades, n, spectrum.seed),
-        }),
-    };
+    let to = cache.get_or_generate(&H0Key::of(&spectrum, spectrum.params, n));
+    let from = spectrum.from_params().map(|f| cache.get_or_generate(&H0Key::of(&spectrum, f, n)));
     let mut data = Vec::with_capacity(to.len() * 2);
     data.extend_from_slice(&to);
     data.extend_from_slice(from.as_deref().unwrap_or(&to));
     if let Some(mut image) = assets.get_mut(&images.h0) {
         image.data = Some(data);
     }
-    *done = Some((spectrum.clone(), n, to));
+    *done = Some((spectrum.clone(), n));
 }
 
 /// Uploads the shore field and the optics map when the host changes them.
@@ -752,6 +842,17 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
     }
 }
 
+/// The shore waves of the sea state on the field's settings at transition weight `w` (W-GERSTNER,
+/// W-WIND); the pair is recomputed only when the sea state or the settings change.
+fn shore_waves_now(spectrum: &OceanSpectrum, settings: ShoreSettings, w: f32, cache: &mut Option<(OceanSpectrum, ShoreSettings, [ShoreWaves; 2])>) -> ShoreWaves {
+    if !cache.as_ref().is_some_and(|(sp, st, _)| sp == spectrum && *st == settings) {
+        let to = ShoreWaves::new(&spectrum.params, &spectrum.cascades, &settings);
+        let from = spectrum.from_params().map_or(to, |p| ShoreWaves::new(&p, &spectrum.cascades, &settings));
+        *cache = Some((spectrum.clone(), settings, [from, to]));
+    }
+    cache.as_ref().map_or_else(ShoreWaves::default, |(_, _, [from, to])| ShoreWaves::blend(from, to, w))
+}
+
 /// Material parameters, and the render world's per-frame state (FFT tier and amortisation).
 #[allow(clippy::too_many_arguments, clippy::similar_names, clippy::type_complexity)]
 fn drive(
@@ -774,18 +875,9 @@ fn drive(
         .map(|(_, surface, _, _, _)| surface.map_or(PlaneCandidate { level: frame.level, bounds: None }, |w| PlaneCandidate { level: w.level, bounds: w.bounds }))
         .collect();
     let plane = cameras.iter().next().and_then(|c| reflection_plane(c.translation(), &candidates));
-    // The shore waves follow the sea state and the field's settings (recomputed only on a change),
-    // blended through a transition as the FFT is (W-WIND).
+    // The shore waves follow the sea state, blended through a transition as the FFT is (W-WIND).
     let weight = spectrum.weight(frame.time);
-    let sw = shore.field.as_ref().map(|f| {
-        let fresh = shore_waves.as_ref().is_some_and(|(sp, st, _)| *sp == *spectrum && *st == f.settings);
-        if !fresh {
-            let to = ShoreWaves::new(&spectrum.params, &spectrum.cascades, &f.settings);
-            let from = spectrum.from_params().map_or(to, |p| ShoreWaves::new(&p, &spectrum.cascades, &f.settings));
-            *shore_waves = Some((spectrum.clone(), f.settings, [from, to]));
-        }
-        shore_waves.as_ref().map_or_else(ShoreWaves::default, |(_, _, [from, to])| ShoreWaves::blend(from, to, weight))
-    });
+    let sw = shore.field.as_ref().map(|f| shore_waves_now(&spectrum, f.settings, weight, &mut shore_waves));
     let prev_time = last_time.replace(frame.time).unwrap_or(frame.time);
     let reflection = plane.zip(sspr_scale(*quality, *reflections)).map(|(level, scale)| (level, scale, reflections.wave_distortion));
     let shared = Shared {

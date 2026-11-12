@@ -80,12 +80,13 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (58)
+### Awaiting owner (59)
 
+WA-6 | awaiting owner | [terrain-water](visual-checks/terrain-water.md) | The sea follows the weather (W-WIND): `scene wa-seyda-noon`, BRP weather thunderstorm and back to clear (`time_scale` 120); smooth roughening and calming, no pop or re-roll; A/B `--off seawind` (2026-11-13)
 WE-15 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Storm cloud shape (S3): `scene we3-ridge` 14:00, BRP thunderstorm over Ascadian Isles, look E/SE; domed tapering cells, anvil shelves, ragged base, sloped edge, not an extruded footprint; A/B `--off cbshape` (2026-11-13)
 WE-14 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Stable cloud silhouettes (S1): `scene we3-ridge` 14:00 + Seyda Neen, horizon line with no fog behind and silhouettes against cloud, still then slow pan; A/B `--off cloudedge` (2026-11-13)
 WA-5 | awaiting owner | [terrain-water](visual-checks/terrain-water.md) | Gerstner shore waves rolling in and swash on the beach (`scene wa-seyda-noon`, `wa-bittercoast`, `wa-seyda-noon --water-wind 14`; A/B `--off shorewaves`, 2026-11-12)
-WE-13 | partial (2026-11-12: CW-1 worse on entry (rain on/off), no gain; both paths: extruded cloud, faint curtain short of the base, horizon-line shimmer, shimmer behind curtain, also at Seyda Neen) | [weather-sky](visual-checks/weather-sky.md) | Local storm seen from outside: storm cell under its clouds, narrow ragged border, no ground-to-sky wall or edge shimmer (CW-1; A/B `--off stormshape`, 2026-11-12)
+WE-13 | awaiting owner (fix S2 2026-11-13: smooth rain fade walking in, curtain to the cloud base, more curtain; 2026-11-12 partial: CW-1 entry pop, faint short curtain) | [weather-sky](visual-checks/weather-sky.md) | Local storm seen from outside: storm cell under its clouds, narrow ragged border, no ground-to-sky wall (CW-1 + S2; A/B `--off stormshape`)
 WA-4 | confirmed (2026-11-12: "that's perfect") | [terrain-water](visual-checks/terrain-water.md) | Wavelets at the shore (W-SHORE): ripples glint to the waterline, swell still dies on beaches, no flat strip, no moiré; A/B `--off shorenormals` (2026-11-12)
 WA-3 | confirmed (2026-11-12: day and night "very nice", night water no longer too bright; emissive in reflection unsure) | [terrain-water](visual-checks/terrain-water.md) | Water mirrors banks, buildings, ships and lit windows, wobbling with waves; edge fade, no flicker, nothing below the water (W-SSPR, A/B `--off waterssr`, 2026-11-12)
 FG-11 | confirmed (2026-11-12: "the fog is glorious") | [weather-sky](visual-checks/weather-sky.md) | Froxel fog smooth over near objects, still and panning; no trails or black bands (FOG-CLAMP, A/B `--off fogclamp`, 2026-11-12)

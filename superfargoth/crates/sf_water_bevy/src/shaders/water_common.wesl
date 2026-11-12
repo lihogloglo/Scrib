@@ -136,9 +136,9 @@ fn shore_waves(p: WaterParams, sh: vec4<f32>, xz: vec2<f32>, t: f32, lod_k: f32)
         return to;
     }
     // A sea-state transition (W-WIND): crossfade the trains it comes from (`ShoreWaves::eval`).
-    let from = shore_trains(p, p.swash4.xyz, sh, xz, t, lod_k);
+    let prior = shore_trains(p, p.swash4.xyz, sh, xz, t, lod_k);
     let w = max(p.swash4.w, 0.0);
-    return ShoreWave(mix(from.offset, to.offset, w), mix(from.slope, to.slope, w), mix(from.crest, to.crest, w));
+    return ShoreWave(mix(prior.offset, to.offset, w), mix(prior.slope, to.slope, w), mix(prior.crest, to.crest, w));
 }
 
 // One set of trains with angular frequencies `om` (rad/s) for `shore_waves`.

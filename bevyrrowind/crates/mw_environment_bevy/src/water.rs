@@ -29,7 +29,7 @@ use sf_records::RecordDb;
 use sf_terrain_bevy::{TerrainHeightsMap, TerrainOrigin, TerrainSystems};
 use sf_water::{BedHeights, Cascades, OpticsMap, SeaWind, SeaWindSettings, ShoreField, ShoreSettings, ShoreWaves, WaterSource, WaterWorld, WaveTwin, WetMask, WindInput, WorldspaceWater, TWIN_RESOLUTION};
 use sf_water_bevy::{
-    OceanSpectrum, OceanSurface, WaterCamera, WaterFrame, WaterLook, WaterPlugin, WaterQuality, WaterReflections, WaterRegionsInput, WaterShoreInput, WaterWind,
+    OceanSpectrum, OceanSurface, WaterCamera, WaterFrame, WaterLook, WaterPlugin, WaterQuality, WaterReflections, WaterRegionsInput, WaterShoreInput,
     WaterSurface, WaterSystems,
 };
 use sf_world::{Worldspace, WorldspaceId};
@@ -37,6 +37,8 @@ use sf_world_bevy::{ActiveWorldspace, WorldspaceRegistry};
 use tes3::esp::{Cell, Landscape};
 
 use mw_game_core::exterior::{ExteriorCamera, Quality};
+/// The sea's wind input (W-WIND): the exterior copies the weather's `WindField` mean wind into it.
+pub use sf_water_bevy::WaterWind;
 
 /// `--water`: which sea the exterior draws.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
@@ -69,8 +71,8 @@ pub fn mode() -> WaterMode {
     }
 }
 
-/// Scaffold `WindInput` until `sf_wind`'s `WindState` (WD1): a steady sea breeze, m/s, blowing
-/// toward the north-east (Morrowind has no wind data; WE2 maps weathers to wind later).
+/// The sea's wind before the weather's first frame, and always with `--off seawind` (W-WIND): a steady
+/// sea breeze, m/s, blowing toward the north-east.
 const DEFAULT_WIND: f32 = 7.0;
 /// One seed for the GPU ocean and the CPU twin (the twin is the GPU's cascade 0 by construction).
 const SEED: u32 = 0x5EA0_0001;
@@ -163,7 +165,7 @@ pub fn add(
     params.wind = WindInput { speed: fixed.unwrap_or(DEFAULT_WIND), toward: Vec2::new(0.6, 0.8) };
     // W-WIND: the weather's 10 m wind drives the sea (the exterior copies `WindField` into
     // `WaterWind::weather`); the command-line wind pins it.
-    let sea = sea_wind.then(|| SeaWind { fixed: fixed.map(|_| params.wind), ..SeaWind::new(params.wind, SeaWindSettings::default()) });
+    let sea = sea_wind.then(|| SeaWind::new(params.wind, SeaWindSettings::default()).with_fixed(fixed.map(|_| params.wind)));
     let cascades = Cascades::default();
     let mut ws = Worldspace::new("exterior");
     ws.has_terrain = true;
@@ -194,7 +196,7 @@ pub fn add(
         ws.set_shore_waves(Some(shore_pair));
     }
     let spectrum = OceanSpectrum { params, cascades: cascades.clone(), seed: SEED, transition: None };
-    let sync = SeaSync { spectrum: spectrum.clone(), settings, shore: [shore_pair; 2] };
+    let sea_sync = SeaSync { spectrum: spectrum.clone(), settings, shore: [shore_pair; 2] };
     let bake = inputs.mask.map(|mask| {
         let handle = std::thread::Builder::new()
             .name("water-shore-bake".into())
@@ -205,7 +207,7 @@ pub fn add(
     app.add_plugins(WaterPlugin)
         .insert_resource(spectrum)
         .insert_resource(WaterWind { weather: None, sea })
-        .insert_resource(sync)
+        .insert_resource(sea_sync)
         .insert_resource(look)
         .insert_resource(water_quality(quality))
         .insert_resource(WaterReflections { sspr, ..WaterReflections::default() })

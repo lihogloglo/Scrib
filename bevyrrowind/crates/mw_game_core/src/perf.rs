@@ -97,6 +97,9 @@ pub enum Part {
     /// `sf_water::ShoreSettings::shore_waves`): off, the FFT alone fades to flat at the shore (the old
     /// look, an A/B).
     ShoreWaves,
+    /// The sea follows the weather's wind (W-WIND, `sf_water::SeaWind`): off, the ocean keeps the fixed
+    /// 7 m/s sea breeze (the old look, an A/B).
+    SeaWind,
     /// Fog on blended and additive NIF materials (`sf_atmos_bevy::FogTranslucentsPlugin`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
@@ -165,7 +168,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 67] = [
+    const ALL: [(&'static str, Part); 68] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -214,6 +217,7 @@ impl Part {
         ("waterssr", Part::WaterSsr),
         ("shorenormals", Part::ShoreNormals),
         ("shorewaves", Part::ShoreWaves),
+        ("seawind", Part::SeaWind),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
         ("foliagetransmission", Part::FoliageTransmission),
@@ -327,5 +331,8 @@ mod tests {
         let shift = Off::from_flags(&["shiftrebase".into()]).expect("known");
         assert!(shift.has(Part::ShiftRebase) && !shift.has(Part::Scene));
         assert_eq!(shift.label(), "shiftrebase");
+        let sea = Off::from_flags(&["seawind".into()]).expect("known");
+        assert!(sea.has(Part::SeaWind) && !sea.has(Part::ShoreWaves));
+        assert_eq!(sea.label(), "seawind");
     }
 }

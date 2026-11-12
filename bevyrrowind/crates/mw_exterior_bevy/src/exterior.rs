@@ -578,9 +578,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
 
     // W-SSPR: `--off waterssr` keeps the environment-map-only water reflections (the old look).
     // W-SHORE: `--off shorenormals` flattens the water's normal with its displacement at the shore.
-    // W-GERSTNER: `--off shorewaves` drops the analytic shore waves (the FFT fades to flat).
-    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves));
+    // W-GERSTNER: `--off shorewaves` drops the analytic shore waves (the FFT fades to flat). W-WIND:
+    // `--off seawind` keeps the fixed sea breeze instead of the weather's wind.
+    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves), !perf.off.has(Part::SeaWind));
     mw_environment_bevy::water::add(&mut app, options.water, options.quality, water_parts, &options.world.worldspaces);
+    app.add_systems(Update, sea_wind);
     mw_doors_bevy::add(&mut app, options.world, options.use_door);
     mw_devtools_bevy::pipeline_watch::add(&mut app);
     mw_scripts_bevy::add(&mut app, vfs.clone(), options.activate);
@@ -1517,6 +1519,17 @@ fn shelter_foliage(
         if materials.get(&material.0).is_some_and(is_leaf_material) {
             commands.entity(entity).try_insert(sf_surface_bevy::ShelterFoliage);
         }
+    }
+}
+
+/// The sea follows the weather (W-WIND): the wind field's mean wind at its 10 m reference height
+/// (`sf_wind::Wind::velocity`, set by the weather) is the spectrum's wind; `sf_water::SeaWind`
+/// low-passes it (gusts are a field pattern on top, never in this mean).
+fn sea_wind(wind: Option<Res<sf_wind_bevy::WindField>>, sea: Option<ResMut<mw_environment_bevy::water::WaterWind>>) {
+    let (Some(wind), Some(mut sea)) = (wind, sea) else { return };
+    let v = Some(wind.state.wind.velocity);
+    if sea.weather != v {
+        sea.weather = v;
     }
 }
 

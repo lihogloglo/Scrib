@@ -147,7 +147,7 @@ pub trait WaterQuery {
 ## Ocean surface
 
 **Spectrum.** JONSWAP with fetch + TMA depth correction + Donelan-Banner spreading + optional swell
-(Horvath 2015), from `WindState` (weather/wind.md) speed and direction and a per-body fetch. Cascades are
+(Horvath 2015), from the weather's 10 m wind (`sf_wind::Wind`, through `sf_water::SeaWind`, "Weather coupling") and a per-body fetch. Cascades are
 square tiles with **power-of-two sizes in metres** (default 4: 256, 64, 16, 4 m; 256² High, 128² Low),
 each band-limited so they don't double-count energy (boundary at the wavelength `size(i+1)/2`, W1). **Weather changes**: the FFT is linear, so a
 weather transition blends `h0 = mix(h0_a, h0_b, w)` (two spectra, re-uploaded when `w` moves 2 %); the
@@ -515,6 +515,38 @@ the surface from the query; wading speed scales by immersion (adapter curve).
 | Cloud shadows | darker water inside and on its specular (`DirectionalLightTexture`) |
 | Fog | the water pass applies froxel + aerial fog; ground fog banks lie on water too |
 | Ash/blight (`surface_rates.ash`) | optional surface film tint on still water (`surface_tint`), cleared by rain |
+
+### Wind → sea state (W-WIND, 2026-11-13)
+
+**Reuse check.** Bevy 0.20 has no ocean or spectrum code. bevy-aqua (our FFT's source) and
+`bevy_water` take one fixed wind and re-initialise on a change (a pop); no maintained crate blends sea
+states. Our own: `H0::generate` already keys its Gaussian noise by `(seed, cascade, wave vector)`
+only, so two winds of one seed share every phase; the blend needs no new noise.
+
+**Industry comparison.** Crest (Unity) and Atlas/UE Water parameterise the spectrum by wind speed
+and fetch and blend spectra over a weather change instead of re-rolling (Crest lerps spectrum
+weights; Tessendorf's linearity makes `mix(h0_a, h0_b, w)` exact). Seas respond to wind over hours
+(fetch/duration-limited growth); games compress that to tens of seconds and never let gusts reach the
+swell. Same here.
+
+**As built.** Input: the weather's mean wind at the 10 m WMO reference height
+(`sf_wind::Wind::velocity`, set by `apply_wind`; gusts are a field pattern on top, not in it): the
+exterior copies it into `sf_water_bevy::WaterWind::weather`. Morrowind's `Wind Speed` 0-1 maps to a
+1-15 m/s mean (`mw_weather::WIND_SPEED_RANGE`), so a clear morning is ~2-3 m/s, storms 8-15 m/s.
+`sf_water::SeaWind`: first-order low-pass (τ 30 s, game clock), then one linear transition at a time
+(6 s) toward the filtered wind once it moves ≥ max(0.15 m/s, 3 %) or 3° (direction kept below
+0.5 m/s): that is the rate limit (≤ 1 re-init per 6 s, none in a steady wind). First weather, a clock
+reset or the override snap. GPU: `h0` array holds 2 × 4 layers (sea state, transition's `from`),
+`water_fft.wesl` mixes them by `FftParams::blend` per frame; the new state's `h0` (8.7 ms CPU for
+4 × 256², measured release) is generated on a worker thread and the transition commits when ready
+and the last one has ended, `from` layers reused from an `H0Cache`. CPU twin: `WaveTwin::blended` +
+`set_mix` at the twin's own time (rebuild 0.2 ms). Shore waves: `ShoreWaves::blend` lerps amplitude,
+swash, band and margin and crossfades the two train sets (`omega_from`, `mix`; their quantised
+periods differ, so lerping ω would jump phase), GPU `swash4` mirrors it. `--water-wind` =
+`SeaWind::with_fixed`; `--off seawind` = no `SeaWind` (the fixed 7 m/s). Cost: GPU one extra `h0`
+texel pair per bin only while a transition runs (≪ 0.01 ms), shore-band trains evaluated twice
+during it; an 8 MB `h0` re-upload per transition (expected ≤ 0.5 ms once, not measured). Tests:
+`sf_water/src/sea_wind_tests.rs`.
 
 ## Performance budgets (1440p; RTX 4060 Laptop / RTX 3070 desktop, GPU ms)
 

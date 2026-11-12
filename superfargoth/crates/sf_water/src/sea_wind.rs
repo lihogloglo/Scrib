@@ -100,6 +100,13 @@ impl SeaWind {
         Self { settings, fixed: None, filtered: None, last_t: f64::NEG_INFINITY, wind, transition: None }
     }
 
+    /// With a host override: the sea keeps `fixed` whatever the weather (`None` = follow it).
+    #[must_use]
+    pub fn with_fixed(mut self, fixed: Option<WindInput>) -> Self {
+        self.fixed = fixed;
+        self
+    }
+
     /// The wind the sea is heading to (all of it once the transition is done).
     pub fn wind(&self) -> WindInput {
         self.wind
@@ -124,6 +131,7 @@ impl SeaWind {
 
     /// Feeds the weather's mean 10 m wind (`None` = unknown) at time `t`. Returns `true` when the
     /// spectrum must be re-generated (a new transition, a snap or the override).
+    #[allow(clippy::cast_possible_truncation)]
     pub fn update(&mut self, weather: Option<Vec2>, t: f64) -> bool {
         let s = self.settings;
         if let Some(fixed) = self.fixed {

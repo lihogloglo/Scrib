@@ -78,3 +78,13 @@ than down), rising from ripples at the waterline to the open swell over the last
 along the shore, foam riding the breaking crests; stronger swash with `--water-wind 14`. Bad: conveyor-belt regularity,
 loops or spikes on crests, a seam where they meet the FFT swell, smearing when the camera moves (motion vectors), water
 showing through the beach behind the swash, W-SHORE ripples gone.
+
+### WA-6: The sea follows the weather (W-WIND; `scene wa-seyda-noon`; A/B `--off seawind`)
+
+Status: awaiting owner. Kind: real game location, High preset, the scene's own time; weather switched live over BRP.
+Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-seyda-noon`; then `bevyrrowind/set {"weather":"thunderstorm","transition_hours":0.2}`
+(add `"time_scale":120` to see it sooner), wait ~1-2 min, then `bevyrrowind/set {"weather":"clear","transition_hours":0.2}`.
+The sea lags the weather by design (30 s low-pass + 6 s steps). A/B: the same with `--off seawind` (fixed 7 m/s sea).
+Look for: a calm, small-waved sea in clear weather; the sea roughening smoothly into the storm (longer, higher swell,
+more whitecaps, stronger shore swash) and calming back the same way. Bad: a pop or a re-roll of the wave pattern at any
+moment, waves jumping at the shore, floating things (CPU water) bobbing out of step with the drawn waves.

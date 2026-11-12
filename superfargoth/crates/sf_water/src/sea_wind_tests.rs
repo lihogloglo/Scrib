@@ -76,7 +76,7 @@ fn re_inits_are_rate_limited() {
 #[test]
 fn the_override_beats_the_weather() {
     let pinned = WindInput { speed: 7.0, toward: Vec2::new(0.6, 0.8) };
-    let mut sea = SeaWind { fixed: Some(pinned), ..SeaWind::new(WindInput { speed: 3.0, toward: Vec2::X }, SeaWindSettings::default()) };
+    let mut sea = SeaWind::new(WindInput { speed: 3.0, toward: Vec2::X }, SeaWindSettings::default()).with_fixed(Some(pinned));
     assert!(sea.update(Some(Vec2::new(25.0, 0.0)), 0.0));
     for i in 1..600 {
         assert!(!sea.update(Some(Vec2::new(25.0, 0.0)), f64::from(i) * STEP));
@@ -120,9 +120,15 @@ fn a_blend_starts_on_the_old_sea_and_ends_on_the_new_one() {
     assert!((height(&mut blend) - ha).abs() < 1e-5);
     blend.set_mix(1.0);
     assert!((height(&mut blend) - hb).abs() < 1e-5);
-    // Linear in the weight (the FFT is linear): the midpoint is the mean.
+    // Linear in the weight (the FFT is linear): the midpoint grid is the mean grid.
+    let grid = |twin: &mut WaveTwin| {
+        twin.evaluate(42.0);
+        twin.cascades[0].grids().height.clone()
+    };
+    let (ga, gb) = (grid(&mut WaveTwin::new(&a, &c, 9, 1, 64)), grid(&mut WaveTwin::new(&b, &c, 9, 1, 64)));
     blend.set_mix(0.5);
-    assert!((height(&mut blend) - 0.5 * (ha + hb)).abs() < 1e-4);
+    let gm = grid(&mut blend);
+    assert!(gm.iter().zip(ga.iter().zip(&gb)).all(|(m, (x, y))| (m - 0.5 * (x + y)).abs() < 1e-5));
     // Shore waves: the same ends, and a continuous crossfade between.
     let s = ShoreSettings::default();
     let (sa, sb) = (ShoreWaves::new(&a, &c, &s), ShoreWaves::new(&b, &c, &s));
@@ -148,6 +154,13 @@ fn measure_reinit_cost() {
         }
     }
     println!("re-init: {:.2} ms per sea state (4 cascades x 256², with texels)", start.elapsed().as_secs_f64() * 1e3 / f64::from(runs));
+    let start = std::time::Instant::now();
+    for _ in 0..runs {
+        for cascade in 0..c.len() {
+            std::hint::black_box(H0::generate(&p, &c, cascade, 256, 1));
+        }
+    }
+    println!("  of which h0 alone: {:.2} ms", start.elapsed().as_secs_f64() * 1e3 / f64::from(runs));
     let start = std::time::Instant::now();
     for _ in 0..runs {
         std::hint::black_box(WaveTwin::blended(&p, &params(14.0, Vec2::X), &c, 1, 1, 64));

@@ -185,22 +185,7 @@ hand-off:* `h` is half the band within 128 m, sharpening to the narrow edge by 2
 the camera term was already the raw band), so the far rain fades in with the near FX. (3) *Curtain top:* full to the
 base, fading out up to the visible base `base + ½·mix(.07,.22,kind)·thickness` (440 m above the base on a 4 km storm
 deck). (4) *Cores:* `lo = max(threshold − 0.05, 0.4)` (was `max(threshold + 0.2, 0.5)`): at map coverage 0.45 field
-0.7 rains half, 0.8 full; field 0.5 (under a third of cover) stays dry. Tests (`sf_atmos::storm`): edge ≥ spacing up to
-the band, the band exactly at half-width, density at each fixed sample changes no faster than the near FX walking in
-(CW-1: 4×), march error vs a fine reference halved near the edge (far, where the spacing outgrows the band, only ~20 %
-less: the residual), curtain to the visible base, core gate at 0.45. Expected < 0.02 ms (a few ALU per sample), not
-measured. `--off stormshape` unchanged.
-**S2 fixes as built (s2-stormfix, 2026-11-13; owner WE-13 2026-11-12: rain on/off walking in, curtain faint and short
-of the base).** (1) *Edge pre-filter:* the edge's half-width is `h = max(edge/2, ds(t)·along)`, `ds = 2·span·u/n` the
-march's own sample spacing at `t` and `along` = |horizontal ray · border normal| (normal from the four taps' gradient;
-1 when it is unclear), so density linear between samples resolves the edge (a grazing ray keeps the narrow
-silhouette); capped at half the band (the widest edge the map encodes), the noise shrinking so `|noise| + h ≤ band/2`.
-The edge profile is `border_weight`'s own shape, so `h` = half the band is the map's blend exactly. (2) *Near
-hand-off:* `h` is half the band within 128 m, sharpening to the narrow edge by 256 m (the near FX ramp over the band;
-the camera term was already the raw band), so the far rain fades in with the near FX. (3) *Curtain top:* full to the
-base, fading out up to the visible base `base + ½·mix(.07,.22,kind)·thickness` (440 m above the base on a 4 km storm
-deck). (4) *Cores:* `lo = max(threshold − 0.05, 0.4)` (was `max(threshold + 0.2, 0.5)`): at map coverage 0.45 field
-0.7 rains half, 0.8 full; field 0.5 (under a third of cover) stays dry. Tests (`sf_atmos::storm`): edge ≥ spacing up to
+0.7 rains 0.78, 0.8 full; field 0.5 (under a third of cover) stays dry. Tests (`sf_atmos::storm`): edge ≥ spacing up to
 the band, the band exactly at half-width, density at each fixed sample changes no faster than the near FX walking in
 (CW-1: 4×), march error vs a fine reference halved near the edge (far, where the spacing outgrows the band, only ~20 %
 less: the residual), curtain to the visible base, core gate at 0.45. Expected < 0.02 ms (a few ALU per sample), not
