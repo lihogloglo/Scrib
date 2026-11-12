@@ -47,6 +47,8 @@ any source (Morrowind KF, UAL, 100STYLE, LaFAN1, Mixamo, mocap) work inside thes
 | R10 | `10-mudcrab-borrow.md` | Mudcrab (Apache-2.0) whole project vs ours: what to adopt or port (converters, LOD, launcher/mods, colour pipeline, profiling, Luau) | done 2026-10-18 |
 | R11a | `11-tradeoffs.md` | **Brainstorm with the owner** (owner, 2026-10-18): these games' mechanics serve different purposes and conflict, and first vs third person trade off. Find a system that reconciles them, or decide which trade-offs we accept. Seed list below; each conflict gets options, who does it which way, cost, and a recommendation; the owner decides | decided with owner 2026-10-19 (see "Decisions") |
 | R11b | spec rewrite: `../../specs/action.md` (new), `../../specs/camera.md` (new), animation.md "Decided shape (R11b)", locomotion.md "Action-layer changes (R11b)" | synthesis of R1-R10 and the R11a decisions into a concrete spec (move taxonomy, action layer and chooser, data per clip, first/third person, combat timing, test courses), owner review | spec drafted, awaiting owner review, 2026-10-19 |
+| R14 | `14-rust-rewrites-and-fp-melee.md` | owner references re-read (sekiro-rs, spud, AC1, faith-runner, sinhonor: what, how, licence, takes), first-person melee practice (Dark Messiah, Dying Light, Mordhau), locomotion standard, Bevy 0.20 crates, corrections to the series | done 2026-11-12 |
+| R15 | `15-audit-and-plan-2026-11-12.md` | audit of the animation, locomotion and first-person stack (ranked causes of the wonky walk with `path:line`), slice plan: walk, locomotion base, third-person combat, first-person combat; owner questions | done 2026-11-12, awaiting orchestrator |
 
 ### R11a seed: conflicts found so far
 
