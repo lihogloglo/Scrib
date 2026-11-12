@@ -35,7 +35,7 @@ pub struct FrameSet {
     /// CSS class drawing it.
     pub class: &'static str,
     /// Further selectors the frame draws on: the framework's role classes (ui.md "Role
-    /// classes") by OpenMW's skin per role (`MW_Window`/`MW_Dialog` thick, `MW_Box` thin,
+    /// classes") by the `OpenMW` skin per role (`MW_Window`/`MW_Dialog` thick, `MW_Box` thin,
     /// `MW_Button`), and parts that carry no class (the message box, styled by `#name`).
     pub roles: &'static [&'static str],
     /// Centre piece, tiled like `MyGUI`'s `TileRect` fill; transparent without one.

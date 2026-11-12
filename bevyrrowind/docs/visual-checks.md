@@ -87,6 +87,7 @@ SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player a
 SH-21 | partial (2026-11-01: torches cast; flicker, cut faces, choppy: SH-20b in progress) | [shadows](visual-checks/shadows.md) | Lamp and torch shadows on the player and torch-bearers; shadowed-lamp pick by view visibility (2026-11-01)
 SH-22 | known bug | [shadows](visual-checks/shadows.md) | Exterior fps halves after leaving the Census office, not the GI (2026-11-02)
 SH-23 | awaiting owner | [shadows](visual-checks/shadows.md) | Sun shadow early-out: Balmora noon, dusk, night, leaf light-through and contact shadows identical before/after (2026-11-09)
+SH-24 | awaiting owner | [shadows](visual-checks/shadows.md) | Balmora at night: statics still cast into cached lamp shadows with GPU-culled statics, A/B `--off cpuculltag` (perf-push P3, 2026-11-12)
 GI-1 | partial (2026-11-02: runs clean, but `flip gi` barely changes the room) | [gi](visual-checks/gi.md) | Dynamic probe GI in the Census office (`--off gi` A/B)
 GI-2 | partial (2026-11-02: no artifacts seen; effect too weak to judge leaks) | [gi](visual-checks/gi.md) | DDGI visibility-weighted probe sampling: no leaks through the office floor/walls, bounce in corners (`--off gi` A/B)
 GI-3 | confirmed (2026-11-02: looks good; defaults kept, gain 1, ambient 0) | [gi](visual-checks/gi.md) | GI replaces the flat cell ambient inside its volume: darker unlit corners, warmer near lamps, no box edge in the office (`flip gi` A/B)
@@ -193,6 +194,7 @@ RO-18 | known bug | [rendering](visual-checks/rendering.md) | Grass and foliage 
 RO-19 | known bug | [rendering](visual-checks/rendering.md) | Very short shadow flickers in Balmora (2026-11-11)
 RO-20 | awaiting owner | [rendering](visual-checks/rendering.md) | Far terrain shadows keep following the player after the far-map upload stopped re-binding materials (2026-11-12)
 RO-21 | awaiting owner | [rendering](visual-checks/rendering.md) | Haze and ash tint change smoothly in weather transitions, same look as before, with the medium no longer re-baked on the CPU (perf-push P1, 2026-11-12)
+RO-22 | awaiting owner | [rendering](visual-checks/rendering.md) | Near/far handoff band: no gaps or doubles with GPU-culled statics, A/B `--off cpuculltag` (perf-push P3, 2026-11-12)
 PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the Census Office floor (again 2026-10-30)
 PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)
 CB-3 | confirmed (2026-11-05; follow-up: new sword attack clips) | [combat](visual-checks/combat.md) | F draws a visible sword; sheathed clicks do nothing; draw / sheathe clips, sword at the attach key (2026-11-05)
@@ -245,6 +247,7 @@ SN-3 | deferred | [characters](visual-checks/characters.md) | Dark elf head morp
 CH-1 | deferred | [characters](visual-checks/characters.md) | The M3 lineup
 CH-3 | deferred | [characters](visual-checks/characters.md) | Balmora street with NPCs standing in place
 CH-4 | deferred | [characters](visual-checks/characters.md) | Census and Excise Office staff
+CH-5 | awaiting owner | [characters](visual-checks/characters.md) | Busy Balmora street: NPCs deform normally with shared skin joint blocks, no DLSS smear (perf-push P5, 2026-11-12)
 SB-1 | deferred | [character-gear](visual-checks/character-gear.md) | Lineup close-up at elbows and knees, walking
 SB-2 | deferred | [character-gear](visual-checks/character-gear.md) | Armored NPC
 SB-3 | deferred | [character-gear](visual-checks/character-gear.md) | Beast tails with greaves

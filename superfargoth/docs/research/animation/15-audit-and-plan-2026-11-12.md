@@ -181,6 +181,18 @@ Nothing in B6 is retuned before A3: tuning slope ops on clips we are about to re
    drag (Mordhau)? Recommended: movement keys; it also works on a pad and in third person.
 6. **First-person FOV seam** (first-person.md open question 4), at FP-2c.
 
+**Owner answers 2026-11-12.**
+1. Yes: the modern preset drops Morrowind's walk/run. Generate the free-movement set (walk/jog/sprint cycles **and**
+   starts, stops, pivots, turns in place) with the clip factory (Kimodo, `bevyrrowind/docs/specs/motion-generation.md`), so cycles and
+   transitions share one style; Morrowind's clips stay for Classic. B3 (L5a/L5b generation) moves up next to A2/A3.
+2. Not fixed yet: rethink §5 Q1-3 stay open, to be answered with the A0 ladder in front of the owner.
+3. Both styles are wanted: Doom/Source (stable view, no body sway) is popular; Mirror's Edge/Dishonored (view on
+   the body) is fine too. Ship both as a first-person camera option; F2 builds the body-driven one, the stable one
+   is the default eye with sway off. The eye height always follows the character's actual height (race and NPC
+   height scale), never a fixed 1.62 m.
+4. Yes: dedicated kick in both views, physics pushes.
+5. Movement keys choose the swing direction.
+
 Decided from the standard, not asked: rate clamp 0.8-1.25 (Lyra), offset-root spring, foot-IK gain curve, aim
 pitch shares, eye low-pass, host-side sweeps with commanded pitch.
 

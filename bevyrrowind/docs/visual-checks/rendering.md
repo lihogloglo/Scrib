@@ -286,3 +286,12 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Look for: haze thickens and the grey-brown ash tint arrives smoothly, no step, flash or pop in sky or far hills; the
   still scenes look as before (foggy milky white, ash storm grey-brown with a dimmer, warmer sun).
 - Status: awaiting owner.
+
+### RO-22: Near/far handoff band with GPU-culled statics (perf-push P3, 2026-11-12)
+- Why: near statics are no longer culled by distance on the CPU (`NoCpuCulling`); their visibility ranges (LOD levels,
+  the dithered end band where the far field takes over) are now honoured only by the GPU preprocess, in every view.
+- Kind: game location. Run: `scene handoff-forest` (Seyda Neen trees at ~400 m) and `scene lamps-handoff` (fly back with
+  S, Shift 400-600 m); F5 shows the LOD tint. A/B with `--off cpuculltag`.
+- Look for: no gap (ground showing where a building or tree should be) and no double (near and far copy both solid) in
+  the handoff band; LOD switches dither as before; sun shadows of near statics end where the statics end.
+- Status: awaiting owner.
