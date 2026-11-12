@@ -8,6 +8,12 @@ and `superfargoth/docs/DECISIONS.md`.
 
 ## Find your way
 
+- **Start at the wiki (owner 2026-11-12):** `docs/wiki/index.md`, then only the page you need. `engine/` says how a
+  system works *now* (with `path:line`), `bevy/` how Bevy 0.20 works (from its source; models don't know 0.20
+  well, so don't guess), `industry/` what UE5, Cyberpunk, RDR2 and Decima do. **Before proposing any change, grep
+  `docs/ledger/<system>.md`** for what was already tried and measured. A slice that changes behaviour updates its
+  wiki page; a slice that tries something adds one ledger line, whatever the result. Specs and research are design
+  history: read them only when a wiki page sends you there.
 - `docs/SYSTEMS.md`: one row per system (specs and sections, crates, ROADMAP and visual-check IDs). Find
   your row and read only those docs.
 - `bevyrrowind/docs/ROADMAP.md`: the current phase and owner decisions. Work comes from the current phase;
@@ -130,6 +136,11 @@ shipped plugin and are never committed. Other games' data follows the clean-room
   choice and its source in the spec instead of asking.
 - A brief is prepared: exact files, functions and line ranges, the previous handoff, what's ruled out, how
   to verify. Never add scope to a running agent; queue a new slice.
+- **Every brief pastes its system's ledger lines** (`docs/ledger/<system>.md`) and links the wiki page, not
+  research docs (they anchor agents on old hypotheses). Before building on a component, check it actually runs
+  in the game (2026-11-12: three agents built on a lamp shadow cache that had been off since 2026-10-21).
+- **Perf work starts from a measured ceiling and an expected ms**, and ends with an untraced 3-run A/B logged in
+  `docs/ledger/perf.md`. Differences under ~0.5 ms are noise.
 - Read lean: grep first, read only the lines needed; filter cargo output to errors and warnings.
 - Hand off at ~80-100k tokens of context: stop at a compiling state, write the handoff, and let a fresh
   agent continue.

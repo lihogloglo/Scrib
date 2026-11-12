@@ -23,4 +23,7 @@ one cargo build at a time. Full protocol: `bevyrrowind/CLAUDE.md`, "Parallel ses
 Working rules for everyone (research first, reuse order, finish before starting, tests, docs, agents):
 @CONTRIBUTING.md
 
+Wiki first: `docs/wiki/index.md` (how things work now, Bevy 0.20 facts, industry standards) and
+`docs/ledger/<system>.md` (what was tried and measured; grep before proposing anything).
+
 System map: `docs/SYSTEMS.md` (find your system's row: specs and sections, crates, ROADMAP and visual-check IDs; read only those).

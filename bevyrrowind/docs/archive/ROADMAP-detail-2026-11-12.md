@@ -1,0 +1,279 @@
+# ROADMAP detail, moved 2026-11-12
+
+Original long entries of `ROADMAP.md` (verbatim), moved when the roadmap was cut to one short line per task. Grep by ID.
+
+## 1.1
+
+- [~] 1.1 **Stability first.** DR-4 crash fix, indoor weather sound (AU-1), door-travel fade hold built; awaiting owner (DR-4, AU-1). Owner ask 2026-10-25: hold the fade until the interior is fully loaded (meshes + textures); objects still pop in. Built 2026-11-11: the reveal gate (pipeline warm-up W1) holds door fades and loading for textures, prepared assets and pipelines (shadow views too), 10 s cap; owner check RG-1.
+
+## 1.2
+
+- [~] 1.2 **Frame budget + gates.** Verified 2026-10-28 (`perf.md` "Frame budget", 1440p + DLSS Q): `balmora` 9.48, `seyda_neen` 9.95, `red_mountain` 9.00, `balmora_walk` 10.50 ms (all ≤ 11 ms); 60 m/s `flight` 11.10 ms median (10.63 ms warm). Left: per-preset budget table, origin-shift spike smoothing on `flight`.
+
+## 1.3
+
+- [~] 1.3 **Temporal resolve as the base.** Bevy TAA default when DLSS is off (MSAA on Low only), F4 cycles; awaiting owner (TA-1). RO-6 DLSS sub-viewport sweep done 2026-10-28; WA-1 distant moiré awaiting owner. Open: motion vectors for translucents (RO-7).
+
+## 1.4
+
+- [~] 1.4 **One shadow design, finished.** World-unit directional PCSS (Clockwork adaptation), SH-11 PostUpdate far-shadow ordering, and SH-20 close-mover lamp shadow refresh built 2026-10-28 (awaiting owner: SH-11, SH-14..20). Open: High lamp-shadow count (owner pick), SH-13. Audit + fixes 2026-11-01 (`superfargoth/docs/research/shadows/2026-11-01-audit.md`, spec "Shadow fixes as built"): characters follow their worldspace layer (player/torch lamp shadows), budget ranks view-visible lights, contact shadows + sun far PCF under DLSS, bevy#26234/#26170 vendored; awaiting owner SH-21, RO-11. Left: audit §5 items 4-7 (lamp map size/filter knobs, housings, spot sconces), RO-12. Specs `superfargoth/docs/specs/shadows.md`, `lights.md`.
+
+## 1.5
+
+- [~] 1.5 Ambient occlusion: Bevy GTAO per preset (Low off); look awaiting owner (SH-16).
+
+## Shader/pipeline precompilation (W0
+
+- [~] Shader/pipeline precompilation (W0 measure + W1 reveal gate built 2026-11-11, owner runs pending: spec §8 W0, visual check RG-1; owner go 2026-11-11; owner 2026-11-01, 2026-11-11: objects appear one by one on load): spec `superfargoth/docs/specs/pipeline-warmup.md` (UE-style predictive precache of a content catalog via vendored patch PW, one reveal gate for fades and `Loading`, miss log, measured front-end/disk caches; slices W0-W6, W0 measure first; owner questions §11). Research `research/shader-precompile-2026-11-11.md`.
+
+## 1.6
+
+- [x] 1.6 Object-terrain blending removed (2026-10-20, lights1); redo is eye candy (WISHLIST §13).
+
+## 1.7
+
+- [~] 1.7 Night brightness: ambient retuned, LT-1 confirmed 2026-10-21; LM-2 NetImmerse vertex lighting mode + 16-bit DDS cutouts built 2026-10-28 (awaiting owner). Left: deferred night checks SK-2, NS-2..4.
+
+## 1.8
+
+- [~] 1.8 Draw-order and far-field bugs: WE-5 storm occlusion + 1.6 km cloud-deck cap and FF-2 L1/L2/L3 debug tint built 2026-10-28 (awaiting owner: WE-5, FF-2). Open: Ghostfence far copy missing (GF-1, B5).
+
+## 1.9
+
+- [~] 1.9 Streaming and culling levers (archive "Next up" 1, 6, 7): incremental `extract_visibility_ranges`, static outfit AABBs, `idle_skip_a3`, 110 m walker AI radius, `CookedMaterials` dedup + 30 Hz NIF material stepping landed 2026-10-28; precombine (J6, default on/off is the owner's call); checks ST-2, ST-3, SC-2.
+
+## 1.10
+
+- [~] 1.10 Volumetric fog black bands (FG-1): not reproduced 2026-10-21; reopen if seen; `--off foghistory` A/B kept.
+
+## 1.11
+
+- [x] 1.11 Thin binary (build-perf.md rule 4): done 2026-10-26: app split slices 1-14a, 15 game crates (`mw_*_bevy`), binary 2.3k lines (CLI only); `specs/app-split.md` "As built".
+
+## 1.12
+
+- [~] 1.12 Owner pass 2026-10-21 bugs: LT-4 DLSS cluster lookup (`bevy#26236`), SH-20 character lamp shadows (`--off movershadows`), RO-B lit smoke + plume `Aabb`, WE-5 ash occlusion + cloud cap, DL-5 interior RT `--off denoiser` all built 2026-10-28 and awaiting owner (LT-4, SH-20, RO-B, TR-3, WE-5, DL-5). Owner 2026-10-25, not urgent: cap ash shelter distance. Owner pass 2026-10-30, logged (not diagnosed): RO-11 ground bands moving with the camera, RO-12 bright character outline, PH-12 office floor hole again, PH-13 characters drop on cell load. Owner 2026-11-05: RO-16 (diagnosis built, awaiting owner) terrain has always had a faint "veil", as if behind resin (not strong; worse at night?); suspects: specular/IBL sheen on rough terrain (reflectance, env-map specular at night), layer blending flattening contrast, de-lit albedo.
+
+## 1.13
+
+- [~] 1.13 Dev console (`sf_console_bevy`, `console.md`): Backquote, live `ssao` and `contactshadows` (SH-16, 2026-11-01), MWScript lines, `TCL`, `COC` (interior, exterior name/region/grid), Down/Enter on suggestions, paste built; CO-1 awaiting owner (2026-10-26). Left: other `--off` parts, console functions (TGM/TAI/TFOW/TWF/COE...), `set x to y`. Owner 2026-11-05 (later): mouse click picks a reference while the console is open, with a visible selection (outline/label), and commands act on it (`kill`, `ref->` functions), as in Morrowind.
+
+## 1.14
+
+- [~] 1.14 Build churn: 2026-11-11 Bevy stopped recompiling per `-p` selection (hakari counts tes3's features; app defaults moved to libs; build-perf.md "Feature unification"); `cargo dev` stays its own Bevy (by design). BS1c: our crates' features set once in the root `[workspace.dependencies]` (ext test -> app build: 18 -> 2 own crates rebuilt). Left: R1-R3 core splits (`sf_vfs`/`sf_ids` `bevy`, core `bake` features; up to 22 crates under `-p mw_boot_bevy`), one test binary per crate (`mw_bake` 17), stale `debug/deps` (67 GB, needs a clean rebuild). Gates 2026-11-11 (cargo time): no-op 1.1 s, touch app 6.1 s, `mw_doors_bevy` 12.2 s, `sf_world_bevy` 15.5 s, `sf_model` 29.4 s (111 dependents): hot-crate gate (8 s) missed; fix = crate graph (R1-R3, split `sf_model`).
+
+## ]
+
+- [ ] 1.15 Godotwind borrow pass (owner 2026-10-26, a dedicated pass, not part of other slices): `research/godotwind-borrow.md` lists the code to take with exact Godotwind pointers; first entry the FFT-to-analytic shore waves.
+
+## 1.16
+
+- [~] 1.16 **Static scene** (owner go 2026-11-08, the long-term answer to H1): statics as a retained GPU instance table per space, culled and LOD-picked on the GPU per view, drawn through Bevy's material pipeline (vendored patch "GS" on bevy#25978, **an own fork** — bevy#26149/#26161 closed unmerged 2026-10-30); slices S0-S9 in `superfargoth/docs/specs/static-scene.md`, work orders `specs/gs-patch-plan.md` (S3a2, done) and `specs/scene-runtime-plan.md` (S3b). Replaces per-entity statics and precombine. S1a/S1c done; **patch GS / S3a2 complete** (slices A and B) and **`sf_scene` core A1-A6 done** (format v3, `scene.chains`, `ChainRegistry`, allocators, `SceneSpace`) — all of it **untested in game, and nothing has ever been baked**; S0/S1b/S2/S3a await owner runs — **run the S0 baseline first: it decides batch granularity** (architecture review "The one change to make before S3b"). **S3b in progress**: S1c-a, B3a, B3b-1/2, B4a, B5a, B5a-2 and B5b built 2026-11-11 (headless only, not run in game); C1 done (`bevyrrowind bake` bakes `scene.cells` + `scene.chains`; first bake 2026-11-11: 1692 tables, 3655 chains, 0 failed); O1 built (slots rewritten in the shift frame, headless); C2 built (`--scene`, off by default; scenes `sc-scene` / `sc-noscene`, SC-scene awaiting owner, perf A/B `perf suite ... --arg=--scene`); B6 built (`scene/*` occupancy gauges, 4 perf summary columns); B5c built (off without GPU culling); **S3b code complete**, next the owner's SC-scene look and the `--scene` perf A/B (`docs/briefs/s3b-session-end-2026-11-11b.md`). Decisions of 2026-11-09/10 in `superfargoth/docs/DECISIONS.md`; open for the owner: whether **interiors** get a table at all, and `NO_LOD` placements. Owner A/B 2026-11-11: looks identical to the old path; perf ~2-3 ms SLOWER with `--scene`. Audit 2026-11-11 (`superfargoth/docs/research/static-scene-perf-audit-2026-11-11.md`, reviewed by a second model): per-frame O(ranges) CPU in the GS port, per-frame slab lookups, per-class capacity skew; fixes 1-3 + 5 built 2026-11-12 (SC-lamps awaiting owner); untraced A/B 2026-11-12: `--scene` 11.23 -> 9.44 ms standing, 14.50 -> 11.10 ms walking (old path 9.31 / 10.71); fix 4 so far only its synthetic-town harness (allocator change not built; A/B `fix4_on` = `fix_on`). **Ceiling 2026-11-12** (`benchmarks/runs/ceil_*`, untraced 3x, 1440p DLSS Q): old path 9.53 / 10.95 ms, `--off statics` 7.52 / 7.21 ms: statics cost 2.0 ms standing, 3.7 ms walking (GPU only 0.7 of it: CPU side); `--scene` saves none of it yet. Owner call: continue (fix 4, S3a3) or freeze.
+
+## 1.17
+
+- [~] 1.17 **One authoritative game clock** (C1 core + C2 wiring built 2026-11-11, owner check pending, C3 calendar globals next; `superfargoth/docs/specs/clock.md`) (owner 2026-11-09: an obvious fix, needed for multiplayer). Three clocks: `sf_sky::SkyClock` (saved `sf/clock`, `f64` days), `sf_rpg::GameTime` (integer minutes; AI, dialogue, journal), `sf_effects::GameMinutes`; nothing converts between them, so AI directive timers can't advance in game. One host-authoritative integer clock in a low-level Bevy-free crate, saved once, replicated by `sf_net`, the others derived (`docs/briefs/ai-next.md`). Research/spec first.
+
+## 1.18
+
+- [~] 1.18 **IK keeps running while paused** (owner 2026-11-09, recent playtests; not diagnosed): character IK still updates in the pause menu. Diagnosed 2026-11-11 (`superfargoth/docs/research/ik-feel-diagnosis-2026-11-11.md` cause 3): pausing `Time<Virtual>` stops the fixed loop but `sf_anim_bevy` Probe/Evaluate/Apply still run at dt 0 (one-frame 136 mm foot drop on stairs; player `grip::feed` probes every frame). Fix slice P-IK2: skip those sets while paused (UE default), opt-in for menu previews. Built 2026-11-11 (P-IK2): set run conditions in `sf_anim_bevy`, `AnimateWhilePaused` opt-in; PL-8 awaiting owner (then [x]).
+
+## ]
+
+- [ ] 1.19 **Streaming's Upload budget would multiply-charge a stage that spans frames** (logged 2026-11-10, **latent, not live**, not diagnosed): `run_stage` charges the whole `request.upload_bytes` on *every* invocation of `Stage::Upload` (`superfargoth/crates/sf_world_bevy/src/stream.rs:814-815`), and `reveal` cannot be resumed anyway — it removes the `Work` and returns `true` unconditionally (`:1265-1275`). Unreachable today because `Upload` runs exactly once per request; it becomes real the first time any stage spans frames (static-scene M1 therefore uploads a cell in one invocation, `DECISIONS.md` 2026-11-10).
+
+## 1.20
+
+- [~] 1.20 **Texture compression + streaming** (owner 2026-11-11, urgent: a normal-map pack is coming): spec `superfargoth/docs/specs/textures.md` + `specs/textures-adapter.md` (research `superfargoth/docs/research/texture-compression-streaming-2026-11-11.md`). Bevy 0.20 has no streaming; normal maps are never loaded today. Slices T0-T8 (cook BC7/BC5/BC4 KTX2, normal maps, terrain + far-field arrays), S1-S4 (size cap, re-bind, residency, streamer); T1 built (`sf_texture::cook`: every role to BC7/BC5/BC4 KTX2), T2 built (`sf_texture::rewrap`: DDS/KTX2 BCn to KTX2 unchanged, missing mips filled in the source format), T0 done (PBR packs census: `specs/textures-adapter.md` §7), T2b built (`sf_texture::remap` block-exact Y flip / R↔B swap / alpha drop / `_nh` split, generic `sf_texture::profile` pack profiles; instances in `mw_bake/data/texture_profiles.ron`), T3 built (`mw_bake::cook`: `texture.cook` + `.meta` + `.index`, full-chain BCn indexed in place, others rewrapped or BC7-encoded; one `CookedTextureLayer` serves de-lit + cooked, de-light first; bake stats line `texture.cook:`), T4 built (normal maps: pack companions cooked BC5/rewrapped linear, runtime `normal_map_texture`, MikkTSpace tangents in `mesh.cook` via the `TangentRule` hook; actors not yet), TX-1 awaiting owner; next T5.
+
+## 2.1
+
+- [~] 2.1 Player: third-person controller + camera + use prompt (`specs/action.md`, `camera.md`; `sf_action`, `sf_camera`, `player.rs`); works in game (owner 2026-10-25), PL-1 confirmed. Items: E takes loose items with their reference stack count (`inventory.rs`), IV-1 awaiting owner; containers open the container window (move, Take all; `inventory_ui.rs`), IV-2 awaiting owner. Owner notes (log only): too much inertia; carried object sinks the capsule (3.3). Left: ownership/theft, container weight/locks.
+
+## 2.1b
+
+- [~] 2.1b Input (with 2.2 U6): `controls.rs` built, menu works; labels in `l10n/en/bevyrrowind.ftl`. Owner: everything HOLD by default (sprint holds, sneak toggles today): per-action hold/toggle option.
+
+## 2.2
+
+- [~] 2.2 UI (`sf_ui*`, `sf_rpg_ui`): kit, Morrowind theme, HUD/message box, dialogue/journal/inventory screens built. Escape menu + options built 2026-10-26 (PM-1 awaiting owner; Save/Load open the save screen, 2.5). Minimal HUD in game 2026-10-26 (bars from the `player` record, compass heading, crosshair, use prompt; HD-1 awaiting owner). Main menu in game 2026-10-26: `bevyrrowind` with no subcommand opens it over Seyda Neen at the chargen exit, paused; New game plays (Continue/Load disabled until M3; MM-1 awaiting owner). Next: 8-piece frames, inventory icons, theme hot reload. Owner 2026-10-30 (PL-1, HD-1 confirmed): main menu over title art/video, not the live world (MM-1 rejected); "Main menu" in the pause menu; mouse-drag volume sliders + one mute icon (PM-1); item icons always drawn, not only on hover, and E closes the container it opened (IV-2). Front end 2026-11-11 (`menus.md` F1-F4, B1; video `video.md` V1-V3b): no world behind the menu (`sf_app_bevy` `AppPhase`), `mw_menu.bik` backdrop (pure-Rust Bink), New game from a baseline, pause "Main menu", Continue/Load at the save's place, loading screen, intro logos on first launch (I1, `sf.intro_videos`), backdrop name from `Morrowind.ini`. Owner 2026-11-11 (MM-1, OP-1 confirmed with follow-up): flow works, look crude ("text over a gray box", "a bad html webpage"; keybinds a separate off-centre window): the classic look (art, frames, fonts, layouts) is a big pass of its own. Look pass (owner 2026-11-11: classic = OpenMW exactly, modern = UI overhaul mods; research `research/openmw-ui-look-2026-11-11.md`, `superfargoth/docs/research/ui-overhaul-mods-2026-11-11.md`): L0 done (texture sizes, bevy_flair sliced tile), L1a frames layer + L1b role classes `sf-window`/`sf-box`/`sf-framed` drawn with OpenMW frames done (LK-1 awaiting owner), L2 title menu image buttons + version done (LK-2 awaiting owner; owner question: classic keeps Continue?); then L3 pause, L4 options window + tabs, L5 keybinds tab, L6 save/load + message boxes, L7 scroll/list art, loading, HUD. Left also: new-game video.
+
+## 2.2b
+
+- [~] 2.2b Options menu (owner 2026-11-05): a proper Options screen (graphics preset + per-feature toggles from the `--off` switches, display/DLSS, controls/rebind, audio, gameplay), not only the volume page in the pause menu. Spec 2026-11-11 with the 2.2 front end: `superfargoth/docs/specs/menus.md` + `video.md` (phases, video backdrop, settings v2, options v2; build plan F/B/V/S), owner answered 2026-11-11; settings model S1a-S1c built (v2 fields, conditions, presets with derived Custom, SettingChanged, machine.toml); vanilla option mirrors OpenMW categories. Rows on `bevy_ui_widgets` slider/checkbox (S2a, OP-1 awaiting owner). Left: S2b-S2c, S3-S5 pages.
+
+## 2.3
+
+- [~] 2.3 Text: fonts, books and scrolls, notifications. Framework slices 1-2 built 2026-10-23 (`ui-text.md`); left:
+  the Morrowind markup parser (`mw_ui::book`, OpenMW `formatting.cpp` port) and MessageBox formatting (`mw_ui::message`), both written 2026-11-08, UNTESTED; MessageBox lowering in `mw_script` next; Bevy side wiring of book records next.
+
+## 2.4
+
+- [~] 2.4 Dialogue + journal + quest store (`specs/rpg.md`, `rpg-adapter.md`; `sf_rpg`, `mw_rpg`, `dialogue.rs`), MWScript runtime (W3). Fargoth ring flow confirmed by owner. Next: HUD.
+
+## 2.5
+
+- [~] 2.5 Saves (`sf_save*`, `mw_saves_bevy`, `save.md`; net-ready `specs/net.md`): F5/F9 quicksave/load (SV-1); part 2 built 2026-10-26: save/load screen from the pause menu (save, overwrite, load, delete; OpenMW fields), SV-2 awaiting owner. Owner 2026-10-30: save/load works, thumbnails wanted. Left: typed names (router text entry; sf/meta name field), thumbnails, exterior place label (region/town), local-time dates. Cross-review 2026-11-01 (`docs/reviews/saves-2026-11-01.md`): C1-C10 fixed (load applies at the fade cut, save identity filled + content check, `.bak` keeps the save name + orphan recovery, corrupt-newest fallback, real read-back verify, failed apply blocks saving, refused autosave retries, `sf/weather` saved, `sf.character.v2` migration for the combat-era shape break). `sf/services` (merchant purses) saved 2026-11-10. Owner decides: CH1 snapshot over budget (3.5-9 ms vs 5 ms; COW overlay deferred), D1-D4. Left from it: main menu on `partly_loaded()`, offer `LoadError::Corrupt` fallback, save-owned body DTO, profile static in `mw_boot_bevy`, flaky `reload_resident` test.
+
+## 2.6
+
+- [~] 2.6 Sound (`sf_audio*`, `mw_audio`, `audio.rs`): cues, ambience, music, footsteps, voices built; impact sounds and the volume mixer (options screen drives the 12 volume/mute settings live, 2026-10-26) built; AU-1/2 confirmed, AU-3..5 awaiting owner. Left: UI sounds, voice LOS + barks (Phase 3), modern-preset beds.
+
+
+## 2.7
+
+- [~] 2.7 OpenMW content mechanics (owner 2026-11-05): alchemy, enchanting/spellmaking, repair, barter (+ mercantile), persuasion, training, travel services, spell purchase are not ported. Per mechanic decide the abstraction level and Morrowind closeness first (port from OpenMW, cite file + commit; feel parts behind a seam). Research done 2026-11-05 (`research/openmw-mechanics-2026-11-05.md`): blocked on two missing prerequisites, stats (attributes/skills/level/factions/bounty; dialogue uses a placeholder) and a spell/effect runtime; stats spec written 2026-11-05 (`superfargoth/docs/specs/stats.md`, `specs/stats-adapter.md`; build plan S0-S9; owner answers 2026-11-05; S0-S5 built 2026-11-05: Bevy-free `sf_stats` + `mw_stats` table/init/OpenMW models, `sf_stats_bevy` + sheets on the player/NPCs/creatures saved with character and overlay, combat vitals and HUD bars from the sheet (HD-2 awaiting owner); S6 2026-11-06: dialogue filters read the sheets; S7 2026-11-08: result-script stat, faction and crime functions written, UNTESTED). 2026-11-08 (not compiled): disposition + persuasion formulas (`mw_rpg::disposition`, `mw_rpg::persuasion`); specs drafted, owner answers pending: effects (`superfargoth/docs/specs/effects.md` + `specs/effects-adapter.md`, E1-E5 / A1-A7) and services + trade (`superfargoth/docs/specs/services.md` + `specs/services-adapter.md`, SV1-SV3 / A1-A7). Owner took the specs' defaults (2026-11-08). Rounds 2-3 (2026-11-08, UNTESTED, `test-pass-2026-11-10.md`): derived disposition + host `Rpg::persuade` (no menu yet); effects E1 core + E2 rules (`sf_effects`), adapter A1 (`mw_effects`); services SV1 (`sf_rpg::service`), SV2 view-models (`sf_rpg_ui`), adapter A1 price formulas (`mw_rpg::services`); dialogue action buttons (`DialogueView`). Round 4 (UNTESTED): Persuasion menu drawn + routed, effects E3 spell book, SV3a trade screens, barter rules A2a (`mw_rpg::barter`), MessageBox lowering. TR1 barter in game, host side (2026-11-10, headless tests; not run in game). TR2 trade screen over the dialogue (2026-11-10, headless tests; PUI-SV3 awaiting owner). A2b Mercantile use on a won haggle (2026-11-10, unit + headless tests). Merchant purses saved (`sf/services`, 2026-11-10). Effects E4a Bevy shell `sf_effects_bevy` + glue (2026-11-10, headless tests; not run in game). Effects E4b saves (2026-11-10, headless tests: `sf.character` v4, `sf/effects`, NPC `effects` blob, modifiers re-registered before the sheet settles). Effects adapter A2 potions (2026-11-10, headless tests; not run in game): inventory Use → host drinks (one taken, `Inflict` on the player, stacks); HUD effect icons not built (next slice). Effects adapter A3 start spells (2026-11-10, headless tests; not run in game): race powers, birthsign and record spells learned at spawn, abilities on the Permanent layer, saved once (not re-learned on load). Pool fortifies fixed (2026-11-10, headless tests): no double count on magicka/fatigue, an ability's Fortify Magicka kept on the derived pool. Effects adapter A5a (2026-11-10, headless tests; not run in game): modern and classic (OpenMW) cast rules, host `CastRequest` (self casts land, touch on the contact), powers once a day, console `cast`. Services A3 training in game (2026-11-10, headless tests; PUI-SV4 awaiting owner): the host's list path (open, rows, buy, close) and Morrowind's training rules; 2 h pass on the MWScript calendar and the sky clock. Next: A5b cast input + HUD spell (`mw_player_bevy`), A3b autocalc spells, the HUD icon list and E5 (items + delivery); then travel/spells (services A4/A5 on the list path), repair, alchemy, enchanting, spellmaking. Crafting spec written 2026-11-10 (`superfargoth/docs/specs/crafting.md` + adapter; owner questions pending).
+
+## ]
+
+- [ ] 2.8 **Crime, stealth, locks** (spec 2026-11-10: `superfargoth/docs/specs/crime.md` LW1-LW9 + `specs/crime-adapter.md` A0-A8; owner questions pending; rules-only slices first, no AI needed): ownership and stolen ledger, offences and bounty, guards/arrest/jail, pickpocket, locks and traps, stealth detection seam.
+
+## 3.1
+
+- [~] 3.1 Traversal/action per R11 decisions (`research/animation/11-tradeoffs.md`, `specs/action.md` phases);
+  old P11. Clip sources: packs only (free first).
+  Potential (owner 2026-10-22): evaluate MotionBricks as an animation source. Audit 2026-10-28 (with Kimodo, SEED, ambient
+  NPC life readiness): `research/ambient-life-2026-10-28.md`; live tests pending owner OK.
+  Wanted later (owner 2026-10-27, not urgent): run + Ctrl slide.
+  High mantle (1.53-2.25 m, UAL2 ClimbUp_2m), B2b clip contacts, B2-T angled trigger and B2b-2 lip hand IK built; owner
+  2026-10-30: mantle triggers and works (AL-10 confirmed), lip hand IK works but needs tuning. Next: B2c wall brace (not
+  built yet, own session; free hand plants on a wall when running into it; busy hands skipped). B2c built 2026-10-30; AL-11 partial: slides sideways on a straight hit, trail hand pose wrong (hand ahead, thumb down); fix wanted (owner 2026-11-05). Head-on wall stop built 2026-11-05 (`MoverParams::wall_stop_deg` 30°, all characters; AL-11 confirmed; follow-up: head-on hands closer together at chest height); palm frame built 2026-11-05 (rotating `HandIk`, rig-derived `palm_axes`, side hand leads; baked); head-on hands in front of the chest built 2026-11-05 (AL-11 awaiting owner). The 2026-10-30 "new movement absent in release" note is closed (owner 2026-11-05: mantles trigger in game; Delirium now wired); vault built 2026-11-05 (UAL2 `SafetyVault`, two-leg warp, 0.81-1.26 m high, ≤ 0.59 m deep, needs room behind else mantle; AL-12 confirmed; tuning left: hiccup before the vault, ~0.13 s stall at contact).
+  Clips (2026-10-27): full Quaternius UAL1/UAL2 now bundled (`assets/animation/quaternius/`); unmapped UAL2 clips ready for
+  slots (Sword_Light_A-D and ClimbUp_2m mapped since): Sword_Light_Combo, Sword_Heavy_*, KipUp, StepUp, SafetyVault, Walk_Fwd/Bwd/L/R, Turn180,
+  LiftAir_* (knock-up). The UAL1 Sword_Attack alt1 light backup now carries 1.5 m root travel (unused; scale it if mapped).
+
+## 3.2
+
+- [~] 3.2 Ragdolls. 2026-11-05 (owner: old ragdoll still in game): `delirium` is a default feature (release GPL-3.0-only; click push dev-only, `delirium_push`); human walker knockdowns and deaths go to Delirium through the `RagdollTakeover` hook (terminal `Takeover::kill`, frozen corpses; console `kill` replaces the `I` key); beasts/creatures keep the old ragdoll; PH-14 confirmed. Hits push along their direction with the balancer on (`TakeoverKind::Hit`, ≥ 10 N·s, forced fall ≥ 100 N·s; `Takeover::hit` entry for combat C6); PH-15 confirmed 2026-11-05. Owner notes: the fall threshold should scale with the character's strength (stats S-slices: Strength/Agility/Fatigue into `HitRules`); characters sink into bent knees on takeover and rise at hand-back: fixed 2026-11-05 (actor scale counted twice in the balancer's leg length; `Rules::stance` matches the incoming pose; 9 cm → 0.4 cm at ×0.9; PH-15 awaiting owner). Gaps: corpse drag, corpse pose in saves/streaming, beasts on Delirium. R0 fixed, AN-1..21 fixed. Owner 2026-10-30: the clip+limp ragdoll is deprecated, deaths and knockdowns use delirium (3.2b) from now on; PH-2 retired; corpse drag later. Left: limp_drop/stairs stretch gates, beast toe pin, powered falls (PH-9). Order `superfargoth/docs/specs/animation-plan.md`; test level `anim-lab`.
+
+## 3.2b
+
+- [p] 3.2b Potential (owner 2026-10-22): delirium-physics active-ragdoll experiment, bevyrrowind only (slice R9 in
+  `superfargoth/docs/research/animation/12-delirium-physics.md`). Fan project: accept the provenance risk, remove if challenged.
+  DE-1 confirmed 2026-10-27 (push in F11 only). Logged: a body landing crouched sinks/slides ~1.5 s before the get-up;
+  takeover of action characters (player, dummy) needs an `ActionBody` hold/hand-back; walker hand-back is a plain move
+  (collision-check it later). Owner 2026-11-11: a friend's project is replacing the GTA IV weights Delirium needs; adopt it
+  when it lands (removes the provenance risk).
+
+## 3.3
+
+- [~] 3.3 Physics follow-ups. Fix plan (`specs/physics-fix-plan.md`) slices 1-10 built 2026-10-26 (no falls on load, items asleep until disturbed, OpenMW NIF collision, steady carry); PH-11 awaiting owner; slice 11 (player physics capsule) waits for the owner; leftovers in the plan's status. Older: hold/drag/throw (PH-4), shapeless items (PH-7), immovable candles (PH-1), ball through walls (archive 6a). Owner 2026-10-25: props jump on entering a room (spawn settling); held object vs capsule.
+
+## 3.4
+
+- [~] 3.4 Deferred character checks: SN-2/3, CH-1/3/4, SB-1/2/3/5, HI-3, AP-2/3, PH-10 (CH-1/3, SB-5 awaiting owner); next stairs 5b, powered falls R3 (`animation-plan.md`). 2026-10-26: IK/pelvis/jump audit fixes built (CHANGELOG); AL-9, PL-3 awaiting owner; left: sprint cycle, run-strafe skate (clips). Owner 2026-11-05: slope trunk lean (AN-21, `mw_graphs` build.rs `Lean` grade up 0.4 / down 0.12): not enough forward lean uphill, slightly too much downhill. Retuned 2026-11-05 (chest+upperChest+neck, walk at 30°: up +8.4° → +16.5°, down −2.6° → −1.5°); AN-21 confirmed. Owner 2026-11-05, later: the walk cycle has a faint unsmoothness (a bit jolty, syncopated), seen on the slope ramps. Owner 2026-11-11: moving around still doesn't feel great and IK seems not to work as it should. Diagnosed 2026-11-11 (`superfargoth/docs/research/ik-feel-diagnosis-2026-11-11.md`): the player never gets foot probes (`mw_player_bevy/src/avatar.rs:271` fills `None`), so no foot placement, pelvis drop or slope lean on the player (sinks 15-34 cm on slopes/stairs); every confirmed foot check was on walkers. Delirium unrelated; the 2.1 inertia note is stale (PL-4). Slices: P-IK1 feed player probes (built 2026-11-11; PL-7 failed 2026-11-11: legs spread, IK overrides the clip, slope lean and head tilt far too strong on the player; P-IK1b diagnosed 2026-11-11 (doc §7: data path fine; head takes the whole lean, foot lock holds through fast turns, pelvis drop not scaled by speed; slices P-IK4 level head, P-IK5 turn unplant (done 2026-11-11, PL-9 confirmed), P-IK6 speed-scaled pelvis/IK, P-IK7 steep-grade lean cap, P-IK1c real-path test)), P-IK3 pelvis bob on slopes (diagnose, then smooth).
+
+## 3.5
+
+- [~] 3.5 Combat (M10): Elden Ring feel, classic rules behind a seam (owner 2026-10-27). Spec written 2026-10-27:
+  `superfargoth/docs/specs/combat.md` (new `sf_combat(_bevy)`, slices C1a-C7) + `specs/combat-adapter.md`. C1a (Bevy-free
+  core) done 2026-10-27; C1b (player vs training dummy, scene `level-arena`) done 2026-10-27, CB-1 confirmed after the
+  afternoon bug pass; 4-hit light chain (UAL2 Sword_Light_A-D) and M1 confirmed that evening. C1c lock-on built 2026-10-27
+  (parts 1-4: lock/break/re-offer + camera, locked facing/strafe, locked side rolls, marker; CB-2). Next: C1c-2b strafe
+  clips, then C2. Visual checks CB-. C4 soft aim built 2026-11-10 (first-person melee: attacks face the view, soft aim 3 m / 30 deg, no hard lock in first person; CB-5 awaiting owner). C4b first-person attack look limits built 2026-11-10 (`MoveRule.look`, view held within 45 deg of the body until `Cancel(Move)`; CB-5b awaiting owner). `--all-features` combat test panic fixed 2026-11-10 (gizmos without the gizmo plugin). C2a built 2026-11-10 (sparring dummy strikes through `Command`, player reactions by tier and side in both views, scene `level-sparring`; CB-3a awaiting owner). C2b built 2026-11-10 (guard on right mouse / L1, heavy moved to R: 80 deg arc after 4 ticks, guarded damage and stamina, guard break at 0, regen x0.5, first-person body follows the view at 360 deg/s; CB-3b awaiting owner); next C2c backstep + knockdown.
+  Owner 2026-11-05 (later, significant): hit/hurt volumes rethink: balls pass through arms outside the mover capsule, and
+  sword swings sometimes pass through a character with no reaction; per-bone hurt shapes for physics impacts and weapons (C4). Spec written 2026-11-05: `superfargoth/docs/specs/character-shapes.md` (one set per rig from the ragdoll def, activation tiers, `BODY_PROXY` layer, budget High ≤ 0.3 ms, slices S0-S7; S3 built (balls through Delirium-held bodies, PH-15); S0 built (scene `level-shapes-bench`, `shapes:` log line, headless `proxy_bench`); 4 owner questions).
+  Logged 2026-10-27: actor separation (`separate_moved`) has no wall sweep; NPC walkers (ORCA) don't block the player;
+  dummies have `CellCoord` but no big_space regrid.
+  Owner 2026-11-02: `I` kill key removed 2026-11-05 (console `kill`, 3.2); the player attacks only with the weapon drawn (`Readiness::Drawn`), never from the sheathed stance. Owner 2026-11-05: still reads as attack-on-click: a sheathed click draws instantly (`mw_player_bevy/src/combat.rs`) with no weapon mesh and no draw/sheathe clip, so the next click attacks. Want: visible draw (clip + weapon on the hand bone), then fight. Built 2026-11-05: sheathed presses do nothing, F shows the weapon on `Weapon Bone` (avatar readiness fed from `Stance`, `EquippedHeld`, test levels `player_held`; CB-3 awaiting owner). Draw/sheathe built 2026-11-05 (Morrowind `WeaponOneHand@equip/unequip`, upper body, prop moves at the text key, attacks gated until drawn). CB-3 confirmed. Owner 2026-11-05: the Quaternius sword attack clips are poor; Kimodo swings unusable (MG-C0), mocap pack next (MG-C1). Priority: context and weapon variety (heavy, jumping, running attacks, per weapon class) over long chains (two lights is enough). Left: equip screen, moveset from weapon type, roll during a draw, sheathe mid-combo. Owner 2026-11-11: combat feels terrible on Quaternius clips; try Morrowind's vanilla attacks first; new combat clips join the next Kimodo pass (3.8).
+
+## 3.4b
+
+- [~] 3.4b First-person arms (owner 2026-11-05): FP-1 built 2026-11-10 (role layer split: first person shows body, arms, weapon, head hidden; FP-1 awaiting owner); FP-1b built 2026-11-10 (per-worldspace shadow-only layer: the hidden head still casts; FP-1b awaiting owner); FP-2 view model designed 2026-11-10 (single pass, not a second camera: spec "View model"); FP-2a built 2026-11-10 (projection math + view copies); FP-2b built 2026-11-10 (view-model material and its two vertex stages, off by default, console `flip viewmodel`; FP-2 awaiting owner); next FP-2c owner check, then FP-3 held items (superfargoth `docs/specs/first-person.md` "Build plan"). Attack look limits built 2026-11-10 (combat.md "C4b"; CB-5b, judge with the view model on and off).
+
+## ]
+
+- [ ] 3.6 Swimming + underwater (owner 2026-10-26; was W5 under Phase 4): player swims (`MoverMode::Swim`, `locomotion.md`), camera medium + underwater fog/medium, waterline split, surface from below, `underwater` audio cue (`water.md` "Underwater"). Caustics and breath/drowning later. Owner 2026-11-05: brainstorm first with 3.7: Morrowind has one global water plane; we want water bodies at any altitude, anywhere (data model + rendering + physics), so swim/buoyancy wait for that design.
+
+## ]
+
+- [ ] 3.7 Buoyancy (owner 2026-10-26; was W6): pontoon bodies in `sf_physics`, wood floats / iron sinks, flow drag (`water.md` "Buoyancy"); thrown and dropped items, corpses. Boats' hull method later.
+
+## 3.8
+
+- [~] 3.8 Ambient life clip factory (owner 2026-10-28): Kimodo + MotionBricks offline generation, SOMA BVH onto `base_anim`, review on a real NPC (`specs/motion-generation.md`). Done: MG1-MG6, MG7a, MG10a (`clip-preview --browse`); tier1 batch 268 clips. Next: MG10b per-clip furniture/props + calibration + verdict keys, MG7b grip table, MG1b chaining/contact constraints, MG8 loops/links. Runtime activity system (interaction points, AI) separate.
+
+## 3.9
+
+- [~] 3.9 **NPC navigation** (M7; `superfargoth/docs/specs/nav.md`): NV0 done 2026-11-11, `navmesh-rs` =0.2.2 adopted (`superfargoth/docs/research/navmesh-spike-nv0-2026-11-11.md`; NV0b not needed); NV1 done 2026-11-11 (`sf_nav` core: types, `NavBackend`, `GridBackend` double, goals, filters); NV2 done 2026-11-11 (`sf_nav_recast` on vendored navmesh-rs); NV3 done 2026-11-11 (`sf_nav_bevy`: `nav.draw` / `nav.stats` / BRP stats, gizmos behind `debug`); NV4a done 2026-11-11 (`sf_nav_bake`: `nav.tiles` / `nav.links` / `nav.coarse` steps, `NavGeometrySource`, door polygons; synthetic tests); NV4b done 2026-11-11 (Morrowind adapter, `nav` in `bevyrrowind bake`, 154k tiles), NV4d (decode cache) and NV4f (packed bake trace log) built; next: re-measure the warm bake, then NV4c (game wiring + NV-1), then NV5-NV12; SI3 (`InWorldspace`) before NV5; NV7a+NV8 gate AI6. Checks NV-.
+
+## 3.10
+
+- [~] 3.10 **NPC AI** (M7; `superfargoth/docs/specs/ai.md` + `ai-as-built.md`, `specs/ai-adapter.md`): AI1 trace, AI2/AI2b HTN, AI3 overlay, AI4 directives, AI5 `sf/ai` saves built 2026-11-08/09, headless and unit-tested. **Not wired into the game** (no `AiActor`, no `AiPlugin`, section unregistered: `docs/briefs/ai-next.md`). AI6 blocked on NV7a/NV8/SI3; AI7 (drives) needs no nav. Audit 2026-11-09 left trace-allocation and guard fixes. Checks AI-.
+
+## ]
+
+- [ ] 3.11 **World interactivity** (owner 2026-11-11): breakable crates, damageable buildings, NPCs moving chairs to sit, NPCs grabbing objects like the player, mounts and vehicles. References: Cyberpunk 2077, Crimson Desert. Designed 2026-11-11: `superfargoth/docs/specs/interaction.md` (slices IN0-IN13, owner questions at the end) + `specs/interaction-adapter.md`; research `superfargoth/docs/research/world-interactivity-2026-11-11.md`. Owner answered 2026-11-11 (spec "Owner questions"). World reactions (NPCs notice, suspect, report, tidy; NPC culprits; reset) designed 2026-11-11: `superfargoth/docs/specs/world-reactions.md` (IN14-16, LW10, AI19-25). Next: IN0 (core), then IN1 (crates break). Ties to 3.8 clips, 3.10 AI, physics, nav.
+
+## Weather polish (surface
+
+- [~] Weather polish (surface weather spec 2026-11-05: `superfargoth/docs/specs/surface-weather.md`; W1 state, W2 GPU side, W3 wetness (`bevy_pbr` patch SW), W2b rain wash + night shelter + partial leaf shelter, W4 puddles + rain rings (`sf_surface`, `sf_surface_bevy`; SW-2 shelter fixed, SW-3, SW-4 retuned: all confirmed 2026-11-06), W5a cover records + layer array built (2026-11-06), W5b cover drawn, W6 trails + knee-deep raised snow (W6b 2026-11-06, SW-6 awaiting owner; open: cascade-0 shadows, POM), W7 next; rain lean in the wind capped + smoothed (WE-8 confirmed 2026-11-06); owner unparked wetness, puddles, snow/ash, trails): storm from Red Mountain (WE-5), tall clouds, ash, splashes (PR2), wetness/snow (SU1, SU2), tree wind (WD2, WD3). Owner 2026-10-21/22: cheap rain puddles + wet objects, persisted in saves, SSR reflections first (`research/borrow-audit-2026-10.md`).
+
+## Water polish (WA-1
+
+- [p] Water polish (WA-1 notes, WISHLIST §12): shore swash + gradual wavelets, textured foam, whitecaps,
+  weather-driven wave height (verify), crest SSS; W4 reflections, caustics, W7 rivers (W5 underwater, W6 buoyancy are 3.6/3.7).
+
+## RT as the
+
+- [p] RT as the Ultra tier (decision 2): exterior RT content, Solari sunset patch, `--rt` in the streamed view, characters in the RT scene, DL-4 contact bands, DL-2 open (needs a `solari,dlss` build).
+
+## GI (owner 2026-11-01,
+
+- [~] GI (owner 2026-11-01, opened from Phase 4): dynamic ray-query probe volumes on the raster High path (`superfargoth/docs/specs/gi.md`; research `gi-dynamic-2026-11-01.md`), no bake; Solari stays Ultra. Slice 1: the Census-office spike (spec "Spike", checks 1-5, ms per pass). Slice 1 built (verification pending; pass blocked on ray-traceable runtime meshes, spec "Spike"); slice 1b built (variants for interiors); slice 1c: pass dispatches in the Census office, 0.025 ms (own `bevy_solari` patch: scene bind group without lights); slice 2 built (light list, 0.05 ms with 21 lights); placement/teleport/toggle built (interior volume fitted to the cell bounds, rebuilt at door teleports, `flip gi`); slice 3 built (DDGI atlases + visibility sampling, 0.08 ms).
+
+## Light rules from
+
+- [ ] Light rules from openmw-rtx (owner 2026-11-05; research `bevyrrowind/docs/research/mw-lighting-rules-2026-11-05.md`): L-A lamp reach by shadow state built 2026-11-05, 1.5 x rejected by the owner (darker towns and interiors), default 4 x both ways, mechanism kept; L-B lamp body not lit twice at GI hits + GI ambient floor 0.1 built 2026-11-05 (GI-lampbody awaiting owner). Later: L-E ambient under GTAO on the no-GI path, L-F emissive/NightDaySwitch census. Skipped: vanilla flicker band, negative lights.
+
+## Albedo de-lighting at
+
+- [~] Albedo de-lighting at bake (owner 2026-11-05; research `superfargoth/docs/research/delighting-2026-11-05.md`): de-lit BC7 KTX2 per texture in a bake layer, on by default on all presets at strength 0.5 pending the owner's look; `--off delight` A/B. D-1 built (algorithm, `sf_texture::delight`, tests); D-2a built (mips, BC7 via `intel_tex_2`, KTX2 writer, `sf_texture::ktx2_out`); D-2c built (coverage-preserving cutout mips); D-2b built (`mw_bake::delight` products, validated top VFS layer, `--off delight`; 3521 textures, cold bake 34 s); TX-delight awaiting owner.
+
+## Bloom on the
+
+- [x] Bloom on the game camera (owner 2026-11-01): Bevy `Bloom::NATURAL` at 0.1, Medium and up, `--off bloom`, console `render.bloom` (RO-14 awaiting owner).
+
+## Foliage light transmission
+
+- [x] Foliage light transmission (WISHLIST §11): Bevy `diffuse_transmission` 0.3 on leaf cutouts + transmitted shadows, `--off foliagetransmission` (RO-15 awaiting owner).
+
+## Cloth: capes/banners/tents (robes
+
+- [p] Cloth: capes/banners/tents (robes stay authored skin; PH-3 confirmed).
+
+## Crowd LOD via
+
+- [p] Crowd LOD via vertex animation textures (owner 2026-10-25: adopt `bevy_open_vat`; `research/crates-2026-10-25.md`): tier below anim LOD 3; spike one creature first.
+
+## Seamless portals: M9a
+
+- [p] Seamless portals: M9a player (SI0-SI11), M9b world (SI12b, NV11, AI12/MA9, AI10, SI16; after 3.10); far-field performance (M8: HLOD, texture streaming, PBR generation).
+
+## Co-op N1–N8 (specs/net.md;
+
+- [p] Co-op N1–N8 (`specs/net.md`; N1–N5 after this phase, N6–N8 after M7).
+
+## Lua/Luau beyond L3;
+
+- [p] Lua/Luau beyond L3; mods milestone demo (M5 E1, U7, X1, X2). Rule hooks spec written 2026-11-08 (`superfargoth/docs/specs/rule-hooks.md`: Luau `rules.wrap` over Rust formula defaults; R1 needs no Luau and sets the shape of every 2.7 formula; owner 2026-11-08: Rust first, Luau later; only the pure-formula shape applies now).
+
+## Crate "update all"
+
+- [p] Crate "update all" pass once `bevy_hanabi` supports Bevy 0.20 (archive Backlog).
+
+## Classic option (owner
+
+- [p] Classic option (owner 2026-10-20/23, ARCHITECTURE §1b): (a) Classic graphics preset on the `--off` switches; (b) classic rules (`mw_rules`, from OpenMW) behind the feel-system seams, after each modern version exists.
+
+## Setup screen (owner
+
+- [p] Setup screen (owner 2026-10-26, `specs/setup.md`): first-run setup in the game binary: Morrowind path, mod list import, bring-your-own downloads (DLSS, animation libraries; one click where licences allow, guided download + hash check otherwise), bake queue with progress. After the Phase 3 animation lanes.
+
+## Living world AI
+
+- [p] Living world AI (owner 2026-10-28; design `superfargoth/docs/specs/ai.md`, memory ai.md "Memory", decisions `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md`; built part in 3.10): characters going about their lives. Reference: https://www.nexusmods.com/reddeadredemption2/mods/10967. A Nemesis-like system (NPCs that remember the player and build rivalries) is a good first step (AI13).
+
+## Groundcover (owner 2026-10-20,
+
+- [p] Groundcover (owner 2026-10-20, low priority; 2026-10-25 adopts `bevy_grass`): masks from LTEX, wind from `sf_wind`; later load Morrowind groundcover mods (`research/crates-2026-10-25.md`).
