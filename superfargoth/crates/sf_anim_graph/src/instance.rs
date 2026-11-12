@@ -275,8 +275,11 @@ pub struct FootStats {
     pub reach_clamped: u32,
     /// Girdle offsets cut by the drop or rise limit.
     pub pelvis_clamped: u32,
-    /// Locks released because they drifted past the unplant distance.
+    /// Locks released because they drifted past the unplant distance or
+    /// turned past the unplant angle.
     pub unplanted: u32,
+    /// Of `unplanted`, those released by the turn (the unplant angle).
+    pub unplanted_turn: u32,
     /// Updates whose `moved` jumped further than a leg reaches (locks reset).
     pub teleports: u32,
     /// Non-finite results caught (the op was skipped and its state reset).
@@ -302,6 +305,7 @@ impl std::ops::AddAssign for FootStats {
         self.reach_clamped += o.reach_clamped;
         self.pelvis_clamped += o.pelvis_clamped;
         self.unplanted += o.unplanted;
+        self.unplanted_turn += o.unplanted_turn;
         self.teleports += o.teleports;
         self.non_finite += o.non_finite;
         self.cap_bound += o.cap_bound;

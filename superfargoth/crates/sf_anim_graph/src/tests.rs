@@ -1301,6 +1301,7 @@ mod physics;
 mod progress;
 mod slot;
 mod stride;
+mod unplant;
 
 /// A masked override layer blends a leg's contact curve by the mask weight
 /// of the leg's foot (curve "linked bones"): an upper-body overlay keeps

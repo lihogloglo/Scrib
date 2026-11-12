@@ -55,7 +55,18 @@ fn humanoid_sim_of(index: usize) -> Option<Sim> {
         }
     }
     let mut set = AnimSet::new(set.name, skeleton, anims).with_humanoid_rig();
-    let v = mw_graphs::validate(&mut set, Template::Humanoid).unwrap();
+    let mut v = mw_graphs::validate(&mut set, Template::Humanoid).unwrap();
+    if let Some(deg) = std::env::var("IK_UNPLANT_ANGLE").ok().and_then(|s| s.parse::<f32>().ok()) {
+        // Measurement sweep (P-IK5): the shipped graph with another turn unplant angle (degrees;
+        // 1000 = off, the drift limit alone).
+        let mut asset = sf_anim_graph::asset::parse_graph(mw_graphs::builtin(Template::Humanoid)).unwrap();
+        for op in &mut asset.procedural {
+            if let sf_anim_graph::asset::OpSpec::FootPlacement { guards, .. } = op {
+                guards.unplant_angle = deg.to_radians();
+            }
+        }
+        v.graph = set.compile(&format!("{}:{}", set.name, Template::Humanoid.path()), &asset).unwrap();
+    }
     #[allow(unused_mut)]
     let mut clips = set.binding_clips(&v.graph).unwrap();
     if std::env::var_os("GAIT_BASELINE").is_some() {
@@ -1340,5 +1351,353 @@ fn paused_updates_move_the_pose() {
             heights.join(" ")
         );
         assert!(drift_p.is_finite() && drift_f.is_finite());
+    }
+}
+
+// --- P-IK1b (owner PL-7 failed 2026-11-11): the player's kinematics vs the walkers' -----------
+
+/// The player's mover (`mw_player_bevy::feel::mover_params`, copied: velocity half-life
+/// 0.07 s, brake 0.05, facing 0.1, turn walk 720 / run 1080 / sprint 480 / sneak 540 deg/s,
+/// gravity 18), or the walkers' `MoverParams::default()`.
+fn mover_params(player: bool) -> MoverParams {
+    if !player {
+        return MoverParams::default();
+    }
+    let turn = sf_controller::TurnRates { walk: 720f32.to_radians(), run: 1080f32.to_radians(), sprint: 480f32.to_radians(), sneak: 540f32.to_radians() };
+    let springs = sf_controller::SpringParams { halflife_velocity: 0.07, halflife_facing: 0.1, halflife_brake: Some(0.05), turn: Some(turn) };
+    MoverParams { springs, gravity: 18.0, ..MoverParams::default() }
+}
+
+/// Per frame of [`ik_walk`] (after the first second).
+#[derive(Default)]
+struct IkFrame {
+    root: Vec3,
+    /// Worst |sample height - ground under the sample| this frame, m.
+    sample_err: f32,
+    grade: f32,
+    /// Trunk pitch (`Bip01 Spine1` to `Bip01 Head`, forward positive, rad) minus the twin's.
+    lean: f32,
+    /// Head pitch (`Bip01 Head`'s +Y axis, forward positive, rad) minus the twin's.
+    head: f32,
+    /// Pelvis height minus the twin's (no IK), m.
+    pelvis: f32,
+    /// Per leg: foot (effector) minus the twin's animated foot, character space (x lateral, z fore-aft), m.
+    foot: Vec<Vec3>,
+    /// Knee spread (`|x_l - x_r|`) minus the twin's, m.
+    knees: f32,
+    stride: f32,
+    drift: f32,
+    unplanted: u32,
+    unplanted_turn: u32,
+    weight: f32,
+    /// Seconds since the intent started (L1).
+    t: f32,
+    /// Locomotion state (L1).
+    state: String,
+    /// Per leg: the twin's animated foot, character space (L1).
+    anim_feet: Vec<Vec3>,
+    /// Per leg: the placed foot in the world (L1).
+    world_feet: Vec<Vec3>,
+    /// Pelvis height, character space: placed and the twin's (L1).
+    pelvis_abs: f32,
+    twin_pelvis_abs: f32,
+}
+
+/// Walks the humanoid graph with the player's (`player`) or the walkers' mover and feed on
+/// `world` at `gait`, with ground probes, next to a **twin** graph fed the same motion and no
+/// ground (the animated pose: no foot placement, no lean, no stride-warp grade term).
+/// `turn`: after that many seconds the intent velocity becomes the second value.
+#[allow(clippy::many_single_char_names, reason = "pose math")]
+fn ik_walk(world: &World, start: Vec3, velocity: Vec3, gait: sf_controller::Gait, seconds: f32, player: bool, turn: Option<(f32, Vec3)>) -> Vec<IkFrame> {
+    let mut sim = humanoid_sim().unwrap();
+    let mut twin = humanoid_sim().unwrap();
+    let running = velocity.length() > 3.0;
+    for s in [&mut sim, &mut twin] {
+        s.set(p::RUNNING, if running { 1.0 } else { 0.0 });
+    }
+    let dir = velocity.normalize();
+    let mut loco = Locomotion::new(WorldPos::ORIGIN.offset(start), dir.x.atan2(dir.z));
+    let params = mover_params(player);
+    let mut stepper = KinematicMover::new();
+    let halflife = if player { 0.025 } else { 0.05 };
+    let bone = |n: &str| sim.skeleton.find(n).unwrap_or_else(|| panic!("{n}"));
+    let (spine1, head, pelvis) = (bone("Bip01 Spine1"), bone("Bip01 Head"), bone("Bip01 Pelvis"));
+    let legs: Vec<(usize, usize)> = sim.graph.legs.iter().map(|l| (usize::from(l.effector()), usize::from(l.joints[1]))).collect();
+    let stride_grade = sim.graph.ops.iter().find_map(|o| match o.op {
+        sf_anim_graph::Op::StrideWarp { grade, .. } => Some(grade),
+        _ => None,
+    });
+    let mut measured = Vec3::ZERO;
+    let mut out = Vec::new();
+    let frames = (seconds / DT).round() as usize;
+    for frame in 0..frames + 60 {
+        let t = frame as f32 * DT - 1.0;
+        let v = match turn {
+            Some((at, to)) if t >= at => to,
+            _ => velocity,
+        };
+        let it = if frame >= 60 { LocomotionIntent { desired_velocity: v, gait, ..LocomotionIntent::IDLE } } else { LocomotionIntent::IDLE };
+        stepper.step(MoveInput { loco: &mut loco, intent: it, params: &params, root: RootMotion::default() }, world, DT);
+        let moved = loco.moved;
+        let raw = (Quat::from_rotation_y(-moved.yaw) * moved.translation / DT).with_y(0.0);
+        measured = raw.lerp(measured, 0.5f32.powf(DT / halflife));
+        let flat = Vec2::new(-measured.x, measured.z);
+        for s in [&mut sim, &mut twin] {
+            s.set(p::MOVING, if flat.length() > 0.5 { 1.0 } else { 0.0 });
+            s.set_vec2(p::MOVE, if flat.length() > 1e-3 { flat.normalize() } else { Vec2::Y });
+            s.velocity = measured;
+            s.moved = moved;
+            s.turn_rate = moved.yaw / DT;
+        }
+        let f = loco.frame();
+        let queries: Vec<_> = f.foot_queries(&sim.out.probe_origins, 0.5, 0.75).collect();
+        let mut hits = vec![None; queries.len()];
+        world.probe(&queries, &mut hits);
+        let mut sample_err = 0.0f32;
+        for (slot, hit) in sim.ground.iter_mut().zip(&hits) {
+            *slot = hit.as_ref().map(|h| {
+                let w = WorldPos::ORIGIN.delta_f32(h.point);
+                if let Some(g) = ground_at(world, w) {
+                    sample_err = sample_err.max((w.y - g).abs());
+                }
+                let (point, normal) = f.ground_sample(h);
+                GroundSample { point, normal }
+            });
+        }
+        sim.run(DT, DT);
+        twin.run(DT, DT);
+        if frame < 120 {
+            continue;
+        }
+        let (m, n) = (&sim.out.model, &twin.out.model);
+        let pitch = |a: Vec3, b: Vec3| {
+            let d = b - a;
+            d.z.atan2(d.y)
+        };
+        let fwd = |q: Quat| {
+            let d = q * Vec3::Y;
+            d.z.atan2(d.y)
+        };
+        let foot: Vec<Vec3> = legs.iter().map(|&(e, _)| m.translation(e) - n.translation(e)).collect();
+        let kx_m = (m.translation(legs[0].1).x - m.translation(legs[1].1).x).abs();
+        let kx_n = (n.translation(legs[0].1).x - n.translation(legs[1].1).x).abs();
+        out.push(IkFrame {
+            root: WorldPos::ORIGIN.delta_f32(f.position),
+            sample_err,
+            grade: sim.out.grade,
+            lean: pitch(m.translation(spine1), m.translation(head)) - pitch(n.translation(spine1), n.translation(head)),
+            head: fwd(m.rotation(head)) - fwd(n.rotation(head)),
+            pelvis: m.translation(pelvis).y - n.translation(pelvis).y,
+            foot,
+            knees: kx_m - kx_n,
+            stride: stride_grade.map_or(1.0, |g| g.scale(sim.out.grade)),
+            drift: sim.out.feet.drift_max,
+            unplanted: sim.out.feet.unplanted,
+            unplanted_turn: sim.out.feet.unplanted_turn,
+            weight: sim.out.feet.weight_max,
+            t,
+            state: sim.state(mw_graphs::build::LOCOMOTION).unwrap_or("?").to_owned(),
+            anim_feet: legs.iter().map(|&(e, _)| n.translation(e)).collect(),
+            world_feet: legs.iter().map(|&(e, _)| WorldPos::ORIGIN.delta_f32(f.to_world(m.translation(e)))).collect(),
+            pelvis_abs: m.translation(pelvis).y,
+            twin_pelvis_abs: n.translation(pelvis).y,
+        });
+    }
+    out
+}
+
+fn ik_row(label: &str, frames: &[&IkFrame]) -> String {
+    let n = frames.len().max(1) as f32;
+    let max = |f: &dyn Fn(&IkFrame) -> f32| frames.iter().map(|x| f(x)).fold(0.0f32, f32::max);
+    let mean = |f: &dyn Fn(&IkFrame) -> f32| frames.iter().map(|x| f(x)).sum::<f32>() / n;
+    let lat = |x: &IkFrame| x.foot.iter().map(|d| d.x.abs()).fold(0.0f32, f32::max);
+    let fa = |x: &IkFrame| x.foot.iter().map(|d| d.z.abs()).fold(0.0f32, f32::max);
+    let gmax = frames.iter().map(|x| x.grade).fold(f32::NEG_INFINITY, f32::max);
+    let gmin = frames.iter().map(|x| x.grade).fold(f32::INFINITY, f32::min);
+    let peak = frames.iter().map(|x| x.lean).fold(0.0f32, |a, b| if b.abs() > a.abs() { b } else { a });
+    format!(
+        "{label:22} {:4} fr | smp err {:4.1} cm | grade {:+5.2} [{:+5.2},{:+5.2}] | lean {:+5.1}° peak {:+5.1}° head {:+5.1}° | pelvis {:+5.1} cm | foot lat max {:4.1} mean {:4.1} cm, fore-aft max {:5.1} | knees {:+5.1} cm | stride x{:4.2} | drift max {:5.1} cm, unplants {:3} (turn {}) | w {:.2}",
+        frames.len(),
+        max(&|x| x.sample_err) * 100.0,
+        mean(&|x| x.grade),
+        gmin,
+        gmax,
+        mean(&|x| x.lean).to_degrees(),
+        peak.to_degrees(),
+        mean(&|x| x.head).to_degrees(),
+        mean(&|x| x.pelvis) * 100.0,
+        max(&lat) * 100.0,
+        mean(&lat) * 100.0,
+        max(&fa) * 100.0,
+        mean(&|x| x.knees) * 100.0,
+        mean(&|x| x.stride),
+        max(&|x| x.drift) * 100.0,
+        frames.iter().map(|x| x.unplanted).sum::<u32>(),
+        frames.iter().map(|x| x.unplanted_turn).sum::<u32>(),
+        max(&|x| x.weight),
+    )
+}
+
+/// P-IK1b (owner PL-7 failed): the player's mover and feed (player springs and turn rates,
+/// measured half-life 0.025 s) next to the walkers' (default mover, 0.05 s), the shipped
+/// humanoid graph with ground probes, at walk 1.6, run 4.5 and sprint 7 m/s on the flat,
+/// 10/20/30° ramps up and down and 0.15/0.30 stairs, plus sharp turns (90°, 180°) on the 20°
+/// ramp. Each value is against a twin graph fed the same motion without ground (the animated
+/// pose). Sanity only: finite.
+#[test]
+#[ignore = "measurement: player IK vs walkers (P-IK1b)"]
+fn player_ik_vs_walkers() {
+    use sf_controller::Gait;
+    if humanoid_sim().is_none() {
+        return;
+    }
+    let mut walks: Vec<Walk> = vec![("flat".into(), World::new(), Vec3::new(-4.0, 0.0, 0.0), Vec3::X, (-99.0, 99.0))];
+    for deg in [10.0, 20.0, 30.0, 40.0] {
+        let (w, top) = World::ramp(deg, 12.0);
+        walks.push((format!("up {deg}°"), w, Vec3::new(-3.0, 0.0, 0.0), Vec3::X, (1.0, top.x - 1.0)));
+        let (w, top) = World::ramp(deg, 12.0);
+        walks.push((format!("down {deg}°"), w, Vec3::new(top.x + 3.0, top.y, 0.0), -Vec3::X, (1.0, top.x - 1.0)));
+    }
+    let (w, top) = World::stairs(16, 0.15, 0.30);
+    walks.push(("stairs up".into(), w, Vec3::new(-3.0, 0.0, 0.0), Vec3::X, (0.5, top.x - 0.5)));
+    let (w, top) = World::stairs(16, 0.15, 0.30);
+    walks.push(("stairs down".into(), w, Vec3::new(top.x + 3.0, top.y, 0.0), -Vec3::X, (0.5, top.x - 0.5)));
+    let (w, top) = World::stairs(8, 0.25, 0.22);
+    walks.push(("steep stairs up".into(), w, Vec3::new(-3.0, 0.0, 0.0), Vec3::X, (0.3, top.x - 0.3)));
+    let check = |frames: &[IkFrame]| {
+        assert!(frames.iter().all(|f| f.lean.is_finite() && f.pelvis.is_finite() && f.foot.iter().all(|d| d.is_finite())), "finite");
+    };
+    for (speed, gait, label) in [(1.6f32, Gait::Walk, "walk 1.6"), (4.5, Gait::Run, "run 4.5"), (7.0, Gait::Sprint, "sprint 7")] {
+        eprintln!("--- {label} m/s");
+        for (name, world, start, dir, window) in &walks {
+            for player in [false, true] {
+                let frames = ik_walk(world, *start, *dir * speed, gait, 1.0 + 16.0 / speed, player, None);
+                check(&frames);
+                let on: Vec<&IkFrame> = frames.iter().filter(|f| f.root.x >= window.0 && f.root.x <= window.1).collect();
+                eprintln!("{}", ik_row(&format!("{name} {}", if player { "player" } else { "npc" }), &on));
+            }
+        }
+    }
+    // Sharp turns half way up the 20° ramp: the 0.6 s after the stick turns.
+    eprintln!("--- turns on the 20° ramp (0.6 s after the turn)");
+    let (w, _) = World::ramp(20.0, 12.0);
+    for (speed, gait, label) in [(1.6f32, Gait::Walk, "walk"), (4.5, Gait::Run, "run")] {
+        for (turn, to) in [("90°", Vec3::Z), ("180°", -Vec3::X)] {
+            for player in [false, true] {
+                let at = 4.0 / speed;
+                let frames = ik_walk(&w, Vec3::new(-1.0, 0.0, 0.0), Vec3::X * speed, gait, at + 1.0, player, Some((at, to * speed)));
+                check(&frames);
+                let after: Vec<&IkFrame> = frames
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| {
+                        let t = 1.0 + *i as f32 * DT;
+                        t >= at && t < at + 0.6
+                    })
+                    .map(|(_, f)| f)
+                    .collect();
+                eprintln!("{}", ik_row(&format!("{label} {turn} {}", if player { "player" } else { "npc" }), &after));
+            }
+        }
+    }
+}
+
+// --- L1 (owner: a leg pops back on stopping, hips rise): the player's stop ---------------------
+
+/// L1: the player's mover walks (1.6 m/s) or runs (4.5) on the flat, then the stick is released
+/// (velocity goal 0) at 8 evenly spaced phases of the gait cycle (phase 0: leg 0's animated foot
+/// at its most forward, from a calibration walk). Per row, over the 2.5 s after the release: per
+/// foot the largest lock drift (placed minus animated foot, horizontal), the `unplanted` releases
+/// (each given to the foot with the larger drift that update), the fastest world slide while the
+/// foot is within 3 cm of its rest height, and its world path; the IK pelvis offset (placed minus
+/// twin) peak and rise after it, the placed and twin pelvis rise after their lowest point; the
+/// time to the idle state and to rest (feet and pelvis under 2 cm/s); the states visited.
+/// Sanity only: finite.
+#[test]
+#[ignore = "measurement: player stop"]
+fn player_stop() {
+    use sf_controller::Gait;
+    let Some(sim) = humanoid_sim() else { return };
+    let names: Vec<String> = sim.graph.legs.iter().map(|l| sim.skeleton.name(usize::from(l.effector())).to_owned()).collect();
+    eprintln!("legs: 0 = {}, 1 = {}", names[0], names[1]);
+    let world = World::new();
+    let start = Vec3::new(-4.0, 0.0, 0.0);
+    let hdist = |v: Vec3| Vec2::new(v.x, v.z).length();
+    for (speed, gait, label) in [(1.6f32, Gait::Walk, "walk"), (4.5, Gait::Run, "run")] {
+        // Calibration: the gait period from leg 0's animated fore-aft peaks.
+        let cal = ik_walk(&world, start, Vec3::X * speed, gait, 6.0, true, None);
+        let z: Vec<f32> = cal.iter().map(|f| f.anim_feet[0].z).collect();
+        let peaks: Vec<f32> = (1..z.len() - 1).filter(|&i| cal[i].t >= 2.0 && z[i] > z[i - 1] && z[i] >= z[i + 1]).map(|i| cal[i].t).collect();
+        assert!(peaks.len() >= 3, "{label}: gait peaks {peaks:?}");
+        let period = (peaks[peaks.len() - 1] - peaks[0]) / (peaks.len() - 1) as f32;
+        let t_ref = peaks.iter().copied().find(|&t| t >= 2.5).unwrap_or(peaks[0]);
+        eprintln!("--- {label} {speed} m/s: gait period {period:.3} s, phase 0 at t {t_ref:.3} s");
+        for k in 0..8u8 {
+            let at = t_ref + f32::from(k) * period / 8.0;
+            let frames = ik_walk(&world, start, Vec3::X * speed, gait, at + 2.5, true, Some((at, Vec3::ZERO)));
+            assert!(frames.iter().all(|f| f.pelvis.is_finite() && f.world_feet.iter().all(|d| d.is_finite())), "finite");
+            let i0 = frames.iter().position(|f| f.t >= at).unwrap();
+            let w = &frames[i0..];
+            let last = w.last().unwrap();
+            let mut feet = String::new();
+            let mut unpl = [0u32; 2];
+            for f in w {
+                if f.unplanted > 0 {
+                    let j = usize::from(hdist(f.foot[1]) > hdist(f.foot[0]));
+                    unpl[j] += f.unplanted;
+                }
+            }
+            let mut rest_at = 0usize;
+            for j in 0..2 {
+                let drift = w.iter().map(|f| hdist(f.foot[j])).fold(0.0f32, f32::max);
+                let rest_y = last.world_feet[j].y;
+                let (mut slide, mut path) = (0.0f32, 0.0f32);
+                for (i, p) in w.windows(2).enumerate() {
+                    let d = hdist(p[1].world_feet[j] - p[0].world_feet[j]);
+                    path += d;
+                    if p[1].world_feet[j].y - rest_y < 0.03 {
+                        slide = slide.max(d / DT);
+                    }
+                    if d / DT > 0.02 {
+                        rest_at = rest_at.max(i + 1);
+                    }
+                }
+                let side = if j == 0 { "L0" } else { "R1" };
+                let _ = write!(feet, "{side} drift {:5.1} unpl {} slide {:4.0} cm/s path {:5.1} | ", drift * 100.0, unpl[j], slide * 100.0, path * 100.0);
+            }
+            for (i, p) in w.windows(2).enumerate() {
+                if (p[1].pelvis_abs - p[0].pelvis_abs).abs() / DT > 0.02 {
+                    rest_at = rest_at.max(i + 1);
+                }
+            }
+            // Lowest point, then the highest after it.
+            let rise = |v: &dyn Fn(&IkFrame) -> f32| {
+                let (lo, min) = w.iter().enumerate().map(|(i, f)| (i, v(f))).fold((0, f32::INFINITY), |a, b| if b.1 < a.1 { b } else { a });
+                let max = w[lo..].iter().map(v).fold(f32::NEG_INFINITY, f32::max);
+                (min, max - min, w[lo].t - at)
+            };
+            let (ik_min, ik_rise, ik_t) = rise(&|f| f.pelvis);
+            let (_, abs_rise, abs_t) = rise(&|f| f.pelvis_abs);
+            let (_, twin_rise, _) = rise(&|f| f.twin_pelvis_abs);
+            let idle = w.iter().find(|f| f.state != w[0].state).map_or(f32::NAN, |f| f.t - at);
+            let mut states: Vec<&str> = Vec::new();
+            for f in w {
+                if states.last() != Some(&f.state.as_str()) {
+                    states.push(&f.state);
+                }
+            }
+            let turned = states.iter().any(|s| s.starts_with("turn"));
+            eprintln!(
+                "{label:4} ph {k}/8 | swing {} | leave +{idle:.2} s | {feet}pelvis IK min {:+5.1} cm at +{ik_t:.2} rise {:+4.1} | placed rise {:+4.1} at +{abs_t:.2} (twin {:+4.1}) | rest +{:.2} s | turn {} | {}",
+                if w[0].anim_feet[0].y > w[0].anim_feet[1].y { "L0" } else { "R1" },
+                ik_min * 100.0,
+                ik_rise * 100.0,
+                abs_rise * 100.0,
+                twin_rise * 100.0,
+                w[rest_at.min(w.len() - 1)].t - at,
+                if turned { "YES" } else { "no" },
+                states.join(">"),
+            );
+        }
     }
 }

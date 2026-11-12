@@ -183,3 +183,70 @@ hands, the camera?). Either way the standard fix is the same: don't tick animati
 - **Gaps vs ours**: (1) player foot IK not fed (ours is built, just not wired: P-IK1); (2) pause gate (P-IK2);
   (3) distance matching (G7, logged); (4) look-at not used; (5) orientation warping not used (fine today: facing
   follows travel except when locked on, where 8-way strafe clips play).
+
+## 7. Player IK after P-IK1 (P-IK1b, owner PL-7 failed)
+
+Owner 2026-11-11: legs "spreading a lot", the IK "overriding the animation"; slope lean "outrageous", "head super
+tilted", while the same ops looked right on walkers. Measured by `player_ik_vs_walkers` (`mw_graphs/tests/slope_walk.rs`,
+ignored): the shipped humanoid graph with probes, the player's mover (feel.rs springs, 720/1080/480 deg/s turns,
+measured half-life 0.025 s) next to the walkers' (default mover, 0.05 s), each against a **twin** graph fed the same
+motion without ground (= the animated pose). Values are IK minus twin: "fore-aft" is phase-contaminated (the grade term
+changes the rate) and is not used below.
+
+| Surface, gait | grade npc / player | lean mean (peak) | head pitch | pelvis cm | foot lateral max cm | lock drift max cm |
+|---|---|---|---|---|---|---|
+| flat walk 1.6 | 0 / 0 | 0 | 0 | 0 | 2.1 | 5.5 / 3.2 |
+| up 20° walk | 0.36 / 0.36 | +11.2° (+14.7) | +15.4° | -11.9 | 6.8 | 3.5 |
+| up 30° walk | 0.57 / 0.57 | +17.3° (+21.5) | **+23.4°** | -16.2 | 6.7 | 4.7 |
+| up 40° walk (flat-slopes only) | 0.83 / 0.83 | +17.7° (+21.0, cap) | **+23.2°** | -21.4 | 6.7 | 6.5 |
+| down 40° walk | -0.83 | -2.3° | -4.5° | -20.4 | 6.6 (knees +8.6) | 3.2 |
+| up 30° run 4.5 | 0.51 / 0.51 | +12.9° (+21.3) | +15.2° | -10.9 | 6.7 | 4.6 |
+| stairs 0.15/0.30 down, run | -0.27 / -0.30 | -0.5° | -0.7° | **-28 / -31** | 4.0 | 5.6 |
+| stairs down, sprint 7 | -0.15 / -0.17 | 0 | 0 | **-31 / -24** | 4.5 | 7.2 |
+| 90° turn on 20°, walk (0.6 s) | 0.34 / 0.26 | +10.9 / +10.4° | -9.8 / +20.2° | -10 / -6 | 6.4 / **15.2** | 20.1 / **33.7** (1 unplant) |
+| 180° turn on 20°, run | 0.15 / -0.03 | +5° | +10 / +12° | -8 / -6 | **32.5 / 21.3** | **31.6 / 21.7** |
+
+Probe sample error vs the ground under it: 0.0-0.6 cm on ramps (stairs 15-25 cm = the sphere catching the nosing, same
+for both). Straight-line rows match npc vs player to within 0.03 grade, 0.5° and 1 cm on every surface and gait.
+
+**Hypotheses.**
+1. *Probe frame mismatch*: **ruled out.** The real player path test (`mw_player_bevy/src/tests_avatar.rs:525`) asserts
+   samples within 1 mm of the ramp and exact normals in the drawn frame; `FootProbes::queue`/`write`
+   (`sf_controller_bevy/src/lib.rs` ~650-730) are shared; the scale is the body child's (`sf_character_bevy/src/lib.rs:987`),
+   the walkers' `body_scale`; yaw by the same `Mover::yaw_of`.
+2. *Grade too large/noisy*: **ruled out as a player bug, confirmed as a surface effect.** Grade = npc's; the capsule is
+   never probed (`GROUND_LAYERS` = STATIC|TERRAIN|PROP, `sf_physics_bevy/src/lib.rs:131`). But PL-7's `level-flat-slopes`
+   has a **40° ramp and 0.25/0.22 stairs** (`levels/flat-slopes.ron:23,31`) that walkers were never judged on
+   (anim-lab stops at 30°): grade 0.83-1.0 pins `Lean` at its cap 0.45 rad (25.8°).
+3. **Head pitch (root cause of "head super tilted")**: `Lean` (`procedural.rs:506-518`) adds chest 0.45 + upperChest 0.4
+   + neck 0.15 = 1.0 of the pitch cumulatively, so **the head takes the whole pitch** (+23° at 30°+, more than the trunk's
+   17°) and nothing levels it. Same on walkers, but there it is seen from the side at 2 m/s on ≤ 30°; the player is seen
+   from behind/above, so a 23-26° head drop reads as the head hanging. Humans keep the head near level on slopes (gaze
+   stabilisation); UE/ALS spread lean over the spine and keep the head on an aim/look layer.
+4. *Speed*: **confirmed for the pelvis.** At run/sprint the same `FootPlacement` drops the pelvis 28-31 cm going down
+   stairs (walk 18 cm) and 18-21 cm on 40° (a crouch: knees bend and splay, "legs spreading"). Nothing scales foot
+   placement or pelvis drop with speed (`guards.max_speed` 8 m/s, `asset.rs:524`; `max_drop` 0.4 of reach).
+5. **Foot lock on fast turns: confirmed (player-specific kinematics).** The player's 720 deg/s walk turn holds a planted
+   foot up to 33.7 cm from the animated one (walker 20 cm), lateral 15 cm, until `unplant` (0.3 × reach, `asset.rs:524`)
+   releases it; 180° run turns 21-32 cm for both. Locked feet held in world while the body spins = spread/crossed legs.
+6. *`StrideWarp` grade term*: **ruled out** as the spread: x0.63-1.21, identical for both, drift on straight ramps ≤ 7.8 cm.
+7. *Player-only extras*: none touch legs or spine pitch in plain locomotion (stance slot only with a weapon drawn,
+   `combat.rs:378`; HandIk weight 0 off mantles/brace; no look-at). **Not settled**: render-rate ≠ 60 Hz, the correction
+   spring and the `Physics` trimesh probes are outside this proxy (the real-path test uses a toy graph without `Lean`).
+
+**Fix slices (ranked; one deliverable each).**
+1. *P-IK4 head stabilisation in `Lean`*: give the op a head joint with a negative share (or a "keep head level" term) so
+   the head pitch stays within ~±5° of the animation; UE Control Rig / ALS head-look layer, Unity Animation Rigging
+   Multi-Aim on the head. Verify: this test's head column ≤ ~5° on every ramp, `slope_lean_table` trunk unchanged. Owner:
+   `level-flat-slopes` camera `ramps`, player third person on 30° and 40°, head looks ahead.
+2. *P-IK5 turn-aware foot lock*: release a lock when the root's yaw since plant exceeds a limit (UE Foot Placement
+   "Plant Settings": rotation/distance unplant limits; GASP unplants on turn-in-place), not only on 0.3 × reach drift.
+   Verify: turn rows' lock drift ≤ ~10 cm, lateral ≤ ~8 cm, no NaN. Owner: quick 90/180° turns on the 20° ramp, K A/B.
+3. *P-IK6 speed-scaled pelvis drop / IK weight*: cap the pelvis offset and ease foot placement toward the animation
+   with speed (UE Foot Placement pelvis "Max Offset" + speed-based alpha; GASP lowers IK at run/sprint). Verify: pelvis
+   column at run/sprint on stairs down ≤ ~12 cm. Owner: running down `stairs-comfy` and the 40° ramp.
+4. *P-IK7 lean cap by grade*: saturate the grade input near 30° (beyond it, a climb, not a lean). Owner taste: ask with 1.
+5. *P-IK1c real-graph player test*: the baked humanoid graph under `avatar::feed` at 60 and 144 fps (closes 7).
+
+Command: `bash bevyrrowind/tools/cargo_turn.sh test --release -p mw_graphs --test slope_walk player_ik_vs_walkers --
+--ignored --nocapture` (needs a Morrowind install; ~2.5 min).

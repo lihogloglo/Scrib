@@ -15,7 +15,8 @@
 //!   counter-rotated so the torso keeps its heading (UE Orientation Warping).
 //! - `FootPlacement`: foot height and tilt from ground samples, ground-plane
 //!   locks while the contact curve is above 0.5 (then the toe, while the
-//!   `roll.<effector>` curve says the heel rolls), released into a decaying
+//!   `roll.<effector>` curve says the heel rolls), released (also when the
+//!   foot drifts or turns past the unplant limits) into a decaying
 //!   offset of half-life `release` / 2 (the swing takes the correction);
 //!   one offset per girdle (critical springs): `Lower` drops each
 //!   girdle by its legs' largest need; `Fit` follows their mean ground
@@ -57,9 +58,17 @@ pub(crate) struct LegState {
     /// correction goes into the swing; the height spring takes the vertical).
     offset: Vec3,
     offset_velocity: Vec3,
-    /// The lock drifted past the unplant distance: it releases and does
-    /// not re-lock until it has (then it re-plants where the foot is).
+    /// The lock drifted past the unplant distance, or the foot turned past
+    /// the unplant angle: it releases and does not re-lock until it has
+    /// (then it re-plants where the foot is).
     unplanting: bool,
+    /// Root yaw since the plant (sum of `moved.yaw`, radians, unwrapped) and
+    /// the animated foot's character-space rotation at the plant: the
+    /// planted foot's world yaw away from the animated one is `turned` plus
+    /// the animated foot's own yaw since then (a turn-in-place clip that
+    /// counter-rotates its planted foot keeps the lock).
+    turned: f32,
+    plant_rotation: Quat,
     /// Smoothed ground height offset of the foot.
     height: Spring,
 }
@@ -228,6 +237,13 @@ fn translate_joint(skeleton: &Skeleton, local: &mut LocalPose, model: &mut Model
 
 fn horizontal(v: Vec3) -> Vec3 {
     Vec3::new(v.x, 0.0, v.z)
+}
+
+/// The twist of `q` about +Y (swing-twist decomposition), radians in
+/// [-π, π]; 0 for a rotation with no twist (a pure swing, e.g. a heel roll).
+fn yaw_about_y(q: Quat) -> f32 {
+    let (y, w) = if q.w < 0.0 { (-q.y, -q.w) } else { (q.y, q.w) };
+    if y.abs() < 1e-9 && w.abs() < 1e-9 { 0.0 } else { 2.0 * y.atan2(w) }
 }
 
 /// Weight of each ground normal against the probe points' spread, m²: the
@@ -584,9 +600,10 @@ type FootTarget<'a> = (&'a Leg, usize, Vec3, Option<Vec3>, Quat);
 
 /// `FootPlacement` (see the module docs) with its guards ([`FootGuards`](crate::asset::FootGuards),
 /// UE Foot Placement / Leg IK practice): samples beyond the step limit are
-/// rejected, locks release once they drift past the unplant distance (and
-/// re-plant), a jump in `moved` resets them, girdle offsets stay within the
-/// drop and rise limits, every target stays within its leg's reach of the
+/// rejected, locks release once they drift past the unplant distance or the
+/// planted foot turns past the unplant angle (UE Foot Placement plant
+/// settings; ALS foot locking) and re-plant, a jump in `moved` resets them,
+/// girdle offsets stay within the drop and rise limits, every target stays within its leg's reach of the
 /// hip, and the whole op blends out (critically damped) while no leg has a
 /// ground sample, the character is fast, the `gate` parameter is off or
 /// physics takes the legs; no lock is planted while a hand-back from physics
@@ -681,6 +698,9 @@ fn foot_placement(
             // A displacement between two points of the character's frame.
             st.offset = unmove * st.offset;
             st.offset_velocity = unmove * st.offset_velocity;
+            if st.lock.is_some() {
+                st.turned += moved.yaw;
+            }
         }
         let foot = usize::from(leg.effector());
         let f = model.translation(foot);
@@ -715,9 +735,16 @@ fn foot_placement(
             cx.feet.drift_max = cx.feet.drift_max.max(drift);
             cx.feet.drift_sum += drift;
             cx.feet.drift_count += 1;
-            if !st.unplanting && drift > guards.unplant * reaches[k] {
+            // Turn unplant (UE Foot Placement plant settings' unplant angle,
+            // ALS foot locking released as the root rotates): the planted
+            // foot's yaw away from the animated foot's, root turn plus the
+            // clip's own foot yaw since the plant.
+            let turn = (st.turned + yaw_about_y(model.rotation(foot) * st.plant_rotation.inverse())).abs();
+            let turned = turn > guards.unplant_angle;
+            if !st.unplanting && (turned || drift > guards.unplant * reaches[k]) {
                 st.unplanting = true;
                 cx.feet.unplanted += 1;
+                cx.feet.unplanted_turn += u32::from(turned);
             }
         }
         // A locked target: the lock's plane position at the animated foot's
@@ -736,6 +763,7 @@ fn foot_placement(
             let ground = lift - normal.map_or(0.0, |n| (n.x * o.x + n.z * o.z) / n.y);
             let l = Vec3::new(f.x + o.x, ground, f.z + o.z);
             (st.lock, st.offset, st.offset_velocity) = (Some(l), Vec3::ZERO, Vec3::ZERO);
+            (st.turned, st.plant_rotation) = (0.0, model.rotation(foot));
             target = locked(l, l.y, &mut st.height);
             planted = Some(l);
         } else if let (Some(p), false) = (pin, st.unplanting) {

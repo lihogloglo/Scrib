@@ -187,6 +187,9 @@ pub mod states {
 pub const LOCOMOTION: &str = "locomotion";
 /// Turn rate (rad/s) above which a standing actor plays a turn.
 pub const TURN_THRESHOLD: f32 = 0.5;
+/// Humanoid `FootPlacement` turn unplant, degrees (P-IK5): a planted foot lets go once the
+/// body has turned this far past it since the plant (UE Foot Placement's unplant angle).
+pub const UNPLANT_ANGLE_DEG: f32 = 20.0;
 
 /// A weapon stance: which Morrowind movement set plays, and the idle laid
 /// over the upper body when the stance has no set of its own. The adapter
@@ -944,7 +947,17 @@ impl Builder {
             self.a.procedural.push(ron::from_str("StrideWarp(pelvis: Rig(\"hips\"), max: 1.2, grade: (up: 0.45, down: 0.25))").expect("StrideWarp defaults"));
             // Foot IK fades out in the air: the player feeds a debounced `on_ground`
             // (NPCs leave it at its default, true).
-            self.a.procedural.push(ron::from_str("FootPlacement(pelvis: Rig(\"hips\"), gate: Some(\"on_ground\"))").expect("FootPlacement defaults"));
+            // Turn unplant (P-IK5, UE Foot Placement's unplant angle): a planted foot lets go
+            // once the body has turned UNPLANT_ANGLE_DEG past it since the plant, so the player's
+            // 720 deg/s walk turn doesn't hold it until the 0.3-reach drift limit (34 cm,
+            // spread legs; `slope_walk player_ik_vs_walkers`, diagnosis 2026-11-11 §7).
+            self.a.procedural.push(
+                ron::from_str(&format!(
+                    "FootPlacement(pelvis: Rig(\"hips\"), guards: (unplant_angle: {}), gate: Some(\"on_ground\"))",
+                    UNPLANT_ANGLE_DEG.to_radians()
+                ))
+                .expect("FootPlacement defaults"),
+            );
             // Trunk lean into the slope (AN-21). Walking uphill the trunk flexes forward more
             // the steeper it gets (the forward moment helps hip propulsion); downhill it stays
             // near upright, a small backward lean (Leroux, Fung & Barbeau 2002, Gait & Posture

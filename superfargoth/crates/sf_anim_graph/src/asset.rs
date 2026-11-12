@@ -511,6 +511,14 @@ pub struct FootGuards {
     /// A foot lock is released once it drifts this far (horizontally) from
     /// the animated foot: speed mismatch, turning, a teleport.
     pub unplant: f32,
+    /// A foot lock is released once the planted foot has turned this far
+    /// (radians, about the up axis) from the animated foot since it
+    /// planted: the root's yaw plus the clip's own foot yaw (UE Foot
+    /// Placement plant settings' unplant angle; ALS releases foot locks as
+    /// the root rotates). Without it a fast turn holds the foot until
+    /// `unplant` and spreads or crosses the legs. The release decays like
+    /// a drift release (`release`), then the foot re-plants where it is.
+    pub unplant_angle: f32,
     /// Above this speed (m/s) the op blends out.
     pub max_speed: f32,
     /// Halflife of the op's weight (blend in and out), seconds.
@@ -521,7 +529,16 @@ pub struct FootGuards {
 
 impl Default for FootGuards {
     fn default() -> Self {
-        Self { max_step: 0.5, max_drop: 0.4, max_rise: 0.5, unplant: 0.3, max_speed: 8.0, blend_halflife: 0.1, foot_halflife: 0.04 }
+        Self {
+            max_step: 0.5,
+            max_drop: 0.4,
+            max_rise: 0.5,
+            unplant: 0.3,
+            unplant_angle: 45f32.to_radians(),
+            max_speed: 8.0,
+            blend_halflife: 0.1,
+            foot_halflife: 0.04,
+        }
     }
 }
 

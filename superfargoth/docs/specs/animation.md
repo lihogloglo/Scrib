@@ -363,7 +363,15 @@ last update's warp ratio and locks. A lock's height is the live sample there, el
   above its ground hit, with the foot rotated to the hit normal (clamped to
   30°). While the baked contact curve is above 0.5 the ground-plane position
   is locked; its height is the animated foot's over the ground under the
-  lock each update (heel-off stays animated); released over 0.1 s. The
+  lock each update (heel-off stays animated); released over 0.1 s. A lock also lets go (same fade,
+  then re-plants where the foot is) once it drifts `guards.unplant` (0.3 of the reach) from the
+  animated foot, or once the planted foot has turned `guards.unplant_angle` past the animated one
+  since the plant: root yaw plus the clip's own foot yaw, so a turn-in-place clip that keeps its
+  foot keeps the lock (UE Foot Placement plant settings' Unplant Radius / Unplant Angle; ALS
+  foot locking released as the root rotates). Framework default 45°; the humanoid graph sets
+  20° (P-IK5 2026-11-11, `slope_walk player_ik_vs_walkers`, sweep off/45/30/20°: player walk 90-180° turn lock drift
+  33.7 → 17.5 cm, lateral 15.2 → 10.1-10.9 cm, run 180° 21.7 → 5.8 / 21.3 → 8.1 cm; straight walks unchanged; the
+  rest of the walk-turn drift is not yaw, it builds before 20°). The
   pelvis drops by the largest amount any foot needs, spring-smoothed. Legs solve with two-bone IK,
   using the animated knee direction as pole. Toes bend to the ground if
   tagged.
