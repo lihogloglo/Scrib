@@ -180,6 +180,7 @@ fn shore_waves_reach_every_pass_with_the_twins_constants() {
     };
     assert_eq!(constant("SW_BREAKER"), sw::BREAKER_INDEX);
     assert_eq!(constant("SW_STEEPNESS"), sw::STEEPNESS_LIMIT);
+    assert_eq!(constant("SW_ORBIT"), sw::ORBIT_LIMIT);
     assert_eq!(constant("SW_MIN_DEPTH"), sw::MIN_DEPTH);
     assert_eq!(constant("SW_GRAVITY"), sf_water::GRAVITY);
     #[allow(clippy::cast_possible_truncation)]
@@ -188,4 +189,17 @@ fn shore_waves_reach_every_pass_with_the_twins_constants() {
     let shares = format!("const SW_SHARES = vec3({:?}, {:?}, {:?});", sw::SHARES[0], sw::SHARES[1], sw::SHARES[2]);
     assert!(src.contains(&shares), "{shares}");
     assert!(src.contains(&format!("/ {:?});", sw::NOISE_PERIOD)), "noise period");
+}
+
+/// W-GERSTNER-DEPTH: the water draw (vertex and fragment) and its motion vectors read the baked
+/// bed slope, at the bindings the Rust side declares (material 113, velocity 8).
+#[test]
+fn bed_slope_reaches_every_pass() {
+    for (module, binding) in [("sf_water_bevy::shaders::water_material", 113), ("sf_water_bevy::shaders::water_velocity", 8)] {
+        let wgsl = compile(module, &[]).expect("compiles");
+        let parsed = naga::front::wgsl::parse_str(&wgsl).expect("parses");
+        let bound = parsed.global_variables.iter().find(|(_, g)| g.name.as_deref() == Some("shore_bed")).and_then(|(_, g)| g.binding.as_ref().map(|b| b.binding));
+        assert_eq!(bound, Some(binding), "{module}: shore_bed binding");
+        assert!(wgsl.contains("shore_slope"), "{module} never samples the bed slope");
+    }
 }

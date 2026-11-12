@@ -289,7 +289,7 @@ impl WorldspaceWater {
         let mut g = crate::ShoreWave::default();
         for _ in 0..3 {
             let (d, o) = f.sample(x0.x, x0.y);
-            g = w.eval(d, o, f.sample_direction(x0.x, x0.y), crate::ShoreWaves::noise_coords(x0), t);
+            g = w.eval_on(d, o, f.sample_slope(x0.x, x0.y), f.sample_direction(x0.x, x0.y), crate::ShoreWaves::noise_coords(x0), t);
             x0 = p - DVec2::new(f64::from(g.offset.x), f64::from(g.offset.z));
         }
         Some(g)

@@ -100,6 +100,9 @@ pub enum Part {
     /// The sea follows the weather's wind (W-WIND, `sf_water::SeaWind`): off, the ocean keeps the fixed
     /// 7 m/s sea breeze (the old look, an A/B).
     SeaWind,
+    /// The shore waves shoal over the baked bed slope from `LAND` (W-GERSTNER-DEPTH,
+    /// `sf_water::ShoreField::bed_slope`): off, they assume the uniform 1:20 beach (the old look, an A/B).
+    ShoreDepth,
     /// Fog on blended and additive NIF materials (`sf_atmos_bevy::FogTranslucentsPlugin`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
@@ -168,7 +171,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 68] = [
+    const ALL: [(&'static str, Part); 69] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -218,6 +221,7 @@ impl Part {
         ("shorenormals", Part::ShoreNormals),
         ("shorewaves", Part::ShoreWaves),
         ("seawind", Part::SeaWind),
+        ("shoredepth", Part::ShoreDepth),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
         ("foliagetransmission", Part::FoliageTransmission),
@@ -334,5 +338,8 @@ mod tests {
         let sea = Off::from_flags(&["seawind".into()]).expect("known");
         assert!(sea.has(Part::SeaWind) && !sea.has(Part::ShoreWaves));
         assert_eq!(sea.label(), "seawind");
+        let depth = Off::from_flags(&["shoredepth".into()]).expect("known");
+        assert!(depth.has(Part::ShoreDepth) && !depth.has(Part::ShoreWaves) && !depth.has(Part::SeaWind));
+        assert_eq!(depth.label(), "shoredepth");
     }
 }

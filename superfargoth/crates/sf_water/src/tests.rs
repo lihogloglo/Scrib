@@ -911,3 +911,178 @@ fn shore_wave_model_numbers() {
         }
     }
 }
+
+// ---- bed slope (W-GERSTNER-DEPTH) ----
+
+/// The straight shore of [`straight_shore`] over a bed `depth(d, z)` (m below the rest level at shore
+/// distance `d`; the field's shoreline is at x = −1, so `d = x + 1` exactly on both sides).
+fn shore_on_bed(depth: impl Fn(f64, f64) -> f32) -> ShoreField {
+    let mut mask = WetMask::new(128, 64, 2.0, DVec2::new(-64.0, -64.0));
+    let mut z = vec![0.0f32; 128 * 64];
+    for y in 0..64 {
+        for x in 0..128 {
+            mask.wet[y * 128 + x] = x >= 32;
+            let (wx, wz) = (-64.0 + 2.0 * x as f64, -64.0 + 2.0 * y as f64);
+            z[y * 128 + x] = depth(wx + 1.0, wz);
+        }
+    }
+    mask.depth = Some(z);
+    ShoreField::bake(&mask, ShoreSettings::default())
+}
+
+#[test]
+fn bed_slope_bakes_the_real_bed_and_honours_its_clamp() {
+    use crate::shore::{BED_SLOPE_MAX, BED_SLOPE_MIN};
+    // A 1:10 bed: β = 0.1 everywhere, in the water and up the beach.
+    let ten = shore_on_bed(|d, _| (0.1 * d) as f32);
+    for x in [-7.0, -1.5, 0.0, 3.0, 10.0, 25.0, 39.0, 80.0] {
+        for z in [-50.0, 0.0, 31.0] {
+            let b = ten.sample_slope(x, z);
+            assert!((b - 0.1).abs() <= 0.01, "x {x} z {z}: β {b}");
+        }
+    }
+    let [p10, p50, p90] = ten.bed_slope_percentiles(40.0).expect("bathymetry");
+    assert!((p10 - 0.1).abs() <= 0.01 && (p50 - 0.1).abs() <= 0.01 && (p90 - 0.1).abs() <= 0.01);
+    // The clamp: a cliff (1:1.7) and a tidal flat (1:200).
+    let cliff = shore_on_bed(|d, _| (0.6 * d) as f32);
+    let flat = shore_on_bed(|d, _| (0.005 * d) as f32);
+    for x in [0.0, 10.0, 30.0] {
+        assert!((cliff.sample_slope(x, 0.0) - BED_SLOPE_MAX).abs() < 1e-6, "{}", cliff.sample_slope(x, 0.0));
+        assert!((flat.sample_slope(x, 0.0) - BED_SLOPE_MIN).abs() < 1e-6, "{}", flat.sample_slope(x, 0.0));
+    }
+    // Unknown depths (NaN: no `LAND`) take the beach slope; the blur bends β smoothly between.
+    let patchy = shore_on_bed(|d, z| if z > 0.0 { f32::NAN } else { (0.2 * d) as f32 });
+    let beach = ShoreSettings::default().beach_slope;
+    assert!((patchy.sample_slope(20.0, 40.0) - beach).abs() < 1e-6, "{}", patchy.sample_slope(20.0, 40.0));
+    assert!((patchy.sample_slope(20.0, -40.0) - 0.2).abs() < 1e-6);
+    let mut last = patchy.sample_slope(20.0, -40.0);
+    for i in 1..=80 {
+        let b = patchy.sample_slope(20.0, -40.0 + f64::from(i));
+        assert!(b <= last + 1e-6 && (last - b) < 0.03, "β step at z {}: {last} -> {b}", -40 + i);
+        last = b;
+    }
+    // Every texel finite and in range; the texture round-trips.
+    for f in [&ten, &cliff, &flat, &patchy] {
+        assert!(f.bed_slope.as_ref().unwrap().iter().all(|b| (BED_SLOPE_MIN..=BED_SLOPE_MAX).contains(b)));
+        assert_eq!(f.encode_slope_r16f().unwrap().len(), f.width * f.height * 2);
+    }
+    let texel = ten.encode_slope_r16f().unwrap();
+    assert!((f16_value(u16::from_le_bytes([texel[0], texel[1]])) - 0.1).abs() < 1e-3);
+}
+
+#[test]
+fn bed_slope_falls_back_to_the_beach_without_bathymetry() {
+    let field = straight_shore();
+    assert!(field.bed_slope.is_none() && field.encode_slope_r16f().is_none() && field.bed_slope_percentiles(40.0).is_none());
+    let beach = field.settings.beach_slope;
+    assert_eq!(field.sample_slope(10.0, 0.0), beach);
+    // Outside the field too, with bathymetry.
+    let ten = shore_on_bed(|d, _| (0.1 * d) as f32);
+    assert_eq!(ten.sample_slope(1e5, 0.0), beach);
+    // A depth grid of the wrong size is ignored, not misread.
+    let mut mask = WetMask::new(8, 8, 2.0, DVec2::ZERO);
+    mask.depth = Some(vec![1.0; 7]);
+    assert!(ShoreField::bake(&mask, ShoreSettings::default()).bed_slope.is_none());
+    // The uniform evaluation is exactly the bed one at the beach slope.
+    let w = shore_waves(&field, 12.0);
+    for d in [-2.0, 0.0, 3.0, 17.0, 33.0] {
+        assert_eq!(w.eval(d, 0.8, Vec2::NEG_X, Vec2::new(0.4, 0.1), 5.5), w.eval_on(d, 0.8, beach, Vec2::NEG_X, Vec2::new(0.4, 0.1), 5.5));
+    }
+    // A NaN slope falls back too (no NaN surface).
+    let g = w.eval_on(5.0, 1.0, f32::NAN, Vec2::NEG_X, Vec2::ZERO, 1.0);
+    assert_eq!(g, w.eval(5.0, 1.0, Vec2::NEG_X, Vec2::ZERO, 1.0));
+}
+
+/// The waves at world XZ (x, z) and time t on `field`'s bed.
+fn wave_on_bed(field: &ShoreField, w: &ShoreWaves, x: f64, z: f64, t: f32) -> ShoreWave {
+    let (d, o) = field.sample(x, z);
+    w.eval_on(d, o, field.sample_slope(x, z), field.sample_direction(x, z), ShoreWaves::noise_coords(DVec2::new(x, z)), t)
+}
+
+/// No NaN and no loops (the displaced position strictly increases along the shore normal: the
+/// Gerstner Jacobian stays > 0) over the whole bed-slope range, a bed that steepens offshore and
+/// along the shore, and winds up to a storm.
+#[test]
+fn shore_waves_on_any_bed_stay_finite_and_never_loop() {
+    let beds: Vec<ShoreField> = [0.02, 0.05, 0.1, 0.2, 0.3]
+        .into_iter()
+        .map(|b| shore_on_bed(move |d, _| (b * d) as f32))
+        .chain(std::iter::once(shore_on_bed(|d, z| (d * (0.05 + 0.25 * (0.5 + 0.5 * (z / 20.0).sin())) * (1.0 + 0.02 * d.max(0.0))) as f32)))
+        .collect();
+    for field in &beds {
+        for wind in [3.0, 8.0, 14.0, 25.0, 30.0] {
+            let w = shore_waves(field, wind);
+            for t in [0.0, 1.9, 47.3, 200.1] {
+                for z in [-40.0, -9.0, 14.0, 37.0] {
+                    let mut last = f64::NEG_INFINITY;
+                    for i in 0..=1200 {
+                        let x = -1.0 - f64::from(w.land_margin) + f64::from(w.band + w.land_margin) * f64::from(i) / 1200.0;
+                        let g = wave_on_bed(field, &w, x, z, t);
+                        assert!(g.offset.is_finite() && g.slope.is_finite() && g.crest.is_finite(), "wind {wind}: {g:?}");
+                        assert!(g.steepness <= shore_waves::STEEPNESS_LIMIT + 1e-4);
+                        let moved = x + f64::from(g.offset.x);
+                        assert!(moved > last, "β {} wind {wind} t {t} z {z}: fold at x {x}", field.sample_slope(x, z));
+                        last = moved;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The CPU query lifts its surface over the baked bed, as the GPU does: a steep bed's crests differ
+/// from the 1:20 proxy's at the same point and time.
+#[test]
+fn query_shore_waves_follow_the_bed_slope() {
+    let id = WorldspaceId::from("ws");
+    let mut ws = Worldspace::new("ws");
+    ws.has_terrain = true;
+    ws.sea_level = Some(0.0);
+    let params = sea(14.0);
+    let cascades = Cascades::default();
+    let world_on = |field: ShoreField| {
+        let mut water = WorldspaceWater::new(WaterBody::from_worldspace(&id, &ws).into_iter().collect());
+        water.set_waves(Some(WaveTwin::new(&params, &cascades, 7, 1, 32)));
+        water.set_shore_waves(Some(ShoreWaves::new(&params, &cascades, &field.settings)));
+        water.set_shore(Some(Arc::new(field)));
+        let mut world = WaterWorld::new();
+        world.insert(id.clone(), water);
+        world
+    };
+    let (mut proxy, mut steep) = (world_on(straight_shore()), world_on(shore_on_bed(|d, _| (0.2 * d) as f32)));
+    let at = WorldPos::from_f64(glam::DVec3::new(9.0, 0.0, 3.0));
+    let mut differs = false;
+    for t in [3.0, 4.4, 6.1, 8.0] {
+        proxy.step(t);
+        steep.step(t);
+        let (a, b) = (proxy.get(&id).unwrap().sample(at).unwrap(), steep.get(&id).unwrap().sample(at).unwrap());
+        assert!(b.height.is_finite() && b.normal.is_finite() && b.velocity.is_finite());
+        differs |= (a.height - b.height).abs() > 1e-3;
+    }
+    assert!(differs, "the query ignores the bed slope");
+}
+
+/// Prints the shore waves over real bed slopes (W-GERSTNER-DEPTH): the breaker cap, peak crest,
+/// main wavelength and swash at a few depths, slopes and winds.
+#[test]
+#[ignore = "measurement: shore waves over the bed slope (W-GERSTNER-DEPTH)"]
+fn shore_wave_bed_numbers() {
+    let field = straight_shore();
+    for wind in [7.0, 14.0, 30.0] {
+        let w = ShoreWaves { variation: 0.0, ..shore_waves(&field, wind) };
+        println!("wind {wind:4.1} m/s: A0 {:.2} m, T {:.2} s, swash at 1:20 ±{:.2} m", w.amplitude, std::f32::consts::TAU / w.omega[0], w.swash);
+        for beta in [0.05, 0.1, 0.2] {
+            let swash = (0..512).map(|i| w.eval_on(-0.5, 1.0, beta, Vec2::NEG_X, Vec2::ZERO, i as f32 * 0.25).offset.y.abs()).fold(0.0, f32::max);
+            for d in [5.0, 10.0, 20.0] {
+                let peak = (0..512).map(|i| w.eval_on(d, 1.0, beta, Vec2::NEG_X, Vec2::ZERO, i as f32 * 0.25).offset.y).fold(f32::MIN, f32::max);
+                let (k, _) = shore_waves::local_wave(w.omega[0], beta * d, beta);
+                let cap = 0.5 * shore_waves::BREAKER_INDEX * beta * d;
+                println!(
+                    "  β {beta:.2} d {d:4.1} m (h {:4.1} m): cap {cap:4.2} m, crest {peak:4.2} m, main λ {:5.1} m, swash ±{swash:4.2} m",
+                    beta * d,
+                    std::f32::consts::TAU / k
+                );
+            }
+        }
+    }
+}

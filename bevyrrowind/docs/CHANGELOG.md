@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-13 (W-GERSTNER-DEPTH, shore waves over the real seabed): shore waves shoal over the bed slope baked from LAND (β = depth/distance, 0.02-0.3, R16Float beside the shore field; coth orbit cap for steep beds); `--off shoredepth` = the 1:20 proxy; WA-5 awaiting owner.
 - 2026-11-13 (W-WIND, sea follows the weather): the FFT ocean's wind is the weather's 10 m mean wind, low-passed (30 s) and blended between two h0 sets of one seed (no re-roll, no pop), CPU twin and shore waves blended alike; `--off seawind` = the old fixed 7 m/s, `--water-wind` still pins it; WA-6 awaiting owner.
 - 2026-11-13 (S2, CW-1 far-rain fixes): far storm edge pre-filtered to the march spacing and handed off on the near FX's band ramp (no rain pop walking in), curtain reaching the cloud's visible base, rain under ordinary thick storm cloud; WE-13 awaiting owner (`--off stormshape` unchanged).
 - 2026-11-13 (loco-coord, camera): third-person camera centred on the character (`sf_camera` `OrbitParams::shoulder_offset` 0, was 0.45 m; souls-like framing), the shoulder swap kept for a later aiming mode; owner request after WALK-1.

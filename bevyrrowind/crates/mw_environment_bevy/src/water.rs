@@ -144,11 +144,13 @@ fn water_quality(q: Quality) -> WaterQuality {
 /// = the FFT alone, fading to flat at the shore, `ShoreSettings::shore_waves` 0).
 /// `sea_wind`: the sea follows the weather's wind (W-WIND, `sf_water::SeaWind`; `--off seawind` =
 /// the fixed [`DEFAULT_WIND`]); `--water-wind` overrides both.
+/// `shore_depth`: the shore waves shoal over the bed slope baked from `LAND` (W-GERSTNER-DEPTH;
+/// `--off shoredepth` = the uniform 1:20 `ShoreSettings::beach_slope`, the mask's depths dropped).
 pub fn add(
     app: &mut App,
     inputs: WaterInputs,
     quality: Quality,
-    (sspr, shore_normals, shore_waves, sea_wind): (bool, bool, bool, bool),
+    (sspr, shore_normals, shore_waves, sea_wind, shore_depth): (bool, bool, bool, bool, bool),
     worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>,
 ) {
     if mode() != WaterMode::On {
@@ -197,7 +199,10 @@ pub fn add(
     }
     let spectrum = OceanSpectrum { params, cascades: cascades.clone(), seed: SEED, transition: None };
     let sea_sync = SeaSync { spectrum: spectrum.clone(), settings, shore: [shore_pair; 2] };
-    let bake = inputs.mask.map(|mask| {
+    let bake = inputs.mask.map(|mut mask| {
+        if !shore_depth {
+            mask.depth = None;
+        }
         let handle = std::thread::Builder::new()
             .name("water-shore-bake".into())
             .spawn(move || ShoreField::bake(&mask, settings))
@@ -241,6 +246,11 @@ fn shore_done(mut bake: ResMut<ShoreBake>, mut water: ResMut<Water>, mut shore: 
         s.components,
         s.open_components
     );
+    if let Some([p10, p50, p90]) = field.bed_slope_percentiles(field.settings.swell_ramp) {
+        info!("water: shore bed slope in the wave band p10 {p10:.3} p50 {p50:.3} p90 {p90:.3}");
+    } else {
+        info!("water: shore bed slope uniform {:.3} (no bathymetry)", field.settings.beach_slope);
+    }
     let field = Arc::new(field);
     if let Some(ws) = water.world.get_mut(&ids::exterior()) {
         ws.set_shore(Some(field.clone()));

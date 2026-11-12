@@ -6,7 +6,9 @@
 //! operations, same noise hash.
 //!
 //! Physics (each choice and its source):
-//! - **Depth** `h = beach_slope · d` (the field has no bathymetry; `ShoreSettings::beach_slope`).
+//! - **Depth** `h = β · d`, β the baked local bed slope (W-GERSTNER-DEPTH,
+//!   `ShoreField::sample_slope`: the bed's mean slope from the shoreline, blurred), or the uniform
+//!   `ShoreSettings::beach_slope` (1:20) without bathymetry (`--off shoredepth`).
 //! - **Dispersion** `ω² = g·k·tanh(k·h)` through Eckart's explicit form `k = k0 / √tanh(k0·h)`,
 //!   `k0 = ω²/g` (Eckart 1951; ≤ 5 % from the exact root). Over a linear slope its phase integral
 //!   is closed-form: `Φ(d) = ∫k dd = (atanh v + atan v) / β`, `v = √tanh(k0·h)`, so crests slow
@@ -18,7 +20,8 @@
 //! - **Horizontal motion**: the linear-theory surface orbit `A·coth(kh)` (Dean & Dalrymple 2002),
 //!   so shallow crests lean shoreward and sharpen; the sum `Σ Q·k·A·coth(kh)` is held at ≤ 0.75
 //!   (the Gerstner Jacobian `1 − Σ Q·k·A·coth` stays ≥ 0.25 before the phase noise, > 0 with it:
-//!   no loops; GPU Gems 1 ch. 1, Finch 2004).
+//!   no loops; GPU Gems 1 ch. 1, Finch 2004), and `coth` is capped so the orbit's growth with
+//!   distance, `½γβ·coth`, stays ≤ [`ORBIT_LIMIT`] (steep real beds; W-GERSTNER-DEPTH).
 //! - **Blend with the FFT**: weight `o·(1 − smoothstep(0, swell_ramp, d))`, the exact complement of
 //!   the FFT swell's `o·smoothstep(0, swell_ramp, d)`: zero at the band's edge, no pop.
 //! - **Swash**: the incident swash of Stockdon et al. 2006, `S = 0.75·β·√(H0·L0)`, as a vertical
@@ -59,6 +62,10 @@ pub const BREAKER_INDEX: f32 = 0.78;
 const MICHE: f32 = 0.142 * PI;
 /// Σ Q·k·A·coth(kh) never exceeds this.
 pub const STEEPNESS_LIMIT: f32 = 0.75;
+/// The horizontal orbit's growth with shore distance, `∂(A·coth kh)/∂d`, never exceeds this
+/// (W-GERSTNER-DEPTH: with the breaker-held phase term ≤ ½γ at the shoreline the Gerstner Jacobian
+/// stays > 0.2 there on beds up to 0.3).
+pub const ORBIT_LIMIT: f32 = 0.4;
 /// Depth below which the waves stop slowing (m): the inner swash zone, so wavelengths stay ≥ ~3 m.
 pub const MIN_DEPTH: f32 = 0.1;
 /// World period of the noise, metres (the GPU gets the floating origin modulo this).
@@ -224,13 +231,23 @@ impl ShoreWaves {
     /// `dir` ([`crate::ShoreField::sample_direction`]), noise coordinates `noise`
     /// ([`Self::noise_coords`]) and time `t` (s, any multiple of [`REPEAT_PERIOD`] apart is the same).
     /// Zero outside `(−land_margin, band)` and when off.
-    #[allow(clippy::float_cmp)] // the same trains exactly: no crossfade
+    /// Over the uniform [`Self::beach_slope`]; [`Self::eval_on`] takes the baked bed's.
     pub fn eval(&self, d: f32, o: f32, dir: Vec2, noise: Vec2, t: f32) -> ShoreWave {
-        let to = self.eval_trains(&self.omega, d, o, dir, noise, t);
+        self.eval_on(d, o, self.beach_slope, dir, noise, t)
+    }
+
+    /// [`Self::eval`] over the local bed slope `beta` (W-GERSTNER-DEPTH,
+    /// [`crate::ShoreField::sample_slope`]): the depth is `beta · d` and the closed-form Eckart
+    /// phase assumes that slope from the shoreline to here (exact on a plane beach; on a real bed the
+    /// local depth is exact and the phase a smooth approximation, since β is blurred).
+    #[allow(clippy::float_cmp)] // the same trains exactly: no crossfade
+    pub fn eval_on(&self, d: f32, o: f32, beta: f32, dir: Vec2, noise: Vec2, t: f32) -> ShoreWave {
+        let beta = if beta.is_finite() { beta.max(1e-3) } else { self.beach_slope };
+        let to = self.eval_trains(&self.omega, d, o, beta, dir, noise, t);
         if self.mix >= 1.0 || self.omega_from == self.omega {
             return to;
         }
-        let from = self.eval_trains(&self.omega_from, d, o, dir, noise, t);
+        let from = self.eval_trains(&self.omega_from, d, o, beta, dir, noise, t);
         let w = self.mix.max(0.0);
         ShoreWave {
             offset: from.offset.lerp(to.offset, w),
@@ -260,12 +277,11 @@ impl ShoreWaves {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn eval_trains(&self, omega: &[f32; TRAINS], d: f32, o: f32, dir: Vec2, noise: Vec2, t: f32) -> ShoreWave {
+    fn eval_trains(&self, omega: &[f32; TRAINS], d: f32, o: f32, beta: f32, dir: Vec2, noise: Vec2, t: f32) -> ShoreWave {
         // (`!(a && b)` also rejects a NaN distance.)
         if !(d < self.band && d > -self.land_margin) || (self.amplitude <= 0.0 && self.swash <= 0.0) {
             return ShoreWave::default();
         }
-        let beta = self.beach_slope;
         let h = beta * d.max(0.0);
         let h_edge = beta * self.band;
         let w = o * (1.0 - smoothstep(0.0, self.band, d));
@@ -281,13 +297,18 @@ impl ShoreWaves {
         let common = env * w * set;
         let mut trains = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); TRAINS];
         let mut steep = 0.0;
+        // The orbit's envelope term (W-GERSTNER-DEPTH): the breaker-held amplitude grows as ½γβ per
+        // metre, so its horizontal orbit A·coth grows as ½γβ·coth; capping coth holds that at
+        // `ORBIT_LIMIT` on any bed (the 1:20 proxy never reached it).
+        let coth_cap = ORBIT_LIMIT / (0.5 * BREAKER_INDEX * beta);
         for (i, train) in trains.iter_mut().enumerate() {
             let (k, phi) = local_wave(omega[i], h, beta);
             let th = (k * h.max(MIN_DEPTH)).tanh();
             let a = (SHARES[i] * common).min(MICHE * th / k);
             let theta = -(phi + omega[i] * t + psi * PHASE_SPREAD[i]);
-            steep += k * a / th;
-            *train = (a, k, 1.0 / th, theta);
+            let coth = (1.0 / th).min(coth_cap);
+            steep += k * a * coth;
+            *train = (a, k, coth, theta);
         }
         let q = (STEEPNESS_LIMIT / steep.max(1e-6)).min(1.0);
         let (mut y, mut along, mut dy, mut dalong) = (0.0, 0.0, 0.0, 0.0);
@@ -298,10 +319,12 @@ impl ShoreWaves {
             dy += a * k * c;
             dalong -= q * a * coth * k * s;
         }
-        // Swash: the whole beach at the main train's shoreline phase.
+        // Swash: the whole beach at the main train's shoreline phase. Stockdon's S ∝ β: `swash` is
+        // at `beach_slope`, scaled to the local slope (the land margin, S/β, does not change).
         let (_, phi0) = local_wave(omega[0], 0.0, beta);
         let theta0 = -(phi0 + omega[0] * t + psi * PHASE_SPREAD[0]);
         let swash = self.swash
+            * (beta / self.beach_slope.max(1e-3))
             * o
             * set
             * (1.0 - smoothstep(0.0, SWASH_ZONE * self.band, d))

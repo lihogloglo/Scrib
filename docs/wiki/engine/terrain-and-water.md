@@ -42,7 +42,7 @@ keyed by source height above the plane); the water draw swaps the environment-ma
 shading normal keeps the chop's wind wavelets at `ShoreSettings::normal_floor` (0.5; `shore_normal_scales`, W-SHORE). Where the
 FFT swell fades, `sf_water::ShoreWaves` (`shore_waves.rs`; GPU `water_common.wesl` `shore_waves`, in the draw, the velocity redraw
 and the CPU query) adds three Gerstner trains rolling in along the baked shoreward direction plus a beach swash, scaled by the
-sea state (W-GERSTNER; the shore field is `Rgba16Float`: distance, openness, direction). The sea follows the weather's 10 m mean
+sea state (W-GERSTNER; the shore field is `Rgba16Float`: distance, openness, direction), shoaling over the local bed slope β = depth / shore distance baked from the adapter's depths (W-GERSTNER-DEPTH, `ShoreField::bed_slope`, `shore.rs`: a second `R16Float` texture, clamped 0.02-0.3, the 1:20 `beach_slope` where unknown). The sea follows the weather's 10 m mean
 wind (W-WIND, `sf_water/src/sea_wind.rs`): low-passed (30 s) and blended between two `h0` sets of one seed (6 s transitions, new
 `h0` on a worker thread), the CPU twin and shore waves blended alike; the exterior copies `WindField` into `WaterWind`. Morrowind wiring:
 `mw_environment_bevy/src/water.rs:141` (`add`; fixed-tick `step`, `bed`, `pools`, `sync`); `mw_water` gives bodies (sea at 0,
@@ -56,7 +56,7 @@ interiors at `WHGT`), optics by region (`optics::*`), `SEA_FETCH_M` 20 km, shore
 ## Switches and counters
 
 `--water on|scaffold|off` (`mw_environment_bevy/src/water.rs:46`; scaffold is a flat plane, `exterior.rs:881`), `--water-wind`;
-`--off waterssr` (environment map only), `--off shorenormals` (flat normal at the shore, the old look), `--off shorewaves` (no Gerstner shore waves or swash), `--off seawind` (the fixed 7 m/s sea breeze; `--water-wind` pins any speed), `--off terrain` and `--off far` perf parts (`mw_game_core/src/perf.rs:127`). `TerrainSettings` `upload_budget`,
+`--off waterssr` (environment map only), `--off shorenormals` (flat normal at the shore, the old look), `--off shorewaves` (no Gerstner shore waves or swash), `--off seawind` (the fixed 7 m/s sea breeze; `--water-wind` pins any speed), `--off shoredepth` (the shore waves over the uniform 1:20 slope proxy), `--off terrain` and `--off far` perf parts (`mw_game_core/src/perf.rs:127`). `TerrainSettings` `upload_budget`,
 `max_loads`, `splat_range`, `raise_m`.
 
 ## Known limits

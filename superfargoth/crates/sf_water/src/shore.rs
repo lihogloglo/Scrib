@@ -2,8 +2,9 @@
 //! the rest level, by an exact Euclidean distance transform (Felzenszwalb and Huttenlocher, "Distance
 //! Transforms of Sampled Functions", 2012), and **openness**, a fetch proxy that scales the swell:
 //! water far (through water, geodesically) from the open sea gets little swell, enclosed water gets
-//! chop or ripples only. The GPU reads the same field ([`ShoreField::encode_rg8`]) so the CPU query
-//! and the drawn surface attenuate alike.
+//! chop or ripples only. The GPU reads the same field ([`ShoreField::encode_rgba16f`]) so the CPU query
+//! and the drawn surface attenuate alike. With bed depths in the mask it also bakes the local bed
+//! slope the shore waves shoal over (W-GERSTNER-DEPTH, [`ShoreField::bed_slope`]).
 
 use glam::DVec2;
 
@@ -31,8 +32,9 @@ pub struct ShoreSettings {
     /// 0 = the normals flatten with the displacement (the old look).
     pub normal_floor: f32,
     /// Seabed slope (rise per metre of shore distance) the analytic shore waves assume for their
-    /// depth, `depth = beach_slope · distance` (W-GERSTNER; [`crate::ShoreWaves`]): the field has
-    /// no bathymetry. 0.05 = 1:20, a typical sandy foreshore (Dean & Dalrymple 2002).
+    /// depth, `depth = beach_slope · distance` (W-GERSTNER; [`crate::ShoreWaves`]), where the field
+    /// has no bathymetry ([`ShoreField::bed_slope`] is the baked one, W-GERSTNER-DEPTH). 0.05 =
+    /// 1:20, a typical sandy foreshore (Dean & Dalrymple 2002).
     pub beach_slope: f32,
     /// Strength of the analytic shore waves and swash (W-GERSTNER): 1 = the sea state's own
     /// amplitude, 0 = off (`--off shorewaves`, the FFT simply fades to flat at the shore).
@@ -68,6 +70,10 @@ pub struct WetMask {
     pub origin: DVec2,
     /// `[row * width + column]`.
     pub wet: Vec<bool>,
+    /// Bed depth below the rest level per texel, metres (+ under water, − the land's height above
+    /// it), `[row * width + column]`; NaN where unknown. `None`: no bathymetry, the shore waves
+    /// assume `ShoreSettings::beach_slope` everywhere (W-GERSTNER-DEPTH).
+    pub depth: Option<Vec<f32>>,
 }
 
 impl WetMask {
@@ -79,6 +85,7 @@ impl WetMask {
             texel,
             origin,
             wet: vec![true; width * height],
+            depth: None,
         }
     }
 }
@@ -108,11 +115,22 @@ pub struct ShoreField {
     /// coherent, shorter where two shores' gradients meet (the medial axis of a channel), 0 beyond
     /// the distance range. The shore waves travel along it (W-GERSTNER).
     pub direction: Vec<[f32; 2]>,
+    /// Local bed slope β = depth / shore distance (W-GERSTNER-DEPTH): the bed's mean slope between
+    /// the shoreline and the texel, so `β·d` is the texel's true depth; clamped to
+    /// [`BED_SLOPE_MIN`]..[`BED_SLOPE_MAX`] and box-blurred like [`Self::direction`] so the crests
+    /// bend smoothly. `None` without depths in the mask (`ShoreSettings::beach_slope` everywhere).
+    pub bed_slope: Option<Vec<f32>>,
     pub settings: ShoreSettings,
     pub stats: ShoreStats,
 }
 
 const BIG: f64 = 1e20;
+
+/// The baked bed slope's range (W-GERSTNER-DEPTH): flatter than 1:50 is a tidal flat the band
+/// can't carry (its depth-limited crests vanish), steeper than 0.3 (~17°) is a cliff or a reef edge
+/// where waves surge and reflect rather than shoal (Iribarren number > 3.3; Battjes 1974).
+pub const BED_SLOPE_MIN: f32 = 0.02;
+pub const BED_SLOPE_MAX: f32 = 0.3;
 
 /// Squared distance transform of one sampled function (FH 2012, the lower envelope of parabolas).
 #[allow(clippy::cast_precision_loss, clippy::many_single_char_names)]
@@ -232,31 +250,53 @@ fn shoreward(distance: &[f32], w: usize, h: usize, texel: f64) -> Vec<[f32; 2]> 
             if g.length() > 0.25 { g.normalize().into() } else { [0.0, 0.0] }
         })
         .collect();
-    let mut tmp = dir.clone();
-    for _ in 0..2 {
-        box_pass(&dir, &mut tmp, w, h, true);
-        box_pass(&tmp, &mut dir, w, h, false);
-    }
+    blur(&mut dir, w, h);
     dir
+}
+
+/// Two rounds of separable 5-tap box passes (a ~9-texel smooth kernel).
+fn blur<const N: usize>(v: &mut [[f32; N]], w: usize, h: usize) {
+    let mut tmp = v.to_vec();
+    for _ in 0..2 {
+        box_pass(v, &mut tmp, w, h, true);
+        box_pass(&tmp, v, w, h, false);
+    }
 }
 
 /// One 5-tap box blur along rows (`horizontal`) or columns.
 #[allow(clippy::cast_precision_loss, clippy::many_single_char_names)]
-fn box_pass(src: &[[f32; 2]], dst: &mut [[f32; 2]], w: usize, h: usize, horizontal: bool) {
+fn box_pass<const N: usize>(src: &[[f32; N]], dst: &mut [[f32; N]], w: usize, h: usize, horizontal: bool) {
     for y in 0..h {
         for x in 0..w {
             let (c, len) = if horizontal { (x, w) } else { (y, h) };
             let (lo, hi) = (c.saturating_sub(2), (c + 2).min(len - 1));
-            let mut s = [0.0f32; 2];
+            let mut s = [0.0f32; N];
             for t in lo..=hi {
                 let v = if horizontal { src[y * w + t] } else { src[t * w + x] };
-                s[0] += v[0];
-                s[1] += v[1];
+                for (a, b) in s.iter_mut().zip(v) {
+                    *a += b;
+                }
             }
             let n = (hi - lo + 1) as f32;
-            dst[y * w + x] = [s[0] / n, s[1] / n];
+            dst[y * w + x] = s.map(|a| a / n);
         }
     }
+}
+
+/// The local bed slope per texel (W-GERSTNER-DEPTH): `depth / distance` (both + in water, − on
+/// land, so the ratio is the bed's mean slope from the shoreline, the beach face's on land), the
+/// fallback where the depth is unknown, clamped, then blurred as the direction is.
+fn bed_slope(depth: &[f32], distance: &[f32], w: usize, h: usize, fallback: f32) -> Vec<f32> {
+    let mut slope: Vec<[f32; 1]> = depth
+        .iter()
+        .zip(distance)
+        .map(|(z, d)| {
+            let b = if z.is_finite() && d.abs() > 1e-3 { z / d } else { fallback };
+            [b.clamp(BED_SLOPE_MIN, BED_SLOPE_MAX)]
+        })
+        .collect();
+    blur(&mut slope, w, h);
+    slope.into_iter().map(|[b]| b).collect()
 }
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
@@ -422,6 +462,8 @@ impl ShoreField {
             open_components: open.iter().filter(|x| **x).count(),
         };
         let direction = shoreward(&distance, w, h, texel);
+        let fallback = settings.beach_slope.clamp(BED_SLOPE_MIN, BED_SLOPE_MAX);
+        let bed_slope = mask.depth.as_ref().filter(|z| z.len() == w * h).map(|z| bed_slope(z, &distance, w, h, fallback));
         Self {
             width: w,
             height: h,
@@ -430,6 +472,7 @@ impl ShoreField {
             distance,
             openness,
             direction,
+            bed_slope,
             settings,
             stats,
         }
@@ -469,6 +512,46 @@ impl ShoreField {
         let top = at(x0, y0).lerp(at(x1, y0), fx);
         let bottom = at(x0, y1).lerp(at(x1, y1), fx);
         top.lerp(bottom, fy)
+    }
+
+    /// Bilinear bed slope ([`Self::bed_slope`]) at world XZ; `ShoreSettings::beach_slope` outside
+    /// the field or without bathymetry (`water_common.wesl` `shore_slope` is the GPU twin).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    pub fn sample_slope(&self, x: f64, z: f64) -> f32 {
+        let fallback = self.settings.beach_slope;
+        let Some(slope) = &self.bed_slope else { return fallback };
+        let u = (x - self.origin.x) / self.texel;
+        let v = (z - self.origin.y) / self.texel;
+        if u < 0.0 || v < 0.0 || u > (self.width - 1) as f64 || v > (self.height - 1) as f64 {
+            return fallback;
+        }
+        let (x0, y0) = (u.floor() as usize, v.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(self.width - 1), (y0 + 1).min(self.height - 1));
+        let (fx, fy) = ((u - x0 as f64) as f32, (v - y0 as f64) as f32);
+        let at = |x: usize, y: usize| slope[y * self.width + x];
+        let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
+        let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
+        top + (bottom - top) * fy
+    }
+
+    /// The 10th, 50th and 90th percentile of the bed slope over the water within `band` metres of a
+    /// shore (the bake report; `None` without bathymetry or such water).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    pub fn bed_slope_percentiles(&self, band: f32) -> Option<[f32; 3]> {
+        let slope = self.bed_slope.as_ref()?;
+        let mut v: Vec<f32> = self.distance.iter().zip(slope).filter(|(d, _)| **d > 0.0 && **d < band).map(|(_, b)| *b).collect();
+        if v.is_empty() {
+            return None;
+        }
+        v.sort_by(f32::total_cmp);
+        let at = |q: f32| v[((v.len() - 1) as f32 * q).round() as usize];
+        Some([at(0.1), at(0.5), at(0.9)])
+    }
+
+    /// The bed slope texture (`R16Float`, rows +Z, little-endian; W-GERSTNER-DEPTH), or `None`
+    /// without bathymetry (the GPU then binds one texel of `beach_slope`).
+    pub fn encode_slope_r16f(&self) -> Option<Vec<u8>> {
+        self.bed_slope.as_ref().map(|s| s.iter().flat_map(|b| f16_bits(*b).to_le_bytes()).collect())
     }
 
     /// Amplitude scale of the swell (long cascades) at shore distance `d` and openness `o`

@@ -321,6 +321,8 @@ pub struct WaterImages {
     pub reflection: Handle<Image>,
     /// The shore field (`Rgba16Float`: distance, openness, shoreward direction) or a 1×1 open-sea stand-in.
     pub shore: Handle<Image>,
+    /// The bed slope (`R16Float`, W-GERSTNER-DEPTH) over the shore field, or a 1×1 beach slope.
+    pub shore_bed: Handle<Image>,
     /// The optics map (`R8Uint`) or a 1×1 zero.
     pub regions: Handle<Image>,
     /// FFT grid of the wave images.
@@ -461,6 +463,17 @@ fn shore_image(width: u32, height: u32, data: Vec<u8>) -> Image {
     i
 }
 
+/// One bed-slope texel (`sf_water::ShoreField::encode_slope_r16f`): a uniform slope everywhere.
+fn beach_slope_texel(slope: f32) -> Vec<u8> {
+    sf_water::shore::f16_bits(slope).to_le_bytes().to_vec()
+}
+
+/// The bed slope (W-GERSTNER-DEPTH): a second texture because the shore field's four channels are
+/// all taken; it shares the field's extent and its sampler (bilinear, clamped).
+fn bed_image(width: u32, height: u32, data: Vec<u8>) -> Image {
+    image(Extent3d { width, height, depth_or_array_layers: 1 }, TextureDimension::D2, TextureFormat::R16Float, TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST, Some(data))
+}
+
 fn regions_image(width: u32, height: u32, data: Vec<u8>) -> Image {
     image(Extent3d { width, height, depth_or_array_layers: 1 }, TextureDimension::D2, TextureFormat::R8Uint, TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST, Some(data))
 }
@@ -477,6 +490,7 @@ fn create_images(mut commands: Commands, mut images: ResMut<Assets<Image>>, qual
         snapshot_depth: images.add(snapshot_image(UVec2::ONE, TextureFormat::R32Float)),
         reflection: images.add(reflection_image(UVec2::ONE)),
         shore: images.add(shore_image(1, 1, open_sea_texel())),
+        shore_bed: images.add(bed_image(1, 1, beach_slope_texel(ShoreSettings::default().beach_slope))),
         regions: images.add(regions_image(1, 1, vec![0])),
         resolution: n,
         snapshot_size: UVec2::ONE,
@@ -684,6 +698,11 @@ fn upload_bakes(shore: Res<WaterShoreInput>, regions: Res<WaterRegionsInput>, im
         images.shore = match &shore.field {
             Some(f) => assets.add(shore_image(f.width as u32, f.height as u32, f.encode_rgba16f())),
             None => assets.add(shore_image(1, 1, open_sea_texel())),
+        };
+        let slope = shore.field.as_ref().map_or(ShoreSettings::default().beach_slope, |f| f.settings.beach_slope);
+        images.shore_bed = match shore.field.as_ref().and_then(|f| Some((f, f.encode_slope_r16f()?))) {
+            Some((f, data)) => assets.add(bed_image(f.width as u32, f.height as u32, data)),
+            None => assets.add(bed_image(1, 1, beach_slope_texel(slope))),
         };
     }
     if regions.is_changed() {
@@ -919,6 +938,7 @@ fn drive(
                 || e.reflection != images.reflection
                 || e.displacement != images.displacement
                 || e.shore != images.shore
+                || e.shore_bed != images.shore_bed
                 || e.regions != images.regions
         });
         if stale && let Some(mut m) = materials.get_mut(&handle.0) {

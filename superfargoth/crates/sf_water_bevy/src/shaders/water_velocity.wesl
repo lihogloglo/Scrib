@@ -4,7 +4,7 @@
 // the nearest surface: each Lagrangian point displaced now vs last frame, through this and last
 // frame's unjittered view. Without it DLSS/TAA move the waves with the bed's motion (smear).
 
-import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, displaced, shore_at, shore_scales, shore_wave_offset};
+import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, displaced, shore_at, shore_scales, shore_slope, shore_wave_offset};
 
 struct VelocityView {
     clip_from_world: mat4x4<f32>,
@@ -19,6 +19,7 @@ struct VelocityView {
 @group(0) @binding(4) var wave_sampler: sampler;
 @group(0) @binding(6) var shore_field: texture_2d<f32>;
 @group(0) @binding(7) var shore_sampler: sampler;
+@group(0) @binding(8) var shore_bed: texture_2d<f32>;
 @if(MULTISAMPLED) @group(0) @binding(5) var scene_depth: texture_depth_multisampled_2d;
 @if(!MULTISAMPLED) @group(0) @binding(5) var scene_depth: texture_depth_2d;
 
@@ -47,10 +48,11 @@ fn vertex(@builtin(vertex_index) vi: u32, @builtin(instance_index) ring: u32) ->
     let camera = vel.camera.xz;
     let x0 = clipmap_xz(water, g, f32(ring), camera);
     let sh = shore_at(water, shore_field, shore_sampler, x0);
+    let bed = shore_slope(water, shore_bed, shore_sampler, x0);
     let scales = shore_scales(water, sh.xy);
     // The shore waves now and at the previous frame's time (W-GERSTNER), as the water draw does.
-    let now = displaced(water, displacement, wave_sampler, x0, camera, scales).xyz + shore_wave_offset(water, sh, x0, camera, water.misc2.x);
-    let prev = displaced(water, prev_displacement, wave_sampler, x0, camera, scales).xyz + shore_wave_offset(water, sh, x0, camera, water.swash.w);
+    let now = displaced(water, displacement, wave_sampler, x0, camera, scales).xyz + shore_wave_offset(water, sh, bed, x0, camera, water.misc2.x);
+    let prev = displaced(water, prev_displacement, wave_sampler, x0, camera, scales).xyz + shore_wave_offset(water, sh, bed, x0, camera, water.swash.w);
     out.clip_now = vel.clip_from_world * vec4(now, 1.0);
     out.clip_prev = vel.prev_clip_from_world * vec4(prev, 1.0);
     out.position = out.clip_now;

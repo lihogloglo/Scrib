@@ -316,9 +316,10 @@ pub fn cell_bounds(cells: impl IntoIterator<Item = (i32, i32)>) -> Option<(i32, 
 /// for `water.shore`: every second `LAND` vertex (256 units ≈ 3.66 m texels), water where the
 /// height is below 0, cells without `LAND` are water (the engine's fill is deep). `heights` are
 /// in units, `[y * 65 + x]`, rows south to north (`mw_world::terrain::LandData`). Engine axes:
-/// x = east, z = −north.
+/// x = east, z = −north. The mask carries the bed depth per texel (m below sea level, NaN without
+/// `LAND`) for the shore waves' bed slope (W-GERSTNER-DEPTH).
 // `manual_midpoint`: `(ox + i) / 2` halves an even vertex index, it is not a midpoint.
-#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap, clippy::cast_precision_loss, clippy::manual_midpoint)]
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap, clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::manual_midpoint)]
 pub fn wet_mask<'a>(
     bounds: (i32, i32, i32, i32),
     lands: impl IntoIterator<Item = ((i32, i32), &'a [f32])>,
@@ -334,6 +335,8 @@ pub fn wet_mask<'a>(
         -f64::from(y1 + 1) * CELL_UNITS * UNIT_M,
     );
     let mut mask = WetMask::new(w, h, texel, origin);
+    // Bed depth below sea level (W-GERSTNER-DEPTH): NaN where no `LAND` says (the fill is deep).
+    let mut depth = vec![f32::NAN; w * h];
     for ((cx, cy), heights) in lands {
         if cx < x0 || cx > x1 || cy < y0 || cy > y1 || heights.len() < LAND_VERTS * LAND_VERTS {
             continue;
@@ -346,10 +349,13 @@ pub fn wet_mask<'a>(
             }
             let row = (rows - gy) / 2;
             for i in (0..LAND_VERTS).filter(|i| (ox + i) % 2 == 0) {
-                mask.wet[row * w + (ox + i) / 2] = heights[j * LAND_VERTS + i] < 0.0;
+                let z = heights[j * LAND_VERTS + i];
+                mask.wet[row * w + (ox + i) / 2] = z < 0.0;
+                depth[row * w + (ox + i) / 2] = (-f64::from(z) * UNIT_M) as f32;
             }
         }
     }
+    mask.depth = Some(depth);
     mask
 }
 

@@ -10,7 +10,7 @@
 // aerial perspective, clouds and fog run after the water by its depth (W-ORDER, render-order.md).
 // Optics shading follows bevy-aqua's structure (MIT OR Apache-2.0).
 
-import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_normal_scales, shore_scales, shore_wave_offset, shore_waves};
+import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_normal_scales, shore_scales, shore_slope, shore_wave_offset, shore_waves};
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT;
 import bevy_pbr::render::pbr_types::{PbrInput, pbr_input_new};
@@ -30,6 +30,8 @@ import bevy_pbr::render::clustered_forward::{view_fragment_cluster_index, unpack
 @group(constants::MATERIAL_BIND_GROUP) @binding(110) var shore_field: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(111) var shore_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(112) var region_map: texture_2d<u32>;
+// Bed slope β (W-GERSTNER-DEPTH, `sf_water::ShoreField::encode_slope_r16f`), sampled with `shore_sampler`.
+@group(constants::MATERIAL_BIND_GROUP) @binding(113) var shore_bed: texture_2d<f32>;
 
 struct WaterVertex {
     @location(0) position: vec3<f32>,
@@ -50,7 +52,7 @@ fn vertex(v: WaterVertex) -> WaterVarying {
     let sh = shore_at(water, shore_field, shore_sampler, x0);
     let scales = shore_scales(water, sh.xy);
     // FFT cascades, plus the shore waves where the swell fades (W-GERSTNER).
-    let g = shore_wave_offset(water, sh, x0, camera, water.misc2.x);
+    let g = shore_wave_offset(water, sh, shore_slope(water, shore_bed, shore_sampler, x0), x0, camera, water.misc2.x);
     let p = displaced(water, displacement, wave_sampler, x0, camera, scales) + vec4(g, g.y);
     var out: WaterVarying;
     out.world_position = vec4(p.xyz, 1.0);
@@ -219,7 +221,7 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     }
     // Shore waves (W-GERSTNER): their analytic slopes, trains filtered out once a pixel's footprint
     // can't carry them (λ < 4 footprints).
-    let gw = shore_waves(water, sh, in.lagrangian, water.misc2.x, 3.14159265 / max(footprint, 1e-4));
+    let gw = shore_waves(water, sh, shore_slope(water, shore_bed, shore_sampler, in.lagrangian), in.lagrangian, water.misc2.x, 3.14159265 / max(footprint, 1e-4));
     s += gw.slope;
     let far = smoothstep(water.misc.z * 2.0, water.misc.z * 16.0, d);
     var N = normalize(vec3(-s.x / max(1.0 + s.z, 0.2), 1.0, -s.y / max(1.0 + s.w, 0.2)));

@@ -78,10 +78,19 @@ than down), rising from ripples at the waterline to the open swell over the last
 along the shore, foam riding the breaking crests; stronger swash with `--water-wind 14`. Bad: conveyor-belt regularity,
 loops or spikes on crests, a seam where they meet the FFT swell, smearing when the camera moves (motion vectors), water
 showing through the beach behind the swash, W-SHORE ripples gone.
+Fix W-GERSTNER-DEPTH (2026-11-13): the shore waves shoal over the real bed slope baked from `LAND` (was a 1:20 proxy that
+capped crests at ≤ 0.19 m). Rerun `scene wa-seyda-noon`, then `--water-wind 14` and `--water-wind 30`, then `scene wa-bittercoast`;
+A/B each with `--off shoredepth` (the old proxy). Log line to check: `water: shore bed slope in the wave band p10 .. p50 .. p90 ..`.
+Look for: visible crests rolling in (tens of cm at 14 m/s, more on steep shores, gentler on flats), longer shallow wavelengths
+(~20-30 m), swash several times stronger on steep beaches. Bad: water flooding over the beach far past the waterline (storm
+swash reaches ±2 m on β 0.2 at 30 m/s), crest loops/spikes, crests kinking where the bed changes. Status: awaiting owner.
 
 ### WA-6: The sea follows the weather (W-WIND; `scene wa-seyda-noon`; A/B `--off seawind`)
 
-Status: awaiting owner. Kind: real game location, High preset, the scene's own time; weather switched live over BRP.
+Status: partial (owner 2026-11-13, `scene wa-seyda-noon`, clear -> thunderstorm over BRP, clock running): the change is too tame to
+  see, "waves are still super tame" in a storm (wind map 0-1 -> 1-15 m/s; `--water-wind 30` looked nice, so storms need a
+  stronger sea state, or a scale problem). New bug: a white band animated toward the shore in the calmest water
+  (rivers, lakes): the shore foam / shore-wave bands are not gated off for enclosed water.
 Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-seyda-noon`; then `bevyrrowind/set {"weather":"thunderstorm","transition_hours":0.2}`
 (add `"time_scale":120` to see it sooner), wait ~1-2 min, then `bevyrrowind/set {"weather":"clear","transition_hours":0.2}`.
 The sea lags the weather by design (30 s low-pass + 6 s steps). A/B: the same with `--off seawind` (fixed 7 m/s sea).

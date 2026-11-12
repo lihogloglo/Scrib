@@ -88,6 +88,7 @@ pub(crate) struct ImageIds {
     snapshot_depth: AssetId<Image>,
     reflection: AssetId<Image>,
     shore: AssetId<Image>,
+    shore_bed: AssetId<Image>,
 }
 
 impl ImageIds {
@@ -101,6 +102,7 @@ impl ImageIds {
             snapshot_depth: i.snapshot_depth.id(),
             reflection: i.reflection.id(),
             shore: i.shore.id(),
+            shore_bed: i.shore_bed.id(),
         }
     }
 }
@@ -186,6 +188,8 @@ impl FromWorld for WaterPipelines {
                         if ms { texture_depth_2d_multisampled() } else { texture_depth_2d() },
                         texture_2d(filtered),
                         sampler(SamplerBindingType::Filtering),
+                        // The bed slope (W-GERSTNER-DEPTH), sampled with the shore sampler.
+                        texture_2d(filtered),
                     ),
                 ),
             )
@@ -400,7 +404,7 @@ fn prepare(
     ) else {
         return;
     };
-    let Some(shore) = images.get(ids.shore) else { return };
+    let (Some(shore), Some(shore_bed)) = (images.get(ids.shore), images.get(ids.shore_bed)) else { return };
     let n = RESOLUTION as u64;
     let (spec, foam) = gpu.buffers.get_or_insert_with(|| {
         let buffer = |label, size| device.create_buffer(&BufferDescriptor { label: Some(label), size, usage: BufferUsages::STORAGE, mapped_at_creation: false });
@@ -463,7 +467,7 @@ fn prepare(
         let velocity = device.create_bind_group(
             "water_velocity",
             &cache.get_bind_group_layout(&pipelines.velocity[ms]),
-            &BindGroupEntries::sequential((params_binding, velocity_binding, &disp.texture_view, &prev.texture_view, &disp.sampler, depth_view, &shore.texture_view, &shore.sampler)),
+            &BindGroupEntries::sequential((params_binding, velocity_binding, &disp.texture_view, &prev.texture_view, &disp.sampler, depth_view, &shore.texture_view, &shore.sampler, &shore_bed.texture_view)),
         );
         commands.entity(entity).insert(WaterViewBindings { samples: msaa.samples(), snapshot, velocity, sspr: sspr.clone() });
     }

@@ -101,6 +101,12 @@ fn wet_mask_from_land_heights() {
     let x = m.origin.x + 32.0 * m.texel;
     let z = m.origin.y + 64.0 * m.texel;
     assert!(x.abs() < 1e-6 && z.abs() < 1e-6, "{x} {z}");
+    // W-GERSTNER-DEPTH: the bed depth below sea level, m (10 units under, 100 units above), unknown
+    // (NaN) in the margin cells without `LAND`.
+    let depth = m.depth.as_ref().expect("bed depths");
+    assert!((depth[64 * 97 + 32] - 10.0 * 0.9144 / 64.0).abs() < 1e-6, "{}", depth[64 * 97 + 32]);
+    assert!((depth[64 * 97 + 34] + 100.0 * 0.9144 / 64.0).abs() < 1e-6);
+    assert!(depth[0].is_nan() && depth[96 * 97 + 96].is_nan());
 }
 
 #[test]

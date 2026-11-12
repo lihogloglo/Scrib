@@ -222,7 +222,7 @@ height clipmap gives the bed.
   `shore_waves` in the vertex draw, the velocity redraw (now and at the previous frame's time) and the
   fragment normal (slopes added to the cascades', trains filtered by the pixel footprint); the CPU
   `WaterQuery` adds the same term (`set_shore_waves`).
-  - *Model:* depth `h = beach_slope·d` (0.05 = 1:20; no bathymetry in the field yet). Dispersion
+  - *Model:* depth `h = β·d`, β the baked bed slope (below; `beach_slope` 0.05 = 1:20 without bathymetry). Dispersion
     `ω² = gk·tanh(kh)` by Eckart's form, whose phase over a linear slope is closed-form
     (`Φ = (atanh v + atan v)/β`, `v = √tanh(k0h)`): crests slow and bunch toward the beach. Periods
     1, 1.12 and 1.8 × the JONSWAP peak (sets every ~8 waves from the beat, a short wind-sea train),
@@ -248,8 +248,29 @@ height clipmap gives the bed.
     Outerra's skewed trochoids by SDF gradient. Ours adds physical shoaling/breaking and a closed-form
     shallow phase. Owner-provided prior art (mechanism only, constants recalibrated): the owner's own
     Godotwind shore swash (MIT, `ocean_shore_common.gdshaderinc`, `docs/plans/shore_overhaul.md`).
-  - *Next (not built):* a bathymetry channel from the terrain heights (real depth instead of the slope
-    proxy: waves breaking on reefs); skewed (asymmetric) breaker profiles.
+  - *Bed slope (W-GERSTNER-DEPTH, 2026-11-13):* the 1:20 proxy capped crests at `½·0.78·0.05·d`
+    (≤ 0.19 m in the band whatever the wind) and kept shallow wavelengths at 5-13 m, under the vertex
+    LOD at ~74 m: invisible. Now the adapter's `WetMask::depth` (Morrowind: `LAND` heights per texel,
+    m below sea level, NaN without `LAND`) bakes a local slope `β = depth / shore distance` (the bed's
+    mean slope from the shoreline, the beach face's on land), clamped to 0.02-0.3 (`BED_SLOPE_MIN/MAX`:
+    flatter is a tidal flat the band can't carry, steeper a cliff where waves surge and reflect,
+    Iribarren > 3.3, Battjes 1974), blurred 2× 5-texel box (as the direction) so crests bend smoothly.
+    It is a second texture, `R16Float`, over the field's extent (the `Rgba16Float` field's four channels
+    are taken; packing it into one would break bilinear filtering), sharing its sampler: one tap per
+    vertex and fragment. Unknown depth or no bathymetry = `beach_slope`; `--off shoredepth` drops the
+    depths (the old proxy). Per texel, `h = β·d` is the true local depth; the closed-form Eckart phase
+    still assumes that slope from the shoreline to the point (exact on a plane beach, a smooth
+    approximation on a real bed, since β varies slowly). Stockdon's swash scales with the local β
+    (the land margin, S/β, does not). New no-loop term: on steep beds the breaker-held orbit
+    `A·coth` grows as `½γβ·coth` per metre, so `coth ≤ 0.4/(½γβ)` (`ORBIT_LIMIT`; the 1:20 proxy never
+    reached it). Measured (`shore_wave_bed_numbers`, main train): 14 m/s, β 0.2, d 10 m: cap 0.78 m,
+    crest 0.58 m, λ 30 m, swash ±1.1 m (×4 the proxy's 0.27 m); β 0.1: crest 0.32 m, λ 22 m. The bake
+    logs the band's β p10/p50/p90. *Reuse/industry:* Crest (Unity) drives its shallow-water
+    attenuation and wave shoaling from a sea-floor depth cache rendered from the terrain; Jeschke and
+    Wojtan 2018 ("Water Surface Wavelets") and UE5 Water's depth inputs likewise take real bathymetry,
+    not a slope constant; ours bakes it once from the same heights (no runtime depth render).
+  - *Next (not built):* skewed (asymmetric) breaker profiles; full Gerstner weight in the inner
+    band; breaking-face foam / whitecaps; contact foam rework (queued separately).
 - shore foam: a foam band at shore distance 0-6 m modulated by a wave-phase signal travelling shoreward
   (aqua's shoreline foam), plus **contact foam** where the scene depth behind the water is within a few
   cm of the surface (rocks, piers, boats, legs);

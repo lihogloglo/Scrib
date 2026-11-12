@@ -75,7 +75,7 @@ pub struct WaterParams {
     pub looks: [Vec4; 24],
 }
 
-/// The water half of [`WaterMaterial`] (bindings 100-107 and 110-112 of the material group).
+/// The water half of [`WaterMaterial`] (bindings 100-107 and 110-113 of the material group).
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct WaterExt {
     #[uniform(100)]
@@ -97,13 +97,17 @@ pub struct WaterExt {
     #[texture(106)]
     #[sampler(107)]
     pub reflection: Handle<Image>,
-    /// `sf_water::ShoreField::encode_rg8` (`Rg8Unorm`), or a 1x1 open-sea texel.
+    /// `sf_water::ShoreField::encode_rgba16f` (`Rgba16Float`), or a 1x1 open-sea texel.
     #[texture(110, visibility(vertex, fragment))]
     #[sampler(111, visibility(vertex, fragment))]
     pub shore: Handle<Image>,
     /// Optics index per map cell (`R8Uint`), or a 1x1 zero.
     #[texture(112, sample_type = "u_int")]
     pub regions: Handle<Image>,
+    /// The bed slope (`sf_water::ShoreField::encode_slope_r16f`, `R16Float`; W-GERSTNER-DEPTH) over
+    /// the shore field's extent, or a 1x1 beach slope; sampled with the shore sampler.
+    #[texture(113, visibility(vertex, fragment))]
+    pub shore_bed: Handle<Image>,
 }
 
 impl WaterExt {
@@ -117,6 +121,7 @@ impl WaterExt {
             snapshot_depth: images.snapshot_depth.clone(),
             reflection: images.reflection.clone(),
             shore: images.shore.clone(),
+            shore_bed: images.shore_bed.clone(),
             regions: images.regions.clone(),
         }
     }

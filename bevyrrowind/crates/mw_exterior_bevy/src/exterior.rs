@@ -580,7 +580,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // W-SHORE: `--off shorenormals` flattens the water's normal with its displacement at the shore.
     // W-GERSTNER: `--off shorewaves` drops the analytic shore waves (the FFT fades to flat). W-WIND:
     // `--off seawind` keeps the fixed sea breeze instead of the weather's wind.
-    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves), !perf.off.has(Part::SeaWind));
+    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves), !perf.off.has(Part::SeaWind), !perf.off.has(Part::ShoreDepth));
     mw_environment_bevy::water::add(&mut app, options.water, options.quality, water_parts, &options.world.worldspaces);
     app.add_systems(Update, sea_wind);
     mw_doors_bevy::add(&mut app, options.world, options.use_door);
