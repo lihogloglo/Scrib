@@ -27,7 +27,7 @@
 //! Selection policy ([`plan_jobs`], counts per [`Skip`]): base-slot textures of referenced models;
 //! skipped when any use is not plain albedo (glow, detail/dark/decal slots, base colour glowing
 //! through emissive or unlit materials, particles and effect models, translucent blends), when a
-//! `_n`/`_nh`/`_spec` companion comes from the albedo's own VFS source (a PBR replacer shipping both:
+//! `_n`/`_nh`/`_spec` companion (or one its source's pack profile names) comes from the albedo's own VFS source (a PBR replacer shipping both:
 //! leave it as authored; a normals-only pack over another source's albedo still de-lights it,
 //! textures-adapter.md §3), for sky and UI
 //! names, a winner already in KTX2, more than one variant of the stem, and at decode time for
@@ -47,6 +47,7 @@ use sf_texture::ktx2_out::is_block_aligned;
 use sf_texture::{Bc7Quality, bc7_ktx2_cutout, delight, shading_grid};
 use sf_vfs::{Vfs, VfsPath};
 
+use crate::texture_profiles::TextureSources;
 use crate::textures::{TEXTURE_ALTERNATES, alpha_is_cutout, decode_rgba};
 
 /// `texture.roles`: a model's texture uses.
@@ -62,7 +63,7 @@ pub const DEFAULT_STRENGTH: f32 = delight::DEFAULT_STRENGTH;
 /// Smallest side de-lit: small detailed textures (icons, trims) don't come back neutral (D-1).
 pub const MIN_SIDE: u32 = 64;
 /// Bump when `sf_texture`'s de-lighting, mips or encode change (2: coverage-preserving cutout mips, D-2c).
-pub const ALGORITHM_VERSION: u32 = 2;
+pub const ALGORITHM_VERSION: u32 = 3;
 /// Every extension a texture reference may resolve to, and its source formats.
 pub const VARIANTS: [&str; 5] = ["dds", "tga", "bmp", "png", "ktx2"];
 /// Companion maps whose presence marks a PBR replacer.
@@ -237,25 +238,40 @@ pub fn sole_variant(source: &str, exists: impl Fn(&str) -> bool) -> bool {
     exists(source) && VARIANTS.iter().filter(|v| **v != ext).all(|v| !exists(&format!("{stem}.{v}")))
 }
 
-/// Whether a `_n`/`_nh`/`_spec` companion of `source` exists in any variant format in the same VFS
-/// source as `source` (`source_of`: the winning source of an exact path, `None` when absent): a
-/// pack that ships both was authored together (textures-adapter.md §3).
-pub fn has_companion<S: PartialEq>(source: &str, source_of: impl Fn(&str) -> Option<S>) -> bool {
+/// Whether a companion of `source` exists in any variant format in the same VFS source as
+/// `source` (`source_of`: the winning source of an exact path, `None` when absent): a pack that
+/// ships both was authored together (textures-adapter.md §3). Companions: [`COMPANIONS`] plus
+/// `extra(source)`, the companion suffixes of that source's pack profile (§8; one source, so one
+/// profile for both files).
+pub fn has_companion<S: PartialEq>(source: &str, source_of: impl Fn(&str) -> Option<S>, extra: impl Fn(&S) -> Vec<String>) -> bool {
     let stem = stem(source);
     let Some(own) = source_of(source) else { return false };
+    let extra = extra(&own);
     COMPANIONS
         .iter()
+        .copied()
+        .chain(extra.iter().map(String::as_str))
         .any(|c| VARIANTS.iter().any(|v| source_of(&format!("{stem}{c}.{v}")).is_some_and(|s| s == own)))
+}
+
+/// [`plan_jobs_with`] with [`COMPANIONS`] only (every source on the default profile).
+pub fn plan_jobs<S: PartialEq>(
+    uses: impl IntoIterator<Item = TextureUse>,
+    resolve: impl Fn(&str) -> Option<String>,
+    source_of: impl Fn(&str) -> Option<S>,
+) -> (BTreeMap<String, TextureJob>, BTreeMap<Skip, u32>) {
+    plan_jobs_with(uses, resolve, source_of, |_| Vec::new())
 }
 
 /// The textures to de-lit, by winning file, and the skip counts (per texture, by first reason in
 /// [`Skip`]'s order). `resolve` maps a reference to its winning file (the runtime's rule,
 /// [`TEXTURE_ALTERNATES`]); `source_of` gives the winning VFS source of an exact path (`None`: no
-/// such file).
-pub fn plan_jobs<S: PartialEq>(
+/// such file); `companions` a source's extra companion suffixes ([`has_companion`]).
+pub fn plan_jobs_with<S: PartialEq>(
     uses: impl IntoIterator<Item = TextureUse>,
     resolve: impl Fn(&str) -> Option<String>,
     source_of: impl Fn(&str) -> Option<S>,
+    companions: impl Fn(&S) -> Vec<String>,
 ) -> (BTreeMap<String, TextureJob>, BTreeMap<Skip, u32>) {
     let exists = |p: &str| source_of(p).is_some();
     let mut by_ref: BTreeMap<String, Vec<TextureUse>> = BTreeMap::new();
@@ -286,7 +302,7 @@ pub fn plan_jobs<S: PartialEq>(
             Some(Skip::SkyUi)
         } else if let Some(role) = other_role {
             Some(Skip::Role(role))
-        } else if has_companion(&winner, &source_of) {
+        } else if has_companion(&winner, &source_of, &companions) {
             Some(Skip::Companion)
         } else {
             None
@@ -485,7 +501,7 @@ pub const ALPHA_INDEX_SUBJECT: &str = "all";
 /// Bump when [`alpha_is_cutout`] can answer differently: it is this step's version, so every
 /// class product (and the index, and through the scene source's fingerprint every `scene.cells`
 /// table) re-bakes.
-pub const ALPHA_CLASSIFIER_VERSION: u32 = 1;
+pub const ALPHA_CLASSIFIER_VERSION: u32 = 2;
 
 /// `texture.alpha_class`: decode one texture file's top mip and classify its alpha.
 ///
@@ -643,8 +659,9 @@ impl fmt::Display for DelightReport {
 }
 
 /// Registers the de-lighting steps and bakes every model's roles, then every albedo texture and
-/// the index. `models` are the referenced model paths; `vfs` the bake's VFS (no baked layer).
-pub fn bake_delight(baker: &mut Baker, vfs: &Vfs, models: &[String], strength: f32) -> DelightReport {
+/// the index. `models` are the referenced model paths; `vfs` the bake's VFS (no baked layer);
+/// `sources` its sources' pack profiles (their companion suffixes, textures-adapter.md §8).
+pub fn bake_delight(baker: &mut Baker, vfs: &Vfs, models: &[String], strength: f32, sources: &TextureSources) -> DelightReport {
     let started = Instant::now();
     let mut report = DelightReport::default();
     baker.register(RolesStep);
@@ -688,7 +705,8 @@ pub fn bake_delight(baker: &mut Baker, vfs: &Vfs, models: &[String], strength: f
     report.alpha_classes = textures.len();
     report.alpha_built = classes.steps.get(ALPHA_CLASS_STEP).map_or(0, |s| s.built);
     let source_of = |p: &str| VfsPath::new(p).ok().and_then(|p| vfs.resolve(&p));
-    let (jobs, skipped) = plan_jobs(uses.iter().cloned(), resolve, source_of);
+    let companions = |s: &sf_vfs::SourceIndex| sources.companion_suffixes(*s).map(str::to_owned).collect();
+    let (jobs, skipped) = plan_jobs_with(uses.iter().cloned(), resolve, source_of, companions);
     report.skipped = skipped;
     let jobs = Arc::new(jobs);
     baker.register(DelightStep { strength, jobs: jobs.clone() }).register(IndexStep { jobs });

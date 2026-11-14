@@ -68,4 +68,58 @@ impl Quality {
     pub const fn cloud_map_per_sample(self) -> bool {
         matches!(self, Self::High | Self::Ultra)
     }
+
+    /// Load-time texture size cap, largest side of level 0 in texels (`sf_texture_bevy::TextureCapPlugin`,
+    /// textures.md §6 "Pool per preset"): Low 512, Medium 1024, High 2048, Ultra none. Absolute, like UE's
+    /// texture-group `MaxLODSize`; vanilla textures (256-512) are never capped, HD packs' 2K are from Medium down.
+    pub const fn texture_cap(self) -> Option<u32> {
+        match self {
+            Self::Low => Some(512),
+            Self::Medium => Some(1024),
+            Self::High => Some(2048),
+            Self::Ultra => None,
+        }
+    }
+
+    /// Parallax occlusion on materials with a depth companion (textures.md §9 "T4d", Bevy's
+    /// `ParallaxMappingMethod`): Low none (the depth map isn't bound), Medium steep parallax with a
+    /// one-sample interpolation (Bevy's `Occlusion`, its default 16 layers), High the same 16 layers
+    /// refined by 5 binary-search steps (`Relief`, Bevy's `DEFAULT_RELIEF_MAPPING`), Ultra 32 layers
+    /// and 8 steps (UE's POM node reference count at glancing angles). Layers scale with the view:
+    /// 1 looking straight on, the maximum at grazing angles (`parallax_mapping.wesl`).
+    pub const fn parallax(self) -> Option<Parallax> {
+        match self {
+            Self::Low => None,
+            Self::Medium => Some(Parallax { max_layers: 16, relief_steps: None }),
+            Self::High => Some(Parallax { max_layers: 16, relief_steps: Some(5) }),
+            Self::Ultra => Some(Parallax { max_layers: 32, relief_steps: Some(8) }),
+        }
+    }
+}
+
+/// A preset's parallax occlusion settings ([`Quality::parallax`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Parallax {
+    /// Most depth layers the ray march steps through (at grazing angles).
+    pub max_layers: u8,
+    /// Binary-search refinement steps after the march (relief mapping); `None`: one interpolation
+    /// between the last two layers (parallax occlusion mapping).
+    pub relief_steps: Option<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// tx-pom: Low binds no depth map, Medium marches with one interpolation, High and Ultra
+    /// refine by binary search; layers never shrink up the presets.
+    #[test]
+    fn preset_picks_the_parallax_method() {
+        assert_eq!(Quality::Low.parallax(), None);
+        let medium = Quality::Medium.parallax().expect("medium");
+        assert_eq!(medium, Parallax { max_layers: 16, relief_steps: None });
+        assert_eq!(Quality::High.parallax(), Some(Parallax { max_layers: 16, relief_steps: Some(5) }));
+        assert_eq!(Quality::Ultra.parallax(), Some(Parallax { max_layers: 32, relief_steps: Some(8) }));
+        assert_eq!(Quality::default().parallax(), Quality::High.parallax());
+    }
 }

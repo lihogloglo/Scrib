@@ -62,6 +62,22 @@ fn a_profile_round_trips_through_ron() {
     assert_eq!(ron::from_str::<PackProfile>(written).unwrap(), profile);
 }
 
+/// A renamed companion follows its target's rule, right after it; bad aliases change nothing.
+#[test]
+fn an_alias_follows_its_target_rule() {
+    let mut profile = test_profile();
+    assert!(profile.alias_suffix("_normal", "_N"));
+    let order: Vec<&str> = profile.suffixes.iter().map(|r| r.suffix.as_str()).collect();
+    assert_eq!(order, ["", "_nh", "_n", "_normal", "_spec", "_diffusespec"]);
+    let (base, rule) = profile.rule_for("tx_wall_NORMAL").unwrap();
+    assert_eq!((base, rule.role, rule.layout), ("tx_wall", PackRole::Normal, profile.suffixes[2].layout));
+    let before = profile.clone();
+    for (suffix, target) in [("_x", "_missing"), ("_x", ""), ("", "_n"), ("_spec", "_n"), ("_NORMAL", "_n")] {
+        assert!(!profile.alias_suffix(suffix, target), "{suffix} = {target}");
+    }
+    assert_eq!(profile, before);
+}
+
 #[test]
 fn stems_route_to_their_rule_and_base() {
     let profile = test_profile();
@@ -271,4 +287,70 @@ fn a_single_level_split_fills_both_chains_in_their_formats() {
             (Slot::Depth, BlockFormat::Bc4, 1, 6)
         ]
     );
+}
+
+/// TS-2: a metal-in-R packed map's ORM product (R↔B swapped on the blocks) decodes, level by
+/// level, as the channel-permuted source within the in-tree decoder's rounding (1/255), for
+/// BC1 and for BC3 (alpha dropped to BC1).
+#[test]
+fn orm_products_decode_as_the_permuted_source() {
+    let profile = test_profile();
+    let orm = rule(&profile, PackRole::Orm);
+    for (pf, format) in [
+        (Pf::FourCc(b"DXT1"), BlockFormat::Bc1),
+        (Pf::FourCc(b"DXT5"), BlockFormat::Bc3),
+    ] {
+        let (bytes, levels) = noise_dds(pf, format);
+        let [product] = &apply(&profile, orm, &bytes, AlphaUse::None)[..] else {
+            panic!("one ORM product")
+        };
+        assert_eq!(product.map, ChannelMap([ch(B), ch(G), ch(R), Src::Unused]));
+        let out = rewrapped(&product.result);
+        assert_eq!((out.format, out.remapped), (BlockFormat::Bc1, true));
+        let written = read_source(&out.ktx2).unwrap().unwrap();
+        for (level, (bytes, shipped)) in written.levels.iter().zip(&levels).enumerate() {
+            let size = (16u32 >> level).max(1);
+            let mut want = decode_level(format, shipped, size, size);
+            product.map.apply_rgba(&mut want);
+            let got = decode_level(out.format, bytes, size, size);
+            for (w, g) in want.as_chunks::<4>().0.iter().zip(got.as_chunks::<4>().0) {
+                for (a, b) in w.iter().zip(g).take(3) {
+                    assert!(a.abs_diff(*b) <= 1, "{format:?} level {level}: {w:?} vs {g:?}");
+                }
+            }
+        }
+    }
+}
+
+/// A legacy specular map fills the ORM slot through the cook path only (its conversion changes
+/// values); the empty-level-0 quirk is data, found per role.
+#[test]
+fn specular_maps_cook_and_quirks_are_per_role() {
+    let mut profile = test_profile();
+    profile.suffixes.push(SuffixRule {
+        suffix: "_gloss".into(),
+        role: PackRole::SpecularShininess,
+        layout: ChannelMap::IDENTITY,
+    });
+    let spec = rule(&profile, PackRole::SpecularShininess);
+    let (dxt5, _) = noise_dds(Pf::FourCc(b"DXT5"), BlockFormat::Bc3);
+    let products = apply(&profile, spec, &dxt5, AlphaUse::None);
+    assert_eq!(products.len(), 1);
+    assert_eq!(
+        (products[0].slot, &products[0].result),
+        (
+            Slot::Orm,
+            &Rewrap::Cook(CookReason::FormatForRole(BlockFormat::Bc3))
+        )
+    );
+
+    assert_eq!(profile.fill_empty_level0(PackRole::Orm), None, "off unless listed");
+    profile.quirks = vec![Quirk::FillEmptyLevel0 {
+        role: PackRole::Orm,
+        channel: B,
+    }];
+    assert_eq!(profile.fill_empty_level0(PackRole::Orm), Some(B));
+    assert_eq!(profile.fill_empty_level0(PackRole::Normal), None);
+    let ron = ron::to_string(&profile).unwrap();
+    assert_eq!(ron::from_str::<PackProfile>(&ron).unwrap(), profile);
 }

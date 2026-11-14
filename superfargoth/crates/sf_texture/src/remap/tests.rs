@@ -474,3 +474,53 @@ fn identity_maps_plan_identity_and_compose() {
         ChannelMap([ch(A), U, U, U])
     );
 }
+
+/// A BC1 block with endpoints `c0`, `c1` (5:6:5) and indices `indices`.
+fn bc1_block(c0: u16, c1: u16, indices: u32) -> [u8; 8] {
+    let mut block = [0; 8];
+    block[..2].copy_from_slice(&c0.to_le_bytes());
+    block[2..4].copy_from_slice(&c1.to_le_bytes());
+    block[4..].copy_from_slice(&indices.to_le_bytes());
+    block
+}
+
+/// The empty-level-0 repair: an 8x8 BC1 whose level 0 has no blue (both endpoints' B field 0)
+/// and whose level 1 does gets level 0's blue rebuilt per block from the 2x2 level-1 texels it
+/// covers; red and green decode exactly as before. A level 0 with any blue, an empty level 1,
+/// alpha or a non-BC1 format is left alone.
+#[test]
+fn an_empty_level0_channel_is_rebuilt_from_level1_only_under_the_rule() {
+    let rg = |r: u16, g: u16| (r << 11) | (g << 5);
+    // Level 0: 2x2 blocks, R/G noise-ish, B 0; one block in three-colour mode (c0 < c1).
+    let level0: Vec<u8> = [
+        bc1_block(rg(31, 10), rg(2, 40), 0x1B1B_1B1B),
+        bc1_block(rg(3, 63), rg(3, 1), 0xE4E4_E4E4),
+        bc1_block(rg(1, 1), rg(9, 9), 0x0101_0101),
+        bc1_block(rg(20, 20), rg(20, 20), 0),
+    ]
+    .concat();
+    // Level 1 (4x4, one block): constant blue 31 (255), so every level-0 block gets 31.
+    let level1 = bc1_block(rg(4, 4) | 31, rg(1, 1) | 31, 0).to_vec();
+    let level2 = bc1_block(0, 0, 0).to_vec();
+    let mut chain = vec![level0.clone(), level1.clone(), level2.clone(), level2.clone()];
+    assert!(fill_empty_level0(BlockFormat::Bc1, &mut chain, 8, 8, B));
+    assert_eq!(chain[1..], [level1.clone(), level2.clone(), level2.clone()], "only level 0 changes");
+    let before = decode_level(BlockFormat::Bc1, &level0, 8, 8);
+    let after = decode_level(BlockFormat::Bc1, &chain[0], 8, 8);
+    for (b, a) in before.as_chunks::<4>().0.iter().zip(after.as_chunks::<4>().0) {
+        assert_eq!((a[0], a[1], a[3]), (b[0], b[1], b[3]), "R, G and alpha unchanged");
+        // Black punch-through texels of three-colour blocks stay black; every other texel is 255.
+        assert!(a[2] == 255 || (b[3] == 0 && a[2] == 0), "{a:?}");
+    }
+
+    // Not under the rule: level 0 already has blue; level 1 has none; alpha; BC3.
+    let mut has = vec![bc1_block(rg(1, 1) | 1, 0, 0).repeat(4), level1.clone(), level2.clone(), level2.clone()];
+    let kept = has.clone();
+    assert!(!fill_empty_level0(BlockFormat::Bc1, &mut has, 8, 8, B));
+    assert_eq!(has, kept);
+    let mut none = vec![level0.clone(), bc1_block(rg(4, 4), rg(1, 1), 0).to_vec(), level2.clone(), level2.clone()];
+    assert!(!fill_empty_level0(BlockFormat::Bc1, &mut none, 8, 8, B));
+    assert_eq!(none[0], level0);
+    assert!(!fill_empty_level0(BlockFormat::Bc1, &mut chain.clone(), 8, 8, A));
+    assert!(!fill_empty_level0(BlockFormat::Bc3, &mut [vec![0; 64], vec![0; 16]], 8, 8, B));
+}

@@ -1709,7 +1709,7 @@ mod tests {
         let (mut ranges_sum, mut blocks_sum, mut chains_sum, mut samples) = (0u64, 0u64, 0u64, 0u32);
         for step in 0..steps {
             s.advance(u64::from(step));
-            if rng() % 4 == 0 {
+            if rng().is_multiple_of(4) {
                 (dx, dy) = [(1, 0), (-1, 0), (0, 1), (0, -1)][usize::try_from(rng() % 4).unwrap()];
             }
             if !(2..38).contains(&(x + dx)) || !(2..38).contains(&(y + dy)) {

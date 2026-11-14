@@ -25,7 +25,7 @@ mod report;
 pub use adapter::{ContentAdapter, ModFiles, RecordCx, RecordFileError};
 pub use hot::HotReloadPlan;
 pub use load::{LoadTimings, LoadedMod, LoadedProfile, ScriptPlan, load_profile};
-pub use manifest::{Content, MANIFEST_FILE, ManifestError, ModId, ModManifest, UiContent};
+pub use manifest::{Content, MANIFEST_FILE, ManifestError, ModId, ModManifest, NormalY, TextureSection, UiContent};
 pub use native::NativeRecords;
 pub use order::{LoadOrderError, resolve_load_order};
 pub use profile::{InputBindings, PROFILE_EXTENSION, Profile, ProfileError, ScriptLimits, SettingValues};

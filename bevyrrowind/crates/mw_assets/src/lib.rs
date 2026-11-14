@@ -17,6 +17,7 @@ pub mod animation;
 pub mod billboard;
 pub mod cooked;
 pub mod lights;
+pub mod map_ab;
 pub mod particles;
 
 use std::sync::Arc;
@@ -36,6 +37,7 @@ pub use animation::{ModelAnimation, NifAnimation, NodeAnimation};
 pub use billboard::Billboard;
 pub use cooked::{CookedLodSettings, CookedMaterials, CookedModelRoot, CookedSpawned};
 pub use lights::{AttachLight, LightCalibration};
+pub use map_ab::{MaterialMaps, PARALLAX_DEPTH_SCALE, Parallax, parallax, set_material_maps, set_parallax};
 pub use particles::{ActorEmitter, LiveEmitter, LiveNode, LiveSystem, NifNode, ParticleEmitter, ParticleExt, ParticleMaterial, ParticleRange};
 
 /// Extensions that may replace a texture reference, in preference order
@@ -109,6 +111,7 @@ impl Plugin for MwAssetsPlugin {
             .init_resource::<LightCalibration>()
             .init_resource::<CookedLodSettings>()
             .init_resource::<CookedMaterials>()
+            .init_resource::<MaterialMaps>()
             .add_plugins(sf_model_bevy::SfModelPlugin)
             .init_asset::<NifAnimation>()
             .register_asset_loader(NifLoader { vfs: self.vfs.clone() })
@@ -125,7 +128,9 @@ impl Plugin for MwAssetsPlugin {
                     leaf_shadow_receivers,
                 ),
             )
-            .add_systems(PostUpdate, billboard::face_camera.before(TransformSystems::Propagate));
+            .add_systems(PostUpdate, billboard::face_camera.before(TransformSystems::Propagate))
+            // `--off normalmaps` / `--off orm` and their live flips (TX-lab).
+            .add_systems(PostUpdate, map_ab::apply_material_maps.before(bevy::asset::AssetEventSystems));
     }
 }
 
@@ -326,6 +331,8 @@ fn standard_material(m: &mw_nif::Material, vfs: &Vfs, load_context: &mut LoadCon
         glow_texture: m.glow_texture.as_deref(),
         // No normal map on the runtime NIF path: its meshes carry no tangents (T4 cooks them).
         normal_texture: None,
+        depth_texture: None,
+        orm: None,
         emissive: Color::srgb(er, eg, eb).to_linear(),
         // The leaf rule: an authored blend drawn as a cutout (`mw_nif::Cutout`).
         foliage: m.cutout != mw_nif::Cutout::No && matches!(alpha_mode, AlphaMode::Mask(_)),
@@ -393,6 +400,14 @@ pub(crate) struct Surface<'a> {
     /// The base texture's tangent-space normal map (T4 companion, `mw_bake::cook::read_companions`):
     /// linear, OpenGL Y (the cook converted it), sampled with the base slot's clamp.
     pub normal_texture: Option<&'a str>,
+    /// The base texture's parallax depth map (tx-pom, `mw_bake::cook::read_depths`): linear BC4
+    /// `1 − height`, sampled with the base slot's clamp, bound with the preset's parallax
+    /// ([`map_ab::parallax`]).
+    pub depth_texture: Option<&'a str>,
+    /// The base texture's ORM companion (TS-2, `mw_bake::cook::read_orms`): linear glTF ORM
+    /// (R occlusion, G perceptual roughness, B metallic), sampled with the base slot's clamp; its
+    /// `occlusion` says whether R holds occlusion (false for a converted specular map, R = 1).
+    pub orm: Option<&'a mw_bake::cook::OrmCompanion>,
     /// Linear emissive color (before exposure scaling).
     pub emissive: LinearRgba,
     pub alpha_mode: AlphaMode,
@@ -457,8 +472,8 @@ impl Surface<'_> {
             base_color_texture: self.base_texture.and_then(|p| texture(p, self.base_clamp, true)),
             // 2002 assets carry no PBR data: matte, low reflectance until
             // generated or replacement maps exist.
-            perceptual_roughness: 0.85,
-            reflectance: 0.3,
+            perceptual_roughness: map_ab::PLAIN_ROUGHNESS,
+            reflectance: map_ab::PLAIN_REFLECTANCE,
             double_sided: self.double_sided,
             cull_mode: if self.double_sided { None } else { Some(bevy::render::render_resource::Face::Back) },
             alpha_mode: self.alpha_mode,
@@ -474,6 +489,31 @@ impl Surface<'_> {
         // BC5 reconstructs Z (`TWO_COMPONENT_NORMAL_MAP`).
         if !self.unlit {
             material.normal_map_texture = self.normal_texture.and_then(|p| texture(p, self.base_clamp, false));
+        }
+        // Parallax occlusion from the depth companion (Bevy's `depth_map`; it needs tangents, as
+        // the normal map, which the same `_nh` companion gives the mesh): the preset's method and
+        // layers, none on Low (not even loaded).
+        if !self.unlit
+            && let Some(parallax) = parallax()
+            && let Some(depth) = self.depth_texture.and_then(|p| texture(p, self.base_clamp, false))
+        {
+            parallax.apply(&mut material, depth);
+        }
+        // An ORM companion (glTF layout, Bevy's slots: `metallic_roughness_texture` reads G
+        // roughness and B metallic, `occlusion_texture` R) replaces the 2002 defaults: Bevy
+        // multiplies factor × texture, so both factors go to 1.0, and reflectance to 0.5 (F0 0.04,
+        // the dielectric standard the PBR packs author for). One image serves both slots.
+        if !self.unlit
+            && let Some(companion) = self.orm
+            && let Some(orm) = texture(&companion.file, self.base_clamp, false)
+        {
+            if companion.occlusion {
+                material.occlusion_texture = Some(orm.clone());
+            }
+            material.metallic_roughness_texture = Some(orm);
+            material.metallic = 1.0;
+            material.perceptual_roughness = 1.0;
+            material.reflectance = 0.5;
         }
 
         // Fixed-function NIF shading is `texture * (emissive + lighting)`: the
@@ -535,6 +575,8 @@ mod tests {
             base_clamp: [false, false],
             glow_texture: None,
             normal_texture: None,
+            depth_texture: None,
+            orm: None,
             emissive: LinearRgba::BLACK,
             alpha_mode,
             double_sided: true,

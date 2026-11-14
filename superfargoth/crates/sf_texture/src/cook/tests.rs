@@ -528,3 +528,26 @@ fn measure_encode_per_format() {
         });
     }
 }
+
+/// A legacy specular map's exponent (A × 255, Blinn-Phong) becomes perceptual roughness
+/// `(2 / (n + 2))^¼` in G at exact points; R 255 (no occlusion), B 0 (dielectric), A 255, the
+/// specular colour dropped.
+#[test]
+fn specular_exponent_maps_to_perceptual_roughness() {
+    assert!((blinn_phong_roughness(0.0) - 1.0).abs() < 1e-6);
+    assert!((blinn_phong_roughness(30.0) - 0.5).abs() < 1e-6);
+    let alphas = [0u8, 2, 14, 126, 255];
+    let mut rgba: Vec<u8> = alphas.iter().flat_map(|&a| [200, 10, 99, a]).collect();
+    specular_to_orm(&mut rgba);
+    let texels: Vec<[u8; 4]> = rgba.as_chunks::<4>().0.to_vec();
+    assert_eq!(
+        texels,
+        [
+            [255, 255, 0, 255],
+            [255, 214, 0, 255],
+            [255, 152, 0, 255],
+            [255, 90, 0, 255],
+            [255, 76, 0, 255],
+        ]
+    );
+}

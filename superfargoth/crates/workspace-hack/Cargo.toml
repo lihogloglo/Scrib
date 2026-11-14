@@ -104,6 +104,7 @@ parking_lot = { version = "0.12", features = ["arc_lock"] }
 petgraph = { version = "0.8", features = ["serde-1"] }
 phf_shared = { version = "0.13" }
 profiling = { version = "1" }
+raw-window-handle = { version = "0.6", default-features = false, features = ["std"] }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 rodio = { version = "0.22", default-features = false, features = ["hound", "lewton", "mp3", "playback", "tracing"] }

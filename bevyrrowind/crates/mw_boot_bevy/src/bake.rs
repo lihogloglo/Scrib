@@ -23,7 +23,7 @@ pub fn cache_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
 pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let started = Instant::now();
     let root = cache_root(cache)?;
-    let (vfs, content, fingerprint) = crate::mods::load_content(install, false)?;
+    let (vfs, content, fingerprint, textures) = crate::mods::load_content(install, false)?;
     let loaded = started.elapsed();
     let mut models = mw_bake::referenced_models(&content.db);
     // Mesh fields no importer handles (vanilla has "Add World Art").
@@ -38,11 +38,20 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let store = Store::open(&root)?;
     let profile = mw_bake::profile_name(install);
     println!("baking {} models and the exterior for profile {profile} into {}", paths.len(), root.display());
+    // Texture sources (textures-adapter.md §8): which VFS sources read with a non-default profile.
+    for (source, pack) in textures.assigned() {
+        println!("texture profile: {} -> {}", vfs.source(source).label(), pack.name);
+    }
+    for warning in &textures.warnings {
+        println!("texture profile warning: {warning}");
+    }
     let prepare = Instant::now();
     let db = Arc::new(content.db);
     let vfs = Arc::new(vfs);
     let terrain = Arc::new(MwTerrainSource::new(db.clone()));
-    let layers = Arc::new(world::MwLayers::new(&db, &vfs));
+    let layers = Arc::new(world::MwLayers::with_sources(&db, &vfs, &textures));
+    let (layer_normals, layer_arms) = layers.companion_counts();
+    let layer_count = layers.len();
     let extra: Vec<_> = world::source_tile_fingerprints(&terrain).into_iter().chain(layers.fingerprints()).collect();
     // The user's animation libraries (animation-sources.md): optional, BYO.
     let anim_sources = Arc::new(mw_bake::sources::AnimSources::local());
@@ -54,7 +63,7 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     );
     let prepared = prepare.elapsed();
 
-    let mut baker = mw_bake::model_baker(store.clone(), inputs.clone());
+    let mut baker = mw_bake::model_baker_with(store.clone(), inputs.clone(), &textures);
     // Meshes + LODs, and each model's static collision source (bake-adapter.md).
     let mut keys = mw_bake::model_keys(&paths);
     keys.extend(mw_bake::collision::collision_keys(&paths));
@@ -79,15 +88,17 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     // Legacy scripts (scripting-adapter.md, M5 W2): MWScript -> Luau modules + bytecode, coverage report.
     let scripts = mw_bake::script::bake_scripts(&mut baker, &store, &db);
     // Albedo de-lighting (bake.md "De-lighting"): roles per model, de-lit BC7 KTX2 per texture, the layer's index.
-    let delight = mw_bake::delight::bake_delight(&mut baker, &vfs, &paths, mw_bake::delight::DEFAULT_STRENGTH);
+    let delight = mw_bake::delight::bake_delight(&mut baker, &vfs, &paths, mw_bake::delight::DEFAULT_STRENGTH, &textures);
     // Texture cook (textures.md §5): every other referenced texture as BCn KTX2, after de-light (it skips de-lit ones).
-    let cook = mw_bake::cook::bake_cook(&mut baker, &vfs, &delight);
+    let cook = mw_bake::cook::bake_cook(&mut baker, &vfs, &delight, &textures);
     // Static scene (static-scene.md, scene-runtime-plan.md §3.3): one `scene.cells` table per
     // exterior cell, then the geometry of every chain they name. After the terrain (each cell's
     // land minimum) and the de-light (per-texture alpha classes): `bake_scene` refuses otherwise.
     let ext = [world::exterior()];
     let scene = mw_bake::scene::bake_scene(&mut baker, &db, &ext);
     let chains = scene.as_ref().ok().map(|_| mw_bake::scene::bake_chains(&baker, &ext));
+    // Texture demand (textures.md §6, S3b): UV density per model + clusters per cell, after the cook (companions).
+    let demand = mw_bake::demand::bake_demand(&mut baker, &ext);
     let manifest = baker.manifest();
     let save = Instant::now();
     inputs.save()?;
@@ -111,6 +122,8 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
         exterior.terrain,
         exterior.terrain_products
     );
+    // T5 (textures.md §9): terrain layers with pack companions (`terrain.layers` time is in the step table).
+    println!("terrain layers: {layer_count}, {layer_normals} with a normal map, {layer_arms} with ARM");
     println!(
         "interiors: {} indexed in {:.2?}; door links {}, unresolved link ends {}",
         exterior.interiors, exterior.interior_index, exterior.door_links, exterior.unresolved_link_ends
@@ -158,6 +171,17 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
         println!("static scene: {} chains in {:.2?}", chains.products.len(), chains.elapsed);
         scene_failed += print_failures(chains);
     }
+    let demand_failed = match &demand {
+        Ok(d) => {
+            print!("{d}");
+            d.failures.iter().take(10).for_each(|(key, error)| eprintln!("  failed: {key}: {error}"));
+            d.failures.len()
+        }
+        Err(e) => {
+            eprintln!("texture.demand: not baked: {e}");
+            1
+        }
+    };
     if let Some(nav) = &nav {
         print!("{nav}");
         for (key, error) in nav.failures.iter().take(10) {
@@ -203,6 +227,9 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     }
     if scene_failed > 0 {
         errors.push(format!("{scene_failed} static scene products failed"));
+    }
+    if demand_failed > 0 {
+        errors.push(format!("{demand_failed} texture demand products failed"));
     }
     if let Some(nav) = nav.as_ref().filter(|n| !n.failures.is_empty()) {
         errors.push(format!("{} navmesh products failed", nav.failures.len()));

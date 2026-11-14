@@ -201,3 +201,4 @@ fn gpu_only_meshes_keep_their_bounds() {
 }
 
 mod skinned;
+mod tangents;

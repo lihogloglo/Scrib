@@ -176,6 +176,7 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Owner 2026-11-06 (`--hour 23`, clear): ground better (fix 1 / N1 OK), soft moonlight OK (N3); the night is too lit ("we can see very
   well"): wants values closer to OpenMW (knobs `--night-ambient` 4 nits, `--exposure-floor` 3.5; 1 nit was "too dark" 2026-10-19).
   Secunda (white moon) not visible: hidden behind Masser or not drawn, not diagnosed. Status: night brightness + Secunda open.
+- Audit 2026-11-13 (tex-audit, code only, not A/B tested): new suspect for the day+night veil: the ground gets no normal or ARM map at all (`mw_world/src/terrain.rs:239-240` sets `normal: None, arm: None`; T5 not built), so every layer is a flat normal at roughness 0.9 with one even specular sheen, and layers are cut to 256 px (`mw_bake/src/world.rs:39` `LAYER_ARRAY_SIZE`, about 35 px/m; packs ship 2K). Lever: T5 + T6 (terrain normals, BC7/BC5 arrays at a per-preset size).
 
 ### TX-delight: De-lit albedo textures (bake layer, 2026-11-05)
 - Kind: game location. Needs a current `bevyrrowind bake` (start log: `delight: layer mounted, N textures`).
@@ -184,17 +185,79 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Look for: corners and edges no longer double-dark under real light; walls not flat or cartoony; no colour shift;
   no blocky BC7 artifacts on gradients; cutout foliage (hedges, tree cards) not thinner at distance (coverage mips).
 - Strength 0.5 (owner 2026-11-05) is baked in: a new strength needs a re-bake.
-- Status: awaiting owner. Source: rtx-borrow D-2b.
+- Status: confirmed 2026-11-13 (owner: "textures seem great"). Source: rtx-borrow D-2b.
 
 ### TX-1: Normal maps from packs (textures T4, 2026-11-11)
 - Kind: game location. Needs a normal-map pack installed as a mod (MVR PBR v2 Beta or Tamrielic PBR West Gash; census in
   `textures-adapter.md` §7) and a fresh `bevyrrowind bake` (line `texture.cook: ... N normal companions`, N > 0).
 - Runs: `view "Balmora" --hour 7` and `--hour 18` (low sun raking across house walls and paving), then
-  `view "Seyda Neen, Census and Excise Office"` (lamp light on walls). No `--off normals` A/B yet (needs main.rs/perf.rs).
+  `view "Seyda Neen, Census and Excise Office"` (lamp light on walls). A/B: console `flip normalmaps` (or start with `--off normalmaps`; lab key N).
 - Look for: relief that moves with the light on pack-textured walls/floors; bumps not inverted (lit side faces the sun);
   no shimmer or sparkle at distance; no hard seams where a texture is mirrored (symmetric trims, statues).
 - Not covered: NPC/creature bodies (assembly carries no tangents yet), terrain (T5/T6).
-- Status: awaiting owner. Source: textures T4.
+- Status: awaiting owner. 2026-11-13: "textures seem great", but that run had no pack mounted (`texture.cook: ... 511 cooked`); the packs are now mods `mvr-pbr` and `tamrielic-pbr-west-gash` (`<user data>/mods`, profile `wareya-pbr`): re-run with TX-4. Source: textures T4.
+- 2026-11-13 (tx-tangent): cooked tangents had the wrong handedness (green inverted on every cooked static, mirrored
+  rigid parts too); fixed and `mesh.cook`/`mesh.rest`/`mesh.rig` keys bumped, so the owner must re-check "bumps not
+  inverted" after a fresh `bevyrrowind bake` (every cooked mesh re-cooks once). Earlier TX-1 verdicts predate the fix.
+- Owner 2026-11-13 (view Balmora 12:00, full re-bake, packs mounted): normal maps on "obviously better" (confirmed on buildings/paving); landscape ROCK statics look wrong (matches `materials.live: ... 2602 normal map without tangents`; tx-tanfix queued); `flip normalmaps` does not reach terrain (terrain material not in map_ab; queued).
+
+### TX-4: PBR `_spec` ORM on statics (textures TS-2, 2026-11-13)
+- Kind: game location. Needs a fresh `bevyrrowind bake` with the packs mounted (log `texture profile: mvr-pbr -> wareya-pbr`,
+  no `texture profile warning`). Runs: `view "Balmora" --hour 12` (stone, wood, metal trim), then an armourer's interior
+  (e.g. `view "Balmora, Meldor: Armorer"`) for displayed armour and weapons. A/B: console `flip orm` (or `--off orm`; lab key M).
+- Look for: metal reads as metal (dark diffuse, coloured reflections); wood and stone stay matte, not plastic; crevices
+  darker under ambient (AO); no mirror-gloss everywhere (= a pack on the wrong profile); displayed armour the same up close
+  and a few metres away (matte close, metallic far = MVR metal-mip defect, repair quirk still off).
+- Not covered: worn armour/bodies on NPCs (actors bind no ORM yet), terrain.
+- Status: awaiting owner. Source: TS-2.
+
+### TX-3a: Load-time texture size cap (textures S1, 2026-11-13)
+- Kind: game location, A/B by restart. Needs the 2K packs mounted (`mvr-pbr`, `tamrielic-pbr-west-gash`) and a current bake.
+  Runs: `view "Balmora" --hour 12` (High: cap 2048 = packs at full res), then the same with `--texture-cap 512` (Low's cap,
+  nothing else changed), optionally `--quality low`. Stand close (1-2 m) to a pack-textured wall and the paving.
+- Look for: High looks as before (full res); 512 visibly softer up close, same at distance; no texture missing, black, pink
+  or blocky-garbled, normal maps still bumping the right way, no sampler/tiling change.
+- Log: `texture.cap: 2048 px, N ktx2 loaded, M capped, ...` (High: M ≈ only >2K files; 512: M large, MiB skipped > 0); one
+  expected startup `warn!` `Duplicate AssetLoader preregistered ... ["ktx2"]`, no `ktx2 cap:` load errors.
+- Status: awaiting owner. Source: textures S1.
+
+### TX-2: Terrain layer normals + ARM from packs (textures T5, 2026-11-13)
+- Kind: game location. Needs a fresh `bevyrrowind bake` with the packs mounted (`mvr-pbr`, `tamrielic-pbr-west-gash`;
+  bake line `terrain layers: N, n with a normal map, a with ARM`, n > 0; `terrain.layers` re-runs, step v3).
+- Runs: `scene tx2-terrain-normals` (Balmora street, RO-16 camera, 07:00 low sun), `scene tx2-west-gash` (hillside west
+  of Balmora, sun to the right), each also with `--hour 18`. No `--off` A/B for terrain normals yet.
+- Look for: ground relief catching the low sun on the side facing it; bumps not inverted (the lit side faces the sun);
+  no shimmer or sparkle at 10-50 m (arrays are still 256², T6 raises them); rock darker in cracks, grass matte, rock
+  not glossy; and whether RO-16's even resin-like sheen breaks up.
+- T6 (2026-11-13): arrays now BC7/BC5 up to 2048² (High/Medium load 1024² under the budget; log `terrain layers: N x S², X MiB`):
+  look for sharper ground at 2-20 m, no blockiness or colour banding (BC7), no shimmer at distance, normals still right.
+- Status: CONFIRMED owner 2026-11-13 (tx2-terrain-normals, after T5+T6 re-bake): "works well"; asked for parallax on the ground too (tx-tpom, queued). Source: textures T5 (`.sessions/tx-t5.md`), T6 (`.sessions/tx-t6.md`).
+
+### TX-lab: Texture lab, normal / ORM maps one asset at a time (tx-lab, 2026-11-13)
+- Kind: synthetic scene + global A/B. Needs a current bake with the packs mounted (`texture.cook: layer mounted, ... K normal
+  companions, L ORM companions`, K, L > 0). Run: `scene level-texture-lab` (07:30 clear; cameras `wide`, `models`, `swatch-1..6`,
+  `model-1..4` via `--camera`); own picks with `--lab-textures tx_a,tx_b --lab-models x/ex_a.nif`.
+- Keys: N normal maps, M ORM maps (= console `flip normalmaps` / `flip orm`, also usable in Balmora; `--off normalmaps,orm`
+  starts with them off), Z turntable, X lamp orbit, I info panel, `[` `]` sun.
+- Look for: on each swatch, relief that moves with its orbiting lamp and the low sun and vanishes with N (none = no data:
+  read the panel); M: metal swatch darker with coloured highlights, stone/wood matte. Panel per swatch: normal / ORM file,
+  format (BC5 / BC1-BC7), mips, "bound", tangents yes. Models the same while turning.
+- Log (no picture): `texture-lab: 6 swatches, 4 models; normals K/6, orm L/6`, then `texture-lab swatch N: ...` lines.
+- Status: owner 2026-11-13 (full re-bake, default picks): normal maps work but TOO FAINT ("had to turn N on to see"; wants stronger); log: 0 sRGB normals, 0 without tangents, swatches 1+3 no companions, models 3-4 (`terrain_rock_wg_01/05.nif`) do not exist in the install (lab default bug). Source: tx-lab (`.sessions/tx-lab.md`).
+
+### TX-5: Parallax occlusion on statics from `_nh` height (textures T4d, 2026-11-13)
+- Kind: synthetic scene + game location, A/B. Needs a re-bake with the packs mounted: `texture.cook: ... N normal
+  companions (D with depth)` and at runtime `texture.cook: layer mounted, ... D depth companions`, D > 0.
+- Runs: `scene level-texture-lab --lab-textures tx_cobblestone_01,tx_bm_cobblestone_01,tx_doorbricks_01,tx_dwe_brick00,tx_wg_cobblestones_01,tx_v_floor_01`
+  (all ship `_nh`; cameras `swatch-1..6`), then `view "Balmora" --hour 8` (Hlaalu atlas `_nh`). Default High (Relief);
+  also `--quality medium` (Occlusion) once.
+- Look for: cobbles and bricks with real depth at grazing angles (stones stand out, mortar sinks), no swimming or
+  crawling when the camera moves, no smearing or stretched texels at silhouettes and edges, nothing floating off
+  the surface. A/B: key L in the lab, `flip parallax` anywhere (`--off parallax` starts off).
+- Log (no picture): lab panel `depth: textures/..._nh_depth.ktx2 ... bound Relief { max_steps: 5 } 16 layers,
+  scale 0.04`; `materials.live:` depth count > 0.
+- Status: owner 2026-11-13 (lab default picks, L toggled): ARTIFACTS: stepped layers (Bevy layer count = mix(max 16, 1, |V.z|): ~8 slices at 45°, depth scale 0.04); fix = more layers per preset (industry 32-64 at grazing) + check scale, then re-check. Source: tx-pom (`.sessions/tx-pom.md`).
+- Owner 2026-11-13: texture SWIMMING on some meshes when moving around them (e.g. big mushrooms): not yet diagnosed (parallax on curved meshes? missing tangents?); A/B `flip parallax` / `flip normalmaps` on one. Owner also wants parallax as a player toggle.
 
 ### SS-matclass: Static material classes look unchanged (static-scene S2, 2026-11-08)
 - Kind: game location, A/B. Runs: `view "Balmora" --hour 14` and `view "Seyda Neen" --hour 14`, each default and

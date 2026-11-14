@@ -7,8 +7,9 @@ license.workspace = true
 publish = false
 
 [dependencies]
-# DDS container parsing for CPU texture decodes (already in the tree via bevy_image).
+# DDS and KTX2 container parsing for CPU texture decodes (`textures`; both already in the tree via bevy_image).
 ddsfile = "0.6"
+ktx2.workspace = true
 dirs.workspace = true
 glam.workspace = true
 # TGA/BMP/PNG decoding (already in the tree via bevy_image).
@@ -46,6 +47,8 @@ sf_controller = { workspace = true, features = ["bake"] }
 sf_coords.workspace = true
 sf_lod = { workspace = true, features = ["bake"] }
 sf_model.workspace = true
+# `texture_profiles`: a mod manifest's `[texture]` section picks its pack profile.
+sf_mods.workspace = true
 # `nav`: the navmesh adapter (nav.md "Bake"): sf_nav_bake steps on the Recast backend.
 sf_nav.workspace = true
 sf_nav_bake.workspace = true
@@ -65,10 +68,10 @@ sf_texture.workspace = true
 sf_vfs.workspace = true
 sf_world = { workspace = true, features = ["bake"] }
 tes3 = { workspace = true, features = ["esp"] }
-# BC1-BC3 block decoding for DDS land textures (pure Rust, MIT).
-texpresso = "2"
 
 [dev-dependencies]
+# `textures` tests: the old BC1-BC3 decoder the framework decode is checked against (pure Rust, MIT).
+texpresso = "2"
 mw_vfs.workspace = true
 tempfile.workspace = true
 # The mantle grip end-to-end test plans its warps with the shipped rules.

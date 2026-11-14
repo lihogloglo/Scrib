@@ -10,6 +10,10 @@
 //!   missing mip levels filled in its format (textures.md §5 "Rewrap rule").
 //! - [`remap`]: block-exact channel remaps (Y flip, R/B swap, dropped alpha, split-out channel)
 //!   run on the blocks of a rewrap (textures.md §7, slice T2b).
+//! - [`level_cap`]: the load-time level-0 size cap on a KTX2 file (top levels dropped, the rest
+//!   byte-identical; textures.md §6, slice S1).
+//! - [`residency`]: the mip residency planner: wanted level per texture from its demands, pool
+//!   budget and hysteresis, as a request list for the streamer (textures.md §6, slice S3a).
 //! - [`profile`]: a texture pack's conventions as data, converted to the canonical layout
 //!   at bake (textures.md §7).
 //!
@@ -19,12 +23,15 @@
 pub mod cook;
 pub mod delight;
 pub mod ktx2_out;
+pub mod level_cap;
 pub mod profile;
 pub mod remap;
+pub mod residency;
 pub mod rewrap;
 
 pub use cook::{
-    AlphaUse, Channel, PlaneLevel, Role, SourceY, cook_levels, cook_rgba, encode_bc4, encode_bc5,
+    AlphaUse, Channel, PlaneLevel, Role, SourceY, blinn_phong_roughness, cook_levels, cook_rgba,
+    encode_bc4, encode_bc5, specular_to_orm,
     format_for, linear_mip_chain, mask_mip_chain, normal_mip_chain,
 };
 pub use delight::{ShadingGrid, delight, shading_grid};
@@ -33,7 +40,7 @@ pub use ktx2_out::{
     preserve_coverage, write_ktx2, write_ktx2_bc7,
 };
 pub use profile::{PackProfile, PackRole, Product, Quirk, Slot, SuffixRule, apply, plan_products};
-pub use remap::{ChannelMap, Remap, RemapError, Src, plan};
+pub use remap::{ChannelMap, Remap, RemapError, Src, fill_empty_level0, plan};
 pub use rewrap::{
     BcSource, Container, CookReason, Rewrap, Rewrapped, SkipReason, canonical, decode_level,
     encode_level, read_source, rewrap, rewrap_mapped, target_format, with_srgb,

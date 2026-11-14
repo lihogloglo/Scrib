@@ -1,13 +1,38 @@
-//! CPU texture decoding for bake steps that resample textures (terrain
-//! layer arrays): DDS (BC1/BC2/BC3 and the uncompressed formats Morrowind
-//! content uses), TGA, BMP, PNG → RGBA8.
+//! CPU texture decoding for bake steps that resample or re-encode textures (the texture cook's
+//! decode path, de-light, terrain layer arrays, far textures): level 0 of any texture file a
+//! Morrowind or `OpenMW` pack ships, to RGBA8 (textures-adapter.md §9 "Source formats").
 //!
-//! Reuse: Bevy decodes DDS only for upload (`BCn` stays compressed), so the
-//! bake can't use it. `ddsfile` (already in the tree through `bevy_image`)
-//! parses the container, `texpresso` decodes `BCn` blocks, and `image` (also
-//! in the tree) reads TGA/BMP/PNG.
+//! - **The bytes decide, then the extension.** A `DDS ` or KTX2 signature is read as that
+//!   container whatever the file is named, PNG and BMP by their signature (`image::guess_format`),
+//!   TGA (it has none) by its extension.
+//! - **Block-compressed** DDS (legacy `FourCC` and DX10 header) and KTX2, BC1-BC5 and BC7: parsed
+//!   and decoded by the framework ([`sf_texture::read_source`], [`sf_texture::decode_level`]), the
+//!   reader the texture cook's rewrap uses, so whatever rewraps also decodes when it has to be
+//!   cooked instead (a BC7 normal that needs its Y flipped, a BC4 used as colour). Level 0 need not
+//!   be whole blocks (the cook decides what to do with an unaligned size).
+//! - **Uncompressed legacy DDS**: any `DDPF_RGB` / `DDPF_LUMINANCE` / `DDPF_ALPHA` layout of 8, 16,
+//!   24 or 32 bits a texel, read by its bit masks (as `DirectXTex`'s legacy table and OSG's DDS
+//!   plugin match them), `DDPF_PALETTEINDEXED8` (P8: a 256-entry RGBA palette after the header)
+//!   and the D3D9 code 36 (`A16B16G16R16`) in `FourCC`.
+//! - **Uncompressed DX10 DDS and KTX2**: the 8- and 16-bit UNORM formats (sRGB variants alike),
+//!   5:6:5, 5:5:5:1, 4:4:4:4 and 10:10:10:2.
+//! - **Not read** (an error, so the cook serves the file as shipped): float and HDR (BC6H, `R16F`,
+//!   ...), signed and integer formats, video (YUY2), ETC/ASTC, Basis Universal, supercompressed
+//!   KTX2, cubemaps, volumes and arrays, JPEG (no decoder in the tree).
+//!
+//! Channels follow D3D sampling: a missing colour channel reads 0 and a missing alpha 1, luminance
+//! fills R, G and B, `A8` is (0, 0, 0, a). Rows are tightly packed, as the DDS and KTX2 references
+//! store them: the DDS pitch field is ignored (old writers fill it wrong).
+//!
+//! Reuse: Bevy's DDS/KTX2 loaders only upload (block formats stay compressed; `bevy_image`
+//! `dds.rs` rejects most legacy uncompressed layouts and maps `L8`/`A8L8` to integer formats), so
+//! the bake can't use them. `ddsfile` and `ktx2` (in the tree through `bevy_image`) parse the
+//! containers, `sf_texture` decodes blocks (`texpresso`, `block_compression`), `image` reads
+//! TGA/BMP/PNG (RLE and palettized included).
 
-use ddsfile::{D3DFormat, Dds, DxgiFormat};
+use ddsfile::{Dds, DxgiFormat};
+use ktx2::Format;
+use sf_texture::{decode_level, read_source};
 
 /// Extensions that may replace a texture reference, in preference order
 /// (`sf_vfs::Vfs::resolve_preferring`). `dds` first is the original engine's
@@ -23,108 +48,231 @@ pub struct Rgba8 {
     pub rgba: Vec<u8>,
 }
 
-/// Decodes the first mip of `bytes`, by the extension of `path`.
+const DDS_MAGIC: &[u8; 4] = b"DDS ";
+const KTX2_MAGIC: &[u8; 12] = b"\xABKTX 20\xBB\r\n\x1A\n";
+/// Magic (4) + `DDS_HEADER` (124): level 0 of a legacy DDS (or a P8 palette).
+const DDS_DATA: usize = 128;
+/// After the `DDS_HEADER_DXT10` extension (20).
+const DX10_DATA: usize = 148;
+/// A P8 palette: 256 entries of R, G, B, A (`PALETTEENTRY`, its flags byte read as alpha).
+const PALETTE_LEN: usize = 1024;
+
+/// Decodes the first mip of `bytes`; `path`'s extension names the format only when the bytes don't
+/// (TGA).
 pub fn decode_rgba(path: &str, bytes: &[u8]) -> Result<Rgba8, String> {
-    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
-    if ext == "dds" {
-        return decode_dds(bytes);
+    if bytes.starts_with(DDS_MAGIC) || bytes.starts_with(KTX2_MAGIC) {
+        return decode_gpu_container(bytes);
     }
-    let format = match ext.as_str() {
-        "tga" => image::ImageFormat::Tga,
-        "bmp" => image::ImageFormat::Bmp,
-        "png" => image::ImageFormat::Png,
-        other => return Err(format!("unsupported texture format {other:?}")),
+    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    let format = match image::guess_format(bytes) {
+        Ok(format @ (image::ImageFormat::Png | image::ImageFormat::Bmp)) => format,
+        Ok(image::ImageFormat::Jpeg) => return Err("JPEG: no decoder in the bake".into()),
+        _ => match ext.as_str() {
+            "tga" => image::ImageFormat::Tga,
+            other => return Err(format!("unsupported texture format {other:?}")),
+        },
     };
     let img = image::load_from_memory_with_format(bytes, format).map_err(|e| e.to_string())?.into_rgba8();
     Ok(Rgba8 { width: img.width(), height: img.height(), rgba: img.into_raw() })
 }
 
-#[allow(clippy::many_single_char_names)] // width, height, channel offsets
+/// A DDS or KTX2 file: block-compressed through the framework's reader, else uncompressed.
+fn decode_gpu_container(bytes: &[u8]) -> Result<Rgba8, String> {
+    if let Some(source) = read_source(bytes).map_err(|reason| format!("{reason:?}"))? {
+        let (width, height) = (source.width, source.height);
+        let rgba = decode_level(source.format, source.levels[0], width, height);
+        return Ok(Rgba8 { width, height, rgba });
+    }
+    // `read_source` turned away cubemaps, volumes, arrays and supercompression already.
+    if bytes.starts_with(DDS_MAGIC) { decode_dds(bytes) } else { decode_ktx2(bytes) }
+}
+
+/// An uncompressed texel layout: bytes a texel (little-endian) and the bit mask of R, G, B, A
+/// (0: the channel is absent). `luminance` reads R's mask as grey for R, G and B.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Layout {
+    bytes: usize,
+    masks: [u64; 4],
+    luminance: bool,
+}
+
+impl Layout {
+    const fn rgba(bytes: usize, r: u64, g: u64, b: u64, a: u64) -> Self {
+        Self { bytes, masks: [r, g, b, a], luminance: false }
+    }
+
+    fn texel(self, px: &[u8]) -> [u8; 4] {
+        let mut word = [0; 8];
+        word[..self.bytes].copy_from_slice(px);
+        let word = u64::from_le_bytes(word);
+        let [r, g, b, a] = self.masks.map(|mask| channel(word, mask));
+        let (r, a) = (r.unwrap_or(0), a.unwrap_or(u8::MAX));
+        if self.luminance { [r, r, r, a] } else { [r, g.unwrap_or(0), b.unwrap_or(0), a] }
+    }
+}
+
+/// The value under `mask` scaled to 8 bits, rounded (5 bits: `v * 255 / 31`); `None` for no mask.
+fn channel(v: u64, mask: u64) -> Option<u8> {
+    if mask == 0 {
+        return None;
+    }
+    let shift = mask.trailing_zeros();
+    let max = mask >> shift;
+    let x = (v & mask) >> shift;
+    Some(u8::try_from((x * 255 + max / 2) / max).unwrap_or(u8::MAX))
+}
+
+const RGBA8: Layout = Layout::rgba(4, 0xff, 0xff00, 0xff_0000, 0xff00_0000);
+const BGRA8: Layout = Layout::rgba(4, 0xff_0000, 0xff00, 0xff, 0xff00_0000);
+const BGRX8: Layout = Layout::rgba(4, 0xff_0000, 0xff00, 0xff, 0);
+const RGB8: Layout = Layout::rgba(3, 0xff, 0xff00, 0xff_0000, 0);
+const BGR8: Layout = Layout::rgba(3, 0xff_0000, 0xff00, 0xff, 0);
+const RG8: Layout = Layout::rgba(2, 0xff, 0xff00, 0, 0);
+const R8: Layout = Layout::rgba(1, 0xff, 0, 0, 0);
+const A8: Layout = Layout::rgba(1, 0, 0, 0, 0xff);
+const RGBA16: Layout = Layout::rgba(8, 0xffff, 0xffff << 16, 0xffff << 32, 0xffff << 48);
+const RG16: Layout = Layout::rgba(4, 0xffff, 0xffff_0000, 0, 0);
+const R16: Layout = Layout::rgba(2, 0xffff, 0, 0, 0);
+const RGB10A2: Layout = Layout::rgba(4, 0x3ff, 0x3ff << 10, 0x3ff << 20, 0b11 << 30);
+const R5G6B5: Layout = Layout::rgba(2, 0xf800, 0x07e0, 0x1f, 0);
+const A1R5G5B5: Layout = Layout::rgba(2, 0x7c00, 0x03e0, 0x1f, 0x8000);
+const A4R4G4B4: Layout = Layout::rgba(2, 0x0f00, 0xf0, 0xf, 0xf000);
+
+/// `DDS_PIXELFORMAT.dwFlags` bits.
+const DDPF_ALPHAPIXELS: u32 = 0x1;
+const DDPF_ALPHA: u32 = 0x2;
+const DDPF_FOURCC: u32 = 0x4;
+const DDPF_PALETTEINDEXED8: u32 = 0x20;
+const DDPF_RGB: u32 = 0x40;
+const DDPF_LUMINANCE: u32 = 0x2_0000;
+/// D3D9's `D3DFMT_A16B16G16R16`, written as a number in `FourCC`.
+const D3DFMT_A16B16G16R16: u32 = 36;
+
+/// The legacy header's layout, from the raw `DDS_PIXELFORMAT` (`ddsfile` drops the palette flag and
+/// matches masks to a fixed list; masks read directly take any 8-32-bit layout).
+fn legacy_layout(bytes: &[u8]) -> Result<Layout, String> {
+    let at = |offset: usize| bytes.get(offset..offset + 4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let (flags, fourcc, bits) = (at(80), at(84), at(88));
+    let [r, g, b, a] = [92, 96, 100, 104].map(|offset| u64::from(at(offset)));
+    if flags & DDPF_FOURCC != 0 {
+        return match fourcc {
+            D3DFMT_A16B16G16R16 => Ok(RGBA16),
+            code => Err(format!("unsupported DDS FourCC {:?}", String::from_utf8_lossy(&code.to_le_bytes()))),
+        };
+    }
+    let bytes = match bits {
+        8 | 16 | 24 | 32 => bits as usize / 8,
+        _ => return Err(format!("unsupported {bits}-bit DDS")),
+    };
+    let alpha = if flags & (DDPF_ALPHAPIXELS | DDPF_ALPHA) == 0 { 0 } else { a };
+    if flags & DDPF_LUMINANCE != 0 {
+        Ok(Layout { bytes, masks: [r, 0, 0, alpha], luminance: true })
+    } else if flags & DDPF_RGB != 0 {
+        Ok(Layout::rgba(bytes, r, g, b, alpha))
+    } else if flags & DDPF_ALPHA != 0 {
+        Ok(Layout::rgba(bytes, 0, 0, 0, a))
+    } else {
+        Err(format!("unsupported DDS pixel format (flags {flags:#x})"))
+    }
+}
+
+/// The DX10 header's uncompressed formats read.
+fn dxgi_layout(format: DxgiFormat) -> Option<Layout> {
+    use DxgiFormat as D;
+    Some(match format {
+        D::R8G8B8A8_Typeless | D::R8G8B8A8_UNorm | D::R8G8B8A8_UNorm_sRGB => RGBA8,
+        D::B8G8R8A8_Typeless | D::B8G8R8A8_UNorm | D::B8G8R8A8_UNorm_sRGB => BGRA8,
+        D::B8G8R8X8_Typeless | D::B8G8R8X8_UNorm | D::B8G8R8X8_UNorm_sRGB => BGRX8,
+        D::R8G8_Typeless | D::R8G8_UNorm => RG8,
+        D::R8_Typeless | D::R8_UNorm => R8,
+        D::A8_UNorm => A8,
+        D::R16G16B16A16_UNorm => RGBA16,
+        D::R16G16_UNorm => RG16,
+        D::R16_UNorm => R16,
+        D::R10G10B10A2_Typeless | D::R10G10B10A2_UNorm => RGB10A2,
+        D::B5G6R5_UNorm => R5G6B5,
+        D::B5G5R5A1_UNorm => A1R5G5B5,
+        D::B4G4R4A4_UNorm => A4R4G4B4,
+        _ => return None,
+    })
+}
+
+/// The KTX2 `vkFormat`s read uncompressed (Vulkan names packed formats high bit first).
+const KTX2_LAYOUTS: [(Format, Layout); 21] = [
+    (Format::R8G8B8A8_UNORM, RGBA8),
+    (Format::R8G8B8A8_SRGB, RGBA8),
+    (Format::A8B8G8R8_UNORM_PACK32, RGBA8),
+    (Format::A8B8G8R8_SRGB_PACK32, RGBA8),
+    (Format::B8G8R8A8_UNORM, BGRA8),
+    (Format::B8G8R8A8_SRGB, BGRA8),
+    (Format::R8G8B8_UNORM, RGB8),
+    (Format::R8G8B8_SRGB, RGB8),
+    (Format::B8G8R8_UNORM, BGR8),
+    (Format::B8G8R8_SRGB, BGR8),
+    (Format::R8G8_UNORM, RG8),
+    (Format::R8G8_SRGB, RG8),
+    (Format::R8_UNORM, R8),
+    (Format::R8_SRGB, R8),
+    (Format::R16G16B16A16_UNORM, RGBA16),
+    (Format::R16G16_UNORM, RG16),
+    (Format::R16_UNORM, R16),
+    (Format::A2B10G10R10_UNORM_PACK32, RGB10A2),
+    (Format::R5G6B5_UNORM_PACK16, R5G6B5),
+    (Format::A1R5G5B5_UNORM_PACK16, A1R5G5B5),
+    (Format::B4G4R4A4_UNORM_PACK16, Layout::rgba(2, 0xf0, 0x0f00, 0xf000, 0xf)),
+];
+
 fn decode_dds(bytes: &[u8]) -> Result<Rgba8, String> {
     let dds = Dds::read(bytes).map_err(|e| e.to_string())?;
-    let (w, h) = (dds.get_width(), dds.get_height());
-    let data = dds.get_data(0).map_err(|e| e.to_string())?;
-    let (wu, hu) = (w as usize, h as usize);
-    let mut rgba = vec![0u8; wu * hu * 4];
-    let bc = match (dds.get_d3d_format(), dds.get_dxgi_format()) {
-        (Some(D3DFormat::DXT1), _) | (_, Some(DxgiFormat::BC1_UNorm | DxgiFormat::BC1_UNorm_sRGB)) => {
-            Some(texpresso::Format::Bc1)
-        }
-        (Some(D3DFormat::DXT2 | D3DFormat::DXT3), _) | (_, Some(DxgiFormat::BC2_UNorm | DxgiFormat::BC2_UNorm_sRGB)) => {
-            Some(texpresso::Format::Bc2)
-        }
-        (Some(D3DFormat::DXT4 | D3DFormat::DXT5), _) | (_, Some(DxgiFormat::BC3_UNorm | DxgiFormat::BC3_UNorm_sRGB)) => {
-            Some(texpresso::Format::Bc3)
-        }
-        _ => None,
+    let (width, height) = (dds.get_width(), dds.get_height());
+    if let Some(header10) = &dds.header10 {
+        let format = header10.dxgi_format;
+        let layout = dxgi_layout(format).ok_or_else(|| format!("unsupported DDS format {format:?}"))?;
+        return unpack(layout, bytes.get(DX10_DATA..).unwrap_or_default(), width, height);
+    }
+    let flags = bytes.get(80..84).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    if flags & DDPF_PALETTEINDEXED8 != 0 {
+        return decode_p8(bytes.get(DDS_DATA..).unwrap_or_default(), width, height);
+    }
+    unpack(legacy_layout(bytes)?, bytes.get(DDS_DATA..).unwrap_or_default(), width, height)
+}
+
+/// A P8 DDS's payload: the palette, then one index a texel.
+fn decode_p8(data: &[u8], width: u32, height: u32) -> Result<Rgba8, String> {
+    let texels = texel_count(width, height)?;
+    let (Some(palette), Some(indices)) = (data.get(..PALETTE_LEN), data.get(PALETTE_LEN..PALETTE_LEN + texels)) else {
+        return Err("truncated P8 DDS".into());
     };
-    if let Some(format) = bc {
-        let need = format.compressed_size(wu, hu);
-        if data.len() < need {
-            return Err(format!("truncated DDS: {} of {need} bytes", data.len()));
-        }
-        format.decompress(&data[..need], wu, hu, &mut rgba);
-        return Ok(Rgba8 { width: w, height: h, rgba });
+    let rgba = indices.iter().flat_map(|&i| palette[usize::from(i) * 4..][..4].iter().copied()).collect();
+    Ok(Rgba8 { width, height, rgba })
+}
+
+fn decode_ktx2(bytes: &[u8]) -> Result<Rgba8, String> {
+    let reader = ktx2::Reader::new(bytes).map_err(|e| format!("KTX2: {e:?}"))?;
+    let header = reader.header();
+    let format = header.format.ok_or("KTX2 without a vkFormat")?;
+    let layout = KTX2_LAYOUTS
+        .iter()
+        .find(|(vk, _)| *vk == format)
+        .map(|(_, layout)| *layout)
+        .ok_or_else(|| format!("unsupported KTX2 format {format:?}"))?;
+    let level = reader.levels().next().ok_or("KTX2 without levels")?;
+    unpack(layout, level.data, header.pixel_width, header.pixel_height.max(1))
+}
+
+fn texel_count(width: u32, height: u32) -> Result<usize, String> {
+    if width == 0 || height == 0 {
+        return Err(format!("{width}x{height} texture"));
     }
-    // 16-bit uncompressed DDS formats used by Morrowind cutout banners/nets/clouds.
-    #[allow(clippy::cast_possible_truncation, clippy::chunks_exact_to_as_chunks)]
-    if let Some(d3d) = dds.get_d3d_format() {
-        let expand5 = |v: u16| ((v * 527 + 23) >> 6) as u8;
-        let expand6 = |v: u16| ((v * 259 + 33) >> 6) as u8;
-        let expand4 = |v: u16| (v * 17) as u8;
-        match d3d {
-            D3DFormat::A1R5G5B5 | D3DFormat::X1R5G5B5 => {
-                if data.len() < wu * hu * 2 {
-                    return Err("truncated DDS".into());
-                }
-                let has_alpha = d3d == D3DFormat::A1R5G5B5;
-                for (px, out) in data.chunks_exact(2).zip(rgba.as_chunks_mut::<4>().0) {
-                    let w = u16::from_le_bytes([px[0], px[1]]);
-                    let a = if !has_alpha || (w & 0x8000) != 0 { 255 } else { 0 };
-                    *out = [expand5((w >> 10) & 0x1f), expand5((w >> 5) & 0x1f), expand5(w & 0x1f), a];
-                }
-                return Ok(Rgba8 { width: w, height: h, rgba });
-            }
-            D3DFormat::A4R4G4B4 => {
-                if data.len() < wu * hu * 2 {
-                    return Err("truncated DDS".into());
-                }
-                for (px, out) in data.chunks_exact(2).zip(rgba.as_chunks_mut::<4>().0) {
-                    let w = u16::from_le_bytes([px[0], px[1]]);
-                    *out = [expand4((w >> 8) & 0xf), expand4((w >> 4) & 0xf), expand4(w & 0xf), expand4((w >> 12) & 0xf)];
-                }
-                return Ok(Rgba8 { width: w, height: h, rgba });
-            }
-            D3DFormat::R5G6B5 => {
-                if data.len() < wu * hu * 2 {
-                    return Err("truncated DDS".into());
-                }
-                for (px, out) in data.chunks_exact(2).zip(rgba.as_chunks_mut::<4>().0) {
-                    let w = u16::from_le_bytes([px[0], px[1]]);
-                    *out = [expand5((w >> 11) & 0x1f), expand6((w >> 5) & 0x3f), expand5(w & 0x1f), 255];
-                }
-                return Ok(Rgba8 { width: w, height: h, rgba });
-            }
-            _ => {}
-        }
-    }
-    // Uncompressed 24/32-bit: (bytes per pixel, byte offsets of r, g, b, a).
-    let layout: (usize, [usize; 3], Option<usize>) = match dds.get_d3d_format() {
-        Some(D3DFormat::A8R8G8B8) => (4, [2, 1, 0], Some(3)),
-        Some(D3DFormat::X8R8G8B8) => (4, [2, 1, 0], None),
-        Some(D3DFormat::A8B8G8R8) => (4, [0, 1, 2], Some(3)),
-        Some(D3DFormat::X8B8G8R8) => (4, [0, 1, 2], None),
-        Some(D3DFormat::R8G8B8) => (3, [2, 1, 0], None),
-        other => return Err(format!("unsupported DDS format {other:?} / {:?}", dds.get_dxgi_format())),
-    };
-    let (bpp, [r, g, b], a) = layout;
-    if data.len() < wu * hu * bpp {
-        return Err("truncated DDS".into());
-    }
-    for (px, out) in data.chunks_exact(bpp).zip(rgba.as_chunks_mut::<4>().0) {
-        out.copy_from_slice(&[px[r], px[g], px[b], a.map_or(255, |a| px[a])]);
-    }
-    Ok(Rgba8 { width: w, height: h, rgba })
+    (width as usize).checked_mul(height as usize).ok_or_else(|| format!("{width}x{height} texture"))
+}
+
+/// Level 0 of `layout` texels, rows tightly packed.
+fn unpack(layout: Layout, data: &[u8], width: u32, height: u32) -> Result<Rgba8, String> {
+    let need = texel_count(width, height)?.checked_mul(layout.bytes).ok_or("texture too large")?;
+    let data = data.get(..need).ok_or_else(|| format!("truncated texture: {} of {need} bytes", data.len()))?;
+    let rgba = data.chunks_exact(layout.bytes).flat_map(|px| layout.texel(px)).collect();
+    Ok(Rgba8 { width, height, rgba })
 }
 
 /// Whether a blended texture's alpha is a cutout (leaf cards: holes plus
@@ -156,101 +304,4 @@ pub fn alpha_is_cutout(image: &Rgba8) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use ddsfile::NewD3dParams;
-
-    fn dds(format: D3DFormat, data: &[u8], w: u32, h: u32) -> Vec<u8> {
-        let mut dds = Dds::new_d3d(NewD3dParams {
-            height: h,
-            width: w,
-            depth: None,
-            format,
-            mipmap_levels: None,
-            caps2: None,
-        })
-        .unwrap();
-        dds.data[..data.len()].copy_from_slice(data);
-        let mut out = Vec::new();
-        dds.write(&mut out).unwrap();
-        out
-    }
-
-    #[test]
-    fn decodes_uncompressed_bgra() {
-        let bytes = dds(D3DFormat::A8R8G8B8, &[10, 20, 30, 40, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 2, 2);
-        let img = decode_rgba("textures/a.dds", &bytes).unwrap();
-        assert_eq!((img.width, img.height), (2, 2));
-        assert_eq!(&img.rgba[..4], &[30, 20, 10, 40]);
-    }
-
-    #[test]
-    fn decodes_16bit_cutout_dds_formats() {
-        // A1R5G5B5: pixel 0 = opaque red (0xFC00), pixel 1 = transparent hole (0x0000).
-        let a1r5g5b5 = [0x00, 0xFC, 0x00, 0x00];
-        let img = decode_rgba("tx_banner_temple_04.dds", &dds(D3DFormat::A1R5G5B5, &a1r5g5b5, 2, 1)).unwrap();
-        assert_eq!(&img.rgba[..8], &[255, 0, 0, 255, 0, 0, 0, 0]);
-        assert!(alpha_is_cutout(&img));
-
-        // A4R4G4B4: pixel 0 = opaque green (0xF0F0), pixel 1 = transparent hole (0x0000).
-        let a4r4g4b4 = [0xF0, 0xF0, 0x00, 0x00];
-        let img4 = decode_rgba("tx_rope_net_01.dds", &dds(D3DFormat::A4R4G4B4, &a4r4g4b4, 2, 1)).unwrap();
-        assert_eq!(&img4.rgba[..8], &[0, 255, 0, 255, 0, 0, 0, 0]);
-        assert!(alpha_is_cutout(&img4));
-    }
-
-    #[test]
-    fn decodes_bc1_solid_block() {
-        // One 4×4 block: color0 = color1 = pure red (RGB565 0xF800), all indices 0.
-        let block = [0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0];
-        let bytes = dds(D3DFormat::DXT1, &block, 4, 4);
-        let img = decode_rgba("x.DDS", &bytes).unwrap();
-        assert_eq!(img.rgba.len(), 64);
-        assert!(img.rgba.chunks(4).all(|p| p[0] == 255 && p[1] == 0 && p[2] == 0 && p[3] == 255), "{:?}", &img.rgba[..4]);
-    }
-
-    #[test]
-    fn rejects_unknown_extensions() {
-        assert!(decode_rgba("a.xyz", &[]).is_err());
-    }
-
-    fn alphas(values: &[u8]) -> Rgba8 {
-        let rgba = values.iter().flat_map(|&a| [0, 0, 0, a]).collect();
-        Rgba8 { width: u32::try_from(values.len()).unwrap(), height: 1, rgba }
-    }
-
-    #[test]
-    fn leaf_alpha_is_a_cutout_glass_is_not() {
-        // Leaf card: holes, solid texels, a thin filtered rim.
-        let leaf: Vec<u8> = [0; 40].into_iter().chain([255; 50]).chain([128; 10]).collect();
-        assert!(alpha_is_cutout(&alphas(&leaf)));
-        // Glass / potion: broad partial alpha.
-        let glass: Vec<u8> = [0; 10].into_iter().chain([255; 20]).chain([100; 70]).collect();
-        assert!(!alpha_is_cutout(&alphas(&glass)));
-        // No holes: nothing to cut.
-        assert!(!alpha_is_cutout(&alphas(&[255; 16])));
-    }
-
-    /// Histograms (holes, solid, soft %) measured on the vanilla textures
-    /// with `examples/foliage_report` (LM-1).
-    fn histogram(holes: usize, solid: usize, soft: usize) -> Rgba8 {
-        let v: Vec<u8> = [0].repeat(holes).into_iter().chain([255].repeat(solid)).chain([128].repeat(soft)).collect();
-        alphas(&v)
-    }
-
-    #[test]
-    fn twig_atlases_are_cutouts_decals_and_crusts_are_not() {
-        for (name, h, s, f) in [("bc_leaves_02", 45, 32, 23), ("branches_01", 85, 10, 5), ("bc_moss_01", 53, 23, 24)] {
-            assert!(alpha_is_cutout(&histogram(h, s, f)), "{name}");
-        }
-        for (name, h, s, f) in [
-            ("dagoth_chalk00", 71, 2, 27),
-            ("bc_moss_03", 35, 5, 61),
-            ("lava_crust", 5, 48, 46),
-            ("bc_podplant_03", 5, 40, 54),
-            ("waterfall_02", 13, 0, 87),
-        ] {
-            assert!(!alpha_is_cutout(&histogram(h, s, f)), "{name}");
-        }
-    }
-}
+mod tests;

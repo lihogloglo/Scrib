@@ -210,9 +210,15 @@ impl CookedSkinned {
             for (i, (sub, (targets, morphs))) in lod.submeshes.iter_mut().zip(morphs).enumerate() {
                 if mirrored {
                     let (vertices, mut indices) = sub.decode()?;
-                    let tangents = sub.decode_tangents()?.unwrap_or_default();
+                    let mut tangents = sub.decode_tangents()?.unwrap_or_default();
                     for tri in indices.as_chunks_mut::<3>().0 {
                         tri.swap(1, 2);
+                    }
+                    // The mirror lives in the skin matrix, which Bevy's
+                    // determinant-sign flag (the entity's transform) never
+                    // sees: flip the handedness here, as that flag would.
+                    for t in &mut tangents {
+                        t[3] = -t[3];
                     }
                     *sub = CookedSubmesh::encode_with_tangents(sub.material, &vertices, &tangents, &indices)?;
                 }

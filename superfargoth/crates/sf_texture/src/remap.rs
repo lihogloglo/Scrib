@@ -538,5 +538,58 @@ fn bc7_block(block: [u8; 16], perm: [usize; 3]) -> [u8; 16] {
     out.to_le_bytes()
 }
 
+/// Rebuilds `channel` of level 0 from level 1 when level 0 holds none of it and level 1 does
+/// (a pack-defect repair, [`crate::Quirk::FillEmptyLevel0`]): the rest of the chain and every
+/// other channel stay as they are. `levels`: the texture's levels in `format`, level 0 first,
+/// `width` x `height` at level 0. True when level 0 changed.
+///
+/// BC1 only, R, G or B (the defect seen so far ships BC1; other formats are left as shipped):
+/// a BC1 block's texels all share one index set across channels, so one channel can't vary
+/// within a block without re-encoding it. Level 0 is "empty" when that field is 0 in both
+/// endpoints of every block (every texel decodes to 0 then); each block then takes the mean of
+/// the level-1 texels it covers (2x2), quantized to the field's width and written to both
+/// endpoints: block-constant, so the rebuilt channel has level 2's resolution. Writing the same
+/// value to a field both endpoints share keeps their order, so the block's mode and its other
+/// channels decode exactly as before.
+pub fn fill_empty_level0(format: BlockFormat, levels: &mut [Vec<u8>], width: u32, height: u32, channel: Channel) -> bool {
+    let (shift, bits) = match channel {
+        Channel::R => (11, 5),
+        Channel::G => (5, 6),
+        Channel::B => (0, 5),
+        Channel::A => return false,
+    };
+    if with_srgb(format, false) != BlockFormat::Bc1 || levels.len() < 2 || width < 4 || height < 4 {
+        return false;
+    }
+    let mask: u16 = ((1u16 << bits) - 1) << shift;
+    let endpoint = |block: &[u8], at: usize| u16::from_le_bytes([block[at], block[at + 1]]);
+    if levels[0].as_chunks::<8>().0.iter().any(|b| (endpoint(b, 0) | endpoint(b, 2)) & mask != 0) {
+        return false;
+    }
+    let (w1, h1) = ((width / 2).max(1), (height / 2).max(1));
+    if levels[1].len() != crate::ktx2_out::level_len(format, w1, h1) {
+        return false;
+    }
+    let texels = crate::rewrap::decode_level(format, &levels[1], w1, h1);
+    let at = channel_index(channel);
+    let value = |x: u32, y: u32| u32::from(texels[(y.min(h1 - 1) * w1 + x.min(w1 - 1)) as usize * 4 + at]);
+    if (0..w1 * h1).all(|i| texels[i as usize * 4 + at] == 0) {
+        return false;
+    }
+    let blocks_x = width.div_ceil(4);
+    let max = (1u32 << bits) - 1;
+    for (i, block) in levels[0].as_chunks_mut::<8>().0.iter_mut().enumerate() {
+        let i = u32::try_from(i).unwrap_or(u32::MAX);
+        let (x, y) = ((i % blocks_x) * 2, (i / blocks_x) * 2);
+        let mean = (value(x, y) + value(x + 1, y) + value(x, y + 1) + value(x + 1, y + 1) + 2) / 4;
+        let field = u16::try_from((mean * max + 127) / 255).unwrap_or(0) << shift;
+        for at in [0, 2] {
+            let bytes = ((endpoint(block, at) & !mask) | field).to_le_bytes();
+            block[at..at + 2].copy_from_slice(&bytes);
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests;

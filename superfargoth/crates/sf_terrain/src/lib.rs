@@ -47,7 +47,7 @@ pub mod shadow;
 mod source;
 mod tile;
 
-pub use product::{LayerArrays, LayerInfo, LayerTable, MacroProduct, ProductError, RtProxy, TileProduct, layer_id};
+pub use product::{LayerArrays, LayerCap, LayerInfo, LayerTable, MacroProduct, ProductError, RtProxy, TileProduct, layer_id};
 
 pub use constrain::{FOOTPRINT_FEATHER, Footprint, FootprintMask, constrain};
 pub use edits::{BRICK_SAMPLES, BrickCoord, EditBrick, HeightEdits, TerrainChanged};

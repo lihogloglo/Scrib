@@ -48,7 +48,7 @@ fn scene_cells_over_vvardenfell() {
     world::bake_exterior(&mut baker, &db, terrain, layers, &paths);
     // The texture bake too: its per-texture alpha classes are what tell a cutout candidate
     // (foliage, fences) from a translucent blend, and `bake_scene` requires them (`scene.rs`).
-    let delight = mw_bake::delight::bake_delight(&mut baker, &vfs, &paths, mw_bake::delight::DEFAULT_STRENGTH);
+    let delight = mw_bake::delight::bake_delight(&mut baker, &vfs, &paths, mw_bake::delight::DEFAULT_STRENGTH, &mw_bake::texture_profiles::TextureSources::default());
     let before = t.elapsed();
     let ext = world::exterior();
     let t = Instant::now();

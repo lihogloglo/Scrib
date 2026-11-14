@@ -55,8 +55,15 @@ mod pipeline_watch;
 #[cfg(feature = "pipelines")]
 pub use pipeline_watch::{PendingDrawsPlugin, PendingMaterialPlugin, PipelineWatchPlugin};
 
+#[cfg(feature = "textures")]
+pub mod textures;
+#[cfg(feature = "textures")]
+pub use textures::{TextureGauge, TextureGaugePlugin, TextureStats};
+
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, feature = "textures"))]
+mod tests_textures;
 #[cfg(test)]
 mod tests_warmup;
 

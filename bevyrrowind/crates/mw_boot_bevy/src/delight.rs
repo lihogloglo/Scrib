@@ -66,7 +66,10 @@ pub fn mount_layers(install: &MorrowindInstall, vfs: Vfs, cache: Option<PathBuf>
         println!("delight: layer mounted, {} textures", stats.delit);
     }
     if cooked.is_some() {
-        println!("texture.cook: layer mounted, {} cooked, {} in place (as shipped)", stats.cooked, stats.in_place);
+        println!(
+            "texture.cook: layer mounted, {} cooked, {} in place (as shipped), {} normal companions, {} ORM companions, {} depth companions",
+            stats.cooked, stats.in_place, stats.normals, stats.orms, stats.depths
+        );
     }
     println!("textures: {} stale (source changed since the bake), {:.0?}", stats.stale, started.elapsed());
     mounted

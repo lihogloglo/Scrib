@@ -321,6 +321,10 @@ struct ViewFlags {
     /// (LOD, size culling, far-field handoff) and the size-culling cutoff (env `BEVYRROWIND_QUALITY`).
     #[arg(long, value_parser = parse_quality)]
     quality: Option<Quality>,
+    /// Texture size cap in texels (largest side of level 0; `0`: none) instead of the quality
+    /// preset's (Low 512, Medium 1024, High 2048, Ultra none), for A/B (textures.md S1).
+    #[arg(long, value_name = "PX")]
+    texture_cap: Option<u32>,
     /// Exteriors: color terrain patches by LOD.
     #[arg(long)]
     terrain_lod: bool,
@@ -474,8 +478,7 @@ impl ViewFlags {
         };
         let meta = std::collections::BTreeMap::from([("cell".to_owned(), title.clone()), ("render".to_owned(), render.label())]);
         let perf = Perf::new(&self.perf, self.bench.as_deref(), self.bench_update_baseline, meta, |_| {})?;
-        mw_assets::set_cutout_foliage(!perf.off.has(Part::LeafMask));
-        mw_assets::set_foliage_transmission(!perf.off.has(Part::FoliageTransmission));
+        asset_switches(&perf.off, Quality::resolve(self.quality));
         Ok(ViewOptions {
             title,
             placements,
@@ -551,8 +554,7 @@ impl ViewFlags {
                 }
             }
         })?;
-        mw_assets::set_cutout_foliage(!perf.off.has(Part::LeafMask));
-        mw_assets::set_foliage_transmission(!perf.off.has(Part::FoliageTransmission));
+        asset_switches(&perf.off, Quality::resolve(self.quality));
         if let Some((_, settings)) = &mut perf.bench {
             // big_space: the app converts the pose to grid coordinates.
             settings.apply_transform = false;
@@ -592,6 +594,7 @@ impl ViewFlags {
             fog: self.fog,
             weather: Some(weather),
             quality: Quality::resolve(self.quality),
+            texture_cap: self.texture_cap.map_or_else(|| Quality::resolve(self.quality).texture_cap(), |px| (px > 0).then_some(px)),
             perf,
             lights: light_infos(db),
             world: mw_doors_bevy::WorldLinks::build(db),
@@ -1165,6 +1168,16 @@ fn find(db: &RecordDb, kind: &str, pattern: Option<&str>, limit: usize) -> Resul
     Ok(())
 }
 
+/// The `--off` parts read when model materials are built (leaf cutouts and transmission) or
+/// applied to them (normal, ORM and depth maps, TX-lab), and the preset's parallax (tx-pom): set
+/// before the app is built.
+fn asset_switches(off: &Off, quality: Quality) {
+    mw_assets::set_cutout_foliage(!off.has(Part::LeafMask));
+    mw_assets::set_foliage_transmission(!off.has(Part::FoliageTransmission));
+    mw_assets::set_material_maps(!off.has(Part::NormalMaps), !off.has(Part::Orm), !off.has(Part::Parallax));
+    mw_assets::set_parallax(quality.parallax().map(|p| mw_assets::Parallax::new(p.max_layers, p.relief_steps)));
+}
+
 /// Lighting calibration overrides (see `mw_assets::LightCalibration`).
 #[derive(clap::Args)]
 struct Lighting {
@@ -1196,8 +1209,8 @@ struct Lighting {
     sun_cascades: Option<(usize, f32)>,
 }
 
-/// Light-lab knobs (`view level:light-lab`, docs/specs/test-levels.md "light-lab"): they edit the
-/// level's parametric lights, so a perf sweep (`perf sweep`) steps one per run.
+/// Lab knobs. Light lab (`view level:light-lab`, docs/specs/test-levels.md "light-lab"): they edit the
+/// level's parametric lights, so a perf sweep (`perf sweep`) steps one per run. Texture lab: what it shows.
 #[derive(clap::Args)]
 struct LabFlags {
     /// Levels with `lights`: this many lights instead of the level's count.
@@ -1212,6 +1225,13 @@ struct LabFlags {
     /// Levels with `lights`: orbit the rig center at this rate, deg/s (moving lights).
     #[arg(long = "lab-orbit")]
     orbit: Option<f32>,
+    /// Texture lab (`level:texture-lab`, or any level): these textures as swatches (comma list; bare
+    /// names get `textures/` and `.dds`) instead of the lab's defaults.
+    #[arg(long = "lab-textures", value_delimiter = ',')]
+    textures: Option<Vec<String>>,
+    /// Texture lab: these models (comma list, VFS paths under `meshes/`) on the turntable instead of the defaults.
+    #[arg(long = "lab-models", value_delimiter = ',')]
+    models: Option<Vec<String>>,
 }
 
 impl Lighting {

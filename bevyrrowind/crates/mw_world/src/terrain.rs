@@ -226,7 +226,9 @@ pub fn surface_for(id: &str, file_name: &str) -> RecordRef {
 
 /// Every live `LTEX` as a terrain layer, plus [`DEFAULT_LAYER`], sorted by
 /// id. With a VFS, texture paths resolve to the file actually present
-/// (`.dds` replaces `.tga`/`.bmp` as in the original engine).
+/// (`.dds` replaces `.tga`/`.bmp` as in the original engine). `normal` and
+/// `arm` stay `None` here: `mw_bake::world::MwLayers` fills them from the
+/// pack companions (it has the texture sources; T5).
 pub fn terrain_layers(db: &RecordDb, vfs: Option<&Vfs>) -> Vec<(RecordId, TerrainLayerDef)> {
     let tiling_m = meters_f32(TEXEL_UNITS);
     let layer = |file: &str, surface: RecordRef| {

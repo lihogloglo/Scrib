@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::cook::{AlphaUse, Channel, Role, SourceY};
 use crate::remap::ChannelMap;
-use crate::rewrap::{Rewrap, canonical, rewrap_mapped};
+use crate::rewrap::{
+    CookReason, Rewrap, canonical, read_source, rewrap_mapped, with_srgb,
+};
 
 /// What a pack file is, and its canonical channels (the order of its [`SuffixRule::layout`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -27,6 +29,10 @@ pub enum PackRole {
     NormalHeight,
     /// Occlusion, roughness, metallic (glTF ORM; A unused).
     Orm,
+    /// A legacy specular map: R, G, B specular colour, A the Blinn-Phong exponent ÷ 255. Not a
+    /// channel layout of ORM: converted at cook ([`crate::cook::specular_to_orm`]: roughness from
+    /// the exponent, no occlusion, dielectric; the colour is dropped), never block-exact.
+    SpecularShininess,
     /// A terrain layer: R, G, B albedo, A roughness (terrain layer arrays, T5/T6).
     TerrainAlbedoRoughness,
 }
@@ -42,11 +48,16 @@ pub struct SuffixRule {
     pub layout: ChannelMap,
 }
 
-/// A known defect of a pack, fixed at bake. No variant yet: the first candidate (a pack whose
-/// packed map has an empty channel at level 0 only) is an open owner question
-/// (textures-adapter.md §7), so nothing is fixed silently.
+/// A known defect of a pack, fixed at bake only when its profile lists it (data; nothing is
+/// fixed silently).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Quirk {}
+pub enum Quirk {
+    /// `role` files whose level 0 holds none of canonical `channel` while level 1 does (a pack
+    /// that filled a channel in its mips only) get level 0's rebuilt from level 1
+    /// ([`crate::remap::fill_empty_level0`]; BC1 only). A file whose level 0 has the channel is
+    /// untouched.
+    FillEmptyLevel0 { role: PackRole, channel: Channel },
+}
 
 /// A texture pack's conventions (module docs).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -78,6 +89,28 @@ impl PackProfile {
             })
             .max_by_key(|rule| rule.suffix.len())
             .map(|rule| (&stem[..stem.len() - rule.suffix.len()], rule))
+    }
+
+    /// Adds `suffix` as another name for the rule of `target` (its role and layout), right
+    /// after it in lookup order: a pack that names a companion differently. False, and
+    /// unchanged, when `suffix` is empty or already a rule, or `target` is no companion rule
+    /// (the base `""` rule can't be renamed). Suffixes compare without regard to ASCII case.
+    pub fn alias_suffix(&mut self, suffix: &str, target: &str) -> bool {
+        let known = |s: &str| self.suffixes.iter().position(|r| r.suffix.eq_ignore_ascii_case(s));
+        if suffix.is_empty() || target.is_empty() || known(suffix).is_some() {
+            return false;
+        }
+        let Some(at) = known(target) else { return false };
+        let rule = SuffixRule { suffix: suffix.to_owned(), ..self.suffixes[at].clone() };
+        self.suffixes.insert(at + 1, rule);
+        true
+    }
+
+    /// The canonical channel [`Quirk::FillEmptyLevel0`] rebuilds in `role` files, if listed.
+    pub fn fill_empty_level0(&self, role: PackRole) -> Option<Channel> {
+        self.quirks.iter().find_map(|quirk| match *quirk {
+            Quirk::FillEmptyLevel0 { role: r, channel } => (r == role).then_some(channel),
+        })
     }
 
     /// The companion stems to look for beside base stem `base`, in lookup order, with their
@@ -140,7 +173,7 @@ pub fn plan_products(
             (Slot::Normal, layout, normal),
             (Slot::Depth, layout, Role::height(Channel::A)),
         ],
-        PackRole::Orm => vec![(Slot::Orm, layout, Role::Packed)],
+        PackRole::Orm | PackRole::SpecularShininess => vec![(Slot::Orm, layout, Role::Packed)],
         PackRole::TerrainAlbedoRoughness => vec![(
             Slot::TerrainLayer,
             layout,
@@ -153,7 +186,9 @@ pub fn plan_products(
 
 /// Converts one shipped `rule` file (DDS or KTX2 bytes) into its canonical products
 /// ([`plan_products`]): each block-exactly remapped and rewrapped where possible
-/// ([`rewrap_mapped`]), else a [`Rewrap::Cook`] / [`Rewrap::Skip`] with its reason.
+/// ([`rewrap_mapped`]), else a [`Rewrap::Cook`] / [`Rewrap::Skip`] with its reason. A
+/// [`PackRole::SpecularShininess`] file always cooks: its conversion changes values, not only
+/// the layout ([`CookReason::FormatForRole`], or `NotBlockCompressed` for uncompressed data).
 /// `alpha`: the material's alpha use, for [`PackRole::Albedo`].
 pub fn apply(
     profile: &PackProfile,
@@ -169,7 +204,18 @@ pub fn apply(
                 slot,
                 map: layout.then(to_canonical),
                 role: canonical_role,
-                result: rewrap_mapped(bytes, &layout, role),
+                result: if rule.role == PackRole::SpecularShininess {
+                    match read_source(bytes) {
+                        Ok(Some(source)) => Rewrap::Cook(CookReason::FormatForRole(with_srgb(
+                            source.format,
+                            false,
+                        ))),
+                        Ok(None) => Rewrap::Cook(CookReason::NotBlockCompressed),
+                        Err(reason) => Rewrap::Skip(reason),
+                    }
+                } else {
+                    rewrap_mapped(bytes, &layout, role)
+                },
             }
         })
         .collect()

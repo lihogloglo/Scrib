@@ -1,0 +1,24 @@
+// Synthetic test level (docs/specs/test-levels.md, "texture-lab"): the texture and normal-map
+// lab. An open grey plate under a low morning sun. The game adds a row of texture swatches
+// (panel, sphere, cube per texture through the statics' material path, each with a lamp
+// orbiting it) along z = 0 and a row of cooked statics on a turntable along z = -14, plus one
+// camera per swatch (`swatch-N`) and per model (`model-N`). `--lab-textures a,b,...` and
+// `--lab-models a.nif,...` replace the defaults (mw_exterior_bevy level/texture_lab.rs).
+// Meters, y up, x east, z south; `at` = footprint center at the bottom.
+(
+    name: "texture-lab",
+    description: "open grey plate, low sun: texture swatches (panel, sphere, cube, orbiting lamp each) and cooked statics on a turntable (normal / ORM map lab)",
+    cameras: [
+        (name: "wide", eye: (0.0, 2.8, 11.5), target: (0.0, 0.9, 0.0)),
+        (name: "models", eye: (0.0, 10.0, 12.0), target: (0.0, 3.0, -14.0)),
+        (name: "top", eye: (0.0, 30.0, 14.0), target: (0.0, 0.0, -7.0)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 12.0)),   // the walk-mode player, behind the `wide` camera
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (70.0, 50.0)), at: (0.0, 0.0, -8.0), material: Grey),
+    ],
+    hour: Some(7.5),
+    weather: Some("clear"),
+)

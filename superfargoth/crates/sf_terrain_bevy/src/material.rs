@@ -38,9 +38,9 @@ pub struct TerrainMaterial {
     #[texture(106, dimension = "2d_array")]
     #[sampler(107)]
     pub albedo_height: Handle<Image>,
-    /// Normal X/Y, AO, roughness per layer.
+    /// Normal X/Y per layer (BC5).
     #[texture(108, dimension = "2d_array")]
-    pub normal_ao_roughness: Handle<Image>,
+    pub normal: Handle<Image>,
     /// 10 × 512² `Rg8Snorm` normal X and Z, beside the heights (filtered).
     #[texture(109, dimension = "2d_array")]
     #[sampler(110)]
@@ -50,6 +50,9 @@ pub struct TerrainMaterial {
     #[texture(111)]
     #[sampler(112)]
     pub far_map: Handle<Image>,
+    /// AO and roughness per layer (BC5), sampled with `albedo_height`'s sampler.
+    #[texture(113, dimension = "2d_array")]
+    pub ao_roughness: Handle<Image>,
 }
 
 impl Material for TerrainMaterial {

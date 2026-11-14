@@ -19,8 +19,13 @@
 //!   count as missing.
 //! - KTX2 (Khronos KTX 2.0) BC1-BC5/BC7 without supercompression, parsed with the `ktx2` crate.
 //! - Not block-compressed (uncompressed DDS, KTX2 of another format, or any other container):
-//!   [`Rewrap::Cook`], decode and run the T1 cook path. Cubemaps, volumes, arrays, BC6H, signed
-//!   BC4/BC5, Basis Universal and supercompressed KTX2: [`Rewrap::Skip`], served as shipped.
+//!   [`Rewrap::Cook`], decode and run the T1 cook path. A `Cook` can also be block-compressed
+//!   ([`CookReason::FormatForRole`], [`CookReason::NotBlockExact`]), so the caller's decoder must
+//!   read what this module reads: [`read_source`] + [`decode_level`].
+//! - Cubemaps, volumes, arrays, BC6H, signed BC4/BC5, Basis Universal and supercompressed KTX2:
+//!   [`Rewrap::Skip`], served as shipped. None is a material input a pack needs cooked (HDR and
+//!   environment maps load as shipped; a signed normal map would need a SNORM sampling path the
+//!   engine doesn't have), and a supercompressed KTX2 is already a runtime file.
 //!
 //! **Role fit** ([`target_format`]): colour takes BC1/BC2/BC3/BC7; normals with the engine's +Y
 //! convention take BC5 or three-channel BC1/BC3/BC7; a single-channel mask of red takes BC4;

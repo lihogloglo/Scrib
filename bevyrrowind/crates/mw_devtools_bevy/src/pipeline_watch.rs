@@ -37,6 +37,10 @@ struct Watch {
 pub fn add(app: &mut App) {
     let defs = std::env::var_os("BEVYRROWIND_PIPELINE_DEFS").is_some();
     app.add_plugins(sf_diag_bevy::PipelineWatchPlugin);
+    // TX-DIAG: `textures.live:` / `materials.live:` lines (GPU texture bytes, normal maps without tangents).
+    if !app.is_plugin_added::<sf_diag_bevy::TextureGaugePlugin>() {
+        app.add_plugins(sf_diag_bevy::TextureGaugePlugin);
+    }
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
         let mut watch = Watch { defs, ..Watch::default() };
         render.add_systems(Render, (move |cache: Res<PipelineCache>| watch.update(&cache)).in_set(RenderSystems::Cleanup));

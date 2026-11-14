@@ -934,6 +934,13 @@
             look_for: "a lit closed room, no sunlight; lamps on a grid at 3.5 m; with --point-shadows N the nearest N lamps cast pillar and walker shadows",
         ),
         (
+            name: "level-texture-lab",
+            level: "texture-lab",
+            hour: 7.5,
+            description: "Texture lab (TX-lab): 6 pack-covered texture swatches (panel, sphere, cube, an orbiting lamp each) and 4 cooked Balmora / West Gash statics on a turntable under a low sun; info panel per swatch and model (cameras wide, models, top, swatch-1..6, model-1..4; --lab-textures a,b --lab-models x.nif)",
+            look_for: "relief on the swatches that moves with the lamp; N flips normal maps, M ORM maps (also console flip normalmaps / orm): the info panel says per swatch whether a normal / ORM map exists and is bound, its format and mips, and whether the mesh has tangents",
+        ),
+        (
             name: "level-shapes-bench",
             level: "shapes-bench",
             hour: 12.0,
@@ -1039,6 +1046,27 @@
             description: "Lamp shadows of statics drawn by the static scene (--scene) at night; A/B: the same at night without --scene",
             look_for: "lamps cast shadows of buildings and walls, steady (no flicker, no popping); walk into a new cell: its statics cast lamp shadows within ~2 s; shadows of cells left behind clear",
             checks: ["SC-lamps"],
+        ),
+        // ---- terrain layer normals + ARM (textures T5; .sessions/tx-t5.md) ----
+        (
+            name: "tx2-terrain-normals",
+            cell: "Balmora",
+            camera: "-283,+5,198,-293,+0.5,185",
+            hour: 7.0,
+            flags: ["--weather", "clear"],
+            description: "Balmora street at eye height (the RO-16 camera) at 07:00: low eastern sun raking across the terrain ground; needs a re-bake with the PBR packs mounted (log `terrain layers: N, n with a normal map, a with ARM`, n > 0)",
+            look_for: "ground relief (pebbles, cracks, grass clumps) that catches the low sun on the side facing it; no inverted bumps (lit side faces the sun); no shimmer or sparkle moving with the camera; does the even resin-like sheen (RO-16) break up?",
+            checks: ["TX-2", "RO-16"],
+        ),
+        (
+            name: "tx2-west-gash",
+            cell: "Balmora",
+            camera: "-410,+1.8,190,-410,+0.3,178",
+            hour: 7.0,
+            flags: ["--weather", "clear"],
+            description: "West Gash hillside west of Balmora at 07:00, looking north with the sun to the right: grass and rock layers (Tamrielic PBR West Gash ground textures)",
+            look_for: "grass and rock ground shows relief lit from the right (east), rock darker in its cracks (AO), grass matte, rock not glossy; no inverted bumps, no shimmer at 10-50 m, no seams at layer borders",
+            checks: ["TX-2"],
         ),
     ],
 )

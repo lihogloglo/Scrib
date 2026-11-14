@@ -25,7 +25,7 @@ pub fn mount(install: &MorrowindInstall, verbose: bool) -> Result<Vfs> {
 
 /// The selected mod profile's VFS and records ([`mods`]).
 pub fn load(install: &MorrowindInstall, verbose: bool) -> Result<(Vfs, LoadedContent)> {
-    let (vfs, content, _) = mods::load_content(install, verbose)?;
+    let (vfs, content, _, _) = mods::load_content(install, verbose)?;
     let mut counts = std::collections::BTreeMap::<String, usize>::new();
     for warning in &content.warnings {
         let name = format!("{warning:?}");

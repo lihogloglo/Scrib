@@ -81,3 +81,4 @@ is a frame over 25 ms (report "hitches"). A/B differences under ~0.5 ms are run-
 [animation](../ledger/animation.md): 15 entries, last 2026-11-12 (IK P-IK1..5, gaits, foot lock, anim LOD, 2026-11-12 audit, AN-/AL-/PL- verdicts)
 [combat-feel](../ledger/combat-feel.md): 13 entries, last 2026-11-12 (combat C1-C4, guard, lock-on, first-person melee and view model, CB-/FP- verdicts)
 [physics](../ledger/physics.md): 20 entries, last 2026-11-11 (fix plan slices 1-10, Delirium takeovers and hits, collision rules, PH- verdicts)
+[textures](../ledger/textures.md): 5 entries, last 2026-11-13 (pack profiles per source, TX- verdicts)

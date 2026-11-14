@@ -227,7 +227,8 @@ mod tests {
             layer_weights: h(),
             macro_albedo: h(),
             albedo_height: h(),
-            normal_ao_roughness: h(),
+            normal: h(),
+            ao_roughness: h(),
             normals: h(),
             far_map: h(),
         });

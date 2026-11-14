@@ -26,13 +26,14 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sf_bake::{BakeError, Baker, PlanCx, ProductKey, RunCx, Step};
 use sf_records::RecordId;
+use sf_texture::{Bc7Quality, BlockFormat};
 use sf_world::WorldspaceId;
 
 use crate::constrain::{FOOTPRINT_FEATHER, Footprint, FootprintMask, constrain};
 use crate::layers::{
     LayerId, LayerMap, LayerParams, TintMap, downsample_layers, downsample_tint, resample_layers, resample_tint,
 };
-use crate::product::{LayerArrays, LayerInfo, LayerTable, MacroProduct, RtProxy, TileProduct, layer_id};
+use crate::product::{LayerArrays, LayerCap, LayerInfo, LayerTable, MacroProduct, RtProxy, TileProduct, layer_id};
 use crate::pyramid::{BlockBounds, EncodedHeights, downsample, top_level};
 use crate::source::{SourceMosaic, SourceTile, SourceTileInfo, TerrainSource};
 use crate::tile::{BLOCKS, LAYER_SAMPLES, TILE_QUADS, TINT_SAMPLES, TileCoord, global_coords};
@@ -204,9 +205,14 @@ impl FootprintSource for NoFootprints {
 pub struct TerrainLayer {
     /// sRGB albedo with height in alpha (alpha 255 everywhere = flat).
     pub albedo_height: String,
-    /// Tangent-space normal map, +Y up.
+    /// Tangent-space normal map in the canonical layout: X right, +Y toward
+    /// the image's top (OpenGL / glTF, Bevy's `StandardMaterial`), Z out.
+    /// Adapters convert a pack's convention in [`LayerSource::decode`]
+    /// ([`LayerFile::Normal`]); the bake turns it into the arrays' +V frame
+    /// ([`normal_to_array_frame`]).
     pub normal: Option<String>,
-    /// Ambient occlusion, roughness, metallic.
+    /// Ambient occlusion (R), perceptual roughness (G), metallic (B, dropped:
+    /// terrain is dielectric), as glTF's ORM.
     pub arm: Option<String>,
     pub tiling_m: f32,
     pub triplanar: bool,
@@ -224,13 +230,24 @@ pub struct LayerImage {
     pub rgba: Vec<u8>,
 }
 
+/// Which map of a [`TerrainLayer`] a file is read as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum LayerFile {
+    AlbedoHeight,
+    Normal,
+    Arm,
+}
+
 /// The host's terrain layers: records and a texture decoder (adapters
 /// know their formats).
 pub trait LayerSource: Send + Sync {
     /// Every `TerrainLayer` record id, sorted.
     fn layers(&self) -> Vec<RecordId>;
     fn layer(&self, id: &RecordId) -> Option<TerrainLayer>;
-    fn decode(&self, path: &str, bytes: &[u8]) -> Result<LayerImage, String>;
+    /// Decodes `path` read as `file`, in [`TerrainLayer`]'s canonical layout
+    /// for that map: the adapter converts its packs' conventions (normal Y,
+    /// channel order, legacy specular maps) here, so the bake names none.
+    fn decode(&self, path: &str, bytes: &[u8], file: LayerFile) -> Result<LayerImage, String>;
 }
 
 /// Settings that change the output (they are step parameters).
@@ -722,7 +739,8 @@ impl Step for LayerTableStep {
         LAYER_TABLE_STEP
     }
     fn version(&self) -> u32 {
-        2
+        // 3: `LayerInfo::source_edge` (T6).
+        3
     }
     fn plan(&self, _subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         for id in self.0.layers.layers() {
@@ -738,7 +756,7 @@ impl Step for LayerTableStep {
         for id in src.layers() {
             let layer = read_layer(LAYER_TABLE_STEP, subject, cx, src, &id)?;
             let bytes = cx.read_file(&layer.albedo_height)?;
-            let img = src.decode(&layer.albedo_height, &bytes).map_err(|e| err(LAYER_TABLE_STEP, subject, e))?;
+            let img = src.decode(&layer.albedo_height, &bytes, LayerFile::AlbedoHeight).map_err(|e| err(LAYER_TABLE_STEP, subject, e))?;
             let (mean_albedo, mean_height) = mean_color(&img);
             let lid = layer_id(id.as_str());
             if let Some(other) = table.layers.iter().find(|l| l.id == lid) {
@@ -756,6 +774,7 @@ impl Step for LayerTableStep {
                 displacement_m: layer.displacement_m,
                 mean_albedo,
                 mean_height,
+                source_edge: img.width.max(img.height),
             });
         }
         let fill = layer_id(&self.0.config.default_layer);
@@ -800,7 +819,11 @@ impl Step for LayersStep {
         LAYERS_STEP
     }
     fn version(&self) -> u32 {
-        2
+        // 3: normals read in `TerrainLayer`'s canonical +Y-up layout and turned into the
+        // arrays' +V frame, Z rebuilt (T5, textures.md §9).
+        // 4: block-compressed (BC7 albedo + height, BC5 normal, BC5 AO + roughness), never
+        // upsampled past the largest source (T6).
+        4
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         subject.parse::<u32>().map_err(|e| err(LAYERS_STEP, subject, e))?;
@@ -812,14 +835,15 @@ impl Step for LayersStep {
         Ok(())
     }
     fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
-        let size: u32 = subject.parse().map_err(|e| err(LAYERS_STEP, subject, e))?;
-        if !size.is_power_of_two() || size < 4 {
-            return Err(err(LAYERS_STEP, subject, "array size must be a power of two"));
+        let max: u32 = subject.parse().map_err(|e| err(LAYERS_STEP, subject, e))?;
+        if !max.is_power_of_two() || max < LayerCap::MIN_EDGE {
+            return Err(err(LAYERS_STEP, subject, "array size must be a power of two of at least 4"));
         }
         let table =
             LayerTable::from_bytes(&cx.product(LAYER_TABLE_STEP, "")?).map_err(|e| err(LAYERS_STEP, subject, e))?;
+        let size = array_size(&table, max);
         let src = &*self.0.layers;
-        // Read every file through `cx` (tracked), then decode and resize in parallel.
+        // Read every file through `cx` (tracked), then decode, resize and encode in parallel.
         let mut jobs: Vec<[Option<NamedFile>; 3]> = Vec::new();
         for info in &table.layers {
             let layer = read_layer(LAYERS_STEP, subject, cx, src, &RecordId::new(&info.record))?;
@@ -828,34 +852,145 @@ impl Step for LayersStep {
             };
             jobs.push([read(&Some(layer.albedo_height.clone()))?, read(&layer.normal)?, read(&layer.arm)?]);
         }
-        let mips = size.trailing_zeros() + 1;
-        let kinds = [MapKind::Albedo, MapKind::Normal, MapKind::Linear];
-        let defaults: [[u8; 4]; 3] = [[128, 128, 128, 255], [128, 128, 255, 255], [255, 230, 0, 255]];
+        let roles = [LayerFile::AlbedoHeight, LayerFile::Normal, LayerFile::Arm];
         let slices: Vec<[Vec<u8>; 3]> = jobs
             .par_iter()
             .map(|files| {
-                let mut out: [Vec<u8>; 3] = Default::default();
+                let mut maps: [Option<LayerImage>; 3] = Default::default();
                 for m in 0..3 {
-                    let img = match &files[m] {
-                        Some((path, bytes)) => src.decode(path, bytes).map_err(|e| format!("{path}: {e}"))?,
-                        None => LayerImage { width: 1, height: 1, rgba: defaults[m].to_vec() },
-                    };
-                    out[m] = mip_chain(&img, size, kinds[m]);
+                    if let Some((path, bytes)) = &files[m] {
+                        let mut img = src.decode(path, bytes, roles[m]).map_err(|e| format!("{path}: {e}"))?;
+                        if roles[m] == LayerFile::Normal {
+                            normal_to_array_frame(&mut img.rgba);
+                        }
+                        maps[m] = Some(img);
+                    }
                 }
-                Ok(out)
+                let [a, n, r] = maps;
+                Ok(encode_layer(a.as_ref(), n.as_ref(), r.as_ref(), size))
             })
             .collect::<Result<_, String>>()
             .map_err(|e| err(LAYERS_STEP, subject, e))?;
-        let mut arrays = LayerArrays { table, size, mips, albedo_height: Vec::new(), normal_ao_roughness: Vec::new() };
+        let mips = size.trailing_zeros() + 1;
+        let mut arrays = LayerArrays {
+            table,
+            size,
+            mips,
+            albedo_height: Vec::new(),
+            normal: Vec::new(),
+            ao_roughness: Vec::new(),
+        };
         for [a, n, r] in slices {
             arrays.albedo_height.extend(a);
-            // One fetch per layer for normal and surface: normal X and Y (Z is
-            // reconstructed), AO, roughness. Terrain is dielectric: metallic is dropped.
-            for (n, r) in n.as_chunks::<4>().0.iter().zip(r.as_chunks::<4>().0) {
-                arrays.normal_ao_roughness.extend_from_slice(&[n[0], n[1], r[0], r[1]]);
-            }
+            arrays.normal.extend(n);
+            arrays.ao_roughness.extend(r);
         }
         Ok(arrays.to_bytes())
+    }
+}
+
+/// Level-0 edge of the arrays baked under `max`: the largest albedo source rounded up to a power
+/// of two, so a pack of small textures never pays for upsampled copies (T6).
+fn array_size(table: &LayerTable, max: u32) -> u32 {
+    let largest = table.layers.iter().map(|l| l.source_edge).max().unwrap_or(1);
+    largest.max(LayerCap::MIN_EDGE).checked_next_power_of_two().unwrap_or(max).min(max)
+}
+
+/// Default maps where a layer has none: mid-grey flat albedo, a flat normal, unoccluded rough
+/// ground (AO 1, roughness 0.9).
+pub const LAYER_DEFAULTS: [[u8; 4]; 3] = [[128, 128, 128, 255], [128, 128, 255, 255], [255, 230, 0, 255]];
+
+/// One layer's three array slices at `size`² (full chains, [`LayerArrays`] layout): albedo +
+/// height BC7 sRGB, normal X/Y BC5 (`normal` already in the arrays' frame,
+/// [`normal_to_array_frame`]), AO + roughness BC5 (from an ARM map's R, G; metallic dropped:
+/// terrain is dielectric). A missing map is [`LAYER_DEFAULTS`]. Every level is encoded in
+/// parallel strips of block rows.
+pub fn encode_layer(
+    albedo: Option<&LayerImage>,
+    normal: Option<&LayerImage>,
+    arm: Option<&LayerImage>,
+    size: u32,
+) -> [Vec<u8>; 3] {
+    let kinds = [MapKind::Albedo, MapKind::Normal, MapKind::Linear];
+    let maps = [albedo, normal, arm];
+    std::array::from_fn(|m| {
+        let fallback;
+        let img = if let Some(img) = maps[m] {
+            img
+        } else {
+            fallback = LayerImage { width: 1, height: 1, rgba: LAYER_DEFAULTS[m].to_vec() };
+            &fallback
+        };
+        let format = if m == 0 { BlockFormat::Bc7Srgb } else { BlockFormat::Bc5 };
+        if img.width == 1 && img.height == 1 {
+            // A uniform map (the defaults): one block, repeated over every level.
+            let block = sf_texture::encode_level(format, &img.rgba.repeat(16), 4, 4, LAYER_BC7_QUALITY);
+            return block.repeat(LayerArrays::slice_len(size, size.trailing_zeros() + 1) / LayerArrays::BLOCK_BYTES);
+        }
+        encode_chain(&mip_chain(img, size, kinds[m]), size, format)
+    })
+}
+
+/// BC7 effort of the albedo + height array (measured: textures.md §9 T6).
+const LAYER_BC7_QUALITY: Bc7Quality = Bc7Quality::Fast;
+
+/// Block rows per parallel encode job (64 texel rows).
+const STRIP_BLOCK_ROWS: usize = 16;
+
+/// Encodes an RGBA8 chain as [`mip_chain`] lays it out (level 0 `size`², down to 1²): BC7 of
+/// RGBA, or BC5 of R and G, in strips of block rows (BC blocks are stored row by row, so strips
+/// concatenate).
+fn encode_chain(chain: &[u8], size: u32, format: BlockFormat) -> Vec<u8> {
+    let mut levels = Vec::new();
+    let (mut offset, mut dim) = (0usize, size as usize);
+    loop {
+        let len = dim * dim * 4;
+        levels.push((&chain[offset..offset + len], dim));
+        offset += len;
+        if dim == 1 {
+            break;
+        }
+        dim /= 2;
+    }
+    let mut out = Vec::new();
+    for (texels, dim) in levels {
+        let strip = if dim >= 4 { dim * 4 * 4 * STRIP_BLOCK_ROWS } else { texels.len() };
+        let strips: Vec<Vec<u8>> = texels
+            .par_chunks(strip)
+            .map(|strip| {
+                let w = u32::try_from(dim).expect("small");
+                let h = u32::try_from(strip.len() / (dim * 4)).expect("small");
+                sf_texture::encode_level(format, strip, w, h, LAYER_BC7_QUALITY)
+            })
+            .collect();
+        for s in strips {
+            out.extend(s);
+        }
+    }
+    out
+}
+
+/// A canonical tangent-space normal map ([`TerrainLayer::normal`]: +Y toward the image's top)
+/// into the layer arrays' frame, in place. The arrays put Y along +V, texture rows downward
+/// (`sf_terrain_bevy` `surface.wesl` `sample_projection`: x along +U, y along +V; on the
+/// top-down projection U, V = world +X, +Z), where an image's top is −V, so G is complemented.
+/// This is the convention-independent rule Bevy's `generate_tangents` follows too (bitangent
+/// −dP/dv). Z is rebuilt from X and Y (a two-channel source decodes with no usable Z; the shader
+/// rebuilds it the same way); alpha is kept.
+///
+/// # Panics
+/// If `rgba.len()` isn't a multiple of 4.
+pub fn normal_to_array_frame(rgba: &mut [u8]) {
+    let (texels, rest) = rgba.as_chunks_mut::<4>();
+    assert!(rest.is_empty(), "RGBA8 texels");
+    for t in texels {
+        t[1] = u8::MAX - t[1];
+        let x = f32::from(t[0]) / 127.5 - 1.0;
+        let y = f32::from(t[1]) / 127.5 - 1.0;
+        let z = (1.0 - x * x - y * y).max(0.0).sqrt();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0..=255
+        let z = ((z * 0.5 + 0.5) * 255.0).round() as u8;
+        t[2] = z;
     }
 }
 
@@ -878,7 +1013,10 @@ pub fn mip_chain(img: &LayerImage, size: u32, kind: MapKind) -> Vec<u8> {
     for y in 0..n {
         for x in 0..n {
             #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let v = if sx > 1.0 || sy > 1.0 {
+            let v = if w == n && h == n {
+                // Same size: the texel itself (what the bilinear branch gives, without its work).
+                texel(x, y)
+            } else if sx > 1.0 || sy > 1.0 {
                 let (x0, y0) = ((x as f64 * sx) as usize, (y as f64 * sy) as usize);
                 let (x1, y1) = (((x + 1) as f64 * sx).ceil() as usize, ((y + 1) as f64 * sy).ceil() as usize);
                 let mut acc = [0.0f32; 4];
@@ -1045,6 +1183,11 @@ impl BakedTerrain {
 
     /// The layer arrays at `size` (the largest baked one if `None`).
     pub fn layers(&self, size: Option<u32>) -> Option<Result<LayerArrays, String>> {
+        self.layers_capped(size, &LayerCap::default())
+    }
+
+    /// [`Self::layers`] without the top levels `cap` drops ([`LayerArrays::from_bytes_capped`]).
+    pub fn layers_capped(&self, size: Option<u32>, cap: &LayerCap) -> Option<Result<LayerArrays, String>> {
         let subject = match size {
             Some(s) => s.to_string(),
             None => self
@@ -1056,6 +1199,6 @@ impl BakedTerrain {
                 .to_string(),
         };
         let b = self.bytes(LAYERS_STEP, &subject)?;
-        Some(b.map_err(|e| e.to_string()).and_then(|b| LayerArrays::from_bytes(&b).map_err(|e| e.to_string())))
+        Some(b.map_err(|e| e.to_string()).and_then(|b| LayerArrays::from_bytes_capped(&b, cap).map_err(|e| e.to_string())))
     }
 }

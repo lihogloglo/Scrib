@@ -160,6 +160,8 @@ pub struct Switches<'w> {
     sky_options: Option<ResMut<'w, sf_sky_bevy::SkyRenderOptions>>,
     /// N1: the flat ambient's specular (vendored `bevy_pbr` patch; `ambient_specular`).
     ambient_specular: Option<ResMut<'w, bevy_pbr::AmbientLightSpecular>>,
+    /// TX-lab: normal, ORM and depth maps on every material (`normalmaps`, `orm`, `parallax`; `--off` sets the start).
+    material_maps: Option<ResMut<'w, mw_assets::MaterialMaps>>,
 }
 
 /// An on/off switch: its key toggles it, BRP sets it by name.
@@ -207,11 +209,18 @@ pub enum Switch {
     Cover,
     /// W6: trails (`SurfaceSettings::trails`; off: no prints, the raised snow stays whole).
     Trails,
+    /// TX-lab: texture-pack normal maps on every material (`mw_assets::MaterialMaps`), as
+    /// `--off normalmaps` but live; flipping back restores each material as it was.
+    NormalMaps,
+    /// TX-lab: ORM maps (metallic-roughness, occlusion) on every material; off: the 2002 factors.
+    Orm,
+    /// tx-pom: parallax depth maps (`depth_map`, `_nh` height) on every material; off: none.
+    Parallax,
 }
 
 /// Names for BRP ([`crate::remote`]) and the console's `on`/`off` ([`crate::console`]).
 impl Switch {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 24] = [
         Self::SunShadows,
         Self::TerrainFarShadows,
         Self::Clouds,
@@ -233,6 +242,9 @@ impl Switch {
         Self::Moonlight,
         Self::Cover,
         Self::Trails,
+        Self::NormalMaps,
+        Self::Orm,
+        Self::Parallax,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -258,6 +270,9 @@ impl Switch {
             Self::Moonlight => "moonlight",
             Self::Cover => "cover",
             Self::Trails => "trails",
+            Self::NormalMaps => "normalmaps",
+            Self::Orm => "orm",
+            Self::Parallax => "parallax",
         }
     }
 
@@ -292,6 +307,9 @@ impl Switch {
             Self::Moonlight => "artistic moonlight",
             Self::Cover => "snow and ash cover",
             Self::Trails => "trails in the cover",
+            Self::NormalMaps => "normal maps",
+            Self::Orm => "ORM maps",
+            Self::Parallax => "parallax (depth maps)",
         }
     }
 
@@ -314,6 +332,9 @@ impl Switch {
             Self::Surface => s.surface.as_ref().map(|w| w.layer),
             Self::Cover => s.surface.as_ref().map(|w| w.cover),
             Self::Trails => s.surface.as_ref().map(|w| w.trails),
+            Self::NormalMaps => s.material_maps.as_ref().map(|m| m.normal_maps),
+            Self::Orm => s.material_maps.as_ref().map(|m| m.orm),
+            Self::Parallax => s.material_maps.as_ref().map(|m| m.parallax),
             Self::Fog => s.fog.as_ref().map(|f| f.enabled),
             Self::FogNightLight => s.fog.as_ref().map(|f| f.view_ambient > 0.0),
             Self::WeatherAmbient => s.sky_options.as_ref().map(|o| o.weather_ambient_tint),
@@ -325,6 +346,7 @@ impl Switch {
     }
 
     /// Sets it (`None`: toggles) and says what happened.
+    #[allow(clippy::too_many_lines)] // one arm per switch
     pub fn set(self, state: &mut LiveAb, s: &mut Switches, on: Option<bool>) -> String {
         let Some(current) = self.get(state, s) else {
             let why = match self {
@@ -335,6 +357,7 @@ impl Switch {
                 Self::Fog | Self::FogNightLight => "not in this run (interior or --off sky)",
                 Self::WeatherAmbient | Self::NightSkyGlow | Self::Moonlight => "not in this run (--off sky)",
                 Self::AmbientSpecular => "not in this run (no PBR renderer)",
+                Self::NormalMaps | Self::Orm | Self::Parallax => "not in this run (no model assets)",
                 _ => "no terrain here",
             };
             return format!("{}: {why}", self.label());
@@ -400,6 +423,15 @@ impl Switch {
             Self::AmbientSpecular => {
                 if let Some(a) = s.ambient_specular.as_mut() {
                     a.0 = v;
+                }
+            }
+            Self::NormalMaps | Self::Orm | Self::Parallax => {
+                if let Some(m) = s.material_maps.as_mut() {
+                    *match self {
+                        Self::NormalMaps => &mut m.normal_maps,
+                        Self::Orm => &mut m.orm,
+                        _ => &mut m.parallax,
+                    } = v;
                 }
             }
             Self::CloudHistory => {
@@ -689,7 +721,8 @@ fn overlay(
              G physics colliders (ragdoll capsules, joints) {colliders}  O combat gizmos (hurt capsules, blade)\n\
              F11 player / free camera (player: WASD, Space jump, E use, Shift tap roll / hold sprint, Ctrl sneak, F ready weapon, LMB attack, Tab 1st/3rd person, wheel zoom)\n\
              Shift+C clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  Shift+F12 copy camera  F12 screenshot  F5/F9 quicksave/load  B bodies {bodies}  |  --off {flags_off}\n\
-             RO-16 veil (console `flip <name>`): terrain_specular {}  terrain_env_specular {}  terrain_indirect {}  terrain_tint {}  surface {}  fog {}  fog_night_light {}  weather_ambient {}  ambient, render.bloom",
+             RO-16 veil (console `flip <name>`): terrain_specular {}  terrain_env_specular {}  terrain_indirect {}  terrain_tint {}  surface {}  fog {}  fog_night_light {}  weather_ambient {}  ambient, render.bloom\n\
+             Textures (console `flip <name>`, texture lab N / M / P): normalmaps {}  orm {}  parallax {}",
             opt(Switch::SunShadows),
             opt(Switch::TerrainFarShadows),
             opt(Switch::FarTint),
@@ -705,6 +738,9 @@ fn overlay(
             opt(Switch::Fog),
             opt(Switch::FogNightLight),
             opt(Switch::WeatherAmbient),
+            opt(Switch::NormalMaps),
+            opt(Switch::Orm),
+            opt(Switch::Parallax),
         );
         if let Some(look) = scene.map(|s| s.look_for.as_str()).filter(|l| !l.is_empty()) {
             let _ = write!(out, "\nlook for: {look}");

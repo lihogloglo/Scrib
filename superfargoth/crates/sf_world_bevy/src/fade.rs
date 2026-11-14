@@ -228,6 +228,7 @@ impl NearTextures<'_, '_> {
                     && loaded(&m.emissive_texture)
                     && loaded(&m.metallic_roughness_texture)
                     && loaded(&m.occlusion_texture)
+                    && loaded(&m.depth_map)
             })
         })
     }

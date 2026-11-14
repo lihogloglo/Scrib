@@ -8,7 +8,8 @@ license.workspace = true
 [features]
 default = []
 # Bake steps on sf_bake (terrain.tile, terrain.pyramid, ...) and the store reader.
-bake = ["dep:sf_bake", "dep:rayon"]
+# Layer arrays block-compressed through sf_texture's encoders (T6).
+bake = ["dep:sf_bake", "dep:rayon", "dep:sf_texture"]
 
 [dependencies]
 glam.workspace = true
@@ -18,12 +19,14 @@ serde.workspace = true
 sf_bake = { workspace = true, optional = true }
 sf_coords.workspace = true
 sf_records.workspace = true
+sf_texture = { workspace = true, optional = true }
 sf_world.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 rayon.workspace = true
 sf_bake.workspace = true
+sf_texture.workspace = true
 tempfile.workspace = true
 
 [lints]

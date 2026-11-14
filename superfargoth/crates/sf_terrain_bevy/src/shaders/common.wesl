@@ -20,11 +20,12 @@ import sf_surface_bevy::view::surface_raise_at;
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var macro_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(106) var albedo_height_array: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(107) var layer_sampler: sampler;
-@group(constants::MATERIAL_BIND_GROUP) @binding(108) var nar_array: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(108) var normal_array: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(109) var normal_clipmap: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(110) var normal_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(111) var far_map: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(112) var far_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(113) var ao_roughness_array: texture_2d_array<f32>;
 
 // Slot indices (keep in sync with params.rs).
 const P_CAMERA: u32 = 0u;       // xyz: main camera (render space), w: origin absolute Y

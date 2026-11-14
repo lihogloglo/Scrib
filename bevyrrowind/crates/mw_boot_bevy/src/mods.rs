@@ -173,8 +173,12 @@ fn print_vfs(vfs: &Vfs, elapsed: std::time::Duration) {
     }
 }
 
-/// VFS and records of the selected profile, and its fingerprint.
-pub fn load_content(install: &MorrowindInstall, verbose: bool) -> Result<(Vfs, LoadedContent, [u8; 32])> {
+/// VFS and records of the selected profile, its fingerprint, and its VFS sources' texture
+/// profiles (each mod's `[texture]`, textures-adapter.md §8).
+pub fn load_content(
+    install: &MorrowindInstall,
+    verbose: bool,
+) -> Result<(Vfs, LoadedContent, [u8; 32], mw_bake::texture_profiles::TextureSources)> {
     let start = Instant::now();
     let mods = open(install, true)?;
     let mut loaded = load(&mods);
@@ -210,11 +214,12 @@ pub fn load_content(install: &MorrowindInstall, verbose: bool) -> Result<(Vfs, L
             );
         }
     }
+    let textures = mw_bake::texture_profiles::TextureSources::from_mods(&loaded.mods);
     let vfs = std::mem::replace(&mut loaded.vfs, Arc::new(Vfs::builder().build()));
     let vfs = Arc::try_unwrap(vfs).map_err(|_| "VFS still shared")?;
     let db = std::mem::replace(&mut loaded.records, sf_records::RecordDb::new());
     // Dev builds keep the profile (records and VFS moved out) for record hot reload (M5 A4).
     #[cfg(feature = "dev")]
     crate::hot_reload::keep_profile(mods, loaded);
-    Ok((vfs, LoadedContent { db, files, warnings }, fingerprint))
+    Ok((vfs, LoadedContent { db, files, warnings }, fingerprint, textures))
 }

@@ -24,6 +24,7 @@ pub mod census;
 pub mod collision;
 pub mod cook;
 pub mod delight;
+pub mod demand;
 mod importer;
 mod inputs;
 pub mod nav;
@@ -147,14 +148,21 @@ pub fn bake_models(store: Store, inputs: Arc<VfsInputs>, models: &[String]) -> (
 /// creature bodies ([`anim::ActorSets::body_rig_keys`]), and
 /// `collision.cook`, see [`collision`]) registered. Registering bakes
 /// nothing: callers pick the keys ([`model_keys`],
-/// [`collision::collision_keys`]).
+/// [`collision::collision_keys`]). Every source on the default texture profile.
 pub fn model_baker(store: Store, inputs: Arc<VfsInputs>) -> Baker {
+    model_baker_with(store, inputs, &texture_profiles::TextureSources::default())
+}
+
+/// [`model_baker`] whose tangent rule looks up the normal-map suffixes of `textures`, the bake's
+/// per-source pack profiles (textures-adapter.md §8).
+pub fn model_baker_with(store: Store, inputs: Arc<VfsInputs>, textures: &texture_profiles::TextureSources) -> Baker {
     let mut baker = Baker::new(store, inputs);
+    let tangents = || Some(cook::tangent_rule(textures));
     baker
         .register(ModelInfoStep { importers: importers() })
-        .register(MeshCookStep { importers: importers(), settings: CookSettings::default(), tangents: Some(cook::tangent_rule()) })
-        .register(MeshRestStep { importers: importers(), settings: CookSettings::default(), tangents: Some(cook::tangent_rule()) })
-        .register(MeshRigStep { importers: importers(), settings: CookSettings::default(), tangents: Some(cook::tangent_rule()) });
+        .register(MeshCookStep { importers: importers(), settings: CookSettings::default(), tangents: tangents() })
+        .register(MeshRestStep { importers: importers(), settings: CookSettings::default(), tangents: tangents() })
+        .register(MeshRigStep { importers: importers(), settings: CookSettings::default(), tangents: tangents() });
     collision::register(&mut baker);
     body::register(&mut baker);
     baker

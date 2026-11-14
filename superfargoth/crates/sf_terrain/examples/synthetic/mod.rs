@@ -21,7 +21,7 @@ use sf_bake::{BakeError, Baker, Digest, Inputs, Store};
 use sf_coords::WorldPos;
 use sf_records::RecordId;
 use sf_terrain::bake::{
-    BakedTerrain, LAYER_KIND, LayerImage, LayerSource, NoFootprints, SOURCE_TILE_KIND, TerrainBake, TerrainBakeConfig,
+    BakedTerrain, LAYER_KIND, LayerFile, LayerImage, LayerSource, NoFootprints, SOURCE_TILE_KIND, TerrainBake, TerrainBakeConfig,
     TerrainLayer,
 };
 use sf_terrain::{
@@ -291,7 +291,8 @@ fn layer_textures(name: &str) -> [Vec<u8>; 3] {
             ah.extend_from_slice(&[srgb(c[0]), srgb(c[1]), srgb(c[2]), unorm(height[k])]);
             let hx = height[y * n + (x + 1) % n] - height[y * n + (x + n - 1) % n];
             let hy = height[((y + 1) % n) * n + x] - height[((y + n - 1) % n) * n + x];
-            let v = Vec3::new(-(hx * strength) as f32, -(hy * strength) as f32, 1.0).normalize();
+            // Canonical +Y up (TerrainLayer::normal): green toward the image top, rows go down.
+            let v = Vec3::new(-(hx * strength) as f32, (hy * strength) as f32, 1.0).normalize();
             nm.extend_from_slice(&[
                 unorm(f64::from(v.x) * 0.5 + 0.5),
                 unorm(f64::from(v.y) * 0.5 + 0.5),
@@ -350,7 +351,7 @@ impl LayerSource for Layers {
             surface: None,
         })
     }
-    fn decode(&self, _path: &str, bytes: &[u8]) -> Result<LayerImage, String> {
+    fn decode(&self, _path: &str, bytes: &[u8], _file: LayerFile) -> Result<LayerImage, String> {
         let w = u32::from_le_bytes(bytes[0..4].try_into().map_err(|_| "short")?);
         let h = u32::from_le_bytes(bytes[4..8].try_into().map_err(|_| "short")?);
         Ok(LayerImage { width: w, height: h, rgba: bytes[8..].to_vec() })

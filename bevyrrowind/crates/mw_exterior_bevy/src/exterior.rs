@@ -114,6 +114,9 @@ pub struct ExteriorOptions {
     pub weather: Option<mw_environment_bevy::weather::WeatherSetup>,
     /// Quality preset (`--quality`): view-distance bias and size culling.
     pub quality: Quality,
+    /// Texture size cap, largest side of level 0 in texels (`--texture-cap`, else the preset's
+    /// `Quality::texture_cap`); `None`: full resolution.
+    pub texture_cap: Option<u32>,
     /// Benchmark, window size and A/B switches.
     pub perf: mw_devtools_bevy::perf::Perf,
     /// Light parameters of every `LIGH` record (lowercase id).
@@ -300,6 +303,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             .set(WindowPlugin { primary_window: Some(perf.window(options.title.clone(), Some((1280, 720)))), ..WindowPlugin::default() }),
     )
     .add_plugins((MwAssetsPlugin { vfs: vfs.clone() }, FreeCameraPlugin))
+    // `.ktx2` loads under the preset's texture size cap (textures.md S1); after DefaultPlugins so it
+    // replaces Bevy's loader for that extension. Log line `texture.cap:`.
+    .add_plugins(sf_texture_bevy::TextureCapPlugin { cap: options.texture_cap })
+    // A replaced image re-binds the materials using it (textures.md S2). Log line `texture.rebind:`.
+    .add_plugins(sf_texture_bevy::ImageRebindPlugin::<StandardMaterial>::default())
     .add_plugins(WorldStreamingPlugin { config: streaming });
     // The static scene (scene-runtime-plan.md §8): after streaming (it orders after
     // `StreamingSystems::Drive` and installs `SceneCells` when enabled); exterior cells only.
@@ -527,7 +535,14 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         }
     }
 
-    app.add_plugins(TerrainPlugin { settings: TerrainSettings::default() })
+    // Terrain layer arrays under the preset's texture cap (textures.md §9 T6); the framework's
+    // memory budget stays unless the preset has no cap (Ultra, `--texture-cap 0`). Log line
+    // `terrain layers:`.
+    let layer_cap = sf_terrain_bevy::sf_terrain::LayerCap {
+        max_edge: options.texture_cap,
+        budget: options.texture_cap.and(Some(sf_terrain_bevy::DEFAULT_LAYER_BUDGET)),
+    };
+    app.add_plugins(TerrainPlugin { settings: TerrainSettings { layer_cap, ..TerrainSettings::default() } })
         .insert_resource(TerrainWorld { baked: terrain })
         .insert_resource(TerrainDebug { lod_colors: options.terrain_lod, wireframe: options.wireframe, no_far_shadows: perf.off.has(Part::FarShadows), ..TerrainDebug::default() });
 

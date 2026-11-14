@@ -7,9 +7,10 @@
     // OpenMW's vanilla conventions (`[Shaders]` defaults, texture-basics): the default for any
     // pack that names none. DirectX normals ("OpenMW uses the DX format for normal maps");
     // `_nh` alpha is height with 0.5 neutral (OpenMW's parallax offset). `_nm` is the older
-    // name OpenMW asks users to rename. OpenMW's `_spec` (RGB specular colour, A shininess) and
-    // terrain `_diffusespec` (A specular intensity) have no canonical slot yet (owner
-    // question 5), so they are not listed.
+    // name OpenMW asks users to rename. `_spec` is OpenMW's specular map (RGB specular colour,
+    // A shininess: the Blinn-Phong exponent ÷ 255, `objects.frag`), converted to ORM at bake
+    // (textures-adapter.md §10: roughness from the exponent, the colour dropped). Terrain
+    // `_diffusespec` (A specular intensity) has no canonical slot yet, so it is not listed.
     (
         name: "openmw",
         suffixes: [
@@ -17,6 +18,7 @@
             (suffix: "_nh", role: NormalHeight, layout: (Channel(R), Channel(G), Channel(B), Channel(A))),
             (suffix: "_n", role: Normal, layout: (Channel(R), Channel(G), Channel(B), Unused)),
             (suffix: "_nm", role: Normal, layout: (Channel(R), Channel(G), Channel(B), Unused)),
+            (suffix: "_spec", role: SpecularShininess, layout: (Channel(R), Channel(G), Channel(B), Channel(A))),
         ],
         normal_y: Down,
         height_neutral: 0.5,
@@ -36,5 +38,10 @@
         ],
         normal_y: Down,
         height_neutral: 0.5,
+        // Pack-defect repair, off (owner question 7, textures-adapter.md §7 "Pack defect"):
+        // a `_spec` whose level 0 has no metal while level 1 has some gets level 0's metal
+        // rebuilt from level 1 (BC1 only). To turn it on, replace `[]` with
+        // `[FillEmptyLevel0(role: Orm, channel: B)]` (B = metallic in the canonical ORM).
+        quirks: [],
     ),
 ]

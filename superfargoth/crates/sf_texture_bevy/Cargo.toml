@@ -1,0 +1,32 @@
+[package]
+name = "sf_texture_bevy"
+description = "Bevy plugin for sf_texture: the KTX2 loader with a load-time level-0 size cap per quality preset and its counters (textures.md §6, slice S1), and the rebind of materials on a replaced image (slice S2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6). The level selection is Bevy-free (`sf_texture::level_cap`).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+# AssetLoader, Reader, VecReader.
+bevy_asset.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+# Image, ImageLoader (the cap trims the file, Bevy's loader builds the image), CompressedImageFormatSupport.
+# `ktx2`: the format this loader exists for (already in the app's set through tonemapping_luts).
+bevy_image = { workspace = true, features = ["ktx2"] }
+bevy_log.workspace = true
+# TypePath on the loader (AssetLoader bound).
+bevy_reflect = { workspace = true, features = ["std"] }
+bevy_time = { workspace = true, features = ["std"] }
+futures-lite.workspace = true
+sf_texture.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# StandardMaterial in the S2 rebind tests (its `#[dependency]` image fields).
+bevy_pbr.workspace = true
+# TextureFormat of the built image in tests.
+wgpu-types.workspace = true
+
+[lints]
+workspace = true

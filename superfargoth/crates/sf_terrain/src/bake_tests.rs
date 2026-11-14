@@ -119,7 +119,7 @@ impl LayerSource for Layers {
             surface: None,
         })
     }
-    fn decode(&self, _path: &str, bytes: &[u8]) -> Result<LayerImage, String> {
+    fn decode(&self, _path: &str, bytes: &[u8], _file: LayerFile) -> Result<LayerImage, String> {
         Ok(LayerImage { width: 2, height: 2, rgba: bytes.to_vec() })
     }
 }
@@ -287,9 +287,13 @@ fn products_decode_and_agree_on_seams_and_levels() {
     assert_eq!(table.layers.len(), 2);
     assert_eq!(table.layers[0].tiling_m, 1024.0 / 341.0);
     let arrays: LayerArrays = baked.layers(None).unwrap().unwrap();
-    assert_eq!(arrays.mips, 5);
-    let per_slice: usize = (0..arrays.mips).map(|m| (16usize >> m).pow(2) * 4).sum();
-    assert_eq!(arrays.albedo_height.len(), per_slice * 2);
+    // 2² sources under a 16² subject: never upsampled past the largest source (one block, 4²).
+    assert_eq!((arrays.size, arrays.mips), (4, 3));
+    assert_eq!(table.layers[0].source_edge, 2);
+    // Three levels of one 16-byte block each, two layers, in each of the three arrays.
+    for a in [&arrays.albedo_height, &arrays.normal, &arrays.ao_roughness] {
+        assert_eq!(a.len(), 3 * 16 * 2);
+    }
 
     let m: MacroProduct = baked.macro_albedo(a).unwrap().unwrap();
     assert!(m.rgba.iter().all(|c| c[3] == 255));
@@ -344,4 +348,246 @@ fn placement_footprints_cover_grounded_placements_only() {
     assert_eq!(out.len(), 1);
     assert_ne!(f.fingerprint(&ws(), TileCoord::new(0, 0, 0)), f.fingerprint(&ws(), TileCoord::new(0, 1, 0)));
     assert_eq!(f.fingerprint(&ws(), TileCoord::new(0, 5, 5)), [0; 32]);
+}
+
+/// A height field over (column, row) in texel units.
+type Height = fn(f32, f32) -> f32;
+
+/// The world normal `sf_terrain_bevy`'s `surface.wesl` shades for one layer-array texel on the
+/// top-down projection: `sample_projection` (x, y from R, G; z rebuilt) then `sample_layer`'s
+/// whiteout blend onto the ground normal (`ty = (t.xy + n.xz, |t.z| n.y)`, world = `ty.xzy`).
+fn shade_top(nar: [u8; 4], ground: glam::Vec3) -> glam::Vec3 {
+    let x = f32::from(nar[0]) / 255.0 * 2.0 - 1.0;
+    let y = f32::from(nar[1]) / 255.0 * 2.0 - 1.0;
+    let z = (1.0 - x * x - y * y).max(0.0).sqrt();
+    let ty = glam::Vec3::new(x + ground.x, y + ground.z, z.abs() * ground.y);
+    glam::Vec3::new(ty.x, ty.z, ty.y).normalize()
+}
+
+/// A canonical (+Y toward the image's top) normal map of height `h(col, row)` (texel units).
+fn canonical_normals(n: usize, h: impl Fn(f32, f32) -> f32) -> LayerImage {
+    let mut rgba = Vec::new();
+    for row in 0..n {
+        for col in 0..n {
+            #[allow(clippy::cast_precision_loss)]
+            let (c, r) = (col as f32, row as f32);
+            let dx = h(c + 0.5, r) - h(c - 0.5, r);
+            // The image's up is −row.
+            let dy_up = -(h(c, r + 0.5) - h(c, r - 0.5));
+            let v = glam::Vec3::new(-dx, -dy_up, 1.0).normalize();
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let u = |f: f32| ((f * 0.5 + 0.5) * 255.0).round() as u8;
+            rgba.extend_from_slice(&[u(v.x), u(v.y), u(v.z), 255]);
+        }
+    }
+    let n = u32::try_from(n).unwrap();
+    LayerImage { width: n, height: n, rgba }
+}
+
+/// T5 tangent frame: a canonical normal map baked into the arrays and shaded the way the shader
+/// does gives the geometric normal of the relief its albedo shows (top-down projection: texel
+/// column = world +X, row = world +Z), so bumps aren't inverted.
+#[test]
+fn layer_normals_shade_the_relief_the_albedo_shows() {
+    let slope = 0.5;
+    let ground = glam::Vec3::Y;
+    // Height rising down the rows (world +Z): y = slope·z faces −Z.
+    // Height rising along the columns (world +X): y = slope·x faces −X.
+    let cases: [(Height, glam::Vec3); 2] = [
+        (|_, r| 0.5 * r, glam::Vec3::new(0.0, 1.0, -slope)),
+        (|c, _| 0.5 * c, glam::Vec3::new(-slope, 1.0, 0.0)),
+    ];
+    for (h, expected) in cases {
+        let mut img = canonical_normals(4, h);
+        normal_to_array_frame(&mut img.rgba);
+        let arrays = mip_chain(&img, 4, MapKind::Normal);
+        let t = &arrays[5 * 4..5 * 4 + 4];
+        let world = shade_top([t[0], t[1], 0, 0], ground);
+        assert!(world.abs_diff_eq(expected.normalize(), 0.01), "{world} vs {}", expected.normalize());
+    }
+}
+
+/// The arrays' frame complements G and rebuilds Z (a two-channel source has none).
+#[test]
+fn array_frame_flips_green_and_rebuilds_z() {
+    let mut rgba = vec![128, 200, 0, 7, 255, 128, 99, 255];
+    normal_to_array_frame(&mut rgba);
+    assert_eq!(rgba[..2], [128, 55]);
+    assert_eq!(rgba[3], 7);
+    // (0.004, −0.569) → z 0.823 → 232.
+    assert_eq!(rgba[2], 232);
+    assert_eq!(rgba[4..8], [255, 127, 128, 255]);
+}
+
+/// Decodes level `mip` of slice `slice` of one array (`LayerArrays` layout).
+fn decode_array_level(data: &[u8], format: sf_texture::BlockFormat, size: u32, mips: u32, slice: usize, mip: u32) -> Vec<u8> {
+    let start = slice * LayerArrays::slice_len(size, mips) + (0..mip).map(|m| LayerArrays::level_len(size, m)).sum::<usize>();
+    let dim = (size >> mip).max(1);
+    sf_texture::decode_level(format, &data[start..start + LayerArrays::level_len(size, mip)], dim, dim)
+}
+
+/// Tileable test pattern with height in alpha.
+fn pattern(n: u32) -> LayerImage {
+    let mut rgba = Vec::new();
+    for y in 0..n {
+        for x in 0..n {
+            let (u, v) = (x as f32 / n as f32 * std::f32::consts::TAU, y as f32 / n as f32 * std::f32::consts::TAU);
+            let w = |f: f32| ((f.sin() * 0.5 + 0.5) * 200.0 + 20.0) as u8;
+            rgba.extend_from_slice(&[w(u), w(v), w(u + v), w(2.0 * u - v)]);
+        }
+    }
+    LayerImage { width: n, height: n, rgba }
+}
+
+/// T6: the three arrays' sizes: every level is whole 16-byte blocks (levels under 4² take one),
+/// the chain runs to 1², BC7 albedo + height decodes back to the RGBA8 chain within BC7's error,
+/// and AO + roughness are the ARM map's R and G.
+#[test]
+fn layer_arrays_are_block_compressed_full_chains() {
+    assert_eq!(LayerArrays::level_len(64, 0), 16 * 16 * 16);
+    assert_eq!(LayerArrays::level_len(64, 5), 16);
+    assert_eq!(LayerArrays::level_len(64, 6), 16);
+    assert_eq!(LayerArrays::slice_len(64, 7), 16 * (256 + 64 + 16 + 4 + 1 + 1 + 1));
+    let img = pattern(64);
+    let [a, n, r] = encode_layer(Some(&img), Some(&img), Some(&img), 64);
+    for data in [&a, &n, &r] {
+        assert_eq!(data.len(), LayerArrays::slice_len(64, 7));
+    }
+    let chain = mip_chain(&img, 64, MapKind::Albedo);
+    let decoded = decode_array_level(&a, sf_texture::BlockFormat::Bc7Srgb, 64, 7, 0, 0);
+    // Four uncorrelated channels are BC7's hard case: mean and worst error stay small.
+    let diffs: Vec<u8> = chain[..64 * 64 * 4].iter().zip(&decoded).map(|(x, y)| x.abs_diff(*y)).collect();
+    let mean = diffs.iter().map(|&d| f64::from(d)).sum::<f64>() / diffs.len() as f64;
+    let worst = diffs.iter().copied().max().unwrap();
+    assert!(mean <= 4.0 && worst <= 24, "BC7 error mean {mean:.2}, worst {worst}");
+    let ar = decode_array_level(&r, sf_texture::BlockFormat::Bc5, 64, 7, 0, 0);
+    let lin = mip_chain(&img, 64, MapKind::Linear);
+    for (t, l) in ar.as_chunks::<4>().0.iter().zip(lin.as_chunks::<4>().0) {
+        assert!(t[0].abs_diff(l[0]) <= 4 && t[1].abs_diff(l[1]) <= 4, "{t:?} vs {l:?}");
+    }
+}
+
+/// T6: missing maps keep their defaults exactly through compression, on every level.
+#[test]
+fn missing_maps_keep_their_defaults() {
+    use sf_texture::BlockFormat;
+    let size = 16;
+    let maps = encode_layer(None, None, None, size);
+    let formats = [BlockFormat::Bc7Srgb, BlockFormat::Bc5, BlockFormat::Bc5];
+    for ((data, format), default) in maps.iter().zip(formats).zip(LAYER_DEFAULTS) {
+        assert_eq!(data.len(), LayerArrays::slice_len(size, 5));
+        for mip in 0..5 {
+            let texels = decode_array_level(data, format, size, 5, 0, mip);
+            let want: &[u8] = if format == BlockFormat::Bc5 { &default[..2] } else { &default };
+            for t in texels.as_chunks::<4>().0 {
+                assert_eq!(&t[..want.len()], want, "{format:?} level {mip}");
+            }
+        }
+    }
+}
+
+/// T6 + T5: the relief direction survives BC5: a canonical normal map baked and compressed, then
+/// shaded the way the shader does, still gives the relief's geometric normal.
+#[test]
+fn bc5_layer_normals_shade_the_relief_the_albedo_shows() {
+    let slope = 0.5;
+    let cases: [(Height, glam::Vec3); 2] = [
+        (|_, r| 0.5 * r, glam::Vec3::new(0.0, 1.0, -slope)),
+        (|c, _| 0.5 * c, glam::Vec3::new(-slope, 1.0, 0.0)),
+    ];
+    for (h, expected) in cases {
+        let mut img = canonical_normals(16, h);
+        normal_to_array_frame(&mut img.rgba);
+        let [_, n, _] = encode_layer(None, Some(&img), None, 16);
+        let texels = decode_array_level(&n, sf_texture::BlockFormat::Bc5, 16, 5, 0, 0);
+        for t in texels.as_chunks::<4>().0 {
+            let world = shade_top([t[0], t[1], 0, 0], glam::Vec3::Y);
+            assert!(world.abs_diff_eq(expected.normalize(), 0.02), "{world} vs {}", expected.normalize());
+        }
+    }
+}
+
+/// Arrays whose every byte names its slice and level, `size`² with a full chain.
+fn tagged_arrays(layers: usize, size: u32) -> LayerArrays {
+    let mips = size.trailing_zeros() + 1;
+    let mut data = Vec::new();
+    for slice in 0..layers {
+        for mip in 0..mips {
+            data.extend(std::iter::repeat_n((slice * 32) as u8 + mip as u8, LayerArrays::level_len(size, mip)));
+        }
+    }
+    let info = |k: usize| crate::LayerInfo {
+        record: format!("l{k}"),
+        id: crate::layer_id(&format!("l{k}")),
+        tiling_m: 4.0,
+        triplanar: false,
+        displacement_m: 0.0,
+        mean_albedo: [0.5; 3],
+        mean_height: 1.0,
+        source_edge: size,
+    };
+    let table = LayerTable { layers: (0..layers).map(info).collect(), ..LayerTable::default() };
+    LayerArrays { table, size, mips, albedo_height: data.clone(), normal: data.clone(), ao_roughness: data }
+}
+
+/// T6: a capped load drops exactly the top levels of every slice of the three arrays.
+#[test]
+fn layer_cap_drops_exactly_the_top_levels() {
+    use crate::LayerCap;
+    let full = tagged_arrays(3, 64);
+    let bytes = full.to_bytes();
+    assert_eq!(LayerArrays::from_bytes(&bytes).unwrap(), full);
+    let cap = LayerCap { max_edge: Some(16), budget: None };
+    assert_eq!(cap.skip(64, 7, 3), 2);
+    let capped = LayerArrays::from_bytes_capped(&bytes, &cap).unwrap();
+    assert_eq!((capped.size, capped.mips, capped.table.layers.len()), (16, 5, 3));
+    let mut expected = Vec::new();
+    for slice in 0..3usize {
+        for mip in 2..7u32 {
+            expected.extend(std::iter::repeat_n((slice * 32) as u8 + mip as u8, LayerArrays::level_len(64, mip)));
+        }
+    }
+    for a in [&capped.albedo_height, &capped.normal, &capped.ao_roughness] {
+        assert_eq!(a, &expected);
+    }
+    assert_eq!(capped.gpu_bytes(), 3 * 3 * LayerArrays::slice_len(16, 5));
+    // A cap at or above the size keeps everything; one below a block stops at one block (4²).
+    assert_eq!(LayerCap { max_edge: Some(64), budget: None }.skip(64, 7, 3), 0);
+    assert_eq!(LayerCap { max_edge: Some(1), budget: None }.skip(64, 7, 3), 4);
+    // The budget drops levels until the three arrays of three layers fit.
+    let fits_32 = 3 * 3 * LayerArrays::slice_len(32, 6);
+    assert_eq!(LayerCap { max_edge: None, budget: Some(fits_32) }.skip(64, 7, 3), 1);
+    assert_eq!(LayerCap { max_edge: None, budget: Some(fits_32 - 1) }.skip(64, 7, 3), 2);
+    assert_eq!(LayerCap { max_edge: Some(16), budget: Some(fits_32) }.skip(64, 7, 3), 2);
+}
+
+/// T6 measurement: encode time of 2048² layers with albedo, normal and ARM all present (the worst
+/// case) on this machine, with an opaque albedo (no height: BC7's opaque modes) and with height in
+/// alpha, and the arrays' size per layer at each edge.
+/// `cargo test --release -p sf_terrain --features bake --lib -- --ignored --nocapture layer_encode_time`
+#[test]
+#[ignore = "measurement: terrain.layers encode time at 2048²"]
+fn layer_encode_time() {
+    use rayon::prelude::*;
+    let layers = 16;
+    for opaque in [true, false] {
+        let mut img = pattern(2048);
+        if opaque {
+            img.rgba.as_chunks_mut::<4>().0.iter_mut().for_each(|t| t[3] = 255);
+        }
+        let t = std::time::Instant::now();
+        let out: Vec<[Vec<u8>; 3]> = (0..layers).into_par_iter().map(|_| encode_layer(Some(&img), Some(&img), Some(&img), 2048)).collect();
+        let s = t.elapsed().as_secs_f64();
+        assert_eq!(out.len(), layers);
+        println!(
+            "terrain.layers encode ({}): {layers} layers x 2048² (BC7 + 2 x BC5, full chains) in {s:.2} s, {:.3} s/layer on {} threads",
+            if opaque { "opaque albedo" } else { "height in alpha" },
+            s / layers as f64,
+            rayon::current_num_threads()
+        );
+    }
+    for edge in [2048u32, 1024, 512, 256] {
+        let mib = 3.0 * LayerArrays::slice_len(edge, edge.trailing_zeros() + 1) as f64 / 1_048_576.0;
+        println!("  {edge}²: {mib:.2} MiB per layer (three arrays)");
+    }
 }

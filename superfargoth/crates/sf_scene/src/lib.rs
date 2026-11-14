@@ -40,6 +40,7 @@ pub mod bake;
 pub mod chain;
 pub mod chains;
 pub mod cull;
+pub mod demand;
 pub mod eligibility;
 pub mod material;
 pub mod product;

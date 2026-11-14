@@ -426,5 +426,35 @@ pub fn cook_rgba(role: Role, rgba: &[u8], width: u32, height: u32, quality: Bc7Q
     write_ktx2(format_for(role), width, height, &levels)
 }
 
+/// The perceptual roughness (Bevy's `perceptual_roughness`, `α = r²`) matching a Blinn-Phong
+/// specular exponent: `α = √(2 / (n + 2))` (Walter et al. 2007, "Microfacet Models for
+/// Refraction", the Phong ↔ Beckmann equivalence; GGX's α is used alike, as in Karis's
+/// "Specular BRDF Reference"), so `r = (2 / (n + 2))^¼`. `n = 0` is fully rough (1.0); `n = 255`
+/// is 0.297.
+pub fn blinn_phong_roughness(exponent: f32) -> f32 {
+    (2.0 / (exponent.max(0.0) + 2.0)).powf(0.25)
+}
+
+/// A legacy specular map's texels (RGB specular colour, A the Blinn-Phong exponent ÷ 255) as
+/// canonical ORM texels, in place: R 255 (no occlusion), G the perceptual roughness of the
+/// exponent ([`blinn_phong_roughness`]), B 0 (dielectric), A 255. The specular colour has no ORM
+/// channel and is dropped (a per-texel specular tint needs another material input).
+///
+/// # Panics
+/// If `rgba.len()` isn't a multiple of 4.
+pub fn specular_to_orm(rgba: &mut [u8]) {
+    let (texels, rest) = rgba.as_chunks_mut::<4>();
+    assert!(rest.is_empty(), "RGBA8 texels");
+    let mut table = [0u8; 256];
+    for (a, out) in table.iter_mut().enumerate() {
+        #[allow(clippy::cast_precision_loss)] // 0..=255
+        let exponent = a as f32;
+        *out = unit_to_byte(blinn_phong_roughness(exponent));
+    }
+    for texel in texels {
+        *texel = [u8::MAX, table[usize::from(texel[3])], 0, u8::MAX];
+    }
+}
+
 #[cfg(test)]
 mod tests;

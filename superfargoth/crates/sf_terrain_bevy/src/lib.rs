@@ -30,7 +30,7 @@ use bevy_asset::{Assets, Handle, RenderAssetUsages, embedded_asset};
 use bevy_camera::primitives::Aabb;
 use bevy_camera::visibility::{NoAutoAabb, VisibilitySystems};
 use bevy_ecs::prelude::*;
-use bevy_image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy_image::{CompressedImageFormatSupport, CompressedImageFormats, Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy_math::{DVec2, Vec3};
 use bevy_mesh::{Indices, Mesh, Mesh3d, MeshTag, PrimitiveTopology};
 use bevy_pbr::{MaterialPlugin, MeshMaterial3d};
@@ -44,6 +44,7 @@ use bevy_tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use bevy_transform::TransformSystems;
 use bevy_transform::components::{GlobalTransform, Transform};
 use sf_coords::WorldPos;
+use sf_terrain::LayerCap;
 use sf_terrain::bake::BakedTerrain;
 use sf_terrain::cdlod::{self, CdlodSettings, MIN_LOD, NodeKey, SelectedNode};
 use sf_terrain::clipmap::{self, CLIPMAP_SIZE, ClipWindow, SampleRect};
@@ -68,6 +69,11 @@ pub use sf_terrain;
 /// from ~25% of the pixel at 0.5 to ~7% at albedo 0.15 (12% at 0.08); RO-16 measurement test.
 pub const DEFAULT_REFLECTANCE: f32 = 0.3;
 
+/// Default memory budget of the terrain layer arrays, bytes: 1 GiB, an eighth of the 8 GB frame
+/// target GPU (terrain.md "Layer arrays"). A world with many layers keeps a smaller level 0
+/// rather than all of them at full size (until per-layer residency, textures.md S3).
+pub const DEFAULT_LAYER_BUDGET: usize = 1 << 30;
+
 /// Tunables. Defaults follow terrain.md and the streaming budgets.
 #[derive(Resource, Clone, Debug)]
 pub struct TerrainSettings {
@@ -87,6 +93,10 @@ pub struct TerrainSettings {
     pub blend_depth: f32,
     /// Layer arrays to load (`None`: the largest baked).
     pub layer_array_size: Option<u32>,
+    /// Top levels of the layer arrays left out at load (T6): the preset's texture cap
+    /// (`max_edge`) and a memory budget for the three arrays. Default: no cap,
+    /// [`DEFAULT_LAYER_BUDGET`].
+    pub layer_cap: LayerCap,
     /// The ground's dielectric reflectance, Bevy's `StandardMaterial::reflectance` scale
     /// (F0 = 0.16 x r², so 0.5 is F0 0.04), applied before surface weather mixes wet areas
     /// toward water. Default [`DEFAULT_REFLECTANCE`]; games may override it, live too.
@@ -108,6 +118,7 @@ impl Default for TerrainSettings {
             splat_range: 1000.0,
             blend_depth: 0.2,
             layer_array_size: None,
+            layer_cap: LayerCap { max_edge: None, budget: Some(DEFAULT_LAYER_BUDGET) },
             reflectance: DEFAULT_REFLECTANCE,
             raise_m: 0.0,
         }
@@ -361,6 +372,24 @@ fn clipmap_image(layers: usize, format: TextureFormat, filtered: bool) -> Image 
     image
 }
 
+/// GPU formats of the three layer arrays, [`sf_terrain::LayerArrays`] order (T6): albedo +
+/// height BC7 sRGB, normal X/Y BC5, AO + roughness BC5.
+pub const LAYER_ARRAY_FORMATS: [TextureFormat; 3] =
+    [TextureFormat::Bc7RgbaUnormSrgb, TextureFormat::Bc5RgUnorm, TextureFormat::Bc5RgUnorm];
+
+/// The three layer array images of baked data (formats [`LAYER_ARRAY_FORMATS`]).
+fn layer_images(size: u32, mips: u32, layers: usize, data: [Vec<u8>; 3]) -> [Image; 3] {
+    let mut data = data.into_iter();
+    LAYER_ARRAY_FORMATS.map(|f| layer_array(size, mips, layers, f, data.next().expect("three arrays")))
+}
+
+/// The load line: `terrain layers: N x S², X MiB (L levels)`.
+fn layer_arrays_line(a: &sf_terrain::LayerArrays) -> String {
+    #[allow(clippy::cast_precision_loss)]
+    let mib = a.gpu_bytes() as f64 / f64::from(1u32 << 20);
+    format!("terrain layers: {} x {}², {mib:.1} MiB ({} levels)", a.table.layers.len(), a.size, a.mips)
+}
+
 /// A layer texture array with its mip chain (bake layout: layer-major).
 fn layer_array(size: u32, mips: u32, layers: usize, format: TextureFormat, data: Vec<u8>) -> Image {
     let extent =
@@ -393,6 +422,7 @@ fn setup_terrain(
     mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
     far_map: Option<Res<FarShadowMap>>,
+    compressed: Option<Res<CompressedImageFormatSupport>>,
 ) {
     let Some(world) = world else {
         if let Some(state) = state {
@@ -412,22 +442,31 @@ fn setup_terrain(
         }
     }
     let baked = world.baked.clone();
-    let (table, albedo, nar) = match baked.layers(settings.layer_array_size) {
-        Some(Ok(a)) => {
-            let n = a.table.layers.len();
-            let albedo = layer_array(a.size, a.mips, n, TextureFormat::Rgba8UnormSrgb, a.albedo_height);
-            let nar = layer_array(a.size, a.mips, n, TextureFormat::Rgba8Unorm, a.normal_ao_roughness);
-            (a.table, albedo, nar)
+    // Headless runs have no device (nothing uploads); a device without BC can't take the arrays.
+    let bc = compressed.is_none_or(|c| c.0.contains(CompressedImageFormats::BC));
+    let (table, [albedo, normal, ao_roughness]) = match baked.layers_capped(settings.layer_array_size, &settings.layer_cap) {
+        Some(Ok(a)) if bc => {
+            log::info!("{}", layer_arrays_line(&a));
+            let images = layer_images(a.size, a.mips, a.table.layers.len(), [a.albedo_height, a.normal, a.ao_roughness]);
+            (a.table, images)
         }
         other => {
-            if let Some(Err(e)) = other {
-                log::error!("terrain layer arrays: {e}");
+            match other {
+                Some(Err(e)) => log::error!("terrain layer arrays: {e}"),
+                Some(Ok(_)) => log::error!(
+                    "terrain layer arrays need BC texture compression (TEXTURE_COMPRESSION_BC), which this GPU lacks:                      drawing flat default layers"
+                ),
+                None => {}
             }
             let one = |c: [u8; 4], f| layer_array(1, 1, 1, f, c.to_vec());
+            let [a, n, r] = sf_terrain::bake::LAYER_DEFAULTS;
             (
                 LayerTable::default(),
-                one([128, 128, 128, 255], TextureFormat::Rgba8UnormSrgb),
-                one([128, 128, 255, 230], TextureFormat::Rgba8Unorm),
+                [
+                    one(a, TextureFormat::Rgba8UnormSrgb),
+                    one(n, TextureFormat::Rgba8Unorm),
+                    one(r, TextureFormat::Rgba8Unorm),
+                ],
             )
         }
     };
@@ -449,7 +488,8 @@ fn setup_terrain(
         layer_weights: layer_weights.clone(),
         macro_albedo: macro_image.clone(),
         albedo_height: images.add(albedo),
-        normal_ao_roughness: images.add(nar),
+        normal: images.add(normal),
+        ao_roughness: images.add(ao_roughness),
         far_map: far_map.map(|m| m.image.clone()).unwrap_or_default(),
     });
     // What the bake used where there is no source, for tiles that don't exist.
@@ -1022,6 +1062,33 @@ fn update_terrain(
 mod tests {
     use super::*;
     use bevy_mesh::VertexAttributeValues;
+
+    /// T6: the layer arrays upload as BC7 sRGB + 2 x BC5 `2d_array` images with the baked
+    /// size, levels and layers, and the load line names them.
+    #[test]
+    fn layer_arrays_upload_block_compressed() {
+        let (size, mips, layers) = (16, 5, 3);
+        let len = 3 * sf_terrain::LayerArrays::slice_len(size, mips);
+        let images = layer_images(size, mips, layers, [vec![0; len], vec![0; len], vec![0; len]]);
+        let formats: Vec<TextureFormat> = images.iter().map(|i| i.texture_descriptor.format).collect();
+        assert_eq!(formats, [TextureFormat::Bc7RgbaUnormSrgb, TextureFormat::Bc5RgUnorm, TextureFormat::Bc5RgUnorm]);
+        for image in &images {
+            let d = &image.texture_descriptor;
+            assert_eq!((d.size.width, d.size.height, d.size.depth_or_array_layers, d.mip_level_count), (16, 16, 3, 5));
+            assert_eq!(image.data.as_ref().map(Vec::len), Some(len));
+            let view = image.texture_view_descriptor.as_ref().and_then(|v| v.dimension);
+            assert_eq!(view, Some(TextureViewDimension::D2Array));
+        }
+        let arrays = sf_terrain::LayerArrays {
+            table: LayerTable { layers: Vec::new(), ..LayerTable::default() },
+            size: 1024,
+            mips: 11,
+            albedo_height: vec![0; 1 << 20],
+            normal: vec![0; 1 << 20],
+            ao_roughness: vec![0; 1 << 20],
+        };
+        assert_eq!(layer_arrays_line(&arrays), "terrain layers: 0 x 1024², 3.0 MiB (11 levels)");
+    }
 
     /// W6b: the raised cover grows the bounds of the levels it displaces (LOD <= 0), upward only;
     /// the detail displacement only the two finest.

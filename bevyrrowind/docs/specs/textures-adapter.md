@@ -21,7 +21,7 @@ maps them to `sf_texture::cook::Role`:
 | UI, splash, cursors, `Icons/`, `Bookart/` | `Ui` (untouched) | sampled 1:1 by `sf_ui` |
 | `_n` companion | `Normal { source_y: Down }` | §2 |
 | `_nh` companion | `NormalHeight` (normal + Bevy `depth_map`) | §7; `_nh` wins over `_n` (OpenMW order) |
-| `_spec` | `Packed` (glTF ORM after an R↔B swap) | §7: R metal, G roughness, B AO, A 1 − subsurface |
+| `_spec` | `Packed` (glTF ORM after an R↔B swap) | §7: R metal, G roughness, B AO, A 1 − subsurface (`wareya-pbr`); `openmw` sources: specular map converted to ORM, §10 |
 | `_diffusespec` (terrain) | terrain layer: RGB albedo, A roughness | §7, T5/T6 |
 
 NIF bump-map slots (`NiTexturingProperty` `BumpMap`, parsed in `mw_nif/src/material.rs:249-253`) and
@@ -37,7 +37,7 @@ NIF bump-map slots (`NiTexturingProperty` `BumpMap`, parsed in `mw_nif/src/mater
   `mesh.cook` inputs); the runtime reads the cooked index, never probes the VFS per material. Before T3 lands, T4's
   loader probe `vfs.resolve_preferring(stem + "_n")` at material build is the scaffold (named, removed by T3).
 - **Convention**: `source_y = Down` (OpenMW: "OpenMW uses the DX format for normal maps"), so cook inverts G. A
-  pack authored OpenGL-style sets `texture.normal_y = "up"` in its `sf_mods` manifest overlay.
+  pack authored OpenGL-style sets `normal_y = "up"` in its `mod.toml` `[texture]` (or `textures.toml`, §8).
 - **Colour space**: linear. The as-shipped path sets `is_srgb = false` for the normal slot (today
   `mw_assets::image_settings_clamped` forces sRGB for every model texture, `mw_assets/src/lib.rs:498-510`).
 
@@ -94,6 +94,14 @@ Material factors with a `_spec`: `metallic = 1.0`, `perceptual_roughness = 1.0` 
 `reflectance = 0.5` (F0 0.04, as Wareya's `f0_scalar`). Without one, today's defaults stand. Textures are linear
 except the diffuse (`is_srgb = false` for normal, ORM and depth).
 
+**`_nh` height → parallax (built 2026-11-13, tx-pom; textures.md §9 "T4d as built").** The winning normal companion read
+as `NormalHeight` by its own source's profile also cooks `texture.cook.depth`: the DXT5 alpha block split out as BC4,
+complemented (bytes unchanged otherwise), BC7 / uncompressed decoded + BC4; capped at 1024² (top levels dropped);
+served at `<nh stem>_depth.ktx2`, listed in `cooked/texture_depths.postcard`. Material: `depth_map` +
+`parallax_depth_scale` 0.04 (OpenMW's `PARALLAX_SCALE` for these maps), method and layers per preset (Low none,
+Medium Occlusion 16, High Relief 5 / 16, Ultra Relief 8 / 32); `--off parallax`, `flip parallax`. The profile's
+`height_neutral` 0.5 is not applied (Bevy has no bias: the polygon is the top). Vanilla `_nh` (openmw profile) too.
+
 **Conventions, measured.** Y is **DirectX** in both packs: for `_nh`, corr(R, ∂h/∂x) −0.84 and corr(G, ∂h/∂row)
 −0.83 (MVR, 40/40 files; TPBR −0.70/−0.70, 10/10): same sign, so +Y points down the image; `_n` against diffuse
 luminance agrees (41/43). Height: alpha, white = high (the R correlation's sign), per-file mean 128 in every MVR
@@ -141,3 +149,144 @@ distance fade, mip-filtered depth sampling (it samples level 0) and self-shadow:
 armour turns metallic a few metres away and matte up close. Options: as shipped, or the cook rebuilds level 0's R
 from level 1 where level 0 has none and level 1 has some (proposed; blurrier metal mask, consistent at every
 distance), or ignore the pack's metal. Report upstream either way.
+
+## 8. Texture sources and profiles (TS-1a, 2026-11-13)
+
+Owner 2026-11-13: read textures from any source, not just the packs linked so far. Each **VFS source** gets its own
+pack profile (§7), chosen by data; the framework still names no pack.
+
+**Reuse check.** Bevy 0.20 has nothing per pack: `bevy_image` `ImageLoaderSettings` (`image_loader.rs:134`) is
+per asset (`format`, `texture_format`, `is_srgb`, `sampler`, `array_layout`), with no green flip, suffix or
+companion notion, and our bake serves cooked KTX2 anyway. Crates: none (a profile is a few lines of data;
+`sf_texture::PackProfile` already models it).
+
+**Industry comparison.** UE5: per texture asset, "Flip Green Channel" plus compression setting `Normalmap` (BC5),
+set by the importer (often from a `_N` suffix rule in import presets). Unity: per texture importer "Texture Type:
+Normal map", presets matched by folder or name (`AssetPostprocessor`). OpenMW: one global set in `settings.cfg`
+`[Shaders]` (`normal map pattern = _n`, `normal height map pattern = _nh`, `specular map pattern = _spec`,
+`terrain specular map pattern = _diffusespec`), DirectX Y only. Bethesda (Skyrim/FO4): fixed suffixes `_n`, `_m`,
+`_s`, `_g`, DirectX Y. So the standard is per-asset settings defaulted by a per-source naming rule; OpenMW's
+global patterns are the weakest form (one convention for every pack). Ours: per-source profile at bake, which is
+UE's import-preset model applied to mod folders.
+
+**Design** (`mw_bake/src/texture_profiles.rs` `TextureSources`):
+- **Choosing a profile.** A mod's `mod.toml` `[texture]` (`sf_mods::TextureSection`): `profile = "<name>"` (a name
+  from `data/texture_profiles.ron`), `normal_y = "up" | "down"` overriding the profile's, `suffixes = { "_normal" =
+  "_n" }` renaming a companion (the pack's suffix follows that profile rule's role and layout, looked up right after
+  it). Manifest-less sources (loose `Data Files`, the ini archives, the builtin mod: all synthesized by `mw_mods`)
+  read the user's `<user data>/textures.toml`, `[<mod id>]` tables of the same fields (e.g. `[morrowind-data]`);
+  ids of folder mods there are ignored (they carry their own `mod.toml`). No entry: `openmw`. Unknown names and
+  bad renames are bake log warnings (`texture profile warning: ...`) and fall back; assigned sources are logged
+  (`texture profile: <source label> -> <profile>`).
+- **Granularity is the mod.** All layers of one mod share its profile. Several packs dumped into one loose
+  `Data Files` are one source with one profile: put a pack of another convention in `<user data>/mods/<pack>/`
+  with a `mod.toml` (a folder there without one doesn't load: `NoManifest` warning).
+- **Companion lookup uses the companion's source.** For base `foo`, the candidates are the union of every
+  profile's normal suffixes (default's first: `_nh`, `_n`, `_nm`, OpenMW's global order, then the new ones); the
+  first `foo<suffix>` that resolves and whose **winning file's own source** profile has that suffix as a normal
+  rule wins, read with that profile's layout and Y. Why not the albedo's source: the common case is a normals-only
+  pack over vanilla diffuse (BSA), and only the pack knows its convention. De-light's §3 rule is unaffected: it
+  asks for companions in the albedo's own source, so one profile (that source's) covers both files; its companion
+  list is `_n`/`_nh`/`_spec` plus that profile's suffixes.
+- **Keys.** The cook job (layout, `source_y`) is the `texture.cook` `role` param, so a profile change re-cooks only
+  that source's companions. `mesh.cook`'s tangent rule asks the suffix union (a superset of the cook's companions:
+  extra tangents are harmless, missing ones shade wrong); its version is 1 while the union is the default's and a
+  hash of it otherwise, so only a new suffix re-cooks meshes. The runtime layer checks fingerprints, not profiles:
+  after changing `[texture]`, re-bake (the profile fingerprint already changes, the manifest is hashed).
+- **Roles beyond normals.** `TextureSources::rule_for(stem, source)` routes `_spec` to ORM for a `wareya-pbr`
+  source; materials don't bind ORM yet (separate slice).
+- **Not built:** a per-folder rule inside one source; a Y-convention census warning at bake (§7 method).
+
+## 9. Source formats (TS-1b, 2026-11-13)
+
+What the bake reads from any source (a BSA, the loose `Data Files`, a mod folder: one VFS). Two readers:
+`sf_texture::rewrap` (block-compressed files, kept as shipped; textures.md §5) and `mw_bake::textures::decode_rgba`
+(everything the cook's decode path, de-light, terrain and far bakes decode). The decoder reads every format the rewrap
+reads, so a block file the rewrap can't keep (a BC7 normal whose Y can't be flipped on the blocks, BC4/BC5 used as
+colour) cooks instead of being `Undecodable`, as it was until TS-1b for BC4/BC5/BC7 and any KTX2.
+
+**Reuse check.** Bevy 0.20 `bevy_image` (`dds.rs`, `ktx2.rs`): upload only, no CPU decode; it rejects most legacy
+uncompressed DDS (`X8R8G8B8`, `R5G6B5`, `A1R5G5B5`, `A4R4G4B4`, `R8G8B8`) and maps `L8`/`A8L8`/`L16` to integer
+formats, so a file the bake doesn't cook often can't load raw either: decode everything we can. `ddsfile` 0.6 parses
+headers, but drops `DDPF_PALETTEINDEXED8` and matches a fixed mask list (and writes luminance as `DDPF_RGB`): legacy
+masks are read from the raw header. `ktx2` 0.5: header and levels. Blocks: `sf_texture::decode_level` (`texpresso`
+BC1-BC5, `block_compression` BC7). `image` 0.25: TGA (RLE, colour-mapped, greyscale), BMP (palettized, RLE), PNG.
+JPEG: no decoder in the tree, and `image`'s `jpeg` feature changes Bevy's feature closure (a workspace rebuild +
+hakari); Bevy's loader has no `jpeg` either: deferred to the crate-update batch.
+
+**Industry comparison.** Morrowind reads DDS (DXT1/3/5, uncompressed), TGA, BMP; OpenMW reads through OSG plugins (DDS
+with DXTn, RGTC and mask-matched uncompressed incl. luminance/alpha; TGA, BMP, PNG, JPEG). `DirectXTex`/`texconv` reads
+every legacy D3D9 layout (P8 and luminance expanded) and every DXGI format, and writes BC1-BC7 and DXGI uncompressed:
+modern packs come from it, NVTT or Compressonator. UE5 and Unity import DDS/TGA/PNG/BMP/JPEG/PSD/EXR and re-encode. We
+read texconv's legacy set, its DXGI UNORM formats and KTX2; gaps vs UE/Unity are JPEG, PSD and HDR/EXR (no Morrowind
+material input).
+
+| Source format | Read by | Outcome |
+|---|---|---|
+| DDS legacy `DXT1`, `DXT2/3`, `DXT4/5`, `ATI1`/`BC4U`, `ATI2`/`BC5U`; DDS DX10 BC1-BC5, BC7 (UNORM, sRGB, TYPELESS); KTX2 BC1-BC5, BC7 | rewrap | kept (rewrapped, levels filled; full chain in the role's format: in place), else decoded + cooked |
+| DDS legacy uncompressed, any RGB / luminance / alpha mask layout of 8-32 bits (`A8R8G8B8`, `X8R8G8B8`, `A8B8G8R8`, `R8G8B8`, `R5G6B5`, `X1R5G5B5`, `A1R5G5B5`, `A4R4G4B4`, `X4R4G4B4`, `A8R3G3B2`, `L8`, `A8L8`, `A4L4`, `A8`, `L16`, `G16R16`, 10:10:10:2); `FourCC` 36 (`A16B16G16R16`); P8 | decoder | cooked |
+| DDS DX10 `R8G8B8A8`, `B8G8R8A8`, `B8G8R8X8`, `R8G8`, `R8`, `A8`, `R16G16B16A16`/`R16G16`/`R16` UNORM, `R10G10B10A2`, `B5G6R5`, `B5G5R5A1`, `B4G4R4A4` | decoder | cooked |
+| KTX2 `R8G8B8A8`, `A8B8G8R8` pack, `B8G8R8A8`, `R8G8B8`, `B8G8R8`, `R8G8`, `R8` (UNORM, sRGB), `R16*` UNORM, `A2B10G10R10`, `R5G6B5`, `A1R5G5B5`, `B4G4R4A4` | decoder | cooked |
+| TGA (true colour, RLE, colour-mapped, greyscale), BMP (1-32 bit, palettized, RLE), PNG | decoder (`image`) | cooked |
+| signed BC4/BC5, BC6H, float, integer, YUV, ETC/ASTC, Basis; cubemap, volume, array | skip | served as shipped (`Unsupported` / `Undecodable`): not Morrowind material inputs (OpenMW samples normals UNORM; no HDR slot); Bevy loads BC6H and cubemaps as shipped |
+| KTX2 zstd/zlib supercompressed | skip | served as shipped (`Supercompressed`; Bevy reads zstd) |
+| JPEG | skip | `Undecodable` (deferred, above) |
+
+- **The bytes decide**: a `DDS ` or KTX2 signature is that container whatever the name; PNG/BMP by signature; TGA by
+  extension. Level sizes come from the format, never the pitch field; rows tightly packed (the DDS/KTX2 references;
+  texconv's `-dword` legacy DWORD-aligned 24-bit files are not detected); `dwMipMapCount` 0 reads as 1 (rewrap).
+- **Channels as D3D9/GL sample them**: missing colour 0, missing alpha 1, luminance replicated to RGB (OSG and the
+  original engine read `L8` as grey; `DirectXTex` maps it to `R8` unless told to expand: we follow the engines the
+  content was made for), `A8` = (0, 0, 0, a), DXGI `R8`/`R8G8` red / red-green.
+- **Level 0 not a whole number of 4x4 blocks** (wgpu and D3D11 refuse it for BC). Standard: keep such textures
+  uncompressed (Unity's fallback when it can't block-compress a size); no resize (changes texel addressing, needs a
+  filter per role) and no padding (wrapped UVs would sample the pad). The decoder crops partial blocks, so the cook
+  can do it; today it's still `CookSkip::Unaligned`, served as shipped (fine for TGA/PNG, a raw unaligned BC DDS fails
+  to load). Follow-up in `cook.rs`: encode them as RGBA8 KTX2.
+- **Sources** (`mw_bake/tests/texture_sources.rs`): every container above cooks the same from the BSA, the loose folder
+  or a mod above both; the highest source's file wins; a normal companion from another source than its albedo is
+  found and cooked. One stem in two extensions across sources (BSA `x.dds`, mod `x.tga`) is `Ambiguous`, served as
+  shipped: a `.dds` and a `.tga` reference resolve to different files. A `.bmp` reference finds only `.bmp`
+  (`TEXTURE_ALTERNATES` has no `bmp`, as the original engine). Per-format exact texels:
+  `mw_bake/src/textures/tests.rs`.
+
+## 10. `_spec` maps into materials (TS-2, 2026-11-13)
+
+Owner 2026-11-13 after TX-1: PBR `_spec` into materials. Decided 2026-11-11 (textures.md §11 q5): "`_spec` mapped to PBR".
+
+**Reuse check.** Bevy 0.20 `StandardMaterial` (`vendor/bevy_pbr/src/pbr_material.rs:152-174,423-446`): one image as both
+`metallic_roughness_texture` (G roughness, B metallic) and `occlusion_texture` (R) is its documented glTF setup; factors
+multiply the texture, so both go to 1.0. Per-texel specular colour/intensity (`specular_tint_texture`,
+`specular_texture`) sit behind the `pbr_specular_textures` feature, off in our Bevy: enabling it rebuilds Bevy for every
+session (CONTRIBUTING "Building"), so not here; candidate for the crate-update batch. Crates: none (the conversion is a
+256-entry table).
+
+**Industry comparison.** Packed ORM: glTF 2.0 core, UE (`_ORM`/`_ARM` with sRGB off), Unity HDRP mask map: linear, one
+fetch. Legacy specular/gloss: UE and Unity have no runtime specular-Phong path; importers and converters turn
+gloss/shininess into roughness at import (Unity keeps a "Specular setup" shader, UE converts). The standard mapping of a
+Blinn-Phong exponent to microfacet roughness is Walter et al. 2007 (Phong ↔ Beckmann `α = √(2/(n+2))`, GGX alike;
+Karis, "Specular BRDF Reference"), perceptual roughness `r = √α`. OpenMW's specular map: RGB specular colour, A
+shininess (`objects.frag`: `shininess = specTex.a * 255.0`, Blinn-Phong); `[Shaders] specular map pattern = _spec`.
+
+**Design.**
+- `_spec` follows its own VFS source's profile (§8): `wareya-pbr` → `PackRole::Orm` (R↔B swap, rewrapped block-exactly:
+  BC1 stays BC1, DXT5 drops its alpha to BC1, BC7 swaps fields; else decode + BC7 UNORM); `openmw` (default) →
+  `PackRole::SpecularShininess`: decoded, `G = round(255·(2/(255·A+2))^¼)`, R 255, B 0, then box mips and **BC1
+  linear** (one varying channel, 6 bits). The colour is dropped (no Bevy input without the feature above): vanilla-style
+  spec packs give roughness, not tint.
+- Plan: `plan_orms` (as `plan_normals`, albedo uses only, sole variant else `Ambiguous`), ORM jobs keyed by an `orm`
+  param (`texture.cook` VERSION 3, index 3); `CookIndex::orms` base stem → `OrmCompanion { file, occlusion }`, served as
+  `cooked/texture_orms.postcard` only while current (stale: none, not metal in the wrong channel).
+- Material (`mw_assets` `Surface::to_material`, statics and every cooked-model path through `TextureCompanions`):
+  ORM bound linear with the base slot's clamp; `occlusion_texture` only for a packed ORM (a converted spec map's R is 1,
+  no fetch); `metallic` 1, `perceptual_roughness` 1, `reflectance` 0.5 (F0 0.04, Wareya's `f0_scalar`). No ORM: the
+  material is unchanged (0 / 0.85 / 0.3). Unlit: none. Actors: not yet (`cooked_material` passes no companions).
+- Pack defect (§7, owner question 7, pending): `Quirk::FillEmptyLevel0 { role: Orm, channel: B }` in a profile's
+  `quirks` (off in the shipped ron): level 0's metal rebuilt from level 1 when level 0 has none and level 1 some, BC1
+  only, block-constant (BC1 shares one index set across channels; the rebuilt mask has level 2's resolution), other
+  channels bit-exact. Counted `level 0 rebuilt` in the `texture.cook:` line.
+
+**Numbers.** Exact roughness at A = 0, 2, 14, 126, 255: 255, 214, 152, 90, 76 (`r` 1.0 … 0.297). MVR `_spec`: 3 390
+files, all → BC1 by rewrap (cost: IO, §7 budget); TPBR BC7 → BC7 by field swap. Converted vanilla spec: decode + BC1
+encode (ISPC, cheap; no census of such packs yet). Tests: `mw_bake/src/cook/tests.rs` (`plan_orms_…`, `orm_companions_…`,
+`level0_metal_…`), `sf_texture` `profile/tests.rs`, `remap/tests.rs`, `cook/tests.rs`, `mw_assets/src/cooked.rs`.

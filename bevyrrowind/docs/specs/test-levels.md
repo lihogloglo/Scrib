@@ -121,3 +121,31 @@ pass/fail gates). `levels/light-lab.ron`, scene `level-light-lab`, suite scenari
   `--lab-orbit DEG_S` (all lights orbit the center: carried torches; moving lights defeat the shadow cache). With the
   existing `--point-shadows N`, `--range`, `--off contactshadows|shadowcache|actors`, `BEVYRROWIND_SHADOW_FILTER`.
 - **Sweeps:** `perf sweep` (docs/perf.md "Light lab cost model").
+
+## Texture lab (built, tx-lab, 2026-11-13)
+
+An asset viewer for texture-pack maps (owner 2026-11-13: "I don't think normals work", "a test scene, like a specific
+asset viewer"): one texture or model at a time, under light that shows relief, with an info panel that tells "no data"
+from "weak effect". `levels/texture-lab.ron` (an open grey plate, 07:30 clear), scene `level-texture-lab`; content is
+the game's (`mw_exterior_bevy/src/level/texture_lab.rs`), so the level file stays plain `sf_level`.
+
+- **Swatches** (`--lab-textures a,b,...`; default 6: `tx_hlaalu_sideedge_01`, `tx_wg_cobblestones_01`,
+  `tx_carvedwood_beam_01`, `tx_dwrv_metal00`, `tx_rock_wg_01`, `tx_wg_dirtroad_01`): a 1.6 m panel, a sphere and a cube
+  per texture, 3 m apart along z = 0, generated with UVs and MikkTSpace tangents; the material is
+  `mw_assets::cooked::cooked_material_with` over the bake's `TextureCompanions`, the statics' own path. The last three
+  are land textures: if the bake lists no companion for them, the panel names the pack files it found instead.
+- **Models** (`--lab-models a.nif,...`; default `ex_hlaalu_b_01`, `ex_hlaalu_wall_01`, `terrain_rock_wg_01`, `_05`):
+  `CookedModelRoot`s 14 m apart along z = -14 (the viewer's cooked path; no cooked product = NIF fallback, said in the
+  panel), on a 10 deg/s turntable. Their parts get the worldspace layer so the sun and lamps light them.
+- **Light:** the level hour (low sun; `[` / `]`), one steady lamp per swatch (radius 1.5 m, `spawn_light`) orbiting it
+  1.4 m out at 1.5 m height, 30 deg/s.
+- **Cameras:** `wide`, `models`, `top` from the file, plus `swatch-N` and `model-N` added for the content.
+- **Keys:** Z turntable, X lamp orbit, I info panel, N normal maps, M ORM maps, L parallax (the global switches, as console
+  `flip normalmaps` / `flip orm` / `flip parallax`; L because P is the clock pause).
+- **Info panel / log:** per swatch the served file and its source (cooked layer, and the original's mod), size, format
+  and mips from the loaded `Image`; normal and ORM companions (file, format, mips, bound or switched off); depth (tx-pom: the BC4
+  map, bound, the material's method / layers / scale, or why none); tangents. Per model: cooked or fallback, parts, materials with a normal / ORM map bound, parts with
+  tangents (GPU-only meshes via the texture gauge's render-world probe). Log at spawn
+  `texture-lab: N swatches, M models; normals K/N, orm L/N`, then `texture-lab swatch i: ...` / `texture-lab model i: ...`
+  once the images load; the gauge's `materials.live:` line counts this scene alone.
+- Any level takes `--lab-textures` / `--lab-models` (e.g. `level:light-lab` for interior lamp light only).

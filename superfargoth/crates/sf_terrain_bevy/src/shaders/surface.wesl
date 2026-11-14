@@ -9,7 +9,7 @@ import super::common::{
     P_DETAIL, P_VALID, P_MACRO, DEBUG_RAW_LAYERS, debug_flags,
     pf, pi, params, level_coord, in_window,
     splat_at, layer_tiling, layer_triplanar, layer_mean,
-    macro_clipmap, macro_sampler, albedo_height_array, nar_array, layer_sampler,
+    macro_clipmap, macro_sampler, albedo_height_array, normal_array, ao_roughness_array, layer_sampler,
 };
 
 const MACRO_LEVELS: u32 = 10u;
@@ -74,15 +74,15 @@ struct LayerSample {
     surface: vec2<f32>,
 }
 
-/// One projection of a layer: two fetches (albedo + height, normal + AO +
-/// roughness).
+/// One projection of a layer: three fetches, one per array (T6: albedo + height BC7, normal
+/// X/Y BC5, AO + roughness BC5; BC5 keeps the two normal channels independent, the standard
+/// normal-map format, so the surface data sits in its own BC5).
 fn sample_projection(id: u32, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> LayerSample {
     var s: LayerSample;
     s.albedo_height = textureSampleGrad(albedo_height_array, layer_sampler, uv, i32(id), ddx, ddy);
-    let nar = textureSampleGrad(nar_array, layer_sampler, uv, i32(id), ddx, ddy);
-    let nxy = nar.xy * 2.0 - 1.0;
+    let nxy = textureSampleGrad(normal_array, layer_sampler, uv, i32(id), ddx, ddy).xy * 2.0 - 1.0;
     s.normal = vec3<f32>(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
-    s.surface = nar.zw;
+    s.surface = textureSampleGrad(ao_roughness_array, layer_sampler, uv, i32(id), ddx, ddy).xy;
     return s;
 }
 

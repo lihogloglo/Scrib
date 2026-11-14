@@ -101,10 +101,19 @@ to it, mods patch it):
 tiling_m: f32, triplanar: bool, displacement_m: f32, surface: RecordRef }`.
 `surface` points at a surface type: footstep sounds, the deformation
 material (snow, mud, ash, sand, none), and the grass rule (M6).
-The bake resamples every layer into fixed-size **texture arrays**:
-1024² by default, 2048² on high. BC7 for albedo + height, BC5 for normal,
-BC7 for ARM, full mips. Missing maps get conservative defaults until PBR
-generation (M7).
+The bake resamples every layer into fixed-size **texture arrays**, full mips
+(as built T6, textures.md §9): albedo + height BC7 sRGB, normal X/Y BC5
+(Z rebuilt in the shader), AO + roughness BC5 (two independent channels:
+BC5 keeps them apart where BC7 would share endpoints; one more fetch per
+projection, 3 instead of 2). Edge: the host's maximum (Morrowind 2048²)
+but never past the largest source, rounded up to a power of two. At load
+the game drops top levels for the preset's texture cap (Low 512, Medium
+1024, High 2048, Ultra none) and a 1 GiB budget for the three arrays
+(`sf_terrain::LayerCap`; one eighth of the 8 GB target GPU, until per-layer
+residency streams layers by use). Missing maps get conservative defaults
+(`LAYER_DEFAULTS`) until PBR generation (M7). Needs BC texture
+compression (every desktop GPU); without it the terrain logs an error
+and draws flat default layers.
 
 **The height stack:**
 

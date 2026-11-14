@@ -182,3 +182,49 @@ fn ensure_weather_adds_it_after_the_loose_data() {
     assert!(ensure_weather(&mut bare));
     assert_eq!(bare.enabled, [builtin_id(), weather_id()]);
 }
+
+/// Texture sources (textures-adapter.md §8): `textures.toml` gives the synthesized mods their
+/// `[texture]` (they have no `mod.toml`), a pack folder carries its own, the rest stay empty; a
+/// pack folder without a `mod.toml` doesn't load (reported).
+#[test]
+fn texture_sections_come_from_the_manifest_or_textures_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let install = install(dir.path());
+    let user = UserDirs::new(dir.path().join("user"));
+    fs::create_dir_all(&user.root).unwrap();
+    fs::write(user.textures(), "[morrowind-data]\nprofile = \"wareya-pbr\"\nnormal_y = \"up\"\n[some-folder-mod]\nprofile = \"x\"\n").unwrap();
+    let root = user.mods().join("pbr");
+    fs::create_dir_all(root.join("assets/textures")).unwrap();
+    fs::write(root.join("assets/textures/a_n.dds"), "n").unwrap();
+    let manifest = "id = \"pbr\"\nname = \"PBR\"\nversion = \"1.0.0\"\n[content]\nassets = [\"assets\"]\n[texture]\nprofile = \"wareya-pbr\"\nsuffixes = { \"_normal\" = \"_n\" }\n";
+    fs::write(root.join("mod.toml"), manifest).unwrap();
+    fs::create_dir_all(user.mods().join("loose-pack/textures")).unwrap();
+
+    let mods = Mods::open(MwAdapter::new(install, builtin()), user, DEFAULT_PROFILE).unwrap();
+    let mut profile = mods.profile.clone();
+    profile.enabled.push(ModId::new("pbr").unwrap());
+    let loaded = load_profile(&mods.repo, &profile, &mods.adapters(), &api());
+    let texture = |id: &str| loaded.get(&ModId::new(id).unwrap()).map(|m| m.manifest.texture.clone()).unwrap();
+    let data = texture(DATA);
+    assert_eq!((data.profile.as_deref(), data.normal_y), (Some("wareya-pbr"), Some(sf_mods::NormalY::Up)));
+    let pbr = texture("pbr");
+    assert_eq!(pbr.profile.as_deref(), Some("wareya-pbr"));
+    assert_eq!(pbr.suffixes.get("_normal").map(String::as_str), Some("_n"));
+    assert!(texture("morrowind.esm").is_empty() && texture(BUILTIN).is_empty());
+    assert!(mods.repo.issues.iter().any(|i| matches!(&i.kind, IssueKind::NoManifest { path } if path.ends_with("loose-pack"))));
+    assert!(mods.adapter.take_mount_warnings().is_empty());
+}
+
+#[test]
+fn an_unreadable_textures_toml_is_a_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let install = install(dir.path());
+    let user = UserDirs::new(dir.path().join("user"));
+    fs::create_dir_all(&user.root).unwrap();
+    fs::write(user.textures(), "[morrowind-data]\nprofil = \"typo\"\n").unwrap();
+    let mods = Mods::open(MwAdapter::new(install, builtin()), user, DEFAULT_PROFILE).unwrap();
+    let loaded = mods.load(&api());
+    assert!(loaded.get(&data_id()).unwrap().manifest.texture.is_empty());
+    let warnings = mods.adapter.take_mount_warnings();
+    assert!(warnings.len() == 1 && warnings[0].contains("textures.toml"), "{warnings:?}");
+}

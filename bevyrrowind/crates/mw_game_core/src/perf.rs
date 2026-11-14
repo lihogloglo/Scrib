@@ -142,6 +142,15 @@ pub enum Part {
     /// De-lit albedo textures (the bake's `texture.delight` VFS layer, bake.md "De-lighting"): off, the layer
     /// isn't mounted and models load the original textures (an A/B; restart to switch).
     Delight,
+    /// Normal maps from texture-pack companions on every material (`mw_assets::MaterialMaps`, TX-lab):
+    /// off, materials drop `normal_map_texture` (an A/B; console `flip normalmaps` switches it live).
+    NormalMaps,
+    /// ORM maps (`_spec` companions, TS-2) on every material: off, no metallic-roughness or occlusion
+    /// texture and the 2002 factors (an A/B; console `flip orm`).
+    Orm,
+    /// Parallax occlusion from `_nh` height companions (`depth_map`, tx-pom) on every material: off,
+    /// no depth map and Bevy's default parallax fields (an A/B; console `flip parallax`).
+    Parallax,
     /// Surface weather on lit materials (`sf_surface_bevy`, vendored `bevy_pbr` patch "SW"): off, the
     /// hook stays compiled in with its flags cleared (an A/B: wet vs dry).
     Surface,
@@ -171,7 +180,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 69] = [
+    const ALL: [(&'static str, Part); 72] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -233,6 +242,9 @@ impl Part {
         ("movershadows", Part::MoverShadows),
         ("precipocc", Part::PrecipOcc),
         ("delight", Part::Delight),
+        ("normalmaps", Part::NormalMaps),
+        ("orm", Part::Orm),
+        ("parallax", Part::Parallax),
         ("surface", Part::Surface),
         ("wet", Part::Wet),
         ("puddles", Part::Puddles),
@@ -341,5 +353,11 @@ mod tests {
         let depth = Off::from_flags(&["shoredepth".into()]).expect("known");
         assert!(depth.has(Part::ShoreDepth) && !depth.has(Part::ShoreWaves) && !depth.has(Part::SeaWind));
         assert_eq!(depth.label(), "shoredepth");
+        let maps = Off::from_flags(&["normalmaps".into(), "ORM".into()]).expect("known");
+        assert!(maps.has(Part::NormalMaps) && maps.has(Part::Orm) && !maps.has(Part::Delight));
+        assert_eq!(maps.label(), "normalmaps,orm");
+        let parallax = Off::from_flags(&["parallax".into()]).expect("known");
+        assert!(parallax.has(Part::Parallax) && !parallax.has(Part::NormalMaps));
+        assert_eq!(parallax.label(), "parallax");
     }
 }

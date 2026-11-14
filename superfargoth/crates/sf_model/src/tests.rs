@@ -556,6 +556,38 @@ fn skinned_and_rig_cooks_carry_tangents_through_every_stream() {
     }
 }
 
+/// A mirrored rigid part ([`CookedSkinned::rigid`] with a negative
+/// determinant) keeps Bevy's tangent frame: the skin matrix carries the
+/// mirror, Bevy skins `T' = M T` and `N' = M⁻ᵀ N` (`bevy_pbr` 0.20
+/// `skinning.wesl` `skin_normals`) and builds `B' = w' cross(N', T')`, which
+/// must be the mirrored bitangent `M B` (the entity's determinant flag never
+/// sees a skin matrix).
+#[test]
+#[allow(clippy::many_single_char_names)] // the math's own names: M, N, T, B
+fn mirrored_rigid_parts_keep_the_bitangent() {
+    let cooked = cook_with(&tangent_model(), &CookSettings::default(), &[true, false]).unwrap();
+    let mirror = Affine3A::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+    let plain = CookedSkinned::rigid(&cooked, "root", Affine3A::IDENTITY).unwrap().unwrap();
+    let flipped = CookedSkinned::rigid(&cooked, "root", mirror).unwrap().unwrap();
+    let m = glam::Mat3::from(mirror.matrix3);
+    let mut checked = 0;
+    for (level, lod) in plain.model.lods.iter().enumerate() {
+        for i in 0..lod.submeshes.len() {
+            let (a, b) = (plain.decode_submesh(level, i).unwrap(), flipped.decode_submesh(level, i).unwrap());
+            assert_eq!(a.vertices, b.vertices);
+            for ((v, ta), tb) in a.vertices.iter().zip(&a.tangents).zip(&b.tangents) {
+                let (n, t) = (Vec3::from_array(v.normal), Vec3::new(ta[0], ta[1], ta[2]));
+                let want = m * (ta[3] * n.cross(t));
+                let (n2, t2) = ((m.inverse().transpose() * n).normalize(), m * Vec3::new(tb[0], tb[1], tb[2]));
+                let got = tb[3] * n2.cross(t2);
+                assert!((got - want).length() < 1e-4, "bitangent {got} vs mirrored {want}");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 0, "the bumpy submesh has tangents");
+}
+
 /// `mesh.cook` with a tangent rule (a test convention: a base texture `x.png`
 /// pairs with `x_n.png`) re-cooks exactly the models whose material gains a
 /// normal map when a pack adds one.

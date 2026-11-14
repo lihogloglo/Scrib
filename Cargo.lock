@@ -5076,6 +5076,7 @@ dependencies = [
  "dirs",
  "glam 0.33.12",
  "image",
+ "ktx2",
  "mw_actors",
  "mw_ai",
  "mw_anim",
@@ -5101,6 +5102,7 @@ dependencies = [
  "sf_coords",
  "sf_lod",
  "sf_model",
+ "sf_mods",
  "sf_nav",
  "sf_nav_bake",
  "sf_nav_recast",
@@ -5450,6 +5452,7 @@ dependencies = [
  "sf_sky_bevy",
  "sf_surface_bevy",
  "sf_terrain_bevy",
+ "sf_texture_bevy",
  "sf_ui",
  "sf_ui_bevy",
  "sf_ui_screens",
@@ -8093,6 +8096,7 @@ dependencies = [
  "bevy_core_pipeline",
  "bevy_diagnostic",
  "bevy_ecs",
+ "bevy_image",
  "bevy_mesh",
  "bevy_pbr",
  "bevy_platform",
@@ -8775,6 +8779,7 @@ dependencies = [
  "sf_bake",
  "sf_coords",
  "sf_records",
+ "sf_texture",
  "sf_world",
  "tempfile",
  "thiserror 2.0.21",
@@ -8824,6 +8829,24 @@ dependencies = [
  "ron",
  "serde",
  "texpresso",
+]
+
+[[package]]
+name = "sf_texture_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_ecs",
+ "bevy_image",
+ "bevy_log",
+ "bevy_pbr",
+ "bevy_reflect",
+ "bevy_time",
+ "futures-lite",
+ "sf_texture",
+ "wgpu-types",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -11116,6 +11139,7 @@ dependencies = [
  "proc-macro2",
  "profiling",
  "quote",
+ "raw-window-handle",
  "regex-automata",
  "regex-syntax",
  "rodio",

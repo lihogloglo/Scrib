@@ -364,3 +364,25 @@ fn only_cutout_candidates_are_classified() {
     assert!(alpha_class_jobs(&[tested], resolve).is_empty());
     assert_eq!(alpha_class_jobs(&[candidate("textures/leaf.dds")], resolve).len(), 1);
 }
+
+/// textures-adapter.md §3 + §8: a companion the albedo's source profile names (here a renamed
+/// `_normal`) marks a PBR replacer in that source only; elsewhere the same name is no companion.
+#[test]
+fn a_profile_companion_skips_de_light_in_its_own_source() {
+    use crate::texture_profiles::TextureSources;
+    let section = sf_mods::TextureSection {
+        suffixes: BTreeMap::from([("_normal".into(), "_n".into())]),
+        ..sf_mods::TextureSection::default()
+    };
+    let sources = TextureSources::from_sections([(1..2, "pack", &section)]);
+    let data = MemSource::new("data").with("textures/a.dds", "a").with("textures/a_normal.dds", "n");
+    let pack = MemSource::new("pack").with("textures/b.dds", "b").with("textures/b_normal.dds", "n");
+    let vfs = Vfs::builder().mount(data).mount(pack).build();
+    let resolve =
+        |r: &str| vfs.resolve_preferring(&VfsPath::new(r).ok()?, TEXTURE_ALTERNATES).map(|(p, _)| p.as_str().to_owned());
+    let source_of = |p: &str| VfsPath::new(p).ok().and_then(|p| vfs.resolve(&p));
+    let companions = |s: &sf_vfs::SourceIndex| sources.companion_suffixes(*s).map(str::to_owned).collect();
+    let (jobs, skipped) = plan_jobs_with([albedo("textures/a.tga"), albedo("textures/b.tga")], resolve, source_of, companions);
+    assert_eq!(jobs.keys().collect::<Vec<_>>(), ["textures/a.dds"]);
+    assert_eq!(skipped, BTreeMap::from([(Skip::Companion, 1)]));
+}

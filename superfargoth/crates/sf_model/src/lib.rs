@@ -17,6 +17,7 @@ mod tangent;
 #[cfg(feature = "gltf")]
 mod gltf_import;
 pub mod steps;
+pub mod uv_density;
 
 pub use cook::{CookError, CookSettings, cook, cook_rest, cook_rest_with, cook_rig, cook_rig_with, cook_with};
 pub use cooked::{Cooked, CookedLod, CookedModel, CookedSubmesh, FormatError, Tangent, Vertex};

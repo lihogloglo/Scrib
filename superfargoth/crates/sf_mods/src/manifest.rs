@@ -81,6 +81,9 @@ pub struct ModManifest {
     /// UI contributions (ui.md).
     #[serde(default)]
     pub ui: UiContent,
+    /// How the bake reads the mod's textures (textures.md §7 "Pack profiles").
+    #[serde(default)]
+    pub texture: TextureSection,
     /// Folder the manifest was loaded from, if any. Asset roots resolve against it.
     #[serde(skip)]
     pub root: Option<PathBuf>,
@@ -117,6 +120,47 @@ pub struct Content {
 pub struct UiContent {
     #[serde(default)]
     pub styles: Vec<String>,
+}
+
+/// Which way a normal map's green channel points: `"up"` (OpenGL style) or `"down"` (DirectX
+/// style).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NormalY {
+    Up,
+    Down,
+}
+
+/// `[texture]`: how the bake reads the mod's textures (textures.md §7). The game adapter owns the
+/// profile names and what they mean; this section only picks one and adjusts it for this mod's
+/// files. Empty (the default): the adapter's default profile, unchanged.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextureSection {
+    /// The pack profile the mod's textures follow, by the adapter's name for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    /// Overrides the profile's normal-map green convention for this mod.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normal_y: Option<NormalY>,
+    /// Suffixes this mod names differently: its suffix → the profile suffix whose role and
+    /// channel layout it follows (`"_normal" = "_n"`), looked up right after that rule. Only this
+    /// mod's files are read with them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub suffixes: BTreeMap<String, String>,
+}
+
+impl TextureSection {
+    /// Whether the section changes nothing.
+    pub fn is_empty(&self) -> bool {
+        self.profile.is_none() && self.normal_y.is_none() && self.suffixes.is_empty()
+    }
+
+    /// A table of sections by mod id (`[<mod id>]` tables of `[texture]` fields): the user-side
+    /// texture settings an adapter applies to mods it synthesizes, which have no `mod.toml`.
+    pub fn table_from_toml(text: &str) -> Result<BTreeMap<ModId, Self>, toml::de::Error> {
+        toml::from_str(text)
+    }
 }
 
 fn any_version() -> VersionReq {
@@ -164,6 +208,7 @@ impl ModManifest {
             load_before: Vec::new(),
             content: Content::default(),
             ui: UiContent::default(),
+            texture: TextureSection::default(),
             root: None,
             adapter: None,
         }

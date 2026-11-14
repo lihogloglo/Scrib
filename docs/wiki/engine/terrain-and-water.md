@@ -13,7 +13,15 @@ Crates: `sf_terrain`, `sf_terrain_bevy`, `sf_water`, `sf_water_bevy`; Morrowind 
 `constrain` under footprints), `terrain.pyramid` (level k from four k-1 tiles), `terrain.macro` (257² far albedo),
 `terrain.layer_table`/`terrain.layers` (splat textures as arrays), `terrain.rt_proxy`. Tiles are 513² samples,
 `TILE_QUADS` 512 (`tile.rs:10`), level k at `0.5*2^k` m. Adapters implement `TerrainSource` (`source.rs`); Morrowind:
-`mw_bake::world` (`MwTerrainSource`, `MwLayers`).
+`mw_bake::world` (`MwTerrainSource`, `MwLayers`). Layer maps (T5): `MwLayers::with_sources` gives each `LTEX` its pack
+normal + ARM companions (`world/layer_maps.rs`, the cook's lookups and per-source profiles), converted to canonical in
+`LayerSource::decode` (normal +Y up; ARM R = AO, G = roughness); `normal_to_array_frame` (`bake.rs`) stores them in
+the arrays' +V frame that `surface.wesl` `sample_projection` reads (x along +U = world +X, y along +V = world +Z).
+Bake line `terrain layers: N, n with a normal map, a with ARM`. Arrays (T6, `encode_layer`): albedo + height BC7 sRGB
+(ISPC Fast), normal X/Y BC5, AO + roughness BC5, full chains, `LayerArrays` FORMAT 3 (`product.rs`); edge = the host's
+max (`mw_bake` `LAYER_ARRAY_SIZE` 2048) capped at the largest source (`LayerInfo::source_edge`); `terrain.layers` v4.
+Load: `BakedTerrain::layers_capped` copies only the levels `TerrainSettings::layer_cap` keeps (preset cap + 1 GiB
+budget, `DEFAULT_LAYER_BUDGET`); log `terrain layers: N x S², X MiB (L levels)`; no BC on the device = error + flat layers.
 
 **Terrain runtime** (`sf_terrain_bevy/src/lib.rs`): `TerrainPlugin` `:230`; `TerrainWorld` (`:150`) streams tiles from the
 store on the async pool around the `TerrainCamera` (`:146`), feeds `TerrainHeightsMap` (CPU queries, `sf_terrain/src/query.rs`).
@@ -61,7 +69,8 @@ interiors at `WHGT`), optics by region (`optics::*`), `SEA_FETCH_M` 20 km, shore
 
 ## Known limits
 
-Far shadow map upload cost was a walk stutter source (see [perf ledger](../../ledger/perf.md); water history in the
+Terrain layer arrays are RGBA8 at 256² (`mw_bake/src/world.rs` `LAYER_ARRAY_SIZE`): BC7/BC5 and size per preset are T6;
+layer height for the height blend comes from the albedo's alpha only (a pack's `_nh` height isn't used). Far shadow map upload cost was a walk stutter source (see [perf ledger](../../ledger/perf.md); water history in the
 [water ledger](../../ledger/water.md)). Rivers, underwater and
 wading are specced (`water.md`); check the code before assuming they are wired. SSPR only mirrors what is on screen
 and opaque (no translucents, nothing off screen: the environment map fills in; the dynamic probe is specced, not built).

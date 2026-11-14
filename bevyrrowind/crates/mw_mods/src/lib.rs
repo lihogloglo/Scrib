@@ -26,7 +26,9 @@
 //! profiles in `<user data>/profiles` ([`UserDirs`]); without a
 //! `profiles/default.toml`, [`default_profile`] enables the builtin mod, the
 //! ini's content files and `morrowind-data`, which loads exactly what the
-//! pre-mods load path did.
+//! pre-mods load path did. Synthesized mods have no `mod.toml`, so their
+//! `[texture]` settings (textures-adapter.md §8) come from the user-side
+//! `<user data>/textures.toml` ([`UserDirs::textures`], [`MwAdapter::with_textures`]).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -41,7 +43,7 @@ use mw_vfs::BsaSource;
 use semver::{Version, VersionReq};
 use sf_mods::{
     ContentAdapter, IssueKind, LoadedProfile, ModId, ModIssue, ModManifest, ModRepository, NativeRecords, Profile, ProfileError,
-    RecordCx, RecordFileError, load_profile,
+    RecordCx, RecordFileError, TextureSection, load_profile,
 };
 use sf_records::{RecordDb, SourceId};
 use sf_vfs::{DirSource, MemSource, VfsPath, VfsSource};
@@ -63,6 +65,8 @@ pub const DEFAULT_PROFILE: &str = "default";
 pub const USER_DATA_ENV: &str = "BEVYRROWIND_USER_DATA";
 /// VFS path of the `mw` Luau runtime in the builtin mod (`mw_script::emit::RUNTIME`).
 pub const RUNTIME_PATH: &str = "scripts/mw/mw.luau";
+/// The user-side texture settings file in the user data folder ([`UserDirs::textures`]).
+pub const TEXTURES_FILE: &str = "textures.toml";
 /// VFS path of the generated function status table (`mw_script::emit::runtime_functions`).
 pub const RUNTIME_FUNCTIONS_PATH: &str = "scripts/mw/functions.luau";
 
@@ -116,6 +120,24 @@ impl UserDirs {
     /// `<root>/profiles`: `<name>.toml` per profile.
     pub fn profiles(&self) -> PathBuf {
         self.root.join("profiles")
+    }
+
+    /// `<root>/textures.toml`: `[<mod id>]` tables of `[texture]` settings for the synthesized
+    /// mods (loose Data Files, the archives' plugin mods), which have no `mod.toml`.
+    pub fn textures(&self) -> PathBuf {
+        self.root.join(TEXTURES_FILE)
+    }
+}
+
+/// Reads a `textures.toml` ([`UserDirs::textures`]); a missing file is empty.
+///
+/// # Errors
+/// The file exists but can't be read or doesn't parse.
+pub fn load_textures(path: &Path) -> Result<BTreeMap<ModId, TextureSection>, String> {
+    match fs::read_to_string(path) {
+        Ok(text) => TextureSection::table_from_toml(&text).map_err(|e| format!("{}: {}", path.display(), e.to_string().trim_end())),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(e) => Err(format!("{}: {e}", path.display())),
     }
 }
 
@@ -180,6 +202,8 @@ pub struct MwAdapter {
     content: Mutex<(Vec<ContentFile>, Vec<LoadWarning>)>,
     /// Archives that failed to open (the mod loads without them).
     mount_warnings: Mutex<Vec<String>>,
+    /// `[texture]` settings of synthesized mods, by id ([`Self::with_textures`]).
+    textures: BTreeMap<ModId, TextureSection>,
 }
 
 impl MwAdapter {
@@ -192,7 +216,17 @@ impl MwAdapter {
             plugins: Mutex::default(),
             content: Mutex::default(),
             mount_warnings: Mutex::default(),
+            textures: BTreeMap::new(),
         }
+    }
+
+    /// The `[texture]` settings its synthesized mods get, by mod id (from the user's
+    /// `textures.toml`, [`load_textures`]); ids of other mods are ignored (a folder mod sets its
+    /// own in its `mod.toml`).
+    #[must_use]
+    pub fn with_textures(mut self, textures: BTreeMap<ModId, TextureSection>) -> Self {
+        self.textures = textures;
+        self
     }
 
     /// Mount only: content files are not parsed (VFS-only commands).
@@ -350,7 +384,13 @@ impl ContentAdapter for MwAdapter {
         weather.description = "weather presets, region climates and precipitation from REGN and Morrowind.ini (mw_weather)".into();
         weather.load_after = plugins.iter().map(|m| m.id.clone()).chain(std::iter::once(data_id())).collect();
         weather.content.records = vec![WEATHER_RECORDS.into()];
-        std::iter::once(builtin).chain(plugins).chain([data, weather]).collect()
+        let mut mods: Vec<ModManifest> = std::iter::once(builtin).chain(plugins).chain([data, weather]).collect();
+        for manifest in &mut mods {
+            if let Some(texture) = self.textures.get(&manifest.id) {
+                manifest.texture = texture.clone();
+            }
+        }
+        mods
     }
 
     fn mount(&self, manifest: &ModManifest) -> Result<Vec<Arc<dyn VfsSource>>, String> {
@@ -473,9 +513,19 @@ pub struct Mods {
 }
 
 impl Mods {
-    /// Scans `user`'s mods folder and the install, and selects `profile`.
+    /// Scans `user`'s mods folder and the install, and selects `profile`. The user's
+    /// `textures.toml` sets the synthesized mods' `[texture]` (an unreadable one is a mount
+    /// warning, and they keep the default).
     pub fn open(adapter: MwAdapter, user: UserDirs, profile: &str) -> Result<Self, ProfileError> {
         let (profile, profile_from_file) = load_profile_named(&user, profile, adapter.install())?;
+        let adapter = match load_textures(&user.textures()) {
+            Ok(textures) if textures.is_empty() => adapter,
+            Ok(textures) => adapter.with_textures(textures),
+            Err(message) => {
+                adapter.warn_mount(message);
+                adapter
+            }
+        };
         let native = NativeRecords;
         let repo = ModRepository::scan(&[user.mods()], &[&adapter, &native]);
         Ok(Self { adapter, native, repo, profile, profile_from_file, user })

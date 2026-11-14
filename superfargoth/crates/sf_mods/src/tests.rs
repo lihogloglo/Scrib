@@ -45,6 +45,37 @@ fn parses_full_manifest() {
     assert_eq!(m.load_after, [id("tribunal")]);
 }
 
+/// `[texture]` (textures.md §7): parsed, absent means empty, and it round-trips through TOML.
+#[test]
+fn texture_section_round_trips() {
+    let m = manifest(
+        r#"
+        id = "pbr-pack"
+        name = "PBR pack"
+        version = "1.0.0"
+
+        [texture]
+        profile = "some-profile"
+        normal_y = "up"
+        suffixes = { "_normal" = "_n", "_height" = "_nh" }
+        "#,
+    );
+    let texture = &m.texture;
+    assert_eq!(texture.profile.as_deref(), Some("some-profile"));
+    assert_eq!(texture.normal_y, Some(NormalY::Up));
+    assert_eq!(texture.suffixes.get("_normal").map(String::as_str), Some("_n"));
+    assert!(!texture.is_empty());
+    let text = toml::to_string(texture).unwrap();
+    assert_eq!(&toml::from_str::<TextureSection>(&text).unwrap(), texture);
+    assert!(simple("plain").texture.is_empty());
+    assert_eq!(toml::to_string(&TextureSection::default()).unwrap(), "");
+    // Typos in the section are errors, like everywhere in the manifest.
+    let typo = "id = \"a\"\nname = \"A\"\nversion = \"1.0.0\"\n[texture]\nnormal = \"up\"";
+    assert!(ModManifest::from_toml(typo).is_err());
+    let bad = "id = \"a\"\nname = \"A\"\nversion = \"1.0.0\"\n[texture]\nnormal_y = \"sideways\"";
+    assert!(ModManifest::from_toml(bad).is_err());
+}
+
 #[test]
 fn rejects_unknown_fields_and_bad_ids() {
     assert!(ModManifest::from_toml("id = \"a\"\nname = \"A\"\nversion = \"1.0.0\"\ntypo = 1").is_err());

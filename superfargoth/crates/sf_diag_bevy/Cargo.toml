@@ -16,6 +16,9 @@ views = ["render", "dep:bevy_core_pipeline", "dep:bevy_pbr"]
 # Pipeline warm-up watch (`PipelineWatchPlugin`, pipeline-warmup.md W0): pending draws, compile
 # times and view-key flips in the render world.
 pipelines = ["render", "dep:bevy_asset", "dep:bevy_camera", "dep:bevy_mesh", "dep:bevy_pbr"]
+# Live texture/material gauge (`TextureGaugePlugin`): GPU bytes per format family, normal/ORM maps on
+# StandardMaterial, normal-mapped meshes without tangents (render-world vertex layouts).
+textures = ["render", "dep:bevy_asset", "dep:bevy_camera", "dep:bevy_image", "dep:bevy_mesh", "dep:bevy_pbr"]
 
 # Minimal Bevy (ARCHITECTURE §8b rule 6). No rendering crate by default: GPU
 # timings arrive through `DiagnosticsStore` when the app adds `RenderDiagnosticsPlugin`.
@@ -34,6 +37,8 @@ bevy_ecs = { workspace = true, features = ["std"] }
 bevy_diagnostic = { workspace = true, features = ["std"] }
 # Instant of diagnostic measurements; HashMap.
 bevy_platform = { workspace = true, features = ["std"] }
+# Image texture descriptors (feature `textures`).
+bevy_image = { workspace = true, optional = true }
 # Mesh3d visibility class (feature `pipelines`).
 bevy_mesh = { workspace = true, optional = true }
 # Shadow phase, light views, mesh preprocessing buffers (feature `views`).

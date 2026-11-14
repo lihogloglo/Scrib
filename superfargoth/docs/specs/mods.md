@@ -72,6 +72,11 @@ scripts = ["scripts/better_lanterns/main.luau"]          # entry points (scripti
 
 [ui]                                          # ui.md
 styles = ["ui/better_lanterns/style.css"]
+
+[texture]                                     # pack profile its textures are read with (textures.md §7):
+profile = "some-profile"                      # a name from the game adapter's profile data; default = adapter's
+normal_y = "up"                               # overrides the profile's normal-map Y convention
+suffixes = { "_normal" = "_n" }               # renames a companion suffix onto a profile rule (2026-11-13)
 ```
 
 `[optional]` replaces the common use of `load_after` with a version check; `load_after` stays

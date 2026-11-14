@@ -36,7 +36,7 @@ use crate::textures::decode_rgba;
 pub const IMPOSTOR_MIN_HEIGHT: f32 = 3.0;
 
 /// Bumped when the rules below change (part of every far bake key).
-const RULES_VERSION: u32 = 2;
+const RULES_VERSION: u32 = 3;
 
 /// [`FarSource`] for Morrowind content.
 pub struct MwFarSource {

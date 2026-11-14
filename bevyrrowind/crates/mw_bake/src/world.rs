@@ -24,7 +24,7 @@ use sf_bake::{BakeError, Baker, Digest, ProductKey};
 use sf_model::steps::ModelInfoStep;
 use sf_records::{RecordDb, RecordId};
 use sf_terrain::bake::{
-    LAYER_KIND, LayerImage, LayerSource, PlacementFootprints, SOURCE_TILE_KIND, TerrainBake,
+    LAYER_KIND, LayerFile, LayerImage, LayerSource, PlacementFootprints, SOURCE_TILE_KIND, TerrainBake,
     TerrainBakeConfig, TerrainLayer, source_tile_record,
 };
 use sf_terrain::{FOOTPRINT_FEATHER, TerrainSource};
@@ -32,24 +32,41 @@ use sf_vfs::Vfs;
 use sf_world::bake::WorldBake;
 use sf_world::{IndexParams, WorldspaceId};
 
+use crate::texture_profiles::TextureSources;
 use crate::textures::decode_rgba;
 
-/// Edge of the terrain layer texture arrays. Vanilla land textures are
-/// 256²; larger replacers are downsampled to this (a quality tier later).
-pub const LAYER_ARRAY_SIZE: u32 = 256;
+pub mod layer_maps;
+
+use layer_maps::Convert;
+
+/// Largest edge of the terrain layer texture arrays (T6, textures.md §9): High's texture size, as
+/// HD land packs ship (2K). The bake never upsamples past the largest layer source (vanilla's 256²
+/// stays 256²); the game drops top levels per preset at load (`sf_terrain::LayerCap`).
+pub const LAYER_ARRAY_SIZE: u32 = 2048;
 
 /// The exterior's terrain layers as an `sf_terrain` [`LayerSource`].
 pub struct MwLayers {
     layers: BTreeMap<RecordId, TerrainLayer>,
+    /// Companion file and map → its conversion to the canonical layout (T5, [`layer_maps`]).
+    convert: HashMap<(String, LayerFile), Convert>,
 }
 
 impl MwLayers {
+    /// [`Self::with_sources`] with every VFS source on the default pack profile.
+    pub fn new(db: &RecordDb, vfs: &Vfs) -> Self {
+        Self::with_sources(db, vfs, &TextureSources::default())
+    }
+
     /// Every live `LTEX` plus the default layer, with paths resolved through
     /// `vfs`. A layer whose texture is missing (vanilla Tribunal has one)
-    /// draws the default land texture, as an unresolved index does.
-    pub fn new(db: &RecordDb, vfs: &Vfs) -> Self {
+    /// draws the default land texture, as an unresolved index does. Each
+    /// layer's normal map and ARM are its texture's pack companions, read
+    /// with their own source's profile (`sources`, [`layer_maps::companions`]).
+    pub fn with_sources(db: &RecordDb, vfs: &Vfs, sources: &TextureSources) -> Self {
         let defs = terrain::terrain_layers(db, Some(vfs));
         let fallback = defs.iter().find(|(id, _)| id.as_str() == terrain::DEFAULT_LAYER).map(|(_, d)| d.albedo_height.clone());
+        let resolve = layer_maps::vfs_resolver(vfs);
+        let mut convert = HashMap::new();
         let layers = defs
             .into_iter()
             .map(|(id, mut def)| {
@@ -58,17 +75,34 @@ impl MwLayers {
                 {
                     def.albedo_height = f.clone();
                 }
-                (id, layer_of(&def))
+                let mut layer = layer_of(&def);
+                let found = layer_maps::companions(sources, &layer.albedo_height, &resolve);
+                for (slot, companion) in [(&mut layer.normal, found.normal), (&mut layer.arm, found.arm)] {
+                    if let Some((file, how)) = companion {
+                        convert.insert((file.clone(), how.file()), how);
+                        *slot = Some(file);
+                    }
+                }
+                (id, layer)
             })
             .collect();
-        Self { layers }
+        Self { layers, convert }
     }
 
-    /// Record fingerprints of every layer (`terrain.layer` inputs).
+    /// Record fingerprints of every layer (`terrain.layer` inputs): the layer and its
+    /// companions' conversions (a changed pack profile re-bakes the arrays).
     pub fn fingerprints(&self) -> impl Iterator<Item = ((String, String), Digest)> + '_ {
-        self.layers
-            .iter()
-            .map(|(id, l)| ((LAYER_KIND.to_owned(), id.as_str().to_owned()), Digest::of(format!("{l:?}").as_bytes())))
+        self.layers.iter().map(|(id, l)| {
+            let how = |p: &Option<String>, f: LayerFile| p.as_ref().and_then(|p| self.convert.get(&(p.clone(), f)));
+            let text = format!("{l:?} {:?} {:?}", how(&l.normal, LayerFile::Normal), how(&l.arm, LayerFile::Arm));
+            ((LAYER_KIND.to_owned(), id.as_str().to_owned()), Digest::of(text.as_bytes()))
+        })
+    }
+
+    /// Layers with a normal map, and with an ARM map (the bake line).
+    pub fn companion_counts(&self) -> (usize, usize) {
+        let count = |f: fn(&TerrainLayer) -> bool| self.layers.values().filter(|l| f(l)).count();
+        (count(|l| l.normal.is_some()), count(|l| l.arm.is_some()))
     }
 
     pub fn len(&self) -> usize {
@@ -102,8 +136,11 @@ impl LayerSource for MwLayers {
         self.layers.get(id).cloned()
     }
 
-    fn decode(&self, path: &str, bytes: &[u8]) -> Result<LayerImage, String> {
-        let img = decode_rgba(path, bytes)?;
+    fn decode(&self, path: &str, bytes: &[u8], file: LayerFile) -> Result<LayerImage, String> {
+        let mut img = decode_rgba(path, bytes)?;
+        if let Some(how) = self.convert.get(&(path.to_owned(), file)) {
+            how.apply(&mut img.rgba);
+        }
         Ok(LayerImage { width: img.width, height: img.height, rgba: img.rgba })
     }
 }

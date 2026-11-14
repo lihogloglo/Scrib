@@ -8,6 +8,17 @@
 //! cooks then weld vertex and tangent together: a vertex whose corners
 //! disagree (a mirrored-UV seam, where the handedness flips) splits into one
 //! vertex per side, which is what DCC exporters write.
+//!
+//! Handedness is Bevy's: `w` is the negated `MikkTSpace` sign, exactly what
+//! `Mesh::generate_tangents` stores (`bevy_mesh` 0.20 `src/mikktspace.rs:126-129`,
+//! "mikktspace seems to assume left-handedness so we can flip the sign"). Bevy's
+//! PBR shader builds the bitangent as `w * cross(N, T)` (`bevy_pbr` 0.20
+//! `src/render/pbr_functions.wesl:162`) and reads a normal map's +Y along it;
+//! with Bevy's top-left UV origin that is `-dP/dv`, the image's up: the
+//! canonical (OpenGL, +Y up) convention the cooks convert normal maps to. The
+//! raw `MikkTSpace` sign points the bitangent along `+dP/dv` and inverts green.
+//! Cooked tangents and the loader's `generate_tangents` fallback (meshes
+//! without cooked tangents) must agree, so both use this sign.
 
 use bevy_mikktspace::{Geometry, TangentSpace, generate_tangents};
 use glam::Vec3;
@@ -45,7 +56,7 @@ impl Geometry for Corners<'_> {
     }
     fn set_tangent(&mut self, tangent_space: Option<TangentSpace>, face: usize, vert: usize) {
         let normal = self.vertex(face, vert).normal;
-        self.out[face * 3 + vert] = settle(tangent_space.map(|t| t.tangent_encoded()), normal);
+        self.out[face * 3 + vert] = settle(tangent_space.map(|t| bevy_handed(t.tangent_encoded())), normal);
     }
 }
 
@@ -60,6 +71,11 @@ pub(crate) fn corner_tangents(vertices: &[Vertex], indices: &[u32]) -> Vec<Tange
     // The error type has no variants: generation can't fail.
     let _ = generate_tangents(&mut corners);
     corners.out
+}
+
+/// A `MikkTSpace` encoded tangent in Bevy's handedness: `w` negated (module docs).
+fn bevy_handed([x, y, z, w]: Tangent) -> Tangent {
+    [x, y, z, -w]
 }
 
 /// `encoded` normalized, or a fallback perpendicular to `normal`.

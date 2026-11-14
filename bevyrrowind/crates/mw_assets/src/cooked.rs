@@ -97,6 +97,10 @@ struct SurfaceKey {
     base_clamp: [bool; 2],
     glow_texture: Option<String>,
     normal_texture: Option<String>,
+    /// The resolved ORM file and whether it binds occlusion too.
+    orm: Option<(String, bool)>,
+    /// The depth companion's served path (tx-pom).
+    depth_texture: Option<String>,
     emissive: [u32; 3],
     alpha: (u8, u32),
     double_sided: bool,
@@ -116,40 +120,79 @@ pub struct CookedMaterials {
     texture_cache: HashMap<(String, [bool; 2], bool), Handle<Image>>,
     textures: Vec<Handle<Image>>,
     /// The companions of the VFS they were read from (re-read if [`SharedVfs`] is replaced).
-    companions: Option<(Weak<sf_vfs::Vfs>, NormalCompanions)>,
+    companions: Option<(Weak<sf_vfs::Vfs>, TextureCompanions)>,
 }
 
-/// The normal-map companions the mounted bake layer lists ([`mw_bake::cook::read_companions`]),
-/// read once per VFS instead of per material: base texture stem -> companion file. Empty without
-/// a bake or without a pack shipping `_n`/`_nh` maps.
+/// The normal-map and ORM companions the mounted bake layer lists
+/// ([`mw_bake::cook::read_companions`], [`mw_bake::cook::read_orms`]), read once per VFS instead
+/// of per material: base texture stem -> companion. Empty without a bake or without a pack
+/// shipping `_n`/`_nh`/`_spec` maps.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct NormalCompanions(Arc<BTreeMap<String, String>>);
+pub struct TextureCompanions {
+    normals: Arc<BTreeMap<String, String>>,
+    /// ORM-slot companions ([`mw_bake::cook::read_orms`], TS-2).
+    orms: Arc<BTreeMap<String, mw_bake::cook::OrmCompanion>>,
+    /// Depth companions ([`mw_bake::cook::read_depths`], tx-pom): base stem -> served depth map.
+    depths: Arc<BTreeMap<String, String>>,
+}
 
-impl NormalCompanions {
-    /// The companions `vfs` serves (one read and decode of the layer's map).
+impl TextureCompanions {
+    /// The companions `vfs` serves (one read and decode of each of the layer's maps).
     pub fn read(vfs: &sf_vfs::Vfs) -> Self {
-        Self(Arc::new(mw_bake::cook::read_companions(vfs)))
+        Self {
+            normals: Arc::new(mw_bake::cook::read_companions(vfs)),
+            orms: Arc::new(mw_bake::cook::read_orms(vfs)),
+            depths: Arc::new(mw_bake::cook::read_depths(vfs)),
+        }
     }
 
-    /// The companion of a base texture reference ([`mw_bake::cook::companion_of`]).
+    /// The normal-map companion of a base texture reference ([`mw_bake::cook::companion_of`]).
     pub fn of(&self, reference: &str) -> Option<&str> {
-        mw_bake::cook::companion_of(&self.0, reference)
+        mw_bake::cook::companion_of(&self.normals, reference)
+    }
+
+    /// The ORM companion of a base texture reference ([`mw_bake::cook::orm_of`]).
+    pub fn orm_of(&self, reference: &str) -> Option<&mw_bake::cook::OrmCompanion> {
+        mw_bake::cook::orm_of(&self.orms, reference)
+    }
+
+    /// The depth map of a base texture reference ([`mw_bake::cook::depth_of`]): its served path.
+    pub fn depth_of(&self, reference: &str) -> Option<&str> {
+        mw_bake::cook::depth_of(&self.depths, reference)
+    }
+
+    /// These companions with `orms` as the ORM ones.
+    #[must_use]
+    pub fn with_orms(self, orms: BTreeMap<String, mw_bake::cook::OrmCompanion>) -> Self {
+        Self { orms: Arc::new(orms), ..self }
+    }
+
+    /// These companions with `depths` (base stem -> served depth map) as the depth ones.
+    #[must_use]
+    pub fn with_depths(self, depths: BTreeMap<String, String>) -> Self {
+        Self { depths: Arc::new(depths), ..self }
+    }
+
+    /// Base textures with a depth companion (the texture lab's panel).
+    pub fn depth_count(&self) -> usize {
+        self.depths.len()
     }
 }
 
-impl From<BTreeMap<String, String>> for NormalCompanions {
+/// Normal-map companions only.
+impl From<BTreeMap<String, String>> for TextureCompanions {
     fn from(map: BTreeMap<String, String>) -> Self {
-        Self(Arc::new(map))
+        Self { normals: Arc::new(map), orms: Arc::default(), depths: Arc::default() }
     }
 }
 
 impl CookedMaterials {
-    fn companions(&mut self, vfs: &Arc<sf_vfs::Vfs>) -> NormalCompanions {
+    fn companions(&mut self, vfs: &Arc<sf_vfs::Vfs>) -> TextureCompanions {
         let current = Arc::downgrade(vfs);
         match &self.companions {
             Some((read_from, companions)) if Weak::ptr_eq(read_from, &current) => companions.clone(),
             _ => {
-                let companions = NormalCompanions::read(vfs);
+                let companions = TextureCompanions::read(vfs);
                 self.companions = Some((current, companions.clone()));
                 companions
             }
@@ -168,8 +211,8 @@ impl CookedMaterials {
 }
 
 /// The NIF surface a cooked material describes (inverse of the importer's mapping), with the base
-/// texture's normal-map companion if the bake serves one.
-fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs, companions: &'a NormalCompanions) -> Surface<'a> {
+/// texture's normal-map and ORM companions if the bake serves them.
+fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs, companions: &'a TextureCompanions) -> Surface<'a> {
     let [red, green, blue, alpha] = m.base_color;
     let [emissive_r, emissive_g, emissive_b] = m.emissive;
     let additive = m.extras.get(extras::BLEND).is_some_and(|mode| mode == "additive");
@@ -183,6 +226,7 @@ fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs, companions: &'a Nor
         Some("t") => [false, true],
         _ => [false, false],
     };
+    let orm = m.base_color_texture.as_deref().and_then(|base| companions.orm_of(base));
     let alpha_mode = match m.alpha {
         SfAlpha::Opaque => AlphaMode::Opaque,
         SfAlpha::Mask(_) if blended => AlphaMode::Blend,
@@ -197,6 +241,8 @@ fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs, companions: &'a Nor
         base_clamp,
         glow_texture: m.extras.get(extras::GLOW_TEXTURE).map(String::as_str),
         normal_texture: m.base_color_texture.as_deref().and_then(|base| companions.of(base)),
+        depth_texture: m.base_color_texture.as_deref().and_then(|base| companions.depth_of(base)),
+        orm,
         emissive: LinearRgba::rgb(emissive_r, emissive_g, emissive_b),
         // The leaf rule, as the NIF path's (`Surface::foliage`).
         foliage: matches!(cutout, Some("cutout" | "cutout_candidate")) && matches!(alpha_mode, AlphaMode::Mask(_)),
@@ -286,17 +332,17 @@ fn fallback(commands: &mut Commands, server: &AssetServer, entity: Entity, root:
 
 /// One cooked material as Bevy's, mapped like the NIF path's: the material
 /// mapper for streamed statics (`sf_world_bevy::ModelMaterials`). Textures
-/// resolve through `vfs` and load from the default asset source. No normal maps: callers that
-/// want them read [`NormalCompanions`] once and use [`cooked_material_with`] or [`material_mapper`].
+/// resolve through `vfs` and load from the default asset source. No companion maps (normal, ORM): callers that
+/// want them read [`TextureCompanions`] once and use [`cooked_material_with`] or [`material_mapper`].
 pub fn cooked_material(m: &sf_model::Material, vfs: &sf_vfs::Vfs, server: &AssetServer) -> StandardMaterial {
-    cooked_material_with(m, vfs, &NormalCompanions::default(), server)
+    cooked_material_with(m, vfs, &TextureCompanions::default(), server)
 }
 
-/// [`cooked_material`] with the base texture's normal-map companion from `companions`.
+/// [`cooked_material`] with the base texture's normal-map and ORM companions from `companions`.
 pub fn cooked_material_with(
     m: &sf_model::Material,
     vfs: &sf_vfs::Vfs,
-    companions: &NormalCompanions,
+    companions: &TextureCompanions,
     server: &AssetServer,
 ) -> StandardMaterial {
     surface(m, vfs, companions).to_material(|path, clamp, srgb| {
@@ -308,7 +354,7 @@ pub fn cooked_material_with(
 /// The material mapper for streamed statics (`sf_world_bevy::ModelMaterials`, wrap it in an `Arc`):
 /// [`cooked_material_with`] over the companions `vfs` serves, read once here.
 pub fn material_mapper(vfs: Arc<sf_vfs::Vfs>) -> impl Fn(&sf_model::Material, &AssetServer) -> StandardMaterial + Send + Sync + 'static {
-    let companions = NormalCompanions::read(&vfs);
+    let companions = TextureCompanions::read(&vfs);
     move |m, server| cooked_material_with(m, &vfs, &companions, server)
 }
 
@@ -317,6 +363,7 @@ fn surface_key(
     base_resolved: Option<String>,
     glow_resolved: Option<String>,
     normal_resolved: Option<String>,
+    orm_resolved: Option<(String, bool)>,
     tint: Option<usize>,
 ) -> SurfaceKey {
     let bc = s.base_color.to_linear();
@@ -335,6 +382,8 @@ fn surface_key(
         base_clamp: s.base_clamp,
         glow_texture: glow_resolved,
         normal_texture: normal_resolved,
+        orm: orm_resolved,
+        depth_texture: s.depth_texture.map(str::to_owned),
         emissive: [s.emissive.red.to_bits(), s.emissive.green.to_bits(), s.emissive.blue.to_bits()],
         alpha,
         double_sided: s.double_sided,
@@ -365,6 +414,7 @@ fn make_materials(
                 s.base_texture.and_then(resolve),
                 s.glow_texture.and_then(resolve),
                 s.normal_texture.and_then(resolve),
+                s.orm.and_then(|c| Some((resolve(&c.file)?, c.occlusion))),
                 tint,
             );
             if let Some(existing) = cache.by_surface.get(&key) {
@@ -411,9 +461,9 @@ mod tests {
     #[test]
     fn normal_map_iff_the_base_texture_has_a_companion() {
         let vfs = sf_vfs::Vfs::builder().build();
-        assert_eq!(NormalCompanions::read(&vfs), NormalCompanions::default(), "no bake layer, no companions");
+        assert_eq!(TextureCompanions::read(&vfs), TextureCompanions::default(), "no bake layer, no companions");
         let companions =
-            NormalCompanions::from(BTreeMap::from([("textures/tx_wall".to_owned(), "textures/tx_wall_n.png".to_owned())]));
+            TextureCompanions::from(BTreeMap::from([("textures/tx_wall".to_owned(), "textures/tx_wall_n.png".to_owned())]));
         let build = |m: &sf_model::Material| {
             let mut loads = Vec::new();
             let made = surface(m, &vfs, &companions).to_material(|path, clamp, srgb| {
@@ -442,7 +492,86 @@ mod tests {
         assert!(unlit.normal_map_texture.is_none());
 
         // Without companions (the plain `cooked_material` path) nothing changes.
-        let none = NormalCompanions::default();
+        let none = TextureCompanions::default();
         assert!(surface(&material("textures/tx_wall.dds", false), &vfs, &none).normal_texture.is_none());
+    }
+
+    /// TS-2: a cooked material gets `metallic_roughness_texture` (and `occlusion_texture` for a
+    /// packed ORM, the same image) iff the bake lists an ORM companion for its base texture, loaded
+    /// linear with the base slot's clamp, with factors 1.0 and reflectance 0.5; a converted
+    /// specular map binds no occlusion. Without one the material is the old one exactly.
+    #[test]
+    fn orm_textures_iff_the_base_texture_has_an_orm_companion() {
+        use mw_bake::cook::OrmCompanion;
+        let vfs = sf_vfs::Vfs::builder().build();
+        let orm = |file: &str, occlusion| OrmCompanion { file: file.to_owned(), occlusion };
+        let companions = TextureCompanions::default().with_orms(BTreeMap::from([
+            ("textures/tx_armor".to_owned(), orm("textures/tx_armor_spec.dds", true)),
+            ("textures/tx_wall".to_owned(), orm("textures/tx_wall_spec.png", false)),
+        ]));
+        let build = |m: &sf_model::Material, companions: &TextureCompanions| {
+            let mut loads = Vec::new();
+            let made = surface(m, &vfs, companions).to_material(|path, clamp, srgb| {
+                loads.push((path.to_owned(), clamp, srgb));
+                Some(Handle::default())
+            });
+            (made, loads)
+        };
+
+        let (armor, loads) = build(&material("Textures\\TX_Armor.dds", false), &companions);
+        assert!(armor.metallic_roughness_texture.is_some());
+        assert_eq!(armor.occlusion_texture, armor.metallic_roughness_texture, "one image, both slots");
+        assert_eq!((armor.metallic, armor.perceptual_roughness, armor.reflectance), (1.0, 1.0, 0.5));
+        assert_eq!(loads[1], ("textures/tx_armor_spec.dds".to_owned(), [false, false], false), "linear");
+
+        let (wall, _) = build(&material("textures/tx_wall.dds", false), &companions);
+        assert!(wall.metallic_roughness_texture.is_some() && wall.occlusion_texture.is_none());
+
+        // No companion, no bake, or unlit: the material is the one without ORM, field for field.
+        let (plain, loads) = build(&material("textures/tx_other.dds", false), &companions);
+        let (before, _) = build(&material("textures/tx_other.dds", false), &TextureCompanions::default());
+        assert_eq!(loads.len(), 1);
+        assert!(plain.metallic_roughness_texture.is_none() && plain.occlusion_texture.is_none());
+        assert_eq!(
+            (plain.metallic, plain.perceptual_roughness, plain.reflectance),
+            (before.metallic, before.perceptual_roughness, before.reflectance)
+        );
+        assert_eq!((before.metallic, before.perceptual_roughness, before.reflectance), (0.0, 0.85, 0.3));
+        let (unlit, _) = build(&material("textures/tx_armor.dds", true), &companions);
+        assert!(unlit.metallic_roughness_texture.is_none());
+    }
+
+    /// tx-pom: a cooked material gets `depth_map` (loaded linear with the base slot's clamp) and the
+    /// preset's parallax iff the bake lists a depth companion for its base texture; without one,
+    /// or unlit, the parallax fields are Bevy's defaults, field for field.
+    #[test]
+    fn depth_map_iff_the_base_texture_has_a_depth_companion() {
+        let vfs = sf_vfs::Vfs::builder().build();
+        let companions = TextureCompanions::default()
+            .with_depths(BTreeMap::from([("textures/tx_wall".to_owned(), "textures/tx_wall_nh_depth.ktx2".to_owned())]));
+        let build = |m: &sf_model::Material| {
+            let mut loads = Vec::new();
+            let made = surface(m, &vfs, &companions).to_material(|path, clamp, srgb| {
+                loads.push((path.to_owned(), clamp, srgb));
+                Some(Handle::default())
+            });
+            (made, loads)
+        };
+        let (wall, loads) = build(&material("Textures\\TX_Wall.dds", false));
+        assert!(wall.depth_map.is_some());
+        assert_eq!(loads[1], ("textures/tx_wall_nh_depth.ktx2".to_owned(), [false, false], false), "linear");
+        let preset = crate::parallax().expect("High by default");
+        assert_eq!((wall.parallax_mapping_method, wall.max_parallax_layer_count), (preset.method, preset.max_layers));
+        assert!((wall.parallax_depth_scale - crate::PARALLAX_DEPTH_SCALE).abs() < f32::EPSILON);
+
+        let plain = StandardMaterial::default();
+        for (m, what) in [(build(&material("textures/tx_other.dds", false)).0, "no companion"), (build(&material("textures/tx_wall.dds", true)).0, "unlit")] {
+            assert!(m.depth_map.is_none(), "{what}");
+            assert_eq!(
+                (m.parallax_depth_scale, m.parallax_mapping_method, m.max_parallax_layer_count),
+                (plain.parallax_depth_scale, plain.parallax_mapping_method, plain.max_parallax_layer_count),
+                "{what}"
+            );
+        }
     }
 }
