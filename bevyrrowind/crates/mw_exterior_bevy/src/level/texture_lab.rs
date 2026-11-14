@@ -35,22 +35,22 @@ use sf_world_bevy::{WorldspaceRegistry, to_grid};
 /// The level's name: its swatches and models spawn without any `--lab-*` flag.
 pub const LEVEL: &str = "texture-lab";
 
-/// Textures the packs cover (MVR PBR: `_n`, `_nh`, `_spec`; Tamrielic PBR West Gash: `_nh`,
-/// `_spec`): a Hlaalu wall trim, a West Gash cobblestone, carved wood, Dwemer metal, a West
-/// Gash rock and a dirt road (the last three are land textures: statics rarely use them, so the
-/// bake may list no companion; the panel says so).
+/// Static textures the packs cover (MVR PBR: `_n`, `_nh`, `_spec`; Tamrielic PBR: `_nh`,
+/// `_spec`): a Hlaalu wall trim, Redoran barracks trim, carved wood, Dwemer metal, a West Gash
+/// rock and a Velothi broken edge. Every default is referenced by cooked statics so `texture.cook`
+/// indexes its normal, ORM and depth companions.
 pub const DEFAULT_TEXTURES: &[&str] = &[
     "textures/tx_hlaalu_sideedge_01.dds",
-    "textures/tx_wg_cobblestones_01.dds",
+    "textures/tx_redoran_barracks_trim.dds",
     "textures/tx_carvedwood_beam_01.dds",
     "textures/tx_dwrv_metal00.dds",
     "textures/tx_rock_wg_01.dds",
-    "textures/tx_wg_dirtroad_01.dds",
+    "textures/tx_velothi_brokenedge_01.dds",
 ];
 
-/// Balmora and West Gash statics: a Hlaalu house, a Hlaalu wall, two West Gash rocks.
+/// Balmora and West Gash statics: a Hlaalu house, a Hlaalu wall, two West Gash rocks (`meshes/f/`).
 pub const DEFAULT_MODELS: &[&str] =
-    &["meshes/x/ex_hlaalu_b_01.nif", "meshes/x/ex_hlaalu_wall_01.nif", "meshes/x/terrain_rock_wg_01.nif", "meshes/x/terrain_rock_wg_05.nif"];
+    &["meshes/x/ex_hlaalu_b_01.nif", "meshes/x/ex_hlaalu_wall_01.nif", "meshes/f/terrain_rock_wg_01.nif", "meshes/f/terrain_rock_wg_05.nif"];
 
 /// Swatch row: centers this far apart along x, at z = 0.
 pub const SWATCH_SPACING: f32 = 3.0;
@@ -66,7 +66,7 @@ const TURNTABLE: f32 = 10.0;
 const LAMP_ORBIT: f32 = 1.4;
 const LAMP_HEIGHT: f32 = 1.5;
 const LAMP_RATE: f32 = 30.0;
-const LAMP_RADIUS: f32 = 1.5;
+const LAMP_RADIUS: f32 = 8.0;
 
 /// What the lab shows: VFS texture and model paths.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -65,12 +65,21 @@ fn parallaxed_uv(
     // `max_layer_count` according to the steepness of Vt.
 
     let view_steepness = abs(Vt.z);
-    // We mix with minimum value 1.0 because otherwise,
-    // with 0.0, we get a division by zero in surfaces parallel to viewport,
-    // resulting in a singularity.
-    let layer_count = mix(max_layer_count, 1.0, view_steepness);
+    // Keep at least a quarter of `max_layer_count` (and at least 4 layers) when looking
+    // more straight-on so high-contrast heightmaps (cobblestones, brick) do not collapse to
+    // 3-5 visible steps at 45-60 degrees.
+    let min_layer_count = min(max_layer_count, max(max_layer_count * 0.25, 4.0));
+    let layer_count = mix(max_layer_count, min_layer_count, view_steepness);
     let layer_depth = 1.0 / layer_count;
-    var delta_uv = depth_scale * layer_depth * Vt.xy * vec2(1.0, -1.0) / view_steepness;
+    // Clamp the 1 / Vt.z tangent projection on grazing flanks and fade the offset at the
+    // silhouette so curved meshes (boulders, mushroom caps) do not swim as the camera moves.
+    let grazing_fade = smoothstep(0.05, 0.25, view_steepness);
+    let total_delta_uv =
+        depth_scale * grazing_fade * Vt.xy * vec2(1.0, -1.0) / max(view_steepness, 0.35);
+    var delta_uv = total_delta_uv * layer_depth;
+    // Center the heightfield on neutral 0.5 depth (OpenMW `_nh` convention: `h * scale - 0.5 * scale`)
+    // so mid-height texels stay locked to the mesh's base UV across view angles.
+    uv = original_uv - 0.5 * total_delta_uv;
 
     var current_layer_depth = 0.0;
     var texture_depth = sample_depth_map(uv, material_bind_group_slot);

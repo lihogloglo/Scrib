@@ -548,7 +548,7 @@ fn chain_product_levels_match_the_table() {
     assert!(matches!(build_chain_mesh(&m, 7), Err(ChainMeshError::NoPart(7))));
     // The step's identity and its key inputs.
     let step = ChainsStep;
-    assert_eq!((step.id(), step.version()), (CHAINS_STEP, 1));
+    assert_eq!((step.id(), step.version()), (CHAINS_STEP, 2));
     step.plan("meshes/a.mdl/0", &mut PlanCx::default()).unwrap();
     assert!(step.plan("meshes/a.mdl", &mut PlanCx::default()).is_err(), "a subject with no part");
 }

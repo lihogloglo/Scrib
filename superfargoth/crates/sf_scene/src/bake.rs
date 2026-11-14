@@ -508,15 +508,28 @@ pub fn build_chain_mesh(model: &CookedModel, part: u32) -> Result<CookedModel, C
     let mut bounds: Option<(Vec3, Vec3)> = None;
     for (level, target) in layout.levels.iter().enumerate() {
         let mut vertices: Vec<Vertex> = Vec::new();
+        let mut tangents: Vec<[f32; 4]> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
         for segment in layout.segments.iter().filter(|s| s.level == level) {
-            let (v, i) = parts[level][segment.submesh].decode()?;
+            let sub = parts[level][segment.submesh];
+            let (v, i) = sub.decode()?;
+            let t = sub.decode_tangents()?.unwrap_or_default();
             // Level-local, not chain-global: this level is its own mesh allocation.
             let base = u32::try_from(vertices.len()).map_err(|_| sf_model::FormatError::TooLarge)?;
             indices.extend(i.iter().map(|&k| k + base));
             for v in &v {
                 let p = Vec3::from_array(v.position);
                 bounds = Some(bounds.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p))));
+            }
+            if !t.is_empty() || !tangents.is_empty() {
+                if tangents.len() < vertices.len() {
+                    tangents.resize(vertices.len(), [1.0, 0.0, 0.0, 1.0]);
+                }
+                if t.len() == v.len() {
+                    tangents.extend(t);
+                } else {
+                    tangents.resize(vertices.len() + v.len(), [1.0, 0.0, 0.0, 1.0]);
+                }
             }
             vertices.extend(v);
         }
@@ -531,7 +544,10 @@ pub fn build_chain_mesh(model: &CookedModel, part: u32) -> Result<CookedModel, C
         if count != target.index_count {
             return Err(ChainMeshError::LevelLength { level, indices: count, expected: target.index_count });
         }
-        lods.push(CookedLod { error: target.error, submeshes: vec![CookedSubmesh::encode(0, &vertices, &indices)?] });
+        lods.push(CookedLod {
+            error: target.error,
+            submeshes: vec![CookedSubmesh::encode_with_tangents(0, &vertices, &tangents, &indices)?],
+        });
     }
     let (min, max) = bounds.unwrap_or((Vec3::ZERO, Vec3::ZERO));
     Ok(CookedModel {
@@ -764,9 +780,10 @@ impl Step for ChainsStep {
     fn id(&self) -> &'static str {
         CHAINS_STEP
     }
-    /// 1: one `.sfmesh` per chain, one LOD level per chain level, one submesh each.
+    /// 1: one `.sfmesh` per chain, one LOD level per chain level, one submesh each;
+    /// 2: preserve vertex tangents on concatenated chain submeshes (tx-tanfix).
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (model, _part) = parse_chain_subject(subject).ok_or_else(|| chain_err(subject, "malformed subject"))?;

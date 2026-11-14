@@ -220,6 +220,7 @@ fn sphere_model() -> CookedModel {
             let n = Vec3::new(t.sin() * p.cos(), t.cos(), t.sin() * p.sin());
             mesh.positions.push((n * 3.0 + Vec3::Y * 3.0).to_array());
             mesh.normals.get_or_insert_with(Vec::new).push(n.to_array());
+            mesh.uvs.get_or_insert_with(Vec::new).push([f32::from(u16::try_from(s).expect("small")) / 48.0, f32::from(u16::try_from(r).expect("small")) / 24.0]);
             mesh.colors.get_or_insert_with(Vec::new).push([0.6, 0.5, 0.4, 1.0]);
         }
     }
@@ -233,7 +234,7 @@ fn sphere_model() -> CookedModel {
     let mut node = Node::new("sphere");
     node.mesh = Some(0);
     let model = Model { nodes: vec![node], meshes: vec![mesh], materials: vec![Material::default()] };
-    match sf_model::cook(&model, &CookSettings::default()).expect("cooks") {
+    match sf_model::cook_with(&model, &CookSettings::default(), &[true]).expect("cooks") {
         Cooked::Static(m) => m,
         Cooked::Skipped { .. } | Cooked::Skinned(_) => panic!("static"),
     }
@@ -376,6 +377,9 @@ fn near_precombine_merges_statics_per_level() {
     for (k, lod) in big.model.lods.iter().enumerate() {
         assert_eq!(lod.triangle_count(), 2 * model.lods[k].triangle_count(), "level {k}");
         assert!((lod.error - model.lods[k].error).abs() < 1e-6);
+        let (v, _) = lod.submeshes[0].decode().expect("decodes");
+        let tangents = lod.submeshes[0].decode_tangents().expect("decodes tangents").expect("tangents preserved");
+        assert_eq!(tangents.len(), v.len(), "level {k} tangents match vertex count");
     }
     assert_eq!(big.model.materials.len(), 1, "one shared material");
     // The two spheres (radius 3, 30 m apart) span ~36 m in X around the center.

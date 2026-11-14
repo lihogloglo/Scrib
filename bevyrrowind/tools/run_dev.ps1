@@ -18,8 +18,16 @@ if (-not (Test-Path $exe)) { throw "no dev build at $exe" }
 # The DLLs `cargo run` would put on PATH: Rust std (sysroot bin) and bevy_dylib (deps).
 $sysroot = (& rustc --print sysroot).Trim()
 $env:PATH = "$sysroot\bin;$root\target\debug\deps;$root\target\debug;$env:PATH"
-$quoted = $args | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
-$p = Start-Process -FilePath $exe -ArgumentList $quoted -WorkingDirectory $root -PassThru `
-    -RedirectStandardOutput (Join-Path $root 'target\run_dev.out.log') `
-    -RedirectStandardError (Join-Path $root 'target\run_dev.err.log')
+$quoted = @($args | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
+$splat = @{
+    FilePath = $exe
+    WorkingDirectory = $root
+    PassThru = $true
+    RedirectStandardOutput = (Join-Path $root 'target\run_dev.out.log')
+    RedirectStandardError = (Join-Path $root 'target\run_dev.err.log')
+}
+if ($quoted.Count -gt 0) {
+    $splat['ArgumentList'] = $quoted
+}
+$p = Start-Process @splat
 $p.Id

@@ -104,5 +104,5 @@ fi
 # The command the owner can rerun, then the launch itself, detached so this script returns.
 args=""; for a in "$@"; do args="$args \"$a\""; done
 printf '@echo off\r\ncd /d "%s"\r\n"%%~dp0bevyrrowind.exe"%s > "%%~dp0last.log" 2>&1\r\n' "$(cygpath -w "$ROOT")" "$args" > "$dir/run.cmd"
-cmd //c start "" //min "$(cygpath -w "$dir/run.cmd")"
+cmd //c start "" "$(cygpath -w "$dir/run.cmd")"
 echo "owner_launch: started $* from $(cygpath -w "$dir") (log $(cygpath -w "$log"))"

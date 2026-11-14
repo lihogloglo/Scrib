@@ -58,7 +58,7 @@ fn pbr_input_from_vertex_output(
         is_logically_front,
     );
 
-@if(LOAD_PREPASS_NORMALS)
+@if(LOAD_PREPASS_NORMALS && !STANDARD_MATERIAL_NORMAL_MAP)
     pbr_input.N = prepass_utils::prepass_normal(in.position, 0u);
 @else
     pbr_input.N = normalize(pbr_input.world_normal);
@@ -139,11 +139,10 @@ pbr_input.material.uv_transform = uv_transform;
 @if(VERTEX_UVS && VERTEX_TANGENTS)
     if ((flags & pbr_types::STANDARD_MATERIAL_FLAGS_DEPTH_MAP_BIT) != 0u) {
         let V = pbr_input.V;
-        let TBN = pbr_functions::calculate_tbn_mikktspace(in.world_normal, in.world_tangent);
-        let T = TBN[0];
-        let B = TBN[1];
-        let N = TBN[2];
-        // Transform V from fragment to camera in world space to tangent space.
+        let N = normalize(pbr_input.world_normal);
+        let T = normalize(in.world_tangent.xyz - N * dot(N, in.world_tangent.xyz));
+        let B = in.world_tangent.w * cross(N, T);
+        // Transform V from fragment to camera in world space to orthonormal tangent space.
         let Vt = vec3(dot(V, T), dot(V, B), dot(V, N));
         @if(BINDLESS)
         let parallax_depth_scale = pbr_bindings::material_array[material_indices[slot].material].parallax_depth_scale;
@@ -548,7 +547,7 @@ pbr_input.material.uv_transform = uv_transform;
         pbr_input.specular_occlusion = specular_occlusion;
 
         // N (normal vector)
-@if(!LOAD_PREPASS_NORMALS) {
+@if(!LOAD_PREPASS_NORMALS || STANDARD_MATERIAL_NORMAL_MAP) {
 
         pbr_input.N = normalize(pbr_input.world_normal);
         pbr_input.clearcoat_N = pbr_input.N;

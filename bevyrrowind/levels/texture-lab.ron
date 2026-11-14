@@ -19,6 +19,6 @@
     objects: [
         (name: "floor", shape: Ground(size: (70.0, 50.0)), at: (0.0, 0.0, -8.0), material: Grey),
     ],
-    hour: Some(7.5),
+    hour: Some(9.5),
     weather: Some("clear"),
 )

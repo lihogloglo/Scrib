@@ -42,6 +42,9 @@ pub fn assembled_mesh_to_mesh(m: &AssembledMesh, has_colors: bool, usage: Render
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, m.vertices.iter().map(|v| v.position).collect::<Vec<_>>());
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, m.vertices.iter().map(|v| v.normal).collect::<Vec<_>>());
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, m.vertices.iter().map(|v| v.uv).collect::<Vec<_>>());
+    if m.tangents.len() == m.vertices.len() {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, m.tangents.clone());
+    }
     if has_colors {
         let colors: Vec<[f32; 4]> = m.vertices.iter().map(|v| v.color.map(|c| f32::from(c) / 255.0)).collect();
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);

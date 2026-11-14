@@ -464,9 +464,9 @@ pub fn solve_limb(
 }
 
 /// The pole point of a limb's solved span (`chain`: upper, knee, …, end):
-/// the knee (`chain[1]`) pushed out along its animated bend, or along
-/// `axis` (model space) when the chain is nearly straight (bend under 5%
-/// of its length).
+/// the knee (`chain[1]`) pushed out along its animated bend, blending into
+/// `axis` (model space) as the chain straightens so the knee plane never
+/// switches across a hard threshold.
 pub fn limb_pole(model: &ModelPose, chain: &[usize], axis: Option<Vec3>) -> Vec3 {
     let (Some(&first), Some(&last)) = (chain.first(), chain.last()) else {
         return Vec3::ZERO;
@@ -477,10 +477,13 @@ pub fn limb_pole(model: &ModelPose, chain: &[usize], axis: Option<Vec3>) -> Vec3
     let line = fp - hp;
     let off = kp - hp;
     let side = off - line * (off.dot(line) / line.length_squared().max(1e-12));
-    let animated = side.length() > 0.05 * length;
     let dir = match axis {
-        Some(a) if !animated => a.normalize_or(Vec3::Z),
-        _ => side.normalize_or(axis.unwrap_or(Vec3::Z)),
+        Some(a) => {
+            let a = a.normalize_or(Vec3::Z);
+            let w = bend_weight(2.0 * side.length() / length);
+            (a * (1.0 - w) + side.normalize_or(a) * w).normalize_or(a)
+        }
+        None => side.normalize_or(Vec3::Z),
     };
     kp + dir * length
 }

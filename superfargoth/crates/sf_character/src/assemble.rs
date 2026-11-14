@@ -127,6 +127,9 @@ pub struct AssembledMesh {
     /// The [`AssemblyPart::group`] of its parts.
     pub group: u8,
     pub vertices: Vec<Vertex>,
+    /// `MikkTSpace` tangents (`[tx, ty, tz, sign]`, one per vertex, or empty when
+    /// none of the contributing submeshes carry tangents).
+    pub tangents: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     /// One per vertex; joints index [`AssembledOutfit::joints`].
     pub skin: Vec<SkinVertex>,
@@ -241,6 +244,16 @@ pub fn assemble(parts: &[AssemblyPart<'_>], lod: usize, shapes: &ShapeWeights) -
                 let mesh = &mut out.merged[k];
                 let base = u32::try_from(mesh.vertices.len()).map_err(|_| FormatError::TooLarge)?;
                 mesh.indices.extend(sub.indices.iter().map(|&i| i + base));
+                if !sub.tangents.is_empty() || !mesh.tangents.is_empty() {
+                    if mesh.tangents.len() < mesh.vertices.len() {
+                        mesh.tangents.resize(mesh.vertices.len(), [1.0, 0.0, 0.0, 1.0]);
+                    }
+                    if sub.tangents.len() == sub.vertices.len() {
+                        mesh.tangents.extend(sub.tangents);
+                    } else {
+                        mesh.tangents.resize(mesh.vertices.len() + sub.vertices.len(), [1.0, 0.0, 0.0, 1.0]);
+                    }
+                }
                 mesh.vertices.extend(sub.vertices);
                 mesh.skin.extend(sub.skin);
             } else {
@@ -248,6 +261,7 @@ pub fn assemble(parts: &[AssemblyPart<'_>], lod: usize, shapes: &ShapeWeights) -
                     material,
                     group: part.group,
                     vertices: sub.vertices,
+                    tangents: sub.tangents,
                     indices: sub.indices,
                     skin: sub.skin,
                     morph_targets: sub.targets.iter().map(|&t| infos[usize::from(t)].clone()).collect(),
@@ -261,6 +275,15 @@ pub fn assemble(parts: &[AssemblyPart<'_>], lod: usize, shapes: &ShapeWeights) -
 
 impl AssembledMesh {
     fn empty(material: Material, group: u8) -> Self {
-        Self { material, group, vertices: Vec::new(), indices: Vec::new(), skin: Vec::new(), morph_targets: Vec::new(), morphs: Vec::new() }
+        Self {
+            material,
+            group,
+            vertices: Vec::new(),
+            tangents: Vec::new(),
+            indices: Vec::new(),
+            skin: Vec::new(),
+            morph_targets: Vec::new(),
+            morphs: Vec::new(),
+        }
     }
 }

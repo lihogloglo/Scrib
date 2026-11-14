@@ -63,8 +63,8 @@ pub struct Parallax {
 }
 
 impl Parallax {
-    /// The High preset's (and the default without a preset): 16 layers, 5 relief steps.
-    pub const HIGH: Self = Self { max_layers: 16.0, method: ParallaxMappingMethod::Relief { max_steps: 5 } };
+    /// The High preset's (and the default without a preset): 32 layers, 5 relief steps.
+    pub const HIGH: Self = Self { max_layers: 32.0, method: ParallaxMappingMethod::Relief { max_steps: 5 } };
 
     /// `max_layers` layers, refined by `relief_steps` binary-search steps (relief mapping) or, for
     /// `None`, by one interpolation (parallax occlusion mapping).
@@ -392,7 +392,7 @@ mod tests {
         Parallax::new(16, None).apply(&mut m, Handle::default());
         assert_eq!((m.parallax_mapping_method, m.max_parallax_layer_count), (ParallaxMappingMethod::Occlusion, 16.0));
         assert!(m.depth_map.is_some() && (m.parallax_depth_scale - PARALLAX_DEPTH_SCALE).abs() < f32::EPSILON);
-        assert_eq!(Parallax::new(16, Some(5)), Parallax::HIGH);
+        assert_eq!(Parallax::new(32, Some(5)), Parallax::HIGH);
         assert_eq!(Parallax::HIGH.method, ParallaxMappingMethod::DEFAULT_RELIEF_MAPPING, "Bevy's relief default");
     }
 }

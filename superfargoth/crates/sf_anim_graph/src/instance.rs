@@ -476,9 +476,6 @@ pub struct GraphInstance {
     physics: Option<PhysicsInput>,
     /// A hand-back blend requested by [`GraphInstance::inertialize_from`].
     handback: Option<f32>,
-    /// The running inertialization is a hand-back (cleared when it ends):
-    /// `FootPlacement` plants no new lock meanwhile.
-    handing_back: bool,
     /// Hits for the `HitReact` ops, queued by [`GraphInstance::hit`].
     hits: Vec<Hit>,
     /// Bound cloth parts ([`GraphInstance::set_cloth`]).
@@ -534,7 +531,6 @@ impl GraphInstance {
             scratch: Scratch { frames: Vec::new(), curve_w: vec![0.0; g.curves.len()], model: ModelPose::new(n), model2: ModelPose::new(n) },
             physics: None,
             handback: None,
-            handing_back: false,
             hits: Vec::new(),
             cloth: Vec::new(),
             ops: g.ops.iter().map(|o| OpState::new(&o.op)).collect(),
@@ -936,7 +932,6 @@ impl GraphInstance {
         // its shorter blend snapped the lying pose onto the clip (AN-5).
         if let Some(d) = self.handback.take() {
             self.request = Some(d);
-            self.handing_back = true;
         }
         self.collect_events(g, out);
         self.params.clear_triggers();
@@ -991,7 +986,8 @@ impl GraphInstance {
             }
         }
         self.inertial.apply(&mut out.pose);
-        self.handing_back &= self.inertial.is_active();
+        let switched = self.request.is_some() && self.inertial.is_active();
+        let inertializing = self.inertial.is_active();
         // The history and the probe origins see the animated pose, without the
         // physics share: inertialization runs before the physics blend, so a
         // state switch under a partial ragdoll starts from the animated pose and
@@ -1023,7 +1019,8 @@ impl GraphInstance {
             feet: FootStats::default(),
             hits: &self.hits,
             physics: self.physics.as_ref().map_or(&[], |p| &p.weights),
-            handing_back: self.handing_back,
+            switched,
+            inertializing,
             probes: &mut out.probe_origins,
         };
         run_ops(&mut pcx, &mut self.ops, &mut out.pose, &mut out.model);

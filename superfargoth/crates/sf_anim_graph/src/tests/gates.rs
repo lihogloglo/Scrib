@@ -159,3 +159,52 @@ fn no_new_lock_while_a_hand_back_inertializes() {
     assert!(blended > 0 && contact_while_blending > 0, "the test never had a contact during the blend");
     assert!(first_lock.is_some(), "no lock after the blend ended");
 }
+
+/// L2: switching state-machine states with an inertialization blend releases any existing foot
+/// lock into the release spring (without tripping `unplanted`) and plants no new lock until the
+/// blend finishes.
+#[test]
+fn state_switch_releases_locks_and_waits_for_blend() {
+    let ron = r#"
+(
+    params: [(name: "walk", kind: Bool(true))],
+    legs: [(name: "l", joints: [Joint("thigh_l"), Joint("shin_l"), Joint("foot_l")], contact: "contact.foot_l")],
+    nodes: {
+        "sm": StateMachine(
+            states: [(name: "w", node: "w"), (name: "r", node: "r")],
+            transitions: [
+                (from: "w", to: "r", when: [IsFalse("walk")], blend: Inertialize(0.25)),
+                (from: "r", to: "w", when: [IsTrue("walk")], blend: Inertialize(0.25)),
+            ],
+        ),
+        "w": Clip(clip: "walk"),
+        "r": Clip(clip: "run"),
+    },
+    layers: [(node: "sm")],
+    procedural: [FootPlacement(pelvis: Joint("hips"), legs: ["l"])],
+)
+"#;
+    let rig = Rig::new(ron);
+    let b = rig.binding();
+    let walk_p = rig.param("walk");
+    let (mut inst, mut out) = (GraphInstance::new(&b), GraphOutput::new(&rig.graph));
+    for _ in 0..10 {
+        walk(&rig, &mut inst, &mut out);
+    }
+    assert_eq!(out.feet.locks, 1, "walk lock planted before switch");
+    inst.params.set_bool(walk_p, false);
+    let mut blending = 0;
+    let mut unplanted = 0;
+    let mut relocked = false;
+    for _ in 0..40 {
+        walk(&rig, &mut inst, &mut out);
+        if inst.inertializing() {
+            blending += 1;
+            unplanted += out.feet.unplanted;
+            assert_eq!(out.feet.locks, 0, "lock held or planted during state-switch blend");
+        } else if out.feet.locks > 0 {
+            relocked = true;
+        }
+    }
+    assert!(blending > 0 && unplanted == 0 && relocked, "blending {blending}, unplanted {unplanted}, relocked {relocked}");
+}

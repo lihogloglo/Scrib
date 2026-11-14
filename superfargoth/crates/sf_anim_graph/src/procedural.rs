@@ -175,9 +175,13 @@ pub(crate) struct ProceduralCx<'a> {
     /// foot ops fade out under the share physics takes of their legs and
     /// reset while it owns them (UE fades leg IK under a ragdoll).
     pub physics: &'a [f32],
-    /// A hand-back from physics is still inertializing: `FootPlacement`
-    /// plants no new lock (the blending foot is still in the ragdoll's stance).
-    pub handing_back: bool,
+    /// An inertialized state/slot transition started this update: existing
+    /// foot locks release into their decay spring so they are not dragged to
+    /// the unplant limit while the legs morph into the new state.
+    pub switched: bool,
+    /// An inertialization blend is still active (state/slot switch or physics
+    /// hand-back): `FootPlacement` plants no new lock until the blend settles.
+    pub inertializing: bool,
     /// The probe origins for the next update ([`GraphOutput::probe_origins`](crate::GraphOutput::probe_origins)),
     /// in: the animated feet led one update; the foot ops move each to
     /// where they target its foot (`StrideWarp` by its warp, `FootPlacement`
@@ -715,6 +719,16 @@ fn foot_placement(
         let mut target = f + Vec3::Y * st.height.update(lift, guards.foot_halflife, dt);
         let curve = |c: Option<u16>| c.and_then(|c| cx.curves.get(usize::from(c)).copied()).unwrap_or(0.0);
         let contact = curve(leg.contact);
+        // A state/slot switch that starts an inertialization releases any lock
+        // held for the previous state into the smooth release spring instead of
+        // holding the foot at the old state's stance until it trips `unplant`.
+        if cx.switched
+            && let Some(l) = st.lock.take()
+        {
+            let prev_toe = st.toe_lock.take().zip(toe).map(|(tl, t)| tl + horizontal(f - t));
+            st.offset = horizontal(prev_toe.unwrap_or(l) - f);
+            st.offset_velocity = Vec3::ZERO;
+        }
         // Heel roll: the contact is over (heel-off) but the toe is still
         // down: the toe pins, the ankle rises and turns about it as animated.
         let rolling = contact <= 0.5 && curve(leg.roll) > 0.5 && !st.unplanting;
@@ -753,7 +767,7 @@ fn foot_placement(
             Vec3::new(p.x, f.y + ground, p.z)
         };
         let mut planted = None;
-        if contact > 0.5 && !st.unplanting && st.lock.is_none() && !cx.handing_back {
+        if contact > 0.5 && !st.unplanting && st.lock.is_none() && !cx.inertializing {
             // A foot plants on the ground it touches, not on the smoothed
             // height still catching up (stair edges); where it is, with what
             // is left of a release (the sampled plane carried under it).

@@ -381,8 +381,9 @@ impl Step for NearStep {
     }
     fn version(&self) -> u32 {
         // 2: buckets split by terrain-blend band; 3: band split removed
-        // (object-terrain blending removed, 2026-10-20).
-        3
+        // (object-terrain blending removed, 2026-10-20); 4: preserve vertex
+        // tangents on merged submeshes (tx-tanfix).
+        4
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (ws, key) = parse_node(1, subject).ok_or_else(|| step_err(NEAR_STEP, subject, "malformed subject"))?;

@@ -83,16 +83,15 @@ impl Quality {
 
     /// Parallax occlusion on materials with a depth companion (textures.md §9 "T4d", Bevy's
     /// `ParallaxMappingMethod`): Low none (the depth map isn't bound), Medium steep parallax with a
-    /// one-sample interpolation (Bevy's `Occlusion`, its default 16 layers), High the same 16 layers
-    /// refined by 5 binary-search steps (`Relief`, Bevy's `DEFAULT_RELIEF_MAPPING`), Ultra 32 layers
-    /// and 8 steps (UE's POM node reference count at glancing angles). Layers scale with the view:
-    /// 1 looking straight on, the maximum at grazing angles (`parallax_mapping.wesl`).
+    /// one-sample interpolation (Bevy's `Occlusion`, 16 layers), High 32 layers refined by 5
+    /// binary-search steps (`Relief`), Ultra 64 layers and 8 steps. Layers scale with the view
+    /// (`parallax_mapping.wesl`).
     pub const fn parallax(self) -> Option<Parallax> {
         match self {
             Self::Low => None,
             Self::Medium => Some(Parallax { max_layers: 16, relief_steps: None }),
-            Self::High => Some(Parallax { max_layers: 16, relief_steps: Some(5) }),
-            Self::Ultra => Some(Parallax { max_layers: 32, relief_steps: Some(8) }),
+            Self::High => Some(Parallax { max_layers: 32, relief_steps: Some(5) }),
+            Self::Ultra => Some(Parallax { max_layers: 64, relief_steps: Some(8) }),
         }
     }
 }
@@ -118,8 +117,8 @@ mod tests {
         assert_eq!(Quality::Low.parallax(), None);
         let medium = Quality::Medium.parallax().expect("medium");
         assert_eq!(medium, Parallax { max_layers: 16, relief_steps: None });
-        assert_eq!(Quality::High.parallax(), Some(Parallax { max_layers: 16, relief_steps: Some(5) }));
-        assert_eq!(Quality::Ultra.parallax(), Some(Parallax { max_layers: 32, relief_steps: Some(8) }));
+        assert_eq!(Quality::High.parallax(), Some(Parallax { max_layers: 32, relief_steps: Some(5) }));
+        assert_eq!(Quality::Ultra.parallax(), Some(Parallax { max_layers: 64, relief_steps: Some(8) }));
         assert_eq!(Quality::default().parallax(), Quality::High.parallax());
     }
 }

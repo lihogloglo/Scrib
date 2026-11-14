@@ -936,7 +936,7 @@
         (
             name: "level-texture-lab",
             level: "texture-lab",
-            hour: 7.5,
+            hour: 9.5,
             description: "Texture lab (TX-lab): 6 pack-covered texture swatches (panel, sphere, cube, an orbiting lamp each) and 4 cooked Balmora / West Gash statics on a turntable under a low sun; info panel per swatch and model (cameras wide, models, top, swatch-1..6, model-1..4; --lab-textures a,b --lab-models x.nif)",
             look_for: "relief on the swatches that moves with the lamp; N flips normal maps, M ORM maps (also console flip normalmaps / orm): the info panel says per swatch whether a normal / ORM map exists and is bound, its format and mips, and whether the mesh has tangents",
         ),

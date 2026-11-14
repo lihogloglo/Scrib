@@ -17,7 +17,6 @@ use sf_world::{IndexedPlacement, Partition, Placement, PlacementClass, Placement
 
 use crate::FormatError;
 use crate::build::node_center;
-use crate::cluster::encode_submesh;
 use crate::node::NodeKey;
 
 /// Bucket edges by placement radius, meters: `[0, a)`, `[a, b)`, `[b, c)`, `[c, ∞)`.
@@ -83,11 +82,13 @@ pub fn bucket_of(radius: f32) -> usize {
 /// A bucket's identity: size class, vertex attributes.
 type BucketKey = (usize, (bool, bool, bool));
 
+type SubmeshBuffers = (Vec<Vertex>, Vec<[f32; 4]>, Vec<u32>);
+
 /// Merged geometry of one level, per material.
 #[derive(Default)]
 struct LevelBuffers {
     error: f32,
-    by_material: BTreeMap<u32, (Vec<Vertex>, Vec<u32>)>,
+    by_material: BTreeMap<u32, SubmeshBuffers>,
 }
 
 /// One bucket being built.
@@ -136,7 +137,7 @@ impl BucketBuilder {
         let (has_normals, has_uvs, has_colors) = self.signature;
         let mut bounds = Aabb { min: [f32::INFINITY; 3], max: [f32::NEG_INFINITY; 3] };
         if let Some(first) = self.levels.first() {
-            for (v, _) in first.by_material.values() {
+            for (v, _, _) in first.by_material.values() {
                 for p in v {
                     for a in 0..3 {
                         bounds.min[a] = bounds.min[a].min(p.position[a]);
@@ -148,8 +149,11 @@ impl BucketBuilder {
         let reach = Vec3::from_array(bounds.min).abs().max(Vec3::from_array(bounds.max).abs()).length();
         let mut lods = Vec::with_capacity(self.levels.len());
         for level in &self.levels {
-            let submeshes: Vec<CookedSubmesh> =
-                level.by_material.iter().map(|(&m, (v, i))| encode_submesh(m, v, i)).collect::<Result<_, _>>()?;
+            let submeshes: Vec<CookedSubmesh> = level
+                .by_material
+                .iter()
+                .map(|(&m, (v, t, i))| CookedSubmesh::encode_with_tangents(m, v, t, i).map_err(|e| FormatError::Mesh(e.to_string())))
+                .collect::<Result<_, _>>()?;
             lods.push(CookedLod { error: level.error, submeshes });
         }
         self.members.sort_unstable();
@@ -163,14 +167,30 @@ impl BucketBuilder {
 }
 
 /// Appends a member's submesh, transformed into cell space.
-fn append(into: &mut (Vec<Vertex>, Vec<u32>), sub: &CookedSubmesh, to_cell: Affine3A, normal_m: Mat3) -> Result<(), FormatError> {
+fn append(into: &mut SubmeshBuffers, sub: &CookedSubmesh, to_cell: Affine3A, normal_m: Mat3) -> Result<(), FormatError> {
     let (vertices, indices) = sub.decode().map_err(|e| FormatError::Mesh(e.to_string()))?;
+    let tangents = sub.decode_tangents().map_err(|e| FormatError::Mesh(e.to_string()))?.unwrap_or_default();
     let base = u32::try_from(into.0.len()).map_err(|_| FormatError::Mesh("precombine too large".into()))?;
+    let tangent_m = Mat3::from(to_cell.matrix3);
+    let sign = if tangent_m.determinant() < 0.0 { -1.0 } else { 1.0 };
     into.0.extend(vertices.iter().map(|v| {
         let n = (normal_m * Vec3::from_array(v.normal)).normalize_or_zero();
         Vertex { position: to_cell.transform_point3(Vec3::from_array(v.position)).to_array(), normal: n.to_array(), ..*v }
     }));
-    into.1.extend(indices.iter().map(|i| base + i));
+    if !tangents.is_empty() || !into.1.is_empty() {
+        if into.1.len() < base as usize {
+            into.1.resize(base as usize, [1.0, 0.0, 0.0, 1.0]);
+        }
+        if tangents.len() == vertices.len() {
+            into.1.extend(tangents.iter().map(|t| {
+                let xyz = (tangent_m * Vec3::new(t[0], t[1], t[2])).try_normalize().unwrap_or(Vec3::X);
+                [xyz.x, xyz.y, xyz.z, t[3] * sign]
+            }));
+        } else {
+            into.1.resize(into.0.len(), [1.0, 0.0, 0.0, 1.0]);
+        }
+    }
+    into.2.extend(indices.iter().map(|i| base + i));
     Ok(())
 }
 
