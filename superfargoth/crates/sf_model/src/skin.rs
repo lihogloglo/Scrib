@@ -569,7 +569,7 @@ fn deforming_group(
     let linear = Mat3::from(transform.matrix3);
     let mirrored = transform.matrix3.determinant() < 0.0;
 
-    let mut group = Group { material: mesh.material, ..Group::default() };
+    let mut group = Group { material: mesh.material, uvs: mesh.uvs.is_some(), ..Group::default() };
     let mut extra = Extra { part, ..Extra::default() };
     let target_slots: Vec<usize> = mesh
         .morph_targets
@@ -654,7 +654,7 @@ fn weld(group: &mut Group, extra: &mut Extra, targets: usize) {
     let tangents = !group.tangents.is_empty();
     let mut index: HashMap<Vec<u8>, u32> = HashMap::new();
     let mut remap = Vec::with_capacity(group.vertices.len());
-    let mut kept = Group { material: group.material, tangent_space: group.tangent_space, ..Group::default() };
+    let mut kept = Group { material: group.material, tangent_space: group.tangent_space, uvs: group.uvs, ..Group::default() };
     let mut kept_extra = Extra { part: extra.part, ..Extra::default() };
     for i in 0..group.vertices.len() {
         let mut key = Vec::with_capacity(64);

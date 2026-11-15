@@ -127,7 +127,7 @@ fn origin_phase_is_continuous_across_origin_moves() {
 // -- end to end ------------------------------------------------------------------
 
 /// A flat 8 × 8 m grid, fine enough for a LOD chain.
-fn plate() -> Model {
+pub(crate) fn plate() -> Model {
     let n = 24u32;
     let mut mesh = MeshData { normals: Some(Vec::new()), ..MeshData::default() };
     for z in 0..=n {

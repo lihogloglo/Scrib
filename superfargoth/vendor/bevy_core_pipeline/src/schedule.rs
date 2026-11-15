@@ -314,7 +314,14 @@ pub(crate) fn submit_pending_command_buffers(
     if buffers.peek().is_some() {
         #[cfg(feature = "trace")]
         let _span = info_span!("queue_submit", count = buffer_count).entered();
+        // superfargoth patch (own, M3 encode timers)
+        let timer = bevy_render::renderer::encode_timing::start();
         queue.submit(buffers);
+        if let Some((hook, start)) = timer {
+            hook(bevy_render::renderer::encode_timing::EncodeEvent::Submit(
+                start.elapsed(),
+            ));
+        }
     }
 }
 

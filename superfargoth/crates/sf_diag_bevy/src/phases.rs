@@ -15,7 +15,8 @@
 //!   present).
 //!
 //! `sf_diag::pacing::derive_work` turns them into `frame/work/ms` at the end
-//! of a run.
+//! of a run. The plugin also adds the per-stage walls (`stages.rs`, `stage/...`) and,
+//! with feature `render`, the encode timers (`encode.rs`, `encode/...`).
 
 use bevy_app::{App, First, Last, MainScheduleOrder, Plugin};
 use bevy_ecs::prelude::*;
@@ -50,11 +51,14 @@ impl Plugin for FramePhasePlugin {
         let mut order = app.world_mut().resource_mut::<MainScheduleOrder>();
         order.insert_before(First, FrameStart);
         order.insert_after(Last, FrameEnd);
+        // After FrameStart/FrameEnd, so the stage marks sit inside them (main/busy covers them).
+        crate::stages::add_main(app);
     }
 
     #[cfg(feature = "render")]
     fn finish(&self, app: &mut App) {
         render::add(app);
+        crate::stages::render::add(app);
     }
 }
 

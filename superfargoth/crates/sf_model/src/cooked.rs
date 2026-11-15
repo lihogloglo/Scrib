@@ -28,7 +28,9 @@ pub const MIN_FORMAT_VERSION: u32 = 4;
 /// caches stay valid and no full re-cook is needed. 2: v3's morph layout.
 /// 3: v4's tangent stream. 4: tangent `w` in Bevy's handedness (the negated
 /// `MikkTSpace` sign, `tangent.rs`), so every tangent-carrying product re-cooks.
-pub const KEY_FORMAT: u32 = 4;
+/// 5: meshes without UVs get the fallback tangent basis instead of none, so a
+/// game's every-lit-material rule gives all its lit statics one vertex layout.
+pub const KEY_FORMAT: u32 = 5;
 /// Versions in `MIN_FORMAT_VERSION..=FORMAT_VERSION` that are no longer read
 /// (none since v4 raised the minimum).
 pub const RETIRED_FORMAT_VERSIONS: [u32; 0] = [];

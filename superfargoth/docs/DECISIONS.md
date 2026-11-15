@@ -1842,3 +1842,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-15 (perf-orch): StandardMaterial bindless slab limit 8192 (vendored `pbr_material.rs`, Apple stock) + bevy#26432;
   depth-only/prepass pipeline keys drop NORMAL_MAP/RELIEF bits they never read (vendored `material.rs`, like bevy#11647).
   Walk -0.83 and -0.85 ms; drop both when upstream ships an equivalent.
+- 2026-11-15 (owner, orch-11-15b): frame target raised to <= 8.3 ms median (120 fps) and <= 11 ms p99, High, 1440p +
+  DLSS Quality, exteriors (1080p rejected: the walk is render-thread bound). SH-25 lamp pick kept. H1 per-lamp
+  GPU-culled caster lists stay in the tree as an env opt-in (keep-opt-in rule), off by default.
+- 2026-11-15 (owner): first-person melee aims at Dark Messiah / Faithkeeper (third person stays Elden Ring), same combat
+  framework with first-person movesets; reference Brutal Morrowind (GPL-3.0 OpenMW fork). Underwater look reference:
+  Abyssal Garden (MIT). Both noted in combat.md, first-person.md, water.md; no work queued.

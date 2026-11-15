@@ -142,6 +142,31 @@ in spirit; the Balmora walk is not: walkers next to lamps keep most cached faces
 view, ~0.1 ms). Next levers (not built): movers at 30 Hz with layer reuse (Clockwork), movers only within a
 distance of the light, a cheaper lamp PCF (the main pass pays ~0.5 ms GPU per shadowed lamp at 1440p).
 
+## GPU-culled casters (H1, 2026-11-15)
+
+Problem: a `NoCpuCulling` mesh gets no per-view processing in the main world; Bevy's render world adds it to every
+camera and every shadow view and culls it on the GPU. Point-light faces come and go with the shadow budget, and a
+subview that appears has the whole GPU-culled table queued into it (`collect_gpu_culled_meshes`), so each newly
+shadowed lamp cost ~58 k specialise + bin operations (6 faces x ~9.6 k static entities) and each face held all of them.
+
+- **Reuse check.** Bevy 0.20: no per-light filter for GPU-culled meshes (only `RenderLayers`); upstream issues around
+  `NoCpuCulling` + shadows (#23991, #24252, #25764) fix range culling and layers, none limits point faces. Crates: none.
+  Ours: the vendored switch `bevy_pbr::CpuListedPointShadowCasters` (point faces take no GPU-culled meshes) existed but
+  was only inserted by the uninstalled `sf_shadow_cache_bevy`.
+- **Industry comparison.** UE keeps light-primitive interactions: per local light, the list of primitives in its
+  bounds, built from the scene octree when a primitive or a light is added or moved, never per frame; cached shadow
+  maps redraw only when that list or a caster changes. Same shape here.
+- **As built.** `sf_sky_bevy/src/gpu_culled_casters.rs` (added by `PointShadowPlugin`): `list_gpu_culled_casters`
+  runs after `SimulationLightSystems::CheckLightVisibility` and adds each shadowed point light's GPU-culled casters to
+  its `CubemapVisibleEntities` from a per-light list, built with Bevy's own tests (light sphere, six face frusta,
+  `RenderLayers`, `InheritedVisibility`, `NotShadowCaster`). A list is rebuilt only when its light's transform, range
+  or layers change or when any GPU-culled caster is added, removed, moved, hidden or shown (one scan of the GPU-culled
+  casters per shadowed light). It inserts `CpuListedPointShadowCasters`, so the faces take casters from these lists
+  only, and the per-face cache (which hashes the same lists) works as with CPU-culled statics. All LOD levels in range
+  are listed; the GPU preprocess picks by `VisibilityRange` per view. Spot lights keep the stock path.
+- Tests: `gpu_culled_casters::tests` (which faces list which casters; rebuilt only on change; no list without a map).
+- Measured: [ledger/statics.md](../../../docs/ledger/statics.md) 2026-11-15.
+
 ## What Bevy 0.20 gives (read in `bevy_light-0.20.0` / `bevy_pbr-0.20.0`, 2026-10-19)
 
 - **Per light:** `PointLight::shadow_maps_enabled`, `shadow_depth_bias`, `shadow_normal_bias`,

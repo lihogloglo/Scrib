@@ -101,11 +101,14 @@ pub(crate) struct Group {
     /// Simplifier attributes, one weight's worth of floats per vertex
     /// (filled after welding).
     pub attributes: Vec<f32>,
-    /// `MikkTSpace` tangents, one per vertex; empty when the material binds no
-    /// normal map ([`Group::add_corner_tangents`]).
+    /// `MikkTSpace` tangents, one per vertex; empty when the group gets none
+    /// ([`Group::add_corner_tangents`]).
     pub tangents: Vec<Tangent>,
     /// The group gets tangents ([`wants_tangents`] for one of its meshes).
     pub tangent_space: bool,
+    /// One of the group's meshes has UVs. Without any, its tangents are the
+    /// deterministic fallback basis (`tangent.rs`), not `MikkTSpace`'s.
+    pub uvs: bool,
 }
 
 impl Group {
@@ -114,7 +117,7 @@ impl Group {
     /// to merge back: corners that agree on vertex and tangent become one
     /// vertex again, a mirrored-UV seam splits. Call before welding.
     pub fn add_corner_tangents(&mut self) {
-        self.tangents = corner_tangents(&self.vertices, &self.indices);
+        self.tangents = corner_tangents(&self.vertices, &self.indices, self.uvs);
         self.vertices = per_corner(&self.vertices, &self.indices);
         self.locked = per_corner(&self.locked, &self.indices);
         self.indices = (0..u32::try_from(self.indices.len()).unwrap_or(u32::MAX)).collect();
@@ -155,8 +158,11 @@ pub fn cook(model: &Model, settings: &CookSettings) -> Result<Cooked, CookError>
 
 /// [`cook`] with `MikkTSpace` tangents on the submeshes of every material
 /// whose entry in `tangents` is true (indexed like [`Model::materials`];
-/// missing entries are false): the materials that bind a normal map. Only
-/// meshes with UVs get tangents (no UVs, no tangent space).
+/// missing entries are false), the materials the caller's rule picks (a game
+/// gives every lit material one, so all its lit meshes share one vertex
+/// layout). A mesh without UVs has no texture space: it gets the fallback
+/// basis (`tangent.rs`, a unit tangent perpendicular to its normal), so the
+/// layout stays uniform.
 pub fn cook_with(model: &Model, settings: &CookSettings, tangents: &[bool]) -> Result<Cooked, CookError> {
     if model.meshes.iter().any(MeshData::deforms) {
         return crate::skin::cook_skinned(model, settings, tangents);
@@ -169,7 +175,7 @@ pub fn cook_with(model: &Model, settings: &CookSettings, tangents: &[bool]) -> R
 
 /// Whether `mesh` gets tangents under `tangents` ([`cook_with`]).
 pub(crate) fn wants_tangents(mesh: &MeshData, tangents: &[bool]) -> bool {
-    mesh.uvs.is_some() && tangents.get(mesh.material as usize).copied().unwrap_or(false)
+    tangents.get(mesh.material as usize).copied().unwrap_or(false)
 }
 
 /// Cooks a model as a character body driven by a rig from outside the
@@ -413,6 +419,7 @@ fn flatten(model: &Model, tangents: &[bool]) -> Result<(BTreeMap<u32, Group>, Fl
         let mirrored = transform.matrix3.determinant() < 0.0;
         let group = groups.entry(mesh.material).or_insert_with(|| Group { material: mesh.material, ..Group::default() });
         group.tangent_space |= wants_tangents(mesh, tangents);
+        group.uvs |= mesh.uvs.is_some();
         let base = u32::try_from(group.vertices.len()).map_err(|_| CookError::Malformed("too many vertices".into()))?;
         for i in 0..n {
             group.vertices.push(vertex(mesh, i, transform, &normal_matrix));

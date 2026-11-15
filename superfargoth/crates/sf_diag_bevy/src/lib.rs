@@ -38,6 +38,9 @@ pub use churn::{ChurnPlugin, ENTITIES, ENTITIES_DELTA, short_type_name};
 
 mod phases;
 pub use phases::FramePhasePlugin;
+#[cfg(any(test, feature = "render"))]
+mod encode;
+mod stages;
 
 #[cfg(feature = "views")]
 mod views;
@@ -66,6 +69,8 @@ mod tests;
 mod tests_textures;
 #[cfg(test)]
 mod tests_warmup;
+#[cfg(test)]
+mod tests_stages;
 
 /// Which Bevy diagnostics are recorded as gauge counters (under their own
 /// path, e.g. `render/opaque_pass/elapsed_gpu`). Bevy's own frame time,

@@ -20,6 +20,7 @@
 
 mod cascades;
 mod env_refresh;
+mod gpu_culled_casters;
 mod night;
 mod path;
 mod proxy;

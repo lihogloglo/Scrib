@@ -36,7 +36,7 @@ use sf_vfs::VfsPath;
 use sf_world::{
     Anchor, AnchorId, AnchorRole, CellDirectory, DoorLink, IndexPage, IndexReader, IndexedPlacement, Level,
     LevelContent, Location, PageCache, Partition, PlacementId, PlacementOverlay, RayTracedWorldspaces, Request, RequestId, RequestKind, RingConfig,
-    Scheduler, SchedulerConfig, Stage, StageStep, TickInput, Worldspace, WorldspaceId,
+    Scheduler, SchedulerConfig, Stage, StageStep, TickInput, Worldspace, WorldspaceId, WorldspaceState,
 };
 
 use crate::coords::{GRID_SWITCH, from_grid, to_grid};
@@ -47,7 +47,7 @@ use crate::spawn::{
     ActivateCx, LoadedModel, ModelMaterials, ModelTemplate, PlacementSpawners, SpawnCx, TemplateLod, model_aabb,
     size_culled_end, spawn_template_ranges,
 };
-use crate::worldspace::{WorldspaceRegistry, WorldspaceRoot};
+use crate::worldspace::{WorldspaceRegistry, WorldspaceRoot, dynamic_layer};
 
 /// Longest run of frames the origin-shift guard may hold the main-thread
 /// stages (a slow approach to a cell border must not starve streaming).
@@ -59,6 +59,7 @@ pub const SHIFT_COOLDOWN_FRAMES: u32 = 2;
 
 /// Settings of the streaming runtime.
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_excessive_bools, reason = "independent A/B switches")]
 pub struct StreamingConfig {
     pub scheduler: SchedulerConfig,
     /// LOD switch distances (screen error), bake.md "Runtime distance".
@@ -101,6 +102,11 @@ pub struct StreamingConfig {
     /// bindless slabs half as fast. Off: the mapper's materials as they come and
     /// one sampler per image (the app's `--off matclass` A/B).
     pub material_classes: bool,
+    /// With [`Self::material_classes`]: statics without a normal map get the
+    /// shared flat one ([`crate::matclass::FLAT_NORMAL_MAP`]), so normal-mapped
+    /// and plain statics of a class share one main-pass key. Off: a normal map
+    /// splits its class (the app's `--off flatnormal` A/B).
+    pub flat_normal_map: bool,
     /// Static parts (cooked `Static` placements and precombine buckets) carry
     /// Bevy's `NoCpuCulling`: no per-view CPU frustum, range and light scans;
     /// the GPU preprocess culls them by frustum and visibility range in every
@@ -125,8 +131,17 @@ impl Default for StreamingConfig {
             max_loading_meshes: 64,
             precombine: true,
             material_classes: true,
+            flat_normal_map: true,
             gpu_cull_statics: false,
         }
+    }
+}
+
+impl StreamingConfig {
+    /// How static materials fold ([`crate::matclass::fold`]); `None` when
+    /// [`Self::material_classes`] is off (materials stay as the mapper made them).
+    pub fn fold_rules(&self) -> Option<crate::matclass::FoldRules> {
+        self.material_classes.then_some(crate::matclass::FoldRules { flat_normal_map: self.flat_normal_map })
     }
 }
 
@@ -657,11 +672,45 @@ impl Streaming {
                 self.run_stage(world, stage, spawners, counters);
             }
         }
+        self.release_unloaded(world);
 
         self.rt.stats.resident_cells = self.rt.cells.len();
         self.rt.stats.models_loaded = self.rt.models.len();
         if let Some(c) = counters {
             self.report_counters(c, now);
+        }
+    }
+
+    /// Frees the root and render-layer pair of every worldspace that streamed out completely (a
+    /// door prefetch the player walked away from): streamed (it has a directory), not active,
+    /// nothing resident or pending, no cell entity left. Its directory stays (index metadata, like
+    /// a cell record); the next prefetch gets a root and a pair again (`cell_entity`). Without
+    /// this, every worldspace ever seen kept its pair (ROADMAP 1.1).
+    fn release_unloaded(&self, world: &mut World) {
+        if self.scheduler.reloading() {
+            return;
+        }
+        let active = world.get_resource::<ActiveWorldspace>().and_then(|a| a.0.clone());
+        let registry = world.resource::<WorldspaceRegistry>();
+        let done: Vec<WorldspaceId> = registry
+            .iter()
+            .map(|(ws, _)| ws)
+            .filter(|ws| {
+                active.as_ref() != Some(*ws)
+                    && self.scheduler.directory(ws).is_some()
+                    && self.scheduler.worldspace_state(ws) == WorldspaceState::Inactive
+                    && !self.scheduler.requests().any(|r| r.worldspace == **ws)
+            })
+            .cloned()
+            .collect();
+        if done.is_empty() {
+            return;
+        }
+        let with_cells: HashSet<&WorldspaceId> = self.rt.cells.keys().map(|(ws, _)| ws).collect();
+        for ws in done.iter().filter(|ws| !with_cells.contains(ws)) {
+            if WorldspaceRegistry::release_in(world, ws) {
+                log::debug!("sf_world_bevy: released worldspace {ws} (its render layers are free again)");
+            }
         }
     }
 
@@ -1117,7 +1166,7 @@ impl Runtime {
             return;
         }
         let mapper = world.get_resource::<ModelMaterials>().cloned().unwrap_or_default();
-        let fold = self.config.material_classes;
+        let fold = self.config.fold_rules();
         world.resource_scope(|world, mut materials: Mut<Assets<StandardMaterial>>| {
             let asset_server = world.resource::<AssetServer>().clone();
             let cooked = world.resource::<Assets<CookedModelAsset>>();
@@ -1306,7 +1355,7 @@ impl Runtime {
             placements.iter().filter(|p| members.contains(&p.placement.id)).map(|p| (p.placement.id, p)).collect();
         let origin = self.info(&request.worldspace).partition.cell_origin(request.cell);
         let mapper = world.get_resource::<ModelMaterials>().cloned().unwrap_or_default();
-        let fold = self.config.material_classes;
+        let fold = self.config.fold_rules();
         let mut buckets = Vec::new();
         world.resource_scope(|world, mut materials: Mut<Assets<StandardMaterial>>| {
             let asset_server = world.resource::<AssetServer>().clone();
@@ -1360,7 +1409,7 @@ impl Runtime {
         let layers = world
             .resource::<WorldspaceRegistry>()
             .get(&request.worldspace)
-            .map_or_else(RenderLayers::default, |e| RenderLayers::layer(e.layer));
+            .map_or_else(RenderLayers::default, |e| dynamic_layer(e.layer));
         let origin = info.partition.cell_origin(request.cell);
         // The far-field proxy first: one spawn item of its own.
         if work.proxy && !work.proxy_spawned {
@@ -1552,7 +1601,7 @@ impl Runtime {
         let layers = world
             .resource::<WorldspaceRegistry>()
             .get(&pending.worldspace)
-            .map_or_else(RenderLayers::default, |e| RenderLayers::layer(e.layer));
+            .map_or_else(RenderLayers::default, |e| dynamic_layer(e.layer));
         let at = PlaceAt {
             worldspace: &pending.worldspace,
             cell: pending.cell,
@@ -1796,13 +1845,13 @@ fn load_page(reader: &dyn IndexReader, cache: &Mutex<PageCache>, ws: &Worldspace
 }
 
 /// Turns a loaded cooked model into a template, deduplicating materials by
-/// description. With `fold` ([`StreamingConfig::material_classes`]) each new
-/// material folds into its class ([`crate::matclass::fold`]).
+/// description. With `fold` ([`StreamingConfig::fold_rules`], `None` when matclass is off) each
+/// new material folds into its class ([`crate::matclass::fold`]).
 fn build_template(
     asset: &CookedModelAsset,
     materials: &mut Assets<StandardMaterial>,
     cache: &mut HashMap<String, Handle<StandardMaterial>>,
-    (mapper, fold): (&ModelMaterials, bool),
+    (mapper, fold): (&ModelMaterials, Option<crate::matclass::FoldRules>),
     asset_server: &AssetServer,
 ) -> ModelTemplate {
     let mut material = |i: u32| -> Handle<StandardMaterial> {
@@ -1812,8 +1861,8 @@ fn build_template(
             .entry(key)
             .or_insert_with(|| {
                 let mut made = (mapper.0)(&desc, asset_server);
-                if fold {
-                    crate::matclass::fold(&mut made);
+                if let Some(rules) = fold {
+                    crate::matclass::fold(&mut made, rules);
                 }
                 materials.add(made)
             })

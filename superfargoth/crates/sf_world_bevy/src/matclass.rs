@@ -17,9 +17,14 @@
 //!   is a [`Split::UvChannel`].
 //! - `parallax_mapping_method`: Bevy's default when there is no depth map (unused then); with one,
 //!   [`Split::DepthMap`].
-//! - `normal_map_texture`: kept. Statics carry none today (2002 assets); a replacer with normal maps
-//!   is a [`Split::NormalMap`] (a shared flat normal map for the rest of the class needs tangents on
-//!   every mesh of the class, a bake change).
+//! - `normal_map_texture`: a material without one gets [`FLAT_NORMAL_MAP`], a shared 1x1 map that
+//!   decodes to exactly the geometric normal, so normal-mapped and plain statics of a class share
+//!   the `NORMAL_MAP` key (UE's default flat normal texture; one extra texture fetch per pixel).
+//!   This needs a tangent basis on every static mesh (the bake gives every static one) and is
+//!   [`FoldRules::flat_normal_map`] (the app's `--off flatnormal`); with it off, a normal map is a
+//!   [`Split::NormalMap`]. The map's decode flags (two-component, flip Y) are material uniform
+//!   flags, not key bits, so its format need not match the class's real normal maps. Unlit
+//!   members get it too (they share the lit key; the shading ignores the normal).
 //! - `depth_bias`: zero when under one unit (Bevy truncates it to an integer for the key and the
 //!   depth state, so the fraction selects nothing); otherwise kept, a [`Split::DepthBias`] (no
 //!   static sets one today).
@@ -30,7 +35,9 @@
 //! - `clearcoat`, `anisotropy_strength`, `specular_transmission`: kept; statics never set them
 //!   ([`Split::Layered`]).
 //!
-//! The A/B switch is [`crate::StreamingConfig::material_classes`] (the app's `--off matclass`).
+//! The A/B switches are [`crate::StreamingConfig::material_classes`] (the app's `--off matclass`)
+//! and [`crate::StreamingConfig::flat_normal_map`] (`--off flatnormal`), read together by
+//! [`crate::StreamingConfig::fold_rules`].
 //!
 //! Gauges (`sf_diag::views::statics`): while `DiagCounters` exist, [`track_static_materials`]
 //! follows the materials of live [`StaticPart`]s (distinct materials, classes, keys, pipeline
@@ -44,15 +51,16 @@ use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use bevy_asset::{AssetId, Assets, UntypedAssetId};
+use bevy_asset::{AssetId, Assets, Handle, RenderAssetUsages, UntypedAssetId, uuid_handle};
 use bevy_ecs::prelude::*;
+use bevy_image::Image;
 use bevy_material::{AlphaMode, OpaqueRendererMethod};
 use bevy_mesh::UvChannel;
 use bevy_pbr::{Material, MeshMaterial3d, ParallaxMappingMethod, StandardMaterial, StandardMaterialKey};
 use bevy_render::extract_resource::ExtractResource;
 use bevy_render::material_bind_groups::{MaterialBindGroupAllocator, MaterialBindGroupAllocators, RenderMaterialBindings};
 use bevy_render::RenderApp;
-use bevy_render::render_resource::Face;
+use bevy_render::render_resource::{Extent3d, Face, TextureDimension, TextureFormat};
 use sf_diag_bevy::DiagCounters;
 use sf_diag_bevy::sf_diag::views::{StaticBindGroups, StaticMaterials};
 use sf_scene::{MaterialClass, MaterialTraits};
@@ -72,6 +80,41 @@ pub enum Split {
     DepthMap,
     /// Clearcoat, anisotropy or specular transmission.
     Layered,
+}
+
+/// The shared flat normal map [`fold`] binds on statics without a normal map: [`flat_normal_image`],
+/// added under this handle by the streaming plugin.
+pub const FLAT_NORMAL_MAP: Handle<Image> = uuid_handle!("8d3f2b6e-5a41-4c7e-b19d-2e6f0a9c7d13");
+
+/// Tangent-space +Z as one `Rgba16Float` texel, (0.5, 0.5, 1.0, 1.0): Bevy's three-component
+/// decode (`rgb * 2 - 1`) gives exactly (0, 0, 1), so `apply_normal_mapping` returns the
+/// interpolated vertex normal, back faces of two-sided materials included (it negates `Nt` there
+/// as the unmapped path negates `N`). An 8-bit unorm texel can't hold 0.5 (128/255 tilts the
+/// normal by 0.2 degrees); a half float holds it exactly and filters.
+pub fn flat_normal_image() -> Image {
+    const HALF: [u8; 2] = 0x3800u16.to_le_bytes(); // 0.5
+    const ONE: [u8; 2] = 0x3C00u16.to_le_bytes(); // 1.0
+    let texel = [HALF, HALF, ONE, ONE].concat();
+    Image::new_fill(
+        Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        &texel,
+        TextureFormat::Rgba16Float,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+}
+
+/// How [`fold`] folds; [`crate::StreamingConfig::fold_rules`] reads it from the switches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FoldRules {
+    /// Bind [`FLAT_NORMAL_MAP`] where a material has no normal map (`--off flatnormal`).
+    pub flat_normal_map: bool,
+}
+
+impl Default for FoldRules {
+    fn default() -> Self {
+        Self { flat_normal_map: true }
+    }
 }
 
 /// What [`fold`] made of a material.
@@ -105,9 +148,10 @@ pub fn class_of(material: &StandardMaterial) -> Option<MaterialClass> {
     traits_of(material).map(MaterialClass::of)
 }
 
-/// The `StandardMaterialKey` every fully folded material of `class` has.
-pub fn class_key(class: MaterialClass) -> StandardMaterialKey {
-    if class.traits().two_sided { StandardMaterialKey::empty() } else { StandardMaterialKey::CULL_BACK }
+/// The `StandardMaterialKey` every fully folded material of `class` has under `rules`.
+pub fn class_key(class: MaterialClass, rules: FoldRules) -> StandardMaterialKey {
+    let cull = if class.traits().two_sided { StandardMaterialKey::empty() } else { StandardMaterialKey::CULL_BACK };
+    if rules.flat_normal_map { cull | StandardMaterialKey::NORMAL_MAP } else { cull }
 }
 
 /// The pipeline-selecting part of a material: what Bevy specializes its material pipeline on
@@ -138,8 +182,9 @@ impl PipelineKey {
     }
 }
 
-/// Folds `material` into its class (module docs); `None`, untouched, when it has none.
-pub fn fold(material: &mut StandardMaterial) -> Option<Folded> {
+/// Folds `material` into its class under `rules` (module docs); `None`, untouched, when it has
+/// none.
+pub fn fold(material: &mut StandardMaterial, rules: FoldRules) -> Option<Folded> {
     let class = class_of(material)?;
     let traits = class.traits();
     material.cull_mode = if traits.two_sided { None } else { Some(Face::Back) };
@@ -152,6 +197,12 @@ pub fn fold(material: &mut StandardMaterial) -> Option<Folded> {
     uv(material.emissive_texture.is_some(), &mut material.emissive_channel);
     uv(material.metallic_roughness_texture.is_some(), &mut material.metallic_roughness_channel);
     uv(material.occlusion_texture.is_some(), &mut material.occlusion_channel);
+    if rules.flat_normal_map && material.normal_map_texture.is_none() {
+        // UV0 (the class's channel), no flip: the flat texel decodes to the geometric normal.
+        material.normal_map_texture = Some(FLAT_NORMAL_MAP);
+        material.normal_map_channel = UvChannel::Uv0;
+        material.flip_normal_map_y = false;
+    }
     uv(material.normal_map_texture.is_some(), &mut material.normal_map_channel);
     if material.depth_map.is_none() {
         material.parallax_mapping_method = ParallaxMappingMethod::default();
@@ -168,7 +219,7 @@ pub fn fold(material: &mut StandardMaterial) -> Option<Folded> {
     if material.diffuse_transmission > 0.0 {
         splits.push(Split::Leaf);
     }
-    if material.normal_map_texture.is_some() {
+    if !rules.flat_normal_map && material.normal_map_texture.is_some() {
         splits.push(Split::NormalMap);
     }
     if bias != 0 {
@@ -339,6 +390,56 @@ mod tests {
         StandardMaterialKey::from(m).bits()
     }
 
+    const FLAT: FoldRules = FoldRules { flat_normal_map: true };
+    const NO_FLAT: FoldRules = FoldRules { flat_normal_map: false };
+
+    /// A normal-mapped static and a plain one of a class end on one key: the plain one gets the
+    /// shared flat map, the real map is kept. `--off flatnormal` keeps the old split.
+    #[test]
+    fn flat_normal_map_folds_mapped_and_plain_statics_into_one_key() {
+        let real = Handle::<Image>::default();
+        for (alpha, two_sided, class) in [
+            (AlphaMode::Opaque, false, MaterialClass::Opaque),
+            (AlphaMode::Mask(0.5), true, MaterialClass::MaskedTwoSided),
+        ] {
+            let mut mapped = StandardMaterial {
+                normal_map_texture: Some(real.clone()),
+                flip_normal_map_y: true,
+                ..surface(alpha, two_sided)
+            };
+            let mut plain = StandardMaterial { normal_map_channel: UvChannel::Uv1, ..surface(alpha, two_sided) };
+            assert_eq!(fold(&mut mapped, FLAT), Some(Folded { class, splits: vec![] }));
+            assert_eq!(fold(&mut plain, FLAT), Some(Folded { class, splits: vec![] }));
+            assert_eq!(mapped.normal_map_texture, Some(real.clone()), "a real map is kept");
+            assert!(mapped.flip_normal_map_y, "its decode flags are its own (uniform flags)");
+            assert_eq!(plain.normal_map_texture, Some(FLAT_NORMAL_MAP));
+            assert_eq!(plain.normal_map_channel, UvChannel::Uv0);
+            assert_eq!(key(&mapped), key(&plain));
+            assert_eq!(key(&plain), class_key(class, FLAT).bits());
+            assert_eq!(PipelineKey::of(&mapped), PipelineKey::of(&plain));
+            assert!(StandardMaterialKey::from(&plain).contains(StandardMaterialKey::NORMAL_MAP));
+
+            let mut mapped = StandardMaterial { normal_map_texture: Some(real.clone()), ..surface(alpha, two_sided) };
+            let mut plain = surface(alpha, two_sided);
+            assert_eq!(fold(&mut mapped, NO_FLAT).map(|f| f.splits), Some(vec![Split::NormalMap]));
+            assert_eq!(fold(&mut plain, NO_FLAT).map(|f| f.splits), Some(vec![]));
+            assert_eq!(plain.normal_map_texture, None, "off: no flat map");
+            assert_ne!(key(&mapped), key(&plain));
+        }
+    }
+
+    /// The flat texel decodes, through Bevy's three-component path (`rgb * 2 - 1`, the format is
+    /// not a two-component one), to exactly tangent-space +Z.
+    #[test]
+    fn flat_normal_map_decodes_to_tangent_space_z() {
+        let image = flat_normal_image();
+        assert_eq!(image.texture_descriptor.format, TextureFormat::Rgba16Float);
+        assert_eq!((image.width(), image.height()), (1, 1));
+        let texel = image.get_color_at(0, 0).expect("readable").to_linear();
+        let nt = [texel.red, texel.green, texel.blue].map(|c| c * 2.0 - 1.0);
+        assert_eq!(nt.map(f32::to_bits), [0.0f32, 0.0, 1.0].map(f32::to_bits));
+    }
+
     #[test]
     fn traits_follow_alpha_and_culling() {
         let t = |m: &StandardMaterial| traits_of(m);
@@ -380,15 +481,18 @@ mod tests {
             (fence, MaterialClass::Masked),
             (grate, MaterialClass::MaskedTwoSided),
         ];
-        for (mut m, class) in cases {
-            let folded = fold(&mut m).expect("a scene material");
-            assert_eq!(folded, Folded { class, splits: vec![] });
-            assert_eq!(key(&m), class_key(class).bits(), "{class:?}");
+        for rules in [FLAT, NO_FLAT] {
+            for (m, class) in &cases {
+                let mut m = m.clone();
+                let folded = fold(&mut m, rules).expect("a scene material");
+                assert_eq!(folded, Folded { class: *class, splits: vec![] });
+                assert_eq!(key(&m), class_key(*class, rules).bits(), "{class:?} {rules:?}");
+            }
         }
-        assert_eq!(class_key(MaterialClass::Opaque).bits(), StandardMaterialKey::CULL_BACK.bits());
-        assert_eq!(class_key(MaterialClass::Masked).bits(), StandardMaterialKey::CULL_BACK.bits());
-        assert_eq!(class_key(MaterialClass::OpaqueTwoSided).bits(), StandardMaterialKey::empty().bits());
-        assert_eq!(class_key(MaterialClass::MaskedTwoSided).bits(), StandardMaterialKey::empty().bits());
+        assert_eq!(class_key(MaterialClass::Opaque, NO_FLAT).bits(), StandardMaterialKey::CULL_BACK.bits());
+        assert_eq!(class_key(MaterialClass::Masked, NO_FLAT).bits(), StandardMaterialKey::CULL_BACK.bits());
+        assert_eq!(class_key(MaterialClass::OpaqueTwoSided, NO_FLAT).bits(), StandardMaterialKey::empty().bits());
+        assert_eq!(class_key(MaterialClass::MaskedTwoSided, NO_FLAT).bits(), StandardMaterialKey::empty().bits());
         // Opaque and masked share a StandardMaterialKey; the mesh key's alpha bits split them.
         let (o, k) = (PipelineKey::of(&surface(AlphaMode::Opaque, false)), PipelineKey::of(&surface(AlphaMode::Mask(0.5), false)));
         assert_eq!((o.key, o.alpha, k.key, k.alpha), (StandardMaterialKey::CULL_BACK.bits(), 0, StandardMaterialKey::CULL_BACK.bits(), 1));
@@ -408,12 +512,12 @@ mod tests {
             ..surface(AlphaMode::Opaque, false)
         };
         assert_ne!(key(&stray), StandardMaterialKey::CULL_BACK.bits());
-        assert_eq!(fold(&mut stray).map(|f| f.splits), Some(vec![]));
+        assert_eq!(fold(&mut stray, NO_FLAT).map(|f| f.splits), Some(vec![]));
         assert_eq!(key(&stray), StandardMaterialKey::CULL_BACK.bits());
         assert_eq!(stray.depth_bias.to_bits(), 0.0f32.to_bits());
 
         let mut leaf = StandardMaterial { diffuse_transmission: 0.5, thickness: 0.05, ..surface(AlphaMode::Mask(0.5), true) };
-        assert_eq!(fold(&mut leaf), Some(Folded { class: MaterialClass::MaskedTwoSided, splits: vec![Split::Leaf] }));
+        assert_eq!(fold(&mut leaf, NO_FLAT), Some(Folded { class: MaterialClass::MaskedTwoSided, splits: vec![Split::Leaf] }));
         assert_eq!(key(&leaf), StandardMaterialKey::DIFFUSE_TRANSMISSION.bits(), "leaves keep their own key");
         assert!((leaf.diffuse_transmission - 0.5).abs() < f32::EPSILON);
 
@@ -424,13 +528,13 @@ mod tests {
             ..surface(AlphaMode::Opaque, false)
         };
         let before = key(&decal);
-        let folded = fold(&mut decal).expect("opaque");
+        let folded = fold(&mut decal, NO_FLAT).expect("opaque");
         assert_eq!(folded.splits, vec![Split::NormalMap, Split::DepthBias, Split::UvChannel]);
         assert_eq!(key(&decal), before, "nothing that changes the look is touched");
 
         let mut blended = surface(AlphaMode::Blend, false);
         blended.emissive_channel = UvChannel::Uv1;
-        assert_eq!(fold(&mut blended), None);
+        assert_eq!(fold(&mut blended, FLAT), None);
         assert_eq!(blended.emissive_channel, UvChannel::Uv1, "non-scene materials are left alone");
     }
 

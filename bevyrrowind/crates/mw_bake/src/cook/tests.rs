@@ -448,11 +448,6 @@ fn a_renamed_suffix_is_found_only_in_its_mod() {
     assert_eq!(plan.jobs["textures/b_normal.dds"].normal.map(|n| n.source_y), Some(SourceY::Down));
     // Without the section neither is a companion.
     assert!(plan_over(&vfs, &refs, &TextureSources::default()).normals.is_empty());
-    // `mesh.cook` asks the union of suffixes: a new suffix changes the tangent rule's key, the
-    // default union keeps version 1 (no re-cook for installs that name no profile).
-    assert_eq!(tangent_rule(&TextureSources::default()).version, 1);
-    assert_eq!(tangent_rule(&pack_sources(&TextureSection { normal_y: Some(NormalY::Up), ..TextureSection::default() })).version, 1);
-    assert!(tangent_rule(&pack_sources(&renamed)).version > 1);
 }
 
 /// Changing one mod's profile re-cooks only that mod's companions (the job, in the cook's `role`
@@ -754,4 +749,107 @@ fn layer_publishes_current_depth_companions() {
     assert_eq!(stats.depths, 0);
     assert!(read_depths(&vfs).is_empty());
     assert!(vfs.read(&VfsPath::new("textures/a_nh_depth.ktx2").unwrap()).is_err());
+}
+
+/// Test importer for [`every_static_material_gets_tangents`]: the file is a postcard [`sf_model::Model`].
+struct PostcardModel;
+
+impl sf_model::ModelImporter for PostcardModel {
+    fn extensions(&self) -> &[&str] {
+        &["pcm"]
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn import(&self, path: &str, bytes: &[u8]) -> Result<sf_model::Model, sf_model::ImportError> {
+        postcard::from_bytes(bytes).map_err(|e| sf_model::ImportError { path: path.into(), message: e.to_string() })
+    }
+}
+
+/// A flat `n` x `n` grid in XZ, normal +Y, UV `u` along +X and `v` along +Z (no mirroring).
+fn grid(n: u32, material: u32, uvs: bool) -> sf_model::MeshData {
+    let mut mesh = sf_model::MeshData { material, normals: Some(Vec::new()), uvs: uvs.then(Vec::new), ..sf_model::MeshData::default() };
+    for z in 0..=n {
+        for x in 0..=n {
+            #[allow(clippy::cast_precision_loss)]
+            let (fx, fz) = (x as f32 / n as f32, z as f32 / n as f32);
+            mesh.positions.push([fx * 4.0 - 2.0, 0.0, fz * 4.0 - 2.0]);
+            mesh.normals.as_mut().unwrap().push([0.0, 1.0, 0.0]);
+            if let Some(uv) = mesh.uvs.as_mut() {
+                uv.push([fx, fz]);
+            }
+        }
+    }
+    let row = n + 1;
+    for z in 0..n {
+        for x in 0..n {
+            let i = z * row + x;
+            mesh.indices.extend([i, i + row, i + 1, i + 1, i + row, i + row + 1]);
+        }
+    }
+    mesh
+}
+
+/// B2 (texture-cost-2026-11-15): `mesh.cook` under the game's [`tangent_rule`] gives every static
+/// submesh a tangent stream, so statics share one vertex layout: a lit material whose base texture
+/// has no normal-map companion, an unlit one, and a lit mesh without UVs (the fallback basis).
+/// Right length (one per vertex, unit) and Bevy's handedness: for this unmirrored layout
+/// `w * cross(N, T)` is `-dP/dv` (the image's up, `tangent.rs`), so `w = 1` everywhere.
+#[test]
+fn every_static_material_gets_tangents() {
+    use sf_bake::ProductKey;
+    use sf_model::steps::{Importers, MeshCookStep};
+    use sf_model::{CookSettings, Cooked, Material, Model, Node};
+
+    let nodes = (0..3u32)
+        .map(|i| {
+            let mut node = Node::new(format!("n{i}"));
+            node.mesh = Some(i);
+            if i > 0 {
+                node.parent = Some(0);
+                node.translation = [5.0 * f32::from(u8::try_from(i).unwrap()), 0.0, 0.0];
+            }
+            node
+        })
+        .collect();
+    let plain = Material { base_color_texture: Some("textures/plain.tga".into()), ..Material::default() };
+    let sign = Material { base_color_texture: Some("textures/sign.tga".into()), unlit: true, ..Material::default() };
+    let model = Model { nodes, meshes: vec![grid(16, 0, true), grid(4, 1, true), grid(8, 2, false)], materials: vec![plain, sign, Material::default()] };
+    let source = MemSource::new("data")
+        .with("meshes/plain.pcm", postcard::to_stdvec(&model).unwrap())
+        .with("textures/plain.dds", dds(D3DFormat::DXT1, 16, 16, 5))
+        .with("textures/sign.dds", dds(D3DFormat::DXT1, 16, 16, 5));
+    let vfs = Arc::new(Vfs::builder().mount(source).build());
+    assert!(vfs.read(&VfsPath::new("textures/plain_n.dds").unwrap()).is_err(), "no normal-map companion");
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut baker = Baker::new(Store::open(dir.path()).unwrap(), Arc::new(TestInputs(vfs)));
+    let importers = Importers::new().with(Arc::new(PostcardModel));
+    baker.register(MeshCookStep { importers, settings: CookSettings::default(), tangents: Some(tangent_rule()) });
+    let key = ProductKey::new(MeshCookStep::ID, "meshes/plain.pcm");
+    let report = baker.bake(std::slice::from_ref(&key));
+    assert_eq!(report.failures().count(), 0, "{:?}", report.products);
+    let bytes = baker.store().get(&baker.product(&key).unwrap()).unwrap();
+    let Cooked::Static(cooked) = Cooked::from_bytes(&bytes).unwrap() else { panic!("static") };
+
+    let mut materials = BTreeSet::new();
+    for lod in &cooked.lods {
+        for sub in &lod.submeshes {
+            materials.insert(sub.material);
+            let tangents = sub.decode_tangents().unwrap().unwrap_or_else(|| panic!("material {} has no tangents", sub.material));
+            assert_eq!(tangents.len(), sub.vertex_count as usize);
+            let (vertices, _) = sub.decode().unwrap();
+            for (v, &[x, y, z, w]) in vertices.iter().zip(&tangents) {
+                let t = glam::Vec3::new(x, y, z);
+                assert!((t.length() - 1.0).abs() < 1e-4, "unit tangent, got {t}");
+                assert!(glam::Vec3::from_array(v.normal).dot(t).abs() < 1e-3, "tangent in the surface plane");
+                assert!((w - 1.0).abs() < f32::EPSILON, "material {}: handedness {w}", sub.material);
+                if sub.material != 2 {
+                    assert!(t.abs_diff_eq(glam::Vec3::X, 1e-3), "MikkTSpace follows +u (+X), got {t}");
+                }
+            }
+        }
+    }
+    assert_eq!(materials.into_iter().collect::<Vec<_>>(), [0, 1, 2], "every material cooked");
+    assert_eq!(tangent_rule().version, 3);
 }

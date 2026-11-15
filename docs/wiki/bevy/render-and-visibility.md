@@ -60,7 +60,7 @@ Facts only, from the stock 0.20.0 source (`~/.cargo/registry/src/*/<crate>-0.20.
   by `RenderLayers`. A view component that was just added gets a full flush of the whole table (`mesh.rs:2345`).
   A point light's subview tables are dropped when it loses its shadow map or its `ViewVisibility`
   (`bevy_pbr/src/render/light.rs`, end of `extract_lights`), so each time it gains a map the table is flushed into
-  its six faces again.
+  its six faces again (our opt-in answer: `engine/statics-and-lod.md`, "GPU-only culling").
 - `extract_cameras` (`bevy_render/src/camera.rs:473`) and `extract_lights` (`bevy_pbr/src/render/light.rs:333`)
   copy each camera's, cascade's and face's sorted visible list.
 - `extract_skins` (`bevy_pbr/src/render/skin.rs:272`) handles skins whose `ViewVisibility` / `SkinnedMesh`

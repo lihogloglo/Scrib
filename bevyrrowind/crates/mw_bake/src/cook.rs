@@ -427,7 +427,7 @@ pub fn plan_orms<'a>(
 /// normals-only pack over vanilla diffuse is read by the pack's convention. `resolve`: the
 /// runtime's rule with [`TEXTURE_ALTERNATES`] and the winner's VFS source, given a `.tga`
 /// reference so TGA, KTX2, DDS and PNG files all count. The bake's one companion lookup: the
-/// texture cook asks it, `mesh.cook` ([`tangent_rule`]) a superset of it.
+/// texture cook asks it.
 pub fn normal_companion<'s>(
     sources: &'s TextureSources,
     reference: &str,
@@ -440,45 +440,17 @@ pub fn normal_companion<'s>(
     })
 }
 
-/// `mesh.cook`'s tangent rule ([`sf_model::steps::TangentRule`], textures-adapter.md §2): a lit
-/// material gets `MikkTSpace` tangents when its base texture has a file under any suffix of
-/// [`TextureSources::normal_suffixes`] (the union over every source's profile). Every candidate
-/// file it looks at goes through [`RunCx::file_exists`], so it becomes a dependency: a pack that
-/// adds or removes a companion re-cooks only the models whose materials use that base texture.
-/// Existence only (any extension in [`TEXTURE_ALTERNATES`] counts), which is what
-/// [`Vfs::resolve_preferring`] needs to answer `Some`. A superset of [`normal_companion`] (it
-/// doesn't ask which source's profile owns the suffix) and so of what the cook binds: a companion
-/// the texture cook skips (ambiguous, or a suffix its source's profile lacks) still gets tangents,
-/// harmless, the runtime binds no normal map for it; never the reverse, which would shade wrong.
-/// The rule's version is 1 while the union is the default profile's (unchanged keys for every
-/// install that names no profile) and follows the union otherwise, so a new suffix re-cooks.
-pub fn tangent_rule(sources: &TextureSources) -> sf_model::steps::TangentRule {
-    let suffixes: Vec<String> = sources.normal_suffixes().into_iter().map(str::to_owned).collect();
-    let defaults = TextureSources::default();
-    let default = defaults.normal_suffixes();
-    let version = if suffixes.iter().map(String::as_str).eq(default.iter().copied()) {
-        1
-    } else {
-        let digest = Digest::of(suffixes.join("\n").to_ascii_lowercase().as_bytes()).0;
-        u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]).max(2)
-    };
-    sf_model::steps::TangentRule {
-        version,
-        wants: Arc::new(move |material: &sf_model::Material, cx: &mut RunCx<'_>| {
-            let Some(reference) = material.base_color_texture.as_deref().filter(|_| !material.unlit) else { return Ok(false) };
-            let base = stem(reference);
-            for suffix in &suffixes {
-                let Ok(path) = VfsPath::new(&format!("{base}{suffix}.tga")) else { continue };
-                let tries = std::iter::once(path.clone()).chain(TEXTURE_ALTERNATES.iter().map(|ext| path.with_extension(ext)));
-                for p in tries {
-                    if cx.file_exists(p.as_str())? {
-                        return Ok(true);
-                    }
-                }
-            }
-            Ok(false)
-        }),
-    }
+/// `mesh.cook`'s tangent rule ([`sf_model::steps::TangentRule`], textures-adapter.md §2): **every**
+/// material gets `MikkTSpace` tangents, normal-mapped or not, lit or unlit (B2, the UE convention:
+/// a tangent basis on every static mesh). `VERTEX_TANGENTS` is part of Bevy's mesh pipeline key,
+/// so a static without tangents splits pipelines and depth batch sets from one with them, and
+/// unlit surfaces fold into the lit material classes (`sf_world_bevy` `matclass.rs`: `unlit` is
+/// per-material data), so they must carry them too. Costs 16 bytes a vertex; asks no file, so a
+/// pack that adds or removes a normal-map companion re-cooks no model. Version 3: the rule before
+/// it asked for companions under [`TextureSources::normal_suffixes`] (versions 1, and 2+ per
+/// suffix union).
+pub fn tangent_rule() -> sf_model::steps::TangentRule {
+    sf_model::steps::TangentRule { version: 3, wants: Arc::new(|_: &sf_model::Material, _: &mut RunCx<'_>| Ok(true)) }
 }
 
 /// Adds the normal-map companions of every base-colour reference in `uses` to `plan`: a

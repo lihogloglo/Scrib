@@ -53,10 +53,11 @@ pub use stream::{
     ActiveWorldspace, CellLoaded, CellUnloaded, DoorLinks, PromoteToEntity, RayTracingVariants, StreamCell, StreamStats, Streaming,
     StreamingAnchor, StreamingConfig, WorldIndexSource, WorldOverlay, WorldspaceActivated, WorldspaceRecords,
 };
-pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceLayers, WorldspaceRegistry, WorldspaceRoot};
+pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceLayers, WorldspaceRegistry, WorldspaceRoot, dynamic_layer};
 
 use bevy_app::{App, Last, Plugin, PostStartup, PostUpdate, Update};
-use bevy_asset::AssetApp;
+use bevy_asset::{AssetApp, Assets};
+use bevy_image::Image;
 use bevy_ecs::prelude::*;
 use bevy_render::batching::gpu_preprocessing::GpuPreprocessingSupport;
 use bevy_render::extract_resource::extract_resource;
@@ -157,6 +158,13 @@ impl Plugin for WorldStreamingPlugin {
         if let Some(mut limit) = app.world_mut().get_resource_mut::<RenderAssetBytesPerFrame>() {
             limit.max_bytes = None;
         }
+        // The flat normal map folded statics bind (`matclass::FLAT_NORMAL_MAP`); headless apps
+        // without images never draw it.
+        if self.config.fold_rules().is_some_and(|r| r.flat_normal_map)
+            && let Some(mut images) = app.world_mut().get_resource_mut::<Assets<Image>>()
+        {
+            images.insert(&matclass::FLAT_NORMAL_MAP, matclass::flat_normal_image()).expect("a uuid handle");
+        }
         // GPU-culled statics need GPU culling in every view ([`StaticGpuCulling`]).
         let support = app
             .get_sub_app(RenderApp)
@@ -203,3 +211,6 @@ mod gpu_batch_tests;
 // Patch GS change detection: the range cache and allocator generation (static-scene perf fix 2).
 #[cfg(test)]
 mod gpu_batch_cache_tests;
+// Worldspace layer pairs freed and reused when a worldspace streams out (ROADMAP 1.1).
+#[cfg(test)]
+mod worldspace_tests;

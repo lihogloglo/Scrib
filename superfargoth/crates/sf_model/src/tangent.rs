@@ -1,4 +1,4 @@
-//! `MikkTSpace` tangents for normal-mapped materials.
+//! `MikkTSpace` tangents for the materials a game's rule picks (every lit one).
 //!
 //! `MikkTSpace` is the tangent basis normal maps are baked against (Blender,
 //! Substance, xNormal, UE, Unity; the glTF spec requires it when a mesh ships
@@ -62,11 +62,18 @@ impl Geometry for Corners<'_> {
 
 /// One `MikkTSpace` tangent per index of `indices` (a triangle list over
 /// `vertices`). Corners `MikkTSpace` leaves without a basis (a degenerate face
-/// with no neighbour to borrow from) get an arbitrary unit tangent
-/// perpendicular to their normal, so every tangent is finite, unit-length
-/// and right-handed or left-handed (w = ±1).
-pub(crate) fn corner_tangents(vertices: &[Vertex], indices: &[u32]) -> Vec<Tangent> {
+/// with no neighbour to borrow from) get the fallback basis, a unit tangent
+/// perpendicular to their normal (glam's `any_orthonormal_vector`, `X` for a
+/// zero normal) with `w = 1`, so every tangent is finite, unit-length and
+/// right-handed or left-handed (w = ±1). `uvs` false (no texture space):
+/// every corner gets the fallback, deterministic, with no `MikkTSpace` pass
+/// over all-zero UVs. Such a surface carries no usable normal map; its
+/// tangent only keeps its vertex layout that of every other lit mesh.
+pub(crate) fn corner_tangents(vertices: &[Vertex], indices: &[u32], uvs: bool) -> Vec<Tangent> {
     let out = indices.iter().map(|&i| settle(None, vertices[i as usize].normal)).collect();
+    if !uvs {
+        return out;
+    }
     let mut corners = Corners { vertices, indices, out };
     // The error type has no variants: generation can't fail.
     let _ = generate_tangents(&mut corners);

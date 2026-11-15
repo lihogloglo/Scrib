@@ -70,6 +70,96 @@ fn submeshes_become_compressed_bevy_meshes() {
     assert!(plain.attribute(Mesh::ATTRIBUTE_NORMAL).is_some());
 }
 
+/// A source without normals, facing ±X (the bake's no-normal fallback tangent
+/// axis), with and without UVs: the loader's smooth normals and the cooked
+/// tangents end orthonormal, nothing NaN, on both load paths.
+#[test]
+fn normal_less_sources_get_tangents_orthogonal_to_their_normals() {
+    for uvs in [false, true] {
+        let n = 8u32;
+        let mut mesh = MeshData {
+            normals: None,
+            uvs: uvs.then(Vec::new),
+            ..MeshData::default()
+        };
+        for z in 0..=n {
+            for y in 0..=n {
+                #[allow(clippy::cast_precision_loss)]
+                let (fy, fz) = (y as f32 / n as f32, z as f32 / n as f32);
+                // A gentle bulge so smooth normals aren't all exactly X.
+                mesh.positions
+                    .push([0.1 * (fy * 3.0).sin() * (fz * 2.0).cos(), fy * 4.0, fz * 4.0]);
+                if let Some(uv) = mesh.uvs.as_mut() {
+                    uv.push([fy, fz]);
+                }
+            }
+        }
+        let row = n + 1;
+        for z in 0..n {
+            for y in 0..n {
+                let i = z * row + y;
+                mesh.indices
+                    .extend([i, i + row, i + 1, i + 1, i + row, i + row + 1]);
+            }
+        }
+        let mut node = Node::new("wall");
+        node.mesh = Some(0);
+        let source = Model {
+            nodes: vec![node],
+            meshes: vec![mesh],
+            materials: vec![Material::default()],
+        };
+        let Cooked::Static(model) =
+            sf_model::cook_with(&source, &CookSettings::default(), &[true]).unwrap()
+        else {
+            panic!("static")
+        };
+        assert!(!model.has_normals);
+        let sub = &model.lods[0].submeshes[0];
+        assert!(sub.has_tangents(), "the bake gives it tangents");
+        for mesh in [
+            submesh_to_mesh(&model, sub, RenderAssetUsages::all(), false).unwrap(),
+            submesh_to_ray_tracing_mesh(&model, sub).unwrap(),
+        ] {
+            let Some(bevy_mesh::VertexAttributeValues::Float32x3(normals)) =
+                mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
+            else {
+                panic!("normals")
+            };
+            let Some(bevy_mesh::VertexAttributeValues::Float32x4(tangents)) =
+                mesh.attribute(Mesh::ATTRIBUTE_TANGENT)
+            else {
+                panic!("tangents")
+            };
+            assert_eq!(normals.len(), tangents.len());
+            for (nv, t) in normals.iter().zip(tangents) {
+                assert!(nv.iter().chain(t).all(|c| c.is_finite()), "uvs {uvs}: {nv:?} {t:?}");
+                let (nv, tv) = (bevy_math::Vec3::from_array(*nv), bevy_math::Vec3::new(t[0], t[1], t[2]));
+                assert!((tv.length() - 1.0).abs() < 1e-4, "uvs {uvs}: unit tangent {tv}");
+                assert!(nv.normalize().dot(tv).abs() < 1e-4, "uvs {uvs}: n {nv} t {tv}");
+                assert!((t[3].abs() - 1.0).abs() < f32::EPSILON, "handedness ±1");
+            }
+        }
+    }
+}
+
+/// Gram-Schmidt keeps the tangent's off-normal direction and its handedness,
+/// and falls back to a perpendicular axis when the tangent is the normal.
+#[test]
+fn orthonormal_tangent_fits_and_falls_back() {
+    let fit = loader::orthonormal_tangent([0.0, 1.0, 0.0], [2.0, 2.0, 0.0, -1.0]);
+    assert_eq!(fit.map(f32::to_bits), [1.0f32, 0.0, 0.0, -1.0].map(f32::to_bits));
+    for n in [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.6, 0.8, 0.0]] {
+        for t in [[n[0], n[1], n[2], 1.0], [0.0; 4], [f32::NAN; 4]] {
+            let [x, y, z, w] = loader::orthonormal_tangent(n, t);
+            let tv = bevy_math::Vec3::new(x, y, z);
+            assert!((tv.length() - 1.0).abs() < 1e-5, "{n:?} {t:?} -> {tv}");
+            assert!(bevy_math::Vec3::from_array(n).dot(tv).abs() < 1e-5, "{n:?} {t:?} -> {tv}");
+            assert!((w - 1.0).abs() < f32::EPSILON);
+        }
+    }
+}
+
 #[test]
 fn ray_tracing_meshes_have_exactly_the_solari_layout() {
     let Cooked::Static(model) = Cooked::from_bytes(&cooked_bytes()).unwrap() else {

@@ -27,7 +27,7 @@ of multi-draw-indirect calls. CPU cost scales with changed instances and batch c
   ("How Bevy 0.20 actually spends per entity").
 - Bevy's own `bevy_city` stress scene uses `NoCpuCulling` plus static transform optimisations
   (`superfargoth/docs/research/perf/README.md` Q5).
-- Our frame target: High, 1440p DLSS Quality, 4060 laptop, at most 11 ms median in exteriors (CONTRIBUTING.md).
+- Our frame target: High, 1440p DLSS Quality, 4060 laptop, at most 8.3 ms median and 11 ms p99 in exteriors (CONTRIBUTING.md, owner 2026-11-15).
 
 ## Where Scrib stands
 Bevy 0.20 already does GPU preprocessing, multi-draw indirect and bindless, so identical mesh plus material becomes

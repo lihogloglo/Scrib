@@ -287,6 +287,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     streaming.lod = screen;
     // Static material classes (static-scene.md S2); `--off matclass` keeps the mapper's materials.
     streaming.material_classes = !perf.off.has(Part::MatClass);
+    streaming.flat_normal_map = !perf.off.has(Part::FlatNormal);
     // Near statics culled on the GPU only (`NoCpuCulling`): opt-in until its lamp capture lists are fixed
     // (perf-push 2026-11-12: on, the walk stutters 113/min, lamp faces 64k work items). A/B with
     // `--env BEVYRROWIND_GPU_CULL_STATICS=1`; `--off cpuculltag` forces it off.
@@ -295,13 +296,26 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // The static scene (`--scene`) or the precombine draws the near statics, never both.
     let (scene, precombine) = static_paths(options.scene, &perf.off, options.lod_tint);
     streaming.precombine = precombine;
-    app.add_plugins(
-        DefaultPlugins
-            .build()
-            // big_space propagates transforms.
-            .disable::<TransformPlugin>()
-            .set(WindowPlugin { primary_window: Some(perf.window(options.title.clone(), Some((1280, 720)))), ..WindowPlugin::default() }),
-    )
+    let mut plugins = DefaultPlugins
+        .build()
+        // big_space propagates transforms.
+        .disable::<TransformPlugin>()
+        .set(WindowPlugin { primary_window: Some(perf.window(options.title.clone(), Some((1280, 720)))), ..WindowPlugin::default() });
+    // Threading A/B switches (M2, `superfargoth/docs/research/cpu-frame-audit-2026-11-15.md`), off by default:
+    // `--env BEVYRROWIND_COMPUTE_THREADS=<n>` sizes Bevy's compute pool (default: cores left after IO and async
+    // compute, 8 on the owner's 16-thread laptop); `--env BEVYRROWIND_NO_PIPELINED=1` runs render on the main thread.
+    if let Some(threads) = std::env::var("BEVYRROWIND_COMPUTE_THREADS").ok().and_then(|v| v.parse::<usize>().ok()) {
+        let mut task_pool_options = TaskPoolOptions::default();
+        task_pool_options.compute.min_threads = threads;
+        task_pool_options.compute.max_threads = threads;
+        info!("threads: compute pool {threads} (BEVYRROWIND_COMPUTE_THREADS)");
+        plugins = plugins.set(TaskPoolPlugin { task_pool_options });
+    }
+    if std::env::var_os("BEVYRROWIND_NO_PIPELINED").is_some_and(|v| v == "1") {
+        info!("threads: pipelined rendering off (BEVYRROWIND_NO_PIPELINED)");
+        plugins = plugins.disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>();
+    }
+    app.add_plugins(plugins)
     .add_plugins((MwAssetsPlugin { vfs: vfs.clone() }, FreeCameraPlugin))
     // `.ktx2` loads under the preset's texture size cap (textures.md S1); after DefaultPlugins so it
     // replaces Bevy's loader for that extension. Log line `texture.cap:`.
@@ -535,12 +549,12 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         }
     }
 
-    // Terrain layer arrays under the preset's texture cap (textures.md §9 T6); the framework's
-    // memory budget stays unless the preset has no cap (Ultra, `--texture-cap 0`). Log line
-    // `terrain layers:`.
+    // Terrain layer arrays under the preset's texture cap (textures.md §9 T6) and always under the
+    // framework's memory budget, Ultra too: uncapped, its BC5 arrays reached 1520 MiB and the Ultra
+    // walk ran out of GPU memory on an 8 GB laptop (ledger perf.md 2026-11-15). Log line `terrain layers:`.
     let layer_cap = sf_terrain_bevy::sf_terrain::LayerCap {
         max_edge: options.texture_cap,
-        budget: options.texture_cap.and(Some(sf_terrain_bevy::DEFAULT_LAYER_BUDGET)),
+        budget: Some(sf_terrain_bevy::DEFAULT_LAYER_BUDGET),
     };
     app.add_plugins(TerrainPlugin { settings: TerrainSettings { layer_cap, ..TerrainSettings::default() } })
         .insert_resource(TerrainWorld { baked: terrain })

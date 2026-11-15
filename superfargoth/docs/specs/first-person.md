@@ -284,6 +284,10 @@ held within a move's `look` yaw of the body until `Cancel(Move)`); the arms in t
   (`HierarchyPropagatePlugin<RenderLayers>`) is not used, as world.rs explains.
 - **Crates**: none covers character part roles.
 - **OpenMW** (ca5e2576): technique A, separate first-person skeleton and parts; cited above.
+- **Brutal Morrowind** (github.com/incident201/brutal-morrowind, GPL-3.0, OpenMW 0.51.0 fork; owner
+  2026-11-15): Dark Messiah first-person melee on OpenMW (kicks, directional/charged attacks, parries,
+  slides, finishers, dismemberment), the target feel for first-person combat (combat.md "Goal").
+  Not yet read; clips come from the player's Dark Messiah install, so only its logic is portable.
 
 ## Open questions
 

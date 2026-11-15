@@ -83,9 +83,9 @@ Read in this order, and only what your task needs:
 
 - **Tie-breaker:** runs as fast as possible, looks as good as possible. Baking is acceptable only as a
   one-time step under a few minutes; nothing bakes during play.
-- **Frame target:** High preset, 1440p + DLSS Quality on an RTX 4060 laptop, ≤ 11 ms median in exteriors
-  (stretch 7 ms). Raster must meet it; ray tracing (Solari) is an Ultra tier that may cost more. Perf work
-  reports ms per preset.
+- **Frame target:** High preset, 1440p + DLSS Quality on an RTX 4060 laptop, ≤ 8.3 ms median (120 fps)
+  and ≤ 11 ms p99 in exteriors (owner 2026-11-15; was 11 ms median). Raster must meet it; ray tracing (Solari)
+  is an Ultra tier that may cost more. Perf work reports ms per preset.
 - **Not a 1:1 port; modern first.** Morrowind content mechanics (MWScript, dialogue, magic effects,
   levelled lists, factions, crime) are ported from OpenMW into `bevyrrowind/` (cite file + commit). Feel
   systems (combat, movement, progression, AI, formulas, UI flow) are modern first, each behind a seam so a

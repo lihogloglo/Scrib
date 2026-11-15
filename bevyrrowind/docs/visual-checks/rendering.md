@@ -254,3 +254,13 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Look for: no gap (ground showing where a building or tree should be) and no double (near and far copy both solid) in
   the handoff band; LOD switches dither as before; sun shadows of near statics end where the statics end.
 - Status: awaiting owner.
+
+### TX-6: Statics look unchanged with tangents everywhere + shared flat normal map (fix B2, 2026-11-15)
+- Why: perf fix B2 (texture-cost doc): every static now bakes tangents (b2a) and statics without a normal map bind one
+  shared 1x1 flat map (b2b, `matclass::FLAT_NORMAL_MAP`), so a class has one pipeline. The look must not change.
+- Kind: game location, A/B by relaunch (no live toggle). Needs the 2026-11-15 re-bake (mesh rule v3).
+- Runs: `view "Balmora" --hour 8`, then the same with `--off flatnormal`; also `scene hi-balmora-night` once.
+- Look for: walls, roofs, rocks, plain wood and cloth statics shade the same in both runs (no facets, no dark or
+  speckled patches, no seams on smooth curved meshes, nothing lit from the wrong side, no black meshes); normal-mapped
+  statics unchanged. Most likely spot if wrong: meshes whose source had no normals (smooth-normals fallback).
+- Status: confirmed 2026-11-15 (owner: default and `--off flatnormal` "looked exactly the same"). Source: orch-11-15b (b2a-tangents, b2b-flatnormal).

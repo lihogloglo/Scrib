@@ -46,9 +46,11 @@ is still `TODO(B4b)` (`residency.rs:228, 827`). Without GPU culling the scene tu
 `StreamingConfig::gpu_cull_statics` (`exterior.rs:282`); `StaticGpuCulling` (`spawn.rs:284`) is forced off when the adapter
 lacks GPU culling (`sf_world_bevy/src/lib.rs:167`). Then `Static`-class parts and precombine buckets carry `NoCpuCulling`
 (`spawn.rs:364`, `stream.rs:1333`); actors, doors, items and lights keep CPU culling. The GPU preprocess culls them by frustum
-and visibility range in every view. Lamp faces: the game does not install `sf_shadow_cache_bevy` (`POINT_SHADOW_CACHE = false`,
-`mw_environment_bevy/src/render.rs:37`), so the vendored `CpuListedPointShadowCasters` list is absent and stock Bevy adds every
-GPU-culled mesh to every point face (`vendor/bevy_pbr/src/render/mesh.rs:2503-2510`).
+and visibility range in the camera and the sun cascades (persistent views; every LOD level stays binned there). Lamp faces
+take no GPU-culled meshes (`CpuListedPointShadowCasters`, `vendor/bevy_pbr/src/render/mesh.rs:2503-2533`, inserted by
+`PointShadowPlugin`): `list_gpu_culled_casters` (`sf_sky_bevy/src/gpu_culled_casters.rs`, runs only while a `NoCpuCulling`
+mesh exists) adds each shadowed lamp's GPU-culled casters to its `CubemapVisibleEntities` from a per-lamp list rebuilt only
+when the lamp or a GPU-culled caster changes.
 
 ## Bevy features used
 

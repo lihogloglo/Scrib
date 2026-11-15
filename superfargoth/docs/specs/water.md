@@ -478,6 +478,11 @@ contact is high), wave cascades × openness (rivers get little), ripples. Buoyan
   from below both show it.
 - **Exposure and cues**: no special exposure; the cue list gets `underwater` (the audio system applies a
   low-pass), `surface_break` on crossings.
+- **Reference for the look (owner 2026-11-15):** [Abyssal Garden](https://github.com/Noniv/abyssal-garden)
+  (MIT, one WebGPU HTML file, all procedural): shafts through a moving surface, caustics on the floor, kelp swaying
+  in a current with sparkle specks, drifting particles and bubbles, fish schools and mantas, a generated underwater
+  soundscape, swim collision that glides along rock, and Low/Medium/High tiers. Mine it for ideas and constants when
+  3.6 starts (MIT code can be ported with a notice); calibrate against our own measurements.
 
 ## Buoyancy (CPU, `sf_physics`)
 

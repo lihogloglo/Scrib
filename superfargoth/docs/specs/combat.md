@@ -16,6 +16,14 @@ Non-goals (first cuts): parry/deflect (guard only), player poise and hyper-armor
 skills, ranged and magic combat, stealth/paired kills (C6), first-person melee presentation (arms view model: first-person.md FP-2..; gameplay: "C4 soft aim"), AI
 (`sf_ai`, M7), damage numbers.
 
+First-person melee direction (owner 2026-11-15): third person keeps the Elden Ring feel; first person aims at Dark Messiah
+of Might and Magic / Faithkeeper (kicks, directional and charged attacks, parries, slides, environmental kills, finishers),
+on the same fighter, sheets and rules seam with first-person movesets. Reference for later:
+[Brutal Morrowind](https://github.com/incident201/brutal-morrowind) (GPL-3.0 C++ fork of OpenMW 0.51.0, Dark Messiah melee:
+kicks, directional/charged attacks, parries, sliding, adrenaline finishers, ragdolls, procedural dismemberment). It ships no
+clips: it imports Dark Messiah's from the player's install, which our clip sources don't cover. Portable with a file +
+commit citation; it's an early AI-built project, so diff it against OpenMW 0.51.0 in a research slice before porting.
+
 Owner decisions (2026-10-27, DECISIONS.md): one button, tap = roll on release, hold = sprint; clips from free packs
 (Quaternius UAL1/UAL2) plus the content's own animations, LaFAN1 optional with a non-LaFAN1 fallback per slot. Defaults
 taken: one weapon class first (one-handed sword), laid out so a second class is only data; per-rig sheets for NPCs and

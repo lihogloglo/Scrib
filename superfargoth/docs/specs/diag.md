@@ -128,6 +128,8 @@ longest busy stage, which is what streaming changes can fix:
 | `render/acquire/ms`, `render/present/ms` | swap-chain acquire, final submit + present | `MsCPUWait` |
 | `gpu/timed/ms` | sum of Bevy's timed passes (`*/elapsed_gpu`), carried forward; untimed passes missing | `MsGPUBusy` (partial) |
 | `frame/work/ms` | max(main busy, render busy, GPU timed) | none (PresentMon has no single "work" number) |
+| `stage/main/<schedule>`, `stage/render/<set>` (2026-11-15) | untraced wall per main schedule (first .. last) and per `Render` set (completion-to-completion, an upper bound; sum = schedule span to Cleanup) | none |
+| `encode/<system>/{sum,max,count}`, `encode/finish_critical`, `encode/finish_wall`, `encode/submit` | untraced `encoder.finish()` per system, the longest one, the parallel finish's wall, `queue.submit` (vendored `bevy_render` `encode_timing.rs`) | none |
 
 We keep our `area/stage/metric` names (renaming would break the CSVs and
 baselines) and map them to PresentMon in this table. PresentMon itself

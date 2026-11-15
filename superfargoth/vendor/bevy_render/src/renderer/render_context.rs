@@ -30,7 +30,7 @@ enum PendingCommandBuffer {
     Buffer(CommandBuffer),
     Encoder {
         encoder: CommandEncoder,
-        #[cfg(feature = "trace")]
+        // superfargoth patch (own, M3 encode timers): the name is kept without `trace` too (encode_timing.rs)
         name: Cow<'static, str>,
     },
 }
@@ -61,12 +61,9 @@ impl PendingCommandBuffers {
     }
 
     pub fn push_encoder(&mut self, encoder: CommandEncoder, name: impl Into<Cow<'static, str>>) {
-        #[cfg(not(feature = "trace"))]
-        let _ = name;
-
+        // superfargoth patch (own, M3 encode timers): name kept without `trace`
         self.0.commands.push(PendingCommandBuffer::Encoder {
             encoder,
-            #[cfg(feature = "trace")]
             name: name.into(),
         });
     }
@@ -118,27 +115,38 @@ fn finish_parallel(
     commands: impl Iterator<Item = PendingCommandBuffer>,
 ) -> impl Iterator<Item = CommandBuffer> {
     let mut command_buffers = Vec::with_capacity(commands.size_hint().0);
+    // superfargoth patch (own, M3 encode timers)
+    let wall = super::encode_timing::start();
     let mut finished_encoders = ComputeTaskPool::get().scope(|scope| {
         for (index, command) in commands.into_iter().enumerate() {
             match command {
                 PendingCommandBuffer::Buffer(command_buffer) => {
                     command_buffers.push((index, command_buffer));
                 }
-                PendingCommandBuffer::Encoder {
-                    encoder,
-                    #[cfg(feature = "trace")]
-                    name,
-                } => {
+                PendingCommandBuffer::Encoder { encoder, name } => {
                     scope.spawn(async move {
                         #[cfg(feature = "trace")]
                         let _span =
                             info_span!("finish_command_buffer", system = name.as_ref()).entered();
-                        (index, encoder.finish())
+                        // superfargoth patch (own, M3 encode timers)
+                        let timer = super::encode_timing::start();
+                        let buffer = encoder.finish();
+                        if let Some((hook, start)) = timer {
+                            hook(super::encode_timing::EncodeEvent::Finish {
+                                name: &name,
+                                elapsed: start.elapsed(),
+                            });
+                        }
+                        (index, buffer)
                     });
                 }
             }
         }
     });
+    // superfargoth patch (own, M3 encode timers)
+    if let Some((hook, start)) = wall {
+        hook(super::encode_timing::EncodeEvent::FinishWall(start.elapsed()));
+    }
 
     command_buffers.append(&mut finished_encoders);
     command_buffers.sort_unstable_by_key(|(index, _)| *index);
@@ -159,7 +167,7 @@ impl RenderContextStateInner {
         if let Some(encoder) = self.command_encoder.take() {
             self.commands.push(PendingCommandBuffer::Encoder {
                 encoder,
-                #[cfg(feature = "trace")]
+                // superfargoth patch (own, M3 encode timers): name kept without `trace`
                 name: "RenderContextState::flush_encoder".into(),
             });
         }
@@ -211,10 +219,12 @@ impl SystemBuffer for RenderContextState {
 
         inner.flush_encoder();
 
-        #[cfg(feature = "trace")]
-        for command in &mut inner.commands {
-            if let PendingCommandBuffer::Encoder { name, .. } = command {
-                *name = _system_meta.name().clone().into();
+        // superfargoth patch (own, M3 encode timers): names also when the encode-timing hook is installed
+        if cfg!(feature = "trace") || super::encode_timing::hook().is_some() {
+            for command in &mut inner.commands {
+                if let PendingCommandBuffer::Encoder { name, .. } = command {
+                    *name = _system_meta.name().clone().into();
+                }
             }
         }
 
@@ -303,7 +313,12 @@ impl<'w> FlushCommands<'w> {
     pub fn flush(&mut self) {
         let mut buffers = self.pending.finish().peekable();
         if buffers.peek().is_some() {
+            // superfargoth patch (own, M3 encode timers)
+            let timer = super::encode_timing::start();
             self.queue.submit(buffers);
+            if let Some((hook, start)) = timer {
+                hook(super::encode_timing::EncodeEvent::Submit(start.elapsed()));
+            }
         }
     }
 }

@@ -1,5 +1,7 @@
 #[cfg(feature = "raw_vulkan_init")]
 pub mod raw_vulkan_init;
+// superfargoth patch (own, M3 encode timers)
+pub mod encode_timing;
 mod render_context;
 mod render_device;
 mod wgpu_wrapper;
@@ -103,7 +105,13 @@ pub fn render_system(
         crate::view::screenshot::submit_screenshot_commands(world, screenshot_state, &mut encoder);
         crate::gpu_readback::submit_readback_commands(world, &mut encoder);
 
-        render_queue.submit([encoder.finish()]);
+        // superfargoth patch (own, M3 encode timers)
+        let buffer = encoder.finish();
+        let timer = encode_timing::start();
+        render_queue.submit([buffer]);
+        if let Some((hook, start)) = timer {
+            hook(encode_timing::EncodeEvent::Submit(start.elapsed()));
+        }
     }
 
     {

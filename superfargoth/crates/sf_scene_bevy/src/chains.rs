@@ -41,12 +41,12 @@ impl ChainAssets {
 pub struct ChainMaterials(pub HashMap<u64, Handle<StandardMaterial>>);
 
 /// What making a chain material needs: the entity path's mapper and its
-/// matclass switch (`StreamingConfig::material_classes`, the app's `--off matclass`).
+/// fold rules (`StreamingConfig::fold_rules`: `None` with the app's `--off matclass`).
 pub struct MaterialMaker<'a> {
     pub materials: &'a mut Assets<StandardMaterial>,
     pub cache: &'a mut ChainMaterials,
     pub mapper: &'a ModelMaterials,
-    pub fold: bool,
+    pub fold: Option<sf_world_bevy::matclass::FoldRules>,
 }
 
 /// The chain's material: its product's `materials[0]` through
@@ -67,8 +67,8 @@ pub fn chain_material(
         .or_insert_with(|| {
             let desc = asset.materials.first().cloned().unwrap_or_default();
             let mut made = (mapper.0)(&desc, asset_server);
-            if *fold {
-                sf_world_bevy::matclass::fold(&mut made);
+            if let Some(rules) = *fold {
+                sf_world_bevy::matclass::fold(&mut made, rules);
             }
             materials.add(made)
         })

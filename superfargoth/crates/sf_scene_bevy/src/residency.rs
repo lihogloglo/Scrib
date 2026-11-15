@@ -53,6 +53,7 @@ use sf_scene::{
     SlotWrite, SpaceConfig, SpaceId, cell_subject,
 };
 use sf_world::{PlacementId, WorldspaceId};
+use sf_world_bevy::matclass::FoldRules;
 use sf_world_bevy::{CellScene, ModelMaterials, SceneCellCx, Streaming, WorldOrigin, WorldOverlay};
 
 use crate::chains::{
@@ -401,7 +402,8 @@ pub fn poll_cell_loads(
 ) {
     let mapper = mapper.as_deref().cloned().unwrap_or_default();
     // `build_template`'s switch: the app's `--off matclass` reaches both paths.
-    let fold = streaming.as_deref().is_none_or(|s| s.config().material_classes);
+    // No streaming plugin: no flat normal map image either (`WorldStreamingPlugin` adds it).
+    let fold = streaming.as_deref().map_or(Some(FoldRules { flat_normal_map: false }), |s| s.config().fold_rules());
     let mut maker = materials.as_deref_mut().map(|materials| MaterialMaker {
         materials,
         cache: &mut chain_materials,

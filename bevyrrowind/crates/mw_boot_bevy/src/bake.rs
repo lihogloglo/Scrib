@@ -63,7 +63,7 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     );
     let prepared = prepare.elapsed();
 
-    let mut baker = mw_bake::model_baker_with(store.clone(), inputs.clone(), &textures);
+    let mut baker = mw_bake::model_baker(store.clone(), inputs.clone());
     // Meshes + LODs, and each model's static collision source (bake-adapter.md).
     let mut keys = mw_bake::model_keys(&paths);
     keys.extend(mw_bake::collision::collision_keys(&paths));

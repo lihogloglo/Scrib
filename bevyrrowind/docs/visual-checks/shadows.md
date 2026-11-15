@@ -181,6 +181,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Status: awaiting owner.
 
 ### SH-25: Lamp shadows stay through a camera turn (lamp-select, 2026-11-15)
+- **Verdict 2026-11-15: keep** (owner). Follow-up queued: retain off-screen holders in vendored `extract_lights` instead of pinning, to win back the +0.34-0.7 ms.
 - Why: owner 2026-11-15 (SH-21 b): after turning the camera or walking closer, lamp shadows faded in. The budget only
   ranked lamps in the frustum (and weighted lamps ahead), so every turn swapped the shadowed set. Now it picks all
   around the viewer and a holder keeps its cached map off screen (`superfargoth/docs/specs/shadows.md` "Light selection").

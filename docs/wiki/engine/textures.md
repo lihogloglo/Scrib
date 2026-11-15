@@ -29,8 +29,11 @@ low-frequency painted light out).
   (`:12`). The framework names no pack.
 
 **Normal maps**: `normal_companion` (`cook.rs:303`) finds `_n`, `_nh`, `_nm` companions, cooked to linear BC5 with the
-profile's Y flip (BC1 normals stay BC1). `tangent_rule` (`cook.rs:323`) gives `mesh.cook`, `mesh.rest` and `mesh.rig`
-MikkTSpace tangents when the base texture has a companion, depending on file existence via `RunCx::file_exists`.
+profile's Y flip (BC1 normals stay BC1). `tangent_rule` (`mw_bake/src/cook.rs:452`, rule v3 since 2026-11-15, fix B2)
+gives every `mesh.cook`, `mesh.rest` and `mesh.rig` MikkTSpace tangents, companion or not (UV-less meshes: a fixed basis
+perpendicular to the normal, `sf_model/src/tangent.rs`; the loader Gram-Schmidts tangents of normal-less sources against
+its smooth normals). Statics without a normal map bind one shared 1x1 Rgba16Float flat map (`sf_world_bevy` matclass
+`FLAT_NORMAL_MAP`, decodes to exactly (0,0,1)), so a material class has one `NORMAL_MAP` key; `--off flatnormal` = old split.
 Runtime material: `mw_assets/src/cooked.rs:296` (`cooked_material_with`). `_nh` height → BC4 `depth_map` (parallax per
 preset, `cook_depth` / `texture.cook.depth`, `map_ab::Parallax`; T4d, textures.md §9).
 

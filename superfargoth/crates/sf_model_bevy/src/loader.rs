@@ -284,9 +284,11 @@ pub fn submesh_to_mesh(
         // Lit materials need normals; source without them gets smooth ones.
         mesh.compute_smooth_normals();
     }
-    // Cooked `MikkTSpace` tangents, only on submeshes whose material binds a
-    // normal map (Bevy's `StandardMaterial` needs them for one).
+    // Cooked tangents (`MikkTSpace`, or the fallback basis without UVs): the
+    // bake gives every static one, so normal-mapped and plain statics share a
+    // layout and a shared flat normal map.
     if let Some(tangents) = sub.decode_tangents()? {
+        let tangents = fit_tangents(&mesh, model.has_normals, tangents);
         mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
     }
     if compress {
@@ -332,6 +334,7 @@ pub fn submesh_to_ray_tracing_mesh(
     }
     if let Some(tangents) = sub.decode_tangents()? {
         // The cooked `MikkTSpace` frame, split at mirrored-UV seams.
+        let tangents = fit_tangents(&mesh, model.has_normals, tangents);
         mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
     } else if mesh.generate_tangents().is_err() {
         // Degenerate UVs: any unit tangent perpendicular to the normal will
@@ -346,6 +349,51 @@ pub fn submesh_to_ray_tracing_mesh(
         mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, normals);
     }
     Ok(mesh)
+}
+
+/// Cooked tangents fitted to the mesh's final normals. With source normals the
+/// cooked frame was built on exactly these normals and is kept bit for bit
+/// (`MikkTSpace` must not be re-orthogonalized). Without them the bake had no
+/// normal to build on (the fallback tangent is along X) while the loader
+/// computed smooth normals, so a tangent may lean on, or be parallel to, the
+/// normal: a degenerate TBN under a normal map. Each tangent is then
+/// Gram-Schmidt orthonormalized against its normal, and replaced by any
+/// perpendicular axis when (nearly) parallel or not finite; handedness kept.
+fn fit_tangents(mesh: &Mesh, has_normals: bool, mut tangents: Vec<[f32; 4]>) -> Vec<[f32; 4]> {
+    if has_normals {
+        return tangents;
+    }
+    let Some(bevy_mesh::VertexAttributeValues::Float32x3(normals)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else {
+        return tangents;
+    };
+    for (t, n) in tangents.iter_mut().zip(normals) {
+        *t = orthonormal_tangent(*n, *t);
+    }
+    tangents
+}
+
+/// `tangent` made unit length and perpendicular to `normal` (Gram-Schmidt),
+/// or [`orthogonal_tangent`] when it has no part off the normal; `w` is kept
+/// (±1, a non-finite or zero one becomes 1).
+pub(crate) fn orthonormal_tangent(normal: [f32; 3], tangent: [f32; 4]) -> [f32; 4] {
+    let unit_normal = bevy_math::Vec3::from_array(normal).normalize_or_zero();
+    let along = bevy_math::Vec3::new(tangent[0], tangent[1], tangent[2]);
+    let sign = if tangent[3].is_finite() && tangent[3] < 0.0 { -1.0 } else { 1.0 };
+    if unit_normal == bevy_math::Vec3::ZERO {
+        // No normal to fit to: any unit tangent will do.
+        let fit = along.try_normalize().unwrap_or(bevy_math::Vec3::X);
+        return [fit.x, fit.y, fit.z, sign];
+    }
+    let off = along - unit_normal * unit_normal.dot(along);
+    match off.try_normalize() {
+        // `try_normalize` rejects a tiny remainder (length ~1e-19), not a
+        // short one; 1e-3 of a unit tangent is parallel for shading.
+        Some(fit) if off.length_squared() > 1e-6 * along.length_squared() => [fit.x, fit.y, fit.z, sign],
+        _ => {
+            let [x, y, z, _] = orthogonal_tangent(unit_normal.to_array());
+            [x, y, z, sign]
+        }
+    }
 }
 
 fn orthogonal_tangent([x, y, z]: [f32; 3]) -> [f32; 4] {

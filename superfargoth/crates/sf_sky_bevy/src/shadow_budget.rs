@@ -210,6 +210,7 @@ impl Plugin for PointShadowPlugin {
 }
 
 fn add(app: &mut App) {
+    crate::gpu_culled_casters::add(app);
     app.init_resource::<PointShadowBudget>()
         .add_systems(
             PostUpdate,

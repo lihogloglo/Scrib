@@ -212,7 +212,23 @@ fn residency_fallback_covers_while_children_load() {
 
 /// A finely tessellated sphere (lots to simplify), vertex-colored.
 fn sphere_model() -> CookedModel {
-    let mut mesh = MeshData::default();
+    let mut node = Node::new("sphere");
+    node.mesh = Some(0);
+    let model = Model { nodes: vec![node], meshes: vec![sphere_mesh(0)], materials: vec![Material::default()] };
+    cook_static(&model)
+}
+
+/// `model` cooked with a tangent basis on every material (the every-lit-material rule, B2).
+fn cook_static(model: &Model) -> CookedModel {
+    match sf_model::cook_with(model, &CookSettings::default(), &vec![true; model.materials.len()]).expect("cooks") {
+        Cooked::Static(m) => m,
+        Cooked::Skipped { .. } | Cooked::Skinned(_) => panic!("static"),
+    }
+}
+
+/// [`sphere_model`]'s mesh, on `material`.
+fn sphere_mesh(material: u32) -> MeshData {
+    let mut mesh = MeshData { material, ..MeshData::default() };
     let (rings, segs) = (24u32, 48u32);
     for r in 0..=rings {
         for s in 0..=segs {
@@ -231,13 +247,7 @@ fn sphere_model() -> CookedModel {
             mesh.indices.extend([a, b, a + 1, a + 1, b, b + 1]);
         }
     }
-    let mut node = Node::new("sphere");
-    node.mesh = Some(0);
-    let model = Model { nodes: vec![node], meshes: vec![mesh], materials: vec![Material::default()] };
-    match sf_model::cook_with(&model, &CookSettings::default(), &[true]).expect("cooks") {
-        Cooked::Static(m) => m,
-        Cooked::Skipped { .. } | Cooked::Skinned(_) => panic!("static"),
-    }
+    mesh
 }
 
 fn placement(i: u32, pos: DVec3, class: PlacementClass) -> IndexedPlacement {
@@ -394,4 +404,70 @@ fn near_precombine_merges_statics_per_level() {
     let none = build_near(Partition::STREAMING, cell, &placements[..2], &|_: &VfsPath| Some(glass.clone()), &|_| false).expect("builds");
     assert!(none.is_none());
     assert_eq!((bucket_of(0.1), bucket_of(BUCKET_EDGES[0]), bucket_of(3.0), bucket_of(50.0)), (0, 1, 2, 3));
+}
+
+/// B2: with every material cooked with a tangent basis, no precombine bucket mixes tangent and
+/// plain parts: every submesh of every level of every bucket carries one tangent per vertex,
+/// whether its members had a normal map's worth of UVs, a UV-less part beside a UV'd one, or no
+/// UVs at all (the fallback basis).
+#[test]
+fn near_precombine_buckets_keep_one_vertex_layout() {
+    use crate::near::build_near;
+    let sphere = Arc::new(sphere_model());
+    // Two materials in one model: a UV'd part and a UV-less one.
+    let mut bare = sphere_mesh(1);
+    bare.uvs = None;
+    let nodes = (0..2u32)
+        .map(|i| {
+            let mut node = Node::new(format!("part{i}"));
+            node.mesh = Some(i);
+            node
+        })
+        .collect();
+    let mixed = Model { nodes, meshes: vec![sphere_mesh(0), bare.clone()], materials: vec![Material::default(), Material { name: "bare".into(), ..Material::default() }] };
+    let mixed = Arc::new(cook_static(&mixed));
+    // A model with no UVs at all (its own bucket: the attribute signature differs).
+    let mut node = Node::new("bare");
+    node.mesh = Some(0);
+    bare.material = 0;
+    let uvless = Arc::new(cook_static(&Model { nodes: vec![node], meshes: vec![bare], materials: vec![Material::default()] }));
+    assert!(!uvless.has_uvs);
+    for (name, m) in [("sphere", &sphere), ("mixed", &mixed), ("uvless", &uvless)] {
+        for (k, lod) in m.lods.iter().enumerate() {
+            for sub in &lod.submeshes {
+                assert!(sub.has_tangents(), "{name} level {k} material {} cooked without tangents", sub.material);
+            }
+        }
+    }
+
+    let cell = IVec3::new(2, 1, 3);
+    let origin = Partition::STREAMING.cell_origin(cell).to_f64();
+    let paths = ["sphere.mdl", "mixed.mdl", "uvless.mdl"];
+    let placements: Vec<IndexedPlacement> = (0..6u32)
+        .map(|i| {
+            let mut p = placement(i, origin + DVec3::new(15.0 + f64::from(i) * 15.0, 0.0, 40.0), PlacementClass::Static);
+            p.placement.model = Some(VfsPath::new(paths[i as usize % 3]).expect("path"));
+            p
+        })
+        .collect();
+    let lookup = |path: &VfsPath| match path.as_str() {
+        "sphere.mdl" => Some(sphere.clone()),
+        "mixed.mdl" => Some(mixed.clone()),
+        "uvless.mdl" => Some(uvless.clone()),
+        _ => None,
+    };
+    let near = build_near(Partition::STREAMING, cell, &placements, &lookup, &|_| false).expect("builds").expect("some");
+    assert_eq!(near.member_count(), 6);
+    assert_eq!(near.buckets.len(), 2, "UV'd and UV-less signatures split; nothing else");
+    for bucket in &near.buckets {
+        for (k, lod) in bucket.model.lods.iter().enumerate() {
+            for sub in &lod.submeshes {
+                let tangents = sub.decode_tangents().expect("decodes").unwrap_or_else(|| panic!("level {k} material {} has no tangents", sub.material));
+                assert_eq!(tangents.len(), sub.vertex_count as usize, "level {k}: one tangent per vertex");
+                for &[x, y, z, w] in &tangents {
+                    assert!((Vec3::new(x, y, z).length() - 1.0).abs() < 1e-3 && (w.abs() - 1.0).abs() < f32::EPSILON, "sane tangent");
+                }
+            }
+        }
+    }
 }

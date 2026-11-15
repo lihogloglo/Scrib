@@ -42,8 +42,9 @@ impl Importers {
     }
 }
 
-/// Which materials of a model bind a normal map, so the mesh steps give their
-/// submeshes `MikkTSpace` tangents. An adapter hook: the rule that pairs a base
+/// Which materials of a model get a tangent basis, so the mesh steps give their
+/// submeshes `MikkTSpace` tangents (a game may pick every material: one vertex
+/// layout for all its statics, the UE convention). An adapter hook: the rule that pairs a base
 /// texture with its normal map is the game's (a suffix convention, a material
 /// record, ...), not the framework's. Asked once per material while a step
 /// runs: check files through `cx` ([`RunCx::file_exists`]) so they become the
@@ -56,7 +57,7 @@ pub struct TangentRule {
     pub wants: Arc<TangentFn>,
 }
 
-/// [`TangentRule::wants`]: true when `material` binds a normal map.
+/// [`TangentRule::wants`]: true when `material` gets tangents.
 pub type TangentFn = dyn Fn(&Material, &mut RunCx<'_>) -> Result<bool, BakeError> + Send + Sync;
 
 impl TangentRule {
@@ -106,7 +107,7 @@ impl Step for ModelInfoStep {
 pub struct MeshCookStep {
     pub importers: Importers,
     pub settings: CookSettings,
-    /// Tangents for normal-mapped materials; `None`: no tangents.
+    /// Which materials get tangents; `None`: none.
     pub tangents: Option<TangentRule>,
 }
 
@@ -146,7 +147,7 @@ impl Step for MeshCookStep {
 pub struct MeshRestStep {
     pub importers: Importers,
     pub settings: CookSettings,
-    /// Tangents for normal-mapped materials; `None`: no tangents.
+    /// Which materials get tangents; `None`: none.
     pub tangents: Option<TangentRule>,
 }
 
@@ -183,7 +184,7 @@ impl Step for MeshRestStep {
 pub struct MeshRigStep {
     pub importers: Importers,
     pub settings: CookSettings,
-    /// Tangents for normal-mapped materials; `None`: no tangents.
+    /// Which materials get tangents; `None`: none.
     pub tangents: Option<TangentRule>,
 }
 

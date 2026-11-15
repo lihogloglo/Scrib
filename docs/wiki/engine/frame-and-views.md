@@ -42,7 +42,11 @@ idle) and retries busy runs (`cli.rs:437, 501`); results go to `target/perf/<tag
 In the game, `--bench` adds (`mw_devtools_bevy/src/perf.rs:164-180`) `SfDiagPlugin` (frame times, Bevy diagnostics, scenario
 camera path, JSON/CSV report), `RenderDiagnosticsPlugin` (GPU pass timings), `ChurnPlugin`, `FramePhasePlugin`
 (`main/busy/ms`, `render/thread/ms`, `render/acquire/ms`, `render/graph/ms`, `render/present/ms`, `sf_diag_bevy/src/phases.rs:1-18`),
-`RenderViewsPlugin` (per-view counts) and asset churn plugins.
+`RenderViewsPlugin` (per-view counts) and asset churn plugins. Untraced stage walls (2026-11-15, M1/M3 of
+`superfargoth/docs/research/cpu-frame-audit-2026-11-15.md`; `sf_diag_bevy/src/{stages,encode}.rs`): `stage/main/<schedule>`
+(first .. last), `stage/render/<set>` (extract_commands .. cleanup, completion-to-completion), `stage/render/{camera_driver,
+graph_submit}`; per encoder `encode/<system>/{sum,max,count}`, `encode/finish_critical`, `encode/finish_wall`,
+`encode/submit` (vendored `bevy_render` `renderer/encode_timing.rs`, `bevy_core_pipeline` `schedule.rs`).
 
 **Report sections** (`sf_diag/src/markdown.rs`): Gates, GPU passes (GPU ms, p95, CPU ms), Per-frame costs (ms counters: mean, p95,
 max), Gauges (counts, sizes), Churn, Hitches (frames over `max(2.5 x median, 25 ms)`, `report.rs:224`, with the counters that

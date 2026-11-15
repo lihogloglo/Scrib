@@ -535,7 +535,7 @@ pub(crate) fn spawn_upper_nodes(world: &mut World) {
     let mut state = shared.lock();
     for (ws, w) in &mut state.worlds {
         let Some(layer) = world.resource::<WorldspaceRegistry>().get(ws).map(|e| e.layer) else { continue };
-        let layers = RenderLayers::layer(layer);
+        let layers = sf_world_bevy::dynamic_layer(layer);
         let levels = levels_for(&settings, w.dir.as_deref());
         let impostors = w.impostors.as_ref().map(|s| (s.materials.clone(), s.layers.clone()));
         let impostors_settled = w.impostors.is_some() || w.impostors_failed;

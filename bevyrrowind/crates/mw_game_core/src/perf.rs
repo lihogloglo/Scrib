@@ -123,6 +123,10 @@ pub enum Part {
     /// slabs); off, the mapper's materials as they come and one sampler per image (an A/B; the look
     /// should not change).
     MatClass,
+    /// With matclass: statics without a normal map bind one shared 1x1 flat normal map, so normal-mapped
+    /// and plain statics of a class share one main-pass key (superfargoth `matclass::FLAT_NORMAL_MAP`);
+    /// off, a normal map splits its class (an A/B; the look should not change).
+    FlatNormal,
     /// Near statics skip Bevy's CPU culling (`NoCpuCulling`, superfargoth
     /// `docs/research/statics-cpu-cost-2026-11-12.md` slice 1): the GPU preprocess culls them by frustum
     /// and range in every view, lamps take them from the shadow cache's lists. Off: the old behaviour,
@@ -180,7 +184,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 72] = [
+    const ALL: [(&'static str, Part); 73] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -237,6 +241,7 @@ impl Part {
         ("skymotion", Part::SkyMotion),
         ("precombine", Part::Precombine),
         ("matclass", Part::MatClass),
+        ("flatnormal", Part::FlatNormal),
         ("cpuculltag", Part::CpuCullTag),
         ("lampfilter", Part::LampFilter),
         ("movershadows", Part::MoverShadows),

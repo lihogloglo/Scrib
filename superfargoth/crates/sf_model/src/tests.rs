@@ -530,6 +530,38 @@ fn tangents_exactly_on_normal_mapped_materials_and_mirrored_seams_split() {
     assert!(plain.lods.iter().flat_map(|l| &l.submeshes).all(|s| !s.has_tangents()));
 }
 
+/// A static mesh without UVs still gets a tangent per vertex when its material
+/// asks for one (B2: one vertex layout for every lit static): the fallback
+/// basis, unit, perpendicular to the normal, `w = 1`, and the same bytes on
+/// every cook.
+#[test]
+fn uv_less_meshes_get_the_fallback_basis() {
+    let mut mesh = terrain_like(8, 0);
+    mesh.uvs = None;
+    let mut node = Node::new("root");
+    node.mesh = Some(0);
+    let model = Model { nodes: vec![node], meshes: vec![mesh], materials: vec![Material::default()] };
+    let cook_once = || {
+        let Cooked::Static(c) = cook_with(&model, &CookSettings::default(), &[true]).unwrap() else { panic!("static") };
+        c
+    };
+    let c = cook_once();
+    for lod in &c.lods {
+        for sub in &lod.submeshes {
+            let tangents = sub.decode_tangents().unwrap().expect("tangents without UVs");
+            assert_eq!(tangents.len(), sub.vertex_count as usize);
+            assert_sane(&tangents);
+            let (vertices, _) = sub.decode().unwrap();
+            for (v, t) in vertices.iter().zip(&tangents) {
+                let dot = Vec3::from_array(v.normal).dot(Vec3::new(t[0], t[1], t[2]));
+                assert!(dot.abs() < 1e-4, "tangent perpendicular to the normal: {dot}");
+                assert!((t[3] - 1.0).abs() < f32::EPSILON, "fallback handedness");
+            }
+        }
+    }
+    assert_eq!(c.lods[0].submeshes[0].tangents, cook_once().lods[0].submeshes[0].tangents, "deterministic");
+}
+
 #[test]
 fn skinned_and_rig_cooks_carry_tangents_through_every_stream() {
     let settings = CookSettings::default();
@@ -539,9 +571,9 @@ fn skinned_and_rig_cooks_carry_tangents_through_every_stream() {
     for (level, lod) in s.model.lods.iter().enumerate() {
         for i in 0..lod.submeshes.len() {
             let sub = s.decode_submesh(level, i).unwrap();
-            // The arm (UVs) gets tangents; the ring triangle has no UVs, so no tangent space.
-            let expected = if sub.material == 0 { sub.vertices.len() } else { 0 };
-            assert_eq!(sub.tangents.len(), expected);
+            // The arm (UVs) gets `MikkTSpace` tangents; the ring triangle has no UVs, so the
+            // fallback basis: every submesh keeps one layout.
+            assert_eq!(sub.tangents.len(), sub.vertices.len());
             assert_eq!(sub.skin.len(), sub.vertices.len());
             assert_sane(&sub.tangents);
         }

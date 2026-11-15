@@ -225,6 +225,9 @@ door links as first-class records, not per-cell teleports.
   move sets without code. Morrowind's stats drive damage/scaling formulas
   through the rules plugin; no more invisible dice rolls on a hit that
   visibly connected.
+- **First person (owner 2026-11-15)**: Dark Messiah / Faithkeeper melee
+  (kicks, directional and charged attacks, parries, slides, environmental
+  kills). Reference: Brutal Morrowind (OpenMW fork, GPL-3.0; combat.md "Goal").
 
 ## 10. Textures: PBR and streaming
 
