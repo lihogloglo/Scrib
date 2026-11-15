@@ -223,7 +223,10 @@ notes, only `docs/specs/`. Don't mix the two in one session.
   research docs (they anchor agents on old hypotheses). Before building on a component, check it actually runs
   in the game (2026-11-12: three agents built on a lamp shadow cache that had been off since 2026-10-21).
 - **Perf work starts from a measured ceiling and an expected ms**, and ends with an untraced 3-run A/B logged in
-  `docs/ledger/perf.md`. Differences under ~0.5 ms are noise.
+  `docs/ledger/perf.md`. Differences under ~0.5 ms are noise. **A change that doesn't win stays (owner
+  2026-11-15):** keep it behind an opt-in switch, off by default, with its ledger line saying what is left to fix; it
+  may be a good first step. Revert only what can't be isolated or breaks something. (Dead or duplicate code that
+  something else replaced is different: delete it, tagged, git keeps it.)
 - Read lean: grep first, read only the lines needed; never a whole large file; cargo output filtered to errors
   and warnings, tests to summary lines, logs with `tail`/`grep`. Tokens grow with what an agent pulls into its
   context (every call re-sends it), not with its number of tool calls.

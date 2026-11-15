@@ -31,9 +31,10 @@ independent Opus review). Awaiting owner: SH-21, RO-11.
   meshes, lights, held slots; parts built later still copy at build time. Held-torch lights copy the slot's layers at
   spawn (bevyrrowind `mw_actors_bevy::held`). Before: the player and every torch light sat on layer 0, lamps on `N`, so
   lamps never saw the player as a caster and a torch's cube saw only layer-0 meshes.
-- **Budget ranks view-visible lights only** (`ViewVisibility`, "Light selection"): lights of resident neighbouring
-  worldspaces (own `BigSpace` frame) and lights outside every frustum no longer take slots they can't render. One
-  `warn!` when a light gains a slot with layers no caster shares.
+- **Budget ranks the viewer's worldspace only** ("Light selection"): lights of resident neighbouring worldspaces (own
+  `BigSpace` frame) no longer take slots they can't render. One `warn!` when a light gains a slot with layers no
+  caster shares. The 2026-11-01 rule also dropped lights outside every frustum (`ViewVisibility`); that made shadows
+  fade in after every camera turn (SH-21 b) and was replaced 2026-11-15 by the 360° pick below.
 - **Shadow filter follows the jitter** (`sf_sky_bevy::upscale`): `Temporal` is parked to `Gaussian` on a camera without
   `TemporalJitter` (native/`--dlss off`, F4) and restored with it; the host picks it once from the setting.
 - **Vendored shaders** (`vendor/README.md` RO-11 row): contact shadows and SSR march depth in `main_pass_viewport`
@@ -213,13 +214,41 @@ budget on top of it is ours (`PointShadowBudget`, since 2026-10-13).
 - *Screen coverage*: 1 inside the light's range, `(range/d)²` outside (the lit volume's share of the view).
   Continuous at `d = range`.
 - *Priority*: game-set multiplier (Bevyrrowind: a carried torch 4, i.e. "twice nearer").
-- Candidates: view-visible lights (`ViewVisibility`: shown, range sphere in a view frustum, `RenderLayers` shared
-  with that view; last frame's value, the budget runs before `CheckVisibility`) within `fade_end`. Only those can
-  light a visible pixel and survive extraction; lights of other resident worldspaces (another `BigSpace` frame, whose
-  distance means nothing) never compete. A holder that leaves every view fades out and frees its slot. A light that
-  first gets a slot while its layers meet no caster's logs one warning (empty cube map).
-  Holders rank `1/hysteresis` (1.25×) better. A newcomer waits for a free slot; shadows crossfade by the existing
-  light split (`fade_time` 0.3 s, distance band `fade_start..fade_end`).
+- Candidates (lamp-select, 2026-11-15): every shown light (`InheritedVisibility`) within `fade_end` of the viewer
+  that shares `RenderLayers` with the viewer's camera, **in every direction, on screen or not**. Lights of other
+  resident worldspaces (another `BigSpace` frame, whose distance means nothing) never compete. The pick depends on
+  where the viewer stands, never on where it looks: no frustum test and no forward weighting, so a camera turn
+  changes neither the holders nor any fade. (Before: `ViewVisibility` candidates and a `0.625 + 0.375 cos` forward
+  weight outside a light's range; a turn swapped the shadowed set and every newcomer faded in, SH-21 b.) A light
+  that first gets a slot while its layers meet no caster's logs one warning (empty cube map).
+- The pick: `sf_sky_bevy::pick_shadowed(candidates, max, hysteresis)` (Bevy-free): the `max` best by importance, a
+  holder's counting `1/hysteresis` (1.25×), ties to the holder. A newcomer waits for a free slot (one new slot per
+  frame); a timed fade (`fade_time` 0.3 s) happens only when a light really gains or loses its slot, the distance
+  band `fade_start..fade_end` does the rest.
+- **Holders keep their map off screen.** Bevy drops a point light that loses `ViewVisibility` (`extract_lights`
+  removes it and its subview tables; `check_point_light_mesh_visibility` stops listing its casters; its face views
+  go), and with it the cached cube. So a holder carries stock `NoFrustumCulling` (+ our marker `ShadowHeldOffscreen`,
+  both removed with the slot; a light the game un-culled itself is left alone): `check_visibility_cpu_culling` then
+  keeps it view-visible and everything above stays. No vendored change for that.
+- **Off-screen holders draw nothing** (vendored, marker `own, SH-21b`): `extract_shadow_caster_changes` lists the
+  shadowed lights whose range sphere is in no active 3D camera frustum (`ShadowCasterChanges::out_of_view_lights`);
+  `skip_unchanged_shadow_views` redraws none of their faces except a first capture. Their dirty faces keep their old
+  keys and refresh through the normal mover/LRU budgets once back in view (a mover's shadow may be a few frames old
+  at the screen edge after a fast turn). Without this, walkers behind the camera would take the two mover refreshes
+  per frame from the lamps in view. Debug line `RUST_LOG=bevy_pbr::shadow_refresh=debug` counts them ("out of view").
+- Industry: slots by contribution at the camera including off-screen lights, hysteresis, crossfade on takeover
+  (OpenMW Clockwork, `research/clockwork-code-2026-10-25.md` item 6); a cached map lives as long as its light holds
+  the slot and is not re-rendered while nothing changes (Unity HDRP cached punctual shadows, UE cached shadow maps).
+- Known limits: the viewer is the camera, so a third-person orbit moves it a few metres and can still hand a slot
+  over when more lights than slots are near (hysteresis covers ~12 % of distance inside a light's range, ~6 %
+  outside). With more candidates than slots the nearest all around win, so a far lamp ahead can go without a shadow
+  where the old forward weight gave it one (`--point-shadows 12` to compare).
+- Cost (A/B 2026-11-15, 1440p DLSS Q, Balmora walk): +0.34 ms at night, +0.5-0.7 ms by day, because 7-8 lamps hold
+  a map instead of the ~3 in view: main thread +0.46 ms (Bevy scans casters for every view-visible shadowed light,
+  pinned holders included), render thread +0.1-0.2 ms (30 more skipped face views); no more faces drawn. Next step
+  (not built): keep off-screen holders in vendored `extract_lights` (light + subview tables retained while a marker
+  component says so) instead of pinning them, so Bevy neither scans nor hashes them off screen; pin only for the
+  frames of the first capture, so a lamp that gains its slot off screen still has a real map when it turns in.
 
 ## Caching (slice 2+, ours)
 

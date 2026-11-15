@@ -141,3 +141,18 @@ fn counts_materials_images_and_meshes_without_tangents() {
     moved.with_depth = 1; // 0 -> 1
     assert!(moved.changed_from(&stats));
 }
+
+/// tex-slab (2026-11-15): the vendored `StandardMaterial` asks for 8192 resources per bindless slab, so
+/// a cell's base colour + normal + ORM + depth companions (~2.4k on the Balmora walk) stay in one slab
+/// and every batch set binds it once (`docs/research/texture-cost-2026-11-15.md`). Apple keeps Auto.
+#[test]
+fn standard_material_slab_holds_an_open_world_of_textures() {
+    use bevy_render::render_resource::{AsBindGroup, BindlessSlabResourceLimit};
+    let limit = StandardMaterial::bindless_slot_count().expect("StandardMaterial is bindless");
+    if cfg!(any(target_os = "macos", target_os = "ios")) {
+        assert_eq!(limit, BindlessSlabResourceLimit::Auto);
+    } else {
+        assert_eq!(limit, BindlessSlabResourceLimit::Custom(8192));
+        assert!(limit.resolve() > bevy_render::render_resource::AUTO_BINDLESS_SLAB_RESOURCE_LIMIT);
+    }
+}

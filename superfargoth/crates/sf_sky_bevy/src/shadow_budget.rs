@@ -9,14 +9,22 @@
 //! `PointLightShadowMap`) but neither a budget nor a per-light shadow
 //! strength, so this module:
 //!
-//! - ranks the lights marked [`BudgetedShadow`] that can light a visible
-//!   pixel (Bevy's `ViewVisibility`: range sphere in a view frustum and
-//!   `RenderLayers` shared with that view, so lights of other resident
-//!   worldspaces never compete) by [`importance`] at the viewer (spec
-//!   `docs/specs/shadows.md`, "Light selection"), with forward-hemisphere
-//!   weighting outside a light's range and hysteresis, and lets at most
-//!   [`PointShadowBudget::max`] hold a shadow map at once; a holder that
-//!   stops being view-visible fades out and frees its slot;
+//! - ranks the shown lights marked [`BudgetedShadow`] around the viewer, in
+//!   every direction and whether on screen or not, by [`importance`] at the
+//!   viewer (spec `docs/specs/shadows.md`, "Light selection"), with
+//!   hysteresis ([`pick_shadowed`]), and lets at most
+//!   [`PointShadowBudget::max`] hold a shadow map at once. Only lights
+//!   sharing `RenderLayers` with the viewer compete (lights of other
+//!   resident worldspaces never do). The pick depends on where the viewer
+//!   stands, never on where it looks, so turning the camera changes nothing
+//!   (cached-shadow engines pick the same way: HDRP cached punctual shadows,
+//!   UE cached shadow maps, `OpenMW` Clockwork's slots by contribution at the
+//!   camera including off-screen lights);
+//! - keeps a slot holder's shadow map alive while it is off screen: holders
+//!   carry Bevy's `NoFrustumCulling`, so they stay `ViewVisibility`-visible
+//!   and Bevy keeps extracting them, their caster lists and their cube-face
+//!   views (a light that loses `ViewVisibility` loses all three, and its
+//!   cached cube with them);
 //! - fades a shadow in and out (distance band and over time) natively in the
 //!   PBR fragment shader via [`PointLightShadowFade`] (`mix(1.0, shadow, fade)`),
 //!   without mutating [`PointLight::intensity`] or spawning duplicate light
@@ -32,7 +40,7 @@
 //! lost its shadow, which Bevy's `prepare_lights` keeps alive.
 
 use bevy_app::{App, Plugin, PostUpdate};
-use bevy_camera::visibility::{RenderLayers, ViewVisibility, VisibilitySystems};
+use bevy_camera::visibility::{InheritedVisibility, NoFrustumCulling, RenderLayers, VisibilitySystems};
 use bevy_camera::{Camera, Camera3d, RenderTarget};
 use bevy_ecs::prelude::*;
 use bevy_light::{NotShadowCaster, PointLight, PointLightShadowMap};
@@ -123,6 +131,27 @@ impl Default for BudgetedShadow {
     }
 }
 
+/// Picks the candidates that hold a shadow map: the `max` best by
+/// `(importance, holds a slot now)`, a holder's importance counting
+/// `1 / hysteresis` times (so a challenger takes a held slot only once it is
+/// that much more important; no flicker between two lights at similar
+/// distances). Returns indices into `candidates`, best first; candidates of
+/// no importance never hold a map.
+#[must_use]
+pub fn pick_shadowed(candidates: &[(f32, bool)], max: usize, hysteresis: f32) -> Vec<usize> {
+    let boost = 1.0 / hysteresis.max(1e-3);
+    let mut ranked: Vec<(f32, usize)> = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, (score, _))| *score > 0.0)
+        .map(|(i, &(score, held))| (if held { score * boost } else { score }, i))
+        .collect();
+    // Ties go to the earlier candidate, so equal lights never swap.
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    ranked.truncate(max);
+    ranked.into_iter().map(|(_, i)| i).collect()
+}
+
 /// A [`BudgetedShadow`] light's range by shadow state: the budget writes
 /// [`PointLight::range`] as [`Self::range`] of the light's shadow fade
 /// (0 without a slot), so it reaches [`Self::shadowed`] only while its shadow
@@ -163,6 +192,12 @@ pub struct ShadowSlot {
     /// Holds one of the budget's shadow maps (fading in, shown or fading out).
     pub held: bool,
 }
+
+/// On a slot holder the budget gave Bevy's `NoFrustumCulling` to (so its
+/// shadow map survives being off screen); both go when the slot is released.
+/// A light that already had `NoFrustumCulling` keeps it and never gets this.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct ShadowHeldOffscreen;
 
 /// The point-shadow budget on its own (`SkyPlugin` adds it; viewers without
 /// a sky add it directly).
@@ -223,13 +258,17 @@ fn sync_map_size(budget: Res<PointShadowBudget>, map: Option<ResMut<PointLightSh
     }
 }
 
-/// The viewer: the highest-order active 3D camera drawing to a window.
-fn viewer(cameras: &Query<(&Camera, &GlobalTransform, Option<&RenderTarget>), With<Camera3d>>) -> Option<GlobalTransform> {
+type ViewerCameras<'w, 's> =
+    Query<'w, 's, (&'static Camera, &'static GlobalTransform, Option<&'static RenderTarget>, Option<&'static RenderLayers>), With<Camera3d>>;
+
+/// The viewer: the highest-order active 3D camera drawing to a window. Its
+/// position and the `RenderLayers` it draws.
+fn viewer(cameras: &ViewerCameras) -> Option<(bevy_math::Vec3, RenderLayers)> {
     cameras
         .iter()
-        .filter(|(c, _, t)| c.is_active && matches!(t, None | Some(RenderTarget::Window(_))))
-        .max_by_key(|(c, _, _)| c.order)
-        .map(|(_, t, _)| *t)
+        .filter(|(c, _, t, _)| c.is_active && matches!(t, None | Some(RenderTarget::Window(_))))
+        .max_by_key(|(c, _, _, _)| c.order)
+        .map(|(_, t, _, layers)| (t.translation(), layers.cloned().unwrap_or_default()))
 }
 
 /// Picks the shadowed lights and advances their native shader shadow fades.
@@ -242,7 +281,7 @@ fn budget_shadows(
     mut commands: Commands,
     budget: Res<PointShadowBudget>,
     time: Res<Time>,
-    cameras: Query<(&Camera, &GlobalTransform, Option<&RenderTarget>), With<Camera3d>>,
+    cameras: ViewerCameras,
     mut lights: Query<(
         Entity,
         &mut PointLight,
@@ -251,61 +290,39 @@ fn budget_shadows(
         &BudgetedShadow,
         Option<&ShadowReach>,
         &GlobalTransform,
-        &ViewVisibility,
+        (&InheritedVisibility, Option<&RenderLayers>, Has<NoFrustumCulling>, Has<ShadowHeldOffscreen>),
     )>,
 ) {
-    let viewer_tf = viewer(&cameras);
-    let eye = viewer_tf.map(|t| t.translation());
-    let view_forward = viewer_tf.map(|t| t.forward().as_vec3());
+    let viewer = viewer(&cameras);
+    let eye = viewer.as_ref().map(|v| v.0);
 
-    // The best `max` candidates by importance: view-visible, inside the fade
-    // band; slot holders rank better by 1 / hysteresis. `ViewVisibility` is
-    // Bevy's "could light a visible pixel": the light is shown, its range
-    // sphere overlaps a view frustum (so a light behind the eye whose range
-    // contains it counts) and its `RenderLayers` meet that view's. A light
-    // of another resident worldspace (another `BigSpace` frame, where the
-    // distance below means nothing) or outside every frustum never takes a
-    // slot only to be dropped by extraction, and a holder that stops being
-    // visible drops out of the ranking, fades out and frees its slot. It is
-    // computed later in `PostUpdate` (`VisibilitySystems::CheckVisibility`),
-    // so this reads last frame's value: one frame late, hidden by the fades.
-    // Lights whose lit volume does not reach the viewer (`d > light.range`)
-    // are weighted by hemisphere alignment so lamps ahead of the player take
-    // priority over distant lamps behind the camera.
-    let mut ranked: Vec<(f32, Entity)> = Vec::new();
-    if let (Some(eye), Some(forward)) = (eye, view_forward)
+    // The candidates: shown lights of the viewer's `RenderLayers` (a light of
+    // another resident worldspace lives in another `BigSpace` frame, where
+    // the distance below means nothing) inside the fade band, in every
+    // direction. Where the viewer looks plays no part, so a camera turn
+    // changes neither the pick nor any fade: a holder off screen keeps its
+    // slot and its cached map (`ShadowHeldOffscreen`). `InheritedVisibility`
+    // is propagated later in `PostUpdate`, so this reads last frame's value.
+    let mut candidates: Vec<(f32, bool)> = Vec::new();
+    let mut candidate_lights: Vec<Entity> = Vec::new();
+    if let Some((eye, layers)) = &viewer
         && budget.max > 0
     {
-        for (entity, light, slot, _, prio, reach, at, visible) in &lights {
-            let to_light = at.translation() - eye;
-            let d = to_light.length();
-            if visible.get() && d < budget.fade_end {
-                let held = slot.is_some_and(|s| s.held);
+        for (entity, light, slot, _, prio, reach, at, (shown, light_layers, ..)) in &lights {
+            let d = at.translation().distance(*eye);
+            if shown.get() && d < budget.fade_end && layers.intersects(light_layers.unwrap_or(&RenderLayers::default())) {
                 // The reach a slot would give, not the current blend.
                 let range = reach.map_or(light.range, |r| r.shadowed);
-                let view_weight = if d <= range || d <= 1e-3 {
-                    1.0
-                } else {
-                    let cos_theta = (to_light / d).dot(forward);
-                    0.625 + 0.375 * cos_theta
-                };
-                let score = importance(range, d, prio.priority) * view_weight;
-                ranked.push((
-                    if held {
-                        score / budget.hysteresis.max(1e-3)
-                    } else {
-                        score
-                    },
-                    entity,
-                ));
+                candidates.push((importance(range, d, prio.priority), slot.is_some_and(|s| s.held)));
+                candidate_lights.push(entity);
             }
         }
     }
-    ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
-    ranked.truncate(budget.max);
+    let ranked: Vec<Entity> =
+        pick_shadowed(&candidates, budget.max, budget.hysteresis).into_iter().map(|i| candidate_lights[i]).collect();
 
     let target_of = |entity: Entity, at: &GlobalTransform| match eye {
-        Some(eye) if ranked.iter().any(|r| r.1 == entity) => {
+        Some(eye) if ranked.contains(&entity) => {
             budget.distance_fade(at.translation().distance(eye))
         }
         _ => 0.0,
@@ -346,7 +363,7 @@ fn budget_shadows(
     // frame so multiple lamps never capture 12+ cubemap faces on the same frame.
     let max_new_slots = if budget.fade_time > 0.0 { 1 } else { budget.max };
     let mut new_slots = 0usize;
-    for (entity, mut light, slot, shadow_fade, _, reach, at, _) in &mut lights {
+    for (entity, mut light, slot, shadow_fade, _, reach, at, (.., unculled, pinned)) in &mut lights {
         let target = target_of(entity, at);
         let Some(mut slot) = slot else {
             let mut fade = 0.0;
@@ -366,6 +383,9 @@ fn budget_shadows(
                     ShadowSlot { fade, held: true },
                     PointLightShadowFade(fade),
                 ));
+                if !unculled {
+                    commands.entity(entity).try_insert((NoFrustumCulling, ShadowHeldOffscreen));
+                }
             }
             if let Some(reach) = reach {
                 set_range(&mut light, reach.range(fade));
@@ -378,6 +398,13 @@ fn budget_shadows(
             held += 1;
             new_slots += 1;
             slot.fade = (slot.fade + step).min(target);
+        }
+
+        // A holder stays in view for Bevy while it holds its slot.
+        if slot.held && !unculled {
+            commands.entity(entity).try_insert((NoFrustumCulling, ShadowHeldOffscreen));
+        } else if !slot.held && pinned {
+            commands.entity(entity).try_remove::<(NoFrustumCulling, ShadowHeldOffscreen)>();
         }
 
         let fade = slot.fade;

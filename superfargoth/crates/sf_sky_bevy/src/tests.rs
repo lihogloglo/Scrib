@@ -239,26 +239,150 @@ fn point_shadow_budget_shadows_the_nearest_within_range() {
     assert!(lights.iter().all(|e| !shadowed(&app, *e).0));
 }
 
-/// A light no view can see (out of every frustum, or on render layers no
-/// camera draws: another worldspace) never takes a slot, however near; a
-/// holder that stops being visible fades out and frees its slot.
+/// A light the viewer cannot be lit by (hidden, or on render layers its
+/// camera does not draw: another worldspace) never takes a slot, however
+/// near; a holder that becomes one fades out and frees its slot.
 #[test]
-fn point_shadow_budget_skips_lights_no_view_sees() {
-    use bevy_camera::visibility::ViewVisibility;
+fn point_shadow_budget_skips_hidden_lights_and_other_render_layers() {
+    use bevy_camera::visibility::{InheritedVisibility, RenderLayers};
     let budget = PointShadowBudget { max: 1, fade_time: 0.0, ..PointShadowBudget::default() };
     let (mut app, lights) = budget_app(budget);
-    app.world_mut().entity_mut(lights[0]).insert(ViewVisibility::HIDDEN);
+    app.world_mut().entity_mut(lights[0]).insert(RenderLayers::layer(3));
     app.update();
     app.update();
     let on: Vec<bool> = lights.iter().map(|e| shadowed(&app, *e).0).collect();
     assert_eq!(on, [false, true, false, false]);
-    // The holder leaves every view: its slot goes to the next visible light.
-    app.world_mut().entity_mut(lights[1]).insert(ViewVisibility::HIDDEN);
+    // The holder is hidden: its slot goes to the next shown light.
+    app.world_mut().entity_mut(lights[1]).insert(InheritedVisibility::HIDDEN);
     app.update();
     app.update();
     let on: Vec<bool> = lights.iter().map(|e| shadowed(&app, *e).0).collect();
     assert_eq!(on, [false, false, true, false]);
     assert!(!app.world().get::<ShadowSlot>(lights[1]).expect("slot").held);
+}
+
+/// Which lights of `lights` hold a shadow slot, with their fades.
+fn holders(app: &App, lights: &[Entity]) -> Vec<(bool, f32)> {
+    lights.iter().map(|e| app.world().get::<ShadowSlot>(*e).map_or((false, 0.0), |s| (s.held, s.fade))).collect()
+}
+
+/// Turning the camera in place changes nothing: the same lights hold the
+/// slots at the same strength, whichever way the viewer faces and whether
+/// Bevy still sees them or not (SH-21 b: shadows faded in after every turn).
+#[test]
+fn a_camera_turn_keeps_the_same_shadowed_lights() {
+    use bevy_camera::visibility::ViewVisibility;
+    let budget = PointShadowBudget { max: 2, fade_time: 0.2, ..PointShadowBudget::default() };
+    let (mut app, lights) = budget_app(budget);
+    // More candidates than slots, on both sides of the viewer.
+    let behind = app
+        .world_mut()
+        .spawn((
+            bevy_light::PointLight { intensity: 1000.0, ..Default::default() },
+            BudgetedShadow::default(),
+            NoLightProxy,
+            GlobalTransform::from_xyz(0.0, 0.0, -3.0),
+            bevy_camera::visibility::InheritedVisibility::VISIBLE,
+            ViewVisibility::VISIBLE,
+        ))
+        .id();
+    let all: Vec<Entity> = lights.iter().copied().chain([behind]).collect();
+    for _ in 0..8 {
+        app.update();
+    }
+    let before = holders(&app, &all);
+    // The two nearest, at 2 m and 3 m, whichever side they are on.
+    assert_eq!(before, [(true, 1.0), (false, 0.0), (false, 0.0), (false, 0.0), (true, 1.0)]);
+
+    let camera = app.world_mut().query_filtered::<Entity, With<Camera3d>>().single(app.world()).expect("camera");
+    for turn in 1..=8u8 {
+        let facing = Transform::from_rotation(bevy_math::Quat::from_rotation_y(f32::from(turn) * std::f32::consts::FRAC_PI_4));
+        app.world_mut().entity_mut(camera).insert(GlobalTransform::from(facing));
+        // What Bevy's frustum culling would say of lights now off screen.
+        for (i, e) in all.iter().enumerate() {
+            let visible = if (usize::from(turn) + i) % 2 == 0 { ViewVisibility::VISIBLE } else { ViewVisibility::HIDDEN };
+            app.world_mut().entity_mut(*e).insert(visible);
+        }
+        app.update();
+        assert_eq!(holders(&app, &all), before, "turn {turn}");
+        let maps: Vec<bool> = all.iter().map(|e| shadowed(&app, *e).0).collect();
+        assert_eq!(maps, [true, false, false, false, true], "turn {turn}");
+    }
+}
+
+/// A slot holder off screen stays visible to Bevy's own frustum culling (so
+/// Bevy keeps extracting it, its caster lists and its cube-face views, and
+/// the cached map survives); a light without a slot is culled as usual, and
+/// a released slot gives the culling back.
+#[test]
+fn a_slot_holder_behind_the_camera_stays_view_visible() {
+    use bevy_camera::primitives::Sphere;
+    use bevy_camera::visibility::{NoFrustumCulling, ViewVisibility, VisibilitySystems};
+    use bevy_camera::{CameraProjection, PerspectiveProjection};
+    let budget = PointShadowBudget { max: 1, fade_time: 0.0, ..PointShadowBudget::default() };
+    let (mut app, lights) = budget_app(budget);
+    app.add_systems(
+        PostUpdate,
+        bevy_camera::visibility::check_visibility_cpu_culling.in_set(VisibilitySystems::CheckVisibility),
+    );
+    // The camera looks down -Z; every light is behind it, out of its frustum.
+    let frustum = PerspectiveProjection::default().compute_frustum(&GlobalTransform::IDENTITY);
+    let camera = app.world_mut().query_filtered::<Entity, With<Camera3d>>().single(app.world()).expect("camera");
+    app.world_mut().entity_mut(camera).insert(frustum);
+    for e in &lights {
+        let at = app.world().get::<GlobalTransform>(*e).expect("placed").translation_vec3a();
+        // As `bevy_light::update_point_light_bounding_spheres` gives every point light.
+        app.world_mut().entity_mut(*e).insert((Sphere { center: at, radius: 1.0 }, ViewVisibility::HIDDEN));
+    }
+    // A light whose culling the game itself turned off keeps that.
+    app.world_mut().entity_mut(lights[2]).insert(NoFrustumCulling);
+    for _ in 0..3 {
+        app.update();
+    }
+    let seen = |app: &App, e: Entity| app.world().get::<ViewVisibility>(e).expect("visibility").get();
+    assert!(shadowed(&app, lights[0]).0);
+    assert!(seen(&app, lights[0]), "the holder is kept in view");
+    assert!(app.world().get::<ShadowHeldOffscreen>(lights[0]).is_some());
+    assert!(!seen(&app, lights[1]), "no slot: culled behind the camera");
+    assert!(app.world().get::<NoFrustumCulling>(lights[1]).is_none());
+
+    // Slot released: frustum culling is back; the game's own flag is untouched.
+    app.world_mut().resource_mut::<PointShadowBudget>().max = 0;
+    for _ in 0..3 {
+        app.update();
+    }
+    assert!(!shadowed(&app, lights[0]).0);
+    assert!(app.world().get::<NoFrustumCulling>(lights[0]).is_none());
+    assert!(app.world().get::<ShadowHeldOffscreen>(lights[0]).is_none());
+    assert!(app.world().get::<NoFrustumCulling>(lights[2]).is_some());
+    assert!(app.world().get::<ShadowHeldOffscreen>(lights[2]).is_none());
+}
+
+/// The pick (Bevy-free): the most important lights hold the slots, and a
+/// challenger takes a held slot only once it is `1 / hysteresis` (1.25x at
+/// the default 0.8) more important than the holder.
+#[test]
+fn a_nearer_light_takes_over_only_past_the_hysteresis_margin() {
+    use crate::shadow_budget::{importance, pick_shadowed};
+    let hysteresis = PointShadowBudget::default().hysteresis;
+    // Inside their range lights score `(range / d)^2`: the holder at 10 m.
+    let holder = importance(20.0, 10.0, 1.0);
+    let at = |d: f32| importance(20.0, d, 1.0);
+    // Free slots: plain order, best first; a light of no importance gets none.
+    assert_eq!(pick_shadowed(&[(at(12.0), false), (at(6.0), false), (at(9.0), false)], 2, hysteresis), [1, 2]);
+    assert_eq!(pick_shadowed(&[(0.0, false), (at(6.0), false)], 2, hysteresis), [1]);
+    assert_eq!(pick_shadowed(&[(at(6.0), false)], 0, hysteresis), [0usize; 0]);
+    // 9.2 m is 1.18x the holder's importance: inside the margin, the holder stays.
+    assert!(at(9.2) / holder > 1.0 && at(9.2) / holder < 1.25);
+    assert_eq!(pick_shadowed(&[(holder, true), (at(9.2), false)], 1, hysteresis), [0]);
+    // 8.8 m is 1.29x: past the margin, the challenger takes the slot...
+    assert!(at(8.8) / holder > 1.25);
+    assert_eq!(pick_shadowed(&[(holder, true), (at(8.8), false)], 1, hysteresis), [1]);
+    // ...and then holds it against the old holder with the same margin.
+    assert_eq!(pick_shadowed(&[(holder, false), (at(8.8), true)], 1, hysteresis), [1]);
+    // Equal lights never swap: the tie goes to the holder, then to the first.
+    assert_eq!(pick_shadowed(&[(holder, false), (holder, true)], 1, hysteresis), [1]);
+    assert_eq!(pick_shadowed(&[(holder, false), (holder, false)], 1, hysteresis), [0]);
 }
 
 #[test]

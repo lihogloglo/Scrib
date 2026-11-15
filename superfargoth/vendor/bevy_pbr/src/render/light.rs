@@ -1156,6 +1156,13 @@ pub struct ShadowCasterChanges {
     /// lights and casters together, so it changes the first and not the second.
     /// [`skip_unchanged_shadow_views`] redraws these lights whole, every frame.
     pub moved_lights: MainEntityHashSet,
+    // superfargoth patch (own, SH-21b)
+    /// Shadowed point/spot lights whose range sphere is in no active 3D camera's
+    /// frustum this frame, so nothing they light is on screen (a light kept
+    /// `ViewVisibility`-visible off screen with `NoFrustumCulling` to keep its cached
+    /// shadow map). [`skip_unchanged_shadow_views`] redraws none of their faces, first
+    /// captures excepted: they keep their map and catch up when back in view.
+    pub out_of_view_lights: MainEntityHashSet,
 }
 
 // superfargoth patch (own, SH-20)
@@ -1235,7 +1242,8 @@ pub fn extract_shadow_caster_changes(
     >,
     // superfargoth patch (own, SH-20): joint poses, active cameras, and the A/B switch.
     joints: Extract<Query<Ref<GlobalTransform>>>,
-    cameras: Extract<Query<(&Camera, &GlobalTransform), With<Camera3d>>>,
+    // superfargoth patch (own, SH-21b): and their frusta.
+    cameras: Extract<Query<(&Camera, &GlobalTransform, &Frustum), With<Camera3d>>>,
     refresh: Extract<Option<Res<ShadowMoverRefresh>>>,
     mut frame: Local<u32>,
     // superfargoth patch (own, SH-20b): last frame's rigid-caster placement hash per light.
@@ -1246,6 +1254,7 @@ pub fn extract_shadow_caster_changes(
     changes.faces.clear();
     changes.light_entities.clear();
     changes.moved_lights.clear();
+    changes.out_of_view_lights.clear();
     let mut seen_lights = MainEntityHashSet::default();
     let per_frame = refresh.as_ref().is_none_or(|r| r.per_frame);
     changes.per_frame_movers = per_frame;
@@ -1253,12 +1262,18 @@ pub fn extract_shadow_caster_changes(
     let cam_positions: Vec<Vec3> = if per_frame {
         cameras
             .iter()
-            .filter(|(c, _)| c.is_active)
-            .map(|(_, gt)| gt.translation())
+            .filter(|(c, _, _)| c.is_active)
+            .map(|(_, gt, _)| gt.translation())
             .collect()
     } else {
         Vec::new()
     };
+    // superfargoth patch (own, SH-21b)
+    let cam_frusta: Vec<Frustum> = cameras
+        .iter()
+        .filter(|(c, _, _)| c.is_active)
+        .map(|(_, _, frustum)| *frustum)
+        .collect();
 
     let mut visible: Vec<Entity> = Vec::new();
     for (light, light_transform, point_light, spot_light, spot_visible, point_visible) in &lights {
@@ -1270,6 +1285,20 @@ pub fn extract_shadow_caster_changes(
 
         let main_light = MainEntity::from(light);
         let light_pos = light_transform.translation();
+        // superfargoth patch (own, SH-21b): what the light can reach is off screen.
+        let light_sphere = bevy_camera::primitives::Sphere {
+            center: light_pos.into(),
+            radius: point_light
+                .map_or(0.0, |l| l.range)
+                .max(spot_light.map_or(0.0, |l| l.range)),
+        };
+        if !cam_frusta.is_empty()
+            && !cam_frusta
+                .iter()
+                .any(|frustum| frustum.intersects_sphere(&light_sphere, false))
+        {
+            changes.out_of_view_lights.insert(main_light);
+        }
         let mut light_entities_hasher = FixedHasher.build_hasher();
         // superfargoth patch (own, SH-20b): rigid casters' light-relative placement over all faces.
         let mut rigid_hasher = FixedHasher.build_hasher();
@@ -1417,6 +1446,8 @@ pub struct ShadowRefreshStats {
     lru: u32,
     deferred: u32,
     clean: u32,
+    // superfargoth patch (own, SH-21b)
+    out_of_view: u32,
     faces_drawn: u32,
 }
 
@@ -1431,6 +1462,8 @@ pub struct ShadowRefreshStats {
 /// always draw; lights whose casters moved take [`MAX_MOVER_LIGHT_REFRESHES_PER_FRAME`];
 /// the rest are refreshed [`MAX_LRU_LIGHT_REFRESHES_PER_FRAME`] at a time in
 /// least-recently-updated (LRU) order across frames to prevent hitches.
+/// superfargoth patch (own, SH-21b): lights out of every camera's view
+/// ([`ShadowCasterChanges::out_of_view_lights`]) are drawn only for a first capture.
 /// `RUST_LOG=bevy_pbr::shadow_refresh=debug` prints the counts once a second.
 pub fn skip_unchanged_shadow_views(
     mut commands: Commands,
@@ -1579,6 +1612,10 @@ pub fn skip_unchanged_shadow_views(
             first_captures += 1;
             draw[idx] = true;
             stats.first += 1;
+        } else if main_light.is_some_and(|m| changes.out_of_view_lights.contains(&m)) {
+            // superfargoth patch (own, SH-21b): nothing it lights is on screen. Its dirty
+            // faces keep their old keys, so they are still dirty when it comes back.
+            stats.out_of_view += 1;
         } else if moved {
             draw[idx] = true;
             whole[idx] = true;
@@ -1653,7 +1690,7 @@ pub fn skip_unchanged_shadow_views(
     if now.duration_since(start).as_secs_f32() >= 1.0 {
         tracing::debug!(
             target: "bevy_pbr::shadow_refresh",
-            "point/spot shadow refresh, light-frames over {} frames: moved (whole) {}, first {}, mover {}, lru {}, deferred {}, clean {}; faces drawn {}",
+            "point/spot shadow refresh, light-frames over {} frames: moved (whole) {}, first {}, mover {}, lru {}, deferred {}, clean {}, out of view {}; faces drawn {}",
             stats.frames,
             stats.moved,
             stats.first,
@@ -1661,6 +1698,7 @@ pub fn skip_unchanged_shadow_views(
             stats.lru,
             stats.deferred,
             stats.clean,
+            stats.out_of_view,
             stats.faces_drawn,
         );
         *stats = ShadowRefreshStats {

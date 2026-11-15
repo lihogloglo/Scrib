@@ -26,11 +26,15 @@ static casters are cached; moving casters are redrawn over the cache. Everything
   (`exterior.rs:1240`, `:1254`).
 - **Extra depth views** (precipitation occlusion, surface-weather shelter) ride Bevy's shadow pass as subviews
   (`sf_sky_bevy/src/sun_view.rs:108`, `add_sun_view`); they invent no private state.
-- **Lamp shadow budget.** Lamps carry `BudgetedShadow`; `budget_shadows` (`sf_sky_bevy/src/shadow_budget.rs:241`)
-  ranks view-visible lights by `importance` (`:107`), gives at most `PointShadowBudget::max` a cube map and fades
-  them by distance and time through `PointLightShadowFade`. Game numbers: High 8 maps at 512, Medium 6 at 512, Low 0,
+- **Lamp shadow budget.** Lamps carry `BudgetedShadow`; `budget_shadows` (`sf_sky_bevy/src/shadow_budget.rs:280`)
+  ranks the shown lights of the viewer's `RenderLayers` all around the viewer, on screen or not, by `importance`
+  with hysteresis (`:115`, `pick_shadowed` `:141`), and gives at most `PointShadowBudget::max` a cube map. Turning the camera
+  changes nothing; a timed fade (0.3 s) happens only when a light gains or loses its slot, else the fade follows
+  distance (`PointLightShadowFade`). Holders carry stock `NoFrustumCulling` (+ `ShadowHeldOffscreen`), so Bevy
+  keeps their caster lists, face views and cached cube while they are off screen; the vendored refresh rule draws
+  nothing for a holder whose range sphere is in no camera frustum (`vendor/README.md` "SH-21b"). Game numbers: High 8 maps at 512, Medium 6 at 512, Low 0,
   Ultra 12 at 1024 (`exterior.rs:1517`, `mw_environment_bevy/src/render.rs:28`); fade 35-45 m (`render.rs:32`).
-  `drop_stale_light_views` (`:201`) frees face views of lights that lost a map (a Bevy 0.20 leak).
+  `drop_stale_light_views` (`:236`) frees face views of lights that lost a map (a Bevy 0.20 leak).
 - **Lamp cache.** `sf_shadow_cache_bevy` (`lib.rs:1`-`:70`, `ShadowCachePlugin` `:209`): per shadowed light a persistent
   cube array holds the depth of its static casters; Bevy's views draw movers over a restored copy. Captures:
   `captures_per_frame` 2, `recapture_interval` 2 s, `settle_time` 1 s, 24 slots (`:85`-`:125`). Skinned meshes and
@@ -58,6 +62,11 @@ Gauges: `ShadowCacheStats` (`sf_shadow_cache_bevy/src/lib.rs:147`), `RUST_LOG=be
 
 - Lamp-shadow quality is open: player shadow flickers near some torches, which lamps cast looks arbitrary
   ([ledger](../../ledger/shadows.md), SH-13, SH-21); hard problem H2.
+- Shadows on a moving character flicker among many lamps: only 2 (+1) lamps redraw per frame, so each lamp's cube
+  holds an older pose on a different frame. Standard fix not built: cached static depth + movers drawn every frame
+  (UE, HDRP mixed cached shadows); ledger 2026-11-15, SH-25.
+- The lamp pick uses the camera position: a third-person orbit can still hand a slot over when more lamps than slots
+  are near; with all slots held, a far lamp ahead may have no shadow (SH-25).
 - Objects past the last cascade get no object shadows; terrain does (ledger 2026-10-19).
 - A moving lamp is drawn whole by Bevy until it stops; torch-bearers cost about six faces per frame.
 - Medium and Low have no or few lamp maps because the main pass samples every shadowed lamp per pixel.

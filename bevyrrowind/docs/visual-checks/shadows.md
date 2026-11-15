@@ -143,6 +143,11 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   Status: partial.
 - Owner 2026-11-12: the shadow on the player still flickers hard close to some torches and lamps. Next session.
 - Owner 2026-11-15 (texture lab, X orbit lamp at night): lighting/shadow pops off abruptly during the orbit (owner unsure it is when the lamp goes behind an object; the lamp is invisible); not diagnosed (see TX-lab).
+- Owner 2026-11-15 (Balmora at night): (a) shadows on a moving NPC flicker when it walks among many lamps; (b) turning the
+  camera or walking closer, shadows visibly fade in after the move. Code read (orchestrator, unverified): (b) the budget ranks
+  only lamps with `ViewVisibility` (`sf_sky_bevy/src/shadow_budget.rs` module docs), so a turn swaps the shadowed set and new
+  holders fade in; Clockwork picks slots by contribution at the camera incl. off-screen lights (clockwork-code-2026-10-25.md
+  item 6). (a) likely the per-frame face-refresh budget (SH-20b) spread over many lamps. Fix slice queued after H1.
 
 ### SH-22: Exterior fps halves after leaving the Census office (owner report, perf)
 - Kind: game location, dev build, 1280x720, High. `run_dev.ps1 view "Seyda Neen, Census and Excise Office"`, walk out the front door.
@@ -174,3 +179,19 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   barrels, awnings, door frames), no shadow missing for a second after a cell streams in, no static shadow that
   lingers or doubles; torch-bearers and NPCs still cast moving shadows over them.
 - Status: awaiting owner.
+
+### SH-25: Lamp shadows stay through a camera turn (lamp-select, 2026-11-15)
+- Why: owner 2026-11-15 (SH-21 b): after turning the camera or walking closer, lamp shadows faded in. The budget only
+  ranked lamps in the frustum (and weighted lamps ahead), so every turn swapped the shadowed set. Now it picks all
+  around the viewer and a holder keeps its cached map off screen (`superfargoth/docs/specs/shadows.md` "Light selection").
+- Kind: game location. Run: `bash bevyrrowind/tools/owner_launch.sh scene lamp-turn` (Balmora street, 22:00, clear,
+  walkers with torches; same spot as `hi-balmora-night`).
+- Look for: stand among several lamps, turn 180° and back (fast, then slowly), look somewhere, turn, look elsewhere:
+  the lamp shadows are already there, nothing fades in after the turn. Walk toward lamps: shadows only strengthen
+  with distance (35-45 m band), no half-second fade on arrival except when a nearer lamp really takes a slot from a
+  farther one (8 slots on High).
+- Also say what you see (not fixed here): (1) a walker passing among several lamps: shadows on it still flicker
+  (cause and standard fix in the ledger 2026-11-15; next slice); (2) a far lamp ahead with no shadow while lamps
+  behind you have one (the nearest 8 all around win now); (3) orbiting the third-person camera: any shadow swap.
+- A/B: `--point-shadows 12` (more slots: fewer takeovers), `--point-shadows 0` (none). No switch back to the old rule.
+- Status: awaiting owner (tests pass; perf A/B in the ledger).

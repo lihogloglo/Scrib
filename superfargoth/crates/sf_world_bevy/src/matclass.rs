@@ -487,4 +487,54 @@ mod tests {
         assert_eq!(g.get(statics::UNCLASSED), Some(&0.0));
         assert_eq!(g.get(statics::PIPELINES), Some(&2.0));
     }
+
+    /// The vendored `superfargoth patch (own: depth-only material key)`: shadow views and a
+    /// depth/motion-vector prepass key a normal-mapped, relief-mapped material like the same
+    /// material without them (one depth pipeline and batch set); a normal prepass keeps the normal
+    /// map, a deferred prepass keeps both; culling and depth bias always stay.
+    #[test]
+    fn depth_only_pipeline_key_ignores_normal_map_and_relief() {
+        use bevy_material::key::{ErasedMaterialKey, ErasedMaterialPipelineKey, ErasedMeshPipelineKey};
+        use bevy_pbr::{MeshPipelineKey, prepass_material_key};
+
+        let pipeline_key = |material: &StandardMaterial, mesh_key: MeshPipelineKey| {
+            let key = ErasedMaterialPipelineKey {
+                mesh_key: ErasedMeshPipelineKey::new(mesh_key),
+                material_key: ErasedMaterialKey::new(StandardMaterialKey::from(material)),
+                type_id: TypeId::of::<StandardMaterial>(),
+            };
+            prepass_material_key::<StandardMaterial>(&key)
+                .unwrap_or(key)
+                .material_key
+                .to_key::<StandardMaterialKey>()
+                .bits()
+        };
+        let plain = StandardMaterial { depth_bias: 3.0, ..surface(AlphaMode::Mask(0.5), false) };
+        let mapped = StandardMaterial {
+            normal_map_texture: Some(Handle::default()),
+            normal_map_channel: UvChannel::Uv1,
+            depth_map: Some(Handle::default()),
+            parallax_mapping_method: ParallaxMappingMethod::Relief { max_steps: 5 },
+            ..plain.clone()
+        };
+        let full = StandardMaterialKey::from(&mapped);
+        let map_bits =
+            StandardMaterialKey::NORMAL_MAP | StandardMaterialKey::NORMAL_MAP_UV | StandardMaterialKey::RELIEF_MAPPING;
+        assert!(full.contains(map_bits));
+
+        let shadow = MeshPipelineKey::DEPTH_PREPASS | MeshPipelineKey::MAY_DISCARD;
+        let motion = MeshPipelineKey::DEPTH_PREPASS | MeshPipelineKey::MOTION_VECTOR_PREPASS;
+        for mesh_key in [MeshPipelineKey::DEPTH_PREPASS, shadow, motion] {
+            assert_eq!(pipeline_key(&mapped, mesh_key), pipeline_key(&plain, mesh_key));
+            assert_eq!(pipeline_key(&plain, mesh_key), StandardMaterialKey::from(&plain).bits(), "plain key untouched");
+        }
+        let normals = motion | MeshPipelineKey::NORMAL_PREPASS;
+        assert_eq!(pipeline_key(&mapped, normals), (full - StandardMaterialKey::RELIEF_MAPPING).bits());
+        let deferred = MeshPipelineKey::DEPTH_PREPASS | MeshPipelineKey::DEFERRED_PREPASS;
+        assert_eq!(pipeline_key(&mapped, deferred), full.bits());
+
+        let kept = StandardMaterialKey::CULL_BACK | StandardMaterialKey::DEPTH_BIAS;
+        assert!(full.intersects(StandardMaterialKey::DEPTH_BIAS) && full.contains(StandardMaterialKey::CULL_BACK));
+        assert_eq!(pipeline_key(&mapped, shadow) & kept.bits(), (full & kept).bits(), "culling and depth bias stay");
+    }
 }

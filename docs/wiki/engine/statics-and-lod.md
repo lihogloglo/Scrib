@@ -67,7 +67,8 @@ in `sf_world_bevy/src/matclass.rs`.
 ## Known limits
 
 - Static scene reaches only parity with the precombine, opt-in: [ledger/statics.md](../../ledger/statics.md).
-- `NoCpuCulling` is opt-in (walk stutters, lamp work items): [ledger/statics.md](../../ledger/statics.md).
+- `NoCpuCulling` is opt-in (walk stutters, lamp work items; with lamp faces fixed it still loses: more batch sets in the
+  camera and cascades, H1 2026-11-15): [ledger/statics.md](../../ledger/statics.md).
 - Precombine falls back to per-placement entities when a member moved or was removed: [ledger/statics.md](../../ledger/statics.md).
 - Frame totals: [ledger/perf.md](../../ledger/perf.md).
 

@@ -53,21 +53,41 @@ visibility: [render-and-visibility.md](render-and-visibility.md).
   bind group per material (:2821).
 - Bind groups themselves are created in `PrepareBindGroups`: `prepare_material_bind_groups` then
   `write_material_bind_group_buffers` (:528-546, 2697).
+- Pipeline keys: shadow views (`specialize_shadows`, `render/light.rs:3405`) and the prepass
+  (`specialize_prepass_material_meshes`, `prepass/mod.rs:1317`) both call `properties.prepass_specialize`; the
+  key is `ErasedMaterialPipelineKey { mesh_key, material_key, type_id }`, the material key being the whole
+  `bind_group_data` (`StandardMaterialKey`, `pbr_material.rs:1263-1293`). `SpecializedMeshPipelines` dedupes only
+  on (final vertex layout, key) (`bevy_render/src/render_resource/pipeline_specializer.rs:239-252`). Stock, a
+  normal-mapped or relief material therefore got its own shadow pipeline and batch set. Vendored
+  `superfargoth patch (own: depth-only material key)`: `Material::prepass_bind_group_data` (`material.rs:295-310`) is
+  applied in `prepass_specialize::<M>` (:1614-1674); `StandardMaterial` (`pbr_material.rs:1638-1662`) clears
+  `RELIEF_MAPPING` unless deferred and `NORMAL_MAP`/`NORMAL_MAP_UV` unless normal or deferred prepass. Same shaders;
+  walk batch sets 133 -> 118 (`docs/ledger/textures.md`). Meshes with and without tangents still sit in
+  different vertex slabs, so they still split depth batch sets.
 
 ## 4. Bindless
 
 - A material is bindless when `M::bindless_slot_count()` is `Some`, `bindless_supported(device)`, and the resolved
-  count > 1 (`material_bind_groups.rs:2198`). `StandardMaterial` declares `#[bindless(index_table(range(0..31)))]`
-  (`bevy_pbr/src/pbr_material.rs:25`); `ExtendedMaterial` takes the smaller limit of base and extension
+  count > 1 (`material_bind_groups.rs:2198`). Our vendored `StandardMaterial` declares
+  `#[bindless(limit(8192), index_table(range(0..31)))]` (`bevy_pbr/src/pbr_material.rs:25-39`, own patch; Apple keeps
+  stock Auto); stock is Auto = `AUTO_BINDLESS_SLAB_RESOURCE_LIMIT` 2048 (64 on Apple, `render_resource/bindless.rs:32`).
+  `bindless_supported` (derive) needs `TEXTURE_BINDING_ARRAY` and sampler fields (6) x limit within
+  `max_binding_array_sampler_elements_per_shader_stage` (Vulkan NVIDIA 1M; DX12 2048, so StandardMaterial is never
+  bindless on DX12, bevy#26182); binding arrays exist only for used types, `count` = limit each. `ExtendedMaterial` takes the smaller limit of base and extension
   (`bevy_render/src/combined_bind_group.rs:18-40`). Non-bindless: one bind group per material
   (`MaterialBindGroupNonBindlessAllocator`, :2367).
 - Bindless layout: slabs (`MaterialBindlessSlab`, :121) each hold binding arrays of textures/samplers/buffers, an
   index table per material slot, and data buffers (:94, 169, 186). A slab's single bind group serves up to
   `slab_capacity` resources; a material goes in the first slab that has the resources or free slots (:1071,
-  `check_allocation` dedups equal resources). Slot ids are 16-bit, so a slab spills past 0xFFFF (:1105).
+  `check_allocation` dedups equal resources; full check :1091). Slot ids are 16-bit, so a slab spills past 0xFFFF (:1105).
+  Each extra slab duplicates every pipeline's batch set (the bind group is in the batch-set key) and flips the bound
+  slab within a pass: on the Balmora walk 2 slabs -> 1 cut batch sets 158 -> 127 and 0.8 ms (ledger textures 2026-11-15).
+  Gauges `material_allocator_{slabs,allocations}/...StandardMaterial` in bench runs (`MaterialAllocatorDiagnosticPlugin`).
+- Count fix (bevy#26432, vendored): a resource counts once per new binding-array entry (:1296, `insert` :2126); stock
+  counted it per binding naming it (our ORM fills two slots, shared samplers six) but freed it once, so the count leaked.
 - Any allocate or free sets `bind_group = None` (:1126, :1444); `prepare_bind_group` (:1640) rebuilds the whole slab's bind
   group on the next `PrepareBindGroups` when it is `None`. Changed shader buffers also invalidate (:1727).
-- Patch: #26321 (`ExtendedMaterial` bindless fallback), vendor README.
+- Patches: #26321 (`ExtendedMaterial` bindless fallback), #26432 (count fix), own slab limit; vendor README.
 
 ## 5. Mesh allocator (slabs)
 

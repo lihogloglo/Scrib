@@ -91,6 +91,7 @@ SH-21 | partial (2026-11-01: torches cast; flicker, cut faces, choppy: SH-20b in
 SH-22 | known bug | [shadows](visual-checks/shadows.md) | Exterior fps halves after leaving the Census office, not the GI (2026-11-02)
 SH-23 | awaiting owner | [shadows](visual-checks/shadows.md) | Sun shadow early-out: Balmora noon, dusk, night, leaf light-through and contact shadows identical before/after (2026-11-09)
 SH-24 | awaiting owner | [shadows](visual-checks/shadows.md) | Balmora at night: statics still cast into cached lamp shadows with GPU-culled statics, A/B `--off cpuculltag` (perf-push P3, 2026-11-12)
+SH-25 | awaiting owner | [shadows](visual-checks/shadows.md) | Balmora street at night (`scene lamp-turn`): lamp shadows already there after a 180° camera turn and when walking toward lamps, no fade-in; note NPC shadow flicker among lamps (lamp-select, 2026-11-15)
 GI-1 | partial (2026-11-02: runs clean, but `flip gi` barely changes the room) | [gi](visual-checks/gi.md) | Dynamic probe GI in the Census office (`--off gi` A/B)
 GI-2 | partial (2026-11-02: no artifacts seen; effect too weak to judge leaks) | [gi](visual-checks/gi.md) | DDGI visibility-weighted probe sampling: no leaks through the office floor/walls, bounce in corners (`--off gi` A/B)
 GI-lampbody | awaiting owner | [gi](visual-checks/gi.md) | Lamp bodies don't light twice at GI hits (less hot bounce right around lamps, room fill kept) and interior ambient floor 0.1 (corners not pitch black) (`flip gi` A/B)

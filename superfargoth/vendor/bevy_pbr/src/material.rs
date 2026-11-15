@@ -291,6 +291,23 @@ pub trait Material: Asset + AsBindGroup + Clone + Sized {
     ) -> Result<(), SpecializedMeshPipelineError> {
         Ok(())
     }
+
+    // superfargoth patch (own: depth-only material key)
+    /// The material key to use for a prepass or shadow pipeline with this `mesh_key`, when it
+    /// differs from `key`: return `Some` with the bits that such a pipeline never reads cleared,
+    /// so that materials which differ only in main-pass features (a normal map, parallax, ...)
+    /// share one depth/shadow pipeline and batch set. `None` (the default) keeps `key`.
+    ///
+    /// The result is passed to [`Material::specialize`] for those pipelines, so it must keep
+    /// every bit that `specialize` or the prepass shaders read for this `mesh_key`.
+    #[expect(
+        unused_variables,
+        reason = "The parameters here are intentionally unused by the default implementation; however, putting underscores here will result in the underscores being copied by rust-analyzer's tab completion."
+    )]
+    #[inline]
+    fn prepass_bind_group_data(key: &Self::Data, mesh_key: MeshPipelineKey) -> Option<Self::Data> {
+        None
+    }
 }
 
 /// A resource that caches resolved shader handles for a specific material type.
@@ -1594,12 +1611,26 @@ pub fn base_specialize(
         },
     )
 }
-fn prepass_specialize(
+// superfargoth patch (own: depth-only material key): generic over `M` so the key can go through
+// `Material::prepass_bind_group_data` (was a non-generic fn). Shadow views and the prepass both
+// come here (`specialize_shadows`, `specialize_prepass_material_meshes`).
+fn prepass_specialize<M: Material>(
     world: &mut World,
     key: &ErasedMaterialPipelineKey,
     layout: &MeshVertexBufferLayoutRef,
     properties: &Arc<MaterialProperties>,
-) -> Result<CachedRenderPipelineId, SpecializedMeshPipelineError> {
+) -> Result<CachedRenderPipelineId, SpecializedMeshPipelineError>
+where
+    M::Data: PartialEq + Eq + Hash + Clone,
+{
+    let masked_key;
+    let key = match prepass_material_key::<M>(key) {
+        Some(masked) => {
+            masked_key = masked;
+            &masked_key
+        }
+        None => key,
+    };
     if let Some(pipelines) =
         world.get_resource::<SpecializedMeshPipelines<PrepassPipelineSpecializer>>()
         && let Some(id) = pipelines.get_pipeline(key, layout)
@@ -1620,6 +1651,26 @@ fn prepass_specialize(
             pipelines.specialize(pipeline_cache, &specializer, key.clone(), layout)
         },
     )
+}
+
+// superfargoth patch (own: depth-only material key)
+/// The key a prepass or shadow pipeline uses for `key`: `key` with its material key replaced by
+/// [`Material::prepass_bind_group_data`], or `None` when the material keeps its key.
+pub fn prepass_material_key<M: Material>(
+    key: &ErasedMaterialPipelineKey,
+) -> Option<ErasedMaterialPipelineKey>
+where
+    M::Data: PartialEq + Eq + Hash + Clone,
+{
+    let data = M::prepass_bind_group_data(
+        &key.material_key.to_key::<M::Data>(),
+        key.mesh_key.downcast(),
+    )?;
+    Some(ErasedMaterialPipelineKey {
+        mesh_key: key.mesh_key.clone(),
+        material_key: ErasedMaterialKey::new(data),
+        type_id: key.type_id,
+    })
 }
 
 fn user_specialize<M: Material>(
@@ -1807,7 +1858,8 @@ where
                 shaders,
                 bindless,
                 base_specialize: Some(base_specialize),
-                prepass_specialize: Some(prepass_specialize),
+                // superfargoth patch (own: depth-only material key)
+                prepass_specialize: Some(prepass_specialize::<M>),
                 user_specialize: Some(user_specialize::<M>),
                 material_key,
                 shadows_enabled,

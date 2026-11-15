@@ -58,6 +58,9 @@ Facts only, from the stock 0.20.0 source (`~/.cargo/registry/src/*/<crate>-0.20.
 - `RenderGpuCulledEntities` (`mesh.rs:1719`) is the table of `NoCpuCulling` meshes; `collect_gpu_culled_meshes`
   (`mesh.rs:2287`) copies it into every camera's and every shadow subview's `RenderVisibleEntities`, filtered only
   by `RenderLayers`. A view component that was just added gets a full flush of the whole table (`mesh.rs:2345`).
+  A point light's subview tables are dropped when it loses its shadow map or its `ViewVisibility`
+  (`bevy_pbr/src/render/light.rs`, end of `extract_lights`), so each time it gains a map the table is flushed into
+  its six faces again.
 - `extract_cameras` (`bevy_render/src/camera.rs:473`) and `extract_lights` (`bevy_pbr/src/render/light.rs:333`)
   copy each camera's, cascade's and face's sorted visible list.
 - `extract_skins` (`bevy_pbr/src/render/skin.rs:272`) handles skins whose `ViewVisibility` / `SkinnedMesh`

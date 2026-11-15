@@ -72,6 +72,8 @@ unchanged) and hands it to Bevy's `ImageLoader` (same `ImageLoaderSettings`: sRG
 `Quality::texture_cap` (`mw_game_core/src/exterior.rs:75`; Low 512, Medium 1024, High 2048, Ultra none), `--texture-cap <px>`
 (`0` = none) overrides (app `main.rs:601`), plugin added in `mw_exterior_bevy/src/exterior.rs:308` (game runs only; viewers
 uncapped). DDS/TGA still load through Bevy's loaders, uncapped. See [content pipeline](content-pipeline.md).
+Materials: the companions (normal, ORM, depth) go into StandardMaterial's bindless slab, which the vendored derive sizes at
+8192 resources (stock 2048 spilled the Balmora walk into 2 slabs and cost 0.8 ms; [Bevy materials §4](../bevy/render-assets-and-materials.md)).
 
 ## Switches and counters
 

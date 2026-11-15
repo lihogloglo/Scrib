@@ -515,6 +515,16 @@
             flags: ["--clouds", "clear"],
             checks: ["HI-4"],
         ),
+        (
+            name: "lamp-turn",
+            cell: "Balmora",
+            camera: "-283,+5,198,-293,+0.5,185",
+            hour: 22.0,
+            description: "Balmora street at night among lamps and torch-bearers: lamp shadows must not fade in after a camera turn (shadow budget picks all around the viewer and keeps off-screen maps)",
+            look_for: "turn the camera 180 degrees and back, fast and slow, then walk toward lamps: their shadows are already there, none fades in after the turn; then watch a walker pass among several lamps (shadows on it still flicker: known, not fixed here)",
+            flags: ["--clouds", "clear"],
+            checks: ["SH-25"],
+        ),
         // ---- terrain veil diagnosis (RO-16, .sessions/terrain-veil.md) ----
         (
             name: "ro16-terrain-veil",

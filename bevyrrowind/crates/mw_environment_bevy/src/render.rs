@@ -24,7 +24,7 @@ const ENV_SUN_CASCADES: &str = "BEVYRROWIND_SUN_CASCADES";
 /// Point-light shadow budget of the quality presets without an override
 /// (`(count, cube face size)`): 8 cached lamps at 512² using Bevy's native
 /// per-face light-relative shadow cache (`bevy_pbr::skip_unchanged_shadow_views`)
-/// with forward-hemisphere priority weighting in `sf_sky_bevy`.
+/// and the 360° importance pick with off-screen holders in `sf_sky_bevy`.
 pub const POINT_SHADOWS_DEFAULT: (usize, usize) = (8, 512);
 
 /// Lamp shadows fade out between these viewer distances, m (`PointLightShadowFade`

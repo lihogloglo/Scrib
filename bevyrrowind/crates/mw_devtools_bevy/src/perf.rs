@@ -14,6 +14,7 @@ use bevy_ecs::prelude::*;
 use bevy_image::Image;
 use bevy_light::DirectionalLight;
 use bevy_mesh::Mesh;
+use bevy_pbr::diagnostic::MaterialAllocatorDiagnosticPlugin;
 use bevy_pbr::StandardMaterial;
 use bevy_render::diagnostic::{MeshAllocatorDiagnosticPlugin, RenderDiagnosticsPlugin};
 use bevy_render::renderer::RenderAdapterInfo;
@@ -166,6 +167,8 @@ impl Perf {
             app.add_plugins((
                 RenderDiagnosticsPlugin,
                 MeshAllocatorDiagnosticPlugin,
+                // StandardMaterial bindless slabs + their resource count (tex-slab, 2026-11-15).
+                MaterialAllocatorDiagnosticPlugin::<StandardMaterial>::default(),
                 SystemInformationDiagnosticsPlugin,
                 SfDiagPlugin::new(settings).with_scenario(scenario)?,
                 ChurnPlugin,

@@ -22,7 +22,20 @@ use crate::{deferred::DEFAULT_PBR_DEFERRED_LIGHTING_PASS_ID, *};
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[bind_group_data(StandardMaterialKey)]
 #[data(0, StandardMaterialUniform, binding_array(10))]
-#[bindless(index_table(range(0..31)))]
+// superfargoth patch (own: StandardMaterial slab limit): 8192 resources per bindless slab instead of
+// `AUTO_BINDLESS_SLAB_RESOURCE_LIMIT` (2048), so an open world's base colour + normal + ORM + depth
+// companions stay in ONE slab: each extra slab duplicates every batch set and re-binds a whole slab
+// per batch set (docs/research/texture-cost-2026-11-15.md). 8192 x 6 samplers is far under Vulkan's
+// descriptor-indexing minimum (500k); where the device has fewer, `bindless_supported` falls back to
+// non-bindless as before. Apple keeps the stock limit (64; Metal argument-buffer sampler limits).
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "ios")),
+    bindless(limit(8192), index_table(range(0..31)))
+)]
+#[cfg_attr(
+    any(target_os = "macos", target_os = "ios"),
+    bindless(index_table(range(0..31)))
+)]
 #[reflect(Default, Debug, Clone)]
 pub struct StandardMaterial {
     /// The color of the surface of the material before lighting.
@@ -1621,4 +1634,29 @@ impl Material for StandardMaterial {
         }
         Ok(())
     }
+
+    // superfargoth patch (own: depth-only material key)
+    // Forward prepass and shadow pipelines run `pbr_prepass.wesl`, which reads the normal map only
+    // under `NORMAL_PREPASS` and never reads parallax (`RELIEF_MAPPING` is used by `pbr.wesl`
+    // alone, i.e. the main pass and the deferred prepass). Cull and depth-bias bits are kept.
+    fn prepass_bind_group_data(
+        key: &StandardMaterialKey,
+        mesh_key: MeshPipelineKey,
+    ) -> Option<StandardMaterialKey> {
+        let unread = standard_material_prepass_unread_bits(mesh_key);
+        key.intersects(unread).then(|| key.difference(unread))
+    }
+}
+
+// superfargoth patch (own: depth-only material key)
+/// The [`StandardMaterialKey`] bits a prepass or shadow pipeline with `mesh_key` never reads.
+fn standard_material_prepass_unread_bits(mesh_key: MeshPipelineKey) -> StandardMaterialKey {
+    if mesh_key.contains(MeshPipelineKey::DEFERRED_PREPASS) {
+        return StandardMaterialKey::empty();
+    }
+    let mut unread = StandardMaterialKey::RELIEF_MAPPING;
+    if !mesh_key.contains(MeshPipelineKey::NORMAL_PREPASS) {
+        unread |= StandardMaterialKey::NORMAL_MAP | StandardMaterialKey::NORMAL_MAP_UV;
+    }
+    unread
 }
