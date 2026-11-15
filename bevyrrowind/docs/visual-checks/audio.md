@@ -20,9 +20,6 @@ synthetic and app tests cover selection, timing and routing (`mw_audio` voice te
   (the trigger range feels too short; the first run missed it for that reason). They don't stop or turn toward the
   player (wanted). Status: partial (range too short, no stop/turn).
 
-### AU-4: Footsteps by boots (`cargo dev scene door-balmora-guild`)
-- Walkers in heavy boots (guards) step heavy, light/medium armour boots light/medium, shoes and bare feet bare.
-- Owner 2026-10-30 (`scene door-balmora-guild`): footsteps by boots work. Status: confirmed.
 
 ### AU-5: Swinging-door sounds (`cargo dev view "Seyda Neen, Census and Excise Office"`, any inner door)
 - Activate a non-load door: its open sound at the door; again: its close sound. The door itself does not move

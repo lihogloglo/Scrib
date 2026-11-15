@@ -26,12 +26,6 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 
 - Source: shf6 (shadows F6 slice 1).
 
-### SH-11: Distant flashes while moving (owner report)
-- Kind: game location. Run: `.\bevyrrowind scene balmora`, fly around.
-- Seen by owner 2026-10-19 (round 1): brief flashes in the distance whenever the camera moves; they look like shadows.
-- Fix (render-opt 2026-10-28): ordered `far_map::update_far_map` before `update_terrain` and moved `fog_shadow_heights`, `far_shadow_input`, and `FarFieldSystems::FarShadow` to `PostUpdate` after `TerrainSystems::Update` so shifted terrain origins never render 1 stale frame; also replaced Bevy cascade-NDC PCSS with world-unit directional PCSS (OpenMW Clockwork adaptation).
-- Status: awaiting owner (2026-10-28).
-- Owner 2026-10-30 (scene balmora, flying): the distant shadow-like flashes are gone. Status: confirmed.
 
 ### SH-13: Point-light (lamp) shadows (owner report)
 - Kind: game location. Run: `.\bevyrrowind scene lamps-handoff` (Balmora, 22:00).
@@ -96,6 +90,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   get none unless `BEVYRROWIND_LAMP_CONTACT=1`). Owner 2026-11-01, Census office with `BEVYRROWIND_LAMP_CONTACT=1`:
   lamp contact shadows work and the cost feels acceptable. Status: confirmed; decision pending on making them the
   default (High/Ultra) and on a screen-space ray length (UE style) for unshadowed lamps.
+- Owner 2026-11-15 (Census office, `flip ssao`): GTAO works but is "barely visible", a very subtle difference on/off. Expected: Bevy (like UE) applies AO to ambient/indirect light only, and our interiors are lit mostly by direct lamp light over a flat ambient; AO shows more once probe GI carries the indirect fill (GI-1/GI-2: "too weak"). Status: confirmed with follow-up.
 
 ### SH-19: Shadow reset B2 (lamp shadows on 2x2 hardware PCF)
 - Kind: game location. Run (release): `.\bevyrrowind view "Seyda Neen, Census and Excise Office" --camera
@@ -147,6 +142,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   on different frames (the cut at a cube-face seam). Fix slice SH-20b (per-light grouping, separate budgets) in progress.
   Status: partial.
 - Owner 2026-11-12: the shadow on the player still flickers hard close to some torches and lamps. Next session.
+- Owner 2026-11-15 (texture lab, X orbit lamp at night): lighting/shadow pops off abruptly during the orbit (owner unsure it is when the lamp goes behind an object; the lamp is invisible); not diagnosed (see TX-lab).
 
 ### SH-22: Exterior fps halves after leaving the Census office (owner report, perf)
 - Kind: game location, dev build, 1280x720, High. `run_dev.ps1 view "Seyda Neen, Census and Excise Office"`, walk out the front door.

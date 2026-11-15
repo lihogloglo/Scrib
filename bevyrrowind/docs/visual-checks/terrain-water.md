@@ -40,29 +40,7 @@ under land. Known: from above (`wa-bittercoast`) the swamp reads grey (sky refle
 W4); at night the water reads lighter than the land (env-map reflection, W4); the shore foam band shape is still the
 generic travelling band (wet sand band waits for SU1); waves by weather are WE3.
 
-### WA-3: Local reflections, SSPR (W-SSPR; `scene wa-vivec-waterfront` 15:00, `ebonheart-night` 22:00, `wa-seyda-noon`, `wa-night-moons` 23:30; A/B `--off waterssr`)
 
-Status: confirmed (owner 2026-11-12: Seyda Neen thunderstorm 9:00 "very nice"; `ebonheart-night` 22:00: "the water is
-correct now", no longer brighter than the land (LM-2), "very nice"). Open: owner unsure emissive surfaces (lit windows)
-show in the reflection; `--off waterssr` A/B not run. Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-vivec-waterfront`, then
-`scene ebonheart-night`; A/B: the same with `--off waterssr` (environment map only, the old look). High preset.
-Look for: Vivec's cantons, Ebonheart's walls and docks, ships and the dark banks mirrored in the water below them and
-wobbling with the waves (vertical streaks on rougher far water, not a hard mirror); at 22:00 lit windows, lamps and light
-sprites reflected (the sprites are translucent: not in the reflection, known), water near dark banks dark, not airglow-bright.
-Bad: smeared streaks or stretched copies at screen edges; a hard cut where a reflection leaves the screen (it should fade
-to the sky reflection); flicker or crawling when still or panning; anything under the water (seabed, hull bottoms)
-mirrored; reflections on a lake or pool at another level than the nearest one. Known: reflections are unfogged (the fog
-over the water covers them), off-screen and occluded things fall back to the sky.
-
-### WA-4: Wavelets at the shore (W-SHORE; `scene wa-seyda-noon`, `wa-bittercoast`; A/B `--off shorenormals`)
-
-Status: confirmed (owner 2026-11-12, `scene wa-seyda-noon`: "that's perfect"; `--off shorenormals` A/B not run). Kind: real game locations, High preset, the scenes' own time and weather.
-Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-seyda-noon`, then `scene wa-bittercoast`; A/B: the same with
-`--off shorenormals` (the old look: the normal flattens with the displacement). Fixes WA-1 (3) "100 % flat at the shore".
-Look for: small wind ripples glinting and moving right up to the waterline on the Seyda Neen beach and the Bitter Coast
-banks; the swell (big slow waves) still dying out over the last tens of metres, the surface itself not bobbing at the
-sand; no flat mirror strip along the shore. Bad: shimmer, sparkle noise or moiré on the near-shore or far water; open-sea
-chop on the beach; a visible line where the ripples start. Foam and reflections should look unchanged.
 
 ### WA-5: Gerstner shore waves (W-GERSTNER; `scene wa-seyda-noon`, `wa-bittercoast`; A/B `--off shorewaves`)
 
@@ -84,6 +62,7 @@ A/B each with `--off shoredepth` (the old proxy). Log line to check: `water: sho
 Look for: visible crests rolling in (tens of cm at 14 m/s, more on steep shores, gentler on flats), longer shallow wavelengths
 (~20-30 m), swash several times stronger on steep beaches. Bad: water flooding over the beach far past the waterline (storm
 swash reaches ±2 m on β 0.2 at 30 m/s), crest loops/spikes, crests kinking where the bed changes. Status: awaiting owner.
+- Owner 2026-11-15 (`scene wa-seyda-noon --water-wind 14`, after W-GERSTNER-DEPTH): shore waves are there now but faint, a little bulge, not a shore-wave shape; crests do not bend; open-sea waves small even at 14 m/s (owner: too little wind or a wrong sim factor; compare the 2026-11-12 "nice at 30"); contact foam on terrain/objects still looks terrible (WA-1 foam item); FPS very low in this scene (not measured: needs a `--bench` run before any guess); no crash. Status: partial.
 
 ### WA-6: The sea follows the weather (W-WIND; `scene wa-seyda-noon`; A/B `--off seawind`)
 
@@ -97,3 +76,4 @@ The sea lags the weather by design (30 s low-pass + 6 s steps). A/B: the same wi
 Look for: a calm, small-waved sea in clear weather; the sea roughening smoothly into the storm (longer, higher swell,
 more whitecaps, stronger shore swash) and calming back the same way. Bad: a pop or a re-roll of the wave pattern at any
 moment, waves jumping at the shore, floating things (CPU water) bobbing out of step with the drawn waves.
+- Owner 2026-11-15 (repeated): the white bands on inland water shores (rivers, lakes) are still there.

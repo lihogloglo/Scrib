@@ -4,31 +4,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 
 ## Player (ROADMAP 2.1; `crates/mw_player_bevy/src/lib.rs`)
 
-### PL-1: Third-person walk and the use prompt (`cargo dev view "Seyda Neen"`, 10:00)
-- Starts in player mode (the dressed `player` body, PL-2; the capsule is drawn only with characters off). WASD, Shift, Space jump, Tab 1st/3rd, wheel zoom; walk to the Census and
-  Excise Office door, then to an NPC (Fargoth by the lighthouse path).
-- Look for: smooth walk and camera (no jitter, camera pushes in against walls); under the centre dot the prompt reads
-  `[E] Open  <door>` / `[E] Talk  <npc>` / `[E] Take  <item>`, it clears when you look away or step past ~2.7 m;
-  E on the door travels, the body arrives at the marker facing out.
-- Fixed 2026-10-25 (player3), check: focus is now a physics ray plus actor capsules, so in the Census and Excise Office
-  the dot on an NPC's chest reads `[E] Talk  <npc>` (was `Take  Broom`); walls block items behind them.
-  `cargo dev view "Seyda Neen, Census and Excise Office"` starts on the floor at the door's arrival marker, facing in
-  (was: on the roof, grey void). E does nothing while the journal or dialogue is open.
-- Owner 2026-10-30 (release start, New game): walk, camera and use prompt fine. Status: confirmed.
 
-### PL-2: Animated player body (action.md A2 slice 2; `cargo dev view "Seyda Neen"`, 10:00)
-- Starts in player mode; Tab to third person. Walk (W, stick), run (Shift sprint), Ctrl sneak, Space jump, turn on the spot.
-- Look for: the `player` record's character (race, sex, head, hair, clothes) in place of the capsule; walk, run, sneak
-  cycles matching the ground speed (no skating), jump/fall clip off the ground and landing back into locomotion, no
-  jitter at any frame rate (the body follows the fixed-tick capsule, interpolated, through the correction
-  spring). Tab to first person hides the body (no arms yet). Shot: `shots/player-body-3-walk.png` (indoors, 3rd person).
-- Status: confirmed with follow-up. Owner 2026-10-27 (after the IK audit fixes): much better, pelvis and jump fixed. Open:
-  movement feel has too much inertia ("like driving a car"); never designed on purpose. Follow-up: PL-4.
-- Owner 2026-10-27 (arena): switching third -> first person can leave the view separated from the capsule (bug, open);
-  first-person arms not built yet (known).
-- Fixed 2026-10-27 (afternoon): the split was the body leaving its capsule, not the camera: Delirium click-to-push hit the
-  player's own body on a left-click attack (now F11 only, never action characters) plus the UAL2 split-take clip offset
-  (cook `start_anchor`). Owner confirmed the view switch live. Status: confirmed (first-person arms still not built).
 
 ### FP-1: First person shows your body and arms, head hidden (`cargo dev view "Seyda Neen"`, 10:00; 3.4b, superfargoth first-person.md)
 - Kind: game location, player mode, default flags. Tab to first person; F readies the weapon (if the player carries one), F again sheathes.
@@ -60,27 +36,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   question 4: accept, blend, or `fov_body = fov_world`?). Report the toggle's default you want.
 - Status: awaiting owner (built 2026-11-10, not run here: no GPU).
 
-### PL-4: Movement feel: starts, stops, reversals (`cargo dev scene level-anim-overview`, F11 player, Tab 3rd person)
-- Player-only motion tuning (Elden-Ring-style): fast speed ramp, faster brake, facing capped at 720/1080/480 deg/s
-  (walk/run/sprint) with the motion following the facing, so a reversal turns at speed. NPCs keep their 0.27 s springs.
-- Try: run (W), release (stop), W then S (reversal), W then D (90 deg), Shift sprint turns (heavier), tap a direction
-  from standing. Look for: responsive, no car-like slide; feet not skating at starts/stops; no pop entering run.
-- Numbers (`cargo test -p mw_player_bevy measure_player_feel -- --ignored --nocapture`), before -> after: 90 % speed
-  0.77 -> 0.20 s; stop from run 1.12 s / 1.73 m -> 0.22 s / 0.32 m; 180 reversal 1.08 s (speed dips to 0.16 m/s) ->
-  0.17 s (keeps 4.5 m/s); 90 deg turn 0.90 -> 0.08 s.
-- Tweak: `crates/mw_player_bevy/src/feel.rs` (half-lives, turn rates, feed smoothing); gait blends `mw_graphs` build.rs
-  `GAIT_BLEND` 0.15 s / `DIRECTION_SMOOTHING` 0.05 s (shared with NPCs, re-bless). Status: confirmed with follow-up
-  (owner 2026-10-27: "much much better, about right"; jump air time is long and floaty). Wanted later: run + Ctrl slide.
-  Jump fix 2026-10-27: player gravity 9.81 -> 18 m/s² (`feel.rs` `GRAVITY`; height still 1 m): air 0.90 -> 0.67 s. Confirmed (owner 2026-10-27: "jump feels better").
 
-### PL-3: Jump take-off held in the air, landing on touchdown (`cargo dev scene level-anim-ledges`, F11 player)
-- Humanoid graph B2: `jump` plays `Jump@head` and holds it while airborne; touchdown plays `Jump@tail` (`land`), then
-  locomotion; running cuts the landing into the run.
-- Jump in place, then running. Look for: one tuck at take-off, held in the air, knees absorb on touchdown (land
-  sound with it); no second leg lift mid-air.
-- B3b feed: walking off a ledge (here or in anim-lab) shows the fall hold (no take-off tuck) after ~0.1 s, then lands;
-  running down stairs or over small steps shows no fall pose at all.
-- Status: confirmed (owner 2026-10-27: jump feels correct).
 
 ### IV-1: Take items and Fargoth's ring (`cargo dev view "Seyda Neen, Census and Excise Office"`) (partial)
 - E on a loose item (bottle, plate, book): it vanishes at once and stays gone after leaving and re-entering the
@@ -199,24 +155,6 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 
 ## Dev console (superfargoth `console.md`; ROADMAP 1.13; `.sessions/console.md`)
 
-### CO-1: Live SSAO and A/B switches from the console
-- Kind: game location. Build `cargo build --release -p bevyrrowind --features dev` (no `solari` needed), run
-  `.\bevyrrowind view "Seyda Neen, Census and Excise Office"` (also SH-16's Balmora spot). Backquote (key left of 1,
-  `²` on AZERTY) opens/closes the console; F1 stays the A/B help.
-- Type `off ssao` / `on ssao` (or `toggle render.ssao`, `render.ssao off`): room corners and under-table darkening
-  go and come back the same frame, no hitch beyond one pipeline compile. `flip sun_shadows`, `off clouds`,
-  `on wireframe`, `flip rings`: same as F2/Shift+C/F7/F8, overlay line updates. `off froxels` says "startup only,
-  relaunch with --off froxels". `help on` lists the live names; Tab completes command and variable names. Keys don't reach the game while open.
-- Scope: GI dropped (owner 2026-10-25: raster GI not built yet, Phase 4). SSAO off keeps the prepasses (image A/B,
-  not cost; cost = a `--off ssao` run). Unblocks SH-16 (AO) re-check.
-- Owner 2026-10-25: partial. COC works for interiors only (`coc balmora` fails: exterior lookup, console slice 3);
-  can't paste; wants Down to select a suggestion and Enter to accept it. No upscaling/DLSS console switch exists yet.
-- 2026-10-26 (console slice 3), re-check: `coc balmora`, `coc "seyda neen"`, `coc "bitter coast region"`, `coc -2 -9`
-  fade to the exterior square's centre on the ground (no fall); `coc "seyda neen, census and excise office"` still
-  goes inside. Type `re`: Down/Up move the `>` mark, Enter puts the candidate in the line (a second Enter runs it),
-  Escape closes the popup first. Ctrl+V and Shift+Insert paste at the cursor (several lines join with `; `).
-- Owner 2026-10-30: `off/on ssao` works, every coc (interior and exterior) works, Down/Enter suggestions and paste work.
-  Status: confirmed.
 
 ### PM-1: Escape menu and options (`cargo dev view "Seyda Neen"`, player mode)
 - Esc opens the pause menu (Resume, Save, Load, Options, Quit; Save/Load greyed out until the save screens are wired);
@@ -229,24 +167,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Owner 2026-10-30: Esc pauses everything; the mixer works but its UI is bad: volume should drag with the mouse
   (sliders), mute should be one small icon per row. Wanted: a "Main menu" button in the pause menu. Status: confirmed with follow-up.
 
-### HD-1: Minimal HUD: bars, compass, crosshair, use prompt (`cargo dev view "Seyda Neen, Census and Excise Office"`, player mode)
-- Bottom left: three thin framed bars, red health, blue magicka, green fatigue (full: the `player` record's 35/50/200),
-  no labels, Morrowind-sized. Bottom right: heading (`N 000` ... `NW 315`) follows the mouse look; north matches the map.
-- A small dot at the screen centre, in first and third person (Tab): what it covers is what E uses.
-- Look at a door or NPC: `E Open <name>` / `E Talk <name>` under the dot; rebind Use (F10) and the glyph follows;
-  a creature shows its name only, no key.
-- Esc (pause), talk (dialogue), J (journal), inventory, the console: the HUD hides; it returns on close. F11 (free camera) hides it.
-- Known: bars are static (no damage or regeneration yet); the compass is a heading label, no local map.
-- Owner 2026-10-30: HUD fine. Status: confirmed.
 
-### HD-2: Bars follow damage and regen (stats S5: the bars are the player's stat sheet)
-- Build `cargo build -p bevyrrowind --features dev`; run `powershell -File bevyrrowind/tools/run_dev.ps1 scene level-arena`
-  (F11 if the free camera is on). Synthetic: the player 3 m from a training dummy.
-- Magicka bar: full at the player's real maximum (it was a static record copy); health and fatigue full.
-- Shift tap (roll) or F then LMB (attacks): the green fatigue bar drops at each roll or swing, then refills smoothly a
-  moment after; it never drops on its own while standing still, and refills no faster than before S5.
-- Hit the dummy: the log reads `training dummy: hit ... health h/100` falling per hit; at 0 it refills to 100.
-- Known: nothing hurts the player yet (the health bar's drop needs an attacker: C2 sparring dummy). Owner 2026-11-05: magicka at max, fatigue drops and refills, health bar still (as expected); dummy health "seems to go down", to re-confirm. Status: confirmed except the dummy log line.
 
 ### MM-1: Release start: main menu with no world behind it, New game (`bevyrrowind` with no arguments)
 - Build `cargo build -p bevyrrowind --features dev`, run `target/debug/bevyrrowind.exe` (no subcommand).
@@ -321,26 +242,6 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   Walking down a steep slope the steps get outrageously long. Owner wants a deep rethink of stops (distance-matched
   stop steps or a Sekiro-like system), not symptom fixes.
 
-### PL-8: Nothing animates in the pause menu (P-IK2, 2026-11-11)
-- Kind: synthetic. `cargo dev scene level-anim-stairs` (walkers on the stairs), then `cargo dev scene level-flat-slopes`,
-  12:00. F11 player, Tab third person; stand on a tread and next to a wall (hand brace), walk, then Esc (pause menu).
-- Before: the animation stage kept running at dt 0 while paused (a walker's foot dropped ~14 cm for a frame on stairs,
-  the player's wall brace re-probed every frame).
-- Look for: while the menu is open nothing in the world moves (walker feet, hips, hands, the player's hands on the
-  wall); close it: walking resumes from the held pose with no pop or snap on the first frame. Status: awaiting owner.
-- Owner 2026-11-11 (stairs scene): pause not tested. Other IK still wrong there: a leg still snaps into place, steps too
-  wide going up or down stairs, arms still behind the back. Logged, not fixed (see PL-7, locomotion rethink).
-
-### PL-9: A planted foot lets go on sharp turns (P-IK5, 2026-11-11)
-- Kind: synthetic. `cargo dev scene level-flat-slopes` (cameras `ramps`), F11 player, Tab third person, 12:00. K is the
-  A/B (foot placement on/off, walkers and player).
-- Before: a foot planted when the stick turned stayed locked in the world while the body spun (720 deg/s walk turn)
-  until it drifted 0.3 of the leg's reach: legs spread or crossed, the planted foot up to 34 cm off the clip.
-- Do sharp 90° and 180° turns at walk and at run, on the flat and on the 20° and 30° ramps. Look for: the planted foot
-  lets go after about 20° of turn and steps with the clip (no spread or crossed legs), with no pop or snap as it lets
-  go; straight walking and gentle curves keep their planted feet as before. K off: the plain clip, for comparison.
-- Status: confirmed (owner 2026-11-11, level-anim-stairs: "seems ok").
-
 ### WALK-0: A/B ladder on the player's walk, one op off at a time (3.4c A0, 2026-11-12)
 - Kind: synthetic. `cargo dev scene level-flat-slopes` (run `bevyrrowind bake` first: graph format 10), 10:00, camera `overview`
   then `ramps`; F11 player, Tab third person, orbit to the side. Backquote console, one at a time, `on <name>` to restore:
@@ -352,12 +253,3 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   slow you down; where should the head look (ahead along the travel, a few metres down the slope, or the camera)?
 - Status: awaiting owner.
 
-### WALK-1: speed gait set, walk / jog / sprint on the flat (3.4c A3, 2026-11-12)
-- Kind: synthetic. Run `bevyrrowind bake` first (new gait slots, graph format 11). `cargo dev scene level-flat-slopes`, 10:00,
-  camera `overview`; F11 player, Tab third person, orbit to the side. Free movement now plays generated loops (Kimodo
-  loco1: walk `walk.cycle.free` 05, jog `run.cycle.3` 04, sprint `sprint.cycle.1` 05, loop-cut at the bake).
-- Look for: walk at a light stick push and full (analog: cadence stays natural, steps shorten at a slow push), jog (run),
-  sprint: no foot skating on the flat, no pop of the feet when switching walk <-> run <-> sprint (the foot phase now carries
-  over), no hitch at the loop seam. Sprint is the "maybe" take (a retimed free sprint is the next A/B). Locked on: backpedal
-  and sidesteps still play the Morrowind sets. The WALK-0 `off ...` ladder still works (`off speed_match` = clips at rate 1).
-- Status: confirmed 2026-11-13 after the walk swap (owner: "I think it's alright"; the diagonal look came from the centre dot on the off-centre shoulder framing: dot now first person only). Was failed (owner 2026-11-12): "the character walks sideways (not in a straight line, more diagonal)"; sprint "looks okay but the animation itself is a bit goofy (legs wide apart)". Suspect: take heading offset vs travel, hidden in the browser (Drive turns the actor) but not in-game (Match); diagnosis 2026-11-12 (`mw_bake/tests/gait_heading.rs`): no heading offset (walk < 1 deg cooked and in-graph); walk.free.05 is wide (22.8 cm feet, toe-out 10/-12) and Match drops its 8.7 deg pelvis yaw swing. Owner: pick another clip. Re-check with walk.cycle.1.05 (path-guided, 1.62 m/s, pelvis-travel 0.5 deg).

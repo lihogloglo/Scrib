@@ -34,6 +34,7 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\farfield\` (`balmora_a*`,
 - Also (owner 2026-10-19, round 6, from the summit at night): round light spots sit inside the fence "wall": they are the far-distance light sprites of the fence's blue lights, drawn while the field itself has no far copy. Not vanilla-looking.
 - Status: known bug, seen by owner 2026-10-19 (round 2): the fence field disappears entirely at a distance and pops back in close. Cause known: blended-only activators have no far copy (weather/distant-shadows.md B5); Phase 1 or later.
 - Source: weather-spec / farfield / nifpop.
+- Owner 2026-11-15 (repeated): Ghostgate fence panels still pop in or vanish suddenly with distance. Owner suspects the emissive material has no LOD; the entry above says why: the segments are blended-only activators with no far copy (B5), so they appear at the ring with no fade.
 
 ## DLSS (superfargoth `sky-lighting.md`; `.sessions/dlss.md`)
 
@@ -105,28 +106,7 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Owner 2026-10-30 (`scene hi-balmora-night`, dev copy): torch smoke now draws over everything, but its blending looks
   wrong, like the Ghostfence (GF-1): it seems not to show over darker things. Hard to describe; looks like a blend-mode
   issue (additive vs alpha?). Status: partial.
-
-### RO-11: Black bands on the ground that move with the camera (owner report)
-- Kind: game location. Seen 2026-10-30 from the release start (Seyda Neen, New game, High defaults), walking outside.
-- Look for: a pattern of dark bands on the terrain that slides as the camera turns or moves.
-- Suspects (not tested): SH-14 contact-shadow bands (`--off contactshadows`), FG-1 fog history (`--off foghistory`), GTAO
-  under TAA/DLSS (console `ssao`). First step: those three A/Bs at the same spot.
-- Status: known bug: cause not diagnosed (owner pass 2026-10-30).
-- Owner 2026-10-30: the same shadow-band look also shows in the anim-lab test levels (flat synthetic boxes, no terrain),
-  so it isn't terrain-specific: a good place to A/B it.
-- Owner 2026-10-30, `scene wk-balmora` (release copy, `--resolution 2560x1440`): bands still there but weaker. Clue: the
-  release start (no subcommand) may run different settings (DLSS/preset) than `scene` runs; diff them first.
-- Owner 2026-10-30: the bands look like a regression from the very recent shadow work (2026-10-28: d89eaa0 world-unit sun
-  PCSS, 39f6508 shadow/LUT changes). First step: A/B or bisect those two commits.
-- Audit 2026-11-01 (`superfargoth/docs/research/shadows/2026-11-01-audit.md` §3): release start = `view` defaults, no settings
-  diff. Leads: GTAO at output resolution under DLSS (bevy#26234, not vendored), contact shadows marching full-size depth under
-  DLSS (`pbr_functions.wesl:308`), aerial LUT samples 10 → 6 (39f6508). A/B: `--dlss taa`, `--off contactshadows`, `ssao`.
-- Built 2026-11-01 (shadow-fixes; spec `shadows.md` "Shadow fixes as built"): contact-shadow march in main-pass pixel space
-  under DLSS, full receiver slope + half-texel margin on the sun's far 4-tap and PCSS paths, bevy#26234 GTAO at the
-  main-pass resolution. Owner copy `%TEMP%\bw-owner-2026-11-01`: `01-new-game.cmd` (fixed), then if bands remain
-  `11-…-no-contactshadows`, `12-…-no-softshadows`, `13-…-taa`, `14-…-no-ssao` (same start, one part off each).
-- Owner 2026-11-01 (`01-new-game`, `11-…-no-contactshadows`): no ground bands in either. Status: **confirmed** (which of the
-  three fixes did it is not isolated; all three stay).
+- Owner 2026-11-15 (`view "Sadrith Mora" --hour 21.25 --weather foggy`, owner shots `Documents/ShareX/Screenshots/2026-11/bevyrrowind_hUnUMC5zsg.jpg`, `bevyrrowind_oQU4iWEVPc.png`): looking through torch smoke, distant mushrooms/rocks that the fog hides elsewhere show unfogged, at full contrast, inside the plume. Hypothesis (not tested): the fog composite (render-order.md step 8, fogs by depth) sees the smoke's near depth at those pixels (a particle depth write or prepass), so the background is fogged as if it were at the smoke's distance; industry: blended particles never write depth and fog themselves (render-order rule 1). Status: known bug.
 
 ### RO-12: Bright outline around characters (owner report)
 - Kind: game location. Seen 2026-10-30 from the release start (Seyda Neen), on NPCs and the player.
@@ -146,23 +126,6 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Status: known bug: not diagnosed (owner pass 2026-10-30).
 - Owner 2026-10-30 (Balmora, release copy): in the game F7 shows the wireframe on the terrain only, none on characters.
 
-### RO-14: Bloom on the game camera (2026-11-01)
-- Kind: game location, dev or release build, High preset. Runs: (1) `view "Balmora" --hour 18.5`, face the sun
-  (west); (2) `view "Balmora" --hour 23`, look at the street lamps and braziers; (3) `scene census`, the candles.
-- Look for: a soft glow around the sun disk, lamp and candle flames and fire only; lit walls and sunlit ground keep
-  crisp edges, no milky haze over the whole image; no pulsing when the camera stops (DLSS/TAA run before bloom).
-- A/B: `--off bloom` (or console `render.bloom 0`; retune live, e.g. `render.bloom 0.2`; default 0.1).
-- Status: confirmed (owner 2026-11-02, sun at dusk; night lamps and candles not checked). Source: visual-niceties.
-
-### RO-15: Light through leaves (foliage diffuse transmission, 2026-11-01)
-- Kind: game location. Runs: `view "Seyda Neen" --hour 7` looking east and `view "Balmora" --hour 18.5` looking
-  west, from under or behind trees so the sun sits behind the canopy; then turn around (sun at your back).
-- Look for: backlit leaves glow warm/green-gold, leaves shadowed by the trunk or other trees stay darker; front-lit
-  leaves look as before or a touch darker (half their direct light goes through); no bright rims or speckle on
-  cutout edges; far impostor trees are unchanged (not covered).
-- A/B: `--off foliagetransmission` (startup only; value `mw_assets::LEAF_DIFFUSE_TRANSMISSION` 0.5 (owner 2026-11-02, was 0.3), thickness 0.05 m).
-- Status: confirmed (owner 2026-11-02 at 0.5; 1.0 tried and liked). Source: visual-niceties.
-
 ### RO-16: Terrain "veil", as if seen through resin (owner report 2026-11-05; was ROADMAP 1.12 "RO-13")
 - Kind: game location, dev build. Run: `powershell -File tools/run_dev.ps1 scene ro16-terrain-veil` (Balmora street, 12:00, clear), then again with `--hour 23`. Seen: strongest at grazing angles, ground takes the sky/env colour, night = smooth blue-grey "clay" sheet, silhouettes lighter, rocks/trees less hit.
 - Console (backquote), one at a time, each followed by the same line again to restore: `flip terrain_env_specular` (env-map specular only), `flip terrain_specular` (every specular lobe), `flip ambient` (the sky's flat 4-nit blue night ambient, all objects), `flip terrain_indirect` (env map + ambient + GI on the terrain), `render.bloom 0` (back: `render.bloom 0.1`), `flip fog`, `flip surface`, `flip terrain_tint` (raw layers). F1 shows their state.
@@ -178,61 +141,6 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   Secunda (white moon) not visible: hidden behind Masser or not drawn, not diagnosed. Status: night brightness + Secunda open.
 - Audit 2026-11-13 (tex-audit, code only, not A/B tested): new suspect for the day+night veil: the ground gets no normal or ARM map at all (`mw_world/src/terrain.rs:239-240` sets `normal: None, arm: None`; T5 not built), so every layer is a flat normal at roughness 0.9 with one even specular sheen, and layers are cut to 256 px (`mw_bake/src/world.rs:39` `LAYER_ARRAY_SIZE`, about 35 px/m; packs ship 2K). Lever: T5 + T6 (terrain normals, BC7/BC5 arrays at a per-preset size).
 
-### TX-delight: De-lit albedo textures (bake layer, 2026-11-05)
-- Kind: game location. Needs a current `bevyrrowind bake` (start log: `delight: layer mounted, N textures`).
-  Runs: `view "Seyda Neen, Census and Excise Office"` and `view "Balmora" --hour 14` facing a lit house wall;
-  A/B by restarting each with `--off delight` (log `delight: off`).
-- Look for: corners and edges no longer double-dark under real light; walls not flat or cartoony; no colour shift;
-  no blocky BC7 artifacts on gradients; cutout foliage (hedges, tree cards) not thinner at distance (coverage mips).
-- Strength 0.5 (owner 2026-11-05) is baked in: a new strength needs a re-bake.
-- Status: confirmed 2026-11-13 (owner: "textures seem great"). Source: rtx-borrow D-2b.
-
-### TX-1: Normal maps from packs (textures T4, 2026-11-11)
-- Kind: game location. Needs a normal-map pack installed as a mod (MVR PBR v2 Beta or Tamrielic PBR West Gash; census in
-  `textures-adapter.md` §7) and a fresh `bevyrrowind bake` (line `texture.cook: ... N normal companions`, N > 0).
-- Runs: `view "Balmora" --hour 7` and `--hour 18` (low sun raking across house walls and paving), then
-  `view "Seyda Neen, Census and Excise Office"` (lamp light on walls). A/B: console `flip normalmaps` (or start with `--off normalmaps`; lab key N).
-- Look for: relief that moves with the light on pack-textured walls/floors; bumps not inverted (lit side faces the sun);
-  no shimmer or sparkle at distance; no hard seams where a texture is mirrored (symmetric trims, statues).
-- Not covered: NPC/creature bodies (assembly carries no tangents yet), terrain (T5/T6).
-- Status: awaiting owner. 2026-11-13: "textures seem great", but that run had no pack mounted (`texture.cook: ... 511 cooked`); the packs are now mods `mvr-pbr` and `tamrielic-pbr-west-gash` (`<user data>/mods`, profile `wareya-pbr`): re-run with TX-4. Source: textures T4.
-- 2026-11-13 (tx-tangent): cooked tangents had the wrong handedness (green inverted on every cooked static, mirrored
-  rigid parts too); fixed and `mesh.cook`/`mesh.rest`/`mesh.rig` keys bumped, so the owner must re-check "bumps not
-  inverted" after a fresh `bevyrrowind bake` (every cooked mesh re-cooks once). Earlier TX-1 verdicts predate the fix.
-- Owner 2026-11-13 (view Balmora 12:00, full re-bake, packs mounted): normal maps on "obviously better" (confirmed on buildings/paving); landscape ROCK statics look wrong (matches `materials.live: ... 2602 normal map without tangents`; tx-tanfix queued); `flip normalmaps` does not reach terrain (terrain material not in map_ab; queued).
-
-### TX-4: PBR `_spec` ORM on statics (textures TS-2, 2026-11-13)
-- Kind: game location. Needs a fresh `bevyrrowind bake` with the packs mounted (log `texture profile: mvr-pbr -> wareya-pbr`,
-  no `texture profile warning`). Runs: `view "Balmora" --hour 12` (stone, wood, metal trim), then an armourer's interior
-  (e.g. `view "Balmora, Meldor: Armorer"`) for displayed armour and weapons. A/B: console `flip orm` (or `--off orm`; lab key M).
-- Look for: metal reads as metal (dark diffuse, coloured reflections); wood and stone stay matte, not plastic; crevices
-  darker under ambient (AO); no mirror-gloss everywhere (= a pack on the wrong profile); displayed armour the same up close
-  and a few metres away (matte close, metallic far = MVR metal-mip defect, repair quirk still off).
-- Not covered: worn armour/bodies on NPCs (actors bind no ORM yet), terrain.
-- Status: awaiting owner. Source: TS-2.
-
-### TX-3a: Load-time texture size cap (textures S1, 2026-11-13)
-- Kind: game location, A/B by restart. Needs the 2K packs mounted (`mvr-pbr`, `tamrielic-pbr-west-gash`) and a current bake.
-  Runs: `view "Balmora" --hour 12` (High: cap 2048 = packs at full res), then the same with `--texture-cap 512` (Low's cap,
-  nothing else changed), optionally `--quality low`. Stand close (1-2 m) to a pack-textured wall and the paving.
-- Look for: High looks as before (full res); 512 visibly softer up close, same at distance; no texture missing, black, pink
-  or blocky-garbled, normal maps still bumping the right way, no sampler/tiling change.
-- Log: `texture.cap: 2048 px, N ktx2 loaded, M capped, ...` (High: M ≈ only >2K files; 512: M large, MiB skipped > 0); one
-  expected startup `warn!` `Duplicate AssetLoader preregistered ... ["ktx2"]`, no `ktx2 cap:` load errors.
-- Status: awaiting owner. Source: textures S1.
-
-### TX-2: Terrain layer normals + ARM from packs (textures T5, 2026-11-13)
-- Kind: game location. Needs a fresh `bevyrrowind bake` with the packs mounted (`mvr-pbr`, `tamrielic-pbr-west-gash`;
-  bake line `terrain layers: N, n with a normal map, a with ARM`, n > 0; `terrain.layers` re-runs, step v3).
-- Runs: `scene tx2-terrain-normals` (Balmora street, RO-16 camera, 07:00 low sun), `scene tx2-west-gash` (hillside west
-  of Balmora, sun to the right), each also with `--hour 18`. No `--off` A/B for terrain normals yet.
-- Look for: ground relief catching the low sun on the side facing it; bumps not inverted (the lit side faces the sun);
-  no shimmer or sparkle at 10-50 m (arrays are still 256², T6 raises them); rock darker in cracks, grass matte, rock
-  not glossy; and whether RO-16's even resin-like sheen breaks up.
-- T6 (2026-11-13): arrays now BC7/BC5 up to 2048² (High/Medium load 1024² under the budget; log `terrain layers: N x S², X MiB`):
-  look for sharper ground at 2-20 m, no blockiness or colour banding (BC7), no shimmer at distance, normals still right.
-- Status: CONFIRMED owner 2026-11-13 (tx2-terrain-normals, after T5+T6 re-bake): "works well"; asked for parallax on the ground too (tx-tpom, queued). Source: textures T5 (`.sessions/tx-t5.md`), T6 (`.sessions/tx-t6.md`).
-
 ### TX-lab: Texture lab, normal / ORM maps one asset at a time (tx-lab, 2026-11-13)
 - Kind: synthetic scene + global A/B. Needs a current bake with the packs mounted (`texture.cook: layer mounted, ... K normal
   companions, L ORM companions`, K, L > 0). Run: `scene level-texture-lab` (07:30 clear; cameras `wide`, `models`, `swatch-1..6`,
@@ -244,6 +152,8 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   format (BC5 / BC1-BC7), mips, "bound", tangents yes. Models the same while turning.
 - Log (no picture): `texture-lab: 6 swatches, 4 models; normals K/6, orm L/6`, then `texture-lab swatch N: ...` lines.
 - Status: owner 2026-11-13 (full re-bake, default picks): normal maps work but TOO FAINT ("had to turn N on to see"; wants stronger); log: 0 sRGB normals, 0 without tangents, swatches 1+3 no companions, models 3-4 (`terrain_rock_wg_01/05.nif`) do not exist in the install (lab default bug). Source: tx-lab (`.sessions/tx-lab.md`).
+- Owner 2026-11-15 (after tx-nstrength + tx-labpicks, log normals 6/6, orm 6/6, depth 6/6): N "definitely works well", M works. Follow-up: the X orbit lamp only shows at night (the 09:30 sun swamps it) and is too bright at night; lab tuning only. Status: confirmed with follow-up.
+- Owner 2026-11-15, new bug, not diagnosed: as the X lamp orbits, something pops off abruptly, possibly the lamp shadow; owner unsure it happens when the lamp passes behind an object (the lab lamp has no visible marker, so its position cannot be seen: a small gizmo would help). Candidates: lamp shadow budget / cache (SH-20/SH-21 family), the double-sided normal flip guard (tx-nstrength), light culling. Logged on SH-21 too.
 
 ### TX-5: Parallax occlusion on statics from `_nh` height (textures T4d, 2026-11-13)
 - Kind: synthetic scene + game location, A/B. Needs a re-bake with the packs mounted: `texture.cook: ... N normal
@@ -258,6 +168,9 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   scale 0.04`; `materials.live:` depth count > 0.
 - Status: owner 2026-11-13 (lab default picks, L toggled): ARTIFACTS: stepped layers (Bevy layer count = mix(max 16, 1, |V.z|): ~8 slices at 45°, depth scale 0.04); fix = more layers per preset (industry 32-64 at grazing) + check scale, then re-check. Source: tx-pom (`.sessions/tx-pom.md`).
 - Owner 2026-11-13: texture SWIMMING on some meshes when moving around them (e.g. big mushrooms): not yet diagnosed (parallax on curved meshes? missing tangents?); A/B `flip parallax` / `flip normalmaps` on one. Owner also wants parallax as a player toggle.
+- Owner 2026-11-15 (CK-1 run, `balmora-sunset-shadows`, after the tx-pomfix re-bake): texture swimming still on some rocks, not everywhere; owner suspects POM. A/B `--off parallax` in the TX-5 re-check.
+- Owner 2026-11-15, lab half (default picks, depth 6/6, L toggled): parallax works (after tx-pomfix). Balmora half next.
+- Owner 2026-11-15, Balmora 08:00: depth on walls and paving works. Swimming on some landscape rocks is POM (gone with `flip parallax`), only at grazing angles; "okay for now, fix later" (likely curved rock meshes: POM assumes a flat surface; silhouette fade / slope clamp of tx-pomfix not enough there). Status: confirmed with follow-up.
 
 ### SS-matclass: Static material classes look unchanged (static-scene S2, 2026-11-08)
 - Kind: game location, A/B. Runs: `view "Balmora" --hour 14` and `view "Seyda Neen" --hour 14`, each default and
@@ -332,23 +245,6 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 ### RO-19: Very short shadow flickers here and there (owner report 2026-11-11)
 - Balmora 14:00, same in sc-scene and sc-noscene: brief, subtle flickers, the owner thinks shadows (maybe fog).
 - Status: known bug, not diagnosed (see the shadows checks SH-* for related cases).
-
-### RO-20: Far terrain shadows keep following after the far-map upload fix (perf-push P2, 2026-11-12)
-- Why: the far shadow map upload no longer touches every terrain, proxy and impostor material to "re-bind" (Bevy writes the
-  same texture in place, so bind groups stay valid); risk is a stale far map if that reasoning is wrong.
-- Kind: game location. Run: `scene balmora-sunset-shadows` (Balmora 18:30), then fly (W, Shift) 2-3 km in one direction.
-- Look for: hills past ~400 m keep shadows that match the low sun as you go; after ~1 km of travel the far shadows around
-  you refresh (no shadows left hanging where you were, no unshadowed hills ahead). A/B: `--off farshadows` drops them.
-- Status: **confirmed 2026-11-12** (owner, clear weather): hills keep shadows, they update as you approach. New, logged: subtle shadow swimming on hills while approaching (cause unknown: far-map recentre texel shift or cascade handoff are the suspects; not chased).
-
-### RO-21: Haze and ash change smoothly with no medium re-bake (perf-push P1, 2026-11-12)
-- Why: weather no longer re-bakes the sky medium on the CPU (a ~4.3 ms render-thread hitch about every 1.3 s); haze,
-  dust and dust tint are now live scales in the atmosphere uniform (vendored `bevy_pbr` patch P1). Same look by design.
-- Kind: game location. Run: `scene fg-redmtn-clear`, press P (clock on) and T (time-lapse), then C until foggy, then
-  ash storm. Then `scene fg-redmtn-foggy` and `scene fg-redmtn-ashstorm` as still references.
-- Look for: haze thickens and the grey-brown ash tint arrives smoothly, no step, flash or pop in sky or far hills; the
-  still scenes look as before (foggy milky white, ash storm grey-brown with a dimmer, warmer sun).
-- Status: **confirmed 2026-11-12** (owner): all weather transitions smooth. Owner wish: an even faster time-lapse preset.
 
 ### RO-22: Near/far handoff band with GPU-culled statics (perf-push P3, 2026-11-12)
 - Why: near statics are no longer culled by distance on the CPU (`NoCpuCulling`); their visibility ranges (LOD levels,

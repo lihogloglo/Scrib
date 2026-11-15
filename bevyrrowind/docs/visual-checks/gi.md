@@ -19,15 +19,6 @@
   compare `--off gi`. Known limits: hard switch to today's ambient at the volume's edge, no specular occlusion yet.
 - Status: partial (owner 2026-11-02): no blotches or flicker seen, but the GI is too weak to judge leaks; revisit once it is visible.
 
-### GI-3: GI replaces the flat ambient inside its volume, Census office
-- Kind: game location, High preset, raster. Run (dev exe): `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen, Census and Excise Office"`;
-  A/B with `flip gi` in the console (on: probe bounce, no cell ambient inside the volume; off: today's cell ambient).
-  Log: `gi: volume traced, sampled by the PBR shader (DDGI probes)`; no `naga`/`wgsl`/validation error.
-- Look for: with GI on, rooms read darker in unlit corners and warmer near lamps than before (GI-1/2 runs); no hard
-  box edge visible inside the office; nothing black or flickering. If corners go too dark, say so: the game's
-  `INTERIOR_AMBIENT_SCALE` (0) can take a small floor. Known limit: dark probe patches (no relocation yet).
-- Tune live: `render.gi_intensity 2` (try 1-4), `render.gi_ambient 0.1`; report the value you like.
-- Status: confirmed (owner 2026-11-02: looks good; defaults kept, `render.gi_intensity` 1, `render.gi_ambient` 0).
 
 ### GI-lampbody: lamp bodies don't light twice at GI hits, ambient floor 0.1, Census office
 - Kind: game location, High preset, raster. Run (dev exe): `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen, Census and Excise Office"`;

@@ -9,10 +9,6 @@ level file). NPCs only run their scripts near the camera (processing range), so 
 awaiting owner. Known issue ids this feeds: SN-2/3 (guar, beasts), CH-1/3/4 (dressed NPCs), SB-1/2/3/5 (spring bones, tails), HI-3, AP-2/3 (not
 here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 
-### AL-1: Animation lab overview
-- `.\bevyrrowind scene level-anim-overview`. Look for: six areas apart (ledges + props near the origin, loop south, slopes/stairs west-north,
-  drops north-east, idles south-west), nothing sunk or missing, every NPC dressed. Status: awaiting owner.
-- Owner 2026-10-30: works perfectly. Status: confirmed.
 
 ### AL-2: Walk loop, turns (SB-1, CH-1)
 - `scene level-anim-loop` (cameras `loop`, `loop-close`). Fargoth walks a 12 m square, Elone runs a 24 m square.
@@ -32,11 +28,6 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   tread (was 16 cm into it, now about 5; heel may hang over the nosing). Known bad: the steep 0.25 m flight at walk speed (feet sink or
   float up to ~0.6 m; needs shorter steps, not IK). Status: awaiting owner.
 
-### AL-4: Traversal heights (future vault / mantle / climb)
-- `scene level-anim-ledges` (cameras `ledges`, `ledges-close`); F11 for the player, walk into each box and the 3 m wall.
-- Look for: the capsule stops at each ledge and the body does not clip into the box (no vault, mantle or climb exists yet: this is the
-  baseline for them); heights readable against the 1 m grid. Status: awaiting owner.
-- 2026-10-30: retired (written before mantles existed; AL-10 and AL-11 cover traversal now). Status: retired.
 
 ### AL-8: Waist mantle, player (action.md B2a; body: A2 slice 2)
 - Needs a bake after 2026-10-26 with the UAL2 library (log: "player traversal: 1 of 1 slot clips baked").
@@ -52,89 +43,15 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   distance, no pop in. Walls still pull it in. Status: camera confirmed (owner 2026-10-27: "solved"); hands on the lip
   and the body clipping: B2b (next).
 
-### AL-10: High mantle, player (action.md B2 high mantle)
-- Needs a bake after 2026-10-27 (`traverse.mantle.high` on UAL2 `ClimbUp_2m`). `scene level-anim-ledges`, F11; walk W into a box, W+Space.
-- Look for: the orange h1.60 and h2.00 boxes play the high climb (hands above the head, body over the lip onto the top); the yellow
-  h1.20 box keeps the waist mantle; the red h2.50 box and the 3.5 m wall refuse into a plain jump; Ctrl + Space never mantles.
-- Owner 2026-10-27 (copy d): works, hands go above the head. Issues: the hands aim at the box centre, not the lip (B2b-2 hand IK, after
-  the B2b-2a contacts); hard to trigger: the body slides along the face and doesn't face it (B2-T approach tolerance + yaw align, in
-  progress).
-- Owner 2026-10-30, after B2-T (99f6466) and B2b-2b/2c (130bf38, e5224f2): the mantle triggers and works; the hands reach the lip
-  but the hand IK needs tuning. Status: confirmed (hand IK tuning logged on ROADMAP 3.1).
 
-### AL-11: Wall brace, player (action.md B2c)
-- No bake needed (runtime feed only). `scene level-anim-ledges`, F11; the grey 3 m wall behind the boxes (14 m long, z -7).
-- Run (W) straight into the wall: both hands rise before the impact and plant on the face, arms slightly bent, palms on
-  the wall (not floating more than ~2 cm, no fingers or forearm through it); release W: the hands let go over ~0.5 s.
-- Walk along the wall about 0.5 m off it (turn parallel, W): only the wall-side hand trails lightly on the face, behind
-  the shoulder; walking away: it lets go. Standing still: no brace. Near the wall's end the hand drops past the edge.
-- F (sword drawn): only the left (off) hand braces. Mantles: the lip grip still wins (AL-10 unchanged).
-- Known: the hand keeps its animated rotation (no palm frame yet), so fingers may angle oddly. Status: awaiting owner.
-- Owner 2026-10-30 (release copy, 13:08 build): fails. Running into the wall, the character starts walking sideways along it,
-  doesn't stop, and the hands never rise. F never draws a sword (never did), so the drawn case is untested.
-- Fix 2026-10-30 (wall-brace-fix): the brace never ran (its gate waited for "no action slot", but plain locomotion always
-  has one); now gated on no Clip/Warp move. Live dev build: both weights reach 1 at the wall, wrists on the face. The sideways
-  walk is older and not the brace: pushing W at an angle into a wall, the mover keeps the along-wall part (collide-and-slide)
-  while the body faces the stick, so the graph plays a side step (bug logged here; the fix is a mover/facing slice). Run in straight (camera
-  square to the wall) to judge the hands. Needs a new exe copy, no bake. Status: awaiting owner.
-- Owner 2026-10-30 (dev3 copy, after the gate fix): the brace now shows, but (1) running straight at the wall, the body
-  starts moving sideways as soon as it hits: wanted a grazing-angle rule: below a threshold angle to the wall's
-  normal the mover stops instead of sliding (mover `sf_controller` `mover.rs`; B2-T noted the same); (2) the side-wall
-  trail pose is wrong: people feeling a wall reach the hand ahead of them, palm on the wall, thumb pointing down
-  (needs the palm frame from the wall normal, the known rotation gap). Status: partial.
-- Owner 2026-10-30: the wall brace needs a big fix; find where the sideways slide comes from first (diagnosis slice),
-  then fix the stop and the trail pose.
-- Fix 2026-11-05 (brace-stop), point (1) only: collide-and-slide kept the along-wall part of any push and the facing turned
-  along it. Now a wall met within 30° of head-on stops the mover (`MoverParams::wall_stop_deg`, Godot's
-  `wall_min_slide_angle`); past 30° it still slides. Check: W straight or up to ~25° off at the wall: the body stops and
-  stays facing the push, no side step, hands brace; ~45° and shallower: it slides along as before. Trail pose (2) not
-  touched yet. Needs a new exe copy, no bake. Status: awaiting owner.
-- Fix 2026-11-05 (brace-palm), point (2): the hand IK now takes a palm rotation from the wall normal (rig palm axes from the
-  Bip01 fingers). Check: walk W along the wall ~0.5 m off it: the wall-side hand reaches ahead of the shoulder, palm flat on
-  the face, fingers forward and a little up, thumb down; run straight in: both palms flat on the face, fingers up, elbows a
-  little bent. Look for wrist skin twisting (no forearm twist bones) and fingers through the face. Needs a new exe copy and
-  the bake (done 2026-11-05). Status: awaiting owner.
-- Owner 2026-11-05: wall stop good, "works and it's satisfying". Nitpick: head-on hands closer together, just in front of the
-  bust (not out to the sides), and at chest height (a bit higher than now). Status: confirmed with follow-up (hand spacing/height).
-- Fix 2026-11-05 (brace-chest): head-on wrists in front of the chest, 0.55 of the shoulders' spacing apart (Bip01 ~0.17 m;
-  were out past the shoulders, 0.5-0.9 m) at 0.92 of shoulder height (~12 cm under it; were 10-30 cm lower, dropping as the
-  body got closer), the same at any distance; side-wall trail and wall stop unchanged. Check: `scene level-anim-ledges`, F11,
-  run W straight into the grey 3 m wall: hands close together just in front of the chest, palms flat, fingers up, elbows bent
-  (more when close), hands not touching each other. Needs a new exe copy, no bake. Status: awaiting owner.
 
-### AL-12: Vault over thin obstacles, player (action.md B2 vault)
-- Re-baked 2026-11-05 (slot `traverse.vault` = UAL2 `SafetyVault`). `scene level-anim-ledges`, camera `vaults` (or F11);
-  boxes 0.4 m deep east of the ledges: yellow 1.0 m, green 0.85 m, white 0.6 m. Then `cargo dev view "Seyda Neen"`: crates,
-  barrels, the dock railing.
-- Run (W) + Space ~1 m from the 1.0 / 0.85 m boxes: a one-hand side vault, the right palm on the near edge of the top (not
-  floating, not through it), legs clear of the box, lands on the far side and keeps running. The 0.6 m box (under the band,
-  0.81-1.26 m) is a plain jump; deep boxes (the ledges) still mantle; a box with a wall right behind mantles instead.
-- Watch for: the takeoff foot dipping into the floor and a camera bob on the 0.85 m box (the body is lowered up to ~0.45 m
-  to the obstacle), a stretched or floating landing when the run-out is short. Status: awaiting owner.
-- 2026-11-05 trigger fix: the probe saw both boxes; the warp refused (`MaxCorrection`) at an angle (hand target sideways of
-  the body) and within ~0.3 m of the face. Now the lip is re-probed square-on and a close takeoff brakes into the plant.
-  Run at the boxes at an angle and right up to them, then Space: vaults (log `traversal press: ... refused []`); look for
-  a brief stall before the hand plants on close presses. Status: awaiting owner.
 
-### AL-9: Gait bands, pelvis and feet (pose audit S3, feed audit F4)
-- Humanoid op data 2026-10-26: `StrideWarp` max 1.6 -> 1.2, `SpeedMatch` rate_share 0.3 -> 0.5, foot IK gated on `on_ground`.
-- `scene level-anim-loop`: NPCs walk on flat ground. Then `scene level-anim-overview`, F11: player walk, run and sprint.
-- Look for: pelvis steady, no bob at step frequency; no deep crouch when running or sprinting (was ~95 mm at 4.5-7 m/s, now
-  under 1 mm headless); feet don't slide; feet let go of the ground in a jump. Sprint plays the run cycle at 2.2x
-  (4.75 steps/s): if it looks frantic, a sprint cycle is the fix, not a longer stride. Run strafes still skate (clip issue).
-  Numbers: `cargo test -p mw_graphs --test slope_walk gait_bands -- --ignored --nocapture`. Status: confirmed (owner 2026-10-27: "so much better"; movement feel follow-up under PL-2).
 
 ### AL-5: Props push (PH-1, physics-adapter.md)
 - `scene level-anim-props` (cameras `props`, `props-close`); F11 (player under the camera), push crates, boxes and the table; `V` throws.
 - Look for: the NPC brushing the crate row without sliding through it, light boxes shoved with a lean or step (not a stuck walk cycle), the
   300 kg block unmoved, crates not jittering. Status: awaiting owner.
 
-### AL-6: Falls and ragdoll (PH-2, PH-9)
-- `scene level-anim-drop` (cameras `drop`, `drop-side`, `drop-close`); `G` shows collider wireframes, console `kill` kills the NPC under the crosshair, `V` throws.
-- Look for: the walker stepping off the 3 m edge (a fall animation or a snap? it must not freeze), the dummy knocked down every 10 s
-  (`@impact` 25 N*s: ragdoll, then get-up), with `G` the capsules following the mesh, no pop into the ragdoll, no spin on the 15 deg slope.
-  No 6 m fall exists for actors (no way to place one on the platform): throw or fly. Status: awaiting owner.
-- 2026-10-30: retired with PH-2 (owner: the clip+limp ragdoll is deprecated, delirium from now on). Status: retired.
 
 ### AL-7: Idles, reactions, other rigs (SN-2/3, CH-3, SB-3, PH-10)
 - `scene level-anim-idles` (cameras `idles`, `idles-close`). Left to right: Fargoth, a Khajiit (Ajira), an Argonian (Huleeya) fidgeting with
@@ -151,11 +68,6 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   step, ~2 cm walking, ~7 cm running), no shaking or stutter. Was: target from the last frame's feet, beating against
   the 60 Hz step. Status: awaiting owner.
 
-### AN-1: Planted feet stay put on distant walkers (slice R3-1)
-- `scene level-anim-overview` (camera `overview`, all walkers at A2 LOD there), then `level-anim-props`/`loop`.
-- Look for: on the props walker (beside the orange crates) and the loop walker, the standing foot doesn't drift with
-  the body during its stance, far and near. Was: A2 updates got half the body motion. Status: awaiting owner.
-- Owner 2026-10-30 (overview): works perfectly. Status: confirmed.
 
 ### AN-3: Footsteps on the feet (slice R3-1)
 - `scene level-anim-loop` (camera `loop-close`), sound on; then `level-anim-props` for the walker's stops.
@@ -169,23 +81,8 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   (about 2 m, 1.5 s); no long glide, no slow-motion walk at the end, idle blends in as it settles. Was: braking
   from 2 m out plus a 1.5 s creep at 0.25 m/s (3 s). Status: awaiting owner.
 
-### AN-4 Knockdowns always come back
-Scene `level-anim-overview` (or `level-anim-drop`), G on. Throw `V` balls at walkers, the knockdown dummy, the guar
-and the mudcrab, hard and soft. Look for: every knocked-down character gets up within ~6 s, then has its capsule
-(G) and walks/idles again; a creature without a ragdoll logs "knockdown cancelled" and keeps its capsule. Never a
-character frozen lying or standing without a capsule.
-- 2026-10-30: retired with PH-2 (delirium replaces knockdowns). Status: retired.
 
-### AN-5 Get-up starts from the lying pose
-Scene `level-anim-overview`, the `@impact` knockdown dummy (idles row, every 12 s). Look for: at the moment the
-ragdoll hands back, no snap: the limbs flow from where they lie into the stand-up over ~0.3 s, the pelvis doesn't
-jump, and the body doesn't rise or sink to meet the ground.
-- 2026-10-30: retired with PH-2 (delirium replaces knockdowns). Status: retired.
 
-### AN-6 Get-up ends on the capsule
-Same scene, G on. Look for: when the get-up starts the capsule appears under the lying pelvis (not ~1 m away), the
-character stands up onto it, and nothing slides when the clip ends and idle takes over.
-- 2026-10-30: retired with PH-2 (delirium replaces knockdowns). Status: retired.
 
 ### AN-8 Creature capsules fit the creature (awaiting owner)
 Scene `level-anim-idles` (or `-overview`, camera `idles-close`), F7 + G on. Look for: the mudcrab and the guar (last two
@@ -206,13 +103,6 @@ Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the
 idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
 while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.
 
-### AN-21 Slope trunk lean, retuned (reopened 2026-11-05, awaiting owner; first pass archived in visual-checks-closed.md)
-Owner 2026-11-05: uphill not enough forward lean, downhill "maybe sliiiightly too much". Retuned (`mw_graphs` build.rs `Lean`):
-up 0.4 -> 0.8, down 0.12 -> 0.075, cap 12 -> 26°, spread over Spine1/Spine2/neck (0.45/0.4/0.15; was chest 0.7 + neck 0.3).
-Measured walk lean vs flat at 10/20/30°: up +2.8/+5.7/+8.4 -> +5.2/+10.7/+16.5°, down -0.8/-1.7/-2.6 -> -0.5/-1.0/-1.5°
-(run about 3/4 of that). Re-baked 2026-11-05. `scene level-anim-stairs`, camera `slopes` (runner on 10°, walkers on 20/30°).
-Look for: going up the 20/30° ramps the back clearly bends forward (bent spine, head following, not a craned neck); going
-down a barely-there lean back; eases in over ~0.3 s, no jolt; flat walking unchanged. Numbers: `slope_walk slope_lean_table`.
 
 ### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slices 2a-2b; confirmed 2026-10-27)
 `cargo build -p bevyrrowind --features dev`, `powershell -File tools/run_dev.ps1 scene level-anim-idles` (camera `idles`).
@@ -231,14 +121,6 @@ check on COM displacement + `roll_stall` timeout (head-right roll 3.0 -> 0.6 s);
 characters (player, dummy). Owner confirmed live: no floor slide, capsule back under the body after the get-up (hidden
 while stumbling by design: Dormant). Status: confirmed. Open (later): a body landing crouched sinks/slides ~1.5 s first.
 
-### LOCO-2 Generated locomotion batch 1 (ROADMAP 3.4c B3b, awaiting owner)
-- Run (from `bevyrrowind/`): `cargo dev clip-preview --browse "../animation packs/generated/loco1"` (Up/Down = clip group, Left/Right
-  = sample; 228 Kimodo clips, 38 groups; `*.free` = same prompt without the speed path). Recipe `tools/motiongen/recipes/loco-batch1.toml`.
-- Look for: a natural gait at the right speed (walk 1.6, jog 4.5, sprint 7.0 m/s); feet not skating or hovering (measured: path-forced
-  run/sprint cycles skate 36-414 cm/s and lose ground contact for 0.4-2.1 s, walk 9-62; the `.free` takes are slow, 2.6 / 3.1 m/s, but
-  plant); starts and stops plant cleanly (no slide into the stand); pivots and turns turn the way named (some pivot/turn samples turn
-  right or not at all: mirror or reject); one consistent style across cycles and transitions. Rate in the browser: Y keep, N reject,
-  M maybe (each advances), Bksp clear, U next unrated; saved to `loco1/verdicts.toml` (overlay shows group tallies). Numbers: `16-gait-card` "As built (B3b)". Status: awaiting owner.
 
 ### AL-TRUNK Matched retarget pose for the trunk (retarget-trunk 2026-11-12, browser confirmed by owner; in-game part open)
 - Needs `bevyrrowind bake` (anim.retarget v5). Run (from `bevyrrowind/`): `cargo dev clip-preview --browse "../animation packs/generated/loco1"`
@@ -249,11 +131,3 @@ while stumbling by design: Dormant). Status: confirmed. Open (later): a body lan
 - Also (retarget-shoulders, anim.retarget v6): arms clear the chest in Kimodo walks (shoulders not pulled in, elbows out
   like MW's own WalkForward); UAL arms ~4 deg wider, shoulders not shrugged in runs. Measured: `mw_bake/tests/generated_arms.rs`.
 
-### LOOP-1 Loop-cut cycles in the clip browser (loco-coord 2026-11-12, awaiting owner)
-- Run: `bash bevyrrowind/tools/owner_launch.sh clip-preview --browse "animation packs/generated/loco1"`; Up/Down to a
-  `loco.walk.cycle.*` / `loco.run.cycle.*` / `loco.sprint.cycle.*` group. Cycle takes now cook through the loop cutter and loop in
-  the slot (no re-blend); the overlay's loop line gives the window, strides and seam errors (pose, foot, speed; hard-cut values in
-  brackets). L toggles cut loop vs raw take (A/B). A cut loop walks on: camera and floor follow (the floor steps by whole 2 m checker periods, so it reads as endless).
-- Look for: walks loop with no hitch, foot pop or speed surge at the seam (measured residue 0.2-0.6 cm/frame); runs mostly clean
-  (0.6-3.2); sprints expected to show the seam (4.9-6.3, poor sources); the slow heading drift per loop is the take's own (±4 deg).
-  Say which cut loops are good enough to give slots. Status: confirmed 2026-11-12 (owner: "this is working"; no per-clip pick).

@@ -1511,3 +1511,894 @@ female walk's left contact dropped for one frame at the loop seam, so the lock r
 Scene `level-anim-idles`, camera `idles-close`. Knock an NPC down with the ball, then kill one limp. Check: arms and
 head swing and flop as they fall (no wooden plank, no frozen arms), hips fold forward far but barely backward, shoulders
 reach forward more than back, no elbow/knee bending backward, no spinning torso. Compare a stagger: brief give, quick recovery.
+
+## Closed 2026-11-15 from visual-checks/weather-sky.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### WE-14: Stable cloud silhouettes (S1, clouds.md "Stable silhouette history"; follows WE-10, WE-13 horizon shimmer)
+- Scene: `scene we3-ridge` at 14:00, clear-to-cloudy weather; then Seyda Neen rooftops against cloud. Still camera, then a
+  slow pan. A/B: relaunch with `--off cloudedge` (old trace window on the traced pixel, raw sample on a history miss).
+- Look at: the horizon line where no fog is behind it, and any ridge, rooftop or tree silhouette against cloud.
+- Look for: no shimmering 1-2 px strip along the horizon or along silhouettes, still or panning; clouds near silhouettes
+  as calm as the open sky.
+- Must not: a halo or sky bleeding past silhouettes (bright cloud/sky fringe on the land side); FG-7 (fog behind ridges)
+  or WE-12 (deck from above, fog split) looking changed.
+- Status: confirmed (owner 2026-11-13, `scene we3-ridge` 14:00: "no shimmering whatsoever"; `--off cloudedge` A/B not run).
+
+WE-14 | confirmed (2026-11-13: "no shimmering whatsoever") | [weather-sky](../visual-checks/weather-sky.md) | Stable cloud silhouettes (S1): `scene we3-ridge` 14:00 + Seyda Neen, horizon line with no fog behind and silhouettes against cloud, still then slow pan; A/B `--off cloudedge` (2026-11-13)
+
+### FG-11: Froxel fog stays smooth over near objects (FOG-CLAMP, part of WE-10 shimmer)
+- Kind: game location. Fix FOG-CLAMP (2026-11-12): froxel history clipped to this frame's 3x3 neighbourhood,
+  weight 0.9 -> 0.95 (fog.md "Froxel history clip as built").
+- Run: `bash bevyrrowind/tools/owner_launch.sh scene balmora --weather foggy --hour 6.5`; hold still 5 s on houses and
+  hills 50-300 m away, then pan slowly, turn fast, and watch NPCs walking past. A/B: same with `--off fogclamp`.
+- Look for: fog over near buildings and land smooth, no crawling grain still or panning; no ghost trails behind
+  moving NPCs or their shadows, none on fast turns; no black bands (FG-1); fog density/colour as before.
+  `--off fogclamp` should crawl more when still.
+- Status: confirmed (owner 2026-11-12, `scene balmora --weather foggy --hour 6.5`: "the fog is glorious"; `--off fogclamp` A/B not run).
+
+FG-11 | confirmed (2026-11-12: "the fog is glorious") | [weather-sky](../visual-checks/weather-sky.md) | Froxel fog smooth over near objects, still and panning; no trails or black bands (FOG-CLAMP, A/B `--off fogclamp`, 2026-11-12)
+
+### WE-11: Weather covers water like land (W-ORDER, render-order.md "Frame graph"; fixes WE-7, WE-10 over sea)
+- Kind: game location. `bash bevyrrowind/tools/owner_launch.sh view "Seyda Neen" --hour 9 --weather foggy`, then
+  `--weather rain` and `--weather thunderstorm`; face the open sea (south-west, off the dock), still camera, then pan.
+  High-up clouds: same `--weather rain`, free camera up ~300 m over the sea. A/B per effect: `--off fog`, `--off froxels`, `--off clouds`.
+- Look for: fog thickening over the far sea as over land (no clear band at the horizon); the far rain curtain and storm
+  continuing over water instead of stopping at the shore; from high up, a cloud between camera and ocean shows.
+- Must not: water looking double-fogged (milkier/greyer than the land beside it); a halo or seam at the shoreline;
+  refraction of the seabed and shore foam changed; stars drawn over water at night (`--hour 23 --weather clear`).
+- Status: confirmed (owner 2026-11-12: fog over the water (`scene fg-bittercoast-ridge`); thunderstorm at Seyda Neen: fog,
+  rain and lightning flashes carry on over the sea; clouds right seen from up at sea). Follow-up wish (later): show the
+  lightning bolt itself, not only the flash.
+
+WE-11 | confirmed (2026-11-12: fog, rain, storm over sea; clouds at sea; wish: visible lightning bolt) | [weather-sky](../visual-checks/weather-sky.md) | Weather covers water like land (W-ORDER): fog/rain/storm over the far sea, cloud over the ocean from high, no double fog or shore halo (2026-11-12)
+
+### WE-12: From very high, the lower part of the clouds disappears (owner 2026-11-12)
+- Kind: game location. Seen in `scene fg-bittercoast-ridge` after flying far above the cloud deck (after W-ORDER).
+- Seen: high enough, the bottom of the clouds vanishes, as if clouds draw only against the sky. Re-seen 2026-11-12
+  flying up into the cloud layer and trying to enter the clouds: their bottom part is missing. Clouds seen from up at sea
+  (below the deck) are fine, so it is not WE-11's high-cloud item. Owner's precise case: deck at ~500 m, camera at
+  ~600 m looking down: the cloud between the camera and the terrain/fog/objects behind it is not drawn; from below it
+  is perfect. Flying into clouds is not a game feature, but very low clouds (and a volcano smoke plume, WISHLIST §5)
+  would hit the same path.
+- Suspect (not tested): the cloud march assumes a camera below or inside the deck, or stops at geometry depth when looking
+  down, or at the deck's entry point.
+- Cause (2026-11-12, WE12-DIAG, code): the composite applies the fog of the pixel's whole column over the cloud, so
+  the dense low fog and banks *behind* the cloud hide it from above (`cloud_composite.wesl:112-135`). Fix: WE12-FIX.
+- Fix WE12-FIX (2026-11-12): only the fog in front of the clouds dims them, the rest lies behind (UE5/Frostbite);
+  far rain/fog under the deck now draws behind it when seen from above. Run
+  `bash bevyrrowind/tools/owner_launch.sh scene fg-bittercoast-ridge`, fly ~100 m above the deck and look down at the
+  cloud tops against the foggy ground, then fly down into the deck. Look for: the deck's full body visible over the
+  terrain/fog from above, and its bottom still drawn when inside. A/B `--off cloudfog` (old: the bottom vanishes).
+  Must not: the at-sea deck seen from below changed (horizon clouds may be slightly clearer: less fog past them,
+  expected), the FG-11/FG-7 fog looks changed, a bright or dark halo at cloud silhouettes against terrain.
+- Status: confirmed (owner 2026-11-12, `scene fg-bittercoast-ridge`: "works perfectly"; `--off cloudfog` A/B not run).
+
+WE-12 | confirmed (2026-11-12: "works perfectly") | [weather-sky](../visual-checks/weather-sky.md) | Deck from above/inside: fog split at the clouds' depth (WE12-FIX); `scene fg-bittercoast-ridge`, fly ~100 m over the deck, look down, then into it; A/B `--off cloudfog` (2026-11-12)
+
+### FG-7: Blocky crenellated edges on distant land in fog (owner report)
+- Kind: game location. Seen 2026-10-30 (`scene balmora`): stair-stepped land silhouettes in fog, worse moving.
+- Cause (2026-11-12, code): the half-res bank modulation is marched to the furthest depth of each trace window, so
+  land pixels at a silhouette took the sky's value; open/cut flips under jitter dropped history (grid steps). Not froxels.
+- Fix FOG-BANK (2026-11-12): bank at the window's nearest and furthest depth, blended per pixel by depth (fog.md
+  "Depth-aware bank"). Run: `bash bevyrrowind/tools/owner_launch.sh scene fg-bittercoast-ridge` (6:30, foggy, 160 m up),
+  then `scene balmora --weather foggy --hour 6.5`; still, then pan and walk. A/B: same with `--off fogbank`.
+- Look for: land and hill silhouettes in fog smooth, no stair steps still or moving, no bright/dark halo along them,
+  fog density and bank shapes unchanged elsewhere. `--off fogbank` should show the old steps.
+- Status: confirmed (owner 2026-11-12, `scene fg-bittercoast-ridge`: blockiness gone).
+
+FG-7 | confirmed (2026-11-12: blockiness gone) | [weather-sky](../visual-checks/weather-sky.md) | Blocky edges on distant land in fog: FOG-BANK fix, A/B `--off fogbank` (2026-11-12)
+
+### FG-9: Vertical light pillar toward a low sun in fog (owner report)
+- Kind: game location. `view "Balmora" --hour 6.25 --weather foggy` (any fog, sun near the horizon), face the sun.
+- Seen 2026-11-02: instead of shafts from the sun, a vertical pillar of light in front of the camera, from below the
+  ground into the sky, that follows the camera. `flip terrain_far_shadows` / `clouds` / `sun_shadows`: no change.
+- Cause: the fog's sky fill was per view *azimuth* (sky at 0.05 rad elevation + zenith), added at every pitch: a low
+  sun's aureole lit a vertical column. Fixed 2026-11-02 (fg9-fog): one isotropic fill, the sky dome's mean radiance
+  (SH L0, as UE/Frostbite volumetric fog), for froxels and far fog alike (fog.md "clouds_fog_light").
+- Run: `powershell -File tools/run_dev.ps1 view "Balmora" --hour 6.25 --weather foggy`, face the sun, pitch up/down.
+- Look for: no pillar; the glow toward the sun is a round forward lobe (key light HG) that stays centred on the sun,
+  not a column; fog brightness even all around (no seam at ~384 m, the froxel range); also noon and 19:00.
+- Status: confirmed (owner 2026-11-02: no pillar). God rays still not visible: FG-10.
+
+FG-9 | confirmed (2026-11-02: no pillar; god rays still not visible, FG-10) | [weather-sky](../visual-checks/weather-sky.md) | Vertical light pillar toward a low sun in fog: isotropic sky fill (fix built 2026-11-02)
+
+### SW-4: Puddles in rain and after (surface-weather.md W4)
+- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather rain`; console:
+  `surface set wet 1`, `surface set puddle 1` (full), `surface set puddle 0.5` (drying), `surface clear`. C: next weather.
+- Look for: puddles in street hollows and on flat paving/floors, edges following dark grout and low spots (soft);
+  flat, mirror-like water reflecting the sky; none on slopes or walls, none under roofs/arches, smaller under trees.
+- Rain rings while it rains (denser in heavier rain); still water at once when the rain stops (C to a clear weather).
+- At puddle 0.5 the puddles shrink from their edges. No shimmer on distant puddles; no rings on characters or far proxies.
+- A/B: same run with `--off puddles`: the W3 wet look only, no standing water. Low preset: no puddles.
+- Re-check (fix 2026-11-05): no puddles on slopes (street ramps, hill roads, stair ramps, slope feet); level ground and
+  flat paving/floors still hold water. Confirmed 2026-11-05 ("puddles are good now").
+- Retune 2026-11-06 (owner: faster, a bit more lenient): slope ramp none from 6°, full from 3° (was 4°/2°); puddles start
+  at wet 0.7 (was 0.9) and fill at 1.25/h × rain (was 0.5): full ~70 game min (~2.5 real min) from dry ground, was ~2.5 h. Look for: puddles
+  within one shower, gentle street slopes hold some, ramps still dry. Status: confirmed (owner 2026-11-06).
+
+SW-4 | confirmed (2026-11-06 retune: faster fill, 6° slope) | [weather-sky](../visual-checks/weather-sky.md) | Puddles, Balmora in rain: `surface set puddle 1`, flat sky-mirror water in hollows and grout, rings while raining that stop with the rain, none under roofs; A/B `--off puddles`
+
+### SW-3: Wetness after rain (surface-weather.md W3)
+- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen" --hour 10 --weather clear`; console:
+  `surface set wet 1` (soaked), `surface set wet 0.5` (drying), `surface clear` (dry). A/B: same run with `--off wet`.
+- Look for: ground, roads, plaster and wood darker and a little richer in colour, glossier (sun and sky highlights);
+  smooth stone and metal get a sharp water sheen; normal-map detail softens under the film (no faceting, no noise).
+- Under roofs, eaves, the dock's deck and tree canopies stays dry (soft edge ~0.75 m); `surface debug exposure` now
+  tints statics too. Walls: vertical streaks, less wet than the ground; undersides dry.
+- At 0.5: patchy drying (metre-scale patches), no tiling visible. Characters stay dry (W8). Far proxies darken a bit.
+- `surface debug porosity`: metal and polish black, stone, earth, plaster white. `--off wet`: exactly the dry look.
+- Status: awaiting owner (built 2026-11-05).
+
+SW-3 | confirmed (owner 2026-11-05: works great, dries in a satisfying pattern; ground look a bit weird, see terrain roughness bug) | [weather-sky](../visual-checks/weather-sky.md) | Wetness after rain, Seyda Neen: `surface set wet 1`, darker/glossier ground and walls, streaks, dry under roofs; A/B `--off wet`
+
+### SW-2: Surface weather shelter, night and trees (surface-weather.md W2, W2b)
+- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 23 --weather clear` (night: no
+  sun shadows); console (`` ` ``): `surface debug exposure`, `surface set wet 1`, later `surface debug cells`, `surface debug off`.
+- Look for (exposure, night): open ground warm yellow; under roofs, eaves and the bridge arches deep blue (full shelter);
+  under tree canopies and bushes only partly blue (about 60% held back, leafy gaps lighter); slopes not self-shadowed;
+  walk 20 m: the tint redraws (no stale map from the last daylight), no pop, fades to yellow ~64 m out.
+- With `surface debug off` + wet 1: ground under trees visibly wet but less than open ground; under roofs dry.
+- Cells: grey 32 m squares, dark borders, fixed as you walk; blue after wet; purple only past ~2 km.
+- A/B: same run with `--off shelter`: everything open (yellow), soaked everywhere. Repeat at `--hour 12`: same result.
+- Owner 2026-11-05 (rain, noon): failed, all yellow even under Vivec's arches (W2b anchor views drew layer 0 only; statics
+  sit on the worldspace layer, so `queue_shadows` dropped every caster). Status: confirmed (owner 2026-11-06, after the render-layer fix).
+
+SW-2 | confirmed (2026-11-06, after the render-layer fix) | [weather-sky](../visual-checks/weather-sky.md) | Surface weather shelter at night (own top-down pass): roofs full, trees partial (`surface debug exposure`), 32 m cells, Balmora 23:00
+
+### WE-8: Rain leans with the wind, capped, turning slowly (rain-slant, weather/wind.md "Precipitation tilt as built")
+- Kind: game location. Run: `.\bevyrrowind view "Balmora" --hour 12 --weather rain`, then `--weather thunderstorm`
+  (free camera, look across a street at the rain against a wall and the sky; wait a minute or two).
+- Look for: rain near vertical in light wind (about 9-15° in Rain, up to ~25° in a thunderstorm, never steeper);
+  the lean direction turns slowly (over a minute or two, no swinging); trees bend the same way the rain leans;
+  the rain-under-roofs shelter follows the lean. Ash storms still blow near flat (uncapped).
+- A/B: console (backquote) `flip rain_slant_cap`: off = the old raw lean (21-44°, turns with every wind change).
+- Status: confirmed (owner 2026-11-06: "rain slant works").
+
+WE-8 | confirmed (2026-11-06) | [weather-sky](../visual-checks/weather-sky.md) | Rain leans with the wind, capped (Rain ~9-15°, thunderstorm ≤ ~25°), direction turns slowly, trees agree; `view "Balmora" --hour 12 --weather rain`, A/B `flip rain_slant_cap`
+
+## Closed 2026-11-15 from visual-checks/terrain-water.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### WA-4: Wavelets at the shore (W-SHORE; `scene wa-seyda-noon`, `wa-bittercoast`; A/B `--off shorenormals`)
+
+Status: confirmed (owner 2026-11-12, `scene wa-seyda-noon`: "that's perfect"; `--off shorenormals` A/B not run). Kind: real game locations, High preset, the scenes' own time and weather.
+Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-seyda-noon`, then `scene wa-bittercoast`; A/B: the same with
+`--off shorenormals` (the old look: the normal flattens with the displacement). Fixes WA-1 (3) "100 % flat at the shore".
+Look for: small wind ripples glinting and moving right up to the waterline on the Seyda Neen beach and the Bitter Coast
+banks; the swell (big slow waves) still dying out over the last tens of metres, the surface itself not bobbing at the
+sand; no flat mirror strip along the shore. Bad: shimmer, sparkle noise or moiré on the near-shore or far water; open-sea
+chop on the beach; a visible line where the ripples start. Foam and reflections should look unchanged.
+
+WA-4 | confirmed (2026-11-12: "that's perfect") | [terrain-water](../visual-checks/terrain-water.md) | Wavelets at the shore (W-SHORE): ripples glint to the waterline, swell still dies on beaches, no flat strip, no moiré; A/B `--off shorenormals` (2026-11-12)
+
+### WA-3: Local reflections, SSPR (W-SSPR; `scene wa-vivec-waterfront` 15:00, `ebonheart-night` 22:00, `wa-seyda-noon`, `wa-night-moons` 23:30; A/B `--off waterssr`)
+
+Status: confirmed (owner 2026-11-12: Seyda Neen thunderstorm 9:00 "very nice"; `ebonheart-night` 22:00: "the water is
+correct now", no longer brighter than the land (LM-2), "very nice"). Open: owner unsure emissive surfaces (lit windows)
+show in the reflection; `--off waterssr` A/B not run. Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-vivec-waterfront`, then
+`scene ebonheart-night`; A/B: the same with `--off waterssr` (environment map only, the old look). High preset.
+Look for: Vivec's cantons, Ebonheart's walls and docks, ships and the dark banks mirrored in the water below them and
+wobbling with the waves (vertical streaks on rougher far water, not a hard mirror); at 22:00 lit windows, lamps and light
+sprites reflected (the sprites are translucent: not in the reflection, known), water near dark banks dark, not airglow-bright.
+Bad: smeared streaks or stretched copies at screen edges; a hard cut where a reflection leaves the screen (it should fade
+to the sky reflection); flicker or crawling when still or panning; anything under the water (seabed, hull bottoms)
+mirrored; reflections on a lake or pool at another level than the nearest one. Known: reflections are unfogged (the fog
+over the water covers them), off-screen and occluded things fall back to the sky.
+
+WA-3 | confirmed (2026-11-12: day and night "very nice", night water no longer too bright; emissive in reflection unsure) | [terrain-water](../visual-checks/terrain-water.md) | Water mirrors banks, buildings, ships and lit windows, wobbling with waves; edge fade, no flicker, nothing below the water (W-SSPR, A/B `--off waterssr`, 2026-11-12)
+
+## Closed 2026-11-15 from visual-checks/shadows.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### SH-11: Distant flashes while moving (owner report)
+- Kind: game location. Run: `.\bevyrrowind scene balmora`, fly around.
+- Seen by owner 2026-10-19 (round 1): brief flashes in the distance whenever the camera moves; they look like shadows.
+- Fix (render-opt 2026-10-28): ordered `far_map::update_far_map` before `update_terrain` and moved `fog_shadow_heights`, `far_shadow_input`, and `FarFieldSystems::FarShadow` to `PostUpdate` after `TerrainSystems::Update` so shifted terrain origins never render 1 stale frame; also replaced Bevy cascade-NDC PCSS with world-unit directional PCSS (OpenMW Clockwork adaptation).
+- Status: awaiting owner (2026-10-28).
+- Owner 2026-10-30 (scene balmora, flying): the distant shadow-like flashes are gone. Status: confirmed.
+
+SH-11 | confirmed (2026-10-30) | [shadows](../visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
+
+## Closed 2026-11-15 from visual-checks/gi.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### GI-3: GI replaces the flat ambient inside its volume, Census office
+- Kind: game location, High preset, raster. Run (dev exe): `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen, Census and Excise Office"`;
+  A/B with `flip gi` in the console (on: probe bounce, no cell ambient inside the volume; off: today's cell ambient).
+  Log: `gi: volume traced, sampled by the PBR shader (DDGI probes)`; no `naga`/`wgsl`/validation error.
+- Look for: with GI on, rooms read darker in unlit corners and warmer near lamps than before (GI-1/2 runs); no hard
+  box edge visible inside the office; nothing black or flickering. If corners go too dark, say so: the game's
+  `INTERIOR_AMBIENT_SCALE` (0) can take a small floor. Known limit: dark probe patches (no relocation yet).
+- Tune live: `render.gi_intensity 2` (try 1-4), `render.gi_ambient 0.1`; report the value you like.
+- Status: confirmed (owner 2026-11-02: looks good; defaults kept, `render.gi_intensity` 1, `render.gi_ambient` 0).
+
+GI-3 | confirmed (2026-11-02: looks good; defaults kept, gain 1, ambient 0) | [gi](../visual-checks/gi.md) | GI replaces the flat cell ambient inside its volume: darker unlit corners, warmer near lamps, no box edge in the office (`flip gi` A/B)
+
+## Closed 2026-11-15 from visual-checks/physics.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### PH-15: Knockdowns of human NPCs are Delirium falls (owner 2026-10-30/11-05: the old ragdoll still played)
+- Kind: level + game location, default build (`delirium` on). `cargo build -p bevyrrowind --features dev`, then
+  `powershell -File tools/run_dev.ps1 scene level-anim-idles` (Llathyno, idle-5: 25 N·s every 12 s; `level-anim-drop`: 10 s).
+- Also: F11 free camera, `V` balls (15 N·s at full throw) at a Dunmer/Breton walker, then at Ajira, Huleeya and the guar.
+- Look for: a human NPC hit goes down under Delirium (`catchFall`: hands out, no pop from the clip), lies still, rolls
+  if needed, gets up and goes back to its idle or path. Ajira/Huleeya/guar keep the old clip + powered-ragdoll knockdown.
+- Log: `knockdown: <e> taken over by the physics layer`, `delirium: took over ... with catchFall`, `handed back (Fallen)`;
+  beasts/creatures `ragdoll: knocked down`. A/B: `--no-default-features` build = old ragdoll for everyone.
+- Status: awaiting owner (delirium-knockdown, 2026-11-05).
+- Fix 2026-11-05 (delirium-hits; owner: "push them in the direction, as the click did"): hits are pushes with the balancer
+  on, no forced fall: a `V` ball (up to 36 N·s head-on) staggers the NPC 0.3-0.5 m along the ball's path with a catch
+  step, then it blends back to its idle; a second ball on a staggering or lying NPC pushes it again. Only 100+ N·s
+  falls for sure (after 0.3 s of push). Log: `hit: <e> taken by the physics layer`, `took over ... with bodyBalance`,
+  `recovered, blending out`. Same feel as the F11 click (Ctrl 20 / plain 45 N·s). Status: awaiting owner.
+- Owner 2026-11-05: confirmed (hits push along their direction). Follow-ups: fall threshold should scale with the
+  character's strength (stats); bodies sink into bent knees on takeover and rise at hand-back; balls pass through arms
+  outside the capsule (hurt shapes, C4). Status: confirmed with follow-ups.
+- Fix 2026-11-05 (knee-sink): the balancer now stands at the takeover pose's leg extension. Delirium counted the actor's
+  scale twice (x0.9 stood 9 cm low, 45 deg more knee; x0.95 5 cm; x1.0 1 cm), now 0.4-0.8 cm and 5-10 deg at every scale.
+  Check: `scene level-anim-idles`, F11, small `V` balls (or a Ctrl click) at Fargoth, Llathyno and a Breton/Dunmer woman:
+  no knee sink as Delirium takes over, no rise as it blends back to the idle. Status: awaiting owner.
+- Fix 2026-11-05 (shapes-s3, character-shapes S3): a held body has kinematic proxies (Delirium's 21 parts) that balls hit.
+  Check: `scene level-anim-idles`, F11, rapid `V` balls at a staggering, then a lying NPC: each ball bounces off the limb
+  it hits and pushes the body again (no ball through it); after the hand-back balls hit the capsule as before. Log:
+  `hit: <e> taken by the physics layer (... N·s, held)` once per ball. Status: awaiting owner.
+
+PH-15 | confirmed (2026-11-05: knee sink fixed; rapid balls push held bodies each time, S3) | [physics](../visual-checks/physics.md) | Knockdowns of human NPCs are Delirium falls + get-ups (V ball, `@impact`); beasts and creatures keep the old ragdoll
+
+### PH-2 (first half, P7): a dead guard ragdolls on the Balmora stairs
+- Note 2026-10-25: `sf_ragdoll` tests `limp_drop` and `settles_on_stairs` fail on their stretch limit (pre-existing).
+  After this check they become sanity guards + printed measurements (CONTRIBUTING.md "Tests and visual checks").
+- Kind: game location. Run: `.\bevyrrowind view "Balmora"` (release, physics on), fly (free camera) to a guard on
+  the stone stairs (the High Town steps up to the Council Club / Hlaalu manor), put the crosshair on him and press
+  `I`. He plays his death clip for 0.4 s, then goes limp. Then hold LMB on a hand or foot to drag the body (a 75 kg
+  corpse is a drag at the default Strength 50: the camera slows), release to drop.
+- What to look for: the clip-to-ragdoll cut is not a pop (velocities carry over); the body tumbles or slumps down the
+  steps without exploding, jittering or sinking into them, then rests within a few seconds; limbs bend the natural
+  way (knees back, elbows forward) and stay attached (the log's `ragdoll: joint stretch peak` stays under 1 cm);
+  the dragged corpse follows by the grabbed limb. Creatures too (a guar, a cliff racer: `I` on them).
+- Press F7 + G to see the skinned-mesh wireframe (yellow) over the ragdoll capsules (orange) and joints (magenta):
+  the mesh must follow the bodies (heads are not drawn: morph-target meshes crash Bevy's wireframe pass). Both keys are in the F1 overlay.
+- Known (P8): no powered crumple yet (the clip cuts to limp); the character root stays where it died (a corpse
+  dragged far can be culled early); corpses don't persist across cell unloads; creature masses are volume
+  estimates (a guar is 1 t: too heavy to drag).
+- Agent run 2026-10-18 (p9fin, release, `scene wk-balmora`, no keyboard):
+  `$env:BEVYRROWIND_AUTO="kill_nearest@3,shot:shots/p9/kill.png@4.5,exit@8"`. Log: `ragdoll: killed ...
+  (meshes/base_anim.nif)`, 1 spawned, 0 failed; joint stretch peak 1.4–2.1 cm (over the 1 cm target: open, P8b).
+  Sanity shot `shots/p9/kill.png`. Not on the stairs (wk-balmora's camera); creatures not run.
+- **Lead (owner 2026-10-19, round 11, with `G` collider view):** the ragdoll's physics capsules behave normally when hit; it's the skinned mesh that doesn't follow them. So the solver is fine and the bug is the pose write-back (bodies → bones: bone/body offset, local vs world frame, or the floating-origin offset), which would explain sinking, floating, spinning and the odd joint angles.
+- Earlier status: rejected by owner 2026-10-19 (round 10): ragdolls very bad: most bodies sink into the ground, float and turn around; joints look unconstrained (unnatural angles); they don't explode. Drag doesn't match the expected Oblivion-style hold/drag UX (later). Phase 3.
+- **R0 fix (anim-refactor, 2026-10-22):** the clip's root still placed the mesh (joints above the pelvis body had physics
+  weight 0, and root motion kept moving the frame); non-uniform race build scale skewed lying limbs; foot placement
+  bent ragdoll legs. Headless test now holds every bone on its body within 0.1 mm while the frame moves, yaws and
+  rebases (`sf_physics_bevy` `bones_follow_bodies_*`). Not checked live by the agent.
+- Re-check: `scene level-anim-drop` (AL-6), press `G`: the mesh sits inside the capsules during the fall, the knockdown
+  and at rest (no sinking, floating or spinning; limbs follow their capsules); `I` on the walker, then on a Balmora
+  guard on the stairs as above. Expect a slight width change at death on races whose build ≠ height (uniform scale
+  while ragdolled, restored at get-up). Status: **awaiting owner**.
+- Owner 2026-10-30: no explosion and the death clip plays, but this clip-then-limp ragdoll path is deprecated: deaths
+  and knockdowns use the delirium system from now on, so this check is retired. Dragging is too hard and works badly
+  (later). Bug seen: `I` in third person kills the player (the crosshair ray hits the player) and also opens the
+  inventory (key clash): logged as PH-14. Status: retired (superseded by delirium).
+
+PH-2 | retired (2026-10-30: clip+limp ragdoll deprecated, delirium from now on) | [physics](../visual-checks/physics.md) | a dead guard ragdolls on the Balmora stairs
+
+### PH-14: Dev kill key `I` kills the player in third person and opens the inventory (owner report)
+- Kind: game location, dev build. Third person, crosshair on an NPC, `I`.
+- Seen 2026-10-30: the player dies (the crosshair ray starts behind the player and hits its own body first) and the
+  inventory opens too (`I` is also the inventory key).
+- Fixed 2026-11-05 (delirium-death): the `I` key is gone; the console's `kill` replaces it and only targets walkers
+  (never the player or the training dummy). Status: fixed, awaiting owner (check with PH-16).
+
+PH-14 | confirmed (2026-11-05) | [physics](../visual-checks/physics.md) | Dev kill key I kills the player in third person and opens the inventory (2026-10-30)
+
+## Closed 2026-11-15 from visual-checks/lights.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### LM-2: Leaf side findings (from LM-1, renderfix1)
+- With `--off leafmask`, blended leaves vanish entirely at ~100 m+, so the A/B no longer shows "blended as before".
+- Leaves (and water) look bright white at night (`shots/renderfix1/night_amb4.png`, Balmora): not traced; hypothesis
+  is still-Blend leaves on the forward FroxelFog path.
+- 4 textures could not be decoded, so they are never promoted to cutouts: `poxyclouds2`, `tx_banner_temple_04`,
+  `tx_eggmine_banner*`, `tx_rope_net_01`.
+- Fix (render-opt 2026-10-28): propagated NetImmerse `NiVertexColorProperty::LightingMode` (`Emissive` vs `EmissiveAmbientDiffuse`) and `NiTexturingProperty::ClampMode` through `mw_nif`, `sf_model`, `mw_bake`, and `mw_assets`, and added 16-bit `A1R5G5B5`/`A4R4G4B4`/`B5G6R5` DDS decoding in `mw_bake/src/textures.rs` for cutout promotion. Re-bake `mesh.cook` / `tex.meta` if using an older bake store; check `view Balmora --hour 22`.
+- Status: awaiting owner (2026-10-28).
+- Owner 2026-10-30 (`scene hi-balmora-night`): leaves look okay; the water is still brighter than the rest at night (not
+  a moon effect). Status: partial (water at night open). 2026-11-12: water at night correct after W-SSPR (owner, `ebonheart-night`, WA-3).
+
+LM-2 | confirmed (2026-11-12: leaves OK; night water correct after W-SSPR) | [lights](../visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
+
+## Closed 2026-11-15 from visual-checks/rendering.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### RO-14: Bloom on the game camera (2026-11-01)
+- Kind: game location, dev or release build, High preset. Runs: (1) `view "Balmora" --hour 18.5`, face the sun
+  (west); (2) `view "Balmora" --hour 23`, look at the street lamps and braziers; (3) `scene census`, the candles.
+- Look for: a soft glow around the sun disk, lamp and candle flames and fire only; lit walls and sunlit ground keep
+  crisp edges, no milky haze over the whole image; no pulsing when the camera stops (DLSS/TAA run before bloom).
+- A/B: `--off bloom` (or console `render.bloom 0`; retune live, e.g. `render.bloom 0.2`; default 0.1).
+- Status: confirmed (owner 2026-11-02, sun at dusk; night lamps and candles not checked). Source: visual-niceties.
+
+RO-14 | confirmed (2026-11-02: sun at dusk; lamps and candles runs not checked) | [rendering](../visual-checks/rendering.md) | Bloom on the game camera: sun, lamps, candles glow, lit walls stay crisp (`--off bloom` A/B)
+
+### RO-15: Light through leaves (foliage diffuse transmission, 2026-11-01)
+- Kind: game location. Runs: `view "Seyda Neen" --hour 7` looking east and `view "Balmora" --hour 18.5` looking
+  west, from under or behind trees so the sun sits behind the canopy; then turn around (sun at your back).
+- Look for: backlit leaves glow warm/green-gold, leaves shadowed by the trunk or other trees stay darker; front-lit
+  leaves look as before or a touch darker (half their direct light goes through); no bright rims or speckle on
+  cutout edges; far impostor trees are unchanged (not covered).
+- A/B: `--off foliagetransmission` (startup only; value `mw_assets::LEAF_DIFFUSE_TRANSMISSION` 0.5 (owner 2026-11-02, was 0.3), thickness 0.05 m).
+- Status: confirmed (owner 2026-11-02 at 0.5; 1.0 tried and liked). Source: visual-niceties.
+
+RO-15 | confirmed (2026-11-02: 0.3 too faint, 1.0 liked, kept 0.5) | [rendering](../visual-checks/rendering.md) | Light through leaves: backlit canopy glows, front-lit unchanged (`--off foliagetransmission` A/B)
+
+### TX-delight: De-lit albedo textures (bake layer, 2026-11-05)
+- Kind: game location. Needs a current `bevyrrowind bake` (start log: `delight: layer mounted, N textures`).
+  Runs: `view "Seyda Neen, Census and Excise Office"` and `view "Balmora" --hour 14` facing a lit house wall;
+  A/B by restarting each with `--off delight` (log `delight: off`).
+- Look for: corners and edges no longer double-dark under real light; walls not flat or cartoony; no colour shift;
+  no blocky BC7 artifacts on gradients; cutout foliage (hedges, tree cards) not thinner at distance (coverage mips).
+- Strength 0.5 (owner 2026-11-05) is baked in: a new strength needs a re-bake.
+- Status: confirmed 2026-11-13 (owner: "textures seem great"). Source: rtx-borrow D-2b.
+
+TX-delight | confirmed 2026-11-13 (owner: "textures seem great") | [rendering](../visual-checks/rendering.md) | De-lit albedo textures: no double-dark corners, no colour shift or BC7 blocks, cutouts keep coverage (`--off delight` A/B)
+
+### TX-2: Terrain layer normals + ARM from packs (textures T5, 2026-11-13)
+- Kind: game location. Needs a fresh `bevyrrowind bake` with the packs mounted (`mvr-pbr`, `tamrielic-pbr-west-gash`;
+  bake line `terrain layers: N, n with a normal map, a with ARM`, n > 0; `terrain.layers` re-runs, step v3).
+- Runs: `scene tx2-terrain-normals` (Balmora street, RO-16 camera, 07:00 low sun), `scene tx2-west-gash` (hillside west
+  of Balmora, sun to the right), each also with `--hour 18`. No `--off` A/B for terrain normals yet.
+- Look for: ground relief catching the low sun on the side facing it; bumps not inverted (the lit side faces the sun);
+  no shimmer or sparkle at 10-50 m (arrays are still 256², T6 raises them); rock darker in cracks, grass matte, rock
+  not glossy; and whether RO-16's even resin-like sheen breaks up.
+- T6 (2026-11-13): arrays now BC7/BC5 up to 2048² (High/Medium load 1024² under the budget; log `terrain layers: N x S², X MiB`):
+  look for sharper ground at 2-20 m, no blockiness or colour banding (BC7), no shimmer at distance, normals still right.
+- Status: CONFIRMED owner 2026-11-13 (tx2-terrain-normals, after T5+T6 re-bake): "works well"; asked for parallax on the ground too (tx-tpom, queued). Source: textures T5 (`.sessions/tx-t5.md`), T6 (`.sessions/tx-t6.md`).
+
+TX-2 | confirmed 2026-11-13 | [rendering](../visual-checks/rendering.md) | Terrain layer normals + ARM from packs: ground relief under low sun, no inverted bumps, no shimmer; does the RO-16 sheen break up (`scene tx2-terrain-normals`, `scene tx2-west-gash`; re-bake with packs)
+
+### RO-11: Black bands on the ground that move with the camera (owner report)
+- Kind: game location. Seen 2026-10-30 from the release start (Seyda Neen, New game, High defaults), walking outside.
+- Look for: a pattern of dark bands on the terrain that slides as the camera turns or moves.
+- Suspects (not tested): SH-14 contact-shadow bands (`--off contactshadows`), FG-1 fog history (`--off foghistory`), GTAO
+  under TAA/DLSS (console `ssao`). First step: those three A/Bs at the same spot.
+- Status: known bug: cause not diagnosed (owner pass 2026-10-30).
+- Owner 2026-10-30: the same shadow-band look also shows in the anim-lab test levels (flat synthetic boxes, no terrain),
+  so it isn't terrain-specific: a good place to A/B it.
+- Owner 2026-10-30, `scene wk-balmora` (release copy, `--resolution 2560x1440`): bands still there but weaker. Clue: the
+  release start (no subcommand) may run different settings (DLSS/preset) than `scene` runs; diff them first.
+- Owner 2026-10-30: the bands look like a regression from the very recent shadow work (2026-10-28: d89eaa0 world-unit sun
+  PCSS, 39f6508 shadow/LUT changes). First step: A/B or bisect those two commits.
+- Audit 2026-11-01 (`superfargoth/docs/research/shadows/2026-11-01-audit.md` §3): release start = `view` defaults, no settings
+  diff. Leads: GTAO at output resolution under DLSS (bevy#26234, not vendored), contact shadows marching full-size depth under
+  DLSS (`pbr_functions.wesl:308`), aerial LUT samples 10 → 6 (39f6508). A/B: `--dlss taa`, `--off contactshadows`, `ssao`.
+- Built 2026-11-01 (shadow-fixes; spec `shadows.md` "Shadow fixes as built"): contact-shadow march in main-pass pixel space
+  under DLSS, full receiver slope + half-texel margin on the sun's far 4-tap and PCSS paths, bevy#26234 GTAO at the
+  main-pass resolution. Owner copy `%TEMP%\bw-owner-2026-11-01`: `01-new-game.cmd` (fixed), then if bands remain
+  `11-…-no-contactshadows`, `12-…-no-softshadows`, `13-…-taa`, `14-…-no-ssao` (same start, one part off each).
+- Owner 2026-11-01 (`01-new-game`, `11-…-no-contactshadows`): no ground bands in either. Status: **confirmed** (which of the
+  three fixes did it is not isolated; all three stay).
+
+RO-11 | confirmed (owner 2026-11-01: gone) | [rendering](../visual-checks/rendering.md) | Black ground bands that move with the camera (2026-10-30)
+
+### RO-20: Far terrain shadows keep following after the far-map upload fix (perf-push P2, 2026-11-12)
+- Why: the far shadow map upload no longer touches every terrain, proxy and impostor material to "re-bind" (Bevy writes the
+  same texture in place, so bind groups stay valid); risk is a stale far map if that reasoning is wrong.
+- Kind: game location. Run: `scene balmora-sunset-shadows` (Balmora 18:30), then fly (W, Shift) 2-3 km in one direction.
+- Look for: hills past ~400 m keep shadows that match the low sun as you go; after ~1 km of travel the far shadows around
+  you refresh (no shadows left hanging where you were, no unshadowed hills ahead). A/B: `--off farshadows` drops them.
+- Status: **confirmed 2026-11-12** (owner, clear weather): hills keep shadows, they update as you approach. New, logged: subtle shadow swimming on hills while approaching (cause unknown: far-map recentre texel shift or cascade handoff are the suspects; not chased).
+
+RO-20 | confirmed 2026-11-12 (subtle shadow swimming on hills while approaching, logged) | [rendering](../visual-checks/rendering.md) | Far terrain shadows keep following the player after the far-map upload stopped re-binding materials (2026-11-12)
+
+### RO-21: Haze and ash change smoothly with no medium re-bake (perf-push P1, 2026-11-12)
+- Why: weather no longer re-bakes the sky medium on the CPU (a ~4.3 ms render-thread hitch about every 1.3 s); haze,
+  dust and dust tint are now live scales in the atmosphere uniform (vendored `bevy_pbr` patch P1). Same look by design.
+- Kind: game location. Run: `scene fg-redmtn-clear`, press P (clock on) and T (time-lapse), then C until foggy, then
+  ash storm. Then `scene fg-redmtn-foggy` and `scene fg-redmtn-ashstorm` as still references.
+- Look for: haze thickens and the grey-brown ash tint arrives smoothly, no step, flash or pop in sky or far hills; the
+  still scenes look as before (foggy milky white, ash storm grey-brown with a dimmer, warmer sun).
+- Status: **confirmed 2026-11-12** (owner): all weather transitions smooth. Owner wish: an even faster time-lapse preset.
+
+RO-21 | confirmed 2026-11-12 | [rendering](../visual-checks/rendering.md) | Haze and ash tint change smoothly in weather transitions, same look as before, with the medium no longer re-baked on the CPU (perf-push P1, 2026-11-12)
+
+## Closed 2026-11-15 from visual-checks/combat.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### CB-1: Light chain and roll on the dummy (C1b)
+- `.\bevyrrowind scene level-arena` (or `scene level-arena --camera chain`). Keys: F readies / sheathes the weapon (an attack press while
+  sheathed draws instead); LMB or pad right bumper attacks (four presses = the light chain); Shift or pad East: tap rolls (on release), hold
+  sprints; O toggles the combat gizmos (hurt capsules green, cyan in i-frames; blade yellow, red while a hit window is open).
+- Look for: hits land when the blade arrives at the dummy (not before); hit-stop reads as impact, not a stall; the dummy's reaction matches the
+  side; the stamina (green) bar drains per swing and refills after; the roll moves ~2 m with no slide at its end; sprint stops when winded.
+- Tune in `bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron` (windows, hit timings, hit-stop, costs, weapon segment) and the slot clips
+  in `mw_graphs/data/animation/sources.ron` (re-bake).
+- Known gaps: no weapon mesh (the stance is gameplay only); medium and large reactions share the knockback clip at full travel (no
+  per-tier root scale yet); no pad default for ready weapon; the dummy is talkable (dialogue picks up every NPC character).
+- Agent live check (2026-10-27): dummies stand on the floor, light1 lands Small front hits (100 -> 90 -> 80), light3's second hit lands
+  Medium; gizmos draw capsules and the blade at the hand. Roll and sprint not confirmed live (BRP input).
+- Owner 2026-10-27: animations work well. Bugs: (1) holding Shift never sprints, every press rolls; (2) the chain walks the player
+  forward too far (UAL2 attacks carry 0.8-1.6 m root; ER steps ~0.3-0.5 m: root scale per move + capsule collision); (3) mouse
+  not captured in 3rd person (windowed: cursor shows, a click lands in another window).
+- Fixed 2026-10-27 (afternoon): hold sprint (a stray unbound Sprint release cancelled the shared Shift / pad B press, `sf_action`
+  `InputSampler::release`); cursor confined on Windows; light chain ~0.4 m per swing (per-move `root_scale` in `sword_1h.ron`); body stays
+  on the capsule through the chain (`sf_anim` cook `start_anchor`: UAL2 split-take clips kept a ~0.95 m pelvis offset); player vs dummy
+  collision (`separate_moved`: the mover stops/slides, the dummy is never shoved). Owner confirmed all live (copy c, arena).
+- Status: confirmed. Owner 2026-10-27 evening (copy d): the 4-hit chain (UAL2 `Sword_Light_A-D`, combat.md "C1b" table) and M1 (cursor
+  stays hidden on a left click and in F11) confirmed.
+
+CB-1 | confirmed (2026-10-27: sprint hold, chain step, mouse capture, dummy collision fixed; evening: 4-hit chain and M1 cursor confirmed) | [combat](../visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
+
+### CB-2: Lock-on, locked facing and side rolls (C1c parts 1-4)
+- `.\bevyrrowind scene level-arena`. Q (or middle mouse, pad R3): lock the dummy in front; Q again releases; Q with nothing in the
+  15 m / 35 deg cone recentres the camera. Then walk away past 20 m (breaks), mantle the 1 m ledge (breaks, re-offered 1 s after landing).
+- Look for: the camera frames the target; a small white dot (dark rim) sits on the locked dummy's chest, gone when unlocked or off screen;
+  locked, the body keeps facing the dummy: A/D circle it, S backs away facing it, standing still turns to it, sprint faces its run;
+  locked Shift tap + A/D = a side dodge (~2 m around it, no pause at its end); W/S + tap = the forward roll squared to the stick.
+- Known gaps: locomotion still plays the forward cycles (strafe clips C1c-2b); no back roll / backstep clip; no target switching (C4).
+- Owner 2026-10-27 (copy d): lock, release, recentre and locked facing confirmed ("main logic solid"); asked for the marker and faster
+  side rolls (both built after, 2709b71, ddc252d). Status: lock + facing confirmed; marker and side rolls awaiting owner.
+- Owner 2026-10-30 (dev3 copy): marker, side rolls and the rest work great. Status: confirmed.
+
+CB-2 | confirmed (2026-10-30) | [combat](../visual-checks/combat.md) | Lock-on, locked facing and side rolls around the dummy (scene level-arena)
+
+### CB-3: F never draws a sword (owner report)
+- Kind: synthetic. `scene level-arena` or any anim-lab level, player (F11).
+- Seen 2026-10-30: F (ready weapon, `combat.rs` `ready_weapon`) never shows a drawn sword, and never did. Unknown whether
+  `Stance` toggles without a visible weapon or the action never fires.
+- Fixed 2026-11-05 (stance-visible): F did toggle `Stance`, but nothing showed it: the avatar never got
+  `CharacterReadiness`, and the `player` record holds no weapon. Now the avatar follows the stance, levels `arena` and
+  `anim-lab` equip `iron longsword` (`player_held`), and a sheathed click or right click does nothing (no implicit draw).
+- Run: `cargo dev scene level-arena` (F11: player). Look for: no sword in hand at start; LMB / RMB do nothing; F: the
+  sword appears in the right hand and the idle / run become the one-handed set; attacks swing it, the blade follows the
+  hand; F again: the sword vanishes. Real cells: the player has no weapon yet (no equip).
+- 2026-11-05 (draw-clips): F plays Morrowind's one-handed draw / sheathe (`WeaponOneHand` equip / unequip) on the
+  upper body; the sword appears in the hand at the clip's attach key and vanishes at its detach key. Look for: walking
+  or running while drawing keeps the legs going (upper body only); the sword shows as the hand reaches it (not at the
+  press, not after the clip); LMB during the draw does nothing, LMB after it swings; F again: hand goes back, sword
+  vanishes mid-clip, LMB refused from the press. Log line: `combat: draw .. s (attach at ..)`. No sheath model (original).
+- Status: confirmed 2026-11-05 (owner: "the sheathe thing works well"). Follow-up: the sword attack clips (Quaternius UAL Sword_Light_*) are poor; generate new ones (3.8 clip factory).
+
+CB-3 | confirmed (2026-11-05; follow-up: new sword attack clips) | [combat](../visual-checks/combat.md) | F draws a visible sword; sheathed clicks do nothing; draw / sheathe clips, sword at the attach key (2026-11-05)
+
+### CB-3a: Sparring dummy strikes; player reactions in both views (C2a, 2026-11-10)
+- `cargo dev scene level-sparring` (cameras `behind`, `side`), F11 player, F to draw. The sparring dummy (Fargoth, sword drawn) stands
+  3 m ahead and swings light1 every 2.5 s while you are within 2 m (`sparring: the player: hit ...` in the log); `dummy` 6 m left
+  stands still. Run third person, then Tab to first person (view model off, then `on viewmodel`).
+- Feel for: step in: a steady beat you can learn; each hit lands as the blade arrives, hit-stop on both, and your body plays the
+  reaction for the side it came from (turn your back, side-on); health -10 per hit; at 0 you refill (non-lethal bout). Step back past
+  2 m: it never swings. Roll through its swing: no hit. First person: the view stays free in a reaction (no wall), the arms follow
+  the flinch, no camera kick yet (C4 shake).
+- Tune: `mw_combat/data/sparring.ron` (first, period, reach); reaction slots in `mw_graphs/data/animation/sources.ron`.
+- Known gaps: Medium/Large reactions front only, one clip; no guard (C2b) or knockdown (C2c).
+- Status: confirmed 2026-11-12 ("all good"). Logged: the roll starts late (Shift tap waits to tell a tap from a sprint hold), hard to time
+  through a swing; first person looking down shows the inside of the body (chest clipping the eye).
+
+CB-3a | confirmed 2026-11-12 (logged: late roll start, first-person chest clipping looking down) | [combat](../visual-checks/combat.md) | Sparring dummy strikes on a beat; player hit reactions by side in third and first person, free look in a reaction (scene level-sparring, 2026-11-10)
+
+## Closed 2026-11-15 from visual-checks/anim-lab.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### AL-1: Animation lab overview
+- `.\bevyrrowind scene level-anim-overview`. Look for: six areas apart (ledges + props near the origin, loop south, slopes/stairs west-north,
+  drops north-east, idles south-west), nothing sunk or missing, every NPC dressed. Status: awaiting owner.
+- Owner 2026-10-30: works perfectly. Status: confirmed.
+
+AL-1 | confirmed (2026-10-30) | [anim-lab](../visual-checks/anim-lab.md) | Animation lab overview
+
+### AL-4: Traversal heights (future vault / mantle / climb)
+- `scene level-anim-ledges` (cameras `ledges`, `ledges-close`); F11 for the player, walk into each box and the 3 m wall.
+- Look for: the capsule stops at each ledge and the body does not clip into the box (no vault, mantle or climb exists yet: this is the
+  baseline for them); heights readable against the 1 m grid. Status: awaiting owner.
+- 2026-10-30: retired (written before mantles existed; AL-10 and AL-11 cover traversal now). Status: retired.
+
+AL-4 | retired (2026-10-30: superseded by AL-10/AL-11) | [anim-lab](../visual-checks/anim-lab.md) | Traversal heights
+
+### AL-6: Falls and ragdoll (PH-2, PH-9)
+- `scene level-anim-drop` (cameras `drop`, `drop-side`, `drop-close`); `G` shows collider wireframes, console `kill` kills the NPC under the crosshair, `V` throws.
+- Look for: the walker stepping off the 3 m edge (a fall animation or a snap? it must not freeze), the dummy knocked down every 10 s
+  (`@impact` 25 N*s: ragdoll, then get-up), with `G` the capsules following the mesh, no pop into the ragdoll, no spin on the 15 deg slope.
+  No 6 m fall exists for actors (no way to place one on the platform): throw or fly. Status: awaiting owner.
+- 2026-10-30: retired with PH-2 (owner: the clip+limp ragdoll is deprecated, delirium from now on). Status: retired.
+
+AL-6 | retired (2026-10-30: superseded by delirium) | [anim-lab](../visual-checks/anim-lab.md) | Falls and ragdoll
+
+### AL-10: High mantle, player (action.md B2 high mantle)
+- Needs a bake after 2026-10-27 (`traverse.mantle.high` on UAL2 `ClimbUp_2m`). `scene level-anim-ledges`, F11; walk W into a box, W+Space.
+- Look for: the orange h1.60 and h2.00 boxes play the high climb (hands above the head, body over the lip onto the top); the yellow
+  h1.20 box keeps the waist mantle; the red h2.50 box and the 3.5 m wall refuse into a plain jump; Ctrl + Space never mantles.
+- Owner 2026-10-27 (copy d): works, hands go above the head. Issues: the hands aim at the box centre, not the lip (B2b-2 hand IK, after
+  the B2b-2a contacts); hard to trigger: the body slides along the face and doesn't face it (B2-T approach tolerance + yaw align, in
+  progress).
+- Owner 2026-10-30, after B2-T (99f6466) and B2b-2b/2c (130bf38, e5224f2): the mantle triggers and works; the hands reach the lip
+  but the hand IK needs tuning. Status: confirmed (hand IK tuning logged on ROADMAP 3.1).
+
+AL-10 | confirmed (2026-10-30: triggers and works; lip hand IK needs tuning, ROADMAP 3.1) | [anim-lab](../visual-checks/anim-lab.md) | High mantle, player (ClimbUp_2m on the 1.6/2.0 m boxes)
+
+### AL-11: Wall brace, player (action.md B2c)
+- No bake needed (runtime feed only). `scene level-anim-ledges`, F11; the grey 3 m wall behind the boxes (14 m long, z -7).
+- Run (W) straight into the wall: both hands rise before the impact and plant on the face, arms slightly bent, palms on
+  the wall (not floating more than ~2 cm, no fingers or forearm through it); release W: the hands let go over ~0.5 s.
+- Walk along the wall about 0.5 m off it (turn parallel, W): only the wall-side hand trails lightly on the face, behind
+  the shoulder; walking away: it lets go. Standing still: no brace. Near the wall's end the hand drops past the edge.
+- F (sword drawn): only the left (off) hand braces. Mantles: the lip grip still wins (AL-10 unchanged).
+- Known: the hand keeps its animated rotation (no palm frame yet), so fingers may angle oddly. Status: awaiting owner.
+- Owner 2026-10-30 (release copy, 13:08 build): fails. Running into the wall, the character starts walking sideways along it,
+  doesn't stop, and the hands never rise. F never draws a sword (never did), so the drawn case is untested.
+- Fix 2026-10-30 (wall-brace-fix): the brace never ran (its gate waited for "no action slot", but plain locomotion always
+  has one); now gated on no Clip/Warp move. Live dev build: both weights reach 1 at the wall, wrists on the face. The sideways
+  walk is older and not the brace: pushing W at an angle into a wall, the mover keeps the along-wall part (collide-and-slide)
+  while the body faces the stick, so the graph plays a side step (bug logged here; the fix is a mover/facing slice). Run in straight (camera
+  square to the wall) to judge the hands. Needs a new exe copy, no bake. Status: awaiting owner.
+- Owner 2026-10-30 (dev3 copy, after the gate fix): the brace now shows, but (1) running straight at the wall, the body
+  starts moving sideways as soon as it hits: wanted a grazing-angle rule: below a threshold angle to the wall's
+  normal the mover stops instead of sliding (mover `sf_controller` `mover.rs`; B2-T noted the same); (2) the side-wall
+  trail pose is wrong: people feeling a wall reach the hand ahead of them, palm on the wall, thumb pointing down
+  (needs the palm frame from the wall normal, the known rotation gap). Status: partial.
+- Owner 2026-10-30: the wall brace needs a big fix; find where the sideways slide comes from first (diagnosis slice),
+  then fix the stop and the trail pose.
+- Fix 2026-11-05 (brace-stop), point (1) only: collide-and-slide kept the along-wall part of any push and the facing turned
+  along it. Now a wall met within 30° of head-on stops the mover (`MoverParams::wall_stop_deg`, Godot's
+  `wall_min_slide_angle`); past 30° it still slides. Check: W straight or up to ~25° off at the wall: the body stops and
+  stays facing the push, no side step, hands brace; ~45° and shallower: it slides along as before. Trail pose (2) not
+  touched yet. Needs a new exe copy, no bake. Status: awaiting owner.
+- Fix 2026-11-05 (brace-palm), point (2): the hand IK now takes a palm rotation from the wall normal (rig palm axes from the
+  Bip01 fingers). Check: walk W along the wall ~0.5 m off it: the wall-side hand reaches ahead of the shoulder, palm flat on
+  the face, fingers forward and a little up, thumb down; run straight in: both palms flat on the face, fingers up, elbows a
+  little bent. Look for wrist skin twisting (no forearm twist bones) and fingers through the face. Needs a new exe copy and
+  the bake (done 2026-11-05). Status: awaiting owner.
+- Owner 2026-11-05: wall stop good, "works and it's satisfying". Nitpick: head-on hands closer together, just in front of the
+  bust (not out to the sides), and at chest height (a bit higher than now). Status: confirmed with follow-up (hand spacing/height).
+- Fix 2026-11-05 (brace-chest): head-on wrists in front of the chest, 0.55 of the shoulders' spacing apart (Bip01 ~0.17 m;
+  were out past the shoulders, 0.5-0.9 m) at 0.92 of shoulder height (~12 cm under it; were 10-30 cm lower, dropping as the
+  body got closer), the same at any distance; side-wall trail and wall stop unchanged. Check: `scene level-anim-ledges`, F11,
+  run W straight into the grey 3 m wall: hands close together just in front of the chest, palms flat, fingers up, elbows bent
+  (more when close), hands not touching each other. Needs a new exe copy, no bake. Status: awaiting owner.
+
+AL-11 | confirmed (2026-11-05: chest brace good, spacing widened a little 0.55 → 0.68) | [anim-lab](../visual-checks/anim-lab.md) | Wall brace, player (palms on the 3 m wall, side-wall trail, off hand only with the sword)
+
+### AL-12: Vault over thin obstacles, player (action.md B2 vault)
+- Re-baked 2026-11-05 (slot `traverse.vault` = UAL2 `SafetyVault`). `scene level-anim-ledges`, camera `vaults` (or F11);
+  boxes 0.4 m deep east of the ledges: yellow 1.0 m, green 0.85 m, white 0.6 m. Then `cargo dev view "Seyda Neen"`: crates,
+  barrels, the dock railing.
+- Run (W) + Space ~1 m from the 1.0 / 0.85 m boxes: a one-hand side vault, the right palm on the near edge of the top (not
+  floating, not through it), legs clear of the box, lands on the far side and keeps running. The 0.6 m box (under the band,
+  0.81-1.26 m) is a plain jump; deep boxes (the ledges) still mantle; a box with a wall right behind mantles instead.
+- Watch for: the takeoff foot dipping into the floor and a camera bob on the 0.85 m box (the body is lowered up to ~0.45 m
+  to the obstacle), a stretched or floating landing when the run-out is short. Status: awaiting owner.
+- 2026-11-05 trigger fix: the probe saw both boxes; the warp refused (`MaxCorrection`) at an angle (hand target sideways of
+  the body) and within ~0.3 m of the face. Now the lip is re-probed square-on and a close takeoff brakes into the plant.
+  Run at the boxes at an angle and right up to them, then Space: vaults (log `traversal press: ... refused []`); look for
+  a brief stall before the hand plants on close presses. Status: awaiting owner.
+
+AL-12 | confirmed (2026-11-05: vault works; a small hiccup before the vault, not smooth or fast yet: tuning) | [anim-lab](../visual-checks/anim-lab.md) | Vault over thin obstacles, player (SafetyVault, one hand on the top; anim-lab vault boxes, Seyda Neen crates and railing)
+
+### AL-9: Gait bands, pelvis and feet (pose audit S3, feed audit F4)
+- Humanoid op data 2026-10-26: `StrideWarp` max 1.6 -> 1.2, `SpeedMatch` rate_share 0.3 -> 0.5, foot IK gated on `on_ground`.
+- `scene level-anim-loop`: NPCs walk on flat ground. Then `scene level-anim-overview`, F11: player walk, run and sprint.
+- Look for: pelvis steady, no bob at step frequency; no deep crouch when running or sprinting (was ~95 mm at 4.5-7 m/s, now
+  under 1 mm headless); feet don't slide; feet let go of the ground in a jump. Sprint plays the run cycle at 2.2x
+  (4.75 steps/s): if it looks frantic, a sprint cycle is the fix, not a longer stride. Run strafes still skate (clip issue).
+  Numbers: `cargo test -p mw_graphs --test slope_walk gait_bands -- --ignored --nocapture`. Status: confirmed (owner 2026-10-27: "so much better"; movement feel follow-up under PL-2).
+
+AL-9 | confirmed | [anim-lab](../visual-checks/anim-lab.md) | Gait bands: pelvis steady, no sprint crouch, feet planted
+
+### AN-1: Planted feet stay put on distant walkers (slice R3-1)
+- `scene level-anim-overview` (camera `overview`, all walkers at A2 LOD there), then `level-anim-props`/`loop`.
+- Look for: on the props walker (beside the orange crates) and the loop walker, the standing foot doesn't drift with
+  the body during its stance, far and near. Was: A2 updates got half the body motion. Status: awaiting owner.
+- Owner 2026-10-30 (overview): works perfectly. Status: confirmed.
+
+AN-1 | confirmed (2026-10-30) | [anim-lab](../visual-checks/anim-lab.md) | Planted feet stay put on distant walkers
+
+### AN-4 Knockdowns always come back
+Scene `level-anim-overview` (or `level-anim-drop`), G on. Throw `V` balls at walkers, the knockdown dummy, the guar
+and the mudcrab, hard and soft. Look for: every knocked-down character gets up within ~6 s, then has its capsule
+(G) and walks/idles again; a creature without a ragdoll logs "knockdown cancelled" and keeps its capsule. Never a
+character frozen lying or standing without a capsule.
+- 2026-10-30: retired with PH-2 (delirium replaces knockdowns). Status: retired.
+
+AN-4 | retired (2026-10-30: superseded by delirium) | [anim-lab](../visual-checks/anim-lab.md) | Knockdowns always come back
+
+### AN-5 Get-up starts from the lying pose
+Scene `level-anim-overview`, the `@impact` knockdown dummy (idles row, every 12 s). Look for: at the moment the
+ragdoll hands back, no snap: the limbs flow from where they lie into the stand-up over ~0.3 s, the pelvis doesn't
+jump, and the body doesn't rise or sink to meet the ground.
+- 2026-10-30: retired with PH-2 (delirium replaces knockdowns). Status: retired.
+
+AN-5 | retired (2026-10-30: superseded by delirium) | [anim-lab](../visual-checks/anim-lab.md) | Get-up starts from the lying pose
+
+### AN-6 Get-up ends on the capsule
+Same scene, G on. Look for: when the get-up starts the capsule appears under the lying pelvis (not ~1 m away), the
+character stands up onto it, and nothing slides when the clip ends and idle takes over.
+- 2026-10-30: retired with PH-2 (delirium replaces knockdowns). Status: retired.
+
+AN-6 | retired (2026-10-30: superseded by delirium) | [anim-lab](../visual-checks/anim-lab.md) | Get-up ends on the capsule
+
+### AN-21 Slope trunk lean, retuned (reopened 2026-11-05, awaiting owner; first pass archived in visual-checks-closed.md)
+Owner 2026-11-05: uphill not enough forward lean, downhill "maybe sliiiightly too much". Retuned (`mw_graphs` build.rs `Lean`):
+up 0.4 -> 0.8, down 0.12 -> 0.075, cap 12 -> 26°, spread over Spine1/Spine2/neck (0.45/0.4/0.15; was chest 0.7 + neck 0.3).
+Measured walk lean vs flat at 10/20/30°: up +2.8/+5.7/+8.4 -> +5.2/+10.7/+16.5°, down -0.8/-1.7/-2.6 -> -0.5/-1.0/-1.5°
+(run about 3/4 of that). Re-baked 2026-11-05. `scene level-anim-stairs`, camera `slopes` (runner on 10°, walkers on 20/30°).
+Look for: going up the 20/30° ramps the back clearly bends forward (bent spine, head following, not a craned neck); going
+down a barely-there lean back; eases in over ~0.3 s, no jolt; flat walking unchanged. Numbers: `slope_walk slope_lean_table`.
+
+AN-21 | confirmed (2026-11-05: slope lean works) | [anim-lab](../visual-checks/anim-lab.md) | Slope trunk lean
+
+### LOCO-2 Generated locomotion batch 1 (ROADMAP 3.4c B3b, awaiting owner)
+- Run (from `bevyrrowind/`): `cargo dev clip-preview --browse "../animation packs/generated/loco1"` (Up/Down = clip group, Left/Right
+  = sample; 228 Kimodo clips, 38 groups; `*.free` = same prompt without the speed path). Recipe `tools/motiongen/recipes/loco-batch1.toml`.
+- Look for: a natural gait at the right speed (walk 1.6, jog 4.5, sprint 7.0 m/s); feet not skating or hovering (measured: path-forced
+  run/sprint cycles skate 36-414 cm/s and lose ground contact for 0.4-2.1 s, walk 9-62; the `.free` takes are slow, 2.6 / 3.1 m/s, but
+  plant); starts and stops plant cleanly (no slide into the stand); pivots and turns turn the way named (some pivot/turn samples turn
+  right or not at all: mirror or reject); one consistent style across cycles and transitions. Rate in the browser: Y keep, N reject,
+  M maybe (each advances), Bksp clear, U next unrated; saved to `loco1/verdicts.toml` (overlay shows group tallies). Numbers: `16-gait-card` "As built (B3b)". Status: awaiting owner.
+
+LOCO-2 | rated 2026-11-12 (229 takes: 38 keep, 61 maybe, 130 reject; verdicts.toml) | [anim-lab](../visual-checks/anim-lab.md) | Generated locomotion batch 1 (Kimodo): gait, speed, skate, clean starts/stops, one style; pick keepers
+
+### LOOP-1 Loop-cut cycles in the clip browser (loco-coord 2026-11-12, awaiting owner)
+- Run: `bash bevyrrowind/tools/owner_launch.sh clip-preview --browse "animation packs/generated/loco1"`; Up/Down to a
+  `loco.walk.cycle.*` / `loco.run.cycle.*` / `loco.sprint.cycle.*` group. Cycle takes now cook through the loop cutter and loop in
+  the slot (no re-blend); the overlay's loop line gives the window, strides and seam errors (pose, foot, speed; hard-cut values in
+  brackets). L toggles cut loop vs raw take (A/B). A cut loop walks on: camera and floor follow (the floor steps by whole 2 m checker periods, so it reads as endless).
+- Look for: walks loop with no hitch, foot pop or speed surge at the seam (measured residue 0.2-0.6 cm/frame); runs mostly clean
+  (0.6-3.2); sprints expected to show the seam (4.9-6.3, poor sources); the slow heading drift per loop is the take's own (±4 deg).
+  Say which cut loops are good enough to give slots. Status: confirmed 2026-11-12 (owner: "this is working"; no per-clip pick).
+
+LOOP-1 | confirmed 2026-11-12 (owner: "working"; no per-clip pick, seam numbers decide) | [anim-lab](../visual-checks/anim-lab.md) | Loop-cut cycles in the clip browser: seam hitch/foot pop/speed surge per gait, L = raw take A/B
+
+## Closed 2026-11-15 from visual-checks/audio.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### AU-4: Footsteps by boots (`cargo dev scene door-balmora-guild`)
+- Walkers in heavy boots (guards) step heavy, light/medium armour boots light/medium, shoes and bare feet bare.
+- Owner 2026-10-30 (`scene door-balmora-guild`): footsteps by boots work. Status: confirmed.
+
+AU-4 | confirmed (2026-10-30) | [audio](../visual-checks/audio.md) | Footsteps by boots
+
+## Closed 2026-11-15 from visual-checks/player-ui.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### PL-1: Third-person walk and the use prompt (`cargo dev view "Seyda Neen"`, 10:00)
+- Starts in player mode (the dressed `player` body, PL-2; the capsule is drawn only with characters off). WASD, Shift, Space jump, Tab 1st/3rd, wheel zoom; walk to the Census and
+  Excise Office door, then to an NPC (Fargoth by the lighthouse path).
+- Look for: smooth walk and camera (no jitter, camera pushes in against walls); under the centre dot the prompt reads
+  `[E] Open  <door>` / `[E] Talk  <npc>` / `[E] Take  <item>`, it clears when you look away or step past ~2.7 m;
+  E on the door travels, the body arrives at the marker facing out.
+- Fixed 2026-10-25 (player3), check: focus is now a physics ray plus actor capsules, so in the Census and Excise Office
+  the dot on an NPC's chest reads `[E] Talk  <npc>` (was `Take  Broom`); walls block items behind them.
+  `cargo dev view "Seyda Neen, Census and Excise Office"` starts on the floor at the door's arrival marker, facing in
+  (was: on the roof, grey void). E does nothing while the journal or dialogue is open.
+- Owner 2026-10-30 (release start, New game): walk, camera and use prompt fine. Status: confirmed.
+
+PL-1 | confirmed (2026-10-30) | [player-ui](../visual-checks/player-ui.md) | Third-person walk and the use prompt
+
+### PL-2: Animated player body (action.md A2 slice 2; `cargo dev view "Seyda Neen"`, 10:00)
+- Starts in player mode; Tab to third person. Walk (W, stick), run (Shift sprint), Ctrl sneak, Space jump, turn on the spot.
+- Look for: the `player` record's character (race, sex, head, hair, clothes) in place of the capsule; walk, run, sneak
+  cycles matching the ground speed (no skating), jump/fall clip off the ground and landing back into locomotion, no
+  jitter at any frame rate (the body follows the fixed-tick capsule, interpolated, through the correction
+  spring). Tab to first person hides the body (no arms yet). Shot: `shots/player-body-3-walk.png` (indoors, 3rd person).
+- Status: confirmed with follow-up. Owner 2026-10-27 (after the IK audit fixes): much better, pelvis and jump fixed. Open:
+  movement feel has too much inertia ("like driving a car"); never designed on purpose. Follow-up: PL-4.
+- Owner 2026-10-27 (arena): switching third -> first person can leave the view separated from the capsule (bug, open);
+  first-person arms not built yet (known).
+- Fixed 2026-10-27 (afternoon): the split was the body leaving its capsule, not the camera: Delirium click-to-push hit the
+  player's own body on a left-click attack (now F11 only, never action characters) plus the UAL2 split-take clip offset
+  (cook `start_anchor`). Owner confirmed the view switch live. Status: confirmed (first-person arms still not built).
+
+PL-2 | confirmed (2026-10-27: view/capsule split fixed: self-push + clip offset) | [player-ui](../visual-checks/player-ui.md) | Animated player body (dressed `player` record, humanoid graph)
+
+### PL-3: Jump take-off held in the air, landing on touchdown (`cargo dev scene level-anim-ledges`, F11 player)
+- Humanoid graph B2: `jump` plays `Jump@head` and holds it while airborne; touchdown plays `Jump@tail` (`land`), then
+  locomotion; running cuts the landing into the run.
+- Jump in place, then running. Look for: one tuck at take-off, held in the air, knees absorb on touchdown (land
+  sound with it); no second leg lift mid-air.
+- B3b feed: walking off a ledge (here or in anim-lab) shows the fall hold (no take-off tuck) after ~0.1 s, then lands;
+  running down stairs or over small steps shows no fall pose at all.
+- Status: confirmed (owner 2026-10-27: jump feels correct).
+
+PL-3 | confirmed | [player-ui](../visual-checks/player-ui.md) | Jump: take-off held in the air, landing on touchdown (graph B2)
+
+### PL-4: Movement feel: starts, stops, reversals (`cargo dev scene level-anim-overview`, F11 player, Tab 3rd person)
+- Player-only motion tuning (Elden-Ring-style): fast speed ramp, faster brake, facing capped at 720/1080/480 deg/s
+  (walk/run/sprint) with the motion following the facing, so a reversal turns at speed. NPCs keep their 0.27 s springs.
+- Try: run (W), release (stop), W then S (reversal), W then D (90 deg), Shift sprint turns (heavier), tap a direction
+  from standing. Look for: responsive, no car-like slide; feet not skating at starts/stops; no pop entering run.
+- Numbers (`cargo test -p mw_player_bevy measure_player_feel -- --ignored --nocapture`), before -> after: 90 % speed
+  0.77 -> 0.20 s; stop from run 1.12 s / 1.73 m -> 0.22 s / 0.32 m; 180 reversal 1.08 s (speed dips to 0.16 m/s) ->
+  0.17 s (keeps 4.5 m/s); 90 deg turn 0.90 -> 0.08 s.
+- Tweak: `crates/mw_player_bevy/src/feel.rs` (half-lives, turn rates, feed smoothing); gait blends `mw_graphs` build.rs
+  `GAIT_BLEND` 0.15 s / `DIRECTION_SMOOTHING` 0.05 s (shared with NPCs, re-bless). Status: confirmed with follow-up
+  (owner 2026-10-27: "much much better, about right"; jump air time is long and floaty). Wanted later: run + Ctrl slide.
+  Jump fix 2026-10-27: player gravity 9.81 -> 18 m/s² (`feel.rs` `GRAVITY`; height still 1 m): air 0.90 -> 0.67 s. Confirmed (owner 2026-10-27: "jump feels better").
+
+PL-4 | confirmed (2026-10-27: "about right"; jump fixed with gravity 18) | [player-ui](../visual-checks/player-ui.md) | Movement feel: starts, stops, reversals (player feel tuning)
+
+### HD-1: Minimal HUD: bars, compass, crosshair, use prompt (`cargo dev view "Seyda Neen, Census and Excise Office"`, player mode)
+- Bottom left: three thin framed bars, red health, blue magicka, green fatigue (full: the `player` record's 35/50/200),
+  no labels, Morrowind-sized. Bottom right: heading (`N 000` ... `NW 315`) follows the mouse look; north matches the map.
+- A small dot at the screen centre, in first and third person (Tab): what it covers is what E uses.
+- Look at a door or NPC: `E Open <name>` / `E Talk <name>` under the dot; rebind Use (F10) and the glyph follows;
+  a creature shows its name only, no key.
+- Esc (pause), talk (dialogue), J (journal), inventory, the console: the HUD hides; it returns on close. F11 (free camera) hides it.
+- Known: bars are static (no damage or regeneration yet); the compass is a heading label, no local map.
+- Owner 2026-10-30: HUD fine. Status: confirmed.
+
+HD-1 | confirmed (2026-10-30) | [player-ui](../visual-checks/player-ui.md) | Minimal HUD: bars, compass, crosshair, use prompt
+
+### HD-2: Bars follow damage and regen (stats S5: the bars are the player's stat sheet)
+- Build `cargo build -p bevyrrowind --features dev`; run `powershell -File bevyrrowind/tools/run_dev.ps1 scene level-arena`
+  (F11 if the free camera is on). Synthetic: the player 3 m from a training dummy.
+- Magicka bar: full at the player's real maximum (it was a static record copy); health and fatigue full.
+- Shift tap (roll) or F then LMB (attacks): the green fatigue bar drops at each roll or swing, then refills smoothly a
+  moment after; it never drops on its own while standing still, and refills no faster than before S5.
+- Hit the dummy: the log reads `training dummy: hit ... health h/100` falling per hit; at 0 it refills to 100.
+- Known: nothing hurts the player yet (the health bar's drop needs an attacker: C2 sparring dummy). Owner 2026-11-05: magicka at max, fatigue drops and refills, health bar still (as expected); dummy health "seems to go down", to re-confirm. Status: confirmed except the dummy log line.
+
+HD-2 | confirmed (2026-11-05: bars ok; dummy health log to re-confirm) | [player-ui](../visual-checks/player-ui.md) | Bars follow damage and regen (stats S5: bars from the player's sheet)
+
+### CO-1: Live SSAO and A/B switches from the console
+- Kind: game location. Build `cargo build --release -p bevyrrowind --features dev` (no `solari` needed), run
+  `.\bevyrrowind view "Seyda Neen, Census and Excise Office"` (also SH-16's Balmora spot). Backquote (key left of 1,
+  `²` on AZERTY) opens/closes the console; F1 stays the A/B help.
+- Type `off ssao` / `on ssao` (or `toggle render.ssao`, `render.ssao off`): room corners and under-table darkening
+  go and come back the same frame, no hitch beyond one pipeline compile. `flip sun_shadows`, `off clouds`,
+  `on wireframe`, `flip rings`: same as F2/Shift+C/F7/F8, overlay line updates. `off froxels` says "startup only,
+  relaunch with --off froxels". `help on` lists the live names; Tab completes command and variable names. Keys don't reach the game while open.
+- Scope: GI dropped (owner 2026-10-25: raster GI not built yet, Phase 4). SSAO off keeps the prepasses (image A/B,
+  not cost; cost = a `--off ssao` run). Unblocks SH-16 (AO) re-check.
+- Owner 2026-10-25: partial. COC works for interiors only (`coc balmora` fails: exterior lookup, console slice 3);
+  can't paste; wants Down to select a suggestion and Enter to accept it. No upscaling/DLSS console switch exists yet.
+- 2026-10-26 (console slice 3), re-check: `coc balmora`, `coc "seyda neen"`, `coc "bitter coast region"`, `coc -2 -9`
+  fade to the exterior square's centre on the ground (no fall); `coc "seyda neen, census and excise office"` still
+  goes inside. Type `re`: Down/Up move the `>` mark, Enter puts the candidate in the line (a second Enter runs it),
+  Escape closes the popup first. Ctrl+V and Shift+Insert paste at the cursor (several lines join with `; `).
+- Owner 2026-10-30: `off/on ssao` works, every coc (interior and exterior) works, Down/Enter suggestions and paste work.
+  Status: confirmed.
+
+CO-1 | confirmed (2026-10-30) | [player-ui](../visual-checks/player-ui.md) | Console: exterior COC, paste, Down/Enter on suggestions (2026-10-26)
+
+### WALK-1: speed gait set, walk / jog / sprint on the flat (3.4c A3, 2026-11-12)
+- Kind: synthetic. Run `bevyrrowind bake` first (new gait slots, graph format 11). `cargo dev scene level-flat-slopes`, 10:00,
+  camera `overview`; F11 player, Tab third person, orbit to the side. Free movement now plays generated loops (Kimodo
+  loco1: walk `walk.cycle.free` 05, jog `run.cycle.3` 04, sprint `sprint.cycle.1` 05, loop-cut at the bake).
+- Look for: walk at a light stick push and full (analog: cadence stays natural, steps shorten at a slow push), jog (run),
+  sprint: no foot skating on the flat, no pop of the feet when switching walk <-> run <-> sprint (the foot phase now carries
+  over), no hitch at the loop seam. Sprint is the "maybe" take (a retimed free sprint is the next A/B). Locked on: backpedal
+  and sidesteps still play the Morrowind sets. The WALK-0 `off ...` ladder still works (`off speed_match` = clips at rate 1).
+- Status: confirmed 2026-11-13 after the walk swap (owner: "I think it's alright"; the diagonal look came from the centre dot on the off-centre shoulder framing: dot now first person only). Was failed (owner 2026-11-12): "the character walks sideways (not in a straight line, more diagonal)"; sprint "looks okay but the animation itself is a bit goofy (legs wide apart)". Suspect: take heading offset vs travel, hidden in the browser (Drive turns the actor) but not in-game (Match); diagnosis 2026-11-12 (`mw_bake/tests/gait_heading.rs`): no heading offset (walk < 1 deg cooked and in-graph); walk.free.05 is wide (22.8 cm feet, toe-out 10/-12) and Match drops its 8.7 deg pelvis yaw swing. Owner: pick another clip. Re-check with walk.cycle.1.05 (path-guided, 1.62 m/s, pelvis-travel 0.5 deg).
+
+WALK-1 | confirmed 2026-11-13 (walk.cycle.1.05; centre dot now first person only; sprint style still goofy: sprint A/B next) | [player-ui](../visual-checks/player-ui.md) | Speed gait set: generated walk / jog / sprint loops on speed, foot phase kept on gait switches, no skating (3.4c A3)
+
+### PL-9: A planted foot lets go on sharp turns (P-IK5, 2026-11-11)
+- Kind: synthetic. `cargo dev scene level-flat-slopes` (cameras `ramps`), F11 player, Tab third person, 12:00. K is the
+  A/B (foot placement on/off, walkers and player).
+- Before: a foot planted when the stick turned stayed locked in the world while the body spun (720 deg/s walk turn)
+  until it drifted 0.3 of the leg's reach: legs spread or crossed, the planted foot up to 34 cm off the clip.
+- Do sharp 90° and 180° turns at walk and at run, on the flat and on the 20° and 30° ramps. Look for: the planted foot
+  lets go after about 20° of turn and steps with the clip (no spread or crossed legs), with no pop or snap as it lets
+  go; straight walking and gentle curves keep their planted feet as before. K off: the plain clip, for comparison.
+- Status: confirmed (owner 2026-11-11, level-anim-stairs: "seems ok").
+
+PL-9 | confirmed (owner 2026-11-11: "seems ok") | [player-ui](../visual-checks/player-ui.md) | Sharp 90/180° turns at walk and run on flat and ramps: the planted foot lets go instead of the legs spreading, K A/B (P-IK5, 2026-11-11)
+
+## Closed 2026-11-15 from visual-checks/streaming.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### ST-2: No pop at origin shifts in flight
+- Kind: game location. Run: `.\bevyrrowind view "Seyda Neen" --bench benchmarks/exterior_flight.json --bench-ground`
+  (60 m/s), watch the whole flight.
+- Changed: at a floating-origin shift (every 256 m) terrain patches move in place
+  instead of respawning, terrain clipmap uploads wait two frames, and object
+  streaming (spawn, reveal, despawn) holds for up to 6 frames around the shift.
+- Look for: no terrain flicker or one-frame holes when crossing 256 m borders; no
+  objects arriving visibly late (pop-in in front of the camera) compared with before.
+- A/B: none at runtime (`StreamingConfig::origin_shift_guard_s = 0` in code).
+- Owner 2026-11-12 (Bitter Coast flight, also seen before): a little flicker in distant terrain every ~200 m of travel.
+  Owner suspects distant shadows mishandling the origin shift (every 256 m); not diagnosed, check later.
+  Cause (FLICKER-DIAG + owner bisect 2026-11-12): DLSS/TAA history is reset at every origin shift (`sync_origin`);
+  seen on terrain and water, never when still, gone with F4 Off.
+- Fix FLICKER-1 (2026-11-12): shifts keep TAA/DLSS history, motion vectors rebased by the origin delta (`OriginRebase`).
+  Launch `bash bevyrrowind/tools/owner_launch.sh view "Seyda Neen" --hour 10`, fly west over the Bitter Coast high and
+  fast. Look for: no periodic pop on distant terrain, shadows or water. Must not: smears or ghost trails for one frame at
+  shifts. A/B `--off shiftrebase` brings the pop back. Log: `origin shift A -> B: rebase ... (history kept)` per shift.
+  Water's own motion vectors get the rebase after W-GERSTNER lands (until then water may still pop/smear at shifts).
+- Status: confirmed (owner 2026-11-12, Seyda Neen 10:00 flight west: "the flicker is gone"; `--off shiftrebase` A/B not run).
+- Source: spikes.
+
+ST-2 | confirmed (2026-11-12: periodic flicker gone, FLICKER-1) | [streaming](../visual-checks/streaming.md) | No pop at origin shifts in flight
+
+## Closed 2026-11-15 from visual-checks/characters.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### CH-5: Busy Balmora street, NPCs deform with shared joint blocks (perf-push P5, 2026-11-12)
+- Why: an NPC's meshes (one per material, + face) now share ONE joint block in the skin buffer (vendored `bevy_pbr`
+  patch P5); matrices are identical by design, so nothing should change.
+- Kind: game location. Run: `scene char-balmora` (walkers OFF in this scene: `--off walkers`, NPCs only idle), DLSS Quality; fly down to a crowded street, then walk
+  past NPCs and turn the camera fast.
+- Look for: NPCs idle and walk normally; clothes, armour, robes and heads stay on the body (no torn seams, no part
+  stuck in a T-pose or at the origin); held weapons/torches follow the hand; no smearing or ghosting on moving
+  limbs under DLSS (motion vectors). NPCs that walk into view look right on their first frame.
+- Status: **confirmed 2026-11-12** (owner): NPCs deform fine. New, logged: idle NPCs float slightly above the ground (scene checklist says no floating); not yet known whether today's P5/P6 or older.
+
+CH-5 | confirmed 2026-11-12 (new: idle NPCs float slightly above ground, logged) | [characters](../visual-checks/characters.md) | Busy Balmora street: NPCs deform normally with shared skin joint blocks, no DLSS smear (perf-push P5, 2026-11-12)
+
+## Closed 2026-11-15 from visual-checks/player-ui.md (owner-pass-11-15)
+
+### PL-8: Nothing animates in the pause menu (P-IK2, 2026-11-11)
+- Kind: synthetic. `cargo dev scene level-anim-stairs` (walkers on the stairs), then `cargo dev scene level-flat-slopes`,
+  12:00. F11 player, Tab third person; stand on a tread and next to a wall (hand brace), walk, then Esc (pause menu).
+- Before: the animation stage kept running at dt 0 while paused (a walker's foot dropped ~14 cm for a frame on stairs,
+  the player's wall brace re-probed every frame).
+- Look for: while the menu is open nothing in the world moves (walker feet, hips, hands, the player's hands on the
+  wall); close it: walking resumes from the held pose with no pop or snap on the first frame. Status: awaiting owner.
+- Owner 2026-11-11 (stairs scene): pause not tested. Other IK still wrong there: a leg still snaps into place, steps too
+  wide going up or down stairs, arms still behind the back. Logged, not fixed (see PL-7, locomotion rethink).
+- Owner 2026-11-15 (level-anim-stairs): confirmed, nothing moves with the menu open, resumes normally.
+
+PL-8 | awaiting owner (pause not tested 2026-11-11; stairs IK issues logged: leg snap, wide steps on stairs, arms behind back) | [player-ui](../visual-checks/player-ui.md) | Pause menu freezes all animation (walkers on stairs, the player at a wall), no pop on resume (P-IK2, 2026-11-11)
+
+## Closed 2026-11-15 from visual-checks/weather-sky.md (owner-pass-11-15)
+
+### CK-1: One game clock drives sky, weather, lamps and saves (clock C1+C2, ROADMAP 1.17, 2026-11-15)
+- Kind: game location. `scene balmora-sunset-shadows` (18:30, opens with the clock paused).
+- Do: P (clock runs), then T (time-lapse x600) through dusk to night, T back to x30, P to pause; Esc menu; if the
+  pause menu offers Save, save, move the hour with `]`, load.
+- Look for: the sun sinks smoothly with no jump when the clock starts or stops; lamps and windows come on at dusk;
+  stars come up; P and the Esc menu both stop the sky dead; a load brings back the saved hour and sky, no jump after.
+- Status: confirmed 2026-11-15 (owner: "it works"; remarks logged on 1.13b, TX-5, WA-6, NS-3, GF-1 and the weather polish line).
+
+CK-1 | awaiting owner | [weather-sky](../visual-checks/weather-sky.md) | One game clock drives sky, weather, lamps and saves: `scene balmora-sunset-shadows`, P / T / Esc, save and load (clock C2, 2026-11-15)
+
+## Closed 2026-11-15 from visual-checks/rendering.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### TX-1: Normal maps from packs (textures T4, 2026-11-11)
+- Kind: game location. Needs a normal-map pack installed as a mod (MVR PBR v2 Beta or Tamrielic PBR West Gash; census in
+  `textures-adapter.md` §7) and a fresh `bevyrrowind bake` (line `texture.cook: ... N normal companions`, N > 0).
+- Runs: `view "Balmora" --hour 7` and `--hour 18` (low sun raking across house walls and paving), then
+  `view "Seyda Neen, Census and Excise Office"` (lamp light on walls). A/B: console `flip normalmaps` (or start with `--off normalmaps`; lab key N).
+- Look for: relief that moves with the light on pack-textured walls/floors; bumps not inverted (lit side faces the sun);
+  no shimmer or sparkle at distance; no hard seams where a texture is mirrored (symmetric trims, statues).
+- Not covered: NPC/creature bodies (assembly carries no tangents yet), terrain (T5/T6).
+- Status: awaiting owner. 2026-11-13: "textures seem great", but that run had no pack mounted (`texture.cook: ... 511 cooked`); the packs are now mods `mvr-pbr` and `tamrielic-pbr-west-gash` (`<user data>/mods`, profile `wareya-pbr`): re-run with TX-4. Source: textures T4.
+- 2026-11-13 (tx-tangent): cooked tangents had the wrong handedness (green inverted on every cooked static, mirrored
+  rigid parts too); fixed and `mesh.cook`/`mesh.rest`/`mesh.rig` keys bumped, so the owner must re-check "bumps not
+  inverted" after a fresh `bevyrrowind bake` (every cooked mesh re-cooks once). Earlier TX-1 verdicts predate the fix.
+- Owner 2026-11-13 (view Balmora 12:00, full re-bake, packs mounted): normal maps on "obviously better" (confirmed on buildings/paving); landscape ROCK statics look wrong (matches `materials.live: ... 2602 normal map without tangents`; tx-tanfix queued); `flip normalmaps` does not reach terrain (terrain material not in map_ab; queued).
+- Owner 2026-11-15 (Balmora 08:00 after tx-tanfix, log `0 normal map without tangents`, was 2602): no shimmer on normal maps; rock look pending.
+- Owner 2026-11-15: landscape rocks "look right now". Status: confirmed.
+
+TX-1 | confirmed 2026-11-15 (rocks right after tx-tanfix, no shimmer) | [rendering](../visual-checks/rendering.md) | Normal maps from packs: relief under low sun / lamp light, no inverted bumps, no shimmer, no mirrored-UV seams (pack installed + re-bake; no A/B yet)
+
+## Closed 2026-11-15 from visual-checks/rendering.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### TX-4: PBR `_spec` ORM on statics (textures TS-2, 2026-11-13)
+- Kind: game location. Needs a fresh `bevyrrowind bake` with the packs mounted (log `texture profile: mvr-pbr -> wareya-pbr`,
+  no `texture profile warning`). Runs: `view "Balmora" --hour 12` (stone, wood, metal trim), then an armourer's interior
+  (e.g. `view "Balmora, Meldor: Armorer"`) for displayed armour and weapons. A/B: console `flip orm` (or `--off orm`; lab key M).
+- Look for: metal reads as metal (dark diffuse, coloured reflections); wood and stone stay matte, not plastic; crevices
+  darker under ambient (AO); no mirror-gloss everywhere (= a pack on the wrong profile); displayed armour the same up close
+  and a few metres away (matte close, metallic far = MVR metal-mip defect, repair quirk still off).
+- Not covered: worn armour/bodies on NPCs (actors bind no ORM yet), terrain.
+- Status: awaiting owner. Source: TS-2.
+- Owner 2026-11-15 (Balmora 12:00, `flip orm`): ORM looks fine outside. The run then crashed walking near a house (render-layer exhaustion, ROADMAP 1.1, not texture-related); armorer half re-launched as `view "Balmora, Meldor: Armorer"`.
+- Owner 2026-11-15 (Meldor: Armorer, `flip orm`): "something happens", but expected-metal items (iron helmet) barely change. Diagnosis (orchestrator, top-mip decode of the pack files): our path is right (factors 1.0, R metal -> B), but MVR PBR v2 Beta has metalness 0 on every pixel in 3384 of its 3390 `_spec` files (iron helm00_00/01/03, steel battleaxe and greaves, `tx_dwrv_metal00` all R = 0; only 6 sword grip/quillon/club textures carry metal). So ORM only changes roughness + AO; pack metal is absent. Comparison: `TX_W_Broadsword_grip`, `tx_w_claymore_grip`, `TX_W_club_daedric_00`. Status: pipeline confirmed; metal look waits on owner (another pack, or a bake-time metal profile).
+- Owner 2026-11-15: "fine, move on": a pack without metal data is the pack's problem; what matters is that the pipeline offers it. Status: confirmed.
+
+TX-4 | confirmed 2026-11-15 (pipeline OK; MVR pack carries metal in 6 of 3390 `_spec` files, accepted) | [rendering](../visual-checks/rendering.md) | PBR `_spec` ORM on statics: metal reads as metal, wood/stone matte, AO in crevices, no mirror-gloss everywhere (TS-2; packs on `wareya-pbr`)
+
+## Closed 2026-11-15 from visual-checks/rendering.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### TX-3a: Load-time texture size cap (textures S1, 2026-11-13)
+- Kind: game location, A/B by restart. Needs the 2K packs mounted (`mvr-pbr`, `tamrielic-pbr-west-gash`) and a current bake.
+  Runs: `view "Balmora" --hour 12` (High: cap 2048 = packs at full res), then the same with `--texture-cap 512` (Low's cap,
+  nothing else changed), optionally `--quality low`. Stand close (1-2 m) to a pack-textured wall and the paving.
+- Look for: High looks as before (full res); 512 visibly softer up close, same at distance; no texture missing, black, pink
+  or blocky-garbled, normal maps still bumping the right way, no sampler/tiling change.
+- Log: `texture.cap: 2048 px, N ktx2 loaded, M capped, ...` (High: M ≈ only >2K files; 512: M large, MiB skipped > 0); one
+  expected startup `warn!` `Duplicate AssetLoader preregistered ... ["ktx2"]`, no `ktx2 cap:` load errors.
+- Status: awaiting owner. Source: textures S1.
+- Owner 2026-11-15 (Balmora 12:00, High then `--texture-cap 512`): "that's good". Log High: `texture.cap: 2048 px, 1114 ktx2 loaded, 8 capped, 692.2 MiB loaded, 18.0 MiB skipped`; 512: `texture.cap: 512 px, 1803 ktx2 loaded, 1067 capped, 0 uncappable, 198.6 MiB loaded, 762.4 MiB skipped`. Status: confirmed.
+
+TX-3a | confirmed 2026-11-15 | [rendering](../visual-checks/rendering.md) | Load-time texture size cap: High = full res, `--texture-cap 512` visibly softer up close, nothing missing/black/pink (S1; `texture.cap:` line)
+
+## Closed 2026-11-15 from visual-checks/weather-sky.md (owner verdicts up to 2026-11-13; index line kept under each entry)
+
+### FG-1: Volumetric fog black bands on fast turns (owner report)
+- Kind: game location: fog lit by lamps at night (owner shot `Desktop/shadow fog.jpg`: giant-mushroom/cave area,
+  21:15, fog). Turn the camera fast left or right.
+- Seen by owner 2026-10-20: dark vertical bands in the lit fog during fast yaw. Repro history (renderfix1, froxel
+  history, lamp-range edge, sun cascades) is in `archive/visual-checks-closed.md`, "FG-1 history".
+- Status: not reproduced 2026-10-21 (owner, Sadrith Mora 21:15 foggy): fog code unchanged since the report; the sun
+  cascades changed in shadow reset A2/B3, likely the fix. Reopen if seen.
+- Owner 2026-11-15 (`view "Sadrith Mora" --hour 21.25 --weather foggy`, fast turns in lamp-lit fog): no black bands. Status: confirmed fixed (closed).
+
+FG-1 | confirmed 2026-11-15 (no bands in Sadrith Mora fog at night) | [weather-sky](../visual-checks/weather-sky.md) | Volumetric fog black bands on fast turns

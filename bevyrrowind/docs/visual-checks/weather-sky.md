@@ -9,14 +9,6 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 (`before_*`, `after_*`, `north_1830_on/off.png`). Cost measured +2.5 ms at
 1440p (over budget; being cut).
 
-### FG-1: Volumetric fog black bands on fast turns (owner report)
-- Kind: game location: fog lit by lamps at night (owner shot `Desktop/shadow fog.jpg`: giant-mushroom/cave area,
-  21:15, fog). Turn the camera fast left or right.
-- Seen by owner 2026-10-20: dark vertical bands in the lit fog during fast yaw. Repro history (renderfix1, froxel
-  history, lamp-range edge, sun cascades) is in `archive/visual-checks-closed.md`, "FG-1 history".
-- Status: not reproduced 2026-10-21 (owner, Sadrith Mora 21:15 foggy): fog code unchanged since the report; the sun
-  cascades changed in shadow reset A2/B3, likely the fix. Reopen if seen.
-
 ## Sky (superfargoth `sky-lighting.md`)
 
 ### SK-2: Night and moon
@@ -61,6 +53,7 @@ silently disabled), and the sun is fully hidden behind thick cloud.
 - Status: deferred 2026-10-19 (phase0): recheck after the Phase 1 night brightness fix (LT-1 rejected).
   texture at day 168, Secunda half-lit at 162; at dusk (`ns-dusk-stars`) Masser shows pale against the twilight.
 - Source: nightsky.
+- Owner 2026-11-15 (repeated, also RO-16 2026-11-06): the white moon (Secunda) is still never visible. Undeferred: known bug, cause not diagnosed.
 
 ### NS-4: No red streaks at night (`scene ns-night-clear`, `scene lt-torch-shadows`)
 - Kind: game location. Bug: with `--clouds clear` red/pink streaks crossed every Balmora night sky. Cause: the cirrus
@@ -111,15 +104,6 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Owner 2026-11-11: also clouds. Flying high, a cloud between the camera and the ocean does not show (same family, H3).
 - Status: known bug: not diagnosed (owner pass 2026-10-30).
 
-### WE-8: Rain leans with the wind, capped, turning slowly (rain-slant, weather/wind.md "Precipitation tilt as built")
-- Kind: game location. Run: `.\bevyrrowind view "Balmora" --hour 12 --weather rain`, then `--weather thunderstorm`
-  (free camera, look across a street at the rain against a wall and the sky; wait a minute or two).
-- Look for: rain near vertical in light wind (about 9-15° in Rain, up to ~25° in a thunderstorm, never steeper);
-  the lean direction turns slowly (over a minute or two, no swinging); trees bend the same way the rain leans;
-  the rain-under-roofs shelter follows the lean. Ash storms still blow near flat (uncapped).
-- A/B: console (backquote) `flip rain_slant_cap`: off = the old raw lean (21-44°, turns with every wind change).
-- Status: confirmed (owner 2026-11-06: "rain slant works").
-
 ### WE-9: Forced fog and rain seem to go away at night (owner 2026-11-06, long-standing)
 - Seen: forced Foggy is dense by day but "see super far" after ~21:00; a forced Thunderstorm stops at "23.50" and comes back at ~7:00.
 - Cause 1 (rain stopping, all forces made with C/BRP): the `]`/`[` hour keys (`live_ab.rs` ~487) and BRP `set hour` (`remote.rs` ~191)
@@ -152,47 +136,12 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Owner 2026-11-06 (ash, north): shimmer still there with fix 1; the region storm's cloud/rain still not drawn over the water (WE-7).
 - Status: fix 1 failed; slices 2-3 (far rain shaped by clouds, deck edges) wait for the owner.
 
-### WE-11: Weather covers water like land (W-ORDER, render-order.md "Frame graph"; fixes WE-7, WE-10 over sea)
-- Kind: game location. `bash bevyrrowind/tools/owner_launch.sh view "Seyda Neen" --hour 9 --weather foggy`, then
-  `--weather rain` and `--weather thunderstorm`; face the open sea (south-west, off the dock), still camera, then pan.
-  High-up clouds: same `--weather rain`, free camera up ~300 m over the sea. A/B per effect: `--off fog`, `--off froxels`, `--off clouds`.
-- Look for: fog thickening over the far sea as over land (no clear band at the horizon); the far rain curtain and storm
-  continuing over water instead of stopping at the shore; from high up, a cloud between camera and ocean shows.
-- Must not: water looking double-fogged (milkier/greyer than the land beside it); a halo or seam at the shoreline;
-  refraction of the seabed and shore foam changed; stars drawn over water at night (`--hour 23 --weather clear`).
-- Status: confirmed (owner 2026-11-12: fog over the water (`scene fg-bittercoast-ridge`); thunderstorm at Seyda Neen: fog,
-  rain and lightning flashes carry on over the sea; clouds right seen from up at sea). Follow-up wish (later): show the
-  lightning bolt itself, not only the flash.
-
-### FG-7: Blocky crenellated edges on distant land in fog (owner report)
-- Kind: game location. Seen 2026-10-30 (`scene balmora`): stair-stepped land silhouettes in fog, worse moving.
-- Cause (2026-11-12, code): the half-res bank modulation is marched to the furthest depth of each trace window, so
-  land pixels at a silhouette took the sky's value; open/cut flips under jitter dropped history (grid steps). Not froxels.
-- Fix FOG-BANK (2026-11-12): bank at the window's nearest and furthest depth, blended per pixel by depth (fog.md
-  "Depth-aware bank"). Run: `bash bevyrrowind/tools/owner_launch.sh scene fg-bittercoast-ridge` (6:30, foggy, 160 m up),
-  then `scene balmora --weather foggy --hour 6.5`; still, then pan and walk. A/B: same with `--off fogbank`.
-- Look for: land and hill silhouettes in fog smooth, no stair steps still or moving, no bright/dark halo along them,
-  fog density and bank shapes unchanged elsewhere. `--off fogbank` should show the old steps.
-- Status: confirmed (owner 2026-11-12, `scene fg-bittercoast-ridge`: blockiness gone).
-
 ### FG-8: Weather fog vanishes at night (owner report)
 - Kind: game location. Foggy weathers (fog, overcast, ash), compare 20:00 and 01:00 (`--hour`).
 - Seen 2026-10-30: in some weathers the fog seems to disappear at night.
 - Suspect (not tested): fog in-scatter scales with sun/moon light, so at night it goes dark and reads as no fog;
   the extinction (distance hiding) should stay.
 - Status: known bug: not diagnosed (owner pass 2026-10-30).
-
-### FG-9: Vertical light pillar toward a low sun in fog (owner report)
-- Kind: game location. `view "Balmora" --hour 6.25 --weather foggy` (any fog, sun near the horizon), face the sun.
-- Seen 2026-11-02: instead of shafts from the sun, a vertical pillar of light in front of the camera, from below the
-  ground into the sky, that follows the camera. `flip terrain_far_shadows` / `clouds` / `sun_shadows`: no change.
-- Cause: the fog's sky fill was per view *azimuth* (sky at 0.05 rad elevation + zenith), added at every pitch: a low
-  sun's aureole lit a vertical column. Fixed 2026-11-02 (fg9-fog): one isotropic fill, the sky dome's mean radiance
-  (SH L0, as UE/Frostbite volumetric fog), for froxels and far fog alike (fog.md "clouds_fog_light").
-- Run: `powershell -File tools/run_dev.ps1 view "Balmora" --hour 6.25 --weather foggy`, face the sun, pitch up/down.
-- Look for: no pillar; the glow toward the sun is a round forward lobe (key light HG) that stays centred on the sun,
-  not a column; fog brightness even all around (no seam at ~384 m, the froxel range); also noon and 19:00.
-- Status: confirmed (owner 2026-11-02: no pillar). God rays still not visible: FG-10.
 
 ### FG-10: No visible god rays at sunrise in fog (owner report)
 - Kind: game location. `view "Balmora" --hour 6.25 --weather foggy` (also `--weather clear`), face the low sun with
@@ -201,28 +150,6 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   is built (`froxel_inject.wesl:156-165`, fog.md "Froxel fog as built"). Suspects (not tested): froxel slices too
   coarse at 160x90x64 / 384 m, in-scatter too weak against the fog's ambient, shadow term not reaching the froxels.
 - Status: known bug: not diagnosed (owner pass 2026-11-02).
-
-### FG-11: Froxel fog stays smooth over near objects (FOG-CLAMP, part of WE-10 shimmer)
-- Kind: game location. Fix FOG-CLAMP (2026-11-12): froxel history clipped to this frame's 3x3 neighbourhood,
-  weight 0.9 -> 0.95 (fog.md "Froxel history clip as built").
-- Run: `bash bevyrrowind/tools/owner_launch.sh scene balmora --weather foggy --hour 6.5`; hold still 5 s on houses and
-  hills 50-300 m away, then pan slowly, turn fast, and watch NPCs walking past. A/B: same with `--off fogclamp`.
-- Look for: fog over near buildings and land smooth, no crawling grain still or panning; no ghost trails behind
-  moving NPCs or their shadows, none on fast turns; no black bands (FG-1); fog density/colour as before.
-  `--off fogclamp` should crawl more when still.
-- Status: confirmed (owner 2026-11-12, `scene balmora --weather foggy --hour 6.5`: "the fog is glorious"; `--off fogclamp` A/B not run).
-
-### SW-2: Surface weather shelter, night and trees (surface-weather.md W2, W2b)
-- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 23 --weather clear` (night: no
-  sun shadows); console (`` ` ``): `surface debug exposure`, `surface set wet 1`, later `surface debug cells`, `surface debug off`.
-- Look for (exposure, night): open ground warm yellow; under roofs, eaves and the bridge arches deep blue (full shelter);
-  under tree canopies and bushes only partly blue (about 60% held back, leafy gaps lighter); slopes not self-shadowed;
-  walk 20 m: the tint redraws (no stale map from the last daylight), no pop, fades to yellow ~64 m out.
-- With `surface debug off` + wet 1: ground under trees visibly wet but less than open ground; under roofs dry.
-- Cells: grey 32 m squares, dark borders, fixed as you walk; blue after wet; purple only past ~2 km.
-- A/B: same run with `--off shelter`: everything open (yellow), soaked everywhere. Repeat at `--hour 12`: same result.
-- Owner 2026-11-05 (rain, noon): failed, all yellow even under Vivec's arches (W2b anchor views drew layer 0 only; statics
-  sit on the worldspace layer, so `queue_shadows` dropped every caster). Status: confirmed (owner 2026-11-06, after the render-layer fix).
 
 ### SW-7: Kick-up puffs in snow and ash (surface-weather.md W7)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`, console
@@ -286,52 +213,6 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   toward a tree in snow, the ground under its leaves suddenly turns bare and depressed; step back and it suddenly refills.
   Status: resets failed (not fixed; see SW-6).
 
-### SW-4: Puddles in rain and after (surface-weather.md W4)
-- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather rain`; console:
-  `surface set wet 1`, `surface set puddle 1` (full), `surface set puddle 0.5` (drying), `surface clear`. C: next weather.
-- Look for: puddles in street hollows and on flat paving/floors, edges following dark grout and low spots (soft);
-  flat, mirror-like water reflecting the sky; none on slopes or walls, none under roofs/arches, smaller under trees.
-- Rain rings while it rains (denser in heavier rain); still water at once when the rain stops (C to a clear weather).
-- At puddle 0.5 the puddles shrink from their edges. No shimmer on distant puddles; no rings on characters or far proxies.
-- A/B: same run with `--off puddles`: the W3 wet look only, no standing water. Low preset: no puddles.
-- Re-check (fix 2026-11-05): no puddles on slopes (street ramps, hill roads, stair ramps, slope feet); level ground and
-  flat paving/floors still hold water. Confirmed 2026-11-05 ("puddles are good now").
-- Retune 2026-11-06 (owner: faster, a bit more lenient): slope ramp none from 6°, full from 3° (was 4°/2°); puddles start
-  at wet 0.7 (was 0.9) and fill at 1.25/h × rain (was 0.5): full ~70 game min (~2.5 real min) from dry ground, was ~2.5 h. Look for: puddles
-  within one shower, gentle street slopes hold some, ramps still dry. Status: confirmed (owner 2026-11-06).
-
-### SW-3: Wetness after rain (surface-weather.md W3)
-- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen" --hour 10 --weather clear`; console:
-  `surface set wet 1` (soaked), `surface set wet 0.5` (drying), `surface clear` (dry). A/B: same run with `--off wet`.
-- Look for: ground, roads, plaster and wood darker and a little richer in colour, glossier (sun and sky highlights);
-  smooth stone and metal get a sharp water sheen; normal-map detail softens under the film (no faceting, no noise).
-- Under roofs, eaves, the dock's deck and tree canopies stays dry (soft edge ~0.75 m); `surface debug exposure` now
-  tints statics too. Walls: vertical streaks, less wet than the ground; undersides dry.
-- At 0.5: patchy drying (metre-scale patches), no tiling visible. Characters stay dry (W8). Far proxies darken a bit.
-- `surface debug porosity`: metal and polish black, stone, earth, plaster white. `--off wet`: exactly the dry look.
-- Status: awaiting owner (built 2026-11-05).
-
-### WE-12: From very high, the lower part of the clouds disappears (owner 2026-11-12)
-- Kind: game location. Seen in `scene fg-bittercoast-ridge` after flying far above the cloud deck (after W-ORDER).
-- Seen: high enough, the bottom of the clouds vanishes, as if clouds draw only against the sky. Re-seen 2026-11-12
-  flying up into the cloud layer and trying to enter the clouds: their bottom part is missing. Clouds seen from up at sea
-  (below the deck) are fine, so it is not WE-11's high-cloud item. Owner's precise case: deck at ~500 m, camera at
-  ~600 m looking down: the cloud between the camera and the terrain/fog/objects behind it is not drawn; from below it
-  is perfect. Flying into clouds is not a game feature, but very low clouds (and a volcano smoke plume, WISHLIST §5)
-  would hit the same path.
-- Suspect (not tested): the cloud march assumes a camera below or inside the deck, or stops at geometry depth when looking
-  down, or at the deck's entry point.
-- Cause (2026-11-12, WE12-DIAG, code): the composite applies the fog of the pixel's whole column over the cloud, so
-  the dense low fog and banks *behind* the cloud hide it from above (`cloud_composite.wesl:112-135`). Fix: WE12-FIX.
-- Fix WE12-FIX (2026-11-12): only the fog in front of the clouds dims them, the rest lies behind (UE5/Frostbite);
-  far rain/fog under the deck now draws behind it when seen from above. Run
-  `bash bevyrrowind/tools/owner_launch.sh scene fg-bittercoast-ridge`, fly ~100 m above the deck and look down at the
-  cloud tops against the foggy ground, then fly down into the deck. Look for: the deck's full body visible over the
-  terrain/fog from above, and its bottom still drawn when inside. A/B `--off cloudfog` (old: the bottom vanishes).
-  Must not: the at-sea deck seen from below changed (horizon clouds may be slightly clearer: less fog past them,
-  expected), the FG-11/FG-7 fog looks changed, a bright or dark halo at cloud silhouettes against terrain.
-- Status: confirmed (owner 2026-11-12, `scene fg-bittercoast-ridge`: "works perfectly"; `--off cloudfog` A/B not run).
-
 ### WE-13: Local storm seen from outside (CW-1, distant-weather.md "CW-1 Storm shape"; follows WE-10)
 - Kind: game location. `bash bevyrrowind/tools/owner_launch.sh scene we3-ridge`, then BRP `bevyrrowind/set {"weather":
   "thunderstorm", "region": "Ascadian Isles Region", "transition_hours": 0}` (look east/south-east) and `"ashstorm"` in
@@ -353,16 +234,6 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   then walk slowly into the storm and back out. Look for: the rain fading in smoothly as you walk in, no on/off threshold,
   as smooth as `--off stormshape`; from outside, a curtain clearly visible and meeting the cloud base (no gap of sky
   between rain top and cloud); dry gaps still where the deck is thin. Status: confirmed with follow-up (owner 2026-11-13, we3-ridge thunderstorm: rain transition smooth walking in, the curtain is visible now, shimmer of objects behind the curtain much better with some left (later)).
-
-### WE-14: Stable cloud silhouettes (S1, clouds.md "Stable silhouette history"; follows WE-10, WE-13 horizon shimmer)
-- Scene: `scene we3-ridge` at 14:00, clear-to-cloudy weather; then Seyda Neen rooftops against cloud. Still camera, then a
-  slow pan. A/B: relaunch with `--off cloudedge` (old trace window on the traced pixel, raw sample on a history miss).
-- Look at: the horizon line where no fog is behind it, and any ridge, rooftop or tree silhouette against cloud.
-- Look for: no shimmering 1-2 px strip along the horizon or along silhouettes, still or panning; clouds near silhouettes
-  as calm as the open sky.
-- Must not: a halo or sky bleeding past silhouettes (bright cloud/sky fringe on the land side); FG-7 (fog behind ridges)
-  or WE-12 (deck from above, fog split) looking changed.
-- Status: confirmed (owner 2026-11-13, `scene we3-ridge` 14:00: "no shimmering whatsoever"; `--off cloudedge` A/B not run).
 
 ### WE-15: Storm cloud shape (S3, clouds.md "Storm cloud shape"; follows WE-13 "cylinder")
 - Scene: `scene we3-ridge` at 14:00, then BRP `bevyrrowind/set {"weather":"thunderstorm","region":"Ascadian Isles Region",

@@ -6,40 +6,6 @@ Open visual checks: physics, ragdolls, carry/drag (PH-*). Index and how-to: [`..
 
 PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH-2 (first half, P7) and PH-4 (carry) are below.
 
-### PH-2 (first half, P7): a dead guard ragdolls on the Balmora stairs
-- Note 2026-10-25: `sf_ragdoll` tests `limp_drop` and `settles_on_stairs` fail on their stretch limit (pre-existing).
-  After this check they become sanity guards + printed measurements (CONTRIBUTING.md "Tests and visual checks").
-- Kind: game location. Run: `.\bevyrrowind view "Balmora"` (release, physics on), fly (free camera) to a guard on
-  the stone stairs (the High Town steps up to the Council Club / Hlaalu manor), put the crosshair on him and press
-  `I`. He plays his death clip for 0.4 s, then goes limp. Then hold LMB on a hand or foot to drag the body (a 75 kg
-  corpse is a drag at the default Strength 50: the camera slows), release to drop.
-- What to look for: the clip-to-ragdoll cut is not a pop (velocities carry over); the body tumbles or slumps down the
-  steps without exploding, jittering or sinking into them, then rests within a few seconds; limbs bend the natural
-  way (knees back, elbows forward) and stay attached (the log's `ragdoll: joint stretch peak` stays under 1 cm);
-  the dragged corpse follows by the grabbed limb. Creatures too (a guar, a cliff racer: `I` on them).
-- Press F7 + G to see the skinned-mesh wireframe (yellow) over the ragdoll capsules (orange) and joints (magenta):
-  the mesh must follow the bodies (heads are not drawn: morph-target meshes crash Bevy's wireframe pass). Both keys are in the F1 overlay.
-- Known (P8): no powered crumple yet (the clip cuts to limp); the character root stays where it died (a corpse
-  dragged far can be culled early); corpses don't persist across cell unloads; creature masses are volume
-  estimates (a guar is 1 t: too heavy to drag).
-- Agent run 2026-10-18 (p9fin, release, `scene wk-balmora`, no keyboard):
-  `$env:BEVYRROWIND_AUTO="kill_nearest@3,shot:shots/p9/kill.png@4.5,exit@8"`. Log: `ragdoll: killed ...
-  (meshes/base_anim.nif)`, 1 spawned, 0 failed; joint stretch peak 1.4–2.1 cm (over the 1 cm target: open, P8b).
-  Sanity shot `shots/p9/kill.png`. Not on the stairs (wk-balmora's camera); creatures not run.
-- **Lead (owner 2026-10-19, round 11, with `G` collider view):** the ragdoll's physics capsules behave normally when hit; it's the skinned mesh that doesn't follow them. So the solver is fine and the bug is the pose write-back (bodies → bones: bone/body offset, local vs world frame, or the floating-origin offset), which would explain sinking, floating, spinning and the odd joint angles.
-- Earlier status: rejected by owner 2026-10-19 (round 10): ragdolls very bad: most bodies sink into the ground, float and turn around; joints look unconstrained (unnatural angles); they don't explode. Drag doesn't match the expected Oblivion-style hold/drag UX (later). Phase 3.
-- **R0 fix (anim-refactor, 2026-10-22):** the clip's root still placed the mesh (joints above the pelvis body had physics
-  weight 0, and root motion kept moving the frame); non-uniform race build scale skewed lying limbs; foot placement
-  bent ragdoll legs. Headless test now holds every bone on its body within 0.1 mm while the frame moves, yaws and
-  rebases (`sf_physics_bevy` `bones_follow_bodies_*`). Not checked live by the agent.
-- Re-check: `scene level-anim-drop` (AL-6), press `G`: the mesh sits inside the capsules during the fall, the knockdown
-  and at rest (no sinking, floating or spinning; limbs follow their capsules); `I` on the walker, then on a Balmora
-  guard on the stairs as above. Expect a slight width change at death on races whose build ≠ height (uniform scale
-  while ragdolled, restored at get-up). Status: **awaiting owner**.
-- Owner 2026-10-30: no explosion and the death clip plays, but this clip-then-limp ragdoll path is deprecated: deaths
-  and knockdowns use the delirium system from now on, so this check is retired. Dragging is too hard and works badly
-  (later). Bug seen: `I` in third person kills the player (the crosshair ray hits the player) and also opens the
-  inventory (key clash): logged as PH-14. Status: retired (superseded by delirium).
 
 ### PH-7: Item body shapes (`body.cook`)
 - Kind: game location. Run: `.\bevyrrowind scene ph-tradehouse-items` (Arrille's Tradehouse with `--physics-debug`;
@@ -157,38 +123,7 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
 - Look for (once fixed): everyone stands on the floor from the first visible frame after the fade.
 - Status: known bug (owner pass 2026-10-30).
 
-### PH-14: Dev kill key `I` kills the player in third person and opens the inventory (owner report)
-- Kind: game location, dev build. Third person, crosshair on an NPC, `I`.
-- Seen 2026-10-30: the player dies (the crosshair ray starts behind the player and hits its own body first) and the
-  inventory opens too (`I` is also the inventory key).
-- Fixed 2026-11-05 (delirium-death): the `I` key is gone; the console's `kill` replaces it and only targets walkers
-  (never the player or the training dummy). Status: fixed, awaiting owner (check with PH-16).
 
-### PH-15: Knockdowns of human NPCs are Delirium falls (owner 2026-10-30/11-05: the old ragdoll still played)
-- Kind: level + game location, default build (`delirium` on). `cargo build -p bevyrrowind --features dev`, then
-  `powershell -File tools/run_dev.ps1 scene level-anim-idles` (Llathyno, idle-5: 25 N·s every 12 s; `level-anim-drop`: 10 s).
-- Also: F11 free camera, `V` balls (15 N·s at full throw) at a Dunmer/Breton walker, then at Ajira, Huleeya and the guar.
-- Look for: a human NPC hit goes down under Delirium (`catchFall`: hands out, no pop from the clip), lies still, rolls
-  if needed, gets up and goes back to its idle or path. Ajira/Huleeya/guar keep the old clip + powered-ragdoll knockdown.
-- Log: `knockdown: <e> taken over by the physics layer`, `delirium: took over ... with catchFall`, `handed back (Fallen)`;
-  beasts/creatures `ragdoll: knocked down`. A/B: `--no-default-features` build = old ragdoll for everyone.
-- Status: awaiting owner (delirium-knockdown, 2026-11-05).
-- Fix 2026-11-05 (delirium-hits; owner: "push them in the direction, as the click did"): hits are pushes with the balancer
-  on, no forced fall: a `V` ball (up to 36 N·s head-on) staggers the NPC 0.3-0.5 m along the ball's path with a catch
-  step, then it blends back to its idle; a second ball on a staggering or lying NPC pushes it again. Only 100+ N·s
-  falls for sure (after 0.3 s of push). Log: `hit: <e> taken by the physics layer`, `took over ... with bodyBalance`,
-  `recovered, blending out`. Same feel as the F11 click (Ctrl 20 / plain 45 N·s). Status: awaiting owner.
-- Owner 2026-11-05: confirmed (hits push along their direction). Follow-ups: fall threshold should scale with the
-  character's strength (stats); bodies sink into bent knees on takeover and rise at hand-back; balls pass through arms
-  outside the capsule (hurt shapes, C4). Status: confirmed with follow-ups.
-- Fix 2026-11-05 (knee-sink): the balancer now stands at the takeover pose's leg extension. Delirium counted the actor's
-  scale twice (x0.9 stood 9 cm low, 45 deg more knee; x0.95 5 cm; x1.0 1 cm), now 0.4-0.8 cm and 5-10 deg at every scale.
-  Check: `scene level-anim-idles`, F11, small `V` balls (or a Ctrl click) at Fargoth, Llathyno and a Breton/Dunmer woman:
-  no knee sink as Delirium takes over, no rise as it blends back to the idle. Status: awaiting owner.
-- Fix 2026-11-05 (shapes-s3, character-shapes S3): a held body has kinematic proxies (Delirium's 21 parts) that balls hit.
-  Check: `scene level-anim-idles`, F11, rapid `V` balls at a staggering, then a lying NPC: each ball bounces off the limb
-  it hits and pushes the body again (no ball through it); after the hand-back balls hit the capsule as before. Log:
-  `hit: <e> taken by the physics layer (... N·s, held)` once per ball. Status: awaiting owner.
 
 ### PH-16: A killed human NPC falls and stays dead under Delirium (owner 2026-10-30: replaces clip + limp ragdoll)
 - Kind: level, default build (`delirium` on). `cargo build -p bevyrrowind --features dev`, then
