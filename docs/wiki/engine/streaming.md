@@ -74,6 +74,7 @@ stale instance offsets in 0.20).
 - Spawn and origin-shift frames spike the render thread, range-slot pressure: [ledger/streaming.md](../../ledger/streaming.md).
 - Entity count of near statics without precombine: [ledger/statics.md](../../ledger/statics.md).
 - Frame cost: [ledger/perf.md](../../ledger/perf.md).
+- **Crash (logged 2026-11-15, not fixed):** worldspace render-layer pairs (`sf_world_bevy/src/worldspace.rs` `allocate_layer`) are never freed; after ~31 loaded worldspaces (interiors prefetched behind doors, e.g. walking past Balmora houses) `RenderLayers::layer(n >= 64)` panics. ROADMAP 1.1.
 
 ## Specs
 
