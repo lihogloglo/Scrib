@@ -3,7 +3,7 @@
 //! The framework side is `sf_sky_bevy` (`RenderPathSetting`,
 //! `UpscalingSetting`); spec `superfargoth/docs/specs/sky-lighting.md`.
 
-use bevy_app::{App, Last, Update};
+use bevy_app::{App, Last, PostUpdate, Update};
 use bevy_camera::visibility::InheritedVisibility;
 use bevy_camera::{Camera, Camera3d, Exposure};
 use bevy_ecs::prelude::*;
@@ -17,6 +17,21 @@ use sf_sky_bevy::{PointShadowBudget, SkyRenderOptions, UpscalingSetting};
 
 /// Default for `--point-shadows` (perf A/B: `--env BEVYRROWIND_POINT_SHADOWS=0`).
 const ENV_POINT_SHADOWS: &str = "BEVYRROWIND_POINT_SHADOWS";
+
+/// `1`: the lamp shadow budget's contrast gate (`sf_sky_bevy::ShadowContrastGate`, ROADMAP 1.23b):
+/// outdoors, lamps whose shadow the sun and ambient would drown get no cube map. Opt-in until its
+/// interleaved A/B (perf arm `--env BEVYRROWIND_LAMP_DAY_GATE=1`).
+const ENV_LAMP_DAY_GATE: &str = "BEVYRROWIND_LAMP_DAY_GATE";
+
+/// `1`: lamp shadow cube faces that no camera sees a receiver of are not drawn (vendored
+/// `bevy_pbr::PointShadowFaceCull`, ROADMAP 1.25 CW-3b). Opt-in until its interleaved A/B
+/// (perf arm `--env BEVYRROWIND_POINT_FACE_CULL=1`).
+const ENV_POINT_FACE_CULL: &str = "BEVYRROWIND_POINT_FACE_CULL";
+
+/// `1`: the sun/moon shadow gate (`sf_sky_bevy::SunShadowGating`, ROADMAP 1.25 CW-8): their cascades
+/// fade out and turn off where the sky's fill drowns their direct light. Opt-in until its interleaved
+/// A/B (perf arm `--env BEVYRROWIND_SUN_SHADOW_GATE=1`).
+const ENV_SUN_SHADOW_GATE: &str = "BEVYRROWIND_SUN_SHADOW_GATE";
 
 /// Default for `--sun-cascades` (perf A/B: `--env BEVYRROWIND_SUN_CASCADES=3:150`).
 const ENV_SUN_CASCADES: &str = "BEVYRROWIND_SUN_CASCADES";
@@ -76,6 +91,14 @@ pub struct RenderSettings {
     /// Sun cascades `(count, last bound m)` instead of the preset's
     /// (`--sun-cascades`, else `BEVYRROWIND_SUN_CASCADES`).
     pub sun_cascades: Option<(usize, f32)>,
+    /// The lamp shadow budget's contrast gate (`BEVYRROWIND_LAMP_DAY_GATE=1`; off by default).
+    pub lamp_day_gate: bool,
+    /// Lamp cube faces no camera sees a receiver of are not drawn
+    /// (`BEVYRROWIND_POINT_FACE_CULL=1`; off by default; `bevy_pbr::PointShadowFaceCull`).
+    pub point_face_cull: bool,
+    /// Sun/moon cascades follow their direct light's visible contribution
+    /// (`BEVYRROWIND_SUN_SHADOW_GATE=1`; off by default; `sf_sky_bevy::SunShadowGating`).
+    pub sun_shadow_gate: bool,
 }
 
 /// `N:M`: `N` sun cascades out to `M` meters.
@@ -109,7 +132,23 @@ impl RenderSettings {
         let path = if ray_traced { RenderPath::RayTraced } else { RenderPath::Raster };
         let point_shadows = std::env::var(ENV_POINT_SHADOWS).ok().and_then(|v| v.trim().parse().ok());
         let sun_cascades = std::env::var(ENV_SUN_CASCADES).ok().and_then(|v| parse_sun_cascades(&v).ok());
-        Ok(Self { path, upscaling, denoiser, point_shadows, shadow_cache: true, mover_shadows: true, cascade_encoders: true, cascade_hold: true, sun_cascades })
+        let lamp_day_gate = std::env::var(ENV_LAMP_DAY_GATE).is_ok_and(|v| v.trim() == "1");
+        let point_face_cull = std::env::var(ENV_POINT_FACE_CULL).is_ok_and(|v| v.trim() == "1");
+        let sun_shadow_gate = std::env::var(ENV_SUN_SHADOW_GATE).is_ok_and(|v| v.trim() == "1");
+        Ok(Self {
+            path,
+            upscaling,
+            denoiser,
+            point_shadows,
+            shadow_cache: true,
+            mover_shadows: true,
+            cascade_encoders: true,
+            cascade_hold: true,
+            sun_cascades,
+            lamp_day_gate,
+            point_face_cull,
+            sun_shadow_gate,
+        })
     }
 
     /// Whether the view needs the sky plugin's render-path management.
@@ -187,10 +226,19 @@ impl RenderSettings {
     }
 
     /// The point-light shadow budget: the override's count, else the
-    /// preset's `(count, face size)`.
+    /// preset's `(count, face size)`; the contrast gate on with `BEVYRROWIND_LAMP_DAY_GATE=1`
+    /// (its thresholds the framework's tunable defaults).
     pub fn point_shadow_budget(self, preset: (usize, usize)) -> PointShadowBudget {
         let (fade_start, fade_end) = LAMP_SHADOW_FADE;
-        PointShadowBudget { max: self.point_shadows.unwrap_or(preset.0), map_size: preset.1, fade_start, fade_end, ..PointShadowBudget::default() }
+        let contrast_gate = sf_sky_bevy::ShadowContrastGate { enabled: self.lamp_day_gate, ..Default::default() };
+        PointShadowBudget { max: self.point_shadows.unwrap_or(preset.0), map_size: preset.1, fade_start, fade_end, contrast_gate, ..PointShadowBudget::default() }
+    }
+
+    /// `BEVYRROWIND_LAMP_DAY_GATE=1` from code (tests, A/B tools).
+    #[must_use]
+    pub fn with_lamp_day_gate(mut self, on: bool) -> Self {
+        self.lamp_day_gate = on;
+        self
     }
 
     /// Before the sky plugin: its settings resources.
@@ -198,6 +246,13 @@ impl RenderSettings {
         app.insert_resource(UpscalingSetting(self.upscaling));
         app.insert_resource(self.point_shadow_budget(POINT_SHADOWS_DEFAULT));
         app.insert_resource(bevy_pbr::ShadowMoverRefresh { per_frame: self.mover_shadows });
+        // CW-3b: the margin comes from the framework's tunable (`sf_sky_bevy`).
+        app.insert_resource(bevy_pbr::PointShadowFaceCull { enabled: self.point_face_cull, ..Default::default() });
+        // CW-8: the thresholds are the framework's tunables (`sf_sky::sun_gate`).
+        app.insert_resource(sf_sky_bevy::SunShadowGating(sf_sky_bevy::sf_sky::sun_gate::SunShadowGate {
+            enabled: self.sun_shadow_gate,
+            ..Default::default()
+        }));
         app.insert_resource(bevy_pbr::ShadowCascadeEncoders(self.cascade_encoders));
         app.insert_resource(sf_sky_bevy::SunCascadeHold(sf_sky_bevy::sf_sky::cascade_hold::CascadeHoldConfig {
             enabled: self.cascade_hold,
@@ -216,6 +271,7 @@ impl RenderSettings {
         }
 
         app.add_systems(Last, log_lighting_at_screenshot);
+        app.add_systems(PostUpdate, publish_sun_occlusion.after(sf_atmos_bevy::CloudSystems::Drive));
     }
 
     /// After the sky plugin (it inits `SkyRenderOptions`): the denoiser switch.
@@ -269,6 +325,23 @@ fn movable_characters(add: On<Add<sf_character_bevy::Character>>, mut commands: 
     commands.entity(add.entity).try_insert(sf_shadow_cache_bevy::ShadowMobility::Movable);
 }
 
+/// CW-8: the cloud shadow map's mean on the sun (`sf_atmos_bevy::mean_cloud_shadow`; 1 while the
+/// sun carries no light texture) for the sun/moon shadow gate (`sf_sky_bevy::SunLightOcclusion`):
+/// the map dims the sun's direct light but not the sky's fill. Glue here: the two framework crates
+/// don't depend on each other.
+#[allow(clippy::needless_pass_by_value)]
+fn publish_sun_occlusion(
+    clouds: Option<Res<sf_atmos_bevy::Clouds>>,
+    suns: Query<Has<bevy_light::DirectionalLightTexture>, With<sf_sky_bevy::SunLight>>,
+    occlusion: Option<ResMut<sf_sky_bevy::SunLightOcclusion>>,
+) {
+    let (Some(clouds), Some(mut occlusion)) = (clouds, occlusion) else { return };
+    let textured = suns.iter().any(|t| t);
+    let s = &clouds.settings;
+    let mean = if textured { sf_atmos_bevy::mean_cloud_shadow(s.weather.mean_cover(), s.look.shadow_strength) } else { 1.0 };
+    occlusion.set_if_neq(sf_sky_bevy::SunLightOcclusion(mean));
+}
+
 /// With every screenshot: the exposure and local-light state it was taken
 /// at (lighting job logs: EV100 per camera, the sky's, shadowed lights).
 fn log_lighting_at_screenshot(
@@ -277,6 +350,7 @@ fn log_lighting_at_screenshot(
     sky: Option<Res<sf_sky_bevy::CurrentSky>>,
     lights: Query<(&PointLight, &InheritedVisibility)>,
     budget: Option<Res<PointShadowBudget>>,
+    gate: Option<Res<sf_sky_bevy::SunShadowGateStats>>,
 ) {
     if shots.is_empty() {
         return;
@@ -289,6 +363,11 @@ fn log_lighting_at_screenshot(
     let lit = lights.iter().filter(|(_, v)| v.get()).count();
     let shadowed = lights.iter().filter(|(l, v)| v.get() && l.shadow_maps_enabled).count();
     let sky = sky.map_or_else(String::new, |s| format!(", sky EV100 {:.2} (sun {:.1} deg)", s.0.ev100, s.0.celestial.sun.elevation_deg()));
+    // CW-8: the sun/moon shadow gate (zero while off).
+    let sky = match gate.filter(|g| **g != sf_sky_bevy::SunShadowGateStats::default()) {
+        Some(g) => format!("{sky}, sun shadow contrast {:.3} strength {:.2}, moon {:.3} / {:.2}", g.sun_contrast, g.sun_strength, g.moon_contrast, g.moon_strength),
+        None => sky,
+    };
     info!(
         "lighting at screenshot: cameras [{}]{sky}; point lights {lit} shown, {shadowed} shadowed (budget {})",
         cams.join("; "),
@@ -331,6 +410,111 @@ mod tests {
         assert!(split.iter().all(|&s| s < bevy_pbr::PER_VIEW_SHADOW_ENCODERS));
         // Off: every cascade in system 0's one encoder, as stock Bevy.
         assert!((0..8).all(|i| bevy_pbr::per_view_shadow_encoder_slot(i, false) == 0));
+    }
+
+    /// ROADMAP 1.23b: the lamp contrast gate is off unless asked for; on, it keeps the framework's
+    /// thresholds and the lamp budget's other settings.
+    #[test]
+    fn lamp_day_gate_is_opt_in() {
+        let base = RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings");
+        assert!(!RenderSettings { lamp_day_gate: false, ..base }.point_shadow_budget(POINT_SHADOWS_DEFAULT).contrast_gate.enabled);
+        let off = base.with_lamp_day_gate(false).point_shadow_budget(POINT_SHADOWS_DEFAULT);
+        let on = base.with_lamp_day_gate(true).point_shadow_budget(POINT_SHADOWS_DEFAULT);
+        assert!(on.contrast_gate.enabled && !off.contrast_gate.enabled);
+        let defaults = sf_sky_bevy::ShadowContrastGate::default();
+        assert_eq!(on.contrast_gate, sf_sky_bevy::ShadowContrastGate { enabled: true, ..defaults });
+        assert_eq!(PointShadowBudget { contrast_gate: off.contrast_gate, ..on }, off);
+    }
+
+    /// CW-3b (ROADMAP 1.25): lamp face culling is off unless asked for; on, it keeps the default margin.
+    #[test]
+    fn point_face_cull_is_opt_in() {
+        for on in [false, true] {
+            let mut app = App::new();
+            let settings = RenderSettings { point_face_cull: on, ..RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings") }
+                .with_shadow_cache(false);
+            settings.insert(&mut app);
+            let cull = *app.world().get_resource::<bevy_pbr::PointShadowFaceCull>().expect("face cull settings");
+            assert_eq!(cull, bevy_pbr::PointShadowFaceCull { enabled: on, ..Default::default() });
+        }
+        assert!(!bevy_pbr::PointShadowFaceCull::default().enabled);
+    }
+
+    /// CW-8 (ROADMAP 1.25): the sun/moon shadow gate is off unless asked for; on, it keeps the
+    /// framework's thresholds.
+    #[test]
+    fn sun_shadow_gate_is_opt_in() {
+        use sf_sky_bevy::sf_sky::sun_gate::SunShadowGate;
+        for on in [false, true] {
+            let mut app = App::new();
+            let settings = RenderSettings { sun_shadow_gate: on, ..RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings") }
+                .with_shadow_cache(false);
+            settings.insert(&mut app);
+            let gate = app.world().get_resource::<sf_sky_bevy::SunShadowGating>().expect("gate settings").0;
+            assert_eq!(gate, SunShadowGate { enabled: on, ..SunShadowGate::default() });
+        }
+        assert!(!SunShadowGate::default().enabled);
+    }
+
+    /// CW-8: the sun's and moons' shadow contrast on a receiver facing them per weather and hour, as the
+    /// gate computes it (`sf_sky::sun_gate::contrasts`) under the game's sky: `LightCalibration`'s
+    /// night floor and moonlight (copied: `mw_assets` is not a dependency), Masser and Secunda,
+    /// each weather's haze, dust and cloud genus (`mw_weather::visual::Look`), the cloud shadow
+    /// map's mean (`sf_atmos_bevy::mean_cloud_shadow`, default look). Not counted: the clouds'
+    /// own glow, multiple scattering (the fill errs low), the ambient tint (luminance 1).
+    #[test]
+    #[ignore = "measurement: CW-8 sun/moon shadow contrast per weather"]
+    fn print_sun_shadow_contrast_per_weather() {
+        use mw_weather::visual::{Look, mw_clouds};
+        use sf_sky_bevy::sf_sky::sun_gate::{SunShadowGate, contrasts, facing_direct};
+        use sf_sky_bevy::sf_sky::{KeyCurve, Moonlight, SkyClock, SkySettings, Weather};
+        let night_nits = 4.0_f32;
+        let mut settings = SkySettings {
+            ambient: KeyCurve::new(vec![(-12.0, night_nits), (-4.0, 0.0)]),
+            moonlight: Moonlight { full_lux: 2.5 * std::f32::consts::PI * night_nits, artistic: true },
+            ..SkySettings::default()
+        };
+        crate::night_sky::apply(&mut settings);
+        let gate = SunShadowGate::default();
+        let strength = sf_atmos_bevy::sf_atmos::CloudLook::default().shadow_strength;
+        println!("band: off <= {} .. full >= {} (holder: x{})", gate.contrast_off, gate.contrast_full, 1.0 / gate.hysteresis);
+        println!("weather        cover  cookie | hour  sun_deg  direct_lx  fill_lx   c_sun  w_sun | moon_lx  c_moon  w_moon");
+        // Day 80 (equinox, as the bench's default sky); moon phase from the game's moons.
+        for ty in mw_weather::WeatherType::ALL {
+            let look = Look::of(ty);
+            let cover = mw_clouds(look.genus).mean_cover();
+            let weather = Weather { haze: look.haze, dust: look.dust, dust_tint: look.dust_tint, cloud_cover: cover, ..Weather::default() };
+            let cookie = sf_atmos_bevy::mean_cloud_shadow(cover, strength);
+            for hour in [8.0, 10.0, 12.0, 16.0, 17.5, 0.0] {
+                let k = settings.evaluate(&SkyClock::at(80.0, hour, &settings.calendar), &weather);
+                let ambient = std::f32::consts::PI * k.ambient;
+                let (sun, moon) = contrasts(&k, cookie, ambient);
+                let fill = k.sun.sky_fill + k.moon.sky_fill + ambient;
+                println!(
+                    "{:13} {cover:5.2}  {cookie:5.2}  | {hour:4.1} {:7.1} {:10.0} {:8.0}  {sun:6.3} {:6.2} | {:7.3} {moon:7.3} {:6.2}",
+                    ty.name(),
+                    k.sun.elevation.to_degrees(),
+                    facing_direct(&k.sun, cookie),
+                    fill,
+                    if k.sun.casts_shadows { gate.weight(sun, false) } else { f32::NAN },
+                    facing_direct(&k.moon, 1.0),
+                    if k.moon.casts_shadows { gate.weight(moon, false) } else { f32::NAN },
+                );
+            }
+        }
+        // Clear: the sun elevation where the band starts (evening).
+        let look = Look::of(mw_weather::WeatherType::Clear);
+        let cover = mw_clouds(look.genus).mean_cover();
+        let clear = Weather { haze: look.haze, cloud_cover: cover, ..Weather::default() };
+        let cookie = sf_atmos_bevy::mean_cloud_shadow(cover, strength);
+        for minutes in (15 * 60..19 * 60).step_by(10) {
+            let k = settings.evaluate(&SkyClock::at(80.0, f64::from(minutes) / 60.0, &settings.calendar), &clear);
+            let (sun, _) = contrasts(&k, cookie, std::f32::consts::PI * k.ambient);
+            if k.sun.casts_shadows && sun < gate.contrast_full {
+                println!("clear: below full strength from {:02}:{:02} (sun {:.1} deg, c {sun:.3})", minutes / 60, minutes % 60, k.sun.elevation.to_degrees());
+                break;
+            }
+        }
     }
 
     /// F3 (ROADMAP 1.22): far sun cascades hold unless `--off cascadehold`, framework defaults otherwise.

@@ -197,10 +197,14 @@ pub enum Part {
     /// temporal history (TAA/DLSS) survives each 256 m cell crossing; off, every shift resets it
     /// (the old periodic pop, an A/B).
     ShiftRebase,
+    /// Selection gates (CW-2, `sf_world::select_gate`): streaming, terrain and far-field selection re-run
+    /// only when the camera moved or turned past a quantum or an input changed. Opt-in until its A/B
+    /// (`BEVYRROWIND_SELECT_GATE=1`); this part forces it off whatever the env says.
+    SelectGate,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 77] = [
+    const ALL: [(&'static str, Part); 78] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -279,6 +283,7 @@ impl Part {
         ("raise", Part::Raise),
         ("scene", Part::Scene),
         ("shiftrebase", Part::ShiftRebase),
+        ("selectgate", Part::SelectGate),
     ];
 
     fn name(self) -> &'static str {
@@ -376,6 +381,9 @@ mod tests {
         let shift = Off::from_flags(&["shiftrebase".into()]).expect("known");
         assert!(shift.has(Part::ShiftRebase) && !shift.has(Part::Scene));
         assert_eq!(shift.label(), "shiftrebase");
+        let gate = Off::from_flags(&["selectgate".into()]).expect("known");
+        assert!(gate.has(Part::SelectGate) && !gate.has(Part::Terrain) && !gate.has(Part::FarField));
+        assert_eq!(gate.label(), "selectgate");
         let enc = Off::from_flags(&["cascadeencoders".into()]).expect("known");
         assert!(enc.has(Part::CascadeEncoders) && !enc.has(Part::MoverShadows) && !enc.has(Part::Shadows));
         assert_eq!(enc.label(), "cascadeencoders");

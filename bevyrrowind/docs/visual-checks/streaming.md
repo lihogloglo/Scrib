@@ -75,3 +75,12 @@ Open visual checks: streaming spikes, size-based draw distance, door links (ST, 
 - Look for: when the fade (or the loading screen) lifts, every object, texture and shadow near you is already there: nothing appears one by one. Holds may be longer than before, never over ~10 s.
 - Log: one `reveal: door|loading held X s (cells, textures, assets, pipelines, gates ...)` line per reveal (which term held), its `+10.0 s: after_reveal N` line (target 0); any `reveal gate: ... not ready after` warning names what was pending (send it).
 - Status: awaiting owner (2026-11-11). Source: warmup-w1.
+
+### ST-4: Selection gates (CW-2, ROADMAP 1.25, built 2026-11-16, opt-in)
+- Run: `view "Balmora"` walking and flying (`--camera` fly), and the `flight` bench path, with and without env
+  `BEVYRROWIND_SELECT_GATE=1` (exe `target/profiling/cw2.exe` or a dev build). Streaming, CDLOD terrain and far-field
+  selection re-run only after the camera moves 4 m / 10 deg (streaming), 0.5 m (terrain), 2 m (far field)
+  (`superfargoth/crates/sf_world/src/select_gate.rs`; terrain morph zones pulled 0.5 m closer while gated, `sf_terrain_bevy/src/params.rs:67`).
+- Look for: terrain cracks or visible LOD steps while walking slowly; far-field holes or late parent/child swaps on the
+  horizon when turning or flying fast; cells popping in later than without the gate; anything after a door/load.
+- Status: awaiting owner.

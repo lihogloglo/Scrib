@@ -16,8 +16,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use glam::{DVec3, IVec3, Vec3};
 use sf_coords::WorldPos;
+use sf_tunables::{Def, Group, Source, Unit, def};
 
 use crate::rings::{Level, RingConfig, RingRadii};
+use crate::select_gate::{GateQuanta, GateSource, SelectGate};
 use crate::{CellDirectory, DoorLink, Location, RingOverrides, WorldspaceId};
 
 /// Identifies an anchor across frames (for the engine's bookkeeping).
@@ -223,6 +225,35 @@ pub struct SchedulerConfig {
     /// finds them loaded (the cell cache of door-based engines). 0 turns
     /// it off.
     pub linger_secs: f64,
+    /// CW-2 selection gate ([`crate::select_gate`]): the ring gather and per-cell decisions re-run only
+    /// when an anchor moved [`STREAM_SELECT_MOVE_M`] or turned [`STREAM_SELECT_TURN_DEG`], or the cell
+    /// state changed (see [`Scheduler::update`]). Off by default until the owner's A/B.
+    pub select_gate: GateQuanta,
+}
+
+/// `stream.select.move_m`: [`SchedulerConfig::select_gate`] location quantum. UE5 World Partition
+/// quantises streaming sources to 400 cm before deciding whether to update streaming.
+pub const STREAM_SELECT_MOVE_M: Def<f32> = def!(float "stream.select.move_m" = 4.0)
+    .range(0.0, 64.0)
+    .unit(Unit::Meters)
+    .help("Streaming re-gathers its rings once an anchor moved this far from where the last gather saw it")
+    .source(Source::Industry("UE5 wp.Runtime.UpdateStreaming.LocationQuantization (400 cm)"))
+    .group(Group::ViewDistance);
+
+/// `stream.select.turn_deg`: [`SchedulerConfig::select_gate`] rotation quantum (the view direction only
+/// weighs R1+ priorities).
+pub const STREAM_SELECT_TURN_DEG: Def<f32> = def!(float "stream.select.turn_deg" = 10.0)
+    .range(0.0, 180.0)
+    .unit(Unit::Degrees)
+    .help("Streaming re-ranks its loads once an anchor's view turned this far")
+    .source(Source::Industry("UE5 wp.Runtime.UpdateStreaming.RotationQuantization (10 deg)"))
+    .group(Group::ViewDistance);
+
+impl SchedulerConfig {
+    /// The streaming gate with its declared quanta, on or off.
+    pub fn select_gate_quanta(enabled: bool) -> GateQuanta {
+        GateQuanta { enabled, move_m: STREAM_SELECT_MOVE_M.default_value(), turn_deg: STREAM_SELECT_TURN_DEG.default_value() }
+    }
 }
 
 impl Default for SchedulerConfig {
@@ -237,6 +268,7 @@ impl Default for SchedulerConfig {
             initial_latency: 0.25,
             far_by_page: false,
             linger_secs: 5.0,
+            select_gate: Self::select_gate_quanta(crate::select_gate::SELECT_GATE.default_value()),
         }
     }
 }
@@ -363,7 +395,7 @@ struct WorldStream {
     prefetched: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Driver {
     Gameplay,
     Visual,
@@ -407,6 +439,19 @@ pub struct Scheduler {
     latency: f64,
     tick: u64,
     now: f64,
+    /// Bumped whenever the gather/decide inputs other than the anchors change (a cell finished a move,
+    /// a worldspace came or went, links, a reload): the selection gate's input key.
+    revision: u64,
+    gate: SelectGate<(u64, Vec<GateAnchorKey>)>,
+}
+
+/// What of an effective anchor the gate compares besides its positions (any change re-gathers).
+#[derive(Clone, Debug, PartialEq)]
+struct GateAnchorKey {
+    ws: WorldspaceId,
+    driver: Driver,
+    scale_bits: u32,
+    keep_only: bool,
 }
 
 impl Scheduler {
@@ -425,7 +470,20 @@ impl Scheduler {
             latency: config.initial_latency,
             tick: 0,
             now: 0.0,
+            revision: 0,
+            gate: SelectGate::default(),
         }
+    }
+
+    /// Changes whenever a cell finished a move or the worldspaces, links or a reload changed: the key
+    /// for selections that read [`Self::level`] (the far field's residency pass, CW-2).
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Gather/decide (runs, skips) so far (selection gate, CW-2; tests and diagnostics).
+    pub fn gate_counts(&self) -> (u64, u64) {
+        (self.gate.runs, self.gate.skips)
     }
 
     pub fn config(&self) -> &SchedulerConfig {
@@ -476,6 +534,7 @@ impl Scheduler {
             directory,
         };
         self.worlds.insert(world.directory.worldspace.clone(), world);
+        self.revision += 1;
         true
     }
 
@@ -485,6 +544,7 @@ impl Scheduler {
         match self.worlds.get(ws) {
             Some(w) if w.live.is_empty() => {
                 self.worlds.remove(ws);
+                self.revision += 1;
                 true
             }
             Some(_) => false,
@@ -500,6 +560,7 @@ impl Scheduler {
     pub fn set_links(&mut self, links: Vec<DoorLink>) {
         self.links = links;
         self.prefetching.clear();
+        self.revision += 1;
     }
 
     /// The player's worldspace.
@@ -585,6 +646,7 @@ impl Scheduler {
         for w in self.worlds.values_mut() {
             w.stale.extend(w.live.iter().copied());
         }
+        self.revision += 1;
     }
 
     /// A reload ([`Self::reload_resident`]) is still unloading cells.
@@ -679,6 +741,31 @@ impl Scheduler {
         anchors.extend(self.ghosts.iter().map(|g| g.anchor.clone()));
         self.door_prefetch(input.anchors, &mut anchors);
 
+        // Selection gate (CW-2): gather + decide are a pure function of the effective anchors (positions,
+        // predictions, view directions, rings driven) and the cell state, so they are skipped while no
+        // anchor moved or turned past its quantum and `revision` is unchanged: last tick's requests and
+        // targets stand. Kept per tick: linger and door prefetch above (time and links; a change shows in
+        // the anchor list), starting async work under the caps and the burst end below. A reload in
+        // progress always runs (stale cells leave `stale` the tick after reaching `Unloaded`).
+        let reloading = self.worlds.values().any(|w| !w.stale.is_empty());
+        let sources: Vec<GateSource> = anchors
+            .iter()
+            .flat_map(|a| [GateSource { pos: a.pos, dir: a.view }, GateSource { pos: a.pred, dir: None }])
+            .collect();
+        let keys: Vec<GateAnchorKey> = anchors
+            .iter()
+            .map(|a| GateAnchorKey { ws: a.ws.clone(), driver: a.driver, scale_bits: a.scale.to_bits(), keep_only: a.keep_only })
+            .collect();
+        if reloading {
+            self.gate.reset();
+        }
+        let gated = self.gate.check(&self.config.select_gate, &sources, (self.revision, keys));
+        if !gated {
+            self.start_async(input.now, &mut report);
+            self.end_burst(&mut report);
+            return report;
+        }
+
         for w in self.worlds.values_mut() {
             w.visited.clear();
             w.prefetched = false;
@@ -699,9 +786,13 @@ impl Scheduler {
         }
 
         self.start_async(input.now, &mut report);
+        self.end_burst(&mut report);
+        report
+    }
 
-        // Burst mode waits for the active worldspace (every worldspace when
-        // none is set), not for loads a lingering one still finishes.
+    /// Burst mode waits for the active worldspace (every worldspace when
+    /// none is set), not for loads a lingering one still finishes.
+    fn end_burst(&mut self, report: &mut TickReport) {
         let active = self.active.as_ref();
         if self.burst
             && !self.reloading()
@@ -712,7 +803,6 @@ impl Scheduler {
             self.burst = false;
             report.burst_ended = true;
         }
-        report
     }
 
     /// Residency cache (`SchedulerConfig::linger_secs`): an anchor that
@@ -917,6 +1007,7 @@ impl Scheduler {
         let w = self.worlds.get_mut(&r.worldspace).expect("requests belong to known worldspaces");
         let i = r.cell_index as usize;
         w.state[i] = CellState { level: r.to, request: None };
+        self.revision += 1;
         if r.to == Level::Unloaded {
             w.live.remove(&r.cell_index);
         }

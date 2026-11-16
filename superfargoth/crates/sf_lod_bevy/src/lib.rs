@@ -38,7 +38,8 @@ use bevy_shader::load_shader_library;
 use sf_lod::products::{NEAR_STEP, node_subject};
 use sf_lod::{FarLevels, NodeKey};
 use sf_model_bevy::baked_path;
-use sf_world::{RingRadii, WorldspaceId};
+use sf_tunables::{AnyDef, Def, Group, Source, Unit, def};
+use sf_world::{GateQuanta, RingRadii, WorldspaceId};
 use sf_world_bevy::{FarProxies, Precombines, StreamingConfig, StreamingSystems};
 
 /// Far-field settings. `levels.handoff` and `band` are replaced by the
@@ -55,9 +56,31 @@ pub struct FarFieldSettings {
     /// depth at the reference screen (L1; L2 and L3 get 1.5× and 2×), so the
     /// finer representation wins wherever both draw in a lead band.
     pub proxy_depth_offset_px: f32,
+    /// CW-2 selection gate (`sf_world::select_gate`): the residency pass re-runs only once the camera
+    /// moved [`FAR_SELECT_MOVE_M`] or a node, the cells' residency or these settings changed (see
+    /// `runtime::residency_pass`); while on, nodes count as needing their children that much early.
+    /// Off by default until the owner's A/B.
+    pub select_gate: GateQuanta,
 }
 
+/// `far.select.move_m`: [`FarFieldSettings::select_gate`] location quantum, also the guard band of the
+/// no-hole fallback. Nobody measured it: far handoffs sit hundreds of meters out with bands of tens.
+pub const FAR_SELECT_MOVE_M: Def<f32> = def!(float "far.select.move_m" = 2.0)
+    .range(0.0, 32.0)
+    .unit(Unit::Meters)
+    .help("The far field re-checks which nodes must stay forced once the camera moved this far")
+    .source(Source::Guess)
+    .group(Group::ViewDistance);
+
+/// This crate's tunables (live binding: tunables slice T2).
+pub const TUNABLES: &[&dyn AnyDef] = &[&FAR_SELECT_MOVE_M];
+
 impl FarFieldSettings {
+    /// The far-field gate with its declared quantum, on or off.
+    pub fn select_gate_quanta(enabled: bool) -> GateQuanta {
+        GateQuanta { enabled, move_m: FAR_SELECT_MOVE_M.default_value(), turn_deg: 0.0 }
+    }
+
     /// The depth bias (`StandardMaterial::depth_bias`, wgpu constant bias) of
     /// a level's proxies. With a float depth buffer and reverse Z, one unit
     /// of constant bias is ~2^-23 of the depth value, i.e. a fixed fraction of
@@ -72,7 +95,13 @@ impl FarFieldSettings {
 
 impl Default for FarFieldSettings {
     fn default() -> Self {
-        Self { levels: FarLevels::default(), l1_shadows: true, light_min_pixels: 2.5, proxy_depth_offset_px: 2.0 }
+        Self {
+            levels: FarLevels::default(),
+            l1_shadows: true,
+            light_min_pixels: 2.5,
+            proxy_depth_offset_px: 2.0,
+            select_gate: Self::select_gate_quanta(sf_world::SELECT_GATE.default_value()),
+        }
     }
 }
 

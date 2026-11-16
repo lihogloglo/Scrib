@@ -65,6 +65,11 @@ stale instance offsets in 0.20).
   `--off nif`, `sizecull` (`exterior.rs:266`), `farfield` (`exterior.rs:217`), `actors`, `walkers`, `terrain`. Others:
   `statics-and-lod.md`. Env `BEVYRROWIND_LOADING_MESHES` (`exterior.rs:1278`). `--off shiftrebase`: origin shifts reset
   temporal history instead of rebasing motion vectors (FLICKER-1 A/B).
+- Selection gate (CW-2, opt-in, built 2026-11-16, not measured; `sf_world/src/select_gate.rs`): `Scheduler::update`
+  skips gather + decide (`scheduler.rs:762`) while no effective anchor moved `stream.select.move_m` (4 m, UE5
+  `LocationQuantization`) or turned `stream.select.turn_deg` (10 deg) and `Scheduler::revision` (cell moves finished,
+  worldspaces, links, reload) is unchanged; linger, door prefetch, async starts and burst end stay per tick, a reload
+  always runs. `--env BEVYRROWIND_SELECT_GATE=1` turns on all three gates (terrain, far field), `--off selectgate` forces off.
 - Counters: `stream/drive/ms`, `stream/tick/ms`, `stream/<stage>/{items,ms,queue}` (+`bytes` for upload; `stream.rs:972-1010`),
   `stream/{requests,resident_cells,models,model_queue,page_cache/bytes,oldest_request/s,latency/s,shift_guard/frames}`,
   `bigspace/*/ms` (`lib.rs:188`), `world/meshes`, `world/point_lights` (`exterior.rs:1185`). `StreamStats` (`stream.rs:245`).

@@ -35,6 +35,17 @@ Facts only, from the stock 0.20.0 source (`~/.cargo/registry/src/*/<crate>-0.20.
 - Patch P5 (vendor README, `bevy_pbr/src/render/skin.rs`): `SkinJointBlocks` shares one refcounted block between
   skinned meshes with the same inverse-bindpose asset and joint entity list, so joints are walked and uploaded
   once per block, not per mesh. Stock keys per mesh entity.
+- Stock cost for an unchanged pose: the walk still looks up every joint of every block (`Changed<GlobalTransform>`
+  filter per joint), and `prepare_skins` writes the whole staging buffer every frame (it must: after the swap,
+  `current_buffer` holds the data of two frames ago). Propagation (stock and our big_space path) assigns
+  `GlobalTransform` to a whole dirty subtree, so `Changed` also fires for equal values.
+- Patch CW-7 (vendor README, `superfargoth patch (own, CW-7: skip unchanged skins)`, opt-in main-world
+  `SkinUploadSettings` `skin.rs:207`): a block is walked only if its joints' common ancestor has `GlobalTransform`
+  or `TransformTreeChanged` changed (`QuerySkinTree` :973, gate in `extract_changed_joints_inner` :690; needs
+  `StaticTransformOptimizations::Enabled`); a walked block counts as changed only if a matrix differs from staging;
+  `plan_upload` (:481, used at :840) writes a changed block into the current buffer on two consecutive frames (so both
+  swapped buffers hold it), merged into contiguous ranges, and a block allocated this frame into both buffers. Motion
+  vectors: unchanged pose = equal buffers = zero skinned motion; a resuming pose reads the frozen pose as previous.
 
 ## 3. Mesh instance data, bind groups, batching
 

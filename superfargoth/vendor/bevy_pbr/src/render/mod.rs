@@ -7,6 +7,7 @@ pub(crate) mod mesh;
 mod mesh_bindings;
 mod mesh_view_bindings;
 mod morph;
+mod point_face_cull; // superfargoth patch (own: point shadow face culling)
 pub(crate) mod skin;
 
 pub use fog::*;
@@ -18,8 +19,11 @@ pub use mesh::*;
 pub use mesh_bindings::MeshLayouts;
 pub use mesh_view_bindings::*;
 pub use morph::*;
+pub use point_face_cull::*; // superfargoth patch (own: point shadow face culling)
 pub use skin::{
     extract_skins, prepare_skins, skins_use_uniform_buffers, SkinJointBlocks, SkinUniforms, MAX_JOINTS,
+    // superfargoth patch (own, CW-7: skip unchanged skins).
+    QuerySkinTree, SkinTree, SkinUploadPlan, SkinUploadSettings, SkinUploadStats,
 };
 
 pub const CORE_3D_SHADOW_MAP_FORMAT: wgpu_types::TextureFormat =

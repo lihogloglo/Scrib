@@ -304,9 +304,14 @@ impl Display for RootView {
 
 pub(crate) fn submit_pending_command_buffers(
     world: &mut World,
-    state: &mut SystemState<(ResMut<PendingCommandBuffers>, Res<RenderQueue>)>,
+    // superfargoth patch (own, CW-5b submit counters): + `RenderDevice` for the opt-in poll
+    state: &mut SystemState<(
+        ResMut<PendingCommandBuffers>,
+        Res<RenderQueue>,
+        Res<RenderDevice>,
+    )>,
 ) {
-    let (mut pending, queue) = state.get_mut(world).unwrap();
+    let (mut pending, queue, device) = state.get_mut(world).unwrap();
     #[cfg(feature = "trace")]
     let buffer_count = pending.len();
     let mut buffers = pending.finish().peekable();
@@ -314,6 +319,8 @@ pub(crate) fn submit_pending_command_buffers(
     if buffers.peek().is_some() {
         #[cfg(feature = "trace")]
         let _span = info_span!("queue_submit", count = buffer_count).entered();
+        // superfargoth patch (own, CW-5b submit counters): wgpu's deferred housekeeping out of the timed submit
+        bevy_render::renderer::encode_timing::poll_if_enabled(&device);
         // superfargoth patch (own, M3 encode timers)
         let timer = bevy_render::renderer::encode_timing::start();
         queue.submit(buffers);

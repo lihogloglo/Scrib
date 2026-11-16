@@ -537,6 +537,14 @@ fn drive(
     };
 }
 
+/// The cloud shadow map's mean transmission for a sky `mean_cover` (`[0, 1]`) at
+/// `shadow_strength`: what `cloud_shadow.wesl` returns past the map's edge (its "average,
+/// never black"), so the CPU and the shader agree.
+#[must_use]
+pub fn mean_cloud_shadow(mean_cover: f32, shadow_strength: f32) -> f32 {
+    (1.0 - mean_cover.clamp(0.0, 1.0) * shadow_strength.clamp(0.0, 1.0) * 0.6).clamp(0.0, 1.0)
+}
+
 /// The flat ambient radiance that lights the camera's surfaces (linear RGB,
 /// `color × brightness`, as Bevy's PBR shades `AmbientLight`): the camera's
 /// own [`AmbientLight`] when it has one, else the [`GlobalAmbientLight`]

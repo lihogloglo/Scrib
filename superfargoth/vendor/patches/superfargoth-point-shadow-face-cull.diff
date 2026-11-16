@@ -1,0 +1,513 @@
+diff --git a/bevy_pbr/src/lib.rs b/bevy_pbr/src/lib.rs
+index 25d2d17e..beb49645 100644
+--- a/bevy_pbr/src/lib.rs
++++ b/bevy_pbr/src/lib.rs
+@@ -428,7 +428,9 @@ impl Plugin for PbrPlugin {
+             .init_gpu_resource::<LightMeta>()
+             .init_resource::<RenderShadowLodOrigin>()
+             // superfargoth patch (#26161)
+-            .init_resource::<ShadowCasterChanges>();
++            .init_resource::<ShadowCasterChanges>()
++            // superfargoth patch (own: point shadow face culling)
++            .init_resource::<PointShadowFaceStats>();
+ 
+         render_app
+             .world_mut()
+diff --git a/bevy_pbr/src/render/light.rs b/bevy_pbr/src/render/light.rs
+index 7dbdf480..07ed924f 100644
+--- a/bevy_pbr/src/render/light.rs
++++ b/bevy_pbr/src/render/light.rs
+@@ -1163,6 +1163,12 @@ pub struct ShadowCasterChanges {
+     /// shadow map). [`skip_unchanged_shadow_views`] redraws none of their faces, first
+     /// captures excepted: they keep their map and catch up when back in view.
+     pub out_of_view_lights: MainEntityHashSet,
++    // superfargoth patch (own: point shadow face culling)
++    /// Shadowed point lights with cube faces no camera can see a receiver of
++    /// ([`point_shadow_faces_seen`]), bit `i` set = face `i` culled; only while
++    /// [`PointShadowFaceCull`] is on. Culled faces are not hashed into
++    /// [`Self::faces`] and [`skip_unchanged_shadow_views`] draws none of them.
++    pub culled_faces: MainEntityHashMap<u8>,
+ }
+ 
+ // superfargoth patch (own, SH-20)
+@@ -1245,9 +1251,12 @@ pub fn extract_shadow_caster_changes(
+     // superfargoth patch (own, SH-21b): and their frusta.
+     cameras: Extract<Query<(&Camera, &GlobalTransform, &Frustum), With<Camera3d>>>,
+     refresh: Extract<Option<Res<ShadowMoverRefresh>>>,
++    // superfargoth patch (own: point shadow face culling)
++    face_cull: Extract<Option<Res<PointShadowFaceCull>>>,
+     mut frame: Local<u32>,
+     // superfargoth patch (own, SH-20b): last frame's rigid-caster placement hash per light.
+-    mut prev_rigid: Local<MainEntityHashMap<u64>>,
++    // superfargoth patch (own: point shadow face culling): with the cull mask it was taken under.
++    mut prev_rigid: Local<MainEntityHashMap<(u64, u8)>>,
+ ) {
+     use core::hash::{BuildHasher, Hash, Hasher};
+ 
+@@ -1255,6 +1264,7 @@ pub fn extract_shadow_caster_changes(
+     changes.light_entities.clear();
+     changes.moved_lights.clear();
+     changes.out_of_view_lights.clear();
++    changes.culled_faces.clear();
+     let mut seen_lights = MainEntityHashSet::default();
+     let per_frame = refresh.as_ref().is_none_or(|r| r.per_frame);
+     changes.per_frame_movers = per_frame;
+@@ -1274,6 +1284,13 @@ pub fn extract_shadow_caster_changes(
+         .filter(|(c, _, _)| c.is_active)
+         .map(|(_, _, frustum)| *frustum)
+         .collect();
++    // superfargoth patch (own: point shadow face culling)
++    let face_cull = face_cull.as_deref().copied().filter(|c| c.enabled);
++    let cull_frusta: Vec<ViewFrustum> = if face_cull.is_some() {
++        cam_frusta.iter().map(|frustum| frustum.0).collect()
++    } else {
++        Vec::new()
++    };
+ 
+     let mut visible: Vec<Entity> = Vec::new();
+     for (light, light_transform, point_light, spot_light, spot_visible, point_visible) in &lights {
+@@ -1304,7 +1321,24 @@ pub fn extract_shadow_caster_changes(
+         let mut rigid_hasher = FixedHasher.build_hasher();
+ 
+         let face_count = if point_visible.is_some() { 6u32 } else { 1u32 };
++        // superfargoth patch (own: point shadow face culling): faces no camera sees a
++        // receiver of are not hashed; the mask goes into the light's entity hash so that
++        // `extract_lights` re-extracts every face's casters when a face comes back.
++        let culled = match (face_cull, point_light, point_visible) {
++            (Some(cull), Some(point), Some(_)) => {
++                !point_shadow_faces_seen(light_pos, point.range, cull.margin_deg, &cull_frusta)
++                    & ALL_POINT_SHADOW_FACES
++            }
++            _ => 0,
++        };
++        if culled != 0 {
++            changes.culled_faces.insert(main_light, culled);
++            light_entities_hasher.write_u8(culled);
++        }
+         for face_idx in 0..face_count {
++            if culled & (1 << face_idx) != 0 {
++                continue;
++            }
+             visible.clear();
+             if let Some(point_visible) = point_visible {
+                 visible.extend(
+@@ -1401,10 +1435,16 @@ pub fn extract_shadow_caster_changes(
+         // changes the transform only; a door swinging past a still lamp, the placement only.
+         let rigid = rigid_hasher.finish();
+         let transform_changed = joints.get(light).is_ok_and(|t| t.is_changed());
+-        if transform_changed && prev_rigid.get(&main_light).is_some_and(|&prev| prev != rigid) {
++        // superfargoth patch (own: point shadow face culling): only comparable under the
++        // same cull mask (culled faces' casters are not in the hash).
++        if transform_changed
++            && prev_rigid
++                .get(&main_light)
++                .is_some_and(|&(prev, prev_culled)| prev_culled == culled && prev != rigid)
++        {
+             changes.moved_lights.insert(main_light);
+         }
+-        prev_rigid.insert(main_light, rigid);
++        prev_rigid.insert(main_light, (rigid, culled));
+         seen_lights.insert(main_light);
+     }
+     prev_rigid.retain(|light, _| seen_lights.contains(light));
+@@ -1432,6 +1472,9 @@ struct ShadowFace {
+     /// `(view_key, members_key, motion_key)` recorded once drawn; `None` forgets the face.
+     keys: Option<(u64, u64, u64)>,
+     has_casters: bool,
++    // superfargoth patch (own: point shadow face culling)
++    /// Culled last frame, not now ([`PointShadowFaceCullTracker`]).
++    revealed: bool,
+ }
+ 
+ /// Light counts (and faces drawn) accumulated for the once-a-second debug line of
+@@ -1449,6 +1492,9 @@ pub struct ShadowRefreshStats {
+     // superfargoth patch (own, SH-21b)
+     out_of_view: u32,
+     faces_drawn: u32,
++    // superfargoth patch (own: point shadow face culling)
++    faces_culled: u32,
++    revealed: u32,
+ }
+ 
+ /// Marks the point and spot light shadow views whose shadow maps are still valid
+@@ -1464,6 +1510,10 @@ pub struct ShadowRefreshStats {
+ /// least-recently-updated (LRU) order across frames to prevent hitches.
+ /// superfargoth patch (own, SH-21b): lights out of every camera's view
+ /// ([`ShadowCasterChanges::out_of_view_lights`]) are drawn only for a first capture.
++/// superfargoth patch (own: point shadow face culling): with [`PointShadowFaceCull`] on,
++/// culled faces ([`ShadowCasterChanges::culled_faces`]) are never drawn and keep their map
++/// and keys; a face back in view that is dirty draws its light that frame, outside the
++/// budgets ([`revealed_face_must_draw`]). Counts: [`PointShadowFaceStats`].
+ /// `RUST_LOG=bevy_pbr::shadow_refresh=debug` prints the counts once a second.
+ pub fn skip_unchanged_shadow_views(
+     mut commands: Commands,
+@@ -1484,12 +1534,17 @@ pub fn skip_unchanged_shadow_views(
+     mut rendered: Local<HashMap<RetainedViewEntity, (u64, u64, u64, u32)>>,
+     mut frame_counter: Local<u32>,
+     mut stats: Local<ShadowRefreshStats>,
++    // superfargoth patch (own: point shadow face culling)
++    mut face_tracker: Local<PointShadowFaceCullTracker>,
++    mut face_stats: ResMut<PointShadowFaceStats>,
+ ) {
+     use core::hash::{BuildHasher, Hash, Hasher};
+     use ShadowFaceState::{Clean, Mandatory, Motion, SetChange};
+ 
+     *frame_counter = frame_counter.wrapping_add(1);
+     let current_frame = *frame_counter;
++    // superfargoth patch (own: point shadow face culling)
++    *face_stats = PointShadowFaceStats::default();
+ 
+     // The shadow map textures this frame (shared by all cameras); without them,
+     // nothing can be known to be unchanged.
+@@ -1512,6 +1567,26 @@ pub fn skip_unchanged_shadow_views(
+         };
+         let retained = view.retained_view_entity;
+         live.insert(retained);
++        face_stats.faces += 1;
++
++        // superfargoth patch (own: point shadow face culling): no camera sees a receiver
++        // of this face. Not drawn; its map and its keys in `rendered` stay as they are, so
++        // it is compared against what it was last drawn from when it comes back.
++        let culled = matches!(*light, LightEntity::Point { .. })
++            && main_entities.get(light_entity).ok().is_some_and(|main| {
++                changes
++                    .culled_faces
++                    .get(main)
++                    .is_some_and(|mask| mask & (1 << retained.subview_index) != 0)
++            });
++        let revealed = face_tracker.record(retained, culled);
++        if culled {
++            face_stats.culled += 1;
++            if !skipped {
++                commands.entity(view_entity).insert(SkipRootViewRendering);
++            }
++            continue;
++        }
+ 
+         let mut view_hasher = FixedHasher.build_hasher();
+         // The texture and, by the pass's name, the layer it renders to.
+@@ -1590,6 +1665,7 @@ pub fn skip_unchanged_shadow_views(
+             last_frame,
+             keys,
+             has_casters: phase_entity_count > 0,
++            revealed,
+         });
+     }
+ 
+@@ -1612,6 +1688,16 @@ pub fn skip_unchanged_shadow_views(
+             first_captures += 1;
+             draw[idx] = true;
+             stats.first += 1;
++        } else if faces
++            .iter()
++            .any(|f| revealed_face_must_draw(f.revealed, f.state != Clean))
++        {
++            // superfargoth patch (own: point shadow face culling): a dirty face back in
++            // view may hold a map from long ago; the light draws now, like a first capture
++            // (out-of-view and refresh budgets never defer it).
++            first_captures += 1;
++            draw[idx] = true;
++            stats.revealed += 1;
+         } else if main_light.is_some_and(|m| changes.out_of_view_lights.contains(&m)) {
+             // superfargoth patch (own, SH-21b): nothing it lights is on screen. Its dirty
+             // faces keep their old keys, so they are still dirty when it comes back.
+@@ -1674,6 +1760,11 @@ pub fn skip_unchanged_shadow_views(
+                     }
+                 }
+                 stats.faces_drawn += 1;
++                // superfargoth patch (own: point shadow face culling)
++                face_stats.drawn += 1;
++                if revealed_face_must_draw(face.revealed, face.state != Clean) {
++                    face_stats.revealed += 1;
++                }
+             } else if !face.skipped {
+                 // Clean, or deferred: a deferred face keeps its old key in `rendered`,
+                 // so it stays dirty and ages towards the front of the LRU queue.
+@@ -1683,6 +1774,9 @@ pub fn skip_unchanged_shadow_views(
+     }
+ 
+     rendered.retain(|retained, _| live.contains(retained));
++    // superfargoth patch (own: point shadow face culling)
++    face_tracker.end_frame();
++    stats.faces_culled += face_stats.culled;
+ 
+     stats.frames += 1;
+     let now = bevy_platform::time::Instant::now();
+@@ -1690,7 +1784,7 @@ pub fn skip_unchanged_shadow_views(
+     if now.duration_since(start).as_secs_f32() >= 1.0 {
+         tracing::debug!(
+             target: "bevy_pbr::shadow_refresh",
+-            "point/spot shadow refresh, light-frames over {} frames: moved (whole) {}, first {}, mover {}, lru {}, deferred {}, clean {}, out of view {}; faces drawn {}",
++            "point/spot shadow refresh, light-frames over {} frames: moved (whole) {}, first {}, mover {}, lru {}, deferred {}, clean {}, out of view {}, revealed {}; faces drawn {}, culled {}",
+             stats.frames,
+             stats.moved,
+             stats.first,
+@@ -1699,7 +1793,10 @@ pub fn skip_unchanged_shadow_views(
+             stats.deferred,
+             stats.clean,
+             stats.out_of_view,
++            // superfargoth patch (own: point shadow face culling)
++            stats.revealed,
+             stats.faces_drawn,
++            stats.faces_culled,
+         );
+         *stats = ShadowRefreshStats {
+             window_start: Some(now),
+diff --git a/bevy_pbr/src/render/mod.rs b/bevy_pbr/src/render/mod.rs
+index c8392b26..ed20fee2 100644
+--- a/bevy_pbr/src/render/mod.rs
++++ b/bevy_pbr/src/render/mod.rs
+@@ -7,6 +7,7 @@ pub(crate) mod mesh;
+ mod mesh_bindings;
+ mod mesh_view_bindings;
+ mod morph;
++mod point_face_cull; // superfargoth patch (own: point shadow face culling)
+ pub(crate) mod skin;
+ 
+ pub use fog::*;
+@@ -18,8 +19,9 @@ pub use mesh::*;
+ pub use mesh_bindings::MeshLayouts;
+ pub use mesh_view_bindings::*;
+ pub use morph::*;
++pub use point_face_cull::*; // superfargoth patch (own: point shadow face culling)
+ pub use skin::{
+     extract_skins, prepare_skins, skins_use_uniform_buffers, SkinJointBlocks, SkinUniforms, MAX_JOINTS,
+ };
+ 
+ pub const CORE_3D_SHADOW_MAP_FORMAT: wgpu_types::TextureFormat =
+diff --git a/bevy_pbr/src/render/point_face_cull.rs b/bevy_pbr/src/render/point_face_cull.rs
+new file mode 100644
+index 0000000..d1a4357
+--- /dev/null
++++ b/bevy_pbr/src/render/point_face_cull.rs
+@@ -0,0 +1,230 @@
++//! superfargoth patch (own: point shadow face culling), ROADMAP 1.25 CW-3b.
++//!
++//! A shadowed point light renders six cube faces. A face can only matter on screen if a
++//! visible receiver samples it: a point `P` samples face `f` when the direction `P - L`
++//! falls in that face's 90° pyramid and `P` is within the light's range. So a face whose
++//! pyramid (apex at the light, out to its range) does not meet any active 3D camera's
++//! frustum within the light's range sphere has no visible receiver: it is not drawn
++//! (UE and Doom 2016 cull shadow cube faces this way; `docs/reviews/technique-gap-audit-2026-11-16.md`
++//! Part 3 item 3).
++//!
++//! The test is conservative (it may keep a face that is not seen, never drops one that is):
++//! a separating-plane test between two convex hulls, using only their face planes (no
++//! edge-edge axes):
++//! - the face pyramid, widened by an angular margin so that filter taps and the normal-offset
++//!   bias near a cube seam still find a drawn face (`tan(45° + margin)` instead of 1), capped at
++//!   the range along its axis (every point of the range sphere in the widened cone lies before
++//!   the cap);
++//! - the camera frustum with its far plane replaced by one just past the light's sphere (a hull
++//!   that holds the frustum's part of the sphere).
++//!
++//! A face is culled when one camera plane has the whole pyramid outside, or one pyramid plane
++//! has the whole clipped frustum outside. Faces follow [`CUBE_MAP_FACES`] order (the shadow
++//! views' `subview_index`), axis-aligned in world space like the views `prepare_lights` makes.
++//!
++//! What the renderer does with the mask: [`crate::extract_shadow_caster_changes`] and
++//! [`crate::skip_unchanged_shadow_views`] (`light.rs`): a culled face is not hashed, not drawn,
++//! and keeps its last map and keys; a face revealed while dirty is drawn the frame it comes back.
++
++use bevy_camera::primitives::CUBE_MAP_FACES;
++use bevy_ecs::prelude::*;
++use bevy_math::{Vec3, Vec4};
++use bevy_platform::collections::HashSet;
++use bevy_render::view::RetainedViewEntity;
++use bevy_shape::{HalfSpace, ViewFrustum};
++
++/// Every face of a cube map, as a [`point_shadow_faces_seen`] mask.
++pub const ALL_POINT_SHADOW_FACES: u8 = 0b11_1111;
++
++/// Widest margin accepted, degrees (the widened pyramid must stay narrower than a half-space).
++pub const MAX_POINT_SHADOW_FACE_MARGIN_DEG: f32 = 30.0;
++
++/// Main-world switch for point shadow face culling. Absent or `enabled: false`: stock
++/// behaviour (every face of a shadowed light is a candidate for drawing).
++///
++/// The game inserts it; the framework's tunable `shadow.lamp.face_cull.margin_deg`
++/// (`sf_sky_bevy`) writes `margin_deg`.
++#[derive(Resource, Clone, Copy, Debug, PartialEq)]
++pub struct PointShadowFaceCull {
++    /// Cull cube faces no camera can see receivers of.
++    pub enabled: bool,
++    /// Angular widening of each face's pyramid, degrees, clamped to
++    /// `0..=`[`MAX_POINT_SHADOW_FACE_MARGIN_DEG`]: covers the shadow filter's kernel and the
++    /// normal-offset bias across a cube seam.
++    pub margin_deg: f32,
++}
++
++impl Default for PointShadowFaceCull {
++    fn default() -> Self {
++        Self {
++            enabled: false,
++            margin_deg: 2.0,
++        }
++    }
++}
++
++/// Render-world counts of point-light cube faces for the frame just decided
++/// ([`crate::skip_unchanged_shadow_views`]); bench gauges `views/lamp_face/*` (`sf_diag_bevy`).
++#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct PointShadowFaceStats {
++    /// Point and spot shadow views (cube faces and spot views) this frame.
++    pub faces: u32,
++    /// Faces culled: no visible receiver can sample them.
++    pub culled: u32,
++    /// Faces back in view this frame that were dirty, drawn at once.
++    pub revealed: u32,
++    /// Faces drawn this frame.
++    pub drawn: u32,
++}
++
++/// The faces of a point light at `light` with `range` that some receiver inside one of
++/// `frusta` may sample: bit `i` set = face `i` (in [`CUBE_MAP_FACES`] order) is seen.
++/// No frusta: every face (nothing known, nothing culled).
++pub fn point_shadow_faces_seen(
++    light: Vec3,
++    range: f32,
++    margin_deg: f32,
++    frusta: &[ViewFrustum],
++) -> u8 {
++    if frusta.is_empty() || !range.is_finite() || range <= 0.0 {
++        return ALL_POINT_SHADOW_FACES;
++    }
++    let margin = margin_deg.clamp(0.0, MAX_POINT_SHADOW_FACE_MARGIN_DEG).to_radians();
++    let spread = (core::f32::consts::FRAC_PI_4 + margin).tan();
++    let mut mask = 0;
++    for frustum in frusta {
++        mask |= faces_seen_by(light, range, spread, frustum);
++        if mask == ALL_POINT_SHADOW_FACES {
++            break;
++        }
++    }
++    mask
++}
++
++/// A plane usable for culling: finite normal and offset (Bevy marks an absent far plane
++/// with a zero normal and an infinite offset).
++fn active(half_space: &HalfSpace) -> bool {
++    let normal_d: Vec4 = half_space.normal_d();
++    normal_d.is_finite() && normal_d.truncate().length_squared() > 0.5
++}
++
++fn signed(half_space: &HalfSpace, p: Vec3) -> f32 {
++    half_space.normal_d().dot(p.extend(1.0))
++}
++
++/// The two axes orthogonal to a cube face's (axis-aligned) direction.
++fn tangents(axis: Vec3) -> (Vec3, Vec3) {
++    if axis.x != 0.0 {
++        (Vec3::Y, Vec3::Z)
++    } else if axis.y != 0.0 {
++        (Vec3::X, Vec3::Z)
++    } else {
++        (Vec3::X, Vec3::Y)
++    }
++}
++
++/// Corners of `frustum` with its far plane moved just past the light sphere (along the view
++/// direction, the sphere's farthest point): a convex hull holding the frustum's part of the
++/// sphere. `None` if the frustum's planes are degenerate.
++fn clipped_corners(light: Vec3, range: f32, frustum: &ViewFrustum) -> Option<[Vec3; 8]> {
++    let [left, right, top, bottom, near, _] = frustum.half_spaces;
++    if ![left, right, top, bottom, near].iter().all(active) {
++        return None;
++    }
++    let forward = Vec3::from(near.normal());
++    let far = HalfSpace::new((-forward).extend(forward.dot(light) + range));
++    let clipped = ViewFrustum {
++        half_spaces: [left, right, top, bottom, near, far],
++    };
++    let corners = clipped.corners()?;
++    corners.iter().all(|c| c.is_finite()).then_some(corners)
++}
++
++fn faces_seen_by(light: Vec3, range: f32, spread: f32, frustum: &ViewFrustum) -> u8 {
++    // The range sphere outside one plane: nothing of the light is in this view.
++    if frustum
++        .half_spaces
++        .iter()
++        .filter(|h| active(h))
++        .any(|h| signed(h, light) < -range)
++    {
++        return 0;
++    }
++    let hull = clipped_corners(light, range, frustum);
++    let mut mask = 0;
++    for (index, face) in CUBE_MAP_FACES.iter().enumerate() {
++        let axis = face.target;
++        let (u, v) = tangents(axis);
++        let cap = light + axis * range;
++        let reach = range * spread;
++        let pyramid = [
++            light,
++            cap + (u + v) * reach,
++            cap + (u - v) * reach,
++            cap + (v - u) * reach,
++            cap - (u + v) * reach,
++        ];
++        // A camera plane with the whole (widened) pyramid outside.
++        if frustum
++            .half_spaces
++            .iter()
++            .filter(|h| active(h))
++            .any(|h| pyramid.iter().all(|&p| signed(h, p) < 0.0))
++        {
++            continue;
++        }
++        // A pyramid plane with the whole clipped frustum outside. Inside the pyramid:
++        // `n . (p - light) + offset >= 0` for every (n, offset) below.
++        if let Some(hull) = hull {
++            let planes = [
++                (axis * spread - u, 0.0),
++                (axis * spread + u, 0.0),
++                (axis * spread - v, 0.0),
++                (axis * spread + v, 0.0),
++                (-axis, range),
++            ];
++            if planes
++                .iter()
++                .any(|&(n, offset)| hull.iter().all(|&p| n.dot(p - light) + offset < 0.0))
++            {
++                continue;
++            }
++        }
++        mask |= 1 << index;
++    }
++    mask
++}
++
++/// Which shadow views were culled last frame, to tell a face coming back into view.
++#[derive(Default)]
++pub struct PointShadowFaceCullTracker {
++    last: HashSet<RetainedViewEntity>,
++    now: HashSet<RetainedViewEntity>,
++}
++
++impl PointShadowFaceCullTracker {
++    /// Records `view`'s state this frame. Returns `true` when it was culled last frame and
++    /// is not now: a revealed face, whose map must be redrawn this frame if it is dirty
++    /// (it may hold content from long ago).
++    pub fn record(&mut self, view: RetainedViewEntity, culled: bool) -> bool {
++        if culled {
++            self.now.insert(view);
++            false
++        } else {
++            self.last.contains(&view)
++        }
++    }
++
++    /// Ends the frame: this frame's culled views become "last frame's".
++    pub fn end_frame(&mut self) {
++        core::mem::swap(&mut self.last, &mut self.now);
++        self.now.clear();
++    }
++}
++
++/// Whether a face must be drawn this frame because of culling: back in view
++/// (`revealed`) while its map is out of date (`dirty`). The light's refresh budget never
++/// defers it.
++pub fn revealed_face_must_draw(revealed: bool, dirty: bool) -> bool {
++    revealed && dirty
++}

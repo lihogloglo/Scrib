@@ -258,6 +258,41 @@ impl AtmosphereModel {
         (-depth).exp()
     }
 
+    /// Share of a beam from `elevation` that the medium scatters (not absorbs) on its way down
+    /// to `altitude`, per channel: `(1 - e^-τ) · τ_s / τ` over the same path as
+    /// [`Self::transmittance`] (ROADMAP 1.25 CW-8, the sky fill estimate). Zero when the ray
+    /// hits the planet.
+    #[expect(clippy::many_single_char_names, reason = "the ray-sphere maths of `transmittance`")]
+    pub fn scattered_fraction(&self, altitude: f32, elevation: f32, scales: &MediumScales, samples: u32) -> Vec3 {
+        let r = self.inner_radius + altitude.max(0.0);
+        let mu = elevation.sin();
+        let disc_ground = r * r * (mu * mu - 1.0) + self.inner_radius * self.inner_radius;
+        if mu < 0.0 && disc_ground >= 0.0 {
+            return Vec3::ZERO;
+        }
+        let disc_top = r * r * (mu * mu - 1.0) + self.outer_radius * self.outer_radius;
+        let length = -r * mu + disc_top.max(0.0).sqrt();
+        let samples = samples.max(1);
+        #[expect(clippy::cast_precision_loss, reason = "small sample count")]
+        let dt = length / samples as f32;
+        let (mut scattered, mut absorbed) = (Vec3::ZERO, Vec3::ZERO);
+        for i in 0..samples {
+            #[expect(clippy::cast_precision_loss, reason = "small sample count")]
+            let t = (i as f32 + 0.5) * dt;
+            let ri = (r * r + t * t + 2.0 * r * t * mu).sqrt();
+            let p = 1.0 - ((ri - self.inner_radius) / (self.outer_radius - self.inner_radius)).clamp(0.0, 1.0);
+            for term in &self.terms {
+                let (s, a) = term.scaled(scales);
+                let density = term.falloff.sample(p) * dt;
+                scattered += s * density;
+                absorbed += a * density;
+            }
+        }
+        let depth = scattered + absorbed;
+        let share = Vec3::select(depth.cmpgt(Vec3::ZERO), scattered / depth.max(Vec3::splat(f32::MIN_POSITIVE)), Vec3::ZERO);
+        (Vec3::ONE - (-depth).exp()) * share
+    }
+
     /// Elevation of the true horizon (radians, ≤ 0) seen from `altitude`.
     pub fn horizon_elevation(&self, altitude: f32) -> f32 {
         let r = self.inner_radius + altitude.max(0.0);

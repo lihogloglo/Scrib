@@ -91,6 +91,20 @@ impl Default for PointLightShadowFade {
     }
 }
 
+/// Shadow strength in `0.0..=1.0` for a [`DirectionalLight`]: the fragment shader blends its
+/// shadow (cascades, the material's own `directional_shadow_factor` and contact shadows)
+/// toward unshadowed by `1 - strength`. Absent = 1 (stock). Unity's `Light.shadowStrength`,
+/// UE's `ShadowAmount`; Bevy 0.20 has none.
+// superfargoth patch (own, CW-8: directional shadow fade)
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct DirectionalLightShadowFade(pub f32);
+
+impl Default for DirectionalLightShadowFade {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
 #[derive(Component)]
 #[require(PointAndSpotLightViewEntities)]
 pub struct ExtractedPointLight {
@@ -147,6 +161,9 @@ pub struct ExtractedDirectionalLight {
     pub occlusion_culling: bool,
     pub sun_disk_angular_size: f32,
     pub sun_disk_intensity: f32,
+    /// [`DirectionalLightShadowFade`], 1 without one.
+    // superfargoth patch (own, CW-8: directional shadow fade)
+    pub shadow_fade: f32,
 }
 
 // NOTE: These must match the bit flags in bevy_pbr/src/render/mesh_view_types.wesl!
@@ -187,6 +204,8 @@ pub struct GpuDirectionalLight {
     decal_index: u32,
     sun_disk_angular_size: f32,
     sun_disk_intensity: f32,
+    // superfargoth patch (own, CW-8: directional shadow fade)
+    shadow_fade: f32,
 }
 
 // NOTE: These must match the bit flags in bevy_pbr/src/render/mesh_view_types.wesl!
@@ -440,10 +459,14 @@ pub fn extract_lights(
                 Option<&VolumetricLight>,
                 Has<OcclusionCulling>,
                 Option<&SunDisk>,
+                // superfargoth patch (own, CW-8: directional shadow fade)
+                Option<&DirectionalLightShadowFade>,
             ),
             (
                 Without<SpotLight>,
                 Or<(
+                    // superfargoth patch (own, CW-8: directional shadow fade)
+                    Changed<DirectionalLightShadowFade>,
                     Changed<DirectionalLight>,
                     Changed<CascadesVisibleEntities>,
                     Changed<Cascades>,
@@ -838,6 +861,7 @@ pub fn extract_lights(
         volumetric_light,
         occlusion_culling,
         sun_disk,
+        shadow_fade,
     ) in &directional_lights
     {
         if !view_visibility.get() {
@@ -970,6 +994,8 @@ pub fn extract_lights(
             occlusion_culling,
             sun_disk_angular_size: sun_disk.unwrap_or_default().angular_size,
             sun_disk_intensity: sun_disk.unwrap_or_default().intensity,
+            // superfargoth patch (own, CW-8: directional shadow fade)
+            shadow_fade: shadow_fade.map_or(1.0, |fade| fade.0.clamp(0.0, 1.0)),
         };
 
         let mut entity_commands = commands
@@ -1163,6 +1189,12 @@ pub struct ShadowCasterChanges {
     /// shadow map). [`skip_unchanged_shadow_views`] redraws none of their faces, first
     /// captures excepted: they keep their map and catch up when back in view.
     pub out_of_view_lights: MainEntityHashSet,
+    // superfargoth patch (own: point shadow face culling)
+    /// Shadowed point lights with cube faces no camera can see a receiver of
+    /// ([`point_shadow_faces_seen`]), bit `i` set = face `i` culled; only while
+    /// [`PointShadowFaceCull`] is on. Culled faces are not hashed into
+    /// [`Self::faces`] and [`skip_unchanged_shadow_views`] draws none of them.
+    pub culled_faces: MainEntityHashMap<u8>,
 }
 
 // superfargoth patch (own, SH-20)
@@ -1245,9 +1277,12 @@ pub fn extract_shadow_caster_changes(
     // superfargoth patch (own, SH-21b): and their frusta.
     cameras: Extract<Query<(&Camera, &GlobalTransform, &Frustum), With<Camera3d>>>,
     refresh: Extract<Option<Res<ShadowMoverRefresh>>>,
+    // superfargoth patch (own: point shadow face culling)
+    face_cull: Extract<Option<Res<PointShadowFaceCull>>>,
     mut frame: Local<u32>,
     // superfargoth patch (own, SH-20b): last frame's rigid-caster placement hash per light.
-    mut prev_rigid: Local<MainEntityHashMap<u64>>,
+    // superfargoth patch (own: point shadow face culling): with the cull mask it was taken under.
+    mut prev_rigid: Local<MainEntityHashMap<(u64, u8)>>,
 ) {
     use core::hash::{BuildHasher, Hash, Hasher};
 
@@ -1255,6 +1290,7 @@ pub fn extract_shadow_caster_changes(
     changes.light_entities.clear();
     changes.moved_lights.clear();
     changes.out_of_view_lights.clear();
+    changes.culled_faces.clear();
     let mut seen_lights = MainEntityHashSet::default();
     let per_frame = refresh.as_ref().is_none_or(|r| r.per_frame);
     changes.per_frame_movers = per_frame;
@@ -1274,6 +1310,13 @@ pub fn extract_shadow_caster_changes(
         .filter(|(c, _, _)| c.is_active)
         .map(|(_, _, frustum)| *frustum)
         .collect();
+    // superfargoth patch (own: point shadow face culling)
+    let face_cull = face_cull.as_deref().copied().filter(|c| c.enabled);
+    let cull_frusta: Vec<ViewFrustum> = if face_cull.is_some() {
+        cam_frusta.iter().map(|frustum| frustum.0).collect()
+    } else {
+        Vec::new()
+    };
 
     let mut visible: Vec<Entity> = Vec::new();
     for (light, light_transform, point_light, spot_light, spot_visible, point_visible) in &lights {
@@ -1304,7 +1347,24 @@ pub fn extract_shadow_caster_changes(
         let mut rigid_hasher = FixedHasher.build_hasher();
 
         let face_count = if point_visible.is_some() { 6u32 } else { 1u32 };
+        // superfargoth patch (own: point shadow face culling): faces no camera sees a
+        // receiver of are not hashed; the mask goes into the light's entity hash so that
+        // `extract_lights` re-extracts every face's casters when a face comes back.
+        let culled = match (face_cull, point_light, point_visible) {
+            (Some(cull), Some(point), Some(_)) => {
+                !point_shadow_faces_seen(light_pos, point.range, cull.margin_deg, &cull_frusta)
+                    & ALL_POINT_SHADOW_FACES
+            }
+            _ => 0,
+        };
+        if culled != 0 {
+            changes.culled_faces.insert(main_light, culled);
+            light_entities_hasher.write_u8(culled);
+        }
         for face_idx in 0..face_count {
+            if culled & (1 << face_idx) != 0 {
+                continue;
+            }
             visible.clear();
             if let Some(point_visible) = point_visible {
                 visible.extend(
@@ -1401,10 +1461,16 @@ pub fn extract_shadow_caster_changes(
         // changes the transform only; a door swinging past a still lamp, the placement only.
         let rigid = rigid_hasher.finish();
         let transform_changed = joints.get(light).is_ok_and(|t| t.is_changed());
-        if transform_changed && prev_rigid.get(&main_light).is_some_and(|&prev| prev != rigid) {
+        // superfargoth patch (own: point shadow face culling): only comparable under the
+        // same cull mask (culled faces' casters are not in the hash).
+        if transform_changed
+            && prev_rigid
+                .get(&main_light)
+                .is_some_and(|&(prev, prev_culled)| prev_culled == culled && prev != rigid)
+        {
             changes.moved_lights.insert(main_light);
         }
-        prev_rigid.insert(main_light, rigid);
+        prev_rigid.insert(main_light, (rigid, culled));
         seen_lights.insert(main_light);
     }
     prev_rigid.retain(|light, _| seen_lights.contains(light));
@@ -1432,6 +1498,9 @@ struct ShadowFace {
     /// `(view_key, members_key, motion_key)` recorded once drawn; `None` forgets the face.
     keys: Option<(u64, u64, u64)>,
     has_casters: bool,
+    // superfargoth patch (own: point shadow face culling)
+    /// Culled last frame, not now ([`PointShadowFaceCullTracker`]).
+    revealed: bool,
 }
 
 /// Light counts (and faces drawn) accumulated for the once-a-second debug line of
@@ -1449,6 +1518,9 @@ pub struct ShadowRefreshStats {
     // superfargoth patch (own, SH-21b)
     out_of_view: u32,
     faces_drawn: u32,
+    // superfargoth patch (own: point shadow face culling)
+    faces_culled: u32,
+    revealed: u32,
 }
 
 /// Marks the point and spot light shadow views whose shadow maps are still valid
@@ -1464,6 +1536,10 @@ pub struct ShadowRefreshStats {
 /// least-recently-updated (LRU) order across frames to prevent hitches.
 /// superfargoth patch (own, SH-21b): lights out of every camera's view
 /// ([`ShadowCasterChanges::out_of_view_lights`]) are drawn only for a first capture.
+/// superfargoth patch (own: point shadow face culling): with [`PointShadowFaceCull`] on,
+/// culled faces ([`ShadowCasterChanges::culled_faces`]) are never drawn and keep their map
+/// and keys; a face back in view that is dirty draws its light that frame, outside the
+/// budgets ([`revealed_face_must_draw`]). Counts: [`PointShadowFaceStats`].
 /// `RUST_LOG=bevy_pbr::shadow_refresh=debug` prints the counts once a second.
 pub fn skip_unchanged_shadow_views(
     mut commands: Commands,
@@ -1484,12 +1560,17 @@ pub fn skip_unchanged_shadow_views(
     mut rendered: Local<HashMap<RetainedViewEntity, (u64, u64, u64, u32)>>,
     mut frame_counter: Local<u32>,
     mut stats: Local<ShadowRefreshStats>,
+    // superfargoth patch (own: point shadow face culling)
+    mut face_tracker: Local<PointShadowFaceCullTracker>,
+    mut face_stats: ResMut<PointShadowFaceStats>,
 ) {
     use core::hash::{BuildHasher, Hash, Hasher};
     use ShadowFaceState::{Clean, Mandatory, Motion, SetChange};
 
     *frame_counter = frame_counter.wrapping_add(1);
     let current_frame = *frame_counter;
+    // superfargoth patch (own: point shadow face culling)
+    *face_stats = PointShadowFaceStats::default();
 
     // The shadow map textures this frame (shared by all cameras); without them,
     // nothing can be known to be unchanged.
@@ -1512,6 +1593,26 @@ pub fn skip_unchanged_shadow_views(
         };
         let retained = view.retained_view_entity;
         live.insert(retained);
+        face_stats.faces += 1;
+
+        // superfargoth patch (own: point shadow face culling): no camera sees a receiver
+        // of this face. Not drawn; its map and its keys in `rendered` stay as they are, so
+        // it is compared against what it was last drawn from when it comes back.
+        let culled = matches!(*light, LightEntity::Point { .. })
+            && main_entities.get(light_entity).ok().is_some_and(|main| {
+                changes
+                    .culled_faces
+                    .get(main)
+                    .is_some_and(|mask| mask & (1 << retained.subview_index) != 0)
+            });
+        let revealed = face_tracker.record(retained, culled);
+        if culled {
+            face_stats.culled += 1;
+            if !skipped {
+                commands.entity(view_entity).insert(SkipRootViewRendering);
+            }
+            continue;
+        }
 
         let mut view_hasher = FixedHasher.build_hasher();
         // The texture and, by the pass's name, the layer it renders to.
@@ -1590,6 +1691,7 @@ pub fn skip_unchanged_shadow_views(
             last_frame,
             keys,
             has_casters: phase_entity_count > 0,
+            revealed,
         });
     }
 
@@ -1612,6 +1714,16 @@ pub fn skip_unchanged_shadow_views(
             first_captures += 1;
             draw[idx] = true;
             stats.first += 1;
+        } else if faces
+            .iter()
+            .any(|f| revealed_face_must_draw(f.revealed, f.state != Clean))
+        {
+            // superfargoth patch (own: point shadow face culling): a dirty face back in
+            // view may hold a map from long ago; the light draws now, like a first capture
+            // (out-of-view and refresh budgets never defer it).
+            first_captures += 1;
+            draw[idx] = true;
+            stats.revealed += 1;
         } else if main_light.is_some_and(|m| changes.out_of_view_lights.contains(&m)) {
             // superfargoth patch (own, SH-21b): nothing it lights is on screen. Its dirty
             // faces keep their old keys, so they are still dirty when it comes back.
@@ -1674,6 +1786,11 @@ pub fn skip_unchanged_shadow_views(
                     }
                 }
                 stats.faces_drawn += 1;
+                // superfargoth patch (own: point shadow face culling)
+                face_stats.drawn += 1;
+                if revealed_face_must_draw(face.revealed, face.state != Clean) {
+                    face_stats.revealed += 1;
+                }
             } else if !face.skipped {
                 // Clean, or deferred: a deferred face keeps its old key in `rendered`,
                 // so it stays dirty and ages towards the front of the LRU queue.
@@ -1683,6 +1800,9 @@ pub fn skip_unchanged_shadow_views(
     }
 
     rendered.retain(|retained, _| live.contains(retained));
+    // superfargoth patch (own: point shadow face culling)
+    face_tracker.end_frame();
+    stats.faces_culled += face_stats.culled;
 
     stats.frames += 1;
     let now = bevy_platform::time::Instant::now();
@@ -1690,7 +1810,7 @@ pub fn skip_unchanged_shadow_views(
     if now.duration_since(start).as_secs_f32() >= 1.0 {
         tracing::debug!(
             target: "bevy_pbr::shadow_refresh",
-            "point/spot shadow refresh, light-frames over {} frames: moved (whole) {}, first {}, mover {}, lru {}, deferred {}, clean {}, out of view {}; faces drawn {}",
+            "point/spot shadow refresh, light-frames over {} frames: moved (whole) {}, first {}, mover {}, lru {}, deferred {}, clean {}, out of view {}, revealed {}; faces drawn {}, culled {}",
             stats.frames,
             stats.moved,
             stats.first,
@@ -1699,7 +1819,10 @@ pub fn skip_unchanged_shadow_views(
             stats.deferred,
             stats.clean,
             stats.out_of_view,
+            // superfargoth patch (own: point shadow face culling)
+            stats.revealed,
             stats.faces_drawn,
+            stats.faces_culled,
         );
         *stats = ShadowRefreshStats {
             window_start: Some(now),
@@ -2558,6 +2681,8 @@ pub fn prepare_lights(
                 depth_texture_base_index: num_directional_cascades_enabled_for_this_view as u32,
                 sun_disk_angular_size: light.sun_disk_angular_size,
                 sun_disk_intensity: light.sun_disk_intensity,
+                // superfargoth patch (own, CW-8: directional shadow fade)
+                shadow_fade: light.shadow_fade,
                 decal_index: decals
                     .as_ref()
                     .and_then(|decals| decals.get(*light_entity))

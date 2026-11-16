@@ -163,9 +163,19 @@ impl Perf {
 
     /// Adds the benchmark plugins (with a scenario) and the A/B systems.
     pub fn add_plugins(self, app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some((scenario, settings)) = self.bench {
+        let poll = env_flag(std::env::var(ENV_POLL_BEFORE_SUBMIT).ok().as_deref());
+        sf_diag_bevy::set_poll_before_submit(poll);
+        if let Some((scenario, mut settings)) = self.bench {
+            let gpu_timers = !env_flag(std::env::var(ENV_NO_GPU_TIMERS).ok().as_deref());
+            if gpu_timers {
+                app.add_plugins(RenderDiagnosticsPlugin);
+            } else {
+                settings.meta.insert(GPU_TIMERS_META.to_owned(), "off".to_owned());
+            }
+            if poll {
+                settings.meta.insert(POLL_META.to_owned(), "on".to_owned());
+            }
             app.add_plugins((
-                RenderDiagnosticsPlugin,
                 MeshAllocatorDiagnosticPlugin,
                 // StandardMaterial bindless slabs + their resource count (tex-slab, 2026-11-15).
                 MaterialAllocatorDiagnosticPlugin::<StandardMaterial>::default(),
@@ -383,6 +393,26 @@ fn bench_present_mode() -> PresentMode {
 }
 
 
+/// Env var `1`: poll the wgpu device just before the main submit (`sf_diag_bevy::set_poll_before_submit`),
+/// so wgpu's deferred destruction is timed as `encode/poll` instead of inside `encode/submit`. A submit-cost
+/// A/B (CW-5b, `docs/reviews/submit-cost-diagnosis-2026-11-16.md` §7); the work moves, it is not removed.
+pub const ENV_POLL_BEFORE_SUBMIT: &str = "BEVYRROWIND_POLL_BEFORE_SUBMIT";
+
+/// Env var `1`: a benchmark without `RenderDiagnosticsPlugin` (no GPU pass timers or their query
+/// resolves), CPU gauges kept. Every `render/*/elapsed_gpu` / `elapsed_cpu` column is then empty and
+/// the report's meta says `gpu_timers: off` (CW-5b: does the plugin cost submit time?).
+pub const ENV_NO_GPU_TIMERS: &str = "BEVYRROWIND_NO_GPU_TIMERS";
+
+/// Report metadata key, `off` when [`ENV_NO_GPU_TIMERS`] dropped the GPU timers.
+pub const GPU_TIMERS_META: &str = "gpu_timers";
+/// Report metadata key, `on` when [`ENV_POLL_BEFORE_SUBMIT`] is set.
+pub const POLL_META: &str = "poll_before_submit";
+
+/// An on/off env switch: `1`, `true`, `on` or `yes` (any case) is on; unset or anything else is off.
+pub fn env_flag(value: Option<&str>) -> bool {
+    value.is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"))
+}
+
 /// Env var choosing a benchmark's window: `borderless` (borderless
 /// fullscreen on the primary monitor, at its resolution: a window that fits
 /// the display) or anything else for a normal window of `--resolution`
@@ -403,6 +433,16 @@ pub fn render_size() -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_flags_are_on_only_for_explicit_yes_values() {
+        for on in ["1", "true", "ON", " yes "] {
+            assert!(env_flag(Some(on)), "{on}");
+        }
+        for off in [None, Some(""), Some("0"), Some("off"), Some("false"), Some("2")] {
+            assert!(!env_flag(off), "{off:?}");
+        }
+    }
 
     #[test]
     fn focus_tally_is_clean_only_with_every_frame_in_front() {

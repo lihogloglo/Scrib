@@ -51,7 +51,8 @@ use sf_terrain::clipmap::{self, CLIPMAP_SIZE, ClipWindow, SampleRect};
 use sf_terrain::{
     BLOCKS, BlockBounds, LayerId, LayerMap, LayerTable, ResidentTile, TerrainHeights, TileCoord, global_coords,
 };
-use sf_world::WorldspaceId;
+use sf_tunables::{AnyDef, Def, Group, Source, Unit, def};
+use sf_world::{GateQuanta, GateSource, SelectGate, WorldspaceId};
 
 pub use far_map::{FAR_MAP_SIZE, FAR_MAP_TEXEL, FarShadowMap};
 pub use material::TerrainMaterial;
@@ -105,6 +106,38 @@ pub struct TerrainSettings {
     /// drawn as geometry by `sf_surface_bevy` through the patch "SW" bindings). The two finest
     /// CDLOD levels' bounds grow upward by it so culling stays conservative. Default 0.
     pub raise_m: f32,
+    /// CW-2 selection gate (`sf_world::select_gate`): CDLOD selection and the patch diff re-run only
+    /// once the camera moved [`TERRAIN_SELECT_MOVE_M`] (3D) from where the last selection saw it, or a
+    /// tile arrived or left, an edit, an origin shift, or a settings or debug change; the shader's morph
+    /// zones move that much closer to stay crack-free ([`params::morph_zone`]). Selection is by distance
+    /// only (no frustum, `sf_terrain::cdlod`), so turning never re-runs it. Kept per frame: load polls,
+    /// requests and eviction, clipmap uploads and the shader parameters (camera, morph). Off by default
+    /// until the owner's A/B.
+    pub select_gate: GateQuanta,
+}
+
+/// `terrain.select.move_m`: [`TerrainSettings::select_gate`] location quantum, also the morph slack.
+/// Nobody measured it: 0.5 m is ~4 % of LOD -2's 12 m range and ~8 frames of a 4 m/s walk at 60 fps.
+pub const TERRAIN_SELECT_MOVE_M: Def<f32> = def!(float "terrain.select.move_m" = 0.5)
+    .range(0.0, 4.0)
+    .unit(Unit::Meters)
+    .help("Terrain re-selects its CDLOD patches once the camera moved this far; the morph zones move this much closer")
+    .source(Source::Guess)
+    .group(Group::ViewDistance);
+
+/// This crate's tunables (live binding: tunables slice T2).
+pub const TUNABLES: &[&dyn AnyDef] = &[&TERRAIN_SELECT_MOVE_M];
+
+impl TerrainSettings {
+    /// The terrain gate with its declared quantum, on or off.
+    pub fn select_gate_quanta(enabled: bool) -> GateQuanta {
+        GateQuanta { enabled, move_m: TERRAIN_SELECT_MOVE_M.default_value(), turn_deg: 0.0 }
+    }
+
+    /// The shader's morph slack: the gate's quantum while it is on.
+    fn morph_slack(&self) -> f32 {
+        if self.select_gate.enabled { self.select_gate.move_m } else { 0.0 }
+    }
 }
 
 impl Default for TerrainSettings {
@@ -121,6 +154,7 @@ impl Default for TerrainSettings {
             layer_cap: LayerCap { max_edge: None, budget: Some(DEFAULT_LAYER_BUDGET) },
             reflectance: DEFAULT_REFLECTANCE,
             raise_m: 0.0,
+            select_gate: Self::select_gate_quanta(sf_world::SELECT_GATE.default_value()),
         }
     }
 }
@@ -322,6 +356,11 @@ struct TerrainState {
     /// Highest height of any tile loaded so far (world meters): the far
     /// shadow's march stops once its ray is above it.
     max_height: f32,
+    /// Bumped by everything besides the camera that changes the CDLOD selection or its patches: a
+    /// tile's slot changed (loaded, absent, evicted), an edit, a settings or debug change.
+    select_rev: u64,
+    /// The selection gate (CW-2), keyed on (`select_rev`, origin).
+    gate: SelectGate<(u64, WorldPos)>,
 }
 
 /// The 33² (or 17²) grid patch: integer grid coordinates in POSITION,
@@ -411,7 +450,7 @@ fn layer_array(size: u32, mips: u32, layers: usize, format: TextureFormat, data:
 }
 
 /// Creates the GPU resources when a [`TerrainWorld`] appears or changes.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn setup_terrain(
     mut commands: Commands,
     world: Option<Res<TerrainWorld>>,
@@ -525,6 +564,8 @@ fn setup_terrain(
         fill_slot,
         fill_rgba,
         max_height: fill,
+        select_rev: 0,
+        gate: SelectGate::default(),
     });
 }
 
@@ -807,6 +848,8 @@ fn update_terrain(
     let Some(cam) = camera.iter().next() else { return };
     let started = Instant::now();
     let state = &mut *state;
+    // Selection inputs besides the camera (CW-2 gate key).
+    let mut tiles_changed = settings.is_changed() || debug.is_changed();
     let cam_render = cam.translation();
     let cam_world = origin.0.offset(cam_render);
     let cam_g = global_coords(cam_world);
@@ -825,8 +868,12 @@ fn update_terrain(
                     state.max_height = state.max_height.max(top);
                     heights.insert(t.resident.clone());
                     *slot = Slot::Ready(Arc::new(t));
+                    tiles_changed = true;
                 }
-                Some(None) => *slot = Slot::Absent,
+                Some(None) => {
+                    *slot = Slot::Absent;
+                    tiles_changed = true;
+                }
                 None => in_flight += 1,
             }
         }
@@ -842,6 +889,7 @@ fn update_terrain(
     for c in requests {
         if !state.baked.has_tile(c) {
             state.tiles.insert(c, Slot::Absent);
+            tiles_changed = true;
             continue;
         }
         if in_flight >= settings.max_loads {
@@ -858,6 +906,7 @@ fn update_terrain(
         .filter(|(c, s)| !keep.contains(c) && !matches!(s, Slot::Loading(_)))
         .map(|(c, _)| *c)
         .collect();
+    tiles_changed |= !evict.is_empty();
     for c in evict {
         state.tiles.remove(&c);
         heights.remove(c);
@@ -866,6 +915,7 @@ fn update_terrain(
     // 3. Edits invalidate the clipmap levels they touch.
     for TerrainEdited(_) in edited.read() {
         state.height_windows = [None; HEIGHT_LEVELS];
+        tiles_changed = true;
     }
 
     // 4. Clipmap uploads, one whole level move at a time, under the budget.
@@ -907,6 +957,9 @@ fn update_terrain(
 
     // 5. CDLOD selection and the patch entities.
     let select_start = Instant::now();
+    if tiles_changed {
+        state.select_rev += 1;
+    }
     // An origin shift re-expresses the live patches in place (new transform
     // and bounds on the same entities) rather than respawning them: no entity
     // churn in the shift frame, which already rewrites every transform
@@ -917,7 +970,11 @@ fn update_terrain(
             commands.entity(e).despawn();
         }
     }
-    if !debug.freeze {
+    // The selection gate (CW-2, `TerrainSettings::select_gate`): skipped while the camera stays within the
+    // quantum of the last selection and nothing in its key changed; the patches stay as they are.
+    let select = !debug.freeze
+        && state.gate.check(&settings.select_gate, &[GateSource { pos: cam_world.to_f64(), dir: None }], (state.select_rev, origin.0));
+    if select {
         let mut selected: Vec<SelectedNode> = Vec::with_capacity(1024);
         let camera3 = bevy_math::DVec3::new(cam_g.x, cam_world.to_f64().y, cam_g.y);
         let bounds = |lod: i8, x: i64, z: i64| node_bounds(state, lod, x, z);
@@ -1019,7 +1076,7 @@ fn update_terrain(
         mask(&state.macro_windows),
         u32::try_from(state.table.layers.len().min(params::MAX_LAYERS)).expect("small"),
     ];
-    p.set_morph(&settings.cdlod);
+    p.set_morph(&settings.cdlod, settings.morph_slack());
     let level_slot = |w: Option<ClipWindow>, shift: u32| -> [i32; 4] {
         let o = [oi_i[0] >> shift, oi_i[1] >> shift];
         let base = |a: usize| i32::try_from(o[a].rem_euclid(CLIPMAP_SIZE)).expect("small");
@@ -1276,5 +1333,101 @@ mod tests {
                 (f0 * a + b) * so
             }, cells.join(" "));
         }
+    }
+
+    /// CW-2: a CDLOD selection kept while the camera moves less than the gate's quantum stays crack-free
+    /// with the morph slack: wherever a patch borders a coarser one, its edge vertices have finished
+    /// morphing (k = 1) and the coarser patch's haven't started (k = 0). Without the slack, the same
+    /// staleness cracks; a fresh selection without it doesn't (the ungated baseline).
+    #[test]
+    fn stale_selection_stays_crack_free_with_the_morph_slack() {
+        use bevy_math::DVec3;
+        let cdlod = CdlodSettings::default();
+        let q = TERRAIN_SELECT_MOVE_M.default_value();
+        let c0 = DVec3::new(1000.3, 2.0, 2000.7); // meters
+        let mut nodes = Vec::new();
+        cdlod::select(DVec3::new(c0.x * 2.0, c0.y, c0.z * 2.0), &cdlod, &|_, _, _| (0.0, 0.0), &mut nodes);
+        assert!(nodes.len() > 100);
+        let drawn: HashSet<NodeKey> = nodes.iter().map(|n| n.key).collect();
+        // The LOD of the drawn patch over level-0 sample point `g`.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+        let lod_at = |g: DVec2| -> Option<i8> {
+            (cdlod.min_lod..=cdlod.max_lod).find(|&lod| {
+                let size = NodeKey::node_samples(lod);
+                let (x, z) = ((g.x / size).floor() as i64, (g.y / size).floor() as i64);
+                let quad = u8::from(g.x / size - x as f64 >= 0.5) | (u8::from(g.y / size - z as f64 >= 0.5) << 1);
+                drawn.contains(&NodeKey { lod, x, z, quadrant: None }) || drawn.contains(&NodeKey { lod, x, z, quadrant: Some(quad) })
+            })
+        };
+        // The shader's morph (`common.wesl` `terrain_vertex`) on flat ground at height 0.
+        #[allow(clippy::cast_possible_truncation)]
+        let morph = |lod: i8, g: DVec2, cam: DVec3, slack: f32| -> f32 {
+            let (start, end) = params::morph_zone(&cdlod, lod, slack);
+            let d = (DVec3::new(g.x * 0.5, 0.0, g.y * 0.5) - cam).length() as f32;
+            ((d - start) / (end - start)).clamp(0.0, 1.0)
+        };
+        // Worst crack over every border with a coarser patch: max of (1 - fine k, coarse k).
+        let worst = |cam: DVec3, slack: f32| -> f32 {
+            let mut worst = 0.0f32;
+            for n in &nodes {
+                let k = n.key;
+                let o = k.first_sample();
+                let step = NodeKey::node_samples(k.lod) / f64::from(cdlod::PATCH_QUADS);
+                let edge = f64::from(k.quads()) * step;
+                for i in 0..=k.quads() {
+                    let t = f64::from(i) * step;
+                    for (g, out) in [
+                        (DVec2::new(o.x + t, o.y), DVec2::new(0.0, -1.0)),
+                        (DVec2::new(o.x + t, o.y + edge), DVec2::new(0.0, 1.0)),
+                        (DVec2::new(o.x, o.y + t), DVec2::new(-1.0, 0.0)),
+                        (DVec2::new(o.x + edge, o.y + t), DVec2::new(1.0, 0.0)),
+                    ] {
+                        let Some(other) = lod_at(g + out * 0.01) else { continue };
+                        if other > k.lod {
+                            assert_eq!(other, k.lod + 1, "neighbors differ by one LOD");
+                            worst = worst.max(1.0 - morph(k.lod, g, cam, slack)).max(morph(other, g, cam, slack));
+                        }
+                    }
+                }
+            }
+            worst
+        };
+        assert!(worst(c0, 0.0) < 1e-3, "fresh selection, no slack");
+        let stale: Vec<DVec3> = (0..16)
+            .map(|i| {
+                let a = f64::from(i) * std::f64::consts::TAU / 16.0;
+                DVec3::new(a.cos(), 0.0, a.sin())
+            })
+            .chain([DVec3::Y, DVec3::NEG_Y, DVec3::new(1.0, 1.0, 0.0).normalize()])
+            .map(|dir| c0 + dir * f64::from(q) * 0.99)
+            .collect();
+        for cam in &stale {
+            let w = worst(*cam, q);
+            assert!(w < 1e-3, "camera {cam}: a crack of {w} with the slack");
+        }
+        let unslacked = stale.iter().map(|c| worst(*c, 0.0)).fold(0.0f32, f32::max);
+        assert!(unslacked > 1e-2, "without the slack a stale selection cracks ({unslacked})");
+    }
+
+    /// CW-2: the terrain gate's key. A still camera skips, a quantum of travel, a tile change (`select_rev`)
+    /// or an origin shift re-selects; off, it always selects.
+    #[test]
+    fn terrain_gate_keys_on_camera_tiles_and_origin() {
+        let q = TerrainSettings::select_gate_quanta(true);
+        let off = TerrainSettings::default().select_gate;
+        assert!(!off.enabled, "off by default until the owner's A/B");
+        assert!(TerrainSettings::default().morph_slack() == 0.0, "no slack while off");
+        let mut gate = SelectGate::<(u64, WorldPos)>::default();
+        let cam = |x: f64| [GateSource { pos: bevy_math::DVec3::new(x, 10.0, 0.0), dir: None }];
+        let o = WorldPos::from_f64(bevy_math::DVec3::ZERO);
+        assert!(gate.check(&q, &cam(0.0), (0, o)));
+        assert!(!gate.check(&q, &cam(0.0), (0, o)), "still");
+        assert!(!gate.check(&q, &cam(f64::from(q.move_m) * 0.9), (0, o)));
+        assert!(gate.check(&q, &cam(f64::from(q.move_m) * 1.01), (0, o)), "moved a quantum");
+        assert!(gate.check(&q, &cam(f64::from(q.move_m) * 1.01), (1, o)), "a tile changed");
+        let shifted = WorldPos::from_f64(bevy_math::DVec3::new(256.0, 0.0, 0.0));
+        assert!(gate.check(&q, &cam(f64::from(q.move_m) * 1.01), (1, shifted)), "origin shift");
+        assert!(!gate.check(&q, &cam(f64::from(q.move_m) * 1.01), (1, shifted)));
+        assert!(gate.check(&off, &cam(0.0), (1, shifted)) && gate.check(&off, &cam(0.0), (1, shifted)));
     }
 }

@@ -238,6 +238,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     app.insert_resource(sf_character_bevy::CharacterSettings { bodies: options.bodies });
     // `--off farnpcs`: characters past the crowd C0 threshold hide (crowd-lod.md CROWD-1 ceiling).
     app.insert_resource(sf_character_bevy::CrowdSettings { hide_far: perf.off.has(Part::FarNpcs) });
+    // CW-7 (ROADMAP 1.25; vendored `skin.rs` "skip unchanged skins"): joint blocks whose matrices did not
+    // change are neither walked nor re-uploaded. Opt-in until its interleaved A/B: `--env BEVYRROWIND_SKIN_SKIP_UNCHANGED=1`.
+    app.insert_resource(bevy::pbr::SkinUploadSettings {
+        skip_unchanged: std::env::var_os("BEVYRROWIND_SKIN_SKIP_UNCHANGED").is_some_and(|v| v == "1"),
+    });
     if let (Some(db), false) = (options.actors.clone(), perf.off.has(Part::Actors) || perf.off.has(Part::Walkers)) {
         mw_walkers_bevy::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone(), !perf.off.has(Part::Physics));
     }
@@ -277,8 +282,18 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // The quality preset scales LOD selection, size culling and the
     // far-field handoff with one bias (`--off sizecull`: no size culling).
     let screen = options.quality.screen(!perf.off.has(Part::SizeCull));
+    // Selection gates (CW-2, ROADMAP 1.25; `sf_world::select_gate`): streaming rings, terrain CDLOD and the
+    // far field's residency pass re-run only once the camera moved or turned past a quantum or an input
+    // changed. Opt-in until its interleaved A/B: `--env BEVYRROWIND_SELECT_GATE=1` (`=0` forces it off);
+    // `--off selectgate` forces it off whatever the env or the `select.gate` default say.
+    let select_gate = match std::env::var("BEVYRROWIND_SELECT_GATE").as_deref() {
+        Ok("1") => true,
+        Ok("0") => false,
+        _ => sf_world::SELECT_GATE.default_value(),
+    } && !perf.off.has(Part::SelectGate);
     let mut far_settings = sf_lod_bevy::FarFieldSettings::default();
     far_settings.levels.screen.bias = screen.bias;
+    far_settings.select_gate = sf_lod_bevy::FarFieldSettings::select_gate_quanta(select_gate);
     // The far field sets its own rings; `--near-ring`/`--far-ring` still override them.
     let base = if far_field {
         sf_lod_bevy::far_streaming_config(StreamingConfig::default(), &far_settings.levels)
@@ -287,6 +302,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     };
     let mut streaming = streaming_config(base, options.near_ring, options.far_ring);
     streaming.lod = screen;
+    streaming.scheduler.select_gate = sf_world::SchedulerConfig::select_gate_quanta(select_gate);
     // Static material classes (static-scene.md S2); `--off matclass` keeps the mapper's materials.
     streaming.material_classes = !perf.off.has(Part::MatClass);
     streaming.flat_normal_map = !perf.off.has(Part::FlatNormal);
@@ -568,7 +584,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         max_edge: options.texture_cap,
         budget: Some(sf_terrain_bevy::DEFAULT_LAYER_BUDGET),
     };
-    app.add_plugins(TerrainPlugin { settings: TerrainSettings { layer_cap, ..TerrainSettings::default() } })
+    let select_gate = TerrainSettings::select_gate_quanta(select_gate);
+    app.add_plugins(TerrainPlugin { settings: TerrainSettings { layer_cap, select_gate, ..TerrainSettings::default() } })
         .insert_resource(TerrainWorld { baked: terrain })
         .insert_resource(TerrainDebug { lod_colors: options.terrain_lod, wireframe: options.wireframe, no_far_shadows: perf.off.has(Part::FarShadows), ..TerrainDebug::default() });
 

@@ -39,14 +39,19 @@ the main camera and add passes in its `Core3d` schedule (`sf_water_bevy/src/rend
 seyda_neen, red_mountain, run, balmora_walk (+ `_night`), balmora_night, flight, census (interior), light_lab; each launches the
 game with `--bench <json> --bench-out --resolution`. Before each run it waits for a quiet machine (no busy process, GPU and CPU
 idle) and retries busy runs (`cli.rs:437, 501`); results go to `target/perf/<tag>/summary.md` (`cli.rs:371-402`).
-In the game, `--bench` adds (`mw_devtools_bevy/src/perf.rs:164-180`) `SfDiagPlugin` (frame times, Bevy diagnostics, scenario
-camera path, JSON/CSV report), `RenderDiagnosticsPlugin` (GPU pass timings), `ChurnPlugin`, `FramePhasePlugin`
+In the game, `--bench` adds (`mw_devtools_bevy/src/perf.rs:164-192`) `SfDiagPlugin` (frame times, Bevy diagnostics, scenario
+camera path, JSON/CSV report), `RenderDiagnosticsPlugin` (GPU pass timings, unless `BEVYRROWIND_NO_GPU_TIMERS`), `ChurnPlugin`, `FramePhasePlugin`
 (`main/busy/ms`, `render/thread/ms`, `render/acquire/ms`, `render/graph/ms`, `render/present/ms`, `sf_diag_bevy/src/phases.rs:1-18`),
 `RenderViewsPlugin` (per-view counts) and asset churn plugins. Untraced stage walls (2026-11-15, M1/M3 of
 `superfargoth/docs/research/cpu-frame-audit-2026-11-15.md`; `sf_diag_bevy/src/{stages,encode}.rs`): `stage/main/<schedule>`
 (first .. last), `stage/render/<set>` (extract_commands .. cleanup, completion-to-completion), `stage/render/{camera_driver,
 graph_submit}`; per encoder `encode/<system>/{sum,max,count}`, `encode/finish_critical`, `encode/finish_wall`,
-`encode/submit` (vendored `bevy_render` `renderer/encode_timing.rs`, `bevy_core_pipeline` `schedule.rs`).
+`encode/submit` (vendored `bevy_render` `renderer/encode_timing.rs`, `bevy_core_pipeline` `schedule.rs`). Submit split
+(CW-5b, 2026-11-16): `encode/queue/{submits,command_buffers}` and `encode/queue/{write_buffer,write_buffer_with,
+write_texture}/{calls,bytes}` count every call through `RenderQueue` (inherent methods shadowing `wgpu::Queue`'s,
+`bevy_render/src/renderer/mod.rs:171-215`, counters `encode_timing.rs:57-111`; bare `&wgpu::Queue` calls unseen);
+`encode/poll` times the opt-in poll before the main submit (`schedule.rs:323`, `encode_timing.rs:118-140`). Passes are not
+counted (56+ direct `begin_*_pass` sites).
 
 **Report sections** (`sf_diag/src/markdown.rs`): Gates, GPU passes (GPU ms, p95, CPU ms), Per-frame costs (ms counters: mean, p95,
 max), Gauges (counts, sizes), Churn, Hitches (frames over `max(2.5 x median, 25 ms)`, `report.rs:224`, with the counters that
@@ -63,7 +68,10 @@ timers above), vendored `bevy_pbr` shadow-view skipping. See `bevy/` pages when 
 
 `--off shadows|lights|shadowcache|movershadows|lampfilter|softshadows|contactshadows|ssao|bloom|gi|envslice|clouds|fog|froxels|
 sky|terrain|particles|actors|walkers|physics|precipocc|surface` (`mw_game_core/src/perf.rs`). `shadowcache` is a no-op for the
-raster path while `POINT_SHADOW_CACHE` is false. Env `BEVYRROWIND_WINDOW`, `BEVYRROWIND_PRESENT`, `BEVYRROWIND_DLSS`.
+raster path while `POINT_SHADOW_CACHE` is false. Env `BEVYRROWIND_WINDOW`, `BEVYRROWIND_PRESENT`, `BEVYRROWIND_DLSS`;
+`BEVYRROWIND_POLL_BEFORE_SUBMIT=1` (wgpu `maintain` moves from `encode/submit` to `encode/poll`, meta `poll_before_submit: on`)
+and `BEVYRROWIND_NO_GPU_TIMERS=1` (bench without `RenderDiagnosticsPlugin`: every `render/*/elapsed_gpu|cpu` column empty, meta
+`gpu_timers: off`, DLSS check skipped) (`mw_devtools_bevy/src/perf.rs:166-178, 396-415`; `perf/cli.rs:1034`).
 
 ## Known limits
 

@@ -284,7 +284,10 @@ fn light_held_slots(
         }
         let entity = e.id();
         if info.animation != LightAnimation::Steady {
-            e.insert(AnimatedLight { intensity: light.intensity, animation: info.animation, seed: u32::try_from(entity.to_bits() & u64::from(u32::MAX)).unwrap_or(0) });
+            e.insert((
+                AnimatedLight { intensity: light.intensity, animation: info.animation, seed: u32::try_from(entity.to_bits() & u64::from(u32::MAX)).unwrap_or(0) },
+                sf_sky_bevy::SteadyIntensity(light.intensity),
+            ));
         }
     }
 }

@@ -52,6 +52,11 @@ use bevy_render::{Render, RenderApp, RenderSystems};
 use bevy_time::Time;
 use bevy_transform::TransformSystems;
 use bevy_transform::components::GlobalTransform;
+use sf_sky::SkyState;
+use sf_tunables::{AnyDef, Def, Group, Source, Unit, def};
+use sf_tunables_bevy::TunablesAppExt;
+
+use crate::{CurrentSky, SkyCamera, SkyRenderOptions};
 
 /// How many point lights cast shadows, and how they fade. A graphics
 /// setting: games map their quality presets onto it.
@@ -76,14 +81,148 @@ pub struct PointShadowBudget {
     /// the camera. One ray march per lit pixel per light, so only the
     /// budgeted few get it, never their twins.
     pub contact_shadows: bool,
+    /// Lights whose shadow would be imperceptible against the sky's light
+    /// (noon sun) get no shadow map. Off by default.
+    pub contrast_gate: ShadowContrastGate,
 }
 
 impl Default for PointShadowBudget {
     /// Off: the budget is opt-in per game and preset.
     fn default() -> Self {
-        Self { max: 0, fade_start: 15.0, fade_end: 25.0, fade_time: 0.3, hysteresis: 0.8, map_size: 1024, contact_shadows: false }
+        Self { max: 0, fade_start: 15.0, fade_end: 25.0, fade_time: 0.3, hysteresis: 0.8, map_size: 1024, contact_shadows: false, contrast_gate: ShadowContrastGate::default() }
     }
 }
+
+/// `shadow.lamp.day_gate`: [`ShadowContrastGate::enabled`].
+pub const DAY_GATE: Def<bool> = def!(bool "shadow.lamp.day_gate" = false)
+    .help("Point lights whose shadow would be imperceptible against the sun and ambient get no shadow map")
+    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .group(Group::Shadows);
+
+/// `shadow.lamp.day_gate.receiver_m`: [`ShadowContrastGate::receiver_distance`].
+pub const DAY_GATE_RECEIVER: Def<f32> = def!(float "shadow.lamp.day_gate.receiver_m" = 2.0)
+    .range(0.1, 20.0)
+    .unit(Unit::Meters)
+    .help("Typical distance from a point light to the surfaces its shadow falls on")
+    .group(Group::Shadows);
+
+/// `shadow.lamp.day_gate.contrast`: [`ShadowContrastGate::contrast_off`] and
+/// [`ShadowContrastGate::contrast_full`]. Anchored on Weber's luminance
+/// threshold (~1-2 % on a uniform field), raised for textured, tonemapped,
+/// temporally resolved frames (contrast masking); nobody measured it.
+pub const DAY_GATE_CONTRAST: Def<[f32; 2]> = def!(float2 "shadow.lamp.day_gate.contrast" = [0.05, 0.15])
+    .range([0.0, 0.0], [1.0, 1.0])
+    .unit(Unit::Ratio)
+    .help("Shadow contrast (the light's share of a receiver's light): no shadow map below the first, full strength above the second")
+    .group(Group::Shadows);
+
+/// `shadow.lamp.face_cull.margin_deg`: `bevy_pbr::PointShadowFaceCull::margin_deg`, bound in
+/// [`crate::SkyPlugin`] (ROADMAP 1.25 CW-3b; the switch itself is the game's). A cube face is
+/// kept while a visible receiver lies within this angle of it: the lamp filter's 2x2 PCF and
+/// the normal-offset bias reach a few texels across a seam (0.18 deg per texel at 512², half
+/// that at the face edge), so 2 deg keeps ~10 texels of slack; nobody measured it.
+pub const FACE_CULL_MARGIN: Def<f32> = def!(float "shadow.lamp.face_cull.margin_deg" = 2.0)
+    .range(0.0, 30.0)
+    .unit(Unit::Degrees)
+    .help("Point shadow cube faces are culled unless a visible receiver lies within this angle of them")
+    .group(Group::Shadows);
+
+/// This module's tunables (live binding: tunables slice T2).
+pub const TUNABLES: &[&dyn AnyDef] = &[&DAY_GATE, &DAY_GATE_RECEIVER, &DAY_GATE_CONTRAST, &FACE_CULL_MARGIN];
+
+/// Shadow maps only where a light's shadow would be seen: a point light's
+/// shadow darkens a receiver by the light's share of the light it gets, its
+/// contrast `E_light / (E_light + E_sky)`. Outdoors at noon the sun gives
+/// ~100 klx and a lamp ~1 klx at a couple of meters: its shadow is a ~1 %
+/// darkening nobody sees, yet its cube map costs a caster scan and six
+/// views. The gate weighs each candidate's [`importance`] and shadow
+/// strength by [`Self::weight`], so shadows fade out as the sun rises and
+/// back in at dusk (continuous in the sky's light; the budget's hysteresis
+/// and timed fade apply as before), and lights at weight 0 hold no map.
+///
+/// `E_sky` is the direct sun and moon on level ground plus the ambient floor
+/// ([`sky_reference_lux`]); only viewers with a [`crate::SkyCamera`] have
+/// one (interiors: no gate). The sky's own diffuse light (the environment
+/// map, GPU-only) isn't counted, so the gate keeps shadows a little longer
+/// than strictly needed (overcast, dusk, sun-shadowed receivers).
+///
+/// It decides only whether a light casts a shadow map, never its light:
+/// [`PointLight::intensity`] is untouched. A light with a [`ShadowReach`]
+/// still blends its range by shadow strength, as when it loses a slot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShadowContrastGate {
+    /// Gate on ([`DAY_GATE`]).
+    pub enabled: bool,
+    /// Typical light-to-receiver distance, meters ([`DAY_GATE_RECEIVER`]);
+    /// at most half the light's range.
+    pub receiver_distance: f32,
+    /// Contrast at or below which a light gets no shadow map.
+    pub contrast_off: f32,
+    /// Contrast at or above which the gate leaves a light as it is.
+    pub contrast_full: f32,
+}
+
+impl Default for ShadowContrastGate {
+    fn default() -> Self {
+        let [contrast_off, contrast_full] = DAY_GATE_CONTRAST.default_value();
+        Self { enabled: DAY_GATE.default_value(), receiver_distance: DAY_GATE_RECEIVER.default_value(), contrast_off, contrast_full }
+    }
+}
+
+impl ShadowContrastGate {
+    /// A shadow's contrast on a receiver lit `light_lux` by the light and
+    /// `sky_lux` by everything else: `E_light / (E_light + E_sky)`, 1 in the dark.
+    #[must_use]
+    pub fn contrast(light_lux: f32, sky_lux: f32) -> f32 {
+        let light = light_lux.max(0.0);
+        let total = light + sky_lux.max(0.0);
+        if total > 0.0 { light / total } else { 1.0 }
+    }
+
+    /// The gate's weight for a shadow of `contrast`: 0 at or below
+    /// [`Self::contrast_off`], 1 at or above [`Self::contrast_full`], linear
+    /// between. A light holding a slot counts its contrast `1 / hysteresis`
+    /// times (the budget's hysteresis), so a holder near the threshold keeps
+    /// its map while the sun drifts.
+    #[must_use]
+    pub fn weight(&self, contrast: f32, held: bool, hysteresis: f32) -> f32 {
+        let c = if held { contrast / hysteresis.max(1e-3) } else { contrast };
+        if c >= self.contrast_full {
+            1.0
+        } else if c <= self.contrast_off || self.contrast_full <= self.contrast_off {
+            0.0
+        } else {
+            (c - self.contrast_off) / (self.contrast_full - self.contrast_off)
+        }
+    }
+
+    /// Illuminance a point light of `intensity` lumens and `range` meters
+    /// puts on a receiver facing it at [`Self::receiver_distance`] (at most
+    /// half the range), lux: `Φ / (4π d²)` times Bevy's range window
+    /// `(1 - (d/R)⁴)²`.
+    #[must_use]
+    pub fn receiver_lux(&self, intensity: f32, range: f32) -> f32 {
+        let range = range.max(1e-3);
+        let d = self.receiver_distance.min(0.5 * range).max(0.05);
+        let window = (1.0 - (d / range).powi(4)).max(0.0).powi(2);
+        intensity.max(0.0) / (4.0 * std::f32::consts::PI * d * d) * window
+    }
+}
+
+/// The light a receiver gets outdoors without local lights, lux: the direct
+/// sun and moon on level ground (`ground illuminance · sin(elevation)`) plus
+/// a uniform ambient of luminance `ambient_nits` (`π · L`).
+#[must_use]
+pub fn sky_reference_lux(sky: &SkyState, ambient_nits: f32) -> f32 {
+    let direct = |l: &sf_sky::SkyLight| l.ground_illuminance() * l.elevation.sin().max(0.0);
+    direct(&sky.sun) + direct(&sky.moon) + std::f32::consts::PI * ambient_nits.max(0.0)
+}
+
+/// The steady intensity of a light whose [`PointLight::intensity`] is
+/// animated (flicker, pulse), lumens: the [`ShadowContrastGate`] reads it
+/// instead, so its shadow decision doesn't follow the flicker.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct SteadyIntensity(pub f32);
 
 impl PointShadowBudget {
     /// Shadow strength by distance to the viewer: 1 to `fade_start`, 0 past
@@ -211,6 +350,12 @@ impl Plugin for PointShadowPlugin {
 
 fn add(app: &mut App) {
     crate::gpu_culled_casters::add(app);
+    // CW-3b: per-face culling of lamp cube maps (vendored `bevy_pbr`, own patch); the game
+    // turns it on (`enabled`), the margin is this crate's tunable.
+    app.init_resource::<bevy_pbr::PointShadowFaceCull>().register_tunables(TUNABLES);
+    let _bound = app
+        .add_tunable(&FACE_CULL_MARGIN)
+        .bind_resource(|cull: &mut bevy_pbr::PointShadowFaceCull, margin| cull.margin_deg = margin);
     app.init_resource::<PointShadowBudget>()
         .add_systems(
             PostUpdate,
@@ -259,17 +404,41 @@ fn sync_map_size(budget: Res<PointShadowBudget>, map: Option<ResMut<PointLightSh
     }
 }
 
-type ViewerCameras<'w, 's> =
-    Query<'w, 's, (&'static Camera, &'static GlobalTransform, Option<&'static RenderTarget>, Option<&'static RenderLayers>), With<Camera3d>>;
+type ViewerCameras<'w, 's> = Query<
+    'w,
+    's,
+    (&'static Camera, &'static GlobalTransform, Option<&'static RenderTarget>, Option<&'static RenderLayers>, Has<SkyCamera>),
+    With<Camera3d>,
+>;
 
 /// The viewer: the highest-order active 3D camera drawing to a window. Its
-/// position and the `RenderLayers` it draws.
-fn viewer(cameras: &ViewerCameras) -> Option<(bevy_math::Vec3, RenderLayers)> {
+/// position, the `RenderLayers` it draws and whether it sees the sky
+/// (a [`SkyCamera`]: outdoors).
+fn viewer(cameras: &ViewerCameras) -> Option<(bevy_math::Vec3, RenderLayers, bool)> {
     cameras
         .iter()
-        .filter(|(c, _, t, _)| c.is_active && matches!(t, None | Some(RenderTarget::Window(_))))
-        .max_by_key(|(c, _, _, _)| c.order)
-        .map(|(_, t, _, layers)| (t.translation(), layers.cloned().unwrap_or_default()))
+        .filter(|(c, _, t, _, _)| c.is_active && matches!(t, None | Some(RenderTarget::Window(_))))
+        .max_by_key(|(c, _, _, _, _)| c.order)
+        .map(|(_, t, _, layers, sky)| (t.translation(), layers.cloned().unwrap_or_default(), sky))
+}
+
+/// The sky light a [`ShadowContrastGate`] compares lights against, lux, or
+/// `None` (gate off, no sky viewer, no sky).
+fn gate_reference(
+    budget: &PointShadowBudget,
+    outdoors: bool,
+    sky: Option<&CurrentSky>,
+    options: Option<&SkyRenderOptions>,
+) -> Option<f32> {
+    if !budget.contrast_gate.enabled || !outdoors {
+        return None;
+    }
+    let sky = &sky?.0;
+    let ambient = options.map_or(1.0, |o| {
+        let c = crate::ambient_color(sky, o).to_linear();
+        sf_sky::luminance(bevy_math::Vec3::new(c.red, c.green, c.blue))
+    });
+    Some(sky_reference_lux(sky, sky.ambient * ambient))
 }
 
 /// Picks the shadowed lights and advances their native shader shadow fades.
@@ -283,6 +452,8 @@ fn budget_shadows(
     budget: Res<PointShadowBudget>,
     time: Res<Time>,
     cameras: ViewerCameras,
+    sky: Option<Res<CurrentSky>>,
+    sky_options: Option<Res<SkyRenderOptions>>,
     mut lights: Query<(
         Entity,
         &mut PointLight,
@@ -291,11 +462,20 @@ fn budget_shadows(
         &BudgetedShadow,
         Option<&ShadowReach>,
         &GlobalTransform,
-        (&InheritedVisibility, Option<&RenderLayers>, Has<NoFrustumCulling>, Has<ShadowHeldOffscreen>),
+        (
+            &InheritedVisibility,
+            Option<&RenderLayers>,
+            Has<NoFrustumCulling>,
+            Has<ShadowHeldOffscreen>,
+            Option<&SteadyIntensity>,
+        ),
     )>,
 ) {
     let viewer = viewer(&cameras);
     let eye = viewer.as_ref().map(|v| v.0);
+    let outdoors = viewer.as_ref().is_some_and(|v| v.2);
+    let reference = gate_reference(&budget, outdoors, sky.as_deref(), sky_options.as_deref());
+    let gate = budget.contrast_gate;
 
     // The candidates: shown lights of the viewer's `RenderLayers` (a light of
     // another resident worldspace lives in another `BigSpace` frame, where
@@ -304,28 +484,36 @@ fn budget_shadows(
     // changes neither the pick nor any fade: a holder off screen keeps its
     // slot and its cached map (`ShadowHeldOffscreen`). `InheritedVisibility`
     // is propagated later in `PostUpdate`, so this reads last frame's value.
+    //
+    // The contrast gate (outdoors, when on) weighs each candidate by how
+    // visible its shadow would be against the sky's light: its importance
+    // (so the most visible win the slots) and its shadow strength (so it
+    // fades as the sun rises); weight 0 holds no map.
     let mut candidates: Vec<(f32, bool)> = Vec::new();
-    let mut candidate_lights: Vec<Entity> = Vec::new();
-    if let Some((eye, layers)) = &viewer
+    let mut candidate_lights: Vec<(Entity, f32)> = Vec::new();
+    if let Some((eye, layers, _)) = &viewer
         && budget.max > 0
     {
-        for (entity, light, slot, _, prio, reach, at, (shown, light_layers, ..)) in &lights {
+        for (entity, light, slot, _, prio, reach, at, (shown, light_layers, _, _, steady)) in &lights {
             let d = at.translation().distance(*eye);
             if shown.get() && d < budget.fade_end && layers.intersects(light_layers.unwrap_or(&RenderLayers::default())) {
                 // The reach a slot would give, not the current blend.
                 let range = reach.map_or(light.range, |r| r.shadowed);
-                candidates.push((importance(range, d, prio.priority), slot.is_some_and(|s| s.held)));
-                candidate_lights.push(entity);
+                let held = slot.is_some_and(|s| s.held);
+                let weight = reference.map_or(1.0, |sky_lux| {
+                    let lux = gate.receiver_lux(steady.map_or(light.intensity, |s| s.0), range);
+                    gate.weight(ShadowContrastGate::contrast(lux, sky_lux), held, budget.hysteresis)
+                });
+                candidates.push((importance(range, d, prio.priority) * weight, held));
+                candidate_lights.push((entity, weight));
             }
         }
     }
-    let ranked: Vec<Entity> =
+    let ranked: Vec<(Entity, f32)> =
         pick_shadowed(&candidates, budget.max, budget.hysteresis).into_iter().map(|i| candidate_lights[i]).collect();
 
-    let target_of = |entity: Entity, at: &GlobalTransform| match eye {
-        Some(eye) if ranked.contains(&entity) => {
-            budget.distance_fade(at.translation().distance(eye))
-        }
+    let target_of = |entity: Entity, at: &GlobalTransform| match (eye, ranked.iter().find(|(e, _)| *e == entity)) {
+        (Some(eye), Some((_, weight))) => budget.distance_fade(at.translation().distance(eye)) * weight,
         _ => 0.0,
     };
 
@@ -364,7 +552,7 @@ fn budget_shadows(
     // frame so multiple lamps never capture 12+ cubemap faces on the same frame.
     let max_new_slots = if budget.fade_time > 0.0 { 1 } else { budget.max };
     let mut new_slots = 0usize;
-    for (entity, mut light, slot, shadow_fade, _, reach, at, (.., unculled, pinned)) in &mut lights {
+    for (entity, mut light, slot, shadow_fade, _, reach, at, (_, _, unculled, pinned, _)) in &mut lights {
         let target = target_of(entity, at);
         let Some(mut slot) = slot else {
             let mut fade = 0.0;

@@ -28,6 +28,7 @@ mod night;
 mod path;
 mod proxy;
 mod shadow_budget;
+mod sun_gate;
 pub mod sun_view;
 mod upscale;
 
@@ -36,6 +37,12 @@ mod upscale;
 mod tests;
 #[cfg(test)]
 mod shader_tests;
+#[cfg(test)]
+mod shadow_gate_tests;
+#[cfg(test)]
+mod face_cull_tests;
+#[cfg(test)]
+mod sun_gate_tests;
 
 use bevy_app::{App, FixedUpdate, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{Assets, Handle};
@@ -62,10 +69,12 @@ pub use path::{GiActive, GiEnabled, GiSkipEmissive, NoRayTracing, RayTracingMesh
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
 pub use shadow_budget::{
     importance as shadow_importance, pick_shadowed, BudgetedShadow, PointShadowBudget, PointShadowPlugin,
-    ShadowHeldOffscreen, ShadowReach, ShadowSlot,
+    ShadowContrastGate, ShadowHeldOffscreen, ShadowReach, ShadowSlot, SteadyIntensity, sky_reference_lux,
+    TUNABLES as SHADOW_BUDGET_TUNABLES,
 };
 pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 pub use env_refresh::EnvMapRefresh;
+pub use sun_gate::{ShadowGateState, SunLightOcclusion, SunShadowGateStats, SunShadowGating};
 
 /// The sky's settings (orbit, atmosphere, curves). Change at will; the
 /// atmosphere medium is rebuilt when its description changes.
@@ -338,6 +347,7 @@ impl Plugin for SkyPlugin {
                 place_atmosphere.in_set(SkySystems::Origin).after(TransformSystems::Propagate),
             );
         cascade_hold::build(app);
+        sun_gate::build(app);
         night::build(app);
         env_refresh::build(app);
         path::build(app);
@@ -664,6 +674,7 @@ fn write_light(
     sky: &SkyLight,
     shader_applies_transmittance: bool,
     active: bool,
+    gated_off: bool,
 ) {
     *transform = light_transform(sky.direction);
     let (tint, illuminance) = if !active {
@@ -675,7 +686,8 @@ fn write_light(
     } else {
         sky.ground_light()
     };
-    let shadows = active && sky.casts_shadows && shader_applies_transmittance;
+    // CW-8: the sun/moon gate may drop a light's maps (`sun_gate`; never while it's off).
+    let shadows = active && sky.casts_shadows && shader_applies_transmittance && !gated_off;
     if light.illuminance != illuminance {
         light.illuminance = illuminance;
     }
@@ -691,25 +703,63 @@ fn write_light(
     }
 }
 
-type LightItem = (&'static mut DirectionalLight, &'static mut Transform);
+type LightItem = (
+    Entity,
+    &'static mut DirectionalLight,
+    &'static mut Transform,
+    Option<&'static mut ShadowGateState>,
+    Option<&'static mut bevy_pbr::DirectionalLightShadowFade>,
+);
+
+/// The sun and moon shadow gate's inputs (CW-8), one parameter.
+type GateInputs<'w> = (
+    Res<'w, SunShadowGating>,
+    Res<'w, SunLightOcclusion>,
+    Res<'w, SkyRenderOptions>,
+    Res<'w, Time>,
+    ResMut<'w, SunShadowGateStats>,
+);
 
 fn apply_lights(
     sky: Res<CurrentSky>,
     path: Res<ActiveRenderPath>,
     sky_cameras: Query<(), With<SkyCamera>>,
+    (gating, occlusion, options, time, mut stats): GateInputs,
     mut suns: Query<LightItem, (With<SunLight>, Without<MoonLight>)>,
     mut moons: Query<LightItem, (With<MoonLight>, Without<SunLight>)>,
+    mut commands: Commands,
 ) {
     let active = !sky_cameras.is_empty();
     // Solari's directional lights ignore the atmosphere: give them the
     // transmitted light (and no shadow maps: ray tracing replaces them).
     let raster = path.0 == RenderPath::Raster;
-    for (mut light, mut transform) in &mut suns {
-        write_light(&mut light, &mut transform, &sky.0.sun, raster, active);
+    let gate = gating.0;
+    // CW-8: each light's shadow contrast on a receiver facing it (only computed while on).
+    let (sun_contrast, moon_contrast) = if gate.enabled {
+        let floor = ambient_color(&sky.0, &options).to_linear();
+        let floor = sf_sky::luminance(Vec3::new(floor.red, floor.green, floor.blue));
+        sf_sky::sun_gate::contrasts(&sky.0, occlusion.0, std::f32::consts::PI * sky.0.ambient * floor)
+    } else {
+        (0.0, 0.0)
+    };
+    let dt = time.delta_secs();
+    let mut next = SunShadowGateStats { sun_contrast, moon_contrast, ..SunShadowGateStats::default() };
+    for (entity, mut light, mut transform, state, fade) in &mut suns {
+        let base = active && sky.0.sun.casts_shadows && raster;
+        let (gated_off, strength) = sun_gate::gate_light(&gate, (base, sun_contrast), dt, (entity, state, fade), &mut commands);
+        next.sun_strength = strength;
+        write_light(&mut light, &mut transform, &sky.0.sun, raster, active, gated_off);
     }
-    for (mut light, mut transform) in &mut moons {
-        write_light(&mut light, &mut transform, &sky.0.moon, raster, active);
+    for (entity, mut light, mut transform, state, fade) in &mut moons {
+        let base = active && sky.0.moon.casts_shadows && raster;
+        let (gated_off, strength) = sun_gate::gate_light(&gate, (base, moon_contrast), dt, (entity, state, fade), &mut commands);
+        next.moon_strength = strength;
+        write_light(&mut light, &mut transform, &sky.0.moon, raster, active, gated_off);
     }
+    if !gate.enabled {
+        next = SunShadowGateStats::default();
+    }
+    stats.set_if_neq(next);
 }
 
 /// A sky camera and what [`apply_cameras`] drives on it.

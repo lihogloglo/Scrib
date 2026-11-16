@@ -428,7 +428,9 @@ impl Plugin for PbrPlugin {
             .init_gpu_resource::<LightMeta>()
             .init_resource::<RenderShadowLodOrigin>()
             // superfargoth patch (#26161)
-            .init_resource::<ShadowCasterChanges>();
+            .init_resource::<ShadowCasterChanges>()
+            // superfargoth patch (own: point shadow face culling)
+            .init_resource::<PointShadowFaceStats>();
 
         render_app
             .world_mut()

@@ -272,7 +272,8 @@ fn fetch_directional_shadow(
             shadow = mix(shadow, next_shadow, (-view_z - next_near_bound) / (this_far_bound - next_near_bound));
         }
     }
-    return shadow;
+    // superfargoth patch (own, CW-8: directional shadow fade): 1 = stock.
+    return mix(1.0, shadow, (*light).shadow_fade);
 }
 
 fn cascade_debug_visualization(

@@ -164,6 +164,56 @@ wgpu_wrapper! {
     pub struct RenderAdapterInfo(AdapterInfo);
 }
 
+// superfargoth patch (own, CW-5b submit counters): inherent methods with `wgpu::Queue`'s names and signatures, so
+// every call through a `RenderQueue` (method syntax resolves them before `Deref`) is counted in
+// `encode_timing::QueueCounts` while the encode-timing hook is installed; then forwarded unchanged. Calls on a bare
+// `&wgpu::Queue` are not counted.
+impl RenderQueue {
+    /// [`Queue::submit`], counted (calls and command buffers).
+    pub fn submit<I: IntoIterator<Item = wgpu::CommandBuffer>>(
+        &self,
+        command_buffers: I,
+    ) -> wgpu::SubmissionIndex {
+        let mut n = 0u64;
+        let index = Queue::submit(
+            self,
+            command_buffers.into_iter().inspect(|_| n += 1),
+        );
+        encode_timing::count(encode_timing::QueueOp::Submit, n);
+        index
+    }
+
+    /// [`Queue::write_buffer`], counted (calls and bytes).
+    pub fn write_buffer(&self, buffer: &wgpu::Buffer, offset: wgpu::BufferAddress, data: &[u8]) {
+        encode_timing::count(encode_timing::QueueOp::WriteBuffer, data.len() as u64);
+        Queue::write_buffer(self, buffer, offset, data);
+    }
+
+    /// [`Queue::write_buffer_with`], counted (calls and bytes).
+    #[must_use]
+    pub fn write_buffer_with(
+        &self,
+        buffer: &wgpu::Buffer,
+        offset: wgpu::BufferAddress,
+        size: wgpu::BufferSize,
+    ) -> Option<wgpu::QueueWriteBufferView> {
+        encode_timing::count(encode_timing::QueueOp::WriteBufferWith, size.get());
+        Queue::write_buffer_with(self, buffer, offset, size)
+    }
+
+    /// [`Queue::write_texture`], counted (calls and source bytes).
+    pub fn write_texture(
+        &self,
+        texture: wgpu::TexelCopyTextureInfo<'_>,
+        data: &[u8],
+        data_layout: wgpu::TexelCopyBufferLayout,
+        size: wgpu::Extent3d,
+    ) {
+        encode_timing::count(encode_timing::QueueOp::WriteTexture, data.len() as u64);
+        Queue::write_texture(self, texture, data, data_layout, size);
+    }
+}
+
 const GPU_NOT_FOUND_ERROR_MESSAGE: &str = if cfg!(target_os = "linux") {
     "Unable to find a GPU! Make sure you have installed required drivers! For extra information, see: https://github.com/bevyengine/bevy/blob/latest/docs/linux_dependencies.md"
 } else {

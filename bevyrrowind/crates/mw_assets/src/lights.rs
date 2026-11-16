@@ -156,7 +156,8 @@ pub fn spawn_light(
     let light = calibration.point_light(info);
     let mut entity = commands.spawn((light, BudgetedShadow::default(), calibration.reach(info.radius), Visibility::Inherited));
     if info.animation != LightAnimation::Steady {
-        entity.insert(AnimatedLight { intensity: light.intensity, animation: info.animation, seed });
+        // The shadow budget's contrast gate reads the steady intensity, not the flicker.
+        entity.insert((AnimatedLight { intensity: light.intensity, animation: info.animation, seed }, sf_sky_bevy::SteadyIntensity(light.intensity)));
     }
     let id = entity.id();
     match model {

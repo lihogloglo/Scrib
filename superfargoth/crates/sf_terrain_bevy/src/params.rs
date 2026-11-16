@@ -59,6 +59,17 @@ fn i(v: i32) -> u32 {
     v as u32
 }
 
+/// The shader's morph zone of `lod`: [`CdlodSettings::morph_zone`] moved `slack_m` closer to the camera
+/// (at most down to the band's inner edge). A selection gate (CW-2) that keeps a selection while the camera
+/// moves less than `slack_m` stays crack-free with it: a finer node's edge against a coarser one lies at
+/// least `range(lod) - slack_m` from the camera, where the morph has finished (Strugar's condition, with
+/// the staleness folded into the zone).
+pub fn morph_zone(cdlod: &CdlodSettings, lod: i8, slack_m: f32) -> (f32, f32) {
+    let (start, end) = cdlod.morph_zone(lod);
+    let slack = slack_m.clamp(0.0, (start - cdlod.range(lod) * 0.5).max(0.0));
+    (start - slack, end - slack)
+}
+
 impl Params {
     pub fn set_f(&mut self, slot: usize, v: [f32; 4]) {
         self.0[slot] = v.map(f);
@@ -68,11 +79,12 @@ impl Params {
         self.0[slot] = v.map(i);
     }
 
-    /// Morph zones per LOD from `MIN_LOD`: (start, 1 / length, spacing).
-    pub fn set_morph(&mut self, cdlod: &CdlodSettings) {
+    /// Morph zones per LOD from `MIN_LOD`: (start, 1 / length, spacing), each moved `slack_m` closer
+    /// ([`morph_zone`]).
+    pub fn set_morph(&mut self, cdlod: &CdlodSettings, slack_m: f32) {
         for n in 0..MORPH_LODS {
             let lod = MIN_LOD + i8::try_from(n).expect("small");
-            let (start, end) = cdlod.morph_zone(lod);
+            let (start, end) = morph_zone(cdlod, lod, slack_m);
             self.set_f(P_MORPH + n, [start, 1.0 / (end - start).max(1e-3), NodeKey::spacing(lod), 0.0]);
         }
     }

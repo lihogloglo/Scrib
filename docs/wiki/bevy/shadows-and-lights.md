@@ -54,6 +54,13 @@ Facts only, from the stock 0.20.0 source (`~/.cargo/registry/src/*/<crate>-0.20.
 - On top (README rows): shadow early-out and lamp filter (B2), `ShadowMoverRefresh` (SH-20, redraws mover faces within
   16 m), CPU-listed shadow views (`CpuListedPointShadowCasters`), `AmbientLightSpecular` (N1). Behaviour of
   these in Scrib: [engine/shadows.md](../engine/shadows.md).
+- Own patch "point shadow face culling" (CW-3b, opt-in `PointShadowFaceCull` main-world resource,
+  `render/point_face_cull.rs`): per light a mask of cube faces no active `Camera3d` frustum can see a receiver of
+  (face pyramid widened by a margin vs the frustum clipped to the range sphere). `extract_shadow_caster_changes` skips
+  culled faces' hashes; `skip_unchanged_shadow_views` keeps them `SkipRootViewRendering` and redraws a dirty face the
+  frame it is revealed. Bevy's structure keeps all six views per light (`prepare_lights`) and the main-world caster
+  lists per face (`check_point_light_mesh_visibility`, `bevy_light/src/lib.rs:517`, stock); counts in the render-world
+  `PointShadowFaceStats`.
 
 ## 5. Clustering
 

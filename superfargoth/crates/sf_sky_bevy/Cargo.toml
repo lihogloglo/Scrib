@@ -47,6 +47,10 @@ sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
 # The game clock resource (`GameClock`, clock.md).
 sf_ids = { workspace = true, features = ["bevy"] }
 sf_sky.workspace = true
+# Tunable declarations (`def!`) of the point-shadow budget's contrast gate.
+sf_tunables.workspace = true
+# Registers and binds the lamp shadow tunables (`shadow.lamp.face_cull.margin_deg`, CW-3b).
+sf_tunables_bevy.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

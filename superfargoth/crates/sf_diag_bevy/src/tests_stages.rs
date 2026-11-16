@@ -7,7 +7,7 @@ use bevy_diagnostic::{DiagnosticsPlugin, FrameCountPlugin};
 use bevy_time::{TimePlugin, TimeUpdateStrategy};
 use sf_diag::Counters;
 
-use crate::encode::{EncodeFrame, encoder_name};
+use crate::encode::{EncodeFrame, QueueTraffic, encoder_name};
 use crate::stages::{MAIN_STAGES, completion_deltas};
 use crate::{DiagCounters, DiagSettings, FramePhasePlugin, SfDiagPlugin};
 
@@ -86,4 +86,41 @@ fn encode_frame_folds_finishes_per_system_and_resets() {
     assert_eq!(value(&seen, "encode/main_pass/max"), Some(2.0));
     assert_eq!(value(&seen, "encode/shadow_pass/sum"), None);
     assert_eq!(value(&seen, "encode/submit"), Some(0.0));
+}
+
+#[test]
+fn encode_frame_reports_poll_only_when_polled_and_queue_traffic_per_frame() {
+    let mut frame = EncodeFrame::default();
+    frame.submit(1.0);
+    frame.poll(0.25);
+    frame.poll(0.5);
+    frame.queue(QueueTraffic { submits: 2, command_buffers: 31, writes: [(90, 4096), (3, 512), (1, 64)] });
+    let counters = Counters::new();
+    frame.report(&counters);
+    let seen = drain(&counters);
+    let expect = [
+        ("encode/submit", 1.0),
+        ("encode/poll", 0.75),
+        ("encode/queue/submits", 2.0),
+        ("encode/queue/command_buffers", 31.0),
+        ("encode/queue/write_buffer/calls", 90.0),
+        ("encode/queue/write_buffer/bytes", 4096.0),
+        ("encode/queue/write_buffer_with/calls", 3.0),
+        ("encode/queue/write_buffer_with/bytes", 512.0),
+        ("encode/queue/write_texture/calls", 1.0),
+        ("encode/queue/write_texture/bytes", 64.0),
+    ];
+    for (name, v) in expect {
+        assert_eq!(value(&seen, name), Some(v), "{name}: {seen:?}");
+    }
+    // Next frame: no poll (switch off) = no poll value; queue traffic resets to zero.
+    frame.submit(1.0);
+    frame.report(&counters);
+    let seen = drain(&counters);
+    assert_eq!(value(&seen, "encode/poll"), None);
+    assert_eq!(value(&seen, "encode/queue/write_buffer/calls"), Some(0.0));
+    // Traffic alone (no timed event) still reports.
+    frame.queue(QueueTraffic { submits: 1, ..QueueTraffic::default() });
+    frame.report(&counters);
+    assert_eq!(value(&drain(&counters), "encode/queue/submits"), Some(1.0));
 }

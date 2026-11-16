@@ -1,6 +1,9 @@
 //! A synthetic biped dressed through the plugin in a headless `App`:
 //! outfit cache sharing, one mesh per material, a swap that keeps the rig.
 
+/// CW-7: vendored skin.rs "skip unchanged skins".
+mod skin_skip;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

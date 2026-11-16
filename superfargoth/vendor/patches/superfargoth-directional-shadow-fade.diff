@@ -1,0 +1,137 @@
+# superfargoth patch (own, CW-8: directional shadow fade), ROADMAP 1.25. Against the vendored tree as of 2026-11-16 (after CW-3b).
+--- a/superfargoth/vendor/bevy_pbr/src/render/light.rs
++++ b/superfargoth/vendor/bevy_pbr/src/render/light.rs
+@@ -91,6 +91,20 @@
+     }
+ }
+ 
++/// Shadow strength in `0.0..=1.0` for a [`DirectionalLight`]: the fragment shader blends its
++/// shadow (cascades, the material's own `directional_shadow_factor` and contact shadows)
++/// toward unshadowed by `1 - strength`. Absent = 1 (stock). Unity's `Light.shadowStrength`,
++/// UE's `ShadowAmount`; Bevy 0.20 has none.
++// superfargoth patch (own, CW-8: directional shadow fade)
++#[derive(Component, Clone, Copy, Debug, PartialEq)]
++pub struct DirectionalLightShadowFade(pub f32);
++
++impl Default for DirectionalLightShadowFade {
++    fn default() -> Self {
++        Self(1.0)
++    }
++}
++
+ #[derive(Component)]
+ #[require(PointAndSpotLightViewEntities)]
+ pub struct ExtractedPointLight {
+@@ -147,6 +161,9 @@
+     pub occlusion_culling: bool,
+     pub sun_disk_angular_size: f32,
+     pub sun_disk_intensity: f32,
++    /// [`DirectionalLightShadowFade`], 1 without one.
++    // superfargoth patch (own, CW-8: directional shadow fade)
++    pub shadow_fade: f32,
+ }
+ 
+ // NOTE: These must match the bit flags in bevy_pbr/src/render/mesh_view_types.wesl!
+@@ -187,6 +204,8 @@
+     decal_index: u32,
+     sun_disk_angular_size: f32,
+     sun_disk_intensity: f32,
++    // superfargoth patch (own, CW-8: directional shadow fade)
++    shadow_fade: f32,
+ }
+ 
+ // NOTE: These must match the bit flags in bevy_pbr/src/render/mesh_view_types.wesl!
+@@ -440,10 +459,14 @@
+                 Option<&VolumetricLight>,
+                 Has<OcclusionCulling>,
+                 Option<&SunDisk>,
++                // superfargoth patch (own, CW-8: directional shadow fade)
++                Option<&DirectionalLightShadowFade>,
+             ),
+             (
+                 Without<SpotLight>,
+                 Or<(
++                    // superfargoth patch (own, CW-8: directional shadow fade)
++                    Changed<DirectionalLightShadowFade>,
+                     Changed<DirectionalLight>,
+                     Changed<CascadesVisibleEntities>,
+                     Changed<Cascades>,
+@@ -838,6 +861,7 @@
+         volumetric_light,
+         occlusion_culling,
+         sun_disk,
++        shadow_fade,
+     ) in &directional_lights
+     {
+         if !view_visibility.get() {
+@@ -970,6 +994,8 @@
+             occlusion_culling,
+             sun_disk_angular_size: sun_disk.unwrap_or_default().angular_size,
+             sun_disk_intensity: sun_disk.unwrap_or_default().intensity,
++            // superfargoth patch (own, CW-8: directional shadow fade)
++            shadow_fade: shadow_fade.map_or(1.0, |fade| fade.0.clamp(0.0, 1.0)),
+         };
+ 
+         let mut entity_commands = commands
+@@ -2655,6 +2681,8 @@
+                 depth_texture_base_index: num_directional_cascades_enabled_for_this_view as u32,
+                 sun_disk_angular_size: light.sun_disk_angular_size,
+                 sun_disk_intensity: light.sun_disk_intensity,
++                // superfargoth patch (own, CW-8: directional shadow fade)
++                shadow_fade: light.shadow_fade,
+                 decal_index: decals
+                     .as_ref()
+                     .and_then(|decals| decals.get(*light_entity))
+diff --git a/superfargoth/vendor/bevy_pbr/src/render/mesh_view_types.wesl b/superfargoth/vendor/bevy_pbr/src/render/mesh_view_types.wesl
+index bbdd3cfb..ee29f8de 100644
+--- a/superfargoth/vendor/bevy_pbr/src/render/mesh_view_types.wesl
++++ b/superfargoth/vendor/bevy_pbr/src/render/mesh_view_types.wesl
+@@ -44,6 +44,8 @@ struct DirectionalLight {
+     decal_index: u32,
+     sun_disk_angular_size: f32,
+     sun_disk_intensity: f32,
++    // superfargoth patch (own, CW-8: directional shadow fade): 1 = stock.
++    shadow_fade: f32,
+ };
+ 
+ const DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT: u32                  = 1u << 0u;
+diff --git a/superfargoth/vendor/bevy_pbr/src/render/pbr_functions.wesl b/superfargoth/vendor/bevy_pbr/src/render/pbr_functions.wesl
+index 13933f69..0365efa3 100644
+--- a/superfargoth/vendor/bevy_pbr/src/render/pbr_functions.wesl
++++ b/superfargoth/vendor/bevy_pbr/src/render/pbr_functions.wesl
+@@ -620,15 +620,19 @@ fn apply_pbr_lighting(
+         if (lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
+                 && (view_bindings::lights.directional_lights[i].flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
+             shadow = shadows::fetch_directional_shadow(i, in.world_position, in.world_normal, view_z, in.frag_coord.xy);
+-            shadow *= in.directional_shadow_factor;
++            // superfargoth patch (own, CW-8: directional shadow fade): the material's own term
++            // (terrain far shadows) fades with the light's cascades (`fetch_directional_shadow`).
++            shadow *= mix(1.0, in.directional_shadow_factor, view_bindings::lights.directional_lights[i].shadow_fade);
+         }
+ 
+         @if(CONTACT_SHADOWS && DEPTH_PREPASS)
+         if contact_shadow_enabled && lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && shadow > 0.0 && // superfargoth patch (own: sun shadow early-out): `lit`
++                view_bindings::lights.directional_lights[i].shadow_fade > 0.0 && // superfargoth patch (own, CW-8: directional shadow fade)
+                 (view_bindings::lights.directional_lights[i].flags &
+                     mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_CONTACT_SHADOWS_ENABLED_BIT) != 0u {
+             let L = view_bindings::lights.directional_lights[i].direction_to_light;
+-            shadow *= calculate_contact_shadow(in.world_position.xyz, in.frag_coord.xy, L, contact_shadow_steps);
++            // superfargoth patch (own, CW-8: directional shadow fade)
++            shadow *= mix(1.0, calculate_contact_shadow(in.world_position.xyz, in.frag_coord.xy, L, contact_shadow_steps), view_bindings::lights.directional_lights[i].shadow_fade);
+         }
+ 
+         direct_light += light_contrib * shadow;
+diff --git a/superfargoth/vendor/bevy_pbr/src/render/shadows.wesl b/superfargoth/vendor/bevy_pbr/src/render/shadows.wesl
+index 97da2619..011ca2c1 100644
+--- a/superfargoth/vendor/bevy_pbr/src/render/shadows.wesl
++++ b/superfargoth/vendor/bevy_pbr/src/render/shadows.wesl
+@@ -272,7 +272,8 @@ fn fetch_directional_shadow(
+             shadow = mix(shadow, next_shadow, (-view_z - next_near_bound) / (this_far_bound - next_near_bound));
+         }
+     }
+-    return shadow;
++    // superfargoth patch (own, CW-8: directional shadow fade): 1 = stock.
++    return mix(1.0, shadow, (*light).shadow_fade);
+ }
+ 
+ fn cascade_debug_visualization(

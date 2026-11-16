@@ -1,4 +1,6 @@
 use core::mem::{self, size_of};
+// superfargoth patch (own, CW-7: skip unchanged skins): upload ranges.
+use core::ops::Range;
 
 use bevy_asset::{prelude::AssetChanged, AssetId, Assets};
 use bevy_camera::visibility::ViewVisibility;
@@ -17,6 +19,8 @@ use bevy_render::{
     Extract,
 };
 use bevy_transform::prelude::GlobalTransform;
+// superfargoth patch (own, CW-7: skip unchanged skins): the changed-tree gate.
+use bevy_transform::{components::TransformTreeChanged, systems::StaticTransformOptimizations};
 use offset_allocator::{Allocation, Allocator};
 use tracing::error;
 
@@ -173,12 +177,145 @@ struct SkinBlock {
     /// Filled from the full joint transforms this frame, so the changed-joint
     /// pass can skip it.
     fresh: bool,
+    /// superfargoth patch (own, CW-7: skip unchanged skins): how many of the
+    /// two GPU buffers do not hold this block's staging matrices yet (2 after
+    /// a change: this frame's `current` and, after the swap, next frame's).
+    pending: u8,
+    /// superfargoth patch (own, CW-7): allocated this frame, so the previous
+    /// buffer holds another skin's (or no) data at its offset: with the skip
+    /// on, both buffers are written (zero motion on its first frame instead
+    /// of a motion vector from stale data).
+    new_alloc: bool,
+    /// superfargoth patch (own, CW-7): listed in `SkinJointBlocks::dirty`.
+    queued: bool,
+    /// superfargoth patch (own, CW-7): where the joints hang, for the
+    /// changed-tree gate.
+    root: BlockRoot,
 }
+
+// superfargoth patch (own, CW-7: skip unchanged skins) begin.
+
+/// Main-world switch, read by [`extract_skins`] every frame (absent = off).
+///
+/// With `skip_unchanged`, a joint block is uploaded only on the frames that
+/// bring both GPU buffers up to date after its matrices changed, and a block
+/// whose joints' common ancestor reports no transform change in its subtree
+/// (`TransformTreeChanged` + `GlobalTransform`; needs Bevy's static transform
+/// optimisation) is not walked at all. Off: stock behaviour (the whole
+/// staging buffer is written every frame, every block is walked).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SkinUploadSettings {
+    /// Skip walking and uploading joint blocks whose matrices did not change.
+    pub skip_unchanged: bool,
+}
+
+/// What the last [`prepare_skins`] wrote into the joint buffers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SkinUploadStats {
+    /// `write_buffer` calls (merged contiguous ranges, both buffers).
+    pub writes: u32,
+    /// Joint matrices written (both buffers; 64 bytes each).
+    pub joints: usize,
+}
+
+impl SkinUploadStats {
+    /// Bytes written into the joint buffers.
+    pub fn bytes(&self) -> usize {
+        self.joints * size_of::<Mat4>()
+    }
+}
+
+/// The ranges of the staging buffer (in joints) to write into each GPU buffer
+/// this frame, after the swap: sorted, merged where contiguous.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SkinUploadPlan {
+    /// Into [`SkinUniforms::current_buffer`].
+    pub current: Vec<Range<usize>>,
+    /// Into [`SkinUniforms::prev_buffer`].
+    pub prev: Vec<Range<usize>>,
+}
+
+/// The transform hierarchy as the changed-tree gate sees it.
+pub trait SkinTree {
+    /// The parent of `entity`, if any.
+    fn parent(&self, entity: Entity) -> Option<Entity>;
+    /// Whether a global transform at or below `root` may have changed since
+    /// the last extraction (its own `GlobalTransform` or its
+    /// `TransformTreeChanged` changed).
+    fn subtree_changed(&self, root: Entity) -> bool;
+}
+
+/// A block's common joint ancestor, found once on its first gated walk.
+#[derive(Clone, Copy)]
+enum BlockRoot {
+    Unknown,
+    Root(Entity),
+    /// The joints share no ancestor (or the walk hit the depth cap): always walked.
+    Unrooted,
+}
+
+/// Cycle guard for the ancestor walks (a hierarchy depth cap, not a tunable).
+const MAX_ANCESTOR_DEPTH: usize = 1024;
+
+/// The lowest common ancestor of `joints` (inclusive: a root joint is its own).
+fn common_root(joints: &[Entity], tree: &dyn SkinTree) -> Option<Entity> {
+    let (&first, rest) = joints.split_first()?;
+    let mut chain = vec![first];
+    while let Some(parent) = tree.parent(*chain.last()?) {
+        if chain.len() >= MAX_ANCESTOR_DEPTH {
+            return None;
+        }
+        chain.push(parent);
+    }
+    let mut lowest = 0;
+    for &joint in rest {
+        let mut entity = joint;
+        let mut steps = 0;
+        let found = loop {
+            if let Some(index) = chain.iter().position(|&c| c == entity) {
+                break index;
+            }
+            steps += 1;
+            match tree.parent(entity) {
+                Some(parent) if steps < MAX_ANCESTOR_DEPTH => entity = parent,
+                _ => return None,
+            }
+        };
+        lowest = lowest.max(found);
+    }
+    Some(chain[lowest])
+}
+
+/// Sorts `ranges` and merges overlapping or touching ones; drops empty ones.
+fn merge_ranges(ranges: &mut Vec<Range<usize>>) {
+    ranges.retain(|r| !r.is_empty());
+    ranges.sort_unstable_by_key(|r| r.start);
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
+    for range in ranges.drain(..) {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    *ranges = merged;
+}
+
+// superfargoth patch (own, CW-7: skip unchanged skins) end.
 
 impl SkinBlock {
     /// The offset in joints within the staging buffer.
     fn offset(&self) -> u32 {
         self.allocation.offset * JOINTS_PER_ALLOCATION_UNIT
+    }
+
+    /// superfargoth patch (own, CW-7): the block's whole allocation in the
+    /// staging buffer, in joints (padding included, so neighbours merge),
+    /// clipped to the staging length.
+    fn range(&self, staging_len: usize) -> Range<usize> {
+        let unit = JOINTS_PER_ALLOCATION_UNIT as usize;
+        let start = self.offset() as usize;
+        let end = start + self.key.joints.len().div_ceil(unit) * unit;
+        start.min(staging_len)..end.min(staging_len)
     }
 }
 
@@ -211,6 +348,17 @@ pub struct SkinJointBlocks {
     total_joints: usize,
     /// Joints visited (matrix lookups) since [`Self::begin_extract`].
     joints_visited: usize,
+    /// superfargoth patch (own, CW-7: skip unchanged skins): the switch
+    /// ([`SkinUploadSettings::skip_unchanged`]).
+    skip_unchanged: bool,
+    /// superfargoth patch (own, CW-7): blocks with `pending > 0`.
+    dirty: Vec<u32>,
+    /// superfargoth patch (own, CW-7): per-frame counters (since
+    /// [`Self::begin_extract`]) and the last upload.
+    blocks_walked: usize,
+    blocks_gated: usize,
+    blocks_changed: usize,
+    last_upload: SkinUploadStats,
 }
 
 impl Default for SkinJointBlocks {
@@ -224,6 +372,12 @@ impl Default for SkinJointBlocks {
             block_by_key: HashMap::default(),
             total_joints: 0,
             joints_visited: 0,
+            skip_unchanged: false,
+            dirty: Vec::new(),
+            blocks_walked: 0,
+            blocks_gated: 0,
+            blocks_changed: 0,
+            last_upload: SkinUploadStats::default(),
         }
     }
 }
@@ -268,7 +422,123 @@ impl SkinJointBlocks {
     /// Starts a frame's extraction (resets [`Self::joints_visited`]).
     pub fn begin_extract(&mut self) {
         self.joints_visited = 0;
+        // superfargoth patch (own, CW-7): per-frame counters.
+        self.blocks_walked = 0;
+        self.blocks_gated = 0;
+        self.blocks_changed = 0;
     }
+
+    // superfargoth patch (own, CW-7: skip unchanged skins) begin.
+
+    /// Turns the skip of unchanged blocks on or off (see [`SkinUploadSettings`]).
+    pub fn set_skip_unchanged(&mut self, on: bool) {
+        self.skip_unchanged = on;
+    }
+
+    /// Whether unchanged blocks are skipped.
+    pub fn skip_unchanged(&self) -> bool {
+        self.skip_unchanged
+    }
+
+    /// Blocks whose joints were walked since [`Self::begin_extract`].
+    pub fn blocks_walked(&self) -> usize {
+        self.blocks_walked
+    }
+
+    /// Blocks not walked because their transform tree did not change.
+    pub fn blocks_gated(&self) -> usize {
+        self.blocks_gated
+    }
+
+    /// Blocks whose matrices changed (or were filled) since [`Self::begin_extract`].
+    pub fn blocks_changed(&self) -> usize {
+        self.blocks_changed
+    }
+
+    /// What the last [`prepare_skins`] wrote.
+    pub fn last_upload(&self) -> SkinUploadStats {
+        self.last_upload
+    }
+
+    /// Marks a block's matrices changed: both buffers need them again.
+    fn touch(blocks: &mut [Option<SkinBlock>], dirty: &mut Vec<u32>, index: u32, new_alloc: bool) {
+        let Some(block) = blocks[index as usize].as_mut() else {
+            return;
+        };
+        block.pending = 2;
+        block.new_alloc |= new_alloc;
+        if !block.queued {
+            block.queued = true;
+            dirty.push(index);
+        }
+    }
+
+    /// What to write after this frame's buffer swap, and the bookkeeping that
+    /// goes with it. `resized`: both buffers were just recreated (everything
+    /// goes into both). Skip off: the whole staging buffer into `current`
+    /// (stock). Skip on: only blocks not yet in both buffers, plus blocks
+    /// allocated this frame into `prev` as well.
+    pub fn plan_upload(&mut self, resized: bool) -> SkinUploadPlan {
+        let len = self.staging.len();
+        let mut plan = SkinUploadPlan::default();
+        if resized {
+            for &index in &self.dirty {
+                if let Some(block) = self.blocks[index as usize].as_mut() {
+                    (block.pending, block.new_alloc, block.queued) = (0, false, false);
+                }
+            }
+            self.dirty.clear();
+            plan.current.push(0..len);
+            plan.prev.push(0..len);
+        } else {
+            if !self.skip_unchanged {
+                plan.current.push(0..len);
+            }
+            let mut keep = Vec::new();
+            for index in mem::take(&mut self.dirty) {
+                let Some(block) = self.blocks[index as usize].as_mut() else {
+                    continue;
+                };
+                if !block.queued {
+                    continue; // listed twice (a freed slot reused this frame)
+                }
+                block.queued = false;
+                if self.skip_unchanged {
+                    plan.current.push(block.range(len));
+                    if block.new_alloc {
+                        plan.prev.push(block.range(len));
+                        block.pending = 1;
+                    }
+                }
+                block.pending = block.pending.saturating_sub(1);
+                block.new_alloc = false;
+                if block.pending > 0 {
+                    keep.push(index);
+                }
+            }
+            for &index in &keep {
+                if let Some(block) = self.blocks[index as usize].as_mut() {
+                    block.queued = true;
+                }
+            }
+            self.dirty = keep;
+        }
+        merge_ranges(&mut plan.current);
+        merge_ranges(&mut plan.prev);
+        let joints = plan
+            .current
+            .iter()
+            .chain(&plan.prev)
+            .map(ExactSizeIterator::len)
+            .sum();
+        self.last_upload = SkinUploadStats {
+            writes: (plan.current.len() + plan.prev.len()) as u32,
+            joints,
+        };
+        plan
+    }
+
+    // superfargoth patch (own, CW-7: skip unchanged skins) end.
 
     /// Gives `skin` the block of its binding, creating it if needed, and
     /// (re)fills that block from `joint_transform` (the joint's current global
@@ -286,9 +556,12 @@ impl SkinJointBlocks {
             inverse_bindposes: skinned_mesh.inverse_bindposes.id(),
             joints: skinned_mesh.joints.as_slice().into(),
         };
+        // superfargoth patch (own, CW-7): whether the block is new this frame.
+        let mut new_alloc = false;
         let block_index = if let Some(&index) = self.block_by_key.get(&key) {
             index
         } else {
+            new_alloc = true;
             // Allocate space for the joints.
             let Some(allocation) = self.allocator.allocate(
                 key.joints
@@ -308,6 +581,11 @@ impl SkinJointBlocks {
                 key: key.clone(),
                 users: 0,
                 fresh: false,
+                // superfargoth patch (own, CW-7): set by `touch` below.
+                pending: 0,
+                new_alloc: false,
+                queued: false,
+                root: BlockRoot::Unknown,
             };
             let index = match self.free_blocks.pop() {
                 Some(index) => {
@@ -348,6 +626,9 @@ impl SkinJointBlocks {
             self.staging[buffer_index] = joint_matrix;
         }
         self.joints_visited += block.key.joints.len();
+        // superfargoth patch (own, CW-7): refilled, so uploaded again.
+        self.blocks_changed += 1;
+        Self::touch(&mut self.blocks, &mut self.dirty, block_index, new_alloc);
 
         self.skin_uniform_info.insert(
             skin,
@@ -390,17 +671,67 @@ impl SkinJointBlocks {
         inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
         changed_transform: impl Fn(Entity) -> Option<Affine3A>,
     ) {
-        for block in self.blocks.iter_mut().flatten() {
+        self.extract_changed_joints_inner(inverse_bindposes, changed_transform, None);
+    }
+
+    /// superfargoth patch (own, CW-7: skip unchanged skins): as
+    /// [`Self::extract_changed_joints`]; with the skip on, a block whose
+    /// joints' common ancestor reports no change in its subtree is not walked.
+    pub fn extract_changed_joints_gated(
+        &mut self,
+        inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
+        changed_transform: impl Fn(Entity) -> Option<Affine3A>,
+        tree: &dyn SkinTree,
+    ) {
+        let gate = self.skip_unchanged.then_some(tree);
+        self.extract_changed_joints_inner(inverse_bindposes, changed_transform, gate);
+    }
+
+    fn extract_changed_joints_inner(
+        &mut self,
+        inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
+        changed_transform: impl Fn(Entity) -> Option<Affine3A>,
+        gate: Option<&dyn SkinTree>,
+    ) {
+        // superfargoth patch (own, CW-7): split borrows for the dirty list.
+        let Self {
+            blocks,
+            staging,
+            dirty,
+            joints_visited,
+            blocks_walked,
+            blocks_gated,
+            blocks_changed,
+            ..
+        } = self;
+        for index in 0..blocks.len() {
+            let Some(block) = blocks[index].as_mut() else {
+                continue;
+            };
             // If we initialized the block this frame, we already populated all
             // the joints, so there's no need to populate them again.
             if mem::take(&mut block.fresh) {
                 continue;
+            }
+            // superfargoth patch (own, CW-7): the changed-tree gate.
+            if let Some(tree) = gate {
+                if matches!(block.root, BlockRoot::Unknown) {
+                    block.root = common_root(&block.key.joints, tree)
+                        .map_or(BlockRoot::Unrooted, BlockRoot::Root);
+                }
+                if let BlockRoot::Root(root) = block.root {
+                    if !tree.subtree_changed(root) {
+                        *blocks_gated += 1;
+                        continue;
+                    }
+                }
             }
             let Some(inverse_bindposes) = inverse_bindposes.get(block.key.inverse_bindposes)
             else {
                 continue;
             };
             let offset = block.offset() as usize;
+            let mut changed = false;
             // Calculate and write in the new joint matrices, if they changed
             // this frame.
             for (joint_index, (&joint, inverse_bindpose)) in block
@@ -414,9 +745,21 @@ impl SkinJointBlocks {
                 let Some(transform) = changed_transform(joint) else {
                     continue;
                 };
-                self.staging[offset + joint_index] = transform * *inverse_bindpose;
+                // superfargoth patch (own, CW-7): a rewrite with an equal
+                // value (propagation marks whole subtrees) is no change.
+                let matrix = transform * *inverse_bindpose;
+                let slot = &mut staging[offset + joint_index];
+                if *slot != matrix {
+                    *slot = matrix;
+                    changed = true;
+                }
             }
-            self.joints_visited += block.key.joints.len().min(inverse_bindposes.len());
+            *joints_visited += block.key.joints.len().min(inverse_bindposes.len());
+            *blocks_walked += 1;
+            if changed {
+                *blocks_changed += 1;
+                Self::touch(blocks, dirty, index as u32, false);
+            }
         }
     }
 }
@@ -450,7 +793,9 @@ pub fn prepare_skins(
     // if skins use uniform buffers on this platform.
     let needed_size = (uniform.blocks.staging.len() as u64 + MAX_JOINTS as u64)
         * size_of::<Mat4>() as u64;
-    if uniform.current_buffer.size() < needed_size {
+    // superfargoth patch (own, CW-7: skip unchanged skins): remembered for the plan.
+    let resized = uniform.current_buffer.size() < needed_size;
+    if resized {
         let mut new_size = uniform.current_buffer.size();
         while new_size < needed_size {
             // 1.5× growth factor.
@@ -482,23 +827,29 @@ pub fn prepare_skins(
         //
         // TODO: This is a bug - will cause motion blur to ignore joint movement
         // for one frame.
-        render_queue.write_buffer(
-            &uniform.prev_buffer,
-            0,
-            bytemuck::must_cast_slice(&uniform.blocks.staging[..]),
-        );
+        //
+        // superfargoth patch (own, CW-7: skip unchanged skins): the plan below
+        // writes the whole staging buffer into both buffers after a resize.
     }
 
-    // Write the data from `uniform.blocks.staging` into
-    // `uniform.current_buffer`.
-    render_queue.write_buffer(
-        &uniform.current_buffer,
-        0,
-        bytemuck::must_cast_slice(&uniform.blocks.staging[..]),
-    );
-
-    // We don't need to write `uniform.prev_buffer` because we already wrote it
-    // last frame, and the data should still be on the GPU.
+    // superfargoth patch (own, CW-7: skip unchanged skins): write the planned
+    // ranges of `uniform.blocks.staging`. Skip off (stock): all of it into
+    // `current_buffer`; we don't need to write `prev_buffer` because we already
+    // wrote it last frame, and the data should still be on the GPU. Skip on:
+    // only blocks that one of the two buffers still lacks.
+    let plan = uniform.blocks.plan_upload(resized);
+    for (buffer, ranges) in [
+        (&uniform.current_buffer, &plan.current),
+        (&uniform.prev_buffer, &plan.prev),
+    ] {
+        for range in ranges {
+            render_queue.write_buffer(
+                buffer,
+                (range.start * size_of::<Mat4>()) as u64,
+                bytemuck::must_cast_slice(&uniform.blocks.staging[range.clone()]),
+            );
+        }
+    }
 }
 
 // Notes on implementation:
@@ -547,9 +898,25 @@ pub fn extract_skins(
     changed_transforms: Extract<Query<(Entity, &GlobalTransform), Changed<GlobalTransform>>>,
     joints: Extract<Query<&GlobalTransform>>,
     mut removed_skinned_meshes_query: Extract<RemovedComponents<SkinnedMesh>>,
+    // superfargoth patch (own, CW-7: skip unchanged skins): the switch and
+    // the changed-tree gate.
+    gate: Extract<(
+        Option<Res<SkinUploadSettings>>,
+        Option<Res<StaticTransformOptimizations>>,
+        Query<(Ref<GlobalTransform>, Option<Ref<TransformTreeChanged>>)>,
+        Query<&ChildOf>,
+    )>,
 ) {
     let blocks = &mut skin_uniforms.into_inner().blocks;
     blocks.begin_extract();
+    let (settings, static_optimizations, trees, parents) = &*gate;
+    blocks.set_skip_unchanged(settings.as_ref().is_some_and(|s| s.skip_unchanged));
+    // Without the static transform optimisation `TransformTreeChanged` is never
+    // marked, so the gate would miss changes: walk every block then.
+    let gated = static_optimizations
+        .as_ref()
+        .is_some_and(|s| s.is_enabled());
+    let tree = QuerySkinTree { trees, parents };
 
     // Find every skinned mesh that changed one of (1) visibility; (2) joint
     // entities (part of `SkinnedMesh`); (3) the associated
@@ -577,12 +944,17 @@ pub fn extract_skins(
 
     // Extract the transforms of changed joints, once per block, and write them
     // into the staging buffer at the appropriate spot.
-    blocks.extract_changed_joints(&skinned_mesh_inverse_bindposes, |joint| {
+    let changed = |joint| {
         changed_transforms
             .get(joint)
             .ok()
-            .map(|(_, transform)| transform.affine())
-    });
+            .map(|(_, transform): (Entity, &GlobalTransform)| transform.affine())
+    };
+    if gated {
+        blocks.extract_changed_joints_gated(&skinned_mesh_inverse_bindposes, changed, &tree);
+    } else {
+        blocks.extract_changed_joints(&skinned_mesh_inverse_bindposes, changed);
+    }
 
     // Delete skins that became invisible.
     for skinned_mesh_entity in removed_skinned_meshes_query.read() {
@@ -591,6 +963,34 @@ pub fn extract_skins(
         if !changed_skinned_meshes.contains(skinned_mesh_entity) {
             blocks.remove_skin(skinned_mesh_entity.into());
         }
+    }
+}
+
+/// superfargoth patch (own, CW-7: skip unchanged skins): the main world's
+/// hierarchy and change ticks as seen from [`extract_skins`]. An entity that
+/// cannot be read counts as changed (the gate only ever skips proven-clean
+/// subtrees).
+pub struct QuerySkinTree<'a, 'w, 's> {
+    pub trees: &'a Query<
+        'w,
+        's,
+        (
+            Ref<'static, GlobalTransform>,
+            Option<Ref<'static, TransformTreeChanged>>,
+        ),
+    >,
+    pub parents: &'a Query<'w, 's, &'static ChildOf>,
+}
+
+impl SkinTree for QuerySkinTree<'_, '_, '_> {
+    fn parent(&self, entity: Entity) -> Option<Entity> {
+        self.parents.get(entity).ok().map(ChildOf::parent)
+    }
+
+    fn subtree_changed(&self, root: Entity) -> bool {
+        self.trees.get(root).map_or(true, |(global, tree)| {
+            global.is_changed() || tree.is_none_or(|tree| tree.is_changed())
+        })
     }
 }
 

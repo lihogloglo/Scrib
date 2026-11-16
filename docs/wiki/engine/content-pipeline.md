@@ -32,6 +32,14 @@ conflicts from disjoint-field merges (`report.rs`).
 - `mw_mods`: `MwAdapter` (`mw_mods/src/lib.rs:329`), the builtin `mw` mod (shipped graphs, Luau runtime) pinned first.
 - `mw_nif`: `parse` (`lib.rs:159`) and `convert` (`:164`) NIF to engine-neutral `sf_model::Model` (Y up, meters, properties
   inherited, controllers to tracks). `mw_bake::to_model` (`importer.rs:207`) adapts it for the bake.
+- NIF controllers play in `mw_assets/src/animation.rs`: node keyframes and visibility per instance (`animate_nodes` `:296`);
+  material controllers (UV scroll, alpha, diffuse/emissive colour) once per model on the global clock, stepped at 30 Hz
+  (`MATERIAL_ANIM_HZ` `:42`), a pure function of step time, writing a `StandardMaterial` only when the value differs
+  (`animate_materials` `:172`, `apply_material_controller` `:223`). Every write is an asset change (re-prepare, bind-group
+  slot rewrite). Opt-in gate `BEVYRROWIND_MATCTRL_GATE=1` (CW-6, off until its A/B): `MaterialUsers` (`:70`), kept by
+  observers on `MeshMaterial3d<StandardMaterial>` and the `AnimatedMaterialUser` marker (`:59`, put on mesh nodes of animated
+  materials, survives the fogged-copy swap), skips materials no entity drew last frame (`ViewVisibility`) and retries them
+  every frame, so one coming into view is current one frame later. Untracked materials animate as before.
 
 **Bake.** `sf_bake` is a build system with constructive traces over a blake3 store (spec: Build Systems a la Carte).
 `Step` (`sf_bake/src/lib.rs:93`) has `plan` (known inputs) and `run` (reads recorded through `RunCx`); `ProductKey`

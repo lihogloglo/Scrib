@@ -10,7 +10,9 @@
 //!   (`crowd/cN/joints/count`, one palette per distinct joint binding: the P5 block), pinned and
 //!   switch-hidden counts; from the render world, the skin extract's joints walked
 //!   (`crowd/joints_extracted/count`), joints uploaded (`crowd/joints_uploaded/count`) and joint
-//!   blocks (`crowd/joint_blocks/count`).
+//!   blocks (`crowd/joint_blocks/count`); CW-7's skin skip (`bevy_pbr::SkinUploadSettings`):
+//!   `skin/blocks_walked|blocks_skipped|blocks_changed/count`, `skin/upload_writes/count`,
+//!   `skin/joints_written/count`, `skin/joint_bytes_written/bytes`.
 
 use bevy_app::{App, PostUpdate};
 use bevy_camera::visibility::{Visibility, VisibilitySystems};
@@ -19,7 +21,7 @@ use bevy_mesh::skinning::SkinnedMesh;
 use sf_anim_bevy::{AnimLod, AnimSystems, PhysicsPose};
 use sf_character::crowd::{CrowdBand, far_hidden};
 use sf_diag_bevy::DiagCounters;
-use sf_diag_bevy::sf_diag::unit::COUNT;
+use sf_diag_bevy::sf_diag::unit::{BYTES, COUNT};
 
 use crate::CharacterBody;
 
@@ -142,5 +144,16 @@ fn skin_gauges(skins: Option<Res<bevy_pbr::SkinUniforms>>, counters: Res<DiagCou
         counters.set_named("crowd/joints_extracted/count", COUNT, skins.blocks.joints_visited() as f64);
         counters.set_named("crowd/joints_uploaded/count", COUNT, skins.blocks.total_joints() as f64);
         counters.set_named("crowd/joint_blocks/count", COUNT, skins.blocks.block_count() as f64);
+        // CW-7 (ROADMAP 1.25, vendored `skin.rs` "skip unchanged skins"): blocks walked, skipped by
+        // the changed-tree gate and changed this frame; what `prepare_skins` really wrote (both
+        // buffers; `crowd/joints_uploaded` above is the buffer total).
+        let blocks = &skins.blocks;
+        let upload = blocks.last_upload();
+        counters.set_named("skin/blocks_walked/count", COUNT, blocks.blocks_walked() as f64);
+        counters.set_named("skin/blocks_skipped/count", COUNT, blocks.blocks_gated() as f64);
+        counters.set_named("skin/blocks_changed/count", COUNT, blocks.blocks_changed() as f64);
+        counters.set_named("skin/upload_writes/count", COUNT, f64::from(upload.writes));
+        counters.set_named("skin/joints_written/count", COUNT, upload.joints as f64);
+        counters.set_named("skin/joint_bytes_written/bytes", BYTES, upload.bytes() as f64);
     }
 }

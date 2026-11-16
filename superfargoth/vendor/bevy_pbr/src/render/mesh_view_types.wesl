@@ -44,6 +44,8 @@ struct DirectionalLight {
     decal_index: u32,
     sun_disk_angular_size: f32,
     sun_disk_intensity: f32,
+    // superfargoth patch (own, CW-8: directional shadow fade): 1 = stock.
+    shadow_fade: f32,
 };
 
 const DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT: u32                  = 1u << 0u;

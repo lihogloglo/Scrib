@@ -1029,7 +1029,11 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &suite::
 }
 
 /// DLSS asked for but silently absent (an exe without its `dlss/` folder) measures another renderer: fail the run.
+/// Not checkable in a run without GPU timers (`BEVYRROWIND_NO_GPU_TIMERS`, meta `gpu_timers: off`): passes.
 fn check_dlss(envs: &[(String, String)], cmd_args: &[String], report: &Report, run_dir: &Path) -> Result<(), String> {
+    if report.meta.get(mw_devtools_bevy::perf::GPU_TIMERS_META).is_some_and(|v| v == "off") {
+        return Ok(());
+    }
     match arms::dlss_requested(envs, std::env::var("BEVYRROWIND_DLSS").ok().as_deref(), cmd_args) {
         Some(mode) if !arms::dlss_timed(report.counters.keys()) => Err(format!(
             "DLSS `{mode}` requested but no DLSS pass was timed (no `*dlss_*/elapsed_gpu` counter): the exe ran without DLSS; see {}",

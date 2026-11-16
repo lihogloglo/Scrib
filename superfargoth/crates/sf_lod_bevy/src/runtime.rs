@@ -36,7 +36,7 @@ use sf_diag_bevy::sf_diag::unit;
 use sf_lod::products::{DIR_STEP, IMPOSTOR_STEP, directory_subject, level_step, node_subject};
 use sf_lod::{FadeRange, FarDirectory, FarLevels, NodeKey, OctaMode};
 use sf_model_bevy::baked_path;
-use sf_world::{Level, WorldspaceId};
+use sf_world::{GateSource, Level, SelectGate, WorldspaceId};
 use sf_world_bevy::{CellProxies, ProxySpawnCx, Streaming, WorldspaceRegistry, to_grid};
 
 use crate::assets::{FarDirectoryAsset, FarNodeAsset, ImpostorAtlasAsset};
@@ -153,6 +153,9 @@ struct FarWorld {
 #[derive(Default)]
 pub(crate) struct FarState {
     worlds: HashMap<WorldspaceId, FarWorld>,
+    /// Bumped whenever a node's parts, lead or children change or a directory arrives: the residency
+    /// pass's selection-gate key (CW-2).
+    revision: u64,
 }
 
 /// The shared state handle (a resource, and inside [`FarHook`]).
@@ -256,6 +259,7 @@ impl CellProxies for FarHook {
             slot.forced = false;
             slot.stats = NodeStats::of(&node.header, node.bytes);
         }
+        state.revision += 1;
         n
     }
 
@@ -281,6 +285,7 @@ impl CellProxies for FarHook {
         if let Some(w) = state.worlds.get_mut(ws) {
             w.l1.remove(&cell);
         }
+        state.revision += 1;
     }
 
     fn bytes(&self, ws: &WorldspaceId, cell: IVec3) -> u64 {
@@ -444,6 +449,7 @@ pub(crate) fn load_directories(
             }
         }
         w.dir = Some(dir);
+        state.revision += 1;
     }
 }
 
@@ -533,6 +539,7 @@ pub(crate) fn spawn_upper_nodes(world: &mut World) {
     let Some(materials) = world.get_resource::<FarMaterials>().cloned() else { return };
     let settings = world.resource::<FarFieldSettings>().clone();
     let mut state = shared.lock();
+    let mut spawned = false;
     for (ws, w) in &mut state.worlds {
         let Some(layer) = world.resource::<WorldspaceRegistry>().get(ws).map(|e| e.layer) else { continue };
         let layers = sf_world_bevy::dynamic_layer(layer);
@@ -560,10 +567,14 @@ pub(crate) fn spawn_upper_nodes(world: &mut World) {
                 // isn't retried.
                 node.parts.push(node.entity);
             }
+            spawned = true;
             if let Ok(mut e) = world.get_entity_mut(node.entity) {
                 e.insert(Visibility::Inherited);
             }
         }
+    }
+    if spawned {
+        state.revision += 1;
     }
 }
 
@@ -581,12 +592,34 @@ pub(crate) fn residency_pass(
     mut ranges: Query<&mut VisibilityRange>,
     mut stats: ResMut<FarFieldStats>,
     counters: Option<Res<DiagCounters>>,
+    mut gate: Local<ResidencyGate>,
 ) {
     let started = Instant::now();
     let Some(camera) = cameras.iter().filter(|(c, _)| c.is_active).min_by_key(|(c, _)| c.order).map(|(_, t)| t.translation()) else {
         return;
     };
     let mut far = shared.lock();
+    // Selection gate (CW-2, `FarFieldSettings::select_gate`): the pass is a function of the camera's
+    // distance to each node (no frustum: turning never matters), the nodes' parts, leads and children
+    // (`FarState::revision`), the cells' residency (`Scheduler::revision`) and the settings. Skipped while
+    // none changed and the camera stayed within the quantum; the forced flags and stats stand. It re-runs
+    // the frame after each input change too: parts spawned this frame get their `GlobalTransform` in
+    // PostUpdate. An origin shift moves the render-space camera far past the quantum. The fades
+    // themselves are `VisibilityRange`, evaluated by Bevy every frame.
+    if settings.is_changed() {
+        gate.settings_rev += 1;
+    }
+    let inputs = (far.revision, streaming.scheduler().revision(), gate.settings_rev);
+    let source = [GateSource { pos: camera.as_dvec3(), dir: None }];
+    if !gate.gate.check(&settings.select_gate, &source, inputs) {
+        if let Some(c) = &counters {
+            emit_far_counters(c, &stats, started);
+        }
+        return;
+    }
+    // While gated, a node counts as needing its children `move_m` early, so a camera that crossed into
+    // the children's band since the last run (by less than the quantum) still finds the parent forced.
+    let guard = if settings.select_gate.enabled { settings.select_gate.move_m.max(0.0) } else { 0.0 };
     let mut out = FarFieldStats::default();
     for (ws, w) in &mut far.worlds {
         let levels = levels_for(&settings, w.dir.as_deref());
@@ -606,7 +639,7 @@ pub(crate) fn residency_pass(
             out.entities += slot.parts.len();
             slot.stats.add_to(&mut out);
             let Ok(t) = transforms.get(first) else { continue };
-            let d = t.translation().distance(camera);
+            let d = (t.translation().distance(camera) - guard).max(0.0);
             // Residency only matters where children should draw.
             let needs = levels.needs_children(1, slot.lead, d);
             let forced = needs && levels.forced(1, slot.lead, d, scheduler.level(ws, *cell) >= Level::Near);
@@ -631,7 +664,7 @@ pub(crate) fn residency_pass(
             out.entities += node.parts.len();
             node.stats.add_to(&mut out);
             let Ok(t) = transforms.get(node.entity) else { continue };
-            let d = t.translation().distance(camera);
+            let d = (t.translation().distance(camera) - guard).max(0.0);
             let needs = levels.needs_children(key.level, node.lead, d);
             let resident = !needs
                 || node.children.iter().all(|c| if c.level == 1 { l1_resident(c.index()) } else { l2_spawned.binary_search(c).is_ok() });
@@ -644,22 +677,39 @@ pub(crate) fn residency_pass(
         }
     }
     out.select_ms = started.elapsed().as_secs_f64() * 1000.0;
-    if let Some(c) = counters {
-        #[allow(clippy::cast_precision_loss)]
-        {
-            c.set_named("far/nodes/l1", unit::COUNT, out.l1 as f64);
-            c.set_named("far/nodes/l2", unit::COUNT, out.l2 as f64);
-            c.set_named("far/nodes/l3", unit::COUNT, out.l3 as f64);
-            c.set_named("far/entities", unit::COUNT, out.entities as f64);
-            c.set_named("far/triangles", unit::COUNT, out.triangles as f64);
-            c.set_named("far/impostors", unit::COUNT, out.impostors as f64);
-            c.set_named("far/lights", unit::COUNT, out.lights as f64);
-            c.set_named("far/forced", unit::COUNT, out.forced as f64);
-            c.set_named("far/resident/bytes", unit::BYTES, out.bytes as f64);
-        }
-        c.add_duration_named("far/select/ms", started.elapsed());
+    if let Some(c) = &counters {
+        emit_far_counters(c, &out, started);
     }
     *stats = out;
+}
+
+/// The residency pass's selection gate (CW-2) and its settings change count.
+pub(crate) struct ResidencyGate {
+    gate: SelectGate<(u64, u64, u64)>,
+    settings_rev: u64,
+}
+
+impl Default for ResidencyGate {
+    fn default() -> Self {
+        // tunables: const (a change counter starts at 0; the settle frame is the one-frame transform lag)
+        Self { gate: SelectGate::with_settle(1), settings_rev: 0 }
+    }
+}
+
+fn emit_far_counters(c: &DiagCounters, out: &FarFieldStats, started: Instant) {
+    #[allow(clippy::cast_precision_loss)]
+    {
+        c.set_named("far/nodes/l1", unit::COUNT, out.l1 as f64);
+        c.set_named("far/nodes/l2", unit::COUNT, out.l2 as f64);
+        c.set_named("far/nodes/l3", unit::COUNT, out.l3 as f64);
+        c.set_named("far/entities", unit::COUNT, out.entities as f64);
+        c.set_named("far/triangles", unit::COUNT, out.triangles as f64);
+        c.set_named("far/impostors", unit::COUNT, out.impostors as f64);
+        c.set_named("far/lights", unit::COUNT, out.lights as f64);
+        c.set_named("far/forced", unit::COUNT, out.forced as f64);
+        c.set_named("far/resident/bytes", unit::BYTES, out.bytes as f64);
+    }
+    c.add_duration_named("far/select/ms", started.elapsed());
 }
 
 /// Debug level tint and the light sprites' night factor.
@@ -753,5 +803,117 @@ pub(crate) fn update_far_shadow(
             m.params.far = params;
             m.far_map = map.clone();
         }
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+    use crate::{FarFieldSettings, FarFieldStats};
+    use sf_world_bevy::StreamingConfig;
+
+    /// One L1 node at the origin whose children (cell 0) are never resident: forced while the camera is
+    /// where they should draw.
+    struct Rig {
+        world: World,
+        schedule: Schedule,
+        shared: FarShared,
+        camera: Entity,
+        threshold: f32,
+    }
+
+    fn rig(gate: bool) -> Rig {
+        let mut world = World::new();
+        let settings = FarFieldSettings { select_gate: FarFieldSettings::select_gate_quanta(gate), ..FarFieldSettings::default() };
+        let threshold = levels_for(&settings, None).node_range(1, 0.0, false).start.end;
+        let part = world.spawn((GlobalTransform::IDENTITY, VisibilityRange::default())).id();
+        let camera = world.spawn((Camera::default(), GlobalTransform::from_translation(Vec3::X * (threshold + 100.0)))).id();
+        let shared = FarShared::default();
+        {
+            let mut s = shared.lock();
+            let slot = L1Slot { handle: Handle::default(), parts: vec![part], lead: 0.0, forced: false, stats: NodeStats::default() };
+            let w = FarWorld {
+                dir_handle: Handle::default(),
+                dir: None,
+                failed: false,
+                l1: HashMap::from([(IVec3::ZERO, slot)]),
+                upper: BTreeMap::new(),
+                atlases: Vec::new(),
+                impostors: None,
+                impostors_failed: false,
+            };
+            s.worlds.insert(WorldspaceId::new("w"), w);
+        }
+        world.insert_resource(shared.clone());
+        world.insert_resource(settings);
+        world.insert_resource(Streaming::new(StreamingConfig::default()));
+        world.insert_resource(FarFieldStats::default());
+        let mut schedule = Schedule::default();
+        schedule.add_systems(residency_pass);
+        Rig { world, schedule, shared, camera, threshold }
+    }
+
+    impl Rig {
+        fn at(&mut self, x: f32) {
+            self.world.entity_mut(self.camera).insert(GlobalTransform::from_translation(Vec3::X * x));
+        }
+        fn frame(&mut self) {
+            self.schedule.run(&mut self.world);
+        }
+        fn forced(&self) -> bool {
+            self.shared.lock().worlds[&WorldspaceId::new("w")].l1[&IVec3::ZERO].forced
+        }
+        /// Tampers with the flag: a pass that runs puts it back, a skipped one leaves it.
+        fn set_forced(&self, v: bool) {
+            self.shared.lock().worlds.get_mut(&WorldspaceId::new("w")).expect("w").l1.get_mut(&IVec3::ZERO).expect("slot").forced = v;
+        }
+        fn node_changed(&self) {
+            self.shared.lock().revision += 1;
+        }
+    }
+
+    /// CW-2: still camera -> the pass is skipped and its result stands; a quantum of travel, a node change
+    /// (plus one settle frame) re-run it; while gated, the no-hole fallback trips `move_m` early.
+    #[test]
+    fn residency_gate_skips_still_frames_and_reacts_to_moves_and_data() {
+        assert!(!FarFieldSettings::default().select_gate.enabled, "off by default until the owner's A/B");
+        let q = FarFieldSettings::select_gate_quanta(true).move_m;
+        let mut r = rig(true);
+        let far = r.threshold + 100.0;
+        r.frame();
+        r.frame();
+        assert!(!r.forced(), "far away: the children aren't needed");
+        r.set_forced(true);
+        for _ in 0..5 {
+            r.frame();
+        }
+        assert!(r.forced(), "still: skipped");
+        r.at(far - 0.5 * q);
+        r.frame();
+        assert!(r.forced(), "under a quantum: skipped");
+        r.at(far - 1.01 * q);
+        r.frame();
+        assert!(!r.forced(), "moved a quantum: re-run");
+        r.set_forced(true);
+        r.node_changed();
+        r.frame();
+        assert!(!r.forced(), "a node changed: re-run");
+        r.set_forced(true);
+        r.frame();
+        assert!(!r.forced(), "the settle frame after it");
+        r.set_forced(true);
+        r.frame();
+        assert!(r.forced(), "then skipped again");
+        // Just outside the children's band: the gated pass already forces the parent, the ungated doesn't.
+        r.at(r.threshold + 0.5 * q);
+        r.frame();
+        assert!(r.forced(), "guard band");
+        let mut u = rig(false);
+        u.at(u.threshold + 0.5 * q);
+        u.frame();
+        assert!(!u.forced());
+        u.set_forced(true);
+        u.frame();
+        assert!(!u.forced(), "ungated: runs every frame");
     }
 }

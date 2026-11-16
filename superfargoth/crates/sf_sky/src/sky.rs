@@ -146,6 +146,10 @@ pub struct SkyLight {
     /// moons). The colour for shaders that apply transmittance themselves;
     /// [`Self::transmittance`] already includes it.
     pub tint: Vec3,
+    /// Estimated sky light this light's scattering puts on level ground, lux
+    /// ([`SkySettings::sky_fill`]): the fill a sky lit by this light adds (Bevy's atmosphere
+    /// environment map). Cloud cover dims it with [`Self::illuminance`]. Zero below the horizon.
+    pub sky_fill: f32,
 }
 
 impl Default for SkyLight {
@@ -157,6 +161,7 @@ impl Default for SkyLight {
             transmittance: Vec3::ZERO,
             casts_shadows: false,
             tint: Vec3::ONE,
+            sky_fill: 0.0,
         }
     }
 }
@@ -215,6 +220,12 @@ pub struct SkyState {
 /// Quadrature steps for the CPU transmittance (error < 0.5% at the horizon).
 const TRANSMITTANCE_SAMPLES: u32 = 48;
 
+/// Share of the light the atmosphere scatters that heads down to the ground
+/// ([`SkySettings::sky_fill`]): Rayleigh scattering is symmetric (half down); forward-peaked
+/// haze sends more of an overhead sun's light down and less of a low sun's. A model constant
+/// (single-scattering geometry), not a quality setting.
+pub const SKY_FILL_DOWNWARD: f32 = 0.5;
+
 impl SkySettings {
     /// The sky at `clock` under `weather`.
     pub fn evaluate(&self, clock: &SkyClock, weather: &Weather) -> SkyState {
@@ -233,11 +244,14 @@ impl SkySettings {
             ) * visible_disk_fraction(pos.elevation, horizon, angular_size),
             casts_shadows: false,
             tint: Vec3::ONE,
+            sky_fill: 0.0,
         };
         let mut sun = light(celestial.sun, self.sun_illuminance, self.sun_angular_size);
+        sun.sky_fill = self.sky_fill(sun.illuminance, sun.elevation, weather);
         let night = self.evaluate_night(*clock, weather, celestial.sun.elevation_deg(), horizon);
         let gain = self.moonlight.gain(&self.moon_list());
         let mut moon = moonlight(night.moons(), gain, weather.moonlight_tint);
+        moon.sky_fill = self.sky_fill(moon.illuminance, moon.elevation, weather);
         let sun_deg = celestial.sun.elevation_deg();
         if sun_deg > self.sun_shadow_min_elevation_deg {
             sun.casts_shadows = true;
@@ -257,6 +271,20 @@ impl SkySettings {
             night_sky_tint: weather.night_sky_tint,
             night,
         }
+    }
+
+    /// Sky light on level ground from a light of `illuminance` lux (above the atmosphere) at
+    /// `elevation` radians, lux: the beam's flux through the ground plane
+    /// (`illuminance · sin(elevation)`) times the share the medium scatters on the way down
+    /// ([`AtmosphereModel::scattered_fraction`], luminance) times [`SKY_FILL_DOWNWARD`].
+    /// Single scattering only (no multiple scattering, no ground bounce, no clouds): it errs
+    /// low, so a gate comparing a light against it keeps shadows a little longer than needed.
+    pub fn sky_fill(&self, illuminance: f32, elevation: f32, weather: &Weather) -> f32 {
+        if elevation <= 0.0 || illuminance <= 0.0 {
+            return 0.0;
+        }
+        let share = self.atmosphere.scattered_fraction(self.observer_altitude, elevation, &weather.medium(), TRANSMITTANCE_SAMPLES);
+        illuminance * elevation.sin() * luminance(share) * SKY_FILL_DOWNWARD
     }
 
     /// The moons to draw: [`Self::moons`], or the Earth-like default.
@@ -346,6 +374,7 @@ fn moonlight(moons: &[MoonState], gain: f32, weather_tint: Option<Vec3>) -> SkyL
         transmittance: brightest.transmittance * tint,
         casts_shadows: false,
         tint,
+        sky_fill: 0.0,
     }
 }
 

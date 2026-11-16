@@ -21,6 +21,21 @@ Everything else is unshadowed.
   per cascade (F1, `BEVYRROWIND_CASCADE_ENCODERS=1`, `per_view_shadow_encoder_slot`, vendored `bevy_pbr/src/render/light.rs:3752`).
   The moon has its own 2 shorter cascades, shadows off until the sky says so (`lib.rs:473`, `write_light` `:654`).
   The sky turns sun shadows off in interiors and at night (`write_light`); sun and moon use `RenderLayers::none()` indoors.
+- **Sun/moon gate (opt-in, off by default; ROADMAP 1.25 CW-8).** The light the elevation rule lets cast keeps its
+  cascades only while its shadow shows: contrast `c = E_direct / (E_direct + E_fill)` (`sf_sky/src/sun_gate.rs:176`),
+  `E_direct` = ground illuminance on a receiver facing the light x the cloud shadow map's mean
+  (`SunLightOcclusion`, filled by the game, `mw_environment_bevy/src/render.rs:333`, from `sf_atmos_bevy::mean_cloud_shadow`);
+  `E_fill` = both lights' single-scattering sky fill (`SkySettings::sky_fill`, `sky.rs:282`; cloud cover dims it with
+  the light, as Bevy's env map is lit by the light) + the other light on level ground + π x ambient floor. Weight 0 at
+  c <= 0.05, 1 at >= 0.15 (`shadow.sun.gate.contrast`, `Guess`, the lamp gate's), holders x 1/0.8; the strength moves
+  toward it at most 1/3 s (`shadow.sun.gate.fade_s`), a fresh caster starts at its weight; strength 0 = maps off (far
+  shadows follow: they key on the flag). The strength goes to the vendored `DirectionalLightShadowFade` (own patch
+  "CW-8", `vendor/README.md`): cascades, the material's far-shadow factor and contact shadows fade together. Glue
+  `apply_lights` (`sf_sky_bevy/src/lib.rs:723`) + `gate_light` (`sun_gate.rs:64`); stats `SunShadowGateStats` (in the
+  screenshot lighting log). By day every weather stays at full strength except the last ~30 min of low sun in fog,
+  rain, snow, thunder, ash, blight and blizzard; at night a dim moon (< ~1.5 lux against the 4-nit floor) drops its 2
+  cascades (ledger 2026-11-16). Switch: `BEVYRROWIND_SUN_SHADOW_GATE=1` (`render.rs:34`). Not faded in the band:
+  froxel fog shadows (own CSM sampling).
 - **PCSS and filter.** `DirectionalLight::soft_shadow_size` = 10 cascade texels on High/Ultra (`exterior.rs:1588`,
   `SOFT_SHADOW_SIZE` `:1305`); the penumbra is world-metre scaled by our shader patch (vendor row "H2",
   `superfargoth/vendor/README.md:20`). Filter: Hardware2x2 on Low, Temporal with a jittered camera, else Gaussian
@@ -33,15 +48,36 @@ Everything else is unshadowed.
   (`exterior.rs:1240`, `:1254`).
 - **Extra depth views** (precipitation occlusion, surface-weather shelter) ride Bevy's shadow pass as subviews
   (`sf_sky_bevy/src/sun_view.rs:108`, `add_sun_view`); they invent no private state.
-- **Lamp shadow budget.** Lamps carry `BudgetedShadow`; `budget_shadows` (`sf_sky_bevy/src/shadow_budget.rs:280`)
+- **Lamp shadow budget.** Lamps carry `BudgetedShadow`; `budget_shadows` (`sf_sky_bevy/src/shadow_budget.rs:432`)
   ranks the shown lights of the viewer's `RenderLayers` all around the viewer, on screen or not, by `importance`
-  with hysteresis (`:115`, `pick_shadowed` `:141`), and gives at most `PointShadowBudget::max` a cube map. Turning the camera
+  with hysteresis (`:242`, `pick_shadowed` `:268`), and gives at most `PointShadowBudget::max` a cube map. Turning the camera
   changes nothing; a timed fade (0.3 s) happens only when a light gains or loses its slot, else the fade follows
   distance (`PointLightShadowFade`). Holders carry stock `NoFrustumCulling` (+ `ShadowHeldOffscreen`), so Bevy
   keeps their caster lists, face views and cached cube while they are off screen; the vendored refresh rule draws
   nothing for a holder whose range sphere is in no camera frustum (`vendor/README.md` "SH-21b"). Game numbers: High 8 maps at 512, Medium 6 at 512, Low 0,
-  Ultra 12 at 1024 (`exterior.rs:1517`, `mw_environment_bevy/src/render.rs:28`); fade 35-45 m (`render.rs:32`).
-  `drop_stale_light_views` (`:236`) frees face views of lights that lost a map (a Bevy 0.20 leak).
+  Ultra 12 at 1024 (`exterior.rs:1517`, `mw_environment_bevy/src/render.rs:33`); fade 35-45 m (`render.rs:37`).
+  `drop_stale_light_views` (`:364`) frees face views of lights that lost a map (a Bevy 0.20 leak).
+- **Contrast gate (opt-in, off by default; ROADMAP 1.23b).** `ShadowContrastGate` (`shadow_budget.rs:141`, tunables
+  `shadow.lamp.day_gate*` `:96`): outdoors (viewer has a `SkyCamera`; interiors unchanged) each candidate's importance
+  and shadow strength are multiplied by a weight of its shadow contrast `c = E_lamp / (E_lamp + E_sky)`: `E_lamp` =
+  steady lumens (`SteadyIntensity`, not the flicker) / 4πd² at a 2 m receiver (at most half the range) times Bevy's
+  range window; `E_sky` = direct sun + moon on level ground + π x ambient floor (`sky_reference_lux` `:204`; the env
+  map's sky diffuse is not counted, erring toward keeping shadows; the direct sun is counted even on sun-shadowed receivers, erring the other way under awnings). Weight 0 at c <= 0.05, 1 at c >= 0.15
+  (`Guess`, Weber ~2 % raised for textured frames), holders' c counts 1/hysteresis times; weight 0 = no map. Noon: none;
+  night: identical pick. Never touches a lamp's intensity (`ShadowReach` still blends range by shadow strength; the
+  game's two reaches are equal). Switch: `BEVYRROWIND_LAMP_DAY_GATE=1` (`render.rs:24`).
+- **Face culling (opt-in, off by default; ROADMAP 1.25 CW-3b).** Vendored own patch "point shadow face culling":
+  `point_shadow_faces_seen` (`superfargoth/vendor/bevy_pbr/src/render/point_face_cull.rs:83`) keeps a cube face only if
+  its 90° pyramid (out to the range, widened by `shadow.lamp.face_cull.margin_deg` = 2°, `sf_sky_bevy/src/shadow_budget.rs:124`,
+  for filter taps across seams) meets an active `Camera3d` frustum clipped to the light's sphere (face-plane separating
+  test, conservative). Mask per light in `extract_shadow_caster_changes` (`light.rs:1327`): culled faces are not hashed
+  and the mask joins the light's entity hash (re-extraction on change). `skip_unchanged_shadow_views` (`light.rs:1582`)
+  never draws a culled face, keeps its map and keys; a dirty face back in view draws its light that frame, outside the
+  budgets (`:1693`). A culled face still exists as a view: stock `check_point_light_mesh_visibility` (bevy_light, not
+  vendored) still lists its casters, `prepare_lights` still makes its view; no hash, uniforms, batching, preprocessing,
+  schedule, encoder or draw. Faces without casters already draw once (a clear) and stay clean. Switch:
+  `BEVYRROWIND_POINT_FACE_CULL=1` (`mw_environment_bevy/src/render.rs:29`). Gauges `views/lamp_face/culled|revealed|drawn`
+  (`sf_diag_bevy/src/views.rs`), debug line `bevy_pbr::shadow_refresh`.
 - **Lamp cache: not in the game** (`POINT_SHADOW_CACHE = false`, `mw_environment_bevy/src/render.rs:37`, since
   2026-10-21; `--off shadowcache` is a no-op). As built: `sf_shadow_cache_bevy` (`lib.rs:1`-`:70`, `ShadowCachePlugin` `:209`): per shadowed light a persistent
   cube array holds the depth of its static casters; Bevy's views draw movers over a restored copy. Captures:
@@ -56,14 +92,14 @@ Everything else is unshadowed.
 ## Bevy features used
 
 `CascadeShadowConfig`, `DirectionalLight` shadows, `PointLightShadowMap`, `PointLightShadowFade` (vendored),
-`ContactShadows`, `ShadowFilteringMethod`, PCSS (`experimental_pbr_pcss`, feature `pcss` in `sf_sky_bevy/Cargo.toml:11`).
+`ContactShadows`, `ShadowFilteringMethod`, PCSS (`experimental_pbr_pcss`, feature `pcss` in `sf_sky_bevy/Cargo.toml:11`), `DirectionalLightShadowFade` (vendored, CW-8).
 Vendored: #26149/#26161 slim per-face schedule (`vendor/README.md:11`), plus the own patches named above.
 
 ## Switches and counters
 
 `--off` parts (`mw_game_core/src/perf.rs:135`): `shadows`, `shadowcache`, `lampfilter`, `movershadows`, `farshadows`,
 `softshadows`, `contactshadows`, `ssao`, `cpuculltag`, `cascadehold`, `cascadeencoders`. `--point-shadows N`, `--sun-cascades N:M`,
-`BEVYRROWIND_LAMP_CONTACT`, `BEVYRROWIND_SHADOW_FILTER`, `BEVYRROWIND_GPU_CULL_STATICS=1`. Console `flip contactshadows`.
+`BEVYRROWIND_LAMP_CONTACT`, `BEVYRROWIND_SHADOW_FILTER`, `BEVYRROWIND_GPU_CULL_STATICS=1`, `BEVYRROWIND_LAMP_DAY_GATE=1`, `BEVYRROWIND_POINT_FACE_CULL=1`, `BEVYRROWIND_SUN_SHADOW_GATE=1`. Console `flip contactshadows`.
 Gauges: `ShadowCacheStats` (`sf_shadow_cache_bevy/src/lib.rs:147`), `RUST_LOG=bevy_pbr::shadow_refresh=debug`.
 
 ## Known limits
@@ -82,4 +118,4 @@ Gauges: `ShadowCacheStats` (`sf_shadow_cache_bevy/src/lib.rs:147`), `RUST_LOG=be
 ## Specs
 
 [shadows](../../../superfargoth/docs/specs/shadows.md), [distant-shadows](../../../superfargoth/docs/specs/weather/distant-shadows.md),
-[lights](../../../superfargoth/docs/specs/lights.md); research `superfargoth/docs/research/shadows/`.
+[lights](../../../superfargoth/docs/specs/lights.md), [lamp-shadow-cache](../../../superfargoth/docs/specs/lamp-shadow-cache.md) (static lamp cache design, CW-4, not built); research `superfargoth/docs/research/shadows/`.

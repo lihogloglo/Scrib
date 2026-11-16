@@ -23,8 +23,10 @@ second body.
 - **Skinning**: stock Bevy keeps one joint block per skinned mesh. Our vendored `bevy_pbr` patch **P5**
   (`superfargoth/vendor/bevy_pbr/src/render/skin.rs:145-423`, `SkinJointBlocks` `:197`) keys a block by
   (inverse-bindposes asset, joint entities) and refcounts it, so all meshes of one NPC extract and upload one
-  palette (`extract_skins` `:534`, `prepare_skins` `:432`). Previous-frame matrices (motion vectors) stay valid at
-  the same offset.
+  palette (`extract_skins` `:885`, `prepare_skins` `:775`). Previous-frame matrices (motion vectors) stay valid at
+  the same offset. CW-7 (opt-in, `BEVYRROWIND_SKIN_SKIP_UNCHANGED=1`, set in `mw_exterior_bevy/src/exterior.rs`
+  next to `CrowdSettings`): blocks of characters whose transforms did not change (A3 frozen, standing idle) are
+  neither walked nor uploaded ([skinning](../bevy/skinning-and-animation.md) section 2).
 - **Roles** (first person): `sf_character/src/slots.rs:33` `ViewRole` (Body, Head, Arms, Held). A root with
   `RoleLayers` (`sf_character_bevy/src/roles.rs:78`) gets its outfit split per role; each part's `RenderLayers`
   follow the root rule (worldspace layer `W`, shadow-only `S`, both or neither). First person puts the head on
@@ -48,7 +50,9 @@ forced anim tier, significance > 1, ragdoll) always show (`sf_character_bevy/src
 set in `mw_exterior_bevy/src/exterior.rs:229`). Gauges per frame (`CrowdStats`, plain bands, pins in C0):
 `crowd/c0|c1|c2/count`, `crowd/cN/meshes/count`, `crowd/cN/joints/count` (one palette per distinct binding),
 `crowd/pinned/count`, `crowd/hidden/count`; render world: `crowd/joints_extracted/count` (skin extract walk),
-`crowd/joints_uploaded/count`, `crowd/joint_blocks/count`. Owner scene: CH-5 (shared joint blocks), FP-1/FP-1b/FP-2.
+`crowd/joints_uploaded/count` (the buffer total, not what was written), `crowd/joint_blocks/count`; CW-7
+(`crowd.rs` `skin_gauges`): `skin/blocks_walked|blocks_skipped|blocks_changed/count`, `skin/upload_writes/count`,
+`skin/joints_written/count`, `skin/joint_bytes_written/bytes` (both buffers, real writes). Owner scene: CH-5 (shared joint blocks), FP-1/FP-1b/FP-2.
 
 ## Known limits
 - P5 expected 0.5-0.9 ms on the Balmora walk; needs a perf run ([perf ledger](../../ledger/perf.md)).

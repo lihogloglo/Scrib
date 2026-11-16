@@ -18,7 +18,11 @@
 //!   capacity slot and the GPU fills them in;
 //! - the preprocessing bind groups created this frame
 //!   (`PreprocessBindGroupCount`, vendored patches "own: preprocess bind group
-//!   count" and "own, GS: counters": range unpacking and materialization).
+//!   count" and "own, GS: counters": range unpacking and materialization);
+//! - the point/spot shadow views culled for having no visible receiver, redrawn
+//!   on coming back into view, and drawn this frame (`PointShadowFaceStats`,
+//!   vendored patch "own: point shadow face culling"): gauges
+//!   `views/lamp_face/culled|revealed|drawn`.
 //!
 //! Views are classified by their render-world components: the
 //! lowest-order `ExtractedCamera` is `main` (label `main`), other cameras
@@ -34,7 +38,7 @@ use bevy_core_pipeline::deferred::{AlphaMask3dDeferred, Opaque3dDeferred};
 use bevy_core_pipeline::prepass::{AlphaMask3dPrepass, Opaque3dPrepass, OpaqueNoLightmap3dBatchSetKey};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
-use bevy_pbr::{LightEntity, MeshInputUniform, MeshUniform, PreprocessBindGroupCount, Shadow, ShadowBatchSetKey};
+use bevy_pbr::{LightEntity, MeshInputUniform, MeshUniform, PointShadowFaceStats, PreprocessBindGroupCount, Shadow, ShadowBatchSetKey};
 use bevy_platform::collections::HashSet;
 use bevy_render::batching::gpu_preprocessing::{BatchedInstanceBuffers, PreprocessWorkItemBuffers};
 use bevy_render::camera::ExtractedCamera;
@@ -197,6 +201,7 @@ fn count_views(
     bind_groups: Option<Res<PreprocessBindGroupCount>>,
     counters: Res<DiagCounters>,
     pending: Res<DiagViews>,
+    face_stats: Option<Res<PointShadowFaceStats>>,
 ) {
     let main_order = views.iter().filter(|(_, _, light)| light.is_none()).filter_map(|(_, camera, _)| camera.map(|c| c.order)).min();
     let mut frame_set: HashSet<CachedRenderPipelineId> = HashSet::default();
@@ -236,5 +241,11 @@ fn count_views(
     }
     frame.distinct_pipelines = small(frame_set.len());
     frame.record(&counters);
+    // CW-3b: point/spot shadow views culled (no visible receiver), redrawn on reveal, drawn.
+    if let Some(stats) = face_stats {
+        for (name, value) in [("culled", stats.culled), ("revealed", stats.revealed), ("drawn", stats.drawn)] {
+            counters.set_named(&format!("views/lamp_face/{name}"), sf_diag::unit::COUNT, f64::from(value));
+        }
+    }
     pending.put(frame);
 }

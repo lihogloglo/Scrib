@@ -620,15 +620,19 @@ fn apply_pbr_lighting(
         if (lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
                 && (view_bindings::lights.directional_lights[i].flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
             shadow = shadows::fetch_directional_shadow(i, in.world_position, in.world_normal, view_z, in.frag_coord.xy);
-            shadow *= in.directional_shadow_factor;
+            // superfargoth patch (own, CW-8: directional shadow fade): the material's own term
+            // (terrain far shadows) fades with the light's cascades (`fetch_directional_shadow`).
+            shadow *= mix(1.0, in.directional_shadow_factor, view_bindings::lights.directional_lights[i].shadow_fade);
         }
 
         @if(CONTACT_SHADOWS && DEPTH_PREPASS)
         if contact_shadow_enabled && lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && shadow > 0.0 && // superfargoth patch (own: sun shadow early-out): `lit`
+                view_bindings::lights.directional_lights[i].shadow_fade > 0.0 && // superfargoth patch (own, CW-8: directional shadow fade)
                 (view_bindings::lights.directional_lights[i].flags &
                     mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_CONTACT_SHADOWS_ENABLED_BIT) != 0u {
             let L = view_bindings::lights.directional_lights[i].direction_to_light;
-            shadow *= calculate_contact_shadow(in.world_position.xyz, in.frag_coord.xy, L, contact_shadow_steps);
+            // superfargoth patch (own, CW-8: directional shadow fade)
+            shadow *= mix(1.0, calculate_contact_shadow(in.world_position.xyz, in.frag_coord.xy, L, contact_shadow_steps), view_bindings::lights.directional_lights[i].shadow_fade);
         }
 
         direct_light += light_contrib * shadow;

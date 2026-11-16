@@ -16,6 +16,9 @@
 //! - [`RenderPath`] and [`sphere_light_luminance`]: the raster/ray-traced
 //!   switch and the emissive-proxy conversion for punctual lights.
 //! - [`cascade_hold`]: the far sun-cascade hold (decision and padded fit).
+//! - [`sun_gate`]: sun/moon cascades by the direct light's visible contribution (CW-8).
+//! - [`lamp_cache`]: the static lamp shadow cache policy (face states, capture queue, store
+//!   pool, mover rate tiers; `docs/specs/lamp-shadow-cache.md`).
 //!
 //! The Bevy glue lives in `sf_sky_bevy`.
 
@@ -24,8 +27,10 @@ pub mod cascade_hold;
 mod celestial;
 mod clock;
 mod curve;
+pub mod lamp_cache;
 mod night;
 mod sky;
+pub mod sun_gate;
 mod weather;
 
 #[cfg(test)]

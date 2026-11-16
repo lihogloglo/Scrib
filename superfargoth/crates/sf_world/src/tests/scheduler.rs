@@ -582,3 +582,71 @@ fn far_ring_by_page_loads_whole_pages() {
     assert!(by_page[2..=6].iter().all(|l| *l == Level::Far), "{by_page:?}");
     assert!(by_page[7..].iter().all(|l| *l == Level::Unloaded), "{by_page:?}");
 }
+
+/// CW-2 selection gate: a still anchor skips gather + decide once nothing moves, a walk ends on the same
+/// residency as the ungated scheduler, and a move past the quantum, a turn or new data re-run it.
+#[test]
+fn select_gate_skips_still_ticks_and_ends_on_the_ungated_residency() {
+    let gated = SchedulerConfig { select_gate: SchedulerConfig::select_gate_quanta(true), ..SchedulerConfig::default() };
+    let q = gated.select_gate.move_m;
+    assert!(q > 1.0, "the walk below steps 1 m per frame");
+    let walk = |config: SchedulerConfig| -> (Sim, Vec<Level>) {
+        let mut sim = Sim::new(config, vec![grid_world("w", 16, 3, 0)]);
+        let at = |x: f64| [anchor(0, AnchorRole::Gameplay, "w", DVec3::new(x, 1.0, 192.0)), anchor(1, AnchorRole::Visual, "w", DVec3::new(x, 1.0, 192.0))];
+        sim.run(600, &at(64.0));
+        // 400 m at 1 m per frame, ending on a multiple of the quantum (the gate's last run sees the stop).
+        for i in 1..=400 {
+            sim.frame(&at(64.0 + f64::from(i)));
+        }
+        sim.run(800, &at(464.0));
+        assert_eq!(sim.s.requests().count(), 0);
+        let levels = (0..16).map(|x| sim.s.level(&ws("w"), cell(x, 1))).collect();
+        (sim, levels)
+    };
+    let (_, ungated_levels) = walk(SchedulerConfig::default());
+    let (mut sim, gated_levels) = walk(gated);
+    assert_eq!(gated_levels, ungated_levels, "same residency at the stop");
+    assert!(gated_levels.contains(&Level::Active) && gated_levels.contains(&Level::Far), "{gated_levels:?}");
+
+    // Still and settled: every tick skips, and nothing changes.
+    let still = [anchor(0, AnchorRole::Gameplay, "w", DVec3::new(464.0, 1.0, 192.0)), anchor(1, AnchorRole::Visual, "w", DVec3::new(464.0, 1.0, 192.0))];
+    let (runs, skips) = sim.s.gate_counts();
+    let log = sim.log.len();
+    sim.run(50, &still);
+    assert_eq!(sim.s.gate_counts(), (runs, skips + 50));
+    assert_eq!(sim.log.len(), log);
+    // Under a quantum: still skipped. Past it: runs.
+    let moved = |dx: f64| [anchor(0, AnchorRole::Gameplay, "w", DVec3::new(464.0 + dx, 1.0, 192.0)), still[1].clone()];
+    sim.frame(&moved(f64::from(q) * 0.5));
+    assert_eq!(sim.s.gate_counts(), (runs, skips + 51));
+    sim.frame(&moved(f64::from(q) * 1.01));
+    assert_eq!(sim.s.gate_counts().0, runs + 1, "moved past the quantum");
+    // A turn of the camera past the rotation quantum runs; one under it doesn't. Each step starts settled
+    // (a run may start loads whose completions re-run it).
+    let turn = sim.s.config().select_gate.turn_deg;
+    let turned = |deg: f32| {
+        let mut c = still[1].clone();
+        c.view_dir = Some(Quat::from_rotation_y(deg.to_radians()) * Vec3::NEG_Z);
+        [moved(f64::from(q) * 1.01)[0].clone(), c]
+    };
+    sim.run(400, &turned(0.0));
+    let (runs, _) = sim.s.gate_counts();
+    sim.frame(&turned(turn * 0.5));
+    assert_eq!(sim.s.gate_counts().0, runs);
+    sim.frame(&turned(turn * 1.5));
+    assert_eq!(sim.s.gate_counts().0, runs + 1, "turned past the quantum");
+    // New data (a worldspace arriving, a reload) runs at once, anchors still.
+    let anchors = turned(turn * 1.5);
+    sim.run(400, &anchors);
+    let (runs, _) = sim.s.gate_counts();
+    assert!(sim.s.add_worldspace(interior("inside"), None));
+    sim.frame(&anchors);
+    assert_eq!(sim.s.gate_counts().0, runs + 1, "a worldspace arrived");
+    let revision = sim.s.revision();
+    sim.s.reload_resident();
+    assert!(sim.s.revision() > revision);
+    sim.run(800, &anchors);
+    assert_eq!(sim.s.requests().count(), 0);
+    assert!(!sim.s.reloading());
+    assert!(sim.s.level(&ws("w"), cell(3, 1)) == Level::Active, "a reload streams the rings back");
+}

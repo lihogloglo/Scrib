@@ -35,7 +35,7 @@ use mw_nif::anim::Target;
 use mw_nif::{AlphaMode as NifAlpha, Model, NodeKind, VertexColorMode};
 use sf_vfs::{Vfs, VfsPath};
 
-pub use animation::{ModelAnimation, NifAnimation, NodeAnimation};
+pub use animation::{AnimatedMaterialUser, MaterialUsers, ModelAnimation, NifAnimation, NodeAnimation};
 pub use billboard::Billboard;
 pub use cooked::{CookedLodSettings, CookedMaterials, CookedModelRoot, CookedSpawned};
 pub use lights::{AttachLight, LightCalibration};
@@ -136,7 +136,13 @@ impl Plugin for MwAssetsPlugin {
                     leaf_shadow_receivers,
                 ),
             )
-            .add_systems(PostUpdate, billboard::face_camera.before(TransformSystems::Propagate))
+            .add_systems(PostUpdate, billboard::face_camera.before(TransformSystems::Propagate));
+        // Material controllers only for materials a visible entity draws (CW-6; opt-in until its A/B).
+        // A resource inserted before the plugin turns it on from code (tests, A/B tools).
+        if animation::gate_from_env() || app.world().contains_resource::<MaterialUsers>() {
+            animation::add_material_gate(app);
+        }
+        app
             // `--off normalmaps` / `--off orm` and their live flips (TX-lab).
             .add_systems(PostUpdate, map_ab::apply_material_maps.before(bevy::asset::AssetEventSystems));
     }
@@ -204,6 +210,7 @@ fn build_world(model: &Model, vfs: &Vfs, load_context: &mut LoadContext<'_>) -> 
     for (i, system) in model.particles.iter().enumerate() {
         node_particles[system.node].push(u32::try_from(i).unwrap_or(u32::MAX));
     }
+    let animated_materials = animation::animated_materials(&model.controllers, materials.len());
     let animation = (!model.controllers.is_empty() || !model.particles.is_empty()).then(|| {
         load_context.add_labeled_asset(
             "Animation".to_owned(),
@@ -283,6 +290,9 @@ fn build_world(model: &Model, vfs: &Vfs, load_context: &mut LoadContext<'_>) -> 
                 entity.insert(CollisionGeometry(meshes[mesh_index].clone()));
             } else {
                 entity.insert((Mesh3d(meshes[mesh_index].clone()), MeshMaterial3d(materials[mesh.material].clone())));
+                if animated_materials.get(mesh.material).copied().unwrap_or(false) {
+                    entity.insert(AnimatedMaterialUser(materials[mesh.material].clone()));
+                }
                 if in_billboard {
                     entity.insert(bevy::light::NotShadowCaster);
                 }

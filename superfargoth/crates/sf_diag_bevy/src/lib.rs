@@ -38,6 +38,8 @@ pub use churn::{ChurnPlugin, ENTITIES, ENTITIES_DELTA, short_type_name};
 
 mod phases;
 pub use phases::FramePhasePlugin;
+#[cfg(feature = "render")]
+pub use encode::set_poll_before_submit;
 #[cfg(any(test, feature = "render"))]
 mod encode;
 mod stages;
