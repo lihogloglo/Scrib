@@ -43,6 +43,8 @@ mod shadow_gate_tests;
 #[cfg(test)]
 mod face_cull_tests;
 #[cfg(test)]
+mod lamp_cache_render_tests;
+#[cfg(test)]
 mod sun_gate_tests;
 #[cfg(test)]
 mod quality_tests;
@@ -78,7 +80,7 @@ pub use shadow_budget::{
 };
 pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 pub use env_refresh::EnvMapRefresh;
-pub use quality::{ShadowQualityPlugin, SunShadowQuality, ViewQuality, ViewQualityCamera, ViewQualityParam};
+pub use quality::{ShadowQualityPlugin, SunShadowQuality, ViewPrepassBase, ViewQuality, ViewQualityCamera, ViewQualityParam};
 pub use sun_gate::{ShadowGateState, SunLightOcclusion, SunShadowGateStats, SunShadowGating};
 
 /// The sky's settings (orbit, atmosphere, curves). Change at will; the

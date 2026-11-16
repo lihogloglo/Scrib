@@ -15,8 +15,12 @@
 //! material-class folding (`sf_world_bevy::matclass`) sees what it saw. Images stay loaded while
 //! off (an A/B, not a memory saving).
 //!
-//! The parallax a depth-mapped material gets is the preset's ([`set_parallax`], from
-//! `mw_game_core::Quality::parallax`): none on Low (the depth map isn't even bound).
+//! The parallax a depth-mapped material gets is the quality preset's, live: `texture.parallax.layers`
+//! and `texture.parallax.relief_steps` (tunables slice T5a) set [`MaterialMaps`]' preset; a change
+//! retunes every depth-mapped material (the method is a pipeline-key bit: they re-specialise), 0
+//! layers takes their depth maps out (as the switch does) and back. New loads bind the preset's
+//! ([`set_parallax`]): none at 0 layers (the depth map isn't even bound), so a run started at 0 has
+//! no depth maps to give back for models loaded meanwhile (they get them when they load again).
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -24,6 +28,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bevy::pbr::ParallaxMappingMethod;
 use bevy::prelude::*;
+use sf_tunables_bevy::sf_tunables::{Def, Group, Lifetime, Source, Unit, def};
+use sf_tunables_bevy::TunablesAppExt;
 
 /// Metallic factor of a material without an ORM map (2002 assets carry no PBR data).
 pub const PLAIN_METALLIC: f32 = 0.0;
@@ -76,6 +82,22 @@ impl Parallax {
         }
     }
 
+    /// `(layers, relief steps)` as the tunables hold them (0 steps: one interpolation).
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "layer counts are small whole numbers")]
+    fn layers_and_steps(self) -> (u32, u32) {
+        let steps = match self.method {
+            ParallaxMappingMethod::Relief { max_steps } => max_steps,
+            ParallaxMappingMethod::Occlusion => 0,
+        };
+        (self.max_layers as u32, steps)
+    }
+
+    /// Sets `material`'s method and layers to these (its depth map and scale stay).
+    fn retune(self, material: &mut StandardMaterial) {
+        material.parallax_mapping_method = self.method;
+        material.max_parallax_layer_count = self.max_layers;
+    }
+
     /// Binds `depth` as `material`'s depth map with these settings and [`PARALLAX_DEPTH_SCALE`].
     pub fn apply(self, material: &mut StandardMaterial, depth: Handle<Image>) {
         material.depth_map = Some(depth);
@@ -107,9 +129,15 @@ pub struct MaterialMaps {
     pub orm: bool,
     /// Parallax depth maps (`depth_map` and the parallax fields).
     pub parallax: bool,
+    /// The preset's parallax (`texture.parallax.layers`, 0: none; `texture.parallax.relief_steps`,
+    /// 0: one interpolation): [`MaterialMaps::preset`].
+    pub parallax_layers: u32,
+    pub parallax_relief_steps: u32,
     stash: HashMap<AssetId<StandardMaterial>, Stashed>,
     /// The flags the last pass applied (a restore pass runs only when one turns back on).
     applied: Switches,
+    /// The preset the last pass applied (a retune pass runs only when it changes).
+    applied_preset: Option<Parallax>,
 }
 
 impl Default for MaterialMaps {
@@ -119,8 +147,27 @@ impl Default for MaterialMaps {
 }
 
 impl MaterialMaps {
+    /// The switches; the preset is the one new loads bind ([`parallax`]).
     pub fn new(normal_maps: bool, orm: bool, parallax: bool) -> Self {
-        Self { normal_maps, orm, parallax, stash: HashMap::new(), applied: Switches::ALL_ON }
+        let preset = self::parallax();
+        let (layers, steps) = preset.map_or((0, 0), Parallax::layers_and_steps);
+        Self {
+            normal_maps,
+            orm,
+            parallax,
+            parallax_layers: layers,
+            parallax_relief_steps: steps,
+            stash: HashMap::new(),
+            applied: Switches::ALL_ON,
+            applied_preset: preset,
+        }
+    }
+
+    /// The preset's parallax: `None` at 0 layers.
+    pub fn preset(&self) -> Option<Parallax> {
+        let clamp = |v: u32| u8::try_from(v).unwrap_or(u8::MAX);
+        (self.parallax_layers > 0)
+            .then(|| Parallax::new(clamp(self.parallax_layers), (self.parallax_relief_steps > 0).then(|| clamp(self.parallax_relief_steps))))
     }
 
     /// Materials holding removed maps.
@@ -249,6 +296,9 @@ impl Stashed {
 /// stashed. `PostUpdate` before the asset events, so a new material is extracted already stripped.
 pub(crate) fn apply_material_maps(mut maps: ResMut<MaterialMaps>, materials: Option<ResMut<Assets<StandardMaterial>>>) {
     let Some(mut materials) = materials else { return };
+    if maps.preset() != maps.applied_preset {
+        retune_parallax(maps.bypass_change_detection(), &mut materials);
+    }
     let on = maps.switches();
     if on == Switches::ALL_ON && maps.stash.is_empty() {
         return;
@@ -257,13 +307,15 @@ pub(crate) fn apply_material_maps(mut maps: ResMut<MaterialMaps>, materials: Opt
     let turned_on = on.turned_on_since(maps.applied);
     maps.applied = on;
     if turned_on {
+        // The preset at 0 layers keeps the depth maps out whatever the switch says.
+        let restore_on = Switches { parallax: on.parallax && maps.applied_preset.is_some(), ..on };
         maps.stash.retain(|id, stashed| {
-            if !stashed.restores(on) {
+            if !stashed.restores(restore_on) {
                 return true;
             }
             // A material dropped meanwhile: forget its maps.
             let Some(mut material) = materials.get_mut(*id) else { return false };
-            stashed.restore(&mut material, on);
+            stashed.restore(&mut material, restore_on);
             !stashed.is_empty()
         });
     }
@@ -279,9 +331,113 @@ pub(crate) fn apply_material_maps(mut maps: ResMut<MaterialMaps>, materials: Opt
     }
 }
 
+/// Depth maps only (the preset's strip and restore leave the other maps to their switches).
+const DEPTH_ONLY_OFF: Switches = Switches { normal_maps: true, orm: true, parallax: false };
+const DEPTH_ONLY_ON: Switches = Switches { normal_maps: false, orm: false, parallax: true };
+
+/// The preset changed: new loads bind it ([`set_parallax`]); at 0 layers every depth map goes into the
+/// stash, otherwise the stashed ones come back (unless the switch keeps them off) and every
+/// depth-mapped material, stashed or not, takes its method and layers.
+fn retune_parallax(maps: &mut MaterialMaps, materials: &mut Assets<StandardMaterial>) {
+    let preset = maps.preset();
+    maps.applied_preset = preset;
+    // The global is process-wide: unit tests running in parallel read it (`cooked.rs`).
+    #[cfg(not(test))]
+    set_parallax(preset);
+    let Some(p) = preset else {
+        let ids: Vec<AssetId<StandardMaterial>> = materials.iter().filter(|(_, m)| m.depth_map.is_some()).map(|(id, _)| id).collect();
+        for id in ids {
+            if let Some(mut material) = materials.get_mut(id) {
+                maps.stash.entry(id).or_default().strip(&mut material, DEPTH_ONLY_OFF);
+            }
+        }
+        return;
+    };
+    for stashed in maps.stash.values_mut() {
+        if let Some(depth) = stashed.depth.as_mut() {
+            (depth.method, depth.layers) = (p.method, p.max_layers);
+        }
+    }
+    if maps.parallax {
+        maps.stash.retain(|id, stashed| {
+            if stashed.depth.is_none() {
+                return true;
+            }
+            let Some(mut material) = materials.get_mut(*id) else { return false };
+            stashed.restore(&mut material, DEPTH_ONLY_ON);
+            !stashed.is_empty()
+        });
+    }
+    #[allow(clippy::float_cmp)] // exact: change detection
+    let ids: Vec<AssetId<StandardMaterial>> = materials
+        .iter()
+        .filter(|(_, m)| m.depth_map.is_some() && (m.parallax_mapping_method != p.method || m.max_parallax_layer_count != p.max_layers))
+        .map(|(id, _)| id)
+        .collect();
+    for id in ids {
+        if let Some(mut material) = materials.get_mut(id) {
+            p.retune(&mut material);
+        }
+    }
+}
+
+/// `texture.parallax.layers`: most depth layers the parallax march steps through (Bevy's
+/// `max_parallax_layer_count`, at grazing angles; 1 looking straight on); 0: no parallax, the depth
+/// map isn't bound. Retunes loaded materials (a pipeline re-specialisation).
+pub const PARALLAX_LAYERS: Def<u32> = def!(count "texture.parallax.layers" = 32)
+    .range(0, 255)
+    .unit(Unit::Count)
+    .help("Parallax occlusion: most depth layers at grazing angles (0: off, no depth map bound; a run started at 0 has none to give back)")
+    .source(Source::BevyDefault("bevy_pbr::StandardMaterial::max_parallax_layer_count (16); High 32 (textures.md T4d)"))
+    .group(Group::Textures)
+    .lifetime(Lifetime::Recompile);
+
+/// `texture.parallax.relief_steps`: binary-search refinement steps after the march (Bevy's
+/// `ParallaxMappingMethod::Relief`); 0: one interpolation (`Occlusion`).
+pub const PARALLAX_RELIEF_STEPS: Def<u32> = def!(count "texture.parallax.relief_steps" = 5)
+    .range(0, 32)
+    .unit(Unit::Count)
+    .help("Parallax relief refinement steps after the march (0: one interpolation, parallax occlusion mapping)")
+    .source(Source::BevyDefault("bevy_pbr::ParallaxMappingMethod::DEFAULT_RELIEF_MAPPING (5 steps)"))
+    .group(Group::Textures)
+    .lifetime(Lifetime::Recompile);
+
+
+/// Binds the parallax tunables into [`MaterialMaps`] (after `MwAssetsPlugin`, which inits it).
+pub fn add_parallax_tunables(app: &mut App) {
+    let _layers = app.add_tunable(&PARALLAX_LAYERS).bind_resource(|m: &mut MaterialMaps, v| m.parallax_layers = v);
+    let _steps = app.add_tunable(&PARALLAX_RELIEF_STEPS).bind_resource(|m: &mut MaterialMaps, v| m.parallax_relief_steps = v);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T5a: the preset's parallax retunes loaded depth-mapped materials live; 0 layers takes their
+    /// depth maps out and a level back on returns them with the new settings; other maps untouched.
+    #[test]
+    fn parallax_preset_retunes_strips_and_restores_live() {
+        let mut app = app(MaterialMaps::new(true, true, true));
+        let keep = app.world_mut().resource_mut::<Assets<StandardMaterial>>().add(mapped());
+        let id = keep.id();
+        app.update();
+        let set = |app: &mut App, layers: u32, steps: u32| {
+            let mut maps = app.world_mut().resource_mut::<MaterialMaps>();
+            (maps.parallax_layers, maps.parallax_relief_steps) = (layers, steps);
+            app.update();
+        };
+        set(&mut app, 16, 0);
+        let m = get(&app, id);
+        assert_eq!((m.parallax_mapping_method, m.max_parallax_layer_count), (ParallaxMappingMethod::Occlusion, 16.0));
+        set(&mut app, 0, 0);
+        let m = get(&app, id);
+        assert!(m.depth_map.is_none() && m.normal_map_texture.is_some(), "depth out, normals kept");
+        set(&mut app, 64, 8);
+        let m = get(&app, id);
+        assert!(m.depth_map.is_some());
+        assert_eq!((m.parallax_mapping_method, m.max_parallax_layer_count), (ParallaxMappingMethod::Relief { max_steps: 8 }, 64.0));
+        assert_eq!(app.world().resource::<MaterialMaps>().stashed(), 0);
+    }
 
     fn mapped() -> StandardMaterial {
         let mut material = StandardMaterial {

@@ -39,7 +39,9 @@ pub use animation::{AnimatedMaterialUser, MATCTRL_GATE, TUNABLES, MaterialGate, 
 pub use billboard::Billboard;
 pub use cooked::{CookedLodSettings, CookedMaterials, CookedModelRoot, CookedSpawned};
 pub use lights::{AttachLight, LightCalibration};
-pub use map_ab::{MaterialMaps, PARALLAX_DEPTH_SCALE, Parallax, parallax, set_material_maps, set_parallax};
+pub use map_ab::{
+    MaterialMaps, PARALLAX_DEPTH_SCALE, PARALLAX_LAYERS, PARALLAX_RELIEF_STEPS, Parallax, add_parallax_tunables, parallax, set_material_maps, set_parallax,
+};
 pub use particles::{ActorEmitter, LiveEmitter, LiveNode, LiveSystem, NifNode, ParticleEmitter, ParticleExt, ParticleMaterial, ParticleRange};
 
 /// Extensions that may replace a texture reference, in preference order

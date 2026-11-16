@@ -510,6 +510,13 @@ impl Streaming {
         self.rt.config.scheduler.select_gate = quanta;
     }
 
+    /// The LOD screen placements spawned from now on use (`lod.bias`, `lod.size_cull.*` live,
+    /// `sf_world::lod_screen`): their switch distances and draw ends are computed at spawn, so
+    /// resident cells keep theirs until they stream out and back (`Lifetime::Respawn`).
+    pub fn set_lod_screen(&mut self, screen: LodScreen) {
+        self.rt.config.lod = screen;
+    }
+
     /// The static template material of `desc`, from streaming's own cache and fold
     /// ([`cached_material`]): what a streamed placement with that material will bind.
     pub(crate) fn template_material(

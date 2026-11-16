@@ -1,0 +1,176 @@
+//! The vendored mechanism of the lamp shadow cache (ROADMAP 1.25 CW-4 S2; `bevy_pbr` patch
+//! "own, CW-4: lamp shadow cache", `render/point_shadow_cache.rs`): which faces get a view and a
+//! phase, which are drawn and how, what extraction hands the render world, and where the copies
+//! are recorded. No GPU here: `prepare_lights` itself needs a device, so its per-face decision is
+//! tested through the functions it calls (`point_shadow_view_faces`, `point_shadow_face_plan`).
+
+use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemId;
+use bevy_light::PointLight;
+use bevy_pbr::{
+    ALL_POINT_SHADOW_FACES, CachedPointShadowCopy, CachedPointShadowFaces, CachedPointShadowMap,
+    ExtractedCachedPointShadowMap, ExtractedPointLight, PointShadowCacheFeedback, PointShadowCacheStore,
+    PointShadowFacePlan, extract_cached_point_shadow_maps, point_shadow_face_plan, point_shadow_view_faces,
+};
+use bevy_render::MainWorld;
+use bevy_render::sync_world::RenderEntity;
+use std::path::PathBuf;
+
+/// Faces with a view (and so a retained shadow phase) and faces drawn, as `prepare_lights` and
+/// `skip_unchanged_shadow_views` decide them.
+fn views_and_draws(cached: Option<&CachedPointShadowMap>, fresh: bool) -> (usize, usize) {
+    let faces = cached.map(CachedPointShadowMap::faces);
+    let mask = point_shadow_view_faces(faces.as_ref());
+    let views = (0..6).filter(|f| mask & (1 << f) != 0).count();
+    let draws = (0..6)
+        .filter(|&f| matches!(point_shadow_face_plan(faces.as_ref(), fresh, f), PointShadowFacePlan::Draw { .. }))
+        .count();
+    (views, draws)
+}
+
+#[test]
+fn a_stock_lamp_keeps_six_face_views() {
+    assert_eq!(point_shadow_view_faces(None), ALL_POINT_SHADOW_FACES);
+    assert_eq!(views_and_draws(None, true), (6, 0), "stock faces are drawn by skip_unchanged, not by a plan");
+    assert!((0..6).all(|f| point_shadow_face_plan(None, true, f) == PointShadowFacePlan::Stock));
+}
+
+#[test]
+fn mask_zero_has_no_face_view_and_no_phase() {
+    let cached = CachedPointShadowMap::default();
+    assert_eq!(views_and_draws(Some(&cached), true), (0, 0));
+    let faces = cached.faces();
+    assert!((0..6).all(|f| point_shadow_face_plan(Some(&faces), true, f) == PointShadowFacePlan::NoView));
+}
+
+#[test]
+fn mask_0b101_has_two_face_views() {
+    let cached = CachedPointShadowMap { view_faces: 0b101, draw_faces: 0b001, load_faces: 0b001, ..Default::default() };
+    assert_eq!(views_and_draws(Some(&cached), true), (2, 1));
+    let faces = cached.faces();
+    assert_eq!(point_shadow_face_plan(Some(&faces), true, 0), PointShadowFacePlan::Draw { load: true });
+    assert_eq!(point_shadow_face_plan(Some(&faces), true, 1), PointShadowFacePlan::NoView);
+    assert_eq!(point_shadow_face_plan(Some(&faces), true, 2), PointShadowFacePlan::Kept);
+    // Not written this frame: the views stay, nothing is drawn.
+    assert_eq!(views_and_draws(Some(&cached), false), (2, 0));
+}
+
+#[test]
+fn masks_are_sanitised_draw_in_view_load_in_draw_six_faces() {
+    let cached = CachedPointShadowMap { view_faces: 0b1100_0001, draw_faces: 0b10, load_faces: 0b1001, ..Default::default() };
+    assert_eq!(cached.faces(), CachedPointShadowFaces { view: 0b11, draw: 0b10, load: 0 });
+    let capture = CachedPointShadowMap { view_faces: 0b11_1111, draw_faces: 0b11_1111, ..Default::default() };
+    let faces = capture.faces();
+    assert!((0..6).all(|f| point_shadow_face_plan(Some(&faces), true, f) == PointShadowFacePlan::Draw { load: false }));
+}
+
+fn extracted_light(shadow_maps_enabled: bool) -> ExtractedPointLight {
+    ExtractedPointLight {
+        color: bevy_color::LinearRgba::default(),
+        intensity: 1.0,
+        range: 10.0,
+        radius: 0.0,
+        transform: bevy_transform::components::GlobalTransform::default(),
+        shadow_maps_enabled,
+        contact_shadows_enabled: false,
+        shadow_depth_bias: 0.0,
+        shadow_normal_bias: 0.0,
+        shadow_map_near_z: 0.1,
+        spot_light_angles: None,
+        volumetric: false,
+        soft_shadows_enabled: false,
+        affects_lightmapped_mesh_diffuse: true,
+        shadow_fade: 1.0,
+    }
+}
+
+/// One extraction, as the render app runs it (the same system across frames, so its change
+/// detection and locals carry over), then the main world moves on a tick.
+fn extract(render: &mut World, system: SystemId) {
+    render.run_system(system).expect("extract system runs");
+    render.flush();
+    render.resource_mut::<MainWorld>().increment_change_tick();
+}
+
+/// A plan executes once: draws and copies apply on the frame the host wrote the component; an
+/// untouched component keeps its masks with nothing to do; removing it hands the light back to
+/// the stock flag. The store size reaches the render world.
+#[test]
+fn extraction_carries_a_written_plan_once_and_restores_the_stock_flag() {
+    let mut render = World::new();
+    render.init_resource::<MainWorld>();
+    let system = render.register_system(extract_cached_point_shadow_maps);
+    let render_light = render.spawn(extracted_light(true)).id();
+    let main_light = {
+        let mut main = render.resource_mut::<MainWorld>();
+        main.insert_resource(PointShadowCacheStore { layers: 24 });
+        main.spawn((
+            PointLight { shadow_maps_enabled: false, ..Default::default() },
+            RenderEntity::from(render_light),
+            CachedPointShadowMap {
+                view_faces: 0b11,
+                draw_faces: 0b01,
+                load_faces: 0b01,
+                copies: vec![CachedPointShadowCopy::Restore { face: 0, layer: 3 }],
+                plan: 7,
+            },
+        ))
+        .id()
+    };
+
+    extract(&mut render, system);
+    let got = render.get::<ExtractedCachedPointShadowMap>(render_light).expect("extracted");
+    assert!(got.fresh, "a new component is a written plan");
+    assert_eq!(got.faces, CachedPointShadowFaces { view: 0b11, draw: 0b01, load: 0b01 });
+    assert_eq!(got.copies, vec![CachedPointShadowCopy::Restore { face: 0, layer: 3 }]);
+    assert_eq!(got.plan, 7);
+    assert_eq!(render.resource::<PointShadowCacheStore>().layers, 24);
+
+    // Untouched: the masks stay, the copies do not repeat.
+    extract(&mut render, system);
+    let got = render.get::<ExtractedCachedPointShadowMap>(render_light).expect("still extracted");
+    assert!(!got.fresh);
+    assert!(got.copies.is_empty());
+    assert_eq!(got.faces.view, 0b11);
+
+    // Written again (same values): fresh again.
+    render.resource_mut::<MainWorld>().get_mut::<CachedPointShadowMap>(main_light).expect("component").plan = 8;
+    extract(&mut render, system);
+    let got = render.get::<ExtractedCachedPointShadowMap>(render_light).expect("extracted");
+    assert!(got.fresh);
+    assert_eq!(got.plan, 8);
+
+    // Removed: the render copy goes, and the light's shadow flag is the stock one again.
+    render.resource_mut::<MainWorld>().entity_mut(main_light).remove::<CachedPointShadowMap>();
+    extract(&mut render, system);
+    assert!(render.get::<ExtractedCachedPointShadowMap>(render_light).is_none());
+    assert!(!render.get::<ExtractedPointLight>(render_light).expect("light").shadow_maps_enabled);
+}
+
+#[test]
+fn feedback_starts_empty() {
+    assert!(PointShadowCacheFeedback::default().drain().is_empty());
+}
+
+fn vendored(file: &str) -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor/bevy_pbr/src").join(file);
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// The copies are recorded before any shadow pass: point shadow views run inside
+/// `camera_driver` (render graph schedule, as root non-camera views), and the copy system is
+/// ordered before it in the same set. Source check (as `shader_tests`): the order is not
+/// observable without a GPU.
+#[test]
+fn copies_are_recorded_before_the_shadow_passes() {
+    let squash = |s: &str| s.split_whitespace().collect::<String>();
+    let lib = squash(&vendored("lib.rs"));
+    assert!(
+        lib.contains(
+            "record_cached_point_shadow_copies.in_set(bevy_render::renderer::RenderGraphSystems::Render).before(bevy_core_pipeline::schedule::camera_driver)"
+        ),
+        "lib.rs: the copy system is no longer ordered before camera_driver"
+    );
+    let cache = squash(&vendored("render/point_shadow_cache.rs"));
+    assert!(cache.contains("pending.push_encoder(encoder,\"point_shadow_cache_copies\");"), "copies no longer queued as one encoder");
+}

@@ -2,17 +2,13 @@
 //! benchmark runs; ROADMAP 1.13, superfargoth `docs/specs/console.md`). The backquote key
 //! (the one left of 1, physical: `²` on AZERTY) opens it; F1 stays the A/B help.
 //!
-//! - `render.ssao` (on/off variable): Bevy GTAO on the streaming camera, live. Starts as
-//!   the run started (`--off ssao` or the Low preset: off). `toggle render.ssao`,
-//!   `render.ssao off`, or `off ssao`.
-//! - `render.contactshadows` (on/off variable): Bevy screen-space contact shadows
-//!   (`ContactShadows` on the camera), live, same grammar (`off contactshadows`). Starts as
-//!   the run started (`--off contactshadows` or the Low preset: off).
-//! - `render.contactlength` / `render.contactthickness` (meters): the contact-shadow ray
-//!   length and surface thickness, live (SH-16 diagnosis: `render.contactlength 3` makes any
-//!   working march obvious). Start as the camera's preset values.
-//! - `render.bloom` (float, 0 = off): Bevy `Bloom` intensity on the camera, live. Starts as
-//!   the camera's preset value (`--off bloom` or the Low preset: 0).
+//! - GTAO, contact shadows and bloom are the quality tunables (tunables slices T4, T5a; spec
+//!   `superfargoth/docs/specs/tunables.md`): `render.ssao.quality off|low|medium|high|ultra`,
+//!   `shadow.contact on|off`, `shadow.contact.length_m` / `shadow.contact.thickness_m` (SH-16
+//!   diagnosis: `shadow.contact.length_m 3` makes any working march obvious), `render.bloom on|off`
+//!   and `render.bloom.intensity`, all live. `off ssao` / `on ssao` / `flip ssao` and the same for
+//!   `contactshadows` set them at the console layer (`on` gives back the level's value, or Bevy's
+//!   default when the level has none).
 //! - `render.gi` (on/off variable): the dynamic probe GI (`sf_sky_bevy::GiEnabled`), live:
 //!   off stops tracing and showing the volume (today's ambient draws), on re-traces it. Starts
 //!   on where the GI runs; a run without it (`--off gi`, Low/Medium, the ray-traced path, an
@@ -34,21 +30,15 @@
 //!   (`mw_rpg_bevy::cast::console_cast`; learns it first if unknown), touch entries on the
 //!   click-selected actor.
 
-use bevy_core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
-use bevy_ecs::system::SystemState;
-use bevy_light::DirectionalLight;
-use bevy_pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
-use bevy_post_process::bloom::Bloom;
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_math::prelude::*;
 use bevy_transform::prelude::*;
 use bevy_time::prelude::*;
 use bevy_input::prelude::*;
-use bevy_render::prelude::*;
+use bevy_ecs::system::SystemState;
 use bevy_enhanced_input::EnhancedInputSystems;
 use sf_character_bevy::CharacterPlacement;
-use sf_sky_bevy::SunLight;
 use sf_console_bevy::overlay::{ConsoleInputSystems, ConsoleKeys, ConsoleOverlayPlugin, ConsoleSelection};
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param, VarId, VarSpec, Vars};
 use sf_console_bevy::{ConsoleAppExt, ConsolePlugin, DevConsole, SetBy};
@@ -58,16 +48,6 @@ use mw_game_core::exterior::ExteriorCamera;
 use mw_game_core::player::LocoAb;
 use crate::live_ab::{LiveAb, Switch, Switches};
 
-/// Name of the SSAO variable.
-const SSAO_VAR: &str = "render.ssao";
-/// Name of the contact-shadows variable.
-const CONTACT_VAR: &str = "render.contactshadows";
-/// Name of the contact-shadow ray length variable (meters).
-const CONTACT_LENGTH_VAR: &str = "render.contactlength";
-/// Name of the contact-shadow thickness variable (meters).
-const CONTACT_THICKNESS_VAR: &str = "render.contactthickness";
-/// Name of the bloom intensity variable (0 = off).
-const BLOOM_VAR: &str = "render.bloom";
 /// Name of the dynamic GI variable.
 const GI_VAR: &str = "render.gi";
 /// Name of the GI irradiance gain variable (`GiVolume::intensity`).
@@ -79,7 +59,7 @@ const TERRAIN_REFLECTANCE_VAR: &str = "terrain.reflectance";
 /// Why a run has no GI (`sf_sky_bevy::GiEnabled` absent).
 const GI_NOT_IN_RUN: &str = "not in this run (--off gi, Low/Medium preset, the ray-traced path, an exterior start or no ray-tracing GPU)";
 
-/// The console, its overlay on backquote, the `tex` texture viewer, `render.ssao`, `render.contactshadows` and the
+/// The console, its overlay on backquote, the `tex` texture viewer, the GI and terrain variables and the
 /// `on`/`off`/`flip` commands.
 pub struct ConsoleWiring;
 
@@ -308,31 +288,11 @@ fn mwscript_names() -> Vec<String> {
     names
 }
 
-/// `render.ssao`, `render.contactshadows`, their systems and the `on`/`off`/`flip` commands
-/// (needs [`ConsolePlugin`] and [`LiveAb`]).
+/// The GI and terrain variables, their systems and the `on`/`off`/`flip` commands (needs
+/// [`ConsolePlugin`] and [`LiveAb`]; `ssao` and `contactshadows` need the quality tunables,
+/// `sf_sky_bevy::ShadowQualityPlugin`).
 fn register(app: &mut App) {
-    let ssao = app.add_console_var(
-        VarSpec::bool(SSAO_VAR, true).help("Screen-space ambient occlusion (Bevy GTAO) on the camera; starts as the run did (--off ssao, Low preset: off)"),
-    );
-    let contact = app.add_console_var(VarSpec::bool(CONTACT_VAR, true).help(
-        "Screen-space contact shadows (Bevy ContactShadows) on the camera; starts as the run did (--off contactshadows, Low preset: off)",
-    ));
-    let length = app.add_console_var(
-        VarSpec::float(CONTACT_LENGTH_VAR, f64::from(ContactShadows::default().length))
-            .float_range(0.01, 20.0)
-            .help("Contact-shadow ray length in meters (starts as the camera's preset value; 3 makes any working march obvious)"),
-    );
-    let thickness = app.add_console_var(
-        VarSpec::float(CONTACT_THICKNESS_VAR, f64::from(ContactShadows::default().thickness))
-            .float_range(0.001, 10.0)
-            .help("Contact-shadow surface thickness in meters (starts as the camera's preset value)"),
-    );
-    let bloom = app.add_console_var(
-        VarSpec::float(BLOOM_VAR, f64::from(Bloom::NATURAL.intensity))
-            .float_range(0.0, 1.0)
-            .help("Bloom intensity on the camera, 0 = off (Bevy Bloom, energy-conserving; starts as the camera's preset value, --off bloom and Low: 0)"),
-    );
-    let gi = app.add_console_var(VarSpec::bool(GI_VAR, false).help(
+    let gi =app.add_console_var(VarSpec::bool(GI_VAR, false).help(
         "Dynamic probe GI (sf_gi_bevy), live; starts on where the GI runs (High/Ultra raster, interior start), off and fixed without it (--off gi)",
     ));
     let gain = sf_gi_bevy::GiVolume::default();
@@ -351,14 +311,10 @@ fn register(app: &mut App) {
             .float_range(0.0, 1.0)
             .help("Terrain reflectance, Bevy scale (F0 = 0.16 x r^2; 0.5 = F0 0.04, 0 = no specular), live; wet ground still mixes toward water; starts as the terrain's (RO-16: try 0.2-0.4)"),
     );
-    app.insert_resource(Ssao { var: ssao, level: None, applied: None })
-        .insert_resource(TerrainReflectance { var: reflectance, seeded: false, reported: None })
-        .insert_resource(Contact { var: contact, length, thickness, settings: None, applied: None, tuned: None })
-        .insert_resource(BloomVar { var: bloom, settings: None, applied: None })
+    app.insert_resource(TerrainReflectance { var: reflectance, seeded: false, reported: None })
         .insert_resource(GiVar { var: gi, applied: None })
         .insert_resource(GiGain { intensity: gi_intensity, ambient: gi_ambient, reported: None })
-        .add_systems(Update, (apply_ssao, apply_contact_shadows, apply_bloom, apply_gi, apply_gi_gain, apply_terrain_reflectance));
-    let vars = LiveVars { ssao, contact, gi };
+        .add_systems(Update, (apply_gi, apply_gi_gain, apply_terrain_reflectance));
     let live = format!("live: ssao, contactshadows, gi, ambient, viewmodel, {}, {}; other --off parts are startup only", LOCO_AB.join(", "), Switch::names());
     for (name, on) in [("on", Some(true)), ("off", Some(false)), ("flip", None)] {
         let verb = match on {
@@ -370,61 +326,11 @@ fn register(app: &mut App) {
             CommandSpec::new(name).help(&format!("{verb} a switch ({live})")).param(Param::new("switch", ArgKind::Str)),
             move |inv| {
                 let part = inv.args.str("switch").unwrap_or_default().to_ascii_lowercase();
-                let text = set_switch(inv.ctx, inv.vars, vars, &part, on)?;
+                let text = set_switch(inv.ctx, inv.vars, gi, &part, on)?;
                 inv.log.info(&text);
                 Ok(())
             },
         );
-    }
-}
-
-/// The console variables `on`/`off`/`flip` set directly (camera components, not A/B switches).
-#[derive(Clone, Copy)]
-struct LiveVars {
-    ssao: VarId,
-    contact: VarId,
-    gi: VarId,
-}
-
-/// `render.ssao` and what the camera started with.
-#[derive(Resource)]
-struct Ssao {
-    var: VarId,
-    /// The camera's quality level at startup (`None`: it started without SSAO; turning it
-    /// on then uses Bevy's default level).
-    level: Option<ScreenSpaceAmbientOcclusionQualityLevel>,
-    /// The variable's generation last applied (`None`: the camera hasn't been seen yet).
-    applied: Option<u64>,
-}
-
-/// `render.contactshadows` and what the camera started with.
-#[derive(Resource)]
-struct Contact {
-    var: VarId,
-    /// `render.contactlength` (meters).
-    length: VarId,
-    /// `render.contactthickness` (meters).
-    thickness: VarId,
-    /// The camera's settings at startup, the preset's (`None`: it started without contact
-    /// shadows; turning them on then uses Bevy's default, the High preset's values), then
-    /// with the tuning variables applied.
-    settings: Option<ContactShadows>,
-    /// The variable's generation last applied (`None`: the camera hasn't been seen yet).
-    applied: Option<u64>,
-    /// The tuning variables' generations last applied.
-    tuned: Option<(u64, u64)>,
-}
-
-impl Contact {
-    /// The settings to put on the camera: the preset's (or Bevy's default) with the tuning
-    /// variables' current values.
-    #[expect(clippy::cast_possible_truncation, reason = "console floats are f64; the component is f32")]
-    fn settings(&self, vars: &Tunables) -> ContactShadows {
-        ContactShadows {
-            length: vars.float(self.length) as f32,
-            thickness: vars.float(self.thickness) as f32,
-            ..self.settings.unwrap_or_default()
-        }
     }
 }
 
@@ -445,144 +351,6 @@ fn changed_since(vars: &Tunables, var: VarId, applied: &mut Option<u64>) -> Opti
     }
     *applied = Some(generation);
     Some(vars.flag(var))
-}
-
-/// Seeds `render.ssao` from the camera once it exists, then inserts or removes Bevy's
-/// SSAO component when the variable changes. On: the depth + motion-vector prepass and
-/// MSAA off, as at startup (`exterior.rs`). Off: only the SSAO component goes; the
-/// prepasses stay (the image is the A/B; for the cost, compare with a `--off ssao` run).
-#[allow(clippy::needless_pass_by_value)]
-fn apply_ssao(
-    mut commands: Commands,
-    mut tunables: ResMut<Tunables>,
-    mut state: ResMut<Ssao>,
-    cameras: Query<(Entity, Option<&ScreenSpaceAmbientOcclusion>), With<ExteriorCamera>>,
-) {
-    if state.applied.is_none() {
-        let Some((_, ssao)) = cameras.iter().next() else { return };
-        state.level = ssao.map(|s| s.quality_level);
-        state.applied = Some(seed_from_camera(&mut tunables, state.var, ssao.is_some()));
-        return;
-    }
-    let state = &mut *state;
-    let Some(on) = changed_since(&tunables, state.var, &mut state.applied) else { return };
-    for (camera, ssao) in &cameras {
-        match (on, ssao.is_some()) {
-            (true, false) => {
-                let quality_level = state.level.unwrap_or_default();
-                commands
-                    .entity(camera)
-                    .insert((ScreenSpaceAmbientOcclusion { quality_level, ..Default::default() }, DepthPrepass, MotionVectorPrepass, Msaa::Off));
-            }
-            (false, true) => {
-                commands.entity(camera).remove::<ScreenSpaceAmbientOcclusion>();
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Seeds `render.contactshadows` from the camera once it exists, then inserts or removes
-/// Bevy's `ContactShadows` when the variable changes. The camera component gates the effect
-/// per view (Bevy's `MeshPipelineKey::CONTACT_SHADOWS`); a light casts them only with its own
-/// `contact_shadows_enabled`, which the sun gets only when the run started with them
-/// (`exterior.rs` `sun_shadow`), so on also sets it on the sun. Off removes only the camera
-/// component (the depth prepass it requires stays). The moon never casts them; lamps follow
-/// `PointShadowBudget::contact_shadows`, untouched here.
-#[allow(clippy::needless_pass_by_value)]
-fn apply_contact_shadows(
-    mut commands: Commands,
-    mut tunables: ResMut<Tunables>,
-    mut state: ResMut<Contact>,
-    cameras: Query<(Entity, Option<&ContactShadows>), With<ExteriorCamera>>,
-    mut suns: Query<&mut DirectionalLight, With<SunLight>>,
-) {
-    if state.applied.is_none() {
-        let Some((_, contact)) = cameras.iter().next() else { return };
-        state.settings = contact.copied();
-        state.applied = Some(seed_from_camera(&mut tunables, state.var, contact.is_some()));
-        // The tuning variables start as the camera's values (a value typed earlier wins).
-        let seed = state.settings.unwrap_or_default();
-        let vars = &mut *tunables;
-        let _ = vars.set_by(state.length, f64::from(seed.length).into(), SetBy::CommandLine);
-        let _ = vars.set_by(state.thickness, f64::from(seed.thickness).into(), SetBy::CommandLine);
-        state.tuned = Some((vars.var(state.length).generation(), vars.var(state.thickness).generation()));
-        return;
-    }
-    let state = &mut *state;
-    let tuned = (tunables.var(state.length).generation(), tunables.var(state.thickness).generation());
-    let retune = state.tuned != Some(tuned);
-    state.tuned = Some(tuned);
-    let on = match changed_since(&tunables, state.var, &mut state.applied) {
-        Some(on) => on,
-        None if retune => tunables.flag(state.var),
-        None => return,
-    };
-    for (camera, contact) in &cameras {
-        match (on, contact.is_some()) {
-            (true, false) => {
-                commands.entity(camera).insert(state.settings(&tunables));
-            }
-            (true, true) if retune => {
-                commands.entity(camera).insert(state.settings(&tunables));
-            }
-            (false, true) => {
-                commands.entity(camera).remove::<ContactShadows>();
-            }
-            _ => {}
-        }
-    }
-    if on {
-        for mut sun in &mut suns {
-            if !sun.contact_shadows_enabled {
-                sun.contact_shadows_enabled = true;
-            }
-        }
-    }
-}
-
-/// `render.bloom` and what the camera started with.
-#[derive(Resource)]
-struct BloomVar {
-    var: VarId,
-    /// The camera's bloom at startup, the preset's (`None`: it started without bloom; turning
-    /// it on then uses `Bloom::NATURAL` with the variable's intensity).
-    settings: Option<Bloom>,
-    /// The variable's generation last applied (`None`: the camera hasn't been seen yet).
-    applied: Option<u64>,
-}
-
-/// Seeds `render.bloom` from the camera once it exists (its intensity, 0 without bloom; a
-/// value typed earlier wins), then puts the preset's bloom with the variable's intensity on
-/// the camera when it changes, or removes the component at 0.
-#[allow(clippy::needless_pass_by_value)]
-#[expect(clippy::cast_possible_truncation, reason = "console floats are f64; the component is f32")]
-fn apply_bloom(mut commands: Commands, mut tunables: ResMut<Tunables>, mut state: ResMut<BloomVar>, cameras: Query<(Entity, Option<&Bloom>), With<ExteriorCamera>>) {
-    if state.applied.is_none() {
-        let Some((_, bloom)) = cameras.iter().next() else { return };
-        state.settings = bloom.cloned();
-        let seed = bloom.map_or(0.0, |b| f64::from(b.intensity));
-        let vars = &mut *tunables;
-        let _ = vars.set_by(state.var, seed.into(), SetBy::CommandLine);
-        let generation = vars.var(state.var).generation();
-        // A value typed before the camera existed differs from the seed: apply it next frame.
-        state.applied = Some(if (vars.float(state.var) - seed).abs() < 1e-9 { generation } else { u64::MAX });
-        return;
-    }
-    let generation = tunables.var(state.var).generation();
-    if state.applied == Some(generation) {
-        return;
-    }
-    state.applied = Some(generation);
-    let intensity = tunables.float(state.var) as f32;
-    for (camera, _) in &cameras {
-        if intensity > 0.0 {
-            let base = state.settings.clone().unwrap_or(Bloom::NATURAL);
-            commands.entity(camera).insert(Bloom { intensity, ..base });
-        } else {
-            commands.entity(camera).remove::<Bloom>();
-        }
-    }
 }
 
 /// `render.gi` and whether the GI is in this run.
@@ -791,19 +559,46 @@ fn set_loco_ab(world: &mut World, name: &str, on: Option<bool>) -> Result<String
     Ok(format!("{label} {} (player{note})", if v { "on" } else { "off" }))
 }
 
-/// `on`/`off`/`flip <name>`: what happened, or why nothing did.
-fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on: Option<bool>) -> Result<String, String> {
-    let var = match name {
-        "ssao" => Some(live.ssao),
-        "contactshadows" => Some(live.contact),
-        _ => None,
+/// The `on`/`off` words that map onto a quality tunable: `(word, tunable, its off value, the value
+/// `on` sets when no lower layer has one on)`. `on` peels the console layer first, so it gives back
+/// the level's (or a `--set`'s) value; Bevy's defaults otherwise (GTAO High, contact shadows on).
+const QUALITY_SWITCHES: [(&str, &str, &str, &str); 2] =
+    [("ssao", "render.ssao.quality", "off", "high"), ("contactshadows", "shadow.contact", "off", "on")];
+
+/// `on`/`off`/`flip ssao|contactshadows` onto their tunables (`None`: not one of these words).
+fn set_quality_switch(vars: &mut Vars, name: &str, on: Option<bool>) -> Result<Option<String>, String> {
+    use sf_console_bevy::sf_console::Value;
+    let Some(&(_, tunable, off, on_value)) = QUALITY_SWITCHES.iter().find(|(word, ..)| *word == name) else { return Ok(None) };
+    let id = vars.id(tunable).ok_or_else(|| format!("{name}: not in this run (no {tunable})"))?;
+    let parse = |text: &str| match vars.var(id).value() {
+        Value::Bool(_) => Value::Bool(text == "on"),
+        _ => Value::Str(text.to_owned()),
     };
+    let (off, on_value) = (parse(off), parse(on_value));
+    let want = on.unwrap_or(*vars.var(id).value() == off);
+    if want {
+        vars.clear(id, SetBy::Console);
+        if *vars.var(id).value() == off {
+            vars.set_by(id, on_value, SetBy::Console)?;
+        }
+    } else {
+        vars.set_by(id, off, SetBy::Console)?;
+    }
+    let now = vars.var(id).value().to_string();
+    Ok(Some(format!("{name} {} ({tunable} {now})", if want { "on" } else { "off" })))
+}
+
+/// `on`/`off`/`flip <name>`: what happened, or why nothing did.
+fn set_switch(world: &mut World, vars: &mut Vars, gi: VarId, name: &str, on: Option<bool>) -> Result<String, String> {
+    if let Some(text) = set_quality_switch(vars, name, on)? {
+        return Ok(text);
+    }
     if name == "gi" {
         if !world.contains_resource::<sf_sky_bevy::GiEnabled>() {
             return Err(format!("gi: {GI_NOT_IN_RUN}"));
         }
-        let v = on.unwrap_or(!vars.flag(live.gi));
-        vars.set_by(live.gi, v.into(), SetBy::Console)?;
+        let v = on.unwrap_or(!vars.flag(gi));
+        vars.set_by(gi, v.into(), SetBy::Console)?;
         return Ok(format!("gi {}", if v { "on" } else { "off" }));
     }
     if name == "ambient" {
@@ -817,14 +612,6 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
     }
     if LOCO_AB.contains(&name) {
         return set_loco_ab(world, name, on);
-    }
-    if let Some(var) = var {
-        if world.query_filtered::<(), With<ExteriorCamera>>().iter(world).next().is_none() {
-            return Err(format!("{name}: no streaming camera in this run"));
-        }
-        let v = on.unwrap_or(!vars.flag(var));
-        vars.set_by(var, v.into(), SetBy::Console)?;
-        return Ok(format!("{name} {}", if v { "on" } else { "off" }));
     }
     if let Some(switch) = Switch::from_name(name) {
         let mut state: SystemState<(ResMut<LiveAb>, Res<Time<Real>>, Switches)> = SystemState::new(world);
@@ -974,61 +761,39 @@ mod tests {
         app.update();
     }
 
+    /// T5a: `off`/`on`/`flip ssao` and `contactshadows` set the quality tunables at the console layer
+    /// (the duplicate `render.ssao` / `render.contactshadows` variables are gone); `on` gives back the
+    /// level's value, or Bevy's default where the level has none; the camera follows; startup-only
+    /// parts still say so.
     #[test]
-    fn ssao_flips_live_and_starts_as_the_camera_did() {
+    fn ssao_and_contact_words_set_the_quality_tunables() {
+        use bevy_pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel as L};
+        use sf_console_bevy::sf_console::Value;
         let mut app = app();
-        let camera = app
-            .world_mut()
-            .spawn((ExteriorCamera, ScreenSpaceAmbientOcclusion { quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Low, ..Default::default() }))
-            .id();
+        app.add_plugins(sf_sky_bevy::ShadowQualityPlugin);
+        let camera = app.world_mut().spawn((ExteriorCamera, sf_sky_bevy::ViewQualityCamera)).id();
+        {
+            let mut t = app.world_mut().resource_mut::<Tunables>();
+            let ssao = t.id("render.ssao.quality").expect("ssao");
+            t.set_by(ssao, Value::Str("low".into()), SetBy::Preset).expect("preset");
+        }
         app.update();
-        app.update();
-        assert!(app.world().get::<ScreenSpaceAmbientOcclusion>(camera).is_some());
+        let level = |app: &App| app.world().get::<ScreenSpaceAmbientOcclusion>(camera).map(|s| s.quality_level);
+        assert_eq!(level(&app), Some(L::Low), "the level's GTAO");
         run(&mut app, "off ssao");
-        assert!(app.world().get::<ScreenSpaceAmbientOcclusion>(camera).is_none());
-        run(&mut app, "toggle render.ssao");
-        let back = app.world().get::<ScreenSpaceAmbientOcclusion>(camera).expect("ssao back on");
-        assert_eq!(back.quality_level, ScreenSpaceAmbientOcclusionQualityLevel::Low);
-        assert_eq!(app.world().get::<Msaa>(camera), Some(&Msaa::Off));
-    }
-
-    #[test]
-    fn camera_without_ssao_seeds_off_and_startup_parts_say_so() {
-        let mut app = app();
-        let camera = app.world_mut().spawn(ExteriorCamera).id();
-        app.update();
-        app.update();
-        assert!(app.world().get::<ScreenSpaceAmbientOcclusion>(camera).is_none());
-        let var = app.world().resource::<Ssao>().var;
-        assert!(!app.world().resource::<Tunables>().flag(var));
-        run(&mut app, "on ssao");
-        assert!(app.world().get::<ScreenSpaceAmbientOcclusion>(camera).is_some());
-        run(&mut app, "off froxels");
-        run(&mut app, "off wireframe");
-        let log: Vec<String> = app.world().resource::<DevConsole>().log().lines().map(|l| l.text.clone()).collect();
-        assert!(log.iter().any(|l| l.contains("froxels: startup only, relaunch with --off froxels")), "{log:?}");
-        assert!(log.iter().any(|l| l == "wireframe off"), "{log:?}");
-    }
-
-    #[test]
-    fn contact_shadows_flip_live_restore_the_preset_and_light_the_sun() {
-        let mut app = app();
-        let medium = ContactShadows { linear_steps: 8, thickness: 0.1, length: 0.3 };
-        let camera = app.world_mut().spawn((ExteriorCamera, medium)).id();
-        // A run started with them off leaves the sun without them (`exterior.rs` `sun_shadow`).
-        let sun = app.world_mut().spawn((SunLight, DirectionalLight { contact_shadows_enabled: false, ..Default::default() })).id();
-        app.update();
-        app.update();
-        assert!(app.world().get::<ContactShadows>(camera).is_some());
-        run(&mut app, "off contactshadows");
-        assert!(app.world().get::<ContactShadows>(camera).is_none(), "{:?}", log(&app));
-        run(&mut app, "toggle render.contactshadows");
-        let back = app.world().get::<ContactShadows>(camera).expect("contact shadows back on");
-        assert_eq!(back.linear_steps, 8, "the preset's settings, not the default 16");
-        assert!(app.world().get::<DirectionalLight>(sun).unwrap().contact_shadows_enabled);
+        assert_eq!(level(&app), None);
+        run(&mut app, "flip ssao");
+        assert_eq!(level(&app), Some(L::Low), "on peels back to the level's value");
+        run(&mut app, "render.ssao.quality off");
+        run(&mut app, "on contactshadows");
+        assert!(app.world().get::<ContactShadows>(camera).is_some(), "Bevy's default where the level has none");
+        run(&mut app, "shadow.contact.length_m 3");
+        assert!((app.world().get::<ContactShadows>(camera).expect("on").length - 3.0).abs() < 1e-6, "tuned live");
         run(&mut app, "flip contactshadows");
         assert!(app.world().get::<ContactShadows>(camera).is_none());
-        assert!(log(&app).iter().any(|l| l == "contactshadows off"), "{:?}", log(&app));
+        assert!(log(&app).iter().any(|l| l.starts_with("contactshadows off")), "{:?}", log(&app));
+        run(&mut app, "off froxels");
+        assert!(log(&app).iter().any(|l| l.contains("froxels: startup only, relaunch with --off froxels")), "{:?}", log(&app));
     }
 
     #[test]
@@ -1084,74 +849,6 @@ mod tests {
         let refit = app.world().get::<GiVolume>(second).expect("volume");
         assert_eq!((refit.intensity, refit.ambient_scale), (2.0, 0.1), "typed values win on the new volume");
         assert_eq!(app.world().resource::<Tunables>().float(intensity), 2.0);
-    }
-
-    #[test]
-    fn contact_length_and_thickness_retune_the_camera_live_and_survive_a_flip() {
-        let mut app = app();
-        let medium = ContactShadows { linear_steps: 8, thickness: 0.1, length: 0.3 };
-        let camera = app.world_mut().spawn((ExteriorCamera, medium)).id();
-        app.update();
-        app.update();
-        let state = app.world().resource::<Contact>();
-        let length = state.length;
-        let vars = app.world().resource::<Tunables>();
-        assert!((vars.float(length) - 0.3).abs() < 1e-6, "seeded from the camera, not Bevy's default");
-        run(&mut app, "render.contactlength 3");
-        run(&mut app, "render.contactthickness 1");
-        let tuned = app.world().get::<ContactShadows>(camera).expect("still on");
-        assert!((tuned.length - 3.0).abs() < 1e-6 && (tuned.thickness - 1.0).abs() < 1e-6, "length {} thickness {}", tuned.length, tuned.thickness);
-        assert_eq!(tuned.linear_steps, 8, "the preset's steps stay");
-        run(&mut app, "off contactshadows");
-        assert!(app.world().get::<ContactShadows>(camera).is_none());
-        run(&mut app, "on contactshadows");
-        let back = app.world().get::<ContactShadows>(camera).expect("back on");
-        assert!((back.length - 3.0).abs() < 1e-6, "the tuned length survives a flip: {}", back.length);
-    }
-
-    #[test]
-    fn bloom_intensity_seeds_from_the_camera_retunes_live_and_zero_turns_it_off() {
-        let mut app = app();
-        let preset = Bloom { intensity: 0.1, ..Bloom::NATURAL };
-        let camera = app.world_mut().spawn((ExteriorCamera, preset)).id();
-        app.update();
-        app.update();
-        let var = app.world().resource::<BloomVar>().var;
-        assert!((app.world().resource::<Tunables>().float(var) - 0.1).abs() < 1e-6, "seeded from the camera, not NATURAL's 0.15");
-        run(&mut app, "render.bloom 0.3");
-        let tuned = app.world().get::<Bloom>(camera).expect("still on");
-        assert!((tuned.intensity - 0.3).abs() < 1e-6, "intensity {}", tuned.intensity);
-        run(&mut app, "render.bloom 0");
-        assert!(app.world().get::<Bloom>(camera).is_none(), "{:?}", log(&app));
-        run(&mut app, "render.bloom 0.2");
-        let back = app.world().get::<Bloom>(camera).expect("back on");
-        assert!((back.intensity - 0.2).abs() < 1e-6, "intensity {}", back.intensity);
-    }
-
-    #[test]
-    fn camera_without_bloom_seeds_zero_and_turns_on_natural() {
-        let mut app = app();
-        let camera = app.world_mut().spawn(ExteriorCamera).id();
-        app.update();
-        app.update();
-        let var = app.world().resource::<BloomVar>().var;
-        assert!(app.world().resource::<Tunables>().float(var).abs() < 1e-9);
-        assert!(app.world().get::<Bloom>(camera).is_none());
-        run(&mut app, "render.bloom 0.1");
-        assert!(app.world().get::<Bloom>(camera).is_some(), "{:?}", log(&app));
-    }
-
-    #[test]
-    fn camera_without_contact_shadows_seeds_off_and_turns_on_with_defaults() {
-        let mut app = app();
-        let camera = app.world_mut().spawn(ExteriorCamera).id();
-        app.update();
-        app.update();
-        let var = app.world().resource::<Contact>().var;
-        assert!(!app.world().resource::<Tunables>().flag(var));
-        run(&mut app, "on contactshadows");
-        let on = app.world().get::<ContactShadows>(camera).expect("contact shadows on");
-        assert_eq!(on.linear_steps, ContactShadows::default().linear_steps);
     }
 
     /// WE-10 fix 1: `flip cloud_history` swaps the accumulating resolve for the legacy one.

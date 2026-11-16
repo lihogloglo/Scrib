@@ -74,6 +74,9 @@ turning never re-runs it. Crack-free because the shader's morph zones move the q
 `stale_selection_stays_crack_free_with_the_morph_slack`). On with `set select.gate on` (live; alias `BEVYRROWIND_SELECT_GATE=1`), `--off selectgate`
 forces it off (`exterior.rs:284`).
 
+`water.quality` (`low|medium|high|ultra`, T5a): the FFT tier, live (`water::bind_quality`; `WaterQuality` re-sizes the wave
+images, `sf_water_bevy/src/lib.rs:529`); the quality level writes it at `Preset`.
+
 ## Known limits
 
 Terrain layer arrays are RGBA8 at 256² (`mw_bake/src/world.rs` `LAYER_ARRAY_SIZE`): BC7/BC5 and size per preset are T6;

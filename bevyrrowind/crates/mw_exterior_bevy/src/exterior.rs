@@ -24,7 +24,6 @@ use bevy::camera::visibility::RenderLayers;
 use bevy_camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy::render::occlusion_culling::OcclusionCulling;
-use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use sf_diag_bevy::{GateStatus, ReadyGate};
@@ -112,8 +111,8 @@ pub struct ExteriorOptions {
     pub weather: Option<mw_environment_bevy::weather::WeatherSetup>,
     /// Quality preset (`--quality`): view-distance bias and size culling.
     pub quality: Quality,
-    /// Texture size cap, largest side of level 0 in texels (`--texture-cap`, else the preset's
-    /// `Quality::texture_cap`); `None`: full resolution.
+    /// `--texture-cap <px>` as given (0: none): the `CommandLine` layer of `texture.max_size_px`, read
+    /// at start (`quality_presets::start_values`); `None`: the quality level's cap.
     pub texture_cap: Option<u32>,
     /// Benchmark, window size and A/B switches.
     pub perf: mw_devtools_bevy::perf::Perf,
@@ -160,8 +159,6 @@ struct Start {
     prepass: bool,
     /// Lamp shadows on 2x2 hardware PCF (`bevy_pbr::PointSpotShadowsHardware2x2`; `--off lampfilter`).
     lamp_hw_filter: bool,
-    /// Bloom (`None`: off; Low preset, `--off bloom`).
-    bloom: Option<Bloom>,
 }
 
 #[derive(Resource)]
@@ -269,16 +266,29 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             true
         })),
     );
-    // The quality preset scales LOD selection, size culling and the
-    // far-field handoff with one bias (`--off sizecull`: no size culling).
-    let screen = options.quality.screen(!perf.off.has(Part::SizeCull));
+    // Tunables T4/T5a: the render settings register the shadow, light, GTAO and upscaling tunables
+    // (`sf_sky_bevy::ShadowQualityPlugin` binds them live), `quality_presets` the rest; the quality
+    // level's values go to the `Preset` layer, `--off` parts and `--texture-cap` to `CommandLine`. The
+    // `Restart` ones (texture cap, far handoff scale, probe GI) are read now, with their `--set`s.
+    render.insert(&mut app);
+    crate::quality_presets::register(&mut app);
+    let start_values = {
+        let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
+        crate::quality_presets::apply(&mut tunables, options.quality, &perf.off, options.texture_cap);
+        mw_assets::set_parallax(crate::quality_presets::tunables_parallax(&tunables));
+        crate::quality_presets::start_values(&mut tunables, &perf.tunables)
+    };
+    crate::quality_presets::bind_live(&mut app);
+    // The quality preset scales LOD selection and size culling (`lod.*`, live for cells streamed after a
+    // change; `--off sizecull`: no size culling) and the far-field handoff (`far.handoff_scale`, at start).
+    let screen = crate::quality_presets::lod_screen(app.world().resource::<sf_tunables_bevy::Tunables>());
     // Selection gates (CW-2, ROADMAP 1.25; `sf_world::select_gate`): streaming rings, terrain CDLOD and the
     // far field's residency pass re-run only once the camera moved or turned past a quantum or an input
     // changed. Live tunable `select.gate` (alias `BEVYRROWIND_SELECT_GATE=1|0`); `--off selectgate` forces it
     // off at the command-line layer. The plugins start with its effective value.
     let select_gate = crate::quality_presets::add_gates(&mut app, perf.off.has(Part::SelectGate));
     let mut far_settings = sf_lod_bevy::FarFieldSettings::default();
-    far_settings.levels.screen.bias = screen.bias;
+    far_settings.levels.screen.bias = start_values.far_handoff_scale;
     far_settings.select_gate = sf_lod_bevy::FarFieldSettings::select_gate_quanta(select_gate);
     // The far field sets its own rings; `--near-ring`/`--far-ring` still override them.
     let base = if far_field {
@@ -326,7 +336,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     .add_plugins((MwAssetsPlugin { vfs: vfs.clone() }, FreeCameraPlugin))
     // `.ktx2` loads under the preset's texture size cap (textures.md S1); after DefaultPlugins so it
     // replaces Bevy's loader for that extension. Log line `texture.cap:`.
-    .add_plugins(sf_texture_bevy::TextureCapPlugin { cap: options.texture_cap })
+    .add_plugins(sf_texture_bevy::TextureCapPlugin { cap: start_values.texture_cap })
     // A replaced image re-binds the materials using it (textures.md S2). Log line `texture.rebind:`.
     .add_plugins(sf_texture_bevy::ImageRebindPlugin::<StandardMaterial>::default())
     .add_plugins(WorldStreamingPlugin { config: streaming });
@@ -372,15 +382,12 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     }
     let mut clock = GameClock::at(options.day, options.hour, settings.calendar.day_ms());
     clock.paused = options.screenshot.is_some() || bench;
-    render.insert(&mut app);
     let off_parts = &perf.off;
-    // Tunables T4: the quality level's shadow and light values at the `Preset` layer, `--off` parts at
-    // `CommandLine` (`quality_presets`); the lamp budget, cascades, PCSS, contact shadows, GTAO and the
-    // shadow filter follow them live (`sf_sky_bevy::ShadowQualityPlugin`, added by `render.insert`).
+    // The quality level's shadow and light values (written above, `quality_presets`): the lamp budget,
+    // cascades, PCSS, contact shadows, GTAO and the shadow filter follow them live.
     let sun_quality = {
-        let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
-        crate::quality_presets::apply(&mut tunables, options.quality, off_parts);
-        sf_sky_bevy::SunShadowQuality::read(&tunables)
+        let tunables = app.world().resource::<sf_tunables_bevy::Tunables>();
+        sf_sky_bevy::SunShadowQuality::read(tunables)
     };
     let contact_shadows = {
         let tunables = app.world().resource::<sf_tunables_bevy::Tunables>();
@@ -391,7 +398,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // now, `--off gi` for the A/B. Before the sky, so it brings Solari's scene plugin alone
     // (the sky adds the full `SolariPlugins` otherwise). Absent on GPUs without ray queries.
     let gi = !off_parts.has(Part::Gi)
-        && matches!(options.quality, Quality::High | Quality::Ultra)
+        && start_values.gi
         && render.path != sf_sky_bevy::sf_sky::RenderPath::RayTraced
         && options.worldspace != ext;
     if gi {
@@ -433,6 +440,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         // Surface weather W2-W3: cell window, shelter map, wetness on every lit material
         // (`surface set wet 1`, `surface debug exposure|cells|porosity`; `--off surface|wet|shelter`).
         // W2b: the shelter maps redraw at night; leaves shelter partially (canopy map).
+        // `surface.puddles` / `surface.shelter` (the quality level's; live, `quality_presets::bind_live`).
+        let (puddles, shelter) = (start_tunable(&app, &crate::quality_presets::PUDDLES), start_tunable(&app, &crate::quality_presets::SHELTER));
         app.add_plugins((
             WeatherPlugin { book: weather.book, state: weather.state },
             sf_weather_bevy::sf_precip_bevy::PrecipPlugin,
@@ -443,9 +452,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
                 layer: !off_parts.has(Part::Surface),
                 wet: !off_parts.has(Part::Wet),
                 // Low: no puddles (surface-weather.md "Budget").
-                puddles: !off_parts.has(Part::Puddles) && !matches!(options.quality, Quality::Low),
+                puddles,
                 // Low: no shelter map (surface-weather.md "Budget").
-                shelter: !off_parts.has(Part::Shelter) && !matches!(options.quality, Quality::Low),
+                shelter,
                 // W5b: snow and ash cover (`--off cover`, `surface set snow|ash 1`).
                 cover: !off_parts.has(Part::Cover),
                 // W6a: prints in the cover from planted feet (`--off trails`, `surface debug trails`).
@@ -489,9 +498,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         let fog = sf_atmos_bevy::sf_atmos::FogSettings::default();
         app.add_plugins(sf_atmos_bevy::CloudsPlugin { settings: cloud_settings(), fog, seed: 0x5EED_C10D })
             .add_systems(Update, cloud_shadow_light);
+        // `sky.clouds.map_per_sample` (the quality level's; live, `quality_presets::bind_live`).
+        let map_per_sample = start_tunable(&app, &crate::quality_presets::CLOUD_MAP_PER_SAMPLE);
         let mut clouds = app.world_mut().resource_mut::<sf_atmos_bevy::Clouds>();
         clouds.enabled = clouds_on;
-        clouds.settings.quality.map_per_sample = options.quality.cloud_map_per_sample();
+        clouds.settings.quality.map_per_sample = map_per_sample;
         let mut fog = app.world_mut().resource_mut::<sf_atmos_bevy::Fog>();
         fog.enabled = fog_on;
         // F3: the froxel volume (High) near the camera; `--off froxels` keeps the
@@ -570,7 +581,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // framework's memory budget, Ultra too: uncapped, its BC5 arrays reached 1520 MiB and the Ultra
     // walk ran out of GPU memory on an 8 GB laptop (ledger perf.md 2026-11-15). Log line `terrain layers:`.
     let layer_cap = sf_terrain_bevy::sf_terrain::LayerCap {
-        max_edge: options.texture_cap,
+        max_edge: start_values.texture_cap,
         budget: Some(sf_terrain_bevy::DEFAULT_LAYER_BUDGET),
     };
     let select_gate = TerrainSettings::select_gate_quanta(select_gate);
@@ -587,7 +598,6 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         .insert_resource(Start { worldspace: options.worldspace, eye: options.eye, target: options.target, bench: bench || options.screenshot.is_some(),
             prepass: options.prepass,
             lamp_hw_filter: !perf.off.has(Part::LampFilter),
-            bloom: if perf.off.has(Part::Bloom) { None } else { options.quality.bloom() },
         })
         .insert_resource(Started(Instant::now()))
         // The spawners at startup (the `PostStartup` hooks of audio, scripts and physics wrap
@@ -613,7 +623,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // W-GERSTNER: `--off shorewaves` drops the analytic shore waves (the FFT fades to flat). W-WIND:
     // `--off seawind` keeps the fixed sea breeze instead of the weather's wind.
     let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves), !perf.off.has(Part::SeaWind), !perf.off.has(Part::ShoreDepth));
-    mw_environment_bevy::water::add(&mut app, options.water, options.quality, water_parts, &options.world.worldspaces);
+    mw_environment_bevy::water::add(&mut app, options.water, water_parts, &options.world.worldspaces);
     app.add_systems(Update, sea_wind);
     mw_doors_bevy::add(&mut app, options.world, options.use_door);
     mw_devtools_bevy::pipeline_watch::add(&mut app);
@@ -897,6 +907,7 @@ fn setup(
         }
     }
     if start.prepass {
+        camera.insert(sf_sky_bevy::ViewPrepassBase { depth: true, motion_vectors: true, ..Default::default() });
         camera.insert((DepthPrepass, MotionVectorPrepass, OcclusionCulling));
     }
     if start.lamp_hw_filter {
@@ -905,17 +916,15 @@ fn setup(
     // The shadow filter, contact shadows (weather.md "Shadow bias and contact shadows", shadows F1) and
     // GTAO (ROADMAP 1.5) from their tunables (`sf_sky_bevy::quality`, live through `ViewQualityCamera`):
     // contact shadows and GTAO ray-march the depth prepass, with motion vectors so it applies the LOD
-    // dither (see the note above); GTAO with MSAA off (the native fallback of F4 restores the spawn
-    // MSAA, `sf_sky_bevy::upscale`).
+    // dither (see the note above); the prepasses and MSAA follow what needs them live
+    // (`sf_sky_bevy::quality::prepasses_follow_consumers`; `--prepass` keeps its own: `ViewPrepassBase`).
     camera.insert(sf_sky_bevy::ViewQualityCamera);
     if let Some(quality) = view_quality.wanted() {
         quality.insert_into(&mut camera);
     }
     // Bloom (screen-space-effects research 4.11): Bevy's post-process bloom runs after DLSS/TAA
-    // (`Core3dSystems::PostProcess` vs `EarlyPostProcess`), at output resolution.
-    if let Some(bloom) = start.bloom.clone() {
-        camera.insert(bloom);
-    }
+    // (`Core3dSystems::PostProcess` vs `EarlyPostProcess`), at output resolution; `render.bloom` and
+    // its intensity put it on this camera live (`mw_environment_bevy::quality_tunables::BloomPlugin`).
     if !start.bench {
         // Up / down follow the Jump / Sneak bindings (`controls::free_camera_keys`); E is Use.
         camera.insert(FreeCamera {
@@ -1386,16 +1395,6 @@ fn streaming_config(mut config: StreamingConfig, near: Option<f32>, far: Option<
     config
 }
 
-/// Bloom scatter fraction ([`QualityRender::bloom`]), two thirds of `Bloom::NATURAL`'s 0.15.
-/// Energy-conserving with no threshold (Bevy's recommendation; a threshold is the "1990s look"
-/// and needs additive compositing): a uniformly lit wall blurs into itself and stays as it was,
-/// only contrast scatters, in proportion to radiance. Our HDR is exposed (`sf_sky_bevy` drives
-/// `Exposure`; NIF emissive is exposure-weighted, `mw_assets::set_emissive`), so a lit wall sits
-/// near 1, a flame against a dark night or room well above its surround, and the sun disk orders
-/// of magnitude above: those glow, walls get at most a faint edge. Conservative because the froxel
-/// fog's sun glow already halos the disk (research 4.11 risk). Console `render.bloom` retunes it.
-const BLOOM_INTENSITY: f32 = 0.1;
-
 /// The sun's shadow bias (weather.md "Shadow bias and contact shadows", shadows F2):
 /// Bevy's 1.8-texel normal offset lifts every lookup off the surface by 1.3 m in
 /// the last cascade, so small casters lose the shadow where they touch the ground;
@@ -1572,42 +1571,6 @@ fn cloud_shadow_light(mut commands: Commands, suns: Query<Entity, (With<SunLight
     }
 }
 
-/// The quality presets' render settings: `Quality` itself moved to `mw_game_core` (app-split.md
-/// slice 1); these name renderer types the core crate doesn't depend on, so they stay here.
-pub(crate) trait QualityRender: Copy {
-    /// `(bias, min_pixels, min_draw_distance)`.
-    fn params(self) -> (f32, f32, f32);
-    fn bloom(self) -> Option<Bloom>;
-    fn screen(self, size_cull: bool) -> sf_model::LodScreen;
-}
-
-impl QualityRender for Quality {
-    fn params(self) -> (f32, f32, f32) {
-        match self {
-            Self::Low => (0.75, 4.0, 16.0),
-            Self::Medium => (0.875, 3.0, 20.0),
-            Self::High => (1.0, 2.0, 24.0),
-            Self::Ultra => (1.0, 1.0, 32.0),
-        }
-    }
-
-    /// Bloom (screen-space-effects research 4.11): Bevy's `Bloom::NATURAL` (COD-AW dual
-    /// filter, energy-conserving, no threshold) at [`BLOOM_INTENSITY`]; off on Low.
-    fn bloom(self) -> Option<Bloom> {
-        match self {
-            Self::Low => None,
-            Self::Medium | Self::High | Self::Ultra => Some(Bloom { intensity: BLOOM_INTENSITY, ..Bloom::NATURAL }),
-        }
-    }
-
-    /// The streaming screen of this preset; `size_cull: false` keeps every
-    /// object to its ring or handoff (`--off sizecull`).
-    fn screen(self, size_cull: bool) -> sf_model::LodScreen {
-        let (bias, min_pixels, min_draw_distance) = self.params();
-        sf_model::LodScreen { bias, min_pixels: if size_cull { min_pixels } else { 0.0 }, min_draw_distance, ..sf_model::LodScreen::default() }
-    }
-}
-
 /// The player's slot clips (traversal and combat, `mw_player_bevy::player_slots`) from the baked
 /// male humanoid graph (action.md B2a, combat.md C1b) and its skeleton (weapon socket tracks).
 /// Slots whose clip isn't baked (no clip-sources library) are left out, and their moves refuse
@@ -1660,7 +1623,6 @@ pub(crate) fn test_world_setup(app: &mut App) {
         bench: false,
         prepass: false,
         lamp_hw_filter: false,
-        bloom: None,
     })
     .init_resource::<Off>()
     .add_systems(OnEnter(WorldAlive), setup.in_set(WorldSetup));
@@ -1721,4 +1683,10 @@ mod static_paths_tests {
         assert_eq!(static_paths(false, &off(&["precombine"]), false), (false, false), "--off precombine");
         assert_eq!(static_paths(true, &off(&["precombine"]), false), (true, false), "--scene --off precombine");
     }
+}
+
+/// A tunable's effective value while the app is built (its start; a binding keeps it live).
+fn start_tunable(app: &App, def: &sf_tunables_bevy::Def<bool>) -> bool {
+    let tunables = app.world().resource::<sf_tunables_bevy::Tunables>();
+    tunables.read(tunables.id_of(def).expect("registered by quality_presets::register"))
 }

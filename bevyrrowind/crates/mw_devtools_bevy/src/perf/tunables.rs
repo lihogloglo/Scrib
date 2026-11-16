@@ -42,6 +42,7 @@ pub const CATALOG: &[(&str, &[&dyn AnyDef])] = &[
     ("sf_sky_bevy::shadow_budget", sf_sky_bevy::SHADOW_BUDGET_TUNABLES),
     ("sf_sky_bevy::quality", sf_sky_bevy::quality::TUNABLES),
     ("mw_devtools_bevy::perf_panel", crate::perf_panel::TUNABLES),
+    ("mw_environment_bevy::quality_tunables", mw_environment_bevy::quality_tunables::TUNABLES),
 ];
 
 /// Every [`CATALOG`] def registered in a fresh store (defaults only): the source of

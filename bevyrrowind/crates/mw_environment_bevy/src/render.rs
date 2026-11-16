@@ -69,6 +69,10 @@ pub struct RenderSettings {
     /// Sun cascades `(count, last bound m)` (`--sun-cascades`, else `BEVYRROWIND_SUN_CASCADES`): the
     /// `CommandLine` layer of `shadow.sun.cascades` and `shadow.sun.distance_m`.
     pub sun_cascades: Option<(usize, f32)>,
+    /// `--dlss` as given: the `CommandLine` layer of `render.upscaling` (`BEVYRROWIND_DLSS` is its env
+    /// alias; the quality preset writes the `Preset` layer). `upscaling` is the start's resolved value
+    /// (report labels).
+    pub dlss_flag: Option<Upscaling>,
 }
 
 /// `N:M`: `N` sun cascades out to `M` meters.
@@ -111,6 +115,7 @@ impl RenderSettings {
             cascade_encoders: true,
             cascade_hold: true,
             sun_cascades,
+            dlss_flag: dlss,
         })
     }
 
@@ -200,7 +205,7 @@ impl RenderSettings {
     /// (`shadow_tunables`: alias copies first, then `sf_sky_bevy::ShadowQualityPlugin` binds them;
     /// the lamp budget, face culling and the sun gate follow them live).
     pub fn insert(self, app: &mut App) {
-        crate::shadow_tunables::register(app, POINT_SHADOWS_DEFAULT, self.point_shadows, self.sun_cascades);
+        crate::shadow_tunables::register(app, POINT_SHADOWS_DEFAULT, self.point_shadows, self.sun_cascades, (self.upscaling, self.dlss_flag));
         if !app.is_plugin_added::<sf_sky_bevy::ShadowQualityPlugin>() {
             app.add_plugins(sf_sky_bevy::ShadowQualityPlugin);
         }

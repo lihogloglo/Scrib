@@ -36,7 +36,7 @@ use sf_world::{Worldspace, WorldspaceId};
 use sf_world_bevy::{ActiveWorldspace, WorldspaceRegistry};
 use tes3::esp::{Cell, Landscape};
 
-use mw_game_core::exterior::{ExteriorCamera, Quality};
+use mw_game_core::exterior::ExteriorCamera;
 /// The sea's wind input (W-WIND): the exterior copies the weather's `WindField` mean wind into it.
 pub use sf_water_bevy::WaterWind;
 /// The water surfaces' material: the exterior's catalog warm-up precaches it (pipeline-warmup.md W4b1).
@@ -129,14 +129,15 @@ struct Pools {
     current: Option<(WorldspaceId, Entity)>,
 }
 
-/// The FFT tier of a `--quality` preset (water.md "Performance budgets").
-fn water_quality(q: Quality) -> WaterQuality {
-    match q {
-        Quality::Low => WaterQuality::Low,
-        Quality::Medium => WaterQuality::Medium,
-        Quality::High => WaterQuality::High,
-        Quality::Ultra => WaterQuality::Ultra,
-    }
+/// The FFT tier: `water.quality` (the quality preset's level) bound live into `WaterQuality`, which
+/// re-sizes the wave images when it changes. Returns the start's tier (insert it with the plugin).
+pub fn bind_quality(app: &mut App) -> WaterQuality {
+    use crate::quality_tunables::{WATER_QUALITY, water_quality};
+    use sf_tunables_bevy::TunablesAppExt;
+    let id = app.add_tunable(&WATER_QUALITY).id();
+    let tier = water_quality(app.world().resource::<sf_tunables_bevy::Tunables>().read(id));
+    let _bound = app.add_tunable(&WATER_QUALITY).bind_resource(|q: &mut WaterQuality, v| *q = water_quality(v));
+    tier
 }
 
 /// `sspr`: local reflections on the water (W-SSPR; `--off waterssr` = the environment map only).
@@ -151,7 +152,6 @@ fn water_quality(q: Quality) -> WaterQuality {
 pub fn add(
     app: &mut App,
     inputs: WaterInputs,
-    quality: Quality,
     (sspr, shore_normals, shore_waves, sea_wind, shore_depth): (bool, bool, bool, bool, bool),
     worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>,
 ) {
@@ -211,12 +211,13 @@ pub fn add(
             .expect("spawn the shore bake thread");
         (handle, Instant::now())
     });
+    let tier = bind_quality(app);
     app.add_plugins(WaterPlugin)
         .insert_resource(spectrum)
         .insert_resource(WaterWind { weather: None, sea })
         .insert_resource(sea_sync)
         .insert_resource(look)
-        .insert_resource(water_quality(quality))
+        .insert_resource(tier)
         .insert_resource(WaterReflections { sspr, ..WaterReflections::default() })
         .insert_resource(WaterRegionsInput { map: inputs.regions.map(Arc::new), looks })
         .insert_resource(ShoreBake(bake))

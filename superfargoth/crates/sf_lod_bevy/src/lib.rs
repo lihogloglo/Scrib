@@ -38,7 +38,7 @@ use bevy_shader::load_shader_library;
 use sf_lod::products::{NEAR_STEP, node_subject};
 use sf_lod::{FarLevels, NodeKey};
 use sf_model_bevy::baked_path;
-use sf_tunables::{AnyDef, Def, Group, Source, Unit, def};
+use sf_tunables::{AnyDef, Def, Group, Lifetime, Source, Unit, def};
 use sf_world::{GateQuanta, RingRadii, WorldspaceId};
 use sf_world_bevy::{FarProxies, Precombines, StreamingConfig, StreamingSystems};
 
@@ -72,8 +72,20 @@ pub const FAR_SELECT_MOVE_M: Def<f32> = def!(float "far.select.move_m" = 2.0)
     .source(Source::Guess)
     .group(Group::ViewDistance);
 
+/// `far.handoff_scale`: the far-field handoff `d1` (and every level after it) as a multiple of the
+/// baked distances: `FarLevels::screen.bias`. The near streaming rings are sized from it at start
+/// ([`far_streaming_config`]) and the cells' statics end at it, so it is read once (`Lifetime::Restart`):
+/// a live change would open a gap or a double draw between near statics and their proxies.
+pub const FAR_HANDOFF_SCALE: Def<f32> = def!(float "far.handoff_scale" = 1.0)
+    .range(0.25, 4.0)
+    .unit(Unit::Ratio)
+    .help("Far-field handoff distances (and the near rings sized from them) as a multiple of the baked ones")
+    .source(Source::Measured("docs/ledger/statics.md 2026-10-12: d1 300 m 11.55 ms / 400 m 11.87 / 600 m 15.05, kept 400 m"))
+    .group(Group::ViewDistance)
+    .lifetime(Lifetime::Restart);
+
 /// This crate's tunables (live binding: tunables slice T2).
-pub const TUNABLES: &[&dyn AnyDef] = &[&FAR_SELECT_MOVE_M];
+pub const TUNABLES: &[&dyn AnyDef] = &[&FAR_SELECT_MOVE_M, &FAR_HANDOFF_SCALE];
 
 impl FarFieldSettings {
     /// The far-field gate with its declared quantum, on or off.

@@ -34,9 +34,12 @@ pub const SHADOW_FILTER: Def<&'static str> = q::FILTER.env_alias("BEVYRROWIND_SH
 /// `render.ssao.quality`, alias `BEVYRROWIND_SSAO=low|medium|high|ultra`.
 pub const SSAO: Def<&'static str> = q::SSAO.env_alias("BEVYRROWIND_SSAO");
 
+/// `render.upscaling`, alias `BEVYRROWIND_DLSS=<mode>` (`--dlss` wins).
+pub const UPSCALING: Def<&'static str> = q::UPSCALING.env_alias("BEVYRROWIND_DLSS");
+
 /// The alias copies, registered before the framework's defs.
 pub const ALIASES: &[&dyn AnyDef] =
-    &[&LAMP_DAY_GATE, &POINT_FACE_CULL, &SUN_SHADOW_GATE, &POINT_SHADOWS, &LAMP_CONTACT, &SHADOW_FILTER, &SSAO];
+    &[&LAMP_DAY_GATE, &POINT_FACE_CULL, &SUN_SHADOW_GATE, &POINT_SHADOWS, &LAMP_CONTACT, &SHADOW_FILTER, &SSAO, &UPSCALING];
 
 /// Bevyrrowind's lamp shadow fade band, m (`Mod` layer over the framework's 15-25 m): 35-45 m covers
 /// Balmora street blocks without nearby pop-in.
@@ -53,19 +56,30 @@ pub fn set_layer<T: Type + Sync>(tunables: &mut Tunables, def: &Def<T>, value: T
 }
 
 /// Registers the alias copies (their environment switches apply now), Bevyrrowind's `Mod` layer, the
-/// base `Preset` lamp budget (`preset`: count, face size) and the command-line sugar.
-pub fn register(app: &mut App, preset: (usize, usize), point_shadows: Option<usize>, sun_cascades: Option<(usize, f32)>) {
+/// base `Preset` lamp budget (`preset`: count, face size) and the command-line sugar (`--dlss`:
+/// `upscaling`; `upscaling_base`: the start's resolved upscaling, the base preset).
+pub fn register(
+    app: &mut App,
+    preset: (usize, usize),
+    point_shadows: Option<usize>,
+    sun_cascades: Option<(usize, f32)>,
+    (upscaling_base, upscaling): (sf_sky_bevy::sf_sky::Upscaling, Option<sf_sky_bevy::sf_sky::Upscaling>),
+) {
     app.register_tunables(ALIASES).register_tunables(sf_sky_bevy::SHADOW_BUDGET_TUNABLES).register_tunables(q::TUNABLES);
     let mut tunables = app.world_mut().resource_mut::<Tunables>();
     let t = &mut *tunables;
     set_layer(t, &sf_sky_bevy::LAMP_FADE, LAMP_FADE_M, SetBy::Mod, "bevyrrowind: Balmora street blocks without nearby pop-in");
     set_layer(t, &POINT_SHADOWS, preset.0, SetBy::Preset, "base preset (High)");
     set_layer(t, &sf_sky_bevy::LAMP_MAP_SIZE, preset.1, SetBy::Preset, "base preset (High)");
+    set_layer(t, &UPSCALING, upscaling_base.label(), SetBy::Preset, "base preset (the start's upscaling)");
     if let Some(count) = point_shadows {
         set_layer(t, &POINT_SHADOWS, count, SetBy::CommandLine, "--point-shadows");
     }
     if let Some((count, meters)) = sun_cascades {
         set_layer(t, &q::SUN_CASCADES, count, SetBy::CommandLine, "--sun-cascades / BEVYRROWIND_SUN_CASCADES");
         set_layer(t, &q::SUN_DISTANCE, meters, SetBy::CommandLine, "--sun-cascades / BEVYRROWIND_SUN_CASCADES");
+    }
+    if let Some(upscaling) = upscaling {
+        set_layer(t, &UPSCALING, upscaling.label(), SetBy::CommandLine, "--dlss");
     }
 }

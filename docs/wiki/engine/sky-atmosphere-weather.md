@@ -84,6 +84,10 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
 (`WeatherOverrides`). GPU spans `clouds_shadow|trace|resolve|composite`, Bevy `atmosphere_luts`; `MediumStats`
 (`rebuilds`, `scale_updates`), `WeatherStats`.
 
+Tunables (T5a, quality level at `Preset`): `sky.clouds.map_per_sample` (live, into `Clouds.settings.quality`), `surface.puddles`
+and `surface.shelter` (live, `SurfaceSettings`; `--off puddles|shelter` at `CommandLine`), declared in
+`mw_environment_bevy/src/quality_tunables.rs`, bound by `quality_presets::bind_live`.
+
 ## Known limits
 
 - `atmosphere_luts` rose 0.36 -> 0.84-0.93 ms with P1 (per-sample term sums); P1b restores stock single fetches, expected

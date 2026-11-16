@@ -70,6 +70,10 @@ in `sf_world_bevy/src/matclass.rs`.
 - `StreamStats`: `precombined`, `precombine_fallbacks`, `scene_covered`, `scene_upload_bytes` (`stream.rs:245-270`).
 - Scene gauges (`sf_scene_bevy/src/gauges.rs`): `scene/cells/resident`, `scene/batches/count`, `scene/slots/batch_live`,
   `scene/slots/batch_capacity_bytes`. Far field: `far/*` (`FarFieldStats`). Per-view cost: `views/*`, see `frame-and-views.md`.
+- View-distance tunables (T5a, the quality level's at the `Preset` layer, `mw_exterior_bevy/src/quality_presets.rs`): `lod.bias`,
+  `lod.size_cull.min_px` (`--off sizecull` = 0), `lod.size_cull.min_distance_m` are `Respawn`: `Streaming::set_lod_screen`
+  (`sf_world_bevy/src/stream.rs:516`) takes them live, but ranges are computed at spawn, so only cells streamed after the change
+  use them. `far.handoff_scale` (d1 = baked 400 m x scale; the near rings are sized from it) is `Restart`.
 
 ## Known limits
 

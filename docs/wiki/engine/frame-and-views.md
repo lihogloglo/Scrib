@@ -74,6 +74,13 @@ and `BEVYRROWIND_NO_GPU_TIMERS=1` (bench without `RenderDiagnosticsPlugin`: ever
 `gpu_timers: off`, DLSS check skipped) (`mw_devtools_bevy/src/perf.rs:166-178, 396-415`; `perf/cli.rs:1034`). Both stay env
 switches (diagnostics and process wiring, read once at startup), not tunables (tunables T4).
 
+Tunables (T5a): `render.upscaling` (`off|taa|auto|native|dlaa|quality|balanced|performance|ultra-performance`; `--dlss` at
+`CommandLine`, alias `BEVYRROWIND_DLSS`; F4 sets it at the console layer) into `UpscalingSetting`; `render.bloom` and
+`render.bloom.intensity` (`--off bloom`) on `ViewQualityCamera` views. Prepasses and MSAA follow their consumers live
+(`sf_sky_bevy/src/quality.rs` `prepasses_follow_consumers`): depth + motion vectors for contact shadows, GTAO or a temporal
+resolve, normals for GTAO, MSAA off under GTAO or TAA/DLSS, else the view's `ViewPrepassBase` (`--prepass`); skipped on the
+ray-traced path. `render.gi.probes` is `Restart` (the GI plugin is added at start; console `render.gi` toggles it live).
+
 ## Known limits
 
 - Render-thread cost grows with views times statics: [ledger/statics.md](../../ledger/statics.md), [ledger/perf.md](../../ledger/perf.md).

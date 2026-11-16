@@ -1,6 +1,6 @@
 # Lamp shadow cache (CW-4)
 
-Design, 2026-11-16. ROADMAP 1.25 CW-4 / 1.23c, visual check SH-21a. Not built. Parent spec: [shadows](shadows.md)
+Design, 2026-11-16. ROADMAP 1.25 CW-4 / 1.23c, visual check SH-21a. S1 and S2 built (S2 inert until S3). Parent spec: [shadows](shadows.md)
 ("Caching", "V1 as built", "Reset B1 as built"); wiki `docs/wiki/engine/shadows.md`; ledger `docs/ledger/shadows.md`.
 Lamp shadow quality is hard problem H2: this spec covers cost and the SH-21a flicker only, not which lamps cast.
 
@@ -227,6 +227,22 @@ cube-size path; lowering `max_lamps` evicts nobody. Owner questions stay open in
 (`static_tier_slots` 0) and `CasterMobility::AnimatedStatic` (frozen unless `animated_casters_move`); `classify` holds the
 settle rule for S3's tracker. 12 tunables in `lamp_cache::TUNABLES`; 21 exact tests in `lamp_cache/tests.rs`.
 
+**S2 as built (2026-11-16).** Vendored `bevy_pbr` patch "own, CW-4: lamp shadow cache": `render/point_shadow_cache.rs` +
+marked blocks in `light.rs`/`lib.rs`. S3's contract, main world: `CachedPointShadowMap { view_faces, draw_faces, load_faces,
+copies: Vec<CachedPointShadowCopy::{Save{face,layer}, Restore{face,layer}, Clear{face}}>, plan }` on a `PointLight` with
+`shadow_maps_enabled = false` (S1: `view_faces = views`, `draw_faces = capture | movers`, `load_faces = movers`, `copies` =
+the lamp's `CopyOrder`s, `plan = FramePlan::frame`); resource `PointShadowCacheStore { layers }` (S1's pool size); feedback
+`PointShadowCacheFeedback::drain()` -> `(light, CachedPointShadowReport { plan, confirmed, lost })` (`confirmed`: drawn faces
+whose phase had every pipeline compiled and nothing pending, for `confirm_capture`; `lost`: new cube slot or live texture,
+`invalidate(SlotLost)`). A plan executes once: draws and copies apply only on a frame the component was written (change
+detection), an untouched one keeps its views skipped. The host fills `CubemapVisibleEntities` (extracted for `view_faces`
+only, re-copied when it or the mask changes) and calls `point_shadow_faces_seen` (CW-3b's face test, the one both paths use)
+for mover faces. `Clear` is a clear-only pass on the live layer, so the store has no reserved cleared layer. Cached face views
+take the lamp as LOD origin (`RenderViewLodOrigins`, patch SW-5) and build their frusta in the render world (`bevy_light`
+leaves unshadowed lamps' `CubemapFrusta` stale). Stock lamps: unchanged; the live texture gains `COPY_SRC | COPY_DST` once a
+cached lamp exists (sticky). **Inert until S3 inserts the component, so no switch.** Tests (`sf_sky_bevy/src/
+lamp_cache_render_tests.rs`, no GPU): mask 0 -> 0 views/phases, 0b101 -> 2, stock -> 6, sanitising, extraction (once, removal).
+
 ## Measurements (S0b, S4)
 
 - One exe, untraced, `perf suite --arm base --arm cache:--env BEVYRROWIND_LAMP_CACHE=1`, plus
@@ -256,8 +272,16 @@ threads, the perf case is weak and the slice is justified by SH-21a alone.
 ## Unverified, to check in S2
 
 - wgpu accepts whole-layer Depth32Float texture-to-texture copies between the two arrays (WebGPU allows it; not run here).
-- A per-view LOD origin for capture views needs only the view-uniform path, not the GPU preprocess inputs.
-- Spawning and despawning a mover face view does not re-specialise more than that face's movers.
+  S2, by source (`wgpu-core-30.0.1/src/command/transfer.rs:521`): depth formats need the full x/y extent but "do support
+  copying a subset of layers"; formats equal, aspect `All`, `COPY_SRC`/`COPY_DST`. Not run on a device yet (S3's first run).
+- A per-view LOD origin for capture views needs only the view-uniform path, not the GPU preprocess inputs. S2, by source:
+  yes, `mesh_preprocess.wesl:248` culls visibility ranges against `view.lod_view_world_position`, which
+  `prepare_view_uniforms` takes from `RenderViewLodOrigins` (`bevy_render/src/view/mod.rs:1293`). CPU-side ranges are S3's
+  lists.
+- Spawning and despawning a mover face view does not re-specialise more than that face's movers. S2, by source: phases,
+  `LightKeyCache` and the specialised-pipeline cache are per retained view (`prepare_lights` retains them by live view), so
+  a new view specialises its own list only, against pipelines already compiled; a capture -> mover switch keeps the view
+  (new attachment only) and re-bins the list difference.
 
 ## Open questions (owner)
 

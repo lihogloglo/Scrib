@@ -24,7 +24,14 @@ pub const SELECT_GATE: Def<bool> = def!(bool "select.gate" = false)
 
 /// `sf_world`'s tunables (live binding: tunables slice T2).
 pub const TUNABLES: &[&dyn AnyDef] =
-    &[&SELECT_GATE, &crate::scheduler::STREAM_SELECT_MOVE_M, &crate::scheduler::STREAM_SELECT_TURN_DEG];
+    &[
+        &SELECT_GATE,
+        &crate::scheduler::STREAM_SELECT_MOVE_M,
+        &crate::scheduler::STREAM_SELECT_TURN_DEG,
+        &crate::lod_screen::LOD_BIAS,
+        &crate::lod_screen::SIZE_CULL_MIN_PX,
+        &crate::lod_screen::SIZE_CULL_MIN_DISTANCE,
+    ];
 
 /// The switch and quanta of one gate (each system declares its own tunables and fills this).
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -608,11 +608,13 @@ fn keys(
         state.note(text, now);
     }
     if input.just_pressed(KeyCode::F4) {
-        let text = if let Some(u) = s.upscaling.as_mut() {
+        let text = if let Some(u) = s.upscaling.as_ref() {
             let i = DLSS_CYCLE.iter().position(|m| *m == u.0).map_or(0, |i| (i + 1) % DLSS_CYCLE.len());
-            u.0 = DLSS_CYCLE[i];
-            let built = if cfg!(feature = "dlss") || !matches!(u.0, Upscaling::Dlss(_)) { "" } else { " (this exe has no dlss feature: TAA)" };
-            format!("temporal resolve requested {}{built}", u.0.label())
+            let next = DLSS_CYCLE[i];
+            // The same switch as the console's `render.upscaling` (its binding writes the setting).
+            commands.queue(move |world: &mut World| request_upscaling(world, next));
+            let built = if cfg!(feature = "dlss") || !matches!(next, Upscaling::Dlss(_)) { "" } else { " (this exe has no dlss feature: TAA)" };
+            format!("temporal resolve requested {}{built} (render.upscaling)", next.label())
         } else {
             "temporal resolve: start with --dlss <mode> in interiors to make it switchable".to_owned()
         };
@@ -798,5 +800,19 @@ fn overlay(
     if *last != out {
         text.0.clone_from(&out);
         *last = out;
+    }
+}
+
+/// F4: the temporal resolve through its tunable `render.upscaling` (console layer), so the key and
+/// the console agree; without the tunable (no `ShadowQualityPlugin`), the setting itself.
+fn request_upscaling(world: &mut World, upscaling: Upscaling) {
+    if let Some(mut tunables) = world.get_resource_mut::<sf_tunables_bevy::Tunables>()
+        && let Some(id) = tunables.id(sf_sky_bevy::quality::UPSCALING.name())
+    {
+        let _ = tunables.set_by(id, sf_tunables_bevy::Value::Str(upscaling.label().to_owned()), sf_tunables_bevy::SetBy::Console);
+        return;
+    }
+    if let Some(mut setting) = world.get_resource_mut::<UpscalingSetting>() {
+        setting.0 = upscaling;
     }
 }

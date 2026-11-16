@@ -359,6 +359,19 @@ Left: the sun bias consts, `sf_shadow_cache_bevy` (CW-4), devtools' duplicate `r
 **CW gates live (T4 part 1):** `shadow.lamp.day_gate`, `shadow.lamp.face_cull`, `shadow.sun.gate`, `select.gate`
 (`--off selectgate` at `CommandLine`), `render.skin.skip_unchanged`, `mw.matctrl.gate`; old env names are aliases.
 
+
+**T5a as built (2026-11-16).** Every value `Quality` decided is a tunable in `quality_presets::quality_preset_values` (golden
+test per level). Live: `render.upscaling` (`sf_sky_bevy::quality`, into `UpscalingSetting`; `--dlss` at `CommandLine`, alias
+`BEVYRROWIND_DLSS`, F4 writes it at `Console`), `render.bloom(.intensity)`, `water.quality`, `sky.clouds.map_per_sample`,
+`surface.puddles|shelter` (game-declared in `mw_environment_bevy::quality_tunables` until their crates take `sf_tunables`),
+`texture.parallax.layers|relief_steps` (`mw_assets::map_ab`, `Recompile`: retunes loaded materials; 0 stashes depth maps).
+Prepasses and MSAA follow their consumers (`prepasses_follow_consumers`, after `SkySystems::RenderPath`, raster only): depth +
+motion vectors for contact shadows, GTAO or TAA/DLSS, normals for GTAO, MSAA off under GTAO or a temporal resolve, else the
+view's `ViewPrepassBase`. `Respawn`: `lod.bias`, `lod.size_cull.min_px|min_distance_m` (`Streaming::set_lod_screen`; ranges
+are per spawned entity, no non-discarding restream exists). `Restart`, read before `finish` with their `--set`s
+(`start_values`): `far.handoff_scale` (near rings sized from it), `texture.max_size_px` (`--texture-cap`), `render.gi.probes`.
+Console `render.ssao|contactshadows|contactlength|contactthickness|bloom` deleted; `on|off|flip ssao|contactshadows` set the
+tunables. Left: a `respawn statics` restream, the texture cap live (reload), T5b records and `sg.*` drivers.
 ## Proposed CONTRIBUTING rule (for the orchestrator to apply)
 
 > **No hardcoded tunables (owner 2026-11-16).** A value that trades quality against cost, sets feel, or is a

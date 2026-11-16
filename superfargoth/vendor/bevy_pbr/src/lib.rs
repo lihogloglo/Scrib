@@ -368,6 +368,12 @@ impl Plugin for PbrPlugin {
             }
         }
 
+        // superfargoth patch (own, CW-4: lamp shadow cache): render-world reports for the host.
+        let cache_feedback = app
+            .world_mut()
+            .get_resource_or_init::<PointShadowCacheFeedback>()
+            .clone();
+
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -394,6 +400,8 @@ impl Plugin for PbrPlugin {
                     // extract_lights so extract_lights can skip unchanged visible-entity lists.
                     extract_shadow_caster_changes,
                     extract_lights.after(extract_shadow_caster_changes),
+                    // superfargoth patch (own, CW-4: lamp shadow cache)
+                    extract_cached_point_shadow_maps,
                     extract_ambient_light_resource,
                     extract_ambient_light,
                     extract_shadow_filtering_method,
@@ -430,7 +438,18 @@ impl Plugin for PbrPlugin {
             // superfargoth patch (#26161)
             .init_resource::<ShadowCasterChanges>()
             // superfargoth patch (own: point shadow face culling)
-            .init_resource::<PointShadowFaceStats>();
+            .init_resource::<PointShadowFaceStats>()
+            // superfargoth patch (own, CW-4: lamp shadow cache)
+            .init_resource::<PointShadowCacheGpu>()
+            .init_resource::<PointShadowCacheStats>()
+            .init_resource::<bevy_render::view::RenderViewLodOrigins>()
+            .insert_resource(cache_feedback)
+            .add_systems(
+                bevy_render::renderer::RenderGraph,
+                record_cached_point_shadow_copies
+                    .in_set(bevy_render::renderer::RenderGraphSystems::Render)
+                    .before(bevy_core_pipeline::schedule::camera_driver),
+            );
 
         render_app
             .world_mut()
@@ -551,7 +570,13 @@ impl SyncComponent<RenderApp, PbrPlugin> for DirectionalLight {
     );
 }
 impl SyncComponent<RenderApp, PbrPlugin> for PointLight {
-    type Target = (Self, ExtractedPointLight, PointAndSpotLightViewEntities);
+    type Target = (
+        Self,
+        ExtractedPointLight,
+        PointAndSpotLightViewEntities,
+        // superfargoth patch (own, CW-4: lamp shadow cache)
+        ExtractedCachedPointShadowMap,
+    );
 }
 impl SyncComponent<RenderApp, PbrPlugin> for SpotLight {
     type Target = (Self, ExtractedPointLight, PointAndSpotLightViewEntities);

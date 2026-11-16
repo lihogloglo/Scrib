@@ -3,6 +3,7 @@
 //! (`night_sky`), and the view's render settings (`render`: ray tracing, upscaling, shadows).
 
 pub mod night_sky;
+pub mod quality_tunables;
 pub mod render;
 pub mod shadow_tunables;
 pub mod water;

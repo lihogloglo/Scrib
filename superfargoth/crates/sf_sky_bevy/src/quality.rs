@@ -8,23 +8,28 @@
 //! - the sun's cascades and PCSS ([`SunShadowQuality`], when the app inserts it) into
 //!   [`SkyRenderOptions`]; the sun and moon lights follow the options' cascades, bias, contact
 //!   shadows and PCSS size when they change ([`sync_sky_lights`]);
+//! - the temporal resolve (`render.upscaling` into [`UpscalingSetting`]);
 //! - per-view contact shadows, GTAO and the shadow filter on cameras with
-//!   [`ViewQualityCamera`] (components inserted and removed live; turning an effect off leaves
-//!   the prepasses it needed, as other passes may use them: the cost of a view without them is a
-//!   start without, `--off`).
+//!   [`ViewQualityCamera`] (components inserted and removed live);
+//! - the views' prepasses and MSAA follow what needs them ([`prepasses_follow_consumers`]): contact
+//!   shadows, GTAO and a temporal resolve each need the depth and motion-vector prepass (GTAO also
+//!   normals and MSAA off, a temporal resolve MSAA off); the view's own needs are its
+//!   [`ViewPrepassBase`]. An effect turned off live costs what a start without it costs (T5a).
 //!
 //! Opt-in: an app that doesn't add the plugin keeps these resources as it sets them. A game sets its
 //! own defaults above the framework's at the `Mod` or `Preset` layer, never by redeclaring a def.
 
 use bevy_app::{App, Plugin, PreUpdate, Update};
-use bevy_core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
+use bevy_core_pipeline::prepass::{DeferredPrepass, DepthPrepass, MotionVectorPrepass, NormalPrepass};
 use bevy_ecs::component::Mutable;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::{EntityCommands, SystemParam};
 use bevy_light::{CascadeShadowConfig, DirectionalLight, ShadowFilteringMethod};
 use bevy_pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
+use bevy_render::camera::TemporalJitter;
 use bevy_render::view::Msaa;
 use sf_sky::sun_gate as sun;
+use sf_sky::{RenderPath, Upscaling};
 use sf_tunables::{AnyDef, Def, Group, Id, Lifetime, Source, Type, Unit, def};
 use sf_tunables_bevy::{TunableSystems, Tunables, TunablesAppExt};
 
@@ -32,7 +37,10 @@ use crate::shadow_budget::{
     DAY_GATE, DAY_GATE_CONTRAST, DAY_GATE_RECEIVER, FACE_CULL, LAMP_CONTACT, LAMP_COUNT, LAMP_FADE,
     LAMP_FADE_TIME, LAMP_HYSTERESIS, LAMP_MAP_SIZE,
 };
-use crate::{CascadeSplits, MoonLight, PointShadowBudget, SkyRenderOptions, SkySystems, SunLight, SunShadowGating, UpscalingSetting};
+use crate::{
+    ActiveRenderPath, CascadeSplits, MoonLight, PointShadowBudget, SkyRenderOptions, SkySystems, SunLight, SunShadowGating,
+    UpscalingSetting,
+};
 
 /// `shadow.sun.cascades`: [`CascadeSplits::num_cascades`] of the sun. A change reallocates the
 /// directional shadow array (Bevy's cascade count is per-light uniform data, no shader def).
@@ -134,8 +142,19 @@ pub const FILTER: Def<&'static str> = def!(choice "shadow.filter" = "auto")
     .group(Group::Shadows)
     .lifetime(Lifetime::Recompile);
 
+/// `render.upscaling`: the temporal resolve ([`UpscalingSetting`]): `off` keeps MSAA, `taa` is Bevy's
+/// TAA, the rest are DLSS modes (TAA where DLSS is missing). A temporal resolve adds jitter and the
+/// prepasses and drops MSAA: pipelines re-specialise.
+pub const UPSCALING: Def<&'static str> = def!(choice "render.upscaling" = "off")
+    .choices(&["off", "taa", "auto", "native", "dlaa", "quality", "balanced", "performance", "ultra-performance"])
+    .help("Temporal resolve: off (MSAA), taa, or a DLSS mode: auto, native (dlaa), quality, balanced, performance, ultra-performance (TAA without DLSS)")
+    .source(Source::BevyDefault("bevy_anti_alias: no temporal resolve unless the camera opts in"))
+    .group(Group::Post)
+    .lifetime(Lifetime::Recompile);
+
 /// This module's tunables.
 pub const TUNABLES: &[&dyn AnyDef] = &[
+    &UPSCALING,
     &SUN_CASCADES,
     &SUN_DISTANCE,
     &SUN_LAMBDA,
@@ -182,10 +201,17 @@ impl Plugin for ShadowQualityPlugin {
         bind(app, &SUN_OVERLAP, |q: &mut SunShadowQuality, v| q.splits.overlap_proportion = v);
         bind(app, &SUN_SOFT, |q: &mut SunShadowQuality, v| q.soft = v);
         bind(app, &SUN_SOFT_SIZE, |q: &mut SunShadowQuality, v| q.soft_size = v);
+        // The temporal resolve (`upscale.rs` puts it on the cameras).
+        bind(app, &UPSCALING, |u: &mut UpscalingSetting, v| {
+            if let Ok(setting) = Upscaling::parse(v) {
+                u.0 = setting;
+            }
+        });
         let ids = ViewQualityIds::register(app);
         app.insert_resource(ids)
             .add_systems(PreUpdate, (apply_sun_quality, sync_sky_lights).chain().after(TunableSystems::Bind))
-            .add_systems(Update, sync_view_quality.before(SkySystems::RenderPath));
+            .add_systems(Update, sync_view_quality.before(SkySystems::RenderPath))
+            .add_systems(Update, prepasses_follow_consumers.after(SkySystems::RenderPath));
     }
 }
 
@@ -304,9 +330,111 @@ pub fn sync_sky_lights(
     }
 }
 
-/// On a camera whose contact shadows, GTAO and shadow filter follow the tunables.
+/// On a camera whose contact shadows, GTAO and shadow filter follow the tunables, and whose
+/// prepasses and MSAA follow what needs them ([`prepasses_follow_consumers`]).
 #[derive(Component, Clone, Copy, Debug, Default)]
+#[require(ViewPrepassBase)]
 pub struct ViewQualityCamera;
+
+/// What a [`ViewQualityCamera`] needs for itself, whatever its effects: the prepasses the host wants
+/// (e.g. an occlusion-culling A/B) and its MSAA when nothing needs MSAA off. Default: no prepass, the
+/// camera's default MSAA (Bevy's 4x).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ViewPrepassBase {
+    pub depth: bool,
+    pub normal: bool,
+    pub motion_vectors: bool,
+    pub msaa: Msaa,
+}
+
+/// The prepasses and MSAA a raster view needs: its base, plus the depth and motion-vector prepass for
+/// contact shadows and GTAO (they march the depth; the motion-vector pass gives every opaque prepass
+/// draw a fragment stage, so the LOD dither applies) and for a temporal resolve (TAA/DLSS require
+/// them), normals for GTAO, MSAA off under GTAO or a temporal resolve.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NeededPrepasses {
+    pub depth: bool,
+    pub normal: bool,
+    pub motion_vectors: bool,
+    pub msaa: Msaa,
+}
+
+impl NeededPrepasses {
+    pub fn of(base: ViewPrepassBase, contact: bool, ssao: bool, temporal: bool) -> Self {
+        let marched = contact || ssao || temporal;
+        Self {
+            depth: base.depth || marched,
+            normal: base.normal || ssao,
+            motion_vectors: base.motion_vectors || marched,
+            msaa: if ssao || temporal { Msaa::Off } else { base.msaa },
+        }
+    }
+}
+
+type PrepassViews<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static ViewPrepassBase,
+        Option<&'static Msaa>,
+        (Has<DepthPrepass>, Has<NormalPrepass>, Has<MotionVectorPrepass>, Has<DeferredPrepass>),
+        (Has<ContactShadows>, Has<ScreenSpaceAmbientOcclusion>, Has<TemporalJitter>),
+    ),
+    With<ViewQualityCamera>,
+>;
+
+/// Inserts and removes the views' depth, normal and motion-vector prepasses and sets their MSAA from
+/// what currently needs them ([`NeededPrepasses`]), after the effects (`sync_view_quality`) and the
+/// temporal resolve (`upscale.rs`) changed this frame: turning contact shadows, GTAO and TAA/DLSS
+/// off live leaves the view as a start without them (Bevy only *adds* required components). Raster
+/// only: on the ray-traced path, and the frame it switches back, Solari's deferred camera is
+/// `path.rs`'s (its snapshot restores MSAA one frame later).
+#[allow(clippy::needless_pass_by_value)]
+pub fn prepasses_follow_consumers(mut commands: Commands, path: Option<Res<ActiveRenderPath>>, views: PrepassViews) {
+    if let Some(path) = &path
+        && (path.0 != RenderPath::Raster || (path.is_changed() && !path.is_added()))
+    {
+        return;
+    }
+    for (entity, base, msaa, (depth, normal, motion_vectors, deferred), (contact, ssao, temporal)) in &views {
+        if deferred {
+            continue;
+        }
+        let want = NeededPrepasses::of(*base, contact, ssao, temporal);
+        let mut e = commands.entity(entity);
+        match (want.depth, depth) {
+            (true, false) => {
+                e.insert(DepthPrepass);
+            }
+            (false, true) => {
+                e.remove::<DepthPrepass>();
+            }
+            _ => {}
+        }
+        match (want.normal, normal) {
+            (true, false) => {
+                e.insert(NormalPrepass);
+            }
+            (false, true) => {
+                e.remove::<NormalPrepass>();
+            }
+            _ => {}
+        }
+        match (want.motion_vectors, motion_vectors) {
+            (true, false) => {
+                e.insert(MotionVectorPrepass);
+            }
+            (false, true) => {
+                e.remove::<MotionVectorPrepass>();
+            }
+            _ => {}
+        }
+        if msaa.copied() != Some(want.msaa) {
+            e.insert(want.msaa);
+        }
+    }
+}
 
 /// The typed ids of the per-view tunables.
 #[derive(Resource, Clone, Copy, Debug)]
@@ -390,16 +518,15 @@ impl ViewQuality {
         Self { contact, ssao: ssao_level(tunables.read(ids.ssao)), filter: shadow_filter(tunables.read(ids.filter), temporal) }
     }
 
-    /// Inserts what a new view needs (contact shadows and GTAO with the depth + motion-vector
-    /// prepass they ray-march, the motion vectors so the prepass applies the LOD dither; GTAO with
-    /// MSAA off).
+    /// Inserts what a new view needs: contact shadows and GTAO (their prepasses and MSAA follow,
+    /// [`prepasses_follow_consumers`]) and the shadow filter.
     pub fn insert_into(&self, e: &mut EntityCommands) {
         e.insert(self.filter);
         if let Some(contact) = self.contact {
-            e.insert((contact, DepthPrepass, MotionVectorPrepass));
+            e.insert(contact);
         }
         if let Some(quality_level) = self.ssao {
-            e.insert((ScreenSpaceAmbientOcclusion { quality_level, ..Default::default() }, DepthPrepass, MotionVectorPrepass, Msaa::Off));
+            e.insert(ScreenSpaceAmbientOcclusion { quality_level, ..Default::default() });
         }
     }
 }
@@ -458,7 +585,7 @@ fn sync_view_quality(
                 e.insert(c);
             }
             (Some(c), None) => {
-                e.insert((c, DepthPrepass, MotionVectorPrepass));
+                e.insert(c);
             }
             (None, Some(_)) => {
                 e.remove::<ContactShadows>();
@@ -470,7 +597,7 @@ fn sync_view_quality(
                 e.insert(ScreenSpaceAmbientOcclusion { quality_level: level, ..have.clone() });
             }
             (Some(quality_level), None) => {
-                e.insert((ScreenSpaceAmbientOcclusion { quality_level, ..Default::default() }, DepthPrepass, MotionVectorPrepass, Msaa::Off));
+                e.insert(ScreenSpaceAmbientOcclusion { quality_level, ..Default::default() });
             }
             (None, Some(_)) => {
                 e.remove::<ScreenSpaceAmbientOcclusion>();

@@ -18,6 +18,7 @@
 pub mod bake;
 mod codec;
 mod index;
+pub mod lod_screen;
 mod overlay;
 mod placement;
 mod reader;

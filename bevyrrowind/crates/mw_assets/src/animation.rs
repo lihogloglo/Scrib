@@ -54,7 +54,7 @@ pub const MATCTRL_GATE: Def<bool> = def!(bool "mw.matctrl.gate" = false)
     .env_alias("BEVYRROWIND_MATCTRL_GATE");
 
 /// This module's tunables (`mw_assets::TUNABLES`).
-pub const TUNABLES: &[&dyn sf_tunables_bevy::AnyDef] = &[&MATCTRL_GATE];
+pub const TUNABLES: &[&dyn sf_tunables_bevy::AnyDef] = &[&MATCTRL_GATE, &crate::map_ab::PARALLAX_LAYERS, &crate::map_ab::PARALLAX_RELIEF_STEPS];
 
 /// The live switch of the material controllers' visibility gate ([`MATCTRL_GATE`]); absent (tests),
 /// the gate is on whenever [`MaterialUsers`] exists.

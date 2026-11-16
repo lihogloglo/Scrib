@@ -94,6 +94,12 @@ mesh not prepared yet), logged at each reveal (+0.5 s) and on a >5 % change (at 
 gets them back field for field; `--off parallax` / `flip parallax` the same for depth maps. Asset viewer: `scene level-texture-lab` (test-levels.md "Texture
 lab"), per-swatch info panel and `texture-lab:` log lines.
 
+Tunables (T5a): `texture.max_size_px` (0: none; `--texture-cap` at `CommandLine`) is `Restart` (the loader and the terrain
+layer cap are built with it, `quality_presets::start_values`): Ultra switched to live keeps the start's cap.
+`texture.parallax.layers` (0: off) and `texture.parallax.relief_steps` retune every depth-mapped material live
+(`map_ab.rs` `retune_parallax`; 0 layers stashes the depth maps, a level back on restores them); a run started at 0 binds no
+depth maps, so models loaded meanwhile get them only when they load again.
+
 ## Known limits
 
 Actors and `scene.chains` drop tangents, so no normal maps there; actors (`mw_actors_bevy` `cooked_material`) bind no

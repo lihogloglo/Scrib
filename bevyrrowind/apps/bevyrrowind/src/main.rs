@@ -609,7 +609,7 @@ impl ViewFlags {
             fog: self.fog,
             weather: Some(weather),
             quality: Quality::resolve(self.quality),
-            texture_cap: self.texture_cap.map_or_else(|| Quality::resolve(self.quality).texture_cap(), |px| (px > 0).then_some(px)),
+            texture_cap: self.texture_cap,
             perf,
             lights: light_infos(db),
             world: mw_doors_bevy::WorldLinks::build(db),
@@ -1246,7 +1246,7 @@ fn asset_switches(off: &Off, quality: Quality) {
     mw_assets::set_cutout_foliage(!off.has(Part::LeafMask));
     mw_assets::set_foliage_transmission(!off.has(Part::FoliageTransmission));
     mw_assets::set_material_maps(!off.has(Part::NormalMaps), !off.has(Part::Orm), !off.has(Part::Parallax));
-    mw_assets::set_parallax(quality.parallax().map(|p| mw_assets::Parallax::new(p.max_layers, p.relief_steps)));
+    mw_assets::set_parallax(mw_exterior_bevy::quality_presets::level_parallax(quality));
 }
 
 /// Lighting calibration overrides (see `mw_assets::LightCalibration`).
