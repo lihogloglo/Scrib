@@ -317,7 +317,7 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Look for: the graph scrolls smoothly, a hitch (open the console, turn fast) stands out as a tall column; the column
   colour and "bound by" agree; bars move with the numbers; text readable at 1440p and 720p, nothing cut off the
   screen; no hitch opening/closing; `set diag.panel.scale 1.5` grows it live. Say what to add or drop.
-- Status: awaiting owner. Source: cw17b-panel-viz.
+- Status: confirmed 2026-11-17 (Balmora 22:00, release): "visualisation seemed nice"; less informative than the F3 panel of the Clockwork renderer (owner reference; compare when the panel is next touched). Source: cw17b-panel-viz.
 
 ### PP-4: Graphics page in the options menu, live behind the pause menu (tunables T5d, 2026-11-16)
 - Kind: game location, release build. `view "Balmora" --hour 22` (no `--quality`: it would win over the saved levels).
@@ -329,4 +329,4 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   restart" in the right pane (texture size, far land reach, probe GI wait for a restart). The overlay note says what changed.
 - Look for: no crash or long hitch per step, labels readable, rows match F3's `preset:` line; quit and start again with
   the same command: the picked levels come back (saved in `<user data>/machine.toml`).
-- Status: awaiting owner. Source: tunables-t5d.
+- Status: blocked 2026-11-17: the page itself could not be judged, the options menu is unusable (earlier windows stay visible and overlap new ones, items move on hover). Owner: menu overhaul is a big later session (ROADMAP 2.2b), not now. Source: tunables-t5d.
