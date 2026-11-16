@@ -9167,6 +9167,7 @@ dependencies = [
  "sf_bake",
  "sf_coords",
  "sf_diag_bevy",
+ "bevy_light",
  "sf_model",
  "sf_model_bevy",
  "sf_scene",

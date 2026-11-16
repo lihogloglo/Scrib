@@ -12,7 +12,9 @@
 //! (`compile_pool::precache_limit`; held-back specimens count as queued), counters
 //! `precache/throttled`, `/outstanding`, `/draw_waiting` and `/limit` (the cap applied).
 //! Each draw pipeline the precache missed is logged once ("precache missed: ...").
-//! W4 builds the catalog and wires the status into the reveal gate.
+//! W4 builds the catalog and wires the status into the reveal gate. W4b3: background tags
+//! ([`Precache::set_background`], the catalog) are admitted after every other tag (the reveal's
+//! resident set) and paused while a reveal drains its last compiles ([`Precache::pause_background`]).
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -174,6 +176,10 @@ struct Shared {
     in_flight: Vec<u32>,
     /// The render-world limit on precache pipelines queued or compiling (W4b1-fix, W4b1-throughput).
     limit: Option<PrecacheLimit>,
+    /// Background tags (W4b3): admitted after every other tag's specimens.
+    background: Vec<u32>,
+    /// Background tags admit nothing new (W4b3: a reveal drains them).
+    background_paused: bool,
 }
 
 /// The precache, main world (added by [`PrecachePlugin`]). Cheap to clone (shared with the render
@@ -222,10 +228,42 @@ impl Precache {
             if let Some(n) = shared.in_flight.get_mut(id) {
                 *n = 0;
             }
+            // Until the render world reports again, nothing of the tag is left (not its last status).
+            if let Some(s) = shared.status.get_mut(id) {
+                *s = PrecacheStatus::default();
+            }
             let id = u32::try_from(id).unwrap_or(u32::MAX);
             shared.inbox.retain(|(t, _)| *t != id);
             shared.releases.push(id);
         }
+    }
+
+    /// Makes `tag` a background tag (W4b3, UE5's low-priority bundled precache): its specimens are
+    /// admitted only after every other tag's ([`PipelinePrecache::set_background`]).
+    pub fn set_background(&self, tag: &str) {
+        let mut shared = self.lock();
+        let id = Self::tag_id(&mut shared, tag);
+        if !shared.background.contains(&id) {
+            shared.background.push(id);
+        }
+    }
+
+    /// Whether `tag` is a background tag.
+    #[must_use]
+    pub fn is_background(&self, tag: &str) -> bool {
+        let shared = self.lock();
+        shared.tags.iter().position(|t| t == tag).is_some_and(|id| shared.background.contains(&u32::try_from(id).unwrap_or(u32::MAX)))
+    }
+
+    /// While paused, background tags admit no new pipeline (W4b3: the reveal gate pauses them once
+    /// only compiles are left, so `waiting_pipelines()` drains; unpaused when no reveal holds).
+    pub fn pause_background(&self, paused: bool) {
+        self.lock().background_paused = paused;
+    }
+
+    #[must_use]
+    pub fn is_background_paused(&self) -> bool {
+        self.lock().background_paused
     }
 
     /// Precache at low priority (W4b1-throughput): at most `limit.draw_waiting` precache pipelines
@@ -314,6 +352,18 @@ fn take_requests(link: Res<PrecacheLink>, mut precache: ResMut<PipelinePrecache>
     let limit = link.0.limit();
     if precache.limit() != limit.map(PrecacheLimit::normalized) {
         precache.set_limits(limit);
+    }
+    let (background, paused) = {
+        let shared = link.0.lock();
+        (shared.background.clone(), shared.background_paused)
+    };
+    for tag in background {
+        if !precache.is_background(tag) {
+            precache.set_background(tag, true);
+        }
+    }
+    if precache.is_background_paused() != paused {
+        precache.pause_background(paused);
     }
     let (inbox, releases) = link.0.take();
     if inbox.is_empty() && releases.is_empty() {

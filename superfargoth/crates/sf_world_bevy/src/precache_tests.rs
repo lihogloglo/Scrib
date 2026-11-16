@@ -656,7 +656,7 @@ fn fake_in_progress(world: &World, id: CachedRenderPipelineId) -> bool {
 
 /// With limit K, N specimens never have more than K precache pipelines outstanding (a plan longer
 /// than K goes alone: at most its own length), held-back specimens count as queued (so the reveal
-/// gate's catalog term holds on them), and all resolve as pipelines finish (one per frame here).
+/// gate's shown-set term holds on them), and all resolve as pipelines finish (one per frame here).
 /// Without a limit every prepared specimen resolves at once (W3's behaviour).
 #[test]
 fn throttle_keeps_at_most_k_precache_pipelines_outstanding() {
@@ -687,7 +687,7 @@ fn throttle_keeps_at_most_k_precache_pipelines_outstanding() {
         world.insert_resource(precache);
         let mut state = SystemState::<PrecacheParam<'static, 'static>>::new(&mut world);
         let main = Precache::default();
-        main.request(std::iter::empty(), crate::CATALOG_TAG);
+        main.request(std::iter::empty(), crate::RESIDENT_TAG);
         let mut gate = RevealGate::default();
         let (mut throttled_seen, mut frames) = (false, 0);
         loop {
@@ -701,11 +701,11 @@ fn throttle_keeps_at_most_k_precache_pipelines_outstanding() {
             let status = tag_status(1, p.waiting(), p.resolved(), |id| if compiling.contains(&id) { Progress::Compiling } else { Progress::Ready });
             assert_eq!((status[0].queued, status[0].total()), (totals.throttled, u32::try_from(N).unwrap()), "held back = queued");
             main.report(status);
-            let s = main.status(crate::CATALOG_TAG);
-            let catalog = (s.pending_assets + s.queued + s.compiling) as usize;
-            let step = gate.step("loading", "x", 0.016, &RevealInputs { cells: true, textures: true, catalog, ..RevealInputs::default() });
-            if catalog > 0 {
-                assert_eq!(step, RevealStep::Holding, "limit {k}: the catalog term holds");
+            let s = main.status(crate::RESIDENT_TAG);
+            let resident = (s.pending_assets + s.queued + s.compiling) as usize;
+            let step = gate.step("loading", "x", 0.016, &RevealInputs { cells: true, textures: true, resident, ..RevealInputs::default() });
+            if resident > 0 {
+                assert_eq!(step, RevealStep::Holding, "limit {k}: the shown set holds");
             } else if matches!(step, RevealStep::Open { warning: None, .. }) {
                 break;
             }
@@ -911,4 +911,88 @@ fn same_frame_draw_settles_as_hit_and_misses_are_logged_once() {
     precache_specimens_with(&mut world, &mut state, fake_in_progress);
     let p = world.resource::<PipelinePrecache>();
     assert_eq!((p.stats().hit, p.stats().missed), (1, 1));
+}
+
+// ---- (7) W4b3: background tags go after the shown set, and pause to drain ----
+
+/// Under a limit, the specimens of a foreground tag (the reveal's shown set) are admitted ahead of
+/// a background tag's (the catalog) even when requested after them; within a class, request order.
+/// While paused, a background tag admits nothing new (the ones in flight finish); unpaused, it
+/// resumes. Without background tags the order is the request order (W4b1-throughput's).
+#[test]
+fn shown_set_is_admitted_ahead_of_the_background_catalog() {
+    const N: usize = 8;
+    const CATALOG: u32 = 1;
+    const SHOWN: u32 = 0;
+    let (mut world, specimens, per) = throttle_world(N);
+    let mut precache = PipelinePrecache::default();
+    *precache.views_mut() = known_views();
+    precache.set_limit(Some(per));
+    precache.set_background(CATALOG, true);
+    assert!(precache.is_background(CATALOG) && !precache.is_background(SHOWN));
+    // The catalog's four first, then the shown set's four.
+    for (i, s) in specimens.iter().enumerate() {
+        precache.request(if i < N / 2 { CATALOG } else { SHOWN }, *s);
+    }
+    world.insert_resource(precache);
+    let mut state = SystemState::<PrecacheParam<'static, 'static>>::new(&mut world);
+    let mut order = Vec::new();
+    for _ in 0..(4 * N) {
+        precache_specimens_with(&mut world, &mut state, fake_in_progress);
+        let p = world.resource::<PipelinePrecache>();
+        for r in p.resolved().iter().skip(order.len()) {
+            order.push((r.tag, r.specimen.mesh));
+        }
+        let mut fake = world.resource_mut::<FakeSpecializers>();
+        fake.compiling.clear();
+    }
+    let expected: Vec<(u32, bevy_asset::AssetId<bevy_mesh::Mesh>)> = specimens[N / 2..]
+        .iter()
+        .map(|s| (SHOWN, s.mesh))
+        .chain(specimens[..N / 2].iter().map(|s| (CATALOG, s.mesh)))
+        .collect();
+    assert_eq!(order, expected, "the shown set first, each class in request order");
+
+    // Paused: the catalog admits nothing; the shown set still does.
+    let (mut world, specimens, per) = throttle_world(3);
+    let mut precache = PipelinePrecache::default();
+    *precache.views_mut() = known_views();
+    precache.set_limit(Some(4 * per));
+    precache.set_background(CATALOG, true);
+    precache.pause_background(true);
+    precache.request(CATALOG, specimens[0]);
+    precache.request(CATALOG, specimens[1]);
+    precache.request(SHOWN, specimens[2]);
+    world.insert_resource(precache);
+    let mut state = SystemState::<PrecacheParam<'static, 'static>>::new(&mut world);
+    precache_specimens_with(&mut world, &mut state, fake_in_progress);
+    let p = world.resource::<PipelinePrecache>();
+    assert_eq!(p.resolved().iter().map(|r| r.tag).collect::<Vec<_>>(), [SHOWN], "paused: only the shown set");
+    assert_eq!((p.waiting().len(), p.outstanding()), (2, per));
+    let tags = tag_status(2, p.waiting(), p.resolved(), |_| Progress::Ready);
+    assert_eq!(tags[CATALOG as usize].queued, 2, "paused specimens stay queued");
+    world.resource_mut::<PipelinePrecache>().pause_background(false);
+    precache_specimens_with(&mut world, &mut state, fake_in_progress);
+    let p = world.resource::<PipelinePrecache>();
+    assert_eq!((p.waiting().len(), p.resolved().len()), (0, 3), "unpaused: the catalog resumes");
+}
+
+/// The main-world surface: `set_background` marks a tag, `pause_background` is shared with the
+/// render world, and a released tag reads empty at once (not its last report).
+#[test]
+fn main_world_background_tags_and_release() {
+    let main = Precache::default();
+    assert!(!main.is_background(crate::CATALOG_TAG));
+    main.set_background(crate::CATALOG_TAG);
+    main.set_background(crate::CATALOG_TAG);
+    assert!(main.is_background(crate::CATALOG_TAG) && !main.is_background(crate::RESIDENT_TAG));
+    main.pause_background(true);
+    assert!(main.is_background_paused());
+
+    main.request(std::iter::empty(), crate::RESIDENT_TAG);
+    let _ = main.take();
+    main.report(vec![crate::PrecacheStatus::default(), crate::PrecacheStatus { compiling: 3, ..crate::PrecacheStatus::default() }]);
+    assert_eq!(main.status(crate::RESIDENT_TAG).compiling, 3);
+    main.release(crate::RESIDENT_TAG);
+    assert_eq!(main.status(crate::RESIDENT_TAG), crate::PrecacheStatus::default(), "released: nothing left");
 }

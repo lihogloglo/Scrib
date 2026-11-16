@@ -255,3 +255,66 @@ fn readiness_holds_keep_the_gate_closed_until_ready() {
         Some("not ready after 10.1 s (reveal_cap): pending pipelines 1 (draws 0, shadow/prepass 0, compiling 0, holds 1)")
     );
 }
+
+/// W4b3: the catalog never holds a reveal (it compiles in the background; the cap warning names it
+/// as information), the shown set does (pipelines term, named `resident` in the warning), and the
+/// background drains only once compiles are all that is left.
+#[test]
+fn the_shown_set_holds_and_the_catalog_does_not() {
+    let mut gate = RevealGate::default();
+    let (n, reveal, warning) = run(&mut gate, &RevealInputs { catalog: 250, ..ready() }, 20).expect("catalog pending: opens");
+    assert_eq!((n, reveal.capped, warning), (SETTLE_FRAMES, None, None), "the catalog alone never holds");
+
+    let mut gate = RevealGate::default();
+    assert!(run(&mut gate, &RevealInputs { resident: 3, catalog: 250, ..ready() }, 40).is_none(), "shown set pending: covered");
+    let (n, reveal, warning) = run(&mut gate, &RevealInputs { catalog: 250, ..ready() }, 20).expect("shown set ready: opens");
+    assert_eq!((n, reveal.capped, warning), (SETTLE_FRAMES, None, None));
+    assert_eq!(terms(&reveal)[3], ("pipelines", 5.0), "the shown set's wait is the pipelines term");
+
+    let mut gate = RevealGate::default();
+    let (n, reveal, warning) = run(&mut gate, &RevealInputs { resident: 2, catalog: 9, ..ready() }, 200).expect("capped");
+    assert_eq!((n, reveal.capped), (81, Some("reveal_cap")));
+    assert_eq!(
+        warning.as_deref(),
+        Some(
+            "not ready after 10.1 s (reveal_cap): pending pipelines 2 (draws 0, shadow/prepass 0, compiling 0, resident 2); \
+             catalog 9 (background)"
+        )
+    );
+
+    // Drain: only compiles left (the catalog's in flight among them) pauses the background.
+    let compiling = PendingSample { waiting: 4, ..PendingSample::default() };
+    assert!(RevealInputs { sample: compiling, catalog: 9, ..ready() }.drains_background());
+    assert!(!RevealInputs { sample: compiling, cells: false, ..ready() }.drains_background(), "cells first");
+    assert!(!RevealInputs { sample: compiling, resident: 1, ..ready() }.drains_background(), "the shown set still compiling");
+    assert!(!RevealInputs { sample: PendingSample { skipped: 1, ..compiling }, ..ready() }.drains_background(), "a visible draw waits");
+    assert!(!RevealInputs { sample: PendingSample { skipped_shadow: 1, ..compiling }, ..ready() }.drains_background());
+    assert!(!RevealInputs { sample: PendingSample { near_unprepared: 1, ..compiling }, ..ready() }.drains_background());
+    assert!(!RevealInputs { sample: compiling, holds: 1, ..ready() }.drains_background(), "a readiness hold");
+}
+
+/// A client's hold pauses the background tags once only compiles are left, and unpauses them at
+/// the reveal; the hold's focus is the client's (none once it opens).
+#[test]
+fn a_client_pauses_the_background_only_to_drain() {
+    let mut app = gate_app();
+    app.init_resource::<Precache>();
+    let pending = app.world().resource::<PendingDraws>().clone();
+    let precache = app.world().resource::<Precache>().clone();
+    pending.store(PendingSample { skipped: 1, waiting: 2, ..PendingSample::default() });
+    for _ in 0..5 {
+        app.update();
+    }
+    assert!(!precache.is_background_paused(), "a visible draw waits: the background keeps going");
+    assert_eq!(app.world().resource::<RevealGate>().focus(), Some([1.0, 2.0, 3.0]));
+    pending.store(PendingSample { waiting: 2, ..PendingSample::default() });
+    app.update();
+    assert!(precache.is_background_paused(), "only compiles left: drain");
+    pending.store(PendingSample::default());
+    for _ in 0..SETTLE_FRAMES {
+        app.update();
+    }
+    assert_eq!(app.world().resource::<Statuses>().0.iter().filter(|s| s.open).count(), 1);
+    assert!(!precache.is_background_paused(), "unpaused at the reveal");
+    assert_eq!(app.world().resource::<RevealGate>().focus(), None);
+}

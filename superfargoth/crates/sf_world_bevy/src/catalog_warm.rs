@@ -13,12 +13,16 @@
 //! water, ...) are named in the catalog and built by [`BuiltinSpecimens`], which the game fills;
 //! one not available yet ([`BuiltinOutcome::NotYet`]) is retried while a reveal holds.
 //!
-//! [`CatalogWarmup::pending`] is part of the reveal gate's pipelines term ([`crate::RevealGate`]):
-//! representatives loading, then the tag's specimens waiting for assets, queued or compiling. A
-//! representative that fails (no product, uncooked, a texture that failed) is counted and logged
-//! once, never waited for; a specimen whose pipeline fails counts as done (logged). One line when
-//! the tag resolves: `warmup: catalog N specimens (B builtins), M pipelines, T s` (M: specimens
-//! resolved, ready or failed).
+//! W4b3: the catalog never holds a reveal. [`CATALOG_TAG`] is a background precache tag
+//! ([`Precache::set_background`]): admitted after the reveal's shown set
+//! ([`crate::ResidentWarmup`]), paused while a reveal drains its last compiles, and at the play
+//! limit after the reveal. [`CatalogWarmup::pending`] (representatives loading, then the tag's
+//! specimens waiting for assets, queued or compiling) is shown in the gate's cap warning and the
+//! `warmup: reveal` line. A representative that fails (no product, uncooked, a texture that
+//! failed) is counted and logged once, never waited for; a specimen whose pipeline fails counts as
+//! done (logged). One line when the tag resolves: `warmup: catalog N specimens (B builtins), M
+//! pipelines, T s (before the reveal | +R s after the reveal)` (M: specimens resolved, ready or
+//! failed; R: from the first reveal the warm-up saw).
 //! Industry: UE5 PSO precaching at load (bundled PSO cache), Unity `ShaderVariantCollection.WarmUp`.
 
 use std::collections::HashMap;
@@ -138,6 +142,10 @@ struct Run {
     failures: Vec<String>,
     builtin_specimens: usize,
     reported: bool,
+    /// A reveal held while the warm-up ran.
+    held: bool,
+    /// When the first hold the warm-up saw ended (the catalog then runs in the background).
+    revealed: Option<Instant>,
 }
 
 impl Run {
@@ -190,7 +198,8 @@ impl CatalogWarmup {
         self.run.as_ref().map_or(&[], |r| &r.failures)
     }
 
-    /// Catalog specimens a reveal waits for: every entry before the start, then representatives
+    /// Catalog specimens still to come (shown by the reveal gate, never waited for since W4b3):
+    /// every entry before the start, then representatives
     /// loading plus the tag's specimens waiting for assets, queued or compiling (failures never
     /// wait). `0` without a catalog.
     #[must_use]
@@ -239,6 +248,11 @@ pub(crate) fn drive_catalog_warmup(world: &mut World) {
             warmup.run = Some(begin(world, catalog, warmup.loader.as_ref()));
         }
         let run = warmup.run.as_mut().expect("begun");
+        if holding {
+            run.held = true;
+        } else if run.held && run.revealed.is_none() {
+            run.revealed = Some(Instant::now());
+        }
         poll_models(world, catalog, run, warmup.skinned_materials.as_ref());
         let mut ready = poll_textures(world, run);
         if !run.tried_builtins || holding {
@@ -248,6 +262,8 @@ pub(crate) fn drive_catalog_warmup(world: &mut World) {
         let precache = world.get_resource::<Precache>().cloned();
         if !ready.is_empty() {
             if let Some(precache) = &precache {
+                // Background (W4b3): after the reveal's shown set; never holds a reveal.
+                precache.set_background(CATALOG_TAG);
                 precache.request(ready.iter().map(WarmSpecimen::specimen), CATALOG_TAG);
             }
             run.kept.extend(ready);
@@ -291,6 +307,8 @@ fn begin(world: &World, catalog: &Catalog, loader: Option<&RepresentativeLoader>
         failures,
         builtin_specimens: 0,
         reported: false,
+        held: false,
+        revealed: None,
     }
 }
 
@@ -356,7 +374,7 @@ fn poll_models(world: &mut World, catalog: &Catalog, run: &mut Run, skinned: Opt
 }
 
 /// Where a material's textures stand: `Some(true)` loaded, `Some(false)` one failed, `None` loading.
-fn textures(material: &StandardMaterial, images: &Assets<Image>, server: &AssetServer) -> Option<bool> {
+pub(crate) fn textures(material: &StandardMaterial, images: &Assets<Image>, server: &AssetServer) -> Option<bool> {
     let all = [
         &material.base_color_texture,
         &material.normal_map_texture,
@@ -449,8 +467,13 @@ fn report(run: &mut Run, catalog: &Catalog, precache: Option<&Precache>) {
         return;
     }
     run.reported = true;
+    let when = match (run.held, run.revealed) {
+        (_, Some(at)) => format!(" (+{:.2} s after the reveal)", at.elapsed().as_secs_f32()),
+        (true, None) => " (before the reveal)".to_owned(),
+        (false, None) => String::new(),
+    };
     log::info!(
-        "warmup: catalog {} specimens ({} builtins), {} pipelines, {:.2} s",
+        "warmup: catalog {} specimens ({} builtins), {} pipelines, {:.2} s{when}",
         run.kept.len(),
         run.builtin_specimens,
         status.ready + status.failed,

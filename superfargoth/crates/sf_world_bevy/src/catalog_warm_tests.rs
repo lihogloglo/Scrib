@@ -1,6 +1,7 @@
 //! Pipeline warm-up W4b1 (`pipeline-warmup.md` §5.3, §5.4): the catalog warm-up requests exactly
 //! the catalog's representatives (with the entry flags, through streaming's material path) under
-//! [`CATALOG_TAG`], and the reveal gate's pipelines term holds while the tag is pending.
+//! [`CATALOG_TAG`], a background tag that never holds the reveal (W4b3); the reveal's shown set
+//! ([`RESIDENT_TAG`]) does.
 //!
 //! GPU-free and exact: cooked models are added to `Assets<CookedModelAsset>` directly and handed
 //! out by a stand-in [`CatalogWarmup::loader`]; the render world's status report is played by
@@ -11,12 +12,14 @@ use std::sync::Arc;
 
 use bevy::asset::AssetPlugin;
 use bevy::mesh::{MeshPlugin, PrimitiveTopology};
+use bevy::camera::visibility::VisibilityRange;
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use sf_model::catalog::{Catalog, CatalogEntry, EntityFlags, MaterialSignature, Representative, VertexLayout};
 use sf_model_bevy::{CookedLodMeshes, CookedModelAsset, CookedSkin};
 
 use crate::{
-    BuiltinOutcome, BuiltinSpecimens, CATALOG_TAG, CatalogWarmup, ModelMaterials, Precache, PrecacheStatus, RevealAsk, RevealCheck,
+    BuiltinOutcome, BuiltinSpecimens, CATALOG_TAG, CatalogWarmup, ModelMaterials, Precache, PrecacheStatus, RESIDENT_TAG, ResidentWarmup, RevealAsk, RevealCheck,
     RevealGate, RevealStatus, SETTLE_FRAMES, Specimen, SpecimenFlags, Streaming, StreamingConfig, WarmSpecimen, standard_material,
 };
 
@@ -192,40 +195,117 @@ fn requests_each_representative_with_its_flags_under_the_catalog_tag() {
     assert!(sent(&app).is_empty());
 }
 
-/// The gate's pipelines term holds while the tag is pending (before the start, the whole
-/// catalog; then queued in flight) and clears when the render world reports it ready; the
-/// warm-up then resolves.
+/// W4b3: the catalog never holds the reveal (UE5: the bundled precache compiles in the
+/// background): with the whole catalog pending the gate opens after `SETTLE_FRAMES`; the tag is a
+/// background one; the warm-up resolves after the reveal, when the render world reports it.
 #[test]
-fn the_gate_holds_while_the_catalog_is_pending() {
+fn the_gate_does_not_wait_for_the_catalog() {
     let Fixture { mut app, .. } = fixture(&[]);
     {
         let world = app.world();
         assert_eq!(world.resource::<CatalogWarmup>().pending(world.get_resource::<Precache>()), 4, "not started: every entry");
     }
-    for _ in 0..10 {
+    for _ in 0..SETTLE_FRAMES {
         app.update();
     }
     let _ = sent(&app);
     let world = app.world();
-    assert_eq!(world.resource::<CatalogWarmup>().pending(world.get_resource::<Precache>()), 3);
-    assert!(world.resource::<Statuses>().0.iter().all(|s| s.cpu_ready && !s.open), "held on the catalog alone");
-    assert!(world.resource::<RevealGate>().is_holding());
+    assert_eq!(world.resource::<CatalogWarmup>().pending(world.get_resource::<Precache>()), 3, "still pending");
+    let opened: Vec<bool> = world.resource::<Statuses>().0.iter().map(|s| s.open).collect();
+    assert_eq!(opened, [false, false, true], "opens after SETTLE_FRAMES clear frames, catalog or not");
+    assert!(world.resource::<Precache>().is_background(CATALOG_TAG));
     assert!(!world.resource::<CatalogWarmup>().is_resolved());
 
-    // Compiling still holds; ready (failures count as done) clears.
-    app.world().resource::<Precache>().report(vec![PrecacheStatus { compiling: 1, ready: 2, ..PrecacheStatus::default() }]);
-    app.update();
-    assert!(app.world().resource::<RevealGate>().is_holding());
     app.world().resource::<Precache>().report(vec![PrecacheStatus { ready: 2, failed: 1, ..PrecacheStatus::default() }]);
+    app.update();
+    let world = app.world();
+    assert_eq!(world.resource::<CatalogWarmup>().pending(world.get_resource::<Precache>()), 0);
+    assert!(world.resource::<CatalogWarmup>().is_resolved());
+}
+
+#[derive(Resource)]
+struct Focus(Entity);
+
+fn focus_client(mut reveal: RevealCheck, focus: Res<Focus>, mut seen: ResMut<Statuses>) {
+    let status = reveal.step(RevealAsk { kind: "door", place: "census", focus: Some(focus.0), cells: true, gated: false, give_up: false });
+    seen.0.push(status);
+}
+
+/// W4b3: the reveal's shown set. While a hold runs, each resident mesh within the radius of the
+/// focus (hidden or far ones not) is requested once per distinct (mesh, material, flags) under
+/// [`RESIDENT_TAG`], with its own entity flags; the gate holds while the tag is pending and opens
+/// once the render world reports it ready; the next hold releases the last one's tag and
+/// requests its shown set again.
+#[test]
+fn the_shown_set_is_requested_and_holds_the_reveal() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default(), MeshPlugin))
+        .init_asset::<StandardMaterial>()
+        .init_asset::<Image>()
+        .init_resource::<Precache>()
+        .init_resource::<RevealGate>()
+        .init_resource::<ResidentWarmup>()
+        .init_resource::<Statuses>()
+        .add_systems(Update, focus_client)
+        .add_systems(
+            PostUpdate,
+            (crate::resident_warm::begin_resident_frame, crate::resident_warm::scan_resident::<StandardMaterial>).chain(),
+        );
+    let world = app.world_mut();
+    let focus = world.spawn(GlobalTransform::from_xyz(100.0, 0.0, 0.0)).id();
+    world.insert_resource(Focus(focus));
+    let (rock, tree) = {
+        let mut meshes = world.resource_mut::<Assets<Mesh>>();
+        (meshes.add(mesh()), meshes.add(mesh()))
+    };
+    let material = world.resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial::default());
+    let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 0.0..1.0, use_aabb: false };
+    let at = |x: f32| (GlobalTransform::from_xyz(100.0 + x, 0.0, 0.0), InheritedVisibility::VISIBLE);
+    world.spawn((Mesh3d(rock.clone()), MeshMaterial3d(material.clone()), at(5.0)));
+    world.spawn((Mesh3d(rock.clone()), MeshMaterial3d(material.clone()), at(-7.0))); // same specimen
+    world.spawn((Mesh3d(tree.clone()), MeshMaterial3d(material.clone()), at(10.0), NotShadowCaster, range.clone()));
+    world.spawn((Mesh3d(tree.clone()), MeshMaterial3d(material.clone()), at(60.0))); // beyond 48 m
+    world.spawn((Mesh3d(tree.clone()), MeshMaterial3d(material.clone()), GlobalTransform::from_xyz(101.0, 0.0, 0.0), InheritedVisibility::HIDDEN));
+
+    for _ in 0..10 {
+        app.update();
+    }
+    let precache = app.world().resource::<Precache>().clone();
+    assert_eq!(precache.status(RESIDENT_TAG), PrecacheStatus { queued: 2, ..PrecacheStatus::default() });
+    assert!(app.world().resource::<Statuses>().0.iter().all(|s| s.cpu_ready && !s.open), "held on the shown set");
+    assert_eq!(app.world().resource::<ResidentWarmup>().requested(), 2);
+    let (inbox, releases) = precache.take();
+    assert!(releases.is_empty(), "nothing to release on the first hold");
+    let mut got: Vec<Specimen> = inbox.into_iter().map(|(_, s)| s).collect();
+    got.sort_by_key(|s| s.flags.bits());
+    let m = material.id().untyped();
+    assert_eq!(
+        format!("{got:?}"),
+        format!(
+            "{:?}",
+            [
+                Specimen { mesh: rock.id(), material: m, flags: SpecimenFlags::SHADOW_CASTER },
+                Specimen { mesh: tree.id(), material: m, flags: SpecimenFlags::VISIBILITY_RANGE_DITHER },
+            ]
+        )
+    );
+
+    // Compiling still holds; ready clears.
+    precache.report(vec![PrecacheStatus { compiling: 1, ready: 1, ..PrecacheStatus::default() }]);
+    app.update();
+    assert!(app.world().resource::<Statuses>().0.iter().all(|s| !s.open));
+    precache.report(vec![PrecacheStatus { ready: 2, ..PrecacheStatus::default() }]);
     app.world_mut().resource_mut::<Statuses>().0.clear();
     for _ in 0..SETTLE_FRAMES {
         app.update();
     }
-    let opened = app.world().resource::<Statuses>().0.iter().filter(|s| s.open).count();
-    assert_eq!(opened, 1, "opens after SETTLE_FRAMES clear frames");
-    let world = app.world();
-    assert_eq!(world.resource::<CatalogWarmup>().pending(world.get_resource::<Precache>()), 0);
-    assert!(world.resource::<CatalogWarmup>().is_resolved());
+    assert_eq!(app.world().resource::<Statuses>().0.iter().filter(|s| s.open).count(), 1, "opens after SETTLE_FRAMES");
+
+    // The client steps again: a new hold releases the last tag and requests its set again.
+    app.update();
+    app.update();
+    let (inbox, releases) = precache.take();
+    assert_eq!((releases.len(), inbox.len()), (1, 2), "released, then requested again");
 }
 
 /// Builtins by name: a registered one gives its specimens, an unknown one is skipped (logged, not

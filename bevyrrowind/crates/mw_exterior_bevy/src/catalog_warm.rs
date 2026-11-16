@@ -1,9 +1,11 @@
-//! Pipeline warm-up W4b1 (`superfargoth/docs/specs/pipeline-warmup.md` §5.3 row 2, §9): the game's
+//! Pipeline warm-up W4b1, W4b3 (`superfargoth/docs/specs/pipeline-warmup.md` §5.3 rows 2-3, §9): the game's
 //! side of `sf_world_bevy::CatalogWarmup`.
 //!
 //! - Entering `Loading` loads the profile's `pipeline.catalog` from the bake store (once per
-//!   session) and starts the warm-up; the framework requests every representative and holds the
-//!   reveal on it (`warmup: catalog ...` line when it resolves).
+//!   session) and starts the warm-up; the framework requests every representative in the
+//!   background (W4b3: it no longer holds a reveal; `warmup: catalog ...` line when it resolves).
+//! - The reveal's shown set (W4b3, `sf_world_bevy::ResidentWarmup`) also scans the terrain, water
+//!   and precipitation entities near the focus (`StandardMaterial` is the framework's default).
 //! - Skinned representatives (`mesh.rig` creature bodies, body parts) map their materials like the
 //!   character path does (`MwCharacters::material`: `cooked_material`, no companions, no fold).
 //! - Builtins: `terrain`, `water`, `precipitation` take their systems' own live entities (mesh and
@@ -25,6 +27,10 @@ use sf_world_bevy::{BuiltinOutcome, BuiltinSpecimens, CatalogWarmup, ModelMateri
 
 /// Registers the skinned material mapping and the builtins, and the catalog load on `Loading`.
 pub fn add(app: &mut App, store: Store, manifest: Arc<Manifest>, vfs: Arc<sf_vfs::Vfs>) {
+    // The reveal's shown set: the builtins' mesh materials too (W4b3).
+    sf_world_bevy::add_resident_material::<sf_terrain_bevy::TerrainMaterial>(app);
+    sf_world_bevy::add_resident_material::<mw_environment_bevy::water::WaterMaterial>(app);
+    sf_world_bevy::add_resident_material::<sf_weather_bevy::sf_precip_bevy::PrecipMaterial>(app);
     let world = app.world_mut();
     if let Some(mut warmup) = world.get_resource_mut::<CatalogWarmup>() {
         warmup.skinned_materials = Some(ModelMaterials(Arc::new(move |m, s| mw_assets::cooked::cooked_material(m, &vfs, s))));

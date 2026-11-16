@@ -538,6 +538,11 @@ pub struct PipelinePrecache {
     /// Predicted keys by (pass, material type): (mesh key bits, material key hash).
     predicted: HashMap<(PrecachePass, TypeId), HashSet<(u64, u64)>>,
     misses_logged: u32,
+    // superfargoth patch (own, W3) W4b3: background tags.
+    /// Tags admitted after every other tag's specimens ([`Self::set_background`]).
+    background: HashSet<u32>,
+    /// Background tags admit nothing new ([`Self::pause_background`]).
+    background_paused: bool,
 }
 
 fn material_key_hash(key: &ErasedMaterialKey) -> u64 {
@@ -600,6 +605,32 @@ impl PipelinePrecache {
     #[must_use]
     pub fn limit(&self) -> Option<PrecacheLimit> {
         self.limit
+    }
+
+    /// Marks `tag` background (W4b3, UE5's low-priority bundled precache): its specimens are
+    /// planned and admitted only after every other tag's, in request order within each class.
+    pub fn set_background(&mut self, tag: u32, background: bool) {
+        if background {
+            self.background.insert(tag);
+        } else {
+            self.background.remove(&tag);
+        }
+    }
+
+    #[must_use]
+    pub fn is_background(&self, tag: u32) -> bool {
+        self.background.contains(&tag)
+    }
+
+    /// While paused, background tags admit no new pipeline (the ones already queued or compiling
+    /// finish), so a reveal waiting for `waiting_pipelines() == 0` can drain them (W4b3).
+    pub fn pause_background(&mut self, paused: bool) {
+        self.background_paused = paused;
+    }
+
+    #[must_use]
+    pub fn is_background_paused(&self) -> bool {
+        self.background_paused
     }
 
     /// Precache pipelines queued or compiling at the last resolve.
@@ -843,8 +874,17 @@ pub fn precache_specimens_with(
     // A draw waiting on a precache pipeline competes for no extra thread.
     let draw_waiting = draw_pending.iter().filter(|id| !outstanding.contains(*id)).count();
     let k = limit.map(|l| l.applied(draw_waiting > 0));
-    let mut views = world.resource::<PipelinePrecache>().views.clone();
-    // (index in `waiting`, its planned work), in request order.
+    let (mut views, background, paused) = {
+        let p = world.resource::<PipelinePrecache>();
+        (p.views.clone(), p.background.clone(), p.background_paused)
+    };
+    // W4b3: every other tag's specimens first, then the background tags' (request order within
+    // each); paused background specimens are not planned.
+    let order: Vec<usize> = (0..waiting.len())
+        .filter(|&i| !background.contains(&waiting[i].tag))
+        .chain((0..waiting.len()).filter(|&i| background.contains(&waiting[i].tag)))
+        .collect();
+    // (index in `waiting`, its planned work), in admission order (`order`).
     let mut candidates: Vec<(usize, Vec<PrecacheWork>)> = Vec::new();
     {
         let p = state.get(world).unwrap();
@@ -899,7 +939,8 @@ pub fn precache_specimens_with(
 
         if let (Some(meshes), Some(materials)) = (&p.render_meshes, &p.render_materials) {
             let planned = if limit.is_some() { THROTTLED_CANDIDATES } else { usize::MAX };
-            for (index, w) in waiting.iter_mut().enumerate() {
+            for &index in &order {
+                let w = &mut waiting[index];
                 let (Some(mesh), Some(material)) =
                     (meshes.get(w.specimen.mesh), materials.get(w.specimen.material))
                 else {
@@ -907,7 +948,10 @@ pub fn precache_specimens_with(
                     continue;
                 };
                 w.assets_ready = true;
-                if views.main.is_empty() || candidates.len() >= planned {
+                if views.main.is_empty()
+                    || candidates.len() >= planned
+                    || (paused && background.contains(&w.tag))
+                {
                     continue;
                 }
                 let work = plan_specimen(

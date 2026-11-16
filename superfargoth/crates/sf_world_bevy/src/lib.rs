@@ -32,6 +32,7 @@ pub mod mesh_slabs;
 mod origin;
 mod precache;
 mod precombine;
+mod resident_warm;
 mod reveal;
 mod scene;
 mod spawn;
@@ -46,6 +47,7 @@ pub use debug::{StreamingDebug, level_color};
 pub use fade::{FadeCutHooks, FadePhase, FadeTransition, StartBlackout, StartTravel, TravelArrived};
 pub use far::{CellProxies, FarProxies, ProxySpawnCx};
 pub use compile_pool::{PipelineCompilePoolPlugin, PipelineCompileThreads, compile_pool_threads, precache_limit};
+pub use resident_warm::{RESIDENT_TAG, ResidentScan, ResidentWarmup, add_resident_material};
 pub use reveal::{RevealAsk, RevealCheck, RevealGate, RevealHolds, RevealInputs, RevealPending, RevealStatus, RevealStep, SETTLE_FRAMES};
 pub use origin::{PHASE_PERIODS, WorldOrigin, WorldOriginBuffer, WorldOriginSystems, WorldOriginUniform};
 pub use precache::{
@@ -134,6 +136,7 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<RevealGate>()
             .init_resource::<RevealHolds>()
             .init_resource::<CatalogWarmup>()
+            .init_resource::<ResidentWarmup>()
             .init_resource::<BuiltinSpecimens>()
             .init_asset::<CellPrecombine>()
             .insert_resource(Streaming::new(self.config.clone()))
@@ -164,10 +167,14 @@ impl Plugin for WorldStreamingPlugin {
                 (apply_subtree_ranges, apply_subtree_layers).before(bevy_camera::visibility::VisibilitySystems::CalculateBounds),
             )
             .add_systems(Last, (report_propagation, reveal::end_reveal_frame))
+            // The reveal's shown set (pipeline-warmup.md W4b3): resident meshes near the focus.
+            .configure_sets(PostUpdate, ResidentScan.after(bevy_transform::TransformSystems::Propagate))
+            .add_systems(PostUpdate, resident_warm::begin_resident_frame.before(ResidentScan))
             // Material-class gauges (static-scene.md S2), only while counters run.
             .init_resource::<matclass::StaticMaterialTracker>()
             .init_resource::<matclass::StaticMaterialIds>()
             .add_systems(Last, matclass::track_static_materials.run_if(resource_exists::<DiagCounters>));
+        add_resident_material::<bevy_pbr::StandardMaterial>(app);
 
         #[cfg(feature = "debug")]
         app.init_resource::<StreamingDebug>();

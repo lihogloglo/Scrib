@@ -41,6 +41,8 @@ bevy_render.workspace = true
 bevy_shader.workspace = true
 # Aabb3d (ring overlay).
 bevy_shape.workspace = true
+# NotShadowCaster: the reveal's shown set reads entity flags (W4b3).
+bevy_light.workspace = true
 # IoTaskPool for index fetches.
 bevy_tasks = { workspace = true, features = ["futures-lite"] }
 bevy_time = { workspace = true, features = ["std"] }

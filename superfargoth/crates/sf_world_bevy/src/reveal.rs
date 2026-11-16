@@ -12,11 +12,15 @@
 //!   pipeline yet ([`sf_diag_bevy::PendingSample::near_unprepared`] and `unprepared`);
 //! - **pipelines**: visible main-pass, shadow-view and prepass draws whose pipeline is queued or
 //!   compiling, plus any pipeline still compiling (`PipelineCache::waiting_pipelines`, which
-//!   covers the non-material ones), plus the catalog warm-up's pending specimens
-//!   ([`crate::CatalogWarmup::pending`], W4b1: representatives loading, then the precache tag),
-//!   plus the readiness holds ([`RevealHolds`], W4b1-fix: any crate or game names a source not
+//!   covers the non-material ones), plus the shown set's pending specimens
+//!   ([`crate::ResidentWarmup::pending`], W4b3: the resident meshes within the radius, requested
+//!   under [`crate::RESIDENT_TAG`]), plus the readiness holds ([`RevealHolds`], W4b1-fix: any crate or game names a source not
 //!   ready yet, e.g. the GI volume before its first trace, whose arrival changes the view key and
-//!   re-specialises every material);
+//!   re-specialises every material). The catalog ([`crate::CatalogWarmup`]) does not hold a
+//!   reveal (W4b3, UE5 PSO precaching: the loading screen waits for the shown components' PSOs,
+//!   the bundled precache keeps compiling in the background): it is a background precache tag,
+//!   admitted after the resident set's and paused once only compiles are left, so
+//!   `waiting_pipelines()` drains; it shows in the cap warning and the `warmup: reveal` line;
 //! - **gates**: external holds ([`crate::FadeTransition::hold`]: lamp shadow captures, the GI
 //!   volume, ground collision) for at most [`RevealGate::gates_max_secs`] after cells and
 //!   textures, as before W1; the last frames settling ([`SETTLE_FRAMES`]) count here too.
@@ -47,6 +51,7 @@ use sf_diag_bevy::{PendingDraws, PendingSample, Reveal, RevealProbe, RevealTerm}
 use crate::catalog_warm::CatalogWarmup;
 use crate::fade::NearTextures;
 use crate::precache::Precache;
+use crate::resident_warm::ResidentWarmup;
 
 /// Frames every term must stay clear before the reveal (the render world's sample is a frame
 /// late, and content spawned by the last CPU step needs a frame to be extracted).
@@ -67,11 +72,13 @@ pub struct RevealGate {
     hold: Option<Hold>,
     stepped: bool,
     last: Option<Reveal>,
+    /// The hold's focus (world space), as its client last saw it.
+    focus: Option<[f32; 3]>,
 }
 
 impl Default for RevealGate {
     fn default() -> Self {
-        Self { max_secs: 10.0, gates_max_secs: 1.5, radius_m: 48.0, hold: None, stepped: false, last: None }
+        Self { max_secs: 10.0, gates_max_secs: 1.5, radius_m: 48.0, hold: None, stepped: false, last: None, focus: None }
     }
 }
 
@@ -106,11 +113,25 @@ pub struct RevealInputs {
     pub gated: bool,
     /// The client's own cap was hit: reveal now (capped `max_hold`).
     pub give_up: bool,
-    /// Catalog specimens still pending (`CatalogWarmup::pending`: representatives loading, then
-    /// the precache tag's assets, queued and compiling); part of the pipelines term.
+    /// The shown set's specimens still pending ([`ResidentWarmup::pending`]: textures loading,
+    /// then the [`crate::RESIDENT_TAG`] assets, queued and compiling); part of the pipelines term.
+    pub resident: usize,
+    /// Catalog specimens still pending (`CatalogWarmup::pending`), for the log only: the catalog
+    /// compiles in the background and never holds a reveal (W4b3).
     pub catalog: usize,
     /// Readiness holds pending ([`RevealHolds::count`]); part of the pipelines term.
     pub holds: usize,
+}
+
+impl RevealInputs {
+    /// Only compiles are left (cells, textures, assets, visible and shadow draws, the shown set
+    /// and the holds all clear): the gate then pauses background precache tags so the compiles
+    /// in flight (`waiting_pipelines()`, which counts the catalog's too) drain (W4b3).
+    #[must_use]
+    pub fn drains_background(&self) -> bool {
+        let s = &self.sample;
+        self.cells && self.textures && s.near_unprepared + s.unprepared + s.skipped + s.skipped_shadow + self.resident + self.holds == 0
+    }
 }
 
 /// Readiness holds (W4b1-fix): named sources any crate or game feeds, each pending or not, that
@@ -157,14 +178,14 @@ impl RevealHolds {
 pub struct RevealPending {
     /// Near meshes not prepared + visible meshes with no pipeline yet.
     pub assets: usize,
-    /// Main, shadow and prepass draws waiting for a pipeline + pipelines compiling + catalog
-    /// specimens pending + readiness holds pending.
+    /// Main, shadow and prepass draws waiting for a pipeline + pipelines compiling + the shown
+    /// set's specimens pending + readiness holds pending.
     pub pipelines: usize,
 }
 
 impl RevealPending {
-    pub fn of(s: &PendingSample, catalog: usize, holds: usize) -> Self {
-        Self { assets: s.near_unprepared + s.unprepared, pipelines: s.skipped + s.skipped_shadow + s.waiting + catalog + holds }
+    pub fn of(s: &PendingSample, resident: usize, holds: usize) -> Self {
+        Self { assets: s.near_unprepared + s.unprepared, pipelines: s.skipped + s.skipped_shadow + s.waiting + resident + holds }
     }
 
     pub fn is_clear(&self) -> bool {
@@ -224,7 +245,7 @@ impl RevealGate {
         hold.cells |= inputs.cells;
         hold.textures |= hold.cells && inputs.textures;
         let cpu = hold.cells && hold.textures;
-        let pending = RevealPending::of(&inputs.sample, inputs.catalog, inputs.holds);
+        let pending = RevealPending::of(&inputs.sample, inputs.resident, inputs.holds);
         if cpu {
             hold.since_cpu = Some(hold.since_cpu.map_or(0.0, |s| s + dt));
         }
@@ -271,6 +292,7 @@ impl RevealGate {
             return RevealStep::Holding;
         };
         let hold = self.hold.take().expect("held");
+        self.focus = None;
         let warning = match capped {
             Some("gate") => Some(format!("a gate (shadow captures, GI, collision, ...) held past {:.1} s", self.gates_max_secs)),
             Some(cap) => Some(format!("not ready after {:.1} s ({cap}): pending {}", hold.waited, pending_text(&hold, inputs))),
@@ -293,15 +315,28 @@ impl RevealGate {
         let abandoned = !std::mem::take(&mut self.stepped) && self.hold.is_some();
         if abandoned {
             self.hold = None;
+            self.focus = None;
         }
         abandoned
     }
+
+    /// The focus of the hold in progress (world space, as its client last saw it); `None` when no
+    /// hold runs or its client has no focus.
+    #[must_use]
+    pub fn focus(&self) -> Option<[f32; 3]> {
+        self.hold.as_ref().and(self.focus)
+    }
+
+    /// Sets the hold's focus (its client does, each frame).
+    pub fn set_focus(&mut self, focus: Option<[f32; 3]>) {
+        self.focus = focus;
+    }
 }
 
-/// `cells, textures, assets 3 (near 2, visible 1), pipelines 6 (draws 1, shadow/prepass 2, compiling 2, catalog 1, holds 1)`
-/// (`catalog` and `holds` only when some are pending; [`RevealCheck`] names the holds).
+/// `cells, textures, assets 3 (near 2, visible 1), pipelines 6 (draws 1, shadow/prepass 2, compiling 2, resident 1, holds 1); catalog 9 (background)`
+/// (`resident`, `holds` and `catalog` only when some are pending; [`RevealCheck`] names the holds).
 fn pending_text(hold: &Hold, inputs: &RevealInputs) -> String {
-    let (s, catalog, holds) = (&inputs.sample, inputs.catalog, inputs.holds);
+    let (s, resident, holds) = (&inputs.sample, inputs.resident, inputs.holds);
     let mut parts = Vec::new();
     if !hold.cells {
         parts.push("cells".to_owned());
@@ -309,19 +344,20 @@ fn pending_text(hold: &Hold, inputs: &RevealInputs) -> String {
     if !hold.textures {
         parts.push("textures".to_owned());
     }
-    let p = RevealPending::of(s, catalog, holds);
+    let p = RevealPending::of(s, resident, holds);
     if p.assets > 0 {
         parts.push(format!("assets {} (near {}, visible {})", p.assets, s.near_unprepared, s.unprepared));
     }
     if p.pipelines > 0 {
-        let catalog = if catalog > 0 { format!(", catalog {catalog}") } else { String::new() };
+        let resident = if resident > 0 { format!(", resident {resident}") } else { String::new() };
         let holds = if holds > 0 { format!(", holds {holds}") } else { String::new() };
         parts.push(format!(
-            "pipelines {} (draws {}, shadow/prepass {}, compiling {}{catalog}{holds})",
+            "pipelines {} (draws {}, shadow/prepass {}, compiling {}{resident}{holds})",
             p.pipelines, s.skipped, s.skipped_shadow, s.waiting
         ));
     }
-    if parts.is_empty() { "nothing (settling)".to_owned() } else { parts.join(", ") }
+    let text = if parts.is_empty() { "nothing (settling)".to_owned() } else { parts.join(", ") };
+    if inputs.catalog > 0 { format!("{text}; catalog {} (background)", inputs.catalog) } else { text }
 }
 
 /// A client's frame of a hold ([`RevealCheck::step`]).
@@ -364,6 +400,7 @@ pub struct RevealCheck<'w, 's> {
     time: Option<Res<'w, Time<Real>>>,
     reveals: Option<ResMut<'w, Messages<Reveal>>>,
     warmup: Option<Res<'w, CatalogWarmup>>,
+    resident: Option<Res<'w, ResidentWarmup>>,
     precache: Option<Res<'w, Precache>>,
     holds: Option<Res<'w, RevealHolds>>,
 }
@@ -385,21 +422,37 @@ impl RevealCheck<'_, '_> {
         let textures_known = gate.hold.as_ref().is_some_and(|h| h.textures);
         let textures = cells && (textures_known || focus.is_none_or(|f| self.near.ready(f, radius)));
         let sample = self.pending.as_ref().map(|p| p.sample()).unwrap_or_default();
-        let catalog = self.warmup.as_ref().map_or(0, |w| w.pending(self.precache.as_deref()));
+        let precache = self.precache.as_deref();
+        let catalog = self.warmup.as_ref().map_or(0, |w| w.pending(precache));
+        let resident = self.resident.as_ref().map_or(0, |r| r.pending(precache));
         let holds = self.holds.as_ref().map_or(0, |h| h.count());
-        let inputs = RevealInputs { cells, textures, sample, gated: ask.gated, give_up: ask.give_up, catalog, holds };
+        let inputs = RevealInputs { cells, textures, sample, gated: ask.gated, give_up: ask.give_up, resident, catalog, holds };
         let dt = self.time.as_ref().map_or(0.0, |t| t.delta_secs());
+        let center = focus.and_then(|f| self.near.at(f));
         let step = gate.step(ask.kind, ask.place, dt, &inputs);
         let cpu_ready = gate.cpu_ready() || matches!(step, RevealStep::Open { .. });
         match step {
             RevealStep::Holding => {
+                gate.set_focus(center);
                 if let Some(pending) = &self.pending {
-                    let center = focus.and_then(|f| self.near.at(f));
                     pending.set_probe(center.map(|c| RevealProbe { center: c, radius }));
+                }
+                // Only compiles left: let the background tags' compiles in flight drain (W4b3).
+                if let Some(precache) = precache {
+                    precache.pause_background(gate.cpu_ready() && inputs.drains_background());
                 }
                 RevealStatus { cpu_ready, open: false }
             }
             RevealStep::Open { reveal, warning } => {
+                if let Some(precache) = precache {
+                    precache.pause_background(false);
+                }
+                let shown = self.resident.as_ref().map_or(0, |r| r.requested());
+                log::info!(
+                    "warmup: reveal {} \"{}\": resident {shown} specimens ({resident} pending), catalog {catalog} pending (background)",
+                    reveal.kind,
+                    reveal.place
+                );
                 let examples = self.pending.as_ref().map(|p| {
                     p.set_probe(None);
                     p.examples()
@@ -426,9 +479,15 @@ impl RevealCheck<'_, '_> {
 }
 
 /// Drops an abandoned hold and clears the probe once no hold runs (`Last`).
-pub(crate) fn end_reveal_frame(mut gate: ResMut<RevealGate>, pending: Option<Res<PendingDraws>>) {
+pub(crate) fn end_reveal_frame(mut gate: ResMut<RevealGate>, pending: Option<Res<PendingDraws>>, precache: Option<Res<Precache>>) {
     if gate.end_frame() {
         log::info!("sf_world_bevy: reveal gate: a hold was abandoned (its cover ended without a reveal)");
+    }
+    if let Some(precache) = precache
+        && !gate.is_holding()
+        && precache.is_background_paused()
+    {
+        precache.pause_background(false);
     }
     if let Some(pending) = pending
         && !gate.is_holding()
