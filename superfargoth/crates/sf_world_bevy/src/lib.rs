@@ -20,7 +20,9 @@
 //! transforms) and register the `baked://` asset source before
 //! `AssetPlugin` (`sf_model_bevy::baked_source`).
 
+mod catalog_warm;
 pub mod coords;
+mod compile_pool;
 #[cfg(feature = "debug")]
 mod debug;
 mod fade;
@@ -28,6 +30,7 @@ mod far;
 pub mod matclass;
 pub mod mesh_slabs;
 mod origin;
+mod precache;
 mod precombine;
 mod reveal;
 mod scene;
@@ -36,13 +39,19 @@ mod stream;
 mod worldspace;
 
 pub use big_space;
+pub use catalog_warm::{BuiltinFn, BuiltinOutcome, BuiltinSpecimens, CATALOG_TAG, CatalogWarmup, RepresentativeLoader, WarmSpecimen, entry_flags};
 pub use coords::{GRID_SWITCH, WorldPosOf, from_grid, to_grid, transform_to_grid, world_grid};
 #[cfg(feature = "debug")]
 pub use debug::{StreamingDebug, level_color};
 pub use fade::{FadeCutHooks, FadePhase, FadeTransition, StartBlackout, StartTravel, TravelArrived};
 pub use far::{CellProxies, FarProxies, ProxySpawnCx};
-pub use reveal::{RevealAsk, RevealCheck, RevealGate, RevealInputs, RevealPending, RevealStatus, RevealStep, SETTLE_FRAMES};
+pub use compile_pool::{PipelineCompilePoolPlugin, PipelineCompileThreads, compile_pool_threads, precache_limit};
+pub use reveal::{RevealAsk, RevealCheck, RevealGate, RevealHolds, RevealInputs, RevealPending, RevealStatus, RevealStep, SETTLE_FRAMES};
 pub use origin::{PHASE_PERIODS, WorldOrigin, WorldOriginBuffer, WorldOriginSystems, WorldOriginUniform};
+pub use precache::{
+    Precache, PrecacheLimit, PrecachePlugin, PrecacheStatus, Progress, Specimen, SpecimenFlags, pipeline_progress, specimen, specimen_flags, specimen_progress,
+    tag_status,
+};
 pub use precombine::{CellPrecombine, PrecombineBucket, PrecombinePath, Precombines, bucket_ranges};
 pub use scene::{CellScene, SceneCellCx, SceneCells};
 pub use spawn::{
@@ -104,6 +113,14 @@ impl Plugin for WorldStreamingPlugin {
         if !app.is_plugin_added::<sf_diag_bevy::PendingMaterialPlugin<bevy_pbr::StandardMaterial>>() {
             app.add_plugins(sf_diag_bevy::PendingMaterialPlugin::<bevy_pbr::StandardMaterial>::default());
         }
+        // Wide pipeline-compile pool while a reveal holds (pipeline-warmup.md W2b).
+        if !app.is_plugin_added::<PipelineCompilePoolPlugin>() {
+            app.add_plugins(PipelineCompilePoolPlugin { threads: self.config.pipeline_compile_threads });
+        }
+        // Pipeline precache: specimens specialised before their first draw (pipeline-warmup.md W3).
+        if !app.is_plugin_added::<PrecachePlugin>() {
+            app.add_plugins(PrecachePlugin);
+        }
         app.init_resource::<WorldspaceRegistry>()
             .init_resource::<FarProxies>()
             .init_resource::<ActiveWorldspace>()
@@ -115,6 +132,9 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<FadeTransition>()
             .init_resource::<FadeCutHooks>()
             .init_resource::<RevealGate>()
+            .init_resource::<RevealHolds>()
+            .init_resource::<CatalogWarmup>()
+            .init_resource::<BuiltinSpecimens>()
             .init_asset::<CellPrecombine>()
             .insert_resource(Streaming::new(self.config.clone()))
             .insert_resource(StaticGpuCulling(self.config.gpu_cull_statics))
@@ -130,6 +150,11 @@ impl Plugin for WorldStreamingPlugin {
             .add_plugins(origin::WorldOriginPlugin)
             .configure_sets(Update, (StreamingSystems::Drive, StreamingSystems::Transition).chain())
             .add_systems(Update, stream::drive_streaming.in_set(StreamingSystems::Drive))
+            // The catalog warm-up (pipeline-warmup.md W4b1): before the reveal clients read its term.
+            .add_systems(
+                Update,
+                catalog_warm::drive_catalog_warmup.run_if(catalog_warm::warmup_busy).before(StreamingSystems::Drive),
+            )
             .add_systems(Update, (fade::run_cut_hooks, fade::run_fade, fade::fade_overlay).chain().in_set(StreamingSystems::Transition))
             .add_systems(PostStartup, worldspace::assign_origins.before(BigSpaceSystems::RecenterLargeTransforms))
             .add_systems(PostUpdate, worldspace::assign_origins.before(BigSpaceSystems::RecenterLargeTransforms))
@@ -215,3 +240,12 @@ mod gpu_batch_cache_tests;
 // Worldspace layer pairs freed and reused when a worldspace streams out (ROADMAP 1.1).
 #[cfg(test)]
 mod worldspace_tests;
+// Pipeline warm-up W2: the vendored `bevy_shader` front-end split and the compile pool size.
+#[cfg(test)]
+mod warmup_tests;
+// Pipeline warm-up W3: the precache's shared key functions (draw path = precache) and status accounting.
+#[cfg(test)]
+mod precache_tests;
+// Pipeline warm-up W4b1: the catalog warm-up requests its specimens; the gate waits on them.
+#[cfg(test)]
+mod catalog_warm_tests;

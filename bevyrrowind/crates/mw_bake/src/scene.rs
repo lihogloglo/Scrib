@@ -182,7 +182,7 @@ impl MwSceneSource {
 /// - `mw_assets::cutout_foliage` (`--off leafmask`): a runtime A/B, so it cannot be in a cache
 ///   key; the bake assumes its default (on). That is what makes the `blended` arm below dead
 ///   here, and it was already so for the `"cutout"` case.
-fn runtime_alpha(m: &Material, textures: &AlphaClasses) -> AlphaMode {
+pub(crate) fn runtime_alpha(m: &Material, textures: &AlphaClasses) -> AlphaMode {
     // `cooked.rs:133-137`, with `cutout_foliage()` at its default (on), so `blended` is false.
     let cutout = m.extras.get(extras::BLEND).map(String::as_str);
     let additive = cutout == Some("additive");

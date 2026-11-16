@@ -116,6 +116,9 @@ pub struct StreamingConfig {
     /// Bevy's CPU culling for them as for everything else (the app's
     /// `--off cpuculltag` A/B).
     pub gpu_cull_statics: bool,
+    /// Threads of the pipeline-compile pool used while a reveal holds (pipeline-warmup.md W2b,
+    /// [`crate::PipelineCompilePoolPlugin`]): `None` = all cores but two, `Some(0)` = off (stock).
+    pub pipeline_compile_threads: Option<usize>,
 }
 
 impl Default for StreamingConfig {
@@ -133,6 +136,7 @@ impl Default for StreamingConfig {
             material_classes: true,
             flat_normal_map: true,
             gpu_cull_statics: false,
+            pipeline_compile_threads: None,
         }
     }
 }
@@ -497,6 +501,19 @@ impl Streaming {
 
     pub fn config(&self) -> &StreamingConfig {
         &self.rt.config
+    }
+
+    /// The static template material of `desc`, from streaming's own cache and fold
+    /// ([`cached_material`]): what a streamed placement with that material will bind.
+    pub(crate) fn template_material(
+        &mut self,
+        desc: &sf_model::Material,
+        materials: &mut Assets<StandardMaterial>,
+        mapper: &ModelMaterials,
+        asset_server: &AssetServer,
+    ) -> Handle<StandardMaterial> {
+        let fold = self.rt.config.fold_rules();
+        cached_material(desc, materials, &mut self.rt.materials, (mapper, fold), asset_server)
     }
 
     /// Budgets ×20 until R0 and R1 are resident (behind a fade or a
@@ -1844,6 +1861,28 @@ fn load_page(reader: &dyn IndexReader, cache: &Mutex<PageCache>, ws: &Worldspace
     Ok(decoded)
 }
 
+/// The template material of a cooked material description: the cached one, else mapped (and
+/// folded with `fold`) and cached. The catalog warm-up ([`crate::CatalogWarmup`]) takes the same
+/// path, so its specimens bind the material streaming will draw.
+pub(crate) fn cached_material(
+    desc: &sf_model::Material,
+    materials: &mut Assets<StandardMaterial>,
+    cache: &mut HashMap<String, Handle<StandardMaterial>>,
+    (mapper, fold): (&ModelMaterials, Option<crate::matclass::FoldRules>),
+    asset_server: &AssetServer,
+) -> Handle<StandardMaterial> {
+    cache
+        .entry(format!("{desc:?}"))
+        .or_insert_with(|| {
+            let mut made = (mapper.0)(desc, asset_server);
+            if let Some(rules) = fold {
+                crate::matclass::fold(&mut made, rules);
+            }
+            materials.add(made)
+        })
+        .clone()
+}
+
 /// Turns a loaded cooked model into a template, deduplicating materials by
 /// description. With `fold` ([`StreamingConfig::fold_rules`], `None` when matclass is off) each
 /// new material folds into its class ([`crate::matclass::fold`]).
@@ -1856,17 +1895,7 @@ fn build_template(
 ) -> ModelTemplate {
     let mut material = |i: u32| -> Handle<StandardMaterial> {
         let desc = asset.materials.get(i as usize).cloned().unwrap_or_default();
-        let key = format!("{desc:?}");
-        cache
-            .entry(key)
-            .or_insert_with(|| {
-                let mut made = (mapper.0)(&desc, asset_server);
-                if let Some(rules) = fold {
-                    crate::matclass::fold(&mut made, rules);
-                }
-                materials.add(made)
-            })
-            .clone()
+        cached_material(&desc, materials, cache, (mapper, fold), asset_server)
     };
     let lods = asset
         .lods

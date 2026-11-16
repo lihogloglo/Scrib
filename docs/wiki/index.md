@@ -38,6 +38,7 @@ is a frame over 25 ms (report "hitches"). A/B differences under ~0.5 ms are run-
 [Streaming](engine/streaming.md): exterior cell streaming, spawning, floating origin, what a placement becomes, origin-shift guard, `--off` parts and stream counters
 [Statics and LOD](engine/statics-and-lod.md): precombine, far field, experimental static scene (`--scene`), opt-in `NoCpuCulling` path
 [Frame and views](engine/frame-and-views.md): cameras and shadow views in an exterior frame, driving plugins, perf suite and report sections
+[Pipeline warm-up](engine/pipeline-warmup.md): reveal gate, compile pool, pipeline precache and baked catalog, how to measure load holds
 [Characters](engine/characters.md): NPC and player assembly, merged parts, skin joint blocks (P5), first-person roles and view copies
 [Animation](engine/animation.md): graph runtime, ops, humanoid graph, LOD tiers A0-A3, foot IK, clip sources and bake
 [Locomotion, action, camera](engine/locomotion-and-action.md): fixed tick, mover, action chooser, player feel, camera, first-person eye

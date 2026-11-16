@@ -18,7 +18,8 @@
 //! [`PipelineWatchPlugin`] (feature `pipelines`, dev builds) adds the logging:
 //! - **Compile times:** `PipelineCache::take_compile_timings` (vendored `bevy_render`, marker
 //!   `own: pipeline compile timing`): counters `pipelines/compile_ms`, `/front_ms`, `/driver_ms`,
-//!   `/wait_ms` (per frame, ms) and a `pipelines: compiled N (...)` line per burst with the
+//!   `/wait_ms` (queued for a pool thread + the first shader-cache lock), `/lock_ms` (that lock alone,
+//!   W2) (per frame, ms) and a `pipelines: compiled N (...)` line per burst with the
 //!   histogram ([`CompileStats`]).
 //! - **View keys:** `bevy_pbr::ViewKeyCache` (public, read-only) diffed per view each frame: one
 //!   `view key changed: <bits> (...)` line per flip (each flip re-specializes every material on
@@ -253,7 +254,7 @@ fn compile_times(cache: Res<PipelineCache>, counters: Option<Res<DiagCounters>>,
         b.started = true;
     }
     let timings = cache.take_compile_timings();
-    let (mut wait, mut front, mut driver) = (0.0, 0.0, 0.0);
+    let (mut wait, mut front, mut driver, mut lock) = (0.0, 0.0, 0.0, 0.0);
     for t in &timings {
         let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
         let (w, f, d) = (ms(t.queued + t.lock_wait), ms(t.front), ms(t.driver));
@@ -261,6 +262,7 @@ fn compile_times(cache: Res<PipelineCache>, counters: Option<Res<DiagCounters>>,
         b.burst.record(label, w, f, d);
         b.session.record(label, w, f, d);
         (wait, front, driver) = (wait + w, front + f, driver + d);
+        lock += ms(t.lock_wait);
     }
     if !timings.is_empty() {
         b.since.get_or_insert_with(Instant::now);
@@ -270,6 +272,8 @@ fn compile_times(cache: Res<PipelineCache>, counters: Option<Res<DiagCounters>>,
             c.add_named("pipelines/front_ms", ms, front);
             c.add_named("pipelines/driver_ms", ms, driver);
             c.add_named("pipelines/wait_ms", ms, wait);
+            // W2: the lock share of the wait (the rest queued for a pool thread).
+            c.add_named("pipelines/lock_ms", ms, lock);
         }
     }
     let due = b.since.is_some_and(|t| t.elapsed().as_secs_f32() >= BURST_SECS);

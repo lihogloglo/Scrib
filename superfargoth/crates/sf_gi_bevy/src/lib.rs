@@ -15,6 +15,8 @@
 //! [`GiTraced`]): until then, and whenever nothing traces (no ray-tracing GPU features,
 //! [`GiSupport`] false, or an empty ray-tracing scene), today's ambient path draws, never a
 //! black box. Without the features the system is absent: no render systems, no pipelines.
+//! [`GiReadiness`] tells an app's reveal (fade, loading) to wait for that first trace, since
+//! showing the volume changes the views' pipeline key.
 //!
 //! GPU timer: `render/gi/probe_update/elapsed_gpu` (Bevy's `RenderDiagnosticsPlugin`, added by
 //! the app); [`GiPlugin`] logs it once per second (`gi: probe_update ...`).
@@ -50,6 +52,32 @@ pub struct GiSupport(pub bool);
 /// traced at least once; the main world then shows the volume.
 #[derive(Resource, Clone, Default)]
 pub(crate) struct GiTraced(pub(crate) Arc<AtomicBool>);
+
+/// Shared by both worlds: set by the render world when the probe pipeline failed to build (the
+/// volume will never be traced, so it never holds a reveal).
+#[derive(Resource, Clone, Default)]
+pub(crate) struct GiFailed(pub(crate) Arc<AtomicBool>);
+
+/// Reveal readiness (pipeline-warmup.md §5.4, W4b1-fix): `pending` while a volume that will be
+/// traced (GPU support, GI on, pipeline not failed) is not traced whole yet. Showing it adds a
+/// view key bit (`GiProbeVolumeView`: every visible material re-specialises), so an app's reveal
+/// waits on it (the game feeds it to `sf_world_bevy::RevealHolds`). Stays pending for
+/// [`READINESS_TAIL_FRAMES`] after the volume shows, so the re-specialised draws reach the
+/// reveal gate's render-world sample before this clears. No volume or no GI: never pending.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GiReadiness {
+    pub pending: bool,
+}
+
+/// Frames [`GiReadiness`] stays pending after the volume shows (extract, then the render frame
+/// whose sample the reveal gate reads a frame later).
+pub const READINESS_TAIL_FRAMES: u8 = 2;
+
+/// Whether a reveal waits on the GI: a volume that will be traced is not shown yet. Pure.
+#[must_use]
+pub fn gi_pending(supported: bool, enabled: bool, failed: bool, unshown_volumes: usize) -> bool {
+    supported && enabled && !failed && unshown_volumes > 0
+}
 
 /// The volume is attached: the render world traces it (its atlases live there).
 #[derive(Component, Clone, Copy)]
@@ -102,8 +130,13 @@ impl Plugin for GiPlugin {
             .init_resource::<sf_sky_bevy::GiActive>()
             .init_resource::<GiLog>()
             .init_resource::<GiTraced>()
+            .init_resource::<GiFailed>()
+            .init_resource::<GiReadiness>()
             .init_resource::<GiSceneStats>()
-            .add_systems(Update, (disable_volumes, attach_volumes, show_volumes, update_active, log_gi).chain());
+            .add_systems(
+                Update,
+                (disable_volumes, attach_volumes, show_volumes, update_readiness, update_active, log_gi).chain(),
+            );
     }
 
     fn finish(&self, app: &mut App) {
@@ -183,6 +216,35 @@ fn show_volumes(
     for entity in &volumes {
         commands.entity(entity).insert(GiShown);
         log::info!("gi: volume traced, sampled by the PBR shader (DDGI probes)");
+    }
+}
+
+/// [`GiReadiness`] from the volumes (after `show_volumes`), with its tail.
+fn update_readiness(
+    support: Res<GiSupport>,
+    enabled: Option<Res<sf_sky_bevy::GiEnabled>>,
+    failed: Res<GiFailed>,
+    unshown: Query<(), (With<GiVolume>, Without<GiShown>)>,
+    mut readiness: ResMut<GiReadiness>,
+    mut tail: Local<u8>,
+) {
+    let now = gi_pending(support.0, enabled.is_none_or(|e| e.0), failed.0.load(Ordering::Relaxed), unshown.iter().count());
+    let pending = readiness_step(now, &mut tail);
+    if readiness.pending != pending {
+        readiness.pending = pending;
+    }
+}
+
+/// One frame of [`GiReadiness`]: pending while `now`, then for [`READINESS_TAIL_FRAMES`] more.
+fn readiness_step(now: bool, tail: &mut u8) -> bool {
+    if now {
+        *tail = READINESS_TAIL_FRAMES;
+        true
+    } else if *tail > 0 {
+        *tail -= 1;
+        true
+    } else {
+        false
     }
 }
 
@@ -321,4 +383,53 @@ pub(crate) fn solari_verdict(mesh: &Mesh) -> Option<Verdict> {
     } else {
         Verdict::Compatible
     })
+}
+
+/// W4b1-fix: [`GiReadiness`] is pending exactly while a volume that will be traced is not shown,
+/// plus its tail; GI off (no support, switched off, pipeline failed, no volume) never holds.
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+
+    fn app(supported: bool) -> App {
+        let mut app = App::new();
+        app.insert_resource(GiSupport(supported))
+            .init_resource::<GiFailed>()
+            .init_resource::<GiReadiness>()
+            .add_systems(Update, update_readiness);
+        app
+    }
+
+    fn pending(app: &mut App) -> bool {
+        app.update();
+        app.world().resource::<GiReadiness>().pending
+    }
+
+    #[test]
+    fn pending_until_shown_then_the_tail() {
+        let mut app = app(true);
+        assert!(!pending(&mut app), "no volume: no hold");
+        let volume = app.world_mut().spawn(GiVolume::default()).id();
+        assert!(pending(&mut app) && pending(&mut app), "untraced volume holds");
+        app.world_mut().entity_mut(volume).insert(GiShown);
+        let tail: Vec<bool> = (0..=READINESS_TAIL_FRAMES).map(|_| pending(&mut app)).collect();
+        assert_eq!(tail, [true, true, false], "shown: pending for the tail frames, then clear");
+        app.world_mut().spawn(GiVolume::default());
+        assert!(pending(&mut app), "a new volume holds again");
+        app.world().resource::<GiFailed>().0.store(true, Ordering::Relaxed);
+        let after: Vec<bool> = (0..=READINESS_TAIL_FRAMES).map(|_| pending(&mut app)).collect();
+        assert_eq!(after, [true, true, false], "pipeline failed: never traced, clears");
+    }
+
+    #[test]
+    fn gi_off_never_holds() {
+        let mut unsupported = app(false);
+        unsupported.world_mut().spawn(GiVolume::default());
+        assert!(!pending(&mut unsupported), "no ray-tracing GPU");
+        let mut switched_off = app(true);
+        switched_off.insert_resource(sf_sky_bevy::GiEnabled(false));
+        switched_off.world_mut().spawn(GiVolume::default());
+        assert!(!pending(&mut switched_off), "GI switched off");
+        assert!(!gi_pending(true, true, false, 0) && gi_pending(true, true, false, 1));
+    }
 }

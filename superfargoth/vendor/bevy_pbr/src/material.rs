@@ -1153,47 +1153,20 @@ pub(crate) fn specialize_material_meshes(
                     continue;
                 };
 
-                let mut mesh_pipeline_key_bits: MeshPipelineKey =
-                    material.properties.mesh_pipeline_key_bits.downcast();
-                mesh_pipeline_key_bits.insert(alpha_mode_pipeline_key(
-                    material.properties.alpha_mode,
-                    &Msaa::from_samples(view_key.msaa_samples()),
-                ));
-                let mut mesh_key = *view_key
-                    | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits())
-                    | mesh_pipeline_key_bits;
-
-                // superfargoth patch (bevyengine/bevy#25978)
-                if let RenderMeshDraw::Extracted(_) = draw {
-                    if let Some(lightmap) = render_lightmaps.render_lightmaps.get(visible_entity) {
-                        mesh_key |= MeshPipelineKey::LIGHTMAPPED;
-
-                        if lightmap.bicubic_sampling {
-                            mesh_key |= MeshPipelineKey::LIGHTMAP_BICUBIC_SAMPLING;
-                        }
-                    }
-
-                    if render_visibility_ranges
-                        .entity_has_crossfading_visibility_ranges(*visible_entity)
-                    {
-                        mesh_key |= MeshPipelineKey::VISIBILITY_RANGE_DITHER;
-                    }
-
-                    if view_key.contains(MeshPipelineKey::MOTION_VECTOR_PREPASS) {
-                        if draw
-                            .flags()
-                            .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_SKIN)
-                        {
-                            mesh_key |= MeshPipelineKey::HAS_PREVIOUS_SKIN;
-                        }
-                        if draw
-                            .flags()
-                            .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_MORPH)
-                        {
-                            mesh_key |= MeshPipelineKey::HAS_PREVIOUS_MORPH;
-                        }
-                    }
-                }
+                // superfargoth patch (own, W3): the key comes from the functions the precache
+                // uses (`precache.rs`; same bits as before, batches add no entity bits).
+                let entity_flags = precache::entity_key_flags(
+                    &draw,
+                    *visible_entity,
+                    &render_lightmaps,
+                    Some(&render_visibility_ranges),
+                );
+                let mesh_key = precache::main_pass_mesh_key(
+                    *view_key,
+                    &mesh.key_bits,
+                    &material.properties,
+                    entity_flags,
+                );
 
                 work_items.push(SpecializationWorkItem {
                     visible_entity: *visible_entity,
@@ -1210,17 +1183,27 @@ pub(crate) fn specialize_material_meshes(
     }
 
     for item in work_items.drain(..) {
-        let key = ErasedMaterialPipelineKey {
-            type_id: item.material_type_id,
-            mesh_key: ErasedMeshPipelineKey::new(item.mesh_key),
-            material_key: item.properties.material_key.clone(),
-        };
+        // superfargoth patch (own, W3)
+        let key = precache::material_pipeline_key(
+            item.material_type_id,
+            item.mesh_key,
+            &item.properties,
+        );
 
         let Some(base_specialize) = item.properties.base_specialize else {
             continue;
         };
         match base_specialize(world, key, &item.layout, &item.properties) {
             Ok(pipeline_id) => {
+                // superfargoth patch (own, W3): precache hit/miss accounting (key for the miss log).
+                precache::note_draw_pipeline_key(
+                    world,
+                    pipeline_id,
+                    precache::PrecachePass::Main,
+                    item.mesh_key,
+                    item.material_type_id,
+                    &item.properties.material_key,
+                );
                 world
                     .resource_mut::<SpecializedMaterialPipelineCache>()
                     .entry(item.retained_view_entity)

@@ -241,6 +241,84 @@ Clients: the door fade, and `mw_exterior_bevy` `phase.rs` `Loading` → `InGame`
 The devtools fade hold on pending draws and its `reveal: loading` line are gone (the gate writes both). Loading-screen
 bar: not wired (menus session: combine `RevealGate::progress` with the streaming fraction in `loading_screen.rs`).
 
+**W2 as built (2026-11-15; owner timing run pending).** W0's walk data (`benchmarks/runs/b2_on`, balmora_walk 1:
+compile 18.9 s = driver 17.5 s + front 1.4 s; queue + lock wait 291 s over the run) says the driver compile on 4
+async-compute threads is the burst limit and the serial front end the trickle, so W2 is two parts. **W2a, front end
+outside the lock** (vendored `bevy_shader`, marker `own, W2a`; `bevy_render` `pipeline_cache.rs` `stage_modules`):
+`ShaderCache::prepare` (hit, or a `ShaderJob` with `Arc` copy-on-write snapshots of the sources) under the shader-cache
+lock, `ShaderJob::compile` (WESL, naga, module creation) outside it, `finish` under it again; a module whose shader or
+imports changed meanwhile is dropped as stale (per-shader change epoch) and retried; a module already being composed
+answers "retry" (no double compile); the layout cache has its own short lock. Side effect: `extract_shaders` (main
+thread, extract) no longer waits on a composition. **W2b, compile pool** (`bevy_render` marker `own, W2b`;
+`sf_world_bevy::PipelineCompilePoolPlugin`, added by `WorldStreamingPlugin`): a pool of all logical cores but 2 (14 on
+the owner's laptop) takes new pipeline tasks while the `RevealGate` holds (fade at black, `Loading`); in play they stay
+on Bevy's 4 async threads so a late compile never competes with the frame. `StreamingConfig::pipeline_compile_threads`
+(`None` auto, `Some(0)` off = stock); game switch `--env BEVYRROWIND_COMPILE_THREADS=<n>` (0 = off). New counter
+`pipelines/lock_ms` (the first lock's wait; `wait_ms` minus it = queued for a thread). Tests: `sf_world_bevy`
+`warmup_tests` (7, exact). **Measured** (`census` load, cold + 2 warm per exe, `benchmarks/runs/w2_census`; ledger perf.md):
+cold hold 12.9 s (capped at 10 s) -> 8.9 s (pipelines 9.9+ -> 6.3 s, W2b); warm pipelines term 0.95 -> 0.65 s (W2a); late
+draws skipped after the reveal 10-17 % -> 2 % of visible; `after_reveal` stays 46 (pipelines first needed after the reveal:
+W3/W4 predict them).
+
+**W3 as built (2026-11-15; not measured: W4 wires it).** Reuse check: Bevy 0.20 has no precache API (bevy#10871 open) and
+built keys inline per entity, so the vendored `bevy_pbr` patch `own, W3` (`precache.rs`) factors them into shared
+functions (`main_pass_mesh_key`, `prepass_mesh_key`, `shadow_mesh_key`, `shadow_view_key`, `material_pipeline_key`) that
+the three draw specialisers now call; UE5 PSO precaching is the model (mesh + material, per pass and view kind). Results
+land in `SpecializedMeshPipelines<Material/PrepassPipelineSpecializer>` (keyed `(layout, key)`) through the material's own
+`base_specialize`/`prepass_specialize`, so a later draw is a hash hit; the per-entity caches (`SpecializedMaterialPipelineCache`
+...) map entities to ids and cannot be filled ahead. Specimen = `{ mesh, material, flags }`, flags = the entity bits
+(`SpecimenFlags`: shadow caster, lightmapped/bicubic, crossfading range, previous skin/morph; the first-frame variant
+without previous data is planned too; not-shadow-receiver is a uniform flag, not a key bit). View kinds: the live cameras'
+main and prepass keys (the last ones while no camera is live; a live set replaces them), shadow = directional and
+perspective (point face = spot) templates always. Main world: `sf_world_bevy::Precache` (`request(specimens, tag)`,
+`status(tag) -> { pending_assets, queued, compiling, ready, failed }`, `release`), `PrecachePlugin` (in `WorldStreamingPlugin`;
+inert until a request), counters `precache/requested`, `/hit`, `/missed` (distinct draw pipelines predicted or not), `/pending_assets`.
+Tests (`precache_tests`, 7, GPU-free): shared keys = the former inline code bit for bit over 160 materials x 48 entity bit sets
+x 3 meshes x 2/8/2 view keys; plan = the draw keys per view kind; `precache_specimens` in a bare world with a `(layout, key)`
+stand-in specialiser: the draw's id is precached, no new entry; hit/miss and tag status. Needs a GPU (not tested): the real
+`PipelineCache`, a full render app's views. Open: draw-function presence and views first seen after a resolve (W6) are not rechecked.
+
+**W4a as built (2026-11-15; catalog only, not wired: W4b requests it).** Reuse check: Bevy 0.20 has nothing (no content-side
+pipeline list, bevy#10871), nor any crate; the model is UE5's bundled PSO cache / PSO precaching (cook-time (vertex factory,
+material, pass) tuples) and Unity's `ShaderVariantCollection`. Framework: `sf_model::catalog` (Bevy-free), step
+`pipeline.catalog` v1 (`CATALOG_FORMAT`), subject `all`, postcard `Catalog { entries, builtins, stats }`, read back by
+`load_catalog(store, manifest)`. Entry = `VertexLayout` (uvs, colours, tangents, skinned, morphs; position + normal always) x
+`MaterialSignature` (type + named fields, the adapter's reading) x `EntityFlags` (shadow caster, crossfade) + one
+`Representative` (mesh step, model, lod, submesh, material index: first in sorted model order, every LOD level read) + use count.
+Adapter hook `CatalogSource` (fingerprint, models as (step, subject, flags), material reader built per run through `RunCx`,
+builtins). Cooks are read as the run goes, not planned: a failing model is counted (`stats.failed`), not fatal. Morrowind:
+`mw_bake::catalog` (`mesh.cook` of every referenced model + `mesh.rig` creature bodies; actor flags for body parts, creatures,
+NPC meshes; signature = runtime alpha incl. resolved cutout candidates and additive, two-sided, unlit, foliage, normal/depth
+companion from `texture.cook.index`), wired into `bevyrrowind bake` after the texture cook (prints a `pipeline.catalog:` line).
+Tests: sf_model `catalog::tests` (bake twice in any model order = byte-identical; shared class + layout = one entry and
+representative; skinned rig = its own entry; synthetic: 3 specimens, 1 skinned) + 3 mw_bake signature tests. Follow-ups (W4b):
+models `mesh.cook` skips (runtime NIF path: counted as `skipped`), particles (`ParticleExt`), far-field proxies, builtins by name
+only (terrain, water, sky, precipitation: W4b maps them); mesh compression and A/B switches are applied by loading the representative.
+
+**W4b1 as built (2026-11-15; not measured yet).** `sf_world_bevy::CatalogWarmup` (`catalog_warm.rs`; `WorldStreamingPlugin` adds it,
+idle until `set_catalog`): started by `start()` or any reveal hold, it loads each representative (`baked://<step>/<model>.<mesh_ext>`
+or a `loader`), takes its submesh and material through streaming's own cache and fold (`stream.rs` `cached_material`,
+`Streaming::template_material`: a later placement binds the same handle) or, skinned, `skinned_materials` (the character mapping),
+flags from the entry (`entry_flags`: shadow caster, crossfade = a non-abrupt range, previous skin/morph), waits for its textures, then
+`Precache::request(.., "catalog")`; handles stay alive. Failed loads/textures are counted and logged once, never waited for. Builtins:
+`BuiltinSpecimens` (name -> builder: `Ready`, `NotYet` retried while a reveal holds, `Skip`; unknown = skip + `warn!`). Gate:
+`RevealInputs::catalog` = `CatalogWarmup::pending` (representatives loading + the tag's assets/queued/compiling) joins the pipelines
+term (cap warning names `catalog N`); `Precache` now counts specimens in flight until the render world reports (a read between extract
+and report looked settled). Line `warmup: catalog N specimens (B builtin specimens), M pipelines (specimens resolved), T s`. Game
+(`mw_exterior_bevy` `catalog_warm.rs`): catalog loaded on `OnEnter(Loading)`; terrain, water, precipitation = their systems' live
+entities; sky skipped (view pipelines, held by `waiting_pipelines()`); `mesh.rig` registered as a baked extension. Tests: `catalog_warm_tests` (3).
+
+**W4b1-fix as built (2026-11-15; measured: census warm hold 7.56 s (base 3.6, W4b1 4.4-5.0), after_reveal 2 (base 46, W4b1 23), skipped_late 0 %; cold capped 14.1 s with 0 visible draws skipped; ledger perf.md; next: throttle only while a draw-path pipeline waits).** W4b1's census run: cold, the catalog's ~250 pipelines queued ahead of the
+visible draws' (cap hit); warm, 23 `after_reveal` from `+GI_PROBES` 0.38 s after the reveal. **Low priority** (UE5 PSO precache):
+`PipelinePrecache::set_limit` (patch `own, W3`) keeps at most K precache pipelines queued or compiling (a plan longer than K goes
+alone), resolving one specimen at a time and counting only what it really queued; held-back specimens stay `waiting` (= queued in the
+tag status, so the gate's catalog term holds on them); draws are never held. The pipeline cache spawns every queued task in one
+`process_queue` (FIFO pools), so holding back at submission suffices; `pipeline_cache.rs` untouched. K = `precache_limit`: half the
+compile threads while a reveal holds (W2b pool, else async-compute), 1 in play; counters `precache/throttled`, `/outstanding`.
+**GI before the reveal:** `sf_world_bevy::RevealHolds` (named readiness sources, pipelines term, 10 s cap, warning `holds N; holds: gi`) fed by `sf_gi_bevy::GiReadiness` (a volume that will trace is not shown yet, +2 tail frames; clear without GPU support, GI off, pipeline error) via `mw_exterior_bevy` `gi_volume.rs` (replaces its fade-only 1.5 s `FadeTransition::hold`). Tests: `precache_tests` throttle, `reveal_tests` holds, `sf_gi_bevy` 2.
+
+**W4b1-throughput as built (2026-11-16; measured: census warm hold 6.3 s vs W4b1-fix 6.6 s (noise), first warm run after a cold one 7.1-8.3 s vs 12.2-12.4 s; cold capped in both; no-catalog base on the same setup warm 2.9 s, cold 8.1 s; ledger perf.md).** UE5 caps precache PSOs only against PSOs a draw needs, so the limit is two: `PrecacheLimit { idle, draw_waiting }` (`PipelinePrecache::set_limits`, `Precache::set_limits`; `compile_pool.rs` `precache_limit`: all compile threads while a reveal holds, half of them while a draw-path pipeline not of the precache's own is queued or compiling, 1/1 in play; never unlimited, so a later draw waits at most one task). A draw counts as waiting from its first draw while its pipeline is in progress (`note_draw_with`, pruned each frame). Admission per pipeline, not per specimen (a specimen may resolve over several frames and stays queued in its tag's status); a hash hit or an id already outstanding takes no slot; a `Creating` task that finished frees its slot before `process_queue` stores it. `precache_specimens_systems()` orders the precache after `specialize_material_meshes` and `specialize_shadows` (the prepass specialiser runs earlier, in `PrepareMeshes`), so it sees the frame's draws; misses settle at the end of the step (a pipeline predicted in the same frame is a hit) and log once each: `precache missed: <Pass> pipeline <id> mesh key 0x.. <flags> material key 0x.. (waiting N); nearest predicted differs by ..` (`waiting 0` = a true miss; shadow misses `key unknown`), cap 256 lines. Counters `precache/draw_waiting`, `/limit`. The last 2 misses were a skinned mesh with morph targets drawn with previous skin but no previous morph: `plan_specimen` now plans every subset of a specimen's previous-frame bits (census warm after_reveal 0/0/0; the misses left come from a view key flipping during or after the hold: W6). **Where the warm hold goes now:** the catalog makes ~250 pipelines where the view uses ~107, and the shader front end (composition + naga, ~45 ms each) is 11-14 s summed over threads against 3.7 s, so the throttle is no longer the limit; the next step is not holding the reveal on the whole catalog (UE5 waits for the shown components' PSOs and leaves the rest of the precache to the background) and a front-end module cache. Measuring: each exe on its own empty GLCache, cold then warm x4 (the NVIDIA cache fills over 3-4 runs); the shared live cache (~1 GB) evicts and is not a warm baseline. Tests: `precache_tests` +7 (limits, hits free, finished tasks free, same-frame misses) and the subset plan.
+
 W0 first: it decides whether the front end (W2) or prediction (W3/W4) is the bigger win, and the caps. W1 is useful
 alone (it fixes the "opens early" cases of ROADMAP 1.1). W3 needs the static scene's batch path accounted for:
 `GpuBatchedMesh3d` batches specialise through the same material path (patch GS), so specimens cover them; coordinate

@@ -81,7 +81,7 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     // Far field (far-field.md): L1-L3 proxies and impostors over the exterior.
     let far = mw_bake::far::bake_far(&mut baker, &db, &[world::exterior()]);
     // Animation (bake-adapter.md "Animation"): skeletons, clips and graphs of every actor.
-    let anim = bake_actors(&mut baker, &db, &vfs, &anim_sources);
+    let (anim, rig_keys) = bake_actors(&mut baker, &db, &vfs, &anim_sources);
     // Item bodies and the settle test of placed items (physics-adapter.md "Items").
     let bodies = mw_bake::body::bake_bodies(&baker, &db, &paths);
     let items = mw_bake::body::check_items(&mut baker, &db);
@@ -99,6 +99,10 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let chains = scene.as_ref().ok().map(|_| mw_bake::scene::bake_chains(&baker, &ext));
     // Texture demand (textures.md §6, S3b): UV density per model + clusters per cell, after the cook (companions).
     let demand = mw_bake::demand::bake_demand(&mut baker, &ext);
+    // Pipeline warm-up catalog (pipeline-warmup.md §7, W4a): the distinct specimens of the cooked
+    // models and rigs, after the texture bake (alpha classes, companions).
+    let catalog_models = mw_bake::catalog::catalog_models(&db, &paths, &rig_keys);
+    let catalog = mw_bake::catalog::bake_catalog(&mut baker, mw_bake::catalog::MwCatalogSource::new(catalog_models));
     let manifest = baker.manifest();
     let save = Instant::now();
     inputs.save()?;
@@ -182,6 +186,19 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
             1
         }
     };
+    match &catalog {
+        Ok(c) => println!(
+            "pipeline.catalog: {} specimens ({} skinned), {} builtins; models {}, submeshes {}, skipped {}, failed {}",
+            c.entries.len(),
+            c.skinned(),
+            c.builtins.len(),
+            c.stats.models,
+            c.stats.submeshes,
+            c.stats.skipped,
+            c.stats.failed
+        ),
+        Err(e) => eprintln!("pipeline.catalog: not baked: {e}"),
+    }
     if let Some(nav) = &nav {
         print!("{nav}");
         for (key, error) in nav.failures.iter().take(10) {
@@ -234,6 +251,9 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     if let Some(nav) = nav.as_ref().filter(|n| !n.failures.is_empty()) {
         errors.push(format!("{} navmesh products failed", nav.failures.len()));
     }
+    if let Err(e) = &catalog {
+        errors.push(format!("pipeline catalog not baked ({e})"));
+    }
     if scripts.errors() > 0 {
         errors.push(format!("{} legacy script products failed to translate or compile", scripts.errors()));
     }
@@ -285,10 +305,11 @@ fn bake_actors(
     db: &Arc<sf_records::RecordDb>,
     vfs: &Arc<sf_vfs::Vfs>,
     anim_sources: &mw_bake::sources::AnimSources,
-) -> mw_bake::anim::AnimBakeReport {
+) -> (mw_bake::anim::AnimBakeReport, Vec<sf_bake::ProductKey>) {
     let sets = mw_bake::anim::actor_sets(db, vfs);
     let anim = mw_bake::anim::bake_animation(baker, &sets, anim_sources);
-    let mut keys = sets.body_rig_keys();
+    let rig_keys = sets.body_rig_keys();
+    let mut keys = rig_keys.clone();
     keys.extend(held_rest_keys(db, vfs));
     let report = baker.bake(&keys);
     let failures: Vec<_> = report.failures().collect();
@@ -297,7 +318,7 @@ fn bake_actors(
         eprintln!("  failed: {key}: {error}");
     }
     print_ragdolls(&mw_bake::ragdoll::bake_ragdolls(baker, &sets));
-    anim
+    (anim, rig_keys)
 }
 
 /// The `ragdoll.cook` census (physics-adapter.md "Ragdolls"); every row with

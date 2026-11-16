@@ -5,7 +5,7 @@
 //!
 //! A source scan (like a tidy check), not a render test: it runs with plain
 //! `std`, finds every `AlphaMode::{Blend, Add, Premultiplied, Multiply}` in
-//! `crates/*_bevy/src` (comments, `matches!` tests and test modules skipped)
+//! `crates/*_bevy/src` (comments, `matches!` tests, test modules and `tests.rs` / `*_tests.rs` files skipped)
 //! and checks:
 //! 1. every file with a translucent site is declared, and every declaration
 //!    still has one (no stale rows);
@@ -82,7 +82,9 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             rust_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") && path.file_name().is_none_or(|n| n != "tests.rs") {
+        } else if path.extension().is_some_and(|e| e == "rs")
+            && path.file_name().and_then(|n| n.to_str()).is_none_or(|n| n != "tests.rs" && !n.ends_with("_tests.rs"))
+        {
             out.push(path);
         }
     }

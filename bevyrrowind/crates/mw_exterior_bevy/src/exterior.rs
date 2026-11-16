@@ -217,6 +217,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // The UI theme sheets (`ui_theme.rs`) come from the same VFS.
     mw_boot_bevy::ui_theme::add_source(&mut app, vfs.clone());
     let mut extensions = BTreeMap::from([(MeshCookStep::ID.to_owned(), mw_bake::SFMESH_EXT.to_owned())]);
+    // Creature bodies' `mesh.rig` products load as cooked models too: the catalog warm-up's skinned representatives.
+    extensions.insert(sf_model::steps::MeshRigStep::ID.to_owned(), mw_bake::SFMESH_EXT.to_owned());
     extensions.extend(sf_lod_bevy::baked_extensions());
     extensions.extend(sf_scene_bevy::baked_extensions());
     // The far field (far-field.md) when the bake has it and `--off farfield` doesn't drop it.
@@ -293,6 +295,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // `--env BEVYRROWIND_GPU_CULL_STATICS=1`; `--off cpuculltag` forces it off.
     streaming.gpu_cull_statics = std::env::var_os("BEVYRROWIND_GPU_CULL_STATICS").is_some_and(|v| v == "1")
         && !perf.off.has(Part::CpuCullTag);
+    // Pipeline-compile pool while a reveal holds (pipeline-warmup.md W2b): default all cores but 2;
+    // A/B with `--env BEVYRROWIND_COMPILE_THREADS=0` (off, stock 4 async threads) or `=<n>`.
+    streaming.pipeline_compile_threads = std::env::var("BEVYRROWIND_COMPILE_THREADS").ok().and_then(|v| v.parse().ok());
     // The static scene (`--scene`) or the precombine draws the near statics, never both.
     let (scene, precombine) = static_paths(options.scene, &perf.off, options.lod_tint);
     streaming.precombine = precombine;
@@ -353,6 +358,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // Cooked materials map exactly like the NIF path's.
     let mapper_vfs = vfs.clone();
     app.insert_resource(ModelMaterials(Arc::new(mw_assets::cooked::material_mapper(mapper_vfs))));
+    // Pipeline warm-up W4b1: the baked catalog precached on `Loading` (the reveal waits on it).
+    crate::catalog_warm::add(&mut app, options.store.clone(), manifest.clone(), vfs.clone());
 
     // The night exposure floor and ambient (LightCalibration, owner option A).
     let mut settings = SkySettings::default();

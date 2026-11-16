@@ -51,7 +51,7 @@ use bevy_transform::components::GlobalTransform;
 use sf_gi::{AtlasLayout, GiLight, GiSettings, LightTracker};
 use sf_sky_bevy::RenderPathCamera;
 
-use crate::{solari_verdict, GiSceneStats, GiTraced, GiVolume, GiVoxels, SceneCounts, Verdict};
+use crate::{solari_verdict, GiFailed, GiSceneStats, GiTraced, GiVolume, GiVoxels, SceneCounts, Verdict};
 
 /// Uniform block size (10 x vec4, `GiUniforms` in the shader).
 const UNIFORM_BYTES: u64 = 160;
@@ -63,10 +63,12 @@ const FLAG_BOUNCE: u32 = 2;
 
 pub(crate) fn build(app: &mut App) {
     let traced = app.world().resource::<GiTraced>().clone();
+    let failed = app.world().resource::<GiFailed>().clone();
     let stats = app.world().resource::<GiSceneStats>().clone();
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
     render_app
         .insert_resource(traced)
+        .insert_resource(failed)
         .insert_resource(stats)
         .init_resource::<MeshVerdicts>()
         .init_resource::<ExtractedGi>()
@@ -531,6 +533,7 @@ fn probe_update(
     cache: Res<PipelineCache>,
     scene: Res<RaytracingSceneBindings>,
     traced: Res<GiTraced>,
+    failed: Res<GiFailed>,
     mut ctx: RenderContext,
 ) {
     let Some(mut gi) = pipeline else { return };
@@ -549,6 +552,8 @@ fn probe_update(
     };
     if gi.status != status && (gi.pending.is_some() || status != "dispatching") {
         if status.starts_with("pipeline error") {
+            // Never traced: the main world stops a reveal waiting on it (`GiReadiness`).
+            failed.0.store(true, Ordering::Relaxed);
             log::error!("gi: {status}");
         } else {
             log::info!("gi: {status}");

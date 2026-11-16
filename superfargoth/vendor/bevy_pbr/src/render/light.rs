@@ -30,7 +30,7 @@ use bevy_light::{
 };
 use bevy_log::warn_once;
 use bevy_material::{
-    key::{ErasedMaterialPipelineKey, ErasedMeshPipelineKey},
+    // superfargoth patch (own, W3): the key types moved to `precache`
     MaterialProperties,
 };
 use bevy_math::{ops, proj, Mat4, UVec4, Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
@@ -3159,15 +3159,8 @@ pub fn check_views_lights_need_specialization(
         }
 
         let is_directional_light = matches!(light_entity, LightEntity::Directional { .. });
-        let mut light_key = MeshPipelineKey::DEPTH_PREPASS;
-        light_key.set(
-            MeshPipelineKey::VIEW_PROJECTION_ORTHOGRAPHIC | MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO,
-            is_directional_light,
-        );
-        light_key.set(
-            MeshPipelineKey::VIEW_PROJECTION_PERSPECTIVE,
-            !is_directional_light,
-        );
+        // superfargoth patch (own, W3): shared with the precache's shadow templates.
+        let light_key = precache::shadow_view_key(is_directional_light);
         if let Some(current_key) =
             light_key_cache.get_mut(&extracted_view_light.retained_view_entity)
         {
@@ -3349,35 +3342,22 @@ pub(crate) fn specialize_shadows(
                     continue;
                 };
 
-                let mut mesh_key =
-                    *light_key | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits());
-
-                // Even though we don't use the lightmap in the shadow map, the
-                // `SetMeshBindGroup` render command will bind the data for it. So
-                // we need to include the appropriate flag in the mesh pipeline key
-                // to ensure that the necessary bind group layout entries are
-                // present.
-                // superfargoth patch (bevyengine/bevy#25978)
-                if matches!(draw, RenderMeshDraw::Extracted(_))
-                    && render_lightmaps
-                        .render_lightmaps
-                        .contains_key(visible_entity)
-                {
-                    mesh_key |= MeshPipelineKey::LIGHTMAPPED;
-                }
-
-                mesh_key |= match material.properties.alpha_mode {
-                    AlphaMode::Mask(_)
-                    | AlphaMode::Blend
-                    | AlphaMode::Premultiplied
-                    | AlphaMode::Add
-                    | AlphaMode::AlphaToCoverage => MeshPipelineKey::MAY_DISCARD,
-                    _ => MeshPipelineKey::NONE,
+                // superfargoth patch (own, W3): the key comes from the function the precache uses
+                // (`precache.rs`; same bits as before: lightmapped, may-discard, reads-material).
+                let entity_flags = precache::entity_key_flags(
+                    &draw,
+                    *visible_entity,
+                    &render_lightmaps,
+                    None, // shadow keys have no dither bit
+                );
+                let Some(mesh_key) = precache::shadow_mesh_key(
+                    *light_key,
+                    &mesh.key_bits,
+                    &material.properties,
+                    entity_flags,
+                ) else {
+                    continue;
                 };
-
-                if material.properties.prepass_reads_material() {
-                    mesh_key |= MeshPipelineKey::PREPASS_READS_MATERIAL;
-                }
 
                 work_items.push(ShadowSpecializationWorkItem {
                     visible_entity: *visible_entity,
@@ -3402,11 +3382,12 @@ pub(crate) fn specialize_shadows(
             continue;
         };
 
-        let key = ErasedMaterialPipelineKey {
-            type_id: item.material_type_id,
-            mesh_key: ErasedMeshPipelineKey::new(item.mesh_key),
-            material_key: item.properties.material_key.clone(),
-        };
+        // superfargoth patch (own, W3)
+        let key = precache::material_pipeline_key(
+            item.material_type_id,
+            item.mesh_key,
+            &item.properties,
+        );
 
         let emulate_unclipped_depth = item
             .mesh_key
@@ -3429,6 +3410,8 @@ pub(crate) fn specialize_shadows(
 
         match prepass_specialize(world, &key, &item.layout, &item.properties) {
             Ok(pipeline_id) => {
+                // superfargoth patch (own, W3): precache hit/miss accounting.
+                precache::note_draw_pipeline(world, pipeline_id);
                 world
                     .resource_mut::<SpecializedShadowMaterialPipelineCache>()
                     .entry(item.retained_view_entity)

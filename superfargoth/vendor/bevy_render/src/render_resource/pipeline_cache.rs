@@ -618,36 +618,23 @@ impl PipelineCache {
         create_pipeline_task(
             async move {
                 let started = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
-                let mut shader_cache = shader_cache.lock().unwrap();
-                let mut layout_cache = layout_cache.lock().unwrap();
-                let locked = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
-
-                let vertex_module = match shader_cache.get(
-                    id,
-                    descriptor.vertex.shader.id(),
-                    &descriptor.vertex.shader_defs,
-                ) {
-                    Ok(module) => module,
-                    Err(err) => return Err(err),
-                };
-
-                let fragment_module = match &descriptor.fragment {
-                    Some(fragment) => {
-                        match shader_cache.get(id, fragment.shader.id(), &fragment.shader_defs) {
-                            Ok(module) => Some(module),
-                            Err(err) => return Err(err),
-                        }
-                    }
-                    None => None,
-                };
+                // superfargoth patch (own, W2a: front end outside the lock): modules via `stage_modules` (the
+                // shader-cache lock only for lookups and stores), the layout under its own short lock.
+                let mut stages: SmallVec<[(AssetId<Shader>, &[ShaderDefVal]); 3]> = SmallVec::new();
+                stages.push((descriptor.vertex.shader.id(), &descriptor.vertex.shader_defs));
+                if let Some(fragment) = &descriptor.fragment {
+                    stages.push((fragment.shader.id(), &fragment.shader_defs));
+                }
+                let (modules, locked) = stage_modules(&shader_cache, &device, id, &stages)?;
+                let vertex_module = modules[0].clone();
+                let fragment_module = descriptor.fragment.as_ref().map(|_| modules[1].clone());
 
                 let layout = if descriptor.layout.is_empty() && descriptor.immediate_size == 0 {
                     None
                 } else {
-                    Some(layout_cache.get(&device, &bind_group_layout, descriptor.immediate_size))
+                    Some(layout_cache.lock().unwrap().get(&device, &bind_group_layout, descriptor.immediate_size))
                 };
-
-                drop((shader_cache, layout_cache));
+                // end superfargoth patch (own, W2a)
                 let composed = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
 
                 let vertex_buffer_layouts = descriptor
@@ -746,23 +733,22 @@ impl PipelineCache {
         create_pipeline_task(
             async move {
                 let started = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
-                let mut shader_cache = shader_cache.lock().unwrap();
-                let mut layout_cache = layout_cache.lock().unwrap();
-                let locked = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
-
-                let compute_module =
-                    match shader_cache.get(id, descriptor.shader.id(), &descriptor.shader_defs) {
-                        Ok(module) => module,
-                        Err(err) => return Err(err),
-                    };
+                // superfargoth patch (own, W2a: front end outside the lock): modules via `stage_modules` (the
+                // shader-cache lock only for lookups and stores), the layout under its own short lock.
+                let (modules, locked) = stage_modules(
+                    &shader_cache,
+                    &device,
+                    id,
+                    &[(descriptor.shader.id(), &descriptor.shader_defs)],
+                )?;
+                let compute_module = modules[0].clone();
 
                 let layout = if descriptor.layout.is_empty() && descriptor.immediate_size == 0 {
                     None
                 } else {
-                    Some(layout_cache.get(&device, &bind_group_layout, descriptor.immediate_size))
+                    Some(layout_cache.lock().unwrap().get(&device, &bind_group_layout, descriptor.immediate_size))
                 };
-
-                drop((shader_cache, layout_cache));
+                // end superfargoth patch (own, W2a)
                 let composed = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
 
                 let constants: Vec<(&str, f64)> = descriptor
@@ -814,44 +800,27 @@ impl PipelineCache {
         create_pipeline_task(
             async move {
                 let started = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
-                let mut shader_cache = shader_cache.lock().unwrap();
-                let mut layout_cache = layout_cache.lock().unwrap();
-                let locked = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
-
-                let mesh_module = match shader_cache.get(
-                    id,
-                    descriptor.mesh.shader.id(),
-                    &descriptor.mesh.shader_defs,
-                ) {
-                    Ok(module) => module,
-                    Err(err) => return Err(err),
-                };
-
-                let fragment_module = match &descriptor.fragment {
-                    Some(fragment) => {
-                        match shader_cache.get(id, fragment.shader.id(), &fragment.shader_defs) {
-                            Ok(module) => Some(module),
-                            Err(err) => return Err(err),
-                        }
-                    }
-                    None => None,
-                };
-
-                let task_module = match &descriptor.task {
-                    Some(task) => match shader_cache.get(id, task.shader.id(), &task.shader_defs) {
-                        Ok(module) => Some(module),
-                        Err(err) => return Err(err),
-                    },
-                    None => None,
-                };
+                // superfargoth patch (own, W2a: front end outside the lock): modules via `stage_modules` (the
+                // shader-cache lock only for lookups and stores), the layout under its own short lock.
+                let mut stages: SmallVec<[(AssetId<Shader>, &[ShaderDefVal]); 3]> = SmallVec::new();
+                stages.push((descriptor.mesh.shader.id(), &descriptor.mesh.shader_defs));
+                if let Some(fragment) = &descriptor.fragment {
+                    stages.push((fragment.shader.id(), &fragment.shader_defs));
+                }
+                if let Some(task) = &descriptor.task {
+                    stages.push((task.shader.id(), &task.shader_defs));
+                }
+                let (modules, locked) = stage_modules(&shader_cache, &device, id, &stages)?;
+                let mesh_module = modules[0].clone();
+                let fragment_module = descriptor.fragment.as_ref().map(|_| modules[1].clone());
+                let task_module = descriptor.task.as_ref().map(|_| modules[stages.len() - 1].clone());
 
                 let layout = if descriptor.layout.is_empty() && descriptor.immediate_size == 0 {
                     None
                 } else {
-                    Some(layout_cache.get(&device, &bind_group_layout, descriptor.immediate_size))
+                    Some(layout_cache.lock().unwrap().get(&device, &bind_group_layout, descriptor.immediate_size))
                 };
-
-                drop((shader_cache, layout_cache));
+                // end superfargoth patch (own, W2a)
                 let composed = bevy_platform::time::Instant::now(); // superfargoth patch (own: pipeline compile timing)
 
                 let fragment_data = descriptor.fragment.as_ref().map(|fragment| {
@@ -1135,6 +1104,128 @@ fn pipeline_error_context(cached_pipeline: &CachedPipeline) -> String {
     }
 }
 
+// superfargoth patch (own, W2a: front end outside the lock), pipeline-warmup.md W2 (bevyengine/bevy#26152).
+/// The shader modules of one pipeline's stages. The shader-cache lock is held only to look modules up
+/// (preparing [`bevy_shader::ShaderJob`]s for misses) and to store the results; WESL composition, naga
+/// and module creation run outside it, so pipelines compose in parallel and `extract_shaders` never
+/// waits on a composition. Returns the modules in stage order and when the lock was first taken.
+fn stage_modules(
+    shader_cache: &Mutex<ShaderCache<WgpuShaderModule, RenderDevice>>,
+    device: &RenderDevice,
+    id: CachedPipelineId,
+    stages: &[(AssetId<Shader>, &[ShaderDefVal])],
+) -> Result<
+    (SmallVec<[Arc<WgpuShaderModule>; 3]>, bevy_platform::time::Instant),
+    ShaderCacheError,
+> {
+    use bevy_shader::ShaderLookup;
+    // A stage repeating an earlier stage's shader and defs reuses its module (one job per module: a
+    // second `prepare` of a module being composed would only say "retry").
+    let first_of = |i: usize| stages[..i].iter().position(|earlier| *earlier == stages[i]);
+    let mut lookups: SmallVec<[Option<ShaderLookup<WgpuShaderModule, RenderDevice>>; 3]> = SmallVec::new();
+    let locked;
+    {
+        let mut cache = shader_cache.lock().unwrap();
+        locked = bevy_platform::time::Instant::now();
+        for (i, &(shader, shader_defs)) in stages.iter().enumerate() {
+            if first_of(i).is_some() {
+                lookups.push(None);
+                continue;
+            }
+            match cache.prepare(id, shader, shader_defs) {
+                Ok(lookup) => lookups.push(Some(lookup)),
+                Err(err) => {
+                    for lookup in lookups.into_iter().flatten() {
+                        if let ShaderLookup::Compile(job) = lookup {
+                            cache.cancel(job);
+                        }
+                    }
+                    return Err(err);
+                }
+            }
+        }
+    }
+    let outputs: SmallVec<[_; 3]> = lookups
+        .into_iter()
+        .map(|lookup| match lookup {
+            None => None,
+            Some(ShaderLookup::Ready(module)) => Some(Ok(module)),
+            Some(ShaderLookup::Compile(job)) => Some(Err(job.compile(device))),
+        })
+        .collect();
+    let needs_finish = outputs.iter().any(|output| matches!(output, Some(Err(_))));
+    let mut cache = needs_finish.then(|| shader_cache.lock().unwrap());
+    let mut modules: SmallVec<[Arc<WgpuShaderModule>; 3]> = SmallVec::new();
+    let mut first_error = None;
+    for (i, output) in outputs.into_iter().enumerate() {
+        let module = match output {
+            None => modules.get(first_of(i).unwrap_or(i)).cloned(),
+            Some(Ok(module)) => Some(module),
+            Some(Err(output)) => match cache.as_mut().unwrap().finish(output) {
+                Ok(module) => Some(module),
+                Err(err) => {
+                    first_error.get_or_insert(err);
+                    None
+                }
+            },
+        };
+        // A failed stage still lets the others finish (no module is left marked in flight).
+        if let Some(module) = module {
+            modules.push(module);
+        } else if first_error.is_none() {
+            unreachable!("a repeated stage follows the stage it repeats");
+        }
+    }
+    match first_error {
+        Some(err) => Err(err),
+        None => Ok((modules, locked)),
+    }
+}
+
+// superfargoth patch (own, W2b: compile pool), pipeline-warmup.md W2. Opt-in, process-wide: an app may
+// install a wider pool for pipeline creation (`install_pipeline_compile_pool`) and switch new pipeline
+// tasks onto it while nothing is on screen (`set_pipeline_compile_boost`: a fade or loading hold), so a
+// burst of driver compiles uses every core instead of the 4 async-compute threads; while not boosted
+// tasks go to `AsyncComputeTaskPool` as in stock Bevy. Not installed = stock.
+static PIPELINE_COMPILE_POOL: std::sync::OnceLock<bevy_tasks::TaskPool> = std::sync::OnceLock::new();
+static PIPELINE_COMPILE_BOOST: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Installs the pool pipeline tasks use while boosted. Returns `false` if one was installed already.
+pub fn install_pipeline_compile_pool(pool: bevy_tasks::TaskPool) -> bool {
+    PIPELINE_COMPILE_POOL.set(pool).is_ok()
+}
+
+/// Whether a compile pool is installed.
+pub fn pipeline_compile_pool_installed() -> bool {
+    PIPELINE_COMPILE_POOL.get().is_some()
+}
+
+/// Sends pipeline tasks spawned from now on to the installed compile pool (`true`) or to
+/// `AsyncComputeTaskPool` (`false`, the default). No effect without an installed pool.
+pub fn set_pipeline_compile_boost(boost: bool) {
+    PIPELINE_COMPILE_BOOST.store(boost, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether new pipeline tasks go to the compile pool.
+pub fn pipeline_compile_boosted() -> bool {
+    PIPELINE_COMPILE_BOOST.load(core::sync::atomic::Ordering::Relaxed) && pipeline_compile_pool_installed()
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "macos"),
+    feature = "multi_threaded"
+))]
+fn spawn_pipeline_task(
+    task: impl Future<Output = Result<Pipeline, ShaderCacheError>> + Send + 'static,
+) -> Task<Result<Pipeline, ShaderCacheError>> {
+    match PIPELINE_COMPILE_POOL.get() {
+        Some(pool) if PIPELINE_COMPILE_BOOST.load(core::sync::atomic::Ordering::Relaxed) => pool.spawn(task),
+        _ => bevy_tasks::AsyncComputeTaskPool::get().spawn(task),
+    }
+}
+// end superfargoth patch (own, W2a/W2b)
+
 #[cfg(all(
     not(target_arch = "wasm32"),
     not(target_os = "macos"),
@@ -1145,7 +1236,7 @@ fn create_pipeline_task(
     sync: bool,
 ) -> CachedPipelineState {
     if !sync {
-        return CachedPipelineState::Creating(bevy_tasks::AsyncComputeTaskPool::get().spawn(task));
+        return CachedPipelineState::Creating(spawn_pipeline_task(task)); // superfargoth patch (own, W2b: compile pool)
     }
 
     match bevy_tasks::block_on(task) {

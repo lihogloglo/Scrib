@@ -9,6 +9,7 @@
 //!
 //! Spec: `docs/specs/bake.md` ("Cooked meshes and LODs").
 
+pub mod catalog;
 mod cook;
 mod cooked;
 mod lod;

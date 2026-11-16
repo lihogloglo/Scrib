@@ -1880,8 +1880,6 @@ dependencies = [
 [[package]]
 name = "bevy_shader"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2becafd54079da13835d6a42fc743e305d6270c27a91de613afe6e3f4b5de19"
 dependencies = [
  "bevy_asset",
  "bevy_platform",
@@ -5006,16 +5004,16 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "mw_bake",
- "naga",
  "mw_nif",
  "mw_world",
+ "naga",
  "sf_model",
  "sf_model_bevy",
  "sf_render_order_bevy",
  "sf_sky_bevy",
- "wesl",
  "sf_vfs",
  "thiserror 2.0.21",
+ "wesl",
  "workspace-hack",
 ]
 

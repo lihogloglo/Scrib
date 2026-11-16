@@ -4,6 +4,7 @@
 //! "App phases": the menu shows with no world). The binary keeps the CLI
 //! (`view level:` parses its flags there).
 
+mod catalog_warm;
 pub mod exterior;
 mod gi_volume;
 mod intro;

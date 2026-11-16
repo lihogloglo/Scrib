@@ -1,14 +1,14 @@
 mod prepass_bindings;
 
 use crate::{
-    alpha_mode_pipeline_key, binding_arrays_are_usable, buffer_layout,
+    binding_arrays_are_usable, buffer_layout, // superfargoth patch (own, W3): key fns moved to `precache`
     collect_meshes_for_gpu_building, init_material_pipeline, set_mesh_motion_vector_flags,
     setup_morph_and_skinning_defs, skin, DeferredAlphaMaskDrawFunction, DeferredFragmentShader,
     DeferredOpaqueDrawFunction, DeferredVertexShader, DrawMesh, MaterialPipeline,
     MaterialPropertiesExt, MeshLayouts, MeshPipeline, MeshPipelineKey, PreparedMaterial,
     PrepassAlphaMaskDrawFunction, PrepassFragmentShader, PrepassOpaqueDepthOnlyDrawFunction,
     PrepassOpaqueDrawFunction, PrepassVertexShader, RenderLightmaps, RenderMaterialInstances,
-    RenderMeshInstanceFlags, SetMaterialBindGroup, SetMeshBindGroup,
+    SetMaterialBindGroup, SetMeshBindGroup,
     ShadowView,
     RenderMeshDraws, // superfargoth patch (bevyengine/bevy#25978): replaces `RenderMeshInstances`
     surface_weather_bind_entries, surface_weather_layout_entries, SurfaceWeatherPrepassBindGroups,
@@ -26,8 +26,8 @@ use bevy_ecs::{
     },
 };
 use bevy_material::{
-    key::{ErasedMaterialPipelineKey, ErasedMeshPipelineKey},
-    AlphaMode, MaterialProperties, OpaqueRendererMethod, RenderPhaseType,
+    key::ErasedMaterialPipelineKey, // superfargoth patch (own, W3): `ErasedMeshPipelineKey` now in `precache`
+    MaterialProperties, OpaqueRendererMethod, RenderPhaseType,
 };
 use bevy_math::{Affine3A, Mat4, Vec2, Vec4};
 use bevy_mesh::{Mesh, Mesh3d, MeshAttributeCompressionFlags, MeshVertexBufferLayoutRef};
@@ -1211,85 +1211,28 @@ pub(crate) fn specialize_prepass_material_meshes(
                     continue;
                 };
 
-                let mut mesh_key =
-                    *view_key | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits());
-
-                let alpha_mode = material.properties.alpha_mode;
-                match alpha_mode {
-                    AlphaMode::Opaque | AlphaMode::AlphaToCoverage | AlphaMode::Mask(_) => {
-                        mesh_key |= alpha_mode_pipeline_key(alpha_mode, msaa);
-                    }
-                    AlphaMode::Blend
-                    | AlphaMode::Premultiplied
-                    | AlphaMode::Add
-                    | AlphaMode::Multiply => {
-                        // In case this material was previously in a valid alpha_mode, remove it to
-                        // stop the queue system from assuming its retained cache to be valid.
-                        removals.push((extracted_view.retained_view_entity, *visible_entity));
-                        continue;
-                    }
-                }
-
-                if material.properties.reads_view_transmission_texture {
-                    // No-op: Materials reading from `ViewTransmissionTexture` are not rendered in the `Opaque3d`
-                    // phase, and are therefore also excluded from the prepass much like alpha-blended materials.
+                // superfargoth patch (own, W3): the key comes from the function the precache uses
+                // (`precache.rs`; same bits as before). `None`: blended or reads the view
+                // transmission texture, so not in the prepass; in case the material was in a valid
+                // mode before, remove it so the queue does not trust its retained cache.
+                let entity_flags = crate::precache::entity_key_flags(
+                    &draw,
+                    *visible_entity,
+                    &render_lightmaps,
+                    Some(&render_visibility_ranges),
+                );
+                let Some(mesh_key) = crate::precache::prepass_mesh_key(
+                    *view_key,
+                    &mesh.key_bits,
+                    &material.properties,
+                    msaa,
+                    deferred_prepass.is_some(),
+                    motion_vector_prepass.is_some(),
+                    entity_flags,
+                ) else {
                     removals.push((extracted_view.retained_view_entity, *visible_entity));
                     continue;
-                }
-
-                let forward = match material.properties.render_method {
-                    OpaqueRendererMethod::Forward => true,
-                    OpaqueRendererMethod::Deferred => false,
-                    OpaqueRendererMethod::Auto => unreachable!(),
                 };
-
-                let deferred = deferred_prepass.is_some() && !forward;
-
-                if deferred {
-                    mesh_key |= MeshPipelineKey::DEFERRED_PREPASS;
-                }
-
-                // superfargoth patch (bevyengine/bevy#25978)
-                if let crate::RenderMeshDraw::Extracted(_) = draw {
-                    if let Some(lightmap) = render_lightmaps.render_lightmaps.get(visible_entity) {
-                        // Even though we don't use the lightmap in the forward prepass, the
-                        // `SetMeshBindGroup` render command will bind the data for it. So
-                        // we need to include the appropriate flag in the mesh pipeline key
-                        // to ensure that the necessary bind group layout entries are
-                        // present.
-                        mesh_key |= MeshPipelineKey::LIGHTMAPPED;
-
-                        if lightmap.bicubic_sampling && deferred {
-                            mesh_key |= MeshPipelineKey::LIGHTMAP_BICUBIC_SAMPLING;
-                        }
-                    }
-
-                    if render_visibility_ranges
-                        .entity_has_crossfading_visibility_ranges(*visible_entity)
-                    {
-                        mesh_key |= MeshPipelineKey::VISIBILITY_RANGE_DITHER;
-                    }
-
-                    // If the previous frame has skins or morph targets, note that.
-                    if motion_vector_prepass.is_some() {
-                        if draw
-                            .flags()
-                            .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_SKIN)
-                        {
-                            mesh_key |= MeshPipelineKey::HAS_PREVIOUS_SKIN;
-                        }
-                        if draw
-                            .flags()
-                            .contains(RenderMeshInstanceFlags::HAS_PREVIOUS_MORPH)
-                        {
-                            mesh_key |= MeshPipelineKey::HAS_PREVIOUS_MORPH;
-                        }
-                    }
-                }
-
-                if material.properties.prepass_reads_material() {
-                    mesh_key |= MeshPipelineKey::PREPASS_READS_MATERIAL;
-                }
 
                 work_items.push(PrepassSpecializationWorkItem {
                     visible_entity: *visible_entity,
@@ -1314,11 +1257,12 @@ pub(crate) fn specialize_prepass_material_meshes(
             continue;
         };
 
-        let key = ErasedMaterialPipelineKey {
-            type_id: item.material_type_id,
-            mesh_key: ErasedMeshPipelineKey::new(item.mesh_key),
-            material_key: item.properties.material_key.clone(),
-        };
+        // superfargoth patch (own, W3)
+        let key = crate::precache::material_pipeline_key(
+            item.material_type_id,
+            item.mesh_key,
+            &item.properties,
+        );
 
         let emulate_unclipped_depth = item
             .mesh_key
@@ -1355,6 +1299,15 @@ pub(crate) fn specialize_prepass_material_meshes(
 
         match prepass_specialize(world, &key, &item.layout, &item.properties) {
             Ok(pipeline_id) => {
+                // superfargoth patch (own, W3): precache hit/miss accounting (key for the miss log).
+                crate::precache::note_draw_pipeline_key(
+                    world,
+                    pipeline_id,
+                    crate::precache::PrecachePass::Prepass,
+                    item.mesh_key,
+                    item.material_type_id,
+                    &item.properties.material_key,
+                );
                 world
                     .resource_mut::<SpecializedPrepassMaterialPipelineCache>()
                     .entry(item.retained_view_entity)

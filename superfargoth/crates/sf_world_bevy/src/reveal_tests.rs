@@ -223,3 +223,35 @@ fn textures_that_never_load_are_capped() {
     assert_eq!((n, reveal.capped), (81, Some("reveal_cap")));
     assert_eq!(warning.as_deref(), Some("not ready after 10.4 s (reveal_cap): pending textures"));
 }
+
+/// W4b1-fix: a readiness hold (the GI volume before its first trace) keeps the gate closed, in the
+/// pipelines term, until its source reports ready; no source (GI off, no volume) never holds; a
+/// hold that never clears hits the 10 s cap, counted in the warning.
+#[test]
+fn readiness_holds_keep_the_gate_closed_until_ready() {
+    let mut holds = RevealHolds::default();
+    assert_eq!(holds.count(), 0);
+    let mut gate = RevealGate::default();
+    let (n, _, warning) = run(&mut gate, &RevealInputs { holds: holds.count(), ..ready() }, 20).expect("no source: opens");
+    assert_eq!((n, warning), (SETTLE_FRAMES, None), "GI off or no volume: no hold");
+
+    holds.set("gi", true);
+    holds.set("other", false);
+    assert_eq!((holds.count(), holds.pending().collect::<Vec<_>>()), (1, vec!["gi"]));
+    assert!(holds.is_pending("gi") && !holds.is_pending("other"));
+    let mut gate = RevealGate::default();
+    assert!(run(&mut gate, &RevealInputs { holds: holds.count(), ..ready() }, 40).is_none(), "5 s pending: still covered");
+    holds.set("gi", false);
+    assert_eq!(holds.count(), 0);
+    let (n, reveal, warning) = run(&mut gate, &RevealInputs { holds: holds.count(), ..ready() }, 20).expect("ready: opens");
+    assert_eq!((n, reveal.capped, warning), (SETTLE_FRAMES, None, None));
+    assert_eq!(terms(&reveal)[3], ("pipelines", 5.0), "the hold's time is the pipelines term");
+
+    let mut gate = RevealGate::default();
+    let (n, reveal, warning) = run(&mut gate, &RevealInputs { holds: 1, ..ready() }, 200).expect("capped");
+    assert_eq!((n, reveal.capped), (81, Some("reveal_cap")));
+    assert_eq!(
+        warning.as_deref(),
+        Some("not ready after 10.1 s (reveal_cap): pending pipelines 1 (draws 0, shadow/prepass 0, compiling 0, holds 1)")
+    );
+}

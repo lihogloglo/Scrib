@@ -39,6 +39,8 @@ use tes3::esp::{Cell, Landscape};
 use mw_game_core::exterior::{ExteriorCamera, Quality};
 /// The sea's wind input (W-WIND): the exterior copies the weather's `WindField` mean wind into it.
 pub use sf_water_bevy::WaterWind;
+/// The water surfaces' material: the exterior's catalog warm-up precaches it (pipeline-warmup.md W4b1).
+pub use sf_water_bevy::WaterMaterial;
 
 /// `--water`: which sea the exterior draws.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]

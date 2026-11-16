@@ -12,7 +12,11 @@
 //!   pipeline yet ([`sf_diag_bevy::PendingSample::near_unprepared`] and `unprepared`);
 //! - **pipelines**: visible main-pass, shadow-view and prepass draws whose pipeline is queued or
 //!   compiling, plus any pipeline still compiling (`PipelineCache::waiting_pipelines`, which
-//!   covers the non-material ones);
+//!   covers the non-material ones), plus the catalog warm-up's pending specimens
+//!   ([`crate::CatalogWarmup::pending`], W4b1: representatives loading, then the precache tag),
+//!   plus the readiness holds ([`RevealHolds`], W4b1-fix: any crate or game names a source not
+//!   ready yet, e.g. the GI volume before its first trace, whose arrival changes the view key and
+//!   re-specialises every material);
 //! - **gates**: external holds ([`crate::FadeTransition::hold`]: lamp shadow captures, the GI
 //!   volume, ground collision) for at most [`RevealGate::gates_max_secs`] after cells and
 //!   textures, as before W1; the last frames settling ([`SETTLE_FRAMES`]) count here too.
@@ -40,7 +44,9 @@ use bevy_ecs::system::SystemParam;
 use bevy_time::{Real, Time};
 use sf_diag_bevy::{PendingDraws, PendingSample, Reveal, RevealProbe, RevealTerm};
 
+use crate::catalog_warm::CatalogWarmup;
 use crate::fade::NearTextures;
+use crate::precache::Precache;
 
 /// Frames every term must stay clear before the reveal (the render world's sample is a frame
 /// late, and content spawned by the last CPU step needs a frame to be extracted).
@@ -100,6 +106,50 @@ pub struct RevealInputs {
     pub gated: bool,
     /// The client's own cap was hit: reveal now (capped `max_hold`).
     pub give_up: bool,
+    /// Catalog specimens still pending (`CatalogWarmup::pending`: representatives loading, then
+    /// the precache tag's assets, queued and compiling); part of the pipelines term.
+    pub catalog: usize,
+    /// Readiness holds pending ([`RevealHolds::count`]); part of the pipelines term.
+    pub holds: usize,
+}
+
+/// Readiness holds (W4b1-fix): named sources any crate or game feeds, each pending or not, that
+/// keep a reveal covered (pipelines term, under [`RevealGate::max_secs`]; the cap warning names
+/// them). For work whose completion changes what the first frames draw, such as the GI volume's
+/// first full trace (it adds a view key bit, so every visible material re-specialises): unlike
+/// [`crate::FadeTransition::hold`] (fade only, capped at [`RevealGate::gates_max_secs`]) it holds
+/// both reveals, the fade and `Loading`. A source sets its state when it changes (persistent, no
+/// per-frame order with the gate's clients); a source that never reports never holds.
+#[derive(Resource, Debug, Default, Clone)]
+pub struct RevealHolds {
+    holds: Vec<(&'static str, bool)>,
+}
+
+impl RevealHolds {
+    /// Sets `name` pending (holds every reveal) or ready.
+    pub fn set(&mut self, name: &'static str, pending: bool) {
+        match self.holds.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, p)) => *p = pending,
+            None => self.holds.push((name, pending)),
+        }
+    }
+
+    /// Whether `name` is pending.
+    #[must_use]
+    pub fn is_pending(&self, name: &str) -> bool {
+        self.holds.iter().any(|&(n, p)| p && n == name)
+    }
+
+    /// The pending sources' names.
+    pub fn pending(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.holds.iter().filter(|(_, p)| *p).map(|&(n, _)| n)
+    }
+
+    /// How many sources are pending.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.pending().count()
+    }
 }
 
 /// The render-world work a reveal waits for.
@@ -107,13 +157,14 @@ pub struct RevealInputs {
 pub struct RevealPending {
     /// Near meshes not prepared + visible meshes with no pipeline yet.
     pub assets: usize,
-    /// Main, shadow and prepass draws waiting for a pipeline + pipelines compiling.
+    /// Main, shadow and prepass draws waiting for a pipeline + pipelines compiling + catalog
+    /// specimens pending + readiness holds pending.
     pub pipelines: usize,
 }
 
 impl RevealPending {
-    pub fn of(s: &PendingSample) -> Self {
-        Self { assets: s.near_unprepared + s.unprepared, pipelines: s.skipped + s.skipped_shadow + s.waiting }
+    pub fn of(s: &PendingSample, catalog: usize, holds: usize) -> Self {
+        Self { assets: s.near_unprepared + s.unprepared, pipelines: s.skipped + s.skipped_shadow + s.waiting + catalog + holds }
     }
 
     pub fn is_clear(&self) -> bool {
@@ -173,7 +224,7 @@ impl RevealGate {
         hold.cells |= inputs.cells;
         hold.textures |= hold.cells && inputs.textures;
         let cpu = hold.cells && hold.textures;
-        let pending = RevealPending::of(&inputs.sample);
+        let pending = RevealPending::of(&inputs.sample, inputs.catalog, inputs.holds);
         if cpu {
             hold.since_cpu = Some(hold.since_cpu.map_or(0.0, |s| s + dt));
         }
@@ -222,7 +273,7 @@ impl RevealGate {
         let hold = self.hold.take().expect("held");
         let warning = match capped {
             Some("gate") => Some(format!("a gate (shadow captures, GI, collision, ...) held past {:.1} s", self.gates_max_secs)),
-            Some(cap) => Some(format!("not ready after {:.1} s ({cap}): pending {}", hold.waited, pending_text(&hold, &inputs.sample))),
+            Some(cap) => Some(format!("not ready after {:.1} s ({cap}): pending {}", hold.waited, pending_text(&hold, inputs))),
             None => None,
         };
         let reveal = Reveal {
@@ -247,8 +298,10 @@ impl RevealGate {
     }
 }
 
-/// `cells, textures, assets 3 (near 2, visible 1), pipelines 5 (draws 1, shadow/prepass 2, compiling 2)`
-fn pending_text(hold: &Hold, s: &PendingSample) -> String {
+/// `cells, textures, assets 3 (near 2, visible 1), pipelines 6 (draws 1, shadow/prepass 2, compiling 2, catalog 1, holds 1)`
+/// (`catalog` and `holds` only when some are pending; [`RevealCheck`] names the holds).
+fn pending_text(hold: &Hold, inputs: &RevealInputs) -> String {
+    let (s, catalog, holds) = (&inputs.sample, inputs.catalog, inputs.holds);
     let mut parts = Vec::new();
     if !hold.cells {
         parts.push("cells".to_owned());
@@ -256,13 +309,15 @@ fn pending_text(hold: &Hold, s: &PendingSample) -> String {
     if !hold.textures {
         parts.push("textures".to_owned());
     }
-    let p = RevealPending::of(s);
+    let p = RevealPending::of(s, catalog, holds);
     if p.assets > 0 {
         parts.push(format!("assets {} (near {}, visible {})", p.assets, s.near_unprepared, s.unprepared));
     }
     if p.pipelines > 0 {
+        let catalog = if catalog > 0 { format!(", catalog {catalog}") } else { String::new() };
+        let holds = if holds > 0 { format!(", holds {holds}") } else { String::new() };
         parts.push(format!(
-            "pipelines {} (draws {}, shadow/prepass {}, compiling {})",
+            "pipelines {} (draws {}, shadow/prepass {}, compiling {}{catalog}{holds})",
             p.pipelines, s.skipped, s.skipped_shadow, s.waiting
         ));
     }
@@ -308,6 +363,9 @@ pub struct RevealCheck<'w, 's> {
     names: Query<'w, 's, &'static Name>,
     time: Option<Res<'w, Time<Real>>>,
     reveals: Option<ResMut<'w, Messages<Reveal>>>,
+    warmup: Option<Res<'w, CatalogWarmup>>,
+    precache: Option<Res<'w, Precache>>,
+    holds: Option<Res<'w, RevealHolds>>,
 }
 
 impl RevealCheck<'_, '_> {
@@ -327,7 +385,9 @@ impl RevealCheck<'_, '_> {
         let textures_known = gate.hold.as_ref().is_some_and(|h| h.textures);
         let textures = cells && (textures_known || focus.is_none_or(|f| self.near.ready(f, radius)));
         let sample = self.pending.as_ref().map(|p| p.sample()).unwrap_or_default();
-        let inputs = RevealInputs { cells, textures, sample, gated: ask.gated, give_up: ask.give_up };
+        let catalog = self.warmup.as_ref().map_or(0, |w| w.pending(self.precache.as_deref()));
+        let holds = self.holds.as_ref().map_or(0, |h| h.count());
+        let inputs = RevealInputs { cells, textures, sample, gated: ask.gated, give_up: ask.give_up, catalog, holds };
         let dt = self.time.as_ref().map_or(0.0, |t| t.delta_secs());
         let step = gate.step(ask.kind, ask.place, dt, &inputs);
         let cpu_ready = gate.cpu_ready() || matches!(step, RevealStep::Open { .. });
@@ -351,7 +411,10 @@ impl RevealCheck<'_, '_> {
                         .map(|e| self.names.get(e).map_or_else(|_| format!("{e}"), |n| format!("\"{n}\"")))
                         .collect();
                     let near = if names.is_empty() { String::new() } else { format!("; near meshes: {}", names.join(", ")) };
-                    log::warn!("sf_world_bevy: reveal gate: {} \"{}\" {warning}{near}; revealing", reveal.kind, reveal.place);
+                    let pending_holds: Vec<&str> = self.holds.as_ref().map(|h| h.pending().collect()).unwrap_or_default();
+                    let holds =
+                        if pending_holds.is_empty() { String::new() } else { format!("; holds: {}", pending_holds.join(", ")) };
+                    log::warn!("sf_world_bevy: reveal gate: {} \"{}\" {warning}{holds}{near}; revealing", reveal.kind, reveal.place);
                 }
                 if let Some(reveals) = self.reveals.as_mut() {
                     reveals.write(reveal);
