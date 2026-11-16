@@ -323,6 +323,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // A replaced image re-binds the materials using it (textures.md S2). Log line `texture.rebind:`.
     .add_plugins(sf_texture_bevy::ImageRebindPlugin::<StandardMaterial>::default())
     .add_plugins(WorldStreamingPlugin { config: streaming });
+    // One mesh slab per vertex layout (ROADMAP 1.22 F4): 2 GiB slab cap; `--off meshslabs` keeps stock 512 MiB.
+    // Log lines `mesh.slabs:` (census) in both.
+    app.add_plugins(sf_world_bevy::mesh_slabs::MeshSlabsPlugin { raise_cap: !perf.off.has(Part::MeshSlabs) });
     // The static scene (scene-runtime-plan.md §8): after streaming (it orders after
     // `StreamingSystems::Drive` and installs `SceneCells` when enabled); exterior cells only.
     // Its batches need the vendored `GpuInstanceBatchPlugin`, which `DefaultPlugins` lacks.
@@ -1675,8 +1678,11 @@ impl QualityRender for Quality {
     /// Sun cascades (shadows F3): practical split (PSSM log/uniform blend, split
     /// near 1 m), Bevy's sphere fit + texel snap + 20 % overlap blend. At 70° FOV,
     /// 16:9, 2048² the texels are 1.4 / 3.8 / 11 / 35 cm on High (A1: 1.4 / 5.2 / 19 /
-    /// 70 cm, `sf_sky_bevy` test `practical_split_cascades_and_texel_sizes`). Low
-    /// drops a cascade (one less caster pass) and ends at 200 m.
+    /// 70 cm, `sf_sky_bevy` test `practical_split_cascades_and_texel_sizes`).
+    /// ROADMAP 1.22 F2 (2 cascades, SPUD) measured no win once F3's `SunCascadeHold` holds
+    /// the far cascades (ledger perf 2026-11-16: walk 11.42 with 2 vs 11.44 with 3), so the
+    /// presets keep 3 for the sharper near split; opt in with `--sun-cascades 2:205` (keeps
+    /// this preset's lambda; F2 used lambda 0.9 for a ~23 m near split on High).
     fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits {
         let (num_cascades, maximum_distance, lambda, overlap_proportion) = match self {
             Self::Low => (3, 160.0, 0.82, 0.15),

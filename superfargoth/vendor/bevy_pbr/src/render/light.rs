@@ -3724,35 +3724,168 @@ pub fn shared_shadow_pass<const IS_LATE: bool>(
     );
 }
 
+// superfargoth patch (own, F1): one command encoder per sun cascade.
+/// Whether the directional-light shadow views of a camera (the sun's cascades) record into one
+/// command encoder each. wgpu-core defers the real encode to `CommandEncoder::finish`, and Bevy
+/// finishes each system's encoder as its own parallel task (`PendingCommandBuffers::finish`), so
+/// one encoder per cascade turns their serial encode into parallel tasks (UE's
+/// `FParallelCommandListSet`: one command list per cascade). `true` (the default) records them
+/// over the [`PER_VIEW_SHADOW_ENCODERS`] per-view shadow pass systems; `false` is stock Bevy:
+/// every cascade of a camera in one encoder. Each extra encoder is one more command buffer for
+/// `queue.submit`, so point/spot shadows (`shared_shadow_pass`, one system run per light view)
+/// are left as they are.
+#[derive(Resource, Clone, Copy, Debug, bevy_render::extract_resource::ExtractResource, bevy_reflect::Reflect)]
+#[reflect(Resource, Debug, Clone)]
+#[extract_app(RenderApp)]
+pub struct ShadowCascadeEncoders(pub bool);
+
+// superfargoth patch (own, F1)
+impl Default for ShadowCascadeEncoders {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+// superfargoth patch (own, F1)
+/// How many per-view shadow pass systems (and so encoders) a camera's directional shadow views
+/// spread over: [`per_view_shadow_pass`] and `per_view_shadow_pass_cascade{1,2,3}`, one per
+/// cascade of `MAX_CASCADES_PER_LIGHT` (4).
+pub const PER_VIEW_SHADOW_ENCODERS: usize = 4;
+
+// superfargoth patch (own, F1): the diagnostics span (and encoder gauge) name of each system.
+const PER_VIEW_SHADOW_PASS_NAMES: [&str; PER_VIEW_SHADOW_ENCODERS] = [
+    "per_view_shadow_pass",
+    "per_view_shadow_pass_cascade1",
+    "per_view_shadow_pass_cascade2",
+    "per_view_shadow_pass_cascade3",
+];
+
+// superfargoth patch (own, F1)
+/// The per-view shadow pass system (`0` = [`per_view_shadow_pass`], `n` =
+/// `per_view_shadow_pass_cascade{n}`) that records entry `index` of a camera's
+/// [`ViewLightEntities::lights`] (directional lights' cascades, in order). Split, cascade `i` of
+/// the first light goes to system `i`, a second light's wrap around; unsplit, all go to system 0.
+#[must_use]
+pub fn per_view_shadow_encoder_slot(index: usize, split: bool) -> usize {
+    if split {
+        index % PER_VIEW_SHADOW_ENCODERS
+    } else {
+        0
+    }
+}
+
+// superfargoth patch (own, F1): the stock system's parameters, shared by the four systems.
+#[derive(SystemParam)]
+pub struct PerViewShadowPassParams<'w, 's> {
+    world: &'w World,
+    view: ViewQuery<'w, 's, &'static ViewLightEntities>,
+    view_light_query: Query<
+        'w,
+        's,
+        (
+            &'static ShadowView,
+            &'static ExtractedView,
+            Has<OcclusionCulling>,
+            Has<PreprocessBindGroups>,
+            Has<SkipGpuPreprocess>,
+            Has<NoIndirectDrawing>,
+        ),
+    >,
+    shadow_render_phases: Res<'w, ViewBinnedRenderPhases<Shadow>>,
+    preprocess_pipelines: Option<Res<'w, PreprocessPipelines>>,
+    build_indirect_params_bind_groups: Option<Res<'w, BuildIndirectParametersBindGroups>>,
+    pipeline_cache: Res<'w, PipelineCache>,
+    indirect_parameters_buffers: Option<Res<'w, IndirectParametersBuffers>>,
+    build_indirect_parameters_metadata: Option<Res<'w, BuildIndirectParametersMetadata>>,
+    cascade_encoders: Option<Res<'w, ShadowCascadeEncoders>>,
+}
+
 /// Renders the shadow maps that are associated with a specific view.
 ///
 /// At present, these consist of the directional light shadows.
+///
+/// superfargoth patch (own, F1): with [`ShadowCascadeEncoders`] on, this records the cascades
+/// [`per_view_shadow_encoder_slot`] gives system 0, and `per_view_shadow_pass_cascade{1,2,3}`
+/// (each its own encoder) the others.
 pub fn per_view_shadow_pass<const IS_LATE: bool>(
-    world: &World,
-    view: ViewQuery<&ViewLightEntities>,
-    view_light_query: Query<(
-        &ShadowView,
-        &ExtractedView,
-        Has<OcclusionCulling>,
-        Has<PreprocessBindGroups>,
-        Has<SkipGpuPreprocess>,
-        Has<NoIndirectDrawing>,
-    )>,
-    shadow_render_phases: Res<ViewBinnedRenderPhases<Shadow>>,
-    preprocess_pipelines: Option<Res<PreprocessPipelines>>,
-    build_indirect_params_bind_groups: Option<Res<BuildIndirectParametersBindGroups>>,
-    pipeline_cache: Res<PipelineCache>,
-    indirect_parameters_buffers: Option<Res<IndirectParametersBuffers>>,
-    build_indirect_parameters_metadata: Option<Res<BuildIndirectParametersMetadata>>,
+    params: PerViewShadowPassParams,
+    ctx: RenderContext,
+) {
+    record_per_view_shadow_pass::<IS_LATE>(0, params, ctx);
+}
+
+// superfargoth patch (own, F1)
+/// The second cascade's encoder ([`per_view_shadow_pass`]).
+pub fn per_view_shadow_pass_cascade1<const IS_LATE: bool>(
+    params: PerViewShadowPassParams,
+    ctx: RenderContext,
+) {
+    record_per_view_shadow_pass::<IS_LATE>(1, params, ctx);
+}
+
+// superfargoth patch (own, F1)
+/// The third cascade's encoder ([`per_view_shadow_pass`]).
+pub fn per_view_shadow_pass_cascade2<const IS_LATE: bool>(
+    params: PerViewShadowPassParams,
+    ctx: RenderContext,
+) {
+    record_per_view_shadow_pass::<IS_LATE>(2, params, ctx);
+}
+
+// superfargoth patch (own, F1)
+/// The fourth cascade's encoder ([`per_view_shadow_pass`]).
+pub fn per_view_shadow_pass_cascade3<const IS_LATE: bool>(
+    params: PerViewShadowPassParams,
+    ctx: RenderContext,
+) {
+    record_per_view_shadow_pass::<IS_LATE>(3, params, ctx);
+}
+
+// superfargoth patch (own, F1): the stock body, over the cascades of one slot.
+fn record_per_view_shadow_pass<const IS_LATE: bool>(
+    slot: usize,
+    params: PerViewShadowPassParams,
     mut ctx: RenderContext,
 ) {
+    let PerViewShadowPassParams {
+        world,
+        view,
+        view_light_query,
+        shadow_render_phases,
+        preprocess_pipelines,
+        build_indirect_params_bind_groups,
+        pipeline_cache,
+        indirect_parameters_buffers,
+        build_indirect_parameters_metadata,
+        cascade_encoders,
+    } = params;
     let view_lights = view.into_inner();
+
+    // A late pass draws only views with occlusion culling: without any, it records no shadow
+    // pass, so it stays in one encoder as stock (no empty command buffers to submit).
+    let split = cascade_encoders.is_none_or(|on| on.0)
+        && (!IS_LATE
+            || view_lights.lights.iter().any(|&entity| {
+                view_light_query
+                    .get(entity)
+                    .is_ok_and(|(_, _, occlusion_culling, ..)| occlusion_culling)
+            }));
+    let mine = |&(index, entity): &(usize, Entity)| {
+        per_view_shadow_encoder_slot(index, split) == slot
+            && view_light_query.contains(entity)
+    };
+    // System 0 always opens its encoder (stock); the others only for a cascade of theirs, so an
+    // unused one adds no command buffer.
+    if slot != 0 && !view_lights.lights.iter().copied().enumerate().any(|e| mine(&e)) {
+        return;
+    }
 
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
-    let time_span = diagnostics.time_span(ctx.command_encoder(), "per_view_shadow_pass");
+    let time_span =
+        diagnostics.time_span(ctx.command_encoder(), PER_VIEW_SHADOW_PASS_NAMES[slot]);
 
-    for view_light_entity in view_lights.lights.iter().copied() {
+    for (_, view_light_entity) in view_lights.lights.iter().copied().enumerate().filter(mine) {
         let Ok((
             view_light,
             extracted_light_view,

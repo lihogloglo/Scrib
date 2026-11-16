@@ -15,10 +15,12 @@
 //! - [`Weather`] and [`Wind`]: the M6 hook, and the shared wind.
 //! - [`RenderPath`] and [`sphere_light_luminance`]: the raster/ray-traced
 //!   switch and the emissive-proxy conversion for punctual lights.
+//! - [`cascade_hold`]: the far sun-cascade hold (decision and padded fit).
 //!
 //! The Bevy glue lives in `sf_sky_bevy`.
 
 mod atmosphere;
+pub mod cascade_hold;
 mod celestial;
 mod clock;
 mod curve;

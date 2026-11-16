@@ -18,11 +18,11 @@ use bevy_pbr::diagnostic::MaterialAllocatorDiagnosticPlugin;
 use bevy_pbr::StandardMaterial;
 use bevy_render::diagnostic::{MeshAllocatorDiagnosticPlugin, RenderDiagnosticsPlugin};
 use bevy_render::renderer::RenderAdapterInfo;
-use bevy_window::{MonitorSelection, PresentMode, Window, WindowMode, WindowPosition, WindowResolution};
+use bevy_window::{MonitorSelection, PresentMode, PrimaryWindow, Window, WindowMode, WindowOccluded, WindowPosition, WindowResolution};
 use bevy_winit::{UpdateMode, WinitSettings};
 use bevy_world_serialization::WorldAsset;
-use sf_diag_bevy::sf_diag::Scenario;
-use sf_diag_bevy::{AssetChurnPlugin, ChurnPlugin, DiagSettings, SfDiagPlugin};
+use sf_diag_bevy::sf_diag::{Phase, Report, Scenario, unit};
+use sf_diag_bevy::{AssetChurnPlugin, ChurnPlugin, DiagCounters, DiagScenario, DiagSettings, SfDiagPlugin};
 use sf_world_bevy::{PlacementSpawner, PlacementSpawners, SpawnCx};
 use sf_world::{IndexedPlacement, Level, PlacementClass};
 // Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
@@ -183,7 +183,7 @@ impl Perf {
             // (`WinitSettings::game`): a benchmark must run flat out
             // whether or not it has focus.
             .insert_resource(WinitSettings { focused_mode: UpdateMode::Continuous, unfocused_mode: UpdateMode::Continuous })
-            .add_systems(Update, record_meta);
+            .add_systems(Update, (record_meta, record_focus));
         }
         if self.off.has(Part::Shadows) {
             app.add_systems(PostUpdate, no_shadows);
@@ -218,6 +218,97 @@ fn record_meta(
     settings.meta.insert("resolution".to_owned(), format!("{}x{}", now.1, now.2));
     settings.meta.insert("present".to_owned(), format!("{:?}", window.present_mode));
     *last = Some(now);
+}
+
+/// Sum counter: 1 for each frame the primary window didn't have keyboard
+/// focus (another app in front), else 0; its run total counts those frames.
+pub const UNFOCUSED: &str = "window/unfocused";
+/// Sum counter: 1 for each frame the primary window was hidden (occluded, or
+/// minimized: a 0-pixel window), else 0.
+pub const HIDDEN: &str = "window/hidden";
+/// Report metadata key: [`FocusTally::label`] over the measured frames.
+pub const FOCUS_META: &str = "focus";
+
+/// Measured frames spent with the window out of the foreground. Windows
+/// gives a background window less CPU (no foreground boost, power
+/// throttling) and composites it instead of flipping it, so such frames
+/// aren't comparable with the rest: a run with any is dirty.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FocusTally {
+    pub frames: u64,
+    pub unfocused: u64,
+    pub hidden: u64,
+}
+
+impl FocusTally {
+    /// Counts one measured frame.
+    pub fn add(&mut self, focused: bool, hidden: bool) {
+        self.frames += 1;
+        self.unfocused += u64::from(!focused);
+        self.hidden += u64::from(hidden);
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.unfocused > 0 || self.hidden > 0
+    }
+
+    /// From a report's [`UNFOCUSED`] / [`HIDDEN`] totals and frame count;
+    /// `None` for a report without them (an exe older than the guard).
+    pub fn from_report(report: &Report) -> Option<Self> {
+        let total = |name: &str| report.counters.get(name).and_then(|c| c.total);
+        let (unfocused, hidden) = (total(UNFOCUSED)?, total(HIDDEN)?);
+        let frames = report.frames.as_ref().map_or(0, |f| f.stats.count);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "frame counts: whole, non-negative, far below 2^52")]
+        Some(Self { frames: frames as u64, unfocused: unfocused.round() as u64, hidden: hidden.round() as u64 })
+    }
+
+    /// `clean`, or `DIRTY: ` and the share of measured frames unfocused and hidden.
+    pub fn label(&self) -> String {
+        if !self.is_dirty() {
+            return "clean".to_owned();
+        }
+        #[allow(clippy::cast_precision_loss, reason = "frame counts far below 2^52")]
+        let pct = |n: u64| if self.frames == 0 { 0.0 } else { 100.0 * n as f64 / self.frames as f64 };
+        format!(
+            "DIRTY: window unfocused {} of {} measured frames ({:.1}%), hidden {} ({:.1}%)",
+            self.unfocused,
+            self.frames,
+            pct(self.unfocused),
+            self.hidden,
+            pct(self.hidden)
+        )
+    }
+}
+
+/// Counts the frames the primary window spent unfocused or hidden
+/// ([`UNFOCUSED`], [`HIDDEN`]) and labels the measured ones in the report's
+/// metadata ([`FOCUS_META`]). winit reports occlusion on some platforms only
+/// (not Windows); there a minimized window shows as 0 × 0 pixels.
+fn record_focus(
+    windows: Query<(Entity, &Window), With<PrimaryWindow>>,
+    mut occlusion: MessageReader<WindowOccluded>,
+    counters: Res<DiagCounters>,
+    scenario: Option<Res<DiagScenario>>,
+    settings: Option<ResMut<DiagSettings>>,
+    mut occluded: Local<bool>,
+    mut tally: Local<FocusTally>,
+) {
+    let Ok((entity, window)) = windows.single() else { return };
+    if let Some(m) = occlusion.read().filter(|m| m.window == entity).last() {
+        *occluded = m.occluded;
+    }
+    let hidden = *occluded || window.physical_width() == 0 || window.physical_height() == 0;
+    counters.add_named(UNFOCUSED, unit::COUNT, if window.focused { 0.0 } else { 1.0 });
+    counters.add_named(HIDDEN, unit::COUNT, if hidden { 1.0 } else { 0.0 });
+    let (Some(scenario), Some(mut settings)) = (scenario, settings) else { return };
+    if scenario.phase() != Phase::Measure {
+        return;
+    }
+    tally.add(window.focused, hidden);
+    // A clean run writes its label once; a dirty one keeps the counts current.
+    if tally.is_dirty() || !settings.meta.contains_key(FOCUS_META) {
+        settings.meta.insert(FOCUS_META.to_owned(), tally.label());
+    }
 }
 
 /// `--off shadows`: the sky turns the sun's shadow maps on in `Update`;
@@ -307,4 +398,28 @@ pub const ENV_RENDER_SIZE: &str = "BEVYRROWIND_RENDER_SIZE";
 /// The offscreen render size from [`ENV_RENDER_SIZE`], if set and valid.
 pub fn render_size() -> Option<(u32, u32)> {
     parse_resolution(&std::env::var(ENV_RENDER_SIZE).ok()?).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn focus_tally_is_clean_only_with_every_frame_in_front() {
+        let mut t = FocusTally::default();
+        for _ in 0..3 {
+            t.add(true, false);
+        }
+        assert!(!t.is_dirty());
+        assert_eq!(t.label(), "clean");
+        t.add(false, false);
+        assert!(t.is_dirty());
+        assert_eq!(t, FocusTally { frames: 4, unfocused: 1, hidden: 0 });
+        assert_eq!(t.label(), "DIRTY: window unfocused 1 of 4 measured frames (25.0%), hidden 0 (0.0%)");
+        // Hidden while focused (minimized as the active app) is dirty too.
+        let mut h = FocusTally::default();
+        h.add(true, true);
+        assert!(h.is_dirty());
+        assert_eq!(h.label(), "DIRTY: window unfocused 0 of 1 measured frames (0.0%), hidden 1 (100.0%)");
+    }
 }

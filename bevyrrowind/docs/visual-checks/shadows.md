@@ -196,3 +196,25 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   behind you have one (the nearest 8 all around win now); (3) orbiting the third-person camera: any shadow swap.
 - A/B: `--point-shadows 12` (more slots: fewer takeovers), `--point-shadows 0` (none). No switch back to the old rule.
 - Status: awaiting owner (tests pass; perf A/B in the ledger).
+
+### SH-26: Far sun cascades held between redraws (ROADMAP 1.22 F3, 2026-11-15)
+- Why: perf (owner 2026-11-15, after the SPUD read): sun cascades are the longest render encode. Low to High now use
+  3 cascades as before (2 measured no win with the hold); cascades 1-2 keep their fit and map until the camera moves 4 m, turns 3°,
+  the sun moves or 4 frames pass (`SunCascadeHold`, `sf_sky_bevy/src/cascade_hold.rs`). Held fits are padded, so far
+  shadows are ~8-11 % coarser.
+- Kind: game location. Run: `bash bevyrrowind/tools/owner_launch.sh scene cascade-hold` (Balmora street, 16:00, clear, walkers).
+- Look for: walk and turn (fast, then slowly): no popping or swimming on houses and terrain, no shadow gap at the screen
+  edges after a fast turn; near shadows (0-20 m) as sharp as before; NPC shadows past ~18 m (cascade 0) may step a little (4-frame refresh).
+- A/B: `--off cascadehold` (redraw every frame = old setup); `--sun-cascades 2:205` (2 cascades, opt-in). Walk -1.0 ms (ledger perf 2026-11-16).
+- Status: confirmed 2026-11-16 (owner: "shadows look good"). Seen in the same run: lamp shadows fade in at ~10 m on some buildings at night, logged as SH-27.
+
+### SH-27: Lamp shadows fade in close at night (owner 2026-11-16, bug)
+- Seen: Balmora at night, some buildings: a lantern's shadow (the "complex" one, cast by the house) only appears within
+  ~10 m of the viewer and fades in, although the lamp shadow fade is set to 35-45 m (`LAMP_SHADOW_FADE`, `mw_environment_bevy/src/render.rs:32`).
+- Likely cause (not verified): the budget. High gives 8 cube maps (`POINT_SHADOWS_DEFAULT`, `render.rs:27`) to the
+  lamps ranked by `importance` (`sf_sky_bevy/src/shadow_budget.rs:115`); in a street with more lanterns than 8, a lamp wins a
+  slot only once it is among the nearest, then fades in over 0.3 s. To confirm: `--point-shadows 16` (does the
+  distance grow?), `RUST_LOG=bevy_pbr::shadow_refresh=debug`.
+- Standard fix direction: many lamp shadows in a shared atlas, resolution by screen size (UE, Frostbite, Decima), so far lamps
+  keep a low-res map instead of none. Hard problem H2; owner picks.
+- Status: logged, not fixed.

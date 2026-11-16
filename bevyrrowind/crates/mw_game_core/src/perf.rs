@@ -127,6 +127,10 @@ pub enum Part {
     /// and plain statics of a class share one main-pass key (superfargoth `matclass::FLAT_NORMAL_MAP`);
     /// off, a normal map splits its class (an A/B; the look should not change).
     FlatNormal,
+    /// Mesh slabs capped at 2 GiB instead of 512 MiB (superfargoth `mesh_slabs::MeshSlabsPlugin`, ROADMAP 1.22
+    /// F4), so a vertex layout never spills into a second slab (which splits its batch sets); off, stock
+    /// `MeshAllocatorSettings` (an A/B; the look should not change). Log lines `mesh.slabs:` either way.
+    MeshSlabs,
     /// Near statics skip Bevy's CPU culling (`NoCpuCulling`, superfargoth
     /// `docs/research/statics-cpu-cost-2026-11-12.md` slice 1): the GPU preprocess culls them by frustum
     /// and range in every view, lamps take them from the shadow cache's lists. Off: the old behaviour,
@@ -143,6 +147,15 @@ pub enum Part {
     /// `bevy_pbr::ShadowMoverRefresh`, SH-20); off, the B3 rule: skinned casters by root on a coarse
     /// grid, at most 2 dirty faces per frame (animated shadows step; an A/B).
     MoverShadows,
+    /// One command encoder per sun cascade (vendored `bevy_pbr::ShadowCascadeEncoders`, ROADMAP 1.22 F1):
+    /// their encode finishes as parallel tasks; off, all cascades of a camera share one encoder as stock
+    /// Bevy (an A/B; the look should not change). Opt-in since 2026-11-16 (`BEVYRROWIND_CASCADE_ENCODERS=1`, no
+    /// measured win with the far-cascade hold on); this part still forces it off.
+    CascadeEncoders,
+    /// Far sun cascades keep their fit and shadow map between redraws (`sf_sky_bevy::SunCascadeHold`,
+    /// ROADMAP 1.22 F3): redrawn after a 4 m move, a 3 degree turn or 4 frames; off, every cascade is
+    /// fitted and drawn every frame as stock Bevy (an A/B).
+    CascadeHold,
     /// De-lit albedo textures (the bake's `texture.delight` VFS layer, bake.md "De-lighting"): off, the layer
     /// isn't mounted and models load the original textures (an A/B; restart to switch).
     Delight,
@@ -184,7 +197,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 73] = [
+    const ALL: [(&'static str, Part); 76] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -242,9 +255,12 @@ impl Part {
         ("precombine", Part::Precombine),
         ("matclass", Part::MatClass),
         ("flatnormal", Part::FlatNormal),
+        ("meshslabs", Part::MeshSlabs),
         ("cpuculltag", Part::CpuCullTag),
         ("lampfilter", Part::LampFilter),
         ("movershadows", Part::MoverShadows),
+        ("cascadeencoders", Part::CascadeEncoders),
+        ("cascadehold", Part::CascadeHold),
         ("precipocc", Part::PrecipOcc),
         ("delight", Part::Delight),
         ("normalmaps", Part::NormalMaps),
@@ -352,6 +368,12 @@ mod tests {
         let shift = Off::from_flags(&["shiftrebase".into()]).expect("known");
         assert!(shift.has(Part::ShiftRebase) && !shift.has(Part::Scene));
         assert_eq!(shift.label(), "shiftrebase");
+        let enc = Off::from_flags(&["cascadeencoders".into()]).expect("known");
+        assert!(enc.has(Part::CascadeEncoders) && !enc.has(Part::MoverShadows) && !enc.has(Part::Shadows));
+        assert_eq!(enc.label(), "cascadeencoders");
+        let hold = Off::from_flags(&["cascadehold".into()]).expect("known");
+        assert!(hold.has(Part::CascadeHold) && !hold.has(Part::CascadeEncoders) && !hold.has(Part::Shadows));
+        assert_eq!(hold.label(), "cascadehold");
         let sea = Off::from_flags(&["seawind".into()]).expect("known");
         assert!(sea.has(Part::SeaWind) && !sea.has(Part::ShoreWaves));
         assert_eq!(sea.label(), "seawind");

@@ -11,7 +11,13 @@ static casters are cached; moving casters are redrawn over the cache. Everything
 - **Sun cascades.** `SunLight` is a `DirectionalLight` with `shadow_maps_enabled`, spawned in
   `superfargoth/crates/sf_sky_bevy/src/lib.rs:458`. Its `CascadeShadowConfig` comes from `CascadeSplits` (PSSM
   practical split, `cascades.rs:17`), built by the game per preset (`bevyrrowind/crates/mw_exterior_bevy/src/exterior.rs:1298`,
-  table at `:1574`: Low 3 cascades/160 m, Medium 3/190, High 3/205, Ultra 4/280). Bevy still fits and texel-snaps each cascade.
+  table at `:1693`: Low 3 cascades/160 m, Medium 3/190, High 3/205, Ultra 4/280; 2 cascades (F2) measured no win with the
+  hold, opt-in `--sun-cascades 2:205`). Bevy still fits and texel-snaps each cascade.
+- **Far-cascade hold (F3, 2026-11-15).** Cascades from index 1 keep last frame's padded fit and map until the camera
+  moves 4 m, turns 3°, the sun moves 0.1° or 4 frames pass: `hold_far_cascades` after Bevy's cascade build
+  (`superfargoth/crates/sf_sky_bevy/src/cascade_hold.rs:90`), render-side skip `skip_held_cascades` (`:162`), decision
+  logic Bevy-free in `sf_sky/src/cascade_hold.rs`. Walk -1.0 ms on 3 cascades (ledger perf 2026-11-16). Opt-in: one encoder
+  per cascade (F1, `BEVYRROWIND_CASCADE_ENCODERS=1`, `per_view_shadow_encoder_slot`, vendored `bevy_pbr/src/render/light.rs:3752`).
   The moon has its own 2 shorter cascades, shadows off until the sky says so (`lib.rs:473`, `write_light` `:654`).
   The sky turns sun shadows off in interiors and at night (`write_light`); sun and moon use `RenderLayers::none()` indoors.
 - **PCSS and filter.** `DirectionalLight::soft_shadow_size` = 10 cascade texels on High/Ultra (`exterior.rs:1588`,
@@ -54,7 +60,7 @@ Vendored: #26149/#26161 slim per-face schedule (`vendor/README.md:11`), plus the
 ## Switches and counters
 
 `--off` parts (`mw_game_core/src/perf.rs:135`): `shadows`, `shadowcache`, `lampfilter`, `movershadows`, `farshadows`,
-`softshadows`, `contactshadows`, `ssao`, `cpuculltag`. `--point-shadows N`, `--sun-cascades N:M`,
+`softshadows`, `contactshadows`, `ssao`, `cpuculltag`, `cascadehold`, `cascadeencoders`. `--point-shadows N`, `--sun-cascades N:M`,
 `BEVYRROWIND_LAMP_CONTACT`, `BEVYRROWIND_SHADOW_FILTER`, `BEVYRROWIND_GPU_CULL_STATICS=1`. Console `flip contactshadows`.
 Gauges: `ShadowCacheStats` (`sf_shadow_cache_bevy/src/lib.rs:147`), `RUST_LOG=bevy_pbr::shadow_refresh=debug`.
 

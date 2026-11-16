@@ -616,13 +616,19 @@ impl ViewFlags {
         })
     }
 
-    /// `--rt`, `--dlss`, `--off denoiser`, `--off shadowcache` and `--off movershadows`.
+    /// `--rt`, `--dlss`, `--off denoiser`, `--off shadowcache`, `--off movershadows`, `--off cascadeencoders` and `--off cascadehold`.
     fn render(&self) -> Result<RenderSettings> {
         let off = Off::from_flags(&self.perf.off)?;
         let low = Quality::resolve(self.quality) == Quality::Low;
         Ok(RenderSettings::new(self.rt, self.dlss, !off.has(Part::Denoiser), low)?.with_point_shadows(self.lighting.point_shadows).with_sun_cascades(self.lighting.sun_cascades)
             .with_shadow_cache(!off.has(Part::ShadowCache))
-            .with_mover_shadows(!off.has(Part::MoverShadows)))
+            .with_mover_shadows(!off.has(Part::MoverShadows))
+            // F1 is opt-in (`--env BEVYRROWIND_CASCADE_ENCODERS=1`): no win measured with the far-cascade hold on
+            // (ledger perf 2026-11-16, walk 11.42 on vs 11.26 off); `--off cascadeencoders` still forces it off.
+            .with_cascade_encoders(
+                std::env::var_os("BEVYRROWIND_CASCADE_ENCODERS").is_some_and(|v| v == "1") && !off.has(Part::CascadeEncoders),
+            )
+            .with_cascade_hold(!off.has(Part::CascadeHold)))
     }
 }
 

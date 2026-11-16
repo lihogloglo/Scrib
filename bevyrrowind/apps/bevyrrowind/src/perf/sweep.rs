@@ -10,7 +10,7 @@ use std::path::Path;
 
 use sf_diag_bevy::sf_diag::Report;
 
-use super::cli::{BUSY, Planned, SCENARIOS, SuiteArgs, execute, write_summary};
+use super::cli::{BUSY, Planned, SCENARIOS, SuiteArgs, execute, focus_lines, run_focus, write_summary};
 
 #[derive(clap::Args)]
 pub struct SweepArgs {
@@ -121,6 +121,9 @@ pub fn run(args: &SweepArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     for n in &notes {
         let _ = writeln!(md, "- **busy machine**: {n}");
+    }
+    for line in focus_lines(&runs.iter().map(|(_, r)| run_focus(r)).collect::<Vec<_>>()) {
+        let _ = writeln!(md, "{line}");
     }
     let header: Vec<&str> = COLUMNS.iter().map(|c| c.0).collect();
     let _ = writeln!(md, "\n| {} | runs | {} |\n|---|---:|{}", args.var, header.join(" | "), "---:|".repeat(COLUMNS.len()));

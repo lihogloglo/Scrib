@@ -495,6 +495,16 @@
             look_for: "NPCs walk street/bridge pathgrid edges at a walking pace with the walk cycle matching speed (no skating), stop, idle and sometimes fidget; they pass each other without overlapping; stand in their path: they step around you. J: mover gizmos (ring, velocity, trajectory); --off walkers: everyone stands",
             checks: ["WK-1", "WK-2"],
         ),
+        (
+            name: "cascade-hold",
+            cell: "Balmora",
+            camera: "-283,+5,198,-293,+0.5,185",
+            hour: 16.0,
+            flags: ["--weather", "clear"],
+            description: "ROADMAP 1.22 F3: far sun cascades (1-2) held between redraws (camera 4 m / 3 deg / every 4 frames)",
+            look_for: "walk and turn: no shadow popping or swimming on houses and terrain, no missing shadow at screen edges after a fast turn; NPC shadows past ~18 m may step slightly; near shadows as sharp as before. A/B: --off cascadehold, --sun-cascades 2:205",
+            checks: ["SH-26"],
+        ),
         // ---- particles (.sessions/particles1.md) ----
         (
             name: "particles-census-fire",

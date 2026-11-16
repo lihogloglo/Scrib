@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::sweep::SweepArgs;
+use mw_devtools_bevy::perf::FocusTally;
 use sf_diag_bevy::sf_diag::suite::{self, GaugeColumn, GpuSampler, GpuSummary, SuiteRun};
 use sf_diag_bevy::sf_diag::{Report, Scenario, nsys, trace};
 
@@ -272,8 +273,51 @@ fn window(file: &Path, from: Option<f64>, to: Option<f64>) -> Result<(f64, f64),
     }
 }
 
-/// A finished run and, when the machine was busy, why.
-type RunResult = Result<Option<(SuiteRun, Option<String>, bool)>, Box<dyn std::error::Error>>;
+/// A finished run, its busy-machine note, and why it should be measured again ([`retry_reason`]).
+type RunResult = Result<Option<(SuiteRun, Option<String>, Option<&'static str>)>, Box<dyn std::error::Error>>;
+
+/// Why a run's numbers aren't clean and it is worth measuring again: other
+/// processes were busy during it, or its window was out of focus or hidden
+/// for some measured frames ([`FocusTally`]). `None`: clean, or focus not
+/// recorded (an exe older than the guard).
+fn retry_reason(busy: bool, focus: Option<FocusTally>) -> Option<&'static str> {
+    match (busy, focus.is_some_and(|f| f.is_dirty())) {
+        (false, false) => None,
+        (true, false) => Some("busy during the run"),
+        (false, true) => Some("window out of focus during the run"),
+        (true, true) => Some("busy and window out of focus during the run"),
+    }
+}
+
+/// A run report's focus label, bold when dirty.
+fn focus_md(f: FocusTally) -> String {
+    if f.is_dirty() { format!("**{}**", f.label()) } else { f.label() }
+}
+
+/// A run's name and its focus record, for [`focus_lines`].
+pub(super) fn run_focus(r: &SuiteRun) -> (String, Option<FocusTally>) {
+    (run_name(&r.scenario, &r.variant, r.repeat), FocusTally::from_report(&r.report))
+}
+
+/// Summary lines on window focus: one when every run was clean, else a
+/// count, one `**unfocused**` line per dirty run and the runs not recorded.
+pub(super) fn focus_lines(runs: &[(String, Option<FocusTally>)]) -> Vec<String> {
+    let dirty: Vec<String> = runs
+        .iter()
+        .filter_map(|(name, f)| f.filter(FocusTally::is_dirty).map(|f| format!("- **unfocused**: {name}: {}", f.label())))
+        .collect();
+    let unknown: Vec<&str> = runs.iter().filter(|(_, f)| f.is_none()).map(|(name, _)| name.as_str()).collect();
+    let clean = runs.len() - dirty.len() - unknown.len();
+    if dirty.is_empty() && unknown.is_empty() {
+        return vec![format!("- focus: clean, all {} runs (window in front for every measured frame)", runs.len())];
+    }
+    let mut lines = vec![format!("- focus: {clean} of {} runs clean", runs.len())];
+    lines.extend(dirty);
+    if !unknown.is_empty() {
+        lines.push(format!("- focus: not recorded for {} (exe older than the focus guard)", unknown.join(", ")));
+    }
+    lines
+}
 
 /// Median CPU % of other processes during a run (system minus ours) above
 /// which the run counts as measured on a busy machine.
@@ -339,10 +383,8 @@ pub(super) fn execute(args: &SuiteArgs, exe: &Path, dir: &Path, plan: &[Planned]
         println!("[{}/{}] {} @ {}{} #{}", i + 1, plan.len(), p.scenario.name, p.resolution, p.step.as_ref().map_or(String::new(), |s| format!(" {}", s.label)), p.repeat);
         let mut result = run_one(args, exe, dir, p, busy);
         for retry in 1..=args.retries {
-            if !matches!(result, Ok(Some((_, _, true)))) {
-                break;
-            }
-            println!("    busy during the run; retry {retry}/{}", args.retries);
+            let Ok(Some((_, _, Some(why)))) = &result else { break };
+            println!("    {why}; retry {retry}/{}", args.retries);
             result = run_one(args, exe, dir, p, busy);
         }
         match result {
@@ -400,6 +442,9 @@ pub(super) fn write_summary(args: &SuiteArgs, exe: &Path, dir: &Path, runs: &[Su
         for n in notes {
             let _ = writeln!(header, "- **busy machine**: {n}");
         }
+    }
+    for line in focus_lines(&runs.iter().map(run_focus).collect::<Vec<_>>()) {
+        let _ = writeln!(header, "{line}");
     }
     let at = summary.find("## ").unwrap_or(summary.len());
     summary.insert_str(at, &format!("{header}\n"));
@@ -573,6 +618,7 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str])
     let median = |c: &str| report.counters.get(c).and_then(|c| c.per_frame).map(|s| s.median);
     let other_cpu = median("system/cpu_usage").zip(median("process/cpu_usage")).map(|(s, p)| s - p);
     let busy_during = other_cpu.filter(|&o| o > OTHER_CPU_LIMIT).map(|o| format!("{name}: other processes used {o:.0}% CPU during the run"));
+    let focus = FocusTally::from_report(&report);
 
     let mut csv = String::from("unix_s,util_pct,clock_mhz,mem_clock_mhz,power_w,temp_c,vram_mib,throttle\n");
     for s in &samples {
@@ -588,6 +634,7 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str])
     }
     let _ = writeln!(extra, "- before the run: GPU {gpu_before:.0}%, CPU {cpu_before:.0}%{}", note.as_ref().map_or(String::new(), |n| format!(" · **busy: {n}**")));
     let _ = writeln!(extra, "- during the run: other processes {}", other_cpu.map_or("?".to_owned(), |o| format!("{o:.0}% CPU (system minus this process){}", if busy_during.is_some() { " · **busy**" } else { "" })));
+    let _ = writeln!(extra, "- focus: {}", focus.map_or_else(|| "not recorded (exe older than the focus guard)".to_owned(), focus_md));
     if let Some(g) = &gpu {
         let _ = writeln!(extra, "{}", g.to_markdown());
     }
@@ -596,12 +643,12 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str])
     md.push_str(&extra);
     std::fs::write(&md_path, md)?;
 
-    let busy = busy_during.is_some();
+    let retry = retry_reason(busy_during.is_some(), focus);
     let note = match (note, busy_during) {
         (Some(a), Some(b)) => Some(format!("{a}; {b}")),
         (a, b) => a.or(b),
     };
-    Ok(Some((SuiteRun { scenario: p.scenario.name.to_owned(), variant, repeat: p.repeat, report, gpu }, note, busy)))
+    Ok(Some((SuiteRun { scenario: p.scenario.name.to_owned(), variant, repeat: p.repeat, report, gpu }, note, retry)))
 }
 
 /// As `sf_diag_bevy` names report files.
@@ -630,6 +677,38 @@ mod tests {
         // A game: counted.
         assert!((working_gpu_load(&[at(90.0, 1800.0), at(10.0, 210.0)]) - 45.0).abs() < 1e-9);
         assert!(working_gpu_load(&[]) < 1e-9);
+    }
+
+    #[test]
+    fn unfocused_runs_retry_like_busy_ones() {
+        let clean = FocusTally { frames: 100, unfocused: 0, hidden: 0 };
+        let dirty = FocusTally { frames: 100, unfocused: 3, hidden: 0 };
+        assert_eq!(retry_reason(false, Some(clean)), None);
+        // Not recorded (an old exe) doesn't retry on focus.
+        assert_eq!(retry_reason(false, None), None);
+        assert_eq!(retry_reason(true, Some(clean)), Some("busy during the run"));
+        assert_eq!(retry_reason(false, Some(dirty)), Some("window out of focus during the run"));
+        assert_eq!(retry_reason(true, Some(dirty)), Some("busy and window out of focus during the run"));
+    }
+
+    #[test]
+    fn focus_lines_flag_each_dirty_run() {
+        let clean = Some(FocusTally { frames: 100, unfocused: 0, hidden: 0 });
+        let all_clean = [("a@1280x720-1".to_owned(), clean), ("a@1280x720-2".to_owned(), clean)];
+        assert_eq!(focus_lines(&all_clean), ["- focus: clean, all 2 runs (window in front for every measured frame)"]);
+        let mixed = [
+            ("a@1280x720-1".to_owned(), clean),
+            ("a@1280x720-2".to_owned(), Some(FocusTally { frames: 200, unfocused: 50, hidden: 10 })),
+            ("b@1280x720-1".to_owned(), None),
+        ];
+        assert_eq!(
+            focus_lines(&mixed),
+            [
+                "- focus: 1 of 3 runs clean",
+                "- **unfocused**: a@1280x720-2: DIRTY: window unfocused 50 of 200 measured frames (25.0%), hidden 10 (5.0%)",
+                "- focus: not recorded for b@1280x720-1 (exe older than the focus guard)",
+            ]
+        );
     }
 
     /// `--arg` takes a game flag that starts with `--` (the `--scene` A/B), repeatable.

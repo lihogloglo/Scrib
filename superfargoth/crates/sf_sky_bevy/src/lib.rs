@@ -15,9 +15,12 @@
 //! - Night sky (`night.rs`): stars, moons (textured per phase or shaded)
 //!   and the sun's glare, drawn into the sky before any cloud composite.
 //!   The sun disk's drawn size is [`sf_sky::SunDiskLook`], not the light's.
+//! - [`SunCascadeHold`]: far sun cascades keep their fit and shadow map while
+//!   the camera stays within 4 m / 3 degrees, up to a max age (`cascade_hold.rs`).
 //! - [`PointShadowBudget`]: shadow maps for the few most important
 //!   [`BudgetedShadow`] point lights, faded by distance and over time.
 
+mod cascade_hold;
 mod cascades;
 mod env_refresh;
 mod gpu_culled_casters;
@@ -53,6 +56,7 @@ use bevy_transform::TransformSystems;
 pub use sf_sky;
 use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
 
+pub use cascade_hold::{CascadeHoldStats, HeldSunCascades, SunCascadeHold};
 pub use cascades::{cascade_texel_sizes, CascadeSplits};
 pub use path::{GiActive, GiEnabled, GiSkipEmissive, NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
@@ -333,6 +337,7 @@ impl Plugin for SkyPlugin {
                 PostUpdate,
                 place_atmosphere.in_set(SkySystems::Origin).after(TransformSystems::Propagate),
             );
+        cascade_hold::build(app);
         night::build(app);
         env_refresh::build(app);
         path::build(app);
@@ -341,6 +346,7 @@ impl Plugin for SkyPlugin {
     }
 
     fn finish(&self, app: &mut App) {
+        cascade_hold::finish(app);
         night::finish(app);
         path::finish(app);
         upscale::finish(app);

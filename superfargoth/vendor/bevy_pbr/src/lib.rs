@@ -212,6 +212,8 @@ impl Plugin for PbrPlugin {
             .init_resource::<DefaultOpaqueRendererMethod>()
             // superfargoth patch (own, N1: ambient specular toggle)
             .init_resource::<AmbientLightSpecular>()
+            // superfargoth patch (own, F1): one command encoder per sun cascade
+            .init_resource::<ShadowCascadeEncoders>()
             .add_plugins((
                 MeshRenderPlugin {
                     use_gpu_instance_buffer_builder: self.use_gpu_instance_buffer_builder,
@@ -255,6 +257,8 @@ impl Plugin for PbrPlugin {
                 bevy_render::extract_component::ExtractComponentPlugin::<PointSpotShadowsHardware2x2>::default(),
                 // superfargoth patch (own, N1: ambient specular toggle)
                 ExtractResourcePlugin::<AmbientLightSpecular>::default(),
+                // superfargoth patch (own, F1): one command encoder per sun cascade
+                ExtractResourcePlugin::<ShadowCascadeEncoders>::default(),
             ));
 
         #[cfg(feature = "bevy_gltf")]
@@ -435,11 +439,25 @@ impl Plugin for PbrPlugin {
         render_app.add_systems(
             Core3d,
             (
-                per_view_shadow_pass::<EARLY_SHADOW_PASS>
+                // superfargoth patch (own, F1): one system (so one encoder) per sun cascade
+                // (`ShadowCascadeEncoders`); chained, so commands keep one order.
+                (
+                    per_view_shadow_pass::<EARLY_SHADOW_PASS>,
+                    per_view_shadow_pass_cascade1::<EARLY_SHADOW_PASS>,
+                    per_view_shadow_pass_cascade2::<EARLY_SHADOW_PASS>,
+                    per_view_shadow_pass_cascade3::<EARLY_SHADOW_PASS>,
+                )
+                    .chain()
                     .after(early_prepass_build_indirect_parameters)
                     .before(early_downsample_depth)
                     .before(per_view_shadow_pass::<LATE_SHADOW_PASS>),
-                per_view_shadow_pass::<LATE_SHADOW_PASS>
+                (
+                    per_view_shadow_pass::<LATE_SHADOW_PASS>,
+                    per_view_shadow_pass_cascade1::<LATE_SHADOW_PASS>,
+                    per_view_shadow_pass_cascade2::<LATE_SHADOW_PASS>,
+                    per_view_shadow_pass_cascade3::<LATE_SHADOW_PASS>,
+                )
+                    .chain()
                     .after(late_prepass_build_indirect_parameters)
                     .before(main_build_indirect_parameters)
                     .before(Core3dSystems::MainPass),

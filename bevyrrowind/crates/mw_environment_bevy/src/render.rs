@@ -52,6 +52,7 @@ pub fn default_upscaling(low: bool) -> Upscaling {
 }
 
 /// The render options of a view.
+#[expect(clippy::struct_excessive_bools, reason = "independent --off A/B switches")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RenderSettings {
     pub path: RenderPath,
@@ -66,6 +67,12 @@ pub struct RenderSettings {
     /// Lamp shadow faces redraw the same frame their casters move or deform (SH-20;
     /// `--off movershadows`: the B3 grid + 2-faces-per-frame rule).
     pub mover_shadows: bool,
+    /// One command encoder per sun cascade (ROADMAP 1.22 F1; `--off cascadeencoders`: one for all,
+    /// stock Bevy).
+    pub cascade_encoders: bool,
+    /// Far sun cascades keep their fit and map between redraws (ROADMAP 1.22 F3,
+    /// `sf_sky_bevy::SunCascadeHold`; `--off cascadehold`: every cascade drawn every frame).
+    pub cascade_hold: bool,
     /// Sun cascades `(count, last bound m)` instead of the preset's
     /// (`--sun-cascades`, else `BEVYRROWIND_SUN_CASCADES`).
     pub sun_cascades: Option<(usize, f32)>,
@@ -102,7 +109,7 @@ impl RenderSettings {
         let path = if ray_traced { RenderPath::RayTraced } else { RenderPath::Raster };
         let point_shadows = std::env::var(ENV_POINT_SHADOWS).ok().and_then(|v| v.trim().parse().ok());
         let sun_cascades = std::env::var(ENV_SUN_CASCADES).ok().and_then(|v| parse_sun_cascades(&v).ok());
-        Ok(Self { path, upscaling, denoiser, point_shadows, shadow_cache: true, mover_shadows: true, sun_cascades })
+        Ok(Self { path, upscaling, denoiser, point_shadows, shadow_cache: true, mover_shadows: true, cascade_encoders: true, cascade_hold: true, sun_cascades })
     }
 
     /// Whether the view needs the sky plugin's render-path management.
@@ -165,6 +172,20 @@ impl RenderSettings {
         self
     }
 
+    /// `--off cascadeencoders` (ROADMAP 1.22 F1 A/B): `bevy_pbr::ShadowCascadeEncoders`.
+    #[must_use]
+    pub fn with_cascade_encoders(mut self, on: bool) -> Self {
+        self.cascade_encoders = on;
+        self
+    }
+
+    /// `--off cascadehold` (ROADMAP 1.22 F3 A/B): `sf_sky_bevy::SunCascadeHold`.
+    #[must_use]
+    pub fn with_cascade_hold(mut self, on: bool) -> Self {
+        self.cascade_hold = on;
+        self
+    }
+
     /// The point-light shadow budget: the override's count, else the
     /// preset's `(count, face size)`.
     pub fn point_shadow_budget(self, preset: (usize, usize)) -> PointShadowBudget {
@@ -177,6 +198,11 @@ impl RenderSettings {
         app.insert_resource(UpscalingSetting(self.upscaling));
         app.insert_resource(self.point_shadow_budget(POINT_SHADOWS_DEFAULT));
         app.insert_resource(bevy_pbr::ShadowMoverRefresh { per_frame: self.mover_shadows });
+        app.insert_resource(bevy_pbr::ShadowCascadeEncoders(self.cascade_encoders));
+        app.insert_resource(sf_sky_bevy::SunCascadeHold(sf_sky_bevy::sf_sky::cascade_hold::CascadeHoldConfig {
+            enabled: self.cascade_hold,
+            ..Default::default()
+        }));
         // N1 (night sheen): the flat ambient (the exterior night floor, the interior cell
         // ambient) lights diffuse only, as `OpenMW`'s; env maps and lamps keep their specular.
         // Live A/B: `flip ambient_specular`.
@@ -282,5 +308,44 @@ mod tests {
         let settings = RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings").with_shadow_cache(false);
         settings.insert(&mut app);
         assert_eq!(app.world().get_resource::<bevy_pbr::AmbientLightSpecular>().map(|a| a.0), Some(false));
+    }
+
+    /// F1 (ROADMAP 1.22): each sun cascade records into its own encoder unless
+    /// `--off cascadeencoders`; the vendored `bevy_pbr` per-view shadow pass systems split by
+    /// `per_view_shadow_encoder_slot`.
+    #[test]
+    fn cascade_encoders_switch_and_split() {
+        for on in [true, false] {
+            let mut app = App::new();
+            let settings = RenderSettings::new(false, Some(Upscaling::Off), true, true)
+                .expect("settings")
+                .with_shadow_cache(false)
+                .with_cascade_encoders(on);
+            settings.insert(&mut app);
+            assert_eq!(app.world().get_resource::<bevy_pbr::ShadowCascadeEncoders>().map(|e| e.0), Some(on));
+        }
+        assert!(bevy_pbr::ShadowCascadeEncoders::default().0, "stock default splits");
+        // Split: the sun's 3 cascades take systems 0, 1, 2; a second light's wrap around.
+        let split: Vec<usize> = (0..6).map(|i| bevy_pbr::per_view_shadow_encoder_slot(i, true)).collect();
+        assert_eq!(split, [0, 1, 2, 3, 0, 1]);
+        assert!(split.iter().all(|&s| s < bevy_pbr::PER_VIEW_SHADOW_ENCODERS));
+        // Off: every cascade in system 0's one encoder, as stock Bevy.
+        assert!((0..8).all(|i| bevy_pbr::per_view_shadow_encoder_slot(i, false) == 0));
+    }
+
+    /// F3 (ROADMAP 1.22): far sun cascades hold unless `--off cascadehold`, framework defaults otherwise.
+    #[test]
+    fn cascade_hold_switch() {
+        for on in [true, false] {
+            let mut app = App::new();
+            let settings = RenderSettings::new(false, Some(Upscaling::Off), true, true)
+                .expect("settings")
+                .with_shadow_cache(false)
+                .with_cascade_hold(on);
+            settings.insert(&mut app);
+            let hold = app.world().get_resource::<sf_sky_bevy::SunCascadeHold>().map(|h| h.0).expect("hold settings");
+            let defaults = sf_sky_bevy::sf_sky::cascade_hold::CascadeHoldConfig::default();
+            assert_eq!(hold, sf_sky_bevy::sf_sky::cascade_hold::CascadeHoldConfig { enabled: on, ..defaults });
+        }
     }
 }

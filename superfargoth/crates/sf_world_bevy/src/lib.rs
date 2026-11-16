@@ -26,6 +26,7 @@ mod debug;
 mod fade;
 mod far;
 pub mod matclass;
+pub mod mesh_slabs;
 mod origin;
 mod precombine;
 mod reveal;
