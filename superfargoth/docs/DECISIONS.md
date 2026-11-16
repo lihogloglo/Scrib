@@ -1849,3 +1849,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   framework with first-person movesets; reference Brutal Morrowind (GPL-3.0 OpenMW fork). Underwater look reference:
   Abyssal Garden (MIT). Both noted in combat.md, first-person.md, water.md; no work queued.
 - 2026-11-16 (owner): agent and orchestrator hand-off point raised from ~80-100k to ~200k tokens of context (CONTRIBUTING "Working with coding agents"); slices stay one deliverable each.
+- 2026-11-16 (owner): no more long bench chains or test marathons for now (machine runs hot, blocks the owner's work,
+  costs tokens). Next sessions implement the remaining CPU waste fixes (ROADMAP 1.25, CW-9 interiors first), the
+  OpenMW-F3-style live perf panel (CW-17, moved up), and runtime presets from "extremely low" to "ultra" via tunables (T3-T5).
