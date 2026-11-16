@@ -244,3 +244,14 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Owner question (look, not perf): should overcast look diffuse (cloud cover turning direct sun into sky fill)? Then the
   gate would also drop overcast shadows by day.
 - Status: confirmed 2026-11-16 (owner: "everything looks right"; run: rain from 16:30 through dusk to night; ashstorm and the clear->rain transition not run). Overcast-diffuse look: owner no strong opinion, maybe later if cheap, not today.
+
+### SH-31: Lamp shadow cache (CW-4 S3, ROADMAP 1.25, built 2026-11-17, opt-in, first run on a GPU)
+- Run (release build): `scene census` and `view "Balmora" --hour 22 --weather clear`, High; `set shadow.lamp.cache.enabled on`
+  (console, live; alias `BEVYRROWIND_LAMP_CACHE=1`); F3 full: views by kind and `views/lamp_face/count` before/after, gauges
+  `lamp_cache/*`. Code `sf_sky_bevy/src/lamp_cache.rs` + vendored `bevy_pbr/src/render/point_shadow_cache.rs`.
+- Look for: lamp shadows identical to the switch off once settled (walls, furniture, crates); a short fade-in when a lamp
+  first gets its slot (captures); NPCs and the player keep crisp, current shadows walking past a lamp and across a cube
+  seam (45 deg diagonals, straight below), no flicker among several lamps (SH-21a); an item picked up or a door swung next
+  to a lamp leaves a ghost for at most ~2 s; flipping the switch both ways shows no pop. Lamp face views should drop to
+  near 0 standing still with nobody near a lamp.
+- Status: awaiting owner.

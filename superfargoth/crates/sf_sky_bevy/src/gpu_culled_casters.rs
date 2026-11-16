@@ -73,7 +73,7 @@ pub(crate) fn add(app: &mut App) {
 
 /// The cube faces (bit `i` = face `i`) of a point light that a caster can
 /// shadow: the tests of `bevy_light::check_point_light_mesh_visibility`.
-fn caster_faces(light: &Sphere, frusta: &CubemapFrusta, aabb: Option<&Aabb>, transform: &GlobalTransform) -> u8 {
+pub(crate) fn caster_faces(light: &Sphere, frusta: &CubemapFrusta, aabb: Option<&Aabb>, transform: &GlobalTransform) -> u8 {
     let Some(aabb) = aabb else {
         return ALL_FACES;
     };

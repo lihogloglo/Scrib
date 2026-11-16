@@ -35,6 +35,10 @@
 //!   losing its map never pops (spec `docs/specs/lights.md`, "Reach follows
 //!   shadow state").
 //!
+//! A holder carrying [`ShadowMapCached`] (the lamp shadow cache, `lamp_cache.rs`) keeps
+//! `PointLight::shadow_maps_enabled` false (the cache shades it as shadowed through its own
+//! component) and its shadow fade does not rise until the cache's faces are all captured.
+//!
 //! Also works around a Bevy 0.20 leak (shadows.md "Stale cube-face views"):
 //! `drop_stale_light_views` despawns the six face views of a light that
 //! lost its shadow, which Bevy's `prepare_lights` keeps alive.
@@ -415,6 +419,16 @@ pub struct ShadowSlot {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct ShadowHeldOffscreen;
 
+/// On a slot holder whose cube map the lamp shadow cache manages (`crate::lamp_cache`, CW-4): the
+/// budget leaves its `PointLight::shadow_maps_enabled` false (the vendored
+/// `bevy_pbr::CachedPointShadowMap` shades it as shadowed) and, while `ready` is false (cube faces
+/// not all captured), its shadow fade does not rise. The cache inserts and removes it.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShadowMapCached {
+    /// Every cube face holds its static depth: the shadow may fade in.
+    pub ready: bool,
+}
+
 /// The point-shadow budget on its own (`SkyPlugin` adds it; viewers without
 /// a sky add it directly).
 pub struct PointShadowPlugin;
@@ -422,6 +436,10 @@ pub struct PointShadowPlugin;
 impl Plugin for PointShadowPlugin {
     fn build(&self, app: &mut App) {
         add(app);
+    }
+
+    fn finish(&self, app: &mut App) {
+        crate::lamp_cache::finish(app);
     }
 }
 
@@ -441,6 +459,7 @@ fn add(app: &mut App) {
                 .after(TransformSystems::Propagate)
                 .before(VisibilitySystems::VisibilityPropagate),
         );
+    crate::lamp_cache::add(app);
     if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
         render_app.add_systems(Render, drop_stale_light_views.in_set(RenderSystems::CreateViews).after(prepare_lights));
     }
@@ -524,7 +543,7 @@ fn gate_reference(
     clippy::too_many_lines,
     reason = "one pass: score, pick, then fade the picked lights; splitting it would thread the same query through helpers"
 )]
-fn budget_shadows(
+pub(crate) fn budget_shadows(
     mut commands: Commands,
     budget: Res<PointShadowBudget>,
     time: Res<Time>,
@@ -545,6 +564,7 @@ fn budget_shadows(
             Has<NoFrustumCulling>,
             Has<ShadowHeldOffscreen>,
             Option<&SteadyIntensity>,
+            Option<&ShadowMapCached>,
         ),
     )>,
 ) {
@@ -571,7 +591,7 @@ fn budget_shadows(
     if let Some((eye, layers, _)) = &viewer
         && budget.max > 0
     {
-        for (entity, light, slot, _, prio, reach, at, (shown, light_layers, _, _, steady)) in &lights {
+        for (entity, light, slot, _, prio, reach, at, (shown, light_layers, _, _, steady, _)) in &lights {
             let d = at.translation().distance(*eye);
             if shown.get() && d < budget.fade_end && layers.intersects(light_layers.unwrap_or(&RenderLayers::default())) {
                 // The reach a slot would give, not the current blend.
@@ -603,7 +623,7 @@ fn budget_shadows(
     // First pass: advance existing held slots and release any that have finished
     // fading out, so newly ranked lights can claim freed slots in the same frame.
     let mut held = 0usize;
-    for (entity, _, slot, _, _, _, at, _) in &mut lights {
+    for (entity, _, slot, _, _, _, at, (.., cached)) in &mut lights {
         let Some(mut slot) = slot else {
             continue;
         };
@@ -611,8 +631,10 @@ fn budget_shadows(
             continue;
         }
         let target = target_of(entity, at);
+        // A cached lamp's shadow does not rise until its faces are captured (CW-4).
+        let wait_capture = cached.is_some_and(|c| !c.ready);
         let fade = if slot.fade < target {
-            (slot.fade + step).min(target)
+            if wait_capture { slot.fade } else { (slot.fade + step).min(target) }
         } else {
             (slot.fade - step).max(target)
         };
@@ -629,17 +651,19 @@ fn budget_shadows(
     // frame so multiple lamps never capture 12+ cubemap faces on the same frame.
     let max_new_slots = if budget.fade_time > 0.0 { 1 } else { budget.max };
     let mut new_slots = 0usize;
-    for (entity, mut light, slot, shadow_fade, _, reach, at, (_, _, unculled, pinned, _)) in &mut lights {
+    for (entity, mut light, slot, shadow_fade, _, reach, at, (_, _, unculled, pinned, _, cached)) in &mut lights {
         let target = target_of(entity, at);
+        let wait_capture = cached.is_some_and(|c| !c.ready);
         let Some(mut slot) = slot else {
             let mut fade = 0.0;
             if target > 0.0 && held < budget.max && new_slots < max_new_slots {
                 held += 1;
                 new_slots += 1;
-                fade = step.min(target);
+                fade = if wait_capture { 0.0 } else { step.min(target) };
                 let shadows = fade > 0.0;
-                if light.shadow_maps_enabled != shadows {
-                    light.shadow_maps_enabled = shadows;
+                let map = shadows && cached.is_none();
+                if light.shadow_maps_enabled != map {
+                    light.shadow_maps_enabled = map;
                 }
                 let contact = shadows && budget.contact_shadows;
                 if light.contact_shadows_enabled != contact {
@@ -663,7 +687,9 @@ fn budget_shadows(
             slot.held = true;
             held += 1;
             new_slots += 1;
-            slot.fade = (slot.fade + step).min(target);
+            if !wait_capture {
+                slot.fade = (slot.fade + step).min(target);
+            }
         }
 
         // A holder stays in view for Bevy while it holds its slot.
@@ -678,8 +704,10 @@ fn budget_shadows(
         if let Some(reach) = reach {
             set_range(&mut light, reach.range(if slot.held { fade } else { 0.0 }));
         }
-        if light.shadow_maps_enabled != shadows {
-            light.shadow_maps_enabled = shadows;
+        // A cached lamp's cube map is the cache's (its component shades it as shadowed).
+        let map = shadows && cached.is_none();
+        if light.shadow_maps_enabled != map {
+            light.shadow_maps_enabled = map;
         }
         let contact = shadows && budget.contact_shadows;
         if light.contact_shadows_enabled != contact {

@@ -243,6 +243,8 @@ impl RenderSettings {
                 .add_systems(Update, shadow_captures_at_black.before(sf_world_bevy::StreamingSystems::Transition));
         }
 
+        // CW-4 S3: characters (and what they carry) are movers of the lamp shadow cache.
+        app.add_observer(lamp_cache_movers);
         app.add_systems(Last, log_lighting_at_screenshot);
         app.add_systems(PostUpdate, publish_sun_occlusion.after(sf_atmos_bevy::CloudSystems::Drive));
     }
@@ -296,6 +298,13 @@ fn shadow_captures_at_black(
 /// doesn't recapture the lights around it (a 1-frame loss of actor shadows).
 fn movable_characters(add: On<Add<sf_character_bevy::Character>>, mut commands: Commands) {
     commands.entity(add.entity).try_insert(sf_shadow_cache_bevy::ShadowMobility::Movable);
+}
+
+/// Characters and what hangs off them (held items, attachments) are always movers of the lamp
+/// shadow cache (`sf_sky_bevy::lamp_cache`, CW-4 S3; the mark is inherited): never captured, so an
+/// NPC that stops and starts doesn't recapture the lamps around it.
+fn lamp_cache_movers(add: On<Add<sf_character_bevy::Character>>, mut commands: Commands) {
+    commands.entity(add.entity).try_insert(sf_sky_bevy::lamp_cache::LampShadowMobility::Movable);
 }
 
 /// CW-8: the cloud shadow map's mean on the sun (`sf_atmos_bevy::mean_cloud_shadow`; 1 while the

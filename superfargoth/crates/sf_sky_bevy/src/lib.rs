@@ -19,11 +19,14 @@
 //!   the camera stays within 4 m / 3 degrees, up to a max age (`cascade_hold.rs`).
 //! - [`PointShadowBudget`]: shadow maps for the few most important
 //!   [`BudgetedShadow`] point lights, faded by distance and over time.
+//! - [`lamp_cache`]: still budgeted lamps keep their static shadow depth and draw only movers
+//!   over it (CW-4, `shadow.lamp.cache.enabled`, off by default).
 
 mod cascade_hold;
 mod cascades;
 mod env_refresh;
 mod gpu_culled_casters;
+pub mod lamp_cache;
 mod night;
 mod path;
 mod proxy;
@@ -44,6 +47,8 @@ mod shadow_gate_tests;
 mod face_cull_tests;
 #[cfg(test)]
 mod lamp_cache_render_tests;
+#[cfg(test)]
+mod lamp_cache_tests;
 #[cfg(test)]
 mod sun_gate_tests;
 #[cfg(test)]
@@ -74,7 +79,7 @@ pub use path::{GiActive, GiEnabled, GiSkipEmissive, NoRayTracing, RayTracingMesh
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
 pub use shadow_budget::{
     importance as shadow_importance, pick_shadowed, BudgetedShadow, PointShadowBudget, PointShadowPlugin,
-    ShadowContrastGate, ShadowHeldOffscreen, ShadowReach, ShadowSlot, SteadyIntensity, sky_reference_lux,
+    ShadowContrastGate, ShadowMapCached, ShadowHeldOffscreen, ShadowReach, ShadowSlot, SteadyIntensity, sky_reference_lux,
     TUNABLES as SHADOW_BUDGET_TUNABLES, DAY_GATE, DAY_GATE_CONTRAST, DAY_GATE_RECEIVER, FACE_CULL, LAMP_CONTACT, LAMP_COUNT, LAMP_FADE,
     LAMP_FADE_TIME, LAMP_HYSTERESIS, LAMP_MAP_SIZE,
 };

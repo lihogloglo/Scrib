@@ -8702,6 +8702,7 @@ dependencies = [
  "dlss_wgpu",
  "log",
  "naga",
+ "sf_diag_bevy",
  "sf_ids",
  "sf_model_bevy",
  "sf_render_order_bevy",

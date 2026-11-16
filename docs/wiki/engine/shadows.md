@@ -78,7 +78,16 @@ Everything else is unshadowed.
   schedule, encoder or draw. Faces without casters already draw once (a clear) and stay clean. Switch:
   `BEVYRROWIND_POINT_FACE_CULL=1` (`mw_environment_bevy/src/render.rs:29`). Gauges `views/lamp_face/culled|revealed|drawn`
   (`sf_diag_bevy/src/views.rs`), debug line `bevy_pbr::shadow_refresh`.
-- **Lamp cache: not in the game** (`POINT_SHADOW_CACHE = false`, `mw_environment_bevy/src/render.rs:37`, since
+- **Lamp shadow cache (opt-in, off; ROADMAP 1.25 CW-4, built not measured).** `shadow.lamp.cache.enabled` (live; alias
+  `BEVYRROWIND_LAMP_CACHE=1`). `sf_sky_bevy/src/lamp_cache.rs`: `admit_lamps` (`:457`, after the budget) gives a still
+  slot holder `bevy_pbr::CachedPointShadowMap` + `ShadowMapCached` and turns its stock flag off (no stock scan, no hash);
+  the budget holds its fade at 0 until every face is captured (`shadow_budget.rs:427`). One caster scan at admission,
+  then only changed casters, light-relative at 1 mm (origin shifts change nothing); skinned, morphed and
+  `LampShadowMobility::Movable` (game: on characters, `render.rs:306`) always move, rigid ones settle after 1 s.
+  `track_lamps` (`:623`) feeds S1 (`sf_sky::lamp_cache`) and writes each lamp's masks, copies and lists from its plan
+  (`write_plan` `:863`): a clean face has no view; a mover face is copied back and drawn with its movers only. A lamp
+  that moves leaves for the stock path until still. Off: the stock path exactly. Not yet run on a GPU (S4).
+- **Legacy lamp cache: not in the game** (`POINT_SHADOW_CACHE = false`, `mw_environment_bevy/src/render.rs:37`, since
   2026-10-21; `--off shadowcache` is a no-op). As built: `sf_shadow_cache_bevy` (`lib.rs:1`-`:70`, `ShadowCachePlugin` `:209`): per shadowed light a persistent
   cube array holds the depth of its static casters; Bevy's views draw movers over a restored copy. Captures:
   `captures_per_frame` 2, `recapture_interval` 2 s, `settle_time` 1 s, 24 slots (`:85`-`:125`). Skinned meshes and
@@ -101,23 +110,26 @@ Live tunables (`set <name> <value>` in the console, BRP `sf.tunables/set`, `--se
 `sf_sky_bevy/src/quality.rs` `ShadowQualityPlugin`, quality levels at the `Preset` layer from
 `mw_exterior_bevy/src/quality_presets.rs`): lamps `shadow.lamp.count`, `.map_size_px`, `.fade_m` (Bevyrrowind 35,45 at
 `Mod`), `.fade_time_s`, `.hysteresis`, `.contact`, `.day_gate` (+ `.receiver_m`, `.contrast`), `.face_cull` (+
-`.margin_deg`); sun `shadow.sun.cascades`, `.distance_m`, `.split_lambda`, `.overlap`, `.soft`, `.soft_size_texels`,
+`.margin_deg`), `.cache.enabled` (+ 11 `shadow.lamp.cache.*` policy values); sun `shadow.sun.cascades`, `.distance_m`, `.split_lambda`, `.overlap`, `.soft`, `.soft_size_texels`,
 `.gate` (+ `.contrast`, `.hysteresis`, `.fade_s`); views `shadow.contact` (+ `.steps`, `.thickness_m`, `.length_m`),
 `shadow.filter` (auto|hardware|gaussian|temporal), `render.ssao.quality`. Deprecated env aliases: `BEVYRROWIND_POINT_SHADOWS`,
-`_LAMP_CONTACT`, `_SHADOW_FILTER`, `_SSAO`, `_LAMP_DAY_GATE`, `_POINT_FACE_CULL`, `_SUN_SHADOW_GATE`; `--point-shadows N`,
+`_LAMP_CONTACT`, `_SHADOW_FILTER`, `_SSAO`, `_LAMP_DAY_GATE`, `_POINT_FACE_CULL`, `_LAMP_CACHE`, `_SUN_SHADOW_GATE`; `--point-shadows N`,
 `--sun-cascades N:M` (and `BEVYRROWIND_SUN_CASCADES`) set the `CommandLine` layer. `--off` parts (`mw_game_core/src/perf.rs:135`):
 `shadows`, `shadowcache`, `lampfilter`, `movershadows`, `farshadows`, `softshadows`, `contactshadows`, `ssao`, `cpuculltag`,
 `cascadehold`, `cascadeencoders` (`softshadows`, `contactshadows`, `ssao` force their tunables at `CommandLine`).
 `BEVYRROWIND_GPU_CULL_STATICS=1` stays env (startup). Console `flip contactshadows` (devtools, older duplicate).
-Gauges: `ShadowCacheStats` (`sf_shadow_cache_bevy/src/lib.rs:147`), `RUST_LOG=bevy_pbr::shadow_refresh=debug`.
+Gauges: `ShadowCacheStats` (`sf_shadow_cache_bevy/src/lib.rs:147`), `RUST_LOG=bevy_pbr::shadow_refresh=debug`; lamp
+cache `lamp_cache/lamps|ready|views|captures|mover_faces|deferred_faces|store_starved|copies|queued|clean_faces|movers|
+stock_lamps|store_used` (main world, `lamp_cache.rs:939`) and `lamp_cache/render/lamps|views|drawn|loaded|copies|
+dropped_copies|lost` (render world, `PointShadowCacheStats`).
 
 ## Known limits
 
 - Lamp-shadow quality is open: player shadow flickers near some torches, which lamps cast looks arbitrary
   ([ledger](../../ledger/shadows.md), SH-13, SH-21); hard problem H2.
 - Shadows on a moving character flicker among many lamps: only 2 (+1) lamps redraw per frame, so each lamp's cube
-  holds an older pose on a different frame. Standard fix not built: cached static depth + movers drawn every frame
-  (UE, HDRP mixed cached shadows); ledger 2026-11-15, SH-25.
+  holds an older pose on a different frame. Standard fix (cached static depth + movers drawn every frame, UE, HDRP
+  mixed cached shadows) built opt-in as the CW-4 lamp cache, not yet checked on a GPU; ledger 2026-11-15, SH-25.
 - The lamp pick uses the camera position: a third-person orbit can still hand a slot over when more lamps than slots
   are near; with all slots held, a far lamp ahead may have no shadow (SH-25).
 - Objects past the last cascade get no object shadows; terrain does (ledger 2026-10-19).

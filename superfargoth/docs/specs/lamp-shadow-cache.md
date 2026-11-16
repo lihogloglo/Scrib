@@ -243,6 +243,22 @@ leaves unshadowed lamps' `CubemapFrusta` stale). Stock lamps: unchanged; the liv
 cached lamp exists (sticky). **Inert until S3 inserts the component, so no switch.** Tests (`sf_sky_bevy/src/
 lamp_cache_render_tests.rs`, no GPU): mask 0 -> 0 views/phases, 0b101 -> 2, stock -> 6, sanitising, extraction (once, removal).
 
+**S3 as built (2026-11-17).** `sf_sky_bevy::lamp_cache` (in `PointShadowPlugin`). `admit_lamps` (PostUpdate, after `budget_shadows`, before visibility) admits a still slot holder (one
+caster scan in its shadowed reach), inserts `CachedPointShadowMap` + `ShadowMapCached` and turns its stock flag off; the
+budget's hook (`shadow_budget.rs`, `ShadowMapCached`) keeps the flag off and holds the fade until `ready`; a slot gained this
+frame starts at fade 0, a lamp the stock path drew keeps its fade (no pop on a live switch). Lost slot, despawn, switch off:
+components removed, stock flag back the same frame. `track_lamps` (after `CheckLightVisibility`, `GpuBatchedLightVisibility`,
+`list_gpu_culled_casters`, before `MarkNewlyHiddenEntitiesInvisible`): S2 feedback (+ `LampCacheReports` for hosts/tests),
+lamp moves (> half its statics shifted relative to it: `Moved`, stock path, back after `settle_time_s` still against one
+reference static), changed/removed casters (light-relative affine + bounds at 1 mm), settling, movers (SH-21b sphere test,
+`point_shadow_faces_seen` with the CW-3b margin), `plan`, then per lamp the component (written only with draws, copies or a
+new view mask), lists (statics on capture faces, movers on mover faces, written on change) and `set_visible` on listed casters.
+Choices: statics present at admission count as in the first capture (never drawn as movers before it); a static that settles
+later is a mover until its face's recapture is issued; characters carry `LampShadowMobility::Movable` (game observer).
+Gauges `lamp_cache/*` + `lamp_cache/render/*` (`sf_diag_bevy` dependency added). Open: instance changes inside a GPU batch
+are not watched (only the batch entity); S2 records copies per lamp, not in S1's global order (a Save into a layer another
+lamp restores from the same frame would race; LRU makes it unlikely). 7 tests `lamp_cache_tests.rs`.
+
 ## Measurements (S0b, S4)
 
 - One exe, untraced, `perf suite --arm base --arm cache:--env BEVYRROWIND_LAMP_CACHE=1`, plus
