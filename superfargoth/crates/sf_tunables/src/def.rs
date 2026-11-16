@@ -313,6 +313,12 @@ impl<T> Id<T> {
     }
 }
 
+impl<T> From<Id<T>> for TunableId {
+    fn from(id: Id<T>) -> Self {
+        id.id
+    }
+}
+
 impl<T> Clone for Id<T> {
     fn clone(&self) -> Self {
         *self

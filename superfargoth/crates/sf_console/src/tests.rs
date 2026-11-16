@@ -145,6 +145,52 @@ fn toggle_and_reset() {
     assert!(c.vars().flag(shadows));
 }
 
+/// `reset <name>` peels the console's layer only; `reset <name> all` clears every layer; a
+/// bare `reset` peels the console's layer everywhere (spec tunables.md "Values: layers").
+#[test]
+fn reset_peels_the_console_layer_and_all_clears_every_layer() {
+    let (mut c, shadows, scale, _) = console();
+    let ctx = &mut Ctx::default();
+    c.vars_mut()
+        .set_by(scale, Value::Float(2.0), SetBy::CommandLine)
+        .unwrap();
+    c.exec(ctx, "time.scale 5; render.shadows off").unwrap();
+    c.exec(ctx, "reset time.scale").unwrap();
+    assert_eq!(c.vars().get(scale), &Value::Float(2.0), "the command line's value is back");
+    assert_eq!(c.vars().var(scale).set_by(), SetBy::CommandLine);
+    c.exec(ctx, "reset time.scale all").unwrap();
+    assert_eq!(c.vars().get(scale), &Value::Float(1.0));
+    assert_eq!(c.vars().var(scale).set_by(), SetBy::Default);
+    c.vars_mut()
+        .set_by(scale, Value::Float(3.0), SetBy::Preset)
+        .unwrap();
+    c.exec(ctx, "time.scale 4; reset").unwrap();
+    assert_eq!(last_line(&c), "reset 2 variable(s)");
+    assert!(c.vars().flag(shadows));
+    assert_eq!(c.vars().get(scale), &Value::Float(3.0), "the preset's value stays");
+    assert!(c.exec(ctx, "reset time.scale everything").is_err());
+}
+
+/// Variables are found through the store, so a variable registered straight into it (the Bevy
+/// plugin's shared tunables) is a console variable too.
+#[test]
+fn variables_registered_in_the_store_are_console_variables() {
+    let (mut c, ..) = console();
+    let ctx = &mut Ctx::default();
+    let fog = c
+        .vars_mut()
+        .register(VarSpec::float("render.fog", 0.5).float_range(0.0, 1.0))
+        .unwrap();
+    c.exec(ctx, "render.fog 0.25").unwrap();
+    assert_eq!(c.vars().get(fog), &Value::Float(0.25));
+    assert_eq!(c.var_id("RENDER.FOG"), Some(fog));
+    assert!(c.complete("render.f").candidates.contains(&"render.fog".to_owned()));
+    assert!(matches!(
+        c.add_command(CommandSpec::new("render.fog"), |_| Ok(())),
+        Err(RegisterError::Duplicate(_))
+    ));
+}
+
 #[test]
 fn commands_bind_typed_args() {
     let (mut c, ..) = console();
@@ -520,8 +566,12 @@ fn set_by_priority() {
         c.vars().var(scale).describe(),
         "time.scale = 2 (default 1) [float 0..=10] (set by command line)"
     );
-    // `reset` gives the variable back to every source; `list` shows who set what.
-    c.exec(ctx, "reset render.shadows; clear; list time")
+    // `reset` takes back the console's value: code's comes back; `reset <name> all` gives
+    // the variable back to every source; `list` shows who set what.
+    c.exec(ctx, "reset render.shadows").unwrap();
+    assert_eq!(c.vars().var(shadows).set_by(), SetBy::Code);
+    assert!(c.vars().flag(shadows));
+    c.exec(ctx, "reset render.shadows all; clear; list time")
         .unwrap();
     assert_eq!(c.vars().var(shadows).set_by(), SetBy::Default);
     assert_eq!(last_line(&c), "* time.scale = 2  (command line)");

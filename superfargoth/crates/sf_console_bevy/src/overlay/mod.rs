@@ -33,7 +33,7 @@ use bevy_ui::{
 use bevy_window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use sf_console::{Edit, Level, Prompt};
 
-use crate::{ConsoleOpen, ConsoleSubmit, ConsoleSystems, DevConsole};
+use crate::{ConsoleOpen, ConsoleSubmit, ConsoleSystems, DevConsole, Tunables};
 
 pub mod inspect;
 pub mod select;
@@ -244,6 +244,7 @@ fn handle_keys(
     mut open: ResMut<ConsoleOpen>,
     mut overlay: ResMut<ConsoleOverlay>,
     mut console: ResMut<DevConsole>,
+    mut tunables: ResMut<Tunables>,
     mut submit: MessageWriter<ConsoleSubmit>,
     mut clipboard: Option<ResMut<Clipboard>>,
     // Ctrl left/right, Shift left/right.
@@ -315,7 +316,9 @@ fn handle_keys(
                 None => continue,
             },
         };
-        if let Some(line) = overlay.prompt.apply(edit, &mut console) {
+        let prompt = &mut overlay.prompt;
+        let tunables = tunables.bypass_change_detection();
+        if let Some(line) = console.with_tunables(tunables, |c| prompt.apply(edit, c)) {
             overlay.scroll = 0;
             submit.write(ConsoleSubmit::typed(line));
         }
@@ -395,7 +398,8 @@ fn release_cursor(
 fn draw_overlay(
     open: Res<ConsoleOpen>,
     style: Res<ConsoleStyle>,
-    console: Res<DevConsole>,
+    mut console: ResMut<DevConsole>,
+    mut tunables: ResMut<Tunables>,
     mut overlay: ResMut<ConsoleOverlay>,
     mut roots: Query<&mut Node, (With<OverlayRoot>, Without<Popup>)>,
     scrollback: Query<&Children, With<Scrollback>>,
@@ -455,7 +459,10 @@ fn draw_overlay(
                 text.0.clone_from(&line);
             }
         }
-        let shown = prompt.popup(&console.0);
+        // Completion looks names up in the store; borrowing it changes nothing.
+        let shown = console
+            .bypass_change_detection()
+            .with_tunables(tunables.bypass_change_detection(), |c| prompt.popup(c));
         for (mut node, mut text) in &mut popup {
             node.display = if shown.is_some() {
                 Display::Flex

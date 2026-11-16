@@ -1,12 +1,13 @@
 # Tunables
 
-Status: spec (2026-11-16); T1 core built ("Migration", T1 as built). Census: `tunables-census.md` (generated, grep only).
+Status: spec (2026-11-16); T1 core and T2 Bevy side built ("Migration", T1/T2 as built). Census: `tunables-census.md` (generated, grep only).
 Crates (proposed): `sf_tunables` (Bevy-free core: definitions, layered values, provenance, presets, dump),
 `sf_tunables_bevy` (thin plugin: resource, change messages, bindings, CLI, BRP). `sf_console` moves its variables
 onto the core; nothing else in the console changes.
 
 <!-- agent-summary -->
-> **Agent summary (2026-11-16).** Core built (T1: `sf_tunables`, console on it); no Bevy side yet. One registry
+> **Agent summary (2026-11-16).** Core built (T1: `sf_tunables`); Bevy side built (T2: `sf_tunables_bevy`, the
+> console on its shared store); app wiring is T3. One registry
 > of named, typed, ranged values with a unit, a source ("provenance") and a lifetime, set through ordered layers (default < mod < preset < user < command line < code <
 > console/BRP), live through Bevy change detection on the settings resources systems already read. Console variables
 > become tunables; `ui.setting_preset` levels become bundles of tunables; perf arms and sweeps set them with `--set`.
@@ -303,6 +304,31 @@ but `Default`; setting `Default` is an error. `ArgKind` gained `Float2`/`Float3`
 `SetBy::Config` is an alias of `User`, which still prints "config", so console output is unchanged. Left for later:
 the console's `reset <name>` still clears every layer (old behaviour, pinned by its tests; Console-only peel is T2/T3's
 call), the `Net::Gameplay` client refusal (T7), per-preset-level dump columns (T5), JSON output in the app (T3).
+
+**T2 as built (2026-11-16).** `superfargoth/crates/sf_tunables_bevy` (`bevy_app`, `bevy_ecs`, `bevy_log`, `serde_json`,
+`toml`; optional `bevy_remote` behind `remote`). `Tunables` resource (newtype over the core store, `Deref`);
+`TunablesPlugin` adds it with `SetTunable { name, value: text, layer, note }`, `PeelTunable { name, layer: Option }`
+(`None`: every layer but `Default`), `TunableChanged { id, name }`, `TunableRefused { name, reason }` (also a
+warning), in `PreUpdate` sets `TunableSystems::Apply` (requests, then `take_changes` as messages) then `::Bind`.
+`TunablesAppExt`: `register_tunables(TUNABLES)` and `add_tunable(&DEF)` are get-or-register (the same name with
+another kind or default panics); the builder has `.bind_resource(|r: &mut R, v| ..)`, `.bind_component::<C, F>(..)`
+(all matches on a change, each newly added one) and `.id()`. A binding writes the first frame its target exists,
+then only on a change (generation compare), so `R.is_changed()` fires once per change. `tunable_changed(id)` run
+condition (`Id<T>` or `TunableId`; the core gained `From<Id<T>> for TunableId`). `overrides`: `parse_set`
+(`name=value`), `parse_file` (TOML: bare dotted keys, quoted keys and `[sections]` flatten to dotted names; bools
+on/off, arrays `a,b`), `apply_overrides(store, list, layer, note) -> Vec<Refusal>` (unknown names refused). `brp`:
+pure JSON handlers `list` (`filter`, `changed`), `get`, `set` (Console layer, kind and range validated, outcome
+`changed|unchanged|outranked`), `reset` (Console layer; `all`: every layer) over the dump `Row`; `remote` registers
+them as `sf.tunables/*` into `RemoteMethods` in `Plugin::finish` (after the app's `RemotePlugin` built it), and
+`mw_devtools_bevy/remote` turns it on (dev builds). **One store:** console variables live in `Tunables`;
+`sf_console` resolves variable names through its store (no copy in its name map); `DevConsole::with_tunables`
+swaps the shared store in while lines run, completion runs and things register; `ConsoleVarChanged` is forwarded
+from `TunableChanged`; `console_flag` / `console_var_changed` read `Res<Tunables>`; `ConsolePlugin` adds
+`TunablesPlugin` if missing. `reset <name>` peels the Console layer, `reset <name> all` clears every layer, a bare
+`reset` peels the Console layer everywhere. `mw_devtools_bevy` console systems read `Tunables` (compile fix). Left
+for T3: the app parsing `--set` / `--tunables` / the user dev file and failing the run on refusals; `vars` columns
+(layer, unit, range), `help` source and lifetime, `tunables diff`; a headless test of the BRP glue (a `remote` test
+build is its own Bevy: bevy_utils `debug`), today covered by the pure handlers' tests and the `dev` check build.
 
 ## Proposed CONTRIBUTING rule (for the orchestrator to apply)
 

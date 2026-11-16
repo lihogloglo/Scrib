@@ -52,6 +52,7 @@ use sf_sky_bevy::SunLight;
 use sf_console_bevy::overlay::{ConsoleInputSystems, ConsoleKeys, ConsoleOverlayPlugin, ConsoleSelection};
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param, VarId, VarSpec, Vars};
 use sf_console_bevy::{ConsoleAppExt, ConsolePlugin, DevConsole, SetBy};
+use sf_tunables_bevy::Tunables;
 
 use mw_game_core::exterior::ExteriorCamera;
 use mw_game_core::player::LocoAb;
@@ -418,8 +419,7 @@ impl Contact {
     /// The settings to put on the camera: the preset's (or Bevy's default) with the tuning
     /// variables' current values.
     #[expect(clippy::cast_possible_truncation, reason = "console floats are f64; the component is f32")]
-    fn settings(&self, console: &DevConsole) -> ContactShadows {
-        let vars = console.vars();
+    fn settings(&self, vars: &Tunables) -> ContactShadows {
         ContactShadows {
             length: vars.float(self.length) as f32,
             thickness: vars.float(self.thickness) as f32,
@@ -432,19 +432,19 @@ impl Contact {
 /// the camera started with the component) and returns the generation to record as applied.
 /// Command-line priority: a value typed before the camera existed wins, and then applies on
 /// the next frame (`u64::MAX` is never a real generation).
-fn seed_from_camera(console: &mut DevConsole, var: VarId, present: bool) -> u64 {
-    let _ = console.vars_mut().set_by(var, present.into(), SetBy::CommandLine);
-    if console.vars().flag(var) == present { console.vars().var(var).generation() } else { u64::MAX }
+fn seed_from_camera(vars: &mut Tunables, var: VarId, present: bool) -> u64 {
+    let _ = vars.set_by(var, present.into(), SetBy::CommandLine);
+    if vars.flag(var) == present { vars.var(var).generation() } else { u64::MAX }
 }
 
 /// The variable's value if it changed since `applied`, which then records the new generation.
-fn changed_since(console: &DevConsole, var: VarId, applied: &mut Option<u64>) -> Option<bool> {
-    let generation = console.vars().var(var).generation();
+fn changed_since(vars: &Tunables, var: VarId, applied: &mut Option<u64>) -> Option<bool> {
+    let generation = vars.var(var).generation();
     if *applied == Some(generation) {
         return None;
     }
     *applied = Some(generation);
-    Some(console.vars().flag(var))
+    Some(vars.flag(var))
 }
 
 /// Seeds `render.ssao` from the camera once it exists, then inserts or removes Bevy's
@@ -454,18 +454,18 @@ fn changed_since(console: &DevConsole, var: VarId, applied: &mut Option<u64>) ->
 #[allow(clippy::needless_pass_by_value)]
 fn apply_ssao(
     mut commands: Commands,
-    mut console: ResMut<DevConsole>,
+    mut tunables: ResMut<Tunables>,
     mut state: ResMut<Ssao>,
     cameras: Query<(Entity, Option<&ScreenSpaceAmbientOcclusion>), With<ExteriorCamera>>,
 ) {
     if state.applied.is_none() {
         let Some((_, ssao)) = cameras.iter().next() else { return };
         state.level = ssao.map(|s| s.quality_level);
-        state.applied = Some(seed_from_camera(&mut console, state.var, ssao.is_some()));
+        state.applied = Some(seed_from_camera(&mut tunables, state.var, ssao.is_some()));
         return;
     }
     let state = &mut *state;
-    let Some(on) = changed_since(&console, state.var, &mut state.applied) else { return };
+    let Some(on) = changed_since(&tunables, state.var, &mut state.applied) else { return };
     for (camera, ssao) in &cameras {
         match (on, ssao.is_some()) {
             (true, false) => {
@@ -492,7 +492,7 @@ fn apply_ssao(
 #[allow(clippy::needless_pass_by_value)]
 fn apply_contact_shadows(
     mut commands: Commands,
-    mut console: ResMut<DevConsole>,
+    mut tunables: ResMut<Tunables>,
     mut state: ResMut<Contact>,
     cameras: Query<(Entity, Option<&ContactShadows>), With<ExteriorCamera>>,
     mut suns: Query<&mut DirectionalLight, With<SunLight>>,
@@ -500,31 +500,31 @@ fn apply_contact_shadows(
     if state.applied.is_none() {
         let Some((_, contact)) = cameras.iter().next() else { return };
         state.settings = contact.copied();
-        state.applied = Some(seed_from_camera(&mut console, state.var, contact.is_some()));
+        state.applied = Some(seed_from_camera(&mut tunables, state.var, contact.is_some()));
         // The tuning variables start as the camera's values (a value typed earlier wins).
         let seed = state.settings.unwrap_or_default();
-        let vars = console.vars_mut();
+        let vars = &mut *tunables;
         let _ = vars.set_by(state.length, f64::from(seed.length).into(), SetBy::CommandLine);
         let _ = vars.set_by(state.thickness, f64::from(seed.thickness).into(), SetBy::CommandLine);
         state.tuned = Some((vars.var(state.length).generation(), vars.var(state.thickness).generation()));
         return;
     }
     let state = &mut *state;
-    let tuned = (console.vars().var(state.length).generation(), console.vars().var(state.thickness).generation());
+    let tuned = (tunables.var(state.length).generation(), tunables.var(state.thickness).generation());
     let retune = state.tuned != Some(tuned);
     state.tuned = Some(tuned);
-    let on = match changed_since(&console, state.var, &mut state.applied) {
+    let on = match changed_since(&tunables, state.var, &mut state.applied) {
         Some(on) => on,
-        None if retune => console.vars().flag(state.var),
+        None if retune => tunables.flag(state.var),
         None => return,
     };
     for (camera, contact) in &cameras {
         match (on, contact.is_some()) {
             (true, false) => {
-                commands.entity(camera).insert(state.settings(&console));
+                commands.entity(camera).insert(state.settings(&tunables));
             }
             (true, true) if retune => {
-                commands.entity(camera).insert(state.settings(&console));
+                commands.entity(camera).insert(state.settings(&tunables));
             }
             (false, true) => {
                 commands.entity(camera).remove::<ContactShadows>();
@@ -557,24 +557,24 @@ struct BloomVar {
 /// the camera when it changes, or removes the component at 0.
 #[allow(clippy::needless_pass_by_value)]
 #[expect(clippy::cast_possible_truncation, reason = "console floats are f64; the component is f32")]
-fn apply_bloom(mut commands: Commands, mut console: ResMut<DevConsole>, mut state: ResMut<BloomVar>, cameras: Query<(Entity, Option<&Bloom>), With<ExteriorCamera>>) {
+fn apply_bloom(mut commands: Commands, mut tunables: ResMut<Tunables>, mut state: ResMut<BloomVar>, cameras: Query<(Entity, Option<&Bloom>), With<ExteriorCamera>>) {
     if state.applied.is_none() {
         let Some((_, bloom)) = cameras.iter().next() else { return };
         state.settings = bloom.cloned();
         let seed = bloom.map_or(0.0, |b| f64::from(b.intensity));
-        let vars = console.vars_mut();
+        let vars = &mut *tunables;
         let _ = vars.set_by(state.var, seed.into(), SetBy::CommandLine);
         let generation = vars.var(state.var).generation();
         // A value typed before the camera existed differs from the seed: apply it next frame.
         state.applied = Some(if (vars.float(state.var) - seed).abs() < 1e-9 { generation } else { u64::MAX });
         return;
     }
-    let generation = console.vars().var(state.var).generation();
+    let generation = tunables.var(state.var).generation();
     if state.applied == Some(generation) {
         return;
     }
     state.applied = Some(generation);
-    let intensity = console.vars().float(state.var) as f32;
+    let intensity = tunables.float(state.var) as f32;
     for (camera, _) in &cameras {
         if intensity > 0.0 {
             let base = state.settings.clone().unwrap_or(Bloom::NATURAL);
@@ -598,19 +598,19 @@ struct GiVar {
 /// the volumes' textures (nothing traced or shown) and re-traces them when it comes back.
 /// A value typed before the seed wins, as for the camera variables.
 #[allow(clippy::needless_pass_by_value)]
-fn apply_gi(mut console: ResMut<DevConsole>, mut state: ResMut<GiVar>, enabled: Option<ResMut<sf_sky_bevy::GiEnabled>>) {
+fn apply_gi(mut tunables: ResMut<Tunables>, mut state: ResMut<GiVar>, enabled: Option<ResMut<sf_sky_bevy::GiEnabled>>) {
     let Some(mut enabled) = enabled else {
         if state.applied.is_none() {
-            let _ = console.vars_mut().set_by(state.var, false.into(), SetBy::CommandLine);
-            state.applied = Some(console.vars().var(state.var).generation());
+            let _ = tunables.set_by(state.var, false.into(), SetBy::CommandLine);
+            state.applied = Some(tunables.var(state.var).generation());
         }
         return;
     };
     if state.applied.is_none() {
-        state.applied = Some(seed_from_camera(&mut console, state.var, enabled.0));
+        state.applied = Some(seed_from_camera(&mut tunables, state.var, enabled.0));
         return;
     }
-    let Some(on) = changed_since(&console, state.var, &mut state.applied) else { return };
+    let Some(on) = changed_since(&tunables, state.var, &mut state.applied) else { return };
     if enabled.0 != on {
         enabled.0 = on;
     }
@@ -634,13 +634,14 @@ struct GiGain {
 #[expect(clippy::cast_possible_truncation, reason = "console floats are f64; the component is f32")]
 fn apply_gi_gain(
     mut console: ResMut<DevConsole>,
+    mut tunables: ResMut<Tunables>,
     mut state: ResMut<GiGain>,
     enabled: Option<Res<sf_sky_bevy::GiEnabled>>,
     mut volumes: Query<&mut sf_gi_bevy::GiVolume>,
 ) {
     let (intensity, ambient) = (state.intensity, state.ambient);
     if enabled.is_none() {
-        let vars = console.vars();
+        let vars = &*tunables;
         let generations = (vars.var(intensity).generation(), vars.var(ambient).generation());
         if state.reported.is_some_and(|seen| seen != generations) {
             console.log_mut().warn(&format!("gi gain: {GI_NOT_IN_RUN}"));
@@ -653,12 +654,12 @@ fn apply_gi_gain(
         if !volume.is_added() {
             continue;
         }
-        let vars = console.vars_mut();
+        let vars = &mut *tunables;
         // Outranked (and ignored) once a value was typed in the console.
         let _ = vars.set_by(intensity, f64::from(volume.intensity).into(), SetBy::CommandLine);
         let _ = vars.set_by(ambient, f64::from(volume.ambient_scale).into(), SetBy::CommandLine);
     }
-    let vars = console.vars();
+    let vars = &*tunables;
     let typed = |var: VarId| (vars.var(var).set_by() == SetBy::Console).then(|| vars.float(var) as f32);
     let (intensity, ambient) = (typed(intensity), typed(ambient));
     if intensity.is_none() && ambient.is_none() {
@@ -690,9 +691,9 @@ struct TerrainReflectance {
 /// to its shader every frame (RO-16 veil fix 1). Without terrain, a typed value says so.
 #[allow(clippy::needless_pass_by_value)]
 #[expect(clippy::cast_possible_truncation, reason = "console floats are f64; the setting is f32")]
-fn apply_terrain_reflectance(mut console: ResMut<DevConsole>, mut state: ResMut<TerrainReflectance>, settings: Option<ResMut<sf_terrain_bevy::TerrainSettings>>) {
+fn apply_terrain_reflectance(mut console: ResMut<DevConsole>, mut tunables: ResMut<Tunables>, mut state: ResMut<TerrainReflectance>, settings: Option<ResMut<sf_terrain_bevy::TerrainSettings>>) {
     let Some(mut settings) = settings else {
-        let generation = console.vars().var(state.var).generation();
+        let generation = tunables.var(state.var).generation();
         if state.reported.is_some_and(|seen| seen != generation) {
             console.log_mut().warn("terrain reflectance: no terrain here");
         }
@@ -702,9 +703,9 @@ fn apply_terrain_reflectance(mut console: ResMut<DevConsole>, mut state: ResMut<
     if !state.seeded {
         state.seeded = true;
         // Outranked (and ignored) once a value was typed in the console.
-        let _ = console.vars_mut().set_by(state.var, f64::from(settings.reflectance).into(), SetBy::CommandLine);
+        let _ = tunables.set_by(state.var, f64::from(settings.reflectance).into(), SetBy::CommandLine);
     }
-    let vars = console.vars();
+    let vars = &*tunables;
     if vars.var(state.var).set_by() != SetBy::Console {
         return;
     }
@@ -999,7 +1000,7 @@ mod tests {
         app.update();
         assert!(app.world().get::<ScreenSpaceAmbientOcclusion>(camera).is_none());
         let var = app.world().resource::<Ssao>().var;
-        assert!(!app.world().resource::<DevConsole>().vars().flag(var));
+        assert!(!app.world().resource::<Tunables>().flag(var));
         run(&mut app, "on ssao");
         assert!(app.world().get::<ScreenSpaceAmbientOcclusion>(camera).is_some());
         run(&mut app, "off froxels");
@@ -1036,14 +1037,14 @@ mod tests {
         run(&mut none, "on gi");
         assert!(log(&none).iter().any(|l| l.contains("gi: not in this run")), "{:?}", log(&none));
         let var = none.world().resource::<GiVar>().var;
-        assert!(!none.world().resource::<DevConsole>().vars().flag(var), "no GI: seeded off");
+        assert!(!none.world().resource::<Tunables>().flag(var), "no GI: seeded off");
 
         let mut app = app();
         app.insert_resource(sf_sky_bevy::GiEnabled(true));
         app.update();
         app.update();
         let var = app.world().resource::<GiVar>().var;
-        assert!(app.world().resource::<DevConsole>().vars().flag(var), "seeded from GiEnabled");
+        assert!(app.world().resource::<Tunables>().flag(var), "seeded from GiEnabled");
         run(&mut app, "off gi");
         assert!(!app.world().resource::<sf_sky_bevy::GiEnabled>().0, "{:?}", log(&app));
         run(&mut app, "flip gi");
@@ -1069,7 +1070,7 @@ mod tests {
         app.update();
         let gain = app.world().resource::<GiGain>();
         let (intensity, ambient) = (gain.intensity, gain.ambient);
-        let vars = app.world().resource::<DevConsole>().vars();
+        let vars = app.world().resource::<Tunables>();
         assert_eq!(vars.float(intensity), 1.25, "seeded from the live volume");
         assert_eq!(vars.float(ambient), 0.0);
         run(&mut app, "render.gi_intensity 2");
@@ -1082,7 +1083,7 @@ mod tests {
         app.update();
         let refit = app.world().get::<GiVolume>(second).expect("volume");
         assert_eq!((refit.intensity, refit.ambient_scale), (2.0, 0.1), "typed values win on the new volume");
-        assert_eq!(app.world().resource::<DevConsole>().vars().float(intensity), 2.0);
+        assert_eq!(app.world().resource::<Tunables>().float(intensity), 2.0);
     }
 
     #[test]
@@ -1094,7 +1095,7 @@ mod tests {
         app.update();
         let state = app.world().resource::<Contact>();
         let length = state.length;
-        let vars = app.world().resource::<DevConsole>().vars();
+        let vars = app.world().resource::<Tunables>();
         assert!((vars.float(length) - 0.3).abs() < 1e-6, "seeded from the camera, not Bevy's default");
         run(&mut app, "render.contactlength 3");
         run(&mut app, "render.contactthickness 1");
@@ -1116,7 +1117,7 @@ mod tests {
         app.update();
         app.update();
         let var = app.world().resource::<BloomVar>().var;
-        assert!((app.world().resource::<DevConsole>().vars().float(var) - 0.1).abs() < 1e-6, "seeded from the camera, not NATURAL's 0.15");
+        assert!((app.world().resource::<Tunables>().float(var) - 0.1).abs() < 1e-6, "seeded from the camera, not NATURAL's 0.15");
         run(&mut app, "render.bloom 0.3");
         let tuned = app.world().get::<Bloom>(camera).expect("still on");
         assert!((tuned.intensity - 0.3).abs() < 1e-6, "intensity {}", tuned.intensity);
@@ -1134,7 +1135,7 @@ mod tests {
         app.update();
         app.update();
         let var = app.world().resource::<BloomVar>().var;
-        assert!(app.world().resource::<DevConsole>().vars().float(var).abs() < 1e-9);
+        assert!(app.world().resource::<Tunables>().float(var).abs() < 1e-9);
         assert!(app.world().get::<Bloom>(camera).is_none());
         run(&mut app, "render.bloom 0.1");
         assert!(app.world().get::<Bloom>(camera).is_some(), "{:?}", log(&app));
@@ -1147,7 +1148,7 @@ mod tests {
         app.update();
         app.update();
         let var = app.world().resource::<Contact>().var;
-        assert!(!app.world().resource::<DevConsole>().vars().flag(var));
+        assert!(!app.world().resource::<Tunables>().flag(var));
         run(&mut app, "on contactshadows");
         let on = app.world().get::<ContactShadows>(camera).expect("contact shadows on");
         assert_eq!(on.linear_steps, ContactShadows::default().linear_steps);
@@ -1319,7 +1320,7 @@ mod tests {
         app.insert_resource(TerrainSettings { reflectance: 0.35, ..TerrainSettings::default() });
         app.update();
         let var = app.world().resource::<TerrainReflectance>().var;
-        let seeded = app.world().resource::<DevConsole>().vars().float(var);
+        let seeded = app.world().resource::<Tunables>().float(var);
         assert!((seeded - 0.35).abs() < 1e-6, "seeded from the terrain, not the default: {seeded}");
         run(&mut app, "terrain.reflectance 0.2");
         let tuned = app.world().resource::<TerrainSettings>().reflectance;

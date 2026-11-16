@@ -5298,6 +5298,7 @@ dependencies = [
  "sf_surface_bevy",
  "sf_terrain_bevy",
  "sf_texview_bevy",
+ "sf_tunables_bevy",
  "sf_weather_bevy",
  "sf_world",
  "sf_world_bevy",
@@ -8024,6 +8025,7 @@ dependencies = [
  "bevy_ui",
  "bevy_window",
  "sf_console",
+ "sf_tunables_bevy",
  "workspace-hack",
 ]
 
@@ -8244,6 +8246,7 @@ dependencies = [
  "sf_model",
  "sf_model_bevy",
  "sf_render_order_bevy",
+ "sf_tunables",
  "sf_vfs",
  "sf_world",
  "sf_world_bevy",
@@ -8662,6 +8665,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sf_ids",
+ "sf_tunables",
  "sf_wind",
 ]
 
@@ -8696,6 +8700,8 @@ dependencies = [
  "sf_model_bevy",
  "sf_render_order_bevy",
  "sf_sky",
+ "sf_tunables",
+ "sf_tunables_bevy",
  "wesl",
  "workspace-hack",
 ]
@@ -8817,6 +8823,7 @@ dependencies = [
  "sf_records",
  "sf_sky_bevy",
  "sf_terrain",
+ "sf_tunables",
  "sf_world",
  "workspace-hack",
 ]
@@ -8877,6 +8884,21 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_tunables_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_log",
+ "bevy_remote",
+ "serde_json",
+ "sf_tunables",
+ "toml 0.9.12+spec-1.1.0",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -9159,6 +9181,7 @@ dependencies = [
  "sf_coords",
  "sf_model",
  "sf_records",
+ "sf_tunables",
  "sf_vfs",
  "tempfile",
  "thiserror 2.0.21",

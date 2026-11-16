@@ -1,0 +1,35 @@
+[package]
+name = "sf_tunables_bevy"
+description = "Bevy plugin for sf_tunables: the registry as a resource, registration from plugins, set/peel messages, bindings into settings resources and components, a change run condition, --set / tunables-file parsing, BRP list/get/set/reset"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# BRP methods `sf.tunables/list|get|set|reset` (registered into Bevy Remote's `RemoteMethods` in
+# `Plugin::finish`, so the app's own `RemotePlugin` keeps its methods). The JSON handlers themselves
+# are always built and tested; this only adds the bevy_remote glue.
+remote = ["dep:bevy_remote"]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6).
+[dependencies]
+# App, Plugin, PreUpdate.
+bevy_app = { workspace = true, features = ["std"] }
+# Resource, Message, run conditions, change detection.
+bevy_ecs = { workspace = true, features = ["std"] }
+# A refused set request is a warning.
+bevy_log.workspace = true
+bevy_remote = { workspace = true, optional = true }
+# The BRP handlers' JSON (pure functions, tested without bevy_remote).
+serde_json.workspace = true
+sf_tunables.workspace = true
+# `--tunables <file.toml>`.
+toml.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# MinimalPlugins for headless tests.
+bevy = { workspace = true }
+
+[lints]
+workspace = true

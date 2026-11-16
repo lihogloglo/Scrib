@@ -72,8 +72,7 @@ fn submitted_lines_toggle_systems_and_report_changes() {
     // Changes from code are reported too (a plain `set` from code would be outranked by
     // the value typed in the console; `reset` gives it back).
     app.world_mut()
-        .resource_mut::<DevConsole>()
-        .vars_mut()
+        .resource_mut::<Tunables>()
         .reset(shadows);
     app.update();
     assert_eq!(app.world().resource::<Frames>().0, 2);
@@ -132,8 +131,8 @@ fn set_by_priority_and_same_frame_apply() {
     app.set_console_var(ssao, false, SetBy::CommandLine);
     app.add_systems(
         Update,
-        (move |console: Res<DevConsole>, mut applied: ResMut<Applied>| {
-            applied.0.push(console.vars().flag(ssao));
+        (move |tunables: Res<Tunables>, mut applied: ResMut<Applied>| {
+            applied.0.push(tunables.flag(ssao));
         })
         .run_if(console_var_changed(ssao)),
     );
@@ -155,17 +154,24 @@ fn set_by_priority_and_same_frame_apply() {
         .write_message(ConsoleSubmit::typed("render.ssao on"));
     app.update();
     assert_eq!(applied(&app), [false, true]);
-    let console = app.world().resource::<DevConsole>();
-    assert_eq!(console.vars().var(ssao).set_by(), SetBy::Console);
+    let tunables = app.world().resource::<Tunables>();
+    assert_eq!(tunables.var(ssao).set_by(), SetBy::Console);
 
-    // `reset` hands the switch back: now the config file may set it.
+    // `reset` takes back the typed value: the command line's is back.
     app.world_mut()
         .write_message(ConsoleSubmit::exec("reset render.ssao"));
+    app.update();
+    assert_eq!(applied(&app), [false, true, false]);
+    let tunables = app.world().resource::<Tunables>();
+    assert_eq!(tunables.var(ssao).set_by(), SetBy::CommandLine);
+    // `reset <name> all` hands the switch back to every source: now the config file may set it.
+    app.world_mut()
+        .write_message(ConsoleSubmit::exec("reset render.ssao all"));
     app.update();
     app.world_mut()
         .write_message(ConsoleSubmit::from(SetBy::Config, "render.ssao off"));
     app.update();
-    assert_eq!(applied(&app), [false, true, false]);
+    assert_eq!(applied(&app), [false, true, false, true, false]);
 }
 
 #[test]

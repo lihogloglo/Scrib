@@ -10,7 +10,8 @@ publish = false
 # Bevy Remote Protocol agent tools (`remote.rs`, `ready::Readiness`); the app's `remote` turns it on.
 # `live_ab` notes when F4 asks for DLSS in an exe built without it; the app's `dlss` turns it on.
 dlss = []
-remote = ["dep:bevy_remote", "dep:bevy_brp_extras", "dep:schemars", "dep:serde", "dep:serde_json", "mw_environment_bevy/remote"]
+# `sf_tunables_bevy/remote`: the `sf.tunables/list|get|set|reset` methods.
+remote = ["dep:bevy_remote", "dep:bevy_brp_extras", "dep:schemars", "dep:serde", "dep:serde_json", "mw_environment_bevy/remote", "sf_tunables_bevy/remote"]
 
 [dependencies]
 # Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
@@ -64,6 +65,8 @@ sf_atmos_bevy.workspace = true
 sf_camera_bevy.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
 sf_console_bevy = { workspace = true, features = ["overlay"] }
+# The shared tunables store (console variables live in it); `remote` adds its BRP methods.
+sf_tunables_bevy.workspace = true
 sf_controller.workspace = true
 # console.rs `off foot_placement`: the foot probes switch (`ControllerSettings::foot_probes`, key K).
 sf_controller_bevy.workspace = true

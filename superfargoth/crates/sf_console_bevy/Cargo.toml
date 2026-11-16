@@ -36,6 +36,8 @@ bevy_app = { workspace = true, features = ["std"] }
 # Resource, Message, exclusive system, run conditions.
 bevy_ecs = { workspace = true, features = ["std"] }
 sf_console.workspace = true
+# The shared store: console variables are tunables (one namespace).
+sf_tunables_bevy.workspace = true
 # Overlay: the mesh store (pick ray); cameras, Aabb and Visibility; selection box; keys and mouse; cursor ray; mesh ray cast
 # (the picking backend's code, run once per click instead of every frame); inspector reflection;
 # text, panels and the primary window's cursor.

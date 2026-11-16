@@ -20,7 +20,7 @@ use sf_console_bevy::overlay::{
 };
 use sf_console_bevy::sf_console::{VarId, VarSpec};
 use sf_console_bevy::{
-    ConsoleAppExt, ConsoleOpen, ConsolePlugin, ConsoleSubmit, DevConsole, SetBy, console_closed,
+    ConsoleAppExt, ConsoleOpen, ConsolePlugin, ConsoleSubmit, DevConsole, SetBy, Tunables, console_closed,
 };
 
 #[derive(Resource)]
@@ -117,15 +117,15 @@ fn setup(
 
 fn rotate(
     time: Res<Time>,
-    console: Res<DevConsole>,
+    tunables: Res<Tunables>,
     switches: Res<Switches>,
     mut crates: Query<&mut Transform, With<Kind>>,
 ) {
-    if !console.vars().flag(switches.spin) {
+    if !tunables.flag(switches.spin) {
         return;
     }
     #[allow(clippy::cast_possible_truncation)]
-    let speed = console.vars().float(switches.speed) as f32;
+    let speed = tunables.float(switches.speed) as f32;
     for mut t in &mut crates {
         t.rotate_y(time.delta_secs() * speed * std::f32::consts::TAU / 10.0);
     }
@@ -168,6 +168,7 @@ fn autotest(
     mut submit: MessageWriter<ConsoleSubmit>,
     mut picks: MessageWriter<ConsolePick>,
     console: Res<DevConsole>,
+    tunables: Res<Tunables>,
     switches: Res<Switches>,
     selection: Res<ConsoleSelection>,
     camera: Query<&GlobalTransform, With<ConsoleCamera>>,
@@ -207,7 +208,7 @@ fn autotest(
             if selection.0 != crate_b.map(|(e, _)| e) {
                 failures.push(format!("selection is {:?}, not crate_b", selection.0));
             }
-            if console.vars().flag(switches.spin) {
+            if tunables.flag(switches.spin) {
                 failures.push("demo.spin is still on".to_owned());
             }
             let log: Vec<&str> = console.log().lines().map(|l| l.text.as_str()).collect();

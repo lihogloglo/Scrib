@@ -340,7 +340,7 @@ struct Command<C> {
 /// The console: registry, variables, history and log.
 pub struct Console<C = ()> {
     commands: Vec<Command<C>>,
-    /// Lowercase command names, aliases and variable names.
+    /// Lowercase command names and aliases (variable names live in the store).
     names: HashMap<String, Target>,
     vars: Vars,
     history: History,
@@ -399,8 +399,12 @@ impl<C> Console<C> {
             ),
             (
                 CommandSpec::new("reset")
-                    .help("Reset a variable to its default, or every variable")
-                    .param(var("variable").optional()),
+                    .help(
+                        "Take back a value typed in the console (the next source down applies), \
+                         `reset <variable> all` back to the default; no name: every variable",
+                    )
+                    .param(var("variable").optional())
+                    .param(Param::new("all", ArgKind::choice(&["all"])).optional()),
                 Builtin::Reset,
             ),
             (
@@ -451,7 +455,6 @@ impl<C> Console<C> {
                     message: e.to_string(),
                 },
             })?;
-        self.names.insert(name, Target::Var(id));
         Ok(id)
     }
 
@@ -517,10 +520,28 @@ impl<C> Console<C> {
         if !valid {
             return Err(RegisterError::InvalidName(name.to_owned()));
         }
-        if self.names.contains_key(&lower) {
+        if self.names.contains_key(&lower) || self.vars.id(&lower).is_some() {
             return Err(RegisterError::Duplicate(lower));
         }
         Ok(lower)
+    }
+
+    /// A lowercase name's target: a command or alias first, then a variable of the store (the
+    /// store is the only list of variable names, so a store shared with other code, such as
+    /// the Bevy plugin's tunables, is one namespace with the console's commands).
+    fn target(&self, lower: &str) -> Option<Target> {
+        self.names
+            .get(lower)
+            .copied()
+            .or_else(|| self.vars.id(lower).map(Target::Var))
+    }
+
+    /// Every name with its target: commands and aliases, then variables (unsorted).
+    fn all_names(&self) -> impl Iterator<Item = (&str, Target)> {
+        self.names
+            .iter()
+            .map(|(n, &t)| (n.as_str(), t))
+            .chain(self.vars.iter().map(|(id, v)| (v.name(), Target::Var(id))))
     }
 
     pub fn vars(&self) -> &Vars {
@@ -533,8 +554,8 @@ impl<C> Console<C> {
 
     /// A variable's id by name (case-insensitive).
     pub fn var_id(&self, name: &str) -> Option<VarId> {
-        match self.names.get(&name.to_ascii_lowercase()) {
-            Some(Target::Var(id)) => Some(*id),
+        match self.target(&name.to_ascii_lowercase()) {
+            Some(Target::Var(id)) => Some(id),
             _ => None,
         }
     }
@@ -682,8 +703,8 @@ impl<C> Console<C> {
 
     /// Resolves a name of the given filter, with suggestions when it doesn't exist.
     fn lookup(&self, name: &str, filter: NameFilter) -> Result<Target, ExecError> {
-        match self.names.get(name) {
-            Some(&t) if self.passes(t, filter) => Ok(t),
+        match self.target(name) {
+            Some(t) if self.passes(t, filter) => Ok(t),
             _ => Err(ExecError::Unknown {
                 what: match filter {
                     NameFilter::Any | NameFilter::Search => "command or variable",
@@ -714,10 +735,9 @@ impl<C> Console<C> {
 
     fn suggest(&self, name: &str, filter: NameFilter) -> Vec<String> {
         let limit = if name.chars().count() <= 4 { 1 } else { 2 };
-        let mut scored: Vec<(usize, &String)> = self
-            .names
-            .iter()
-            .filter(|&(n, &t)| n != "?" && self.passes(t, filter))
+        let mut scored: Vec<(usize, &str)> = self
+            .all_names()
+            .filter(|&(n, t)| n != "?" && self.passes(t, filter))
             .filter_map(|(n, _)| {
                 let last = n.rsplit('.').next().unwrap_or(n);
                 let d = edit_distance(name, n).min(edit_distance(name, last));
@@ -725,8 +745,8 @@ impl<C> Console<C> {
                 (d <= limit || contains).then_some((if contains { d.min(limit) } else { d }, n))
             })
             .collect();
-        scored.sort();
-        scored.into_iter().take(3).map(|(_, n)| n.clone()).collect()
+        scored.sort_unstable();
+        scored.into_iter().take(3).map(|(_, n)| n.to_owned()).collect()
     }
 
     fn set_var(&mut self, name: &str, id: VarId, text: &str) -> Result<(), ExecError> {
@@ -812,12 +832,18 @@ impl<C> Console<C> {
                 return self.set_var(&name, id, if on { "on" } else { "off" });
             }
             Builtin::Reset => {
+                // The console's own layer only (spec tunables.md "Values: layers"): a
+                // value from the command line, a preset or a mod comes back. `all` clears
+                // every layer but the default.
                 if let Some(id) = var(self, "variable") {
-                    self.vars.reset(id);
+                    if args.str("all").is_some() {
+                        self.vars.reset(id);
+                    } else {
+                        self.vars.clear(id, SetBy::Console);
+                    }
                     self.log.info(&self.vars.var(id).describe());
                 } else {
-                    let ids: Vec<VarId> = self.vars.iter().map(|(id, _)| id).collect();
-                    let n = ids.into_iter().filter(|&id| self.vars.reset(id)).count();
+                    let n = self.vars.clear_layer(SetBy::Console);
                     self.log.info(&format!("reset {n} variable(s)"));
                 }
             }
@@ -887,7 +913,7 @@ impl<C> Console<C> {
             ));
             return;
         };
-        let Some(&target) = self.names.get(name) else {
+        let Some(target) = self.target(name) else {
             self.search(name);
             return;
         };
@@ -962,15 +988,14 @@ impl<C> Console<C> {
         };
         let names = |filter: NameFilter| -> Vec<String> {
             let mut out: Vec<String> = self
-                .names
-                .iter()
-                .filter(|&(n, &t)| n != "?" && self.passes(t, filter))
-                .filter(|&(n, &t)| match t {
+                .all_names()
+                .filter(|&(n, t)| n != "?" && self.passes(t, filter))
+                .filter(|&(n, t)| match t {
                     // Complete primary names only; aliases still run.
-                    Target::Command(i) => &self.commands[i].spec.name == n,
+                    Target::Command(i) => self.commands[i].spec.name == n,
                     Target::Var(_) => true,
                 })
-                .map(|(n, _)| n.clone())
+                .map(|(n, _)| n.to_owned())
                 .collect();
             out.sort();
             out
@@ -987,9 +1012,9 @@ impl<C> Console<C> {
             all
         } else {
             let head = tokens[0].text.to_ascii_lowercase();
-            match self.names.get(&head) {
-                Some(&Target::Var(id)) if index == 1 => self.vars.var(id).kind().value_candidates(),
-                Some(&Target::Command(i)) => {
+            match self.target(&head) {
+                Some(Target::Var(id)) if index == 1 => self.vars.var(id).kind().value_candidates(),
+                Some(Target::Command(i)) => {
                     let command = &self.commands[i];
                     let set_value =
                         matches!(command.action, Action::Builtin(Builtin::Set)) && index == 2;

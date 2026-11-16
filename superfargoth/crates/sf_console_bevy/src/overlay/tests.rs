@@ -113,8 +113,9 @@ fn front_end_types_completes_submits_and_browses_history() {
     // Enter submits: the line runs this frame.
     press(&mut app, KeyCode::Enter, Key::Enter);
     app.update();
-    let id = console(&app).var_id("test.flag").unwrap();
-    assert!(!console(&app).vars().flag(id));
+    let tunables = app.world().resource::<Tunables>();
+    let id = tunables.id("test.flag").unwrap();
+    assert!(!tunables.flag(id));
     assert_eq!(prompt(&app), "");
     assert_eq!(last_line(&app), "test.flag = off (default on) [on|off]");
     assert_eq!(
