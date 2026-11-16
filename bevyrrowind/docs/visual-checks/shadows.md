@@ -226,7 +226,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Look for: at noon, lanterns under awnings/arcades (direct sun is counted even where the receiver is in shade): is a
   missing lamp shadow noticeable there? At dusk (~19-20 h): do lamp shadows fade in smoothly, no popping? At 22 h: no
   difference between the two runs.
-- Status: awaiting owner.
+- Status: confirmed 2026-11-16 (owner: "seems good", noon run; dusk fade not separately confirmed).
 
 ### SH-29: Point shadow face culling (CW-3b, ROADMAP 1.25, built 2026-11-16, opt-in)
 - Run: `view "Balmora" --hour 21 --weather clear`, High, with and without env `BEVYRROWIND_POINT_FACE_CULL=1` (exe
@@ -234,7 +234,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   lamp with NPCs walking under it; spin 180/360 deg fast in third and first person; look straight up and down under it.
 - Look for: a lamp shadow popping in or showing an old pose for a frame as it enters the screen; shadows cut or missing
   along a cube seam (45 deg diagonals from the lamp, straight below it); any difference against the same spin with the switch off.
-- Status: awaiting owner.
+- Status: confirmed 2026-11-16 (owner: "seems all good"). Owner noted ~17 ms average in some areas (dev build, night, only face culling on; dev builds link Bevy dynamically, not a bench number).
 
 ### SH-30: Sun/moon shadow gate (CW-8, ROADMAP 1.25, built 2026-11-16, opt-in)
 - Run: `view "Balmora"` with env `BEVYRROWIND_SUN_SHADOW_GATE=1` (exe `target/profiling/cw8.exe` or a dev build;
@@ -243,4 +243,4 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   shadows, look right? (3) Overcast noon: shadows stay (overcast dims sun and sky fill alike). (4) Night, dim moon: no moon shadows.
 - Owner question (look, not perf): should overcast look diffuse (cloud cover turning direct sun into sky fill)? Then the
   gate would also drop overcast shadows by day.
-- Status: awaiting owner.
+- Status: confirmed 2026-11-16 (owner: "everything looks right"; run: rain from 16:30 through dusk to night; ashstorm and the clear->rain transition not run). Overcast-diffuse look: owner no strong opinion, maybe later if cheap, not today.

@@ -119,4 +119,4 @@ the streamed view: Shift+J mover gizmos, K foot placement on/off. `--off walkers
 - Look for: far/frozen characters keep their pose (no bind/T-pose, no limbs from another character); walking until far
   characters animate again: no smear or ghost trail under DLSS on their first moving frames; characters walking into
   view or respawning: no one-frame streak.
-- Status: awaiting owner.
+- Status: confirmed 2026-11-16 (owner: "everything seems fine as well, no smear, no issues").

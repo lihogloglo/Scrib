@@ -83,4 +83,4 @@ Open visual checks: streaming spikes, size-based draw distance, door links (ST, 
   (`superfargoth/crates/sf_world/src/select_gate.rs`; terrain morph zones pulled 0.5 m closer while gated, `sf_terrain_bevy/src/params.rs:67`).
 - Look for: terrain cracks or visible LOD steps while walking slowly; far-field holes or late parent/child swaps on the
   horizon when turning or flying fast; cells popping in later than without the gate; anything after a door/load.
-- Status: awaiting owner.
+- Status: confirmed 2026-11-16 (owner: "no popping whatsoever, even when flying fast"; going in and out of doors: no issue).

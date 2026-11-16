@@ -94,9 +94,9 @@ SH-24 | awaiting owner | [shadows](visual-checks/shadows.md) | Balmora at night:
 SH-25 | confirmed | [shadows](visual-checks/shadows.md) | Balmora street at night (`scene lamp-turn`): lamp shadows already there after a 180° camera turn and when walking toward lamps, no fade-in; note NPC shadow flicker among lamps (lamp-select, 2026-11-15)
 SH-26 | confirmed 2026-11-16 | [shadows](visual-checks/shadows.md) | Balmora street 16:00 (`scene cascade-hold`): far sun cascades held between redraws; no popping, swimming or edge gaps when walking and turning; far NPC shadows may step (orch-11-15c, 2026-11-15)
 SH-27 | bug, logged | [shadows](visual-checks/shadows.md) | Night, Balmora: lamp shadows on some buildings appear only within ~10 m and fade in (budget of 8 maps on High, likely; owner 2026-11-16)
-SH-28 | awaiting owner (2026-11-16, opt-in CW-3a) | [shadows](visual-checks/shadows.md) | Lamp shadow day gate: noon lamps under awnings, dusk fade-in, night unchanged (`BEVYRROWIND_LAMP_DAY_GATE=1`)
-SH-29 | awaiting owner (2026-11-16, opt-in CW-3b) | [shadows](visual-checks/shadows.md) | Point shadow face culling: no pop-in when spinning near a lamp, no seam gaps (`BEVYRROWIND_POINT_FACE_CULL=1`)
-SH-30 | awaiting owner (2026-11-16, opt-in CW-8) | [shadows](visual-checks/shadows.md) | Sun/moon shadow gate: dusk-rain fade, ashstorm, overcast noon look, dim moon (`BEVYRROWIND_SUN_SHADOW_GATE=1`)
+SH-28 | confirmed 2026-11-16 (owner: "seems good", noon; dusk fade not separately checked; opt-in CW-3a, perf not yet measured) | [shadows](visual-checks/shadows.md) | Lamp shadow day gate: noon lamps under awnings, dusk fade-in, night unchanged (`BEVYRROWIND_LAMP_DAY_GATE=1`)
+SH-29 | confirmed 2026-11-16 (owner: "seems all good"; opt-in CW-3b, perf not yet measured) | [shadows](visual-checks/shadows.md) | Point shadow face culling: no pop-in when spinning near a lamp, no seam gaps (`BEVYRROWIND_POINT_FACE_CULL=1`)
+SH-30 | confirmed 2026-11-16 (owner: "everything looks right": rain 16:30 -> dusk fade -> night moon; opt-in CW-8, perf not yet measured) | [shadows](visual-checks/shadows.md) | Sun/moon shadow gate: dusk-rain fade, ashstorm, overcast noon look, dim moon (`BEVYRROWIND_SUN_SHADOW_GATE=1`)
 GI-1 | partial (2026-11-02: runs clean, but `flip gi` barely changes the room) | [gi](visual-checks/gi.md) | Dynamic probe GI in the Census office (`--off gi` A/B)
 GI-2 | partial (2026-11-02: no artifacts seen; effect too weak to judge leaks) | [gi](visual-checks/gi.md) | DDGI visibility-weighted probe sampling: no leaks through the office floor/walls, bounce in corners (`--off gi` A/B)
 GI-lampbody | awaiting owner | [gi](visual-checks/gi.md) | Lamp bodies don't light twice at GI hits (less hot bounce right around lamps, room fill kept) and interior ambient floor 0.1 (corners not pitch black) (`flip gi` A/B)
@@ -212,7 +212,7 @@ SH-19 | inconclusive | [shadows](visual-checks/shadows.md) | Shadow reset B2
 DL-2 | deferred | [rendering](visual-checks/rendering.md) | Super Resolution at 1440p
 SK-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Night and moon
 ST-3 | deferred | [streaming](visual-checks/streaming.md) | Paced model loads arrive in time
-ST-4 | awaiting owner (2026-11-16, opt-in CW-2) | [streaming](visual-checks/streaming.md) | Selection gates: no terrain cracks, far-field holes or late cells (`BEVYRROWIND_SELECT_GATE=1`)
+ST-4 | confirmed 2026-11-16 (owner: "no popping whatsoever, even when flying fast"; doors fine; opt-in CW-2, perf not yet measured) | [streaming](visual-checks/streaming.md) | Selection gates: no terrain cracks, far-field holes or late cells (`BEVYRROWIND_SELECT_GATE=1`)
 SC-2 | deferred | [streaming](visual-checks/streaming.md) | The cutoff fades, never pops
 SC-foliage | owner: OK in Balmora (2026-11-11) | [rendering](visual-checks/rendering.md) | Cutout candidates (foliage, fences, grates) drawn from the static table, and no candidate that should fade softly gaining hard edges
 SN-2 | deferred | [characters](visual-checks/characters.md) | Guar from its cooked skinned product
@@ -220,7 +220,7 @@ SN-3 | deferred | [characters](visual-checks/characters.md) | Dark elf head morp
 CH-1 | deferred | [characters](visual-checks/characters.md) | The M3 lineup
 CH-3 | deferred | [characters](visual-checks/characters.md) | Balmora street with NPCs standing in place
 CH-4 | deferred | [characters](visual-checks/characters.md) | Census and Excise Office staff
-CH-5 | awaiting owner (2026-11-16, opt-in CW-7) | [characters](visual-checks/characters.md) | Skip unchanged skins: poses correct, no DLSS smear on resume (`BEVYRROWIND_SKIN_SKIP_UNCHANGED=1`)
+CH-5 | confirmed 2026-11-16 (owner: "everything seems fine, no smear, no issues"; opt-in CW-7, perf not yet measured) | [characters](visual-checks/characters.md) | Skip unchanged skins: poses correct, no DLSS smear on resume (`BEVYRROWIND_SKIN_SKIP_UNCHANGED=1`)
 SB-1 | deferred | [character-gear](visual-checks/character-gear.md) | Lineup close-up at elbows and knees, walking
 SB-2 | deferred | [character-gear](visual-checks/character-gear.md) | Armored NPC
 SB-3 | deferred | [character-gear](visual-checks/character-gear.md) | Beast tails with greaves
