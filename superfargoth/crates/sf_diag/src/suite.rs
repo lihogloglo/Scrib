@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::markdown::big;
 use crate::report::Report;
-use crate::stats::percentile_sorted;
+use crate::stats::{Stat, percentile_sorted};
 
 /// One running process.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -327,20 +327,44 @@ pub struct SuiteRun {
     pub gpu: Option<GpuSummary>,
 }
 
-/// A gauge shown as a column of the suite summary (its median).
+/// A gauge shown as a column of the suite summary: one per-frame statistic of a counter.
 #[derive(Clone, Debug)]
 pub struct GaugeColumn {
     pub label: String,
     pub counter: String,
+    /// Which per-frame statistic a run shows (the row across repeats takes the median of those).
+    pub stat: Stat,
+}
+
+impl GaugeColumn {
+    /// The counter's per-frame median.
+    pub fn median(label: &str, counter: &str) -> Self {
+        Self {
+            label: label.to_owned(),
+            counter: counter.to_owned(),
+            stat: Stat::Median,
+        }
+    }
+
+    /// The counter's per-frame mean (per-thread busy times: a mean adds up over frames, a median hides the
+    /// expensive ones).
+    pub fn mean(label: &str, counter: &str) -> Self {
+        Self {
+            label: label.to_owned(),
+            counter: counter.to_owned(),
+            stat: Stat::Mean,
+        }
+    }
 }
 
 impl SuiteRun {
-    fn gauge(&self, counter: &str) -> Option<f64> {
+    /// A gauge column's value in this run.
+    pub fn gauge(&self, column: &GaugeColumn) -> Option<f64> {
         self.report
             .counters
-            .get(counter)
+            .get(&column.counter)
             .and_then(|c| c.per_frame)
-            .map(|s| s.median)
+            .map(|s| s.get(column.stat))
     }
 }
 
@@ -393,7 +417,7 @@ impl Row {
                 g.map(|g| g.temp_mean_c),
             ],
             timed: r.report.timed_gpu_ms(),
-            gauges: gauges.iter().map(|c| r.gauge(&c.counter)).collect(),
+            gauges: gauges.iter().map(|c| r.gauge(c)).collect(),
         }
     }
 
@@ -586,10 +610,7 @@ mod tests {
             run(2, 20.0, 3000.0),
             run(3, 12.0, 2000.0),
         ];
-        let gauges = [GaugeColumn {
-            label: "meshes".into(),
-            counter: "world/meshes".into(),
-        }];
+        let gauges = [GaugeColumn::median("meshes", "world/meshes")];
         let md = suite_markdown("t", &runs, &gauges);
         // Median of medians 12 ms (83 fps); worst = max of worsts (80 ms).
         assert!(md.contains("| town 1280x720 ×3 | 12.00 | 83 |"), "{md}");

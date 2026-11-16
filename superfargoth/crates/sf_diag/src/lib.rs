@@ -9,6 +9,7 @@
 //! - [`CameraPath`] and [`ScenarioRun`]: scripted fly-throughs with a
 //!   warm-up, measured at constant speed along a centripetal Catmull-Rom
 //!   spline.
+//! - [`ab`]: interleaved A/B plans, outlier guard, Mann-Whitney U and the decision rule.
 //! - [`suite`]: driving runs from another process (quiet-machine wait,
 //!   `nvidia-smi` sampling, summaries across repeats); [`nsys`]: Nsight
 //!   Systems per-pass GPU tables; [`trace`]: Chrome trace summaries.
@@ -17,6 +18,7 @@
 //!
 //! The Bevy glue lives in `sf_diag_bevy`.
 
+pub mod ab;
 mod counters;
 mod gate;
 mod markdown;

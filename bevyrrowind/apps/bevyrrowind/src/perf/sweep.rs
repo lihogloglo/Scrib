@@ -92,6 +92,7 @@ pub fn run(args: &SweepArgs) -> Result<(), Box<dyn std::error::Error>> {
     if !Path::new("benchmarks").is_dir() {
         return Err("run from the bevyrrowind repo root (scenario paths are relative to it)".into());
     }
+    super::ab::check_save(suite.save.as_deref())?;
     let [name] = suite.scenarios.as_slice() else { return Err("a sweep takes exactly one scenario".into()) };
     let scenario = SCENARIOS.iter().find(|s| s.name == name).ok_or_else(|| format!("unknown scenario {name:?}; see `perf list`"))?;
     let base_resolution = suite.resolutions.first().cloned().unwrap_or_else(|| "1280x720".to_owned());
@@ -100,7 +101,7 @@ pub fn run(args: &SweepArgs) -> Result<(), Box<dyn std::error::Error>> {
     for repeat in 1..=suite.repeat.max(1) {
         for value in &args.values {
             let resolution = if args.var == "resolution" { value.clone() } else { base_resolution.clone() };
-            plan.push(Planned { scenario, resolution, repeat, step: Some(Step::new(&args.var, value)) });
+            plan.push(Planned { scenario, resolution, repeat, step: Some(Step::new(&args.var, value)), arm: None, warmup: false });
         }
     }
     let dir = suite.out.join(&suite.tag);
@@ -108,19 +109,16 @@ pub fn run(args: &SweepArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut busy: Vec<&str> = BUSY.to_vec();
     busy.extend(suite.wait_for.iter().map(String::as_str));
     println!("sweep {} over {:?}: {} runs → {}", args.var, args.values, plan.len(), dir.display());
-    let (runs, notes) = execute(suite, &exe, &dir, &plan, &busy);
+    let (runs, ledger) = execute(suite, &exe, &dir, &plan, &busy);
     if suite.dry_run || runs.is_empty() {
         return Ok(());
     }
 
     let mut md = format!("# Sweep `{}`: `{}` over {}\n\n", suite.tag, args.var, scenario.name);
-    let _ = writeln!(md, "- `bevyrrowind {}` at {base_resolution}; off: {}", scenario.args.join(" "), if suite.off.is_empty() { "none".to_owned() } else { suite.off.join(",") });
+    let _ = writeln!(md, "- `bevyrrowind {}` at {base_resolution}; off: {}", scenario.args.join(" "), if suite.run.off.is_empty() { "none".to_owned() } else { suite.run.off.join(",") });
     let _ = writeln!(md, "- medians over repeats of per-run medians (frame stats: per-run median / p95); {} runs", runs.len());
-    if notes.is_empty() {
-        let _ = writeln!(md, "- machine: quiet for every run");
-    }
-    for n in &notes {
-        let _ = writeln!(md, "- **busy machine**: {n}");
+    for line in ledger.lines(runs.len(), &busy) {
+        let _ = writeln!(md, "{line}");
     }
     for line in focus_lines(&runs.iter().map(|(_, r)| run_focus(r)).collect::<Vec<_>>()) {
         let _ = writeln!(md, "{line}");
@@ -140,7 +138,7 @@ pub fn run(args: &SweepArgs) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(dir.join("sweep.csv"), &csv)?;
     print!("\n{md}");
     let suite_runs: Vec<_> = runs.into_iter().map(|(_, r)| r).collect();
-    write_summary(suite, &exe, &dir, &suite_runs, &notes, &busy)?;
+    write_summary(suite, &exe, &dir, &suite_runs, &ledger, &busy, None)?;
     if let Some(save) = &suite.save {
         std::fs::write(save.join("sweep.md"), &md)?;
         std::fs::write(save.join("sweep.csv"), &csv)?;

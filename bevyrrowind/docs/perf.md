@@ -281,6 +281,47 @@ table, nvidia-smi load/clock/power/temperature over the measured window), `.json
 `.warmup.csv`, `gpu.csv`, `log.txt`; and `summary.md` (median of runs: median, p95, p99, 1 % low, worst,
 hitches, GPU load, timed GPU passes, entity/mesh counts). `--save` copies md + json into the repo.
 
+Every `summary.md` opens with provenance: date (UTC), `git rev-parse HEAD` + dirty count, exe path + SHA-256 +
+mtime, bake profile + manifest time, power plan (`powercfg /getactivescheme`) and AC/battery; then "valid runs: N
+of M" with one **dropped** line per run left out, and "machine: quiet" only when every kept run was checked clean
+(no busy note, CPU and focus recorded). Dirty runs (busy or unfocused during the run, or the quiet wait gave up)
+and outliers (median > 1.3x the median of the arm's other runs, or measured hitches > 3x the arm's + 10) are retried
+up to `--retries`, then dropped, never averaged in; a last pass re-checks each arm leave-one-out (a garbage first
+run). A run that asks for DLSS (`BEVYRROWIND_DLSS` or `--dlss`, not taa/off) but times no `dlss_*` pass fails. The
+tables start with per-thread means: main busy, render busy, render graph, GPU timed (`stat unit`-style: the frame is
+~max of them, so a main-thread win can hide behind a render-bound frame). `--save` refuses a folder that already
+holds files (pick a new tag; old controls are never overwritten).
+
+### Interleaved A/B (perf-verdict audit 2026-11-16 §5)
+
+Arms in one invocation, same exe, counterbalanced order, never AAA then BBB:
+
+```sh
+cp target/profiling/bevyrrowind.exe target/profiling/bench-ab.exe   # a private copy no build overwrites
+target/profiling/bench-ab.exe perf suite statics_ab balmora_walk balmora --resolution 2560x1440 --repeat 6 \
+    --env BEVYRROWIND_DLSS=quality \
+    --arm base: --arm "scene:--arg=--scene" --arm "h1:--env BEVYRROWIND_GPU_CULL_STATICS=1" \
+    --exe target/profiling/bench-ab.exe --save benchmarks/runs/statics_ab
+```
+
+- `--arm NAME:SETTINGS` (repeatable, at least two; the first is the base). SETTINGS are the suite's own per-run
+  flags, whitespace-separated: `--off=a,b`, `--env K=V`, `--arg=--flag` (a flag with a value takes two:
+  `--arg=--sun-cascades --arg=2:205`); `base:` = shipped defaults. Suite-level `--off/--env/--arg` apply to every
+  arm, the arm's go on top. Run folders are `<scenario>@<res>_arm=<name>-<repeat>`.
+- Plan: one discarded warm-up run per arm (first scenario), then per scenario and resolution each repeat runs every
+  arm once in a Williams-design order (2 arms: ABBA / BAAB; odd counts use the square and its mirror), rows
+  shuffled by `--seed` (default from the clock; printed, so `--seed N` replays the order). Make `--repeat` a
+  multiple of the arm count, or positions are not balanced (warned).
+- The summary adds "A/B verdicts vs `<base>`", one row per scenario and arm: runs kept, median of run medians,
+  min-max, Δ (median minus the base's), paired Δ (median over repeats of arm minus base in the same repeat),
+  Mann-Whitney U and two-sided p (exact without ties up to 20 runs, else normal with tie and continuity
+  correction), per-thread Δ (main busy / render busy / render graph / GPU timed means), verdict.
+- **Decision rule (set before the runs):** an arm differs when |Δ| > the larger min-max range of the two arms, or
+  p < 0.05; anything else is **inconclusive** (keep the code opt-in, never delete on it). With 3 runs per arm p can't
+  go below 0.1 (only a range-clearing Δ counts); 6 per arm reaches p = 0.002. The thread Δ says which thread moved.
+- Not yet: a bench lock shared across sessions with GPU-busy detection during the run (audit §5 fix 2), power
+  plan / throttling control (fix 6). Until then, start chains only when no other session benches.
+
 A single benchmark without the runner: `view <cell> --bench benchmarks/<file>.json [--resolution WxH]
 [--bench-out dir] [--bench-baseline path|none] [--bench-seconds N] [--hitch-ms N] [--off ...]`.
 
