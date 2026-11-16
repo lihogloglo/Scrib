@@ -291,16 +291,42 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Look for: digits refresh ~4x a second and stay readable; frame ms matches the top-left fps; "bound by" matches the
   feel (GPU when the view is heavy, main when the town crowd is busy); flipping a CW switch or a tunable (console)
   moves the numbers within ~1 s and shows the tunable in the list with its layer; no hitch on open/close.
-- Status: awaiting owner. Source: cw17-panel.
+- Status: confirmed 2026-11-16 (Balmora 22:00, release): works. Owner follow-up: "extremely rudimentary", wants visualizations (graphs, bars), CW-17b. Source: cw17-panel.
 
 ### PP-2: Graphics presets switch live, Extremely low to Ultra (tunables T5b, 2026-11-16)
 - Kind: game location, release build. `view "Balmora" --hour 22` (night: lamps), then again `--hour 12` (day: sun
   cascades, GTAO, bloom); start level `--quality high` (default), `--quality extremely-low` for a cold start at the floor.
-- Press F3 (full panel), then Shift+F4 repeatedly: extremely_low, low, medium, high, ultra, wrapping. The overlay note says
+- Press F3 (full panel), then Shift+F4 repeatedly (key removed 2026-11-16, T5d: now Esc > Options > Graphics, PP-4, or
+  console `preset <level>`): extremely_low, low, medium, high, ultra, wrapping. The overlay note says
   what changed and what "applies on restart" (texture cap, far handoff, probe GI); F3's `preset:` line follows.
 - Look for: each step changes the look the same frame with no crash or long hitch (a short pipeline hitch on GTAO/contact/
   filter/upscaler changes is expected); Extremely low: no lamp shadows, short one-cascade sun shadow, no GTAO or bloom,
   softer (DLSS Performance builds) or aliased (MSAA) image, nearer LOD swaps; Ultra: 12 lamp shadows, 4 cascades to 280 m.
   Console `set shadow.lamp.count 2` turns the panel to `custom (...; shadows custom)`; `reset shadow.lamp.count` back.
   Compare the panel's frame/main/render/GPU per level (CPU vs GPU bound). Textures change only after a restart.
-- Status: awaiting owner. Source: tunables-t5b.
+- Status: confirmed 2026-11-16 (Balmora 22:00, release): cycling works. Owner follow-up: presets belong in the options menu, no shortcut (T5d). Day half not run. Source: tunables-t5b.
+
+### PP-3: F3 perf panel graphs: frame-time graph, thread bars, pass bars (CW-17b, 2026-11-16)
+- Kind: game location, release build (`cargo build --release -p bevyrrowind`). `view "Balmora" --hour 22`; flags none
+  (env `BEVYRROWIND_PANEL_GPU_TIMERS=1` for the GPU line, bars and passes). Fullscreen 1440p, then once `--resolution 1280x720`.
+- F3 compact (top right, dark translucent): frame line (mean, med, p99, max), "bound by" in its colour, the frame-time
+  graph (last 600 frames: columns coloured main orange / render blue / GPU green / none grey, main/render/GPU lines on
+  top, dashed 8.3 ms white and 11 ms red target lines, 25 ms scale, magenta mark on spikes above it), legend + "last N s",
+  main / render / GPU bars against the frame (the bound one in full colour, "< bound"). F3 again: full adds GPU passes and
+  main stages as sorted bars, the counts, submit-ms and views sparklines, preset and tunables. F3 again: off.
+- Look for: the graph scrolls smoothly, a hitch (open the console, turn fast) stands out as a tall column; the column
+  colour and "bound by" agree; bars move with the numbers; text readable at 1440p and 720p, nothing cut off the
+  screen; no hitch opening/closing; `set diag.panel.scale 1.5` grows it live. Say what to add or drop.
+- Status: awaiting owner. Source: cw17b-panel-viz.
+
+### PP-4: Graphics page in the options menu, live behind the pause menu (tunables T5d, 2026-11-16)
+- Kind: game location, release build. `view "Balmora" --hour 22` (no `--quality`: it would win over the saved levels).
+- Esc > Options > E twice (or click the tab) to **Graphics**: Graphics Preset, then View Distance, Shadows, Lighting, Post-processing,
+  Textures, Effects, Water, Sky, each Extremely Low / Low / Medium / High / Ultra (starts at High).
+- Change Graphics Preset (left/right): the town behind the menu changes at once (lamp shadows, sun cascade reach, GTAO,
+  bloom, LOD swaps), every group row follows; then change one group (e.g. Shadows): it changes alone and the overall
+  reads **Custom**; steps never land on Custom. Graphics Preset, View Distance, Lighting and Textures show "Applies after
+  restart" in the right pane (texture size, far land reach, probe GI wait for a restart). The overlay note says what changed.
+- Look for: no crash or long hitch per step, labels readable, rows match F3's `preset:` line; quit and start again with
+  the same command: the picked levels come back (saved in `<user data>/machine.toml`).
+- Status: awaiting owner. Source: tunables-t5d.

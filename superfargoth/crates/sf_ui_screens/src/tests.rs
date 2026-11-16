@@ -1794,6 +1794,34 @@ fn collect_options(mut events: MessageReader<OptionsEvent>, mut out: ResMut<Opti
 #[path = "tests_options_pane.rs"]
 mod options_pane;
 
+/// A preset driver's choice (levels plus `custom`): steps cycle the levels and skip `custom`,
+/// wrapping; from `custom` right goes to the first level, left to the last; a choice of only
+/// `custom` doesn't step.
+#[test]
+fn choice_steps_skip_the_derived_custom_level() {
+    use sf_ui::SettingValue::Text;
+    let options = ["low", "high", "custom"].map(|o| (o.to_owned(), o.to_owned()));
+    let row = |value: &str| OptionRow {
+        key: "sg.shadows".into(),
+        label: "Shadows".into(),
+        kind: OptionKind::Choice(options.to_vec()),
+        value: Text(value.into()),
+        enabled: true,
+        description: None,
+        disabled_reason: None,
+        restart: false,
+        default: Text("high".into()),
+    };
+    assert_eq!(row("low").stepped(1), Some(Text("high".into())));
+    assert_eq!(row("high").stepped(1), Some(Text("low".into())), "wraps over custom");
+    assert_eq!(row("low").stepped(-1), Some(Text("high".into())), "wraps back over custom");
+    assert_eq!(row("custom").stepped(1), Some(Text("low".into())));
+    assert_eq!(row("custom").stepped(-1), Some(Text("high".into())));
+    assert_eq!(row("gone").stepped(-1), Some(Text("low".into())), "an unknown value goes to the first");
+    let only = OptionRow { kind: OptionKind::Choice(vec![("custom".into(), "Custom".into())]), ..row("custom") };
+    assert_eq!(only.stepped(1), None);
+}
+
 /// Role classes on the stock screens' windows, boxes and framed buttons.
 #[path = "tests_roles.rs"]
 mod roles;

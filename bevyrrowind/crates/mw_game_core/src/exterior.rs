@@ -33,7 +33,7 @@ pub fn pinned_clouds(genus: CloudPreset) -> CloudWeather {
 /// the overall graphics preset `sf.graphics_preset` (tunables slice T5b). Every value a level decides
 /// (view distance, shadows, lights, post, sky, water, surface, textures, GI) is a tunable its `sg.*`
 /// group writes at the `Preset` layer from the builtin mod's records (`mw_mods::BASE_RECORDS`); the
-/// level switches live (console `set sf.graphics_preset <level>`, `preset`, Shift+F4).
+/// level switches live (the options menu's Graphics page, console `set sf.graphics_preset <level>`, `preset`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Quality {
     /// The floor for weak machines and CPU/GPU comparisons, below Low.

@@ -234,7 +234,9 @@ Each is one slice with its test; F and V lines can run in parallel (different cr
 - **S2** Options screen v2 (widgets, description pane, footer, apply/revert, keep dialog, reset page).
 - **S3** Display settings live (window mode, monitor, resolution, vsync, frame cap) with the countdown.
 - **S4** Graphics page (game adapter): preset + per-feature settings, `Restart` first; each later conversion to
-  `Live` is its own logged slice.
+  `Live` is its own logged slice. *As built (tunables T5d, 2026-11-16):* the page is the preset drivers only (overall +
+  8 `sg.*` groups, owner: groups only), all live (the tunables' presets, not `ui.setting_preset` values), `Machine`
+  scope, "Applies after restart" on rows writing `Restart` tunables; choices step over `custom`. Per-feature rows: later.
 - **S5** Interface and accessibility pages wired to `UiSettings`.
 
 ## Owner answers (2026-11-11)

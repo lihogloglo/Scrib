@@ -60,27 +60,37 @@ a console and BRP for agents.
   formats, multisampled, array layers/mips past the view's first. Bevy's own `RenderDebugOverlayPlugin`
   (bevy_dev_tools) only shows the camera's prepass buffers full-screen.
 
-## Perf panel (F3, OpenMW's F3 / UE `stat unit`)
-`mw_devtools_bevy/src/perf_panel.rs` (pure half `perf_panel_model.rs`), in every interactive run incl. release (added
-by `live_ab::add`). F3 cycles off / compact / full (top right); Shift+F3 is now terrain far shadows; console/BRP
-`flip perfpanel`. Every number is a mean over `diag.panel.window_s` (1 s), redrawn every `diag.panel.refresh_s` (0.25 s).
-- **frame** ms/fps, p99, max: `Time<Real>` delta. **main / render**: `main/busy/ms`, `render/busy/ms` (`sf_diag_bevy`
-  `FramePhasePlugin`, render one frame behind). **GPU**: sum of the top-level `render/<pass>/elapsed_gpu` (Bevy
-  `RenderDiagnosticsPlugin`; partial, untimed passes missing); "n/a" unless `diag.panel.gpu_timers` (env
-  `BEVYRROWIND_PANEL_GPU_TIMERS=1`, read at startup: it adds timestamp queries + a readback every frame) or the GI's timer.
-- **bound by**: the busiest of GPU/render/main if it is at least `diag.panel.bound_ratio` (0.85) of the frame, else
-  "none" (vsync, a cap, untimed GPU).
-- Full only: top 3 `stage/main/*`, top `diag.panel.top_passes` GPU passes, `views/*` (camera, cascades, lamp faces,
-  `lamp_face/culled`, items, batch sets; `RenderViewsPlugin`), point+spot lights total/shadowed (queried at refresh),
-  `encode/*` (encoders, command buffers, submits + ms, poll; CW-5b), entities, the graphics preset (`sf.graphics_preset`;
-  `custom (high; shadows custom, post low)`: the usual group level and the groups that differ), every tunable set above the
-  preset with its layer. Streaming: n/a (no live gauge).
-- Cost: the gauge plugins are gated by `sf_diag_bevy::set_gauges_live` (off while hidden or with `diag.panel.gauges`
-  off) and `DiagCounters` leaves the main world, so counter-gated reporters stop too. Not measured.
-- Reuse check (2026-11-16): Bevy 0.20 `bevy_dev_tools` `FpsOverlayPlugin` (frame only) and `DiagnosticsOverlay`
-  (reads `DiagnosticsStore` only, needs `bevy_picking`, behind Bevy's `dev` feature: not in release, and our gauges live
-  in `sf_diag` counters); `iyes_perf_ui` 0.5 (MIT/Apache) is on Bevy 0.16. So a plain `bevy_ui` text node. Industry:
-  OpenMW F3 (frame/update/render/GPU bars), UE `stat unit` (Frame/Game/Draw/GPU, bound = the one near Frame), `stat gpu`.
+## Perf panel (F3, OpenMW's F3 / UE `stat unitgraph` + `stat unit`)
+`mw_devtools_bevy/src/perf_panel.rs` (pure halves `perf_panel_model.rs` numbers + text, `perf_panel_graph.rs` history,
+columns, pixels; `bevy_ui` tree `perf_panel_ui.rs`), in every interactive run incl. release (added by `live_ab::add`).
+F3 cycles off / compact / full (top right); console/BRP `flip perfpanel`. Numbers are means over `diag.panel.window_s`
+(1 s), rewritten every `diag.panel.refresh_s` (0.25 s); the graph is per frame, redrawn every `diag.panel.graph_refresh_s`.
+- **Compact**: frame line (mean ms/fps, median, p99, max: `Time<Real>` delta), "bound by" in its colour, the frame-time
+  graph (last `diag.panel.graph_frames` = 600 frames; a column = the worst frame it covers, so no hitch is lost; coloured by
+  that frame's own bound; main/render/GPU lines; dashed `diag.panel.target_ms` 8.3/11 ms lines; scale top
+  `diag.panel.graph_top_ms` 25 ms, spikes above it clipped with a mark), legend + span, main/render/GPU bars (fill =
+  busy / frame, the bound one full colour). Per-frame numbers: `main/busy/ms`, `render/busy/ms` (one frame behind), the GPU
+  sum of the latest top-level `render/<pass>/elapsed_gpu` (a few frames behind), so lines can sit a column apart.
+- **Full** adds: top `diag.panel.top_passes` GPU passes and top 3 `stage/main/*` as bars (share of the frame), views
+  (`views/*`: camera, cascades, lamp faces, culled, items, batch sets), point+spot lights total/shadowed, `encode/*`
+  (encoders, command buffers, submits + ms, poll; CW-5b), entities, sparklines of submit ms and views drawn, the preset
+  (`sf.graphics_preset`, `custom (high; shadows custom, post low)`), every tunable set above the preset. Streaming n/a.
+- **bound by**: the busiest of GPU/render/main if at least `diag.panel.bound_ratio` (0.85) of the frame, else "none".
+  GPU "n/a" unless `diag.panel.gpu_timers` (env `BEVYRROWIND_PANEL_GPU_TIMERS=1`, startup only) or the GI's timer.
+- **Look**: sizes authored at 1080p; `diag.panel.scale` 0 = auto (physical height / 1080, at least `diag.panel.min_scale`
+  0.9), divides out the OS scale factor, follows Bevy's `UiScale`; `diag.panel.graph_px`, `diag.panel.alpha`,
+  `diag.panel.colour.*` (sRGB). A change of any of these, or of the mode, rebuilds the tree.
+- **Cost**: hidden, nothing exists or runs (run conditions), no frame is recorded, the gauges are off
+  (`sf_diag_bevy::set_gauges_live`) and `DiagCounters` leaves the main world. Shown: the gauges as in a benchmark, one
+  sample per frame, a CPU-filled `Image` (~400x110 texels at 1080p; Bevy 0.20 `GpuImage::prepare_asset` reuses the texture
+  and does one `write_texture` while the size stays) at the graph rate, ~30 (compact) / ~80 (full) nodes mutated at the
+  refresh rate, nothing spawned per frame. Not measured.
+- Reuse check (2026-11-16): Bevy 0.20 `bevy_dev_tools` `FpsOverlayPlugin` + `frame_time_graph` (a `UiMaterial` shader over
+  a storage buffer of frame times, one colour ramp by fps; behind Bevy's `dev` feature, not in release) and
+  `DiagnosticsOverlay` (`DiagnosticsStore` only); `iyes_perf_ui` 0.5 is on Bevy 0.16. We take its idea (a UI node fed per
+  frame) but draw on the CPU: no shader to keep, per-frame bound colours and thread lines, pixel-exact tests. Industry:
+  UE `stat unitgraph` (frame/game/draw/GPU lines + budget line), `stat gpu`, RTSS / PresentMon / FrameView frame-time
+  graphs, OpenMW F3 bars.
 
 ## Bevy features used
 `bevy_remote` (BRP, via `bevy_brp_mcp`/`bevy_brp_extras`), `bevy_diagnostic`, gizmos, `PipelineCache::waiting_pipelines`
@@ -105,8 +115,9 @@ warns about a declared tunable missing from it).
 levels `extremely_low`, `low`, `medium`, `high`, `ultra` of `sf.graphics_preset`, which sets the groups `sg.view_distance`,
 `sg.shadows`, `sg.lighting`, `sg.post`, `sg.textures`, `sg.effects`, `sg.water`, `sg.sky` (values: the builtin mod's
 `bevyrrowind/crates/mw_mods/data/records/graphics_presets.ron`, table in `docs/tunables-index.md`). Start level
-`--quality <level>` (`extremely-low` too; `BEVYRROWIND_QUALITY`). Switch while running: **Shift+F4** cycles the overall
-level (overlay note says what changed); console `preset` (list), `preset ultra`, `preset shadows low`, or
+`--quality <level>` (`extremely-low` too; `BEVYRROWIND_QUALITY`; beats the menu's saved levels). Switch while running:
+**Esc > Options > Graphics** (overall + one row per group, live behind the menu, saved per machine in
+`<user data>/machine.toml`, T5d; overlay note says what changed); console `preset` (list), `preset ultra`, `preset shadows low`, or
 `set sf.graphics_preset ultra` / `set sg.shadows low`; BRP `sf.tunables/set`; `--set sf.graphics_preset=ultra` at start.
 A level writes the `Preset` layer, so console/`--set`/`--off` values stay above it and the driver reads `custom`; `reset
 <name>` goes back. Not live: `texture.max_size_px`, `far.handoff_scale`, `render.gi.probes` (`Restart`: stored, the

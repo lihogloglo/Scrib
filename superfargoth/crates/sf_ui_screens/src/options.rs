@@ -12,8 +12,9 @@
 //!
 //! Input: up and down move between the page's enabled rows, then "Key bindings" and Back (no
 //! wrap); left and right change the focused row (a toggle flips, a choice cycles, a slider
-//! steps, clamped to its range); confirm or a click flips a toggle and cycles a choice forward;
-//! the arrow buttons step; tab prev / next (Q / E, the triggers) switch pages, wrapping. A
+//! steps, clamped to its range; a preset driver's `custom` option, [`sf_ui::CUSTOM_LEVEL`], is
+//! derived, so it is shown but stepped over); confirm or a click flips a toggle and cycles a
+//! choice forward; the arrow buttons step; tab prev / next (Q / E, the triggers) switch pages, wrapping. A
 //! disabled row (the app sets `enabled = false`; `ui.setting` has no condition yet) is shown
 //! greyed and skipped.
 //!
@@ -121,14 +122,25 @@ impl OptionRow {
                     SettingValue::Text(id) => options.iter().position(|(o, _)| o == id),
                     _ => None,
                 };
+                // A preset driver's `custom` (sf_ui::CUSTOM_LEVEL) is derived, never picked:
+                // shown, stepped over.
+                let pickable = |i: usize| options[i].0 != sf_ui::CUSTOM_LEVEL;
+                if !(0..options.len()).any(pickable) {
+                    return None;
+                }
                 let len = options.len();
-                let at = current.map_or(0, |at| {
-                    if direction < 0 {
+                // An unknown value goes to the first option (either way), as before.
+                let (mut at, direction) = current.map_or((len - 1, 1), |at| (at, direction));
+                loop {
+                    at = if direction < 0 {
                         (at + len - 1) % len
                     } else {
                         (at + 1) % len
+                    };
+                    if pickable(at) {
+                        break;
                     }
-                });
+                }
                 SettingValue::Text(options[at].0.clone())
             }
             (OptionKind::Int { min, max, step }, SettingValue::Int(v)) => SettingValue::Int(

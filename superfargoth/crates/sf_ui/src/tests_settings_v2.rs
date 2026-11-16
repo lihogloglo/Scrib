@@ -211,3 +211,47 @@ fn conditions_truth_table() {
     let one_fails = [tr("dlss"), tr("rt"), ph(PHASE_IN_GAME)];
     assert!(!eval(&one_fails, PHASE_IN_GAME), "AND, one fails");
 }
+
+/// A host adds another record set's settings: they go after the built-ins and the host's own,
+/// the other set's copies of the built-ins don't replace the host's (a record-replaced
+/// built-in stays replaced), and a key both define takes the later one.
+#[test]
+fn extend_settings_appends_record_settings_not_builtins() {
+    let mut host = load(
+        r#"
+[[define]]
+kind = "ui.setting"
+id = "sf.audio_master_volume"
+value = { label = "set-loud", page = "audio", kind = { Float = { default = 0.5, min = 0.0, max = 1.0 } } }
+
+[[define]]
+kind = "ui.setting"
+id = "m.speed"
+value = { label = "set-speed", kind = { Bool = { default = false } } }
+"#,
+        RecordFormat::Toml,
+    );
+    let other = load(
+        r#"
+[[define]]
+kind = "ui.setting"
+id = "m.speed"
+value = { label = "set-speed-2", kind = { Bool = { default = true } } }
+
+[[define]]
+kind = "ui.setting"
+id = "sg.shadows"
+value = { label = "set-shadows", page = "graphics", kind = { Choice = { default = "high", options = ["low", "high", "custom"] } } }
+"#,
+        RecordFormat::Toml,
+    );
+    let before: Vec<String> = host.settings().map(|d| d.id.as_str().to_owned()).collect();
+    host.extend_settings(&other);
+    let after: Vec<String> = host.settings().map(|d| d.id.as_str().to_owned()).collect();
+    assert_eq!(after[..before.len()], before[..], "existing keys keep their place");
+    assert_eq!(after.last().map(String::as_str), Some("sg.shadows"), "a new key goes last");
+    assert_eq!(after.len(), before.len() + 1);
+    let master = host.setting("sf.audio_master_volume").expect("master");
+    assert_eq!(master.def.label, "set-loud", "the host's replaced built-in stays");
+    assert_eq!(host.setting("m.speed").expect("speed").def.label, "set-speed-2", "the later set wins a key");
+}

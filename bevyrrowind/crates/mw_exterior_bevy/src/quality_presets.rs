@@ -9,7 +9,8 @@
 //!
 //! **Live switch:** the drivers are tunables (`sf_tunables_bevy::PresetsPlugin`): console
 //! `set sf.graphics_preset ultra`, `set sg.shadows low`, BRP `sf.tunables/set`, `--set`, the
-//! [`preset`](add_console) console command, Shift+F4 (`mw_devtools_bevy::live_ab`). A driver reads
+//! [`preset`](add_console) console command, the options menu's Graphics page
+//! ([`crate::graphics_page`], levels saved per machine, T5d). A driver reads
 //! `custom` when a member differs from every level (a hand-set value stays above the preset).
 //!
 //! What a value costs to change (its `Lifetime`): shadows, lights, GTAO, contact shadows, bloom, the

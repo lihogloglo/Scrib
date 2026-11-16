@@ -8,11 +8,11 @@
 //! startup: use the `--off`/`--lod-tint` flags and compare two runs.
 //!
 //! Keys: F1 help, F2 sun shadows, F3 perf panel (off / compact / full, [`crate::perf_panel`]),
-//! Shift+F3 terrain far shadows, F4 DLSS mode, Shift+F4 next graphics preset (`sf.graphics_preset`:
-//! `extremely_low`, `low`, `medium`, `high`, `ultra`; tunables T5b),
+//! Shift+F3 terrain far shadows, F4 DLSS mode (graphics presets are in the options menu's Graphics
+//! page, tunables T5d; the help shows the level),
 //! Shift+F6 far-field tint (F5 / F9 are quicksave / quickload, `saves.rs`), F6 terrain LOD colors, F7 wireframe (terrain and skinned meshes; G shows the physics colliders, ragdoll capsules and joints, `physics.rs`),
 //! F8 streaming rings, `[` / `]` hour -/+ 0.5 (Shift: 0.1), P pause clock,
-//! T clock speed (x1, x4, x20), Shift+F12 copy camera (`--camera` string), Shift+C clouds on/off (also console
+//! T clock speed (x1, x4, x20, x40), Shift+F12 copy camera (`--camera` string), Shift+C clouds on/off (also console
 //! `flip clouds`; F10 is the keybinds screen, `controls.rs`),
 //! C next weather (forced everywhere with its transition), F12 screenshot,
 //! B smooth ↔ vanilla character bodies (handled in `actors.rs`).
@@ -539,8 +539,9 @@ pub fn live_weather(s: &Switches) -> Option<mw_environment_bevy::weather::LiveWe
 }
 
 /// The T key's clock speeds: normal (Morrowind's 30x), x4 (a weather
-/// transition in ~10-25 s), x20 (a day in ~2.4 min).
-pub const TIME_SCALES: [f32; 3] = [30.0, 120.0, 600.0];
+/// transition in ~10-25 s), x20 (a day in ~2.4 min), x40 (a day in ~72 s; owner 2026-11-15:
+/// game time x1200, ROADMAP 1.13b).
+pub const TIME_SCALES: [f32; 4] = [30.0, 120.0, 600.0, 1200.0];
 
 pub fn clock_label(clock: &GameClock) -> &'static str {
     if clock.paused {
@@ -609,12 +610,8 @@ fn keys(
         let text = format!("perf panel {}", panel.mode.label());
         state.note(text, now);
     }
-    if shifted && input.just_pressed(KeyCode::F4) {
-        commands.queue(move |world: &mut World| {
-            let text = cycle_graphics_preset(world);
-            world.resource_mut::<LiveAb>().note(text, now);
-        });
-    } else if input.just_pressed(KeyCode::F4) {
+    // Shift+F4 is unbound: graphics presets are in the options menu (owner 2026-11-16, T5d).
+    if !shifted && input.just_pressed(KeyCode::F4) {
         let text = if let Some(u) = s.upscaling.as_ref() {
             let i = DLSS_CYCLE.iter().position(|m| *m == u.0).map_or(0, |i| (i + 1) % DLSS_CYCLE.len());
             let next = DLSS_CYCLE[i];
@@ -770,11 +767,11 @@ fn overlay(
             .unwrap_or_else(|| "n/a".to_owned());
         let _ = write!(
             out,
-            "\nF2 sun shadows {}  F3 perf panel {panel} (off/compact/full)  Shift+F3 terrain far shadows {}  F4 DLSS {dlss}  Shift+F4 graphics preset {preset} (console `preset`)\n\
+            "\nF2 sun shadows {}  F3 perf panel {panel} (off/compact/full)  Shift+F3 terrain far shadows {}  F4 DLSS {dlss}  graphics preset {preset} (Esc > Options > Graphics, console `preset`)\n\
              Shift+F6 far tint {}  F6 terrain LOD colors {}  F7 wireframe (terrain, skinned meshes) {}  F8 rings {}\n\
              G physics colliders (ragdoll capsules, joints) {colliders}  O combat gizmos (hurt capsules, blade)\n\
              F11 player / free camera (player: WASD, Space jump, E use, Shift tap roll / hold sprint, Ctrl sneak, F ready weapon, LMB attack, Tab 1st/3rd person, wheel zoom)\n\
-             Shift+C clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  Shift+F12 copy camera  F12 screenshot  F5/F9 quicksave/load  B bodies {bodies}  |  --off {flags_off}\n\
+             Shift+C clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20/x40  Shift+F12 copy camera  F12 screenshot  F5/F9 quicksave/load  B bodies {bodies}  |  --off {flags_off}\n\
              RO-16 veil (console `flip <name>`): terrain_specular {}  terrain_env_specular {}  terrain_indirect {}  terrain_tint {}  surface {}  fog {}  fog_night_light {}  weather_ambient {}  ambient, render.bloom\n\
              Textures (console `flip <name>`, texture lab N / M / P): normalmaps {}  orm {}  parallax {}\n\
              Snow and ash (console `flip <name>`): cover {}  trails {}  raise {}",
@@ -815,29 +812,9 @@ fn overlay(
     }
 }
 
-/// Shift+F4: the next level of the overall graphics preset (`sf.graphics_preset`, `extremely_low` ..
-/// `ultra`, wrapping; from `custom`: `extremely_low`), written at the console layer like `set
-/// sf.graphics_preset <level>`: the presets apply it this frame ([`preset_notes`] shows what changed).
-fn cycle_graphics_preset(world: &mut World) -> String {
-    use sf_tunables_bevy::sf_tunables::presets::{GRAPHICS_PRESET, LEVELS};
-    if !world.contains_resource::<sf_tunables_bevy::Presets>() {
-        return "graphics presets: not in this app (exteriors only)".to_owned();
-    }
-    let Some(mut tunables) = world.get_resource_mut::<sf_tunables_bevy::Tunables>() else {
-        return "graphics presets: no tunables".to_owned();
-    };
-    let Some(id) = tunables.id(GRAPHICS_PRESET.name()) else {
-        return "graphics presets: not registered".to_owned();
-    };
-    let next = LEVELS.iter().position(|l| *l == tunables.text(id)).map_or(LEVELS[0], |i| LEVELS[(i + 1) % LEVELS.len()]);
-    match tunables.set_by(id, sf_tunables_bevy::Value::Str(next.to_owned()), sf_tunables_bevy::SetBy::Console) {
-        Ok(_) => format!("graphics preset {next} requested (sf.graphics_preset)"),
-        Err(e) => format!("graphics preset: {e}"),
-    }
-}
-
-/// Shows each applied preset level in the overlay: what changed, what applies on restart or to new
-/// spawns, what stays above the preset (the same line the log gets).
+/// Shows each applied preset level in the overlay (from the options menu's Graphics page, the
+/// console `preset`, BRP): what changed, what applies on restart or to new spawns, what stays above
+/// the preset (the same line the log gets).
 fn preset_notes(mut applied: MessageReader<sf_tunables_bevy::PresetApplied>, real: Res<Time<Real>>, mut state: ResMut<LiveAb>) {
     for a in applied.read() {
         let text = match &a.summary {
@@ -859,5 +836,33 @@ fn request_upscaling(world: &mut World, upscaling: Upscaling) {
     }
     if let Some(mut setting) = world.get_resource_mut::<UpscalingSetting>() {
         setting.0 = upscaling;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sf_tunables_bevy::{SetBy, TunablesAppExt};
+
+    /// T5d: Shift+F4 no longer switches the graphics preset (it moved to the options menu's
+    /// Graphics page; owner 2026-11-16): the driver keeps its default, no overlay note.
+    #[test]
+    fn shift_f4_is_not_bound() {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Time<Real>>()
+            .init_resource::<LiveAb>()
+            .insert_resource(sf_tunables_bevy::Presets::default())
+            .register_tunables(sf_tunables_bevy::sf_tunables::presets::TUNABLES)
+            .add_systems(Update, keys);
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::ShiftLeft);
+        input.press(KeyCode::F4);
+        app.update();
+        app.update();
+        let t = app.world().resource::<sf_tunables_bevy::Tunables>();
+        let var = t.var(t.id("sf.graphics_preset").expect("driver"));
+        assert_eq!((var.value().as_str(), var.set_by()), (Some("custom"), SetBy::Default));
+        assert!(app.world().resource::<LiveAb>().note.is_none(), "no key note");
     }
 }

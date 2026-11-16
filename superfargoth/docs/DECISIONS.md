@@ -1855,3 +1855,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-16 (tunables-t5b, industry standard): graphics presets are data: `sf.graphics_preset` over UE-style groups `sg.view_distance|shadows|lighting|post|textures|effects|water|sky`,
   levels `extremely_low` (floor below Low, mostly UE `sg.*Quality 0`), `low`..`ultra`, `custom` derived; each tunable in one group;
   `sf.tunable_preset` records in the builtin mod (own kind, not `ui.setting_preset`: members are `Dev` tunables), written at `Preset`.
+- 2026-11-16 (owner, PP-1/PP-2): graphics presets go in the options menu (overall preset + `sg.*` groups, answers tunables
+  open question 1 for groups), no live A/B key for them; the F3 perf panel needs real visualizations (frame-time graph, bars),
+  not text only.
+- 2026-11-17 (tunables-t5d, industry standard): graphics levels picked in the options menu are saved per machine
+  (`<user data>/machine.toml`, UE `GameUserSettings` style), not in the profile; only picks are saved, applied at `User`
+  (CLI `--quality`/`--set` above them); benchmark and screenshot runs ignore them.

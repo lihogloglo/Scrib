@@ -109,8 +109,15 @@ pub struct ExteriorOptions {
     pub fog: Option<f32>,
     /// The live weather (M6 WE3): records, state and the grid's climates.
     pub weather: Option<mw_environment_bevy::weather::WeatherSetup>,
-    /// Quality preset (`--quality`): view-distance bias and size culling.
+    /// Quality preset (`--quality`, else `BEVYRROWIND_QUALITY`, else High): the start level of
+    /// `sf.graphics_preset`.
     pub quality: Quality,
+    /// `--quality` or `BEVYRROWIND_QUALITY` was given: the level is a `CommandLine` request that
+    /// wins over the options menu's saved levels (`graphics_page::apply_start_levels`).
+    pub quality_set: bool,
+    /// Read the options menu's saved graphics levels (`<user data>/machine.toml`): interactive
+    /// runs only, not benchmarks or screenshots (as the user dev file `tunables.toml`).
+    pub menu_graphics: bool,
     /// `--texture-cap <px>` as given (0: none): the `CommandLine` layer of `texture.max_size_px`, read
     /// at start (`quality_presets::start_values`); `None`: the quality level's cap.
     pub texture_cap: Option<u32>,
@@ -270,13 +277,23 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // (`sf_sky_bevy::ShadowQualityPlugin` binds them live), `quality_presets` the rest and the preset
     // drivers; the loaded profile's `sf.tunable` records go to the `Mod` layer, the quality level of
     // its `sf.graphics_preset` records to `Preset`, `--off` parts and `--texture-cap` to `CommandLine`.
-    // The `Restart` ones (texture cap, far handoff scale, probe GI) are read now, with their `--set`s
-    // (and a `--set` of a preset driver). The drivers then switch live (`preset`, Shift+F4).
+    // Then the options menu's saved levels (T5d, interactive runs) as `User` requests, an explicit
+    // `--quality` above them at `CommandLine`. The `Restart` ones (texture cap, far handoff scale,
+    // probe GI) are read now, with their `--set`s (and a `--set` of a preset driver). The drivers
+    // then switch live (options menu > Graphics, console `preset`).
     render.insert(&mut app);
     crate::quality_presets::register(&mut app);
     let (presets, start_values) = {
         let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
         let book = crate::quality_presets::apply(&mut tunables, options.actors.as_deref(), options.quality, &perf.off, options.texture_cap);
+        let saved = match crate::graphics_page::machine_file() {
+            Some(path) if options.menu_graphics && !bench => crate::graphics_page::load_saved(&path, &book),
+            _ => Vec::new(),
+        };
+        let quality = options.quality_set.then(|| options.quality.name());
+        for line in crate::graphics_page::apply_start_levels(&mut tunables, &book, &saved, quality) {
+            info!("graphics preset at start: {line}");
+        }
         let start = crate::quality_presets::start_values(&mut tunables, &book, &perf.tunables);
         mw_assets::set_parallax(crate::quality_presets::tunables_parallax(&tunables));
         (book, start)

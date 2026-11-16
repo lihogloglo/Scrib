@@ -79,7 +79,7 @@ pub fn index_markdown() -> Result<String, String> {
 }
 
 /// The value each graphics preset level writes, per `sg.*` group (the `Preset` layer; switch with
-/// `preset <level>`, `set sg.<group> <level>`, Shift+F4).
+/// `preset <level>`, `set sg.<group> <level>`, the options menu's Graphics page).
 fn levels_markdown(store: &sf_tunables::Tunables) -> String {
     use sf_tunables::presets::{LEVELS, MergedPresets, PresetBook};
     let db = mw_environment_bevy::shadow_tunables::base_records();

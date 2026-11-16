@@ -30,13 +30,19 @@
 //!   leaves the menus, or on exit (`sf_ui_bevy` `sync_profile`, console/PC convention: not
 //!   once per slider step). "Key bindings" opens the keybinds screen on top (`controls.rs`);
 //!   its Back returns to the options.
+//! - **Graphics page** (`graphics_page.rs`, tunables T5d): the preset rows are `ui.setting`
+//!   records added to the registry here; a pick applies live through the preset drivers, the rows
+//!   follow the drivers (`graphics_page::sync_rows`), and the picks are `Machine` settings, saved
+//!   to `<user data>/machine.toml` (`sf_ui_bevy::load_machine_settings` here, written when the
+//!   menus close).
 
 use bevy::prelude::*;
 use sf_app_bevy::AppPhase;
 use sf_app_bevy::bevy_state::prelude::NextState;
 use sf_console_bevy::ConsoleOpen;
 use sf_records::RecordDb;
-use sf_ui::{Layer, SettingsStore, UiRegistry};
+use sf_tunables_bevy::{Presets, Tunables};
+use sf_ui::{Layer, SettingValue, SettingsStore, UiRegistry};
 use sf_ui_bevy::{ScreenStackRes, UiAction, UiActionEvent, UiLocalizer, UiRegistryRes, UiScreenRoot, UiSettingsStore, UiSystems};
 use sf_ui_screens::{
     OptionsChange, OptionsEvent, OptionsModel, OptionsScreen, PauseChoice, PauseMenuEvent, PauseMenuModel, PauseMenuScreen, SaveLoadMode,
@@ -77,16 +83,23 @@ pub fn add(app: &mut App) {
     let world = app.world_mut();
     let Some(mut registry) = world.get_resource_mut::<UiRegistryRes>() else { return };
     registry.0.extend_screens(&screens());
+    registry.0.extend_settings(&crate::graphics_page::registry());
     if !world.contains_resource::<UiSettingsStore>() {
         let profile = mw_boot_bevy::mods::bindings_profile();
         let store = settings_store(&world.resource::<UiRegistryRes>().0, profile.as_ref().map(|(_, p)| p));
         world.insert_resource(store);
+        if let Some(path) = crate::graphics_page::machine_file() {
+            match sf_ui_bevy::load_machine_settings(world, path) {
+                Ok(issues) => issues.iter().for_each(|i| warn!("machine settings: {i:?}")),
+                Err(e) => warn!("machine settings: {e}"),
+            }
+        }
     }
     app.add_systems(
         Update,
         (
             (localize_labels, keep_hud, open_pause_menu).chain().after(UiSystems::Dispatch).before(ScreenSystems::Spawn),
-            (host_pause_menu, host_options, close_screens, pause_time).chain().after(ScreenSystems::Input),
+            (host_pause_menu, host_options, crate::graphics_page::sync_rows, close_screens, pause_time).chain().after(ScreenSystems::Input),
         ),
     );
     // The save/load screen's request (`mw_saves_bevy::menu` hosts it and registers it too).
@@ -240,7 +253,8 @@ fn applies_live(key: &str) -> bool {
 }
 
 /// Option changes go to the store (saved into the profile when the menus close, consumers
-/// apply them); Key bindings opens the keybinds screen on top. Back has closed the screen.
+/// apply them); a Graphics page pick also requests its preset level (`graphics_page::pick`, live).
+/// Key bindings opens the keybinds screen on top. Back has closed the screen.
 #[allow(clippy::needless_pass_by_value)] // system parameters
 fn host_options(
     mut commands: Commands,
@@ -248,6 +262,8 @@ fn host_options(
     mut store: Option<ResMut<UiSettingsStore>>,
     mut stack: ResMut<ScreenStackRes>,
     registry: Res<UiRegistryRes>,
+    presets: Option<Res<Presets>>,
+    mut tunables: Option<ResMut<Tunables>>,
 ) {
     for event in events.read() {
         match &event.change {
@@ -257,6 +273,15 @@ fn host_options(
                     warn!("options: no settings store, {key} not kept");
                     continue;
                 };
+                if let SettingValue::Text(level) = value
+                    && crate::graphics_page::is_row(key)
+                {
+                    let live = presets.as_deref().map(|p| &p.0).zip(tunables.as_deref_mut());
+                    if let Err(e) = crate::graphics_page::pick(&mut store.0, live, key, level) {
+                        warn!("options: {key}: {e}");
+                    }
+                    continue;
+                }
                 match store.0.set(key, value.clone()) {
                     Ok(value) if applies_live(key) => info!("options: {key} = {value:?}"),
                     Ok(value) => info!("options: {key} = {value:?} (stored; nothing applies it live yet)"),

@@ -18,12 +18,15 @@
 # to keep sound, e.g. `owner_launch.sh --sound scene <name>`.
 set -u
 # `--sound` is ours, not the game's: drop it and skip the default `--mute`.
-sound=0; kept=()
-for a in "$@"; do if [ "$a" = "--sound" ]; then sound=1; else kept+=("$a"); fi; done
+sound=0; release=0; kept=()
+for a in "$@"; do case "$a" in --sound) sound=1 ;; --release) release=1 ;; *) kept+=("$a") ;; esac; done
 # Only `scene` and `view` take `--mute` (clip-preview has no audio and rejects it).
 case "${kept[0]:-}" in scene|view) [ "$sound" = 1 ] || kept+=("--mute") ;; esac
 set -- "${kept[@]}"
 TARGET=/c/cargo-target/scrib/debug
+# `--release` (ours, consumed like `--sound`): the release build instead, for honest perf numbers (F3 panel checks);
+# it must exist (`cargo build --release -p bevyrrowind`).
+[ "$release" = 1 ] && TARGET=/c/cargo-target/scrib/release
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"   # bevyrrowind/, the game's working dir
 
 build_busy() {
@@ -82,7 +85,7 @@ while :; do
     note "$why"; sleep 15
 done
 
-[ -f "$TARGET/bevyrrowind.exe" ] || { echo "owner_launch: no dev build at $TARGET"; exit 2; }
+[ -f "$TARGET/bevyrrowind.exe" ] || { echo "owner_launch: no build at $TARGET"; exit 2; }
 dir="$TEMP/bw-owner-$(date +%Y-%m-%d-%H%M)"
 mkdir -p "$dir"
 cp "$TARGET/bevyrrowind.exe" "$dir/" || exit 2

@@ -441,6 +441,20 @@ impl UiRegistry {
         }
     }
 
+    /// Adds `other`'s record settings and setting presets as a later source (same key:
+    /// `other` wins; a new key goes after the current ones, so its page is listed after
+    /// theirs). `other`'s built-ins are skipped: `self` has its own (possibly replaced by a
+    /// record). For hosts that assemble settings from several record sets, as
+    /// [`Self::extend_screens`].
+    pub fn extend_settings(&mut self, other: &UiRegistry) {
+        for (key, def) in other.settings.iter().filter(|(_, d)| d.source.is_some()) {
+            self.settings.insert(key.clone(), def.clone());
+        }
+        for (id, def) in &other.setting_presets {
+            self.setting_presets.insert(id.clone(), def.clone());
+        }
+    }
+
     /// Contributions to a slot, ordered by priority, then load order.
     pub fn slot(&self, id: &str) -> &[Def<String, SlotContribution>] {
         self.slots.get(id).map_or(&[], Vec::as_slice)

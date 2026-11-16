@@ -333,9 +333,9 @@ struct ViewFlags {
     #[arg(long)]
     sun_size: Option<f32>,
     /// Exteriors: the start level of the graphics preset `sf.graphics_preset`: extremely-low, low, medium,
-    /// high (default), ultra (records `sg.*` in the builtin mod; switch live with `preset <level>` or
-    /// Shift+F4); view distance, shadows, lighting, post, textures, effects, water, sky
-    /// (env `BEVYRROWIND_QUALITY`).
+    /// high (default), ultra (records `sg.*` in the builtin mod; switch live in the options menu's
+    /// Graphics page or with `preset <level>`); view distance, shadows, lighting, post, textures,
+    /// effects, water, sky (env `BEVYRROWIND_QUALITY`). Given, it wins over the menu's saved levels.
     #[arg(long, value_parser = parse_quality)]
     quality: Option<Quality>,
     /// Texture size cap in texels (largest side of level 0; `0`: none) instead of the quality
@@ -585,7 +585,7 @@ impl ViewFlags {
             title,
             eye,
             target,
-            screenshot: self.screenshot,
+            screenshot: self.screenshot.clone(),
             screenshot_anyway: self.screenshot_anyway,
             settle: self.settle,
             store,
@@ -611,6 +611,8 @@ impl ViewFlags {
             fog: self.fog,
             weather: Some(weather),
             quality: Quality::resolve(self.quality),
+            quality_set: self.quality.is_some() || std::env::var_os(Quality::ENV).is_some(),
+            menu_graphics: self.bench.is_none() && self.screenshot.is_none(),
             texture_cap: self.texture_cap,
             perf,
             lights: light_infos(db),
@@ -622,9 +624,7 @@ impl ViewFlags {
             actors: None,
             level: None,
             start_in_main_menu: false,
-            movies: mw_exterior_bevy::main_menu::MenuMovies::from_ini(|key| {
-                install.ini.as_ref().and_then(|ini| ini.get("Movies", key))
-            }),
+            movies: mw_exterior_bevy::main_menu::MenuMovies::from_ini(|key| install.ini.as_ref().and_then(|ini| ini.get("Movies", key))),
             bodies: self.bodies,
             cloth: self.cloth,
             worldspace,

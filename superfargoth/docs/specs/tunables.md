@@ -397,7 +397,7 @@ sends `PresetApplied` (summary: changed, "applies on restart" / "to new spawns" 
 Records: builtin mod `mw` (`mw_mods::BASE_RECORDS`, `data/records/graphics_presets.ron`, `tunables.ron`: lamp fade 35,45), applied
 by `NativeRecords`; the exterior re-applies the profile's `Mod` values and builds the book (`quality_presets::apply`). Golden: the
 records equal the old table for Low..Ultra. Console `preset [level | group level]`; F3 shows the overall level (custom: the groups
-that differ) and only tunables above the preset. Left: a menu row (owner question 1), device auto-detect (P3).
+that differ) and only tunables above the preset. Left: a menu row (owner question 1; done in T5d), device auto-detect (P3).
 
 Extremely low (below Low; sources in the records, mostly UE `sg.*Quality 0`):
 
@@ -408,6 +408,16 @@ Extremely low (below Low; sources in the records, mostly UE `sg.*Quality 0`):
 | lighting / post | no GTAO, no probe GI, no bloom; DLSS Performance with DLSS, else MSAA (Low: MSAA) |
 | textures | cap 256 px (512, `Restart`), no parallax |
 | effects / water / sky | as Low: no puddles or shelter, water `low`, clouds without per-sample weather map |
+
+**T5d as built (2026-11-16).** The presets' menu row (owner question 1: groups only; DECISIONS 2026-11-16: no live A/B key,
+Shift+F4 removed). `mw_exterior_bevy::graphics_page`: `ui.setting` records (page `graphics`), keys = the 9 drivers, options
+theirs; `sf_ui_screens` choices step over `custom` (derived, shown). A pick writes the driver at `User`, a level request
+`drive_presets` applies next frame (live behind the pause menu); `sync_rows` shows each driver's effective level, the
+"Applies after restart" badge on rows whose levels write a `Restart` tunable. Saved are the picks, kept consistent by a
+`ui.setting_preset` built from the book (overall level = group levels), never command-line or console values; scope
+`Machine` (`<user data>/machine.toml`, UE `GameUserSettings.ini`). Start: saved levels as `User` requests after the run's
+`Preset` level, an explicit `--quality`/`BEVYRROWIND_QUALITY` at `CommandLine` after them, `--set` drivers last, before the
+`Restart` values are read; benchmarks and screenshots skip the saved levels (as `tunables.toml`).
 
 ## Proposed CONTRIBUTING rule (for the orchestrator to apply)
 

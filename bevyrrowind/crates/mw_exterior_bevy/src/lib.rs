@@ -6,6 +6,7 @@
 
 mod catalog_warm;
 pub mod exterior;
+pub mod graphics_page;
 mod gi_volume;
 mod intro;
 mod teardown;

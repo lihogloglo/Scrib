@@ -28,7 +28,12 @@ the game supplies models, a Morrowind theme and the front-end flow. A Quake-styl
   `menu_*.dds`; backdrop = first of video/texture candidates via `sf_ui::resolve_backdrop`, looped `VideoPlayer`.
 - **Pause menu**: `pause_menu.rs`: Esc opens (HUD screen is the input target of play); Resume, Save, Load, Options,
   Main menu, Quit; `pause = "WhileOpen"` pauses `Time<Virtual>`. Options from `ui.setting` records, stored in
-  `profiles/<name>.toml`, written on menu exit.
+  `profiles/<name>.toml` (`Machine` scope: `<user data>/machine.toml`), written on menu exit.
+- **Graphics page** (tunables T5d): `mw_exterior_bevy/src/graphics_page.rs`: rows = `ui.setting` records keyed by the
+  preset drivers (`sf.graphics_preset`, `sg.*`), Extremely low..Ultra, Custom shown not picked (`OptionRow::stepped`
+  skips `sf_ui::CUSTOM_LEVEL`). A pick sets the driver at `User` (applied live next frame by `drive_presets`);
+  `sync_rows` shows the drivers' effective levels and a restart badge on rows touching `Restart` tunables. The picks
+  (not command-line or console values) are `Machine` settings, read at start as `User` requests (interactive runs).
 - **Console**: `sf_console` (Bevy-free: commands, typed variables with `SetBy` priority, completion) and
   `sf_console_bevy` (`ConsolePlugin` `lib.rs:34`, `ConsoleSubmit`, `ConsoleVarChanged`). Game front end:
   `mw_devtools_bevy/src/console.rs`: backquote opens it in `view`/`scene` only; `render.*` variables, `on/off/flip`
@@ -44,8 +49,8 @@ Console variables (`help`, `vars`); settings `sf.intro_videos` (`first_launch`/`
 touch UI. `ui_frames` (`mw_boot_bevy/src/ui_frames.rs`) holds the Morrowind frame art.
 
 ## Known limits
-No Credits screen. Options changes apply only where a consumer reads the store (audio page does); the rest are
-stored. No console in screenshot or benchmark runs. Visual state of menus is owner-judged (`visual-checks`, MM-1).
+No Credits screen. Options changes apply only where a consumer reads the store (audio and graphics pages do); the
+rest are stored. No console in screenshot or benchmark runs. Visual state of menus is owner-judged (`visual-checks`, MM-1).
 
 ## Specs
 `superfargoth/docs/specs/ui.md`, `menus.md`, `console.md`, `journal-ui.md`, `ui-text.md`;

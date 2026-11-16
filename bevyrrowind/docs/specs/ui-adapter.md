@@ -109,6 +109,9 @@ Framework: `superfargoth/docs/specs/menus.md` and `video.md`; research
   levels as `ui.setting_preset` data; a curated subset of `Off` parts (`mw_game_core/src/perf.rs`) become
   per-feature settings (shadows, soft/contact shadows, SSAO, bloom, GI, clouds, froxel fog, far field, actors'
   shadows); upscaler and RT from `RenderSettings`. All `Restart` first, made `Live` one by one later.
+  *As built (tunables T5d, 2026-11-16):* `mw_exterior_bevy/src/graphics_page.rs`: the overall `sf.graphics_preset` and
+  the 8 `sg.*` groups as `ui.setting` rows (levels in `sf.tunable_preset` records, `graphics_presets.ron`), live behind
+  the pause menu, saved per machine; per-feature rows (the `Off` subset, upscaler, RT) not yet.
 - **Vanilla page layout** (owner 2026-11-11): with the vanilla/classic option the options screen mirrors OpenMW's
   settings window categories and their option sets (map: `docs/research/openmw-settings-window-2026-11-11.md`: Prefs, Audio, Controls, Video [Video, Detail Level, Water, Lights, Shadows], Scripts, Language); the
   modern option keeps the framework pages. Same settings and screen, only the grouping.

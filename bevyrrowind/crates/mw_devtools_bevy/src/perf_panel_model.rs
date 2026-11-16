@@ -207,6 +207,7 @@ pub struct EncodeLine {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub frame_ms: Option<f64>,
+    pub frame_median: Option<f64>,
     pub frame_p99: Option<f64>,
     pub frame_max: Option<f64>,
     pub main_ms: Option<f64>,
@@ -251,37 +252,26 @@ impl Bound {
     }
 }
 
-/// The panel's text (`full`: every line; else the compact lines).
-pub fn format(s: &Snapshot, full: bool) -> String {
-    let mut out = String::new();
+/// The frame line: mean (fps), median, p99, max over the window.
+pub fn frame_line(s: &Snapshot) -> String {
     let fps = s.frame_ms.filter(|f| *f > 0.0).map_or_else(|| "--".to_owned(), |f| format!("{:.0}", 1000.0 / f));
-    let _ = writeln!(out, "frame {} ms ({fps} fps)  p99 {}  max {}", ms(s.frame_ms), ms(s.frame_p99), ms(s.frame_max));
-    let _ = write!(out, "main {}  render {}  GPU {}", ms(s.main_ms), ms(s.render_ms), ms(s.gpu_ms));
-    for note in [s.cpu_note, s.gpu_note].into_iter().flatten() {
-        let _ = write!(out, "  ({note})");
-    }
-    let _ = write!(out, "\nbound by: {}", s.bound.map_or("n/a", Bound::label));
-    if !full {
-        return out;
-    }
-    if !s.main_stages.is_empty() {
-        let stages: Vec<String> = s.main_stages.iter().map(|(n, v)| format!("{n} {v:.2}")).collect();
-        let _ = write!(out, "\nmain stages: {}", stages.join("  "));
-    }
-    if s.gpu_passes.is_empty() {
-        let _ = write!(out, "\nGPU passes: n/a");
-    } else {
-        let _ = write!(out, "\nGPU passes (ms):");
-        for (name, v) in &s.gpu_passes {
-            let _ = write!(out, "\n  {v:6.2}  {name}");
-        }
-    }
+    format!("frame {} ms ({fps} fps)  med {}  p99 {}  max {}", ms(s.frame_ms), ms(s.frame_median), ms(s.frame_p99), ms(s.frame_max))
+}
+
+/// Why main/render or GPU are missing, if they are (`(note)  (note)`).
+pub fn notes(s: &Snapshot) -> String {
+    [s.cpu_note, s.gpu_note].into_iter().flatten().map(|n| format!("({n})")).collect::<Vec<_>>().join("  ")
+}
+
+/// The full panel's counts: views, lights, encoders, entities.
+pub fn counts_text(s: &Snapshot) -> String {
+    let mut out = String::new();
     match &s.views {
         Some(v) => {
             let culled = v.lamp_culled.map_or_else(String::new, |c| format!(" (+{} culled)", num(c)));
             let _ = write!(
                 out,
-                "\nviews: camera {}  cascades {}  lamp faces {}{culled}  items {}  batch sets {}",
+                "views: camera {}  cascades {}  lamp faces {}{culled}  items {}  batch sets {}",
                 num(v.main),
                 num(v.cascades),
                 num(v.lamp_faces),
@@ -290,7 +280,7 @@ pub fn format(s: &Snapshot, full: bool) -> String {
             );
         }
         None => {
-            let _ = write!(out, "\nviews: n/a");
+            let _ = write!(out, "views: n/a");
         }
     }
     let _ = write!(out, "\nlights (point+spot): {} total, {} shadowed", s.lights.0, s.lights.1);
@@ -312,7 +302,12 @@ pub fn format(s: &Snapshot, full: bool) -> String {
         }
     }
     let _ = write!(out, "\nentities {}  streaming: n/a", s.entities);
-    let _ = write!(out, "\npreset: {}", s.preset.as_deref().unwrap_or("n/a (no sf.graphics_preset)"));
+    out
+}
+
+/// The full panel's footer: the graphics preset and the tunables set above it.
+pub fn footer_text(s: &Snapshot) -> String {
+    let mut out = format!("preset: {}", s.preset.as_deref().unwrap_or("n/a (no sf.graphics_preset)"));
     if s.tunables.is_empty() {
         let _ = write!(out, "\ntunables: all default");
     } else {
@@ -324,5 +319,34 @@ pub fn format(s: &Snapshot, full: bool) -> String {
             let _ = write!(out, "\n  ... {} more", s.tunables_more);
         }
     }
+    out
+}
+
+/// The panel as plain text (`full`: every line; else the compact lines): the logs' and tests' view
+/// of what the graphical panel shows.
+pub fn format(s: &Snapshot, full: bool) -> String {
+    let mut out = frame_line(s);
+    let _ = write!(out, "\nmain {}  render {}  GPU {}", ms(s.main_ms), ms(s.render_ms), ms(s.gpu_ms));
+    let notes = notes(s);
+    if !notes.is_empty() {
+        let _ = write!(out, "  {notes}");
+    }
+    let _ = write!(out, "\nbound by: {}", s.bound.map_or("n/a", Bound::label));
+    if !full {
+        return out;
+    }
+    if !s.main_stages.is_empty() {
+        let stages: Vec<String> = s.main_stages.iter().map(|(n, v)| format!("{n} {v:.2}")).collect();
+        let _ = write!(out, "\nmain stages: {}", stages.join("  "));
+    }
+    if s.gpu_passes.is_empty() {
+        let _ = write!(out, "\nGPU passes: n/a");
+    } else {
+        let _ = write!(out, "\nGPU passes (ms):");
+        for (name, v) in &s.gpu_passes {
+            let _ = write!(out, "\n  {v:6.2}  {name}");
+        }
+    }
+    let _ = write!(out, "\n{}\n{}", counts_text(s), footer_text(s));
     out
 }

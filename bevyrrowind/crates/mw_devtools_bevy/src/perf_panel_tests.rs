@@ -1,14 +1,15 @@
-//! Perf panel: the pure rules (exact) and a minimal-app toggle (no panic, the node and the
-//! counters follow the mode).
+//! Perf panel: the pure rules (exact) and a minimal-app toggle (no panic, the tree, the samples and
+//! the counters follow the mode).
 
 use bevy_app::prelude::*;
+use bevy_asset::{AssetApp, AssetPlugin, Assets};
 use bevy_ecs::prelude::*;
+use bevy_image::Image;
 use bevy_ui::prelude::*;
 use sf_diag_bevy::DiagCounters;
 
-use super::{PanelText, PerfPanel, PerfPanelPlugin};
+use super::{PanelRoot, PanelState, PerfPanel, PerfPanelPlugin};
 use crate::perf_panel_model::{Bound, PanelMode, Series, Snapshot, Windows, bound_by, format, gpu_frame, gpu_span, top_n};
-
 #[test]
 fn series_window_mean_max_percentile() {
     let mut s = Series::default();
@@ -97,6 +98,7 @@ fn modes_cycle() {
 fn text_compact_and_full() {
     let s = Snapshot {
         frame_ms: Some(8.0),
+        frame_median: Some(7.5),
         frame_p99: Some(11.0),
         frame_max: Some(12.5),
         main_ms: Some(3.0),
@@ -109,7 +111,7 @@ fn text_compact_and_full() {
     };
     assert_eq!(
         format(&s, false),
-        "frame 8.00 ms (125 fps)  p99 11.00  max 12.50\n\
+        "frame 8.00 ms (125 fps)  med 7.50  p99 11.00  max 12.50\n\
          main 3.00  render 7.50  GPU n/a  (GPU: diag.panel.gpu_timers off)\n\
          bound by: RENDER thread"
     );
@@ -124,39 +126,70 @@ fn text_compact_and_full() {
 /// `sf_diag_bevy::set_gauges_live` is process-wide: the app tests take turns.
 static GAUGES_FLAG: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn panel_text(app: &mut App) -> Option<String> {
-    let mut q = app.world_mut().query_filtered::<&Text, With<PanelText>>();
-    q.iter(app.world()).next().map(|t| t.0.clone())
+fn app() -> App {
+    let mut app = App::new();
+    app.add_plugins((TaskPoolPlugin::default(), bevy_time::TimePlugin, AssetPlugin::default(), PerfPanelPlugin));
+    app.init_asset::<Image>();
+    app.finish();
+    app.cleanup();
+    app
+}
+
+/// The header's text (the frame line once the first refresh ran).
+fn header(app: &mut App) -> Option<String> {
+    let e = app.world().resource::<PanelState>().ui.as_ref()?.header;
+    app.world().get::<Text>(e).map(|t| t.0.clone())
+}
+
+fn roots(app: &mut App) -> usize {
+    let mut q = app.world_mut().query_filtered::<(), With<PanelRoot>>();
+    q.iter(app.world()).count()
+}
+
+fn samples(app: &App) -> usize {
+    app.world().resource::<PanelState>().history.len()
 }
 
 #[test]
 fn toggling_builds_and_hides_the_panel() {
     let _one = GAUGES_FLAG.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut app = App::new();
-    app.add_plugins((TaskPoolPlugin::default(), bevy_time::TimePlugin, PerfPanelPlugin));
-    app.finish();
-    app.cleanup();
-    app.update();
-    // Hidden at start: no node, the counters out of the main world, gauges off.
-    assert!(panel_text(&mut app).is_none());
+    let mut app = app();
+    for _ in 0..4 {
+        app.update();
+    }
+    // Hidden at start: no tree, no samples, the counters out of the main world, gauges off.
+    assert_eq!(roots(&mut app), 0);
+    assert_eq!(samples(&app), 0, "nothing recorded while hidden");
     assert!(!app.world().contains_resource::<DiagCounters>());
     assert!(!sf_diag_bevy::gauges_live());
 
     for mode in [PanelMode::Compact, PanelMode::Full] {
         app.world_mut().resource_mut::<PerfPanel>().mode = mode;
-        for _ in 0..6 {
+        for _ in 0..8 {
             app.update();
         }
-        let text = panel_text(&mut app).expect("panel shown");
-        assert!(text.starts_with(&format!("perf ({}", mode.label())), "{text}");
+        assert_eq!(roots(&mut app), 1, "one tree ({mode:?})");
+        let text = header(&mut app).expect("panel shown");
+        assert!(text.starts_with("frame "), "{text}");
+        assert!(samples(&app) > 0, "frames recorded while shown");
         assert!(app.world().contains_resource::<DiagCounters>());
         assert!(sf_diag_bevy::gauges_live());
+        let state = app.world().resource::<PanelState>();
+        let ui = state.ui.as_ref().expect("built");
+        assert_eq!(ui.look.mode, mode);
+        let handle = ui.graph.clone().expect("a graph image");
+        let [w, h] = ui.graph_px;
+        let len = app.world().resource::<Assets<Image>>().get(&handle).and_then(|i| i.data.as_ref().map(Vec::len));
+        assert_eq!(len, Some((w * h * 4) as usize), "the graph is drawn");
+        assert_eq!(ui.sparks.len(), if mode == PanelMode::Full { 2 } else { 0 });
     }
 
     app.world_mut().resource_mut::<PerfPanel>().mode = PanelMode::Off;
-    app.update();
-    app.update();
-    assert!(panel_text(&mut app).is_none());
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(roots(&mut app), 0);
+    assert_eq!(samples(&app), 0, "hiding drops the samples and records none");
     assert!(!app.world().contains_resource::<DiagCounters>());
     assert!(!sf_diag_bevy::gauges_live());
 }
@@ -164,42 +197,20 @@ fn toggling_builds_and_hides_the_panel() {
 #[test]
 fn gauges_off_shows_frame_only() {
     let _one = GAUGES_FLAG.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut app = App::new();
-    app.add_plugins((TaskPoolPlugin::default(), bevy_time::TimePlugin, PerfPanelPlugin));
-    app.finish();
-    app.cleanup();
+    let mut app = app();
     {
         let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
         let id = tunables.id("diag.panel.gauges").expect("registered");
         tunables.set_text(id, "off").expect("a bool");
     }
     app.world_mut().resource_mut::<PerfPanel>().mode = PanelMode::Compact;
-    for _ in 0..4 {
+    for _ in 0..6 {
         app.update();
     }
-    let text = panel_text(&mut app).expect("panel shown");
+    let state = app.world().resource::<PanelState>();
+    let notes = state.ui.as_ref().map(|ui| ui.notes).expect("built");
+    let text = app.world().get::<Text>(notes).map(|t| t.0.clone()).unwrap_or_default();
     assert!(text.contains("diag.panel.gauges off"), "{text}");
     assert!(!app.world().contains_resource::<DiagCounters>());
 }
 
-/// T5b: the panel shows the overall graphics preset; when it reads custom, the usual group level and
-/// the groups that differ.
-#[test]
-fn the_panel_shows_the_graphics_preset_and_the_groups_that_differ() {
-    use sf_tunables_bevy::sf_tunables::presets::TUNABLES as DRIVERS;
-    let mut t = sf_tunables_bevy::Tunables::default();
-    assert_eq!(super::preset_label(&t), None, "no presets in this app");
-    t.register_all(DRIVERS).expect("drivers");
-    let set = |t: &mut sf_tunables_bevy::Tunables, name: &str, level: &str| {
-        let id = t.id(name).expect(name);
-        t.set_text_by(id, level, sf_tunables_bevy::SetBy::Preset).expect(level);
-    };
-    for d in DRIVERS {
-        set(&mut t, d.name(), "high");
-    }
-    assert_eq!(super::preset_label(&t).as_deref(), Some("high"));
-    set(&mut t, "sf.graphics_preset", "custom");
-    set(&mut t, "sg.shadows", "custom");
-    set(&mut t, "sg.post", "low");
-    assert_eq!(super::preset_label(&t).as_deref(), Some("custom (high; shadows custom, post low)"));
-}
