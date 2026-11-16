@@ -194,6 +194,7 @@ PP-1 | confirmed, follow-up | [rendering](visual-checks/rendering.md) | F3 perf 
 PP-2 | confirmed, follow-up | [rendering](visual-checks/rendering.md) | Graphics presets live: Shift+F4 cycles extremely_low..ultra in Balmora night and day, F3 follows, custom after a hand change (T5b, 2026-11-16)
 PP-3 | confirmed | [rendering](visual-checks/rendering.md) | F3 perf panel graphs (CW-17b, release, Balmora 22:00): frame-time graph coloured by bound with 8.3/11 ms lines, thread bars, full: pass/stage bars + sparklines (2026-11-16)
 PP-4 | blocked (menu bugs, 2.2b) | [rendering](visual-checks/rendering.md) | Graphics page: Esc > Options > Graphics in Balmora 22:00, overall + group rows live behind the menu, Custom, restart badges, saved across a restart (T5d, 2026-11-16)
+PP-5 | awaiting owner (play session) | [rendering](visual-checks/rendering.md) | CW gates on by default: play with `--tunables tunables/cw-gates-on.toml`, F3 open, flip each gate in the console; verdict per gate (2026-11-17)
 RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn away from the model (2026-10-30)
 WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
 WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)

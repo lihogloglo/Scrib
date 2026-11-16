@@ -1,0 +1,17 @@
+# CPU-waste (ROADMAP 1.25) gates on, for the owner's play session that decides their defaults (visual check PP-5).
+# Use: `bevyrrowind view "Balmora" --tunables tunables/cw-gates-on.toml` (path from bevyrrowind/), or
+# `bash tools/owner_launch.sh --release view "Balmora" --tunables tunables/cw-gates-on.toml`.
+# Each line can be flipped live in the console (`set <name> off`, `reset <name>` = back to this file's value).
+
+# Visually confirmed 2026-11-16 (SH-28, SH-29, SH-30, ST-4, CH-5):
+"shadow.lamp.day_gate" = true        # CW-3a: lamps the sun/sky drown get no shadow map
+"shadow.lamp.face_cull" = true       # CW-3b: lamp cube faces with nothing to shade are not drawn
+"shadow.sun.gate" = true             # CW-8: sun/moon cascades fade out where the sky's fill drowns them
+"select.gate" = true                 # CW-2: terrain/far-field/streaming selection only when the camera moved
+"render.skin.skip_unchanged" = true  # CW-7: characters whose pose didn't change skip the skin upload
+
+# No look change expected, not checked on its own:
+"mw.matctrl.gate" = true             # CW-6: animated NIF materials update only when visible
+
+# Built 2026-11-17, not yet checked (DR-5):
+"stream.interior.disable_exterior" = true  # CW-9: the exterior parks (out of every query) while indoors

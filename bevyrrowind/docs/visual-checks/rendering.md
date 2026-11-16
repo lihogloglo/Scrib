@@ -330,3 +330,19 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Look for: no crash or long hitch per step, labels readable, rows match F3's `preset:` line; quit and start again with
   the same command: the picked levels come back (saved in `<user data>/machine.toml`).
 - Status: blocked 2026-11-17: the page itself could not be judged, the options menu is unusable (earlier windows stay visible and overlap new ones, items move on hover). Owner: menu overhaul is a big later session (ROADMAP 2.2b), not now. Source: tunables-t5d.
+### PP-5: CW gates on by default? Owner play session (ROADMAP 1.25, 2026-11-17)
+- Kind: normal play, release build, F3 compact open. Start: `bash tools/owner_launch.sh --release view "Balmora"
+  --tunables tunables/cw-gates-on.toml` (all gates on; the file lists them). Play as usual: walk Balmora by day, wait to
+  night (`[`/`]` hour keys), go into a house and the Census Office (Seyda Neen), back out, cross a crowd, run fast.
+- A/B any gate live in the console: `set <name> off`, then `reset <name>` (back on). Watch the F3 graph and main/render/GPU.
+- Look for, per gate (anything that looks wrong = that gate stays off):
+  - `shadow.lamp.day_gate`: lamp shadows switch on at dusk without a pop; none missing at night or indoors.
+  - `shadow.lamp.face_cull`: no lamp shadow vanishing or appearing as you turn; shadows behind you come back when you look.
+  - `shadow.sun.gate`: sun/moon shadows fade smoothly in overcast and at night; never cut while the sun is clearly visible.
+  - `select.gate`: no terrain holes, late LOD swaps or far-field gaps after a fast run, a turn on the spot or a door.
+  - `render.skin.skip_unchanged`: no frozen, stretched or T-posed characters, near or far, in the crowd.
+  - `mw.matctrl.gate`: animated surfaces (water in fountains, lava, flame/sign textures) keep moving when you look back.
+  - `stream.interior.disable_exterior` (DR-5): indoors nothing changes on screen and no outdoor sound; going back out is as
+    fast as before; F3 entities drop indoors and main ms falls.
+- Verdict per gate: keep (on by default), maybe, reject; plus a feel for the panel's numbers with all on vs all off.
+- Status: awaiting owner (play session). Source: orch-presets.
