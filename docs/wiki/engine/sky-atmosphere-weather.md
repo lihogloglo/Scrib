@@ -66,6 +66,9 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   precipitation, lightning flash and sound cues (`fx.rs`). Distant weather: a world weather map mirrored to
   `CloudWeatherMap` (`:291`, `sf_atmos_bevy/src/weather_map.rs`). Surface weather (wet, puddles, snow, ash) steps in
   `surface.rs` and shades through the vendored SW patch.
+  Shelter (`sf_surface_bevy` shelter.rs, exposure.rs) and precip occlusion (`sf_precip_bevy` occlusion.rs) are top-down caster maps
+  around a world-texel-snapped centre; casters pick their LOD by that centre (vendored `bevy_render` `RenderViewLodOrigins`), not the
+  camera, and cover exposure eases toward each redraw (~2 s, world-anchored, kept across a big_space recentre; SW-5 2026-11-16).
 - **Exposure and night.** Exposure range floor EV100 3.5 and the night ambient floor come from the game
   (`bevyrrowind/crates/mw_assets/src/lights.rs:93`); see [lights](lights.md).
 

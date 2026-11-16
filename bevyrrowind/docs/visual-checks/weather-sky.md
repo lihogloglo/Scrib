@@ -163,6 +163,13 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   Ash (same day): a bit too big and bright; same near-white glow at night.
   Status: accepted for now; rework, size/brightness (ash) and night look pending.
 - Owner 2026-11-06 (after the SW-5/6 fixes): puffs still very bright at night (snow and ash); night look is the priority fix.
+- Fix 2026-11-15 (bugfix-11-15): night glow = `puff_light` lit puffs with the top-of-atmosphere sun (no transmittance; ~130k lux
+  after sunset), phase floor 0.25. Puffs now use Bevy `apply_pbr_lighting` (fake sphere normal): atmosphere, cascades, lamps,
+  ambient, GI. Ash `KickLook::ASH` 0.05->0.25 m at opacity 0.25 (was 0.07->0.38 at 0.4). Look for: Skaal night `surface set snow 1`
+  and Ghostgate night `surface set ash 1`, walk/run: faint moonlit or lamp-tinted puffs, not white; by day, shaded far side.
+  Still open (later slice): shape/noise, soft-particle fade scaled with size, forward-scatter phase, two layers. Status: awaiting owner.
+- Owner 2026-11-15 (after the fix): night puffs good, "much better"; likes that they drift with the wind. Status: confirmed with
+  follow-up (look rework later).
 
 ### SW-6: Knee-deep snow and footprints (surface-weather.md W6a prints + W6b raised geometry)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`,
@@ -193,6 +200,9 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   trails); ring edge and paving not reported.
 - Logged, not checked: the rain occlusion map (`sf_precip_bevy/src/occlusion.rs`) likely drops casters outside every
   view the same way the shelter map did (fixed in 30319aa).
+- Fix 2026-11-15 (bugfix-11-15, raise only): the raise was coverage x amount x depth with coverage at the vertex (cobble/grout  heights averaged to their mean), so drift patches rose stones and all. Now raise = depth x saturate((amount - top)/(1 - top)),  top = the layer's 90th-percentile height (baked, terrain layer table v4) mixed with drift: snow fills the grout first (shading),  the ground rises only once the stones are buried. Look for: a terrain road at `surface set snow 0.4`: snow in the grout, stones  and feet at ground level; `snow 1`: the full knee-deep raise with prints. Status: raise awaiting owner (shelter resets: SW-5).
+- Owner 2026-11-16 (Skaal `surface set snow 1`): raise maybe: better (only snow rises), but it reads as an extruded mesh, a
+  vertical wall with jagged edges along the drift border; maybe raises too much. Wants a smooth ramp at the edge. Status: raise maybe.
 
 ### SW-5: Snow and ash cover (surface-weather.md W5)
 - Kind: game location. Ash: `powershell -File bevyrrowind/tools/run_dev.ps1 view "Ghostgate" --hour 12 --weather ashstorm`,
@@ -212,6 +222,9 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Owner 2026-11-06 (after both fixes): still jumps. Lead: shelter under trees (canopy) pops in and out with distance: walking
   toward a tree in snow, the ground under its leaves suddenly turns bare and depressed; step back and it suddenly refills.
   Status: resets failed (not fixed; see SW-6).
+- Fix 2026-11-16 (bugfix-11-15): the shelter photo drew far trees as their sparse LOD level chosen by camera distance (walk  closer -> full leaves -> ground bare at once), with a lagging centre and no blend. Now the caster level follows the map's own  centre (camera-independent), centres snap to world texels, and a world-anchored exposure history eases changes over ~2 s  (keeps across a big_space recentre). Precip occlusion: casters behind the camera kept, centre snapped. Also cover amount  from the geometric slope (texture edges no longer bare through full snow). Look for: Skaal `surface set snow 1`, walk from  60 m to 3 m toward a tree and back: snow under the leaves stays or fades, never snaps; no scene-wide reset after 16 m; same in  Ghostgate ash under roofs/arches; rain under trees/roofs steady as you approach or back off. Status: awaiting owner.
+- Owner 2026-11-16 (Skaal): reject. Changes are now eased (vertices move up and down smoothly), but cover still follows
+  the camera: walking up to a tree, the snow under it noticeably sinks. Shelter must not depend on viewer distance. Status: failed.
 
 ### WE-13: Local storm seen from outside (CW-1, distant-weather.md "CW-1 Storm shape"; follows WE-10)
 - Kind: game location. `bash bevyrrowind/tools/owner_launch.sh scene we3-ridge`, then BRP `bevyrrowind/set {"weather":

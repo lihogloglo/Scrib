@@ -740,7 +740,8 @@ impl Step for LayerTableStep {
     }
     fn version(&self) -> u32 {
         // 3: `LayerInfo::source_edge` (T6).
-        3
+        // 4: `LayerInfo::p90_height` (W6b).
+        4
     }
     fn plan(&self, _subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         for id in self.0.layers.layers() {
@@ -758,6 +759,7 @@ impl Step for LayerTableStep {
             let bytes = cx.read_file(&layer.albedo_height)?;
             let img = src.decode(&layer.albedo_height, &bytes, LayerFile::AlbedoHeight).map_err(|e| err(LAYER_TABLE_STEP, subject, e))?;
             let (mean_albedo, mean_height) = mean_color(&img);
+            let p90_height = height_percentile(&img, 0.9);
             let lid = layer_id(id.as_str());
             if let Some(other) = table.layers.iter().find(|l| l.id == lid) {
                 return Err(err(
@@ -774,6 +776,7 @@ impl Step for LayerTableStep {
                 displacement_m: layer.displacement_m,
                 mean_albedo,
                 mean_height,
+                p90_height,
                 source_edge: img.width.max(img.height),
             });
         }
@@ -797,6 +800,26 @@ fn mean_color(img: &LayerImage) -> ([f32; 3], f32) {
     #[allow(clippy::cast_possible_truncation)]
     let m = sum.map(|s| (s / n) as f32);
     ([m[0], m[1], m[2]], m[3])
+}
+
+/// The `q` quantile (nearest rank, 0..1) of an image's height (alpha), 0..1: the smallest
+/// height at or under which at least `q` of the texels lie. 0 for an empty image.
+pub(crate) fn height_percentile(img: &LayerImage, q: f32) -> f32 {
+    let mut counts = [0usize; 256];
+    for px in img.rgba.as_chunks::<4>().0 {
+        counts[usize::from(px[3])] += 1;
+    }
+    let n = img.rgba.len() / 4;
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let rank = ((f64::from(q.clamp(0.0, 1.0)) * n as f64).ceil() as usize).max(1);
+    let mut seen = 0;
+    for (v, c) in (0..=u8::MAX).zip(counts) {
+        seen += c;
+        if seen >= rank {
+            return f32::from(v) / 255.0;
+        }
+    }
+    0.0
 }
 
 /// A file path and its bytes.

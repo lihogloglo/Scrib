@@ -46,6 +46,7 @@ comment; `grep -rn "superfargoth patch" vendor/<crate>` lists them.
 
 ## The Bevy shadow patch (#26149, #26161) — own fork
 
+| `bevy_render` (own) | same | `superfargoth patch (own, SW-5: per-view LOD origin)`, surface weather SW-5/SW-6 (shelter pops): optional render-world resource `RenderViewLodOrigins(HashMap<RetainedViewEntity, Vec3>)` (`view/mod.rs`, next to `RenderShadowLodOrigin`); `prepare_view_uniforms` takes a listed view's point as `lod_view_world_position` (GPU visibility-range culling and dither), so the top-down shelter, canopy and precipitation maps (`sf_surface_bevy`, `sf_precip_bevy`) pick each caster's LOD by the map centre, not the camera. Absent or unlisted = stock. No diff file; grep the marker. ~15 lines in 1 file | upstream lets a view override its LOD origin |
 **Both PRs were closed unmerged upstream on 2026-10-30**: self-closed by their author, branches deleted, zero reviews
 between them (the underlying bevy issue #25576 is still open). This row is therefore not "a vendored patch carrying an
 upstream PR" (CONTRIBUTING rule 4) but an **own fork we maintain**, and its "Drop when" can only be met by upstream

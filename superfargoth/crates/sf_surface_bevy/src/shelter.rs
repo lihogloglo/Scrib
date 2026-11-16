@@ -30,30 +30,44 @@
 //! camera and outside the sun's cascades used to drop out of the redraw, and the cover under it
 //! changed at the next redraw (SW-5/SW-6 "resets"). A view owning its casters' visibility is
 //! Bevy's own pattern (each light's frusta mark their casters the same way).
+//!
+//! Camera-independent (SW-5, owner 2026-11-16 "the camera was the main issue"): a caster with a
+//! `VisibilityRange` (a LOD level) casts when it is in range of the *map centre*, not of the
+//! camera ([`split_casters`]), and the GPU agrees: the views' LOD origin is the centre too
+//! (`bevy_render::view::RenderViewLodOrigins`, vendored patch "SW-5: per-view LOD origin";
+//! Bevy otherwise culls and dithers a camera-tied shadow view's levels by the camera). A tree
+//! 40 m away no longer casts its sparse far level until the camera walks up to it and its dense
+//! near level then lands in one redraw: the level changes only when the map moves, like a stable
+//! shadow cascade. The centre snaps to the world texel grid (`shelter_center_world`) and what
+//! the maps say is eased in over ~2.4 s by the exposure pack (`crate::exposure`), so the
+//! remaining changes (a redraw 16 m on, a caster streaming in, the edge fade moving) fade
+//! instead of popping. The uniform switches to a redraw's clip the frame after its request,
+//! when the pack takes the drawn maps in (`ExposureClock`).
 
 use bevy_asset::{Assets, Handle, RenderAssetUsages};
 use bevy_camera::Camera;
 use bevy_camera::primitives::Aabb;
 use bevy_camera::visibility::{
     InheritedVisibility, RenderLayers, SetViewVisibility, ViewVisibility, VisibilityRange,
-    VisibleEntityRanges,
 };
 use bevy_ecs::prelude::*;
 use bevy_image::{Image, ImageSampler};
 use bevy_light::NotShadowCaster;
-use bevy_math::{Mat4, Vec4};
+use bevy_math::{Mat4, Vec3, Vec4};
 use bevy_mesh::Mesh3d;
 use bevy_mesh::skinning::SkinnedMesh;
 use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy_render::sync_world::{MainEntity, RenderEntity};
+use bevy_time::{Real, Time};
 use bevy_transform::components::GlobalTransform;
 use sf_diag_bevy::DiagCounters;
 use sf_sky_bevy::sun_view::{SunViewRequest, SunViewSource};
 use sf_surface::view::{
-    DebugView, SHELTER_DOWN_M, SHELTER_HALF_M, SHELTER_LEAF_PASS, SHELTER_SIZE, SHELTER_TEXEL_M,
-    SHELTER_UP_M, ShelterTrigger, shelter_view,
+    DebugView, ExposureClock, ExposureMode, SHELTER_DOWN_M, SHELTER_HALF_M, SHELTER_LEAF_PASS,
+    SHELTER_SIZE, SHELTER_TEXEL_M, SHELTER_UP_M, ShelterTrigger, shelter_view,
 };
 use crate::cells::camera_position;
+use crate::exposure::ExposureFrame;
 use crate::{
     SurfaceGpu, SurfaceOrigin, SurfaceSettings, SurfaceStats, SurfaceUniform, SurfaceWeatherCamera,
 };
@@ -119,6 +133,10 @@ pub(crate) fn shelter_image() -> Image {
 pub(crate) struct ShelterState {
     trigger: ShelterTrigger,
     origin: Option<sf_coords::WorldPos>,
+    /// Which exposure pass runs (`crate::exposure`), and the held map's world texel.
+    clock: ExposureClock,
+    /// The clip of the redraw requested last frame: the uniform takes it with its pass.
+    pending_clip: Option<Mat4>,
 }
 
 type CasterFilter = (
@@ -136,6 +154,7 @@ type Caster<'a> = (
     Option<&'a RenderEntity>,
     Option<&'a RenderLayers>,
     Has<ShelterFoliage>,
+    Option<&'a VisibilityRange>,
 );
 
 /// A [`Caster`] query item.
@@ -147,23 +166,44 @@ type CasterItem<'a> = (
     Option<&'a RenderEntity>,
     Option<&'a RenderLayers>,
     bool,
+    Option<&'a VisibilityRange>,
 );
 
 /// The redraw's casters as `(render, main)` pairs, solid and foliage, sorted.
 type Split = (Vec<(Entity, MainEntity)>, Vec<(Entity, MainEntity)>);
 
+/// Whether a caster with `range` (a LOD level; `None`: always) draws into a map centred on
+/// `center`: Bevy's own rule (`VisibilityRange::is_visible_at_all`, the AABB centre when
+/// `use_aabb`) with the map centre as the viewer, as the GPU does for these views
+/// (`RenderViewLodOrigins`). Shared with the precipitation map's twin
+/// (`sf_precip_bevy::occlusion::lod_casts`).
+pub(crate) fn lod_casts(range: Option<&VisibilityRange>, tf: &GlobalTransform, aabb: Option<&Aabb>, center: Vec3) -> bool {
+    range.is_none_or(|r| {
+        let at = match (r.use_aabb, aabb) {
+            (true, Some(b)) => tf.transform_point(b.center.into()),
+            _ => tf.translation(),
+        };
+        r.is_visible_at_all(at.distance(center))
+    })
+}
+
 /// Only what `camera_layers` sees casts, like the view (`sun_view` gives an anchor's view the
-/// camera's layers): other worldspaces' casters drop here, not in Bevy's shadow queue.
-fn split_casters<'a>(
+/// camera's layers): other worldspaces' casters drop here, not in Bevy's shadow queue. A LOD
+/// level casts by its distance from the map's `center` ([`lod_casts`]), never the camera's.
+pub(crate) fn split_casters<'a>(
     casters: impl Iterator<Item = CasterItem<'a>>,
     view_from_world: Mat4,
+    center: Vec3,
     camera_layers: &RenderLayers,
 ) -> Split {
     let layer_zero = RenderLayers::default();
     let range = SHELTER_UP_M + SHELTER_DOWN_M;
     let (mut solid, mut leaves) = (Vec::new(), Vec::new());
-    for (e, tf, aabb, visible, render, layers, foliage) in casters {
+    for (e, tf, aabb, visible, render, layers, foliage, lod) in casters {
         if !visible.get() || !layers.unwrap_or(&layer_zero).intersects(camera_layers) {
+            continue;
+        }
+        if !lod_casts(lod, tf, aabb, center) {
             continue;
         }
         let (c, radius) = aabb.map_or((tf.translation(), 0.0), |b| {
@@ -195,10 +235,12 @@ fn split_casters<'a>(
     (solid, leaves)
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity, clippy::too_many_lines)]
 pub(crate) fn update_shelter(
     mut frame: ResMut<ShelterFrame>,
     mut canopy: ResMut<CanopyFrame>,
+    mut exposure: ResMut<ExposureFrame>,
+    time: Option<Res<Time<Real>>>,
     mut uniform: ResMut<SurfaceUniform>,
     mut stats: ResMut<SurfaceStats>,
     gpu: Res<SurfaceGpu>,
@@ -222,20 +264,44 @@ pub(crate) fn update_shelter(
 ) {
     frame.0 = None;
     canopy.0 = None;
+    *exposure = ExposureFrame::default();
     let active = settings.shelter && (uniform.flags != 0 || uniform.debug != DebugView::Off);
     let (true, Some(cam)) = (active, camera_position(&cameras)) else {
         uniform.shelter = Vec4::ZERO;
         uniform.canopy = Vec4::ZERO;
         shelter.trigger.reset();
+        shelter.clock.reset();
+        shelter.pending_clip = None;
         return;
     };
     if shelter.origin != Some(origin.0) {
-        // Render space moved under the maps: draw them again where they now are.
+        // Render space moved under the maps: the held map stays where it is in the world (its
+        // clip follows the shift, the pack is world-anchored), and a redraw draws it again
+        // around the camera.
+        if let Some(old) = shelter.origin {
+            let shift = Mat4::from_translation(old.delta_f32(origin.0));
+            uniform.shelter_clip_from_world *= shift;
+            if let Some(clip) = shelter.pending_clip.as_mut() {
+                *clip *= shift;
+            }
+        }
         shelter.origin = Some(origin.0);
         shelter.trigger.reset();
-        uniform.shelter = Vec4::ZERO;
-        uniform.canopy = Vec4::ZERO;
     }
+    // Last frame's redraw was drawn by last frame's render: this frame's pass takes it in, and
+    // the uniform switches to its clip with it (every pass of a frame reads one map).
+    let dt = time.map_or(0.0, |t| t.delta_secs());
+    let pass = shelter.clock.frame(dt);
+    if let Some(p) = pass
+        && p.mode != ExposureMode::Ease
+        && let Some(clip) = shelter.pending_clip.take()
+    {
+        uniform.shelter_clip_from_world = clip;
+        uniform.shelter = Vec4::new(1.0, SHELTER_UP_M + SHELTER_DOWN_M, SHELTER_TEXEL_M, SHELTER_HALF_M);
+        // z: depth below the centre (the pack's heights are over the centre, `exposure.wgsl`).
+        uniform.canopy = Vec4::new(1.0, SHELTER_LEAF_PASS, SHELTER_DOWN_M, 0.0);
+    }
+    exposure.pass = pass;
     let camera = camera_entities
         .iter()
         .filter(|(_, c, _)| c.is_active)
@@ -244,22 +310,22 @@ pub(crate) fn update_shelter(
     let Some((camera, camera_layers)) = camera else {
         return;
     };
-    if shelter.trigger.frame(cam, !added.is_empty()).is_none() {
+    if shelter.trigger.frame_world(origin.0.to_f64(), cam, !added.is_empty()).is_none() {
         return;
     }
     let center = shelter.trigger.center().expect("set by a redraw");
+    let texel = shelter.trigger.center_texel().expect("set by a redraw");
     let (view_from_world, clip_from_world) = shelter_view(center);
-    let (solid, leaves) = split_casters(casters.iter(), view_from_world, &camera_layers);
+    let (solid, leaves) = split_casters(casters.iter(), view_from_world, center, &camera_layers);
     stats.shelter_redraws += 1;
     stats.shelter_casters = solid.len();
     stats.canopy_casters = leaves.len();
     if let Some(c) = counters {
         c.add_named("surface/shelter_redraws", "count", 1.0);
     }
-    let range = SHELTER_UP_M + SHELTER_DOWN_M;
-    uniform.shelter_clip_from_world = clip_from_world;
-    uniform.shelter = Vec4::new(1.0, range, SHELTER_TEXEL_M, SHELTER_HALF_M);
-    uniform.canopy = Vec4::new(1.0, SHELTER_LEAF_PASS, 0.0, 0.0);
+    shelter.clock.redraw(texel);
+    shelter.pending_clip = Some(clip_from_world);
+    exposure.center = Some(center);
     let request = |subview, image: &Handle<Image>, casters| SunViewRequest {
         light: anchor.0,
         camera,
@@ -276,26 +342,18 @@ pub(crate) fn update_shelter(
 
 /// `VisibilitySystems::CheckVisibility`, after the redraw is chosen (`SurfaceSystems`): this
 /// frame's shelter and canopy casters are visible to a view (the maps), so Bevy extracts them
-/// even when no camera or light frustum holds them. A caster with a `VisibilityRange` counts only
-/// in range of the surface-weather camera (the LOD level the camera draws, never a far proxy).
+/// even when no camera or light frustum holds them. The lists hold only the LOD levels in range
+/// of the map centre ([`split_casters`]), whatever the camera sees: the map's own levels.
+/// The precipitation map's twin is `sf_precip_bevy::occlusion::mark_casters_visible`.
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn mark_casters_visible(
     shelter: Res<ShelterFrame>,
     canopy: Res<CanopyFrame>,
-    ranges: Option<Res<VisibleEntityRanges>>,
-    mut casters: Query<(&mut ViewVisibility, Has<VisibilityRange>)>,
+    mut casters: Query<&mut ViewVisibility>,
 ) {
     for req in shelter.0.iter().chain(canopy.0.iter()) {
         for (_, main) in &req.casters {
-            let e = main.id();
-            let Ok((mut visibility, has_range)) = casters.get_mut(e) else {
-                continue;
-            };
-            let out_of_range = has_range
-                && ranges
-                    .as_deref()
-                    .is_some_and(|r| !r.entity_is_in_range_of_view(e, req.camera));
-            if !out_of_range {
+            if let Ok(mut visibility) = casters.get_mut(main.id()) {
                 visibility.set_visible();
             }
         }

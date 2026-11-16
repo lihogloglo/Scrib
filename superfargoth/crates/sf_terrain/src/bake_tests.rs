@@ -524,6 +524,7 @@ fn tagged_arrays(layers: usize, size: u32) -> LayerArrays {
         displacement_m: 0.0,
         mean_albedo: [0.5; 3],
         mean_height: 1.0,
+        p90_height: 1.0,
         source_edge: size,
     };
     let table = LayerTable { layers: (0..layers).map(info).collect(), ..LayerTable::default() };
@@ -590,4 +591,22 @@ fn layer_encode_time() {
         let mib = 3.0 * LayerArrays::slice_len(edge, edge.trailing_zeros() + 1) as f64 / 1_048_576.0;
         println!("  {edge}²: {mib:.2} MiB per layer (three arrays)");
     }
+}
+
+/// W6b: the layer table's high point is the exact nearest-rank 90th percentile of the height
+/// (alpha) bytes; an empty image is 0.
+#[test]
+fn height_p90_is_the_nearest_rank_percentile() {
+    // Ten texels with heights 0, 10, ..., 90: the 9th of ten is 80.
+    let rgba: Vec<u8> = (0..10u8).flat_map(|k| [0, 0, 0, k * 10]).collect();
+    let img = LayerImage { width: 10, height: 1, rgba };
+    assert_eq!(height_percentile(&img, 0.9), 80.0 / 255.0);
+    assert_eq!(height_percentile(&img, 1.0), 90.0 / 255.0);
+    assert_eq!(height_percentile(&img, 0.0), 0.0);
+    // Paving at 200 with one 255 stud in twenty: the p90 stays 200.
+    let mut rgba: Vec<u8> = (0..20).flat_map(|_| [0, 0, 0, 200]).collect();
+    rgba[3] = 255;
+    let paving = LayerImage { width: 20, height: 1, rgba };
+    assert_eq!(height_percentile(&paving, 0.9), 200.0 / 255.0);
+    assert_eq!(height_percentile(&LayerImage { width: 0, height: 0, rgba: Vec::new() }, 0.9), 0.0);
 }

@@ -3,7 +3,8 @@
 //! the cameras marked [`SurfaceWeatherCamera`] get the component on their render-world view
 //! (once the textures are on the GPU); views that lost the mark lose it, and with it the
 //! `SURFACE_WEATHER` shader def (interiors pay nothing). Same shape as `sf_gi_bevy`'s
-//! `GiProbeVolumeView`.
+//! `GiProbeVolumeView`. The shelter binding (45) holds the exposure pack (`crate::exposure`,
+//! SW-5), not the raw depth map; while the pack holds no map the uniform says "no shelter".
 
 use bevy_app::SubApp;
 use bevy_ecs::prelude::*;
@@ -19,6 +20,8 @@ use bevy_render::sync_world::RenderEntity;
 use bevy_render::texture::GpuImage;
 use bevy_render::{Extract, Render, RenderSystems};
 
+use crate::exposure::ExposureGpu;
+use crate::uniform::{U_CANOPY, U_SHELTER};
 use crate::{SurfaceGpu, SurfaceUniform, SurfaceWeatherCamera, U_SLOTS, cells, trail::TrailGpu};
 
 pub(crate) fn build(render_app: &mut SubApp) {
@@ -95,22 +98,29 @@ pub(crate) fn extract_view(
     uniform: Extract<Res<SurfaceUniform>>,
     images: Res<RenderAssets<GpuImage>>,
     trail: Option<Res<TrailGpu>>,
+    exposure: Option<Res<ExposureGpu>>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     mut state: Local<Option<ViewState>>,
 ) {
     let state = state.get_or_insert_with(|| ViewState::new(&device));
-    let slots = uniform.slots();
+    let mut slots = uniform.slots();
+    if !exposure.as_deref().is_some_and(ExposureGpu::valid) {
+        // The bound pack holds no map yet (or its pass did not run): open sky, as with the map
+        // off, never a stale or empty pack.
+        slots[U_SHELTER][0] = 0.0_f32.to_bits();
+        slots[U_CANOPY][0] = 0.0_f32.to_bits();
+    }
     if state.written != Some(slots) {
         let bytes: Vec<u8> = slots.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
         queue.write_buffer(&state.uniform, 0, &bytes);
         state.written = Some(slots);
     }
-    let bindings = gpu.as_deref().zip(trail.as_deref()).and_then(|(gpu, trail)| {
+    let bindings = gpu.as_deref().zip(trail.as_deref()).zip(exposure.as_deref()).and_then(|((gpu, trail), exposure)| {
         Some(SurfaceWeatherBindings {
             uniform: state.uniform.clone(),
             cells: view_of(&images, &gpu.cells)?,
-            shelter: view_of(&images, &gpu.shelter)?,
+            shelter: exposure.current_view().clone(),
             noise: view_of(&images, &gpu.noise)?,
             sampler: state.sampler.clone(),
             shelter_sampler: state.shelter_sampler.clone(),

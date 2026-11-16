@@ -107,6 +107,14 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   wrong, like the Ghostfence (GF-1): it seems not to show over darker things. Hard to describe; looks like a blend-mode
   issue (additive vs alpha?). Status: partial.
 - Owner 2026-11-15 (`view "Sadrith Mora" --hour 21.25 --weather foggy`, owner shots `Documents/ShareX/Screenshots/2026-11/bevyrrowind_hUnUMC5zsg.jpg`, `bevyrrowind_oQU4iWEVPc.png`): looking through torch smoke, distant mushrooms/rocks that the fog hides elsewhere show unfogged, at full contrast, inside the plume. Hypothesis (not tested): the fog composite (render-order.md step 8, fogs by depth) sees the smoke's near depth at those pixels (a particle depth write or prepass), so the background is fogged as if it were at the smoke's distance; industry: blended particles never write depth and fog themselves (render-order rule 1). Status: known bug.
+- Diagnosis + fix 2026-11-15 (bugfix-11-15): no depth or blend bug (smoke is NIF 0xED alpha blend, no depth write, no prepass). Cause:
+  smoke was lit as a PBR surface (no Morrowind light saturation), so near its torch it was a dark veil: invisible over dark walls, and
+  in lit froxel fog it replaced the bright fog veil (the "unfogged hole"). Now lit as a volume (no N·L, Bevy point/spot/sun lights,
+  sun keeps atmosphere transmittance) with per-lamp saturation to texture x colour; NIF colour keys converted sRGB->linear
+  (`mw_assets` particles.rs/.wesl). Look for: `scene hi-balmora-night`, grey textured smoke over dark walls, no white blow-out at
+  the flame, flames about as bright as before; `view "Sadrith Mora" --hour 21.25 --weather foggy`, plume sits in the fog, no clear
+  hole. Risk: smoke far from lights darker than before. Status: awaiting owner.
+- Owner 2026-11-15: smoke disappeared; carried-torch handles very bright (RO-23). Fix 2026-11-16 (smoke-2): the sRGB key  conversion was wrong (game-wide NIF vertex colours stay raw) and the per-lamp cap kept the plume at 0.08x its texture; now  Morrowind's clamp on the sum of lights, "fully lit" in exposed units: beside a torch the plume shows its plain texture  (1.0 at 0.5-1.5 m, 0.6 at 3 m) at any exposure (old path: 10.7x at 0.5 m, up to 121x at night). Same look checks as above.  Status: confirmed by owner 2026-11-16 (`scene hi-balmora-night`).
 
 ### RO-12: Bright outline around characters (owner report)
 - Kind: game location. Seen 2026-10-30 from the release start (Seyda Neen), on NPCs and the player.
@@ -264,3 +272,12 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   speckled patches, no seams on smooth curved meshes, nothing lit from the wrong side, no black meshes); normal-mapped
   statics unchanged. Most likely spot if wrong: meshes whose source had no normals (smooth-normals fallback).
 - Status: confirmed 2026-11-15 (owner: default and `--off flatnormal` "looked exactly the same"). Source: orch-11-15b (b2a-tangents, b2b-flatnormal).
+
+### RO-23: Carried-torch handles unnaturally bright at night (owner report 2026-11-15)
+- Kind: game location. `scene hi-balmora-night`: look at torches carried by guards/NPCs (the handle and head, not the flame).
+- Seen by owner 2026-11-15: "the handle of torches seemed very very lit, very unnaturally bright". Predates the RO-B work.
+- Cause (bugfix-11-15, by code): `mw_assets::self_lit` (carried light models, `mw_actors_bevy` held.rs) mapped Morrowind's
+  "fully lit" to nits calibrated at SCENE_EV100 7 and exposed them; night exteriors sit at the EV 3.5 floor (`lights.rs:81`),
+  ~11x brighter (and near black at day EVs). Fix 2026-11-16: emissive in exposed units (emissive 1 x texture, exposure
+  weight 0) = the plain texture at any exposure; torch smoke's saturation uses the same exposed "fully lit".
+- Look for: at night the handle shows its plain wood/metal texture, not glowing; by day not black. Status: confirmed by owner 2026-11-16 (`scene hi-balmora-night`): handles no longer over-bright.

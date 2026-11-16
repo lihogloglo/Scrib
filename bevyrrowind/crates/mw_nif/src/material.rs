@@ -189,6 +189,17 @@ pub(crate) struct AuthoredAlpha {
 }
 
 impl AuthoredAlpha {
+    /// The state `alpha`'s flags author (additive: destination factor `One`).
+    pub(crate) fn from_property(alpha: &NiAlphaProperty) -> Self {
+        Self {
+            blending: alpha.alpha_blending(),
+            additive: alpha.dst_blend_mode() == AlphaBlendFunction::One,
+            testing: alpha.alpha_testing(),
+            test: alpha.test_mode(),
+            test_ref: alpha.test_ref,
+        }
+    }
+
     /// How to draw it, and whether that is a cutout promoted from a blend
     /// (see [`Cutout`]).
     ///
@@ -199,8 +210,8 @@ impl AuthoredAlpha {
     /// motion vectors (TAA/DLSS smear) and sort per mesh. Modern engines
     /// draw such cards alpha-tested (UE "Masked", Unity "Cutout"), so they
     /// become a [`AlphaMode::Mask`] at [`CUTOUT_CUTOFF`]. True translucents
-    /// stay blended: additive (glows, Ghostfence), blends without the test
-    /// (glass, smoke), untextured or faded surfaces (`material_alpha` < 1:
+    /// stay blended: additive (glows, flames: `0x0D`), blends without the
+    /// test (glass, smoke and Ghostfence: `0xED`), untextured or faded surfaces (`material_alpha` < 1:
     /// ghosts). Animated fades and particles are demoted by the caller,
     /// which knows the controllers.
     pub fn resolve(self, material_alpha: f32, textured: bool) -> (AlphaMode, Cutout) {
@@ -291,13 +302,7 @@ pub(crate) fn from_properties(stream: &NiStream, inherited: &Inherited) -> Mater
     }
 
     if let Some(alpha) = get::<NiAlphaProperty>(stream, inherited.alpha) {
-        let authored = AuthoredAlpha {
-            blending: alpha.alpha_blending(),
-            additive: alpha.dst_blend_mode() == AlphaBlendFunction::One,
-            testing: alpha.alpha_testing(),
-            test: alpha.test_mode(),
-            test_ref: alpha.test_ref,
-        };
+        let authored = AuthoredAlpha::from_property(alpha);
         (material.alpha_mode, material.cutout) = authored.resolve(material.alpha, material.base_texture.is_some());
     }
 
@@ -376,6 +381,24 @@ mod tests {
         assert_eq!(always.resolve(1.0, true), blend);
         let opaque = authored(false, false, false, AlphaTestFunction::Always, 0);
         assert_eq!(opaque.resolve(1.0, true), (AlphaMode::Opaque, Cutout::No));
+    }
+
+    #[test]
+    fn smoke_blends_and_flames_add_from_their_flags() {
+        let property = |flags: u16| {
+            let mut alpha = NiAlphaProperty::default();
+            alpha.base.flags = flags;
+            AuthoredAlpha::from_property(&alpha)
+        };
+        // `tx_smokealpha00` smoke and Ghostfence: src-alpha / inv-src-alpha, no test.
+        let smoke = property(0x00ED);
+        assert!(smoke.blending && !smoke.additive && !smoke.testing);
+        assert_eq!(smoke.resolve(1.0, true).0, AlphaMode::Blend { additive: false });
+        assert_eq!(smoke.resolve(0.5, true), (AlphaMode::Blend { additive: false }, Cutout::No));
+        // Flames: src-alpha / one.
+        let flame = property(0x000D);
+        assert!(flame.blending && flame.additive && !flame.testing);
+        assert_eq!(flame.resolve(1.0, true), (AlphaMode::Blend { additive: true }, Cutout::No));
     }
 
     #[test]

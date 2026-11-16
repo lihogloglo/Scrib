@@ -290,6 +290,35 @@ fn trail_pass_compiles_and_matches_the_cpu_twin() {
     assert!(layer.contains(&format!("const TRAIL_LIP_HEIGHT: f32 = {:?};", sf_surface::trail::LIP_HEIGHT)));
 }
 
+/// SW-5: the exposure pack pass parses and validates as naga reads it, its uniform is the size
+/// `exposure::params` packs, its modes are `ExposureMode::code`'s, and its cover ramp and edge
+/// fade are the layer's (the pack's fresh value is what the layer shows once the lag is gone).
+/// The layer reads the pack: heights in R and G, the lag in B (`surface_exposure`).
+#[test]
+fn exposure_pass_compiles_and_matches_the_layer() {
+    use sf_surface::view::ExposureMode;
+    let src = include_str!("exposure.wgsl");
+    let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let params = module.types.iter().find(|(_, t)| t.name.as_deref() == Some("ExposureParams")).expect("ExposureParams");
+    let naga::TypeInner::Struct { span, .. } = params.1.inner else { panic!("ExposureParams is a struct") };
+    assert_eq!(span as usize, crate::exposure::PARAM_BYTES);
+    for (name, mode) in [("MODE_FRESH", ExposureMode::Fresh), ("MODE_CARRY", ExposureMode::Carry(bevy_math::IVec2::ZERO)), ("MODE_EASE", ExposureMode::Ease)] {
+        assert!(src.contains(&format!("const {name}: i32 = {};", mode.code())), "{name}");
+    }
+    let layer = include_str!("layer.wesl");
+    for name in ["SHELTER_NEAR_M", "SHELTER_FULL_M", "SHELTER_FADE_START"] {
+        let line = |s: &str| s.lines().find(|l| l.starts_with(&format!("const {name}: f32 = "))).map(str::to_owned);
+        assert_eq!(line(src), line(layer), "{name}");
+        assert!(line(src).is_some(), "{name}");
+    }
+    assert!(layer.contains("textureGather(1, shelter, shelter_sampler, uv + shift) - height"), "leaves from the pack's G");
+    assert!(layer.contains("textureGather(2, shelter, shelter_sampler, uv)"), "the lag from the pack's B");
+    assert!(layer.contains("return saturate(now + eased * below_top);"), "the lag eases what lies under the top only");
+}
+
 /// W6b: the terrain's main pass and prepass displace by one function (`common::terrain_raise`
 /// over `view::surface_raise_at`), linked exactly when their surface weather def is on, so depth
 /// and motion vectors match the drawn surface; shadow views (no def) stay undisplaced.

@@ -41,8 +41,8 @@ const SHADER: &str = "embedded://mw_assets/shaders/particles.wesl";
 /// fogged like `sf_atmos_bevy::FroxelFogMaterial` (render-order.md rule 1).
 pub type ParticleMaterial = ExtendedMaterial<StandardMaterial, ParticleExt>;
 
-/// The particle buffer and fog bindings of [`ParticleMaterial`] (bindings
-/// 110-113 of the material group; 110-112 as `FroxelFogExt`).
+/// The particle buffer, fog and light bindings of [`ParticleMaterial`]
+/// (bindings 110-113 of the material group; 110-112 as `FroxelFogExt`).
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug, Default)]
 pub struct ParticleExt {
     /// [`TranslucentFog::params`]; kept current by [`sync_materials`].
@@ -54,6 +54,29 @@ pub struct ParticleExt {
     /// [`ParticleBuffers::buffer`].
     #[storage(113, read_only)]
     particles: Handle<ShaderBuffer>,
+}
+
+/// Morrowind's light saturation on a particle (CPU twin of `saturated_light`
+/// in `shaders/particles.wesl`): the factor on its texture × colour, in units
+/// of "fully lit": `1 / view.exposure` nits, the exposed white (equal to
+/// [`crate::emissive_nits`] at [`crate::SCENE_EV100`]). Every light term is the
+/// non-directional luminance of a white face: `scene` the scene's own light
+/// (indirect + sun/moon), `lamps` the sum of the point and spot lights;
+/// `tint` is the particle's vertex colour (its `NiColorData` key).
+///
+/// The original lights a vertex in fixed function with the vertex colour
+/// driving ambient and diffuse (`AmbientAndDiffuse`, the NIF default:
+/// [`mw_nif::VertexColorMode::AmbientDiffuse`]) and clamps the *sum* at 1 per
+/// channel, `min(tint × (ambient + Σ lights), 1)`, before the texture
+/// multiplies it: `min(S, 1 / tint)` here. Near a torch a grey puff (tint
+/// 0.302) saturates to its plain texture: never a dark veil, never blown out.
+/// The scene's own light stays physical (`max(scene, ..)`): by day it is far
+/// past "fully lit", where a clamp would blacken smoke, and the lamps only
+/// fill the headroom it leaves, as they do in the original.
+#[cfg(test)]
+fn saturated_light(scene: Vec3, lamps: Vec3, tint: Vec3) -> Vec3 {
+    let cap = Vec3::ONE / tint.max(Vec3::splat(1e-4));
+    scene.max((scene + lamps).min(cap))
 }
 
 impl MaterialExtension for ParticleExt {
@@ -150,6 +173,10 @@ impl ParticleBuffers {
             let mut gpu = [0.0f32; 12];
             gpu[..3].copy_from_slice(&p.position.to_array());
             gpu[3] = p.size;
+            // NiColorData keys are vertex colours (the original's per-particle
+            // vertex colour), taken as stored like model vertex colours
+            // (`bevy_mesh` in lib.rs, the bake's `mesh_data`); only material
+            // colours are converted from sRGB.
             gpu[4..8].copy_from_slice(&p.color.to_array());
             gpu[8] = p.angle;
             *out = gpu.map(f32::to_bits);
@@ -179,7 +206,11 @@ impl ParticleBuffers {
             return Some(handle.clone());
         }
         let base = particle_base(standard.get(source)?);
-        let extension = ParticleExt { fog_params: fog.params, fog_volume: fog.volume.clone(), particles: self.buffer.clone() };
+        let extension = ParticleExt {
+            fog_params: fog.params,
+            fog_volume: fog.volume.clone(),
+            particles: self.buffer.clone(),
+        };
         let handle = materials.add(ParticleMaterial { base, extension });
         self.materials.insert(source.id(), handle.clone());
         Some(handle)
@@ -189,20 +220,16 @@ impl ParticleBuffers {
 /// A particle system's material as drawn: always blended. NIF particles are
 /// blended or additive; the rare alpha-tested or opaque one blends too (the
 /// quads have no depth prepass, and the fog composite would fog an opaque
-/// one a second time).
+/// one a second time). Lit as a volume by the shader (non-directional, no
+/// specular), so the surface lighting fields stay as authored; a
+/// camera-facing quad has no back to cull.
 fn particle_base(source: &StandardMaterial) -> StandardMaterial {
     let mut base = source.clone();
     if matches!(base.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_)) {
         base.alpha_mode = AlphaMode::Blend;
     }
-    if !base.unlit {
-        // Volumetric puffs scatter light from fires underneath (`-N`) as well
-        // as sky/sun above (`+N`), without flat-cardboard specular glints.
-        base.diffuse_transmission = 0.5;
-        base.reflectance = 0.0;
-        base.double_sided = true;
-        base.cull_mode = None;
-    }
+    base.double_sided = true;
+    base.cull_mode = None;
     base
 }
 
@@ -648,6 +675,7 @@ mod tests {
     use mw_nif::particles::{EmitTarget, Particle, ParticleSystem};
 
     #[test]
+    #[allow(clippy::float_cmp, reason = "the buffer holds the written floats bit for bit")]
     fn slots_share_sizes_reuse_freed_runs_and_clear_stale_particles() {
         let mut buffers = ParticleBuffers {
             buffer: Handle::default(),
@@ -675,6 +703,7 @@ mod tests {
         let mut written = 0;
         buffers.write(b, &[p(1.0), p(7.0)], &mut written);
         assert_eq!(written, 2);
+        // Colour keys go to the GPU as stored, like model vertex colours.
         assert_eq!(buffers.data[33].map(f32::from_bits)[..9], [7.0, 2.0, 3.0, 0.5, 0.1, 0.2, 0.3, 0.4, 1.5]);
         buffers.write(b, &[p(1.0)], &mut written);
         assert_eq!(buffers.data[33], [0; 12], "a particle that died draws nothing");
@@ -685,6 +714,122 @@ mod tests {
         assert_eq!(buffers.data[32], [0; 12], "and cleared");
         assert_eq!(buffers.allocate(2000).first, 36);
         assert_eq!(buffers.data.len(), 3 * BUFFER_CHUNK);
+    }
+
+    #[test]
+    fn particles_always_blend_without_a_prepass() {
+        for mode in [AlphaMode::Opaque, AlphaMode::Mask(0.5), AlphaMode::Blend] {
+            let source = StandardMaterial { alpha_mode: mode, ..default() };
+            let base = particle_base(&source);
+            assert_eq!(base.alpha_mode, AlphaMode::Blend, "{mode:?}");
+            assert!(base.diffuse_transmission.abs() < f32::EPSILON, "no surface-lighting hack: lit as a volume");
+            assert!(base.cull_mode.is_none());
+        }
+        let flame = particle_base(&StandardMaterial { alpha_mode: AlphaMode::Add, ..default() });
+        assert_eq!(flame.alpha_mode, AlphaMode::Add, "additive stays additive");
+        assert!(!<ParticleExt as MaterialExtension>::enable_prepass());
+        assert!(!<ParticleExt as MaterialExtension>::enable_shadows());
+    }
+
+    /// "Fully lit" (nits) as the shader sets it, `1 / view.exposure` (exposed
+    /// units), at the calibrated exposure [`crate::SCENE_EV100`] (Bevy's
+    /// exposure `2^-EV100 / 1.2`): the [`crate::emissive_nits`] of that EV.
+    fn fully_lit() -> f32 {
+        1.0 / ((-crate::SCENE_EV100).exp2() / 1.2)
+    }
+
+    /// A placed torch light (radius 256 units, in meters) as
+    /// `LightCalibration::point_light` sets it: the white-face luminance at
+    /// `d` m in units of "fully lit" ([`fully_lit`]), through Bevy's
+    /// inverse-square falloff and range window (`getDistanceAttenuation` in
+    /// `pbr_lighting.wesl`).
+    fn torch_at(d: f32) -> f32 {
+        let calibration = crate::lights::LightCalibration::default();
+        let radius = 256.0 * 0.014_287_5; // units to meters, as lights.rs
+        let candela = calibration.lumens_per_radius_sq * radius * radius / (4.0 * std::f32::consts::PI);
+        let range = calibration.reach(radius).unshadowed;
+        let window = (1.0 - (d * d / (range * range)).powi(2)).clamp(0.0, 1.0).powi(2);
+        candela * window / (d * d).max(1e-4) / std::f32::consts::PI / fully_lit()
+    }
+
+    /// The night exterior's own light on a white face in units of "fully
+    /// lit": the ambient floor (`night_ambient_nits` × the sky's blue
+    /// ambient, luminance ~0.65) plus a full moon (~1.2x the floor, lights.rs
+    /// `FULL_MOONLIGHT_FLOOR_RATIO`).
+    fn night_scene() -> f32 {
+        let floor = crate::lights::LightCalibration::default().night_ambient_nits * 0.65;
+        2.2 * floor / fully_lit()
+    }
+
+    #[test]
+    fn smoke_beside_its_torch_saturates_to_its_texture() {
+        let tint = Vec3::splat(0.302); // `tx_smokealpha00` smoke's grey key
+        let night = Vec3::splat(night_scene());
+        // Morrowind's clamp of the sum: the puff shows its plain texture
+        // (tint × factor = 1) as long as tint × (scene + lamps) reaches 1.
+        for d in [0.05, 0.5, 1.5] {
+            let lit = tint * saturated_light(night, Vec3::splat(torch_at(d)), tint);
+            assert!((lit - Vec3::ONE).abs().max_element() < 1e-4, "at {d} m: {lit} is not the plain texture");
+        }
+        // Below the clamp the lights add up exactly and keep their hue.
+        let warm = Vec3::new(1.0, 0.6, 0.3);
+        for d in [6.0, 10.0] {
+            let lamps = warm * torch_at(d);
+            let factor = saturated_light(night, lamps, tint);
+            assert!((factor - (night + lamps)).abs().max_element() < 1e-5, "at {d} m: {factor}");
+        }
+        // By day the scene's own light is far past "fully lit": kept, never clamped dark.
+        let day = Vec3::splat(40.0);
+        let factor = saturated_light(day, Vec3::splat(torch_at(0.05)), tint);
+        assert!((factor - day).abs().max_element() < 1e-4, "{factor}");
+        // Sane everywhere: finite, never below the scene, monotone in the lamps, a black key too.
+        assert!(saturated_light(night, Vec3::splat(1e6), Vec3::ZERO).is_finite());
+        let mut last = Vec3::ZERO;
+        for i in 0..=400 {
+            #[allow(clippy::cast_precision_loss)] // small test index
+            let lamps = warm * (i as f32 / 40.0);
+            let factor = saturated_light(night, lamps, tint);
+            assert!(factor.is_finite() && factor.cmpge(night).all());
+            assert!((tint * factor).cmple(Vec3::splat(1.0 + 1e-5)).all(), "never past fully lit: {factor}");
+            assert!(factor.cmpge(last).all(), "monotone in the light");
+            last = factor;
+        }
+    }
+
+    #[test]
+    #[ignore = "measurement: smoke radiance above a placed torch at night, old surface path vs volume paths"]
+    fn print_torch_smoke_radiance() {
+        // Displayed value of a white texel (1 = "fully lit" white at SCENE_EV100),
+        // directly above a white torch, at night, at the calibrated exposure and
+        // at the night exterior's exposure floor (lamps read 2^(7 - 3.5) ≈ 11x there).
+        let calibration = crate::lights::LightCalibration::default();
+        let floor_gain = (crate::SCENE_EV100 - calibration.exposure_floor_ev100).exp2();
+        let scene = night_scene();
+        let key = 0.302_f32; // smoke's grey NiColorData key, as stored
+        let key_srgb_decoded = 0.0745_f32; // yesterday's sRGB -> linear conversion of it
+        println!("night scene light {scene:.4} x fully lit; exposure-floor gain {floor_gain:.2}x");
+        println!("     d |  lamp S | old surface (dt 0.5, uncapped) | per-lamp cap, sRGB key | per-lamp cap, raw key | sum clamp, raw key (now)");
+        for d in [0.5_f32, 1.5, 3.0] {
+            let s = torch_at(d);
+            // The committed path: StandardMaterial, diffuse_transmission 0.5,
+            // normal up; a torch below lights the transmitted back face (half
+            // the albedo, N·L = 1, no clamp); ambient on both faces (1x albedo).
+            let old = key * (scene + 0.5 * s);
+            // The first RO-B volume path: each lamp `min(s, 1)` (its whitening
+            // floor is 1 here), with the sRGB-decoded key, then the raw one.
+            let capped = scene + s.min(1.0);
+            let srgb_key = key_srgb_decoded * capped;
+            let raw_key = key * capped;
+            let new = key * saturated_light(Vec3::splat(scene), Vec3::splat(s), Vec3::splat(key)).x;
+            // The fixed-nits paths read `floor_gain` brighter at the floor. "Now" saturates in
+            // exposed units (`1 / view.exposure`): its lights read `floor_gain` times more
+            // "fully lit" there, and the clamp still caps the display at the plain texture.
+            let new_f = key * saturated_light(Vec3::splat(scene * floor_gain), Vec3::splat(s * floor_gain), Vec3::splat(key)).x;
+            let (old_f, srgb_f, raw_f) = (old * floor_gain, srgb_key * floor_gain, raw_key * floor_gain);
+            println!(
+                "{d:4.1} m | {s:7.2} | {old:7.3} / floor {old_f:7.3} | {srgb_key:7.3} / floor {srgb_f:7.3} | {raw_key:7.3} / floor {raw_f:7.3} | {new:7.3} / floor {new_f:7.3}"
+            );
+        }
     }
 
     #[test]

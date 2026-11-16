@@ -716,6 +716,15 @@ impl ColorGrading {
 #[derive(Default, Resource, Debug)]
 pub struct RenderShadowLodOrigin(pub Vec3);
 
+// superfargoth patch (own, SW-5: per-view LOD origin)
+/// A render-world resource (optional): views, by [`RetainedViewEntity`], that resolve
+/// visibility ranges (LODs: GPU culling and the dither) from a point of their own instead of
+/// their camera's. An app's depth view that must not change with the camera (a top-down
+/// occlusion map) puts its centre here, so every caster's level follows the map, not the
+/// camera. Absent, or a view not listed: stock behaviour.
+#[derive(Default, Resource, Debug, Clone)]
+pub struct RenderViewLodOrigins(pub HashMap<RetainedViewEntity, Vec3>);
+
 #[derive(Clone, ShaderType)]
 pub struct ViewUniform {
     pub clip_from_world: Mat4,
@@ -1224,6 +1233,8 @@ pub fn prepare_view_uniforms(
     >,
     frame_count: Res<FrameCount>,
     shadow_lod_origin: Option<Res<RenderShadowLodOrigin>>,
+    // superfargoth patch (own, SW-5: per-view LOD origin)
+    view_lod_origins: Option<Res<RenderViewLodOrigins>>,
 ) {
     let view_iter = views.iter();
     let view_count = view_iter.len();
@@ -1278,7 +1289,12 @@ pub fn prepare_view_uniforms(
 
         // Determine the position of the camera used for resolving visibility
         // ranges (LODs).
+        // superfargoth patch (own, SW-5: per-view LOD origin): a listed view's own origin wins.
+        let own_lod_origin = view_lod_origins
+            .as_deref()
+            .and_then(|o| o.0.get(&extracted_view.retained_view_entity).copied());
         let lod_view_world_position = match (&extracted_camera, &shadow_lod_origin) {
+            _ if own_lod_origin.is_some() => own_lod_origin.unwrap_or_default(),
             (Some(_), _) | (None, None) => {
                 // If we're rendering a camera directly (i.e. we're not
                 // rendering a shadow map), we use this camera's position as the

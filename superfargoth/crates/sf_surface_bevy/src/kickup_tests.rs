@@ -31,9 +31,20 @@ fn shader_compiles_per_preset() {
         ("high", with(HIGH, &[])),
         ("high, probes in an array", with(HIGH, &["MULTIPLE_LIGHT_PROBES_IN_ARRAY"])),
         ("ultra", with(HIGH, &["GI_PROBES", "MULTIPLE_LIGHT_PROBES_IN_ARRAY"])),
+        ("irradiance volume", with(HIGH, &["IRRADIANCE_VOLUME"])),
+        ("high, no atmosphere", HIGH.iter().copied().filter(|d| *d != "ATMOSPHERE").collect()),
     ];
-    for (preset, defs) in jobs {
+    for (preset, mut defs) in jobs {
+        // Defs every desktop pipeline has (the pipeline cache's storage-buffer limit, the mesh
+        // pipeline's irradiance volumes): `apply_pbr_lighting`'s light probes need them.
+        defs.extend(["AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3", "IRRADIANCE_VOLUMES_ARE_USABLE"]);
         match compile(MODULE, &defs) {
+            // SW-7: lit by Bevy's own path, so a set sun is dimmed by the atmosphere's transmittance
+            // exactly when the atmosphere is on, and the clustered point lights are summed.
+            Ok(wgsl) if wgsl.contains("atmosphere_transmittance_texture") != defs.contains(&"ATMOSPHERE") => {
+                failures.push(format!("[{preset}] sun transmittance linked = {}", !defs.contains(&"ATMOSPHERE")));
+            }
+            Ok(wgsl) if !wgsl.contains("clustered_lights") => failures.push(format!("[{preset}] no point lights")),
             // The sky term and the soft fade are linked in exactly when their defs are on.
             Ok(wgsl) if wgsl.contains("diffuse_environment_map") != defs.contains(&"ENVIRONMENT_MAP") => {
                 failures.push(format!("[{preset}] environment map linked = {}", !defs.contains(&"ENVIRONMENT_MAP")));

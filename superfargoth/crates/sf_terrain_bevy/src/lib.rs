@@ -1035,8 +1035,7 @@ fn update_terrain(
     }
     p.set_f(params::P_DETAIL, detail_params(&settings, state.max_height));
     for (n, l) in state.table.layers.iter().take(params::MAX_LAYERS).enumerate() {
-        p.0[params::P_LAYERS + 2 * n] = [l.tiling_m.to_bits(), l.displacement_m.to_bits(), u32::from(l.triplanar), 0];
-        p.set_f(params::P_LAYERS + 2 * n + 1, [l.mean_albedo[0], l.mean_albedo[1], l.mean_albedo[2], l.mean_height]);
+        p.set_layer(n, l);
     }
     if let Some(far) = &far_map {
         p.set_f(params::P_FAR, far.params.to_array());

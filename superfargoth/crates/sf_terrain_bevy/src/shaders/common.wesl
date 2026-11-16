@@ -307,11 +307,18 @@ fn detail_displacement(xz: vec2<f32>, spacing: f32) -> f32 {
     return d;
 }
 
-/// The blended layer height (0..1; 0.5 past the splat range) at render XZ `xz`, `dist` meters
-/// from the camera, prefiltered to texels of `spacing`: the vertex-rate twin of
-/// `surface.wesl` `terrain_surface`'s `height` (the same Mishkinis height blend over top-down
-/// heights and the same splat-range fade), for the raised cover's coverage (W6b).
-fn layer_blend_height(xz: vec2<f32>, spacing: f32, dist: f32) -> f32 {
+/// The layer's 90th-percentile height (0..1, baked `LayerInfo::p90_height`): its relief's high point.
+fn layer_top(id: u32) -> f32 {
+    return pf(P_LAYERS + 2u * id).w;
+}
+
+/// The blended high point of the layers' height (0..1; 0.5 past the splat range) at render XZ
+/// `xz`, `dist` meters from the camera, for the raised cover's bury depth (W6b): the same
+/// Mishkinis height blend and splat-range fade as `surface.wesl` `terrain_surface`'s `height`,
+/// each layer's height (prefiltered to texels of `spacing`, a vertex's footprint, so cobbles and
+/// grout average to the mean) lifted to at least its p90 (`layer_top`), so a cover stands raised
+/// only once it buries the stones, not where it shows in the grout.
+fn layer_blend_top(xz: vec2<f32>, spacing: f32, dist: f32) -> f32 {
     let detail = pf(P_DETAIL);
     let near = 1.0 - smoothstep(0.7 * detail.x, detail.x, dist);
     if near <= 0.0 {
@@ -338,7 +345,13 @@ fn layer_blend_height(xz: vec2<f32>, spacing: f32, dist: f32) -> f32 {
     let top = max(max(hw.x, hw.y), max(hw.z, hw.w)) - detail.y;
     let b = max(hw - vec4<f32>(top), vec4<f32>(0.0));
     let bw = b / max(b.x + b.y + b.z + b.w, 1e-5);
-    return mix(0.5, dot(bw, hl), near);
+    var ht = hl;
+    for (var k = 0; k < 4; k += 1) {
+        if s.weights[k] > 0.0 {
+            ht[k] = max(hl[k], layer_top(s.ids[k]));
+        }
+    }
+    return mix(0.5, dot(bw, ht), near);
 }
 
 /// Raised-cover fade (W6b; twin `sf_terrain::cdlod::CdlodSettings::raise_fade`): 1 out to
@@ -438,8 +451,8 @@ fn terrain_vertex(grid: vec2<f32>, instance_index: u32, detail: bool) -> Terrain
 /// x now, y now without prints, z last frame (motion vectors), in meters, weighted by `raise_w`
 /// (LOD <= 0, faded smoothly in world distance to 0 inside LOD 0); w is y unweighted (the
 /// fragment tilts its normal by w's slope times the weight, so the fade's own ramp never shades).
-/// The coverage takes the layers' blended height at this vertex, as the shading takes it per
-/// pixel. The main pass and the prepass both displace by this one function, so their depths
+/// The bury depth takes the layers' blended high point at this vertex (`layer_blend_top`): bare
+/// relief and snow in the grout stay shading only. The main pass and the prepass both displace by this one function, so their depths
 /// match; the node bounds grow by `TerrainSettings::raise_m`. Camera motion moves the fade with
 /// it; z keeps this frame's weight (a smooth fade moves < 2 mm a frame at a run).
 @if(SURFACE_WEATHER || SURFACE_WEATHER_PREPASS)
@@ -447,8 +460,8 @@ fn terrain_raise(t: TerrainVertex) -> vec4<f32> {
     if t.raise_w <= 0.0 {
         return vec4<f32>(0.0);
     }
-    let base = layer_blend_height(t.position.xz, t.texel_m, distance(camera_position(), t.position));
-    let r = surface_raise_at(t.position, terrain_normal(t.position.xz, t.lod), base, t.texel_m);
+    let top = layer_blend_top(t.position.xz, t.texel_m, distance(camera_position(), t.position));
+    let r = surface_raise_at(t.position, terrain_normal(t.position.xz, t.lod), top, t.texel_m);
     return vec4<f32>(r * t.raise_w, r.y);
 }
 

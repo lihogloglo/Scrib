@@ -4,7 +4,7 @@
 //! (design rule 2): `sf_surface_bevy` uploads it.
 
 use glam::camera::rh::{proj::directx::orthographic, view::look_to_mat4};
-use glam::{IVec2, Mat4, UVec2, Vec3};
+use glam::{DVec3, IVec2, Mat4, UVec2, Vec3};
 use sf_weather::ClimateIx;
 
 use crate::{CellGrid, SurfaceState, Worldspace};
@@ -235,6 +235,25 @@ pub fn shelter_center(p: Vec3) -> Vec3 {
     (p / SHELTER_TEXEL_M).round() * SHELTER_TEXEL_M
 }
 
+/// The shelter centre for a camera at render `p` with the floating origin at world `origin`:
+/// X and Z snapped to whole texels of the *world* grid (Y in render space, depth only), as
+/// `(render centre, world texel of the centre)`. Two redraws then differ by a whole number of
+/// texels (the exposure pack's shift, [`ExposureMode::Carry`]) across a floating-origin shift
+/// too. With the origin at zero it is [`shelter_center`].
+#[allow(clippy::cast_possible_truncation)]
+pub fn shelter_center_world(origin: DVec3, p: Vec3) -> (Vec3, IVec2) {
+    let t = f64::from(SHELTER_TEXEL_M);
+    let world = origin + p.as_dvec3();
+    let tx = (world.x / t).round();
+    let tz = (world.z / t).round();
+    let center = Vec3::new(
+        (tx * t - origin.x) as f32,
+        (p.y / SHELTER_TEXEL_M).round() * SHELTER_TEXEL_M,
+        (tz * t - origin.z) as f32,
+    );
+    (center, IVec2::new(tx as i32, tz as i32))
+}
+
 /// The vertical view centred on `center`: `(view_from_world, clip_from_world)`, orthographic,
 /// looking down −Y with −Z up (view X = world X), reverse Z: depth 1 at the top plane
 /// ([`SHELTER_UP_M`] above), 0 at the bottom ([`SHELTER_DOWN_M`] below).
@@ -261,6 +280,7 @@ pub enum Redraw {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ShelterTrigger {
     center: Option<Vec3>,
+    texel: Option<IVec2>,
     streamed: bool,
     frames: u32,
 }
@@ -271,6 +291,11 @@ impl ShelterTrigger {
         self.center
     }
 
+    /// The world texel of the last redraw's centre ([`shelter_center_world`]).
+    pub fn center_texel(&self) -> Option<IVec2> {
+        self.texel
+    }
+
     /// The map is off: the next frame redraws fresh.
     pub fn reset(&mut self) {
         *self = Self::default();
@@ -279,6 +304,12 @@ impl ShelterTrigger {
     /// One frame with the camera at `camera` (render space); `streamed`: shelter casters were
     /// added this frame. Returns the redraw (and moves the centre) when one is due.
     pub fn frame(&mut self, camera: Vec3, streamed: bool) -> Option<Redraw> {
+        self.frame_world(DVec3::ZERO, camera, streamed)
+    }
+
+    /// [`Self::frame`] with the floating origin at world `origin`: the centre snaps to the world
+    /// texel grid ([`shelter_center_world`]).
+    pub fn frame_world(&mut self, origin: DVec3, camera: Vec3, streamed: bool) -> Option<Redraw> {
         self.streamed |= streamed;
         self.frames = self.frames.saturating_add(1);
         let why = match self.center {
@@ -295,11 +326,164 @@ impl ShelterTrigger {
             Some(_) => None,
         }?;
         if why != Redraw::Streamed {
-            self.center = Some(shelter_center(camera));
+            let (center, texel) = shelter_center_world(origin, camera);
+            self.center = Some(center);
+            self.texel = Some(texel);
         }
         self.streamed = false;
         self.frames = 0;
         Some(why)
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Exposure pack (SW-5/SW-6): the shelter result eased over time instead of swapped per redraw.
+//
+// The layer reads one `Rgba16Float` texture in the shelter map's texels (`sf_surface_bevy`
+// `exposure.rs` / `exposure.wgsl`): R and G the solid and leaf casters' heights over the map
+// centre (copied from the two depth maps), B the *lag* (eased exposure minus the fresh one), A
+// the fresh ground exposure (the layer's tent for a receiver below every caster, edge fade
+// included). The fragment keeps its exact 3D test on R and G and adds the lag: steady, the lag
+// is 0 and the layer is unchanged; after a redraw the ground keeps what it showed (lag = shown -
+// fresh) and the lag decays to 0 over ~2.4 s. The lag is the ground's: a receiver on its
+// texel's top surface (a roof, a leaf, a static floor) keeps the exact test, only what lies under
+// the top is eased (`layer.wesl` `SHELTER_LAG_TOP_M`). The pack is world-anchored: a redraw's pass reads
+// last pack's texel at `texel + shift` (the centres' world-texel difference), so a world point
+// keeps its eased value however the map moves; a texel the old map did not cover showed open sky.
+// Like persistent snow-accumulation maps (RDR2, Horizon) and stable shadow cascades: the map
+// never pops with the camera, it fades.
+
+/// The lag's time constant, seconds: 95 % of a change shows after `3 × TAU` (2.4 s).
+pub const EXPOSURE_TAU_S: f32 = 0.8;
+/// Easing passes run this long after a redraw is taken in (the lag is then under e⁻⁵ ≈ 0.7 %),
+/// the last one snaps it to 0; steady frames run no pass.
+pub const EXPOSURE_RUN_S: f32 = 5.0 * EXPOSURE_TAU_S;
+
+/// The lag's factor over `dt` seconds: frame-rate independent (`decay(a) · decay(b) =
+/// decay(a + b)`).
+pub fn ease_decay(dt: f32) -> f32 {
+    (-dt.max(0.0) / EXPOSURE_TAU_S).exp()
+}
+
+/// What one exposure pass does to the pack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExposureMode {
+    /// A map with no history (first draw, the map was off): lag 0.
+    Fresh,
+    /// Take in a redraw whose centre is `shift` world texels from the held one: each texel keeps
+    /// what it showed (last pack's texel at `texel + shift`; open sky outside it).
+    Carry(IVec2),
+    /// Decay the lag only (the maps did not change).
+    Ease,
+}
+
+impl ExposureMode {
+    /// The mode's code in the pass's params (`exposure.wgsl` `MODE_*`).
+    pub fn code(self) -> i32 {
+        match self {
+            ExposureMode::Fresh => 0,
+            ExposureMode::Carry(_) => 1,
+            ExposureMode::Ease => 2,
+        }
+    }
+
+    /// The shift a [`ExposureMode::Carry`] reads at (zero otherwise).
+    pub fn shift(self) -> IVec2 {
+        match self {
+            ExposureMode::Carry(s) => s,
+            _ => IVec2::ZERO,
+        }
+    }
+}
+
+/// One frame's exposure pass: the mode and the lag's factor this pass.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExposurePass {
+    pub mode: ExposureMode,
+    pub decay: f32,
+}
+
+/// The pack texel a new texel `texel` takes its history from after a shift: `texel + shift`,
+/// when last pack held it.
+pub fn exposure_source(texel: IVec2, shift: IVec2) -> Option<IVec2> {
+    let s = texel + shift;
+    let n = SHELTER_SIZE.cast_signed();
+    (s.x >= 0 && s.y >= 0 && s.x < n && s.y < n).then_some(s)
+}
+
+/// One pack texel's `(lag, fresh)` after a pass (the GPU twin is `exposure.wgsl` `main`): `held`
+/// is last pack's `(lag, fresh)` at the source texel (`None`: outside it), `fresh` this pass's
+/// ground exposure (ignored by [`ExposureMode::Ease`], which keeps last pack's).
+pub fn exposure_texel(pass: ExposurePass, held: Option<(f32, f32)>, fresh: f32) -> (f32, f32) {
+    match pass.mode {
+        ExposureMode::Fresh => (0.0, fresh),
+        ExposureMode::Carry(_) => {
+            // What the texel showed: eased = lag + fresh; open sky where the old map ended.
+            let shown = held.map_or(1.0, |(lag, f)| lag + f);
+            ((shown - fresh) * pass.decay, fresh)
+        }
+        ExposureMode::Ease => {
+            let (lag, f) = held.unwrap_or((0.0, fresh));
+            (lag * pass.decay, f)
+        }
+    }
+}
+
+/// The exposure pack's clock (main world): which pass runs this frame. A redraw requested on
+/// frame N is drawn by frame N's render (Bevy's shadow pass, after the prepass), so frame N + 1's
+/// pass (before the prepass) takes it in, and the uniform switches to its clip on that frame:
+/// every pass of a frame sees one consistent map.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ExposureClock {
+    held: Option<IVec2>,
+    pending: Option<IVec2>,
+    easing: Option<f32>,
+}
+
+impl ExposureClock {
+    /// The map is off: the next redraw starts fresh.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// The world texel of the map the pack holds.
+    pub fn held(&self) -> Option<IVec2> {
+        self.held
+    }
+
+    /// Whether a redraw waits for next frame's pass.
+    pub fn pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// A redraw centred on world texel `center` was requested this frame.
+    pub fn redraw(&mut self, center: IVec2) {
+        self.pending = Some(center);
+    }
+
+    /// This frame's pass, `dt` seconds after the last frame; call before this frame's
+    /// [`Self::redraw`]. A pending redraw is taken in (lag carried, no decay this frame: it
+    /// shows exactly what the old map showed), then [`EXPOSURE_RUN_S`] of easing passes, the
+    /// last with factor 0; `None` on steady frames.
+    pub fn frame(&mut self, dt: f32) -> Option<ExposurePass> {
+        if let Some(center) = self.pending.take() {
+            let mode = self.held.map_or(ExposureMode::Fresh, |h| ExposureMode::Carry(center - h));
+            self.held = Some(center);
+            self.easing = (mode != ExposureMode::Fresh).then_some(0.0);
+            return Some(ExposurePass { mode, decay: 1.0 });
+        }
+        let elapsed = {
+            let t = self.easing.as_mut()?;
+            *t += dt.max(0.0);
+            *t
+        };
+        let decay = if elapsed >= EXPOSURE_RUN_S {
+            self.easing = None;
+            0.0
+        } else {
+            ease_decay(dt)
+        };
+        Some(ExposurePass { mode: ExposureMode::Ease, decay })
     }
 }
 

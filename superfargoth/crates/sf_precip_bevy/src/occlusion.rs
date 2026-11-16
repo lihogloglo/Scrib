@@ -15,13 +15,24 @@
 //! direction turned [`REDIRECT_DEG`], or casters streamed in; steady frames
 //! cost nothing. Far proxies carry [`NoPrecipOcclusion`] (hosts add it);
 //! terrain must stay in (hills shelter their lee from a storm).
+//!
+//! Camera-independent (SW-5/SW-6, twin of `sf_surface_bevy::shelter`; no crate both depend on
+//! fits, so the few lines are repeated here): the centre snaps to the map's texel grid in the
+//! view's own plane ([`snap_center`], a stable cascade's snap), so thin branches stop
+//! re-rasterising on every redraw; a caster's LOD level casts by its distance from the map
+//! centre ([`lod_casts`]) and the GPU agrees (the view's LOD origin is the centre:
+//! `bevy_render::view::RenderViewLodOrigins`, vendored patch "SW-5: per-view LOD origin"); and
+//! the redraw's casters are made visible ([`mark_casters_visible`]): Bevy extracts a mesh only
+//! while some view sees it, so a roof behind the camera dropped out of the map.
 
 use glam::camera::rh::{proj::directx::orthographic, view::look_to_mat4};
 
-use bevy_app::{App, PreUpdate, Startup};
+use bevy_app::{App, PostUpdate, PreUpdate, Startup};
 use bevy_asset::{Assets, Handle, RenderAssetUsages};
 use bevy_camera::primitives::Aabb;
-use bevy_camera::visibility::InheritedVisibility;
+use bevy_camera::visibility::{
+    check_visibility_ranges, InheritedVisibility, SetViewVisibility, ViewVisibility, VisibilityRange, VisibilitySystems,
+};
 use bevy_camera::{Camera, Camera3d};
 use bevy_ecs::prelude::*;
 use bevy_image::{Image, ImageSampler};
@@ -30,6 +41,8 @@ use bevy_math::{Mat4, Vec3, Vec4};
 use bevy_mesh::Mesh3d;
 use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy_render::sync_world::{MainEntity, RenderEntity};
+use bevy_render::view::RenderViewLodOrigins;
+use bevy_render::{Extract, ExtractSchedule, RenderApp};
 use bevy_transform::components::GlobalTransform;
 use sf_sky_bevy::sun_view::{add_sun_view, SunViewRequest, SunViewSource};
 
@@ -42,6 +55,9 @@ pub const MAP_SIZE: u32 = 512;
 /// Half the covered square, meters: the far drop box (64 m) seen from any
 /// direction spans at most 32·√2 ≈ 45 m.
 pub const HALF_M: f32 = 48.0;
+/// Map texel, meters (0.1875 m): the centre snaps to it.
+#[allow(clippy::cast_precision_loss, reason = "512 is exact in f32")]
+pub const TEXEL_M: f32 = 2.0 * HALF_M / MAP_SIZE as f32;
 /// Depth range upstream (toward the source) and downstream of the camera,
 /// meters. Downstream covers the far box's corner (32·√3 ≈ 55 m).
 pub const UPWIND_M: f32 = 100.0;
@@ -88,8 +104,9 @@ pub struct PrecipOcclusionStats {
     pub casters: usize,
 }
 
+/// This frame's redraw (if any) and its centre (the view's LOD origin), both worlds.
 #[derive(Resource, Clone, Debug, Default)]
-struct Frame(Option<SunViewRequest>);
+pub(crate) struct Frame(pub Option<SunViewRequest>, pub Vec3);
 
 impl SunViewSource for Frame {
     const PASS_NAME: &'static str = "precip_occlusion";
@@ -131,12 +148,62 @@ pub fn along(center: Vec3, dir: Vec3) -> (Mat4, Mat4) {
     (view, proj * view)
 }
 
+/// The map's centre for a camera at `pos` with the view along `dir`: `pos` snapped to whole
+/// texels ([`TEXEL_M`]) on the view's own axes, as a stable shadow cascade snaps its centre, so
+/// every redraw lays the same texel grid over the world (thin casters rasterise the same way
+/// each time) and a move under a texel keeps the centre and the projection.
+pub fn snap_center(pos: Vec3, dir: Vec3) -> Vec3 {
+    // The view's rotation alone (`along` uses the same basis).
+    let rotation = look_to_mat4(Vec3::ZERO, dir, Vec3::NEG_Z);
+    let v = rotation.transform_vector3(pos);
+    let snapped = (v / TEXEL_M).round() * TEXEL_M;
+    rotation.transpose().transform_vector3(snapped)
+}
+
+/// Whether a caster with `range` (a LOD level; `None`: always) draws into the map centred on
+/// `center`: Bevy's rule (`VisibilityRange::is_visible_at_all`, the AABB centre when `use_aabb`)
+/// with the map centre as the viewer. Twin of `sf_surface_bevy::shelter::lod_casts`.
+pub fn lod_casts(range: Option<&VisibilityRange>, tf: &GlobalTransform, aabb: Option<&Aabb>, center: Vec3) -> bool {
+    range.is_none_or(|r| {
+        let at = match (r.use_aabb, aabb) {
+            (true, Some(b)) => tf.transform_point(b.center.into()),
+            _ => tf.translation(),
+        };
+        r.is_visible_at_all(at.distance(center))
+    })
+}
+
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<PrecipOcclusionConfig>()
         .init_resource::<PrecipOcclusionStats>()
         .add_systems(Startup, setup)
-        .add_systems(PreUpdate, update);
+        .add_systems(PreUpdate, update)
+        .add_systems(PostUpdate, mark_casters_visible.in_set(VisibilitySystems::CheckVisibility).after(check_visibility_ranges));
     add_sun_view::<Frame>(app);
+    if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+        render_app.init_resource::<RenderViewLodOrigins>().add_systems(ExtractSchedule, extract_lod_origin);
+    }
+}
+
+/// `VisibilitySystems::CheckVisibility`: a redraw's casters are visible to a view (the map), so
+/// Bevy extracts them even when no camera or light frustum holds them (twin of
+/// `sf_surface_bevy::shelter::mark_casters_visible`). The list holds only the levels in range of
+/// the map centre.
+#[allow(clippy::needless_pass_by_value)]
+fn mark_casters_visible(frame: Res<Frame>, mut casters: Query<&mut ViewVisibility>) {
+    for (_, main) in frame.0.iter().flat_map(|req| req.casters.iter()) {
+        if let Ok(mut visibility) = casters.get_mut(main.id()) {
+            visibility.set_visible();
+        }
+    }
+}
+
+/// A redraw's view resolves visibility ranges from the map centre (the vendored patch).
+#[allow(clippy::needless_pass_by_value)]
+fn extract_lod_origin(frame: Extract<Res<Frame>>, origins: Option<ResMut<RenderViewLodOrigins>>) {
+    if let (Some(req), Some(mut origins)) = (frame.0.as_ref(), origins) {
+        origins.0.insert(req.retained(), frame.1);
+    }
 }
 
 fn map_image(size: u32) -> Image {
@@ -166,7 +233,7 @@ fn update(
     lights: Query<(Entity, &DirectionalLight)>,
     cameras: Query<(Entity, &Camera, &GlobalTransform), With<Camera3d>>,
     casters: Query<
-        (Entity, &GlobalTransform, Option<&Aabb>, &InheritedVisibility, Option<&RenderEntity>),
+        (Entity, &GlobalTransform, Option<&Aabb>, &InheritedVisibility, Option<&RenderEntity>, Option<&VisibilityRange>),
         (With<Mesh3d>, Without<NotShadowCaster>, Without<NoPrecipOcclusion>),
     >,
     added: Query<(), (Added<Mesh3d>, Without<NotShadowCaster>, Without<NoPrecipOcclusion>)>,
@@ -205,7 +272,8 @@ fn update(
         return;
     }
     *since = (false, 0);
-    let center = if moved { pos } else { last.unwrap_or(pos) };
+    // Snapped in the view's plane (re-snapped when only the direction turned: a new grid).
+    let center = snap_center(if moved { pos } else { last.unwrap_or(pos) }, dir);
     *last = Some(center);
     *last_dir = Some(dir);
     let (view_from_world, clip_from_world) = along(center, dir);
@@ -213,20 +281,21 @@ fn update(
     let range = UPWIND_M + DOWNWIND_M;
     let mut found: Vec<(Entity, MainEntity)> = casters
         .iter()
-        .filter(|(_, _, _, visible, _)| visible.get())
-        .filter(|(_, tf, aabb, _, _)| {
+        .filter(|(_, tf, aabb, visible, _, lod)| visible.get() && lod_casts(*lod, tf, *aabb, center))
+        .filter(|(_, tf, aabb, _, _, _)| {
             let (c, radius) = aabb.map_or((tf.translation(), 0.0), |b| (tf.transform_point(b.center.into()), tf.radius_vec3a(b.half_extents)));
             let p = view_from_world.transform_point3(c);
             // The view looks down -Z: in range while 0 <= -z <= range.
             p.x.abs() <= reach + radius && p.y.abs() <= reach + radius && p.z <= radius && -p.z <= range + radius
         })
-        .map(|(e, _, _, _, render)| (render.map_or(Entity::PLACEHOLDER, |r| **r), MainEntity::from(e)))
+        .map(|(e, _, _, _, render, _)| (render.map_or(Entity::PLACEHOLDER, |r| **r), MainEntity::from(e)))
         .collect();
     found.sort_unstable();
     stats.redraws += 1;
     stats.casters = found.len();
     out.clip_from_world = clip_from_world;
     out.params = Vec4::new(1.0, range, 0.0, 0.0);
+    frame.1 = center;
     frame.0 = Some(SunViewRequest {
         light,
         camera,

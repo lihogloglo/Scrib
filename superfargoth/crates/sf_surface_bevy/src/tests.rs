@@ -275,7 +275,8 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
     );
     let u = uniform(&app);
     assert_eq!(u.flags, FLAG_WET);
-    assert_eq!(u.shelter, Vec4::new(1.0, 350.0, 0.125, 64.0));
+    assert_eq!(u.shelter.x, 0.0, "drawn this frame: the pack takes the map in next frame (SW-5)");
+    assert_eq!(app.world().resource::<exposure::ExposureFrame>().pass, None);
     let req = app
         .world()
         .resource::<ShelterFrame>()
@@ -307,7 +308,21 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
         (leaves.light, leaves.subview, leaves.image, leaves.clip_from_world),
         (anchor, CANOPY_SUBVIEW, gpu.canopy.id(), req.clip_from_world)
     );
-    assert_eq!(u.canopy, Vec4::new(1.0, sf_surface::view::SHELTER_LEAF_PASS, 0.0, 0.0));
+    // Next frame the pack takes the map in (fresh: nothing held) and the uniform switches to its
+    // clip, the depth below the centre in canopy.z (the pack's heights are over the centre).
+    app.update();
+    assert!(app.world().resource::<ShelterFrame>().0.is_none(), "steady");
+    assert_eq!(
+        app.world().resource::<exposure::ExposureFrame>().pass.map(|p| p.mode),
+        Some(sf_surface::view::ExposureMode::Fresh)
+    );
+    let u = uniform(&app);
+    assert_eq!(u.shelter, Vec4::new(1.0, 350.0, 0.125, 64.0));
+    assert_eq!(u.shelter_clip_from_world, req.clip_from_world);
+    assert_eq!(
+        u.canopy,
+        Vec4::new(1.0, sf_surface::view::SHELTER_LEAF_PASS, sf_surface::view::SHELTER_DOWN_M, 0.0)
+    );
     // The roof sits over the camera's ground in the map, higher.
     let ground = u
         .shelter_clip_from_world
@@ -366,9 +381,13 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
     // `--off wet` and `--off surface` clear the flags (the hook stays compiled in).
     sf_weather_bevy::surface_set(app.world_mut(), Channel::Wet, 0.5, "land").unwrap();
     app.update();
+    assert_eq!((uniform(&app).flags, uniform(&app).shelter.x), (FLAG_WET, 0.0), "redrawn, not yet taken in");
+    app.update();
     assert_eq!((uniform(&app).flags, uniform(&app).shelter.x), (FLAG_WET, 1.0));
     let set = |app: &mut App, layer, wet, shelter| {
         app.world_mut().insert_resource(SurfaceSettings { layer, wet, puddles: true, shelter, cover: true, trails: true });
+        // A map turned on is taken in the frame after its redraw.
+        app.update();
         app.update();
         let u = uniform(app);
         (u.flags, u.shelter.x)
@@ -586,8 +605,9 @@ fn trails_take_stamps_and_place_the_ring() {
 }
 
 /// SW-5/SW-6 "resets": a shelter redraw draws its casters even when no camera or light frustum
-/// sees them (Bevy extracts only meshes some view sees): the redraw marks them visible, a far
-/// proxy out of the camera's `VisibilityRange` excepted, and only on redraw frames.
+/// sees them (Bevy extracts only meshes some view sees): the redraw marks them visible, and only
+/// on redraw frames. A far proxy out of the map centre's `VisibilityRange` is no caster at all
+/// (SW-5: the map's own LOD levels).
 #[test]
 fn shelter_redraw_makes_its_casters_visible() {
     use bevy_camera::visibility::{ViewVisibility, VisibilityRange, VisibleEntityRanges};
@@ -610,13 +630,10 @@ fn shelter_redraw_makes_its_casters_visible() {
     sf_weather_bevy::surface_set(app.world_mut(), Channel::Snow, 1.0, "land").unwrap();
     app.update();
     let req = app.world().resource::<ShelterFrame>().0.clone().expect("shelter redraw");
-    let mut casters: Vec<_> = req.casters.iter().map(|c| c.1.id()).collect();
-    casters.sort_unstable();
-    let mut expected = vec![roof, proxy];
-    expected.sort_unstable();
-    assert_eq!(casters, expected);
+    let casters: Vec<_> = req.casters.iter().map(|c| c.1.id()).collect();
+    assert_eq!(casters, vec![roof], "the proxy is out of range of the map centre");
     assert!(visible(&app, roof), "the redraw's caster is extracted");
-    assert!(!visible(&app, proxy), "out of the camera's visibility range: its near LOD casts instead");
+    assert!(!visible(&app, proxy), "out of the map's visibility range: its near LOD casts instead");
     // A steady frame: no redraw, nothing marked (Bevy's own reset hides it again).
     *app.world_mut().get_mut::<ViewVisibility>(roof).unwrap() = ViewVisibility::HIDDEN;
     app.update();
@@ -652,4 +669,129 @@ fn origin_shift_keeps_the_world_anchored_inputs() {
     app.update();
     assert_eq!(world_of(&app), before);
     assert_eq!(stats(&app).full_uploads, full, "a shift rewrites nothing");
+}
+
+/// SW-5 ("the camera was the main issue"): a LOD level casts by its distance from the map
+/// centre, so two redraws around one centre with the camera 10 m apart draw the same casters and
+/// mark the same ones visible (a tree's near level 15 m from the centre, its far level not, though
+/// the camera now stands 25 m from it); the redraw's views get the centre as their LOD origin.
+#[test]
+fn shelter_levels_follow_the_map_centre_not_the_camera() {
+    use bevy_camera::visibility::{ViewVisibility, VisibilityRange};
+    let mut app = app();
+    let cam = app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(-240.0, 5.0, 20.0)))).id();
+    let at = |x: f32, y: f32| GlobalTransform::from_translation(Vec3::new(x, y, 20.0));
+    let caster = |app: &mut App, x: f32, range: Option<VisibilityRange>| {
+        let e = app
+            .world_mut()
+            .spawn((Mesh3d(Handle::default()), at(x, 9.0), InheritedVisibility::VISIBLE, ViewVisibility::HIDDEN))
+            .id();
+        if let Some(r) = range {
+            app.world_mut().entity_mut(e).insert(r);
+        }
+        e
+    };
+    let roof = caster(&mut app, -238.0, None);
+    let near = caster(&mut app, -255.0, Some(VisibilityRange::abrupt(0.0, 20.0)));
+    let far = caster(&mut app, -255.0, Some(VisibilityRange::abrupt(20.0, 200.0)));
+    app.update();
+    sf_weather_bevy::surface_set(app.world_mut(), Channel::Snow, 1.0, "land").unwrap();
+    app.update();
+    let first = app.world().resource::<ShelterFrame>().0.clone().expect("fresh redraw");
+    let center = app.world().resource::<exposure::ExposureFrame>().center.expect("the redraw's LOD origin");
+    assert!((center - Vec3::new(-240.0, 5.0, 20.0)).length() < sf_surface::view::SHELTER_TEXEL_M, "{center}");
+    let ids = |req: &sf_sky_bevy::sun_view::SunViewRequest| {
+        let mut v: Vec<_> = req.casters.iter().map(|c| c.1.id()).collect();
+        v.sort_unstable();
+        v
+    };
+    let mut expected = vec![roof, near];
+    expected.sort_unstable();
+    assert_eq!(ids(&first), expected, "the near level, 15 m from the centre");
+    let visible = |app: &App, e| app.world().get::<ViewVisibility>(e).unwrap().get();
+    assert!(visible(&app, near) && !visible(&app, far));
+    // The camera walks 10 m east (no redraw: under 16 m), a caster streams in out of the map:
+    // the next redraw keeps the centre and draws the same levels.
+    *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(Vec3::new(-230.0, 5.0, 20.0));
+    for e in [roof, near, far] {
+        *app.world_mut().get_mut::<ViewVisibility>(e).unwrap() = ViewVisibility::HIDDEN;
+    }
+    caster(&mut app, 500.0, None);
+    let mut second = None;
+    for _ in 0..40 {
+        app.update();
+        if let Some(req) = app.world().resource::<ShelterFrame>().0.clone() {
+            second = Some(req);
+            break;
+        }
+    }
+    let second = second.expect("a streamed redraw within 30 frames");
+    assert_eq!(app.world().resource::<exposure::ExposureFrame>().center, Some(center), "same centre");
+    assert_eq!(second.clip_from_world, first.clip_from_world);
+    assert_eq!(ids(&second), ids(&first), "same casters, camera 10 m on");
+    assert!(visible(&app, near) && !visible(&app, far), "same levels marked");
+}
+
+/// SW-5: a redraw is taken into the exposure pack the frame after its request: a move carries
+/// the pack by the centres' world-texel difference (20 m = 160 texels), then easing passes run.
+#[test]
+fn shelter_redraws_carry_the_exposure_pack() {
+    use sf_surface::view::ExposureMode;
+    let mut app = app();
+    let cam = app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(-240.0, 5.0, 20.0)))).id();
+    let pass = |app: &App| app.world().resource::<exposure::ExposureFrame>().pass.map(|p| p.mode);
+    app.update();
+    sf_weather_bevy::surface_set(app.world_mut(), Channel::Snow, 1.0, "land").unwrap();
+    app.update();
+    assert_eq!(pass(&app), None, "requested this frame");
+    app.update();
+    assert_eq!(pass(&app), Some(ExposureMode::Fresh));
+    app.update();
+    assert_eq!(pass(&app), None, "a fresh map has nothing to ease");
+    *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(Vec3::new(-220.0, 5.0, 20.0));
+    app.update();
+    let req = app.world().resource::<ShelterFrame>().0.clone().expect("moved past 16 m");
+    let old_clip = uniform(&app).shelter_clip_from_world;
+    assert_ne!(old_clip, req.clip_from_world, "the uniform keeps the held map this frame");
+    app.update();
+    assert_eq!(pass(&app), Some(ExposureMode::Carry(IVec2::new(160, 0))));
+    assert_eq!(uniform(&app).shelter_clip_from_world, req.clip_from_world, "switched with its pass");
+    app.update();
+    assert_eq!(pass(&app), Some(ExposureMode::Ease));
+    let p = exposure::params(sf_surface::view::ExposurePass { mode: ExposureMode::Carry(IVec2::new(160, -3)), decay: 0.5 });
+    let word = |i: usize| [p[4 * i], p[4 * i + 1], p[4 * i + 2], p[4 * i + 3]];
+    assert_eq!(
+        (i32::from_le_bytes(word(0)), i32::from_le_bytes(word(1)), i32::from_le_bytes(word(2)), i32::from_le_bytes(word(3))),
+        (160, -3, 1, 1024)
+    );
+    assert_eq!((f32::from_le_bytes(word(4)), f32::from_le_bytes(word(5)), f32::from_le_bytes(word(6))), (0.5, 350.0, 150.0));
+}
+
+/// SW-5: a floating-origin shift keeps the held shelter map where it is in the world (its clip
+/// follows the shift: no frame without shelter), and the redraw it forces carries the pack by
+/// zero texels (the camera stayed put in the world).
+#[test]
+fn origin_shift_keeps_the_held_shelter_map() {
+    use sf_surface::view::ExposureMode;
+    let mut app = app();
+    let cam = app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(10.0, 0.0, -3.0)))).id();
+    app.update();
+    sf_weather_bevy::surface_set(app.world_mut(), Channel::Snow, 1.0, "land").unwrap();
+    app.update();
+    app.update();
+    let before = uniform(&app);
+    assert_eq!(before.shelter.x, 1.0);
+    let o = |app: &App| app.world().resource::<SurfaceOrigin>().0.to_f64().as_vec3();
+    let world_point = o(&app) + Vec3::new(13.0, 2.0, -7.0);
+    let clip_before = before.shelter_clip_from_world.project_point3(world_point - o(&app));
+    app.world_mut().resource_mut::<SurfaceOrigin>().0 = WorldPos::new(IVec3::new(2, 0, 0), Vec3::ZERO);
+    *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(Vec3::new(10.0 - 256.0, 0.0, -3.0));
+    app.update();
+    let after = uniform(&app);
+    assert_eq!(after.shelter.x, 1.0, "no frame without shelter");
+    let clip_after = after.shelter_clip_from_world.project_point3(world_point - o(&app));
+    assert!((clip_after - clip_before).length() < 1e-5, "{clip_before} {clip_after}");
+    assert!(app.world().resource::<ShelterFrame>().0.is_some(), "drawn again around the camera");
+    app.update();
+    assert_eq!(app.world().resource::<exposure::ExposureFrame>().pass.map(|p| p.mode), Some(ExposureMode::Carry(IVec2::ZERO)));
 }

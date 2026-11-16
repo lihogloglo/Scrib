@@ -9,13 +9,15 @@
 //!   strength, kind, seed), the kind table and the ground wind go to the material's uniform.
 //! - **Draw** ([`KickupMaterial`]): one entity, one draw of a fixed mesh of
 //!   [`BURSTS`] × [`SPRITES`] quads ([`burst_mesh`]); `kickup.wesl` flies each sprite in closed
-//!   form (the twin of `sf_surface::kickup::sprite_at`), lights it as the surfaces are lit (sun
-//!   and moon with a shadow tap, the ambient floor, the sky's environment map, × exposure), fades
-//!   it against the depth prepass and fogs it ([`TranslucentFog`]). Hidden while no burst lives.
+//!   form (the twin of `sf_surface::kickup::sprite_at`), lights it with Bevy's `apply_pbr_lighting`
+//!   over a fake sphere normal, as the surfaces are lit (sun and moon through the atmosphere's
+//!   transmittance, their cascades, the clustered point lights, the ambient floor, the environment
+//!   map, × exposure; SW-7), fades it against the depth prepass and fogs it ([`TranslucentFog`]).
+//!   Hidden while no burst lives.
 //!
 //! Presentation only (design rule "net-ready"): bursts never feed gameplay. Not built: puddle
 //! splashes (the puddle level is a per-pixel function of the terrain's basins, no CPU twin at a
-//! point yet), point lights on the puffs.
+//! point yet).
 
 use bevy_app::{App, PostUpdate, Startup};
 use bevy_asset::{Asset, Assets, Handle, RenderAssetUsages, embedded_asset};
@@ -314,9 +316,9 @@ pub(crate) fn update_kickup(
                 // W6b raises the cover above the physics ground the stamp sits on: throw the puff
                 // from the uncut cover surface (the print's lip), or the depth test hides it in the
                 // snow. Cell amounts only, full coverage (an upper bound): the shader's slope,
-                // shelter and coverage terms aren't on the CPU.
-                let raise = sf_surface::trail::cover_raise(snow, 1.0, uniform.cover[0].y, [0.0, 0.0], 0.0)
-                    + sf_surface::trail::cover_raise(ash, 1.0, uniform.cover[1].y, [0.0, 0.0], 0.0);
+                // shelter and coverage terms aren't on the CPU; a top of 0 (flat ground) gives the full bury.
+                let raise = sf_surface::trail::cover_raise(snow, 0.0, uniform.cover[0].y, [0.0, 0.0], 0.0)
+                    + sf_surface::trail::cover_raise(ash, 0.0, uniform.cover[1].y, [0.0, 0.0], 0.0);
                 let at = at + bevy_math::DVec3::Y * f64::from(raise);
                 #[expect(clippy::cast_possible_truncation, reason = "a hash seed")]
                 let seed = unit(state.ring.spawned() as u32 ^ 0xB5E7);

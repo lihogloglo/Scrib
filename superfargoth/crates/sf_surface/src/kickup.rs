@@ -103,9 +103,9 @@ impl KickLook {
         up: 1.2,
         forward_bias: 0.4,
         delay_s: 0.08,
-        size: [0.07, 0.38],
+        size: [0.05, 0.25],
         albedo: Vec3::new(0.3, 0.27, 0.24),
-        opacity: 0.4,
+        opacity: 0.25,
     };
 
     pub fn of(kind: KickKind) -> KickLook {

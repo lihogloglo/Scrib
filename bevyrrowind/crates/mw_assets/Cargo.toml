@@ -19,6 +19,12 @@ mw_world.workspace = true
 thiserror.workspace = true
 workspace-hack.workspace = true
 
+[dev-dependencies]
+# Shader compile checks (no GPU, no picture): wesl links particles.wesl against the vendored
+# bevy_pbr per def set, as Bevy's shader cache does; naga validates (as sf_surface_bevy's).
+naga = { workspace = true, features = ["wgsl-in"] }
+wesl = { workspace = true, features = ["naga-ext"] }
+
 [lints]
 workspace = true
 

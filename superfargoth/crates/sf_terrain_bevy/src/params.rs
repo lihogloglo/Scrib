@@ -81,3 +81,37 @@ impl Params {
         &self.0
     }
 }
+
+impl Params {
+    /// Layer `n`'s two slots (`common.wesl` `layer_tiling` .. `layer_top`): (tiling, displacement,
+    /// triplanar, p90 height) and (mean albedo, mean height).
+    pub fn set_layer(&mut self, n: usize, l: &sf_terrain::LayerInfo) {
+        self.0[P_LAYERS + 2 * n] = [f(l.tiling_m), f(l.displacement_m), u32::from(l.triplanar), f(l.p90_height)];
+        self.set_f(P_LAYERS + 2 * n + 1, [l.mean_albedo[0], l.mean_albedo[1], l.mean_albedo[2], l.mean_height]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// W6b: a layer's slots carry its p90 height (the bury raise's high point) beside its mean.
+    #[test]
+    fn layer_slots_carry_mean_and_p90_height() {
+        let l = sf_terrain::LayerInfo {
+            record: "l".into(),
+            id: sf_terrain::layer_id("l"),
+            tiling_m: 4.0,
+            triplanar: true,
+            displacement_m: 0.05,
+            mean_albedo: [0.1, 0.2, 0.3],
+            mean_height: 0.45,
+            p90_height: 0.8,
+            source_edge: 512,
+        };
+        let mut p = Params::default();
+        p.set_layer(3, &l);
+        assert_eq!(p.0[P_LAYERS + 6], [4.0f32.to_bits(), 0.05f32.to_bits(), 1, 0.8f32.to_bits()]);
+        assert_eq!(p.0[P_LAYERS + 7], [0.1f32, 0.2, 0.3, 0.45].map(f32::to_bits));
+    }
+}

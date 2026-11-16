@@ -443,8 +443,8 @@ mod tests {
         let opaque = StandardMaterial { base_color: Color::linear_rgb(0.5, 0.5, 0.5), ..StandardMaterial::default() };
         let lit = mw_assets::self_lit(&opaque).expect("opaque surfaces are self-lit");
         assert!(lit.base_color.to_linear().red.abs() < 1e-6, "no lit base");
-        assert!(lit.reflectance == 0.0 && (lit.emissive_exposure_weight - 1.0).abs() < 1e-6);
-        assert!((lit.emissive.red - 0.5 * mw_assets::emissive_nits()).abs() < 1e-3, "fully lit at the scene exposure");
+        assert!(lit.reflectance == 0.0 && lit.emissive_exposure_weight.abs() < 1e-6, "fully lit is exposure-independent");
+        assert!((lit.emissive.red - 0.5).abs() < 1e-6, "fully lit = the plain texture in exposed units");
         let flame = StandardMaterial { alpha_mode: AlphaMode::Add, ..StandardMaterial::default() };
         assert!(mw_assets::self_lit(&flame).is_none(), "flames keep their material");
     }

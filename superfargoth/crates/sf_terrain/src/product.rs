@@ -197,6 +197,9 @@ pub struct LayerInfo {
     /// Mean albedo, linear RGB, and mean height (alpha).
     pub mean_albedo: [f32; 3],
     pub mean_height: f32,
+    /// The 90th-percentile height (alpha, 0..1): the relief's high point (cobble tops), which a
+    /// cover must bury before it stands as raised geometry (surface weather W6b).
+    pub p90_height: f32,
     /// Larger edge of the albedo source, texels: `terrain.layers` never upsamples the arrays
     /// past the largest one (T6).
     pub source_edge: u32,
@@ -214,7 +217,8 @@ pub struct LayerTable {
 
 impl LayerTable {
     const MAGIC: [u8; 4] = *b"SFTL";
-    pub const FORMAT: u32 = 2;
+    /// 3: `LayerInfo::p90_height` (W6b bury raise).
+    pub const FORMAT: u32 = 3;
 
     pub fn to_bytes(&self) -> Vec<u8> {
         encode(Self::MAGIC, Self::FORMAT, self)
@@ -262,7 +266,8 @@ struct LayerArraysRef<'a> {
 
 impl LayerArrays {
     const MAGIC: [u8; 4] = *b"SFTA";
-    pub const FORMAT: u32 = 3;
+    /// 4: the embedded table's `LayerInfo::p90_height` (W6b).
+    pub const FORMAT: u32 = 4;
     /// Bytes of one 4×4 block in every array (BC7 and BC5 alike).
     pub const BLOCK_BYTES: usize = 16;
 

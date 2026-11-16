@@ -86,6 +86,8 @@ pub const COVER_HEIGHT_MIX: f32 = 0.5;
 pub const COVER_DRIFT: f32 = 0.5;
 pub const COVER_DRIFT_TILE_M: f32 = 64.0;
 pub const COVER_NORMAL: f32 = 1.0;
+/// The highest bury top (W6b `cover_bury`): keeps its ramp finite, so amount 1 buries any relief.
+pub const COVER_TOP_MAX: f32 = 0.999;
 /// Ash's Bevy `reflectance` (F0 0.04, a plain dielectric); snow takes ice's, `WATER_REFLECTANCE`.
 pub const ASH_REFLECTANCE: f32 = 0.5;
 /// Snow sparkle: glint facet cell (m; divides 256), share of cells that glint at sparkle 1, their
@@ -102,7 +104,7 @@ pub const SPARKLE_FADE_FAR_M: f32 = 0.02;
 pub const ORIGIN_GRID_M: f32 = 256.0;
 
 /// The named shader constants, as `layer.wesl` declares them (`const NAME: f32 = v;`).
-pub const SHADER_CONSTANTS: [(&str, f32); 46] = [
+pub const SHADER_CONSTANTS: [(&str, f32); 47] = [
     ("POROSITY_ROUGH_LOW", POROSITY_ROUGH_LOW),
     ("POROSITY_ROUGH_SPAN", POROSITY_ROUGH_SPAN),
     ("WET_DARK_POROUS", WET_DARK_POROUS),
@@ -141,6 +143,7 @@ pub const SHADER_CONSTANTS: [(&str, f32); 46] = [
     ("COVER_DRIFT", COVER_DRIFT),
     ("COVER_DRIFT_TILE_M", COVER_DRIFT_TILE_M),
     ("COVER_NORMAL", COVER_NORMAL),
+    ("COVER_TOP_MAX", COVER_TOP_MAX),
     ("ASH_REFLECTANCE", ASH_REFLECTANCE),
     ("SPARKLE_CELL_M", SPARKLE_CELL_M),
     ("SPARKLE_DENSITY", SPARKLE_DENSITY),
@@ -346,10 +349,19 @@ pub fn cover_blend(amount: f32, h: f32, contrast: f32) -> f32 {
 
 /// The cover's coverage at a point (`surface_cover_coverage`): the height blend of `amount` over
 /// the compared height of the surface (`base`), the cover look (`cover`) and the drift noise
-/// (`drift`). One function for the shading's blend and the raised geometry (W6b), so the cover
-/// stands raised exactly where it shows: bare ground (coverage 0) is never lifted.
+/// (`drift`): the shading only (the raised geometry follows [`cover_bury`]).
 pub fn cover_coverage(amount: f32, base: f32, cover: f32, drift: f32, contrast: f32) -> f32 {
     cover_blend(amount, cover_height(base, cover, drift), contrast)
+}
+
+/// The bury depth (W6b; `surface_cover_bury`), 0..1: how far `amount` has risen past the
+/// footprint's high point `top` ([`cover_height`] of the relief's p90 height, the look and the
+/// drift), over what is left to the full depth: `(amount - top) / (1 - top)`, clamped. 0 until
+/// the cover buries the relief's high point (partial cover in the grout is shading only, as in
+/// RDR2 / ROTTR deep snow), `amount` on a flat surface (`top` 0), 1 at amount 1.
+pub fn cover_bury(amount: f32, top: f32) -> f32 {
+    let t = top.clamp(0.0, COVER_TOP_MAX);
+    ((amount - t) / (1.0 - t)).clamp(0.0, 1.0)
 }
 
 /// Sparkle fades as a pixel covers more than a glint cell (`footprint` m per pixel; 0 unknown:

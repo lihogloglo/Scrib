@@ -19,6 +19,8 @@ pub mod cooked;
 pub mod lights;
 pub mod map_ab;
 pub mod particles;
+#[cfg(test)]
+mod particles_shader_tests;
 
 use std::sync::Arc;
 
@@ -69,8 +71,13 @@ pub fn set_emissive(material: &mut StandardMaterial, color: LinearRgba) {
 /// plain texture there; Bevy's point lights have no near clamp
 /// (`1 / max(d², 1 cm²)`), so the light a few centimeters away blows it out
 /// to white. The surface is mapped as its texture glowing at "fully lit"
-/// (the emissive rule with emissive 1) and takes no further light: black
-/// base, no specular. Blended surfaces (flames, smoke) stay as they are: `None`.
+/// and takes no further light: black base, no specular. "Fully lit" is the
+/// original's display-referred clamp, so it is set in *exposed* units
+/// (emissive 1, exposure weight 0): the plain texture at any exposure. The
+/// nits of [`set_emissive`] are calibrated at [`SCENE_EV100`] and read ~11x
+/// too bright at the night exposure floor (EV 3.5; owner 2026-11-15:
+/// "handle of torches very very lit") and near black at day EVs.
+/// Blended surfaces (flames, smoke) stay as they are: `None`.
 pub fn self_lit(material: &StandardMaterial) -> Option<StandardMaterial> {
     if matches!(material.alpha_mode, AlphaMode::Blend | AlphaMode::Add | AlphaMode::Premultiplied | AlphaMode::Multiply) {
         return None;
@@ -80,7 +87,8 @@ pub fn self_lit(material: &StandardMaterial) -> Option<StandardMaterial> {
     if m.emissive_texture.is_none() {
         m.emissive_texture.clone_from(&m.base_color_texture);
     }
-    set_emissive(&mut m, LinearRgba::rgb(base.red, base.green, base.blue));
+    m.emissive = LinearRgba::rgb(base.red, base.green, base.blue);
+    m.emissive_exposure_weight = 0.0;
     m.base_color = Color::linear_rgba(0.0, 0.0, 0.0, base.alpha);
     m.reflectance = 0.0;
     Some(m)

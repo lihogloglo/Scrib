@@ -48,7 +48,8 @@ pub struct SurfaceUniform {
     /// x: animation seconds (wrapped at `sf_surface::layer::RIPPLE_TIME_WRAP_S`, still while no
     /// rings show), y: rain at the camera (0..1; puddle rings, W4).
     pub time: Vec4,
-    /// x: 1 when the canopy map is valid; y: share of the rain a full leaf canopy lets through.
+    /// x: 1 when the canopy map is valid; y: share of the rain a full leaf canopy lets through;
+    /// z: depth below the map centre (m; the exposure pack holds heights over the centre, SW-5).
     pub canopy: Vec4,
     /// Per cover channel (snow, ash; `crate::cover::cover_slots`): x 1 / tiling (1/m, 0 = no
     /// layer), y depth (m), z sparkle, w contrast.

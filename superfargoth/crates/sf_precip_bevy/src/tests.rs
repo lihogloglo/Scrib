@@ -88,3 +88,82 @@ fn occlusion_view_follows_the_travel_direction() {
     assert_eq!(travel(&precip), Some(ash));
     assert_eq!(travel(&Precip { enabled: false, ..precip }), None);
 }
+
+/// SW-6: the map centre snaps to the map's texels on the view's own axes (a stable cascade's
+/// snap): a snapped centre stays, a move under half a texel keeps the centre and the projection,
+/// a whole texel across the view moves a world point by exactly one texel.
+#[test]
+fn occlusion_centre_snaps_to_its_texels() {
+    use super::occlusion::{along, snap_center, view_dir, MAP_SIZE, TEXEL_M};
+    assert_eq!(TEXEL_M, 0.1875);
+    for dir in [Vec3::NEG_Y, view_dir(Vec3::new(3.0, -8.0, 0.0)), view_dir(Vec3::new(15.0, -1.0, 4.0))] {
+        let c = snap_center(Vec3::new(103.37, 21.9, -48.02), dir);
+        assert_eq!(snap_center(c, dir), c, "{dir}: a snapped centre stays");
+        for off in [Vec3::new(0.05, 0.0, 0.0), Vec3::new(0.0, -0.04, 0.03), Vec3::new(-0.03, 0.03, 0.03)] {
+            let moved = snap_center(c + off, dir);
+            assert_eq!(moved, c, "{dir} {off}");
+            assert_eq!(along(moved, dir).1, along(c, dir).1, "{dir} {off}: same projection");
+        }
+        let (view, clip) = along(c, dir);
+        let right = view.inverse().transform_vector3(Vec3::X);
+        let next = snap_center(c + right * TEXEL_M, dir);
+        let p = c + Vec3::new(5.0, 1.0, -3.0);
+        let (a, b) = (clip.project_point3(p), along(next, dir).1.project_point3(p));
+        #[allow(clippy::cast_precision_loss)]
+        let texel_clip = 2.0 / MAP_SIZE as f32;
+        assert!(((a.x - b.x).abs() - texel_clip).abs() < 1e-4 && (a.y - b.y).abs() < 1e-4, "{dir}: {a} {b}");
+    }
+}
+
+/// SW-6 (twin of `sf_surface_bevy`'s shelter test): an occlusion redraw makes its casters visible
+/// (Bevy extracts only meshes some view sees: a roof behind the camera dropped out of the map),
+/// only on redraw frames, and a LOD level casts by its distance from the map centre.
+#[test]
+fn occlusion_redraw_makes_its_casters_visible() {
+    use bevy_camera::visibility::{InheritedVisibility, ViewVisibility, VisibilityRange};
+    use bevy_camera::{Camera, Camera3d};
+    use bevy_light::DirectionalLight;
+    use bevy_transform::components::GlobalTransform;
+    let mut app = App::new();
+    app.insert_resource(Assets::<bevy_image::Image>::default());
+    let rain = PrecipSlot { intensity: 0.5, wind_follow: 0.0, ..PrecipSlot::default() };
+    app.insert_resource(Precip { slots: [Some(rain), None], ..Precip::default() });
+    occlusion::build(&mut app);
+    app.world_mut().spawn(DirectionalLight { shadow_maps_enabled: true, ..Default::default() });
+    let eye = Vec3::new(10.0, 2.0, -4.0);
+    let cam = app.world_mut().spawn((Camera::default(), Camera3d::default(), GlobalTransform::from_translation(eye))).id();
+    let caster = |app: &mut App, at: Vec3, range: Option<VisibilityRange>| {
+        let e = app
+            .world_mut()
+            .spawn((Mesh3d(Handle::default()), GlobalTransform::from_translation(at), InheritedVisibility::VISIBLE, ViewVisibility::HIDDEN))
+            .id();
+        if let Some(r) = range {
+            app.world_mut().entity_mut(e).insert(r);
+        }
+        e
+    };
+    // Behind and above the camera (no frustum holds it), and a tree's two levels 15 m away.
+    let roof = caster(&mut app, eye + Vec3::new(-3.0, 4.0, 2.0), None);
+    let near = caster(&mut app, eye + Vec3::new(15.0, 0.0, 0.0), Some(VisibilityRange::abrupt(0.0, 20.0)));
+    let far = caster(&mut app, eye + Vec3::new(15.0, 0.0, 0.0), Some(VisibilityRange::abrupt(20.0, 200.0)));
+    let visible = |app: &App, e| app.world().get::<ViewVisibility>(e).unwrap().get();
+    app.update();
+    let frame = app.world().resource::<occlusion::Frame>().clone();
+    let req = frame.0.expect("first redraw");
+    let mut ids: Vec<_> = req.casters.iter().map(|c| c.1.id()).collect();
+    ids.sort_unstable();
+    let mut expected = vec![roof, near];
+    expected.sort_unstable();
+    assert_eq!(ids, expected, "the far level is out of range of the map centre");
+    assert!((frame.1 - eye).length() < 0.2, "the LOD origin is the snapped centre: {}", frame.1);
+    assert!(visible(&app, roof) && visible(&app, near) && !visible(&app, far));
+    // A small move (under the 6 m recenter): no redraw, nothing marked.
+    for e in [roof, near] {
+        *app.world_mut().get_mut::<ViewVisibility>(e).unwrap() = ViewVisibility::HIDDEN;
+    }
+    *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(eye + Vec3::X * 3.0);
+    app.update();
+    assert!(app.world().resource::<occlusion::Frame>().0.is_none());
+    assert!(!visible(&app, roof));
+    assert_eq!(app.world().resource::<PrecipOcclusionStats>().redraws, 1);
+}

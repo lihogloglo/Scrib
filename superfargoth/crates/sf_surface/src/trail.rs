@@ -230,15 +230,17 @@ pub fn trail_height(v: [f32; 2], d: f32, ring: f32) -> f32 {
 }
 
 /// Raised cover (W6b; `layer.wesl` `surface_cover_raise`): how high a cover of depth `d` stands
-/// over the ground at `amount` (cell × slope × exposure) and `coverage` (the shading's height
-/// blend there, `layer::cover_coverage`) over the ring value `v` (`ring` the ring depth, 0 = no
-/// trail): its share of the depth where it shows, prints cut to the ground, lips on top. Zero
-/// wherever the coverage is: a thin cover stands raised in its patches only, never over bare
-/// paving. The terrain's visual height is ground + this (summed over the channels).
-pub fn cover_raise(amount: f32, coverage: f32, d: f32, v: [f32; 2], ring: f32) -> f32 {
-    if amount <= 0.0 || coverage <= 0.0 || d <= 0.0 {
+/// over the ground at `amount` (cell × slope × exposure) over a relief whose high point is `top`
+/// (`layer::cover_height` of the surface's p90 height, the look and the drift; 0 = flat) and the
+/// ring value `v` (`ring` the ring depth, 0 = no trail): the bury depth's share of the depth
+/// (`layer::cover_bury`), prints cut to the ground, lips on top. Zero until the cover buries the
+/// relief: snow in a road's grout is shading only, the stones never rise with it. The terrain's
+/// visual height is ground + this (summed over the channels).
+pub fn cover_raise(amount: f32, top: f32, d: f32, v: [f32; 2], ring: f32) -> f32 {
+    let bury = crate::layer::cover_bury(amount, top);
+    if bury <= 0.0 || d <= 0.0 {
         return 0.0;
     }
     let h = if ring > 0.0 { trail_height(v, d, ring) } else { 0.0 };
-    coverage * amount * (d + h).max(0.0)
+    bury * (d + h).max(0.0)
 }

@@ -86,9 +86,9 @@ WA-6 | partial (2026-11-13: storm sea far too tame; moving white shore band in r
 WE-15 | partial (2026-11-13: clouds still goofy; bigger shape pass later) | [weather-sky](visual-checks/weather-sky.md) | Storm cloud shape (S3): `scene we3-ridge` 14:00, BRP thunderstorm over Ascadian Isles, look E/SE; domed tapering cells, anvil shelves, ragged base, sloped edge, not an extruded footprint; A/B `--off cbshape` (2026-11-13)
 WA-5 | partial (2026-11-15: shore waves visible but faint bulges, crests do not bend; open sea small at 14 m/s; contact foam bad; FPS very low, unmeasured) | [terrain-water](visual-checks/terrain-water.md) | Gerstner shore waves over the real bed slope: `scene wa-seyda-noon`, `--water-wind 14`, `30`, `scene wa-bittercoast`; A/B `--off shoredepth` / `--off shorewaves`
 WE-13 | confirmed with follow-up (2026-11-13: smooth rain fade, curtain visible, shimmer behind it much better, some left) | [weather-sky](visual-checks/weather-sky.md) | Local storm seen from outside: storm cell under its clouds, narrow ragged border, no ground-to-sky wall (CW-1 + S2; A/B `--off stormshape`)
-SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player and torches cast none; fixes built 2026-11-01: SH-21) | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
-SH-21 | partial (2026-11-01: torches cast; flicker, cut faces, choppy: SH-20b in progress) | [shadows](visual-checks/shadows.md) | Lamp and torch shadows on the player and torch-bearers; shadowed-lamp pick by view visibility (2026-11-01)
-SH-22 | known bug | [shadows](visual-checks/shadows.md) | Exterior fps halves after leaving the Census office, not the GI (2026-11-02)
+SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player and torches cast none; fixes built 2026-11-01: SH-21); owner 2026-11-15: shadow code changed since, may be stale, re-check | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
+SH-21 | partial (2026-11-01: torches cast; flicker, cut faces, choppy: SH-20b in progress); owner 2026-11-15: shadow code changed since, may be stale, re-check | [shadows](visual-checks/shadows.md) | Lamp and torch shadows on the player and torch-bearers; shadowed-lamp pick by view visibility (2026-11-01)
+SH-22 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [shadows](visual-checks/shadows.md) | Exterior fps halves after leaving the Census office, not the GI (2026-11-02)
 SH-23 | awaiting owner | [shadows](visual-checks/shadows.md) | Sun shadow early-out: Balmora noon, dusk, night, leaf light-through and contact shadows identical before/after (2026-11-09)
 SH-24 | awaiting owner | [shadows](visual-checks/shadows.md) | Balmora at night: statics still cast into cached lamp shadows with GPU-culled statics, A/B `--off cpuculltag` (perf-push P3, 2026-11-12)
 SH-25 | confirmed | [shadows](visual-checks/shadows.md) | Balmora street at night (`scene lamp-turn`): lamp shadows already there after a 180° camera turn and when walking toward lamps, no fade-in; note NPC shadow flicker among lamps (lamp-select, 2026-11-15)
@@ -109,7 +109,7 @@ TX-6 | confirmed | [rendering](visual-checks/rendering.md) | Balmora 08:00 and n
 SS-matclass | awaiting owner | [rendering](visual-checks/rendering.md) | Static material classes: every static looks as with `--off matclass` (textures, cutout edges, two-sided leaves, glow) in Balmora and Seyda Neen
 SC-scene | owner: matches sc-noscene (2026-11-11); floating foliage + shadow flicker are not from --scene; 883 batch-full warnings; perf: ~2-3 ms SLOWER on (batch overflow) | [rendering](visual-checks/rendering.md) | Static scene (`--scene`): every static present, no double draw, nothing jumps after a 256 m walk; doors/lights stay entities
 SC-lamps | awaiting owner | [rendering](visual-checks/rendering.md) | Lamp shadows of `--scene` statics at night: present, steady, recapture after a new cell (scene sc-scene-night)
-RO-B | known bug (2026-11-15: smoke shows the background unfogged in fog; 2026-10-30: odd blend) | [rendering](visual-checks/rendering.md) | Lit smoke shading + dynamic plume Aabb sort over sky and objects
+RO-B | confirmed by owner 2026-11-16 (fix smoke-2: volume lighting, sum-of-lights saturation, exposure-relative fully lit) | [rendering](visual-checks/rendering.md) | Lit smoke shading + dynamic plume Aabb sort over sky and objects
 PH-11 | partial (2026-10-30: still a walkable hole in the office floor, PH-12) | [physics](visual-checks/physics.md) | Physics fixes: no falls on load, still clutter, steady carry
 WE-5 | confirmed with follow-up (2026-10-30: shelter too generous, cap to a few metres; clouds maybe high) | [weather-sky](visual-checks/weather-sky.md) | Ash/blight storm ignores terrain and objects, wrong ...
 AL-2 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Walk loop, turns
@@ -161,16 +161,18 @@ PUI-SV3 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Trade scree
 PUI-SV4 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Training list over the dialogue: top 3 skills, prices, refusals, buy +1 and 2 h pass, Back (A3)
 SV-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Quicksave / quickload; load sometimes spawns below the floor
 
-### Known bug (29)
+### Known bug (31)
+PL-9 | known bug (owner 2026-11-15, not diagnosed) | [player-ui](visual-checks/player-ui.md) | Player run looks sideways: the character runs on a diagonal to its travel
+RO-23 | confirmed by owner 2026-11-16 (fix smoke-2: self_lit in exposed units) | [rendering](visual-checks/rendering.md) | Carried-torch handles unnaturally bright at night (fully lit in nits at EV 7, night floor EV 3.5 = ~11x)
 
 NS-3 | known bug (owner 2026-11-15, repeated: Secunda never visible; not diagnosed) | [weather-sky](visual-checks/weather-sky.md) | Masser and Secunda
-SH-13 | known bug | [shadows](visual-checks/shadows.md) | Point-light (lamp) shadows
-SH-14 | known bug | [shadows](visual-checks/shadows.md) | Contact-shadow bands at object edges
+SH-13 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [shadows](visual-checks/shadows.md) | Point-light (lamp) shadows
+SH-14 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [shadows](visual-checks/shadows.md) | Contact-shadow bands at object edges
 GF-1 | known bug (owner 2026-11-15, repeated: fence panels pop with distance; no far copy, B5) | [rendering](visual-checks/rendering.md) | Ghostfence appears complete, never late
 DL-4 | known bug | [rendering](visual-checks/rendering.md) | Rug-edge black bands under RT
-RO-12 | known bug | [rendering](visual-checks/rendering.md) | Bright outline around characters (2026-10-30)
-RO-18 | known bug | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
-RO-19 | known bug | [rendering](visual-checks/rendering.md) | Very short shadow flickers in Balmora (2026-11-11)
+RO-12 | known bug (owner 2026-11-15: not seen in a long while; close if still absent) | [rendering](visual-checks/rendering.md) | Bright outline around characters (2026-10-30)
+RO-18 | known bug (owner 2026-11-15: not reproduced; owner retries flying high) | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
+RO-19 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [rendering](visual-checks/rendering.md) | Very short shadow flickers in Balmora (2026-11-11)
 RO-22 | awaiting owner | [rendering](visual-checks/rendering.md) | Near/far handoff band: no gaps or doubles with GPU-culled statics, A/B `--off cpuculltag` (perf-push P3, 2026-11-12)
 PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the Census Office floor (again 2026-10-30)
 PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)
@@ -186,9 +188,9 @@ FP-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First-person v
 RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn away from the model (2026-10-30)
 WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
 WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)
-SW-7 | OK for now 2026-11-06 (crude, rework; ash too big/bright; near-white at night) | [weather-sky](visual-checks/weather-sky.md) | Kick-up puffs (W7): Skaal Village `surface set snow 1` walk/run/sprint: white-blue powder puffs at each foot-down, bigger when running, lit like the snow (shadow, night); Ghostgate `surface set ash 1`: grey-brown puffs drift downwind; `--off kickup`
-SW-6 | failed again 2026-11-06 after both fixes: resets remain (canopy shelter pops near trees), only prints, no shin trails; ring edge + paving fix not reported; ash a bit deeper | [weather-sky](visual-checks/weather-sky.md) | Knee-deep snow + footprints (W6a/W6b): Skaal Village `surface set snow 1`, walk: snow raised 0.45 m near the camera, easing out by ~43 m, feet sunk, prints cut to the ground with lips, no smear with DLSS; live `off trails` / `off cover`
-SW-5 | coverage OK 2026-11-06; resets fix failed 2026-11-06 (tree canopy shelter pops in/out with distance) | [weather-sky](visual-checks/weather-sky.md) | Snow and ash cover: Ghostgate `surface set ash 1`, Skaal Village `surface set snow 1`; flat tops covered, walls/slopes bare, patchy at 0.4, none under roofs or on characters, snow glints; A/B `--off cover`
+SW-7 | confirmed with follow-up (owner 2026-11-15: night puffs good, "much better", drift with the wind liked; look rework still open) | [weather-sky](visual-checks/weather-sky.md) | Kick-up puffs (W7): Skaal Village `surface set snow 1` walk/run/sprint: white-blue powder puffs at each foot-down, bigger when running, lit like the snow (shadow, night); Ghostgate `surface set ash 1`: grey-brown puffs drift downwind; `--off kickup`
+SW-6 | raise maybe (owner 2026-11-16: only snow rises now, but edges look extruded, vertical and jagged; smooth the ramp); open: shelter resets, shin trails, ash depth | [weather-sky](visual-checks/weather-sky.md) | Knee-deep snow + footprints (W6a/W6b): Skaal Village `surface set snow 1`, walk: snow raised 0.45 m near the camera, easing out by ~43 m, feet sunk, prints cut to the ground with lips, no smear with DLSS; live `off trails` / `off cover`
+SW-5 | shelter failed (owner 2026-11-16: eased now, but snow under trees still sinks as the camera nears; coverage OK 2026-11-06) | [weather-sky](visual-checks/weather-sky.md) | Snow and ash cover: Ghostgate `surface set ash 1`, Skaal Village `surface set snow 1`; flat tops covered, walls/slopes bare, patchy at 0.4, none under roofs or on characters, snow glints; A/B `--off cover`
 AU-6 | known bug | [audio](visual-checks/audio.md) | Third-person listener in the character head, not the camera (2026-10-30)
 FG-8 | known bug | [weather-sky](visual-checks/weather-sky.md) | Weather fog vanishes at night (2026-10-30)
 

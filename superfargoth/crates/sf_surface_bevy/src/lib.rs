@@ -9,6 +9,8 @@
 //!   extra views of Bevy's shadow pass (`sf_sky_bevy::sun_view`) owned by an anchor of their
 //!   own (drawn at night too); solid casters in one, [`ShelterFoliage`] leaves (partial
 //!   shelter) in the other.
+//! - **Exposure pack** ([`exposure`], SW-5): `Rgba16Float` 1024² (ping-pong), the maps'
+//!   heights plus the eased exposure's lag, world-anchored; the layer's shelter binding.
 //! - **Noise atlas**: `Rgba8Unorm` 256², repeat, generated at startup.
 //! - **Cover layer array** ([`cover`], W5a): the snow and ash looks the host decoded
 //!   ([`CoverLayers`], from `sf_surface::cover::SurfaceLayer` records), `Rgba8Unorm` 512² × 4
@@ -33,6 +35,7 @@
 
 mod cells;
 pub mod cover;
+mod exposure;
 pub mod kickup;
 mod render;
 mod shelter;
@@ -209,6 +212,7 @@ impl Plugin for SurfaceWeatherPlugin {
                     .after(check_visibility_ranges),
             );
         kickup::build(app);
+        exposure::build(app);
         sf_sky_bevy::sun_view::add_sun_view::<shelter::ShelterFrame>(app);
         sf_sky_bevy::sun_view::add_sun_view::<shelter::CanopyFrame>(app);
         if app.get_sub_app(RenderApp).is_none() {
@@ -219,7 +223,7 @@ impl Plugin for SurfaceWeatherPlugin {
         let render_app = app.sub_app_mut(RenderApp);
         render_app
             .init_resource::<cells::PendingCellWrites>()
-            .add_systems(ExtractSchedule, (cells::extract_writes, (trail::extract, render::extract_view).chain()));
+            .add_systems(ExtractSchedule, (cells::extract_writes, (trail::extract, exposure::extract, render::extract_view).chain()));
         render::build(render_app);
         trail::build(app);
     }

@@ -6,26 +6,26 @@
 // Mesh: four vertices per sprite. @location(0) the sprite's seeds in [0, 1)³, @location(1) the
 // corner in [-1, 1]², @location(2) (burst slot, sprite index, 0, 0).
 //
-// Lit as the surfaces are (not a fixed brightness: precipitation's night look, WE-9 cause 3):
-// the view's directional lights (sun, moon) with one shadow tap at the sprite, the flat ambient
-// (the night floor) and the sky's diffuse environment map, all × the view's exposure. The mesh
-// view's light bindings are fragment-only, so the light is evaluated per pixel at the sprite's
-// centre (flat inputs: the same value over the sprite). Point lights are not summed (logged).
+// Lit by Bevy's own `apply_pbr_lighting`, as the opaque surfaces and the NIF particles are (SW-7;
+// not a fixed brightness: precipitation's night look, WE-9 cause 3): a rough dielectric over a
+// fake sphere normal from the sprite corner, so the directional lights carry the atmosphere's
+// transmittance and visible sun disc (a set sun adds nothing), their cascades are filtered as on
+// the ground, and the clustered point lights, the ambient floor, the environment map and the GI
+// probes all count, × the view's exposure.
 // Soft against the depth prepass where there is one; fogged like any translucent (RO-3).
 
 import sf_render_order_bevy::translucent_fog::{froxel_fog_lookup, froxel_fog_apply, FOG_BLEND};
-import bevy_render::maths::quat_rotate;
 import bevy_pbr::render::{
-    mesh_view_bindings as bindings,
-    mesh_view_bindings::{view, lights, light_probes},
-    mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
-    shadows::{get_cascade_index, world_to_directional_light_local},
-    shadow_sampling::sample_shadow_map_hardware,
+    mesh_view_bindings::view,
+    mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
+    pbr_types::{PbrInput, pbr_input_new, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND},
+    pbr_functions::{apply_pbr_lighting, calculate_view},
     view_transformations::{position_world_to_clip, depth_ndc_to_view_z},
 };
 
 const TAU: f32 = 6.2831853;
-const INV_PI: f32 = 0.31830989;
+// Powder: fully rough, a faint dielectric sheen (F0 = 0.16 · 0.2² ≈ 0.6 %).
+const PUFF_REFLECTANCE: f32 = 0.2;
 // `sf_surface::kickup::SEED_STEP`.
 const SEED_STEP: vec3<f32> = vec3<f32>(0.618034, 0.7548777, 0.5698403);
 // `sf_surface::kickup::FLOOR_BELOW_M`.
@@ -79,7 +79,7 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) corner: vec2<f32>,
     @location(1) @interpolate(flat) albedo_alpha: vec4<f32>,
-    // The sprite's centre (lighting, shadow) and radius.
+    // The sprite's centre and radius (the lit sphere).
     @location(2) @interpolate(flat) center: vec4<f32>,
     @location(3) dist: f32,
 }
@@ -112,6 +112,13 @@ fn fade(u: f32) -> f32 {
 fn sprite_size(kind: KickKind, u: f32, s: vec3<f32>) -> f32 {
     let uc = clamp(u, 0.0, 1.0);
     return (kind.size.x + (kind.size.y - kind.size.x) * sqrt(uc)) * (0.7 + 0.6 * s.y);
+}
+
+// The sprite's frame facing the camera along `f`: (right, up, f).
+fn facing(f: vec3<f32>) -> mat3x3<f32> {
+    let up_ref = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, -1.0), abs(f.y) > 0.999);
+    let right = normalize(cross(up_ref, f));
+    return mat3x3<f32>(right, cross(f, right), f);
 }
 
 @vertex
@@ -151,71 +158,13 @@ fn vertex(v: Vertex) -> VertexOutput {
     if alpha < 0.002 {
         return out;
     }
-    let f = to_cam / max(dist, 1e-3);
-    let up_ref = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, -1.0), abs(f.y) > 0.999);
-    let right = normalize(cross(up_ref, f));
-    let up = cross(f, right);
-    let q = p + (right * v.corner.x + up * v.corner.y) * r;
+    let basis = facing(to_cam / max(dist, 1e-3));
+    let q = p + (basis[0] * v.corner.x + basis[1] * v.corner.y) * r;
     out.position = position_world_to_clip(q);
     out.albedo_alpha = vec4<f32>(kind.color.rgb, alpha);
     out.center = vec4<f32>(p, r);
     out.dist = distance(q, cam);
     return out;
-}
-
-// The sky's diffuse light toward `n` (the view's environment map), as `bevy_pbr`'s
-// `environment_map_light` reads it for the view's own cubemap.
-fn sky_irradiance(n: vec3<f32>) -> vec3<f32> {
-    var e = vec3<f32>(0.0);
-    @if(ENVIRONMENT_MAP) {
-        let ix = light_probes.view_cubemap_index;
-        if ix >= 0 {
-            var d = quat_rotate(light_probes.view_rotation, n);
-            // Cube maps are left-handed.
-            d.z = -d.z;
-            @if(MULTIPLE_LIGHT_PROBES_IN_ARRAY)
-            e = textureSampleLevel(bindings::diffuse_environment_maps[ix], bindings::environment_map_sampler, d, 0.0).rgb;
-            @else
-            e = textureSampleLevel(bindings::diffuse_environment_map, bindings::environment_map_sampler, d, 0.0).rgb;
-            e *= light_probes.intensity_for_view;
-        }
-    }
-    return e;
-}
-
-// One hardware PCF tap of directional light `i`'s cascades at `p` (1: lit).
-fn sun_shadow(i: u32, p: vec3<f32>) -> f32 {
-    let light = &lights.directional_lights[i];
-    if ((*light).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) == 0u {
-        return 1.0;
-    }
-    let view_z = (view.view_from_world * vec4<f32>(p, 1.0)).z;
-    let cascade = get_cascade_index(i, view_z);
-    if cascade >= (*light).num_cascades {
-        return 1.0;
-    }
-    // Biased toward the light (as the surfaces' depth bias), a little more for the puff's size.
-    let biased = p + (*light).direction_to_light * ((*light).shadow_depth_bias + 0.05);
-    let local = world_to_directional_light_local(i, cascade, vec4<f32>(biased, 1.0));
-    if local.w == 0.0 {
-        return 1.0;
-    }
-    return sample_shadow_map_hardware(local.xy, local.z, i32((*light).depth_texture_base_index + cascade));
-}
-
-// Radiance per unit albedo of a puff at `p` seen along `-f` (pre-exposure): the directional
-// lights over a diffuse sphere (Lambert's phase: brighter seen from the lit side), the ambient
-// floor, the sky.
-fn puff_light(p: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
-    var l = vec3<f32>(0.0);
-    for (var i = 0u; i < lights.n_directional_lights; i = i + 1u) {
-        let light = &lights.directional_lights[i];
-        let phase = 0.5 + 0.25 * dot((*light).direction_to_light, f);
-        l += (*light).color.rgb * (INV_PI * phase * sun_shadow(i, p));
-    }
-    l += lights.ambient_color.rgb;
-    l += 0.5 * (sky_irradiance(vec3<f32>(0.0, 1.0, 0.0)) + sky_irradiance(f));
-    return l;
 }
 
 @fragment
@@ -236,9 +185,26 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if alpha < 0.002 {
         discard;
     }
-    let cam = view.world_position;
-    let f = normalize(cam - in.center.xyz);
-    let rgb = in.albedo_alpha.rgb * puff_light(in.center.xyz, f) * view.exposure;
+    // A ball of powder: the sphere's normal under this pixel and the point on it, lit as the
+    // ground is (pre-exposure in, × exposure out).
+    let basis = facing(normalize(view.world_position - in.center.xyz));
+    let n = normalize(basis[0] * in.corner.x + basis[1] * in.corner.y + basis[2] * sqrt(1.0 - r2));
+    let at = vec4<f32>(in.center.xyz + n * in.center.w, 1.0);
+    var pbr: PbrInput = pbr_input_new();
+    pbr.material.base_color = vec4<f32>(in.albedo_alpha.rgb, 1.0);
+    pbr.material.perceptual_roughness = 1.0;
+    pbr.material.metallic = 0.0;
+    pbr.material.reflectance = vec3<f32>(PUFF_REFLECTANCE);
+    pbr.material.flags = STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND;
+    pbr.frag_coord = in.position;
+    pbr.world_position = at;
+    pbr.world_normal = n;
+    pbr.N = n;
+    pbr.is_orthographic = view.clip_from_view[3].w == 1.0;
+    pbr.V = calculate_view(at, pbr.is_orthographic);
+    // The draw casts no shadow (`NotShadowCaster`) but receives: the cascades, the lamps' cubes.
+    pbr.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT;
+    let rgb = apply_pbr_lighting(pbr).rgb;
     // Fogged like any translucent (RO-3).
     let uv = (in.position.xy - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
     let fog = froxel_fog_lookup(fog_volume, fog_sampler, fog_params, uv, in.dist);

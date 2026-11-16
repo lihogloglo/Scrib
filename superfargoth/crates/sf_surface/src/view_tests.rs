@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use glam::{DVec2, IVec2, Vec3};
+use glam::{DVec2, DVec3, IVec2, Vec3};
 use sf_records::RecordId;
 use sf_weather::{ClimateIx, ClimateRaster};
 
@@ -269,6 +269,142 @@ fn shelter_redraws_on_move_climb_and_streaming_only() {
     assert_eq!(t.frame(c, false), None, "served");
     t.reset();
     assert_eq!(t.frame(c, false), Some(Redraw::Fresh));
+}
+
+/// SW-5: the centre snaps to the world texel grid, so a floating-origin shift with the camera at
+/// the same world point gives the same world texel (and a whole-texel render centre), and two
+/// redraws differ by whole texels.
+#[test]
+fn shelter_centre_snaps_to_the_world_grid() {
+    let p = Vec3::new(10.03, 5.0, -3.07);
+    assert_eq!(shelter_center_world(DVec3::ZERO, p).0, shelter_center(p), "origin 0: the render snap");
+    // An origin off the texel grid (0.05 m) and one cell further: same world point, same texel.
+    let a = DVec3::new(256.05, 0.0, -512.0);
+    let b = a + DVec3::new(256.0, 0.0, 0.0);
+    let (ca, ta) = shelter_center_world(a, p);
+    let (cb, tb) = shelter_center_world(b, p - Vec3::new(256.0, 0.0, 0.0));
+    assert_eq!(ta, tb);
+    let world = |o: DVec3, c: Vec3| (o.x + f64::from(c.x), o.z + f64::from(c.z));
+    let (wa, wb) = (world(a, ca), world(b, cb));
+    assert!((wa.0 - wb.0).abs() < 1e-4 && (wa.1 - wb.1).abs() < 1e-4, "{wa:?} {wb:?}");
+    assert!((wa.0 / 0.125 - f64::from(ta.x)).abs() < 1e-3, "on the world grid: {wa:?}");
+    // 16 m east: 128 texels, whatever the origin.
+    let (_, tc) = shelter_center_world(a, p + Vec3::new(16.0, 0.0, 0.0));
+    assert_eq!(tc - ta, IVec2::new(128, 0));
+    let mut t = ShelterTrigger::default();
+    assert_eq!(t.frame_world(a, p, false), Some(Redraw::Fresh));
+    assert_eq!((t.center(), t.center_texel()), (Some(ca), Some(ta)));
+}
+
+/// SW-5: a redraw's pass reads last pack's texel at `texel + shift`: a world-anchored texel keeps
+/// its value bit for bit; the texels the old map did not cover take the fresh value as target and
+/// start from open sky (what they showed).
+#[test]
+fn exposure_shift_keeps_world_texels_and_seeds_new_ones() {
+    let n = SHELTER_SIZE as i32;
+    // The map moved 3 texels east and 2 north: new texel t holds world texel t + new_min, last
+    // pack held it at t + shift.
+    let shift = IVec2::new(3, -2);
+    assert_eq!(exposure_source(IVec2::new(0, 5), shift), Some(IVec2::new(3, 3)));
+    assert_eq!(exposure_source(IVec2::new(n - 3, 5), shift), None, "entered from the east");
+    assert_eq!(exposure_source(IVec2::new(4, 1), shift), None, "entered from the south");
+    assert_eq!(exposure_source(IVec2::new(n - 4, n - 1), shift), Some(IVec2::new(n - 1, n - 3)));
+    assert_eq!(exposure_source(IVec2::new(7, 7), IVec2::splat(n)), None, "a jump of a map: all new");
+    // A whole pack over a world pattern, moved by `shift` (factor 1: the take-in frame). Steady
+    // texels (lag 0) whose world point keeps its fresh value come out bit for bit; entering
+    // texels take the fresh value as target and show open sky (lag = 1 - fresh).
+    let carry = ExposurePass { mode: ExposureMode::Carry(shift), decay: 1.0 };
+    let world = |w: IVec2| ((w.x * 7 + w.y * 13).rem_euclid(97) as f32) / 96.0;
+    let (old_min, new_min) = (IVec2::new(-500, 40), IVec2::new(-500, 40) + shift);
+    let old: Vec<(f32, f32)> = (0..n * n).map(|i| (0.0, world(IVec2::new(i % n, i / n) + old_min))).collect();
+    for y in (0..n).step_by(7) {
+        for x in (0..n).step_by(5) {
+            let t = IVec2::new(x, y);
+            let held = exposure_source(t, shift).map(|s| old[(s.y * n + s.x) as usize]);
+            let fresh = world(t + new_min);
+            let (lag, target) = exposure_texel(carry, held, fresh);
+            assert_eq!(target.to_bits(), fresh.to_bits());
+            match held {
+                Some(h) => {
+                    assert_eq!(h.1.to_bits(), fresh.to_bits(), "the same world texel at {t}");
+                    assert_eq!((lag.to_bits(), target.to_bits()), (0.0_f32.to_bits(), h.1.to_bits()), "bit for bit at {t}");
+                }
+                None => assert_eq!(lag, 1.0 - fresh, "entering texel {t} shows open sky"),
+            }
+        }
+    }
+    // In mid-ease, what a texel shows is carried (lag + target), to rounding.
+    let held = (0.137_f32, 0.402_f32);
+    let (lag, fresh) = exposure_texel(carry, Some(held), 0.9);
+    assert_eq!(fresh, 0.9);
+    assert!((lag + fresh - (held.0 + held.1)).abs() < 1e-6, "shown kept");
+    // Same map (streamed casters): nothing changes where nothing changed.
+    let same = ExposurePass { mode: ExposureMode::Carry(IVec2::ZERO), decay: 1.0 };
+    assert_eq!(exposure_texel(same, Some((0.0, 0.25)), 0.25), (0.0, 0.25));
+    // A new texel: target fresh, shown open sky (1), eased from there.
+    assert_eq!(exposure_texel(carry, None, 0.3), (0.7, 0.3));
+    // Fresh: no lag. Ease: the lag decays, the target stays.
+    let fresh_pass = ExposurePass { mode: ExposureMode::Fresh, decay: 1.0 };
+    assert_eq!(exposure_texel(fresh_pass, Some(held), 0.6), (0.0, 0.6));
+    let ease = ExposurePass { mode: ExposureMode::Ease, decay: 0.5 };
+    assert_eq!(exposure_texel(ease, Some((0.4, 0.2)), 0.9), (0.2, 0.2));
+    assert_eq!((ExposureMode::Fresh.code(), carry.mode.code(), ease.mode.code()), (0, 1, 2));
+    assert_eq!((carry.mode.shift(), ease.mode.shift()), (shift, IVec2::ZERO));
+}
+
+/// SW-5: the ease is frame-rate independent and shows ~95 % of a change after 2.4 s; the clock
+/// takes a redraw in the frame after its request, eases for `EXPOSURE_RUN_S`, ends on factor 0
+/// and then runs no pass.
+#[test]
+fn exposure_ease_is_frame_rate_independent() {
+    // N small steps == one big step.
+    for (n, dt) in [(60, 1.0 / 60.0), (144, 1.0 / 144.0), (7, 0.31)] {
+        let product: f32 = (0..n).map(|_| ease_decay(dt)).product();
+        let big = ease_decay(dt * n as f32);
+        assert!((product - big).abs() < 1e-5, "{n} x {dt}: {product} vs {big}");
+    }
+    assert!(1.0 - ease_decay(3.0 * EXPOSURE_TAU_S) > 0.949, "95 % after 3 tau");
+    assert!((3.0 * EXPOSURE_TAU_S - 2.4).abs() < 1e-6);
+    // The clock at two frame rates: the remaining lag after 2.4 s matches.
+    let run = |dt: f32| {
+        let mut c = ExposureClock::default();
+        assert_eq!(c.frame(dt), None, "nothing held");
+        c.redraw(IVec2::new(10, 10));
+        assert!(c.pending());
+        assert_eq!(c.frame(dt), Some(ExposurePass { mode: ExposureMode::Fresh, decay: 1.0 }));
+        assert_eq!(c.frame(dt), None, "a fresh map has no lag to ease");
+        c.redraw(IVec2::new(140, 10));
+        assert_eq!(c.frame(dt), Some(ExposurePass { mode: ExposureMode::Carry(IVec2::new(130, 0)), decay: 1.0 }));
+        assert_eq!(c.held(), Some(IVec2::new(140, 10)));
+        let mut lag = 1.0_f32;
+        let mut t = 0.0;
+        while t + dt <= 2.4 + 1e-4 {
+            let p = c.frame(dt).expect("easing");
+            assert_eq!(p.mode, ExposureMode::Ease);
+            lag *= p.decay;
+            t += dt;
+        }
+        lag
+    };
+    let (slow, fast) = (run(1.0 / 30.0), run(1.0 / 120.0));
+    assert!((slow - fast).abs() < 1e-3 && slow < 0.051, "{slow} {fast}");
+    // The run ends with a snap to 0, then steady frames run nothing.
+    let mut c = ExposureClock::default();
+    c.redraw(IVec2::ZERO);
+    c.frame(0.1);
+    c.redraw(IVec2::ONE);
+    c.frame(0.1);
+    let mut last = None;
+    for _ in 0..1000 {
+        match c.frame(0.1) {
+            Some(p) => last = Some(p),
+            None => break,
+        }
+    }
+    assert_eq!(last.map(|p| p.decay), Some(0.0), "the last pass snaps the lag");
+    assert_eq!(c.frame(0.1), None);
+    c.reset();
+    assert_eq!(c.held(), None);
 }
 
 #[test]

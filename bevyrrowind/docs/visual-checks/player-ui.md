@@ -253,3 +253,9 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   slow you down; where should the head look (ahead along the travel, a few metres down the slope, or the camera)?
 - Status: awaiting owner.
 
+
+### PL-9: Player run looks sideways (owner report 2026-11-15)
+- Kind: game location, third person, any exterior; run (and sprint) straight ahead, then strafe-run.
+- Seen by owner 2026-11-15: "the animation of running is kinda sideways, character runs in diagonal". Not diagnosed. Leads to
+  check: run clip root/facing yaw after retarget, `side_lanes` / lean in the walk ladder (WALK-0 A/B), speed-match picking a
+  strafe-diagonal clip, body yaw lagging the travel direction. Status: known bug.
