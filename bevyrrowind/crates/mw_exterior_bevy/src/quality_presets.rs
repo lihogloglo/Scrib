@@ -299,7 +299,7 @@ pub fn preset_status(book: &PresetBook, tunables: &sf_tunables_bevy::sf_tunables
 
 /// The exterior's CW gates: registers their alias copies (env switches apply now), `--off selectgate`
 /// (`select_gate_off`) at `CommandLine`, and binds them live into terrain, far field and streaming
-/// settings and Bevy's skin upload settings. Returns `select.gate`'s effective value (the plugins'
+/// settings, Bevy's skin upload settings and worldspace parking (CW-9). Returns `select.gate`'s effective value (the plugins'
 /// starting settings).
 pub fn add_gates(app: &mut App, select_gate_off: bool) -> bool {
     app.register_tunables(&[&SELECT_GATE, &SKIN_SKIP_UNCHANGED]);
@@ -313,6 +313,14 @@ pub fn add_gates(app: &mut App, select_gate_off: bool) -> bool {
         let quanta = sf_world::GateQuanta { enabled: on, ..s.config().scheduler.select_gate };
         s.set_select_gate(quanta);
     });
+    // CW-9: worldspaces the player left (the exterior while indoors) park out of every query; live
+    // both ways (`sf_world_bevy::WorldspaceParking`, park.rs).
+    let _park = app
+        .add_tunable(&sf_world::park::PARK_LEFT)
+        .bind_resource(|p: &mut sf_world_bevy::WorldspaceParking, on| p.enabled = on);
+    let _settle = app
+        .add_tunable(&sf_world::park::PARK_SETTLE_S)
+        .bind_resource(|p: &mut sf_world_bevy::WorldspaceParking, s| p.settle_s = s);
     app.init_resource::<SkinUploadSettings>();
     let _skin = app.add_tunable(&SKIN_SKIP_UNCHANGED).bind_resource(|s: &mut SkinUploadSettings, on| s.skip_unchanged = on);
     let tunables = app.world().resource::<Tunables>();

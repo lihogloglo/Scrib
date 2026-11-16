@@ -27,6 +27,7 @@ use std::sync::Arc;
 
 use bevy_camera::visibility::{NoAutoAabb, NoCpuCulling, RenderLayers, VisibilityRange};
 use bevy_ecs::bundle::{DynamicBundle, NoBundleEffect};
+use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::prelude::*;
 use bevy_mesh::Mesh3d;
 use bevy_pbr::MeshMaterial3d;
@@ -280,7 +281,7 @@ pub(crate) struct LiveLodFrame {
 /// the current one, at most `lod_live_budget` chains a frame. Idle (one compare) once every chain
 /// is current. Not behind the selection gates (CW-2): no gated selection reads the screen (rings,
 /// far-field residency), and this pass runs on the screen's change itself.
-pub(crate) fn apply_lod_screen(world: &mut World, parts: &mut QueryState<(Entity, &'static LodPart)>, mut applied: Local<Option<LodScreen>>) {
+pub(crate) fn apply_lod_screen(world: &mut World, parts: &mut QueryState<(Entity, &'static LodPart), Allow<Disabled>>, mut applied: Local<Option<LodScreen>>) {
     let Some(streaming) = world.get_resource::<Streaming>() else { return };
     let screen = streaming.config().lod;
     let budget = streaming.config().lod_live_budget.max(1);

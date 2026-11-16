@@ -318,6 +318,26 @@ for the active worldspace's loads. The fade writes `TravelArrived` the frame
 it moves the traveler, so apps resync camera controllers that cache a pose
 (Bevy's `FreeCamera` keeps its own yaw and pitch).
 
+**Parking the worldspace left (CW-9, as built 2026-11-17, opt-in).** The
+ghost keeps the exterior resident for a whole small-interior visit (the player
+never gets 32 m from the way back) and far-field L2/L3 nodes never leave, so
+indoors the exterior kept ticking in every system (Census Office: 15.7 k
+entities). `stream.interior.disable_exterior` (off) parks a worldspace the
+player was in and left, once it had no streaming request for
+`stream.interior.park_settle_s` (0.25 s, Guess): root `Visibility::Hidden`,
+next frame Bevy's `Disabled` on root and subtree (default query filter; the
+two steps because Bevy 0.20's render-world sync ignores `Disabled`, so
+extraction must first drop the instances and lights). It unparks, same
+entities and state, when it becomes active (the cut, before the hold), gets a
+request (the ghost expiring, a prefetch reload), the switch goes off, or an
+entity is parented under it (observer). Never-entered prefetch targets don't
+park (they feed the pipeline warm-up). Readers that must see parked entities
+name them (`Allow<Disabled>`): subtree layer/range hooks, live LOD re-range, a
+game's save capture and teardown. Scripts read placements from a data table,
+not queries, so a script naming an outdoor ref keeps working indoors.
+Standard: UE streaming levels loaded but not visible stop ticking; OpenMW
+keeps preloaded cells outside the scene graph.
+
 **Every worldspace is indexed** (2026-10-12). The bake indexes each
 worldspace with the partition its `Worldspace` record names
 (`WorldBake::with_overrides`; interiors are `Single`, one cell that loads

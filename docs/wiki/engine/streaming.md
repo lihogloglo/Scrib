@@ -53,6 +53,17 @@ placement ends at the far handoff if far-eligible, else its ring's unload radius
 **Reveal.** A cell group stays `Visibility::Hidden` until `reveal` in the `Upload` stage (`stream.rs:1575`); `RevealGate`
 (`reveal.rs`) is what loading and door fades wait on.
 
+**Worldspace left behind (CW-9, opt-in).** Indoors the exterior stays resident: the residency-cache ghost
+(`scheduler.rs` `linger`) keeps its full rings while the player stands within 32 m of the way back (a small interior:
+the whole visit), and far-field L2/L3 nodes never leave. Without parking it all keeps ticking (visibility, big_space,
+character layers, walkers, far-field pass). With `stream.interior.disable_exterior` on, `park::park_worldspaces`
+(`sf_world_bevy/src/park.rs`, `Update` after the fade) parks a worldspace the player left once it had no streaming
+request for `stream.interior.park_settle_s`: root `Visibility::Hidden` (extraction drops its instances and lights;
+Bevy 0.20's render sync ignores `Disabled`), next frame `Disabled` on root + subtree. Unparked (same ids and state) when
+it becomes active (the door cut, before the hold), gets a request, the switch goes off, or an entity is parented under
+it (`wake_on_parent` observer). Never-entered prefetch targets don't park. `Allow<Disabled>` in subtree layer/range
+hooks, `lod_live`, `persist_actor_stats` (saves), teardown.
+
 ## Bevy features used
 
 `big_space` + `FloatingOrigin`; `VisibilityRange`; `RenderLayers` (world plus shadow-only layer per worldspace,
@@ -70,6 +81,9 @@ stale instance offsets in 0.20).
   `LocationQuantization`) or turned `stream.select.turn_deg` (10 deg) and `Scheduler::revision` (cell moves finished,
   worldspaces, links, reload) is unchanged; linger, door prefetch, async starts and burst end stay per tick, a reload
   always runs. `set select.gate on` (live; alias `BEVYRROWIND_SELECT_GATE=1`) turns on all three gates (terrain, far field), `--off selectgate` forces off.
+- Parking (CW-9, opt-in, built 2026-11-17, not measured): `set stream.interior.disable_exterior on` (live both ways,
+  bound in `mw_exterior_bevy/src/quality_presets.rs` `add_gates`), `stream.interior.park_settle_s` (0.25 s). Counters
+  `stream/parked/{worldspaces,entities}`, `stream/park/ms`; log `sf_world_bevy: parked|unparked <ws>: N entities`.
 - Counters: `stream/drive/ms`, `stream/tick/ms`, `stream/<stage>/{items,ms,queue}` (+`bytes` for upload; `stream.rs:972-1010`),
   `stream/{requests,resident_cells,models,model_queue,page_cache/bytes,oldest_request/s,latency/s,shift_guard/frames}`,
   `bigspace/*/ms` (`lib.rs:188`), `world/meshes`, `world/point_lights` (`exterior.rs:1185`). `StreamStats` (`stream.rs:245`).
@@ -82,7 +96,9 @@ stale instance offsets in 0.20).
 - Spawn and origin-shift frames spike the render thread, range-slot pressure: [ledger/streaming.md](../../ledger/streaming.md).
 - Entity count of near statics without precombine: [ledger/statics.md](../../ledger/statics.md).
 - Frame cost: [ledger/perf.md](../../ledger/perf.md).
-- **Worldspace lifetime (fixed 2026-11-15, door-crash):** a worldspace that is fully streamed out (not active, nothing resident or pending, no cell) is released at the end of each streaming update (`Streaming::release_unloaded`, `stream.rs`): `WorldspaceRegistry::release_in` (`worldspace.rs`) despawns its root and returns its render-layer pair to a FIFO free list (refused while the root holds more than its proxy); its index directory stays. Runtime layers use the growing constructor (`dynamic_layer`), so > 31 worldspaces loaded at once only allocate (one-time warning "render layers past 63 spill"). Before: pairs were never freed and `RenderLayers::layer(64)` panicked after ~31 interiors passed (ROADMAP 1.1). Open: per-worldspace physics worlds may never be freed (`sf_physics world.rs:979`); prefetched roots could be `Visibility::Hidden` (UE hides loaded sublevels).
+- Parking (CW-9): a looping voice under a parked root keeps playing at its last gain (`bevy_audio` sinks are not paused
+  yet); parked actors' AI, animation and timed effects pause (their stats still save: `persist_actor_stats`).
+- **Worldspace lifetime (fixed 2026-11-15, door-crash):** a worldspace that is fully streamed out (not active, nothing resident or pending, no cell) is released at the end of each streaming update (`Streaming::release_unloaded`, `stream.rs`): `WorldspaceRegistry::release_in` (`worldspace.rs`) despawns its root and returns its render-layer pair to a FIFO free list (refused while the root holds more than its proxy); its index directory stays. Runtime layers use the growing constructor (`dynamic_layer`), so > 31 worldspaces loaded at once only allocate (one-time warning "render layers past 63 spill"). Before: pairs were never freed and `RenderLayers::layer(64)` panicked after ~31 interiors passed (ROADMAP 1.1). Open: per-worldspace physics worlds may never be freed (`sf_physics world.rs:979`); never-entered prefetched roots still tick (left ones park with CW-9).
 
 ## Specs
 

@@ -141,6 +141,7 @@ LK-2 | owner: issues (Continue style) | [player-ui](visual-checks/player-ui.md) 
 FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)
 RG-1 | awaiting owner | [streaming](visual-checks/streaming.md) | Nothing pops in after a door fade or the loading screen lifts (reveal gate W1; `reveal:` lines)
+DR-5 | awaiting owner (2026-11-17, CW-9 opt-in) | [streaming](visual-checks/streaming.md) | Interiors park the exterior (`set stream.interior.disable_exterior on`): door in and out unchanged, F3 entities/main ms drop indoors
 
 ### Partial (9)
 

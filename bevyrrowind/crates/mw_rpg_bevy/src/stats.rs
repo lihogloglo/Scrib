@@ -322,7 +322,12 @@ fn write_sheet(overlay: &mut PlacementOverlay, table: &StatTableRes, placement: 
 pub fn persist_actor_stats(world: &World, overlay: &mut PlacementOverlay) {
     let Some(table) = world.get_resource::<StatTableRes>() else { return };
     let tick = world.get_resource::<StatTick>().map_or(0, |t| t.0);
-    let Some(mut q) = world.try_query::<(&CharacterPlacement, &Stats, Option<&Effects>)>() else { return };
+    // Parked worldspaces' actors (CW-9: the exterior's while indoors, `Disabled`) are resident too.
+    let Some(mut q) =
+        world.try_query_filtered::<(&CharacterPlacement, &Stats, Option<&Effects>), Allow<bevy_ecs::entity_disabling::Disabled>>()
+    else {
+        return;
+    };
     for (placement, stats, effects) in q.iter(world) {
         write_sheet(overlay, table, placement, stats);
         if let Some(effects) = effects {

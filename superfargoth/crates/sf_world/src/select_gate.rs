@@ -32,6 +32,8 @@ pub const TUNABLES: &[&dyn AnyDef] =
         &crate::lod_screen::SIZE_CULL_MIN_PX,
         &crate::lod_screen::SIZE_CULL_MIN_DISTANCE,
         &crate::lod_screen::LOD_LIVE_BUDGET,
+        &crate::park::PARK_LEFT,
+        &crate::park::PARK_SETTLE_S,
     ];
 
 /// The switch and quanta of one gate (each system declares its own tunables and fills this).

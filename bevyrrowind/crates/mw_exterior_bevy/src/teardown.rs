@@ -45,7 +45,8 @@ pub(crate) fn add(app: &mut App) {
 
 /// `OnExit(WorldAlive)`: despawns the world and resets the world resources (module docs).
 fn tear_down(world: &mut World) {
-    let roots: Vec<Entity> = world.query_filtered::<Entity, With<WorldspaceRoot>>().iter(world).collect();
+    // Parked worldspaces (CW-9, `sf_world_bevy` park.rs) are disabled: named so they go too.
+    let roots: Vec<Entity> = world.query_filtered::<Entity, (With<WorldspaceRoot>, Allow<bevy::ecs::entity_disabling::Disabled>)>().iter(world).collect();
     let count = roots.len();
     for root in roots {
         world.despawn(root);

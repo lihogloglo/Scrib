@@ -848,8 +848,10 @@ mod tests {
         assert_eq!(hero_before.1, [Some(110), Some(50)]);
         let ids_before = *app.world().resource::<EffectIds>();
 
-        // Save with time stopped, then a fresh state: new player, no creature, empty overlay.
+        // Save with time stopped, then a fresh state: new player, no creature, empty overlay. The
+        // creature is parked (CW-9: its worldspace left, `Disabled`): a resident actor saves all the same.
         step(&mut app, 0.0);
+        app.world_mut().entity_mut(rat).insert(bevy_ecs::entity_disabling::Disabled);
         save(&mut app);
         restore_player_sheet_fresh(&mut app);
         assert!(app.world_mut().query::<&Effects>().iter(app.world()).all(|fx| fx.owner != hero || fx.active.is_empty()));

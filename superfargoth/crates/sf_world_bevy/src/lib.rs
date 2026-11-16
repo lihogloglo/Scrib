@@ -31,6 +31,7 @@ mod lod_live;
 pub mod matclass;
 pub mod mesh_slabs;
 mod origin;
+mod park;
 mod precache;
 mod precombine;
 mod resident_warm;
@@ -51,6 +52,7 @@ pub use lod_live::{EndInputs, LodChain, LodPart, ResolvedEnd, bucket_end};
 pub use compile_pool::{PipelineCompilePoolPlugin, PipelineCompileThreads, compile_pool_threads, precache_limit};
 pub use resident_warm::{RESIDENT_TAG, ResidentScan, ResidentWarmup, add_resident_material};
 pub use reveal::{RevealAsk, RevealCheck, RevealGate, RevealHolds, RevealInputs, RevealPending, RevealStatus, RevealStep, SETTLE_FRAMES};
+pub use park::WorldspaceParking;
 pub use origin::{PHASE_PERIODS, WorldOrigin, WorldOriginBuffer, WorldOriginSystems, WorldOriginUniform};
 pub use precache::{
     Precache, PrecacheLimit, PrecachePlugin, PrecacheStatus, Progress, Specimen, SpecimenFlags, pipeline_progress, specimen, specimen_flags, specimen_progress,
@@ -126,6 +128,7 @@ impl Plugin for WorldStreamingPlugin {
             app.add_plugins(PrecachePlugin);
         }
         app.init_resource::<WorldspaceRegistry>()
+            .init_resource::<WorldspaceParking>()
             .init_resource::<FarProxies>()
             .init_resource::<ActiveWorldspace>()
             .init_resource::<DoorLinks>()
@@ -163,6 +166,10 @@ impl Plugin for WorldStreamingPlugin {
                 catalog_warm::drive_catalog_warmup.run_if(catalog_warm::warmup_busy).before(StreamingSystems::Drive),
             )
             .add_systems(Update, (fade::run_cut_hooks, fade::run_fade, fade::fade_overlay).chain().in_set(StreamingSystems::Transition))
+            // Parked worldspaces (CW-9): after the fade, so a cut's new active worldspace unparks
+            // before the hold reads it; the observer unparks on any spawn under a parked subtree.
+            .add_systems(Update, park::park_worldspaces.after(StreamingSystems::Transition))
+            .add_observer(park::wake_on_parent)
             .add_systems(PostStartup, worldspace::assign_origins.before(BigSpaceSystems::RecenterLargeTransforms))
             .add_systems(PostUpdate, worldspace::assign_origins.before(BigSpaceSystems::RecenterLargeTransforms))
             // After scene spawning (runtime-imported models), before visibility.
@@ -263,3 +270,6 @@ mod catalog_warm_tests;
 // Live view distance (tunables T5c): a screen change re-ranges resident LOD chains as a fresh spawn would.
 #[cfg(test)]
 mod lod_live_tests;
+// Parked worldspaces (CW-9): the street the player left leaves every query and comes back whole.
+#[cfg(test)]
+mod park_tests;

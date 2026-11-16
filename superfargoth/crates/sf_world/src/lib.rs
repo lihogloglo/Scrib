@@ -20,6 +20,7 @@ mod codec;
 mod index;
 pub mod lod_screen;
 mod overlay;
+pub mod park;
 mod placement;
 mod reader;
 mod records;

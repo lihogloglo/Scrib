@@ -18,6 +18,7 @@ use bevy_asset::{AssetServer, Handle, UntypedHandle};
 use bevy_camera::primitives::Aabb;
 use bevy_camera::visibility::{RenderLayers, VisibilityRange};
 use bevy_color::{Color, LinearRgba};
+use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::prelude::*;
 use bevy_material::AlphaMode;
 use bevy_math::{IVec3, Vec3};
@@ -218,10 +219,11 @@ impl SubtreeRange {
 const MAX_SUBTREE_DEPTH: usize = 48;
 
 /// Gives new meshes under a [`SubtreeRange`] their visibility range.
+#[allow(clippy::type_complexity)]
 pub fn apply_subtree_ranges(
     mut commands: Commands,
-    added: Query<Entity, (Added<Mesh3d>, Without<VisibilityRange>)>,
-    nodes: Query<(&Transform, Option<&ChildOf>, Option<&SubtreeRange>)>,
+    added: Query<Entity, (Added<Mesh3d>, Without<VisibilityRange>, Allow<Disabled>)>,
+    nodes: Query<(&Transform, Option<&ChildOf>, Option<&SubtreeRange>), Allow<Disabled>>,
 ) {
     for entity in &added {
         // The mesh origin in the current ancestor's space, walking up.
@@ -259,10 +261,11 @@ impl SubtreeLayers {
 }
 
 /// Gives new meshes under a [`SubtreeLayers`] root its render layers.
+#[allow(clippy::type_complexity)]
 pub fn apply_subtree_layers(
     mut commands: Commands,
-    added: Query<Entity, (Added<Mesh3d>, Without<RenderLayers>)>,
-    nodes: Query<(Option<&ChildOf>, Option<&SubtreeLayers>)>,
+    added: Query<Entity, (Added<Mesh3d>, Without<RenderLayers>, Allow<Disabled>)>,
+    nodes: Query<(Option<&ChildOf>, Option<&SubtreeLayers>), Allow<Disabled>>,
 ) {
     for entity in &added {
         let mut current = entity;

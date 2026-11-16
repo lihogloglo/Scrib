@@ -69,6 +69,19 @@ Open visual checks: streaming spikes, size-based draw distance, door links (ST, 
 - Status: partial, owner 2026-10-19 (round 8): works, see DR-4.
 - Source: interiors, doorfix.
 
+### DR-5: Interiors park the exterior (CW-9, opt-in)
+- Kind: game location. Build: release (`cargo build --release -p bevyrrowind`). Run: `.\bevyrrowind view "Seyda Neen"`,
+  High, walk into "Seyda Neen, Census and Excise Office"; F3 (full). Note entities, point lights and main ms; console
+  `set stream.interior.disable_exterior on`; wait 2 s; note them again (log `sf_world_bevy: parked @exterior: N entities disabled in X ms`).
+- Look for: indoors nothing changes on screen (no flash, no hitch beyond one frame, no exterior sound); entities drop by
+  ~15 k and main ms by an expected 2-3 ms (GPU-bound there: the frame median may not move). Then walk out the door and
+  back in: same fade times as DR-1/DR-2, the town is all there at once outside (no pop-in, NPCs where they stood, no
+  respawn: one `unparked @exterior` log line), and parks again ~0.25 s after you are back in. `set
+  stream.interior.disable_exterior off` indoors: all back, nothing changes on screen. Audio: a loop outside the door
+  must not start playing indoors (known risk: parked voices keep their last gain).
+- Status: awaiting owner (2026-11-17, built, not measured).
+- Source: cw9-interior-drop.
+
 ### RG-1: Nothing pops in after a reveal (reveal gate, pipeline-warmup W1)
 - Kind: game location, cold (delete `%LOCALAPPDATA%\NVIDIA\DXCache` and `\GLCache` first) then warm. Build: `cargo build -p bevyrrowind --features dev`.
 - Run: (1) release start, New game into Seyda Neen; (2) `.\bevyrrowind view "Seyda Neen"`, walk into "Seyda Neen, Census and Excise Office"; (3) back out. High preset, then Low.
