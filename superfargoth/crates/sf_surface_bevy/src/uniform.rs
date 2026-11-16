@@ -7,7 +7,8 @@ use bevy_math::{IVec4, Mat4, Vec4};
 use sf_surface::view::DebugView;
 
 /// Slots: the shelter matrix (4 columns), window, cells, shelter, misc, time, canopy, cover (snow,
-/// ash), cover UV at the origin, the trail ring's placement (W6a).
+/// ash), cover UV at the origin, the trail ring's placement (W6a), the far shelter level (SW-5e:
+/// its matrix, its `shelter` and `canopy`).
 pub const U_SHELTER_CLIP: usize = 0;
 pub const U_WINDOW: usize = 4;
 pub const U_CELLS: usize = 5;
@@ -21,7 +22,10 @@ pub const U_TRAIL: usize = 13;
 pub const U_TRAIL_CELLS: usize = 14;
 pub const U_TRAIL_PREV: usize = 15;
 pub const U_TRAIL_PREV_CELLS: usize = 16;
-pub const U_SLOTS: usize = 17;
+pub const U_FAR_CLIP: usize = 17; // tunables: const (layout: uniform slot index)
+pub const U_FAR_SHELTER: usize = 21; // tunables: const (layout: uniform slot index)
+pub const U_FAR_CANOPY: usize = 22; // tunables: const (layout: uniform slot index)
+pub const U_SLOTS: usize = 23;
 
 /// Layer flags (`misc.x`): which channels are non-zero anywhere in the cell window.
 pub const FLAG_WET: u32 = 1;
@@ -51,7 +55,8 @@ pub struct SurfaceUniform {
     /// rings show), y: rain at the camera (0..1; puddle rings, W4).
     pub time: Vec4,
     /// x: 1 when the canopy map is valid; y: share of the rain a full leaf canopy lets through;
-    /// z: depth below the map centre (m; the exposure pack holds heights over the centre, SW-5).
+    /// z: depth below the map centre (m; the exposure pack holds heights over the centre, SW-5);
+    /// w: the level's test, 0 the 6-texel tent (near), 1 bilinear (far, SW-5e).
     pub canopy: Vec4,
     /// Per cover channel (snow, ash; `crate::cover::cover_slots`): x 1 / tiling (1/m, 0 = no
     /// layer), y depth (m), z sparkle, w contrast.
@@ -67,6 +72,11 @@ pub struct SurfaceUniform {
     /// Last frame's `trail` and `trail_cells` (W6b: the displaced terrain's motion vectors).
     pub trail_prev: Vec4,
     pub trail_prev_cells: IVec4,
+    /// The far shelter level (SW-5e; mesh-view binding 49 holds its pack): render space → its
+    /// clip, then its `shelter` and `canopy` as the near level's (x 0: no far level).
+    pub far_clip_from_world: Mat4,
+    pub far_shelter: Vec4,
+    pub far_canopy: Vec4,
 }
 
 impl Default for SurfaceUniform {
@@ -86,6 +96,9 @@ impl Default for SurfaceUniform {
             trail_cells: IVec4::ZERO,
             trail_prev: Vec4::ZERO,
             trail_prev_cells: IVec4::ZERO,
+            far_clip_from_world: Mat4::IDENTITY,
+            far_shelter: Vec4::ZERO,
+            far_canopy: Vec4::ZERO,
         }
     }
 }
@@ -121,6 +134,11 @@ impl SurfaceUniform {
         s[U_TRAIL_CELLS] = self.trail_cells.to_array().map(|v| v as u32);
         s[U_TRAIL_PREV] = f(self.trail_prev);
         s[U_TRAIL_PREV_CELLS] = self.trail_prev_cells.to_array().map(|v| v as u32);
+        for c in 0..4 {
+            s[U_FAR_CLIP + c] = f(self.far_clip_from_world.col(c));
+        }
+        s[U_FAR_SHELTER] = f(self.far_shelter);
+        s[U_FAR_CANOPY] = f(self.far_canopy);
         s
     }
 }

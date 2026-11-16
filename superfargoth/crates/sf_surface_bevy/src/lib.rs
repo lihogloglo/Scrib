@@ -11,6 +11,10 @@
 //!   shelter) in the other.
 //! - **Exposure pack** ([`exposure`], SW-5): `Rgba16Float` 1024² (ping-pong), the maps'
 //!   heights plus the eased exposure's lag, world-anchored; the layer's shelter binding.
+//! - **Far shelter level** (SW-5e, [`ShelterFarSettings`]): the same capture and pack over
+//!   ±512 m at 1 m texels, casters at a coarser fixed LOD; the layer blends near into far over
+//!   the near map's band, far into open sky over its own. [`ShelterReach`] says how far shelter
+//!   is known, for the terrain's raise fade.
 //! - **Noise atlas**: `Rgba8Unorm` 256², repeat, generated at startup.
 //! - **Cover layer array** ([`cover`], W5a): the snow and ash looks the host decoded
 //!   ([`CoverLayers`], from `sf_surface::cover::SurfaceLayer` records), `Rgba8Unorm` 512² × 4
@@ -31,9 +35,11 @@
 //! level against the height map, flat water, rain rings while it rains), W5b snow and ash cover
 //! (slope × shelter × cell, height blend, the look's normals, snow glints); W2's debug views stay
 //! (`surface debug exposure|cells|porosity|trails`). W6a: footprints cut the cover ([`trail`]: the
-//! trail ring at mesh-view binding 52, stamps from the host's [`TrailStamp`] messages).
+//! trail ring at mesh-view binding 52, stamps from the host's [`TrailStamp`] messages). S1a: whole
+//! [`Deformer`] meshes carve too ([`deform`]: a depth view from below, merged into the ring's B).
 
 mod cells;
+pub mod deform;
 pub mod cover;
 mod exposure;
 pub mod kickup;
@@ -46,6 +52,10 @@ mod uniform;
 mod tests;
 #[cfg(test)]
 mod shader_tests;
+#[cfg(test)]
+mod deform_tests;
+#[cfg(test)]
+mod shelter_offset_tests;
 
 use bevy_app::{App, Plugin, PostUpdate, Startup};
 use bevy_asset::{Assets, Handle, RenderAssetUsages};
@@ -57,15 +67,17 @@ use bevy_render::{ExtractSchedule, RenderApp};
 use bevy_shader::load_shader_library;
 use bevy_transform::TransformSystems;
 use sf_coords::WorldPos;
-use sf_surface::view::{NOISE_SIZE, WINDOW_CELLS, noise_atlas};
+use sf_surface::view::{NOISE_SIZE, WINDOW_CELLS, noise_atlas_mips};
 use bevy_time::Time;
 use sf_surface::layer::RIPPLE_TIME_WRAP_S;
+use sf_tunables::{AnyDef, Def, Source, Unit, def};
 use sf_weather_bevy::{CurrentWeather, SurfaceDebug, WorldSurface};
 
 pub use cells::{CellWrite, CellWrites};
 pub use cover::{CoverLayers, CoverSource};
+pub use deform::{DEFORM_SUBVIEW, DeformGap, DeformGaps, DeformGround, DeformSettings, Deformer, NoDeform};
 pub use kickup::{KickupSettings, KickupStats};
-pub use shelter::{CANOPY_SUBVIEW, NoSurfaceShelter, SHELTER_SUBVIEW, ShelterFoliage};
+pub use shelter::{CANOPY_SUBVIEW, FAR_CANOPY_SUBVIEW, FAR_SHELTER_SUBVIEW, NoSurfaceShelter, SHELTER_SUBVIEW, ShelterFoliage};
 pub use sf_surface;
 pub use trail::{TrailFrame, TrailStamp};
 pub use uniform::{FLAG_ASH, FLAG_PUDDLE, FLAG_RAISE, FLAG_SNOW, FLAG_WET, SurfaceUniform, U_SLOTS};
@@ -79,6 +91,100 @@ pub struct SurfaceWeatherCamera;
 /// as for `sf_wind_bevy::WindOrigin`). The window and the shelter map work in render space.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct SurfaceOrigin(pub WorldPos);
+
+/// `surface.shelter.far_half_m`: [`ShelterFarSettings::half_m`]. It must hold the raised cover's
+/// reach on the widest preset (casters end at the near-field handoff, 400 m less its 10 % band on
+/// High: 360 m) plus a recentre step and the hand-over band: 512 m x 0.875 - 64 m = 384 m. 1024²
+/// texels over it: 1 m, well under a tree crown or a roof.
+pub const SHELTER_FAR_HALF_M: Def<f32> = def!(float "surface.shelter.far_half_m" = 512.0)
+    .range(128.0, 2048.0)
+    .unit(Unit::Meters)
+    .help("The far shelter level covers this far around the camera each way (1024² texels): shelter under far trees and roofs is known out to it")
+    .source(Source::Industry("stable shadow cascades / clipmaps: the outer level covers the effect's reach (raise to the 400 m handoff)"));
+
+/// `surface.shelter.far_recenter_m`: [`ShelterFarSettings::recenter_m`]. 64 m = 8 near steps;
+/// with the 512 m level it keeps 384 m known (above High's 360 m caster reach).
+pub const SHELTER_FAR_RECENTER_M: Def<f32> = def!(float "surface.shelter.far_recenter_m" = 64.0)
+    .range(8.0, 512.0)
+    .unit(Unit::Meters)
+    .help("The far shelter level redraws once the camera moved this far from its centre")
+    .source(Source::Guess);
+
+/// `surface.shelter.far_lod_distance_m`: [`ShelterFarSettings::lod_distance_m`], the distance every
+/// caster's LOD level is picked at for the far maps. At 150 m a reference pixel (1440p, 70°) is
+/// ~0.15 m, so that level's error is far under the 1 m texel; it stays under the shortest preset's
+/// handoff less its band (Extremely low: 200 m - 20 m), so every static's last near level holds it
+/// and proxies (from the handoff) never cast.
+pub const SHELTER_FAR_LOD_DISTANCE_M: Def<f32> = def!(float "surface.shelter.far_lod_distance_m" = 150.0)
+    .range(0.0, 400.0)
+    .unit(Unit::Meters)
+    .help("Casters draw into the far shelter maps at the LOD level they show at this distance")
+    .source(Source::Industry("fixed content LOD per cascade (texel 1 m vs ~0.15 m pixel error at 150 m)"));
+
+/// This crate's tunables (live binding: tunables slice T2; the far level reads them each frame).
+pub const TUNABLES: &[&dyn AnyDef] = &[
+    &SHELTER_FAR_HALF_M,
+    &SHELTER_FAR_RECENTER_M,
+    &SHELTER_FAR_LOD_DISTANCE_M,
+    &deform::DEFORM_ENABLED,
+    &deform::DEFORM_WINDOW_M,
+    &deform::DEFORM_TEXEL_M,
+    &deform::DEFORM_RANGE_M,
+    &deform::DEFORM_MAX_ACTORS,
+    &deform::DEFORM_LOD_DISTANCE_M,
+    &deform::DEFORM_SLAB_BELOW_M,
+    &deform::DEFORM_GAP_TEXELS,
+    &deform::DEFORM_GROUND_STEP_M,
+    &deform::DEFORM_LOG_S,
+];
+
+/// The far shelter level (SW-5e; `sf_surface::view::ShelterLevel::far`): a second capture of
+/// the shelter and canopy maps around the camera, wider and coarser, so shelter is known
+/// (deterministically: fixed caster LOD, world-snapped texels) wherever the raised cover stands.
+/// Off: the near level alone, open sky past it, and the raise ends where it ends.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct ShelterFarSettings {
+    pub on: bool,
+    /// [`SHELTER_FAR_HALF_M`].
+    pub half_m: f32,
+    /// [`SHELTER_FAR_RECENTER_M`].
+    pub recenter_m: f32,
+    /// [`SHELTER_FAR_LOD_DISTANCE_M`].
+    pub lod_distance_m: f32,
+}
+
+impl Default for ShelterFarSettings {
+    fn default() -> Self {
+        Self {
+            on: SurfaceSettings::default().shelter,
+            half_m: SHELTER_FAR_HALF_M.default_value(),
+            recenter_m: SHELTER_FAR_RECENTER_M.default_value(),
+            lod_distance_m: SHELTER_FAR_LOD_DISTANCE_M.default_value(),
+        }
+    }
+}
+
+impl ShelterFarSettings {
+    /// The far level's geometry.
+    pub fn level(&self) -> sf_surface::view::ShelterLevel {
+        sf_surface::view::ShelterLevel::far(self.half_m, self.recenter_m)
+    }
+}
+
+/// How far from the camera shelter is known whatever the camera's place (SW-5e, written every
+/// frame from the settings): the far level's unfaded reach, the near level's with the far level
+/// off, `None` with the shelter off (exposure 1 everywhere: nothing changes with distance). The
+/// host passes it with its casters' reach to `sf_surface::view::raise_reach_m` and gives the
+/// result to the terrain (`TerrainSettings::raise_reach_m`).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct ShelterReach(pub Option<f32>);
+
+impl ShelterReach {
+    /// The reach for these settings.
+    pub fn of(surface: &SurfaceSettings, far: &ShelterFarSettings) -> Self {
+        Self(surface.shelter.then(|| if far.on { far.level().known_m() } else { sf_surface::view::NEAR_LEVEL.known_m() }))
+    }
+}
 
 /// A/B switches and the preset (surface-weather.md "A/B switches", "Budget"). Off parts keep
 /// the hook compiled in and clear its flags (one uniform branch per pixel).
@@ -151,6 +257,9 @@ pub struct SurfaceGpu {
     pub shelter: Handle<Image>,
     /// Leaf casters only (partial shelter).
     pub canopy: Handle<Image>,
+    /// The far level's maps (SW-5e), same formats.
+    pub far_shelter: Handle<Image>,
+    pub far_canopy: Handle<Image>,
     pub noise: Handle<Image>,
     /// The cover layer array ([`cover`]): a neutral placeholder until the host inserts
     /// [`CoverLayers`].
@@ -164,6 +273,10 @@ pub struct SurfaceStats {
     pub shelter_casters: usize,
     /// Leaf casters in the last canopy redraw.
     pub canopy_casters: usize,
+    /// The far level's redraws and its last redraw's solid and leaf casters (SW-5e).
+    pub far_redraws: u64,
+    pub far_casters: usize,
+    pub far_canopy_casters: usize,
     /// Cell texels written (strips and full rewrites).
     pub cell_texels: u64,
     pub full_uploads: u64,
@@ -173,6 +286,9 @@ pub struct SurfaceStats {
     pub cover_slices: u32,
     /// Trail stamps taken (W6a; within range, capped per frame).
     pub trail_stamps: u64,
+    /// Deformer captures requested (S1a) and the last one's casters.
+    pub deform_captures: u64,
+    pub deform_casters: usize,
 }
 
 /// System sets, in `PostUpdate` after transforms (order the game's origin and camera glue
@@ -189,8 +305,12 @@ impl Plugin for SurfaceWeatherPlugin {
             .init_resource::<CellWrites>()
             .init_resource::<SurfaceOrigin>()
             .init_resource::<SurfaceSettings>()
+            .init_resource::<ShelterFarSettings>()
+            .init_resource::<ShelterReach>()
             .init_resource::<SurfaceDebug>()
             .init_resource::<TrailFrame>()
+            .init_resource::<DeformSettings>()
+            .init_resource::<DeformGaps>()
             .add_message::<TrailStamp>()
             .configure_sets(
                 PostUpdate,
@@ -201,13 +321,14 @@ impl Plugin for SurfaceWeatherPlugin {
                     .after(VisibilitySystems::VisibilityPropagate)
                     .after(VisibilitySystems::CalculateBounds),
             )
-            .add_systems(Startup, setup)
+            .add_systems(Startup, (setup, deform::setup))
             .add_systems(
                 PostUpdate,
                 (
                     cells::update_cells,
                     cover::update_cover,
                     trail::update_trails,
+                    deform::update_deform,
                     debug_view,
                     shelter::update_shelter,
                     ripple_clock,
@@ -218,7 +339,7 @@ impl Plugin for SurfaceWeatherPlugin {
             )
             .add_systems(
                 PostUpdate,
-                shelter::mark_casters_visible
+                (shelter::mark_casters_visible, deform::mark_casters_visible)
                     .in_set(VisibilitySystems::CheckVisibility)
                     .after(SurfaceSystems)
                     .after(check_visibility_ranges),
@@ -227,6 +348,9 @@ impl Plugin for SurfaceWeatherPlugin {
         exposure::build(app);
         sf_sky_bevy::sun_view::add_sun_view::<shelter::ShelterFrame>(app);
         sf_sky_bevy::sun_view::add_sun_view::<shelter::CanopyFrame>(app);
+        sf_sky_bevy::sun_view::add_sun_view::<shelter::FarShelterFrame>(app);
+        sf_sky_bevy::sun_view::add_sun_view::<shelter::FarCanopyFrame>(app);
+        sf_sky_bevy::sun_view::add_sun_view::<deform::DeformerFrame>(app);
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
@@ -235,7 +359,7 @@ impl Plugin for SurfaceWeatherPlugin {
         let render_app = app.sub_app_mut(RenderApp);
         render_app
             .init_resource::<cells::PendingCellWrites>()
-            .add_systems(ExtractSchedule, (cells::extract_writes, (trail::extract, exposure::extract, render::extract_view).chain()));
+            .add_systems(ExtractSchedule, (cells::extract_writes, deform::extract_lod_distance, (trail::extract, exposure::extract, render::extract_view).chain()));
         render::build(render_app);
         trail::build(app);
     }
@@ -258,19 +382,14 @@ fn cells_image() -> Image {
     image
 }
 
+/// The noise atlas with its full mip chain (SW-6: the raised cover reads the drift prefiltered to
+/// its filter width; every other read is at level 0). The render world's sampler (47) filters
+/// between mips linearly.
 fn noise_image() -> Image {
-    let data: Vec<u8> = noise_atlas().into_iter().flatten().collect();
-    let mut image = Image::new(
-        Extent3d {
-            width: NOISE_SIZE,
-            height: NOISE_SIZE,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8Unorm,
-        RenderAssetUsages::RENDER_WORLD,
-    );
+    let extent = Extent3d { width: NOISE_SIZE, height: NOISE_SIZE, depth_or_array_layers: 1 };
+    let mut image = Image::new_uninit(extent, TextureDimension::D2, TextureFormat::Rgba8Unorm, RenderAssetUsages::RENDER_WORLD);
+    image.texture_descriptor.mip_level_count = NOISE_SIZE.trailing_zeros() + 1;
+    image.data = Some(noise_atlas_mips().into_iter().flatten().collect());
     image.sampler = repeat_linear();
     image
 }
@@ -290,6 +409,8 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         cells: images.add(cells_image()),
         shelter: shelter::shelter_handle(&mut images),
         canopy: shelter::shelter_handle(&mut images),
+        far_shelter: shelter::shelter_handle(&mut images),
+        far_canopy: shelter::shelter_handle(&mut images),
         noise: images.add(noise_image()),
         cover: images.add(cover::cover_image(&cover::pack(&[None, None]))),
     });

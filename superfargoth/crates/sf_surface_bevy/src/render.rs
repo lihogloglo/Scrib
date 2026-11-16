@@ -5,6 +5,7 @@
 //! `SURFACE_WEATHER` shader def (interiors pay nothing). Same shape as `sf_gi_bevy`'s
 //! `GiProbeVolumeView`. The shelter binding (45) holds the exposure pack (`crate::exposure`,
 //! SW-5), not the raw depth map; while the pack holds no map the uniform says "no shelter".
+//! The canopy binding (49) holds the far level's pack (SW-5e), with its own validity.
 
 use bevy_app::SubApp;
 use bevy_ecs::prelude::*;
@@ -21,7 +22,7 @@ use bevy_render::texture::GpuImage;
 use bevy_render::{Extract, Render, RenderSystems};
 
 use crate::exposure::ExposureGpu;
-use crate::uniform::{U_CANOPY, U_SHELTER};
+use crate::uniform::{U_CANOPY, U_FAR_CANOPY, U_FAR_SHELTER, U_SHELTER};
 use crate::{SurfaceGpu, SurfaceUniform, SurfaceWeatherCamera, U_SLOTS, cells, trail::TrailGpu};
 
 pub(crate) fn build(render_app: &mut SubApp) {
@@ -51,13 +52,15 @@ impl ViewState {
                 usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
-            // Cells and noise: filtered, repeating (the window is a torus, the noise tiles).
+            // Cells and noise: filtered, repeating (the window is a torus, the noise tiles); linear
+            // between the noise's mips (SW-6: the raise's drift; every other read is at level 0).
             sampler: device.create_sampler(&SamplerDescriptor {
                 label: Some("surface_weather_sampler"),
                 address_mode_u: AddressMode::Repeat,
                 address_mode_v: AddressMode::Repeat,
                 mag_filter: FilterMode::Linear,
                 min_filter: FilterMode::Linear,
+                mipmap_filter: MipmapFilterMode::Linear,
                 ..SamplerDescriptor::default()
             }),
             // The shelter and canopy gathers: unfiltered depth, clamped at the maps' edge.
@@ -111,6 +114,11 @@ pub(crate) fn extract_view(
         slots[U_SHELTER][0] = 0.0_f32.to_bits();
         slots[U_CANOPY][0] = 0.0_f32.to_bits();
     }
+    if !exposure.as_deref().is_some_and(ExposureGpu::far_valid) {
+        // The far pack likewise (SW-5e): no far level, open sky past the near one.
+        slots[U_FAR_SHELTER][0] = 0.0_f32.to_bits();
+        slots[U_FAR_CANOPY][0] = 0.0_f32.to_bits();
+    }
     if state.written != Some(slots) {
         let bytes: Vec<u8> = slots.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
         queue.write_buffer(&state.uniform, 0, &bytes);
@@ -124,7 +132,7 @@ pub(crate) fn extract_view(
             noise: view_of(&images, &gpu.noise)?,
             sampler: state.sampler.clone(),
             shelter_sampler: state.shelter_sampler.clone(),
-            canopy: view_of(&images, &gpu.canopy)?,
+            canopy: exposure.far_view().clone(),
             cover: view_of(&images, &gpu.cover)?,
             cover_sampler: state.cover_sampler.clone(),
             trail: trail.current_view().clone(),

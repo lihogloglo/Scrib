@@ -50,10 +50,14 @@ impl wesl::Resolver for Files {
         if package == "constants" && path.components.is_empty() {
             return Ok(Cow::Borrowed(CONSTANTS));
         }
-        if !matches!(package, "bevy_pbr" | "bevy_render" | "bevy_core_pipeline") {
+        // This crate's own shaders (embedded assets at run time).
+        let mut file = if package == "sf_sky_bevy" {
+            PathBuf::from(CRATE).join("src/shaders")
+        } else if matches!(package, "bevy_pbr" | "bevy_render" | "bevy_core_pipeline") {
+            vendor(package)
+        } else {
             return Err(missing("unknown package"));
-        }
-        let mut file = vendor(package);
+        };
         for c in &path.components {
             file.push(c);
         }
@@ -275,4 +279,11 @@ fn atmosphere_uniform_layout_matches_between_rust_and_wgsl() {
     let rust = bevy_pbr::resources::GpuAtmosphere::min_size().get();
     assert_eq!(u64::from(layouter[handle].size), rust, "WGSL vs Rust size");
     assert_eq!(bevy_pbr::MAX_MEDIUM_TERMS, 8, "types.wesl declares array<vec4<f32>, 8>");
+}
+
+/// NS-3: the night pass (stars, moons with their opacity and texture blend, glare) links and validates.
+#[test]
+fn night_sky_shader_compiles() {
+    let wgsl = compile("sf_sky_bevy::night", &[]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(wgsl.contains("texture_blend") && wgsl.contains("alpha"));
 }

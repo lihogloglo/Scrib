@@ -284,6 +284,78 @@ material issue in the NIF material mapping (additive/emissive blend), not part o
   stay on the NIF path until animation graphs drive cooked nodes. Gate: the bake summary's skipped
   count drops from 736 by the UV/material/particle-only models (~300), bake time unchanged.
 
+#### B5 as planned (b5-spec, 2026-11-16; design only, not built)
+
+**Cause, in code.** Two independent gaps. (1) *Eligibility:* `Placement::far_eligible` accepts only classes
+`Static | Door | Light` (`sf_world/src/placement.rs:132-138`); the adapter gives every `ACTI` class `Custom(2)`
+(`mw_world/src/source.rs:27,54`), scripted or not, so no fence segment enters the far bake or ends its own chain at
+the handoff. (2) *L1 content:* `build_l1` skips every submesh whose material alpha is not `Opaque`
+(`sf_lod/src/build.rs:150-156`, "phase 1"); `ClusterBuilder` makes one opaque mesh with vertex-colour albedo
+(`cluster.rs:64-83`, `proxy_material()` `:224`); `ProxyMaterial` is `StandardMaterial` + far-shadow extension, one
+handle per level, applied to every node mesh (`sf_lod_bevy/src/materials.rs:97`, `runtime.rs:66,333`). Emissive and
+alpha are in the cooked `Material` (`sf_model/src/lib.rs:196-206`) but the far path drops both. The owner's guess
+("emissive has no far version") is half right: the whole blended class has none. `ImpostorMaterial` is
+`Mask` only (`materials.rs:148`); light sprites are separate point batches (`build.rs:123-133`).
+
+**Reuse check.** *Bevy 0.20:* the `VisibilityRange` crossfade is a fragment discard
+(`visibility_range_dither`, `vendor/bevy_pbr/.../pbr.wesl:58`, prepass `pbr_prepass.wesl:52`) run before alpha, so it
+applies to blended materials too (stipple instead of smooth opacity; no opacity fade exists in Bevy). With 0.5-alpha
+layers the stipple is mild; an opacity fade would need our own extension and a per-entity weight (not planned).
+*Crates:* none for HLOD material merging. *Industry (unverified, from memory, mark guess):* UE HLOD merges
+translucent/emissive materials only by keeping them as separate material slots on the proxy (no baking of blend into
+opaque); Skyrim/FO4 object LOD (xLODGen) bakes opaque and alpha-tested statics into atlases and leaves glows and
+glass out, with fx drawn as near-only, which is the "pops in" behaviour we have; OpenMW object paging merges static
+geometry and keeps blend state per batch (guess). So the standard is "separate blended batch, original material
+class", not "bake into the opaque proxy".
+
+**Design (general, framework stays game-agnostic).**
+- **a. L1 keeps blended parts** (`sf_lod`): in `build_l1`, `AlphaMode::Blend` submeshes go to a second
+  `ClusterBuilder` (the same simplify budget), per-vertex albedo * alpha from the existing `albedo` path, grouped by
+  quantised emissive (one group in practice). `build_parent` carries the blended mesh through L2 and drops it at L3.
+  The node mesh stays `Cooked::Static` with one more submesh whose `Material` is `{alpha: Blend, emissive, unlit
+  false}` (the blob already stores materials; no format change, bump `lod.l1` and `lod.l2` versions). `Mask` parts stay
+  out (needs far textures, open question).
+- **b. Blended proxy material** (`sf_lod_bevy`): `FarMaterials.blend[level]`, a `ProxyMaterial` twin with
+  `AlphaMode::Blend`, depth write off, emissive from the submesh, no shadow cast, fog via `TranslucentFog`
+  like `LightSpriteMaterial` (`runtime.rs:73`); `spawn_parts` picks it when the submesh material is `Blend`. Same
+  `VisibilityRange` lead bands, so the invariant (no node fades before its proxy is drawn) holds.
+- **c. Eligibility**: new `PlacementFlags::FAR_PROXY` (`1 << 6`): "custom class opts into far proxies".
+  `far_eligible` becomes `... && (class in {Static,Door,Light} || flags.contains(FAR_PROXY))`. The adapter
+  (`mw_world::source::placement`) sets it for `ACTI` whose record has no script and whose id is not in
+  `MwFarSource::script_tokens` (`mw_bake/src/far.rs:46,52`). Flags are serialised (`source.rs:317`): bump the
+  world-source version. Scripted activators stay near-only (safe: scripts can hide or move them).
+  Rest-pose cook (`mesh.rest`, B2) then applies automatically to the fence NIFs (UV-animated, so `mesh.cook`
+  skips them).
+- **d. Handoff fade**: nothing new. The near fence NIF already has the B1 `SubtreeRange` crossfade (dither works on
+  blended per the reuse check); the far part fades in over the same lead band. Light sprites stay (Light placements,
+  independent); re-judge at GF-1 once the field is visible, the "spots in the wall" should then sit in the field.
+- **Cost (to measure, not decided):** the fence is ~hundreds of `ex_gg_fence_s_*` placements (count unknown: print it
+  in the bake summary). L1 adds at most one blended draw per 128 m node holding fence; segments are 3 planes
+  (a few dozen tris), so triangles are negligible after simplification, overdraw of three 0.5 layers is the real
+  cost (same as near). Perf reported per GF-1 in the ledger.
+- **Removal path:** `FAR_PROXY` is permanent (general opt-in). Nothing temporary; if far textures arrive for `Mask`
+  parts, they join the same second batch.
+
+**Tests (CPU).** (1) `far_eligible`: `Custom(2)` without the flag false, with it true, `NO_LOD` still wins.
+(2) adapter: scriptless `ACTI` placement carries `FAR_PROXY`, scripted one (id in `script_tokens`) does not.
+(3) `build_l1` on a model of one `Blend` part (alpha 0.5, emissive 0.3): node mesh has a `Blend` submesh with that
+emissive and vertex alpha 0.5, no opaque submesh; mixed model keeps both. (4) `build_parent` keeps the blended
+submesh at L2, drops it at L3. (5) fade weights of near and far ranges sum to 1 across the lead band (existing
+invariant test, extended with a blended case). Rendering is not asserted (no automated visual checks).
+
+**Slices.** **B5a** (`sf_lod` + `sf_lod_bevy`): a + b, tests 3-4, bake versions; verify with a synthetic model.
+**B5b** (`sf_world` + `mw_world` + `mw_bake`): c + d, tests 1, 2, 5, rebake, print fence count/triangles in the
+bake summary; ledger line in `docs/ledger/statics.md`; update wiki `statics-and-lod.md`.
+
+**Owner check GF-1** (scene `ghostfence-far`, camera ~1.9 km SW, 120 m up, day and night, awaiting owner): the
+glowing field is visible as a wall from the start (no ring pop), stays visible while flying in, and the near panel
+replaces it with no sudden pop (stipple dissolve, ~one lead band, at 400 m x handoff scale); look for double
+brightness at the handoff (near + far both drawn), seams at 128 m node borders, and whether the blue light sprites
+now sit inside the field. F5 tints L1 green: fence segments should now tint.
+
+**Owner decision (2026-11-16):** far fence panels use the exact near material (alpha 0.5, emissive 0.3), so they read as
+the same wall; the look fix (near wall reads as opaque white) stays in GF-2 and carries to the far copy.
+
 ### Aerial perspective and haze (now)
 
 Bevy's atmosphere already fogs every opaque pixel with the aerial-view LUT. The shots look clear

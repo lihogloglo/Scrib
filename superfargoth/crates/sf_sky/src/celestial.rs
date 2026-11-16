@@ -133,6 +133,13 @@ impl Orbit {
         SkyPosition::from_equatorial(declination, hour_angle, latitude, self.north_rotation())
     }
 
+    /// A body in the local horizon frame: `enu` points toward it (x east, y north, z up; any
+    /// length, zero: straight down).
+    pub fn horizontal(&self, enu: Vec3) -> SkyPosition {
+        let local = Vec3::new(enu.x, enu.z, -enu.y).normalize_or(Vec3::NEG_Y);
+        SkyPosition { direction: self.north_rotation() * local, elevation: local.y.clamp(-1.0, 1.0).asin() }
+    }
+
     /// A moon on the ecliptic at `phase` (0 new, 0.5 full): it runs ahead
     /// of the sun in longitude by its phase, so it transits later (full
     /// moon at midnight).

@@ -719,11 +719,55 @@ pub struct RenderShadowLodOrigin(pub Vec3);
 // superfargoth patch (own, SW-5: per-view LOD origin)
 /// A render-world resource (optional): views, by [`RetainedViewEntity`], that resolve
 /// visibility ranges (LODs: GPU culling and the dither) from a point of their own instead of
-/// their camera's. An app's depth view that must not change with the camera (a top-down
-/// occlusion map) puts its centre here, so every caster's level follows the map, not the
-/// camera. Absent, or a view not listed: stock behaviour.
+/// their camera's. A view that must not change with the camera (a cached lamp shadow face)
+/// puts its own point here, so every caster's level follows that point, not the camera. (A
+/// view whose levels must not change with its own position either, such as a world-anchored
+/// occlusion map, uses [`RenderViewLodDistances`].) Absent, or a view not listed: stock
+/// behaviour.
 #[derive(Default, Resource, Debug, Clone)]
 pub struct RenderViewLodOrigins(pub HashMap<RetainedViewEntity, Vec3>);
+
+// superfargoth patch (own, SW-5d: fixed per-view LOD distance)
+/// A render-world resource (optional): views, by [`RetainedViewEntity`], that resolve every
+/// mesh's visibility range (LOD: GPU culling and the dither) as if the mesh stood this many
+/// world units from the viewer, wherever it is. A view that must draw the same level of every
+/// mesh whatever its position (a world-anchored top-down occlusion map) lists itself here:
+/// `0.0` draws each mesh's finest level (the one visible at distance 0), a larger distance a
+/// fixed coarser one. Such a view never dithers: a mesh whose range holds the distance (as
+/// `VisibilityRange::is_visible_at_all`) draws whole, any other is culled
+/// ([`resolve_visibility_range`]). Wins over [`RenderViewLodOrigins`] for a view listed in
+/// both. Absent, or a view not listed: stock behaviour.
+#[derive(Default, Resource, Debug, Clone)]
+pub struct RenderViewLodDistances(pub HashMap<RetainedViewEntity, f32>);
+
+// superfargoth patch (own, SW-5d: fixed per-view LOD distance)
+/// The CPU twin of the shaders' visibility-range rule (`mesh_preprocess.wesl` culling,
+/// `mesh_functions::get_visibility_range_dither_level`), kept for tests: `lod_range` is a range
+/// as the GPU stores it (start margin, end margin), `camera_distance` the mesh's distance from
+/// the view's LOD origin, `lod_fixed_distance` the view's [`ViewUniform::lod_fixed_distance`]
+/// (negative: off). `None`: culled; `Some(level)`: drawn at that dither level (0 = whole).
+pub fn resolve_visibility_range(
+    lod_range: Vec4,
+    camera_distance: f32,
+    lod_fixed_distance: f32,
+) -> Option<i32> {
+    if lod_fixed_distance >= 0.0 {
+        let d = lod_fixed_distance;
+        return (d >= lod_range.x && d < lod_range.w).then_some(0);
+    }
+    if camera_distance < lod_range.x || camera_distance >= lod_range.w {
+        return None;
+    }
+    let (offset, bounds) = if camera_distance >= lod_range.z {
+        (0, lod_range.zw())
+    } else {
+        (-16, lod_range.xy())
+    };
+    // Mirrors the shader's `i32(round(..))`, clamped to 0..=16 next.
+    #[allow(clippy::cast_possible_truncation)]
+    let level = ((camera_distance - bounds.x) / (bounds.y - bounds.x) * 16.0).round() as i32;
+    Some(offset + level.clamp(0, 16))
+}
 
 #[derive(Clone, ShaderType)]
 pub struct ViewUniform {
@@ -787,6 +831,11 @@ pub struct ViewUniform {
     // superfargoth patch (own, FLICKER-1: origin rebase)
     /// [`OriginRebase`] of this view's camera (zero for views without one).
     pub origin_rebase: Vec3,
+    // superfargoth patch (own, SW-5d: fixed per-view LOD distance)
+    /// The view's [`RenderViewLodDistances`] entry: every mesh resolves its visibility range at
+    /// this distance, undithered. Negative (`-1.0`): off, ranges resolve from
+    /// `lod_view_world_position` as stock.
+    pub lod_fixed_distance: f32,
 }
 
 #[derive(Resource)]
@@ -1235,6 +1284,8 @@ pub fn prepare_view_uniforms(
     shadow_lod_origin: Option<Res<RenderShadowLodOrigin>>,
     // superfargoth patch (own, SW-5: per-view LOD origin)
     view_lod_origins: Option<Res<RenderViewLodOrigins>>,
+    // superfargoth patch (own, SW-5d: fixed per-view LOD distance)
+    view_lod_distances: Option<Res<RenderViewLodDistances>>,
 ) {
     let view_iter = views.iter();
     let view_count = view_iter.len();
@@ -1330,6 +1381,13 @@ pub fn prepare_view_uniforms(
             }
         };
 
+        // superfargoth patch (own, SW-5d: fixed per-view LOD distance): a listed view's fixed
+        // distance (never negative), else off.
+        let lod_fixed_distance = view_lod_distances
+            .as_deref()
+            .and_then(|d| d.0.get(&extracted_view.retained_view_entity).copied())
+            .map_or(-1.0, |d| d.max(0.0));
+
         let view_uniforms = ViewUniformOffset {
             offset: writer.write(&ViewUniform {
                 clip_from_world,
@@ -1352,6 +1410,8 @@ pub fn prepare_view_uniforms(
                 frame_count: frame_count.0,
                 // superfargoth patch (own, FLICKER-1: origin rebase)
                 origin_rebase: origin_rebase.map_or(Vec3::ZERO, |r| r.0),
+                // superfargoth patch (own, SW-5d: fixed per-view LOD distance)
+                lod_fixed_distance,
             }),
         };
 

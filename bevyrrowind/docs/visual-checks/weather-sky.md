@@ -54,6 +54,14 @@ silently disabled), and the sun is fully hidden behind thick cloud.
   texture at day 168, Secunda half-lit at 162; at dusk (`ns-dusk-stars`) Masser shows pale against the twilight.
 - Source: nightsky.
 - Owner 2026-11-15 (repeated, also RO-16 2026-11-06): the white moon (Secunda) is still never visible. Undeferred: known bug, cause not diagnosed.
+- Fix 2026-11-17 (NS-3): cause = our invented moon path kept Secunda low (4.6° at 21:30 on days 0 and 168, never above 40°),
+  behind Balmora's valley sides; the disk and its 16 textures were fine. Now OpenMW's moon model drives both moons (rise
+  1.2 h later each day on a 24-day cycle, ~20 h arc, shown 15:00-07:00 and only once ~30-40° up; NW rise, overhead, SE
+  set; OpenMW sizes 21°/9°). Secunda shows every night of the cycle, 4-13 h a night. Look for: `scene ns-moons-full`
+  (day 168, 01:00): both full in the north-west, 70° and 52° up; `scene ns-moons-quarter` (day 162, 21:30): look
+  straight up, both half-lit near the zenith; new game's first night: Masser from ~22:00 NNW, Secunda ~23:40 NW, each a
+  plain star-blocking disk first, its texture fading in as it climbs. Days only advance with the clock running (P/T;
+  `[`/`]` stay in the same day). Status: awaiting owner.
 
 ### NS-4: No red streaks at night (`scene ns-night-clear`, `scene lt-torch-shadows`)
 - Kind: game location. Bug: with `--clouds clear` red/pink streaks crossed every Balmora night sky. Cause: the cirrus
@@ -171,6 +179,25 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Owner 2026-11-15 (after the fix): night puffs good, "much better"; likes that they drift with the wind. Status: confirmed with
   follow-up (look rework later).
 
+### SW-8: Legs and bodies carve deep snow (surface-weather.md "S1 deformer capture"; owner go 2026-11-16)
+- Kind: game location. `view "Skaal Village" --hour 12 --weather snow`, console `surface set snow 1`, P to pause the clock.
+- Look for: wading leaves one continuous trench the width of the legs (not a row of prints), deeper only where legs go
+  below the snow; crouch: deeper; an NPC walking past carves its legs; a lying body carves its shape; first person: the
+  legs carve, no stray arm-shaped hole; running fast: no gaps in the trench. Snow 0.4 (thin): carves only as deep as the
+  snow is. Log: `surface/deform_*` counters non-zero, no "surface deform: no ground height hook" line.
+- Known: the 16 m window follows the tagged actor nearest the camera (an NPC between camera and player can take it);
+  first-person arms and held items do not carve; gap-fill prints also puff. No berm or spray yet (S2, S4).
+- Owner 2026-11-17 (Skaal, `--weather snow` 12:00; snow cover command not logged): "very bad": the trail made by the
+  character is not centred on it; patches of deformed snow keep appearing next to the character ("still": maybe the
+  W6 foot-stamp trail too). Diagnosis queued (trail-offset: origin/height/focus hypotheses, end-to-end tests). Status: failed.
+- Owner 2026-11-17, run 2 (`surface set snow 1`, 1P and 3P alike; `surface debug trails`): foot prints (blue) and lips
+  (red) sit correctly under the feet; the capture's groove (green, ring B) has leg width and follows the walk but is carved
+  a few metres to the right of the character, roughly constant offset. Lead: capture <-> ring mapping (sun_view depth
+  view vs the ring's frame). Status: failed (diagnosis running).
+- Fix 2026-11-17 (trail-offset): Bevy's shadow pass ignores the requested viewport, so the capture was drawn at 2x over the
+  512² target; it now projects over the whole target. Owner 2026-11-17 (run 3): "the trail is fixed". Status: trail position
+  confirmed; crouch, NPCs, lying bodies, first person not yet reported.
+
 ### SW-6: Knee-deep snow and footprints (surface-weather.md W6a prints + W6b raised geometry)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`,
   console `surface set snow 1`; walk (third person) over open snowy ground, look back. `surface debug trails`: prints blue,
@@ -203,6 +230,11 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Fix 2026-11-15 (bugfix-11-15, raise only): the raise was coverage x amount x depth with coverage at the vertex (cobble/grout  heights averaged to their mean), so drift patches rose stones and all. Now raise = depth x saturate((amount - top)/(1 - top)),  top = the layer's 90th-percentile height (baked, terrain layer table v4) mixed with drift: snow fills the grout first (shading),  the ground rises only once the stones are buried. Look for: a terrain road at `surface set snow 0.4`: snow in the grout, stones  and feet at ground level; `snow 1`: the full knee-deep raise with prints. Status: raise awaiting owner (shelter resets: SW-5).
 - Owner 2026-11-16 (Skaal `surface set snow 1`): raise maybe: better (only snow rises), but it reads as an extruded mesh, a
   vertical wall with jagged edges along the drift border; maybe raises too much. Wants a smooth ramp at the edge. Status: raise maybe.
+- Fix 2026-11-16 (SW-6, smooth ramp): the raise threshold amplified tiny changes into a wall (old worst slope 47-72°); now
+  a smooth, slope-limited field: edges ramp over ~4 m and never stand steeper than 30° (snow's angle of repose); over stony
+  ground at full snow it rises only part of the way (gentle undulation, answers "maybe raises too much"). Look for: Skaal
+  `surface set snow 1`: drift and road edges are soft ramps, no vertical wall or jagged steps; `snow 0.4` on paving: still
+  flat (snow in the grout only). Known left: roof drip lines still steep (SW-6b queued). Status: awaiting owner.
 
 ### SW-5: Snow and ash cover (surface-weather.md W5)
 - Kind: game location. Ash: `powershell -File bevyrrowind/tools/run_dev.ps1 view "Ghostgate" --hour 12 --weather ashstorm`,
@@ -239,9 +271,23 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   A/B: console `flip raise` (F1 help, "Snow and ash" line) toggles the raise alone (off = flat cover, same look). Known
   left: past ~64 m (shelter map edge) the ground under far trees reads open and raised until it enters the map.
   Status: awaiting owner.
+- Owner 2026-11-16 (tex viewer, Skaal snow): `surface.shelter` redraws (about half the rate of the other maps) change the whole map: trees gain or lose shelter at each redraw; `surface.exposure` shows red moving with the player and blue patches flashing then fading at each update. Cause: casters pick their LOD by the map centre, which jumps 16 m per redraw (SW-5d in progress).
+- Fix 2026-11-17 (SW-5d + SW-5e): (d) the shelter, canopy and rain-occlusion maps draw every tree/roof at its finest level
+  whatever the camera or map centre (vendored patch `RenderViewLodDistances`), so a redraw 16 m on gives the same texels;
+  (e) a second, far shelter map out to ±512 m (1 m texels, a fixed coarser level of each caster), blended in at 56-64 m, so
+  trees far away shelter the snow under them too; the raise now ends where shelter is known (360 m High, 270 m Low).
+  Look for: Skaal Village `surface set snow 1`, P to pause; walk to a tree from ~300 m and back: the snow under and round
+  it never rises or sinks on the way; `tex show surface.shelter` while walking 100 m: trees no longer gain/lose shelter
+  at each redraw (the map just slides); `tex show surface.exposure`: no blue flashes. Also rain under far trees: ground
+  under the canopy stays drier at any distance. Status: awaiting owner.
+- Owner 2026-11-17 (run 2, Skaal `surface set snow 1`): some trees' sheltered area is offset from the tree, sometimes
+  not; the offset can update suddenly (a flat pit beside the player under a tree in the shot). Likely the same root cause
+  as SW-8's offset (both are sun_view depth views); SW-5e far level / near blend also suspect. Status: failed.
+- 2026-11-17: shelter offsets handed to the owner's separate shelter session (not this one). Lead from a stopped diagnosis
+  (`.sessions/_archive/shelter-offset.md`): rigid held props are shelter casters, so a redraw stamps a sheltered patch where
+  the character stood.
 
 ### WE-13: Local storm seen from outside (CW-1, distant-weather.md "CW-1 Storm shape"; follows WE-10)
-- Owner 2026-11-16 (tex viewer, Skaal snow): `surface.shelter` redraws (about half the rate of the other maps) change the whole map: trees gain or lose shelter at each redraw; `surface.exposure` shows red moving with the player and blue patches flashing then fading at each update. Cause: casters pick their LOD by the map centre, which jumps 16 m per redraw (SW-5d in progress).
 - Kind: game location. `bash bevyrrowind/tools/owner_launch.sh scene we3-ridge`, then BRP `bevyrrowind/set {"weather":
   "thunderstorm", "region": "Ascadian Isles Region", "transition_hours": 0}` (look east/south-east) and `"ashstorm"` in
   `"Ashlands Region"` (look north); still camera, then pan slowly. A/B: relaunch with `--off stormshape` (old region column).

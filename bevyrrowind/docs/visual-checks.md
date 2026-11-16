@@ -81,7 +81,7 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (49)
+### Awaiting owner (53)
 
 WA-7 | awaiting owner | [terrain-water](visual-checks/terrain-water.md) | Water chain gated by visible water (CW-10a): release, `view "Balmora"` street then the river bank at noon, `set water.gate.visible on`, F3 GPU water passes before/after; turning toward/away from water: no pop, reflections valid (2026-11-17)
 WA-6 | partial (2026-11-13: storm sea far too tame; moving white shore band in rivers/lakes, still seen 2026-11-15) | [terrain-water](visual-checks/terrain-water.md) | The sea follows the weather (W-WIND): `scene wa-seyda-noon`, BRP weather thunderstorm and back to clear (`time_scale` 120); smooth roughening and calming, no pop or re-roll; A/B `--off seawind` (2026-11-13)
@@ -144,6 +144,8 @@ FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)
 RG-1 | awaiting owner | [streaming](visual-checks/streaming.md) | Nothing pops in after a door fade or the loading screen lifts (reveal gate W1; `reveal:` lines)
 DR-5 | awaiting owner (2026-11-17, CW-9 opt-in) | [streaming](visual-checks/streaming.md) | Interiors park the exterior (`set stream.interior.disable_exterior on`): door in and out unchanged, F3 entities/main ms drop indoors
+NS-3 | awaiting owner (2026-11-17: OpenMW moon model; cause: invented path kept Secunda low) | [weather-sky](visual-checks/weather-sky.md) | Masser and Secunda
+SW-8 | confirmed with follow-up (owner 2026-11-17: trail fixed after the viewport fix; crouch/NPC/1P not reported) | [weather-sky](visual-checks/weather-sky.md) | Legs and bodies carve deep snow (depth view from below): Skaal Village `surface set snow 1`, wade, crouch, NPC passing, first person
 
 ### Partial (9)
 
@@ -168,16 +170,14 @@ PUI-SV3 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Trade scree
 PUI-SV4 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Training list over the dialogue: top 3 skills, prices, refusals, buy +1 and 2 h pass, Back (A3)
 SV-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Quicksave / quickload; load sometimes spawns below the floor
 
-### Known bug (31)
+### Known bug (29)
 PL-9 | known bug (owner 2026-11-15, not diagnosed) | [player-ui](visual-checks/player-ui.md) | Player run looks sideways: the character runs on a diagonal to its travel
 RO-23 | confirmed by owner 2026-11-16 (fix smoke-2: self_lit in exposed units) | [rendering](visual-checks/rendering.md) | Carried-torch handles unnaturally bright at night (fully lit in nits at EV 7, night floor EV 3.5 = ~11x)
 
-NS-3 | known bug (owner 2026-11-15, repeated: Secunda never visible; not diagnosed) | [weather-sky](visual-checks/weather-sky.md) | Masser and Secunda
 SH-13 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [shadows](visual-checks/shadows.md) | Point-light (lamp) shadows
 SH-14 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [shadows](visual-checks/shadows.md) | Contact-shadow bands at object edges
 GF-1 | known bug (owner 2026-11-15, repeated: fence panels pop with distance; no far copy, B5) | [rendering](visual-checks/rendering.md) | Ghostfence appears complete, never late
 DL-4 | known bug | [rendering](visual-checks/rendering.md) | Rug-edge black bands under RT
-RO-12 | known bug (owner 2026-11-15: not seen in a long while; close if still absent) | [rendering](visual-checks/rendering.md) | Bright outline around characters (2026-10-30)
 RO-18 | known bug (owner 2026-11-15: not reproduced; owner retries flying high) | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
 RO-19 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [rendering](visual-checks/rendering.md) | Very short shadow flickers in Balmora (2026-11-11)
 RO-22 | awaiting owner | [rendering](visual-checks/rendering.md) | Near/far handoff band: no gaps or doubles with GPU-culled statics, A/B `--off cpuculltag` (perf-push P3, 2026-11-12)
@@ -201,8 +201,8 @@ RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn
 WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
 WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)
 SW-7 | confirmed with follow-up (owner 2026-11-15: night puffs good, "much better", drift with the wind liked; look rework still open) | [weather-sky](visual-checks/weather-sky.md) | Kick-up puffs (W7): Skaal Village `surface set snow 1` walk/run/sprint: white-blue powder puffs at each foot-down, bigger when running, lit like the snow (shadow, night); Ghostgate `surface set ash 1`: grey-brown puffs drift downwind; `--off kickup`
-SW-6 | raise maybe (owner 2026-11-16: only snow rises now, but edges look extruded, vertical and jagged; smooth the ramp); open: shelter resets, shin trails, ash depth | [weather-sky](visual-checks/weather-sky.md) | Knee-deep snow + footprints (W6a/W6b): Skaal Village `surface set snow 1`, walk: snow raised 0.45 m near the camera, easing out by ~43 m, feet sunk, prints cut to the ground with lips, no smear with DLSS; live `off trails` / `off cover`
-SW-5 | awaiting owner (SW-5c 2026-11-16: raise camera-free on every LOD + F1 `raise`; SW-5b failed: still sank; coverage OK 2026-11-06) | [weather-sky](visual-checks/weather-sky.md) | Snow and ash cover: Ghostgate `surface set ash 1`, Skaal Village `surface set snow 1`; flat tops covered, walls/slopes bare, patchy at 0.4, none under roofs or on characters, snow glints; A/B `--off cover`
+SW-6 | awaiting owner (SW-6 smooth ramp 2026-11-16, repose-limited 30°; was: raise maybe, extruded jagged edges); open: shelter resets, shin trails, ash depth | [weather-sky](visual-checks/weather-sky.md) | Knee-deep snow + footprints (W6a/W6b): Skaal Village `surface set snow 1`, walk: snow raised 0.45 m near the camera, easing out by ~43 m, feet sunk, prints cut to the ground with lips, no smear with DLSS; live `off trails` / `off cover`
+SW-5 | failed (owner 2026-11-17: shelter area offset from some trees, jumps; same lead as SW-8; SW-5d+5e built) | [weather-sky](visual-checks/weather-sky.md) | Snow and ash cover: Ghostgate `surface set ash 1`, Skaal Village `surface set snow 1`; flat tops covered, walls/slopes bare, patchy at 0.4, none under roofs or on characters, snow glints; A/B `--off cover`
 AU-6 | known bug | [audio](visual-checks/audio.md) | Third-person listener in the character head, not the camera (2026-10-30)
 FG-8 | known bug | [weather-sky](visual-checks/weather-sky.md) | Weather fog vanishes at night (2026-10-30)
 

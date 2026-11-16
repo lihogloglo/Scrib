@@ -17,6 +17,7 @@ import bevy_pbr::render::pbr_types::{
 import sf_surface_bevy::layer::{
     SurfaceUniform, SurfaceInput, CLASS_STATIC, CLASS_DYNAMIC, FLAG_PUDDLE, FLAG_RAISE, apply_surface_layer,
     surface_porosity, surface_height_of, surface_raise_amounts, surface_raise_tops, surface_raise_of,
+    surface_raise_filter_m,
     surface_ring_at,
 };
 
@@ -26,7 +27,9 @@ import sf_surface_bevy::layer::{
 @group(0) @binding(46) var surface_noise: texture_2d<f32>;
 @group(0) @binding(47) var surface_sampler: sampler;
 @group(0) @binding(48) var surface_shelter_sampler: sampler;
-@group(0) @binding(49) var surface_canopy: texture_2d<f32>;
+// The far shelter level's exposure pack (SW-5e; the binding the raw canopy map held until SW-5
+// moved the leaves into the pack's G).
+@group(0) @binding(49) var surface_far_shelter: texture_2d<f32>;
 // The cover layer array (W5a; `cover.rs`: slices 2c albedo (sRGB bytes) + height, 2c + 1 normal
 // XY + roughness + AO, c = 0 snow, 1 ash) and its trilinear, anisotropic, repeating sampler.
 @group(0) @binding(50) var surface_cover: texture_2d_array<f32>;
@@ -36,20 +39,33 @@ import sf_surface_bevy::layer::{
 // Last frame's ring (W6b: motion vectors of the raised cover; the same ring when no pass ran).
 @group(0) @binding(53) var surface_trail_previous: texture_2d<f32>;
 
+/// The raise's filter width (m; SW-6 `surface_raise_filter_m`) for this view's covers: their
+/// depths summed (each channel with a look, whether or not it lies anywhere now, so the width holds
+/// still while snow comes and goes), the repose `tan_repose`, at least `min_m`, the caller's
+/// high-point texel `base_texel_m` (terrain: its coarsest layer level).
+fn surface_raise_filter(tan_repose: f32, min_m: f32, base_texel_m: f32) -> f32 {
+    let u = surface_uniform;
+    let depth = select(0.0, u.snow_layer.y, u.snow_layer.x > 0.0) + select(0.0, u.ash_layer.y, u.ash_layer.x > 0.0);
+    return surface_raise_filter_m(depth, tan_repose, min_m, base_texel_m);
+}
+
 /// The raised cover over the ground point `p` (render space, ground normal `n`, the surface's
-/// high point `top` 0..1 on the shading's `SurfaceInput.height` scale, tops prefiltered to `texel_m`
-/// m, on terrain one fixed world scale, SW-5c; W6b): x this frame's raise (m), y the same without the trail (the cover's own slope, for
+/// high point `top` 0..1 on the shading's `SurfaceInput.height` scale, smooth: terrain's layers'
+/// p90, bilinear), the tops prefiltered to `filter_m` m (`surface_raise_filter`; one world scale on
+/// every LOD, SW-5c; W6b, SW-6): x this frame's raise (m), y the same without the trail (the cover's own slope, for
 /// normals), z last frame's (last frame's ring and placement; the cells and shelter as now). It
 /// rises with the bury depth (`surface_raise_tops`: the amount past the relief's high point,
-/// swung by the drift patches): a thin cover in the grout stays shading only. Both terrain
-/// passes (main and prepass, `SURFACE_WEATHER` / `SURFACE_WEATHER_PREPASS`) call this one function.
-fn surface_raise_at(p: vec3<f32>, n: vec3<f32>, top: f32, texel_m: f32) -> vec3<f32> {
+/// swung by the drift patches): a thin cover in the grout stays shading only, and the trail-free
+/// raise stands no steeper than the repose angle over any tops (amount edges keep their own ramp).
+/// Both terrain passes (main and prepass, `SURFACE_WEATHER` / `SURFACE_WEATHER_PREPASS`) call this
+/// one function.
+fn surface_raise_at(p: vec3<f32>, n: vec3<f32>, top: f32, filter_m: f32) -> vec3<f32> {
     let u = surface_uniform;
-    let a = surface_raise_amounts(u, surface_cells, surface_sampler, surface_shelter, surface_canopy, surface_shelter_sampler, p, n);
+    let a = surface_raise_amounts(u, surface_cells, surface_sampler, surface_shelter, surface_far_shelter, surface_shelter_sampler, p, n);
     if a.x <= 0.0 && a.y <= 0.0 {
         return vec3(0.0);
     }
-    let c = surface_raise_tops(u, surface_noise, surface_sampler, surface_cover, surface_cover_sampler, a, p.xz, top, texel_m);
+    let c = surface_raise_tops(u, surface_noise, surface_sampler, surface_cover, surface_cover_sampler, a, p.xz, top, filter_m);
     if a.x <= c.x && a.y <= c.y {
         return vec3(0.0);
     }
@@ -57,14 +73,14 @@ fn surface_raise_at(p: vec3<f32>, n: vec3<f32>, top: f32, texel_m: f32) -> vec3<
     let then = surface_ring_at(surface_trail_previous, surface_sampler, u.trail_prev, u.trail_prev_cells, p.xz);
     return vec3(
         surface_raise_of(u, a, c, now, u.trail.w),
-        surface_raise_of(u, a, c, vec2(0.0), 0.0),
+        surface_raise_of(u, a, c, vec3(0.0), 0.0),
         surface_raise_of(u, a, c, then, u.trail_prev.w),
     );
 }
 
 /// The layer on the view's resources.
 fn apply_surface_weather(pbr: ptr<function, PbrInput>, s: SurfaceInput) {
-    apply_surface_layer(pbr, s, surface_uniform, surface_cells, surface_sampler, surface_shelter, surface_shelter_sampler, surface_noise, surface_canopy, surface_cover, surface_cover_sampler, surface_trail);
+    apply_surface_layer(pbr, s, surface_uniform, surface_cells, surface_sampler, surface_shelter, surface_shelter_sampler, surface_noise, surface_far_shelter, surface_cover, surface_cover_sampler, surface_trail);
 }
 
 /// A layer input for `pbr` of class `surface_class`: porosity from the material (Lagarde's

@@ -67,6 +67,9 @@ fn uniform_matches_the_wgsl_struct() {
             ("trail_cells", "vec4<i32>"),
             ("trail_prev", "vec4<f32>"),
             ("trail_prev_cells", "vec4<i32>"),
+            ("far_clip_from_world", "mat4x4<f32>"),
+            ("far_shelter", "vec4<f32>"),
+            ("far_canopy", "vec4<f32>"),
         ]
     );
     assert_eq!(
@@ -84,9 +87,12 @@ fn uniform_matches_the_wgsl_struct() {
             U_TRAIL_CELLS,
             U_TRAIL_PREV,
             U_TRAIL_PREV_CELLS,
+            U_FAR_CLIP,
+            U_FAR_SHELTER,
+            U_FAR_CANOPY,
             U_SLOTS
         ],
-        [0, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17]
+        [0, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 21, 22, 23]
     );
     let konst = |name: &str| -> u32 {
         let line = wgsl
@@ -692,65 +698,101 @@ fn origin_shift_keeps_the_world_anchored_inputs() {
     assert_eq!(stats(&app).full_uploads, full, "a shift rewrites nothing");
 }
 
-/// SW-5 ("the camera was the main issue"): a LOD level casts by its distance from the map
-/// centre, so two redraws around one centre with the camera 10 m apart draw the same casters and
-/// mark the same ones visible (a tree's near level 15 m from the centre, its far level not, though
-/// the camera now stands 25 m from it); the redraw's views get the centre as their LOD origin.
+/// SW-5d (owner 2026-11-16: trees gained or lost shelter at each redraw): every caster draws its
+/// finest LOD level whatever the camera and the map centre. Redraws centred 0, 16.5 and 48.5 m
+/// apart over one world (a roof without a range, trees with 0-30 / 30-120 / 400 m+ proxy chains
+/// standing 0-60 m from the centres) draw the same casters and mark the same ones visible: each
+/// tree's 0-30 m level, never its coarser level or its proxy (the SW-5 centre rule swapped a
+/// tree 30-60 m out between sparse and dense leaves here); the views resolve LODs at 0 m.
 #[test]
-fn shelter_levels_follow_the_map_centre_not_the_camera() {
+fn shelter_casters_are_the_finest_levels_for_any_centre() {
     use bevy_camera::visibility::{ViewVisibility, VisibilityRange};
     let mut app = app();
-    let cam = app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(-240.0, 5.0, 20.0)))).id();
-    let at = |x: f32, y: f32| GlobalTransform::from_translation(Vec3::new(x, y, 20.0));
+    let eye = Vec3::new(-240.0, 5.0, 20.0);
+    let cam = app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(eye))).id();
     let caster = |app: &mut App, x: f32, range: Option<VisibilityRange>| {
         let e = app
             .world_mut()
-            .spawn((Mesh3d(Handle::default()), at(x, 9.0), InheritedVisibility::VISIBLE, ViewVisibility::HIDDEN))
+            .spawn((Mesh3d(Handle::default()), GlobalTransform::from_translation(Vec3::new(x, 9.0, 20.0)), InheritedVisibility::VISIBLE, ViewVisibility::HIDDEN))
             .id();
         if let Some(r) = range {
             app.world_mut().entity_mut(e).insert(r);
         }
         e
     };
-    let roof = caster(&mut app, -238.0, None);
-    let near = caster(&mut app, -255.0, Some(VisibilityRange::abrupt(0.0, 20.0)));
-    let far = caster(&mut app, -255.0, Some(VisibilityRange::abrupt(20.0, 200.0)));
+    let mut finest = vec![caster(&mut app, -238.0, None)];
+    let mut coarse = Vec::new();
+    for x in [-252.0, -240.0, -220.0, -200.0] {
+        finest.push(caster(&mut app, x, Some(VisibilityRange::abrupt(0.0, 30.0))));
+        coarse.push(caster(&mut app, x, Some(VisibilityRange::abrupt(30.0, 120.0))));
+        coarse.push(caster(&mut app, x, Some(VisibilityRange::abrupt(400.0, 1.0e6))));
+    }
+    finest.sort_unstable();
     app.update();
     sf_weather_bevy::surface_set(app.world_mut(), Channel::Snow, 1.0, "land").unwrap();
-    app.update();
-    let first = app.world().resource::<ShelterFrame>().0.clone().expect("fresh redraw");
-    let center = app.world().resource::<exposure::ExposureFrame>().center.expect("the redraw's LOD origin");
-    assert!((center - Vec3::new(-240.0, 5.0, 20.0)).length() < sf_surface::view::SHELTER_TEXEL_M, "{center}");
     let ids = |req: &sf_sky_bevy::sun_view::SunViewRequest| {
         let mut v: Vec<_> = req.casters.iter().map(|c| c.1.id()).collect();
         v.sort_unstable();
         v
     };
-    let mut expected = vec![roof, near];
-    expected.sort_unstable();
-    assert_eq!(ids(&first), expected, "the near level, 15 m from the centre");
     let visible = |app: &App, e| app.world().get::<ViewVisibility>(e).unwrap().get();
-    assert!(visible(&app, near) && !visible(&app, far));
-    // The camera walks 10 m east (no redraw: under 16 m), a caster streams in out of the map:
-    // the next redraw keeps the centre and draws the same levels.
-    *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(Vec3::new(-230.0, 5.0, 20.0));
-    for e in [roof, near, far] {
-        *app.world_mut().get_mut::<ViewVisibility>(e).unwrap() = ViewVisibility::HIDDEN;
-    }
-    caster(&mut app, 500.0, None);
-    let mut second = None;
-    for _ in 0..40 {
-        app.update();
-        if let Some(req) = app.world().resource::<ShelterFrame>().0.clone() {
-            second = Some(req);
-            break;
+    for dx in [0.0, 16.5, 48.5] {
+        *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(eye + Vec3::X * dx);
+        for &e in finest.iter().chain(&coarse) {
+            *app.world_mut().get_mut::<ViewVisibility>(e).unwrap() = ViewVisibility::HIDDEN;
         }
+        app.update();
+        let req = app.world().resource::<ShelterFrame>().0.clone().expect("a move past the recenter redraws");
+        assert_eq!(ids(&req), finest, "centre {dx} m on: the finest levels only");
+        assert!(finest.iter().all(|&e| visible(&app, e)), "centre {dx} m on: finest levels marked");
+        assert!(!coarse.iter().any(|&e| visible(&app, e)), "centre {dx} m on: coarser levels and proxies not marked");
     }
-    let second = second.expect("a streamed redraw within 30 frames");
-    assert_eq!(app.world().resource::<exposure::ExposureFrame>().center, Some(center), "same centre");
-    assert_eq!(second.clip_from_world, first.clip_from_world);
-    assert_eq!(ids(&second), ids(&first), "same casters, camera 10 m on");
-    assert!(visible(&app, near) && !visible(&app, far), "same levels marked");
+}
+
+/// SW-5d: the levels a fixed LOD distance picks (Bevy's `is_visible_at_all` at that distance),
+/// for chains 0-30 / 30-120 / 120-400 m: [`shelter::SHELTER_LOD_DISTANCE_M`] (0 m) the first,
+/// 150 m (sw5e's coarse far map) the third, whatever the casters' positions; no range always
+/// casts, a proxy that starts beyond the distance never does.
+#[test]
+fn lod_casts_picks_the_level_at_the_fixed_distance() {
+    use bevy_camera::visibility::VisibilityRange;
+    let chain = [VisibilityRange::abrupt(0.0, 30.0), VisibilityRange::abrupt(30.0, 120.0), VisibilityRange::abrupt(120.0, 400.0)];
+    let picks = |d: f32| chain.iter().map(|r| shelter::lod_casts(Some(r), d)).collect::<Vec<_>>();
+    assert_eq!(picks(shelter::SHELTER_LOD_DISTANCE_M), [true, false, false]);
+    assert_eq!(picks(150.0), [false, false, true]);
+    assert!(shelter::lod_casts(None, 0.0) && shelter::lod_casts(None, 150.0));
+    assert!(!shelter::lod_casts(Some(&VisibilityRange::abrupt(400.0, 1.0e6)), 0.0), "proxy only");
+}
+
+/// SW-5d, the vendored `bevy_render` patch's CPU twin of the GPU rule
+/// (`bevy_render::view::resolve_visibility_range`, mirrors `mesh_preprocess` culling and the
+/// dither): a fixed-distance view draws a level whole (dither 0) when its range holds the
+/// distance and culls it otherwise, at any camera distance; d = 150 picks the third level of a
+/// 0-30 / 30-120 / 120-400 m chain. Point-origin mode (off, `-1.0`) is stock: in range = drawn,
+/// the start and end margins dither, out of range culled.
+#[test]
+fn fixed_lod_distance_views_draw_whole_levels() {
+    use bevy_render::view::resolve_visibility_range as resolve;
+    let finest = Vec4::new(0.0, 0.0, 30.0, 30.0);
+    let mid = Vec4::new(30.0, 30.0, 120.0, 120.0);
+    let far = Vec4::new(120.0, 120.0, 400.0, 400.0);
+    let proxy = Vec4::new(400.0, 400.0, 1.0e6, 1.0e6);
+    for camera in [0.0, 15.0, 45.0, 200.0, 5000.0] {
+        assert_eq!(resolve(finest, camera, 0.0), Some(0), "finest at {camera}");
+        for r in [mid, far, proxy] {
+            assert_eq!(resolve(r, camera, 0.0), None, "{r} at {camera}");
+        }
+        assert_eq!([finest, mid, far, proxy].map(|r| resolve(r, camera, 150.0)), [None, None, Some(0), None], "d 150 at {camera}");
+    }
+    // A dithered range: a fixed view never dithers, even inside a margin.
+    let soft = Vec4::new(0.0, 0.0, 25.0, 35.0);
+    assert_eq!(resolve(soft, 100.0, 30.0), Some(0));
+    // Point-origin mode (stock): culled outside, whole inside, dithered in a margin.
+    assert_eq!(resolve(mid, 10.0, -1.0), None);
+    assert_eq!(resolve(mid, 60.0, -1.0), Some(0));
+    assert_eq!(resolve(mid, 120.0, -1.0), None);
+    assert_eq!(resolve(soft, 30.0, -1.0), Some(8), "half way through the end margin");
+    assert_eq!(resolve(Vec4::new(10.0, 20.0, 50.0, 60.0), 15.0, -1.0), Some(-8), "half way through the start margin");
 }
 
 /// SW-5: a redraw is taken into the exposure pack the frame after its request: a move carries
@@ -779,13 +821,17 @@ fn shelter_redraws_carry_the_exposure_pack() {
     assert_eq!(uniform(&app).shelter_clip_from_world, req.clip_from_world, "switched with its pass");
     app.update();
     assert_eq!(pass(&app), Some(ExposureMode::Ease));
-    let p = exposure::params(sf_surface::view::ExposurePass { mode: ExposureMode::Carry(IVec2::new(160, -3)), decay: 0.5 });
+    let outer = Some((0.125, bevy_math::Vec2::new(0.4375, 0.25)));
+    let p = exposure::params(sf_surface::view::ExposurePass { mode: ExposureMode::Carry(IVec2::new(160, -3)), decay: 0.5 }, &sf_surface::view::NEAR_LEVEL, false, outer);
     let word = |i: usize| [p[4 * i], p[4 * i + 1], p[4 * i + 2], p[4 * i + 3]];
     assert_eq!(
         (i32::from_le_bytes(word(0)), i32::from_le_bytes(word(1)), i32::from_le_bytes(word(2)), i32::from_le_bytes(word(3))),
         (160, -3, 1, 1024)
     );
     assert_eq!((f32::from_le_bytes(word(4)), f32::from_le_bytes(word(5)), f32::from_le_bytes(word(6))), (0.5, 350.0, 150.0));
+    let floats = |from: usize| [0, 1, 2, 3].map(|i| f32::from_le_bytes(word(from + i)));
+    assert_eq!(floats(8), [0.0; 4], "the near level's tent");
+    assert_eq!(floats(12), [1.0, 0.125, 0.4375, 0.25], "the far pack as its outer level");
 }
 
 /// SW-5: a floating-origin shift keeps the held shelter map where it is in the world (its clip
@@ -815,4 +861,184 @@ fn origin_shift_keeps_the_held_shelter_map() {
     assert!(app.world().resource::<ShelterFrame>().0.is_some(), "drawn again around the camera");
     app.update();
     assert_eq!(app.world().resource::<exposure::ExposureFrame>().pass.map(|p| p.mode), Some(ExposureMode::Carry(IVec2::ZERO)));
+}
+
+/// SW-5e far level: the far maps draw every caster at the level it shows at the far LOD distance
+/// (150 m: the 120-400 m level of a 0-30 / 30-120 / 120-400 / 400 m+ proxy chain, never the
+/// proxy), the same set for centres anywhere inside one far recentre step, and the app's far
+/// redraw holds that set while the near maps (moved 16.5 and 48.5 m) hold the finest levels; the
+/// far request is its own subview and image, and the far redraw marks its casters visible.
+#[test]
+fn far_level_casters_are_fixed_for_any_camera_in_a_step() {
+    use bevy_camera::visibility::{RenderLayers, ViewVisibility, VisibilityRange};
+    use sf_surface::view::ShelterLevel;
+    let far_settings = ShelterFarSettings::default();
+    let level = far_settings.level();
+    let d = far_settings.lod_distance_m;
+    assert_eq!(d, 150.0);
+    let chain = [
+        VisibilityRange::abrupt(0.0, 30.0),
+        VisibilityRange::abrupt(30.0, 120.0),
+        VisibilityRange::abrupt(120.0, 400.0),
+        VisibilityRange::abrupt(400.0, 1.0e6),
+    ];
+    // Trees 0-300 m from the first centre (each the four levels), a roof without a range.
+    let mut world = World::new();
+    let mut expected = Vec::new();
+    let mut all = Vec::new();
+    for x in [-300.0, -120.0, -10.0, 40.0, 150.0, 300.0] {
+        for (i, r) in chain.iter().enumerate() {
+            let e = world.spawn((GlobalTransform::from_translation(Vec3::new(x, 9.0, 20.0)), InheritedVisibility::VISIBLE, r.clone(), ShelterFoliage)).id();
+            all.push(e);
+            if i == 2 {
+                expected.push(e);
+            }
+        }
+    }
+    let roof = world.spawn((GlobalTransform::from_translation(Vec3::new(5.0, 6.0, -30.0)), InheritedVisibility::VISIBLE)).id();
+    expected.sort_unstable();
+    let mut q = world.query::<(
+        Entity,
+        &GlobalTransform,
+        Option<&bevy_camera::primitives::Aabb>,
+        &InheritedVisibility,
+        Option<&bevy_render::sync_world::RenderEntity>,
+        Option<&RenderLayers>,
+        Has<ShelterFoliage>,
+        Option<&VisibilityRange>,
+    )>();
+    let ids = |v: Vec<(Entity, bevy_render::sync_world::MainEntity)>| v.into_iter().map(|p| p.1.id()).collect::<Vec<_>>();
+    for center in [Vec3::ZERO, Vec3::new(40.0, 3.0, -30.0), Vec3::new(-63.0, 0.0, 10.0)] {
+        let (view, _) = level.view(level.center_world(bevy_math::DVec3::ZERO, center).0);
+        let (solid, leaves) = shelter::split_casters(q.iter(&world), view, d, &RenderLayers::default(), &level);
+        assert_eq!(ids(solid), vec![roof], "centre {center}");
+        assert_eq!(ids(leaves), expected, "centre {center}: the 120-400 m levels only");
+    }
+    // The near level at the same centres keeps the finest ones, and never reaches 300 m.
+    let (view, _) = sf_surface::view::NEAR_LEVEL.view(Vec3::ZERO);
+    let (_, near_leaves) = shelter::split_casters(q.iter(&world), view, shelter::SHELTER_LOD_DISTANCE_M, &RenderLayers::default(), &sf_surface::view::NEAR_LEVEL);
+    assert_eq!(near_leaves.len(), 2, "the 0-30 m levels of the trees at -10 and 40 m");
+    assert_ne!(level, ShelterLevel::far(1024.0, 64.0));
+
+    // In the app: the far redraw on the first frame, none while the near one follows the camera.
+    let mut app = app();
+    let eye = Vec3::new(-240.0, 5.0, 20.0);
+    let cam = app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(eye))).id();
+    let mut far_expected = Vec::new();
+    let mut proxies = Vec::new();
+    for x in [-400.0, -250.0, -100.0] {
+        for (i, r) in chain.iter().enumerate() {
+            let e = app
+                .world_mut()
+                .spawn((Mesh3d(Handle::default()), GlobalTransform::from_translation(Vec3::new(x, 9.0, 20.0)), InheritedVisibility::VISIBLE, ViewVisibility::HIDDEN, r.clone()))
+                .id();
+            match i {
+                2 => far_expected.push(e),
+                3 => proxies.push(e),
+                _ => {}
+            }
+        }
+    }
+    far_expected.sort_unstable();
+    app.update();
+    sf_weather_bevy::surface_set(app.world_mut(), Channel::Snow, 1.0, "land").unwrap();
+    app.update();
+    let far_req = app.world().resource::<shelter::FarShelterFrame>().0.clone().expect("far redraw with the first");
+    assert_eq!((far_req.subview, far_req.size, far_req.image), (FAR_SHELTER_SUBVIEW, 1024, app.world().resource::<SurfaceGpu>().far_shelter.id()));
+    let mut got: Vec<_> = far_req.casters.iter().map(|c| c.1.id()).collect();
+    got.sort_unstable();
+    assert_eq!(got, far_expected, "the 120-400 m levels, never a proxy");
+    let visible = |app: &App, e| app.world().get::<ViewVisibility>(e).unwrap().get();
+    assert!(far_expected.iter().all(|&e| visible(&app, e)), "the far redraw's casters are extracted");
+    assert!(!proxies.iter().any(|&e| visible(&app, e)));
+    assert_eq!(stats(&app).far_redraws, 1);
+    for dx in [16.5, 48.5] {
+        *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(eye + Vec3::X * dx);
+        app.update();
+        assert!(app.world().resource::<ShelterFrame>().0.is_some(), "the near maps recentre at {dx} m");
+        assert!(app.world().resource::<shelter::FarShelterFrame>().0.is_none(), "the far maps hold at {dx} m");
+    }
+    *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(eye + Vec3::X * 70.0);
+    app.update();
+    let again = app.world().resource::<shelter::FarShelterFrame>().0.clone().expect("past the 64 m step");
+    let mut got: Vec<_> = again.casters.iter().map(|c| c.1.id()).collect();
+    got.sort_unstable();
+    assert_eq!(got, far_expected, "the same casters from the next centre");
+}
+
+/// SW-5e: the far level's take-in: the pack takes it the frame after its request, the uniform
+/// names its clip, 1 m texels, its depth range and the bilinear test (`far_canopy.w`), the far
+/// pass runs fresh, and the near pass that carries a recentre reads the far pack through
+/// `outer_uv_map`; [`ShelterReach`] says how far shelter is known (384 m with the far level, the
+/// near level's 40 m without, none with the shelter off).
+#[test]
+fn far_level_feeds_the_uniform_the_near_pass_and_the_reach() {
+    use sf_surface::view::{ExposureMode, NEAR_LEVEL, outer_uv_map};
+    let mut app = app();
+    let cam = app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(-240.0, 5.0, 20.0)))).id();
+    app.update();
+    assert_eq!(*app.world().resource::<ShelterReach>(), ShelterReach(Some(384.0)));
+    sf_weather_bevy::surface_set(app.world_mut(), Channel::Snow, 1.0, "land").unwrap();
+    app.update();
+    let far_req = app.world().resource::<shelter::FarShelterFrame>().0.clone().expect("far redraw");
+    assert_eq!(uniform(&app).far_shelter.x, 0.0, "taken in next frame");
+    app.update();
+    let frame = *app.world().resource::<exposure::ExposureFrame>();
+    assert_eq!(frame.far_pass.map(|p| p.mode), Some(ExposureMode::Fresh));
+    assert_eq!(frame.far_lod_distance, 150.0);
+    let u = uniform(&app);
+    assert_eq!(u.far_clip_from_world, far_req.clip_from_world);
+    assert_eq!(u.far_shelter, Vec4::new(1.0, 1024.0, 1.0, 512.0));
+    assert_eq!((u.far_canopy.x, u.far_canopy.z, u.far_canopy.w), (1.0, 512.0, 1.0));
+    assert_eq!((u.canopy.w, u.shelter.z), (0.0, 0.125), "the near level keeps its tent");
+    assert_eq!(frame.outer, None, "a fresh near map has nothing to carry");
+    // A near recentre (20 m) inside the far step: its take-in reads the far pack.
+    *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(Vec3::new(-220.0, 5.0, 20.0));
+    app.update();
+    app.update();
+    let frame = *app.world().resource::<exposure::ExposureFrame>();
+    assert_eq!(frame.pass.map(|p| p.mode), Some(ExposureMode::Carry(IVec2::new(160, 0))));
+    assert_eq!(frame.far_pass, None, "the far map holds (fresh: nothing to ease)");
+    let u = uniform(&app);
+    assert_eq!(frame.outer, Some(outer_uv_map(u.shelter_clip_from_world, NEAR_LEVEL.half_m, u.far_clip_from_world, 512.0)));
+    // The reach follows the settings.
+    app.world_mut().resource_mut::<ShelterFarSettings>().on = false;
+    app.update();
+    assert_eq!(*app.world().resource::<ShelterReach>(), ShelterReach(Some(40.0)));
+    assert_eq!(uniform(&app).far_shelter.x, 0.0, "far level off: no far map");
+    app.world_mut().resource_mut::<SurfaceSettings>().shelter = false;
+    app.update();
+    assert_eq!(*app.world().resource::<ShelterReach>(), ShelterReach(None));
+}
+
+/// SW-5e raise domain: on every preset's near-field handoff (`sf_lod::FarLevels::default`: 400 m,
+/// a 10 % band, times `far.handoff_scale`: 0.5 Extremely low, 0.75 Low, 0.875 Medium, 1 High and
+/// Ultra) the raise fades to exactly 0 no farther than the far level knows shelter (its half
+/// extent less the band and a recentre step) and than casters exist (the handoff less its band),
+/// inside the displaced terrain levels; without a far level it ends inside the near level, and
+/// with the shelter off (exposure 1 everywhere) the terrain keeps its own sub-pixel end.
+#[test]
+fn raise_fade_ends_where_shelter_and_casters_are_known() {
+    use sf_terrain::cdlod::{CdlodSettings, RAISE_MAX_LOD};
+    // sf_lod::FarLevels::default (fixture: the handoff into the proxies and its band).
+    const HANDOFF_M: f32 = 400.0;
+    const BAND: f32 = 0.1;
+    let cdlod = CdlodSettings::default();
+    let surface = SurfaceSettings::default();
+    let far = ShelterFarSettings::default();
+    for bias in [0.5, 0.75, 0.875, 1.0] {
+        let casters = HANDOFF_M * bias * (1.0 - BAND);
+        let known = ShelterReach::of(&surface, &far).0;
+        let reach = sf_surface::view::raise_reach_m(known, casters);
+        let (start, end) = cdlod.raise_fade_range(reach);
+        assert!(end <= far.half_m.min(casters), "bias {bias}: {end}");
+        assert!(end <= far.level().known_m(), "bias {bias}: {end}");
+        assert!(start < end && end < cdlod.range(RAISE_MAX_LOD));
+        assert_eq!(cdlod.raise_fade_within(end, reach), 0.0);
+        assert_eq!(cdlod.raise_fade_within(start, reach), 1.0);
+    }
+    let near_only = ShelterReach::of(&surface, &ShelterFarSettings { on: false, ..far }).0;
+    assert_eq!(cdlod.raise_fade_range(sf_surface::view::raise_reach_m(near_only, 360.0)).1, 40.0);
+    let off = ShelterReach::of(&SurfaceSettings { shelter: false, ..surface }, &far).0;
+    assert_eq!(cdlod.raise_fade_range(sf_surface::view::raise_reach_m(off, 360.0)), cdlod.raise_fade_range(f32::INFINITY));
 }

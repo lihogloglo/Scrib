@@ -24,6 +24,7 @@
 //! and `sWashRate`, linear here).
 
 pub mod cover;
+pub mod deform;
 mod grid;
 pub mod kickup;
 pub mod layer;
@@ -433,4 +434,8 @@ mod cover_tests;
 #[cfg(test)]
 mod trail_tests;
 #[cfg(test)]
+mod deform_tests;
+#[cfg(test)]
 mod kickup_tests;
+#[cfg(test)]
+mod raise_tests;

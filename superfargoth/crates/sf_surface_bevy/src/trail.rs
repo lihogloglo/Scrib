@@ -13,6 +13,7 @@
 //!   `sf_surface::trail::TrailPass::run`) when there is work (stamps, a refill quantum, the window
 //!   moved); otherwise nothing runs and the current ring stays bound. Mesh-view binding 52 holds
 //!   the current ring (sampled with the cells' repeating, filtering sampler: the ring is a torus).
+//!   B holds the deformer ceiling (S1a, [`crate::deform`]): the pass merges last frame's capture.
 //!
 //! Why one compute pass instead of instanced stamp quads with Min/Max blending (the spec's
 //! first sketch): re-centering, refill and stamps all read the previous ring and write the next
@@ -22,12 +23,16 @@
 
 use std::num::NonZeroU64;
 
-use bevy_asset::{Assets, Handle, uuid_handle};
+use bevy_asset::{AssetId, Assets, Handle, uuid_handle};
 use bevy_core_pipeline::schedule::{Core3d, Core3dSystems};
 use bevy_ecs::prelude::*;
 use bevy_math::{DVec2, IVec2, IVec4, Vec2, Vec4};
 use bevy_render::diagnostic::RecordDiagnostics;
-use bevy_render::render_resource::binding_types::{texture_2d, texture_storage_2d, uniform_buffer_sized};
+use bevy_image::Image;
+use bevy_render::render_asset::RenderAssets;
+use bevy_render::render_resource::binding_types::{
+    storage_buffer_read_only_sized, texture_2d, texture_depth_2d, texture_storage_2d, uniform_buffer_sized,
+};
 use bevy_render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BufferInitDescriptor, BufferUsages,
     CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, PipelineCache, ShaderStages,
@@ -35,6 +40,7 @@ use bevy_render::render_resource::{
     TextureViewDescriptor,
 };
 use bevy_render::renderer::{RenderContext, RenderDevice};
+use bevy_render::texture::GpuImage;
 use bevy_render::{Extract, Render, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
 use bevy_transform::components::GlobalTransform;
@@ -74,6 +80,9 @@ pub struct TrailFrame {
     pub depth_m: f32,
     pub refill_m: f32,
     pub stamps: Vec<Stamp>,
+    /// The deformer capture to merge (S1a, [`crate::deform`]): last frame's request, drawn by
+    /// last frame's shadow pass (this frame's draws after the ring pass), and its target.
+    pub capture: Option<(sf_surface::deform::Capture, AssetId<Image>)>,
 }
 
 #[derive(Default)]
@@ -186,8 +195,11 @@ pub(crate) struct TrailGpu {
     held: Option<IVec2>,
     layout: BindGroupLayoutDescriptor,
     pipeline: CachedComputePipelineId,
-    pending: Option<TrailPass>,
+    /// This frame's pass and the capture target it merges (S1a).
+    pending: Option<(TrailPass, Option<AssetId<Image>>)>,
     ready: Option<BindGroup>,
+    /// Bound in place of a capture when a pass has none (1×1, cleared: nothing carves).
+    no_capture: TextureView,
 }
 
 impl TrailGpu {
@@ -221,6 +233,18 @@ impl FromWorld for TrailGpu {
         let device = world.resource::<RenderDevice>();
         let (a, a_storage) = ring(device, "surface_trail_ring_a");
         let (b, b_storage) = ring(device, "surface_trail_ring_b");
+        let no_capture = device
+            .create_texture(&TextureDescriptor {
+                label: Some("surface_trail_no_capture"),
+                size: Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Depth32Float,
+                usage: TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&TextureViewDescriptor::default());
         let layout = BindGroupLayoutDescriptor::new(
             "surface_trail",
             &BindGroupLayoutEntries::sequential(
@@ -229,6 +253,8 @@ impl FromWorld for TrailGpu {
                     uniform_buffer_sized(false, NonZeroU64::new((sf_surface::trail::PARAM_SLOTS * 16) as u64)),
                     texture_2d(TextureSampleType::Float { filterable: false }),
                     texture_storage_2d(FORMAT, StorageTextureAccess::WriteOnly),
+                    texture_depth_2d(),
+                    storage_buffer_read_only_sized(false, NonZeroU64::new(4)),
                 ),
             ),
         );
@@ -240,7 +266,18 @@ impl FromWorld for TrailGpu {
             zero_initialize_workgroup_memory: false,
             ..ComputePipelineDescriptor::default()
         });
-        Self { sampled: [a, b], storage: [a_storage, b_storage], current: 0, previous: 0, held: None, layout, pipeline, pending: None, ready: None }
+        Self {
+            sampled: [a, b],
+            storage: [a_storage, b_storage],
+            current: 0,
+            previous: 0,
+            held: None,
+            layout,
+            pipeline,
+            pending: None,
+            ready: None,
+            no_capture,
+        }
     }
 }
 
@@ -248,7 +285,7 @@ pub(crate) fn build(app: &mut bevy_app::App) {
     let edge = RING_SIZE.unsigned_abs();
     app.register_debug_texture(DebugTexture::render(
         "surface.trail",
-        "trail ring (current): R depression (m, <= 0), G lip (m, >= 0), 1024 texels around the camera",
+        "trail ring (current): R depression (m, <= 0), G lip (m, >= 0), B deformer ceiling code (m, <= 0; S1a; `tex show surface.trail b -0.5 0`), 1024 texels around the camera",
         (edge, edge),
         FORMAT,
         |world| world.get_resource::<TrailGpu>().map(|g| g.current_view().clone()),
@@ -266,7 +303,8 @@ pub(crate) fn build(app: &mut bevy_app::App) {
 }
 
 /// Decides this frame's pass and flips the rings (before `render::extract_view` binds the
-/// current one).
+/// current one). A capture to merge is work (S1a: a standing leg re-writes its hole each frame
+/// against the refill).
 pub(crate) fn extract(frame: Extract<Res<TrailFrame>>, gpu: Option<ResMut<TrailGpu>>, cache: Res<PipelineCache>) {
     let Some(mut gpu) = gpu else { return };
     gpu.previous = gpu.current;
@@ -277,9 +315,10 @@ pub(crate) fn extract(frame: Extract<Res<TrailFrame>>, gpu: Option<ResMut<TrailG
     if !frame.on || cache.get_compute_pipeline(gpu.pipeline).is_none() {
         return;
     }
-    if frame.stamps.is_empty() && frame.refill_m <= 0.0 && gpu.held == Some(frame.new_min) {
+    if frame.stamps.is_empty() && frame.refill_m <= 0.0 && frame.capture.is_none() && gpu.held == Some(frame.new_min) {
         return;
     }
+    let (capture, image) = frame.capture.clone().map_or((None, None), |(c, i)| (Some(c), Some(i)));
     let pass = TrailPass {
         corner: frame.corner,
         depth_m: frame.depth_m,
@@ -287,26 +326,46 @@ pub(crate) fn extract(frame: Extract<Res<TrailFrame>>, gpu: Option<ResMut<TrailG
         old_min: gpu.held,
         refill_m: frame.refill_m,
         stamps: frame.stamps.clone(),
+        capture,
     };
     gpu.current ^= 1;
     gpu.held = Some(frame.new_min);
-    gpu.pending = Some(pass);
+    gpu.pending = Some((pass, image));
 }
 
-fn prepare(gpu: Option<ResMut<TrailGpu>>, device: Res<RenderDevice>, cache: Res<PipelineCache>) {
+#[allow(clippy::needless_pass_by_value)]
+fn prepare(gpu: Option<ResMut<TrailGpu>>, device: Res<RenderDevice>, cache: Res<PipelineCache>, images: Res<RenderAssets<GpuImage>>) {
     let Some(mut gpu) = gpu else { return };
-    let Some(pass) = gpu.pending.take() else { return };
+    let Some((mut pass, image)) = gpu.pending.take() else { return };
+    // The capture's target not on the GPU yet: no capture this pass.
+    let target = image.and_then(|i| images.get(i)).map(|g| g.texture_view.clone());
+    if target.is_none() {
+        pass.capture = None;
+    }
     let bytes: Vec<u8> = pass.slots().iter().flatten().flat_map(|w| w.to_le_bytes()).collect();
     let params = device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("surface_trail_params"),
         contents: &bytes,
         usage: BufferUsages::UNIFORM,
     });
+    let ground_bytes: Vec<u8> = pass.ground_words().iter().flat_map(|w| w.to_le_bytes()).collect();
+    let ground = device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("surface_trail_ground"),
+        contents: &ground_bytes,
+        usage: BufferUsages::STORAGE,
+    });
     let (cur, prev) = (gpu.current, gpu.current ^ 1);
+    let capture = target.as_ref().unwrap_or(&gpu.no_capture);
     let group = device.create_bind_group(
         "surface_trail",
         &cache.get_bind_group_layout(&gpu.layout),
-        &BindGroupEntries::sequential((params.as_entire_binding(), &gpu.sampled[prev], &gpu.storage[cur])),
+        &BindGroupEntries::sequential((
+            params.as_entire_binding(),
+            &gpu.sampled[prev],
+            &gpu.storage[cur],
+            capture,
+            ground.as_entire_binding(),
+        )),
     );
     gpu.ready = Some(group);
 }

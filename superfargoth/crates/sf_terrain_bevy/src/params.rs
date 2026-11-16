@@ -19,7 +19,9 @@ pub const MAX_LAYERS: usize = 256;
 /// The far shadow map: (min x, min z, 1 / extent, base height), render
 /// space; extent 0 = none.
 pub const P_FAR: usize = P_LAYERS + 2 * MAX_LAYERS;
-pub const SLOTS: usize = P_FAR + 1;
+/// The raised cover (SW-6): (tan of the repose angle, the filter's minimum width m, -, -).
+pub const P_RAISE: usize = P_FAR + 1;
+pub const SLOTS: usize = P_RAISE + 1;
 
 pub const HEIGHT_LEVELS: usize = 10;
 pub const LAYER_LEVELS: usize = 3;

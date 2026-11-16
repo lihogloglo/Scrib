@@ -116,17 +116,6 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   hole. Risk: smoke far from lights darker than before. Status: awaiting owner.
 - Owner 2026-11-15: smoke disappeared; carried-torch handles very bright (RO-23). Fix 2026-11-16 (smoke-2): the sRGB key  conversion was wrong (game-wide NIF vertex colours stay raw) and the per-lamp cap kept the plume at 0.08x its texture; now  Morrowind's clamp on the sum of lights, "fully lit" in exposed units: beside a torch the plume shows its plain texture  (1.0 at 0.5-1.5 m, 0.6 at 3 m) at any exposure (old path: 10.7x at 0.5 m, up to 121x at night). Same look checks as above.  Status: confirmed by owner 2026-11-16 (`scene hi-balmora-night`).
 
-### RO-12: Bright outline around characters (owner report)
-- Kind: game location. Seen 2026-10-30 from the release start (Seyda Neen), on NPCs and the player.
-- Look for: a thin halo, brighter than the surroundings, along character silhouettes.
-- Suspects (not tested): TAA/DLSS disocclusion on skinned meshes (motion vectors), GTAO or contact-shadow edge, fog
-  froxel edge. First step: F4 (temporal mode) and `--off` A/Bs at the same spot.
-- Status: known bug: cause not diagnosed (owner pass 2026-10-30).
-- Owner 2026-10-30, `scene wk-balmora`: no outline around characters there; seen only from the release start (no
-  subcommand). Clue: compare its settings (DLSS mode, preset, resolution) with `scene` runs.
-- Audit 2026-11-01: no settings diff (content: Seyda Neen haze). Lead: half-res cloud/bank composite gives thin foreground
-  objects the background's bank fog (`cloud_composite.wesl:44-87`, `d.y` not depth-clipped); secondary GTAO edge under DLSS.
-
 ### RO-13: F7 wireframe drawn away from the model (owner report)
 - Kind: synthetic. Any anim-lab level, dev build, F7 (wireframe over skinned meshes; `mw_devtools_bevy/src/live_ab.rs`).
 - Seen 2026-10-30: the wireframe seems to exist but shows at a different place than the character it belongs to.
@@ -330,6 +319,7 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Look for: no crash or long hitch per step, labels readable, rows match F3's `preset:` line; quit and start again with
   the same command: the picked levels come back (saved in `<user data>/machine.toml`).
 - Status: blocked 2026-11-17: the page itself could not be judged, the options menu is unusable (earlier windows stay visible and overlap new ones, items move on hover). Owner: menu overhaul is a big later session (ROADMAP 2.2b), not now. Source: tunables-t5d.
+
 ### PP-5: CW gates on by default? Owner play session (ROADMAP 1.25, 2026-11-17)
 - Kind: normal play, release build, F3 compact open. Start: `bash tools/owner_launch.sh --release view "Balmora"
   --tunables tunables/cw-gates-on.toml` (all gates on; the file lists them). Play as usual: walk Balmora by day, wait to

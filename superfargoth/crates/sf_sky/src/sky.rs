@@ -7,7 +7,7 @@ use crate::atmosphere::{AtmosphereModel, visible_disk_fraction};
 use crate::celestial::{Celestial, Orbit};
 use crate::clock::{Calendar, SkyClock};
 use crate::curve::KeyCurve;
-use crate::night::{MAX_MOONS, Moon, MoonState, Moonlight, NightGlow, NightSky, StarField, SunDiskLook};
+use crate::night::{MAX_MOONS, Moon, MoonPath, MoonState, Moonlight, NightGlow, NightSky, StarField, SunDiskLook};
 use crate::weather::Weather;
 
 /// Everything that defines a world's sky. Data-driven: adapters fill it from
@@ -308,8 +308,16 @@ impl SkySettings {
         let direct = weather.direct_light_factor();
         let mut night = NightSky::default();
         for (slot, moon) in night.moons.iter_mut().zip(self.moon_list().iter()) {
-            let (phase, frame) = moon.phase(&clock);
-            let position = moon.position(&self.orbit, &clock, &self.calendar, phase);
+            let drive = if let MoonPath::Driven(driver) = &moon.path { Some(driver.drive(&clock)) } else { None };
+            let (phase, frame) = match drive {
+                Some(d) => moon.snap_phase(f64::from(d.phase)),
+                None => moon.phase(&clock),
+            };
+            let position = match drive {
+                Some(d) => self.orbit.horizontal(d.direction_enu),
+                None => moon.position(&self.orbit, &clock, &self.calendar, phase),
+            };
+            let (alpha, texture_blend) = drive.map_or((1.0, 1.0), |d| (d.alpha.clamp(0.0, 1.0), d.texture_blend.clamp(0.0, 1.0)));
             let (illuminated, brightness) = crate::night::phase_light(phase);
             let full = moon.illuminance * direct;
             #[expect(clippy::cast_possible_truncation, reason = "fraction")]
@@ -331,6 +339,8 @@ impl SkySettings {
                 angular_size: moon.angular_size,
                 tint: Vec3::from(moon.tint),
                 occluder: moon.occluder,
+                alpha,
+                texture_blend,
             };
             night.moon_count += 1;
         }

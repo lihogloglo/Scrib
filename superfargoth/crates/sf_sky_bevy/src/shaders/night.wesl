@@ -19,9 +19,11 @@ struct GpuMoon {
     textured: u32,
     // Moon-local light direction (x right, y up, z toward the viewer).
     light: vec3<f32>,
-    _pad: f32,
+    // Opacity of the whole moon: its disk and the stars it hides.
+    alpha: f32,
     radiance: vec3<f32>,
-    _pad2: f32,
+    // Lit surface (1) versus a plain disk that only hides the stars (0).
+    texture_blend: f32,
 }
 
 struct Night {
@@ -142,7 +144,7 @@ fn night_sky(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     for (var i = 0u; i < night.moon_count; i += 1u) {
         let m = night.moons[i];
         let c = dot(d, m.direction);
-        if c <= 0.0 {
+        if c <= 0.0 || m.alpha <= 0.0 {
             continue;
         }
         let p = vec2(dot(d, m.right), dot(d, m.up)) / (c * m.tan_radius);
@@ -152,18 +154,18 @@ fn night_sky(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
             continue;
         }
         // The whole disk hides what is behind it (stars, farther moons).
-        let occ = 1.0 - smoothstep(m.occluder - aa, m.occluder + aa, r);
+        let occ = (1.0 - smoothstep(m.occluder - aa, m.occluder + aa, r)) * m.alpha;
         var lit = vec3(0.0);
         var alpha = 0.0;
         if m.textured != 0u {
             let t = sample_moon(i, vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5));
-            lit = t.rgb * m.radiance;
-            alpha = t.a;
+            lit = t.rgb * m.radiance * m.texture_blend;
+            alpha = t.a * m.alpha;
         } else {
             let n = vec3(p, sqrt(max(1.0 - r * r, 0.0)));
             let shade = smoothstep(-0.04, 0.04, dot(n, m.light));
-            alpha = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
-            lit = m.radiance * shade;
+            alpha = (1.0 - smoothstep(1.0 - aa, 1.0 + aa, r)) * m.alpha;
+            lit = m.radiance * shade * m.texture_blend;
         }
         color = color * (1.0 - max(occ, alpha)) + lit * alpha;
     }

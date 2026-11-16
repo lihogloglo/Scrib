@@ -9,6 +9,7 @@
 //! sizes, so a world can have a huge moon without a huge light.
 
 use std::f64::consts::{PI, TAU};
+use std::sync::Arc;
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,7 @@ use crate::curve::KeyCurve;
 pub const MAX_MOONS: usize = 4;
 
 /// How a moon crosses the sky.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MoonPath {
     /// Physical: an orbit near the ecliptic whose position follows its
     /// phase (new moon next to the sun, full moon opposite, transiting at
@@ -42,6 +43,53 @@ pub enum MoonPath {
         /// Offset of the path north (+) or south of its great circle, degrees.
         declination_deg: f32,
     },
+    /// Driven by the game adapter: its [`MoonDriver`] gives the moon's direction, phase and
+    /// visibility at each clock instant (a game's own moon rules, e.g. ported from another engine).
+    /// [`Moon::phase_period_days`] and [`Moon::phase_at_epoch`] are unused. Code, not data: not
+    /// serialised (the adapter installs it when it builds the settings).
+    #[serde(skip)]
+    Driven(MoonDriver),
+}
+
+/// One driven moon at one instant ([`MoonPath::Driven`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MoonDrive {
+    /// Unit vector toward the moon in the local horizon frame: x east, y north, z up.
+    pub direction_enu: Vec3,
+    /// Phase in `[0, 1)`: 0 new, 0.25 first quarter, 0.5 full (snapped to [`Moon::phase_steps`]).
+    pub phase: f32,
+    /// Opacity of the whole moon in `[0, 1]`: its disk and the stars it hides (0: not drawn).
+    pub alpha: f32,
+    /// Lit surface (1) versus a plain disk that only hides the stars (0), in `[0, 1]`.
+    pub texture_blend: f32,
+}
+
+/// The adapter's function from the sky clock to a driven moon's state.
+#[derive(Clone)]
+pub struct MoonDriver(pub Arc<dyn Fn(&SkyClock) -> MoonDrive + Send + Sync>);
+
+impl MoonDriver {
+    pub fn new(f: impl Fn(&SkyClock) -> MoonDrive + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+
+    /// The moon at `clock`.
+    pub fn drive(&self, clock: &SkyClock) -> MoonDrive {
+        (self.0)(clock)
+    }
+}
+
+impl std::fmt::Debug for MoonDriver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MoonDriver(..)")
+    }
+}
+
+impl PartialEq for MoonDriver {
+    /// The same driver (one `Arc`).
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// One moon: orbit, phase cycle, look and light.
@@ -153,6 +201,10 @@ pub struct MoonState {
     pub angular_size: f32,
     pub tint: Vec3,
     pub occluder: f32,
+    /// Opacity of the drawn moon (disk and star occluder), `[0, 1]`; 1 unless driven.
+    pub alpha: f32,
+    /// Lit surface versus a plain star-hiding disk, `[0, 1]`; 1 unless driven.
+    pub texture_blend: f32,
 }
 
 impl MoonState {
@@ -173,14 +225,22 @@ pub fn phase_light(phase: f64) -> (f32, f32) {
 }
 
 impl Moon {
-    /// Phase at `clock`, snapped to `phase_steps`, and the texture frame.
+    /// Phase at `clock`, snapped to `phase_steps`, and the texture frame (a driven moon: its
+    /// driver's phase).
     pub fn phase(&self, clock: &SkyClock) -> (f64, Option<u32>) {
-        let mut phase = if self.phase_period_days > 0.0 {
+        let phase = if let MoonPath::Driven(driver) = &self.path {
+            f64::from(driver.drive(clock).phase)
+        } else if self.phase_period_days > 0.0 {
             clock.days / f64::from(self.phase_period_days) + f64::from(self.phase_at_epoch)
         } else {
             f64::from(self.phase_at_epoch)
-        }
-        .rem_euclid(1.0);
+        };
+        self.snap_phase(phase)
+    }
+
+    /// `phase` wrapped, snapped to `phase_steps`, and its texture frame.
+    pub fn snap_phase(&self, phase: f64) -> (f64, Option<u32>) {
+        let mut phase = phase.rem_euclid(1.0);
         if self.phase_steps > 0 {
             let steps = f64::from(self.phase_steps);
             phase = ((phase * steps).round() / steps).rem_euclid(1.0);
@@ -199,6 +259,7 @@ impl Moon {
     pub fn position(&self, orbit: &Orbit, clock: &SkyClock, calendar: &Calendar, phase: f64) -> SkyPosition {
         match self.path {
             MoonPath::Synodic => orbit.synodic_moon(clock, calendar, phase),
+            MoonPath::Driven(ref driver) => orbit.horizontal(driver.drive(clock).direction_enu),
             MoonPath::Circuit { circuit_days, hour_angle_at_epoch_deg, tilt_deg, declination_deg } => {
                 let turns = if circuit_days > 0.0 { clock.days / f64::from(circuit_days) } else { 0.0 };
                 let hour_angle = TAU * turns.fract() + f64::from(hour_angle_at_epoch_deg).to_radians();

@@ -106,6 +106,18 @@ pub struct TerrainSettings {
     /// drawn as geometry by `sf_surface_bevy` through the patch "SW" bindings). The two finest
     /// CDLOD levels' bounds grow upward by it so culling stays conservative. Default 0.
     pub raise_m: f32,
+    /// The raised cover's steepest slope, degrees (SW-6, [`TERRAIN_RAISE_REPOSE_DEG`]): the raise's
+    /// tops are low-passed wide enough (`sf_surface::layer::raise_filter_m`) that the cover never
+    /// stands steeper whatever the tops. Shader slot `P_RAISE`.
+    pub raise_repose_deg: f32,
+    /// The raise's narrowest filter width, meters (SW-6, [`TERRAIN_RAISE_FILTER_MIN_M`]).
+    pub raise_filter_min_m: f32,
+    /// How far from the camera the raised cover may stand (SW-5e), meters: the host sets it to where
+    /// the cover's inputs stop being known whatever the camera's place (surface weather's shelter
+    /// levels and the casters that fill them, `sf_surface::view::raise_reach_m`), so no texel's raise
+    /// changes as the camera nears. The fade ends there or at its own sub-pixel end, whichever is
+    /// nearer (`CdlodSettings::raise_fade_range`). Infinite (default): no limit.
+    pub raise_reach_m: f32,
     /// CW-2 selection gate (`sf_world::select_gate`): CDLOD selection and the patch diff re-run only
     /// once the camera moved [`TERRAIN_SELECT_MOVE_M`] (3D) from where the last selection saw it, or a
     /// tile arrived or left, an edit, an origin shift, or a settings or debug change; the shader's morph
@@ -125,8 +137,33 @@ pub const TERRAIN_SELECT_MOVE_M: Def<f32> = def!(float "terrain.select.move_m" =
     .source(Source::Guess)
     .group(Group::ViewDistance);
 
+/// `terrain.raise.repose_deg`: [`TerrainSettings::raise_repose_deg`]. Settled snow's angle of repose
+/// is 30-35 deg (DEM studies), fresh powder ~25 (`superfargoth/docs/research/deep-snow-2026-11-16.md`
+/// section 4 S2); 30 is the conservative end for the accumulated cover. Steeper reads sharper edges
+/// (a narrower filter), flatter softer ones.
+pub const TERRAIN_RAISE_REPOSE_DEG: Def<f32> = def!(float "terrain.raise.repose_deg" = 30.0)
+    .range(10.0, 60.0)
+    .unit(Unit::Degrees)
+    .help("Raised snow and ash never stand steeper than this at their edges (the tops are low-passed to fit)")
+    .source(Source::Industry("snow angle of repose 30-35 deg, DEM (research deep-snow-2026-11-16 S2)"));
+
+/// `terrain.raise.filter_min_m`: [`TerrainSettings::raise_filter_min_m`], the floor under the repose
+/// bound's width (which is ~4.3 m for 0.45 m of snow at 30 deg); 0.5 m was SW-5c's fixed prefilter.
+pub const TERRAIN_RAISE_FILTER_MIN_M: Def<f32> = def!(float "terrain.raise.filter_min_m" = 0.5)
+    .range(0.25, 64.0)
+    .unit(Unit::Meters)
+    .help("The raised cover's tops are low-passed at least this wide (the repose angle may need wider)")
+    .source(Source::Guess);
+
 /// This crate's tunables (live binding: tunables slice T2).
-pub const TUNABLES: &[&dyn AnyDef] = &[&TERRAIN_SELECT_MOVE_M];
+pub const TUNABLES: &[&dyn AnyDef] = &[&TERRAIN_SELECT_MOVE_M, &TERRAIN_RAISE_REPOSE_DEG, &TERRAIN_RAISE_FILTER_MIN_M];
+
+/// The `P_RAISE` slot (SW-6, SW-5e): tan of the repose angle, the filter's minimum width (m), the
+/// raise fade's start and end (m; `CdlodSettings::raise_fade_range` at the reach limit).
+fn raise_params(settings: &TerrainSettings) -> [f32; 4] {
+    let (start, end) = settings.cdlod.raise_fade_range(settings.raise_reach_m);
+    [settings.raise_repose_deg.to_radians().tan(), settings.raise_filter_min_m, start, end]
+}
 
 impl TerrainSettings {
     /// The terrain gate with its declared quantum, on or off.
@@ -154,6 +191,9 @@ impl Default for TerrainSettings {
             layer_cap: LayerCap { max_edge: None, budget: Some(DEFAULT_LAYER_BUDGET) },
             reflectance: DEFAULT_REFLECTANCE,
             raise_m: 0.0,
+            raise_repose_deg: TERRAIN_RAISE_REPOSE_DEG.default_value(),
+            raise_filter_min_m: TERRAIN_RAISE_FILTER_MIN_M.default_value(),
+            raise_reach_m: f32::INFINITY,
             select_gate: Self::select_gate_quanta(sf_world::SELECT_GATE.default_value()),
         }
     }
@@ -1092,6 +1132,7 @@ fn update_terrain(
         p.set_i(params::P_LAYER + l, level_slot(state.layer_windows[l], u32::try_from(l).expect("small") + 1));
     }
     p.set_f(params::P_DETAIL, detail_params(&settings, state.max_height));
+    p.set_f(params::P_RAISE, raise_params(&settings));
     for (n, l) in state.table.layers.iter().take(params::MAX_LAYERS).enumerate() {
         p.set_layer(n, l);
     }
@@ -1161,27 +1202,39 @@ mod tests {
         assert!(near(node_margins(-1, 0.0, -1.0), (0.05, 0.05)));
     }
 
-    /// W6b/SW-5c: the shader's raised-cover fade, displaced levels and prefilter are its CPU
-    /// twin's (`CdlodSettings::raise_weight` / `vertex_raise`); `terrain_raise` prefilters to
-    /// `RAISE_TEXEL_M` and reads the finest normal level, never the vertex's spacing or LOD; the
-    /// fade ends before the splat range fades the layers' high point (`layer_blend_top`).
+    /// W6b/SW-5c/SW-6: the shader's raised-cover fade and displaced levels are its CPU twin's
+    /// (`CdlodSettings::raise_weight` / `vertex_raise`); `terrain_raise` prefilters to the one
+    /// filter width of the repose bound (`surface_raise_filter` from `P_RAISE` and the coarsest
+    /// layer level's 4 m texel, `sf_surface::layer::raise_filter_m`'s `base_texel_m`), reads the
+    /// layers' bilinear p90 (`layer_raise_top`, no camera distance) and the finest normal level,
+    /// never the vertex's spacing or LOD; the fade ends inside the splat range.
     #[test]
     fn raise_constants_match_the_twin() {
         let wgsl = include_str!("shaders/common.wesl");
-        for (name, v) in [
-            ("RAISE_FADE_START", cdlod::RAISE_FADE_START),
-            ("RAISE_FADE_END", cdlod::RAISE_FADE_END),
-            ("RAISE_TEXEL_M", cdlod::RAISE_TEXEL_M),
-        ] {
-            assert!(wgsl.contains(&format!("const {name}: f32 = {v:?};")), "{name}");
-        }
+        // SW-5e: the fade's range comes from P_RAISE (zw), the CPU's `raise_fade_range`.
+        assert!(wgsl.contains("return select(1.0 - smoothstep(r.z, r.w, d), 0.0, d >= r.w);"));
         assert!(wgsl.contains(&format!("const RAISE_MAX_LOD: i32 = {};", cdlod::RAISE_MAX_LOD)));
         assert!(wgsl.contains("if lod <= RAISE_MAX_LOD {\n        out.raise_w = raise_fade("));
         let body = wgsl.split("fn terrain_raise(").nth(1).unwrap().split("\n}\n").next().unwrap();
-        assert!(body.contains("layer_blend_top(t.position.xz, RAISE_TEXEL_M,"), "{body}");
-        assert!(body.contains("terrain_normal(t.position.xz, 0.0), top, RAISE_TEXEL_M)"), "{body}");
-        assert!(!body.contains("t.lod") && !body.contains("spacing"), "{body}");
+        assert!(body.contains("let r_params = pf(P_RAISE);"), "{body}");
+        assert!(body.contains("surface_raise_filter(r_params.x, r_params.y, raise_top_texel_m())"), "{body}");
+        assert!(body.contains("let top = layer_raise_top(t.position.xz);"), "{body}");
+        assert!(body.contains("terrain_normal(t.position.xz, 0.0), top, filter_m)"), "{body}");
+        assert!(!body.contains("t.lod") && !body.contains("spacing") && !body.contains("camera_position"), "{body}");
         assert!(body.contains("!surface_raise_on()"), "{body}");
+        // The high point reads the coarsest layer level first, 4 m texels (0.5 m x 2^LAYER_LEVELS).
+        let top = wgsl.split("fn layer_raise_top(").nth(1).unwrap().split("\n}\n").next().unwrap();
+        assert!(top.contains("let l = LAYER_LEVELS - k;") && !top.contains("dist"), "{top}");
+        assert!(wgsl.contains("return 0.5 * exp2(f32(LAYER_LEVELS));"));
+        assert_eq!(1usize << LAYER_LEVELS, 8, "the 4 m texel sf_surface's raise_tests assume");
+        // P_RAISE carries tan(repose) and the minimum width from the tunables' defaults.
+        let p = raise_params(&TerrainSettings::default());
+        assert!((p[0] - 30f32.to_radians().tan()).abs() < 1e-6, "{p:?}");
+        assert_eq!(p[1].to_bits(), TERRAIN_RAISE_FILTER_MIN_M.default_value().to_bits());
+        let unlimited = TerrainSettings::default().cdlod.raise_fade_range(f32::INFINITY);
+        assert_eq!((p[2], p[3]), unlimited, "no reach limit: the sub-pixel fade");
+        let limited = raise_params(&TerrainSettings { raise_reach_m: 300.0, ..TerrainSettings::default() });
+        assert_eq!((limited[2], limited[3]), (200.0, 300.0));
         let s = TerrainSettings::default();
         assert!(cdlod::RAISE_FADE_END * s.cdlod.lod0_range <= 0.7 * s.splat_range);
     }
@@ -1206,6 +1259,7 @@ mod tests {
         assert_eq!(slot("P_DETAIL"), params::P_DETAIL);
         assert_eq!(slot("P_LAYERS"), params::P_LAYERS);
         assert_eq!(slot("P_FAR"), params::P_FAR);
+        assert_eq!(slot("P_RAISE"), params::P_RAISE);
         assert_eq!(slot("HEIGHT_LEVELS"), HEIGHT_LEVELS);
         assert_eq!(slot("LAYER_LEVELS"), LAYER_LEVELS);
         assert_eq!(params::P_MORPH + params::MORPH_LODS, params::P_HEIGHT);

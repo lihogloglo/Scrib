@@ -22,6 +22,7 @@
 
 pub mod ambient;
 pub mod cover;
+pub mod moons;
 mod ini;
 pub mod script;
 pub mod visual;

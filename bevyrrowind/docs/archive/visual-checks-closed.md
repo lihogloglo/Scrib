@@ -2402,3 +2402,19 @@ TX-3a | confirmed 2026-11-15 | [rendering](../visual-checks/rendering.md) | Load
 - Owner 2026-11-15 (`view "Sadrith Mora" --hour 21.25 --weather foggy`, fast turns in lamp-lit fog): no black bands. Status: confirmed fixed (closed).
 
 FG-1 | confirmed 2026-11-15 (no bands in Sadrith Mora fog at night) | [weather-sky](../visual-checks/weather-sky.md) | Volumetric fog black bands on fast turns
+
+## Closed 2026-11-17 from visual-checks/rendering.md
+
+### RO-12: Bright outline around characters (owner report)
+- Kind: game location. Seen 2026-10-30 from the release start (Seyda Neen), on NPCs and the player.
+- Look for: a thin halo, brighter than the surroundings, along character silhouettes.
+- Suspects (not tested): TAA/DLSS disocclusion on skinned meshes (motion vectors), GTAO or contact-shadow edge, fog
+  froxel edge. First step: F4 (temporal mode) and `--off` A/Bs at the same spot.
+- Status: known bug: cause not diagnosed (owner pass 2026-10-30).
+- Owner 2026-10-30, `scene wk-balmora`: no outline around characters there; seen only from the release start (no
+  subcommand). Clue: compare its settings (DLSS mode, preset, resolution) with `scene` runs.
+- Audit 2026-11-01: no settings diff (content: Seyda Neen haze). Lead: half-res cloud/bank composite gives thin foreground
+  objects the background's bank fog (`cloud_composite.wesl:44-87`, `d.y` not depth-clipped); secondary GTAO edge under DLSS.
+- Owner 2026-11-17: fixed for a while (not seen since well before 2026-11-15). Status: confirmed (closed).
+
+RO-12 | confirmed 2026-11-17 (owner: fixed for a while) | [rendering](../visual-checks/rendering.md) | Bright outline around characters (2026-10-30)

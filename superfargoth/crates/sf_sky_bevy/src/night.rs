@@ -56,9 +56,11 @@ struct GpuMoon {
     up: Vec3,
     textured: u32,
     light: Vec3,
-    _pad: f32,
+    /// Opacity of the whole moon (`MoonState::alpha`).
+    alpha: f32,
     radiance: Vec3,
-    _pad2: f32,
+    /// Lit surface versus the plain star-hiding disk (`MoonState::texture_blend`).
+    texture_blend: f32,
 }
 
 /// GPU layout of `Night` in `night.wesl`.
@@ -164,8 +166,9 @@ fn prepare_frame(
             up,
             textured: u32::from(frame_image.is_some()),
             light: Vec3::new(theta.sin(), 0.0, -theta.cos()),
+            alpha: moon.alpha,
             radiance: moon.tint * moon.transmittance * (moon.full_illuminance / solid_angle.max(1e-9)),
-            ..GpuMoon::default()
+            texture_blend: moon.texture_blend,
         };
         u.moon_count += 1;
     }

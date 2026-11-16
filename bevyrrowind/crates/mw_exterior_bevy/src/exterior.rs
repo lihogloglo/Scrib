@@ -492,6 +492,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             .add_systems(PostUpdate, surface_glue.after(sync_origin).before(sf_surface_bevy::SurfaceSystems))
             .add_systems(PostUpdate, shelter_foliage.before(sf_surface_bevy::SurfaceSystems))
             .add_systems(PostUpdate, crate::trails::foot_stamps.after(sf_anim_bevy::AnimSystems::Apply).before(sf_surface_bevy::SurfaceSystems))
+            // S1b: deformer tags, the capture's ground hook, sweep-gap prints (`trails.rs`).
+            .add_plugins(crate::trails::deform_plugin)
             .add_systems(PostUpdate, crate::trails::terrain_raise.after(sf_surface_bevy::SurfaceSystems))
             .add_observer(no_surface_shelter_terrain);
         // AU-1: weather loops and region one-shots into the audio plugin (`crate::audio`).

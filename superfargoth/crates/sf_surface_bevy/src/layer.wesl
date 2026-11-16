@@ -48,7 +48,8 @@ struct SurfaceUniform {
     /// camera (0..1; the puddles' rings, W4).
     time: vec4<f32>,
     /// x: 1 when the canopy map is valid; y: share of the rain a full leaf canopy lets through;
-    /// z: depth below the map centre (m; the exposure pack holds heights over the centre, SW-5).
+    /// z: depth below the map centre (m; the exposure pack holds heights over the centre, SW-5);
+    /// w: the level's test (0 the 6-texel tent, 1 bilinear: the far level, SW-5e).
     canopy: vec4<f32>,
     /// Cover looks (W5a; the layer array at binding 50, slices 2c albedo+height, 2c+1 normal XY,
     /// roughness, AO): x 1 / tiling (1/m, 0 = no layer), y depth (m), z sparkle, w contrast.
@@ -65,6 +66,11 @@ struct SurfaceUniform {
     /// Last frame's `trail` and `trail_cells` (W6b: the displaced terrain's motion vectors).
     trail_prev: vec4<f32>,
     trail_prev_cells: vec4<i32>,
+    /// The far shelter level (SW-5e; its pack at mesh-view binding 49): render space -> its clip,
+    /// then its `shelter` and `canopy` as the near level's (x 0: no far level).
+    far_clip_from_world: mat4x4<f32>,
+    far_shelter: vec4<f32>,
+    far_canopy: vec4<f32>,
 }
 
 const FLAG_WET: u32 = 1u;
@@ -94,7 +100,8 @@ const SHELTER_NORMAL_OFFSET_M: f32 = 0.35;
 /// height (Clockwork ROOF_NEAR 8 u, ROOF_FULL 24 u): no acne, no hard edge at a ledge.
 const SHELTER_NEAR_M: f32 = 0.12;
 const SHELTER_FULL_M: f32 = 0.35;
-/// The outer part of the map (fraction of its half extent) fades to open sky.
+/// The outer part of a level's map (fraction of its half extent) hands over to the next level
+/// out, or fades to open sky past the far one (SW-5e; twin `sf_surface::view::SHELTER_FADE_START`).
 const SHELTER_FADE_START: f32 = 0.875;
 /// SW-5: the exposure pack's lag eases receivers this far (m) or more from their texel's
 /// highest caster (the ground under it); the top surface itself keeps the exact test.
@@ -159,7 +166,7 @@ const COVER_HEIGHT_MIX: f32 = 0.5;
 const COVER_DRIFT: f32 = 0.5;
 const COVER_DRIFT_TILE_M: f32 = 64.0;
 const COVER_NORMAL: f32 = 1.0;
-const COVER_TOP_MAX: f32 = 0.999;
+const COVER_TOP_MAX: f32 = 0.6;
 const ASH_REFLECTANCE: f32 = 0.5;
 /// Snow sparkle: glint cell (m), glinting share at sparkle 1, facet tilt, facet roughness, and
 /// the pixel footprint (m) where glints fade and are gone.
@@ -252,78 +259,108 @@ fn surface_cell_load(cells: texture_2d<f32>, u: SurfaceUniform, p: vec3<f32>) ->
     return textureLoad(cells, (t + vec2(n)) % vec2(n), 0);
 }
 
-/// Exposure to the open sky at `p` with geometric normal `n_geo`: 1 open, 0 under cover.
-/// Clockwork's `surfaceExposure` shape: nine gathers cover a 6x6-texel tent (0.75 m of
-/// slanting rain) around the point looked up `SHELTER_NORMAL_OFFSET_M` out along the normal;
-/// a caster shelters by how far it sits above the point (ramp NEAR..FULL, raised by the
-/// slope's own rise over two texels). Open sky outside the map (far roofs are exposed).
-/// Leaves (the canopy map, same texels and tent) cover a fraction of the tent and hold back
-/// `1 - canopy.y` of the rain where they cover it all (Clockwork `roofLeaves` / `LEAF_HOLD`:
-/// partial shelter under trees; ours reads leaf cover from its own map, not a checkerboard).
-/// SW-5: `shelter` is the exposure pack (`exposure.wgsl`): R the solid casters' heights over the
-/// map centre (m), G the leaves', B the lag. The 3D test runs on R and G as it ran on the depth
-/// maps (`canopy` is no longer read: its heights are G); the lag (eased minus fresh, 0 when
-/// steady) is added, so a redraw's change eases in over ~2.4 s instead of popping.
-fn surface_exposure(shelter: texture_2d<f32>, canopy: texture_2d<f32>, shelter_sampler: sampler, u: SurfaceUniform, p: vec3<f32>, n_geo: vec3<f32>) -> f32 {
-    if u.shelter.x == 0.0 {
-        return 1.0;
-    }
+/// One shelter level's test at `p` with geometric normal `n_geo` (SW-5e: the near or the far
+/// level; `s`, `c4` its uniform `shelter` / `canopy` vec4s): x the exposure now, unfaded, y the
+/// eased lag where it applies, z where the point lies in the map (its edge: >= 1 outside, x 1).
+/// Clockwork's `surfaceExposure` shape: nine gathers cover a 6x6-texel tent (0.75 m of slanting
+/// rain at the near level's texels) around the point looked up `SHELTER_NORMAL_OFFSET_M` out along
+/// the normal; the far level (`c4.w` 1, 1 m texels) reads its four nearest texels bilinear instead
+/// (a 6 m tent would blur a tree crown away). A caster shelters by how far it sits above the
+/// point (ramp NEAR..FULL, raised by the slope's own rise over two texels). Leaves (G, same texels
+/// and test) cover a fraction and hold back `1 - c4.y` of the rain where they cover it all
+/// (Clockwork `roofLeaves` / `LEAF_HOLD`). SW-5: `pack` is the level's exposure pack
+/// (`exposure.wgsl`): R the solid casters' heights over the map centre (m), G the leaves', B the
+/// lag (eased minus fresh, 0 when steady).
+fn surface_level_exposure(pack: texture_2d<f32>, shelter_sampler: sampler, clip_from_world: mat4x4<f32>, s: vec4<f32>, c4: vec4<f32>, p: vec3<f32>, n_geo: vec3<f32>) -> vec3<f32> {
     let q = p + vec3(n_geo.x, 0.0, n_geo.z) * SHELTER_NORMAL_OFFSET_M;
-    let c = u.shelter_clip_from_world * vec4(q, 1.0);
+    let c = clip_from_world * vec4(q, 1.0);
     let edge = max(abs(c.x), abs(c.y));
     if edge >= 1.0 {
-        return 1.0;
+        return vec3(1.0, 0.0, edge);
     }
-    let size = vec2<f32>(textureDimensions(shelter));
+    let size = vec2<f32>(textureDimensions(pack));
     let uv = c.xy * vec2(0.5, -0.5) + 0.5;
     // A slope rises across two texels without sheltering itself (tan capped at 4).
     let ny = max(abs(n_geo.y), 0.25);
-    let rise = 2.0 * u.shelter.z * sqrt(max(1.0 - ny * ny, 0.0)) / ny;
+    let rise = 2.0 * s.z * sqrt(max(1.0 - ny * ny, 0.0)) / ny;
     let near = vec4(SHELTER_NEAR_M + rise);
     let full = vec4(SHELTER_FULL_M + rise);
     let blend = fract(uv * size - 0.5);
-    let leaves_on = u.canopy.x > 0.0;
+    let leaves_on = c4.x > 0.0;
     // The point's height over the map centre (reverse Z depth x range - depth below the centre),
     // as the pack holds the casters'.
-    let height = vec4(c.z * u.shelter.y - u.canopy.z);
+    let height = vec4(c.z * s.y - c4.z);
     var open = 0.0;
     var leaves = 0.0;
     var weight = 0.0;
-    for (var row = 0; row < 3; row++) {
-        for (var column = 0; column < 3; column++) {
-            let shift = vec2(f32(2 * column - 2), f32(2 * row - 2)) / size;
-            // Meters the casters sit above the point.
-            let over = textureGather(0, shelter, shelter_sampler, uv + shift) - height;
-            let gap = vec4(1.0) - smoothstep(near, full, over);
-            // Tent weights of the four texels (gather order: (0,1), (1,1), (1,0), (0,0)).
-            let low = vec2(f32(2 * column), f32(2 * row));
-            let high = low + 1.0;
-            let lw = select(low + 1.0 - blend, 5.0 - low + blend, low >= vec2(3.0));
-            let hw = select(high + 1.0 - blend, 5.0 - high + blend, high >= vec2(3.0));
-            let w = vec4(lw.x * hw.y, hw.x * hw.y, hw.x * lw.y, lw.x * lw.y);
-            open += dot(gap, w);
-            weight += dot(w, vec4(1.0));
-            if leaves_on {
-                let leaf_over = textureGather(1, shelter, shelter_sampler, uv + shift) - height;
-                leaves += dot(smoothstep(near, full, leaf_over), w);
+    if c4.w > 0.0 {
+        // Bilinear over the four texels around the point (gather order: (0,1), (1,1), (1,0), (0,0)).
+        let w = vec4((1.0 - blend.x) * blend.y, blend.x * blend.y, blend.x * (1.0 - blend.y), (1.0 - blend.x) * (1.0 - blend.y));
+        open = dot(vec4(1.0) - smoothstep(near, full, textureGather(0, pack, shelter_sampler, uv) - height), w);
+        if leaves_on {
+            leaves = dot(smoothstep(near, full, textureGather(1, pack, shelter_sampler, uv) - height), w);
+        }
+        weight = 1.0;
+    } else {
+        for (var row = 0; row < 3; row++) {
+            for (var column = 0; column < 3; column++) {
+                let shift = vec2(f32(2 * column - 2), f32(2 * row - 2)) / size;
+                // Meters the casters sit above the point.
+                let over = textureGather(0, pack, shelter_sampler, uv + shift) - height;
+                let gap = vec4(1.0) - smoothstep(near, full, over);
+                // Tent weights of the four texels (gather order: (0,1), (1,1), (1,0), (0,0)).
+                let low = vec2(f32(2 * column), f32(2 * row));
+                let high = low + 1.0;
+                let lw = select(low + 1.0 - blend, 5.0 - low + blend, low >= vec2(3.0));
+                let hw = select(high + 1.0 - blend, 5.0 - high + blend, high >= vec2(3.0));
+                let w = vec4(lw.x * hw.y, hw.x * hw.y, hw.x * lw.y, lw.x * lw.y);
+                open += dot(gap, w);
+                weight += dot(w, vec4(1.0));
+                if leaves_on {
+                    let leaf_over = textureGather(1, pack, shelter_sampler, uv + shift) - height;
+                    leaves += dot(smoothstep(near, full, leaf_over), w);
+                }
             }
         }
     }
-    let leaf_hold = (1.0 - u.canopy.y) * (leaves / weight);
-    let now = mix(open / weight * (1.0 - leaf_hold), 1.0, smoothstep(SHELTER_FADE_START, 1.0, edge));
+    let leaf_hold = (1.0 - c4.y) * (leaves / weight);
+    let now = open / weight * (1.0 - leaf_hold);
     // The lag, bilinear over the four texels around the point (same gather order). It eases
     // what lies under the map's top surface (ground under leaves and roofs); the top surface
     // itself (a roof, a leaf, a static floor: within SHELTER_LAG_TOP_M of its texel's highest
     // caster) keeps the exact test, its lag being the ground's, not its own.
-    let lag = textureGather(2, shelter, shelter_sampler, uv);
+    let lag = textureGather(2, pack, shelter_sampler, uv);
     let eased = mix(mix(lag.w, lag.z, blend.x), mix(lag.x, lag.y, blend.x), blend.y);
     let texel = clamp(vec2<i32>(floor(uv * size)), vec2(0), vec2<i32>(size) - 1);
-    let tops = textureLoad(shelter, texel, 0);
+    let tops = textureLoad(pack, texel, 0);
     let below_top = smoothstep(SHELTER_FULL_M, SHELTER_LAG_TOP_M, abs(max(tops.r, tops.g) - height.x));
-    return saturate(now + eased * below_top);
+    return vec3(now, eased * below_top, edge);
 }
 
-/// Surface gradient of a perturbed normal `nn` against the geometric normal `n`
+/// Exposure to the open sky at `p` with geometric normal `n_geo`: 1 open, 0 under cover. SW-5e
+/// (CPU twin `sf_surface::view::blended_exposure`): the near level (`shelter`, +-64 m) inside its
+/// range, handed over across its outer band (`SHELTER_FADE_START`..1 of its half extent) to what
+/// the far level (`far`, +-512 m) shows there, the far level beyond, handed over to open sky across
+/// its own band; open beyond it and with no map. Each level's lag is added past its hand-over (the
+/// pack's shown value, `sf_surface::view::shown_exposure`), so a redraw's change eases in over
+/// ~2.4 s instead of popping, the band's too. The far level is read only where the near one hands
+/// over (the near interior reads one level). Both terrain passes' raise (`surface_raise_amounts`)
+/// and the fragment's cover and wetness call this one function.
+fn surface_exposure(shelter: texture_2d<f32>, far: texture_2d<f32>, shelter_sampler: sampler, u: SurfaceUniform, p: vec3<f32>, n_geo: vec3<f32>) -> f32 {
+    var near = vec3(1.0, 0.0, 2.0);
+    if u.shelter.x != 0.0 {
+        near = surface_level_exposure(shelter, shelter_sampler, u.shelter_clip_from_world, u.shelter, u.canopy, p, n_geo);
+    }
+    let near_fade = smoothstep(SHELTER_FADE_START, 1.0, near.z);
+    var outer = 1.0;
+    if near_fade > 0.0 && u.far_shelter.x != 0.0 {
+        let f = surface_level_exposure(far, shelter_sampler, u.far_clip_from_world, u.far_shelter, u.far_canopy, p, n_geo);
+        outer = saturate(mix(f.x, 1.0, smoothstep(SHELTER_FADE_START, 1.0, f.z)) + f.y);
+    }
+    return saturate(mix(near.x, outer, near_fade) + near.y);
+}
+
+// Surface gradient of a perturbed normal `nn` against the geometric normal `n`
 /// (Mikkelsen 2020, `SurfgradFromPerturbedNormal`); `surface_resolve` inverts it.
 fn surface_gradient_of(n: vec3<f32>, nn: vec3<f32>) -> vec3<f32> {
     let k = dot(n, nn);
@@ -533,27 +570,60 @@ fn surface_cover_coverage(amount: f32, base: f32, look: f32, drift: f32, contras
     return surface_cover_blend(amount, surface_cover_height(base, look, drift), contrast);
 }
 
-/// The bury depth (W6b; twin `sf_surface::layer::cover_bury`), 0..1: how far `amount` has risen
-/// past the footprint's high point `top` (`surface_cover_height` of the relief's p90, the look
-/// and the drift), over what is left to the full depth. 0 until the cover buries the relief's
-/// high point (snow in the grout stays shading only), `amount` on a flat surface (`top` 0), 1 at
-/// amount 1.
+/// The bury depth (W6b, SW-6; twin `sf_surface::layer::cover_bury`), 0..1: how far `amount` has
+/// risen past the footprint's high point `top` (`surface_cover_height` of the relief's p90, the
+/// look's mean and the drift, prefiltered: `surface_raise_tops`) over what is left to the full
+/// depth, the ramp never narrower than `1 - COVER_TOP_MAX`, through a smoothstep (C1 at toe and
+/// crest). 0 until the cover buries the relief's high point (snow in the grout stays shading
+/// only), 1 at amount 1 over tops up to COVER_TOP_MAX; slope <= `surface_bury_gain` in either input.
 fn surface_cover_bury(amount: f32, top: f32) -> f32 {
-    let t = clamp(top, 0.0, COVER_TOP_MAX);
-    return saturate((amount - t) / (1.0 - t));
+    let t = saturate(top);
+    return smoothstep(0.0, 1.0, (amount - t) / (1.0 - min(t, COVER_TOP_MAX)));
+}
+
+/// The bury's steepest slope per unit of amount or top (twin `sf_surface::layer::bury_gain`).
+fn surface_bury_gain() -> f32 {
+    return 1.5 / (1.0 - COVER_TOP_MAX);
+}
+
+/// The world width (m) the raise's tops are low-passed to (SW-6; twin
+/// `sf_surface::layer::raise_filter_m`, which derives it): the narrowest that keeps a cover of
+/// `depth` m (both channels) no steeper than `tan_repose` along any direction for any tops, with
+/// the layers' p90 bilinear on texels of `base_texel_m`; at least `min_m`, at most the drift tile.
+fn surface_raise_filter_m(depth: f32, tan_repose: f32, min_m: f32, base_texel_m: f32) -> f32 {
+    if depth <= 0.0 {
+        return min_m;
+    }
+    let budget = tan_repose / (depth * surface_bury_gain() * sqrt(2.0)) - (1.0 - COVER_HEIGHT_MIX) / base_texel_m;
+    let w = select(COVER_DRIFT_TILE_M, COVER_DRIFT / budget, budget * COVER_DRIFT_TILE_M > COVER_DRIFT);
+    return max(w, min_m);
+}
+
+/// The fractional mip level at which a texture of `texel0_m` m texels reads no steeper than its
+/// range over `w_m` m per axis (SW-6; twin `sf_surface::layer::prefilter_level`; needs a linear
+/// mip filter): mip m (texel T <= w) blended toward m + 1 by 2 (1 - T / w).
+fn surface_prefilter_level(w_m: f32, texel0_m: f32) -> f32 {
+    if w_m <= texel0_m {
+        return 0.0;
+    }
+    let m = floor(log2(w_m / texel0_m));
+    return m + 2.0 * (1.0 - texel0_m * exp2(m) / w_m);
 }
 
 /// The drift noise (0..1) at render XZ `xz`: a thin cover lies in patches (one tap, any stage).
 fn surface_cover_drift(noise: texture_2d<f32>, samp: sampler, xz: vec2<f32>) -> f32 {
-    return textureSampleLevel(noise, samp, xz / COVER_DRIFT_TILE_M + vec2(0.17, 0.83), 0.0).g;
+    return surface_cover_drift_at(noise, samp, xz, 0.0);
 }
 
-/// The height of channel `c`'s look at render XZ `xz`, prefiltered to texels of `texel_m`
-/// meters (a vertex's spacing; any stage: explicit mip).
-fn surface_cover_look_height(cover: texture_2d_array<f32>, cover_sampler: sampler, layer: vec4<f32>, uv0: vec2<f32>, c: u32, xz: vec2<f32>, texel_m: f32) -> f32 {
-    let size = f32(textureDimensions(cover).x);
-    let mip = max(log2(texel_m * size * layer.x), 0.0);
-    return textureSampleLevel(cover, cover_sampler, xz * layer.x + uv0, i32(2u * c), mip).a;
+/// The drift noise at mip `level` (SW-6: the raise's, prefiltered to its filter width; the atlas
+/// carries its full mip chain, `sf_surface::view::noise_atlas_mips`).
+fn surface_cover_drift_at(noise: texture_2d<f32>, samp: sampler, xz: vec2<f32>, level: f32) -> f32 {
+    return textureSampleLevel(noise, samp, xz / COVER_DRIFT_TILE_M + vec2(0.17, 0.83), level).g;
+}
+
+/// The mean height of channel `c`'s look (its 1x1 mip; SW-6: the raise follows no look texel).
+fn surface_cover_look_mean(cover: texture_2d_array<f32>, cover_sampler: sampler, uv0: vec2<f32>, c: u32) -> f32 {
+    return textureSampleLevel(cover, cover_sampler, uv0, i32(2u * c), f32(textureNumLevels(cover) - 1u)).a;
 }
 
 fn surface_sparkle_fade(footprint: f32) -> f32 {
@@ -622,14 +692,15 @@ fn surface_sparkle(xz: vec2<f32>, sparkle: f32, footprint: f32) -> vec3<f32> {
     return vec3(tilt.x, fade, tilt.y);
 }
 
-/// The trail ring around a pixel (W6a): the ring (R depression, G lip; m) at the pixel and one
-/// texel to each side (+X, -X, +Z, -Z), the texel (m) and the ring depth (m; 0 = no trail here).
+/// The trail ring around a pixel (W6a): the ring (R depression, G lip, B deformer ceiling code
+/// (S1a); m) at the pixel and one texel to each side (+X, -X, +Z, -Z), the texel (m) and the ring
+/// depth (m; 0 = no trail here).
 struct SurfaceTrail {
-    c: vec2<f32>,
-    px: vec2<f32>,
-    nx: vec2<f32>,
-    pz: vec2<f32>,
-    nz: vec2<f32>,
+    c: vec3<f32>,
+    px: vec3<f32>,
+    nx: vec3<f32>,
+    pz: vec3<f32>,
+    nz: vec3<f32>,
     texel: f32,
     ring: f32,
 }
@@ -645,27 +716,27 @@ fn surface_in_trail(u: SurfaceUniform, xz: vec2<f32>) -> bool {
     return all(t >= vec2(0.0)) && all(t <= vec2(n));
 }
 
-/// The ring at `xz` (R, G in m; bilinear over the torus), faded to 0 over TRAIL_EDGE_FADE_M
+/// The ring at `xz` (R, G, B in m; bilinear over the torus), faded to 0 over TRAIL_EDGE_FADE_M
 /// before the ring's edge.
-fn surface_trail_at(trail: texture_2d<f32>, samp: sampler, u: SurfaceUniform, xz: vec2<f32>) -> vec2<f32> {
+fn surface_trail_at(trail: texture_2d<f32>, samp: sampler, u: SurfaceUniform, xz: vec2<f32>) -> vec3<f32> {
     return surface_ring_at(trail, samp, u.trail, u.trail_cells, xz);
 }
 
 /// A ring placed by `place` (`trail` slot layout) and `cells` (`trail_cells`) at `xz`: this
 /// frame's (`surface_trail_at`) or last frame's (W6b motion vectors). 0 when the ring is off.
-fn surface_ring_at(trail: texture_2d<f32>, samp: sampler, place: vec4<f32>, cells: vec4<i32>, xz: vec2<f32>) -> vec2<f32> {
+fn surface_ring_at(trail: texture_2d<f32>, samp: sampler, place: vec4<f32>, cells: vec4<i32>, xz: vec2<f32>) -> vec3<f32> {
     let n = f32(cells.z);
     if place.w <= 0.0 || place.z <= 0.0 || n <= 0.0 {
-        return vec2(0.0);
+        return vec3(0.0);
     }
     let t = (xz - place.xy) * place.z;
     let edge_m = min(min(t.x, n - t.x), min(t.y, n - t.y)) / place.z;
     let fade = saturate((edge_m - 0.5) / TRAIL_EDGE_FADE_M);
     if fade <= 0.0 {
-        return vec2(0.0);
+        return vec3(0.0);
     }
     let uv = (t + vec2<f32>(cells.xy)) / n;
-    return textureSampleLevel(trail, samp, uv, 0.0).xy * fade;
+    return textureSampleLevel(trail, samp, uv, 0.0).xyz * fade;
 }
 
 /// Raised cover (W6b; twin `sf_surface::trail::cover_raise`): how high a cover of depth `d`
@@ -674,7 +745,7 @@ fn surface_ring_at(trail: texture_2d<f32>, samp: sampler, place: vec4<f32>, cell
 /// ring depth, 0 = no trail): the bury depth's share of the depth (`surface_cover_bury`; 0 until
 /// the cover buries the relief, so bare stones and snow in the grout stay down), prints cut down
 /// to the ground (a full print: 0), lips on top.
-fn surface_cover_raise(amount: f32, top: f32, d: f32, v: vec2<f32>, ring: f32) -> f32 {
+fn surface_cover_raise(amount: f32, top: f32, d: f32, v: vec3<f32>, ring: f32) -> f32 {
     let bury = surface_cover_bury(amount, top);
     if bury <= 0.0 || d <= 0.0 {
         return 0.0;
@@ -695,7 +766,7 @@ fn surface_raise_amounts(
     cells: texture_2d<f32>,
     samp: sampler,
     shelter: texture_2d<f32>,
-    canopy: texture_2d<f32>,
+    far: texture_2d<f32>,
     shelter_sampler: sampler,
     p: vec3<f32>,
     n: vec3<f32>,
@@ -715,15 +786,17 @@ fn surface_raise_amounts(
     if a.x <= 0.0 && a.y <= 0.0 {
         return vec2(0.0);
     }
-    return a * surface_exposure(shelter, canopy, shelter_sampler, u, p, n);
+    return a * surface_exposure(shelter, far, shelter_sampler, u, p, n);
 }
 
 /// The bury tops of both covers (x snow, y ash; `surface_cover_bury`'s `top`) over a ground point
 /// at render XZ `xz` with `amounts` (`surface_raise_amounts`) and the surface's high point `top`
-/// (0..1 on the shading's `SurfaceInput.height` scale: terrain `layer_blend_top`, each layer's
-/// p90): the shading's compared height (`surface_cover_height`) of that high point, the look
-/// prefiltered to `texel_m` (terrain: one fixed world scale, `RAISE_TEXEL_M`, never the vertex
-/// spacing: SW-5c) and the drift patches. 1 where a channel has no amount (never buried).
+/// (0..1 on the shading's `SurfaceInput.height` scale: terrain `layer_raise_top`, the layers'
+/// p90, bilinear): the shading's compared height (`surface_cover_height`) of that high point, the
+/// look's mean and the drift patches prefiltered to `filter_m` m (SW-6: the raise's filter width,
+/// `surface_raise_filter_m`, one world scale on every LOD and at every distance, SW-5c), so the
+/// raise's slope stays under the repose angle whatever the tops. 1 where a channel has no amount
+/// (never buried).
 fn surface_raise_tops(
     u: SurfaceUniform,
     noise: texture_2d<f32>,
@@ -733,34 +806,46 @@ fn surface_raise_tops(
     amounts: vec2<f32>,
     xz: vec2<f32>,
     top: f32,
-    texel_m: f32,
+    filter_m: f32,
 ) -> vec2<f32> {
-    let drift = surface_cover_drift(noise, samp, xz);
+    let level = surface_prefilter_level(filter_m, COVER_DRIFT_TILE_M / f32(textureDimensions(noise).x));
+    let drift = surface_cover_drift_at(noise, samp, xz, level);
     var out = vec2(1.0);
     if amounts.x > 0.0 {
-        let look = surface_cover_look_height(cover, cover_sampler, u.snow_layer, u.cover_uv.xy, COVER_SNOW, xz, texel_m);
-        out.x = surface_cover_height(top, look, drift);
+        out.x = surface_cover_height(top, surface_cover_look_mean(cover, cover_sampler, u.cover_uv.xy, COVER_SNOW), drift);
     }
     if amounts.y > 0.0 {
-        let look = surface_cover_look_height(cover, cover_sampler, u.ash_layer, u.cover_uv.zw, COVER_ASH, xz, texel_m);
-        out.y = surface_cover_height(top, look, drift);
+        out.y = surface_cover_height(top, surface_cover_look_mean(cover, cover_sampler, u.cover_uv.zw, COVER_ASH), drift);
     }
     return out;
 }
 
 /// The raise (m) of both covers at `amounts` over the bury tops `tops` (`surface_raise_tops`)
-/// and a ring value `v` (ring depth `ring`).
-fn surface_raise_of(u: SurfaceUniform, amounts: vec2<f32>, tops: vec2<f32>, v: vec2<f32>, ring: f32) -> f32 {
-    return surface_cover_raise(amounts.x, tops.x, u.snow_layer.y, v, ring) + surface_cover_raise(amounts.y, tops.y, u.ash_layer.y, v, ring);
+/// and a ring value `v` (ring depth `ring`), under the deformers' ceiling (S1a; twin
+/// `sf_surface::deform::capped_raise` of the channels' `trail::cover_raise`): taken after the
+/// bury, so a leg above a partly buried cover carves nothing and the surface never stands above it.
+fn surface_raise_of(u: SurfaceUniform, amounts: vec2<f32>, tops: vec2<f32>, v: vec3<f32>, ring: f32) -> f32 {
+    let raise = surface_cover_raise(amounts.x, tops.x, u.snow_layer.y, v, ring) + surface_cover_raise(amounts.y, tops.y, u.ash_layer.y, v, ring);
+    if ring <= 0.0 {
+        return raise;
+    }
+    return min(raise, surface_trail_ceiling(v, ring));
+}
+
+/// The deformers' ceiling (m over the ground; S1a, twin `sf_surface::deform::ceiling`) a ring
+/// value's B stands for: the ring depth plus its lip (above every raise: none) lowered by B.
+fn surface_trail_ceiling(v: vec3<f32>, ring: f32) -> f32 {
+    let h = ring * (1.0 + TRAIL_LIP_HEIGHT);
+    return h + clamp(v.z, -h, 0.0);
 }
 
 /// The ring around `p` for the cover (no trail: ring 0). Four more taps only where the pixel
-/// itself is in a print or on a lip.
+/// itself is in a print, on a lip or under a deformer.
 fn surface_trail_of(trail: texture_2d<f32>, samp: sampler, u: SurfaceUniform, p: vec3<f32>) -> SurfaceTrail {
     var t: SurfaceTrail;
     t.texel = 1.0 / max(u.trail.z, 1e-6);
     t.c = surface_trail_at(trail, samp, u, p.xz);
-    if t.c.x == 0.0 && t.c.y == 0.0 {
+    if all(t.c == vec3(0.0)) {
         return t;
     }
     t.ring = u.trail.w;
@@ -773,8 +858,15 @@ fn surface_trail_of(trail: texture_2d<f32>, samp: sampler, u: SurfaceUniform, p:
 
 /// The trail's height (m) in a cover of depth `d`: the print down to the ground (`-d` at most:
 /// stamps carve the ring depth, the deepest look) plus the lip scaled to this cover.
-fn surface_trail_height(v: vec2<f32>, d: f32, ring: f32) -> f32 {
+fn surface_trail_height(v: vec3<f32>, d: f32, ring: f32) -> f32 {
     return clamp(v.x, -d, 0.0) + v.y * d / ring;
+}
+
+/// The trail height the shading cuts a cover of depth `d` at `amount` by (S1a; twin
+/// `sf_surface::deform::shade_height`): the print's, or lower the deformers' ceiling under the
+/// cover's surface (taken as `d × amount`: the shading has no bury), never below `-d`.
+fn surface_trail_cut(v: vec3<f32>, d: f32, ring: f32, amount: f32) -> f32 {
+    return max(min(surface_trail_height(v, d, ring), surface_trail_ceiling(v, ring) - d * saturate(amount)), -d);
 }
 
 /// Lays channel `c` over the material where its height blend covers (`amount` the cell's ×
@@ -805,9 +897,9 @@ fn surface_apply_cover(
     var trail_g = vec3(0.0);
     if t.ring > 0.0 && layer.y > 0.0 {
         let d = layer.y;
-        cut_amount = saturate(amount + surface_trail_height(t.c, d, t.ring) / d);
-        let sx = (surface_trail_height(t.px, d, t.ring) - surface_trail_height(t.nx, d, t.ring)) / (2.0 * t.texel);
-        let sz = (surface_trail_height(t.pz, d, t.ring) - surface_trail_height(t.nz, d, t.ring)) / (2.0 * t.texel);
+        cut_amount = saturate(amount + surface_trail_cut(t.c, d, t.ring, amount) / d);
+        let sx = (surface_trail_cut(t.px, d, t.ring, amount) - surface_trail_cut(t.nx, d, t.ring, amount)) / (2.0 * t.texel);
+        let sz = (surface_trail_cut(t.pz, d, t.ring, amount) - surface_trail_cut(t.nz, d, t.ring, amount)) / (2.0 * t.texel);
         let fade = 1.0 - smoothstep(t.texel, 4.0 * t.texel, s.footprint);
         let tg = -vec3(sx, 0.0, sz) * (fade * coverage);
         trail_g = tg - n_geo * dot(n_geo, tg);
@@ -844,7 +936,7 @@ fn apply_surface_layer(
     shelter: texture_2d<f32>,
     shelter_sampler: sampler,
     noise: texture_2d<f32>,
-    canopy: texture_2d<f32>,
+    far: texture_2d<f32>,
     cover: texture_2d_array<f32>,
     cover_sampler: sampler,
     trail: texture_2d<f32>,
@@ -861,7 +953,7 @@ fn apply_surface_layer(
         let shade = 0.45 + 0.55 * sqrt(saturate(luma * 2.0));
         var tint = vec3(0.5);
         if debug == DEBUG_EXPOSURE {
-            let e = surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, s.ground_n);
+            let e = surface_exposure(shelter, far, shelter_sampler, u, s.world_pos, s.ground_n);
             // Sheltered blue, open sky warm yellow; detail kept through the albedo's luminance.
             tint = mix(vec3(0.05, 0.2, 1.0), vec3(1.0, 0.8, 0.15), e);
         } else if debug == DEBUG_CELLS {
@@ -878,12 +970,13 @@ fn apply_surface_layer(
             // Porosity black (sealed: metal, polish) to white (drinks); far proxies red-tinted.
             tint = vec3(s.porosity) * select(vec3(1.0), vec3(1.0, 0.5, 0.5), s.surface_class == CLASS_FAR);
         } else if debug == DEBUG_TRAILS {
-            // Prints blue (full depth brightest), lips red, on grey; outside the ring purple;
+            // Prints blue (full depth brightest), lips red, deformer ceilings (S1a) green, on grey;
+            // outside the ring purple;
             // trails off (no cover look, `--off trails`) dark grey.
             tint = vec3(0.25);
             if u.trail.w > 0.0 {
                 let v = surface_trail_at(trail, samp, u, s.world_pos.xz);
-                tint = vec3(0.15) + vec3(saturate(v.y / (TRAIL_LIP_HEIGHT * u.trail.w)), 0.0, saturate(-v.x / u.trail.w)) * 0.85;
+                tint = vec3(0.15) + vec3(saturate(v.y / (TRAIL_LIP_HEIGHT * u.trail.w)), saturate(-v.z / u.trail.w), saturate(-v.x / u.trail.w)) * 0.85;
                 if !surface_in_trail(u, s.world_pos.xz) {
                     tint = vec3(0.5, 0.0, 0.5);
                 }
@@ -941,7 +1034,7 @@ fn apply_surface_layer(
         }
         if s.surface_class != CLASS_FAR && (wet > 0.0 || p > 0.0 || snow > 0.0 || ash > 0.0) {
             // Shelter: none under roofs, less (smaller puddles, fewer rings) under leaves.
-            let e = surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, s.ground_n);
+            let e = surface_exposure(shelter, far, shelter_sampler, u, s.world_pos, s.ground_n);
             wet *= e;
             p *= e;
             rain = u.time.y * e;

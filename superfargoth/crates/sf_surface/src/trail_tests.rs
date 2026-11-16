@@ -152,7 +152,7 @@ fn pass_keeps_moves_and_stamps() {
     // Render space = world here (origin 0).
     #[allow(clippy::cast_possible_truncation)]
     let corner = min.as_vec2() * RING_TEXEL_M as f32;
-    let first = TrailPass { corner, depth_m: D, new_min: min, old_min: None, refill_m: 0.0, stamps: vec![foot(Vec2::new(0.03, 0.03), Vec2::X)] };
+    let first = TrailPass { corner, depth_m: D, new_min: min, old_min: None, refill_m: 0.0, stamps: vec![foot(Vec2::new(0.03, 0.03), Vec2::X)], capture: None };
     let ring = first.run(&vec![[1.0, 1.0]; idx(IVec2::new(0, n))]);
     // The texel under the stamp's centre: world texel (0, 0), at address world mod n.
     let under = IVec2::ZERO.rem_euclid(IVec2::splat(n));
@@ -195,34 +195,42 @@ fn raise_composes_cover_and_prints() {
 
 /// SW-6 "B" (2026-11-15, paving): the raise follows the bury depth, not where the cover shows. A
 /// cover below the relief's high point (snow 0.4 in a road's grout, cobble tops at 0.8) raises
-/// nothing, with or without prints and lips; past it the raise ramps to the full depth at
-/// amount 1, monotone; a flat surface (top 0) keeps amount x depth.
+/// nothing, with or without prints and lips; past it the raise ramps (SW-6 2026-11-16: a
+/// smoothstep over a ramp no narrower than `1 - COVER_TOP_MAX`) to the full depth at amount 1 over
+/// tops up to `COVER_TOP_MAX`, part of it over higher tops, monotone; a flat surface (top 0) keeps
+/// smoothstep(amount) x depth. `raise_tests.rs` holds the slope bound.
 #[test]
 fn raise_follows_the_bury_depth() {
-    use crate::layer::cover_bury;
+    use crate::layer::{COVER_TOP_MAX, cover_bury};
     let knee = 0.45;
     let top = 0.8;
+    let ss = |x: f32| x * x * (3.0 - 2.0 * x);
     assert_eq!(cover_raise(0.4, top, knee, [0.0, 0.0], 0.0), 0.0);
     assert_eq!(cover_raise(0.4, top, knee, [0.0, LIP_HEIGHT * knee], knee), 0.0);
     assert_eq!(cover_raise(top, top, knee, [0.0, 0.0], 0.0), 0.0);
-    assert!((cover_raise(0.9, top, knee, [0.0, 0.0], 0.0) - 0.5 * knee).abs() < 1e-6);
-    assert_eq!(cover_raise(1.0, top, knee, [0.0, 0.0], 0.0), knee);
-    // Amount 1 buries any relief, even a top at 1.
-    assert_eq!(cover_bury(1.0, 1.0), 1.0);
-    // Flat: amount x depth.
+    let ramp = 1.0 - COVER_TOP_MAX;
+    assert!((cover_raise(0.9, top, knee, [0.0, 0.0], 0.0) - ss(0.1 / ramp) * knee).abs() < 1e-6);
+    assert!((cover_raise(1.0, top, knee, [0.0, 0.0], 0.0) - ss(0.2 / ramp) * knee).abs() < 1e-6);
+    assert_eq!(cover_raise(1.0, 0.5, knee, [0.0, 0.0], 0.0), knee);
+    // Amount 1 buries any relief up to COVER_TOP_MAX; a top at 1 never rises.
+    assert_eq!(cover_bury(1.0, COVER_TOP_MAX), 1.0);
+    assert_eq!(cover_bury(1.0, 1.0), 0.0);
+    // Flat: smoothstep(amount) x depth.
     for i in 0..=10u8 {
         let a = f32::from(i) / 10.0;
-        assert!((cover_raise(a, 0.0, knee, [0.0, 0.0], 0.0) - a * knee).abs() < 1e-6);
+        assert!((cover_raise(a, 0.0, knee, [0.0, 0.0], 0.0) - ss(a) * knee).abs() < 1e-6);
     }
-    // Monotone in the amount, for any top.
-    for t in [0.0, 0.3, 0.8, 1.0] {
+    // Monotone in the amount, for any top; full at amount 1 up to COVER_TOP_MAX.
+    for t in [0.0, 0.3, COVER_TOP_MAX, 0.8, 1.0] {
         let mut last = 0.0;
         for i in 0..=40u8 {
             let r = cover_raise(f32::from(i) / 40.0, t, knee, [0.0, 0.0], 0.0);
             assert!(r >= last, "top {t}, step {i}: {r} < {last}");
             last = r;
         }
-        assert_eq!(last, knee);
+        if t <= COVER_TOP_MAX {
+            assert_eq!(last, knee, "top {t}");
+        }
     }
 }
 

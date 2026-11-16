@@ -245,7 +245,13 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
             world_pos = world_from_local[3].xyz;
         }
 
-        let camera_distance = length(world_pos - view.lod_view_world_position);
+        // superfargoth patch (own, SW-5d: fixed per-view LOD distance): a view with a fixed
+        // LOD distance resolves every mesh at that distance (`RenderViewLodDistances`).
+        let camera_distance = select(
+            length(world_pos - view.lod_view_world_position),
+            view.lod_fixed_distance,
+            view.lod_fixed_distance >= 0.0,
+        );
         // `x` is the minimum range; `w` is the largest range.
         if (camera_distance < lod_range.x || camera_distance >= lod_range.w) {
             return;

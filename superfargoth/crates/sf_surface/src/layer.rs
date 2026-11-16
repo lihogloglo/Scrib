@@ -89,8 +89,13 @@ pub const COVER_HEIGHT_MIX: f32 = 0.5;
 pub const COVER_DRIFT: f32 = 0.5;
 pub const COVER_DRIFT_TILE_M: f32 = 64.0;
 pub const COVER_NORMAL: f32 = 1.0;
-/// The highest bury top (W6b `cover_bury`): keeps its ramp finite, so amount 1 buries any relief.
-pub const COVER_TOP_MAX: f32 = 0.999;
+/// The bury top past which the bury's ramp stops narrowing (W6b `cover_bury`; SW-6 2026-11-16, was
+/// 0.999): the ramp from the top to amount 1 is never narrower than `1 - COVER_TOP_MAX`, so the
+/// bury's gain stays [`bury_gain`] (3.75) and the raise's slope bounded ([`raise_filter_m`]).
+/// Amount 1 buries to the full depth any relief whose top is at most this; a higher top (stones
+/// under a drift high point) rises `(1 - top) / (1 - COVER_TOP_MAX)` up the ramp. 0.6: open ground
+/// (p90 <= 0.7 under the mean look and drift) stays full at amount 1.
+pub const COVER_TOP_MAX: f32 = 0.6;
 /// Ash's Bevy `reflectance` (F0 0.04, a plain dielectric); snow takes ice's, `WATER_REFLECTANCE`.
 pub const ASH_REFLECTANCE: f32 = 0.5;
 /// Snow sparkle: glint facet cell (m; divides 256), share of cells that glint at sparkle 1, their
@@ -367,14 +372,59 @@ pub fn cover_coverage(amount: f32, base: f32, cover: f32, drift: f32, contrast: 
     cover_blend(amount, cover_height(base, cover, drift), contrast)
 }
 
-/// The bury depth (W6b; `surface_cover_bury`), 0..1: how far `amount` has risen past the
-/// footprint's high point `top` ([`cover_height`] of the relief's p90 height, the look and the
-/// drift), over what is left to the full depth: `(amount - top) / (1 - top)`, clamped. 0 until
-/// the cover buries the relief's high point (partial cover in the grout is shading only, as in
-/// RDR2 / ROTTR deep snow), `amount` on a flat surface (`top` 0), 1 at amount 1.
+/// The bury depth (W6b, SW-6; `surface_cover_bury`), 0..1: how far `amount` has risen past the
+/// footprint's high point `top` ([`cover_height`] of the relief's p90 height, the look's mean and
+/// the drift, prefiltered: [`raise_filter_m`]) over what is left to the full depth, `(amount - top)
+/// / (1 - min(top, COVER_TOP_MAX))`, through a smoothstep (C1 at the toe and the crest). 0 until the
+/// cover buries the relief's high point (partial cover in the grout is shading only, as in RDR2 /
+/// ROTTR deep snow), 1 at amount 1 over any top up to [`COVER_TOP_MAX`]. Its slope in `amount` and
+/// in `top` is at most [`bury_gain`] (SW-6: the old `(amount - top) / (1 - top)` with tops up to
+/// 0.999 had a gain up to 1000 next to amount 1: the vertical wall).
 pub fn cover_bury(amount: f32, top: f32) -> f32 {
-    let t = top.clamp(0.0, COVER_TOP_MAX);
-    ((amount - t) / (1.0 - t)).clamp(0.0, 1.0)
+    let t = top.clamp(0.0, 1.0);
+    let x = ((amount - t) / (1.0 - t.min(COVER_TOP_MAX))).clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// The bury's steepest slope (SW-6) per unit of `amount` or of `top`: the smoothstep's 1.5 over the
+/// narrowest ramp, `1 - COVER_TOP_MAX`. Below `COVER_TOP_MAX` the ramp `(a - t) / (1 - t)` has
+/// `|d/dt| = (1 - a) / (1 - t)^2 <= 1 / (1 - t)` wherever it lies inside 0..1.
+pub fn bury_gain() -> f32 {
+    1.5 / (1.0 - COVER_TOP_MAX)
+}
+
+/// The world width (m) the raise's tops are low-passed to (SW-6; `layer.wesl`
+/// `surface_raise_filter_m`) so the raised cover never stands steeper than the repose angle
+/// (`tan_repose`), whatever the tops. The raise is `depth x bury(amount, top)` (`depth_m`: the
+/// channels' summed depth) with `top = clamp(mix(base, 1 - look, COVER_HEIGHT_MIX) + (drift - 0.5)
+/// x COVER_DRIFT)`, the look at its mean (no slope), the drift prefiltered to the width `w`
+/// ([`prefilter_level`]: slope <= 1 / w per axis) and `base` the layers' p90 bilinear on texels of
+/// `base_texel_m` (0..1 values: slope <= `1 / base_texel_m` per axis). Along any direction a
+/// bilinear field is at most sqrt 2 steeper than along an axis, so `slope <= depth x bury_gain x
+/// sqrt 2 x ((1 - COVER_HEIGHT_MIX) / base_texel_m + COVER_DRIFT / w)`; `w` is the narrowest width
+/// that keeps it at `tan_repose`, at least `min_m` and at most the drift tile (where the drift is
+/// one constant texel and only the base's own term remains). No cover: `min_m`. Amount edges
+/// (shelter, slope, cells) are not filtered: they rise at `depth x bury_gain x` the amount's slope.
+pub fn raise_filter_m(depth_m: f32, tan_repose: f32, min_m: f32, base_texel_m: f32) -> f32 {
+    if depth_m <= 0.0 {
+        return min_m;
+    }
+    let budget = tan_repose / (depth_m * bury_gain() * std::f32::consts::SQRT_2)
+        - (1.0 - COVER_HEIGHT_MIX) / base_texel_m;
+    let w = if budget * COVER_DRIFT_TILE_M > COVER_DRIFT { COVER_DRIFT / budget } else { COVER_DRIFT_TILE_M };
+    w.max(min_m)
+}
+
+/// The mip level (fractional: trilinear) at which a texture of `texel0_m` m texels (mip 0) reads as
+/// a field no steeper than its range over `w_m` per axis (SW-6; `layer.wesl`
+/// `surface_prefilter_level`): mip `m` (texel `T = texel0 x 2^m <= w`) blended toward `m + 1` by
+/// `f = 2 (1 - T / w)`, so `(1 - f) / T + f / (2 T) = 1 / w`. 0 when `w` is finer than the texture.
+pub fn prefilter_level(w_m: f32, texel0_m: f32) -> f32 {
+    if w_m <= texel0_m {
+        return 0.0;
+    }
+    let m = (w_m / texel0_m).log2().floor();
+    m + 2.0 * (1.0 - texel0_m * m.exp2() / w_m)
 }
 
 /// Sparkle fades as a pixel covers more than a glint cell (`footprint` m per pixel; 0 unknown:

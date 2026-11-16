@@ -117,7 +117,7 @@ fn occlusion_centre_snaps_to_its_texels() {
 
 /// SW-6 (twin of `sf_surface_bevy`'s shelter test): an occlusion redraw makes its casters visible
 /// (Bevy extracts only meshes some view sees: a roof behind the camera dropped out of the map),
-/// only on redraw frames, and a LOD level casts by its distance from the map centre.
+/// only on redraw frames, and only a caster's finest LOD level casts (SW-5d).
 #[test]
 fn occlusion_redraw_makes_its_casters_visible() {
     use bevy_camera::visibility::{InheritedVisibility, ViewVisibility, VisibilityRange};
@@ -154,8 +154,7 @@ fn occlusion_redraw_makes_its_casters_visible() {
     ids.sort_unstable();
     let mut expected = vec![roof, near];
     expected.sort_unstable();
-    assert_eq!(ids, expected, "the far level is out of range of the map centre");
-    assert!((frame.1 - eye).length() < 0.2, "the LOD origin is the snapped centre: {}", frame.1);
+    assert_eq!(ids, expected, "the finest level only");
     assert!(visible(&app, roof) && visible(&app, near) && !visible(&app, far));
     // A small move (under the 6 m recenter): no redraw, nothing marked.
     for e in [roof, near] {
@@ -166,4 +165,62 @@ fn occlusion_redraw_makes_its_casters_visible() {
     assert!(app.world().resource::<occlusion::Frame>().0.is_none());
     assert!(!visible(&app, roof));
     assert_eq!(app.world().resource::<PrecipOcclusionStats>().redraws, 1);
+}
+
+/// SW-5d: the levels a fixed LOD distance picks (Bevy's `is_visible_at_all` at that distance),
+/// for chains 0-30 / 30-120 / 120-400 m: 0 m the first, 150 m the third; no range always casts,
+/// a proxy that starts beyond the distance never does.
+#[test]
+fn lod_casts_picks_the_level_at_the_fixed_distance() {
+    use bevy_camera::visibility::VisibilityRange;
+    let chain = [VisibilityRange::abrupt(0.0, 30.0), VisibilityRange::abrupt(30.0, 120.0), VisibilityRange::abrupt(120.0, 400.0)];
+    let picks = |d: f32| chain.iter().map(|r| occlusion::lod_casts(Some(r), d)).collect::<Vec<_>>();
+    assert_eq!(picks(occlusion::LOD_DISTANCE_M), [true, false, false]);
+    assert_eq!(picks(150.0), [false, false, true]);
+    assert!(occlusion::lod_casts(None, 0.0) && occlusion::lod_casts(None, 150.0));
+    assert!(!occlusion::lod_casts(Some(&VisibilityRange::abrupt(400.0, 1.0e6)), occlusion::LOD_DISTANCE_M), "proxy only");
+}
+
+/// SW-5d: redraws centred 0, 16 and 48 m apart over one world draw the same casters: each
+/// tree's finest level (0-30 m), never its 30-120 m level or its 400 m+ proxy, though the trees
+/// stand 0-58 m from the centres (the SW-5 centre rule swapped levels between these redraws).
+#[test]
+fn occlusion_casters_are_the_finest_levels_for_any_centre() {
+    use bevy_camera::visibility::{InheritedVisibility, ViewVisibility, VisibilityRange};
+    use bevy_camera::{Camera, Camera3d};
+    use bevy_light::DirectionalLight;
+    use bevy_transform::components::GlobalTransform;
+    let mut app = App::new();
+    app.insert_resource(Assets::<bevy_image::Image>::default());
+    let rain = PrecipSlot { intensity: 0.5, wind_follow: 0.0, ..PrecipSlot::default() };
+    app.insert_resource(Precip { slots: [Some(rain), None], ..Precip::default() });
+    occlusion::build(&mut app);
+    app.world_mut().spawn(DirectionalLight { shadow_maps_enabled: true, ..Default::default() });
+    let eye = Vec3::new(10.0, 2.0, -4.0);
+    let cam = app.world_mut().spawn((Camera::default(), Camera3d::default(), GlobalTransform::from_translation(eye))).id();
+    let spawn = |app: &mut App, at: Vec3, range: VisibilityRange| {
+        app.world_mut()
+            .spawn((Mesh3d(Handle::default()), GlobalTransform::from_translation(at), InheritedVisibility::VISIBLE, ViewVisibility::HIDDEN, range))
+            .id()
+    };
+    let mut finest = Vec::new();
+    for x in [-10.0, 0.0, 10.0, 20.0] {
+        let at = eye + Vec3::new(x, 0.0, 3.0);
+        finest.push(spawn(&mut app, at, VisibilityRange::abrupt(0.0, 30.0)));
+        spawn(&mut app, at, VisibilityRange::abrupt(30.0, 120.0));
+        spawn(&mut app, at, VisibilityRange::abrupt(400.0, 1.0e6));
+    }
+    finest.sort_unstable();
+    let mut sets = Vec::new();
+    for dx in [0.0, 16.0, 48.0] {
+        *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(eye + Vec3::X * dx);
+        app.update();
+        let req = app.world().resource::<occlusion::Frame>().0.clone().expect("a move past the recenter redraws");
+        let mut ids: Vec<_> = req.casters.iter().map(|c| c.1.id()).collect();
+        ids.sort_unstable();
+        sets.push(ids);
+    }
+    for (ids, dx) in sets.iter().zip([0, 16, 48]) {
+        assert_eq!(ids, &finest, "centre {dx} m on: the finest levels only");
+    }
 }

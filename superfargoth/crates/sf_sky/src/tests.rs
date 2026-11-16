@@ -739,3 +739,40 @@ fn moonlight_colour_is_the_weathers_hue_else_the_moons() {
     // The sun stays white.
     assert_eq!(midnight(&s, 0.0, &w).sun.tint, Vec3::ONE);
 }
+
+/// NS-3: a driven moon sits where its driver says (horizon frame, rotated by the world's north),
+/// takes its phase snapped to the steps, and carries its alpha and texture blend to the renderer.
+#[test]
+fn driven_moon_follows_its_driver() {
+    let driver = MoonDriver::new(|clock: &SkyClock| MoonDrive {
+        // East-north-east, 30 degrees up; the phase advances with the day.
+        direction_enu: Vec3::new(0.8, 0.3, 0.5),
+        phase: if clock.days < 1.0 { 0.5 } else { 0.27 },
+        alpha: 0.5,
+        texture_blend: 2.0,
+    });
+    let mut settings = SkySettings {
+        moons: vec![Moon {
+            path: MoonPath::Driven(driver.clone()),
+            phase_steps: 8,
+            textures: (0..8).map(|k| format!("m{k}")).collect(),
+            ..Moon::default()
+        }],
+        ..SkySettings::default()
+    };
+    settings.orbit.north_heading_deg = 90.0;
+    let night = settings.evaluate(&SkyClock { days: 0.9 }, &Weather::default()).night;
+    let m = night.moons()[0];
+    let enu = Vec3::new(0.8, 0.3, 0.5).normalize();
+    assert!((m.position.elevation - enu.z.asin()).abs() < 1e-5);
+    let flat = settings.orbit.horizontal(Vec3::new(0.0, 1.0, 0.0)).direction;
+    assert!(flat.y.abs() < 1e-6 && (flat.length() - 1.0).abs() < 1e-6, "north on the horizon: {flat}");
+    assert_eq!((m.phase, m.frame, m.alpha, m.texture_blend), (0.5, Some(4), 0.5, 1.0));
+    let later = settings.evaluate(&SkyClock { days: 1.5 }, &Weather::default()).night.moons()[0];
+    assert_eq!((later.phase, later.frame), (0.25, Some(2)));
+    // Undriven moons draw fully.
+    let plain = SkySettings::default().evaluate(&SkyClock { days: 0.9 }, &Weather::default());
+    assert!(plain.night.moons().iter().all(|m| (m.alpha, m.texture_blend) == (1.0, 1.0)));
+    // One driver equals itself, not another.
+    assert_eq!(MoonPath::Driven(driver.clone()), MoonPath::Driven(driver));
+}

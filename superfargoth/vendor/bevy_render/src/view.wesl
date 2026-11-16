@@ -98,6 +98,11 @@ struct View {
     // to a "previous = current" render-space position gives last frame's render-space position
     // across a floating-origin shift; zero on every other frame and for views without one.
     origin_rebase: vec3<f32>,
+    // superfargoth patch (own, SW-5d: fixed per-view LOD distance): `RenderViewLodDistances`
+    // (view/mod.rs). >= 0: every mesh resolves its visibility range at this distance,
+    // undithered (culling in `mesh_preprocess`, `get_visibility_range_dither_level`);
+    // negative: off, ranges resolve from `lod_view_world_position` (stock).
+    lod_fixed_distance: f32,
 };
 
 // -----------------

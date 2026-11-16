@@ -124,6 +124,20 @@ SOFTWARE.
 - Ported into: `bevyrrowind/crates/mw_weather/src/ambient.rs` (the game; differences in the module docs: linear decode and
   luminance normalisation after OpenMW's gamma-space interpolation).
 
+## OpenMW (moons)
+
+- Source: https://github.com/OpenMW/openmw, commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (the moon code is
+  unchanged on master as of 2026-11-17): `apps/openmw/mwworld/weather.cpp` and `weather.hpp` (`MoonModel`:
+  `calculateSettings`, `buildCycle`, `calculateState`, `hoursUntilVisible`, `hoursUntilInvisible`, `hourOfDay`,
+  `dayOfCycle`, `riseHour`, `handoverHour`, `rotation`, `angle`, `phase`, `shadowBlend`, `hourlyAlpha`,
+  `earlyMoonShadowAlpha`, `safeDivide`, its constants), `apps/openmw/mwrender/skyutil.cpp` (`Moon::setState`
+  direction, `CelestialBody` quad size, `Moon::setPhase` texture names), `apps/openmw/mwrender/sky.cpp` (moon scale
+  `Moons_*_Size / 115`) and `files/shaders/compatibility/sky.frag` (`paintMoon` blend).
+- Licence: GPL-3.0 (OpenMW: "GNU General Public License version 3"; the full text is the repository's `LICENSE`,
+  identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt). Holder: the OpenMW contributors.
+- Ported into: `bevyrrowind/crates/mw_weather/src/moons.rs` (the game; f32 arithmetic in OpenMW's order) and its use in
+  `bevyrrowind/crates/mw_environment_bevy/src/night_sky.rs`.
+
 ## OpenMW (book markup)
 
 - Source: https://github.com/OpenMW/openmw, commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`:

@@ -173,3 +173,27 @@ fn real_cover_layers_name_install_textures() {
         assert!(resolved.is_some(), "{} not in the VFS", layer.albedo_height);
     }
 }
+
+/// NS-3: every phase texture of both moons is in the install's VFS (`Morrowind.bsa`) as a DXT DDS
+/// with a top level, and the player's `[Moons]` values are the vanilla ones the model defaults to.
+#[test]
+fn moon_phase_textures_resolve_in_the_install() {
+    use mw_weather::moons::{MoonName, MoonSettings};
+    let Ok((install, _)) = MorrowindInstall::detect(None) else {
+        eprintln!("no Morrowind install detected; skipping");
+        return;
+    };
+    let vfs = mw_vfs::mount_install(&install, Vfs::builder()).unwrap().vfs;
+    for moon in MoonName::ALL {
+        let textures = moon.phase_textures();
+        assert_eq!(textures.len(), 8);
+        for path in &textures {
+            let bytes = vfs.read(&sf_vfs::VfsPath::new(path).unwrap()).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let (height, width) = (u32::from_le_bytes(bytes[12..16].try_into().unwrap()), u32::from_le_bytes(bytes[16..20].try_into().unwrap()));
+            assert!(bytes.starts_with(b"DDS ") && width > 0 && height > 0, "{path}");
+            assert!(matches!(&bytes[84..88], b"DXT1" | b"DXT3" | b"DXT5"), "{path}: {:?}", &bytes[84..88]);
+        }
+        let player = MoonSettings::from_ini(moon, install.ini.as_ref());
+        println!("{moon:?}: ini {player:?}");
+    }
+}

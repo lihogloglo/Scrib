@@ -137,6 +137,15 @@ fn get_visibility_range_dither_level(instance_index: u32, world_position: vec4<f
     }
 
     let lod_range = visibility_ranges[visibility_buffer_index];
+
+    // superfargoth patch (own, SW-5d: fixed per-view LOD distance): a view with a fixed LOD
+    // distance (`RenderViewLodDistances`) never dithers: whole when the range holds the
+    // distance, culled otherwise (CPU twin: `bevy_render::view::resolve_visibility_range`).
+    if (view.lod_fixed_distance >= 0.0) {
+        let d = view.lod_fixed_distance;
+        return select(-16, 0, d >= lod_range.x && d < lod_range.w);
+    }
+
     let camera_distance = length(view.lod_view_world_position.xyz - world_position.xyz);
 
     // This encodes the following mapping:

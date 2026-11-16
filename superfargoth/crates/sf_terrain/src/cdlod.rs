@@ -75,15 +75,11 @@ impl NodeKey {
 /// where the 0.45 m knee-deep cover subtends ~1.5 output pixels at 1440p (SW-5c).
 pub const RAISE_FADE_START: f32 = 8.0;
 /// Where it reaches 0 (`RAISE_FADE_END`, 576 m): sub-pixel, inside [`RAISE_MAX_LOD`]'s range, and
-/// before the terrain's splat range fades the layers' high point (`layer_blend_top`, from 700 m).
+/// inside the terrain's splat range (from 700 m; the raise's high point, `layer_raise_top`, reads no distance).
 pub const RAISE_FADE_END: f32 = 12.0;
 /// The coarsest LOD the raise displaces (`common.wesl` `RAISE_MAX_LOD`): every coarser node lies
 /// past this one's range, beyond the fade's end (SW-5c; was LOD 0 with a 43 m fade).
 pub const RAISE_MAX_LOD: i8 = 4;
-/// The one world scale the raise's tops are prefiltered to, meters (`common.wesl`
-/// `RAISE_TEXEL_M`; the LOD 0 vertex spacing): every LOD displaces the same world-space field,
-/// never one prefiltered to its own vertex spacing (SW-5c).
-pub const RAISE_TEXEL_M: f32 = 0.5;
 
 /// LOD ranges and morph zones.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -117,14 +113,34 @@ impl CdlodSettings {
     }
 
     /// Weight of the raised cover (surface weather W6b, SW-5c; `common.wesl` `raise_fade`) at
-    /// `d` meters from the camera (the vertex's 3D distance, as the morph uses): 1 out to
-    /// [`RAISE_FADE_START`] × LOD 0's range, a smoothstep down to exactly 0 at
-    /// [`RAISE_FADE_END`] × that range and beyond. Only where the raise is sub-pixel, and it
-    /// scales every ground point alike (open and sheltered): no relative pit near the camera.
-    /// The raise is displaced on LOD ≤ [`RAISE_MAX_LOD`]; every coarser vertex lies past that
-    /// LOD's range, beyond the fade's end, so no seam or step remains.
+    /// `d` meters from the camera (the vertex's 3D distance, as the morph uses), with no reach
+    /// limit from outside: [`Self::raise_fade_within`] at an infinite reach.
     pub fn raise_fade(&self, d: f32) -> f32 {
-        let (a, b) = (RAISE_FADE_START * self.lod0_range, RAISE_FADE_END * self.lod0_range);
+        self.raise_fade_within(d, f32::INFINITY)
+    }
+
+    /// The raise's fade `(start, end)` in meters (SW-5e): it ends at [`RAISE_FADE_END`] × LOD 0's
+    /// range (where the cover is sub-pixel) or at the host's `reach_m`, whichever is nearer, and
+    /// starts at [`RAISE_FADE_START`] / [`RAISE_FADE_END`] of that end. `reach_m` is how far the
+    /// cover's inputs are known whatever the camera's place (surface weather's shelter levels and
+    /// the casters that fill them, `sf_surface::view::raise_reach_m`): past it a texel's cover
+    /// would change as the camera neared, so the raise is already 0 there.
+    pub fn raise_fade_range(&self, reach_m: f32) -> (f32, f32) {
+        let end = (RAISE_FADE_END * self.lod0_range).min(reach_m.max(0.0));
+        (end * (RAISE_FADE_START / RAISE_FADE_END), end)
+    }
+
+    /// Weight of the raised cover at `d` meters with the reach limit `reach_m`: 1 out to the
+    /// fade's start ([`Self::raise_fade_range`]), a smoothstep down to exactly 0 at its end and
+    /// beyond. It scales every ground point alike (open and sheltered): no relative pit near the
+    /// camera. The raise is displaced on LOD ≤ [`RAISE_MAX_LOD`]; every coarser vertex lies past
+    /// that LOD's range, beyond the fade's end (which a reach limit only brings nearer), so no
+    /// seam or step remains.
+    pub fn raise_fade_within(&self, d: f32, reach_m: f32) -> f32 {
+        let (a, b) = self.raise_fade_range(reach_m);
+        if d >= b {
+            return 0.0;
+        }
         let t = ((d - a) / (b - a)).clamp(0.0, 1.0);
         1.0 - t * t * (3.0 - 2.0 * t)
     }
@@ -136,16 +152,18 @@ impl CdlodSettings {
     }
 
     /// The raised cover a vertex of `lod` at `d` meters displaces by (`common.wesl`
-    /// `terrain_raise`): `field(texel_m)` is the cover's unweighted raise at the vertex's world
-    /// point with its tops prefiltered to `texel_m` meters (`surface_raise_at`), and the vertex
-    /// passes [`RAISE_TEXEL_M`], never its own spacing: the same world point raises alike on every
-    /// LOD and at every distance inside the fade (SW-5c).
-    pub fn vertex_raise(&self, lod: i8, d: f32, field: impl Fn(f32) -> f32) -> f32 {
+    /// `terrain_raise`): `field(filter_m)` is the cover's unweighted raise at the vertex's world
+    /// point with its tops prefiltered to `filter_m` meters (`surface_raise_at`), and the vertex
+    /// passes the view's one filter width (`filter_m`: SW-6's repose bound,
+    /// `sf_surface::layer::raise_filter_m`, from the covers' depth and the repose tunables), never
+    /// its own spacing or distance: the same world point raises alike on every LOD and at every
+    /// distance inside the fade (SW-5c).
+    pub fn vertex_raise(&self, lod: i8, d: f32, filter_m: f32, field: impl Fn(f32) -> f32) -> f32 {
         let w = self.raise_weight(lod, d);
         if w <= 0.0 {
             return 0.0;
         }
-        w * field(RAISE_TEXEL_M)
+        w * field(filter_m)
     }
 
     /// The view distance: the coarsest LOD's range.
@@ -345,33 +363,61 @@ mod tests {
         assert!(steepest * knee < 0.004, "slope {}", steepest * knee);
     }
 
+    /// SW-5e: a host reach limit only brings the fade nearer: it ends exactly at the reach (0 at
+    /// and past it), starts at the same 2/3 of its end, stays inside the displaced levels, and an
+    /// infinite reach is the unlimited fade.
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn raise_fade_ends_at_the_reach_limit() {
+        let s = CdlodSettings::default();
+        assert_eq!(s.raise_fade_range(f32::INFINITY), (RAISE_FADE_START * s.lod0_range, RAISE_FADE_END * s.lod0_range));
+        for reach in [120.0, 180.0, 270.0, 315.0, 360.0] {
+            let (start, end) = s.raise_fade_range(reach);
+            assert_eq!(end, reach);
+            assert_eq!(start, reach * RAISE_FADE_START / RAISE_FADE_END);
+            assert!(end < s.range(RAISE_MAX_LOD));
+            assert_eq!(s.raise_fade_within(start, reach), 1.0);
+            assert_eq!(s.raise_fade_within(end, reach), 0.0);
+            assert_eq!(s.raise_fade_within(end + 1.0, reach), 0.0);
+            assert!(s.raise_fade_within(end - 1.0, reach) > 0.0);
+        }
+        assert_eq!(s.raise_fade_within(0.0, 0.0), 0.0, "no reach: no raise");
+        for d in [0.0, 200.0, 400.0, 500.0, 600.0] {
+            assert_eq!(s.raise_fade(d), s.raise_fade_within(d, f32::INFINITY));
+        }
+    }
+
     /// SW-5c: a ground point's raise is a function of the world only. The same point, with a
     /// field whose tops rise as they are prefiltered coarser (the bury's concave clamp,
     /// `sw5-diag` cause 2), raises bit-equal at 5, 30 and 100 m from the camera and on LOD
-    /// -2/-1/0/1/2 (vertex spacing 0.125/0.25/0.5/1/2 m); prefiltered to each LOD's own spacing
+    /// -2..4 (vertex spacing 0.125 to 8 m) and, SW-6, at the repose bound's filter width (4.28 m
+    /// for 0.45 m of snow at 30 deg) as at SW-5c's 0.5 m; prefiltered to each LOD's own spacing
     /// (W6b), the same point did not.
     #[test]
     fn raise_is_the_same_on_every_lod_and_distance() {
         let s = CdlodSettings::default();
         // A sheltered snow point (amount 0.8 under a 0.45 m cover) whose top rises 0.04 per mip
-        // of a 1024 px look tiled every 4 m (`surface_cover_look_height`).
-        let field = |texel_m: f32| {
-            let mip = (texel_m * 1024.0 / 4.0).log2().max(0.0);
-            let top = 0.04f32.mul_add(mip, 0.5);
-            ((0.8 - top) / (1.0 - top)).clamp(0.0, 1.0) * 0.45
+        // of the 0.25 m drift atlas (`surface_raise_tops`), through SW-6's smoothstep bury.
+        let field = |filter_m: f32| {
+            let mip = (filter_m / 0.25).log2().max(0.0);
+            let top = 0.04f32.mul_add(mip, 0.4);
+            let x = ((0.8 - top) / (1.0 - top.min(0.6))).clamp(0.0, 1.0);
+            x * x * (3.0 - 2.0 * x) * 0.45
         };
-        let reference = s.vertex_raise(0, 5.0, field);
-        assert!(reference > 0.0);
-        let mut old = Vec::new();
-        for lod in -2..=2i8 {
-            let spacing = 0.5 * 2f32.powi(i32::from(lod));
-            for d in [5.0, 30.0, 100.0] {
-                let r = s.vertex_raise(lod, d, field);
-                assert_eq!(r.to_bits(), reference.to_bits(), "LOD {lod} at {d} m");
-                old.push((s.raise_weight(lod, d) * field(spacing)).to_bits());
+        for filter_m in [0.5, 4.28] {
+            let reference = s.vertex_raise(0, 5.0, filter_m, field);
+            assert!(reference > 0.0);
+            let mut old = Vec::new();
+            for lod in -2..=RAISE_MAX_LOD {
+                let spacing = 0.5 * 2f32.powi(i32::from(lod));
+                for d in [5.0, 30.0, 100.0, 300.0] {
+                    let r = s.vertex_raise(lod, d, filter_m, field);
+                    assert_eq!(r.to_bits(), reference.to_bits(), "LOD {lod} at {d} m, filter {filter_m} m");
+                    old.push((s.raise_weight(lod, d) * field(spacing)).to_bits());
+                }
             }
+            old.dedup();
+            assert!(old.len() > 1, "the per-LOD prefilter did change the raise");
         }
-        old.dedup();
-        assert!(old.len() > 1, "the per-LOD prefilter did change the raise");
     }
 }

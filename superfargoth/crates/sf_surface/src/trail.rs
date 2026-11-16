@@ -49,8 +49,11 @@ pub const REFILL_QUANTUM_M: f32 = 0.002;
 /// Wider than the sole: a boot pushes snow aside, and the ring's 6.25 cm texels need ≥ 1.5 texels.
 pub const FOOT_HALF_M: Vec2 = Vec2::new(0.16, 0.09);
 
-/// Uniform words: four slots of `vec4` (window, mins, counts, shape), then two per stamp.
-pub const PARAM_SLOTS: usize = 4 + 2 * MAX_STAMPS;
+/// Uniform header slots: window, mins, counts, shape, then the deformer capture's three
+/// (`capture`, `slab`, `ground`; S1a).
+pub const HEADER_SLOTS: usize = 7;
+/// Uniform words: the header's `vec4` slots, then two per stamp.
+pub const PARAM_SLOTS: usize = HEADER_SLOTS + 2 * MAX_STAMPS;
 
 /// One stamp in render space (meters, X and Z).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -176,11 +179,13 @@ pub struct TrailPass {
     pub old_min: Option<IVec2>,
     pub refill_m: f32,
     pub stamps: Vec<Stamp>,
+    /// The deformer capture drawn last frame (S1a, `crate::deform`), merged into B.
+    pub capture: Option<crate::deform::Capture>,
 }
 
 impl TrailPass {
     /// The uniform as `vec4<u32>` slots (f32 / i32 bit-cast).
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
     pub fn slots(&self) -> Vec<[u32; 4]> {
         let f = |v: [f32; 4]| v.map(f32::to_bits);
         let old = self.old_min.unwrap_or(IVec2::ZERO);
@@ -188,13 +193,48 @@ impl TrailPass {
         let mut s = vec![[0; 4]; PARAM_SLOTS];
         s[0] = f([self.corner.x, self.corner.y, RING_TEXEL_M as f32, self.depth_m]);
         s[1] = [self.new_min.x, self.new_min.y, old.x, old.y].map(|v| v as u32);
-        s[2] = [n as u32, u32::from(self.old_min.is_some()), RING_SIZE as u32, 0];
+        let size = self.capture.as_ref().map_or(0, |c| c.size);
+        s[2] = [n as u32, u32::from(self.old_min.is_some()), RING_SIZE as u32, size];
         s[3] = f([self.refill_m, LIP_HEIGHT, LIP_WIDTH, WALL]);
+        if let Some(c) = &self.capture {
+            let g = &c.ground;
+            s[4] = f([c.corner.x, c.corner.y, c.texel_m, c.near_y]);
+            s[5] = f([c.range_m, crate::deform::ceiling_ref(self.depth_m), g.corner.x, g.corner.y]);
+            s[6] = f([g.step_m, g.edge as f32, 0.0, 0.0]);
+        }
         for (i, st) in self.stamps.iter().take(MAX_STAMPS).enumerate() {
-            s[4 + 2 * i] = f([st.center.x, st.center.y, st.axis.x, st.axis.y]);
-            s[5 + 2 * i] = f([st.half.x, st.half.y, st.depth, 0.0]);
+            s[HEADER_SLOTS + 2 * i] = f([st.center.x, st.center.y, st.axis.x, st.axis.y]);
+            s[HEADER_SLOTS + 1 + 2 * i] = f([st.half.x, st.half.y, st.depth, 0.0]);
         }
         s
+    }
+
+    /// The ground grid's storage words (`trail.wgsl` `ground`; at least one: a binding is never
+    /// empty).
+    pub fn ground_words(&self) -> Vec<f32> {
+        match &self.capture {
+            Some(c) if !c.ground.heights.is_empty() => c.ground.heights.clone(),
+            _ => vec![0.0],
+        }
+    }
+
+    /// The pass's B channel (the deformer ceiling, S1a) on a CPU ring (`RING_SIZE`², row-major
+    /// by Z then X) with the drawn capture target `depth` (all of it, `deform::MAX_CAPTURE_SIZE`²,
+    /// ignored without a capture): the GPU's result.
+    pub fn run_ceiling(&self, prev: &[f32], depth: &[f32]) -> Vec<f32> {
+        let n = RING_SIZE;
+        let mut out = vec![0.0; prev.len()];
+        for z in 0..n {
+            for x in 0..n {
+                let addr = IVec2::new(x, z);
+                #[allow(clippy::cast_sign_loss)]
+                let i = (z * n + x) as usize;
+                let last = if kept(addr, self.old_min, self.new_min, n) { prev[i] } else { 0.0 };
+                let captured = self.capture.as_ref().map_or(0.0, |c| c.value_at(self.texel_center(addr), depth, self.depth_m));
+                out[i] = crate::deform::ceiling_update(last, self.refill_m, captured);
+            }
+        }
+        out
     }
 
     /// The render X, Z of texel `addr`'s centre in the new window.

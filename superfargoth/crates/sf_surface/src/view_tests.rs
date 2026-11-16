@@ -471,3 +471,148 @@ fn measure_full_window_fill() {
         out.len()
     );
 }
+
+/// SW-5e: the far level is the near capture scaled: 1024² over ±512 m (1 m texels), its depth
+/// range its half extent each way, its vertical recentre and streamed-redraw interval in the near
+/// level's ratios; shelter is known (unfaded for any camera inside one recentre step) out to
+/// 0.875 x 512 - 64 = 384 m, the near level's 40 m. The near level is the old shelter map.
+#[test]
+fn far_level_scales_the_near_capture() {
+    let far = ShelterLevel::far(512.0, 64.0);
+    assert_eq!((far.texel_m(), far.up_m, far.down_m, far.recenter_y_m, far.refresh_frames), (1.0, 512.0, 512.0, 32.0, 120));
+    assert_eq!(far.known_m(), 384.0);
+    assert_eq!((NEAR_LEVEL.texel_m(), NEAR_LEVEL.known_m()), (SHELTER_TEXEL_M, 40.0));
+    let c = shelter_center(Vec3::new(10.03, 5.0, -3.07));
+    assert_eq!(NEAR_LEVEL.view(c), shelter_view(c));
+    // The far centre snaps to whole metres of the world grid.
+    let (center, texel) = far.center_world(DVec3::new(256.0, 0.0, -512.0), Vec3::new(10.4, 3.2, -3.6));
+    assert_eq!((center, texel), (Vec3::new(10.0, 3.0, -4.0), IVec2::new(266, -516)));
+    let (_, clip) = far.view(center);
+    for (dx, dz) in [(1.0, 1.0), (-1.0, -1.0)] {
+        let p = clip.project_point3(center + Vec3::new(dx * 512.0, 0.0, dz * 512.0));
+        assert!((p.x.abs() - 1.0).abs() < 1e-5 && (p.y.abs() - 1.0).abs() < 1e-5, "{p}");
+    }
+    assert!((clip.project_point3(center + Vec3::Y * 512.0).z - 1.0).abs() < 1e-5);
+    // Moves inside a step redraw nothing; past it the level recentres.
+    let mut t = ShelterTrigger::default();
+    assert_eq!(t.frame_level(&far, DVec3::ZERO, Vec3::ZERO, false), Some(Redraw::Fresh));
+    assert_eq!(t.frame_level(&far, DVec3::ZERO, Vec3::new(63.0, 30.0, 0.0), false), None);
+    assert_eq!(t.frame_level(&far, DVec3::ZERO, Vec3::new(65.0, 0.0, 0.0), false), Some(Redraw::Moved));
+    for _ in 0..119 {
+        assert_eq!(t.frame_level(&far, DVec3::ZERO, Vec3::new(65.0, 0.0, 0.0), true), None);
+    }
+    assert_eq!(t.frame_level(&far, DVec3::ZERO, Vec3::new(65.0, 0.0, 0.0), false), Some(Redraw::Streamed));
+}
+
+/// A test world for the levels' twin: a tree crown (a disc of 4 m radius over the ground) at
+/// `TREE`. A level's ground exposure at `p` is bilinear between its texel centres, each 0 under
+/// the crown and 1 outside (the layer's far test; the near tent is finer still, and both read a
+/// fixed world grid: the centres snap to whole texels).
+const TREE: Vec3 = Vec3::new(300.0, 0.0, -20.0);
+
+fn level_ground(level: &ShelterLevel, center: Vec3, p: Vec3) -> f32 {
+    let t = level.texel_m();
+    let covered = |x: f32, z: f32| if Vec3::new(x, 0.0, z).distance(TREE) < 4.0 { 0.0 } else { 1.0 };
+    // Texel centres sit at (k + 0.5) texels from the snapped centre (an even texel count).
+    let g = (p - center) / t - 0.5;
+    let (fx, fz) = (g.x.floor(), g.z.floor());
+    let (bx, bz) = (g.x - fx, g.z - fz);
+    let at = |i: f32, j: f32| covered(center.x + (fx + i + 0.5) * t, center.z + (fz + j + 0.5) * t);
+    let lo = at(0.0, 0.0) + (at(1.0, 0.0) - at(0.0, 0.0)) * bx;
+    let hi = at(0.0, 1.0) + (at(1.0, 1.0) - at(0.0, 1.0)) * bx;
+    lo + (hi - lo) * bz
+}
+
+/// What the layer shows at `p` for a camera that walked from the far side to `camera` (both
+/// levels recentred by their triggers on the way, as in the game).
+fn shown_from(camera: Vec3, p: Vec3) -> f32 {
+    let far = ShelterLevel::far(512.0, 64.0);
+    let (mut near_t, mut far_t) = (ShelterTrigger::default(), ShelterTrigger::default());
+    let start = camera + Vec3::X * 300.0;
+    for i in 0..=300 {
+        let c = start.lerp(camera, i as f32 / 300.0);
+        near_t.frame_level(&NEAR_LEVEL, DVec3::ZERO, c, false);
+        far_t.frame_level(&far, DVec3::ZERO, c, false);
+    }
+    let (nc, fc) = (near_t.center().unwrap(), far_t.center().unwrap());
+    let near = (NEAR_LEVEL.edge(nc, p), level_ground(&NEAR_LEVEL, nc, p));
+    let far_v = (far.edge(fc, p), level_ground(&far, fc, p));
+    blended_exposure(Some(near), Some(far_v))
+}
+
+/// SW-5e (owner 2026-11-16: snow under trees still sank as the camera neared): a ground point
+/// under a far tree reads the same shelter from cameras 5, 60 and 200 m away (near level, the
+/// band, far level): the levels hold the same world texels whatever their centres; open sky only
+/// beyond the far level. Points under the crown's rim, where the near level's finer texels differ
+/// from the far ones, move by at most the band weight times that difference.
+#[test]
+fn exposure_under_a_far_tree_holds_as_the_camera_nears() {
+    let under = TREE + Vec3::new(1.2, 0.0, -0.7);
+    for d in [5.0, 60.0, 200.0, 380.0] {
+        let camera = under - Vec3::X * d + Vec3::Y * 1.7;
+        assert_eq!(shown_from(camera, under), 0.0, "camera {d} m away");
+    }
+    assert_eq!(shown_from(under - Vec3::X * 700.0, under), 1.0, "beyond the far level: open");
+    // The far level alone (no near map): the same.
+    let far = ShelterLevel::far(512.0, 64.0);
+    let fc = far.center_world(DVec3::ZERO, under - Vec3::X * 200.0).0;
+    assert_eq!(blended_exposure(None, Some((far.edge(fc, under), level_ground(&far, fc, under)))), 0.0);
+    // The rim: the near and far values differ; the shown one lies between them, by the band.
+    let rim = TREE + Vec3::new(3.8, 0.0, 0.3);
+    let camera = rim - Vec3::X * 60.0;
+    let nc = NEAR_LEVEL.center_world(DVec3::ZERO, camera).0;
+    let fc = far.center_world(DVec3::ZERO, camera).0;
+    let (n, f) = (level_ground(&NEAR_LEVEL, nc, rim), level_ground(&far, fc, rim));
+    let w = level_fade(NEAR_LEVEL.edge(nc, rim));
+    let shown = blended_exposure(Some((NEAR_LEVEL.edge(nc, rim), n)), Some((far.edge(fc, rim), f)));
+    assert!((shown - (n + (f - n) * w)).abs() < 1e-6, "{n} {f} {w} {shown}");
+    // The levels' texel grids coincide in the world (whole far texels are whole near texels).
+    assert_eq!((far.texel_m() / NEAR_LEVEL.texel_m()).fract(), 0.0);
+    // No map at all: open sky.
+    assert_eq!(blended_exposure(None, None), 1.0);
+}
+
+/// SW-5e: a carried texel shows exactly what it showed, whatever the band moved under it
+/// (`exposure_texel_in` against `shown_exposure`, factor 1); a texel the old map did not reach
+/// showed the next level out; a single level with open sky outside is SW-5's `exposure_texel`.
+#[test]
+fn carried_texels_keep_what_they_showed_across_the_band() {
+    let carry = ExposurePass { mode: ExposureMode::Carry(IVec2::new(128, 0)), decay: 1.0 };
+    let outer = 0.3;
+    for (held, fade) in [((0.0, 0.1, 0.0), 0.6), ((0.12, 0.4, 0.9), 0.0), ((-0.05, 0.9, 0.5), 1.0), ((0.0, 0.0, 1.0), 0.25)] {
+        let fresh = 0.55;
+        let (lag, target) = exposure_texel_in(carry, Some(held), fresh, fade, outer);
+        assert_eq!(target, fresh);
+        let before = shown_exposure(held.0, held.1, held.2, outer);
+        let after = shown_exposure(lag, target, fade, outer);
+        assert!((before - after).abs() < 1e-6, "{held:?} {fade}: {before} {after}");
+    }
+    let (lag, fresh) = exposure_texel_in(carry, None, 0.8, 0.0, outer);
+    assert!((shown_exposure(lag, fresh, 0.0, outer) - outer).abs() < 1e-6, "entered: what the far level showed");
+    let held = (0.137_f32, 0.402_f32);
+    assert_eq!(exposure_texel(carry, Some(held), 0.9), exposure_texel_in(carry, Some((held.0, held.1, 0.0)), 0.9, 0.0, 1.0));
+    assert_eq!((level_fade(0.5), level_fade(SHELTER_FADE_START), level_fade(1.0), level_fade(3.0)), (0.0, 0.0, 1.0, 1.0));
+}
+
+/// SW-5e: the near pass's uv into the far pack (`outer_uv_map`) maps every near texel onto the far
+/// pack's uv of the same world point, for any pair of centres; the raise's reach is the known
+/// shelter or the casters, whichever ends first, and unlimited with no shelter map.
+#[test]
+fn near_texels_map_onto_the_far_pack_and_the_reach_is_the_nearer_bound() {
+    let far = ShelterLevel::far(512.0, 64.0);
+    let (nc, fc) = (Vec3::new(100.25, 3.0, -40.5), Vec3::new(64.0, 0.0, 0.0));
+    let (near_clip, far_clip) = (NEAR_LEVEL.view(nc).1, far.view(fc).1);
+    let (scale, offset) = outer_uv_map(near_clip, NEAR_LEVEL.half_m, far_clip, far.half_m);
+    assert_eq!(scale, 0.125);
+    let uv = |clip: glam::Mat4, p: Vec3| {
+        let c = clip.project_point3(p);
+        glam::Vec2::new(c.x * 0.5 + 0.5, -c.y * 0.5 + 0.5)
+    };
+    for p in [Vec3::new(100.0, 0.0, -40.0), Vec3::new(160.0, 7.0, -100.0), Vec3::new(40.5, -3.0, 20.0)] {
+        let mapped = uv(near_clip, p) * scale + offset;
+        assert!((mapped - uv(far_clip, p)).length() < 1e-5, "{p}: {mapped} {}", uv(far_clip, p));
+    }
+    assert_eq!(raise_reach_m(None, 360.0), f32::INFINITY);
+    assert_eq!(raise_reach_m(Some(far.known_m()), 360.0), 360.0);
+    assert_eq!(raise_reach_m(Some(NEAR_LEVEL.known_m()), 360.0), 40.0);
+}

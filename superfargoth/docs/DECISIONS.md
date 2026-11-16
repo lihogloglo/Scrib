@@ -1861,3 +1861,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-17 (tunables-t5d, industry standard): graphics levels picked in the options menu are saved per machine
   (`<user data>/machine.toml`, UE `GameUserSettings` style), not in the profile; only picks are saved, applied at `User`
   (CLI `--quality`/`--set` above them); benchmark and screenshot runs ignore them.
+- 2026-11-17 (orch-snow, owner): game calendar = one data record (`sf.calendar`, clock.md "Calendar (C3)"), generic
+  enough for odd calendars; weekday display is a mod (data carries names, no vanilla UI shows them); the calendar feeds
+  weather a month/day-of-year input for optional, subtle seasonal data later (vanilla neutral, not built now).
