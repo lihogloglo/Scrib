@@ -6,7 +6,9 @@
 //!   `echo`, `clear`), "did you mean" on unknown names.
 //! - Variables ([`Vars`]): typed values with defaults, validated on every set,
 //!   read by [`VarId`] every frame, with change tracking for the engine side and
-//!   a "set by" priority ([`SetBy`]: default < config < command line < code < console).
+//!   a "set by" priority ([`SetBy`]: default < mod < preset < user config < command line
+//!   < code < console). The store is `sf_tunables` (a console variable is a tunable),
+//!   re-exported here under its console names.
 //! - Line editing support: [`Prompt`] (the input line, its history browsing and
 //!   completion popup), [`Console::complete`], [`History`], and the output [`Log`]
 //!   a front end draws from.
@@ -21,8 +23,6 @@ use std::fmt::Write as _;
 mod history;
 mod lex;
 mod prompt;
-mod value;
-mod vars;
 
 #[cfg(test)]
 mod tests;
@@ -30,8 +30,12 @@ mod tests;
 pub use history::{History, Level, Line, Log};
 pub use lex::{Segment, Token, split};
 pub use prompt::{Edit, Prompt};
-pub use value::{ArgKind, NameFilter, Value, parse_bool};
-pub use vars::{SetBy, SetOutcome, Var, VarId, VarSpec, Vars};
+// The typed variable store is the tunables core: a console variable is a tunable.
+pub use sf_tunables;
+pub use sf_tunables::{
+    ArgKind, NameFilter, SetBy, SetOutcome, Spec as VarSpec, Tunable as Var, TunableId as VarId,
+    Tunables as Vars, Value, parse_bool,
+};
 
 /// Default number of history entries kept.
 pub const HISTORY_CAPACITY: usize = 200;
@@ -434,15 +438,18 @@ impl<C> Console<C> {
     }
 
     /// Registers a variable.
-    pub fn add_var(&mut self, mut spec: VarSpec) -> Result<VarId, RegisterError> {
-        spec.name = self.check_name(&spec.name)?;
-        let name = spec.name.clone();
+    pub fn add_var(&mut self, spec: VarSpec) -> Result<VarId, RegisterError> {
+        let name = self.check_name(spec.name())?;
         let id = self
             .vars
-            .register(spec)
-            .map_err(|message| RegisterError::BadDefault {
-                name: name.clone(),
-                message,
+            .register(spec.renamed(&name))
+            .map_err(|e| match e {
+                sf_tunables::RegisterError::InvalidName(n) => RegisterError::InvalidName(n),
+                sf_tunables::RegisterError::Duplicate(n) => RegisterError::Duplicate(n),
+                e => RegisterError::BadDefault {
+                    name: name.clone(),
+                    message: e.to_string(),
+                },
             })?;
         self.names.insert(name, Target::Var(id));
         Ok(id)

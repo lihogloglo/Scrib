@@ -1,0 +1,2024 @@
+{
+  "about": "Per-crate ratchet of tools/tunables-census.mjs --check: a crate's T count may only go down. Rewrite with --update-baseline only when counts went down (a migration slice).",
+  "totals": {
+    "rows": 2180,
+    "T": 1247,
+    "C": 487,
+    "?": 446
+  },
+  "crates": {
+    "bevyrrowind": {
+      "T": 2,
+      "?": 1,
+      "C": 0,
+      "tunables": [
+        "src/perf/cli.rs GPU_BUSY_PCT",
+        "src/perf/cli.rs OTHER_CPU_LIMIT"
+      ]
+    },
+    "mw_actors": {
+      "T": 2,
+      "?": 2,
+      "C": 29,
+      "tunables": [
+        "src/equip.rs SLOT_COUNT",
+        "src/slots.rs PRT_COUNT"
+      ]
+    },
+    "mw_actors_bevy": {
+      "T": 5,
+      "?": 0,
+      "C": 0,
+      "tunables": [
+        "src/actor_particles.rs ACTOR_PARTICLE_RANGE_M",
+        "src/held.rs HeldLightBudget.max",
+        "src/held.rs HeldLightTuning.clearance_m",
+        "src/held.rs HeldLightTuning.source_radius_m",
+        "src/held.rs TORCH_SHADOW_PRIORITY"
+      ]
+    },
+    "mw_ai": {
+      "T": 5,
+      "?": 4,
+      "C": 2,
+      "tunables": [
+        "src/scaffold.rs WALK_SLACK",
+        "src/wander.rs IDLE_CHANCE_MULTIPLIER",
+        "src/wander.rs MAX_WALK_SPEED",
+        "src/wander.rs MIN_WALK_SPEED",
+        "src/wander.rs START_RADIUS"
+      ]
+    },
+    "mw_anim": {
+      "T": 3,
+      "?": 2,
+      "C": 5,
+      "tunables": [
+        "src/convert.rs EULER_RATE",
+        "src/convert.rs SNAP_DURATION",
+        "src/convert.rs SNAP_SPEED_RATIO"
+      ]
+    },
+    "mw_assets": {
+      "T": 12,
+      "?": 10,
+      "C": 1,
+      "tunables": [
+        "src/cooked.rs CookedLodSettings.max_distance",
+        "src/cooked.rs CookedLodSettings.tint_levels",
+        "src/cooked.rs RAY_TRACING_LOD",
+        "src/lights.rs FULL_MOONLIGHT_FLOOR_RATIO",
+        "src/lights.rs LightCalibration.exposure_floor_ev100",
+        "src/lights.rs LightCalibration.lumens_per_radius_sq",
+        "src/lights.rs LightCalibration.range_scale",
+        "src/lights.rs LightCalibration.unshadowed_range_scale",
+        "src/lights.rs SHADOW_NEAR_Z",
+        "src/map_ab.rs PARALLAX_DEPTH_SCALE",
+        "src/particles.rs CARRY_MAX_STEP_M",
+        "src/particles.rs PARTICLE_REACH_M"
+      ]
+    },
+    "mw_audio": {
+      "T": 8,
+      "?": 1,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs MusicMood.battle_hold_s",
+        "src/lib.rs RangeScale.default_max",
+        "src/lib.rs RangeScale.default_min",
+        "src/lib.rs RangeScale.max_mult",
+        "src/lib.rs RangeScale.min_mult",
+        "src/lib.rs UNIT_M",
+        "src/voice.rs VoiceRules.greet_duration_s",
+        "src/voice.rs VoiceRules.idle_odds"
+      ]
+    },
+    "mw_audio_bevy": {
+      "T": 5,
+      "?": 1,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs EYE_M",
+        "src/lib.rs IDLE_SPEED_MPS",
+        "src/lib.rs START_GRACE_S",
+        "src/lib.rs STEP_JUMP_M",
+        "src/lib.rs STEP_RANGE_M"
+      ]
+    },
+    "mw_bake": {
+      "T": 21,
+      "?": 11,
+      "C": 21,
+      "tunables": [
+        "src/census.rs MAX_BANDS",
+        "src/census.rs MAX_SPAN",
+        "src/census.rs MIN_EXTENT",
+        "src/census.rs MIN_FILL",
+        "src/census.rs MIN_HEIGHT",
+        "src/census.rs MIN_SHARE",
+        "src/cook.rs DEPTH_MAX_SIZE",
+        "src/delight.rs DEFAULT_STRENGTH",
+        "src/delight.rs MIN_SIDE",
+        "src/far.rs IMPOSTOR_MIN_HEIGHT",
+        "src/importer.rs DROP_FRACTION",
+        "src/nav.rs APPROACH_RADIUS",
+        "src/nav.rs CELL_BUDGET",
+        "src/nav.rs DEFAULT_SWIM_HEIGHT_SCALE",
+        "src/nav.rs DOOR_FLOOR_SLACK",
+        "src/nav.rs DOOR_HALF_DEPTH",
+        "src/nav.rs GeometryCache.heights",
+        "src/nav.rs HEIGHT_BUDGET",
+        "src/nav.rs MESH_BUDGET",
+        "src/nav.rs TERRAIN_SPACING",
+        "src/world.rs LAYER_ARRAY_SIZE"
+      ]
+    },
+    "mw_combat": {
+      "T": 0,
+      "?": 4,
+      "C": 0,
+      "tunables": []
+    },
+    "mw_delirium": {
+      "T": 26,
+      "?": 3,
+      "C": 1,
+      "tunables": [
+        "src/body.rs Options.arm_out_deg",
+        "src/body.rs Options.body_kg",
+        "src/body.rs Options.torque",
+        "src/takeover.rs ROLL_RADIUS",
+        "src/takeover.rs Rules.blend_in",
+        "src/takeover.rs Rules.blend_out",
+        "src/takeover.rs Rules.corpse_secs",
+        "src/takeover.rs Rules.dead_relax",
+        "src/takeover.rs Rules.down_secs",
+        "src/takeover.rs Rules.dying",
+        "src/takeover.rs Rules.fallen_ratio",
+        "src/takeover.rs Rules.falling_speed",
+        "src/takeover.rs Rules.knock_down_after",
+        "src/takeover.rs Rules.max_secs",
+        "src/takeover.rs Rules.max_velocity",
+        "src/takeover.rs Rules.min_secs",
+        "src/takeover.rs Rules.recover_secs",
+        "src/takeover.rs Rules.recover_speed",
+        "src/takeover.rs Rules.relax",
+        "src/takeover.rs Rules.rest",
+        "src/takeover.rs Rules.roll_gain",
+        "src/takeover.rs Rules.roll_secs",
+        "src/takeover.rs Rules.roll_speed",
+        "src/takeover.rs Rules.still_secs",
+        "src/takeover.rs Rules.still_speed",
+        "src/takeover.rs SETTLED"
+      ]
+    },
+    "mw_delirium_bevy": {
+      "T": 7,
+      "?": 1,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs BLENDED_OUT",
+        "src/lib.rs CLICK_IMPULSE",
+        "src/lib.rs HAND_BACK_BLEND",
+        "src/lib.rs HitRules.certain_fall",
+        "src/lib.rs HitRules.gain",
+        "src/lib.rs HitRules.takeover",
+        "src/lib.rs SIZE"
+      ]
+    },
+    "mw_devtools_bevy": {
+      "T": 4,
+      "?": 3,
+      "C": 0,
+      "tunables": [
+        "src/live_ab.rs LiveAb.sun_shadows",
+        "src/live_ab.rs TIME_SCALES",
+        "src/perf.rs DEFAULT_RESOLUTION",
+        "src/pipeline_watch.rs FLUSH_SECS"
+      ]
+    },
+    "mw_doors_bevy": {
+      "T": 3,
+      "?": 0,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs MIN_FACING",
+        "src/lib.rs NEAR_M",
+        "src/lib.rs REACH_M"
+      ]
+    },
+    "mw_effects": {
+      "T": 5,
+      "?": 0,
+      "C": 44,
+      "tunables": [
+        "src/mgef.rs EFFECT_COUNT",
+        "src/mgef.rs FIRE_DAMAGE",
+        "src/mgef.rs FROST_DAMAGE",
+        "src/mgef.rs SHOCK_DAMAGE",
+        "src/source.rs FOOT_M"
+      ]
+    },
+    "mw_environment_bevy": {
+      "T": 6,
+      "?": 2,
+      "C": 1,
+      "tunables": [
+        "src/night_sky.rs DEG_PER_SIZE",
+        "src/render.rs LAMP_SHADOW_FADE",
+        "src/render.rs POINT_SHADOWS_DEFAULT",
+        "src/render.rs POINT_SHADOW_CACHE",
+        "src/weather.rs LIVE_HOLD_HOURS",
+        "src/weather.rs RASTER_MARGIN"
+      ]
+    },
+    "mw_exterior_bevy": {
+      "T": 9,
+      "?": 2,
+      "C": 12,
+      "tunables": [
+        "src/exterior.rs BLOOM_INTENSITY",
+        "src/exterior.rs SOFT_SHADOW_SIZE",
+        "src/exterior.rs SUN_DEPTH_BIAS",
+        "src/exterior.rs SUN_NORMAL_BIAS",
+        "src/gi_volume.rs INTERIOR_AMBIENT_SCALE",
+        "src/level.rs SIZE",
+        "src/trails.rs DOWN_M",
+        "src/trails.rs ON_TERRAIN_M",
+        "src/trails.rs TOE_SHIFT_M"
+      ]
+    },
+    "mw_game_core": {
+      "T": 5,
+      "?": 3,
+      "C": 0,
+      "tunables": [
+        "src/doors.rs ARRIVAL_EYE_M",
+        "src/exterior.rs CAPTURE_STABLE_FRAMES",
+        "src/exterior.rs CAPTURE_TIMEOUT_SECS",
+        "src/exterior.rs CLOUD_WORLD_SCALE",
+        "src/player.rs LocoAb.speed_match"
+      ]
+    },
+    "mw_graphs": {
+      "T": 8,
+      "?": 1,
+      "C": 0,
+      "tunables": [
+        "src/build.rs DIRECTION_SMOOTHING",
+        "src/build.rs GAIT_BLEND",
+        "src/build.rs LOCK_BLEND",
+        "src/build.rs RATE_CLAMP",
+        "src/build.rs SPEED_SMOOTHING",
+        "src/build.rs TURN_THRESHOLD",
+        "src/build.rs UNPLANT_ANGLE_DEG",
+        "src/script.rs SCRIPT_PRIORITY"
+      ]
+    },
+    "mw_nif": {
+      "T": 6,
+      "?": 7,
+      "C": 10,
+      "tunables": [
+        "src/material.rs CUTOUT_CUTOFF",
+        "src/material.rs Material.depth_test",
+        "src/material.rs Material.depth_write",
+        "src/particles.rs GRAVITY_SCALE",
+        "src/particles.rs STEP",
+        "src/particles.rs WINDOW_SLACK"
+      ]
+    },
+    "mw_physics": {
+      "T": 5,
+      "?": 0,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs DEFAULT_STRENGTH",
+        "src/lib.rs HUMANOID_MASS",
+        "src/lib.rs KG_PER_WEIGHT",
+        "src/lib.rs MASS_RANGE",
+        "src/lib.rs WEIGHTLESS_DENSITY"
+      ]
+    },
+    "mw_player_bevy": {
+      "T": 31,
+      "?": 4,
+      "C": 1,
+      "tunables": [
+        "src/avatar.rs AIR_GRACE",
+        "src/avatar.rs CLIP_BLEND_IN",
+        "src/avatar.rs FALL_SPEED",
+        "src/avatar.rs HIDE_FADE",
+        "src/avatar.rs TELEPORT_M",
+        "src/avatar.rs TRAVERSAL_BLEND_IN",
+        "src/avatar.rs TRAVERSAL_BLEND_OUT",
+        "src/combat.rs STANCE_BLEND_IN",
+        "src/combat.rs STANCE_BLEND_OUT",
+        "src/feel.rs ACCEL_HALFLIFE",
+        "src/feel.rs BRAKE_HALFLIFE",
+        "src/feel.rs FACING_HALFLIFE",
+        "src/feel.rs GRAVITY",
+        "src/feel.rs MEASURE_HALFLIFE",
+        "src/feel.rs TURN_RUN_DEG",
+        "src/feel.rs TURN_SNEAK_DEG",
+        "src/feel.rs TURN_SPRINT_DEG",
+        "src/feel.rs TURN_WALK_DEG",
+        "src/lib.rs ARRIVAL_GROUND_MARGIN_M",
+        "src/lib.rs ARRIVAL_WAIT_MAX_SECS",
+        "src/lib.rs CEILING_M",
+        "src/lib.rs FALL_LIMIT_M",
+        "src/lib.rs FLOOR_SEARCH_M",
+        "src/lib.rs GROUND_OFFSET_M",
+        "src/lib.rs INTERIOR_VOID_MARGIN_M",
+        "src/lib.rs LOOK_RAD_PER_COUNT",
+        "src/lib.rs PLACE_ABOVE_M",
+        "src/lib.rs PLACE_BELOW_M",
+        "src/lib.rs SHAPE_RAY_TOLERANCE_M",
+        "src/lib.rs STEP_M",
+        "src/lib.rs STICK_LOOK_RAD_PER_S"
+      ]
+    },
+    "mw_rpg": {
+      "T": 3,
+      "?": 4,
+      "C": 7,
+      "tunables": [
+        "src/barter.rs BarterOptions.cap_75",
+        "src/training.rs TRAINING_HOURS",
+        "src/training.rs TrainingOptions.base_skill"
+      ]
+    },
+    "mw_rpg_bevy": {
+      "T": 0,
+      "?": 4,
+      "C": 2,
+      "tunables": []
+    },
+    "mw_saves_bevy": {
+      "T": 0,
+      "?": 2,
+      "C": 2,
+      "tunables": []
+    },
+    "mw_script": {
+      "T": 1,
+      "?": 0,
+      "C": 1,
+      "tunables": [
+        "src/interp.rs DEFAULT_STEP_LIMIT"
+      ]
+    },
+    "mw_stats": {
+      "T": 3,
+      "?": 3,
+      "C": 8,
+      "tunables": [
+        "src/gmst.rs VANILLA_LEVEL_UP_MULT",
+        "src/progression.rs MAX_PICKS",
+        "src/table.rs STRENGTH"
+      ]
+    },
+    "mw_ui": {
+      "T": 5,
+      "?": 4,
+      "C": 1,
+      "tunables": [
+        "src/book.rs BookOptions.trim_after_last_break",
+        "src/book.rs IMG_SCHEME_DEFAULT_SIZE",
+        "src/book.rs LEGACY_SIZES",
+        "src/message.rs MAX_BUTTONS",
+        "src/message.rs MAX_FIELD"
+      ]
+    },
+    "mw_viewers_bevy": {
+      "T": 0,
+      "?": 0,
+      "C": 12,
+      "tunables": []
+    },
+    "mw_walkers_bevy": {
+      "T": 15,
+      "?": 2,
+      "C": 1,
+      "tunables": [
+        "src/physics.rs AUTO_FRAME_DELAY",
+        "src/physics.rs BALL_MASS",
+        "src/physics.rs BALL_RADIUS",
+        "src/physics.rs BALL_SPEED",
+        "src/physics.rs DEATH_HANDOFF",
+        "src/physics.rs HIT_REACT_IMPULSE",
+        "src/physics.rs INSERT_BUDGET_MS",
+        "src/physics.rs KNOCKDOWN_HANDOFF",
+        "src/physics.rs KNOCKDOWN_IMPULSE",
+        "src/physics.rs STEP_BUDGET_MS",
+        "src/walkers.rs AI_SLEEP_RADIUS_M",
+        "src/walkers.rs AI_WAKE_RADIUS_M",
+        "src/walkers.rs DORMANT_SIGNIFICANCE",
+        "src/walkers.rs PROCESS_MARGIN",
+        "src/walkers.rs TIMESCALE"
+      ]
+    },
+    "mw_water": {
+      "T": 9,
+      "?": 7,
+      "C": 1,
+      "tunables": [
+        "src/lib.rs SEA_FETCH_M",
+        "src/lib.rs UNIT_M",
+        "src/lib.rs WaterIni.max_ripples",
+        "src/lib.rs WaterIni.near_water_points",
+        "src/lib.rs WaterIni.near_water_radius",
+        "src/lib.rs WaterIni.near_water_underwater_freq",
+        "src/lib.rs WaterIni.near_water_underwater_volume",
+        "src/lib.rs WaterIni.ripple_lifetime",
+        "src/lib.rs WaterIni.underwater_color_weight"
+      ]
+    },
+    "mw_weather": {
+      "T": 17,
+      "?": 5,
+      "C": 1,
+      "tunables": [
+        "src/ambient.rs FADE_STEPS",
+        "src/cover.rs ASH_DEPTH_M",
+        "src/cover.rs SNOW_DEPTH_M",
+        "src/cover.rs TILING_M",
+        "src/lib.rs DEFAULT_TIMESCALE",
+        "src/visual.rs BANK_DENSITY",
+        "src/visual.rs BANK_FALLOFF",
+        "src/visual.rs BLOWING_TILT_MAX_DEG",
+        "src/visual.rs CLOUD_SPEED_MPS",
+        "src/visual.rs CLOUD_WORLD_SCALE",
+        "src/visual.rs MAX_CLOUD_THICKNESS_M",
+        "src/visual.rs RAIN_TILT_MAX_DEG",
+        "src/visual.rs STORM_INNER_M",
+        "src/visual.rs STORM_RADIUS_M",
+        "src/visual.rs STORM_STRENGTH",
+        "src/visual.rs STORM_TILT_MAX_DEG",
+        "src/visual.rs WIND_SPEED_RANGE"
+      ]
+    },
+    "mw_world": {
+      "T": 14,
+      "?": 2,
+      "C": 4,
+      "tunables": [
+        "src/portal.rs ADJUST_MAX_RATIO",
+        "src/portal.rs FLOOR_MAX_OFFSET_M",
+        "src/portal.rs FLOOR_PROBES_M",
+        "src/portal.rs FLOOR_PROBE_DEPTH_M",
+        "src/portal.rs FLOOR_PROBE_HEIGHT_M",
+        "src/portal.rs FLOOR_REACH_M",
+        "src/portal.rs READY_MAX_RATIO",
+        "src/portal.rs SLAB_MAX_THICKNESS_RATIO",
+        "src/source.rs SourceOptions.ground_tolerance_m",
+        "src/source.rs SourceOptions.pivot_tolerance_m",
+        "src/terrain.rs DEFAULT_HEIGHT_UNITS",
+        "src/terrain.rs HEIGHT_SCALE",
+        "src/terrain.rs LAND_TEXELS",
+        "src/worldspaces.rs PAIR_DISTANCE_M"
+      ]
+    },
+    "sf_action": {
+      "T": 20,
+      "?": 22,
+      "C": 5,
+      "tunables": [
+        "src/brace.rs BRACE_FIRM_SPEED",
+        "src/brace.rs BRACE_HALFLIFE",
+        "src/brace.rs BRACE_LEAD",
+        "src/brace.rs BRACE_LOOKAHEAD",
+        "src/brace.rs BRACE_MIN_SPEED",
+        "src/brace.rs BRACE_SPREAD",
+        "src/state.rs CharacterParams.coyote_ticks",
+        "src/state.rs CharacterParams.deadzone",
+        "src/state.rs CharacterParams.gravity",
+        "src/state.rs CharacterParams.height",
+        "src/state.rs CharacterParams.jump_buffer_ticks",
+        "src/state.rs CharacterParams.jump_height",
+        "src/state.rs CharacterParams.radius",
+        "src/state.rs CharacterParams.run_threshold",
+        "src/state.rs ModeProfile.jump_scale",
+        "src/state.rs ModeProfile.speed_scale",
+        "src/step.rs FORWARD_COS",
+        "src/step.rs MAX_SETTLE",
+        "src/step.rs TRAVERSE_INPUT_COS",
+        "src/step.rs VAULT_REACH_SLACK"
+      ]
+    },
+    "sf_action_bevy": {
+      "T": 2,
+      "?": 0,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs OBSTACLE_RANGE_M",
+        "src/lib.rs SAME_FACE_COS"
+      ]
+    },
+    "sf_ai": {
+      "T": 3,
+      "?": 1,
+      "C": 2,
+      "tunables": [
+        "src/directive.rs MAX_REACTIONS",
+        "src/htn.rs SEARCH_DEPTH",
+        "src/trace.rs DEFAULT_TRACE_CAP"
+      ]
+    },
+    "sf_ai_bevy": {
+      "T": 3,
+      "?": 2,
+      "C": 1,
+      "tunables": [
+        "src/gizmos.rs LINE_STEP",
+        "src/gizmos.rs RING_RADIUS",
+        "src/gizmos.rs TEXT_SIZE"
+      ]
+    },
+    "sf_anim": {
+      "T": 53,
+      "?": 8,
+      "C": 6,
+      "tunables": [
+        "src/annotate.rs CONTACT_RELEASE",
+        "src/annotate.rs CONTACT_SPEED",
+        "src/annotate.rs HAND_PIVOT_RELEASE",
+        "src/annotate.rs HAND_SPEED",
+        "src/annotate.rs MIN_CONTACT",
+        "src/cloth.rs CLOTH_MAX_SUBSTEPS",
+        "src/cloth.rs CLOTH_SUBSTEP",
+        "src/cloth.rs ClothParams.damping",
+        "src/cloth.rs ClothParams.gravity",
+        "src/cloth.rs ClothParams.inertia_angular",
+        "src/cloth.rs ClothParams.inertia_linear",
+        "src/cloth.rs ClothParams.teleport_angle",
+        "src/cloth.rs ClothParams.teleport_distance",
+        "src/cloth.rs ClothParams.tether_scale",
+        "src/cloth.rs ClothParams.thickness",
+        "src/cloth.rs GridSpec.cols",
+        "src/cloth.rs GridSpec.mass",
+        "src/cloth.rs GridSpec.max_distance_scale",
+        "src/cloth.rs GridSpec.ring",
+        "src/cloth.rs GridSpec.rows",
+        "src/cook.rs ContactRules.enabled",
+        "src/cook.rs ContactRules.height",
+        "src/cook.rs ContactRules.lift",
+        "src/cook.rs ContactRules.release",
+        "src/cook.rs ContactRules.speed",
+        "src/cook.rs CookSettings.error_bound",
+        "src/cook.rs CookSettings.max_rate",
+        "src/cook.rs CookSettings.min_rate",
+        "src/cook.rs CookSettings.shell_distance",
+        "src/cook.rs RootMotionRules.anchor_end",
+        "src/cook.rs RootMotionRules.attitude",
+        "src/cook.rs RootMotionRules.extract",
+        "src/cook.rs RootMotionRules.horizontal",
+        "src/cook.rs RootMotionRules.vertical",
+        "src/cook.rs RootMotionRules.yaw",
+        "src/foot_metrics.rs MeterRules.planted",
+        "src/foot_metrics.rs MeterRules.settle",
+        "src/foot_metrics.rs MeterRules.sole",
+        "src/ik.rs TwoBone.max_extension",
+        "src/ik.rs TwoBone.weight",
+        "src/ik/full_body.rs FullBodySettings.reach",
+        "src/ik/full_body.rs FullBodySettings.root_compliance",
+        "src/import.rs SourceSpace.unit_scale",
+        "src/loop_cut.rs IN_PLACE_SPEED",
+        "src/loop_cut.rs LoopCutRules.blend",
+        "src/loop_cut.rs LoopCutRules.max_strides",
+        "src/loop_cut.rs LoopCutRules.min_strides",
+        "src/loop_cut.rs LoopCutRules.plateau",
+        "src/loop_cut.rs LoopCutRules.refine",
+        "src/loop_cut.rs VELOCITY_WEIGHT",
+        "src/retarget.rs CONTACT_BLEND",
+        "src/skeleton.rs SkeletonRules.detect_root_motion",
+        "src/skeleton.rs SkeletonRules.guess_tags"
+      ]
+    },
+    "sf_anim_bevy": {
+      "T": 6,
+      "?": 0,
+      "C": 2,
+      "tunables": [
+        "src/lod.rs A2_INTERVAL",
+        "src/lod.rs AnimBudget.cost_us",
+        "src/lod.rs AnimLodSettings.cull_offscreen",
+        "src/lod.rs AnimLodSettings.hysteresis",
+        "src/lod.rs AnimLodSettings.pixels",
+        "src/lod.rs AnimLodSettings.reference_height"
+      ]
+    },
+    "sf_anim_graph": {
+      "T": 18,
+      "?": 0,
+      "C": 6,
+      "tunables": [
+        "src/asset.rs FootGuards.blend_halflife",
+        "src/asset.rs FootGuards.foot_halflife",
+        "src/asset.rs FootGuards.max_drop",
+        "src/asset.rs FootGuards.max_rise",
+        "src/asset.rs FootGuards.max_speed",
+        "src/asset.rs FootGuards.max_step",
+        "src/asset.rs FootGuards.unplant",
+        "src/compiled.rs Provenance.redistributable",
+        "src/instance.rs GRADE_HALFLIFE",
+        "src/procedural.rs FADE_CUT",
+        "src/procedural.rs NORMAL_WEIGHT",
+        "src/procedural.rs STEP_EDGE",
+        "src/secondary.rs CLOTH_LEG_FOLLOW",
+        "src/secondary.rs CLOTH_MAX_LOD",
+        "src/secondary.rs SPRING_MAX_SUBSTEPS",
+        "src/secondary.rs SPRING_SUBSTEP",
+        "src/variety.rs DEFAULT_RATE_JITTER",
+        "src/variety.rs Variety.rate"
+      ]
+    },
+    "sf_app_bevy": {
+      "T": 0,
+      "?": 1,
+      "C": 0,
+      "tunables": []
+    },
+    "sf_atmos": {
+      "T": 34,
+      "?": 40,
+      "C": 2,
+      "tunables": [
+        "src/bank_edges.rs DEPTH_FLOOR",
+        "src/bank_edges.rs DEPTH_SIGMA",
+        "src/bank_edges.rs LOG_STEPS",
+        "src/density.rs CB_RAG_BOOST",
+        "src/density.rs CB_TOP_MIN",
+        "src/density.rs COVERAGE_EDGE",
+        "src/fog.rs FogBanks.coverage",
+        "src/fog.rs FogBanks.sharpness",
+        "src/fog.rs FogLayer.density",
+        "src/fog.rs FogLayer.falloff",
+        "src/fog.rs FogSettings.ambient",
+        "src/fog.rs FogSettings.far",
+        "src/fog.rs FogSettings.phase_g",
+        "src/fog.rs FogSettings.sky_distance",
+        "src/fog.rs FogSettings.wind",
+        "src/fog.rs GOLDEN_ANGLE",
+        "src/fog.rs MAX_EXPONENT",
+        "src/fog.rs NOISE_GAIN",
+        "src/fog.rs NOISE_MID",
+        "src/fog.rs SKY_FILL_SAMPLES",
+        "src/froxel.rs MAX_FOG_LIGHTS",
+        "src/noise.rs DETAIL_SIZE",
+        "src/noise.rs SHAPE_SIZE",
+        "src/noise.rs WEATHER_SIZE",
+        "src/scroll.rs RISE_RATE",
+        "src/settings.rs CloudLook.cirrus_depth",
+        "src/settings.rs CloudLook.far",
+        "src/settings.rs CloudLook.ms_falloff",
+        "src/settings.rs CloudLook.shadow_strength",
+        "src/shadow.rs MAX_DRIFT_M",
+        "src/storm.rs NEAR_SHARP",
+        "src/storm.rs StormShape.edge_m",
+        "src/storm.rs StormShape.edge_noise_m",
+        "src/storm.rs StormShape.ground_fraction"
+      ]
+    },
+    "sf_atmos_bevy": {
+      "T": 22,
+      "?": 12,
+      "C": 6,
+      "tunables": [
+        "src/lib.rs SHADOW_ANCHOR_CELL",
+        "src/lib.rs SHADOW_HALF_EXTENT",
+        "src/render.rs FOG_LIGHT_TEXELS",
+        "src/render.rs FOG_STEPS",
+        "src/shaders/bank_edges.wesl DEPTH_FLOOR",
+        "src/shaders/bank_edges.wesl DEPTH_SIGMA",
+        "src/shaders/bank_edges.wesl LOG_STEPS",
+        "src/shaders/cloud_common.wesl CB_RAG_BOOST",
+        "src/shaders/cloud_common.wesl CB_TOP_MIN",
+        "src/shaders/cloud_trace.wesl EDGE_NOISE_TILES",
+        "src/shaders/cloud_trace.wesl FAR_SHEAR",
+        "src/shaders/cloud_trace.wesl FAR_STEPS",
+        "src/shaders/cloud_trace.wesl STORM_NEAR_SHARP",
+        "src/shaders/fog.wesl MAX_EXPONENT",
+        "src/shaders/fog_light.wesl GOLDEN_ANGLE",
+        "src/shaders/fog_light.wesl SKY_FILL_SAMPLES",
+        "src/shaders/froxel_common.wesl MAX_FOG_LIGHTS",
+        "src/shaders/froxel_inject.wesl FAR_BIAS",
+        "src/shaders/froxel_inject.wesl FAR_BIAS_PER_M",
+        "src/shaders/froxel_inject.wesl FAR_FADE_START",
+        "src/shaders/froxel_inject.wesl FAR_PENUMBRA",
+        "src/shaders/froxel_inject.wesl FAR_PENUMBRA_MIN"
+      ]
+    },
+    "sf_audio": {
+      "T": 21,
+      "?": 4,
+      "C": 1,
+      "tunables": [
+        "src/attenuation.rs Attenuation.max_m",
+        "src/attenuation.rs Attenuation.min_m",
+        "src/group.rs SoundGroup.max_instances",
+        "src/group.rs SoundGroup.volume",
+        "src/impacts.rs ImpactParams.cooldown_s",
+        "src/impacts.rs ImpactParams.full_speed",
+        "src/impacts.rs ImpactParams.max_per_tick",
+        "src/impacts.rs ImpactParams.min_speed",
+        "src/impacts.rs ImpactParams.min_volume",
+        "src/impacts.rs ImpactParams.override_ratio",
+        "src/impacts.rs ImpactParams.slide_fade_s",
+        "src/impacts.rs ImpactParams.slide_full",
+        "src/impacts.rs ImpactParams.slide_hold_s",
+        "src/impacts.rs ImpactParams.slide_min",
+        "src/impacts.rs ImpactParams.slide_min_level",
+        "src/lib.rs COUNT",
+        "src/lib.rs FADE_S",
+        "src/lib.rs OUTDOOR_FADE_S",
+        "src/music.rs MUSIC_FADE_S",
+        "src/volume.rs VOLUME_RANGE_DB",
+        "src/volume.rs VOLUME_TAPER"
+      ]
+    },
+    "sf_audio_bevy": {
+      "T": 2,
+      "?": 0,
+      "C": 0,
+      "tunables": [
+        "src/contacts.rs MIN_LEVEL",
+        "src/lib.rs MAX_ONE_SHOTS"
+      ]
+    },
+    "sf_bake": {
+      "T": 0,
+      "?": 2,
+      "C": 3,
+      "tunables": []
+    },
+    "sf_camera": {
+      "T": 34,
+      "?": 4,
+      "C": 1,
+      "tunables": [
+        "src/collision.rs CollisionParams.fade_end",
+        "src/collision.rs CollisionParams.fade_start",
+        "src/collision.rs CollisionParams.margin",
+        "src/collision.rs CollisionParams.out_halflife",
+        "src/collision.rs CollisionParams.radius",
+        "src/comfort.rs ComfortSettings.auto_camera",
+        "src/comfort.rs ComfortSettings.centre_dot",
+        "src/comfort.rs ComfortSettings.fov_body",
+        "src/comfort.rs ComfortSettings.fov_world",
+        "src/comfort.rs ComfortSettings.head_bob",
+        "src/comfort.rs ComfortSettings.motion_blur",
+        "src/comfort.rs ComfortSettings.shake",
+        "src/comfort.rs ComfortSettings.shake_strength",
+        "src/comfort.rs ComfortSettings.view_model",
+        "src/comfort.rs ComfortSettings.view_model_depth",
+        "src/comfort.rs ShakeParams.decay",
+        "src/comfort.rs ShakeParams.frequency",
+        "src/lockon.rs LockParams.acquire_range",
+        "src/lockon.rs LockParams.angle_weight",
+        "src/lockon.rs LockParams.break_range",
+        "src/lockon.rs LockParams.framing_halflife",
+        "src/lockon.rs LockParams.los_timeout",
+        "src/lockon.rs LockParams.reacquire_window",
+        "src/lockon.rs SoftAimParams.reach",
+        "src/orbit.rs OrbitParams.distance_halflife",
+        "src/orbit.rs OrbitParams.max_lag",
+        "src/orbit.rs OrbitParams.pivot_halflife_xz",
+        "src/orbit.rs OrbitParams.pivot_halflife_y",
+        "src/orbit.rs OrbitParams.pivot_height",
+        "src/orbit.rs OrbitParams.swap_halflife",
+        "src/orbit.rs RecentreParams.delay",
+        "src/orbit.rs RecentreParams.halflife",
+        "src/orbit.rs RecentreParams.min_speed",
+        "src/view_model.rs MAX_DEPTH"
+      ]
+    },
+    "sf_camera_bevy": {
+      "T": 5,
+      "?": 0,
+      "C": 1,
+      "tunables": [
+        "src/lib.rs FirstPersonParams.eye_height",
+        "src/lib.rs Lockable.aim_height",
+        "src/lib.rs ZoomParams.max",
+        "src/lib.rs ZoomParams.min",
+        "src/lib.rs ZoomParams.step"
+      ]
+    },
+    "sf_character": {
+      "T": 20,
+      "?": 1,
+      "C": 4,
+      "tunables": [
+        "src/align.rs DEGENERATE_COS",
+        "src/align.rs UPRIGHT_COS",
+        "src/crowd.rs C0_PIXELS",
+        "src/crowd.rs C1_PIXELS",
+        "src/crowd.rs HYSTERESIS",
+        "src/rig.rs RetargetOptions.ik_legs",
+        "src/smooth.rs SmoothSettings.band",
+        "src/smooth.rs SmoothSettings.iterations",
+        "src/smooth.rs SmoothSettings.keep_authored",
+        "src/smooth.rs SmoothSettings.link",
+        "src/smooth.rs SmoothSettings.max_hops",
+        "src/smooth.rs SmoothSettings.overlap",
+        "src/smooth.rs SmoothSettings.tolerance",
+        "src/smooth.rs SmoothSettings.weld",
+        "src/smooth.rs TransferSettings.iterations",
+        "src/smooth.rs TransferSettings.max_angle",
+        "src/smooth.rs TransferSettings.max_distance",
+        "src/smooth.rs TransferSettings.tolerance",
+        "src/smooth.rs TransferSettings.weld",
+        "src/smooth_outfit.rs OutfitSmoothing.guard_tolerance"
+      ]
+    },
+    "sf_character_bevy": {
+      "T": 5,
+      "?": 0,
+      "C": 1,
+      "tunables": [
+        "src/cloth.rs ClothSettings.simulate",
+        "src/lib.rs AnimVarietySettings.enabled",
+        "src/lib.rs SETTLE_FRAMES",
+        "src/view_model.rs ViewModelSettings.depth",
+        "src/view_model.rs ViewModelSettings.fov_scale"
+      ]
+    },
+    "sf_combat": {
+      "T": 10,
+      "?": 3,
+      "C": 0,
+      "tunables": [
+        "src/rules.rs MIN_STABILITY",
+        "src/rules.rs StandardRules.guard_regen",
+        "src/rules.rs StandardRules.regen_per_s",
+        "src/shape.rs HEAD_HEIGHT",
+        "src/shape.rs HEAD_RADIUS",
+        "src/shape.rs RADIUS_SCALE",
+        "src/shape.rs SWEEP_STEPS",
+        "src/sheet.rs Defaults.blend_in",
+        "src/sheet.rs HitStopDef.hold",
+        "src/step.rs HOSTILE_RANGE"
+      ]
+    },
+    "sf_combat_bevy": {
+      "T": 3,
+      "?": 1,
+      "C": 0,
+      "tunables": [
+        "src/lock.rs LockConfig.eye_height",
+        "src/lock.rs LockConfig.los_radius",
+        "src/marker.rs MARKER_SIZE"
+      ]
+    },
+    "sf_console": {
+      "T": 0,
+      "?": 0,
+      "C": 2,
+      "tunables": []
+    },
+    "sf_console_bevy": {
+      "T": 6,
+      "?": 3,
+      "C": 0,
+      "tunables": [
+        "src/overlay/inspect.rs MAX_ITEMS",
+        "src/overlay/inspect.rs MAX_VALUE",
+        "src/overlay/inspect.rs REFRESH_FRAMES",
+        "src/overlay/mod.rs ConsoleStyle.height_percent",
+        "src/overlay/mod.rs ConsoleStyle.release_cursor",
+        "src/overlay/select.rs FIND_MAX"
+      ]
+    },
+    "sf_controller": {
+      "T": 37,
+      "?": 3,
+      "C": 4,
+      "tunables": [
+        "src/avoid.rs AvoidParams.idle_speed",
+        "src/avoid.rs AvoidParams.margin",
+        "src/avoid.rs AvoidParams.max_neighbours",
+        "src/avoid.rs AvoidParams.neighbour_dist",
+        "src/avoid.rs AvoidParams.side_bias",
+        "src/avoid.rs AvoidParams.time_horizon",
+        "src/avoid.rs AvoidParams.vertical_gap",
+        "src/avoid.rs AvoidParams.yield_weight",
+        "src/context.rs DROP_SAMPLES",
+        "src/correction.rs CorrectionParams.halflife",
+        "src/correction.rs CorrectionParams.max_distance",
+        "src/correction.rs CorrectionParams.max_yaw_rate",
+        "src/correction.rs CorrectionParams.min_speed",
+        "src/correction.rs CorrectionParams.speed_ratio",
+        "src/correction.rs CorrectionParams.yaw_halflife",
+        "src/motion.rs PREDICT_STEP",
+        "src/motion.rs STILL_SPEED",
+        "src/motion.rs SpringParams.halflife_facing",
+        "src/motion.rs SpringParams.halflife_velocity",
+        "src/mover.rs DEFLECT_FACING",
+        "src/mover.rs MoverParams.gravity",
+        "src/mover.rs MoverParams.ground_radius",
+        "src/mover.rs MoverParams.halflife_height",
+        "src/mover.rs MoverParams.height",
+        "src/mover.rs MoverParams.max_fall_speed",
+        "src/mover.rs MoverParams.max_slope_deg",
+        "src/mover.rs MoverParams.radius",
+        "src/mover.rs MoverParams.skin",
+        "src/mover.rs MoverParams.step_down",
+        "src/mover.rs MoverParams.swim_depth",
+        "src/mover.rs MoverParams.wall_stop_deg",
+        "src/mover.rs SLIDE_STOP_S",
+        "src/path.rs ArrivalParams.cutoff_speed",
+        "src/path.rs ArrivalParams.run_deceleration",
+        "src/path.rs ArrivalParams.walk_deceleration",
+        "src/steps.rs CollisionSettings.lod",
+        "src/steps.rs CollisionSettings.weld"
+      ]
+    },
+    "sf_controller_bevy": {
+      "T": 11,
+      "?": 0,
+      "C": 1,
+      "tunables": [
+        "src/lib.rs Avoider.max_speed",
+        "src/lib.rs Avoider.priority",
+        "src/lib.rs ControllerSettings.avoidance",
+        "src/lib.rs ControllerSettings.enabled",
+        "src/lib.rs ControllerSettings.foot_probe_down",
+        "src/lib.rs ControllerSettings.foot_probes",
+        "src/lib.rs ControllerSettings.idle_speed",
+        "src/lib.rs ControllerSettings.max_dt",
+        "src/lib.rs ControllerSettings.moving_speed",
+        "src/lib.rs ControllerSettings.stop_speed",
+        "src/lib.rs MEASURE_HALFLIFE"
+      ]
+    },
+    "sf_coords": {
+      "T": 0,
+      "?": 3,
+      "C": 0,
+      "tunables": []
+    },
+    "sf_diag": {
+      "T": 14,
+      "?": 3,
+      "C": 4,
+      "tunables": [
+        "src/ab.rs EXACT_MAX",
+        "src/ab.rs HITCH_RATIO",
+        "src/ab.rs HITCH_SLACK",
+        "src/ab.rs OUTLIER_RATIO",
+        "src/gate.rs STREAMING_STUTTERS_PER_MIN",
+        "src/path.rs MIN_KEY_SPACING",
+        "src/path.rs SAMPLES_PER_SEGMENT",
+        "src/report.rs MAX_CHURN",
+        "src/report.rs MAX_CULPRITS",
+        "src/report.rs MAX_HITCHES",
+        "src/report.rs MAX_SPIKES",
+        "src/report.rs Tolerance.absolute_ms",
+        "src/scenario.rs Warmup.frames",
+        "src/views.rs PHASE_METRIC_COUNT"
+      ]
+    },
+    "sf_diag_bevy": {
+      "T": 10,
+      "?": 2,
+      "C": 3,
+      "tunables": [
+        "src/lib.rs DiagSettings.apply_transform",
+        "src/lib.rs DiagSettings.exit_on_finish",
+        "src/lib.rs DiagSettings.markdown",
+        "src/lib.rs DiagSettings.update_baseline",
+        "src/pipeline_watch.rs BURST_SECS",
+        "src/textures.rs MIN_PRINT_SECS",
+        "src/textures.rs SAMPLE_LAG_SECS",
+        "src/textures.rs SCAN_SECS",
+        "src/warmup.rs AFTER_REVEAL_SECS",
+        "src/warmup.rs COMPILE_BUCKETS_MS"
+      ]
+    },
+    "sf_effects": {
+      "T": 6,
+      "?": 1,
+      "C": 0,
+      "tunables": [
+        "src/active.rs MAX_EFFECTS_PER_SOURCE",
+        "src/standard.rs CostConsts.area_unit",
+        "src/standard.rs CostConsts.scale",
+        "src/standard.rs CostConsts.skill_cap",
+        "src/standard.rs CostConsts.skill_discount",
+        "src/standard.rs StandardEffectRules.item_uses"
+      ]
+    },
+    "sf_gi": {
+      "T": 15,
+      "?": 1,
+      "C": 4,
+      "tunables": [
+        "src/ddgi.rs DEPTH_SHARPNESS",
+        "src/ddgi.rs IRRADIANCE_TEXELS",
+        "src/ddgi.rs SELF_SHADOW_BIAS",
+        "src/ddgi.rs VISIBILITY_TEXELS",
+        "src/fit.rs VolumeBudget.max_dims",
+        "src/fit.rs VolumeBudget.min_spacing",
+        "src/lib.rs GiSettings.changed_hysteresis",
+        "src/lib.rs GiSettings.dims",
+        "src/lib.rs GiSettings.hysteresis",
+        "src/lib.rs GiSettings.max_lights",
+        "src/lib.rs GiSettings.probes_per_frame",
+        "src/lib.rs GiSettings.rays",
+        "src/lib.rs GiSettings.spacing",
+        "src/lib.rs MAX_RAYS",
+        "src/lights.rs MOVED_DISTANCE"
+      ]
+    },
+    "sf_gi_bevy": {
+      "T": 10,
+      "?": 1,
+      "C": 8,
+      "tunables": [
+        "src/lib.rs GiVolume.ambient_scale",
+        "src/lib.rs GiVolume.intensity",
+        "src/lib.rs READINESS_TAIL_FRAMES",
+        "src/probe_update.wesl DEPTH_SHARPNESS",
+        "src/probe_update.wesl IRR_COUNT",
+        "src/probe_update.wesl IRR_TEXELS",
+        "src/probe_update.wesl MAX_RAYS",
+        "src/probe_update.wesl SURFACE_BIAS",
+        "src/probe_update.wesl VIS_COUNT",
+        "src/probe_update.wesl VIS_TEXELS"
+      ]
+    },
+    "sf_ids": {
+      "T": 1,
+      "?": 4,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs MAX_PLAYERS"
+      ]
+    },
+    "sf_level": {
+      "T": 0,
+      "?": 1,
+      "C": 0,
+      "tunables": []
+    },
+    "sf_lod": {
+      "T": 12,
+      "?": 2,
+      "C": 3,
+      "tunables": [
+        "src/build.rs FarBakeSettings.light_merge",
+        "src/cluster.rs SimplifySettings.color_weight",
+        "src/cluster.rs SimplifySettings.crease_cos",
+        "src/cluster.rs SimplifySettings.prune",
+        "src/impostor.rs ImpostorSettings.frame_px",
+        "src/impostor.rs ImpostorSettings.frames",
+        "src/impostor.rs ImpostorSettings.supersample",
+        "src/levels.rs FarLevels.band",
+        "src/levels.rs FarLevels.handoff",
+        "src/levels.rs FarLevels.min_pixels",
+        "src/policy.rs FarLight.intensity",
+        "src/policy.rs FarLight.radius"
+      ]
+    },
+    "sf_lod_bevy": {
+      "T": 8,
+      "?": 0,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs FarFieldSettings.l1_shadows",
+        "src/lib.rs FarFieldSettings.light_min_pixels",
+        "src/lib.rs FarFieldSettings.proxy_depth_offset_px",
+        "src/shaders/far_shadow_map.wesl FAR_BIAS",
+        "src/shaders/far_shadow_map.wesl FAR_BIAS_PER_M",
+        "src/shaders/far_shadow_map.wesl FAR_FADE_START",
+        "src/shaders/far_shadow_map.wesl FAR_PENUMBRA",
+        "src/shaders/far_shadow_map.wesl FAR_PENUMBRA_MIN"
+      ]
+    },
+    "sf_model": {
+      "T": 20,
+      "?": 4,
+      "C": 7,
+      "tunables": [
+        "src/cook.rs CookSettings.base_error",
+        "src/cook.rs CookSettings.color_weight",
+        "src/cook.rs CookSettings.lock_borders",
+        "src/cook.rs CookSettings.max_lods",
+        "src/cook.rs CookSettings.min_reduction",
+        "src/cook.rs CookSettings.min_triangles",
+        "src/cook.rs CookSettings.normal_weight",
+        "src/cook.rs CookSettings.overdraw_threshold",
+        "src/cook.rs CookSettings.uv_weight",
+        "src/lod.rs LodScreen.bias",
+        "src/lod.rs LodScreen.crossfade",
+        "src/lod.rs LodScreen.height_px",
+        "src/lod.rs LodScreen.min_draw_distance",
+        "src/lod.rs LodScreen.min_pixels",
+        "src/lod.rs LodScreen.pixel_error",
+        "src/skin.rs JOINT_CENTER_WEIGHT",
+        "src/skin.rs MAX_INFLUENCES",
+        "src/skin.rs MORPH_WEIGHT",
+        "src/skin.rs RUNTIME_MORPH_LODS",
+        "src/uv_density.rs SMALL_AREA"
+      ]
+    },
+    "sf_model_bevy": {
+      "T": 3,
+      "?": 0,
+      "C": 1,
+      "tunables": [
+        "src/loader.rs SfMeshLoaderSettings.compress",
+        "src/loader.rs SfMeshLoaderSettings.keep_cpu_copy",
+        "src/skinned.rs MAX_JOINTS"
+      ]
+    },
+    "sf_nav": {
+      "T": 3,
+      "?": 1,
+      "C": 4,
+      "tunables": [
+        "src/grid.rs MAX_TILE_CELLS",
+        "src/types.rs MAX_AREAS",
+        "src/types.rs MAX_CLASSES"
+      ]
+    },
+    "sf_nav_bake": {
+      "T": 0,
+      "?": 0,
+      "C": 1,
+      "tunables": []
+    },
+    "sf_nav_bevy": {
+      "T": 0,
+      "?": 3,
+      "C": 0,
+      "tunables": []
+    },
+    "sf_nav_recast": {
+      "T": 9,
+      "?": 4,
+      "C": 4,
+      "tunables": [
+        "src/build.rs DETAIL_SAMPLE_MAX_ERROR_CELLS",
+        "src/build.rs MAX_EDGE_LEN_M",
+        "src/build.rs MAX_SIMPLIFICATION_ERROR",
+        "src/build.rs MERGE_REGION_AREA",
+        "src/build.rs MIN_REGION_AREA",
+        "src/lib.rs MAX_MESHES",
+        "src/lib.rs MAX_POLYS_PER_TILE",
+        "src/lib.rs MAX_TILES_PER_MESH",
+        "src/search.rs AWAY_RADIUS"
+      ]
+    },
+    "sf_physics": {
+      "T": 41,
+      "?": 3,
+      "C": 2,
+      "tunables": [
+        "src/body.rs ITEM_DAMPING",
+        "src/body.rs PhysicsParams.contact_force_threshold",
+        "src/body.rs PhysicsParams.contact_report_speed",
+        "src/body.rs PhysicsParams.density",
+        "src/body.rs PhysicsParams.gravity",
+        "src/body.rs PhysicsParams.kill_margin",
+        "src/body.rs PhysicsParams.mass_range",
+        "src/body.rs PhysicsParams.max_corrective_velocity",
+        "src/body.rs PhysicsParams.rebase_distance",
+        "src/body.rs PhysicsParams.rolling_resistance",
+        "src/body.rs PhysicsParams.thin_extent",
+        "src/body.rs PhysicsParams.thin_skin",
+        "src/carry.rs CarryParams.break_distance",
+        "src/carry.rs CarryParams.break_time",
+        "src/carry.rs CarryParams.drag_friction",
+        "src/carry.rs CarryParams.extra_iterations",
+        "src/carry.rs CarryParams.hold_distance",
+        "src/carry.rs CarryParams.max_extrapolation",
+        "src/carry.rs CarryParams.max_throw_speed",
+        "src/carry.rs CarryParams.reach",
+        "src/carry.rs CarryParams.settle_time",
+        "src/carry.rs CarryParams.torque_arm",
+        "src/carry.rs HolderLimits.carry_force",
+        "src/carry.rs HolderLimits.carry_mass",
+        "src/carry.rs HolderLimits.drag_mass",
+        "src/carry.rs HolderLimits.throw_impulse",
+        "src/character.rs PushParams.capsule_inset",
+        "src/character.rs PushParams.push_force",
+        "src/character.rs PushParams.reach",
+        "src/cook.rs FitSettings.hull_tolerance",
+        "src/cook.rs FitSettings.max_hull_vertices",
+        "src/cook.rs FitSettings.max_hulls",
+        "src/cook.rs FitSettings.min_extent",
+        "src/cook.rs FitSettings.primitive_tolerance",
+        "src/cook.rs FitSettings.resolution",
+        "src/steps.rs CheckSettings.overlap_allowance",
+        "src/steps.rs CheckSettings.reach",
+        "src/steps.rs CheckSettings.settle_time",
+        "src/steps.rs CheckSettings.support_tolerance",
+        "src/steps.rs CheckSettings.terrain_patch",
+        "src/steps.rs MIN_SHRINK"
+      ]
+    },
+    "sf_physics_bevy": {
+      "T": 23,
+      "?": 1,
+      "C": 2,
+      "tunables": [
+        "src/character.rs CharacterPhysics.impact_threshold",
+        "src/character.rs TERRAIN_KILL_DEPTH",
+        "src/debug.rs PhysicsDebug.max_lines",
+        "src/debug.rs PhysicsDebug.radius",
+        "src/lib.rs PhysicsSettings.debris_extent",
+        "src/lib.rs PhysicsSettings.debris_mass",
+        "src/lib.rs PhysicsSettings.hz",
+        "src/lib.rs PhysicsSettings.insert_batch",
+        "src/lib.rs PhysicsSettings.insert_budget_ms",
+        "src/lib.rs PhysicsSettings.item_batch",
+        "src/lib.rs PhysicsSettings.max_steps_per_frame",
+        "src/lib.rs PhysicsSettings.terrain",
+        "src/lib.rs PhysicsSettings.terrain_chunk",
+        "src/lib.rs PhysicsSettings.terrain_spacing",
+        "src/proxies.rs MAX_LEAD",
+        "src/proxies.rs SECS",
+        "src/ragdoll.rs GET_UP_PROBE",
+        "src/ragdoll.rs RagdollConfig.fade",
+        "src/ragdoll.rs RagdollConfig.get_up_blend",
+        "src/ragdoll.rs RagdollConfig.max_powered",
+        "src/stream.rs COVERAGE_MARGIN",
+        "src/stream.rs COVERAGE_PERIOD_S",
+        "src/stream.rs INSERT_PRIOR_S"
+      ]
+    },
+    "sf_precip_bevy": {
+      "T": 16,
+      "?": 4,
+      "C": 2,
+      "tunables": [
+        "src/lib.rs PrecipSlot.fall_speed",
+        "src/lib.rs PrecipSlot.intensity",
+        "src/lib.rs PrecipSlot.size",
+        "src/lib.rs PrecipSlot.wind_follow",
+        "src/lib.rs STREAK_S",
+        "src/occlusion.rs DOWNWIND_M",
+        "src/occlusion.rs HALF_M",
+        "src/occlusion.rs MAP_SIZE",
+        "src/occlusion.rs MIN_ELEVATION",
+        "src/occlusion.rs RECENTER_M",
+        "src/occlusion.rs RECENTER_Y_M",
+        "src/occlusion.rs REDIRECT_DEG",
+        "src/occlusion.rs REDIRECT_FRAMES",
+        "src/occlusion.rs REFRESH_FRAMES",
+        "src/occlusion.rs TEXEL_M",
+        "src/occlusion.rs UPWIND_M"
+      ]
+    },
+    "sf_ragdoll": {
+      "T": 24,
+      "?": 5,
+      "C": 3,
+      "tunables": [
+        "src/cook.rs CookParams.chain_radius",
+        "src/cook.rs CookParams.density",
+        "src/cook.rs CookParams.effector_radius",
+        "src/cook.rs CookParams.limb_radius",
+        "src/cook.rs CookParams.max_chain_bodies",
+        "src/cook.rs CookParams.max_mass_ratio",
+        "src/cook.rs CookParams.max_spine_bodies",
+        "src/cook.rs CookParams.min_extra_chain",
+        "src/cook.rs CookParams.wing_radius",
+        "src/cook.rs SPINE_SWING_DEG",
+        "src/cook.rs SPINE_TWIST_DEG",
+        "src/instance.rs RagdollSettings.axial_inertia",
+        "src/instance.rs RagdollSettings.ccd",
+        "src/instance.rs RagdollSettings.damping",
+        "src/instance.rs RagdollSettings.end_inertia_floor",
+        "src/instance.rs RagdollSettings.extra_iterations",
+        "src/instance.rs RagdollSettings.head_inertia_floor",
+        "src/instance.rs RagdollSettings.user",
+        "src/powered.rs DriveParams.gravity_compensation",
+        "src/powered.rs DriveParams.kinematic_gain",
+        "src/powered.rs DriveParams.omega",
+        "src/powered.rs DriveParams.pelvis_omega",
+        "src/powered.rs DriveParams.powered_iterations",
+        "src/react.rs Sensed.pelvis_speed"
+      ]
+    },
+    "sf_render_order_bevy": {
+      "T": 3,
+      "?": 1,
+      "C": 2,
+      "tunables": [
+        "src/translucent_fog.wesl FOG_BLEND",
+        "src/translucent_fog.wesl FOG_MULTIPLY",
+        "src/translucent_fog.wesl FOG_PREMULTIPLIED"
+      ]
+    },
+    "sf_rpg": {
+      "T": 0,
+      "?": 0,
+      "C": 2,
+      "tunables": []
+    },
+    "sf_rpg_ui": {
+      "T": 1,
+      "?": 4,
+      "C": 0,
+      "tunables": [
+        "src/book.rs PageMetrics.height"
+      ]
+    },
+    "sf_save": {
+      "T": 8,
+      "?": 6,
+      "C": 7,
+      "tunables": [
+        "src/container.rs LZ4_MAX_RATIO",
+        "src/container.rs LZ4_MIN",
+        "src/container.rs Limits.max_sections",
+        "src/fs.rs RENAME_ATTEMPTS",
+        "src/meta.rs SaveMeta.play_time_ms",
+        "src/slots.rs RotationPolicy.auto",
+        "src/slots.rs RotationPolicy.exit",
+        "src/slots.rs RotationPolicy.quick"
+      ]
+    },
+    "sf_save_bevy": {
+      "T": 2,
+      "?": 1,
+      "C": 22,
+      "tunables": [
+        "src/lib.rs SaveConfig.background",
+        "src/sections/mod.rs V1_DAY_MS"
+      ]
+    },
+    "sf_scene": {
+      "T": 8,
+      "?": 5,
+      "C": 18,
+      "tunables": [
+        "src/bake.rs SceneSettings.casts_shadow",
+        "src/bake.rs SceneSettings.layers",
+        "src/cull.rs HorizonParams.margin",
+        "src/cull.rs HorizonParams.min_cells",
+        "src/demand.rs MAX_CLUSTER_RADIUS",
+        "src/space.rs SpaceConfig.frames_in_flight",
+        "src/space.rs SpaceConfig.space",
+        "src/table.rs MAX_LOD_LEVELS"
+      ]
+    },
+    "sf_scene_bevy": {
+      "T": 1,
+      "?": 1,
+      "C": 3,
+      "tunables": [
+        "src/residency.rs SLAB_WAIT_FRAMES"
+      ]
+    },
+    "sf_script": {
+      "T": 3,
+      "?": 2,
+      "C": 0,
+      "tunables": [
+        "src/fault.rs FaultPolicy.max_aborts",
+        "src/fault.rs FaultPolicy.max_errors",
+        "src/fault.rs FaultPolicy.window"
+      ]
+    },
+    "sf_script_bevy": {
+      "T": 0,
+      "?": 1,
+      "C": 0,
+      "tunables": []
+    },
+    "sf_shadow_cache_bevy": {
+      "T": 10,
+      "?": 1,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs MAX_CACHED_LIGHTS",
+        "src/lib.rs ShadowCacheSettings.captures_per_frame",
+        "src/lib.rs ShadowCacheSettings.enabled",
+        "src/lib.rs ShadowCacheSettings.max_lights",
+        "src/lib.rs ShadowCacheSettings.move_threshold",
+        "src/lib.rs ShadowCacheSettings.recapture_interval",
+        "src/lib.rs ShadowCacheSettings.reuse_layers",
+        "src/lib.rs ShadowCacheSettings.settle_time",
+        "src/lib.rs ShadowCacheSettings.warmup",
+        "src/lib.rs ShadowCacheSettings.warmup_settle_time"
+      ]
+    },
+    "sf_sky": {
+      "T": 31,
+      "?": 22,
+      "C": 1,
+      "tunables": [
+        "src/cascade_hold.rs CascadeHoldConfig.enabled",
+        "src/cascade_hold.rs CascadeHoldConfig.hold_from",
+        "src/cascade_hold.rs CascadeHoldConfig.max_age",
+        "src/cascade_hold.rs CascadeHoldConfig.move_threshold",
+        "src/cascade_hold.rs CascadeHoldConfig.sun_threshold_deg",
+        "src/cascade_hold.rs CascadeHoldConfig.turn_threshold_deg",
+        "src/celestial.rs Orbit.axial_tilt_deg",
+        "src/celestial.rs Orbit.latitude_deg",
+        "src/celestial.rs Orbit.north_heading_deg",
+        "src/celestial.rs Orbit.spring_equinox_day",
+        "src/clock.rs Calendar.hours_per_day",
+        "src/night.rs MAX_MOONS",
+        "src/night.rs Moon.angular_size",
+        "src/night.rs Moon.phase_steps",
+        "src/night.rs Moonlight.full_lux",
+        "src/night.rs NIGHT_SKY_GLOW_RATIO",
+        "src/night.rs NIGHT_SKY_HORIZON_RATIO",
+        "src/night.rs StarField.brightest_lux",
+        "src/night.rs StarField.density",
+        "src/night.rs SunDiskLook.intensity",
+        "src/sky.rs ExposureRange.max_ev100",
+        "src/sky.rs ExposureRange.min_ev100",
+        "src/sky.rs SkyLight.casts_shadows",
+        "src/sky.rs SkySettings.moon_angular_size",
+        "src/sky.rs SkySettings.moon_illuminance",
+        "src/sky.rs SkySettings.moon_shadow_min_elevation_deg",
+        "src/sky.rs SkySettings.observer_altitude",
+        "src/sky.rs SkySettings.sun_angular_size",
+        "src/sky.rs SkySettings.sun_illuminance",
+        "src/sky.rs SkySettings.sun_shadow_min_elevation_deg",
+        "src/sky.rs TRANSMITTANCE_SAMPLES"
+      ]
+    },
+    "sf_sky_bevy": {
+      "T": 26,
+      "?": 3,
+      "C": 2,
+      "tunables": [
+        "src/lib.rs MEDIUM_UPDATE_STEPS",
+        "src/lib.rs SkyCamera.exposure",
+        "src/lib.rs SkyRenderOptions.auto_light_proxies",
+        "src/lib.rs SkyRenderOptions.auto_ray_tracing_meshes",
+        "src/lib.rs SkyRenderOptions.default_proxy_radius",
+        "src/lib.rs SkyRenderOptions.lambda",
+        "src/lib.rs SkyRenderOptions.maximum_distance",
+        "src/lib.rs SkyRenderOptions.medium_min_interval",
+        "src/lib.rs SkyRenderOptions.medium_resolution",
+        "src/lib.rs SkyRenderOptions.minimum_distance",
+        "src/lib.rs SkyRenderOptions.night_sky_glow",
+        "src/lib.rs SkyRenderOptions.num_cascades",
+        "src/lib.rs SkyRenderOptions.overlap_proportion",
+        "src/lib.rs SkyRenderOptions.ray_tracing_denoiser",
+        "src/lib.rs SkyRenderOptions.sea_level",
+        "src/lib.rs SkyRenderOptions.split_near",
+        "src/lib.rs SkyRenderOptions.weather_ambient_tint",
+        "src/lib.rs SunShadow.contact_shadows",
+        "src/shadow_budget.rs BudgetedShadow.priority",
+        "src/shadow_budget.rs PointShadowBudget.contact_shadows",
+        "src/shadow_budget.rs PointShadowBudget.fade_end",
+        "src/shadow_budget.rs PointShadowBudget.fade_start",
+        "src/shadow_budget.rs PointShadowBudget.fade_time",
+        "src/shadow_budget.rs PointShadowBudget.hysteresis",
+        "src/shadow_budget.rs PointShadowBudget.map_size",
+        "src/shadow_budget.rs PointShadowBudget.max"
+      ]
+    },
+    "sf_stats": {
+      "T": 1,
+      "?": 0,
+      "C": 0,
+      "tunables": [
+        "src/ops.rs MAX_DEPTH"
+      ]
+    },
+    "sf_surface": {
+      "T": 58,
+      "?": 29,
+      "C": 3,
+      "tunables": [
+        "src/grid.rs CELL_M",
+        "src/grid.rs SNOW_LINE_BLEND_M",
+        "src/kickup.rs BURSTS",
+        "src/kickup.rs FLOOR_BELOW_M",
+        "src/kickup.rs FOOT_REF_M",
+        "src/kickup.rs MIN_COVER",
+        "src/kickup.rs RANGE_M",
+        "src/kickup.rs SEED_STEP",
+        "src/kickup.rs STEP_M",
+        "src/kickup.rs STEP_S",
+        "src/layer.rs BASIN_FULL_M",
+        "src/layer.rs COVER_DRIFT_TILE_M",
+        "src/layer.rs COVER_HEIGHT_MIX",
+        "src/layer.rs COVER_TOP_MAX",
+        "src/layer.rs FILM_POROUS_HOLD",
+        "src/layer.rs HEIGHT_FROM_LUMA",
+        "src/layer.rs ORIGIN_GRID_M",
+        "src/layer.rs POOL_TILE_M",
+        "src/layer.rs PUDDLE_DEPTH",
+        "src/layer.rs PUDDLE_REACH",
+        "src/layer.rs RIPPLE_CELL_M",
+        "src/layer.rs RIPPLE_FADE_FAR_M",
+        "src/layer.rs RIPPLE_FADE_NEAR_M",
+        "src/layer.rs RIPPLE_RADIUS",
+        "src/layer.rs RIPPLE_RATE",
+        "src/layer.rs RIPPLE_RING",
+        "src/layer.rs RIPPLE_TIME_WRAP_S",
+        "src/layer.rs SPARKLE_CELL_M",
+        "src/layer.rs SPARKLE_DENSITY",
+        "src/layer.rs SPARKLE_FADE_FAR_M",
+        "src/layer.rs SPARKLE_FADE_NEAR_M",
+        "src/layer.rs WET_SATURATION",
+        "src/lib.rs SurfaceTuning.ash_clear_mult",
+        "src/lib.rs SurfaceTuning.ash_wash",
+        "src/lib.rs SurfaceTuning.catch_up_h",
+        "src/lib.rs SurfaceTuning.dry_h",
+        "src/lib.rs SurfaceTuning.puddle_dry_mult",
+        "src/lib.rs SurfaceTuning.puddle_from_wet",
+        "src/lib.rs SurfaceTuning.storm_wet_rate",
+        "src/trail.rs FOOT_HALF_M",
+        "src/trail.rs LIP_HEIGHT",
+        "src/trail.rs LIP_WIDTH",
+        "src/trail.rs MAX_STAMPS",
+        "src/trail.rs REFILL_QUANTUM_M",
+        "src/trail.rs RING_SIZE",
+        "src/trail.rs RING_TEXEL_M",
+        "src/trail.rs STAMP_RANGE_M",
+        "src/view.rs EXPOSURE_RUN_S",
+        "src/view.rs EXPOSURE_TAU_S",
+        "src/view.rs NOISE_SIZE",
+        "src/view.rs SHELTER_DOWN_M",
+        "src/view.rs SHELTER_HALF_M",
+        "src/view.rs SHELTER_RECENTER_M",
+        "src/view.rs SHELTER_RECENTER_Y_M",
+        "src/view.rs SHELTER_REFRESH_FRAMES",
+        "src/view.rs SHELTER_SIZE",
+        "src/view.rs SHELTER_TEXEL_M",
+        "src/view.rs SHELTER_UP_M"
+      ]
+    },
+    "sf_surface_bevy": {
+      "T": 56,
+      "?": 26,
+      "C": 41,
+      "tunables": [
+        "src/cover.rs COVER_SIZE",
+        "src/cover.rs DERIVED_HEIGHT_PERCENTILES",
+        "src/cover.rs DERIVED_NORMAL_STRENGTH",
+        "src/exposure.wgsl SHELTER_FADE_START",
+        "src/exposure.wgsl SHELTER_FULL_M",
+        "src/exposure.wgsl SHELTER_NEAR_M",
+        "src/kickup.rs KickupSettings.on",
+        "src/kickup.wesl FLOOR_BELOW_M",
+        "src/kickup.wesl RANGE_M",
+        "src/kickup.wesl SEED_STEP",
+        "src/kickup.wesl SOFT_M",
+        "src/layer.wesl BASIN_FULL_M",
+        "src/layer.wesl CLASS_FAR",
+        "src/layer.wesl COVER_DRIFT_TILE_M",
+        "src/layer.wesl COVER_HEIGHT_MIX",
+        "src/layer.wesl COVER_TOP_MAX",
+        "src/layer.wesl FILM_POROUS_HOLD",
+        "src/layer.wesl HEIGHT_FROM_LUMA",
+        "src/layer.wesl ORIGIN_GRID_M",
+        "src/layer.wesl PATCH_TILE_M",
+        "src/layer.wesl POOL_TILE_M",
+        "src/layer.wesl PUDDLE_DEPTH",
+        "src/layer.wesl PUDDLE_REACH",
+        "src/layer.wesl RIPPLE_CELL_M",
+        "src/layer.wesl RIPPLE_FADE_FAR_M",
+        "src/layer.wesl RIPPLE_FADE_NEAR_M",
+        "src/layer.wesl RIPPLE_RADIUS",
+        "src/layer.wesl RIPPLE_RATE",
+        "src/layer.wesl RIPPLE_RING",
+        "src/layer.wesl RIPPLE_SCALE_0",
+        "src/layer.wesl RIPPLE_SCALE_1",
+        "src/layer.wesl RIPPLE_SCALE_2",
+        "src/layer.wesl RIPPLE_SCALE_3",
+        "src/layer.wesl RIPPLE_TIME_WRAP_S",
+        "src/layer.wesl SHELTER_FADE_START",
+        "src/layer.wesl SHELTER_FULL_M",
+        "src/layer.wesl SHELTER_LAG_TOP_M",
+        "src/layer.wesl SHELTER_NEAR_M",
+        "src/layer.wesl SHELTER_NORMAL_OFFSET_M",
+        "src/layer.wesl SPARKLE_CELL_M",
+        "src/layer.wesl SPARKLE_DENSITY",
+        "src/layer.wesl SPARKLE_FADE_FAR_M",
+        "src/layer.wesl SPARKLE_FADE_NEAR_M",
+        "src/layer.wesl STREAK_TILE_U_M",
+        "src/layer.wesl STREAK_TILE_V_M",
+        "src/layer.wesl TRAIL_EDGE_FADE_M",
+        "src/layer.wesl TRAIL_LIP_HEIGHT",
+        "src/layer.wesl WET_SATURATION",
+        "src/lib.rs SurfaceSettings.cover",
+        "src/lib.rs SurfaceSettings.layer",
+        "src/lib.rs SurfaceSettings.puddles",
+        "src/lib.rs SurfaceSettings.raise",
+        "src/lib.rs SurfaceSettings.shelter",
+        "src/lib.rs SurfaceSettings.trails",
+        "src/lib.rs SurfaceSettings.wet",
+        "src/uniform.rs U_TRAIL_PREV"
+      ]
+    },
+    "sf_terrain": {
+      "T": 19,
+      "?": 10,
+      "C": 14,
+      "tunables": [
+        "src/bake.rs TerrainBakeConfig.fill_height",
+        "src/bake.rs TerrainBakeConfig.min_top_level",
+        "src/bake.rs TerrainBakeConfig.read_margin",
+        "src/cdlod.rs CdlodSettings.lod0_range",
+        "src/cdlod.rs CdlodSettings.morph_fraction",
+        "src/cdlod.rs MAX_LOD",
+        "src/cdlod.rs MIN_LOD",
+        "src/cdlod.rs RAISE_FADE_END",
+        "src/cdlod.rs RAISE_FADE_START",
+        "src/cdlod.rs RAISE_MAX_LOD",
+        "src/cdlod.rs RAISE_TEXEL_M",
+        "src/clipmap.rs CLIPMAP_SIZE",
+        "src/edits.rs BRICK_SAMPLES",
+        "src/product.rs MIN_EDGE",
+        "src/pyramid.rs MAX_QUANT_STEP",
+        "src/shadow.rs ShadowMarch.reach",
+        "src/shadow.rs ShadowMarch.steps",
+        "src/source.rs PHASE_TOLERANCE",
+        "src/tile.rs BASE_SPACING"
+      ]
+    },
+    "sf_terrain_bevy": {
+      "T": 34,
+      "?": 2,
+      "C": 38,
+      "tunables": [
+        "src/far_map.rs FAR_MAP_SIZE",
+        "src/far_map.rs FAR_MAP_TEXEL",
+        "src/far_map.rs REFRESH_AGE",
+        "src/far_map.rs REFRESH_COS",
+        "src/lib.rs DEFAULT_LAYER_BUDGET",
+        "src/lib.rs SHIFT_SETTLE_FRAMES",
+        "src/lib.rs SLACK_M",
+        "src/lib.rs TerrainSettings.blend_depth",
+        "src/lib.rs TerrainSettings.max_loads",
+        "src/lib.rs TerrainSettings.raise_m",
+        "src/lib.rs TerrainSettings.snap",
+        "src/lib.rs TerrainSettings.splat_range",
+        "src/params.rs HEIGHT_LEVELS",
+        "src/params.rs MAX_LAYERS",
+        "src/params.rs MORPH_LODS",
+        "src/params.rs P_HEIGHT",
+        "src/shaders/common.wesl HEIGHT_LEVELS",
+        "src/shaders/common.wesl MIN_LOD",
+        "src/shaders/common.wesl P_FAR",
+        "src/shaders/common.wesl P_HEIGHT",
+        "src/shaders/common.wesl RAISE_FADE_END",
+        "src/shaders/common.wesl RAISE_FADE_START",
+        "src/shaders/common.wesl RAISE_MAX_LOD",
+        "src/shaders/common.wesl RAISE_TEXEL_M",
+        "src/shaders/common.wesl SIZE",
+        "src/shaders/far_shadow.wesl FAR_BIAS_PER_M",
+        "src/shaders/far_shadow.wesl FAR_FADE_START",
+        "src/shaders/far_shadow.wesl FAR_FIRST_PER_M",
+        "src/shaders/far_shadow.wesl FAR_MAP_BIAS",
+        "src/shaders/far_shadow.wesl FAR_MAP_PENUMBRA_MIN",
+        "src/shaders/far_shadow.wesl FAR_MARCH_END",
+        "src/shaders/far_shadow.wesl FAR_PENUMBRA",
+        "src/shaders/far_shadow.wesl FAR_REACH",
+        "src/shaders/far_shadow.wesl FAR_STEPS"
+      ]
+    },
+    "sf_texture": {
+      "T": 7,
+      "?": 5,
+      "C": 6,
+      "tunables": [
+        "src/delight.rs DEFAULT_STRENGTH",
+        "src/delight.rs LUMINANCE_WEIGHTS",
+        "src/ktx2_out.rs CLEAR_WEIGHT",
+        "src/ktx2_out.rs COVERAGE_STEPS",
+        "src/residency.rs DOWNGRADE_WAIT_S",
+        "src/residency.rs TAIL_SIZE",
+        "src/residency.rs UPGRADE_STABLE_S"
+      ]
+    },
+    "sf_texture_bevy": {
+      "T": 1,
+      "?": 0,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs SETTLE"
+      ]
+    },
+    "sf_texview_bevy": {
+      "T": 2,
+      "?": 0,
+      "C": 0,
+      "tunables": [
+        "src/lib.rs TARGET_MAX",
+        "src/lib.rs VIEW_HEIGHT_VH"
+      ]
+    },
+    "sf_tunables": {
+      "T": 0,
+      "?": 6,
+      "C": 0,
+      "tunables": []
+    },
+    "sf_ui": {
+      "T": 13,
+      "?": 4,
+      "C": 2,
+      "tunables": [
+        "src/notify.rs ToastConfig.base",
+        "src/notify.rs ToastConfig.fade_in",
+        "src/notify.rs ToastConfig.fade_out",
+        "src/notify.rs ToastConfig.max",
+        "src/notify.rs ToastConfig.max_queued",
+        "src/notify.rs ToastConfig.max_visible",
+        "src/notify.rs ToastConfig.merge_repeats",
+        "src/notify.rs ToastConfig.min",
+        "src/notify.rs ToastConfig.per_char",
+        "src/notify.rs ToastConfig.scale",
+        "src/rebind.rs CAPTURE_TIMEOUT",
+        "src/rich_text.rs RunStyle.size",
+        "src/settings.rs AUDIO_VOLUME_STEP"
+      ]
+    },
+    "sf_ui_bevy": {
+      "T": 18,
+      "?": 7,
+      "C": 1,
+      "tunables": [
+        "src/lib.rs UiSettings.classic_windows",
+        "src/lib.rs UiSettings.high_contrast",
+        "src/lib.rs UiSettings.hud_scale",
+        "src/lib.rs UiSettings.menu_scale",
+        "src/lib.rs UiSettings.reduce_motion",
+        "src/lib.rs UiSettings.text_scale",
+        "src/nav.rs NavRepeat.delay",
+        "src/nav.rs NavRepeat.interval",
+        "src/nav.rs STICK_THRESHOLD",
+        "src/notify.rs MESSAGE_BOX_Z",
+        "src/router.rs SCREEN_Z_STEP",
+        "src/router.rs UI_CONTEXT_PRIORITY",
+        "src/text_measure.rs CACHE_LIMIT",
+        "src/text_measure.rs MeasureScale.scale_factor",
+        "src/text_measure.rs MeasureScale.text_scale",
+        "src/text_measure.rs RichTextTheme.font_size",
+        "src/text_measure.rs RichTextTheme.image_scale",
+        "src/text_measure.rs RichTextTheme.line_height"
+      ]
+    },
+    "sf_ui_inventory": {
+      "T": 0,
+      "?": 0,
+      "C": 1,
+      "tunables": []
+    },
+    "sf_ui_screens": {
+      "T": 7,
+      "?": 5,
+      "C": 0,
+      "tunables": [
+        "src/keybinds.rs CELL_WIDTH",
+        "src/keybinds.rs LABEL_WIDTH",
+        "src/loading.rs SWEEP_WIDTH",
+        "src/options.rs DEFAULT_FLOAT_STEPS",
+        "src/options.rs PANE_WIDTH",
+        "src/options.rs THUMB_WIDTH",
+        "src/widgets.rs ScreenColors.font_size"
+      ]
+    },
+    "sf_vfs": {
+      "T": 0,
+      "?": 1,
+      "C": 0,
+      "tunables": []
+    },
+    "sf_video": {
+      "T": 0,
+      "?": 0,
+      "C": 1,
+      "tunables": []
+    },
+    "sf_video_bevy": {
+      "T": 4,
+      "?": 1,
+      "C": 0,
+      "tunables": [
+        "src/audio.rs RING_SECONDS",
+        "src/control.rs DUCK_ATTACK_S",
+        "src/control.rs DUCK_RELEASE_S",
+        "src/lib.rs QUEUE_FRAMES"
+      ]
+    },
+    "sf_water": {
+      "T": 37,
+      "?": 15,
+      "C": 3,
+      "tunables": [
+        "src/lib.rs TWIN_RESOLUTION",
+        "src/records.rs WaterOptics.refraction_strength",
+        "src/records.rs WaterOptics.scattering",
+        "src/sea_wind.rs SeaWindSettings.angle_step_deg",
+        "src/sea_wind.rs SeaWindSettings.blend_s",
+        "src/sea_wind.rs SeaWindSettings.calm",
+        "src/sea_wind.rs SeaWindSettings.min_speed_step",
+        "src/sea_wind.rs SeaWindSettings.response_s",
+        "src/sea_wind.rs SeaWindSettings.speed_step",
+        "src/shore.rs BED_SLOPE_MAX",
+        "src/shore.rs BED_SLOPE_MIN",
+        "src/shore.rs ShoreSettings.beach_slope",
+        "src/shore.rs ShoreSettings.chop_floor",
+        "src/shore.rs ShoreSettings.chop_ramp",
+        "src/shore.rs ShoreSettings.enclosed_fetch",
+        "src/shore.rs ShoreSettings.enclosed_max",
+        "src/shore.rs ShoreSettings.normal_floor",
+        "src/shore.rs ShoreSettings.open_core",
+        "src/shore.rs ShoreSettings.open_falloff",
+        "src/shore.rs ShoreSettings.range",
+        "src/shore.rs ShoreSettings.shore_waves",
+        "src/shore.rs ShoreSettings.swell_ramp",
+        "src/shore_waves.rs ECKART_LINEAR",
+        "src/shore_waves.rs MIN_DEPTH",
+        "src/shore_waves.rs NOISE_PERIOD",
+        "src/shore_waves.rs ORBIT_LIMIT",
+        "src/shore_waves.rs PHASE_NOISE",
+        "src/shore_waves.rs STEEPNESS_LIMIT",
+        "src/spectrum.rs DEFAULT_CASCADES",
+        "src/spectrum.rs DEFAULT_SPLIT",
+        "src/spectrum.rs GRAVITY",
+        "src/spectrum.rs SpectrumParams.amplitude",
+        "src/spectrum.rs SpectrumParams.choppiness",
+        "src/spectrum.rs SpectrumParams.fetch",
+        "src/spectrum.rs SpectrumParams.speed",
+        "src/sspr.rs MIN_HEIGHT",
+        "src/twin.rs INVERSION_ITERATIONS"
+      ]
+    },
+    "sf_water_bevy": {
+      "T": 18,
+      "?": 8,
+      "C": 6,
+      "tunables": [
+        "src/lib.rs ClipmapSettings.base_spacing",
+        "src/lib.rs ClipmapSettings.displacement_range",
+        "src/lib.rs ClipmapSettings.quads",
+        "src/lib.rs ClipmapSettings.rings",
+        "src/lib.rs ClipmapSettings.skirt",
+        "src/lib.rs MAX_CASCADES",
+        "src/lib.rs MAX_LOOKS",
+        "src/lib.rs RESOLUTION",
+        "src/lib.rs WaterReflections.wave_distortion",
+        "src/shaders/water_common.wesl SW_ECKART_LINEAR",
+        "src/shaders/water_common.wesl SW_GRAVITY",
+        "src/shaders/water_common.wesl SW_MIN_DEPTH",
+        "src/shaders/water_common.wesl SW_ORBIT",
+        "src/shaders/water_common.wesl SW_PHASE_NOISE",
+        "src/shaders/water_common.wesl SW_PHASE_SPREAD",
+        "src/shaders/water_common.wesl SW_SHARES",
+        "src/shaders/water_fft.wesl MAX_N",
+        "src/shaders/water_sspr.wesl MIN_HEIGHT"
+      ]
+    },
+    "sf_weather": {
+      "T": 42,
+      "?": 21,
+      "C": 36,
+      "tunables": [
+        "src/frame.rs BORDER_BAND_M",
+        "src/frame.rs LIGHTNING_BUCKET_HOURS",
+        "src/frame.rs LIGHTNING_MAX_SPAN_HOURS",
+        "src/frame.rs MAX_VISIBILITY_M",
+        "src/frame.rs SPEED_OF_SOUND",
+        "src/frame.rs WORLD_STRIKE_CELL_M",
+        "src/frame.rs WORLD_STRIKE_RADIUS_M",
+        "src/hash.rs JITTER",
+        "src/hash.rs STRIKE_COUNT",
+        "src/hash.rs WIND_SPEED",
+        "src/map.rs BANK_COVERAGE",
+        "src/map.rs BANK_DENSITY",
+        "src/map.rs BANK_FALLOFF",
+        "src/map.rs CIRRUS_HEIGHT",
+        "src/map.rs CLOUD_SPEED",
+        "src/map.rs COVERAGE",
+        "src/map.rs DENSITY",
+        "src/map.rs FOG_DENSITY",
+        "src/map.rs FOG_FALLOFF",
+        "src/map.rs MAP_SIZE",
+        "src/precip_wind.rs CALM_MPS",
+        "src/precip_wind.rs DIRECTION_TAU_S",
+        "src/precip_wind.rs DROP_HEIGHT_M",
+        "src/precip_wind.rs PrecipWindFilter.speed",
+        "src/precip_wind.rs SPEED_TAU_S",
+        "src/precip_wind.rs TURN_MIN_MPS",
+        "src/precip_wind.rs UNCAPPED_DEG",
+        "src/records.rs Climate.change_interval_hours",
+        "src/records.rs Climate.transition_hours",
+        "src/records.rs FogTerms.bank_density",
+        "src/records.rs FogTerms.height_density",
+        "src/records.rs Lightning.distance_m",
+        "src/records.rs Lightning.fade_s",
+        "src/records.rs OneShotSet.interval_s",
+        "src/records.rs OneShotSet.volume",
+        "src/records.rs PrecipKind.fall_speed",
+        "src/records.rs PrecipKind.size",
+        "src/records.rs WANDER_HOURS",
+        "src/records.rs WindTerms.direction_deg",
+        "src/records.rs WindTerms.direction_jitter_deg",
+        "src/records.rs WindTerms.speed",
+        "src/state.rs MAX_DEPTH"
+      ]
+    },
+    "sf_weather_bevy": {
+      "T": 8,
+      "?": 2,
+      "C": 0,
+      "tunables": [
+        "src/fx.rs CUE_STEP",
+        "src/fx.rs LIGHTNING_CLOUD_GAIN",
+        "src/fx.rs LIGHTNING_GLOW_HEIGHT",
+        "src/fx.rs LIGHTNING_LUX",
+        "src/fx.rs LIGHTNING_NEAR_M",
+        "src/fx.rs PrecipWind.slant_cap",
+        "src/lib.rs MAP_TEXEL_M",
+        "src/lib.rs MAX_STEP_HOURS"
+      ]
+    },
+    "sf_wind": {
+      "T": 9,
+      "?": 8,
+      "C": 2,
+      "tunables": [
+        "src/source.rs MAX_SOURCES",
+        "src/state.rs OCTAVE1_SCALE",
+        "src/state.rs WindSettings.gust_band",
+        "src/state.rs WindSettings.gust_bias",
+        "src/state.rs WindSettings.gust_travel",
+        "src/state.rs WindSettings.max_profile",
+        "src/state.rs WindSettings.reference_height",
+        "src/state.rs WindSettings.roughness",
+        "src/state.rs WindSettings.swirl"
+      ]
+    },
+    "sf_wind_bevy": {
+      "T": 0,
+      "?": 0,
+      "C": 5,
+      "tunables": []
+    },
+    "sf_world": {
+      "T": 21,
+      "?": 1,
+      "C": 3,
+      "tunables": [
+        "src/index.rs IndexParams.far_min_radius",
+        "src/reader.rs DEFAULT_CAP",
+        "src/rings.rs RingConfig.active",
+        "src/rings.rs RingConfig.far",
+        "src/rings.rs RingConfig.far_min_radius",
+        "src/rings.rs RingConfig.horizon",
+        "src/rings.rs RingConfig.near",
+        "src/scheduler.rs Budgets.activate_ms",
+        "src/scheduler.rs Budgets.assets_in_flight",
+        "src/scheduler.rs Budgets.burst_factor",
+        "src/scheduler.rs Budgets.deactivate_ms",
+        "src/scheduler.rs Budgets.despawn_ms",
+        "src/scheduler.rs Budgets.fetches_in_flight",
+        "src/scheduler.rs Budgets.spawn_ms",
+        "src/scheduler.rs SchedulerConfig.door_prefetch",
+        "src/scheduler.rs SchedulerConfig.far_by_page",
+        "src/scheduler.rs SchedulerConfig.initial_latency",
+        "src/scheduler.rs SchedulerConfig.linger_secs",
+        "src/scheduler.rs SchedulerConfig.lookahead_max",
+        "src/scheduler.rs SchedulerConfig.lookahead_min",
+        "src/scheduler.rs SchedulerConfig.view_weight"
+      ]
+    },
+    "sf_world_bevy": {
+      "T": 24,
+      "?": 3,
+      "C": 5,
+      "tunables": [
+        "src/debug.rs StreamingDebug.rings",
+        "src/fade.rs FadeTransition.fade_secs",
+        "src/fade.rs FadeTransition.gated",
+        "src/fade.rs FadeTransition.max_hold_secs",
+        "src/fade.rs FadeTransition.ready_margin_m",
+        "src/fade.rs MIN_HOLD_FRAMES",
+        "src/matclass.rs FoldRules.flat_normal_map",
+        "src/mesh_slabs.rs MeshSlabsPlugin.raise_cap",
+        "src/reveal.rs RevealGate.gates_max_secs",
+        "src/reveal.rs RevealGate.max_secs",
+        "src/reveal.rs RevealGate.radius_m",
+        "src/reveal.rs RevealGate.stepped",
+        "src/reveal.rs SETTLE_FRAMES",
+        "src/spawn.rs MAX_SUBTREE_DEPTH",
+        "src/spawn.rs RANGE_STEPS_PER_OCTAVE",
+        "src/stream.rs MAX_GUARDED_FRAMES",
+        "src/stream.rs SHIFT_COOLDOWN_FRAMES",
+        "src/stream.rs StreamingConfig.flat_normal_map",
+        "src/stream.rs StreamingConfig.gpu_cull_statics",
+        "src/stream.rs StreamingConfig.material_classes",
+        "src/stream.rs StreamingConfig.max_loading_meshes",
+        "src/stream.rs StreamingConfig.origin_shift_guard_s",
+        "src/stream.rs StreamingConfig.placements_per_item",
+        "src/stream.rs StreamingConfig.precombine"
+      ]
+    }
+  }
+}

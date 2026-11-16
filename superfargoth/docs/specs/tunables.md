@@ -1,13 +1,13 @@
 # Tunables
 
-Status: spec (2026-11-16, design slice; no code yet). Census: `tunables-census.md` (generated, grep only).
+Status: spec (2026-11-16); T1 core built ("Migration", T1 as built). Census: `tunables-census.md` (generated, grep only).
 Crates (proposed): `sf_tunables` (Bevy-free core: definitions, layered values, provenance, presets, dump),
 `sf_tunables_bevy` (thin plugin: resource, change messages, bindings, CLI, BRP). `sf_console` moves its variables
 onto the core; nothing else in the console changes.
 
 <!-- agent-summary -->
-> **Agent summary (2026-11-16).** Not built. One registry of named, typed, ranged values with a unit, a source
-> ("provenance") and a lifetime, set through ordered layers (default < mod < preset < user < command line < code <
+> **Agent summary (2026-11-16).** Core built (T1: `sf_tunables`, console on it); no Bevy side yet. One registry
+> of named, typed, ranged values with a unit, a source ("provenance") and a lifetime, set through ordered layers (default < mod < preset < user < command line < code <
 > console/BRP), live through Bevy change detection on the settings resources systems already read. Console variables
 > become tunables; `ui.setting_preset` levels become bundles of tunables; perf arms and sweeps set them with `--set`.
 > Read next: "Design" to add a tunable; "What stays a const" before migrating; "Migration" for the slice order.
@@ -227,7 +227,7 @@ per system asserts `def.max <= CAPACITY`. Raising a capacity is a code change, b
   unit, range, source, lifetime, net, scope, `file:line`) into `docs/tunables-index.md`, generated like
   `node tools/decisions-index.mjs`; `--json` for tools. The wiki pages' "Switches and counters" sections link their
   prefix in it.
-- `tools/tunables-census.mjs` (census appendix) keeps finding what is *not* migrated. Its `--check` mode (slice T0)
+- `tools/tunables-census.mjs` (slice T0) keeps finding what is *not* migrated. Its `--check` mode (slice T0)
   holds a per-crate baseline of T-class consts and fails when a crate's count rises: a ratchet that enforces the
   hygiene rule without a big-bang migration.
 
@@ -258,6 +258,11 @@ another value?* If yes, tunable. If a value is only ever changed together with c
 
 Inline literals in expressions (`masked_area > 0.5`) follow the same rule: name them first, then classify.
 
+The census classifies by name, so it misreads some true constants as T or ?. Mark such a const (or `Default` field)
+with `// tunables: const (<reason>)` on its line or the line above: the census then counts it C with that reason, and
+`--check` stops counting it. The reason is required and says which rule above it falls under (format, capacity,
+external contract ...); a value that a sweep, preset or mod could want changed is never opted out.
+
 ## Migration
 
 One deliverable and its test per slice, in value order (perf- and look-critical first). Each system slice: declares
@@ -284,6 +289,20 @@ reaches the consumer resource in a `MinimalPlugins` app.
 
 Shader consts move inside their system's slice (uniform first). Env switches that stay env (paths, ports, tooling:
 census "Env switches") are listed in `docs/wiki/engine/app-and-dev-tools.md` as process wiring, not tunables.
+
+**T1 as built (2026-11-16).** `superfargoth/crates/sf_tunables` (Bevy-free; `thiserror`, `serde`; hakari
+final-excludes). `Def<T>` is `const` data with `const fn` builders; `def!(float "name" = v)` adds `file!()`/`line!()`
+(kind words `bool int count float float2 float3 text choice`; `Type` covers `bool`, `i32 i64 u32 usize`, `f32 f64`,
+`[f32; 2|3]`, `&'static str`). A crate lists `TUNABLES: &[&dyn AnyDef]` for `Tunables::register_all`; a number
+without a range is refused. `Id<T>` reads and writes typed (`read`, `write`); `id_of(&DEF)` checks the kind. Each
+tunable holds one `Layer` (value + optional note: who and why) per `SetBy`; a set under the top layer is stored and
+reports `Outranked`; `clear(id, layer)` peels one, `clear_layer(layer)` peels it everywhere, `reset(id)` clears all
+but `Default`; setting `Default` is an error. `ArgKind` gained `Float2`/`Float3` (text `a,b`). `rows()` (serde) and
+`dump_markdown()` sort by name; `guesses()` counts `Source::Guess`. `f32` values go through their shortest decimal
+(`0.1` reads `0.1`). `sf_console` re-exports the store as `Vars`/`Var`/`VarId`/`VarSpec` (and `sf_tunables`);
+`SetBy::Config` is an alias of `User`, which still prints "config", so console output is unchanged. Left for later:
+the console's `reset <name>` still clears every layer (old behaviour, pinned by its tests; Console-only peel is T2/T3's
+call), the `Net::Gameplay` client refusal (T7), per-preset-level dump columns (T5), JSON output in the app (T3).
 
 ## Proposed CONTRIBUTING rule (for the orchestrator to apply)
 

@@ -7997,6 +7997,7 @@ dependencies = [
 name = "sf_console"
 version = "0.1.0"
 dependencies = [
+ "sf_tunables",
  "thiserror 2.0.21",
 ]
 
@@ -8868,6 +8869,14 @@ dependencies = [
  "sf_diag_bevy",
  "wesl",
  "workspace-hack",
+]
+
+[[package]]
+name = "sf_tunables"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

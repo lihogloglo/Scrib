@@ -1,0 +1,13 @@
+[package]
+name = "sf_tunables"
+description = "Bevy-free tunables core for superfargoth: typed, ranged, documented values with a unit, provenance and lifetime, set through priority layers, with change tracking and a stable dump"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
