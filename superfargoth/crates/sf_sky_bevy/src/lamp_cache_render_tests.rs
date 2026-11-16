@@ -4,16 +4,20 @@
 //! are recorded. No GPU here: `prepare_lights` itself needs a device, so its per-face decision is
 //! tested through the functions it calls (`point_shadow_view_faces`, `point_shadow_face_plan`).
 
+use bevy_camera::visibility::{CubemapVisibleEntities, ViewVisibility};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemId;
-use bevy_light::PointLight;
+use bevy_light::{DirectionalLightShadowMap, PointLight, PointLightShadowMap};
 use bevy_pbr::{
     ALL_POINT_SHADOW_FACES, CachedPointShadowCopy, CachedPointShadowFaces, CachedPointShadowMap,
     ExtractedCachedPointShadowMap, ExtractedPointLight, PointShadowCacheFeedback, PointShadowCacheStore,
-    PointShadowFacePlan, extract_cached_point_shadow_maps, point_shadow_face_plan, point_shadow_view_faces,
+    PointShadowFacePlan, ShadowCasterChanges, extract_cached_point_shadow_maps, extract_lights,
+    extract_shadow_caster_changes, point_shadow_face_plan, point_shadow_view_faces,
 };
 use bevy_render::MainWorld;
-use bevy_render::sync_world::RenderEntity;
+use bevy_render::sync_world::{MainEntity, RenderEntity};
+use bevy_render::view::{RenderShadowMapVisibleEntities, RetainedViewEntity};
+use bevy_transform::components::GlobalTransform;
 use std::path::PathBuf;
 
 /// Faces with a view (and so a retained shadow phase) and faces drawn, as `prepare_lights` and
@@ -70,7 +74,7 @@ fn extracted_light(shadow_maps_enabled: bool) -> ExtractedPointLight {
         intensity: 1.0,
         range: 10.0,
         radius: 0.0,
-        transform: bevy_transform::components::GlobalTransform::default(),
+        transform: GlobalTransform::default(),
         shadow_maps_enabled,
         contact_shadows_enabled: false,
         shadow_depth_bias: 0.0,
@@ -173,4 +177,148 @@ fn copies_are_recorded_before_the_shadow_passes() {
     );
     let cache = squash(&vendored("render/point_shadow_cache.rs"));
     assert!(cache.contains("pending.push_encoder(encoder,\"point_shadow_cache_copies\");"), "copies no longer queued as one encoder");
+}
+
+/// The render app's light extraction (`extract_shadow_caster_changes`, `extract_lights`,
+/// `extract_cached_point_shadow_maps`) run against a main world, and the face views
+/// `prepare_lights` would give each shadowed point light: six on the stock path, the view faces
+/// when cached (`point_shadow_view_faces`). The 2026-11-17 crash ("Failed to get point light
+/// visible entity for face") was a face view without its extracted list.
+pub(crate) struct RenderExtract {
+    render: World,
+    systems: [SystemId; 3],
+}
+
+impl RenderExtract {
+    pub(crate) fn new() -> Self {
+        let mut render = World::new();
+        render.init_resource::<MainWorld>();
+        render.init_resource::<ShadowCasterChanges>();
+        let systems = [
+            render.register_system(extract_shadow_caster_changes),
+            render.register_system(extract_lights),
+            render.register_system(extract_cached_point_shadow_maps),
+        ];
+        Self { render, systems }
+    }
+
+    /// Gives the main-world light `light` a render entity (`sync_world`'s job) and the main world
+    /// the shadow map resources `extract_lights` reads.
+    pub(crate) fn link(&mut self, main: &mut World, light: Entity) -> Entity {
+        main.init_resource::<PointLightShadowMap>();
+        main.init_resource::<DirectionalLightShadowMap>();
+        let render_light = self.render.spawn_empty().id();
+        main.entity_mut(light).insert(RenderEntity::from(render_light));
+        render_light
+    }
+
+    /// One extraction of `main`, as the render app runs it (the main world is swapped in), then
+    /// the main world moves on a tick.
+    pub(crate) fn extract(&mut self, main: &mut World) {
+        std::mem::swap(main, &mut *self.render.resource_mut::<MainWorld>());
+        for system in self.systems {
+            self.render.run_system(system).expect("extract system runs");
+            self.render.flush();
+        }
+        std::mem::swap(main, &mut *self.render.resource_mut::<MainWorld>());
+        main.increment_change_tick();
+    }
+
+    /// Face views `prepare_lights` would create this frame with no visible-entity list:
+    /// `(main-world light, face)`. Must always be empty.
+    pub(crate) fn faces_without_list(&mut self) -> Vec<(Entity, u32)> {
+        let mut missing = Vec::new();
+        let mut lights = self.render.query::<(
+            &ExtractedPointLight,
+            &MainEntity,
+            Option<&ExtractedCachedPointShadowMap>,
+            Option<&RenderShadowMapVisibleEntities>,
+        )>();
+        for (light, main, cached, lists) in lights.iter(&self.render) {
+            if !light.shadow_maps_enabled || light.spot_light_angles.is_some() {
+                continue;
+            }
+            let views = point_shadow_view_faces(cached.map(|c| &c.faces));
+            for face in (0..6).filter(|f| views & (1 << f) != 0) {
+                let key = RetainedViewEntity { main_entity: *main, auxiliary_entity: None, subview_index: face };
+                if !lists.is_some_and(|l| l.subviews.contains_key(&key)) {
+                    missing.push((main.id(), face));
+                }
+            }
+        }
+        missing
+    }
+
+    /// The faces with an extracted list, as a mask.
+    pub(crate) fn listed_faces(&self, render_light: Entity) -> u8 {
+        self.render.get::<RenderShadowMapVisibleEntities>(render_light).map_or(0, |lists| {
+            lists.subviews.keys().filter(|k| k.subview_index < 6).fold(0, |mask, k| mask | (1 << k.subview_index))
+        })
+    }
+}
+
+/// A lamp switching path keeps a list for every face view: stock (six) -> cached (its view
+/// faces) -> stock again with the very lists it had before (its stock hash unchanged: the case
+/// that crashed, the stock hash kept through the cached spell matched again) -> cached again
+/// (lists re-extracted for the view faces, never the stale stock ones).
+#[test]
+fn a_lamp_changing_path_always_has_a_list_for_each_face_view() {
+    let mut main = World::new();
+    let casters = [main.spawn_empty().id(), main.spawn_empty().id()];
+    let lamp = main
+        .spawn((
+            PointLight { shadow_maps_enabled: true, ..Default::default() },
+            GlobalTransform::IDENTITY,
+            ViewVisibility::VISIBLE,
+        ))
+        .id();
+    let mut extract = RenderExtract::new();
+    let render_light = extract.link(&mut main, lamp);
+    // The stock scan's lists, rewritten every frame it runs (Bevy derefs them mutably).
+    let stock_fill = |main: &mut World| {
+        let mut lists = main.get_mut::<CubemapVisibleEntities>(lamp).expect("lists");
+        for face in 0..6 {
+            lists.get_mut(face).entities.clear();
+        }
+        lists.get_mut(0).entities.push(casters[0]);
+        lists.get_mut(3).entities.push(casters[1]);
+    };
+    let frame = |main: &mut World, extract: &mut RenderExtract| {
+        extract.extract(main);
+        let missing = extract.faces_without_list();
+        assert!(missing.is_empty(), "face views without a list: {missing:?}");
+        extract.listed_faces(render_light)
+    };
+
+    for _ in 0..2 {
+        stock_fill(&mut main);
+        assert_eq!(frame(&mut main, &mut extract), ALL_POINT_SHADOW_FACES, "stock: six lists");
+    }
+
+    // Cached: the stock flag off, the host's lists on its capture faces, then a clean cube.
+    main.get_mut::<PointLight>(lamp).expect("light").shadow_maps_enabled = false;
+    main.entity_mut(lamp).insert(CachedPointShadowMap { view_faces: 0b1001, draw_faces: 0b1001, ..Default::default() });
+    assert_eq!(frame(&mut main, &mut extract), 0b1001, "cached: the view faces' lists");
+    main.get_mut::<CachedPointShadowMap>(lamp).expect("cached").view_faces = 0;
+    main.get_mut::<CachedPointShadowMap>(lamp).expect("cached").draw_faces = 0;
+    assert_eq!(frame(&mut main, &mut extract), 0, "clean cube: no view, no list");
+    assert_eq!(frame(&mut main, &mut extract), 0, "untouched: kept");
+
+    // Back to the stock path (moved, lost cache, switch off) with the same casters: same hash.
+    main.entity_mut(lamp).remove::<CachedPointShadowMap>();
+    main.get_mut::<PointLight>(lamp).expect("light").shadow_maps_enabled = true;
+    stock_fill(&mut main);
+    assert_eq!(frame(&mut main, &mut extract), ALL_POINT_SHADOW_FACES, "stock again: six lists");
+    stock_fill(&mut main);
+    assert_eq!(frame(&mut main, &mut extract), ALL_POINT_SHADOW_FACES);
+
+    // Cached again with the lists untouched: re-extracted for its view faces only.
+    main.get_mut::<PointLight>(lamp).expect("light").shadow_maps_enabled = false;
+    main.entity_mut(lamp).insert(CachedPointShadowMap { view_faces: 0b1001, ..Default::default() });
+    assert_eq!(frame(&mut main, &mut extract), 0b1001, "cached again: its view faces' lists, not the stock six");
+
+    // Cache removed while the budget turns its shadow off: no view, nothing missing.
+    main.entity_mut(lamp).remove::<CachedPointShadowMap>();
+    main.get_mut::<PointLight>(lamp).expect("light").shadow_maps_enabled = false;
+    assert_eq!(frame(&mut main, &mut extract), 0, "unshadowed: lists dropped");
 }

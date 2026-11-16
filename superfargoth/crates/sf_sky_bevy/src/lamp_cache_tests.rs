@@ -5,12 +5,12 @@
 //! system in `Last` stands in for the render world's feedback (every capture drawn is confirmed).
 
 use bevy::MinimalPlugins;
-use bevy_app::{App, Last};
+use bevy_app::{App, Last, PostUpdate};
 use bevy_camera::Camera3d;
 use bevy_camera::primitives::Aabb;
-use bevy_camera::visibility::{CubemapVisibleEntities, InheritedVisibility, ViewVisibility};
+use bevy_camera::visibility::{CubemapVisibleEntities, InheritedVisibility, ViewVisibility, VisibilitySystems};
 use bevy_ecs::prelude::*;
-use bevy_light::PointLight;
+use bevy_light::{PointLight, SimulationLightSystems};
 use bevy_math::Vec3;
 use bevy_mesh::Mesh3d;
 use bevy_pbr::{CachedPointShadowMap, CachedPointShadowReport, PointShadowCacheStore, point_shadow_view_faces};
@@ -19,6 +19,7 @@ use sf_tunables::Type;
 use sf_tunables_bevy::Tunables;
 
 use crate::lamp_cache::{LampCacheReports, LampCacheStats, LampShadowMobility};
+use crate::lamp_cache_render_tests::RenderExtract;
 use crate::{BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowMapCached, ShadowSlot};
 
 /// What the stand-in render world saw each frame: `(view, draw, load)` of the written component.
@@ -278,4 +279,80 @@ fn flipping_the_switch_live_both_ways() {
     assert!(room.cached().is_some() && room.ready(), "on again: captured again");
     assert_eq!(room.take_frames().iter().filter(|f| f.1 != 0).count(), 1, "one capture plan (two faces), confirmed");
     assert_eq!(room.views(), 0);
+}
+
+/// Stand-in for `bevy_light`'s `check_point_light_mesh_visibility`: a shadowed lamp's six lists,
+/// each caster in range on the face of its dominant axis; unshadowed (cached) lamps untouched.
+fn stock_visibility(
+    mut lamps: Query<(&PointLight, &GlobalTransform, &mut CubemapVisibleEntities)>,
+    casters: Query<(Entity, &GlobalTransform), With<Mesh3d>>,
+) {
+    for (light, at, mut lists) in &mut lamps {
+        if !light.shadow_maps_enabled {
+            continue;
+        }
+        for face in 0..6 {
+            lists.get_mut(face).entities.clear();
+        }
+        for (caster, t) in &casters {
+            let d = t.translation() - at.translation();
+            if d.length() > light.range {
+                continue;
+            }
+            let a = d.abs();
+            let face = if a.x >= a.y && a.x >= a.z {
+                usize::from(d.x < 0.0)
+            } else if a.y >= a.z {
+                2 + usize::from(d.y < 0.0)
+            } else {
+                4 + usize::from(d.z > 0.0)
+            };
+            lists.get_mut(face).entities.push(caster);
+        }
+    }
+}
+
+/// The live handover the owner did (2026-11-17 crash): a stock lamp, the switch flipped on, the
+/// lamp moving (stock path with the very lists it had before), still again (cached), the switch
+/// off and on again. After every frame the render app's extraction runs and each face view
+/// `prepare_lights` would create has its list.
+#[test]
+fn every_face_view_has_its_list_through_live_switches_and_moves() {
+    let mut room = room(false);
+    room.app.add_systems(
+        PostUpdate,
+        stock_visibility
+            .in_set(SimulationLightSystems::CheckLightVisibility)
+            .after(VisibilitySystems::VisibilityPropagate),
+    );
+    let mut extract = RenderExtract::new();
+    extract.link(room.app.world_mut(), room.lamp);
+    let mut step = |room: &mut Room, frames: usize, what: &str| {
+        for _ in 0..frames {
+            room.run(1);
+            extract.extract(room.app.world_mut());
+            let missing = extract.faces_without_list();
+            assert!(missing.is_empty(), "{what}: face views without a list: {missing:?}");
+        }
+    };
+
+    step(&mut room, 3, "stock");
+    assert_eq!(room.list(0), vec![room.statics[0]], "the stand-in lists the stock faces");
+    set_switch(&mut room.app, true);
+    step(&mut room, 6, "switched on");
+    assert!(room.cached().is_some() && room.ready());
+
+    let lamp = room.lamp;
+    room.translate(lamp, Vec3::new(0.5, 0.0, 0.0));
+    step(&mut room, 2, "moved");
+    assert!(room.cached().is_none() && room.light().shadow_maps_enabled, "stock path while moving");
+    step(&mut room, 12, "settling");
+    assert!(room.cached().is_some(), "cached again once still");
+
+    set_switch(&mut room.app, false);
+    step(&mut room, 2, "switched off");
+    assert!(room.cached().is_none() && room.light().shadow_maps_enabled);
+    set_switch(&mut room.app, true);
+    step(&mut room, 6, "switched on again");
+    assert!(room.cached().is_some());
 }

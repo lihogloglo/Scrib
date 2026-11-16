@@ -259,6 +259,13 @@ Gauges `lamp_cache/*` + `lamp_cache/render/*` (`sf_diag_bevy` dependency added).
 are not watched (only the batch entity); S2 records copies per lamp, not in S1's global order (a Save into a layer another
 lamp restores from the same frame would race; LRU makes it unlikely). 7 tests `lamp_cache_tests.rs`.
 
+**Crash fix (2026-11-17).** First device run (live switch on, Balmora 22:00) panicked in `get_shadow_map_visible_entities`:
+`extract_lights` kept the stock list hash through a cached spell, and a lamp back on the stock path with the same casters
+matched it, keeping only its view-face lists under six stock views. Now lists are keyed by the path that extracted them
+and kept only while they cover every face view (`point_shadow_lists_cover`); a face without a list is skipped with a
+warn-once (guard). Tests: `a_lamp_changing_path_always_has_a_list_for_each_face_view` (render-world extraction),
+`every_face_view_has_its_list_through_live_switches_and_moves` (headless app + extraction); both failed on the old code.
+
 ## Measurements (S0b, S4)
 
 - One exe, untraced, `perf suite --arm base --arm cache:--env BEVYRROWIND_LAMP_CACHE=1`, plus

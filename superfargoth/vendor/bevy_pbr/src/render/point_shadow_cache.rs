@@ -792,3 +792,24 @@ pub fn record_cached_point_shadow_copies(
 pub(crate) fn cached_face_listed(cached: Option<CachedPointShadowFaces>, subview: u32) -> bool {
     cached.is_none_or(|faces| subview < 6 && u32::from(faces.view) & (1 << subview) != 0)
 }
+
+/// Whether `lists` holds a visible-entity list for every face in `faces` of the light `main`.
+/// `extract_lights` keeps a light's lists only while they cover every face `prepare_lights`
+/// gives a view and a phase (six on the stock path, the view faces when cached): a shadow view
+/// never exists without its list.
+#[must_use]
+pub fn point_shadow_lists_cover(
+    lists: &bevy_render::view::RenderShadowMapVisibleEntities,
+    main: MainEntity,
+    faces: u8,
+) -> bool {
+    (0..6u32)
+        .filter(|face| faces & (1 << face) != 0)
+        .all(|face| {
+            lists.subviews.contains_key(&RetainedViewEntity {
+                main_entity: main,
+                auxiliary_entity: None,
+                subview_index: face,
+            })
+        })
+}

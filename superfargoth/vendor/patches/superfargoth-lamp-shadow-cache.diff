@@ -60,17 +60,19 @@ index beb49645..e034f2d7 100644
  impl SyncComponent<RenderApp, PbrPlugin> for SpotLight {
      type Target = (Self, ExtractedPointLight, PointAndSpotLightViewEntities);
 diff --git a/bevy_pbr/src/render/light.rs b/bevy_pbr/src/render/light.rs
-index 6fd16a86..8831a7f3 100644
+index 6fd16a86..34959be2 100644
 --- a/bevy_pbr/src/render/light.rs
 +++ b/bevy_pbr/src/render/light.rs
-@@ -1,4 +1,6 @@
+@@ -1,4 +1,8 @@
  use crate::*;
 +// superfargoth patch (own, CW-4: lamp shadow cache)
-+use super::point_shadow_cache::{cached_face_listed, CachedLightInputs};
++use super::point_shadow_cache::{
++    cached_face_listed, point_shadow_lists_cover, CachedLightInputs,
++};
  use alloc::sync::Arc;
  use bevy_asset::UntypedAssetId;
  use bevy_camera::primitives::{
-@@ -399,15 +401,20 @@ pub fn extract_lights(
+@@ -399,15 +403,20 @@ pub fn extract_lights(
                  Entity,
                  RenderEntity,
                  Ref<PointLight>,
@@ -92,7 +94,7 @@ index 6fd16a86..8831a7f3 100644
                  Changed<PointLight>,
                  Changed<CubemapVisibleEntities>,
                  Changed<GlobalTransform>,
-@@ -512,6 +519,12 @@ pub fn extract_lights(
+@@ -512,6 +521,12 @@ pub fn extract_lights(
          Query<(), With<ExtractedPointLight>>,
          Local<EntityHashMap<u64>>,
      ),
@@ -105,7 +107,7 @@ index 6fd16a86..8831a7f3 100644
      mut all_lights_found: Local<EntityHashSet>,
      mut rect_light_missing_luts_warning_emitted: Local<bool>,
      system_change_tick: SystemChangeTick,
-@@ -537,6 +550,14 @@ pub fn extract_lights(
+@@ -537,6 +552,14 @@ pub fn extract_lights(
      let point_light_texel_size = 2.0 / point_light_shadow_map.size as f32;
  
      all_lights_found.clear();
@@ -120,7 +122,7 @@ index 6fd16a86..8831a7f3 100644
  
      for (
          main_entity,
-@@ -549,6 +570,8 @@ pub fn extract_lights(
+@@ -549,6 +572,8 @@ pub fn extract_lights(
          maybe_render_layers,
          volumetric_light,
          shadow_fade,
@@ -129,7 +131,7 @@ index 6fd16a86..8831a7f3 100644
      ) in point_lights.iter()
      {
          if !view_visibility.get() {
-@@ -558,7 +581,10 @@ pub fn extract_lights(
+@@ -558,7 +583,10 @@ pub fn extract_lights(
              continue;
          }
  
@@ -141,7 +143,7 @@ index 6fd16a86..8831a7f3 100644
              all_lights_found.insert(render_entity);
  
              // superfargoth patch: only rebuild RenderExtractedShadowMapVisibleEntities when the
-@@ -568,10 +594,21 @@ pub fn extract_lights(
+@@ -568,10 +596,29 @@ pub fn extract_lights(
                  .light_entities
                  .get(&MainEntity::from(main_entity))
                  .copied();
@@ -150,16 +152,24 @@ index 6fd16a86..8831a7f3 100644
 -                && current_entities_hash.is_some()
 -                && prev_light_entities.get(&render_entity).copied() == current_entities_hash;
 +            // superfargoth patch (own, CW-4: lamp shadow cache): cached lamps are not hashed; their
-+            // lists change when the host writes them or the view faces change.
++            // lists change when the host writes them or the view faces change. Either path keeps
++            // its lists only if they cover every face `prepare_lights` gives a view (six stock, the
++            // view faces cached): a view never exists without its list.
++            let lists_cover = |faces: u8| {
++                existing_render_shadow_map_visible_entities
++                    .get(render_entity)
++                    .is_ok_and(|(_, _, lists)| {
++                        point_shadow_lists_cover(lists, MainEntity::from(main_entity), faces)
++                    })
++            };
 +            let entities_unchanged = match cached_faces {
 +                Some(faces) => {
-+                    existing_render_shadow_map_visible_entities.contains(render_entity)
++                    lists_cover(faces.view)
 +                        && !cubemap_visible_entities.is_changed()
 +                        && cached_list_faces.get(&render_entity) == Some(&faces.view)
 +                }
 +                None => {
-+                    existing_render_shadow_map_visible_entities
-+                        .contains(render_entity)
++                    lists_cover(ALL_POINT_SHADOW_FACES)
 +                        && current_entities_hash.is_some()
 +                        && prev_light_entities.get(&render_entity).copied() == current_entities_hash
 +                }
@@ -167,7 +177,7 @@ index 6fd16a86..8831a7f3 100644
  
              if !entities_unchanged {
                  // Fetch or create the visible entities for each cubemap face.
-@@ -594,6 +631,10 @@ pub fn extract_lights(
+@@ -594,6 +641,10 @@ pub fn extract_lights(
                  };
  
                  for face_index in 0..6 {
@@ -178,7 +188,7 @@ index 6fd16a86..8831a7f3 100644
                      let retained_view_entity = RetainedViewEntity {
                          main_entity: MainEntity::from(main_entity),
                          auxiliary_entity: None,
-@@ -634,6 +675,8 @@ pub fn extract_lights(
+@@ -634,6 +685,8 @@ pub fn extract_lights(
                          view_entity.main_entity.entity() == main_entity
                              && view_entity.auxiliary_entity.is_none()
                              && view_entity.subview_index < 6
@@ -187,7 +197,7 @@ index 6fd16a86..8831a7f3 100644
                      });
                  render_shadow_map_visible_entities
                      .subviews
-@@ -641,6 +684,8 @@ pub fn extract_lights(
+@@ -641,6 +694,8 @@ pub fn extract_lights(
                          view_entity.main_entity.entity() == main_entity
                              && view_entity.auxiliary_entity.is_none()
                              && view_entity.subview_index < 6
@@ -196,18 +206,34 @@ index 6fd16a86..8831a7f3 100644
                      });
  
                  let mut entity_commands = commands.entity(render_entity);
-@@ -651,6 +696,10 @@ pub fn extract_lights(
-                 if let Some(hash) = current_entities_hash {
-                     prev_light_entities.insert(render_entity, hash);
+@@ -648,8 +703,24 @@ pub fn extract_lights(
+                     render_extracted_shadow_map_visible_entities,
+                     render_shadow_map_visible_entities,
+                 ));
+-                if let Some(hash) = current_entities_hash {
+-                    prev_light_entities.insert(render_entity, hash);
++                // superfargoth patch (own, CW-4: lamp shadow cache): the lists are keyed by the path
++                // that extracted them: a cached extraction forgets the stock hash, a stock one the
++                // view mask. (A stock hash kept through a cached spell matched again on the lamp's
++                // return to the stock path, so its view-face lists stood in for six stock faces:
++                // "Failed to get point light visible entity for face", 2026-11-17.)
++                match (cached_faces, current_entities_hash) {
++                    (Some(faces), _) => {
++                        prev_light_entities.remove(&render_entity);
++                        cached_list_faces.insert(render_entity, faces.view);
++                    }
++                    (None, Some(hash)) => {
++                        cached_list_faces.remove(&render_entity);
++                        prev_light_entities.insert(render_entity, hash);
++                    }
++                    (None, None) => {
++                        cached_list_faces.remove(&render_entity);
++                        prev_light_entities.remove(&render_entity);
++                    }
                  }
-+                // superfargoth patch (own, CW-4: lamp shadow cache)
-+                if let Some(faces) = cached_faces {
-+                    cached_list_faces.insert(render_entity, faces.view);
-+                }
              }
          }
- 
-@@ -668,6 +717,8 @@ pub fn extract_lights(
+@@ -668,6 +739,8 @@ pub fn extract_lights(
                  .as_ref()
                  .is_some_and(DetectChanges::is_changed)
              || shadow_fade.as_ref().is_some_and(DetectChanges::is_changed)
@@ -216,7 +242,7 @@ index 6fd16a86..8831a7f3 100644
              || point_light_shadow_map.is_changed();
  
          if light_changed {
-@@ -681,7 +732,8 @@ pub fn extract_lights(
+@@ -681,7 +754,8 @@ pub fn extract_lights(
                  range: point_light.range,
                  radius: point_light.radius,
                  transform: *transform,
@@ -226,7 +252,7 @@ index 6fd16a86..8831a7f3 100644
                  contact_shadows_enabled: point_light.contact_shadows_enabled,
                  shadow_depth_bias: point_light.shadow_depth_bias,
                  // The factor of SQRT_2 is for the worst-case diagonal offset
-@@ -1563,6 +1615,8 @@ pub fn skip_unchanged_shadow_views(
+@@ -1563,6 +1637,8 @@ pub fn skip_unchanged_shadow_views(
      // superfargoth patch (own: point shadow face culling)
      mut face_tracker: Local<PointShadowFaceCullTracker>,
      mut face_stats: ResMut<PointShadowFaceStats>,
@@ -235,7 +261,7 @@ index 6fd16a86..8831a7f3 100644
  ) {
      use core::hash::{BuildHasher, Hash, Hasher};
      use ShadowFaceState::{Clean, Mandatory, Motion, SetChange};
-@@ -1595,6 +1649,25 @@ pub fn skip_unchanged_shadow_views(
+@@ -1595,6 +1671,25 @@ pub fn skip_unchanged_shadow_views(
          live.insert(retained);
          face_stats.faces += 1;
  
@@ -261,7 +287,7 @@ index 6fd16a86..8831a7f3 100644
          // superfargoth patch (own: point shadow face culling): no camera sees a receiver
          // of this face. Not drawn; its map and its keys in `rendered` stay as they are, so
          // it is compared against what it was last drawn from when it comes back.
-@@ -1912,6 +1985,8 @@ pub fn prepare_lights(
+@@ -1912,6 +2007,8 @@ pub fn prepare_lights(
          ResMut<LightKeyCache>,
          ResMut<SpecializedShadowMaterialPipelineCache>,
      ),
@@ -270,7 +296,7 @@ index 6fd16a86..8831a7f3 100644
  ) {
      let views_iter = views.iter();
      let views_count = views_iter.len();
-@@ -2345,11 +2420,21 @@ pub fn prepare_lights(
+@@ -2345,11 +2442,21 @@ pub fn prepare_lights(
              dimension: TextureDimension::D2,
              format: CORE_3D_SHADOW_MAP_FORMAT,
              label: Some("point_light_shadow_map_texture"),
@@ -293,7 +319,7 @@ index 6fd16a86..8831a7f3 100644
      let point_light_depth_texture_view =
          point_light_depth_texture
              .texture
-@@ -2441,6 +2526,33 @@ pub fn prepare_lights(
+@@ -2441,6 +2548,33 @@ pub fn prepare_lights(
              (point_light_frusta, _),
          ) = point_lights.get_mut(*light_entity).unwrap();
  
@@ -327,7 +353,7 @@ index 6fd16a86..8831a7f3 100644
          if !light.shadow_maps_enabled {
              despawn_entities(
                  &mut commands,
-@@ -2501,6 +2613,8 @@ pub fn prepare_lights(
+@@ -2501,6 +2635,8 @@ pub fn prepare_lights(
              live_shadow_mapping_lights.insert(retained_view_entity);
          }
      }
@@ -336,6 +362,121 @@ index 6fd16a86..8831a7f3 100644
  
      // spot lights
      for (light_index, light_entity) in point_light_entities
+@@ -3374,6 +3510,8 @@ pub(crate) fn specialize_shadows(
+                 continue;
+             };
+ 
++            // superfargoth patch (own, CW-4: lamp shadow cache): an `Option`; a face without a
++            // list gets its pending queues and nothing queued, like a list without `Mesh3d`.
+             let visible_entities = get_shadow_map_visible_entities(
+                 &shadow_map_visible_entities_query,
+                 light_entity,
+@@ -3407,7 +3545,8 @@ pub(crate) fn specialize_shadows(
+             // NOTE: Lights with shadow mapping disabled will have no visible entities
+             // so no meshes will be queued
+ 
+-            let Some(visible_entities) = visible_entities.get::<Mesh3d>() else {
++            // superfargoth patch (own, CW-4: lamp shadow cache): `and_then`
++            let Some(visible_entities) = visible_entities.and_then(|v| v.get::<Mesh3d>()) else {
+                 continue;
+             };
+ 
+@@ -3598,7 +3737,8 @@ pub fn queue_shadows(
+             extracted_view_light,
+         );
+ 
+-        let Some(visible_entities) = visible_entities.get::<Mesh3d>() else {
++        // superfargoth patch (own, CW-4: lamp shadow cache): `and_then`
++        let Some(visible_entities) = visible_entities.and_then(|v| v.get::<Mesh3d>()) else {
+             continue;
+         };
+ 
+@@ -4105,21 +4245,27 @@ fn point_or_spot_light_to_clusterable(point_light: &ExtractedPointLight) -> Clus
+ 
+ /// Returns the [`RenderShadowMapVisibleEntities`] table corresponding to the
+ /// given [`LightEntity`].
++///
++/// superfargoth patch (own, CW-4: lamp shadow cache): `Option` (was a panic for every light
++/// type). A point light face without a list is skipped this frame with a warning (guard only:
++/// `extract_lights` keeps the lists covering every face view, `point_shadow_lists_cover`).
+ fn get_shadow_map_visible_entities<'w, 's: 'w>(
+     shadow_map_visible_entities_query: &'w Query<'w, 's, &'_ RenderShadowMapVisibleEntities>,
+     light_entity: &'_ LightEntity,
+     extracted_view_light: &'_ ExtractedView,
+-) -> &'w RenderVisibleEntities {
++) -> Option<&'w RenderVisibleEntities> {
+     match light_entity {
+         LightEntity::Directional { light_entity, .. } => {
+             let retained_view_entity = extracted_view_light.retained_view_entity;
+-            &shadow_map_visible_entities_query
+-                .get(*light_entity)
+-                .expect("Failed to get directional light visible entities")
+-                .subviews
+-                .get(&retained_view_entity)
+-                .expect("Failed to get directional light visible entities for cascade")
+-                .1
++            Some(
++                &shadow_map_visible_entities_query
++                    .get(*light_entity)
++                    .expect("Failed to get directional light visible entities")
++                    .subviews
++                    .get(&retained_view_entity)
++                    .expect("Failed to get directional light visible entities for cascade")
++                    .1,
++            )
+         }
+         LightEntity::Point {
+             light_entity,
+@@ -4133,13 +4279,20 @@ fn get_shadow_map_visible_entities<'w, 's: 'w>(
+                 auxiliary_entity: None,
+                 subview_index: *face_index as u32,
+             };
+-            &shadow_map_visible_entities_query
++            // superfargoth patch (own, CW-4: lamp shadow cache): skip the face, warn once (was
++            // `expect("Failed to get point light visible entit{ies, y for face}")`).
++            let list = shadow_map_visible_entities_query
+                 .get(*light_entity)
+-                .expect("Failed to get point light visible entities")
+-                .subviews
+-                .get(&retained_view_entity)
+-                .expect("Failed to get point light visible entity for face")
+-                .1
++                .ok()
++                .and_then(|lists| lists.subviews.get(&retained_view_entity));
++            if list.is_none() {
++                warn_once!(
++                    "point shadow face {face_index} of light {:?} has a view but no visible-entity \
++                     list; skipped this frame (lamp shadow cache guard)",
++                    retained_view_entity.main_entity
++                );
++            }
++            list.map(|(_, list)| list)
+         }
+         LightEntity::Spot { light_entity } => {
+             // We replace the auxiliary entity with `None`
+@@ -4150,13 +4303,15 @@ fn get_shadow_map_visible_entities<'w, 's: 'w>(
+                 auxiliary_entity: None,
+                 subview_index: 0,
+             };
+-            &shadow_map_visible_entities_query
+-                .get(*light_entity)
+-                .expect("Failed to get spot light visible entities")
+-                .subviews
+-                .get(&retained_view_entity)
+-                .expect("Failed to get spot light visible entity for view")
+-                .1
++            Some(
++                &shadow_map_visible_entities_query
++                    .get(*light_entity)
++                    .expect("Failed to get spot light visible entities")
++                    .subviews
++                    .get(&retained_view_entity)
++                    .expect("Failed to get spot light visible entity for view")
++                    .1,
++            )
+         }
+     }
+ }
 diff --git a/bevy_pbr/src/render/mod.rs b/bevy_pbr/src/render/mod.rs
 index ed20fee2..45423fa3 100644
 --- a/bevy_pbr/src/render/mod.rs
@@ -358,10 +499,10 @@ index ed20fee2..45423fa3 100644
      // superfargoth patch (own, CW-7: skip unchanged skins).
 diff --git a/bevy_pbr/src/render/point_shadow_cache.rs b/bevy_pbr/src/render/point_shadow_cache.rs
 new file mode 100644
-index 0000000..37812a7
+index 00000000..e4a09180
 --- /dev/null
 +++ b/bevy_pbr/src/render/point_shadow_cache.rs
-@@ -0,0 +1,794 @@
+@@ -0,0 +1,815 @@
 +//! superfargoth patch (own, CW-4: lamp shadow cache), ROADMAP 1.25 CW-4 slice S2.
 +//! Spec: `superfargoth/docs/specs/lamp-shadow-cache.md` ("Design" 3, "S2 as built").
 +//!
@@ -1155,4 +1296,25 @@ index 0000000..37812a7
 +/// stock lamp, the view faces of a cached one.
 +pub(crate) fn cached_face_listed(cached: Option<CachedPointShadowFaces>, subview: u32) -> bool {
 +    cached.is_none_or(|faces| subview < 6 && u32::from(faces.view) & (1 << subview) != 0)
++}
++
++/// Whether `lists` holds a visible-entity list for every face in `faces` of the light `main`.
++/// `extract_lights` keeps a light's lists only while they cover every face `prepare_lights`
++/// gives a view and a phase (six on the stock path, the view faces when cached): a shadow view
++/// never exists without its list.
++#[must_use]
++pub fn point_shadow_lists_cover(
++    lists: &bevy_render::view::RenderShadowMapVisibleEntities,
++    main: MainEntity,
++    faces: u8,
++) -> bool {
++    (0..6u32)
++        .filter(|face| faces & (1 << face) != 0)
++        .all(|face| {
++            lists.subviews.contains_key(&RetainedViewEntity {
++                main_entity: main,
++                auxiliary_entity: None,
++                subview_index: face,
++            })
++        })
 +}
