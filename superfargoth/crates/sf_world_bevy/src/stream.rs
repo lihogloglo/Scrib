@@ -41,12 +41,12 @@ use sf_world::{
 
 use crate::coords::{GRID_SWITCH, from_grid, to_grid};
 use crate::far::{FarProxies, ProxySpawnCx};
-use crate::precombine::{CellPrecombine, Precombines, bucket_ranges};
+use crate::precombine::{CellPrecombine, Precombines};
 use crate::scene::{SceneCellCx, SceneCells};
 use crate::spawn::{
     ActivateCx, LoadedModel, ModelMaterials, ModelTemplate, PlacementSpawners, SpawnCx, TemplateLod, model_aabb,
-    size_culled_end, spawn_template_ranges,
 };
+use crate::lod_live::{EndInputs, LodChain, spawn_levels};
 use crate::worldspace::{WorldspaceRegistry, WorldspaceRoot, dynamic_layer};
 
 /// Longest run of frames the origin-shift guard may hold the main-thread
@@ -119,6 +119,10 @@ pub struct StreamingConfig {
     /// Threads of the pipeline-compile pool used while a reveal holds (pipeline-warmup.md W2b,
     /// [`crate::PipelineCompilePoolPlugin`]): `None` = all cores but two, `Some(0)` = off (stock).
     pub pipeline_compile_threads: Option<usize>,
+    /// LOD chains (placements or precombine buckets) re-ranged per frame after
+    /// a [`Self::lod`] change ([`crate::lod_live`]; `lod.live.chains_per_frame`,
+    /// `sf_world::lod_screen::LOD_LIVE_BUDGET`).
+    pub lod_live_budget: usize,
 }
 
 impl Default for StreamingConfig {
@@ -137,6 +141,7 @@ impl Default for StreamingConfig {
             flat_normal_map: true,
             gpu_cull_statics: false,
             pipeline_compile_threads: None,
+            lod_live_budget: sf_world::lod_screen::LOD_LIVE_BUDGET.default_value() as usize,
         }
     }
 }
@@ -285,6 +290,13 @@ pub struct StreamStats {
     /// Model uses that wanted ray-tracing variants ([`RayTracingVariants`])
     /// but found the model already loading or loaded without them.
     pub ray_tracing_misses: u64,
+    /// Live view distance ([`crate::lod_live`]): LOD chains re-ranged under a
+    /// new screen, parts whose `VisibilityRange` changed, and parts spawned
+    /// (a level opened) or despawned (a level collapsed) on the way.
+    pub lod_live_chains: u64,
+    pub lod_live_ranges_changed: u64,
+    pub lod_live_parts_spawned: u64,
+    pub lod_live_parts_despawned: u64,
     pub fetch_errors: u64,
     pub resident_cells: usize,
     pub models_loaded: usize,
@@ -510,11 +522,25 @@ impl Streaming {
         self.rt.config.scheduler.select_gate = quanta;
     }
 
-    /// The LOD screen placements spawned from now on use (`lod.bias`, `lod.size_cull.*` live,
-    /// `sf_world::lod_screen`): their switch distances and draw ends are computed at spawn, so
-    /// resident cells keep theirs until they stream out and back (`Lifetime::Respawn`).
+    /// The LOD screen (`lod.bias`, `lod.size_cull.*` live, `sf_world::lod_screen`): placements
+    /// spawned from now on use it, and the LOD chains already resident are re-ranged in place over
+    /// the next frames, [`StreamingConfig::lod_live_budget`] chains a frame ([`crate::lod_live`]).
     pub fn set_lod_screen(&mut self, screen: LodScreen) {
         self.rt.config.lod = screen;
+    }
+
+    /// LOD chains re-ranged per frame after a screen change (`lod.live.chains_per_frame` live).
+    pub fn set_lod_live_budget(&mut self, chains: usize) {
+        self.rt.config.lod_live_budget = chains.max(1);
+    }
+
+    /// Sums one frame of the live re-range into the stats.
+    pub(crate) fn add_lod_live(&mut self, frame: crate::lod_live::LiveLodFrame) {
+        let s = &mut self.rt.stats;
+        s.lod_live_chains += frame.chains;
+        s.lod_live_ranges_changed += frame.ranges_changed;
+        s.lod_live_parts_spawned += frame.parts_spawned;
+        s.lod_live_parts_despawned += frame.parts_despawned;
     }
 
     /// The static template material of `desc`, from streaming's own cache and fold
@@ -1392,18 +1418,11 @@ impl Runtime {
             let asset_server = world.resource::<AssetServer>().clone();
             let Some(combine) = world.resource::<Assets<CellPrecombine>>().get(handle) else { return };
             for bucket in &combine.buckets {
-                let (mut end, mut band) = (0.0f32, 0.0f32);
-                for p in bucket.members.iter().filter_map(|id| by_id.get(id)) {
-                    let e = ends.of(p);
-                    let reach = if e.at_handoff { 0.0 } else { bucket.reach };
-                    if e.distance + reach > end {
-                        (end, band) = (e.distance + reach, e.band);
-                    }
-                }
+                // Its members' ends before size culling: the bucket's end follows the screen live
+                // (`lod_live::bucket_end`, the same function at spawn).
+                let member_ends: Arc<[EndInputs]> = bucket.members.iter().filter_map(|id| by_id.get(id)).map(|p| ends.inputs(p)).collect();
                 let template = build_template(&bucket.model, &mut materials, &mut self.materials, (&mapper, fold), &asset_server);
-                let errors: Vec<f32> = template.lods.iter().map(|l| l.error).collect();
-                let ranges = bucket_ranges(&errors, &ends.lod, end, band, bucket.reach);
-                buckets.push((template, ranges, end, band));
+                buckets.push((Arc::new(template), bucket.reach, member_ends));
             }
         });
         let Some(center) = world.resource::<Assets<CellPrecombine>>().get(handle).map(|c| c.center) else { return 0 };
@@ -1411,20 +1430,11 @@ impl Runtime {
         let mut n = 1;
         // Precombined buckets are statics: GPU-culled when the app allows it.
         let gpu_culled = crate::StaticGpuCulling::on(world);
-        for (template, ranges, end, band) in &buckets {
-            let cx = SpawnCx {
-                worldspace: &request.worldspace,
-                cell: request.cell,
-                level: request.to,
-                parent: batch,
-                layers,
-                local: Transform::from_translation(origin.delta_f32(center)),
-                model: None,
-                max_distance: *end,
-                end_band: *band,
-                lod: &ends.lod,
-            };
-            n += spawn_template_ranges(world, &cx, template, ranges, gpu_culled);
+        let local = Transform::from_translation(origin.delta_f32(center));
+        for (template, reach, members) in buckets {
+            let chain = Arc::new(LodChain::bucket(template, reach, members, batch, local, layers.clone(), gpu_culled, ends.lod));
+            let ranges = chain.ranges(&ends.lod);
+            n += spawn_levels(world, &chain, &ranges, |_| true);
         }
         n
     }
@@ -1521,7 +1531,8 @@ impl Runtime {
             model,
             max_distance: end.distance,
             end_band: end.band,
-            lod: &self.config.lod,
+            end: end.inputs,
+            lod: &at.ends.lod,
         };
         spawner.spawn(world, &cx, p)
     }
@@ -1826,24 +1837,28 @@ struct Ends {
 struct End {
     distance: f32,
     band: f32,
-    /// Ends at the far-field handoff (not earlier).
-    at_handoff: bool,
     /// Size culling ended it before its ring or the handoff.
     size_culled: bool,
+    /// What it was resolved from (LOD chains keep it, `lod_live`).
+    inputs: EndInputs,
 }
 
 impl Ends {
-    fn of(&self, p: &IndexedPlacement) -> End {
-        // A far-field proxy takes over from eligible placements at its
-        // handoff; the rest keep their ring's range.
+    /// A placement's end before size culling. A far-field proxy takes over
+    /// from eligible placements at its handoff; the rest keep their ring's range.
+    fn inputs(&self, p: &IndexedPlacement) -> EndInputs {
         let (max_distance, end_band, kept_radius) = match self.handoff {
             Some((d, band)) if p.placement.far_eligible() => (d, band, Some(self.kept)),
             _ if self.content.level_of(p) == Some(Level::Far) => (self.rings.far.unload, 0.0, None),
             _ => (self.rings.near.unload, 0.0, None),
         };
-        let (distance, band) = size_culled_end(&self.lod, p, max_distance, end_band, kept_radius);
-        let size_culled = distance < max_distance;
-        End { distance, band, at_handoff: kept_radius.is_some() && !size_culled, size_culled }
+        EndInputs::of(p, max_distance, end_band, kept_radius)
+    }
+
+    fn of(&self, p: &IndexedPlacement) -> End {
+        let inputs = self.inputs(p);
+        let r = inputs.resolve(&self.lod);
+        End { distance: r.distance, band: r.band, size_culled: r.size_culled, inputs }
     }
 }
 

@@ -1,0 +1,9 @@
+// Bevyrrowind's values over framework defaults (builtin mod `mw`, `sf.tunable` records at the `Mod`
+// layer; tunables spec "Names and the split"): the framework keeps its generic default, the game
+// says why it differs. A mod overrides one with its own record of the same id.
+[
+  define(kind: "sf.tunable", id: "shadow.lamp.fade_m", value: (
+    value: "35,45",
+    source: "guess: covers Balmora street blocks without nearby lamp shadow pop-in (visual-checks/shadows.md, audit 2026-11-01; framework default 15-25 m)",
+  )),
+]

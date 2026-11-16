@@ -22,6 +22,8 @@ bevy_log.workspace = true
 bevy_remote = { workspace = true, optional = true }
 # The BRP handlers' JSON (pure functions, tested without bevy_remote).
 serde_json.workspace = true
+# `sf.tunable` / `sf.tunable_preset` records read from a loaded record store (presets).
+sf_records.workspace = true
 sf_tunables.workspace = true
 # `--tunables <file.toml>`.
 toml.workspace = true

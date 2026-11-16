@@ -29,12 +29,15 @@ pub fn pinned_clouds(genus: CloudPreset) -> CloudWeather {
     mw_weather::visual::mw_clouds(genus)
 }
 
-/// Quality presets (industry-audit.md J1, ROADMAP Next up 4): the level the run starts at. Every value
-/// a level decides (view distance, shadows, lights, post, sky, water, surface, textures, GI) is a
-/// tunable written at the `Preset` layer from one table (`mw_exterior_bevy::quality_presets`,
-/// tunables slices T4 and T5a).
+/// Quality presets (industry-audit.md J1, ROADMAP Next up 4): the level the run starts at, a level of
+/// the overall graphics preset `sf.graphics_preset` (tunables slice T5b). Every value a level decides
+/// (view distance, shadows, lights, post, sky, water, surface, textures, GI) is a tunable its `sg.*`
+/// group writes at the `Preset` layer from the builtin mod's records (`mw_mods::BASE_RECORDS`); the
+/// level switches live (console `set sf.graphics_preset <level>`, `preset`, Shift+F4).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Quality {
+    /// The floor for weak machines and CPU/GPU comparisons, below Low.
+    ExtremelyLow,
     Low,
     Medium,
     #[default]
@@ -44,9 +47,13 @@ pub enum Quality {
 
 impl Quality {
     pub const ENV: &'static str = "BEVYRROWIND_QUALITY";
+    /// Every level, weakest first.
+    pub const ALL: [Self; 5] = [Self::ExtremelyLow, Self::Low, Self::Medium, Self::High, Self::Ultra];
 
+    /// `extremely_low` (also `extremely-low`, `extremelylow`), `low`, `medium`, `high`, `ultra`.
     pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
+        match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "extremely_low" | "extremelylow" => Some(Self::ExtremelyLow),
             "low" => Some(Self::Low),
             "medium" => Some(Self::Medium),
             "high" => Some(Self::High),
@@ -55,8 +62,36 @@ impl Quality {
         }
     }
 
+    /// The level id of `sf.graphics_preset` (`extremely_low`, ..., `ultra`).
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ExtremelyLow => "extremely_low",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Ultra => "ultra",
+        }
+    }
+
     /// `--quality`, else `BEVYRROWIND_QUALITY`, else High.
     pub fn resolve(flag: Option<Self>) -> Self {
         flag.or_else(|| std::env::var(Self::ENV).ok().and_then(|v| Self::parse(&v))).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod quality_tests {
+    use super::Quality;
+
+    /// `--quality` / `BEVYRROWIND_QUALITY` take the five levels, `extremely-low` spelled either way.
+    #[test]
+    fn quality_parses_every_level() {
+        for spelling in ["extremely-low", "extremely_low", "Extremely-Low", " extremelylow "] {
+            assert_eq!(Quality::parse(spelling), Some(Quality::ExtremelyLow), "{spelling}");
+        }
+        for q in Quality::ALL {
+            assert_eq!(Quality::parse(q.name()), Some(q));
+        }
+        assert_eq!(Quality::parse("epic"), None);
     }
 }

@@ -332,12 +332,14 @@ struct ViewFlags {
     /// Exteriors: drawn sun disk diameter in degrees (Morrowind default 2.5; physical 0.53).
     #[arg(long)]
     sun_size: Option<f32>,
-    /// Exteriors: quality preset: low, medium, high (default), ultra: view-distance bias
-    /// (LOD, size culling, far-field handoff) and the size-culling cutoff (env `BEVYRROWIND_QUALITY`).
+    /// Exteriors: the start level of the graphics preset `sf.graphics_preset`: extremely-low, low, medium,
+    /// high (default), ultra (records `sg.*` in the builtin mod; switch live with `preset <level>` or
+    /// Shift+F4); view distance, shadows, lighting, post, textures, effects, water, sky
+    /// (env `BEVYRROWIND_QUALITY`).
     #[arg(long, value_parser = parse_quality)]
     quality: Option<Quality>,
     /// Texture size cap in texels (largest side of level 0; `0`: none) instead of the quality
-    /// preset's (Low 512, Medium 1024, High 2048, Ultra none), for A/B (textures.md S1).
+    /// preset's (Extremely low 256, Low 512, Medium 1024, High 2048, Ultra none), for A/B (textures.md S1).
     #[arg(long, value_name = "PX")]
     texture_cap: Option<u32>,
     /// Exteriors: color terrain patches by LOD.
@@ -634,8 +636,8 @@ impl ViewFlags {
     /// `--rt`, `--dlss`, `--off denoiser`, `--off shadowcache`, `--off movershadows`, `--off cascadeencoders` and `--off cascadehold`.
     fn render(&self) -> Result<RenderSettings> {
         let off = Off::from_flags(&self.perf.off)?;
-        let low = Quality::resolve(self.quality) == Quality::Low;
-        Ok(RenderSettings::new(self.rt, self.dlss, !off.has(Part::Denoiser), low)?.with_point_shadows(self.lighting.point_shadows).with_sun_cascades(self.lighting.sun_cascades)
+        let quality = Quality::resolve(self.quality);
+        Ok(RenderSettings::new(self.rt, self.dlss, !off.has(Part::Denoiser), quality)?.with_point_shadows(self.lighting.point_shadows).with_sun_cascades(self.lighting.sun_cascades)
             .with_shadow_cache(!off.has(Part::ShadowCache))
             .with_mover_shadows(!off.has(Part::MoverShadows))
             // F1 is opt-in (`--env BEVYRROWIND_CASCADE_ENCODERS=1`): no win measured with the far-cascade hold on
@@ -1320,7 +1322,7 @@ impl Lighting {
 
 /// `--quality` values.
 fn parse_quality(s: &str) -> std::result::Result<Quality, String> {
-    Quality::parse(s).ok_or_else(|| format!("unknown quality {s:?}: low, medium, high, ultra"))
+    Quality::parse(s).ok_or_else(|| format!("unknown quality {s:?}: extremely-low, low, medium, high, ultra"))
 }
 
 /// `--clouds` values (the `sf_atmos` cloud genera).
@@ -1354,6 +1356,17 @@ mod tests {
         assert_eq!(flags.perf.set, ["shadow.lamp.count=4", "select.gate=on"]);
         assert_eq!(flags.perf.tunables, [PathBuf::from("a.toml")]);
         assert!(is_interactive(cli.command.as_ref()));
+    }
+
+    /// T5b: `--quality` takes the five levels of `sf.graphics_preset`, `extremely-low` spelled either way.
+    #[test]
+    fn quality_takes_extremely_low() {
+        for spelling in ["extremely-low", "extremely_low"] {
+            let cli = parse(&["view", "-2,-9", "--quality", spelling]);
+            let Some(Command::View { flags, .. }) = &cli.command else { panic!("view") };
+            assert_eq!(flags.quality, Some(Quality::ExtremelyLow), "{spelling}");
+        }
+        assert!(Cli::try_parse_from(["bevyrrowind", "view", "-2,-9", "--quality", "epic"]).is_err());
     }
 
     #[test]

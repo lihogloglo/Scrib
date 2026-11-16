@@ -18,6 +18,8 @@
 //! - [`overrides`]: `--set name=value` and `--tunables <file.toml>` parsing (pure; app wiring is T3).
 //! - [`brp`]: the `sf.tunables/list|get|set|reset` handlers as pure JSON functions; the `remote`
 //!   feature registers them with Bevy Remote.
+//! - [`presets`]: presets as data (slice T5b): [`PresetsPlugin`] applies the `sf.graphics_preset` /
+//!   `sg.*` driver levels a host loaded from `sf.tunable_preset` records ([`Presets`]).
 
 use std::ops::{Deref, DerefMut};
 
@@ -32,6 +34,9 @@ pub use sf_tunables::{AnyDef, Def, Id, SetBy, SetOutcome, TunableId, Type, Value
 
 pub mod brp;
 pub mod overrides;
+pub mod presets;
+
+pub use presets::{PresetApplied, Presets, PresetsPlugin};
 
 #[cfg(test)]
 mod tests;

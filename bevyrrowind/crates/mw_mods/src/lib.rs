@@ -70,6 +70,40 @@ pub const TEXTURES_FILE: &str = "textures.toml";
 /// VFS path of the generated function status table (`mw_script::emit::runtime_functions`).
 pub const RUNTIME_FUNCTIONS_PATH: &str = "scripts/mw/functions.luau";
 
+/// The builtin mod's native record files (`.ron`, applied by `NativeRecords` in load order, so any
+/// later mod patches them): the graphics presets (`sf.tunable_preset`: `sf.graphics_preset` and its
+/// `sg.*` groups, tunables slice T5b) and Bevyrrowind's values over framework defaults (`sf.tunable`).
+pub const BASE_RECORDS: [(&str, &str); 2] = [
+    ("records/graphics_presets.ron", include_str!("../data/records/graphics_presets.ron")),
+    ("records/tunables.ron", include_str!("../data/records/tunables.ron")),
+];
+
+/// Registers the tunables record kinds (`sf.tunable`, `sf.tunable_preset`).
+pub fn register_tunable_kinds(db: &mut RecordDb) -> Result<(), sf_records::RecordError> {
+    use sf_tunables::presets::{PRESET_KIND, PresetRecord, TUNABLE_KIND, TunableRecord};
+    db.register_serde::<TunableRecord>(TUNABLE_KIND)?;
+    db.register_serde::<PresetRecord>(PRESET_KIND)
+}
+
+/// The builtin mod's layer of [`BASE_RECORDS`] (above the host's layers).
+fn base_records_source() -> Arc<dyn VfsSource> {
+    Arc::new(BASE_RECORDS.iter().fold(MemSource::new("builtin:mw records"), |s, (path, text)| s.with(path, *text)))
+}
+
+/// A record store holding only the builtin mod's [`BASE_RECORDS`] (source `mw`): the presets for
+/// apps loaded without a profile (viewers, tests), and the shipped levels' reference.
+pub fn base_record_db() -> RecordDb {
+    let mut db = RecordDb::new();
+    register_tunable_kinds(&mut db).expect("tunables kinds register once");
+    let source = db.add_source(BUILTIN, &[]);
+    for (path, text) in BASE_RECORDS {
+        let outcome = sf_records::apply_record_file(&mut db, source, text, sf_records::RecordFormat::Ron)
+            .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+        assert!(outcome.errors.is_empty(), "{path}: {:?}", outcome.errors);
+    }
+    db
+}
+
 /// Modern formats and the legacy ones they replace (`mw_assets::TEXTURE_ALTERNATES`,
 /// the glTF importer); see [`ContentAdapter::modern_alternates`].
 pub const MODERN_ALTERNATES: &[(&str, &[&str])] =
@@ -367,7 +401,8 @@ impl ContentAdapter for MwAdapter {
 
     fn discover(&self, issues: &mut Vec<ModIssue>) -> Vec<ModManifest> {
         let mut builtin = ModManifest::synthesized(builtin_id(), "Bevyrrowind builtin", Version::parse(VERSION).expect("crate version"));
-        builtin.description = "shipped animation graphs and the mw script runtime; mounted lowest".into();
+        builtin.description = "shipped animation graphs, the mw script runtime and the graphics presets; mounted lowest".into();
+        builtin.content.records = BASE_RECORDS.iter().map(|(path, _)| (*path).to_owned()).collect();
         let plugins = self.discover_plugins(issues);
         let mut data = ModManifest::synthesized(data_id(), "Data Files (loose)", Version::new(0, 0, 0));
         data.description = "the install's loose Data Files, over its archives".into();
@@ -395,7 +430,7 @@ impl ContentAdapter for MwAdapter {
 
     fn mount(&self, manifest: &ModManifest) -> Result<Vec<Arc<dyn VfsSource>>, String> {
         match manifest.id.as_str() {
-            BUILTIN => Ok(self.builtin.clone()),
+            BUILTIN => Ok(self.builtin.iter().cloned().chain(std::iter::once(base_records_source())).collect()),
             // The generated record file: a marker the pipeline hands back to `apply_records`.
             WEATHER => Ok(vec![Arc::new(MemSource::new("weather").with(WEATHER_RECORDS, ""))]),
             DATA => {
@@ -419,6 +454,8 @@ impl ContentAdapter for MwAdapter {
     fn register_kinds(&self, db: &mut RecordDb) {
         mw_records::register_kinds(db).expect("TES3 kinds register once");
         mw_weather::register_kinds(db).expect("weather kinds register once");
+        // The builtin mod's graphics presets and any mod's tunable values (`NativeRecords` applies them).
+        register_tunable_kinds(db).expect("tunables kinds register once");
     }
 
     fn apply_records(&self, cx: &mut RecordCx<'_>, file: &VfsPath) -> Result<(), RecordFileError> {
@@ -470,8 +507,8 @@ impl ContentAdapter for MwAdapter {
     fn stamp(&self, manifest: &ModManifest) -> Vec<u8> {
         let mut out = format!("{ADAPTER} {VERSION}\n").into_bytes();
         if manifest.id.as_str() == BUILTIN {
-            // Generated layers: their bytes (small: graphs and the Luau runtime).
-            for layer in &self.builtin {
+            // Generated layers: their bytes (small: graphs, the Luau runtime, the base records).
+            for layer in self.builtin.iter().cloned().chain(std::iter::once(base_records_source())) {
                 let mut paths = Vec::new();
                 layer.visit_files(&mut |p| paths.push(p));
                 paths.sort_unstable();

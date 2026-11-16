@@ -186,6 +186,7 @@ fn live_spawn(world: &mut World, handle: Handle, record: &str, ws: &WorldspaceId
         model: None,
         max_distance: 1000.0,
         end_band: 0.0,
+        end: sf_world_bevy::EndInputs::fixed(1000.0, 0.0),
         lod: &lod,
     };
     let entities = spawner.spawn(world, &cx, &IndexedPlacement { placement, radius });

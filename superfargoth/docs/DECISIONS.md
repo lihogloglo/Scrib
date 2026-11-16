@@ -1852,3 +1852,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-16 (owner): no more long bench chains or test marathons for now (machine runs hot, blocks the owner's work,
   costs tokens). Next sessions implement the remaining CPU waste fixes (ROADMAP 1.25, CW-9 interiors first), the
   OpenMW-F3-style live perf panel (CW-17, moved up), and runtime presets from "extremely low" to "ultra" via tunables (T3-T5).
+- 2026-11-16 (tunables-t5b, industry standard): graphics presets are data: `sf.graphics_preset` over UE-style groups `sg.view_distance|shadows|lighting|post|textures|effects|water|sky`,
+  levels `extremely_low` (floor below Low, mostly UE `sg.*Quality 0`), `low`..`ultra`, `custom` derived; each tunable in one group;
+  `sf.tunable_preset` records in the builtin mod (own kind, not `ui.setting_preset`: members are `Dev` tunables), written at `Preset`.

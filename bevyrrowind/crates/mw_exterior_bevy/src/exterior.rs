@@ -266,19 +266,24 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             true
         })),
     );
-    // Tunables T4/T5a: the render settings register the shadow, light, GTAO and upscaling tunables
-    // (`sf_sky_bevy::ShadowQualityPlugin` binds them live), `quality_presets` the rest; the quality
-    // level's values go to the `Preset` layer, `--off` parts and `--texture-cap` to `CommandLine`. The
-    // `Restart` ones (texture cap, far handoff scale, probe GI) are read now, with their `--set`s.
+    // Tunables T4/T5a/T5b: the render settings register the shadow, light, GTAO and upscaling tunables
+    // (`sf_sky_bevy::ShadowQualityPlugin` binds them live), `quality_presets` the rest and the preset
+    // drivers; the loaded profile's `sf.tunable` records go to the `Mod` layer, the quality level of
+    // its `sf.graphics_preset` records to `Preset`, `--off` parts and `--texture-cap` to `CommandLine`.
+    // The `Restart` ones (texture cap, far handoff scale, probe GI) are read now, with their `--set`s
+    // (and a `--set` of a preset driver). The drivers then switch live (`preset`, Shift+F4).
     render.insert(&mut app);
     crate::quality_presets::register(&mut app);
-    let start_values = {
+    let (presets, start_values) = {
         let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
-        crate::quality_presets::apply(&mut tunables, options.quality, &perf.off, options.texture_cap);
+        let book = crate::quality_presets::apply(&mut tunables, options.actors.as_deref(), options.quality, &perf.off, options.texture_cap);
+        let start = crate::quality_presets::start_values(&mut tunables, &book, &perf.tunables);
         mw_assets::set_parallax(crate::quality_presets::tunables_parallax(&tunables));
-        crate::quality_presets::start_values(&mut tunables, &perf.tunables)
+        (book, start)
     };
+    app.insert_resource(sf_tunables_bevy::Presets(presets));
     crate::quality_presets::bind_live(&mut app);
+    crate::quality_presets::add_console(&mut app);
     // The quality preset scales LOD selection and size culling (`lod.*`, live for cells streamed after a
     // change; `--off sizecull`: no size culling) and the far-field handoff (`far.handoff_scale`, at start).
     let screen = crate::quality_presets::lod_screen(app.world().resource::<sf_tunables_bevy::Tunables>());

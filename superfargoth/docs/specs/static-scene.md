@@ -30,7 +30,7 @@ rule a CPU twin and a GPU pass must both be held to. Mechanism lives where it ha
 the `sf_scene::table`/`::chain` module docs, §3 → [scene-runtime-plan.md](scene-runtime-plan.md), §6 →
 [gs-patch-plan.md](gs-patch-plan.md), history → [archive/static-scene-history.md](archive/static-scene-history.md)).
 
-Replaces, once complete, per-entity statics (`sf_world_bevy` `spawn_template_ranges`) and the near-cell
+Replaces, once complete, per-entity statics (`sf_world_bevy` `lod_live::spawn_levels`) and the near-cell
 precombine ([precombine.md](precombine.md)); absorbs far-field selection ([far-field.md](far-field.md)). Hard problem H1
 (`bevyrrowind/docs/hard-problems.md`). Research: [spud-code-2026-11-08](../research/spud-code-2026-11-08.md).
 

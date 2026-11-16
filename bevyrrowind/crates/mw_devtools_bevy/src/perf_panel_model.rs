@@ -225,7 +225,7 @@ pub struct Snapshot {
     pub encode: Option<EncodeLine>,
     pub entities: usize,
     pub preset: Option<String>,
-    /// Every non-default tunable: name, value, layer.
+    /// Every tunable set above the preset (user, command line, code, console): name, value, layer.
     pub tunables: Vec<(String, String, &'static str)>,
     /// Non-default tunables left out (over the cap).
     pub tunables_more: usize,
@@ -312,11 +312,11 @@ pub fn format(s: &Snapshot, full: bool) -> String {
         }
     }
     let _ = write!(out, "\nentities {}  streaming: n/a", s.entities);
-    let _ = write!(out, "\npreset: {}", s.preset.as_deref().unwrap_or("n/a (startup --quality)"));
+    let _ = write!(out, "\npreset: {}", s.preset.as_deref().unwrap_or("n/a (no sf.graphics_preset)"));
     if s.tunables.is_empty() {
         let _ = write!(out, "\ntunables: all default");
     } else {
-        let _ = write!(out, "\ntunables (non-default):");
+        let _ = write!(out, "\ntunables (above the preset):");
         for (name, value, layer) in &s.tunables {
             let _ = write!(out, "\n  {name} = {value} [{layer}]");
         }

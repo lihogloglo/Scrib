@@ -35,6 +35,8 @@ glam.workspace = true
 mw_boot_bevy.workspace = true
 mw_game_core.workspace = true
 mw_install.workspace = true
+# The builtin mod's records (`sf.tunable` values, graphics presets) for apps without a profile.
+mw_mods.workspace = true
 mw_water.workspace = true
 mw_weather.workspace = true
 mw_world.workspace = true

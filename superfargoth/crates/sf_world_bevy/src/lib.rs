@@ -27,6 +27,7 @@ mod compile_pool;
 mod debug;
 mod fade;
 mod far;
+mod lod_live;
 pub mod matclass;
 pub mod mesh_slabs;
 mod origin;
@@ -46,6 +47,7 @@ pub use coords::{GRID_SWITCH, WorldPosOf, from_grid, to_grid, transform_to_grid,
 pub use debug::{StreamingDebug, level_color};
 pub use fade::{FadeCutHooks, FadePhase, FadeTransition, StartBlackout, StartTravel, TravelArrived};
 pub use far::{CellProxies, FarProxies, ProxySpawnCx};
+pub use lod_live::{EndInputs, LodChain, LodPart, ResolvedEnd, bucket_end};
 pub use compile_pool::{PipelineCompilePoolPlugin, PipelineCompileThreads, compile_pool_threads, precache_limit};
 pub use resident_warm::{RESIDENT_TAG, ResidentScan, ResidentWarmup, add_resident_material};
 pub use reveal::{RevealAsk, RevealCheck, RevealGate, RevealHolds, RevealInputs, RevealPending, RevealStatus, RevealStep, SETTLE_FRAMES};
@@ -58,7 +60,7 @@ pub use precombine::{CellPrecombine, PrecombineBucket, PrecombinePath, Precombin
 pub use scene::{CellScene, SceneCellCx, SceneCells};
 pub use spawn::{
     ActivateCx, LoadedModel, MaterialMapper, ModelMaterials, ModelTemplate, PlacementSpawner, PlacementSpawners, SubtreeLayers,
-    SubtreeRange, SpawnCx, StaticGpuCulling, StaticSpawner, RANGE_STEPS_PER_OCTAVE, shared_range, TemplateLod, apply_subtree_layers, apply_subtree_ranges, chain_ranges, model_aabb, size_culled_end, spawn_template, spawn_template_ranges, standard_material,
+    SubtreeRange, SpawnCx, StaticGpuCulling, StaticSpawner, RANGE_STEPS_PER_OCTAVE, shared_range, TemplateLod, apply_subtree_layers, apply_subtree_ranges, chain_ranges, model_aabb, size_culled_end, spawn_template, standard_material,
     visibility_range,
 };
 pub use stream::{
@@ -153,6 +155,8 @@ impl Plugin for WorldStreamingPlugin {
             .add_plugins(origin::WorldOriginPlugin)
             .configure_sets(Update, (StreamingSystems::Drive, StreamingSystems::Transition).chain())
             .add_systems(Update, stream::drive_streaming.in_set(StreamingSystems::Drive))
+            // Live view distance (T5c): chains spawned under an older `LodScreen` re-ranged in place.
+            .add_systems(Update, lod_live::apply_lod_screen.in_set(StreamingSystems::Drive).after(stream::drive_streaming))
             // The catalog warm-up (pipeline-warmup.md W4b1): before the reveal clients read its term.
             .add_systems(
                 Update,
@@ -256,3 +260,6 @@ mod precache_tests;
 // Pipeline warm-up W4b1: the catalog warm-up requests its specimens; the gate waits on them.
 #[cfg(test)]
 mod catalog_warm_tests;
+// Live view distance (tunables T5c): a screen change re-ranges resident LOD chains as a fresh spawn would.
+#[cfg(test)]
+mod lod_live_tests;

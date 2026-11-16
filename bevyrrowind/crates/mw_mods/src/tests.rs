@@ -2,6 +2,7 @@ use std::fs;
 
 use sf_mods::{IssueKind, Severity};
 use sf_records::RecordId;
+use sf_tunables::presets::{PresetRecord, TunableRecord};
 use sf_vfs::MemSource;
 use tes3::esp::{Header, Light, LightData, Static, TES3Object};
 
@@ -78,9 +79,15 @@ fn default_profile_loads_like_the_install() {
     let errors: Vec<_> = loaded.report.issues.iter().filter(|i| i.severity() == Severity::Error).collect();
     assert!(errors.is_empty(), "{errors:?}");
 
-    // Layers: builtin < Morrowind.bsa < Tribunal.bsa < Extra.bsa < Data Files.
+    // Layers: builtin (+ its base records) < Morrowind.bsa < Tribunal.bsa < Extra.bsa < Data Files.
     let labels: Vec<String> = loaded.vfs.stats().into_iter().map(|s| s.label).collect();
-    assert_eq!(labels, ["builtin", "Morrowind.bsa", "Tribunal.bsa", "Extra.bsa", "Data Files", "weather"]);
+    assert_eq!(labels, ["builtin", "builtin:mw records", "Morrowind.bsa", "Tribunal.bsa", "Extra.bsa", "Data Files", "weather"]);
+
+    // The builtin mod's native records (tunables T5b): the graphics presets and the game's tunable values.
+    let shadows = loaded.records.get::<PresetRecord>(&RecordId::new("sg.shadows")).expect("sg.shadows preset");
+    assert_eq!(shadows.levels.len(), 5, "extremely_low..ultra");
+    assert!(loaded.records.get::<TunableRecord>(&RecordId::new("shadow.lamp.fade_m")).is_some());
+    assert_eq!(base_record_db().len::<PresetRecord>(), loaded.records.len::<PresetRecord>());
     assert_eq!(loaded.vfs.read(&p("textures/a.dds")).unwrap(), b"base");
     assert_eq!(loaded.vfs.read(&p("textures/b.dds")).unwrap(), b"tribunal");
     assert_eq!(loaded.vfs.read(&p(RUNTIME_PATH)).unwrap(), b"return {}");

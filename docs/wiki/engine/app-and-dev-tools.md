@@ -72,8 +72,9 @@ by `live_ab::add`). F3 cycles off / compact / full (top right); Shift+F3 is now 
   "none" (vsync, a cap, untimed GPU).
 - Full only: top 3 `stage/main/*`, top `diag.panel.top_passes` GPU passes, `views/*` (camera, cascades, lamp faces,
   `lamp_face/culled`, items, batch sets; `RenderViewsPlugin`), point+spot lights total/shadowed (queried at refresh),
-  `encode/*` (encoders, command buffers, submits + ms, poll; CW-5b), entities, the `preset` tunable, every non-default
-  tunable with its layer. Streaming: n/a (no live gauge).
+  `encode/*` (encoders, command buffers, submits + ms, poll; CW-5b), entities, the graphics preset (`sf.graphics_preset`;
+  `custom (high; shadows custom, post low)`: the usual group level and the groups that differ), every tunable set above the
+  preset with its layer. Streaming: n/a (no live gauge).
 - Cost: the gauge plugins are gated by `sf_diag_bevy::set_gauges_live` (off while hidden or with `diag.panel.gauges`
   off) and `DiagCounters` leaves the main world, so counter-gated reporters stop too. Not measured.
 - Reuse check (2026-11-16): Bevy 0.20 `bevy_dev_tools` `FpsOverlayPlugin` (frame only) and `DiagnosticsOverlay`
@@ -99,6 +100,17 @@ registration. Console: `vars` (value, unit, kind/range, layer), `help <name>` (s
 `tunables diff`. Perf: `--set` in `perf suite` and `--arm`, `perf sweep --var set:<name>`; every run report gets a
 "Tunables" section (report meta `tunables`). A crate's `TUNABLES` list goes in `perf/tunables.rs` `CATALOG` (a run
 warns about a declared tunable missing from it).
+
+**Graphics presets, live** (tunables T5b; `mw_exterior_bevy/src/quality_presets.rs`, `sf_tunables/src/presets.rs`):
+levels `extremely_low`, `low`, `medium`, `high`, `ultra` of `sf.graphics_preset`, which sets the groups `sg.view_distance`,
+`sg.shadows`, `sg.lighting`, `sg.post`, `sg.textures`, `sg.effects`, `sg.water`, `sg.sky` (values: the builtin mod's
+`bevyrrowind/crates/mw_mods/data/records/graphics_presets.ron`, table in `docs/tunables-index.md`). Start level
+`--quality <level>` (`extremely-low` too; `BEVYRROWIND_QUALITY`). Switch while running: **Shift+F4** cycles the overall
+level (overlay note says what changed); console `preset` (list), `preset ultra`, `preset shadows low`, or
+`set sf.graphics_preset ultra` / `set sg.shadows low`; BRP `sf.tunables/set`; `--set sf.graphics_preset=ultra` at start.
+A level writes the `Preset` layer, so console/`--set`/`--off` values stay above it and the driver reads `custom`; `reset
+<name>` goes back. Not live: `texture.max_size_px`, `far.handoff_scale`, `render.gi.probes` (`Restart`: stored, the
+note says "applies on restart"). F3 shows the level.
 
 ## Known limits
 Live A/B, console and BRP exist only in interactive `view`/`scene` runs, not screenshot or bench runs. Agents judge no

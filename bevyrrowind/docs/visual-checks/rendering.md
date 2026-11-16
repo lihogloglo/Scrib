@@ -292,3 +292,15 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   feel (GPU when the view is heavy, main when the town crowd is busy); flipping a CW switch or a tunable (console)
   moves the numbers within ~1 s and shows the tunable in the list with its layer; no hitch on open/close.
 - Status: awaiting owner. Source: cw17-panel.
+
+### PP-2: Graphics presets switch live, Extremely low to Ultra (tunables T5b, 2026-11-16)
+- Kind: game location, release build. `view "Balmora" --hour 22` (night: lamps), then again `--hour 12` (day: sun
+  cascades, GTAO, bloom); start level `--quality high` (default), `--quality extremely-low` for a cold start at the floor.
+- Press F3 (full panel), then Shift+F4 repeatedly: extremely_low, low, medium, high, ultra, wrapping. The overlay note says
+  what changed and what "applies on restart" (texture cap, far handoff, probe GI); F3's `preset:` line follows.
+- Look for: each step changes the look the same frame with no crash or long hitch (a short pipeline hitch on GTAO/contact/
+  filter/upscaler changes is expected); Extremely low: no lamp shadows, short one-cascade sun shadow, no GTAO or bloom,
+  softer (DLSS Performance builds) or aliased (MSAA) image, nearer LOD swaps; Ultra: 12 lamp shadows, 4 cascades to 280 m.
+  Console `set shadow.lamp.count 2` turns the panel to `custom (...; shadows custom)`; `reset shadow.lamp.count` back.
+  Compare the panel's frame/main/render/GPU per level (CPU vs GPU bound). Textures change only after a restart.
+- Status: awaiting owner. Source: tunables-t5b.

@@ -6,14 +6,19 @@
 //!   deprecated aliases (`Def::env_alias`, `CommandLine` layer). The framework never names them, so
 //!   the copies register first ([`register`], before `ShadowQualityPlugin` and `SkyPlugin`): an alias
 //!   applies only where its def is registered fresh.
-//! - **Mod layer.** Bevyrrowind's own value above a framework default (census "two truths"): the lamp
-//!   fade band. Interim code-side write; T5 moves it to a base-mod `sf.tunable` record.
-//! - **Preset layer.** The viewers' base preset (the High lamp budget); the exterior's quality table
-//!   (`mw_exterior_bevy::quality_presets`) rewrites the layer for its `Quality`.
+//! - **Mod layer.** Bevyrrowind's own values above framework defaults (census "two truths": the lamp
+//!   fade band) are `sf.tunable` records of the builtin mod (`mw_mods::BASE_RECORDS`, slice T5b):
+//!   [`register`] applies the shipped ones ([`base_records`]), the exterior re-applies the loaded
+//!   profile's ([`apply_mod_records`]), so a mod's record wins.
+//! - **Preset layer.** The viewers' base preset (the High lamp budget); the exterior's graphics preset
+//!   (`mw_exterior_bevy::quality_presets`, `sf.graphics_preset`) rewrites the layer for its level.
 //! - **Command line.** `--point-shadows` and `--sun-cascades` (and `BEVYRROWIND_SUN_CASCADES`, a
 //!   `COUNT:METERS` pair no single alias parses) are sugar onto the `CommandLine` layer.
 
+use std::sync::OnceLock;
+
 use bevy_app::App;
+use sf_records::RecordDb;
 use sf_sky_bevy::quality as q;
 use sf_sky_bevy::sf_sky::sun_gate as sun;
 use sf_tunables_bevy::sf_tunables::{AnyDef, Def, SetBy, Type};
@@ -41,9 +46,31 @@ pub const UPSCALING: Def<&'static str> = q::UPSCALING.env_alias("BEVYRROWIND_DLS
 pub const ALIASES: &[&dyn AnyDef] =
     &[&LAMP_DAY_GATE, &POINT_FACE_CULL, &SUN_SHADOW_GATE, &POINT_SHADOWS, &LAMP_CONTACT, &SHADOW_FILTER, &SSAO, &UPSCALING];
 
-/// Bevyrrowind's lamp shadow fade band, m (`Mod` layer over the framework's 15-25 m): 35-45 m covers
-/// Balmora street blocks without nearby pop-in.
-pub const LAMP_FADE_M: [f32; 2] = [35.0, 45.0];
+/// The builtin mod's records (`mw_mods::BASE_RECORDS`), parsed once: apps without a loaded profile
+/// (viewers, tests) take Bevyrrowind's `Mod`-layer values and the graphics presets from them.
+pub fn base_records() -> &'static RecordDb {
+    static DB: OnceLock<RecordDb> = OnceLock::new();
+    DB.get_or_init(mw_mods::base_record_db)
+}
+
+/// Writes `db`'s `sf.tunable` records at the `Mod` layer, replacing what the layer held (load order:
+/// the later mod wins). Returns the refused ones (unknown names, bad values).
+pub fn apply_mod_records(tunables: &mut Tunables, db: &RecordDb) -> Vec<String> {
+    tunables.clear_layer(SetBy::Mod);
+    let values = sf_tunables_bevy::presets::mod_values(db);
+    sf_tunables_bevy::sf_tunables::presets::apply_mod_values(tunables, values.iter().map(|(n, r, m)| (n.as_str(), r, m.as_str())))
+}
+
+/// Bevyrrowind's lamp shadow fade band, m: the builtin mod's `shadow.lamp.fade_m` (over the
+/// framework's 15-25 m), for budgets built without the tunables (the character viewer) or before they bind.
+pub fn base_lamp_fade() -> [f32; 2] {
+    let record = base_records().get::<sf_tunables_bevy::sf_tunables::presets::TunableRecord>(&sf_records::RecordId::new(sf_sky_bevy::LAMP_FADE.name()));
+    let parsed = record.and_then(|r| {
+        let (a, b) = r.value.text().split_once(',').map(|(a, b)| (a.trim().parse().ok(), b.trim().parse().ok()))?;
+        Some([a?, b?])
+    });
+    parsed.unwrap_or_else(|| sf_sky_bevy::LAMP_FADE.default_value())
+}
 
 /// Sets `layer` of a registered tunable from game code, with a note (who and why). A refused value is
 /// a bug in the caller (a table out of the def's range): it panics.
@@ -68,7 +95,9 @@ pub fn register(
     app.register_tunables(ALIASES).register_tunables(sf_sky_bevy::SHADOW_BUDGET_TUNABLES).register_tunables(q::TUNABLES);
     let mut tunables = app.world_mut().resource_mut::<Tunables>();
     let t = &mut *tunables;
-    set_layer(t, &sf_sky_bevy::LAMP_FADE, LAMP_FADE_M, SetBy::Mod, "bevyrrowind: Balmora street blocks without nearby pop-in");
+    // The shipped `sf.tunable` records; a name another plugin registers later is the host's to apply
+    // (the exterior re-applies the profile's records once everything registered).
+    let _later = apply_mod_records(t, base_records());
     set_layer(t, &POINT_SHADOWS, preset.0, SetBy::Preset, "base preset (High)");
     set_layer(t, &sf_sky_bevy::LAMP_MAP_SIZE, preset.1, SetBy::Preset, "base preset (High)");
     set_layer(t, &UPSCALING, upscaling_base.label(), SetBy::Preset, "base preset (the start's upscaling)");

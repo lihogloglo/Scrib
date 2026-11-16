@@ -39,10 +39,10 @@ the ~256 m pop of ST-2). A grid change still resets; `--off shiftrebase` restore
 **One placement into entities.** `spawn_item` (`stream.rs:1353`) spawns the far proxy, then the precombine buckets (see
 `statics-and-lod.md`), then 16 placements per item into a hidden batch under a hidden group under the cell. A
 `PlacementSpawner` is picked by class (`spawn.rs:123-186`): the game registers light, uncooked-NIF and actor spawners
-(`exterior.rs:727-745`); statics use `StaticSpawner` (`spawn.rs:298`). `spawn_template_ranges` (`spawn.rs:333`) makes **one
+(`exterior.rs:727-745`); statics use `StaticSpawner` (`spawn.rs:303`). `lod_live::spawn_levels` (`lod_live.rs:210`) makes **one
 entity per LOD level per mesh part**: `Mesh3d`, `MeshMaterial3d`, local `Transform`, `VisibilityRange`, worldspace
-`RenderLayers`, `Aabb` + `NoAutoAabb`, `StaticPart`, `ChildOf(batch)` (`spawn.rs:340-352`); `NoCpuCulling` when GPU-culled
-(`spawn.rs:364`); ray-tracing variants are not used in exteriors (`exterior.rs:1207`).
+`RenderLayers`, `Aabb` + `NoAutoAabb`, `StaticPart`, `LodPart`, `ChildOf(batch)` (`lod_live.rs:222-234`); `NoCpuCulling` when GPU-culled
+(`lod_live.rs:246`); ray-tracing variants are not used in exteriors (`exterior.rs:1207`).
 
 **LOD ranges.** `chain_ranges` (`spawn.rs:412`) maps per-level projected error to switch distances plus an end band;
 `visibility_range` (`spawn.rs:431`) makes dithered `VisibilityRange` fades; `shared_range` (`spawn.rs:468`) rounds bounds up
@@ -73,6 +73,9 @@ stale instance offsets in 0.20).
 - Counters: `stream/drive/ms`, `stream/tick/ms`, `stream/<stage>/{items,ms,queue}` (+`bytes` for upload; `stream.rs:972-1010`),
   `stream/{requests,resident_cells,models,model_queue,page_cache/bytes,oldest_request/s,latency/s,shift_guard/frames}`,
   `bigspace/*/ms` (`lib.rs:188`), `world/meshes`, `world/point_lights` (`exterior.rs:1185`). `StreamStats` (`stream.rs:245`).
+- Live view distance (T5c, `sf_world_bevy/src/lod_live.rs`): a `LodScreen` change (`lod.bias`, `lod.size_cull.*`, `Live`)
+  re-ranges resident LOD chains in place, `lod.live.chains_per_frame` a frame, after `drive`; no restream, no cell, actor or
+  item touched. Details: `statics-and-lod.md` "Switches and counters".
 
 ## Known limits
 

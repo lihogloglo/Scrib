@@ -15,6 +15,8 @@ mw_weather.workspace = true
 semver.workspace = true
 sf_mods.workspace = true
 sf_records.workspace = true
+# The `sf.tunable` / `sf.tunable_preset` record kinds (the builtin mod's graphics presets).
+sf_tunables.workspace = true
 sf_vfs.workspace = true
 tes3 = { workspace = true, features = ["esp", "bsa"] }
 

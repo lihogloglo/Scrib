@@ -12,7 +12,8 @@
 //! - GPU: Bevy's `RenderDiagnosticsPlugin` (`render/<pass>/elapsed_gpu`), only when it runs
 //!   (`diag.panel.gpu_timers`, or the GI's timer); the GPU frame is the sum of the top-level timed
 //!   passes (partial: untimed passes are missing);
-//! - lights, entities, preset and the non-default tunables: read at refresh from the world.
+//! - lights, entities, the graphics preset (`sf.graphics_preset`; when `custom`, the groups that differ)
+//!   and the tunables set above the preset: read at refresh from the world.
 //!
 //! Cost: the two gauge plugins are added to every interactive run and the panel owns them. Hidden
 //! (or `diag.panel.gauges` off), they are off (`sf_diag_bevy::set_gauges_live(false)`: one
@@ -381,13 +382,10 @@ fn snapshot(state: &PanelState, tunables: &Tunables) -> Snapshot {
     let max_tunables = usize::try_from(tunables.read(state.ids.max_tunables)).unwrap_or(usize::MAX);
     let changed: Vec<(String, String, &'static str)> = tunables
         .iter()
-        .filter(|(_, t)| t.set_by() != SetBy::Default)
+        .filter(|(_, t)| t.set_by() > SetBy::Preset)
         .map(|(_, t)| (t.name().to_owned(), t.value().to_string(), t.set_by().describe()))
         .collect();
-    let preset = tunables
-        .iter()
-        .find(|(_, t)| t.name() == "preset" || t.name().ends_with(".preset"))
-        .map(|(_, t)| format!("{} [{}]", t.value(), t.set_by().describe()));
+    let preset = preset_label(tunables);
     Snapshot {
         frame_ms,
         frame_p99: state.frame.percentile(99.0),
@@ -415,6 +413,29 @@ fn snapshot(state: &PanelState, tunables: &Tunables) -> Snapshot {
         tunables_more: changed.len().saturating_sub(max_tunables),
         tunables: changed.into_iter().take(max_tunables).collect(),
     }
+}
+
+/// The overall graphics preset's level (`sf.graphics_preset`); when it reads `custom`, the most common
+/// group level and the `sg.*` groups that differ from it (`custom (high; shadows custom, post low)`).
+pub(crate) fn preset_label(tunables: &Tunables) -> Option<String> {
+    use sf_tunables_bevy::sf_tunables::presets::{CUSTOM, DRIVERS, GRAPHICS_PRESET};
+    let level = |name: &str| tunables.id(name).map(|id| tunables.text(id).to_owned());
+    let overall = level(GRAPHICS_PRESET.name())?;
+    if overall != CUSTOM {
+        return Some(overall);
+    }
+    let groups: Vec<(&str, String)> = DRIVERS[1..].iter().filter_map(|d| level(d.name()).map(|l| (d.name(), l))).collect();
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    for (_, l) in &groups {
+        match counts.iter_mut().find(|(c, _)| c == l) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((l.as_str(), 1)),
+        }
+    }
+    let common = counts.iter().max_by_key(|(_, n)| *n).map_or(CUSTOM, |(l, _)| *l);
+    let differ: Vec<String> =
+        groups.iter().filter(|(_, l)| l != common).map(|(n, l)| format!("{} {l}", n.trim_start_matches("sg."))).collect();
+    Some(format!("custom ({common}; {})", differ.join(", ")))
 }
 
 #[cfg(test)]

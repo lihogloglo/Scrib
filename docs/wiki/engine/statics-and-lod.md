@@ -18,10 +18,10 @@ skip Bevy's CPU culling (`NoCpuCulling`). Streaming and the per-placement fallba
 - The fetch waits for the asset (`stream.rs:849`). `valid_members` (`stream.rs:1773`) checks every member is present and
   untouched by the overlay; otherwise the whole precombine is dropped and the cell spawns per placement
   (`precombine_fallbacks`, `stream.rs:869, 908`). Members skip model loading and visuals but still activate.
-- Spawn: `spawn_precombine` (`stream.rs:1294`) builds one template per bucket and one batch entity. Each bucket ends at its
-  farthest-reaching member (the handoff for far-eligible members, else the member's end plus the bucket `reach`) and uses
+- Spawn: `spawn_precombine` (`stream.rs:1400`) builds one template per bucket and one batch entity. Each bucket ends at its
+  farthest-reaching member (the handoff for far-eligible members, else the member's end plus the bucket `reach`; `lod_live::bucket_end`) and uses
   `bucket_ranges` (`precombine.rs:60`: every LOD switch pushed out by `reach`). Parts spawn through
-  `spawn_template_ranges` (`spawn.rs:333`), so each bucket is still one entity per LOD level per part.
+  `lod_live::spawn_levels` (`lod_live.rs:210`), so each bucket is still one entity per LOD level per part.
 
 **Far field (`sf_lod_bevy`).** `FarFieldPlugin` (`lib.rs:163`) inserts `FarProxies` with handoff `levels.handoff(1)` (default
 handoffs 400 / 2000 / 8000 m times the preset bias, `sf_lod/src/levels.rs:72`) and runs after streaming `Drive`
@@ -43,9 +43,9 @@ vendored Bevy GPU preprocess, not by a scene compute pass: the scene-buffer uplo
 is still `TODO(B4b)` (`residency.rs:228, 827`). Without GPU culling the scene turns itself off (`SceneSupport`, `lib.rs:111`).
 
 **GPU-only culling (`NoCpuCulling`, opt-in).** `BEVYRROWIND_GPU_CULL_STATICS=1` (and no `--off cpuculltag`) sets
-`StreamingConfig::gpu_cull_statics` (`exterior.rs:282`); `StaticGpuCulling` (`spawn.rs:284`) is forced off when the adapter
+`StreamingConfig::gpu_cull_statics` (`exterior.rs:282`); `StaticGpuCulling` (`spawn.rs:289`) is forced off when the adapter
 lacks GPU culling (`sf_world_bevy/src/lib.rs:167`). Then `Static`-class parts and precombine buckets carry `NoCpuCulling`
-(`spawn.rs:364`, `stream.rs:1333`); actors, doors, items and lights keep CPU culling. The GPU preprocess culls them by frustum
+(`lod_live.rs:246`, `stream.rs:1432`); actors, doors, items and lights keep CPU culling. The GPU preprocess culls them by frustum
 and visibility range in the camera and the sun cascades (persistent views; every LOD level stays binned there). Lamp faces
 take no GPU-culled meshes (`CpuListedPointShadowCasters`, `vendor/bevy_pbr/src/render/mesh.rs:2503-2533`, inserted by
 `PointShadowPlugin`): `list_gpu_culled_casters` (`sf_sky_bevy/src/gpu_culled_casters.rs`, runs only while a `NoCpuCulling`
@@ -71,9 +71,11 @@ in `sf_world_bevy/src/matclass.rs`.
 - Scene gauges (`sf_scene_bevy/src/gauges.rs`): `scene/cells/resident`, `scene/batches/count`, `scene/slots/batch_live`,
   `scene/slots/batch_capacity_bytes`. Far field: `far/*` (`FarFieldStats`). Per-view cost: `views/*`, see `frame-and-views.md`.
 - View-distance tunables (T5a, the quality level's at the `Preset` layer, `mw_exterior_bevy/src/quality_presets.rs`): `lod.bias`,
-  `lod.size_cull.min_px` (`--off sizecull` = 0), `lod.size_cull.min_distance_m` are `Respawn`: `Streaming::set_lod_screen`
-  (`sf_world_bevy/src/stream.rs:516`) takes them live, but ranges are computed at spawn, so only cells streamed after the change
-  use them. `far.handoff_scale` (d1 = baked 400 m x scale; the near rings are sized from it) is `Restart`.
+  `lod.size_cull.min_px` (`--off sizecull` = 0), `lod.size_cull.min_distance_m` are `Live` (T5c): `Streaming::set_lod_screen`
+  (`sf_world_bevy/src/stream.rs:528`) and resident LOD parts (placements and precombine buckets, each with a `LodPart` holding its
+  chain's inputs) re-ranged in place by `lod_live::apply_lod_screen` (`lod_live.rs:283`), `lod.live.chains_per_frame` (4096) chains
+  a frame; collapsed levels despawn, opened levels spawn; `StreamStats::lod_live_*`, counters `stream/lod_live/{chains,ms}`. Not
+  live: uncooked NIF subtrees, `--scene`, and `far.handoff_scale` (d1 = baked 400 m x scale; near rings sized from it): `Restart`.
 
 ## Known limits
 

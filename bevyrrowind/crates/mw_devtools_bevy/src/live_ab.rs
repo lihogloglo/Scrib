@@ -8,7 +8,8 @@
 //! startup: use the `--off`/`--lod-tint` flags and compare two runs.
 //!
 //! Keys: F1 help, F2 sun shadows, F3 perf panel (off / compact / full, [`crate::perf_panel`]),
-//! Shift+F3 terrain far shadows, F4 DLSS mode,
+//! Shift+F3 terrain far shadows, F4 DLSS mode, Shift+F4 next graphics preset (`sf.graphics_preset`:
+//! `extremely_low`, `low`, `medium`, `high`, `ultra`; tunables T5b),
 //! Shift+F6 far-field tint (F5 / F9 are quicksave / quickload, `saves.rs`), F6 terrain LOD colors, F7 wireframe (terrain and skinned meshes; G shows the physics colliders, ragdoll capsules and joints, `physics.rs`),
 //! F8 streaming rings, `[` / `]` hour -/+ 0.5 (Shift: 0.1), P pause clock,
 //! T clock speed (x1, x4, x20), Shift+F12 copy camera (`--camera` string), Shift+C clouds on/off (also console
@@ -65,7 +66,8 @@ impl Plugin for LiveAbPlugin {
         }
         app.init_resource::<LiveAb>()
             .add_systems(Startup, (spawn_overlay, pause_scene_clock))
-            .add_systems(Update, (keys, overlay, skinned_wireframe).chain())
+            .add_message::<sf_tunables_bevy::PresetApplied>()
+            .add_systems(Update, (keys, preset_notes, overlay, skinned_wireframe).chain())
             .add_systems(PostUpdate, sun_shadows_off);
     }
 }
@@ -607,7 +609,12 @@ fn keys(
         let text = format!("perf panel {}", panel.mode.label());
         state.note(text, now);
     }
-    if input.just_pressed(KeyCode::F4) {
+    if shifted && input.just_pressed(KeyCode::F4) {
+        commands.queue(move |world: &mut World| {
+            let text = cycle_graphics_preset(world);
+            world.resource_mut::<LiveAb>().note(text, now);
+        });
+    } else if input.just_pressed(KeyCode::F4) {
         let text = if let Some(u) = s.upscaling.as_ref() {
             let i = DLSS_CYCLE.iter().position(|m| *m == u.0).map_or(0, |i| (i + 1) % DLSS_CYCLE.len());
             let next = DLSS_CYCLE[i];
@@ -727,6 +734,7 @@ fn overlay(
     mut text: Query<&mut Text, With<OverlayText>>,
     mut last: Local<String>,
     (diagnostics, mut fps): (Option<Res<DiagnosticsStore>>, Local<(f32, String)>),
+    tunables: Option<Res<sf_tunables_bevy::Tunables>>,
 ) {
     let Ok(mut text) = text.single_mut() else { return };
     // Smoothed fps and frame ms, refreshed twice a second so the digits stay readable.
@@ -756,9 +764,13 @@ fn overlay(
         let flags_off = off.map_or_else(|| "none".to_owned(), |o| o.label());
         let bodies = s.bodies.as_ref().map_or_else(|| "n/a".to_owned(), |b| format!("{:?}", b.bodies).to_lowercase());
         let panel = s.panel.as_ref().map_or("n/a", |p| p.mode.label());
+        let preset = tunables
+            .as_ref()
+            .and_then(|t| t.id(sf_tunables_bevy::sf_tunables::presets::GRAPHICS_PRESET.name()).map(|id| t.text(id).to_owned()))
+            .unwrap_or_else(|| "n/a".to_owned());
         let _ = write!(
             out,
-            "\nF2 sun shadows {}  F3 perf panel {panel} (off/compact/full)  Shift+F3 terrain far shadows {}  F4 DLSS {dlss}\n\
+            "\nF2 sun shadows {}  F3 perf panel {panel} (off/compact/full)  Shift+F3 terrain far shadows {}  F4 DLSS {dlss}  Shift+F4 graphics preset {preset} (console `preset`)\n\
              Shift+F6 far tint {}  F6 terrain LOD colors {}  F7 wireframe (terrain, skinned meshes) {}  F8 rings {}\n\
              G physics colliders (ragdoll capsules, joints) {colliders}  O combat gizmos (hurt capsules, blade)\n\
              F11 player / free camera (player: WASD, Space jump, E use, Shift tap roll / hold sprint, Ctrl sneak, F ready weapon, LMB attack, Tab 1st/3rd person, wheel zoom)\n\
@@ -800,6 +812,39 @@ fn overlay(
     if *last != out {
         text.0.clone_from(&out);
         *last = out;
+    }
+}
+
+/// Shift+F4: the next level of the overall graphics preset (`sf.graphics_preset`, `extremely_low` ..
+/// `ultra`, wrapping; from `custom`: `extremely_low`), written at the console layer like `set
+/// sf.graphics_preset <level>`: the presets apply it this frame ([`preset_notes`] shows what changed).
+fn cycle_graphics_preset(world: &mut World) -> String {
+    use sf_tunables_bevy::sf_tunables::presets::{GRAPHICS_PRESET, LEVELS};
+    if !world.contains_resource::<sf_tunables_bevy::Presets>() {
+        return "graphics presets: not in this app (exteriors only)".to_owned();
+    }
+    let Some(mut tunables) = world.get_resource_mut::<sf_tunables_bevy::Tunables>() else {
+        return "graphics presets: no tunables".to_owned();
+    };
+    let Some(id) = tunables.id(GRAPHICS_PRESET.name()) else {
+        return "graphics presets: not registered".to_owned();
+    };
+    let next = LEVELS.iter().position(|l| *l == tunables.text(id)).map_or(LEVELS[0], |i| LEVELS[(i + 1) % LEVELS.len()]);
+    match tunables.set_by(id, sf_tunables_bevy::Value::Str(next.to_owned()), sf_tunables_bevy::SetBy::Console) {
+        Ok(_) => format!("graphics preset {next} requested (sf.graphics_preset)"),
+        Err(e) => format!("graphics preset: {e}"),
+    }
+}
+
+/// Shows each applied preset level in the overlay: what changed, what applies on restart or to new
+/// spawns, what stays above the preset (the same line the log gets).
+fn preset_notes(mut applied: MessageReader<sf_tunables_bevy::PresetApplied>, real: Res<Time<Real>>, mut state: ResMut<LiveAb>) {
+    for a in applied.read() {
+        let text = match &a.summary {
+            Ok(s) => format!("{} {}: {s}", a.driver, a.level),
+            Err(e) => format!("{} {}: {e}", a.driver, a.level),
+        };
+        state.note(text, real.elapsed_secs());
     }
 }
 

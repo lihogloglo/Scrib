@@ -390,3 +390,78 @@ fn command_line_overrides_apply_after_every_plugin_registered() {
     assert_eq!(refused[0].name, "test.lamp.cuont");
     assert_eq!(refused[0].reason, "no such tunable (--set)");
 }
+
+/// T5b: a driver switch (console layer) applies its level before the bindings run: the bound
+/// resource has the level's value after one update; the driver shows the level again.
+#[test]
+fn a_driver_switch_reaches_the_bound_resource_the_same_frame() {
+    use sf_tunables::presets::{MergedPresets, PresetBook, PresetRecord, RecordValue};
+    let mut app = app();
+    app.add_plugins(crate::PresetsPlugin);
+    let record = PresetRecord {
+        driver: "sg.shadows".into(),
+        levels: [
+            ("low".to_owned(), [("test.lamp.count".to_owned(), RecordValue::Int(0))].into()),
+            ("high".to_owned(), [("test.lamp.count".to_owned(), RecordValue::Int(8))].into()),
+        ]
+        .into(),
+        ..PresetRecord::default()
+    };
+    let merged = MergedPresets::merge([(&record, "base")], &[]);
+    let (book, issues) = PresetBook::build(&app.world().resource::<Tunables>().0, &merged);
+    assert!(issues.is_empty(), "{issues:?}");
+    app.insert_resource(crate::Presets(book));
+    app.update();
+    assert_eq!(app.world().resource::<Budget>().count, 4, "no level yet: the default");
+    app.world_mut().write_message(SetTunable::new("sg.shadows", "low", SetBy::Console));
+    app.update();
+    assert_eq!(app.world().resource::<Budget>().count, 0, "low, the same frame");
+    app.world_mut().write_message(SetTunable::new("sg.shadows", "high", SetBy::Console));
+    app.update();
+    assert_eq!(app.world().resource::<Budget>().count, 8, "high");
+    let t = app.world().resource::<Tunables>();
+    let driver = t.var(t.id("sg.shadows").expect("driver"));
+    assert_eq!((driver.value(), driver.set_by()), (&sf_tunables::Value::Str("high".into()), SetBy::Preset));
+    let applied: Vec<_> = app.world_mut().resource_mut::<Messages<crate::PresetApplied>>().drain().collect();
+    assert_eq!(applied.last().map(|a| (a.level.as_str(), a.by)), Some(("high", SetBy::Console)));
+    app.world_mut().write_message(SetTunable::new("test.lamp.count", "3", SetBy::Console));
+    app.update();
+    app.update();
+    assert_eq!(app.world().resource::<Tunables>().text(app.world().resource::<Tunables>().id("sg.shadows").expect("driver")), "custom");
+}
+
+/// T5b: `sf.tunable` and `sf.tunable_preset` records from a record store, in load order; the values
+/// land at the `Mod` layer.
+#[test]
+fn record_kinds_apply_at_the_mod_layer_in_load_order() {
+    use sf_records::{RecordDb, RecordFormat, apply_record_file};
+    let mut db = RecordDb::new();
+    crate::presets::register_kinds(&mut db).expect("kinds");
+    let base = db.add_source("base", &[]);
+    let later = db.add_source("later", &[base]);
+    let text = r#"[
+  define(kind: "sf.tunable", id: "test.lamp.count", value: (value: 6, source: "measured: x")),
+  define(kind: "sf.tunable", id: "test.contact", value: (value: false)),
+  define(kind: "sf.tunable_preset", id: "base/shadows", value: (driver: "sg.shadows", levels: { "low": { "test.lamp.count": 0 } })),
+]"#;
+    let outcome = apply_record_file(&mut db, base, text, RecordFormat::Ron).expect("parses");
+    assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+    let text = r#"[ define(kind: "sf.tunable", id: "test.lamp.fade_start_m", value: (value: 35.0)),
+  define(kind: "sf.tunable", id: "test.lamp.count", value: (value: 2)) ]"#;
+    let outcome = apply_record_file(&mut db, later, text, RecordFormat::Ron).expect("parses");
+    assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+    let values = crate::presets::mod_values(&db);
+    let mut app = app();
+    let mut t = app.world_mut().resource_mut::<Tunables>();
+    let refused = sf_tunables::presets::apply_mod_values(&mut t, values.iter().map(|(n, r, m)| (n.as_str(), r, m.as_str())));
+    assert!(refused.is_empty(), "{refused:?}");
+    let count = t.id("test.lamp.count").expect("count");
+    assert_eq!((t.int(count), t.var(count).set_by()), (2, SetBy::Mod), "the later mod wins");
+    assert_eq!(t.var(count).note(SetBy::Mod), Some("mod later: guess"));
+    assert!(!t.flag(t.id("test.contact").expect("contact")));
+    let presets = crate::presets::preset_records(&db);
+    assert_eq!(presets.len(), 1);
+    assert_eq!((presets[0].0.driver.as_str(), presets[0].1.as_str()), ("sg.shadows", "base"));
+    app.update();
+    assert!((app.world().resource::<Budget>().fade_start - 35.0).abs() < f32::EPSILON, "bound from the mod layer");
+}

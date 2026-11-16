@@ -118,7 +118,7 @@ fn text_compact_and_full() {
     assert!(full.contains("\nviews: n/a"));
     assert!(full.contains("\nencoders: n/a"));
     assert!(full.contains("\npreset: n/a"));
-    assert!(full.ends_with("\ntunables (non-default):\n  diag.panel.window_s = 2 [console]"));
+    assert!(full.ends_with("\ntunables (above the preset):\n  diag.panel.window_s = 2 [console]"));
 }
 
 /// `sf_diag_bevy::set_gauges_live` is process-wide: the app tests take turns.
@@ -180,4 +180,26 @@ fn gauges_off_shows_frame_only() {
     let text = panel_text(&mut app).expect("panel shown");
     assert!(text.contains("diag.panel.gauges off"), "{text}");
     assert!(!app.world().contains_resource::<DiagCounters>());
+}
+
+/// T5b: the panel shows the overall graphics preset; when it reads custom, the usual group level and
+/// the groups that differ.
+#[test]
+fn the_panel_shows_the_graphics_preset_and_the_groups_that_differ() {
+    use sf_tunables_bevy::sf_tunables::presets::TUNABLES as DRIVERS;
+    let mut t = sf_tunables_bevy::Tunables::default();
+    assert_eq!(super::preset_label(&t), None, "no presets in this app");
+    t.register_all(DRIVERS).expect("drivers");
+    let set = |t: &mut sf_tunables_bevy::Tunables, name: &str, level: &str| {
+        let id = t.id(name).expect(name);
+        t.set_text_by(id, level, sf_tunables_bevy::SetBy::Preset).expect(level);
+    };
+    for d in DRIVERS {
+        set(&mut t, d.name(), "high");
+    }
+    assert_eq!(super::preset_label(&t).as_deref(), Some("high"));
+    set(&mut t, "sf.graphics_preset", "custom");
+    set(&mut t, "sg.shadows", "custom");
+    set(&mut t, "sg.post", "low");
+    assert_eq!(super::preset_label(&t).as_deref(), Some("custom (high; shadows custom, post low)"));
 }

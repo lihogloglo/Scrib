@@ -16,23 +16,24 @@ use std::sync::Arc;
 
 use bevy_asset::{AssetServer, Handle, UntypedHandle};
 use bevy_camera::primitives::Aabb;
-use bevy_camera::visibility::{NoAutoAabb, NoCpuCulling, RenderLayers, VisibilityRange};
+use bevy_camera::visibility::{RenderLayers, VisibilityRange};
 use bevy_color::{Color, LinearRgba};
-use bevy_ecs::bundle::{DynamicBundle, NoBundleEffect};
 use bevy_ecs::prelude::*;
 use bevy_material::AlphaMode;
 use bevy_math::{IVec3, Vec3};
 use bevy_mesh::{Mesh, Mesh3d};
-use bevy_pbr::{MeshMaterial3d, StandardMaterial};
+use bevy_pbr::StandardMaterial;
 use bevy_render::render_resource::Face;
 use bevy_transform::components::Transform;
 use sf_model::{LodRange, LodScreen, lod_ranges};
-use sf_model_bevy::{CookedRayTracing, NoRayTracing, RayTracingMesh};
-use sf_world::{IndexedPlacement, Level, PlacementClass, PlacementFlags, WorldspaceId};
+use sf_model_bevy::CookedRayTracing;
+use sf_world::{IndexedPlacement, Level, PlacementClass, WorldspaceId};
+
+use crate::lod_live::{EndInputs, LodChain, spawn_levels};
 
 /// A cooked model, ready to instance: every level's parts with their meshes
 /// and (deduplicated) materials.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ModelTemplate {
     /// LOD0 first.
     pub lods: Vec<TemplateLod>,
@@ -44,7 +45,7 @@ pub struct ModelTemplate {
     pub ray_tracing: Option<CookedRayTracing>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TemplateLod {
     /// Deviation from LOD0 in model-space meters.
     pub error: f32,
@@ -73,12 +74,16 @@ pub struct SpawnCx<'a> {
     pub local: Transform,
     pub model: Option<&'a LoadedModel>,
     /// Unload radius of the ring holding this placement: the end of its
-    /// last LOD level.
+    /// last LOD level ([`Self::end`] resolved under [`Self::lod`]).
     pub max_distance: f32,
     /// Width of a dithered fade-out band ending the last level at
     /// `max_distance` (0: abrupt). Set when a far-field proxy takes over
     /// from this placement (far-field.md, "Lead bands").
     pub end_band: f32,
+    /// What `max_distance` and `end_band` come from before size culling. LOD
+    /// chains spawn from it and keep it, so a live screen change redoes their
+    /// end ([`crate::lod_live`]).
+    pub end: EndInputs,
     pub lod: &'a LodScreen,
 }
 
@@ -301,84 +306,24 @@ impl PlacementSpawner for StaticSpawner {
     fn spawn(&self, world: &mut World, cx: &SpawnCx<'_>, placement: &IndexedPlacement) -> u32 {
         let Some(LoadedModel::Cooked(template)) = cx.model else { return 0 };
         let gpu_culled = placement.placement.class == PlacementClass::Static && StaticGpuCulling::on(world);
-        let ranges = template_ranges(cx, template);
-        spawn_template_ranges(world, cx, template, &ranges, gpu_culled)
+        spawn_chain(world, cx, template.clone(), gpu_culled)
     }
 }
 
 /// Spawns every visible LOD part of a template under `cx.parent` (CPU-culled).
 pub fn spawn_template(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTemplate) -> u32 {
-    let ranges = template_ranges(cx, template);
-    spawn_template_ranges(world, cx, template, &ranges, false)
+    spawn_chain(world, cx, Arc::new(template.clone()), false)
 }
 
-/// The levels' ranges of a template placed with `cx`.
-fn template_ranges(cx: &SpawnCx<'_>, template: &ModelTemplate) -> Vec<LodRange> {
-    let scale = cx.local.scale.abs().max_element();
-    let errors: Vec<f32> = template.lods.iter().map(|l| l.error * scale).collect();
-    chain_ranges(&errors, cx.lod, cx.max_distance, cx.end_band)
-}
-
-/// [`spawn_template`] with the levels' ranges given (one per level).
-///
-/// With ray-tracing variants ([`ModelTemplate::ray_tracing`]), the traced
-/// level's parts carry their [`RayTracingMesh`] and the other levels
-/// [`NoRayTracing`]: the ray tracer ignores visibility ranges and sees
-/// exactly one level.
-///
-/// `gpu_culled`: the parts carry `NoCpuCulling` (statics only, see
-/// [`StaticGpuCulling`]). Every LOD level stays alive and the GPU preprocess
-/// range-culls it per view (vendored `mesh_preprocess.wesl`, visibility
-/// range cull under `FRUSTUM_CULLING`), as Bevy's CPU range check did.
-pub fn spawn_template_ranges(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTemplate, ranges: &[LodRange], gpu_culled: bool) -> u32 {
-    let mut plain = Vec::new();
-    let mut traced = Vec::new();
-    let mut untraced = Vec::new();
-    for (level, (lod, range)) in template.lods.iter().zip(ranges).enumerate() {
-        let Some(visibility) = visibility_range(range) else { continue };
-        for (part, (mesh, material)) in lod.parts.iter().enumerate() {
-            let bundle = (
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(material.clone()),
-                cx.local,
-                visibility.clone(),
-                cx.layers.clone(),
-                template.aabb,
-                // The model's bounds are exact already; skip Bevy's AABB scan.
-                NoAutoAabb,
-                // What the material-class gauges count (static-scene.md S2).
-                crate::matclass::StaticPart,
-                ChildOf(cx.parent),
-            );
-            match &template.ray_tracing {
-                None => plain.push(bundle),
-                Some(rt) => match (rt.level == level).then(|| rt.meshes.get(part)).flatten() {
-                    Some(variant) => traced.push((bundle, RayTracingMesh(variant.clone()))),
-                    None => untraced.push((bundle, NoRayTracing)),
-                },
-            }
-        }
-    }
-    let n = u32::try_from(plain.len() + traced.len() + untraced.len()).unwrap_or(u32::MAX);
-    if gpu_culled {
-        spawn_parts::<NoCpuCulling, _, _, _>(world, plain, traced, untraced);
-    } else {
-        spawn_parts::<(), _, _, _>(world, plain, traced, untraced);
-    }
-    n
-}
-
-/// Spawns the three part lists, each part with an extra `T` (a marker or `()`).
-fn spawn_parts<T: Bundle + Default, A: Bundle, B: Bundle, C: Bundle>(world: &mut World, plain: Vec<A>, traced: Vec<B>, untraced: Vec<C>)
-where
-    <T as DynamicBundle>::Effect: NoBundleEffect,
-    <A as DynamicBundle>::Effect: NoBundleEffect,
-    <B as DynamicBundle>::Effect: NoBundleEffect,
-    <C as DynamicBundle>::Effect: NoBundleEffect,
-{
-    world.spawn_batch(plain.into_iter().map(|b| (b, T::default())));
-    world.spawn_batch(traced.into_iter().map(|b| (b, T::default())));
-    world.spawn_batch(untraced.into_iter().map(|b| (b, T::default())));
+/// Spawns a placement's LOD chain under `cx.parent`: one entity per visible
+/// level and part, each with its `VisibilityRange` and a
+/// [`crate::lod_live::LodPart`] that keeps the chain's inputs, so a live
+/// screen change re-ranges it in place. `gpu_culled`: the parts carry
+/// `NoCpuCulling` ([`StaticGpuCulling`]).
+fn spawn_chain(world: &mut World, cx: &SpawnCx<'_>, template: Arc<ModelTemplate>, gpu_culled: bool) -> u32 {
+    let chain = Arc::new(LodChain::placement(cx, template, gpu_culled));
+    let ranges = chain.ranges(cx.lod);
+    spawn_levels(world, &chain, &ranges, |_| true)
 }
 
 /// Where a placement stops being drawn, with the size-based draw distance
@@ -392,19 +337,10 @@ where
 /// `NO_SIZE_CULL`, placements without known bounds (radius 0), and those
 /// a far-field proxy represents (`kept_radius`: `Some` for a placement that
 /// hands over to a proxy, with the smallest radius its cell's proxy keeps),
-/// which must reach the handoff or a hole opens.
+/// which must reach the handoff or a hole opens ([`EndInputs::of`]).
 pub fn size_culled_end(lod: &LodScreen, placement: &IndexedPlacement, end: f32, end_band: f32, kept_radius: Option<f32>) -> (f32, f32) {
-    let p = &placement.placement;
-    let exempt = matches!(p.class, PlacementClass::Actor | PlacementClass::Door)
-        || p.flags.contains(PlacementFlags::NO_SIZE_CULL)
-        || placement.radius <= 0.0
-        || kept_radius.is_some_and(|k| placement.radius >= k);
-    let d = lod.draw_distance(placement.radius);
-    if exempt || d >= end {
-        return (end, end_band);
-    }
-    let band = d * lod.crossfade;
-    (d - band, band)
+    let r = EndInputs::of(placement, end, end_band, kept_radius).resolve(lod);
+    (r.distance, r.band)
 }
 
 /// LOD ranges of a chain ending at `max_distance`, with a fade-out band of

@@ -245,7 +245,7 @@ pub fn fold(material: &mut StandardMaterial, rules: FoldRules) -> Option<Folded>
 }
 
 /// Marker on every mesh part the framework spawns for a static template
-/// ([`crate::spawn_template_ranges`], per-placement and precombined alike): what the S2 gauges count.
+/// (`lod_live::spawn_levels`, per-placement and precombined alike): what the S2 gauges count.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct StaticPart;
 

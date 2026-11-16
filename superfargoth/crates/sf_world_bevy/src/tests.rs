@@ -24,7 +24,7 @@ use sf_world::{
 
 use super::*;
 
-fn ws() -> WorldspaceId {
+pub(crate) fn ws() -> WorldspaceId {
     WorldspaceId::new("test")
 }
 
@@ -194,6 +194,11 @@ fn streaming_app(dir: &std::path::Path) -> App {
 /// [`placements`] is far-eligible and the *near* step — the only level the
 /// static scene draws — is empty.
 fn streaming_app_radius(dir: &std::path::Path, far_min_radius: f32) -> App {
+    streaming_app_config(dir, far_min_radius, StreamingConfig { gpu_cull_statics: true, ..StreamingConfig::default() })
+}
+
+/// [`streaming_app_radius`] with the streaming settings given.
+pub(crate) fn streaming_app_config(dir: &std::path::Path, far_min_radius: f32, config: StreamingConfig) -> App {
     let store = Store::open(dir).unwrap();
     let cooked = cook(&plate(), &CookSettings::default()).unwrap().to_bytes();
     let mut manifest = Manifest::default();
@@ -215,7 +220,7 @@ fn streaming_app_radius(dir: &std::path::Path, far_min_radius: f32) -> App {
     );
     app.add_plugins((MinimalPlugins, AssetPlugin::default(), MeshPlugin))
         .init_asset::<StandardMaterial>()
-        .add_plugins(WorldStreamingPlugin { config: StreamingConfig { gpu_cull_statics: true, ..StreamingConfig::default() } })
+        .add_plugins(WorldStreamingPlugin { config })
         .insert_resource(WorldIndexSource(Arc::new(index)))
         .insert_resource(ActiveWorldspace(Some(ws())));
     app.finish();
@@ -224,7 +229,7 @@ fn streaming_app_radius(dir: &std::path::Path, far_min_radius: f32) -> App {
 }
 
 /// Runs frames until streaming is idle (async IO and asset loads need real time).
-fn settle(app: &mut App) -> usize {
+pub(crate) fn settle(app: &mut App) -> usize {
     for frame in 0..5000 {
         app.update();
         if frame > 3 && app.world().resource::<Streaming>().is_idle() {
@@ -564,6 +569,7 @@ fn static_parts_skip_cpu_culling_other_classes_keep_it() {
             model: Some(&model),
             max_distance: 200.0,
             end_band: 0.0,
+            end: EndInputs::fixed(200.0, 0.0),
             lod: &lod,
         };
         let placement = Placement {

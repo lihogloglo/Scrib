@@ -142,7 +142,7 @@ the dev console's `render.gi_intensity` / `render.gi_ambient` write every `GiVol
 - **Ray-tracing mesh variants (slice 1b):** Solari takes only uncompressed position/normal/uv0/tangent meshes with
   u32 indices, so streamed models need a second copy. `sf_world_bevy::RayTracingVariants` (resource: which
   worldspaces, `sf_world::RayTracedWorldspaces::{None, Single, All}`, and the LOD level) makes streaming load a
-  worldspace's cooked models with `SfMeshLoaderSettings::ray_tracing_lod`; `spawn_template_ranges` puts
+  worldspace's cooked models with `SfMeshLoaderSettings::ray_tracing_lod`; `lod_live::spawn_levels` puts
   `RayTracingMesh` on the traced level's parts and `NoRayTracing` on the others (both components now live in
   `sf_model_bevy`, re-exported by `sf_sky_bevy`). The game sets `Single` (interiors: `Partition::Single`) at Startup
   when `GiSupport` is true or the ray-traced path is active, level `mw_assets::cooked::RAY_TRACING_LOD` (0).

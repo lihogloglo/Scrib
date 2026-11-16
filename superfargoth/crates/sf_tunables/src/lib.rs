@@ -11,6 +11,8 @@
 //!   ([`Tunables::take_changes`], [`Tunables::revision`]). Reads by [`Id`] / [`TunableId`] are
 //!   an index, fine every frame.
 //! - [`Tunables::rows`] / [`Tunables::dump_markdown`]: the stable, sorted dump.
+//! - [`presets`]: presets as data (`sf.tunable` and `sf.tunable_preset` records, the
+//!   `sf.graphics_preset` and `sg.*` drivers; slice T5b).
 //!
 //! `sf_console` uses this store for its variables (re-exported there as `Vars`, `Var`,
 //! `VarId`, `VarSpec`).
@@ -18,11 +20,14 @@
 mod def;
 mod dump;
 mod meta;
+pub mod presets;
 mod store;
 mod value;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_presets;
 
 pub use def::{AnyDef, Def, Id, Type};
 pub use dump::Row;

@@ -190,6 +190,7 @@ FP-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person s
 FP-1b | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person: the player's shadow keeps its head under sun, lamps and a torch, raster and RT (2026-11-10)
 FP-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First-person view model (`flip viewmodel`): weapon and arms at the body FOV, never in walls, lit like the world, no DLSS/TAA smear; shader-compile log line (2026-11-10)
 PP-1 | awaiting owner | [rendering](visual-checks/rendering.md) | F3 perf panel (CW-17, release build): numbers refresh, bound-by matches the feel, flipping a CW switch moves them (2026-11-16)
+PP-2 | awaiting owner | [rendering](visual-checks/rendering.md) | Graphics presets live: Shift+F4 cycles extremely_low..ultra in Balmora night and day, F3 follows, custom after a hand change (T5b, 2026-11-16)
 RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn away from the model (2026-10-30)
 WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
 WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)

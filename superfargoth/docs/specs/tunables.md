@@ -153,7 +153,7 @@ Single player is a host. Presentation tunables never feed gameplay (CONTRIBUTING
 | Lifetime | Applies | Examples | Console says |
 |---|---|---|---|
 | `Live` | next frame, through the bound resource/component | fade ranges, hysteresis, budgets in ms, bias, gains | nothing |
-| `Respawn` | to things spawned after the change; existing ones keep theirs until they respawn (cell reload, `respawn <system>` command) | per-placement LOD tiers baked into spawned entities, mesh slab sizes | "applies to new spawns" |
+| `Respawn` | to things spawned after the change; existing ones keep theirs until they respawn (cell reload, `respawn <system>` command) | mesh slab sizes, runtime-imported (uncooked) models' LOD ends (cooked LOD chains re-range live, T5c) | "applies to new spawns" |
 | `Recompile` | live, but changes a shader def: pipelines re-specialise (a hitch; pipeline-warmup's catalog holds each preset's variants) | cascade count, PCF/PCSS choice, parallax steps | "recompiles pipelines" |
 | `Restart` | stored, read at the next start (id Tech latch) | thread counts, pipelined rendering, texture cap, compute threads | "applies on restart" |
 | `Bake` | part of the bake key; `bevyrrowind bake` picks it up | `FarLevels.handoff`, `CookSettings`, precombine rules | "needs a re-bake" |
@@ -195,11 +195,11 @@ behaviour on top of `Live`/`Recompile`.
 
 ### Presets are bundles of tunables
 
-`ui.setting_preset` records already map a driver's levels to setting keys and derive "Custom" (presets.rs). For
+The records are `sf.tunable_preset` (T5b as built: the shape of `ui.setting_preset`, which maps a driver's levels to setting keys and derives "Custom", but its own kind, as members are mostly `Dev` tunables with no menu row). For
 player tunables **the setting key is the tunable name**, and levels write the `Preset` layer, not the user store, so
 a hand-changed option sits on `User` above the preset and the driver reads "custom" exactly as today.
 
-Groups follow UE's scalability groups, one driver each with levels low/medium/high/ultra: `sg.view_distance`
+Groups follow UE's scalability groups, one driver each with levels extremely_low/low/medium/high/ultra: `sg.view_distance`
 (lod bias, size cull, rings, far handoff scale), `sg.shadows` (sun cascades, distance, PCSS, filter, lamp count/map
 size/fade, contact), `sg.lighting` (GI, SSAO), `sg.post` (bloom, upscaler), `sg.textures` (cap, parallax),
 `sg.effects` (weather/precip/particle budgets), `sg.characters` (anim LOD pixels, crowd tiers), `sg.water`,
@@ -372,6 +372,43 @@ are per spawned entity, no non-discarding restream exists). `Restart`, read befo
 (`start_values`): `far.handoff_scale` (near rings sized from it), `texture.max_size_px` (`--texture-cap`), `render.gi.probes`.
 Console `render.ssao|contactshadows|contactlength|contactthickness|bloom` deleted; `on|off|flip ssao|contactshadows` set the
 tunables. Left: a `respawn statics` restream, the texture cap live (reload), T5b records and `sg.*` drivers.
+
+**T5c as built (2026-11-16).** `lod.bias`, `lod.size_cull.min_px|min_distance_m` are `Live`: resident content re-ranges in place,
+no restream (UE `r.ViewDistanceScale` / Unity `lodBias` re-select from data kept with the instance). Every LOD part spawned
+through `sf_world_bevy` (per-placement chains and precombine buckets) carries `LodPart { chain, level }`: template, scaled errors,
+end before size culling (`EndInputs`: ring or handoff, band, size-cull radius or exempt). `lod_live::apply_lod_screen` (`Update`,
+after drive) redoes a stale chain's ranges with the spawn's own functions, writes the changed `VisibilityRange`s (Bevy re-extracts
+them), despawns collapsed levels and spawns opened ones, `lod.live.chains_per_frame` (4096, `Guess`) chains a frame. Nothing else is
+touched; no gated selection reads the screen. Tests: live == fresh spawn at three screens, levels open/collapse, budget, gate on.
+Not live: uncooked (NIF subtree) ends, `--scene` (no LOD yet), `far.handoff_scale` (`Restart`). Risk: each new screen adds distinct
+ranges to Bevy's never-freed 65535 range slots (`shared_range` snaps them). Not measured.
+
+**T5b as built (2026-11-16).** Presets are data. `sf_tunables::presets`: kinds `sf.tunable` (`TunableRecord {value, source}`, id =
+tunable, `apply_mod_values` at `Mod`) and `sf.tunable_preset` (`PresetRecord {driver, when, source, levels, sources}`); not
+`ui.setting_preset`, whose values target the menu store and are dropped unless each key is a `ui.setting` row, with no per-value
+source (same shape and merge rule: records sharing a driver merge in load order). Drivers are choice tunables (`Player` scope):
+`sf.graphics_preset` and `sg.view_distance|shadows|lighting|post|textures|effects|water|sky`, levels `extremely_low low medium
+high ultra` + `custom`. `PresetBook` checks the merge (driver a choice with `custom`, level an option, value in range, a member in one
+group), `apply` writes a level at `Preset` (a driver member sets that driver; keys the level lacks peeled), `level_of` keeps the
+shown level while its values hold (Low and Extremely low water are equal), else the first match, else `custom`; `when: "!dlss"`
+picks a record by host capability (`render::capabilities`). `sf_tunables_bevy::PresetsPlugin`: `drive_presets` between `Apply` and
+`Bind` turns a driver set above `Preset` (console, BRP, `--set`, Shift+F4) into a level, peels that layer, syncs the drivers,
+sends `PresetApplied` (summary: changed, "applies on restart" / "to new spawns" by the def's lifetime, kept above the preset).
+Records: builtin mod `mw` (`mw_mods::BASE_RECORDS`, `data/records/graphics_presets.ron`, `tunables.ron`: lamp fade 35,45), applied
+by `NativeRecords`; the exterior re-applies the profile's `Mod` values and builds the book (`quality_presets::apply`). Golden: the
+records equal the old table for Low..Ultra. Console `preset [level | group level]`; F3 shows the overall level (custom: the groups
+that differ) and only tunables above the preset. Left: a menu row (owner question 1), device auto-detect (P3).
+
+Extremely low (below Low; sources in the records, mostly UE `sg.*Quality 0`):
+
+| Group | Values (Low in brackets) |
+|---|---|
+| view distance | `lod.bias` 0.5 (0.75), size cull 8 px (4) from 12 m (16), `far.handoff_scale` 0.5 (0.75, `Restart`) |
+| shadows | no lamp shadows, 256 px faces (512), 1 sun cascade (3) to 120 m (160), no contact, no PCSS, hardware 2x2 |
+| lighting / post | no GTAO, no probe GI, no bloom; DLSS Performance with DLSS, else MSAA (Low: MSAA) |
+| textures | cap 256 px (512, `Restart`), no parallax |
+| effects / water / sky | as Low: no puddles or shelter, water `low`, clouds without per-sample weather map |
+
 ## Proposed CONTRIBUTING rule (for the orchestrator to apply)
 
 > **No hardcoded tunables (owner 2026-11-16).** A value that trades quality against cost, sets feel, or is a

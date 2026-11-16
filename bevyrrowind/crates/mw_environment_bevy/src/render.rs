@@ -12,6 +12,7 @@ use bevy_log::info;
 use bevy_post_process::auto_exposure::AutoExposure;
 use bevy_render::view::screenshot::Screenshot;
 use bevy_transform::components::GlobalTransform;
+use mw_game_core::exterior::Quality;
 use sf_sky_bevy::sf_sky::{RenderPath, Upscaling};
 use sf_sky_bevy::{PointShadowBudget, SkyRenderOptions, UpscalingSetting};
 
@@ -32,16 +33,25 @@ const POINT_SHADOW_CACHE: bool = false;
 /// Default for `--dlss` when the flag isn't given (perf suite: `--env BEVYRROWIND_DLSS=quality`).
 const ENV_DLSS: &str = "BEVYRROWIND_DLSS";
 
-/// Upscaling without `--dlss` or `BEVYRROWIND_DLSS`: a temporal resolve on
-/// Medium and up (ROADMAP 1.3): DLSS `auto` (Quality at our resolutions) in
-/// builds with DLSS, which falls back to TAA on GPUs without it; TAA in
-/// builds without. The Low preset keeps MSAA. `--dlss taa|off` picks.
-pub fn default_upscaling(low: bool) -> Upscaling {
-    match (low, cfg!(feature = "dlss")) {
-        (true, _) => Upscaling::Off,
-        (false, true) => Upscaling::parse("auto").unwrap_or(Upscaling::Taa),
-        (false, false) => Upscaling::Taa,
+/// Upscaling without `--dlss` or `BEVYRROWIND_DLSS`, the start's value of the quality level's
+/// `render.upscaling` (the truth is the `sg.post` records, `mw_mods::BASE_RECORDS`; a test in
+/// `mw_exterior_bevy::quality_presets` keeps the two equal): a temporal resolve on Medium and up
+/// (ROADMAP 1.3), DLSS `auto` (Quality at our resolutions) in builds with DLSS, which falls back to
+/// TAA on GPUs without it, TAA in builds without; Low keeps MSAA; Extremely low DLSS Performance in
+/// DLSS builds, else MSAA. `--dlss taa|off` picks.
+pub fn default_upscaling(quality: Quality) -> Upscaling {
+    match (quality, cfg!(feature = "dlss")) {
+        (Quality::ExtremelyLow, true) => Upscaling::parse("performance").unwrap_or(Upscaling::Off),
+        (Quality::ExtremelyLow | Quality::Low, _) => Upscaling::Off,
+        (_, true) => Upscaling::parse("auto").unwrap_or(Upscaling::Taa),
+        (_, false) => Upscaling::Taa,
     }
+}
+
+/// What this build can do, for preset records with a `when` (`sg.post`'s DLSS levels): `dlss` in
+/// builds with the `dlss` feature.
+pub const fn capabilities() -> &'static [&'static str] {
+    if cfg!(feature = "dlss") { &["dlss"] } else { &[] }
 }
 
 /// The render options of a view.
@@ -88,13 +98,13 @@ pub fn parse_sun_cascades(s: &str) -> Result<(usize, f32), String> {
 
 impl RenderSettings {
     /// From the flags; `--dlss` falls back to `BEVYRROWIND_DLSS`, then to
-    /// [`default_upscaling`] (`low`: the Low quality preset).
-    pub fn new(ray_traced: bool, dlss: Option<Upscaling>, denoiser: bool, low: bool) -> Result<Self, String> {
+    /// [`default_upscaling`] of the start's quality level.
+    pub fn new(ray_traced: bool, dlss: Option<Upscaling>, denoiser: bool, quality: Quality) -> Result<Self, String> {
         let upscaling = match dlss {
             Some(u) => u,
             None => match std::env::var(ENV_DLSS) {
                 Ok(raw) if !raw.trim().is_empty() => Upscaling::parse(&raw)?,
-                _ => default_upscaling(low),
+                _ => default_upscaling(quality),
             },
         };
         if ray_traced && !cfg!(feature = "solari") {
@@ -197,7 +207,7 @@ impl RenderSettings {
     /// preset's `(count, face size)`, Bevyrrowind's fade band, the framework's other defaults.
     /// In apps with [`Self::insert`] the tunables then drive it (`sf_sky_bevy::ShadowQualityPlugin`).
     pub fn point_shadow_budget(self, preset: (usize, usize)) -> PointShadowBudget {
-        let [fade_start, fade_end] = crate::shadow_tunables::LAMP_FADE_M;
+        let [fade_start, fade_end] = crate::shadow_tunables::base_lamp_fade();
         PointShadowBudget { max: self.point_shadows.unwrap_or(preset.0), map_size: preset.1, fade_start, fade_end, ..PointShadowBudget::default() }
     }
 
@@ -347,7 +357,7 @@ mod tests {
     #[test]
     fn render_settings_make_the_flat_ambient_diffuse_only() {
         let mut app = App::new();
-        let settings = RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings").with_shadow_cache(false);
+        let settings = RenderSettings::new(false, Some(Upscaling::Off), true, Quality::Low).expect("settings").with_shadow_cache(false);
         settings.insert(&mut app);
         assert_eq!(app.world().get_resource::<bevy_pbr::AmbientLightSpecular>().map(|a| a.0), Some(false));
     }
@@ -359,7 +369,7 @@ mod tests {
     fn cascade_encoders_switch_and_split() {
         for on in [true, false] {
             let mut app = App::new();
-            let settings = RenderSettings::new(false, Some(Upscaling::Off), true, true)
+            let settings = RenderSettings::new(false, Some(Upscaling::Off), true, Quality::Low)
                 .expect("settings")
                 .with_shadow_cache(false)
                 .with_cascade_encoders(on);
@@ -379,7 +389,7 @@ mod tests {
     fn tunable_app(env: &[(&str, &str)]) -> App {
         let mut app = App::new();
         app.add_plugins(sf_tunables_bevy::TunablesPlugin).insert_resource(sf_tunables_bevy::TunableEnv::from_pairs(env));
-        RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings").with_shadow_cache(false).insert(&mut app);
+        RenderSettings::new(false, Some(Upscaling::Off), true, Quality::Low).expect("settings").with_shadow_cache(false).insert(&mut app);
         app.update();
         app
     }
@@ -441,7 +451,7 @@ mod tests {
         assert_eq!((b.max, b.fade_start, b.fade_end), (5, 10.0, 20.0));
         let mut cli = App::new();
         cli.add_plugins(sf_tunables_bevy::TunablesPlugin).insert_resource(sf_tunables_bevy::TunableEnv::from_pairs(&[("BEVYRROWIND_POINT_SHADOWS", "2")]));
-        RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings").with_point_shadows(Some(3)).insert(&mut cli);
+        RenderSettings::new(false, Some(Upscaling::Off), true, Quality::Low).expect("settings").with_point_shadows(Some(3)).insert(&mut cli);
         cli.update();
         assert_eq!(cli.world().resource::<PointShadowBudget>().max, 3, "--point-shadows wins over the env");
     }
@@ -512,7 +522,7 @@ mod tests {
     fn cascade_hold_switch() {
         for on in [true, false] {
             let mut app = App::new();
-            let settings = RenderSettings::new(false, Some(Upscaling::Off), true, true)
+            let settings = RenderSettings::new(false, Some(Upscaling::Off), true, Quality::Low)
                 .expect("settings")
                 .with_shadow_cache(false)
                 .with_cascade_hold(on);

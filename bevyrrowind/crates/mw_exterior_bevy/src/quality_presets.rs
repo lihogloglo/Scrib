@@ -1,37 +1,49 @@
-//! Quality presets as tunables, interim (tunables slices T4, T5a; spec
-//! `superfargoth/docs/specs/tunables.md` "Presets are bundles of tunables"): at startup the chosen
-//! [`Quality`] writes every value it decides into the `Preset` layer from one table
-//! ([`quality_preset_values`], which replaced the `QualityRender` and `Quality` `match` arms); a
-//! console `set` sits above it (`Console` layer), `--off` parts, flags and the env aliases at
-//! `CommandLine`. T5b turns the table into `sf.tunable` records with `sg.*` group drivers and
-//! switches levels live.
+//! Graphics presets as data (tunables slices T4, T5a, T5b; spec
+//! `superfargoth/docs/specs/tunables.md` "Presets are bundles of tunables"): the levels live in the
+//! builtin mod's `sf.tunable_preset` records (`mw_mods::BASE_RECORDS`, `graphics_presets.ron`; a mod
+//! changes them with its own records), one per UE-style scalability group (`sg.view_distance`,
+//! `sg.shadows`, `sg.lighting`, `sg.post`, `sg.textures`, `sg.effects`, `sg.water`, `sg.sky`) and the
+//! overall `sf.graphics_preset`, whose levels (`extremely_low`, `low`, `medium`, `high`, `ultra`) set
+//! the groups. At startup [`apply`] writes the run's [`Quality`] level at the `Preset` layer; a console
+//! `set` sits above it (`Console` layer), `--off` parts, flags and the env aliases at `CommandLine`.
+//!
+//! **Live switch:** the drivers are tunables (`sf_tunables_bevy::PresetsPlugin`): console
+//! `set sf.graphics_preset ultra`, `set sg.shadows low`, BRP `sf.tunables/set`, `--set`, the
+//! [`preset`](add_console) console command, Shift+F4 (`mw_devtools_bevy::live_ab`). A driver reads
+//! `custom` when a member differs from every level (a hand-set value stays above the preset).
 //!
 //! What a value costs to change (its `Lifetime`): shadows, lights, GTAO, contact shadows, bloom, the
 //! temporal resolve (prepasses and MSAA follow), clouds, water, puddles, shelter and parallax are live
-//! (some re-specialise pipelines); the LOD bias and size culling apply to cells streamed after the
-//! change (`Respawn`); the far-field handoff scale, the texture cap and the probe GI are read once at
-//! start (`Restart`, [`start_values`]): so Ultra switched to live is Ultra minus its textures.
+//! (some re-specialise pipelines); the LOD bias and size culling follow their def's lifetime
+//! (`Live` since T5c: resident LOD chains re-ranged in place, `crate::restream`); the far-field handoff scale, the
+//! texture cap and the probe GI are read once at start (`Restart`, [`start_values`]): so Ultra
+//! switched to live is Ultra minus its textures, and the console says so.
 //!
 //! Also the exterior's CW gates as live tunables ([`add_gates`]): `select.gate` (CW-2: streaming,
 //! terrain, far field) and `render.skin.skip_unchanged` (CW-7), with their old env switches as aliases.
 
+use std::collections::BTreeMap;
+
+use bevy::log::warn;
 use bevy::pbr::SkinUploadSettings;
 use bevy::prelude::*;
 use mw_devtools_bevy::perf::{Off, Part};
+use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
+use sf_records::RecordDb;
 use sf_sky_bevy::quality as q;
 use sf_tunables_bevy::overrides::{OverrideSet, apply_overrides};
+use sf_tunables_bevy::sf_tunables::presets::{self as tp, MergedPresets, MergedValue, PresetBook, PresetRecord};
 use sf_tunables_bevy::sf_tunables::Def;
-use sf_tunables_bevy::{SetBy, Tunables, TunablesAppExt, Value};
+use sf_tunables_bevy::{Presets, SetBy, Tunables, TunablesAppExt, Value};
 
 pub use mw_environment_bevy::quality_tunables::{CLOUD_MAP_PER_SAMPLE, GI_PROBES, PUDDLES, SHELTER, TEXTURE_MAX_SIZE};
 pub use mw_game_core::exterior::Quality;
 
-/// Bloom's scatter fraction in this game: two thirds of `Bloom::NATURAL`'s 0.15 (the fog's sun glow
-/// already halos the disk, screen-space-effects research 4.11).
-const BLOOM_INTENSITY: f64 = 0.1;
+/// The overall driver's name (`sf.graphics_preset`).
+pub const OVERALL: &str = tp::GRAPHICS_PRESET.name();
 
-/// Every tunable the table writes that the render settings (`RenderSettings::insert`: shadows,
-/// lights, GTAO, upscaling) don't register: register them before [`apply`].
+/// Every tunable the presets write that the render settings (`RenderSettings::insert`: shadows,
+/// lights, GTAO, upscaling) don't register, and the drivers: register them before [`apply`].
 pub fn register(app: &mut App) {
     // One by one: a def registered here first would keep another crate's env-alias copy from
     // registering fresh (`select.gate`, `mw.matctrl.gate`), and its alias from applying.
@@ -45,6 +57,9 @@ pub fn register(app: &mut App) {
         &mw_assets::PARALLAX_RELIEF_STEPS,
     ])
     .register_tunables(mw_environment_bevy::quality_tunables::TUNABLES);
+    if !app.is_plugin_added::<sf_tunables_bevy::PresetsPlugin>() {
+        app.add_plugins(sf_tunables_bevy::PresetsPlugin);
+    }
 }
 
 /// `select.gate` (CW-2), alias `BEVYRROWIND_SELECT_GATE=1|0`; `--off selectgate` forces it off at
@@ -54,91 +69,26 @@ pub const SELECT_GATE: Def<bool> = sf_world::SELECT_GATE.env_alias("BEVYRROWIND_
 /// `render.skin.skip_unchanged` (CW-7), alias `BEVYRROWIND_SKIN_SKIP_UNCHANGED=1`.
 pub const SKIN_SKIP_UNCHANGED: Def<bool> = sf_character_bevy::SKIN_SKIP_UNCHANGED.env_alias("BEVYRROWIND_SKIN_SKIP_UNCHANGED");
 
-/// One quality level's values, `(tunable, value)`: every key of each level, so a level written over
-/// another leaves nothing of it. Sources, shadows and lights: the lamp budget High = 8 cached lamps
-/// at 512² (Bevy's per-face light-relative cache; perf.md "Shadows v2"); contact shadows off on Low
-/// (it costs the depth + motion-vector prepass), 0.3 m = Bevy's default (SH-14), on the lamps on High
-/// and Ultra (owner 2026-11-01, SH-16); GTAO 1x2 / 2x2 / 3x3 on Medium / High / Ultra (ledger shadows
-/// 2026-10-21, ~0.9 ms at 1440p High); sun cascades a PSSM practical split (ledger shadows
-/// 2026-10-19, presets cut to 160-280 m; F2's 2 cascades measured no win, ledger perf 2026-11-16);
-/// PCSS on High and Ultra (shadows F5); Hardware2x2 on Low, else temporal under TAA/DLSS (SH-12).
-/// View distance (industry-audit.md J1): one bias scales LOD selection, size culling and the far
-/// handoff d1 (the baked 400 m x bias, ledger statics 2026-10-12); the size-culling cutoff matches
-/// `OpenMW`'s 2 px on High, our 1 px LOD budget on Ultra (culls 3 % at High, 8 % at Low, ledger
-/// statics 2026-10-12). Post: bloom off on Low (research 4.11); MSAA on Low, else a temporal resolve
-/// (DLSS `auto` in DLSS builds, TAA otherwise; ROADMAP 1.3). Sky: the clouds' weather map per sample
-/// on High and Ultra (weather.md, distant weather). Water: the FFT tier of the level (water.md
-/// "Performance budgets"). Surface: no puddles, no shelter map on Low (surface-weather.md "Budget").
-/// Textures: the load cap Low 512, Medium 1024, High 2048, Ultra none (ledger textures 2026-11-13,
-/// textures.md §6); parallax none on Low, 16-layer occlusion on Medium, 32/5 and 64/8 relief on High
-/// and Ultra (textures.md §9 T4d). GI: the probe GI on High and Ultra (gi.md slice 1).
-pub fn quality_preset_values(quality: Quality) -> Vec<(&'static str, Value)> {
-    use mw_environment_bevy::quality_tunables as qt;
-    let high = matches!(quality, Quality::High | Quality::Ultra);
-    let low = quality == Quality::Low;
-    let (lamps, face): (i64, i64) = match quality {
-        Quality::Low => (0, 512),
-        Quality::Medium => (6, 512),
-        Quality::High => (8, 512),
-        Quality::Ultra => (12, 1024),
-    };
-    let ssao = match quality {
-        Quality::Low => "off",
-        Quality::Medium => "low",
-        Quality::High => "medium",
-        Quality::Ultra => "high",
-    };
-    let (cascades, distance, lambda, overlap): (i64, f64, f64, f64) = match quality {
-        Quality::Low => (3, 160.0, 0.82, 0.15),
-        Quality::Medium => (3, 190.0, 0.80, 0.15),
-        Quality::High => (3, 205.0, 0.80, 0.16),
-        Quality::Ultra => (4, 280.0, 0.85, 0.2),
-    };
-    let (bias, min_pixels, min_draw_distance): (f64, f64, f64) = match quality {
-        Quality::Low => (0.75, 4.0, 16.0),
-        Quality::Medium => (0.875, 3.0, 20.0),
-        Quality::High => (1.0, 2.0, 24.0),
-        Quality::Ultra => (1.0, 1.0, 32.0),
-    };
-    let (water, texture_cap, parallax_layers, relief_steps): (&str, i64, i64, i64) = match quality {
-        Quality::Low => ("low", 512, 0, 0),
-        Quality::Medium => ("medium", 1024, 16, 0),
-        Quality::High => ("high", 2048, 32, 5),
-        Quality::Ultra => ("ultra", 0, 64, 8),
-    };
-    let text = |s: &str| Value::Str(s.to_owned());
-    vec![
-        (sf_sky_bevy::LAMP_COUNT.name(), Value::Int(lamps)),
-        (sf_sky_bevy::LAMP_MAP_SIZE.name(), Value::Int(face)),
-        (sf_sky_bevy::LAMP_CONTACT.name(), Value::Bool(high)),
-        (q::CONTACT.name(), Value::Bool(!low)),
-        (q::CONTACT_STEPS.name(), Value::Int(if high { 16 } else { 8 })),
-        (q::CONTACT_THICKNESS.name(), Value::Float(0.1)),
-        (q::CONTACT_LENGTH.name(), Value::Float(0.3)),
-        (q::SSAO.name(), text(ssao)),
-        (q::SUN_CASCADES.name(), Value::Int(cascades)),
-        (q::SUN_DISTANCE.name(), Value::Float(distance)),
-        (q::SUN_LAMBDA.name(), Value::Float(lambda)),
-        (q::SUN_OVERLAP.name(), Value::Float(overlap)),
-        (q::SUN_SOFT.name(), Value::Bool(high)),
-        (q::SUN_SOFT_SIZE.name(), Value::Float(10.0)),
-        (q::FILTER.name(), text(if low { "hardware" } else { "auto" })),
-        (sf_world::lod_screen::LOD_BIAS.name(), Value::Float(bias)),
-        (sf_world::lod_screen::SIZE_CULL_MIN_PX.name(), Value::Float(min_pixels)),
-        (sf_world::lod_screen::SIZE_CULL_MIN_DISTANCE.name(), Value::Float(min_draw_distance)),
-        (sf_lod_bevy::FAR_HANDOFF_SCALE.name(), Value::Float(bias)),
-        (qt::BLOOM.name(), Value::Bool(!low)),
-        (qt::BLOOM_INTENSITY.name(), Value::Float(BLOOM_INTENSITY)),
-        (q::UPSCALING.name(), text(mw_environment_bevy::render::default_upscaling(low).label())),
-        (CLOUD_MAP_PER_SAMPLE.name(), Value::Bool(high)),
-        (qt::WATER_QUALITY.name(), text(water)),
-        (PUDDLES.name(), Value::Bool(!low)),
-        (SHELTER.name(), Value::Bool(!low)),
-        (TEXTURE_MAX_SIZE.name(), Value::Int(texture_cap)),
-        (mw_assets::PARALLAX_LAYERS.name(), Value::Int(parallax_layers)),
-        (mw_assets::PARALLAX_RELIEF_STEPS.name(), Value::Int(relief_steps)),
-        (GI_PROBES.name(), Value::Bool(high)),
-    ]
+/// The preset records to use: the loaded profile's (`db`, when it holds any), else the builtin
+/// mod's (apps without a profile, tests).
+pub fn preset_db(db: Option<&RecordDb>) -> &RecordDb {
+    match db {
+        Some(db) if !db.is_empty::<PresetRecord>() => db,
+        _ => mw_environment_bevy::shadow_tunables::base_records(),
+    }
+}
+
+/// `db`'s presets merged for this build ([`mw_environment_bevy::render::capabilities`]: the
+/// `sg.post` record for builds without DLSS).
+pub fn merged(db: &RecordDb) -> MergedPresets {
+    let records = sf_tunables_bevy::presets::preset_records(db);
+    MergedPresets::merge(records.iter().map(|(r, m)| (r, m.as_str())), mw_environment_bevy::render::capabilities())
+}
+
+/// Every non-driver value `quality`'s level writes, from the builtin mod's records (before any app
+/// exists: the first loads' parallax).
+pub fn level_values(quality: Quality) -> BTreeMap<String, MergedValue> {
+    merged(mw_environment_bevy::shadow_tunables::base_records()).flatten(OVERALL, quality.name())
 }
 
 /// The `--off` parts that force a tunable at the `CommandLine` layer: `(part, tunable, value)`.
@@ -162,13 +112,25 @@ fn set(tunables: &mut Tunables, name: &str, value: Value, layer: SetBy, note: St
     tunables.set_noted(id, value, layer, Some(note)).unwrap_or_else(|e| panic!("tunable {name}: {e}"));
 }
 
-/// Writes `quality`'s level into the `Preset` layer, the `--off` parts and `--texture-cap <px>`
-/// (`texture_cap`, 0: none) into `CommandLine`. After `RenderSettings::insert` and [`register`]
-/// (they register the tunables).
-pub fn apply(tunables: &mut Tunables, quality: Quality, off: &Off, texture_cap: Option<u32>) {
-    for (name, value) in quality_preset_values(quality) {
-        set(tunables, name, value, SetBy::Preset, format!("quality {quality:?}"));
+/// Builds the presets from `db` ([`preset_db`]) and the loaded profile's `sf.tunable` values (at the
+/// `Mod` layer), writes `quality`'s level at the `Preset` layer, the `--off` parts and
+/// `--texture-cap <px>` (`texture_cap`, 0: none) at `CommandLine`. After `RenderSettings::insert`
+/// and [`register`] (they register the tunables). Returns the book for `Presets`; problems in the
+/// records (a mod's bad value, a missing level) are warnings.
+pub fn apply(tunables: &mut Tunables, db: Option<&RecordDb>, quality: Quality, off: &Off, texture_cap: Option<u32>) -> PresetBook {
+    if let Some(db) = db {
+        for refused in mw_environment_bevy::shadow_tunables::apply_mod_records(tunables, db) {
+            warn!("{refused}");
+        }
     }
+    let (book, issues) = PresetBook::build(tunables, &merged(preset_db(db)));
+    for issue in issues {
+        warn!("{issue}");
+    }
+    if let Err(e) = book.apply(tunables, OVERALL, quality.name()) {
+        warn!("graphics preset {}: {e}", quality.name());
+    }
+    book.sync(tunables);
     for (part, name, value) in off_values() {
         if off.has(part) {
             set(tunables, name, value, SetBy::CommandLine, format!("--off {}", part.name()));
@@ -177,14 +139,15 @@ pub fn apply(tunables: &mut Tunables, quality: Quality, off: &Off, texture_cap: 
     if let Some(px) = texture_cap {
         set(tunables, TEXTURE_MAX_SIZE.name(), Value::Int(i64::from(px)), SetBy::CommandLine, "--texture-cap".to_owned());
     }
+    book
 }
 
-/// The parallax new loads bind at a level ([`quality_preset_values`]' `texture.parallax.*`), for
-/// `mw_assets::set_parallax` before the app is built (the exterior then follows the tunables live).
+/// The parallax new loads bind at a level (its `texture.parallax.*`), for `mw_assets::set_parallax`
+/// before the app is built (the exterior then follows the tunables live).
 pub fn level_parallax(quality: Quality) -> Option<mw_assets::Parallax> {
-    let values = quality_preset_values(quality);
-    let get = |name: &str| match values.iter().find(|(n, _)| *n == name) {
-        Some((_, Value::Int(v))) => u8::try_from(*v).unwrap_or(u8::MAX),
+    let values = level_values(quality);
+    let get = |name: &str| match values.get(name).map(|v| &v.value) {
+        Some(tp::RecordValue::Int(v)) => u8::try_from(*v).unwrap_or(u8::MAX),
         _ => 0,
     };
     let (layers, steps) = (get(mw_assets::PARALLAX_LAYERS.name()), get(mw_assets::PARALLAX_RELIEF_STEPS.name()));
@@ -212,13 +175,20 @@ pub struct StartValues {
 }
 
 /// The `Restart` tunables' effective values, after the run's `--set` / `--tunables` overrides for
-/// them (the others apply in `Plugin::finish`, once every plugin registered its tunables; these are
-/// read before that). A refused override is left to `finish`, which reports it and fails the run.
-pub fn start_values(tunables: &mut Tunables, overrides: &[OverrideSet]) -> StartValues {
+/// them and for the preset drivers (`--set sf.graphics_preset=ultra` starts with Ultra's texture cap;
+/// the other overrides apply in `Plugin::finish`, once every plugin registered its tunables; these
+/// are read before that). A refused override is left to `finish`, which reports it and fails the run.
+pub fn start_values(tunables: &mut Tunables, book: &PresetBook, overrides: &[OverrideSet]) -> StartValues {
     let restart = [TEXTURE_MAX_SIZE.name(), sf_lod_bevy::FAR_HANDOFF_SCALE.name(), GI_PROBES.name()];
+    let early = |name: &str| restart.contains(&name) || book.driver(name).is_some();
     for set in overrides {
-        let early: Vec<_> = set.overrides.iter().filter(|o| restart.contains(&o.name.as_str())).cloned().collect();
-        let _refused = apply_overrides(tunables, &early, SetBy::CommandLine, Some(&set.origin));
+        let sets: Vec<_> = set.overrides.iter().filter(|o| early(&o.name)).cloned().collect();
+        let _refused = apply_overrides(tunables, &sets, SetBy::CommandLine, Some(&set.origin));
+    }
+    for (driver, level, result) in book.take_requests(tunables) {
+        if let Err(e) = result {
+            warn!("preset {driver} {level}: {e}");
+        }
     }
     let cap: u32 = tunables.read(tunables.id_of(&TEXTURE_MAX_SIZE).expect("registered"));
     StartValues {
@@ -240,12 +210,13 @@ pub fn lod_screen(tunables: &Tunables) -> sf_model::LodScreen {
     }
 }
 
-/// Binds the table's game-side live tunables into what consumes them (each writes once its target
-/// exists, then on a change): the streaming screen (`Respawn`: cells streamed after it), the clouds'
+/// Binds the presets' game-side live tunables into what consumes them (each writes once its target
+/// exists, then on a change): the streaming screen (live, resident chains re-ranged by T5c), the clouds'
 /// weather-map sampling, puddles and shelter, the parallax of loaded materials, bloom on the views.
 pub fn bind_live(app: &mut App) {
     use sf_world::lod_screen as l;
     use sf_world_bevy::Streaming;
+    crate::restream::bind(app);
     let _bias = app
         .add_tunable(&l::LOD_BIAS)
         .bind_resource(|s: &mut Streaming, v| s.set_lod_screen(sf_model::LodScreen { bias: v, ..s.config().lod }));
@@ -264,6 +235,65 @@ pub fn bind_live(app: &mut App) {
     if !app.is_plugin_added::<mw_environment_bevy::quality_tunables::BloomPlugin>() {
         app.add_plugins(mw_environment_bevy::quality_tunables::BloomPlugin);
     }
+}
+
+/// The `preset` console command: no argument lists every driver's level (and what sits above the
+/// preset); `preset <level>` switches the overall preset; `preset <group> <level>` one group
+/// (`shadows` or `sg.shadows`). Prints what applies on restart or to new spawns.
+pub fn add_console(app: &mut App) {
+    sf_console_bevy::ConsoleAppExt::add_console_command(
+        app,
+        CommandSpec::new("preset")
+            .help(
+                "Graphics presets: `preset` lists the levels, `preset <level>` sets sf.graphics_preset \
+                 (extremely_low, low, medium, high, ultra), `preset <group> <level>` one sg.* group",
+            )
+            .param(Param::new("level_or_group", ArgKind::Str).optional())
+            .param(Param::new("level", ArgKind::Str).optional()),
+        |inv| {
+            let Some(book) = inv.ctx.get_resource::<Presets>().map(|p| p.0.clone()) else {
+                return Err("no graphics presets in this app".to_owned());
+            };
+            let (first, second) = (inv.args.str("level_or_group"), inv.args.str("level"));
+            let (driver, level) = match (first, second) {
+                (None, _) => {
+                    for line in preset_status(&book, inv.vars) {
+                        inv.log.info(&line);
+                    }
+                    return Ok(());
+                }
+                (Some(level), None) => (OVERALL.to_owned(), level.to_ascii_lowercase()),
+                (Some(group), Some(level)) => {
+                    let group = group.to_ascii_lowercase();
+                    let name = if book.driver(&group).is_some() { group } else { format!("sg.{group}") };
+                    (name, level.to_ascii_lowercase().replace('-', "_"))
+                }
+            };
+            let level = level.replace('-', "_");
+            let applied = book.apply(inv.vars, &driver, &level)?;
+            book.sync(inv.vars);
+            inv.log.info(&format!("{driver} {level}: {}", applied.summary(inv.vars)));
+            Ok(())
+        },
+    );
+}
+
+/// One line per driver: its level, and for a group the members set above the preset.
+pub fn preset_status(book: &PresetBook, tunables: &sf_tunables_bevy::sf_tunables::Tunables) -> Vec<String> {
+    book.drivers
+        .iter()
+        .map(|d| {
+            let level = book.level_of(tunables, &d.name).unwrap_or(tp::CUSTOM);
+            let above: Vec<String> = d
+                .members
+                .iter()
+                .map(|id| tunables.var(*id))
+                .filter(|t| t.set_by() > SetBy::Preset)
+                .map(|t| format!("{} {} ({})", t.name(), t.value(), t.set_by().describe()))
+                .collect();
+            if above.is_empty() { format!("{}: {level}", d.name) } else { format!("{}: {level}; above the preset: {}", d.name, above.join(", ")) }
+        })
+        .collect()
 }
 
 /// The exterior's CW gates: registers their alias copies (env switches apply now), `--off selectgate`
@@ -297,12 +327,13 @@ mod tests {
     fn app(quality: Quality, off: &Off, env: &[(&str, &str)]) -> App {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, sf_tunables_bevy::TunablesPlugin)).insert_resource(sf_tunables_bevy::TunableEnv::from_pairs(env));
-        mw_environment_bevy::render::RenderSettings::new(false, None, true, quality == Quality::Low)
+        mw_environment_bevy::render::RenderSettings::new(false, None, true, quality)
             .expect("settings")
             .with_shadow_cache(false)
             .insert(&mut app);
         register(&mut app);
-        apply(&mut app.world_mut().resource_mut::<Tunables>(), quality, off, None);
+        let book = apply(&mut app.world_mut().resource_mut::<Tunables>(), None, quality, off, None);
+        app.insert_resource(Presets(book));
         app.insert_resource(q::SunShadowQuality::default())
             .init_resource::<SkyRenderOptions>()
             .init_resource::<sf_terrain_bevy::TerrainSettings>()
@@ -392,7 +423,7 @@ mod tests {
             assert_eq!(read_bool("render.bloom"), bloom, "{quality:?} bloom");
             assert!((t.float(t.id("render.bloom.intensity").expect("intensity")) - 0.1).abs() < 1e-6, "{quality:?} bloom intensity");
             let upscaling = t.var(t.id(q::UPSCALING.name()).expect("upscaling")).layer(SetBy::Preset).cloned();
-            let want = mw_environment_bevy::render::default_upscaling(quality == Quality::Low);
+            let want = mw_environment_bevy::render::default_upscaling(quality);
             assert_eq!(upscaling, Some(Value::Str(want.label().to_owned())), "{quality:?} upscaling");
             assert_eq!(w.resource::<sf_sky_bevy::UpscalingSetting>().0, want, "{quality:?} upscaling setting");
             assert_eq!(w.resource::<sf_atmos_bevy::Clouds>().settings.quality.map_per_sample, per_sample, "{quality:?} clouds");
@@ -403,7 +434,8 @@ mod tests {
             let old_parallax = parallax.map(|(layers, steps)| mw_assets::Parallax::new(layers, steps));
             assert_eq!(maps.preset(), old_parallax, "{quality:?} parallax");
             assert_eq!(level_parallax(quality), old_parallax, "{quality:?} level parallax");
-            let start = start_values(&mut app.world_mut().resource_mut::<Tunables>(), &[]);
+            let book = app.world().resource::<Presets>().0.clone();
+            let start = start_values(&mut app.world_mut().resource_mut::<Tunables>(), &book, &[]);
             assert_eq!(start, StartValues { texture_cap: cap, far_handoff_scale: bias, gi }, "{quality:?} start values");
         }
     }
@@ -456,15 +488,15 @@ mod tests {
         let s = w.resource::<sf_surface_bevy::SurfaceSettings>();
         assert!(!s.puddles && !s.shelter);
         let mut t = app.world_mut().resource_mut::<Tunables>();
-        apply(&mut t, Quality::Ultra, &off, Some(1024));
+        let book = apply(&mut t, None, Quality::Ultra, &off, Some(1024));
         let sets = [OverrideSet {
             origin: "--set".into(),
             overrides: vec![sf_tunables_bevy::overrides::Override { name: "far.handoff_scale".into(), value: "1.5".into() }],
         }];
-        let start = start_values(&mut t, &sets);
+        let start = start_values(&mut t, &book, &sets);
         assert_eq!(start, StartValues { texture_cap: Some(1024), far_handoff_scale: 1.5, gi: false });
-        apply(&mut t, Quality::Ultra, &Off::default(), Some(0));
-        assert_eq!(start_values(&mut t, &[]).texture_cap, None, "--texture-cap 0: none");
+        let _ = apply(&mut t, None, Quality::Ultra, &Off::default(), Some(0));
+        assert_eq!(start_values(&mut t, &book, &[]).texture_cap, None, "--texture-cap 0: none");
     }
 
     /// A value set at the console sits above the preset (and `reset` peels back to it).
@@ -522,5 +554,206 @@ mod tests {
         assert_eq!(read(&plain), (false, false, false, false), "off by default");
         console(&mut plain, "render.skin.skip_unchanged", "on");
         assert!(read(&plain).3);
+    }
+
+    /// The old `Quality` table (T5a's `quality_preset_values`, copied as it was): the golden fixture the
+    /// shipped records must equal for Low..Ultra.
+    fn old_table(quality: Quality) -> Vec<(&'static str, Value)> {
+        use mw_environment_bevy::quality_tunables as qt;
+        let high = matches!(quality, Quality::High | Quality::Ultra);
+        let low = quality == Quality::Low;
+        let (lamps, face): (i64, i64) = match quality {
+            Quality::Low => (0, 512),
+            Quality::Medium => (6, 512),
+            Quality::High => (8, 512),
+            _ => (12, 1024),
+        };
+        let ssao = match quality {
+            Quality::Low => "off",
+            Quality::Medium => "low",
+            Quality::High => "medium",
+            _ => "high",
+        };
+        let (cascades, distance, lambda, overlap): (i64, f64, f64, f64) = match quality {
+            Quality::Low => (3, 160.0, 0.82, 0.15),
+            Quality::Medium => (3, 190.0, 0.80, 0.15),
+            Quality::High => (3, 205.0, 0.80, 0.16),
+            _ => (4, 280.0, 0.85, 0.2),
+        };
+        let (bias, min_pixels, min_draw_distance): (f64, f64, f64) = match quality {
+            Quality::Low => (0.75, 4.0, 16.0),
+            Quality::Medium => (0.875, 3.0, 20.0),
+            Quality::High => (1.0, 2.0, 24.0),
+            _ => (1.0, 1.0, 32.0),
+        };
+        let (water, texture_cap, parallax_layers, relief_steps): (&str, i64, i64, i64) = match quality {
+            Quality::Low => ("low", 512, 0, 0),
+            Quality::Medium => ("medium", 1024, 16, 0),
+            Quality::High => ("high", 2048, 32, 5),
+            _ => ("ultra", 0, 64, 8),
+        };
+        // `default_upscaling(low)` as it was: MSAA on Low, else DLSS auto in DLSS builds, TAA without.
+        let upscaling = match (low, mw_environment_bevy::render::capabilities().contains(&"dlss")) {
+            (true, _) => "off",
+            (false, true) => "auto",
+            (false, false) => "taa",
+        };
+        let text = |s: &str| Value::Str(s.to_owned());
+        vec![
+            (sf_sky_bevy::LAMP_COUNT.name(), Value::Int(lamps)),
+            (sf_sky_bevy::LAMP_MAP_SIZE.name(), Value::Int(face)),
+            (sf_sky_bevy::LAMP_CONTACT.name(), Value::Bool(high)),
+            (q::CONTACT.name(), Value::Bool(!low)),
+            (q::CONTACT_STEPS.name(), Value::Int(if high { 16 } else { 8 })),
+            (q::CONTACT_THICKNESS.name(), Value::Float(0.1)),
+            (q::CONTACT_LENGTH.name(), Value::Float(0.3)),
+            (q::SSAO.name(), text(ssao)),
+            (q::SUN_CASCADES.name(), Value::Int(cascades)),
+            (q::SUN_DISTANCE.name(), Value::Float(distance)),
+            (q::SUN_LAMBDA.name(), Value::Float(lambda)),
+            (q::SUN_OVERLAP.name(), Value::Float(overlap)),
+            (q::SUN_SOFT.name(), Value::Bool(high)),
+            (q::SUN_SOFT_SIZE.name(), Value::Float(10.0)),
+            (q::FILTER.name(), text(if low { "hardware" } else { "auto" })),
+            (sf_world::lod_screen::LOD_BIAS.name(), Value::Float(bias)),
+            (sf_world::lod_screen::SIZE_CULL_MIN_PX.name(), Value::Float(min_pixels)),
+            (sf_world::lod_screen::SIZE_CULL_MIN_DISTANCE.name(), Value::Float(min_draw_distance)),
+            (sf_lod_bevy::FAR_HANDOFF_SCALE.name(), Value::Float(bias)),
+            (qt::BLOOM.name(), Value::Bool(!low)),
+            (qt::BLOOM_INTENSITY.name(), Value::Float(0.1)),
+            (q::UPSCALING.name(), text(upscaling)),
+            (CLOUD_MAP_PER_SAMPLE.name(), Value::Bool(high)),
+            (qt::WATER_QUALITY.name(), text(water)),
+            (PUDDLES.name(), Value::Bool(!low)),
+            (SHELTER.name(), Value::Bool(!low)),
+            (TEXTURE_MAX_SIZE.name(), Value::Int(texture_cap)),
+            (mw_assets::PARALLAX_LAYERS.name(), Value::Int(parallax_layers)),
+            (mw_assets::PARALLAX_RELIEF_STEPS.name(), Value::Int(relief_steps)),
+            (GI_PROBES.name(), Value::Bool(high)),
+        ]
+    }
+
+    /// Golden (T5b, presets as data): each of Low..Ultra in the builtin mod's records, flattened
+    /// through `sf.graphics_preset` and its groups, equals the old table key for key (no more, no less).
+    #[test]
+    fn shipped_records_equal_the_old_table() {
+        let app = app(Quality::High, &Off::default(), &[]);
+        let t = app.world().resource::<Tunables>();
+        for quality in [Quality::Low, Quality::Medium, Quality::High, Quality::Ultra] {
+            let records = level_values(quality);
+            let old = old_table(quality);
+            assert_eq!(records.len(), old.len(), "{quality:?}: {:?}", records.keys().collect::<Vec<_>>());
+            for (name, want) in old {
+                let got = records.get(name).unwrap_or_else(|| panic!("{quality:?}: {name} missing"));
+                let parsed = t.var(t.id(name).expect(name)).kind().parse(&got.value.text()).expect(name);
+                assert!(tp::values_match(&parsed, &want), "{quality:?} {name}: records {parsed}, old {want}");
+            }
+        }
+    }
+
+    /// Extremely low: every group has it, writing the same keys as its other levels, each value in its
+    /// def's range (the book refuses one that isn't); every key belongs to exactly one group, the one
+    /// its def names; `default_upscaling` agrees with `sg.post` on every level.
+    #[test]
+    fn extremely_low_is_complete_valid_and_groups_match_their_defs() {
+        let app = app(Quality::High, &Off::default(), &[]);
+        let t = app.world().resource::<Tunables>();
+        let (book, issues) = PresetBook::build(t, &merged(mw_environment_bevy::shadow_tunables::base_records()));
+        assert!(issues.is_empty(), "{issues:#?}");
+        assert_eq!(book.drivers.len(), 9, "the overall driver and eight groups");
+        for d in &book.drivers {
+            let names = |level: &str| -> Vec<String> {
+                let mut n: Vec<String> =
+                    d.level(level).unwrap_or_else(|| panic!("{} {level}", d.name)).values.iter().map(|m| m.name.clone()).collect();
+                n.sort();
+                n
+            };
+            for level in tp::LEVELS {
+                assert_eq!(names(level), names("ultra"), "{} {level}: same keys", d.name);
+            }
+            for m in d.level("extremely_low").expect("level").values.iter().filter(|m| !m.driver) {
+                assert_eq!(t.var(m.id).meta().group.map(sf_tunables_bevy::sf_tunables::Group::driver), Some(d.name.as_str()), "{}: its def's group", m.name);
+                assert!(!m.source.is_empty(), "{} has a source", m.name);
+            }
+        }
+        let xlow = level_values(Quality::ExtremelyLow);
+        assert_eq!(xlow.len(), old_table(Quality::Low).len(), "every key set");
+        let get = |name: &str| xlow[name].value.text();
+        assert_eq!(
+            (get("shadow.lamp.count"), get("shadow.sun.cascades"), get("lod.bias"), get("texture.max_size_px")),
+            ("0".to_owned(), "1".to_owned(), "0.5".to_owned(), "256".to_owned())
+        );
+        for quality in Quality::ALL {
+            let records = level_values(quality)[q::UPSCALING.name()].value.text();
+            assert_eq!(records, mw_environment_bevy::render::default_upscaling(quality).label(), "{quality:?} upscaling");
+        }
+    }
+
+    /// Extremely low starts as its records say, read where the game consumes them.
+    #[test]
+    #[allow(clippy::float_cmp)] // exact: values from the records
+    fn extremely_low_reaches_the_consumers() {
+        let app = app(Quality::ExtremelyLow, &Off::default(), &[]);
+        let w = app.world();
+        let b = w.resource::<sf_sky_bevy::PointShadowBudget>();
+        assert_eq!((b.max, b.map_size, b.contact_shadows), (0, 256, false));
+        assert_eq!(w.resource::<q::SunShadowQuality>().splits.num_cascades, 1);
+        assert_eq!(w.resource::<SkyRenderOptions>().cascades.bounds.len(), 1);
+        let lod = w.resource::<sf_world_bevy::Streaming>().config().lod;
+        assert_eq!((lod.bias, lod.min_pixels, lod.min_draw_distance), (0.5, 8.0, 12.0));
+        let t = w.resource::<Tunables>();
+        assert_eq!(t.text(t.id(tp::GRAPHICS_PRESET.name()).expect("driver")), "extremely_low");
+        assert_eq!(t.text(t.id("sg.water").expect("driver")), "extremely_low", "the level asked for, though Low's water is the same");
+    }
+
+    /// T5b live switch: the overall driver from the console reaches the consumers the next update;
+    /// a hand change reads custom (overall and its group), its reset goes back; a `Restart` key is
+    /// stored (and the summary says so); the `Mod` layer stays under the preset.
+    #[test]
+    #[allow(clippy::float_cmp)] // exact: values from the records
+    fn the_overall_preset_switches_live() {
+        let mut app = app(Quality::Low, &Off::default(), &[]);
+        let driver = |app: &App, name: &str| {
+            let t = app.world().resource::<Tunables>();
+            t.text(t.id(name).expect(name)).to_owned()
+        };
+        assert_eq!(driver(&app, "sf.graphics_preset"), "low");
+        console(&mut app, "sf.graphics_preset", "ultra");
+        let w = app.world();
+        assert_eq!(w.resource::<sf_sky_bevy::PointShadowBudget>().max, 12);
+        assert_eq!(w.resource::<SkyRenderOptions>().cascades.bounds.len(), 4);
+        assert_eq!(*w.resource::<mw_environment_bevy::quality_tunables::WaterQuality>(), mw_environment_bevy::quality_tunables::WaterQuality::Ultra);
+        assert!(w.resource::<sf_surface_bevy::SurfaceSettings>().puddles);
+        let b = w.resource::<sf_sky_bevy::PointShadowBudget>();
+        assert_eq!((b.fade_start, b.fade_end), (35.0, 45.0), "the Mod layer stays");
+        assert_eq!(driver(&app, "sf.graphics_preset"), "ultra");
+        let t = w.resource::<Tunables>();
+        let cap = t.var(t.id(TEXTURE_MAX_SIZE.name()).expect("cap"));
+        assert_eq!((cap.value(), cap.set_by()), (&Value::Int(0), SetBy::Preset), "stored; read at the next start");
+        let applied = app.world_mut().resource_mut::<Messages<sf_tunables_bevy::PresetApplied>>().drain().last().expect("applied");
+        assert!(applied.summary.as_ref().is_ok_and(|s| s.contains("applies on restart: ") && s.contains("texture.max_size_px")), "{applied:?}");
+        console(&mut app, "shadow.lamp.count", "2");
+        assert_eq!((driver(&app, "sg.shadows"), driver(&app, "sf.graphics_preset"), driver(&app, "sg.water")), ("custom".into(), "custom".into(), "ultra".into()));
+        let status = preset_status(&app.world().resource::<Presets>().0, app.world().resource::<Tunables>());
+        assert!(status.iter().any(|l| l == "sg.shadows: custom; above the preset: shadow.lamp.count 2 (console)"), "{status:#?}");
+        app.world_mut().write_message(sf_tunables_bevy::PeelTunable { name: "shadow.lamp.count".into(), layer: Some(SetBy::Console) });
+        app.update();
+        assert_eq!(driver(&app, "sf.graphics_preset"), "ultra", "back to the level");
+        console(&mut app, "sg.shadows", "extremely_low");
+        assert_eq!(app.world().resource::<sf_sky_bevy::PointShadowBudget>().max, 0);
+        assert_eq!((driver(&app, "sg.shadows"), driver(&app, "sf.graphics_preset")), ("extremely_low".into(), "custom".into()));
+    }
+
+    /// `--set sf.graphics_preset=ultra` is a start level: the `Restart` keys start with Ultra's values.
+    #[test]
+    fn a_preset_set_on_the_command_line_sets_the_start_values() {
+        let mut app = app(Quality::Low, &Off::default(), &[]);
+        let book = app.world().resource::<Presets>().0.clone();
+        let sets = [OverrideSet {
+            origin: "--set".into(),
+            overrides: vec![sf_tunables_bevy::overrides::Override { name: "sf.graphics_preset".into(), value: "ultra".into() }],
+        }];
+        let start = start_values(&mut app.world_mut().resource_mut::<Tunables>(), &book, &sets);
+        assert_eq!(start, StartValues { texture_cap: None, far_handoff_scale: 1.0, gi: true });
     }
 }

@@ -1,9 +1,9 @@
 {
   "about": "Per-crate ratchet of tools/tunables-census.mjs --check: a crate's T count may only go down. Rewrite with --update-baseline only when counts went down (a migration slice).",
   "totals": {
-    "rows": 2180,
-    "T": 1241,
-    "C": 492,
+    "rows": 2179,
+    "T": 1239,
+    "C": 493,
     "?": 447
   },
   "crates": {
@@ -220,24 +220,22 @@
       ]
     },
     "mw_environment_bevy": {
-      "T": 6,
+      "T": 5,
       "?": 2,
       "C": 1,
       "tunables": [
         "src/night_sky.rs DEG_PER_SIZE",
         "src/render.rs POINT_SHADOWS_DEFAULT",
         "src/render.rs POINT_SHADOW_CACHE",
-        "src/shadow_tunables.rs LAMP_FADE_M",
         "src/weather.rs LIVE_HOLD_HOURS",
         "src/weather.rs RASTER_MARGIN"
       ]
     },
     "mw_exterior_bevy": {
-      "T": 8,
+      "T": 7,
       "?": 1,
       "C": 12,
       "tunables": [
-        "src/exterior.rs BLOOM_INTENSITY",
         "src/exterior.rs SUN_DEPTH_BIAS",
         "src/exterior.rs SUN_NORMAL_BIAS",
         "src/gi_volume.rs INTERIOR_AMBIENT_SCALE",
@@ -1709,7 +1707,7 @@
     "sf_tunables": {
       "T": 0,
       "?": 6,
-      "C": 0,
+      "C": 1,
       "tunables": []
     },
     "sf_tunables_bevy": {

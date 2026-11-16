@@ -102,7 +102,7 @@ the cell the old way (rare, correct); phase 2 would rebuild in the background.
   `NearCombineLoader` (`.sfnear`, meshes labeled `bucket<b>/lod<k>/<i>`, via `sf_model_bevy::static_model_asset`)
   and installs the resource. A near load's fetch waits for the precombine (loaded or failed); members are
   validated (all fetched, none moved or removed by the overlay, else fallback) and their models never load.
-  The buckets spawn as one spawn item (after the proxy item rule) through `spawn_template_ranges`; members skip
+  The buckets spawn as one spawn item (after the proxy item rule) through `lod_live::spawn_levels`; members skip
   their spawner (activation, so colliders, is unchanged). Only with a far field (its near level holds every
   placement). The level group holds the asset handle while resident.
 - **Ranges.** A bucket ends at its farthest-reaching member: at the handoff (the center is the L1 node's X/Z,

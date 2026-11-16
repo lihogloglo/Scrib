@@ -15,12 +15,13 @@ the main camera and add passes in its `Core3d` schedule (`sf_water_bevy/src/rend
 
 **Views per frame** (what `sf_diag::views::ViewKind` counts: `Main`, `Cascade`, `LampFace`, `Other`, `sf_diag/src/views.rs:5-17`):
 - `main`: the camera.
-- `cascade<i>`: sun cascades, 3 on Low/Medium/High (max distance 160/190/205 m), 4 on Ultra (280 m)
-  (`exterior.rs:1575-1580`; built by `sf_sky_bevy::CascadeSplits`). The moon is a second directional light (`MoonLight`)
+- `cascade<i>`: sun cascades per `sg.shadows` level: 1 on Extremely low (120 m), 3 on Low/Medium/High (160/190/205 m), 4 on
+  Ultra (280 m), live (`shadow.sun.cascades`; records `mw_mods/data/records/graphics_presets.ron`, tunables T5b)
+  (built by `sf_sky_bevy::CascadeSplits`). The moon is a second directional light (`MoonLight`)
   that spawns with shadows off and has them switched per frame by `apply_lights` (`sf_sky_bevy/src/lib.rs:470-476, 682`), so a night frame can have moon cascades.
 - `lamp.face<f>` / `lamp.spot`: point-light cube faces, six per shadowed lamp. `PointShadowBudget` (`sf_sky_bevy/src/shadow_budget.rs:51`)
-  caps shadowed lamps (default 8 at 512 px, fade 35-45 m, `mw_environment_bevy/src/render.rs:28-33`; per preset
-  `quality.point_shadows()`, `exterior.rs:344`). Face caching is **vendored `bevy_pbr`'s** `skip_unchanged_shadow_views`
+  caps shadowed lamps (default 8 at 512 px; fade 35-45 m is the builtin mod's `sf.tunable` record `shadow.lamp.fade_m`; per preset
+  level `sg.shadows`: 0/0/6/8/12 from Extremely low to Ultra). Face caching is **vendored `bevy_pbr`'s** `skip_unchanged_shadow_views`
   (`vendor/bevy_pbr/src/lib.rs:410`), not `sf_shadow_cache_bevy`: the game compiles that plugin out with
   `POINT_SHADOW_CACHE = false` (`render.rs:37, 185`), so its capture/restore views and `ShadowCacheSystems` do not run in the game.
 - `other` (extra depth views drawn by Bevy's shadow pass through `sf_sky_bevy::sun_view`, `sun_view.rs:1-30`, only on redraw
