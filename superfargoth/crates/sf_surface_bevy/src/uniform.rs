@@ -28,6 +28,8 @@ pub const FLAG_WET: u32 = 1;
 pub const FLAG_PUDDLE: u32 = 2;
 pub const FLAG_SNOW: u32 = 4;
 pub const FLAG_ASH: u32 = 8;
+/// SW-5c: the raised cover is on (with a snow or ash channel; [`crate::SurfaceSettings::flags`]).
+pub const FLAG_RAISE: u32 = 16;
 
 /// The CPU mirror of the uniform (main world), written by the plugin's systems and uploaded
 /// when it changes.

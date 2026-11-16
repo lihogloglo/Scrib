@@ -106,9 +106,10 @@ fn uniform_matches_the_wgsl_struct() {
             konst("FLAG_WET"),
             konst("FLAG_PUDDLE"),
             konst("FLAG_SNOW"),
-            konst("FLAG_ASH")
+            konst("FLAG_ASH"),
+            konst("FLAG_RAISE")
         ],
-        [FLAG_WET, FLAG_PUDDLE, FLAG_SNOW, FLAG_ASH]
+        [FLAG_WET, FLAG_PUDDLE, FLAG_SNOW, FLAG_ASH, FLAG_RAISE]
     );
     for v in DebugView::ALL {
         assert_eq!(
@@ -120,6 +121,26 @@ fn uniform_matches_the_wgsl_struct() {
         SurfaceUniform::flags_of([0, 3, 0, 1]),
         FLAG_PUDDLE | FLAG_ASH
     );
+}
+
+/// SW-5c `raise` A/B: the uniform's flags carry `FLAG_RAISE` exactly while a cover channel is in
+/// the window, the cover is on and the raise is on; the raise's amounts (the only input of the
+/// terrain displacement, `surface_raise_amounts` / `surface_raise_on`) read that flag.
+#[test]
+fn raise_switch_sets_the_raise_flag() {
+    let on = SurfaceSettings::default();
+    let off = SurfaceSettings { raise: false, ..SurfaceSettings::default() };
+    let snow = [5, 0, 200, 0];
+    assert_eq!(on.flags(snow), FLAG_WET | FLAG_SNOW | FLAG_RAISE);
+    assert_eq!(off.flags(snow), FLAG_WET | FLAG_SNOW, "flat cover: the look stays");
+    assert_eq!(on.flags([0, 0, 0, 9]), FLAG_ASH | FLAG_RAISE);
+    assert_eq!(on.flags([5, 1, 0, 0]), FLAG_WET | FLAG_PUDDLE, "no cover, no raise");
+    assert_eq!(SurfaceSettings { cover: false, ..on }.flags(snow), FLAG_WET);
+    assert_eq!(SurfaceSettings { layer: false, ..on }.flags(snow), 0);
+    let layer = include_str!("layer.wesl");
+    let amounts = layer.split("fn surface_raise_amounts(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    assert!(amounts.contains("if (flags & FLAG_RAISE) == 0u {\n        return vec2(0.0);"), "{amounts}");
+    assert!(include_str!("view.wesl").contains("return (surface_uniform.misc.x & FLAG_RAISE) != 0u;"));
 }
 
 fn book() -> WeatherBook {
@@ -385,7 +406,7 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
     app.update();
     assert_eq!((uniform(&app).flags, uniform(&app).shelter.x), (FLAG_WET, 1.0));
     let set = |app: &mut App, layer, wet, shelter| {
-        app.world_mut().insert_resource(SurfaceSettings { layer, wet, puddles: true, shelter, cover: true, trails: true });
+        app.world_mut().insert_resource(SurfaceSettings { layer, wet, puddles: true, shelter, cover: true, trails: true, raise: true });
         // A map turned on is taken in the frame after its redraw.
         app.update();
         app.update();

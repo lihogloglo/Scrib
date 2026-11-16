@@ -146,6 +146,49 @@ Order inside: (1) early-out when `flags == 0` or the cell is all zero; (2) expos
 (3)-(5) as extra height and gradient. It writes only `PbrInput` fields: `material.base_color`,
 `perceptual_roughness`, `reflectance` (water F0 0.02 ≈ reflectance 0.35), `N`, `diffuse_occlusion`.
 
+**SW-5b as built (2026-11-16): accumulation on the undisplaced ground.** The amounts are view-independent, as in
+shipped snow (top-down occlusion map at fixed world texels + the base geometry normal; displacement and shading
+only present the amount). `SurfaceInput.ground_n` is the undisplaced geometric normal: terrain passes its normal
+before `raised_normal` (the W6b raise tilt, camera-faded 18-43 m), everything else its `world_normal` (no raise).
+The cover slope (`surface_cover_up` = ground up + `COVER_SHADING_SHARE` 0.25 × the shading normal's Y offset from
+the lit normal, i.e. its detail only), both exposure lookups (offset + slope rise term), the wet facing and the
+terrain's puddle gate read it; `pbr.world_normal` stays the lighting normal. Before, the raise's ~40° walls at a
+canopy's shelter edge lost cover slope and slid the exposure lookup under the canopy as the camera neared (owner:
+snow under a tree sinks). Tests: `sf_surface::layer` `cover_amount_ignores_the_raise` (bit-equal amount at raise
+weight 0 and 1), `shader_tests::terrain_accumulates_on_the_undisplaced_ground` (linked main pass). Open (follow-up):
+raise tops prefiltered at the LOD's vertex spacing (`t.texel_m`), finer near the camera, which lowers the mean raise
+where amount < 1 (diagnosis cause 2); the terrain's layer blend (`steep`) still reads the raised normal (look only).
+
+**SW-5c as built (2026-11-16): the raise is one world-space field on every LOD.** Remaining cause after SW-5/5b: the
+raise only existed on LOD ≤ 0 and was faded by camera distance (1 to 18 m, 0 at 43 m), so open snow rose 0 -> 0.45 m
+around a sheltered patch that stayed flat as the camera came in (the patch "sank"), and its tops were prefiltered at
+the vertex spacing of the current LOD/morph (cause 2). Industry standard: displacement LOD changes mesh density,
+never the displaced value (UE5 landscape / Nanite displacement, CDLOD morphing between LODs of one height field;
+Arkham / ROTTR snow: the macro cover height is view-independent, only detail is LOD'd). Now: `terrain_raise`
+(`common.wesl`) displaces every LOD ≤ `RAISE_MAX_LOD` 4 by the same field: tops (`layer_blend_top` and the cover
+look in `surface_raise_tops`) prefiltered at one world scale `RAISE_TEXEL_M` 0.5 m (LOD 0 spacing), the amount's
+ground normal from the finest resident normal level (`terrain_normal(xz, 0)`), never the LOD's; coarser vertices
+morph onto their even neighbours like the base height, so seams close and nothing pops. **Fade decision:** a fade
+is kept only where the raise is sub-pixel: 1 to 384 m (`RAISE_FADE_START` 8 × LOD 0 range), smoothstep to 0 at
+576 m (`RAISE_FADE_END` 12×; 0.45 m spans ~1.5 px at 1440p with a ~60° vertical FOV at 384 m, ~1 px at 576 m;
+slope 0.35 %), weighting every ground point alike (open and sheltered, so no relative pit); it ends inside LOD 4's
+range (768 m, coarser nodes are never displaced; node bounds grow by `raise_m` on LOD ≤ 4) and before the splat
+range fades the layers' high point (`layer_blend_top`, from 0.7 × 1000 m). Why not to the horizon: the splat fade
+would change the tops past 700 m, and LOD 5+ (16 m+ spacing) cannot hold a 0.45 m step; past 576 m it is invisible
+anyway. CPU twin `sf_terrain::cdlod` (`raise_weight`, `vertex_raise`, constants checked against the WGSL). Cost:
+vertex work only; the raise (~15-20 fetches: cells, shelter gathers, splat + 4 layer taps, cover look, drift, two
+ring taps, one normal) now also runs on LOD 1-4 vertices, about as many again as LOD -2..0 (CDLOD keeps roughly the
+same visible vertex count per level, ~7-8k): ~+60k vertex invocations over main + prepass, estimated < 0.05 ms on
+the 4060 laptop; zero when no snow or ash is in the window (`FLAG_RAISE` gates it before any fetch) and past 576 m.
+**A/B:** `--off raise` / live `flip raise` (F1 help, "Snow and ash" line): `SurfaceSettings::raise` clears
+`FLAG_RAISE` (set with a snow or ash channel, `SurfaceSettings::flags`), so the cover lies flat with the same look
+and amounts. No bake or format change. Known remaining camera dependence: the shelter map covers ±64 m around the
+camera and reads open beyond ("Outside the 64 m radius" above), so a tree's sheltered patch now shows raised past ~64 m and opens when it
+enters the map; a far shelter estimate (cascade or edge fade) is a separate slice. Tests:
+`cdlod::raise_is_the_same_on_every_lod_and_distance` (bit-equal at 5/30/100 m and LOD -2..2),
+`raise_fade_reaches_zero_inside_the_displaced_levels`, `sf_terrain_bevy` `raise_constants_match_the_twin`,
+`sf_surface_bevy` `raise_switch_sets_the_raise_flag`, console `raise_flips_the_raised_cover_alone`.
+
 **Hook sites.**
 - **`StandardMaterial` (NIF statics, characters, held items, fades):** own patch "SW" in
   `superfargoth/vendor/bevy_pbr`, the GI patch's shape: a `SurfaceWeatherView` render-world component on the view
@@ -178,7 +221,7 @@ lips flatten with it; mud has no refill. Visual surface height on deformable ter
 `cover × max_depth_m` + R + G: the snow layer is raised geometry and feet, which the collider keeps on the
 ground, appear sunk in it; the stamp carves exactly to the ground (RDR2-style).
 
-**Geometry.** Vertex displacement on CDLOD LOD ≤ 0 (0.5 / 0.25 / 0.125 m spacing), weighted by a smooth world-distance fade (1 to 18 m, 0 at 43 m, inside LOD 0; the height is coverage × amount × depth, coverage the shading's height blend);
+**Geometry.** Vertex displacement on CDLOD LOD ≤ 4 (SW-5c; was LOD ≤ 0), one world-space field prefiltered at 0.5 m on every LOD, weighted by a smooth world-distance fade only where it is sub-pixel (1 to 384 m, 0 at 576 m, inside LOD 4; was 18-43 m; the height is coverage × amount × depth, coverage the shading's height blend);
 the shading tilts by the cover slope times the fade, never by the fade's ramp. CDLOD node bounds grow by `max_depth_m` (culling and the occlusion-culling
 prepass stay conservative). Vertex normals from central differences of the ring + cover height.
 **Fragment:** POM / relief mapping on the composite height (4-8 linear steps + 2 binary refinements, fade

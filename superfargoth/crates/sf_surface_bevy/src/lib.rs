@@ -68,7 +68,7 @@ pub use kickup::{KickupSettings, KickupStats};
 pub use shelter::{CANOPY_SUBVIEW, NoSurfaceShelter, SHELTER_SUBVIEW, ShelterFoliage};
 pub use sf_surface;
 pub use trail::{TrailFrame, TrailStamp};
-pub use uniform::{FLAG_ASH, FLAG_PUDDLE, FLAG_SNOW, FLAG_WET, SurfaceUniform, U_SLOTS};
+pub use uniform::{FLAG_ASH, FLAG_PUDDLE, FLAG_RAISE, FLAG_SNOW, FLAG_WET, SurfaceUniform, U_SLOTS};
 
 /// Marks the camera that gets surface weather (one exterior camera; the game inserts and
 /// removes it as the camera changes worldspace).
@@ -97,6 +97,9 @@ pub struct SurfaceSettings {
     pub cover: bool,
     /// `--off trails`: prints in snow and ash (W6; no stamps, no ring pass, the cover uncut).
     pub trails: bool,
+    /// `--off raise`: the raised cover (W6b displacement; SW-5c A/B): off, snow and ash lie flat
+    /// (shading only), on the same amounts and look.
+    pub raise: bool,
 }
 
 impl Default for SurfaceSettings {
@@ -108,6 +111,7 @@ impl Default for SurfaceSettings {
             shelter: true,
             cover: true,
             trails: true,
+            raise: true,
         }
     }
 }
@@ -129,6 +133,14 @@ impl SurfaceSettings {
             mask &= !(FLAG_SNOW | FLAG_ASH);
         }
         mask
+    }
+
+    /// The uniform's layer flags for a cell window with channel maxima `max` (R wet, G puddle, B
+    /// snow, A ash): the channels present that these settings let through, plus [`FLAG_RAISE`]
+    /// while a cover channel is and the raise is on (SW-5c).
+    pub fn flags(self, max: [u8; 4]) -> u32 {
+        let f = SurfaceUniform::flags_of(max) & self.flag_mask();
+        if self.raise && f & (FLAG_SNOW | FLAG_ASH) != 0 { f | FLAG_RAISE } else { f }
     }
 }
 

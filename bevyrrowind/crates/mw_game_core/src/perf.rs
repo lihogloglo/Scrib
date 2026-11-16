@@ -186,6 +186,9 @@ pub enum Part {
     Trails,
     /// Kick-up in snow and ash (surface-weather.md W7): off, feet throw no puffs (an A/B).
     Kickup,
+    /// The raised cover (surface-weather.md W6b, SW-5c): off, snow and ash lie flat (shading only;
+    /// an A/B, live as the `raise` switch).
+    Raise,
     /// The static scene (superfargoth scene-runtime-plan.md §8): with `--scene`, near statics draw from
     /// the baked cell tables (`sf_scene_bevy`) instead of the precombine; off, the precombine draws
     /// them again (an A/B).
@@ -197,7 +200,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 76] = [
+    const ALL: [(&'static str, Part); 77] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -273,6 +276,7 @@ impl Part {
         ("cover", Part::Cover),
         ("trails", Part::Trails),
         ("kickup", Part::Kickup),
+        ("raise", Part::Raise),
         ("scene", Part::Scene),
         ("shiftrebase", Part::ShiftRebase),
     ];
@@ -350,6 +354,10 @@ mod tests {
         let shore = Off::from_flags(&["shorenormals".into()]).expect("known");
         assert!(shore.has(Part::ShoreNormals) && !shore.has(Part::WaterSsr));
         assert_eq!(shore.label(), "shorenormals");
+        // SW-5c: `--off raise` leaves the raise alone off, not the cover or its trails.
+        let raise = Off::from_flags(&["raise".into()]).expect("known");
+        assert!(raise.has(Part::Raise) && !raise.has(Part::Cover) && !raise.has(Part::Trails));
+        assert_eq!(raise.label(), "raise");
         let waves = Off::from_flags(&["shorewaves".into()]).expect("known");
         assert!(waves.has(Part::ShoreWaves) && !waves.has(Part::ShoreNormals));
         assert_eq!(waves.label(), "shorewaves");

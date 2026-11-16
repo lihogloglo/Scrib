@@ -71,6 +71,8 @@ const FLAG_WET: u32 = 1u;
 const FLAG_PUDDLE: u32 = 2u;
 const FLAG_SNOW: u32 = 4u;
 const FLAG_ASH: u32 = 8u;
+// SW-5c: the raised cover is on (`SurfaceSettings::raise`; set with a snow or ash channel).
+const FLAG_RAISE: u32 = 16u;
 
 const DEBUG_OFF: u32 = 0u;
 const DEBUG_EXPOSURE: u32 = 1u;
@@ -146,11 +148,12 @@ const RIPPLE_SCALE_0: f32 = 1.0;
 const RIPPLE_SCALE_1: f32 = 1.25;
 const RIPPLE_SCALE_2: f32 = 0.8;
 const RIPPLE_SCALE_3: f32 = 0.625;
-/// Cover (W5; `sf_surface::layer` documents each): slope ramp on the shading normal's Y, the
+/// Cover (W5; `sf_surface::layer` documents each): slope ramp and the shading detail's share in it, the
 /// height blend's soft edge, the cover texture's share of the compared height, drift swing and
 /// tile (m), cover normal strength, ash F0 (snow takes ice's, WATER_REFLECTANCE).
 const COVER_UP_LOW: f32 = 0.45;
 const COVER_UP_HIGH: f32 = 0.8;
+const COVER_SHADING_SHARE: f32 = 0.25;
 const COVER_EDGE: f32 = 0.08;
 const COVER_HEIGHT_MIX: f32 = 0.5;
 const COVER_DRIFT: f32 = 0.5;
@@ -193,6 +196,11 @@ struct SurfaceInput {
     /// triangle face normal (position derivatives), the terrain's height field; never a
     /// smoothed vertex normal, which reads a ramp as level.
     level_up: f32,
+    /// The undisplaced geometric normal (SW-5b): accumulation (cover slope, sky exposure, wet
+    /// facing) reads it, so the amounts never depend on the camera. Terrain's lighting normal
+    /// (`pbr.world_normal`) carries the distance-faded cover raise; everything else has no
+    /// raise and passes its geometric normal.
+    ground_n: vec3<f32>,
     porosity: f32,
     surface_class: u32,
     /// DYNAMIC: per-character wetness (W8), else 0.
@@ -495,6 +503,15 @@ fn surface_cover_slope(up: f32) -> f32 {
     return smoothstep(COVER_UP_LOW, COVER_UP_HIGH, up);
 }
 
+/// The up the cover slope reads (C1 + SW-5b): the undisplaced ground normal's Y (`ground_up`)
+/// plus `COVER_SHADING_SHARE` of the shading normal's own detail, its Y offset from the lit
+/// geometric normal (`lit_up`; terrain's is tilted by the camera-faded raise). Without detail
+/// it is `ground_up` exactly, whatever the raise; with no raise (`ground_up == lit_up`, statics)
+/// it is `mix(geometric, shading, share)` as before.
+fn surface_cover_up(ground_up: f32, lit_up: f32, shading_up: f32) -> f32 {
+    return ground_up + COVER_SHADING_SHARE * (shading_up - lit_up);
+}
+
 fn surface_cover_amount(cell: f32, up: f32, exposure: f32) -> f32 {
     return cell * surface_cover_slope(up) * exposure;
 }
@@ -671,7 +688,8 @@ fn surface_cover_raise(amount: f32, top: f32, d: f32, v: vec2<f32>, ring: f32) -
 
 /// The cover amounts over a ground point `p` (render space, ground normal `n`) for the raise
 /// (W6b): x snow, y ash, each its cell × slope × exposure (0 where the channel is off or has
-/// no look). The fragment's amount uses the shading normal; this the ground's.
+/// no look, and both 0 while the raise is off: `FLAG_RAISE`, SW-5c's `raise` A/B). The
+/// fragment's amount uses the shading normal; this the ground's.
 fn surface_raise_amounts(
     u: SurfaceUniform,
     cells: texture_2d<f32>,
@@ -683,6 +701,9 @@ fn surface_raise_amounts(
     n: vec3<f32>,
 ) -> vec2<f32> {
     let flags = u.misc.x;
+    if (flags & FLAG_RAISE) == 0u {
+        return vec2(0.0);
+    }
     let snow_on = (flags & FLAG_SNOW) != 0u && u.snow_layer.x > 0.0 && u.snow_layer.y > 0.0;
     let ash_on = (flags & FLAG_ASH) != 0u && u.ash_layer.x > 0.0 && u.ash_layer.y > 0.0;
     if !snow_on && !ash_on {
@@ -701,8 +722,8 @@ fn surface_raise_amounts(
 /// at render XZ `xz` with `amounts` (`surface_raise_amounts`) and the surface's high point `top`
 /// (0..1 on the shading's `SurfaceInput.height` scale: terrain `layer_blend_top`, each layer's
 /// p90): the shading's compared height (`surface_cover_height`) of that high point, the look
-/// prefiltered to `texel_m` (the vertex spacing) and the drift patches. 1 where a channel has no
-/// amount (never buried).
+/// prefiltered to `texel_m` (terrain: one fixed world scale, `RAISE_TEXEL_M`, never the vertex
+/// spacing: SW-5c) and the drift patches. 1 where a channel has no amount (never buried).
 fn surface_raise_tops(
     u: SurfaceUniform,
     noise: texture_2d<f32>,
@@ -840,7 +861,7 @@ fn apply_surface_layer(
         let shade = 0.45 + 0.55 * sqrt(saturate(luma * 2.0));
         var tint = vec3(0.5);
         if debug == DEBUG_EXPOSURE {
-            let e = surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, (*pbr).world_normal);
+            let e = surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, s.ground_n);
             // Sheltered blue, open sky warm yellow; detail kept through the albedo's luminance.
             tint = mix(vec3(0.05, 0.2, 1.0), vec3(1.0, 0.8, 0.15), e);
         } else if debug == DEBUG_CELLS {
@@ -883,6 +904,7 @@ fn apply_surface_layer(
     if !want_wet && !want_puddle && !want_snow && !want_ash {
         return;
     }
+    // The lighting normal (terrain: tilted by the cover raise); the amounts read `s.ground_n`.
     let n_geo = (*pbr).world_normal;
     var wet = 0.0;
     var puddle = 0.0;
@@ -894,7 +916,7 @@ fn apply_surface_layer(
     } else {
         let cell = surface_cells_at(cells, samp, u, s.world_pos);
         if want_wet && cell.r > 0.0 {
-            wet = cell.r * surface_facing_wet(noise, samp, s.world_pos, n_geo);
+            wet = cell.r * surface_facing_wet(noise, samp, s.world_pos, s.ground_n);
             // Drying leaves patches: low noise dries last.
             let n = textureSampleLevel(noise, samp, s.world_pos.xz / PATCH_TILE_M, 0.0).r;
             wet = smoothstep(n * 0.6, n * 0.6 + 0.4, wet);
@@ -908,8 +930,9 @@ fn apply_surface_layer(
         // Cover lies on faces that look up: the geometric slope, with a little of the
         // shading normal so the tops of bumps still catch it first. The shading normal
         // alone (normal-map bevels, POM walls under COVER_UP_HIGH) left the base
-        // texture's edges bare through full snow (owner 2026-11-15).
-        let up = mix(n_geo.y, (*pbr).N.y, 0.25);
+        // texture's edges bare through full snow (owner 2026-11-15). The slope is the
+        // undisplaced ground's (SW-5b): the raise presents the amount and never feeds it.
+        let up = surface_cover_up(s.ground_n.y, n_geo.y, (*pbr).N.y);
         if want_snow {
             snow = surface_cover_amount(cell.b, up, 1.0);
         }
@@ -918,7 +941,7 @@ fn apply_surface_layer(
         }
         if s.surface_class != CLASS_FAR && (wet > 0.0 || p > 0.0 || snow > 0.0 || ash > 0.0) {
             // Shelter: none under roofs, less (smaller puddles, fewer rings) under leaves.
-            let e = surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, n_geo);
+            let e = surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, s.ground_n);
             wet *= e;
             p *= e;
             rain = u.time.y * e;

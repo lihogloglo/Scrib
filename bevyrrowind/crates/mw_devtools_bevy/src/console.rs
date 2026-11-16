@@ -78,7 +78,7 @@ const TERRAIN_REFLECTANCE_VAR: &str = "terrain.reflectance";
 /// Why a run has no GI (`sf_sky_bevy::GiEnabled` absent).
 const GI_NOT_IN_RUN: &str = "not in this run (--off gi, Low/Medium preset, the ray-traced path, an exterior start or no ray-tracing GPU)";
 
-/// The console, its overlay on backquote, `render.ssao`, `render.contactshadows` and the
+/// The console, its overlay on backquote, the `tex` texture viewer, `render.ssao`, `render.contactshadows` and the
 /// `on`/`off`/`flip` commands.
 pub struct ConsoleWiring;
 
@@ -88,7 +88,8 @@ impl Plugin for ConsoleWiring {
             app.add_plugins(ConsolePlugin);
         }
         // F1 is the A/B help (`live_ab.rs`): backquote only.
-        app.add_plugins(ConsoleOverlayPlugin).insert_resource(ConsoleKeys { toggle: vec![KeyCode::Backquote] });
+        app.add_plugins((ConsoleOverlayPlugin, sf_texview_bevy::TexViewPlugin))
+            .insert_resource(ConsoleKeys { toggle: vec![KeyCode::Backquote] });
         // The open console clears the keys before the player's actions read them (console.md "Overlay").
         app.configure_sets(
             PreUpdate,
@@ -1325,5 +1326,21 @@ mod tests {
         assert!((tuned - 0.2).abs() < 1e-6, "{tuned} {:?}", log(&app));
         run(&mut app, "terrain.reflectance 0");
         assert!(app.world().resource::<TerrainSettings>().reflectance.abs() < 1e-9);
+    }
+
+    /// SW-5c: `raise` flips the raised cover live (`SurfaceSettings::raise`, the uniform's
+    /// `FLAG_RAISE` next frame) and leaves the cover and its trails alone.
+    #[test]
+    fn raise_flips_the_raised_cover_alone() {
+        let mut app = app();
+        run(&mut app, "off raise");
+        assert!(log(&app).iter().any(|l| l.contains("raised snow (displacement): not in this run")), "{:?}", log(&app));
+        app.world_mut().insert_resource(sf_surface_bevy::SurfaceSettings::default());
+        run(&mut app, "off raise");
+        let s = *app.world().resource::<sf_surface_bevy::SurfaceSettings>();
+        assert!(!s.raise && s.cover && s.trails, "{s:?}");
+        assert!(log(&app).iter().any(|l| l == "raised snow (displacement) off"), "{:?}", log(&app));
+        run(&mut app, "flip raise");
+        assert!(app.world().resource::<sf_surface_bevy::SurfaceSettings>().raise);
     }
 }

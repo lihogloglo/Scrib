@@ -445,6 +445,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
                 cover: !off_parts.has(Part::Cover),
                 // W6a: prints in the cover from planted feet (`--off trails`, `surface debug trails`).
                 trails: !off_parts.has(Part::Trails),
+                // SW-5c: the raised cover (`--off raise`, live `flip raise`).
+                raise: !off_parts.has(Part::Raise),
             })
             // W7: puffs kicked up by feet in snow and ash (`--off kickup`).
             .insert_resource(sf_surface_bevy::KickupSettings { on: !off_parts.has(Part::Kickup) })

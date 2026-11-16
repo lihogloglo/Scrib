@@ -44,6 +44,7 @@ use bevy_render::sync_world::{MainEntity, RenderEntity};
 use bevy_render::view::RenderViewLodOrigins;
 use bevy_render::{Extract, ExtractSchedule, RenderApp};
 use bevy_transform::components::GlobalTransform;
+use sf_diag_bevy::texview::{DebugTexture, DebugTextures};
 use sf_sky_bevy::sun_view::{add_sun_view, SunViewRequest, SunViewSource};
 
 use crate::{velocity, Precip};
@@ -175,6 +176,7 @@ pub fn lod_casts(range: Option<&VisibilityRange>, tf: &GlobalTransform, aabb: Op
 
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<PrecipOcclusionConfig>()
+        .init_resource::<DebugTextures>()
         .init_resource::<PrecipOcclusionStats>()
         .add_systems(Startup, setup)
         .add_systems(PreUpdate, update)
@@ -218,8 +220,17 @@ fn map_image(size: u32) -> Image {
     image
 }
 
-pub(crate) fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+pub(crate) fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut textures: ResMut<DebugTextures>) {
     let image = images.add(map_image(MAP_SIZE));
+    // For the `tex` viewer (`sf_texview_bevy`).
+    if let Some(map) = images.get(&image) {
+        textures.register(DebugTexture::image(
+            "precip.occlusion",
+            "precipitation occlusion: depth along the drops' travel from upstream (roofs, trees, hills upwind)",
+            image.clone(),
+            map,
+        ));
+    }
     commands.insert_resource(PrecipOcclusion { image, clip_from_world: Mat4::IDENTITY, params: Vec4::ZERO });
 }
 

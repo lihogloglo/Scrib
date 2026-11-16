@@ -63,10 +63,17 @@ pub mod textures;
 #[cfg(feature = "textures")]
 pub use textures::{TextureGauge, TextureGaugePlugin, TextureStats};
 
+#[cfg(feature = "texview")]
+pub mod texview;
+#[cfg(feature = "texview")]
+pub use texview::{DebugTexture, DebugTextureAppExt, DebugTextures, TexSource};
+
 #[cfg(test)]
 mod tests;
 #[cfg(all(test, feature = "textures"))]
 mod tests_textures;
+#[cfg(all(test, feature = "texview"))]
+mod tests_texview;
 #[cfg(test)]
 mod tests_warmup;
 #[cfg(test)]

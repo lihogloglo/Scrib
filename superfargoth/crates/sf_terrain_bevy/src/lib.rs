@@ -772,12 +772,13 @@ const SHIFT_SETTLE_FRAMES: u8 = 2;
 
 /// Height margins (below, above) a CDLOD node's bounds grow by, meters: the layer detail
 /// displacement either way on the two finest levels (LOD < 0), the raise
-/// ([`TerrainSettings::raise_m`], W6b) upward on the levels it displaces (LOD <= 0: its distance
-/// fade ends inside LOD 0's range); 5 cm of rounding slack everywhere.
+/// ([`TerrainSettings::raise_m`], W6b) upward on the levels it displaces (SW-5c: LOD <=
+/// [`cdlod::RAISE_MAX_LOD`], whose range holds its distance fade's end); 5 cm of rounding slack
+/// everywhere.
 fn node_margins(lod: i8, detail_m: f32, raise_m: f32) -> (f32, f32) {
     const SLACK_M: f32 = 0.05;
     let detail = if lod < 0 { detail_m } else { 0.0 };
-    let raise = if lod <= 0 { raise_m.max(0.0) } else { 0.0 };
+    let raise = if lod <= cdlod::RAISE_MAX_LOD { raise_m.max(0.0) } else { 0.0 };
     (detail + SLACK_M, detail + raise + SLACK_M)
 }
 
@@ -1089,25 +1090,43 @@ mod tests {
         assert_eq!(layer_arrays_line(&arrays), "terrain layers: 0 x 1024², 3.0 MiB (11 levels)");
     }
 
-    /// W6b: the raised cover grows the bounds of the levels it displaces (LOD <= 0), upward only;
-    /// the detail displacement only the two finest.
+    /// W6b/SW-5c: the raised cover grows the bounds of the levels it displaces (LOD <=
+    /// `RAISE_MAX_LOD`), upward only; the detail displacement only the two finest.
     #[test]
-    fn node_bounds_grow_by_the_raise_on_the_finest_levels() {
+    fn node_bounds_grow_by_the_raise_on_the_displaced_levels() {
         let near = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6;
         assert!(near(node_margins(-2, 0.1, 0.45), (0.15, 0.6)));
         assert!(near(node_margins(-1, 0.0, 0.45), (0.05, 0.5)));
         assert!(near(node_margins(0, 0.1, 0.45), (0.05, 0.5)));
-        assert!(near(node_margins(1, 0.1, 0.45), (0.05, 0.05)));
+        assert!(near(node_margins(1, 0.1, 0.45), (0.05, 0.5)));
+        assert!(near(node_margins(cdlod::RAISE_MAX_LOD, 0.1, 0.45), (0.05, 0.5)));
+        assert!(near(node_margins(cdlod::RAISE_MAX_LOD + 1, 0.1, 0.45), (0.05, 0.05)));
         assert!(near(node_margins(-1, 0.0, -1.0), (0.05, 0.05)));
     }
 
-    /// W6b: the shader's raised-cover fade is its CPU twin's (`CdlodSettings::raise_fade`).
+    /// W6b/SW-5c: the shader's raised-cover fade, displaced levels and prefilter are its CPU
+    /// twin's (`CdlodSettings::raise_weight` / `vertex_raise`); `terrain_raise` prefilters to
+    /// `RAISE_TEXEL_M` and reads the finest normal level, never the vertex's spacing or LOD; the
+    /// fade ends before the splat range fades the layers' high point (`layer_blend_top`).
     #[test]
-    fn raise_fade_constants_match_the_twin() {
+    fn raise_constants_match_the_twin() {
         let wgsl = include_str!("shaders/common.wesl");
-        for (name, v) in [("RAISE_FADE_START", cdlod::RAISE_FADE_START), ("RAISE_FADE_END", cdlod::RAISE_FADE_END)] {
+        for (name, v) in [
+            ("RAISE_FADE_START", cdlod::RAISE_FADE_START),
+            ("RAISE_FADE_END", cdlod::RAISE_FADE_END),
+            ("RAISE_TEXEL_M", cdlod::RAISE_TEXEL_M),
+        ] {
             assert!(wgsl.contains(&format!("const {name}: f32 = {v:?};")), "{name}");
         }
+        assert!(wgsl.contains(&format!("const RAISE_MAX_LOD: i32 = {};", cdlod::RAISE_MAX_LOD)));
+        assert!(wgsl.contains("if lod <= RAISE_MAX_LOD {\n        out.raise_w = raise_fade("));
+        let body = wgsl.split("fn terrain_raise(").nth(1).unwrap().split("\n}\n").next().unwrap();
+        assert!(body.contains("layer_blend_top(t.position.xz, RAISE_TEXEL_M,"), "{body}");
+        assert!(body.contains("terrain_normal(t.position.xz, 0.0), top, RAISE_TEXEL_M)"), "{body}");
+        assert!(!body.contains("t.lod") && !body.contains("spacing"), "{body}");
+        assert!(body.contains("!surface_raise_on()"), "{body}");
+        let s = TerrainSettings::default();
+        assert!(cdlod::RAISE_FADE_END * s.cdlod.lod0_range <= 0.7 * s.splat_range);
     }
 
     /// The WGSL slot constants must match `params.rs`.

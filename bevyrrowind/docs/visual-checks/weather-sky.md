@@ -225,8 +225,23 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Fix 2026-11-16 (bugfix-11-15): the shelter photo drew far trees as their sparse LOD level chosen by camera distance (walk  closer -> full leaves -> ground bare at once), with a lagging centre and no blend. Now the caster level follows the map's own  centre (camera-independent), centres snap to world texels, and a world-anchored exposure history eases changes over ~2 s  (keeps across a big_space recentre). Precip occlusion: casters behind the camera kept, centre snapped. Also cover amount  from the geometric slope (texture edges no longer bare through full snow). Look for: Skaal `surface set snow 1`, walk from  60 m to 3 m toward a tree and back: snow under the leaves stays or fades, never snaps; no scene-wide reset after 16 m; same in  Ghostgate ash under roofs/arches; rain under trees/roofs steady as you approach or back off. Status: awaiting owner.
 - Owner 2026-11-16 (Skaal): reject. Changes are now eased (vertices move up and down smoothly), but cover still follows
   the camera: walking up to a tree, the snow under it noticeably sinks. Shelter must not depend on viewer distance. Status: failed.
+- Fix 2026-11-16 (SW-5b): the cover amount came from the ground's normal tilted by the snow raise, which fades in with camera
+  distance (18-43 m), so the raised walls round a canopy lost cover and the shelter lookup slid under the tree as you came
+  near. The amount now reads the undisplaced ground; the raise only lights. Look for: Skaal Village `surface set snow 1`, walk
+  towards a tree from ~50 m: the snow under and around the canopy must not change as you approach; raised snow walls keep their
+  cover (no bare walls). Known left: the raise height itself may still settle slightly near the camera (separate slice).
+- Owner 2026-11-16 (SW-5b, Skaal): still the same issue. Owner asks for a console view of the surface render targets (shelter, exposure, trail) to see under the hood; also: deformation should take the whole leg up to the knee, not only the feet; missing niceties: rim bulge round the trench, particles (RDR2 as reference). Status: failed.
+- Fix 2026-11-16 (SW-5c): the raised snow (~0.45 m) existed only within ~43 m of the camera (faded in from 43 to 18 m) and
+  its bury tops were filtered by the LOD's vertex spacing, so open snow rose round a sheltered patch that stayed flat as you
+  came near. Now every terrain LOD out to ~400 m displaces the same world-fixed snow height (fade 384-576 m, sub-pixel).
+  Look for: Skaal Village `surface set snow 1`, P to pause; walk to a tree from ~60 m and back: the snow height round and
+  under it stays the same the whole way (no rising, no sinking); open snow far off stands raised too (look at hill edges).
+  A/B: console `flip raise` (F1 help, "Snow and ash" line) toggles the raise alone (off = flat cover, same look). Known
+  left: past ~64 m (shelter map edge) the ground under far trees reads open and raised until it enters the map.
+  Status: awaiting owner.
 
 ### WE-13: Local storm seen from outside (CW-1, distant-weather.md "CW-1 Storm shape"; follows WE-10)
+- Owner 2026-11-16 (tex viewer, Skaal snow): `surface.shelter` redraws (about half the rate of the other maps) change the whole map: trees gain or lose shelter at each redraw; `surface.exposure` shows red moving with the player and blue patches flashing then fading at each update. Cause: casters pick their LOD by the map centre, which jumps 16 m per redraw (SW-5d in progress).
 - Kind: game location. `bash bevyrrowind/tools/owner_launch.sh scene we3-ridge`, then BRP `bevyrrowind/set {"weather":
   "thunderstorm", "region": "Ascadian Isles Region", "transition_hours": 0}` (look east/south-east) and `"ashstorm"` in
   `"Ashlands Region"` (look north); still camera, then pan slowly. A/B: relaunch with `--off stormshape` (old region column).

@@ -346,3 +346,42 @@ fn terrain_passes_share_one_displacement() {
         assert!(body(&wgsl).is_none(), "{module} {defs:?}: displaced without surface weather");
     }
 }
+
+/// SW-5b: in the terrain's linked main pass with surface weather on, accumulation reads the
+/// undisplaced ground normal (`SurfaceInput.ground_n`, the fragment's normal before
+/// `raised_normal`): the cover slope, every sky exposure lookup and the wet facing, never the
+/// camera-faded raised `world_normal` (that stays the lighting normal).
+#[test]
+fn terrain_accumulates_on_the_undisplaced_ground() {
+    fn body<'a>(wgsl: &'a str, name: &str) -> &'a str {
+        let start = wgsl
+            .match_indices("fn ")
+            .map(|(i, _)| i)
+            .find(|&i| wgsl[i..].lines().next().is_some_and(|l| l.contains(&format!("{name}("))))
+            .unwrap_or_else(|| panic!("fn {name} linked"));
+        let end = start + wgsl[start..].find("\n}\n").expect("fn end");
+        &wgsl[start..end]
+    }
+    let main = compile("sf_terrain_bevy::shaders::terrain", &with(HIGH, &["SURFACE_WEATHER"])).unwrap_or_else(|e| panic!("{e}"));
+    let layer = body(&main, "apply_surface_layer");
+    let calls = |f: &str| layer.lines().filter(|l| l.contains(&format!("{f}("))).map(str::trim).collect::<Vec<_>>();
+    for (f, min) in [("surface_exposure", 2), ("surface_facing_wet", 1), ("surface_cover_up", 1)] {
+        let lines = calls(f);
+        assert!(lines.len() >= min, "{f}: {lines:?}");
+        for l in lines {
+            assert!(l.contains("ground_n") && !l.contains("world_normal"), "{f} reads the ground normal: {l}");
+        }
+    }
+    for l in calls("surface_cover_up") {
+        assert!(l.contains("ground_n.y,"), "the cover slope's base is the ground's up: {l}");
+    }
+    let frag = body(&main, "fragment");
+    let ground = frag.find("let n_ground = ").expect("the fragment keeps the undisplaced normal");
+    let raise = frag.find("raised_normal(").expect("the raise tilts the lighting normal");
+    assert!(ground < raise, "n_ground is taken before the raise");
+    assert!(frag.contains(".ground_n = n_ground;"), "the layer's ground normal is the undisplaced one");
+    assert!(frag.contains(".level_up = n_ground.y;"), "the puddle gate on the undisplaced ground");
+    // Statics: the geometric normal is their ground (no raise).
+    let view = include_str!("view.wesl");
+    assert!(view.contains("s.ground_n = pbr.world_normal;"));
+}

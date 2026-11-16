@@ -1,0 +1,36 @@
+[package]
+name = "sf_texview_bevy"
+description = "Dev texture viewer: the `tex` console command shows a registered render target (sf_diag_bevy `DebugTextures`) in a screen corner, one channel or RGB, value range remapped, nearest texels (Unreal's `vis`)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6). A dev plugin: the app adds it with the console.
+[dependencies]
+# App, Plugin, Update.
+bevy_app = { workspace = true, features = ["std"] }
+# Assets<Image> (the viewer's target), Handle.
+bevy_asset.workspace = true
+# camera_driver: the blit runs after the cameras in the root render graph.
+bevy_core_pipeline.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+# Image, ImageSampler (the target).
+bevy_image.workspace = true
+# Pipelines, bind groups, RenderAssets<GpuImage>, the RenderGraph schedule.
+bevy_render.workspace = true
+# The blit shader (WESL, shader defs per sample type).
+bevy_shader.workspace = true
+# ImageNode in a screen corner.
+bevy_ui.workspace = true
+sf_console_bevy.workspace = true
+sf_diag_bevy.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# Shader compile check (no GPU, no picture): wesl links the shader per def set, naga validates
+# (as sf_surface_bevy's).
+naga = { workspace = true, features = ["wgsl-in"] }
+wesl = { workspace = true, features = ["naga-ext"] }
+
+[lints]
+workspace = true

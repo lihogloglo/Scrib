@@ -70,11 +70,20 @@ impl NodeKey {
     }
 }
 
-/// Where the raised cover's distance fade starts, as a fraction of LOD 0's range
-/// ([`CdlodSettings::raise_fade`]; `common.wesl` `RAISE_FADE_START`).
-pub const RAISE_FADE_START: f32 = 0.375;
-/// Where it reaches 0 (`RAISE_FADE_END`): inside LOD 0's range, so LOD 1 needs no raise.
-pub const RAISE_FADE_END: f32 = 0.9;
+/// Where the raised cover's distance fade starts, as a multiple of LOD 0's range
+/// ([`CdlodSettings::raise_fade`]; `common.wesl` `RAISE_FADE_START`): 384 m at the default 48 m,
+/// where the 0.45 m knee-deep cover subtends ~1.5 output pixels at 1440p (SW-5c).
+pub const RAISE_FADE_START: f32 = 8.0;
+/// Where it reaches 0 (`RAISE_FADE_END`, 576 m): sub-pixel, inside [`RAISE_MAX_LOD`]'s range, and
+/// before the terrain's splat range fades the layers' high point (`layer_blend_top`, from 700 m).
+pub const RAISE_FADE_END: f32 = 12.0;
+/// The coarsest LOD the raise displaces (`common.wesl` `RAISE_MAX_LOD`): every coarser node lies
+/// past this one's range, beyond the fade's end (SW-5c; was LOD 0 with a 43 m fade).
+pub const RAISE_MAX_LOD: i8 = 4;
+/// The one world scale the raise's tops are prefiltered to, meters (`common.wesl`
+/// `RAISE_TEXEL_M`; the LOD 0 vertex spacing): every LOD displaces the same world-space field,
+/// never one prefiltered to its own vertex spacing (SW-5c).
+pub const RAISE_TEXEL_M: f32 = 0.5;
 
 /// LOD ranges and morph zones.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -107,17 +116,36 @@ impl CdlodSettings {
         (start, end)
     }
 
-    /// Weight of the near-only raised cover (surface weather W6b; `common.wesl` `raise_fade`) at
+    /// Weight of the raised cover (surface weather W6b, SW-5c; `common.wesl` `raise_fade`) at
     /// `d` meters from the camera (the vertex's 3D distance, as the morph uses): 1 out to
     /// [`RAISE_FADE_START`] × LOD 0's range, a smoothstep down to exactly 0 at
-    /// [`RAISE_FADE_END`] × that range and beyond. The raise is displaced on LOD ≤ 0 only; every
-    /// LOD 1 vertex lies past LOD 0's range, so the fade reaches 0 inside the displaced region and
-    /// no seam or step remains. Long against the 0.45 m depth (max slope ~2.7 % at 48 m): the
-    /// surface eases down far below the grazing angle of a standing camera, so no crest shows.
+    /// [`RAISE_FADE_END`] × that range and beyond. Only where the raise is sub-pixel, and it
+    /// scales every ground point alike (open and sheltered): no relative pit near the camera.
+    /// The raise is displaced on LOD ≤ [`RAISE_MAX_LOD`]; every coarser vertex lies past that
+    /// LOD's range, beyond the fade's end, so no seam or step remains.
     pub fn raise_fade(&self, d: f32) -> f32 {
         let (a, b) = (RAISE_FADE_START * self.lod0_range, RAISE_FADE_END * self.lod0_range);
         let t = ((d - a) / (b - a)).clamp(0.0, 1.0);
         1.0 - t * t * (3.0 - 2.0 * t)
+    }
+
+    /// The raise weight of a vertex of `lod` at `d` meters (`common.wesl` `terrain_vertex`'s
+    /// `raise_w`): [`Self::raise_fade`] on the displaced levels, 0 past [`RAISE_MAX_LOD`].
+    pub fn raise_weight(&self, lod: i8, d: f32) -> f32 {
+        if lod <= RAISE_MAX_LOD { self.raise_fade(d) } else { 0.0 }
+    }
+
+    /// The raised cover a vertex of `lod` at `d` meters displaces by (`common.wesl`
+    /// `terrain_raise`): `field(texel_m)` is the cover's unweighted raise at the vertex's world
+    /// point with its tops prefiltered to `texel_m` meters (`surface_raise_at`), and the vertex
+    /// passes [`RAISE_TEXEL_M`], never its own spacing: the same world point raises alike on every
+    /// LOD and at every distance inside the fade (SW-5c).
+    pub fn vertex_raise(&self, lod: i8, d: f32, field: impl Fn(f32) -> f32) -> f32 {
+        let w = self.raise_weight(lod, d);
+        if w <= 0.0 {
+            return 0.0;
+        }
+        w * field(RAISE_TEXEL_M)
     }
 
     /// The view distance: the coarsest LOD's range.
@@ -285,33 +313,65 @@ mod tests {
         assert!((a - (48.0 - 0.3 * 24.0)).abs() < 1e-4);
     }
 
-    /// SW-6 ring edge (2026-11-06): the raised cover's fade is 1 near the camera, exactly 0 at
-    /// and beyond its end, which lies inside LOD 0's range (LOD 1 is never displaced, so no seam),
-    /// monotone and continuous, with a slope far below the old 3.6 m linear morph-zone ramp.
+    /// SW-5c: the raised cover's fade is 1 over every near LOD (past LOD 0's range), exactly 0
+    /// at and beyond its end, which lies inside the coarsest displaced LOD's range (coarser nodes
+    /// are never displaced, so no seam), monotone and continuous, with a slope far below W6b's
+    /// (0.45 m over 25 m).
     #[test]
     #[allow(clippy::float_cmp)]
     fn raise_fade_reaches_zero_inside_the_displaced_levels() {
         let s = CdlodSettings::default();
-        let end = RAISE_FADE_END * s.lod0_range;
-        assert!(end < s.range(0));
-        assert!(RAISE_FADE_START * s.lod0_range > s.range(MIN_LOD));
+        let (start, end) = (RAISE_FADE_START * s.lod0_range, RAISE_FADE_END * s.lod0_range);
+        assert!(start > s.range(0), "full raise on every level to LOD 0 and past it");
+        assert!(end < s.range(RAISE_MAX_LOD), "the fade ends inside the coarsest displaced LOD");
+        assert!(end > s.range(RAISE_MAX_LOD - 1), "RAISE_MAX_LOD is the coarsest one needed");
         assert_eq!(s.raise_fade(0.0), 1.0);
-        assert_eq!(s.raise_fade(RAISE_FADE_START * s.lod0_range), 1.0);
+        assert_eq!(s.raise_fade(start), 1.0);
         assert_eq!(s.raise_fade(end), 0.0);
-        assert_eq!(s.raise_fade(s.range(0)), 0.0);
-        assert_eq!(s.raise_fade(1e4), 0.0);
-        let step = 0.01;
+        assert_eq!(s.raise_fade(s.range(RAISE_MAX_LOD)), 0.0);
+        assert_eq!(s.raise_fade(1e5), 0.0);
+        assert_eq!(s.raise_weight(RAISE_MAX_LOD + 1, 1.0), 0.0);
+        let step = 0.1;
         let mut last = 1.0;
         let mut steepest: f32 = 0.0;
-        for i in 0..6000u16 {
+        for i in 0..8000u16 {
             let w = s.raise_fade(f32::from(i) * step);
             assert!(w <= last, "monotone at {}", f32::from(i) * step);
             steepest = steepest.max((last - w) / step);
             last = w;
         }
-        // Max slope of a 0.45 m cover: 1.5 × depth / length; the old ramp was 0.45 / 3.6 m.
+        // Max slope of a 0.45 m cover: 1.5 × depth / length (~0.35 %; W6b's was ~2.7 %).
         let knee = 0.45;
-        assert!(steepest * knee < 0.03, "slope {}", steepest * knee);
-        assert!(steepest * knee < 0.25 * knee / 3.6);
+        assert!(steepest * knee < 0.004, "slope {}", steepest * knee);
+    }
+
+    /// SW-5c: a ground point's raise is a function of the world only. The same point, with a
+    /// field whose tops rise as they are prefiltered coarser (the bury's concave clamp,
+    /// `sw5-diag` cause 2), raises bit-equal at 5, 30 and 100 m from the camera and on LOD
+    /// -2/-1/0/1/2 (vertex spacing 0.125/0.25/0.5/1/2 m); prefiltered to each LOD's own spacing
+    /// (W6b), the same point did not.
+    #[test]
+    fn raise_is_the_same_on_every_lod_and_distance() {
+        let s = CdlodSettings::default();
+        // A sheltered snow point (amount 0.8 under a 0.45 m cover) whose top rises 0.04 per mip
+        // of a 1024 px look tiled every 4 m (`surface_cover_look_height`).
+        let field = |texel_m: f32| {
+            let mip = (texel_m * 1024.0 / 4.0).log2().max(0.0);
+            let top = 0.04f32.mul_add(mip, 0.5);
+            ((0.8 - top) / (1.0 - top)).clamp(0.0, 1.0) * 0.45
+        };
+        let reference = s.vertex_raise(0, 5.0, field);
+        assert!(reference > 0.0);
+        let mut old = Vec::new();
+        for lod in -2..=2i8 {
+            let spacing = 0.5 * 2f32.powi(i32::from(lod));
+            for d in [5.0, 30.0, 100.0] {
+                let r = s.vertex_raise(lod, d, field);
+                assert_eq!(r.to_bits(), reference.to_bits(), "LOD {lod} at {d} m");
+                old.push((s.raise_weight(lod, d) * field(spacing)).to_bits());
+            }
+        }
+        old.dedup();
+        assert!(old.len() > 1, "the per-LOD prefilter did change the raise");
     }
 }

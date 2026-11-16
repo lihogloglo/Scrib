@@ -209,6 +209,9 @@ pub enum Switch {
     Cover,
     /// W6: trails (`SurfaceSettings::trails`; off: no prints, the raised snow stays whole).
     Trails,
+    /// SW-5c: the raised cover (`SurfaceSettings::raise`; off: snow and ash lie flat, the same
+    /// look and amounts: the raise alone, A/B).
+    Raise,
     /// TX-lab: texture-pack normal maps on every material (`mw_assets::MaterialMaps`), as
     /// `--off normalmaps` but live; flipping back restores each material as it was.
     NormalMaps,
@@ -220,7 +223,7 @@ pub enum Switch {
 
 /// Names for BRP ([`crate::remote`]) and the console's `on`/`off` ([`crate::console`]).
 impl Switch {
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::SunShadows,
         Self::TerrainFarShadows,
         Self::Clouds,
@@ -242,6 +245,7 @@ impl Switch {
         Self::Moonlight,
         Self::Cover,
         Self::Trails,
+        Self::Raise,
         Self::NormalMaps,
         Self::Orm,
         Self::Parallax,
@@ -270,6 +274,7 @@ impl Switch {
             Self::Moonlight => "moonlight",
             Self::Cover => "cover",
             Self::Trails => "trails",
+            Self::Raise => "raise",
             Self::NormalMaps => "normalmaps",
             Self::Orm => "orm",
             Self::Parallax => "parallax",
@@ -307,6 +312,7 @@ impl Switch {
             Self::Moonlight => "artistic moonlight",
             Self::Cover => "snow and ash cover",
             Self::Trails => "trails in the cover",
+            Self::Raise => "raised snow (displacement)",
             Self::NormalMaps => "normal maps",
             Self::Orm => "ORM maps",
             Self::Parallax => "parallax (depth maps)",
@@ -332,6 +338,7 @@ impl Switch {
             Self::Surface => s.surface.as_ref().map(|w| w.layer),
             Self::Cover => s.surface.as_ref().map(|w| w.cover),
             Self::Trails => s.surface.as_ref().map(|w| w.trails),
+            Self::Raise => s.surface.as_ref().map(|w| w.raise),
             Self::NormalMaps => s.material_maps.as_ref().map(|m| m.normal_maps),
             Self::Orm => s.material_maps.as_ref().map(|m| m.orm),
             Self::Parallax => s.material_maps.as_ref().map(|m| m.parallax),
@@ -353,7 +360,7 @@ impl Switch {
                 Self::Clouds | Self::CloudHistory => "not in this run (interior or --off clouds)",
                 Self::FarTint => "no far field here",
                 Self::Rings => "no streaming here",
-                Self::Surface | Self::Cover | Self::Trails => "not in this run (interior)",
+                Self::Surface | Self::Cover | Self::Trails | Self::Raise => "not in this run (interior)",
                 Self::Fog | Self::FogNightLight => "not in this run (interior or --off sky)",
                 Self::WeatherAmbient | Self::NightSkyGlow | Self::Moonlight => "not in this run (--off sky)",
                 Self::AmbientSpecular => "not in this run (no PBR renderer)",
@@ -386,11 +393,12 @@ impl Switch {
                     r.enabled = v;
                 }
             }
-            Self::Surface | Self::Cover | Self::Trails => {
+            Self::Surface | Self::Cover | Self::Trails | Self::Raise => {
                 if let Some(w) = s.surface.as_mut() {
                     match self {
                         Self::Cover => w.cover = v,
                         Self::Trails => w.trails = v,
+                        Self::Raise => w.raise = v,
                         _ => w.layer = v,
                     }
                 }
@@ -722,7 +730,8 @@ fn overlay(
              F11 player / free camera (player: WASD, Space jump, E use, Shift tap roll / hold sprint, Ctrl sneak, F ready weapon, LMB attack, Tab 1st/3rd person, wheel zoom)\n\
              Shift+C clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  Shift+F12 copy camera  F12 screenshot  F5/F9 quicksave/load  B bodies {bodies}  |  --off {flags_off}\n\
              RO-16 veil (console `flip <name>`): terrain_specular {}  terrain_env_specular {}  terrain_indirect {}  terrain_tint {}  surface {}  fog {}  fog_night_light {}  weather_ambient {}  ambient, render.bloom\n\
-             Textures (console `flip <name>`, texture lab N / M / P): normalmaps {}  orm {}  parallax {}",
+             Textures (console `flip <name>`, texture lab N / M / P): normalmaps {}  orm {}  parallax {}\n\
+             Snow and ash (console `flip <name>`): cover {}  trails {}  raise {}",
             opt(Switch::SunShadows),
             opt(Switch::TerrainFarShadows),
             opt(Switch::FarTint),
@@ -741,6 +750,9 @@ fn overlay(
             opt(Switch::NormalMaps),
             opt(Switch::Orm),
             opt(Switch::Parallax),
+            opt(Switch::Cover),
+            opt(Switch::Trails),
+            opt(Switch::Raise),
         );
         if let Some(look) = scene.map(|s| s.look_for.as_str()).filter(|l| !l.is_empty()) {
             let _ = write!(out, "\nlook for: {look}");

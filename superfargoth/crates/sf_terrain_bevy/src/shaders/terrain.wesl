@@ -136,7 +136,10 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     let edges = edge_pixels(in.grid);
     let debug = debug_flags();
 
-    var n_geo = terrain_normal(xz, in.lod);
+    // The undisplaced ground normal: surface weather accumulates on it (SW-5b); the raise only
+    // tilts the lighting normal, so the amounts never follow the camera-faded displacement.
+    let n_ground = terrain_normal(xz, in.lod);
+    var n_geo = n_ground;
 @if(SURFACE_WEATHER)
     n_geo = raised_normal(n_geo, xz, in.raise);
     let dist = distance(view.world_position, in.world_position.xyz);
@@ -169,11 +172,12 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     // Puddles (W4) only on level ground: the steeper of the clipmap normal here and the
     // height field over 4 m (the filtered 8-bit normal of a coarse LOD reads gentle slopes as
     // level). The concavity raises the pool score in hollows. Only while puddles are on.
-    si.level_up = n_geo.y;
+    si.ground_n = n_ground;
+    si.level_up = n_ground.y;
     si.basin = 0.0;
-    if surface_puddles_on() && surface_puddle_flat(n_geo.y) > 0.0 {
+    if surface_puddles_on() && surface_puddle_flat(n_ground.y) > 0.0 {
         let ground = terrain_ground(xz);
-        si.level_up = min(n_geo.y, surface_up_of_gradient(ground.xy));
+        si.level_up = min(n_ground.y, surface_up_of_gradient(ground.xy));
         si.basin = ground.z;
     }
     si.porosity = surface_porosity(0.0, pbr.material.perceptual_roughness);

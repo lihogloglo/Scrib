@@ -81,6 +81,9 @@ pub const RIPPLE_SCALES: [f32; RIPPLE_GRIDS] = [1.0, 1.25, 0.8, 0.625];
 /// and tile (m; divides the 256 m origin grid), the cover normal's strength.
 pub const COVER_UP_LOW: f32 = 0.45;
 pub const COVER_UP_HIGH: f32 = 0.8;
+/// The shading normal's share in the slope's up (C1, `cover_up`): its detail (normal-map bumps)
+/// only, on the undisplaced ground's up (SW-5b).
+pub const COVER_SHADING_SHARE: f32 = 0.25;
 pub const COVER_EDGE: f32 = 0.08;
 pub const COVER_HEIGHT_MIX: f32 = 0.5;
 pub const COVER_DRIFT: f32 = 0.5;
@@ -104,7 +107,7 @@ pub const SPARKLE_FADE_FAR_M: f32 = 0.02;
 pub const ORIGIN_GRID_M: f32 = 256.0;
 
 /// The named shader constants, as `layer.wesl` declares them (`const NAME: f32 = v;`).
-pub const SHADER_CONSTANTS: [(&str, f32); 47] = [
+pub const SHADER_CONSTANTS: [(&str, f32); 48] = [
     ("POROSITY_ROUGH_LOW", POROSITY_ROUGH_LOW),
     ("POROSITY_ROUGH_SPAN", POROSITY_ROUGH_SPAN),
     ("WET_DARK_POROUS", WET_DARK_POROUS),
@@ -138,6 +141,7 @@ pub const SHADER_CONSTANTS: [(&str, f32); 47] = [
     ("RIPPLE_SCALE_3", RIPPLE_SCALES[3]),
     ("COVER_UP_LOW", COVER_UP_LOW),
     ("COVER_UP_HIGH", COVER_UP_HIGH),
+    ("COVER_SHADING_SHARE", COVER_SHADING_SHARE),
     ("COVER_EDGE", COVER_EDGE),
     ("COVER_HEIGHT_MIX", COVER_HEIGHT_MIX),
     ("COVER_DRIFT", COVER_DRIFT),
@@ -318,8 +322,17 @@ pub fn ring(to: [f32; 2], phase: f32) -> [f32; 2] {
     [v[0] * s, v[1] * s]
 }
 
-/// How much cover a face can hold by its slope (`surface_cover_slope`), `up` the shading
-/// normal's Y (the base normal map included: snow lies on the tops of bumps).
+/// The up the cover slope reads (`surface_cover_up`, C1 + SW-5b): the undisplaced ground
+/// normal's Y plus `COVER_SHADING_SHARE` of the shading normal's own detail (its Y offset from the
+/// lit geometric normal, `lit_up`; terrain's is tilted by the camera-faded cover raise). Without
+/// detail it is `ground_up` exactly, so the amount never follows the camera; with no raise
+/// (`ground_up == lit_up`) it is `mix(geometric, shading, share)`.
+pub fn cover_up(ground_up: f32, lit_up: f32, shading_up: f32) -> f32 {
+    ground_up + COVER_SHADING_SHARE * (shading_up - lit_up)
+}
+
+/// How much cover a face can hold by its slope (`surface_cover_slope`), `up` from [`cover_up`]
+/// (the base normal map included: snow lies on the tops of bumps).
 pub fn cover_slope(up: f32) -> f32 {
     smoothstep(COVER_UP_LOW, COVER_UP_HIGH, up)
 }
@@ -612,6 +625,42 @@ mod tests {
         assert!((cover_amount(0.5, 1.0, 0.5) - 0.25).abs() < 1e-6);
         let mid = cover_slope(f32::midpoint(COVER_UP_LOW, COVER_UP_HIGH));
         assert!((mid - 0.5).abs() < 1e-6);
+    }
+
+    /// SW-5b: the cover amount reads the undisplaced ground, so one ground point holds the same
+    /// cover at raise weight 0 and 1 (beyond 43 m and inside 18 m of the camera), bit for bit,
+    /// however steep the raise's wall tilts the lit normal; the C1 formula on the lit normal
+    /// (before SW-5b) lost cover on that wall as the camera came near.
+    #[test]
+    fn cover_amount_ignores_the_raise() {
+        fn normalize(v: [f32; 3]) -> [f32; 3] {
+            let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            [v[0] / l, v[1] / l, v[2] / l]
+        }
+        // terrain.wesl `raised_normal`: the ground tilted by the raise's slope `g` x weight `w`.
+        fn raised(n: [f32; 3], g: [f32; 2], w: f32) -> [f32; 3] {
+            normalize([n[0] / n[1] - g[0] * w, 1.0, n[2] / n[1] - g[1] * w])
+        }
+        // Flat, gentle and in-ramp ground; a canopy edge's raise wall (0.45 m over 0.5 m) both ways.
+        for ground in [[0.0, 1.0, 0.0], normalize([0.2, 1.0, 0.1]), normalize([0.9, 1.0, 0.0])] {
+            for g in [[0.9, 0.0], [-0.9, 0.3], [0.0, 2.0]] {
+                for (cell, e) in [(1.0, 1.0), (0.6, 0.4)] {
+                    let amount = |w: f32| {
+                        let lit = raised(ground, g, w);
+                        // No normal-map detail: the shading normal is the lit one.
+                        cover_amount(cell, cover_up(ground[1], lit[1], lit[1]), e)
+                    };
+                    assert_eq!(amount(0.0).to_bits(), amount(1.0).to_bits(), "ground {ground:?} raise slope {g:?}");
+                    assert_eq!(amount(0.0).to_bits(), cover_amount(cell, ground[1], e).to_bits());
+                }
+            }
+        }
+        // The pre-SW-5b slope (the lit normal's Y) lost the cover on a raised wall up close.
+        let lit = raised([0.0, 1.0, 0.0], [0.0, 2.0], 1.0);
+        assert!(cover_slope(mix(lit[1], lit[1], COVER_SHADING_SHARE)) < 1.0);
+        assert_eq!(cover_slope(cover_up(1.0, lit[1], lit[1])), 1.0);
+        // No raise: the C1 mix of geometric and shading Y.
+        assert!((cover_up(0.7, 0.7, 0.9) - mix(0.7, 0.9, COVER_SHADING_SHARE)).abs() < 1e-6);
     }
 
     #[test]

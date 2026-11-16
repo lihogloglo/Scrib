@@ -39,6 +39,7 @@ use bevy_render::{Extract, Render, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
 use bevy_transform::components::GlobalTransform;
 use sf_coords::WorldPos;
+use sf_diag_bevy::texview::{DebugTexture, DebugTextureAppExt};
 use sf_surface::trail::{
     MAX_STAMPS, RING_SIZE, RING_TEXEL_M, Refill, STAMP_RANGE_M, Stamp, TrailPass, refill_rate_m_per_h, window_min,
 };
@@ -244,6 +245,14 @@ impl FromWorld for TrailGpu {
 }
 
 pub(crate) fn build(app: &mut bevy_app::App) {
+    let edge = RING_SIZE.unsigned_abs();
+    app.register_debug_texture(DebugTexture::render(
+        "surface.trail",
+        "trail ring (current): R depression (m, <= 0), G lip (m, >= 0), 1024 texels around the camera",
+        (edge, edge),
+        FORMAT,
+        |world| world.get_resource::<TrailGpu>().map(|g| g.current_view().clone()),
+    ));
     if let Some(mut shaders) = app.world_mut().get_resource_mut::<Assets<Shader>>() {
         shaders
             .insert(&TRAIL_SHADER, Shader::from_wgsl(include_str!("trail.wgsl"), "embedded://sf_surface_bevy/trail.wgsl"))

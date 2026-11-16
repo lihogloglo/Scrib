@@ -119,7 +119,7 @@ pub(crate) fn update_cells(
     uniform.window = Vec4::new(corner.x, corner.y, inv_cell, 1.0);
     let t = min.rem_euclid(bevy_math::IVec2::splat(WINDOW_CELLS));
     uniform.cells = IVec4::new(t.x, t.y, WINDOW_CELLS, 0);
-    uniform.flags = SurfaceUniform::flags_of(window_state.max) & settings.flag_mask();
+    uniform.flags = settings.flags(window_state.max);
     if texels > 0 {
         stats.cell_texels += texels;
         stats.full_uploads += u64::from(full);

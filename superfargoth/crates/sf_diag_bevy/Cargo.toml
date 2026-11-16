@@ -19,6 +19,9 @@ pipelines = ["render", "dep:bevy_asset", "dep:bevy_camera", "dep:bevy_mesh", "de
 # Live texture/material gauge (`TextureGaugePlugin`): GPU bytes per format family, normal/ORM maps on
 # StandardMaterial, normal-mapped meshes without tangents (render-world vertex layouts).
 textures = ["render", "dep:bevy_asset", "dep:bevy_camera", "dep:bevy_image", "dep:bevy_mesh", "dep:bevy_pbr"]
+# Named debug textures (`texview::DebugTextures`): the registry the `tex` console viewer
+# (`sf_texview_bevy`) lists and draws; registering costs nothing per frame.
+texview = ["render", "dep:bevy_asset", "dep:bevy_image"]
 
 # Minimal Bevy (ARCHITECTURE §8b rule 6). No rendering crate by default: GPU
 # timings arrive through `DiagnosticsStore` when the app adds `RenderDiagnosticsPlugin`.

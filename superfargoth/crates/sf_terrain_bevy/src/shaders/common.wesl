@@ -10,7 +10,7 @@ import bevy_pbr::render::mesh_functions;
 // Raised cover (surface weather W6b): the view's surface weather bindings (vendored bevy_pbr patch
 // "SW"), in the main pass and, for the same views, the prepass.
 @if(SURFACE_WEATHER || SURFACE_WEATHER_PREPASS)
-import sf_surface_bevy::view::surface_raise_at;
+import sf_surface_bevy::view::{surface_raise_at, surface_raise_on};
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<storage, read> params: array<vec4<u32>>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var height_clipmap: texture_2d_array<f32>;
@@ -315,8 +315,9 @@ fn layer_top(id: u32) -> f32 {
 /// The blended high point of the layers' height (0..1; 0.5 past the splat range) at render XZ
 /// `xz`, `dist` meters from the camera, for the raised cover's bury depth (W6b): the same
 /// Mishkinis height blend and splat-range fade as `surface.wesl` `terrain_surface`'s `height`,
-/// each layer's height (prefiltered to texels of `spacing`, a vertex's footprint, so cobbles and
-/// grout average to the mean) lifted to at least its p90 (`layer_top`), so a cover stands raised
+/// each layer's height (prefiltered to texels of `spacing`: the raise passes `RAISE_TEXEL_M`, one
+/// world scale for every LOD, so cobbles and grout average to the mean alike) lifted to at
+/// least its p90 (`layer_top`), so a cover stands raised
 /// only once it buries the stones, not where it shows in the grout.
 fn layer_blend_top(xz: vec2<f32>, spacing: f32, dist: f32) -> f32 {
     let detail = pf(P_DETAIL);
@@ -354,13 +355,19 @@ fn layer_blend_top(xz: vec2<f32>, spacing: f32, dist: f32) -> f32 {
     return mix(0.5, dot(bw, ht), near);
 }
 
-/// Raised-cover fade (W6b; twin `sf_terrain::cdlod::CdlodSettings::raise_fade`): 1 out to
-/// `RAISE_FADE_START` × LOD 0's range, a smoothstep down to exactly 0 at `RAISE_FADE_END` × that
-/// range, by the vertex's 3D distance `d` from the camera. A function of the vertex position only,
-/// so neighbors across a LOD seam weigh shared vertices alike; it ends inside LOD 0, so LOD 1
-/// (always past LOD 0's range) needs none.
-const RAISE_FADE_START: f32 = 0.375;
-const RAISE_FADE_END: f32 = 0.9;
+/// Raised-cover fade (W6b, SW-5c; twin `sf_terrain::cdlod::CdlodSettings::raise_fade`): 1 out to
+/// `RAISE_FADE_START` × LOD 0's range (384 m), a smoothstep down to exactly 0 at
+/// `RAISE_FADE_END` × that range (576 m, where the 0.45 m cover is sub-pixel), by the vertex's 3D
+/// distance `d` from the camera. A function of the vertex position only, so neighbors across a
+/// LOD seam weigh shared vertices alike; it scales all ground alike, so no relative pit shows; it
+/// ends inside `RAISE_MAX_LOD`, so coarser levels (always past its range) need none.
+const RAISE_FADE_START: f32 = 8.0;
+const RAISE_FADE_END: f32 = 12.0;
+/// The coarsest displaced LOD (twin `cdlod::RAISE_MAX_LOD`).
+const RAISE_MAX_LOD: i32 = 4;
+/// The one world scale (m) the raise's tops are prefiltered to on every LOD (twin
+/// `cdlod::RAISE_TEXEL_M`, LOD 0's spacing): the same world point raises alike near and far.
+const RAISE_TEXEL_M: f32 = 0.5;
 
 fn raise_fade(d: f32) -> f32 {
     let m = pf(P_MORPH + u32(-MIN_LOD));
@@ -379,12 +386,9 @@ struct TerrainVertex {
     /// Weight of the detail displacement: 1 at LOD -2, fading out across LOD -1's morph zone, 0
     /// from LOD 0.
     near_w: f32,
-    /// Weight of the raised cover (W6b, `raise_fade`): smooth in world distance, 0 before LOD 0
-    /// ends (and on every coarser level).
+    /// Weight of the raised cover (W6b, SW-5c `raise_fade`): smooth in world distance, 1 to
+    /// 384 m, 0 from 576 m (inside `RAISE_MAX_LOD`, and on every coarser level).
     raise_w: f32,
-    /// The vertex spacing as morphed (m; the LOD's, doubling across its morph zone): the raised
-    /// cover's texture prefilter, equal on both sides of a seam.
-    texel_m: f32,
 }
 
 /// Strugar's CDLOD vertex: morph odd grid vertices toward their even
@@ -440,28 +444,32 @@ fn terrain_vertex(grid: vec2<f32>, instance_index: u32, detail: bool) -> Terrain
     out.grid = grid;
     out.lod = f32(lod) + k;
     out.raise_w = 0.0;
-    if lod <= 0 {
+    if lod <= RAISE_MAX_LOD {
         out.raise_w = raise_fade(distance(camera_position(), out.position));
     }
-    out.texel_m = spacing * exp2(k);
     return out;
 }
 
 /// Raised cover over a terrain vertex (surface weather W6b, `sf_surface_bevy::view::surface_raise_at`):
 /// x now, y now without prints, z last frame (motion vectors), in meters, weighted by `raise_w`
-/// (LOD <= 0, faded smoothly in world distance to 0 inside LOD 0); w is y unweighted (the
-/// fragment tilts its normal by w's slope times the weight, so the fade's own ramp never shades).
+/// (LOD <= `RAISE_MAX_LOD`, 1 to 384 m, faded to 0 by 576 m); w is y unweighted (the fragment
+/// tilts its normal by w's slope times the weight, so the fade's own ramp never shades).
 /// The bury depth takes the layers' blended high point at this vertex (`layer_blend_top`): bare
-/// relief and snow in the grout stay shading only. The main pass and the prepass both displace by this one function, so their depths
-/// match; the node bounds grow by `TerrainSettings::raise_m`. Camera motion moves the fade with
-/// it; z keeps this frame's weight (a smooth fade moves < 2 mm a frame at a run).
+/// relief and snow in the grout stay shading only. SW-5c: the raise is one world-space field on
+/// every LOD (UE5/Nanite displacement, CDLOD: LOD changes the mesh density, never the displaced
+/// value): tops prefiltered to `RAISE_TEXEL_M`, never the vertex spacing, and the amount on the
+/// finest resident normal level, never the LOD's; coarser vertices morph onto their even
+/// neighbours like the base height, so a point raises alike at every distance and seams close.
+/// The main pass and the prepass both displace by this one function, so their depths match; the
+/// node bounds grow by `TerrainSettings::raise_m`. z keeps this frame's weight (the fade is 1
+/// everywhere a moving camera could see a change).
 @if(SURFACE_WEATHER || SURFACE_WEATHER_PREPASS)
 fn terrain_raise(t: TerrainVertex) -> vec4<f32> {
-    if t.raise_w <= 0.0 {
+    if t.raise_w <= 0.0 || !surface_raise_on() {
         return vec4<f32>(0.0);
     }
-    let top = layer_blend_top(t.position.xz, t.texel_m, distance(camera_position(), t.position));
-    let r = surface_raise_at(t.position, terrain_normal(t.position.xz, t.lod), top, t.texel_m);
+    let top = layer_blend_top(t.position.xz, RAISE_TEXEL_M, distance(camera_position(), t.position));
+    let r = surface_raise_at(t.position, terrain_normal(t.position.xz, 0.0), top, RAISE_TEXEL_M);
     return vec4<f32>(r * t.raise_w, r.y);
 }
 

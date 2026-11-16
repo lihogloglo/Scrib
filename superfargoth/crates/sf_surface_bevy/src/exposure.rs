@@ -28,6 +28,7 @@ use bevy_app::App;
 use bevy_asset::{Assets, Handle, uuid_handle};
 use bevy_core_pipeline::schedule::{Core3d, Core3dSystems};
 use bevy_ecs::prelude::*;
+use bevy_image::Image;
 use bevy_math::Vec3;
 use bevy_render::diagnostic::RecordDiagnostics;
 use bevy_render::render_asset::RenderAssets;
@@ -46,6 +47,7 @@ use bevy_render::texture::GpuImage;
 use bevy_render::view::RenderViewLodOrigins;
 use bevy_render::{Extract, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
+use sf_diag_bevy::texview::{DebugTexture, DebugTextureAppExt, DebugTextures};
 use sf_surface::view::{
     ExposureMode, ExposurePass, SHELTER_DOWN_M, SHELTER_LEAF_PASS, SHELTER_SIZE, SHELTER_UP_M,
 };
@@ -176,7 +178,15 @@ impl FromWorld for ExposureGpu {
 
 /// Main-world resource always (the shelter writes it); render side when there is a renderer.
 pub(crate) fn build(app: &mut App) {
-    app.init_resource::<ExposureFrame>();
+    app.init_resource::<ExposureFrame>()
+        .register_debug_texture(DebugTexture::render(
+            "surface.exposure",
+            "exposure pack (current): R solid / G leaf casters' height over the map centre (m), B lag, A fresh ground exposure 0..1",
+            (SHELTER_SIZE, SHELTER_SIZE),
+            FORMAT,
+            |world| world.get_resource::<ExposureGpu>().map(|g| g.current_view().clone()),
+        ))
+        .add_systems(bevy_app::Startup, register_debug_textures.after(crate::setup));
     if let Some(mut shaders) = app.world_mut().get_resource_mut::<Assets<Shader>>() {
         shaders
             .insert(&EXPOSURE_SHADER, Shader::from_wgsl(include_str!("exposure.wgsl"), "embedded://sf_surface_bevy/exposure.wgsl"))
@@ -188,6 +198,22 @@ pub(crate) fn build(app: &mut App) {
         .add_systems(RenderStartup, bevy_render::init_gpu_resource::<ExposureGpu>)
         .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
         .add_systems(Core3d, exposure_pass.before(Core3dSystems::Prepass));
+}
+
+/// The maps the pack is made from, for the `tex` viewer (`sf_texview_bevy`; read before the
+/// render world takes their `RENDER_WORLD`-only data).
+#[allow(clippy::needless_pass_by_value)]
+fn register_debug_textures(gpu: Res<SurfaceGpu>, images: Res<Assets<Image>>, mut textures: ResMut<DebugTextures>) {
+    let maps = [
+        ("surface.shelter", "shelter map: top-down depth of solid casters (roofs, arches, rock), 128 m around the camera", &gpu.shelter),
+        ("surface.canopy", "canopy map: top-down depth of leaf casters (partial shelter), 128 m around the camera", &gpu.canopy),
+        ("surface.cells", "cell window: per-32 m cell surface state (R wet, G puddle, B snow, A ash), toroidal", &gpu.cells),
+    ];
+    for (name, description, handle) in maps {
+        if let Some(image) = images.get(handle) {
+            textures.register(DebugTexture::image(name, description, handle.clone(), image));
+        }
+    }
 }
 
 /// Sets this frame's LOD origins, decides this frame's pass and flips the packs (before
@@ -230,7 +256,7 @@ pub(crate) fn extract(
         pass.mode = ExposureMode::Fresh;
     }
     let maps = surface.as_deref().and_then(|s| {
-        let view = |h: &Handle<bevy_image::Image>| images.get(h).map(|g| g.texture_view.clone());
+        let view = |h: &Handle<Image>| images.get(h).map(|g| g.texture_view.clone());
         Some((view(&s.shelter)?, view(&s.canopy)?))
     });
     let (Some((shelter_map, canopy_map)), Some(_)) = (maps, cache.get_compute_pipeline(gpu.pipeline)) else {

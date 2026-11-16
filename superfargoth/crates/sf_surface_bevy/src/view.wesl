@@ -15,7 +15,7 @@ import bevy_pbr::render::pbr_types::{
     STANDARD_MATERIAL_FLAGS_ALPHA_MODE_ALPHA_TO_COVERAGE,
 };
 import sf_surface_bevy::layer::{
-    SurfaceUniform, SurfaceInput, CLASS_STATIC, CLASS_DYNAMIC, FLAG_PUDDLE, apply_surface_layer,
+    SurfaceUniform, SurfaceInput, CLASS_STATIC, CLASS_DYNAMIC, FLAG_PUDDLE, FLAG_RAISE, apply_surface_layer,
     surface_porosity, surface_height_of, surface_raise_amounts, surface_raise_tops, surface_raise_of,
     surface_ring_at,
 };
@@ -37,8 +37,8 @@ import sf_surface_bevy::layer::{
 @group(0) @binding(53) var surface_trail_previous: texture_2d<f32>;
 
 /// The raised cover over the ground point `p` (render space, ground normal `n`, the surface's
-/// high point `top` 0..1 on the shading's `SurfaceInput.height` scale, vertex spacing `texel_m`;
-/// W6b): x this frame's raise (m), y the same without the trail (the cover's own slope, for
+/// high point `top` 0..1 on the shading's `SurfaceInput.height` scale, tops prefiltered to `texel_m`
+/// m, on terrain one fixed world scale, SW-5c; W6b): x this frame's raise (m), y the same without the trail (the cover's own slope, for
 /// normals), z last frame's (last frame's ring and placement; the cells and shelter as now). It
 /// rises with the bury depth (`surface_raise_tops`: the amount past the relief's high point,
 /// swung by the drift patches): a thin cover in the grout stays shading only. Both terrain
@@ -77,6 +77,7 @@ fn surface_input_of(pbr: PbrInput, surface_class: u32) -> SurfaceInput {
     s.height = surface_height_of(pbr.material.base_color.rgb);
     s.basin = 0.0;
     s.level_up = pbr.world_normal.y;
+    s.ground_n = pbr.world_normal;
     s.porosity = surface_porosity(pbr.material.metallic, pbr.material.perceptual_roughness);
     s.surface_class = surface_class;
     s.instance_wet = 0.0;
@@ -119,6 +120,12 @@ fn apply_surface_weather_standard(pbr: ptr<function, PbrInput>) {
 /// Whether puddles are on in the cell window (terrain computes its basin only then).
 fn surface_puddles_on() -> bool {
     return (surface_uniform.misc.x & FLAG_PUDDLE) != 0u;
+}
+
+/// Whether the raised cover is on (SW-5c `FLAG_RAISE`: a snow or ash channel in the window and
+/// the `raise` A/B on): terrain skips the raise's per-vertex work otherwise.
+fn surface_raise_on() -> bool {
+    return (surface_uniform.misc.x & FLAG_RAISE) != 0u;
 }
 
 /// The puddle gate's up (`SurfaceInput.level_up`) of a mesh: Y of the triangle's face normal from

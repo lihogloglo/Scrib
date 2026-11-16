@@ -38,6 +38,28 @@ a console and BRP for agents.
   `pacing.awk`. Repo `tools/`: `doccheck.sh`, `decisions-index.mjs`, `bevy_variants.sh` (how many Bevy builds a set of
   cargo selections needs, from `cargo tree`; CONTRIBUTING "Building").
 
+## Texture viewer (`tex`, Unreal's `vis`)
+- **Console** (dev runs, backquote): `tex list` (name, size, format, description); `tex show <name> [r|g|b|a|rgb]
+  [min max]` draws it in the bottom-right corner (45% of the window height): one channel as grey or `rgb`, values
+  remapped from `[min, max]` (default `0 1`; `max < min` inverts) so the grey level is the remapped value; nearest
+  texels; NaN/inf magenta. A unique part of a name is enough (`tex show trail g -0.3 0`). `tex hide`. Alias `vis`.
+- **Registered**: `surface.shelter`, `surface.canopy` (depth maps, 1024² Depth32Float; try `r 0 1` / `r 1 0`),
+  `surface.cells` (128² RGBA8: R wet, G puddle, B snow, A ash), `surface.exposure` (current pack, 1024² RGBA16F: R/G
+  solid/leaf caster height m, B lag, A exposure), `surface.trail` (current ring, 1024² RGBA16F: R depression m <= 0,
+  G lip m), `precip.occlusion` (512² Depth32Float).
+- **Registering a target** (framework, any system): `sf_diag_bevy` feature `texview`, `DebugTextures`
+  (`sf_diag_bevy/src/texview.rs:96`). An `Image` asset: `DebugTexture::image(name, description, handle, &image)`
+  (`:58`; e.g. `sf_precip_bevy/src/occlusion.rs:228`, `sf_surface_bevy/src/exposure.rs:206`). A render-world
+  texture: `app.register_debug_texture(DebugTexture::render(name, description, size, format, |render_world| view))`
+  (`:70`, `:148`; e.g. `exposure.rs:183`, `trail.rs:250`); the closure runs only while that name is shown.
+- **Viewer**: `sf_texview_bevy` (`lib.rs:49`, added by `mw_devtools_bevy/src/console.rs:91`). On a change
+  (`apply_view`, `lib.rs:324`) it makes an `Rgba8Unorm` target `Image` (source size, long side <= 1024) in an
+  `ImageNode`; the render world resolves the source (`render.rs:142`) and one fullscreen pass `texview.wesl`
+  (`textureLoad`: float, depth and uint/sint variants, no copy) runs in the root `RenderGraph` after `camera_driver`
+  (`render.rs:137`); the UI shows it one frame later. Hidden: no target, node or pass. Not viewable: depth+stencil
+  formats, multisampled, array layers/mips past the view's first. Bevy's own `RenderDebugOverlayPlugin`
+  (bevy_dev_tools) only shows the camera's prepass buffers full-screen.
+
 ## Bevy features used
 `bevy_remote` (BRP, via `bevy_brp_mcp`/`bevy_brp_extras`), `bevy_diagnostic`, gizmos, `PipelineCache::waiting_pipelines`
 (`pipeline_watch.rs`).
