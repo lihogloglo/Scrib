@@ -77,6 +77,19 @@ forces it off (`exterior.rs:284`).
 `water.quality` (`low|medium|high|ultra`, T5a): the FFT tier, live (`water::bind_quality`; `WaterQuality` re-sizes the wave
 images, `sf_water_bevy/src/lib.rs:529`); the quality level writes it at `Preset`.
 
+**Water visibility gate (CW-10a, opt-in, built 2026-11-17, not measured):** without it the FFT, mips, snapshot, SSPR and
+velocity run in every exterior frame (the clipmap is one `NoFrustumCulling` mesh to the 32 km skirt). `set water.gate.visible on`
+(live both ways; `water.gate.margin_m` 16, `water.gate.idle_fft_s` 0.125; `sf_water_bevy/src/gate.rs`, bound in
+`mw_environment_bevy/src/water.rs` `bind_gate`). Frustum term (CPU): per `WaterCamera`, boxes where water can be drawn (the shore
+field's wet leaves, `sf_water::WetTiles`, plus the open sea around the field and the shown bodies, grown by the margin) culled by
+the frustum planes and a view-pyramid SAT; none left: that camera's snapshot, SSPR, velocity are not queued and the FFT runs every
+`idle_fft_s` with all cascades (foam stays current), re-entry runs every cascade and copies `prev_displacement` after the FFT (no
+stale motion). Occlusion term (GPU, same frame, no readback): the boxes are drawn depth-only after the opaque pass in an occlusion
+query (`water_gate.wesl`, `render.rs` `gate_probe`), resolved into the indirect arguments of the snapshot, SSPR and velocity
+(zero when no sample passed). The camera inside a box (shore, swimming) skips the probe. Counters: `sf_water_bevy::gate_stats()`
+(frustum closes, probes), GPU timer `water_gate`. On an island the frustum term rarely closes looking level (the sea is in every
+direction): the occlusion term is the one that saves in streets and valleys; the FFT (~0.16 ms) is only frustum-gated.
+
 ## Known limits
 
 Terrain layer arrays are RGBA8 at 256² (`mw_bake/src/world.rs` `LAYER_ARRAY_SIZE`): BC7/BC5 and size per preset are T6;

@@ -77,3 +77,13 @@ Look for: a calm, small-waved sea in clear weather; the sea roughening smoothly 
 more whitecaps, stronger shore swash) and calming back the same way. Bad: a pop or a re-roll of the wave pattern at any
 moment, waves jumping at the shore, floating things (CPU water) bobbing out of step with the drawn waves.
 - Owner 2026-11-15 (repeated): the white bands on inland water shores (rivers, lakes) are still there.
+
+### WA-7: Water chain gated by visible water (CW-10a; `view "Balmora"`; switch `water.gate.visible`)
+
+Status: awaiting owner (built 2026-11-17, cw10a-water; not measured).
+Launch: release build, `bash bevyrrowind/tools/owner_launch.sh view "Balmora"` at noon, F3 GPU passes open. In a street
+facing away from the Odai: note `water_velocity`, `water_sspr`, `water_snapshot`, then `set water.gate.visible on`: they should
+drop to ~0 (a small `water_gate` probe appears; `water_fft` stays unless you look at the sky or straight down).
+Then walk to the river bank: all passes back, same values as off. Turn toward and away from the water repeatedly, and walk
+out of a street onto the bank. Look for: no pop, flicker or one-frame flat/frozen water when it comes into view; reflections
+(SSPR) and refraction valid on the first frame; no smear behind waves (DLSS motion) on re-entry; foam unchanged. A/B: `set water.gate.visible off`.

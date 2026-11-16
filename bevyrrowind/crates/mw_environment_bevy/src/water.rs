@@ -39,6 +39,8 @@ use tes3::esp::{Cell, Landscape};
 use mw_game_core::exterior::ExteriorCamera;
 /// The sea's wind input (W-WIND): the exterior copies the weather's `WindField` mean wind into it.
 pub use sf_water_bevy::WaterWind;
+/// The water crate's tunables (`water.gate.*`, CW-10a), for the app's tunables catalog.
+pub use sf_water_bevy::TUNABLES as WATER_TUNABLES;
 /// The water surfaces' material: the exterior's catalog warm-up precaches it (pipeline-warmup.md W4b1).
 pub use sf_water_bevy::WaterMaterial;
 
@@ -140,6 +142,16 @@ pub fn bind_quality(app: &mut App) -> WaterQuality {
     tier
 }
 
+/// The water chain's visibility gate (CW-10a, `sf_water_bevy::gate`): `water.gate.visible` (off by
+/// default), its box margin and the idle FFT period, live both ways into `WaterGateSettings`.
+fn bind_gate(app: &mut App) {
+    use sf_tunables_bevy::TunablesAppExt;
+    use sf_water_bevy::{WaterGateSettings, WATER_GATE_IDLE_FFT_S, WATER_GATE_MARGIN_M, WATER_GATE_VISIBLE};
+    let _on = app.add_tunable(&WATER_GATE_VISIBLE).bind_resource(|g: &mut WaterGateSettings, v| g.enabled = v);
+    let _margin = app.add_tunable(&WATER_GATE_MARGIN_M).bind_resource(|g: &mut WaterGateSettings, v| g.margin_m = v);
+    let _idle = app.add_tunable(&WATER_GATE_IDLE_FFT_S).bind_resource(|g: &mut WaterGateSettings, v| g.idle_fft_s = v);
+}
+
 /// `sspr`: local reflections on the water (W-SSPR; `--off waterssr` = the environment map only).
 /// `shore_normals`: wind wavelets in the shading normal up to the shoreline (W-SHORE; `--off
 /// shorenormals` = the normal flattens with the displacement, `ShoreSettings::normal_floor` 0).
@@ -212,6 +224,7 @@ pub fn add(
         (handle, Instant::now())
     });
     let tier = bind_quality(app);
+    bind_gate(app);
     app.add_plugins(WaterPlugin)
         .insert_resource(spectrum)
         .insert_resource(WaterWind { weather: None, sea })

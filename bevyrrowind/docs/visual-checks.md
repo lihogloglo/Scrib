@@ -83,6 +83,7 @@ One line per open ID: `ID | status | file | title`. Entries live in [`visual-che
 
 ### Awaiting owner (49)
 
+WA-7 | awaiting owner | [terrain-water](visual-checks/terrain-water.md) | Water chain gated by visible water (CW-10a): release, `view "Balmora"` street then the river bank at noon, `set water.gate.visible on`, F3 GPU water passes before/after; turning toward/away from water: no pop, reflections valid (2026-11-17)
 WA-6 | partial (2026-11-13: storm sea far too tame; moving white shore band in rivers/lakes, still seen 2026-11-15) | [terrain-water](visual-checks/terrain-water.md) | The sea follows the weather (W-WIND): `scene wa-seyda-noon`, BRP weather thunderstorm and back to clear (`time_scale` 120); smooth roughening and calming, no pop or re-roll; A/B `--off seawind` (2026-11-13)
 WE-15 | partial (2026-11-13: clouds still goofy; bigger shape pass later) | [weather-sky](visual-checks/weather-sky.md) | Storm cloud shape (S3): `scene we3-ridge` 14:00, BRP thunderstorm over Ascadian Isles, look E/SE; domed tapering cells, anvil shelves, ragged base, sloped edge, not an extruded footprint; A/B `--off cbshape` (2026-11-13)
 WA-5 | partial (2026-11-15: shore waves visible but faint bulges, crests do not bend; open sea small at 14 m/s; contact foam bad; FPS very low, unmeasured) | [terrain-water](visual-checks/terrain-water.md) | Gerstner shore waves over the real bed slope: `scene wa-seyda-noon`, `--water-wind 14`, `30`, `scene wa-bittercoast`; A/B `--off shoredepth` / `--off shorewaves`

@@ -25,7 +25,9 @@ bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 log.workspace = true
 sf_coords = { path = "../sf_coords", version = "0.1.0" }
 sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
+sf_tunables.workspace = true
 sf_water = { path = "../sf_water", version = "0.1.0" }
+wgpu.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

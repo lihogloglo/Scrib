@@ -8,23 +8,23 @@ use std::collections::HashMap;
 use bevy_app::App;
 use bevy_asset::{load_embedded_asset, AssetId, Handle};
 use bevy_camera::{MainPassResolutionOverride, Viewport};
-use bevy_core_pipeline::core_3d::main_transparent_pass_3d;
+use bevy_core_pipeline::core_3d::{main_transparent_pass_3d, CORE_3D_DEPTH_FORMAT};
 use bevy_core_pipeline::prepass::ViewPrepassTextures;
 use bevy_core_pipeline::schedule::{Core3d, Core3dSystems};
 use bevy_core_pipeline::FullscreenShader;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::IntoSystemSet;
 use bevy_image::Image;
-use bevy_math::{Mat4, Vec4};
+use bevy_math::{Mat4, UVec4, Vec4};
 use bevy_render::camera::ExtractedCamera;
 use bevy_render::diagnostic::RecordDiagnostics;
 use bevy_render::render_asset::RenderAssets;
 use bevy_render::render_resource::binding_types::{
-    sampler, storage_buffer_sized, texture_2d, texture_2d_array, texture_depth_2d, texture_depth_2d_multisampled, texture_storage_2d,
+    sampler, storage_buffer_read_only_sized, storage_buffer_sized, texture_2d, texture_2d_array, texture_depth_2d, texture_depth_2d_multisampled, texture_storage_2d,
     texture_storage_2d_array, uniform_buffer,
 };
 use bevy_render::render_resource::{
-    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferUsages, CachedComputePipelineId,
+    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferUsages, CachedComputePipelineId, CompareFunction, ComputePipeline, DepthBiasState, DepthStencilState, PrimitiveState, PrimitiveTopology, RenderPipeline, StencilState,
     CachedRenderPipelineId, ColorTargetState, ColorWrites, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, FragmentState, LoadOp,
     MultisampleState, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType,
     ShaderStages, ShaderType, StorageTextureAccess, StoreOp, TextureFormat, TextureSampleType, TextureViewDescriptor, TextureViewDimension, UniformBuffer,
@@ -38,7 +38,7 @@ use sf_render_order_bevy::PassStage;
 use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
 
-use crate::{WaterCamera, WaterImages, WaterParams, MAX_CASCADES, RESOLUTION};
+use crate::{WaterCamera, WaterGate, WaterImages, WaterParams, MAX_CASCADES, RESOLUTION};
 
 /// The FFT chain's uniform (`water_fft.wesl` `FftParams`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
@@ -111,6 +111,10 @@ impl ImageIds {
 #[derive(Resource, Clone, Debug, Default)]
 pub(crate) struct WaterRender {
     pub active: bool,
+    /// The FFT and mips run this frame (the visibility gate idles them, CW-10a; always without it).
+    pub fft_run: bool,
+    /// Copy the displacement to `prev_displacement` before the FFT (`gate::FftPlan::copy_before`).
+    pub fft_copy_before: bool,
     pub fft: FftUniform,
     /// Mip levels of the wave images, and the cascades (array layers) written.
     pub mips: u32,
@@ -132,6 +136,49 @@ struct WaterViewBindings {
     velocity: BindGroup,
     /// The SSPR bind group and its dispatch size (reflection texels).
     sspr: Option<(BindGroup, [u32; 2])>,
+    /// The visibility gate's probe (CW-10a): `None` without the gate, inside a water box, or while
+    /// its pipelines compile; the passes then draw and dispatch directly.
+    gate: Option<GateBindings>,
+}
+
+/// Render-world copy of the camera's [`WaterGate`] (present while the gate is on).
+#[derive(Component)]
+struct ViewGate(WaterGate);
+
+/// One view's probe this frame: its pipelines, bind groups and buffers.
+struct GateBindings {
+    probe: RenderPipeline,
+    args_pipeline: ComputePipeline,
+    probe_group: BindGroup,
+    args_group: BindGroup,
+    query: wgpu::QuerySet,
+    resolve: Buffer,
+    args: Buffer,
+    boxes: u32,
+}
+
+/// One view's persistent probe objects (re-created when the box count outgrows `boxes`).
+struct GateGpu {
+    query: wgpu::QuerySet,
+    resolve: Buffer,
+    args: Buffer,
+    boxes: Buffer,
+    capacity: u64,
+}
+
+/// The `args` buffer (u32 offsets ×4 = bytes): snapshot draw, velocity draw, SSPR dispatch (`water_gate.wesl`).
+pub(crate) const GATE_ARGS_SNAPSHOT: u64 = 0;
+pub(crate) const GATE_ARGS_VELOCITY: u64 = 16;
+pub(crate) const GATE_ARGS_SSPR: u64 = 32;
+const GATE_ARGS_BYTES: u64 = 48;
+/// One box in the probe's storage buffer (`GateBox`: two `vec4<f32>`).
+const GATE_BOX_BYTES: u64 = 32;
+/// Vertices per box (one triangle strip, `water_gate.wesl` `strip_corner`).
+pub(crate) const GATE_STRIP: u32 = 14;
+
+#[derive(Clone, Copy, Debug, Default, ShaderType)]
+struct GateCounts {
+    counts: UVec4,
 }
 
 #[derive(Resource, Default)]
@@ -144,6 +191,8 @@ struct WaterGpu {
     mips: Vec<(BindGroup, [u32; 3])>,
     /// Last frame's unjittered `clip_from_world` per view (motion vectors).
     prev: HashMap<Entity, Mat4>,
+    /// The visibility gate's probe objects per view (CW-10a).
+    gates: HashMap<Entity, GateGpu>,
 }
 
 #[derive(Resource)]
@@ -158,6 +207,10 @@ struct WaterPipelines {
     mips: BindGroupLayoutDescriptor,
     mips_shader: Handle<Shader>,
     velocity_shader: Handle<Shader>,
+    /// The visibility gate (CW-10a): probe (view, boxes) and arguments (query, args, counts).
+    gate_probe: BindGroupLayoutDescriptor,
+    gate_args: BindGroupLayoutDescriptor,
+    gate_shader: Handle<Shader>,
     fullscreen: FullscreenShader,
 }
 
@@ -237,6 +290,18 @@ impl FromWorld for WaterPipelines {
             ),
             mips_shader: load_embedded_asset!(world, "shaders/water_mips.wesl"),
             velocity_shader: load_embedded_asset!(world, "shaders/water_velocity.wesl"),
+            gate_probe: BindGroupLayoutDescriptor::new(
+                "water_gate_probe",
+                &BindGroupLayoutEntries::sequential(ShaderStages::VERTEX, (uniform_buffer::<ViewUniform>(true), storage_buffer_read_only_sized(false, None))),
+            ),
+            gate_args: BindGroupLayoutDescriptor::new(
+                "water_gate_args",
+                &BindGroupLayoutEntries::with_indices(
+                    ShaderStages::COMPUTE,
+                    ((2, storage_buffer_read_only_sized(false, None)), (3, storage_buffer_sized(false, None)), (4, uniform_buffer::<GateCounts>(false))),
+                ),
+            ),
+            gate_shader: load_embedded_asset!(world, "shaders/water_gate.wesl"),
             fullscreen: world.resource::<FullscreenShader>().clone(),
         }
     }
@@ -254,6 +319,8 @@ struct WaterPipelineIds {
     sspr: Option<[CachedComputePipelineId; 2]>,
     snapshot: HashMap<u32, CachedRenderPipelineId>,
     velocity: HashMap<u32, CachedRenderPipelineId>,
+    gate_probe: HashMap<u32, CachedRenderPipelineId>,
+    gate_args: Option<CachedComputePipelineId>,
 }
 
 pub(crate) fn build(app: &mut App) {
@@ -285,15 +352,23 @@ pub(crate) fn finish(app: &mut App) {
 }
 
 #[allow(clippy::type_complexity)]
-fn extract(mut commands: Commands, state: Extract<Res<WaterRender>>, cameras: Extract<Query<(RenderEntity, Has<WaterCamera>), With<bevy_camera::Camera3d>>>) {
+fn extract(
+    mut commands: Commands,
+    state: Extract<Res<WaterRender>>,
+    cameras: Extract<Query<(RenderEntity, Has<WaterCamera>, Option<&WaterGate>), With<bevy_camera::Camera3d>>>,
+) {
     commands.insert_resource(state.clone());
-    for (entity, water) in &cameras {
+    for (entity, water, gate) in &cameras {
         let mut e = commands.entity(entity);
         if water && state.active {
             e.insert(WaterView);
         } else {
             e.remove::<(WaterView, WaterViewBindings)>();
         }
+        match gate {
+            Some(g) if water => e.insert(ViewGate(g.clone())),
+            _ => e.remove::<ViewGate>(),
+        };
     }
 }
 
@@ -324,6 +399,26 @@ impl WaterPipelines {
                 targets: vec![target(TextureFormat::Rgba16Float), target(TextureFormat::R32Float)],
                 ..FragmentState::default()
             }),
+            ..RenderPipelineDescriptor::default()
+        }
+    }
+
+    /// The gate's probe: boxes depth-tested (reverse Z, no write) against the view's depth, no colour.
+    fn gate_probe_descriptor(&self, samples: u32) -> RenderPipelineDescriptor {
+        RenderPipelineDescriptor {
+            label: Some(format!("water_gate_probe_{samples}").into()),
+            layout: vec![self.gate_probe.clone()],
+            vertex: VertexState { shader: self.gate_shader.clone(), shader_defs: Vec::new(), entry_point: Some("probe".into()), buffers: Vec::new(), constants: Vec::default() },
+            primitive: PrimitiveState { topology: PrimitiveTopology::TriangleStrip, cull_mode: None, ..PrimitiveState::default() },
+            depth_stencil: Some(DepthStencilState {
+                format: CORE_3D_DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(CompareFunction::GreaterEqual),
+                stencil: StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
+            multisample: MultisampleState { count: samples, ..MultisampleState::default() },
+            fragment: None,
             ..RenderPipelineDescriptor::default()
         }
     }
@@ -372,11 +467,15 @@ fn queue_pipelines(views: Query<&Msaa, With<WaterView>>, pipelines: Option<Res<W
     for s in views.iter().map(Msaa::samples).chain(warm) {
         ids.snapshot.entry(s).or_insert_with(|| cache.queue_render_pipeline(p.snapshot_descriptor(s)));
         ids.velocity.entry(s).or_insert_with(|| cache.queue_render_pipeline(p.velocity_descriptor(s)));
+        ids.gate_probe.entry(s).or_insert_with(|| cache.queue_render_pipeline(p.gate_probe_descriptor(s)));
+    }
+    if ids.gate_args.is_none() {
+        ids.gate_args = Some(cache.queue_compute_pipeline(p.compute(&p.gate_args, &p.gate_shader, "gate_args")));
     }
 }
 
 // FLICKER-1: `OriginRebase` (O_new - O_old, render space) on origin-shift frames; zero otherwise.
-type ViewItem<'a> = (Entity, &'a ExtractedView, &'a ViewTarget, &'a ViewDepthStencilTexture, &'a Msaa, Option<&'a bevy_render::view::OriginRebase>);
+type ViewItem<'a> = (Entity, &'a ExtractedView, &'a ViewTarget, &'a ViewDepthStencilTexture, &'a Msaa, Option<&'a bevy_render::view::OriginRebase>, Option<&'a ViewGate>);
 
 #[allow(clippy::too_many_arguments)]
 fn prepare(
@@ -390,6 +489,7 @@ fn prepare(
     images: Res<RenderAssets<GpuImage>>,
     view_uniforms: Res<ViewUniforms>,
     mut gpu: ResMut<WaterGpu>,
+    pipeline_ids: Res<WaterPipelineIds>,
 ) {
     gpu.fft = None;
     let Some(pipelines) = pipelines else { return };
@@ -447,7 +547,8 @@ fn prepare(
     let mut params = UniformBuffer::from(state.params);
     params.write_buffer(&device, &queue);
     let sspr = sspr_bindings(&state, &pipelines, &cache, &device, &queue, &images, &view_uniforms, &mut gpu, (snap_color, snap_depth));
-    for (entity, view, target, depth, msaa, rebase) in &views {
+    let ids_gate = (pipeline_ids.gate_probe.clone(), pipeline_ids.gate_args);
+    for (entity, view, target, depth, msaa, rebase, gate) in &views {
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
         let ms = usize::from(msaa.samples() > 1);
         let snapshot = device.create_bind_group(
@@ -469,8 +570,75 @@ fn prepare(
             &cache.get_bind_group_layout(&pipelines.velocity[ms]),
             &BindGroupEntries::sequential((params_binding, velocity_binding, &disp.texture_view, &prev.texture_view, &disp.sampler, depth_view, &shore.texture_view, &shore.sampler, &shore_bed.texture_view)),
         );
-        commands.entity(entity).insert(WaterViewBindings { samples: msaa.samples(), snapshot, velocity, sspr: sspr.clone() });
+        let gate = match gate {
+            // The frustum term closed this camera: none of its passes is queued (`prev` stays current).
+            Some(g) if !g.0.in_frustum() => {
+                commands.entity(entity).remove::<WaterViewBindings>();
+                continue;
+            }
+            Some(g) if !g.0.forced => gate_bindings(entity, &g.0, msaa.samples(), &state, sspr.as_ref().map(|s| s.1), &pipelines, &ids_gate, &cache, &device, &queue, &view_uniforms, &mut gpu),
+            _ => None,
+        };
+        commands.entity(entity).insert(WaterViewBindings { samples: msaa.samples(), snapshot, velocity, sspr: sspr.clone(), gate });
     }
+}
+
+/// One view's probe (CW-10a, `gate.rs`): its boxes uploaded, the query and argument buffers, and
+/// both bind groups. `None` while a gate pipeline compiles (the passes then run directly).
+#[allow(clippy::too_many_arguments)]
+fn gate_bindings(
+    entity: Entity,
+    gate: &WaterGate,
+    samples: u32,
+    state: &WaterRender,
+    sspr_groups: Option<[u32; 2]>,
+    pipelines: &WaterPipelines,
+    (probe_ids, args_id): &(HashMap<u32, CachedRenderPipelineId>, Option<CachedComputePipelineId>),
+    cache: &PipelineCache,
+    device: &RenderDevice,
+    queue: &RenderQueue,
+    view_uniforms: &ViewUniforms,
+    gpu: &mut WaterGpu,
+) -> Option<GateBindings> {
+    let probe = cache.get_render_pipeline(*probe_ids.get(&samples)?)?.clone();
+    let args_pipeline = cache.get_compute_pipeline((*args_id)?)?.clone();
+    let count = u32::try_from(gate.boxes.len()).ok().filter(|n| *n > 0)?;
+    let bytes = u64::from(count) * GATE_BOX_BYTES;
+    if gpu.gates.get(&entity).is_none_or(|g| g.capacity < bytes) {
+        let capacity = bytes.next_power_of_two().max(64 * GATE_BOX_BYTES);
+        let buffer = |label, size, usage| device.create_buffer(&BufferDescriptor { label: Some(label), size, usage, mapped_at_creation: false });
+        let query = device.wgpu_device().create_query_set(&wgpu::QuerySetDescriptor { label: Some("water_gate"), ty: wgpu::QueryType::Occlusion, count: 1 });
+        gpu.gates.insert(
+            entity,
+            GateGpu {
+                query,
+                resolve: buffer("water_gate_resolve", wgpu::QUERY_SIZE.into(), BufferUsages::QUERY_RESOLVE | BufferUsages::STORAGE),
+                args: buffer("water_gate_args", GATE_ARGS_BYTES, BufferUsages::STORAGE | BufferUsages::INDIRECT),
+                boxes: buffer("water_gate_boxes", capacity, BufferUsages::STORAGE | BufferUsages::COPY_DST),
+                capacity,
+            },
+        );
+    }
+    let g = gpu.gates.get(&entity)?;
+    let data: Vec<u8> = gate.boxes.iter().flat_map(|[lo, hi]| [lo.x, lo.y, lo.z, 1.0, hi.x, hi.y, hi.z, 1.0]).flat_map(f32::to_le_bytes).collect();
+    queue.write_buffer(&g.boxes, 0, &data);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let (quads, rings) = (state.params.clip.y as u32, state.params.clip.z as u32);
+    let [gx, gy] = sspr_groups.unwrap_or([0, 0]);
+    let mut counts = UniformBuffer::from(GateCounts { counts: UVec4::new(quads * quads * 6, rings, gx, gy) });
+    counts.write_buffer(device, queue);
+    let probe_group = device.create_bind_group(
+        "water_gate_probe",
+        &cache.get_bind_group_layout(&pipelines.gate_probe),
+        &BindGroupEntries::sequential((view_uniforms.uniforms.binding()?, g.boxes.as_entire_binding())),
+    );
+    let args_group = device.create_bind_group(
+        "water_gate_args",
+        &cache.get_bind_group_layout(&pipelines.gate_args),
+        &BindGroupEntries::with_indices(((2, g.resolve.as_entire_binding()), (3, g.args.as_entire_binding()), (4, counts.binding()?))),
+    );
+    crate::gate::PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Some(GateBindings { probe, args_pipeline, probe_group, args_group, query: g.query.clone(), resolve: g.resolve.clone(), args: g.args.clone(), boxes: count })
 }
 
 /// The SSPR bind group (one for every water view: the bindings are the view-independent
@@ -533,7 +701,10 @@ fn sspr_pass(view: ViewQuery<(&WaterViewBindings, &ViewUniformOffset)>, gpu: Res
     // Each dispatch is its own usage scope: the resolve sees every projection's atomics.
     for pipeline in &pipelines {
         pass.set_pipeline(pipeline);
-        pass.dispatch_workgroups(groups[0], groups[1], 1);
+        match &bindings.gate {
+            Some(g) => pass.dispatch_workgroups_indirect(&g.args, GATE_ARGS_SSPR),
+            None => pass.dispatch_workgroups(groups[0], groups[1], 1),
+        }
     }
     span.end(&mut pass);
 }
@@ -541,6 +712,10 @@ fn sspr_pass(view: ViewQuery<(&WaterViewBindings, &ViewUniformOffset)>, gpu: Res
 /// GPU-timed compute pass (`render/<label>/elapsed_gpu`).
 #[allow(clippy::cast_possible_truncation)]
 fn fft_pass(_view: ViewQuery<&WaterView>, gpu: Res<WaterGpu>, state: Res<WaterRender>, ids: Res<WaterPipelineIds>, cache: Res<PipelineCache>, images: Res<RenderAssets<GpuImage>>, mut ctx: RenderContext) {
+    // The visibility gate idles the FFT while no camera sees water (CW-10a; always runs without it).
+    if !state.fft_run {
+        return;
+    }
     let Some(group) = gpu.fft.as_ref() else { return };
     let Some(pipelines) = ids.fft.and_then(|ids| {
         let p: Option<Vec<_>> = ids.iter().map(|id| cache.get_compute_pipeline(*id)).collect();
@@ -556,11 +731,12 @@ fn fft_pass(_view: ViewQuery<&WaterView>, gpu: Res<WaterGpu>, state: Res<WaterRe
     if disp.texture.width() != n || prev.texture.width() != n {
         return;
     }
-    ctx.command_encoder().copy_texture_to_texture(
-        disp.texture.as_image_copy(),
-        prev.texture.as_image_copy(),
-        Extent3d { width: n, height: n, depth_or_array_layers: MAX_CASCADES as u32 },
-    );
+    let extent = Extent3d { width: n, height: n, depth_or_array_layers: MAX_CASCADES as u32 };
+    // After a frame without FFT (the gate idled it) `prev` would be older than a frame: copy after
+    // the FFT instead, so the first frame back has no wave motion rather than a too-long one.
+    if state.fft_copy_before {
+        ctx.command_encoder().copy_texture_to_texture(disp.texture.as_image_copy(), prev.texture.as_image_copy(), extent);
+    }
     FFT_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let cascades = state.fft.count;
     let diagnostics = ctx.diagnostic_recorder();
@@ -576,6 +752,9 @@ fn fft_pass(_view: ViewQuery<&WaterView>, gpu: Res<WaterGpu>, state: Res<WaterRe
     }
     span.end(&mut pass);
     drop(pass);
+    if !state.fft_copy_before {
+        ctx.command_encoder().copy_texture_to_texture(disp.texture.as_image_copy(), prev.texture.as_image_copy(), extent);
+    }
     // Mip chains of both wave images (level k from k−1).
     if let Some(mips) = ids.mips.and_then(|id| cache.get_compute_pipeline(id)) {
         let mut pass = ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor { label: Some("water_mips"), timestamp_writes: None });
@@ -590,14 +769,18 @@ fn fft_pass(_view: ViewQuery<&WaterView>, gpu: Res<WaterGpu>, state: Res<WaterRe
 }
 
 fn snapshot_pass(
-    view: ViewQuery<(&WaterViewBindings, &ExtractedCamera, Option<&MainPassResolutionOverride>)>,
+    view: ViewQuery<(&WaterViewBindings, &ExtractedCamera, Option<&MainPassResolutionOverride>, &ViewDepthStencilTexture, &ViewUniformOffset)>,
     state: Res<WaterRender>,
     ids: Res<WaterPipelineIds>,
     cache: Res<PipelineCache>,
     images: Res<RenderAssets<GpuImage>>,
     mut ctx: RenderContext,
 ) {
-    let (bindings, camera, resolution) = view.into_inner();
+    let (bindings, camera, resolution, view_depth, offset) = view.into_inner();
+    // The gate's probe first: the SSPR and velocity passes read the arguments it writes.
+    if let Some(g) = bindings.gate.as_ref() {
+        gate_probe(&mut ctx, g, view_depth, offset, camera, resolution);
+    }
     let Some(image_ids) = state.images else { return };
     let (Some(color), Some(depth)) = (images.get(image_ids.snapshot_color), images.get(image_ids.snapshot_depth)) else { return };
     let Some(pipeline) = ids.snapshot.get(&bindings.samples).and_then(|id| cache.get_render_pipeline(*id)) else { return };
@@ -625,8 +808,45 @@ fn snapshot_pass(
     }
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, &bindings.snapshot, &[]);
-    pass.draw(0..3, 0..1);
+    match &bindings.gate {
+        Some(g) => pass.draw_indirect(&g.args, GATE_ARGS_SNAPSHOT),
+        None => pass.draw(0..3, 0..1),
+    }
     span.end(&mut pass);
+}
+
+/// The gate's probe (CW-10a, `water_gate.wesl`): the view's water boxes depth-tested against its
+/// depth after the opaque pass in an occlusion query, the query resolved on the GPU and turned into
+/// the indirect arguments of the snapshot, SSPR and velocity passes. GPU-timed as `water_gate`.
+fn gate_probe(ctx: &mut RenderContext, g: &GateBindings, depth: &ViewDepthStencilTexture, offset: &ViewUniformOffset, camera: &ExtractedCamera, resolution: Option<&MainPassResolutionOverride>) {
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
+    let mut pass = ctx.command_encoder().begin_render_pass(&RenderPassDescriptor {
+        label: Some("water_gate"),
+        color_attachments: &[],
+        depth_stencil_attachment: Some(depth.get_attachment(StoreOp::Store)),
+        timestamp_writes: None,
+        occlusion_query_set: Some(&g.query),
+        multiview_mask: None,
+    });
+    let span = diagnostics.pass_span(&mut pass, "water_gate");
+    if let Some(v) = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution) {
+        #[allow(clippy::cast_precision_loss)]
+        pass.set_viewport(v.physical_position.x as f32, v.physical_position.y as f32, v.physical_size.x as f32, v.physical_size.y as f32, v.depth.start, v.depth.end);
+    }
+    pass.set_pipeline(&g.probe);
+    pass.set_bind_group(0, &g.probe_group, &[offset.offset]);
+    pass.begin_occlusion_query(0);
+    pass.draw(0..GATE_STRIP, 0..g.boxes);
+    pass.end_occlusion_query();
+    span.end(&mut pass);
+    drop(pass);
+    let encoder = ctx.command_encoder();
+    encoder.resolve_query_set(&g.query, 0..1, &g.resolve, 0);
+    let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor { label: Some("water_gate_args"), timestamp_writes: None });
+    pass.set_pipeline(&g.args_pipeline);
+    pass.set_bind_group(0, &g.args_group, &[]);
+    pass.dispatch_workgroups(1, 1, 1);
 }
 
 fn velocity_pass(
@@ -658,7 +878,10 @@ fn velocity_pass(
     }
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, &bindings.velocity, &[]);
-    pass.draw(0..quads * quads * 6, 0..rings);
+    match &bindings.gate {
+        Some(g) => pass.draw_indirect(&g.args, GATE_ARGS_VELOCITY),
+        None => pass.draw(0..quads * quads * 6, 0..rings),
+    }
     span.end(&mut pass);
 }
 

@@ -17,6 +17,9 @@
 //!
 //! Wave and optics code follows bevy-aqua (MIT OR Apache-2.0; `THIRD_PARTY_NOTICES.md`).
 
+mod gate;
+#[cfg(test)]
+mod gate_tests;
 mod material;
 pub mod mesh;
 mod render;
@@ -44,6 +47,7 @@ use bevy_transform::components::GlobalTransform;
 use sf_water::{origin_phase, reflection_plane, Cascades, OpticsMap, PlaneCandidate, SeaTransition, SeaWind, ShoreField, ShoreSettings, ShoreWaves, SpectrumParams, WaterOptics, H0, REPEAT_PERIOD};
 
 pub use material::{WaterExt, WaterMaterial, WaterParams};
+pub use gate::{gate_stats, GateStats, WaterGate, WaterGateSettings, MAX_GATE_BOXES, TUNABLES, WATER_GATE_IDLE_FFT_S, WATER_GATE_MARGIN_M, WATER_GATE_VISIBLE};
 
 /// FFT grid per cascade at High/Ultra (water.md: 256²); Low and Medium use 128².
 pub const RESOLUTION: usize = 256;
@@ -342,6 +346,7 @@ impl Plugin for WaterPlugin {
         load_shader_library!(app, "shaders/water_common.wesl");
         embedded_asset!(app, "shaders/water_material.wesl");
         embedded_asset!(app, "shaders/water_fft.wesl");
+        embedded_asset!(app, "shaders/water_gate.wesl");
         embedded_asset!(app, "shaders/water_mips.wesl");
         embedded_asset!(app, "shaders/water_snapshot.wesl");
         embedded_asset!(app, "shaders/water_sspr.wesl");
@@ -356,13 +361,15 @@ impl Plugin for WaterPlugin {
             .init_resource::<WaterQuality>()
             .init_resource::<WaterReflections>()
             .init_resource::<ClipmapSettings>()
+            .init_resource::<WaterGateSettings>()
+            .init_resource::<gate::WetTilesCache>()
             .init_resource::<render::WaterRender>()
             .add_plugins(MaterialPlugin::<WaterMaterial>::default())
-            .configure_sets(PostUpdate, WaterSystems::Drive.after(TransformSystems::Propagate))
+            .configure_sets(PostUpdate, WaterSystems::Drive.after(TransformSystems::Propagate).after(bevy_camera::visibility::VisibilitySystems::UpdateFrusta))
             .add_systems(PreStartup, create_images)
             .add_systems(
                 PostUpdate,
-                (depth_usages, size_waves, follow_wind, upload_spectrum, upload_bakes, size_targets, attach_surface, drive).chain().in_set(WaterSystems::Drive),
+                (depth_usages, size_waves, follow_wind, upload_spectrum, upload_bakes, size_targets, attach_surface, gate::update_tiles, gate::gate_views, drive).chain().in_set(WaterSystems::Drive),
             );
         render::build(app);
     }
@@ -877,13 +884,13 @@ fn shore_waves_now(spectrum: &OceanSpectrum, settings: ShoreSettings, w: f32, ca
 fn drive(
     (frame, spectrum, look, clip, quality): (Res<WaterFrame>, Res<OceanSpectrum>, Res<WaterLook>, Res<ClipmapSettings>, Res<WaterQuality>),
     (shore, regions, reflections): (Res<WaterShoreInput>, Res<WaterRegionsInput>, Res<WaterReflections>),
-    cameras: Query<&GlobalTransform, With<WaterCamera>>,
+    (cameras, gate_settings): (Query<(&GlobalTransform, Option<&WaterGate>), With<WaterCamera>>, Res<WaterGateSettings>),
     images: Option<Res<WaterImages>>,
     mut surfaces: Query<(&MeshMaterial3d<WaterMaterial>, Option<&WaterSurface>, Has<OceanSurface>, &mut Visibility, &bevy_camera::visibility::InheritedVisibility)>,
     mut materials: ResMut<Assets<WaterMaterial>>,
     mut state: ResMut<render::WaterRender>,
     mut clock: Local<(u64, [Option<f64>; MAX_CASCADES])>,
-    (mut last_time, mut shore_waves): (Local<Option<f64>>, Local<Option<(OceanSpectrum, ShoreSettings, [ShoreWaves; 2])>>),
+    (mut last_time, mut shore_waves, mut fft_clock): (Local<Option<f64>>, Local<Option<(OceanSpectrum, ShoreSettings, [ShoreWaves; 2])>>, Local<gate::FftClock>),
 ) {
     let Some(images) = images else { return };
     let cascades = spectrum.cascades.len().min(MAX_CASCADES).min(quality.cascades());
@@ -893,7 +900,7 @@ fn drive(
         .filter(|(_, surface, ocean, _, inherited)| if *ocean && surface.is_none() { frame.enabled } else { inherited.get() })
         .map(|(_, surface, _, _, _)| surface.map_or(PlaneCandidate { level: frame.level, bounds: None }, |w| PlaneCandidate { level: w.level, bounds: w.bounds }))
         .collect();
-    let plane = cameras.iter().next().and_then(|c| reflection_plane(c.translation(), &candidates));
+    let plane = cameras.iter().next().and_then(|(c, _)| reflection_plane(c.translation(), &candidates));
     // The shore waves follow the sea state, blended through a transition as the FFT is (W-WIND).
     let weight = spectrum.weight(frame.time);
     let sw = shore.field.as_ref().map(|f| shore_waves_now(&spectrum, f.settings, weight, &mut shore_waves));
@@ -946,13 +953,16 @@ fn drive(
         }
     }
     // FFT tier: the cascades this frame. On High the two swell cascades (256 m, 64 m) alternate,
-    // so three of four run each frame; the chop runs every frame.
+    // so three of four run each frame; the chop runs every frame. The visibility gate (CW-10a)
+    // idles it while no camera sees water and runs every cascade on an idle tick and on re-entry.
+    let any_open = cameras.iter().any(|(_, g)| g.is_none_or(WaterGate::in_frustum));
+    let plan = fft_clock.plan(gate_settings.enabled, any_open, frame.time, gate_settings.idle_fft_s);
     let (count, k) = (u32::try_from(cascades).unwrap_or(0), clock.0);
     clock.0 += 1;
-    let skip = if quality.amortised() && count >= 3 { u32::from(k % 2 == 0) } else { u32::MAX };
+    let skip = if quality.amortised() && count >= 3 && !plan.full { u32::from(k % 2 == 0) } else { u32::MAX };
     let mut dts = Vec4::ZERO;
     #[allow(clippy::cast_possible_truncation)]
-    for c in (0..cascades).filter(|c| u32::try_from(*c).ok() != Some(skip)) {
+    for c in (0..cascades).filter(|c| plan.run && u32::try_from(*c).ok() != Some(skip)) {
         dts[c] = clock.1[c].map_or(0.0, |l| (frame.time - l).clamp(0.0, 0.2)) as f32;
         clock.1[c] = Some(frame.time);
     }
@@ -963,6 +973,8 @@ fn drive(
     #[allow(clippy::cast_possible_truncation)]
     let next = render::WaterRender {
         active: any,
+        fft_run: plan.run,
+        fft_copy_before: plan.copy_before,
         fft: render::FftUniform {
             sizes: p.sizes,
             dts,

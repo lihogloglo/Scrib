@@ -356,6 +356,16 @@ Solari's world cache (open question 3). Underwater beds lit by Solari get no wat
 sunlight (they're lit as if dry); the water pass's transmittance covers the view path only. Accepted
 for M6.
 
+**Visibility gate, CW-10a as built (2026-11-17, opt-in `water.gate.visible`, not measured):** the chain runs only for cameras that
+can see water. CPU frustum term (`sf_water_bevy/src/gate.rs`): wet-leaf quadtree of the shore field (`sf_water::WetTiles`, 8-texel
+leaves, wet at distance >= -margin), the open-sea strips around the field and the shown bodies, grown by `water.gate.margin_m`, tested
+against the frustum planes and a view-pyramid SAT; none: no snapshot/SSPR/velocity for that camera, FFT at `water.gate.idle_fft_s`
+with every cascade while no camera sees water, re-entry with every cascade and the `prev_displacement` copy after the FFT. GPU
+occlusion term (same frame, no readback; UE5 occlusion queries, GPU-driven indirect args): the boxes drawn depth-only after the
+opaque pass in an occlusion query, resolved into the indirect args of snapshot, SSPR and velocity. Not gated: the water draw itself
+(transmissive phase), the SSPR hash clear, the FFT by occlusion. Expected (audit §2 item 5): -0.45 ms GPU where water is hidden
+behind houses or hills, -0.6 ms looking away from all water, +~0.02 ms (probe) when water fills the view.
+
 ## Render order (transparent side; rainwater, 2026-10-19)
 
 Whole-frame picture (every pass, fog/shadow/prepass per material), the rules and the guard test: [render-order.md](render-order.md) (renderorder, 2026-10-19).

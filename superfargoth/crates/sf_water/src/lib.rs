@@ -15,6 +15,9 @@ pub mod shore_waves;
 pub mod spectrum;
 pub mod sspr;
 pub mod twin;
+pub mod wet_tiles;
+#[cfg(test)]
+mod wet_tiles_tests;
 
 #[cfg(test)]
 mod tests;
@@ -31,6 +34,7 @@ pub use shore_waves::{ShoreWave, ShoreWaves};
 pub use spectrum::{Cascades, DEFAULT_CASCADES, GRAVITY, H0, REPEAT_PERIOD, SpectrumParams, WindInput};
 pub use sspr::{PlaneCandidate, reflection_plane};
 pub use twin::{CascadeTwin, WaveSample, WaveTwin, origin_phase, tile_coords};
+pub use wet_tiles::WetTiles;
 
 use sf_coords::WorldPos;
 use sf_world::{RecordRef, Worldspace, WorldspaceId};

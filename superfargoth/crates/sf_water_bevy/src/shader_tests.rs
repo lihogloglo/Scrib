@@ -102,7 +102,8 @@ fn compile(module: &str, defs: &[&str]) -> Result<String, String> {
 #[test]
 fn water_shaders_compile() {
     let mut failures = Vec::new();
-    let jobs: [(&str, &[&str]); 9] = [
+    let jobs: [(&str, &[&str]); 10] = [
+        ("sf_water_bevy::shaders::water_gate", &[]),
         ("sf_water_bevy::shaders::water_fft", &[]),
         ("sf_water_bevy::shaders::water_mips", &[]),
         ("sf_water_bevy::shaders::water_snapshot", &[]),
@@ -201,5 +202,31 @@ fn bed_slope_reaches_every_pass() {
         let bound = parsed.global_variables.iter().find(|(_, g)| g.name.as_deref() == Some("shore_bed")).and_then(|(_, g)| g.binding.as_ref().map(|b| b.binding));
         assert_eq!(bound, Some(binding), "{module}: shore_bed binding");
         assert!(wgsl.contains("shore_slope"), "{module} never samples the bed slope");
+    }
+}
+
+/// The visibility gate (CW-10a): the probe and argument entry points exist, and `gate_args` writes
+/// the draw/dispatch layouts at the byte offsets the passes read (`GATE_ARGS_*`): instance count,
+/// velocity instances and both SSPR group counts scale with the occlusion result.
+#[test]
+fn gate_shader_matches_its_rust_side() {
+    let wgsl = compile("sf_water_bevy::shaders::water_gate", &[]).expect("compiles");
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("parses");
+    for name in ["probe", "gate_args"] {
+        assert!(module.entry_points.iter().any(|e| e.name == name), "entry point {name}");
+    }
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/shaders/water_gate.wesl")).expect("shader");
+    let at = |offset: u64| offset / 4;
+    let (s, v, r) = (at(crate::render::GATE_ARGS_SNAPSHOT), at(crate::render::GATE_ARGS_VELOCITY), at(crate::render::GATE_ARGS_SSPR));
+    for line in [
+        format!("args[{s}] = 3u;"),
+        format!("args[{}] = k;", s + 1),
+        format!("args[{v}] = gate.counts.x;"),
+        format!("args[{}] = gate.counts.y * k;", v + 1),
+        format!("args[{r}] = gate.counts.z * k;"),
+        format!("args[{}] = gate.counts.w * k;", r + 1),
+        format!("args[{}] = k;", r + 2),
+    ] {
+        assert!(src.contains(&line), "water_gate.wesl lacks `{line}`");
     }
 }

@@ -36,6 +36,7 @@ pub const CATALOG: &[(&str, &[&dyn AnyDef])] = &[
     ("mw_assets", mw_assets::TUNABLES),
     ("sf_character_bevy", sf_character_bevy::TUNABLES),
     ("sf_world", sf_world::TUNABLES),
+    ("sf_water_bevy", mw_environment_bevy::water::WATER_TUNABLES),
     ("sf_lod_bevy", sf_lod_bevy::TUNABLES),
     ("sf_terrain_bevy", sf_terrain_bevy::TUNABLES),
     ("sf_sky::lamp_cache", sf_sky_bevy::sf_sky::lamp_cache::TUNABLES),

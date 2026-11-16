@@ -9097,8 +9097,10 @@ dependencies = [
  "naga",
  "sf_coords",
  "sf_render_order_bevy",
+ "sf_tunables",
  "sf_water",
  "wesl",
+ "wgpu",
  "workspace-hack",
 ]
 
