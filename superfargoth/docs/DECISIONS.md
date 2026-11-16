@@ -1848,3 +1848,4 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-15 (owner): first-person melee aims at Dark Messiah / Faithkeeper (third person stays Elden Ring), same combat
   framework with first-person movesets; reference Brutal Morrowind (GPL-3.0 OpenMW fork). Underwater look reference:
   Abyssal Garden (MIT). Both noted in combat.md, first-person.md, water.md; no work queued.
+- 2026-11-16 (owner): agent and orchestrator hand-off point raised from ~80-100k to ~200k tokens of context (CONTRIBUTING "Working with coding agents"); slices stay one deliverable each.

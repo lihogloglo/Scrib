@@ -26,7 +26,8 @@ One line per attempt, newest first, never edited after the fact except to add a 
 Briefs paste the ledger lines of their system. Before proposing a change, grep the ledger for it.
 Perf words: a **stutter** is a frame over 1.5x the moving median of 60 frames (report "stutters/min"); a **hitch**
 is a frame over 25 ms (report "hitches"). A/B differences under ~0.5 ms are run-to-run noise (old path walk read
-10.71, 10.95 and 11.72 ms across 2026-11-11/12); repeat 3x.
+10.71, 10.95 and 11.72 ms across 2026-11-11/12); interleave the arms (`perf suite --arm`), 3+ runs each, and give
+main/render/GPU ms beside the frame. Below that size the verdict is "inconclusive", which never deletes or freezes code.
 
 ## Pages
 
@@ -70,6 +71,7 @@ is a frame over 25 ms (report "hitches"). A/B differences under ~0.5 ms are run-
 [First person](industry/first-person.md): true first person vs arms rig, view model FOV, camera styles, first-person melee
 [Bevy projects](industry/bevy-projects.md): what other Bevy open-world projects do, and that none reach the target scale
 [Clouds and weather](industry/clouds-and-weather.md): Nubis/HZD coverage maps, regional influence, envelope clouds, rain under cloud density, UE local fog, why local storms must not be pillars
+[FableFlight](industry/fableflight.md): code study of an open-source flight sim with a horizon-wide view; what makes its distance cheap (satellite far albedo, SSE LOD, sliced map refresh, 160 km clouds, shadowed haze), ranked takeaways for us
 
 ## Ledgers (`../ledger/`)
 <!-- one line each: link to ../ledger/NAME.md, N entries, last date -->

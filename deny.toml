@@ -22,6 +22,10 @@ ignore = [
     { id = "RUSTSEC-2026-0192", reason = "transitive via bevy_winit/accesskit_winit; no maintained alternative upstream" },
     # paste unmaintained (finished proc macro, no upgrade): pulled by the game's tes3 git dependency.
     { id = "RUSTSEC-2024-0436", reason = "compile-time proc macro via tes3; no replacement upstream" },
+    # rustix 1.1.5 xattr functions unsound on a zero-length buffer (published 2026-11-16; fix 1.1.6). Unix-only
+    # `rustix::fs` xattr calls nobody here makes on Windows; the 1.1.6 bump re-resolves windows-sys and changes
+    # the workspace-hack feature set (a full Bevy rebuild), so it waits for the batched update pass.
+    { id = "RUSTSEC-2026-0486", reason = "unix-only xattr fns, unused on Windows; fix 1.1.6 goes in the update batch" },
 ]
 
 [licenses]

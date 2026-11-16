@@ -222,15 +222,20 @@ notes, only `docs/specs/`. Don't mix the two in one session.
 - **Every brief pastes its system's ledger lines** (`docs/ledger/<system>.md`) and links the wiki page, not
   research docs (they anchor agents on old hypotheses). Before building on a component, check it actually runs
   in the game (2026-11-12: three agents built on a lamp shadow cache that had been off since 2026-10-21).
-- **Perf work starts from a measured ceiling and an expected ms**, and ends with an untraced 3-run A/B logged in
-  `docs/ledger/perf.md`. Differences under ~0.5 ms are noise. **A change that doesn't win stays (owner
+- **Perf work starts from a measured ceiling and an expected ms**, and ends with an untraced A/B logged in
+  `docs/ledger/perf.md`: one exe, arms interleaved in one `perf suite --arm` invocation (3+ runs each), judged on
+  the main, render and GPU times as well as the frame (a cut on a thread the frame isn't bound by is "banked", not
+  "parity"). Differences under ~0.5 ms are noise. **A null result never deletes, freezes or disables code (owner
+  2026-11-16):** "no visible win" is "inconclusive", not "no win" (`docs/reviews/perf-verdict-audit-2026-11-16.md`).
+  **A change that doesn't win stays (owner
   2026-11-15):** keep it behind an opt-in switch, off by default, with its ledger line saying what is left to fix; it
   may be a good first step. Revert only what can't be isolated or breaks something. (Dead or duplicate code that
   something else replaced is different: delete it, tagged, git keeps it.)
 - Read lean: grep first, read only the lines needed; never a whole large file; cargo output filtered to errors
   and warnings, tests to summary lines, logs with `tail`/`grep`. Tokens grow with what an agent pulls into its
   context (every call re-sends it), not with its number of tool calls.
-- Hand off on context, not on a count: at ~80-100k tokens of context (or once your context was summarised),
+- Hand off on context, not on a count: at ~200k tokens of context (owner 2026-11-16; was 80-100k), or once your
+  context was summarised,
   stop at a compiling state, finish the handoff in your session file, and let a fresh agent continue.
   Orchestrators split slices to fit and log tool calls and tokens per slice in their session file.
 - Use a strong model for anything that writes or fixes code; lighter models for research and docs only.
