@@ -96,6 +96,11 @@ Read in this order, and only what your task needs:
 - **Net-ready:** small co-op (2-4 players, host-authoritative) comes later, so new specs use a fixed tick,
   input as commands, presentation that never feeds gameplay, and a remote player is just another character.
 - **Everything is a mod:** content flows through `sf_vfs` / `sf_records` / `sf_mods`, no privileged paths.
+- **No hardcoded tunables (owner 2026-11-16).** A value that trades quality against cost, sets feel, or is a
+  distance, budget, count, timing, threshold or hysteresis is a tunable (`superfargoth/docs/specs/tunables.md`):
+  declared with its unit, range and source (`Guess` is allowed and counted), never a bare `const` or literal. Maths,
+  units, formats, layouts, capacities and fixtures stay `const`. Once slice T0 lands, `node tools/tunables-census.mjs
+  --check` must pass (a crate's count of candidate consts may only go down).
 - **Framework/game split, one-way:** `superfargoth/` never depends on `bevyrrowind/` and never names Morrowind
   (or any game's) formats, IDs, units or conventions; add an adapter hook instead. Morrowind-specific ports live
   in `bevyrrowind/`.
