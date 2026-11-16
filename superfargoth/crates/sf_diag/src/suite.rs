@@ -2,9 +2,10 @@
 //! sampling the GPU alongside, and summarizing repeated runs.
 //!
 //! Numbers from a busy machine are noise: [`busy_processes`] lists the
-//! processes (by name) that must not run during a measurement, ignoring
-//! the driver itself and its ancestors (a driver started by `cargo run`
-//! doesn't wait for its own cargo). [`GpuSampler`] records
+//! processes that must not run during a measurement ([`BusyRules`]: by name,
+//! or by where the exe lives), ignoring the driver's own [`family`] (a driver
+//! started by `cargo run` doesn't wait for its own cargo). [`PmonSampler`]
+//! records which other processes put work on the GPU. [`GpuSampler`] records
 //! `nvidia-smi` samples stamped with the wall clock, so they line up with
 //! a report's [`Report::wall_start_unix_s`] window.
 
@@ -26,9 +27,11 @@ pub struct ProcessInfo {
     pub pid: u32,
     pub parent: u32,
     pub name: String,
+    /// Full executable path, where the platform reports it (Windows; `None` for protected processes).
+    pub path: Option<String>,
 }
 
-/// Every running process (name, pid, parent pid).
+/// Every running process (pid, parent pid, name, executable path).
 pub fn processes() -> io::Result<Vec<ProcessInfo>> {
     let output = if cfg!(windows) {
         Command::new("powershell")
@@ -36,7 +39,8 @@ pub fn processes() -> io::Result<Vec<ProcessInfo>> {
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId),$($_.ParentProcessId),$($_.Name)\" }",
+                // `|` can't appear in a Windows file name or path.
+                "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)|$($_.ExecutablePath)\" }",
             ])
             .stderr(Stdio::null())
             .output()?
@@ -50,9 +54,17 @@ pub fn processes() -> io::Result<Vec<ProcessInfo>> {
     Ok(text.lines().filter_map(parse_process_line).collect())
 }
 
-/// `pid,ppid,name` (Windows) or `pid ppid name` (`ps`).
+/// `pid|ppid|name|path` (Windows, path may be empty) or `pid ppid name` (`ps`).
 fn parse_process_line(line: &str) -> Option<ProcessInfo> {
     let line = line.trim();
+    if line.contains('|') {
+        let mut f = line.splitn(4, '|');
+        let pid = f.next()?.trim().parse().ok()?;
+        let parent = f.next()?.trim().parse().ok()?;
+        let name = f.next()?.trim().to_owned();
+        let path = f.next().map(str::trim).filter(|p| !p.is_empty()).map(str::to_owned);
+        return Some(ProcessInfo { pid, parent, name, path });
+    }
     let (pid, rest) = line.split_once([',', ' '])?;
     let rest = rest.trim_start();
     let (parent, name) = rest.split_once([',', ' '])?;
@@ -60,6 +72,7 @@ fn parse_process_line(line: &str) -> Option<ProcessInfo> {
         pid: pid.trim().parse().ok()?,
         parent: parent.trim().parse().ok()?,
         name: name.trim().to_owned(),
+        path: None,
     })
 }
 
@@ -72,14 +85,69 @@ fn base_name(name: &str) -> String {
         .map_or(lower.clone(), str::to_owned)
 }
 
-/// The running processes named in `names` (case-insensitive, `.exe`
-/// optional), except this process and its ancestors.
-pub fn busy_processes(names: &[&str]) -> io::Result<Vec<ProcessInfo>> {
-    Ok(busy_among(&processes()?, std::process::id(), names))
+/// A path for prefix comparison: lowercase, `\` separators, no `\\?\` prefix. `dir` adds a trailing `\`.
+pub fn normalize_path(path: &str, dir: bool) -> String {
+    let mut p = path.replace('/', "\\").to_ascii_lowercase();
+    if let Some(rest) = p.strip_prefix(r"\\?\") {
+        p = rest.to_owned();
+    }
+    if dir && !p.ends_with('\\') {
+        p.push('\\');
+    }
+    p
 }
 
-fn busy_among(all: &[ProcessInfo], me: u32, names: &[&str]) -> Vec<ProcessInfo> {
-    let wanted: Vec<String> = names.iter().map(|n| base_name(n)).collect();
+/// What makes another process "busy" for a benchmark: its name (builds, game instances) or where its
+/// executable lives (build output and temp copies, whatever the exe is called: `orch-a.exe`, `h1gpucull.exe`).
+#[derive(Clone, Debug, Default)]
+pub struct BusyRules {
+    /// Base names (case-insensitive, `.exe` optional).
+    pub names: Vec<String>,
+    /// Directories (normalized, trailing `\`) whose executables count.
+    pub dirs: Vec<String>,
+    /// Path fragments (normalized) that exempt an executable under `dirs`: installed tools such as
+    /// `\cargo\bin\` (an MCP server run from a temp toolchain is not a benchmark).
+    pub exempt: Vec<String>,
+}
+
+impl BusyRules {
+    /// Rules for `names` and the directories `dirs` (each kept as given and as canonicalized, which
+    /// resolves junctions and 8.3 short names); installed cargo/rustup tools are exempt.
+    pub fn new<'a>(names: impl IntoIterator<Item = &'a str>, dirs: impl IntoIterator<Item = std::path::PathBuf>) -> Self {
+        let mut rules = Self {
+            names: names.into_iter().map(base_name).collect(),
+            dirs: Vec::new(),
+            exempt: [r"\cargo\bin\", r"\.cargo\bin\", r"\rustup\", r"\.rustup\"].map(str::to_owned).to_vec(),
+        };
+        for d in dirs {
+            let canonical = std::fs::canonicalize(&d).ok();
+            for p in std::iter::once(d).chain(canonical) {
+                let n = normalize_path(&p.to_string_lossy(), true);
+                if n.len() > 3 && !rules.dirs.contains(&n) {
+                    rules.dirs.push(n);
+                }
+            }
+        }
+        rules
+    }
+
+    /// Why `p` is busy (`None` = it isn't).
+    pub fn reason(&self, p: &ProcessInfo) -> Option<String> {
+        if self.names.contains(&base_name(&p.name)) {
+            return Some(p.name.clone());
+        }
+        let path = normalize_path(p.path.as_deref()?, false);
+        let dir = self.dirs.iter().find(|d| path.starts_with(d.as_str()))?;
+        if self.exempt.iter().any(|e| path[dir.len() - 1..].contains(e.as_str())) {
+            return None;
+        }
+        Some(format!("{} (under {})", p.name, dir.trim_end_matches('\\')))
+    }
+}
+
+/// `me`, its ancestors (a driver started by `cargo run` doesn't wait for its own cargo) and its descendants
+/// (the game it runs, its `nvidia-smi` samplers).
+pub fn family(all: &[ProcessInfo], me: u32) -> Vec<u32> {
     let mut exempt = vec![me];
     let mut cursor = me;
     // Walk up the parent chain (bounded: pid reuse can make cycles).
@@ -93,21 +161,37 @@ fn busy_among(all: &[ProcessInfo], me: u32, names: &[&str]) -> Vec<ProcessInfo> 
         exempt.push(p.parent);
         cursor = p.parent;
     }
+    let mut frontier = vec![me];
+    while let Some(parent) = frontier.pop() {
+        for c in all.iter().filter(|c| c.parent == parent && c.pid != parent) {
+            if !exempt.contains(&c.pid) {
+                exempt.push(c.pid);
+                frontier.push(c.pid);
+            }
+        }
+    }
+    exempt
+}
+
+/// The running processes [`BusyRules`] flags, except this process's [`family`], each with why.
+pub fn busy_processes(rules: &BusyRules) -> io::Result<Vec<(ProcessInfo, String)>> {
+    Ok(busy_among(&processes()?, std::process::id(), rules))
+}
+
+/// [`busy_processes`] over a given process list.
+pub fn busy_among(all: &[ProcessInfo], me: u32, rules: &BusyRules) -> Vec<(ProcessInfo, String)> {
+    let exempt = family(all, me);
     all.iter()
-        .filter(|p| !exempt.contains(&p.pid) && wanted.contains(&base_name(&p.name)))
-        .cloned()
+        .filter(|p| !exempt.contains(&p.pid))
+        .filter_map(|p| rules.reason(p).map(|why| (p.clone(), why)))
         .collect()
 }
 
-/// Blocks until none of `names` runs (see [`busy_processes`]), checking
-/// every `poll`. `on_wait` hears the blockers each time it has to wait.
-pub fn wait_until_idle(
-    names: &[&str],
-    poll: Duration,
-    mut on_wait: impl FnMut(&[ProcessInfo]),
-) -> io::Result<()> {
+/// Blocks until [`busy_processes`] finds nothing, checking every `poll`. `on_wait` hears the blockers each
+/// time it has to wait.
+pub fn wait_until_idle(rules: &BusyRules, poll: Duration, mut on_wait: impl FnMut(&[(ProcessInfo, String)])) -> io::Result<()> {
     loop {
-        let busy = busy_processes(names)?;
+        let busy = busy_processes(rules)?;
         if busy.is_empty() {
             return Ok(());
         }
@@ -224,6 +308,100 @@ impl GpuSampler {
         self.reader.join().unwrap_or_default()
     }
 }
+
+/// One `nvidia-smi pmon -s u` line: a process with a GPU context and its SM (shader) utilisation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GpuProcSample {
+    /// When the line arrived (Unix seconds).
+    pub unix_s: f64,
+    pub pid: u32,
+    /// `C` compute, `G` graphics, `C+G` both.
+    pub kind: String,
+    /// SM utilisation in percent; `None` for `-` (no work in the sample).
+    pub sm_pct: Option<f64>,
+    /// Process name (truncated to 15 characters by `nvidia-smi`).
+    pub name: String,
+}
+
+/// Parses one `nvidia-smi pmon -s u` line (`# ...` headers give `None`).
+pub fn parse_pmon_line(line: &str, unix_s: f64) -> Option<GpuProcSample> {
+    if line.trim_start().starts_with('#') {
+        return None;
+    }
+    // gpu pid type sm mem enc dec [jpg ofa] command
+    let f: Vec<&str> = line.split_whitespace().collect();
+    if f.len() < 8 {
+        return None;
+    }
+    f[0].parse::<u32>().ok()?;
+    let pid = f[1].parse().ok()?;
+    let name_at = f.iter().skip(3).position(|c| c.parse::<f64>().is_err() && *c != "-").map_or(f.len(), |i| i + 3);
+    Some(GpuProcSample {
+        unix_s,
+        pid,
+        kind: f[2].to_owned(),
+        sm_pct: f[3].parse().ok(),
+        name: f.get(name_at..).map(|n| n.join(" ")).unwrap_or_default(),
+    })
+}
+
+/// The processes outside `exempt` whose SM utilisation reached `min_sm_pct` within `[from, to]`, with their
+/// peak (one entry per pid, highest first). On Windows (WDDM) every windowed app has a graphics context and
+/// is listed at `-`: being listed is not load, the SM share is.
+pub fn gpu_contenders(samples: &[GpuProcSample], exempt: &[u32], from: f64, to: f64, min_sm_pct: f64) -> Vec<(u32, String, f64)> {
+    let mut out: Vec<(u32, String, f64)> = Vec::new();
+    for s in samples.iter().filter(|s| s.unix_s >= from && s.unix_s <= to && !exempt.contains(&s.pid)) {
+        let Some(sm) = s.sm_pct.filter(|&sm| sm >= min_sm_pct) else { continue };
+        match out.iter_mut().find(|(pid, ..)| *pid == s.pid) {
+            Some(e) => e.2 = e.2.max(sm),
+            None => out.push((s.pid, s.name.clone(), sm)),
+        }
+    }
+    out.sort_by(|a, b| b.2.total_cmp(&a.2));
+    out
+}
+
+/// One `nvidia-smi pmon -s u -c 1` snapshot (empty without `nvidia-smi`).
+pub fn gpu_processes() -> Vec<GpuProcSample> {
+    let Ok(out) = Command::new("nvidia-smi").args(["pmon", "-s", "u", "-c", "1"]).stderr(Stdio::null()).output() else {
+        return Vec::new();
+    };
+    let now = unix_now();
+    String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| parse_pmon_line(l, now)).collect()
+}
+
+/// `nvidia-smi pmon` running in a loop (one sample a second); [`PmonSampler::stop`] returns the samples.
+pub struct PmonSampler {
+    child: Child,
+    reader: JoinHandle<Vec<GpuProcSample>>,
+}
+
+impl PmonSampler {
+    /// Starts sampling. Fails without `nvidia-smi`.
+    pub fn start() -> io::Result<Self> {
+        let mut child = Command::new("nvidia-smi")
+            .args(["pmon", "-s", "u", "-d", "1"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let stdout = child.stdout.take().ok_or_else(|| io::Error::other("no stdout"))?;
+        let reader = std::thread::spawn(move || {
+            BufReader::new(stdout)
+                .lines()
+                .map_while(Result::ok)
+                .filter_map(|line| parse_pmon_line(&line, unix_now()))
+                .collect()
+        });
+        Ok(Self { child, reader })
+    }
+
+    pub fn stop(mut self) -> Vec<GpuProcSample> {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.reader.join().unwrap_or_default()
+    }
+}
+
 
 /// GPU load over a window.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -523,42 +701,74 @@ mod tests {
     #[test]
     fn process_lines_parse_on_both_platforms() {
         assert_eq!(
-            parse_process_line("1234,5678,cargo.exe"),
-            Some(ProcessInfo {
-                pid: 1234,
-                parent: 5678,
-                name: "cargo.exe".into()
-            })
+            parse_process_line(r"1234|5678|cargo.exe|C:\Users\me\.cargo\bin\cargo.exe"),
+            Some(proc(1234, 5678, "cargo.exe", Some(r"C:\Users\me\.cargo\bin\cargo.exe")))
         );
-        assert_eq!(
-            parse_process_line("  42     1 /usr/bin/rustc"),
-            Some(ProcessInfo {
-                pid: 42,
-                parent: 1,
-                name: "/usr/bin/rustc".into()
-            })
-        );
+        assert_eq!(parse_process_line("4|0|System|"), Some(proc(4, 0, "System", None)));
+        assert_eq!(parse_process_line("  42     1 /usr/bin/rustc"), Some(proc(42, 1, "/usr/bin/rustc", None)));
         assert_eq!(parse_process_line("garbage"), None);
     }
 
+    fn proc(pid: u32, parent: u32, name: &str, path: Option<&str>) -> ProcessInfo {
+        ProcessInfo { pid, parent, name: name.into(), path: path.map(str::to_owned) }
+    }
+
+    fn rules() -> BusyRules {
+        BusyRules {
+            names: ["cargo", "rustc", "game"].map(str::to_owned).to_vec(),
+            dirs: vec![normalize_path("C:/cargo-target/scrib", true), normalize_path(r"\\?\C:\Users\me\AppData\Local\Temp", true)],
+            exempt: vec![r"\cargo\bin\".into()],
+        }
+    }
+
     #[test]
-    fn busy_ignores_self_and_ancestors() {
-        let p = |pid, parent, name: &str| ProcessInfo {
-            pid,
-            parent,
-            name: name.into(),
-        };
+    fn busy_ignores_self_ancestors_and_children() {
         let all = vec![
-            p(1, 0, "explorer.exe"),
-            p(10, 1, "cargo.exe"),  // our parent: `cargo run`
-            p(11, 10, "game.exe"),  // us
-            p(20, 1, "cargo.exe"),  // someone else's build
-            p(21, 20, "rustc.exe"), // its compiler
-            p(30, 1, "GAME.EXE"),   // another game instance
+            proc(1, 0, "explorer.exe", None),
+            proc(10, 1, "cargo.exe", None),  // our parent: `cargo run`
+            proc(11, 10, "game.exe", None),  // us
+            proc(12, 11, "game.exe", None),  // the game we run
+            proc(13, 12, "nvidia-smi.exe", None),
+            proc(20, 1, "cargo.exe", None),  // someone else's build
+            proc(21, 20, "rustc.exe", None), // its compiler
+            proc(30, 1, "GAME.EXE", None),   // another game instance
         ];
-        let busy = busy_among(&all, 11, &["cargo", "rustc.exe", "game"]);
-        let pids: Vec<u32> = busy.iter().map(|p| p.pid).collect();
+        let busy = busy_among(&all, 11, &rules());
+        let pids: Vec<u32> = busy.iter().map(|(p, _)| p.pid).collect();
         assert_eq!(pids, vec![20, 21, 30]);
+        assert_eq!(family(&all, 11), vec![11, 10, 1, 12, 13]);
+    }
+
+    #[test]
+    fn renamed_bench_exes_are_busy_by_where_they_live() {
+        let all = vec![
+            proc(11, 1, "perf.exe", None), // us
+            proc(40, 1, "orch-a.exe", Some(r"C:\cargo-target\scrib\profiling\orch-a.exe")),
+            proc(41, 1, "h1gpucull.exe", Some("c:/CARGO-TARGET/scrib/profiling/h1gpucull.exe")),
+            proc(42, 1, "bevyrrowind.exe", Some(r"C:\Users\me\AppData\Local\Temp\bw-owner-1116\bevyrrowind.exe")),
+            // An installed tool in a temp toolchain (MCP server) is not a benchmark.
+            proc(43, 1, "bevy_brp_mcp.exe", Some(r"C:\Users\me\AppData\Local\Temp\ovid-build-tools\cargo\bin\bevy_brp_mcp.exe")),
+            proc(44, 1, "firefox.exe", Some(r"C:\Program Files\Mozilla Firefox\firefox.exe")),
+            // A sibling folder with the same prefix is not under the target dir.
+            proc(45, 1, "scrib.exe", Some(r"C:\cargo-target\scribble\scrib.exe")),
+        ];
+        let busy = busy_among(&all, 11, &rules());
+        let pids: Vec<u32> = busy.iter().map(|(p, _)| p.pid).collect();
+        assert_eq!(pids, vec![40, 41, 42]);
+        assert_eq!(busy[0].1, r"orch-a.exe (under c:\cargo-target\scrib)");
+    }
+
+    #[test]
+    fn pmon_lines_and_contenders() {
+        assert_eq!(parse_pmon_line("# gpu         pid   type     sm    mem    enc    dec    jpg    ofa    command ", 0.0), None);
+        let idle = parse_pmon_line("    0       1252   C+G      -      -      -      -      -      -    firefox.exe    ", 1.0).unwrap();
+        assert_eq!((idle.pid, idle.sm_pct, idle.name.as_str()), (1252, None, "firefox.exe"));
+        let ui = parse_pmon_line("    0       8688   C+G      2     28      -      -      -      -    T3 Code (Beta).", 1.0).unwrap();
+        assert_eq!((ui.sm_pct, ui.name.as_str()), (Some(2.0), "T3 Code (Beta)."));
+        let s = |t: f64, pid: u32, sm: Option<f64>| GpuProcSample { unix_s: t, pid, kind: "C+G".into(), sm_pct: sm, name: format!("p{pid}") };
+        let samples = [s(5.0, 7, Some(90.0)), s(10.0, 7, Some(85.0)), s(11.0, 8, Some(40.0)), s(12.0, 8, Some(60.0)), s(12.0, 9, Some(3.0)), s(13.0, 10, None), s(30.0, 11, Some(99.0))];
+        // pid 7 is the game (exempt), 9 desktop noise, 10 idle, 11 outside the window.
+        assert_eq!(gpu_contenders(&samples, &[7], 8.0, 20.0, 15.0), vec![(8, "p8".to_owned(), 60.0)]);
     }
 
     #[test]

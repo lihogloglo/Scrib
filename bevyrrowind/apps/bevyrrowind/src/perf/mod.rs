@@ -3,5 +3,7 @@
 //! (app-split.md slice 12a).
 
 mod ab;
+mod chain;
 pub mod cli;
+mod power;
 mod sweep;

@@ -81,8 +81,37 @@ pub const SCENARIOS: &[SuiteScenario] = &[
 /// The resolution of a CPU-floor run: small enough that the GPU drops out.
 const FLOOR_RESOLUTION: &str = "960x600";
 
-/// Processes that make numbers noise: builds, other game instances.
+/// Processes that make numbers noise by name: builds, other game instances. Renamed copies are caught by
+/// where they live ([`busy_rules`]).
 pub(super) const BUSY: &[&str] = &["cargo", "rustc", "bevyrrowind", "ovid"];
+
+/// Another process at or above this SM share (`nvidia-smi pmon`) is GPU work competing with the run: the
+/// same 15 % the quiet check allows for the whole GPU before a run. On this laptop's driver (WDDM) every
+/// windowed app is listed by `pmon`, idle at `-`, and the desktop UI shows 0-2 %, so being listed is not load.
+const GPU_BUSY_PCT: f64 = 15.0;
+
+/// What counts as busy: [`BUSY`] and `--wait-for` names, plus any exe under the cargo target dir (also reached
+/// through `target\` junctions) or the temp folder, whatever it is called (`orch-a.exe`, `h1gpucull.exe`, owner
+/// copies in `%TEMP%\bw-owner-*`); installed cargo/rustup tools there (MCP servers) are exempt.
+pub(super) fn busy_rules(args: &SuiteArgs) -> suite::BusyRules {
+    let mut dirs: Vec<PathBuf> = vec![PathBuf::from("target"), PathBuf::from("../target"), std::env::temp_dir()];
+    dirs.extend(["CARGO_TARGET_DIR", "TEMP", "TMP"].iter().filter_map(std::env::var_os).map(PathBuf::from));
+    if let Some(root) = super::chain::repo_root() {
+        dirs.push(root.join("target"));
+    }
+    dirs.retain(|d| d.exists());
+    suite::BusyRules::new(BUSY.iter().copied().chain(args.wait_for.iter().map(String::as_str)), dirs)
+}
+
+/// Takes the machine for a chain of runs: the cross-session bench lock and the power plan (`chain.rs`); a dry
+/// run takes nothing. Keep the result alive until the summary is written.
+pub(super) fn start_chain(args: &SuiteArgs, exe: &Path) -> Result<super::chain::Chain, Box<dyn std::error::Error>> {
+    if args.dry_run {
+        return Ok(super::chain::Chain::dry());
+    }
+    let what = std::env::args().map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a }).collect::<Vec<_>>().join(" ");
+    super::chain::Chain::begin(&what, exe, args.no_lock)
+}
 
 #[derive(clap::Subcommand)]
 pub enum PerfCommand {
@@ -192,9 +221,13 @@ pub struct SuiteArgs {
     /// Re-run a scenario this many times when other processes were busy during it.
     #[arg(long, default_value_t = 2)]
     retries: usize,
-    /// Print the commands without running them.
+    /// Print the commands without running them (takes no bench lock, leaves the power plan alone).
     #[arg(long)]
     pub(super) dry_run: bool,
+    /// Don't take the cross-session bench lock (`.sessions/bench.lock`): debugging the runner only; the
+    /// summary says another bench may have overlapped.
+    #[arg(long)]
+    no_lock: bool,
 }
 
 pub fn run(command: PerfCommand) -> Result<(), Box<dyn std::error::Error>> {
@@ -413,15 +446,17 @@ fn run_suite(args: &SuiteArgs) -> Result<(), Box<dyn std::error::Error>> {
     let plan = plan_runs(&chosen, &resolutions, args.repeat, &arm_list, seed);
     let dir = args.out.join(&args.tag);
     std::fs::create_dir_all(&dir)?;
-    let mut busy: Vec<&str> = BUSY.to_vec();
-    busy.extend(args.wait_for.iter().map(String::as_str));
+    let busy = busy_rules(args);
     let profile = exe.parent().and_then(Path::file_name).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     if profile != "profiling" && profile != "release" {
         eprintln!("warning: {} is a `{profile}` build; measure the profiling build (cargo build --profile profiling -p bevyrrowind)", exe.display());
     }
     println!("{} runs → {}", plan.len(), dir.display());
 
-    let (runs, ledger) = execute(args, &exe, &dir, &plan, &busy);
+    // Held until this function returns (after the summary): every arm and repeat under one lock and plan.
+    let chain = start_chain(args, &exe)?;
+    let (runs, mut ledger) = execute(args, &exe, &dir, &plan, &busy);
+    ledger.chain.clone_from(&chain.notes);
     if args.dry_run || runs.is_empty() {
         return Ok(());
     }
@@ -454,6 +489,8 @@ pub(super) struct Ledger {
     pub(super) unchecked: Vec<String>,
     /// Discarded warm-up runs that ran.
     pub(super) warmups: usize,
+    /// The chain's hold on the machine: bench lock, power plan, throttling (`chain.rs`).
+    pub(super) chain: Vec<String>,
 }
 
 impl Ledger {
@@ -463,17 +500,19 @@ impl Ledger {
     }
 
     /// Summary lines: valid count, dropped runs, the machine state.
-    pub(super) fn lines(&self, kept: usize, busy: &[&str]) -> Vec<String> {
+    pub(super) fn lines(&self, kept: usize, busy: &suite::BusyRules) -> Vec<String> {
         let mut lines = vec![format!(
             "- valid runs: {kept} of {}{}",
             self.planned,
             if self.warmups > 0 { format!(" ({} warm-up runs discarded)", self.warmups) } else { String::new() }
         )];
         lines.extend(self.dropped.iter().map(|d| format!("- **dropped**: {d}")));
+        lines.extend(self.chain.iter().map(|c| format!("- {c}")));
         if self.quiet() {
+            let dirs = if busy.dirs.is_empty() { String::new() } else { format!(" nor any exe under {}", busy.dirs.iter().map(|d| format!("`{}`", d.trim_end_matches('\\'))).collect::<Vec<_>>().join(", ")) };
             lines.push(format!(
-                "- machine: quiet, every kept run checked (before each run: no {} process, GPU ≤ 15% at ≥ {IDLE_GPU_CLOCK_MHZ} MHz, CPU ≤ 20%; during: other processes ≤ {OTHER_CPU_LIMIT}% CPU, window in focus)",
-                busy.join("/")
+                "- machine: quiet, every kept run checked (before each run: no {} process{dirs}, no other process ≥ {GPU_BUSY_PCT}% GPU SM, GPU ≤ 15% at ≥ {IDLE_GPU_CLOCK_MHZ} MHz, CPU ≤ 20%; during: other processes ≤ {OTHER_CPU_LIMIT}% CPU and < {GPU_BUSY_PCT}% GPU SM, none of those processes at the end, window in focus)",
+                busy.names.join("/")
             ));
         } else {
             lines.extend(self.notes.iter().map(|n| format!("- **busy machine**: {n}")));
@@ -501,7 +540,7 @@ fn peers(kept: &[(usize, SuiteRun)], run: &SuiteRun) -> Vec<RunPoint> {
 
 /// Measures one planned run until it is clean and no outlier against `kept` (up to `--retries` retries);
 /// `None` when it failed or stayed dirty (the ledger says why) or in a dry run.
-fn measure(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str], kept: &[(usize, SuiteRun)], ledger: &mut Ledger) -> Option<Measured> {
+fn measure(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &suite::BusyRules, kept: &[(usize, SuiteRun)], ledger: &mut Ledger) -> Option<Measured> {
     let label = || format!("{} @ {} #{}{}", p.scenario.name, p.resolution, p.repeat, p.arm.as_ref().map_or(String::new(), |(_, a)| format!(" [{}]", a.name)));
     for attempt in 0..=args.retries {
         let m = match run_one(args, exe, dir, p, busy) {
@@ -552,7 +591,7 @@ fn keep(runs: &mut Vec<(usize, SuiteRun)>, ledger: &mut Ledger, i: usize, m: Mea
 /// Warm-ups run once and are discarded. Dirty runs never enter the result: after the last retry they are dropped
 /// (the ledger says "N of M valid"). A last pass re-checks each arm leave-one-out (a garbage first run had no
 /// peers yet) and re-measures its outliers.
-pub(super) fn execute(args: &SuiteArgs, exe: &Path, dir: &Path, plan: &[Planned], busy: &[&str]) -> (Vec<(usize, SuiteRun)>, Ledger) {
+pub(super) fn execute(args: &SuiteArgs, exe: &Path, dir: &Path, plan: &[Planned], busy: &suite::BusyRules) -> (Vec<(usize, SuiteRun)>, Ledger) {
     let mut runs: Vec<(usize, SuiteRun)> = Vec::new();
     let mut ledger = Ledger::default();
     for (i, p) in plan.iter().enumerate() {
@@ -622,7 +661,7 @@ pub(super) fn write_summary(
     dir: &Path,
     runs: &[SuiteRun],
     ledger: &Ledger,
-    busy: &[&str],
+    busy: &suite::BusyRules,
     ab: Option<&AbInfo>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut gauges: Vec<GaugeColumn> = arms::thread_gauges().into();
@@ -709,19 +748,24 @@ fn run_name(scenario: &str, variant: &str, repeat: usize) -> String {
 
 /// Waits for a quiet machine: none of `busy` running, GPU and CPU idle.
 /// Returns a note when it gave up waiting.
-fn wait_quiet(busy: &[&str], max_wait: Duration, no_wait: bool) -> Result<(Option<String>, f64, f64), Box<dyn std::error::Error>> {
+fn wait_quiet(busy: &suite::BusyRules, max_wait: Duration, no_wait: bool) -> Result<(Option<String>, f64, f64), Box<dyn std::error::Error>> {
     let started = Instant::now();
     let mut said = String::new();
     loop {
-        let procs = suite::busy_processes(busy)?;
+        let all = suite::processes()?;
+        let procs = suite::busy_among(&all, std::process::id(), busy);
+        let contenders = suite::gpu_contenders(&suite::gpu_processes(), &suite::family(&all, std::process::id()), f64::NEG_INFINITY, f64::INFINITY, GPU_BUSY_PCT);
         let gpu = gpu_load(Duration::from_secs(2));
         let cpu = suite::cpu_load_percent().unwrap_or(0.0);
         let mut why = Vec::new();
         if !procs.is_empty() {
-            let mut names: Vec<String> = procs.iter().map(|p| p.name.clone()).collect();
+            let mut names: Vec<String> = procs.into_iter().map(|(_, why)| why).collect();
             names.sort();
             names.dedup();
             why.push(format!("running: {}", names.join(", ")));
+        }
+        if !contenders.is_empty() {
+            why.push(format!("on the GPU: {}", gpu_list(&contenders)));
         }
         if gpu > 15.0 {
             why.push(format!("GPU {gpu:.0}%"));
@@ -758,6 +802,100 @@ fn gpu_load(span: Duration) -> f64 {
     working_gpu_load(&taken)
 }
 
+/// Other work seen during a run, besides CPU share: GPU work of other processes and busy processes still running.
+struct OtherWork {
+    /// `nvidia-smi pmon` ran.
+    pmon_on: bool,
+    /// pmon samples inside the measured window.
+    in_window: usize,
+    /// Other processes at or above [`GPU_BUSY_PCT`] SM in the window.
+    gpu: Vec<(u32, String, f64)>,
+    /// [`busy_rules`] processes running when the run ended (one that came and went is seen only by its GPU or CPU use).
+    busy_at_end: Vec<(suite::ProcessInfo, String)>,
+}
+
+impl OtherWork {
+    /// Judges the `pmon` samples (`None`: pmon didn't run) in `window` (the runner's family and the game `child`
+    /// exempt), takes the end-of-run process snapshot, and writes `gpu-procs.csv` (every sample with SM work: the
+    /// evidence).
+    fn check(pmon: Option<Vec<suite::GpuProcSample>>, child: u32, busy: &suite::BusyRules, (from, to): (f64, f64), run_dir: &Path) -> std::io::Result<Self> {
+        let pmon_on = pmon.is_some();
+        let samples = pmon.unwrap_or_default();
+        let at_end = suite::processes().unwrap_or_default();
+        let mut exempt = suite::family(&at_end, std::process::id());
+        exempt.push(child);
+        let mut csv = String::from("unix_s,pid,type,sm_pct,name\n");
+        for s in samples.iter().filter(|s| s.sm_pct.is_some()) {
+            let _ = writeln!(csv, "{:.3},{},{},{},{}", s.unix_s, s.pid, s.kind, s.sm_pct.unwrap_or_default(), s.name.replace(',', " "));
+        }
+        std::fs::write(run_dir.join("gpu-procs.csv"), csv)?;
+        Ok(Self {
+            pmon_on,
+            in_window: samples.iter().filter(|s| s.unix_s >= from && s.unix_s <= to).count(),
+            gpu: suite::gpu_contenders(&samples, &exempt, from, to, GPU_BUSY_PCT),
+            busy_at_end: suite::busy_among(&at_end, std::process::id(), busy),
+        })
+    }
+
+    fn describe(&self) -> String {
+        if !self.pmon_on {
+            "not checked (no `nvidia-smi pmon`)".to_owned()
+        } else if self.gpu.is_empty() {
+            format!("none ≥ {GPU_BUSY_PCT}% SM ({} pmon samples)", self.in_window)
+        } else {
+            gpu_list(&self.gpu)
+        }
+    }
+}
+
+/// Waits for the game to exit; kills it after `limit` (`None` = killed).
+fn wait_child(child: &mut std::process::Child, limit: Duration) -> std::io::Result<Option<std::process::ExitStatus>> {
+    let deadline = Instant::now() + limit;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// `gpu.csv`: every `nvidia-smi` sample of the run.
+fn write_gpu_csv(samples: &[suite::GpuSample], path: &Path) -> std::io::Result<()> {
+    let mut csv = String::from("unix_s,util_pct,clock_mhz,mem_clock_mhz,power_w,temp_c,vram_mib,throttle\n");
+    for s in samples {
+        let _ = writeln!(csv, "{:.3},{},{},{},{},{},{},{:#x}", s.unix_s, s.util_pct, s.clock_mhz, s.mem_clock_mhz, s.power_w, s.temp_c, s.vram_mib, s.throttle);
+    }
+    std::fs::write(path, csv)
+}
+
+/// `name (pid) 40%, ...` for [`suite::gpu_contenders`].
+fn gpu_list(contenders: &[(u32, String, f64)]) -> String {
+    contenders.iter().map(|(pid, name, sm)| format!("{name} ({pid}) {sm:.0}% SM")).collect::<Vec<_>>().join(", ")
+}
+
+/// What else ran during a measured window: other processes' CPU share above [`OTHER_CPU_LIMIT`], other
+/// processes' GPU work (`pmon`, at or above [`GPU_BUSY_PCT`] SM), busy processes still running at the end.
+fn during_reasons(other_cpu: Option<f64>, gpu_contenders: &[(u32, String, f64)], busy_at_end: &[(suite::ProcessInfo, String)]) -> Vec<String> {
+    let mut why = Vec::new();
+    if let Some(o) = other_cpu.filter(|&o| o > OTHER_CPU_LIMIT) {
+        why.push(format!("other processes used {o:.0}% CPU"));
+    }
+    if !gpu_contenders.is_empty() {
+        why.push(format!("other GPU work: {}", gpu_list(gpu_contenders)));
+    }
+    if !busy_at_end.is_empty() {
+        let mut names: Vec<&str> = busy_at_end.iter().map(|(_, w)| w.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        why.push(format!("running at the end: {}", names.join(", ")));
+    }
+    why
+}
+
 /// Mean utilisation, idle-clock samples counted as 0 %.
 fn working_gpu_load(samples: &[suite::GpuSample]) -> f64 {
     if samples.is_empty() {
@@ -777,7 +915,7 @@ fn variant_name(resolution: &str, off: &[String], game_args: &[String], step: Op
     variant
 }
 
-fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str]) -> RunResult {
+fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &suite::BusyRules) -> RunResult {
     // The suite's settings, then the arm's, then the sweep step's.
     let settings = p.arm.as_ref().map_or_else(|| args.run.clone(), |(_, arm)| args.run.with(&arm.settings));
     let mut off = settings.off.clone();
@@ -825,6 +963,7 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str])
 
     let log = File::create(run_dir.join("log.txt"))?;
     let gpu_smi = GpuSampler::start(250).ok();
+    let pmon = suite::PmonSampler::start().ok();
     let launch = suite::unix_now();
     let mut child = Command::new(exe)
         .args(&cmd_args)
@@ -832,18 +971,13 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str])
         .stdout(Stdio::from(log.try_clone()?))
         .stderr(Stdio::from(log))
         .spawn()?;
-    let deadline = Instant::now() + Duration::from_mins(20);
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break Some(status);
-        }
-        if Instant::now() > deadline {
-            let _ = child.kill();
-            break None;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    };
+    let child_pid = child.id();
+    let status = wait_child(&mut child, Duration::from_mins(20));
+    // Samplers stop before anything can fail (a leaked `nvidia-smi` loop would outlive the suite).
     let samples = gpu_smi.map(GpuSampler::stop).unwrap_or_default();
+    let pmon = pmon.map(suite::PmonSampler::stop);
+    let ended = suite::unix_now();
+    let status = status?;
     let stem = file_stem(&scenario.name);
     let report_path = run_dir.join(format!("{stem}.json"));
     let Ok(report) = Report::load(&report_path) else {
@@ -854,14 +988,13 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str])
     // The quiet check only sees the start: other work can begin mid-run.
     let median = |c: &str| report.counters.get(c).and_then(|c| c.per_frame).map(|s| s.median);
     let other_cpu = median("system/cpu_usage").zip(median("process/cpu_usage")).map(|(s, p)| s - p);
-    let busy_during = other_cpu.filter(|&o| o > OTHER_CPU_LIMIT).map(|o| format!("{name}: other processes used {o:.0}% CPU during the run"));
+    let window = report.wall_start_unix_s.zip(report.wall_end_unix_s).unwrap_or((launch, ended));
+    let others = OtherWork::check(pmon, child_pid, busy, window, &run_dir)?;
+    let during = during_reasons(other_cpu, &others.gpu, &others.busy_at_end);
+    let busy_during = (!during.is_empty()).then(|| format!("{name}: during the run: {}", during.join("; ")));
     let focus = FocusTally::from_report(&report);
 
-    let mut csv = String::from("unix_s,util_pct,clock_mhz,mem_clock_mhz,power_w,temp_c,vram_mib,throttle\n");
-    for s in &samples {
-        let _ = writeln!(csv, "{:.3},{},{},{},{},{},{},{:#x}", s.unix_s, s.util_pct, s.clock_mhz, s.mem_clock_mhz, s.power_w, s.temp_c, s.vram_mib, s.throttle);
-    }
-    std::fs::write(run_dir.join("gpu.csv"), csv)?;
+    write_gpu_csv(&samples, &run_dir.join("gpu.csv"))?;
     std::fs::write(run_dir.join("run.txt"), format!("launch_unix_s={launch:.3}\nexe={}\nargs={shown}\n", exe.display()))?;
 
     let mut extra = String::from("\n## Run\n\n");
@@ -870,7 +1003,11 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str])
         let _ = writeln!(extra, "- env: {}", envs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "));
     }
     let _ = writeln!(extra, "- before the run: GPU {gpu_before:.0}%, CPU {cpu_before:.0}%{}", note.as_ref().map_or(String::new(), |n| format!(" · **busy: {n}**")));
-    let _ = writeln!(extra, "- during the run: other processes {}", other_cpu.map_or("?".to_owned(), |o| format!("{o:.0}% CPU (system minus this process){}", if busy_during.is_some() { " · **busy**" } else { "" })));
+    let _ = writeln!(extra, "- during the run: other processes {}", other_cpu.map_or("?".to_owned(), |o| format!("{o:.0}% CPU (system minus this process)")));
+    let _ = writeln!(extra, "- other GPU work during the run: {}", others.describe());
+    if let Some(b) = &busy_during {
+        let _ = writeln!(extra, "- **busy**: {b}");
+    }
     let _ = writeln!(extra, "- focus: {}", focus.map_or_else(|| "not recorded (exe older than the focus guard)".to_owned(), focus_md));
     if let Some(g) = &gpu {
         let _ = writeln!(extra, "{}", g.to_markdown());
@@ -885,7 +1022,9 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str])
         (Some(a), Some(b)) => Some(format!("{a}; {b}")),
         (a, b) => a.or(b),
     };
-    let checked = other_cpu.is_some() && focus.is_some();
+    // GPU contention counts as checked when pmon ran with samples in the window, or the machine has no
+    // nvidia-smi at all (no GPU samples either).
+    let checked = other_cpu.is_some() && focus.is_some() && (others.in_window > 0 || samples.is_empty());
     Ok(Some(Measured { run: SuiteRun { scenario: p.scenario.name.to_owned(), variant, repeat: p.repeat, report, gpu }, note, retry, checked }))
 }
 
@@ -1061,15 +1200,39 @@ mod ab_tests {
             dropped: vec!["balmora @ 1280x720 #3 [x]: median 51.70 ms > 1.3 x the arm's 10.20 ms (after 2 retries)".into()],
             ..Ledger::default()
         };
-        let lines = ledger.lines(11, &["cargo"]);
+        let rules = suite::BusyRules { names: vec!["cargo".into()], dirs: vec![suite::normalize_path("C:/cargo-target/scrib", true)], exempt: Vec::new() };
+        let lines = ledger.lines(11, &rules);
         assert_eq!(lines[0], "- valid runs: 11 of 12 (2 warm-up runs discarded)");
         assert_eq!(lines[1], "- **dropped**: balmora @ 1280x720 #3 [x]: median 51.70 ms > 1.3 x the arm's 10.20 ms (after 2 retries)");
-        assert!(lines[2].starts_with("- machine: quiet, every kept run checked"));
+        assert!(lines[2].starts_with("- machine: quiet, every kept run checked (before each run: no cargo process nor any exe under `c:\\cargo-target\\scrib`"), "{}", lines[2]);
         // A kept run not fully checked, or a `--no-wait` note: no "quiet" line.
+        let none = suite::BusyRules::default();
         let unchecked = Ledger { planned: 1, unchecked: vec!["a@1280x720-1".into()], ..Ledger::default() };
         assert!(!unchecked.quiet());
-        assert!(unchecked.lines(1, &[]).iter().all(|l| !l.contains("quiet")));
-        let noisy = Ledger { planned: 1, notes: vec!["a: running: cargo".into()], ..Ledger::default() };
-        assert_eq!(noisy.lines(1, &[]), ["- valid runs: 1 of 1", "- **busy machine**: a: running: cargo"]);
+        assert!(unchecked.lines(1, &none).iter().all(|l| !l.contains("quiet")));
+        let noisy = Ledger { planned: 1, notes: vec!["a: running: cargo".into()], chain: vec!["bench lock: held".into()], ..Ledger::default() };
+        assert_eq!(noisy.lines(1, &none), ["- valid runs: 1 of 1", "- bench lock: held", "- **busy machine**: a: running: cargo"]);
+    }
+
+    #[test]
+    fn other_gpu_work_or_a_bench_started_mid_run_makes_the_run_busy() {
+        assert!(during_reasons(Some(10.0), &[], &[]).is_empty());
+        let other = suite::ProcessInfo { pid: 7, parent: 1, name: "orch-a.exe".into(), path: None };
+        let why = during_reasons(Some(40.0), &[(9, "h1gpucull.exe".into(), 63.0)], &[(other, "orch-a.exe (under c:\\cargo-target\\scrib)".into())]);
+        assert_eq!(
+            why,
+            ["other processes used 40% CPU", "other GPU work: h1gpucull.exe (9) 63% SM", "running at the end: orch-a.exe (under c:\\cargo-target\\scrib)"]
+        );
+    }
+
+    #[test]
+    fn suite_takes_no_lock() {
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(flatten)]
+            suite: SuiteArgs,
+        }
+        let cli = <Cli as clap::Parser>::try_parse_from(["perf", "t", "balmora_walk", "--no-lock", "--dry-run"]).unwrap();
+        assert!(cli.suite.no_lock && cli.suite.dry_run);
     }
 }

@@ -21,6 +21,7 @@
 pub mod ab;
 mod counters;
 mod gate;
+pub mod lock;
 mod markdown;
 pub mod nsys;
 pub mod pacing;

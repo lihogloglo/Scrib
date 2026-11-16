@@ -10,7 +10,7 @@ use std::path::Path;
 
 use sf_diag_bevy::sf_diag::Report;
 
-use super::cli::{BUSY, Planned, SCENARIOS, SuiteArgs, execute, focus_lines, run_focus, write_summary};
+use super::cli::{Planned, SCENARIOS, SuiteArgs, busy_rules, execute, focus_lines, run_focus, start_chain, write_summary};
 
 #[derive(clap::Args)]
 pub struct SweepArgs {
@@ -106,10 +106,11 @@ pub fn run(args: &SweepArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     let dir = suite.out.join(&suite.tag);
     std::fs::create_dir_all(&dir)?;
-    let mut busy: Vec<&str> = BUSY.to_vec();
-    busy.extend(suite.wait_for.iter().map(String::as_str));
+    let busy = busy_rules(suite);
     println!("sweep {} over {:?}: {} runs → {}", args.var, args.values, plan.len(), dir.display());
-    let (runs, ledger) = execute(suite, &exe, &dir, &plan, &busy);
+    let chain = start_chain(suite, &exe)?;
+    let (runs, mut ledger) = execute(suite, &exe, &dir, &plan, &busy);
+    ledger.chain.clone_from(&chain.notes);
     if suite.dry_run || runs.is_empty() {
         return Ok(());
     }

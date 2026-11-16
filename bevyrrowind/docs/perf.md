@@ -254,13 +254,15 @@ restore the file afterwards.
 
 ## Quiet machine
 
-Numbers from a busy machine are noise. The suite waits, before every run, until no `cargo`, `rustc`,
-`bevyrrowind` or `ovid` process runs (other agents build here), GPU load <= 15 % and CPU load <= 20 %
+Numbers from a busy machine are noise. One bench chain at a time holds `.sessions/bench.lock` (bench-lock
+2026-11-16, details in "Suite runner"). The suite waits, before every run, until no `cargo`, `rustc`,
+`bevyrrowind` or `ovid` process runs and no other exe runs from the cargo target folder or `%TEMP%` (renamed bench
+copies; `cargo\bin`/`rustup` tools exempt), GPU load <= 15 % and CPU load <= 20 %
 (`--wait-for name,...` adds names; `--max-wait-min`, `--no-wait`). GPU samples below 600 MHz graphics clock
 count as idle: the lock screen and compositor show 25-40 % at ~210 MHz, any 3D load clocks past 1 GHz (shadowA2;
 unattended runs used to wait out `--max-wait-min`). During the run it compares system and
-process CPU (Bevy's `SystemInformationDiagnosticsPlugin`): other processes above 25 % mark the run busy and it
-is retried (`--retries`, default 2). Busy runs are flagged in the report and the summary.
+process CPU (Bevy's `SystemInformationDiagnosticsPlugin`): other processes above 25 % CPU, or another process at
+>= 15 % GPU SM in `nvidia-smi pmon` samples (`gpu-procs.csv`), mark the run busy and it is retried (`--retries`, default 2). Busy runs are flagged in the report and the summary.
 
 ## Suite runner
 
@@ -291,6 +293,24 @@ run). A run that asks for DLSS (`BEVYRROWIND_DLSS` or `--dlss`, not taa/off) but
 tables start with per-thread means: main busy, render busy, render graph, GPU timed (`stat unit`-style: the frame is
 ~max of them, so a main-thread win can hide behind a render-bound frame). `--save` refuses a folder that already
 holds files (pick a new tag; old controls are never overwritten).
+
+**One bench at a time, real busy detection, power plan** (audit §5 fixes 2 and 6; `perf/chain.rs`, `perf/power.rs`,
+`sf_diag::lock`, `sf_diag::suite::{BusyRules, PmonSampler}`). A `perf suite` / `perf sweep` holds
+`<repo>/.sessions/bench.lock` for its whole chain (every arm, warm-up and repeat); a second bench waits and prints the
+holder (pid, exe, since, command line). A lock whose pid is gone (or reused by another program) is taken over, and the
+taker first undoes the dead chain's power-plan switch. `--dry-run` takes no lock; `--no-lock` skips it and the summary
+says so. "Busy" (before each run, and as a snapshot at its end) is now any `cargo`/`rustc`/`bevyrrowind`/`ovid` or
+`--wait-for` name **or any exe under the cargo target dir or `%TEMP%`** (junctions and 8.3 names resolved), whatever it
+is called (`orch-a.exe`, `h1gpucull.exe`, `%TEMP%\bw-owner-*`); installed tools under `cargo\bin` / `rustup` there (the
+`bevy_brp_mcp` MCP servers) are exempt, as are the runner's own parents and children. GPU: `nvidia-smi pmon -s u` is
+sampled every second during the run (`gpu-procs.csv`); another process at >= 15 % SM inside the measured window
+(the same 15 % as the pre-run GPU check) makes the run busy and it is retried. Why a share and not "listed": on this
+laptop's driver (WDDM) `pmon` lists every windowed app (~20, idle at `-`; the agent UI shows 0-2 %), so being listed is
+not load; no other GPU-load threshold was invented. At chain start the runner switches to High performance / Ultimate
+(`powercfg /setactive`) and restores the previous plan at the end (drop guard; a killed chain is undone by the next
+taker of its lock); this laptop has only Balanced (Modern Standby), so the summary says so and the Windows 11 power
+mode (read from the registry, `best performance` on AC here; `powercfg` can't set it) goes into the provenance power
+line. `powercfg /powerthrottling disable /path <exe>` needs an elevated prompt: skipped with a note when it fails.
 
 ### Interleaved A/B (perf-verdict audit 2026-11-16 §5)
 

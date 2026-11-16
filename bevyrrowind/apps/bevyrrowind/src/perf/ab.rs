@@ -122,6 +122,8 @@ pub trait Probe {
     fn power_scheme(&self) -> Option<String>;
     /// `Win32_Battery.BatteryStatus` (`None`: no battery).
     fn battery_status(&self) -> Option<u32>;
+    /// The power-mode registry key (`reg query ...\Power\User\PowerSchemes`; `power::parse_overlay`).
+    fn power_overlay(&self) -> Option<String>;
     /// The bake cache's newest profile: name and modification time.
     fn bake_profile(&self) -> Option<(String, f64)>;
 }
@@ -165,6 +167,10 @@ impl Probe for MachineProbe {
     fn battery_status(&self) -> Option<u32> {
         let out = output("powershell", &["-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance Win32_Battery).BatteryStatus"])?;
         out.lines().find_map(|l| l.trim().parse().ok())
+    }
+
+    fn power_overlay(&self) -> Option<String> {
+        super::power::overlay_reg()
     }
 
     fn bake_profile(&self) -> Option<(String, f64)> {
@@ -241,11 +247,16 @@ pub fn provenance_lines(exe: &Path, probe: &dyn Probe) -> Vec<String> {
             probe.mtime_unix_s(exe).map_or_else(unknown, utc)
         ),
         format!("- bake: {bake}"),
-        format!(
-            "- power: plan {} · {}",
-            probe.power_scheme().as_deref().and_then(parse_power_scheme).unwrap_or_else(unknown),
-            power_source(probe.battery_status())
-        ),
+        {
+            let battery = probe.battery_status();
+            let on_battery = matches!(battery, Some(1 | 4 | 5));
+            format!(
+                "- power: plan {} · mode {} · {}",
+                probe.power_scheme().as_deref().and_then(parse_power_scheme).unwrap_or_else(unknown),
+                probe.power_overlay().as_deref().and_then(|r| super::power::parse_overlay(r, on_battery)).map_or_else(unknown, |g| super::power::overlay_name(&g)),
+                power_source(battery)
+            )
+        },
     ]
 }
 
@@ -430,6 +441,9 @@ mod tests {
         fn battery_status(&self) -> Option<u32> {
             self.battery
         }
+        fn power_overlay(&self) -> Option<String> {
+            Some("    ActiveOverlayAcPowerScheme    REG_SZ    ded574b5-45a0-4f42-8737-46345c09c238\r\n    ActiveOverlayDcPowerScheme    REG_SZ    00000000-0000-0000-0000-000000000000\r\n".into())
+        }
         fn bake_profile(&self) -> Option<(String, f64)> {
             None
         }
@@ -446,12 +460,12 @@ mod tests {
                 "- commit: `985a22af0000` (clean)",
                 &format!("- exe sha256: `{}` · modified 2000-03-01 00:00:00 UTC", "ab".repeat(32)),
                 "- bake: ?",
-                "- power: plan Balanced (381b4222-f694-41f0-9685-ff5bb260df2e) · AC",
+                "- power: plan Balanced (381b4222-f694-41f0-9685-ff5bb260df2e) · mode best performance · AC",
             ]
         );
         let lines = provenance_lines(&exe, &FakeProbe { dirty: 42, battery: Some(1) });
         assert_eq!(lines[1], "- commit: `985a22af0000` (**dirty**: 42 tracked files changed)");
-        assert!(lines[4].ends_with("· **battery**"));
+        assert!(lines[4].ends_with("· mode balanced · **battery**"), "battery reads the DC power mode");
         assert_eq!(power_source(None), "AC (no battery)");
         assert_eq!(utc(0.0), "1970-01-01 00:00:00 UTC");
         // certutil (Windows 10+, and the spaced form of older versions) and sha256sum.
