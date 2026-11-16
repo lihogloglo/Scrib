@@ -221,7 +221,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 
 ### SH-28: Lamp shadow day gate (CW-3a, ROADMAP 1.25, built 2026-11-16, opt-in)
 - Run: `view "Balmora" --hour 12 --weather clear` and again at `--hour 19` (dusk) and `--hour 22`, each with and without
-  env `BEVYRROWIND_LAMP_DAY_GATE=1` (exe `target/profiling/cw3a.exe`, or a dev build). Lamps must light exactly the same
+  `set shadow.lamp.day_gate on` (console, live; exe `target/profiling/cw3a.exe`, or a dev build). Lamps must light exactly the same
   in both; only their shadow maps change (`sf_sky_bevy/src/shadow_budget.rs`, contrast gate).
 - Look for: at noon, lanterns under awnings/arcades (direct sun is counted even where the receiver is in shade): is a
   missing lamp shadow noticeable there? At dusk (~19-20 h): do lamp shadows fade in smoothly, no popping? At 22 h: no
@@ -229,7 +229,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Status: confirmed 2026-11-16 (owner: "seems good", noon run; dusk fade not separately confirmed).
 
 ### SH-29: Point shadow face culling (CW-3b, ROADMAP 1.25, built 2026-11-16, opt-in)
-- Run: `view "Balmora" --hour 21 --weather clear`, High, with and without env `BEVYRROWIND_POINT_FACE_CULL=1` (exe
+- Run: `view "Balmora" --hour 21 --weather clear`, High, with and without `set shadow.lamp.face_cull on` (console, live; exe
   `target/profiling/cw3b.exe` or a dev build; vendored `bevy_pbr/src/render/point_face_cull.rs`). Stand 3-6 m from a street
   lamp with NPCs walking under it; spin 180/360 deg fast in third and first person; look straight up and down under it.
 - Look for: a lamp shadow popping in or showing an old pose for a frame as it enters the screen; shadows cut or missing
@@ -237,7 +237,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Status: confirmed 2026-11-16 (owner: "seems all good"). Owner noted ~17 ms average in some areas (dev build, night, only face culling on; dev builds link Bevy dynamically, not a bench number).
 
 ### SH-30: Sun/moon shadow gate (CW-8, ROADMAP 1.25, built 2026-11-16, opt-in)
-- Run: `view "Balmora"` with env `BEVYRROWIND_SUN_SHADOW_GATE=1` (exe `target/profiling/cw8.exe` or a dev build;
+- Run: `view "Balmora"` with `set shadow.sun.gate on` (console, live; exe `target/profiling/cw8.exe` or a dev build;
   `sf_sky/src/sun_gate.rs`, vendored `DirectionalLightShadowFade`). (1) 16:30 clear -> rain -> clear: shadows full until
   ~17:20, then fade over a few seconds, no pop, no hard far-terrain shadow left. (2) Ashstorm 08:00: weaker or fading
   shadows, look right? (3) Overcast noon: shadows stay (overcast dims sun and sky fill alike). (4) Night, dim moon: no moon shadows.

@@ -11,6 +11,9 @@
 //!   in `PreUpdate` ([`TunableSystems::Apply`]), then every effective change of the last frame goes
 //!   out as [`TunableChanged`], then bindings run ([`TunableSystems::Bind`]). A refused request is
 //!   a warning and a [`TunableRefused`].
+//! - A def's deprecated environment alias (`Def::env_alias`) is read when it is registered and
+//!   set at the `CommandLine` layer ([`TunableEnv`]); a value that doesn't parse goes to
+//!   [`OverrideRefusals`], which the app checks before the first frame.
 //! - [`tunable_changed`]: run condition, true once per change (and on its first run).
 //! - [`overrides`]: `--set name=value` and `--tunables <file.toml>` parsing (pure; app wiring is T3).
 //! - [`brp`]: the `sf.tunables/list|get|set|reset` handlers as pure JSON functions; the `remote`
@@ -22,7 +25,7 @@ use bevy_app::{App, Plugin, PreUpdate};
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryFilter;
-use bevy_log::warn;
+use bevy_log::{info, warn};
 
 pub use sf_tunables;
 pub use sf_tunables::{AnyDef, Def, Id, SetBy, SetOutcome, TunableId, Type, Value};
@@ -225,31 +228,160 @@ pub trait TunablesAppExt {
 
 impl TunablesAppExt for App {
     fn register_tunables(&mut self, defs: &[&dyn AnyDef]) -> &mut Self {
-        let mut tunables = self.world_mut().get_resource_or_init::<Tunables>();
-        for def in defs {
-            register_or_check(&mut tunables, *def);
-        }
+        let world = self.world_mut();
+        let mut tunables = world.get_resource_or_init::<Tunables>();
+        let fresh: Vec<TunableId> = defs
+            .iter()
+            .filter_map(|def| register_or_check(&mut tunables, *def))
+            .collect();
+        apply_env_aliases(world, &fresh);
         self
     }
 
     fn add_tunable<T: Type + Sync>(&mut self, def: &Def<T>) -> TunableBuilder<'_, T> {
-        let mut tunables = self.world_mut().get_resource_or_init::<Tunables>();
-        register_or_check(&mut tunables, def);
+        let world = self.world_mut();
+        let mut tunables = world.get_resource_or_init::<Tunables>();
+        let fresh = register_or_check(&mut tunables, def);
         let id = tunables
             .id_of(def)
             .unwrap_or_else(|e| panic!("tunable {}: {e}", AnyDef::name(def)));
+        apply_env_aliases(world, fresh.as_slice());
         TunableBuilder { app: self, id }
     }
 }
 
-fn register_or_check(tunables: &mut Tunables, def: &dyn AnyDef) {
+/// Applies `--set` / `--tunables` overrides at the `CommandLine` layer once every plugin has
+/// registered its tunables (in `Plugin::finish`, after all `build`s), sets in order (a later one
+/// wins), one info line per set. Refusals (unknown names, bad values) are warnings and go to
+/// [`OverrideRefusals`]: the app decides to fail the run (a plugin added after this one whose
+/// `finish` checks the resource).
+pub struct CommandLineOverrides(pub Vec<overrides::OverrideSet>);
+
+impl Plugin for CommandLineOverrides {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<OverrideRefusals>();
+    }
+
+    fn finish(&self, app: &mut App) {
+        let world = app.world_mut();
+        let mut refused = Vec::new();
+        {
+            let mut tunables = world.get_resource_or_init::<Tunables>();
+            for set in &self.0 {
+                let before = refused.len();
+                refused.extend(
+                    overrides::apply_overrides(
+                        &mut tunables,
+                        &set.overrides,
+                        SetBy::CommandLine,
+                        Some(&set.origin),
+                    )
+                    .into_iter()
+                    .map(|r| overrides::Refusal {
+                        reason: format!("{} ({})", r.reason, set.origin),
+                        name: r.name,
+                    }),
+                );
+                info!(
+                    "tunables: {}: {} value(s) set, {} refused",
+                    set.origin,
+                    set.overrides.len() - (refused.len() - before),
+                    refused.len() - before
+                );
+            }
+        }
+        for r in &refused {
+            warn!("tunable {r}");
+        }
+        world.resource_mut::<OverrideRefusals>().0.extend(refused);
+    }
+}
+
+/// Where deprecated environment aliases ([`sf_tunables::Def::env_alias`]) are read from when a
+/// tunable is registered: the process environment by default; tests insert
+/// [`TunableEnv::from_pairs`] before registering.
+#[derive(Resource)]
+pub struct TunableEnv(Box<EnvLookup>);
+
+/// Reads one environment variable.
+type EnvLookup = dyn Fn(&str) -> Option<String> + Send + Sync;
+
+impl Default for TunableEnv {
+    fn default() -> Self {
+        Self(Box::new(|name| std::env::var(name).ok()))
+    }
+}
+
+impl TunableEnv {
+    /// A fixed environment (tests).
+    pub fn from_pairs(pairs: &[(&str, &str)]) -> Self {
+        let map: std::collections::HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        Self(Box::new(move |name| map.get(name).cloned()))
+    }
+
+    pub fn get(&self, name: &str) -> Option<String> {
+        (self.0)(name)
+    }
+}
+
+/// Overrides that were refused before the first frame: environment aliases with a value that
+/// doesn't parse (at registration), and the app's `--set` / `--tunables` refusals. The app fails
+/// the run when this isn't empty (a typo must not silently measure the default).
+#[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
+pub struct OverrideRefusals(pub Vec<overrides::Refusal>);
+
+/// Applies the environment aliases of freshly registered tunables at the `CommandLine` layer, one
+/// info line per alias in use; refusals go to [`OverrideRefusals`].
+fn apply_env_aliases(world: &mut World, fresh: &[TunableId]) {
+    {
+        let tunables = world.get_resource_or_init::<Tunables>();
+        if !fresh
+            .iter()
+            .any(|id| tunables.var(*id).meta().env_alias.is_some())
+        {
+            return;
+        }
+    }
+    world.init_resource::<TunableEnv>();
+    let mut refused = Vec::new();
+    world.resource_scope(|world, env: Mut<TunableEnv>| {
+        let mut tunables = world.resource_mut::<Tunables>();
+        let lookup = |name: &str| env.get(name);
+        for id in fresh {
+            match overrides::apply_env_alias(&mut tunables, *id, &lookup, SetBy::CommandLine) {
+                Ok(Some(used)) => info!(
+                    "tunable {} = {} from env {} (deprecated: use --set {}={})",
+                    used.name, used.value, used.var, used.name, used.value
+                ),
+                Ok(None) => {}
+                Err(refusal) => {
+                    warn!("tunable {refusal}");
+                    refused.push(refusal);
+                }
+            }
+        }
+    });
+    if !refused.is_empty() {
+        world
+            .get_resource_or_init::<OverrideRefusals>()
+            .0
+            .extend(refused);
+    }
+}
+
+/// Registers `def`, or checks it against the tunable already registered under its name. Returns
+/// the id when it was registered just now.
+fn register_or_check(tunables: &mut Tunables, def: &dyn AnyDef) -> Option<TunableId> {
     let name = def.name();
     match tunables.id(name) {
-        None => {
+        None => Some(
             tunables
                 .register_any(def)
-                .unwrap_or_else(|e| panic!("tunable {name}: {e}"));
-        }
+                .unwrap_or_else(|e| panic!("tunable {name}: {e}")),
+        ),
         Some(id) => {
             let spec = def.spec();
             let have = tunables.var(id);
@@ -261,6 +393,7 @@ fn register_or_check(tunables: &mut Tunables, def: &dyn AnyDef) {
                 spec.kind().describe(),
                 spec.default_value(),
             );
+            None
         }
     }
 }

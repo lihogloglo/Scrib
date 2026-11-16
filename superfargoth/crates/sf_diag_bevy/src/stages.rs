@@ -66,12 +66,12 @@ fn add_stage(app: &mut App, i: usize, label: impl ScheduleLabel + Clone) {
             s.set_executor(SingleThreadedExecutor::new());
         });
     }
-    app.add_systems(start, move |mut c: ResMut<MainStages>| c.0[i] = Some(Instant::now()))
-        .add_systems(end, move |mut c: ResMut<MainStages>, counters: Option<Res<DiagCounters>>| {
+    app.add_systems(start, (move |mut c: ResMut<MainStages>| c.0[i] = Some(Instant::now())).run_if(crate::gauges_live))
+        .add_systems(end, (move |mut c: ResMut<MainStages>, counters: Option<Res<DiagCounters>>| {
             if let (Some(t), Some(counters)) = (c.0[i].take(), counters) {
                 counters.add_duration_named(MAIN_STAGES[i], t.elapsed());
             }
-        });
+        }).run_if(crate::gauges_live));
     let mut order = app.world_mut().resource_mut::<MainScheduleOrder>();
     order.insert_before(label.clone(), start);
     order.insert_after(label, end);
@@ -174,17 +174,18 @@ pub(crate) mod render {
                 let s = world.resource::<Stamps>();
                 s.stamp(&s.start);
             })
+            .run_if(crate::gauges_live)
             .before_ignore_deferred(RenderSystems::ExtractCommands),
         );
         for (i, (_, set)) in SETS.iter().enumerate().take(CLEANUP) {
             render_app.add_systems(
                 Render,
-                (move |s: Res<Stamps>| s.stamp(&s.ends[i])).after_ignore_deferred(set.clone()).in_set(super::RenderStageMarks),
+                (move |s: Res<Stamps>| s.stamp(&s.ends[i])).run_if(crate::gauges_live).after_ignore_deferred(set.clone()).in_set(super::RenderStageMarks),
             );
         }
         render_app.add_systems(
             Render,
-            report.after_ignore_deferred(RenderSystems::Cleanup).after_ignore_deferred(super::RenderStageMarks),
+            report.run_if(crate::gauges_live).after_ignore_deferred(RenderSystems::Cleanup).after_ignore_deferred(super::RenderStageMarks),
         );
         // `RenderGraph` runs exclusive systems (`camera_driver`, the submit): exclusive markers
         // strictly between its sets add no barrier.
@@ -198,12 +199,15 @@ pub(crate) mod render {
             RenderGraph,
             (
                 graph_mark(0)
+                    .run_if(crate::gauges_live)
                     .after_ignore_deferred(RenderGraphSystems::Begin)
                     .before_ignore_deferred(RenderGraphSystems::Render),
                 graph_mark(1)
+                    .run_if(crate::gauges_live)
                     .after_ignore_deferred(RenderGraphSystems::Render)
                     .before_ignore_deferred(RenderGraphSystems::Submit),
                 graph_mark(2)
+                    .run_if(crate::gauges_live)
                     .after_ignore_deferred(RenderGraphSystems::Submit)
                     .before_ignore_deferred(RenderGraphSystems::Finish),
             ),

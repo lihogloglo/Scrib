@@ -2,9 +2,9 @@
   "about": "Per-crate ratchet of tools/tunables-census.mjs --check: a crate's T count may only go down. Rewrite with --update-baseline only when counts went down (a migration slice).",
   "totals": {
     "rows": 2180,
-    "T": 1247,
-    "C": 487,
-    "?": 446
+    "T": 1241,
+    "C": 492,
+    "?": 447
   },
   "crates": {
     "bevyrrowind": {
@@ -189,7 +189,7 @@
     "mw_devtools_bevy": {
       "T": 4,
       "?": 3,
-      "C": 0,
+      "C": 1,
       "tunables": [
         "src/live_ab.rs LiveAb.sun_shadows",
         "src/live_ab.rs TIME_SCALES",
@@ -225,20 +225,19 @@
       "C": 1,
       "tunables": [
         "src/night_sky.rs DEG_PER_SIZE",
-        "src/render.rs LAMP_SHADOW_FADE",
         "src/render.rs POINT_SHADOWS_DEFAULT",
         "src/render.rs POINT_SHADOW_CACHE",
+        "src/shadow_tunables.rs LAMP_FADE_M",
         "src/weather.rs LIVE_HOLD_HOURS",
         "src/weather.rs RASTER_MARGIN"
       ]
     },
     "mw_exterior_bevy": {
-      "T": 9,
-      "?": 2,
+      "T": 8,
+      "?": 1,
       "C": 12,
       "tunables": [
         "src/exterior.rs BLOOM_INTENSITY",
-        "src/exterior.rs SOFT_SHADOW_SIZE",
         "src/exterior.rs SUN_DEPTH_BIAS",
         "src/exterior.rs SUN_NORMAL_BIAS",
         "src/gi_volume.rs INTERIOR_AMBIENT_SCALE",
@@ -1084,7 +1083,7 @@
     "sf_lod_bevy": {
       "T": 8,
       "?": 0,
-      "C": 0,
+      "C": 1,
       "tunables": [
         "src/lib.rs FarFieldSettings.l1_shadows",
         "src/lib.rs FarFieldSettings.light_min_pixels",
@@ -1409,8 +1408,8 @@
     },
     "sf_sky": {
       "T": 31,
-      "?": 22,
-      "C": 1,
+      "?": 24,
+      "C": 2,
       "tunables": [
         "src/cascade_hold.rs CascadeHoldConfig.enabled",
         "src/cascade_hold.rs CascadeHoldConfig.hold_from",
@@ -1446,7 +1445,7 @@
       ]
     },
     "sf_sky_bevy": {
-      "T": 26,
+      "T": 21,
       "?": 3,
       "C": 2,
       "tunables": [
@@ -1468,14 +1467,9 @@
         "src/lib.rs SkyRenderOptions.split_near",
         "src/lib.rs SkyRenderOptions.weather_ambient_tint",
         "src/lib.rs SunShadow.contact_shadows",
-        "src/shadow_budget.rs BudgetedShadow.priority",
-        "src/shadow_budget.rs PointShadowBudget.contact_shadows",
-        "src/shadow_budget.rs PointShadowBudget.fade_end",
-        "src/shadow_budget.rs PointShadowBudget.fade_start",
-        "src/shadow_budget.rs PointShadowBudget.fade_time",
-        "src/shadow_budget.rs PointShadowBudget.hysteresis",
-        "src/shadow_budget.rs PointShadowBudget.map_size",
-        "src/shadow_budget.rs PointShadowBudget.max"
+        "src/quality.rs SunShadowQuality.minimum_distance",
+        "src/quality.rs SunShadowQuality.split_near",
+        "src/shadow_budget.rs BudgetedShadow.priority"
       ]
     },
     "sf_stats": {
@@ -1716,6 +1710,12 @@
       "T": 0,
       "?": 6,
       "C": 0,
+      "tunables": []
+    },
+    "sf_tunables_bevy": {
+      "T": 0,
+      "?": 0,
+      "C": 2,
       "tunables": []
     },
     "sf_ui": {

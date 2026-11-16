@@ -80,6 +80,18 @@ pub use roles::{CharacterLayerSystems, PartRole, RoleLayer, RoleLayers, ShadowLa
 pub use sf_character::ViewRole;
 pub use view_model::{ViewCopyMaterial, ViewModel, ViewModelMaterial, ViewModelMaterials, ViewModelPlugin, ViewModelSettings, ViewModelUniform};
 
+/// `render.skin.skip_unchanged`: `bevy_pbr::SkinUploadSettings::skip_unchanged` (vendored `skin.rs`
+/// own patch "skip unchanged skins", ROADMAP 1.25 CW-7): joint blocks whose matrices did not change
+/// are neither walked nor re-uploaded. Read by Bevy's skin extraction every frame, so live both ways
+/// (a block changed while off stays queued for both buffers). The host binds it.
+pub const SKIN_SKIP_UNCHANGED: sf_tunables::Def<bool> = sf_tunables::def!(bool "render.skin.skip_unchanged" = false)
+    .help("Skinned meshes upload only the joint blocks whose matrices changed")
+    .source(sf_tunables::Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .group(sf_tunables::Group::Characters);
+
+/// This crate's tunables (the host binds them).
+pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[&SKIN_SKIP_UNCHANGED];
+
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 

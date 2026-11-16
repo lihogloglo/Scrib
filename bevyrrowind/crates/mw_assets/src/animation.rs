@@ -7,6 +7,8 @@ use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use mw_nif::anim::{ColorSlot, Controller, Target};
 use mw_nif::particles::ParticleSystem;
+use sf_tunables_bevy::sf_tunables::{Def, Group, Source, def};
+use sf_tunables_bevy::{SetBy, TunableSystems, Tunables, TunablesAppExt};
 
 /// Everything animated in one model, shared by its instances.
 #[derive(Asset, TypePath)]
@@ -41,13 +43,24 @@ pub struct AnimationPhase(pub f32);
 /// at 90 fps.
 const MATERIAL_ANIM_HZ: f32 = 30.0;
 
-/// `1`: material controllers skip materials no visible entity draws (ROADMAP 1.25 CW-6). Opt-in until its
-/// interleaved A/B (perf arm `--env BEVYRROWIND_MATCTRL_GATE=1`).
-const ENV_MATCTRL_GATE: &str = "BEVYRROWIND_MATCTRL_GATE";
+/// `mw.matctrl.gate`: material controllers skip materials no visible entity draws (ROADMAP 1.25 CW-6).
+/// Live ([`MaterialGate`]): the first time it turns on, [`MaterialUsers`] is filled from the entities
+/// already spawned and its observers keep it from then on (off again, they keep tracking, unused).
+/// Opt-in until its interleaved A/B; alias `BEVYRROWIND_MATCTRL_GATE=1`.
+pub const MATCTRL_GATE: Def<bool> = def!(bool "mw.matctrl.gate" = false)
+    .help("NIF material controllers skip materials no visible entity draws")
+    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .group(Group::Effects)
+    .env_alias("BEVYRROWIND_MATCTRL_GATE");
 
-/// Whether `BEVYRROWIND_MATCTRL_GATE=1` is set.
-pub(crate) fn gate_from_env() -> bool {
-    std::env::var(ENV_MATCTRL_GATE).is_ok_and(|v| v.trim() == "1")
+/// This module's tunables (`mw_assets::TUNABLES`).
+pub const TUNABLES: &[&dyn sf_tunables_bevy::AnyDef] = &[&MATCTRL_GATE];
+
+/// The live switch of the material controllers' visibility gate ([`MATCTRL_GATE`]); absent (tests),
+/// the gate is on whenever [`MaterialUsers`] exists.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MaterialGate {
+    pub enabled: bool,
 }
 
 /// On a NIF mesh node whose material a material controller drives: that
@@ -58,7 +71,7 @@ pub(crate) fn gate_from_env() -> bool {
 #[reflect(Component)]
 pub struct AnimatedMaterialUser(pub Handle<StandardMaterial>);
 
-/// Visibility gate of the material controllers (`BEVYRROWIND_MATCTRL_GATE=1`): the
+/// Visibility gate of the material controllers (`mw.matctrl.gate`): the
 /// entities drawing each `StandardMaterial`, kept on spawn and despawn by observers
 /// (holders of `MeshMaterial3d<StandardMaterial>` and of [`AnimatedMaterialUser`]),
 /// never by a per-frame scan. Present only while the gate is on.
@@ -99,23 +112,61 @@ impl MaterialUsers {
 
 /// Turns the visibility gate on: [`MaterialUsers`] and the observers that keep it.
 pub(crate) fn add_material_gate(app: &mut App) {
-    app.init_resource::<MaterialUsers>()
-        .add_observer(|insert: On<Insert<MeshMaterial3d<StandardMaterial>>>, q: Query<&MeshMaterial3d<StandardMaterial>>, mut users: ResMut<MaterialUsers>| {
+    app.init_resource::<MaterialUsers>();
+    add_user_observers(app.world_mut());
+}
+
+/// The live gate ([`MATCTRL_GATE`] bound to [`MaterialGate`]); a [`MaterialUsers`] inserted before the
+/// plugin turns it on from code (tests, A/B tools: the `Code` layer).
+pub(crate) fn add_live_gate(app: &mut App) {
+    let on_from_code = app.world().contains_resource::<MaterialUsers>();
+    app.init_resource::<MaterialGate>();
+    let gate = app.add_tunable(&MATCTRL_GATE).bind_resource(|g: &mut MaterialGate, on| g.enabled = on).id();
+    if on_from_code {
+        let _ = app.world_mut().resource_mut::<Tunables>().write(gate, true, SetBy::Code);
+        add_material_gate(app);
+    }
+    app.add_systems(
+        PreUpdate,
+        install_material_gate
+            .after(TunableSystems::Bind)
+            .run_if(|g: Res<MaterialGate>, users: Option<Res<MaterialUsers>>| g.enabled && users.is_none()),
+    );
+}
+
+/// The gate turned on for the first time: [`MaterialUsers`] from the entities already spawned, then
+/// the observers that keep it.
+fn install_material_gate(world: &mut World) {
+    let mut users = MaterialUsers::default();
+    let mut meshes = world.query::<(Entity, &MeshMaterial3d<StandardMaterial>)>();
+    for (entity, m) in meshes.iter(world) {
+        users.add(m.id(), entity);
+    }
+    let mut markers = world.query::<(Entity, &AnimatedMaterialUser)>();
+    for (entity, m) in markers.iter(world) {
+        users.add(m.0.id(), entity);
+    }
+    world.insert_resource(users);
+    add_user_observers(world);
+}
+
+fn add_user_observers(world: &mut World) {
+    world.add_observer(|insert: On<Insert<MeshMaterial3d<StandardMaterial>>>, q: Query<&MeshMaterial3d<StandardMaterial>>, mut users: ResMut<MaterialUsers>| {
             if let Ok(m) = q.get(insert.entity) {
                 users.add(m.id(), insert.entity);
             }
-        })
-        .add_observer(|discard: On<Discard<MeshMaterial3d<StandardMaterial>>>, q: Query<&MeshMaterial3d<StandardMaterial>>, mut users: ResMut<MaterialUsers>| {
+        });
+    world.add_observer(|discard: On<Discard<MeshMaterial3d<StandardMaterial>>>, q: Query<&MeshMaterial3d<StandardMaterial>>, mut users: ResMut<MaterialUsers>| {
             if let Ok(m) = q.get(discard.entity) {
                 users.remove(m.id(), discard.entity);
             }
-        })
-        .add_observer(|insert: On<Insert<AnimatedMaterialUser>>, q: Query<&AnimatedMaterialUser>, mut users: ResMut<MaterialUsers>| {
+        });
+    world.add_observer(|insert: On<Insert<AnimatedMaterialUser>>, q: Query<&AnimatedMaterialUser>, mut users: ResMut<MaterialUsers>| {
             if let Ok(m) = q.get(insert.entity) {
                 users.add(m.0.id(), insert.entity);
             }
-        })
-        .add_observer(|discard: On<Discard<AnimatedMaterialUser>>, q: Query<&AnimatedMaterialUser>, mut users: ResMut<MaterialUsers>| {
+        });
+    world.add_observer(|discard: On<Discard<AnimatedMaterialUser>>, q: Query<&AnimatedMaterialUser>, mut users: ResMut<MaterialUsers>| {
             if let Ok(m) = q.get(discard.entity) {
                 users.remove(m.0.id(), discard.entity);
             }
@@ -174,10 +225,12 @@ pub(crate) fn animate_materials(
     mut anim_events: MessageReader<AssetEvent<NifAnimation>>,
     animations: Res<Assets<NifAnimation>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    gate: Option<Res<MaterialUsers>>,
+    (gate, gate_on): (Option<Res<MaterialUsers>>, Option<Res<MaterialGate>>),
     visibility: Query<&ViewVisibility>,
     mut state: Local<MaterialAnimState>,
 ) {
+    // Off (live): no gate; the stale list is dropped by the next full step.
+    let gate = gate.filter(|_| gate_on.as_ref().is_none_or(|g| g.enabled));
     let elapsed = time.elapsed_secs().max(0.0);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let step = (elapsed * MATERIAL_ANIM_HZ).floor() as u32;

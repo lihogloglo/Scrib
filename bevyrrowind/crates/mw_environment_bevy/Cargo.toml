@@ -49,6 +49,8 @@ sf_records.workspace = true
 sf_shadow_cache_bevy.workspace = true
 sf_sky_bevy.workspace = true
 sf_terrain_bevy.workspace = true
+# Shadow and light tunables: the game's alias copies, Mod and Preset layer values (tunables T4).
+sf_tunables_bevy.workspace = true
 sf_vfs.workspace = true
 sf_water.workspace = true
 sf_water_bevy.workspace = true

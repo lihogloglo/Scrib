@@ -281,3 +281,14 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   ~11x brighter (and near black at day EVs). Fix 2026-11-16: emissive in exposed units (emissive 1 x texture, exposure
   weight 0) = the plain texture at any exposure; torch smoke's saturation uses the same exposed "fully lit".
 - Look for: at night the handle shows its plain wood/metal texture, not glowing; by day not black. Status: confirmed by owner 2026-11-16 (`scene hi-balmora-night`): handles no longer over-bright.
+
+### PP-1: F3 perf panel shows honest live numbers (CW-17, 2026-11-16)
+- Kind: game location, release build (`cargo build --release -p bevyrrowind`, no `dev`). Any exterior, e.g.
+  `view "Balmora" --hour 12` or `scene hi-balmora-night`; flags none (start with env `BEVYRROWIND_PANEL_GPU_TIMERS=1` for GPU times).
+- Press F3: compact panel top-right (frame ms + fps, p99, max; main, render, GPU; bound by). F3 again: full (main
+  stages, top GPU passes, views by kind, lamp faces culled, lights, encoders/submits, entities, preset, non-default
+  tunables). F3 again: off. Console `flip perfpanel` does the same as compact/off.
+- Look for: digits refresh ~4x a second and stay readable; frame ms matches the top-left fps; "bound by" matches the
+  feel (GPU when the view is heavy, main when the town crowd is busy); flipping a CW switch or a tunable (console)
+  moves the numbers within ~1 s and shows the tunable in the list with its layer; no hitch on open/close.
+- Status: awaiting owner. Source: cw17-panel.

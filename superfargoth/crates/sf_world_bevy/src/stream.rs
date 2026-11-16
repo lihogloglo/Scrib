@@ -503,6 +503,13 @@ impl Streaming {
         &self.rt.config
     }
 
+    /// The streaming selection gate at run time (CW-2, `select.gate` live; see
+    /// [`sf_world::Scheduler::set_select_gate`]).
+    pub fn set_select_gate(&mut self, quanta: sf_world::GateQuanta) {
+        self.scheduler.set_select_gate(quanta);
+        self.rt.config.scheduler.select_gate = quanta;
+    }
+
     /// The static template material of `desc`, from streaming's own cache and fold
     /// ([`cached_material`]): what a streamed placement with that material will bind.
     pub(crate) fn template_material(

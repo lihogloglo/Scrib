@@ -64,7 +64,7 @@ pub(crate) fn build(app: &mut App) {
 /// A camera whose `ShadowFilteringMethod::Temporal` was parked while it had no
 /// `TemporalJitter` (`shadow_filter_follows_jitter`).
 #[derive(Component)]
-struct TemporalShadowsParked;
+pub(crate) struct TemporalShadowsParked;
 
 /// Temporal shadow filtering is a per-frame dithered kernel that only a temporal
 /// resolve (TAA or DLSS, i.e. `TemporalJitter`) averages out; without one it is

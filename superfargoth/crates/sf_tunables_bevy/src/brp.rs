@@ -74,6 +74,11 @@ fn row(tunables: &Tunables, id: TunableId) -> Result<Value, Failure> {
     })
 }
 
+/// Every tunable's dump row as pretty JSON, sorted by name (`bevyrrowind tunables --json`).
+pub fn rows_json(tunables: &Tunables) -> String {
+    serde_json::to_string_pretty(&tunables.rows()).expect("dump rows are plain data")
+}
+
 /// `sf.tunables/list`.
 pub fn list(tunables: &Tunables, params: Option<&Value>) -> Result<Value, Failure> {
     let params = object(params)?;

@@ -7,7 +7,8 @@
 //! (far field, terrain, sky, near/far rings, LOD tint) are decided at
 //! startup: use the `--off`/`--lod-tint` flags and compare two runs.
 //!
-//! Keys: F1 help, F2 sun shadows, F3 terrain far shadows, F4 DLSS mode,
+//! Keys: F1 help, F2 sun shadows, F3 perf panel (off / compact / full, [`crate::perf_panel`]),
+//! Shift+F3 terrain far shadows, F4 DLSS mode,
 //! Shift+F6 far-field tint (F5 / F9 are quicksave / quickload, `saves.rs`), F6 terrain LOD colors, F7 wireframe (terrain and skinned meshes; G shows the physics colliders, ragdoll capsules and joints, `physics.rs`),
 //! F8 streaming rings, `[` / `]` hour -/+ 0.5 (Shift: 0.1), P pause clock,
 //! T clock speed (x1, x4, x20), Shift+F12 copy camera (`--camera` string), Shift+C clouds on/off (also console
@@ -44,7 +45,7 @@ use sf_world_bevy::big_space::prelude::CellCoord;
 /// Adds the keys and overlay (and BRP, with the `remote` feature) when the run is interactive.
 pub fn add(app: &mut App, interactive: bool) {
     if interactive {
-        app.add_plugins((LiveAbPlugin, crate::console::ConsoleWiring));
+        app.add_plugins((LiveAbPlugin, crate::perf_panel::PerfPanelPlugin, crate::console::ConsoleWiring));
         #[cfg(feature = "remote")]
         crate::remote::add(app);
     }
@@ -162,6 +163,8 @@ pub struct Switches<'w> {
     ambient_specular: Option<ResMut<'w, bevy_pbr::AmbientLightSpecular>>,
     /// TX-lab: normal, ORM and depth maps on every material (`normalmaps`, `orm`, `parallax`; `--off` sets the start).
     material_maps: Option<ResMut<'w, mw_assets::MaterialMaps>>,
+    /// CW-17: the perf panel (F3 cycles its modes; `perfpanel` here is off vs shown).
+    panel: Option<ResMut<'w, crate::perf_panel::PerfPanel>>,
 }
 
 /// An on/off switch: its key toggles it, BRP sets it by name.
@@ -219,11 +222,13 @@ pub enum Switch {
     Orm,
     /// tx-pom: parallax depth maps (`depth_map`, `_nh` height) on every material; off: none.
     Parallax,
+    /// CW-17: the live perf panel (F3; on = compact, or the mode it is in).
+    PerfPanel,
 }
 
 /// Names for BRP ([`crate::remote`]) and the console's `on`/`off` ([`crate::console`]).
 impl Switch {
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::SunShadows,
         Self::TerrainFarShadows,
         Self::Clouds,
@@ -249,6 +254,7 @@ impl Switch {
         Self::NormalMaps,
         Self::Orm,
         Self::Parallax,
+        Self::PerfPanel,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -278,6 +284,7 @@ impl Switch {
             Self::NormalMaps => "normalmaps",
             Self::Orm => "orm",
             Self::Parallax => "parallax",
+            Self::PerfPanel => "perfpanel",
         }
     }
 
@@ -316,6 +323,7 @@ impl Switch {
             Self::NormalMaps => "normal maps",
             Self::Orm => "ORM maps",
             Self::Parallax => "parallax (depth maps)",
+            Self::PerfPanel => "perf panel",
         }
     }
 
@@ -342,6 +350,7 @@ impl Switch {
             Self::NormalMaps => s.material_maps.as_ref().map(|m| m.normal_maps),
             Self::Orm => s.material_maps.as_ref().map(|m| m.orm),
             Self::Parallax => s.material_maps.as_ref().map(|m| m.parallax),
+            Self::PerfPanel => s.panel.as_ref().map(|p| p.mode != crate::perf_panel::PanelMode::Off),
             Self::Fog => s.fog.as_ref().map(|f| f.enabled),
             Self::FogNightLight => s.fog.as_ref().map(|f| f.view_ambient > 0.0),
             Self::WeatherAmbient => s.sky_options.as_ref().map(|o| o.weather_ambient_tint),
@@ -365,6 +374,7 @@ impl Switch {
                 Self::WeatherAmbient | Self::NightSkyGlow | Self::Moonlight => "not in this run (--off sky)",
                 Self::AmbientSpecular => "not in this run (no PBR renderer)",
                 Self::NormalMaps | Self::Orm | Self::Parallax => "not in this run (no model assets)",
+                Self::PerfPanel => "not in this run (not interactive)",
                 _ => "no terrain here",
             };
             return format!("{}: {why}", self.label());
@@ -440,6 +450,17 @@ impl Switch {
                         Self::Orm => &mut m.orm,
                         _ => &mut m.parallax,
                     } = v;
+                }
+            }
+            Self::PerfPanel => {
+                if let Some(p) = s.panel.as_mut() {
+                    use crate::perf_panel::PanelMode;
+                    // On keeps the shown mode (compact or full); off from any.
+                    if !v {
+                        p.mode = PanelMode::Off;
+                    } else if p.mode == PanelMode::Off {
+                        p.mode = PanelMode::Compact;
+                    }
                 }
             }
             Self::CloudHistory => {
@@ -544,10 +565,10 @@ fn on_off(v: bool) -> &'static str {
     if v { "on" } else { "off" }
 }
 
-/// Keys that toggle a [`Switch`] (Shift+F6: far-field tint, in [`keys`]).
-const SWITCH_KEYS: [(KeyCode, Switch); 5] = [
+/// Keys that toggle a [`Switch`] (Shift+F3: terrain far shadows, Shift+F6: far-field tint and F3:
+/// the perf panel's modes, in [`keys`]).
+const SWITCH_KEYS: [(KeyCode, Switch); 4] = [
     (KeyCode::F2, Switch::SunShadows),
-    (KeyCode::F3, Switch::TerrainFarShadows),
     (KeyCode::F6, Switch::TerrainLodColors),
     (KeyCode::F7, Switch::Wireframe),
     (KeyCode::F8, Switch::Rings),
@@ -574,6 +595,16 @@ fn keys(
     }
     if shifted && input.just_pressed(KeyCode::F6) {
         let text = Switch::FarTint.set(&mut state, &mut s, None);
+        state.note(text, now);
+    }
+    if shifted && input.just_pressed(KeyCode::F3) {
+        let text = Switch::TerrainFarShadows.set(&mut state, &mut s, None);
+        state.note(text, now);
+    } else if input.just_pressed(KeyCode::F3)
+        && let Some(panel) = s.panel.as_mut()
+    {
+        panel.mode = panel.mode.next();
+        let text = format!("perf panel {}", panel.mode.label());
         state.note(text, now);
     }
     if input.just_pressed(KeyCode::F4) {
@@ -722,9 +753,10 @@ fn overlay(
         let colliders = colliders.map_or("n/a", |d| on_off(d.enabled));
         let flags_off = off.map_or_else(|| "none".to_owned(), |o| o.label());
         let bodies = s.bodies.as_ref().map_or_else(|| "n/a".to_owned(), |b| format!("{:?}", b.bodies).to_lowercase());
+        let panel = s.panel.as_ref().map_or("n/a", |p| p.mode.label());
         let _ = write!(
             out,
-            "\nF2 sun shadows {}  F3 terrain far shadows {}  F4 DLSS {dlss}\n\
+            "\nF2 sun shadows {}  F3 perf panel {panel} (off/compact/full)  Shift+F3 terrain far shadows {}  F4 DLSS {dlss}\n\
              Shift+F6 far tint {}  F6 terrain LOD colors {}  F7 wireframe (terrain, skinned meshes) {}  F8 rings {}\n\
              G physics colliders (ragdoll capsules, joints) {colliders}  O combat gizmos (hurt capsules, blade)\n\
              F11 player / free camera (player: WASD, Space jump, E use, Shift tap roll / hold sprint, Ctrl sneak, F ready weapon, LMB attack, Tab 1st/3rd person, wheel zoom)\n\

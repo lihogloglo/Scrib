@@ -28,6 +28,8 @@ use sf_world::{IndexedPlacement, Level, PlacementClass};
 // Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
 pub use mw_game_core::perf::{Off, Part};
 
+pub mod tunables;
+
 /// Default benchmark window, physical pixels (the stored baselines).
 pub const DEFAULT_RESOLUTION: (u32, u32) = (1280, 720);
 
@@ -64,6 +66,16 @@ pub struct PerfFlags {
     /// frame, at least 25 ms. Env: `BEVYRROWIND_HITCH_MS`.
     #[arg(long)]
     pub hitch_ms: Option<f64>,
+    /// Set a tunable for this run, `name=value` (repeatable; the command-line layer, above mods,
+    /// presets and the options, under the console). An unknown name or bad value fails the run.
+    /// `bevyrrowind tunables --md` lists them (`docs/tunables-index.md`).
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    pub set: Vec<String>,
+    /// Tunables file (TOML, `name = value`; `[section]` tables prefix their keys), applied before
+    /// `--set` (repeatable, in order). Interactive runs also read `<user data>/tunables.toml`;
+    /// benchmarks only the files passed here.
+    #[arg(long = "tunables", value_name = "FILE")]
+    pub tunables: Vec<PathBuf>,
 }
 
 fn parse_resolution(raw: &str) -> Result<(u32, u32), String> {
@@ -82,6 +94,9 @@ pub struct Perf {
     /// Physical window size; `None` keeps the viewer's default window.
     pub resolution: Option<(u32, u32)>,
     pub bench: Option<(Scenario, DiagSettings)>,
+    /// `--tunables` files and `--set` (and the user dev file in interactive runs), applied once every
+    /// plugin registered its tunables ([`tunables`]).
+    pub tunables: Vec<sf_tunables_bevy::overrides::OverrideSet>,
 }
 
 impl Perf {
@@ -133,7 +148,8 @@ impl Perf {
             }
             None => None,
         };
-        Ok(Self { off, resolution, bench })
+        let tunables = tunables::run_overrides(&flags.set, &flags.tunables, bench.is_some(), tunables::user_file())?;
+        Ok(Self { off, resolution, bench, tunables })
     }
 
     /// The primary window: the requested size at scale factor 1 (physical
@@ -165,6 +181,7 @@ impl Perf {
     pub fn add_plugins(self, app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         let poll = env_flag(std::env::var(ENV_POLL_BEFORE_SUBMIT).ok().as_deref());
         sf_diag_bevy::set_poll_before_submit(poll);
+        tunables::add(app, self.tunables, self.bench.is_some());
         if let Some((scenario, mut settings)) = self.bench {
             let gpu_timers = !env_flag(std::env::var(ENV_NO_GPU_TIMERS).ok().as_deref());
             if gpu_timers {

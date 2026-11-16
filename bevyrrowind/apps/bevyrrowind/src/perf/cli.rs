@@ -425,6 +425,7 @@ fn run_suite(args: &SuiteArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     arms::check_save(args.save.as_deref())?;
     args.run.env_pairs()?;
+    args.run.check_sets()?;
     let arm_list = arms::parse_arms(&args.arms)?;
     let names: Vec<&str> = if args.scenarios.is_empty() { SCENARIOS.iter().map(|s| s.name).collect() } else { args.scenarios.iter().map(String::as_str).collect() };
     let mut chosen = Vec::new();
@@ -922,13 +923,13 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &suite::
     off.extend(p.step.iter().flat_map(|s| s.off.iter().cloned()));
     let variant = match &p.arm {
         // An arm is named by its name alone: the summary lists each arm's settings.
-        Some((_, arm)) => format!("{} arm={}", variant_name(&p.resolution, &args.run.off, &args.run.args, None), arm.name),
-        None => variant_name(&p.resolution, &off, &settings.args, p.step.as_ref().map(|s| s.label.as_str())),
+        Some((_, arm)) => format!("{} arm={}", variant_name(&p.resolution, &args.run.off, &args.run.game_args(), None), arm.name),
+        None => variant_name(&p.resolution, &off, &settings.game_args(), p.step.as_ref().map(|s| s.label.as_str())),
     };
     let name = run_name(p.scenario.name, &variant, p.repeat);
     let run_dir = dir.join(&name);
     let mut cmd_args: Vec<String> = p.scenario.args.iter().map(|a| (*a).to_owned()).collect();
-    cmd_args.extend(p.step.iter().flat_map(|s| s.args.iter().cloned()).chain(settings.args.iter().cloned()));
+    cmd_args.extend(p.step.iter().flat_map(|s| s.args.iter().cloned()).chain(settings.game_args()));
     cmd_args.extend(["--resolution".to_owned(), p.resolution.clone(), "--bench-out".to_owned(), run_dir.display().to_string(), "--bench-baseline".to_owned(), "none".to_owned()]);
     if !off.is_empty() {
         cmd_args.extend(["--off".to_owned(), off.join(",")]);
@@ -1012,6 +1013,7 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &suite::
     if let Some(g) = &gpu {
         let _ = writeln!(extra, "{}", g.to_markdown());
     }
+    extra.push_str(&tunables_section(&report));
     let md_path = run_dir.join(format!("{stem}.md"));
     let mut md = std::fs::read_to_string(&md_path).unwrap_or_default();
     md.push_str(&extra);
@@ -1026,6 +1028,22 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &suite::
     // nvidia-smi at all (no GPU samples either).
     let checked = other_cpu.is_some() && focus.is_some() && (others.in_window > 0 || samples.is_empty());
     Ok(Some(Measured { run: SuiteRun { scenario: p.scenario.name.to_owned(), variant, repeat: p.repeat, report, gpu }, note, retry, checked }))
+}
+
+/// The run report's "Tunables" section: every tunable not at its default with its layer (the game's
+/// report meta `tunables`), so a ledger line can be reproduced (tunables.md "Perf harness").
+fn tunables_section(report: &Report) -> String {
+    let mut s = String::from("\n## Tunables\n\n");
+    match report.meta.get(mw_devtools_bevy::perf::tunables::TUNABLES_META).map(String::as_str) {
+        None => s.push_str("- not recorded (exe older than the tunables section)\n"),
+        Some("none") => s.push_str("- all at their defaults\n"),
+        Some(list) => {
+            for item in list.split("; ") {
+                let _ = writeln!(s, "- `{item}`");
+            }
+        }
+    }
+    s
 }
 
 /// DLSS asked for but silently absent (an exe without its `dlss/` folder) measures another renderer: fail the run.

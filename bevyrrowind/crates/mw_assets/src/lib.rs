@@ -35,7 +35,7 @@ use mw_nif::anim::Target;
 use mw_nif::{AlphaMode as NifAlpha, Model, NodeKind, VertexColorMode};
 use sf_vfs::{Vfs, VfsPath};
 
-pub use animation::{AnimatedMaterialUser, MaterialUsers, ModelAnimation, NifAnimation, NodeAnimation};
+pub use animation::{AnimatedMaterialUser, MATCTRL_GATE, TUNABLES, MaterialGate, MaterialUsers, ModelAnimation, NifAnimation, NodeAnimation};
 pub use billboard::Billboard;
 pub use cooked::{CookedLodSettings, CookedMaterials, CookedModelRoot, CookedSpawned};
 pub use lights::{AttachLight, LightCalibration};
@@ -137,11 +137,10 @@ impl Plugin for MwAssetsPlugin {
                 ),
             )
             .add_systems(PostUpdate, billboard::face_camera.before(TransformSystems::Propagate));
-        // Material controllers only for materials a visible entity draws (CW-6; opt-in until its A/B).
-        // A resource inserted before the plugin turns it on from code (tests, A/B tools).
-        if animation::gate_from_env() || app.world().contains_resource::<MaterialUsers>() {
-            animation::add_material_gate(app);
-        }
+        // Material controllers only for materials a visible entity draws (CW-6; live tunable
+        // `mw.matctrl.gate`, opt-in until its A/B). A `MaterialUsers` inserted before the plugin turns
+        // it on from code (tests, A/B tools).
+        animation::add_live_gate(app);
         app
             // `--off normalmaps` / `--off orm` and their live flips (TX-lab).
             .add_systems(PostUpdate, map_ab::apply_material_maps.before(bevy::asset::AssetEventSystems));

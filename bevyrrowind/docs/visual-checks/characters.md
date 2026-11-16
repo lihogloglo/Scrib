@@ -113,8 +113,8 @@ the streamed view: Shift+J mover gizmos, K foot placement on/off. `--off walkers
 | AF-7 | `cargo dev character dremora dremora_lord clannfear --camera 0.6,1.4,3.6,0,1.0,0` (dremora fix, `.sessions/dremora.md`; shots/dremora/before.png, after.png) | Both dremora wear their daedric armor while idling: shoulder pauldrons, upper-arm plates ("biceps"), forearm braces, thigh greaves, calf boots and shoes (before: only the leather body suit). Press X (death): the armor stays on through the fall until the clip's end, then hides as authored | confirmed by owner (2026-10-13) |
 
 ### CH-5: Skip unchanged skins (CW-7, ROADMAP 1.25, built 2026-11-16, opt-in)
-- Run: `view "Balmora"` daytime, market crowd near and far, DLSS Quality, with and without env
-  `BEVYRROWIND_SKIN_SKIP_UNCHANGED=1` (exe `target/profiling/cw7.exe` or a dev build; vendored patch
+- Run: `view "Balmora"` daytime, market crowd near and far, DLSS Quality, with and without (console, live)
+  `set render.skin.skip_unchanged on` (exe `target/profiling/cw7.exe` or a dev build; vendored patch
   `superfargoth/vendor/bevy_pbr/src/render/skin.rs`, "own, CW-7").
 - Look for: far/frozen characters keep their pose (no bind/T-pose, no limbs from another character); walking until far
   characters animate again: no smear or ghost trail under DLSS on their first moving frames; characters walking into

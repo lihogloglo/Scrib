@@ -97,9 +97,18 @@ Vendored: #26149/#26161 slim per-face schedule (`vendor/README.md:11`), plus the
 
 ## Switches and counters
 
-`--off` parts (`mw_game_core/src/perf.rs:135`): `shadows`, `shadowcache`, `lampfilter`, `movershadows`, `farshadows`,
-`softshadows`, `contactshadows`, `ssao`, `cpuculltag`, `cascadehold`, `cascadeencoders`. `--point-shadows N`, `--sun-cascades N:M`,
-`BEVYRROWIND_LAMP_CONTACT`, `BEVYRROWIND_SHADOW_FILTER`, `BEVYRROWIND_GPU_CULL_STATICS=1`, `BEVYRROWIND_LAMP_DAY_GATE=1`, `BEVYRROWIND_POINT_FACE_CULL=1`, `BEVYRROWIND_SUN_SHADOW_GATE=1`. Console `flip contactshadows`.
+Live tunables (`set <name> <value>` in the console, BRP `sf.tunables/set`, `--set name=value`; bound by
+`sf_sky_bevy/src/quality.rs` `ShadowQualityPlugin`, quality levels at the `Preset` layer from
+`mw_exterior_bevy/src/quality_presets.rs`): lamps `shadow.lamp.count`, `.map_size_px`, `.fade_m` (Bevyrrowind 35,45 at
+`Mod`), `.fade_time_s`, `.hysteresis`, `.contact`, `.day_gate` (+ `.receiver_m`, `.contrast`), `.face_cull` (+
+`.margin_deg`); sun `shadow.sun.cascades`, `.distance_m`, `.split_lambda`, `.overlap`, `.soft`, `.soft_size_texels`,
+`.gate` (+ `.contrast`, `.hysteresis`, `.fade_s`); views `shadow.contact` (+ `.steps`, `.thickness_m`, `.length_m`),
+`shadow.filter` (auto|hardware|gaussian|temporal), `render.ssao.quality`. Deprecated env aliases: `BEVYRROWIND_POINT_SHADOWS`,
+`_LAMP_CONTACT`, `_SHADOW_FILTER`, `_SSAO`, `_LAMP_DAY_GATE`, `_POINT_FACE_CULL`, `_SUN_SHADOW_GATE`; `--point-shadows N`,
+`--sun-cascades N:M` (and `BEVYRROWIND_SUN_CASCADES`) set the `CommandLine` layer. `--off` parts (`mw_game_core/src/perf.rs:135`):
+`shadows`, `shadowcache`, `lampfilter`, `movershadows`, `farshadows`, `softshadows`, `contactshadows`, `ssao`, `cpuculltag`,
+`cascadehold`, `cascadeencoders` (`softshadows`, `contactshadows`, `ssao` force their tunables at `CommandLine`).
+`BEVYRROWIND_GPU_CULL_STATICS=1` stays env (startup). Console `flip contactshadows` (devtools, older duplicate).
 Gauges: `ShadowCacheStats` (`sf_shadow_cache_bevy/src/lib.rs:147`), `RUST_LOG=bevy_pbr::shadow_refresh=debug`.
 
 ## Known limits

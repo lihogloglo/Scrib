@@ -490,6 +490,12 @@ impl Scheduler {
         &self.config
     }
 
+    /// Turns the selection gate on or off or changes its quanta at run time (`select.gate` live):
+    /// off, every update runs and the gate's stored sources are dropped, so turning it on runs once.
+    pub fn set_select_gate(&mut self, quanta: GateQuanta) {
+        self.config.select_gate = quanta;
+    }
+
     /// Makes a worldspace streamable. Returns false (and changes nothing)
     /// if it is already present.
     pub fn add_worldspace(&mut self, directory: CellDirectory, overrides: Option<&RingOverrides>) -> bool {

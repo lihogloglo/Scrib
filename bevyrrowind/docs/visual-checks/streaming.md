@@ -77,8 +77,8 @@ Open visual checks: streaming spikes, size-based draw distance, door links (ST, 
 - Status: awaiting owner (2026-11-11). Source: warmup-w1.
 
 ### ST-4: Selection gates (CW-2, ROADMAP 1.25, built 2026-11-16, opt-in)
-- Run: `view "Balmora"` walking and flying (`--camera` fly), and the `flight` bench path, with and without env
-  `BEVYRROWIND_SELECT_GATE=1` (exe `target/profiling/cw2.exe` or a dev build). Streaming, CDLOD terrain and far-field
+- Run: `view "Balmora"` walking and flying (`--camera` fly), and the `flight` bench path, with and without (console, live)
+  `set select.gate on` (exe `target/profiling/cw2.exe` or a dev build). Streaming, CDLOD terrain and far-field
   selection re-run only after the camera moves 4 m / 10 deg (streaming), 0.5 m (terrain), 2 m (far field)
   (`superfargoth/crates/sf_world/src/select_gate.rs`; terrain morph zones pulled 0.5 m closer while gated, `sf_terrain_bevy/src/params.rs:67`).
 - Look for: terrain cracks or visible LOD steps while walking slowly; far-field holes or late parent/child swaps on the

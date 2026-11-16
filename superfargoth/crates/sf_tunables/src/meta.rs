@@ -207,4 +207,8 @@ pub struct Meta {
     pub lifetime: Lifetime,
     /// Where it is declared (`file!()`, `line!()`), for the dump.
     pub location: Option<(&'static str, u32)>,
+    /// A deprecated environment switch that still sets it (`BEVYRROWIND_SSAO`): read once when
+    /// the tunable is registered, at the `CommandLine` layer (`sf_tunables_bevy`). Kept one
+    /// release, then removed in favour of `--set name=value`.
+    pub env_alias: Option<&'static str>,
 }

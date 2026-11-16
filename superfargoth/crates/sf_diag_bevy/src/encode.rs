@@ -176,6 +176,9 @@ pub(crate) fn report(counters: &Counters) {
 pub(crate) fn install() {
     use bevy_render::renderer::encode_timing::{self, EncodeEvent};
     fn hook(event: EncodeEvent<'_>) {
+        if !crate::gauges_live() {
+            return;
+        }
         let ms = |d: core::time::Duration| d.as_secs_f64() * 1000.0;
         let mut frame = FRAME.lock().unwrap_or_else(PoisonError::into_inner);
         match event {

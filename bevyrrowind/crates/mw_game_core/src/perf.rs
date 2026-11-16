@@ -199,7 +199,7 @@ pub enum Part {
     ShiftRebase,
     /// Selection gates (CW-2, `sf_world::select_gate`): streaming, terrain and far-field selection re-run
     /// only when the camera moved or turned past a quantum or an input changed. Opt-in until its A/B
-    /// (`BEVYRROWIND_SELECT_GATE=1`); this part forces it off whatever the env says.
+    /// (tunable `select.gate`, alias `BEVYRROWIND_SELECT_GATE=1`); this part forces it off at the command-line layer.
     SelectGate,
 }
 
@@ -286,7 +286,7 @@ impl Part {
         ("selectgate", Part::SelectGate),
     ];
 
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         Self::ALL.iter().find(|(_, p)| *p == self).map_or("?", |(n, _)| n)
     }
 }

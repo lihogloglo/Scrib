@@ -196,6 +196,7 @@ impl<T: Type> Def<T> {
                 net: Net::Presentation,
                 lifetime: Lifetime::Live,
                 location: None,
+                env_alias: None,
             },
         }
     }
@@ -244,6 +245,14 @@ impl<T: Type> Def<T> {
 
     pub const fn lifetime(mut self, lifetime: Lifetime) -> Self {
         self.meta.lifetime = lifetime;
+        self
+    }
+
+    /// A deprecated environment switch that still sets it, at the `CommandLine` layer, when the
+    /// tunable is registered in a Bevy app (`sf_tunables_bevy`); parsed by the tunable's kind
+    /// (bools: `1`/`0`, `on`/`off`, `true`/`false`). Shown by the dump and `help`.
+    pub const fn env_alias(mut self, name: &'static str) -> Self {
+        self.meta.env_alias = Some(name);
         self
     }
 

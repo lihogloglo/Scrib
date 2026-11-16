@@ -36,6 +36,8 @@ pub struct Row {
     pub help: String,
     /// `path/to/file.rs:line`, `/` separators.
     pub location: Option<String>,
+    /// The deprecated environment switch that still sets it.
+    pub env_alias: Option<&'static str>,
 }
 
 impl Tunables {
@@ -68,6 +70,7 @@ impl Tunables {
                     location: meta
                         .location
                         .map(|(file, line)| format!("{}:{line}", file.replace('\\', "/"))),
+                    env_alias: meta.env_alias,
                 }
             })
             .collect();
@@ -87,8 +90,8 @@ impl Tunables {
         let cell = |s: &str| s.replace('|', "\\|").replace('\n', " ");
         let mut out = format!(
             "{} tunable(s), {} guess(es)\n\n\
-             | name | value | default | kind | unit | set by | source | lifetime | net | scope | group | where | help |\n\
-             |---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
+             | name | value | default | kind | unit | set by | source | lifetime | net | scope | group | env | where | help |\n\
+             |---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
             self.len(),
             self.guesses()
         );
@@ -103,7 +106,7 @@ impl Tunables {
             };
             let _ = writeln!(
                 out,
-                "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
                 r.name,
                 cell(&r.value),
                 cell(&r.default),
@@ -121,6 +124,7 @@ impl Tunables {
                     Scope::Player => "player",
                 },
                 r.group.unwrap_or(""),
+                r.env_alias.map(|e| format!("`{e}`")).unwrap_or_default(),
                 r.location.as_deref().unwrap_or(""),
                 cell(&r.help),
             );

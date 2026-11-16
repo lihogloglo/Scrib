@@ -71,7 +71,7 @@ interiors at `WHGT`), optics by region (`optics::*`), `SEA_FETCH_M` 20 km, shore
 and the patch diff (`sf_terrain_bevy/src/lib.rs:975`) while the camera stays within `terrain.select.move_m` (0.5 m, 3D,
 `lib.rs:121`) of the last selection and its key (tile slots, edits, settings, debug, origin) is unchanged; distance only, so
 turning never re-runs it. Crack-free because the shader's morph zones move the quantum closer (`params.rs:67`, test
-`stale_selection_stays_crack_free_with_the_morph_slack`). On with `--env BEVYRROWIND_SELECT_GATE=1`, `--off selectgate`
+`stale_selection_stays_crack_free_with_the_morph_slack`). On with `set select.gate on` (live; alias `BEVYRROWIND_SELECT_GATE=1`), `--off selectgate`
 forces it off (`exterior.rs:284`).
 
 ## Known limits

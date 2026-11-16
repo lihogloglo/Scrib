@@ -18,7 +18,8 @@ pub struct SweepArgs {
     suite: SuiteArgs,
     /// The variable: a view flag without its dashes (`point-shadows`, `lab-lights`, `range`,
     /// `lab-radius`, `lab-orbit`, ...), `off` (an `--off` part; `none` for the baseline),
-    /// `a+b` (flags stepped together, values `1+2`), `resolution` (`WxH`), or `env:KEY` (an
+    /// `a+b` (flags stepped together, values `1+2`), `resolution` (`WxH`), `set:NAME` (a tunable,
+    /// `--set NAME=value`; `bevyrrowind tunables --md` lists them), or `env:KEY` (an
     /// environment variable, e.g.
     /// `env:BEVYRROWIND_SHADOW_FILTER`).
     #[arg(long)]
@@ -41,7 +42,9 @@ pub struct Step {
 impl Step {
     fn new(var: &str, value: &str) -> Self {
         let mut step = Self { label: format!("{var}={value}"), ..Self::default() };
-        if let Some(key) = var.strip_prefix("env:") {
+        if let Some(name) = var.strip_prefix("set:") {
+            step.args.extend(["--set".to_owned(), format!("{name}={value}")]);
+        } else if let Some(key) = var.strip_prefix("env:") {
             step.envs.push((key.to_owned(), value.to_owned()));
         } else if var == "off" {
             step.off.extend(value.split('+').filter(|v| *v != "none").map(str::to_owned));
@@ -160,6 +163,9 @@ mod tests {
         assert_eq!(Step::new("off", "contactshadows+shadowcache").off, ["contactshadows", "shadowcache"]);
         assert_eq!(Step::new("env:BEVYRROWIND_SHADOW_FILTER", "hardware").envs, [("BEVYRROWIND_SHADOW_FILTER".to_owned(), "hardware".to_owned())]);
         assert!(Step::new("resolution", "960x600").args.is_empty());
+        let set = Step::new("set:shadow.lamp.count", "4");
+        assert_eq!(set.args, ["--set", "shadow.lamp.count=4"]);
+        assert_eq!(set.label, "set:shadow.lamp.count=4");
         assert_eq!(median(vec![3.0, 1.0, 2.0, 10.0]), Some(2.5));
     }
 }

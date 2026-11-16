@@ -27,6 +27,7 @@ mod gpu_culled_casters;
 mod night;
 mod path;
 mod proxy;
+pub mod quality;
 mod shadow_budget;
 mod sun_gate;
 pub mod sun_view;
@@ -43,6 +44,8 @@ mod shadow_gate_tests;
 mod face_cull_tests;
 #[cfg(test)]
 mod sun_gate_tests;
+#[cfg(test)]
+mod quality_tests;
 
 use bevy_app::{App, FixedUpdate, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{Assets, Handle};
@@ -70,10 +73,12 @@ pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
 pub use shadow_budget::{
     importance as shadow_importance, pick_shadowed, BudgetedShadow, PointShadowBudget, PointShadowPlugin,
     ShadowContrastGate, ShadowHeldOffscreen, ShadowReach, ShadowSlot, SteadyIntensity, sky_reference_lux,
-    TUNABLES as SHADOW_BUDGET_TUNABLES,
+    TUNABLES as SHADOW_BUDGET_TUNABLES, DAY_GATE, DAY_GATE_CONTRAST, DAY_GATE_RECEIVER, FACE_CULL, LAMP_CONTACT, LAMP_COUNT, LAMP_FADE,
+    LAMP_FADE_TIME, LAMP_HYSTERESIS, LAMP_MAP_SIZE,
 };
 pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 pub use env_refresh::EnvMapRefresh;
+pub use quality::{ShadowQualityPlugin, SunShadowQuality, ViewQuality, ViewQualityCamera, ViewQualityParam};
 pub use sun_gate::{ShadowGateState, SunLightOcclusion, SunShadowGateStats, SunShadowGating};
 
 /// The sky's settings (orbit, atmosphere, curves). Change at will; the

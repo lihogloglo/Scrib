@@ -66,7 +66,7 @@ in `sf_world_bevy/src/matclass.rs`.
   (`sf_lod_bevy/src/runtime.rs:614`) while the camera stays within `far.select.move_m` (2 m) and the far state, the
   scheduler's revision and the settings are unchanged, plus one settle frame after any change (new parts get their
   `GlobalTransform` in PostUpdate); while on, nodes need their children 2 m early (guard band, `runtime.rs:622`) so
-  the no-hole fallback never lags. Env `BEVYRROWIND_SELECT_GATE=1`, `--off selectgate`.
+  the no-hole fallback never lags. Live tunable `select.gate` (alias `BEVYRROWIND_SELECT_GATE=1`), `--off selectgate`.
 - `StreamStats`: `precombined`, `precombine_fallbacks`, `scene_covered`, `scene_upload_bytes` (`stream.rs:245-270`).
 - Scene gauges (`sf_scene_bevy/src/gauges.rs`): `scene/cells/resident`, `scene/batches/count`, `scene/slots/batch_live`,
   `scene/slots/batch_capacity_bytes`. Far field: `far/*` (`FarFieldStats`). Per-view cost: `views/*`, see `frame-and-views.md`.

@@ -7,6 +7,8 @@
 //!   dotted name) or quoted (`"shadow.lamp.fade_start_m" = 15`); `[shadow.lamp]` sections work too.
 //! - [`apply_overrides`] sets them on one layer (normally `CommandLine`) and returns every
 //!   refusal: an unknown name must fail the run, not silently measure the default.
+//! - [`apply_env_alias`]: a def's deprecated environment switch (`Def::env_alias`), applied at
+//!   registration by [`crate::TunablesAppExt`] (refusals land in [`crate::OverrideRefusals`]).
 
 use std::fmt;
 
@@ -17,6 +19,15 @@ use sf_tunables::{SetBy, Tunables};
 pub struct Override {
     pub name: String,
     pub value: String,
+}
+
+/// Overrides from one place (`--set`, a `--tunables` file, the user dev file), applied in order
+/// by [`crate::CommandLineOverrides`]: on the same layer a later set wins.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OverrideSet {
+    /// Where they come from (`--set`, `file C:/x/tunables.toml`): the layer's note and the log.
+    pub origin: String,
+    pub overrides: Vec<Override>,
 }
 
 /// A bad `--set` argument or tunables file.
@@ -118,6 +129,52 @@ pub struct Refusal {
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.name, self.reason)
+    }
+}
+
+/// An environment alias that set a tunable ([`apply_env_alias`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnvAliasUse {
+    pub var: &'static str,
+    pub name: String,
+    pub value: String,
+}
+
+/// Sets tunable `id` from its deprecated environment alias ([`sf_tunables::Def::env_alias`]) on
+/// `layer`, if it has one and `lookup` finds the variable set and non-empty (an empty variable
+/// counts as unset). The value is parsed by the tunable's kind (bools: `1`/`0`, `on`/`off`,
+/// `true`/`false`); one that doesn't parse or is out of range is a [`Refusal`] and changes
+/// nothing. The layer's note reads `env VAR (deprecated: --set name=value)`.
+pub fn apply_env_alias(
+    tunables: &mut Tunables,
+    id: sf_tunables::TunableId,
+    lookup: &dyn Fn(&str) -> Option<String>,
+    layer: SetBy,
+) -> Result<Option<EnvAliasUse>, Refusal> {
+    let var = tunables.var(id);
+    let Some(alias) = var.meta().env_alias else {
+        return Ok(None);
+    };
+    let Some(value) = lookup(alias).filter(|v| !v.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let value = value.trim().to_owned();
+    let name = var.name().to_owned();
+    let note = format!("env {alias} (deprecated: --set {name}=value)");
+    let result = var
+        .kind()
+        .parse(&value)
+        .and_then(|v| tunables.set_noted(id, v, layer, Some(note)));
+    match result {
+        Ok(_) => Ok(Some(EnvAliasUse {
+            var: alias,
+            name,
+            value,
+        })),
+        Err(reason) => Err(Refusal {
+            name,
+            reason: format!("env {alias}={value}: {reason}"),
+        }),
     }
 }
 

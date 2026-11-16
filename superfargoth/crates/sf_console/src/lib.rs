@@ -322,6 +322,7 @@ enum Builtin {
     Toggle,
     Reset,
     Vars,
+    Tunables,
     History,
     Echo,
     Clear,
@@ -415,6 +416,12 @@ impl<C> Console<C> {
                     )
                     .param(Param::new("filter", ArgKind::Str).optional()),
                 Builtin::Vars,
+            ),
+            (
+                CommandSpec::new("tunables")
+                    .help("`tunables diff`: every variable not at its default, with the layer it comes from")
+                    .param(Param::new("what", ArgKind::choice(&["diff"]))),
+                Builtin::Tunables,
             ),
             (
                 CommandSpec::new("history").help("List submitted lines"),
@@ -863,11 +870,42 @@ impl<C> Console<C> {
                             SetBy::Default => String::new(),
                             by => format!("  ({})", by.describe()),
                         };
-                        format!("{mark} {} = {}{by}", v.name(), v.value())
+                        format!(
+                            "{mark} {} = {}{}  [{}]{by}",
+                            v.name(),
+                            v.value(),
+                            unit_suffix(v),
+                            v.kind().describe()
+                        )
                     })
                     .collect();
                 lines.sort_by(|a, b| a[2..].cmp(&b[2..]));
                 self.log.info(&format!("{} variable(s)", lines.len()));
+                for l in lines {
+                    self.log.info(&l);
+                }
+            }
+            Builtin::Tunables => {
+                let mut lines: Vec<String> = self
+                    .vars
+                    .iter()
+                    .filter(|(_, v)| v.set_by() != SetBy::Default)
+                    .map(|(_, v)| {
+                        let by = v.set_by();
+                        let note = v.note(by).map_or_else(String::new, |n| format!(": {n}"));
+                        format!(
+                            "{} = {}{} (default {})  ({}{note})",
+                            v.name(),
+                            v.value(),
+                            unit_suffix(v),
+                            v.default(),
+                            by.describe()
+                        )
+                    })
+                    .collect();
+                lines.sort();
+                self.log
+                    .info(&format!("{} variable(s) not at their default", lines.len()));
                 for l in lines {
                     self.log.info(&l);
                 }
@@ -918,7 +956,7 @@ impl<C> Console<C> {
             return;
         };
         let text = match target {
-            Target::Var(id) => self.vars.var(id).describe(),
+            Target::Var(id) => describe_var(self.vars.var(id)),
             Target::Command(i) => {
                 let spec = &self.commands[i].spec;
                 let mut s = format!("usage: {}", spec.usage());
@@ -1054,4 +1092,40 @@ fn edit_distance(a: &str, b: &str) -> usize {
         }
     }
     row[b.len()]
+}
+
+/// ` m`, ` ms`, ...: a variable's unit after its value (empty without one).
+fn unit_suffix(v: &Var) -> String {
+    match v.meta().unit.symbol() {
+        "" => String::new(),
+        s => format!(" {s}"),
+    }
+}
+
+/// `help <variable>`: its [`Var::describe`] line, then where its default comes from, what a
+/// change costs, its env alias, and every layer that holds a value (tunables.md "Live in Bevy").
+fn describe_var(v: &Var) -> String {
+    let meta = v.meta();
+    let mut s = v.describe();
+    let _ = write!(
+        s,
+        "\nsource {} · {}",
+        meta.source,
+        meta.lifetime.notice().unwrap_or("live")
+    );
+    if let Some(env) = meta.env_alias {
+        let _ = write!(s, " · env {env} (deprecated: --set {}=...)", v.name());
+    }
+    let layers: Vec<String> = v
+        .layers()
+        .filter(|(l, _)| *l != SetBy::Default)
+        .map(|(l, value)| match v.note(l) {
+            Some(n) => format!("{} {value} ({n})", l.describe()),
+            None => format!("{} {value}", l.describe()),
+        })
+        .collect();
+    if !layers.is_empty() {
+        let _ = write!(s, "\nlayers: {}", layers.join(", "));
+    }
+    s
 }

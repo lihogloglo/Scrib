@@ -87,11 +87,70 @@ pub struct PointShadowBudget {
 }
 
 impl Default for PointShadowBudget {
-    /// Off: the budget is opt-in per game and preset.
+    /// Off: the budget is opt-in per game and preset. The tunables' defaults.
     fn default() -> Self {
-        Self { max: 0, fade_start: 15.0, fade_end: 25.0, fade_time: 0.3, hysteresis: 0.8, map_size: 1024, contact_shadows: false, contrast_gate: ShadowContrastGate::default() }
+        let [fade_start, fade_end] = LAMP_FADE.default_value();
+        Self {
+            max: LAMP_COUNT.default_value(),
+            fade_start,
+            fade_end,
+            fade_time: LAMP_FADE_TIME.default_value(),
+            hysteresis: LAMP_HYSTERESIS.default_value(),
+            map_size: LAMP_MAP_SIZE.default_value(),
+            contact_shadows: LAMP_CONTACT.default_value(),
+            contrast_gate: ShadowContrastGate::default(),
+        }
     }
 }
+
+/// `shadow.lamp.count`: [`PointShadowBudget::max`]. Off by default: a game and its presets opt in.
+pub const LAMP_COUNT: Def<usize> = def!("shadow.lamp.count" = 0_usize)
+    .range(0, 64)
+    .unit(Unit::Count)
+    .help("Point lights holding a shadow map at once (0: no point-light shadows)")
+    .source(Source::Guess)
+    .group(Group::Shadows);
+
+/// `shadow.lamp.map_size_px`: [`PointShadowBudget::map_size`] (`PointLightShadowMap::size`). A
+/// change reallocates the cube-map array (one hitch).
+pub const LAMP_MAP_SIZE: Def<usize> = def!("shadow.lamp.map_size_px" = 1024_usize)
+    .range(64, 4096)
+    .unit(Unit::Pixels)
+    .help("Face size of the point-light shadow cube maps (a change reallocates them)")
+    .source(Source::BevyDefault("bevy_light::PointLightShadowMap::size"))
+    .group(Group::Shadows);
+
+/// `shadow.lamp.fade_m`: [`PointShadowBudget::fade_start`] and [`PointShadowBudget::fade_end`]. The
+/// framework's generic band; a game sets its own at the `Mod` layer (census "two truths").
+pub const LAMP_FADE: Def<[f32; 2]> = def!(float2 "shadow.lamp.fade_m" = [15.0, 25.0])
+    .range([0.0, 0.0], [500.0, 500.0])
+    .unit(Unit::Meters)
+    .help("Lamp shadows at full strength within the first distance of the viewer, gone past the second")
+    .source(Source::Guess)
+    .group(Group::Shadows);
+
+/// `shadow.lamp.fade_time_s`: [`PointShadowBudget::fade_time`].
+pub const LAMP_FADE_TIME: Def<f32> = def!(float "shadow.lamp.fade_time_s" = 0.3)
+    .range(0.0, 5.0)
+    .unit(Unit::Seconds)
+    .help("Seconds for a lamp shadow to fade fully in or out when its light gains or loses a slot")
+    .source(Source::Guess)
+    .group(Group::Shadows);
+
+/// `shadow.lamp.hysteresis`: [`PointShadowBudget::hysteresis`].
+pub const LAMP_HYSTERESIS: Def<f32> = def!(float "shadow.lamp.hysteresis" = 0.8)
+    .range(0.1, 1.0)
+    .unit(Unit::Ratio)
+    .help("A light holding a shadow slot keeps it until a challenger's importance is higher by 1 / this")
+    .source(Source::Guess)
+    .group(Group::Shadows);
+
+/// `shadow.lamp.contact`: [`PointShadowBudget::contact_shadows`] (also needs the view's contact
+/// shadows, `shadow.contact`).
+pub const LAMP_CONTACT: Def<bool> = def!(bool "shadow.lamp.contact" = false)
+    .help("Screen-space contact shadows on the lamps holding a shadow map (needs shadow.contact on the view)")
+    .source(Source::BevyDefault("bevy_light::PointLight::contact_shadows_enabled"))
+    .group(Group::Shadows);
 
 /// `shadow.lamp.day_gate`: [`ShadowContrastGate::enabled`].
 pub const DAY_GATE: Def<bool> = def!(bool "shadow.lamp.day_gate" = false)
@@ -127,8 +186,26 @@ pub const FACE_CULL_MARGIN: Def<f32> = def!(float "shadow.lamp.face_cull.margin_
     .help("Point shadow cube faces are culled unless a visible receiver lies within this angle of them")
     .group(Group::Shadows);
 
-/// This module's tunables (live binding: tunables slice T2).
-pub const TUNABLES: &[&dyn AnyDef] = &[&DAY_GATE, &DAY_GATE_RECEIVER, &DAY_GATE_CONTRAST, &FACE_CULL_MARGIN];
+/// `shadow.lamp.face_cull`: `bevy_pbr::PointShadowFaceCull::enabled` (ROADMAP 1.25 CW-3b).
+pub const FACE_CULL: Def<bool> = def!(bool "shadow.lamp.face_cull" = false)
+    .help("Point shadow cube faces no camera sees a receiver of are not drawn")
+    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .group(Group::Shadows);
+
+/// This module's tunables (bound by [`crate::ShadowQualityPlugin`], tunables slice T4).
+pub const TUNABLES: &[&dyn AnyDef] = &[
+    &LAMP_COUNT,
+    &LAMP_MAP_SIZE,
+    &LAMP_FADE,
+    &LAMP_FADE_TIME,
+    &LAMP_HYSTERESIS,
+    &LAMP_CONTACT,
+    &DAY_GATE,
+    &DAY_GATE_RECEIVER,
+    &DAY_GATE_CONTRAST,
+    &FACE_CULL,
+    &FACE_CULL_MARGIN,
+];
 
 /// Shadow maps only where a light's shadow would be seen: a point light's
 /// shadow darkens a receiver by the light's share of the light it gets, its

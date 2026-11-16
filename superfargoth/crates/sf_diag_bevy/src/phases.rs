@@ -16,7 +16,8 @@
 //!
 //! `sf_diag::pacing::derive_work` turns them into `frame/work/ms` at the end
 //! of a run. The plugin also adds the per-stage walls (`stages.rs`, `stage/...`) and,
-//! with feature `render`, the encode timers (`encode.rs`, `encode/...`).
+//! with feature `render`, the encode timers (`encode.rs`, `encode/...`). Every marker runs only while
+//! [`crate::gauges_live`] (default on; a live overlay turns it off while hidden).
 
 use bevy_app::{App, First, Last, MainScheduleOrder, Plugin};
 use bevy_ecs::prelude::*;
@@ -46,8 +47,8 @@ impl Plugin for FramePhasePlugin {
         app.init_schedule(FrameStart)
             .init_schedule(FrameEnd)
             .init_resource::<MainClock>()
-            .add_systems(FrameStart, |mut clock: ResMut<MainClock>| clock.0 = Some(Instant::now()))
-            .add_systems(FrameEnd, main_end);
+            .add_systems(FrameStart, (|mut clock: ResMut<MainClock>| clock.0 = Some(Instant::now())).run_if(crate::gauges_live))
+            .add_systems(FrameEnd, main_end.run_if(crate::gauges_live));
         let mut order = app.world_mut().resource_mut::<MainScheduleOrder>();
         order.insert_before(First, FrameStart);
         order.insert_after(Last, FrameEnd);
@@ -98,14 +99,14 @@ mod render {
         render_app
             .insert_resource(counters)
             .init_resource::<Clock>()
-            .add_systems(Render, frame_start.in_set(RenderSystems::ExtractCommands))
-            .add_systems(Render, (|mut c: ResMut<Clock>| c.acquire = Some(Instant::now())).in_set(RenderSystems::PrepareViews).before(prepare_windows))
-            .add_systems(Render, acquire_end.in_set(RenderSystems::PrepareViews).after(prepare_windows))
-            .add_systems(Render, (|mut c: ResMut<Clock>| c.submit = Some(Instant::now())).in_set(RenderSystems::Render).before(render_system))
-            .add_systems(Render, submit_end.in_set(RenderSystems::Render).after(render_system))
-            .add_systems(Render, frame_end.in_set(RenderSystems::Cleanup))
-            .add_systems(RenderGraph, (|mut c: ResMut<Clock>| c.graph = Some(Instant::now())).in_set(RenderGraphSystems::Begin))
-            .add_systems(RenderGraph, graph_end.in_set(RenderGraphSystems::Finish));
+            .add_systems(Render, frame_start.run_if(crate::gauges_live).in_set(RenderSystems::ExtractCommands))
+            .add_systems(Render, (|mut c: ResMut<Clock>| c.acquire = Some(Instant::now())).run_if(crate::gauges_live).in_set(RenderSystems::PrepareViews).before(prepare_windows))
+            .add_systems(Render, acquire_end.run_if(crate::gauges_live).in_set(RenderSystems::PrepareViews).after(prepare_windows))
+            .add_systems(Render, (|mut c: ResMut<Clock>| c.submit = Some(Instant::now())).run_if(crate::gauges_live).in_set(RenderSystems::Render).before(render_system))
+            .add_systems(Render, submit_end.run_if(crate::gauges_live).in_set(RenderSystems::Render).after(render_system))
+            .add_systems(Render, frame_end.run_if(crate::gauges_live).in_set(RenderSystems::Cleanup))
+            .add_systems(RenderGraph, (|mut c: ResMut<Clock>| c.graph = Some(Instant::now())).run_if(crate::gauges_live).in_set(RenderGraphSystems::Begin))
+            .add_systems(RenderGraph, graph_end.run_if(crate::gauges_live).in_set(RenderGraphSystems::Finish));
     }
 
     fn ms(t: Option<Instant>) -> f64 {

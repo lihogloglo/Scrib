@@ -18,6 +18,10 @@ pub struct RunSettings {
     /// Extra environment for the game, KEY=VALUE (repeatable).
     #[arg(long = "env")]
     pub envs: Vec<String>,
+    /// Set a tunable for the run, `name=value` (repeatable; the game's `--set`, command-line layer;
+    /// `bevyrrowind tunables --md` lists them). A refused name or value fails the run.
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    pub sets: Vec<String>,
     /// Extra game flag for every run (repeatable; `--arg=--scene`, a flag with a value takes two:
     /// `--arg=--sun-cascades --arg=2:205`): an A/B of a switch that is not an `--off` part. Shown in the variant name.
     #[arg(long = "arg", allow_hyphen_values = true)]
@@ -28,7 +32,12 @@ impl RunSettings {
     /// `self` then `more` (an arm's settings on top of the suite's).
     pub fn with(&self, more: &Self) -> Self {
         let cat = |a: &[String], b: &[String]| a.iter().chain(b).cloned().collect();
-        Self { off: cat(&self.off, &more.off), envs: cat(&self.envs, &more.envs), args: cat(&self.args, &more.args) }
+        Self {
+            off: cat(&self.off, &more.off),
+            envs: cat(&self.envs, &more.envs),
+            sets: cat(&self.sets, &more.sets),
+            args: cat(&self.args, &more.args),
+        }
     }
 
     /// The `--env` pairs, split (`KEY=VALUE` checked).
@@ -39,16 +48,35 @@ impl RunSettings {
             .collect()
     }
 
-    /// The settings as `perf suite` flags (`--off=a,b --env K=V --arg=x`); empty for the shipped game.
+    /// The `--set` values checked (`name=value`; the game checks names and values).
+    pub fn check_sets(&self) -> Result<(), String> {
+        for s in &self.sets {
+            mw_devtools_bevy::perf::tunables::check_set(s)?;
+        }
+        Ok(())
+    }
+
+    /// The game flags of the `--set` values plus `--arg`: `--set a=1 --set b=2 <args...>`.
+    pub fn game_args(&self) -> Vec<String> {
+        set_args(&self.sets).chain(self.args.iter().cloned()).collect()
+    }
+
+    /// The settings as `perf suite` flags (`--off=a,b --env K=V --set n=v --arg=x`); empty for the shipped game.
     pub fn describe(&self) -> String {
         let mut parts = Vec::new();
         if !self.off.is_empty() {
             parts.push(format!("--off={}", self.off.join(",")));
         }
         parts.extend(self.envs.iter().map(|e| format!("--env {e}")));
+        parts.extend(self.sets.iter().map(|s| format!("--set {s}")));
         parts.extend(self.args.iter().map(|a| format!("--arg={a}")));
         parts.join(" ")
     }
+}
+
+/// `--set <s>` game flags, one pair per value.
+pub fn set_args(sets: &[String]) -> impl Iterator<Item = String> + '_ {
+    sets.iter().flat_map(|s| ["--set".to_owned(), s.clone()])
 }
 
 /// One arm of an interleaved A/B: a name and the settings it adds.
@@ -58,7 +86,7 @@ pub struct Arm {
     pub settings: RunSettings,
 }
 
-/// Parses `--arm NAME:SETTINGS`: SETTINGS are `perf suite`'s own per-run flags (`--off`, `--env`, `--arg`),
+/// Parses `--arm NAME:SETTINGS`: SETTINGS are `perf suite`'s own per-run flags (`--off`, `--env`, `--set`, `--arg`),
 /// whitespace-separated, parsed by the same definitions; empty for the shipped game (`base:`).
 pub fn parse_arm(spec: &str) -> Result<Arm, String> {
     #[derive(clap::Parser)]
@@ -74,6 +102,7 @@ pub fn parse_arm(spec: &str) -> Result<Arm, String> {
     let cli = <ArmCli as clap::Parser>::try_parse_from(rest.split_whitespace())
         .map_err(|e| format!("--arm {name}: {}", e.to_string().lines().next().unwrap_or("bad settings").trim_start_matches("error: ")))?;
     cli.settings.env_pairs().map_err(|e| format!("--arm {name}: {e}"))?;
+    cli.settings.check_sets().map_err(|e| format!("--arm {name}: {e}"))?;
     Ok(Arm { name: name.to_owned(), settings: cli.settings })
 }
 
@@ -386,13 +415,18 @@ mod tests {
         assert!(parse_arm("x:--sun-cascades 2:205").unwrap_err().starts_with("--arm x: "));
         assert!(parse_arm("x:scene").is_err());
         assert!(parse_arm("x:--env NOEQUALS").unwrap_err().contains("expected KEY=VALUE"));
+        // `--set`: passed to the game as its own `--set`, shape checked here.
+        let s = parse_arm("b:--set shadow.lamp.count=4 --set select.gate=on").unwrap();
+        assert_eq!(s.settings.game_args(), ["--set", "shadow.lamp.count=4", "--set", "select.gate=on"]);
+        assert_eq!(s.settings.describe(), "--set shadow.lamp.count=4 --set select.gate=on");
+        assert!(parse_arm("x:--set shadow.lamp.count").unwrap_err().contains("expected name=value"));
         // The set: none, or two or more distinct names.
         assert!(parse_arms(&[]).unwrap().is_empty());
         assert!(parse_arms(&["base:".into()]).unwrap_err().contains("at least two arms"));
         assert!(parse_arms(&["a:".into(), "a:--off=x".into()]).unwrap_err().contains("duplicate"));
         assert_eq!(parse_arms(&["a:".into(), "b:--off=x".into(), "c:--arg=--scene".into()]).unwrap().len(), 3);
         // Arm settings go on top of the suite's.
-        let suite = RunSettings { off: vec!["sky".into()], envs: vec![], args: vec!["--rings".into()] };
+        let suite = RunSettings { off: vec!["sky".into()], args: vec!["--rings".into()], ..RunSettings::default() };
         let both = suite.with(&a.settings);
         assert_eq!(both.off, ["sky", "precombine", "npcs"]);
         assert_eq!(both.args, ["--rings", "--sun-cascades", "2:205"]);

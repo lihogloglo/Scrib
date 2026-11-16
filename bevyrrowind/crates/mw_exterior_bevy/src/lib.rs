@@ -12,6 +12,7 @@ mod teardown;
 pub mod level;
 mod loading_screen;
 mod origin_rebase;
+pub mod quality_presets;
 pub mod main_menu;
 pub mod pause_menu;
 pub mod phase;

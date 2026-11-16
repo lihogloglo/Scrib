@@ -6,8 +6,8 @@ use sf_tunables::{AnyDef, Def, Unit, def};
 
 use crate::overrides::{Override, apply_overrides, parse_file, parse_set};
 use crate::{
-    PeelTunable, SetBy, SetTunable, TunableChanged, TunableRefused, Tunables, TunablesAppExt,
-    TunablesPlugin, brp, tunable_changed,
+    OverrideRefusals, PeelTunable, SetBy, SetTunable, TunableChanged, TunableEnv, TunableRefused,
+    Tunables, TunablesAppExt, TunablesPlugin, brp, tunable_changed,
 };
 
 const FADE: Def<f32> = def!(float "test.lamp.fade_start_m" = 15.0)
@@ -302,4 +302,91 @@ fn overrides_apply_on_their_layer_and_refuse_unknown_names() {
     assert_eq!(t.var(id).set_by(), SetBy::CommandLine);
     assert_eq!(t.var(id).note(SetBy::CommandLine), Some("--set"));
     assert_eq!(t.int(id), 8);
+}
+
+const SSAO_ALIAS: Def<bool> = def!(bool "test.ssao" = true).env_alias("TEST_SSAO");
+const RADIUS_ALIAS: Def<f32> = def!(float "test.ai.radius_m" = 60.0)
+    .range(0.0, 500.0)
+    .env_alias("TEST_AI_RADIUS");
+
+#[test]
+fn env_alias_sets_the_command_line_layer_at_registration() {
+    let mut app = App::new();
+    app.insert_resource(TunableEnv::from_pairs(&[
+        ("TEST_SSAO", "0"),
+        ("TEST_AI_RADIUS", " 80 "),
+    ]));
+    app.add_plugins((MinimalPlugins, TunablesPlugin))
+        .register_tunables(&[&SSAO_ALIAS]);
+    let _ = app.add_tunable(&RADIUS_ALIAS);
+    let tunables = app.world().resource::<Tunables>();
+    let ssao = tunables.var(tunables.id("test.ssao").unwrap());
+    assert_eq!(ssao.value(), &sf_tunables::Value::Bool(false));
+    assert_eq!(ssao.set_by(), SetBy::CommandLine);
+    assert_eq!(
+        ssao.note(SetBy::CommandLine),
+        Some("env TEST_SSAO (deprecated: --set test.ssao=value)")
+    );
+    let radius = tunables.var(tunables.id("test.ai.radius_m").unwrap());
+    assert_eq!(radius.value(), &sf_tunables::Value::Float(80.0));
+    assert!(app.world().get_resource::<OverrideRefusals>().is_none());
+}
+
+#[test]
+fn env_alias_unset_or_empty_leaves_the_default() {
+    let mut app = App::new();
+    app.insert_resource(TunableEnv::from_pairs(&[("TEST_SSAO", "")]));
+    app.register_tunables(&[&SSAO_ALIAS, &RADIUS_ALIAS]);
+    let tunables = app.world().resource::<Tunables>();
+    assert!(tunables.iter().all(|(_, t)| t.set_by() == SetBy::Default));
+}
+
+#[test]
+fn a_bad_env_alias_value_is_refused() {
+    let mut app = App::new();
+    app.insert_resource(TunableEnv::from_pairs(&[
+        ("TEST_SSAO", "maybe"),
+        ("TEST_AI_RADIUS", "9000"),
+    ]));
+    app.add_plugins((MinimalPlugins, TunablesPlugin))
+        .register_tunables(&[&SSAO_ALIAS, &RADIUS_ALIAS]);
+    let refused = &app.world().resource::<OverrideRefusals>().0;
+    let names: Vec<&str> = refused.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["test.ssao", "test.ai.radius_m"]);
+    assert!(refused[0].reason.starts_with("env TEST_SSAO=maybe: "), "{}", refused[0]);
+    let tunables = app.world().resource::<Tunables>();
+    assert!(tunables.iter().all(|(_, t)| t.set_by() == SetBy::Default));
+}
+
+#[test]
+fn command_line_overrides_apply_after_every_plugin_registered() {
+    use crate::CommandLineOverrides;
+    use crate::overrides::OverrideSet;
+    let set = |origin: &str, list: &[&str]| OverrideSet {
+        origin: origin.to_owned(),
+        overrides: list.iter().map(|a| parse_set(a).unwrap()).collect(),
+    };
+    let mut app = App::new();
+    // Added before the plugin that registers the tunables: they apply in `finish`.
+    app.add_plugins((
+        MinimalPlugins,
+        TunablesPlugin,
+        CommandLineOverrides(vec![
+            set("file a.toml", &["test.lamp.count=2", "test.contact=off"]),
+            set("--set", &["test.lamp.count=6", "test.lamp.cuont=3"]),
+        ]),
+    ));
+    app.register_tunables(TUNABLES);
+    app.finish();
+    let tunables = app.world().resource::<Tunables>();
+    let count = tunables.var(tunables.id("test.lamp.count").unwrap());
+    assert_eq!(count.value(), &sf_tunables::Value::Int(6));
+    assert_eq!(count.set_by(), SetBy::CommandLine);
+    assert_eq!(count.note(SetBy::CommandLine), Some("--set"));
+    let contact = tunables.var(tunables.id("test.contact").unwrap());
+    assert_eq!(contact.note(SetBy::CommandLine), Some("file a.toml"));
+    let refused = &app.world().resource::<OverrideRefusals>().0;
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0].name, "test.lamp.cuont");
+    assert_eq!(refused[0].reason, "no such tunable (--set)");
 }

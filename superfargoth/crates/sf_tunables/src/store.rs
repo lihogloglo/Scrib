@@ -230,6 +230,12 @@ impl Spec {
         self
     }
 
+    /// A deprecated environment switch that still sets it (see [`crate::Def::env_alias`]).
+    pub fn env_alias(mut self, name: &'static str) -> Self {
+        self.meta.env_alias = Some(name);
+        self
+    }
+
     /// All the metadata at once.
     pub fn meta(mut self, meta: Meta) -> Self {
         self.meta = meta;

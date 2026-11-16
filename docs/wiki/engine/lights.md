@@ -39,7 +39,9 @@ Vendored: DLSS cluster lookup fix #26236 (`vendor/README.md:14`), ambient specul
 
 ## Switches and counters
 
-`--off lights`; `--range-unshadowed X` (reach scale without a map); live `flip ambient_specular`, `flip gi`.
+`--off lights`; `--range-unshadowed X` (reach scale without a map); live `flip ambient_specular`, `flip gi`. The lamp
+shadow budget is live tunables (`set shadow.lamp.count 4`, `shadow.lamp.fade_m`, `shadow.lamp.map_size_px`, ...; list in
+[shadows](shadows.md) "Switches and counters").
 Counters: `PointShadowBudget` state, perf report light counts via `mw_devtools_bevy/src/perf.rs`.
 
 ## Known limits

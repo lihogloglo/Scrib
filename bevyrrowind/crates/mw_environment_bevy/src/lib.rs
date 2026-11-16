@@ -4,5 +4,6 @@
 
 pub mod night_sky;
 pub mod render;
+pub mod shadow_tunables;
 pub mod water;
 pub mod weather;

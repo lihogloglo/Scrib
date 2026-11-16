@@ -14,6 +14,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bevy_app::{App, AppExit, First, Plugin};
@@ -146,6 +147,22 @@ impl Default for DiagSettings {
             markdown: true,
         }
     }
+}
+
+/// Process-wide: whether [`FramePhasePlugin`] (frame phases, stage walls, encode timers) and
+/// `RenderViewsPlugin` time and count. On by default (benchmarks always measure); a live overlay
+/// that owns these gauges (the game's F3 perf panel) turns it off while hidden, so a hidden panel
+/// costs one run-condition check per marker system and no timing.
+static GAUGES_LIVE: AtomicBool = AtomicBool::new(true);
+
+/// Turns the frame-phase, stage, encode and view gauges on or off ([`gauges_live`]).
+pub fn set_gauges_live(on: bool) {
+    GAUGES_LIVE.store(on, Ordering::Relaxed);
+}
+
+/// Run condition: the frame-phase, stage, encode and view gauges are on ([`set_gauges_live`]).
+pub fn gauges_live() -> bool {
+    GAUGES_LIVE.load(Ordering::Relaxed)
 }
 
 /// The shared counter registry. Systems take `Res<DiagCounters>`; async

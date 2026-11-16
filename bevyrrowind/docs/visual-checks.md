@@ -33,7 +33,8 @@ variant (`--off ...`, `--dlss ...`) itself; the owner never types commands or re
    | WASD, Q/E, mouse | fly (free camera; Shift runs at 80 m/s) |
    | F1 | show/hide the help overlay |
    | F2 | sun shadows on/off |
-   | F3 | terrain far shadows on/off (shadows past the cascades) |
+   | F3 | perf panel: off, compact, full (frame, main/render/GPU, bound by; CW-17) |
+   | Shift+F3 | terrain far shadows on/off (shadows past the cascades) |
    | F4 | DLSS: off, quality, balanced, performance, DLAA (exe built with `dlss`; on by default as `auto` since 2026-10-12, start with `--dlss off` for native) |
    | F5 | far-field level tint (L1 green, L2 blue, L3 purple) |
    | F6 / F7 | terrain LOD colors / terrain wireframe |
@@ -188,6 +189,7 @@ WALK-0 | awaiting owner | [player-ui](visual-checks/player-ui.md) | A/B ladder o
 FP-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person shows body, arms and weapon with the head hidden (2026-11-10)
 FP-1b | awaiting owner | [player-ui](visual-checks/player-ui.md) | First person: the player's shadow keeps its head under sun, lamps and a torch, raster and RT (2026-11-10)
 FP-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First-person view model (`flip viewmodel`): weapon and arms at the body FOV, never in walls, lit like the world, no DLSS/TAA smear; shader-compile log line (2026-11-10)
+PP-1 | awaiting owner | [rendering](visual-checks/rendering.md) | F3 perf panel (CW-17, release build): numbers refresh, bound-by matches the feel, flipping a CW switch moves them (2026-11-16)
 RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn away from the model (2026-10-30)
 WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
 WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)

@@ -24,8 +24,6 @@ use bevy::camera::visibility::RenderLayers;
 use bevy_camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy::render::occlusion_culling::OcclusionCulling;
-use bevy::light::{CascadeShadowConfig, ShadowFilteringMethod};
-use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -160,11 +158,6 @@ struct Start {
     target: DVec3,
     bench: bool,
     prepass: bool,
-    /// Screen-space contact shadows (`None`: off; `--off contactshadows`).
-    contact: Option<ContactShadows>,
-    /// Bevy GTAO (`None`: off; Low preset, `--off ssao`).
-    ssao: Option<ScreenSpaceAmbientOcclusionQualityLevel>,
-    shadow_filter: ShadowFilteringMethod,
     /// Lamp shadows on 2x2 hardware PCF (`bevy_pbr::PointSpotShadowsHardware2x2`; `--off lampfilter`).
     lamp_hw_filter: bool,
     /// Bloom (`None`: off; Low preset, `--off bloom`).
@@ -238,11 +231,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     app.insert_resource(sf_character_bevy::CharacterSettings { bodies: options.bodies });
     // `--off farnpcs`: characters past the crowd C0 threshold hide (crowd-lod.md CROWD-1 ceiling).
     app.insert_resource(sf_character_bevy::CrowdSettings { hide_far: perf.off.has(Part::FarNpcs) });
-    // CW-7 (ROADMAP 1.25; vendored `skin.rs` "skip unchanged skins"): joint blocks whose matrices did not
-    // change are neither walked nor re-uploaded. Opt-in until its interleaved A/B: `--env BEVYRROWIND_SKIN_SKIP_UNCHANGED=1`.
-    app.insert_resource(bevy::pbr::SkinUploadSettings {
-        skip_unchanged: std::env::var_os("BEVYRROWIND_SKIN_SKIP_UNCHANGED").is_some_and(|v| v == "1"),
-    });
+    // CW-2 selection gates and CW-7 skin uploads as live tunables (`select.gate`,
+    // `render.skin.skip_unchanged`; their old env switches are aliases): `quality_presets::add_gates`.
     if let (Some(db), false) = (options.actors.clone(), perf.off.has(Part::Actors) || perf.off.has(Part::Walkers)) {
         mw_walkers_bevy::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone(), !perf.off.has(Part::Physics));
     }
@@ -284,13 +274,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     let screen = options.quality.screen(!perf.off.has(Part::SizeCull));
     // Selection gates (CW-2, ROADMAP 1.25; `sf_world::select_gate`): streaming rings, terrain CDLOD and the
     // far field's residency pass re-run only once the camera moved or turned past a quantum or an input
-    // changed. Opt-in until its interleaved A/B: `--env BEVYRROWIND_SELECT_GATE=1` (`=0` forces it off);
-    // `--off selectgate` forces it off whatever the env or the `select.gate` default say.
-    let select_gate = match std::env::var("BEVYRROWIND_SELECT_GATE").as_deref() {
-        Ok("1") => true,
-        Ok("0") => false,
-        _ => sf_world::SELECT_GATE.default_value(),
-    } && !perf.off.has(Part::SelectGate);
+    // changed. Live tunable `select.gate` (alias `BEVYRROWIND_SELECT_GATE=1|0`); `--off selectgate` forces it
+    // off at the command-line layer. The plugins start with its effective value.
+    let select_gate = crate::quality_presets::add_gates(&mut app, perf.off.has(Part::SelectGate));
     let mut far_settings = sf_lod_bevy::FarFieldSettings::default();
     far_settings.levels.screen.bias = screen.bias;
     far_settings.select_gate = sf_lod_bevy::FarFieldSettings::select_gate_quanta(select_gate);
@@ -388,16 +374,19 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     clock.paused = options.screenshot.is_some() || bench;
     render.insert(&mut app);
     let off_parts = &perf.off;
-    let contact_shadows = !off_parts.has(Part::ContactShadows) && options.quality.contact_shadows().is_some();
-    // Lamp contact shadows: the preset's (High and Ultra; owner 2026-11-01, SH-16), or
-    // `BEVYRROWIND_LAMP_CONTACT=1|0` to force them either way for an A/B.
-    let lamp_contact = contact_shadows
-        && match std::env::var("BEVYRROWIND_LAMP_CONTACT").as_deref() {
-            Ok("1") => true,
-            Ok("0") => false,
-            _ => options.quality.lamp_contact_shadows(),
-        };
-    app.insert_resource(sf_sky_bevy::PointShadowBudget { contact_shadows: lamp_contact, ..render.point_shadow_budget(options.quality.point_shadows()) });
+    // Tunables T4: the quality level's shadow and light values at the `Preset` layer, `--off` parts at
+    // `CommandLine` (`quality_presets`); the lamp budget, cascades, PCSS, contact shadows, GTAO and the
+    // shadow filter follow them live (`sf_sky_bevy::ShadowQualityPlugin`, added by `render.insert`).
+    let sun_quality = {
+        let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
+        crate::quality_presets::apply(&mut tunables, options.quality, off_parts);
+        sf_sky_bevy::SunShadowQuality::read(&tunables)
+    };
+    let contact_shadows = {
+        let tunables = app.world().resource::<sf_tunables_bevy::Tunables>();
+        tunables.read(tunables.id_of(&sf_sky_bevy::quality::CONTACT).expect("registered"))
+    };
+    app.insert_resource(sun_quality);
     // Dynamic probe GI (gi.md, slice 1): High and Ultra on the raster path, interiors only for
     // now, `--off gi` for the A/B. Before the sky, so it brings Solari's scene plugin alone
     // (the sky adds the full `SolariPlugins` otherwise). Absent on GPUs without ray queries.
@@ -415,8 +404,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     app.add_systems(Startup, ray_tracing_variants);
     app.add_plugins(SkyPlugin { settings, clock, render_path: render.path }).insert_resource(SkyRenderOptions {
         ray_tracing_denoiser: render.denoiser,
-        cascades: sun_cascades(options.quality, render.sun_cascades),
-        sun_shadow: sun_shadow(contact_shadows, if off_parts.has(Part::SoftShadows) { None } else { options.quality.soft_shadow_size() }),
+        cascades: sun_quality.splits.build(),
+        sun_shadow: sun_shadow(contact_shadows, sun_quality.soft_size()),
         ..SkyRenderOptions::default()
     });
     if off_parts.has(Part::EnvSlice) {
@@ -597,21 +586,6 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     })
         .insert_resource(Start { worldspace: options.worldspace, eye: options.eye, target: options.target, bench: bench || options.screenshot.is_some(),
             prepass: options.prepass,
-            contact: if perf.off.has(Part::ContactShadows) { None } else { options.quality.contact_shadows() },
-            // A1 A/B: BEVYRROWIND_SSAO=low|medium|high|ultra overrides the preset's level.
-            ssao: if perf.off.has(Part::Ssao) {
-                None
-            } else {
-                match std::env::var("BEVYRROWIND_SSAO").as_deref() {
-                    Ok("low") => Some(ScreenSpaceAmbientOcclusionQualityLevel::Low),
-                    Ok("medium") => Some(ScreenSpaceAmbientOcclusionQualityLevel::Medium),
-                    Ok("high") => Some(ScreenSpaceAmbientOcclusionQualityLevel::High),
-                    Ok("ultra") => Some(ScreenSpaceAmbientOcclusionQualityLevel::Ultra),
-                    _ => options.quality.ssao(),
-                }
-            },
-            // lampcost A/B (perf.md "Per-lamp GPU cost"): BEVYRROWIND_SHADOW_FILTER=hardware|gaussian|temporal.
-            shadow_filter: match std::env::var("BEVYRROWIND_SHADOW_FILTER").as_deref() { Ok("hardware") => ShadowFilteringMethod::Hardware2x2, Ok("gaussian") => ShadowFilteringMethod::Gaussian, Ok("temporal") => ShadowFilteringMethod::Temporal, _ => options.quality.shadow_filter(options.render.upscaling.is_temporal()) },
             lamp_hw_filter: !perf.off.has(Part::LampFilter),
             bloom: if perf.off.has(Part::Bloom) { None } else { options.quality.bloom() },
         })
@@ -858,6 +832,7 @@ fn setup_spawners(
 
 // -- scene ----------------------------------------------------------------------------
 
+#[expect(clippy::too_many_arguments, reason = "system parameters")]
 fn setup(
     mut commands: Commands,
     mut registry: ResMut<WorldspaceRegistry>,
@@ -866,6 +841,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    view_quality: sf_sky_bevy::ViewQualityParam,
 ) {
     let entry = registry.ensure(&mut commands, &start.worldspace);
     let (cell, mut transform) = to_grid(WorldPos::from_f64(start.eye));
@@ -923,21 +899,17 @@ fn setup(
     if start.prepass {
         camera.insert((DepthPrepass, MotionVectorPrepass, OcclusionCulling));
     }
-    // weather.md "Shadow bias and contact shadows" (shadows F1): contact shadows ray-march
-    // the depth prepass, which needs motion vectors here so it applies the LOD dither
-    // (see the note above).
-    camera.insert(start.shadow_filter);
     if start.lamp_hw_filter {
         camera.insert(bevy::pbr::PointSpotShadowsHardware2x2);
     }
-    if let Some(contact) = start.contact {
-        camera.insert((contact, DepthPrepass, MotionVectorPrepass));
-    }
-    // ROADMAP 1.5: Bevy GTAO on the same camera outdoors and indoors. It needs the depth +
-    // normal prepass (motion vectors too, so the prepass applies the LOD dither) and MSAA off:
-    // the native fallback of F4 restores the spawn MSAA (`sf_sky_bevy::upscale`).
-    if let Some(quality_level) = start.ssao {
-        camera.insert((ScreenSpaceAmbientOcclusion { quality_level, ..default() }, DepthPrepass, MotionVectorPrepass, Msaa::Off));
+    // The shadow filter, contact shadows (weather.md "Shadow bias and contact shadows", shadows F1) and
+    // GTAO (ROADMAP 1.5) from their tunables (`sf_sky_bevy::quality`, live through `ViewQualityCamera`):
+    // contact shadows and GTAO ray-march the depth prepass, with motion vectors so it applies the LOD
+    // dither (see the note above); GTAO with MSAA off (the native fallback of F4 restores the spawn
+    // MSAA, `sf_sky_bevy::upscale`).
+    camera.insert(sf_sky_bevy::ViewQualityCamera);
+    if let Some(quality) = view_quality.wanted() {
+        quality.insert_into(&mut camera);
     }
     // Bloom (screen-space-effects research 4.11): Bevy's post-process bloom runs after DLSS/TAA
     // (`Core3dSystems::PostProcess` vs `EarlyPostProcess`), at output resolution.
@@ -1414,23 +1386,6 @@ fn streaming_config(mut config: StreamingConfig, near: Option<f32>, far: Option<
     config
 }
 
-/// The sun's shadow cascades (shadows F3, weather.md "Distant shadows"): a
-/// practical split to ~250 m per preset ([`QualityRender::sun_cascades`]), 2× sharper
-/// at mid range than the A1 layout; past them the terrain shadows itself
-/// (`sf_terrain_bevy`'s far shadow). `fixed` (`--sun-cascades`) replaces the
-/// preset's count and last bound.
-fn sun_cascades(quality: Quality, fixed: Option<(usize, f32)>) -> CascadeShadowConfig {
-    let preset = quality.sun_cascades();
-    let (num_cascades, maximum_distance) = fixed.unwrap_or((preset.num_cascades, preset.maximum_distance));
-    sf_sky_bevy::CascadeSplits { num_cascades, maximum_distance, ..preset }.build()
-}
-
-/// PCSS light size in cascade texels (see [`QualityRender::soft_shadow_size`]); tuned by eye.
-const SOFT_SHADOW_SIZE: f32 = 10.0;
-
-/// Contact-shadow ray length, meters (Bevy's default; [`QualityRender::contact_shadows`]).
-const CONTACT_LENGTH: f32 = 0.3;
-
 /// Bloom scatter fraction ([`QualityRender::bloom`]), two thirds of `Bloom::NATURAL`'s 0.15.
 /// Energy-conserving with no threshold (Bevy's recommendation; a threshold is the "1990s look"
 /// and needs additive compositing): a uniformly lit wall blurs into itself and stays as it was,
@@ -1622,14 +1577,7 @@ fn cloud_shadow_light(mut commands: Commands, suns: Query<Entity, (With<SunLight
 pub(crate) trait QualityRender: Copy {
     /// `(bias, min_pixels, min_draw_distance)`.
     fn params(self) -> (f32, f32, f32);
-    fn point_shadows(self) -> (usize, usize);
-    fn contact_shadows(self) -> Option<ContactShadows>;
-    fn lamp_contact_shadows(self) -> bool;
-    fn ssao(self) -> Option<ScreenSpaceAmbientOcclusionQualityLevel>;
     fn bloom(self) -> Option<Bloom>;
-    fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits;
-    fn soft_shadow_size(self) -> Option<f32>;
-    fn shadow_filter(self, temporal: bool) -> ShadowFilteringMethod;
     fn screen(self, size_cull: bool) -> sf_model::LodScreen;
 }
 
@@ -1643,105 +1591,12 @@ impl QualityRender for Quality {
         }
     }
 
-    /// Point lights with shadow maps and their cube face size
-    /// (`sf_sky_bevy::PointShadowBudget`, ranked by `shadow_importance`).
-    /// High: 8 cached lamps (`sf_shadow_cache_bevy`: static casters drawn once,
-    /// movers over the copy; perf.md "Shadows v2"). Before the cache (shf6, census,
-    /// 720p): 4.8 ms with none, 6.6 / 12.2 / 21.7 ms with 1 / 4 / 8, render-thread
-    /// bound. Medium/Low: none (the main pass samples every shadowed lamp per pixel).
-    fn point_shadows(self) -> (usize, usize) {
-        match self {
-            Self::Low => (0, 512),
-            Self::Medium => (6, 512),
-            Self::High => mw_environment_bevy::render::POINT_SHADOWS_DEFAULT,
-            Self::Ultra => (12, 1024),
-        }
-    }
-
-    /// Screen-space contact shadows (shadows F1, weather.md "Shadow bias and contact
-    /// shadows"): Bevy's depth-prepass ray march toward the sun and the budgeted point
-    /// lights, so small objects stay grounded at any cascade texel size. Off on Low
-    /// (it costs the depth + motion-vector prepass). The sun always casts them; lamps per
-    /// [`Self::lamp_contact_shadows`]; length 0.3 m = Bevy's default (was 0.5: the
-    /// long view-dependent bands at object edges, SH-14).
-    fn contact_shadows(self) -> Option<ContactShadows> {
-        match self {
-            Self::Low => None,
-            Self::Medium => Some(ContactShadows { linear_steps: 8, thickness: 0.1, length: CONTACT_LENGTH }),
-            Self::High | Self::Ultra => Some(ContactShadows { linear_steps: 16, thickness: 0.1, length: CONTACT_LENGTH }),
-        }
-    }
-
-    /// Contact shadows on the budgeted (shadow-mapped) lamps too: High and Ultra. Shadow
-    /// reset A1 (2026-10-21) had turned them off everywhere (0.8 ms GPU per shadowed lamp at
-    /// 1440p native, and the SH-14 bands of the then 0.5 m ray); the owner confirmed them
-    /// in the Census office at 0.3 m (2026-11-01, SH-16). Medium keeps the sun's only.
-    fn lamp_contact_shadows(self) -> bool {
-        matches!(self, Self::High | Self::Ultra)
-    }
-
-    /// Bevy GTAO quality (ROADMAP 1.5, shadows.md "Reset A1 as built"): off on Low (MSAA,
-    /// no prepass), slices x samples 1x2 / 2x2 / 3x3 on Medium / High / Ultra, temporal
-    /// noise under TAA or DLSS.
-    fn ssao(self) -> Option<ScreenSpaceAmbientOcclusionQualityLevel> {
-        match self {
-            Self::Low => None,
-            Self::Medium => Some(ScreenSpaceAmbientOcclusionQualityLevel::Low),
-            Self::High => Some(ScreenSpaceAmbientOcclusionQualityLevel::Medium),
-            Self::Ultra => Some(ScreenSpaceAmbientOcclusionQualityLevel::High),
-        }
-    }
-
     /// Bloom (screen-space-effects research 4.11): Bevy's `Bloom::NATURAL` (COD-AW dual
     /// filter, energy-conserving, no threshold) at [`BLOOM_INTENSITY`]; off on Low.
     fn bloom(self) -> Option<Bloom> {
         match self {
             Self::Low => None,
             Self::Medium | Self::High | Self::Ultra => Some(Bloom { intensity: BLOOM_INTENSITY, ..Bloom::NATURAL }),
-        }
-    }
-
-    /// Sun cascades (shadows F3): practical split (PSSM log/uniform blend, split
-    /// near 1 m), Bevy's sphere fit + texel snap + 20 % overlap blend. At 70° FOV,
-    /// 16:9, 2048² the texels are 1.4 / 3.8 / 11 / 35 cm on High (A1: 1.4 / 5.2 / 19 /
-    /// 70 cm, `sf_sky_bevy` test `practical_split_cascades_and_texel_sizes`).
-    /// ROADMAP 1.22 F2 (2 cascades, SPUD) measured no win once F3's `SunCascadeHold` holds
-    /// the far cascades (ledger perf 2026-11-16: walk 11.42 with 2 vs 11.44 with 3), so the
-    /// presets keep 3 for the sharper near split; opt in with `--sun-cascades 2:205` (keeps
-    /// this preset's lambda; F2 used lambda 0.9 for a ~23 m near split on High).
-    fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits {
-        let (num_cascades, maximum_distance, lambda, overlap_proportion) = match self {
-            Self::Low => (3, 160.0, 0.82, 0.15),
-            Self::Medium => (3, 190.0, 0.80, 0.15),
-            Self::High => (3, 205.0, 0.80, 0.16),
-            Self::Ultra => (4, 280.0, 0.85, 0.2),
-        };
-        sf_sky_bevy::CascadeSplits { num_cascades, minimum_distance: 0.1, split_near: 1.0, maximum_distance, lambda, overlap_proportion }
-    }
-
-    /// Soft contact-hardening sun shadows (shadows F5): Bevy PCSS light size in cascade
-    /// texels (`DirectionalLight::soft_shadow_size`; penumbra = blocker gap x size, so it
-    /// is crisp at contact and widens with distance). High and Ultra only; Medium keeps
-    /// the Gaussian PCF, Low the 2x2 tap.
-    fn soft_shadow_size(self) -> Option<f32> {
-        match self {
-            Self::Low | Self::Medium => None,
-            Self::High | Self::Ultra => Some(SOFT_SHADOW_SIZE),
-        }
-    }
-
-    /// Shadow-map filtering (shadows F2): Hardware2x2 on Low (one tap); above it
-    /// Temporal when a temporal resolve runs (TAA or DLSS, ROADMAP 1.3), else Gaussian.
-    /// Temporal rotates the PCF and PCSS sample kernel every frame so the resolve
-    /// averages it out; with Gaussian, PCSS's noise rotation is a fixed screen-space
-    /// pattern: the blocky, half-transparent, swimming penumbra at object edges under
-    /// grazing light (SH-12; Bevy's own note in `shadow_sampling.wesl` calls the
-    /// non-temporal PCSS "rather noisy").
-    fn shadow_filter(self, temporal: bool) -> ShadowFilteringMethod {
-        match (self, temporal) {
-            (Self::Low, _) => ShadowFilteringMethod::Hardware2x2,
-            (_, true) => ShadowFilteringMethod::Temporal,
-            (_, false) => ShadowFilteringMethod::Gaussian,
         }
     }
 
@@ -1804,9 +1659,6 @@ pub(crate) fn test_world_setup(app: &mut App) {
         target: DVec3::new(0.0, 10.0, -10.0),
         bench: false,
         prepass: false,
-        contact: None,
-        ssao: None,
-        shadow_filter: ShadowFilteringMethod::Hardware2x2,
         lamp_hw_filter: false,
         bloom: None,
     })

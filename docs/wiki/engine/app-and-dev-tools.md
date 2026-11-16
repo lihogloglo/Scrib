@@ -22,7 +22,7 @@ a console and BRP for agents.
   `SCENARIOS` (`:25`: `balmora`, `balmora_walk`, `balmora_night`, ...) run with `--repeat N`; results under
   `<out>/<tag>/`; `--bench` runs take `--bench-out`, `--bench-baseline`, `--bench-seconds`, `--resolution WxH`. Run the profiling build
   from the repo root. Frame sections: see frame-and-views. Counters come from `sf_diag_bevy`.
-- **Dev tools** (`mw_devtools_bevy`, `lib.rs:1`): `live_ab` (A/B keys and one-line overlay, `view`/`scene` only; F1
+- **Dev tools** (`mw_devtools_bevy`, `lib.rs:1`): `live_ab` (A/B keys and one-line overlay, `view`/`scene` only; F1 help, F3 perf panel below;
   help), `console` (backquote; game commands, other lines run as MWScript), `remote` (BRP, feature `remote` inside
   `dev`, never release), `pipeline_watch` (logs pipelines still compiling; a draw with a pending pipeline is skipped),
   `ready`, `perf`.
@@ -60,6 +60,27 @@ a console and BRP for agents.
   formats, multisampled, array layers/mips past the view's first. Bevy's own `RenderDebugOverlayPlugin`
   (bevy_dev_tools) only shows the camera's prepass buffers full-screen.
 
+## Perf panel (F3, OpenMW's F3 / UE `stat unit`)
+`mw_devtools_bevy/src/perf_panel.rs` (pure half `perf_panel_model.rs`), in every interactive run incl. release (added
+by `live_ab::add`). F3 cycles off / compact / full (top right); Shift+F3 is now terrain far shadows; console/BRP
+`flip perfpanel`. Every number is a mean over `diag.panel.window_s` (1 s), redrawn every `diag.panel.refresh_s` (0.25 s).
+- **frame** ms/fps, p99, max: `Time<Real>` delta. **main / render**: `main/busy/ms`, `render/busy/ms` (`sf_diag_bevy`
+  `FramePhasePlugin`, render one frame behind). **GPU**: sum of the top-level `render/<pass>/elapsed_gpu` (Bevy
+  `RenderDiagnosticsPlugin`; partial, untimed passes missing); "n/a" unless `diag.panel.gpu_timers` (env
+  `BEVYRROWIND_PANEL_GPU_TIMERS=1`, read at startup: it adds timestamp queries + a readback every frame) or the GI's timer.
+- **bound by**: the busiest of GPU/render/main if it is at least `diag.panel.bound_ratio` (0.85) of the frame, else
+  "none" (vsync, a cap, untimed GPU).
+- Full only: top 3 `stage/main/*`, top `diag.panel.top_passes` GPU passes, `views/*` (camera, cascades, lamp faces,
+  `lamp_face/culled`, items, batch sets; `RenderViewsPlugin`), point+spot lights total/shadowed (queried at refresh),
+  `encode/*` (encoders, command buffers, submits + ms, poll; CW-5b), entities, the `preset` tunable, every non-default
+  tunable with its layer. Streaming: n/a (no live gauge).
+- Cost: the gauge plugins are gated by `sf_diag_bevy::set_gauges_live` (off while hidden or with `diag.panel.gauges`
+  off) and `DiagCounters` leaves the main world, so counter-gated reporters stop too. Not measured.
+- Reuse check (2026-11-16): Bevy 0.20 `bevy_dev_tools` `FpsOverlayPlugin` (frame only) and `DiagnosticsOverlay`
+  (reads `DiagnosticsStore` only, needs `bevy_picking`, behind Bevy's `dev` feature: not in release, and our gauges live
+  in `sf_diag` counters); `iyes_perf_ui` 0.5 (MIT/Apache) is on Bevy 0.16. So a plain `bevy_ui` text node. Industry:
+  OpenMW F3 (frame/update/render/GPU bars), UE `stat unit` (Frame/Game/Draw/GPU, bound = the one near Frame), `stat gpu`.
+
 ## Bevy features used
 `bevy_remote` (BRP, via `bevy_brp_mcp`/`bevy_brp_extras`), `bevy_diagnostic`, gizmos, `PipelineCache::waiting_pipelines`
 (`pipeline_watch.rs`).
@@ -67,6 +88,17 @@ a console and BRP for agents.
 ## Switches and counters
 `--off <parts>`, `--bench`, `--resolution`, `--hitch-ms`/`BEVYRROWIND_HITCH_MS`, `BEVYRROWIND_BRP_PORT`,
 `BEVYRROWIND_BAKE_SKIP_NAV`. Live A/B and console variables as above.
+
+**Tunables** (spec `superfargoth/docs/specs/tunables.md`; index `docs/tunables-index.md`, regenerate with
+`bevyrrowind tunables --md`, `--json` for tools): `view`/`scene` (so benches) take `--set name=value` (repeatable) and
+`--tunables <file.toml>` at the command-line layer (`PerfFlags`, `mw_devtools_bevy/src/perf/tunables.rs`), applied in
+`Plugin::finish` once every plugin registered; a refused name or value logs and exits 2 before the first frame.
+Interactive runs (no `--bench`/`--screenshot`, `main.rs` `is_interactive`) also read `<user data>/tunables.toml`
+(logged); benches only the files they are passed. A def's `env_alias` (deprecated env switch) sets the same layer at
+registration. Console: `vars` (value, unit, kind/range, layer), `help <name>` (source, lifetime, env alias, layers),
+`tunables diff`. Perf: `--set` in `perf suite` and `--arm`, `perf sweep --var set:<name>`; every run report gets a
+"Tunables" section (report meta `tunables`). A crate's `TUNABLES` list goes in `perf/tunables.rs` `CATALOG` (a run
+warns about a declared tunable missing from it).
 
 ## Known limits
 Live A/B, console and BRP exist only in interactive `view`/`scene` runs, not screenshot or bench runs. Agents judge no

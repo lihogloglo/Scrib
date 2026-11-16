@@ -465,7 +465,8 @@ fn help_vars_search_echo_clear() {
         ]
     );
     c.exec(ctx, "? time.scale").unwrap();
-    assert_eq!(last_line(&c), "time.scale = 1 [float 0..=10]");
+    let help: Vec<&str> = c.log().lines().map(|l| l.text.as_str()).skip(3).collect();
+    assert_eq!(help, ["time.scale = 1 [float 0..=10]", "source guess · live"]);
     c.exec(ctx, "help").unwrap();
     assert_eq!(
         last_line(&c),
@@ -486,9 +487,9 @@ fn help_vars_search_echo_clear() {
         vars,
         [
             "3 variable(s)",
-            "  render.mode = raster",
-            "  render.shadows = on",
-            "* render.water = off  (console)"
+            "  render.mode = raster  [raster|solari]",
+            "  render.shadows = on  [on|off]",
+            "* render.water = off  [on|off]  (console)"
         ]
     );
     c.exec(ctx, "cls; help shadow").unwrap();
@@ -574,7 +575,7 @@ fn set_by_priority() {
     c.exec(ctx, "reset render.shadows all; clear; list time")
         .unwrap();
     assert_eq!(c.vars().var(shadows).set_by(), SetBy::Default);
-    assert_eq!(last_line(&c), "* time.scale = 2  (command line)");
+    assert_eq!(last_line(&c), "* time.scale = 2  [float 0..=10]  (command line)");
     c.exec_as(ctx, "render.shadows off", SetBy::Config).unwrap();
     assert!(!c.vars().flag(shadows));
 }
@@ -721,4 +722,54 @@ fn fallback_runs_unclaimed_commands_and_completes() {
     assert_eq!(err.to_string(), "script: no bad thing");
     assert_eq!(c.complete("player->ad").candidates, ["player->additem"]);
     assert!(c.complete("add").candidates.contains(&"additem".to_owned()));
+}
+
+#[test]
+fn vars_help_and_tunables_diff_show_layers_units_and_sources() {
+    use sf_tunables::{Lifetime, Source, Unit};
+    let mut c = Console::<Ctx>::new();
+    let fade = c
+        .add_var(
+            VarSpec::float("shadow.fade_m", 15.0)
+                .float_range(0.0, 500.0)
+                .unit(Unit::Meters)
+                .source(Source::Industry("UE local light fade"))
+                .lifetime(Lifetime::Recompile)
+                .env_alias("TEST_FADE"),
+        )
+        .unwrap();
+    c.add_var(VarSpec::bool("shadow.on", true)).unwrap();
+    c.vars_mut()
+        .set_noted(fade, Value::Float(30.0), SetBy::CommandLine, Some("--set".into()))
+        .unwrap();
+    let ctx = &mut Ctx::default();
+    c.exec(ctx, "vars shadow").unwrap();
+    let lines: Vec<&str> = c.log().lines().map(|l| l.text.as_str()).collect();
+    assert_eq!(
+        lines,
+        [
+            "2 variable(s)",
+            "* shadow.fade_m = 30 m  [float 0..=500]  (command line)",
+            "  shadow.on = on  [on|off]"
+        ]
+    );
+    c.exec(ctx, "clear; help shadow.fade_m").unwrap();
+    let lines: Vec<&str> = c.log().lines().map(|l| l.text.as_str()).collect();
+    assert_eq!(
+        lines[1..],
+        [
+            "source industry: UE local light fade · recompiles pipelines · env TEST_FADE (deprecated: --set shadow.fade_m=...)",
+            "layers: command line 30 (--set)"
+        ]
+    );
+    c.exec(ctx, "shadow.on off; clear; tunables diff").unwrap();
+    let lines: Vec<&str> = c.log().lines().map(|l| l.text.as_str()).collect();
+    assert_eq!(
+        lines,
+        [
+            "2 variable(s) not at their default",
+            "shadow.fade_m = 30 m (default 15)  (command line: --set)",
+            "shadow.on = off (default on)  (console)"
+        ]
+    );
 }

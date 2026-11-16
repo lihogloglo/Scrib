@@ -195,3 +195,39 @@ fn only_materials_of_played_controllers_are_marked() {
     assert_eq!(animated_materials(&[idle, on_second], 3), vec![false, true, false]);
     assert_eq!(animated_materials(&[scroll()], 0), Vec::<bool>::new(), "out-of-range index ignored");
 }
+
+/// CW-6 live (`mw.matctrl.gate`): off, nothing is tracked and every step writes; turned on with
+/// entities already spawned, their materials are tracked from then on (an invisible user's material
+/// is skipped); off again, the next step writes it.
+#[test]
+fn gate_turns_on_and_off_live() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default(), sf_tunables_bevy::TunablesPlugin))
+        .init_asset::<StandardMaterial>()
+        .init_asset::<NifAnimation>()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(40)))
+        .init_resource::<Modified>()
+        .add_systems(Update, animate_materials)
+        .add_systems(Last, count_modified);
+    add_live_gate(&mut app);
+    let material = model(&mut app, scroll());
+    user(&mut app, &material, false);
+    app.update();
+    assert!(app.world().get_resource::<MaterialUsers>().is_none(), "off: no tracking");
+    let set = |app: &mut App, on: &str| {
+        app.world_mut().write_message(sf_tunables_bevy::SetTunable::new("mw.matctrl.gate", on, SetBy::Console));
+        app.update();
+    };
+    set(&mut app, "on");
+    assert_eq!(app.world().resource::<MaterialUsers>().users(material.id()).map(<[Entity]>::len), Some(2), "spawned users found");
+    app.world_mut().resource_mut::<Modified>().0 = 0;
+    for _ in 0..10 {
+        app.update();
+    }
+    assert_eq!(app.world().resource::<Modified>().0, 0, "invisible user: skipped");
+    set(&mut app, "off");
+    for _ in 0..3 {
+        app.update();
+    }
+    assert!(app.world().resource::<Modified>().0 > 0, "off: animates again");
+}

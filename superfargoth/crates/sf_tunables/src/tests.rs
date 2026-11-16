@@ -347,3 +347,14 @@ fn config_is_the_user_layer() {
     assert_eq!(SetBy::User.describe(), "config");
     assert!(SetBy::ALL.windows(2).all(|w| w[0] < w[1]));
 }
+
+#[test]
+fn env_alias_is_metadata_shown_by_the_dump() {
+    const SSAO: Def<bool> = def!(bool "test.ssao" = true).env_alias("TEST_SSAO");
+    assert_eq!(SSAO.meta().env_alias, Some("TEST_SSAO"));
+    let mut t = Tunables::default();
+    t.register_def(&SSAO).unwrap();
+    let rows = t.rows();
+    assert_eq!(rows[0].env_alias, Some("TEST_SSAO"));
+    assert!(t.dump_markdown().contains("| `TEST_SSAO` |"));
+}

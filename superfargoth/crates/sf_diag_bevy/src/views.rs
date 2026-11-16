@@ -75,7 +75,7 @@ impl Plugin for RenderViewsPlugin {
         render_app
             .insert_resource(counters)
             .insert_resource(views)
-            .add_systems(Render, count_views.in_set(RenderSystems::Render).after(render_system));
+            .add_systems(Render, count_views.run_if(crate::gauges_live).in_set(RenderSystems::Render).after(render_system));
     }
 }
 

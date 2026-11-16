@@ -71,7 +71,8 @@ sky|terrain|particles|actors|walkers|physics|precipocc|surface` (`mw_game_core/s
 raster path while `POINT_SHADOW_CACHE` is false. Env `BEVYRROWIND_WINDOW`, `BEVYRROWIND_PRESENT`, `BEVYRROWIND_DLSS`;
 `BEVYRROWIND_POLL_BEFORE_SUBMIT=1` (wgpu `maintain` moves from `encode/submit` to `encode/poll`, meta `poll_before_submit: on`)
 and `BEVYRROWIND_NO_GPU_TIMERS=1` (bench without `RenderDiagnosticsPlugin`: every `render/*/elapsed_gpu|cpu` column empty, meta
-`gpu_timers: off`, DLSS check skipped) (`mw_devtools_bevy/src/perf.rs:166-178, 396-415`; `perf/cli.rs:1034`).
+`gpu_timers: off`, DLSS check skipped) (`mw_devtools_bevy/src/perf.rs:166-178, 396-415`; `perf/cli.rs:1034`). Both stay env
+switches (diagnostics and process wiring, read once at startup), not tunables (tunables T4).
 
 ## Known limits
 

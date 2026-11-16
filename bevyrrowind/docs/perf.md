@@ -325,8 +325,9 @@ target/profiling/bench-ab.exe perf suite statics_ab balmora_walk balmora --resol
 ```
 
 - `--arm NAME:SETTINGS` (repeatable, at least two; the first is the base). SETTINGS are the suite's own per-run
-  flags, whitespace-separated: `--off=a,b`, `--env K=V`, `--arg=--flag` (a flag with a value takes two:
-  `--arg=--sun-cascades --arg=2:205`); `base:` = shipped defaults. Suite-level `--off/--env/--arg` apply to every
+  flags, whitespace-separated: `--off=a,b`, `--env K=V`, `--set name=value` (a tunable, below), `--arg=--flag`
+  (a flag with a value takes two: `--arg=--sun-cascades --arg=2:205`); `base:` = shipped defaults. Suite-level
+  `--off/--env/--set/--arg` apply to every
   arm, the arm's go on top. Run folders are `<scenario>@<res>_arm=<name>-<repeat>`.
 - Plan: one discarded warm-up run per arm (first scenario), then per scenario and resolution each repeat runs every
   arm once in a Williams-design order (2 arms: ABBA / BAAB; odd counts use the square and its mirror), rows
@@ -343,7 +344,15 @@ target/profiling/bench-ab.exe perf suite statics_ab balmora_walk balmora --resol
   plan / throttling control (fix 6). Until then, start chains only when no other session benches.
 
 A single benchmark without the runner: `view <cell> --bench benchmarks/<file>.json [--resolution WxH]
-[--bench-out dir] [--bench-baseline path|none] [--bench-seconds N] [--hitch-ms N] [--off ...]`.
+[--bench-out dir] [--bench-baseline path|none] [--bench-seconds N] [--hitch-ms N] [--off ...] [--set name=value]`.
+
+**Tunables in runs** (tunables.md slice T3; names in `docs/tunables-index.md`). `--set name=value` is a run setting
+like `--off` and `--env`: `perf suite <tag> balmora --set select.gate=on`, an arm `--arm "b:--set select.gate=on"`, or
+a sweep `perf sweep <tag> balmora --var set:stream.select.move_m --values 2,4,8` (one `--set` per step; a pair value
+`a,b` can't be swept, the values list is comma-split). A refused name or value fails the run (exit 2, reason in
+`log.txt`), it never measures the default. Benchmarks never read the user dev file `<user data>/tunables.toml`; pass a
+file with `--arg=--tunables --arg=<file.toml>`. Every run's `<scenario>.md` ends with a "Tunables" section (report
+meta `tunables`): every value not at its default, with its layer and note.
 
 ## Frame pacing (measurement setup)
 
@@ -383,6 +392,14 @@ warm-up (loading) included, with what changed in that frame and the one before: 
 (`ecs/entities_delta`), asset events per type (`assets/<Type>/added|modified|removed`), pipelines created
 (`pipelines/created`), streaming stage items and times (`stream/*`), terrain, origin shifts
 (`world/origin_shifts`), big_space propagation.
+
+## Live perf panel (F3, CW-17)
+
+For judging by playing (DECISIONS 2026-11-16: no long bench chains): F3 in any interactive run, release build included,
+shows frame ms (mean, p99, max over 1 s), main/render busy, GPU (timed passes; `BEVYRROWIND_PANEL_GPU_TIMERS=1` at
+start, else n/a), what the frame is bound by, and in full mode GPU passes, views, lights, encoders/submits and every
+non-default tunable. The same gauges as a bench report, live and smoothed: a reading, not a measurement; A/B verdicts
+still come from `perf suite --arm` (ledger). Lines and sources: `docs/wiki/engine/app-and-dev-tools.md` "Perf panel".
 
 ## A/B switches
 

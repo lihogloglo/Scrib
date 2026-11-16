@@ -133,6 +133,21 @@ enum Command {
         #[command(subcommand)]
         command: mods::ModsCommand,
     },
+    /// Every declared tunable (name, default, unit, range, source, lifetime, net, scope, env alias,
+    /// where): `--md` writes the index (`docs/tunables-index.md`), `--json` prints JSON. Needs no
+    /// install. Set one for a run with `view ... --set name=value` (tunables.md).
+    Tunables {
+        /// Write the Markdown index to `--out` (default: `docs/tunables-index.md` at the repo root,
+        /// found from the current folder up).
+        #[arg(long)]
+        md: bool,
+        /// Where `--md` writes.
+        #[arg(long, requires = "md", value_name = "PATH")]
+        out: Option<PathBuf>,
+        /// Print every tunable as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Benchmarks: the suite runner, trace and Nsight summaries (`docs/perf.md`).
     Perf {
         #[command(subcommand)]
@@ -741,6 +756,11 @@ type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[allow(clippy::too_many_lines, reason = "the subcommand dispatch: one short arm per command")]
 fn run(cli: Cli) -> Result {
     mw_boot_bevy::mods::select(mw_boot_bevy::mods::Selection { user_data: cli.user_data, profile: cli.profile });
+    if is_interactive(cli.command.as_ref())
+        && let Some(dir) = mw_boot_bevy::mods::user_data()
+    {
+        mw_devtools_bevy::perf::tunables::set_user_file(dir.join(mw_devtools_bevy::perf::tunables::USER_FILE_NAME));
+    }
     let Some(command) = cli.command else {
         let (install, _) = MorrowindInstall::detect(cli.morrowind.as_deref())?;
         return play(&install);
@@ -755,11 +775,14 @@ fn run(cli: Cli) -> Result {
             return scenes::run(cli.morrowind, name.as_deref(), list, file.as_deref(), extra);
         }
         Command::Perf { command } => return perf::cli::run(command),
+        Command::Tunables { md, out, json } => return tunables_index(md, out, json),
         other => other,
     };
     let (install, origin) = MorrowindInstall::detect(cli.morrowind.as_deref())?;
     match command {
-        Command::Detect | Command::AnimSources | Command::Perf { .. } | Command::Scene { .. } => unreachable!(),
+        Command::Detect | Command::AnimSources | Command::Perf { .. } | Command::Scene { .. } | Command::Tunables { .. } => {
+            unreachable!()
+        }
         Command::Info { conflicts } => info(&install, &origin, conflicts),
         Command::Bake { cache } => mw_boot_bevy::bake::run(&install, cache),
         Command::Weather { command } => mw_environment_bevy::weather::run(&install, command),
@@ -854,6 +877,48 @@ fn run(cli: Cli) -> Result {
         #[cfg(feature = "dev")]
         Command::ClipPreview(args) => clip_preview(&install, args),
     }
+}
+
+/// Whether a command is an interactive game run, which reads the user dev file
+/// `<user data>/tunables.toml`: the game itself and `view` (so `scene`) without `--bench` or
+/// `--screenshot`. Benchmarks and screenshots read only the `--tunables` files they are given, so a
+/// stale local override can't skew a measurement or a baseline (tunables.md "User dev file").
+fn is_interactive(command: Option<&Command>) -> bool {
+    match command {
+        None => true,
+        Some(Command::View { flags, .. }) => flags.bench.is_none() && flags.screenshot.is_none(),
+        Some(_) => false,
+    }
+}
+
+/// `tunables --md [--out PATH]` / `--json`.
+fn tunables_index(md: bool, out: Option<PathBuf>, json: bool) -> Result {
+    use mw_devtools_bevy::perf::tunables::{index_json, index_markdown};
+    let print_md = !json && !md;
+    if json {
+        println!("{}", index_json()?);
+    }
+    if md {
+        let path = match out {
+            Some(p) => p,
+            None => repo_root()?.join("docs").join("tunables-index.md"),
+        };
+        std::fs::write(&path, index_markdown()?)?;
+        println!("wrote {}", path.display());
+    }
+    if print_md {
+        print!("{}", index_markdown()?);
+    }
+    Ok(())
+}
+
+/// The repo root: the first folder from the current one up that holds `docs/wiki/index.md`.
+fn repo_root() -> Result<PathBuf> {
+    let cwd = std::env::current_dir()?;
+    cwd.ancestors()
+        .find(|d| d.join("docs").join("wiki").join("index.md").is_file())
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| format!("no repo root (docs/wiki/index.md) above {}; pass --md <path>", cwd.display()).into())
 }
 
 /// `clip-preview`: the jobs from `--clip` and `--batch`, then the capture run.
@@ -1271,5 +1336,45 @@ fn parse_bodies(s: &str) -> std::result::Result<sf_character_bevy::SmoothBodies,
         "smooth" => Ok(sf_character_bevy::SmoothBodies::Smooth),
         "vanilla" => Ok(sf_character_bevy::SmoothBodies::Vanilla),
         other => Err(format!("bodies {other:?}: smooth or vanilla")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(std::iter::once("bevyrrowind").chain(args.iter().copied())).expect("parses")
+    }
+
+    #[test]
+    fn view_takes_set_and_tunables_files() {
+        let cli = parse(&["view", "-2,-9", "--set", "shadow.lamp.count=4", "--set", "select.gate=on", "--tunables", "a.toml"]);
+        let Some(Command::View { flags, .. }) = &cli.command else { panic!("view") };
+        assert_eq!(flags.perf.set, ["shadow.lamp.count=4", "select.gate=on"]);
+        assert_eq!(flags.perf.tunables, [PathBuf::from("a.toml")]);
+        assert!(is_interactive(cli.command.as_ref()));
+    }
+
+    #[test]
+    fn only_interactive_runs_read_the_user_dev_file() {
+        assert!(is_interactive(None));
+        let bench = parse(&["view", "-2,-9", "--bench", "benchmarks/x.json"]);
+        assert!(!is_interactive(bench.command.as_ref()));
+        let shot = parse(&["view", "-2,-9", "--screenshot", "x.png"]);
+        assert!(!is_interactive(shot.command.as_ref()));
+        assert!(!is_interactive(parse(&["info"]).command.as_ref()));
+    }
+
+    #[test]
+    fn tunables_index_flags() {
+        let md = |cli: Cli| match cli.command {
+            Some(Command::Tunables { md, out, json }) => (md, out, json),
+            _ => panic!("tunables"),
+        };
+        assert_eq!(md(parse(&["tunables", "--md"])), (true, None, false));
+        assert_eq!(md(parse(&["tunables", "--md", "--out", "x.md"])), (true, Some(PathBuf::from("x.md")), false));
+        assert!(Cli::try_parse_from(["bevyrrowind", "tunables", "--out", "x.md"]).is_err());
+        assert_eq!(md(parse(&["tunables", "--json"])), (false, None, true));
     }
 }

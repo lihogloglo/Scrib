@@ -330,6 +330,35 @@ for T3: the app parsing `--set` / `--tunables` / the user dev file and failing t
 (layer, unit, range), `help` source and lifetime, `tunables diff`; a headless test of the BRP glue (a `remote` test
 build is its own Bevy: bevy_utils `debug`), today covered by the pure handlers' tests and the `dev` check build.
 
+**T3 as built (2026-11-16).** `Def::env_alias("BEVYRROWIND_X")` (core `Meta.env_alias`, dump column `env`):
+`register_tunables`/`add_tunable` read it for a freshly registered def (`TunableEnv`: process env, tests swap a map;
+empty = unset), set `CommandLine` noted `env X (deprecated: --set name=value)` with one info line; a bad value goes to
+`OverrideRefusals`. `CommandLineOverrides(Vec<OverrideSet>)` applies sets in order at `CommandLine` in `Plugin::finish`
+(after every `build`), refusals to the same resource. Game side `mw_devtools_bevy/src/perf/tunables.rs`: `PerfFlags`
+`--set`/`--tunables` (every `view`/`scene`/bench run), order user file < `--tunables` files < `--set`; the user dev file
+`<user data>/tunables.toml` only in interactive runs (`main.rs` `is_interactive`: no `--bench`, no `--screenshot`;
+`run_overrides` drops it for benches too); `FailOnRefusals` logs each refusal and exits 2 before the first frame;
+`CATALOG` lists every crate's `TUNABLES` for `bevyrrowind tunables --md|--json` (no app; defaults), and a run warns about
+a `def!` tunable missing from it. Bench reports carry meta `tunables` (non-default values, layer, note); the suite adds a
+"Tunables" section per run; `RunSettings --set` (suite, `--arm`), sweep `--var set:<name>`. Console: `vars` adds unit,
+kind/range; `help <var>` adds source, lifetime, env alias, layers; `tunables diff`. Left: `VarSpec` console vars are not
+indexed; a sweep can't step pair values.
+
+**T4 as built (2026-11-16).** `sf_sky_bevy::quality::ShadowQualityPlugin` (opt-in) binds every shadow and light
+tunable: `shadow.lamp.{count, map_size_px, fade_m, fade_time_s, hysteresis, contact, day_gate(.receiver_m, .contrast),
+face_cull}` into `PointShadowBudget` / `PointShadowFaceCull`; `shadow.sun.gate(.contrast, .hysteresis, .fade_s)` into
+`SunShadowGating`; `shadow.sun.{cascades, distance_m, split_lambda, overlap, soft, soft_size_texels}` into
+`SunShadowQuality` (inserted by the host) → `SkyRenderOptions`, which the sun/moon now follow live (`sync_sky_lights`);
+`shadow.contact(.steps, .thickness_m, .length_m)`, `render.ssao.quality` and `shadow.filter` (auto = temporal under
+TAA/DLSS) inserted/removed on cameras with `ViewQualityCamera` (off keeps the prepasses). Lifetimes: contact on/off,
+GTAO and the filter `Recompile`, the rest `Live` (a map size or cascade count change reallocates). Game side:
+`mw_environment_bevy::shadow_tunables` (alias copies registered first, lamp fade 35/45 m at `Mod`, base `Preset`,
+`--point-shadows`/`--sun-cascades` sugar at `CommandLine`); `mw_exterior_bevy::quality_presets` (interim `Preset` table
+replacing the `QualityRender` shadow arms, golden-tested; `--off contactshadows|ssao|softshadows` at `CommandLine`).
+Left: the sun bias consts, `sf_shadow_cache_bevy` (CW-4), devtools' duplicate `render.ssao`/`render.contactshadows` vars.
+**CW gates live (T4 part 1):** `shadow.lamp.day_gate`, `shadow.lamp.face_cull`, `shadow.sun.gate`, `select.gate`
+(`--off selectgate` at `CommandLine`), `render.skin.skip_unchanged`, `mw.matctrl.gate`; old env names are aliases.
+
 ## Proposed CONTRIBUTING rule (for the orchestrator to apply)
 
 > **No hardcoded tunables (owner 2026-11-16).** A value that trades quality against cost, sets feel, or is a

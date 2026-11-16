@@ -15,24 +15,6 @@ use bevy_transform::components::GlobalTransform;
 use sf_sky_bevy::sf_sky::{RenderPath, Upscaling};
 use sf_sky_bevy::{PointShadowBudget, SkyRenderOptions, UpscalingSetting};
 
-/// Default for `--point-shadows` (perf A/B: `--env BEVYRROWIND_POINT_SHADOWS=0`).
-const ENV_POINT_SHADOWS: &str = "BEVYRROWIND_POINT_SHADOWS";
-
-/// `1`: the lamp shadow budget's contrast gate (`sf_sky_bevy::ShadowContrastGate`, ROADMAP 1.23b):
-/// outdoors, lamps whose shadow the sun and ambient would drown get no cube map. Opt-in until its
-/// interleaved A/B (perf arm `--env BEVYRROWIND_LAMP_DAY_GATE=1`).
-const ENV_LAMP_DAY_GATE: &str = "BEVYRROWIND_LAMP_DAY_GATE";
-
-/// `1`: lamp shadow cube faces that no camera sees a receiver of are not drawn (vendored
-/// `bevy_pbr::PointShadowFaceCull`, ROADMAP 1.25 CW-3b). Opt-in until its interleaved A/B
-/// (perf arm `--env BEVYRROWIND_POINT_FACE_CULL=1`).
-const ENV_POINT_FACE_CULL: &str = "BEVYRROWIND_POINT_FACE_CULL";
-
-/// `1`: the sun/moon shadow gate (`sf_sky_bevy::SunShadowGating`, ROADMAP 1.25 CW-8): their cascades
-/// fade out and turn off where the sky's fill drowns their direct light. Opt-in until its interleaved
-/// A/B (perf arm `--env BEVYRROWIND_SUN_SHADOW_GATE=1`).
-const ENV_SUN_SHADOW_GATE: &str = "BEVYRROWIND_SUN_SHADOW_GATE";
-
 /// Default for `--sun-cascades` (perf A/B: `--env BEVYRROWIND_SUN_CASCADES=3:150`).
 const ENV_SUN_CASCADES: &str = "BEVYRROWIND_SUN_CASCADES";
 
@@ -41,10 +23,6 @@ const ENV_SUN_CASCADES: &str = "BEVYRROWIND_SUN_CASCADES";
 /// per-face light-relative shadow cache (`bevy_pbr::skip_unchanged_shadow_views`)
 /// and the 360° importance pick with off-screen holders in `sf_sky_bevy`.
 pub const POINT_SHADOWS_DEFAULT: (usize, usize) = (8, 512);
-
-/// Lamp shadows fade out between these viewer distances, m (`PointLightShadowFade`
-/// in the PBR shader; 35–45 m covers Balmora street blocks without nearby pop-in).
-const LAMP_SHADOW_FADE: (f32, f32) = (35.0, 45.0);
 
 /// Legacy static/mover cubemap cache (`sf_shadow_cache_bevy`): off now that
 /// vendored `bevy_pbr` caches shadow maps per cubemap face in light-relative
@@ -74,8 +52,8 @@ pub struct RenderSettings {
     pub upscaling: Upscaling,
     /// DLSS Ray Reconstruction on the ray-traced path (`--off denoiser` turns it off).
     pub denoiser: bool,
-    /// Point lights with shadow maps (`--point-shadows`, else
-    /// `BEVYRROWIND_POINT_SHADOWS`, else the quality preset's).
+    /// Point lights with shadow maps (`--point-shadows`): the `CommandLine` layer of
+    /// `shadow.lamp.count` (alias `BEVYRROWIND_POINT_SHADOWS`, set at registration).
     pub point_shadows: Option<usize>,
     /// Cached point-light shadow maps (`--off shadowcache` turns them off).
     pub shadow_cache: bool,
@@ -88,17 +66,9 @@ pub struct RenderSettings {
     /// Far sun cascades keep their fit and map between redraws (ROADMAP 1.22 F3,
     /// `sf_sky_bevy::SunCascadeHold`; `--off cascadehold`: every cascade drawn every frame).
     pub cascade_hold: bool,
-    /// Sun cascades `(count, last bound m)` instead of the preset's
-    /// (`--sun-cascades`, else `BEVYRROWIND_SUN_CASCADES`).
+    /// Sun cascades `(count, last bound m)` (`--sun-cascades`, else `BEVYRROWIND_SUN_CASCADES`): the
+    /// `CommandLine` layer of `shadow.sun.cascades` and `shadow.sun.distance_m`.
     pub sun_cascades: Option<(usize, f32)>,
-    /// The lamp shadow budget's contrast gate (`BEVYRROWIND_LAMP_DAY_GATE=1`; off by default).
-    pub lamp_day_gate: bool,
-    /// Lamp cube faces no camera sees a receiver of are not drawn
-    /// (`BEVYRROWIND_POINT_FACE_CULL=1`; off by default; `bevy_pbr::PointShadowFaceCull`).
-    pub point_face_cull: bool,
-    /// Sun/moon cascades follow their direct light's visible contribution
-    /// (`BEVYRROWIND_SUN_SHADOW_GATE=1`; off by default; `sf_sky_bevy::SunShadowGating`).
-    pub sun_shadow_gate: bool,
 }
 
 /// `N:M`: `N` sun cascades out to `M` meters.
@@ -130,24 +100,17 @@ impl RenderSettings {
             eprintln!("--dlss needs a build with `--features dlss`; TAA instead");
         }
         let path = if ray_traced { RenderPath::RayTraced } else { RenderPath::Raster };
-        let point_shadows = std::env::var(ENV_POINT_SHADOWS).ok().and_then(|v| v.trim().parse().ok());
         let sun_cascades = std::env::var(ENV_SUN_CASCADES).ok().and_then(|v| parse_sun_cascades(&v).ok());
-        let lamp_day_gate = std::env::var(ENV_LAMP_DAY_GATE).is_ok_and(|v| v.trim() == "1");
-        let point_face_cull = std::env::var(ENV_POINT_FACE_CULL).is_ok_and(|v| v.trim() == "1");
-        let sun_shadow_gate = std::env::var(ENV_SUN_SHADOW_GATE).is_ok_and(|v| v.trim() == "1");
         Ok(Self {
             path,
             upscaling,
             denoiser,
-            point_shadows,
+            point_shadows: None,
             shadow_cache: true,
             mover_shadows: true,
             cascade_encoders: true,
             cascade_hold: true,
             sun_cascades,
-            lamp_day_gate,
-            point_face_cull,
-            sun_shadow_gate,
         })
     }
 
@@ -225,34 +188,29 @@ impl RenderSettings {
         self
     }
 
-    /// The point-light shadow budget: the override's count, else the
-    /// preset's `(count, face size)`; the contrast gate on with `BEVYRROWIND_LAMP_DAY_GATE=1`
-    /// (its thresholds the framework's tunable defaults).
+    /// The point-light shadow budget at its starting values: the override's count, else the
+    /// preset's `(count, face size)`, Bevyrrowind's fade band, the framework's other defaults.
+    /// In apps with [`Self::insert`] the tunables then drive it (`sf_sky_bevy::ShadowQualityPlugin`).
     pub fn point_shadow_budget(self, preset: (usize, usize)) -> PointShadowBudget {
-        let (fade_start, fade_end) = LAMP_SHADOW_FADE;
-        let contrast_gate = sf_sky_bevy::ShadowContrastGate { enabled: self.lamp_day_gate, ..Default::default() };
-        PointShadowBudget { max: self.point_shadows.unwrap_or(preset.0), map_size: preset.1, fade_start, fade_end, contrast_gate, ..PointShadowBudget::default() }
+        let [fade_start, fade_end] = crate::shadow_tunables::LAMP_FADE_M;
+        PointShadowBudget { max: self.point_shadows.unwrap_or(preset.0), map_size: preset.1, fade_start, fade_end, ..PointShadowBudget::default() }
     }
 
-    /// `BEVYRROWIND_LAMP_DAY_GATE=1` from code (tests, A/B tools).
-    #[must_use]
-    pub fn with_lamp_day_gate(mut self, on: bool) -> Self {
-        self.lamp_day_gate = on;
-        self
-    }
-
-    /// Before the sky plugin: its settings resources.
+    /// Before the sky plugin: its settings resources, and the shadow and light tunables
+    /// (`shadow_tunables`: alias copies first, then `sf_sky_bevy::ShadowQualityPlugin` binds them;
+    /// the lamp budget, face culling and the sun gate follow them live).
     pub fn insert(self, app: &mut App) {
+        crate::shadow_tunables::register(app, POINT_SHADOWS_DEFAULT, self.point_shadows, self.sun_cascades);
+        if !app.is_plugin_added::<sf_sky_bevy::ShadowQualityPlugin>() {
+            app.add_plugins(sf_sky_bevy::ShadowQualityPlugin);
+        }
         app.insert_resource(UpscalingSetting(self.upscaling));
         app.insert_resource(self.point_shadow_budget(POINT_SHADOWS_DEFAULT));
         app.insert_resource(bevy_pbr::ShadowMoverRefresh { per_frame: self.mover_shadows });
-        // CW-3b: the margin comes from the framework's tunable (`sf_sky_bevy`).
-        app.insert_resource(bevy_pbr::PointShadowFaceCull { enabled: self.point_face_cull, ..Default::default() });
-        // CW-8: the thresholds are the framework's tunables (`sf_sky::sun_gate`).
-        app.insert_resource(sf_sky_bevy::SunShadowGating(sf_sky_bevy::sf_sky::sun_gate::SunShadowGate {
-            enabled: self.sun_shadow_gate,
-            ..Default::default()
-        }));
+        // CW-3b: `shadow.lamp.face_cull` and its margin (tunables).
+        app.insert_resource(bevy_pbr::PointShadowFaceCull::default());
+        // CW-8: `shadow.sun.gate` and its thresholds (tunables, `sf_sky::sun_gate`).
+        app.insert_resource(sf_sky_bevy::SunShadowGating::default());
         app.insert_resource(bevy_pbr::ShadowCascadeEncoders(self.cascade_encoders));
         app.insert_resource(sf_sky_bevy::SunCascadeHold(sf_sky_bevy::sf_sky::cascade_hold::CascadeHoldConfig {
             enabled: self.cascade_hold,
@@ -412,48 +370,75 @@ mod tests {
         assert!((0..8).all(|i| bevy_pbr::per_view_shadow_encoder_slot(i, false) == 0));
     }
 
-    /// ROADMAP 1.23b: the lamp contrast gate is off unless asked for; on, it keeps the framework's
-    /// thresholds and the lamp budget's other settings.
-    #[test]
-    fn lamp_day_gate_is_opt_in() {
-        let base = RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings");
-        assert!(!RenderSettings { lamp_day_gate: false, ..base }.point_shadow_budget(POINT_SHADOWS_DEFAULT).contrast_gate.enabled);
-        let off = base.with_lamp_day_gate(false).point_shadow_budget(POINT_SHADOWS_DEFAULT);
-        let on = base.with_lamp_day_gate(true).point_shadow_budget(POINT_SHADOWS_DEFAULT);
-        assert!(on.contrast_gate.enabled && !off.contrast_gate.enabled);
-        let defaults = sf_sky_bevy::ShadowContrastGate::default();
-        assert_eq!(on.contrast_gate, sf_sky_bevy::ShadowContrastGate { enabled: true, ..defaults });
-        assert_eq!(PointShadowBudget { contrast_gate: off.contrast_gate, ..on }, off);
+    /// A render-settings app with the tunables plugin and a fixed environment (the aliases).
+    fn tunable_app(env: &[(&str, &str)]) -> App {
+        let mut app = App::new();
+        app.add_plugins(sf_tunables_bevy::TunablesPlugin).insert_resource(sf_tunables_bevy::TunableEnv::from_pairs(env));
+        RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings").with_shadow_cache(false).insert(&mut app);
+        app.update();
+        app
     }
 
-    /// CW-3b (ROADMAP 1.25): lamp face culling is off unless asked for; on, it keeps the default margin.
-    #[test]
-    fn point_face_cull_is_opt_in() {
-        for on in [false, true] {
-            let mut app = App::new();
-            let settings = RenderSettings { point_face_cull: on, ..RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings") }
-                .with_shadow_cache(false);
-            settings.insert(&mut app);
-            let cull = *app.world().get_resource::<bevy_pbr::PointShadowFaceCull>().expect("face cull settings");
-            assert_eq!(cull, bevy_pbr::PointShadowFaceCull { enabled: on, ..Default::default() });
-        }
-        assert!(!bevy_pbr::PointShadowFaceCull::default().enabled);
+    fn console_set(app: &mut App, name: &str, value: &str) {
+        app.world_mut().write_message(sf_tunables_bevy::SetTunable::new(name, value, sf_tunables_bevy::SetBy::Console));
+        app.update();
     }
 
-    /// CW-8 (ROADMAP 1.25): the sun/moon shadow gate is off unless asked for; on, it keeps the
-    /// framework's thresholds.
+    /// CW gates (ROADMAP 1.23b, 1.25 CW-3b, CW-8) are live tunables: off by default, on through the old
+    /// env switch (alias), and a console set flips each one both ways, reaching its consumer next frame.
     #[test]
-    fn sun_shadow_gate_is_opt_in() {
+    fn cw_shadow_gates_are_live_tunables() {
         use sf_sky_bevy::sf_sky::sun_gate::SunShadowGate;
-        for on in [false, true] {
-            let mut app = App::new();
-            let settings = RenderSettings { sun_shadow_gate: on, ..RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings") }
-                .with_shadow_cache(false);
-            settings.insert(&mut app);
-            let gate = app.world().get_resource::<sf_sky_bevy::SunShadowGating>().expect("gate settings").0;
-            assert_eq!(gate, SunShadowGate { enabled: on, ..SunShadowGate::default() });
+        let read = |app: &App| {
+            let w = app.world();
+            (
+                w.resource::<PointShadowBudget>().contrast_gate.enabled,
+                w.resource::<bevy_pbr::PointShadowFaceCull>().enabled,
+                w.resource::<sf_sky_bevy::SunShadowGating>().0.enabled,
+            )
+        };
+        let mut app = tunable_app(&[]);
+        assert_eq!(read(&app), (false, false, false), "off by default");
+        let env = [("BEVYRROWIND_LAMP_DAY_GATE", "1"), ("BEVYRROWIND_POINT_FACE_CULL", "1"), ("BEVYRROWIND_SUN_SHADOW_GATE", "1")];
+        let mut aliased = tunable_app(&env);
+        assert_eq!(read(&aliased), (true, true, true), "env aliases");
+        for (name, value) in [("shadow.lamp.day_gate", "off"), ("shadow.lamp.face_cull", "off"), ("shadow.sun.gate", "off")] {
+            console_set(&mut aliased, name, value);
         }
-        assert!(!SunShadowGate::default().enabled);
+        assert_eq!(read(&aliased), (false, false, false), "console above the alias");
+        for (name, value) in [("shadow.lamp.day_gate", "on"), ("shadow.lamp.face_cull", "on"), ("shadow.sun.gate", "on")] {
+            console_set(&mut app, name, value);
+        }
+        assert_eq!(read(&app), (true, true, true), "live on");
+        // The thresholds stay the framework's.
+        let w = app.world();
+        assert_eq!(w.resource::<sf_sky_bevy::SunShadowGating>().0, SunShadowGate { enabled: true, ..SunShadowGate::default() });
+        assert_eq!(w.resource::<PointShadowBudget>().contrast_gate, sf_sky_bevy::ShadowContrastGate { enabled: true, ..Default::default() });
+        assert_eq!(*w.resource::<bevy_pbr::PointShadowFaceCull>(), bevy_pbr::PointShadowFaceCull { enabled: true, ..Default::default() });
+    }
+
+    /// The lamp budget follows its tunables: Bevyrrowind's fade at the `Mod` layer (two truths), the
+    /// base preset's count and face size, `--point-shadows` and its env alias at `CommandLine`, a
+    /// console set live.
+    #[test]
+    fn lamp_budget_follows_its_tunables() {
+        let app = tunable_app(&[]);
+        let b = *app.world().resource::<PointShadowBudget>();
+        assert_eq!((b.max, b.map_size, b.fade_start, b.fade_end), (8, 512, 35.0, 45.0));
+        let tunables = app.world().resource::<sf_tunables_bevy::Tunables>();
+        let fade = tunables.var(tunables.id("shadow.lamp.fade_m").expect("fade"));
+        assert_eq!((fade.set_by(), fade.default()), (sf_tunables_bevy::SetBy::Mod, &sf_tunables_bevy::Value::Float2([15.0, 25.0])));
+        let mut app = tunable_app(&[("BEVYRROWIND_POINT_SHADOWS", "2")]);
+        assert_eq!(app.world().resource::<PointShadowBudget>().max, 2, "env alias");
+        console_set(&mut app, "shadow.lamp.count", "5");
+        console_set(&mut app, "shadow.lamp.fade_m", "10,20");
+        let b = *app.world().resource::<PointShadowBudget>();
+        assert_eq!((b.max, b.fade_start, b.fade_end), (5, 10.0, 20.0));
+        let mut cli = App::new();
+        cli.add_plugins(sf_tunables_bevy::TunablesPlugin).insert_resource(sf_tunables_bevy::TunableEnv::from_pairs(&[("BEVYRROWIND_POINT_SHADOWS", "2")]));
+        RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings").with_point_shadows(Some(3)).insert(&mut cli);
+        cli.update();
+        assert_eq!(cli.world().resource::<PointShadowBudget>().max, 3, "--point-shadows wins over the env");
     }
 
     /// CW-8: the sun's and moons' shadow contrast on a receiver facing them per weather and hour, as the
