@@ -32,8 +32,9 @@ of multi-draw-indirect calls. CPU cost scales with changed instances and batch c
 ## Where Scrib stands
 Bevy 0.20 already does GPU preprocessing, multi-draw indirect and bindless, so identical mesh plus material becomes
 one indirect draw. Missing against the standard: CPU visibility still runs per entity per view unless the entity has
-`NoCpuCulling`, and phase items are per entity. We use the opt-in `NoCpuCulling` path on near statics and are
-building a retained static scene (upstream bevy#25978) so phase items become O(batch sets). No meshlet path (Bevy
+`NoCpuCulling`, and phase items are per entity. Neither answer is on by default: `NoCpuCulling` on
+near statics is opt-in (`BEVYRROWIND_GPU_CULL_STATICS=1`, frame parity and main -0.7 ms on 2026-11-16) and the retained
+static scene (upstream bevy#25978) is frozen (`--scene`, ROADMAP 1.16, delete on hold). No meshlet path (Bevy
 meshlets rejected, audit row 32). See [engine/statics-and-lod](../engine/statics-and-lod.md),
 [engine/frame-and-views](../engine/frame-and-views.md), [bevy/render-and-visibility](../bevy/render-and-visibility.md),
 [ledger/perf](../../ledger/perf.md) and [ledger/statics](../../ledger/statics.md).

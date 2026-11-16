@@ -71,6 +71,7 @@ main/render/GPU ms beside the frame. Below that size the verdict is "inconclusiv
 [First person](industry/first-person.md): true first person vs arms rig, view model FOV, camera styles, first-person melee
 [Bevy projects](industry/bevy-projects.md): what other Bevy open-world projects do, and that none reach the target scale
 [Clouds and weather](industry/clouds-and-weather.md): Nubis/HZD coverage maps, regional influence, envelope clouds, rain under cloud density, UE local fog, why local storms must not be pillars
+[Crimson Desert](industry/crimson-desert.md): per-pixel RT GI and RT AO, SSR with an RT fallback, lit volumes, displacement/parallax and screen-space displacement; what fits our CPU-bound frame (screen-space lamp shadows)
 [FableFlight](industry/fableflight.md): code study of an open-source flight sim with a horizon-wide view; what makes its distance cheap (satellite far albedo, SSE LOD, sliced map refresh, 160 km clouds, shadowed haze), ranked takeaways for us
 
 ## Ledgers (`../ledger/`)

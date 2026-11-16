@@ -3,8 +3,9 @@
 ## What it does
 
 Sun shadows are stock Bevy 0.20 cascades with our split layout, world-unit PCSS and contact shadows (vendored
-`bevy_pbr`). Past the cascades the terrain shadows itself (far shadow map). Lamps get a few budgeted cube maps whose
-static casters are cached; moving casters are redrawn over the cache. Everything else is unshadowed.
+`bevy_pbr`). Past the cascades the terrain shadows itself (far shadow map). Lamps get a few budgeted cube maps; a face is
+redrawn whole when anything in it changed and skipped otherwise. There is no static caster cache in the game (below).
+Everything else is unshadowed.
 
 ## How it works
 
@@ -41,7 +42,8 @@ static casters are cached; moving casters are redrawn over the cache. Everything
   nothing for a holder whose range sphere is in no camera frustum (`vendor/README.md` "SH-21b"). Game numbers: High 8 maps at 512, Medium 6 at 512, Low 0,
   Ultra 12 at 1024 (`exterior.rs:1517`, `mw_environment_bevy/src/render.rs:28`); fade 35-45 m (`render.rs:32`).
   `drop_stale_light_views` (`:236`) frees face views of lights that lost a map (a Bevy 0.20 leak).
-- **Lamp cache.** `sf_shadow_cache_bevy` (`lib.rs:1`-`:70`, `ShadowCachePlugin` `:209`): per shadowed light a persistent
+- **Lamp cache: not in the game** (`POINT_SHADOW_CACHE = false`, `mw_environment_bevy/src/render.rs:37`, since
+  2026-10-21; `--off shadowcache` is a no-op). As built: `sf_shadow_cache_bevy` (`lib.rs:1`-`:70`, `ShadowCachePlugin` `:209`): per shadowed light a persistent
   cube array holds the depth of its static casters; Bevy's views draw movers over a restored copy. Captures:
   `captures_per_frame` 2, `recapture_interval` 2 s, `settle_time` 1 s, 24 slots (`:85`-`:125`). Skinned meshes and
   `ShadowMobility::Movable` always count as movers (`:401`-`:416`). GPU-culled statics (`NoCpuCulling`) are listed by

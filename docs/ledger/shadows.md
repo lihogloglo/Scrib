@@ -32,7 +32,8 @@ Format: `date | tried | result | verdict | commit or doc`. Newest first. Owner c
 ## Standing facts
 
 - Stock Bevy shadows plus vendored patches; never inject into Bevy's render world (DECISIONS 2026-10-21).
-- The lamp cache is needed: moving casters defeat Bevy's skip rule (B1 measurement).
+- A static lamp cache is needed (moving casters defeat Bevy's skip rule, B1 measurement) but none runs:
+  `sf_shadow_cache_bevy` is off since 2026-10-21 (`mw_environment_bevy/src/render.rs:37`).
 - Contact shadows are visible outdoors; lamp contact shadows cost about 0.8 ms GPU per lamp at native 1440p.
 - Lamp shadow quality (SH-13, SH-21) is the open core problem (hard problem H2); perf work on it is parked.
 - Meshes that cast nothing need `NotShadowCaster`, or the cache tracks them and never settles.

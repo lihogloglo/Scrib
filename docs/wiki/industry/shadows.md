@@ -27,18 +27,24 @@
 | bevy_terrain | Heightfield-raymarched terrain shadow, called "RDR2-style" in its source | `docs/research/bevy-open-world-projects-2026-11-12.md` |
 
 ## Key numbers
-- Bevy 0.20: at most 4 cascades; ours span 10 m (first bound) to 504 m
-  (`superfargoth/docs/research/shadows/README.md` s3).
+- Bevy 0.20: at most 4 cascades; ours: 3 cascades to 205 m on High, 4 to 280 m on Ultra
+  ([engine/shadows](../engine/shadows.md)).
 - Bevy `ContactShadows` default: 16 steps, 0.3 m ray.
 - Mudcrab (Bevy, Skyrim data): 4 cascades at 2048 squared, `maximum_distance` fitted to the streamed radius; its doc
   names distance, then cascade count, then map size as the levers (`superfargoth/docs/research/perf/README.md` Q5).
-- Our local lights: one shadowed point light on High.
+- Our local lights: 8 shadowed lamps at 512 px on High, 12 at 1024 on Ultra.
 
 ## Where Scrib stands
-Match: shadowed-light budget with importance and hysteresis, static caster caching (vendored bevy PRs #26149 and
-#26161 skip unchanged views), selection by contribution including off-screen lights. Gaps against UE5: no virtual map
-or atlas with per-light resolution (one cube size), no per-cascade size-based caster culling, no distance-field far
-shadows beyond terrain, no cascade cache in Bevy. Contact shadows: sun and moon only. See
+Match: shadowed-light budget with importance and hysteresis, selection all around the viewer, on screen or not.
+Partial (audit 2026-11-16, `docs/reviews/technique-gap-audit-2026-11-16.md`): lamp faces are skipped only while
+nothing in them changed (vendored fork of bevy #26149 and #26161); this is **not** static caster caching: a mover
+redraws the face whole, every face stays a render view with its CPU cost, and the static cache `sf_shadow_cache_bevy`
+is off (`POINT_SHADOW_CACHE`, `bevyrrowind/crates/mw_environment_bevy/src/render.rs:37`). The importance is range over
+distance, with no sun or ambient term (lamps shadow at noon). Gaps against UE5/RDR2: no static lamp cache, no
+per-face culling, no virtual map or atlas with per-light resolution (one cube size), no per-cascade size-based caster
+culling, no distance-field far shadows beyond terrain, no static cascade cache (far cascades are held up to 4 frames).
+Contact shadows: sun and moon, lamps on High and Ultra. Screen-space shadows for the lamps beyond the budget
+(Days Gone's Bend SSS; no extra views, fits our CPU-bound frame): [Crimson Desert](crimson-desert.md). See
 [engine/shadows](../engine/shadows.md), [engine/lights](../engine/lights.md) and [ledger/shadows](../../ledger/shadows.md).
 
 ## Sources

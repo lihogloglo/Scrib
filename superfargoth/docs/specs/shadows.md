@@ -324,10 +324,10 @@ Superseded by the shadow reset (2026-10-21); moved verbatim to [archive/shadows-
 |---|---|---|---|
 | Shadowed-light budget + fade | HDRP max shadows + fade distance; UE per-light fade; Clockwork | `PointShadowBudget`, importance, hysteresis, crossfade | **match** |
 | Selection by contribution incl. off-screen lights | Clockwork; HDRP (screen-size based) | `shadow_importance` on shown lights, in view or not | **match** |
-| Static caster caching | Doom 2016, HDRP mixed cached, UE cached shadows, Flax | `sf_shadow_cache_bevy` (auto mobility); Bevy still runs its per-face views | **match** since reset B1: vendored PRs #26149/#26161 skip unchanged views, cache kept (see "Reset B1 as built") |
-| Dynamic casters over cached copy | HDRP, UE, Clockwork (30 Hz) | `sf_shadow_cache_bevy` composites movers over the static copy; #26161 alone redraws whole cubes (see "Reset B1 as built") | **stale, see Reset A1-B2** |
+| Static caster caching | Doom 2016, HDRP mixed cached, UE cached shadows, Flax | `sf_shadow_cache_bevy` (auto mobility); Bevy still runs its per-face views | **GAP** (audit 2026-11-16): cache off in the game since 2026-10-21 (`POINT_SHADOW_CACHE = false`); vendored PRs #26149/#26161 only skip unchanged views (see "Reset B1 as built") |
+| Dynamic casters over cached copy | HDRP, UE, Clockwork (30 Hz) | `sf_shadow_cache_bevy` composites movers over the static copy; #26161 alone redraws whole cubes (see "Reset B1 as built") | **GAP**: no mover compositing in the game; 2 + 1 lights redraw per frame |
 | Atlas, per-light resolution | Doom, HDRP | one global cube size | **GAP (P2)**: slice 3 |
-| Contact shadows for unshadowed lights | UE | sun and moon only, 0.3 m; lamps none since reset A1 (see "Reset A1 as built") | **differ**: engines use one key light, short ray |
+| Contact shadows for unshadowed lights | UE | sun and moon, 0.3 m; lamps on High and Ultra (`PointShadowBudget::contact_shadows`) | **differ**: engines use one key light, short ray |
 
 ## Co-op
 
