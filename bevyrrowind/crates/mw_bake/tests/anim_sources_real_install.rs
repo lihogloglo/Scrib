@@ -38,10 +38,6 @@ const VAULT: &str = "quaternius_ual2:SafetyVault";
 /// The shipped LAFAN1 candidate (second, after UAL2; private only): a run-in
 /// step-up onto a 1.05 m box. Its tests resolve it explicitly.
 const LAFAN1: &str = "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2";
-/// Every slot in the shipped manifest with a non-LAFAN1 candidate: the 4 traversal slots (`traverse.climb.up` = UAL1
-/// `ClimbLedge`, for B3; the two mantles; the vault), the 21 combat slots (7 of them the heavy chain), the 3 guard
-/// slots (`guard.sword_1h.{raise,idle,break}`, C2b) and the 2 Quaternius get-ups (`getup.supine`, `getup.prone`).
-const SLOTS: usize = 30;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
 const TARGETS: usize = 3;
 
@@ -164,7 +160,10 @@ fn mantle_clip_retargets_onto_the_humanoid_skeletons() {
     assert!(report.slots.contains(&format!("{SLOT}: {REFERENCE}")), "{:?}", report.slots);
     assert!(report.slots.contains(&format!("{HIGH_SLOT}: {HIGH}")), "{:?}", report.slots);
     assert!(report.slots.contains(&format!("{VAULT_SLOT}: {VAULT}")), "{:?}", report.slots);
-    assert_eq!(report.library_clips, SLOTS * TARGETS);
+    // Every slot left with a candidate (LAFAN1 dropped) retargets onto each target; a slot without one plays its
+    // fallback. Counted from the manifest: a constant went stale each time slots were added (ROADMAP 1.21).
+    let slots = s.sources.manifest.slots.values().filter(|slot| !slot.candidates.is_empty()).count();
+    assert_eq!(report.library_clips, slots * TARGETS);
 
     for set in &HUMANOID_SETS[..TARGETS] {
         let target = skeleton(&baker, set.skeleton);
@@ -196,7 +195,12 @@ fn mantle_clip_retargets_onto_the_humanoid_skeletons() {
         let used = &graph.clips[usize::from(*slot)];
         assert_eq!(used.product, retargeted(&s, set.skeleton));
         assert_eq!((used.provenance.source.as_str(), used.provenance.license.as_str(), used.provenance.redistributable), ("quaternius_ual2", "CC0-1.0", true));
-        assert_eq!(graph.non_redistributable().count(), 0);
+        // Only clips from private-only sources (e.g. the generated gait cycles, local until the owner's licence
+        // check) may be non-redistributable.
+        for clip in graph.non_redistributable() {
+            let source = s.sources.manifest.sources.get(&clip.provenance.source);
+            assert!(source.is_some_and(|src| src.private_only), "{}: {} not redistributable", set.skeleton, clip.reference);
+        }
     }
 }
 
