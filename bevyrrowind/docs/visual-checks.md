@@ -81,8 +81,9 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (53)
+### Awaiting owner (54)
 
+EX-1 | awaiting owner (fix E1+E1b built 2026-11-17: tune `sky.moon.sky_scatter`, `sky.night.glow_ratio` live; floor 4.5 default) | [weather-sky](visual-checks/weather-sky.md) | Night darkness, three launch-flag arms vs today (`view "Balmora" --day 173 --hour 3.5 --weather clear`; `--night-ambient 2`, `--exposure-floor 4.5`, both halfway)
 WA-7 | confirmed with follow-up (owner 2026-11-17: no regression, no visible change; F3 GPU numbers missing) | [terrain-water](visual-checks/terrain-water.md) | Water chain gated by visible water (CW-10a): release, `view "Balmora"` street then the river bank at noon, `set water.gate.visible on`, F3 GPU water passes before/after; turning toward/away from water: no pop, reflections valid (2026-11-17)
 WA-6 | partial (2026-11-13: storm sea far too tame; moving white shore band in rivers/lakes, still seen 2026-11-15) | [terrain-water](visual-checks/terrain-water.md) | The sea follows the weather (W-WIND): `scene wa-seyda-noon`, BRP weather thunderstorm and back to clear (`time_scale` 120); smooth roughening and calming, no pop or re-roll; A/B `--off seawind` (2026-11-13)
 WE-15 | partial (2026-11-13: clouds still goofy; bigger shape pass later) | [weather-sky](visual-checks/weather-sky.md) | Storm cloud shape (S3): `scene we3-ridge` 14:00, BRP thunderstorm over Ascadian Isles, look E/SE; domed tapering cells, anvil shelves, ragged base, sloped edge, not an extruded footprint; A/B `--off cbshape` (2026-11-13)

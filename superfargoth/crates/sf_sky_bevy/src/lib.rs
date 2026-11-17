@@ -53,6 +53,8 @@ mod lamp_cache_tests;
 mod sun_gate_tests;
 #[cfg(test)]
 mod quality_tests;
+#[cfg(test)]
+mod moon_scatter_tests;
 
 use bevy_app::{App, FixedUpdate, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{Assets, Handle};
@@ -72,6 +74,8 @@ use bevy_transform::TransformSystems;
 
 pub use sf_sky;
 use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
+use sf_tunables::{Def, Group, Net, Scope, Source, Unit, def};
+use sf_tunables_bevy::TunablesAppExt;
 
 pub use cascade_hold::{CascadeHoldStats, HeldSunCascades, SunCascadeHold};
 pub use cascades::{cascade_texel_sizes, CascadeSplits};
@@ -283,6 +287,19 @@ pub struct SunLight;
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct MoonLight;
 
+/// `sky.moon.sky_scatter`: the moon light's [`bevy_pbr::DirectionalLightAtmosphereScatter`]
+/// (E1b, `docs/specs/exposure-tonemap.md`). The moonlight is artistic (far above a real moon's),
+/// so the atmosphere scattering all of it paints a day-blue night sky; the land keeps the full
+/// light. UE's per-light `Atmosphere Sun Light` opt-out, as a ratio.
+pub const MOON_SKY_SCATTER: Def<f32> = def!(float "sky.moon.sky_scatter" = 0.15)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Share of the moon's light the sky atmosphere scatters (the night sky's colour and the moon's halo); the ground keeps the full light")
+    .source(Source::Guess)
+    .scope(Scope::Player)
+    .net(Net::Presentation)
+    .group(Group::Sky);
+
 /// The `Atmosphere` entity (spawned by the plugin).
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct SkyAtmosphere;
@@ -335,6 +352,10 @@ impl Plugin for SkyPlugin {
                 (SkySystems::Clock, SkySystems::RenderPath, SkySystems::Apply).chain(),
             )
             .add_systems(Startup, spawn_sky);
+        // E1b: the moon's share of the sky atmosphere (vendored `bevy_pbr`, own patch).
+        let _bound = app
+            .add_tunable(&MOON_SKY_SCATTER)
+            .bind_component::<bevy_pbr::DirectionalLightAtmosphereScatter, With<MoonLight>>(|scatter, ratio| scatter.0 = ratio);
         if !app.is_plugin_added::<PointShadowPlugin>() {
             app.add_plugins(PointShadowPlugin);
         }
@@ -513,6 +534,8 @@ fn spawn_sky(
                 angular_size: settings.moon_angular_size,
                 intensity: 0.0,
             },
+            // E1b: `sky.moon.sky_scatter` drives it (bound in `SkyPlugin::build`).
+            bevy_pbr::DirectionalLightAtmosphereScatter(MOON_SKY_SCATTER.default_value()),
             moon_cascades,
             Transform::default(),
         ));

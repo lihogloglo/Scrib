@@ -240,7 +240,9 @@ fn sample_local_inscattering(local_scattering: vec3<f32>, ray_dir: vec3<f32>, wo
         let psi_ms = sample_multiscattering_lut(local_r, mu_light);
         let multiscattering_factor = psi_ms * local_scattering;
 
-        inscattering += (*light).color.rgb * (scattering_factor + multiscattering_factor);
+        // superfargoth patch (own, E1b: directional atmosphere scatter): the light's share of
+        // the sky (single + multiple scattering), 1 = stock.
+        inscattering += (*light).color.rgb * (*light).atmosphere_scatter * (scattering_factor + multiscattering_factor);
     }
     return inscattering;
 }
@@ -498,7 +500,9 @@ fn raymarch_atmosphere(
         for (var light_i: u32 = 0u; light_i < lights.n_directional_lights; light_i++) {
             let light = &lights.directional_lights[light_i];
             let light_dir = (*light).direction_to_light;
-            let light_color = (*light).color.rgb;
+            // superfargoth patch (own, E1b: directional atmosphere scatter): the virtual planet
+            // ground below the horizon is part of the sky the light lights, so it scales too.
+            let light_color = (*light).color.rgb * (*light).atmosphere_scatter;
             let transmittance_to_ground = exp(-optical_depth);
             // position on the sphere and get the sphere normal (up)
             let sphere_point = pos + ray_dir * t_end;

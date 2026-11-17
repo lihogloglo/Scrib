@@ -1871,3 +1871,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-17 (NS-3b, follows the moonrise decision): the modern rule moves OpenMW's rise-hour handovers to moments the moon is
   invisible (below the horizon or faded out by day), so modern moons can stand hours along their arc from OpenMW's on a given
   night (Masser ~47 deg ahead on clock day 172). Presentation only: rules that read moon phase (MWScript) use the classic model.
+- 2026-11-17 (owner, exposure-tonemap): eye adaptation wanted; every exposure, night-darkness, tonemap, grade and bloom value is a
+  Player tunable with its own row on a new options page, Image (answers tunables open question 1 for this system). Exposure
+  design: pre-exposure (CPU-adapted EV written to the camera), schedule kept for benchmarks (spec exposure-tonemap.md).

@@ -23,7 +23,10 @@ get shadow maps (see [shadows](shadows.md)). Night readability comes from an amb
   Extraction re-runs every frame for animated lights; per [lights spec](../../../superfargoth/docs/specs/lights.md) neither
   that nor `prepare_lights` showed up above 0.4 ms. No light budget or draw distance exists beyond the shadow budget.
 - **Night brightness and ambient.** The exterior ambient floor is `night_ambient_nits` 4 (sun below -12 deg, fading
-  out by -4 deg; `LightCalibration::apply_sky` `lights.rs:93`); the exposure floor is EV100 3.5 (same default); interior cell
+  out by -4 deg; `LightCalibration::apply_sky` `lights.rs:93`); the exposure floor is EV100 4.5 (owner EX-1, 2026-11-17; was 3.5).
+  Both, the moon ratio and the sky glow ratio are live tunables (`exposure.min_ev100`, `sky.night.ambient_nits`,
+  `sky.moon.light_floor_ratio`, `sky.night.glow_ratio`; `mw_assets::lights::add_night_tunables`, exterior only);
+  the moon scatters `sky.moon.sky_scatter` (0.15) of its light into the sky (vendored per-light scale, E1b); interior cell
   ambient is 300 nits x cell colour (`ambient` `:106`). The flat ambient lights diffuse only
   (`AmbientLightSpecular(false)`, `mw_environment_bevy/src/render.rs:183`; vendor row N1, `vendor/README.md:27`).
   Moonlight is 2.5 x pi x the floor in lux, artistic (`FULL_MOONLIGHT_FLOOR_RATIO`, `lights.rs:77`).

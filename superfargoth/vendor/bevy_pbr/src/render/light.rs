@@ -109,6 +109,31 @@ impl Default for DirectionalLightShadowFade {
     }
 }
 
+/// Scale in `0.0..=1.0` of a [`DirectionalLight`]'s light scattered by the `Atmosphere` (the
+/// sky, aerial perspective, the atmosphere environment map and the atmosphere's virtual ground
+/// bounce); its disk, its transmittance and the light it casts on surfaces stay. Absent = 1
+/// (stock). UE's per-light `Atmosphere Sun Light` opt-in (here a ratio, 0 = opt out); Bevy 0.20
+/// scatters every directional light fully.
+// superfargoth patch (own, E1b: directional atmosphere scatter)
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct DirectionalLightAtmosphereScatter(pub f32);
+
+impl Default for DirectionalLightAtmosphereScatter {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+/// The scale [`extract_lights`] puts on the GPU light: the component clamped to `0..=1`, 1 when
+/// absent or not a number (stock).
+// superfargoth patch (own, E1b: directional atmosphere scatter)
+pub fn atmosphere_scatter_ratio(scatter: Option<&DirectionalLightAtmosphereScatter>) -> f32 {
+    match scatter {
+        Some(scatter) if !scatter.0.is_nan() => scatter.0.clamp(0.0, 1.0),
+        _ => 1.0,
+    }
+}
+
 #[derive(Component)]
 #[require(PointAndSpotLightViewEntities)]
 pub struct ExtractedPointLight {
@@ -168,6 +193,9 @@ pub struct ExtractedDirectionalLight {
     /// [`DirectionalLightShadowFade`], 1 without one.
     // superfargoth patch (own, CW-8: directional shadow fade)
     pub shadow_fade: f32,
+    /// [`DirectionalLightAtmosphereScatter`], 1 without one.
+    // superfargoth patch (own, E1b: directional atmosphere scatter)
+    pub atmosphere_scatter: f32,
 }
 
 // NOTE: These must match the bit flags in bevy_pbr/src/render/mesh_view_types.wesl!
@@ -210,6 +238,8 @@ pub struct GpuDirectionalLight {
     sun_disk_intensity: f32,
     // superfargoth patch (own, CW-8: directional shadow fade)
     shadow_fade: f32,
+    // superfargoth patch (own, E1b: directional atmosphere scatter)
+    atmosphere_scatter: f32,
 }
 
 // NOTE: These must match the bit flags in bevy_pbr/src/render/mesh_view_types.wesl!
@@ -470,12 +500,16 @@ pub fn extract_lights(
                 Option<&SunDisk>,
                 // superfargoth patch (own, CW-8: directional shadow fade)
                 Option<&DirectionalLightShadowFade>,
+                // superfargoth patch (own, E1b: directional atmosphere scatter)
+                Option<&DirectionalLightAtmosphereScatter>,
             ),
             (
                 Without<SpotLight>,
                 Or<(
                     // superfargoth patch (own, CW-8: directional shadow fade)
                     Changed<DirectionalLightShadowFade>,
+                    // superfargoth patch (own, E1b: directional atmosphere scatter)
+                    Changed<DirectionalLightAtmosphereScatter>,
                     Changed<DirectionalLight>,
                     Changed<CascadesVisibleEntities>,
                     Changed<Cascades>,
@@ -936,6 +970,7 @@ pub fn extract_lights(
         occlusion_culling,
         sun_disk,
         shadow_fade,
+        atmosphere_scatter,
     ) in &directional_lights
     {
         if !view_visibility.get() {
@@ -1070,6 +1105,8 @@ pub fn extract_lights(
             sun_disk_intensity: sun_disk.unwrap_or_default().intensity,
             // superfargoth patch (own, CW-8: directional shadow fade)
             shadow_fade: shadow_fade.map_or(1.0, |fade| fade.0.clamp(0.0, 1.0)),
+            // superfargoth patch (own, E1b: directional atmosphere scatter)
+            atmosphere_scatter: atmosphere_scatter_ratio(atmosphere_scatter),
         };
 
         let mut entity_commands = commands
@@ -2819,6 +2856,8 @@ pub fn prepare_lights(
                 sun_disk_intensity: light.sun_disk_intensity,
                 // superfargoth patch (own, CW-8: directional shadow fade)
                 shadow_fade: light.shadow_fade,
+                // superfargoth patch (own, E1b: directional atmosphere scatter)
+                atmosphere_scatter: light.atmosphere_scatter,
                 decal_index: decals
                     .as_ref()
                     .and_then(|decals| decals.get(*light_entity))

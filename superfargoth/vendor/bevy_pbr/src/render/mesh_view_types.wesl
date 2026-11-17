@@ -46,6 +46,9 @@ struct DirectionalLight {
     sun_disk_intensity: f32,
     // superfargoth patch (own, CW-8: directional shadow fade): 1 = stock.
     shadow_fade: f32,
+    // superfargoth patch (own, E1b: directional atmosphere scatter): scale of the light's
+    // in-scattering in the `Atmosphere` passes, 0..1, 1 = stock.
+    atmosphere_scatter: f32,
 };
 
 const DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT: u32                  = 1u << 0u;

@@ -274,6 +274,11 @@ impl RenderExtract {
         missing
     }
 
+    /// The render world (extracted components).
+    pub(crate) fn world(&self) -> &World {
+        &self.render
+    }
+
     /// The faces with an extracted list, as a mask.
     pub(crate) fn listed_faces(&self, render_light: Entity) -> u8 {
         self.render.get::<RenderShadowMapVisibleEntities>(render_light).map_or(0, |lists| {

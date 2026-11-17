@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use sf_tunables::{AnyDef, Def, Source, Unit, def};
+use sf_tunables::{AnyDef, Def, Group, Net, Scope, Source, Unit, def};
 
 use crate::celestial::{Orbit, SkyPosition};
 use crate::clock::{Calendar, SkyClock};
@@ -421,8 +421,20 @@ impl NightSky {
 /// is ~0.2 mcd/m² and a full-moon sky a few mcd/m²; the floor is raised far above that for a
 /// readable night, and the glow is raised with it so sky and ground agree. 0.1 keeps the
 /// zenith a dark blue at the night exposure (the ground under the floor reads a little
-/// brighter, the horizon a little brighter still), not a twilight.
-pub const NIGHT_SKY_GLOW_RATIO: f32 = 0.1;
+/// brighter, the horizon a little brighter still), not a twilight. The default of
+/// [`NIGHT_GLOW_RATIO`].
+pub const NIGHT_SKY_GLOW_RATIO: f32 = NIGHT_GLOW_RATIO.default_value();
+
+/// `sky.night.glow_ratio`: [`NightGlow::ratio`], live (exposure-tonemap.md "Night darkness"): a
+/// host binds it to its [`crate::SkySettings::night_glow`].
+pub const NIGHT_GLOW_RATIO: Def<f32> = def!(float "sky.night.glow_ratio" = 0.1)
+    .range(0.0, 5.0)
+    .unit(Unit::Ratio)
+    .help("Night sky glow: zenith luminance over the night ambient floor's luminance (0: off)")
+    .source(Source::Guess)
+    .group(Group::Post)
+    .scope(Scope::Player)
+    .net(Net::Presentation);
 
 /// Horizon over zenith radiance of the night glow. A thin emitting layer seen at a slant is
 /// brighter low down (van Rhijn: ~6x for airglow at 90 km); extinction and the observed sky

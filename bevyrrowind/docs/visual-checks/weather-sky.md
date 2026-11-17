@@ -370,3 +370,27 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Must not: fair or overcast decks changed (a calm region beside the storm, then `"weather":"cloudy"` / `"overcast"`);
   FG-7, WE-11, WE-12 looks changed (fog behind ridges, fog over sea, deck from above).
 - Status: partial (owner 2026-11-13: shimmer better, but the clouds "still look goofy and a bit weird"; a bigger cloud-shape pass later).
+
+## Exposure and tonemapping (superfargoth `exposure-tonemap.md`)
+
+### EX-1: Night darkness, three arms (E0, launch flags only, no build)
+- Game location: `view "Balmora" --day 173 --hour 3.5 --weather clear`, clock paused (P); look at the street, the
+  hills and the sky (Secunda low NW, Masser high). Arms, one launch each: today; `--night-ambient 2` (ground, sky glow
+  and moonlight 1 EV darker, lamps unchanged); `--exposure-floor 4.5` (everything 1 EV darker, lamps included);
+  `--night-ambient 2.5 --exposure-floor 4` (between).
+- Look for: which reads as night and not "day for night", while streets stay readable (LT-1, 1 nit, was too dark);
+  lamp-lit walls not too dim (lit-look rule); Secunda easier to see. Status: awaiting owner.
+- Owner 2026-11-17 (arms 1 and 2 seen, arm 3 cancelled: build running): `--exposure-floor 4.5` looked nice, but the sky
+  stays a clear daytime blue. Suspects (code): the atmosphere's Rayleigh scattering of the artistic moonlight (31.4 lx,
+  ~125x a real full moon, hue `Sun Night Color` 59,97,176) and the N2 airglow; split live with `flip moonlight` and
+  `flip night_sky_glow`. Status: floor 4.5 kept as the candidate; blue sky open (spec E1b).
+- Owner 2026-11-17 (arm 2, flips, 4 shots): the moonlight makes the sky blue (owner likes its blue on the land, not in
+  the sky); the night sky glow makes the sky brighter than the land; both off: a dark grey sky with a pale horizon band.
+  Next (E1b): moon lights the land at full strength but scatters less in the sky (per-light sky-scatter scale), glow
+  ratio lowered until the sky sits under the land. Status: diagnosed, fix pending.
+- Fix 2026-11-17 (E1 + E1b, dev build needed): floor 4.5 by default; live `set sky.moon.sky_scatter <0..1>` (0.15: moon
+  lights the land fully, the sky a little; also shrinks the white halo round Masser), `set sky.night.glow_ratio <x>`
+  (0.1 today; lower until the sky sits under the land), `set sky.night.ambient_nits`, `set exposure.min_ev100`.
+  Check: same view, clock paused; land keeps its moonlit blue, sky deep and under the land, Secunda readable. Say the
+  values you keep. Status: awaiting owner.
+

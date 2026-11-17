@@ -1267,10 +1267,11 @@ struct Lighting {
     /// Ambient luminance (nits) for a white cell ambient.
     #[arg(long)]
     ambient: Option<f32>,
-    /// Night exposure floor, EV100: the darkest exposure a view may take.
+    /// Night exposure floor, EV100: the darkest exposure a view may take (alias of
+    /// `--set exposure.min_ev100=<v>`, live tunable; default 4.5).
     #[arg(long)]
     exposure_floor: Option<f32>,
-    /// Exterior ambient floor at night, nits.
+    /// Exterior ambient floor at night, nits (alias of `--set sky.night.ambient_nits=<v>`, live tunable).
     #[arg(long)]
     night_ambient: Option<f32>,
     /// Point lights casting shadows (the most important, `sf_sky_bevy::shadow_importance`; default by `--quality`;

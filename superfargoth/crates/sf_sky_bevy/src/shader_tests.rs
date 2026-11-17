@@ -307,3 +307,66 @@ fn night_sky_glow_compiles_and_the_uniform_layout_matches() {
     let rust = crate::night::NightUniform::min_size().get();
     assert_eq!(u64::from(layouter[handle].size), rust, "WGSL vs Rust size");
 }
+
+/// Patch E1b (`DirectionalLightAtmosphereScatter`, `sky.moon.sky_scatter`): every atmosphere
+/// pass that in-scatters the directional lights (sky-view LUT, aerial-view LUT, the raymarched
+/// sky) links and validates with the per-light scale; the environment capture reads the
+/// sky-view LUT, so it carries the scale through it.
+#[test]
+fn atmosphere_passes_scale_each_lights_in_scattering() {
+    let jobs: [(&str, &[&str]); 4] = [
+        ("bevy_pbr::atmosphere::sky_view_lut", &[]),
+        ("bevy_pbr::atmosphere::aerial_view_lut", &[]),
+        ("bevy_pbr::atmosphere::render_sky", &[]),
+        ("bevy_pbr::atmosphere::render_sky", &["MULTISAMPLED"]),
+    ];
+    let mut failures = Vec::new();
+    for (module, defs) in jobs {
+        match compile(module, defs) {
+            Ok(wgsl) if !wgsl.contains(".atmosphere_scatter") => failures.push(format!("{module} {defs:?}: no per-light scatter scale")),
+            Ok(_) => {}
+            Err(e) => failures.push(e),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// Patches CW-8 + E1b: the Rust `GpuDirectionalLight` (`render/light.rs`, encase layout) and the
+/// WGSL `DirectionalLight` (`mesh_view_types.wesl`) have the same fields in the same order and
+/// the same size (both patched fields sit in the struct's tail padding, so the size alone would
+/// not catch a field added on one side only).
+#[test]
+fn directional_light_layout_matches_between_rust_and_wgsl() {
+    use bevy_render::render_resource::ShaderType;
+    let wgsl = compile("bevy_pbr::atmosphere::sky_view_lut", &[]).expect("compiles");
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("parses");
+    let (handle, ty) = module
+        .types
+        .iter()
+        .find(|(_, t)| t.name.as_deref().is_some_and(|n| n.ends_with("DirectionalLight")))
+        .unwrap_or_else(|| panic!("DirectionalLight in the linked module: {:?}", module.types.iter().filter_map(|(_, t)| t.name.clone()).collect::<Vec<_>>()));
+    let naga::TypeInner::Struct { members, .. } = &ty.inner else { panic!("DirectionalLight is a struct") };
+    let wgsl_fields: Vec<String> = members.iter().map(|m| m.name.clone().expect("named member")).collect();
+
+    let source = std::fs::read_to_string(vendor("bevy_pbr").join("render/light.rs")).expect("vendored light.rs");
+    let body = source
+        .split("pub struct GpuDirectionalLight {")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}").next())
+        .expect("GpuDirectionalLight in light.rs");
+    let rust_fields: Vec<String> = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("//") && line.contains(':'))
+        .map(|line| line.split(':').next().unwrap_or_default().trim().to_owned())
+        // The one stock rename between the two sides.
+        .map(|name| if name == "dir_to_light" { "direction_to_light".to_owned() } else { name })
+        .collect();
+    assert_eq!(rust_fields, wgsl_fields, "Rust vs WGSL fields");
+    assert_eq!(wgsl_fields.last().map(String::as_str), Some("atmosphere_scatter"));
+
+    let mut layouter = naga::proc::Layouter::default();
+    layouter.update(module.to_ctx()).expect("layout");
+    let rust = bevy_pbr::GpuDirectionalLight::min_size().get();
+    assert_eq!(u64::from(layouter[handle].size), rust, "WGSL vs Rust size");
+}

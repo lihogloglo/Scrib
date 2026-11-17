@@ -395,9 +395,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // Pipeline warm-up W4b1: the baked catalog precached on `Loading` (the reveal waits on it).
     crate::catalog_warm::add(&mut app, options.store.clone(), manifest.clone(), vfs.clone());
 
-    // The night exposure floor and ambient (LightCalibration, owner option A).
+    // The night exposure floor and ambient (LightCalibration, owner option A), live tunables from
+    // the first frame (exposure-tonemap.md E1; the launch flags at the CommandLine layer).
     let mut settings = SkySettings::default();
     options.calibration.apply_sky(&mut settings);
+    mw_assets::lights::add_night_tunables(&mut app, &options.calibration);
     mw_environment_bevy::night_sky::apply(&mut settings);
     if let Some(degrees) = options.sun_size {
         settings.sun_disk.angular_size = degrees.to_radians();

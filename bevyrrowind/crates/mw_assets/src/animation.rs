@@ -53,8 +53,17 @@ pub const MATCTRL_GATE: Def<bool> = def!(bool "mw.matctrl.gate" = false)
     .group(Group::Effects)
     .env_alias("BEVYRROWIND_MATCTRL_GATE");
 
-/// This module's tunables (`mw_assets::TUNABLES`).
-pub const TUNABLES: &[&dyn sf_tunables_bevy::AnyDef] = &[&MATCTRL_GATE, &crate::map_ab::PARALLAX_LAYERS, &crate::map_ab::PARALLAX_RELIEF_STEPS];
+/// The crate's tunables (`mw_assets::TUNABLES`): this module's, the parallax A/B's and the night
+/// calibration's (`lights::NIGHT_TUNABLES`, with the framework's `sky.night.glow_ratio` it binds).
+pub const TUNABLES: &[&dyn sf_tunables_bevy::AnyDef] = &[
+    &MATCTRL_GATE,
+    &crate::map_ab::PARALLAX_LAYERS,
+    &crate::map_ab::PARALLAX_RELIEF_STEPS,
+    &crate::lights::EXPOSURE_FLOOR,
+    &crate::lights::NIGHT_AMBIENT,
+    &crate::lights::MOON_FLOOR_RATIO,
+    &sf_sky_bevy::sf_sky::NIGHT_GLOW_RATIO,
+];
 
 /// The live switch of the material controllers' visibility gate ([`MATCTRL_GATE`]); absent (tests),
 /// the gate is on whenever [`MaterialUsers`] exists.
