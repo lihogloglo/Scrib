@@ -3,7 +3,8 @@
 ## What it does
 Every character (player, NPC) moves by a kinematic capsule mover on a 60 Hz fixed tick. One chooser picks what a
 character does next from one `Command` per tick and data move rules. The drawn body is the interpolation of the last
-two ticks; the camera follows the drawn body at frame rate and never feeds gameplay.
+two ticks (`ControllerSystems::Interpolate`, the same `TickPose` mechanism for player and NPCs, `sf_controller::frame`);
+the camera follows the drawn body at frame rate and never feeds gameplay.
 
 ## How it works
 - **Tick**: `TICK_HZ = 60` (`superfargoth/crates/sf_action/src/ids.rs:6`); Bevy `Time<Fixed>`, `physics_in_fixed_timestep`

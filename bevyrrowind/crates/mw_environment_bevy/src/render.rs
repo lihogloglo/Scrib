@@ -424,7 +424,7 @@ mod tests {
             )
         };
         let mut app = tunable_app(&[]);
-        assert_eq!(read(&app), (false, false, false), "off by default");
+        assert_eq!(read(&app), (true, true, true), "on by default (owner 2026-11-17, 18fc91e0)");
         let env = [("BEVYRROWIND_LAMP_DAY_GATE", "1"), ("BEVYRROWIND_POINT_FACE_CULL", "1"), ("BEVYRROWIND_SUN_SHADOW_GATE", "1")];
         let mut aliased = tunable_app(&env);
         assert_eq!(read(&aliased), (true, true, true), "env aliases");

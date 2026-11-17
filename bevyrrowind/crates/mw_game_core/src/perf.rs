@@ -107,6 +107,23 @@ pub enum Part {
     /// trailing their crests, swash and contact lace, foam look by age; off, the WA-6 shore band and
     /// the constant contact foam (the old look, an A/B).
     SurfFoam,
+    /// Surf shape (SF-2, `sf_water::SurfShape`): the shore waves stand up taller (`surf_height_gain`,
+    /// tunable `breaker_gamma`), skew to a steep front through a shoaling/steepening/bore lifecycle and
+    /// break in patches; off, the symmetric physically capped Gerstner crests (the old look, an A/B).
+    SurfSkew,
+    /// The underwater post (U3, `sf_water_bevy` `underwater_pass`): on a camera fully under the water,
+    /// spectral extinction and in-scatter by depth, with the sky, aerial perspective and fog composite
+    /// skipped; off, the camera's medium is still tracked but the frame is drawn as above the water
+    /// (the old look, an A/B; the tunable `water.underwater` stays the master switch).
+    Underwater,
+    /// The weather's sea state (W-SEASTATE, `mw_water::sea_state`): the weather's wind goes through the
+    /// authored sea state curve to the spectrum, on the `water.sea_fetch_m` fetch; off, the wind is
+    /// copied verbatim on the classic 20 km fetch (the old look, an A/B).
+    SeaState,
+    /// Rain rings on the water (R1, `sf_water_bevy::WaterRain`): the puddles' drop rings on every
+    /// outdoor water surface while it rains, by the weather's rain; off, the water ignores the rain
+    /// (the old look, an A/B).
+    WaterRain,
     /// Fog on blended and additive NIF materials (`sf_atmos_bevy::FogTranslucentsPlugin`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
@@ -213,7 +230,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 80] = [
+    const ALL: [(&'static str, Part); 85] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -265,6 +282,11 @@ impl Part {
         ("seawind", Part::SeaWind),
         ("shoredepth", Part::ShoreDepth),
         ("surffoam", Part::SurfFoam),
+        ("surfskew", Part::SurfSkew),
+        ("underwater", Part::Underwater),
+        ("seastate", Part::SeaState),
+        ("water_rain", Part::WaterRain),
+        ("waterrain", Part::WaterRain),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
         ("foliagetransmission", Part::FoliageTransmission),
@@ -409,7 +431,20 @@ mod tests {
         assert_eq!(depth.label(), "shoredepth");
         let surf = Off::from_flags(&["surffoam".into()]).expect("known");
         assert!(surf.has(Part::SurfFoam) && !surf.has(Part::ShoreWaves));
+        let state = Off::from_flags(&["seastate".into()]).expect("known");
+        assert!(state.has(Part::SeaState) && !state.has(Part::SeaWind));
+        assert_eq!(state.label(), "seastate");
         assert_eq!(surf.label(), "surffoam");
+        let skew = Off::from_flags(&["surfskew".into()]).expect("known");
+        assert!(skew.has(Part::SurfSkew) && !skew.has(Part::SurfFoam) && !skew.has(Part::ShoreWaves));
+        assert_eq!(skew.label(), "surfskew");
+        let under = Off::from_flags(&["underwater".into()]).expect("known");
+        assert!(under.has(Part::Underwater) && !under.has(Part::SurfFoam) && !under.has(Part::ShoreWaves));
+        assert_eq!(under.label(), "underwater");
+        let rain = Off::from_flags(&["water_rain".into()]).expect("known");
+        assert!(rain.has(Part::WaterRain) && !rain.has(Part::Puddles) && !rain.has(Part::ShoreWaves));
+        assert_eq!(rain.label(), "water_rain");
+        assert_eq!(Off::from_flags(&["waterrain".into()]).expect("alias"), rain);
         let maps = Off::from_flags(&["normalmaps".into(), "ORM".into()]).expect("known");
         assert!(maps.has(Part::NormalMaps) && maps.has(Part::Orm) && !maps.has(Part::Delight));
         assert_eq!(maps.label(), "normalmaps,orm");

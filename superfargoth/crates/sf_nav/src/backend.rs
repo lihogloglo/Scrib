@@ -154,6 +154,34 @@ pub struct DebugPoly {
     /// Detour polygons have at most 6.
     pub walls: u8,
     pub state: PolyState,
+    /// The polygon's detail mesh: the surface at its sampled heights (Detour's `dtPolyDetail`).
+    /// Empty when the backend has none (the polygon is its own surface).
+    pub detail: Vec<DebugTri>,
+}
+
+/// One triangle of a [`DebugPoly`]'s detail mesh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DebugTri {
+    /// Indices into [`TileGeometry::verts`].
+    pub verts: [u32; 3],
+    /// Entry `k`: the polygon edge (`i` runs from `DebugPoly::verts[i]` to `[i + 1]`) that the
+    /// triangle's edge from `verts[k]` to `verts[(k + 1) % 3]` lies on, or `None` inside the
+    /// polygon (Detour's `DT_DETAIL_EDGE_BOUNDARY`).
+    pub edges: [Option<u8>; 3],
+}
+
+/// One line of a tile's debug draw ([`TileGeometry::for_each_edge`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DebugEdge {
+    /// Endpoints, meters from [`TileGeometry::origin`].
+    pub a: Vec3,
+    pub b: Vec3,
+    /// Index into [`TileGeometry::polys`].
+    pub poly: usize,
+    /// The polygon edge this line follows.
+    pub edge: u8,
+    /// That edge has no neighbour ([`DebugPoly::walls`]).
+    pub wall: bool,
 }
 
 /// A resident tile's polygons for debug draw ([`NavBackend::tile_geometry`]): read-only, built on
@@ -162,9 +190,54 @@ pub struct DebugPoly {
 pub struct TileGeometry {
     /// The frame of [`TileGeometry::verts`]: the tile's nav region origin.
     pub origin: WorldPos,
-    /// Meters from `origin`, Y up.
+    /// Meters from `origin`, Y up: polygon vertices, then detail vertices.
     pub verts: Vec<Vec3>,
     pub polys: Vec<DebugPoly>,
+}
+
+impl TileGeometry {
+    /// Every polygon's outline as Detour's `duDebugDrawNavMeshPolyBoundaries` draws it: along
+    /// the detail mesh's boundary edges where the polygon has a detail mesh (the lines follow
+    /// the sampled surface, not the coarse polygon), else along the polygon's own edges. An edge
+    /// shared by two polygons comes once per polygon. Missing vertex indices are skipped.
+    pub fn for_each_edge(&self, mut f: impl FnMut(DebugEdge)) {
+        let at = |i: u32| self.verts.get(i as usize).copied();
+        for (poly, p) in self.polys.iter().enumerate() {
+            let wall = |e: u8| e < 8 && p.walls & (1 << e) != 0;
+            if p.detail.is_empty() {
+                let n = p.verts.len();
+                for i in 0..n {
+                    let (Some(a), Some(b)) = (at(p.verts[i]), at(p.verts[(i + 1) % n])) else {
+                        continue;
+                    };
+                    let edge = u8::try_from(i).unwrap_or(u8::MAX);
+                    f(DebugEdge {
+                        a,
+                        b,
+                        poly,
+                        edge,
+                        wall: wall(edge),
+                    });
+                }
+                continue;
+            }
+            for t in &p.detail {
+                for k in 0..3 {
+                    let Some(edge) = t.edges[k] else { continue };
+                    let (Some(a), Some(b)) = (at(t.verts[k]), at(t.verts[(k + 1) % 3])) else {
+                        continue;
+                    };
+                    f(DebugEdge {
+                        a,
+                        b,
+                        poly,
+                        edge,
+                        wall: wall(edge),
+                    });
+                }
+            }
+        }
+    }
 }
 
 /// A side of a tile, where a polygon edge can continue into the neighbouring tile.

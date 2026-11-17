@@ -304,6 +304,7 @@ fn smoke_over_a_test_bake() {
         queue_depth: Some(3),
         tick_ms: Some(0.25),
         rebuilds: Some(0),
+        ..NavCounters::default()
     };
     let line = run(&mut app, "nav.stats");
     assert_eq!(line.len(), 1);

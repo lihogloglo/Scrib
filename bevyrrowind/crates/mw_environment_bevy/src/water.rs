@@ -27,10 +27,10 @@ use mw_water::{optics, optics_records, MwWaterSource, WaterIni};
 use mw_world::ids;
 use sf_records::RecordDb;
 use sf_terrain_bevy::{TerrainHeightsMap, TerrainOrigin, TerrainSystems};
-use sf_water::{BedHeights, Cascades, OpticsMap, SeaWind, SeaWindSettings, ShoreField, ShoreSettings, ShoreWaves, WaterSource, WaterWorld, WaveTwin, WetMask, WindInput, WorldspaceWater, TWIN_RESOLUTION};
+use sf_water::{BedHeights, Cascades, WaterQuery, OpticsMap, SeaWind, SeaWindSettings, ShoreField, ShoreSettings, ShoreWaves, WaterSource, WaterWorld, WaveTwin, WetMask, WindInput, WorldspaceWater, TWIN_RESOLUTION};
 use sf_water_bevy::{
     OceanSpectrum, OceanSurface, WaterCamera, WaterFrame, WaterLook, WaterPlugin, WaterQuality, WaterReflections, WaterRegionsInput, WaterShoreInput,
-    WaterSurface, WaterSystems,
+    WaterMediums, WaterSurface, WaterSystems,
 };
 use sf_world::{Worldspace, WorldspaceId};
 use sf_world_bevy::{ActiveWorldspace, WorldspaceRegistry};
@@ -39,7 +39,9 @@ use tes3::esp::{Cell, Landscape};
 use mw_game_core::exterior::ExteriorCamera;
 /// The sea's wind input (W-WIND): the exterior copies the weather's `WindField` mean wind into it.
 pub use sf_water_bevy::WaterWind;
-/// The water crate's tunables (`water.gate.*`, CW-10a), for the app's tunables catalog.
+/// The rain on the water (R1): the exterior feeds the weather's rain into it (0 indoors).
+pub use sf_water_bevy::WaterRain;
+/// The water crate's tunables (`water.gate.*`, CW-10a; `water.underwater`, `water.medium.*`, U1), for the app's tunables catalog.
 pub use sf_water_bevy::TUNABLES as WATER_TUNABLES;
 /// The water surfaces' material: the exterior's catalog warm-up precaches it (pipeline-warmup.md W4b1).
 pub use sf_water_bevy::WaterMaterial;
@@ -93,8 +95,10 @@ pub struct Water {
 pub struct WaterInputs {
     /// The exterior's wet mask at sea level (the shore bake's input).
     mask: Option<WetMask>,
-    /// Optics record index by exterior cell.
+    /// Optics record index by exterior cell (before the shore bake: each region's open-water record).
     regions: Option<OpticsMap>,
+    /// The cell bounds and `REGN` names, for the shore bake's openness-aware optics map (WA-10).
+    cells: Option<CellRegions>,
 }
 
 impl WaterInputs {
@@ -112,15 +116,22 @@ impl WaterInputs {
             return Self::default();
         };
         let mask = mw_water::wet_mask(bounds, lands.iter().map(|(g, h)| (*g, h.as_slice())));
-        let map = mw_water::optics_map(bounds, |x, y| regions.get(&(x, y)).cloned());
+        // No openness until the shore bake: swamp regions start with their open-water record.
+        let map = mw_water::optics_map(bounds, |x, y| regions.get(&(x, y)).cloned(), |_, _| None, 0.0);
         info!("water: wet mask {}x{} ({} LAND cells), regions {}x{} in {:.2} s", mask.width, mask.height, lands.len(), map.width, map.height, t.elapsed().as_secs_f32());
-        Self { mask: Some(mask), regions: Some(map) }
+        Self { mask: Some(mask), regions: Some(map), cells: Some((bounds, regions)) }
     }
 }
 
-/// The shore bake running on a worker thread (water-adapter.md: ~1 s, gate ≤ 10 s cold).
+/// The shore bake running on a worker thread (water-adapter.md: ~1 s, gate ≤ 10 s cold), with the
+/// optics map re-derived from its openness (swamp only on enclosed water, WA-10 item 4).
 #[derive(Resource)]
-struct ShoreBake(Option<(JoinHandle<ShoreField>, Instant)>);
+struct ShoreBake(Option<(JoinHandle<ShoreProduct>, Instant)>);
+
+/// The shore bake's products: the field and the optics map from its openness.
+type ShoreProduct = (ShoreField, Option<OpticsMap>);
+/// Exterior cell bounds and `REGN` names by cell grid.
+type CellRegions = ((i32, i32, i32, i32), HashMap<(i32, i32), String>);
 
 /// Interior water levels (engine Y, metres) by worldspace (`HAS_WATER` + `WHGT`).
 #[derive(Resource)]
@@ -152,6 +163,36 @@ fn bind_gate(app: &mut App) {
     let _idle = app.add_tunable(&WATER_GATE_IDLE_FFT_S).bind_resource(|g: &mut WaterGateSettings, v| g.idle_fft_s = v);
 }
 
+/// The camera medium (underwater U1, `sf_water_bevy::WaterMedium`): `water.underwater` (on by
+/// default; off = always above) and its 1 cm hysteresis, live into `WaterMediumSettings`; the
+/// underwater post's light falloff and sky fill (U3), live too.
+fn bind_medium(app: &mut App) {
+    use sf_tunables_bevy::TunablesAppExt;
+    use sf_water_bevy::{WaterMediumSettings, WATER_MEDIUM_HYSTERESIS_M, WATER_UNDERWATER, WATER_UNDERWATER_KD_SCALE, WATER_UNDERWATER_SKY_FILL};
+    let _on = app.add_tunable(&WATER_UNDERWATER).bind_resource(|m: &mut WaterMediumSettings, v| m.enabled = v);
+    let _band = app.add_tunable(&WATER_MEDIUM_HYSTERESIS_M).bind_resource(|m: &mut WaterMediumSettings, v| m.hysteresis_m = v);
+    let _kd = app.add_tunable(&WATER_UNDERWATER_KD_SCALE).bind_resource(|m: &mut WaterMediumSettings, v| m.kd_scale = v);
+    let _fill = app.add_tunable(&WATER_UNDERWATER_SKY_FILL).bind_resource(|m: &mut WaterMediumSettings, v| m.sky_fill = v);
+}
+
+/// `--off underwater` (U3): the camera's medium is still tracked, but the frame is drawn as above
+/// the water (the A/B arm), `WaterMediumSettings::post` false. Follows the `Off` resource whenever it
+/// changes (the command line, and a live A/B toggling it), so it needs no slot in [`add`]'s switches.
+fn underwater_switch(off: Res<mw_game_core::perf::Off>, mut settings: ResMut<sf_water_bevy::WaterMediumSettings>) {
+    let post = !off.has(mw_game_core::perf::Part::Underwater);
+    if settings.post != post {
+        settings.post = post;
+    }
+}
+
+/// Each water camera's medium (above / split / under) from the CPU query of the active worldspace,
+/// in the state of the last physics step. Interiors' pools are not in the query yet (their
+/// `WaterSurface` only), so an interior camera is always above.
+fn medium(water: Res<Water>, active: Res<ActiveWorldspace>, origin: Res<TerrainOrigin>, mut media: WaterMediums) {
+    let ws = active.0.clone().unwrap_or_else(ids::exterior);
+    media.update(origin.0.cell, |p| water.world.sample(&ws, p));
+}
+
 /// `sspr`: local reflections on the water (W-SSPR; `--off waterssr` = the environment map only).
 /// `shore_normals`: wind wavelets in the shading normal up to the shoreline (W-SHORE; `--off
 /// shorenormals` = the normal flattens with the displacement, `ShoreSettings::normal_floor` 0).
@@ -161,10 +202,14 @@ fn bind_gate(app: &mut App) {
 /// the fixed [`DEFAULT_WIND`]); `--water-wind` overrides both.
 /// `shore_depth`: the shore waves shoal over the bed slope baked from `LAND` (W-GERSTNER-DEPTH;
 /// `--off shoredepth` = the uniform 1:20 `ShoreSettings::beach_slope`, the mask's depths dropped).
+/// `surf_foam`: the breaker foam (SF-1, `sf_water::SurfFoam`; `--off surffoam` = the WA-6 shore band and
+/// the constant contact foam, `ShoreSettings::surf_foam.enabled` false).
+/// `surf_skew`: the surf shape (SF-2, `sf_water::SurfShape`; `--off surfskew` = the symmetric,
+/// physically capped crests, `ShoreSettings::surf_shape.enabled` false).
 pub fn add(
     app: &mut App,
     inputs: WaterInputs,
-    (sspr, shore_normals, shore_waves, sea_wind, shore_depth): (bool, bool, bool, bool, bool),
+    (sspr, shore_normals, shore_waves, sea_wind, shore_depth, surf_foam, surf_skew): (bool, bool, bool, bool, bool, bool, bool),
     worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>,
 ) {
     if mode() != WaterMode::On {
@@ -203,6 +248,8 @@ pub fn add(
     if !shore_normals {
         settings.normal_floor = 0.0;
     }
+    settings.surf_foam.enabled = surf_foam;
+    settings.surf_shape.enabled = surf_skew;
     if !shore_waves {
         settings.shore_waves = 0.0;
     }
@@ -213,18 +260,33 @@ pub fn add(
     }
     let spectrum = OceanSpectrum { params, cascades: cascades.clone(), seed: SEED, transition: None };
     let sea_sync = SeaSync { spectrum: spectrum.clone(), settings, shore: [shore_pair; 2] };
+    let enclosed_below = {
+        use sf_tunables_bevy::TunablesAppExt;
+        let id = app.add_tunable(&mw_water::SWAMP_ENCLOSED_BELOW).id();
+        app.world().resource::<sf_tunables_bevy::Tunables>().read(id)
+    };
+    let cells = inputs.cells;
     let bake = inputs.mask.map(|mut mask| {
         if !shore_depth {
             mask.depth = None;
         }
         let handle = std::thread::Builder::new()
             .name("water-shore-bake".into())
-            .spawn(move || ShoreField::bake(&mask, settings))
+            .spawn(move || {
+                let field = ShoreField::bake(&mask, settings);
+                // Swamp optics only where the water is enclosed (WA-10 item 4).
+                let map = cells.map(|(bounds, regions)| {
+                    let open = mw_water::cell_openness(&field);
+                    mw_water::optics_map(bounds, |x, y| regions.get(&(x, y)).cloned(), |x, y| open.get(&(x, y)).copied(), enclosed_below)
+                });
+                (field, map)
+            })
             .expect("spawn the shore bake thread");
         (handle, Instant::now())
     });
     let tier = bind_quality(app);
     bind_gate(app);
+    bind_medium(app);
     app.add_plugins(WaterPlugin)
         .insert_resource(spectrum)
         .insert_resource(WaterWind { weather: None, sea })
@@ -232,25 +294,36 @@ pub fn add(
         .insert_resource(look)
         .insert_resource(tier)
         .insert_resource(WaterReflections { sspr, ..WaterReflections::default() })
+        .insert_resource(sf_water_bevy::WaterSurfFoam(settings.surf_foam))
         .insert_resource(WaterRegionsInput { map: inputs.regions.map(Arc::new), looks })
         .insert_resource(ShoreBake(bake))
         .insert_resource(Pools { levels, look: look_of(optics::INTERIOR), current: None })
         .insert_resource(Water { world, time: 0.0 })
         .add_systems(FixedUpdate, step.before(sf_physics_bevy::PhysicsSystems::Step))
         .add_systems(Update, (spawn_ocean, mark_camera, bed, shore_done, pools))
-        .add_systems(PostUpdate, sync.after(TerrainSystems::Update).before(WaterSystems::Drive));
+        .add_systems(PostUpdate, sync.after(TerrainSystems::Update).before(WaterSystems::Drive))
+        .add_systems(PostUpdate, medium.after(TerrainSystems::Update).in_set(WaterSystems::Medium))
+        .add_systems(PostUpdate, underwater_switch.run_if(resource_exists_and_changed::<mw_game_core::perf::Off>).before(WaterSystems::Medium));
 }
 
-/// Hands the finished shore bake to the GPU waves and the CPU query.
-fn shore_done(mut bake: ResMut<ShoreBake>, mut water: ResMut<Water>, mut shore: ResMut<WaterShoreInput>) {
+/// Hands the finished shore bake to the GPU waves and the CPU query, and its openness-aware optics
+/// map to the surface and the underwater post (both read `WaterRegionsInput`).
+fn shore_done(mut bake: ResMut<ShoreBake>, mut water: ResMut<Water>, mut shore: ResMut<WaterShoreInput>, mut regions: ResMut<WaterRegionsInput>) {
     if !bake.0.as_ref().is_some_and(|(h, _)| h.is_finished()) {
         return;
     }
     let Some((handle, started)) = bake.0.take() else { return };
-    let Ok(field) = handle.join() else {
+    let Ok((field, map)) = handle.join() else {
         error!("water: the shore bake panicked; waves stay unattenuated");
         return;
     };
+    if let Some(map) = map {
+        let swamp = mw_water::optics_index(optics::SWAMP);
+        #[allow(clippy::naive_bytecount)] // once per run, a few thousand cells
+        let count = map.index.iter().filter(|&&i| i == swamp).count();
+        info!("water: optics map from shore openness, {count} enclosed swamp cells");
+        regions.map = Some(Arc::new(map));
+    }
     let s = field.stats;
     info!(
         "water: shore field {}x{} at {:.2} m in {:.2} s ({} wet texels, {} components, {} open)",
@@ -407,3 +480,89 @@ fn sync(
     }
 }
 
+/// The sea state tunables (`water.sea_fetch_m`, `water.sea_state_curve.p1..p6`; W-SEASTATE), for the
+/// app's tunables catalog.
+pub use mw_water::SEA_STATE_TUNABLES;
+/// The optics map's tunables (`water.swamp_enclosed_below`, WA-10 item 4).
+pub use mw_water::OPTICS_TUNABLES as WATER_OPTICS_TUNABLES;
+
+/// The weather's sea state (W-SEASTATE, `mw_water::sea_state`): the exterior maps the weather's wind
+/// through [`Self::sea_velocity`] into [`WaterWind::weather`], and `apply_fetch` keeps the
+/// spectrum's fetch on [`Self::fetch`]. Bound live from the tunables ([`add_sea_state`]).
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct SeaState {
+    /// Off (`--off seastate`): the weather's wind verbatim, on [`mw_water::CLASSIC_FETCH_M`].
+    pub enabled: bool,
+    /// `water.sea_state_curve.p1..p6`.
+    pub curve: mw_water::SeaStateCurve,
+    /// `water.sea_fetch_m`.
+    pub fetch_m: f32,
+}
+
+impl SeaState {
+    /// The sea's wind for the weather's mean 10 m wind velocity (direction kept).
+    pub fn sea_velocity(&self, weather: Vec2) -> Vec2 {
+        if self.enabled { self.curve.sea_velocity(weather) } else { weather }
+    }
+
+    /// The spectrum's fetch, m.
+    pub fn fetch(&self) -> f32 {
+        if self.enabled { self.fetch_m } else { mw_water::CLASSIC_FETCH_M }
+    }
+
+    /// The sea's wind fed from the weather (WA-10, [`mw_water::sea_state::weather_sea_wind`]): `None`
+    /// until the weather is `valid`, then `direction` at the weather's `mid_speed`, through the curve.
+    pub fn sea_input(&self, valid: bool, direction: Vec2, mid_speed: f32) -> Option<Vec2> {
+        mw_water::sea_state::weather_sea_wind(valid, direction, mid_speed).map(|v| self.sea_velocity(v))
+    }
+
+    /// Expected Hs of a sea wind `sea_speed` (m/s) on [`Self::fetch`], m (the sea state log line).
+    pub fn expected_hs(&self, sea_speed: f32) -> f32 {
+        mw_water::sea_state::expected_hs(sea_speed, self.fetch())
+    }
+}
+
+/// The weather's sea state (W-SEASTATE; `enabled` false = `--off seastate`): registers and binds the
+/// curve points and the fetch live into [`SeaState`]. After [`add`] (nothing without the FFT ocean).
+/// `--water-wind` still pins the sea (`SeaWind::fixed`), `--off seawind` still keeps the fixed
+/// breeze; both on the fetch chosen here.
+pub fn add_sea_state(app: &mut App, enabled: bool) {
+    use mw_water::{SeaStateCurve, SEA_FETCH_M, SEA_STATE_POINTS};
+    use sf_tunables_bevy::TunablesAppExt;
+    if mode() != WaterMode::On {
+        return;
+    }
+    app.insert_resource(SeaState { enabled, curve: SeaStateCurve::default(), fetch_m: SEA_FETCH_M.default_value() });
+    let _fetch = app.add_tunable(&SEA_FETCH_M).bind_resource(|s: &mut SeaState, v| s.fetch_m = v);
+    for (i, def) in SEA_STATE_POINTS.into_iter().enumerate() {
+        let _point = app.add_tunable(def).bind_resource(move |s: &mut SeaState, v| s.curve.points[i] = v);
+    }
+    app.add_systems(PostUpdate, apply_fetch.after(TerrainSystems::Update).before(WaterSystems::Drive));
+}
+
+/// The spectrum's fetch follows [`SeaState::fetch`] (the start's value on the first frame, before the
+/// first `h0` upload). A W-WIND transition blends the wind only (`SeaTransition` carries the `from`
+/// wind, the fetch is shared), so a change waits for the running transition to finish and then
+/// re-generates `h0` at once: a live edit of `water.sea_fetch_m` pops the sea (dev only; the weather
+/// never changes the fetch). A blended fetch needs `SeaTransition` to carry the `from` fetch.
+fn apply_fetch(state: Res<SeaState>, frame: Res<WaterFrame>, mut spectrum: ResMut<OceanSpectrum>) {
+    let fetch = state.fetch();
+    if spectrum.params.fetch.to_bits() == fetch.to_bits() || spectrum.weight(frame.time) < 1.0 {
+        return;
+    }
+    spectrum.params.fetch = fetch;
+}
+
+/// Rain rings on the water (R1, `sf_water_bevy::WaterRain`): binds `water.rain_ripple.*` live into
+/// `WaterRainSettings`. The exterior feeds [`WaterRain`] from the weather (the puddles' rain) while
+/// `--off water_rain` is not given; unfed it stays 0 and the water shows no rings.
+pub fn add_rain(app: &mut App) {
+    use sf_tunables_bevy::TunablesAppExt;
+    use sf_water_bevy::{WaterRainSettings, WATER_RAIN_RIPPLE_FADE_FAR_M, WATER_RAIN_RIPPLE_FADE_NEAR_M, WATER_RAIN_RIPPLE_STRENGTH};
+    if mode() != WaterMode::On {
+        return;
+    }
+    let _strength = app.add_tunable(&WATER_RAIN_RIPPLE_STRENGTH).bind_resource(|r: &mut WaterRainSettings, v| r.strength = v);
+    let _near = app.add_tunable(&WATER_RAIN_RIPPLE_FADE_NEAR_M).bind_resource(|r: &mut WaterRainSettings, v| r.fade_near_m = v);
+    let _far = app.add_tunable(&WATER_RAIN_RIPPLE_FADE_FAR_M).bind_resource(|r: &mut WaterRainSettings, v| r.fade_far_m = v);
+}

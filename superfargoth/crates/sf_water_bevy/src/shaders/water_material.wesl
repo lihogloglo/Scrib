@@ -6,11 +6,13 @@
 // of the water), Beer-Lambert absorption + single scattering over the view path with optics
 // blended from the region map, Bevy PBR lighting (GGX sun/moon, clustered lights, shadows,
 // environment map) with water's F0 0.02, local reflections from the SSPR image where it hits
-// (W-SSPR, the environment map elsewhere), whitecap, shore and contact foam. No fog: the sky,
+// (W-SSPR, the environment map elsewhere), whitecap and breaker foam (SF-1: bore, swash and contact
+// lace by age; `--off surffoam` = the WA-6 shore band and constant contact foam). No fog: the sky,
 // aerial perspective, clouds and fog run after the water by its depth (W-ORDER, render-order.md).
 // Optics shading follows bevy-aqua's structure (MIT OR Apache-2.0).
 
-import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_normal_scales, shore_scales, shore_slope, shore_wave_offset, shore_waves};
+import super::water_common::{SurfInput, WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_foam_weight, shore_normal_scales, shore_scales, shore_slope, shore_wave_offset, shore_waves, surf_birth, surf_foam, sw_cells, sw_hash, sw_noise};
+import sf_render_order_bevy::rain_rings::rain_ripples;
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT;
 import bevy_pbr::render::pbr_types::{PbrInput, pbr_input_new};
@@ -223,6 +225,18 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     // can't carry them (λ < 4 footprints).
     let gw = shore_waves(water, sh, shore_slope(water, shore_bed, shore_sampler, in.lagrangian), in.lagrangian, water.misc2.x, 3.14159265 / max(footprint, 1e-4));
     s += gw.slope;
+    // Rain rings (R1): the puddles' procedural drop rings (`sf_render_order_bevy::rain_rings`) at
+    // the surface point's render XZ (rain falls on space, the swell does not carry the rings),
+    // × the host's rain (`rain.x`: 0 dry, indoors or `--off water_rain`) and the strength, faded
+    // as a pixel spans a ring's breadth (no shimmer far off). Front face only: rain falls from
+    // above. `rain_ripples` tilts the normal by `+slope`; `s.xy` is the height's gradient.
+    if is_front && water.rain.x > 0.0 {
+        let rings = water.rain.z * (1.0 - smoothstep(water.rain2.x, water.rain2.y, footprint));
+        if rings > 0.0 {
+            let tilt = rain_ripples(in.world_position.xz, water.rain.y, water.rain.x) * rings;
+            s = vec4(s.xy - tilt, s.zw);
+        }
+    }
     let far = smoothstep(water.misc.z * 2.0, water.misc.z * 16.0, d);
     var N = normalize(vec3(-s.x / max(1.0 + s.z, 0.2), 1.0, -s.y / max(1.0 + s.w, 0.2)));
     N = normalize(mix(N, vec3(0.0, 1.0, 0.0), far));
@@ -273,22 +287,67 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
 
     // Foam: whitecaps (persistent Jacobian foam), a shore band whose bands run shoreward with the
     // swell (aqua's shoreline foam), and contact foam where the bed or an object is close.
+    // SF-1 breaker foam (`shore3.y` on) replaces the band where the shore waves run, and the contact
+    // foam everywhere; `--off surffoam` (`shore3.y` 0) keeps the WA-6 band and the constant contact
+    // foam below unchanged (the A/B arm).
+    let surf_on = water.shore3.y > 0.5;
+    let trains = water.swash2.x > 0.0;
     var foam = saturate(whitecap * look.whitecaps);
+    var foam_rgb = vec3(0.8);
     let band = water.misc2.y;
-    if sh.x < band && look.shore_foam > 0.0 {
+    if !(surf_on && trains) && sh.x < band && look.shore_foam > 0.0 {
         let fade = 1.0 - smoothstep(0.0, band, max(sh.x, 0.0));
         let phase = sh.x * 0.8 + water.misc2.x * 1.3;
         // With the shore waves on, the bands ride their main train's breaking crests (W-GERSTNER).
         let wave = select(0.5 + 0.5 * sin(phase), 0.5 + 0.5 * gw.crest, water.swash2.x > 0.0);
-        foam = max(foam, look.shore_foam * fade * (0.35 + 0.65 * wave * wave) * (0.3 + 0.7 * sh.y));
+        // The band follows the local wave energy (WA-6): the shore waves' breaking ratio, or without
+        // them the open-water swell this openness would carry (no foam on calm or enclosed water).
+        let breaking = select(sh.y * water.waves.x, gw.breaking, water.swash2.x > 0.0);
+        foam = max(foam, look.shore_foam * fade * (0.35 + 0.65 * wave * wave) * shore_foam_weight(breaking, water.shore3.x));
     }
-    if valid && path < 1e5 {
+    if !surf_on && valid && path < 1e5 {
         let vertical = path * abs(V.y);
         foam = max(foam, 0.7 * (1.0 - smoothstep(0.0, look.contact, vertical)) * step(1e-3, look.contact));
     }
+    if surf_on {
+        // Bore foam trailing the main crest, swash and contact lace (`sf_water::surf_foam`), on a
+        // cellular lace fixed to the water's Lagrangian points (it rides with the water) whose
+        // width varies per wave; resolved lace fades to its mean once a pixel spans its cells.
+        let vertical = select(1e6, path * abs(V.y), valid && path < 1e5);
+        let birth = select(0.0, surf_birth(water, gw.breaking) * saturate(look.shore_foam), trains);
+        let reach = look.contact * (1.0 + water.surf5.z);
+        if birth > 0.0 || (look.contact > 1e-3 && vertical < reach) {
+            let cells = max(water.surf2.x, 1.0);
+            let cell_m = 1024.0 / cells;
+            let uv = fract((water.shore3.zw + in.lagrangian) / 1024.0);
+            let lace = sw_cells(uv, u32(cells), 7u);
+            // The wave's count, wrapped at the whole cycles per clock period (no pop at the wrap).
+            let cycles = max(round(water.swash.x * 256.0 / 6.2831853), 1.0);
+            let n = floor((0.5 * 3.14159265 + max(water.surf.w, 1e-3) - gw.phase) / 6.2831853);
+            let wave = u32(n - cycles * floor(n / cycles));
+            let shift = vec2(sw_hash(wave, 0u, 11u), sw_hash(wave, 1u, 11u));
+            let variation = sw_noise(fract(uv + shift), max(u32(cells) / 4u, 1u), 13u);
+            let theta = atan2(gw.crest, gw.crest_cos);
+            let detail = 1.0 - smoothstep(0.25, 1.0, footprint / cell_m);
+            let t = surf_foam(water, SurfInput(gw.breaking, theta, gw.swash, vertical, look.contact, lace.x, variation, saturate(look.shore_foam) * select(0.0, 1.0, trains), detail));
+            // Look by age: fresh foam dense and bright, aged foam thinner, translucent and tinted by
+            // the body's hue (bubbles on water, not paint); the whitecaps keep their own colour.
+            let age = 1.0 - t.fresh;
+            let hue = body / max(max(body.r, max(body.g, body.b)), 1e-4);
+            let surf_rgb = mix(water.surf3.z, water.surf3.y, t.fresh) * mix(vec3(1.0), hue, water.surf3.w * age);
+            let cover = t.coverage * mix(1.0, water.surf4.x, age);
+            foam_rgb = (foam * vec3(0.8) + cover * surf_rgb) / max(foam + cover, 1e-4);
+            foam = 1.0 - (1.0 - foam) * (1.0 - cover);
+            // The under-roller glow: air injected by breaking lights the body.
+            body *= 1.0 + t.glow;
+            // Foam relief (height `surf4.z` m × foam) catches the light: its slope from the lace gradient.
+            let slope = clamp(water.surf4.z * t.d_lace / cell_m, -1.0, 1.0) * lace.yz;
+            N = normalize(N + select(-1.0, 1.0, is_front) * vec3(-slope.x, 0.0, -slope.y));
+        }
+    }
 
     var pbr = pbr_input_new();
-    pbr.material.base_color = vec4(mix(body, vec3(0.8), foam), 1.0);
+    pbr.material.base_color = vec4(mix(body, foam_rgb, foam), 1.0);
     pbr.material.perceptual_roughness = mix(roughness, 0.9, foam);
     pbr.material.metallic = 0.0;
     // F0 = 0.16 r^2 = 0.02 (water).

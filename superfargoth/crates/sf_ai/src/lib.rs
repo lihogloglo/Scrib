@@ -13,11 +13,16 @@
 //!   [`DirectiveDone`] completion events, all on one logical clock.
 //! - AI5 (saves): [`save`], the `sf/ai` section's shape ([`AiSave`]: per actor, its
 //!   [`SavedStack`]), key and version, and the checks a loaded section must pass.
+//! - AI7 (drives): [`drive`], IAUS utility arbitration: record-built [`Drives`] (considerations
+//!   with response [`Curve`]s over an adapter [`Inputs`] vocabulary), the pure [`arbitrate`]
+//!   (momentum, minimum commit, the `Directive` floor, ties by record id), [`serving_for`] onto
+//!   AI4's [`Serving`], and the save-ready [`ArbiterState`].
 //!
 //! The console command `ai.trace` and BRP live in `sf_ai_bevy` (AI3): actor references and the
 //! console context are the shell's.
 
 pub mod directive;
+pub mod drive;
 pub mod htn;
 pub mod ids;
 pub mod save;
@@ -28,17 +33,21 @@ pub use directive::{
     Directive, DirectiveDone, DirectiveEnd, DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, DirectiveStatus,
     Limit, MAX_REACTIONS, ModernPolicy, SavedStack, Serving, StackEdit, StackError, StackPolicy, format_directives,
 };
+pub use drive::{
+    ArbiterState, Arbitration, CONSIDERATION_KIND, Consideration, ConsiderationDef, Curve, DRIVE_KIND, Drive, DriveDef,
+    DriveLoadError, DriveLoadReport, Drives, Inputs, SavedArbiter, Scored, arbitrate, register_drive_kinds, serving_for,
+};
 pub use htn::{
     Decomposition, LoadError, LoadReport, Library, METHOD_KIND, MethodDef, NoPlan, Operators, Replan, Resume,
     SEARCH_DEPTH, SEARCH_TRIES, SubtaskDef, TASK_KIND, TaskDef, decompose, mtr_better, register_kinds, replan, resume,
 };
-pub use ids::{ConsiderationId, DirectiveId, DriveId, MethodId, OperatorId, TaskId};
+pub use ids::{ConsiderationId, DirectiveId, DriveId, InputId, MethodId, OperatorId, TaskId};
 pub use save::{AI_SECTION, AI_VERSION, ActorSave, AiSave, AiSaveError};
 pub use sf_ids::ActorKey;
 pub use sf_rpg::GameTime;
 pub use state::{BitKey, IntKey, KeyKind, KeySet, RefKey, StateKey, StateKeyError, StateKeys, Target, WorldState};
 pub use trace::{
-    Admit, ConsiderationScore, DEFAULT_TRACE_CAP, DriveScore, MethodChoice, OperatorState, OperatorStatus, PathFailure,
+    Admit, ConsiderationScore, DEFAULT_TRACE_CAP, DriveReason, DriveScore, MethodChoice, OperatorState, OperatorStatus, PathFailure,
     PathState, Plan, PlanOutcome, PlanStep, RejectReason, Rejection, TRACE_LEN, Trace, TraceEntry, TraceNames,
     TraceStore, Trigger, format_trace, format_trace_with,
 };
@@ -47,6 +56,8 @@ pub use trace::{
 mod tests;
 #[cfg(test)]
 mod tests_directive;
+#[cfg(test)]
+mod tests_drive;
 #[cfg(test)]
 mod tests_htn;
 #[cfg(test)]

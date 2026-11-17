@@ -34,6 +34,30 @@ struct WaterParams {
     // A sea-state transition (W-WIND, `sf_water::ShoreWaves::blend`): (ω of the trains crossfaded
     // from ×3, weight of `swash.xyz` against them; 1 = none).
     swash4: vec4<f32>,
+    // Shore foam (WA-6): (breaking ratio of a full band, `sf_water::ShoreSettings::foam_full_breaking`;
+    // breaker foam on 0/1 (SF-1, `--off surffoam` = 0); its lace's noise origin x, z m: the floating
+    // origin modulo `sf_water::shore_waves::NOISE_PERIOD`, set on every surface).
+    shore3: vec4<f32>,
+    // Breaker foam (SF-1, `sf_water::SurfFoam`): (birth start, birth full, bore decay rad, front rad);
+    // (lace cells per noise period, lace width fresh, aged, feather in cells); (lace variation,
+    // albedo fresh, aged, aged tint); (aged opacity, glow, relief m, swash residue rad); (contact
+    // on calm water, contact line share, swash spread, 0).
+    surf: vec4<f32>,
+    surf2: vec4<f32>,
+    surf3: vec4<f32>,
+    surf4: vec4<f32>,
+    surf5: vec4<f32>,
+    // Rain rings (R1, `sf_water_bevy::WaterRain`): (intensity 0..1, 0 = no rings or switched off;
+    // ring clock s; strength; 0); (fade near m, fade far m of pixel footprint; 0, 0).
+    rain: vec4<f32>,
+    rain2: vec4<f32>,
+    // Surf shape (SF-2, `sf_water::SurfShape`; its height gain is already in `swash2.x`): (break
+    // sharpness p when on, 0 = off (`--off surfskew`); breaker γ; steepen start; bore start); (bore full; skew at the end of the
+    // steepening; skew of the full bore; bore loop cap); (minimum crest height at the break line m;
+    // gap cells per noise period; gap share; gap feather).
+    shape: vec4<f32>,
+    shape2: vec4<f32>,
+    shape3: vec4<f32>,
     // Optics table for the map, 3 vec4 per entry: (absorption, whitecaps), (scattering, contact
     // depth), (roughness, shore foam, 0, 0).
     looks: array<vec4<f32>, 24>,
@@ -79,6 +103,8 @@ const SW_PHASE_NOISE = 0.8;
 const SW_SET_FLOOR = 0.6;
 const SW_SKEW = 0.5;
 const SW_ZONE = 0.3;
+// tunables: const (the twin of sf_water SKEW_RATE_LIMIT, a no-fold bound)
+const SW_SKEW_RATE_LIMIT = 0.1;
 const SW_ECKART_LINEAR = 4.0;
 const SW_GRAVITY = 9.81;
 const SW_REPEAT = 256.0;
@@ -137,6 +163,173 @@ struct ShoreWave {
     slope: vec4<f32>,
     // sin of the main train's phase (1 on its crests).
     crest: f32,
+    // How close the trains come to breaking, 0-1 (`sf_water::ShoreWave::breaking`).
+    breaking: f32,
+    // cos of the main train's phase (SF-1: with `crest`, the phase the breaker foam trails).
+    crest_cos: f32,
+    // The main train's phase θ rad (the dominant set's through a transition; counts the waves).
+    phase: f32,
+    // Swash (SF-1): (weight 0-1, swash phase g rad; `sf_water::ShoreWave::swash`).
+    swash: vec2<f32>,
+    // Surf lifecycle (SF-2): (phase skew s, bore weight 0-1 with the break gaps;
+    // `sf_water::ShoreWave::lifecycle`).
+    lifecycle: vec2<f32>,
+}
+
+// Share of the shore foam band at breaking ratio `breaking`, full from `full`: the local wave
+// energy, ∝ ratio² (WA-6; `sf_water::shore_foam_weight` is the CPU twin).
+fn shore_foam_weight(breaking: f32, full: f32) -> f32 {
+    let r = saturate(breaking / max(full, 1e-3));
+    return r * r;
+}
+
+// ---- Breaker foam (SF-1): `sf_water::surf_foam` is the CPU twin (same terms, same order). ----
+
+const SW_PI = 3.14159265;
+
+// (F2 − F1 in cells, its gradient per cell) of a periodic cellular (Worley) noise over uv ∈ [0, 1)
+// with `cells` cells a side: 0 on the cell borders (the foam lace's field).
+fn sw_cells(uv: vec2<f32>, cells: u32, seed: u32) -> vec3<f32> {
+    let g = uv * f32(cells);
+    let i = vec2<i32>(floor(g));
+    let f = g - floor(g);
+    let n = i32(cells);
+    var d1 = 1e9;
+    var d2 = 1e9;
+    var r1 = vec2(0.0);
+    var r2 = vec2(0.0);
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let c = vec2<u32>(((i + vec2(x, y)) % n + n) % n);
+            let r = vec2(f32(x), f32(y)) + vec2(sw_hash(c.x, c.y, seed), sw_hash(c.x, c.y, seed + 1u)) - f;
+            let dd = dot(r, r);
+            if dd < d1 {
+                d2 = d1;
+                r2 = r1;
+                d1 = dd;
+                r1 = r;
+            } else if dd < d2 {
+                d2 = dd;
+                r2 = r;
+            }
+        }
+    }
+    let a = sqrt(d1);
+    let b = sqrt(d2);
+    return vec3(b - a, r1 / max(a, 1e-5) - r2 / max(b, 1e-5));
+}
+
+fn surf_birth(p: WaterParams, breaking: f32) -> f32 {
+    return smoothstep(p.surf.x, max(p.surf.y, p.surf.x + 1e-3), breaking);
+}
+
+fn bore_profile(p: WaterParams, psi: f32) -> f32 {
+    let front = max(p.surf.w, 1e-3);
+    return smoothstep(0.0, front, psi) * exp(-max(psi - front, 0.0) / max(p.surf.z, 1e-3));
+}
+
+fn behind_crest(p: WaterParams, theta: f32) -> f32 {
+    let x = 0.5 * SW_PI + max(p.surf.w, 1e-3) - theta;
+    return x - SW_TAU * floor(x / SW_TAU);
+}
+
+// (lace 0-1, ∂lace/∂e) of the cellular field `e` for a lace `width` and `feather` (cells).
+fn foam_lace(e: f32, width: f32, feather: f32) -> vec2<f32> {
+    let f = max(feather, 1e-3);
+    let t = saturate((e - (width - f)) / (2.0 * f));
+    return vec2(1.0 - t * t * (3.0 - 2.0 * t), -6.0 * t * (1.0 - t) / (2.0 * f));
+}
+
+fn swash_edge(p: WaterParams, swash: vec2<f32>) -> f32 {
+    let x = 1.5 * SW_PI - swash.y;
+    let age = x - SW_TAU * floor(x / SW_TAU);
+    var shape = exp(-(age - SW_PI) / max(p.surf4.w, 1e-3));
+    if age < SW_PI {
+        shape = smoothstep(0.0, max(p.surf.w, 1e-3), age);
+    }
+    return saturate(swash.x) * shape;
+}
+
+// One fragment's inputs (`sf_water::SurfFoamInput`; `vertical` ≥ 1e5 where unknown).
+struct SurfInput {
+    breaking: f32,
+    phase: f32,
+    swash: vec2<f32>,
+    vertical: f32,
+    contact: f32,
+    lace: f32,
+    variation: f32,
+    strength: f32,
+    detail: f32,
+}
+
+// (`sf_water::SurfFoamTerms`.)
+struct SurfTerms {
+    bore: f32,
+    waterline: f32,
+    coverage: f32,
+    fresh: f32,
+    glow: f32,
+    d_lace: f32,
+}
+
+fn surf_foam(p: WaterParams, i: SurfInput) -> SurfTerms {
+    let detail = saturate(i.detail);
+    let birth = surf_birth(p, i.breaking) * saturate(i.strength);
+    let profile = bore_profile(p, behind_crest(p, i.phase));
+    let v = 1.0 + p.surf3.x * (2.0 * saturate(i.variation) - 1.0);
+    let lb = foam_lace(i.lace, mix(p.surf2.z, p.surf2.y, profile) * v, p.surf2.w);
+    let bore = birth * profile * mix(profile, lb.x, detail);
+    let edge = swash_edge(p, i.swash);
+    var waterline = 0.0;
+    var fresh_w = 0.0;
+    var dl_w = 0.0;
+    if i.contact > 1e-3 && i.vertical < 1e5 {
+        let tau = max(birth, edge);
+        let amount = mix(p.surf5.x, 1.0, tau);
+        let x = max(i.vertical, 0.0) / (i.contact * (1.0 + p.surf5.z * edge));
+        let line = 1.0 - smoothstep(0.0, max(p.surf5.y, 1e-3), x);
+        let out = 1.0 - smoothstep(0.0, 1.0, x);
+        let lw = foam_lace(i.lace, mix(p.surf2.z, p.surf2.y, out * tau), p.surf2.w);
+        let lace = out * mix(out, lw.x, detail);
+        waterline = amount * (1.0 - (1.0 - line) * (1.0 - lace));
+        fresh_w = line + (1.0 - line) * tau * out;
+        dl_w = amount * (1.0 - line) * out * detail * lw.y;
+    }
+    let coverage = 1.0 - (1.0 - bore) * (1.0 - waterline);
+    let fresh = (bore * profile + waterline * fresh_w) / max(bore + waterline, 1e-6);
+    return SurfTerms(bore, waterline, coverage, fresh, p.surf4.y * birth * profile, (1.0 - waterline) * birth * profile * detail * lb.y + (1.0 - bore) * dl_w);
+}
+
+// The surf lifecycle (SF-2, `sf_water::surf_life` is the CPU twin) at breaking ratio `b` (before
+// the smooth min), its shore-distance rate `db_dd` (1/m), gap mask `open` (1 = breaks) and the orbit
+// the skew warps `orbit` (m, Q₀·Σ A·coth): (phase skew s, bore weight with the gaps, |∂s/∂d| of the
+// steepening 1/m). The steepening's skew is capped so its peak growth stretches the map by at most
+// SW_SKEW_RATE_LIMIT.
+fn surf_life(p: WaterParams, b: f32, db_dd: f32, open: f32, orbit: f32) -> vec3<f32> {
+    let span = max(p.shape.w - p.shape.z, 1e-3);
+    let x = saturate((b - p.shape.z) / span);
+    let steep_w = x * x * (3.0 - 2.0 * x);
+    let bore_ramp = smoothstep(p.shape.w, max(p.shape2.x, p.shape.w + 1e-3), b);
+    let bore = bore_ramp * saturate(open);
+    let skew_steepen = clamp(p.shape2.y, 0.0, 0.9);
+    let skew_bore = clamp(p.shape2.z, 0.0, 0.9);
+    let grow = orbit * skew_steepen * 1.5 / span * abs(db_dd);
+    let lead = skew_steepen * min(SW_SKEW_RATE_LIMIT / max(grow, 1e-12), 1.0);
+    let skew = lead * steep_w * (1.0 - bore) + skew_bore * bore;
+    let rate = lead * 6.0 * x * (1.0 - x) / span * abs(db_dd);
+    return vec3(skew, bore, rate);
+}
+
+// The envelope at the break line (SF-2's minimum visible crest; `sf_water::surf_envelope`): the
+// smooth min `soft` raised to the sharper min of exponent `shape.x` up to half `shape3.x`.
+fn surf_envelope(p: WaterParams, shoal: f32, breaker: f32, soft: f32) -> f32 {
+    let lo = min(shoal, breaker);
+    let hi = max(shoal, breaker);
+    let e = clamp(p.shape.x, 1.0, 32.0);
+    let sharp = lo / pow(1.0 + pow(max(lo / max(hi, 1e-20), 1e-12), e), 1.0 / e);
+    let raised = min(sharp, 0.5 * max(p.shape3.x, 0.0));
+    return select(soft, raised, raised > soft);
 }
 
 // The shore waves at Lagrangian render-space `xz` with shore sample `sh` (`shore_at`) over bed
@@ -151,12 +344,13 @@ fn shore_waves(p: WaterParams, sh: vec4<f32>, bed: f32, xz: vec2<f32>, t: f32, l
     // A sea-state transition (W-WIND): crossfade the trains it comes from (`ShoreWaves::eval`).
     let prior = shore_trains(p, p.swash4.xyz, sh, bed, xz, t, lod_k);
     let w = max(p.swash4.w, 0.0);
-    return ShoreWave(mix(prior.offset, to.offset, w), mix(prior.slope, to.slope, w), mix(prior.crest, to.crest, w));
+    let late = w >= 0.5;
+    return ShoreWave(mix(prior.offset, to.offset, w), mix(prior.slope, to.slope, w), mix(prior.crest, to.crest, w), mix(prior.breaking, to.breaking, w), mix(prior.crest_cos, to.crest_cos, w), select(prior.phase, to.phase, late), vec2(mix(prior.swash.x, to.swash.x, w), select(prior.swash.y, to.swash.y, late)), mix(prior.lifecycle, to.lifecycle, w));
 }
 
 // One set of trains with angular frequencies `om` (rad/s) for `shore_waves`.
 fn shore_trains(p: WaterParams, om: vec3<f32>, sh: vec4<f32>, bed: f32, xz: vec2<f32>, t: f32, lod_k: f32) -> ShoreWave {
-    var out = ShoreWave(vec3(0.0), vec4(0.0), 0.0);
+    var out = ShoreWave(vec3(0.0), vec4(0.0), 0.0, 0.0, 0.0, 0.0, vec2(0.0), vec2(0.0));
     let d = sh.x;
     let band = p.swash2.w;
     let margin = p.swash3.x;
@@ -176,10 +370,21 @@ fn shore_trains(p: WaterParams, om: vec3<f32>, sh: vec4<f32>, bed: f32, xz: vec2
     let variation = p.swash3.y;
     let group = 1.0 - variation * (1.0 - SW_SET_FLOOR) * (1.0 - sets);
     let psi = variation * SW_PHASE_NOISE * (2.0 * sw_noise(noise, 16u, 3u) - 1.0);
+    // γ: SW_BREAKER with `--off surfskew`, the tunable `breaker_gamma` otherwise (SF-2).
+    let on = p.shape.x > 0.5;
+    let gamma = select(SW_BREAKER, clamp(p.shape.y, 0.1, 2.0), on);
     let shoal = p.swash2.x * pow(max(h_edge / max(h, SW_MIN_DEPTH), 1.0), 0.25);
-    let breaker = 0.5 * SW_BREAKER * h;
+    let breaker = 0.5 * gamma * h;
     let env = shoal * breaker / pow(shoal * shoal * shoal * shoal + breaker * breaker * breaker * breaker + 1e-20, 0.25);
-    let amp = env * w * group;
+    // env / breaker, the breaker held at SW_MIN_DEPTH so the beach and the swash keep the ratio.
+    let breaker_r = 0.5 * gamma * max(h, SW_MIN_DEPTH);
+    out.breaking = w * group * shoal / pow(shoal * shoal * shoal * shoal + breaker_r * breaker_r * breaker_r * breaker_r + 1e-20, 0.25);
+    var crest_env = env;
+    if on {
+        crest_env = surf_envelope(p, shoal, breaker, env);
+    }
+    // The minimum visible crest at the break line (SF-2).
+    let amp = crest_env * w * group;
     var a = vec3(0.0);
     var k = vec3(0.0);
     var coth = vec3(0.0);
@@ -188,7 +393,8 @@ fn shore_trains(p: WaterParams, om: vec3<f32>, sh: vec4<f32>, bed: f32, xz: vec2
     let shares = SW_SHARES;
     let spread = SW_PHASE_SPREAD;
     // The orbit's envelope term held at SW_ORBIT on any bed (W-GERSTNER-DEPTH).
-    let coth_cap = SW_ORBIT / (0.5 * SW_BREAKER * beta);
+    let coth_cap = SW_ORBIT / (0.5 * gamma * beta);
+    var orbit = 0.0;
     for (var i = 0u; i < 3u; i++) {
         let lw = sw_local_wave(om[i], h, beta);
         let th = tanh(lw.x * max(h, SW_MIN_DEPTH));
@@ -197,8 +403,32 @@ fn shore_trains(p: WaterParams, om: vec3<f32>, sh: vec4<f32>, bed: f32, xz: vec2
         coth[i] = min(1.0 / th, coth_cap);
         theta[i] = -(lw.y + om[i] * t + psi * spread[i]);
         steep += lw.x * a[i] * coth[i];
+        orbit += a[i] * coth[i];
     }
-    let q = min(SW_STEEPNESS / max(steep, 1e-6), 1.0);
+    // The surf lifecycle (SF-2, `ShoreWaves::life`): the breaking ratio before the smooth min, its
+    // rate with shore distance (the depth part held at SW_MIN_DEPTH's: continuous), the break gaps
+    // at the point's shoreline foot, the skew capped by the unskewed orbit Q₀·Σ A·coth.
+    var life = vec3(0.0);
+    if on {
+        let ratio = shoal / max(breaker_r, 1e-20);
+        let b = w * group * ratio;
+        let xb = saturate(d / band);
+        let depth_rate = 1.25 * beta / max(h, SW_MIN_DEPTH);
+        let db_dd = b * depth_rate + o * group * ratio * 6.0 * xb * (1.0 - xb) / band;
+        let foot = fract(noise + d * dir / 1024.0);
+        let cells = u32(p.shape3.y);
+        let g1 = sw_noise(foot, cells, 4u);
+        let gaps = g1 + (sw_noise(foot, cells, 5u) - g1) * fade;
+        let feather = max(p.shape3.w, 1e-3);
+        let open = 1.0 - variation * (1.0 - smoothstep(p.shape3.z - feather, p.shape3.z + feather, gaps));
+        life = surf_life(p, b, db_dd, open, orbit * min(SW_STEEPNESS / max(steep, 1e-6), 1.0));
+    }
+    // The loop budget (SF-2): the skew steepens the horizontal map by up to 1 + s (its growth is held
+    // by the cap above); the bore raises the cap to `shape2.w`. The old SW_STEEPNESS / steep when off.
+    let s = life.x;
+    let limit = SW_STEEPNESS + (p.shape2.w - SW_STEEPNESS) * life.y;
+    let budget = steep * (1.0 + s * (1.0 - life.y));
+    let q = min(limit / max(budget, 1e-6), 1.0);
     var y = 0.0;
     var along = 0.0;
     var dy = 0.0;
@@ -206,21 +436,32 @@ fn shore_trains(p: WaterParams, om: vec3<f32>, sh: vec4<f32>, bed: f32, xz: vec2
     for (var i = 0u; i < 3u; i++) {
         // Resolution fade (the CPU twin keeps every train: lod_k = ∞).
         let r = 1.0 - smoothstep(0.5 * lod_k, lod_k, k[i]);
-        let s = sin(theta[i]);
-        let c = cos(theta[i]);
-        y += r * a[i] * s;
-        along += r * q * a[i] * coth[i] * c;
-        dy += r * a[i] * k[i] * c;
-        dalong -= r * q * a[i] * coth[i] * k[i] * s;
+        // The skewed phase θ' = θ − s·sin θ (SF-2; θ when s = 0), its derivative 1 − s·cos θ.
+        let warped = theta[i] - s * sin(theta[i]);
+        let m = 1.0 - s * cos(theta[i]);
+        let sn = sin(warped);
+        let cs = cos(warped);
+        y += r * a[i] * sn;
+        along += r * q * a[i] * coth[i] * cs;
+        dy += r * a[i] * k[i] * cs * m;
+        dalong -= r * q * a[i] * coth[i] * k[i] * sn * m;
     }
     let phi0 = sw_local_wave(om.x, 0.0, beta).y;
     let theta0 = -(phi0 + om.x * t + psi * SW_PHASE_SPREAD.x);
     // Stockdon's swash ∝ β: `swash2.y` is at the beach slope `swash2.z`.
-    let swash = p.swash2.y * (beta / max(p.swash2.z, 1e-3)) * o * group * (1.0 - smoothstep(0.0, SW_ZONE * band, d)) * smoothstep(-margin, -0.5 * margin, d);
-    y += swash * sin(theta0 - SW_SKEW * sin(theta0));
+    let swash_w = o * group * (1.0 - smoothstep(0.0, SW_ZONE * band, d)) * smoothstep(-margin, -0.5 * margin, d);
+    let swash = p.swash2.y * (beta / max(p.swash2.z, 1e-3)) * swash_w;
+    let g = theta0 - SW_SKEW * sin(theta0);
+    y += swash * sin(g);
     out.offset = vec3(dir.x * along, y, dir.y * along);
     out.slope = vec4(dy * dir.x, dy * dir.y, dalong * dir.x * dir.x, dalong * dir.y * dir.y);
-    out.crest = sin(theta.x);
+    // The main train's skewed phase: the visible crest the foam follows.
+    let crest_phase = theta.x - s * sin(theta.x);
+    out.crest = sin(crest_phase);
+    out.crest_cos = cos(crest_phase);
+    out.phase = crest_phase;
+    out.lifecycle = life.xy;
+    out.swash = vec2(select(0.0, swash_w, p.swash2.y > 0.0), g);
     return out;
 }
 

@@ -18,13 +18,25 @@ debug = ["dep:bevy_color", "dep:bevy_gizmos"]
 bevy_app = { workspace = true, features = ["std"] }
 # Resource, systems, run conditions.
 bevy_ecs = { workspace = true, features = ["std"] }
+# The ring's read failures (one warning per tile).
+bevy_log.workspace = true
+# The query service's parallel slices (`ComputeTaskPool::scope`, opt-in).
+bevy_tasks.workspace = true
 serde.workspace = true
 # The BRP answer (`sf_nav/stats`).
 serde_json.workspace = true
+# The baked ring (NV4c): `nav.tiles` products from the bake store and manifest.
+sf_bake.workspace = true
+sf_nav_bake.workspace = true
 sf_console_bevy.workspace = true
 # WorldPos: the draw frame's origin.
 sf_coords.workspace = true
+# ActorKey in the query service's request ids.
+sf_ids.workspace = true
 sf_nav.workspace = true
+# The ring radii and per-frame cap as tunables, bound live.
+sf_tunables.workspace = true
+sf_tunables_bevy.workspace = true
 # Vec3 (the same glam Bevy re-exports).
 glam.workspace = true
 # Location, WorldspaceId.
@@ -41,6 +53,8 @@ workspace-hack.workspace = true
 bevy = { workspace = true, features = ["3d", "ui", "tonemapping_luts"] }
 # The test bake: synthetic boxes and ramps through the real backend.
 sf_nav_recast.workspace = true
+# The ring test's temporary bake store.
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -3,6 +3,42 @@
 Moved here to keep [ai.md](ai.md) inside its size budget. Newest slice first; the module docs in
 `superfargoth/crates/sf_ai/src/` are the detailed reference.
 
+## AI7: drives, utility arbitration (2026-11-17)
+
+`sf_ai::drive` (Bevy-free, no new deps). Records `sf.ai.consideration` (`ConsiderationDef { input, range: (at0,
+at1), curve }`) and `sf.ai.drive` (`DriveDef { considerations, weight, momentum, commit_ticks, floor?, directive }`),
+registered by `register_drive_kinds`; every tunable is a required record field (units and ranges in the type docs),
+none has a code default. `Inputs` is the adapter's input vocabulary (`InputId`, case-folded, registration order);
+`Drives::build(db, inputs)` resolves names once and collects every unknown input, unknown consideration, bad value
+(non-finite or equal bookends, non-finite curve parameter, unsorted or empty piecewise table, negative weight,
+momentum or floor) and second directive drive into one `DriveLoadReport` (`AI drives: N error(s)`, AI2 style).
+Ids follow **record id order** (not load order), so the tie-break is stable across mod lists. `Curve`: `Polynomial`
+(linear at exponent 1), `Logistic`, `Logit`, `Piecewise`; output clamped to 0..=1, NaN gives 0, and a NaN input
+(or one past the end of the `inputs` slice) vetoes its drive. Score = IAUS compensated product
+(`v + (1 - v)(1 - 1/n) v` per consideration) times the weight. `arbitrate(drives, inputs, prev, tick, trace) ->
+Arbitration { drive, reason, state, scores }` is pure: floor lifts an applicable drive (raw > 0), the running drive
+gets `x (1 + momentum)`, highest score wins, ties to the lowest id, all zero = idle; a running drive inside
+`commit_ticks` holds while its raw > 0. Time is only the logical tick (a coarser tier switches on its first
+decision past the same tick). `serving_for(drives, chosen, current)`: a reaction drive gives `Serving::Suspended`;
+the directive drive or no drive serves the stack (`Top` after a suspension, a named `Directive(id)` kept).
+Trace (AI1, minimally extended): `ConsiderationScore.input` (raw input next to the curve value), `TraceEntry.
+drive_reason: Option<DriveReason>` (`best | tie | momentum | commit | floor | idle`, the first rule the winner
+needed; skipped in JSON when `None`, so older dumps and `sf_ai_bevy`'s BRP golden keep their shape);
+`format_trace` prints `drive d0 (momentum)`. Tests: `tests_drive.rs` (14) + the AI1 goldens updated.
+
+Design, and why (Dave Mark's IAUS, GDC 2013/2015; Game AI Pro 3 ch. 13, Lewis; Guild Wars 2):
+- **No per-consideration weight:** IAUS keeps every factor in 0..=1 so the product reads "how true are all of
+  these"; a curve's slope and shift already scale it. The drive weight sets the bucket (e.g. 1, 2, 3, 5).
+- **Floor only while applicable:** a directive drive whose considerations score 0 (no directive to serve) stays at 0,
+  so a weak reaction can win then; with content, a reaction must beat the floor ("clearly beats it").
+- **Commit yields to a dead drive:** a committed drive whose own raw score drops to 0 (threat gone) releases at once.
+- **Saved by name:** `ArbiterState { running, since }` is serde, but a `DriveId` is a load-time index, so its save
+  form is `SavedArbiter { drive: RecordId, since }` (`to_saved` / `resolve`; a drive whose mod is gone resolves to
+  none). Not in `sf/ai` yet: that is a v2 step (freeze `ActorSave` in `legacy::v1`, bless `sf.ai.v2.json`).
+- Not built: the Bevy system that fills inputs, arbitrates on the AI tick and calls `DirectiveStack::serve`; the
+  adapter considerations (Hello, Fight, Flee, Alarm in `mw_ai`); a drive's HTN root task; scratch reuse for the
+  `scores` `Vec` (AIM measures first); drive names in `ai.trace` (`TraceNames` has no drive hook yet).
+
 ## AI5: the `sf/ai` save section (2026-11-09)
 
 `sf_ai::save`: `AI_SECTION` = `sf/ai`, `AI_VERSION` 1, `AiSave { actors: BTreeMap<ActorKey, ActorSave> }`,

@@ -47,7 +47,9 @@ mod trajectory;
 pub use avoid::{AvoidAgent, AvoidParams, AvoidRole, Avoidance};
 pub use context::{Affordance, ContextHit, ContextParams, ContextProbes, ContextQuery, ContextRequest, Side};
 pub use correction::{CorrectionParams, RenderCorrection};
-pub use frame::CharacterFrame;
+pub use frame::{CharacterFrame, TickPose};
+/// The motion type of [`Locomotion::moved`] (re-exported for hosts that feed it on).
+pub use sf_anim::RootDelta;
 pub use intent::{Gait, GaitSpeeds, LocomotionIntent};
 pub use motion::{MotionState, SpringParams, TurnRates, forward, spring_character, spring_yaw, turn_toward, wrap_angle};
 pub use mover::{KinematicMover, Locomotion, MoveInput, MoverMode, MoverParams, RootMotion, separate, separate_moved};

@@ -53,7 +53,10 @@ pub enum Trigger {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConsiderationScore {
     pub consideration: ConsiderationId,
-    /// The curve's output, 0..=1.
+    /// The raw input value in the input's own units, before the bookends (AI7). A NaN input
+    /// (unknown) scores 0 and dumps as JSON `null`.
+    pub input: f32,
+    /// The curve's output, 0..=1, before IAUS compensation.
     pub value: f32,
 }
 
@@ -63,10 +66,32 @@ pub struct DriveScore {
     pub drive: DriveId,
     /// Compensated product of the considerations times the drive's weight.
     pub raw: f32,
-    /// What arbitration compared: `raw` after momentum, commit time and the `Directive` floor.
-    /// `raw != score` is the usual answer to "why didn't it switch?".
+    /// What arbitration compared: `raw` lifted to the drive's floor (when `raw > 0`), times
+    /// `1 + momentum` for the running drive. `raw != score` is the usual answer to "why didn't it
+    /// switch?"; a minimum commit holds the running drive whatever the scores
+    /// ([`DriveReason::Commit`]).
     pub score: f32,
     pub considerations: Vec<ConsiderationScore>,
+}
+
+/// Why arbitration chose [`TraceEntry::drive`] (AI7, `drive::arbitrate`): the first rule that
+/// changed the result, so `best` means no rule helped the winner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DriveReason {
+    /// The highest score, beaten by nothing.
+    Best,
+    /// Equal top scores: the lowest drive id (record id order) won.
+    Tie,
+    /// The running drive kept the actor only thanks to its momentum bonus.
+    Momentum,
+    /// The running drive is inside its minimum commit time; another drive scored higher.
+    Commit,
+    /// The winner won only thanks to its floor (the `Directive` drive: content wins unless a
+    /// reaction clearly beats it).
+    Floor,
+    /// Every drive scored 0: no drive runs.
+    Idle,
 }
 
 /// One step of the chosen decomposition: the method that expanded a compound task.
@@ -195,6 +220,10 @@ pub struct TraceEntry {
     pub drives: Vec<DriveScore>,
     /// The winning drive.
     pub drive: Option<DriveId>,
+    /// Why `drive` won (AI7). Left out of the JSON when the step didn't arbitrate, so older
+    /// dumps and goldens keep their shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drive_reason: Option<DriveReason>,
     /// The chosen decomposition, root task first.
     pub methods: Vec<MethodChoice>,
     /// Methods tried and skipped, in the order tried.
@@ -226,6 +255,7 @@ impl TraceEntry {
         self.directive = None;
         self.drives.clear();
         self.drive = None;
+        self.drive_reason = None;
         self.methods.clear();
         self.rejected.clear();
         self.plan.steps.clear();
@@ -582,7 +612,7 @@ impl TraceNames for Indices {}
 
 /// The last `n` entries of `trace`, oldest first, one line each, for the console (`ai.trace`):
 ///
-/// `#<tick> t<tier> <trigger> drive <d> via <task:method>... rej <first rejection> [(+k)] [plan <outcome>] op <o> <status> path <state> [<µs>us]`
+/// `#<tick> t<tier> <trigger> drive <d> [(<reason>)] via <task:method>... rej <first rejection> [(+k)] [plan <outcome>] op <o> <status> path <state> [<µs>us]`
 ///
 /// `-` marks an empty field; `plan <outcome>` only appears when the step planned. Ids print as
 /// their indices (`d3`, `t1:m7`); [`format_trace_with`] takes a name resolver.
@@ -601,6 +631,16 @@ pub fn format_trace_with(trace: &Trace, n: usize, names: &dyn TraceNames) -> Str
                 let _ = write!(out, " drive {d}");
             }
             None => out.push_str(" drive -"),
+        }
+        if let Some(reason) = e.drive_reason {
+            out.push_str(match reason {
+                DriveReason::Best => " (best)",
+                DriveReason::Tie => " (tie)",
+                DriveReason::Momentum => " (momentum)",
+                DriveReason::Commit => " (commit)",
+                DriveReason::Floor => " (floor)",
+                DriveReason::Idle => " (idle)",
+            });
         }
         out.push_str(" via ");
         if e.methods.is_empty() {

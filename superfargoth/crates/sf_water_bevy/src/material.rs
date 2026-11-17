@@ -70,6 +70,33 @@ pub struct WaterParams {
     /// A sea-state transition (W-WIND, `ShoreWaves::blend`): (ω of the trains crossfaded from ×3,
     /// weight of `swash.xyz` against them; 1 = none).
     pub swash4: Vec4,
+    /// Shore foam (WA-6): (breaking ratio of a full band, `sf_water::ShoreSettings::foam_full_breaking`;
+    /// breaker foam on 0/1 (SF-1, `--off surffoam` = 0); its lace's noise origin x, z m: the floating
+    /// origin modulo `sf_water::shore_waves::NOISE_PERIOD`, on every surface).
+    pub shore3: Vec4,
+    /// Breaker foam (SF-1, `sf_water::SurfFoam`): (birth start, birth full, bore decay rad, front rad).
+    pub surf: Vec4,
+    /// (lace cells per noise period, lace width fresh, aged, feather; cells).
+    pub surf2: Vec4,
+    /// (lace variation, albedo fresh, albedo aged, aged tint).
+    pub surf3: Vec4,
+    /// (aged opacity, glow, relief m, swash residue rad).
+    pub surf4: Vec4,
+    /// (contact on calm water, contact line share, swash spread, 0).
+    pub surf5: Vec4,
+    /// Rain rings (R1, `crate::WaterRain`, `crate::WaterRainSettings`): (intensity 0..1 with the
+    /// host's switch applied, 0 = no rings; ring clock s, wrapped at `RAIN_CLOCK_WRAP_S`; strength; 0).
+    pub rain: Vec4,
+    /// (fade near m, fade far m of pixel footprint; 0, 0).
+    pub rain2: Vec4,
+    /// Surf shape (SF-2, `sf_water::SurfShape`; its height gain is already in `swash2.x`): (break
+    /// sharpness exponent when on, 0 = off (`--off surfskew`); breaker γ; steepen start; bore start;
+    /// breaking ratios).
+    pub shape: Vec4,
+    /// (bore full ratio; skew at the end of the steepening; skew of the full bore; bore loop cap).
+    pub shape2: Vec4,
+    /// (minimum crest height at the break line m; gap cells per noise period; gap share; gap feather).
+    pub shape3: Vec4,
     /// Optics table of the map, 3 per entry: (absorption, whitecaps), (scattering, contact depth),
     /// (roughness, shore foam, 0, 0).
     pub looks: [Vec4; 24],

@@ -127,27 +127,9 @@ impl ActionCharacter {
     }
 }
 
-/// A drawn root pose at the end of a tick.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TickPose {
-    pub position: WorldPos,
-    pub rotation: Quat,
-}
-
-impl TickPose {
-    pub fn of(loco: &Locomotion) -> Self {
-        Self { position: loco.render_position(), rotation: loco.render_rotation() }
-    }
-
-    /// `self` toward `next` by `alpha` in 0..=1.
-    #[must_use]
-    pub fn lerp(self, next: Self, alpha: f32) -> Self {
-        Self {
-            position: self.position.offset(self.position.delta_f32(next.position) * alpha),
-            rotation: self.rotation.slerp(next.rotation, alpha),
-        }
-    }
-}
+/// A drawn root pose at the end of a tick (moved to `sf_controller` so the NPC movers of
+/// `sf_controller_bevy` interpolate with the same type: one mechanism).
+pub use sf_controller::TickPose;
 
 /// No-clip (a dev cheat: Bethesda's `ToggleCollision`, Unreal's `ghost`): the body flies
 /// (`MoverMode::Fly`, no gravity) and steps against no collision at all. The intent's

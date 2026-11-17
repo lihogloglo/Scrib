@@ -269,9 +269,30 @@ height clipmap gives the bed.
     attenuation and wave shoaling from a sea-floor depth cache rendered from the terrain; Jeschke and
     Wojtan 2018 ("Water Surface Wavelets") and UE5 Water's depth inputs likewise take real bathymetry,
     not a slope constant; ours bakes it once from the same heights (no runtime depth render).
-  - *Next (not built):* skewed (asymmetric) breaker profiles; full Gerstner weight in the inner
-    band; breaking-face foam / whitecaps; contact foam rework (queued separately).
-- shore foam: a foam band at shore distance 0-6 m modulated by a wave-phase signal travelling shoreward
+  - *Surf plan (2026-11-17, owner go; research `superfargoth/docs/research/surf-and-foam-2026-11-17.md`):* the shore is
+    tame because the breaker cap allows a 1 m swell to stand only ~25 m out (where LOD and `swell_ramp` hide it) and the
+    Gerstner crest is symmetric; the foam is ugly because it is a fixed band, not born from breaking. Canonical technique
+    (Crest, UE5 Water, Outerra, Horizon, Atlas, Sea of Thieves): a depth/shore field decides where waves break, the breaker
+    has its own skewed shape, and foam is born from the breaking state, then persists and fades. *Reuse:* Bevy 0.20 none;
+    `bevy_water` (0.16) and `bevy-aqua` have no breaking; Crest (MIT) is a design reference; Thürey 2007 is patented (US
+    8,204,725), not used. Slices, one switch each: **SF-1 breaker foam** (`--off surffoam`, est. +0.03-0.06 ms): bore foam
+    born at `b = H/(γh)` (`ShoreWave::breaking`) and trailing behind the crest in phase, swash lace, contact foam as a
+    noise-thresholded thin line instead of a constant 0.7, foam look by age (fresh ~0.85, aged translucent and body-tinted,
+    advected noise lace, foam normals, turquoise under-roller glow); **SF-2 surf shape** (`--off surfskew`, est. +0.02-0.05
+    ms): phase warp `θ' = θ − s·sin θ` skew, steeper front, bore saw-tooth, `surf_height_gain`, break gaps along the crest,
+    loop cap only in the bore zone; **SF-3 foam buffer** (`--off foamsim`, est. +0.05-0.10 ms) only if SF-1 still reads
+    painted on: camera-centred R8 1024², fixed 30 Hz tick, swash + current advection, decay 4-10 s; **SF-4** real
+    overhanging lip on a surf-strip mesh, parked for the owner's go. Before touching whitecaps: verify the Jacobian
+    persistence actually runs.
+    *Foam look (2026-11-17, WA-9 failed: "painted, wrong scale"; research `superfargoth/docs/research/foam-look-2026-11-17.md`):*
+    one 1.4 m procedural lace shaded flat is the cause. Recipe: a generated tileable 1024² RGBA8 foam texture (three bubble
+    sizes, clump density, packed height/normal; ours, no licence risk; no usable CC0 sea-foam found), the existing masks
+    threshold it with a feather (Crest pattern), three world scales 2.5 m / 7.3 m rotated / 23 m each fading to its mean
+    coverage with distance; then lit from its own height normals with thin-foam translucency and a bubble layer. Slices
+    FL-1 texture + layered sampling (`--off foamtex`, ~5 taps, est. < 0.1 ms), FL-2 foam lighting (`--off foamlit`).
+- shore foam: a foam band at shore distance 0-6 m modulated by a wave-phase signal travelling shoreward, scaled by the local
+  breaking energy (W-FOAM-GATE 2026-11-17: `ShoreWave::breaking` = train amplitude / McCowan limit × openness, weight
+  `saturate(breaking / foam_full_breaking)²`, 0.6 Guess; calm or enclosed water draws none)
   (aqua's shoreline foam), plus **contact foam** where the scene depth behind the water is within a few
   cm of the surface (rocks, piers, boats, legs);
 - **wet band** on land: the surface hook darkens and smooths terrain within the swash height above the
@@ -488,6 +509,19 @@ contact is high), wave cascades × openness (rivers get little), ripples. Buoyan
   from below both show it.
 - **Exposure and cues**: no special exposure; the cue list gets `underwater` (the audio system applies a
   low-pass), `surface_break` on crossings.
+- **Plan (2026-11-17, owner go; research `superfargoth/docs/research/underwater-2026-11-17.md`):** Crest's design in our
+  own passes. *Reuse check:* Bevy 0.20 has no underwater; `FullscreenMaterial` has no depth input, `VolumetricFog`/`FogVolume`
+  can't model a displaced infinite ocean, `DistanceFog` is per material; no crate does underwater (Crest 4 and Abyssal Garden,
+  MIT, are references only). Changes to the design above: (a) sky, aerial perspective and the `sf_atmos` composite run after
+  the water by depth, so they are **gated off** pixels whose ray starts underwater (a uniform when fully under, the waterline
+  mask when split), or the view is fogged twice; (b) the back face samples the sky itself (the sky pass skips water depth);
+  (c) **caustics are applied from depth** in the snapshot copy and the underwater post, not by a hook in every material;
+  (d) froxel shafts are an additive in-scatter gain on the atmosphere froxel volume (spectral extinction stays analytic).
+  Medium colour = the body's own region optics (`WaterLook`), so the swamp is murky and the open sea clear, no extra preset.
+  The meniscus line is wanted (owner: "a midline"). Slices, one deliverable each: U1 camera medium (CPU, cues), U2 surface
+  from below (Snell + TIR, `--off waterbelow`), U3 underwater post fully submerged (`--off underwater`), U4 waterline mask +
+  meniscus (`water.waterline`), U5 caustics bake + apply (`--off caustics`), U6 froxel shafts High+ (`--off watershafts`).
+  Deferred: lens droplets, bubbles/snow particles, fog on translucents underwater, swim physics.
 - **Reference for the look (owner 2026-11-15):** [Abyssal Garden](https://github.com/Noniv/abyssal-garden)
   (MIT, one WebGPU HTML file, all procedural): shafts through a moving surface, caustics on the floor, kelp swaying
   in a current with sparkle specks, drifting particles and bubbles, fish schools and mantas, a generated underwater
@@ -540,6 +574,15 @@ the surface from the query; wading speed scales by immersion (adapter curve).
   footsteps take the `water` variant below 0.3 m depth, `wade` deeper; `underwater` and
   `surface_break` cues for the camera.
 - **AI**: the query's `depth` lets pathing treat deep water as swim-only (M7).
+- **Ripples plan (2026-11-17, owner go; research `superfargoth/docs/research/water-ripples-2026-11-17.md`):** rain does
+  **not** inject into the grid (thousands of splats at 0.125 m over 32 m): rain rings reuse the procedural ring code (R1 draft: moved to the shared WESL module `sf_render_order_bevy::rain_rings`, `rain_ripples`; was
+  `surface_ripples` in `sf_surface_bevy/src/layer.wesl`; Clockwork port, already in THIRD_PARTY_NOTICES), shared by puddles and water,
+  with slopes added to the water normal, × a host-fed `WaterRain { intensity }`. *Reuse:* Bevy none; no maintained,
+  licence-clear iWave crate; Crest (MIT) reference only; OpenMW ripples are a flipbook/particle, nothing to port. Slices:
+  **R1** rain rings on water (`--off water_rain`, est. 0.03-0.06 ms); **R2** the iWave grid above, normals only (`--off
+  ripples`, est. 0.05-0.08 ms); **R3** emitters (wading actors, floaters, entry impacts) through a `WaterDisturbances`
+  resource on the fixed tick; **R4** a `WaterSplash { pos, speed, radius, kind }` message for the PR2 particles + optional
+  wake foam. Known gap: rain rings under shelter until `shelter.rs` is wired (OpenMW has the same bug, #7157).
 
 ## Weather coupling
 

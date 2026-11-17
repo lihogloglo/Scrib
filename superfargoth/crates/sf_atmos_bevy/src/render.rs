@@ -1127,8 +1127,13 @@ fn trace_pass(
     );
 }
 
+/// Skipped on a view whose camera is fully under water ([`bevy_pbr::SkyOccluded`], set by the water
+/// plugin from the camera's medium): its clouds, height and bank fog, froxels and rain curtain lie
+/// above the surface, and the underwater post fogs those pixels instead (water.md "Underwater" Plan
+/// (a): else the view is fogged twice). The waterline split (U4) gates per pixel with its mask.
+#[allow(clippy::type_complexity)]
 fn composite_pass(
-    view: ViewQuery<(&CloudView, &ViewTarget, &ExtractedCamera, Option<&MainPassResolutionOverride>, AtmosphereOffsets)>,
+    view: ViewQuery<(&CloudView, &ViewTarget, &ExtractedCamera, Option<&MainPassResolutionOverride>, AtmosphereOffsets), Without<bevy_pbr::SkyOccluded>>,
     ids: Res<CloudPipelineIds>,
     cache: Res<PipelineCache>,
     mut ctx: RenderContext,

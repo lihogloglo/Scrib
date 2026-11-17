@@ -110,6 +110,7 @@ Each consideration maps an input (threat distance, health ratio, a stat, disposi
 curve; a drive scores the compensated product (IAUS) times its weight. The running drive gets momentum and a minimum
 commit time; *Directive* has a floor so content wins unless a reaction clearly beats it. Morrowind's Hello, Fight,
 Flee and Alarm rules are adapter considerations.
+- **As built (AI7):** `sf_ai::drive` — records, curves, `arbitrate`, `serving_for`, `ArbiterState`: [ai-as-built.md](ai-as-built.md) "AI7".
 
 ## Behaviours (HTN method library)
 
@@ -332,7 +333,7 @@ One deliverable plus its test per slice. Visual checks use prefix `AI-`.
 | AI19-AI25, AIM2 | world reactions: concerns, notice drive, discovery by tier, investigate/report, suspicion, tidy, consequences ([world-reactions.md](world-reactions.md)) | there |
 | **AIM** measurement | Floor and High cap sweeps ("Tiers and budget"), AI + mover + animation ms together | owner runs; provisional rows filled |
 
-Order: AI1 → AI2 → AI3 → AI4 → AI5 → AI6 (needs NV7a, NV8, seamless SI3) → AI7 → AI8 → AI9 → AI10 (needs NV12) →
+Order: AI1 → AI2 → AI3 → AI4 → AI5 → AI6 (needs NV6, NV7a, NV8; worldspace from `WorldPosOf::location`, DECISIONS 2026-11-17) → AI7 → AI8 → AI9 → AI10 (needs NV12) →
 AI11 → AI12 (needs NV11, SI2) → AI13 → AI15 → AI14 → AI16-AI18 later. NV0 runs in parallel with AI1-AI3. The
 adapter's schedules pack (MA8) waits for AI10-AI12. AI10, AI12 and NV11 are seamless M9b (they replace SI13-SI15).
 

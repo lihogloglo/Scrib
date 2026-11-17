@@ -35,7 +35,7 @@ fn bodies_from_water_levels() {
         (MwWaterSource
             .ocean_spectrum(&WorldspaceId::new("ext"))
             .fetch
-            - SEA_FETCH_M)
+            - SEA_FETCH_M.default_value())
             .abs()
             < 1e-3
     );
@@ -43,7 +43,12 @@ fn bodies_from_water_levels() {
 
 #[test]
 fn optics_follow_regions() {
-    assert_eq!(optics_for_region("Bitter Coast Region"), optics::SWAMP);
+    // A swamp region's open water is coastal; its enclosed water swamp (`optics_for_cell`, WA-10).
+    assert_eq!(optics_for_region("Bitter Coast Region"), optics::COASTAL);
+    assert_eq!(optics_for_cell("Bitter Coast Region", Some(0.1), 0.5), optics::SWAMP);
+    assert_eq!(optics_for_cell("Bitter Coast Region", Some(0.9), 0.5), optics::COASTAL);
+    assert_eq!(optics_for_cell("Bitter Coast Region", None, 0.5), optics::COASTAL);
+    assert_eq!(optics_for_cell("Azura's Coast Region", Some(0.1), 0.5), optics::SEA);
     assert_eq!(optics_for_region("Ascadian Isles Region"), optics::COASTAL);
     assert_eq!(optics_for_region("Azura's Coast Region"), optics::SEA);
     assert_eq!(optics_for_region("Sheogorad"), optics::SEA);
@@ -56,7 +61,7 @@ fn optics_follow_regions() {
     let r = source
         .optics_at(&WorldspaceId::new("ext"), WorldPos::ORIGIN)
         .unwrap();
-    assert_eq!(r.id.as_str(), optics::SWAMP);
+    assert_eq!(r.id.as_str(), optics::COASTAL);
     // Visibility: swamp murkiest, the open sea clearest, each at its target.
     let recs = optics_records(&WaterIni::default());
     let rec = |id: &str| &recs.iter().find(|(i, _)| *i == id).unwrap().1;
@@ -112,12 +117,63 @@ fn wet_mask_from_land_heights() {
 #[test]
 fn optics_map_by_region() {
     let bounds = (-1, -1, 1, 1);
-    let map = optics_map(bounds, |x, y| {
-        (x == 0 && y == 1).then(|| "Bitter Coast Region".to_owned())
-    });
+    let map = optics_map(
+        bounds,
+        |x, y| (x == 0 && y == 1).then(|| "Bitter Coast Region".to_owned()),
+        |_, _| Some(0.1),
+        SWAMP_ENCLOSED_BELOW.default_value(),
+    );
     assert_eq!((map.width, map.height), (3, 3));
     // Row 0 is the northernmost (y = 1).
     assert_eq!(map.index[1], optics_index(optics::SWAMP));
     assert_eq!(map.index[4], optics_index(optics::SEA));
     assert_eq!(optics_index(optics::INTERIOR), 5);
+}
+
+/// WA-10 item 4: in the Bitter Coast the open sea is coastal and only enclosed water swamp, from the
+/// baked shore openness; other regions keep their record. Same lookup as the underwater post's
+/// (`sf_water::optics_index_at`).
+#[test]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+fn swamp_optics_only_on_enclosed_water() {
+    let cell = CELL_UNITS * UNIT_M;
+    let texel = 4.0;
+    // Cells -4..=4 both ways; rows run +Z = south, so z spans -(4 + 1) cells .. 4 cells.
+    let origin = glam::DVec2::new(-4.0 * cell, -5.0 * cell);
+    let n = (9.0 * cell / texel) as usize + 1;
+    let mut mask = WetMask::new(n, n, texel, origin);
+    // A land block over cells x -1..=1, y -1..=1 holding a 30 m pool at cell (0, 0)'s centre.
+    let pool = glam::DVec2::new(0.5 * cell, -0.5 * cell);
+    for row in 0..n {
+        for col in 0..n {
+            let p = origin + glam::DVec2::new(col as f64, row as f64) * texel;
+            let land = (-cell..2.0 * cell).contains(&p.x) && (-2.0 * cell..cell).contains(&p.y);
+            mask.wet[row * n + col] = !land || p.distance(pool) < 30.0;
+        }
+    }
+    let field = ShoreField::bake(&mask, ShoreSettings::default());
+    let open = cell_openness(&field);
+    let regions: HashMap<(i32, i32), &str> = [
+        ((0, 0), "Bitter Coast Region"),   // the enclosed pool
+        ((3, 0), "Bitter Coast Region"),   // open sea
+        ((1, 1), "Bitter Coast Region"),   // dry land
+        ((-3, 0), "Azura's Coast Region"), // open sea, another region
+        ((0, 3), "Ascadian Isles Region"),
+    ]
+    .into_iter()
+    .collect();
+    assert!(open[&(0, 0)] < 0.1 && open[&(3, 0)] > 0.8 && !open.contains_key(&(1, 1)), "openness {:?}", (open.get(&(0, 0)), open.get(&(3, 0))));
+    let map = optics_map(
+        (-4, -4, 4, 4),
+        |x, y| regions.get(&(x, y)).map(|r| (*r).to_owned()),
+        |x, y| open.get(&(x, y)).copied(),
+        SWAMP_ENCLOSED_BELOW.default_value(),
+    );
+    let at = |cx: i32, cy: i32| sf_water::optics_index_at(&map, glam::DVec2::new((f64::from(cx) + 0.5) * cell, -(f64::from(cy) + 0.5) * cell));
+    assert_eq!(at(0, 0), optics_index(optics::SWAMP));
+    assert_eq!(at(3, 0), optics_index(optics::COASTAL));
+    assert_eq!(at(1, 1), optics_index(optics::COASTAL));
+    assert_eq!(at(-3, 0), optics_index(optics::SEA));
+    assert_eq!(at(0, 3), optics_index(optics::COASTAL));
+    assert_eq!(at(2, 2), optics_index(optics::SEA)); // no region: the open sea
 }

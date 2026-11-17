@@ -323,10 +323,10 @@ mod streamed_ground {
     }
 
     /// AN-7: a walking character's capsule keeps a steady place under it at
-    /// any frame rate. The mover runs per frame and physics at 60 Hz: at
-    /// 144 fps, targeting the last frame's feet moved the capsule by 0, 1 or 2
-    /// frames of walking per step, so the drawn (interpolated) capsule shook
-    /// against the body by about a centimetre at walking speed.
+    /// any frame rate. Was (before `NV7a`) a frame-rate mover against the 60 Hz
+    /// step: the capsule shook against the body by about a centimetre at
+    /// 144 fps. Now both run on the tick: the drawn body and the drawn
+    /// (interpolated) capsule blend the same two ticks and stay together.
     #[cfg(feature = "controller")]
     #[test]
     fn walking_capsule_keeps_steady_under_the_mover_at_144_fps() {
@@ -354,14 +354,14 @@ mod streamed_ground {
             if frame < 200 {
                 continue;
             }
-            let feet = app.world().get::<Mover>(e).unwrap().loco.position;
+            let feet = app.world().get::<Mover>(e).unwrap().drawn().position;
             let alpha = app.world().resource::<Time<Fixed>>().overstep_fraction();
             let id = app.world().resource::<Capsules>().0[&e].id;
             let pose = app.world().resource::<Physics>().worlds.active_world().unwrap().pose_at(id, alpha).unwrap();
             offsets.push(feet.delta_f32(pose.pos).x);
         }
         let (lo, hi) = offsets.iter().fold((f32::MAX, f32::MIN), |(l, h), &o| (l.min(o), h.max(o)));
-        assert!(lo < -0.01, "interpolation draws a step behind: {lo}");
+        assert!(lo.abs() < 0.002 && hi.abs() < 0.002, "the drawn capsule is off the drawn body: {lo:.4}..{hi:.4} m");
         assert!(hi - lo < 0.002, "the capsule shakes {:.1} mm against the mover ({lo:.4}..{hi:.4} m)", (hi - lo) * 1000.0);
     }
 }

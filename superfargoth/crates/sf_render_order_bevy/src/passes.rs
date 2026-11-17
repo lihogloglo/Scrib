@@ -5,7 +5,7 @@
 //! the transparent pass (W-ORDER; UE5 Single Layer Water's placement): the
 //! [`PassStage::Snapshot`] and [`PassStage::Reflection`] (the water's SSPR) run
 //! before it (after the opaque pass only), every later stage after it, so the sky, clouds and fog read the water's depth and
-//! cover it as they cover land.
+//! cover it as they cover land; [`PassStage::Medium`] (the underwater post) fogs the result last.
 //!
 //! `render_sky` is private to `bevy_pbr`, so its system set can't be named. A
 //! stage after the water is ordered after every system set already ordered
@@ -40,6 +40,10 @@ pub enum PassStage {
     Night,
     /// Cloud and fog composite (`sf_atmos_bevy`), after the water and `render_sky`.
     Clouds,
+    /// The medium the camera is in (`sf_water_bevy` underwater post, U3): after the composite, so it
+    /// fogs the finished opaque + water image; before the transparent pass, whose particles fog
+    /// themselves.
+    Medium,
 }
 
 /// The passes added through [`add_pass`] (their own function sets).
@@ -64,7 +68,7 @@ fn add_pass_to<M>(render_app: &mut SubApp, stage: PassStage, own: InternedSystem
     skip.extend(render_app.world().get_resource::<Registered>().map(|r| r.0.clone()).unwrap_or_default());
     let found = sets_before_transparent(render_app, &skip);
     render_app.init_resource::<Registered>().world_mut().resource_mut::<Registered>().0.push(own);
-    render_app.configure_sets(Core3d, (PassStage::Snapshot.before(PassStage::Reflection), PassStage::Reflection.before(PassStage::Night), PassStage::Night.before(PassStage::Clouds)));
+    render_app.configure_sets(Core3d, (PassStage::Snapshot.before(PassStage::Reflection), PassStage::Reflection.before(PassStage::Night), PassStage::Night.before(PassStage::Clouds), PassStage::Clouds.before(PassStage::Medium)));
     let config = pass.in_set(stage).after(main_opaque_pass_3d);
     if matches!(stage, PassStage::Snapshot | PassStage::Reflection) {
         render_app.add_systems(Core3d, config.before(main_transmissive_pass_3d));
@@ -117,6 +121,9 @@ mod tests {
     fn reflection(mut l: ResMut<Log>) {
         l.0.push("reflection");
     }
+    fn medium(mut l: ResMut<Log>) {
+        l.0.push("medium");
+    }
 
     /// Stands in for Bevy's private `render_sky` (ordered like it: after the
     /// opaque pass, before the transparent pass).
@@ -133,7 +140,8 @@ mod tests {
                 0 => add_pass_to(&mut sub, PassStage::Night, night.into_system_set().intern(), &[], night),
                 1 => add_pass_to(&mut sub, PassStage::Clouds, clouds.into_system_set().intern(), &[], clouds),
                 2 => add_pass_to(&mut sub, PassStage::Snapshot, snapshot.into_system_set().intern(), &[], snapshot),
-                _ => add_pass_to(&mut sub, PassStage::Reflection, reflection.into_system_set().intern(), &[], reflection),
+                3 => add_pass_to(&mut sub, PassStage::Reflection, reflection.into_system_set().intern(), &[], reflection),
+                _ => add_pass_to(&mut sub, PassStage::Medium, medium.into_system_set().intern(), &[], medium),
             }
         }
         sub
@@ -149,11 +157,11 @@ mod tests {
     /// stages after the water also wait for the sky.
     #[test]
     fn order_is_the_enums_for_any_add_order() {
-        for order in [[0, 1, 2, 3], [0, 2, 1, 3], [1, 0, 3, 2], [1, 3, 2, 0], [3, 2, 0, 1], [2, 1, 0, 3], [3, 0, 1, 2]] {
+        for order in [[0, 1, 2, 3, 4], [4, 0, 2, 1, 3], [1, 0, 4, 3, 2], [1, 3, 2, 0, 4], [3, 4, 2, 0, 1], [2, 1, 0, 3, 4], [4, 3, 0, 1, 2]] {
             let log = run(&order);
             let at = |name| log.iter().position(|s| *s == name).unwrap();
-            assert!(at("snapshot") < at("reflection") && at("reflection") < at("night") && at("night") < at("clouds"), "added in order {order:?}: {log:?}");
-            assert!(at("sky") < at("night"), "added in order {order:?}: {log:?}");
+            assert!(at("snapshot") < at("reflection") && at("reflection") < at("night") && at("night") < at("clouds") && at("clouds") < at("medium"), "added in order {order:?}: {log:?}");
+            assert!(at("sky") < at("night") && at("sky") < at("medium"), "added in order {order:?}: {log:?}");
         }
     }
 

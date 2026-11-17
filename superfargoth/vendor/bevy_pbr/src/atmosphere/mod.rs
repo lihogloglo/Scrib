@@ -208,6 +208,14 @@ impl Plugin for AtmospherePlugin {
     }
 }
 
+/// superfargoth patch (own, U3: sky occluded): a render-world view component saying that no sky
+/// and no air lie between this view's camera and what it sees (its lens is fully under water:
+/// `sf_water_bevy` inserts it from the camera's medium each frame). `render_sky` skips such a view
+/// (neither the sky nor the aerial perspective is drawn: the underwater post fogs it instead, so
+/// it is not fogged twice); other passes that fog by depth may read it too. Absent = stock.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct SkyOccluded;
+
 /// For each camera with [`AtmosphereSettings`], picks the nearest [`Atmosphere`] by world-space
 /// distance to its origin, copies it as [`ExtractedAtmosphere`], and builds [`GpuAtmosphereSettings`].
 pub fn extract_atmosphere(

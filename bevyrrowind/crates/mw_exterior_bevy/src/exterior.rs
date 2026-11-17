@@ -240,6 +240,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     if let (Some(db), false) = (options.actors.clone(), perf.off.has(Part::Actors) || perf.off.has(Part::Walkers)) {
         mw_walkers_bevy::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone(), !perf.off.has(Part::Physics));
     }
+    // nav.md NV4c: the navmesh with its baked tile ring around the player (`nav.stats`, `nav.draw tiles`; `--off nav` is a follow-up).
+    mw_walkers_bevy::nav::add(&mut app, options.store.clone(), manifest.clone());
     if !perf.off.has(Part::Physics) {
         mw_walkers_bevy::physics::add(&mut app, options.store.clone(), (*manifest).clone(), options.physics_debug, options.actors.clone());
         // Deaths stay testable (owner 2026-11-02: replaces the `I` debug key, PH-14/PH-16).
@@ -510,6 +512,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             app.insert_resource(sf_weather_bevy::WorldWeatherMap::new(raster).with_worldspace(ids::exterior().0))
                 .add_systems(Update, weather_site.before(WeatherSystems::Evaluate));
         }
+        // WA-10 item 3: no drops under the water (`precip_water`).
+        app.add_systems(Update, precip_water.after(WeatherSystems::Apply).before(sf_weather_bevy::sf_precip_bevy::PrecipSystems));
     }
     // weather.md "Wind" (WD1): one wind field; fog and cloud drift read it.
     app.add_plugins(sf_wind_bevy::WindPlugin::default())
@@ -652,9 +656,17 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // W-SHORE: `--off shorenormals` flattens the water's normal with its displacement at the shore.
     // W-GERSTNER: `--off shorewaves` drops the analytic shore waves (the FFT fades to flat). W-WIND:
     // `--off seawind` keeps the fixed sea breeze instead of the weather's wind.
-    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves), !perf.off.has(Part::SeaWind), !perf.off.has(Part::ShoreDepth));
+    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves), !perf.off.has(Part::SeaWind), !perf.off.has(Part::ShoreDepth), !perf.off.has(Part::SurfFoam), !perf.off.has(Part::SurfSkew));
     mw_environment_bevy::water::add(&mut app, options.water, water_parts, &options.world.worldspaces);
-    app.add_systems(Update, sea_wind);
+    // W-SEASTATE: `--off seastate` copies the weather's wind verbatim on the classic 20 km fetch.
+    mw_environment_bevy::water::add_sea_state(&mut app, !perf.off.has(Part::SeaState));
+    // R1: rain rings on the water follow the weather's rain; `--off water_rain` leaves the water dry.
+    mw_environment_bevy::water::add_rain(&mut app);
+    if !perf.off.has(Part::WaterRain) {
+        app.add_systems(Update, water_rain);
+    }
+    // WA-10: after the weather's apply, so the frame's first valid wind reaches the sea that frame.
+    app.add_systems(Update, sea_wind.after(WeatherSystems::Apply));
     mw_doors_bevy::add(&mut app, options.world, options.use_door);
     mw_devtools_bevy::pipeline_watch::add(&mut app);
     mw_scripts_bevy::add(&mut app, vfs.clone(), options.activate);
@@ -1446,6 +1458,46 @@ use sf_atmos_bevy::sf_atmos::CloudPreset;
 
 // -- live weather (weather.md "Fog", "Clouds" and "Distant weather", M6 WE3/WE4c) ------
 
+/// WA-10 item 3 (`wa10-diag-2026-11-17.md` §3): what the water under the camera does to the
+/// precipitation, `(under, floor)`. Under it (`MediumState::Under`): none at all. Otherwise the floor is its
+/// surface, `eye_y + depth` (render space, as `Precip::floor` wants; `depth` is negative above the
+/// water, `-inf` with none: no floor). The water writes no depth, so without the floor the drops
+/// would show through the sea from above too.
+fn precip_floor(state: sf_water::MediumState, eye_y: f32, depth: f32) -> (bool, Option<f32>) {
+    let under = state == sf_water::MediumState::Under;
+    (under, (!under && depth.is_finite()).then_some(eye_y + depth))
+}
+
+/// `Precip::enabled` while the camera is or was under the water: off under it, the value it had
+/// before (in `saved`) once out. `weather_site` rewrites `enabled` each frame from the
+/// worldspace; this runs after it, so under the water wins.
+fn precip_mute(enabled: bool, under: bool, saved: &mut Option<bool>) -> bool {
+    if under {
+        if enabled || saved.is_none() {
+            *saved = Some(enabled);
+        }
+        false
+    } else {
+        saved.take().unwrap_or(enabled)
+    }
+}
+
+/// Feeds [`precip_floor`] from the camera's `WaterMedium` (`mw_environment_bevy::water::medium`,
+/// last frame's: it runs in `PostUpdate`) into `Precip`.
+fn precip_water(
+    camera: Query<(&GlobalTransform, &sf_water_bevy::WaterMedium), With<ExteriorCamera>>,
+    precip: Option<ResMut<sf_weather_bevy::sf_precip_bevy::Precip>>,
+    mut saved: Local<Option<bool>>,
+) {
+    let Some(mut precip) = precip else { return };
+    let (under, floor) = camera.iter().next().map_or((false, None), |(t, m)| precip_floor(m.state(), t.translation().y, m.medium.depth));
+    let enabled = precip_mute(precip.enabled, under, &mut saved);
+    if precip.enabled != enabled || precip.floor != floor {
+        precip.enabled = enabled;
+        precip.floor = floor;
+    }
+}
+
 /// The weather's site (WE4c): the climates at the camera from the world
 /// weather map's region raster (`WorldWeatherMap::site_at`: own region,
 /// blended with a neighbour's across `sf_weather::BORDER_BAND_M`; sea takes
@@ -1566,15 +1618,74 @@ fn shelter_foliage(
     }
 }
 
-/// The sea follows the weather (W-WIND): the wind field's mean wind at its 10 m reference height
-/// (`sf_wind::Wind::velocity`, set by the weather) is the spectrum's wind; `sf_water::SeaWind`
-/// low-passes it (gusts are a field pattern on top, never in this mean).
-fn sea_wind(wind: Option<Res<sf_wind_bevy::WindField>>, sea: Option<ResMut<mw_environment_bevy::water::WaterWind>>) {
-    let (Some(wind), Some(mut sea)) = (wind, sea) else { return };
-    let v = Some(wind.state.wind.velocity);
+/// Rain on the water (R1): the rain the puddles' rings see (`sf_surface_bevy::rain_of`: the weather
+/// frame's wetting rate over the storm's), none indoors (interior pools have no sky). Not added
+/// with `--off water_rain` (the water stays dry).
+fn water_rain(
+    weather: Option<Res<sf_weather_bevy::CurrentWeather>>,
+    surface: Option<Res<sf_weather_bevy::WorldSurface>>,
+    active: Res<ActiveWorldspace>,
+    rain: Option<ResMut<mw_environment_bevy::water::WaterRain>>,
+) {
+    let Some(mut rain) = rain else { return };
+    let outdoors = active.0.as_ref().is_none_or(|ws| *ws == ids::exterior());
+    let intensity = match (&weather, &surface) {
+        (Some(w), Some(s)) if outdoors && w.valid => sf_surface_bevy::rain_of(w.frame.surface.wet, s.tuning.storm_wet_rate),
+        _ => 0.0,
+    };
+    if rain.intensity.to_bits() != intensity.to_bits() {
+        rain.intensity = intensity;
+    }
+}
+
+/// The sea follows the weather (W-WIND): the weather's mean 10 m wind is the spectrum's wind;
+/// `sf_water::SeaWind` snaps to its first value and low-passes the rest (gusts are a field pattern on
+/// top, never in this mean). W-SEASTATE: the speed goes through the authored sea state curve first
+/// (`SeaState`; `--off seastate` = verbatim). WA-10: nothing until `CurrentWeather` is valid (the sea
+/// used to snap to the wind field's pre-weather default and crawl to the storm), and the curve gets
+/// the weather's mid speed (`WeatherFrame::wind_mid_speed`), the wander keeping only its direction.
+/// Without a weather (synthetic levels) the wind field's mean wind. Logs each committed sea state.
+fn sea_wind(
+    wind: Option<Res<sf_wind_bevy::WindField>>,
+    weather: Option<Res<sf_weather_bevy::CurrentWeather>>,
+    sea: Option<ResMut<mw_environment_bevy::water::WaterWind>>,
+    state: Option<Res<mw_environment_bevy::water::SeaState>>,
+    mut committed: Local<Option<[u32; 3]>>,
+) {
+    let Some(mut sea) = sea else { return };
+    let state = state.as_deref();
+    let v = if let Some(w) = weather.as_deref() {
+        let (dir, mid) = (w.frame.wind().velocity, w.frame.wind_mid_speed);
+        match state {
+            Some(s) => s.sea_input(w.valid, dir, mid),
+            None => w.valid.then(|| dir.normalize_or(Vec2::X) * mid),
+        }
+    } else {
+        wind.map(|f| state.map_or(f.state.wind.velocity, |s| s.sea_velocity(f.state.wind.velocity)))
+    };
     if sea.weather != v {
         sea.weather = v;
     }
+    // A commit (snap, new transition or override) shows as a new `SeaWind::wind` on the next frame.
+    let Some(now) = sea.sea.as_ref().map(|s| {
+        let w = s.wind();
+        (w.speed, w.toward)
+    }) else {
+        return;
+    };
+    let bits = [now.0.to_bits(), now.1.x.to_bits(), now.1.y.to_bits()];
+    if committed.replace(bits).is_none_or(|was| was == bits) {
+        return;
+    }
+    let (mid, wander) = weather.as_deref().map_or((f32::NAN, f32::NAN), |w| (w.frame.wind_mid_speed, w.frame.wind().velocity.length()));
+    let (fetch, hs) = state.map_or((f32::NAN, f32::NAN), |s| (s.fetch(), s.expected_hs(now.0)));
+    info!(
+        "water: sea state weather {mid:.1} m/s (wandering {wander:.1}) -> sea {:.1} m/s toward ({:.2}, {:.2}), fetch {:.0} km, expected Hs {hs:.2} m",
+        now.0,
+        now.1.x,
+        now.1.y,
+        fetch / 1000.0
+    );
 }
 
 /// The wind field's floating origin (the terrain's, set by [`sync_origin`]).
@@ -1721,4 +1832,35 @@ mod static_paths_tests {
 fn start_tunable(app: &App, def: &sf_tunables_bevy::Def<bool>) -> bool {
     let tunables = app.world().resource::<sf_tunables_bevy::Tunables>();
     tunables.read(tunables.id_of(def).expect("registered by quality_presets::register"))
+}
+
+#[cfg(test)]
+mod precip_water_tests {
+    use sf_water::MediumState;
+
+    use super::{precip_floor, precip_mute};
+
+    /// WA-10 item 3: under the water, no precipitation; above it, the floor is its surface
+    /// (eye + depth, depth negative above); no water, no floor.
+    #[test]
+    fn precip_floor_follows_the_water_under_the_camera() {
+        assert_eq!(precip_floor(MediumState::Under, -4.0, 2.0), (true, None), "under: disabled");
+        assert_eq!(precip_floor(MediumState::Above, 10.0, -1.5), (false, Some(8.5)), "above: floor at the surface");
+        assert_eq!(precip_floor(MediumState::Split, 0.0, 0.25), (false, Some(0.25)), "waterline: still floored");
+        assert_eq!(precip_floor(MediumState::Above, 10.0, f32::NEG_INFINITY), (false, None), "no water: no floor");
+    }
+
+    /// Under the water mutes `enabled`; out of it, the value it had comes back (outdoors on, indoors off).
+    #[test]
+    fn precip_mute_restores_the_enabled_state() {
+        let mut saved = None;
+        assert!(!precip_mute(true, true, &mut saved));
+        // Next frame, no host rewrite: our own `false` must not become the saved value.
+        assert!(!precip_mute(false, true, &mut saved));
+        assert!(precip_mute(false, false, &mut saved), "out of the water: back on");
+        assert!(precip_mute(true, false, &mut saved), "stays on");
+        let mut saved = None;
+        assert!(!precip_mute(false, true, &mut saved));
+        assert!(!precip_mute(false, false, &mut saved), "indoors it stays off");
+    }
 }

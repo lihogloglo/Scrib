@@ -20,6 +20,12 @@
 //!   paused, low animation significance). Interiors walk their own PGRD
 //!   (the worldspace id is the cell name). Flying creatures (`FLIES`) use
 //!   the mover's `Fly { hover }` mode.
+//! - Ticks (`NV7a`): the scaffold ([`drive`]), ORCA and the mover run in
+//!   `FixedUpdate` after the player's move and before the physics step; the
+//!   drawn NPC is interpolated between its last two ticks
+//!   (`sf_controller_bevy`). Ground, attach, the processing range and the
+//!   camera obstacle stay at frame rate (host state); gizmos, the report and
+//!   the stride monitor only read.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -522,6 +528,10 @@ type Unprocessed = Without<Held>;
 /// `PhysicsStreaming::collision_loading`): woken earlier, it fell through
 /// the floor that arrived a few frames later (fallfix, 2026-10-18). Exterior
 /// movers also wait for the terrain heights around them.
+///
+/// `Update`, at frame rate (`NV7a`): host state like streaming (which colliders
+/// are resident, the camera's AI range), not a gameplay rule; a change lands
+/// at the next tick boundary, so a mover never parks or wakes mid-tick.
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::type_complexity)]
 fn processing_range(
     mut commands: Commands,
@@ -601,6 +611,9 @@ fn terrain_missing(heights: &TerrainHeightsMap, ws: &WorldspaceId, pos: WorldPos
 }
 
 /// The scaffold writes intents (and route directions for ORCA's yield rule).
+/// `FixedUpdate` (`NV7a`): gameplay, one update per tick; there the generic
+/// clock is the fixed one, so `dt` is the tick and the walk is the same at
+/// any frame rate. A fidget fired here plays at the next animation update.
 #[allow(clippy::needless_pass_by_value)]
 fn drive(
     time: Res<Time>,
@@ -660,6 +673,12 @@ fn drive(
 
 /// The camera as a non-reactive obstacle at its feet (about 1.2 m below the
 /// eye), so walkers step around a camera standing in the street.
+///
+/// Scaffold (`NV7a`): stays in `Update`, at frame rate, because it follows the
+/// free camera (presentation); the ticks read the obstacle as last written.
+/// Removal path: once every view has a player body (whose obstacle follows
+/// its tick state, `mw_player_bevy::obstacle`), the free camera stops being
+/// an avoidance participant and this goes.
 #[allow(clippy::needless_pass_by_value)]
 fn camera_obstacle(
     mut commands: Commands,
@@ -766,6 +785,8 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
             min_walk,
             max_walk,
         })
+        // Host state at frame rate: ground (streamed colliders, terrain), new movers, the
+        // processing range, the camera obstacle (scaffold). The ticks see it as last written.
         .add_systems(
             Update,
             (
@@ -774,11 +795,19 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
                 attach,
                 processing_range,
                 camera_obstacle,
-                drive,
             )
-                .chain()
-                .in_set(ControllerSystems::Drive),
+                .chain(),
         )
+        // Gameplay on the fixed tick (NV7a): the player moves first (its tick state is what
+        // the NPCs avoid), then the NPC intents and their mover, then the physics step.
+        .configure_sets(
+            FixedUpdate,
+            (
+                ControllerSystems::Drive.after(sf_action_bevy::ActionSystems::Move),
+                ControllerSystems::Step.before(sf_physics_bevy::PhysicsSystems::Step),
+            ),
+        )
+        .add_systems(FixedUpdate, drive.in_set(ControllerSystems::Drive))
         .insert_resource(GiveUps {
             trace: std::env::var_os("BEVYRROWIND_STRIDE_TRACE").is_some(),
             ..GiveUps::default()
@@ -943,7 +972,8 @@ fn stride_monitor(
             feet.fill(FootTrack::default());
             continue;
         }
-        let frame = m.loco.frame();
+        // Feet as drawn (the interpolated root), never the tick state.
+        let frame = m.drawn_frame();
         let walking = m.gait.moving;
         for (k, leg) in legs.iter().enumerate() {
             let t = &mut feet[k];

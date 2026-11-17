@@ -963,6 +963,98 @@ fn config_validates() {
     ));
 }
 
+/// Rolling ground for the debug-draw test: ±0.6 m bumps 3.9 m apart (under 26 degrees).
+fn bump(x: f32, z: f32) -> f32 {
+    0.6 * (0.8 * x).sin() * (0.8 * z).cos()
+}
+
+/// The soup's own surface under `(x, z)`: the triangle of its `step` grid cell (split along the
+/// cell's `(x0, z0)`-`(x1, z1)` diagonal, as [`Soup::quad`] does).
+fn bump_soup_height(x: f32, z: f32, step: f32) -> f32 {
+    let (i, j) = ((x / step).floor(), (z / step).floor());
+    let (u, v) = (x / step - i, z / step - j);
+    let h = |di: f32, dj: f32| bump((i + di) * step, (j + dj) * step);
+    let (ha, hb, hc, hd) = (h(0.0, 0.0), h(0.0, 1.0), h(1.0, 1.0), h(1.0, 0.0));
+    if v >= u {
+        ha + (hc - hb) * u + (hb - ha) * v
+    } else {
+        ha + (hd - ha) * u + (hc - hd) * v
+    }
+}
+
+/// NV-1 debug draw: on bumpy ground the drawn outlines follow the detail mesh. Every line's ends
+/// and midpoint sit on the input surface, never more than a cell height under it (the depth test
+/// would hide it) nor four over it (Recast's one-cell offset, voxel-top rounding, the voxel top
+/// over a sloped cell, the detail sampling error); the coarse polygon edges they replace dip
+/// further under it. Each polygon edge is covered exactly once by the detail boundary lines
+/// matched to it (XZ lengths add up).
+#[test]
+fn debug_edges_follow_the_detail_surface() {
+    const STEP: f32 = 0.5;
+    let mut s = Soup::default();
+    for i in 0..32 {
+        for j in 0..16 {
+            let (x0, z0) = (i as f32 * STEP, j as f32 * STEP);
+            let (x1, z1) = (x0 + STEP, z0 + STEP);
+            s.quad(
+                [
+                    Vec3::new(x0, bump(x0, z0), z0),
+                    Vec3::new(x0, bump(x0, z1), z1),
+                    Vec3::new(x1, bump(x1, z1), z1),
+                    Vec3::new(x1, bump(x1, z0), z0),
+                ],
+                GROUND,
+            );
+        }
+    }
+    let mut b = backend();
+    assert_eq!(load(&mut b, &s, 2, 1), 2);
+    let ch = cfg(H).cell_height;
+    let above = |p: Vec3| p.y - bump_soup_height(p.x, p.z, STEP);
+    let (mut lo, mut hi, mut coarse_lo, mut lines) = (f32::MAX, f32::MIN, f32::MAX, 0);
+    for x in 0..2 {
+        let geo = b.tile_geometry(&key(x, 0)).unwrap();
+        assert!(geo.polys.iter().all(|p| !p.detail.is_empty()));
+        let mut covered: Vec<Vec<f32>> =
+            geo.polys.iter().map(|p| vec![0.0; p.verts.len()]).collect();
+        geo.for_each_edge(|e| {
+            for p in [e.a, e.b, (e.a + e.b) * 0.5] {
+                let dy = above(p);
+                assert!(
+                    (-ch..=4.0 * ch).contains(&dy),
+                    "{p} is {dy} m over the ground"
+                );
+                (lo, hi) = (lo.min(dy), hi.max(dy));
+            }
+            covered[e.poly][usize::from(e.edge)] +=
+                Vec2::new(e.b.x - e.a.x, e.b.z - e.a.z).length();
+            lines += 1;
+        });
+        for (p, cov) in geo.polys.iter().zip(&covered) {
+            let n = p.verts.len();
+            for (i, got) in cov.iter().enumerate() {
+                let (a, b) = (
+                    geo.verts[p.verts[i] as usize],
+                    geo.verts[p.verts[(i + 1) % n] as usize],
+                );
+                let want = Vec2::new(b.x - a.x, b.z - a.z).length();
+                assert!((got - want).abs() < 1e-3, "edge {i}: {got} drawn of {want}");
+                for t in [0.25, 0.5, 0.75] {
+                    coarse_lo = coarse_lo.min(above(a.lerp(b, t)));
+                }
+            }
+        }
+    }
+    println!(
+        "{lines} lines, {lo:.3}..{hi:.3} m over the ground; coarse polygon edges down to \
+         {coarse_lo:.3} m"
+    );
+    assert!(
+        coarse_lo < -ch,
+        "the bumps put coarse edges under the ground"
+    );
+}
+
 /// A 6 × 6 tile town at the NV0 humanoid calibration (0.15 m voxels, 128 per tile: 19.2 m
 /// tiles): ground, 6 × 6 m houses every 14 m with a 20 degree ramp up to every other roof.
 #[test]

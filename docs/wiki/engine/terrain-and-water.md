@@ -50,7 +50,7 @@ keyed by source height above the plane); the water draw swaps the environment-ma
 shading normal keeps the chop's wind wavelets at `ShoreSettings::normal_floor` (0.5; `shore_normal_scales`, W-SHORE). Where the
 FFT swell fades, `sf_water::ShoreWaves` (`shore_waves.rs`; GPU `water_common.wesl` `shore_waves`, in the draw, the velocity redraw
 and the CPU query) adds three Gerstner trains rolling in along the baked shoreward direction plus a beach swash, scaled by the
-sea state (W-GERSTNER; the shore field is `Rgba16Float`: distance, openness, direction), shoaling over the local bed slope β = depth / shore distance baked from the adapter's depths (W-GERSTNER-DEPTH, `ShoreField::bed_slope`, `shore.rs`: a second `R16Float` texture, clamped 0.02-0.3, the 1:20 `beach_slope` where unknown). The sea follows the weather's 10 m mean
+sea state (W-GERSTNER; the shore field is `Rgba16Float`: distance, openness, direction), shoaling over the local bed slope β = depth / shore distance baked from the adapter's depths (W-GERSTNER-DEPTH, `ShoreField::bed_slope`, `shore.rs`: a second `R16Float` texture, clamped 0.02-0.3, the 1:20 `beach_slope` where unknown).  The shore foam band follows the local breaking energy (`ShoreWave::breaking`, W-FOAM-GATE), so calm and enclosed water has none. The sea follows the weather's 10 m mean
 wind (W-WIND, `sf_water/src/sea_wind.rs`): low-passed (30 s) and blended between two `h0` sets of one seed (6 s transitions, new
 `h0` on a worker thread), the CPU twin and shore waves blended alike; the exterior copies `WindField` into `WaterWind`. Morrowind wiring:
 `mw_environment_bevy/src/water.rs:141` (`add`; fixed-tick `step`, `bed`, `pools`, `sync`); `mw_water` gives bodies (sea at 0,
@@ -94,7 +94,7 @@ direction): the occlusion term is the one that saves in streets and valleys; the
 
 Terrain layer arrays are RGBA8 at 256² (`mw_bake/src/world.rs` `LAYER_ARRAY_SIZE`): BC7/BC5 and size per preset are T6;
 layer height for the height blend comes from the albedo's alpha only (a pack's `_nh` height isn't used). Far shadow map upload cost was a walk stutter source (see [perf ledger](../../ledger/perf.md); water history in the
-[water ledger](../../ledger/water.md)). Rivers, underwater and
+[water ledger](../../ledger/water.md)). Underwater: U1 camera medium built (`sf_water::medium`, `WaterMedium` per `WaterCamera`, cues; interior pools are not in the CPU query, so interiors read Above); the post, waterline and caustics are U3-U5. Rivers, the rest of underwater and
 wading are specced (`water.md`); check the code before assuming they are wired. SSPR only mirrors what is on screen
 and opaque (no translucents, nothing off screen: the environment map fills in; the dynamic probe is specced, not built).
 

@@ -20,7 +20,7 @@ character, projectile, `BODY_PROXY`), interpolated poses (`pose_at` `:444`), eve
 `PhysicsBody` entities get interpolated pose written back. Streaming (`stream.rs`): `PhysicsHook` wraps placement
 spawners, Active cells queue `Fixed` colliders (one shared mesh per model, built on the task pool) under
 `insert_budget_ms`; terrain chunks 64 m at 0.5 m follow the active cells; an item gate waits for the floor.
-Characters: `character.rs` (capsules, `CharacterFellOut`, safety net). Proxies: `proxies.rs`. Carry: `carry.rs`.
+Characters: `character.rs` (capsules follow the mover's tick pose inside `FixedUpdate`, `CharacterFellOut`, safety net). Proxies: `proxies.rs`. Carry: `carry.rs`.
 
 **Collision from NIF** (`mw_bake/src/collision.rs:1-30`, `collision.cook`): OpenMW `bulletnifloader.cpp` rules (commit
 4e718b50): skinned models none; `NC` markers; non-empty `RootCollisionNode` subtree; models `mesh.cook` skips and

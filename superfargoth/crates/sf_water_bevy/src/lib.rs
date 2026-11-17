@@ -9,7 +9,8 @@
 //! The host (an app or adapter) owns the inputs: [`OceanSpectrum`] (sea state, seed, cascades:
 //! the twin's), [`WaterFrame`] (time, floating-origin cell, rest level), [`WaterLook`] (optics),
 //! [`WaterShoreInput`] and
-//! [`WaterRegionsInput`] (bake products), [`WaterQuality`], [`WaterReflections`]; it marks the camera ([`WaterCamera`])
+//! [`WaterRegionsInput`] (bake products), [`WaterQuality`], [`WaterReflections`], [`WaterRain`] (rain
+//! rings, R1); it marks the camera ([`WaterCamera`])
 //! and surface entities ([`OceanSurface`] for the ocean, [`WaterSurface`] for lakes, pools and
 //! interior water at their own level), with the camera's render layers. Systems in
 //! [`WaterSystems::Drive`] (`PostUpdate`) turn them into GPU state; order the host's systems
@@ -21,6 +22,8 @@ mod gate;
 #[cfg(test)]
 mod gate_tests;
 mod material;
+mod medium;
+mod rain;
 pub mod mesh;
 mod render;
 #[cfg(test)]
@@ -47,7 +50,16 @@ use bevy_transform::components::GlobalTransform;
 use sf_water::{origin_phase, reflection_plane, Cascades, OpticsMap, PlaneCandidate, SeaTransition, SeaWind, ShoreField, ShoreSettings, ShoreWaves, SpectrumParams, WaterOptics, H0, REPEAT_PERIOD};
 
 pub use material::{WaterExt, WaterMaterial, WaterParams};
-pub use gate::{gate_stats, GateStats, WaterGate, WaterGateSettings, MAX_GATE_BOXES, TUNABLES, WATER_GATE_IDLE_FFT_S, WATER_GATE_MARGIN_M, WATER_GATE_VISIBLE};
+pub use rain::{WaterRain, WaterRainSettings, RAIN_CLOCK_WRAP_S, WATER_RAIN_RIPPLE_FADE_FAR_M, WATER_RAIN_RIPPLE_FADE_NEAR_M, WATER_RAIN_RIPPLE_STRENGTH};
+pub use gate::{gate_stats, GateStats, WaterGate, WaterGateSettings, MAX_GATE_BOXES, WATER_GATE_IDLE_FFT_S, WATER_GATE_MARGIN_M, WATER_GATE_VISIBLE};
+pub use medium::{
+    post_on, MediumCue, UnderwaterUniform, WaterMedium, WaterMediumCue, WaterMediumSettings, WaterMediumUniform, WaterMediums, NO_WATER_DEPTH_M, WATER_MEDIUM_HYSTERESIS_M, WATER_UNDERWATER,
+    WATER_UNDERWATER_KD_SCALE, WATER_UNDERWATER_SKY_FILL,
+};
+
+/// This crate's tunables (the host binds them: [`WaterGateSettings`], [`WaterMediumSettings`],
+/// [`WaterRainSettings`]).
+pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[&WATER_GATE_VISIBLE, &WATER_GATE_MARGIN_M, &WATER_GATE_IDLE_FFT_S, &WATER_UNDERWATER, &WATER_MEDIUM_HYSTERESIS_M, &WATER_UNDERWATER_KD_SCALE, &WATER_UNDERWATER_SKY_FILL, &WATER_RAIN_RIPPLE_STRENGTH, &WATER_RAIN_RIPPLE_FADE_NEAR_M, &WATER_RAIN_RIPPLE_FADE_FAR_M];
 
 /// FFT grid per cascade at High/Ultra (water.md: 256²); Low and Medium use 128².
 pub const RESOLUTION: usize = 256;
@@ -166,6 +178,12 @@ impl Default for WaterReflections {
     }
 }
 
+/// The breaker foam on every water surface (SF-1, `sf_water::SurfFoam`, the host's
+/// `ShoreSettings::surf_foam`): kept apart from the baked shore field so pools and the ocean before
+/// its bake follow the same switch (`--off surffoam`: `enabled` false).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct WaterSurfFoam(pub sf_water::SurfFoam);
+
 /// Per-frame inputs the host sets before [`WaterSystems::Drive`].
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct WaterFrame {
@@ -263,7 +281,7 @@ impl Default for ClipmapSettings {
 /// [`ScreenSpaceTransmission`] with 0 steps: the water draws in the transmissive phase (W-ORDER)
 /// without Bevy's colour copy (the water reads its own snapshot).
 #[derive(Component, Clone, Copy, Debug, Default)]
-#[require(ScreenSpaceTransmission = water_transmission())]
+#[require(ScreenSpaceTransmission = water_transmission(), WaterMedium)]
 pub struct WaterCamera;
 
 /// No transmission copy (`steps: 0`): only the phase placement is used.
@@ -304,6 +322,9 @@ impl WaterSurface {
 pub enum WaterSystems {
     /// `PostUpdate`, after transform propagation: spectrum upload, targets, material, render state.
     Drive,
+    /// `PostUpdate`, after transform propagation and before [`Self::Drive`]: the host's system that
+    /// updates the cameras' [`WaterMedium`] ([`WaterMediums::update`]).
+    Medium,
 }
 
 /// The plugin's images (GPU-written ones too, so materials and readbacks can hold handles).
@@ -351,6 +372,7 @@ impl Plugin for WaterPlugin {
         embedded_asset!(app, "shaders/water_snapshot.wesl");
         embedded_asset!(app, "shaders/water_sspr.wesl");
         embedded_asset!(app, "shaders/water_velocity.wesl");
+        embedded_asset!(app, "shaders/water_underwater.wesl");
         app.init_resource::<OceanSpectrum>()
             .init_resource::<WaterFrame>()
             .init_resource::<WaterWind>()
@@ -360,6 +382,9 @@ impl Plugin for WaterPlugin {
             .init_resource::<WaterRegionsInput>()
             .init_resource::<WaterQuality>()
             .init_resource::<WaterReflections>()
+            .init_resource::<WaterSurfFoam>()
+            .init_resource::<WaterRain>()
+            .init_resource::<WaterRainSettings>()
             .init_resource::<ClipmapSettings>()
             .init_resource::<WaterGateSettings>()
             .init_resource::<gate::WetTilesCache>()
@@ -371,6 +396,7 @@ impl Plugin for WaterPlugin {
                 PostUpdate,
                 (depth_usages, size_waves, follow_wind, upload_spectrum, upload_bakes, size_targets, attach_surface, gate::update_tiles, gate::gate_views, drive).chain().in_set(WaterSystems::Drive),
             );
+        medium::build(app);
         render::build(app);
     }
 
@@ -783,12 +809,15 @@ struct Shared<'a> {
     clip: &'a ClipmapSettings,
     shore: &'a WaterShoreInput,
     regions: &'a WaterRegionsInput,
+    surf: &'a sf_water::SurfFoam,
     cascades: usize,
     /// SSPR this frame: (plane level, texel scale, wave distortion).
     reflection: Option<(f32, u32, f32)>,
     /// The shore waves of this sea state on the shore field (W-GERSTNER), and last frame's time.
     shore_waves: Option<ShoreWaves>,
     prev_time: f64,
+    /// The rain rings' uniform slots this frame (R1, `rain::slots`; zero: no rings).
+    rain: [Vec4; 2],
 }
 
 /// Render-space XZ of world XZ `p` under the floating origin.
@@ -835,6 +864,7 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
     for (i, l) in s.regions.looks.iter().take(MAX_LOOKS).enumerate() {
         looks[i * 3..i * 3 + 3].copy_from_slice(&l.table());
     }
+    let shape = sw.map_or([Vec4::ZERO; 3], |w| surf_shape_slots(&w.surf));
     WaterParams {
         phase01: Vec4::new(phase[0].x, phase[0].y, phase[1].x, phase[1].y),
         phase23: Vec4::new(phase[2].x, phase[2].y, phase[3].x, phase[3].y),
@@ -858,6 +888,21 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
             Vec4::new(w.land_margin, w.variation, origin(frame.origin_cell.x), origin(frame.origin_cell.z))
         }),
         swash4: sw.map_or(Vec4::W, |w| Vec4::new(w.omega_from[0], w.omega_from[1], w.omega_from[2], w.mix)),
+        shore3: {
+            let g = f64::from(sf_coords::GRID_CELL);
+            let origin = |c: i32| (f64::from(c) * g).rem_euclid(sf_water::shore_waves::NOISE_PERIOD) as f32;
+            Vec4::new(st.foam_full_breaking, f32::from(u8::from(s.surf.enabled)), origin(frame.origin_cell.x), origin(frame.origin_cell.z))
+        },
+        surf: Vec4::new(s.surf.birth_start, s.surf.birth_full, s.surf.bore_decay_rad, s.surf.front_rad),
+        surf2: Vec4::new(lace_cells(s.surf.lace_cell_m), s.surf.lace_fresh, s.surf.lace_aged, s.surf.feather),
+        surf3: Vec4::new(s.surf.lace_variation, s.surf.albedo_fresh, s.surf.albedo_aged, s.surf.aged_tint),
+        surf4: Vec4::new(s.surf.aged_opacity, s.surf.glow, s.surf.bump_m, s.surf.swash_residue_rad),
+        surf5: Vec4::new(s.surf.contact_calm, s.surf.contact_line, s.surf.swash_spread, 0.0),
+        rain: s.rain[0],
+        rain2: s.rain[1],
+        shape: shape[0],
+        shape2: shape[1],
+        shape3: shape[2],
         regions,
         reflection: match s.reflection {
             // Only the surface at the mirrored level reads the SSPR; others keep the environment map.
@@ -866,6 +911,27 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
         },
         looks,
     }
+}
+
+/// The surf shape's uniform slots (SF-2, `WaterParams::shape..shape3`; `water_common.wesl`
+/// `shore_trains` reads them, `sf_water::ShoreWaves::eval_on` is the CPU twin). Slot 0's x is the
+/// break sharpness (≥ 1) when on, 0 when off; γ is the twin's in effect either way (the shader also
+/// selects `SW_BREAKER` when off).
+fn surf_shape_slots(s: &sf_water::SurfShape) -> [Vec4; 3] {
+    let on = if s.enabled { s.break_sharpness.clamp(1.0, 32.0) } else { 0.0 };
+    [
+        Vec4::new(on, s.gamma(), s.steepen_start, s.bore_start),
+        Vec4::new(s.bore_full, s.skew_steepen, s.skew_bore, s.bore_loop),
+        Vec4::new(s.break_crest_min_m, s.gap_cells(), s.gap_share, s.gap_feather),
+    ]
+}
+
+/// Whole lace cells per noise period for a lace cell of `cell_m` metres (SF-1: the cellular noise
+/// tiles over `sf_water::shore_waves::NOISE_PERIOD`, so the floating origin's wrap never shows).
+#[allow(clippy::cast_possible_truncation)]
+fn lace_cells(cell_m: f32) -> f32 {
+    let period = sf_water::shore_waves::NOISE_PERIOD as f32;
+    (period / cell_m.max(0.05)).round().clamp(1.0, 16_384.0)
 }
 
 /// The shore waves of the sea state on the field's settings at transition weight `w` (W-GERSTNER,
@@ -880,11 +946,12 @@ fn shore_waves_now(spectrum: &OceanSpectrum, settings: ShoreSettings, w: f32, ca
 }
 
 /// Material parameters, and the render world's per-frame state (FFT tier and amortisation).
-#[allow(clippy::too_many_arguments, clippy::similar_names, clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::similar_names, clippy::type_complexity, clippy::too_many_lines)]
 fn drive(
     (frame, spectrum, look, clip, quality): (Res<WaterFrame>, Res<OceanSpectrum>, Res<WaterLook>, Res<ClipmapSettings>, Res<WaterQuality>),
-    (shore, regions, reflections): (Res<WaterShoreInput>, Res<WaterRegionsInput>, Res<WaterReflections>),
+    (shore, regions, reflections, surf): (Res<WaterShoreInput>, Res<WaterRegionsInput>, Res<WaterReflections>, Res<WaterSurfFoam>),
     (cameras, gate_settings): (Query<(&GlobalTransform, Option<&WaterGate>), With<WaterCamera>>, Res<WaterGateSettings>),
+    (rain_input, rain_settings): (Res<WaterRain>, Res<WaterRainSettings>),
     images: Option<Res<WaterImages>>,
     mut surfaces: Query<(&MeshMaterial3d<WaterMaterial>, Option<&WaterSurface>, Has<OceanSurface>, &mut Visibility, &bevy_camera::visibility::InheritedVisibility)>,
     mut materials: ResMut<Assets<WaterMaterial>>,
@@ -915,7 +982,9 @@ fn drive(
         clip: &clip,
         shore: &shore,
         regions: &regions,
+        surf: &surf.0,
         cascades,
+        rain: rain::slots(frame.time, *rain_input, *rain_settings),
     };
     let mut primary: Option<WaterParams> = None;
     let mut any = false;

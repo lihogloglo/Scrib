@@ -21,7 +21,7 @@ use bevy_camera::primitives::{Aabb, Frustum};
 use bevy_ecs::prelude::*;
 use bevy_math::{Affine3A, Vec3};
 use bevy_transform::components::GlobalTransform;
-use sf_tunables::{def, AnyDef, Def, Group, Source, Unit};
+use sf_tunables::{def, Def, Group, Source, Unit};
 use sf_water::WetTiles;
 
 use crate::{render_xz, ClipmapSettings, OceanSurface, WaterCamera, WaterFrame, WaterShoreInput, WaterSurface};
@@ -50,13 +50,10 @@ pub const WATER_GATE_IDLE_FFT_S: Def<f32> = def!(float "water.gate.idle_fft_s" =
     .source(Source::Guess)
     .group(Group::Water);
 
-/// This crate's tunables (the host binds them into [`WaterGateSettings`]).
-pub const TUNABLES: &[&dyn AnyDef] = &[&WATER_GATE_VISIBLE, &WATER_GATE_MARGIN_M, &WATER_GATE_IDLE_FFT_S];
-
 /// Most boxes one camera's probe draws (a capacity: beyond it the probe is skipped, every pass runs).
 pub const MAX_GATE_BOXES: usize = 4096; // tunables: const (capacity: past it the gate runs every pass)
 
-/// The gate's settings (bound from [`TUNABLES`] by the host; live both ways).
+/// The gate's settings (bound from [`crate::TUNABLES`] by the host; live both ways).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct WaterGateSettings {
     pub enabled: bool,

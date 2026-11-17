@@ -6,23 +6,40 @@
 //! writes (player input, AI, the adapter's path-walk scaffold), and
 //! optionally an [`Avoider`] (it takes part in local avoidance as a reactive
 //! agent). Other avoidance participants that never react (the player, the
-//! camera) carry an [`AvoidObstacle`] the host keeps current. Per frame:
+//! camera) carry an [`AvoidObstacle`] the host keeps current.
 //!
-//! 1. [`ControllerSystems::Drive`] (`Update`): host systems write
-//!    [`MoveIntent`]s and [`AvoidObstacle`]s. Empty here.
-//! 2. [`ControllerSystems::Step`] (`Update`): one system, in the industry
+//! Gameplay runs on the fixed tick (nav.md `NV7a`; the net-ready rule: a fixed
+//! tick, presentation never feeds gameplay), drawing is interpolated, the
+//! same pattern as the action layer's player (`sf_action_bevy`, Bevy 0.20's
+//! `physics_in_fixed_timestep`). The tick rate is the app's `Time<Fixed>`
+//! (the action layer and physics set it); this crate adds none.
+//!
+//! 1. [`ControllerSystems::Drive`] (`FixedUpdate`): host systems write
+//!    [`MoveIntent`]s (path followers, AI, scripts). Empty here.
+//! 2. [`ControllerSystems::Step`] (`FixedUpdate`): one system, in the industry
 //!    order (UE `CharacterMovementComponent` + RVO, Unity `NavMeshAgent`,
 //!    Detour crowd: steering → avoidance → movement): ORCA
 //!    ([`Avoidance::solve`]) turns every reactive agent's desired velocity
 //!    into a collision-free one, then [`KinematicMover::step_batch`] moves
 //!    every character with one batched probe call per stage against the
-//!    ground resource `G`, then the root `Transform`s are written.
-//! 3. [`ControllerSystems::Feed`] (`PostUpdate`, in
+//!    ground resource `G`; each mover's pose before and after the tick is
+//!    kept ([`Mover::poses`]). Hosts order it before their physics step.
+//! 3. [`ControllerSystems::Interpolate`] (`RunFixedMainLoop`, after the
+//!    fixed loop, once per frame): the drawn root is the previous and current
+//!    tick poses blended by `Time<Fixed>::overstep_fraction` ([`TickPose`],
+//!    the action layer's type), written to the `Transform`; the drawn motion
+//!    since last frame goes to the feed. Dormant movers are snapped to their
+//!    state (an outside owner may have moved them) and a [`Held`] one's
+//!    `Transform` is left to its owner.
+//! 4. [`ControllerSystems::Feed`] (`PostUpdate`, in
 //!    [`AnimSystems::Probe`]): each mover's [`Animator`] gets its velocity,
-//!    `moved` delta and turn rate in character space, the adapter-named
+//!    drawn `moved` delta and turn rate in character space, the adapter-named
 //!    locomotion parameters ([`AnimParamNames`]), and per-leg ground
-//!    samples (one batched probe at the graph's `probe_origins`) for foot
-//!    placement.
+//!    samples (one batched probe at the graph's `probe_origins`, under the
+//!    drawn root) for foot placement.
+//!
+//! [`AvoidObstacle`]s are written by the host at frame rate (they follow a
+//! camera or the player's body) and read by the next ticks.
 //!
 //! The ground `G` is any [`GroundProbe`] resource (terrain heights plus the
 //! static query world in a game); the host keeps it current.
@@ -35,19 +52,20 @@
 use std::marker::PhantomData;
 use std::time::Instant;
 
-use bevy_app::{App, Plugin, PostUpdate, Update};
+use bevy_app::{App, FixedUpdate, Plugin, PostUpdate, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy_ecs::prelude::*;
 use bevy_math::{Quat, Vec2, Vec3};
-use bevy_time::Time;
+use bevy_time::{Fixed, Time};
 use bevy_transform::components::Transform;
 use sf_anim_bevy::{AnimSystems, Animator};
 use sf_anim_graph::GroundSample;
 use sf_controller::{
     AvoidAgent, Avoidance, CharacterFrame, Gait, GroundHit, KinematicMover, MoveInput, ProbeQuery,
+    RootDelta,
 };
 pub use sf_controller::{
     AvoidParams, AvoidRole, GroundProbe, Locomotion, LocomotionIntent, MoverMode, MoverParams,
-    RootMotion,
+    RootMotion, TickPose,
 };
 use sf_coords::WorldPos;
 use sf_diag_bevy::DiagCounters;
@@ -58,10 +76,12 @@ mod tests;
 /// The sets, chained within their schedules (see the crate docs).
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ControllerSystems {
-    /// `Update`: intents and obstacles (host systems).
+    /// `FixedUpdate`: intents (host systems: path followers, AI, scripts).
     Drive,
-    /// `Update`: avoidance, mover, transform write-back.
+    /// `FixedUpdate`: avoidance and the mover (the tick's gameplay state).
     Step,
+    /// `RunFixedMainLoop`, after the fixed loop: interpolated drawn roots to `Transform`.
+    Interpolate,
     /// `PostUpdate`, inside `AnimSystems::Probe`: the animation feed.
     Feed,
 }
@@ -84,14 +104,22 @@ impl<G: GroundProbe + Resource> Plugin for SfControllerPlugin<G> {
         app.init_resource::<ControllerSettings>()
             .init_resource::<ControllerStats>()
             .configure_sets(
-                Update,
+                FixedUpdate,
                 (ControllerSystems::Drive, ControllerSystems::Step).chain(),
+            )
+            .configure_sets(
+                RunFixedMainLoop,
+                ControllerSystems::Interpolate.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop),
             )
             .configure_sets(
                 PostUpdate,
                 ControllerSystems::Feed.in_set(AnimSystems::Probe),
             )
-            .add_systems(Update, step::<G>.in_set(ControllerSystems::Step))
+            .add_systems(FixedUpdate, step::<G>.in_set(ControllerSystems::Step))
+            .add_systems(
+                RunFixedMainLoop,
+                interpolate.in_set(ControllerSystems::Interpolate),
+            )
             .add_systems(
                 PostUpdate,
                 feed_animators::<G>.in_set(ControllerSystems::Feed),
@@ -137,6 +165,15 @@ pub struct Mover {
     pub measured_turn: f32,
     /// What the feed told the graph last (its hysteresis state).
     pub gait: FeedGait,
+    /// The pose at the start and at the end of the last tick ([`Mover::poses`]).
+    prev: TickPose,
+    curr: TickPose,
+    /// The root drawn last frame (`None` after a snap or while dormant)…
+    drawn: Option<TickPose>,
+    /// …and how the drawn root moved from the frame before it, in that frame's
+    /// character space: the feed's `moved` (what the eye sees, never the
+    /// tick's lump: 0, 1 or 2 ticks land in one frame).
+    drawn_moved: RootDelta,
 }
 
 /// The feed's locomotion state, kept between frames for hysteresis.
@@ -153,8 +190,10 @@ pub const MEASURE_HALFLIFE: f32 = 0.05;
 impl Mover {
     /// Standing at `position` facing `yaw`, in a parent frame at `frame_origin`.
     pub fn new(position: WorldPos, yaw: f32, params: MoverParams, frame_origin: WorldPos) -> Self {
+        let loco = Locomotion::new(position, yaw);
+        let pose = TickPose::of(&loco);
         Self {
-            loco: Locomotion::new(position, yaw),
+            loco,
             params,
             frame_origin,
             root: RootMotion::default(),
@@ -164,7 +203,43 @@ impl Mover {
             measured: Vec3::ZERO,
             measured_turn: 0.0,
             gait: FeedGait::default(),
+            prev: pose,
+            curr: pose,
+            drawn: None,
+            drawn_moved: RootDelta::ZERO,
         }
+    }
+
+    /// The tick poses the drawn root blends: at the start and at the end of
+    /// the last tick that stepped this mover.
+    pub fn poses(&self) -> (TickPose, TickPose) {
+        (self.prev, self.curr)
+    }
+
+    /// Call after moving [`Mover::loco`] outside a tick step without drawing
+    /// the way there (a teleport, a fell-out return, a hand-back): both tick
+    /// poses become the current state and the feed sees no motion for it.
+    pub fn snap(&mut self) {
+        self.curr = TickPose::of(&self.loco);
+        self.prev = self.curr;
+        self.drawn = None;
+        self.drawn_moved = RootDelta::ZERO;
+    }
+
+    /// The root as drawn last frame (before the first frame: the current state).
+    pub fn drawn(&self) -> TickPose {
+        self.drawn.unwrap_or_else(|| TickPose::of(&self.loco))
+    }
+
+    /// The drawn root's character-space frame: animation inputs (foot probes,
+    /// stride checks) work in what is drawn, never in the tick state.
+    pub fn drawn_frame(&self) -> CharacterFrame {
+        self.drawn().frame()
+    }
+
+    /// How the drawn root moved since the frame before (the feed's `moved`).
+    pub fn drawn_moved(&self) -> RootDelta {
+        self.drawn_moved
     }
 
     /// Yaw (about +Y, 0 facing +Z) of a rotation's forward (+Z) axis.
@@ -260,7 +335,8 @@ pub struct ControllerSettings {
     pub enabled: bool,
     pub avoidance: bool,
     pub avoid: AvoidParams,
-    /// Longest step; longer frames (hitches, loading) are clamped.
+    /// Longest step, s: a tick longer than this (a host with a slow fixed
+    /// rate) is clamped. The tick itself is the app's `Time<Fixed>`.
     pub max_dt: f32,
     /// Measured speed above which a still character counts as moving for
     /// the graph, m/s…
@@ -310,7 +386,8 @@ impl Default for ControllerSettings {
     }
 }
 
-/// Last frame's work (also counters `controller/...` with `SfDiagPlugin`).
+/// Last tick's step (`avoid_us`, `move_us`, counts) and last frame's `write_us` (interpolation)
+/// and `feed_us` (also counters `controller/...` with `SfDiagPlugin`; the step's add up per frame).
 #[derive(Resource, Clone, Debug, Default)]
 pub struct ControllerStats {
     pub movers: usize,
@@ -335,6 +412,9 @@ struct StepScratch {
     intents: Vec<LocomotionIntent>,
 }
 
+/// One fixed tick of every awake mover (`FixedUpdate`; there the generic
+/// clock is the fixed one, so `dt` is the tick). Gameplay state only: the
+/// `Transform` is written by [`interpolate`].
 #[allow(
     clippy::too_many_arguments,
     clippy::too_many_lines,
@@ -347,10 +427,7 @@ fn step<G: GroundProbe + Resource>(
     mut stats: ResMut<ControllerStats>,
     counters: Option<Res<DiagCounters>>,
     mut scratch: Local<StepScratch>,
-    mut movers: Query<
-        (&mut Mover, &MoveIntent, Option<&Avoider>, &mut Transform),
-        Without<Dormant>,
-    >,
+    mut movers: Query<(&mut Mover, &MoveIntent, Option<&Avoider>), Without<Dormant>>,
     mut sleeping: Query<&mut Mover, (With<Dormant>, Added<Dormant>)>,
     obstacles: Query<&AvoidObstacle>,
 ) {
@@ -379,14 +456,14 @@ fn step<G: GroundProbe + Resource>(
     } = &mut *scratch;
     let mut items: Vec<_> = movers.iter_mut().collect();
     intents.clear();
-    intents.extend(items.iter().map(|(_, intent, _, _)| intent.0));
+    intents.extend(items.iter().map(|(_, intent, _)| intent.0));
 
     // Avoidance: every mover is an agent (reactive with an `Avoider`), then the obstacles.
     let t0 = Instant::now();
     let mut reactive = 0;
     if settings.avoidance && !items.is_empty() {
         agents.clear();
-        for (m, intent, avoider, _) in &items {
+        for (m, intent, avoider) in &items {
             let preferred = intent.0.desired_velocity;
             let (role, priority, travel, max_speed) = match avoider {
                 Some(a) => {
@@ -426,7 +503,7 @@ fn step<G: GroundProbe + Resource>(
         out.clear();
         out.resize(agents.len(), Vec3::ZERO);
         avoidance.solve(agents, &settings.avoid, dt, out);
-        for (i, (_, _, avoider, _)) in items.iter().enumerate() {
+        for (i, (_, _, avoider)) in items.iter().enumerate() {
             if avoider.is_some() {
                 intents[i].desired_velocity = out[i];
             }
@@ -434,13 +511,17 @@ fn step<G: GroundProbe + Resource>(
     }
     let avoid_us = micros(t0);
 
-    // The mover: one batch, one probe call per stage.
+    // The mover: one batch, one probe call per stage. The tick starts from
+    // the state as it is (an outside write since the last tick included).
     let t1 = Instant::now();
+    for (m, _, _) in &mut items {
+        m.prev = TickPose::of(&m.loco);
+    }
     {
         let mut inputs: Vec<MoveInput<'_>> = items
             .iter_mut()
             .zip(intents.iter())
-            .map(|((m, _, _, _), intent)| {
+            .map(|((m, _, _), intent)| {
                 let Mover {
                     loco,
                     params,
@@ -463,7 +544,7 @@ fn step<G: GroundProbe + Resource>(
 
     // Measured motion: what the step actually did, in the new frame.
     let keep = 0.5f32.powf(dt / MEASURE_HALFLIFE);
-    for (m, _, _, _) in &mut items {
+    for (m, _, _) in &mut items {
         let moved = m.loco.moved;
         let raw = Quat::from_rotation_y(-moved.yaw) * moved.translation / dt;
         let raw = if raw.is_finite() {
@@ -478,17 +559,8 @@ fn step<G: GroundProbe + Resource>(
         };
         m.measured = raw.lerp(m.measured, keep);
         m.measured_turn = turn + (m.measured_turn - turn) * keep;
+        m.curr = TickPose::of(&m.loco);
     }
-
-    let t2 = Instant::now();
-    for (m, _, _, t) in &mut items {
-        let (translation, rotation) = m.root_transform();
-        if t.translation != translation || t.rotation != rotation {
-            t.translation = translation;
-            t.rotation = rotation;
-        }
-    }
-    let write_us = micros(t2);
 
     *stats = ControllerStats {
         movers: items.len(),
@@ -496,7 +568,7 @@ fn step<G: GroundProbe + Resource>(
         obstacles: obstacles.iter().len(),
         avoid_us,
         move_us,
-        write_us,
+        write_us: stats.write_us,
         feed_us: stats.feed_us,
         foot_probes: stats.foot_probes,
     };
@@ -504,7 +576,6 @@ fn step<G: GroundProbe + Resource>(
         let ms = sf_diag_bevy::sf_diag::unit::MS;
         c.add_named("controller/avoid/ms", ms, f64::from(avoid_us) / 1000.0);
         c.add_named("controller/move/ms", ms, f64::from(move_us) / 1000.0);
-        c.add_named("controller/write/ms", ms, f64::from(write_us) / 1000.0);
         #[allow(clippy::cast_precision_loss)]
         c.set_named(
             "controller/movers/count",
@@ -516,6 +587,53 @@ fn step<G: GroundProbe + Resource>(
 
 fn micros(since: Instant) -> f32 {
     since.elapsed().as_secs_f32() * 1e6
+}
+
+// --- Interpolation ------------------------------------------------------------------------
+
+/// Once per frame after the fixed loop: each awake mover is drawn at its tick
+/// poses blended by `overstep_fraction` (presentation only: reads the tick
+/// state, never writes it). A dormant mover is snapped to its state each frame
+/// (an outside owner may move it: a ragdoll get-up, a hand-back), so it wakes
+/// without a slide; a [`Held`] one's `Transform` belongs to its owner.
+#[allow(clippy::needless_pass_by_value)]
+fn interpolate(
+    fixed: Res<Time<Fixed>>,
+    mut stats: ResMut<ControllerStats>,
+    counters: Option<Res<DiagCounters>>,
+    mut movers: Query<(&mut Mover, &mut Transform, Has<Dormant>, Has<Held>)>,
+) {
+    let t0 = Instant::now();
+    let alpha = fixed.overstep_fraction().clamp(0.0, 1.0);
+    for (mut m, mut t, dormant, held) in &mut movers {
+        let m = &mut *m;
+        let pose = if dormant {
+            m.snap();
+            if held {
+                continue;
+            }
+            m.curr
+        } else {
+            m.prev.lerp(m.curr, alpha)
+        };
+        m.drawn_moved = m
+            .drawn
+            .map_or(RootDelta::ZERO, |last| last.frame().delta_to(&pose.frame()));
+        m.drawn = (!dormant).then_some(pose);
+        let translation = m.frame_origin.delta_f32(pose.position);
+        if t.translation != translation || t.rotation != pose.rotation {
+            t.translation = translation;
+            t.rotation = pose.rotation;
+        }
+    }
+    stats.write_us = micros(t0);
+    if let Some(c) = counters {
+        c.add_named(
+            "controller/write/ms",
+            sf_diag_bevy::sf_diag::unit::MS,
+            f64::from(stats.write_us) / 1000.0,
+        );
+    }
 }
 
 // --- Animation feed -----------------------------------------------------------------------
@@ -762,15 +880,17 @@ fn feed_animators<G: GroundProbe + Resource>(
         let inv = m.body_scale.recip();
         let a = &mut *animator;
         a.drive.velocity = v.velocity * inv;
+        let drawn = m.drawn_frame();
         a.drive.acceleration = if dormant {
             Vec3::ZERO
         } else {
-            m.loco.frame().dir_to_local(m.loco.motion.acceleration) * inv
+            drawn.dir_to_local(m.loco.motion.acceleration) * inv
         };
         a.drive.turn_rate = v.turn;
-        // Composed until the graph's next update consumes it (A2 updates every
-        // other frame, AN-1); zero when the mover went dormant (and not stepped since).
-        let mut moved = m.loco.moved;
+        // The drawn root's motion this frame (smooth at any frame rate, unlike
+        // the tick's), composed until the graph's next update consumes it (A2
+        // updates every other frame, AN-1); zero while dormant and after a snap.
+        let mut moved = m.drawn_moved;
         moved.translation *= inv;
         a.drive.moved = a.drive.moved.then(moved);
         if let Some(n) = &names.moving {
@@ -791,7 +911,7 @@ fn feed_animators<G: GroundProbe + Resource>(
         if dormant || !settings.foot_probes {
             FootProbes::drop_samples(a);
         } else if ground.is_some() {
-            probes.queue(entity, a, m.loco.frame(), m.body_scale, &settings);
+            probes.queue(entity, a, drawn, m.body_scale, &settings);
         }
     }
     if let (Some(ground), false) = (ground, probes.is_empty()) {
@@ -841,7 +961,7 @@ fn draw_movers(
     let path = Color::srgb(0.95, 0.8, 0.2);
     let air = Color::srgb(0.9, 0.2, 0.2);
     for m in &movers {
-        let feet = settings.origin.delta_f32(m.loco.position);
+        let feet = settings.origin.delta_f32(m.drawn().position);
         let color = if m.loco.grounded.is_some() { walk } else { air };
         let iso = bevy_math::Isometry3d::from_translation(feet + Vec3::Y * 0.02);
         gizmos.circle(

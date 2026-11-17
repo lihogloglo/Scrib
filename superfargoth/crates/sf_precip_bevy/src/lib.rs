@@ -15,7 +15,9 @@
 //!
 //! The occlusion map (`occlusion.rs`) kills drops with a caster upstream of
 //! them along their travel (roofs, walls, hills); hosts switch
-//! [`Precip::enabled`] off indoors. Not built: splashes, textures
+//! [`Precip::enabled`] off indoors. [`Precip::floor`] is a plane the drops
+//! never show below (a host's water surface, which writes no depth). Not
+//! built: splashes, textures
 //! (procedural shapes). The streaks fog themselves from [`TranslucentFog`] (render-order.md
 //! rule 1, RO-3): dimmed by the transmittance to their distance plus the
 //! in-scatter in front of them.
@@ -107,6 +109,10 @@ pub struct Precip {
     pub wind: Vec2,
     /// Light on the drops (sky ambient, day/night; lightning adds).
     pub brightness: f32,
+    /// Precipitation floor: drops whose lower end is below this render-space
+    /// height (y, the camera's space) are not drawn (a host's water surface).
+    /// `None`: no floor.
+    pub floor: Option<f32>,
 }
 
 impl Default for Precip {
@@ -116,6 +122,7 @@ impl Default for Precip {
             slots: [None; SLOTS],
             wind: Vec2::ZERO,
             brightness: 1.0,
+            floor: None,
         }
     }
 }
@@ -128,6 +135,8 @@ pub struct PrecipParams {
     pub velocity: Vec4,
     pub look: Vec4,
     pub color: Vec4,
+    /// x: [`Precip::floor`], y: 1 when set (0: none).
+    pub clip: Vec4,
 }
 
 /// One nested box of one kind.
@@ -284,7 +293,13 @@ pub fn layer_params(slot: &PrecipSlot, layer: usize, precip: &Precip, offset: Ve
         velocity: v.extend(slot.flutter),
         look: Vec4::new(slot.size[0], slot.size[1], slot.intensity.clamp(0.0, 1.0), if flake { 1.5 } else { 1.0 }),
         color: (slot.color.truncate() * precip.brightness.max(0.0)).extend(slot.color.w * far),
+        clip: floor_clip(precip.floor),
     }
+}
+
+/// [`PrecipParams::clip`] for a floor (zero: none).
+pub fn floor_clip(floor: Option<f32>) -> Vec4 {
+    floor.map_or(Vec4::ZERO, |y| Vec4::new(y, 1.0, 0.0, 0.0))
 }
 
 #[allow(clippy::needless_pass_by_value)]

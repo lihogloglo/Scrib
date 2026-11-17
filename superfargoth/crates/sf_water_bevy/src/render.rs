@@ -1,7 +1,9 @@
 //! Render world: the FFT compute chain (before the main pass), the snapshot of the opaque scene
 //! (after the opaque pass, before the water draws in the transmissive pass, W-ORDER), the SSPR
 //! compute of that snapshot (W-SSPR, between the two: `sf_water::sspr`), and the velocity redraw
-//! (after the transparent pass, before post-processing).
+//! (after the transparent pass, before post-processing); and the underwater post (U3, water.md
+//! "Underwater"): on a view fully under the water, after the cloud/fog composite
+//! (`PassStage::Medium`, render-order.md step 8b).
 
 use std::collections::HashMap;
 
@@ -24,6 +26,7 @@ use bevy_render::render_resource::binding_types::{
     texture_storage_2d_array, uniform_buffer,
 };
 use bevy_render::render_resource::{
+    BlendComponent, BlendFactor, BlendOperation, BlendState, WgpuFeatures,
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferUsages, CachedComputePipelineId, CompareFunction, ComputePipeline, DepthBiasState, DepthStencilState, PrimitiveState, PrimitiveTopology, RenderPipeline, StencilState,
     CachedRenderPipelineId, ColorTargetState, ColorWrites, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, FragmentState, LoadOp,
     MultisampleState, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType,
@@ -38,7 +41,7 @@ use sf_render_order_bevy::PassStage;
 use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
 
-use crate::{WaterCamera, WaterGate, WaterImages, WaterParams, MAX_CASCADES, RESOLUTION};
+use crate::{UnderwaterUniform, WaterCamera, WaterGate, WaterImages, WaterParams, MAX_CASCADES, RESOLUTION};
 
 /// The FFT chain's uniform (`water_fft.wesl` `FftParams`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
@@ -211,6 +214,9 @@ struct WaterPipelines {
     gate_probe: BindGroupLayoutDescriptor,
     gate_args: BindGroupLayoutDescriptor,
     gate_shader: Handle<Shader>,
+    /// The underwater post (U3): view, medium, depth (single-sample, multisampled).
+    underwater: [BindGroupLayoutDescriptor; 2],
+    underwater_shader: Handle<Shader>,
     fullscreen: FullscreenShader,
 }
 
@@ -244,6 +250,15 @@ impl FromWorld for WaterPipelines {
                         // The bed slope (W-GERSTNER-DEPTH), sampled with the shore sampler.
                         texture_2d(filtered),
                     ),
+                ),
+            )
+        };
+        let underwater = |ms: bool| {
+            BindGroupLayoutDescriptor::new(
+                "water_underwater",
+                &BindGroupLayoutEntries::sequential(
+                    ShaderStages::FRAGMENT,
+                    (uniform_buffer::<ViewUniform>(true), uniform_buffer::<UnderwaterUniform>(false), if ms { texture_depth_2d_multisampled() } else { texture_depth_2d() }),
                 ),
             )
         };
@@ -302,6 +317,8 @@ impl FromWorld for WaterPipelines {
                 ),
             ),
             gate_shader: load_embedded_asset!(world, "shaders/water_gate.wesl"),
+            underwater: [underwater(false), underwater(true)],
+            underwater_shader: load_embedded_asset!(world, "shaders/water_underwater.wesl"),
             fullscreen: world.resource::<FullscreenShader>().clone(),
         }
     }
@@ -321,6 +338,8 @@ struct WaterPipelineIds {
     velocity: HashMap<u32, CachedRenderPipelineId>,
     gate_probe: HashMap<u32, CachedRenderPipelineId>,
     gate_args: Option<CachedComputePipelineId>,
+    /// The underwater post per (MSAA samples, view target format).
+    underwater: HashMap<(u32, TextureFormat), CachedRenderPipelineId>,
 }
 
 pub(crate) fn build(app: &mut App) {
@@ -331,7 +350,13 @@ pub(crate) fn build(app: &mut App) {
         .init_resource::<WaterPipelineIds>()
         .add_systems(ExtractSchedule, extract)
         .add_systems(RenderStartup, bevy_render::init_gpu_resource::<WaterPipelines>)
-        .add_systems(Render, (queue_pipelines.in_set(RenderSystems::Queue), prepare.in_set(RenderSystems::PrepareBindGroups)))
+        .add_systems(
+            Render,
+            (
+                (queue_pipelines, queue_underwater).in_set(RenderSystems::Queue),
+                (prepare, prepare_underwater).in_set(RenderSystems::PrepareBindGroups),
+            ),
+        )
         .add_systems(
             Core3d,
             (
@@ -349,6 +374,9 @@ pub(crate) fn finish(app: &mut App) {
     sf_render_order_bevy::add_pass(app, PassStage::Snapshot, snapshot_pass.into_system_set().intern(), &mine, snapshot_pass);
     // SSPR (W-SSPR): after the snapshot it reads, before the water samples it.
     sf_render_order_bevy::add_pass(app, PassStage::Reflection, sspr_pass.into_system_set().intern(), &mine, sspr_pass);
+    // The underwater post (U3): after the composite (which skips an underwater view), so it fogs
+    // the finished opaque + water image; before the transparent pass (render-order.md step 8b).
+    sf_render_order_bevy::add_pass(app, PassStage::Medium, underwater_pass.into_system_set().intern(), &mine, underwater_pass);
 }
 
 #[allow(clippy::type_complexity)]
@@ -882,6 +910,139 @@ fn velocity_pass(
         Some(g) => pass.draw_indirect(&g.args, GATE_ARGS_VELOCITY),
         None => pass.draw(0..quads * quads * 6, 0..rings),
     }
+    span.end(&mut pass);
+}
+
+// -- underwater post (U3) ---------------------------------------------------------------
+
+/// One underwater view's post this frame: its bind group and pipeline. Present only while the
+/// camera is fully under the water and the post is on (`medium.rs` `post_on`, which removes it
+/// with the [`UnderwaterUniform`]), so [`underwater_pass`] runs for no other view.
+#[derive(Component)]
+pub(crate) struct UnderwaterBindings {
+    group: BindGroup,
+    pipeline: CachedRenderPipelineId,
+}
+
+/// Dual-source blending lets the post multiply the scene by a per-channel transmittance (as Bevy's
+/// `render_sky`); without it the mean transmittance goes in alpha.
+fn dual_source(device: &RenderDevice) -> bool {
+    device.features().contains(WgpuFeatures::DUAL_SOURCE_BLENDING)
+}
+
+impl WaterPipelines {
+    /// The post: a fullscreen triangle over the view target, `colour = inscatter + scene × T`.
+    fn underwater_descriptor(&self, samples: u32, format: TextureFormat, dual: bool) -> RenderPipelineDescriptor {
+        let ms = samples > 1;
+        let mut shader_defs = Vec::new();
+        if ms {
+            shader_defs.push("MULTISAMPLED".into());
+        }
+        if dual {
+            shader_defs.push("DUAL_SOURCE_BLENDING".into());
+        }
+        let dst_factor = if dual { BlendFactor::Src1 } else { BlendFactor::SrcAlpha };
+        RenderPipelineDescriptor {
+            label: Some(format!("water_underwater_{samples}").into()),
+            layout: vec![self.underwater[usize::from(ms)].clone()],
+            vertex: self.fullscreen.to_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: self.underwater_shader.clone(),
+                shader_defs,
+                entry_point: Some("underwater".into()),
+                targets: vec![Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState {
+                        color: BlendComponent { src_factor: BlendFactor::One, dst_factor, operation: BlendOperation::Add },
+                        alpha: BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add },
+                    }),
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..FragmentState::default()
+            }),
+            multisample: MultisampleState { count: samples, ..MultisampleState::default() },
+            ..RenderPipelineDescriptor::default()
+        }
+    }
+}
+
+/// The post's pipeline per (samples, target format) of the views under water, and the
+/// single-sample HDR one at startup (warm-up: diving never waits for a compile).
+fn queue_underwater(
+    views: Query<(&Msaa, &ViewTarget), With<UnderwaterUniform>>,
+    pipelines: Option<Res<WaterPipelines>>,
+    cache: Res<PipelineCache>,
+    device: Res<RenderDevice>,
+    mut ids: ResMut<WaterPipelineIds>,
+) {
+    let Some(p) = pipelines else { return };
+    let dual = dual_source(&device);
+    let warm = std::iter::once((1, TextureFormat::Rgba16Float));
+    for key in views.iter().map(|(msaa, target)| (msaa.samples(), target.main_texture_format())).chain(warm) {
+        ids.underwater.entry(key).or_insert_with(|| cache.queue_render_pipeline(p.underwater_descriptor(key.0, key.1, dual)));
+    }
+}
+
+/// The post's uniform and bind group on each view under water.
+#[allow(clippy::too_many_arguments)]
+fn prepare_underwater(
+    mut commands: Commands,
+    views: Query<(Entity, &UnderwaterUniform, &ViewTarget, &ViewDepthStencilTexture, &Msaa)>,
+    pipelines: Option<Res<WaterPipelines>>,
+    ids: Res<WaterPipelineIds>,
+    cache: Res<PipelineCache>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+    view_uniforms: Res<ViewUniforms>,
+) {
+    let Some(p) = pipelines else { return };
+    for (entity, uniform, target, depth, msaa) in &views {
+        let samples = msaa.samples();
+        let pipeline = ids.underwater.get(&(samples, target.main_texture_format())).copied();
+        let (Some(pipeline), Some(depth_view), Some(view_binding)) = (pipeline, depth.attachment.depth_stencil_views().depth_only_view(), view_uniforms.uniforms.binding()) else {
+            commands.entity(entity).remove::<UnderwaterBindings>();
+            continue;
+        };
+        let mut buffer = UniformBuffer::from(*uniform);
+        buffer.write_buffer(&device, &queue);
+        let Some(binding) = buffer.binding() else { continue };
+        let group = device.create_bind_group(
+            "water_underwater",
+            &cache.get_bind_group_layout(&p.underwater[usize::from(samples > 1)]),
+            &BindGroupEntries::sequential((view_binding, binding, depth_view)),
+        );
+        commands.entity(entity).insert(UnderwaterBindings { group, pipeline });
+    }
+}
+
+/// The underwater post (U3; `water_underwater.wesl`): spectral Beer-Lambert extinction and
+/// in-scatter by depth over the whole view, blended onto its target. Runs only on a view with
+/// [`UnderwaterBindings`] (camera fully under the water, state 2); GPU-timed as `water_underwater`.
+fn underwater_pass(
+    view: ViewQuery<(&UnderwaterBindings, &ViewTarget, &ExtractedCamera, Option<&MainPassResolutionOverride>, &ViewUniformOffset)>,
+    cache: Res<PipelineCache>,
+    mut ctx: RenderContext,
+) {
+    let (bindings, target, camera, resolution, offset) = view.into_inner();
+    let Some(pipeline) = cache.get_render_pipeline(bindings.pipeline) else { return };
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
+    let mut pass = ctx.command_encoder().begin_render_pass(&RenderPassDescriptor {
+        label: Some("water_underwater"),
+        color_attachments: &[Some(target.get_color_attachment())],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    let span = diagnostics.pass_span(&mut pass, "water_underwater");
+    if let Some(v) = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution) {
+        #[allow(clippy::cast_precision_loss)]
+        pass.set_viewport(v.physical_position.x as f32, v.physical_position.y as f32, v.physical_size.x as f32, v.physical_size.y as f32, v.depth.start, v.depth.end);
+    }
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, &bindings.group, &[offset.offset]);
+    pass.draw(0..3, 0..1);
     span.end(&mut pass);
 }
 

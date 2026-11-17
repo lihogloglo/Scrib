@@ -677,6 +677,187 @@ fn shore_waves_are_zero_beyond_the_band_and_finite_everywhere() {
     }
 }
 
+/// WA-6: the shore foam band follows the local wave energy (`shore_foam_weight` of
+/// `ShoreWave::breaking`): drawn on an open beach at 7 m/s, nothing where the trains have no height
+/// (openness 0: rivers and pools far from the sea; no amplitude; shore waves off), and less on a lake.
+#[test]
+fn shore_foam_follows_the_wave_energy() {
+    let field = straight_shore();
+    let full = field.settings.foam_full_breaking;
+    let w = shore_waves(&field, 7.0);
+    let flat = ShoreWaves { amplitude: 0.0, ..w };
+    let off = ShoreWaves::new(&sea(7.0), &Cascades::default(), &ShoreSettings { shore_waves: 0.0, ..ShoreSettings::default() });
+    let lake = field.settings.enclosed_max;
+    for t in [0.0, 1.7, 40.3, 200.9] {
+        for noise in [Vec2::ZERO, Vec2::new(0.3, 0.7), Vec2::new(0.91, 0.12)] {
+            // The 6 m band, the swash side included.
+            for d in [-1.0, 0.0, 1.5, 3.0, 5.5] {
+                let at = |w: &ShoreWaves, o: f32| shore_foam_weight(w.eval(d, o, Vec2::NEG_X, noise, t).breaking, full);
+                assert_eq!(at(&w, 0.0), 0.0, "openness 0, d {d}");
+                assert_eq!(at(&flat, 1.0), 0.0, "no amplitude, d {d}");
+                assert_eq!(at(&off, 1.0), 0.0, "off, d {d}");
+                let open = at(&w, 1.0);
+                assert!(open > 0.0 && open <= 1.0, "open beach, d {d} t {t}: {open}");
+                assert!(at(&w, lake) < open, "lake vs open, d {d} t {t}: {} vs {open}", at(&w, lake));
+            }
+        }
+    }
+    assert_eq!(shore_foam_weight(f32::NAN, full), 0.0);
+    assert_eq!(shore_foam_weight(2.0, full), 1.0);
+}
+
+/// One fragment's breaker-foam input (SF-1) with the lace resolved and no waterline.
+fn surf_input(breaking: f32, phase: f32, lace: f32) -> SurfFoamInput {
+    SurfFoamInput { breaking, phase, swash: Vec2::ZERO, vertical: f32::INFINITY, contact: 0.35, lace, variation: 0.5, strength: 1.0, detail: 1.0 }
+}
+
+/// SF-1 (keeps W-FOAM-GATE): no bore foam and no glow where the trains do not break (breaking 0,
+/// calm or enclosed water up to the largest lake's openness), and nothing at all when off. On an
+/// open beach the shore waves do give bore foam.
+#[test]
+fn surf_foam_is_born_only_where_waves_break() {
+    let s = SurfFoam::default();
+    let off = SurfFoam { enabled: false, ..s };
+    let lake = ShoreSettings::default().enclosed_max;
+    for k in 0..64 {
+        let phase = k as f32 * 0.37 - 9.0;
+        for lace in [0.0, 0.1, 0.3, 0.6] {
+            for breaking in [0.0, 0.2, lake, s.birth_start] {
+                let t = surf_foam(&surf_input(breaking, phase, lace), &s);
+                assert_eq!((t.bore, t.coverage, t.glow), (0.0, 0.0, 0.0), "breaking {breaking} phase {phase}");
+            }
+            let wet = SurfFoamInput { vertical: 0.0, swash: Vec2::new(1.0, 2.0), ..surf_input(1.0, phase, lace) };
+            assert_eq!(surf_foam(&wet, &off), SurfFoamTerms::default(), "off");
+        }
+    }
+    // The waves themselves: an enclosed water's trains never reach the birth; an open beach's do.
+    let field = straight_shore();
+    let mut open_bore = 0.0f32;
+    for wind in [7.0, 14.0, 30.0] {
+        let w = shore_waves(&field, wind);
+        for t in [0.0, 3.1, 77.7] {
+            for d in [0.5, 2.0, 5.0, 12.0, 25.0] {
+                let at = |o: f32| w.eval(d, o, Vec2::NEG_X, Vec2::new(0.3, 0.7), t);
+                let lakewave = at(lake);
+                let calm = surf_foam(&surf_input(lakewave.breaking, lakewave.phase, 0.2), &s);
+                assert_eq!(calm.bore, 0.0, "lake, wind {wind} d {d}: breaking {}", lakewave.breaking);
+                let g = at(1.0);
+                open_bore = open_bore.max(surf_birth(g.breaking, &s));
+            }
+        }
+    }
+    assert!(open_bore > 0.5, "no breaking on an open beach: {open_bore}");
+}
+
+/// SF-1: bore foam is densest on the crest (θ = π/2) and decays monotonically behind it (the
+/// roller's trail, eroded by the narrowing lace), for any lace sample and detail.
+#[test]
+fn bore_foam_peaks_on_the_crest_and_decays_behind() {
+    let s = SurfFoam::default();
+    let crest = 0.5 * std::f32::consts::PI;
+    for detail in [0.0, 0.5, 1.0] {
+        for lace in [0.0, 0.05, 0.2, 0.45, 0.7] {
+            let at = |theta: f32| surf_foam(&SurfFoamInput { detail, ..surf_input(1.0, theta, lace) }, &s).bore;
+            let top = at(crest);
+            assert!(top > 0.0, "detail {detail} lace {lace}");
+            let mut last = top;
+            // Behind the crest: θ falls with time at a point, so "behind" is θ < π/2.
+            for k in 1..200 {
+                let behind = k as f32 * (std::f32::consts::TAU - s.front_rad) / 200.0;
+                let v = at(crest - behind);
+                assert!(v <= last + 1e-6, "rises behind the crest: {v} after {last} at {behind} rad (lace {lace})");
+                last = v;
+            }
+            assert!(last < 0.05 * top, "no decay: {last} vs {top}");
+            // Ahead of the crest (the front feather) it is below the crest's.
+            for k in 0..20 {
+                let ahead = k as f32 * s.front_rad / 20.0;
+                assert!(at(crest + ahead) <= top + 1e-6, "ahead {ahead}");
+            }
+        }
+    }
+    // Fresh lace covers the cells on the crest; aged foam keeps only the cell borders.
+    assert!(surf_foam(&surf_input(1.0, crest, 0.45), &s).bore > 0.9999);
+    assert_eq!(surf_foam(&surf_input(1.0, crest - 4.0, 0.45), &s).bore, 0.0);
+    assert!(surf_foam(&surf_input(1.0, crest - 4.0, 0.0), &s).bore > 0.0);
+}
+
+/// SF-1: the waterline foam is a thin bright line at the very edge, 0 beyond its reach (the
+/// contact depth, widened by the uprush), faint on calm water and full with turbulence.
+#[test]
+fn waterline_foam_ends_at_its_reach() {
+    let s = SurfFoam::default();
+    let contact = 0.35;
+    for swash in [Vec2::ZERO, Vec2::new(1.0, 2.0), Vec2::new(0.6, -1.0), Vec2::new(1.0, 4.4)] {
+        let reach = contact * (1.0 + s.swash_spread * swash_edge(swash, &s));
+        for breaking in [0.0, 0.7, 1.0] {
+            for lace in [0.0, 0.2, 0.5] {
+                let at = |vertical: f32| surf_foam(&SurfFoamInput { swash, vertical, ..surf_input(breaking, 0.3, lace) }, &s).waterline;
+                for v in [reach * 1.001, reach * 1.01, 2.0 * contact * (1.0 + s.swash_spread), 10.0] {
+                    assert_eq!(at(v), 0.0, "beyond the reach {reach}: vertical {v}");
+                }
+                assert!(at(0.0) >= s.contact_calm, "edge line");
+            }
+        }
+    }
+    let calm = SurfFoamInput { vertical: 0.0, ..surf_input(0.0, 0.3, 0.3) };
+    assert_eq!(surf_foam(&calm, &s).waterline, s.contact_calm);
+    assert!(surf_foam(&SurfFoamInput { breaking: 1.0, ..calm }, &s).waterline > 0.9999);
+    assert_eq!(surf_foam(&SurfFoamInput { contact: 0.0, ..calm }, &s).waterline, 0.0, "no contact depth");
+    // The uprush (cos g < 0) carries the swash edge; the backwash keeps a fading residue.
+    let edge = |g: f32| swash_edge(Vec2::new(1.0, g), &s);
+    assert_eq!(edge(std::f32::consts::PI), 1.0, "mid-uprush");
+    assert!(edge(0.0) < 1.0 && edge(0.0) > edge(-1.0), "residue fades through the backwash");
+    assert_eq!(swash_edge(Vec2::new(0.0, 3.0), &s), 0.0);
+}
+
+/// SF-1: every term stays in range and finite over a grid of inputs, NaN ones included.
+#[test]
+fn surf_foam_stays_in_range() {
+    let s = SurfFoam::default();
+    let nan = f32::NAN;
+    let mut n = 0;
+    for breaking in [-1.0, 0.0, 0.6, 0.9, 1.0, 3.0, nan] {
+        for phase in [-50.0, -1.0, 0.0, 1.0, 1.6, 3.0, 400.0, nan] {
+            for swash in [Vec2::ZERO, Vec2::new(0.5, 1.0), Vec2::new(1.0, -2.0), Vec2::new(2.0, 9.0), Vec2::new(nan, 1.0), Vec2::new(1.0, nan)] {
+                for vertical in [0.0, 0.03, 0.2, 1.0, f32::INFINITY, nan, -1.0] {
+                    for lace in [-0.1, 0.0, 0.3, 0.9, nan] {
+                        for detail in [0.0, 0.5, 1.0] {
+                            let i = SurfFoamInput { breaking, phase, swash, vertical, contact: 0.35, lace, variation: 0.3, strength: 1.0, detail };
+                            let t = surf_foam(&i, &s);
+                            for (name, v) in [("bore", t.bore), ("waterline", t.waterline), ("coverage", t.coverage), ("fresh", t.fresh)] {
+                                assert!((0.0..=1.0).contains(&v), "{name} {v} at {i:?}");
+                            }
+                            assert!((0.0..=s.glow).contains(&t.glow), "glow {} at {i:?}", t.glow);
+                            assert!(t.d_lace.is_finite() && t.d_lace <= 0.0, "slope {} at {i:?}", t.d_lace);
+                            n += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(n > 10_000);
+}
+
+/// SF-1: the shore waves export their main train's phase (crest = sin θ, `crest_cos` = cos θ) and a
+/// swash weight in [0, 1], zero without swash.
+#[test]
+fn shore_waves_export_the_phase_and_swash() {
+    let field = straight_shore();
+    let w = shore_waves(&field, 14.0);
+    let dry = ShoreWaves { swash: 0.0, ..w };
+    for t in [0.0, 2.2, 130.4] {
+        for d in [-1.0, 0.0, 1.0, 4.0, 20.0] {
+            let g = w.eval(d, 1.0, Vec2::NEG_X, Vec2::new(0.4, 0.1), t);
+            assert!((g.crest - g.phase.sin()).abs() < 1e-5 && (g.crest_cos - g.phase.cos()).abs() < 1e-5, "d {d}: {g:?}");
+            assert!((0.0..=1.0).contains(&g.swash.x) && g.swash.y.is_finite(), "d {d}: {g:?}");
+            assert_eq!(dry.eval(d, 1.0, Vec2::NEG_X, Vec2::new(0.4, 0.1), t).swash.x, 0.0);
+        }
+    }
+    assert!(w.eval(0.0, 1.0, Vec2::NEG_X, Vec2::ZERO, 1.0).swash.x > 0.0, "no swash at the shoreline");
+}
+
 /// The analytic waves take over exactly as the FFT swell fades: their weight is the swell's
 /// complement, and both the amplitude and the surface are continuous across the band (no pop).
 #[test]
@@ -784,13 +965,18 @@ fn shore_waves_never_loop() {
         for t in [0.0, 0.7, 2.9, 31.0, 140.5] {
             for z in [-50.0, -7.0, 22.0] {
                 let mut last = f64::NEG_INFINITY;
+                let mut last_bore = false;
                 for i in 0..=1500 {
                     let x = -f64::from(w.land_margin) + f64::from(w.band + w.land_margin) * f64::from(i) / 1500.0;
                     let g = wave_at(&field, &w, x, z, t);
-                    assert!(g.steepness <= shore_waves::STEEPNESS_LIMIT + 1e-4, "{}", g.steepness);
+                    // SF-2: inside the bore the front may stand vertical (`SurfShape::bore_loop`).
+                    let bore = g.lifecycle.y > 0.0;
+                    let cap = if bore { w.surf.bore_loop.max(shore_waves::STEEPNESS_LIMIT) } else { shore_waves::STEEPNESS_LIMIT };
+                    assert!(g.steepness <= cap + 1e-4, "{}", g.steepness);
                     let moved = x + f64::from(g.offset.x);
-                    assert!(moved > last, "wind {wind} t {t}: fold at x {x}");
+                    assert!(moved > last || bore || last_bore, "wind {wind} t {t}: fold at x {x}");
                     last = moved;
+                    last_bore = bore;
                 }
             }
         }
@@ -1015,14 +1201,19 @@ fn shore_waves_on_any_bed_stay_finite_and_never_loop() {
             for t in [0.0, 1.9, 47.3, 200.1] {
                 for z in [-40.0, -9.0, 14.0, 37.0] {
                     let mut last = f64::NEG_INFINITY;
+                    let mut last_bore = false;
                     for i in 0..=1200 {
                         let x = -1.0 - f64::from(w.land_margin) + f64::from(w.band + w.land_margin) * f64::from(i) / 1200.0;
                         let g = wave_on_bed(field, &w, x, z, t);
                         assert!(g.offset.is_finite() && g.slope.is_finite() && g.crest.is_finite(), "wind {wind}: {g:?}");
-                        assert!(g.steepness <= shore_waves::STEEPNESS_LIMIT + 1e-4);
+                        // SF-2: inside the bore the front may stand vertical (`SurfShape::bore_loop`).
+                        let bore = g.lifecycle.y > 0.0;
+                        let cap = if bore { w.surf.bore_loop.max(shore_waves::STEEPNESS_LIMIT) } else { shore_waves::STEEPNESS_LIMIT };
+                        assert!(g.steepness <= cap + 1e-4);
                         let moved = x + f64::from(g.offset.x);
-                        assert!(moved > last, "β {} wind {wind} t {t} z {z}: fold at x {x}", field.sample_slope(x, z));
+                        assert!(moved > last || bore || last_bore, "β {} wind {wind} t {t} z {z}: fold at x {x}", field.sample_slope(x, z));
                         last = moved;
+                        last_bore = bore;
                     }
                 }
             }
@@ -1085,4 +1276,229 @@ fn shore_wave_bed_numbers() {
             }
         }
     }
+}
+
+// ---- surf shape (SF-2) ----
+
+fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The shore waves as they were before SF-2 (`ShoreWaves::eval_trains` at variation 0: sets 1, no
+/// phase bends, so no noise), op for op, for the `--off surfskew` arm's exactness.
+fn pre_sf2(w: &ShoreWaves, d: f32, o: f32, beta: f32, dir: Vec2, t: f32) -> ShoreWave {
+    use shore_waves::{BREAKER_INDEX, MIN_DEPTH, ORBIT_LIMIT, SHARES, STEEPNESS_LIMIT, TRAINS, local_wave};
+    let beta = if beta.is_finite() { beta.max(1e-3) } else { w.beach_slope };
+    if !(d < w.band && d > -w.land_margin) || (w.amplitude <= 0.0 && w.swash <= 0.0) {
+        return ShoreWave::default();
+    }
+    let miche = 0.142 * std::f32::consts::PI;
+    let h = beta * d.max(0.0);
+    let h_edge = beta * w.band;
+    let ww = o * (1.0 - smooth(0.0, w.band, d));
+    let set = 1.0f32;
+    let shoal = w.amplitude * (h_edge / h.max(MIN_DEPTH)).max(1.0).powf(0.25);
+    let breaker = 0.5 * BREAKER_INDEX * h;
+    let env = shoal * breaker / (shoal.powi(4) + breaker.powi(4) + 1e-20).powf(0.25);
+    let common = env * ww * set;
+    let breaker_r = 0.5 * BREAKER_INDEX * h.max(MIN_DEPTH);
+    let breaking = ww * set * shoal / (shoal.powi(4) + breaker_r.powi(4) + 1e-20).powf(0.25);
+    let mut trains = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); TRAINS];
+    let mut steep = 0.0;
+    let coth_cap = ORBIT_LIMIT / (0.5 * BREAKER_INDEX * beta);
+    for (i, train) in trains.iter_mut().enumerate() {
+        let (k, phi) = local_wave(w.omega[i], h, beta);
+        let th = (k * h.max(MIN_DEPTH)).tanh();
+        let a = (SHARES[i] * common).min(miche * th / k);
+        let theta = -(phi + w.omega[i] * t);
+        let coth = (1.0 / th).min(coth_cap);
+        steep += k * a * coth;
+        *train = (a, k, coth, theta);
+    }
+    let q = (STEEPNESS_LIMIT / steep.max(1e-6)).min(1.0);
+    let (mut y, mut along, mut dy, mut dalong) = (0.0, 0.0, 0.0, 0.0);
+    for (a, k, coth, theta) in trains {
+        let (s, c) = theta.sin_cos();
+        y += a * s;
+        along += q * a * coth * c;
+        dy += a * k * c;
+        dalong -= q * a * coth * k * s;
+    }
+    let (_, phi0) = local_wave(w.omega[0], 0.0, beta);
+    let theta0 = -(phi0 + w.omega[0] * t);
+    let swash_w = o * set * (1.0 - smooth(0.0, 0.3 * w.band, d)) * smooth(-w.land_margin, -0.5 * w.land_margin, d);
+    let swash = w.swash * (beta / w.beach_slope.max(1e-3)) * swash_w;
+    let g = theta0 - 0.5 * theta0.sin();
+    y += swash * g.sin();
+    ShoreWave {
+        offset: Vec3::new(dir.x * along, y, dir.y * along),
+        slope: glam::Vec4::new(dy * dir.x, dy * dir.y, dalong * dir.x * dir.x, dalong * dir.y * dir.y),
+        crest: trains[0].3.sin(),
+        crest_cos: trains[0].3.cos(),
+        phase: trains[0].3,
+        swash: Vec2::new(if w.swash > 0.0 { swash_w } else { 0.0 }, g),
+        steepness: q * steep,
+        breaking,
+        lifecycle: Vec2::ZERO,
+    }
+}
+
+/// `--off surfskew` is the old shape exactly (== on every field, a grid of distances, beds, times,
+/// openness and winds), and the surf gain raises only the incident waves, not the swash.
+#[test]
+fn surf_skew_off_is_the_old_shape() {
+    let off = ShoreSettings { surf_shape: SurfShape::off(), ..ShoreSettings::default() };
+    for wind in [4.0, 7.0, 14.0, 25.0] {
+        let w = ShoreWaves { variation: 0.0, ..ShoreWaves::new(&sea(wind), &Cascades::default(), &off) };
+        let on = ShoreWaves::new(&sea(wind), &Cascades::default(), &ShoreSettings::default());
+        let gain = SurfShape::default().height_gain;
+        assert!((on.amplitude - gain * w.amplitude).abs() <= 1e-5 * on.amplitude.max(1.0), "{} vs {}", on.amplitude, w.amplitude);
+        assert_eq!(on.swash, w.swash);
+        for beta in [0.02, 0.05, 0.1, 0.3] {
+            for i in 0..=160 {
+                let d = -1.0 - w.land_margin + (w.band + w.land_margin + 2.0) * i as f32 / 160.0;
+                for t in [0.0, 1.3, 47.9, 200.2] {
+                    for o in [1.0, 0.35] {
+                        let g = w.eval_on(d, o, beta, Vec2::NEG_X, Vec2::new(0.3, 0.7), t);
+                        assert_eq!(g, pre_sf2(&w, d, o, beta, Vec2::NEG_X, t), "wind {wind} β {beta} d {d} t {t} o {o}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// With the defaults and with every tunable at its range's end: no NaN, the lifecycle in range, the
+/// horizontal map never folds outside the bore (the displaced position strictly increases with shore
+/// distance), and the lifecycle actually happens (skew and bore somewhere).
+#[test]
+fn surf_shape_stays_finite_and_folds_only_in_the_bore() {
+    let extreme = SurfShape {
+        height_gain: 2.5,
+        breaker_gamma: 1.0,
+        skew_steepen: 0.9,
+        skew_bore: 0.9,
+        break_sharpness: 16.0,
+        break_crest_min_m: 3.0,
+        bore_loop: 1.5,
+        ..SurfShape::default()
+    };
+    for shape in [SurfShape::default(), extreme] {
+        let settings = ShoreSettings { surf_shape: shape, ..ShoreSettings::default() };
+        let (mut skewed, mut bored) = (0usize, 0usize);
+        for wind in [3.0, 8.0, 14.0, 25.0] {
+            let w = ShoreWaves::new(&sea(wind), &Cascades::default(), &settings);
+            for beta in [0.02, 0.05, 0.1, 0.3] {
+                for t in [0.0, 2.9, 31.0, 140.5] {
+                    let (mut last, mut last_bore) = (f64::NEG_INFINITY, false);
+                    for i in 0..=1500 {
+                        let d = -w.land_margin + (w.band + w.land_margin) * i as f32 / 1500.0;
+                        let g = w.eval_on(d, 1.0, beta, Vec2::NEG_X, Vec2::new(0.42, 0.17), t);
+                        assert!(
+                            g.offset.is_finite() && g.slope.is_finite() && g.lifecycle.is_finite() && g.crest.is_finite(),
+                            "{shape:?} wind {wind} β {beta} d {d}: {g:?}"
+                        );
+                        assert!((0.0..1.0).contains(&g.lifecycle.x) && (0.0..=1.0).contains(&g.lifecycle.y), "{g:?}");
+                        skewed += usize::from(g.lifecycle.x > 0.0);
+                        bored += usize::from(g.lifecycle.y > 0.5);
+                        let bore = g.lifecycle.y > 0.0;
+                        // dir = −x: the displaced shore distance is d + offset.x.
+                        let moved = f64::from(d) + f64::from(g.offset.x);
+                        assert!(moved > last || bore || last_bore, "{shape:?} wind {wind} β {beta} t {t}: fold at d {d}");
+                        last = moved;
+                        last_bore = bore;
+                    }
+                }
+            }
+        }
+        assert!(skewed > 0 && bored > 0, "no lifecycle: {skewed} skewed, {bored} in the bore");
+    }
+}
+
+/// `surf_height_gain` raises the incident waves: seaward of the break the crest grows with the gain
+/// (∝ it, less the smooth min), the break line moves seaward, and inside the surf zone the crest
+/// stays depth-limited (H = γh whatever the offshore height, as on a real saturated beach). On a
+/// 1:3 bed so the break falls well inside the band (on the default 1:20 bed a 7 m/s sea already
+/// breaks at the band's edge: the whole band is surf zone, where the gain cannot show).
+#[test]
+fn surf_gain_raises_the_crest() {
+    const BETA: f32 = 0.3;
+    let waves = |gain: f32| {
+        let settings = ShoreSettings { surf_shape: SurfShape { height_gain: gain, ..SurfShape::default() }, ..ShoreSettings::default() };
+        ShoreWaves { variation: 0.0, ..ShoreWaves::new(&sea(7.0), &Cascades::default(), &settings) }
+    };
+    let peak = |w: &ShoreWaves, d: f32| {
+        (0..512).map(|i| w.eval_on(d, 1.0, BETA, Vec2::NEG_X, Vec2::ZERO, i as f32 * 0.25).offset.y).fold(f32::MIN, f32::max)
+    };
+    // The break point: the shoaled amplitude meets the depth-limited one, A·(band/d)^¼ = ½γβd.
+    let gamma = SurfShape::default().breaker_gamma;
+    let break_at = |w: &ShoreWaves| (w.amplitude * w.band.powf(0.25) / (0.5 * gamma * BETA)).powf(0.8);
+    let [w1, w15, w2] = [waves(1.0), waves(1.5), waves(2.0)];
+    let (b1, b2) = (break_at(&w1), break_at(&w2));
+    assert!(1.3 * b2 < 0.8 * w2.band && 0.6 * b1 > 2.0, "break at {b1} / {b2} m: pick another sea or bed");
+    for i in 0..4 {
+        let d = 1.3 * b2 + (0.8 * w2.band - 1.3 * b2) * i as f32 / 3.0;
+        let (a, b, c) = (peak(&w1, d), peak(&w15, d), peak(&w2, d));
+        assert!(a > 0.0 && b > 1.3 * a && c > 1.6 * a, "offshore d {d}: crest {a} / {b} / {c} m at gain 1 / 1.5 / 2");
+    }
+    // The bore's seaward edge moves out with the gain.
+    let bore_edge = |w: &ShoreWaves| {
+        (0..=400).map(|i| w.band * i as f32 / 400.0).filter(|&d| w.eval_on(d, 1.0, BETA, Vec2::NEG_X, Vec2::ZERO, 0.0).lifecycle.y > 0.0).fold(0.0, f32::max)
+    };
+    let (e1, e15, e2) = (bore_edge(&w1), bore_edge(&w15), bore_edge(&w2));
+    assert!(e1 > 0.0 && e15 > e1 && e2 > e15, "bore edge {e1} / {e15} / {e2} m at gain 1 / 1.5 / 2");
+    for d in [0.3 * b1, 0.6 * b1] {
+        let (a, c) = (peak(&w1, d), peak(&w2, d));
+        assert!(c >= a - 1e-4 && c <= 1.1 * a, "surf zone d {d}: crest {a} / {c} m at gain 1 / 2 (depth-limited)");
+    }
+}
+
+/// The lifecycle: no skew while shoaling, the steepening's skew before the bore, the full bore's
+/// skew past `bore_full`, nothing of the bore in a gap; and no skew far out on the twin.
+#[test]
+fn surf_skew_starts_at_the_steepening() {
+    let s = SurfShape::default();
+    let mut last = 0.0;
+    for i in 0..=300 {
+        let b = 3.0 * i as f32 / 300.0;
+        let l = surf_life(&s, b, 0.1, 1.0, 0.0);
+        if b < s.steepen_start {
+            assert_eq!((l.skew, l.bore, l.skew_rate), (0.0, 0.0, 0.0), "b {b}");
+        }
+        if b < s.bore_start {
+            assert!(l.bore == 0.0 && l.skew <= s.skew_steepen + 1e-6, "b {b}: {l:?}");
+        }
+        if b >= s.bore_full {
+            assert!((l.bore - 1.0).abs() < 1e-6 && (l.skew - s.skew_bore).abs() < 1e-6, "b {b}: {l:?}");
+        }
+        assert!(l.skew >= last - 1e-6, "skew falls at b {b}");
+        last = l.skew;
+        let gap = surf_life(&s, b, 0.1, 0.0, 0.0);
+        assert!(gap.bore == 0.0 && gap.skew <= s.skew_steepen + 1e-6, "gap at b {b}: {gap:?}");
+    }
+    let w = ShoreWaves { variation: 0.0, ..ShoreWaves::new(&sea(7.0), &Cascades::default(), &ShoreSettings::default()) };
+    for t in [0.0, 5.0, 77.0] {
+        assert_eq!(w.eval(0.95 * w.band, 1.0, Vec2::NEG_X, Vec2::ZERO, t).lifecycle, Vec2::ZERO);
+    }
+}
+
+/// The break gaps: along a long crest deep in the surf zone some points break fully and some not at
+/// all, and a point's state holds along its wave ray (the same shoreline foot at every distance).
+#[test]
+fn surf_gaps_leave_some_crests_unbroken() {
+    let w = ShoreWaves::new(&sea(14.0), &Cascades::default(), &ShoreSettings::default());
+    let (mut broken, mut gaps) = (0usize, 0usize);
+    for i in 0..1024 {
+        let foot = Vec2::new(0.25, i as f32 / 1024.0);
+        // dir = −x: the foot is noise + d·dir / period, so the noise sits d / period seaward of it.
+        let at = |d: f32| w.eval(d, 1.0, Vec2::NEG_X, foot + Vec2::new(d / shore_waves::NOISE_PERIOD as f32, 0.0), 10.0).lifecycle.y;
+        let bore = at(2.0);
+        broken += usize::from(bore > 0.95);
+        gaps += usize::from(bore < 0.05);
+        for d in [1.0, 3.0] {
+            assert!((at(d) - bore).abs() < 1e-4, "foot {foot}: {} at d {d}, {bore} at 2 m", at(d));
+        }
+    }
+    assert!(broken > 200 && gaps > 20, "{broken} broken, {gaps} in gaps of 1024");
 }

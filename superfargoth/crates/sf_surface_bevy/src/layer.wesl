@@ -23,13 +23,16 @@
 // gitlab.com/OursCodeur/openmw branch clockwork-alpha, commit
 // c5e5a9a6362c35512823884753d2d5284af204fa (GPL-3.0; THIRD_PARTY_NOTICES.md).
 // Rain rings: the ring profile (`blip`, `circle`, trailing rings) of
-// files/shaders/lib/water/rain_ripples.glsl as Clockwork uses it on puddles (same commit).
+// files/shaders/lib/water/rain_ripples.glsl as Clockwork uses it on puddles (same commit), in the
+// shared `sf_render_order_bevy::rain_rings` module (the water bodies ring with it too, R1).
 // Wet model: S. Lagarde, "Water drop 3b - Physically based wet surfaces" (2013); puddles and
 // ripple layers by rain intensity: "Water drop 2b - Dynamic rain and its effects" (2013).
 // Normals: M. Mikkelsen, "Surface Gradient-Based Bump Mapping Framework" (JCGT 2020).
 // The CPU twin of the wet math is `sf_surface::layer` (tests compare the constants).
 
 import bevy_pbr::render::pbr_types::PbrInput;
+// The rain rings and the world-anchored hash grids, shared with the water (R1).
+import sf_render_order_bevy::rain_rings::{grid_cells_per_origin, grid_hash, grid_wrap_cell, rain_ripples};
 
 /// Keep in sync with `uniform.rs` (slots of vec4).
 struct SurfaceUniform {
@@ -141,20 +144,13 @@ const BASIN_POOL: f32 = 0.35;
 const PUDDLE_ROUGHNESS: f32 = 0.06;
 const POOL_TILE_M: f32 = 64.0;
 const HEIGHT_FROM_LUMA: f32 = 2.0;
-/// Rain rings: drop cell, ring radius (cell share), ring breadth (cycle share), cycles a
-/// second, tilt, footprint fade (m per pixel), clock wrap, and the four grids' cell scales.
-const RIPPLE_CELL_M: f32 = 1.6;
-const RIPPLE_RADIUS: f32 = 0.2;
-const RIPPLE_RING: f32 = 0.16666667;
-const RIPPLE_RATE: f32 = 1.2;
+/// Rain rings: tilt, footprint fade (m per pixel) and clock wrap. The rings themselves (drop
+/// cell, ring radius and breadth, cycles a second, the four grids' cell scales) are the shared
+/// `sf_render_order_bevy::rain_rings` module's.
 const RIPPLE_TILT: f32 = 0.5;
 const RIPPLE_FADE_NEAR_M: f32 = 0.02;
 const RIPPLE_FADE_FAR_M: f32 = 0.06;
 const RIPPLE_TIME_WRAP_S: f32 = 1000.0;
-const RIPPLE_SCALE_0: f32 = 1.0;
-const RIPPLE_SCALE_1: f32 = 1.25;
-const RIPPLE_SCALE_2: f32 = 0.8;
-const RIPPLE_SCALE_3: f32 = 0.625;
 /// Cover (W5; `sf_surface::layer` documents each): slope ramp and the shading detail's share in it, the
 /// height blend's soft edge, the cover texture's share of the compared height, drift swing and
 /// tile (m), cover normal strength, ash F0 (snow takes ice's, WATER_REFLECTANCE).
@@ -171,9 +167,8 @@ const ASH_REFLECTANCE: f32 = 0.5;
 /// Snow sparkle: glint cell (m), glinting share at sparkle 1, facet tilt, facet roughness, and
 /// the pixel footprint (m) where glints fade and are gone.
 const SPARKLE_CELL_M: f32 = 0.02;
-/// The floating origin's grid (m): render space shifts by whole cells of it. Every noise tile
-/// and hash cell here divides it, and hash grids wrap to it (`surface_wrap_cell`).
-const ORIGIN_GRID_M: f32 = 256.0;
+// The floating origin's grid, `ORIGIN_GRID_M` (256 m), is `rain_rings`': every noise tile and
+// hash cell here divides it, and hash grids wrap to it (`grid_wrap_cell`).
 const SPARKLE_DENSITY: f32 = 0.03;
 const SPARKLE_TILT: f32 = 0.35;
 const SPARKLE_ROUGHNESS: f32 = 0.1;
@@ -450,90 +445,6 @@ fn surface_ripple_fade(footprint: f32) -> f32 {
     return 1.0 - smoothstep(RIPPLE_FADE_NEAR_M, RIPPLE_FADE_FAR_M, footprint);
 }
 
-/// A hash grid's cell index wrapped to the origin grid (`ORIGIN_GRID_M` holds `n` cells): render
-/// space moves by whole origin cells on a floating-origin shift, so a grid hashed by its wrapped
-/// index is world-anchored and keeps its pattern across the shift (UE5's LWC wrap, `LWCWrap`).
-fn surface_wrap_cell(c: vec2<i32>, n: i32) -> vec2<i32> {
-    return ((c % n) + n) % n;
-}
-
-/// Cells of `cell_m` meters in the origin grid (`cell_m` divides it).
-fn surface_cells_per_origin(cell_m: f32) -> i32 {
-    return i32(round(ORIGIN_GRID_M / cell_m));
-}
-
-/// Two hash values in 0..1 for an integer cell and a seed.
-fn surface_hash(c: vec2<i32>, seed: u32) -> vec2<f32> {
-    var h = (u32(c.x) * 0x8da6b343u) ^ (u32(c.y) * 0xd8163841u) ^ (seed * 0x9e3779b9u);
-    h = (h ^ (h >> 15u)) * 0x2c1b3c6du;
-    h = (h ^ (h >> 12u)) * 0x297a2d39u;
-    h = h ^ (h >> 15u);
-    return vec2(f32(h & 0xffffu), f32(h >> 16u)) / 65535.0;
-}
-
-/// `rain_ripples.glsl` `blip` and `blipDerivative`.
-fn surface_blip(x: f32) -> f32 {
-    let y = max(0.0, 1.0 - x * x);
-    return y * y * y;
-}
-
-fn surface_blip_derivative(x: f32) -> f32 {
-    let y = clamp(x, -1.0, 1.0);
-    let n = y * y - 1.0;
-    return -6.0 * y * n * n;
-}
-
-/// One drop's ring slope (`rain_ripples.glsl` `circle`): `to` the point minus the drop (cell
-/// units), `phase` the drop's cycle; zero outside the ring's band. Twin: `sf_surface::layer::ring`.
-fn surface_ring(to: vec2<f32>, phase: f32) -> vec2<f32> {
-    let d = length(to);
-    let follower = (phase - d / RIPPLE_RADIUS) / RIPPLE_RING - 1.0;
-    if follower < -1.0 || follower > 1.0 {
-        return vec2(0.0);
-    }
-    let energy = 1.0 - phase;
-    let range = surface_blip(min(follower, 0.0));
-    let v = vec3(to * (-surface_blip_derivative(follower) * 5.0 * energy * energy), 0.5);
-    return v.xy * (energy * range / length(v));
-}
-
-/// One drop grid at `q` (cell units): each cell drops once a cycle at a random spot (its own
-/// start phase), with two trailing rings (`rain`: a - b/2 + c/4).
-fn surface_drops(q: vec2<f32>, seed: u32, time: f32, period: i32) -> vec2<f32> {
-    let cell = surface_wrap_cell(vec2<i32>(floor(q)), period);
-    let f = q - floor(q);
-    let start = surface_hash(cell, seed ^ 0x51ed27u).x;
-    var slope = vec2(0.0);
-    var weight = 1.0;
-    for (var k = 0; k < 3; k++) {
-        let t = time * RIPPLE_RATE + start - f32(k) * RIPPLE_RING;
-        let cycle = floor(t);
-        let spot = surface_hash(cell, seed ^ (u32(i32(cycle)) * 0x632be5abu));
-        let drop = vec2(0.5) + (0.5 - RIPPLE_RADIUS) * (2.0 * spot - 1.0);
-        slope += weight * surface_ring(f - drop, t - cycle);
-        weight *= -0.5;
-    }
-    return slope;
-}
-
-/// Rain rings at render XZ `xz` (m): up to four drop grids, grid k on over rain k/4..(k+1)/4
-/// (Lagarde's ripple layers: drizzle rings sparsely, a storm densely). Returns the water's
-/// slope along X and Z.
-fn surface_ripples(xz: vec2<f32>, time: f32, rain: f32) -> vec2<f32> {
-    var scales = array<f32, 4>(RIPPLE_SCALE_0, RIPPLE_SCALE_1, RIPPLE_SCALE_2, RIPPLE_SCALE_3);
-    var slope = vec2(0.0);
-    for (var k = 0u; k < 4u; k++) {
-        let w = saturate((rain - f32(k) * 0.25) * 4.0);
-        if w <= 0.0 {
-            break;
-        }
-        let cell_m = RIPPLE_CELL_M * scales[k];
-        let q = xz / cell_m + vec2(0.37, 0.71) * f32(k);
-        slope += w * surface_drops(q, k + 1u, time, surface_cells_per_origin(cell_m));
-    }
-    return slope;
-}
-
 /// Cover (W5) twins: `sf_surface::layer::{cover_slope, cover_amount, cover_height, cover_blend,
 /// sparkle_fade}`.
 fn surface_cover_slope(up: f32) -> f32 {
@@ -684,11 +595,11 @@ fn surface_sparkle(xz: vec2<f32>, sparkle: f32, footprint: f32) -> vec3<f32> {
     if sparkle <= 0.0 || fade <= 0.0 {
         return vec3(0.0);
     }
-    let cell = surface_wrap_cell(vec2<i32>(floor(xz / SPARKLE_CELL_M)), surface_cells_per_origin(SPARKLE_CELL_M));
-    if surface_hash(cell, 11u).x >= sparkle * SPARKLE_DENSITY {
+    let cell = grid_wrap_cell(vec2<i32>(floor(xz / SPARKLE_CELL_M)), grid_cells_per_origin(SPARKLE_CELL_M));
+    if grid_hash(cell, 11u).x >= sparkle * SPARKLE_DENSITY {
         return vec3(0.0);
     }
-    let tilt = (surface_hash(cell, 12u) * 2.0 - 1.0) * SPARKLE_TILT;
+    let tilt = (grid_hash(cell, 12u) * 2.0 - 1.0) * SPARKLE_TILT;
     return vec3(tilt.x, fade, tilt.y);
 }
 
@@ -1088,7 +999,7 @@ fn apply_surface_layer(
         // Rain rings on the water, while it rains on it, until they shrink below a pixel.
         let rings = puddle * surface_ripple_fade(s.footprint);
         if rain > 0.0 && rings > 0.0 {
-            let slope = surface_ripples(s.world_pos.xz, u.time.x, rain) * (RIPPLE_TILT * rings);
+            let slope = rain_ripples(s.world_pos.xz, u.time.x, rain) * (RIPPLE_TILT * rings);
             let g = -vec3(slope.x, 0.0, slope.y);
             gradient += g - n_geo * dot(n_geo, g);
         }

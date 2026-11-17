@@ -1883,3 +1883,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-17 (owner, perf-tests): after a play session with all of them on ("very smoothly and very fast", 110 fps in
   Balmora), the static scene and the CW gates (select, lamp face cull + day gate, sun gate, skin skip, matctrl, interior park,
   depth-only no material) are on by default (`--off scene` / `set <name> off` for A/Bs); lamp cache stays off. High/Ultra pin DLSS Quality.
+- 2026-11-17 (ai-nav, owner go): AI6 no longer waits on seamless SI3: an actor's worldspace already comes from its root
+  (`WorldPosOf::location`, one `big_space` root per worldspace), so nav/AI queries take that. `InWorldspace` and per-camera
+  `ViewerWorldspace` stay in seamless M9. AI6 needs NV6, NV7a, NV8; NV5 (multi-anchor residency) may follow AI6.

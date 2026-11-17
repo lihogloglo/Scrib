@@ -1,6 +1,7 @@
 //! Feature `debug`: the `nav.draw` layers as immediate-mode gizmos (nav.md "Debug draw"). Tiles
-//! draw as Detour's `duDebugDrawNavMeshPolyBoundaries` does: every polygon edge in its area's
-//! colour, inner edges faint and walls (edges with no neighbour) solid; disabled polygons grey.
+//! draw as Detour's `duDebugDrawNavMeshPolyBoundaries` does: every polygon edge, along the detail
+//! mesh so it follows the ground, in its area's colour, inner edges faint and walls (edges with no
+//! neighbour) solid; disabled polygons grey.
 //! Paths draw as a yellow line through the recorded waypoints with a tick at each.
 //!
 //! Immediate mode, rebuilt from the backend every frame: tiles stream and door patches change
@@ -15,10 +16,13 @@ use bevy_gizmos::gizmos::Gizmos;
 use glam::Vec3;
 use sf_nav::{AreaId, PolyFlags, TileGeometry};
 
-use crate::{NavDebugPaths, NavDraw, NavDrawFrame, NavDrawn, NavMeshes, PathLayer};
+use crate::{NavDebugPaths, NavDraw, NavDrawFrame, NavDrawn, NavMeshes, NavSystems, PathLayer};
 
 /// Lift above the polygons, meters, so lines don't z-fight with the ground they lie on.
 const LIFT: f32 = 0.05;
+/// Line alpha of walls (edges with no neighbour) and of edges shared with another polygon.
+const WALL_ALPHA: f32 = 1.0;
+const INNER_ALPHA: f32 = 0.35;
 /// Paths sit above the tiles.
 const PATH_LIFT: f32 = 0.12;
 /// Waypoint tick height, meters.
@@ -27,11 +31,11 @@ const TICK: f32 = 0.3;
 pub(crate) fn add(app: &mut App) {
     app.add_systems(
         PostUpdate,
-        draw.run_if(resource_exists::<GizmoConfigStore>).run_if(
-            |d: Res<NavDraw>, n: Res<NavDrawn>| {
+        draw.in_set(NavSystems::Draw)
+            .run_if(resource_exists::<GizmoConfigStore>)
+            .run_if(|d: Res<NavDraw>, n: Res<NavDrawn>| {
                 d.tiles || d.paths.is_some() || *n != NavDrawn::default()
-            },
-        ),
+            }),
     );
 }
 
@@ -44,23 +48,15 @@ fn area_color(area: AreaId, flags: PolyFlags, alpha: f32) -> Color {
     Color::hsla(hue, 0.85, 0.55, alpha)
 }
 
+/// The tile's polygon outlines along the detail mesh ([`TileGeometry::for_each_edge`]), so they
+/// follow the sampled ground instead of cutting under it between polygon corners.
 fn draw_tile(gizmos: &mut Gizmos, geo: &TileGeometry, base: Vec3) -> usize {
     let lift = base + Vec3::Y * LIFT;
-    for poly in &geo.polys {
-        let n = poly.verts.len();
-        let inner = area_color(poly.state.area, poly.state.flags, 0.35);
-        let wall = area_color(poly.state.area, poly.state.flags, 1.0);
-        for i in 0..n {
-            let (Some(a), Some(b)) = (
-                geo.verts.get(poly.verts[i] as usize),
-                geo.verts.get(poly.verts[(i + 1) % n] as usize),
-            ) else {
-                continue;
-            };
-            let is_wall = i < 8 && poly.walls & (1 << i) != 0;
-            gizmos.line(*a + lift, *b + lift, if is_wall { wall } else { inner });
-        }
-    }
+    geo.for_each_edge(|e| {
+        let s = geo.polys[e.poly].state;
+        let alpha = if e.wall { WALL_ALPHA } else { INNER_ALPHA };
+        gizmos.line(e.a + lift, e.b + lift, area_color(s.area, s.flags, alpha));
+    });
     geo.polys.len()
 }
 

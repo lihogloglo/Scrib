@@ -286,10 +286,10 @@ One deliverable plus its test per slice; research and building are separate.
 |---|---|---|
 | **NV0-NV4a** (**done 2026-11-11**) | spike, `sf_nav` core, `sf_nav_recast`, `sf_nav_bevy`, `sf_nav_bake` steps | rows with their tests: [archive](archive/nav-history.md#done-build-plan-rows-moved-from-navmd-at-nv4a) |
 | **NV4b** Morrowind bake (**done 2026-11-11**) | adapter `NavGeometrySource` (cooked collision, terrain, water, doors), `bevyrrowind bake` wiring | cold bake time and MiB per class on the first pack (the "Bake" gate) |
-| **NV4c** game wiring | `sf_nav_bevy` in the game: `NavPlugin`, baked tiles into `NavMeshes`, draw frame from the floating origin, BRP `sf_nav/stats` | owner check NV-1 (tiles drawn over Seyda Neen) |
+| **NV4c** game wiring (**built 2026-11-17**, player-ring scaffold until NV5) | `sf_nav_bevy` in the game: `NavPlugin`, baked tiles into `NavMeshes`, draw frame from the floating origin, BRP `sf_nav/stats` | owner check NV-1 (tiles drawn over Seyda Neen) |
 | **NV5** streaming | nav ring residency per gameplay anchor and open portal, per class on demand (needs seamless SI3) | residency set exact for scripted anchor paths; `large` tiles absent with no large actor; unload hysteresis |
-| **NV6** query service | worker queue, slicing, tick-boundary results, partial results at the ring edge | ordering and budget exact; sync mode equals async results |
-| **NV7a** fixed tick | NPC drive (path follower, ORCA, mover) in `FixedUpdate` + render interpolation | headless: walker positions identical at 30 and 144 fps for the same ticks |
+| **NV6** query service (**built 2026-11-17**) | worker queue, slicing, tick-boundary results, partial results at the ring edge | ordering and budget exact; sync mode equals async results |
+| **NV7a** fixed tick (**built 2026-11-17**) | NPC drive (path follower, ORCA, mover) in `FixedUpdate` + render interpolation | headless: walker positions identical at 30 and 144 fps for the same ticks |
 | **NV7b** ORCA walls | obstacle lines in `sf_controller::avoid` | agent never crosses a wall segment; batch = single bit for bit |
 | **NV8** corridor | `PathCorridor` feeding `PathFollower`; repair after a push | headless walk around a pillar and through a door frame, nothing stuck |
 | **NV9** links + areas | off-mesh links (jump, drop, ladder, pathgrid) and area costs per class | path takes the cheaper area; link traversal events in order |
@@ -298,7 +298,7 @@ One deliverable plus its test per slice; research and building are separate.
 | **NV12** coarse graph | HPA* legs, travel time for tier 0 | coarse cost within the measured band of Detour path length on test levels |
 | **NVM** measurement | Floor and High sweep: bake time and MiB per class, query and ORCA ms at 60 Hz (Balmora, Vivec canton, Census Office); stuck counts near props | owner runs; numbers into "Budgets"; class or carving revisits |
 
-Order: NV0 → NV1 → NV2 → NV3 → NV4a → NV4b → NV4c → (seamless SI3) → NV5 → NV6 → NV7a → NV7b → NV8 → NV9 → NV10 → NV11 → NV12; NVM
+Order: NV0 → NV1 → NV2 → NV3 → NV4a → NV4b → NV4c → NV6 → NV7a → NV8 (→ AI6) → NV5 → NV7b (DECISIONS 2026-11-17: NV5 and seamless SI3 no longer gate AI6) → NV9 → NV10 → NV11 → NV12; NVM
 after NV8. NV11 replaces seamless SI13 (M9b); NV7a lands before AI6.
 
 **As built** (full notes: [archive/nav-history.md](archive/nav-history.md)). **NV1**: the trait as in "Interfaces",
@@ -307,6 +307,17 @@ region-local f32; per-job `DetachedQuery` (vendored patch); synthetic town at th
 `nearest` 1.2 µs, a 115 m path 48 µs. **NV3**: `sf_nav_bevy` (`NavMeshes`, `nav.stats` / `nav.draw`, BRP
 `sf_nav/stats`, gizmos behind `debug`); not wired into the game yet. **NV4a**: `sf_nav_bake` steps as in "Bake";
 door polygons by area + centroid in the door volume; `nav.coarse` is an HPA* stub (straight-line costs until NV12).
+**NV4c**: `sf_nav::ring::NavRing` (tile set per class and region around one anchor, load/unload radii, nearest-first
+reads, re-plans only on a tile or worldspace change) + `sf_nav_bevy::residency::NavRingPlugin` (store reads by `nav.tiles`
+subject, cap per frame); tunables `ai.nav.ring.*`; game side `mw_walkers_bevy::nav` (humanoid only, anchor = first
+`Gameplay` streaming anchor). Scaffold `NavRingScaffold`, removed by NV5.
+**NV6**: `sf_nav::service::QueryService` (per-tick node allowances fixed before jobs run, so serial, reordered and parallel
+runs give the same replies; a job finished in tick t is ready at t+1; ring-edge goals become `Partial` via `NavCoverage`,
+which `NavRing` implements) + `sf_nav_bevy::queries::NavQueryPlugin` (`FixedFirst` publish, `FixedUpdate` run, replies in a
+map keyed by `RequestId`, not a Message: staggered AI polls its id). Scaffold `NavQueryOnMain`: slices run inside the tick.
+**NV7a**: NPC drive + ORCA + mover in `FixedUpdate` (`ControllerSystems::Drive` → `Step`, after the player's move, before
+`PhysicsSystems::Step`); `Mover` keeps the tick's start/end poses, `ControllerSystems::Interpolate` draws them by overstep
+(the player's `TickPose`, now in `sf_controller::frame`). NV8 and AI6 write `MoveIntent` in `ControllerSystems::Drive`.
 
 ## Open questions
 

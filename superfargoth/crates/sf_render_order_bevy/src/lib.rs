@@ -18,9 +18,11 @@
 //!
 //! The plugin also holds [`TranslucentFog`], the fog every translucent applies
 //! to itself (render-order.md rule 1), and its shader module
-//! `sf_render_order_bevy::translucent_fog`.
+//! `sf_render_order_bevy::translucent_fog`, and the shared rain rings
+//! `sf_render_order_bevy::rain_rings` (rain on puddles and on water bodies, R1:
+//! both import this crate's modules, neither depends on the other).
 //!
-//! Crates that tag draws or fog translucents add the plugin if it is missing.
+//! Crates that tag draws, fog translucents or ring rain add the plugin if it is missing.
 
 use bevy_app::{App, Plugin};
 use bevy_core_pipeline::core_3d::{Transparent3d, TransparentSortingInfo3d};
@@ -80,6 +82,11 @@ pub struct RenderOrderPlugin;
 impl Plugin for RenderOrderPlugin {
     fn build(&self, app: &mut App) {
         fog::init(app);
+        // The rain rings module the surface layer and the water import (headless apps have no
+        // embedded registry, as `fog::init`).
+        if app.world().contains_resource::<bevy_asset::io::embedded::EmbeddedAssetRegistry>() {
+            bevy_shader::load_shader_library!(app, "rain_rings.wesl");
+        }
         app.add_plugins(SkyMotionPlugin);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.init_resource::<ExtractedBands>().add_systems(ExtractSchedule, extract_bands).add_systems(

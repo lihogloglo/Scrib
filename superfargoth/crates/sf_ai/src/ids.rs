@@ -43,6 +43,11 @@ id!(
     ConsiderationId(u16), "c"
 );
 id!(
+    /// A drive input (threat distance, health ratio, a stat, ...): index into the input
+    /// vocabulary the adapter registers before the drives load (AI7, `drive::Inputs`).
+    InputId(u16), "i"
+);
+id!(
     /// An HTN task, compound or primitive: index into the task registry (AI2).
     TaskId(u32), "t"
 );

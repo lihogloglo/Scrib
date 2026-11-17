@@ -39,6 +39,222 @@ pub struct ShoreSettings {
     /// Strength of the analytic shore waves and swash (W-GERSTNER): 1 = the sea state's own
     /// amplitude, 0 = off (`--off shorewaves`, the FFT simply fades to flat at the shore).
     pub shore_waves: f32,
+    /// Breaking ratio ([`crate::ShoreWave::breaking`]: the shore waves' height over the depth-limited
+    /// one, 0-1) at which the shore foam band reaches full strength; below it the band fades with the
+    /// wave energy, ∝ ratio² ([`crate::shore_foam_weight`], WA-6: no band on calm or enclosed water).
+    /// Unitless, range 0.1-1, default 0.6 (Guess: an open beach's sets, 0.45-1 with the openness at
+    /// the shoreline, keep most of the band; the largest lake, ≤ `enclosed_max`, under a third).
+    pub foam_full_breaking: f32,
+    /// The breaker foam (SF-1, [`SurfFoam`]): bore foam born from [`crate::ShoreWave::breaking`],
+    /// swash lace and contact foam, with its look by age. `enabled` false = the shore band and the
+    /// constant contact foam (`--off surffoam`, the A/B arm).
+    pub surf_foam: SurfFoam,
+    /// The surf shape (SF-2, [`SurfShape`]): taller shore waves, a skewed steep front through a
+    /// shoaling/steepening/bore lifecycle and breaking in patches. `enabled` false = the symmetric,
+    /// physically capped crests (`--off surfskew`, the A/B arm).
+    pub surf_shape: SurfShape,
+}
+
+/// The surf shape (SF-2; research `surf-and-foam-2026-11-17.md` "Surf", recommendation items 1-4).
+/// The breaking ratio before the smooth min, `b` = the shoaled amplitude (× openness, band fade and
+/// sets) over the depth-limited one, drives a lifecycle per point: **shoaling** (`b` <
+/// `steepen_start`: symmetric Gerstner), **steepening** (the phase skews, `θ' = θ − s·sin θ`, so the
+/// shoreward face steepens and the back flattens) and **bore** (`b` ≥ `bore_start`: stronger skew, and
+/// the loop cap rises so the front may stand vertical). Outerra's skewed trochoid and Peachey 1986's
+/// depth-varying profile, on our closed-form phase; Horizon Forbidden West's variation texture
+/// (Malan, SIGGRAPH 2022) gives the break gaps. The CPU twin is [`crate::ShoreWaves`]
+/// (`ShoreWaves::eval_on`); `water_common.wesl` `shore_trains` the GPU's. Every value is a tunable
+/// (`tunables.md`): unit and range in its doc, source `Guess` unless stated.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SurfShape {
+    /// On (SF-2) or the symmetric, physically capped crests (`--off surfskew`: gain 1, γ =
+    /// [`crate::shore_waves::BREAKER_INDEX`], no skew, no gaps).
+    pub enabled: bool,
+    /// `surf_height_gain`: the offshore significant height of the shore waves is multiplied by this
+    /// (the swash keeps the sea's own height), ratio, range 1-2.5, default 1.5 (Guess: research's
+    /// 1.4-1.8; the physical caps look tame, the owner 2026-11-17).
+    pub height_gain: f32,
+    /// `breaker_gamma`: depth-limited breaker index H/h, range 0.6-1.0, default 0.78 (Industry:
+    /// `McCowan` 1894, the solitary-wave limit on a plane beach).
+    pub breaker_gamma: f32,
+    /// Breaking ratio `b` where the steepening starts (below it: shoaling, no skew), unitless,
+    /// range 0.3-1, default 0.6 (Guess: research's lifecycle).
+    pub steepen_start: f32,
+    /// Breaking ratio where the bore starts (H = γh), unitless, range 0.6-1.5 (> `steepen_start`),
+    /// default 1.0 (Industry: the breaker criterion itself).
+    pub bore_start: f32,
+    /// Breaking ratio of the full bore, unitless, range > `bore_start` to 4, default 1.5 (Guess: the
+    /// bore forms over about a third of the break depth shoreward).
+    pub bore_full: f32,
+    /// Phase skew `s` at the end of the steepening, unitless, range 0-0.9, default 0.35 (Guess:
+    /// Outerra's skewed trochoid, a visibly pitched face before the break).
+    pub skew_steepen: f32,
+    /// Phase skew of the full bore, unitless, range 0-0.9 (< 1 keeps the phase warp monotonic),
+    /// default 0.6 (Guess: the sawtooth of a surf-zone bore).
+    pub skew_bore: f32,
+    /// Loop cap of the full bore: Σ Q·k·A·coth(kh) may reach this instead of
+    /// [`crate::shore_waves::STEEPNESS_LIMIT`] (0.75); above ~0.8 the front leans past vertical
+    /// (a small fold, the curl's hint), unitless, range 0.5-1.5, default 1.0 (Guess: research's ~1.0).
+    pub bore_loop: f32,
+    /// Minimum visible crest at the break line: up to this wave height (m, crest to trough) the
+    /// envelope takes the sharper min of `break_sharpness` instead of the smooth one, so the wave
+    /// stands up to nearly its depth-limited height where it breaks (never above it, and no wave where
+    /// the sea has none), range 0-3, default 1.0 (Guess). 0 = the smooth min everywhere.
+    pub break_crest_min_m: f32,
+    /// Exponent of that sharper min, `A = lo·(1 + (lo/hi)^p)^(-1/p)` of the shoaled and depth-limited
+    /// amplitudes (4 = the smooth min's own, the crest 16 % under the hard min at the break; 8 = 8 %;
+    /// a max of smooth functions, so the envelope's growth stays that of the two laws), unitless,
+    /// range 4-16, default 8 (Guess).
+    pub break_sharpness: f32,
+    /// Break gap patch size along the crest (m): the world value noise cell that masks the bore,
+    /// range 4-128, default 24 (Guess: Horizon's variation texture breaks a crest every few tens of
+    /// metres). Rounded to whole cells per [`crate::shore_waves::NOISE_PERIOD`].
+    pub gap_cell_m: f32,
+    /// Share of the crest that does not break (the gaps), range 0-1, default 0.3 (Guess; a value
+    /// noise threshold, so the share is approximate).
+    pub gap_share: f32,
+    /// Feather of the gap edges in noise units, range 0.01-0.5, default 0.08 (Guess).
+    pub gap_feather: f32,
+}
+
+impl Default for SurfShape {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            height_gain: 1.5,
+            breaker_gamma: 0.78,
+            steepen_start: 0.6,
+            bore_start: 1.0,
+            bore_full: 1.5,
+            skew_steepen: 0.35,
+            skew_bore: 0.6,
+            bore_loop: 1.0,
+            break_crest_min_m: 1.0,
+            break_sharpness: 8.0,
+            gap_cell_m: 24.0,
+            gap_share: 0.3,
+            gap_feather: 0.08,
+        }
+    }
+}
+
+impl SurfShape {
+    /// The shape of `--off surfskew`: gain 1, γ = `BREAKER_INDEX`, everything else inert.
+    #[must_use]
+    pub fn off() -> Self {
+        Self { enabled: false, ..Self::default() }
+    }
+
+    /// The offshore height gain in effect (1 when off).
+    pub fn gain(&self) -> f32 {
+        if self.enabled { self.height_gain.max(0.0) } else { 1.0 }
+    }
+
+    /// The breaker index in effect ([`crate::shore_waves::BREAKER_INDEX`] when off).
+    pub fn gamma(&self) -> f32 {
+        if self.enabled { self.breaker_gamma.clamp(0.1, 2.0) } else { crate::shore_waves::BREAKER_INDEX }
+    }
+
+    /// Whole gap cells per noise period (as the SF-1 lace: the noise tiles with the floating
+    /// origin's wrap).
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn gap_cells(&self) -> f32 {
+        let period = crate::shore_waves::NOISE_PERIOD as f32;
+        (period / self.gap_cell_m.max(1.0)).round().clamp(1.0, 1024.0)
+    }
+}
+
+/// The breaker foam (SF-1; research `surf-and-foam-2026-11-17.md` "Foam"): foam born where the
+/// shore waves break and trailing behind the main train's crest in phase (the roller's whitewater
+/// wake, stateless: a function of the phase behind the crest), a lacy swash edge, contact foam as a
+/// thin noise-thresholded line, and a look by age (fresh dense and bright, aged thin, translucent
+/// and tinted by the body; Crest's foam feather, bubbles and 3D lighting). The lace is a cellular
+/// (Worley `F2 − F1`) pattern on the water's Lagrangian points, so it rides with the water. The
+/// CPU twin is [`crate::surf_foam`]; `water_material.wesl` the GPU's. Every value is a tunable
+/// (`tunables.md`): unit and range in its doc, source `Guess` unless stated.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SurfFoam {
+    /// On (SF-1) or the shore band and constant contact foam (`--off surffoam`).
+    pub enabled: bool,
+    /// Breaking ratio ([`crate::ShoreWave::breaking`], unitless) where bore foam starts to be born,
+    /// range 0-1, default 0.5 (Guess: research's 0.85 on the raw H/γh, here × openness × sets and
+    /// capped at 1 by the smooth min; the largest lake, ≤ `enclosed_max` 0.35, stays clean).
+    pub birth_start: f32,
+    /// Breaking ratio of full bore foam, range 0-1.2 (> `birth_start`), default 0.85 (Guess).
+    pub birth_full: f32,
+    /// Phase behind the crest (rad) over which the bore foam falls to 1/e, range 0.1-6, default 1.8
+    /// (Guess: the whitewater trails about a third of a wavelength).
+    pub bore_decay_rad: f32,
+    /// Phase ahead of the crest (rad) over which the bore foam rises (the roller's front feather),
+    /// range 0.01-1.5, default 0.3 (Guess).
+    pub front_rad: f32,
+    /// Lace cell size (m): the cellular pattern's feature size, range 0.2-8, default 1.4 (Guess:
+    /// photographs of surf-zone foam show 0.5-2 m holes). Rounded to whole cells per noise period.
+    pub lace_cell_m: f32,
+    /// Lace width at the crest (fresh foam), in cells of the `F2 − F1` distance (0 at cell borders,
+    /// ≈ 0.5 at centres), range 0-2, default 0.8 (Guess: fresh foam covers the cells).
+    pub lace_fresh: f32,
+    /// Lace width of fully aged foam (thin lines between the holes), range 0-1, default 0.06 (Guess).
+    pub lace_aged: f32,
+    /// Lace edge feather, cells, range 0.005-0.5, default 0.05 (Guess; Crest's "Foam Feather").
+    pub feather: f32,
+    /// Variation of the lace width along the water (value noise at 4 cells, ± this share), range
+    /// 0-1, default 0.5 (Guess).
+    pub lace_variation: f32,
+    /// Albedo of fresh foam, range 0-1, default 0.85 (Industry: sea foam 0.7-0.9, Whitlock 1982).
+    pub albedo_fresh: f32,
+    /// Albedo of aged foam, range 0-1, default 0.55 (Guess: research's 0.5-0.6).
+    pub albedo_aged: f32,
+    /// Share of the water body's hue in aged foam (translucent bubbles), range 0-1, default 0.6 (Guess).
+    pub aged_tint: f32,
+    /// Opacity of aged foam over the body, range 0-1, default 0.6 (Guess).
+    pub aged_opacity: f32,
+    /// Under-roller glow: the body's in-scatter raised by this share × the fresh bore foam (air
+    /// injected by breaking lights the water turquoise; Crest "Foam Bubbles"), ratio, range 0-4,
+    /// default 0.8 (Guess).
+    pub glow: f32,
+    /// Foam relief height (m) for its normal (Crest "Foam 3D lighting"), range 0-0.2, default 0.03
+    /// (Guess).
+    pub bump_m: f32,
+    /// Phase (rad) over which the swash foam's residue fades through the backwash, range 0.1-6,
+    /// default 1.2 (Guess).
+    pub swash_residue_rad: f32,
+    /// Contact foam on calm water (no breaking, no swash), share of full, range 0-1, default 0.2
+    /// (Guess: a faint line at piers and rocks; the turbulence raises it to 1).
+    pub contact_calm: f32,
+    /// The thin bright line at the very edge: its share of the contact reach, range 0.01-1, default
+    /// 0.15 (Guess).
+    pub contact_line: f32,
+    /// The swash widens the waterline foam's reach by up to this factor during the uprush, range
+    /// 0-8, default 2.0 (Guess).
+    pub swash_spread: f32,
+}
+
+impl Default for SurfFoam {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            birth_start: 0.5,
+            birth_full: 0.85,
+            bore_decay_rad: 1.8,
+            front_rad: 0.3,
+            lace_cell_m: 1.4,
+            lace_fresh: 0.8,
+            lace_aged: 0.06,
+            feather: 0.05,
+            lace_variation: 0.5,
+            albedo_fresh: 0.85,
+            albedo_aged: 0.55,
+            aged_tint: 0.6,
+            aged_opacity: 0.6,
+            glow: 0.8,
+            bump_m: 0.03,
+            swash_residue_rad: 1.2,
+            contact_calm: 0.2,
+            contact_line: 0.15,
+            swash_spread: 2.0,
+        }
+    }
 }
 
 impl Default for ShoreSettings {
@@ -55,6 +271,9 @@ impl Default for ShoreSettings {
             normal_floor: 0.5,
             beach_slope: 0.05,
             shore_waves: 1.0,
+            foam_full_breaking: 0.6,
+            surf_foam: SurfFoam::default(),
+            surf_shape: SurfShape::default(),
         }
     }
 }

@@ -460,8 +460,9 @@ fn ripple_clock(
     }
 }
 
-/// Rain intensity (0..1) from a wetting rate and the storm's.
-pub(crate) fn rain_of(wet_rate: f32, storm_wet_rate: f32) -> f32 {
+/// Rain intensity (0..1) from a wetting rate and the storm's (the puddles' rings; hosts feed the
+/// same to `sf_water_bevy::WaterRain`, R1).
+pub fn rain_of(wet_rate: f32, storm_wet_rate: f32) -> f32 {
     if storm_wet_rate > 0.0 {
         (wet_rate / storm_wet_rate).clamp(0.0, 1.0)
     } else {

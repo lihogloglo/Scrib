@@ -157,6 +157,10 @@ pub struct WeatherFrame {
     /// Cap on the precipitation's lean from vertical, degrees (the presets'
     /// `wind.precip_tilt_max_deg`, blended like the wind). Presentation only.
     pub precip_tilt_max_deg: f32,
+    /// The middle of the presets' mean wind speed ranges (`wind.speed`), blended like the wind, m/s:
+    /// the wind's speed without its slow wander (`sky.wind` wanders inside the ranges). For hosts
+    /// that want the weather's steady speed, such as a sea state (WA-10).
+    pub wind_mid_speed: f32,
 }
 
 impl Default for WeatherFrame {
@@ -175,6 +179,7 @@ impl Default for WeatherFrame {
             storms: Vec::new(),
             visibility_m: MAX_VISIBILITY_M,
             precip_tilt_max_deg: crate::UNCAPPED_DEG,
+            wind_mid_speed: 0.0,
         }
     }
 }
@@ -259,6 +264,8 @@ struct Acc {
     w_sky: f32,
     w_fog: f32,
     wind: Vec2,
+    /// Σ mid speed · weight (`WeatherFrame::wind_mid_speed`).
+    wind_mid: f32,
     gustiness: f32,
     w_wind: f32,
     gust_length: (f32, f32),
@@ -350,6 +357,7 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
             add_scaled!(acc.fog, f, w[FOG]; height_falloff, height_base, bank_falloff, bank_coverage, albedo, phase_g, ambient);
             acc.w_fog += w[FOG];
             acc.wind += preset_wind(state, climate.key, bp, input.hours) * w[WIND];
+            acc.wind_mid += f32::midpoint(rec.wind.speed[0], rec.wind.speed[1]) * w[WIND];
             acc.gustiness += rec.wind.gustiness * w[WIND];
             acc.w_wind += w[WIND];
             acc.precip_tilt += rec.wind.precip_tilt_max_deg * w[WIND];
@@ -421,6 +429,7 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
     };
     frame.surface = surface;
     frame.precip_tilt_max_deg = if acc.w_wind > 0.0 { acc.precip_tilt * nw } else { crate::UNCAPPED_DEG };
+    frame.wind_mid_speed = acc.wind_mid * nw;
     frame.lightning_per_hour = lightning_rate;
 
     let mut extinction = frame.fog.extinction_at(input.altitude, 0.0);

@@ -27,6 +27,9 @@ struct PrecipParams {
     look: vec4<f32>,
     // rgb: linear color (lit), a: opacity
     color: vec4<f32>,
+    // x: precipitation floor, render-space y (a water surface), y: 1 when
+    // the floor is set (0: none, no floor)
+    clip: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> precip: PrecipParams;
@@ -58,6 +61,16 @@ fn occluded(p: vec3<f32>) -> bool {
     let top = textureLoad(occ_map, vec2<i32>(uv * dims), 0);
     // 0.3 m of slack so a drop at a surface's own height isn't cut.
     return top > c.z + 0.3 / occ_params.y;
+}
+
+// True when the drop's lower end is below the floor (the water under the
+// camera: drops never show under its surface, which writes no depth).
+// `reach`: how far the drop extends below its centre, metres.
+fn below_floor(p: vec3<f32>, reach: f32) -> bool {
+    if precip.clip.y < 0.5 {
+        return false;
+    }
+    return p.y - reach < precip.clip.x;
 }
 
 struct Vertex {
@@ -98,7 +111,9 @@ fn vertex(v: Vertex) -> VertexOutput {
         let ph = v.drop.z * 6.2831853;
         p += vec3<f32>(sin(t * 1.7 + ph), 0.35 * sin(t * 2.3 + ph * 3.0), cos(t * 1.3 + ph * 1.7)) * flutter;
     }
-    if occluded(p) {
+    // A streak reaches half its length below its centre (its vertical share).
+    let reach = select(0.0, 0.5 * abs(precip.velocity.y) * precip.volume.z, precip.volume.w < 0.5);
+    if occluded(p) || below_floor(p, reach) {
         return out;
     }
     // Fade at the box faces (no pop on wrap) and inside the nested box.

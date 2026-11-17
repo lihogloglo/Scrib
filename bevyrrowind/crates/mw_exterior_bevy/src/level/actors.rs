@@ -149,7 +149,9 @@ pub fn add(app: &mut App, actors: Arc<[ActorSetup]>) {
     app.insert_resource(LevelActors(actors))
         .add_message::<ImpactOnCharacter>()
         .add_systems(PostStartup, install)
-        .add_systems(Update, (script, drive).chain().in_set(ControllerSystems::Drive));
+        .add_systems(Update, script)
+        // The path follower is NPC gameplay: on the fixed tick, with the walkers (NV7a).
+        .add_systems(FixedUpdate, drive.in_set(ControllerSystems::Drive));
 }
 
 /// Replaces the viewer's actor spawner (when characters are on).
@@ -232,7 +234,7 @@ fn fidget_picker(action: &sf_level::Action, index: usize) -> FidgetPicker {
     FidgetPicker::new(&weights, action.every, param("max", action.every * 2.0), sf_anim_graph::variety::mix64(index as u64))
 }
 
-/// Paths write the intent; actions fire while standing.
+/// Paths write the intent; actions fire while standing (`FixedUpdate`: `dt` is the tick).
 #[allow(clippy::needless_pass_by_value)]
 fn drive(
     time: Res<Time>,

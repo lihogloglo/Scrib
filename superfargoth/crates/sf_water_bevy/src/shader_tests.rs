@@ -35,6 +35,8 @@ impl Files {
         match package {
             "bevy_pbr" | "bevy_render" | "bevy_core_pipeline" => Some(crates.join("../vendor").join(package).join("src")),
             "sf_water_bevy" => Some(PathBuf::from(CRATE).join("src")),
+            // The shared rain rings (R1).
+            "sf_render_order_bevy" => Some(crates.join("sf_render_order_bevy").join("src")),
             _ => None,
         }
     }
@@ -97,12 +99,13 @@ fn compile(module: &str, defs: &[&str]) -> Result<String, String> {
 }
 
 /// Every water shader compiles (W-SSPR adds the first water shader test): the FFT, mips,
-/// snapshot, velocity and SSPR passes, and the water draw with and without an environment map
-/// (its SSPR composition recomputes the environment specular only under `ENVIRONMENT_MAP`).
+/// snapshot, velocity and SSPR passes, the water draw with and without an environment map
+/// (its SSPR composition recomputes the environment specular only under `ENVIRONMENT_MAP`), and the
+/// underwater post (U3) with and without MSAA and dual-source blending.
 #[test]
 fn water_shaders_compile() {
     let mut failures = Vec::new();
-    let jobs: [(&str, &[&str]); 10] = [
+    let jobs: [(&str, &[&str]); 14] = [
         ("sf_water_bevy::shaders::water_gate", &[]),
         ("sf_water_bevy::shaders::water_fft", &[]),
         ("sf_water_bevy::shaders::water_mips", &[]),
@@ -113,6 +116,10 @@ fn water_shaders_compile() {
         ("sf_water_bevy::shaders::water_sspr", &[]),
         ("sf_water_bevy::shaders::water_material", &[]),
         ("sf_water_bevy::shaders::water_material", &["ENVIRONMENT_MAP"]),
+        ("sf_water_bevy::shaders::water_underwater", &[]),
+        ("sf_water_bevy::shaders::water_underwater", &["MULTISAMPLED"]),
+        ("sf_water_bevy::shaders::water_underwater", &["DUAL_SOURCE_BLENDING"]),
+        ("sf_water_bevy::shaders::water_underwater", &["MULTISAMPLED", "DUAL_SOURCE_BLENDING"]),
     ];
     for (module, defs) in jobs {
         if let Err(e) = compile(module, defs) {
@@ -192,6 +199,52 @@ fn shore_waves_reach_every_pass_with_the_twins_constants() {
     assert!(src.contains(&format!("/ {:?});", sw::NOISE_PERIOD)), "noise period");
 }
 
+/// WA-6: the shore foam band is gated by the local wave energy (`shore_foam_weight`, the CPU twin's
+/// `sf_water::shore_foam_weight`), no longer by a floored openness that left it on calm water.
+#[test]
+fn shore_foam_follows_the_wave_energy() {
+    let material = compile("sf_water_bevy::shaders::water_material", &[]).expect("compiles");
+    assert!(material.contains("shore_foam_weight") && material.contains("breaking"), "the shore foam is not gated by the waves");
+    assert!(material.contains("shore3"), "no foam reference in the uniform");
+    let src = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/water_material.wesl")).expect("source");
+    assert!(!src.contains("0.3 + 0.7 * sh.y"), "the old openness floor is back");
+}
+
+/// SF-1: the breaker foam runs behind `shore3.y` (`--off surffoam` = 0), which keeps the WA-6 band
+/// and the constant contact foam of before verbatim (the A/B arm); on, the foam reads the shore
+/// waves' phase and swash and the cellular lace. The CPU twin's names are the WGSL's.
+#[test]
+fn surf_foam_switch_keeps_the_old_path() {
+    let material = compile("sf_water_bevy::shaders::water_material", &[]).expect("compiles");
+    for name in ["surf_foam", "sw_cells", "crest_cos", "shore3.y", "surf5"] {
+        assert!(material.contains(name), "no {name} in the water draw");
+    }
+    let src = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/water_material.wesl")).expect("source");
+    assert!(src.contains("let surf_on = water.shore3.y > 0.5;"), "no switch");
+    // The old terms, gated by the switch, unchanged.
+    assert!(src.contains("if !(surf_on && trains) && sh.x < band && look.shore_foam > 0.0 {"), "old band not kept for the off arm");
+    assert!(src.contains("if !surf_on && valid && path < 1e5 {"), "old contact foam not kept for the off arm");
+    assert!(src.contains("foam = max(foam, 0.7 * (1.0 - smoothstep(0.0, look.contact, vertical)) * step(1e-3, look.contact));"), "old contact foam changed");
+    assert!(src.contains("var foam_rgb = vec3(0.8);") && src.contains("mix(body, foam_rgb, foam)"), "the off arm's foam colour changed");
+    let common = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/water_common.wesl")).expect("source");
+    for name in ["fn surf_birth(", "fn bore_profile(", "fn behind_crest(", "fn foam_lace(", "fn swash_edge(", "fn surf_foam("] {
+        assert!(common.contains(name), "no {name} twin of sf_water::{}", name.trim_start_matches("fn ").trim_end_matches('('));
+    }
+}
+
+/// SF-1: the lace cell size becomes whole cells per noise period (the cellular lace tiles with the
+/// floating origin's wrap), clamped for a zero size.
+#[test]
+#[allow(clippy::float_cmp)] // exact: whole cells, and the clamp
+fn surf_foam_reaches_the_uniform() {
+    let on = sf_water::SurfFoam::default();
+    assert!(on.enabled);
+    let cells = crate::lace_cells(on.lace_cell_m);
+    assert_eq!(cells.fract(), 0.0);
+    assert!(cells >= 1.0 && (1024.0 / cells - on.lace_cell_m).abs() < 0.01, "{cells}");
+    assert_eq!(crate::lace_cells(0.0), crate::lace_cells(0.05), "clamped");
+}
+
 /// W-GERSTNER-DEPTH: the water draw (vertex and fragment) and its motion vectors read the baked
 /// bed slope, at the bindings the Rust side declares (material 113, velocity 8).
 #[test]
@@ -229,4 +282,139 @@ fn gate_shader_matches_its_rust_side() {
     ] {
         assert!(src.contains(&line), "water_gate.wesl lacks `{line}`");
     }
+}
+
+/// U3: the underwater post's `Underwater` struct keeps the size of its Rust mirror, its fragment
+/// entry point is the pipeline's, its extinction floor is `sf_water`'s, and it lights its
+/// in-scatter at the view's exposure (the scene it blends onto is pre-exposed).
+#[test]
+#[allow(clippy::float_cmp)] // exact: the WGSL literal must parse to the very constant
+fn underwater_post_matches_its_rust_side() {
+    use bevy_render::render_resource::ShaderType;
+    let wgsl = compile("sf_water_bevy::shaders::water_underwater", &[]).expect("compiles");
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("parses");
+    assert!(module.entry_points.iter().any(|e| e.name == "underwater"), "entry point underwater");
+    let span = module.types.iter().find_map(|(_, ty)| match &ty.inner {
+        naga::TypeInner::Struct { members, span } if members.iter().any(|m| m.name.as_deref() == Some("sun")) => Some(u64::from(*span)),
+        _ => None,
+    });
+    assert_eq!(span, Some(crate::UnderwaterUniform::min_size().get()), "Underwater layout");
+    assert!(wgsl.contains("view.exposure"), "the in-scatter is not exposed like the scene");
+    let src = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/water_underwater.wesl")).expect("source");
+    let line = src.lines().find(|l| l.starts_with("const MIN_EXTINCTION = ") || l.starts_with("const MIN_EXTINCTION: f32 = ")).expect("const MIN_EXTINCTION");
+    let value: f32 = line.split('=').nth(1).unwrap().trim().trim_end_matches(';').parse().unwrap_or_else(|_| panic!("{line}"));
+    assert_eq!(value, sf_water::underwater::MIN_EXTINCTION);
+    // An empty depth (reverse Z 0: nothing hit) is full extinction, never a distance.
+    assert!(src.contains("var transmittance = vec3(0.0);") && src.contains("if depth > 0.0 {"), "infinite depth is not the medium colour");
+    // Dual-source blending writes a per-channel transmittance; without it the mean goes in alpha.
+    let dual = compile("sf_water_bevy::shaders::water_underwater", &["DUAL_SOURCE_BLENDING"]).expect("compiles");
+    assert!(dual.contains("blend_src"), "no dual-source output");
+    assert!(!wgsl.contains("blend_src"), "dual-source output without the feature");
+}
+
+/// U3: the post draws only for a camera fully under the water (uniform state 2) with the post on:
+/// never above (0) or split (1, the waterline's, U4), never with `--off underwater`. The extract
+/// gives the post its uniform and the sky gate (`SkyOccluded`) through that one test, the pass runs
+/// only on a view with the bindings the prepare makes from that uniform, and the vendored sky and
+/// the `sf_atmos` composite skip a view with the gate.
+#[test]
+fn underwater_post_is_gated_on_state_two() {
+    use crate::{post_on, WaterMedium, WaterMediumSettings, WaterMediumUniform};
+    use sf_water::MediumState;
+    let on = WaterMediumSettings::default();
+    assert!(on.post, "the post is on by default");
+    let off = WaterMediumSettings { post: false, ..on };
+    for (state, code) in [(MediumState::Above, 0), (MediumState::Split, 1), (MediumState::Under, 2)] {
+        let mut m = WaterMedium::default();
+        m.medium.state = state;
+        let u = WaterMediumUniform::from(&m);
+        assert_eq!(u.state, code);
+        assert_eq!(post_on(&on, &u), code == 2, "{state:?}");
+        assert!(!post_on(&off, &u), "{state:?} with --off underwater");
+    }
+    let medium = std::fs::read_to_string(PathBuf::from(CRATE).join("src/medium.rs")).expect("source");
+    assert!(medium.contains("settings.post && medium.state == MediumState::Under.as_u32()"), "post_on changed");
+    assert!(medium.contains("if post_on(&settings, &uniform) {"), "the extract does not gate on post_on");
+    assert!(medium.contains("e.insert((UnderwaterUniform::new(m, &look, sun, ambient, &settings), SkyOccluded));"), "uniform and sky gate not inserted together");
+    assert!(medium.contains("e.remove::<(UnderwaterUniform, SkyOccluded, crate::render::UnderwaterBindings)>();"), "the post is not removed when the camera surfaces");
+    let render = std::fs::read_to_string(PathBuf::from(CRATE).join("src/render.rs")).expect("source");
+    assert!(render.contains("view: ViewQuery<(&UnderwaterBindings,"), "the pass runs without the bindings");
+    assert!(render.contains("views: Query<(Entity, &UnderwaterUniform,"), "the bindings are made without the uniform");
+    assert!(render.contains("PassStage::Medium, underwater_pass"), "the pass is not at step 8b");
+    assert!(render.contains("pass_span(&mut pass, \"water_underwater\")"), "no GPU timer");
+    let vendor = PathBuf::from(CRATE).join("../../vendor/bevy_pbr/src/atmosphere");
+    let sky = std::fs::read_to_string(vendor.join("node.rs")).expect("vendored render_sky");
+    assert!(sky.contains("bevy_ecs::query::Without<super::SkyOccluded>"), "the vendored render_sky ignores the gate");
+    let atmos = std::fs::read_to_string(PathBuf::from(CRATE).join("../sf_atmos_bevy/src/render.rs")).expect("sf_atmos render");
+    assert!(atmos.contains("AtmosphereOffsets), Without<bevy_pbr::SkyOccluded>>"), "the composite ignores the gate");
+}
+
+/// R1: the rain rings are the puddles' (`sf_render_order_bevy::rain_rings`, linked into the water
+/// draw), added to the slopes before the normal is built, only on the front face and only while
+/// the rain slot is on (`rain.x`: the host's intensity, 0 dry, indoors and with `--off water_rain`),
+/// faded by the pixel footprint; no rain is no slots; the clock wraps on whole ring cycles.
+#[test]
+fn rain_rings_are_gated_by_the_switch_and_intensity() {
+    let material = compile("sf_water_bevy::shaders::water_material", &[]).expect("compiles");
+    assert!(material.contains("rain_ripples"), "the rain rings are not linked into the water draw");
+    let src = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/water_material.wesl")).expect("source");
+    assert!(src.contains("import sf_render_order_bevy::rain_rings::rain_ripples;"), "not the shared rings");
+    assert!(src.contains("if is_front && water.rain.x > 0.0 {"), "rings not gated by the rain and the front face");
+    assert!(src.contains("let rings = water.rain.z * (1.0 - smoothstep(water.rain2.x, water.rain2.y, footprint));"), "rings not faded by the footprint");
+    assert!(src.contains("rain_ripples(in.world_position.xz, water.rain.y, water.rain.x) * rings;"), "rings not scaled by the rain");
+    let term = src.find("rain_ripples(in.world_position").expect("ring term");
+    let normal = src.find("var N = normalize(").expect("normal");
+    assert!(term < normal, "the rings must join the slopes before the normal is built");
+    // Off (no rain, or `--off water_rain` from the host): the slots are zero, the branch is skipped.
+    let settings = crate::WaterRainSettings::default();
+    assert_eq!(crate::rain::slots(5.0, crate::WaterRain { intensity: 0.0 }, settings), [bevy_math::Vec4::ZERO; 2]);
+    assert!(crate::rain::slots(5.0, crate::WaterRain { intensity: 0.5 }, settings)[0].x > 0.0);
+    // The ring clock wraps on whole cycles of the shared rings' drop rate (no pop at the wrap).
+    let rings = std::fs::read_to_string(PathBuf::from(CRATE).join("../sf_render_order_bevy/src/rain_rings.wesl")).expect("shared rings");
+    let rate: f64 = rings
+        .lines()
+        .find_map(|l| l.strip_prefix("const RIPPLE_RATE: f32 = "))
+        .expect("RIPPLE_RATE in rain_rings.wesl")
+        .trim_end_matches(';')
+        .parse()
+        .expect("a number");
+    let turns = rate * crate::RAIN_CLOCK_WRAP_S;
+    assert!((turns - turns.round()).abs() < 1e-3, "{turns} ring cycles per clock wrap");
+}
+
+/// SF-2: the surf shape reaches every pass through `shore_trains` with the twin's constants and gap
+/// seeds, and `--off surfskew` zeroes slot 0's x (the shader's switch, γ back to `SW_BREAKER`).
+#[test]
+// (Exact: the WGSL literal must parse to the very constant; the slots copy the settings.)
+#[allow(clippy::float_cmp)]
+fn surf_shape_reaches_the_shader_with_the_twins_constants() {
+    use sf_water::shore_waves as sw;
+    let material = compile("sf_water_bevy::shaders::water_material", &[]).expect("compiles");
+    let velocity = compile("sf_water_bevy::shaders::water_velocity", &[]).expect("compiles");
+    for name in ["surf_life", "surf_envelope", "shape3"] {
+        assert!(material.contains(name) && velocity.contains(name), "no {name} in the water draw or its motion vectors");
+    }
+    let src = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/water_common.wesl")).expect("source");
+    let constant = |name: &str| -> f32 {
+        let line = src.lines().find(|l| l.starts_with(&format!("const {name} = "))).unwrap_or_else(|| panic!("const {name}"));
+        line.split('=').nth(1).unwrap().trim().trim_end_matches(';').parse().unwrap_or_else(|_| panic!("{line}"))
+    };
+    assert_eq!(constant("SW_SKEW_RATE_LIMIT"), sw::SKEW_RATE_LIMIT);
+    for seed in sw::GAP_SEEDS {
+        assert!(src.contains(&format!("sw_noise(foot, cells, {seed}u)")), "gap seed {seed}");
+    }
+    // The twin's switch, γ clamp, shoreline foot and skew clamps.
+    assert!(src.contains("let on = p.shape.x > 0.5;"), "no switch");
+    assert!(src.contains("let gamma = select(SW_BREAKER, clamp(p.shape.y, 0.1, 2.0), on);"), "γ not the twin's");
+    assert!(src.contains("let foot = fract(noise + d * dir / 1024.0);"), "gaps not at the shoreline foot");
+    assert!(src.contains("let skew_bore = clamp(p.shape2.z, 0.0, 0.9);") && src.contains("let e = clamp(p.shape.x, 1.0, 32.0);"), "clamps");
+    let on = crate::surf_shape_slots(&sf_water::SurfShape::default());
+    let off = crate::surf_shape_slots(&sf_water::SurfShape::off());
+    let d = sf_water::SurfShape::default();
+    assert_eq!(on[0].x, d.break_sharpness);
+    assert_eq!(off[0].x, 0.0);
+    assert_eq!(off[0].y, sw::BREAKER_INDEX);
+    assert_eq!(on[0].y, d.breaker_gamma);
+    assert_eq!(on[2].y.fract(), 0.0, "gap cells not whole per noise period");
+    assert_eq!(on[2].y, d.gap_cells());
 }

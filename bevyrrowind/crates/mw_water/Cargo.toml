@@ -10,6 +10,7 @@ publish = false
 encoding_rs.workspace = true
 glam.workspace = true
 sf_coords.workspace = true
+sf_tunables.workspace = true
 sf_water.workspace = true
 sf_world.workspace = true
 

@@ -492,6 +492,7 @@ impl NavBackend for GridBackend {
                 verts: (base..base + 4).collect(),
                 walls,
                 state: cell.state,
+                detail: Vec::new(),
             });
         }
         Some(geo)

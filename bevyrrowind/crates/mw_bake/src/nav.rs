@@ -76,6 +76,11 @@ const TERRAIN_SPACING: f32 = sf_terrain::BASE_SPACING;
 /// Bump when this module's geometry rules change (part of every cell product).
 const RULES_VERSION: u32 = 1;
 
+/// Every worldspace's one nav region (module doc "Regions"): id and origin, as the bake tiles it and
+/// the runtime ring (`mw_walkers_bevy::nav`) reads it.
+pub const REGION: u16 = 0; // tunables: const (an id the bake keys its products by)
+pub const REGION_ORIGIN: WorldPos = WorldPos::ORIGIN; // tunables: const (a coordinate frame)
+
 pub const HUMANOID: AgentClassId = AgentClassId(0);
 pub const LARGE: AgentClassId = AgentClassId(1);
 pub const GROUND: AreaId = AreaId(1);
@@ -738,7 +743,7 @@ impl NavGeometrySource for MwNavSource {
         self.world
             .spaces
             .get(ws)
-            .map(|s| vec![NavRegion { region: 0, origin: WorldPos::ORIGIN, min: s.min, max: s.max }])
+            .map(|s| vec![NavRegion { region: REGION, origin: REGION_ORIGIN, min: s.min, max: s.max }])
             .unwrap_or_default()
     }
 

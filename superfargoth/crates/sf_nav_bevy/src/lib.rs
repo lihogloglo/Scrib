@@ -15,6 +15,14 @@
 //!   `duDebugDrawNavMesh`), drawn only when the app has Bevy's gizmo plugin; positions go through
 //!   [`NavDrawFrame`] (the render origin and the worldspace to show). [`NavDrawn`] counts what the
 //!   last frame drew, for log-line checks (no visual judgement by agents).
+//! - `NV4c`, [`NavRingPlugin`] (module [`residency`]): baked `nav.tiles` products kept resident in
+//!   [`NavMeshes`] around one [`NavAnchor`] with load/unload hysteresis and a per-frame tile cap;
+//!   `nav.stats` adds its counts ([`RingStats`]). Scaffold `NavRingScaffold`: NV5 replaces it with
+//!   per-anchor, per-portal, budgeted residency on the streaming scheduler.
+//! - NV6, [`NavQueryPlugin`] (module [`queries`]): the path query service on the fixed tick.
+//!   Callers request through [`NavQueries`] and take replies published at the next tick boundary;
+//!   `nav.stats` shows the queue, running jobs and the last tick's run (`queue 3 (1 running), tick
+//!   0.04 ms (2 jobs, 256 nodes, 1 results)`).
 
 use std::collections::BTreeMap;
 
@@ -29,9 +37,33 @@ use sf_world::{Location, WorldspaceId};
 mod console;
 #[cfg(feature = "debug")]
 mod gizmos;
+pub mod queries;
+pub mod residency;
 
 #[cfg(test)]
+mod queries_tests;
+#[cfg(test)]
+mod residency_tests;
+#[cfg(test)]
 mod tests;
+
+pub use queries::{NavQueries, NavQueryPlugin, NavQuerySettings};
+pub use residency::{
+    BakedNavRing, NavAnchor, NavRingPlugin, NavRingSettings, RING_LOAD_M, RING_TILES_PER_FRAME,
+    RING_UNLOAD_M, RingStats,
+};
+
+/// The nav systems' sets, for hosts to order against: write [`NavAnchor`] before `Residency`
+/// (`Update`), [`NavDrawFrame`] before `Draw` (`PostUpdate`, feature `debug`); request paths
+/// before `Queries` (`FixedUpdate`) to have them planned that tick; replies are published in
+/// `Publish` (`FixedFirst`), before any `FixedUpdate` system.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NavSystems {
+    Residency,
+    Draw,
+    Publish,
+    Queries,
+}
 
 /// The BRP method [`brp_stats_system`] answers.
 pub const BRP_STATS_METHOD: &str = "sf_nav/stats";
@@ -56,13 +88,21 @@ impl Plugin for NavPlugin {
 #[derive(Resource)]
 pub struct NavMeshes(pub Box<dyn NavBackend>);
 
-/// Counters the query service and runtime patches fill (NV6 queue depth and ms per tick, NV10
-/// rebuilds); `None` reads `n/a`.
+/// Counters the query service and runtime patches fill (NV6 [`NavQueryPlugin`]: the queue and
+/// the last tick's run; NV10 rebuilds); `None` reads `n/a`.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct NavCounters {
+    /// Requests queued or running.
     pub queue_depth: Option<usize>,
+    /// The last tick's run, wall time (reported only).
     pub tick_ms: Option<f32>,
     pub rebuilds: Option<u64>,
+    /// Requests with a search under way.
+    pub running: Option<usize>,
+    /// The last tick's run: jobs stepped, expansions, replies finished.
+    pub jobs: Option<u32>,
+    pub nodes: Option<u32>,
+    pub results: Option<u32>,
 }
 
 /// The last path of each actor, for `nav.draw paths`. Keyed by the actor's printed id (the AI's
@@ -140,6 +180,12 @@ pub struct NavStats {
     pub queue_depth: Option<usize>,
     pub tick_ms: Option<f32>,
     pub rebuilds: Option<u64>,
+    pub running: Option<usize>,
+    pub jobs: Option<u32>,
+    pub nodes: Option<u32>,
+    pub results: Option<u32>,
+    /// The baked ring's counts, with [`NavRingPlugin`].
+    pub ring: Option<RingStats>,
 }
 
 impl NavStats {
@@ -178,6 +224,13 @@ impl NavStats {
             queue_depth: counters.queue_depth,
             tick_ms: counters.tick_ms,
             rebuilds: counters.rebuilds,
+            running: counters.running,
+            jobs: counters.jobs,
+            nodes: counters.nodes,
+            results: counters.results,
+            ring: world
+                .get_resource::<BakedNavRing>()
+                .map(BakedNavRing::stats),
         }
     }
 
@@ -199,8 +252,21 @@ impl NavStats {
             format!(" ({per_class})")
         };
         let na = |v: Option<String>| v.unwrap_or_else(|| "n/a".to_owned());
+        let ring = self.ring.as_ref().map_or_else(String::new, |r| {
+            format!(
+                "; ring: {} pending, {} empty, {} unbaked, {} failed, {} loaded, {} dropped, last {:.2} ms",
+                r.pending, r.empty, r.unbaked, r.failed, r.loads, r.drops, r.last_ms
+            )
+        });
+        let running = self
+            .running
+            .map_or_else(String::new, |r| format!(" ({r} running)"));
+        let run = match (self.jobs, self.nodes, self.results) {
+            (Some(j), Some(n), Some(r)) => format!(" ({j} jobs, {n} nodes, {r} results)"),
+            _ => String::new(),
+        };
         format!(
-            "nav: {} tiles{per_class}, {} polys, {:.2} MiB, queue {}, tick {} ms, rebuilds {}",
+            "nav: {} tiles{per_class}, {} polys, {:.2} MiB, queue {}{running}, tick {} ms{run}, rebuilds {}{ring}",
             self.tiles,
             self.polys,
             self.mib,

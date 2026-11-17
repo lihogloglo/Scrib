@@ -181,7 +181,7 @@ fn shaders_compile_per_preset_with_and_without_surface_weather() {
                     // surface: the terrain's height field, a mesh's face normal.
                     Ok(wgsl)
                         if sw
-                            && (!wgsl.contains("surface_ripples")
+                            && (!wgsl.contains("rain_ripples")
                                 || (module.contains("terrain") && !wgsl.contains("terrain_ground"))
                                 || (module.contains("pbr") && !wgsl.contains("surface_face_up"))) =>
                     {
@@ -271,15 +271,19 @@ fn view_bindings_match_the_bevy_pbr_patch() {
     );
 }
 
-/// The wet constants in `layer.wesl` are the CPU twin's (`sf_surface::layer`).
+/// The wet constants in `layer.wesl` and the shared rain rings (`sf_render_order_bevy::rain_rings`,
+/// R1) are the CPU twin's (`sf_surface::layer`).
 #[test]
 fn wet_constants_match_the_cpu_twin() {
     let wgsl = include_str!("layer.wesl");
+    let rings = include_str!("../../sf_render_order_bevy/src/rain_rings.wesl");
     for (name, value) in sf_surface::layer::SHADER_CONSTANTS {
+        let decl = format!("const {name}: f32 = ");
         let line = wgsl
             .lines()
-            .find(|l| l.starts_with(&format!("const {name}: f32 = ")))
-            .unwrap_or_else(|| panic!("{name} in layer.wesl"));
+            .chain(rings.lines())
+            .find(|l| l.starts_with(&decl))
+            .unwrap_or_else(|| panic!("{name} in layer.wesl or rain_rings.wesl"));
         let v: f32 = line.split('=').nth(1).unwrap().trim().trim_end_matches(';').parse().unwrap();
         assert!((v - value).abs() < 1e-6, "{name}: wgsl {v}, rust {value}");
     }

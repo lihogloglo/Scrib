@@ -224,3 +224,29 @@ fn occlusion_casters_are_the_finest_levels_for_any_centre() {
         assert_eq!(ids, &finest, "centre {dx} m on: the finest levels only");
     }
 }
+
+#[test]
+fn floor_defaults_off_and_packs_the_plane() {
+    let rain = PrecipSlot { intensity: 1.0, ..PrecipSlot::default() };
+    let none = Precip::default();
+    assert_eq!(none.floor, None, "no floor by default");
+    assert_eq!(layer_params(&rain, 0, &none, Vec3::ZERO, 0.0).clip, Vec4::ZERO, "default: the shader's floor test is off");
+    let sea = Precip { floor: Some(-3.5), ..Precip::default() };
+    assert_eq!(layer_params(&rain, 1, &sea, Vec3::ZERO, 0.0).clip, Vec4::new(-3.5, 1.0, 0.0, 0.0));
+}
+
+#[test]
+fn shader_kills_drops_below_the_floor() {
+    let wesl = include_str!("shaders/precip.wesl");
+    // The uniform's last field matches `PrecipParams::clip`.
+    let params = wesl.split("struct PrecipParams {").nth(1).unwrap().split('}').next().unwrap();
+    let fields: Vec<&str> = params.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("//")).collect();
+    assert_eq!(fields, ["volume: vec4<f32>,", "offset: vec4<f32>,", "velocity: vec4<f32>,", "look: vec4<f32>,", "color: vec4<f32>,", "clip: vec4<f32>,"]);
+    // Off (clip.y 0, the default) never kills; on, the drop's lower end under clip.x does.
+    let floor = wesl.split("fn below_floor(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    assert!(floor.contains("if precip.clip.y < 0.5 {\n        return false;"), "{floor}");
+    assert!(floor.contains("return p.y - reach < precip.clip.x;"), "{floor}");
+    // Same kill path as the shelter test (a degenerate position).
+    let vertex = wesl.split("fn vertex(").nth(1).unwrap();
+    assert!(vertex.contains("if occluded(p) || below_floor(p, reach) {\n        return out;"), "{vertex}");
+}

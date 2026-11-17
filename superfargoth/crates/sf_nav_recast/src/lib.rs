@@ -40,13 +40,14 @@ mod tests;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use navmesh_rs::detour::{self, DetachedQuery, NavMesh, NavMeshParams, NavMeshQuery};
 use sf_coords::WorldPos;
 use sf_nav::{
-    AgentClassId, AreaId, AreaTable, BlobPoly, BlobTile, BuildConfig, DebugPoly, JobState,
-    NavBackend, NavError, NavPoint, NavRay, PathJob, PolyEdge, PolyFlags, PolyRef, PolyState,
-    QueryFilter, SliceBudget, TileGeometry, TileInput, TileKey, TileRef, TileSide, TileSummary,
+    AgentClassId, AreaId, AreaTable, BlobPoly, BlobTile, BuildConfig, DebugPoly, DebugTri,
+    JobState, NavBackend, NavError, NavPoint, NavRay, PathJob, PolyEdge, PolyFlags, PolyRef,
+    PolyState, QueryFilter, SliceBudget, TileGeometry, TileInput, TileKey, TileRef, TileSide,
+    TileSummary,
 };
 use sf_world::{Location, WorldspaceId};
 
@@ -374,6 +375,79 @@ pub(crate) fn backend(e: navmesh_rs::Error) -> NavError {
     }
 }
 
+/// A polygon's detail triangles for debug draw ([`NavBackend::tile_geometry`]). Corner `k` is the
+/// polygon's vertex `k` below its vertex count, else detail vertex `vert_base + k - vert_count`
+/// (Detour's detail vertex rule, navmesh-rs `detail_vert`), offset by `detail_base` in `verts`.
+/// A triangle edge flagged `DETAIL_EDGE_BOUNDARY` is matched to the polygon edge it lies on, the
+/// closest in XZ (as `duDebugDrawNavMeshPolyBoundaries` matches them). Triangles with a corner
+/// outside `verts` are dropped.
+fn debug_tris(
+    tile: &detour::MeshTile,
+    pd: &detour::PolyDetail,
+    corners: &[u32],
+    verts: &[Vec3],
+    detail_base: usize,
+) -> Vec<DebugTri> {
+    let xz = |v: &Vec3| Vec2::new(v.x, v.z);
+    let outline: Vec<Vec2> = corners
+        .iter()
+        .filter_map(|&c| verts.get(c as usize).map(xz))
+        .collect();
+    let nv = corners.len();
+    if outline.len() != nv || nv < 3 {
+        return Vec::new();
+    }
+    let index = |k: u8| -> Option<u32> {
+        let k = usize::from(k);
+        let i = if k < nv {
+            corners[k] as usize
+        } else {
+            detail_base + pd.vert_base as usize + (k - nv)
+        };
+        (i < verts.len()).then(|| u32::try_from(i).ok()).flatten()
+    };
+    let dist2 = |p: Vec2, a: Vec2, b: Vec2| {
+        let ab = b - a;
+        let len2 = ab.length_squared();
+        let t = if len2 > 0.0 {
+            ((p - a).dot(ab) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        p.distance_squared(a + ab * t)
+    };
+    let on_edge = |a: Vec2, b: Vec2| {
+        (0..nv)
+            .map(|e| {
+                let (p, q) = (outline[e], outline[(e + 1) % nv]);
+                (e, dist2(a, p, q).max(dist2(b, p, q)))
+            })
+            .min_by(|x, y| x.1.total_cmp(&y.1))
+            .and_then(|(e, _)| u8::try_from(e).ok())
+    };
+    let first = pd.tri_base as usize * 4;
+    let tris = tile
+        .detail_tris
+        .get(first..first + usize::from(pd.tri_count) * 4)
+        .unwrap_or_default();
+    tris.as_chunks::<4>()
+        .0
+        .iter()
+        .filter_map(|t| {
+            let v = [index(t[0])?, index(t[1])?, index(t[2])?];
+            let edges = std::array::from_fn(|k| {
+                let flags = i32::from(detour::detail_tri_edge_flags(t[3], k));
+                if flags & detour::DETAIL_EDGE_BOUNDARY == 0 {
+                    return None;
+                }
+                let (a, b) = (&verts[v[k] as usize], &verts[v[(k + 1) % 3] as usize]);
+                on_edge(xz(a), xz(b))
+            });
+            Some(DebugTri { verts: v, edges })
+        })
+        .collect()
+}
+
 fn bad_tile(key: &TileKey, reason: impl Into<String>) -> NavError {
     NavError::InvalidTile {
         key: Box::new(key.clone()),
@@ -537,33 +611,49 @@ impl NavBackend for RecastBackend {
 
     /// The tile's ground polygons (off-mesh connections are links, drawn by their own layer);
     /// an edge is a wall where Detour stores no neighbour (`neis == 0`), as Detour's
-    /// `duDebugDrawNavMeshPolyBoundaries` draws outer edges.
+    /// `duDebugDrawNavMeshPolyBoundaries` draws outer edges. Each polygon carries its detail
+    /// triangles (the tile's detail vertices follow its polygon vertices in `verts`), so the
+    /// draw follows the sampled surface.
     fn tile_geometry(&self, key: &TileKey) -> Option<TileGeometry> {
         let m = self.mesh_of_key(&MeshKey::of(key))?;
         let t = m.nav.tile_by_ref(*m.tiles.get(&(key.x, key.z))?)?;
-        let verts = t
+        let mut verts: Vec<Vec3> = t
             .verts
             .as_chunks::<3>()
             .0
             .iter()
             .map(|&v| Vec3::from_array(v))
             .collect();
+        let detail_base = verts.len();
+        verts.extend(
+            t.detail_verts
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|&v| Vec3::from_array(v)),
+        );
         let polys = t
             .polys
             .iter()
-            .filter(|p| p.poly_type() != detour::POLYTYPE_OFFMESH_CONNECTION)
-            .map(|p| {
+            .enumerate()
+            .filter(|(_, p)| p.poly_type() != detour::POLYTYPE_OFFMESH_CONNECTION)
+            .map(|(ip, p)| {
                 let n = usize::from(p.vert_count);
                 let walls = (0..n.min(8))
                     .filter(|&i| p.neis[i] == 0)
                     .fold(0u8, |w, i| w | 1 << i);
+                let corners: Vec<u32> = p.verts[..n].iter().map(|&v| u32::from(v)).collect();
+                let detail = t.detail_meshes.get(ip).map_or_else(Vec::new, |pd| {
+                    debug_tris(t, pd, &corners, &verts, detail_base)
+                });
                 DebugPoly {
-                    verts: p.verts[..n].iter().map(|&v| u32::from(v)).collect(),
+                    verts: corners,
                     walls,
                     state: PolyState {
                         area: AreaId(p.area()),
                         flags: PolyFlags::from_bits_retain(p.flags),
                     },
+                    detail,
                 }
             })
             .collect();

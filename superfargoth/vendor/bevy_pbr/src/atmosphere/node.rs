@@ -159,18 +159,23 @@ pub fn atmosphere_luts(
 }
 
 pub fn render_sky(
-    view: ViewQuery<(
-        &ExtractedCamera,
-        &AtmosphereBindGroups,
-        &ViewTarget,
-        &DynamicUniformIndex<GpuAtmosphere>,
-        &DynamicUniformIndex<GpuAtmosphereSettings>,
-        &AtmosphereTransformsOffset,
-        &ViewUniformOffset,
-        &ViewLightsUniformOffset,
-        &RenderSkyPipelineId,
-        Option<&MainPassResolutionOverride>,
-    )>,
+    // superfargoth patch (own, U3: sky occluded): a view under water draws neither sky nor aerial
+    // perspective (`super::SkyOccluded`).
+    view: ViewQuery<
+        (
+            &ExtractedCamera,
+            &AtmosphereBindGroups,
+            &ViewTarget,
+            &DynamicUniformIndex<GpuAtmosphere>,
+            &DynamicUniformIndex<GpuAtmosphereSettings>,
+            &AtmosphereTransformsOffset,
+            &ViewUniformOffset,
+            &ViewLightsUniformOffset,
+            &RenderSkyPipelineId,
+            Option<&MainPassResolutionOverride>,
+        ),
+        bevy_ecs::query::Without<super::SkyOccluded>,
+    >,
     pipeline_cache: Res<PipelineCache>,
     mut ctx: RenderContext,
 ) {

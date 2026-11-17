@@ -90,3 +90,31 @@ drop to ~0 (a small `water_gate` probe appears; `water_fft` stays unless you loo
 Then walk to the river bank: all passes back, same values as off. Turn toward and away from the water repeatedly, and walk
 out of a street onto the bank. Look for: no pop, flicker or one-frame flat/frozen water when it comes into view; reflections
 (SSPR) and refraction valid on the first frame; no smear behind waves (DLSS motion) on re-entry; foam unchanged. A/B: `set water.gate.visible off`.
+
+### WA-8: Shore foam follows the wave energy, none on calm inland water (W-FOAM-GATE; `view "Balmora"`, `scene wa-seyda-noon`)
+
+Status: awaiting owner (built 2026-11-17, water-inland). Fixes the WA-6 white band on rivers and lakes.
+Launch: `bash bevyrrowind/tools/owner_launch.sh view "Balmora"` (the Odai banks at noon), then `scene wa-seyda-noon`.
+Look for: on the Odai and inland pools no white band creeping toward the bank; the largest lakes at most a faint band; on the
+Seyda Neen beach the band still rides the breaking crests and pulses with the sets (a little weaker than before on small
+sets: if too weak, `ShoreSettings::foam_full_breaking` 0.6 goes down). Contact foam and the band's look are unchanged
+(the surf + foam rework comes after the research pass).
+
+### WA-9: Surf: breaker foam (SF-1) and breaking wave shape (SF-2) (`scene wa-seyda-noon --water-wind 14`; A/B `--off surffoam`, `--off surfskew`)
+
+Status: failed (owner 2026-11-17, profiling build, `--water-wind 14`): (1) no surf, the water rises and falls gently with a Gerstner bulge (Seyda Neen likely too gentle: SF-2b + a steeper test beach); (2) no patchy breaking seen; (3) foam "frankly quite bad": looks painted, wrong scale; no turquoise glow seen; Seyda Neen water reads murky green; (4) no wet sand trace at the waterline (the swash lace is on the water; the terrain wet band is not built); (5) contact foam = the painted, wrong-scale one. Owner: "I have seen projects doing foam quite well": research the foam LOOK (textured foam), not only where it is born.
+Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-seyda-noon --water-wind 14`, then `--water-wind 30`; A/B the same with `--off surffoam,surfskew`.
+Look for: waves steepening with a forward-leaning front as they come in, breaking in patches (not one ruler line), dense white foam on the breaking crest fading behind it into lace with holes, aged foam greyish and see-through, a faint turquoise glow under the breaking crest; lacy foam at the waterline on the uprush; thin foam lines (not halos) at rocks and piers. Bad: white paint bands, foam that slides over still water, spikes or loops at the crest, shimmering lace far away.
+Known: on the gentle 1:20 parts the waves stay small (they are faded where they break; SF-2b next).
+
+### WA-10: Storm sea, underwater post, rain rings (W-SEASTATE, U3, R1; `scene wa-seyda-noon --weather thunderstorm`, profiling build)
+
+Status: failed (owner 2026-11-17, first launch): (1) storm sea still not big, "definitely not 2 m"; (2) no rain rings on the
+water at all; (3) rain falls underwater; (4) underwater far too murky: visibility a few tens of cm; (5) a gap between the
+head going under and the effect starting (Split state draws nothing until all near-plane corners are under; U4 not built);
+(6) no waterline "middle line" (U4, expected, owner wants it). Next: one read-only diagnosis of 1-4, then fixes + U4.
+Recheck (owner 2026-11-17 22:15, fixes in): rain rings visible (the first launch may have been hidden by wavelets); no rain
+underwater, pass. Colour regression: the Bitter Coast fix made the sea bluer, but murky green is right for Seyda Neen (bluer
+elsewhere, as before); only the visibility range was wrong. Next: give Bitter Coast its green tint back with coastal
+visibility. Storm sea still too meek, with no big crest foam and no sea spray: that goes to a separate storm-sea session
+inspired by Sea of Thieves. Open: U4 waterline.

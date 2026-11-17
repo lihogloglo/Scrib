@@ -55,3 +55,33 @@ impl CharacterFrame {
         (self.to_local(hit.point), self.dir_to_local(hit.normal))
     }
 }
+
+/// A drawn root pose at the end of a fixed tick: what render interpolation blends. One
+/// mechanism for every fixed-tick body (the action layer's `ActionBody`, the
+/// `sf_controller_bevy` movers): the drawn root is `prev.lerp(curr, overstep_fraction)`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TickPose {
+    pub position: WorldPos,
+    pub rotation: Quat,
+}
+
+impl TickPose {
+    pub fn of(loco: &crate::Locomotion) -> Self {
+        Self { position: loco.render_position(), rotation: loco.render_rotation() }
+    }
+
+    /// `self` toward `next` by `alpha` in 0..=1.
+    #[must_use]
+    pub fn lerp(self, next: Self, alpha: f32) -> Self {
+        Self {
+            position: self.position.offset(self.position.delta_f32(next.position) * alpha),
+            rotation: self.rotation.slerp(next.rotation, alpha),
+        }
+    }
+
+    /// The character-space frame of this pose (heading only: the yaw of its forward axis).
+    pub fn frame(&self) -> CharacterFrame {
+        let f = self.rotation * Vec3::Z;
+        CharacterFrame::new(self.position, f.x.atan2(f.z))
+    }
+}

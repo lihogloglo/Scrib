@@ -24,6 +24,8 @@ bevy_shape.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 mw_actors.workspace = true
+# `nav`: the bake's agent classes and nav region (`mw_bake::nav`), so the ring reads the subjects it wrote.
+mw_bake.workspace = true
 mw_ai.workspace = true
 mw_game_core.workspace = true
 mw_graphs.workspace = true
@@ -39,6 +41,11 @@ sf_controller = { workspace = true, features = ["bake", "terrain"] }
 sf_controller_bevy = { workspace = true, features = ["debug"] }
 sf_coords.workspace = true
 sf_diag_bevy.workspace = true
+# `nav` (nav.md NV4c): the navmesh resource, its baked ring, `nav.stats` and `nav.draw` gizmos.
+sf_nav.workspace = true
+sf_nav_bake.workspace = true
+sf_nav_bevy = { workspace = true, features = ["debug"] }
+sf_nav_recast.workspace = true
 sf_physics = { workspace = true, features = ["bake"] }
 sf_physics_bevy = { workspace = true, features = ["debug", "controller", "ragdoll"] }
 sf_ragdoll.workspace = true

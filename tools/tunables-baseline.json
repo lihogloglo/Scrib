@@ -1301,10 +1301,19 @@
       ]
     },
     "sf_render_order_bevy": {
-      "T": 3,
+      "T": 12,
       "?": 1,
       "C": 2,
       "tunables": [
+        "src/rain_rings.wesl ORIGIN_GRID_M",
+        "src/rain_rings.wesl RIPPLE_CELL_M",
+        "src/rain_rings.wesl RIPPLE_RADIUS",
+        "src/rain_rings.wesl RIPPLE_RATE",
+        "src/rain_rings.wesl RIPPLE_RING",
+        "src/rain_rings.wesl RIPPLE_SCALE_0",
+        "src/rain_rings.wesl RIPPLE_SCALE_1",
+        "src/rain_rings.wesl RIPPLE_SCALE_2",
+        "src/rain_rings.wesl RIPPLE_SCALE_3",
         "src/translucent_fog.wesl FOG_BLEND",
         "src/translucent_fog.wesl FOG_MULTIPLY",
         "src/translucent_fog.wesl FOG_PREMULTIPLIED"
@@ -1544,7 +1553,7 @@
       ]
     },
     "sf_surface_bevy": {
-      "T": 56,
+      "T": 47,
       "?": 26,
       "C": 41,
       "tunables": [
@@ -1566,21 +1575,12 @@
         "src/layer.wesl COVER_TOP_MAX",
         "src/layer.wesl FILM_POROUS_HOLD",
         "src/layer.wesl HEIGHT_FROM_LUMA",
-        "src/layer.wesl ORIGIN_GRID_M",
         "src/layer.wesl PATCH_TILE_M",
         "src/layer.wesl POOL_TILE_M",
         "src/layer.wesl PUDDLE_DEPTH",
         "src/layer.wesl PUDDLE_REACH",
-        "src/layer.wesl RIPPLE_CELL_M",
         "src/layer.wesl RIPPLE_FADE_FAR_M",
         "src/layer.wesl RIPPLE_FADE_NEAR_M",
-        "src/layer.wesl RIPPLE_RADIUS",
-        "src/layer.wesl RIPPLE_RATE",
-        "src/layer.wesl RIPPLE_RING",
-        "src/layer.wesl RIPPLE_SCALE_0",
-        "src/layer.wesl RIPPLE_SCALE_1",
-        "src/layer.wesl RIPPLE_SCALE_2",
-        "src/layer.wesl RIPPLE_SCALE_3",
         "src/layer.wesl RIPPLE_TIME_WRAP_S",
         "src/layer.wesl SHELTER_FADE_START",
         "src/layer.wesl SHELTER_FULL_M",

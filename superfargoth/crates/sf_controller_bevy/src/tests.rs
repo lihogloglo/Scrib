@@ -6,7 +6,7 @@ use std::time::Duration;
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_math::Vec3;
-use bevy_time::{Time, TimePlugin, TimeUpdateStrategy};
+use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
 use bevy_transform::components::Transform;
 use sf_controller::{GroundHit, GroundProbe, ProbeQuery, SurfaceId};
 use sf_coords::WorldPos;
@@ -40,12 +40,13 @@ impl GroundProbe for Flat {
     }
 }
 
+/// Frames of 1/60 s on a 1/60 s tick: one tick per update (the stage runs in `FixedUpdate`).
 fn app() -> App {
+    let frame = Duration::from_secs_f64(1.0 / 60.0);
     let mut app = App::new();
     app.add_plugins(TimePlugin)
-        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
-            1.0 / 60.0,
-        )))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(frame))
+        .insert_resource(Time::<Fixed>::from_duration(frame))
         .add_plugins(SfControllerPlugin::<Flat>::default())
         .insert_resource(Flat);
     app
@@ -102,10 +103,12 @@ fn head_on_walkers_pass_and_transforms_follow() {
         m.loco.position.delta_f32(WorldPos::ORIGIN).x < -3.0,
         "a walked past b"
     );
+    // Drawn: the interpolated root (one tick per frame: overstep 0, the tick's start).
     assert!(
-        (t.translation - m.root_transform().0).length() < 1e-5,
+        (t.translation - WorldPos::ORIGIN.delta_f32(m.drawn().position)).length() < 1e-5,
         "transform written"
     );
+    assert_eq!(m.drawn(), m.poses().0.lerp(m.poses().1, 0.0));
     let stats = w.resource::<ControllerStats>();
     assert_eq!((stats.movers, stats.reactive), (2, 2));
     let _ = w.resource::<Time>();
@@ -371,7 +374,7 @@ fn walk_asset() -> std::sync::Arc<sf_anim_bevy::AnimAsset> {
     Arc::new(sf_anim_bevy::AnimAsset::new(Arc::new(skeleton), Arc::new(graph), clips).unwrap())
 }
 
-/// What the graph got at each of its updates: the walker's position then and
+/// What the graph got at each of its updates: the walker's drawn position then and
 /// `drive.moved`; `.1` holds this frame's until Evaluate shows whether it was consumed.
 #[derive(Resource, Default)]
 struct Fed(Vec<(WorldPos, Vec3)>, Option<(WorldPos, Vec3)>);
@@ -392,7 +395,7 @@ fn a2_updates_get_all_the_motion_since_their_last_update() {
             (|movers: Query<&Mover>, animators: Query<&Animator>, mut fed: ResMut<Fed>| {
                 let m = movers.single().unwrap();
                 let a = animators.get(m.animator.unwrap()).unwrap();
-                fed.1 = Some((m.loco.position, a.drive.moved.translation));
+                fed.1 = Some((m.drawn().position, a.drive.moved.translation));
             })
             .after(AnimSystems::Probe)
             .before(AnimSystems::Evaluate),
@@ -422,4 +425,109 @@ fn a2_updates_get_all_the_motion_since_their_last_update() {
     let told: f32 = fed[1..].iter().map(|f| f.1.length()).sum();
     assert!(travelled > 1.0, "walking: {travelled} m");
     assert!((told - travelled).abs() < 0.01 * travelled, "the graph was told {told:.3} m of {travelled:.3} m");
+}
+
+// --- NV7a: the fixed tick ---------------------------------------------------------------
+
+/// A walker's path follower, driven in `ControllerSystems::Drive` like the hosts'.
+#[derive(Component)]
+struct Follow(sf_controller::PathFollower);
+
+/// Every tick's end state of the walker, and every frame's drawn-root checks.
+#[derive(Resource, Default)]
+struct TickLog {
+    ticks: Vec<(WorldPos, f32)>,
+    frames: usize,
+    /// Largest distance of the drawn root off the segment between the two tick poses, m.
+    off_segment: f32,
+    /// Lowest drawn root height over the floor, m.
+    lowest: f32,
+    non_finite: usize,
+}
+
+fn follow(time: Res<Time>, mut walkers: Query<(&Mover, &mut Follow, &mut MoveIntent)>) {
+    for (m, mut f, mut intent) in &mut walkers {
+        intent.0 = f.0.update(m.loco.position, time.delta_secs()).intent;
+    }
+}
+
+fn log_tick(walkers: Query<&Mover, With<Follow>>, mut log: ResMut<TickLog>) {
+    for m in &walkers {
+        log.ticks.push((m.loco.position, m.loco.motion.yaw));
+    }
+}
+
+/// `Update` runs after the fixed loop and the interpolation: the drawn root.
+fn check_drawn(walkers: Query<(&Mover, &Transform), With<Follow>>, mut log: ResMut<TickLog>) {
+    for (m, t) in &walkers {
+        let (prev, curr) = m.poses();
+        let drawn = WorldPos::ORIGIN.offset(t.translation);
+        let (a, b) = (prev.position.delta_f32(drawn), prev.position.delta_f32(curr.position));
+        let s = if b.length_squared() > 0.0 { (a.dot(b) / b.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
+        log.off_segment = log.off_segment.max((a - b * s).length());
+        log.lowest = log.lowest.min(t.translation.y);
+        log.non_finite += usize::from(!t.translation.is_finite() || !t.rotation.is_finite());
+        log.frames += 1;
+    }
+}
+
+/// Runs the walker along a fixed path at `fps` frames per second on the 60 Hz
+/// tick until `ticks` ticks ran.
+fn walk_ticks(fps: u32, ticks: usize) -> TickLog {
+    let mut app = App::new();
+    app.add_plugins(TimePlugin)
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / f64::from(fps))))
+        .insert_resource(Time::<Fixed>::from_hz(60.0))
+        .add_plugins(SfControllerPlugin::<Flat>::default())
+        .insert_resource(Flat)
+        .insert_resource(TickLog { lowest: f32::MAX, ..TickLog::default() })
+        .add_systems(bevy_app::FixedUpdate, follow.in_set(crate::ControllerSystems::Drive))
+        .add_systems(bevy_app::FixedUpdate, log_tick.after(crate::ControllerSystems::Step))
+        .add_systems(bevy_app::Update, check_drawn);
+    let params = MoverParams::default();
+    // An L with a stop at the corner: starts, turns, brakes and arrives.
+    let nodes = [Vec3::new(0.0, 0.0, 6.0), Vec3::new(5.0, 0.0, 6.0), Vec3::new(5.0, 0.0, 1.0)]
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| sf_controller::PathNode { wait: if i == 1 { 0.5 } else { 0.0 }, ..sf_controller::PathNode::at(WorldPos::ORIGIN.offset(p)) })
+        .collect();
+    let path = sf_controller::PathFollower::new(nodes, sf_controller::PathMode::Once, 1.4).for_mover(&params);
+    app.world_mut().spawn((
+        Mover::new(WorldPos::ORIGIN, 0.0, params, WorldPos::ORIGIN),
+        MoveIntent::default(),
+        Avoider { max_speed: 2.0, ..Avoider::default() },
+        Follow(path),
+        Transform::default(),
+    ));
+    let mut frames = 0;
+    while app.world().resource::<TickLog>().ticks.len() < ticks {
+        app.update();
+        frames += 1;
+        assert!(frames < 100 * ticks, "the fixed loop never ran");
+    }
+    app.world_mut().remove_resource::<TickLog>().unwrap()
+}
+
+/// `NV7a`: NPC gameplay advances per tick, never per frame. The same ticks at
+/// 30 fps (two per frame) and 144 fps (none or one per frame) give the walker
+/// bit-identical tick states, and its drawn root always lies between its last
+/// two tick poses.
+#[test]
+fn walker_ticks_are_identical_at_30_and_144_fps() {
+    const TICKS: usize = 600;
+    let slow = walk_ticks(30, TICKS);
+    let fast = walk_ticks(144, TICKS);
+    let bits = |(p, yaw): &(WorldPos, f32)| (format!("{p:?}"), yaw.to_bits());
+    for (i, (a, b)) in slow.ticks[..TICKS].iter().zip(&fast.ticks[..TICKS]).enumerate() {
+        assert_eq!(a, b, "tick {i}: {a:?} at 30 fps vs {b:?} at 144 fps");
+        assert_eq!(bits(a), bits(b), "tick {i}: not bit-identical");
+    }
+    let end = slow.ticks[TICKS - 1].0;
+    assert!(WorldPos::ORIGIN.delta_f32(end).length() > 6.0, "walked the path: ended at {end:?}");
+    for (fps, log) in [(30, &slow), (144, &fast)] {
+        assert_eq!(log.non_finite, 0, "{fps} fps: non-finite drawn root");
+        assert!(log.lowest > -1e-3, "{fps} fps: drawn under the floor ({} m)", log.lowest);
+        assert!(log.off_segment < 1e-4, "{fps} fps: drawn {} m off its two tick poses", log.off_segment);
+        assert!(log.frames > TICKS / 3, "{fps} fps: {} frames", log.frames);
+    }
 }

@@ -28,18 +28,19 @@ fn golden_trace() -> Trace {
                 raw: 0.5,
                 score: 0.75,
                 considerations: vec![
-                    ConsiderationScore { consideration: ConsiderationId(0), value: 0.5 },
-                    ConsiderationScore { consideration: ConsiderationId(1), value: 1.0 },
+                    ConsiderationScore { consideration: ConsiderationId(0), input: 12.5, value: 0.5 },
+                    ConsiderationScore { consideration: ConsiderationId(1), input: 1.0, value: 1.0 },
                 ],
             },
             DriveScore {
                 drive: DriveId(1),
                 raw: 0.25,
                 score: 0.25,
-                considerations: vec![ConsiderationScore { consideration: ConsiderationId(2), value: 0.25 }],
+                considerations: vec![ConsiderationScore { consideration: ConsiderationId(2), input: -3.0, value: 0.25 }],
             },
         ],
         drive: Some(DriveId(0)),
+        drive_reason: Some(DriveReason::Momentum),
         methods: vec![
             MethodChoice { task: TaskId(1), method: MethodId(7) },
             MethodChoice { task: TaskId(4), method: MethodId(12) },
@@ -69,6 +70,7 @@ fn golden_trace() -> Trace {
         directive: Some(DirectiveId(5)),
         drives: Vec::new(),
         drive: Some(DriveId(0)),
+        drive_reason: None,
         methods: vec![MethodChoice { task: TaskId(1), method: MethodId(6) }],
         rejected: vec![Rejection { task: TaskId(1), method: MethodId(7), reason: RejectReason::SubtaskFailed(TaskId(4)) }],
         plan: Plan { steps: vec![PlanStep { task: TaskId(11), operator: OperatorId(1) }], cursor: 0, partial: true },
@@ -141,10 +143,12 @@ const GOLDEN_JSON: &str = r#"[
         "considerations": [
           {
             "consideration": 0,
+            "input": 12.5,
             "value": 0.5
           },
           {
             "consideration": 1,
+            "input": 1.0,
             "value": 1.0
           }
         ]
@@ -156,12 +160,14 @@ const GOLDEN_JSON: &str = r#"[
         "considerations": [
           {
             "consideration": 2,
+            "input": -3.0,
             "value": 0.25
           }
         ]
       }
     ],
     "drive": 0,
+    "drive_reason": "momentum",
     "methods": [
       {
         "task": 1,
@@ -329,7 +335,7 @@ fn format_trace_of_the_golden_trace_is_exact() {
     let trace = golden_trace();
     assert_eq!(
         format_trace(&trace, 10),
-        "#120 t2 scheduled drive d0 via t1:m7>t4:m12 rej t1:m5 pre1 (+1) op o4 running path following 85us\n\
+        "#120 t2 scheduled drive d0 (momentum) via t1:m7>t4:m12 rej t1:m5 pre1 (+1) op o4 running path following 85us\n\
          #126 t1 replan drive d0 via t1:m6 rej t1:m7 sub t4 op o1 failed path failed(no_path)\n"
     );
     assert_eq!(

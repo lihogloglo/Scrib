@@ -5,6 +5,9 @@
 //! Waves are a pure function of `(seed, spectrum inputs, time, absolute XZ)`: saves store nothing
 //! for water, and the floating origin never moves a wave ([`twin::tile_coords`]).
 
+pub mod medium;
+#[cfg(test)]
+mod medium_tests;
 pub mod query;
 pub mod records;
 pub mod sea_wind;
@@ -15,6 +18,9 @@ pub mod shore_waves;
 pub mod spectrum;
 pub mod sspr;
 pub mod twin;
+pub mod underwater;
+#[cfg(test)]
+mod underwater_tests;
 pub mod wet_tiles;
 #[cfg(test)]
 mod wet_tiles_tests;
@@ -22,6 +28,7 @@ mod wet_tiles_tests;
 #[cfg(test)]
 mod tests;
 
+pub use medium::{CameraMedium, MediumCues, MediumState, NearPlane, optics_index_at};
 pub use query::{
     BedHeights, Capsule, Immersion, WaterQuery, WaterSample, WaterWorld, WorldspaceWater,
 };
@@ -29,11 +36,12 @@ pub use records::{
     FoamTerms, RiverPoint, WaterBody, WaterKind, WaterOptics, WaterShape, WaveTerms,
 };
 pub use sea_wind::{SeaTransition, SeaWind, SeaWindSettings, wind_input};
-pub use shore::{OpticsMap, ShoreField, ShoreSettings, ShoreStats, WetMask};
-pub use shore_waves::{ShoreWave, ShoreWaves};
+pub use shore::{OpticsMap, ShoreField, ShoreSettings, ShoreStats, SurfFoam, SurfShape, WetMask};
+pub use shore_waves::{ShoreWave, ShoreWaves, SurfFoamInput, SurfFoamTerms, SurfLife, shore_foam_weight, surf_birth, surf_envelope, surf_foam, surf_life, swash_edge};
 pub use spectrum::{Cascades, DEFAULT_CASCADES, GRAVITY, H0, REPEAT_PERIOD, SpectrumParams, WindInput};
 pub use sspr::{PlaneCandidate, reflection_plane};
 pub use twin::{CascadeTwin, WaveSample, WaveTwin, origin_phase, tile_coords};
+pub use underwater::{UnderwaterLight, UnderwaterOptics, sun_term, underwater_colour};
 pub use wet_tiles::WetTiles;
 
 use sf_coords::WorldPos;

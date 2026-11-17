@@ -23,7 +23,9 @@
 //! - Rain rings (W4): the ring profile of `files/shaders/lib/water/rain_ripples.glsl` (`blip`,
 //!   `blipDerivative`, `circle`: a ring running out from a drop, trailing rings, energy fading
 //!   over the cycle) as Clockwork uses it on puddles (same commit), on drop grids that turn on
-//!   quarter by quarter of rain intensity (Lagarde's ripple layers).
+//!   quarter by quarter of rain intensity (Lagarde's ripple layers). The shader side is the shared
+//!   `sf_render_order_bevy::rain_rings` module (the water bodies ring with it too, R1); its
+//!   constants are in [`SHADER_CONSTANTS`] with the layer's.
 //! - Cover (W5, snow and ash): the cell's amount × a slope ramp on the shading normal × the
 //!   shelter exposure, then a height blend (the "height lerp" of layered terrain and snow
 //!   materials, e.g. UE's `HeightLerp`; Frostbite and Decima layer snow the same way): the cover's
@@ -111,7 +113,8 @@ pub const SPARKLE_FADE_FAR_M: f32 = 0.02;
 /// glints) wrap their cell index to it, so an origin shift never changes the look.
 pub const ORIGIN_GRID_M: f32 = 256.0;
 
-/// The named shader constants, as `layer.wesl` declares them (`const NAME: f32 = v;`).
+/// The named shader constants, as `layer.wesl` or the shared `rain_rings.wesl` declares them
+/// (`const NAME: f32 = v;`).
 pub const SHADER_CONSTANTS: [(&str, f32); 48] = [
     ("POROSITY_ROUGH_LOW", POROSITY_ROUGH_LOW),
     ("POROSITY_ROUGH_SPAN", POROSITY_ROUGH_SPAN),
@@ -325,6 +328,71 @@ pub fn ring(to: [f32; 2], phase: f32) -> [f32; 2] {
     let v = [to[0] * k, to[1] * k, 0.5];
     let s = energy * range / (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     [v[0] * s, v[1] * s]
+}
+
+/// A hash grid's cell index wrapped to the origin grid of `n` cells (`grid_wrap_cell` of
+/// `sf_render_order_bevy::rain_rings`): world-anchored across a floating-origin shift.
+pub fn wrap_cell(c: [i32; 2], n: i32) -> [i32; 2] {
+    [c[0].rem_euclid(n), c[1].rem_euclid(n)]
+}
+
+/// Cells of `cell_m` meters in the origin grid (`grid_cells_per_origin`).
+#[allow(clippy::cast_possible_truncation)]
+pub fn cells_per_origin(cell_m: f32) -> i32 {
+    (ORIGIN_GRID_M / cell_m).round() as i32
+}
+
+/// Two hash values in 0..1 for an integer cell and a seed (`grid_hash`, bit for bit: WGSL `u32`
+/// arithmetic wraps).
+#[allow(clippy::cast_sign_loss, clippy::cast_precision_loss)]
+pub fn hash(c: [i32; 2], seed: u32) -> [f32; 2] {
+    let mut h = (c[0] as u32).wrapping_mul(0x8da6_b343) ^ (c[1] as u32).wrapping_mul(0xd816_3841) ^ seed.wrapping_mul(0x9e37_79b9);
+    h = (h ^ (h >> 15)).wrapping_mul(0x2c1b_3c6d);
+    h = (h ^ (h >> 12)).wrapping_mul(0x297a_2d39);
+    h ^= h >> 15;
+    [(h & 0xffff) as f32 / 65535.0, (h >> 16) as f32 / 65535.0]
+}
+
+/// One drop grid at `q` (cell units; `rain_drops`): each cell drops once a cycle at a random spot
+/// (its own start phase), with two trailing rings (`rain`: a - b/2 + c/4).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+pub fn drops(q: [f32; 2], seed: u32, time: f32, period: i32) -> [f32; 2] {
+    let floor = [q[0].floor(), q[1].floor()];
+    let cell = wrap_cell([floor[0] as i32, floor[1] as i32], period);
+    let frac = [q[0] - floor[0], q[1] - floor[1]];
+    let start = hash(cell, seed ^ 0x0051_ed27)[0];
+    let mut slope = [0.0_f32; 2];
+    let mut weight = 1.0_f32;
+    for k in 0..3 {
+        let t = time * RIPPLE_RATE + start - k as f32 * RIPPLE_RING;
+        let cycle = t.floor();
+        let spot = hash(cell, seed ^ ((cycle as i32) as u32).wrapping_mul(0x632b_e5ab));
+        let drop = [0.5 + (0.5 - RIPPLE_RADIUS) * (2.0 * spot[0] - 1.0), 0.5 + (0.5 - RIPPLE_RADIUS) * (2.0 * spot[1] - 1.0)];
+        let ring_slope = ring([frac[0] - drop[0], frac[1] - drop[1]], t - cycle);
+        slope[0] += weight * ring_slope[0];
+        slope[1] += weight * ring_slope[1];
+        weight *= -0.5;
+    }
+    slope
+}
+
+/// Rain rings at render XZ `xz` (m; `rain_ripples`, shared by the puddles and the water bodies,
+/// R1): the drop grids weighted by [`ripple_weights`] of `rain` (0..1), `time` on the wrapped
+/// ring clock (s). The slope the rings tilt the normal by along X and Z (`up + (x, 0, z)`).
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+pub fn ripples(xz: [f32; 2], time: f32, rain: f32) -> [f32; 2] {
+    let mut slope = [0.0_f32; 2];
+    for (k, w) in ripple_weights(rain).into_iter().enumerate() {
+        if w <= 0.0 {
+            break;
+        }
+        let cell_m = RIPPLE_CELL_M * RIPPLE_SCALES[k];
+        let q = [xz[0] / cell_m + 0.37 * k as f32, xz[1] / cell_m + 0.71 * k as f32];
+        let d = drops(q, k as u32 + 1, time, cells_per_origin(cell_m));
+        slope[0] += w * d[0];
+        slope[1] += w * d[1];
+    }
+    slope
 }
 
 /// The up the cover slope reads (`surface_cover_up`, C1 + SW-5b): the undisplaced ground
@@ -634,6 +702,47 @@ mod tests {
                 .fold(0.0, f32::max)
         };
         assert!(peak(0.9) < peak(0.5));
+    }
+
+    /// The shared rain rings (puddles and water bodies, R1): no rain, no slope anywhere; with rain
+    /// a bounded, finite slope on a grid of points and times, some of it non-zero; and the hash
+    /// grid wraps to the origin grid (a whole origin cell away is the same cell).
+    #[test]
+    fn ripples_are_still_without_rain_and_bounded_with_it() {
+        #[allow(clippy::cast_precision_loss)]
+        let at = |i: i32, j: i32| [i as f32 * 0.37 - 40.0, j as f32 * 0.41 - 40.0];
+        let times = [0.0, 0.33, 7.9, 999.9];
+        for i in 0..64 {
+            for j in 0..64 {
+                for t in times {
+                    assert_eq!(ripples(at(i, j), t, 0.0), [0.0, 0.0]);
+                    assert_eq!(ripples(at(i, j), t, -0.5), [0.0, 0.0]);
+                }
+            }
+        }
+        // Four grids at most, each ring a unit vector's share, trailing rings 1 + 1/2 + 1/4.
+        let bound = 4.0 * 1.75;
+        let mut moved = 0;
+        for rain in [0.1, 0.4, 0.75, 1.0, 1.5] {
+            for i in 0..64 {
+                for j in 0..64 {
+                    for t in times {
+                        let slope = ripples(at(i, j), t, rain);
+                        assert!(slope[0].is_finite() && slope[1].is_finite(), "rain {rain} at {:?} t {t}: {slope:?}", at(i, j));
+                        assert!(slope[0].hypot(slope[1]) <= bound, "rain {rain} at {:?} t {t}: {slope:?}", at(i, j));
+                        moved += usize::from(slope[0].abs() + slope[1].abs() > 0.0);
+                    }
+                }
+            }
+        }
+        assert!(moved > 0, "rain rings nothing");
+        for cell_m in RIPPLE_SCALES.map(|scale| RIPPLE_CELL_M * scale) {
+            let n = cells_per_origin(cell_m);
+            assert_eq!(wrap_cell([-1, n], n), [n - 1, 0]);
+            assert_eq!(hash(wrap_cell([3 + n, -7], n), 5), hash(wrap_cell([3, -7 + n], n), 5));
+        }
+        let hashed = hash([12, -3], 9);
+        assert!((0.0..=1.0).contains(&hashed[0]) && (0.0..=1.0).contains(&hashed[1]));
     }
 
     #[test]

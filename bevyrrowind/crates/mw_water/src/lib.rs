@@ -6,18 +6,22 @@
 use std::collections::HashMap;
 
 use sf_coords::WorldPos;
+use sf_tunables::{def, AnyDef, Def, Group, Source, Unit};
 use sf_water::{
-    OpticsMap, ShoreSettings, WetMask,
+    OpticsMap, ShoreField, ShoreSettings, WetMask,
     FoamTerms, RiverPolicy, SpectrumParams, WaterBody, WaterOptics, WaterOpticsSource, WaterSource,
 };
 use sf_world::{RecordRef, Worldspace, WorldspaceId};
 
+pub mod sea_state;
+#[cfg(test)]
+mod sea_state_tests;
 #[cfg(test)]
 mod tests;
 
-/// Open-sea fetch, metres (water-adapter.md "Openness and fetch"): the Inner Sea is narrow and
-/// Vvardenfell compressed, so less than a real ocean. Calibration constant.
-pub const SEA_FETCH_M: f32 = 20_000.0;
+/// The sea state from the weather (W-SEASTATE): the open-sea fetch `water.sea_fetch_m` (was a fixed
+/// 20 km, water-adapter.md "Openness and fetch") and the weather → sea wind curve.
+pub use sea_state::{SeaStateCurve, CLASSIC_FETCH_M, SEA_FETCH_M, SEA_STATE_POINTS, TUNABLES as SEA_STATE_TUNABLES};
 
 /// Optics record ids.
 pub mod optics {
@@ -33,14 +37,45 @@ fn optics_ref(id: &str) -> RecordRef {
     RecordRef::new(WaterOptics::KIND, id)
 }
 
-/// The optics record for an exterior region name (`REGN` names as the W0 census found them on cells
-/// with water). Unknown regions and the open sea use `mw_water/sea`.
+/// `water.swamp_enclosed_below` (WA-10 item 4): a swamp region's cell whose water has a mean shore
+/// openness (`sf_water::ShoreField::openness`, 0 sheltered … 1 open sea) below this is enclosed swamp
+/// water (`mw_water/swamp`); at or above it, open coast (`mw_water/coastal`). Enclosed lakes are
+/// ≤ 0.35 (`ShoreSettings::enclosed_max`), so 0.5 makes every lake and pool swamp, and a channel of
+/// the open sea swamp from ~550 m (geodesic) past the open region (openness 1/e over 800 m).
+pub const SWAMP_ENCLOSED_BELOW: Def<f32> = def!(float "water.swamp_enclosed_below" = 0.5)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Shore openness below which a swamp region's water uses the swamp optics (else coastal); read at the shore bake")
+    .source(Source::Guess)
+    .group(Group::Water);
+
+/// The optics map's tunables (the CATALOG list).
+pub const OPTICS_TUNABLES: &[&dyn AnyDef] = &[&SWAMP_ENCLOSED_BELOW];
+
+/// Regions whose enclosed water is swamp (`mw_water/swamp`) and whose open water is coastal.
+pub fn is_swamp_region(region: &str) -> bool {
+    region.to_ascii_lowercase().contains("bitter coast")
+}
+
+/// The optics record for an exterior cell: [`optics_for_region`], except that a swamp region's
+/// ([`is_swamp_region`]) water is swamp where it is enclosed, its mean shore `openness` below
+/// `enclosed_below` ([`SWAMP_ENCLOSED_BELOW`]). Without openness (a dry cell, or before the shore
+/// bake) the open default (coastal) holds, so the open sea never takes the swamp's 3 m visibility.
+pub fn optics_for_cell(region: &str, openness: Option<f32>, enclosed_below: f32) -> &'static str {
+    if is_swamp_region(region) && openness.is_some_and(|o| o < enclosed_below) {
+        optics::SWAMP
+    } else {
+        optics_for_region(region)
+    }
+}
+
+/// The optics record for an exterior region name's open water (`REGN` names as the W0 census found
+/// them on cells with water). Unknown regions and the open sea use `mw_water/sea`; a swamp region's
+/// open water is coastal, its enclosed water swamp ([`optics_for_cell`]).
 pub fn optics_for_region(region: &str) -> &'static str {
     let r = region.to_ascii_lowercase();
     let has = |s: &str| r.contains(s);
-    if has("bitter coast") {
-        optics::SWAMP
-    } else if has("ascadian") || has("west gash") || has("grazelands") || has("molag mar") {
+    if is_swamp_region(region) || has("ascadian") || has("west gash") || has("grazelands") || has("molag mar") {
         optics::COASTAL
     } else if has("ashlands") || has("red mountain") || has("molag amur") {
         optics::ASH
@@ -156,7 +191,9 @@ impl WaterSource for MwWaterSource {
 
     fn ocean_spectrum(&self, _id: &WorldspaceId) -> SpectrumParams {
         SpectrumParams {
-            fetch: SEA_FETCH_M,
+            // `water.sea_fetch_m`'s default; the host binds the live value (and `--off seastate`'s
+            // classic fetch) into the spectrum.
+            fetch: SEA_FETCH_M.default_value(),
             ..SpectrumParams::default()
         }
     }
@@ -361,11 +398,15 @@ pub fn wet_mask<'a>(
 
 /// Optics by exterior cell (water-adapter.md "Optics by region"): one texel per cell, rows south,
 /// `region_of` gives a cell's `REGN` name (none: the open sea). The GPU blends between cell centres
-/// (≈ 117 m, the spec's 128 m border blend).
+/// (≈ 117 m, the spec's 128 m border blend). `openness_of` gives a cell's mean shore openness
+/// ([`cell_openness`]; none: dry or not baked yet), which splits a swamp region into enclosed swamp
+/// and open coast at `enclosed_below` ([`optics_for_cell`], WA-10 item 4).
 #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 pub fn optics_map(
     bounds: (i32, i32, i32, i32),
     region_of: impl Fn(i32, i32) -> Option<String>,
+    openness_of: impl Fn(i32, i32) -> Option<f32>,
+    enclosed_below: f32,
 ) -> OpticsMap {
     let (x0, y0, x1, y1) = bounds;
     let (w, h) = ((x1 - x0 + 1) as usize, (y1 - y0 + 1) as usize);
@@ -374,7 +415,7 @@ pub fn optics_map(
         for col in 0..w {
             let (cx, cy) = (x0 + col as i32, y1 - row as i32);
             if let Some(r) = region_of(cx, cy) {
-                index[row * w + col] = optics_index(optics_for_region(&r));
+                index[row * w + col] = optics_index(optics_for_cell(&r, openness_of(cx, cy), enclosed_below));
             }
         }
     }
@@ -389,4 +430,27 @@ pub fn optics_map(
         ),
         index,
     }
+}
+
+/// Mean shore openness ([`ShoreField::openness`]) of each exterior cell's water texels (shore distance
+/// > 0), by cell grid; cells without water are absent. One pass over the field (on the bake thread).
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+pub fn cell_openness(field: &ShoreField) -> HashMap<(i32, i32), f32> {
+    let cell = CELL_UNITS * UNIT_M;
+    let mut sums: HashMap<(i32, i32), (f64, u32)> = HashMap::new();
+    for row in 0..field.height {
+        let z = field.origin.y + row as f64 * field.texel;
+        let cy = (-z / cell).floor() as i32;
+        for col in 0..field.width {
+            let i = row * field.width + col;
+            if field.distance[i] <= 0.0 {
+                continue;
+            }
+            let cx = ((field.origin.x + col as f64 * field.texel) / cell).floor() as i32;
+            let e = sums.entry((cx, cy)).or_default();
+            e.0 += f64::from(field.openness[i]);
+            e.1 += 1;
+        }
+    }
+    sums.into_iter().map(|(k, (s, n))| (k, (s / f64::from(n)) as f32)).collect()
 }
