@@ -138,3 +138,51 @@ pub fn poll_if_enabled(device: &super::RenderDevice) {
         hook(EncodeEvent::Poll(start.elapsed()));
     }
 }
+
+// superfargoth patch (own: bind group walk once): forwards to the vendored wgpu-core
+// (`wgpu_core::command::bind_group_walk`, superfargoth `vendor/README.md`), so callers need no wgpu-core
+// dependency of their own. On wasm (no wgpu-core in reach) the switch does nothing and the counts are zero.
+
+/// Render-pass bind group walks since the last [`take_bind_group_walk_counts`] (wgpu-core's
+/// `bind_group_walk::WalkCounts`: `SetBindGroup` merges and pre-draw init registrations, done and skipped,
+/// with the texture entries each walked or would have walked).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BindGroupWalkCounts {
+    pub merges: u64,
+    pub merge_textures: u64,
+    pub merges_skipped: u64,
+    pub merge_textures_skipped: u64,
+    pub inits: u64,
+    pub init_textures: u64,
+    pub inits_skipped: u64,
+    pub init_textures_skipped: u64,
+}
+
+/// Process-wide: a render pass walks each bind group's textures once (repeat merges and repeat init
+/// registrations of a bind group within one pass are skipped). Default `false` = stock wgpu-core.
+pub fn set_bind_group_walk_once(on: bool) {
+    #[cfg(not(target_arch = "wasm32"))]
+    wgpu::wgc::command::bind_group_walk::set_walk_once(on);
+    #[cfg(target_arch = "wasm32")]
+    let _ = on;
+}
+
+/// The walk counts since the last call, reset to zero.
+pub fn take_bind_group_walk_counts() -> BindGroupWalkCounts {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let c = wgpu::wgc::command::bind_group_walk::take_counts();
+        BindGroupWalkCounts {
+            merges: c.merges,
+            merge_textures: c.merge_textures,
+            merges_skipped: c.merges_skipped,
+            merge_textures_skipped: c.merge_textures_skipped,
+            inits: c.inits,
+            init_textures: c.init_textures,
+            inits_skipped: c.inits_skipped,
+            init_textures_skipped: c.init_textures_skipped,
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    BindGroupWalkCounts::default()
+}

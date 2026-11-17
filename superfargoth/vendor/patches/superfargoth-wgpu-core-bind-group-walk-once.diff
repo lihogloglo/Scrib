@@ -1,0 +1,243 @@
+diff --git a/src/command/bind_group_walk.rs b/src/command/bind_group_walk.rs
+new file mode 100644
+index 00000000..50ab1148
+--- /dev/null
++++ b/src/command/bind_group_walk.rs
+@@ -0,0 +1,118 @@
++//! superfargoth patch (own: bind group walk once), superfargoth `vendor/README.md` and
++//! `docs/research/wgpu-pass-rewalk-2026-11-17.md`.
++//!
++//! A render pass walks every texture of a bind group each time the group is set
++//! ([`set_bind_group`](super::pass::set_bind_group) merges its uses into the pass's usage scope)
++//! and each time it is flushed before a draw (`flush_bindings_helper` registers its memory-init
++//! actions), which is again whenever a lower-indexed group or the pipeline layout changes. With
++//! a bindless group of thousands of textures those repeats dominate `finish()`.
++//!
++//! With [`set_walk_once`] on, a render pass remembers the bind groups it already merged and the
++//! ones whose init actions it already registered, and skips the repeats. Both repeats are no-ops:
++//! a bind group is immutable and a render pass's scope only grows, so merging the same uses again
++//! changes nothing; discards are only recorded when a pass starts, so a second registration in the
++//! same pass finds nothing to clear and only appends duplicate init actions. Off (the default) is
++//! the stock code path.
++//!
++//! The counters are always on (a few relaxed atomic adds per bind group, none per texture).
++
++use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
++
++use crate::FastHashSet;
++
++static WALK_ONCE: AtomicBool = AtomicBool::new(false);
++
++/// Process-wide: render passes walk each bind group's textures once per pass. Default `false` = stock.
++pub fn set_walk_once(on: bool) {
++    WALK_ONCE.store(on, Ordering::Relaxed);
++}
++
++/// Whether [`set_walk_once`] is on.
++#[inline]
++pub fn walk_once() -> bool {
++    WALK_ONCE.load(Ordering::Relaxed)
++}
++
++/// Render-pass bind group walks since the last [`take_counts`].
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct WalkCounts {
++    /// Bind groups merged into a pass's usage scope (`SetBindGroup` commands that walked).
++    pub merges: u64,
++    /// Texture entries those merges walked.
++    pub merge_textures: u64,
++    /// Merges skipped: the pass had already merged that bind group.
++    pub merges_skipped: u64,
++    /// Texture entries the skipped merges would have walked.
++    pub merge_textures_skipped: u64,
++    /// Bind groups whose memory-init actions were registered at a flush before a draw.
++    pub inits: u64,
++    /// Texture entries those registrations walked.
++    pub init_textures: u64,
++    /// Registrations skipped: the pass had already registered that bind group.
++    pub inits_skipped: u64,
++    /// Texture entries the skipped registrations would have walked.
++    pub init_textures_skipped: u64,
++}
++
++static COUNTS: [AtomicUsize; 8] = [const { AtomicUsize::new(0) }; 8];
++
++#[inline]
++fn count(slot: usize, walked: bool, textures: usize) {
++    let slot = if walked { slot } else { slot + 2 };
++    COUNTS[slot].fetch_add(1, Ordering::Relaxed);
++    COUNTS[slot + 1].fetch_add(textures, Ordering::Relaxed);
++}
++
++/// The counts since the last call, reset to zero.
++pub fn take_counts() -> WalkCounts {
++    let t = |i: usize| COUNTS[i].swap(0, Ordering::Relaxed) as u64;
++    WalkCounts {
++        merges: t(0),
++        merge_textures: t(1),
++        merges_skipped: t(2),
++        merge_textures_skipped: t(3),
++        inits: t(4),
++        init_textures: t(5),
++        inits_skipped: t(6),
++        init_textures_skipped: t(7),
++    }
++}
++
++/// One render pass's memo, present only while [`walk_once`] is on. Keys are bind group addresses:
++/// the encoder's tracker holds every bind group set in the pass, so an address names one bind
++/// group for the pass's life.
++#[derive(Debug, Default)]
++pub(crate) struct PassWalks {
++    merged: FastHashSet<usize>,
++    init_registered: FastHashSet<usize>,
++}
++
++impl PassWalks {
++    /// A render pass's memo, or `None` when the switch is off.
++    pub(crate) fn for_render_pass() -> Option<Self> {
++        walk_once().then(Self::default)
++    }
++}
++
++/// Whether this `SetBindGroup` must merge the bind group (key `bind_group`, `textures` entries)
++/// into the pass's scope. Counts either way.
++#[inline]
++pub(crate) fn must_merge(walks: &mut Option<PassWalks>, bind_group: usize, textures: usize) -> bool {
++    let walk = walks.as_mut().is_none_or(|w| w.merged.insert(bind_group));
++    count(0, walk, textures);
++    walk
++}
++
++/// Whether this flush must register the bind group's memory-init actions. Counts either way.
++#[inline]
++pub(crate) fn must_register_init(
++    walks: &mut Option<PassWalks>,
++    bind_group: usize,
++    textures: usize,
++) -> bool {
++    let walk = walks
++        .as_mut()
++        .is_none_or(|w| w.init_registered.insert(bind_group));
++    count(4, walk, textures);
++    walk
++}
+diff --git a/src/command/compute.rs b/src/command/compute.rs
+index c4bc341b..566d90cf 100644
+--- a/src/command/compute.rs
++++ b/src/command/compute.rs
+@@ -701,6 +701,8 @@ pub(super) fn encode_compute_pass(
+             pending_discard_init_fixups: SurfacesInDiscardState::new(),
+             scope: device.new_usage_scope(),
+             string_offset: 0,
++            // superfargoth patch (own: bind group walk once): render passes only
++            bind_group_walks: None,
+         },
+         active_query: None,
+ 
+diff --git a/src/command/mod.rs b/src/command/mod.rs
+index e61429e7..d532b5ba 100644
+--- a/src/command/mod.rs
++++ b/src/command/mod.rs
+@@ -10,6 +10,8 @@
+ 
+ mod allocator;
+ mod bind;
++// superfargoth patch (own: bind group walk once)
++pub mod bind_group_walk;
+ mod bundle;
+ mod clear;
+ mod compute;
+diff --git a/src/command/pass.rs b/src/command/pass.rs
+index fd90492b..9c523cfe 100644
+--- a/src/command/pass.rs
++++ b/src/command/pass.rs
+@@ -57,6 +57,10 @@ pub(crate) struct PassState<'scope, 'snatch_guard, 'cmd_enc> {
+     pub(crate) dynamic_offset_count: usize,
+ 
+     pub(crate) string_offset: usize,
++
++    /// superfargoth patch (own: bind group walk once): this render pass's memo of bind groups
++    /// already merged and already init-registered; `None` = stock (switch off, compute passes).
++    pub(crate) bind_group_walks: Option<super::bind_group_walk::PassWalks>,
+ }
+ 
+ pub(crate) fn set_bind_group<E>(
+@@ -108,7 +112,15 @@ where
+ 
+         bind_group.validate_dynamic_bindings(index, &state.temp_offsets)?;
+ 
+-        if merge_bind_groups {
++        // superfargoth patch (own: bind group walk once): a bind group this pass already
++        // merged is not walked again (same uses into a scope that only grows: a no-op).
++        if merge_bind_groups
++            && super::bind_group_walk::must_merge(
++                &mut state.bind_group_walks,
++                Arc::as_ptr(bind_group) as usize,
++                bind_group.texture_init_actions.len(),
++            )
++        {
+             // Merge the bind group's resources into the tracker. We only do this
+             // for render passes. For compute passes it is done per dispatch in
+             // [`flush_bindings`].
+@@ -147,22 +159,31 @@ pub(super) fn flush_bindings_helper(state: &mut PassState) -> Result<(), Destroy
+     let pipeline_layout = state.binder.pipeline_layout.as_ref().unwrap();
+ 
+     for (i, bind_group, dynamic_offsets) in entries {
+-        state.base.buffer_memory_init_actions.extend(
+-            bind_group.buffer_init_actions.iter().filter_map(|action| {
+-                action
+-                    .buffer
+-                    .initialization_status
+-                    .read()
+-                    .check_action(action)
+-            }),
+-        );
+-        for action in bind_group.texture_init_actions.iter() {
+-            state.pending_discard_init_fixups.extend(
+-                state
+-                    .base
+-                    .texture_memory_actions
+-                    .register_init_action(action),
++        // superfargoth patch (own: bind group walk once): a bind group whose init actions this
++        // pass already registered is not walked again (discards are only recorded when a pass
++        // starts, so a repeat clears nothing and only appends duplicate init actions).
++        if super::bind_group_walk::must_register_init(
++            &mut state.bind_group_walks,
++            Arc::as_ptr(bind_group) as usize,
++            bind_group.texture_init_actions.len(),
++        ) {
++            state.base.buffer_memory_init_actions.extend(
++                bind_group.buffer_init_actions.iter().filter_map(|action| {
++                    action
++                        .buffer
++                        .initialization_status
++                        .read()
++                        .check_action(action)
++                }),
+             );
++            for action in bind_group.texture_init_actions.iter() {
++                state.pending_discard_init_fixups.extend(
++                    state
++                        .base
++                        .texture_memory_actions
++                        .register_init_action(action),
++                );
++            }
+         }
+ 
+         let used_resource = bind_group
+diff --git a/src/command/render.rs b/src/command/render.rs
+index 75a150c4..c53acc50 100644
+--- a/src/command/render.rs
++++ b/src/command/render.rs
+@@ -2384,6 +2384,9 @@ pub(super) fn encode_render_pass(
+                 dynamic_offset_count: 0,
+ 
+                 string_offset: 0,
++
++                // superfargoth patch (own: bind group walk once)
++                bind_group_walks: super::bind_group_walk::PassWalks::for_render_pass(),
+             },
+ 
+             immediate_slots_set: Default::default(),

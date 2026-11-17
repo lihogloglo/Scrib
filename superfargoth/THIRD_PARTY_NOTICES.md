@@ -210,6 +210,14 @@ SOFTWARE.
 - Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
 - Ported into: `bevyrrowind/crates/mw_ui/src/message.rs` (the game; written 2026-11-08, untested).
 
+## wgpu-core (vendored, altered)
+
+- Source: wgpu-core 30.0.1 (crates.io; https://github.com/gfx-rs/wgpu).
+- Licence: MIT OR Apache-2.0 (`vendor/wgpu-core/LICENSE.MIT`, `LICENSE.APACHE`). Holder: the gfx-rs developers.
+- Used in: every renderer crate through Bevy, as the copy in `vendor/wgpu-core`, which we altered: the
+  `superfargoth patch` hunks in `src/command/` add an opt-in, default-off switch so a render pass walks each bind
+  group's textures once, plus walk counters (`vendor/patches/superfargoth-wgpu-core-bind-group-walk-once.diff`).
+
 ## navmesh-rs / recastnavigation (vendored, altered)
 
 - Source: navmesh-rs 0.2.2 (crates.io; https://github.com/Tavrin/navmesh-rs), a translation of recastnavigation

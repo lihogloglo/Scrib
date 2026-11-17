@@ -202,12 +202,19 @@ impl Plugin for WorldStreamingPlugin {
         if let Some(mut limit) = app.world_mut().get_resource_mut::<RenderAssetBytesPerFrame>() {
             limit.max_bytes = None;
         }
-        // The flat normal map folded statics bind (`matclass::FLAT_NORMAL_MAP`); headless apps
-        // without images never draw it.
-        if self.config.fold_rules().is_some_and(|r| r.flat_normal_map)
+        // The flat normal map folded statics bind (`matclass::FLAT_NORMAL_MAP`), or the whole
+        // shared set of the bench-only `one_texture_set` rule (the flat map is part of it);
+        // headless apps without images never draw them.
+        if let Some(rules) = self.config.fold_rules()
             && let Some(mut images) = app.world_mut().get_resource_mut::<Assets<Image>>()
         {
-            images.insert(&matclass::FLAT_NORMAL_MAP, matclass::flat_normal_image()).expect("a uuid handle");
+            if rules.one_texture_set {
+                for (handle, image) in matclass::one_texture_set_images() {
+                    images.insert(&handle, image).expect("a uuid handle");
+                }
+            } else if rules.flat_normal_map {
+                images.insert(&matclass::FLAT_NORMAL_MAP, matclass::flat_normal_image()).expect("a uuid handle");
+            }
         }
         // GPU-culled statics need GPU culling in every view ([`StaticGpuCulling`]).
         let support = app

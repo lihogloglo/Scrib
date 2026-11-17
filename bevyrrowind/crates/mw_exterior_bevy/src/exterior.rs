@@ -324,6 +324,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // Static material classes (static-scene.md S2); `--off matclass` keeps the mapper's materials.
     streaming.material_classes = !perf.off.has(Part::MatClass);
     streaming.flat_normal_map = !perf.off.has(Part::FlatNormal);
+    // Bench-only ceiling arm, reversed: `--off texvariety` binds one shared image per texture slot.
+    streaming.one_texture_set = perf.off.has(Part::TexVariety);
     // Near statics culled on the GPU only (`NoCpuCulling`): opt-in until its lamp capture lists are fixed
     // (perf-push 2026-11-12: on, the walk stutters 113/min, lamp faces 64k work items). A/B with
     // `--env BEVYRROWIND_GPU_CULL_STATICS=1`; `--off cpuculltag` forces it off.
@@ -650,7 +652,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // W-SHORE: `--off shorenormals` flattens the water's normal with its displacement at the shore.
     // W-GERSTNER: `--off shorewaves` drops the analytic shore waves (the FFT fades to flat). W-WIND:
     // `--off seawind` keeps the fixed sea breeze instead of the weather's wind.
-    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves), !perf.off.has(Part::SeaWind), !perf.off.has(Part::ShoreDepth));
+    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves), !perf.off.has(Part::SeaWind), !perf.off.has(Part::ShoreDepth), !perf.off.has(Part::SurfFoam));
     mw_environment_bevy::water::add(&mut app, options.water, water_parts, &options.world.worldspaces);
     app.add_systems(Update, sea_wind);
     mw_doors_bevy::add(&mut app, options.world, options.use_door);

@@ -103,6 +103,10 @@ pub enum Part {
     /// The shore waves shoal over the baked bed slope from `LAND` (W-GERSTNER-DEPTH,
     /// `sf_water::ShoreField::bed_slope`): off, they assume the uniform 1:20 beach (the old look, an A/B).
     ShoreDepth,
+    /// Breaker foam (SF-1, `sf_water::SurfFoam`): bore foam born where the shore waves break and
+    /// trailing their crests, swash and contact lace, foam look by age; off, the WA-6 shore band and
+    /// the constant contact foam (the old look, an A/B).
+    SurfFoam,
     /// Fog on blended and additive NIF materials (`sf_atmos_bevy::FogTranslucentsPlugin`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
@@ -127,6 +131,11 @@ pub enum Part {
     /// and plain statics of a class share one main-pass key (superfargoth `matclass::FLAT_NORMAL_MAP`);
     /// off, a normal map splits its class (an A/B; the look should not change).
     FlatNormal,
+    /// Bench only, reversed: `--off texvariety` turns ON superfargoth's `FoldRules::one_texture_set`, every
+    /// image slot of a static material binds one shared image per slot kind, so the bindless material slab
+    /// holds a handful of textures while keys, pipelines, batch sets and draws stay the same (the ceiling of
+    /// the per-texture binding cost). The look is wrong by design; needs matclass on.
+    TexVariety,
     /// Mesh slabs capped at 2 GiB instead of 512 MiB (superfargoth `mesh_slabs::MeshSlabsPlugin`, ROADMAP 1.22
     /// F4), so a vertex layout never spills into a second slab (which splits its batch sets); off, stock
     /// `MeshAllocatorSettings` (an A/B; the look should not change). Log lines `mesh.slabs:` either way.
@@ -204,7 +213,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 78] = [
+    const ALL: [(&'static str, Part); 80] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -255,6 +264,7 @@ impl Part {
         ("shorewaves", Part::ShoreWaves),
         ("seawind", Part::SeaWind),
         ("shoredepth", Part::ShoreDepth),
+        ("surffoam", Part::SurfFoam),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
         ("foliagetransmission", Part::FoliageTransmission),
@@ -262,6 +272,7 @@ impl Part {
         ("precombine", Part::Precombine),
         ("matclass", Part::MatClass),
         ("flatnormal", Part::FlatNormal),
+        ("texvariety", Part::TexVariety),
         ("meshslabs", Part::MeshSlabs),
         ("cpuculltag", Part::CpuCullTag),
         ("lampfilter", Part::LampFilter),
@@ -396,6 +407,9 @@ mod tests {
         let depth = Off::from_flags(&["shoredepth".into()]).expect("known");
         assert!(depth.has(Part::ShoreDepth) && !depth.has(Part::ShoreWaves) && !depth.has(Part::SeaWind));
         assert_eq!(depth.label(), "shoredepth");
+        let surf = Off::from_flags(&["surffoam".into()]).expect("known");
+        assert!(surf.has(Part::SurfFoam) && !surf.has(Part::ShoreWaves));
+        assert_eq!(surf.label(), "surffoam");
         let maps = Off::from_flags(&["normalmaps".into(), "ORM".into()]).expect("known");
         assert!(maps.has(Part::NormalMaps) && maps.has(Part::Orm) && !maps.has(Part::Delight));
         assert_eq!(maps.label(), "normalmaps,orm");

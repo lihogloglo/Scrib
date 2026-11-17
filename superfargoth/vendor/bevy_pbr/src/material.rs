@@ -231,6 +231,21 @@ pub trait Material: Asset + AsBindGroup + Clone + Sized {
         ShaderRef::Default
     }
 
+    // superfargoth patch (own: depth-only no material)
+    /// Whether a depth-only opaque prepass or shadow pipeline of this material (no `MAY_DISCARD`,
+    /// only `DEPTH_PREPASS` among the prepass bits, no emulated unclipped depth) reads nothing
+    /// from the material bind group, although the material has prepass shaders of its own.
+    ///
+    /// Such a pipeline has no fragment stage (`PrepassPipeline::specialize`), so this is true
+    /// when the material keeps the default prepass vertex shader, or when its own one reads no
+    /// material binding. With [`DepthOnlyMaterialSettings::skip_material`] on, those draws then
+    /// take the material-less path (`DrawDepthOnlyPrepass`, an empty bind group 3). `false`
+    /// (the default) keeps the material bound whenever the material has a prepass shader.
+    #[inline]
+    fn prepass_depth_only_ignores_material() -> bool {
+        false
+    }
+
     /// Returns this material's deferred vertex shader. If [`ShaderRef::Default`] is returned, the default deferred vertex shader
     /// will be used.
     fn deferred_vertex_shader() -> ShaderRef {
@@ -383,6 +398,49 @@ fn initialize_material_shaders<M: Material>(
     shaders
 }
 
+// superfargoth patch (own: depth-only no material) begin.
+
+/// Main-world switch, read once per material type when its [`MaterialPlugin`] finishes
+/// (`Plugin::finish`; absent = off). Insert it before the app runs; later changes do nothing.
+///
+/// With `skip_material`, the opaque depth-only draws (shadow views, a prepass with depth only) of
+/// materials that declare [`Material::prepass_depth_only_ignores_material`] take the material-less
+/// path that materials without prepass shaders already take: a pipeline layout with an empty
+/// group 3, `DrawDepthOnlyPrepass`, and no material bind group index in the batch set key. Alpha
+/// masked and blended draws, and normal, motion vector and deferred prepasses, keep the material.
+/// Off: stock behaviour (a material with a prepass shader is always bound).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DepthOnlyMaterialSettings {
+    /// Draw opaque depth-only casters without the material bind group, for the materials that
+    /// declare it.
+    pub skip_material: bool,
+}
+
+/// Marker entry in [`MaterialProperties::shaders`] (the struct is not ours to add a field to):
+/// the material's depth-only opaque pipelines read no material binding. Its handle is never
+/// loaded or compiled; only `MaterialPropertiesExt::prepass_reads_material` looks the label up.
+#[derive(ShaderLabel, Debug, Hash, PartialEq, Eq, Clone, Default)]
+pub struct PrepassDepthOnlyNoMaterial;
+
+/// Adds the [`PrepassDepthOnlyNoMaterial`] marker to a material type's shader list when the
+/// switch is on and `M` declares [`Material::prepass_depth_only_ignores_material`]. The list is
+/// copied into every [`MaterialProperties`] of `M`, so the key bit, the pipeline layout and the
+/// draw function of a draw all read the same value.
+pub fn mark_depth_only_no_material<M: Material>(
+    shaders: &mut SmallVec<[(InternedShaderLabel, Handle<Shader>); 6]>,
+    settings: Option<&DepthOnlyMaterialSettings>,
+) {
+    let marker = PrepassDepthOnlyNoMaterial.intern();
+    if settings.is_some_and(|s| s.skip_material)
+        && M::prepass_depth_only_ignores_material()
+        && !shaders.iter().any(|(label, _)| *label == marker)
+    {
+        shaders.push((marker, Handle::default()));
+    }
+}
+
+// superfargoth patch (own: depth-only no material) end.
+
 #[derive(Default)]
 pub struct MaterialsPlugin {
     /// Debugging flags that can optionally be set when constructing the renderer.
@@ -500,6 +558,36 @@ where
                             .in_set(DirtySpecializationSystems::CheckForRemovals),
                     ),
                 );
+        }
+    }
+
+    // superfargoth patch (own: depth-only no material): the startup switch, read once, after
+    // every plugin was built and before the first material of `M` is prepared.
+    fn finish(&self, app: &mut App) {
+        let settings = app
+            .world()
+            .get_resource::<DepthOnlyMaterialSettings>()
+            .copied();
+        // Off or absent: nothing is touched (stock behaviour).
+        if !settings.is_some_and(|s| s.skip_material) {
+            return;
+        }
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        let Some(mut material_shaders) = render_app
+            .world_mut()
+            .get_resource_mut::<MaterialShaders<M>>()
+        else {
+            return;
+        };
+        let before = material_shaders.shaders.len();
+        mark_depth_only_no_material::<M>(&mut material_shaders.shaders, settings.as_ref());
+        if material_shaders.shaders.len() != before {
+            tracing::info!(
+                "depth-only no material: opaque depth-only draws of {} skip the material bind group",
+                core::any::type_name::<M>()
+            );
         }
     }
 }
@@ -1902,6 +1990,14 @@ pub(crate) trait MaterialPropertiesExt {
 
 impl MaterialPropertiesExt for MaterialProperties {
     fn prepass_reads_material(&self) -> bool {
+        // superfargoth patch (own: depth-only no material): a material type that declared its
+        // depth-only opaque pipelines material-free, with the startup switch on, carries this
+        // marker (`mark_depth_only_no_material`). Every caller (the key bit in `precache`, the
+        // pipeline layout in `PrepassPipeline::specialize`) reads it from the same properties, and
+        // the draw functions and batch set keys follow the key bit.
+        if self.get_shader(PrepassDepthOnlyNoMaterial).is_some() {
+            return false;
+        }
         // The default prepass shaders doesn't need material's bind group,
         // but for user provided prepass shaders currently we don't have a way to known this
         // because material's bind group is used for both prepass and the other passes.

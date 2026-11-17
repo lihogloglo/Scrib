@@ -107,6 +107,13 @@ pub struct StreamingConfig {
     /// and plain statics of a class share one main-pass key. Off: a normal map
     /// splits its class (the app's `--off flatnormal` A/B).
     pub flat_normal_map: bool,
+    /// Bench only, with [`Self::material_classes`]: every image slot of a static
+    /// template material binds one shared image per slot kind
+    /// ([`crate::matclass::bind_one_texture_set`]), so the material bind groups
+    /// hold a handful of textures while keys, pipelines and draws stay the same
+    /// (the app's `--off texvariety` arm; the look is wrong by design). Off by
+    /// default.
+    pub one_texture_set: bool,
     /// Static parts (cooked `Static` placements and precombine buckets) carry
     /// Bevy's `NoCpuCulling`: no per-view CPU frustum, range and light scans;
     /// the GPU preprocess culls them by frustum and visibility range in every
@@ -139,6 +146,7 @@ impl Default for StreamingConfig {
             precombine: true,
             material_classes: true,
             flat_normal_map: true,
+            one_texture_set: false, // tunables: const (bench-only A/B arm switch, `--off texvariety`; not a quality or feel value)
             gpu_cull_statics: false,
             pipeline_compile_threads: None,
             lod_live_budget: sf_world::lod_screen::LOD_LIVE_BUDGET.default_value() as usize,
@@ -150,7 +158,10 @@ impl StreamingConfig {
     /// How static materials fold ([`crate::matclass::fold`]); `None` when
     /// [`Self::material_classes`] is off (materials stay as the mapper made them).
     pub fn fold_rules(&self) -> Option<crate::matclass::FoldRules> {
-        self.material_classes.then_some(crate::matclass::FoldRules { flat_normal_map: self.flat_normal_map })
+        self.material_classes.then_some(crate::matclass::FoldRules {
+            flat_normal_map: self.flat_normal_map,
+            one_texture_set: self.one_texture_set,
+        })
     }
 }
 

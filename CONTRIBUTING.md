@@ -235,7 +235,9 @@ notes, only `docs/specs/`. Don't mix the two in one session.
   **A change that doesn't win stays (owner
   2026-11-15):** keep it behind an opt-in switch, off by default, with its ledger line saying what is left to fix; it
   may be a good first step. Revert only what can't be isolated or breaks something. (Dead or duplicate code that
-  something else replaced is different: delete it, tagged, git keeps it.)
+  something else replaced is different: delete it, tagged, git keeps it.) **A change that wins becomes the default
+  (owner 2026-11-17):** once its interleaved A/B says "faster" and nothing about the look is awaiting the owner, turn
+  it on by default without asking; its off value stays as the A/B arm.
 - Read lean: grep first, read only the lines needed; never a whole large file; cargo output filtered to errors
   and warnings, tests to summary lines, logs with `tail`/`grep`. Tokens grow with what an agent pulls into its
   context (every call re-sends it), not with its number of tool calls.

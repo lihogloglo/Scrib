@@ -11,6 +11,7 @@ use std::sync::Arc;
 use bevy_app::prelude::*;
 use bevy_diagnostic::SystemInformationDiagnosticsPlugin;
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::NonSendMarker;
 use bevy_image::Image;
 use bevy_light::DirectionalLight;
 use bevy_mesh::Mesh;
@@ -18,7 +19,7 @@ use bevy_pbr::diagnostic::MaterialAllocatorDiagnosticPlugin;
 use bevy_pbr::StandardMaterial;
 use bevy_render::diagnostic::{MeshAllocatorDiagnosticPlugin, RenderDiagnosticsPlugin};
 use bevy_render::renderer::RenderAdapterInfo;
-use bevy_window::{MonitorSelection, PresentMode, PrimaryWindow, Window, WindowMode, WindowOccluded, WindowPosition, WindowResolution};
+use bevy_window::{MonitorSelection, PresentMode, PrimaryWindow, Window, WindowLevel, WindowMode, WindowOccluded, WindowPosition, WindowResolution};
 use bevy_winit::{UpdateMode, WinitSettings};
 use bevy_world_serialization::WorldAsset;
 use sf_diag_bevy::sf_diag::{Phase, Report, Scenario, unit};
@@ -170,6 +171,10 @@ impl Perf {
             }
         } else {
             window.present_mode = bench_present_mode();
+            // A bench launched from a background shell does not get the foreground on Windows (the
+            // foreground lock): topmost keeps the window in front of everything else for the run, and
+            // `take_foreground` asks for input focus once it is shown.
+            window.window_level = WindowLevel::AlwaysOnTop;
             if std::env::var(ENV_WINDOW).is_ok_and(|v| v.eq_ignore_ascii_case("borderless")) {
                 window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Primary);
             }
@@ -210,7 +215,7 @@ impl Perf {
             // (`WinitSettings::game`): a benchmark must run flat out
             // whether or not it has focus.
             .insert_resource(WinitSettings { focused_mode: UpdateMode::Continuous, unfocused_mode: UpdateMode::Continuous })
-            .add_systems(Update, (record_meta, record_focus));
+            .add_systems(Update, (record_meta, record_focus, take_foreground));
         }
         if self.off.has(Part::Shadows) {
             app.add_systems(PostUpdate, no_shadows);
@@ -305,6 +310,31 @@ impl FocusTally {
             pct(self.hidden)
         )
     }
+}
+
+/// Bench runs: asks winit for the foreground once, on the first frame the primary window is
+/// shown. Bevy creates the window hidden and only calls winit's `focus_window` at creation on
+/// macOS (`bevy_winit` `system.rs` `create_windows`), and a window shown by a process that is not
+/// the foreground one (a bench started from a background shell) is activated behind the others.
+/// winit's `focus_window` on Windows does nothing when the window is hidden, minimized or already
+/// the foreground window, and otherwise takes the foreground with a synthetic Alt press followed
+/// by `SetForegroundWindow` (`force_window_active`). One request only: a later alt-tab by the
+/// owner is not fought. Runs on the main thread (winit windows are thread-local).
+fn take_foreground(windows: Query<Entity, With<PrimaryWindow>>, mut asked: Local<bool>, _main_thread: NonSendMarker) {
+    if *asked {
+        return;
+    }
+    let Ok(entity) = windows.single() else { return };
+    bevy_winit::WINIT_WINDOWS.with_borrow(|winit_windows| {
+        let Some(window) = winit_windows.get_window(entity) else { return };
+        // `None`: the platform cannot tell (not Windows); ask anyway.
+        if window.is_visible() == Some(false) {
+            return;
+        }
+        window.focus_window();
+        *asked = true;
+        bevy_log::info!("bench window: foreground requested (winit focus_window)");
+    });
 }
 
 /// Counts the frames the primary window spent unfocused or hidden

@@ -79,6 +79,18 @@ Materials: the companions (normal, ORM, depth) go into StandardMaterial's bindle
 8192 resources (stock 2048 spilled the Balmora walk into 2 slabs and cost 0.8 ms; [Bevy materials §4](../bevy/render-assets-and-materials.md)).
 
 ## Switches and counters
+- `--off texvariety` (bench only, wrong look by design): every streamed static binds one shared image per texture slot
+  (`FoldRules::one_texture_set`, `superfargoth/crates/sf_world_bevy/src/matclass.rs`), keys and batch sets unchanged; it
+  measures what the texture count of the material slab costs (ledger perf 2026-11-17: >= 1.8 ms render thread).
+- Tunable `render.depth_only.skip_material` (restart, off): opaque StandardMaterial depth-only draws skip the material
+  bind group (vendored `bevy_pbr`, marker `superfargoth patch (own: depth-only no material)`); inconclusive so far.
+- Tunable `render.wgpu.bind_group_walk_once` (restart, **on** since 2026-11-17): a render pass walks each bind group's textures once
+  (vendored `wgpu-core`, `superfargoth/vendor/wgpu-core/src/command/bind_group_walk.rs`; set in
+  `mw_exterior_bevy/src/quality_presets.rs` `add_gates`). Stock wgpu re-registers the whole slab at every draw that
+  follows a change of the mesh group or of a layout below group 3: ~31 slab walks a frame on the Balmora walk, ~4.7
+  with the switch (one per pass binding it); frame -1.15 ms, render thread -1.37 (ledger perf 2026-11-17).
+- Counters `encode/bind_walk/{merges,inits}[_skipped]` and `.../{merge,init}_textures[_skipped]` (per frame, bench
+  CSV): bind groups merged / init-registered by render passes and the texture entries walked or skipped.
 
 Load-time cap (S1): `texture.cap: <cap>, N ktx2 loaded, M capped, U uncappable, X MiB loaded, Y MiB skipped` (GPU bytes;
 logged once each loading burst has been still 2 s; resource `sf_texture_bevy::TextureCapStats`). `--off delight` (`mw_game_core/src/perf.rs:175`; also drops the cooked layer's de-lit files); bake lines `texture.cook:` and

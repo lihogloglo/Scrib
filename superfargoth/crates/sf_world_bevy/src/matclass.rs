@@ -39,6 +39,12 @@
 //! and [`crate::StreamingConfig::flat_normal_map`] (`--off flatnormal`), read together by
 //! [`crate::StreamingConfig::fold_rules`].
 //!
+//! [`FoldRules::one_texture_set`] ([`crate::StreamingConfig::one_texture_set`], the app's
+//! `--off texvariety`; off by default) is a bench-only arm, wrong to look at by design: every image
+//! slot that holds an image gets the one shared image of its kind ([`bind_one_texture_set`]), so
+//! the material bind groups hold a handful of textures while classes, keys, pipelines, batch sets
+//! and draws stay as they are. It sizes what the number of bound textures costs.
+//!
 //! Gauges (`sf_diag::views::statics`): while `DiagCounters` exist, [`track_static_materials`]
 //! follows the materials of live [`StaticPart`]s (distinct materials, classes, keys, pipeline
 //! keys) and [`count_static_bind_groups`] reads which material bind groups hold them in the render
@@ -104,16 +110,71 @@ pub fn flat_normal_image() -> Image {
     )
 }
 
+/// The shared images of [`FoldRules::one_texture_set`], one per slot kind ([`one_texture_set_images`]);
+/// normal maps share [`FLAT_NORMAL_MAP`].
+pub const ONE_BASE_COLOR: Handle<Image> = uuid_handle!("3b1c7e52-9f04-4d6a-8a2b-6c5d1e0f7a91");
+/// Metallic-roughness and occlusion (one image: both are multipliers, white is neutral for each).
+pub const ONE_ORM: Handle<Image> = uuid_handle!("a47d0c19-2e63-4b85-9c3f-0d8e5b6a1f24");
+pub const ONE_EMISSIVE: Handle<Image> = uuid_handle!("5e92f3a8-71c6-4e0d-b4a7-9f2c8d3e6b05");
+pub const ONE_DEPTH_MAP: Handle<Image> = uuid_handle!("c06a8b3d-4f17-49e2-a5d8-1b7e9c2f4a63");
+
+/// The images behind the [`FoldRules::one_texture_set`] handles, each one neutral texel: white
+/// base colour (sRGB), white metallic-roughness/occlusion (linear; the factors stay as they are),
+/// black emissive, a depth map of zero depth (no parallax offset) and [`flat_normal_image`]. The
+/// streaming plugin adds them under their handles.
+pub fn one_texture_set_images() -> [(Handle<Image>, Image); 5] {
+    let texel = |bytes: &[u8], format| {
+        Image::new_fill(
+            Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            TextureDimension::D2,
+            bytes,
+            format,
+            RenderAssetUsages::RENDER_WORLD,
+        )
+    };
+    [
+        (ONE_BASE_COLOR, texel(&[255; 4], TextureFormat::Rgba8UnormSrgb)),
+        (ONE_ORM, texel(&[255; 4], TextureFormat::Rgba8Unorm)),
+        (ONE_EMISSIVE, texel(&[0, 0, 0, 255], TextureFormat::Rgba8UnormSrgb)),
+        (ONE_DEPTH_MAP, texel(&[0], TextureFormat::R8Unorm)),
+        (FLAT_NORMAL_MAP, flat_normal_image()),
+    ]
+}
+
+/// [`FoldRules::one_texture_set`]: every image slot of `material` that holds an image gets the one
+/// shared image of its kind. Only handles change: an empty slot stays empty and no other field is
+/// touched, so `StandardMaterialKey`, the alpha mode and the render method (the whole
+/// [`PipelineKey`], and the depth-only key Bevy derives from it) are what they were. The image
+/// formats only feed material uniform flags (two-component normal map, RG metallic-roughness),
+/// never a key. These are all the image slots of `StandardMaterial` in this workspace's Bevy
+/// (its transmission, specular, clearcoat and anisotropy texture features are off).
+pub fn bind_one_texture_set(material: &mut StandardMaterial) {
+    let share = |slot: &mut Option<Handle<Image>>, shared: Handle<Image>| {
+        if slot.is_some() {
+            *slot = Some(shared);
+        }
+    };
+    share(&mut material.base_color_texture, ONE_BASE_COLOR);
+    share(&mut material.emissive_texture, ONE_EMISSIVE);
+    share(&mut material.metallic_roughness_texture, ONE_ORM);
+    share(&mut material.occlusion_texture, ONE_ORM);
+    share(&mut material.normal_map_texture, FLAT_NORMAL_MAP);
+    share(&mut material.depth_map, ONE_DEPTH_MAP);
+}
+
 /// How [`fold`] folds; [`crate::StreamingConfig::fold_rules`] reads it from the switches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldRules {
     /// Bind [`FLAT_NORMAL_MAP`] where a material has no normal map (`--off flatnormal`).
     pub flat_normal_map: bool,
+    /// Bench only, off by default: bind one shared image per slot kind ([`bind_one_texture_set`],
+    /// the app's `--off texvariety`). The look is wrong by design.
+    pub one_texture_set: bool,
 }
 
 impl Default for FoldRules {
     fn default() -> Self {
-        Self { flat_normal_map: true }
+        Self { flat_normal_map: true, one_texture_set: false } // tunables: const (bench-only A/B arm switch, not a quality or feel value)
     }
 }
 
@@ -183,8 +244,12 @@ impl PipelineKey {
 }
 
 /// Folds `material` into its class under `rules` (module docs); `None`, untouched, when it has
-/// none.
+/// none. Under [`FoldRules::one_texture_set`] a material without a class gets the shared images
+/// too (blended statics sit in the same bind groups).
 pub fn fold(material: &mut StandardMaterial, rules: FoldRules) -> Option<Folded> {
+    if rules.one_texture_set {
+        bind_one_texture_set(material);
+    }
     let class = class_of(material)?;
     let traits = class.traits();
     material.cull_mode = if traits.two_sided { None } else { Some(Face::Back) };
@@ -390,8 +455,8 @@ mod tests {
         StandardMaterialKey::from(m).bits()
     }
 
-    const FLAT: FoldRules = FoldRules { flat_normal_map: true };
-    const NO_FLAT: FoldRules = FoldRules { flat_normal_map: false };
+    const FLAT: FoldRules = FoldRules { flat_normal_map: true, one_texture_set: false };
+    const NO_FLAT: FoldRules = FoldRules { flat_normal_map: false, one_texture_set: false };
 
     /// A normal-mapped static and a plain one of a class end on one key: the plain one gets the
     /// shared flat map, the real map is kept. `--off flatnormal` keeps the old split.
@@ -592,27 +657,176 @@ mod tests {
         assert_eq!(g.get(statics::PIPELINES), Some(&2.0));
     }
 
+    /// The material key a prepass or shadow pipeline of `mesh_key` specializes on (the vendored
+    /// depth-only material key, else the full one).
+    fn prepass_key(material: &StandardMaterial, mesh_key: bevy_pbr::MeshPipelineKey) -> u64 {
+        use bevy_material::key::{ErasedMaterialKey, ErasedMaterialPipelineKey, ErasedMeshPipelineKey};
+        use bevy_pbr::prepass_material_key;
+
+        let key = ErasedMaterialPipelineKey {
+            mesh_key: ErasedMeshPipelineKey::new(mesh_key),
+            material_key: ErasedMaterialKey::new(StandardMaterialKey::from(material)),
+            type_id: TypeId::of::<StandardMaterial>(),
+        };
+        prepass_material_key::<StandardMaterial>(&key)
+            .unwrap_or(key)
+            .material_key
+            .to_key::<StandardMaterialKey>()
+            .bits()
+    }
+
+    /// The image slots of a material: base colour, emissive, metallic-roughness, occlusion, normal
+    /// map, depth map (all of them in this workspace's Bevy features).
+    fn slots(m: &StandardMaterial) -> [Option<Handle<Image>>; 6] {
+        [
+            m.base_color_texture.clone(),
+            m.emissive_texture.clone(),
+            m.metallic_roughness_texture.clone(),
+            m.occlusion_texture.clone(),
+            m.normal_map_texture.clone(),
+            m.depth_map.clone(),
+        ]
+    }
+
+    /// Every field of a material but which images it binds (a filled slot prints the same).
+    fn without_images(m: &StandardMaterial) -> String {
+        let mut m = m.clone();
+        let blank = |slot: &mut Option<Handle<Image>>| {
+            if slot.is_some() {
+                *slot = Some(Handle::default());
+            }
+        };
+        blank(&mut m.base_color_texture);
+        blank(&mut m.emissive_texture);
+        blank(&mut m.metallic_roughness_texture);
+        blank(&mut m.occlusion_texture);
+        blank(&mut m.normal_map_texture);
+        blank(&mut m.depth_map);
+        format!("{m:?}")
+    }
+
+    /// `one_texture_set` (bench only, `--off texvariety`): materials with pairwise different images
+    /// end on one image per slot kind, and nothing a pipeline, class or bin reads moves: the same
+    /// slots are filled, the main-pass and prepass keys, the class, the splits and every non-image
+    /// field are the same with the rule on and off. Off, the handles are the material's own.
+    #[test]
+    fn one_texture_set_shares_images_and_keeps_every_key() {
+        use bevy_pbr::MeshPipelineKey;
+
+        const NORMAL: usize = 4;
+        let mut store = Assets::<Image>::default();
+        let mut image = || Some(store.add(Image::default()));
+        let wall = StandardMaterial { base_color_texture: image(), ..surface(AlphaMode::Opaque, false) };
+        let mapped = StandardMaterial {
+            base_color_texture: image(),
+            normal_map_texture: image(),
+            flip_normal_map_y: true,
+            ..surface(AlphaMode::Opaque, false)
+        };
+        let full = StandardMaterial {
+            base_color_texture: image(),
+            normal_map_texture: image(),
+            metallic_roughness_texture: image(),
+            occlusion_texture: image(),
+            metallic: 1.0,
+            ..surface(AlphaMode::Opaque, true)
+        };
+        let window = StandardMaterial {
+            base_color_texture: image(),
+            emissive_texture: image(),
+            emissive: LinearRgba::rgb(2.0, 1.5, 1.0),
+            ..surface(AlphaMode::Opaque, false)
+        };
+        let relief = StandardMaterial {
+            base_color_texture: image(),
+            normal_map_texture: image(),
+            depth_map: image(),
+            parallax_mapping_method: ParallaxMappingMethod::Relief { max_steps: 5 },
+            parallax_depth_scale: 0.05,
+            ..surface(AlphaMode::Opaque, false)
+        };
+        let fence = StandardMaterial { base_color_texture: image(), ..surface(AlphaMode::Mask(0.5), false) };
+        let leaf = StandardMaterial {
+            base_color_texture: image(),
+            normal_map_texture: image(),
+            diffuse_transmission: 0.5,
+            ..surface(AlphaMode::Mask(0.3), true)
+        };
+        let decal = StandardMaterial {
+            base_color_texture: image(),
+            base_color_channel: UvChannel::Uv1,
+            occlusion_texture: image(),
+            occlusion_channel: UvChannel::Uv1,
+            depth_bias: 4.0,
+            ..surface(AlphaMode::Opaque, false)
+        };
+        let glass = StandardMaterial {
+            base_color_texture: image(),
+            emissive_texture: image(),
+            ..surface(AlphaMode::Blend, false)
+        };
+        let bare = StandardMaterial { base_color_texture: None, ..surface(AlphaMode::Opaque, false) };
+        let originals = [wall, mapped, full, window, relief, fence, leaf, decal, glass, bare];
+        let given: Vec<Handle<Image>> = originals.iter().flat_map(slots).flatten().collect();
+        assert_eq!(given.len(), 19);
+        assert_eq!(given.iter().collect::<HashSet<_>>().len(), given.len(), "pairwise different images");
+
+        let shadow = MeshPipelineKey::DEPTH_PREPASS | MeshPipelineKey::MAY_DISCARD;
+        let motion = MeshPipelineKey::DEPTH_PREPASS | MeshPipelineKey::MOTION_VECTOR_PREPASS;
+        let normals = motion | MeshPipelineKey::NORMAL_PREPASS;
+        let deferred = MeshPipelineKey::DEPTH_PREPASS | MeshPipelineKey::DEFERRED_PREPASS;
+        let shared = [ONE_BASE_COLOR, ONE_EMISSIVE, ONE_ORM, ONE_ORM, FLAT_NORMAL_MAP, ONE_DEPTH_MAP];
+        for base in [FLAT, NO_FLAT] {
+            let mut bound: [HashSet<Handle<Image>>; 6] = Default::default();
+            for (i, original) in originals.iter().enumerate() {
+                let (mut off, mut on) = (original.clone(), original.clone());
+                let folded_off = fold(&mut off, base);
+                let folded_on = fold(&mut on, FoldRules { one_texture_set: true, ..base });
+                assert_eq!(folded_on, folded_off, "material {i}: class and splits");
+                assert_eq!(PipelineKey::of(&on), PipelineKey::of(&off), "material {i}: main-pass key");
+                for mesh_key in [MeshPipelineKey::DEPTH_PREPASS, shadow, motion, normals, deferred] {
+                    assert_eq!(prepass_key(&on, mesh_key), prepass_key(&off, mesh_key), "material {i}: {mesh_key:?}");
+                }
+                assert_eq!(slots(&on).map(|s| s.is_some()), slots(&off).map(|s| s.is_some()), "material {i}: filled slots");
+                assert_eq!(without_images(&on), without_images(&off), "material {i}: non-image fields");
+
+                // Off: the material's own handles (and the flat normal map `flat_normal_map` adds).
+                for (kind, (was, is)) in slots(original).into_iter().zip(slots(&off)).enumerate() {
+                    let flat = kind == NORMAL && base.flat_normal_map && folded_off.is_some();
+                    let expected = was.or(flat.then_some(FLAT_NORMAL_MAP));
+                    assert_eq!(is, expected, "material {i} slot {kind}: untouched with the rule off");
+                }
+                // On: the shared image of the kind wherever a slot is filled.
+                for (kind, slot) in slots(&on).into_iter().enumerate() {
+                    if let Some(handle) = slot {
+                        assert_eq!(handle, shared[kind], "material {i} slot {kind}");
+                        bound[kind].insert(handle);
+                    }
+                }
+            }
+            assert!(bound.iter().all(|kind| kind.len() == 1), "every slot kind is used and holds one image: {bound:?}");
+            let all: HashSet<_> = bound.iter().flatten().cloned().collect();
+            let added: HashSet<_> = one_texture_set_images().into_iter().map(|(handle, _)| handle).collect();
+            assert_eq!(all, added, "the plugin adds exactly the images the rule binds");
+        }
+        assert!(one_texture_set_images().iter().all(|(_, image)| (image.width(), image.height()) == (1, 1)));
+
+        // Off by default, and the config switch reaches the rules.
+        assert!(!FoldRules::default().one_texture_set);
+        assert_eq!(crate::StreamingConfig::default().fold_rules(), Some(FoldRules::default()));
+        let config = crate::StreamingConfig { one_texture_set: true, ..crate::StreamingConfig::default() };
+        assert_eq!(config.fold_rules(), Some(FoldRules { flat_normal_map: true, one_texture_set: true }));
+    }
+
     /// The vendored `superfargoth patch (own: depth-only material key)`: shadow views and a
     /// depth/motion-vector prepass key a normal-mapped, relief-mapped material like the same
     /// material without them (one depth pipeline and batch set); a normal prepass keeps the normal
     /// map, a deferred prepass keeps both; culling and depth bias always stay.
     #[test]
     fn depth_only_pipeline_key_ignores_normal_map_and_relief() {
-        use bevy_material::key::{ErasedMaterialKey, ErasedMaterialPipelineKey, ErasedMeshPipelineKey};
-        use bevy_pbr::{MeshPipelineKey, prepass_material_key};
+        use bevy_pbr::MeshPipelineKey;
 
-        let pipeline_key = |material: &StandardMaterial, mesh_key: MeshPipelineKey| {
-            let key = ErasedMaterialPipelineKey {
-                mesh_key: ErasedMeshPipelineKey::new(mesh_key),
-                material_key: ErasedMaterialKey::new(StandardMaterialKey::from(material)),
-                type_id: TypeId::of::<StandardMaterial>(),
-            };
-            prepass_material_key::<StandardMaterial>(&key)
-                .unwrap_or(key)
-                .material_key
-                .to_key::<StandardMaterialKey>()
-                .bits()
-        };
+        let pipeline_key = prepass_key;
         let plain = StandardMaterial { depth_bias: 3.0, ..surface(AlphaMode::Mask(0.5), false) };
         let mapped = StandardMaterial {
             normal_map_texture: Some(Handle::default()),
@@ -640,5 +854,71 @@ mod tests {
         let kept = StandardMaterialKey::CULL_BACK | StandardMaterialKey::DEPTH_BIAS;
         assert!(full.intersects(StandardMaterialKey::DEPTH_BIAS) && full.contains(StandardMaterialKey::CULL_BACK));
         assert_eq!(pipeline_key(&mapped, shadow) & kept.bits(), (full & kept).bits(), "culling and depth bias stay");
+    }
+
+    /// The vendored `superfargoth patch (own: depth-only no material)`: with the startup switch on,
+    /// an opaque `StandardMaterial`'s shadow and depth-only prepass keys carry neither
+    /// `PREPASS_READS_MATERIAL` nor `MAY_DISCARD` (the draw path then takes the layout with an empty
+    /// group 3 and the depth-only draw function); an alpha-masked one keeps `MAY_DISCARD` and its
+    /// prepass fragment shader, so the material path. Off or absent, the bit is set as in stock Bevy.
+    #[test]
+    fn depth_only_opaque_keys_skip_the_material_only_with_the_switch_on() {
+        use bevy_material::{MaterialProperties, labels::ShaderLabel};
+        use bevy_mesh::{BaseMeshPipelineKey, PrimitiveTopology};
+        use bevy_pbr::precache::{EntityKeyFlags, prepass_mesh_key, shadow_mesh_key, shadow_view_key};
+        use bevy_pbr::{DepthOnlyMaterialSettings, MeshPipelineKey, PrepassFragmentShader, mark_depth_only_no_material};
+        use bevy_render::view::Msaa;
+
+        // What `prepare_asset` builds for a `StandardMaterial` (it has a prepass fragment shader),
+        // with the shader list as `MaterialPlugin::finish` leaves it under `settings`.
+        let props = |alpha_mode: AlphaMode, settings: Option<DepthOnlyMaterialSettings>| {
+            let mut p = MaterialProperties {
+                alpha_mode,
+                render_method: OpaqueRendererMethod::Forward,
+                shadows_enabled: true,
+                prepass_enabled: true,
+                ..Default::default()
+            };
+            p.shaders.push((PrepassFragmentShader.intern(), Handle::default()));
+            mark_depth_only_no_material::<StandardMaterial>(&mut p.shaders, settings.as_ref());
+            p
+        };
+        let tri = BaseMeshPipelineKey::from_primitive_topology_and_strip_index(PrimitiveTopology::TriangleList, None);
+        let depth_view = MeshPipelineKey::from_msaa_samples(1) | MeshPipelineKey::DEPTH_PREPASS;
+        // A sun cascade, a lamp face or spot, and a prepass with depth only.
+        let keys = |p: &MaterialProperties| {
+            let caster = EntityKeyFlags::SHADOW_CASTER;
+            [
+                shadow_mesh_key(shadow_view_key(true), &tri, p, caster).expect("casts a shadow"),
+                shadow_mesh_key(shadow_view_key(false), &tri, p, caster).expect("casts a shadow"),
+                prepass_mesh_key(depth_view, &tri, p, &Msaa::from_samples(1), false, false, caster).expect("has a prepass"),
+            ]
+        };
+        let on = Some(DepthOnlyMaterialSettings { skip_material: true });
+        let off = Some(DepthOnlyMaterialSettings::default());
+        let reads = MeshPipelineKey::PREPASS_READS_MATERIAL;
+
+        // On, opaque: neither bit that selects the material path; nothing else in the key moved.
+        let opaque_on = keys(&props(AlphaMode::Opaque, on));
+        let opaque_off = keys(&props(AlphaMode::Opaque, off));
+        for (with, without) in opaque_on.iter().zip(&opaque_off) {
+            assert!(!with.intersects(reads | MeshPipelineKey::MAY_DISCARD), "{with:?}");
+            assert_eq!(*with | reads, *without, "only that bit differs");
+        }
+        // On, alpha-masked: `MAY_DISCARD` keeps the material path, and the fragment shader is still
+        // found (the marker hides nothing).
+        let masked = props(AlphaMode::Mask(0.5), on);
+        assert!(masked.get_shader(PrepassFragmentShader).is_some());
+        for key in keys(&masked) {
+            assert!(key.contains(MeshPipelineKey::MAY_DISCARD), "{key:?}");
+        }
+        // Off or absent: the bit is set as in stock Bevy, whatever the alpha mode.
+        for settings in [off, None] {
+            for alpha in [AlphaMode::Opaque, AlphaMode::Mask(0.5)] {
+                for key in keys(&props(alpha, settings)) {
+                    assert!(key.contains(reads), "{alpha:?} {settings:?} {key:?}");
+                }
+            }
+        }
     }
 }

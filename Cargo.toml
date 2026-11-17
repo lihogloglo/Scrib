@@ -339,6 +339,10 @@ dlss_wgpu = { path = "superfargoth/vendor/dlss_wgpu" }
 # navmesh-rs 0.2.2, own patch (superfargoth/vendor/README.md): `DetachedQuery` public, so sf_nav_recast keeps each
 # sliced A* in its own job. Drop when upstream exposes detached (or self-owned) sliced A* state.
 navmesh-rs = { path = "superfargoth/vendor/navmesh-rs" }
+# wgpu-core 30.0.1, own patch (superfargoth/vendor/README.md, docs/research/wgpu-pass-rewalk-2026-11-17.md): an
+# opt-in, default-off switch so a render pass walks each bind group's textures once (`command::bind_group_walk`),
+# plus walk counters. Drop when upstream stops re-walking bind groups on rebind (gfx-rs/wgpu#9738).
+wgpu-core = { path = "superfargoth/vendor/wgpu-core" }
 # Our feature-unification crate in place of the crates.io stub (`workspace-hack` above).
 workspace-hack = { path = "superfargoth/crates/workspace-hack" }
 

@@ -53,6 +53,17 @@ fn encoder_names_drop_paths_generics_and_closures() {
 }
 
 #[test]
+fn encoder_names_from_pass_labels_drop_the_instance() {
+    assert_eq!(encoder_name("pass:main_opaque_pass_3d"), "pass:main_opaque_pass_3d");
+    assert_eq!(encoder_name("pass:early prepass"), "pass:early prepass");
+    assert_eq!(encoder_name("pass:shadow_point_light_4_-y"), "pass:shadow_point_light");
+    assert_eq!(encoder_name("pass:shadow_directional_light_1_cascade_0"), "pass:shadow_directional_light");
+    // A trailing index is not an instance separator, and system names are left alone.
+    assert_eq!(encoder_name("pass:bloom_0"), "pass:bloom_0");
+    assert_eq!(encoder_name("a::b::pass_2_x"), "pass_2_x");
+}
+
+#[test]
 fn encode_frame_folds_finishes_per_system_and_resets() {
     let mut frame = EncodeFrame::default();
     frame.finish("a::shadow_pass<A>", 1.0);

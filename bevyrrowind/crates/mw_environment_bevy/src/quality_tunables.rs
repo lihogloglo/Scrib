@@ -81,9 +81,42 @@ pub const TEXTURE_MAX_SIZE: Def<u32> = def!(count "texture.max_size_px" = 0)
     .group(Group::Textures)
     .lifetime(Lifetime::Restart);
 
+/// `render.depth_only.skip_material`: `bevy_pbr::DepthOnlyMaterialSettings::skip_material` (vendored
+/// `material.rs`, own patch "depth-only no material"): opaque `StandardMaterial` draws in shadow views
+/// and in a prepass with depth only bind no material group (Bevy's stock material-less depth-only
+/// path). Read at start (`Restart`): Bevy reads it once when its material plugin finishes, and the
+/// pipelines and draw functions of a run must all agree.
+pub const DEPTH_ONLY_SKIP_MATERIAL: Def<bool> = def!(bool "render.depth_only.skip_material" = false)
+    .help("Opaque shadow and depth-only draws bind no material group (alpha-masked ones keep it); read at start")
+    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .group(Group::Shadows)
+    .lifetime(Lifetime::Restart);
+
+/// `render.wgpu.bind_group_walk_once`: the vendored wgpu-core switch (own patch "bind group walk once",
+/// `wgpu_core::command::bind_group_walk`, reached through `bevy_render`'s `encode_timing`): a render pass
+/// merges a bind group into its usage scope and registers its memory-init actions once, not again on
+/// every re-set or rebind (the bindless material slab holds thousands of textures). Read at start. On by
+/// default (owner 2026-11-17, after the interleaved A/B); `--set render.wgpu.bind_group_walk_once=off` is
+/// stock wgpu-core.
+pub const BIND_GROUP_WALK_ONCE: Def<bool> = def!(bool "render.wgpu.bind_group_walk_once" = true)
+    .help("A render pass walks each bind group's textures once, not on every rebind (vendored wgpu-core); read at start")
+    .source(Source::Measured("perf 2026-11-17: walk -1.15 ms frame, -1.37 ms render thread; on by default, owner 2026-11-17"))
+    .group(Group::Textures)
+    .lifetime(Lifetime::Restart);
+
 /// This module's tunables.
-pub const TUNABLES: &[&dyn AnyDef] =
-    &[&BLOOM, &BLOOM_INTENSITY, &WATER_QUALITY, &CLOUD_MAP_PER_SAMPLE, &PUDDLES, &SHELTER, &GI_PROBES, &TEXTURE_MAX_SIZE];
+pub const TUNABLES: &[&dyn AnyDef] = &[
+    &BLOOM,
+    &BLOOM_INTENSITY,
+    &WATER_QUALITY,
+    &CLOUD_MAP_PER_SAMPLE,
+    &PUDDLES,
+    &SHELTER,
+    &GI_PROBES,
+    &TEXTURE_MAX_SIZE,
+    &DEPTH_ONLY_SKIP_MATERIAL,
+    &BIND_GROUP_WALK_ONCE,
+];
 
 pub use sf_water_bevy::WaterQuality;
 

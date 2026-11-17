@@ -294,6 +294,11 @@ tables start with per-thread means: main busy, render busy, render graph, GPU ti
 ~max of them, so a main-thread win can hide behind a render-bound frame). `--save` refuses a folder that already
 holds files (pick a new tag; old controls are never overwritten).
 
+Bench windows take the front themselves: `--bench` runs open always-on-top and ask winit for the foreground once
+the window is shown (`mw_devtools_bevy/src/perf.rs` `take_foreground`, log line `bench window: foreground requested`;
+Bevy only asks at creation on macOS, and Windows activates a window from a background shell behind the others).
+One request per run: alt-tabbing away later is not fought and marks the run unfocused as before.
+
 **One bench at a time, real busy detection, power plan** (audit §5 fixes 2 and 6; `perf/chain.rs`, `perf/power.rs`,
 `sf_diag::lock`, `sf_diag::suite::{BusyRules, PmonSampler}`). A `perf suite` / `perf sweep` holds
 `<repo>/.sessions/bench.lock` for its whole chain (every arm, warm-up and repeat); a second bench waits and prints the

@@ -160,7 +160,7 @@ arboard = { version = "3", default-features = false, features = ["wayland-data-c
 getrandom = { version = "0.4", default-features = false, features = ["std"] }
 glamx = { version = "0.3", default-features = false, features = ["approx", "i32", "nalgebra", "nostd-libm", "std"] }
 num-rational = { version = "0.4" }
-wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
+wgpu-core = { path = "../../vendor/wgpu-core", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "portable-atomic", "renderdoc", "vulkan"] }
 windows = { version = "0.62", features = ["Devices_Power", "Foundation_Collections", "Gaming_Input_ForceFeedback", "System_Power", "Wdk_System_SystemInformation", "Wdk_System_SystemServices", "Wdk_System_Threading", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Display", "Win32_Devices_Properties", "Win32_Globalization", "Win32_Graphics_Direct3D12", "Win32_Graphics_Direct3D_Dxc", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_DirectComposition", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_Media_Audio", "Win32_Media_KernelStreaming", "Win32_Media_Multimedia", "Win32_Security_Authorization", "Win32_System_Com_StructuredStorage", "Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Performance", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
 windows-core = { version = "0.62" }
@@ -179,7 +179,7 @@ nix = { version = "0.31", default-features = false, features = ["event", "ioctl"
 num-rational = { version = "0.4" }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "pipe", "process", "shm", "system", "thread"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["event", "net", "pipe", "process", "shm", "system", "time"] }
-wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
+wgpu-core = { path = "../../vendor/wgpu-core", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "portable-atomic", "renderdoc", "vulkan"] }
 x11rb = { version = "0.13", default-features = false, features = ["dl-libxcb", "randr", "resource_manager", "xinput", "xkb"] }
 x11rb-protocol = { version = "0.13", default-features = false, features = ["randr", "resource_manager", "xinput", "xkb"] }

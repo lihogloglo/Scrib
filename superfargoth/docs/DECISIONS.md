@@ -1874,3 +1874,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-17 (owner, exposure-tonemap): eye adaptation wanted; every exposure, night-darkness, tonemap, grade and bloom value is a
   Player tunable with its own row on a new options page, Image (answers tunables open question 1 for this system). Exposure
   design: pre-exposure (CPU-adapted EV written to the camera), schedule kept for benchmarks (spec exposure-tonemap.md).
+- 2026-11-17 (owner, wgpu-walk): wgpu-core 30.0.1 is vendored (`vendor/wgpu-core`, `[patch.crates-io]`) with one own opt-in
+  patch, off by default: a render pass walks each bind group's textures once (`render.wgpu.bind_group_walk_once`). Measured
+  -1.15 ms frame on the town walk (ledger perf); stays opt-in until the owner defaults it. Drop when upstream fixes #9738.
+- 2026-11-17 (owner, wgpu-walk): `render.wgpu.bind_group_walk_once` is on by default in the game ("all the new options
+  that were optimizing the game should be by default"): an optimisation that wins its interleaved A/B becomes the default,
+  with its off value kept as the A/B arm. Unmeasured or look-changing switches still wait for their A/B and owner check.

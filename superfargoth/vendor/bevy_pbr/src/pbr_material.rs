@@ -1465,6 +1465,16 @@ impl Material for StandardMaterial {
         shader_ref(bevy_asset::embedded_path!("render/pbr_prepass.wesl"))
     }
 
+    // superfargoth patch (own: depth-only no material)
+    // The vertex stage is the default `prepass/prepass.wesl` (no `prepass_vertex_shader` here),
+    // which reads no material binding, and a depth-only opaque pipeline has no fragment stage:
+    // `pbr_prepass.wesl` is attached only for a normal, motion vector or deferred target, for
+    // emulated unclipped depth, or under `MAY_DISCARD` (`PrepassPipeline::specialize`).
+    #[inline]
+    fn prepass_depth_only_ignores_material() -> bool {
+        true
+    }
+
     fn deferred_fragment_shader() -> ShaderRef {
         shader_ref(bevy_asset::embedded_path!("render/pbr.wesl"))
     }

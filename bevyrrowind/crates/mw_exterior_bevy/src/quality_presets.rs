@@ -26,7 +26,7 @@
 use std::collections::BTreeMap;
 
 use bevy::log::warn;
-use bevy::pbr::SkinUploadSettings;
+use bevy::pbr::{DepthOnlyMaterialSettings, SkinUploadSettings};
 use bevy::prelude::*;
 use mw_devtools_bevy::perf::{Off, Part};
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
@@ -37,7 +37,7 @@ use sf_tunables_bevy::sf_tunables::presets::{self as tp, MergedPresets, MergedVa
 use sf_tunables_bevy::sf_tunables::Def;
 use sf_tunables_bevy::{Presets, SetBy, Tunables, TunablesAppExt, Value};
 
-pub use mw_environment_bevy::quality_tunables::{CLOUD_MAP_PER_SAMPLE, GI_PROBES, PUDDLES, SHELTER, TEXTURE_MAX_SIZE};
+pub use mw_environment_bevy::quality_tunables::{BIND_GROUP_WALK_ONCE, CLOUD_MAP_PER_SAMPLE, DEPTH_ONLY_SKIP_MATERIAL, GI_PROBES, PUDDLES, SHELTER, TEXTURE_MAX_SIZE};
 pub use mw_game_core::exterior::Quality;
 
 /// The overall driver's name (`sf.graphics_preset`).
@@ -180,7 +180,9 @@ pub struct StartValues {
 /// the other overrides apply in `Plugin::finish`, once every plugin registered its tunables; these
 /// are read before that). A refused override is left to `finish`, which reports it and fails the run.
 pub fn start_values(tunables: &mut Tunables, book: &PresetBook, overrides: &[OverrideSet]) -> StartValues {
-    let restart = [TEXTURE_MAX_SIZE.name(), sf_lod_bevy::FAR_HANDOFF_SCALE.name(), GI_PROBES.name()];
+    // `render.depth_only.skip_material` too (vendored `superfargoth patch (own: depth-only no material)`):
+    // `add_gates` reads it while the app is built.
+    let restart = [TEXTURE_MAX_SIZE.name(), sf_lod_bevy::FAR_HANDOFF_SCALE.name(), GI_PROBES.name(), DEPTH_ONLY_SKIP_MATERIAL.name(), BIND_GROUP_WALK_ONCE.name()];
     let early = |name: &str| restart.contains(&name) || book.driver(name).is_some();
     for set in overrides {
         let sets: Vec<_> = set.overrides.iter().filter(|o| early(&o.name)).cloned().collect();
@@ -300,7 +302,8 @@ pub fn preset_status(book: &PresetBook, tunables: &sf_tunables_bevy::sf_tunables
 /// The exterior's CW gates: registers their alias copies (env switches apply now), `--off selectgate`
 /// (`select_gate_off`) at `CommandLine`, and binds them live into terrain, far field and streaming
 /// settings, Bevy's skin upload settings and worldspace parking (CW-9). Returns `select.gate`'s effective value (the plugins'
-/// starting settings).
+/// starting settings). Also inserts Bevy's depth-only material switch (`render.depth_only.skip_material`,
+/// read at start, not live): call it before the app runs.
 pub fn add_gates(app: &mut App, select_gate_off: bool) -> bool {
     app.register_tunables(&[&SELECT_GATE, &SKIN_SKIP_UNCHANGED]);
     if select_gate_off {
@@ -323,6 +326,22 @@ pub fn add_gates(app: &mut App, select_gate_off: bool) -> bool {
         .bind_resource(|p: &mut sf_world_bevy::WorldspaceParking, s| p.settle_s = s);
     app.init_resource::<SkinUploadSettings>();
     let _skin = app.add_tunable(&SKIN_SKIP_UNCHANGED).bind_resource(|s: &mut SkinUploadSettings, on| s.skip_unchanged = on);
+    // `render.depth_only.skip_material` (vendored `superfargoth patch (own: depth-only no material)`): not
+    // live. Bevy reads the resource once, when its material plugin finishes, so the value of this start
+    // (`start_values` applied its `--set`) goes in now; unregistered (a host without `register`): off.
+    let depth_only = {
+        let tunables = app.world().resource::<Tunables>();
+        tunables.id_of(&DEPTH_ONLY_SKIP_MATERIAL).is_ok_and(|id| tunables.read(id))
+    };
+    app.insert_resource(DepthOnlyMaterialSettings { skip_material: depth_only });
+    // `render.wgpu.bind_group_walk_once` (vendored wgpu-core, `superfargoth patch (own: bind group walk
+    // once)`): a process-wide switch, set once from the value of this start (default on); an unregistered
+    // tunable (a host without `register`) leaves wgpu-core stock.
+    let walk_once = {
+        let tunables = app.world().resource::<Tunables>();
+        tunables.id_of(&BIND_GROUP_WALK_ONCE).is_ok_and(|id| tunables.read(id))
+    };
+    bevy::render::renderer::encode_timing::set_bind_group_walk_once(walk_once);
     let tunables = app.world().resource::<Tunables>();
     tunables.read(tunables.id_of(&SELECT_GATE).expect("registered"))
 }

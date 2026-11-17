@@ -160,6 +160,10 @@ struct RenderContextStateInner {
     command_encoder: Option<CommandEncoder>,
     commands: Vec<PendingCommandBuffer>,
     render_device: Option<RenderDevice>,
+    // superfargoth patch (own, M3 encode timers): the label of the first tracked render pass this system
+    // began, kept only while the encode-timing hook is installed; names the system's encoders when the
+    // system name is empty (no `debug` feature).
+    first_pass_label: Option<String>,
 }
 
 impl RenderContextStateInner {
@@ -220,10 +224,19 @@ impl SystemBuffer for RenderContextState {
         inner.flush_encoder();
 
         // superfargoth patch (own, M3 encode timers): names also when the encode-timing hook is installed
+        let first_pass_label = inner.first_pass_label.take();
         if cfg!(feature = "trace") || super::encode_timing::hook().is_some() {
             for command in &mut inner.commands {
                 if let PendingCommandBuffer::Encoder { name, .. } = command {
                     *name = _system_meta.name().clone().into();
+                    // No system name (without the `debug` feature it is the placeholder
+                    // `<Enable the debug feature to see the name>`): the first render pass's label, as
+                    // `pass:<label>`.
+                    if name.is_empty() || name.starts_with('<') {
+                        if let Some(label) = &first_pass_label {
+                            *name = format!("pass:{label}").into();
+                        }
+                    }
                 }
             }
         }
@@ -277,6 +290,11 @@ impl<'w, 's> RenderContext<'w, 's> {
         descriptor: RenderPassDescriptor<'_>,
     ) -> TrackedRenderPass<'a> {
         self.ensure_device();
+
+        // superfargoth patch (own, M3 encode timers)
+        if self.state.0.first_pass_label.is_none() && super::encode_timing::hook().is_some() {
+            self.state.0.first_pass_label = descriptor.label.map(str::to_owned);
+        }
 
         let command_encoder = self.state.0.command_encoder.get_or_insert_with(|| {
             self.render_device

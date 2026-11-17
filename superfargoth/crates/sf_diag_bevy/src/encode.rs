@@ -70,9 +70,28 @@ fn as_f64(v: u64) -> f64 {
 }
 
 /// `bevy_core_pipeline::core_3d::main_opaque_pass_3d<X>::{{closure}}` -> `main_opaque_pass_3d`.
+/// A render pass label used as the name (`pass:<label>`: the vendored `bevy_render` falls back to
+/// it when the system name is unavailable) loses its per-instance suffix, so one counter covers
+/// every light or cascade: `pass:shadow_point_light_4_-y` -> `pass:shadow_point_light`.
 pub(crate) fn encoder_name(system: &str) -> &str {
     let base = system.split('<').next().unwrap_or(system);
-    base.rsplit("::").find(|s| !s.is_empty() && !s.starts_with('{')).unwrap_or(base)
+    let name = base.rsplit("::").find(|s| !s.is_empty() && !s.starts_with('{')).unwrap_or(base);
+    if name.starts_with("pass:") { without_instance(name) } else { name }
+}
+
+/// `name` up to its first `_<digits>_` (an index inside a label starts a per-instance suffix).
+fn without_instance(name: &str) -> &str {
+    let bytes = name.as_bytes();
+    let mut from = 0;
+    while let Some(offset) = name[from..].find('_') {
+        let underscore = from + offset;
+        let digits = bytes[underscore + 1..].iter().take_while(|b| b.is_ascii_digit()).count();
+        if digits > 0 && bytes.get(underscore + 1 + digits) == Some(&b'_') {
+            return &name[..underscore];
+        }
+        from = underscore + 1;
+    }
+    name
 }
 
 impl EncodeFrame {
@@ -170,6 +189,26 @@ pub(crate) fn report(counters: &Counters) {
         ],
     });
     frame.report(counters);
+    drop(frame);
+    // Render-pass bind group walks (vendored wgpu-core, `superfargoth patch (own: bind group walk once)`):
+    // how often a pass merged a bind group into its usage scope and registered its init actions, how
+    // often the switch skipped a repeat, and the texture entries each walked or would have walked.
+    let w = bevy_render::renderer::encode_timing::take_bind_group_walk_counts();
+    let walks = [
+        ("encode/bind_walk/merges", w.merges),
+        ("encode/bind_walk/merge_textures", w.merge_textures),
+        ("encode/bind_walk/merges_skipped", w.merges_skipped),
+        ("encode/bind_walk/merge_textures_skipped", w.merge_textures_skipped),
+        ("encode/bind_walk/inits", w.inits),
+        ("encode/bind_walk/init_textures", w.init_textures),
+        ("encode/bind_walk/inits_skipped", w.inits_skipped),
+        ("encode/bind_walk/init_textures_skipped", w.init_textures_skipped),
+    ];
+    if walks.iter().any(|(_, v)| *v > 0) {
+        for (key, v) in walks {
+            counters.add_named(key, unit::COUNT, as_f64(v));
+        }
+    }
 }
 
 #[cfg(feature = "render")]
