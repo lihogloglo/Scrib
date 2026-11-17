@@ -1,6 +1,6 @@
 // Sky bodies drawn into the sky (sf_sky_bevy `night.rs`): a procedural star
-// field, the moons (textured per phase, or a shaded sphere) and the sun's
-// glare. One fullscreen triangle at the far plane, depth-tested against the
+// field, the moons (textured per phase, or a shaded sphere) with their glow,
+// and the sun's glare. One fullscreen triangle at the far plane, depth-tested against the
 // scene so it only touches sky pixels; additive onto Bevy's sky, before the
 // cloud composite (which then hides all of it behind clouds). Radiances are
 // in nits and already carry the atmosphere's transmittance (CPU, per moon
@@ -24,6 +24,12 @@ struct GpuMoon {
     radiance: vec3<f32>,
     // Lit surface (1) versus a plain disk that only hides the stars (0).
     texture_blend: f32,
+    // Glow (sf_sky::Moon::glow): radiance at the disk edge before the
+    // texture's hue, the edge's angular radius and the 1/e distance beyond it
+    // (radians; 0: no glow).
+    glow_radiance: vec3<f32>,
+    glow_edge: f32,
+    glow_falloff: f32,
 }
 
 struct Night {
@@ -49,6 +55,11 @@ struct Night {
 @group(0) @binding(6) var moon_sampler: sampler;
 
 const PI: f32 = 3.14159265;
+// The hue grid: 4x4 bilinear taps between texel pairs cover an 8x8 mip once.
+const HUE_GRID: u32 = 4u; // tunables: const (layout: covers the 8x8 level exactly)
+// A glow term below this share of the frame's white (after exposure) is not
+// evaluated: under one 12-bit output step.
+const GLOW_NEGLIGIBLE: f32 = 0.000244; // tunables: const (maths: 1/4096, below one 12-bit output step)
 
 fn pcg3d(v_in: vec3<u32>) -> vec3<u32> {
     var v = v_in * 1664525u + 1013904223u;
@@ -116,13 +127,49 @@ fn sky_transmittance(d: vec3<f32>) -> vec3<f32> {
     return mix(night.transmittance[i].rgb, night.transmittance[j].rgb, fract(x));
 }
 
-fn sample_moon(i: u32, uv: vec2<f32>) -> vec4<f32> {
+fn sample_moon_level(i: u32, uv: vec2<f32>, level: f32) -> vec4<f32> {
     switch i {
-        case 0u: { return textureSampleLevel(moon0, moon_sampler, uv, 0.0); }
-        case 1u: { return textureSampleLevel(moon1, moon_sampler, uv, 0.0); }
-        case 2u: { return textureSampleLevel(moon2, moon_sampler, uv, 0.0); }
-        default: { return textureSampleLevel(moon3, moon_sampler, uv, 0.0); }
+        case 0u: { return textureSampleLevel(moon0, moon_sampler, uv, level); }
+        case 1u: { return textureSampleLevel(moon1, moon_sampler, uv, level); }
+        case 2u: { return textureSampleLevel(moon2, moon_sampler, uv, level); }
+        default: { return textureSampleLevel(moon3, moon_sampler, uv, level); }
     }
+}
+
+fn sample_moon(i: u32, uv: vec2<f32>) -> vec4<f32> {
+    return sample_moon_level(i, uv, 0.0);
+}
+
+// (base width, mip count) of moon `i`'s bound texture.
+fn moon_texture_size(i: u32) -> vec2<u32> {
+    switch i {
+        case 0u: { return vec2(textureDimensions(moon0).x, textureNumLevels(moon0)); }
+        case 1u: { return vec2(textureDimensions(moon1).x, textureNumLevels(moon1)); }
+        case 2u: { return vec2(textureDimensions(moon2).x, textureNumLevels(moon2)); }
+        default: { return vec2(textureDimensions(moon3).x, textureNumLevels(moon3)); }
+    }
+}
+
+// The glow's hue: the bound phase texture's average colour, alpha-weighted
+// (the transparent margin adds nothing) and normalised to luminance 1. Read
+// at the level nearest 8x8 (Morrowind's phase DDS stop there: 512 with 7
+// levels, 256 with 6), or the smallest the texture has, on a 4x4 tap grid.
+// Dark texels (the unlit side of a phase) weigh little, so the lit part sets
+// the hue; a black texture (new moon) falls back to white, and its glow is
+// ~0 anyway (no light at new moon).
+fn moon_hue(i: u32) -> vec3<f32> {
+    let size = moon_texture_size(i);
+    let level = min(size.y - 1u, max(firstLeadingBit(max(size.x, 1u)), 3u) - 3u);
+    var sum = vec3(0.0);
+    for (var y = 0u; y < HUE_GRID; y += 1u) {
+        for (var x = 0u; x < HUE_GRID; x += 1u) {
+            let uv = (vec2(f32(x), f32(y)) + 0.5) / f32(HUE_GRID);
+            let t = sample_moon_level(i, uv, f32(level));
+            sum += t.rgb * t.a;
+        }
+    }
+    let l = dot(sum, vec3(0.2126, 0.7152, 0.0722));
+    return select(vec3(1.0), sum / l, l > 1e-6);
 }
 
 @fragment
@@ -147,7 +194,22 @@ fn night_sky(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         if c <= 0.0 || m.alpha <= 0.0 {
             continue;
         }
-        let p = vec2(dot(d, m.right), dot(d, m.up)) / (c * m.tan_radius);
+        // Gnomonic (tangent plane) offset: |q| = tan(angle from the centre).
+        let q = vec2(dot(d, m.right), dot(d, m.up)) / c;
+        // Glow, under the disk (the disk hides it where it is opaque):
+        // exponential beyond the disk edge, flat inside it.
+        if m.glow_falloff > 0.0 {
+            let x = max(atan(length(q)) - m.glow_edge, 0.0) / m.glow_falloff;
+            let g = m.glow_radiance * exp(-x);
+            if max(g.r, max(g.g, g.b)) * view.exposure > GLOW_NEGLIGIBLE {
+                var hue = vec3(1.0);
+                if m.textured != 0u {
+                    hue = moon_hue(i);
+                }
+                color += g * hue;
+            }
+        }
+        let p = q / m.tan_radius;
         let r = length(p);
         let aa = px / m.tan_radius;
         if r > 1.0 + aa {

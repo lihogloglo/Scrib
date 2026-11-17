@@ -44,7 +44,7 @@ pub use celestial::{Celestial, Orbit, SkyPosition};
 pub use clock::{Calendar, SkyClock};
 pub use curve::KeyCurve;
 pub use night::{
-    MAX_MOONS, Moon, MoonDrive, MoonDriver, MoonPath, MoonState, Moonlight, NIGHT_SKY_GLOW_RATIO, NIGHT_SKY_HORIZON_RATIO, NightGlow, NightSky, StarField, SunDiskLook, phase_light,
+    MAX_MOONS, MOON_GLOW, MOON_GLOW_SIZE, MOON_GLOW_TUNABLES, Moon, MoonDrive, MoonDriver, MoonGlow, MoonPath, MoonState, Moonlight, NIGHT_SKY_GLOW_RATIO, NIGHT_SKY_HORIZON_RATIO, NightGlow, NightSky, StarField, SunDiskLook, phase_light,
 };
 pub use sky::{ExposureRange, SkyLight, SkySettings, SkyState, luminance};
 pub use weather::{Weather, Wind};

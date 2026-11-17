@@ -199,3 +199,89 @@ fn quad_sizes_follow_sky_cpp() {
     assert!(close(quad_angular_size(94.0).to_degrees(), 20.84, 0.01));
     assert!(close(quad_angular_size(40.0).to_degrees(), 8.95, 0.01));
 }
+
+fn rising(moon: MoonName) -> MoonModel {
+    MoonModel::from_ini_with(moon, None, MoonHorizon::Rise)
+}
+
+/// NS-3 owner 2026-11-17 (modern rule): a moon shows, textured, from just above the horizon on
+/// both sides of its arc; the classic rule hides it below `Fade End Angle` (Masser 40, Secunda
+/// 30). The cycles differ (the handovers move), so the rules are compared at equal angles, then
+/// on a real night.
+#[test]
+fn rise_shows_the_moon_from_the_horizon() {
+    for moon in MoonName::ALL {
+        let (modern, classic) = (rising(moon), MoonModel::from_ini(moon, None));
+        for angle in [1.0, 10.0, 25.0, 155.0, 179.0] {
+            assert_eq!((modern.early_moon_shadow_alpha(angle), modern.shadow_blend(angle)), (1.0, 1.0), "{moon:?} {angle}");
+            assert_eq!(classic.early_moon_shadow_alpha(angle), 0.0, "{moon:?} {angle}");
+        }
+        // Some night of the first cycle has it opaque and textured below 15 deg.
+        let low = (1..=24).any(|day| {
+            (0..96).any(|q| {
+                let st = modern.state(day, f32::from(u8::try_from(q).unwrap_or(0)) / 4.0);
+                st.rotation_from_horizon > 0.5 && st.rotation_from_horizon < 15.0 && st.alpha == 1.0 && st.shadow_blend == 1.0
+            })
+        });
+        assert!(low, "{moon:?} never seen low");
+    }
+    let s = rising(MoonName::Secunda);
+    // A quarter degree up: half way through the 0.5 deg edge ramp.
+    assert!(close(s.early_moon_shadow_alpha(0.25), 0.5, 1e-5));
+    assert_eq!((s.early_moon_shadow_alpha(0.0), s.early_moon_shadow_alpha(180.0)), (0.0, 0.0));
+    // Noon: the daytime fade still hides it.
+    assert_eq!(s.state(1, 12.0).alpha, 0.0);
+}
+
+/// The modern rule must not show the rise-hour handover (`handoverHour`, the moon switching to
+/// the next day's place on its path): over a whole 24-day cycle, minute by minute, a moon seen in
+/// two consecutive minutes moves at most its path speed, both rules.
+#[test]
+fn a_visible_moon_never_jumps() {
+    for horizon in [MoonHorizon::Rise, MoonHorizon::OpenMwFade] {
+        for moon in MoonName::ALL {
+            let model = MoonModel::from_ini_with(moon, None, horizon);
+            let step_deg = model.degrees_per_hour() / 60.0;
+            let mut last: Option<(glam::Vec3, f32)> = None;
+            let mut seen = 0_u32;
+            for minute in 0..24 * 24 * 60 {
+                let (day, hour) = (1 + minute / (24 * 60), f32::from(u16::try_from(minute % (24 * 60)).unwrap_or(0)) / 60.0);
+                let state = model.state(day, hour);
+                let now = (state.direction(), state.alpha);
+                if let Some((dir, alpha)) = last
+                    && alpha > 0.0
+                    && now.1 > 0.0
+                {
+                    seen += 1;
+                    let moved = dir.angle_between(now.0).to_degrees();
+                    assert!(moved <= step_deg * 1.5 + 1e-3, "{horizon:?} {moon:?} day {day} {hour:.3} h: jumped {moved:.2} deg");
+                }
+                last = Some(now);
+            }
+            assert!(seen > 0, "{horizon:?} {moon:?} never visible");
+        }
+    }
+}
+
+#[test]
+#[ignore = "measurement: NS-3 both moons over the owner's 2026-11-17 night (clock day 172 from 22:00), modern vs classic"]
+fn owner_night_both_moons() {
+    for moon in MoonName::ALL {
+        let (modern, classic) = (rising(moon), MoonModel::from_ini(moon, None));
+        for q in 0..((31 - 22) * 4) {
+            let (day, hour) = game_day_hour(172.0 + (22.0 + f64::from(q) * 0.25) / 24.0);
+            let (m, c) = (modern.state(day, hour), classic.state(day, hour));
+            println!(
+                "{moon:?} day {day} {hour:5.2} h: modern up {:6.2} deg {:?} alpha {:.2} blend {:.2} | classic up {:6.2} deg {:?} alpha {:.2} blend {:.2}",
+                m.direction().z.asin().to_degrees(),
+                m.phase,
+                m.alpha,
+                m.shadow_blend,
+                c.direction().z.asin().to_degrees(),
+                c.phase,
+                c.alpha,
+                c.shadow_blend
+            );
+        }
+    }
+}

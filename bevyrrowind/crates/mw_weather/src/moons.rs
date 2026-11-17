@@ -38,6 +38,20 @@ const DAYS_PER_CYCLE: i32 = DAYS_PER_PHASE * PHASES_PER_CYCLE;
 /// `sStartIncrements`: from the start date, 16 Last Seed 427.
 const START_INCREMENTS: i32 = 17; // tunables: const (OpenMW data: the start date)
 
+/// How a moon shows near the horizon (owner 2026-11-17, `DECISIONS.md` NS-3): the rules seam
+/// between the modern default and the classic look. Paths, phases and the daytime fade
+/// (`hourlyAlpha`) are `OpenMW`'s either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MoonHorizon {
+    /// Modern default: the moon shows from the moment it rises, its surface textured all the way;
+    /// the framework's atmosphere dims and reddens it low down, as its glow already was.
+    #[default]
+    Rise,
+    /// `OpenMW` / vanilla: hidden below `Fade End Angle`, a plain star-hiding disk up to
+    /// `Fade Start Angle` (`earlyMoonShadowAlpha`, `shadowBlend`). For the Classic preset.
+    OpenMwFade,
+}
+
 /// The two moons, in the order `OpenMW` creates (and draws) them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoonName {
@@ -109,6 +123,23 @@ impl MoonSettings {
             fade_end_angle: f("Fade End Angle"),
             moon_shadow_early_fade_angle: f("Moon Shadow Early Fade Angle"),
         }
+    }
+
+    /// These settings under `horizon`. [`MoonHorizon::Rise`] sets both fade angles to the early
+    /// fade angle (vanilla 0.5 deg), so `earlyMoonShadowAlpha` only ramps the first and last
+    /// half degree of the arc and `shadowBlend` is textured above it. Applied before the cycle is
+    /// built, so `handoverHour` (the switch to the next day's rise hour, a jump of the moon along
+    /// its path) still falls only where the moon is invisible: below the horizon or faded out by
+    /// day, never on a moon low in the sky. The player's `Fade Start/End Angle` keys only count
+    /// under [`MoonHorizon::OpenMwFade`].
+    #[must_use]
+    pub fn with_horizon(mut self, horizon: MoonHorizon) -> Self {
+        if horizon == MoonHorizon::Rise {
+            let edge = self.moon_shadow_early_fade_angle.max(0.0);
+            self.fade_start_angle = edge;
+            self.fade_end_angle = edge;
+        }
+        self
     }
 }
 
@@ -267,10 +298,16 @@ impl MoonModel {
         m
     }
 
-    /// The moon from the player's ini (vanilla fallbacks).
+    /// The moon from the player's ini (vanilla fallbacks), as `OpenMW` shows it
+    /// ([`MoonHorizon::OpenMwFade`]).
     pub fn from_ini(moon: MoonName, ini: Option<&MorrowindIni>) -> Self {
+        Self::from_ini_with(moon, ini, MoonHorizon::OpenMwFade)
+    }
+
+    /// [`Self::from_ini`] under `horizon` ([`MoonSettings::with_horizon`]).
+    pub fn from_ini_with(moon: MoonName, ini: Option<&MorrowindIni>, horizon: MoonHorizon) -> Self {
         let (sunrise, sunset) = day_hours(ini);
-        Self::new(MoonSettings::from_ini(moon, ini), sunrise, sunset)
+        Self::new(MoonSettings::from_ini(moon, ini).with_horizon(horizon), sunrise, sunset)
     }
 
     pub fn settings(&self) -> &MoonSettings {

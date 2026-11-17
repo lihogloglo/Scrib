@@ -117,3 +117,21 @@ fn old_circuit_put_secunda_at_the_horizon() {
         );
     }
 }
+
+/// NS-3c: both moons glow (framework defaults, hue from their own textures in the night pass),
+/// and the glow never changes the moonlight: the light that lights the ground is the same
+/// with every glow off.
+#[test]
+fn moons_glow_without_changing_the_moonlight() {
+    let s = settings();
+    assert!(s.moons.iter().all(|m| m.glow > 0.0 && m.glow_size > 0.0));
+    let mut off = s.clone();
+    for m in &mut off.moons {
+        m.glow = 0.0;
+    }
+    for hour in [21.0, 23.5, 1.0, 3.0] {
+        let (a, b) = (at(&s, 162.0, hour), at(&off, 162.0, hour));
+        assert_eq!(a.moon, b.moon, "moonlight at {hour}");
+        assert_eq!(a.night, b.night, "drawn moons at {hour}");
+    }
+}

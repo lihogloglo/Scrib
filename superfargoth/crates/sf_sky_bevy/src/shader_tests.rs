@@ -287,3 +287,23 @@ fn night_sky_shader_compiles() {
     let wgsl = compile("sf_sky_bevy::night", &[]).unwrap_or_else(|e| panic!("{e}"));
     assert!(wgsl.contains("texture_blend") && wgsl.contains("alpha"));
 }
+
+/// NS-3c: the night pass with the moon glow (texture hue taps, glow under the disk) links and
+/// validates, and the Rust night uniform (`GpuMoon` with the glow fields) and the WGSL `Night`
+/// struct have the same size.
+#[test]
+fn night_sky_glow_compiles_and_the_uniform_layout_matches() {
+    use bevy_render::render_resource::ShaderType;
+    let wgsl = compile("sf_sky_bevy::night", &[]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(wgsl.contains("glow_falloff") && wgsl.contains("textureNumLevels"), "the glow and its hue are in the linked shader");
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("parses");
+    let (handle, _) = module
+        .types
+        .iter()
+        .find(|(_, t)| t.name.as_deref().is_some_and(|n| n.contains("Night")))
+        .unwrap_or_else(|| panic!("Night in the linked module: {:?}", module.types.iter().filter_map(|(_, t)| t.name.clone()).collect::<Vec<_>>()));
+    let mut layouter = naga::proc::Layouter::default();
+    layouter.update(module.to_ctx()).expect("layout");
+    let rust = crate::night::NightUniform::min_size().get();
+    assert_eq!(u64::from(layouter[handle].size), rust, "WGSL vs Rust size");
+}

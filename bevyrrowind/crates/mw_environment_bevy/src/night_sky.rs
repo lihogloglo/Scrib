@@ -7,9 +7,12 @@
 //! `apps/openmw/mwworld/weather.cpp` at commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`): each
 //! is an [`MoonPath::Driven`] moon whose driver maps the game clock to `OpenMW`'s game day and hour
 //! and hands the framework the moon's direction (`Moon::setState`), phase, opacity
-//! (`earlyMoonShadowAlpha * hourlyAlpha`: hidden near the horizon and by day) and texture blend
-//! (`shadowBlend`: a plain star-hiding disk low down, the textured moon higher up; the night pass
-//! draws it like `OpenMW`'s `paintMoon`). The drawn size is `OpenMW`'s moon quad
+//! (`earlyMoonShadowAlpha * hourlyAlpha`) and texture blend (`shadowBlend`). The horizon rule is
+//! [`MoonHorizon::default`] (owner 2026-11-17): the moon shows from its rise, textured, dimmed and
+//! reddened by the atmosphere like its glow; `OpenMW`'s fade (hidden below `Fade End Angle`, a
+//! plain star-hiding disk up to `Fade Start Angle`, as `paintMoon` draws it) is
+//! [`MoonHorizon::OpenMwFade`], for the Classic preset. Hidden by day either way. The night pass
+//! draws the blend like `OpenMW`'s `paintMoon`. The drawn size is `OpenMW`'s moon quad
 //! ([`mw_weather::moons::quad_angular_size`]: Masser 20.8 deg, Secunda 9.0 deg at the vanilla
 //! sizes 94 and 40).
 //!
@@ -21,7 +24,7 @@
 //! texel 1.4x Masser's). `old_circuit_put_secunda_at_the_horizon` in the tests prints them.
 
 use mw_install::MorrowindIni;
-use mw_weather::moons::{MoonModel, MoonName, game_day_hour, quad_angular_size};
+use mw_weather::moons::{MoonHorizon, MoonModel, MoonName, game_day_hour, quad_angular_size};
 use sf_sky_bevy::sf_sky::{Moon, MoonDrive, MoonDriver, MoonPath, SkyClock, SkySettings};
 
 /// Drawn degrees per unit of `Masser Size` / `Secunda Size` of the earlier, smaller disks, at
@@ -68,7 +71,7 @@ pub fn apply_with(settings: &mut SkySettings, ini: Option<&MorrowindIni>) {
         .iter()
         .zip(&MOONS)
         .map(|(&name, look)| {
-            let model = MoonModel::from_ini(name, ini);
+            let model = MoonModel::from_ini_with(name, ini, MoonHorizon::default());
             let size = model.settings().size;
             let angular_size = quad_angular_size(size);
             // Same radiance as the earlier disk: illuminance over the drawn solid angle (pi r^2).
@@ -86,6 +89,9 @@ pub fn apply_with(settings: &mut SkySettings, ini: Option<&MorrowindIni>) {
                 textures: name.phase_textures(),
                 // The textures leave a margin around the disk.
                 occluder: 0.85,
+                // The framework's glow (NS-3c): coloured by each moon's own texture, so
+                // Masser's comes out reddish and Secunda's pale; a texture mod recolours it.
+                ..Moon::default()
             }
         })
         .collect();

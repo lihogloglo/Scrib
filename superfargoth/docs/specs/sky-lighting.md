@@ -181,6 +181,23 @@ What is *lit* stays physical; what is *drawn* is artistic where games are.
   moons (Lambert phase law each): one shadow caster, as games do. Its strength
   is set apart from the disks (`Moonlight`, N3: artistic full-moon lux, cloud-dimmed, hue from
   the weather; cheaper moon cascades). As built: `sky-lighting-as-built.md`.
+- **Moon glow** (NS-3c as built, 2026-11-17): each moon draws its own small aureole in the night
+  pass, under its disk: `L(θ) = L₀ · hue · exp(-max(θ - edge, 0) / falloff)` with
+  `L₀ = tint · transmittance · glow · alpha · texture_blend · E / (2π falloff (edge + falloff))`
+  (`sf_sky::Moon::glow`; `E` the moon's illuminance at its phase after weather; edge = `occluder`
+  times the drawn radius; falloff = `glow_size` disk radii). So it dims at crescent, reddens and
+  fades low down, and vanishes below the horizon or while the moon is hidden. Hue: the bound phase
+  texture's alpha-weighted average colour, luminance 1, read on the GPU from 16 bilinear taps of
+  the level nearest 8x8 (Morrowind's DDS stop at 8x8; black: white). Per-moon data, defaults
+  `sky.moon.glow.strength` 0.04 and `sky.moon.glow.size` 0.5 (Guess). The moonlight, the
+  atmosphere and the ground lighting are untouched; the atmosphere's own white halo around the
+  brightest moon remains (Bevy has no per-light opt-out; a vendored flag would be needed).
+  Reuse check: Bevy 0.20's atmosphere draws only uniform `SunDisk`s and gets its aureole from the
+  Mie forward peak of each `DirectionalLight` (one more light per moon: per-sample LUT cost, ledger
+  2026-11-12, and a coloured ground). UE's `SkyAtmosphere` takes up to two atmosphere lights, each
+  with a disk and its Mie glow, so a second moon there is the same trade; skies that draw moons as
+  textured sky-sphere bodies add a glow term in the material. We follow our sun-glare precedent
+  (an energy share in an exponential halo, drawn before the clouds), per moon.
 - **Stars** (`StarField`): procedural, three cube-map hash layers (few
   bright, many faint, warm-to-blue tints, scintillation near the horizon).
   Each star is a Gaussian about a pixel wide whose integral is its

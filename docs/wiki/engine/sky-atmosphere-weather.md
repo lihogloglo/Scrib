@@ -27,7 +27,11 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   runs: the perf report shows `GPU ms/run` and `runs/frame` and sums the per-frame share (`sf_diag` `PassTiming`).
   A run still lands on one frame (a ~0.7 ms spike every 8th); spreading it over frames (UE-style) is not done.
 - **Night sky.** Stars, textured moons and sun glare are drawn after the water and before the cloud composite (`night.rs`); the moon
-  light is separate from the drawn disks. Raster or Solari path switch: `path.rs`; DLSS/TAA: `upscale.rs`.
+  light is separate from the drawn disks. Morrowind's moons follow OpenMW's path model (`mw_weather/src/moons.rs`) under
+  `MoonHorizon::Rise` (default since 2026-11-17): opaque and textured from the horizon, dimmed by the atmosphere's
+  transmittance; `OpenMwFade` (hidden below 30-40°) is the classic rule. Each moon also draws its own small glow under
+  its disk (`sf_sky::Moon::glow`, NS-3c), hued by its texture's average colour on the GPU and scaled by its own light at
+  its phase and the transmittance; the single moonlight (and its white atmosphere halo) is unchanged. Raster or Solari path switch: `path.rs`; DLSS/TAA: `upscale.rs`.
 - **Clouds and fog.** `CloudsPlugin` (`sf_atmos_bevy/src/lib.rs:229`): a half-res raymarch lit through the atmosphere
   LUTs, temporal resolve, depth-aware composite after the water (Bevy's transmissive pass) and `render_sky`, before
   transparents; the trace and composite read a depth that holds the water, so weather covers sea like land (W-ORDER,
@@ -67,8 +71,13 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   `CloudWeatherMap` (`:291`, `sf_atmos_bevy/src/weather_map.rs`). Surface weather (wet, puddles, snow, ash) steps in
   `surface.rs` and shades through the vendored SW patch.
   Shelter (`sf_surface_bevy` shelter.rs, exposure.rs) and precip occlusion (`sf_precip_bevy` occlusion.rs) are top-down caster maps
-  around a world-texel-snapped centre; casters pick their LOD by that centre (vendored `bevy_render` `RenderViewLodOrigins`), not the
-  camera, and cover exposure eases toward each redraw (~2 s, world-anchored, kept across a big_space recentre; SW-5 2026-11-16).
+  around a world-texel-snapped centre; every caster draws its level at a fixed LOD distance (vendored `bevy_render`
+  `RenderViewLodDistances`: 0 m near, 150 m far level), whatever the camera, and cover exposure eases toward each redraw (~2 s,
+  world-anchored, kept across a big_space recentre). The captures are one-frame views of Bevy's shadow pass owned by a
+  `DepthViewAnchor` (`sf_sky_bevy/src/sun_view.rs`): Bevy's `extract_lights` strips an anchor's shadow tables every frame, so
+  `extract_anchors` runs after it (2026-11-17; unordered, about every other capture was dropped and the old texels sat under the new
+  centre); a dropped anchor capture logs a warning. Only the static world casts: skinned meshes and everything under an `Animator`
+  (`mw_exterior_bevy/src/shelter_casters.rs`) are out. Read a capture back as numbers with console `surface probe` (dev tools page).
 - **Exposure and night.** Exposure range floor EV100 3.5 and the night ambient floor come from the game
   (`bevyrrowind/crates/mw_assets/src/lights.rs:93`); see [lights](lights.md).
 

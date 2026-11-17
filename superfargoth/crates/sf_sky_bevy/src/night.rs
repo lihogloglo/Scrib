@@ -39,7 +39,7 @@ use sf_render_order_bevy::PassStage;
 use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
 use bevy_time::Time;
-use sf_sky::MAX_MOONS;
+use sf_sky::{MAX_MOONS, Moon, MoonState};
 
 use crate::{CurrentSky, SkyCamera, SkyConfig, WeatherState};
 
@@ -47,7 +47,7 @@ use crate::{CurrentSky, SkyCamera, SkyConfig, WeatherState};
 const T_ROWS: usize = 16;
 
 /// GPU layout of `GpuMoon` in `night.wesl`.
-#[derive(Clone, Copy, Default, ShaderType)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
 struct GpuMoon {
     direction: Vec3,
     tan_radius: f32,
@@ -61,11 +61,17 @@ struct GpuMoon {
     radiance: Vec3,
     /// Lit surface versus the plain star-hiding disk (`MoonState::texture_blend`).
     texture_blend: f32,
+    /// Glow radiance at the disk edge before the texture's hue ([`sf_sky::MoonGlow`]).
+    glow_radiance: Vec3,
+    /// Disk edge, angular radius in radians.
+    glow_edge: f32,
+    /// Glow 1/e distance beyond the edge, radians (0: no glow).
+    glow_falloff: f32,
 }
 
 /// GPU layout of `Night` in `night.wesl`.
 #[derive(Clone, Copy, Default, ShaderType)]
-struct NightUniform {
+pub(crate) struct NightUniform {
     moons: [GpuMoon; MAX_MOONS],
     sun_direction: Vec3,
     glare_size: f32,
@@ -146,30 +152,11 @@ fn prepare_frame(
     let state = &sky.0;
     let mut u = NightUniform::default();
     let mut ids = [None; MAX_MOONS];
+    let looks = settings.moon_list();
     for (i, moon) in state.night.moons().iter().enumerate() {
-        let d = moon.position.direction.normalize_or(Vec3::NEG_Y);
-        let reference = if d.y.abs() > 0.999 { Vec3::Z } else { Vec3::Y };
-        let right = d.cross(reference).normalize();
-        let up = right.cross(d);
-        let radius = moon.angular_size * 0.5;
-        let solid_angle = std::f32::consts::PI * radius * radius;
         let frame_image = moon.frame.and_then(|k| images.handles.get(i)?.get(k as usize)).map(Handle::id);
         ids[i] = frame_image;
-        // Phase lighting for the procedural sphere: θ = 0 new (lit from
-        // behind), π full (lit from the viewer), waxing lit on the right.
-        let theta = std::f32::consts::TAU * moon.phase;
-        u.moons[i] = GpuMoon {
-            direction: d,
-            tan_radius: radius.tan(),
-            right,
-            occluder: moon.occluder,
-            up,
-            textured: u32::from(frame_image.is_some()),
-            light: Vec3::new(theta.sin(), 0.0, -theta.cos()),
-            alpha: moon.alpha,
-            radiance: moon.tint * moon.transmittance * (moon.full_illuminance / solid_angle.max(1e-9)),
-            texture_blend: moon.texture_blend,
-        };
+        u.moons[i] = gpu_moon(moon, looks.get(i), frame_image.is_some());
         u.moon_count += 1;
     }
     let look = &settings.sun_disk;
@@ -190,6 +177,35 @@ fn prepare_frame(
         }
     }
     *frame = NightFrame { uniform: u, images: ids, active: !cameras.is_empty() };
+}
+
+/// One moon's uniform: its disk and its glow ([`Moon::glow`]; none without its settings).
+fn gpu_moon(moon: &MoonState, look: Option<&Moon>, textured: bool) -> GpuMoon {
+    let d = moon.position.direction.normalize_or(Vec3::NEG_Y);
+    let reference = if d.y.abs() > 0.999 { Vec3::Z } else { Vec3::Y };
+    let right = d.cross(reference).normalize();
+    let up = right.cross(d);
+    let radius = moon.angular_size * 0.5;
+    let solid_angle = std::f32::consts::PI * radius * radius;
+    // Phase lighting for the procedural sphere: θ = 0 new (lit from
+    // behind), π full (lit from the viewer), waxing lit on the right.
+    let theta = std::f32::consts::TAU * moon.phase;
+    let glow = look.map(|l| l.glow(moon)).unwrap_or_default();
+    GpuMoon {
+        direction: d,
+        tan_radius: radius.tan(),
+        right,
+        occluder: moon.occluder,
+        up,
+        textured: u32::from(textured),
+        light: Vec3::new(theta.sin(), 0.0, -theta.cos()),
+        alpha: moon.alpha,
+        radiance: moon.tint * moon.transmittance * (moon.full_illuminance / solid_angle.max(1e-9)),
+        texture_blend: moon.texture_blend,
+        glow_radiance: glow.radiance,
+        glow_edge: glow.edge,
+        glow_falloff: if glow.radiance == Vec3::ZERO { 0.0 } else { glow.falloff },
+    }
 }
 
 // -- render world --------------------------------------------------------------
@@ -395,3 +411,7 @@ fn night_pass(
     pass.draw(0..3, 0..1);
     span.end(&mut pass);
 }
+
+#[cfg(test)]
+#[path = "night_tests.rs"]
+mod tests;

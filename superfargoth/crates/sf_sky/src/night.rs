@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use sf_tunables::{AnyDef, Def, Source, Unit, def};
 
 use crate::celestial::{Orbit, SkyPosition};
 use crate::clock::{Calendar, SkyClock};
@@ -121,6 +122,47 @@ pub struct Moon {
     /// Radius of the star-hiding disk as a fraction of the drawn disk (the
     /// unlit side hides stars too). Below 1 when the textures have a margin.
     pub occluder: f32,
+    /// Glow (aureole) around the disk: the share of the moon's light at its
+    /// phase spread into a soft halo outside the disk, coloured by the disk
+    /// texture's average hue ([`Moon::glow`]). 0 turns it off. Default
+    /// [`MOON_GLOW`].
+    pub glow: f32,
+    /// Distance beyond the disk edge (`occluder` times the drawn radius) at
+    /// which the glow falls to 1/e, in disk radii. Default [`MOON_GLOW_SIZE`].
+    pub glow_size: f32,
+}
+
+/// `sky.moon.glow.strength`: the default [`Moon::glow`] (each moon carries its own value; a
+/// game's moons set theirs in data). The sun glare's precedent ([`SunDiskLook::glare`]) is a
+/// share of the light in an exponential halo; nobody measured it for a moon.
+pub const MOON_GLOW: Def<f32> = def!(float "sky.moon.glow.strength" = 0.04)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Share of a moon's light (at its phase, after the atmosphere) drawn as a glow around its disk")
+    .source(Source::Guess);
+
+/// `sky.moon.glow.size`: the default [`Moon::glow_size`]. Small and soft (a few disk radii in
+/// all, not a haze: owner 2026-11-17, NS-3c).
+pub const MOON_GLOW_SIZE: Def<f32> = def!(float "sky.moon.glow.size" = 0.5)
+    .range(0.05, 8.0)
+    .unit(Unit::Ratio)
+    .help("Distance beyond a moon's disk edge at which its glow falls to 1/e, in disk radii")
+    .source(Source::Guess);
+
+/// The moon glow's tunables: defaults of per-moon data ([`Moon::glow`], [`Moon::glow_size`]),
+/// not bound live.
+pub const MOON_GLOW_TUNABLES: &[&dyn AnyDef] = &[&MOON_GLOW, &MOON_GLOW_SIZE];
+
+/// One moon's glow at one instant ([`Moon::glow`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MoonGlow {
+    /// Radiance at and inside the disk edge, linear RGB nits, before the
+    /// texture's hue (luminance 1) multiplies it. Zero: no glow.
+    pub radiance: Vec3,
+    /// Angular radius of the disk edge, radians.
+    pub edge: f32,
+    /// Angular distance beyond the edge at which the glow falls to 1/e, radians.
+    pub falloff: f32,
 }
 
 impl Default for Moon {
@@ -136,6 +178,8 @@ impl Default for Moon {
             tint: [0.9, 0.93, 1.0],
             textures: Vec::new(),
             occluder: 1.0,
+            glow: MOON_GLOW.default_value(),
+            glow_size: MOON_GLOW_SIZE.default_value(),
         }
     }
 }
@@ -225,6 +269,27 @@ pub fn phase_light(phase: f64) -> (f32, f32) {
 }
 
 impl Moon {
+    /// This moon's glow in `state`: `L(θ) = L₀ exp(-max(θ - edge, 0) / falloff)` at angle `θ`
+    /// from the disk centre, with `L₀ = tint · transmittance · glow · alpha · texture_blend · E
+    /// / (2π falloff (edge + falloff))`: [`Self::glow`] of the moon's illuminance `E` at its
+    /// phase (the halo's integral outside the disk, small angles). It dims at crescent, reddens
+    /// and fades low down, and vanishes below the horizon (transmittance 0) or while the moon
+    /// is hidden (`alpha` 0).
+    #[must_use]
+    pub fn glow(&self, state: &MoonState) -> MoonGlow {
+        let (lo, hi) = MOON_GLOW.bounds().unwrap_or((0.0, 1.0));
+        let (size_lo, size_hi) = MOON_GLOW_SIZE.bounds().unwrap_or((0.05, 8.0));
+        let edge = 0.5 * state.angular_size.max(0.0) * state.occluder.clamp(0.0, 1.0);
+        let falloff = self.glow_size.clamp(size_lo, size_hi) * edge;
+        let share = self.glow.clamp(lo, hi) * state.alpha.clamp(0.0, 1.0) * state.texture_blend.clamp(0.0, 1.0);
+        if !(falloff > 0.0 && share > 0.0 && state.illuminance > 0.0) {
+            return MoonGlow { radiance: Vec3::ZERO, edge, falloff };
+        }
+        let spread = std::f32::consts::TAU * falloff * (edge + falloff);
+        let radiance = state.tint * state.transmittance.max(Vec3::ZERO) * (share * state.illuminance / spread);
+        MoonGlow { radiance, edge, falloff }
+    }
+
     /// Phase at `clock`, snapped to `phase_steps`, and the texture frame (a driven moon: its
     /// driver's phase).
     pub fn phase(&self, clock: &SkyClock) -> (f64, Option<u32>) {
