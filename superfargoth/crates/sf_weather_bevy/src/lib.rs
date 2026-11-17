@@ -57,7 +57,7 @@ mod surface;
 #[cfg(test)]
 mod tests;
 
-pub use surface::{SurfaceDebug, WorldSurface, dump as surface_dump, set as surface_set};
+pub use surface::{ProbeRequest, ProbeStatus, SurfaceDebug, SurfaceProbe, WorldSurface, dump as surface_dump, set as surface_set};
 pub use fx::{
     CUE_STEP, LIGHTNING_GLOW, LIGHTNING_GLOW_HEIGHT, LIGHTNING_NEAR_M, near_factor, LIGHTNING_CLOUD_GAIN, LIGHTNING_ELEVATION, LIGHTNING_LUX, LightningFlash, LightningLight, WeatherSound, assign_slots,
     lightning_direction, precip_brightness, precip_slot, PrecipWind, capped_slot,
@@ -193,6 +193,7 @@ impl Plugin for WeatherPlugin {
             .init_resource::<PrecipWind>()
             .init_resource::<WorldSurface>()
             .init_resource::<SurfaceDebug>()
+            .init_resource::<SurfaceProbe>()
             .add_message::<WeatherSound>()
             .configure_sets(
                 Update,
@@ -215,6 +216,7 @@ impl Plugin for WeatherPlugin {
                     .in_set(WeatherSystems::Apply)
                     .before(sf_precip_bevy::PrecipSystems),
             );
+        app.add_systems(bevy_app::Last, surface::probe_to_console);
         surface::register_console(app);
     }
 }

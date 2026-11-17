@@ -116,7 +116,7 @@ anywhere in Bevy's dependency closure (`superfargoth/docs/build-perf.md` "Featur
 
 - **Every cargo command that compiles goes through `bash bevyrrowind/tools/cargo_turn.sh <cargo args>`** (path
   from the repo root; same workspace from any folder). It is a first-come queue shared by every session
-  (`--queue` lists it), waits for any build from any project, and runs at BelowNormal priority. While
+  (`--queue` lists it; `--stats` sums its log of waits and build times), waits for any build from any project, and runs at BelowNormal priority. While
   `.sessions/BUILD-FREEZE` exists, only commands run with `SCRIB_BUILD_FREEZE_OK=1` go through (someone is
   fixing manifests). `cargo tree`, `cargo deny` and `cargo hakari` don't compile and skip the queue.
 - **These share one Bevy:** `test -p <any crate>`, `test --workspace`, `build -p bevyrrowind` (and the same with

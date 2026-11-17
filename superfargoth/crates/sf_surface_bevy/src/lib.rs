@@ -42,6 +42,7 @@ mod cells;
 pub mod deform;
 pub mod cover;
 mod exposure;
+mod probe;
 pub mod kickup;
 mod render;
 mod shelter;
@@ -56,6 +57,8 @@ mod shader_tests;
 mod deform_tests;
 #[cfg(test)]
 mod shelter_offset_tests;
+#[cfg(test)]
+mod probe_tests;
 
 use bevy_app::{App, Plugin, PostUpdate, Startup};
 use bevy_asset::{Assets, Handle, RenderAssetUsages};
@@ -72,6 +75,8 @@ use bevy_time::Time;
 use sf_surface::layer::RIPPLE_TIME_WRAP_S;
 use sf_tunables::{AnyDef, Def, Source, Unit, def};
 use sf_weather_bevy::{CurrentWeather, SurfaceDebug, WorldSurface};
+/// `surface probe`: the request and its text (`probe` reads the shelter maps back for it).
+pub use sf_weather_bevy::{ProbeRequest, ProbeStatus, SurfaceProbe};
 
 pub use cells::{CellWrite, CellWrites};
 pub use cover::{CoverLayers, CoverSource};
@@ -308,6 +313,9 @@ impl Plugin for SurfaceWeatherPlugin {
             .init_resource::<ShelterFarSettings>()
             .init_resource::<ShelterReach>()
             .init_resource::<SurfaceDebug>()
+            .init_resource::<SurfaceProbe>()
+            .init_resource::<probe::ProbeState>()
+            .init_resource::<shelter::ShelterPending>()
             .init_resource::<TrailFrame>()
             .init_resource::<DeformSettings>()
             .init_resource::<DeformGaps>()
@@ -331,6 +339,7 @@ impl Plugin for SurfaceWeatherPlugin {
                     deform::update_deform,
                     debug_view,
                     shelter::update_shelter,
+                    probe::run_probe,
                     ripple_clock,
                     count_uniform,
                 )

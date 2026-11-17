@@ -491,6 +491,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             .configure_sets(PostUpdate, sf_surface_bevy::SurfaceSystems.after(TerrainSystems::Update))
             .add_systems(PostUpdate, surface_glue.after(sync_origin).before(sf_surface_bevy::SurfaceSystems))
             .add_systems(PostUpdate, shelter_foliage.before(sf_surface_bevy::SurfaceSystems))
+            // Shelter audit 2026-11-17: only the static world casts ground shelter (`shelter_casters.rs`).
+            .add_systems(PostUpdate, crate::shelter_casters::no_shelter_for_animated::<sf_anim_bevy::Animator>.before(sf_surface_bevy::SurfaceSystems))
             .add_systems(PostUpdate, crate::trails::foot_stamps.after(sf_anim_bevy::AnimSystems::Apply).before(sf_surface_bevy::SurfaceSystems))
             // S1b: deformer tags, the capture's ground hook, sweep-gap prints (`trails.rs`).
             .add_plugins(crate::trails::deform_plugin)

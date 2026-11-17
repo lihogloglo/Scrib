@@ -11,7 +11,14 @@
 //! 300 m out to past the tree, through both levels' recentres, vertical recentres and a
 //! floating-origin shift.
 
-#![allow(clippy::float_cmp, clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+#![allow(
+    clippy::float_cmp,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::many_single_char_names,
+    clippy::struct_field_names,
+    reason = "a shader twin: the shader's short names and the uniform's field names"
+)]
 
 use std::collections::HashMap;
 

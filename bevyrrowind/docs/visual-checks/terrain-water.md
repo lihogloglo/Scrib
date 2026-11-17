@@ -81,6 +81,9 @@ moment, waves jumping at the shore, floating things (CPU water) bobbing out of s
 ### WA-7: Water chain gated by visible water (CW-10a; `view "Balmora"`; switch `water.gate.visible`)
 
 Status: awaiting owner (built 2026-11-17, cw10a-water; not measured).
+- Owner 2026-11-17 (dev build, `set water.gate.visible on`): nothing broke, no visible change (expected: it only skips passes). The
+  F3 GPU water-pass numbers could not be read: the F3 panel shows no GPU data at all (logged, rendering). Status: look
+  confirmed (no regression); perf not seen.
 Launch: release build, `bash bevyrrowind/tools/owner_launch.sh view "Balmora"` at noon, F3 GPU passes open. In a street
 facing away from the Odai: note `water_velocity`, `water_sspr`, `water_snapshot`, then `set water.gate.visible on`: they should
 drop to ~0 (a small `water_gate` probe appears; `water_fft` stays unless you look at the sky or straight down).

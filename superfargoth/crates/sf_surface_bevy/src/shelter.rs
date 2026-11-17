@@ -165,7 +165,8 @@ pub(crate) fn shelter_image() -> Image {
         RenderAssetUsages::RENDER_WORLD,
     );
     image.texture_descriptor.usage =
-        TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT;
+        // COPY_SRC: `surface probe` reads the maps back (`crate::probe`).
+        TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC;
     image.sampler = ImageSampler::nearest();
     image
 }
@@ -186,6 +187,15 @@ pub(crate) struct LevelState {
 pub(crate) struct ShelterState {
     near: LevelState,
     far: LevelState,
+}
+
+/// Per level: a redraw was requested (this frame or earlier) whose clip the uniform has not
+/// taken yet, so the level's maps and the uniform's clip may not be the same capture.
+/// `crate::probe` reads the maps back only on a frame where neither is set.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ShelterPending {
+    pub(crate) near: bool,
+    pub(crate) far: bool,
 }
 
 /// One level's slots in the uniform: its clip, its `shelter` and its `canopy` vec4s.
@@ -361,7 +371,7 @@ pub(crate) fn level_frame(
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity, clippy::too_many_lines)]
 pub(crate) fn update_shelter(
-    mut frames: (ResMut<ShelterFrame>, ResMut<CanopyFrame>, ResMut<FarShelterFrame>, ResMut<FarCanopyFrame>),
+    mut frames: (ResMut<ShelterFrame>, ResMut<CanopyFrame>, ResMut<FarShelterFrame>, ResMut<FarCanopyFrame>, ResMut<ShelterPending>),
     mut exposure: ResMut<ExposureFrame>,
     mut reach: ResMut<ShelterReach>,
     time: Option<Res<Time<Real>>>,
@@ -386,7 +396,7 @@ pub(crate) fn update_shelter(
     mut shelter: Local<ShelterState>,
     counters: Option<Res<DiagCounters>>,
 ) {
-    let (frame, canopy, far_frame, far_canopy) = (&mut frames.0, &mut frames.1, &mut frames.2, &mut frames.3);
+    let (frame, canopy, far_frame, far_canopy, pending) = (&mut frames.0, &mut frames.1, &mut frames.2, &mut frames.3, &mut frames.4);
     let (settings, far_settings) = (&*settings.0, &*settings.1);
     frame.0 = None;
     canopy.0 = None;
@@ -433,6 +443,10 @@ pub(crate) fn update_shelter(
         streamed,
         LevelUniform { clip: &mut u.shelter_clip_from_world, shelter: &mut u.shelter, canopy: &mut u.canopy },
     );
+    let now_pending = ShelterPending { near: shelter.near.pending_clip.is_some(), far: shelter.far.pending_clip.is_some() };
+    if **pending != now_pending {
+        **pending = now_pending;
+    }
     exposure.pass = pass;
     exposure.far_pass = far_pass;
     exposure.far = far_settings.on.then_some(far_level);

@@ -47,6 +47,12 @@ a console and BRP for agents.
   `surface.cells` (128² RGBA8: R wet, G puddle, B snow, A ash), `surface.exposure` (current pack, 1024² RGBA16F: R/G
   solid/leaf caster height m, B lag, A exposure), `surface.trail` (current ring, 1024² RGBA16F: R depression m <= 0,
   G lip m), `precip.occlusion` (512² Depth32Float).
+- **Numbers instead of a picture** (`surface probe [x z] [half_m]`, 2026-11-17): reads the four shelter depth maps back from
+  the GPU once and logs them (`surface probe:` lines, also in the console) as text grids of one world window (default ±16 m
+  round the camera; near maps 0.5 m cells, far maps 1 m): `.` no caster, `#` outside the map, `-`/`0`-`9` the caster's top
+  relative to the camera in 2 m steps, with each map's centre and caster-texel total. The same world window probed after
+  two redraws must print the same grid; a grid that moves with the centre means a capture was not drawn
+  (`sf_surface/src/probe.rs`, `sf_surface_bevy/src/probe.rs`). Over BRP: `bevyrrowind/console {"line": "surface probe"}`.
 - **Registering a target** (framework, any system): `sf_diag_bevy` feature `texview`, `DebugTextures`
   (`sf_diag_bevy/src/texview.rs:96`). An `Image` asset: `DebugTexture::image(name, description, handle, &image)`
   (`:58`; e.g. `sf_precip_bevy/src/occlusion.rs:228`, `sf_surface_bevy/src/exposure.rs:206`). A render-world

@@ -121,6 +121,19 @@ WE-5 precipitation map, which follows the wind slant and would move wet patches)
 under a full canopy `SHELTER_LEAF_PASS` 0.4 of the rain gets through (why and how: [as built](surface-weather-as-built.md)
 W2b). Outside the 64 m radius, exposure fades to "open sky" (far roofs exposed; far interiors not visible).
 
+**As built 2026-11-17 (shelter audit).** *Capture reliability:* an anchor is not a light, and Bevy's `extract_lights` removes
+the shadow visibility tables from every non-light render entity each frame; `sun_view::extract_anchors` therefore runs after
+it. Before, the two were unordered, the anchor had tables on about every other frame, and a redraw's one-frame view was dropped
+silently on the others while the uniform still took the new clip: the layer read last capture's texels under the new centre
+(sheltered patches a recentre step off; five SW-5 fixes had treated that as LOD, lag or reach). A dropped or undrawn anchor
+capture now logs a warning. *Casters:* static world only: skinned meshes (framework) and every mesh under an animated body
+(the game's `shelter_casters.rs`: rigid heads, helmets, weapons) are out, since a capture that is not redrawn per frame may
+hold static geometry only (UE cached shadow maps, RDR2 static/dynamic split). *Check tool:* console `surface probe` reads
+the four depth maps back as world-anchored text grids (`sf_surface::probe`); two redraws must print the same grid for the
+same world window. *Left:* the exposure pack's lag/carry (2.4 s easing) was built to hide capture differences that no longer
+exist; with consistent captures a merge-only pack and a level blend by camera distance would do (owner go needed, it changes
+how the near-to-far hand-over looks); the streamed trigger is armed by any new mesh, static or not (redraw cost while running).
+
 ## Shader integration
 
 One WESL module, **`sf_surface_bevy::layer`** (binding-agnostic: callers pass the uniform and textures), plus

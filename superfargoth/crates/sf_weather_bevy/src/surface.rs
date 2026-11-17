@@ -7,12 +7,14 @@ use std::fmt::Write as _;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
+use bevy_math::DVec2;
 use bevy_platform::time::Instant;
-use sf_console_bevy::ConsoleAppExt;
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
+use sf_console_bevy::{ConsoleAppExt, DevConsole};
 use sf_diag_bevy::DiagCounters;
 use sf_records::RecordId;
 use sf_sky_bevy::GameClock;
+use sf_surface::probe::{PROBE_DEFAULT_HALF_M, PROBE_MAX_HALF_M};
 use sf_surface::view::DebugView;
 use sf_surface::{CELL_M, CellGrid, Channel, RateSource, SurfaceSave, SurfaceState, SurfaceTuning, WeatherRates, cell_of};
 use sf_weather::{ClimateIx, WeatherBook};
@@ -62,6 +64,106 @@ impl WorldSurface {
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SurfaceDebug(pub DebugView);
 
+/// What `surface probe` asks for: the world square to print (`center` `None`: around the surface
+/// camera).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProbeRequest {
+    /// The window's centre, world X and Z.
+    pub center: Option<DVec2>,
+    /// Half the window, meters.
+    pub half_m: f32,
+}
+
+/// Where a `surface probe` stands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProbeStatus {
+    /// None asked yet.
+    #[default]
+    Idle,
+    /// Asked; the readback has not come back.
+    Pending,
+    /// [`SurfaceProbe::lines`] holds the last probe's text (its grids, or why it failed).
+    Done,
+}
+
+/// `surface probe [x z] [half_m]`: a GPU readback of the shelter depth maps as world-anchored
+/// text grids (`sf_surface::probe`). The request lives here, next to the command, like
+/// [`SurfaceDebug`]; `sf_surface_bevy` (which owns the maps) takes it, reads the maps back and
+/// hands the lines over, and [`probe_to_console`] shows them in the console. Code may ask too:
+/// [`Self::request`], then poll [`Self::status`].
+#[derive(Resource, Debug, Default)]
+pub struct SurfaceProbe {
+    request: Option<ProbeRequest>,
+    status: ProbeStatus,
+    lines: Vec<String>,
+    /// The console has not shown `lines` yet.
+    unprinted: bool,
+}
+
+impl SurfaceProbe {
+    /// Asks for a probe (replacing one still pending).
+    pub fn request(&mut self, center: Option<DVec2>, half_m: f32) {
+        self.request = Some(ProbeRequest { center, half_m });
+        self.status = ProbeStatus::Pending;
+    }
+
+    /// The renderer's side: the request to start on, once.
+    pub fn take_request(&mut self) -> Option<ProbeRequest> {
+        self.request.take()
+    }
+
+    /// The renderer's side: the probe's text.
+    pub fn finish(&mut self, lines: Vec<String>) {
+        self.lines = lines;
+        self.unprinted = true;
+        // A request made while this one ran is still to do.
+        if self.request.is_none() {
+            self.status = ProbeStatus::Done;
+        }
+    }
+
+    pub fn status(&self) -> ProbeStatus {
+        self.status
+    }
+
+    /// The last finished probe's lines (each starts with `surface probe:`).
+    pub fn lines(&self) -> &[String] {
+        &self.lines
+    }
+}
+
+/// Shows a finished probe's lines in the console (a command's handler has returned long before
+/// the readback completes).
+pub(crate) fn probe_to_console(mut probe: ResMut<SurfaceProbe>, console: Option<ResMut<DevConsole>>) {
+    if !probe.unprinted {
+        return;
+    }
+    probe.unprinted = false;
+    if let Some(mut console) = console {
+        for line in &probe.lines {
+            console.log_mut().info(line);
+        }
+    }
+}
+
+/// `surface probe`'s arguments: none (around the camera, the default half), `<half_m>`, `<x> <z>`
+/// or `<x> <z> <half_m>`.
+fn probe_request(first: Option<&str>, second: Option<f64>, third: Option<&str>) -> Result<ProbeRequest, String> {
+    const USAGE: &str = "surface probe [x z] [half_m]: world coordinates of the window centre (default: the camera), half extent in meters";
+    let number = |text: &str| text.trim().parse::<f64>().ok().filter(|v| v.is_finite()).ok_or_else(|| format!("{USAGE} (not a number: {text:?})"));
+    let (center, half) = match (first, second, third) {
+        (None, ..) => (None, None),
+        (Some(half), None, _) => (None, Some(number(half)?)),
+        (Some(x), Some(z), half) => (Some(DVec2::new(number(x)?, z)), half.map(number).transpose()?),
+    };
+    #[expect(clippy::cast_possible_truncation, reason = "a window half in meters")]
+    let half_m = half.map_or(PROBE_DEFAULT_HALF_M, |h| h as f32);
+    if !(1.0..=PROBE_MAX_HALF_M).contains(&half_m) {
+        return Err(format!("surface probe: half_m must be in 1..{PROBE_MAX_HALF_M} (got {half_m})"));
+    }
+    Ok(ProbeRequest { center, half_m })
+}
+
 /// Game hours since the clock's epoch.
 fn game_hours(time: &GameClock) -> f64 {
     time.now.hours()
@@ -109,15 +211,29 @@ pub(crate) fn register_console(app: &mut App) {
             .help(
                 "Surface weather (host): `surface dump`, `surface clear`, `surface set <wet|puddle|snow|ash> <0..1> [here|<climate>]` \
                  (here: the camera's climates; snow/ash set every cell those climates weigh); \
-                 `surface debug <off|exposure|cells|porosity|trails>` (tint: shelter exposure, 32 m cells, porosity, trail ring)",
+                 `surface debug <off|exposure|cells|porosity|trails>` (tint: shelter exposure, 32 m cells, porosity, trail ring); \
+                 `surface probe [x z] [half_m]` (reads the shelter depth maps back from the GPU and prints them as text grids \
+                 around world x z, default the camera, half_m 16: near solid and leaves at 0.5 m cells, far solid and leaves at 1 m)",
             )
-            .param(Param::new("action", ArgKind::choice(&["set", "dump", "clear", "debug"])))
-            .param(Param::new("channel", ArgKind::choice(&["wet", "puddle", "snow", "ash", "off", "exposure", "cells", "porosity", "trails"])).optional())
-            .param(Param::new("value", ArgKind::Float { min: 0.0, max: 1.0 }).optional())
+            .param(Param::new("action", ArgKind::choice(&["set", "dump", "clear", "debug", "probe"])))
+            // Free text and an open float (each action checks its own): `probe` takes world
+            // coordinates where `set` and `debug` take a channel or view name and an amount.
+            .param(Param::new("channel", ArgKind::Str).optional())
+            .param(Param::new("value", ArgKind::float()).optional())
             .param(Param::rest("target").optional()),
         |inv| {
             let world = &mut *inv.ctx;
             match inv.args.str("action").unwrap_or("dump") {
+                "probe" => {
+                    let request = probe_request(inv.args.str("channel"), inv.args.float("value"), inv.args.str("target"))?;
+                    world.get_resource_or_init::<SurfaceProbe>().request(request.center, request.half_m);
+                    let around = request.center.map_or_else(|| "the camera".to_owned(), |c| format!("x {} z {}", c.x, c.y));
+                    inv.log.info(&format!(
+                        "surface probe: asked for +-{} m around {around}; the grids come in the log and here when the readback completes \
+                         (a few frames; needs the surface weather renderer)",
+                        request.half_m
+                    ));
+                }
                 "clear" => {
                     let mut s = world.resource_mut::<WorldSurface>();
                     s.state.clear();
@@ -132,7 +248,7 @@ pub(crate) fn register_console(app: &mut App) {
                 "set" => {
                     let channel = inv.args.str("channel").and_then(Channel::parse).ok_or("surface set needs a channel: wet, puddle, snow or ash")?;
                     #[expect(clippy::cast_possible_truncation, reason = "a 0..1 amount")]
-                    let value = inv.args.float("value").ok_or("surface set needs a value in 0..1")? as f32;
+                    let value = inv.args.float("value").filter(|v| (0.0..=1.0).contains(v)).ok_or("surface set needs a value in 0..1")? as f32;
                     let target = inv.args.str("target").map_or("here", |t| t.trim().trim_matches('"'));
                     let n = set(world, channel, value, target)?;
                     inv.log.info(&format!("surface: {} = {value:.3} on {n} {}", channel.name(), if channel.per_climate() { "climates" } else { "cells" }));

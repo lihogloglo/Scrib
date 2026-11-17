@@ -18,4 +18,5 @@ pub mod restream;
 pub mod main_menu;
 pub mod pause_menu;
 pub mod phase;
+mod shelter_casters;
 mod trails;

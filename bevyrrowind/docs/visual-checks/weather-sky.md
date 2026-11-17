@@ -62,6 +62,37 @@ silently disabled), and the sun is fully hidden behind thick cloud.
   straight up, both half-lit near the zenith; new game's first night: Masser from ~22:00 NNW, Secunda ~23:40 NW, each a
   plain star-blocking disk first, its texture fading in as it climbs. Days only advance with the clock running (P/T;
   `[`/`]` stay in the same day). Status: awaiting owner.
+- Owner 2026-11-17 (Balmora from 22:00, clock running): Masser only appears ~02:30, already high; near the horizon its
+  disk is invisible but its light (the halo at that spot) shows; no Secunda. Cause (code, not render order): the disk's
+  opacity is OpenMW's `earlyMoonShadowAlpha` (`mw_weather/src/moons.rs:457`): hidden below `Fade End Angle` (Masser 40°,
+  Secunda 30°), plain disk up to 50°; the moon's light and atmosphere halo (`sf_sky_bevy` moon light) ignore that alpha.
+  Status: failed (disk/halo mismatch; Secunda not seen). Design question to the owner: moons from the horizon (modern)
+  vs OpenMW's fade (classic preset). Owner 2026-11-17: visible from the horizon (DECISIONS.md); OpenMW fade only for Classic.
+  Next slice: drop the horizon fade from the modern moon alpha (keep the daytime fade), check the halo and disk agree; and
+  print Secunda's elevation/alpha/phase over the run's night (why it was not seen).
+- Fix 2026-11-17 (NS-3b, `MoonHorizon::Rise`, dev build): moons show opaque and textured from their rise (0.5° edge ramp),
+  dimmed and reddened by the atmosphere like their glow; daytime fade unchanged. Measured: on clock day 172 Secunda was below
+  the horizon until ~02:25 (so not seen in the run above); the modern schedule differs from OpenMW's by hours on some nights
+  (Masser ~55° at 22:00 that night instead of 8°). Check: `view "Balmora" --day 173 --hour 3.5 --weather clear`, clock
+  paused (P), fly up with the free camera (F11) to clear the valley: Secunda low in the north-west (~10°), its disk and glow in
+  the same place, a smaller, third-quarter moon; Masser near the zenith. Then let time run (T) ~1 h: Secunda climbs smoothly,
+  never jumps or pops. Also `scene ns-moons-quarter` (Secunda high, half lit). Status: awaiting owner.
+- Owner 2026-11-17 (NS-3b run, Balmora day 173 03:30): Secunda finally seen, very faint (the night reads too bright, a
+  "day for night" look). Masser's glow is white, should take the texture's reddish colour; Secunda has no glow at all.
+  Cause (code): the glow is Bevy's atmosphere scattering the single `MoonLight` (`sf_sky_bevy/src/lib.rs:501`), which
+  points at the brightest moon only (`sf_sky/src/sky.rs:361` `moonlight`) and is coloured by the weather's moonlight hue,
+  not the moon. Status: moonrise confirmed; glow failed (colour, Secunda); night brightness logged (separate).
+- Fix 2026-11-17 (NS-3c, dev build): each moon draws its own small glow in the night pass (as the sun glare), hue = its phase
+  texture's alpha-weighted average (a texture mod changes it), strength = its own light at this phase x transmittance
+  (`sky.moon.glow.strength` 0.04, `sky.moon.glow.size` 0.5 disk radii: Masser ~4.4°, Secunda ~1.9°). Ground light, its
+  colour and the atmosphere unchanged, so the wide white halo round the brightest moon remains (removing it needs a vendored
+  flag that also drops all moonlit sky brightening: owner decision). Check: `view "Balmora" --day 173 --hour 3.5 --weather
+  clear`, GPU timers on: a reddish glow hugging Masser, a smaller pale one round Secunda (low NW), both soft, no ring or
+  hard edge, gone when a moon sets; the ground light's colour unchanged. Status: awaiting owner.
+- Owner 2026-11-17 (NS-3c run): glows alright, reddish hue there; they sit behind the moons (weird, but pretty: keep for
+  now, maybe fix later for realism); the white atmosphere halo round Masser is fine (no vendored flag). New, not fixed:
+  Masser shows a black circle in its middle, smaller than the texture (size mismatch; source unknown, maybe the `occluder`
+  0.85 disk or the glow edge vs the texture's disk). Status: glow confirmed with follow-up; black circle = known bug.
 
 ### NS-4: No red streaks at night (`scene ns-night-clear`, `scene lt-torch-shadows`)
 - Kind: game location. Bug: with `--clouds clear` red/pink streaks crossed every Balmora night sky. Cause: the cirrus
@@ -197,6 +228,11 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Fix 2026-11-17 (trail-offset): Bevy's shadow pass ignores the requested viewport, so the capture was drawn at 2x over the
   512² target; it now projects over the whole target. Owner 2026-11-17 (run 3): "the trail is fixed". Status: trail position
   confirmed; crouch, NPCs, lying bodies, first person not yet reported.
+- Owner 2026-11-17 (run 4, Skaal `surface set snow 1`): some little creatures (owner: "skraelings", likely rieklings) leave
+  no trace in the snow. Not diagnosed. Lead: the capture is an orthographic depth view from below, but it draws only meshes
+  under a `Deformer`, and `tag_deformers` (`mw_exterior_bevy/src/trails.rs`) tags only animators whose graph has `legs`; a
+  creature rig without a legs entry is never tagged. Fix direction: tag every actor (creature) body, not by leg graph.
+  Status: known bug (creatures), logged.
 
 ### SW-6: Knee-deep snow and footprints (surface-weather.md W6a prints + W6b raised geometry)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`,
@@ -235,6 +271,8 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   ground at full snow it rises only part of the way (gentle undulation, answers "maybe raises too much"). Look for: Skaal
   `surface set snow 1`: drift and road edges are soft ramps, no vertical wall or jagged steps; `snow 0.4` on paving: still
   flat (snow in the grout only). Known left: roof drip lines still steep (SW-6b queued). Status: awaiting owner.
+- Owner 2026-11-17 (Skaal, same run as SW-5 run 3): "the snow ramp is good". Status: ramp confirmed. Still open: shin
+  trails (SW-8), ash depth, SW-6b drip lines.
 
 ### SW-5: Snow and ash cover (surface-weather.md W5)
 - Kind: game location. Ash: `powershell -File bevyrrowind/tools/run_dev.ps1 view "Ghostgate" --hour 12 --weather ashstorm`,
@@ -286,6 +324,21 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - 2026-11-17: shelter offsets handed to the owner's separate shelter session (not this one). Lead from a stopped diagnosis
   (`.sessions/_archive/shelter-offset.md`): rigid held props are shelter casters, so a redraw stamps a sheltered patch where
   the character stood.
+- Fix 2026-11-17 (shelter-audit, measured, not yet seen): the capture itself was being skipped. Bevy's light extraction
+  strips the shadow tables from our capture anchors every frame and we put them back in no fixed order, so about every
+  other redraw (and most snow-trail captures) drew nothing while the game moved on to the new map centre: every sheltered
+  patch then sat a recentre step (up to ~20 m) off its tree or roof until a later redraw. All earlier SW-5 fixes eased or
+  re-levelled that symptom. Now ordered (`sun_view.rs`), with a log warning if a capture is ever dropped; character parts
+  (heads, helmets, weapons, shields) no longer cast shelter, so no sheltered pit is left where someone stood. Numbers
+  (`surface probe`): the area round the SW-5 video's tree reads identical from every map centre and view direction.
+  Check: `view "Skaal Village" --hour 12 --weather snow`, `surface set snow 1`, run between the trees NE of the village
+  (around world -2106, -3044) for a few minutes, in and out, turning: the bare patch under each tree stays under that
+  tree, same shape near and far, no patch appears or leaves as you approach, none trails behind you or NPCs. Also SW-8
+  again (trails continuous, no missing stretches). Known left: a patch may change shape slightly ~40-60 m out (near map
+  taking over from the far map); the 2.4 s easing is still in (proposal to remove it now that captures agree: ask).
+  Status: awaiting owner.
+- Owner 2026-11-17 (run 3, Skaal `surface set snow 1`, dev build 02:37): "snow bug has disappeared". Status: confirmed
+  (shelter offsets and resets gone). Open: ash in Ghostgate not rechecked; easing removal still to ask.
 
 ### WE-13: Local storm seen from outside (CW-1, distant-weather.md "CW-1 Storm shape"; follows WE-10)
 - Kind: game location. `bash bevyrrowind/tools/owner_launch.sh scene we3-ridge`, then BRP `bevyrrowind/set {"weather":

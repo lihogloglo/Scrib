@@ -28,6 +28,7 @@ pub mod deform;
 mod grid;
 pub mod kickup;
 pub mod layer;
+pub mod probe;
 mod save;
 pub mod trail;
 pub mod view;
@@ -439,3 +440,5 @@ mod deform_tests;
 mod kickup_tests;
 #[cfg(test)]
 mod raise_tests;
+#[cfg(test)]
+mod probe_tests;

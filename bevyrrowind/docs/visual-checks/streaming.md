@@ -80,6 +80,8 @@ Open visual checks: streaming spikes, size-based draw distance, door links (ST, 
   stream.interior.disable_exterior off` indoors: all back, nothing changes on screen. Audio: a loop outside the door
   must not start playing indoors (known risk: parked voices keep their last gain).
 - Status: awaiting owner (2026-11-17, built, not measured).
+- Owner 2026-11-17 (dev build, `set stream.interior.disable_exterior on`): "worked, I think", nothing broke going in and out. F3
+  entities/main ms indoors not reported (F3 GPU data missing). Status: look confirmed (no regression); the drop not seen.
 - Source: cw9-interior-drop.
 
 ### RG-1: Nothing pops in after a reveal (reveal gate, pipeline-warmup W1)

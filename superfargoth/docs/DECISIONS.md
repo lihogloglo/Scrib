@@ -1864,3 +1864,10 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-17 (orch-snow, owner): game calendar = one data record (`sf.calendar`, clock.md "Calendar (C3)"), generic
   enough for odd calendars; weekday display is a mod (data carries names, no vanilla UI shows them); the calendar feeds
   weather a month/day-of-year input for optional, subtle seasonal data later (vanilla neutral, not built now).
+- 2026-11-17 (shelter-audit): a depth capture that is not redrawn every frame (`sun_view` anchors: shelter, canopy, deform) is checked by reading it back as numbers (`surface probe`), never by CPU twins alone; its casters are static geometry only; an anchor system that depends on what Bevy leaves on a render entity states its order against the Bevy system explicitly (0.20 chains are weak).
+- 2026-11-17 (owner, NS-3): moons are visible from the horizon (modern default: dimmed and reddened by the atmosphere, glow
+  always matching the disk); OpenMW's `earlyMoonShadowAlpha`/`shadowBlend` horizon fade (hidden below Fade End Angle) is kept
+  only for the later Classic preset. Paths, phases and the daytime fade stay OpenMW's.
+- 2026-11-17 (NS-3b, follows the moonrise decision): the modern rule moves OpenMW's rise-hour handovers to moments the moon is
+  invisible (below the horizon or faded out by day), so modern moons can stand hours along their arc from OpenMW's on a given
+  night (Masser ~47 deg ahead on clock day 172). Presentation only: rules that read moon phase (MWScript) use the classic model.

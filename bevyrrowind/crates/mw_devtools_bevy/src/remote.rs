@@ -15,6 +15,9 @@
 //!   screenshot).
 //! - `bevyrrowind/set`: any of switches, hour, clock, cloud preset, camera;
 //!   answers with the new status.
+//! - `bevyrrowind/console`: runs a dev-console line (as a script would: not echoed, not in
+//!   the history) and answers with the console log's tail; a command's output shows on the
+//!   next call.
 //!
 //! Everything else the A/B keys do is reachable with `brp_extras/send_keys`.
 //! Workflow and rules: CLAUDE.md "Live inspection (BRP)".
@@ -41,11 +44,12 @@ pub const DEFAULT_PORT: u16 = 15712;
 
 const STATUS: &str = "bevyrrowind/status";
 const SET: &str = "bevyrrowind/set";
+const CONSOLE: &str = "bevyrrowind/console";
 
 /// Adds BRP, the extras and the game's agent tools.
 pub fn add(app: &mut App) {
     let port = std::env::var("BEVYRROWIND_BRP_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT);
-    app.add_plugins(RemotePlugin::default().with_method_main(STATUS, status).with_method_main(SET, set))
+    app.add_plugins(RemotePlugin::default().with_method_main(STATUS, status).with_method_main(SET, set).with_method_main(CONSOLE, console))
         .add_plugins(BrpExtrasPlugin::with_port(port).port_in_title(PortDisplay::Always))
         .register_agent_tool(
             AgentTool::new(
@@ -67,7 +71,54 @@ pub fn add(app: &mut App) {
             )
             .params_schema_for::<Set>()
             .result_schema_for::<Status>(),
+        )
+        .register_agent_tool(
+            AgentTool::new(
+                "bevyrrowind_console",
+                CONSOLE,
+                "Run a dev-console line (optional) and return the last `tail` lines of the console log \
+                 (default 40). The line runs on the next frame: call again without `line` to read its output.",
+            )
+            .params_schema_for::<ConsoleCall>()
+            .result_schema_for::<ConsoleTail>(),
         );
+}
+
+/// `bevyrrowind/console`'s parameters.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ConsoleCall {
+    /// A console line to run (as `ConsoleSubmit::exec`: not echoed, not in the history).
+    line: Option<String>,
+    /// How many of the log's last lines to return (default 40).
+    tail: Option<usize>,
+}
+
+/// `bevyrrowind/console`'s answer.
+#[derive(Serialize, JsonSchema)]
+struct ConsoleTail {
+    /// The console log's last lines, oldest first (as they stood before `line` ran).
+    lines: Vec<String>,
+}
+
+/// Console log lines returned when `tail` is absent.
+// tunables: const (a reply size, not a trade-off)
+const CONSOLE_TAIL: usize = 40;
+
+fn console(
+    In(params): In<Option<Value>>,
+    log: Option<Res<sf_console_bevy::DevConsole>>,
+    mut submit: MessageWriter<sf_console_bevy::ConsoleSubmit>,
+) -> BrpResult {
+    let params: ConsoleCall = serde_json::from_value(params.unwrap_or(Value::Null)).map_err(invalid)?;
+    let Some(log) = log else { return Err(invalid("no dev console in this run")) };
+    let all: Vec<String> = log.log().lines().map(|l| l.text.clone()).collect();
+    let tail = params.tail.unwrap_or(CONSOLE_TAIL).min(all.len());
+    let lines = all[all.len() - tail..].to_vec();
+    if let Some(line) = params.line {
+        submit.write(sf_console_bevy::ConsoleSubmit::exec(line));
+    }
+    to_value(&ConsoleTail { lines })
 }
 
 /// `bevyrrowind/status`'s answer.

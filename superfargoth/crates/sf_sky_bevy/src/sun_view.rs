@@ -33,7 +33,9 @@
 //! and the main-world request (made in `PreUpdate`) can be stale by render
 //! time: the sky turns the sun's shadows off in `Update` (interiors, night).
 //! [`view_allowed`] is checked at spawn, so such a request is dropped. An
-//! anchor's tables exist from its first extraction on, whatever the sky does.
+//! anchor's tables are put back every frame after Bevy's light extraction has
+//! stripped them (`extract_anchors`), whatever the sky does; a dropped anchor
+//! capture is a bug and logs a warning.
 
 use core::any::TypeId;
 
@@ -109,13 +111,14 @@ pub fn add_sun_view<S: SunViewSource>(app: &mut App) {
     app.init_resource::<S>();
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
     if !render_app.world().contains_resource::<AnchorsExtracted>() {
-        render_app.init_resource::<AnchorsExtracted>().add_systems(ExtractSchedule, extract_anchors);
+        render_app.init_resource::<AnchorsExtracted>().add_systems(ExtractSchedule, extract_anchors.after(bevy_pbr::extract_lights));
     }
     render_app.init_resource::<S>().add_systems(ExtractSchedule, extract::<S>).add_systems(
         Render,
         (
             inject_casters::<S>.in_set(RenderSystems::PrepareAssets).before(collect_visible_cpu_culled_entities),
             spawn_view::<S>.in_set(RenderSystems::CreateViews).after(prepare_lights),
+            report_view::<S>.in_set(RenderSystems::PhaseSort),
         ),
     );
 }
@@ -136,6 +139,18 @@ struct AnchorsExtracted;
 
 /// Gives each anchor's render entity the marker and the two (empty) visibility
 /// tables a light would have; the sources fill their subviews.
+///
+/// After `bevy_pbr::extract_lights`, always: that system ends by removing both
+/// tables from every render entity that holds them and is not one of its own
+/// lights ("clear out any shadow maps that correspond to lights that have become
+/// invisible"), so it strips an anchor every frame it finds one dressed. Unordered
+/// (until 2026-11-17) the two systems' commands landed in either order: when the
+/// removal came last the anchor had no tables that frame, [`inject_casters`] found
+/// no owner and [`spawn_view`] dropped the request, while the host went on as if
+/// the capture had been drawn (the shelter maps kept last capture's texels under
+/// the new centre: sheltered patches off by a recentre step, SW-5; the deform
+/// capture missed frames, SW-8). Ordered, the removal is applied first and the
+/// tables are back, empty, before the render schedule runs.
 fn extract_anchors(mut commands: Commands, anchors: Extract<Query<&RenderEntity, With<DepthViewAnchor>>>) {
     for render in &anchors {
         if let Ok(mut e) = commands.get_entity(**render) {
@@ -173,6 +188,7 @@ fn inject_casters<S: SunViewSource>(
     let Some((_, _, _, mut visible, mut extracted)) =
         lights.iter_mut().find(|(main, light, anchor, _, _)| main.id() == req.light && owner_enabled(*light, *anchor))
     else {
+        log::debug!("sun view {}: no owner to list the casters on", S::PASS_NAME);
         return;
     };
     let key = req.retained();
@@ -216,15 +232,29 @@ fn spawn_view<S: SunViewSource>(
         commands.entity(old).despawn();
     }
     let Some(req) = source.request() else { return };
-    let Some(gpu) = images.get(req.image) else { return };
+    let Some(gpu) = images.get(req.image) else {
+        log::warn!("sun view {}: request dropped: target image not on the GPU", S::PASS_NAME);
+        return;
+    };
     let key = req.retained();
     let Some((light, _, _, anchor, _, layers)) = lights
         .iter()
         .find(|(_, main, extracted, anchor, visible, _)| main.id() == req.light && view_allowed(owner_enabled(*extracted, *anchor), *visible, &key))
     else {
+        // A light with its shadows off drops the request by design (module docs). An anchor
+        // never should: its tables and this view's entry exist every frame (`extract_anchors`,
+        // `inject_casters`), and the host believes the capture was drawn, so say it loudly.
+        if let Some((.., tables, _)) = lights.iter().find(|(_, main, _, anchor, ..)| main.id() == req.light && *anchor) {
+            log::warn!(
+                "sun view {}: capture dropped: the anchor has {}",
+                S::PASS_NAME,
+                if tables.is_some() { "no entry for this view" } else { "no shadow visibility tables" }
+            );
+        }
         return;
     };
     let Some((_, mut view_lights, no_indirect, camera_layers)) = views.iter_mut().find(|(m, ..)| m.id() == req.camera) else {
+        log::warn!("sun view {}: request dropped: camera has no shadow view list this frame", S::PASS_NAME);
         return;
     };
     let layers = view_layers(anchor, layers, camera_layers);
@@ -258,6 +288,35 @@ fn spawn_view<S: SunViewSource>(
     view_lights.lights.push(entity.id());
     phases.prepare_for_new_frame(key, mode);
     *spawned = Some(entity.id());
+}
+
+/// After the shadow queue: says when this frame's view will not be drawn (not in the camera's
+/// list, flagged skipped, or without a phase). A capture that silently draws nothing leaves
+/// the host with last capture's texels under this capture's matrices; `debug` logs each
+/// capture's caster and bin counts (`RUST_LOG=sf_sky_bevy::sun_view=debug`).
+#[allow(clippy::type_complexity)]
+fn report_view<S: SunViewSource>(
+    source: Res<S>,
+    views: Query<(Entity, &ExtractedView, Has<bevy_render::view::SkipRootViewRendering>), With<ShadowView>>,
+    cameras: Query<(&MainEntity, &ViewLightEntities)>,
+    phases: Res<ViewBinnedRenderPhases<Shadow>>,
+) {
+    let Some(req) = source.request() else { return };
+    let key = req.retained();
+    // No view: `spawn_view` dropped the request and said why.
+    let Some((entity, _, skipped)) = views.iter().find(|(_, v, _)| v.retained_view_entity == key) else { return };
+    let listed = cameras.iter().any(|(m, l)| m.id() == req.camera && l.lights.contains(&entity));
+    let bins = phases.get(&key).map(|p| (p.multidrawable_meshes.len(), p.batchable_meshes.len(), p.unbatchable_meshes.len()));
+    if !listed || skipped || bins.is_none() {
+        log::warn!(
+            "sun view {}: capture not drawn: casters {}, in camera list {listed}, skip flag {skipped}, phase {}",
+            S::PASS_NAME,
+            req.casters.len(),
+            if bins.is_some() { "present" } else { "missing" }
+        );
+    } else {
+        log::debug!("sun view {}: casters {}, phase bins {bins:?}", S::PASS_NAME, req.casters.len());
+    }
 }
 
 #[cfg(test)]

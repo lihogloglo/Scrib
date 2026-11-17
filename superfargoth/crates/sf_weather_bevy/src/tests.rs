@@ -461,6 +461,45 @@ fn surface_steps_on_game_time_and_the_console_drives_it() {
     assert!((s.state.climate(land).wet - 0.75).abs() <= sf_surface::QUANTUM);
 }
 
+/// `surface probe [x z] [half_m]` leaves the request the renderer takes, and a finished probe's
+/// lines reach the console once; `surface set` still refuses an amount outside 0..1.
+#[test]
+fn surface_probe_asks_and_prints() {
+    let mut app = app();
+    let take = |app: &mut App| app.world_mut().resource_mut::<SurfaceProbe>().take_request();
+    assert_eq!(app.world().resource::<SurfaceProbe>().status(), ProbeStatus::Idle);
+    // (`console` returns the lines after the log's last one: give it one.)
+    console(&mut app, "surface clear").unwrap();
+    let out = console(&mut app, "surface probe").unwrap();
+    assert!(out[0].starts_with("surface probe: asked for +-16 m around the camera"), "{out:?}");
+    assert_eq!(app.world().resource::<SurfaceProbe>().status(), ProbeStatus::Pending);
+    assert_eq!(take(&mut app), Some(ProbeRequest { center: None, half_m: 16.0 }));
+    assert_eq!(take(&mut app), None);
+    console(&mut app, "surface probe 8").unwrap();
+    assert_eq!(take(&mut app), Some(ProbeRequest { center: None, half_m: 8.0 }));
+    console(&mut app, "surface probe -2105.5 -3043.75").unwrap();
+    assert_eq!(take(&mut app), Some(ProbeRequest { center: Some(DVec2::new(-2105.5, -3043.75)), half_m: 16.0 }));
+    let out = console(&mut app, "surface probe 10 -20 4").unwrap();
+    assert!(out[0].starts_with("surface probe: asked for +-4 m around x 10 z -20"), "{out:?}");
+    assert_eq!(take(&mut app), Some(ProbeRequest { center: Some(DVec2::new(10.0, -20.0)), half_m: 4.0 }));
+    for bad in ["surface probe here", "surface probe 0.5", "surface probe 1 2 500", "surface probe 1 2 x"] {
+        assert!(console(&mut app, bad).is_err(), "{bad}");
+    }
+    assert_eq!(take(&mut app), None);
+    // The renderer hands the text over; the console shows it once.
+    let lines = |app: &App| app.world().resource::<sf_console_bevy::DevConsole>().log().lines().map(|l| l.text.clone()).collect::<Vec<_>>();
+    app.world_mut().resource_mut::<SurfaceProbe>().finish(vec!["surface probe: a".into(), "surface probe: b".into()]);
+    assert_eq!(app.world().resource::<SurfaceProbe>().status(), ProbeStatus::Done);
+    let before = lines(&app).len();
+    app.update();
+    assert_eq!(lines(&app)[before..], ["surface probe: a", "surface probe: b"]);
+    app.update();
+    assert_eq!(lines(&app).len(), before + 2);
+    assert_eq!(app.world().resource::<SurfaceProbe>().lines().len(), 2);
+    assert!(console(&mut app, "surface set wet 2 land").is_err());
+    assert!(console(&mut app, "surface set wet").is_err());
+}
+
 #[test]
 fn capped_slot_follows_the_drift_formula() {
     let rain = sf_precip_bevy::PrecipSlot { fall_speed: 8.0, wind_follow: 0.8, ..sf_precip_bevy::PrecipSlot::default() };

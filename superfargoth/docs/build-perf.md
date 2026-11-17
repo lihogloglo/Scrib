@@ -115,6 +115,10 @@ crate is added to the app's graph or Bevy is upgraded; a gate miss is a bug.
 | Cold bake (Morrowind, fresh store) | ≤ 2 min | 47.7 s |
 | No-op bake | ≤ 2.5 s | 1.75 s |
 
+The gates are single measurements; the real workday is in the build log: every `cargo_turn.sh` command appends
+its queue wait (by reason), cargo run time, exit and compiled units / Bevy crates to `.sessions/build-log.tsv`
+(untracked), and `bash bevyrrowind/tools/cargo_turn.sh --stats [days]` sums it (since 2026-11-17).
+
 Incremental time is cargo's freshness check (~0.8 s) + ~0.5-1 s per crate between the edit and
 the app + the app crate (~2 s rustc, 0.73 s link). It grows with chain depth, not crate size: keep
 rule 3 (wide and shallow) and rule 5 (split by change frequency) in mind for `sf_model`.

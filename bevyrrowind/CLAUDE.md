@@ -43,7 +43,9 @@ window title. Code: `bevyrrowind/crates/mw_devtools_bevy/src/remote.rs`.
   close only processes you started.
 - **Game tools first:** `brp_list_agent_tools` lists `bevyrrowind/status`
   (scene, hour, A/B switches, camera, `ready`) and `bevyrrowind/set`
-  (switches, hour, clock, clouds, camera); call them with `brp_execute`.
+  (switches, hour, clock, clouds, camera) and `bevyrrowind/console` (runs a
+  dev-console line, returns the log tail; the camera only follows `set` in
+  free-camera mode, F11); call them with `brp_execute`.
   Poll `ready` before `brp_extras_screenshot`. Other A/B keys (F4 DLSS, B
   bodies, ...) via `brp_extras_send_keys`. `world_query` and friends only
   see reflected, registered types (Bevy's, and few of ours yet).
