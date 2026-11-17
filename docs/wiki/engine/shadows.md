@@ -21,7 +21,7 @@ Everything else is unshadowed.
   per cascade (F1, `BEVYRROWIND_CASCADE_ENCODERS=1`, `per_view_shadow_encoder_slot`, vendored `bevy_pbr/src/render/light.rs:3752`).
   The moon has its own 2 shorter cascades, shadows off until the sky says so (`lib.rs:473`, `write_light` `:654`).
   The sky turns sun shadows off in interiors and at night (`write_light`); sun and moon use `RenderLayers::none()` indoors.
-- **Sun/moon gate (opt-in, off by default; ROADMAP 1.25 CW-8).** The light the elevation rule lets cast keeps its
+- **Sun/moon gate (on by default (owner 2026-11-17); ROADMAP 1.25 CW-8).** The light the elevation rule lets cast keeps its
   cascades only while its shadow shows: contrast `c = E_direct / (E_direct + E_fill)` (`sf_sky/src/sun_gate.rs:176`),
   `E_direct` = ground illuminance on a receiver facing the light x the cloud shadow map's mean
   (`SunLightOcclusion`, filled by the game, `mw_environment_bevy/src/render.rs:333`, from `sf_atmos_bevy::mean_cloud_shadow`);
@@ -57,7 +57,7 @@ Everything else is unshadowed.
   nothing for a holder whose range sphere is in no camera frustum (`vendor/README.md` "SH-21b"). Game numbers: High 8 maps at 512, Medium 6 at 512, Low 0,
   Ultra 12 at 1024 (`exterior.rs:1517`, `mw_environment_bevy/src/render.rs:33`); fade 35-45 m (`render.rs:37`).
   `drop_stale_light_views` (`:364`) frees face views of lights that lost a map (a Bevy 0.20 leak).
-- **Contrast gate (opt-in, off by default; ROADMAP 1.23b).** `ShadowContrastGate` (`shadow_budget.rs:141`, tunables
+- **Contrast gate (on by default (owner 2026-11-17); ROADMAP 1.23b).** `ShadowContrastGate` (`shadow_budget.rs:141`, tunables
   `shadow.lamp.day_gate*` `:96`): outdoors (viewer has a `SkyCamera`; interiors unchanged) each candidate's importance
   and shadow strength are multiplied by a weight of its shadow contrast `c = E_lamp / (E_lamp + E_sky)`: `E_lamp` =
   steady lumens (`SteadyIntensity`, not the flicker) / 4πd² at a 2 m receiver (at most half the range) times Bevy's
@@ -66,7 +66,7 @@ Everything else is unshadowed.
   (`Guess`, Weber ~2 % raised for textured frames), holders' c counts 1/hysteresis times; weight 0 = no map. Noon: none;
   night: identical pick. Never touches a lamp's intensity (`ShadowReach` still blends range by shadow strength; the
   game's two reaches are equal). Switch: `BEVYRROWIND_LAMP_DAY_GATE=1` (`render.rs:24`).
-- **Face culling (opt-in, off by default; ROADMAP 1.25 CW-3b).** Vendored own patch "point shadow face culling":
+- **Face culling (on by default (owner 2026-11-17), night walk -0.46 ms; ROADMAP 1.25 CW-3b).** Vendored own patch "point shadow face culling":
   `point_shadow_faces_seen` (`superfargoth/vendor/bevy_pbr/src/render/point_face_cull.rs:83`) keeps a cube face only if
   its 90° pyramid (out to the range, widened by `shadow.lamp.face_cull.margin_deg` = 2°, `sf_sky_bevy/src/shadow_budget.rs:124`,
   for filter taps across seams) meets an active `Camera3d` frustum clipped to the light's sphere (face-plane separating

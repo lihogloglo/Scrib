@@ -9,9 +9,9 @@ use sf_tunables::{Def, Source, Unit, def};
 /// `stream.interior.disable_exterior`: park the worldspaces the player left (the exterior while inside
 /// an interior, and back): their entities stay resident, out of every query and render, until the
 /// player returns or streaming touches them.
-pub const PARK_LEFT: Def<bool> = def!(bool "stream.interior.disable_exterior" = false)
+pub const PARK_LEFT: Def<bool> = def!(bool "stream.interior.disable_exterior" = true)
     .help("Worldspaces the player left (the exterior while indoors) stay resident but out of every query and render (Bevy Disabled)")
-    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"));
+    .source(Source::Owner("2026-11-17: on by default after the owner's play session with every gate on; A/B docs/ledger/perf.md 2026-11-17"));
 
 /// `stream.interior.park_settle_s`: how long a left worldspace must stay quiet (no streaming request,
 /// nothing spawned under it) before it parks, so late spawns (models finishing after the door) don't

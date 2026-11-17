@@ -82,7 +82,7 @@ Materials: the companions (normal, ORM, depth) go into StandardMaterial's bindle
 - `--off texvariety` (bench only, wrong look by design): every streamed static binds one shared image per texture slot
   (`FoldRules::one_texture_set`, `superfargoth/crates/sf_world_bevy/src/matclass.rs`), keys and batch sets unchanged; it
   measures what the texture count of the material slab costs (ledger perf 2026-11-17: >= 1.8 ms render thread).
-- Tunable `render.depth_only.skip_material` (restart, off): opaque StandardMaterial depth-only draws skip the material
+- Tunable `render.depth_only.skip_material` (restart, on by default, owner 2026-11-17): opaque StandardMaterial depth-only draws skip the material
   bind group (vendored `bevy_pbr`, marker `superfargoth patch (own: depth-only no material)`); inconclusive so far.
 - Tunable `render.wgpu.bind_group_walk_once` (restart, **on** since 2026-11-17): a render pass walks each bind group's textures once
   (vendored `wgpu-core`, `superfargoth/vendor/wgpu-core/src/command/bind_group_walk.rs`; set in

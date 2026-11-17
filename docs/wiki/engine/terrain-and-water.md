@@ -67,7 +67,7 @@ interiors at `WHGT`), optics by region (`optics::*`), `SEA_FETCH_M` 20 km, shore
 `--off waterssr` (environment map only), `--off shorenormals` (flat normal at the shore, the old look), `--off shorewaves` (no Gerstner shore waves or swash), `--off seawind` (the fixed 7 m/s sea breeze; `--water-wind` pins any speed), `--off shoredepth` (the shore waves over the uniform 1:20 slope proxy), `--off terrain` and `--off far` perf parts (`mw_game_core/src/perf.rs:127`). `TerrainSettings` `upload_budget`,
 `max_loads`, `splat_range`, `raise_m`.
 
-**Selection gate (CW-2, opt-in, built 2026-11-16, not measured):** `TerrainSettings::select_gate` skips CDLOD selection
+**Selection gate (CW-2, on by default (owner 2026-11-17)):** `TerrainSettings::select_gate` skips CDLOD selection
 and the patch diff (`sf_terrain_bevy/src/lib.rs:975`) while the camera stays within `terrain.select.move_m` (0.5 m, 3D,
 `lib.rs:121`) of the last selection and its key (tile slots, edits, settings, debug, origin) is unchanged; distance only, so
 turning never re-runs it. Crack-free because the shader's morph zones move the quantum closer (`params.rs:67`, test

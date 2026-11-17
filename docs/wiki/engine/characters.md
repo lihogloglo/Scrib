@@ -24,7 +24,7 @@ second body.
   (`superfargoth/vendor/bevy_pbr/src/render/skin.rs:145-423`, `SkinJointBlocks` `:197`) keys a block by
   (inverse-bindposes asset, joint entities) and refcounts it, so all meshes of one NPC extract and upload one
   palette (`extract_skins` `:885`, `prepare_skins` `:775`). Previous-frame matrices (motion vectors) stay valid at
-  the same offset. CW-7 (opt-in, live tunable `render.skin.skip_unchanged`, alias `BEVYRROWIND_SKIN_SKIP_UNCHANGED=1`, bound in `mw_exterior_bevy/src/quality_presets.rs`
+  the same offset. CW-7 (on by default (owner 2026-11-17), live tunable `render.skin.skip_unchanged`, alias `BEVYRROWIND_SKIN_SKIP_UNCHANGED=1`, bound in `mw_exterior_bevy/src/quality_presets.rs`
   next to `CrowdSettings`): blocks of characters whose transforms did not change (A3 frozen, standing idle) are
   neither walked nor uploaded ([skinning](../bevy/skinning-and-animation.md) section 2).
 - **Roles** (first person): `sf_character/src/slots.rs:33` `ViewRole` (Body, Head, Arms, Held). A root with

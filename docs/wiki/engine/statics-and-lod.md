@@ -3,7 +3,7 @@
 ## What it does
 
 Three ways draw the static world, by distance. Near cells (inside the far-field handoff) draw from a baked **precombine**
-(a few merged meshes per cell) or, opt-in, from the **static scene** (retained GPU instance batches). Past the handoff the
+(a few merged meshes per cell) or, by default since 2026-11-17 (owner; `--off scene` = precombine), from the **static scene** (retained GPU instance batches). Past the handoff the
 **far field** draws HLOD proxies (L1/L2/L3), impostors and light sprites. Separately, an opt-in switch makes static parts
 skip Bevy's CPU culling (`NoCpuCulling`). Streaming and the per-placement fallback path are in `streaming.md`.
 
@@ -31,7 +31,7 @@ L1 nodes ride the streaming far ring through `CellProxies` (`runtime.rs:203`, `F
 (`levels.rs`, `FadeRange`). `residency_pass` (`runtime.rs:570`) forces a parent visible while any child that should draw is
 not resident (no holes).
 
-**Static scene (`--scene`, experimental).** `static_paths` (`mw_exterior_bevy/src/exterior.rs:1268`): scene needs `--scene`, no
+**Static scene (default since owner 2026-11-17; `--scene` is a no-op).** `static_paths` (`mw_exterior_bevy/src/exterior.rs:1405`): scene needs no
 `--off scene`, and no `--off near/nif`, no `--lod-tint`; it turns the precombine off (never both). `ScenePlugin`
 (`sf_scene_bevy/src/lib.rs:64`) installs `SceneCells(SceneHook)` when enabled (`lib.rs:191`); the game also adds the vendored
 `GpuInstanceBatchPlugin` (`exterior.rs:302`). Flow: baked per-cell tables (`sf_scene`, `SceneTableLoader`) load through the
@@ -61,8 +61,8 @@ in `sf_world_bevy/src/matclass.rs`.
 ## Switches and counters
 
 - `--off precombine` (`exterior.rs:1271`), `scene`, `matclass`, `cpuculltag`, `farfield` (`lod`), `near`/`far`/`nif`; flags
-  `--scene`, `--lod-tint`; env `BEVYRROWIND_GPU_CULL_STATICS`.
-- Far-field selection gate (CW-2, opt-in, built 2026-11-16, not measured): the residency pass (`far/select/ms`) is skipped
+  `--off scene` (precombine), `--lod-tint`; env `BEVYRROWIND_GPU_CULL_STATICS`.
+- Far-field selection gate (CW-2, on by default (owner 2026-11-17); walk -0.44 ms, ledger perf 2026-11-17): the residency pass (`far/select/ms`) is skipped
   (`sf_lod_bevy/src/runtime.rs:614`) while the camera stays within `far.select.move_m` (2 m) and the far state, the
   scheduler's revision and the settings are unchanged, plus one settle frame after any change (new parts get their
   `GlobalTransform` in PostUpdate); while on, nodes need their children 2 m early (guard band, `runtime.rs:622`) so
@@ -79,7 +79,7 @@ in `sf_world_bevy/src/matclass.rs`.
 
 ## Known limits
 
-- Static scene reaches only parity with the precombine, opt-in: [ledger/statics.md](../../ledger/statics.md).
+- Static scene: parity with the precombine on the walk, -0.22 ms standing and ~6x fewer walk hitches on the walk-once base; default since owner 2026-11-17: [ledger/statics.md](../../ledger/statics.md).
 - `NoCpuCulling` is opt-in (walk stutters, lamp work items; with lamp faces fixed it still loses: more batch sets in the
   camera and cascades, H1 2026-11-15): [ledger/statics.md](../../ledger/statics.md).
 - Precombine falls back to per-placement entities when a member moved or was removed: [ledger/statics.md](../../ledger/statics.md).

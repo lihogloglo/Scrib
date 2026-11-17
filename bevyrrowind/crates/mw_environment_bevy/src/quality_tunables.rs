@@ -86,9 +86,9 @@ pub const TEXTURE_MAX_SIZE: Def<u32> = def!(count "texture.max_size_px" = 0)
 /// and in a prepass with depth only bind no material group (Bevy's stock material-less depth-only
 /// path). Read at start (`Restart`): Bevy reads it once when its material plugin finishes, and the
 /// pipelines and draw functions of a run must all agree.
-pub const DEPTH_ONLY_SKIP_MATERIAL: Def<bool> = def!(bool "render.depth_only.skip_material" = false)
+pub const DEPTH_ONLY_SKIP_MATERIAL: Def<bool> = def!(bool "render.depth_only.skip_material" = true)
     .help("Opaque shadow and depth-only draws bind no material group (alpha-masked ones keep it); read at start")
-    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .source(Source::Owner("2026-11-17: on by default after the owner's play session with every gate on; A/B docs/ledger/perf.md 2026-11-17"))
     .group(Group::Shadows)
     .lifetime(Lifetime::Restart);
 

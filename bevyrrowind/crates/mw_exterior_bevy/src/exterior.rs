@@ -76,7 +76,7 @@ pub struct ExteriorOptions {
     pub store: Store,
     pub manifest: Manifest,
     pub lod_tint: bool,
-    /// `--scene`: near statics draw from the static scene (`sf_scene_bevy`) instead of the precombine.
+    /// `--scene`: no-op since the static scene became the default (owner 2026-11-17; `--off scene` = precombine).
     pub scene: bool,
     pub terrain_lod: bool,
     pub wireframe: bool,
@@ -334,8 +334,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // Pipeline-compile pool while a reveal holds (pipeline-warmup.md W2b): default all cores but 2;
     // A/B with `--env BEVYRROWIND_COMPILE_THREADS=0` (off, stock 4 async threads) or `=<n>`.
     streaming.pipeline_compile_threads = std::env::var("BEVYRROWIND_COMPILE_THREADS").ok().and_then(|v| v.parse().ok());
-    // The static scene (`--scene`) or the precombine draws the near statics, never both.
-    let (scene, precombine) = static_paths(options.scene, &perf.off, options.lod_tint);
+    // The static scene (default; `--off scene` for the A/B) or the precombine draws the near statics, never both.
+    let (scene, precombine) = static_paths(&perf.off, options.lod_tint);
     streaming.precombine = precombine;
     let mut plugins = DefaultPlugins
         .build()
@@ -652,7 +652,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // W-SHORE: `--off shorenormals` flattens the water's normal with its displacement at the shore.
     // W-GERSTNER: `--off shorewaves` drops the analytic shore waves (the FFT fades to flat). W-WIND:
     // `--off seawind` keeps the fixed sea breeze instead of the weather's wind.
-    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves), !perf.off.has(Part::SeaWind), !perf.off.has(Part::ShoreDepth), !perf.off.has(Part::SurfFoam));
+    let water_parts = (!perf.off.has(Part::WaterSsr), !perf.off.has(Part::ShoreNormals), !perf.off.has(Part::ShoreWaves), !perf.off.has(Part::SeaWind), !perf.off.has(Part::ShoreDepth));
     mw_environment_bevy::water::add(&mut app, options.water, water_parts, &options.world.worldspaces);
     app.add_systems(Update, sea_wind);
     mw_doors_bevy::add(&mut app, options.world, options.use_door);
@@ -1396,13 +1396,15 @@ fn fog_shadow_heights(map: Option<Res<sf_terrain_bevy::FarShadowMap>>, mut input
 
 /// Which path draws the near statics: `(scene, precombine)`, never both on.
 ///
-/// The static scene needs `--scene` and no `--off scene`. Both bypass the spawners, so both are
-/// off where a spawner must see every static: `--off near` (no near statics), `--off nif` (the
-/// runtime NIF path) and `--lod-tint` (the tint view). The precombine is also off with
-/// `--off precombine`, and whenever the scene draws (the two draw the same placements).
-fn static_paths(scene_flag: bool, off: &Off, lod_tint: bool) -> (bool, bool) {
+/// The static scene draws by default (owner 2026-11-17, after the chain-1 A/B and a play session;
+/// `--scene` is a no-op kept for old scripts); `--off scene` brings the precombine back for the A/B.
+/// Both bypass the spawners, so both are off where a spawner must see every static: `--off near`
+/// (no near statics), `--off nif` (the runtime NIF path) and `--lod-tint` (the tint view). The
+/// precombine is also off with `--off precombine`, and whenever the scene draws (the two draw the
+/// same placements).
+fn static_paths(off: &Off, lod_tint: bool) -> (bool, bool) {
     let spawners_only = off.has(Part::Near) || off.has(Part::Nif) || lod_tint;
-    let scene = scene_flag && !off.has(Part::Scene) && !spawners_only;
+    let scene = !off.has(Part::Scene) && !spawners_only;
     let precombine = !(scene || spawners_only || off.has(Part::Precombine));
     (scene, precombine)
 }
@@ -1700,18 +1702,18 @@ mod static_paths_tests {
         Off::from_flags(&names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>()).expect("known parts")
     }
 
-    /// C2a (scene-runtime-plan.md §8): `--scene` swaps the precombine for the static scene, and the
-    /// views that need every static as an entity turn both off.
+    /// C2a (scene-runtime-plan.md §8): the static scene replaces the precombine by default (owner
+    /// 2026-11-17), `--off scene` brings the precombine back, and the views that need every static as
+    /// an entity turn both off.
     #[test]
-    fn scene_flag_replaces_the_precombine_and_spawner_views_turn_both_off() {
-        assert_eq!(static_paths(false, &Off::default(), false), (false, true), "default: the precombine");
-        assert_eq!(static_paths(true, &Off::default(), false), (true, false), "--scene");
-        assert_eq!(static_paths(true, &off(&["scene"]), false), (false, true), "--scene --off scene");
-        assert_eq!(static_paths(true, &off(&["near"]), false), (false, false), "--scene --off near");
-        assert_eq!(static_paths(true, &off(&["nif"]), false), (false, false), "--scene --off nif");
-        assert_eq!(static_paths(true, &Off::default(), true), (false, false), "--scene --lod-tint");
-        assert_eq!(static_paths(false, &off(&["precombine"]), false), (false, false), "--off precombine");
-        assert_eq!(static_paths(true, &off(&["precombine"]), false), (true, false), "--scene --off precombine");
+    fn scene_replaces_the_precombine_and_spawner_views_turn_both_off() {
+        assert_eq!(static_paths(&Off::default(), false), (true, false), "default: the static scene");
+        assert_eq!(static_paths(&off(&["scene"]), false), (false, true), "--off scene: the precombine");
+        assert_eq!(static_paths(&off(&["near"]), false), (false, false), "--off near");
+        assert_eq!(static_paths(&off(&["nif"]), false), (false, false), "--off nif");
+        assert_eq!(static_paths(&Off::default(), true), (false, false), "--lod-tint");
+        assert_eq!(static_paths(&off(&["scene", "precombine"]), false), (false, false), "--off scene,precombine");
+        assert_eq!(static_paths(&off(&["precombine"]), false), (true, false), "--off precombine");
     }
 }
 

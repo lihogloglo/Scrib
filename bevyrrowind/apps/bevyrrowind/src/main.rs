@@ -420,8 +420,8 @@ struct ViewFlags {
     /// Tint cooked models by LOD level (green LOD0, yellow, orange, red, magenta).
     #[arg(long)]
     lod_tint: bool,
-    /// Draw near statics from the static scene (baked `scene.cells`) instead of the precombine
-    /// (scene-runtime-plan.md §8; exteriors only, `--off scene` for the A/B).
+    /// No-op, kept for old scripts: the static scene (baked `scene.cells`) draws near statics by default
+    /// since 2026-11-17 (owner); `--off scene` brings back the precombine for the A/B.
     #[arg(long)]
     scene: bool,
     /// Load skinned models (actors, creatures, body parts) from their cooked

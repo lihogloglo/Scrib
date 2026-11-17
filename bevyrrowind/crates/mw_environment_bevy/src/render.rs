@@ -36,13 +36,15 @@ const ENV_DLSS: &str = "BEVYRROWIND_DLSS";
 /// Upscaling without `--dlss` or `BEVYRROWIND_DLSS`, the start's value of the quality level's
 /// `render.upscaling` (the truth is the `sg.post` records, `mw_mods::BASE_RECORDS`; a test in
 /// `mw_exterior_bevy::quality_presets` keeps the two equal): a temporal resolve on Medium and up
-/// (ROADMAP 1.3), DLSS `auto` (Quality at our resolutions) in builds with DLSS, which falls back to
-/// TAA on GPUs without it, TAA in builds without; Low keeps MSAA; Extremely low DLSS Performance in
-/// DLSS builds, else MSAA. `--dlss taa|off` picks.
+/// (ROADMAP 1.3), DLSS in builds with DLSS, which falls back to TAA on GPUs without it, TAA in builds
+/// without. High and Ultra pin DLSS Quality (owner 2026-11-17: `auto` picks Performance from 3.68 MP,
+/// and 2560x1440 is 3.69, while the frame target is 1440p + DLSS Quality); Medium keeps `auto`; Low
+/// keeps MSAA; Extremely low DLSS Performance in DLSS builds, else MSAA. `--dlss taa|off` picks.
 pub fn default_upscaling(quality: Quality) -> Upscaling {
     match (quality, cfg!(feature = "dlss")) {
         (Quality::ExtremelyLow, true) => Upscaling::parse("performance").unwrap_or(Upscaling::Off),
         (Quality::ExtremelyLow | Quality::Low, _) => Upscaling::Off,
+        (Quality::High | Quality::Ultra, true) => Upscaling::parse("quality").unwrap_or(Upscaling::Taa),
         (_, true) => Upscaling::parse("auto").unwrap_or(Upscaling::Taa),
         (_, false) => Upscaling::Taa,
     }

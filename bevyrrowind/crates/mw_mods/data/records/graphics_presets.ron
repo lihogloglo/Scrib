@@ -115,7 +115,7 @@
   )),
 
   // Post: bloom off on Low (screen-space-effects research 4.11), its scatter two thirds of
-  // Bloom::NATURAL; MSAA on Low, else a temporal resolve (DLSS `auto` in DLSS builds, TAA otherwise;
+  // Bloom::NATURAL; MSAA on Low, else a temporal resolve (DLSS in DLSS builds: Quality on High/Ultra, owner 2026-11-17, `auto` on Medium; TAA otherwise;
   // ROADMAP 1.3). Extremely low: DLSS Performance where the build has DLSS, else MSAA.
   define(kind: "sf.tunable_preset", id: "sg.post", value: (
     driver: "sg.post",
@@ -124,13 +124,19 @@
       "extremely_low": { "render.bloom": false, "render.bloom.intensity": 0.1, "render.upscaling": "performance" },
       "low": { "render.bloom": false, "render.bloom.intensity": 0.1, "render.upscaling": "off" },
       "medium": { "render.bloom": true, "render.bloom.intensity": 0.1, "render.upscaling": "auto" },
-      "high": { "render.bloom": true, "render.bloom.intensity": 0.1, "render.upscaling": "auto" },
-      "ultra": { "render.bloom": true, "render.bloom.intensity": 0.1, "render.upscaling": "auto" },
+      "high": { "render.bloom": true, "render.bloom.intensity": 0.1, "render.upscaling": "quality" },
+      "ultra": { "render.bloom": true, "render.bloom.intensity": 0.1, "render.upscaling": "quality" },
     },
     sources: {
       "extremely_low": {
         "render.bloom": "industry: UE sg.PostProcessQuality 0 (r.BloomQuality 0); Low already off",
         "render.upscaling": "industry: NVIDIA DLSS programming guide (Performance mode = 50% render scale, the low-end recommendation); UE sg.ResolutionQuality low",
+      },
+      "high": {
+        "render.upscaling": "owner: 2026-11-17: DLSS Quality on High (DLSS auto picks Performance at 2560x1440, 3.69 MP); the frame target is 1440p + DLSS Quality",
+      },
+      "ultra": {
+        "render.upscaling": "owner: 2026-11-17: DLSS Quality like High (never below High)",
       },
     },
   )),

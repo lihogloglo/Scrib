@@ -53,7 +53,7 @@ placement ends at the far handoff if far-eligible, else its ring's unload radius
 **Reveal.** A cell group stays `Visibility::Hidden` until `reveal` in the `Upload` stage (`stream.rs:1575`); `RevealGate`
 (`reveal.rs`) is what loading and door fades wait on.
 
-**Worldspace left behind (CW-9, opt-in).** Indoors the exterior stays resident: the residency-cache ghost
+**Worldspace left behind (CW-9, on by default (owner 2026-11-17)).** Indoors the exterior stays resident: the residency-cache ghost
 (`scheduler.rs` `linger`) keeps its full rings while the player stands within 32 m of the way back (a small interior:
 the whole visit), and far-field L2/L3 nodes never leave. Without parking it all keeps ticking (visibility, big_space,
 character layers, walkers, far-field pass). With `stream.interior.disable_exterior` on, `park::park_worldspaces`
@@ -76,12 +76,12 @@ stale instance offsets in 0.20).
   `--off nif`, `sizecull` (`exterior.rs:266`), `farfield` (`exterior.rs:217`), `actors`, `walkers`, `terrain`. Others:
   `statics-and-lod.md`. Env `BEVYRROWIND_LOADING_MESHES` (`exterior.rs:1278`). `--off shiftrebase`: origin shifts reset
   temporal history instead of rebasing motion vectors (FLICKER-1 A/B).
-- Selection gate (CW-2, opt-in, built 2026-11-16, not measured; `sf_world/src/select_gate.rs`): `Scheduler::update`
+- Selection gate (CW-2, on by default (owner 2026-11-17), walk -0.44 ms; `sf_world/src/select_gate.rs`): `Scheduler::update`
   skips gather + decide (`scheduler.rs:762`) while no effective anchor moved `stream.select.move_m` (4 m, UE5
   `LocationQuantization`) or turned `stream.select.turn_deg` (10 deg) and `Scheduler::revision` (cell moves finished,
   worldspaces, links, reload) is unchanged; linger, door prefetch, async starts and burst end stay per tick, a reload
   always runs. `set select.gate on` (live; alias `BEVYRROWIND_SELECT_GATE=1`) turns on all three gates (terrain, far field), `--off selectgate` forces off.
-- Parking (CW-9, opt-in, built 2026-11-17, not measured): `set stream.interior.disable_exterior on` (live both ways,
+- Parking (CW-9, on by default (owner 2026-11-17), not measurable on the census bench): `set stream.interior.disable_exterior on` (live both ways,
   bound in `mw_exterior_bevy/src/quality_presets.rs` `add_gates`), `stream.interior.park_settle_s` (0.25 s). Counters
   `stream/parked/{worldspaces,entities}`, `stream/park/ms`; log `sf_world_bevy: parked|unparked <ws>: N entities`.
 - Counters: `stream/drive/ms`, `stream/tick/ms`, `stream/<stage>/{items,ms,queue}` (+`bytes` for upload; `stream.rs:972-1010`),

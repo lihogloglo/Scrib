@@ -83,9 +83,9 @@ fn weight_at(hour: f64) -> f32 {
 }
 
 #[test]
-fn gate_is_off_by_default() {
-    assert!(!PointShadowBudget::default().contrast_gate.enabled);
-    assert!(!DAY_GATE.default_value());
+fn gate_is_on_by_default() {
+    assert!(PointShadowBudget::default().contrast_gate.enabled);
+    assert!(DAY_GATE.default_value(), "on by default (owner 2026-11-17)");
     let [off, full] = DAY_GATE_CONTRAST.default_value();
     assert!(0.0 < off && off < full && full < 1.0);
     let mut t = sf_tunables::Tunables::default();

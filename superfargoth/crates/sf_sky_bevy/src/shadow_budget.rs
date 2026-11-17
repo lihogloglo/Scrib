@@ -157,9 +157,9 @@ pub const LAMP_CONTACT: Def<bool> = def!(bool "shadow.lamp.contact" = false)
     .group(Group::Shadows);
 
 /// `shadow.lamp.day_gate`: [`ShadowContrastGate::enabled`].
-pub const DAY_GATE: Def<bool> = def!(bool "shadow.lamp.day_gate" = false)
+pub const DAY_GATE: Def<bool> = def!(bool "shadow.lamp.day_gate" = true)
     .help("Point lights whose shadow would be imperceptible against the sun and ambient get no shadow map")
-    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .source(Source::Owner("2026-11-17: on by default after the owner's play session with every gate on; A/B docs/ledger/perf.md 2026-11-17"))
     .group(Group::Shadows);
 
 /// `shadow.lamp.day_gate.receiver_m`: [`ShadowContrastGate::receiver_distance`].
@@ -191,9 +191,9 @@ pub const FACE_CULL_MARGIN: Def<f32> = def!(float "shadow.lamp.face_cull.margin_
     .group(Group::Shadows);
 
 /// `shadow.lamp.face_cull`: `bevy_pbr::PointShadowFaceCull::enabled` (ROADMAP 1.25 CW-3b).
-pub const FACE_CULL: Def<bool> = def!(bool "shadow.lamp.face_cull" = false)
+pub const FACE_CULL: Def<bool> = def!(bool "shadow.lamp.face_cull" = true)
     .help("Point shadow cube faces no camera sees a receiver of are not drawn")
-    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .source(Source::Owner("2026-11-17: on by default after the owner's play session with every gate on; A/B docs/ledger/perf.md 2026-11-17"))
     .group(Group::Shadows);
 
 /// This module's tunables (bound by [`crate::ShadowQualityPlugin`], tunables slice T4).

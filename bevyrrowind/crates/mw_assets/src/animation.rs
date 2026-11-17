@@ -46,10 +46,10 @@ const MATERIAL_ANIM_HZ: f32 = 30.0;
 /// `mw.matctrl.gate`: material controllers skip materials no visible entity draws (ROADMAP 1.25 CW-6).
 /// Live ([`MaterialGate`]): the first time it turns on, [`MaterialUsers`] is filled from the entities
 /// already spawned and its observers keep it from then on (off again, they keep tracking, unused).
-/// Opt-in until its interleaved A/B; alias `BEVYRROWIND_MATCTRL_GATE=1`.
-pub const MATCTRL_GATE: Def<bool> = def!(bool "mw.matctrl.gate" = false)
+/// On by default (owner 2026-11-17, after the interleaved A/B and a play session); alias `BEVYRROWIND_MATCTRL_GATE`.
+pub const MATCTRL_GATE: Def<bool> = def!(bool "mw.matctrl.gate" = true)
     .help("NIF material controllers skip materials no visible entity draws")
-    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .source(Source::Owner("2026-11-17: on by default after the owner's play session with every gate on; A/B docs/ledger/perf.md 2026-11-17"))
     .group(Group::Effects)
     .env_alias("BEVYRROWIND_MATCTRL_GATE");
 

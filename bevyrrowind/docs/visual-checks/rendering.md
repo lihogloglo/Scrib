@@ -335,4 +335,7 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   - `stream.interior.disable_exterior` (DR-5): indoors nothing changes on screen and no outdoor sound; going back out is as
     fast as before; F3 entities drop indoors and main ms falls.
 - Verdict per gate: keep (on by default), maybe, reject; plus a feel for the panel's numbers with all on vs all off.
-- Status: awaiting owner (play session). Source: orch-presets.
+- Measured 2026-11-17 (perf-tests, interleaved, ledger perf): **faster** `select.gate` (walk -0.44 ms) and
+  `shadow.lamp.face_cull` (night walk -0.46): a "keep" turns these on by default. Inconclusive: skin skip, matctrl gate,
+  day gate, sun gate (night), disable_exterior (bench starts indoors). Lamp cache: render +0.94 ms on the night walk.
+- Status: confirmed 2026-11-17 (owner played `--scene` + every gate on, `tunables/perf-play-2026-11-17.toml`, profiling exe, DLSS auto = Performance: "very smoothly and very fast", 110 fps in Balmora many times): all on by default, lamp cache stays off. Source: orch-presets, perf-tests.

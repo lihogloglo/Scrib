@@ -227,6 +227,13 @@ notes, only `docs/specs/`. Don't mix the two in one session.
 - **Every brief pastes its system's ledger lines** (`docs/ledger/<system>.md`) and links the wiki page, not
   research docs (they anchor agents on old hypotheses). Before building on a component, check it actually runs
   in the game (2026-11-12: three agents built on a lamp shadow cache that had been off since 2026-10-21).
+- **Design a bench session before running it (owner 2026-11-17).** Bench hours cost the owner's machine and time.
+  Write the design in the session file first: the question each arm answers, the **interactions that matter**
+  (switches that touch the same work: lamp face cull × lamp cache × day gate, `--scene` × lamp shadows, all gates on
+  together = what the player gets) tested as combined arms, not only one-switch-vs-base, and the fewest runs that
+  answer it (more arms beat more repeats; stop a suite once its answer is clear). **Hitches count as much as the
+  frame time:** every verdict and ledger line gives hitches per minute and p99 next to the median, and an arm that
+  cuts hitches is a result, not a footnote. A session of more than ~1 h of bench needs the owner's go on the design.
 - **Perf work starts from a measured ceiling and an expected ms**, and ends with an untraced A/B logged in
   `docs/ledger/perf.md`: one exe, arms interleaved in one `perf suite --arm` invocation (3+ runs each), judged on
   the main, render and GPU times as well as the frame (a cut on a thread the frame isn't bound by is "banked", not

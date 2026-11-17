@@ -84,9 +84,9 @@ pub use view_model::{ViewCopyMaterial, ViewModel, ViewModelMaterial, ViewModelMa
 /// own patch "skip unchanged skins", ROADMAP 1.25 CW-7): joint blocks whose matrices did not change
 /// are neither walked nor re-uploaded. Read by Bevy's skin extraction every frame, so live both ways
 /// (a block changed while off stays queued for both buffers). The host binds it.
-pub const SKIN_SKIP_UNCHANGED: sf_tunables::Def<bool> = sf_tunables::def!(bool "render.skin.skip_unchanged" = false)
+pub const SKIN_SKIP_UNCHANGED: sf_tunables::Def<bool> = sf_tunables::def!(bool "render.skin.skip_unchanged" = true)
     .help("Skinned meshes upload only the joint blocks whose matrices changed")
-    .source(sf_tunables::Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .source(sf_tunables::Source::Owner("2026-11-17: on by default after the owner's play session with every gate on; A/B docs/ledger/perf.md 2026-11-17"))
     .group(sf_tunables::Group::Characters);
 
 /// This crate's tunables (the host binds them).

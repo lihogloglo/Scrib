@@ -1880,3 +1880,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-17 (owner, wgpu-walk): `render.wgpu.bind_group_walk_once` is on by default in the game ("all the new options
   that were optimizing the game should be by default"): an optimisation that wins its interleaved A/B becomes the default,
   with its off value kept as the A/B arm. Unmeasured or look-changing switches still wait for their A/B and owner check.
+- 2026-11-17 (owner, perf-tests): after a play session with all of them on ("very smoothly and very fast", 110 fps in
+  Balmora), the static scene and the CW gates (select, lamp face cull + day gate, sun gate, skin skip, matctrl, interior park,
+  depth-only no material) are on by default (`--off scene` / `set <name> off` for A/Bs); lamp cache stays off. High/Ultra pin DLSS Quality.

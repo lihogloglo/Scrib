@@ -212,12 +212,14 @@ fn gate_turns_on_and_off_live() {
     add_live_gate(&mut app);
     let material = model(&mut app, scroll());
     user(&mut app, &material, false);
-    app.update();
-    assert!(app.world().get_resource::<MaterialUsers>().is_none(), "off: no tracking");
     let set = |app: &mut App, on: &str| {
         app.world_mut().write_message(sf_tunables_bevy::SetTunable::new("mw.matctrl.gate", on, SetBy::Console));
         app.update();
     };
+    // On by default (owner 2026-11-17): start from off to walk the off -> on -> off path.
+    set(&mut app, "off");
+    app.update();
+    assert!(app.world().get_resource::<MaterialUsers>().is_none(), "off: no tracking");
     set(&mut app, "on");
     assert_eq!(app.world().resource::<MaterialUsers>().users(material.id()).map(<[Entity]>::len), Some(2), "spawned users found");
     app.world_mut().resource_mut::<Modified>().0 = 0;

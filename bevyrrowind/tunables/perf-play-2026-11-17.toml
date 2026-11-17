@@ -1,0 +1,16 @@
+# Owner play session 2026-11-17 (perf-tests): every CPU-waste switch that measured faster or close, on together.
+# Launch: `bash tools/owner_launch.sh --profiling view "Balmora" --scene --tunables tunables/perf-play-2026-11-17.toml`
+# (`--scene` is a launch flag, not live). Flip any line live in the console: `set <name> off`, `reset <name>`.
+# Measured numbers: docs/ledger/perf.md 2026-11-17 (interleaved, one switch at a time, DLSS Q 2560x1440).
+
+"select.gate" = true                  # walk -0.44 ms (faster)
+"shadow.lamp.face_cull" = true        # night walk -0.46 ms (faster)
+"mw.matctrl.gate" = true              # walk render -0.40 (inconclusive, p 0.095)
+"shadow.sun.gate" = true              # night -0.29 (inconclusive)
+"render.skin.skip_unchanged" = true   # walk -0.16 (inconclusive)
+"shadow.lamp.day_gate" = true         # walk -0.15 (inconclusive)
+"stream.interior.disable_exterior" = true  # not measurable on the bench (starts indoors); go in through a door
+"render.depth_only.skip_material" = true   # walk -0.16, render -0.31 (inconclusive); read at start only
+
+# Off: render thread +0.94 ms and p99 +2.8 ms on the night walk. Try `set shadow.lamp.cache.enabled on` at night.
+"shadow.lamp.cache.enabled" = false

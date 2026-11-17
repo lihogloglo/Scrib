@@ -579,9 +579,9 @@ mod tests {
         console(&mut gated, "select.gate", "on");
         assert!(read(&gated).0);
         let mut plain = app(Quality::Low, &Off::default(), &[]);
-        assert_eq!(read(&plain), (false, false, false, false), "off by default");
-        console(&mut plain, "render.skin.skip_unchanged", "on");
-        assert!(read(&plain).3);
+        assert_eq!(read(&plain), (true, true, true, true), "on by default (owner 2026-11-17)");
+        console(&mut plain, "render.skin.skip_unchanged", "off");
+        assert!(!read(&plain).3);
     }
 
     /// The old `Quality` table (T5a's `quality_preset_values`, copied as it was): the golden fixture the
@@ -620,11 +620,13 @@ mod tests {
             Quality::High => ("high", 2048, 32, 5),
             _ => ("ultra", 0, 64, 8),
         };
-        // `default_upscaling(low)` as it was: MSAA on Low, else DLSS auto in DLSS builds, TAA without.
-        let upscaling = match (low, mw_environment_bevy::render::capabilities().contains(&"dlss")) {
-            (true, _) => "off",
-            (false, true) => "auto",
-            (false, false) => "taa",
+        // `default_upscaling`: MSAA on Low, else DLSS in DLSS builds (Quality on High and Ultra since owner 2026-11-17,
+        // `auto` on Medium), TAA without.
+        let upscaling = match (low, high, mw_environment_bevy::render::capabilities().contains(&"dlss")) {
+            (true, _, _) => "off",
+            (false, true, true) => "quality",
+            (false, false, true) => "auto",
+            (false, _, false) => "taa",
         };
         let text = |s: &str| Value::Str(s.to_owned());
         vec![

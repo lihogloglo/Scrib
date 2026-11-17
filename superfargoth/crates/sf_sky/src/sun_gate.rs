@@ -24,9 +24,9 @@ use sf_tunables::{AnyDef, Def, Group, Source, Unit, def};
 use crate::sky::{SkyLight, SkyState};
 
 /// `shadow.sun.gate`: [`SunShadowGate::enabled`].
-pub const GATE: Def<bool> = def!(bool "shadow.sun.gate" = false)
+pub const GATE: Def<bool> = def!(bool "shadow.sun.gate" = true)
     .help("Sun and moon cascades fade out and turn off when their direct light is drowned by the sky's fill")
-    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .source(Source::Owner("2026-11-17: on by default after the owner's play session with every gate on; A/B docs/ledger/perf.md 2026-11-17"))
     .group(Group::Shadows);
 
 /// `shadow.sun.gate.contrast`: [`SunShadowGate::contrast_off`] and

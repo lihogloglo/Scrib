@@ -17,9 +17,9 @@ use sf_tunables::{AnyDef, Def, Group, Source, def};
 
 /// `select.gate`: the one switch of every CW-2 gate (streaming here, terrain in `sf_terrain_bevy`, the far
 /// field in `sf_lod_bevy`; each system's quanta sit next to its settings). Hosts read it for the default.
-pub const SELECT_GATE: Def<bool> = def!(bool "select.gate" = false)
+pub const SELECT_GATE: Def<bool> = def!(bool "select.gate" = true)
     .help("Streaming, terrain and far-field selection re-run only when the camera moved or turned past a quantum or an input changed")
-    .source(Source::Owner("2026-11-15: a change stays opt-in, off, until its interleaved A/B wins"))
+    .source(Source::Owner("2026-11-17: on by default after the owner's play session with every gate on; A/B docs/ledger/perf.md 2026-11-17"))
     .group(Group::ViewDistance);
 
 /// `sf_world`'s tunables (live binding: tunables slice T2).
