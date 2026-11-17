@@ -255,3 +255,10 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   to a lamp leaves a ghost for at most ~2 s; flipping the switch both ways shows no pop. Lamp face views should drop to
   near 0 standing still with nobody near a lamp.
 - Status: awaiting owner.
+- Owner 2026-11-17 (Census, dev build 02:37; the live switch-on no longer panics): no flicker; everything looks the same on
+  and off; lamp face views drop when on. Status: Census confirmed; Balmora 22:00 next. Follow-up for later (not the cache,
+  on and off alike): lamp shadows fade in too close: entering the Census and walking down the hallway, shadows visibly fade
+  in a few metres ahead. Needs the lamp-shadow distance/fade retuned.
+- Balmora 22:00 first crashed on the switch-on (`unwrap()` on `None`, vendored `texture_attachment.rs`; fixed same day, own
+  patch "CW-4: load-only depth attachments"). Owner 2026-11-17 rerun: no crash, shadows stay crisp, look the same as off.
+  Status: confirmed (Census + Balmora). Open: the close lamp-shadow fade-in above.

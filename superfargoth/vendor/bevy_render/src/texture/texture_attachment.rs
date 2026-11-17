@@ -373,27 +373,33 @@ impl DepthStencilViewAttachment {
 
     /// Marks this depth attachment as unused this frame so that it'll be
     /// cleared at first use.
+    ///
+    /// superfargoth patch (own, CW-4: load-only depth attachments): an aspect built without a
+    /// clear value always loads (as `new` sets it up), so a frame reset only re-arms aspects that
+    /// have one. Stock re-armed every aspect, and `get_attachment` then unwrapped a `None` clear
+    /// value: the lamp shadow cache's load-only face views panicked once kept across frames.
     pub fn prepare_for_new_frame(&self) {
         match &self.depth_stencil_data {
             DepthStencilData::DepthStencil {
+                depth_clear_value,
+                stencil_clear_value,
                 depth_is_first_call,
                 stencil_is_first_call,
-                ..
             } => {
-                depth_is_first_call.store(true, Ordering::Relaxed);
-                stencil_is_first_call.store(true, Ordering::Relaxed);
+                depth_is_first_call.store(depth_clear_value.is_some(), Ordering::Relaxed);
+                stencil_is_first_call.store(stencil_clear_value.is_some(), Ordering::Relaxed);
             }
             DepthStencilData::DepthOnly {
+                depth_clear_value,
                 depth_is_first_call,
-                ..
             } => {
-                depth_is_first_call.store(true, Ordering::Relaxed);
+                depth_is_first_call.store(depth_clear_value.is_some(), Ordering::Relaxed);
             }
             DepthStencilData::StencilOnly {
+                stencil_clear_value,
                 stencil_is_first_call,
-                ..
             } => {
-                stencil_is_first_call.store(true, Ordering::Relaxed);
+                stencil_is_first_call.store(stencil_clear_value.is_some(), Ordering::Relaxed);
             }
         }
     }

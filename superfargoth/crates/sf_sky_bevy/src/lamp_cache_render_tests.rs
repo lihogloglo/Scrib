@@ -179,6 +179,31 @@ fn copies_are_recorded_before_the_shadow_passes() {
     assert!(cache.contains("pending.push_encoder(encoder,\"point_shadow_cache_copies\");"), "copies no longer queued as one encoder");
 }
 
+/// Owner run 2026-11-17 (Balmora 22:00, `set shadow.lamp.cache.enabled on`): `prepare_lights`
+/// re-arms every existing `ShadowView` each frame, and a cached face kept across frames with
+/// `load` (built without a clear value) then panicked in `get_attachment` (`unwrap()` on `None`,
+/// `texture_attachment.rs`). The reset must re-arm only aspects that have a clear value. Source
+/// check (as above): building a `TextureView` needs a device (wgpu's noop backend is a feature
+/// that would split the workspace's Bevy build).
+#[test]
+fn a_frame_reset_never_rearms_a_load_only_depth_attachment() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor/bevy_render/src/texture/texture_attachment.rs");
+    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let reset = src.split("pub fn prepare_for_new_frame(&self) {").last().expect("prepare_for_new_frame");
+    let reset = &reset[..reset.find("\n    }\n").expect("end of prepare_for_new_frame")];
+    let squash = |s: &str| s.split_whitespace().collect::<String>();
+    let reset = squash(reset);
+    assert!(!reset.contains(".store(true,"), "a frame reset re-arms a clear without a clear value");
+    for aspect in ["depth", "stencil"] {
+        assert!(
+            reset.contains(&format!("{aspect}_is_first_call.store({aspect}_clear_value.is_some(),")),
+            "{aspect}: the reset must re-arm only with a clear value"
+        );
+    }
+    let cache = squash(&vendored("render/point_shadow_cache.rs"));
+    assert!(cache.contains("(!load).then_some(0.0),"), "cached faces no longer load without a clear value: recheck this test");
+}
+
 /// The render app's light extraction (`extract_shadow_caster_changes`, `extract_lights`,
 /// `extract_cached_point_shadow_maps`) run against a main world, and the face views
 /// `prepare_lights` would give each shadowed point light: six on the stock path, the view faces
