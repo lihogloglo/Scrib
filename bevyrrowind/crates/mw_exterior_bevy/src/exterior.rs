@@ -41,6 +41,7 @@ use sf_sky_bevy::GameClock;
 use sf_sky_bevy::sf_sky::SkySettings;
 use sf_sky_bevy::{MoonLight, SkyCamera, SkyPlugin, SkyRenderOptions, SunLight, TemporalHistory};
 use sf_weather_bevy::{WeatherOverrides, WeatherPlugin, WeatherSite, WeatherSystems};
+use sf_terrain_bevy::sf_terrain::TerrainTiles;
 use sf_terrain_bevy::sf_terrain::bake::BakedTerrain;
 use sf_terrain_bevy::{TerrainCamera, TerrainDebug, TerrainOrigin, TerrainPlugin, TerrainSettings, TerrainStats, TerrainSystems, TerrainWorld};
 use sf_vfs::Vfs;
@@ -149,6 +150,9 @@ pub struct ExteriorOptions {
     pub water: mw_environment_bevy::water::WaterInputs,
     /// A synthetic test level (`level.rs`, TS1): `worldspace` is its own.
     pub level: Option<crate::level::LevelSetup>,
+    /// A generated world (`worldgen.rs`, slice G1): its terrain instead of the bake's, nothing of the content
+    /// streams in the exterior, the cloud layer raised.
+    pub worldgen: Option<crate::worldgen::WorldgenSetup>,
     /// The release start (no subcommand): the front end, the main menu with no world, until New
     /// game builds it (`phase.rs`, `main_menu.rs`). Dev runs (`view`, `scene`) leave it off and
     /// go straight to loading.
@@ -199,10 +203,17 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     if manifest.get(sf_world::bake::DIR_STEP, ext.as_str()).is_none() {
         return Err("no baked world index for the exterior: run `bevyrrowind bake`".into());
     }
-    let terrain = Arc::new(BakedTerrain::new(options.store.clone(), &manifest, ext.clone()));
-    if terrain.tiles().is_empty() {
-        return Err("no baked terrain for the exterior: run `bevyrrowind bake`".into());
-    }
+    // A generated world brings its own tiles (`worldgen.rs`); else the bake's.
+    let terrain: Arc<dyn TerrainTiles> = if let Some(w) = &options.worldgen {
+        w.tiles.clone()
+    } else {
+        let baked = Arc::new(BakedTerrain::new(options.store.clone(), &manifest, ext.clone()));
+        if baked.tiles().is_empty() {
+            return Err("no baked terrain for the exterior: run `bevyrrowind bake`".into());
+        }
+        baked
+    };
+    let worldgen = options.worldgen.is_some();
 
     let mut app = App::new();
     let render = options.render;
@@ -219,7 +230,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     extensions.extend(sf_lod_bevy::baked_extensions());
     extensions.extend(sf_scene_bevy::baked_extensions());
     // The far field (far-field.md) when the bake has it and `--off farfield` doesn't drop it.
-    let far_field = manifest.get(sf_lod::products::DIR_STEP, ext.as_str()).is_some() && !options.perf.off.has(Part::FarField);
+    // Not in a generated world: the far field is the content's statics.
+    let far_field = !worldgen && manifest.get(sf_lod::products::DIR_STEP, ext.as_str()).is_some() && !options.perf.off.has(Part::FarField);
     app.register_asset_source(
         BAKED_SOURCE,
         baked_source(options.store.clone(), BakedManifest::new((*manifest).clone()), extensions),
@@ -241,7 +253,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         mw_walkers_bevy::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone(), !perf.off.has(Part::Physics));
     }
     // nav.md NV4c: the navmesh with its baked tile ring around the player (`nav.stats`, `nav.draw tiles`; `--off nav` is a follow-up).
-    mw_walkers_bevy::nav::add(&mut app, options.store.clone(), manifest.clone());
+    // (Not in a generated world: the baked navmesh is the content's ground.)
+    if !worldgen {
+        mw_walkers_bevy::nav::add(&mut app, options.store.clone(), manifest.clone());
+    }
     if !perf.off.has(Part::Physics) {
         mw_walkers_bevy::physics::add(&mut app, options.store.clone(), (*manifest).clone(), options.physics_debug, options.actors.clone());
         // Deaths stay testable (owner 2026-11-02: replaces the `I` debug key, PH-14/PH-16).
@@ -388,6 +403,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     if let Some(level) = options.level {
         crate::level::add(&mut app, level);
     }
+    if let Some(w) = &options.worldgen {
+        crate::worldgen::add(&mut app, &ext, w);
+    }
+    let cloud_base_lift_m = options.worldgen.as_ref().map_or(0.0, |w| w.cloud_base_lift_m);
     // ROADMAP 2.4: the dialogue window on mw_rpg (`dialogue.rs`).
     mw_rpg_bevy::dialogue::add(&mut app, options.actors.clone(), options.open_ui.clone());
     // Character stats (stats.md S4): the player's sheet, NPC and creature sheets at spawn.
@@ -460,6 +479,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             dust: options.dust,
             clouds: options.clouds.map(pinned_clouds),
             fog_scale: options.fog,
+            cloud_base_lift_m,
         };
         // WE4c: the world weather map over the region raster (`sf_weather_bevy::WorldWeatherMap`):
         // distant regions show their own clouds; the camera's site comes from it.
@@ -530,7 +550,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     }
     if (clouds_on || fog_on) && !perf.off.has(Part::Sky) {
         let fog = sf_atmos_bevy::sf_atmos::FogSettings::default();
-        app.add_plugins(sf_atmos_bevy::CloudsPlugin { settings: cloud_settings(), fog, seed: 0x5EED_C10D })
+        app.add_plugins(sf_atmos_bevy::CloudsPlugin { settings: cloud_settings(cloud_base_lift_m), fog, seed: 0x5EED_C10D })
             .add_systems(Update, cloud_shadow_light);
         // `sky.clouds.map_per_sample` (the quality level's; live, `quality_presets::bind_live`).
         let map_per_sample = start_tunable(&app, &crate::quality_presets::CLOUD_MAP_PER_SAMPLE);
@@ -619,8 +639,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         budget: Some(sf_terrain_bevy::DEFAULT_LAYER_BUDGET),
     };
     let select_gate = TerrainSettings::select_gate_quanta(select_gate);
-    app.add_plugins(TerrainPlugin { settings: TerrainSettings { layer_cap, select_gate, ..TerrainSettings::default() } })
-        .insert_resource(TerrainWorld { baked: terrain })
+    // `--off gputerrain`: a generated world goes through CPU tiles (the G1 path, worldgen G2 A/B).
+    let gpu_fill = !perf.off.has(Part::GpuTerrain);
+    app.add_plugins(TerrainPlugin { settings: TerrainSettings { layer_cap, select_gate, gpu_fill, ..TerrainSettings::default() } })
+        .insert_resource(TerrainWorld::new(terrain))
         .insert_resource(TerrainDebug { lod_colors: options.terrain_lod, wireframe: options.wireframe, no_far_shadows: perf.off.has(Part::FarShadows), ..TerrainDebug::default() });
 
     // Before `Start` takes the worldspace: where an interior start puts the player (`player.rs`).
@@ -1699,9 +1721,10 @@ fn wind_origin(origin: Res<TerrainOrigin>, mut wind: ResMut<sf_wind_bevy::WindOr
 /// from then on, `sf_weather_bevy`): the look with sizes halved with the
 /// altitudes ([`CLOUD_WORLD_SCALE`], we2b's noise halving; the presets'
 /// heights come halved from `mw_weather::visual`).
-pub(crate) fn cloud_settings() -> sf_atmos_bevy::sf_atmos::CloudSettings {
+pub(crate) fn cloud_settings(base_lift_m: f32) -> sf_atmos_bevy::sf_atmos::CloudSettings {
     let mut settings = sf_atmos_bevy::sf_atmos::CloudSettings::preset(CloudPreset::Fair);
     settings.weather = pinned_clouds(CloudPreset::Fair);
+    settings.weather.base += base_lift_m;
     settings.look = settings.look.scaled(CLOUD_WORLD_SCALE);
     settings
 }

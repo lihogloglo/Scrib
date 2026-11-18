@@ -17,10 +17,20 @@ png = "0.18"
 rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Runtime tiles (`tiles`, slice G1): canonical tiles and the provider trait; Bevy-free like this crate.
+sf_terrain.workspace = true
+sf_world.workspace = true
 thiserror.workspace = true
 # GeoTIFF elevation tiles for `import-dem` (MIT, image-rs); DEFLATE (Copernicus COGs) and LZW only.
 tiff = { version = "0.11", default-features = false, features = ["deflate", "lzw"] }
 toml.workspace = true
+
+[dev-dependencies]
+# GPU twin of the runtime tiles (tests/gpu_twin.rs): naga validates the composed fill shader, a headless wgpu
+# compute run (default adapter or the WARP fallback) checks it against the CPU tiles.
+futures-lite.workspace = true
+naga = { workspace = true, features = ["wgsl-in"] }
+wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
 
 [[bin]]
 name = "scrib-worldgen"

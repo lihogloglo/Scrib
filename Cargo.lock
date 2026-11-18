@@ -2338,6 +2338,7 @@ dependencies = [
  "sf_sky_bevy",
  "sf_vfs",
  "sf_world",
+ "sf_worldgen",
  "tes3",
 ]
 
@@ -9314,13 +9315,18 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "clap",
+ "futures-lite",
+ "naga",
  "png",
  "rayon",
  "serde",
  "serde_json",
+ "sf_terrain",
+ "sf_world",
  "thiserror 2.0.21",
  "tiff",
  "toml 0.9.12+spec-1.1.0",
+ "wgpu",
 ]
 
 [[package]]

@@ -101,7 +101,7 @@ pub fn global_coords(pos: WorldPos) -> DVec2 {
 }
 
 /// Absolute meters of level-0 global sample index `g` on one axis.
-pub(crate) fn sample_meters(g: i64) -> f64 {
+pub fn sample_meters(g: i64) -> f64 {
     // i64 -> f64 is exact below 2^53 samples (far beyond the i32 cell grid).
     #[allow(clippy::cast_precision_loss)]
     let g = g as f64;

@@ -1897,3 +1897,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-18 (worldgen, owner): Vvardenfell 10x keeps flat lowlands with a gentle apron rising toward Red Mountain,
   which surges dramatically above real-world proportions (summit ~5.5 km); Etna and Teide are the references (Iceland
   rejected), Teide's barrancos the model for foyadas; the analytic erosion filter (WG-F) is kept for detail.
+- 2026-11-18 (worldgen, owner): a generated 10x world may ship as a baked product (transformative, like a mod or
+  Tamriel Rebuilt); raw source data still never ships. Next: landmark gazetteer (WG-L2), live viewer (WG-L1), and a
+  terrain-diffusion test (MIT, SIGGRAPH 2026) fed our heights through its 240 m low-frequency layer.
+- 2026-11-19 (worldgen, owner): any terrain is fine for now; the downstream chain (settlements, forests, textures) is
+  procedural and regenerates from it, deterministically, in the game renderer. Generated worlds fill terrain detail on the
+  GPU (look only); gameplay heights come from the CPU twin. Trees: several species, many, counts raised gradually.

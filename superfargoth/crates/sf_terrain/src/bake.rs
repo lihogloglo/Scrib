@@ -1225,3 +1225,25 @@ impl BakedTerrain {
         Some(b.map_err(|e| e.to_string()).and_then(|b| LayerArrays::from_bytes_capped(&b, cap).map_err(|e| e.to_string())))
     }
 }
+
+impl crate::TerrainTiles for BakedTerrain {
+    fn worldspace(&self) -> &WorldspaceId {
+        &self.ws
+    }
+
+    fn has_tile(&self, c: TileCoord) -> bool {
+        Self::has_tile(self, c)
+    }
+
+    fn tile(&self, c: TileCoord) -> Option<Result<TileProduct, String>> {
+        Self::tile(self, c)
+    }
+
+    fn macro_albedo(&self, c: TileCoord) -> Option<Result<MacroProduct, String>> {
+        Self::macro_albedo(self, c)
+    }
+
+    fn layers_capped(&self, size: Option<u32>, cap: &LayerCap) -> Option<Result<LayerArrays, String>> {
+        Self::layers_capped(self, size, cap)
+    }
+}

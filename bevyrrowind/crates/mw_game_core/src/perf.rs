@@ -227,10 +227,14 @@ pub enum Part {
     /// only when the camera moved or turned past a quantum or an input changed. Opt-in until its A/B
     /// (tunable `select.gate`, alias `BEVYRROWIND_SELECT_GATE=1`); this part forces it off at the command-line layer.
     SelectGate,
+    /// GPU clipmap fill of a generated world (worldgen G2, `sf_terrain_bevy::TerrainSettings::gpu_fill`): the
+    /// heights, normals and macro albedo are evaluated on the GPU and CPU tiles only serve height queries near
+    /// the camera; off, every tile is generated on the CPU and uploaded (the G1 path, an A/B for hitches).
+    GpuTerrain,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 85] = [
+    const ALL: [(&'static str, Part); 86] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -317,6 +321,7 @@ impl Part {
         ("scene", Part::Scene),
         ("shiftrebase", Part::ShiftRebase),
         ("selectgate", Part::SelectGate),
+        ("gputerrain", Part::GpuTerrain),
     ];
 
     pub fn name(self) -> &'static str {

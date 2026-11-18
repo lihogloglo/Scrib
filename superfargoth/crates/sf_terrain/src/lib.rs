@@ -36,10 +36,12 @@
 pub mod bake;
 pub mod cdlod;
 pub mod clipmap;
+pub mod gpu_fill;
 mod constrain;
 mod edits;
 mod layers;
 mod product;
+mod provider;
 mod pyramid;
 mod query;
 mod resample;
@@ -48,6 +50,7 @@ mod source;
 mod tile;
 
 pub use product::{LayerArrays, LayerCap, LayerInfo, LayerTable, MacroProduct, ProductError, RtProxy, TileProduct, layer_id};
+pub use provider::{GpuField, TerrainTiles};
 
 pub use constrain::{FOOTPRINT_FEATHER, Footprint, FootprintMask, constrain};
 pub use edits::{BRICK_SAMPLES, BrickCoord, EditBrick, HeightEdits, TerrainChanged};
@@ -63,7 +66,7 @@ pub use source::{
 };
 pub use tile::{
     BASE_SPACING, BLOCK_QUADS, BLOCKS, CANONICAL_DIAGONAL, HeightTile, LAYER_SAMPLES, TILE_QUADS, TILE_SAMPLES,
-    TINT_SAMPLES, TileCoord, global_coords,
+    TINT_SAMPLES, TileCoord, global_coords, sample_meters,
 };
 
 /// Errors from building a [`SourceMosaic`] or a layer map.

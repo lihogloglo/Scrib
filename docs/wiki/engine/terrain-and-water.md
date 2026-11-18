@@ -30,6 +30,13 @@ Clipmaps: 10 levels of 512² `R32Float` heights, 3 splat levels, 10 macro levels
 picks patches per frame; the vertex shader morphs and displaces. Patch transforms are relative to the floating origin
 (`TerrainOrigin`). `TerrainMaterial`: `material.rs:20`. Height edits: `edits.rs`.
 
+**Tile providers** (2026-11-19): `TerrainWorld { tiles: Arc<dyn TerrainTiles> }` (`sf_terrain/src/provider.rs`); the bake
+store (`BakedTerrain`) is one provider (CPU fill, unchanged), `sf_worldgen::tiles::GuideTiles` another (generated worlds,
+`view world:<guide dir>`): it hands the runtime a WGSL height function + data (`GpuField`), so clipmap strips fill on the
+GPU (`sf_terrain_bevy/src/gpu_fill.rs`, `sf_worldgen/src/tiles.wgsl`), CDLOD bounds come from `block_bounds` without
+evaluating heights, and a CPU twin (2 threads, `terrain.twin.*`) feeds `TerrainHeightsMap` near the camera. `--off
+gputerrain` = CPU tiles for every level.
+
 **Far shadow map** (`far_map.rs`): `far_shadow_map` (`sf_terrain/src/shadow.rs`, march 40 steps, reach 6000 m) over
 `FAR_MAP_SIZE` 384 texels, computed on the async pool and uploaded as a texture; far proxies and impostors read it (one
 fetch), the terrain marches the clipmap itself. `update_far_map` runs before `update_terrain` (`lib.rs:256-258`).

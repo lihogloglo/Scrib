@@ -2,7 +2,7 @@
 //! crate into the App; `level` holds the synthetic test levels (TS1) it can open, `pause_menu`
 //! the Esc menu, `main_menu` the title menu of a release start and `phase` the app phases (menus.md
 //! "App phases": the menu shows with no world). The binary keeps the CLI
-//! (`view level:` parses its flags there).
+//! (`view level:` parses its flags there). `worldgen` opens a generated world as the exterior (`view world:`).
 
 mod catalog_warm;
 pub mod exterior;
@@ -20,3 +20,4 @@ pub mod pause_menu;
 pub mod phase;
 mod shelter_casters;
 mod trails;
+pub mod worldgen;

@@ -46,6 +46,8 @@ pub struct CloudWeatherMap {
     uniform: bool,
     /// `envelope(rows)`, kept with the rows.
     envelope: [f32; 4],
+    /// Added to every climate's cloud base ([`Self::set_base_lift`]).
+    base_lift_m: f32,
 }
 
 /// Lowest cloud base, highest cloud top and most cirrus over the table's rows
@@ -53,6 +55,16 @@ pub struct CloudWeatherMap {
 /// combination, so every texel's layer lies inside it. `[3]`: 1 when some row
 /// precipitates or the rows' height-fog densities differ (the trace's distant
 /// shafts and far fog, `WE4d`), else 0.
+/// The table with `lift_m` added to each climate's base (row B, first channel).
+fn lift_bases(mut rows: Vec<[f32; 4]>, lift_m: f32) -> Vec<[f32; 4]> {
+    if lift_m != 0.0 {
+        for r in rows.as_chunks_mut::<4>().0 {
+            r[1][0] += lift_m;
+        }
+    }
+    rows
+}
+
 fn envelope(rows: &[[f32; 4]]) -> [f32; 4] {
     let (mut e, mut fog) = ([f32::INFINITY, f32::NEG_INFINITY, 0.0, 0.0], (f32::INFINITY, f32::NEG_INFINITY));
     for r in rows.as_chunks::<4>().0 {
@@ -65,6 +77,15 @@ fn envelope(rows: &[[f32; 4]]) -> [f32; 4] {
 }
 
 impl CloudWeatherMap {
+    /// Raises every climate's cloud base by `lift_m` meters (a per-world setting: summits that reach the
+    /// weather's cloud heights); the next [`Self::sync`] takes the table anew when it changed.
+    pub fn set_base_lift(&mut self, lift_m: f32) {
+        if self.base_lift_m.to_bits() != lift_m.to_bits() {
+            self.base_lift_m = lift_m;
+            self.rows = Arc::new(Vec::new());
+        }
+    }
+
     /// Mirrors `map` after `map.update(..)` (or `update_window`) returned
     /// `update`: the table when it was resolved anew, the window, the uniform
     /// flag. Run it with the map's CPU texels off (`set_cpu_texels(false)`).
@@ -76,7 +97,7 @@ impl CloudWeatherMap {
         let (window, size) = map.window();
         let full = update.table_changed || update.texels == size.unsigned_abs().pow(2);
         if full || self.rows.is_empty() {
-            self.rows = Arc::new(map.gpu_rows());
+            self.rows = Arc::new(lift_bases(map.gpu_rows(), self.base_lift_m));
             self.envelope = envelope(&self.rows);
             self.table_gen += 1;
         }
@@ -90,7 +111,7 @@ impl CloudWeatherMap {
         self.cells = Arc::new(map.raster().gpu_cells());
         self.raster_gen += 1;
         self.table_gen += 1;
-        self.rows = Arc::new(map.gpu_rows());
+        self.rows = Arc::new(lift_bases(map.gpu_rows(), self.base_lift_m));
         self.envelope = envelope(&self.rows);
     }
 

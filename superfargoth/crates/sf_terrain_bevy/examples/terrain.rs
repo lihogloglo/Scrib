@@ -155,7 +155,7 @@ fn main() {
         ..SkyRenderOptions::default()
     })
     .add_plugins(TerrainPlugin { settings: terrain_settings(&args) })
-    .insert_resource(TerrainWorld { baked })
+    .insert_resource(TerrainWorld { tiles: baked })
     .insert_resource(TerrainDebug {
         lod_colors: args.lod,
         wireframe: args.wire,

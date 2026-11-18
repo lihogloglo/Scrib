@@ -1,6 +1,6 @@
 # World generation (`sf_worldgen`, the Scrib worldgen tool)
 
-Status: **look loop in progress** (2026-11-18). Built: research WG-R1-R4, `sf_worldgen` (stream power, Veloren LEM
+Status: **game-renderer chain in progress** (2026-11-19: generated island streams as game terrain, GPU detail fill; look loop 2026-11-18). Built: research WG-R1-R4, `sf_worldgen` (stream power, Veloren LEM
 port, layout, landscape, stratovolcano, analytic erosion filter, DEM import, measure; bin `scrib-worldgen`), viewer
 `bevyrrowind worldgen-view`; outputs and owner verdicts in `docs/ledger/worldgen.md`. **Next: the screenshot
 milestone** ("Handoff" at the end). This spec is agreed at WG-0.
@@ -15,8 +15,8 @@ anchor rules, coordinate remap, its slices): `../../../bevyrrowind/docs/specs/wo
 > Inputs are generic *guides* (intent heights, region map, strokes, anchors, water); a stage graph turns them
 > into heights and fields: uplift + stream-power erosion (macro, ~25 m), hydraulic + thermal erosion and
 > landform operators (mid, 2-4 m), anchor stamps, hydrology, material fields. Below 2 m, detail is synthesized
-> at runtime by one deterministic function (GPU clipmap fill + CPU twin). Recipes and seeds ship; heights derived
-> from the player's game data are made on the player's machine by the bake. Read "Goal", "Pipeline", your slice.
+> at runtime by one deterministic function (GPU clipmap fill + CPU twin). A generated world may ship baked (owner
+> 2026-11-18); raw source data never ships. Read "Goal", "Pipeline", your slice, and the "Handoff".
 <!-- /agent-summary -->
 
 ## Goal
@@ -45,10 +45,13 @@ during play.
 
 - **Framework/game split:** `sf_worldgen` never names Morrowind formats or ids. The adapter turns game data into
   guides, and recipes name landforms, not games.
-- **Data never ships derived:** heights derived from Bethesda's or Tamriel Rebuilt's data are not redistributed.
-  What ships is a **world recipe** (a mod: guides that aren't derived, parameters, seed, hand edits), and the
-  player's bake runs it against their install. So the player-side run must fit the bake budget ("a few minutes,
-  once", on the 4060 laptop). Author-side iteration may be slower per run, but its preview must be interactive.
+- **A generated world may ship baked (owner 2026-11-18; was "data never ships derived"):** a 10x world is
+  transformed enough to count as a derivative work, like a mod or Tamriel Rebuilt, so its baked heights may be
+  distributed (the whole island at 30 m is ~8 MB; finer detail is runtime). Source data itself (the game's `LAND`
+  records, raw dumps) still never ships. A world recipe can still run on the player's install; when it does, the
+  run must fit the bake budget ("a few minutes, once", on the 4060 laptop). Author-side iteration may be slower per
+  run, but its preview must be interactive. A shipped bake also settles cross-machine equality: everyone loads the
+  same file.
 - **Deterministic:** same recipe + same sources = same heights on every machine (saves store positions, nav
   bakes from heights, co-op host and guests must agree). Products are content-hashed; co-op compares hashes.
   WGSL doesn't promise bit-equal floats across GPUs, so (WG-R1): the macro stage runs on the CPU (5.8 M cells,
@@ -282,25 +285,14 @@ over a closed operator registry).
 1. Mid-stage throughput: can fixed-point pipe-model erosion over ~225 M samples at 4 m fit the bake budget on the
    4060 laptop? Measured at WG-3; if not, the finest baked level moves to ~8 m and stage 7 carries more.
 
-## Handoff (2026-11-18, end of the first worldgen session)
+## Handoff (2026-11-19)
 
-State: the owner judges looks in `bevyrrowind worldgen-view <guide dirs> --markers <markers.json>` (launched through
-`owner_launch.sh`; keys 1-9 switch arms). Current best: WG-VO's volcano on S4 C1 (`target/worldgen/vo/V1-V4`, params
-`bevyrrowind/worldgen/red-mountain-vo.toml`), owner "very promising". Open look gripes (later): the volcano reads as
-"different cones merged together" (artificial); the littoral is smooth and undeveloped; relief gets dull down the
-slopes; landscape arms have too little detail below 300 m and too much 1-3 km relief vs real Etna/Teide (WG-M,
-`target/worldgen/m/README.md`), real Iceland rejected as a reference. Metrics only pick knobs; the owner judges.
-
-**Screenshot milestone (owner 2026-11-18: "get people excited")**, the next session's work, three slices in the game
-(not the viewer: it has no textures, clouds or Morrowind meshes):
-1. **Whole 10x island as game terrain** (owner: no crop). WG-4 + WG-5 minimal: `sf_terrain` stores from a coarser
-   finest level (~2 m; 0.5 m everywhere would be ~58 GB) and the levels below come from the WG-F filter at runtime
-   (GPU fill + CPU twin), fed through a `TerrainSource` over a guide v1 grid (`--world <guide dir>`).
-2. **Settlements stamped in** (WG-8 + WG-A1/A3 minimal): named settlement clusters (`markers.json`) placed at 10x
-   positions at 1:1 size with their source ground stamped and blended; their references streamed at the new positions.
-   Doors and scripted coordinates (WG-A3b) wait. Careful: some settlements sit on geology (Vivec in a bay, Balmora on
-   both banks of the Odai): a stamp is enough for now (adapter "Hard cases").
-3. **Ground textures and one tree species** (WG-N1/N2 minimal): layers from slope/altitude/region mapped to Morrowind
-   LTEX; one Morrowind tree mesh scattered by simple rules on the static scene + far field.
-Also: raise the volumetric cloud base (`sf_atmos` `CloudSettings::base`) so the 5.5 km summit can pierce the layer.
-The 3D viewer lives in `mw_viewers_bevy` for now; a standalone tool would move it to its own crate.
+Day summary: `../../../docs/reviews/worldgen-2026-11-18.md`; older handoffs: `archive/worldgen-history.md`.
+Owner direction: any terrain is fine for now (working island `target/worldgen/vo/V3`); build the deterministic
+procedural chain on it in the **game renderer**. State: `bevyrrowind view "world:<guide dir>"` streams a guide as game
+terrain (`sf_terrain::TerrainTiles` provider, `sf_worldgen::tiles::GuideTiles`); G2 fills the clipmaps on the GPU
+(`sf_worldgen/src/tiles.wgsl`, mirror of `filter.rs`, 8 runtime octaves 160 m → 1.25 m), CPU twin on 2 threads for
+queries and physics, `--off gputerrain` = the G1 CPU-tile arm, console `worldgen.filter` / `worldgen.octaves`.
+**Next:** owner look at G2 (detail, filter toggle, hitches vs `--off gputerrain`, plus Seyda Neen unchanged), then
+trees (scatter stage → existing bake/static scene/far field, counts in steps), ground textures (removes
+`FALLBACK_LOOK`), clouds/atmosphere tuning, settlements. Limits: see the day summary "Known issues".

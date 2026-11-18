@@ -146,7 +146,7 @@ in the world; only the release start path (or a session working on the menu) sho
 - [p] Setup screen (owner 2026-10-26, `specs/setup.md`): first-run Morrowind path, mods, downloads, bake queue.
 - [p] Living world AI (owner 2026-10-28, `specs/ai.md`; built part in 3.10): Nemesis-like rivalries first (AI13).
 - [p] Groundcover (owner 2026-10-20, low priority): adopt `bevy_grass`, masks from LTEX, wind `sf_wind`.
-- [~] **World generation** (owner 2026-11-18, new lane, Scrib tools suite): generic `sf_worldgen` tool that generates nature between the kept human-made content; Vvardenfell at 10x first, then Tamriel Rebuilt, then any landform. 2026-11-18: research WG-R1-R4, `worldgen-dump`, `scrib-worldgen` (Veloren LEM port, layout, stratovolcano, erosion filter, DEM import, measure), 3D `worldgen-view`; owner look loop: volcano "very promising". Next: screenshot milestone (whole island in the game, settlements stamped, ground textures + one tree species; spec "Handoff"). `superfargoth/docs/specs/worldgen.md`, `specs/worldgen-adapter.md`.
+- [~] **World generation** (owner 2026-11-18, new lane, Scrib tools suite): generic `sf_worldgen` tool that generates nature between the kept human-made content; Vvardenfell at 10x first, then Tamriel Rebuilt, then any landform. 2026-11-18: research WG-R1-R4, `worldgen-dump`, `scrib-worldgen` (Veloren LEM port, layout, stratovolcano, erosion filter, DEM import, measure), 3D `worldgen-view`; owner look loop: volcano "very promising". 2026-11-19: generated island in the game renderer (`view world:`, GPU detail fill, CPU twin). Next: owner look at G2, then trees (many, several species), ground textures, clouds, settlements (spec "Handoff"). `superfargoth/docs/specs/worldgen.md`, `specs/worldgen-adapter.md`.
 
 ## Recent
 

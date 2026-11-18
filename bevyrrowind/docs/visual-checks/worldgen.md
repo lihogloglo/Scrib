@@ -35,3 +35,11 @@ switching to a higher arm lifts it.
 - Owner 2026-11-18 (WG-VO V1-V4 vs C2, Etna, Teide): "very promising". Gripes, fine for now: the cones feel like
   "different cones merged together" (artificial); the littoral is very smooth and undeveloped; relief stops being
   interesting down the volcano's slopes. Next: original settlements in place + trees, for a screenshot.
+
+### WG-G: generated island in the game renderer (G1 2026-11-18, G2 2026-11-19)
+
+Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/vo/V3"` (camera
+11 km south of the summit, 400 m up). Look for: gullies and ridges down to ~1-2 m when walking; console
+`worldgen.filter false/true` shows what the filter adds; hitches while flying vs the `--off gputerrain` arm; clouds
+(base ~3.1 km) with the 5.5 km summit through them. Placeholders: flat height/slope colours, no shore foam.
+- Owner 2026-11-19 (G1, CPU tiles): runs, fps good, a lot of hitches, erosion not visible. → G2 awaiting owner.

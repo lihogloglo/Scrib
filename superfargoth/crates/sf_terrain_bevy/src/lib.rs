@@ -15,14 +15,22 @@
 //! - **Origin**: patch transforms are relative to [`TerrainOrigin`], the
 //!   floating origin; hosts on `big_space` implement [`RenderOrigin`] for
 //!   their origin resource and add [`TerrainOriginPlugin`].
+//! - **GPU fill** (worldgen G2, `gpu_fill`): a provider with a GPU field
+//!   ([`sf_terrain::GpuField`]) fills the height, normal and macro clipmaps
+//!   on the GPU; no tile is needed to draw (CDLOD bounds are analytic,
+//!   `TerrainTiles::block_bounds`) and CPU tiles are generated only for
+//!   height queries near the camera and at coarse levels (the CPU twin,
+//!   [`TwinSettings`]). [`TerrainSettings::gpu_fill`] off: the tile path.
 
 mod far_map;
+mod gpu_fill;
 mod material;
 mod params;
 mod render;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use bevy_app::{App, Plugin, PostUpdate};
@@ -37,17 +45,19 @@ use bevy_pbr::{MaterialPlugin, MeshMaterial3d};
 use bevy_render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
 };
+use bevy_render::renderer::{RenderGraph, RenderGraphSystems};
 use bevy_render::storage::ShaderBuffer;
 use bevy_render::{ExtractSchedule, Render, RenderApp, RenderSystems};
-use bevy_shader::load_shader_library;
+use bevy_shader::{Shader, load_shader_library};
 use bevy_tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use bevy_transform::TransformSystems;
 use bevy_transform::components::{GlobalTransform, Transform};
 use sf_coords::WorldPos;
 use sf_terrain::LayerCap;
-use sf_terrain::bake::BakedTerrain;
+use sf_terrain::TerrainTiles;
 use sf_terrain::cdlod::{self, CdlodSettings, MIN_LOD, NodeKey, SelectedNode};
 use sf_terrain::clipmap::{self, CLIPMAP_SIZE, ClipWindow, SampleRect};
+use sf_terrain::gpu_fill::{FillKind, FillRequest};
 use sf_terrain::{
     BLOCKS, BlockBounds, LayerId, LayerMap, LayerTable, ResidentTile, TerrainHeights, TileCoord, global_coords,
 };
@@ -55,6 +65,7 @@ use sf_tunables::{AnyDef, Def, Group, Source, Unit, def};
 use sf_world::{GateQuanta, GateSource, SelectGate, WorldspaceId};
 
 pub use far_map::{FAR_MAP_SIZE, FAR_MAP_TEXEL, FarShadowMap};
+pub use gpu_fill::GpuFillCounters;
 pub use material::TerrainMaterial;
 use params::Params;
 pub use params::{HEIGHT_LEVELS, LAYER_LEVELS, MACRO_LEVELS};
@@ -126,7 +137,69 @@ pub struct TerrainSettings {
     /// requests and eviction, clipmap uploads and the shader parameters (camera, morph). Off by default
     /// until the owner's A/B.
     pub select_gate: GateQuanta,
+    /// Fill the clipmaps on the GPU when the provider has a GPU field (`gpu_fill`, worldgen G2); off, every
+    /// provider goes through CPU tiles (the G1 path, an A/B). Default on.
+    pub gpu_fill: bool,
+    /// Which CPU tiles a GPU-filled world generates for height queries.
+    pub twin: TwinSettings,
 }
+
+/// The CPU twin of a GPU-filled world (`gpu_fill`): tiles generated only for height queries (physics, camera,
+/// AI, the far shadow), the finest levels near the camera and the coarse levels' whole windows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TwinSettings {
+    /// Levels 0 .. this many get the tiles around the camera's ([`TERRAIN_TWIN_NEAR_LEVELS`]).
+    pub near_levels: u8,
+    /// ... this many tiles either side of the camera's ([`TERRAIN_TWIN_NEAR_RADIUS`]).
+    pub near_radius: i32,
+    /// Levels from this one up get every tile their height window covers ([`TERRAIN_TWIN_COARSE_LEVEL`]).
+    pub coarse_level: u8,
+    /// Twin tile loads in flight ([`TERRAIN_TWIN_LOADS`]).
+    pub max_loads: usize,
+}
+
+impl Default for TwinSettings {
+    fn default() -> Self {
+        Self {
+            near_levels: u8::try_from(TERRAIN_TWIN_NEAR_LEVELS.default_value()).unwrap_or(2),
+            near_radius: i32::try_from(TERRAIN_TWIN_NEAR_RADIUS.default_value()).unwrap_or(1),
+            coarse_level: u8::try_from(TERRAIN_TWIN_COARSE_LEVEL.default_value()).unwrap_or(5),
+            max_loads: usize::try_from(TERRAIN_TWIN_LOADS.default_value()).unwrap_or(1),
+        }
+    }
+}
+
+/// `terrain.twin.near_levels`: [`TwinSettings::near_levels`]. Two levels (0.5 m and 1 m) carry the full detail
+/// a walking or riding player and the physics around them touch; past them queries read the coarse levels.
+pub const TERRAIN_TWIN_NEAR_LEVELS: Def<u32> = def!(count "terrain.twin.near_levels" = 2)
+    .range(0, 10)
+    .unit(Unit::Count)
+    .help("GPU-filled terrain: CPU query tiles of the finest this many levels are generated around the camera")
+    .source(Source::Guess);
+
+/// `terrain.twin.near_radius`: [`TwinSettings::near_radius`]: 1 = the 3 x 3 tiles around the camera's (level 0:
+/// at least 256 m of full detail around the player, level 1 512 m).
+pub const TERRAIN_TWIN_NEAR_RADIUS: Def<u32> = def!(count "terrain.twin.near_radius" = 1)
+    .range(0, 4)
+    .unit(Unit::Count)
+    .help("GPU-filled terrain: CPU query tiles this many tiles either side of the camera's, on the near levels")
+    .source(Source::Guess);
+
+/// `terrain.twin.coarse_level`: [`TwinSettings::coarse_level`]. Level 5 (16 m samples) keeps the octaves of
+/// 32 m and up, so far queries are off by at most the finer octaves' share of the detail (a few metres).
+pub const TERRAIN_TWIN_COARSE_LEVEL: Def<u32> = def!(count "terrain.twin.coarse_level" = 5)
+    .range(0, 9)
+    .unit(Unit::Count)
+    .help("GPU-filled terrain: CPU query tiles of every level from this one up cover their whole clipmap window")
+    .source(Source::Guess);
+
+/// `terrain.twin.max_loads`: [`TwinSettings::max_loads`]. One at a time: each runs on the provider's own small
+/// pool (`sf_worldgen` `twin_threads`), so the game's threads keep their cores.
+pub const TERRAIN_TWIN_LOADS: Def<u32> = def!(count "terrain.twin.max_loads" = 1)
+    .range(1, 16)
+    .unit(Unit::Count)
+    .help("GPU-filled terrain: CPU query tiles generated at once")
+    .source(Source::Guess);
 
 /// `terrain.select.move_m`: [`TerrainSettings::select_gate`] location quantum, also the morph slack.
 /// Nobody measured it: 0.5 m is ~4 % of LOD -2's 12 m range and ~8 frames of a 4 m/s walk at 60 fps.
@@ -156,7 +229,15 @@ pub const TERRAIN_RAISE_FILTER_MIN_M: Def<f32> = def!(float "terrain.raise.filte
     .source(Source::Guess);
 
 /// This crate's tunables (live binding: tunables slice T2).
-pub const TUNABLES: &[&dyn AnyDef] = &[&TERRAIN_SELECT_MOVE_M, &TERRAIN_RAISE_REPOSE_DEG, &TERRAIN_RAISE_FILTER_MIN_M];
+pub const TUNABLES: &[&dyn AnyDef] = &[
+    &TERRAIN_SELECT_MOVE_M,
+    &TERRAIN_RAISE_REPOSE_DEG,
+    &TERRAIN_RAISE_FILTER_MIN_M,
+    &TERRAIN_TWIN_NEAR_LEVELS,
+    &TERRAIN_TWIN_NEAR_RADIUS,
+    &TERRAIN_TWIN_COARSE_LEVEL,
+    &TERRAIN_TWIN_LOADS,
+];
 
 /// The `P_RAISE` slot (SW-6, SW-5e): tan of the repose angle, the filter's minimum width (m), the
 /// raise fade's start and end (m; `CdlodSettings::raise_fade_range` at the reach limit).
@@ -195,6 +276,8 @@ impl Default for TerrainSettings {
             raise_filter_min_m: TERRAIN_RAISE_FILTER_MIN_M.default_value(),
             raise_reach_m: f32::INFINITY,
             select_gate: Self::select_gate_quanta(sf_world::SELECT_GATE.default_value()),
+            gpu_fill: true,
+            twin: TwinSettings::default(),
         }
     }
 }
@@ -230,10 +313,17 @@ pub struct TerrainDebug {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct TerrainCamera;
 
-/// The worldspace whose terrain is shown, read from the bake store.
+/// The worldspace whose terrain is shown: its tiles from the bake store
+/// (`sf_terrain::bake::BakedTerrain`) or any other [`TerrainTiles`] provider.
 #[derive(Resource, Clone)]
 pub struct TerrainWorld {
-    pub baked: Arc<BakedTerrain>,
+    pub tiles: Arc<dyn TerrainTiles>,
+}
+
+impl TerrainWorld {
+    pub fn new(tiles: Arc<dyn TerrainTiles>) -> Self {
+        Self { tiles }
+    }
 }
 
 /// The world position of render-space (0, 0, 0): the floating origin.
@@ -291,6 +381,12 @@ pub struct TerrainStats {
     pub update_ms: f32,
     /// Height levels resident on the GPU.
     pub height_levels: u32,
+    /// The clipmaps fill on the GPU (`gpu_fill`); then the tiles above are the CPU twin's.
+    pub gpu_fill: bool,
+    /// GPU fill so far: pieces and texels dispatched, frames that dispatched (cumulative).
+    pub gpu_pieces: u64,
+    pub gpu_texels: u64,
+    pub gpu_frames: u64,
 }
 
 /// Fire after editing a worldspace's `HeightEdits`: GPU clipmap levels
@@ -327,6 +423,7 @@ impl Plugin for TerrainPlugin {
             .init_resource::<TerrainHeightsMap>()
             .init_resource::<TerrainStats>()
             .init_resource::<ClipmapWrites>()
+            .init_resource::<gpu_fill::GpuFillQueue>()
             .add_message::<TerrainEdited>()
             .configure_sets(
                 PostUpdate,
@@ -346,10 +443,24 @@ impl Plugin for TerrainPlugin {
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .init_resource::<render::PendingWrites>()
-                .add_systems(ExtractSchedule, render::extract_writes)
-                .add_systems(Render, render::write_clipmaps.in_set(RenderSystems::PrepareResources));
+                .init_resource::<gpu_fill::GpuFillRender>()
+                .add_systems(ExtractSchedule, (render::extract_writes, gpu_fill::extract))
+                .add_systems(
+                    Render,
+                    (render::write_clipmaps, gpu_fill::prepare).in_set(RenderSystems::PrepareResources),
+                )
+                // Before any view renders (the camera driver runs in `Render`).
+                .add_systems(RenderGraph, gpu_fill::run.in_set(RenderGraphSystems::Begin));
         }
     }
+}
+
+/// A GPU-filled world's state (`gpu_fill`): analytic bounds per tile instead of resident tiles, and whether the
+/// render world can fill yet.
+struct GpuMode {
+    bounds: HashMap<TileCoord, Arc<BlockBounds>>,
+    ready: Arc<AtomicBool>,
+    counters: Arc<GpuFillCounters>,
 }
 
 /// A resident tile.
@@ -369,7 +480,8 @@ enum Slot {
 #[derive(Resource)]
 struct TerrainState {
     ws: WorldspaceId,
-    baked: Arc<BakedTerrain>,
+    /// Where tiles come from (the bake store or a generator).
+    src: Arc<dyn TerrainTiles>,
     material: Handle<TerrainMaterial>,
     params: Handle<ShaderBuffer>,
     heights: Handle<Image>,
@@ -399,6 +511,8 @@ struct TerrainState {
     /// Bumped by everything besides the camera that changes the CDLOD selection or its patches: a
     /// tile's slot changed (loaded, absent, evicted), an edit, a settings or debug change.
     select_rev: u64,
+    /// The GPU fill of a provider with a GPU field (`None`: the tile path).
+    gpu: Option<GpuMode>,
     /// The selection gate (CW-2), keyed on (`select_rev`, origin).
     gate: SelectGate<(u64, WorldPos)>,
 }
@@ -502,13 +616,26 @@ fn setup_terrain(
     mut materials: ResMut<Assets<TerrainMaterial>>,
     far_map: Option<Res<FarShadowMap>>,
     compressed: Option<Res<CompressedImageFormatSupport>>,
+    mut shaders: ResMut<Assets<Shader>>,
+    mut heights_map: ResMut<TerrainHeightsMap>,
+    mut field_rev: Local<u64>,
 ) {
+    // The old state's patches and the query tiles it put in `TerrainHeightsMap` (edits stay).
+    let mut retire = |commands: &mut Commands, state: &TerrainState| {
+        for (e, _) in state.nodes.values() {
+            commands.entity(*e).despawn();
+        }
+        if let Some(heights) = heights_map.0.get_mut(&state.ws) {
+            for c in state.tiles.keys() {
+                heights.remove(*c);
+            }
+        }
+    };
     let Some(world) = world else {
         if let Some(state) = state {
-            for (e, _) in state.nodes.values() {
-                commands.entity(*e).despawn();
-            }
+            retire(&mut commands, &state);
             commands.remove_resource::<TerrainState>();
+            commands.remove_resource::<gpu_fill::GpuFillMain>();
         }
         return;
     };
@@ -516,14 +643,12 @@ fn setup_terrain(
         return;
     }
     if let Some(state) = state {
-        for (e, _) in state.nodes.values() {
-            commands.entity(*e).despawn();
-        }
+        retire(&mut commands, &state);
     }
-    let baked = world.baked.clone();
+    let tiles = world.tiles.clone();
     // Headless runs have no device (nothing uploads); a device without BC can't take the arrays.
     let bc = compressed.is_none_or(|c| c.0.contains(CompressedImageFormats::BC));
-    let (table, [albedo, normal, ao_roughness]) = match baked.layers_capped(settings.layer_array_size, &settings.layer_cap) {
+    let (table, [albedo, normal, ao_roughness]) = match tiles.layers_capped(settings.layer_array_size, &settings.layer_cap) {
         Some(Ok(a)) if bc => {
             log::info!("{}", layer_arrays_line(&a));
             let images = layer_images(a.size, a.mips, a.table.layers.len(), [a.albedo_height, a.normal, a.ao_roughness]);
@@ -540,7 +665,7 @@ fn setup_terrain(
             let one = |c: [u8; 4], f| layer_array(1, 1, 1, f, c.to_vec());
             let [a, n, r] = sf_terrain::bake::LAYER_DEFAULTS;
             (
-                LayerTable::default(),
+                default_layer_table(a, tiles.fill_height()),
                 [
                     one(a, TextureFormat::Rgba8UnormSrgb),
                     one(n, TextureFormat::Rgba8Unorm),
@@ -579,9 +704,35 @@ fn setup_terrain(
             let c = l.mean_albedo.map(sf_terrain::bake::linear_to_srgb);
             [c[0], c[1], c[2], 255]
         });
+    // The GPU fill when the provider has a field (and it isn't switched off).
+    let field = if settings.gpu_fill { tiles.gpu_field() } else { None };
+    let gpu = field.map(|field| {
+        *field_rev += 1;
+        let source = sf_terrain::gpu_fill::compose(&field.wgsl);
+        let shader = shaders.add(Shader::from_wgsl(source, format!("sf_terrain_bevy/gpu_fill/{}.wgsl", *field_rev)));
+        let ready = Arc::new(AtomicBool::new(false));
+        let counters = Arc::new(GpuFillCounters::default());
+        #[allow(clippy::cast_precision_loss)]
+        let mib = (field.data.len() * 4) as f64 / f64::from(1u32 << 20);
+        log::info!("terrain: clipmaps fill on the GPU from {} ({mib:.1} MiB of field data)", field.label);
+        commands.insert_resource(gpu_fill::GpuFillMain {
+            shader,
+            data: field.data.clone(),
+            rev: *field_rev,
+            heights: heights.id(),
+            normals: normals.id(),
+            macro_image: macro_image.id(),
+            ready: ready.clone(),
+            counters: counters.clone(),
+        });
+        GpuMode { bounds: HashMap::new(), ready, counters }
+    });
+    if gpu.is_none() {
+        commands.remove_resource::<gpu_fill::GpuFillMain>();
+    }
     commands.insert_resource(TerrainState {
-        ws: baked.worldspace().clone(),
-        baked,
+        ws: tiles.worldspace().clone(),
+        src: tiles.clone(),
         material,
         params,
         heights,
@@ -605,8 +756,36 @@ fn setup_terrain(
         fill_rgba,
         max_height: fill,
         select_rev: 0,
+        gpu,
         gate: SelectGate::default(),
     });
+}
+
+/// Without layer arrays: one flat default layer (the 1×1 `albedo` slice) whose mean is its own
+/// colour, so the shader's tint (macro / layer mean) gives back the macro albedo near the camera
+/// as well as far (an empty table left the mean at 0 and the tint at its ×4 clamp).
+fn default_layer_table(albedo: [u8; 4], fill_height: f32) -> LayerTable {
+    let lin = |c: u8| {
+        let s = f32::from(c) / 255.0;
+        if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    };
+    let id = sf_terrain::layer_id("sf.terrain.default");
+    let height = f32::from(albedo[3]) / 255.0;
+    LayerTable {
+        layers: vec![sf_terrain::LayerInfo {
+            record: "sf.terrain.default".to_owned(),
+            id,
+            tiling_m: 4.0,
+            triplanar: false,
+            displacement_m: 0.0,
+            mean_albedo: [lin(albedo[0]), lin(albedo[1]), lin(albedo[2])],
+            mean_height: height,
+            p90_height: height,
+            source_edge: 1,
+        }],
+        fill_layer: Some(id),
+        fill_height,
+    }
 }
 
 fn level_u8(l: usize) -> u8 {
@@ -661,15 +840,15 @@ impl Wanted {
     }
 }
 
-fn load_tile(baked: Arc<BakedTerrain>, c: TileCoord, wants_layers: bool) -> Option<Loaded> {
-    let product = match baked.tile(c)? {
+fn load_tile(tiles: Arc<dyn TerrainTiles>, c: TileCoord, wants_layers: bool, wants_macro: bool) -> Option<Loaded> {
+    let product = match tiles.tile(c)? {
         Ok(p) => p,
         Err(e) => {
             log::error!("terrain tile {c:?}: {e}");
             return None;
         }
     };
-    let macro_rgba = baked.macro_albedo(c).and_then(Result::ok).map(|m| m.rgba);
+    let macro_rgba = if wants_macro { tiles.macro_albedo(c).and_then(Result::ok).map(|m| m.rgba) } else { None };
     let tile = product.height_tile();
     Some(Loaded {
         resident: Arc::new(ResidentTile { tile, bounds: product.bounds }),
@@ -678,14 +857,16 @@ fn load_tile(baked: Arc<BakedTerrain>, c: TileCoord, wants_layers: bool) -> Opti
     })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Height,
     Layer,
     Macro,
 }
 
-/// Queues the strips a window move exposes. Returns the bytes queued.
+/// Queues the strips a window move exposes (CPU texture writes, or GPU fill pieces). Returns the bytes queued.
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 fn upload_level(
     state: &TerrainState,
     edits: Option<&sf_terrain::HeightEdits>,
@@ -694,6 +875,7 @@ fn upload_level(
     old: Option<ClipWindow>,
     new: ClipWindow,
     writes: &mut Vec<TextureWrite>,
+    gpu_queue: &mut Vec<FillRequest>,
 ) -> usize {
     let lv = level_u8(level);
     let ready = |c: TileCoord| match state.tiles.get(&c) {
@@ -706,6 +888,18 @@ fn upload_level(
             let n = piece.count();
             let size = [u32::try_from(piece.size[0]).expect("small"), u32::try_from(piece.size[1]).expect("small")];
             let layer = u32::try_from(level).expect("small");
+            // A GPU-filled world: the render world evaluates the piece (heights + normals, or macro); the budget
+            // counts the bytes it writes.
+            let gpu_kind = match kind {
+                Kind::Height => Some((FillKind::Heights, 6)),
+                Kind::Macro => Some((FillKind::Macro, 4)),
+                Kind::Layer => None,
+            };
+            if let (Some(_), Some((fill, per))) = (&state.gpu, gpu_kind) {
+                gpu_queue.push(FillRequest { kind: fill, level: lv, rect: piece, texel });
+                bytes += n * per;
+                continue;
+            }
             match kind {
                 Kind::Height => {
                     // One sample of margin: normals difference their neighbors.
@@ -801,6 +995,10 @@ fn tiles_of(rect: SampleRect, level: u8, per: i64) -> impl Iterator<Item = TileC
 
 /// Whether every tile a window reads is loaded (or known absent).
 fn window_ready(state: &TerrainState, w: ClipWindow, level: usize, per: i64, margin: i64) -> bool {
+    // A GPU-filled world reads no tile (layers fill with the default slot).
+    if state.gpu.is_some() {
+        return true;
+    }
     let mut needed = HashSet::new();
     window_tiles(w, level_u8(level), per, margin, &mut needed);
     needed.iter().all(|c| matches!(state.tiles.get(c), Some(Slot::Ready(_) | Slot::Absent)))
@@ -814,6 +1012,13 @@ fn node_bounds(state: &TerrainState, lod: i8, x: i64, z: i64) -> (f32, f32) {
     let lookup = |k: u8, bx: i64, bz: i64| -> Option<(f32, f32)> {
         let c =
             TileCoord::new(k, i32::try_from(bx.div_euclid(blocks)).ok()?, i32::try_from(bz.div_euclid(blocks)).ok()?);
+        let block = |b: &BlockBounds| -> Option<(f32, f32)> {
+            Some(b.get(usize::try_from(bx.rem_euclid(blocks)).ok()?, usize::try_from(bz.rem_euclid(blocks)).ok()?))
+        };
+        // A GPU-filled world: the provider's analytic bounds.
+        if let Some(gpu) = &state.gpu {
+            return block(gpu.bounds.get(&c)?);
+        }
         match state.tiles.get(&c)? {
             Slot::Ready(t) => {
                 let b: &BlockBounds = &t.resident.bounds;
@@ -880,6 +1085,7 @@ fn update_terrain(
     mut heights_map: ResMut<TerrainHeightsMap>,
     mut terrain_stats: ResMut<TerrainStats>,
     mut writes: ResMut<ClipmapWrites>,
+    mut gpu_queue: ResMut<gpu_fill::GpuFillQueue>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut edited: MessageReader<TerrainEdited>,
     camera: Query<&GlobalTransform, With<TerrainCamera>>,
@@ -897,6 +1103,8 @@ fn update_terrain(
     let origin_moved = state.origin != Some(origin.0);
     state.shift_settle = if origin_moved { SHIFT_SETTLE_FRAMES } else { state.shift_settle.saturating_sub(1) };
 
+    // A GPU-filled world: the tiles are the CPU twin's (queries only), they don't change the selection.
+    let gpu = state.gpu.is_some();
     // 1. Finished loads.
     let heights = heights_map.0.entry(state.ws.clone()).or_default();
     let mut in_flight = 0;
@@ -908,11 +1116,11 @@ fn update_terrain(
                     state.max_height = state.max_height.max(top);
                     heights.insert(t.resident.clone());
                     *slot = Slot::Ready(Arc::new(t));
-                    tiles_changed = true;
+                    tiles_changed |= !gpu;
                 }
                 Some(None) => {
                     *slot = Slot::Absent;
-                    tiles_changed = true;
+                    tiles_changed |= !gpu;
                 }
                 None => in_flight += 1,
             }
@@ -920,24 +1128,33 @@ fn update_terrain(
         let _ = c;
     }
 
-    // 2. Requests (coarse levels first, so far terrain is never missing) and eviction.
+    // 2. Requests (coarse levels first, so far terrain is never missing) and eviction. A GPU-filled world asks
+    // only for its twin's tiles, the nearest first within a level.
     let wanted = Wanted::new(cam_g, settings.snap);
-    let keep = wanted.tiles(128);
+    let keep = if gpu { twin_tiles(cam_g, &wanted, &settings.twin) } else { wanted.tiles(128) };
     let mut requests: Vec<TileCoord> = keep.iter().copied().filter(|c| !state.tiles.contains_key(c)).collect();
-    requests.sort_by_key(|c| (std::cmp::Reverse(c.level), c.z, c.x));
+    if gpu {
+        // The camera's own level-0 tile first (the ground clamp and physics under the player read it), then the
+        // cheap coarse levels, then the rest nearest first.
+        let home = |c: &TileCoord| !(c.level == 0 && tile_distance2(*c, cam_g) <= 2 * 256 * 256);
+        requests.sort_by_key(|c| (home(c), std::cmp::Reverse(c.level), tile_distance2(*c, cam_g)));
+    } else {
+        requests.sort_by_key(|c| (std::cmp::Reverse(c.level), c.z, c.x));
+    }
+    let max_loads = if gpu { settings.twin.max_loads } else { settings.max_loads };
     let pool = AsyncComputeTaskPool::get();
     for c in requests {
-        if !state.baked.has_tile(c) {
+        if !state.src.has_tile(c) {
             state.tiles.insert(c, Slot::Absent);
-            tiles_changed = true;
+            tiles_changed |= !gpu;
             continue;
         }
-        if in_flight >= settings.max_loads {
+        if in_flight >= max_loads {
             break;
         }
-        let baked = state.baked.clone();
-        let wants_layers = usize::from(c.level) < LAYER_LEVELS;
-        state.tiles.insert(c, Slot::Loading(pool.spawn(async move { load_tile(baked, c, wants_layers) })));
+        let src = state.src.clone();
+        let wants_layers = !gpu && usize::from(c.level) < LAYER_LEVELS;
+        state.tiles.insert(c, Slot::Loading(pool.spawn(async move { load_tile(src, c, wants_layers, !gpu) })));
         in_flight += 1;
     }
     let evict: Vec<TileCoord> = state
@@ -946,10 +1163,30 @@ fn update_terrain(
         .filter(|(c, s)| !keep.contains(c) && !matches!(s, Slot::Loading(_)))
         .map(|(c, _)| *c)
         .collect();
-    tiles_changed |= !evict.is_empty();
+    tiles_changed |= !gpu && !evict.is_empty();
     for c in evict {
         state.tiles.remove(&c);
         heights.remove(c);
+    }
+
+    // 2b. A GPU-filled world's analytic bounds for every tile its windows cover (cheap: the provider's min/max
+    // pyramid, no sample evaluated); new bounds change the selection.
+    if let Some(g) = &mut state.gpu {
+        let covered = wanted.tiles(0);
+        g.bounds.retain(|c, _| covered.contains(c));
+        for c in covered {
+            if g.bounds.contains_key(&c) {
+                continue;
+            }
+            let b = state.src.block_bounds(c).unwrap_or_else(|| BlockBounds {
+                min: vec![state.fill; BLOCKS * BLOCKS],
+                max: vec![state.fill; BLOCKS * BLOCKS],
+            });
+            let top = b.max.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            state.max_height = state.max_height.max(top);
+            g.bounds.insert(c, Arc::new(b));
+            tiles_changed = true;
+        }
     }
 
     // 3. Edits invalidate the clipmap levels they touch.
@@ -962,7 +1199,10 @@ fn update_terrain(
     let nothing_resident = state.height_windows.iter().all(Option::is_none);
     // Uploads wait out the frames around an origin shift (streaming.md,
     // "Spikes"): the render world is busy re-collecting every instance.
-    let budget = if nothing_resident {
+    let budget = if state.gpu.as_ref().is_some_and(|g| !g.ready.load(Ordering::Relaxed)) {
+        // The GPU fill's pipelines are still compiling: nothing would write the windows yet.
+        0
+    } else if nothing_resident {
         settings.burst_budget
     } else if state.shift_settle > 0 {
         0
@@ -986,7 +1226,7 @@ fn update_terrain(
             if old == Some(new) || !window_ready(state, new, level, per, i64::from(kind == Kind::Height)) {
                 continue;
             }
-            used += upload_level(state, edits, kind, level, old, new, &mut writes.0);
+            used += upload_level(state, edits, kind, level, old, new, &mut writes.0, &mut gpu_queue.0);
             match kind {
                 Kind::Height => state.height_windows[level] = Some(new),
                 Kind::Macro => state.macro_windows[level] = Some(new),
@@ -1153,8 +1393,46 @@ fn update_terrain(
         select_ms,
         update_ms: started.elapsed().as_secs_f32() * 1e3,
         height_levels: mask(&state.height_windows).count_ones(),
+        gpu_fill: state.gpu.is_some(),
+        gpu_pieces: state.gpu.as_ref().map_or(0, |g| g.counters.pieces.load(Ordering::Relaxed)),
+        gpu_texels: state.gpu.as_ref().map_or(0, |g| g.counters.texels.load(Ordering::Relaxed)),
+        gpu_frames: state.gpu.as_ref().map_or(0, |g| g.counters.frames.load(Ordering::Relaxed)),
     };
 }
+
+/// The CPU twin's tiles of a GPU-filled world ([`TwinSettings`]): the finest levels' tiles around the camera's
+/// (`cam`, level-0 global sample coordinates) and every tile of the coarse levels' height windows.
+fn twin_tiles(cam: DVec2, wanted: &Wanted, twin: &TwinSettings) -> HashSet<TileCoord> {
+    let mut out = HashSet::new();
+    let per = i64::try_from(sf_terrain::TILE_QUADS).expect("small");
+    for level in 0..twin.near_levels.min(level_u8(HEIGHT_LEVELS)) {
+        let size = f64::from(512u32 << level);
+        #[allow(clippy::cast_possible_truncation)]
+        let (tx, tz) = ((cam.x / size).floor() as i32, (cam.y / size).floor() as i32);
+        for dz in -twin.near_radius..=twin.near_radius {
+            for dx in -twin.near_radius..=twin.near_radius {
+                out.insert(TileCoord::new(level, tx + dx, tz + dz));
+            }
+        }
+    }
+    for level in usize::from(twin.coarse_level)..HEIGHT_LEVELS {
+        window_tiles(wanted.heights[level], level_u8(level), per, 0, &mut out);
+    }
+    out
+}
+
+/// Squared distance (level-0 samples²) from `cam` to tile `c`'s centre.
+fn tile_distance2(c: TileCoord, cam: DVec2) -> i64 {
+    let size = i64::from(512u32 << c.level);
+    let (x0, z0) = c.first_sample();
+    #[allow(clippy::cast_possible_truncation)]
+    let (dx, dz) = (x0 + size / 2 - cam.x as i64, z0 + size / 2 - cam.y as i64);
+    dx.saturating_mul(dx).saturating_add(dz.saturating_mul(dz))
+}
+
+#[cfg(test)]
+#[path = "tests_gpu.rs"]
+mod tests_gpu;
 
 #[cfg(test)]
 mod tests {

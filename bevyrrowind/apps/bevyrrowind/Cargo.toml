@@ -89,6 +89,8 @@ sf_records.workspace = true
 # `pcss`, `solari`: on for every member at the root workspace entry (feature unification).
 sf_sky_bevy.workspace = true
 sf_vfs.workspace = true
+# `view world:` (worldgen slice G1): runtime terrain tiles from a guide (Bevy-free).
+sf_worldgen.workspace = true
 sf_world = { workspace = true, features = ["bake"] }
 tes3 = { workspace = true, features = ["esp"] }
 # Test-scene registry (`scenes.ron`, `src/scenes.rs`); both already in the graph through Bevy.

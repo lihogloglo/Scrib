@@ -46,6 +46,18 @@ pub fn priority_flood_eps(
     sea_level: f64,
     z: &mut Vec<f64>,
 ) {
+    flood(w, hgt, h, wet, sea_level, z, true);
+}
+
+/// Fills `z` with the plain **depression-filled** surface of `h` (Barnes et al. 2014 Algorithm 2 with the pit
+/// queue, no ε): every closed depression is raised exactly to its spill height, so `z − h` is the fill depth.
+/// Same base level and order as [`priority_flood_eps`].
+pub fn priority_fill(w: usize, hgt: usize, h: &[f64], wet: &[bool], sea_level: f64, z: &mut Vec<f64>) {
+    flood(w, hgt, h, wet, sea_level, z, false);
+}
+
+/// The shared queue logic: with `eps`, a pit sample is raised one ulp above the sample it was reached from.
+fn flood(w: usize, hgt: usize, h: &[f64], wet: &[bool], sea_level: f64, z: &mut Vec<f64>, eps: bool) {
     let n = w * hgt;
     z.clear();
     z.extend(
@@ -94,7 +106,7 @@ pub fn priority_flood_eps(
             }
             closed[nb] = true;
             if z[nb] <= zc {
-                z[nb] = zc.next_up();
+                z[nb] = if eps { zc.next_up() } else { zc };
                 pit.push_back(nb);
             } else {
                 open.push(Node {

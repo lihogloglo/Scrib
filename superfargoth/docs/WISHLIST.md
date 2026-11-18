@@ -275,6 +275,15 @@ door links as first-class records, not per-cell teleports.
 - Customize the player character's face and body. Morrowind heads are fixed meshes, so this likely needs
   replacement head/body models with morph targets, behind an option (classic heads stay the default path).
 
+## 16. Long-distance NPC transit on large worlds (later, optional; owner 2026-11-18)
+
+- On 10x-scale worlds (`specs/worldgen.md`), an NPC whose route is too far to walk could pick faster transport
+  (travel-service links in `WorldGraph`/`CoarseGraph` weighted by boarding + travel time, or HTN methods for mounts
+  and transit nodes).
+- **Optional and low priority:** NPCs roaming between towns raise player-facing discoverability issues (hard-to-find
+  quest givers or merchants, Radiant AI's classic trap), so any inter-town transit must stay opt-in and respect the
+  quest-safety exclusion rules (`specs/ai.md` "Directives").
+
 ## 17. Vegetation at scale: millions of trees (later; owner 2026-11-18, idea only, for "1:1" worlds)
 
 - Reference: the Chlorophyll Engine (youtube.com/watch?v=VC_NUxbeA0E): 10 M trees over 15 km²; past a screen footprint

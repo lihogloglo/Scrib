@@ -23,10 +23,17 @@
 //! (parametric stratovolcano or exemplar stamp, C1 blend) and [`structure`] (channel orientation coherence,
 //! drainage density, junction angles).
 //!
+//! WG-L2a, the landform census ([`landforms`], `scrib-worldgen landforms`): craters, basins, lakes, lagoons,
+//! trenches, gorges, valleys, peaks, plateaus, bays, headlands and islands found in any guide by standard
+//! geomorphometry, written as `features.json` + an overlay, names joined from a generic names file.
+//!
 //! WG-S5 (same runner, per-arm `solver`, `rock`, `uplift_noise`, `rough_start`, `finite`): [`lem`] (the landscape
 //! evolution model ported from Veloren's `erosion.rs`, GPL-3.0: multi-receiver implicit stream power, lakes by
 //! Cordonnier et al. 2019, fixed anchor cells) and [`lithology`] (rock-type Worley map for erodibility, uplift
 //! noise); arms with equal landscape switches share one landscape run.
+//!
+//! G1, runtime terrain ([`tiles`]): canonical `sf_terrain` tiles generated on demand from a guide plus the
+//! band-limited [`filter`], a `TerrainTiles` provider for the game renderer.
 //!
 //! Rules (worldgen.md "Constraints", "Stage rules"): deterministic (single-threaded where order matters,
 //! `rayon` only for pure per-sample maps), sea cells are base level and never move, every stage audits the
@@ -50,6 +57,7 @@ pub mod flood;
 pub mod grid;
 pub mod guide;
 pub mod landform;
+pub mod landforms;
 pub mod landscape;
 pub mod layout;
 pub mod lem;
@@ -66,6 +74,7 @@ pub mod stratovolcano;
 pub mod stream;
 pub mod structure;
 pub mod thermal;
+pub mod tiles;
 pub mod volcano;
 
 pub use grid::Grid;

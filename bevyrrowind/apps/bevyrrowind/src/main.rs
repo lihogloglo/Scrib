@@ -9,6 +9,7 @@ mod mods;
 mod perf;
 mod scenes;
 mod sweep;
+mod world;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -646,6 +647,7 @@ impl ViewFlags {
             open_ui: self.open_ui.clone(),
             actors: None,
             level: None,
+            worldgen: None,
             start_in_main_menu: false,
             movies: mw_exterior_bevy::main_menu::MenuMovies::from_ini(|key| install.ini.as_ref().and_then(|ini| ini.get("Movies", key))),
             bodies: self.bodies,
@@ -1065,6 +1067,10 @@ fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result
     // Synthetic test levels (TS1): `level:<name>`.
     if let Some(name) = cell.strip_prefix(mw_exterior_bevy::level::PREFIX) {
         return level::view(install, name, flags);
+    }
+    // Generated worlds (worldgen G1): `world:<guide dir>`.
+    if let Some(dir) = cell.strip_prefix(world::PREFIX) {
+        return world::view(install, dir, flags);
     }
     let (vfs, content) = load(install, false)?;
     let vfs = flags.delight(install, vfs)?;

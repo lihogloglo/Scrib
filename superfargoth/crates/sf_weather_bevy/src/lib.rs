@@ -116,6 +116,9 @@ pub struct WeatherOverrides {
     pub clouds: Option<CloudWeather>,
     /// Multiplier on the weather's fog densities (height fog and banks).
     pub fog_scale: Option<f32>,
+    /// Raises every cloud layer's base by this, meters (the uniform layer and the world weather map's
+    /// climates): a per-world setting for a world whose summits reach the weather's cloud heights.
+    pub cloud_base_lift_m: f32,
 }
 
 /// Texel size of the world weather map, meters: a quarter of the default
@@ -289,7 +292,7 @@ fn evaluate(
 
 /// Distant weather (`WE4c`): the world weather map's table (each climate at weight 1) and window
 /// for this frame's clock and camera, mirrored into the clouds' map.
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn update_map(
     time: Res<GameClock>,
     config: Res<SkyConfig>,
@@ -297,6 +300,7 @@ fn update_map(
     world: Res<WorldWeather>,
     map: Option<ResMut<WorldWeatherMap>>,
     clouds: Option<ResMut<sf_atmos_bevy::CloudWeatherMap>>,
+    overrides: Res<WeatherOverrides>,
     counters: Option<Res<DiagCounters>>,
 ) {
     let (Some(mut map), Some(mut clouds)) = (map, clouds) else { return };
@@ -306,6 +310,7 @@ fn update_map(
     let hours = time.now.hours();
     let map = &mut *map;
     let update = map.map.update(&records.0, &world.0, hours, config.sky_clock(&time).hour(calendar), camera);
+    clouds.set_base_lift(overrides.cloud_base_lift_m);
     clouds.sync(&map.map, update);
     if let Some(c) = counters {
         c.add_named("weather/map/ms", sf_diag_bevy::sf_diag::unit::MS, t0.elapsed().as_secs_f64() * 1000.0);
@@ -362,7 +367,8 @@ fn apply_clouds(
     if !current.valid {
         return;
     }
-    let w = cloud_weather(&current.frame.clouds, overrides.clouds.as_ref());
+    let mut w = cloud_weather(&current.frame.clouds, overrides.clouds.as_ref());
+    w.base += overrides.cloud_base_lift_m;
     if clouds.settings.weather != w {
         clouds.settings.weather = w;
     }

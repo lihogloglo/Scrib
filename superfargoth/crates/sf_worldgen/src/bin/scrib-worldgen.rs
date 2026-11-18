@@ -7,6 +7,7 @@
 //! scrib-worldgen detail --in GUIDE --out DIR --spacing 5 [--crop X0,Y0,X1,Y1] [--params FILE.toml] [--set NAME=V]...
 //! scrib-worldgen stamp-volcano --base GUIDE --params FILE.toml --out DIR [--arms V1,V2]
 //! scrib-worldgen measure GUIDE... [--ref GUIDE]... [--mask-sea] [--region X0,Y0,X1,Y1] [--summit auto|X,Y] --out FILE.md|json
+//! scrib-worldgen landforms GUIDE [--names NAMES.json] [--scale S] [--origin X,Y] [--set NAME=V]... --out DIR
 //! ```
 
 use std::path::PathBuf;
@@ -124,6 +125,70 @@ enum Cmd {
     /// Land-only terrain statistics of guide folders at one spacing (`sf_worldgen::measure`): hypsometry, slope,
     /// band roughness, spectrum, drainage density, channel structure, local relief; Markdown + JSON report.
     Measure(Box<MeasureArgs>),
+    /// Landform census (`sf_worldgen::landforms`): craters, basins, lakes, lagoons, trenches, gorges, valleys,
+    /// peaks, plateaus, bays, headlands, islands; writes features.json, overlay.png and README.md.
+    Landforms(LandformsArgs),
+}
+
+#[derive(clap::Args)]
+struct LandformsArgs {
+    /// Guide folder (v1).
+    guide: PathBuf,
+    /// Names file (`{format: 1, points: [{name, x_m, y_m, radius_m?, kind_hint?}]}`, guide frame).
+    #[arg(long)]
+    names: Option<PathBuf>,
+    /// Field size over the reference world (sets the declared `scale`).
+    #[arg(long)]
+    scale: Option<f64>,
+    /// Guide-frame metres of sample (0, 0), overriding the guide's `origin_m`.
+    #[arg(long, value_delimiter = ',', num_args = 1, allow_negative_numbers = true)]
+    origin: Option<Vec<f64>>,
+    /// One declared value `name=value` (source Guess); repeatable.
+    #[arg(long = "set")]
+    sets: Vec<String>,
+    /// Output folder.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+fn landforms(a: LandformsArgs) -> sf_worldgen::Result<()> {
+    use sf_worldgen::landforms::{LandformsRequest, declared_defaults, run_landforms, set};
+    let mut declared = declared_defaults();
+    if let Some(s) = a.scale {
+        set(&mut declared, "scale", s, Some("Input(--scale)".into()))?;
+    }
+    for kv in &a.sets {
+        let (k, v) = kv
+            .split_once('=')
+            .ok_or_else(|| sf_worldgen::Error::Invalid(format!("--set {kv}: name=value expected")))?;
+        let v: f64 = v
+            .trim()
+            .parse()
+            .map_err(|_| sf_worldgen::Error::Invalid(format!("--set {kv}: not a number")))?;
+        set(&mut declared, k.trim(), v, None)?;
+    }
+    let origin_m = match a.origin.as_deref() {
+        None => None,
+        Some([x, y]) => Some([*x, *y]),
+        Some(_) => return Err(sf_worldgen::Error::Invalid("--origin takes X,Y".into())),
+    };
+    let command = std::env::args().collect::<Vec<_>>().join(" ").replace('\\', "/");
+    let c = run_landforms(&LandformsRequest {
+        guide: a.guide,
+        names: a.names,
+        out: a.out.clone(),
+        origin_m,
+        declared,
+        command,
+    })?;
+    let named = c.features.iter().filter(|f| f.name.is_some()).count();
+    let total: f64 = c.timings.iter().map(|t| t.1).sum();
+    println!(
+        "{}: {} features ({named} named) in {total:.1} s",
+        a.out.display(),
+        c.features.len()
+    );
+    Ok(())
 }
 
 #[derive(clap::Args)]
@@ -294,6 +359,13 @@ fn stamp_volcano(req: StampRequest) -> ExitCode {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Landforms(a) => match landforms(a) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("scrib-worldgen: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::Measure(a) => match measure(*a) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {

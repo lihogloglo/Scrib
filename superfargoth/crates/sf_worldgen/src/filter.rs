@@ -466,6 +466,21 @@ fn profile(th: f32, sharp: f32, carve: f32) -> (f32, f32) {
 /// The detail offset Δh (metres) at world point `p` (x east, y north) over `base`. `|Δh| ≤ max_amplitude_m`,
 /// 0 on flat ground and at or below `sea_level_m`.
 pub fn detail_offset(p: [f64; 2], base: &BaseSample, sea_level_m: f64, prm: &FilterParams) -> f32 {
+    detail_offset_banded(p, base, sea_level_m, prm, None)
+}
+
+/// [`detail_offset`] band-limited for a lattice of coarser spacing: octave `k` is scaled by
+/// `smoothstep(band_m[0], band_m[1], λₖ)`, so octaves whose wavelength is at or below `band_m[0]` metres are off
+/// and those at or above `band_m[1]` untouched (a factor of exactly 1, so with every octave above the band the
+/// result equals [`detail_offset`] bit for bit). A runtime level of spacing `s` passes `[lo · s, hi · s]`
+/// (`crate::tiles`). `None`: no band limit.
+pub fn detail_offset_banded(
+    p: [f64; 2],
+    base: &BaseSample,
+    sea_level_m: f64,
+    prm: &FilterParams,
+    band_m: Option<[f32; 2]>,
+) -> f32 {
     let g0 = base.grad;
     let slope0 = (g0[0] * g0[0] + g0[1] * g0[1]).sqrt();
     let shore = ((base.h - sea_level_m).max(0.0) as f32) * prm.shore_ratio;
@@ -488,8 +503,10 @@ pub fn detail_offset(p: [f64; 2], base: &BaseSample, sea_level_m: f64, prm: &Fil
     let mut w = 1.0 / wsum;
     for k in 0..prm.octaves {
         let s = (g[0] * g[0] + g[1] * g[1]).sqrt();
+        let band = band_m.map_or(1.0, |[lo, hi]| smoothstep(lo, hi, lambda));
         let fade = smoothstep(prm.slope_fade[0], prm.slope_fade[1], s)
-            * (1.0 - smoothstep(prm.curvature_fade[0], prm.curvature_fade[1], curv * lambda));
+            * (1.0 - smoothstep(prm.curvature_fade[0], prm.curvature_fade[1], curv * lambda))
+            * band;
         if fade > 0.0 && s > 0.0 {
             let dir = [-g[1] / s, g[0] / s];
             let seed = prm.seed ^ k.wrapping_mul(0x9e37_79b9);
