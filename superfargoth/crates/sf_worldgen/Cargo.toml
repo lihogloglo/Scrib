@@ -18,6 +18,8 @@ rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# GeoTIFF elevation tiles for `import-dem` (MIT, image-rs); DEFLATE (Copernicus COGs) and LZW only.
+tiff = { version = "0.11", default-features = false, features = ["deflate", "lzw"] }
 toml.workspace = true
 
 [[bin]]

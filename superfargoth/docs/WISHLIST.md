@@ -275,6 +275,18 @@ door links as first-class records, not per-cell teleports.
 - Customize the player character's face and body. Morrowind heads are fixed meshes, so this likely needs
   replacement head/body models with morph targets, behind an option (classic heads stay the default path).
 
+## 17. Vegetation at scale: millions of trees (later; owner 2026-11-18, idea only, for "1:1" worlds)
+
+- Reference: the Chlorophyll Engine (youtube.com/watch?v=VC_NUxbeA0E): 10 M trees over 15 km²; past a screen footprint
+  per-instance data streams out and a tile renders as one aggregate (voxel hierarchy), proxies built on player hardware.
+  Epic's Nanite Foliage (UE 5.7) reportedly goes a similar voxel route (to verify).
+- Ours today: retained GPU instance batches + GPU culling near (static scene), HLOD L1-L3 + octahedral impostors far
+  (far field), baked on the player's machine; never measured past Morrowind density (~50 k objects in Balmora). A 10x
+  island at a sparse 50 trees/ha is ~12 M trees (~1.5 M within 10 km).
+- Gaps: per-tile GPU procedural scatter (rules + seed, nothing stored), a vegetation aggregate (impostor tiles vs voxel),
+  tree shadows at that count, a measured ceiling. Owner: don't spend time or tokens on it now; worldgen starts with one
+  tree species on the existing pipeline.
+
 ---
 
 ## Early decisions this list forces

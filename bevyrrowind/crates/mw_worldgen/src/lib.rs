@@ -13,6 +13,7 @@
 //! column 0 = the west edge. Sample `(col, row)` is at Morrowind `x = 8192·cells_min.x + 128·col`,
 //! `y = 8192·(cells_max.y + 1) − 128·row` units. Cells without `LAND` hold [`fill_height`] and mask 0.
 
+pub mod markers;
 mod output;
 pub mod stats;
 
@@ -27,6 +28,7 @@ use mw_world::terrain::{LAND_VERTS, LandData, fill_height};
 use sf_records::{RecordDb, RecordId};
 use tes3::esp::{Cell, Landscape, Region};
 
+pub use markers::{Marker, MarkersFile, SummitMarker, read_markers};
 pub use output::{Meta, RegionsFile, read_meta, run, write};
 pub use stats::Stats;
 
@@ -319,6 +321,8 @@ pub struct Dump {
     pub mosaic: Mosaic,
     pub regions: RegionMap,
     pub stats: Stats,
+    /// Named exterior cell groups and the summit (`markers.json`, [`markers`]).
+    pub markers: MarkersFile,
     /// The record sources in load order (content files and mods).
     pub plugins: Vec<String>,
 }
@@ -329,5 +333,6 @@ pub fn dump(db: &RecordDb, bin_m: f32) -> Result<Dump, DumpError> {
     let regions = region_map(db, mosaic.cells_min, mosaic.cells_max)?;
     let stats = stats::measure(&mosaic, &regions, bin_m);
     let plugins = db.sources().iter().map(|s| s.name.clone()).collect();
-    Ok(Dump { mosaic, regions, stats, plugins })
+    let markers = markers::markers(db, &mosaic);
+    Ok(Dump { mosaic, regions, stats, markers, plugins })
 }

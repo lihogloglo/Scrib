@@ -8,7 +8,9 @@
 //!
 //! Outputs per arm (`<output>/<arm>/`): `heights.f32` + `meta.json` (guide format v1, so a product reads back as
 //! a guide), `overview.png`, `crop-<name>.png`; then `sheet-<crop>.png` and `sheet-overview.png` (arms left to
-//! right in recipe order) and `README.md` with the numbers.
+//! right in recipe order) and `README.md` with the numbers, including the routing/convergence table and the
+//! channel-network metrics ([`crate::metrics`]) of every arm and of each `[[compare]]` folder (a finished field in
+//! guide format v1, read with [`Guide::read`]).
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -17,16 +19,18 @@ use std::time::Instant;
 use rayon::prelude::*;
 
 use crate::guide::{Guide, RegionMap};
-use crate::recipe::{Recipe, Resolved};
+use crate::metrics::{ChannelMetrics, DIRECTION_NAMES, channel_metrics};
+use crate::perturb;
+use crate::recipe::{Crop, FlowKind, Recipe, Resolved};
 use crate::resample::{bicubic, bspline_weights};
 use crate::shade::{Gray, Light, contact_sheet, downsample, hillshade, write_png};
-use crate::stream::{StreamParams, StreamStats, erode};
+use crate::stream::{Flow, StreamParams, StreamStats, erode};
 use crate::thermal::{ThermalParams, relax};
 use crate::{Audit, Error, Grid, Result, WetDry, hash_f32};
 
 /// Contact-sheet gap, px, and its gray (layout).
-const SHEET_GAP_PX: usize = 8; // tunables: const (sheet layout, fixed by the look-test design)
-const SHEET_GAP_GRAY: u8 = 255; // tunables: const (sheet layout: white gaps)
+pub(crate) const SHEET_GAP_PX: usize = 8; // tunables: const (sheet layout, fixed by the look-test design)
+pub(crate) const SHEET_GAP_GRAY: u8 = 255; // tunables: const (sheet layout: white gaps)
 
 /// Command-line overrides.
 #[derive(Debug, Clone, Default)]
@@ -102,6 +106,21 @@ pub struct ArmReport {
     pub audit_erosion: Audit,
     pub audit_thermal: Audit,
     pub heights_blake3: String,
+    /// Drainage-area routing of the stream stage ("d8", "mfd p = …"), when it ran.
+    pub flow: String,
+    pub perturbed: bool,
+    /// Channel-network numbers of the final heights (as written, f32), when the recipe sets a threshold.
+    pub channels: Option<ChannelMetrics>,
+}
+
+/// Numbers of a finished height field measured for comparison (`[[compare]]`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CompareReport {
+    pub name: String,
+    pub dir: PathBuf,
+    pub max_height_m: f64,
+    pub wet_dry: WetDry,
+    pub channels: Option<ChannelMetrics>,
 }
 
 struct Placement {
@@ -112,7 +131,7 @@ struct Placement {
     seconds: f64,
 }
 
-fn masked_source(guide: &Guide, recipe: &Recipe) -> (Grid, usize) {
+pub(crate) fn masked_source(guide: &Guide, mask_to_sea: &[String]) -> (Grid, usize) {
     let fill = guide
         .fill_m
         .unwrap_or_else(|| f64::from(guide.heights.iter().copied().fold(f32::INFINITY, f32::min)));
@@ -129,9 +148,7 @@ fn masked_source(guide: &Guide, recipe: &Recipe) -> (Grid, usize) {
             .iter()
             .map(|n| {
                 !n.is_empty()
-                    && recipe
-                        .place
-                        .mask_to_sea
+                    && mask_to_sea
                         .iter()
                         .any(|p| n.starts_with(p.as_str()))
             })
@@ -149,7 +166,7 @@ fn masked_source(guide: &Guide, recipe: &Recipe) -> (Grid, usize) {
 }
 
 /// Region weights at guide position (col, row) (fractional samples): up to 16 (legend index, weight) pairs.
-fn region_weights(reg: &RegionMap, spacing: f64, col: f64, row: f64, out: &mut Vec<(u8, f64)>) {
+pub(crate) fn region_weights(reg: &RegionMap, spacing: f64, col: f64, row: f64, out: &mut Vec<(u8, f64)>) {
     out.clear();
     let px = col * spacing / reg.cell_m - 0.5;
     let py = row * spacing / reg.cell_m - 0.5;
@@ -270,7 +287,13 @@ fn place(guide: &Guide, recipe: &Recipe, src: &Grid, frame: &Frame, regional: bo
     }
 }
 
-fn frame_for(guide: &Guide, recipe: &Recipe, src: &Grid, spacing_m: f64) -> Result<Frame> {
+pub(crate) fn frame_for(
+    guide: &Guide,
+    s: f64,
+    margin: f64,
+    src: &Grid,
+    spacing_m: f64,
+) -> Result<Frame> {
     let (mut c0, mut r0, mut c1, mut r1) = (usize::MAX, usize::MAX, 0, 0);
     for row in 0..src.h {
         for col in 0..src.w {
@@ -285,8 +308,6 @@ fn frame_for(guide: &Guide, recipe: &Recipe, src: &Grid, spacing_m: f64) -> Resu
     if c0 > c1 {
         return Err(Error::Invalid("no land left after masking".into()));
     }
-    let s = recipe.params.scale.v;
-    let margin = recipe.params.sea_margin_m.v;
     let x0 = s * (guide.origin_m[0] + c0 as f64 * src.spacing) - margin;
     let y0 = s * (guide.origin_m[1] - r0 as f64 * src.spacing) + margin;
     let x1 = s * (guide.origin_m[0] + c1 as f64 * src.spacing) + margin;
@@ -302,14 +323,19 @@ fn frame_for(guide: &Guide, recipe: &Recipe, src: &Grid, spacing_m: f64) -> Resu
     })
 }
 
-fn resolve_crops(guide: &Guide, recipe: &Recipe, src: &Grid) -> Result<Vec<CropAt>> {
-    let s = recipe.params.scale.v;
+pub(crate) fn resolve_crops(
+    guide: &Guide,
+    crops: &[Crop],
+    crop_size_m: f64,
+    s: f64,
+    src: &Grid,
+) -> Result<Vec<CropAt>> {
     let reg = guide
         .regions
         .as_ref()
         .ok_or_else(|| Error::Invalid("crops need a region grid".into()))?;
     let mut out = Vec::new();
-    for c in &recipe.crops {
+    for c in crops {
         let (rule, gx, gy) = if let Some(name) = &c.peak_of {
             let idx = reg
                 .find(name)
@@ -335,7 +361,7 @@ fn resolve_crops(guide: &Guide, recipe: &Recipe, src: &Grid) -> Result<Vec<CropA
                 .ok_or_else(|| Error::Invalid(format!("no region named {name:?}")))?;
             // Window of the crop's size on the region grid holding the most pixels of the region; first in
             // row-major order on ties.
-            let win = ((recipe.params.crop_size_m.v / s / reg.cell_m).round() as usize).max(1);
+            let win = ((crop_size_m / s / reg.cell_m).round() as usize).max(1);
             let mut best = (0usize, 0usize, 0usize);
             for py in 0..=reg.h.saturating_sub(win) {
                 for px in 0..=reg.w.saturating_sub(win) {
@@ -377,16 +403,16 @@ fn resolve_crops(guide: &Guide, recipe: &Recipe, src: &Grid) -> Result<Vec<CropA
     Ok(out)
 }
 
-fn render_crop(
+pub(crate) fn render_crop(
     g: &Grid,
     frame: &Frame,
     crop: &CropAt,
-    recipe: &Recipe,
+    crop_px: usize,
+    size: f64,
     sea: f64,
     light: Light,
 ) -> Gray {
-    let px = recipe.params.crop_px.v as usize;
-    let size = recipe.params.crop_size_m.v;
+    let px = crop_px;
     let step = size / px as f64;
     let mut data = vec![0.0; px * px];
     data.par_chunks_mut(px).enumerate().for_each(|(j, row)| {
@@ -409,7 +435,7 @@ fn render_crop(
     )
 }
 
-fn write_heights(
+pub(crate) fn write_heights(
     dir: &Path,
     g: &Grid,
     frame: &Frame,
@@ -437,6 +463,13 @@ fn write_heights(
 /// Runs a recipe. Returns the arm reports.
 #[allow(clippy::too_many_lines)]
 pub fn run(recipe_path: &Path, ov: &Overrides) -> Result<Vec<ArmReport>> {
+    // A recipe with `pipeline = "landform"` is a WG-S4 landform-first recipe ([`crate::landform`]).
+    let text = std::fs::read_to_string(recipe_path)?;
+    let table: toml::Table = toml::from_str(&text)?;
+    if table.get("pipeline").and_then(toml::Value::as_str) == Some("landform") {
+        crate::landform::run(recipe_path, &text, ov)?;
+        return Ok(Vec::new());
+    }
     let recipe = Recipe::read(recipe_path)?;
     let p = &recipe.params;
     let mut guide = Guide::read(&recipe.guide.dir)?;
@@ -455,10 +488,10 @@ pub fn run(recipe_path: &Path, ov: &Overrides) -> Result<Vec<ArmReport>> {
     let sea = guide.sea_level_m;
     let out_dir = ov.out.clone().unwrap_or_else(|| recipe.output.dir.clone());
     std::fs::create_dir_all(&out_dir)?;
-    let (src, masked) = masked_source(&guide, &recipe);
+    let (src, masked) = masked_source(&guide, &recipe.place.mask_to_sea);
     let spacing = ov.macro_spacing_m.unwrap_or(p.macro_spacing_m.v);
-    let frame = frame_for(&guide, &recipe, &src, spacing)?;
-    let crops = resolve_crops(&guide, &recipe, &src)?;
+    let frame = frame_for(&guide, p.scale.v, p.sea_margin_m.v, &src, spacing)?;
+    let crops = resolve_crops(&guide, &recipe.crops, p.crop_size_m.v, p.scale.v, &src)?;
     let light = Light {
         azimuth_deg: p.light_azimuth_deg.v,
         altitude_deg: p.light_altitude_deg.v,
@@ -475,6 +508,34 @@ pub fn run(recipe_path: &Path, ov: &Overrides) -> Result<Vec<ArmReport>> {
         (frame.w * frame.h) as f64 * 1e-6,
         frame.scale
     );
+    let mut compares = Vec::new();
+    for c in &recipe.compares {
+        let cg = Guide::read(&c.dir)?;
+        let g = Grid {
+            w: cg.w,
+            h: cg.h,
+            spacing: cg.spacing_m,
+            data: cg.heights.iter().map(|&v| f64::from(v)).collect(),
+        };
+        let rep = CompareReport {
+            name: c.name.clone(),
+            dir: c.dir.clone(),
+            max_height_m: g.data.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            wet_dry: WetDry::count(&g.data, cg.sea_level_m),
+            channels: p
+                .channel_area_km2
+                .as_ref()
+                .map(|a| channel_metrics(&g, cg.sea_level_m, a.v * 1e6)),
+        };
+        println!(
+            "  compare {}: max {:.1} m; land {}, sea {}",
+            rep.name, rep.max_height_m, rep.wet_dry.land, rep.wet_dry.sea
+        );
+        if let Some(ch) = &rep.channels {
+            println!("    channels: {}", channel_line(ch));
+        }
+        compares.push(rep);
+    }
     let mut placements: [Option<Placement>; 2] = [None, None];
     let mut reports = Vec::new();
     let mut overviews: Vec<Gray> = Vec::new();
@@ -497,17 +558,53 @@ pub fn run(recipe_path: &Path, ov: &Overrides) -> Result<Vec<ArmReport>> {
         let t = Instant::now();
         let mut stream = None;
         let mut audit_erosion = Audit::default();
+        let flow = match arm.flow {
+            FlowKind::D8 => Flow::D8,
+            FlowKind::Mfd => Flow::Mfd {
+                exponent: p.flow_exponent.as_ref().map_or(1.0, |e| e.v),
+            },
+        };
         if arm.erosion {
             let start = g.data.clone();
+            let field = if arm.perturb {
+                let (amp, wl, seed) = (
+                    p.perturb_amp_m.as_ref().map_or(0.0, |v| v.v),
+                    p.perturb_wavelength_m.as_ref().map_or(1.0, |v| v.v),
+                    p.perturb_seed.as_ref().map_or(0, |v| v.v as u64),
+                );
+                Some(perturb::field(
+                    frame.w,
+                    frame.h,
+                    |x, y| frame.world(x as f64, y as f64),
+                    amp,
+                    wl,
+                    seed,
+                ))
+            } else {
+                None
+            };
+            let (cap, steady_dh_m) = if arm.steady {
+                (
+                    p.steady_max_iterations
+                        .as_ref()
+                        .map_or(iterations, |v| v.v as usize),
+                    p.steady_dh_m.as_ref().map(|v| v.v),
+                )
+            } else {
+                (iterations, None)
+            };
             stream = Some(erode(
                 &mut g,
                 &pl.intent.data,
                 &StreamParams {
                     m: p.stream_m.v,
-                    iterations,
+                    iterations: cap,
                     k_dt: &pl.k,
                     restore: &pl.restore,
                     sea_level: sea,
+                    flow,
+                    perturb: field.as_deref(),
+                    steady_dh_m,
                 },
             )?);
             audit_erosion = Audit::compare(&start, &g.data, sea);
@@ -533,7 +630,23 @@ pub fn run(recipe_path: &Path, ov: &Overrides) -> Result<Vec<ArmReport>> {
         let thermal_s = t.elapsed().as_secs_f64();
         let after = WetDry::count(&g.data, sea);
         let max_height_m = g.data.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let channels = p.channel_area_km2.as_ref().map(|a| {
+            // Measured on the heights as written (f32), like a `[[compare]]` folder.
+            let written = Grid {
+                data: g.data.iter().map(|&v| f64::from(v as f32)).collect(),
+                ..g.clone()
+            };
+            channel_metrics(&written, sea, a.v * 1e6)
+        });
+        let flow_name = match (arm.erosion, flow) {
+            (false, _) => "-".to_string(),
+            (true, Flow::D8) => "d8".to_string(),
+            (true, Flow::Mfd { exponent }) => format!("mfd p = {exponent}"),
+        };
         let mut rep = ArmReport {
+            flow: flow_name,
+            perturbed: arm.erosion && arm.perturb,
+            channels,
             name: arm.name.clone(),
             help: arm.help.clone(),
             placement_s: place_s,
@@ -561,7 +674,15 @@ pub fn run(recipe_path: &Path, ov: &Overrides) -> Result<Vec<ArmReport>> {
             write_png(&dir.join("overview.png"), &ovw)?;
             overviews.push(ovw);
             for (ci, crop) in crops.iter().enumerate() {
-                let img = render_crop(&g, &frame, crop, &recipe, sea, light);
+                let img = render_crop(
+                    &g,
+                    &frame,
+                    crop,
+                    p.crop_px.v as usize,
+                    p.crop_size_m.v,
+                    sea,
+                    light,
+                );
                 write_png(&dir.join(format!("crop-{}.png", crop.name)), &img)?;
                 crop_imgs[ci].push(img);
             }
@@ -581,6 +702,22 @@ pub fn run(recipe_path: &Path, ov: &Overrides) -> Result<Vec<ArmReport>> {
             rep.after.sea,
             rep.stream.as_ref().map_or(0, |s| s.pits_after_routing)
         );
+        if let Some(st) = &rep.stream {
+            println!(
+                "    stream ({}{}): {} steps, residual |dh| max {:.4} / p99 {:.4} m per step, converged {}; incision mean {:.2} / p99 {:.1} m",
+                rep.flow,
+                if rep.perturbed { ", perturbed" } else { "" },
+                st.iterations,
+                st.residual_max_m,
+                st.residual_p99_m,
+                st.converged,
+                st.mean_incision_m,
+                st.p99_incision_m
+            );
+        }
+        if let Some(c) = &rep.channels {
+            println!("    channels: {}", channel_line(c));
+        }
         arm_names.push(arm.name.clone());
         reports.push(rep);
     }
@@ -610,6 +747,7 @@ pub fn run(recipe_path: &Path, ov: &Overrides) -> Result<Vec<ArmReport>> {
             &crops,
             &reports,
             overviews.first(),
+            &compares,
         ),
     )?;
     Ok(reports)
@@ -626,6 +764,7 @@ fn readme(
     crops: &[CropAt],
     reports: &[ArmReport],
     overview: Option<&Gray>,
+    compares: &[CompareReport],
 ) -> String {
     let p = &recipe.params;
     let census = recipe.census();
@@ -770,5 +909,133 @@ fn readme(
         s,
         "\nPlacement time is paid once per `regional` flag (shared by the arms after the first). \"Pits after routing\": dry interior samples without a lower receiver on the Priority-Flood+ε surface (0 = everything drains). \"Raw closed pits\": dry samples lower than all 8 dry neighbours in the final heights (depressions are routed, not filled). Incision = intent - final height over dry samples, measured after the stream stage (before thermal)."
     );
+    readme_s2b(&mut s, recipe, reports, compares);
     s
+}
+
+/// One-line summary of a channel network (stdout).
+fn channel_line(c: &ChannelMetrics) -> String {
+    let shares: Vec<String> = DIRECTION_NAMES
+        .iter()
+        .zip(c.direction_share)
+        .map(|(n, v)| format!("{n} {:.1}", v * 100.0))
+        .collect();
+    format!(
+        "A >= {:.3} km2: {} samples, {:.0} km; length share % {}; sinuosity {:.3} over {} stems (mean {:.1} km)",
+        c.threshold_km2,
+        c.channel_samples,
+        c.length_km,
+        shares.join(" "),
+        c.mean_sinuosity,
+        c.stems,
+        c.mean_stem_km
+    )
+}
+
+/// The routing/convergence and channel-network tables (WG-S2b).
+#[allow(clippy::too_many_lines)]
+fn readme_s2b(s: &mut String, recipe: &Recipe, reports: &[ArmReport], compares: &[CompareReport]) {
+    let p = &recipe.params;
+    let opt = |name: &str, v: Option<&crate::recipe::Param>| {
+        v.map(|v| format!("{name} = {} {} ({})", v.v, v.unit, v.source))
+    };
+    let set: Vec<String> = [
+        opt("flow_exponent", p.flow_exponent.as_ref()),
+        opt("perturb_amp_m", p.perturb_amp_m.as_ref()),
+        opt("perturb_wavelength_m", p.perturb_wavelength_m.as_ref()),
+        opt("perturb_seed", p.perturb_seed.as_ref()),
+        opt("steady_dh_m", p.steady_dh_m.as_ref()),
+        opt("steady_max_iterations", p.steady_max_iterations.as_ref()),
+        opt("channel_area_km2", p.channel_area_km2.as_ref()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if set.is_empty() {
+        return;
+    }
+    let _ = writeln!(s, "\n## Routing and convergence\n");
+    let _ = writeln!(s, "Parameters: {}.\n", set.join("; "));
+    let _ = writeln!(
+        s,
+        "| Arm | Flow | Perturbed | Steps | Converged | Residual abs(dh) m per step (max / p99) | MFD stuck senders |"
+    );
+    let _ = writeln!(s, "|---|---|---|---|---|---|---|");
+    for r in reports {
+        let Some(st) = &r.stream else { continue };
+        let _ = writeln!(
+            s,
+            "| {} | {} | {} | {} | {} | {:.4} / {:.4} | {} |",
+            r.name,
+            r.flow,
+            r.perturbed,
+            st.iterations,
+            st.converged,
+            st.residual_max_m,
+            st.residual_p99_m,
+            st.mfd_stuck
+        );
+    }
+    for r in reports {
+        let Some(st) = &r.stream else { continue };
+        let trace: Vec<String> = st
+            .residual_trace
+            .iter()
+            .map(|(i, v)| format!("{i}: {v:.4}"))
+            .collect();
+        let _ = writeln!(
+            s,
+            "\nResidual p99 trace {} (step: m per step): {}.",
+            r.name,
+            trace.join(", ")
+        );
+    }
+    let rows: Vec<(String, &ChannelMetrics)> = reports
+        .iter()
+        .filter_map(|r| r.channels.as_ref().map(|c| (r.name.clone(), c)))
+        .chain(compares.iter().filter_map(|c| {
+            c.channels
+                .as_ref()
+                .map(|m| (format!("{} (`{}`)", c.name, c.dir.display()), m))
+        }))
+        .collect();
+    if rows.is_empty() {
+        return;
+    }
+    let _ = writeln!(s, "\n## Channel network\n");
+    let _ = writeln!(
+        s,
+        "Channels: D8 drainage area on the final heights (as written, f32) over the Priority-Flood+ε surface, area >= {:.3} km². Length share = channel length per grid direction (link to the D8 receiver). Sinuosity = main-stem length / head-to-outlet distance, mean over the {} largest outlets.\n",
+        rows[0].1.threshold_km2,
+        crate::metrics::SINUOSITY_CHANNELS
+    );
+    let _ = writeln!(
+        s,
+        "| Field | Channel samples | Length km | {} | Max share % | Mean sinuosity | Stems (mean km) |",
+        DIRECTION_NAMES.map(|d| format!("{d} %")).join(" | ")
+    );
+    let _ = writeln!(s, "|---|---|---|{}---|---|---|", "---|".repeat(8));
+    for (name, c) in rows {
+        let max = c.direction_share.iter().copied().fold(0.0, f64::max);
+        let _ = writeln!(
+            s,
+            "| {name} | {} | {:.0} | {} | {:.1} | {:.3} | {} ({:.1}) |",
+            c.channel_samples,
+            c.length_km,
+            c.direction_share
+                .map(|v| format!("{:.1}", v * 100.0))
+                .join(" | "),
+            max * 100.0,
+            c.mean_sinuosity,
+            c.stems,
+            c.mean_stem_km
+        );
+    }
+    for c in compares {
+        let _ = writeln!(
+            s,
+            "\nCompare `{}`: max height {:.1} m, land {}, sea {}.",
+            c.name, c.max_height_m, c.wet_dry.land, c.wet_dry.sea
+        );
+    }
 }

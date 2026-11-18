@@ -1894,3 +1894,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   not x10; below ~2 m terrain detail is synthesized at runtime with a CPU twin. Specs `worldgen.md`, `worldgen-adapter.md`.
 - 2026-11-18 (worldgen, WG-S1 numbers): corrects the bullet above: vertical relief defaults to the horizontal S (a
   uniform x10 makes Red Mountain's 270.8 m summit 2.7 km); per-region recipes may remap it, judged in the WG-S2 look test.
+- 2026-11-18 (worldgen, owner): Vvardenfell 10x keeps flat lowlands with a gentle apron rising toward Red Mountain,
+  which surges dramatically above real-world proportions (summit ~5.5 km); Etna and Teide are the references (Iceland
+  rejected), Teide's barrancos the model for foyadas; the analytic erosion filter (WG-F) is kept for detail.

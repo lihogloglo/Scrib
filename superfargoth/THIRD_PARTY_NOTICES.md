@@ -210,6 +210,21 @@ SOFTWARE.
 - Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
 - Ported into: `bevyrrowind/crates/mw_ui/src/message.rs` (the game; written 2026-11-08, untested).
 
+## Veloren (erosion)
+
+- Source: https://gitlab.com/veloren/veloren master commit `6c99b292e0c3cbb5ab9c76e2c2f83a3ce73b295c` (2026-11-10):
+  `world/src/sim/erosion.rs` (`erode`, `get_lakes`, `get_multi_rec`, `get_multi_drainage`; file last changed in
+  `07840f06fa49df612eccb9258099393bdd900eac`), itself a port of fastscapelib-fortran (GPL-3.0) and of Cordonnier, Bovy,
+  Braun 2019. Read for comparison, not ported: fastscapelib `include/fastscapelib/flow/sink_resolver.hpp`,
+  `basin_graph.hpp` (GPL-3.0, github.com/fastscape-lem/fastscapelib commit `b85cc6b1341241cbe4a1d3458ed7e3fa5a857f48`).
+- Licence: GPL-3.0-or-later (the full text is identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt).
+- Ported into: `superfargoth/crates/sf_worldgen/src/lem/` (`mod.rs`: multi-receiver implicit stream power swept along
+  the multi stack, lake water levels, local Newton for n != 1, Roering tangent diffusivity; `route.rs`: basin graph,
+  lowest-pass tree, fill re-routing of flooded nodes, water surface, multiple receivers with the `0.5 + 0.6 S` exponent,
+  multi stack, drainage), altered: steepest-slope receivers, fixed-order single-threaded reductions, one outside basin,
+  breadth-first fill, sea and grid edge as fixed base level, optional fixed (anchor) cells, monotone line-split implicit
+  diffusion instead of ADI, no sediment, soil or bedrock layer.
+
 ## wgpu-core (vendored, altered)
 
 - Source: wgpu-core 30.0.1 (crates.io; https://github.com/gfx-rs/wgpu).

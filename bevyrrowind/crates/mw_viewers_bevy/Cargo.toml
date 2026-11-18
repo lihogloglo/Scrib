@@ -1,6 +1,6 @@
 [package]
 name = "mw_viewers_bevy"
-description = "The game's standalone viewers: `view` (one cell, cooked/skinned/animated models), `character` (actor lineup) (app-split.md slice 12)"
+description = "The game's standalone viewers: `view` (one cell, cooked/skinned/animated models), `character` (actor lineup), `worldgen-view` (guide grids in 3D) (app-split.md slice 12)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,6 +16,7 @@ clip_preview = ["dep:mw_anim", "dep:sf_anim", "dep:sf_anim_graph", "dep:serde_js
 # The umbrella crate: each viewer builds its own `App` with `DefaultPlugins` (as the binary does).
 bevy = { workspace = true, features = ["3d"] }
 bevy_camera_controller = { workspace = true, features = ["free_camera"] }
+clap.workspace = true
 mw_actors.workspace = true
 mw_actors_bevy.workspace = true
 mw_anim = { workspace = true, optional = true }
@@ -27,6 +28,8 @@ mw_game_core.workspace = true
 mw_graphs.workspace = true
 mw_physics.workspace = true
 mw_world.workspace = true
+# `markers.json` (worldgen-view `--markers`): the format and its reader.
+mw_worldgen.workspace = true
 serde_json = { workspace = true, optional = true }
 sf_anim = { workspace = true, optional = true }
 sf_anim_bevy = { workspace = true, features = ["debug"] }
@@ -40,6 +43,7 @@ sf_model_bevy.workspace = true
 sf_records.workspace = true
 sf_sky_bevy.workspace = true
 sf_vfs = { workspace = true, features = ["bevy"] }
+sf_worldgen.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 toml = { workspace = true, optional = true }
 workspace-hack.workspace = true

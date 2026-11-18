@@ -81,8 +81,9 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (55)
-WG-S2 | awaiting owner | [worldgen](visual-checks/worldgen.md) | 10x Vvardenfell erosion look test: hillshade sheets A0-A3 in `target/worldgen/s2/` (images, no game run) (2026-11-18)
+### Awaiting owner (56)
+WG-V | awaiting owner | [worldgen](visual-checks/worldgen.md) | 3D worldgen viewer `worldgen-view`, S2 arms A0-A3 (B0-B3 next) (2026-11-18)
+WG-S2 | partial (owner 2026-11-18: parallel "motherboard" channels in A1/A2; wants 3D) | [worldgen](visual-checks/worldgen.md) | 10x Vvardenfell erosion look test: hillshade sheets A0-A3 in `target/worldgen/s2/` (images, no game run) (2026-11-18)
 
 EX-1 | awaiting owner (fix E1+E1b built 2026-11-17: tune `sky.moon.sky_scatter`, `sky.night.glow_ratio` live; floor 4.5 default) | [weather-sky](visual-checks/weather-sky.md) | Night darkness, three launch-flag arms vs today (`view "Balmora" --day 173 --hour 3.5 --weather clear`; `--night-ambient 2`, `--exposure-floor 4.5`, both halfway)
 WA-10 | partial (2026-11-17 recheck: rings + no rain underwater pass; Bitter Coast must stay green, only visibility was wrong; storm sea still meek, no crest foam/spray (Sea of Thieves session); U4 waterline open) | [terrain-water](visual-checks/terrain-water.md) | Storm sea + underwater + rain rings (W-SEASTATE, U3, R1): `scene wa-seyda-noon --weather thunderstorm` (2026-11-17)

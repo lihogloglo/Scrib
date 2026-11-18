@@ -2,13 +2,21 @@
 //!
 //! ```text
 //! scrib-worldgen run <recipe.toml> [--arms A0,A1] [--macro-spacing 25] [--iterations N] [--out DIR] [--no-images]
+//! scrib-worldgen import-dem <tile.tif|folder>... --centre LAT,LON --extent-km EW[,NS] --spacing 20 --out DIR
+//!     [--fill -30] [--sea-max 0] [--name N] [--source S] [--licence L]
+//! scrib-worldgen detail --in GUIDE --out DIR --spacing 5 [--crop X0,Y0,X1,Y1] [--params FILE.toml] [--set NAME=V]...
+//! scrib-worldgen stamp-volcano --base GUIDE --params FILE.toml --out DIR [--arms V1,V2]
+//! scrib-worldgen measure GUIDE... [--ref GUIDE]... [--mask-sea] [--region X0,Y0,X1,Y1] [--summit auto|X,Y] --out FILE.md|json
 //! ```
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use sf_worldgen::dem::{ImportParams, ImportRequest, run_import};
+use sf_worldgen::filter::{DetailRequest, apply_overrides_toml, declared_defaults, run_detail, set};
 use sf_worldgen::run::{Overrides, run};
+use sf_worldgen::stratovolcano::{StampRequest, run_stamp};
 
 #[derive(Parser)]
 #[command(
@@ -41,11 +49,283 @@ enum Cmd {
         #[arg(long)]
         no_images: bool,
     },
+    /// Imports georeferenced TIFF elevation tiles (EPSG:4326) as a guide v1 folder on a local metric grid.
+    ImportDem {
+        /// Georeferenced TIFF tiles, or folders of them.
+        #[arg(required = true)]
+        tiles: Vec<PathBuf>,
+        /// Centre `lat,lon`, degrees (north, east).
+        #[arg(long, value_delimiter = ',', num_args = 1, allow_negative_numbers = true)]
+        centre: Vec<f64>,
+        /// Extent, km: `ew` (square) or `ew,ns`.
+        #[arg(long, value_delimiter = ',')]
+        extent_km: Vec<f64>,
+        /// Output sample spacing, metres.
+        #[arg(long)]
+        spacing: f64,
+        /// Output guide folder.
+        #[arg(long)]
+        out: PathBuf,
+        /// Height written for sea and no data, metres, < 0 (Guess: a flat shelf below the shoreline, as the
+        /// Vvardenfell guide's -29.3 m fill).
+        #[arg(long, default_value_t = -30.0, allow_negative_numbers = true)]
+        fill: f64,
+        /// Source heights at or below this are sea, metres (Copernicus GLO-30 open ocean reads 0).
+        #[arg(long, default_value_t = 0.0, allow_negative_numbers = true)]
+        sea_max: f64,
+        /// Place name for the meta.
+        #[arg(long)]
+        name: Option<String>,
+        /// Source line for the meta.
+        #[arg(long)]
+        source: Option<String>,
+        /// Licence or attribution line for the meta.
+        #[arg(long)]
+        licence: Option<String>,
+    },
+    /// Runtime-detail preview: resamples a guide to a finer spacing over a crop and applies the erosion filter
+    /// (`sf_worldgen::filter`); writes a guide v1 folder.
+    Detail {
+        /// Base guide folder (v1).
+        #[arg(long = "in")]
+        input: PathBuf,
+        /// Output guide folder.
+        #[arg(long)]
+        out: PathBuf,
+        /// Output sample spacing, metres.
+        #[arg(long)]
+        spacing: f64,
+        /// Crop `x0,y0,x1,y1` in the guide frame, metres (x east, y north); default the whole guide.
+        #[arg(long, value_delimiter = ',', num_args = 1, allow_negative_numbers = true)]
+        crop: Option<Vec<f64>>,
+        /// TOML file of filter value overrides (`name = v` or `name = { v, source }`).
+        #[arg(long)]
+        params: Option<PathBuf>,
+        /// One override `name=value` (source Guess), applied after --params; repeatable.
+        #[arg(long = "set")]
+        sets: Vec<String>,
+    },
+    /// Stamps a composable stratovolcano (`sf_worldgen::stratovolcano`) on a base guide, one guide v1 folder per
+    /// arm of the params file, plus README.md with timings and the radial-profile fits.
+    StampVolcano {
+        /// Base guide folder (v1).
+        #[arg(long)]
+        base: PathBuf,
+        /// Params file (TOML: [centre], [reference], [params], [[arm]]).
+        #[arg(long)]
+        params: PathBuf,
+        /// Output folder (one sub-folder per arm).
+        #[arg(long)]
+        out: PathBuf,
+        /// Only these arms (comma-separated names).
+        #[arg(long, value_delimiter = ',')]
+        arms: Option<Vec<String>>,
+    },
+    /// Land-only terrain statistics of guide folders at one spacing (`sf_worldgen::measure`): hypsometry, slope,
+    /// band roughness, spectrum, drainage density, channel structure, local relief; Markdown + JSON report.
+    Measure(Box<MeasureArgs>),
 }
 
+#[derive(clap::Args)]
+struct MeasureArgs {
+    /// Guide folders (v1) to measure.
+    dirs: Vec<PathBuf>,
+    /// Reference guide folders (measured first; the report's gap section compares the others to their range).
+    #[arg(long = "ref")]
+    refs: Vec<PathBuf>,
+    /// Exclude sea and land within --coast-m of it.
+    #[arg(long)]
+    mask_sea: bool,
+    /// Coastal margin, metres (metric definition, WG-M report: 500).
+    #[arg(long, default_value_t = 500.0)]
+    coast_m: f64,
+    /// Grid-border margin, metres (WG-M report: 1000).
+    #[arg(long, default_value_t = 1000.0)]
+    edge_m: f64,
+    /// Crop `x0,y0,x1,y1` in each guide's frame, metres (x east, y north).
+    #[arg(long, value_delimiter = ',', num_args = 1, allow_negative_numbers = true)]
+    region: Option<Vec<f64>>,
+    /// Measuring spacing, metres (WG-M report: 20).
+    #[arg(long, default_value_t = 20.0)]
+    spacing: f64,
+    /// Cone / lowland split: `auto` (highest valid sample) or `x,y` guide-frame metres.
+    #[arg(long, allow_hyphen_values = true)]
+    summit: Option<String>,
+    /// Cone zone radius around the summit, km (WG-M report: 10).
+    #[arg(long, default_value_t = 10.0)]
+    cone_km: f64,
+    /// Lowland zone: at least this far from the summit, km (WG-M report: 20).
+    #[arg(long, default_value_t = 20.0)]
+    lowland_km: f64,
+    /// Elevation band zone `lo,hi`, metres.
+    #[arg(long, value_delimiter = ',', num_args = 1, allow_negative_numbers = true)]
+    band: Option<Vec<f64>>,
+    /// Spectral patch edge, samples, a power of two (WG-M report: 512).
+    #[arg(long, default_value_t = 512)]
+    patch: usize,
+    /// Report file: `.md` (and `.json` beside it) or `.json`.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+fn measure(a: MeasureArgs) -> sf_worldgen::Result<()> {
+    use sf_worldgen::measure::{MeasureParams, MeasureRequest, Summit, run_measure};
+    let bad = |m: &str| sf_worldgen::Error::Invalid(m.into());
+    let mut p = MeasureParams::standard(a.spacing);
+    p.mask_sea = a.mask_sea;
+    p.coast_m = a.coast_m;
+    p.edge_m = a.edge_m;
+    p.cone_m = a.cone_km * 1000.0;
+    p.lowland_m = a.lowland_km * 1000.0;
+    p.patch = a.patch;
+    p.region_m = match a.region.as_deref() {
+        None => None,
+        Some(&[x0, y0, x1, y1]) => Some([x0, y0, x1, y1]),
+        Some(_) => return Err(bad("--region takes x0,y0,x1,y1")),
+    };
+    p.band_m = match a.band.as_deref() {
+        None => None,
+        Some(&[lo, hi]) => Some([lo, hi]),
+        Some(_) => return Err(bad("--band takes lo,hi")),
+    };
+    p.summit = match a.summit.as_deref() {
+        None => None,
+        Some("auto") => Some(Summit::Auto),
+        Some(xy) => {
+            let parts: Vec<f64> = xy.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+            let [x, y] = parts[..] else {
+                return Err(bad("--summit takes auto or x,y"));
+            };
+            Some(Summit::At([x, y]))
+        }
+    };
+    run_measure(&MeasureRequest {
+        refs: a.refs,
+        dirs: a.dirs,
+        params: p,
+        out: a.out,
+    })
+    .map(|_| ())
+}
+
+#[allow(clippy::cast_precision_loss)] // sample count in millions, for the report line
+fn detail(
+    input: PathBuf,
+    out: PathBuf,
+    spacing: f64,
+    crop: Option<Vec<f64>>,
+    params: Option<PathBuf>,
+    sets: &[String],
+) -> sf_worldgen::Result<()> {
+    let crop_m = match crop.as_deref() {
+        None => None,
+        Some(&[x0, y0, x1, y1]) => Some([x0, y0, x1, y1]),
+        Some(_) => {
+            return Err(sf_worldgen::Error::Invalid(
+                "--crop takes x0,y0,x1,y1".into(),
+            ));
+        }
+    };
+    let mut declared = declared_defaults();
+    if let Some(p) = &params {
+        apply_overrides_toml(&mut declared, &std::fs::read_to_string(p)?)?;
+    }
+    for kv in sets {
+        let (k, v) = kv
+            .split_once('=')
+            .ok_or_else(|| sf_worldgen::Error::Invalid(format!("--set {kv}: name=value expected")))?;
+        let v: f64 = v
+            .trim()
+            .parse()
+            .map_err(|_| sf_worldgen::Error::Invalid(format!("--set {kv}: not a number")))?;
+        set(&mut declared, k.trim(), v, None)?;
+    }
+    let req = DetailRequest {
+        input,
+        out: out.clone(),
+        spacing_m: spacing,
+        crop_m,
+        declared,
+    };
+    let r = run_detail(&req)?;
+    let s = &r.stats;
+    println!(
+        "{}: {}x{} @ {} m ({:.2} M samples), origin ({:.1}, {:.1}) m; read {:.2} s, filter {:.2} s, write {:.2} s; |dh| mean {:.3} m, p99 {:.3} m, max {:.3} m, mean dh {:.3} m, changed {:.1} %, new wet {}, new dry {}",
+        out.display(),
+        r.dims[0],
+        r.dims[1],
+        r.spacing_m,
+        r.samples as f64 * 1e-6,
+        r.origin_m[0],
+        r.origin_m[1],
+        r.seconds_read,
+        r.seconds_filter,
+        r.seconds_write,
+        s.mean_abs_m,
+        s.p99_abs_m,
+        s.max_abs_m,
+        s.mean_m,
+        s.changed_share * 100.0,
+        s.new_wet,
+        s.new_dry
+    );
+    Ok(())
+}
+
+fn stamp_volcano(req: StampRequest) -> ExitCode {
+    match run_stamp(&req) {
+        Ok(r) => {
+            println!(
+                "stamp-volcano: {} arms, summit {}",
+                r.arms.len(),
+                r.centre_rule
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("scrib-worldgen: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+// One arm per subcommand; the dispatch reads best in one place.
+#[allow(clippy::too_many_lines)]
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Measure(a) => match measure(*a) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("scrib-worldgen: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::StampVolcano {
+            base,
+            params,
+            out,
+            arms,
+        } => stamp_volcano(StampRequest {
+            base,
+            params,
+            out,
+            arms,
+        }),
+        Cmd::Detail {
+            input,
+            out,
+            spacing,
+            crop,
+            params,
+            sets,
+        } => match detail(input, out, spacing, crop, params, &sets) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("scrib-worldgen: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::Run {
             recipe,
             arms,
@@ -63,6 +343,64 @@ fn main() -> ExitCode {
             };
             match run(&recipe, &ov) {
                 Ok(_) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("scrib-worldgen: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::ImportDem {
+            tiles,
+            centre,
+            extent_km,
+            spacing,
+            out,
+            fill,
+            sea_max,
+            name,
+            source,
+            licence,
+        } => {
+            let (&[lat, lon], &[ew, ref ns @ ..]) = (centre.as_slice(), extent_km.as_slice()) else {
+                eprintln!("scrib-worldgen: --centre takes lat,lon and --extent-km takes ew[,ns]");
+                return ExitCode::FAILURE;
+            };
+            let ns = ns.first().copied().unwrap_or(ew);
+            let req = ImportRequest {
+                inputs: tiles,
+                params: ImportParams {
+                    centre_lat: lat,
+                    centre_lon: lon,
+                    extent_m: [ew * 1000.0, ns * 1000.0],
+                    spacing_m: spacing,
+                    sea_max_m: sea_max,
+                    fill_m: fill,
+                },
+                out: out.clone(),
+                name,
+                source,
+                licence,
+            };
+            match run_import(&req) {
+                Ok(imp) => {
+                    let s = &imp.stats;
+                    println!(
+                        "{}: {}x{} @ {} m, min {:.1} m, max {:.1} m at local ({:.0}, {:.0}) m = ({:.5}, {:.5}), land {:.1} % ({:.1} km2)",
+                        out.display(),
+                        imp.w,
+                        imp.h,
+                        imp.spacing_m,
+                        s.min_m,
+                        s.max_m,
+                        s.peak_local_m[0],
+                        s.peak_local_m[1],
+                        s.peak_lat_lon[0],
+                        s.peak_lat_lon[1],
+                        s.land_share * 100.0,
+                        s.land_km2
+                    );
+                    ExitCode::SUCCESS
+                }
                 Err(e) => {
                     eprintln!("scrib-worldgen: {e}");
                     ExitCode::FAILURE

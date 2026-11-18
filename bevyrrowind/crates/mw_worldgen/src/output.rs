@@ -7,6 +7,7 @@
 //!   holds the legend colours (so it views as a coloured map).
 //! - `regions.json`: the legend ([`RegionsFile`]).
 //! - `meta.json`: layout, units, sources, a blake3 of `heights.f32`, and the [`Stats`] ([`Meta`]).
+//! - `markers.json`: named exterior cell groups and the summit, source metres ([`crate::markers`]).
 
 use std::fs::File;
 use std::fmt::Write as _;
@@ -154,6 +155,7 @@ pub fn write(dump: &Dump, dir: &Path) -> Result<Meta, DumpError> {
     let mut file = BufWriter::new(File::create(dir.join("meta.json"))?);
     serde_json::to_writer_pretty(&mut file, &meta)?;
     file.flush()?;
+    std::fs::write(dir.join("markers.json"), serde_json::to_vec_pretty(&dump.markers)?)?;
     Ok(meta)
 }
 
@@ -185,7 +187,7 @@ pub fn run(db: &sf_records::RecordDb, out: &Path, bin_m: f32) -> Result<String, 
         meta.max_edge_mismatch_m
     );
     report.push_str(&dump.stats.to_string());
-    for name in ["heights.f32", "heights.png", "mask.png", "regions.png", "regions.json", "meta.json"] {
+    for name in ["heights.f32", "heights.png", "mask.png", "regions.png", "regions.json", "meta.json", "markers.json"] {
         let _ = writeln!(report, "wrote {} ({} bytes)", out.join(name).display(), size(name));
     }
     let _ = writeln!(report, "worldgen-dump: {:.2} s (after content load)", started.elapsed().as_secs_f64());

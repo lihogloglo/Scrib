@@ -1,7 +1,9 @@
 # World generation (`sf_worldgen`, the Scrib worldgen tool)
 
-Status: **plan** (owner brainstorm 2026-11-18). No code. Research (WG-R1-R3) and a look spike (WG-S1-S3) come first;
-"Reuse check" and "Industry comparison" are drafts that WG-R1 completes, and this spec is agreed at WG-0.
+Status: **look loop in progress** (2026-11-18). Built: research WG-R1-R4, `sf_worldgen` (stream power, Veloren LEM
+port, layout, landscape, stratovolcano, analytic erosion filter, DEM import, measure; bin `scrib-worldgen`), viewer
+`bevyrrowind worldgen-view`; outputs and owner verdicts in `docs/ledger/worldgen.md`. **Next: the screenshot
+milestone** ("Handoff" at the end). This spec is agreed at WG-0.
 Crates (planned): `sf_worldgen` (Bevy-free core), `sf_worldgen_gpu` (wgpu compute, no Bevy), tool binary
 `scrib-worldgen`. Feeds `sf_terrain::TerrainSource` ([terrain](terrain.md)). First game adapter (Vvardenfell at 10×,
 anchor rules, coordinate remap, its slices): `../../../bevyrrowind/docs/specs/worldgen-adapter.md`.
@@ -124,7 +126,13 @@ game data ──adapter──> guides ──stage graph──> products ──Te
    retuning the collar width doesn't re-run erosion. Avoid template or mirror continuation and per-operator
    footprints: all were rejected with evidence.
 5. **Hydrology:** flow accumulation → rivers and lakes as `sf_water` bodies at their own heights; wetness and
-   moisture fields.
+   moisture fields. Stream power never makes meanders or braids, so rivers get their own centreline stage
+   (meander simulation, Paris 2023) before they are carved.
+
+**Irregularity is designed in (WG-R4):** uniform rock and uplift run to a strict steady state self-organise into
+evenly spaced ridges and valleys (Perron et al. 2009), the "motherboard" look the owner rejected. The layout enters
+as **uplift and erodibility fields** varying per cell (rock types, region edges, cellular noise), never as a target
+height; runs start noisy and stop at a finite time, not at strict equilibrium.
 6. **Material fields:** slope, curvature, flow, wetness, altitude, rock type, exposure → splat inputs (the adapter
    maps them to its layers: LTEX or pack textures) and scatter density fields.
 7. **Runtime detail (< 2 m):** one stateless detail function guided by the material fields: an analytic
@@ -181,6 +189,13 @@ Godotwind erosion/hydrology (WISHLIST §3-4) is an anecdote, not a design.
   (MIT/Apache, stalled since 2024) don't give a GPU twin, so we write a small integer-hash gradient noise with
   identical CPU and WGSL versions. No maintained wgpu erosion crate exists. GeoTIFF exemplars through the `tiff` crate
   (to confirm at WG-1).
+- **Ports (WG-R4, `../research/worldgen-oss-survey-2026-11-18.md`):** Veloren `world/src/sim/erosion.rs` (Rust,
+  GPL-3.0: implicit stream power, multi-receiver flow, Cordonnier lakes, diffusion, per-cell erodibility and uplift)
+  is the stage-2 base, ported with a fixed summation order, anchor boundary conditions and tiling; fastscapelib
+  (GPL-3.0) for the basin-graph sink resolver and the n ≠ 1 Newton step, its Python `fastscape` as an offline
+  reference oracle; Paris 2023 `Meandering-rivers` (MIT) for a river-centreline stage. Each port cites file + commit
+  and gets a `THIRD_PARTY_NOTICES.md` entry. Not usable: HighMap (LGPL-2.1 vs GPL-3.0 conflict, reimplement),
+  SimpleHydrology (no licence file), learned sketch-to-terrain models (no weights or licence, or CUDA only).
 - **Own code, each citing its source:** stream power on a grid (Cordonnier et al. 2016; Schott et al. 2023, MIT
   reference code), pipe-model hydraulic erosion (Mei et al. 2007) and thermal erosion in fixed point, and an analytic
   gradient-aligned erosion filter for runtime detail (runevision 2026; Grenier et al., CGF 2024), reimplemented from
@@ -217,6 +232,11 @@ adapter spec); visual checks use the same IDs in `bevyrrowind/docs/visual-checks
 
 **Order:** WG-R1-R3 → WG-S1-S3 → WG-0 → WG-1-3 with WG-A1-A2 → WG-4, WG-5, WG-8 → WG-A3-A4 → WG-6, WG-7, WG-A5, WG-N1-N3 →
 WG-G1, WG-G2.
+
+**Owner priorities (2026-11-18), in order:** (1) a landscape the owner likes (look loop in the viewer: WG-VO, live
+tuning); (2) settlements where they belong (anchors: WG-A1, WG-8, WG-A3); (3) textures on the ground (WG-N1: material
+fields → Morrowind LTEX); (4) rocks and trees on the terrain (WG-N2; **one tree species is fine to start**, on the
+existing static scene + far field). Millions-of-trees vegetation is parked (WISHLIST §17).
 
 **Research (no builds; can run beside other work):**
 
@@ -261,3 +281,26 @@ over a closed operator registry).
 
 1. Mid-stage throughput: can fixed-point pipe-model erosion over ~225 M samples at 4 m fit the bake budget on the
    4060 laptop? Measured at WG-3; if not, the finest baked level moves to ~8 m and stage 7 carries more.
+
+## Handoff (2026-11-18, end of the first worldgen session)
+
+State: the owner judges looks in `bevyrrowind worldgen-view <guide dirs> --markers <markers.json>` (launched through
+`owner_launch.sh`; keys 1-9 switch arms). Current best: WG-VO's volcano on S4 C1 (`target/worldgen/vo/V1-V4`, params
+`bevyrrowind/worldgen/red-mountain-vo.toml`), owner "very promising". Open look gripes (later): the volcano reads as
+"different cones merged together" (artificial); the littoral is smooth and undeveloped; relief gets dull down the
+slopes; landscape arms have too little detail below 300 m and too much 1-3 km relief vs real Etna/Teide (WG-M,
+`target/worldgen/m/README.md`), real Iceland rejected as a reference. Metrics only pick knobs; the owner judges.
+
+**Screenshot milestone (owner 2026-11-18: "get people excited")**, the next session's work, three slices in the game
+(not the viewer: it has no textures, clouds or Morrowind meshes):
+1. **Whole 10x island as game terrain** (owner: no crop). WG-4 + WG-5 minimal: `sf_terrain` stores from a coarser
+   finest level (~2 m; 0.5 m everywhere would be ~58 GB) and the levels below come from the WG-F filter at runtime
+   (GPU fill + CPU twin), fed through a `TerrainSource` over a guide v1 grid (`--world <guide dir>`).
+2. **Settlements stamped in** (WG-8 + WG-A1/A3 minimal): named settlement clusters (`markers.json`) placed at 10x
+   positions at 1:1 size with their source ground stamped and blended; their references streamed at the new positions.
+   Doors and scripted coordinates (WG-A3b) wait. Careful: some settlements sit on geology (Vivec in a bay, Balmora on
+   both banks of the Odai): a stamp is enough for now (adapter "Hard cases").
+3. **Ground textures and one tree species** (WG-N1/N2 minimal): layers from slope/altitude/region mapped to Morrowind
+   LTEX; one Morrowind tree mesh scattered by simple rules on the static scene + far field.
+Also: raise the volumetric cloud base (`sf_atmos` `CloudSettings::base`) so the 5.5 km summit can pierce the layer.
+The 3D viewer lives in `mw_viewers_bevy` for now; a standalone tool would move it to its own crate.

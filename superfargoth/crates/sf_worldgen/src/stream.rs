@@ -16,26 +16,59 @@
 //! - Base level: wet samples, held at the sea level (the water surface). They never move, and since every
 //!   receiver chain ends at ≥ sea level and the update is a convex mix, dry samples stay dry.
 //!
-//! Deterministic: routing and the sweeps are single-threaded in a fixed order; only the D8 receiver map (a pure
-//! function of the routing surface) runs in parallel.
+//! - Drainage area ([`Flow`]): D8 (single flow, the original solver) or **multiple-flow-direction** accumulation
+//!   ([`crate::mfd`], Freeman 1991 / Quinn et al. 1991 / Holmgren 1994 slope-power weights). With MFD the
+//!   implicit update still runs along the steepest (D8) receiver, so it keeps its stack order and stays
+//!   unconditionally stable for n = 1; only `A` changes. This is what Schott et al. 2023 do (MFD area, incision
+//!   relative to the steepest receiver; code `H-Schott/StreamPowerErosion`). The fully implicit MFD update
+//!   (Braun, Cordonnier, Bovy, Yuan, EGU 2018-17723; Anand, Hooshyar, Porporato, "Linear layout of multiple
+//!   flow-direction networks for landscape-evolution simulations", Env. Modelling & Software 133, 2020) mixes
+//!   all receivers in a topological order; it is the next step if the steepest-receiver update shows grid bias.
+//! - Symmetry breaking: an optional perturbation ([`crate::perturb`]) added to the uplift target and the initial
+//!   height of dry samples (clamped to stay dry).
+//! - Convergence: every step measures the residual `|Δh|` per step over dry samples (max and p99); with
+//!   `steady_dh_m` set the run stops once the p99 drops below it (steady state, uplift balancing incision), else
+//!   it runs `iterations` steps (the cap either way).
+//!
+//! Deterministic: routing, the MFD accumulation and the sweeps are single-threaded in a fixed order; only the D8
+//! receiver map and the MFD in-degree and raw weights (pure functions of the routing surface) run in parallel.
 
 use rayon::prelude::*;
 
 use crate::flood::priority_flood_eps;
 use crate::grid::{NEIGHBOUR_DIST, neighbour};
+use crate::mfd::mfd_area;
 use crate::{Error, Grid, Result};
+
+/// How drainage area is accumulated.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub enum Flow {
+    /// Single flow to the steepest receiver (O'Callaghan & Mark 1984).
+    D8,
+    /// Multiple flow to all lower neighbours, weights `tanβᵖ` ([`crate::mfd`]).
+    Mfd { exponent: f64 },
+}
+
+/// Steps between two residual trace entries (report sampling, not a tunable).
+// tunables: const (report layout)
+pub const RESIDUAL_TRACE_EVERY: usize = 50;
 
 /// Per-sample inputs of the stream power stage.
 pub struct StreamParams<'a> {
     /// Drainage-area exponent m (n is 1).
     pub m: f64,
-    /// Number of implicit steps.
+    /// Number of implicit steps (the cap when `steady_dh_m` is set).
     pub iterations: usize,
     /// `K dt` per sample, units m^(1-2m) (dimensionless for m = 0.5).
     pub k_dt: &'a [f64],
     /// Fraction of the gap to the intent restored per step, per sample, in [0, 1] (`dt / τ`).
     pub restore: &'a [f64],
     pub sea_level: f64,
+    pub flow: Flow,
+    /// Added to the uplift target and the initial height of dry samples, metres (clamped to stay dry).
+    pub perturb: Option<&'a [f64]>,
+    /// Stop once the p99 of `|Δh|` per step over dry samples is below this, metres per step.
+    pub steady_dh_m: Option<f64>,
 }
 
 /// Receiver tree of one routing pass.
@@ -56,7 +89,17 @@ pub struct Routing {
 /// Numbers of one erosion run.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct StreamStats {
+    /// Steps run.
     pub iterations: usize,
+    /// Residual of the last step: largest and 99th-percentile `|Δh|` over dry samples, metres per step.
+    pub residual_max_m: f64,
+    pub residual_p99_m: f64,
+    /// True when a `steady_dh_m` criterion stopped the run before the cap.
+    pub converged: bool,
+    /// MFD senders without a lower neighbour, largest over all steps (0 expected).
+    pub mfd_stuck: usize,
+    /// Residual p99 every [`RESIDUAL_TRACE_EVERY`] steps and at the last step: (step, metres per step).
+    pub residual_trace: Vec<(usize, f64)>,
     /// Largest pits-after-routing count over all steps (0 expected).
     pub pits_after_routing: usize,
     /// Largest drainage area at the last step, km².
@@ -164,19 +207,42 @@ pub fn erode(h: &mut Grid, intent: &[f64], p: &StreamParams) -> Result<StreamSta
     if intent.len() != n || p.k_dt.len() != n || p.restore.len() != n {
         return Err(Error::Invalid("stream power fields differ in size".into()));
     }
+    if p.perturb.is_some_and(|d| d.len() != n) {
+        return Err(Error::Invalid("perturbation field differs in size".into()));
+    }
     let wet: Vec<bool> = h.data.iter().map(|&v| v < p.sea_level).collect();
-    let w = h.w;
-    let mut z = Vec::with_capacity(n);
-    let mut stats = StreamStats {
-        iterations: p.iterations,
-        ..StreamStats::default()
+    // Uplift target: the intent plus the perturbation, never below sea level on dry samples.
+    let target: Vec<f64> = match p.perturb {
+        Some(d) => (0..n)
+            .map(|i| {
+                if wet[i] {
+                    intent[i]
+                } else {
+                    (intent[i] + d[i]).max(p.sea_level)
+                }
+            })
+            .collect(),
+        None => intent.to_vec(),
     };
-    let mut routing = Routing::default();
-    for _ in 0..p.iterations {
-        // Uplift toward the intent (explicit; restore ≤ 1 so it never overshoots the intent).
+    if let Some(d) = p.perturb {
         for i in 0..n {
             if !wet[i] {
-                let gap = intent[i] - h.data[i];
+                h.data[i] = (h.data[i] + d[i]).max(p.sea_level);
+            }
+        }
+    }
+    let dry_count = wet.iter().filter(|v| !**v).count();
+    let mut z = Vec::with_capacity(n);
+    let mut prev = h.data.clone();
+    let mut dh = Vec::with_capacity(dry_count);
+    let mut stats = StreamStats::default();
+    let mut routing = Routing::default();
+    for _ in 0..p.iterations {
+        prev.copy_from_slice(&h.data);
+        // Uplift toward the target (explicit; restore ≤ 1 so it never overshoots the target).
+        for i in 0..n {
+            if !wet[i] {
+                let gap = target[i] - h.data[i];
                 if gap > 0.0 {
                     h.data[i] += p.restore[i] * gap;
                 }
@@ -190,29 +256,38 @@ pub fn erode(h: &mut Grid, intent: &[f64], p: &StreamParams) -> Result<StreamSta
                 routing.unrouted
             )));
         }
-        // Implicit sweep from base level upward.
-        for &i in &routing.order {
-            let i = i as usize;
-            let r = routing.receiver[i] as usize;
-            if r == i || wet[i] {
-                continue;
-            }
-            let hr = if wet[r] { p.sea_level } else { h.data[r] };
-            let hi = h.data[i];
-            if hi <= hr {
-                continue;
-            }
-            let diag = (i % w != r % w) && (i / w != r / w);
-            let dx = if diag { std::f64::consts::SQRT_2 } else { 1.0 } * h.spacing;
-            let a = routing.area[i];
-            let am = if p.m.to_bits() == 0.5f64.to_bits() {
-                a.sqrt()
-            } else {
-                a.powf(p.m)
-            };
-            let f = p.k_dt[i] * am / dx;
-            h.data[i] = (hi + f * hr) / (1.0 + f);
+        if let Flow::Mfd { exponent } = p.flow {
+            let (area, stuck) = mfd_area(h.w, h.h, h.spacing, &z, &wet, exponent);
+            routing.area = area;
+            stats.mfd_stuck = stats.mfd_stuck.max(stuck);
         }
+        sweep(h, &routing, &wet, p);
+        stats.iterations += 1;
+        dh.clear();
+        dh.extend(
+            (0..n)
+                .filter(|&i| !wet[i])
+                .map(|i| (h.data[i] - prev[i]).abs()),
+        );
+        (stats.residual_max_m, stats.residual_p99_m) = max_and_p99(&mut dh);
+        if stats.iterations % RESIDUAL_TRACE_EVERY == 0 {
+            stats
+                .residual_trace
+                .push((stats.iterations, stats.residual_p99_m));
+        }
+        if p.steady_dh_m.is_some_and(|t| stats.residual_p99_m < t) {
+            stats.converged = true;
+            break;
+        }
+    }
+    if stats
+        .residual_trace
+        .last()
+        .is_none_or(|t| t.0 != stats.iterations)
+    {
+        stats
+            .residual_trace
+            .push((stats.iterations, stats.residual_p99_m));
     }
     stats.max_area_km2 = routing.area.iter().copied().fold(0.0, f64::max) * 1e-6;
     let mut inc: Vec<f64> = (0..n)
@@ -231,6 +306,18 @@ pub fn erode(h: &mut Grid, intent: &[f64], p: &StreamParams) -> Result<StreamSta
     Ok(stats)
 }
 
+/// Largest value and 99th percentile (nearest rank, as the incision stats) of `v`; (0, 0) when empty. Reorders `v`.
+pub fn max_and_p99(v: &mut [f64]) -> (f64, f64) {
+    if v.is_empty() {
+        return (0.0, 0.0);
+    }
+    let k = ((v.len() - 1) as f64 * 0.99).round() as usize;
+    let (_, p99, upper) = v.select_nth_unstable_by(k, f64::total_cmp);
+    let p99 = *p99;
+    let max = upper.iter().copied().fold(p99, f64::max);
+    (max, p99)
+}
+
 /// Dry samples strictly below all 8 neighbours, none of them wet and not on the border.
 pub fn raw_pits(g: &Grid, wet: &[bool]) -> usize {
     (0..g.len())
@@ -243,4 +330,32 @@ pub fn raw_pits(g: &Grid, wet: &[bool]) -> usize {
                 })
         })
         .count()
+}
+
+/// One implicit Braun-Willett sweep along the steepest receivers, from base level upward (stack order), with the
+/// drainage area of `routing` (D8 or MFD).
+fn sweep(h: &mut Grid, routing: &Routing, wet: &[bool], p: &StreamParams) {
+    let w = h.w;
+    for &i in &routing.order {
+        let i = i as usize;
+        let r = routing.receiver[i] as usize;
+        if r == i || wet[i] {
+            continue;
+        }
+        let hr = if wet[r] { p.sea_level } else { h.data[r] };
+        let hi = h.data[i];
+        if hi <= hr {
+            continue;
+        }
+        let diag = (i % w != r % w) && (i / w != r / w);
+        let dx = if diag { std::f64::consts::SQRT_2 } else { 1.0 } * h.spacing;
+        let a = routing.area[i];
+        let am = if p.m.to_bits() == 0.5f64.to_bits() {
+            a.sqrt()
+        } else {
+            a.powf(p.m)
+        };
+        let f = p.k_dt[i] * am / dx;
+        h.data[i] = (hi + f * hr) / (1.0 + f);
+    }
 }

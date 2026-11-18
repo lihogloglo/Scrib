@@ -73,6 +73,28 @@ pub struct Params {
     pub crop_size_m: Param,
     /// Crop edge, px.
     pub crop_px: Param,
+    // Optional (WG-S2b): required only by the arms that use them.
+    /// MFD slope exponent p (arms with `flow = "mfd"`).
+    #[serde(default)]
+    pub flow_exponent: Option<Param>,
+    /// Perturbation amplitude, metres (arms with `perturb = true`).
+    #[serde(default)]
+    pub perturb_amp_m: Option<Param>,
+    /// Perturbation lattice wavelength, metres (world frame).
+    #[serde(default)]
+    pub perturb_wavelength_m: Option<Param>,
+    /// Perturbation hash seed.
+    #[serde(default)]
+    pub perturb_seed: Option<Param>,
+    /// Steady-state threshold: p99 `|Δh|` per step, metres (arms with `steady = true`).
+    #[serde(default)]
+    pub steady_dh_m: Option<Param>,
+    /// Step cap of steady-state arms.
+    #[serde(default)]
+    pub steady_max_iterations: Option<Param>,
+    /// Drainage-area threshold of the channel-network metrics, km² (metrics skipped when absent).
+    #[serde(default)]
+    pub channel_area_km2: Option<Param>,
 }
 
 /// Per-region values (all optional except in `default`).
@@ -120,6 +142,7 @@ pub struct Crop {
 /// One variant of the run.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)] // independent recipe switches, read from TOML
 pub struct Arm {
     pub name: String,
     #[serde(default)]
@@ -128,6 +151,32 @@ pub struct Arm {
     pub regional: bool,
     pub erosion: bool,
     pub thermal: bool,
+    /// Drainage-area routing of the stream stage (default D8).
+    #[serde(default)]
+    pub flow: FlowKind,
+    /// Add the hash perturbation to the uplift target and initial height.
+    #[serde(default)]
+    pub perturb: bool,
+    /// Run to the steady-state criterion (`steady_dh_m`), capped at `steady_max_iterations`.
+    #[serde(default)]
+    pub steady: bool,
+}
+
+/// Drainage-area routing named by an arm.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FlowKind {
+    #[default]
+    D8,
+    Mfd,
+}
+
+/// A finished height field (guide format v1 folder) measured next to the arms for comparison.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Compare {
+    pub name: String,
+    pub dir: PathBuf,
 }
 
 /// Labels for region-grid cells in the source's own coordinates: pixel (px, py) is labelled
@@ -176,6 +225,8 @@ pub struct Recipe {
     #[serde(rename = "arm")]
     pub arms: Vec<Arm>,
     pub report: Option<Report>,
+    #[serde(rename = "compare", default)]
+    pub compares: Vec<Compare>,
 }
 
 const SOURCES: [&str; 6] = [
@@ -187,7 +238,7 @@ const SOURCES: [&str; 6] = [
     "BevyDefault(",
 ];
 
-fn check_source(name: &str, s: &str) -> Result<()> {
+pub(crate) fn check_source(name: &str, s: &str) -> Result<()> {
     if s == "Guess"
         || SOURCES[1..]
             .iter()
@@ -201,7 +252,7 @@ fn check_source(name: &str, s: &str) -> Result<()> {
     }
 }
 
-fn check_range(name: &str, v: f64, min: f64, max: f64) -> Result<()> {
+pub(crate) fn check_range(name: &str, v: f64, min: f64, max: f64) -> Result<()> {
     if v.is_finite() && v >= min && v <= max {
         Ok(())
     } else {
@@ -212,7 +263,26 @@ fn check_range(name: &str, v: f64, min: f64, max: f64) -> Result<()> {
 }
 
 impl Params {
-    fn all(&self) -> [(&'static str, &Param); 15] {
+    fn all(&self) -> Vec<(&'static str, &Param)> {
+        let optional = [
+            ("flow_exponent", &self.flow_exponent),
+            ("perturb_amp_m", &self.perturb_amp_m),
+            ("perturb_wavelength_m", &self.perturb_wavelength_m),
+            ("perturb_seed", &self.perturb_seed),
+            ("steady_dh_m", &self.steady_dh_m),
+            ("steady_max_iterations", &self.steady_max_iterations),
+            ("channel_area_km2", &self.channel_area_km2),
+        ];
+        let mut v = self.required().to_vec();
+        v.extend(
+            optional
+                .into_iter()
+                .filter_map(|(name, p)| p.as_ref().map(|p| (name, p))),
+        );
+        v
+    }
+
+    fn required(&self) -> [(&'static str, &Param); 15] {
         [
             ("scale", &self.scale),
             ("macro_spacing_m", &self.macro_spacing_m),
@@ -304,6 +374,31 @@ impl Recipe {
         }
         if self.arms.is_empty() {
             return Err(Error::Invalid("no [[arm]]".into()));
+        }
+        let p = &self.params;
+        for a in &self.arms {
+            let mut need: Vec<(&str, bool)> = Vec::new();
+            if a.flow == FlowKind::Mfd {
+                need.push(("flow_exponent", p.flow_exponent.is_some()));
+            }
+            if a.perturb {
+                need.push(("perturb_amp_m", p.perturb_amp_m.is_some()));
+                need.push(("perturb_wavelength_m", p.perturb_wavelength_m.is_some()));
+                need.push(("perturb_seed", p.perturb_seed.is_some()));
+            }
+            if a.steady {
+                need.push(("steady_dh_m", p.steady_dh_m.is_some()));
+                need.push(("steady_max_iterations", p.steady_max_iterations.is_some()));
+            }
+            if let Some((name, _)) = need.iter().find(|(_, ok)| !ok) {
+                return Err(Error::Invalid(format!(
+                    "arm {}: needs [params] {name}",
+                    a.name
+                )));
+            }
+        }
+        if p.perturb_wavelength_m.as_ref().is_some_and(|w| w.v <= 0.0) {
+            return Err(Error::Invalid("perturb_wavelength_m must be > 0".into()));
         }
         for c in &self.crops {
             if c.peak_of.is_some() == c.region.is_some() {

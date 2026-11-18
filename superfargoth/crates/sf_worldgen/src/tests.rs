@@ -3,9 +3,12 @@
 use std::fmt::Write as _;
 
 use crate::flood::priority_flood_eps;
+use crate::metrics::channel_metrics;
+use crate::mfd::{mfd_area, outflow_into_sinks};
+use crate::perturb;
 use crate::resample::resample;
 use crate::shade::{Light, hillshade};
-use crate::stream::{StreamParams, erode, raw_pits, route};
+use crate::stream::{Flow, StreamParams, erode, raw_pits, route};
 use crate::thermal::{ThermalParams, relax};
 use crate::{Audit, Grid, WetDry, hash_f64};
 
@@ -42,6 +45,9 @@ fn params<'a>(k: &'a [f64], restore: &'a [f64]) -> StreamParams<'a> {
         k_dt: k,
         restore,
         sea_level: SEA,
+        flow: Flow::D8,
+        perturb: None,
+        steady_dh_m: None,
     }
 }
 
@@ -252,4 +258,102 @@ fn recipe_refuses_out_of_range_values() {
     assert!(undeclared.validate().is_err());
     let bad: crate::recipe::Recipe = toml::from_str(&text(2.0)).unwrap();
     assert!(bad.validate().unwrap_err().to_string().contains("scale"));
+}
+
+#[test]
+fn mfd_area_conserves_total_area() {
+    let g = cone_island();
+    let wet = wet_of(&g);
+    let mut z = Vec::new();
+    priority_flood_eps(g.w, g.h, &g.data, &wet, SEA, &mut z);
+    for p in [1.0, 1.1, 4.0] {
+        let (area, stuck) = mfd_area(g.w, g.h, g.spacing, &z, &wet, p);
+        assert_eq!(stuck, 0);
+        // Every dry interior sample sends; the sum of what reaches the sinks is the sum of the senders' cells.
+        let senders = (0..g.len()).filter(|&i| !wet[i] && !g.is_border(i)).count() as f64
+            * g.spacing
+            * g.spacing;
+        let out = outflow_into_sinks(g.w, g.h, g.spacing, &z, &wet, p, &area);
+        assert!(
+            (out - senders).abs() <= 1e-9 * senders,
+            "p {p}: {out} vs {senders}"
+        );
+        // Flow spreads: more samples carry more than their own cell than under D8.
+        let d8 = route(&g, &wet, SEA, &mut z.clone());
+        let carried = |a: &[f64]| a.iter().filter(|&&v| v > 400.0 + 1e-6).count();
+        assert!(carried(&area) >= carried(&d8.area));
+    }
+}
+
+#[test]
+fn perturbation_is_deterministic_world_anchored_and_thread_independent() {
+    let world =
+        |ox: f64, oy: f64| move |x: usize, y: usize| [ox + x as f64 * 20.0, oy - y as f64 * 20.0];
+    let run_in = |threads: usize| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| perturb::field(64, 48, world(-1000.0, 500.0), 2.0, 60.0, 7))
+    };
+    let a = run_in(1);
+    assert_eq!(hash_f64(&a), hash_f64(&run_in(1)));
+    assert_eq!(hash_f64(&a), hash_f64(&run_in(4)));
+    assert!(a.iter().all(|v| v.abs() <= 2.0));
+    assert!(a.iter().any(|v| v.abs() > 0.1), "not flat");
+    // A grid whose origin is 5 samples east and 3 south (another tile) sees the same values at the same points.
+    let b = perturb::field(64, 48, world(-900.0, 440.0), 2.0, 60.0, 7);
+    for y in 0..45 {
+        for x in 0..59 {
+            assert_eq!(b[y * 64 + x], a[(y + 3) * 64 + x + 5]);
+        }
+    }
+    // Another seed gives another field.
+    assert_ne!(
+        hash_f64(&a),
+        hash_f64(&perturb::field(64, 48, world(-1000.0, 500.0), 2.0, 60.0, 8))
+    );
+}
+
+#[test]
+fn steady_state_run_stops_before_the_cap() {
+    let base = cone_island();
+    let n = base.len();
+    let (k, restore) = (vec![0.02; n], vec![0.05; n]);
+    let field = perturb::field(
+        base.w,
+        base.h,
+        |x, y| [x as f64 * 20.0, -(y as f64) * 20.0],
+        1.0,
+        40.0,
+        1,
+    );
+    let run = |steady: Option<f64>| {
+        let mut g = base.clone();
+        let st = erode(
+            &mut g,
+            &base.data,
+            &StreamParams {
+                iterations: 5000,
+                flow: Flow::Mfd { exponent: 1.1 },
+                perturb: Some(&field),
+                steady_dh_m: steady,
+                ..params(&k, &restore)
+            },
+        )
+        .unwrap();
+        (g, st)
+    };
+    let (g, st) = run(Some(1e-3));
+    assert!(st.converged, "{st:?}");
+    assert!(st.iterations < 5000);
+    assert!(st.residual_p99_m < 1e-3);
+    assert_eq!(st.mfd_stuck, 0);
+    assert!(Audit::compare(&base.data, &g.data, SEA).is_clean());
+    assert!(g.data.iter().all(|v| v.is_finite()));
+    // Channel metrics run on the result and give shares that sum to 1.
+    let c = channel_metrics(&g, SEA, 20.0 * 400.0);
+    assert!(c.channel_samples > 0);
+    assert!((c.direction_share.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+    assert!(c.mean_sinuosity >= 1.0);
 }

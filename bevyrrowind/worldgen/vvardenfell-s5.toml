@@ -1,0 +1,251 @@
+# WG-S5 Veloren LEM port + heterogeneous fields + finite time: Vvardenfell at S = 10, same layout as S4
+# (specs: superfargoth/docs/specs/worldgen.md "Pipeline" / "Irregularity is designed in", bevyrrowind/docs/specs/worldgen-adapter.md).
+# Run from the repo root:  target/release/scrib-worldgen run bevyrrowind/worldgen/vvardenfell-s5.toml
+# Input: the WG-S1 guide (`bevyrrowind worldgen-dump --out target/worldgen/vvardenfell`), derived from the player's
+# install, never shipped. Output: target/worldgen/s5/ (README.md there has the numbers).
+# Question: does the Veloren erosion port with per-cell erodibility (rock-type map), uplift noise, a noisy start and a
+# finite-time stop break S4 C1's evenly spaced parallel valleys ("motherboard"; WG-R4: Perron et al. 2009)?
+# Every value: { v, unit, min, max, source }. `Guess` = not measured yet; the owner's rating settles them.
+pipeline = "landform"
+
+[guide]
+dir = "target/worldgen/vvardenfell"
+# Guide-frame metres of sample (0, 0): the dump's origin_mw_units (-229376, 237568) x 1.8288 / 128 m per unit.
+origin_m = [-3277.2096, 3394.2528]
+
+[output]
+dir = "target/worldgen/s5"
+
+[report]
+cell_label = "Morrowind cell"
+cell_origin = [-28, 28]
+cell_step = [1, -1]
+
+[place]
+# Bloodmoon's Solstheim regions become sea: Vvardenfell only.
+mask_to_sea = ["Solstheim", "Thirsk"]
+
+[volcano]
+region = "Red Mountain Region"
+# Real Etna at 20 m from WG-RC (`scrib-worldgen import-dem`); D4e is skipped while it is missing.
+exemplar_dir = "target/worldgen/real/etna-20m"
+
+
+[params]
+scale = { v = 10, unit = "ratio", min = 1, max = 20, source = "Owner(2026-11-18)", help = "S: horizontal factor" }
+macro_spacing_m = { v = 20, unit = "m", min = 10, max = 50, source = "Guess", help = "output grid, as S2" }
+sea_margin_m = { v = 3000, unit = "m", min = 0, max = 20000, source = "Guess" }
+# Layout.
+layout_cutoff_m = { v = 1500, unit = "m", min = 200, max = 20000, source = "Guess", help = "Gaussian low-pass of the source relief: wavelength (world m) kept at half amplitude (brief: ~1-2 km at S = 10); sigma = 0.187 x cutoff" }
+# Landscape (uplift-driven steady state).
+landscape_spacing_m = { v = 40, unit = "m", min = 10, max = 200, source = "Guess", help = "grid of the calibration runs (CPU budget); refined on the macro grid after" }
+stream_m = { v = 0.5, unit = "ratio", min = 0.3, max = 0.7, source = "Industry(Braun & Willett 2013; m/n 0.4-0.6, Whipple & Tucker 1999)", help = "drainage-area exponent, n = 1" }
+land_k_dt = { v = 5, unit = "ratio", min = 0.001, max = 100, source = "Guess", help = "K dt per step at erodibility 1 (m^0 for m = 0.5): a time-step size; the steady state does not depend on it" }
+flow_exponent = { v = 1.1, unit = "ratio", min = 0.5, max = 10, source = "Industry(Freeman 1991 p 1.1)", help = "MFD slope exponent of the drainage area" }
+uplift_floor = { v = 0.2, unit = "ratio", min = 0, max = 1, source = "Guess", help = "uplift where the low-passed relief is 0 (coast), as a share of the region's uplift at L_ref" }
+rise_steps = { v = 5, unit = "count", min = 1, max = 10000, source = "Guess", help = "first-round uplift guess: target / rise_steps per step (calibration rescales it)" }
+start_fraction = { v = 0.05, unit = "ratio", min = 0, max = 1, source = "Guess", help = "low start: this share of the target-scaled layout" }
+start_noise_m = { v = 2.0, unit = "m", min = 0, max = 50, source = "Guess", help = "hash value noise on the start surface (symmetry breaking, Braun & Willett 2013)" }
+start_noise_wavelength_m = { v = 80, unit = "m", min = 10, max = 5000, source = "Guess" }
+noise_seed = { v = 1, unit = "count", min = 0, max = 4294967295, source = "Guess", help = "hash seed; the volcano asymmetry uses seed + 1, its gully seed seed + 2" }
+steady_rel = { v = 0.05, unit = "ratio", min = 0.0001, max = 1, source = "Guess", help = "steady state: p99 |dh| per step over land below this share of the mean uplift per step (routing flips keep a few % of noise)" }
+steady_max_iterations = { v = 300, unit = "count", min = 1, max = 5000, source = "Guess", help = "step cap of the last calibration round (CPU budget)" }
+calib_round_iterations = { v = 100, unit = "count", min = 1, max = 5000, source = "Guess", help = "step cap of the earlier calibration rounds (they only need a near-steady p95)" }
+calib_rounds = { v = 6, unit = "count", min = 1, max = 10, source = "Guess", help = "runs to steady state; each rescales the regional uplift by target / measured p95" }
+refine_max_iterations = { v = 40, unit = "count", min = 0, max = 2000, source = "Guess", help = "step cap of the refine run on the macro grid (CPU budget)" }
+# Parametric stratovolcano (C2).
+volcano_summit_m = { v = 3300, unit = "m", min = 100, max = 9000, source = "Reference(Etna 3.3 km)", help = "crater rim height above sea" }
+volcano_radius_m = { v = 17000, unit = "m", min = 1000, max = 60000, source = "Guess", help = "base radius R (brief: 15-20 km; Etna's base is ~40 km across)" }
+volcano_decay_m = { v = 6000, unit = "m", min = 100, max = 60000, source = "Guess", help = "flank decay length r0 of the exponential profile: rim slope ~30 deg, 2 deg at R" }
+volcano_crater_radius_m = { v = 400, unit = "m", min = 10, max = 5000, source = "Guess" }
+volcano_crater_depth_m = { v = 150, unit = "m", min = 0, max = 1000, source = "Guess" }
+volcano_asym_amp = { v = 0.12, unit = "ratio", min = 0, max = 0.5, source = "Guess", help = "radius warp by low-frequency value noise" }
+volcano_asym_wavelength_m = { v = 12000, unit = "m", min = 500, max = 100000, source = "Guess" }
+volcano_blend_start = { v = 0.6, unit = "ratio", min = 0, max = 2, source = "Guess", help = "blend into the landscape starts at this share of R" }
+volcano_blend_end = { v = 1.0, unit = "ratio", min = 0, max = 2, source = "Guess", help = "landscape only beyond this share of R" }
+volcano_k_dt = { v = 0.02, unit = "ratio", min = 0, max = 1, source = "Guess", help = "K dt per step of the light gully erosion (x blend weight)" }
+volcano_erosion_steps = { v = 30, unit = "count", min = 0, max = 1000, source = "Guess", help = "a young volcano is lightly eroded" }
+volcano_flow_exponent = { v = 4.0, unit = "ratio", min = 0.5, max = 10, source = "Guess", help = "MFD exponent on the cone: larger concentrates flow (Holmgren 1994), seeding gullies" }
+volcano_seed_amp_m = { v = 2.0, unit = "m", min = 0, max = 50, source = "Guess", help = "gully seed noise (x blend weight)" }
+volcano_seed_wavelength_m = { v = 60, unit = "m", min = 10, max = 5000, source = "Guess" }
+exemplar_base_quantile = { v = 0.1, unit = "ratio", min = 0, max = 1, source = "Guess", help = "exemplar heights above this quantile (inside the blend disc) are scaled to the summit" }
+# Metrics.
+channel_area_km2 = { v = 0.1, unit = "km2", min = 0.004, max = 100, source = "Guess", help = "channel threshold (metrics only), as S2b" }
+coherence_window_m = { v = 1000, unit = "m", min = 100, max = 20000, source = "Guess", help = "square window of the channel orientation coherence (brief: 1 km)" }
+coherence_dir_steps = { v = 5, unit = "count", min = 1, max = 100, source = "Guess", help = "channel direction = vector to the sample this many receivers downstream" }
+# Previews (as S2).
+light_azimuth_deg = { v = 315, unit = "deg", min = 0, max = 360, source = "Industry(GIS hillshade default, NW light)" }
+light_altitude_deg = { v = 45, unit = "deg", min = 1, max = 90, source = "Industry(GIS hillshade default)" }
+sea_gray = { v = 40, unit = "count", min = 0, max = 255, source = "Guess" }
+overview_max_px = { v = 2048, unit = "px", min = 256, max = 8192, source = "Owner(2026-11-18)" }
+crop_size_m = { v = 12000, unit = "m", min = 1000, max = 50000, source = "Owner(2026-11-18)" }
+crop_px = { v = 1200, unit = "px", min = 256, max = 4096, source = "Owner(2026-11-18)" }
+# WG-S5: Veloren LEM port (`solver = "lem"` arms).
+stream_n = { v = 1, unit = "ratio", min = 1, max = 2, source = "Industry(Braun & Willett 2013; n = 1 keeps the steady state linear in U/K, which the calibration uses)", help = "slope exponent; n != 1 uses the local Newton step" }
+mfd_exp_base = { v = 0.5, unit = "ratio", min = 0, max = 10, source = "Reference(Veloren erosion.rs get_multi_rec, from fastscapelib-fortran find_mult_rec)", help = "multiple-receiver exponent p = base + slope_coef x mean slope" }
+mfd_exp_slope = { v = 0.6, unit = "ratio", min = 0, max = 10, source = "Reference(Veloren erosion.rs get_multi_rec)" }
+nonlinear_max_ratio = { v = 0, unit = "ratio", min = 0, max = 1000, source = "Guess", help = "cap of the Roering nonlinear diffusivity boost, x base D (0 = off). Off in S5: the coefficient lags one step, and at the calibration steps (D dt / dx2 ~ 10-100) it oscillates (80 m probe: cap 10 never steady, residual 0.38-0.56; cap 3 not steady in 300 steps; cap 1 steady but region p95 error 0.20 vs 0.02 at 0)" }
+# Rock-type map (arms with rock = true): Worley cells of a few km, warped, softer bands along unit edges.
+rock_cell_m = { v = 3000, unit = "m", min = 200, max = 50000, source = "Guess", help = "feature-point lattice spacing (world m): rock units of a few km" }
+rock_jitter = { v = 0.9, unit = "ratio", min = 0, max = 1, source = "Guess", help = "feature point jitter inside its lattice cell (1 = anywhere)" }
+rock_warp_m = { v = 600, unit = "m", min = 0, max = 10000, source = "Guess", help = "domain warp amplitude: unit edges not straight" }
+rock_warp_wavelength_m = { v = 4000, unit = "m", min = 100, max = 50000, source = "Guess" }
+rock_edge_band_m = { v = 200, unit = "m", min = 0, max = 5000, source = "Guess", help = "softer band along unit contacts (fractured, faulted rock)" }
+rock_edge_k = { v = 2.0, unit = "ratio", min = 1, max = 10, source = "Guess", help = "K factor at a unit edge, fading to 1 across the band" }
+# Uplift noise (uplift_noise = true): U x max(0, 1 + amp x value noise).
+uplift_noise_amp = { v = 0.35, unit = "ratio", min = 0, max = 1, source = "Guess" }
+uplift_noise_wavelength_m = { v = 8000, unit = "m", min = 500, max = 100000, source = "Guess", help = "low frequency: tilted blocks of a few km, not bumps" }
+# Rough start (rough_start = true): + |value noise| on the start surface (land only rises, no new sea).
+rough_start_m = { v = 30, unit = "m", min = 0, max = 500, source = "Guess" }
+rough_start_wavelength_m = { v = 500, unit = "m", min = 20, max = 20000, source = "Guess" }
+# Finite time (finite = true): forcing = calibrated uplift / f, run from the start at dt x ratio until the land p95
+# reaches f x that forcing's steady p95 (so the relief matches the calibration, but the landscape is young).
+finite_fraction = { v = 0.7, unit = "ratio", min = 0.05, max = 1, source = "Guess", help = "stop at this share of the steady-state relief" }
+finite_dt_ratio = { v = 0.01, unit = "ratio", min = 0.0001, max = 1, source = "Guess", help = "time step of the finite run / calibration step (K dt, U dt, D dt scaled alike; the steady state does not change, the transient is resolved)" }
+finite_max_steps = { v = 1500, unit = "count", min = 1, max = 100000, source = "Guess", help = "step cap of the finite run (CPU budget)" }
+finite_refine_steps = { v = 10, unit = "count", min = 0, max = 10000, source = "Guess", help = "steps at the same dt on the macro grid after the finite run" }
+
+[region_params]
+relief = { unit = "ratio", min = 0.5, max = 40, source = "Guess", help = "target p95 height = relief x p95 of the low-passed source relief over the region (default = S)" }
+erodibility = { unit = "ratio", min = 0.05, max = 3, source = "Guess", help = "K multiplier (Procedural Tamriel classes, WG-R3 s1); with calibrated uplift it shifts incision between neighbouring regions" }
+talus_deg = { unit = "deg", min = 10, max = 60, source = "Guess", help = "threshold hillslope angle" }
+hillslope_m = { unit = "m", min = 10, max = 5000, source = "Guess", help = "D / U: hillslope curvature length; a ridge of half-width L rises U L^2 / 2D above its channels, edge slope L / (D/U)" }
+
+[regions.default]
+relief = 10
+erodibility = 0.75
+talus_deg = 33
+hillslope_m = 250
+
+# Stratovolcano region; in C1 just uplifted landscape (the volcano arms replace it).
+[regions."Red Mountain Region"]
+erodibility = 1.0
+talus_deg = 38
+hillslope_m = 150
+
+# Basalt flows, tephra plains: hills.
+[regions."Ashlands Region"]
+erodibility = 0.75
+talus_deg = 35
+
+# Young lava fields: plateau (barely eroded).
+[regions."Molag Amur Region"]
+erodibility = 0.2
+talus_deg = 40
+hillslope_m = 400
+
+# Eroded highlands, river canyons: valley.
+[regions."West Gash Region"]
+erodibility = 1.2
+talus_deg = 33
+hillslope_m = 200
+
+# Swamp delta: flat.
+[regions."Bitter Coast Region"]
+erodibility = 0.35
+talus_deg = 25
+hillslope_m = 600
+
+# Lake lowlands: flat.
+[regions."Ascadian Isles Region"]
+erodibility = 0.35
+talus_deg = 28
+hillslope_m = 600
+
+# Plateau grassland, escarpments: plateau.
+[regions."Grazelands Region"]
+erodibility = 0.2
+talus_deg = 33
+hillslope_m = 500
+
+# Drowned coast: coast.
+[regions."Azura's Coast Region"]
+erodibility = 0.45
+talus_deg = 33
+
+# Rocky islets: coast.
+[regions."Sheogorad Region"]
+erodibility = 0.45
+talus_deg = 35
+
+# Rock types (arms with rock = true): K multiplier x the region's erodibility; shares of the map.
+[rock_params]
+k = { unit = "ratio", min = 0.05, max = 10, source = "Guess", help = "K multiplier of the unit (lava flows and intrusions hard, tephra and tuff soft)" }
+share = { unit = "ratio", min = 0, max = 1, source = "Guess", help = "share of feature points (normalised)" }
+
+[rocks.hard]
+k = 0.35
+share = 0.3
+
+[rocks.medium]
+k = 1.0
+share = 0.45
+
+[rocks.soft]
+k = 2.5
+share = 0.25
+
+[[crop]]
+name = "red-mountain"
+peak_of = "Red Mountain Region"
+
+[[crop]]
+name = "ashlands"
+region = "Ashlands Region"
+
+[[crop]]
+name = "bitter-coast"
+region = "Bitter Coast Region"
+
+[[crop]]
+name = "west-gash"
+region = "West Gash Region"
+
+[[arm]]
+name = "D1"
+help = "Veloren LEM port (multi-receiver implicit stream power, lakes by Cordonnier 2019 fill routing, nonlinear hillslope) with S4's uniform per-region K, to steady state: control vs S4 C1"
+solver = "lem"
+
+[[arm]]
+name = "D2"
+help = "D1 + rock-type K (3 km Worley units: hard 0.35 / medium 1 / soft 2.5, softer 200 m contact bands), to steady state"
+solver = "lem"
+rock = true
+
+[[arm]]
+name = "D3"
+help = "D2 + uplift noise (x 1 +- 0.35 @ 8 km) + rough start (30 m @ 500 m) + finite time (stop at 0.7 of steady relief, dt x 0.01)"
+solver = "lem"
+rock = true
+uplift_noise = true
+rough_start = true
+finite = true
+
+[[arm]]
+name = "D4p"
+help = "D3 + S4's parametric stratovolcano"
+solver = "lem"
+rock = true
+uplift_noise = true
+rough_start = true
+finite = true
+volcano = "parametric"
+
+[[arm]]
+name = "D4e"
+help = "D3 + S4's exemplar volcano (real Etna at 20 m)"
+solver = "lem"
+rock = true
+uplift_noise = true
+rough_start = true
+finite = true
+volcano = "exemplar"
+
+# Same metrics on S4 C1 (uniform K, steady, S4 solver) and S2b B3.
+[[compare]]
+name = "S4 C1"
+dir = "target/worldgen/s4/C1"
+
+[[compare]]
+name = "S2b B3"
+dir = "target/worldgen/s2b/B3"

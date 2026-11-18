@@ -74,7 +74,8 @@ enum Command {
     /// List a VFS directory.
     Ls { dir: Option<String> },
     /// Worldgen WG-S1/WG-R2 (`docs/specs/worldgen-adapter.md`): the exterior's `LAND` as one height mosaic
-    /// (raw f32, 16-bit PNG, mask) and the per-cell region map with its legend, plus the terrain stats.
+    /// (raw f32, 16-bit PNG, mask) and the per-cell region map with its legend, plus the terrain stats and
+    /// `markers.json` (named exterior cell groups and the summit, WG-V2).
     /// Derived from your own data: keep the output out of git.
     WorldgenDump {
         /// Output folder (created).
@@ -83,6 +84,17 @@ enum Command {
         /// Height histogram bin width, meters.
         #[arg(long, default_value_t = 100.0)]
         bin_m: f32,
+    },
+    /// Worldgen WG-V: guide grids (format v1, `heights.f32` + `meta.json`) as 3D terrain in a live window.
+    /// Each folder is an arm on keys 1-9 (a folder holding guide folders gives all of them, sorted); the
+    /// camera stays put across a switch. Needs no install. Scale references (WG-V2): `--markers <markers.json>`,
+    /// figures, trees, haze, contours. Keys: see `mw_viewers_bevy::worldgen_view`.
+    WorldgenView {
+        /// Guide folders (absolute paths when run from a copy of the exe).
+        #[arg(required = true)]
+        dirs: Vec<PathBuf>,
+        #[command(flatten)]
+        settings: mw_viewers_bevy::worldgen_view::WorldgenViewSettings,
     },
     /// Furniture and race census (motion-generation.md, MG4): seat, table,
     /// counter, bed and shelf heights from collision, weighted by placements,
@@ -789,11 +801,20 @@ fn run(cli: Cli) -> Result {
         }
         Command::Perf { command } => return perf::cli::run(command),
         Command::Tunables { md, out, json } => return tunables_index(md, out, json),
+        Command::WorldgenView { dirs, settings } => {
+            let arms = mw_viewers_bevy::worldgen_view::arms::parse(&dirs)?;
+            return if mw_viewers_bevy::worldgen_view::run(arms, settings) { Ok(()) } else { Err("worldgen-view failed".into()) };
+        }
         other => other,
     };
     let (install, origin) = MorrowindInstall::detect(cli.morrowind.as_deref())?;
     match command {
-        Command::Detect | Command::AnimSources | Command::Perf { .. } | Command::Scene { .. } | Command::Tunables { .. } => {
+        Command::Detect
+        | Command::AnimSources
+        | Command::Perf { .. }
+        | Command::Scene { .. }
+        | Command::Tunables { .. }
+        | Command::WorldgenView { .. } => {
             unreachable!()
         }
         Command::Info { conflicts } => info(&install, &origin, conflicts),

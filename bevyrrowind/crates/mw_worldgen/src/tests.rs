@@ -210,3 +210,67 @@ fn files_round_trip() {
     let legend: crate::RegionsFile = serde_json::from_slice(&std::fs::read(dir.path().join("regions.json")).unwrap()).unwrap();
     assert_eq!(legend.regions, d.regions.legend);
 }
+
+/// A named exterior cell.
+fn named(grid: (i32, i32), name: &str) -> Cell {
+    let mut cell = Cell { name: name.into(), ..Cell::default() };
+    cell.data.grid = grid;
+    cell
+}
+
+fn near(a: [f64; 2], b: [f64; 2]) -> bool {
+    (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9
+}
+
+#[test]
+fn markers_group_named_cells_and_keep_the_summit() {
+    let mut db = db_with(vec![ramp_land((0, 0)), ramp_land((1, 0)), ramp_land((0, 1)), ramp_land((3, 0))]);
+    let esp = db.add_source("Names.esp", &[]);
+    // Box (0, 0)..(3, 1). "Seyda Neen" is (0, 0) + (1, 1): diagonal neighbours, one group, spelt as the lowest
+    // cell. "Ghostgate" is (3, 0) + (3, 1); (1, 0) and (2, *) stay unnamed; (9, 9) is outside the box.
+    for cell in [
+        named((0, 0), "Seyda Neen"),
+        named((1, 1), "seyda neen "),
+        named((0, 1), "Pelagiad"),
+        named((3, 0), "Ghostgate"),
+        named((3, 1), "Ghostgate"),
+        named((9, 9), "Outside"),
+    ] {
+        db.define(esp, keys::cell(&cell), cell).unwrap();
+    }
+    let d = dump(&db, 100.0).unwrap();
+    let m = &d.markers;
+    let s = crate::markers::cell_size_m();
+    assert_eq!((m.format, m.cell_size_m), (crate::markers::MARKERS_FORMAT, s));
+    let rows: Vec<_> = m.markers.iter().map(|k| (k.name.as_str(), k.cells.clone())).collect();
+    assert_eq!(rows, vec![
+        ("Ghostgate", vec![[3, 0], [3, 1]]),
+        ("Seyda Neen", vec![[0, 0], [1, 1]]),
+        ("Pelagiad", vec![[0, 1]]),
+    ]);
+    let gg = &m.markers[0];
+    assert!(near(gg.centroid_m, [3.5 * s, 1.0 * s]), "{:?}", gg.centroid_m);
+    assert_eq!((gg.min_m, gg.max_m), ([3.0 * s, 0.0], [4.0 * s, 2.0 * s]));
+    let sn = &m.markers[1];
+    assert!(near(sn.centroid_m, [1.0 * s, 1.0 * s]), "{:?}", sn.centroid_m);
+    // The summit: the ramp's top (east edge of (3, 0)), first in row-major order: the north edge of (3, 0).
+    let top = m.summit.as_ref().unwrap();
+    assert_eq!(top.height_m, ramp(4 * 64));
+    assert_eq!(top.cell, [3, 0]);
+    assert_eq!((top.x_m, top.y_m), (4.0 * s, 1.0 * s));
+}
+
+#[test]
+fn markers_file_round_trips() {
+    let d = dump(&fixture(), 100.0).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    write(&d, dir.path()).unwrap();
+    let back = crate::read_markers(&dir.path().join("markers.json")).unwrap();
+    assert_eq!(back, d.markers);
+    // The fixture names no cell; the summit is the stats' summit.
+    assert!(back.markers.is_empty());
+    let stats = d.stats.summit.as_ref().unwrap();
+    let top = back.summit.unwrap();
+    assert_eq!(top.height_m, stats.height_m);
+    assert_eq!([top.x_m, top.y_m], stats.mw_units.map(|u| u * mw_world::convert::UNIT_METERS_F64));
+}

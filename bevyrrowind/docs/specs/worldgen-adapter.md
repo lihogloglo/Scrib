@@ -71,7 +71,10 @@ owner to rule on.
 Hard cases: the **Ghostfence** (its pylons ring Red Mountain; at 10× the ring is regenerated along a path, not
 stamped), **roads** (signposts are anchors; roads are re-routed later, until then the road LTEX stays only inside
 footprints), **anchors on slopes** (terracing or retaining in the stamp), **Dwemer ruins** spread over large areas
-(one anchor per cluster, transition bands between them).
+(one anchor per cluster, transition bands between them). **Settlements on geology** (owner 2026-11-18): Vivec sits in
+a bay, Balmora on both banks of the Odai, Seyda Neen and Ebonheart on the shore: their anchors carry coastlines and
+rivers that the generated land must continue (the bay as a coast constraint in the layout, the river as a forced
+channel), not just a ground patch. A plain stamp is accepted for the first screenshot.
 
 ## Coordinates through the anchor transform (WG-A3b)
 
@@ -109,6 +112,12 @@ Framework slices and the order across both specs: framework spec "Build plan".
   `heights.png` (16-bit), `mask.png`, `regions.png` (indexed, REGN `map_color`) + `regions.json`, `meta.json` (dims,
   spacing, origin, stats, blake3 hash). 1.4 s on the owner's install; output `target/worldgen/vvardenfell/` (ignored).
   Later: a `--cells` crop (the box includes Solstheim when Bloodmoon loads).
+- [x] **WG-V2** markers (2026-11-18): the dump also writes `markers.json` (`mw_worldgen::markers`, format 1): one
+  marker per 8-connected group of same-named exterior cells (case-insensitive; no settlement flag exists, so forts,
+  ruins and shrines count; `cells` count lets a reader filter), centroid and cell bounds in **source metres** (units x
+  1.8288/128, x east, y north, origin = Morrowind's), plus the summit (highest `LAND` sample). A 10x arm puts a
+  marker at 10 x centroid; its cells keep their 117 m. Owner's install: 96 markers, 21 with 2+ cells (Vivec's
+  cantons are separate names), summit (422.5, 1055.2) m. Read by `worldgen-view --markers`.
 - [~] **WG-S2** look test, built 2026-11-18, **awaiting owner** (visual check WG-S2): first `sf_worldgen` crate
   (guide v1 reader, resample, priority-flood, implicit stream power, thermal, hillshade, `scrib-worldgen run`), recipe
   `bevyrrowind/worldgen/vvardenfell-s2.toml` (41 values, 33 `Guess`), 9 tests; 4 arms at 20 m in 113 s; numbers in

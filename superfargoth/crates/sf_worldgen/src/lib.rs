@@ -8,9 +8,25 @@
 //! - [`stream`]: macro fluvial erosion by the stream power law with the implicit O(n) solver of
 //!   Braun & Willett (2013), routed over the flooded surface, uplift relaxing toward the intent
 //!   (Cordonnier et al. 2016 drive the form by an uplift map).
+//!   Drainage area by D8 or by multiple-flow-direction accumulation ([`mfd`]: Freeman 1991, Quinn et al. 1991,
+//!   Holmgren 1994; as Schott et al. 2023), an optional steady-state stop on the per-step residual.
+//! - [`perturb`]: integer-hash value noise in absolute world coordinates that breaks grid symmetry (uplift
+//!   target + initial height).
+//! - [`metrics`]: channel-network measurements (direction shares of channel length, main-stem sinuosity).
 //! - [`thermal`]: a talus-angle relaxation pass (Musgrave, Kolb, Mace 1989; Olsen 2004).
 //! - [`shade`]: a fixed-light hillshade renderer and contact sheets (8-bit PNG).
 //! - [`recipe`] and [`run`]: the recipe file the `scrib-worldgen` binary runs.
+//!
+//! WG-S4, the landform-first macro (`pipeline = "landform"` recipes, [`landform`]): [`layout`] (the source reduced
+//! to a mask, a Gaussian low-passed relief and the region map), [`landscape`] (uplift-driven stream power +
+//! hillslope diffusion + threshold slope to steady state, Cordonnier et al. 2016 / Braun & Willett 2013), [`volcano`]
+//! (parametric stratovolcano or exemplar stamp, C1 blend) and [`structure`] (channel orientation coherence,
+//! drainage density, junction angles).
+//!
+//! WG-S5 (same runner, per-arm `solver`, `rock`, `uplift_noise`, `rough_start`, `finite`): [`lem`] (the landscape
+//! evolution model ported from Veloren's `erosion.rs`, GPL-3.0: multi-receiver implicit stream power, lakes by
+//! Cordonnier et al. 2019, fixed anchor cells) and [`lithology`] (rock-type Worley map for erodibility, uplift
+//! noise); arms with equal landscape switches share one landscape run.
 //!
 //! Rules (worldgen.md "Constraints", "Stage rules"): deterministic (single-threaded where order matters,
 //! `rayon` only for pure per-sample maps), sea cells are base level and never move, every stage audits the
@@ -28,15 +44,29 @@
     clippy::many_single_char_names
 )]
 
+pub mod dem;
+pub mod filter;
 pub mod flood;
 pub mod grid;
 pub mod guide;
+pub mod landform;
+pub mod landscape;
+pub mod layout;
+pub mod lem;
+pub mod lithology;
+pub mod measure;
+pub mod metrics;
+pub mod mfd;
+pub mod perturb;
 pub mod recipe;
 pub mod resample;
 pub mod run;
 pub mod shade;
+pub mod stratovolcano;
 pub mod stream;
+pub mod structure;
 pub mod thermal;
+pub mod volcano;
 
 pub use grid::Grid;
 
@@ -134,3 +164,9 @@ pub fn hash_f64(h: &[f64]) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_s4;
+#[cfg(test)]
+mod tests_s5;
+#[cfg(test)]
+mod tests_measure;
