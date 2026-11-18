@@ -73,6 +73,17 @@ enum Command {
     },
     /// List a VFS directory.
     Ls { dir: Option<String> },
+    /// Worldgen WG-S1/WG-R2 (`docs/specs/worldgen-adapter.md`): the exterior's `LAND` as one height mosaic
+    /// (raw f32, 16-bit PNG, mask) and the per-cell region map with its legend, plus the terrain stats.
+    /// Derived from your own data: keep the output out of git.
+    WorldgenDump {
+        /// Output folder (created).
+        #[arg(long)]
+        out: PathBuf,
+        /// Height histogram bin width, meters.
+        #[arg(long, default_value_t = 100.0)]
+        bin_m: f32,
+    },
     /// Furniture and race census (motion-generation.md, MG4): seat, table,
     /// counter, bed and shelf heights from collision, weighted by placements,
     /// clustered into bands; writes the planner's `bands.json`.
@@ -804,6 +815,13 @@ fn run(cli: Cli) -> Result {
             }
             std::fs::write(&path, census.bands_json())?;
             println!("wrote {}", path.display());
+            Ok(())
+        }
+        Command::WorldgenDump { out, bin_m } => {
+            let started = std::time::Instant::now();
+            let (_, content) = load(&install, false)?;
+            print!("{}", mw_worldgen::run(&content.db, &out, bin_m)?);
+            println!("worldgen-dump: {:.1} s total", started.elapsed().as_secs_f64());
             Ok(())
         }
         Command::Uses { id, limit } => {

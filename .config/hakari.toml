@@ -78,6 +78,7 @@ workspace-members = [
     "sf_weather",
     "sf_wind",
     "sf_world",
+    "sf_worldgen",
     "sf_vfs",
     # Game cores (bevyrrowind/crates): all but `mw_assets` (the Bevy asset loaders) are Bevy-free.
     "mw_actors",
@@ -102,6 +103,7 @@ workspace-members = [
     "mw_water",
     "mw_weather",
     "mw_world",
+    "mw_worldgen",
 ]
 # Unified features would be every crate's `--all-features`, so opt-ins that must not leak into
 # default builds stay per crate: DLSS (its build needs the DLSS SDK), the Luau JIT (`sf_script/jit`)

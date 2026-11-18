@@ -77,6 +77,7 @@ mw_mods.workspace = true
 mw_records.workspace = true
 mw_weather.workspace = true
 mw_world.workspace = true
+mw_worldgen.workspace = true
 sf_atmos_bevy.workspace = true
 sf_bake.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }

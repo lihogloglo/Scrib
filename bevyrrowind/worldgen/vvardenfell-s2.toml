@@ -1,0 +1,150 @@
+# WG-S2 look test: Vvardenfell at S = 10 (specs: superfargoth/docs/specs/worldgen.md, bevyrrowind/docs/specs/worldgen-adapter.md).
+# Run from the repo root:  target/release/scrib-worldgen run bevyrrowind/worldgen/vvardenfell-s2.toml
+# Input: the WG-S1 guide (`bevyrrowind worldgen-dump --out target/worldgen/vvardenfell`), derived from the player's
+# install, never shipped. Output: target/worldgen/s2/ (README.md there has the numbers).
+# Every value: { v, unit, min, max, source }. `Guess` = not measured yet; the owner's rating of this test settles them.
+
+[guide]
+dir = "target/worldgen/vvardenfell"
+# Guide-frame metres of sample (0, 0): the dump's origin_mw_units (-229376, 237568) x 1.8288 / 128 m per unit
+# (x east, y north; Morrowind's y axis is north).
+origin_m = [-3277.2096, 3394.2528]
+
+[output]
+dir = "target/worldgen/s2"
+
+[report]
+cell_label = "Morrowind cell"
+cell_origin = [-28, 28]   # meta.json origin_cell: region pixel (0, 0)
+cell_step = [1, -1]       # one pixel east = +1 x, one pixel south = -1 y
+
+[place]
+# Bloodmoon's Solstheim regions become sea: this test is Vvardenfell only.
+mask_to_sea = ["Solstheim", "Thirsk"]
+
+[params]
+scale = { v = 10, unit = "ratio", min = 1, max = 20, source = "Owner(2026-11-18)", help = "S: horizontal factor" }
+macro_spacing_m = { v = 20, unit = "m", min = 10, max = 50, source = "Guess", help = "worldgen.md 'Scale and numbers' sizes the macro stage at ~25 m" }
+sea_margin_m = { v = 3000, unit = "m", min = 0, max = 20000, source = "Guess", help = "sea kept around the land box" }
+stream_m = { v = 0.5, unit = "ratio", min = 0.3, max = 0.7, source = "Industry(Braun & Willett 2013; Procedural Tamriel m 0.5 n 1)", help = "drainage-area exponent, n = 1" }
+stream_k_dt = { v = 0.03, unit = "ratio", min = 0, max = 1, source = "Guess", help = "K dt per step at erodibility 1 (m^0 for m = 0.5)" }
+stream_restore = { v = 0.02, unit = "ratio", min = 0, max = 1, source = "Guess", help = "dt / tau: share of the gap to the intent restored per step at uplift 1" }
+stream_iterations = { v = 60, unit = "count", min = 0, max = 1000, source = "Guess" }
+thermal_iterations = { v = 30, unit = "count", min = 0, max = 1000, source = "Guess" }
+thermal_rate = { v = 0.25, unit = "ratio", min = 0.01, max = 0.5, source = "Guess", help = "share of the talus excess moved per step" }
+light_azimuth_deg = { v = 315, unit = "deg", min = 0, max = 360, source = "Industry(GIS hillshade default, NW light)" }
+light_altitude_deg = { v = 45, unit = "deg", min = 1, max = 90, source = "Industry(GIS hillshade default)" }
+sea_gray = { v = 40, unit = "count", min = 0, max = 255, source = "Guess", help = "gray of wet samples in previews" }
+overview_max_px = { v = 2048, unit = "px", min = 256, max = 8192, source = "Owner(2026-11-18)" }
+crop_size_m = { v = 12000, unit = "m", min = 1000, max = 50000, source = "Owner(2026-11-18)" }
+crop_px = { v = 1200, unit = "px", min = 256, max = 4096, source = "Owner(2026-11-18)" }
+
+[region_params]
+erodibility = { unit = "ratio", min = 0.05, max = 3, source = "Guess", help = "K multiplier; start: Procedural Tamriel classes (mountain 1.0, valley 1.2, scarp 0.9, hills 0.75, coast 0.45, flat 0.35, plateau 0.2), WG-R3 s1" }
+uplift = { unit = "ratio", min = 0, max = 5, source = "Guess", help = "restore-rate multiplier" }
+relief = { unit = "ratio", min = 0.5, max = 20, source = "Guess", help = "vertical factor on intent heights (default = S, worldgen.md)" }
+talus_deg = { unit = "deg", min = 10, max = 60, source = "Guess", help = "thermal stage talus angle" }
+peak_m = { unit = "m", min = 0, max = 9000, source = "Reference(Etna 3.3 km)", help = "profile boost: region's top lands here" }
+boost_base_m = { unit = "m", min = 0, max = 1000, source = "Guess", help = "profile boost starts above this intent height (before scaling)" }
+boost_power = { unit = "ratio", min = 1, max = 4, source = "Guess", help = "> 1: concave profile, steeper toward the top" }
+
+# No region (unregioned land, sea): hills.
+[regions.default]
+erodibility = 0.75
+uplift = 1.0
+relief = 10
+talus_deg = 33
+
+# Stratovolcano (Etna, Teide, Fuji): concave profile to ~3.3 km. Relief 8 below the boost keeps the flanks
+# gentler; the power term steepens the upper cone. Mountain class.
+[regions."Red Mountain Region"]
+erodibility = 1.0
+relief = 8
+peak_m = 3300
+boost_base_m = 40
+boost_power = 2.0
+talus_deg = 38
+
+# Basalt flows, tephra plains: hills.
+[regions."Ashlands Region"]
+erodibility = 0.75
+talus_deg = 35
+
+# Young lava fields: plateau (barely eroded).
+[regions."Molag Amur Region"]
+erodibility = 0.2
+talus_deg = 40
+
+# Eroded highlands, river canyons: valley.
+[regions."West Gash Region"]
+erodibility = 1.2
+talus_deg = 33
+
+# Swamp delta: flat.
+[regions."Bitter Coast Region"]
+erodibility = 0.35
+talus_deg = 25
+
+# Lake lowlands: flat.
+[regions."Ascadian Isles Region"]
+erodibility = 0.35
+talus_deg = 28
+
+# Plateau grassland, escarpments: plateau.
+[regions."Grazelands Region"]
+erodibility = 0.2
+talus_deg = 33
+
+# Drowned coast: coast.
+[regions."Azura's Coast Region"]
+erodibility = 0.45
+talus_deg = 33
+
+# Rocky islets: coast.
+[regions."Sheogorad Region"]
+erodibility = 0.45
+talus_deg = 35
+
+[[crop]]
+name = "red-mountain"
+peak_of = "Red Mountain Region"
+
+[[crop]]
+name = "ashlands"
+region = "Ashlands Region"
+
+[[crop]]
+name = "bitter-coast"
+region = "Bitter Coast Region"
+
+[[crop]]
+name = "west-gash"
+region = "West Gash Region"
+
+[[arm]]
+name = "A0"
+help = "intent x10 on both axes, bicubic, no erosion"
+regional = false
+erosion = false
+thermal = false
+
+[[arm]]
+name = "A1"
+help = "stream power, uniform erodibility (default region everywhere), relief x10"
+regional = false
+erosion = true
+thermal = false
+
+[[arm]]
+name = "A2"
+help = "stream power, per-region erodibility + per-region relief (Red Mountain concave stratovolcano to ~3.3 km, others x10)"
+regional = true
+erosion = true
+thermal = false
+
+[[arm]]
+name = "A3"
+help = "A2 + thermal pass (per-region talus angle)"
+regional = true
+erosion = true
+thermal = true

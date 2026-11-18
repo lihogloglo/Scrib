@@ -7,7 +7,7 @@ a console and BRP for agents.
 
 ## How it works
 - **Entry**: `bevyrrowind/apps/bevyrrowind/src/main.rs:1` (clap `Command` at `:52`). `play` (`:907`) is the no-subcommand
-  path (`ExteriorOptions::start_in_main_menu`, see ui-and-menus). Inspection: `detect`, `info`, `record`, `find`, `ls`,
+  path (`ExteriorOptions::start_in_main_menu`, see ui-and-menus). Inspection: `detect`, `info`, `worldgen-dump` (terrain + REGN export for worldgen, `mw_worldgen`), `record`, `find`, `ls`,
   `uses`, `extract`, `which`, `nif`, `anim`, `nif-sweep`, `weather`, `furniture-census`, `anim-sources`. Build and
   content: `bake` (`mw_boot_bevy/src/bake.rs`: collision, terrain, nav, far field, textures), `mods`
   (profiles, load order). Viewers: `view "<cell>"`, `character`, `scene <name>`. `clip-preview` only with feature `dev`.

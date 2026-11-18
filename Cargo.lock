@@ -2325,6 +2325,7 @@ dependencies = [
  "mw_viewers_bevy",
  "mw_weather",
  "mw_world",
+ "mw_worldgen",
  "ron",
  "serde",
  "sf_atmos_bevy",
@@ -5963,6 +5964,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mw_worldgen"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "mw_records",
+ "mw_world",
+ "png",
+ "serde",
+ "serde_json",
+ "sf_records",
+ "tempfile",
+ "tes3",
+]
+
+[[package]]
 name = "naga"
 version = "30.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8360,11 +8376,14 @@ dependencies = [
  "bevy_gizmos",
  "bevy_log",
  "bevy_tasks",
+ "bevy_time",
  "glam 0.33.12",
  "serde",
  "serde_json",
  "sf_bake",
  "sf_console_bevy",
+ "sf_controller",
+ "sf_controller_bevy",
  "sf_coords",
  "sf_ids",
  "sf_nav",
@@ -9258,6 +9277,20 @@ dependencies = [
  "tempfile",
  "wesl",
  "workspace-hack",
+]
+
+[[package]]
+name = "sf_worldgen"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "clap",
+ "png",
+ "rayon",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]

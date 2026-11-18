@@ -1,0 +1,24 @@
+[package]
+name = "mw_worldgen"
+description = "Morrowind worldgen adapter: source terrain and region map exports and measurements (WG-S1, WG-R2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+blake3.workspace = true
+mw_records.workspace = true
+mw_world.workspace = true
+# 16-bit gray and indexed PNG writing; already in Cargo.lock (through `image`), no default features.
+png = "0.18"
+serde.workspace = true
+serde_json.workspace = true
+sf_records.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

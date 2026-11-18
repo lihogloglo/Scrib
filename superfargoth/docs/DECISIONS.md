@@ -1886,3 +1886,11 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-17 (ai-nav, owner go): AI6 no longer waits on seamless SI3: an actor's worldspace already comes from its root
   (`WorldPosOf::location`, one `big_space` root per worldspace), so nav/AI queries take that. `InWorldspace` and per-camera
   `ViewerWorldspace` stay in seamless M9. AI6 needs NV6, NV7a, NV8; NV5 (multi-anchor residency) may follow AI6.
+- 2026-11-18 (worldgen, owner): world generation is a generic Scrib tool (`sf_worldgen`, shippable on its own) that
+  generates nature *between* the kept human-made content (settlements, wrecks, tombs, mines, shrines), never over it.
+  Vvardenfell at 10x first, then Tamriel Rebuilt, then any landform. Flat world with a rendered curvature drop, no sphere.
+- 2026-11-18 (worldgen): heights derived from the player's game data never ship; recipes + seeds do, and the player's
+  bake runs them (bake budget applies, deterministic, hash-checked). Vertical relief comes from per-region recipes,
+  not x10; below ~2 m terrain detail is synthesized at runtime with a CPU twin. Specs `worldgen.md`, `worldgen-adapter.md`.
+- 2026-11-18 (worldgen, WG-S1 numbers): corrects the bullet above: vertical relief defaults to the horizontal S (a
+  uniform x10 makes Red Mountain's 270.8 m summit 2.7 km); per-region recipes may remap it, judged in the WG-S2 look test.

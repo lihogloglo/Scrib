@@ -269,6 +269,7 @@ sf_wind = { path = "superfargoth/crates/sf_wind", version = "0.1.0" }
 sf_wind_bevy = { path = "superfargoth/crates/sf_wind_bevy", version = "0.1.0" }
 sf_world = { path = "superfargoth/crates/sf_world", version = "0.1.0" }
 sf_world_bevy = { path = "superfargoth/crates/sf_world_bevy", version = "0.1.0" }
+sf_worldgen = { path = "superfargoth/crates/sf_worldgen", version = "0.1.0" }
 # Feature unification (cargo hakari, .config/hakari.toml): every Bevy library crate, framework and game,
 # depends on it. This is hakari's empty crates.io stub (CC0, never has code), patched below to
 # superfargoth/crates/workspace-hack.
@@ -314,6 +315,7 @@ mw_vfs = { path = "bevyrrowind/crates/mw_vfs" }
 mw_water = { path = "bevyrrowind/crates/mw_water" }
 mw_weather = { path = "bevyrrowind/crates/mw_weather" }
 mw_world = { path = "bevyrrowind/crates/mw_world" }
+mw_worldgen = { path = "bevyrrowind/crates/mw_worldgen" }
 
 [patch.crates-io]
 # big_space with dirty-tree pruning in low-precision propagation (superfargoth/vendor/big_space,
