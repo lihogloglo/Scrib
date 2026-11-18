@@ -151,18 +151,56 @@ fn astar_follows_directed_edges() {
     );
 }
 
+/// `AiWander::getRandomIdle` (`OpenMW` `aiwander.cpp` at `b8285cc9`) on scripted draws: the gate
+/// draw against `fIdleChanceMultiplier`, then `roll = 100 * draw` per idle, `roll <= chance`
+/// and `roll > best` (best starts at 0, ties keep the earlier idle).
+#[test]
+fn idle_roll_is_openmw_get_random_idle_exactly() {
+    fn scripted(chances: [u8; 8], mult: f32, draws: &[f32]) -> (Option<u8>, usize) {
+        let mut i = 0;
+        let pick = roll_idle_with(&chances, mult, || {
+            let d = draws[i];
+            i += 1;
+            d
+        });
+        (pick, i)
+    }
+    let c = [10, 20, 30, 40, 50, 60, 70, 80];
+    // Gate: a first draw above the multiplier means no idle, and nothing else is drawn.
+    assert_eq!(scripted(c, 0.75, &[0.76]), (None, 1));
+    // At the multiplier exactly the gate passes (`>`, not `>=`).
+    assert_eq!(scripted(c, 0.75, &[0.75, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]), (None, 9));
+    // A zero roll never wins (`roll > best`, best starts at 0), even with chance 100.
+    assert_eq!(scripted([100; 8], 1.0, &[0.0; 9]), (None, 9));
+    // `roll <= chance` is inclusive: 50.0 wins Idle6 (chance 50); 50.5 doesn't.
+    assert_eq!(scripted(c, 0.75, &[0.5, 0.9, 0.9, 0.9, 0.9, 0.5, 0.9, 0.9, 0.9]), (Some(6), 9));
+    assert_eq!(scripted(c, 0.75, &[0.5, 0.9, 0.9, 0.9, 0.9, 0.505, 0.9, 0.9, 0.9]), (None, 9));
+    // The highest qualifying roll wins: Idle3 rolls 15 (<= 20), Idle7 rolls 55 (<= 60), Idle9
+    // rolls 81 (> 80, out).
+    assert_eq!(scripted(c, 0.75, &[0.1, 0.9, 0.15, 0.9, 0.9, 0.9, 0.55, 0.9, 0.81]), (Some(7), 9));
+    // A tie keeps the earlier idle (strict `>`).
+    assert_eq!(scripted([50; 8], 1.0, &[0.0, 0.4, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]), (Some(2), 9));
+}
+
 #[test]
 fn idle_roll_matches_openmw_statistics() {
     let mut rng = fastrand::Rng::with_seed(7);
     let n = 200_000;
-    // One idle at 100%: r in 0..133, wins when 0 < r < 75.
+    // One idle at 100%: the gate passes with p = 0.75, then any roll in (0, 100] wins.
     let mut one = [0; 8];
     one[0] = 100;
     let hits = (0..n)
         .filter(|_| roll_idle(&one, 0.75, &mut rng) == Some(2))
         .count();
     let p = f64::from(u32::try_from(hits).unwrap()) / f64::from(n);
-    assert!((p - 74.0 / 133.0).abs() < 0.005, "{p}");
+    assert!((p - 0.75).abs() < 0.005, "{p}");
+    // One idle at 40%: 0.75 * 0.40.
+    one[0] = 40;
+    let hits = (0..n)
+        .filter(|_| roll_idle(&one, 0.75, &mut rng) == Some(2))
+        .count();
+    let p = f64::from(u32::try_from(hits).unwrap()) / f64::from(n);
+    assert!((p - 0.3).abs() < 0.005, "{p}");
     assert!((0..1000).all(|_| roll_idle(&[0; 8], 0.75, &mut rng).is_none()));
     // Equal chances pick every group about equally often.
     let mut counts = [0u32; 10];
@@ -212,20 +250,20 @@ fn wander_goals_stay_in_range_and_cover_allowed_nodes() {
     }
     assert_eq!(goals, allowed);
 
-    // Idle chances win before walking.
+    // Idle chances win before walking: at 100 % each, every roll past the
+    // `fIdleChanceMultiplier` gate (0.75) is an idle, the rest walk.
     let mut idler = planner.clone();
     idler.wander.idle_chances = [100; 8];
     idler.idle_seconds[3] = 2.5;
     let steps: Vec<_> = (0..500)
         .map(|_| idler.next(Some(&graph), home, &mut rng))
         .collect();
-    assert!(
-        steps
-            .iter()
-            .filter(|s| matches!(s, WanderStep::Idle { variant: 2..=9, .. }))
-            .count()
-            > 450
-    );
+    let fidgets = steps
+        .iter()
+        .filter(|s| matches!(s, WanderStep::Idle { variant: 2..=9, .. }))
+        .count();
+    assert!((330..=420).contains(&fidgets), "{fidgets} idles of 500");
+    assert!(steps.iter().all(|s| matches!(s, WanderStep::Idle { variant: 2..=9, .. } | WanderStep::Walk { .. })));
     assert!(steps.contains(&WanderStep::Idle {
         variant: 5,
         seconds: 2.5
@@ -261,12 +299,12 @@ fn scaffold_expires_and_repeats_in_game_hours() {
     let mut wander = no_idles(0.0);
     wander.duration_hours = 2.0;
     wander.repeat = false;
-    let mut s = PathWalkScaffold::new(WanderPlanner::new(wander, home), 2.0, 3);
+    let mut s = WanderDriver::new(WanderPlanner::new(wander, home), 2.0, 3);
     assert!(!s.update(Some(&graph), home, 0.1, 1.5).expired);
     let out = s.update(Some(&graph), home, 0.1, 1.0);
     assert!(out.expired && out.intent == sf_controller::LocomotionIntent::IDLE);
     wander.repeat = true;
-    let mut s = PathWalkScaffold::new(WanderPlanner::new(wander, home), 2.0, 3);
+    let mut s = WanderDriver::new(WanderPlanner::new(wander, home), 2.0, 3);
     assert!((0..10).all(|_| !s.update(Some(&graph), home, 0.1, 1.0).expired));
 }
 
@@ -313,7 +351,7 @@ fn mover_walks_scaffold_paths_on_flat_ground() {
     let home = graph.position(14);
     let speed = walk_speed(50.0, wander::MIN_WALK_SPEED, wander::MAX_WALK_SPEED);
     assert!((speed - meters(150.0)).abs() < 1e-5);
-    let mut scaffold = PathWalkScaffold::new(WanderPlanner::new(no_idles(2000.0), home), speed, 11);
+    let mut scaffold = WanderDriver::new(WanderPlanner::new(no_idles(2000.0), home), speed, 11);
     let probe = TerrainProbe(Flat);
     let params = MoverParams::default();
     let mut loco = Locomotion::new(home, 0.0);
@@ -361,7 +399,7 @@ fn mover_walks_scaffold_paths_on_flat_ground() {
 fn stuck_walks_are_given_up_and_replanned() {
     let graph = interior(&lattice(5, 256));
     let home = graph.position(12);
-    let mut s = PathWalkScaffold::new(WanderPlanner::new(no_idles(1024.0), home), 1.5, 7);
+    let mut s = WanderDriver::new(WanderPlanner::new(no_idles(1024.0), home), 1.5, 7);
     let dt = 0.1;
     // Walking, but held in place (a wall the path doesn't know about).
     let mut walked = 0;
@@ -398,7 +436,7 @@ fn blocked_edges_are_routed_around() {
     assert_eq!(graph.path_avoiding(0, 1, &[(0, 1), (3, 2)]), None);
 
     let (a, b) = (graph.position(0), graph.position(1));
-    let mut s = PathWalkScaffold::new(WanderPlanner::new(no_idles(1024.0), a), 1.5, 3);
+    let mut s = WanderDriver::new(WanderPlanner::new(no_idles(1024.0), a), 1.5, 3);
     // Walk until a give-up whose walk heads from node 0 to node 1, held in place at node 0.
     let mut resumed = false;
     for _ in 0..2000 {
@@ -438,7 +476,7 @@ fn first_leg_give_ups_start_at_the_next_nearest_node() {
     // already passed.
     let away = -(a.delta_f32(graph.position(1)).normalize() + a.delta_f32(graph.position(3)).normalize()).normalize();
     let pos = a.offset(away * 0.8);
-    let mut s = PathWalkScaffold::new(WanderPlanner::new(no_idles(1024.0), pos), 1.5, 5);
+    let mut s = WanderDriver::new(WanderPlanner::new(no_idles(1024.0), pos), 1.5, 5);
     let mut resumed = false;
     for _ in 0..2000 {
         let edge = s.follower().map(|f| (f.target(), f.nodes.clone()));
@@ -475,7 +513,7 @@ fn first_leg_give_ups_start_at_the_next_nearest_node() {
 #[test]
 fn off_grid_give_ups_avoid_the_blocked_heading() {
     let home = WorldPos::ORIGIN;
-    let mut s = PathWalkScaffold::new(WanderPlanner::new(no_idles(1024.0), home), 1.5, 11);
+    let mut s = WanderDriver::new(WanderPlanner::new(no_idles(1024.0), home), 1.5, 11);
     let mut blocked: Vec<Vec3> = Vec::new();
     let mut walks = 0;
     for _ in 0..6000 {
@@ -515,4 +553,401 @@ fn an_idle_never_repeats_back_to_back() {
         last = now;
     }
     assert!(fidgets > 1000, "{fidgets}");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn htn_wander_on_navmesh_stays_within_radius_and_rolls_exact_idles() {
+    use sf_ai::{ExecConfig, ExecContext, NavCommand, NavMoveState, PlanOutcome, TraceEntry};
+    use sf_controller::{PathFollower, PathMode};
+    use sf_nav::{
+        AgentClassId, AreaId, CorridorConfig, Goal, GridBackend, GridCell, GridConfig, JobState,
+        NavBackend, PathCorridor, PathJob, PathQuery, PolyFlags, QueryFilter, SliceBudget,
+    };
+    use sf_world::{Location, WorldspaceId};
+
+    let vocab = WanderVocabulary::build();
+    let ws = WorldspaceId::new("test_room");
+    let class = AgentClassId(0);
+    let area = AreaId(1);
+    let filter = QueryFilter::default();
+
+    // 48 x 48 m flat walkable room on GridBackend (covers the 6x6 lattice in engine space:
+    // x in 0..=18.29 m, z in -18.29..=0 m; shift lattice into positive X/Z so it sits inside tile (0,0)).
+    let mut backend = GridBackend::new(GridConfig {
+        cell_size: 1.0,
+        tile_cells: 48,
+    })
+    .unwrap();
+    let row = ".".repeat(48);
+    let rows: Vec<&str> = (0..48).map(|_| row.as_str()).collect();
+    backend
+        .insert_rows(&ws, class, 0.5, &rows, |c| {
+            (c == '.').then_some(GridCell::new(0.0, area, PolyFlags::WALK))
+        })
+        .unwrap();
+
+    // Build a 5x5 lattice shifted into positive engine X/Z (`y <= 0` in Morrowind units -> `z >= 0` in engine).
+    let mut pts = Vec::new();
+    let mut edges = Vec::new();
+    let n = 5i32;
+    let step = 256i32;
+    let idx = |x: i32, y: i32| usize::try_from(y * n + x).unwrap();
+    for y in 0..n {
+        for x in 0..n {
+            pts.push([(x + 1) * step, -(y + 1) * step, 0]);
+            if x + 1 < n {
+                edges.extend([(idx(x, y), idx(x + 1, y)), (idx(x + 1, y), idx(x, y))]);
+            }
+            if y + 1 < n {
+                edges.extend([(idx(x, y), idx(x, y + 1)), (idx(x, y + 1), idx(x, y))]);
+            }
+        }
+    }
+    let graph = interior(&grid(&pts, &edges));
+    let home = graph.position(12); // center of the 5x5 grid
+
+    let wander = Wander {
+        distance: meters(400.0),
+        duration_hours: 0.0,
+        game_hour: 0,
+        idle_chances: [40, 40, 40, 40, 0, 0, 0, 0],
+        repeat: true,
+    };
+    let speed = 2.0;
+    let mut driver = WanderDriver::with_vocab(
+        WanderPlanner::new(wander, home),
+        speed,
+        42,
+        ws.clone(),
+        std::sync::Arc::new(vocab.clone()),
+    );
+
+    let cfg = ExecConfig::default();
+    let corridor_cfg = CorridorConfig::default();
+    let dt = 0.1;
+
+    let mut pos = home;
+    let mut corridor: Option<(Location, PathCorridor, PathFollower)> = None;
+    let mut nav_state = NavMoveState::Idle;
+    let mut walk_plans = 0usize;
+    let mut idle_plans = 0usize;
+    let mut stand_plans = 0usize;
+    let mut fidget_variants = Vec::new();
+    let mut last_fidget: Option<u8> = None;
+
+    for tick in 0..4000u64 {
+        let ctx = ExecContext {
+            location: Location::new(ws.clone(), pos),
+            yaw: 0.0,
+            dt,
+            nav: nav_state,
+        };
+        let mut trace = TraceEntry::new(tick, 2);
+        let out = driver.step_htn(Some(&graph), &ctx, &cfg, 0.0, Some(&mut trace));
+
+        if out.plan_outcome == Some(PlanOutcome::Planned) {
+            assert_eq!(trace.methods.len(), 1);
+            let chosen_method = trace.methods[0].method;
+            assert_eq!(trace.plan.steps.len(), 1);
+            let chosen_task = trace.plan.steps[0].task;
+            // Exact decomposition: walk -> wander_walk/do_walk (a MoveTo), fidget Idle2..=9 ->
+            // wander_idle/do_idle (a Wait with that group), plain stand -> wander_stand/do_idle.
+            if let NavCommand::MoveTo { .. } = out.nav {
+                assert_eq!((chosen_method, chosen_task), (vocab.wander_walk, vocab.do_walk));
+                assert_eq!(out.idle_variant, None);
+                walk_plans += 1;
+                last_fidget = None;
+            } else {
+                assert_eq!(chosen_task, vocab.do_idle);
+                idle_plans += 1;
+                if let Some(v @ 2..=9) = out.idle_variant {
+                    assert_eq!(chosen_method, vocab.wander_idle, "fidget {v}");
+                    assert_ne!(Some(v), last_fidget, "back-to-back fidget {v}");
+                    last_fidget = Some(v);
+                    fidget_variants.push(v);
+                } else {
+                    assert_eq!(out.idle_variant, Some(0));
+                    assert_eq!(chosen_method, vocab.wander_stand);
+                    stand_plans += 1;
+                    last_fidget = None;
+                }
+            }
+        }
+
+        match out.nav {
+            NavCommand::MoveTo { goal, speed, .. } => {
+                let dist_from_home = flat_dist(home, goal.pos);
+                assert!(
+                    dist_from_home <= wander.distance + 1e-3,
+                    "MoveTo goal {dist_from_home} m exceeds wander radius {}",
+                    wander.distance
+                );
+                let needs_load = corridor.as_ref().is_none_or(|(g, _, _)| g != &goal);
+                if needs_load {
+                    let q = PathQuery::new(
+                        class,
+                        Location::new(ws.clone(), pos),
+                        Goal::Point(goal.clone()),
+                        filter.clone(),
+                    );
+                    let mut job = PathJob::new(q);
+                    let mut budget = SliceBudget::new(2048);
+                    let JobState::Done(path) = backend.find_path(&mut job, &mut budget) else {
+                        panic!("expected complete path on GridBackend");
+                    };
+                    let mut c = PathCorridor::new(class, filter.clone());
+                    c.load(goal.clone(), &path).unwrap();
+                    let f = PathFollower::new(Vec::new(), PathMode::Once, speed);
+                    corridor = Some((goal, c, f));
+                }
+                let (_, c, f) = corridor.as_mut().unwrap();
+                c.step(&backend, Location::new(ws.clone(), pos), dt, &corridor_cfg)
+                    .unwrap();
+                let stop_at_end = c.stop_at_end();
+                let mut corners: Vec<WorldPos> = c.corners().iter().map(|l| l.pos).collect();
+                if corners.is_empty() && stop_at_end {
+                    corners.push(c.target().pos);
+                }
+                f.set_corridor_corners(&corners, stop_at_end);
+                let fout = f.update(pos, dt);
+                pos = pos.offset(fout.intent.desired_velocity * dt);
+                let local = home.delta_f32(pos);
+                assert!(local.is_finite(), "NaN position at tick {tick}");
+                assert!(
+                    flat_dist(home, pos) <= wander.distance + 1.0,
+                    "walked {} m from home (radius {})",
+                    flat_dist(home, pos),
+                    wander.distance
+                );
+                nav_state = if fout.finished && stop_at_end {
+                    NavMoveState::Arrived
+                } else {
+                    NavMoveState::Following
+                };
+            }
+            NavCommand::Stop | NavCommand::None => {
+                corridor = None;
+                nav_state = NavMoveState::Idle;
+            }
+        }
+    }
+
+    assert!(walk_plans >= 10, "expected >= 10 HTN walk plans, got {walk_plans}");
+    assert!(idle_plans >= 10, "expected >= 10 HTN idle plans, got {idle_plans}");
+    assert!(
+        fidget_variants.len() >= 8,
+        "expected >= 8 fidget idles, got {}",
+        fidget_variants.len()
+    );
+    // Every walk plan but the one still running at the end reached its goal (comes to rest).
+    let arrived = usize::try_from(driver.arrival_count()).unwrap();
+    assert!(arrived + 1 >= walk_plans && arrived >= 10, "{arrived} arrivals of {walk_plans} walks");
+    assert_eq!(driver.stuck_count(), 0, "open room: no walk given up");
+    let vocab_stand = vocab.wander_stand;
+
+    // Verify 3.0 s NoProgress stuck timeout on HTN MoveTo: hold the actor in place, confirm stuck
+    // increments after 3.0 s, recovery idle runs, and the next walk picks a different goal.
+    let mut stuck_driver = WanderDriver::with_vocab(
+        WanderPlanner::new(no_idles(600.0), home),
+        speed,
+        7,
+        ws.clone(),
+        std::sync::Arc::new(vocab),
+    );
+    let mut first_goal = None;
+    let mut give_up_tick = None;
+    let mut recovery_idled = false;
+    let mut second_goal = None;
+
+    for i in 0..80 {
+        let ctx = ExecContext {
+            location: Location::new(ws.clone(), home),
+            yaw: 0.0,
+            dt,
+            nav: NavMoveState::Following,
+        };
+        let mut trace = TraceEntry::new(i, 2);
+        let out = stuck_driver.step_htn(Some(&graph), &ctx, &cfg, 0.0, Some(&mut trace));
+        // The pause after a give-up is a plain stand: `wander_stand`.
+        if give_up_tick.is_some() && out.plan_outcome == Some(PlanOutcome::Planned) && out.nav == NavCommand::Stop {
+            assert_eq!(trace.methods[0].method, vocab_stand);
+            stand_plans += 1;
+        }
+        if let NavCommand::MoveTo { ref goal, .. } = out.nav {
+            if first_goal.is_none() {
+                first_goal = Some(goal.pos);
+            } else if give_up_tick.is_some() && second_goal.is_none() {
+                second_goal = Some(goal.pos);
+                break;
+            }
+        }
+        if stuck_driver.stuck_count() == 1 && give_up_tick.is_none() {
+            give_up_tick = Some(i);
+            assert_eq!(out.nav, NavCommand::Stop);
+            assert_eq!(out.idle_variant, Some(0));
+        } else if give_up_tick.is_some() && out.nav == NavCommand::Stop {
+            recovery_idled = true;
+        }
+    }
+
+    let give_up = give_up_tick.expect("HTN MoveTo should fail with NoProgress after 3.0 s");
+    assert!((29..=31).contains(&give_up), "expected give-up around 30 ticks (3.0 s), got {give_up}");
+    assert!(recovery_idled, "expected recovery Wait after stuck give-up");
+    assert!(stand_plans >= 1, "the recovery pause decomposes through wander_stand");
+    assert_ne!(
+        first_goal.expect("first goal"),
+        second_goal.expect("second goal after recovery"),
+        "replanned walk should avoid the abandoned goal"
+    );
+}
+
+/// A walker that leaves the resident navmesh mid-walk (its tile evicted, or walked off it) drops
+/// the navmesh `MoveTo` and picks a pathgrid walk in fallback mode instead of standing forever.
+#[test]
+fn navmesh_walk_left_mid_way_continues_on_the_pathgrid() {
+    use sf_ai::{ExecConfig, ExecContext, NavCommand, NavMoveState};
+    use sf_world::{Location, WorldspaceId};
+
+    let graph = interior(&lattice(5, 256));
+    let home = graph.position(12);
+    let ws = WorldspaceId::new("test_room");
+    let mut driver = WanderDriver::with_vocab(
+        WanderPlanner::new(no_idles(600.0), home),
+        2.0,
+        3,
+        ws.clone(),
+        std::sync::Arc::new(WanderVocabulary::build()),
+    );
+    let ctx = ExecContext {
+        location: Location::new(ws, home),
+        yaw: 0.0,
+        dt: 0.1,
+        nav: NavMoveState::Idle,
+    };
+    let out = driver.step_htn(Some(&graph), &ctx, &ExecConfig::default(), 0.0, None);
+    assert!(matches!(out.nav, NavCommand::MoveTo { .. }), "{:?}", out.nav);
+    assert!(driver.is_walking());
+    // Off the navmesh from here on: the next fallback step walks a pathgrid route at once.
+    let out = driver.update_fallback(Some(&graph), home, 0.1, 0.0, &ExecConfig::default());
+    assert!(out.walking, "stalled on the navmesh MoveTo");
+    assert!(driver.follower().is_some());
+    assert!(out.intent.desired_velocity.length() > 0.1, "{:?}", out.intent.desired_velocity);
+}
+
+/// A navmesh `MoveTo` that fails (`NoPath`: goal off the mesh; `NoProgress`: held in place) is the
+/// goal failing, not a pathgrid edge or first leg (the corridor walked neither): the driver keeps
+/// the abandoned goal, the planner's pathgrid memory stays empty, and the next walk rolls away
+/// from it (`OpenMW` `AiWander` re-chooses and records no edge, `aiwander.cpp` at `b8285cc9`).
+#[test]
+#[allow(clippy::too_many_lines)]
+fn navmesh_give_ups_remember_the_goal_not_pathgrid_edges() {
+    use sf_ai::{
+        ExecConfig, ExecContext, NavCommand, NavMoveState, PathFailure, PathState,
+    };
+    use sf_nav::{
+        AgentClassId, AreaId, Goal, GridBackend, GridCell, GridConfig, JobState, NavBackend,
+        PathCorridor, PathJob, PathQuery, PolyFlags, QueryFilter, SliceBudget,
+    };
+    use sf_world::{Location, WorldspaceId};
+
+    let ws = WorldspaceId::new("test_room");
+    let (class, area, filter) = (AgentClassId(0), AreaId(1), QueryFilter::default());
+    // Walkable for z < 13 m only: the lattice row at z = 14.6 m snaps onto the mesh (2 m extent)
+    // and is walked toward (held in place: `NoProgress`), the row at z = 18.3 m is off it (`NoPath`).
+    let mut backend = GridBackend::new(GridConfig { cell_size: 1.0, tile_cells: 48 }).unwrap();
+    let (open, wall) = (".".repeat(48), "#".repeat(48));
+    let rows: Vec<&str> = (0..48).map(|z| if z < 13 { open.as_str() } else { wall.as_str() }).collect();
+    backend
+        .insert_rows(&ws, class, 0.5, &rows, |c| (c == '.').then_some(GridCell::new(0.0, area, PolyFlags::WALK)))
+        .unwrap();
+    // The 5x5 lattice of the navmesh test, in positive engine X/Z; the actor stands on node 12.
+    let (n, step) = (5i32, 256i32);
+    let idx = |x: i32, y: i32| usize::try_from(y * n + x).unwrap();
+    let mut pts = Vec::new();
+    let mut edges = Vec::new();
+    for y in 0..n {
+        for x in 0..n {
+            pts.push([(x + 1) * step, -(y + 1) * step, 0]);
+            if x + 1 < n {
+                edges.extend([(idx(x, y), idx(x + 1, y)), (idx(x + 1, y), idx(x, y))]);
+            }
+            if y + 1 < n {
+                edges.extend([(idx(x, y), idx(x, y + 1)), (idx(x, y + 1), idx(x, y))]);
+            }
+        }
+    }
+    let graph = interior(&grid(&pts, &edges));
+    let home = graph.position(12);
+    assert_eq!(graph.node_at(home), Some(12), "standing on a node: the old code blocked pathgrid edges");
+
+    let mut driver = WanderDriver::with_vocab(
+        WanderPlanner::new(no_idles(800.0), home),
+        2.0,
+        5,
+        ws.clone(),
+        std::sync::Arc::new(WanderVocabulary::build()),
+    );
+    let cfg = ExecConfig::default();
+    let same_goal_m = driver.tuning.same_goal_m;
+    let mut nav_state = NavMoveState::Idle;
+    let mut loaded: Option<WorldPos> = None;
+    let mut walking_to: Option<WorldPos> = None;
+    let mut abandoned: Option<WorldPos> = None;
+    let (mut no_path, mut no_progress, mut checked) = (0, 0, 0);
+    for tick in 0..20_000u64 {
+        let ctx = ExecContext {
+            location: Location::new(ws.clone(), home),
+            yaw: 0.0,
+            dt: 0.1,
+            nav: nav_state,
+        };
+        let stuck = driver.stuck_count();
+        let out = driver.step_htn(Some(&graph), &ctx, &cfg, 0.0, None);
+        if driver.stuck_count() > stuck {
+            match out.path {
+                PathState::Failed(PathFailure::NoPath) => no_path += 1,
+                PathState::Failed(PathFailure::NoProgress) => no_progress += 1,
+                ref p => panic!("tick {tick}: a give-up without a path failure ({p:?})"),
+            }
+            let goal = walking_to.take().expect("a walk was running");
+            assert_eq!(driver.abandoned(), Some(goal), "tick {tick}: the failed goal is remembered");
+            assert!(driver.planner.blocked.is_empty(), "tick {tick}: {:?}", driver.planner.blocked);
+            assert!(driver.planner.blocked_starts.is_empty(), "tick {tick}: {:?}", driver.planner.blocked_starts);
+            abandoned = Some(goal);
+        }
+        match out.nav {
+            NavCommand::MoveTo { goal, .. } => {
+                if loaded != Some(goal.pos) {
+                    loaded = Some(goal.pos);
+                    if let Some(gone) = abandoned.take() {
+                        let d = flat_dist(goal.pos, gone);
+                        assert!(d >= same_goal_m, "tick {tick}: next goal {d} m from the abandoned one");
+                        checked += 1;
+                    }
+                    let q = PathQuery::new(class, Location::new(ws.clone(), home), Goal::Point(goal.clone()), filter.clone());
+                    let mut job = PathJob::new(q);
+                    nav_state = match backend.find_path(&mut job, &mut SliceBudget::new(4096)) {
+                        JobState::Done(path) => {
+                            PathCorridor::new(class, filter.clone()).load(goal.clone(), &path).unwrap();
+                            NavMoveState::Following
+                        }
+                        JobState::Failed(_) => NavMoveState::Failed,
+                        JobState::InProgress => panic!("budget too small"),
+                    };
+                }
+                walking_to = Some(goal.pos);
+            }
+            NavCommand::Stop | NavCommand::None => {
+                loaded = None;
+                nav_state = NavMoveState::Idle;
+            }
+        }
+        if no_path >= 3 && no_progress >= 3 && abandoned.is_none() {
+            break;
+        }
+    }
+    assert!(no_path >= 3 && no_progress >= 3, "{no_path} NoPath, {no_progress} NoProgress give-ups");
+    assert!(checked >= 5, "{checked} walks after a give-up");
+    assert_eq!(driver.replan_count(), 0, "navmesh give-ups never resume a pathgrid route");
 }

@@ -317,6 +317,16 @@ pub struct BlobTile {
     pub polys: Vec<BlobPoly>,
 }
 
+/// Constrained movement along the navmesh surface ([`NavBackend::move_along_surface`], Detour
+/// `moveAlongSurface`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceMove {
+    /// Constrained end position on the last visited polygon.
+    pub pos: Location,
+    /// Polygons visited from the start polygon to the polygon containing [`Self::pos`].
+    pub visited: Vec<PolyRef>,
+}
+
 /// A navmesh backend (Detour `dtNavMesh` + `dtNavMeshQuery`). Thread-safe for queries: every
 /// query takes `&self`; tile changes take `&mut self` and apply between ticks.
 ///
@@ -374,6 +384,59 @@ pub trait NavBackend: Send + Sync {
     /// Sets polygons' area and flags without a rebuild (doors: Detour `setPolyArea` and
     /// `setPolyFlags`).
     fn set_poly_state(&mut self, polys: &[PolyRef], state: PolyState) -> Result<(), NavError>;
+
+    /// Whether `poly` is resident and passes `filter` (Detour `isValidPolyRef`).
+    fn is_valid_poly(&self, poly: PolyRef, filter: &QueryFilter) -> bool {
+        self.poly_state(poly)
+            .is_some_and(|s| filter.passes(s.area, s.flags))
+    }
+
+    /// Closest point on `poly` (including its boundary) to `at` (Detour `closestPointOnPoly` /
+    /// `closestPointOnPolyBoundary`).
+    fn closest_point_on_poly(&self, poly: PolyRef, at: &Location) -> Result<Location, NavError> {
+        let _ = (poly, at);
+        Err(NavError::Unsupported("closest_point_on_poly"))
+    }
+
+    /// Constrains movement from `from` towards `to` along the surface, returning the constrained
+    /// end position and the visited polygons (Detour `moveAlongSurface`).
+    fn move_along_surface(
+        &self,
+        from: &NavPoint,
+        to: &Location,
+        filter: &QueryFilter,
+    ) -> Result<SurfaceMove, NavError> {
+        let _ = (from, to, filter);
+        Err(NavError::Unsupported("move_along_surface"))
+    }
+
+    /// String-pulled steering corners from `pos` to `target` through `polys` (at most
+    /// `max_corners`), pruning corners within `0.01 m` of `pos` on XZ (Detour `findCorners`).
+    fn corridor_corners(
+        &self,
+        pos: &Location,
+        target: &Location,
+        polys: &[PolyRef],
+        max_corners: usize,
+    ) -> Result<Vec<Location>, NavError> {
+        let _ = (pos, target, polys, max_corners);
+        Err(NavError::Unsupported("corridor_corners"))
+    }
+
+    /// Bounded local search (`max_nodes` expansions) from `start` back toward `corridor` (ending
+    /// at `target`), returning the path to the furthest visited polygon of `corridor` (Detour
+    /// `initSlicedFindPath` + `updateSlicedFindPath` + `finalizeSlicedFindPathPartial`).
+    fn repair_corridor(
+        &self,
+        start: &NavPoint,
+        target: &Location,
+        corridor: &[PolyRef],
+        filter: &QueryFilter,
+        max_nodes: u32,
+    ) -> Result<Vec<PolyRef>, NavError> {
+        let _ = (start, target, corridor, filter, max_nodes);
+        Err(NavError::Unsupported("repair_corridor"))
+    }
 
     /// Every resident tile (stats, debug draw), in no particular order. A backend without
     /// residency data returns none.

@@ -22,7 +22,10 @@ use mw_bake::nav::{HUMANOID, REGION, REGION_ORIGIN, classes};
 use sf_bake::{Manifest, ProductKey, Store};
 use sf_coords::WorldPos;
 use sf_nav::{ClassTiling, RegionFrame, RingLayout};
-use sf_nav_bevy::{NavAnchor, NavDrawFrame, NavMeshes, NavPlugin, NavRingPlugin, NavSystems};
+use sf_nav_bevy::{
+    NavAnchor, NavCorridorPlugin, NavDrawFrame, NavMeshes, NavPlugin, NavQueryPlugin,
+    NavRingPlugin, NavSystems,
+};
 use sf_nav_recast::{RecastBackend, RecastConfig};
 use sf_world::AnchorRole;
 use sf_world_bevy::{StreamingAnchor, WorldOrigin, WorldOriginSystems, WorldPosOf};
@@ -36,11 +39,11 @@ fn has_tiles(manifest: &Manifest) -> bool {
         .is_some_and(|(k, _)| k.step == sf_nav_bake::TILES)
 }
 
-/// Adds the navmesh and its baked ring. Without baked tiles (a bake run with
-/// `BEVYRROWIND_BAKE_SKIP_NAV`) it logs one line and adds nothing.
+/// Adds the navmesh and its baked ring. Without baked tiles (an incomplete bake)
+/// it logs one line and adds nothing.
 pub fn add(app: &mut App, store: Store, manifest: Arc<Manifest>) {
     if !has_tiles(&manifest) {
-        info!("nav: the bake has no navmesh tiles (BEVYRROWIND_BAKE_SKIP_NAV?): no navmesh this run");
+        info!("nav: the bake has no navmesh tiles: no navmesh this run");
         return;
     }
     let classes = classes();
@@ -56,7 +59,12 @@ pub fn add(app: &mut App, store: Store, manifest: Arc<Manifest>) {
         regions: BTreeMap::new(),
         default_regions: vec![RegionFrame { region: REGION, origin: REGION_ORIGIN }],
     };
-    app.add_plugins((NavPlugin, NavRingPlugin { store, manifest, layout }))
+    app.add_plugins((
+        NavPlugin,
+        NavQueryPlugin,
+        NavCorridorPlugin,
+        NavRingPlugin { store, manifest, layout },
+    ))
         .insert_resource(NavMeshes(Box::new(backend)))
         .add_systems(Update, follow_player.before(NavSystems::Residency))
         .add_systems(PostUpdate, draw_frame.after(WorldOriginSystems).before(NavSystems::Draw));

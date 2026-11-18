@@ -23,12 +23,23 @@ debug = [
 [dependencies]
 bevy_app = { workspace = true, features = ["std"] }
 bevy_ecs = { workspace = true, features = ["std"] }
+bevy_time = { workspace = true, features = ["std"] }
+glam.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sf_ai.workspace = true
 sf_console_bevy.workspace = true
+sf_controller.workspace = true
+sf_controller_bevy.workspace = true
+sf_coords.workspace = true
+sf_ids.workspace = true
+sf_nav.workspace = true
+sf_nav_bevy.workspace = true
 sf_records.workspace = true
+sf_tunables.workspace = true
+sf_tunables_bevy.workspace = true
+sf_world.workspace = true
 # debug: the camera to face the text; colours; immediate-mode gizmos (the trace changes every
 # decision, so nothing is retained); isometries; the actors' world positions.
 bevy_camera = { workspace = true, optional = true }
@@ -41,6 +52,7 @@ workspace-hack.workspace = true
 [dev-dependencies]
 # MinimalPlugins for the headless tests; a window, 3D and UI for the example.
 bevy = { workspace = true, features = ["3d", "ui", "tonemapping_luts"] }
+sf_nav_recast.workspace = true
 
 [lints]
 workspace = true

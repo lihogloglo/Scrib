@@ -15,10 +15,10 @@ trace is pushed at startup: the overlay shows only what the store holds). Backti
 ## Game scenes
 
 ### NV-1: baked navmesh tiles drawn over Seyda Neen (`owner_launch.sh view "Seyda Neen" --hour 12`, slice NV4c)
-Status: **owner screenshot 2026-11-17 (Balmora, `nav.draw tiles`): roofs, bridges, stairs and canal walks drawn; most terrain
-ground between houses shows no lines.** Cause (code): the draw uses Detour polygon vertices only (`sf_nav_recast` `tile_geometry`,
-5 cm lift), which cut under bumpy terrain and are hidden by depth; the detail mesh (built, `build.rs:166`) is not drawn. Fixed
-the same day (outlines follow the detail mesh, may float up to ~0.3 m over bumps): **awaiting re-check**. Roofs: Recast keeps every walkable
+Status: **confirmed by owner 2026-11-18 (Balmora: `nav.stats` good, `nav.draw tiles` shows tiles streaming and following the terrain).** Two earlier causes fixed: (1) 2026-11-17: outlines follow Detour's detail mesh instead of coarse
+polygon edges; (2) 2026-11-18: `NavSpace::build` (`mw_bake/src/nav.rs:298`) listed level-0 terrain tiles 128 m off per axis
+(`tx*256` instead of `TileCoord::origin()` = `tx*256-128`), leaving ~3/4 of exterior land without terrain polys; fixed and
+exterior navmesh re-baked (80,892 tiles rebuilt). Roofs: Recast keeps every walkable
 surface (unreachable islands are standard; pruning from pathgrid seeds is a possible later option).
 1. Type `nav.draw tiles`: humanoid tile outlines (19.2 m tiles) out to ~256 m around you, walls brighter; tiles fill in
    over a second or two (4 per frame). Walk or fly ~100 m: new tiles appear ahead, far ones drop behind.
@@ -27,10 +27,19 @@ surface (unreachable islands are standard; pruning from pathgrid seeds is a poss
    walls and water; nothing over rooftops you can't reach. `nav.draw off` hides them.
 
 ### NV-2: NPCs walk smoothly on the fixed tick (`owner_launch.sh view "Balmora" --hour 12`, slice NV7a)
-Status: **awaiting owner** (built and headless-tested 2026-11-17). NPC movement moved from frame rate to the 60 Hz tick
+Status: **confirmed by owner 2026-11-18 (Balmora).** NPC movement moved from frame rate to the 60 Hz tick
 with interpolation, and their physics capsules now follow the tick pose (the old AN-7 lead was deleted).
 1. Watch street walkers uncapped (high fps), then cap to 30 fps if your build has the cap key/flag: no judder, stepping
    or foot sliding at either rate; turns stay smooth.
 2. Walk away until NPCs freeze (processing range) and come back: no pop or slide when they wake.
 3. Knock one down / ragdoll it and let it get up; throw a ball at a walker: capsule sits on the body, no snap.
 4. Fly the camera into a walker's path: it still steps around the camera.
+
+### AI-2: wanderers run the HTN wander/idle methods over the navmesh (`owner_launch.sh view "Balmora" --hour 12`, slice MA3)
+Status: **confirmed by owner 2026-11-18 (Balmora): nobody frozen, NPCs follow the drawn paths, log line OK, `nav.draw paths` correct.** Rhythm (point 3) not commented. Ground wanderers now plan with `mw_ai::methods` (HTN over `sf_ai`) and walk
+`sf_nav` navmesh paths (`NavCorridor`); the pathgrid is only a fallback (fliers, unbaked cells).
+Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh walks arrived, ...)`: N most wanderers, X rising.
+1. Street wanderers walk smooth paths to points near their spawn, stop, sometimes fidget, then walk again.
+2. Nobody stands frozen for long, walks into walls, or leaves its area. `nav.draw paths` shows the paths.
+3. Fidgets vary (never the same one twice in a row). Is the walk/pause/fidget rhythm right? (Plain pauses are 2-5 s,
+   not OpenMW's per-tick re-roll; say if NPCs fidget too often or too rarely.)

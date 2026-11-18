@@ -4977,10 +4977,13 @@ dependencies = [
  "mw_vfs",
  "mw_world",
  "petgraph",
+ "sf_ai",
  "sf_controller",
  "sf_coords",
+ "sf_nav",
  "sf_records",
  "sf_vfs",
+ "sf_world",
  "tes3",
  "thiserror 2.0.21",
 ]
@@ -5832,6 +5835,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_camera_controller",
+ "clap",
  "mw_actors",
  "mw_actors_bevy",
  "mw_anim",
@@ -5843,6 +5847,7 @@ dependencies = [
  "mw_graphs",
  "mw_physics",
  "mw_world",
+ "mw_worldgen",
  "serde_json",
  "sf_anim",
  "sf_anim_bevy",
@@ -5856,6 +5861,7 @@ dependencies = [
  "sf_records",
  "sf_sky_bevy",
  "sf_vfs",
+ "sf_worldgen",
  "tes3",
  "toml 0.9.12+spec-1.1.0",
  "workspace-hack",
@@ -5888,6 +5894,8 @@ dependencies = [
  "mw_physics",
  "mw_world",
  "sf_action_bevy",
+ "sf_ai",
+ "sf_ai_bevy",
  "sf_anim",
  "sf_anim_bevy",
  "sf_anim_graph",
@@ -5900,6 +5908,7 @@ dependencies = [
  "sf_controller_bevy",
  "sf_coords",
  "sf_diag_bevy",
+ "sf_ids",
  "sf_nav",
  "sf_nav_bake",
  "sf_nav_bevy",
@@ -5909,6 +5918,7 @@ dependencies = [
  "sf_ragdoll",
  "sf_records",
  "sf_terrain_bevy",
+ "sf_tunables_bevy",
  "sf_world",
  "sf_world_bevy",
  "tes3",
@@ -7117,6 +7127,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
+name = "quick-error"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
+
+[[package]]
 name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7710,6 +7726,7 @@ dependencies = [
 name = "sf_ai"
 version = "0.1.0"
 dependencies = [
+ "glam 0.33.12",
  "postcard",
  "serde",
  "serde_json",
@@ -7732,13 +7749,25 @@ dependencies = [
  "bevy_ecs",
  "bevy_gizmos",
  "bevy_math",
+ "bevy_time",
  "bevy_transform",
+ "glam 0.33.12",
  "log",
  "serde",
  "serde_json",
  "sf_ai",
  "sf_console_bevy",
+ "sf_controller",
+ "sf_controller_bevy",
+ "sf_coords",
+ "sf_ids",
+ "sf_nav",
+ "sf_nav_bevy",
+ "sf_nav_recast",
  "sf_records",
+ "sf_tunables",
+ "sf_tunables_bevy",
+ "sf_world",
  "workspace-hack",
 ]
 
@@ -9290,6 +9319,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tiff",
  "toml 0.9.12+spec-1.1.0",
 ]
 
@@ -9751,6 +9781,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "tiff"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63feaf3343d35b6ca4d50483f94843803b0f51634937cc2ec519fc32232bc52"
+dependencies = [
+ "flate2",
+ "half",
+ "quick-error",
+ "weezl",
 ]
 
 [[package]]
@@ -10427,6 +10469,12 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "weezl"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "wesl"

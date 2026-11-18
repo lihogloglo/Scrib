@@ -38,25 +38,40 @@ use bevy_log::prelude::*;
 use bevy_math::prelude::*;
 use bevy_time::prelude::*;
 use bevy_transform::prelude::*;
-use mw_ai::{CellKey, PathGrids, PathWalkScaffold, Wander, WanderPlanner, gmst_float, walk_speed};
+use mw_ai::{
+    CellKey, PathGrids, Wander, WanderDriver, WanderPlanner, WanderTuning, WanderVocabulary,
+    gmst_float, walk_speed,
+};
 use mw_graphs::build::params as gp;
+use sf_ai::{
+    ExecConfig, ExecContext, NavCommand, NavMoveState, TraceEntry,
+};
+use sf_ai_bevy::{
+    AiActor, AiExecPlugin, AiExecSettings, AiExecTick, AiLibrary, AiPlugin, AiTraces,
+    add_exec_tunables, to_controller_gait,
+};
 use sf_anim_bevy::{AnimLod, AnimStats, Animator};
 use sf_bake::{Manifest, Store};
-use sf_character_bevy::{Character, CharacterBody};
+use sf_character_bevy::{Character, CharacterBody, CharacterPlacement};
 use sf_controller::steps::COLLISION_COOK;
 use sf_controller::{
-    CollisionMesh, GroundHit, GroundProbe, Nearest, ProbeQuery, StaticId, StaticShape, StaticWorld,
-    TerrainProbe,
+    CollisionMesh, GroundHit, GroundProbe, LocomotionIntent, Nearest, ProbeQuery, StaticId,
+    StaticShape, StaticWorld, TerrainProbe,
 };
 use sf_controller_bevy::{
     AnimParamNames, AvoidObstacle, Avoider, ControllerGizmos, ControllerSettings,
     ControllerSystems, Dormant, Held, MoveIntent, Mover, MoverMode, MoverParams, SfControllerPlugin,
 };
 use sf_coords::{WorldPos, WorldTransform};
+use sf_ids::ActorKey;
+use sf_nav::{DEFAULT_EXTENT, QueryFilter};
+use sf_nav_bevy::{NavCorridor, NavMeshes, NavQueries, NavSystems};
 use sf_records::{RecordDb, RecordId};
 use sf_terrain_bevy::TerrainHeightsMap;
 use sf_terrain_bevy::sf_terrain::TerrainHeights;
-use sf_world::{IndexedPlacement, Level, PlacementClass, PlacementId, WorldspaceId};
+use sf_tunables_bevy::TunablesAppExt;
+use sf_tunables_bevy::sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, Unit, def};
+use sf_world::{IndexedPlacement, Level, Location, PlacementClass, PlacementId, WorldspaceId};
 use sf_world_bevy::coords::WorldPosOf;
 use sf_world_bevy::{
     ActivateCx, ActiveWorldspace, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx,
@@ -336,6 +351,8 @@ struct WalkerContent {
     db: Arc<RecordDb>,
     min_walk: f32,
     max_walk: f32,
+    /// `fIdleChanceMultiplier` (the `AI_W` idle roll gate, `mw_ai::roll_idle_with`).
+    idle_mult: f32,
 }
 
 /// A dressed character another layer moves (e.g. `mw_player_bevy`'s training dummy, under an
@@ -343,13 +360,23 @@ struct WalkerContent {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct ActionDriven;
 
-/// A wandering character's scaffold driver (`mw_ai`, named scaffold).
+/// The shared Morrowind wander HTN vocabulary (`MA3`).
+#[derive(Resource, Clone)]
+pub struct WanderVocab(pub Arc<WanderVocabulary>);
+
+/// A wandering character's HTN wander driver (`mw_ai`, `MA3`).
 #[derive(Component)]
 pub struct Walker {
-    scaffold: PathWalkScaffold,
+    pub driver: WanderDriver,
     variant: Option<u8>,
     /// The pathgrid it walks: its exterior cell at spawn, or its interior.
     key: CellKey,
+    /// The intent [`apply_held_intent`] restores after [`NavSystems::Corridor`] (which resets a
+    /// goal-less corridor to `IDLE`): the pathgrid fallback's walk, or a navmesh stand's facing.
+    held_intent: Option<LocomotionIntent>,
+    /// The mode it ran last tick: `Some(true)` HTN over the navmesh (`NavCorridor`), `Some(false)`
+    /// the pathgrid fallback (fliers, swimmers, no resident navmesh tile), `None` not yet driven.
+    on_navmesh: Option<bool>,
 }
 
 /// The worldspace a mover lives in (NPCs never change worldspace in M3).
@@ -438,14 +465,22 @@ fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
 fn attach(
     mut commands: Commands,
     content: Res<WalkerContent>,
+    vocab: Option<Res<WanderVocab>>,
     pos_of: WorldPosOf,
     fresh: Query<
-        (Entity, &Character, &CharacterBody, &Transform, &ChildOf),
+        (
+            Entity,
+            &Character,
+            &CharacterBody,
+            &Transform,
+            &ChildOf,
+            Option<&CharacterPlacement>,
+        ),
         (Without<Mover>, Without<mw_game_core::player::PlayerAvatar>, Without<ActionDriven>),
     >,
     bodies: Query<&Transform>,
 ) {
-    for (entity, character, body, transform, parent) in &fresh {
+    for (entity, character, body, transform, parent, placement) in &fresh {
         let Character::Record { id, .. } = character else {
             continue;
         };
@@ -488,9 +523,23 @@ fn attach(
             ActorSpace(location.worldspace.clone()),
             Dormant,
         ));
+        if let Some(p) = placement {
+            e.try_insert(AiActor(ActorKey(p.0.0)));
+        }
         if let Some((wander, speed)) = setup.wander {
             let seed = entity.to_bits() ^ 0x5741_4C4B;
-            let scaffold = PathWalkScaffold::new(WanderPlanner::new(wander, position), speed, seed);
+            let vocab = vocab
+                .as_ref()
+                .map_or_else(mw_ai::wander_library, |v| v.0.clone());
+            let mut planner = WanderPlanner::new(wander, position);
+            planner.idle_mult = content.idle_mult;
+            let driver = WanderDriver::with_vocab(
+                planner,
+                speed,
+                seed,
+                location.worldspace.clone(),
+                vocab,
+            );
             let key = if location.worldspace == mw_world::ids::exterior() {
                 CellKey::exterior_at(position)
             } else {
@@ -498,15 +547,31 @@ fn attach(
             };
             e.insert((
                 Walker {
-                    scaffold,
+                    driver,
                     variant: None,
                     key,
+                    held_intent: None,
+                    on_navmesh: None,
                 },
                 Avoider {
                     max_speed: speed * 1.5,
                     ..Avoider::default()
                 },
             ));
+            if matches!(setup.mode, MoverMode::Ground) {
+                let actor_key = ActorKey(placement.map_or(u128::from(entity.to_bits()), |p| p.0.0));
+                let filter =
+                    QueryFilter::for_class(&mw_bake::nav::areas(), mw_bake::nav::HUMANOID);
+                e.insert(
+                    NavCorridor::new(
+                        actor_key,
+                        mw_bake::nav::HUMANOID,
+                        location.worldspace.clone(),
+                        speed,
+                    )
+                    .with_filter(filter),
+                );
+            }
         }
     }
 }
@@ -610,54 +675,191 @@ fn terrain_missing(heights: &TerrainHeightsMap, ws: &WorldspaceId, pos: WorldPos
         .any(|(dx, dz)| h.height(pos.offset(Vec3::new(dx, 0.0, dz))).is_none())
 }
 
-/// The scaffold writes intents (and route directions for ORCA's yield rule).
-/// `FixedUpdate` (`NV7a`): gameplay, one update per tick; there the generic
-/// clock is the fixed one, so `dt` is the tick and the walk is the same at
-/// any frame rate. A fidget fired here plays at the next animation update.
-#[allow(clippy::needless_pass_by_value)]
+fn nav_move_state(nav: &NavCorridor) -> NavMoveState {
+    if nav.failed.is_some() {
+        NavMoveState::Failed
+    } else if nav.is_arrived() {
+        NavMoveState::Arrived
+    } else if nav.corridor().is_some() {
+        NavMoveState::Following
+    } else if nav.pending.is_some() || nav.goal.is_some() {
+        NavMoveState::Pending
+    } else {
+        NavMoveState::Idle
+    }
+}
+
+fn clear_corridor_goal(nav: &mut NavCorridor, queries: Option<&mut NavQueries>) {
+    if let Some(id) = nav.pending.take()
+        && let Some(q) = queries
+    {
+        q.cancel(id);
+    }
+    nav.clear_goal();
+}
+
+/// Steps each awake [`Walker`] (`MA3`): on a resident navmesh tile, steps HTN + [`NavCorridor`]
+/// before [`NavSystems::Corridor`]; off the navmesh (fliers or unbaked cells), runs the pathgrid
+/// fallback route.
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::type_complexity
+)]
 fn drive(
     time: Res<Time>,
+    mut tick: ResMut<AiExecTick>,
+    exec_settings: Option<Res<AiExecSettings>>,
+    wander_settings: Option<Res<WanderSettings>>,
     grids: Res<Pathgrids>,
-    mut walkers: Query<(Entity, &Mover, &mut Walker, &mut MoveIntent, &mut Avoider), Without<Dormant>>,
+    meshes: Option<Res<NavMeshes>>,
+    mut queries: Option<ResMut<NavQueries>>,
+    mut traces: Option<ResMut<AiTraces>>,
+    mut walkers: Query<
+        (
+            Entity,
+            &Mover,
+            &ActorSpace,
+            Option<&AiActor>,
+            &mut Walker,
+            &mut MoveIntent,
+            &mut Avoider,
+            Option<&mut NavCorridor>,
+        ),
+        Without<Dormant>,
+    >,
     ground: Ground,
     mut give_ups: ResMut<GiveUps>,
+    mut modes: ResMut<WanderModes>,
     mut animators: Query<&mut Animator>,
 ) {
+    tick.0 += 1;
+    let current_tick = tick.0;
+    let exec_cfg = exec_settings.map_or_else(ExecConfig::default, |s| s.config);
+    let wander_tuning = wander_settings.map_or_else(WanderTuning::default, |s| s.tuning);
     let dt = time.delta_secs().min(0.1);
     let hours = dt * TIMESCALE / 3600.0;
-    for (entity, mover, mut walker, mut intent, mut avoider) in &mut walkers {
+    for (entity, mover, space, actor, mut walker, mut intent, mut avoider, mut corridor) in
+        &mut walkers
+    {
         let pos = mover.loco.position;
+        let loc = Location::new(space.0.clone(), pos);
         let walker = &mut *walker;
+        walker.driver.tuning = wander_tuning;
         let graph = grids.0.get(&walker.key);
-        let (stuck, edge) = (walker.scaffold.stuck_count(), current_edge(&walker.scaffold, pos));
-        let out = walker.scaffold.update(graph, pos, dt, hours);
-        if walker.scaffold.stuck_count() > stuck {
-            let kind = give_ups.record(entity, mover, edge, ground.probe());
-            if let Some((from, to)) = edge {
-                match graph.filter(|g| g.node_at(to).is_some()) {
-                    None => give_ups.off_grid += 1,
-                    Some(g) if g.node_at(from).is_none() => give_ups.first_leg += 1,
-                    Some(_) => {}
+
+        let on_navmesh = matches!(mover.loco.mode, MoverMode::Ground)
+            && corridor.as_ref().is_some_and(|c| {
+                meshes.as_ref().is_some_and(|m| {
+                    m.0.nearest(&loc, c.class, DEFAULT_EXTENT, &c.filter)
+                        .is_some()
+                })
+            });
+        walker.on_navmesh = Some(on_navmesh);
+        let arrivals_before = walker.driver.arrival_count();
+
+        let (walking, idle_variant) = if on_navmesh {
+            let nav = corridor.as_deref_mut().expect("on_navmesh requires corridor");
+            let nav_state = nav_move_state(nav);
+            let ctx = ExecContext {
+                location: loc,
+                yaw: mover.loco.motion.yaw,
+                dt,
+                nav: nav_state,
+            };
+            let wants_trace = actor
+                .zip(traces.as_ref())
+                .is_some_and(|(a, t)| t.wants(a.0, 2));
+            let mut entry = wants_trace.then(|| TraceEntry::new(current_tick, 2));
+            let (stuck, edge) = (walker.driver.stuck_count(), walker.driver.current_edge(pos));
+            let out = walker
+                .driver
+                .step_htn(graph, &ctx, &exec_cfg, hours, entry.as_mut());
+            if walker.driver.stuck_count() > stuck {
+                let _ = give_ups.record(entity, mover, edge, ground.probe());
+                modes.navmesh_give_ups += 1;
+            }
+            if let (Some(a), Some(t), Some(e)) = (actor, traces.as_mut(), entry)
+                && (out.plan_outcome.is_some() || out.operator.is_some())
+            {
+                t.push(a.0, e);
+            }
+            match out.nav {
+                NavCommand::MoveTo { goal, gait, speed } => {
+                    let needs_new_goal = nav.goal.as_ref() != Some(&goal)
+                        || nav.is_arrived()
+                        || nav.failed.is_some();
+                    if needs_new_goal {
+                        clear_corridor_goal(nav, queries.as_deref_mut());
+                        nav.set_goal(goal);
+                    }
+                    nav.follower.gait = to_controller_gait(gait);
+                    nav.follower.speed = speed;
+                    walker.held_intent = None;
+                }
+                NavCommand::Stop | NavCommand::None => {
+                    clear_corridor_goal(nav, queries.as_deref_mut());
+                    // Keep the executor's facing (`Face`, `Wait { facing }`) as
+                    // `sf_ai_bevy::apply_exec_output` does, held past the corridor's reset.
+                    let stand = LocomotionIntent {
+                        desired_facing: out.facing,
+                        ..LocomotionIntent::IDLE
+                    };
+                    intent.0 = stand;
+                    walker.held_intent = Some(stand);
                 }
             }
-            // The mover found the edge unwalkable: route around it, not idle.
-            if kind != "other"
-                && let Some((from, to)) = edge
-                && walker.scaffold.replan_around(graph, from, to, pos)
-            {
-                give_ups.rerouted += 1;
+            avoider.travel = nav
+                .corridor()
+                .and_then(|c| c.corners().first())
+                .map_or(Vec3::ZERO, |c| {
+                    pos.delta_f32(c.pos).with_y(0.0).normalize_or_zero()
+                });
+            (walker.driver.is_walking(), out.idle_variant)
+        } else {
+            if let Some(ref mut nav) = corridor {
+                clear_corridor_goal(nav, queries.as_deref_mut());
             }
+            let (stuck, edge) = (walker.driver.stuck_count(), walker.driver.current_edge(pos));
+            let out = walker.driver.update_fallback(graph, pos, dt, hours, &exec_cfg);
+            if walker.driver.stuck_count() > stuck {
+                let kind = give_ups.record(entity, mover, edge, ground.probe());
+                if let Some((from, to)) = edge {
+                    match graph.filter(|g| g.node_at(to).is_some()) {
+                        None => give_ups.off_grid += 1,
+                        Some(g) if g.node_at(from).is_none() => give_ups.first_leg += 1,
+                        Some(_) => {}
+                    }
+                }
+                // The mover found the edge unwalkable: route around it, not idle.
+                if kind != "other"
+                    && let Some((from, to)) = edge
+                    && walker.driver.replan_around(graph, from, to, pos)
+                {
+                    give_ups.rerouted += 1;
+                }
+            }
+            intent.0 = out.intent;
+            walker.held_intent = Some(out.intent);
+            avoider.travel = walker.driver.follower().map_or(Vec3::ZERO, |f| {
+                let t = f.target();
+                let from = if t > 0 { f.nodes[t - 1].pos } else { pos };
+                f.nodes.get(t).map_or(Vec3::ZERO, |n| {
+                    from.delta_f32(n.pos).with_y(0.0).normalize_or_zero()
+                })
+            });
+            (out.walking, out.idle_variant)
+        };
+        let arrived = u64::from(walker.driver.arrival_count() - arrivals_before);
+        if on_navmesh {
+            modes.navmesh_arrivals += arrived;
+        } else {
+            modes.fallback_arrivals += arrived;
         }
-        intent.0 = out.intent;
-        avoider.travel = walker.scaffold.follower().map_or(Vec3::ZERO, |f| {
-            let t = f.target();
-            let from = if t > 0 { f.nodes[t - 1].pos } else { pos };
-            f.nodes.get(t).map_or(Vec3::ZERO, |n| {
-                from.delta_f32(n.pos).with_y(0.0).normalize_or_zero()
-            })
-        });
+
         // AI_W idles: a new IdleN (2..=9) plays once as a fidget.
-        let variant = (!out.walking).then_some(out.idle_variant.unwrap_or(0));
+        let variant = (!walking).then_some(idle_variant.unwrap_or(0));
         if variant != walker.variant {
             walker.variant = variant;
             if let (Some(v @ 2..=9), Some(mut animator)) = (
@@ -667,6 +869,20 @@ fn drive(
                 animator.set_float(gp::IDLE_VARIANT, f32::from(v));
                 animator.fire(gp::FIDGET);
             }
+        }
+    }
+}
+
+/// Restores [`Walker::held_intent`] after [`NavSystems::Corridor`] for ground walkers whose
+/// [`NavCorridor`] had no active goal: pathgrid fallback walks, and navmesh stands holding the
+/// executor's facing.
+#[allow(clippy::type_complexity)]
+fn apply_held_intent(
+    mut walkers: Query<(&Walker, &mut MoveIntent), (Without<Dormant>, Without<Held>)>,
+) {
+    for (walker, mut intent) in &mut walkers {
+        if let Some(fb) = walker.held_intent {
+            intent.0 = fb;
         }
     }
 }
@@ -737,10 +953,11 @@ fn gizmos(
     }
 }
 
-/// Adds the walkers: controller stage, ground, pathgrids, scaffold driver.
+/// Adds the walkers: controller stage, ground, pathgrids, HTN wander driver.
 pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, physics: bool) {
     let started = std::time::Instant::now();
     let grids = PathGrids::build(&db);
+    let vocab = mw_ai::wander_library();
     let min_walk = gmst_float(&db, "fMinWalkSpeed", 100.0);
     let max_walk = gmst_float(&db, "fMaxWalkSpeed", 200.0);
     info!(
@@ -762,6 +979,8 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
     } else {
         app.add_plugins(SfControllerPlugin::<MwGround>::default());
     }
+    add_drive(app, vocab);
+    let idle_mult = gmst_float(&db, "fIdleChanceMultiplier", mw_ai::wander::IDLE_CHANCE_MULTIPLIER);
     app.insert_resource(GroundOnPhysics(physics))
         .insert_resource(ControllerSettings {
             params,
@@ -784,6 +1003,7 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
             db,
             min_walk,
             max_walk,
+            idle_mult,
         })
         // Host state at frame rate: ground (streamed colliders, terrain), new movers, the
         // processing range, the camera obstacle (scaffold). The ticks see it as last written.
@@ -807,11 +1027,6 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
                 ControllerSystems::Step.before(sf_physics_bevy::PhysicsSystems::Step),
             ),
         )
-        .add_systems(FixedUpdate, drive.in_set(ControllerSystems::Drive))
-        .insert_resource(GiveUps {
-            trace: std::env::var_os("BEVYRROWIND_STRIDE_TRACE").is_some(),
-            ..GiveUps::default()
-        })
         .insert_resource(StrideStats {
             trace: std::env::var_os("BEVYRROWIND_STRIDE_TRACE").is_some(),
             ..StrideStats::default()
@@ -825,6 +1040,193 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
             Update,
             log_fell_out.run_if(resource_exists::<Messages<sf_physics_bevy::CharacterFellOut>>),
         );
+}
+
+/// The wander drive (`MA3`): the HTN vocabulary as the AI library, the exec settings and tick,
+/// and [`drive`] on the fixed tick before [`NavSystems::Corridor`] (which turns its `MoveTo` goals
+/// into `MoveIntent`), then [`apply_held_intent`] after it. Shared by [`add`] and the headless
+/// drive tests, so they run the game's schedule.
+fn add_drive(app: &mut App, vocab: Arc<WanderVocabulary>) {
+    if !app.is_plugin_added::<AiPlugin>() {
+        app.add_plugins(AiPlugin::default());
+    }
+    app.insert_resource(AiLibrary {
+        library: vocab.library.clone(),
+        report: None,
+    })
+    .insert_resource(WanderVocab(vocab))
+    .init_resource::<AiExecSettings>()
+    .init_resource::<WanderSettings>()
+    .init_resource::<AiExecTick>()
+    .init_resource::<WanderModes>()
+    .insert_resource(GiveUps {
+        trace: std::env::var_os("BEVYRROWIND_STRIDE_TRACE").is_some(),
+        ..GiveUps::default()
+    })
+    .add_systems(
+        FixedUpdate,
+        (
+            drive
+                .in_set(ControllerSystems::Drive)
+                .after(NavSystems::Publish)
+                .before(NavSystems::Corridor),
+            apply_held_intent
+                .in_set(ControllerSystems::Drive)
+                .after(NavSystems::Corridor),
+        ),
+    )
+    .add_systems(Update, report_modes);
+    // The drive reads `AiExecSettings` without `AiExecPlugin` (it steps its own runners): bind
+    // the `ai.exec.*` tunables here unless the plugin already does.
+    if !app.is_plugin_added::<AiExecPlugin>() {
+        add_exec_tunables(app);
+    }
+    add_wander_tunables(app);
+}
+
+/// `mw.ai.wander.walk_backstop_mult`: [`WanderTuning::walk_backstop_mult`].
+pub const WANDER_WALK_BACKSTOP_MULT: Def<f32> = def!(float "mw.ai.wander.walk_backstop_mult" = 2.0)
+    .range(1.0, 10.0)
+    .unit(Unit::Ratio)
+    .help("Pathgrid fallback walks are given up after this multiple of their nominal time + slack")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Live);
+
+/// `mw.ai.wander.walk_slack_s`: [`WanderTuning::walk_slack_s`].
+pub const WANDER_WALK_SLACK_S: Def<f32> = def!(float "mw.ai.wander.walk_slack_s" = 5.0)
+    .range(0.0, 60.0)
+    .unit(Unit::Seconds)
+    .help("Seconds added to the pathgrid fallback walk backstop")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Live);
+
+/// `mw.ai.wander.same_goal_m`: [`WanderTuning::same_goal_m`].
+pub const WANDER_SAME_GOAL_M: Def<f32> = def!(float "mw.ai.wander.same_goal_m" = 0.5)
+    .range(0.0, 10.0)
+    .unit(Unit::Meters)
+    .help("A new wander goal this close to the goal just given up is rolled once more")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Live);
+
+/// `mw.ai.wander.give_up_pause_min_s`: [`WanderTuning::give_up_pause_min_s`].
+pub const WANDER_GIVE_UP_PAUSE_MIN_S: Def<f32> =
+    def!(float "mw.ai.wander.give_up_pause_min_s" = 1.0)
+    .range(0.0, 30.0)
+    .unit(Unit::Seconds)
+    .help("Seconds a wanderer stands after giving up a walk, before the random extra")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Live);
+
+/// `mw.ai.wander.give_up_pause_jitter_s`: [`WanderTuning::give_up_pause_jitter_s`].
+pub const WANDER_GIVE_UP_PAUSE_JITTER_S: Def<f32> =
+    def!(float "mw.ai.wander.give_up_pause_jitter_s" = 1.0)
+    .range(0.0, 30.0)
+    .unit(Unit::Seconds)
+    .help("Random extra seconds (uniform) a wanderer stands after giving up a walk")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Live);
+
+/// The wander drive's live tunables (`mw.ai.wander.*`).
+pub const TUNABLES: &[&dyn AnyDef] = &[
+    &WANDER_WALK_BACKSTOP_MULT,
+    &WANDER_WALK_SLACK_S,
+    &WANDER_SAME_GOAL_M,
+    &WANDER_GIVE_UP_PAUSE_MIN_S,
+    &WANDER_GIVE_UP_PAUSE_JITTER_S,
+];
+
+/// Live wander feel values bound from [`TUNABLES`]; [`drive`] copies them into every
+/// [`WanderDriver::tuning`].
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct WanderSettings {
+    pub tuning: WanderTuning,
+}
+
+impl Default for WanderSettings {
+    fn default() -> Self {
+        Self {
+            tuning: WanderTuning {
+                walk_backstop_mult: WANDER_WALK_BACKSTOP_MULT.default_value(),
+                walk_slack_s: WANDER_WALK_SLACK_S.default_value(),
+                same_goal_m: WANDER_SAME_GOAL_M.default_value(),
+                give_up_pause_min_s: WANDER_GIVE_UP_PAUSE_MIN_S.default_value(),
+                give_up_pause_jitter_s: WANDER_GIVE_UP_PAUSE_JITTER_S.default_value(),
+            },
+        }
+    }
+}
+
+fn add_wander_tunables(app: &mut App) {
+    let _mult = app
+        .add_tunable(&WANDER_WALK_BACKSTOP_MULT)
+        .bind_resource(|s: &mut WanderSettings, v| s.tuning.walk_backstop_mult = v);
+    let _slack = app
+        .add_tunable(&WANDER_WALK_SLACK_S)
+        .bind_resource(|s: &mut WanderSettings, v| s.tuning.walk_slack_s = v);
+    let _goal = app
+        .add_tunable(&WANDER_SAME_GOAL_M)
+        .bind_resource(|s: &mut WanderSettings, v| s.tuning.same_goal_m = v);
+    let _pause = app
+        .add_tunable(&WANDER_GIVE_UP_PAUSE_MIN_S)
+        .bind_resource(|s: &mut WanderSettings, v| s.tuning.give_up_pause_min_s = v);
+    let _jitter = app
+        .add_tunable(&WANDER_GIVE_UP_PAUSE_JITTER_S)
+        .bind_resource(|s: &mut WanderSettings, v| s.tuning.give_up_pause_jitter_s = v);
+}
+
+// tunables: const (log cadence only: how often the report lines re-check; gates no behaviour)
+const REPORT_INTERVAL_S: f32 = 5.0;
+
+/// Which mode the awake wanderers run (`MA3`) and what their walks did, since start.
+#[derive(Resource, Debug, Default)]
+pub struct WanderModes {
+    /// Awake wanderers on the HTN + navmesh path / on the pathgrid fallback, as last logged.
+    pub navmesh: usize,
+    pub fallback: usize,
+    /// Walks that reached their goal, by mode.
+    pub navmesh_arrivals: u64,
+    pub fallback_arrivals: u64,
+    /// Navmesh walks given up (no path, or 3 s without progress).
+    pub navmesh_give_ups: u64,
+    next: f32,
+}
+
+/// Logs `ai: N wanderers on navmesh, M on pathgrid fallback ...` when the split changes, checked
+/// every 5 s (not per frame): one line after a cell load settles, so a run's log shows MA3 live.
+#[allow(clippy::needless_pass_by_value)]
+fn report_modes(time: Res<Time>, mut modes: ResMut<WanderModes>, walkers: Query<&Walker, Without<Dormant>>) {
+    let now = time.elapsed_secs();
+    if now < modes.next {
+        return;
+    }
+    modes.next = now + REPORT_INTERVAL_S;
+    let (mut navmesh, mut fallback) = (0, 0);
+    for w in &walkers {
+        match w.on_navmesh {
+            Some(true) => navmesh += 1,
+            Some(false) => fallback += 1,
+            None => {}
+        }
+    }
+    if (navmesh, fallback) == (modes.navmesh, modes.fallback) {
+        return;
+    }
+    modes.navmesh = navmesh;
+    modes.fallback = fallback;
+    info!(
+        "ai: {navmesh} wanderers on navmesh, {fallback} on pathgrid fallback (since start: {} navmesh walks arrived, {} given up; {} fallback walks arrived)",
+        modes.navmesh_arrivals, modes.navmesh_give_ups, modes.fallback_arrivals
+    );
 }
 
 /// Every 5 s: what the walkers do (log only; counters carry the timings).
@@ -843,12 +1245,12 @@ fn report(
     if now < *next {
         return;
     }
-    *next = now + 5.0;
+    *next = now + REPORT_INTERVAL_S;
     let (mut walkers, mut walking, mut grounded, mut dormant, mut stuck, mut blocked) = (0, 0, 0, 0, 0, 0);
     for (m, w, d) in &movers {
         walkers += usize::from(w.is_some());
         dormant += usize::from(d);
-        stuck += w.map_or(0, |w| w.scaffold.stuck_count());
+        stuck += w.map_or(0, |w| w.driver.stuck_count());
         walking += usize::from(m.gait.moving);
         // Pushing without progress (blocked, crowded): the graph is told the
         // measured speed, so these stand instead of walking in place.
@@ -1114,16 +1516,7 @@ fn graph_state(character: Option<&Character>, a: &Animator, lod: Option<&AnimLod
 
 // --- Walks given up (walkers3) --------------------------------------------------------------
 
-/// The path edge a walker is on: where it comes from (the previous node, or
-/// where it stands when heading for the first) and the node it walks to.
-fn current_edge(scaffold: &PathWalkScaffold, pos: WorldPos) -> Option<(WorldPos, WorldPos)> {
-    let f = scaffold.follower()?;
-    let t = f.target();
-    let to = f.nodes.get(t)?.pos;
-    Some((if t > 0 { f.nodes[t - 1].pos } else { pos }, to))
-}
-
-/// Walks the scaffold gave up for lack of progress, by what stopped them:
+/// Walks the wander driver gave up for lack of progress, by what stopped them:
 /// ground too steep to climb ahead on the edge, a wall (any other surface
 /// that turned the motion aside), or nothing the mover hit (crowding, ORCA).
 /// `BEVYRROWIND_STRIDE_TRACE=1` logs each with the ground along the edge.
@@ -1242,4 +1635,18 @@ mod tests {
         assert!(app.world().get::<Dormant>(held).is_none(), "the range touched a held mover");
         assert!(app.world().get::<Held>(held).is_some());
     }
+
+    /// The `mw.ai.wander.*` tunable defaults and [`mw_ai::WanderTuning::default`] (the Bevy-free
+    /// twin `mw_ai` uses headless) are the same values, field by field.
+    #[test]
+    fn wander_tunable_defaults_match_wander_tuning_default() {
+        assert_eq!(
+            super::WanderSettings::default().tuning,
+            mw_ai::WanderTuning::default()
+        );
+    }
 }
+
+#[cfg(test)]
+#[path = "drive_tests.rs"]
+mod drive_tests;

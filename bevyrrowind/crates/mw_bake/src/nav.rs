@@ -295,8 +295,7 @@ impl NavSpace {
         #[allow(clippy::cast_precision_loss, reason = "512 quads")]
         let tile = sf_terrain::TILE_QUADS as f32 * TERRAIN_SPACING;
         for &(tx, tz) in input.terrain {
-            #[allow(clippy::cast_precision_loss, reason = "tile indices are small")]
-            let o = Vec2::new(tx as f32, tz as f32) * tile;
+            let o = WorldPos::ORIGIN.delta_f32(TileCoord::new(0, tx, tz).origin()).xz();
             for x in cell_range(o.x, o.x + tile - 1e-3, NAV_CELL) {
                 for z in cell_range(o.y, o.y + tile - 1e-3, NAV_CELL) {
                     cells.entry((x, z)).or_default().terrain.push((tx, tz));

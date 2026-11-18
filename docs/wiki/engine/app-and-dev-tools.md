@@ -103,8 +103,8 @@ F3 cycles off / compact / full (top right); console/BRP `flip perfpanel`. Number
 (`pipeline_watch.rs`).
 
 ## Switches and counters
-`--off <parts>`, `--bench`, `--resolution`, `--hitch-ms`/`BEVYRROWIND_HITCH_MS`, `BEVYRROWIND_BRP_PORT`,
-`BEVYRROWIND_BAKE_SKIP_NAV`. Live A/B and console variables as above.
+`--off <parts>`, `--bench`, `--resolution`, `--hitch-ms`/`BEVYRROWIND_HITCH_MS`, `BEVYRROWIND_BRP_PORT`.
+Live A/B and console variables as above.
 
 **Tunables** (spec `superfargoth/docs/specs/tunables.md`; index `docs/tunables-index.md`, regenerate with
 `bevyrrowind tunables --md`, `--json` for tools): `view`/`scene` (so benches) take `--set name=value` (repeatable) and

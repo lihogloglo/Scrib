@@ -3,6 +3,35 @@
 Moved here to keep [ai.md](ai.md) inside its size budget. Newest slice first; the module docs in
 `superfargoth/crates/sf_ai/src/` are the detailed reference.
 
+## AI6: move executors `MoveTo`, `Wait`, `Face` and HTN `PlanRunner` (2026-11-18)
+
+`sf_ai::exec` (Bevy-free; `sf_coords` + `glam` in `[dependencies]`, 0 Bevy crates): built-in operator vocabulary
+(`OP_MOVE_TO = "move_to"`, `OP_WAIT = "wait"`, `OP_FACE = "face"`, `register_move_operators -> MoveOperatorIds`),
+`ExecGait`, `FaceTarget { Yaw, Point }`, `OperatorKind` / `MoveAction`, `ExecConfig`, `NavMoveState`, `ExecContext`,
+`NavCommand`, `ExecOutput`, `OperatorExec`, and `PlanRunner` (`OperatorResolver`, `OperatorBindings`).
+- **`MoveTo`**: commands `NavCommand::MoveTo { goal, gait, speed }`; succeeds (`OperatorStatus::Succeeded`,
+  `PathState::None`) on `NavMoveState::Arrived` or initial proximity (`<= arrive_dist_m`); fails immediately with
+  `PathState::Failed(PathFailure::NoPath)` on `NavMoveState::Failed`; tracks the actor's closest planar XZ distance to
+  `goal.pos`, resetting `no_progress_s` whenever planar distance improves by `>= progress_min_m` (`0.25 m`) and failing
+  with `PathState::Failed(PathFailure::NoProgress)` at `stuck_timeout_s` (`3.0 s`, ai.md "Executors").
+- **`Wait`**: commands idle locomotion (`NavCommand::Stop`, optional `facing`, optional `idle_variant`) while counting
+  down `duration_s` by `dt` each fixed tick; succeeds as soon as `remaining_s <= 0.0`.
+- **`Face`**: computes desired yaw (`FaceTarget::Yaw` or `FaceTarget::Point` via `atan2(dx, dz)`), commands
+  `NavCommand::Stop` with `facing = Some(desired_yaw)`, and succeeds once `wrap_angle(desired_yaw - ctx.yaw).abs() <=
+  tolerance_rad`.
+- **`PlanRunner`**: runs either direct/queued operators (`step_direct`) or an HTN root `TaskId` (`step_htn`), monitoring
+  dirty read keys (`plan.reads.intersects(&dirty)`) via `htn::replan` (`Replaced` / `KeptNotBetter` / `KeptNoPlan`),
+  per-step primitive task preconditions (`lib.holds(step.task, ws)` -> fresh `decompose` on `Trigger::Replan`), and
+  partial plan continuations across `Pause` (`htn::resume` -> `PlanOutcome::Continued`, falling back to `decompose` on
+  failure), recording `OperatorState` and `PathState` into `TraceEntry`.
+- **Bevy shell (`sf_ai_bevy::exec`)**: `AiExecutor` component, `AiExecPlugin`, `AiSystems::Execute` in `FixedUpdate`
+  inside `ControllerSystems::Drive` ordered `.before(NavSystems::Corridor)` (replies are already published: `NavSystems::Publish` runs earlier, in `FixedFirst`; the `.after(Publish)` in code is a no-op) (plus
+  `apply_idle_intent` `.after(NavSystems::Corridor)` so `Wait`/`Face` `desired_facing` is preserved when
+  `NavCorridor::goal` is `None`); live tunables `ai.exec.{stuck_timeout_s 3.0, progress_min_m 0.25,
+  face_tolerance_rad 0.05}` (Guess, Dev, Net::Gameplay, Live). `NavQueryPlugin` and `NavCorridorPlugin` added in
+  `mw_walkers_bevy::nav::add`. Tests: `sf_ai` `tests_exec.rs` (4), `sf_ai_bevy` `exec_tests.rs` (2 headless Recast room
+  integration tests).
+
 ## AI7: drives, utility arbitration (2026-11-17)
 
 `sf_ai::drive` (Bevy-free, no new deps). Records `sf.ai.consideration` (`ConsiderationDef { input, range: (at0,

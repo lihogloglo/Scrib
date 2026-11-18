@@ -8,8 +8,10 @@ license.workspace = true
 
 # Bevy-free core (build-perf.md rule 1): in hakari's final-excludes.
 [dependencies]
+glam = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
+sf_coords.workspace = true
 sf_ids.workspace = true
 sf_records.workspace = true
 # `GameTime`, the logical clock directives expire on (AI4).
@@ -21,8 +23,6 @@ thiserror.workspace = true
 [dev-dependencies]
 # The save codec (save.md): the directive stack's binary round trip.
 postcard.workspace = true
-# `WorldPos` for test locations (`sf_world` doesn't re-export it).
-sf_coords.workspace = true
 
 [lints]
 workspace = true

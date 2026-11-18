@@ -30,6 +30,7 @@
 
 pub mod backend;
 pub mod baked;
+pub mod corridor;
 pub mod filter;
 pub mod grid;
 pub mod query;
@@ -39,11 +40,15 @@ pub mod types;
 
 pub use backend::{
     AreaVolume, BlobPoly, BlobTile, BuildConfig, DebugEdge, DebugPoly, DebugTri, NavBackend,
-    NavError, PolyEdge, TileGeometry, TileInput, TileSide, TileSummary,
+    NavError, PolyEdge, SurfaceMove, TileGeometry, TileInput, TileSide, TileSummary,
 };
 pub use baked::{
     BakedTile, CoarseEdge, CoarseGraph, CoarseNode, CoarseNodeKind, DoorApproach, DoorPolys,
     NavLinks,
+};
+pub use corridor::{
+    CORNER_PRUNE_DIST_M, CorridorConfig, CorridorStep, PathCorridor, merge_shortcut,
+    merge_start_moved,
 };
 pub use filter::QueryFilter;
 pub use grid::{GridBackend, GridCell, GridConfig};
@@ -63,6 +68,8 @@ pub use types::{
     TraverseKind,
 };
 
+#[cfg(test)]
+mod corridor_tests;
 #[cfg(test)]
 mod ring_tests;
 #[cfg(test)]

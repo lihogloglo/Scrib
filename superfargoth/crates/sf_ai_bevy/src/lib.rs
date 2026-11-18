@@ -38,12 +38,20 @@ use sf_ai::{
 use sf_records::RecordDb;
 
 mod console;
+pub mod exec;
 #[cfg(feature = "debug")]
 mod gizmos;
 
+pub use exec::{
+    AiExecPlugin, AiExecSettings, AiExecTick, AiExecutor, AiSystems, EXEC_ARRIVE_DIST_M,
+    EXEC_FACE_TOLERANCE_RAD, EXEC_PROGRESS_MIN_M, EXEC_STUCK_TIMEOUT_S, add_exec_tunables,
+    to_controller_gait,
+};
 #[cfg(feature = "debug")]
 pub use gizmos::AiGizmoVar;
 
+#[cfg(test)]
+mod exec_tests;
 #[cfg(test)]
 mod tests;
 

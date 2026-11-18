@@ -70,14 +70,7 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let report = baker.bake(&keys);
     let exterior = world::bake_exterior(&mut baker, &db, terrain, layers, &paths);
     // Navmeshes (nav.md "Bake"): after the collision cook and the terrain, which the tiles read.
-    // Scaffold (2026-11-11, removed once the cold navmesh bake meets the "few minutes" gate, nav.md "Bake"):
-    // `BEVYRROWIND_BAKE_SKIP_NAV=1` skips the navmesh steps so the other caches can re-bake meanwhile.
-    let nav = if std::env::var_os("BEVYRROWIND_BAKE_SKIP_NAV").is_some() {
-        println!("nav: skipped (BEVYRROWIND_BAKE_SKIP_NAV)");
-        None
-    } else {
-        Some(mw_bake::nav::bake_nav(&mut baker, &db, &paths))
-    };
+    let nav = mw_bake::nav::bake_nav(&mut baker, &db, &paths);
     // Far field (far-field.md): L1-L3 proxies and impostors over the exterior.
     let far = mw_bake::far::bake_far(&mut baker, &db, &[world::exterior()]);
     // Animation (bake-adapter.md "Animation"): skeletons, clips and graphs of every actor.
@@ -199,11 +192,9 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
         ),
         Err(e) => eprintln!("pipeline.catalog: not baked: {e}"),
     }
-    if let Some(nav) = &nav {
-        print!("{nav}");
-        for (key, error) in nav.failures.iter().take(10) {
-            eprintln!("  failed: {key}: {error}");
-        }
+    print!("{nav}");
+    for (key, error) in nav.failures.iter().take(10) {
+        eprintln!("  failed: {key}: {error}");
     }
     let fingerprint_hex = fingerprint.hex();
     println!("profile fingerprint {} ({})", &fingerprint_hex[..12], if profile_changed { "changed since the last bake" } else { "unchanged" });
@@ -248,7 +239,7 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     if demand_failed > 0 {
         errors.push(format!("{demand_failed} texture demand products failed"));
     }
-    if let Some(nav) = nav.as_ref().filter(|n| !n.failures.is_empty()) {
+    if !nav.failures.is_empty() {
         errors.push(format!("{} navmesh products failed", nav.failures.len()));
     }
     if let Err(e) = &catalog {

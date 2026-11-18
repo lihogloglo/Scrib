@@ -26,9 +26,9 @@ use sf_coords::WorldPos;
 use sf_world::{Location, WorldspaceId};
 
 use crate::{
-    AgentClassId, AreaId, AreaTable, BuildConfig, Goal, JobState, NavBackend, NavError, NavPoint,
-    NavRay, PathJob, PathQuery, PathResult, PathStatus, PolyRef, PolyState, QueryFilter,
-    SliceBudget, TileInput, TileKey, TileRef,
+    AgentClassId, AreaId, AreaTable, BuildConfig, CORNER_PRUNE_DIST_M, Goal, JobState, NavBackend,
+    NavError, NavPoint, NavRay, PathJob, PathQuery, PathResult, PathStatus, PolyRef, PolyState,
+    QueryFilter, SliceBudget, SurfaceMove, TileInput, TileKey, TileRef,
 };
 
 const BLOB_VERSION: u32 = 1;
@@ -289,6 +289,12 @@ impl GridBackend {
         (p / self.cfg.cell_size).floor() as i32
     }
 
+    fn clamp_to_cell(&self, v: &CellView, p: Vec3) -> Vec3 {
+        let cs = self.cfg.cell_size;
+        let (x0, z0) = (v.at.x as f32 * cs, v.at.y as f32 * cs);
+        Vec3::new(p.x.clamp(x0, x0 + cs), v.cell.y, p.z.clamp(z0, z0 + cs))
+    }
+
     /// `to` is enterable from `from`: resident, passes the filter, within the climb.
     fn step_ok(from: &CellView, to: Option<CellView>, f: &QueryFilter) -> Option<CellView> {
         to.filter(|t| {
@@ -333,6 +339,80 @@ fn local(loc: &Location) -> Vec3 {
 
 fn located(ws: &WorldspaceId, p: Vec3) -> Location {
     Location::new(ws.clone(), WorldPos::from_f64(p.as_dvec3()))
+}
+
+/// Detour's 2D signed triangle area (`acx * abz - abx * acz`).
+fn tri_area_2d(a: Vec3, b: Vec3, c: Vec3) -> f32 {
+    let (abx, abz) = (b.x - a.x, b.z - a.z);
+    let (acx, acz) = (c.x - a.x, c.z - a.z);
+    acx * abz - abx * acz
+}
+
+fn vequal_xz(a: Vec3, b: Vec3) -> bool {
+    Vec2::new(a.x - b.x, a.z - b.z).length_squared() < (1.0 / 16384.0) * (1.0 / 16384.0)
+}
+
+/// Funnel string-pulling across a sequence of `(left, right)` portals ending at `(end, end)`.
+fn pull_portals(start: Vec3, portals: &[(Vec3, Vec3)], max_pts: usize) -> Vec<Vec3> {
+    let mut out = Vec::with_capacity(max_pts.min(portals.len() + 1));
+    out.push(start);
+    if out.len() >= max_pts {
+        return out;
+    }
+    let mut apex = start;
+    let mut pleft = apex;
+    let mut pright = apex;
+    let (mut left_idx, mut right_idx) = (0usize, 0usize);
+    let mut i = 0usize;
+    while i < portals.len() {
+        let (left, right) = portals[i];
+        if tri_area_2d(apex, pright, right) <= 0.0 {
+            if vequal_xz(apex, pright) || tri_area_2d(apex, pleft, right) > 0.0 {
+                pright = right;
+                right_idx = i;
+            } else {
+                apex = pleft;
+                let apex_idx = left_idx;
+                out.push(apex);
+                if out.len() >= max_pts {
+                    return out;
+                }
+                pleft = apex;
+                pright = apex;
+                left_idx = apex_idx;
+                right_idx = apex_idx;
+                i = apex_idx + 1;
+                continue;
+            }
+        }
+        if tri_area_2d(apex, pleft, left) >= 0.0 {
+            if vequal_xz(apex, pleft) || tri_area_2d(apex, pright, left) < 0.0 {
+                pleft = left;
+                left_idx = i;
+            } else {
+                apex = pright;
+                let apex_idx = right_idx;
+                out.push(apex);
+                if out.len() >= max_pts {
+                    return out;
+                }
+                pleft = apex;
+                pright = apex;
+                left_idx = apex_idx;
+                right_idx = apex_idx;
+                i = apex_idx + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    if let Some(&(_, end)) = portals.last()
+        && out.len() < max_pts
+        && out.last().is_none_or(|&last| !vequal_xz(last, end))
+    {
+        out.push(end);
+    }
+    out
 }
 
 impl NavBackend for GridBackend {
@@ -675,6 +755,218 @@ impl NavBackend for GridBackend {
             }
         }
         Ok(())
+    }
+
+    fn closest_point_on_poly(&self, poly: PolyRef, at: &Location) -> Result<Location, NavError> {
+        let v = self.view(poly).ok_or(NavError::UnknownPoly(poly))?;
+        let (tile, _) = self.tile_of(poly).ok_or(NavError::UnknownPoly(poly))?;
+        if tile.key.ws != at.worldspace {
+            return Err(NavError::UnknownPoly(poly));
+        }
+        Ok(located(&at.worldspace, self.clamp_to_cell(&v, local(at))))
+    }
+
+    fn move_along_surface(
+        &self,
+        from: &NavPoint,
+        to: &Location,
+        filter: &QueryFilter,
+    ) -> Result<SurfaceMove, NavError> {
+        let ws = &from.loc.worldspace;
+        if &to.worldspace != ws {
+            return Err(NavError::WrongWorldspace {
+                query: ws.clone(),
+                goal: to.worldspace.clone(),
+            });
+        }
+        let start = self
+            .view(from.poly)
+            .filter(|v| filter.passes(v.cell.state.area, v.cell.state.flags))
+            .ok_or(NavError::UnknownPoly(from.poly))?;
+        let class = self
+            .tile_of(from.poly)
+            .map(|(t, _)| t.key.class)
+            .ok_or(NavError::UnknownPoly(from.poly))?;
+        let ray = self.raycast(from, to, filter)?;
+        let mut visited = ray.polys;
+        let mut cur = visited
+            .last()
+            .and_then(|&p| self.view(p))
+            .unwrap_or(start);
+        let b = local(to);
+        // When a diagonal ray hits a wall, slide along open cardinal cells toward `to`.
+        while visited.len() < 16 {
+            let cur_pt = self.clamp_to_cell(&cur, b);
+            let cur_d2 = Vec2::new(cur_pt.x - b.x, cur_pt.z - b.z).length_squared();
+            let mut best_next: Option<(f32, CellView)> = None;
+            for dir in &DIRS[..4] {
+                let Some(nb) = Self::step_ok(&cur, self.locate(ws, class, cur.at + *dir), filter)
+                else {
+                    continue;
+                };
+                let nb_pt = self.clamp_to_cell(&nb, b);
+                let d2 = Vec2::new(nb_pt.x - b.x, nb_pt.z - b.z).length_squared();
+                if d2 + 1e-6 < cur_d2 && best_next.as_ref().is_none_or(|(bd, _)| d2 < *bd) {
+                    best_next = Some((d2, nb));
+                }
+            }
+            let Some((_, nb)) = best_next else { break };
+            cur = nb;
+            visited.push(cur.poly);
+        }
+        let end = self.clamp_to_cell(&cur, b);
+        Ok(SurfaceMove {
+            pos: located(ws, end),
+            visited,
+        })
+    }
+
+    fn corridor_corners(
+        &self,
+        pos: &Location,
+        target: &Location,
+        polys: &[PolyRef],
+        max_corners: usize,
+    ) -> Result<Vec<Location>, NavError> {
+        let ws = &pos.worldspace;
+        if &target.worldspace != ws {
+            return Err(NavError::WrongWorldspace {
+                query: ws.clone(),
+                goal: target.worldspace.clone(),
+            });
+        }
+        let Some(&first) = polys.first() else {
+            return Err(NavError::Backend("empty corridor".into()));
+        };
+        if max_corners == 0 {
+            return Ok(Vec::new());
+        }
+        let first_view = self.view(first).ok_or(NavError::UnknownPoly(first))?;
+        let start = self.clamp_to_cell(&first_view, local(pos));
+        let mut portals: Vec<(Vec3, Vec3)> = Vec::with_capacity(polys.len());
+        let mut last_view = first_view;
+        let cs = self.cfg.cell_size;
+        for &next_poly in &polys[1..] {
+            let Some(next_view) = self.view(next_poly) else {
+                break;
+            };
+            let d = next_view.at - last_view.at;
+            let (x0, z0) = (last_view.at.x as f32 * cs, last_view.at.y as f32 * cs);
+            let (x1, z1) = (x0 + cs, z0 + cs);
+            let y = f32::midpoint(last_view.cell.y, next_view.cell.y);
+            let portal = match (d.x, d.y) {
+                (-1, 0) => (Vec3::new(x0, y, z0), Vec3::new(x0, y, z1)),
+                (0, 1) => (Vec3::new(x0, y, z1), Vec3::new(x1, y, z1)),
+                (1, 0) => (Vec3::new(x1, y, z1), Vec3::new(x1, y, z0)),
+                (0, -1) => (Vec3::new(x1, y, z0), Vec3::new(x0, y, z0)),
+                (1, 1) => (Vec3::new(x0, y, z1), Vec3::new(x1, y, z0)),
+                (-1, 1) => (Vec3::new(x0, y, z0), Vec3::new(x1, y, z1)),
+                (-1, -1) => (Vec3::new(x1, y, z0), Vec3::new(x0, y, z1)),
+                (1, -1) => (Vec3::new(x1, y, z1), Vec3::new(x0, y, z0)),
+                _ => break,
+            };
+            portals.push(portal);
+            last_view = next_view;
+        }
+        let end = self.clamp_to_cell(&last_view, local(target));
+        portals.push((end, end));
+
+        let pts = pull_portals(start, &portals, max_corners.saturating_add(1));
+        let prune_r2 = CORNER_PRUNE_DIST_M * CORNER_PRUNE_DIST_M;
+        let out: Vec<Location> = pts
+            .into_iter()
+            .skip_while(|p| Vec2::new(p.x - start.x, p.z - start.z).length_squared() <= prune_r2)
+            .take(max_corners)
+            .map(|p| located(ws, p))
+            .collect();
+        Ok(out)
+    }
+
+    fn repair_corridor(
+        &self,
+        start: &NavPoint,
+        target: &Location,
+        corridor: &[PolyRef],
+        filter: &QueryFilter,
+        max_nodes: u32,
+    ) -> Result<Vec<PolyRef>, NavError> {
+        let ws = &start.loc.worldspace;
+        if &target.worldspace != ws {
+            return Err(NavError::WrongWorldspace {
+                query: ws.clone(),
+                goal: target.worldspace.clone(),
+            });
+        }
+        let start_view = self
+            .view(start.poly)
+            .filter(|v| filter.passes(v.cell.state.area, v.cell.state.flags))
+            .ok_or(NavError::UnknownPoly(start.poly))?;
+        let class = self
+            .tile_of(start.poly)
+            .map(|(t, _)| t.key.class)
+            .ok_or(NavError::UnknownPoly(start.poly))?;
+        let valid: Vec<PolyRef> = corridor
+            .iter()
+            .copied()
+            .filter(|&p| {
+                self.view(p)
+                    .is_some_and(|v| filter.passes(v.cell.state.area, v.cell.state.flags))
+            })
+            .collect();
+        let Some(&end_poly) = valid.last() else {
+            return Ok(vec![start.poly]);
+        };
+        if start.poly == end_poly {
+            return Ok(vec![start.poly]);
+        }
+        let end_view = self.view(end_poly).expect("filtered valid");
+        let end_center = self.center(end_view.at, end_view.cell.y);
+        let end_pt = self.clamp_to_cell(&end_view, local(target));
+        let start_pos = self.center(start_view.at, start_view.cell.y);
+        let h_scale = filter.min_cost();
+        let mut s = Search {
+            epoch: self.epoch,
+            start: start.clone(),
+            target: Target::Polys(vec![(end_poly, end_center, end_pt)]),
+            h_scale,
+            open: BinaryHeap::new(),
+            nodes: HashMap::new(),
+            best: None,
+        };
+        s.open.push(Open {
+            f: s.target.heuristic(start_pos) * h_scale,
+            g: 0.0,
+            poly: start.poly,
+        });
+        s.nodes.insert(
+            start.poly,
+            Node {
+                g: 0.0,
+                parent: None,
+                closed: false,
+                pos: start_pos,
+            },
+        );
+        let dummy_query = PathQuery::new(class, start.loc.clone(), Goal::Point(target.clone()), filter.clone());
+        let mut budget = SliceBudget::new(max_nodes.max(1));
+        let (res, _) = self.run(&mut s, &dummy_query, &mut budget);
+        res?;
+
+        // Match Detour `finalizeSlicedFindPathPartial`: pick the furthest polygon of `valid`
+        // visited by the bounded search, or fall back to the closest visited polygon.
+        let end = valid
+            .iter()
+            .rev()
+            .copied()
+            .find(|p| s.nodes.contains_key(p))
+            .or_else(|| s.best.map(|(_, p)| p))
+            .unwrap_or(start.poly);
+        let mut path = vec![end];
+        while let Some(p) = s.nodes[path.last().expect("non-empty")].parent {
+            path.push(p);
+        }
+        path.reverse();
+        Ok(path)
     }
 }
 

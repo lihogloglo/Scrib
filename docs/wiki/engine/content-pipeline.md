@@ -48,7 +48,7 @@ dynamic read still match. `Store` (`store.rs:56`): `objects/ab/cdef..`, `traces.
 (`memo.rs`) caches file hashes by stat. `VfsInputs` (`mw_bake/src/inputs.rs`) gives file and record fingerprints.
 `bevyrrowind bake` (`apps/bevyrrowind/src/main.rs:126,750`) runs `mw_boot_bevy/src/bake.rs:23` in this order: models
 (`model.info`, `mesh.cook`, `mesh.rest`, `mesh.rig`) + `collision.cook` (`mw_bake/src/lib.rs:151`), exterior
-(`terrain.*`, `world.*`), nav (`mw.nav.cell/links`, skip with `BEVYRROWIND_BAKE_SKIP_NAV`), far field (`lod.*`), actors
+(`terrain.*`, `world.*`), nav (`mw.nav.cell/links`, `nav.tiles/links/coarse`), far field (`lod.*`), actors
 (skeleton/anim cook, graph compile), item bodies, scripts (MWScript to Luau), de-light and texture cook
 (`texture.*`), static scene (`scene.cells`, `scene.chains`). Cache root defaults to `<local data dir>/bevyrrowind/bake`.
 It prints a `BakeSummary` and saves the profile manifest.
@@ -60,13 +60,12 @@ None in the logic crates (Bevy-free by design). Bevy side: `sf_vfs/src/bevy.rs` 
 
 ## Switches and counters
 
-`BEVYRROWIND_BAKE_SKIP_NAV=1`; `--cache <dir>`; `BakeReport`/`StepStats` (`lib.rs:258,276`) count hits, runs and time per step.
+`--cache <dir>`; `BakeReport`/`StepStats` (`lib.rs:258,276`) count hits, runs and time per step.
 Re-run bake after changing animation slots or sources.
 
 ## Known limits
 
-Cold bake time of the nav steps is above the "few minutes" gate (scaffold skip above). Game logs: see
-[streaming ledger](../../ledger/streaming.md) for load-side hitches.
+Game logs: see [streaming ledger](../../ledger/streaming.md) for load-side hitches.
 
 ## Specs
 

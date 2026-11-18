@@ -32,15 +32,18 @@ mw_graphs.workspace = true
 mw_physics.workspace = true
 mw_world.workspace = true
 sf_action_bevy.workspace = true
+sf_ai.workspace = true
+sf_ai_bevy.workspace = true
 sf_anim_bevy.workspace = true
 sf_bake.workspace = true
 sf_camera.workspace = true
 sf_camera_bevy.workspace = true
-sf_character_bevy.workspace = true
+sf_character_bevy = { workspace = true, features = ["world"] }
 sf_controller = { workspace = true, features = ["bake", "terrain"] }
 sf_controller_bevy = { workspace = true, features = ["debug"] }
 sf_coords.workspace = true
 sf_diag_bevy.workspace = true
+sf_ids.workspace = true
 # `nav` (nav.md NV4c): the navmesh resource, its baked ring, `nav.stats` and `nav.draw` gizmos.
 sf_nav.workspace = true
 sf_nav_bake.workspace = true
@@ -51,6 +54,8 @@ sf_physics_bevy = { workspace = true, features = ["debug", "controller", "ragdol
 sf_ragdoll.workspace = true
 sf_records.workspace = true
 sf_terrain_bevy.workspace = true
+# `mw.ai.wander.*` tunables (MA3 wander feel) and the `ai.exec.*` binding the wander drive reads.
+sf_tunables_bevy.workspace = true
 sf_world.workspace = true
 sf_world_bevy.workspace = true
 tes3 = { workspace = true, features = ["esp"] }

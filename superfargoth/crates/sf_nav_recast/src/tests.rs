@@ -16,9 +16,10 @@ use std::time::Instant;
 use glam::{DVec3, Vec2, Vec3};
 use sf_coords::WorldPos;
 use sf_nav::{
-    AgentClass, AgentClassId, AreaDef, AreaId, AreaTable, AreaVolume, BuildConfig, DEFAULT_EXTENT,
-    Goal, JobState, MAX_CLASSES, NavBackend, NavError, PathJob, PathQuery, PathResult, PathStatus,
-    PolyFlags, PolyState, QueryFilter, SliceBudget, TileInput, TileKey,
+    AgentClass, AgentClassId, AreaDef, AreaId, AreaTable, AreaVolume, BuildConfig, CorridorConfig,
+    DEFAULT_EXTENT, Goal, JobState, MAX_CLASSES, NavBackend, NavError, PathCorridor, PathJob,
+    PathQuery, PathResult, PathStatus, PolyFlags, PolyState, QueryFilter, SliceBudget, TileInput,
+    TileKey,
 };
 use sf_world::{Location, WorldspaceId};
 
@@ -1145,4 +1146,89 @@ fn measure_bake_and_queries() {
         first.status,
         first.polys.len()
     );
+}
+
+#[test]
+fn recast_corridor_steps_repairs_and_shortcuts_visibility() {
+    // 2 x 2 tiles (16 m x 16 m) with a central pillar at [6.0..10.0, 6.0..10.0] and an isolated
+    // platform in tile (2, 0).
+    let mut s = Soup::default();
+    s.floor(0.0, 0.0, 16.0, 16.0, 0.0);
+    s.block(Vec3::new(6.0, 0.0, 6.0), Vec3::new(10.0, 3.0, 10.0));
+    s.floor(17.0, 0.0, 23.0, 8.0, 0.0);
+    let mut b = backend();
+    assert_eq!(load(&mut b, &s, 3, 2), 5);
+
+    let start = loc(2.0, 0.0, 8.0);
+    let goal = loc(14.0, 0.0, 8.0);
+    let path = b.find_path_now(query(start.clone(), Goal::Point(goal.clone()))).unwrap();
+    assert_eq!(path.status, PathStatus::Complete);
+    assert!(path.polys.len() >= 3, "polys: {}", path.polys.len());
+
+    let mut corridor = PathCorridor::from_result(H, filter(), goal.clone(), &path).unwrap();
+    let cfg = CorridorConfig::default();
+
+    // 1. Step along the waypoints: visited polygons trim from the front, and the final step
+    // reaches `stop_at_end = true`.
+    let initial_polys = corridor.polys().len();
+    for wp in &path.waypoints[1..] {
+        let a = xyz(corridor.pos());
+        let target_pt = xyz(wp);
+        for k in 1..=10 {
+            let p = a.lerp(target_pt, k as f32 / 10.0);
+            let step = corridor
+                .step(&b, loc(p.x, p.y, p.z), 1.0 / 60.0, &cfg)
+                .unwrap();
+            assert!(!step.needs_replan);
+        }
+    }
+    assert!(corridor.polys().len() < initial_polys);
+    assert!(corridor.stop_at_end());
+
+    // 2. Lateral push > repair_drift_m (2.5 m) onto an adjacent walkable polygon repairs locally
+    // without raising `needs_replan`.
+    let mut pushed = PathCorridor::from_result(H, filter(), goal.clone(), &path).unwrap();
+    let push_step = pushed
+        .step(&b, loc(2.0, 0.0, 11.5), 1.0 / 60.0, &cfg)
+        .unwrap();
+    assert!(push_step.repaired);
+    assert!(!push_step.needs_replan);
+    assert_eq!(pushed.last_poly(), path.polys.last().copied());
+
+    // 3. Push onto the disconnected platform at x = 20.0 raises `needs_replan`.
+    let mut disc = PathCorridor::from_result(H, filter(), goal.clone(), &path).unwrap();
+    let disc_step = disc
+        .step(&b, loc(20.0, 0.0, 4.0), 1.0 / 60.0, &cfg)
+        .unwrap();
+    assert!(!disc_step.repaired);
+    assert!(disc_step.needs_replan);
+
+    // 4. Visibility shortcutting: on an open 2-tile floor, a dogleg corridor across tiles
+    // straightens to 1 corner (`goal`), whereas around the pillar it never cuts across the pillar.
+    let mut open_soup = Soup::default();
+    open_soup.floor(0.0, 0.0, 16.0, 16.0, 0.0);
+    let open_b = backend_with(&open_soup, 2, 2);
+    let a = loc(2.0, 0.0, 2.0);
+    let mid = loc(14.0, 0.0, 2.0);
+    let c = loc(14.0, 0.0, 14.0);
+    let leg1 = open_b.find_path_now(query(a.clone(), Goal::Point(mid.clone()))).unwrap();
+    let leg2 = open_b.find_path_now(query(mid, Goal::Point(c.clone()))).unwrap();
+    let mut dogleg_polys = leg1.polys;
+    dogleg_polys.extend_from_slice(&leg2.polys[1..]);
+    let dogleg = PathResult {
+        status: PathStatus::Complete,
+        polys: dogleg_polys,
+        waypoints: vec![a.clone(), c.clone()],
+        cost: leg1.cost + leg2.cost,
+    };
+    let mut open_corr = PathCorridor::from_result(H, filter(), c.clone(), &dogleg).unwrap();
+    let open_step = open_corr.step(&open_b, a, 1.0 / 60.0, &cfg).unwrap();
+    assert_eq!(open_step.corners.len(), 1, "expected straight shortcut to goal: {:?}", open_step.corners);
+    assert!(xyz(&open_step.corners[0]).distance(xyz(&c)) < 0.2);
+
+    // Around the pillar on `b`, the initial corridor keeps its intermediate corner around the
+    // pillar and never cuts through [6..10, 6..10].
+    let mut pillar_corr = PathCorridor::from_result(H, filter(), goal, &path).unwrap();
+    let pillar_step = pillar_corr.step(&b, start, 1.0 / 60.0, &cfg).unwrap();
+    assert!(pillar_step.corners.len() >= 2, "must steer around pillar: {:?}", pillar_step.corners);
 }

@@ -98,8 +98,7 @@ cp "$(rustc --print sysroot)"/bin/std-*.dll "$dir/" 2>/dev/null
 log="$dir/last.log"
 # Bake first, with the very exe the owner will run (2026-11-11: a scene showed only capsules because the mesh cache
 # on disk was an older .sfmesh format than the build). A no-op when the store is current (~2 s); a stale store is
-# rebaked, which the scene needs anyway. A failed bake means no launch. The caller's env passes through (e.g. a
-# temporary BEVYRROWIND_BAKE_SKIP_NAV).
+# rebaked, which the scene needs anyway. A failed bake means no launch. The caller's env passes through.
 echo "owner_launch: checking the bake (no-op when current)"
 if ! ( cd "$ROOT" && "$dir/bevyrrowind.exe" bake ) > "$dir/bake.log" 2>&1; then
     echo "owner_launch: bake failed, not launching (log $(cygpath -w "$dir/bake.log"))"

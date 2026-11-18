@@ -154,6 +154,27 @@ fn cells_list_every_placement_their_bounds_touch() {
 }
 
 #[test]
+fn terrain_tiles_use_partition_origin_across_all_four_quadrants() {
+    let terrain = BTreeSet::from([(0, 0)]);
+    let input = SpaceInput {
+        extent: Some((Vec2::splat(-128.0), Vec2::splat(128.0))),
+        water: None,
+        placements: Vec::new(),
+        terrain: &terrain,
+        nodes: Vec::new(),
+    };
+    let s = NavSpace::build(&ws(), input, &bounds_of).unwrap();
+    // Level-0 tile (0, 0) spans [-128, 128) m on both axes: cells -2..=1 (64 m each), including x in [-128, 0).
+    let mut keys: Vec<_> = s.cells.keys().copied().collect();
+    keys.sort_unstable();
+    let expected: Vec<_> = (-2..=1).flat_map(|x| (-2..=1).map(move |z| (x, z))).collect();
+    assert_eq!(keys, expected);
+    for k in expected {
+        assert_eq!(s.cells[&k].terrain, vec![(0, 0)], "cell {k:?} must list tile (0, 0)");
+    }
+}
+
+#[test]
 fn door_volume_covers_the_doorway_and_its_threshold() {
     let w = world();
     let door = &w.spaces[&ws()].cells[&(0, 0)].doors[0];

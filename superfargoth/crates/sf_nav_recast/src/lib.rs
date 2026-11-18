@@ -30,6 +30,7 @@
 )]
 
 mod build;
+mod corridor;
 mod filter;
 mod refs;
 mod search;
@@ -46,8 +47,8 @@ use sf_coords::WorldPos;
 use sf_nav::{
     AgentClassId, AreaId, AreaTable, BlobPoly, BlobTile, BuildConfig, DebugPoly, DebugTri,
     JobState, NavBackend, NavError, NavPoint, NavRay, PathJob, PolyEdge, PolyFlags, PolyRef,
-    PolyState, QueryFilter, SliceBudget, TileGeometry, TileInput, TileKey, TileRef, TileSide,
-    TileSummary,
+    PolyState, QueryFilter, SliceBudget, SurfaceMove, TileGeometry, TileInput, TileKey, TileRef,
+    TileSide, TileSummary,
 };
 use sf_world::{Location, WorldspaceId};
 
@@ -749,6 +750,40 @@ impl NavBackend for RecastBackend {
                 .map_err(backend)?;
         }
         Ok(())
+    }
+
+    fn closest_point_on_poly(&self, poly: PolyRef, at: &Location) -> Result<Location, NavError> {
+        corridor::closest_point_on_poly(self, poly, at)
+    }
+
+    fn move_along_surface(
+        &self,
+        from: &NavPoint,
+        to: &Location,
+        filter: &QueryFilter,
+    ) -> Result<SurfaceMove, NavError> {
+        corridor::move_along_surface(self, from, to, filter)
+    }
+
+    fn corridor_corners(
+        &self,
+        pos: &Location,
+        target: &Location,
+        polys: &[PolyRef],
+        max_corners: usize,
+    ) -> Result<Vec<Location>, NavError> {
+        corridor::corridor_corners(self, pos, target, polys, max_corners)
+    }
+
+    fn repair_corridor(
+        &self,
+        start: &NavPoint,
+        target: &Location,
+        corridor: &[PolyRef],
+        filter: &QueryFilter,
+        max_nodes: u32,
+    ) -> Result<Vec<PolyRef>, NavError> {
+        corridor::repair_corridor(self, start, target, corridor, filter, max_nodes)
     }
 }
 

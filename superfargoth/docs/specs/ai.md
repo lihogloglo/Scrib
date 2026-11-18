@@ -136,6 +136,7 @@ NPC's from AI or scripts").
 
 Fliers skip the navmesh (3D steer with probes); swimmers use water areas. The **classic executor slot**: an operator
 set registered under the same task ids (e.g. an `AiWander` port in `mw_rules`), never built early.
+- **As built (AI6):** `sf_ai::exec` (`MoveTo`, `Wait`, `Face`, `PlanRunner`, `OperatorBindings`) + `sf_ai_bevy::exec` (`AiExecutor`, `AiExecPlugin`, tunables `ai.exec.*`): [ai-as-built.md](ai-as-built.md) "AI6".
 
 ## Perception and stimuli
 
@@ -317,8 +318,8 @@ One deliverable plus its test per slice. Visual checks use prefix `AI-`.
 | **AI3** overlay | `sf_ai_bevy` gizmos, `ai.select`/`ai.tiers`, BRP | headless smoke; log line |
 | **AI4** directives | stack, `StackPolicy`, completion events | exact orders, policy double |
 | **AI5** saves | `sf/ai` section | round trip; old saves load |
-| **AI6** move executors | `MoveTo`, `Wait`, `Face` over `sf_nav` (then MA3 drops `PathWalkScaffold`) | headless goals reached, no stuck |
-| **AI7** drives | arbiter, considerations, curves, momentum | exact scores and switch ticks |
+| **AI6** move executors (**built 2026-11-18**) | `MoveTo`, `Wait`, `Face` over `sf_nav` (then MA3 drops `PathWalkScaffold`) | headless goals reached, no stuck |
+| **AI7** drives (**built 2026-11-17**) | arbiter, considerations, curves, momentum | exact scores and switch ticks |
 | **AI8** perception | sight, hearing, stimuli, per-player awareness, batched LOS | exact on synthetic scenes |
 | **AI9** allocator | tiers 2/1, fixed `sim.cpu_tier` caps, pins; per-actor tier-2 cost in `ai.stats` | exact assignment + hysteresis; cost line logged |
 | **AI10** tier 0 | logical state, promotion resolve, `fast_forward` | tier invariance; no in-view promotion |

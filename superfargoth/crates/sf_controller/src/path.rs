@@ -94,6 +94,7 @@ pub struct PathOutput {
 }
 
 /// Follows a polyline of [`PathNode`]s.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug)]
 pub struct PathFollower {
     pub nodes: Vec<PathNode>,
@@ -113,6 +114,9 @@ pub struct PathFollower {
     backward: bool,
     wait_left: Option<f32>,
     finished: bool,
+    /// When false (a partial corridor or a truncated corner window), the last
+    /// node in [`Self::nodes`] is a walk-through corner rather than a stop.
+    stop_at_end: bool,
     /// The plan reached zero: coasting to rest on the spring.
     stopping: bool,
     /// A copy of the mover's velocity spring driven by the commanded speed
@@ -136,10 +140,34 @@ impl PathFollower {
             backward: false,
             wait_left: None,
             finished: false,
+            stop_at_end: true,
             stopping: false,
             plan_speed: 0.0,
             plan_accel: 0.0,
         }
+    }
+
+    /// Replaces the followed polyline with string-pulled corridor corners while
+    /// preserving the velocity-spring prediction (`plan_speed`, `plan_accel`).
+    /// When `stop_at_end` is false (an incomplete corridor or a truncated
+    /// corner window whose last corner is not the final target), every supplied
+    /// corner is walk-through.
+    pub fn set_corridor_corners(&mut self, corners: &[WorldPos], stop_at_end: bool) {
+        self.nodes.clear();
+        self.nodes.extend(corners.iter().copied().map(PathNode::at));
+        self.mode = PathMode::Once;
+        self.stop_at_end = stop_at_end;
+        self.target = 0;
+        self.backward = false;
+        self.wait_left = None;
+        self.finished = self.nodes.is_empty();
+        if !stop_at_end || self.nodes.len() != 1 {
+            self.stopping = false;
+        }
+    }
+
+    pub fn stop_at_end(&self) -> bool {
+        self.stop_at_end
     }
 
     /// Brakes like the mover with these parameters (arrival, velocity spring).
@@ -196,7 +224,7 @@ impl PathFollower {
 
     fn is_stop(&self, i: usize) -> bool {
         let end = match self.mode {
-            PathMode::Once => i + 1 == self.nodes.len(),
+            PathMode::Once => self.stop_at_end && i + 1 == self.nodes.len(),
             PathMode::Loop => false,
             PathMode::PingPong => i == 0 || i + 1 == self.nodes.len(),
         };
@@ -256,6 +284,9 @@ impl PathFollower {
             let node = self.nodes[self.target];
             let dist = flat(pos.delta_f32(node.pos)).length();
             if self.is_stop(self.target) {
+                if self.stopping && self.plan_speed <= self.arrival.cutoff_speed && dist > self.stop_radius {
+                    self.stopping = false;
+                }
                 // A committed stop arrives once the spring has come to rest.
                 let arrived = if self.stopping { self.plan_speed <= self.arrival.cutoff_speed } else { dist <= self.stop_radius };
                 if arrived {
@@ -271,8 +302,13 @@ impl PathFollower {
                     return self.idle(Some(&node));
                 }
             } else if dist <= self.arrival_radius {
-                self.advance();
-                continue;
+                if self.next(self.target, self.backward).is_some() {
+                    self.advance();
+                    continue;
+                } else if dist <= self.stop_radius {
+                    self.finished = true;
+                    return self.idle(Some(&node));
+                }
             }
             break;
         }

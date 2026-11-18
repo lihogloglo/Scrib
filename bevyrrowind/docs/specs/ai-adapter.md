@@ -1,6 +1,6 @@
 # AI adapter: Morrowind's packages, AI settings, crime and schedules on `sf_ai` / `sf_nav`
 
-Status: **draft, docs only (2026-11-08)**, nothing built. Framework design: `../../../superfargoth/docs/specs/ai.md`
+Status: **draft (2026-11-08); MA1 (NV4b) and MA3 built (2026-11-18, awaiting owner check AI-2)**. Framework design: `../../../superfargoth/docs/specs/ai.md`
 (directives, drives, HTN, tiers) and `../../../superfargoth/docs/specs/nav.md` (navmesh, links, worldspace graph).
 Research: `../../../superfargoth/docs/research/npc-ai-2026-11-08.md` §4, §7.2-7.3. Proposed ROADMAP 3.9 / 3.10.
 OpenMW source for every port: `gitlab.com/OpenMW/openmw` at **`b8285cc95d19e080fe0532f9f5154b0c3f727735`** (GPL-3.0);
@@ -9,8 +9,8 @@ ported code cites file + commit in its module docs, gets a `superfargoth/THIRD_P
 
 ## Crates
 
-- **`mw_ai`** (exists, Bevy-free, hakari `final-excludes`): today `pathgrid`, `wander`, `scaffold` (`PathWalkScaffold`,
-  removed in MA3). Gains: `packages` (AI_W/T/E/F/A → directives), `policy` (the OpenMW `StackPolicy`), `settings`
+- **`mw_ai`** (exists, Bevy-free, hakari `final-excludes`): `pathgrid`, `wander`, `methods` (`WanderVocabulary`,
+  `WanderDriver`, `wander_library`; `PathWalkScaffold` removed in MA3). Gains: `packages` (AI_W/T/E/F/A → directives), `policy` (the OpenMW `StackPolicy`), `settings`
   (Hello/Fight/Flee/Alarm considerations), `awareness` (the `AwarenessModel`), `fast_forward`, `schedules` (loader,
   anchors, quest-safety validator), `nav` (agent classes, area table, pathgrid links, door approach points), and the
   Morrowind HTN method set as data (`bevyrrowind/data/ai/methods/*.ron`).
@@ -178,7 +178,7 @@ filters through a new function family; named enemies remembering and returning a
 |---|---|---|---|
 | **MA1** nav data | two agent classes, area table, `NavGeometrySource` (door leaves out, doorway areas), pathgrid links, door approach points | real install: tile and link counts, bake time per class, creature-radius histogram printed | NV4 |
 | **MA2** packages | AI_* records and MWScript functions → directives, OpenMW `StackPolicy`, `GetAIPackageDone` | exact stack orders vs OpenMW cases; script tests per function | AI4 |
-| **MA3** wander methods | Morrowind wander/idle method set on `sf_ai`; `PathWalkScaffold` removed | headless: wanderers stay within radius; idle chances exact | AI6 |
+| **MA3** wander methods (**built 2026-11-18**) | Morrowind wander/idle method set on `sf_ai`; `PathWalkScaffold` removed | headless: wanderers stay within radius; idle chances exact (`roll_idle_with` vs OpenMW `getRandomIdle` at b8285cc; `drive_tests.rs` runs the real Bevy `drive`) | AI6 |
 | **MA4** settings | Hello/Fight/Flee stats + considerations | exact ratings vs OpenMW formulas | AI7 |
 | **MA5** awareness | `awarenessCheck` port as `AwarenessModel` | exact vs formula cases | AI8 |
 | **MA6** crime | `mw_rpg::crime` port (no `sf_ai` dep), guards' *Pursue* via glue | scripted theft: witnesses, bounty, guard pursues | MA5 |

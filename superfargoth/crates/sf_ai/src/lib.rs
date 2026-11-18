@@ -23,6 +23,7 @@
 
 pub mod directive;
 pub mod drive;
+pub mod exec;
 pub mod htn;
 pub mod ids;
 pub mod save;
@@ -36,6 +37,11 @@ pub use directive::{
 pub use drive::{
     ArbiterState, Arbitration, CONSIDERATION_KIND, Consideration, ConsiderationDef, Curve, DRIVE_KIND, Drive, DriveDef,
     DriveLoadError, DriveLoadReport, Drives, Inputs, SavedArbiter, Scored, arbitrate, register_drive_kinds, serving_for,
+};
+pub use exec::{
+    ExecConfig, ExecContext, ExecGait, ExecOutput, FaceTarget, MoveAction, MoveOperatorIds, NavCommand, NavMoveState,
+     OP_FACE, OP_MOVE_TO, OP_WAIT, OperatorBindings, OperatorExec, OperatorKind, OperatorResolver, PlanRunner,
+    register_move_operators, wrap_angle, yaw_toward,
 };
 pub use htn::{
     Decomposition, LoadError, LoadReport, Library, METHOD_KIND, MethodDef, NoPlan, Operators, Replan, Resume,
@@ -58,6 +64,8 @@ mod tests;
 mod tests_directive;
 #[cfg(test)]
 mod tests_drive;
+#[cfg(test)]
+mod tests_exec;
 #[cfg(test)]
 mod tests_htn;
 #[cfg(test)]

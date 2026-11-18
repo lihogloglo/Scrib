@@ -122,8 +122,8 @@ in the world; only the release start path (or a session working on the menu) sho
 - [ ] 3.6 Swimming + underwater (owner 2026-10-26): waits for the 3.7 design (water at any altitude, owner 2026-11-05). `water.md`, `docs/wiki/engine/terrain-and-water.md`.
 - [ ] 3.7 Buoyancy (owner 2026-10-26): pontoon bodies, drag, thrown items, corpses (`water.md`).
 - [~] 3.8 Ambient life clip factory (owner 2026-10-28): MG1-MG6, MG7a, MG10a done, tier1 268 clips; next MG10b, MG7b, MG1b, MG8. `specs/motion-generation.md`.
-- [~] 3.9 **NPC navigation** (M7): NV0-NV4d, NV4f done (154k tiles baked); NV4c built 2026-11-17 (player ring scaffold, 517 tiles in Seyda Neen, owner check NV-1); NV6 query service built 2026-11-17 (headless, not added by the game); NV7a NPC fixed tick built 2026-11-17 (owner check NV-2); next warm re-measure, NV8 (gate AI6), then NV5, NV7b, NV9-NV12. `specs/nav.md`.
-- [~] 3.10 **NPC AI** (M7): AI1-AI5, AI7 (drives, 2026-11-17) built headless, not wired into the game (`docs/briefs/ai-next.md`); AI6 waits on NV6/NV7a/NV8. `specs/ai.md`, `ai-as-built.md`.
+- [~] 3.9 **NPC navigation** (M7): NV0-NV4d, NV4f done (154k tiles baked, warm nav 2.18 s, `BEVYRROWIND_BAKE_SKIP_NAV` removed); NV4c done (player ring scaffold, terrain origin fixed + re-baked 2026-11-18, owner: NV-1); NV6 query service built 2026-11-17; NV7a NPC fixed tick done (owner: NV-2); NV8 corridor built 2026-11-18 (headless); next NV5, NV7b, NV9-NV12. `specs/nav.md`.
+- [~] 3.10 **NPC AI** (M7): AI1-AI7 built; MA3 done 2026-11-18, owner AI-2 OK (Morrowind wander/idle HTN methods on `sf_ai`, ground wanderers path on `sf_nav` via `NavCorridor`, `PathWalkScaffold` removed); next MA2 (packages + MWScript AI -> directives, OpenMW `StackPolicy`), MA4 (Hello/Fight/Flee considerations), AI8-AI13. `specs/ai.md`, `ai-as-built.md`, `docs/specs/ai-adapter.md`.
 - [ ] 3.11 **World interactivity** (owner 2026-11-11): crates, buildings, chairs, grabbing, mounts; owner answered; next IN0 core, IN1 crates break. `specs/interaction.md`, `world-reactions.md`.
 
 ## Phase 4: eye candy and the wider world (after phase 2)

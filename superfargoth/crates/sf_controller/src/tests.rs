@@ -759,6 +759,40 @@ fn walkers_stop_within_a_step_without_a_creep() {
     assert!(run.error.abs() < 0.1, "run stops {:+.2} m from the node", run.error);
 }
 
+#[test]
+fn corridor_corners_preserve_spring_and_walk_through_when_truncated() {
+    let world = World::new();
+    let params = MoverParams::default();
+    let mut path = PathFollower::new(Vec::new(), PathMode::Once, 1.5).for_mover(&params);
+    let mut loco = Locomotion::new(p(0.0, 0.0, 0.0), 0.0);
+    let mut mover = KinematicMover::new();
+
+    // Feed a single walk-through corner (`stop_at_end = false`) 0.35 m ahead:
+    // even inside braking distance, it commands full cruise speed without braking.
+    path.set_corridor_corners(&[p(0.0, 0.0, 0.35)], false);
+    assert!(!path.stop_at_end());
+    let out = path.update(loco.position, DT);
+    assert!(!out.finished);
+    assert!((out.intent.desired_velocity.length() - 1.5).abs() < 1e-5);
+
+    // Feed updated corners every tick into a final stop at z = 6.0 m (`stop_at_end = true`):
+    // preserving `stopping` across single-corner refreshes lands cleanly without re-accelerating.
+    let end = p(0.0, 0.0, 6.0);
+    let mut arrived = false;
+    for _ in 0..600 {
+        path.set_corridor_corners(&[end], true);
+        let out = path.update(loco.position, DT);
+        mover.step(MoveInput { loco: &mut loco, intent: out.intent, params: &params, root: RootMotion::default() }, &world, DT);
+        if out.finished {
+            arrived = true;
+            break;
+        }
+    }
+    assert!(arrived, "never finished at {:?}", xyz(loco.position));
+    assert!((xyz(loco.position).z - 6.0).abs() <= path.stop_radius);
+    assert!(loco.motion.velocity.length() <= path.arrival.cutoff_speed + 0.05);
+}
+
 // --- Bake step ---------------------------------------------------------------------------
 
 #[cfg(feature = "bake")]

@@ -22,6 +22,8 @@ bevy_ecs = { workspace = true, features = ["std"] }
 bevy_log.workspace = true
 # The query service's parallel slices (`ComputeTaskPool::scope`, opt-in).
 bevy_tasks.workspace = true
+# Fixed timestep delta for the corridor driver (NV8).
+bevy_time = { workspace = true, features = ["std"] }
 serde.workspace = true
 # The BRP answer (`sf_nav/stats`).
 serde_json.workspace = true
@@ -29,6 +31,9 @@ serde_json.workspace = true
 sf_bake.workspace = true
 sf_nav_bake.workspace = true
 sf_console_bevy.workspace = true
+# PathFollower and Mover/MoveIntent for the corridor driver (NV8).
+sf_controller.workspace = true
+sf_controller_bevy.workspace = true
 # WorldPos: the draw frame's origin.
 sf_coords.workspace = true
 # ActorKey in the query service's request ids.

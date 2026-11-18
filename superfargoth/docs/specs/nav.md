@@ -107,8 +107,8 @@ ends' worldspace and frame) in NV11, since the AI saves routes by link.
 `add_tile` / `remove_tile` / `tile`, `nearest`, sliced `find_path(&self, &mut PathJob, &mut SliceBudget)`, `raycast`,
 `poly_state` / `set_poly_state` (doors: `setPolyArea`/`setPolyFlags`, no rebuild), and read-only debug accessors
 (NV3) `tile_summaries` (key, bytes, polygons per resident tile) and `tile_geometry` (a tile's polygons with wall
-edges, region-local, built on request). Still to add: corridor moves
-(`dtPathCorridor`, NV8), local boundary (`dtLocalBoundary`, NV7b), `set_obstacle` / `clear_obstacle` /
+edges, region-local, built on request), and corridor moves (`is_valid_poly`, `closest_point_on_poly`,
+`move_along_surface`, `corridor_corners`, `repair_corridor`, NV8). Still to add: local boundary (`dtLocalBoundary`, NV7b), `set_obstacle` / `clear_obstacle` /
 `rebuild_dirty` (TileCache, NV10, opt-in), and bake-side `read_tile_blob` (NV4a: a blob's polygons with edge links:
 wall, in-tile polygon, or portal to a tile side). The bake's adapter seam (`sf_nav_bake`, built NV4a):
 
@@ -291,7 +291,7 @@ One deliverable plus its test per slice; research and building are separate.
 | **NV6** query service (**built 2026-11-17**) | worker queue, slicing, tick-boundary results, partial results at the ring edge | ordering and budget exact; sync mode equals async results |
 | **NV7a** fixed tick (**built 2026-11-17**) | NPC drive (path follower, ORCA, mover) in `FixedUpdate` + render interpolation | headless: walker positions identical at 30 and 144 fps for the same ticks |
 | **NV7b** ORCA walls | obstacle lines in `sf_controller::avoid` | agent never crosses a wall segment; batch = single bit for bit |
-| **NV8** corridor | `PathCorridor` feeding `PathFollower`; repair after a push | headless walk around a pillar and through a door frame, nothing stuck |
+| **NV8** corridor (**built 2026-11-18**) | `PathCorridor` feeding `PathFollower`; repair after a push | headless walk around a pillar and through a door frame, nothing stuck |
 | **NV9** links + areas | off-mesh links (jump, drop, ladder, pathgrid) and area costs per class | path takes the cheaper area; link traversal events in order |
 | **NV10** runtime patches | door poly state (area/flags); opt-in TileCache carving (`carves_nav`, at rest), rebuild budget | shut door raises cost with zero rebuilds, locked blocks except for an admitted agent; carve rebuilds per tick ≤ budget |
 | **NV11** worldspace graph | `LinkId`, `WorldGraph`, `portal_query` (supersedes seamless SI13) | exact routes on a synthetic 3-space graph; LOS through an open seamless opening, none through fade links |
@@ -317,7 +317,12 @@ which `NavRing` implements) + `sf_nav_bevy::queries::NavQueryPlugin` (`FixedFirs
 map keyed by `RequestId`, not a Message: staggered AI polls its id). Scaffold `NavQueryOnMain`: slices run inside the tick.
 **NV7a**: NPC drive + ORCA + mover in `FixedUpdate` (`ControllerSystems::Drive` → `Step`, after the player's move, before
 `PhysicsSystems::Step`); `Mover` keeps the tick's start/end poses, `ControllerSystems::Interpolate` draws them by overstep
-(the player's `TickPose`, now in `sf_controller::frame`). NV8 and AI6 write `MoveIntent` in `ControllerSystems::Drive`.
+(the player's `TickPose`, now in `sf_controller::frame`). **NV8**: `sf_nav::corridor::PathCorridor` (`move_along_surface`,
+local repair by bounded partial search when pushed past `repair_drift_m` or on an invalid start polygon, lookahead
+trimming, periodic topology optimization, visibility shortcutting, string-pulled corners) + `sf_nav_recast::corridor`
+and `GridBackend` implementations; `sf_controller::PathFollower::set_corridor_corners` preserves spring state across
+ticks; `sf_nav_bevy::corridor::NavCorridorPlugin` (`NavCorridor`, `NavSystems::Corridor` in `FixedUpdate` inside
+`ControllerSystems::Drive`, `.before(NavSystems::Queries)` (`NavSystems::Publish` runs earlier, in `FixedFirst`, so the `.after(Publish)` in code is a no-op), tunables `ai.nav.corridor.*`).
 
 ## Open questions
 

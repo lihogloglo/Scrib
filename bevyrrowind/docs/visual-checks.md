@@ -147,8 +147,9 @@ LK-1 | owner: issues (submenus overlap) | [player-ui](visual-checks/player-ui.md
 LK-2 | owner: issues (Continue style) | [player-ui](visual-checks/player-ui.md) | Look pass L2: title menu as OpenMW image buttons, version text
 FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)
-NV-1 | owner re-check 2026-11-17: still no lines on terrain: bake bug (terrain tiles listed 128 m off, `mw_bake/src/nav.rs:298`), fix + nav re-bake pending | [ai](visual-checks/ai.md) | Baked navmesh tiles over Seyda Neen (`nav.draw tiles`, `nav.stats`), slice NV4c (2026-11-17)
-NV-2 | awaiting owner | [ai](visual-checks/ai.md) | NPCs walk smoothly on the fixed tick at low and high fps; wake, knockdown, ball hits without pops, slice NV7a (2026-11-17)
+NV-1 | confirmed by owner 2026-11-18 (Balmora: `nav.stats` good, `nav.draw tiles` streams and follows terrain after detail-mesh + terrain-origin fixes) | [ai](visual-checks/ai.md) | Baked navmesh tiles over Seyda Neen (`nav.draw tiles`, `nav.stats`), slice NV4c (2026-11-17)
+NV-2 | confirmed by owner 2026-11-18 (Balmora) | [ai](visual-checks/ai.md) | NPCs walk smoothly on the fixed tick at low and high fps; wake, knockdown, ball hits without pops, slice NV7a (2026-11-17)
+AI-2 | confirmed by owner 2026-11-18 (Balmora: no one frozen, follow drawn paths, log OK) | [ai](visual-checks/ai.md) | Balmora wanderers plan HTN wander/idle and walk navmesh paths, pathgrid only as fallback, slice MA3 (2026-11-18)
 RG-1 | awaiting owner | [streaming](visual-checks/streaming.md) | Nothing pops in after a door fade or the loading screen lifts (reveal gate W1; `reveal:` lines)
 DR-5 | confirmed with follow-up (owner 2026-11-17: door in/out fine; F3 drop not read) | [streaming](visual-checks/streaming.md) | Interiors park the exterior (`set stream.interior.disable_exterior on`): door in and out unchanged, F3 entities/main ms drop indoors
 NS-3 | confirmed with follow-up (owner 2026-11-17: moonrise, per-moon glows; open: glow behind the disk, black inner circle on Masser) | [weather-sky](visual-checks/weather-sky.md) | Masser and Secunda

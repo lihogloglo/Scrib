@@ -1,11 +1,18 @@
 //! The `AI_W` wander package: idle rolls and wander goals.
 //!
-//! Behavior follows `OpenMW`'s `AiWander` (GPL reference, fine in this
-//! repo): each decision first rolls the eight idle chances; with no idle
-//! picked and a non-zero distance, the actor walks to a random pathgrid node
-//! within `distance` of its home (spawn) position, along A* from the node
-//! nearest to it. `game_hour` (time-of-day gating in the original editor's
-//! data) is kept but inert, as in `OpenMW`.
+//! Ported from `OpenMW` (GPL-3.0, fine in this repo) `apps/openmw/mwmechanics/aiwander.cpp` at
+//! commit `b8285cc95d19e080fe0532f9f5154b0c3f727735` (`bevyrrowind/docs/specs/ai-adapter.md`):
+//! - [`roll_idle_with`] is `AiWander::getRandomIdle` exactly: one closed-probability draw against
+//!   `fIdleChanceMultiplier` gates any idle, then each of Idle2..Idle9 draws `roll` in `[0, 100]`
+//!   and wins when `roll <= chance` and `roll` beats the best draw so far (which starts at 0).
+//! - `onChooseActionStatePerFrameActions`: with no idle picked and a non-zero distance, the actor
+//!   walks; here to a random pathgrid node within `distance` of its home (spawn) position, along
+//!   A* from the node nearest to it. `game_hour` (time-of-day gating in the original editor's
+//!   data) is kept but inert, as in `OpenMW`.
+//!
+//! Ours, not `OpenMW`'s (modern first): [`WanderPlanner::next_after`] skips the last fidget so
+//! none plays twice in a row, and a plain stand lasts 2-5 s instead of re-rolling every reaction
+//! tick.
 
 use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 
@@ -94,19 +101,26 @@ impl Wander {
     }
 }
 
-/// Rolls the idle chances (`OpenMW`'s rule): for each idle, draw
-/// `r` in `0..100/mult`; it wins if `r < mult * chance` and `r` beats the
-/// best draw so far (which starts at 0). Returns the group number (2..=9).
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+/// Rolls the idle chances with `rng` ([`roll_idle_with`]). Returns the group number (2..=9).
 pub fn roll_idle(chances: &[u8; 8], mult: f32, rng: &mut fastrand::Rng) -> Option<u8> {
-    let range = (100.0 / mult.max(1e-3)) as u32;
-    let mut best = 0;
+    roll_idle_with(chances, mult, || rng.f32())
+}
+
+/// `OpenMW`'s `AiWander::getRandomIdle` (`aiwander.cpp` at `b8285cc9`), `draw` standing for
+/// `Misc::Rng::rollClosedProbability` (uniform in `[0, 1]`): no idle when the first draw exceeds
+/// `mult` (`fIdleChanceMultiplier`); else, for each of Idle2..=Idle9 in order, `roll = 100 *
+/// draw()` wins when `roll <= chance` and `roll > best` (`best` starts at 0 and becomes the
+/// winning roll). Draws once for the gate and, past it, once per idle. Returns the group (2..=9).
+pub fn roll_idle_with(chances: &[u8; 8], mult: f32, mut draw: impl FnMut() -> f32) -> Option<u8> {
+    if draw() > mult {
+        return None;
+    }
+    let mut best = 0.0;
     let mut pick = None;
     for (group, &chance) in (2u8..).zip(chances) {
-        let threshold = (mult * f32::from(chance)) as u32;
-        let r = rng.u32(0..range.max(1));
-        if r < threshold && r > best {
-            best = r;
+        let roll = draw() * 100.0;
+        if roll <= f32::from(chance) && roll > best {
+            best = roll;
             pick = Some(group);
         }
     }

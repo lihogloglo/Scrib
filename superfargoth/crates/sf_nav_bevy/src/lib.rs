@@ -35,11 +35,14 @@ use sf_nav::{AgentClassId, NavBackend, PathResult};
 use sf_world::{Location, WorldspaceId};
 
 mod console;
+pub mod corridor;
 #[cfg(feature = "debug")]
 mod gizmos;
 pub mod queries;
 pub mod residency;
 
+#[cfg(test)]
+mod corridor_tests;
 #[cfg(test)]
 mod queries_tests;
 #[cfg(test)]
@@ -47,6 +50,11 @@ mod residency_tests;
 #[cfg(test)]
 mod tests;
 
+pub use corridor::{
+    CORRIDOR_LOOKAHEAD_POLYS, CORRIDOR_MAX_CORNERS, CORRIDOR_OPTIMIZE_RANGE_M,
+    CORRIDOR_REPAIR_DRIFT_M, CORRIDOR_REPAIR_NODES, CORRIDOR_TOPOLOGY_PERIOD_S, NavCorridor,
+    NavCorridorPlugin, NavCorridorSettings,
+};
 pub use queries::{NavQueries, NavQueryPlugin, NavQuerySettings};
 pub use residency::{
     BakedNavRing, NavAnchor, NavRingPlugin, NavRingSettings, RING_LOAD_M, RING_TILES_PER_FRAME,
@@ -56,12 +64,14 @@ pub use residency::{
 /// The nav systems' sets, for hosts to order against: write [`NavAnchor`] before `Residency`
 /// (`Update`), [`NavDrawFrame`] before `Draw` (`PostUpdate`, feature `debug`); request paths
 /// before `Queries` (`FixedUpdate`) to have them planned that tick; replies are published in
-/// `Publish` (`FixedFirst`), before any `FixedUpdate` system.
+/// `Publish` (`FixedFirst`), before any `FixedUpdate` system; `Corridor` (`FixedUpdate`, inside
+/// `ControllerSystems::Drive`) steps [`NavCorridor`]s before `Queries`.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NavSystems {
     Residency,
     Draw,
     Publish,
+    Corridor,
     Queries,
 }
 
