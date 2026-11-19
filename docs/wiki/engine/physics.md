@@ -48,11 +48,12 @@ engine; no avian. See [Locomotion](locomotion-and-action.md) for the mover that 
 ## Switches and counters
 
 `--off physics` (`mw_game_core/src/perf.rs:158`); `physics/...` counters under `SfDiagPlugin`; collider wireframes with the
-`debug` feature. Delirium is off by default: `--features delirium` (`apps/bevyrrowind/Cargo.toml:19`).
+`debug` feature. Delirium is on by default (`apps/bevyrrowind/Cargo.toml:19`); `--no-default-features` leaves it out.
 
 ## Known limits
 
-Delirium 0.5+ reads weights from a GTA IV program (`kv::unlock`); a friend's replacement is to be adopted. One Delirium
+Delirium's ~700 engine numbers come from the no-game fork's stand-in table (`delirium_data::kv::unlock_own`, opened in
+`mw_delirium/src/sim.rs:17`): estimates from Delirium's own source, not GTA IV's, so behaviour differs from upstream. One Delirium
 character per process (`nmrs::set`). PH-12 floor hole and PH-13 drop-on-load are open (see [ledger](../../ledger/physics.md)).
 The player has no physics capsule (slice 11 waits for the owner).
 

@@ -120,6 +120,10 @@ ground before getting up, which delays the get-up (lying `still` check waits on 
 check on COM displacement + `roll_stall` timeout (head-right roll 3.0 -> 0.6 s); click-to-push F11 only, never on action
 characters (player, dummy). Owner confirmed live: no floor slide, capsule back under the body after the get-up (hidden
 while stumbling by design: Dormant). Status: confirmed. Open (later): a body landing crouched sinks/slides ~1.5 s first.
+Re-check 2026-11-19 (confirmed): engine numbers now the no-game fork's stand-ins, not GTA IV's (build
+`--features dev,delirium_push`). Look for: same as above, plus whether he feels stiffer or looser than before (headless:
+80-120 N s chest pushes mostly ridden out by stepping, 160 N s floors him from the side). Owner 2026-11-19: a jump/flicker
+back to the capsule at the end; fixed (`Mover::snap` at the hand-back); owner: solved.
 
 
 ### AL-TRUNK Matched retarget pose for the trunk (retarget-trunk 2026-11-12, browser confirmed by owner; in-game part open)

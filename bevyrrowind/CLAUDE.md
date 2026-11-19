@@ -20,7 +20,7 @@ cargo run -p bevyrrowind --features dev,solari,dlss -- view "<cell>" --rt [--dls
 
 Game runs are for the owner's checks: sub-agents never launch the game, and the session talking to the owner
 uses `tools/owner_launch.sh` (`../CONTRIBUTING.md` "Tests and visual checks"). Game crates may take GPL
-crates; Delirium (`--features delirium`) is GPL-3.0-only and off by default (app `Cargo.toml`).
+crates; Delirium (`delirium` feature) is GPL-3.0-only and on by default (app `Cargo.toml`; `--no-default-features` drops it).
 
 ## Live inspection (BRP)
 

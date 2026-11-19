@@ -3036,8 +3036,8 @@ dependencies = [
 
 [[package]]
 name = "delirium"
-version = "0.1.0"
-source = "git+https://github.com/PVCPC/delirium-physics?rev=f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d#f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d"
+version = "0.7.0"
+source = "git+https://github.com/ronokopl/delirium-physics-no-game?rev=cb8ccecd03d8427f43b798a8bcbf6c2fb9c5fa0e#cb8ccecd03d8427f43b798a8bcbf6c2fb9c5fa0e"
 dependencies = [
  "bevy_math",
  "bevy_tasks",
@@ -3048,8 +3048,8 @@ dependencies = [
 
 [[package]]
 name = "delirium-data"
-version = "0.1.0"
-source = "git+https://github.com/PVCPC/delirium-physics?rev=f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d#f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d"
+version = "0.7.0"
+source = "git+https://github.com/ronokopl/delirium-physics-no-game?rev=cb8ccecd03d8427f43b798a8bcbf6c2fb9c5fa0e#cb8ccecd03d8427f43b798a8bcbf6c2fb9c5fa0e"
 dependencies = [
  "aes",
  "blake3",
@@ -3058,8 +3058,8 @@ dependencies = [
 
 [[package]]
 name = "delirium-sdk"
-version = "0.1.0"
-source = "git+https://github.com/PVCPC/delirium-physics?rev=f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d#f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d"
+version = "0.7.0"
+source = "git+https://github.com/ronokopl/delirium-physics-no-game?rev=cb8ccecd03d8427f43b798a8bcbf6c2fb9c5fa0e#cb8ccecd03d8427f43b798a8bcbf6c2fb9c5fa0e"
 dependencies = [
  "delirium",
  "delirium-data",
@@ -5194,6 +5194,7 @@ name = "mw_delirium"
 version = "0.1.0"
 dependencies = [
  "delirium",
+ "delirium-data",
  "delirium-sdk",
  "glam 0.33.12",
  "mw_anim",

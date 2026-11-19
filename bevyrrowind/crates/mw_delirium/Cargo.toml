@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 delirium.workspace = true
+delirium-data.workspace = true
 delirium-sdk.workspace = true
 glam.workspace = true
 mw_anim.workspace = true

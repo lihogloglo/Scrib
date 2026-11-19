@@ -884,20 +884,7 @@ fn read_back(
         live.remove(&root);
         let mut transforms = frames.p1();
         if let Ok([mut t, mut local]) = transforms.get_many_mut([root, body]) {
-            let yaw = Mover::yaw_of(t.rotation * local.rotation * l0.rotation.inverse());
-            let rotation = Quat::from_rotation_y(yaw);
-            let shift = t.rotation * (t.scale * local.translation) - rotation * (t.scale * l0.translation);
-            t.rotation = rotation;
-            t.translation += shift;
-            *local = l0;
-            if let Ok(mut m) = movers.get_mut(root) {
-                m.loco.position = m.loco.render_position().offset(shift);
-                m.loco.height_offset = 0.0;
-                m.loco.height_offset_velocity = 0.0;
-                m.loco.motion.yaw = yaw;
-                m.loco.motion.facing_goal = yaw;
-                m.loco.motion.angular_velocity = 0.0;
-            }
+            move_root(&mut t, &mut local, l0, movers.get_mut(root).ok().as_deref_mut());
         }
         commands.entity(body).try_remove::<PhysicsPose>();
         // The capsule comes back with the mover (no `Dormant`); the proxies go.
@@ -907,6 +894,28 @@ fn read_back(
         info!("delirium: {root} handed back ({how:?}) after {secs:.1} s");
     }
     stats.live = live.len();
+}
+
+/// The hand-back's root move: the root takes the body's move (heading included, its mover too), the body its own local
+/// transform `l0` back. The mover goes to its new render position with `height_offset` zeroed, and both its tick poses
+/// with it (`Mover::snap`): left stale, the first frame with no fixed tick drew the takeover spot, a one-frame jump back
+/// (owner 2026-11-19, DE-1; the drawn-root interpolation came 2026-11-17).
+fn move_root(t: &mut Transform, local: &mut Transform, l0: Transform, mover: Option<&mut Mover>) {
+    let yaw = Mover::yaw_of(t.rotation * local.rotation * l0.rotation.inverse());
+    let rotation = Quat::from_rotation_y(yaw);
+    let shift = t.rotation * (t.scale * local.translation) - rotation * (t.scale * l0.translation);
+    t.rotation = rotation;
+    t.translation += shift;
+    *local = l0;
+    if let Some(m) = mover {
+        m.loco.position = m.loco.render_position().offset(shift);
+        m.loco.height_offset = 0.0;
+        m.loco.height_offset_velocity = 0.0;
+        m.loco.motion.yaw = yaw;
+        m.loco.motion.facing_goal = yaw;
+        m.loco.motion.angular_velocity = 0.0;
+        m.snap();
+    }
 }
 
 /// Click-to-push runs in the free camera (F11: `PlayerMode` off) or with no player layer at all, never while the
@@ -1129,6 +1138,32 @@ mod tests {
         }
         for other in ["meshes/base_animkna.nif", "meshes/r/guar.nif"] {
             assert!(death_reaction(other, true, point, Vec3::ZERO).is_none(), "{other}: the limp ragdoll");
+        }
+    }
+
+    /// Owner 2026-11-19 (DE-1): at the hand-back the character flashed back to the takeover spot for a frame: the
+    /// root moved but the mover's tick poses (the drawn-root interpolation) stayed there.
+    #[test]
+    fn hand_back_moves_the_drawn_root_too() {
+        use bevy_math::Quat;
+        use bevy_transform::components::Transform;
+        use sf_controller::MoverParams;
+        use sf_controller_bevy::Mover;
+
+        let start = WorldPos::ORIGIN;
+        let mut mover = Mover::new(start, 0.0, MoverParams::default(), WorldPos::ORIGIN);
+        mover.snap(); // Held: snapped at the takeover spot every frame.
+        let mut root = Transform::IDENTITY;
+        let l0 = Transform::IDENTITY;
+        // The body walked 1.5 m along x and turned 90 deg while held.
+        let mut body = Transform::from_xyz(1.5, 0.0, 0.0).with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+        super::move_root(&mut root, &mut body, l0, Some(&mut mover));
+        assert!((root.translation - Vec3::new(1.5, 0.0, 0.0)).length() < 1e-5, "root takes the body's move");
+        assert_eq!(body, l0, "the body gets its local transform back");
+        let landed = start.offset(Vec3::new(1.5, 0.0, 0.0));
+        let (prev, curr) = mover.poses();
+        for (name, pose) in [("prev", prev), ("curr", curr)] {
+            assert!(pose.position.delta_f32(landed).length() < 1e-5, "{name} tick pose at the moved spot, not the takeover's");
         }
     }
 

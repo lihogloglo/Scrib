@@ -1,4 +1,5 @@
-//! Delirium (Euphoria-style active ragdoll, github.com/PVCPC/delirium-physics, GPL-3.0-only) characters built from
+//! Delirium (Euphoria-style active ragdoll, github.com/PVCPC/delirium-physics through its no-game fork
+//! github.com/ronokopl/delirium-physics-no-game, GPL-3.0-only) characters built from
 //! Morrowind's humanoid skeleton. Bevy-free; ROADMAP 3.2b slice 1.
 //!
 //! - [`character_from_skeleton`]: the Delirium character (asset + build, `nm-character-1`) from the `Bip01` bones.

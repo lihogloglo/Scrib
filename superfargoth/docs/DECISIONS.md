@@ -1903,3 +1903,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-19 (worldgen, owner): any terrain is fine for now; the downstream chain (settlements, forests, textures) is
   procedural and regenerates from it, deterministically, in the game renderer. Generated worlds fill terrain detail on the
   GPU (look only); gameplay heights come from the CPU twin. Trees: several species, many, counts raised gradually.
+- 2026-11-19 (Delirium, owner): adopt ronokopl/delirium-physics-no-game (GPL-3.0-only fork of PVCPC 0.7.0) for Delirium's
+  engine numbers: own stand-ins from Delirium's source, no GTA IV data or player install. Our body stays our own
+  (`character_from_skeleton`); `delirium` is a default feature again (it was off 2026-11-10 only for the GTA IV need).

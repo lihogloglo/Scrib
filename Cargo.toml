@@ -162,10 +162,13 @@ wgpu-types = { version = "30", default-features = false, features = ["std"] }
 tes3 = { git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0", default-features = false }
 clap = { version = "4", features = ["derive"] }
 # Euphoria-style active ragdoll (GPL-3.0-only; owner 2026-10-26, ROADMAP 3.2b). Game crates only (`mw_delirium`):
-# GPL-3.0-only code stays out of the framework. No releases: pinned to a commit. Re-pinned 2026-11-08 to 0.7.0
-# (`f4ff84d`, main of 2026-11-06): the old pin 91ee246 vanished when upstream rewrote its history.
-delirium = { git = "https://github.com/PVCPC/delirium-physics", rev = "f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d", default-features = false }
-delirium-sdk = { git = "https://github.com/PVCPC/delirium-physics", rev = "f4ff84d0df9e8708da3c5fc6ffff8856137c8f9d" }
+# GPL-3.0-only code stays out of the framework. No releases: pinned to a commit. 2026-11-19: the no-game fork
+# (ronokopl, upstream 0.7.0 `41db26f` + `kv::unlock_own`: its own stand-in engine numbers, no GTA IV data),
+# replacing PVCPC `f4ff84d` whose numbers came from the player's GTA IV program.
+delirium = { git = "https://github.com/ronokopl/delirium-physics-no-game", rev = "cb8ccecd03d8427f43b798a8bcbf6c2fb9c5fa0e", default-features = false }
+delirium-sdk = { git = "https://github.com/ronokopl/delirium-physics-no-game", rev = "cb8ccecd03d8427f43b798a8bcbf6c2fb9c5fa0e" }
+# `kv::unlock_own`: the fork's stand-in engine numbers (safe Rust; the SDK's `nm_unlock_own` is the C entry).
+delirium-data = { git = "https://github.com/ronokopl/delirium-physics-no-game", rev = "cb8ccecd03d8427f43b798a8bcbf6c2fb9c5fa0e" }
 # Platform data directories: the bake cache lives in the local data dir.
 dirs = "6"
 encoding_rs = "0.8"

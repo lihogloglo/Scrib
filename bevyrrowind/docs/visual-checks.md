@@ -136,7 +136,7 @@ AN-2 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Walkers stop wit
 AN-8 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Creature capsules fit the creature
 AN-9 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted foot holds through the heel roll
 AN-10, AN-13, AN-14 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/anim-lab.md) | Get-ups
-DE-1 | confirmed with follow-up (2026-10-27: floor slide fixed, push in F11 only; a crouched landing sinks ~1.5 s, later) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
+DE-1 | confirmed 2026-11-19 (no-game fork numbers; hand-back jump fixed); earlier confirmed with follow-up (2026-10-27: floor slide fixed, push in F11 only; a crouched landing sinks ~1.5 s, later) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
 AL-TRUNK | confirmed in the browser 2026-11-12 (arms clear the chest, trunk upright); in-game mantle/combat clips not yet looked at | [anim-lab](visual-checks/anim-lab.md) | Matched retarget pose: retargeted clips keep Morrowind's trunk curvature (upright vs before), mantle/combat no worse
 AU-3 | partial (2026-10-30: greets only very close; NPCs don't stop or turn) | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
 AU-5 | rejected (2026-10-30: no swing, no sound, prompt only) | [audio](visual-checks/audio.md) | Swinging-door sounds

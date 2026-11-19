@@ -44,8 +44,10 @@ SOFTWARE.
   "skyrim-delirium contributors" (maintainer: YoucefNabil).
 - Ported into: `bevyrrowind/crates/mw_delirium/src/body.rs` (the game, not the framework; the crate is
   GPL-3.0-only), with the changes listed in that file's header. The crate also links delirium-physics
-  (github.com/PVCPC/delirium-physics, GPL-3.0-only) as a Cargo git dependency. The game app's `delirium` feature
-  (on by default since 2026-11-05, release builds included) links both, so default game binaries are GPL-3.0-only;
+  (github.com/PVCPC/delirium-physics, GPL-3.0-only; since 2026-11-19 through its modified fork
+  github.com/ronokopl/delirium-physics-no-game, commit `cb8ccec`, GPL-3.0-only, whose stand-in engine numbers replace
+  GTA IV's) as a Cargo git dependency. The game app's `delirium` feature
+  (on by default since 2026-11-05, off 2026-11-10 to 2026-11-19, release builds included) links both, so default game binaries are GPL-3.0-only;
   the GPU-vendor permission (`LICENSE-EXCEPTION.md`) doesn't extend to this code.
 
 ## OpenMW Clockwork (sunsoft directional PCSS)

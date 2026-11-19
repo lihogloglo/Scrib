@@ -13,8 +13,12 @@ use crate::Body;
 /// Step length, s (60 Hz).
 pub const DT: f32 = 1.0 / 60.0;
 
-/// Puts the character's asset in Delirium's global slot (first call per process wins).
+/// Opens Delirium's engine numbers from the no-game fork's own stand-in table (`kv-own.txt`, ronokopl/delirium-physics-no-game
+/// `cb8ccec`; no GTA IV data) and puts the character's asset in Delirium's global slot (first call per process wins).
 pub fn install(character: &Character) {
+    // `None`: the built-in table; numbers already opened are kept. The 157 slots it leaves unset (returned) are read
+    // only by `delirium-data`'s game-file parsers (vehicles, maps, pad), never by the engine (checked 2026-11-19).
+    let _game_file_only = delirium_data::kv::unlock_own(None);
     let (j, p, m, s) = character.asset();
     delirium::nmrs::set(delirium::nmrs::HOMER, j, p, m, s);
 }
