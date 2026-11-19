@@ -1,0 +1,65 @@
+{
+  "name": "x10_west_gash_flight",
+  "warmup": {
+    "seconds": 3.0,
+    "frames": 120
+  },
+  "measure": {
+    "kind": "path",
+    "speed": 60.0,
+    "keyframes": [
+      {
+        "position": [
+          -1900.0,
+          381.0,
+          2300.0
+        ]
+      },
+      {
+        "position": [
+          -2172.0,
+          230.3,
+          1916.0
+        ]
+      },
+      {
+        "position": [
+          -3800.0,
+          537.0,
+          700.0
+        ]
+      },
+      {
+        "position": [
+          -5800.0,
+          337.0,
+          -300.0
+        ]
+      },
+      {
+        "position": [
+          -6500.0,
+          336.8,
+          1500.0
+        ]
+      }
+    ]
+  },
+  "gates": [
+    {
+      "gate": "max_frame_stat",
+      "stat": "median",
+      "ms": 8.3
+    },
+    {
+      "gate": "max_stutters",
+      "factor": 1.5,
+      "window": 60,
+      "per_minute": 1.0
+    },
+    {
+      "gate": "max_frame_ms",
+      "ms": 33.0
+    }
+  ]
+}

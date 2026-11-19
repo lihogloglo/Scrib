@@ -8,13 +8,19 @@ publish = false
 
 [dependencies]
 blake3.workspace = true
+# WG-X5 flora placements (`flora`): poses and `sf_world::Placement`s; all already in mw_world's graph.
+glam.workspace = true
 mw_records.workspace = true
 mw_world.workspace = true
 # 16-bit gray and indexed PNG writing; already in Cargo.lock (through `image`), no default features.
 png = "0.18"
 serde.workspace = true
 serde_json.workspace = true
+sf_coords.workspace = true
 sf_records.workspace = true
+sf_vfs.workspace = true
+sf_world.workspace = true
+sf_worldgen.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 
 [dev-dependencies]

@@ -51,6 +51,13 @@ impl LayerMap {
         [(id(0), w[0]), (id(1), w[1]), (id(2), w[2]), (id(3), w3)]
     }
 
+    /// A layer map from its samples (`LAYER_SAMPLES`² of them, row-major), each as [`Self::sample`] returns it:
+    /// what a provider that composes maps (one sample from one map, the next from another) builds with.
+    pub fn from_samples(coord: TileCoord, samples: &[[(LayerId, u8); 4]]) -> Result<Self, TerrainError> {
+        assert_eq!(samples.len(), LAYER_SAMPLES * LAYER_SAMPLES, "from_samples: one entry per layer sample");
+        Self::build(coord, samples)
+    }
+
     fn build(coord: TileCoord, samples: &[[(LayerId, u8); 4]]) -> Result<Self, TerrainError> {
         // Neighboring samples mostly repeat ids, and palettes are small:
         // skip repeats, then a linear check, instead of sorting every id.
@@ -152,12 +159,71 @@ pub fn resample_layers(
 ) -> Result<Option<LayerMap>, TerrainError> {
     assert_eq!(coord.level, 0, "coarser layer maps come from `downsample_layers`");
     let Some(mosaic) = &src.layers else { return Ok(None) };
+    resample_mosaic(coord, mosaic, 2, f64::from(params.blend_radius), params.default_layer).map(Some)
+}
+
+/// One layer grid on its own lattice (an adapter's material grid that isn't a set of source tiles, such as a
+/// generated world's guide layers): texel `(i, j)` covers `origin + [i, i + 1) · spacing` in engine X and Z (rows
+/// step +Z), `None` where it names no layer. Resampled with [`resample_layer_grid`]; at level 0 that equals
+/// [`resample_layers`] on a [`SourceMosaic`] of one tile holding the same layers.
+pub struct LayerGrid {
+    mosaic: GridMosaic<Option<LayerId>>,
+    size: [usize; 2],
+}
+
+impl LayerGrid {
+    /// `origin`: absolute engine metres (X, Z) of texel (0, 0)'s minimum corner; `texels` row-major, `size[0]`
+    /// per row.
+    pub fn new(origin: [f64; 2], spacing: f32, size: [usize; 2], texels: Vec<Option<LayerId>>) -> Result<Self, TerrainError> {
+        let id = crate::SourceTileId(0);
+        if texels.len() != size[0] * size[1] {
+            return Err(TerrainError::BadSize { id, what: "layer texels", got: texels.len(), expected: size[0] * size[1] });
+        }
+        let mut lattice = None;
+        let start = crate::source::place(id, "layers", &mut lattice, glam::DVec2::from_array(origin), spacing)?;
+        let lattice = lattice.expect("placed");
+        Ok(Self { mosaic: GridMosaic::new(lattice, vec![crate::source::Placed { start, size, data: texels }]), size })
+    }
+
+    /// Texel spacing, metres.
+    pub fn spacing(&self) -> f64 {
+        self.mosaic.lattice.spacing
+    }
+
+    /// `[w, h]` texels.
+    pub fn size(&self) -> [usize; 2] {
+        self.size
+    }
+}
+
+/// The layer map of `coord` at any level from one [`LayerGrid`]: layer sample `n` at level-0 index
+/// `first + (2n << level)` (as `TileCoord::global_sample(2n, ..)`), a tent of `params.blend_radius` around texel
+/// centres at level 0 (bitwise [`resample_layers`]), at coarser levels at least one layer sample wide (`2^level`
+/// m), so a coarse level prefilters instead of aliasing. A generator's direct per-level map, not the bake's
+/// [`downsample_layers`] chain (each level is built alone).
+pub fn resample_layer_grid(coord: TileCoord, grid: &LayerGrid, params: &LayerParams) -> Result<LayerMap, TerrainError> {
+    let step = 2i64 << coord.level;
+    let mut radius = f64::from(params.blend_radius);
+    if coord.level > 0 {
+        radius = radius.max(f64::from(1u32 << coord.level));
+    }
+    resample_mosaic(coord, &grid.mosaic, step, radius, params.default_layer)
+}
+
+/// Layer samples every `step` level-0 indices from `first_sample`, a tent of `radius_m` metres.
+fn resample_mosaic(
+    coord: TileCoord,
+    mosaic: &GridMosaic<Option<LayerId>>,
+    step: i64,
+    radius_m: f64,
+    default_layer: LayerId,
+) -> Result<LayerMap, TerrainError> {
     let lattice = mosaic.lattice;
-    let radius = (f64::from(params.blend_radius) / lattice.spacing).max(1e-3);
+    let radius = (radius_m / lattice.spacing).max(1e-3);
     let (gx0, gz0) = coord.first_sample();
-    // Samples every 2 level-0 indices (1 m); texel centers sit half a texel in.
-    let px = TentPlan::new(LAYER_SAMPLES, radius, |n| lattice.coord(gx0 + 2 * n, 0) - 0.5);
-    let pz = TentPlan::new(LAYER_SAMPLES, radius, |n| lattice.coord(gz0 + 2 * n, 1) - 0.5);
+    // Level 0: samples every 2 level-0 indices (1 m); texel centers sit half a texel in.
+    let px = TentPlan::new(LAYER_SAMPLES, radius, |n| lattice.coord(gx0 + step * n, 0) - 0.5);
+    let pz = TentPlan::new(LAYER_SAMPLES, radius, |n| lattice.coord(gz0 + step * n, 1) - 0.5);
     let window: Window<Option<LayerId>> = GridMosaic::gather(mosaic, [px.first, pz.first], [px.span, pz.span], None);
     let mut samples = Vec::with_capacity(LAYER_SAMPLES * LAYER_SAMPLES);
     let mut acc = Vec::new();
@@ -176,10 +242,10 @@ pub fn resample_layers(
                     }
                 }
             }
-            samples.push(top4(&mut acc, params.default_layer));
+            samples.push(top4(&mut acc, default_layer));
         }
     }
-    LayerMap::build(coord, &samples).map(Some)
+    LayerMap::build(coord, &samples)
 }
 
 /// Level-k layer map from level k−1 maps. `child` returns resident level

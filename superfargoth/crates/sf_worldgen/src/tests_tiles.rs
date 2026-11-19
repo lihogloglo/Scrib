@@ -170,6 +170,99 @@ fn bounds_cover(t: &GuideTiles) {
     // A coarse level well past the guide spacing (64 m samples) over level-0 tiles in the hills.
     check(TileCoord::new(7, 0, 0), TileCoord::new(0, 3, 3));
     check(TileCoord::new(7, 0, 0), TileCoord::new(0, 6, 5));
+    // Where the stamp fixture sits (unstamped tiles: just more coverage).
+    check(TileCoord::new(7, 0, 0), TileCoord::new(0, 3, 4));
+    check(TileCoord::new(3, 0, 0), TileCoord::new(0, 4, 4));
+}
+
+/// A stamp over the hills straddling level-0 tiles (3, 4) | (4, 4) (the edge at X = 896 m): weight 1 inside, a
+/// C1 smootherstep to 0 across 30 m at its edges, heights a 1.5 km tower (well past the guide, so the bounds
+/// must grow) with a ripple.
+fn stamped() -> GuideTiles {
+    let (w, h, sp, band) = (120usize, 100usize, 1.8288, 30.0);
+    let (mut heights, mut weights) = (Vec::new(), Vec::new());
+    for r in 0..h {
+        for c in 0..w {
+            let d = (c.min(w - 1 - c).min(r).min(h - 1 - r)) as f64 * sp;
+            let t = (d / band).clamp(0.0, 1.0);
+            weights.push((t * t * t * (t * (6.0 * t - 15.0) + 10.0)) as f32);
+            heights.push(1500.0 + 0.1 * c as f32 + 2.0 * ((r as f32) * 0.3).sin());
+        }
+    }
+    let stamp = crate::stamps::Stamp { name: "tower".into(), origin_m: [790.3, -930.7], dims: [w, h], spacing_m: sp, heights, weights };
+    tiles().with_stamps(StampSet { stamps: vec![stamp] })
+}
+
+#[test]
+fn stamp_replaces_inside_blends_in_band_and_leaves_outside_bitwise() {
+    let plain = tiles();
+    let st = stamped();
+    let idx = st.stamps().unwrap();
+    let (mut inside, mut band, mut outside) = (0, 0, 0);
+    for c in [TileCoord::new(0, 3, 4), TileCoord::new(0, 4, 4), TileCoord::new(2, 0, 0)] {
+        let (a, b) = (plain.heights(c), st.heights(c));
+        for j in 0..TILE_SAMPLES {
+            for i in 0..TILE_SAMPLES {
+                let (gx, gz) = c.global_sample(i, j);
+                let (x, z) = (sample_meters(gx), sample_meters(gz));
+                let (hp, hs) = (a.get(i, j), b.get(i, j));
+                match idx.sample(x, -z) {
+                    // Inside: the stamp's height bit for bit (no detail).
+                    Some((h, w)) if w >= 1.0 => {
+                        assert_eq!(hs.to_bits(), h.to_bits(), "{c:?} ({i}, {j})");
+                        inside += 1;
+                    }
+                    Some((h, w)) if w > 0.0 => {
+                        let (lo, hi) = (hp.min(h) - 25.0, hp.max(h) + 25.0);
+                        assert!(hs.is_finite() && hs >= lo && hs <= hi, "{c:?} ({i}, {j}): {hs} vs {hp} / {h}");
+                        band += 1;
+                    }
+                    _ => {
+                        assert_eq!(hs.to_bits(), hp.to_bits(), "{c:?} ({i}, {j}) changed outside the stamp");
+                        outside += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(inside > 1000 && band > 1000 && outside > 1000, "{inside} / {band} / {outside}");
+    // The point query is the tile function.
+    let (x, z) = (790.3 + 60.0 * 1.8288, 930.7 + 50.0 * 1.8288);
+    assert_eq!(st.height(x, z, 0).to_bits(), idx.sample(x, -z).unwrap().0.to_bits());
+    assert_eq!(st.height(x, z, 0).to_bits(), st.with_params(*st.params()).height(x, z, 0).to_bits());
+}
+
+#[test]
+fn stamped_tiles_are_bitwise_across_threads_and_neighbours() {
+    let t = stamped();
+    for level in [0u8, 1] {
+        let c = containing(800.0, 1000.0, level);
+        let a = t.heights(c);
+        let one = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap().install(|| t.heights(c));
+        assert_eq!(bits(&a), bits(&one));
+        let east = t.heights(TileCoord::new(level, c.x + 1, c.z));
+        let n = TILE_SAMPLES - 1;
+        for k in 0..TILE_SAMPLES {
+            assert_eq!(a.get(n, k).to_bits(), east.get(0, k).to_bits(), "level {level} east edge {k}");
+        }
+    }
+}
+
+#[test]
+fn stamped_bounds_cover_every_finer_level_sample() {
+    bounds_cover(&stamped());
+}
+
+#[test]
+fn stamped_gpu_data_packs_the_stamps_after_the_heights() {
+    let (plain, st) = (tiles(), stamped());
+    let (a, b) = (plain.gpu_data(), st.gpu_data());
+    assert_eq!(a[slot::STAMPS as usize], 0);
+    assert_eq!(b[slot::STAMPS as usize] as usize, a.len());
+    assert_eq!(&b[..slot::STAMPS as usize], &a[..slot::STAMPS as usize]);
+    assert_eq!(&b[slot::STAMPS as usize + 1..a.len()], &a[slot::STAMPS as usize + 1..]);
+    assert_eq!(b.len() * 4, st.gpu_data_bytes());
+    assert_eq!(a.len() * 4, plain.gpu_data_bytes());
 }
 
 #[test]

@@ -88,6 +88,9 @@ sf_mods.workspace = true
 sf_records.workspace = true
 # `pcss`, `solari`: on for every member at the root workspace entry (feature unification).
 sf_sky_bevy.workspace = true
+# `view world:` ground layers (WG-X3): the exterior bake's layer table and arrays (`bake::BakedTerrain`); `bake` is
+# already on through mw_bake, so no new feature set.
+sf_terrain = { workspace = true, features = ["bake"] }
 sf_vfs.workspace = true
 # `view world:` (worldgen slice G1): runtime terrain tiles from a guide (Bevy-free).
 sf_worldgen.workspace = true

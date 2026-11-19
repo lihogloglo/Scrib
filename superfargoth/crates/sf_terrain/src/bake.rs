@@ -1204,6 +1204,13 @@ impl BakedTerrain {
         Some(b.map_err(|e| e.to_string()).and_then(|b| RtProxy::from_bytes(&b).map_err(|e| e.to_string())))
     }
 
+    /// The layer table alone (ids, mean albedos; no texture data): what a generated world that borrows these
+    /// layers needs for its macro look.
+    pub fn layer_table(&self) -> Option<Result<LayerTable, String>> {
+        let b = self.bytes(LAYER_TABLE_STEP, "")?;
+        Some(b.map_err(|e| e.to_string()).and_then(|b| LayerTable::from_bytes(&b).map_err(|e| e.to_string())))
+    }
+
     /// The layer arrays at `size` (the largest baked one if `None`).
     pub fn layers(&self, size: Option<u32>) -> Option<Result<LayerArrays, String>> {
         self.layers_capped(size, &LayerCap::default())

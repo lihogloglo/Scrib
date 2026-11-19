@@ -1906,3 +1906,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-19 (Delirium, owner): adopt ronokopl/delirium-physics-no-game (GPL-3.0-only fork of PVCPC 0.7.0) for Delirium's
   engine numbers: own stand-ins from Delirium's source, no GTA IV data or player install. Our body stays our own
   (`character_from_skeleton`); `delirium` is a default feature again (it was off 2026-11-10 only for the GTA IV need).
+- 2026-11-19 (worldgen, owner): three world options for players: classic Morrowind, the same map at 10x (WG-X, built first),
+  and later the generated realistic island (the WG-S/VO/TD pipeline, also the owner's base for future worlds). Same-map
+  settlements stay 1:1 for now; settlement growth comes later.

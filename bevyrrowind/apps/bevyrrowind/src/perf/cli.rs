@@ -67,6 +67,18 @@ pub const SCENARIOS: &[SuiteScenario] = &[
         args: &["view", "Seyda Neen", "--bench", "benchmarks/exterior_flight.json", "--bench-ground"],
     },
     SuiteScenario {
+        name: "x10_flight",
+        about: "10x same map (worldgen WG-X, guide target/worldgen/x10s): 60 m/s flight from Balmora over the West Gash, 6.7 km",
+        args: &[
+            "view",
+            "world:target/worldgen/x10s",
+            "--camera",
+            "-1900,+80,2300,-2172,+10,1916",
+            "--bench",
+            "benchmarks/x10_flight.json",
+        ],
+    },
+    SuiteScenario {
         name: "census",
         about: "interior: Seyda Neen Census and Excise Office walk-through",
         args: &["view", "Seyda Neen, Census and Excise Office", "--bench", "benchmarks/census_office.json"],

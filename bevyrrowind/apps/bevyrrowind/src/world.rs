@@ -9,6 +9,10 @@
 //! Slice G2: the clipmaps fill on the GPU from the provider's field and its CPU tiles only answer height queries
 //! (generated on a small pool of their own, `twin_threads`); `--off gputerrain` is the G1 path (every tile on the
 //! CPU, rayon's global pool). The filter is live (`worldgen.filter`, `worldgen.octaves`, `mw_exterior_bevy::worldgen`).
+//!
+//! WG-X4: a guide with `anchors.json` (the same map at 10×, `worldgen-x10`) streams the content's settlements at
+//! their new places: anchor members and what lies inside stamped footprints, moved through the anchor transform
+//! (`world_content`); the rest of the content's exterior references stay out.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -18,6 +22,11 @@ use mw_environment_bevy::water::WaterInputs;
 use mw_devtools_bevy::perf::{Off, Part};
 use mw_exterior_bevy::worldgen::{CLOUD_BASE_LIFT_M, WorldgenSetup, WorldgenTiles};
 use mw_install::MorrowindInstall;
+use mw_world::convert::UNIT_METERS_F64;
+use mw_worldgen::classify::Class;
+use sf_bake::{Manifest, Store};
+use sf_records::RecordDb;
+use sf_worldgen::anchors::AnchorTransform;
 use sf_worldgen::filter::FilterParams;
 use sf_worldgen::tiles::{GuideTiles, LevelTiming};
 
@@ -74,6 +83,11 @@ pub(crate) fn view(install: &MorrowindInstall, dir: &str, mut flags: crate::View
         let eye = glam::DVec3::new(ex, ground(ex, ez).max(0.0) + EYE_HEIGHT_M, ez);
         (eye, glam::DVec3::new(sx, sh * 0.8, sz))
     };
+    // `--set scatter.budget=<count>`: the flora pass's budget (WG-X5), read here because the pass runs before the app.
+    let flora_budget = flags.perf.set.iter().find_map(|s| s.strip_prefix("scatter.budget=")).map(str::parse::<f64>).transpose()
+        .map_err(|e| format!("--set scatter.budget: {e}"))?;
+    // A load-time value, not an app tunable: the app's `--set` check would reject the name.
+    flags.perf.set.retain(|s| !s.starts_with("scatter.budget="));
     let (vfs, content) = mw_boot_bevy::load(install, false)?;
     let vfs = flags.delight(install, vfs)?;
     println!("content loaded in {:.2} s", started.elapsed().as_secs_f32());
@@ -86,6 +100,9 @@ pub(crate) fn view(install: &MorrowindInstall, dir: &str, mut flags: crate::View
     if let Some(w) = &mut options.weather {
         w.load_sounds(&content.db, &vfs);
     }
+    let tiles = with_exterior_layers(tiles, &options.store, &options.manifest, &mw_world::ids::exterior(), dir)?;
+    let anchors = AnchorTransform::read(path).map_err(|e| format!("world:{dir}: {e}"))?;
+    let world_content = anchors.map(|a| moved_content(&content.db, &a, &tiles, &options.store, &options.manifest, flora_budget));
     options.actors = Some(Arc::new(content.db));
     let report = tiles.clone();
     let base = tiles.clone();
@@ -101,8 +118,102 @@ pub(crate) fn view(install: &MorrowindInstall, dir: &str, mut flags: crate::View
         timings: Arc::new(move || summary(&report.timings())),
         octaves: prm.octaves,
         rebuild: Arc::new(rebuild),
+        content: world_content,
     });
     mw_exterior_bevy::exterior::run(Arc::new(vfs), options)
+}
+
+/// WG-X3: the generated world draws the exterior bake's layer arrays (a guide's `layers.json` names the same layer
+/// records, `worldgen-layers`), and its macro look comes from their mean albedos. Without a baked layer table the
+/// tiles stay as they are (default layer, fallback look).
+#[allow(clippy::cast_precision_loss)] // MiB for a log line
+fn with_exterior_layers(
+    tiles: Arc<GuideTiles>,
+    store: &Store,
+    manifest: &Manifest,
+    ext: &sf_world::WorldspaceId,
+    dir: &str,
+) -> Result<Arc<GuideTiles>, String> {
+    let baked = Arc::new(sf_terrain::bake::BakedTerrain::new(store.clone(), manifest, ext.clone()));
+    let table = match baked.layer_table() {
+        Some(Ok(t)) => t,
+        Some(Err(e)) => {
+            eprintln!("warning: world:{dir}: baked terrain layer table: {e}; no ground layers");
+            return Ok(tiles);
+        }
+        None => {
+            eprintln!("warning: world:{dir}: no baked terrain layer table (run `bevyrrowind bake`); no ground layers");
+            return Ok(tiles);
+        }
+    };
+    let arrays: sf_worldgen::tiles::LayerArraysFn = Arc::new(move |size, cap| baked.layers_capped(size, cap));
+    let (t, missing) = tiles.with_params(*tiles.params()).with_layer_arrays(&table, arrays).map_err(|e| format!("world:{dir}: {e}"))?;
+    match t.layers() {
+        Some(l) => {
+            let g = &l.layers().global;
+            println!(
+                "worldgen layers: {} palette layers ({} not in the bake: grey), global {}x{} @ {:.2} m, {} stamp grids, \
+                 layer table {} layers; GPU field {:.1} MiB",
+                l.ids().len(),
+                missing.len(),
+                g.dims[0],
+                g.dims[1],
+                g.spacing_m,
+                l.layers().stamps.len(),
+                table.layers.len(),
+                t.gpu_data_bytes() as f64 / f64::from(1u32 << 20),
+            );
+            if !missing.is_empty() {
+                eprintln!("warning: world:{dir}: layers not in the bake's table: {missing:?}");
+            }
+        }
+        None => println!("worldgen layers: none in {dir} (run `bevyrrowind worldgen-layers --guide {dir}`); fallback look"),
+    }
+    Ok(Arc::new(t))
+}
+
+/// The content's exterior references moved through `anchors` (`world_content`), with their log lines.
+fn moved_content(
+    db: &RecordDb,
+    anchors: &AnchorTransform,
+    tiles: &GuideTiles,
+    store: &Store,
+    manifest: &Manifest,
+    flora_budget: Option<f64>,
+) -> mw_exterior_bevy::worldgen::WorldgenContent {
+    let started = Instant::now();
+    let source = mw_world::MwWorldSource::build(db, &mw_world::SourceOptions::default());
+    let ext = mw_world::ids::exterior();
+    // The classification only names what's kept inside footprints and what's dropped (the census); it needs the
+    // models' bounds for rocks (`mw_worldgen::classify`).
+    let models: Vec<sf_vfs::VfsPath> = source.all_placements(&ext).filter_map(|p| p.model.clone()).collect();
+    let infos = mw_exterior_bevy::worldgen::model_infos(store, manifest, &models);
+    let infos: std::collections::HashMap<String, ([f32; 3], [f32; 3])> =
+        infos.into_iter().map(|(m, i)| (m.as_str().to_owned(), (i.min.to_array(), i.max.to_array()))).collect();
+    let bounds = |m: &str| infos.get(m).copied();
+    let refs = mw_worldgen::x10::exterior_refs(&source, &bounds);
+    let rock_min_m = mw_worldgen::anchor::Params::default().rock_min_m;
+    let classes = refs.iter().map(|r| mw_worldgen::classify::classify(r, rock_min_m).0);
+    let mut heights = mw_world::terrain::HeightSampler::new(db);
+    let mut source_ground = |x: f64, y: f64| {
+        #[allow(clippy::cast_possible_truncation)] // Morrowind units of the source map fit f32
+        let units = |m: f64| (m / UNIT_METERS_F64) as f32;
+        heights.height(units(x), units(y)).map(|h| f64::from(h) * UNIT_METERS_F64)
+    };
+    let ground = |x: f64, y: f64| f64::from(tiles.height(x, -y, 0));
+    let refs: Vec<(&sf_world::Placement, Class)> = source.all_placements(&ext).zip(classes).collect();
+    let (placements, census) = crate::world_content::remap(refs, anchors, &ground, &mut source_ground);
+    println!(
+        "worldgen anchors: {} anchors ({} stamped) at scale {}; {} placements kept in {:.2} s",
+        anchors.anchors.len(),
+        anchors.anchors.iter().filter(|a| a.stamp.is_some()).count(),
+        anchors.scale,
+        placements.len(),
+        started.elapsed().as_secs_f32()
+    );
+    println!("worldgen anchors: {}", census.line());
+    let extra = mw_worldgen::flora::extra(db, &source, &bounds, tiles, flora_budget);
+    mw_exterior_bevy::worldgen::WorldgenContent { placements, extra }
 }
 
 /// `L0 12 x 31.2 ms (max 45.0) + macro 2.1 ms | L1 ...`: tiles per level, mean and max ms each.

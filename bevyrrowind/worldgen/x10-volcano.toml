@@ -1,0 +1,177 @@
+# WG-X1: the "same map at 10x" volcano. Morrowind's own heights x10 (target/worldgen/x10, guide v1) keep their
+# relief; an apron and a smooth cone are ADDED on top so Red Mountain stands higher and more prominent, with a gentle
+# slope leading to its base (owner 2026-11-19). Spec: bevyrrowind/docs/specs/worldgen-adapter.md "Same map at 10x (WG-X)".
+# Run from the repo root:
+#   target/release/scrib-worldgen stamp-volcano --base target/worldgen/x10 --params bevyrrowind/worldgen/x10-volcano.toml --out target/worldgen/x10v
+# Code: superfargoth/crates/sf_worldgen/src/stratovolcano.rs ("Additive mode" in its module docs).
+# Every value: { v, unit, min, max, source }. `Guess` = not measured yet; the owner's look settles them. Arms change
+# values with `set`. Caldera, secondary, sub-peaks, collapse, rifts and ravines stay declared (switchable per arm) but
+# no arm uses them: Morrowind already has its crater.
+# Bearings are compass degrees (0 = north, 90 = east). Shares ("ratio" of R) are of the mean foot radius.
+
+mode = "additive"
+
+[centre]
+# Between the base maximum (4224.5, 10552.2), 2707.8 m, on the crater's NE rim, and the crater floor
+# (2974.5, 9852.2), 1449 m: the flat top covers both.
+explicit_m = [3600.0, 10200.0]
+
+[reference]
+# Real DEMs (WG-RC, Copernicus GLO-30, not shipped): their radial profiles are fitted in README.md for comparison.
+guides = ["target/worldgen/real/etna-20m", "target/worldgen/real/teide-20m"]
+# The base on the same edifice window, for the channel-structure comparison.
+structure_guides = ["target/worldgen/x10"]
+
+[params]
+seed = { v = 1, unit = "id", min = 0, max = 4294967295, source = "Guess", help = "hash seed of every feature" }
+summit_m = { v = 5500, unit = "m", min = 1000, max = 9000, source = "Owner(2026-11-18)", help = "highest point above sea after the stamp (base + apron + edifice); the base already reaches 2708 m" }
+ref_quantile = { v = 0.25, unit = "ratio", min = 0, max = 1, source = "Guess", help = "reference level: this quantile of the base heights on the foot ring (r_mean x blend_out)" }
+
+# Footprint and asymmetry.
+foot_major_m = { v = 16000, unit = "m", min = 1000, max = 60000, source = "Guess", help = "footprint ellipse semi-major axis, measured from the flat top + knee (cone distance); the coast is 10-17 km from the summit, 22 km to the SSE" }
+foot_minor_m = { v = 10000, unit = "m", min = 1000, max = 60000, source = "Guess", help = "semi-minor axis (cone distance)" }
+foot_major_bearing_deg = { v = 160, unit = "deg", min = 0, max = 360, source = "Guess", help = "major axis toward the land bridge (SSE)" }
+foot_offset_m = { v = 2500, unit = "m", min = 0, max = 30000, source = "Guess", help = "footprint centre offset from the summit toward the far (SSE) coast" }
+foot_offset_bearing_deg = { v = 160, unit = "deg", min = 0, max = 360, source = "Guess" }
+foot_warp = { v = 0.12, unit = "ratio", min = 0, max = 0.4, source = "Guess", help = "angular noise on the footprint radius" }
+foot_warp_wavelength_m = { v = 9000, unit = "m", min = 500, max = 100000, source = "Guess", help = "along the mean-radius circle" }
+domain_warp_m = { v = 400, unit = "m", min = 0, max = 5000, source = "Guess", help = "domain warp of the edifice (keeps amp x 1.9 / wavelength < 1: contours stay single-valued)" }
+domain_warp_wavelength_m = { v = 5000, unit = "m", min = 500, max = 100000, source = "Guess" }
+
+# Profile (power-law concave cone on an apron, measured from a flat top that keeps the base's summit and crater).
+top_flat_m = { v = 1700, unit = "m", min = 0, max = 20000, source = "Guess", help = "flat top radius: a uniform lift, so the base's crater (1.5 km from the centre, ~700 m radius) and summit rim keep their relief" }
+top_round_m = { v = 800, unit = "m", min = 0, max = 20000, source = "Guess", help = "C1 knee half-width joining the flat top to the cone" }
+coast_fit_norm = { v = 4, unit = "ratio", min = 0, max = 16, source = "Guess", help = "coast-fitted footprint: rho = (rho_ellipse^n + rho_coast^n)^(1/n), rho_coast = r / (r + coast distance); 0 = ellipse only. The north coast is only 10 km from the summit" }
+cone_exponent = { v = 1.6, unit = "ratio", min = 1, max = 4, source = "Guess", help = "p of E = H (1 - rho)^p; larger = more concave (steeper upper, gentler lower flanks)" }
+cone_exponent_var = { v = 0.15, unit = "ratio", min = 0, max = 0.6, source = "Guess", help = "flank-specific exponent: p (1 + var n(theta)), at least 1" }
+cone_exponent_wavelength_m = { v = 14000, unit = "m", min = 500, max = 100000, source = "Guess" }
+crater_radius_m = { v = 350, unit = "m", min = 10, max = 5000, source = "Guess", help = "summit crater; Etna's summit craters are a few hundred metres across" }
+crater_depth_m = { v = 0, unit = "m", min = 0, max = 1000, source = "Guess", help = "0: no edifice crater, the base keeps its own (Morrowind's crater rides on the flat top)" }
+blend_in = { v = 0.8, unit = "ratio", min = 0, max = 2, source = "Guess", help = "edifice replaces the base fully inside this share of R(theta)" }
+blend_out = { v = 1.15, unit = "ratio", min = 0, max = 3, source = "Guess", help = "base untouched by the edifice beyond this share" }
+coast_fade_m = { v = 1000, unit = "m", min = 0, max = 20000, source = "Guess", help = "edifice fades to 0 within this distance of any water, sea or inland (lakes untouched); short, since the coast-fitted footprint already brings the cone down to the shore" }
+apron_gradient = { v = 0.02, unit = "ratio", min = 0.005, max = 0.04, source = "Owner(2026-11-18: a few hundred metres over 15-20 km)", help = "apron rise per metre of coast distance" }
+apron_max_m = { v = 500, unit = "m", min = 0, max = 3000, source = "Guess", help = "soft cap of the apron (tanh)" }
+apron_inner_m = { v = 20000, unit = "m", min = 1000, max = 80000, source = "Guess", help = "apron at full strength within this distance of the summit" }
+apron_outer_m = { v = 30000, unit = "m", min = 1000, max = 100000, source = "Guess", help = "and gone beyond it" }
+apron_flatten = { v = 0, unit = "ratio", min = 0, max = 1, source = "Guess", help = "ignored in additive mode (the base relief is kept)" }
+flatten_knee_m = { v = 100, unit = "m", min = 1, max = 2000, source = "Guess", help = "soft knee of the flattening around the reference level" }
+smooth_max_m = { v = 60, unit = "m", min = 0, max = 1000, source = "Guess", help = "blend width where cones merge (smooth max)" }
+
+# Caldera (Teide's Las Canadas) and the young summit cone.
+caldera_radius_m = { v = 4000, unit = "m", min = 100, max = 30000, source = "Guess", help = "older caldera rim radius" }
+caldera_offset_m = { v = 1000, unit = "m", min = 0, max = 20000, source = "Guess", help = "caldera centre from the summit (Teide sits at the north edge of Las Canadas)" }
+caldera_offset_bearing_deg = { v = 150, unit = "deg", min = 0, max = 360, source = "Guess" }
+caldera_wall_m = { v = 350, unit = "m", min = 0, max = 2000, source = "Guess", help = "floor below the old rim (Las Canadas wall: a few hundred metres, U)" }
+caldera_wall_width_m = { v = 300, unit = "m", min = 10, max = 5000, source = "Guess" }
+caldera_warp = { v = 0.12, unit = "ratio", min = 0, max = 0.5, source = "Guess" }
+caldera_warp_wavelength_m = { v = 3000, unit = "m", min = 100, max = 50000, source = "Guess" }
+caldera_open_bearing_deg = { v = 330, unit = "deg", min = 0, max = 360, source = "Guess", help = "sector buried by younger lavas (Teide's north side)" }
+caldera_open_half_deg = { v = 50, unit = "deg", min = 0, max = 180, source = "Guess" }
+caldera_open_fade_deg = { v = 25, unit = "deg", min = 1, max = 180, source = "Guess" }
+young_radius_m = { v = 3600, unit = "m", min = 100, max = 30000, source = "Guess", help = "young summit cone radius, rising from the caldera floor to the summit" }
+young_exponent = { v = 1.0, unit = "ratio", min = 1, max = 4, source = "Guess" }
+
+# Secondary summit (Pico Viejo).
+secondary_distance_m = { v = 3200, unit = "m", min = 0, max = 30000, source = "Guess", help = "Pico Viejo is ~3 km from Teide's summit" }
+secondary_bearing_deg = { v = 235, unit = "deg", min = 0, max = 360, source = "Guess" }
+secondary_height_ratio = { v = 0.82, unit = "ratio", min = 0, max = 0.98, source = "Guess", help = "of the summit height (Pico Viejo 3135 m / Teide 3715 m = 0.84, U)" }
+secondary_radius_m = { v = 6000, unit = "m", min = 100, max = 30000, source = "Guess" }
+secondary_exponent = { v = 1.2, unit = "ratio", min = 1, max = 4, source = "Guess" }
+secondary_crater_radius_m = { v = 400, unit = "m", min = 10, max = 3000, source = "Guess", help = "Pico Viejo's crater is ~800 m across (U)" }
+secondary_crater_depth_m = { v = 100, unit = "m", min = 0, max = 1000, source = "Guess" }
+
+# Sub-peaks.
+subpeak_count = { v = 4, unit = "count", min = 0, max = 32, source = "Guess" }
+subpeak_r_min = { v = 0.2, unit = "ratio", min = 0, max = 1.5, source = "Guess" }
+subpeak_r_max = { v = 0.55, unit = "ratio", min = 0, max = 1.5, source = "Guess" }
+subpeak_h_min_m = { v = 150, unit = "m", min = 0, max = 3000, source = "Guess" }
+subpeak_h_max_m = { v = 450, unit = "m", min = 0, max = 3000, source = "Guess" }
+subpeak_radius_min_m = { v = 700, unit = "m", min = 50, max = 10000, source = "Guess" }
+subpeak_radius_max_m = { v = 1500, unit = "m", min = 50, max = 10000, source = "Guess" }
+subpeak_aspect = { v = 1.8, unit = "ratio", min = 1, max = 6, source = "Guess", help = "radial elongation (ridged knobs)" }
+
+# Flank collapse (Etna's Valle del Bove: ~5 x 8 km horseshoe, walls up to ~1 km, opening east).
+collapse_bearing_deg = { v = 100, unit = "deg", min = 0, max = 360, source = "Guess", help = "opening direction (downslope)" }
+collapse_head = { v = 0.18, unit = "ratio", min = 0, max = 1.5, source = "Guess", help = "head wall distance from the summit" }
+collapse_toe = { v = 0.85, unit = "ratio", min = 0, max = 2, source = "Guess" }
+collapse_width_head_m = { v = 4000, unit = "m", min = 100, max = 30000, source = "Guess" }
+collapse_width_toe_m = { v = 5500, unit = "m", min = 100, max = 30000, source = "Guess" }
+collapse_depth_m = { v = 900, unit = "m", min = 0, max = 3000, source = "Guess", help = "scar depth below the flank (Valle del Bove walls up to ~1 km, U)" }
+collapse_depth_fade = { v = 0.45, unit = "ratio", min = 0, max = 0.99, source = "Guess", help = "share of the length after which the depth fades to 0 at the toe (the scar opens out)" }
+collapse_wall_m = { v = 350, unit = "m", min = 10, max = 5000, source = "Guess", help = "wall width (the talus pass softens it in V3)" }
+collapse_wall_warp_m = { v = 180, unit = "m", min = 0, max = 3000, source = "Guess", help = "noise on the wall line" }
+collapse_wall_warp_wavelength_m = { v = 1200, unit = "m", min = 50, max = 50000, source = "Guess" }
+
+# Rift zones and parasitic cinder cones (Etna NE / S / W rifts; Tenerife's dorsal ridges).
+rift_count = { v = 3, unit = "count", min = 0, max = 3, source = "Guess" }
+rift_1_bearing_deg = { v = 35, unit = "deg", min = 0, max = 360, source = "Guess" }
+rift_2_bearing_deg = { v = 195, unit = "deg", min = 0, max = 360, source = "Guess" }
+rift_3_bearing_deg = { v = 285, unit = "deg", min = 0, max = 360, source = "Guess" }
+rift_start = { v = 0.12, unit = "ratio", min = 0, max = 2, source = "Guess" }
+rift_end = { v = 1.25, unit = "ratio", min = 0, max = 3, source = "Guess", help = "rifts run out into the apron" }
+rift_taper = { v = 0.2, unit = "ratio", min = 0.01, max = 0.5, source = "Guess", help = "share of the length over which the ridge fades in and out" }
+rift_curve_deg = { v = 12, unit = "deg", min = 0, max = 60, source = "Guess" }
+rift_curve_wavelength_m = { v = 5000, unit = "m", min = 200, max = 50000, source = "Guess" }
+rift_ridge_m = { v = 120, unit = "m", min = 0, max = 1000, source = "Guess", help = "rift ridge height" }
+rift_ridge_width_m = { v = 900, unit = "m", min = 10, max = 10000, source = "Guess", help = "Gaussian half-width" }
+rift_cones = { v = 8, unit = "count", min = 0, max = 64, source = "Guess", help = "cones per rift (Etna has 300+ flank cones)" }
+rift_cone_lateral_m = { v = 300, unit = "m", min = 0, max = 5000, source = "Guess" }
+cone_width_min_m = { v = 300, unit = "m", min = 20, max = 5000, source = "Guess", help = "basal width, log-uniform" }
+cone_width_max_m = { v = 1200, unit = "m", min = 20, max = 5000, source = "Guess", help = "Etna's Monti Rossi ~1 km (U)" }
+cone_height_ratio = { v = 0.18, unit = "ratio", min = 0.01, max = 0.6, source = "Reference(Porter 1972, GSA Bull. 83: Hco = 0.18 Wco)" }
+cone_crater_ratio = { v = 0.40, unit = "ratio", min = 0.01, max = 0.9, source = "Reference(Porter 1972, GSA Bull. 83: Wcr = 0.40 Wco)" }
+cone_crater_depth_ratio = { v = 0.4, unit = "ratio", min = 0, max = 1, source = "Guess" }
+cone_knee = { v = 0.15, unit = "ratio", min = 0, max = 0.45, source = "Guess", help = "rounding of the cone foot and rim" }
+
+# Ravines (barrancos): heterogeneous-K stream power + fractures + talus.
+ravine_steps = { v = 60, unit = "count", min = 0, max = 2000, source = "Guess" }
+ravine_k_dt = { v = 0.008, unit = "ratio", min = 0, max = 10, source = "Guess", help = "K dt per step at relative erodibility 1 (x edifice weight)" }
+ravine_m = { v = 0.5, unit = "ratio", min = 0.3, max = 0.7, source = "Industry(Braun & Willett 2013; m/n 0.4-0.6, Whipple & Tucker 1999)", help = "drainage-area exponent, n = 1" }
+ravine_flow_exponent = { v = 4, unit = "ratio", min = 0.5, max = 10, source = "Guess", help = "MFD exponent: larger concentrates flow (Holmgren 1994)" }
+ravine_seed_m = { v = 6, unit = "m", min = 0, max = 100, source = "Guess", help = "coarse seed noise: catchments organise around it" }
+ravine_seed_wavelength_m = { v = 400, unit = "m", min = 20, max = 10000, source = "Guess" }
+ravine_seed_fine_m = { v = 1.5, unit = "m", min = 0, max = 50, source = "Guess" }
+ravine_seed_fine_wavelength_m = { v = 60, unit = "m", min = 10, max = 5000, source = "Guess" }
+flank_k_var = { v = 0.7, unit = "ratio", min = 0, max = 0.99, source = "Guess", help = "older (dissected) vs younger flanks" }
+flank_k_wavelength_m = { v = 12000, unit = "m", min = 500, max = 100000, source = "Guess" }
+band_thickness_m = { v = 180, unit = "m", min = 5, max = 5000, source = "Guess", help = "lava / pyroclastic layers" }
+band_edge = { v = 0.15, unit = "ratio", min = 0.01, max = 1, source = "Guess", help = "share of a band over which K changes to the next" }
+band_k_var = { v = 0.6, unit = "ratio", min = 0, max = 0.99, source = "Guess" }
+band_warp_m = { v = 60, unit = "m", min = 0, max = 1000, source = "Guess", help = "bands are not perfect contours" }
+cell_size_m = { v = 1500, unit = "m", min = 50, max = 20000, source = "Guess", help = "cellular patches (lava fields of different age)" }
+cell_k_var = { v = 0.5, unit = "ratio", min = 0, max = 0.99, source = "Guess" }
+fracture_count = { v = 8, unit = "count", min = 0, max = 64, source = "Guess" }
+fracture_start_min = { v = 0.1, unit = "ratio", min = 0, max = 2, source = "Guess" }
+fracture_start_max = { v = 0.35, unit = "ratio", min = 0, max = 2, source = "Guess" }
+fracture_len_min = { v = 0.25, unit = "ratio", min = 0, max = 2, source = "Guess" }
+fracture_len_max = { v = 0.6, unit = "ratio", min = 0, max = 2, source = "Guess" }
+fracture_angle_deg = { v = 25, unit = "deg", min = 0, max = 90, source = "Guess", help = "deviation from radial, and wander amplitude" }
+fracture_wander_wavelength_m = { v = 2500, unit = "m", min = 100, max = 50000, source = "Guess" }
+fracture_depth_m = { v = 25, unit = "m", min = 0, max = 500, source = "Guess", help = "notch that captures flow" }
+fracture_width_m = { v = 40, unit = "m", min = 5, max = 1000, source = "Guess", help = "Gaussian half-width of the notch" }
+fracture_taper = { v = 0.15, unit = "ratio", min = 0.01, max = 0.5, source = "Guess" }
+fracture_k_boost = { v = 2.0, unit = "ratio", min = 0, max = 20, source = "Guess", help = "K x (1 + boost) along fractures" }
+ravine_talus_deg = { v = 40, unit = "deg", min = 10, max = 80, source = "Guess", help = "talus pass widens cut channels into V ravines" }
+ravine_thermal_steps = { v = 30, unit = "count", min = 0, max = 1000, source = "Guess" }
+ravine_thermal_rate = { v = 0.25, unit = "ratio", min = 0.01, max = 0.5, source = "Guess" }
+
+# V4 runtime-detail preview (filter.rs defaults) and the profile measurement.
+detail_spacing_m = { v = 5, unit = "m", min = 1, max = 100, source = "Owner(2026-11-18: brief)" }
+detail_crop_m = { v = 16000, unit = "m", min = 1000, max = 100000, source = "Owner(2026-11-18: brief)", help = "square crop around the summit" }
+fit_bin_m = { v = 250, unit = "m", min = 20, max = 5000, source = "Guess", help = "radial profile ring width" }
+fit_max_r_m = { v = 20000, unit = "m", min = 1000, max = 100000, source = "Guess", help = "profile radius" }
+
+[[arm]]
+name = "s55"
+help = "summit 5500 m, p 1.6, apron 2 % to 500 m, coast-fitted footprint (n 4), coast fade 1 km"
+
+[[arm]]
+name = "s45"
+help = "as s55 with the summit at 4500 m"
+set = { summit_m = 4500 }
+
+[[arm]]
+name = "s55c"
+help = "summit 5500 m, more concave cone (p 2.2: steeper upper, gentler lower flanks), steeper apron (3 %), coast fade 1.5 km"
+set = { cone_exponent = 2.2, apron_gradient = 0.03, coast_fade_m = 1500 }

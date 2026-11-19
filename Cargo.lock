@@ -2336,6 +2336,7 @@ dependencies = [
  "sf_mods",
  "sf_records",
  "sf_sky_bevy",
+ "sf_terrain",
  "sf_vfs",
  "sf_world",
  "sf_worldgen",
@@ -5980,12 +5981,17 @@ name = "mw_worldgen"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "glam 0.33.12",
  "mw_records",
  "mw_world",
  "png",
  "serde",
  "serde_json",
+ "sf_coords",
  "sf_records",
+ "sf_vfs",
+ "sf_world",
+ "sf_worldgen",
  "tempfile",
  "tes3",
 ]

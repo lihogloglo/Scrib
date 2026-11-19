@@ -51,6 +51,7 @@
     clippy::many_single_char_names
 )]
 
+pub mod anchors;
 pub mod dem;
 pub mod filter;
 pub mod flood;
@@ -59,6 +60,7 @@ pub mod guide;
 pub mod landform;
 pub mod landforms;
 pub mod landscape;
+pub mod layers;
 pub mod layout;
 pub mod lem;
 pub mod lithology;
@@ -69,7 +71,9 @@ pub mod perturb;
 pub mod recipe;
 pub mod resample;
 pub mod run;
+pub mod scatter;
 pub mod shade;
+pub mod stamps;
 pub mod stratovolcano;
 pub mod stream;
 pub mod structure;

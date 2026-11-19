@@ -26,6 +26,7 @@ use sf_terrain::{HeightTile, TileCoord, sample_meters};
 use sf_world::WorldspaceId;
 use sf_worldgen::filter::FilterParams;
 use sf_worldgen::guide::Guide;
+use sf_worldgen::stamps::{Stamp, StampSet};
 use sf_worldgen::tiles::{GuideTiles, TileSettings};
 use wgpu::util::DeviceExt;
 
@@ -279,7 +280,11 @@ fn compare(t: &GuideTiles, reqs: &[FillRequest], plan: &FillPlan, out: &[u32]) -
 }
 
 fn check(name: &str, t: &GuideTiles) {
-    let reqs = requests(t);
+    check_with(name, t, &requests(t));
+}
+
+fn check_with(name: &str, t: &GuideTiles, reqs: &[FillRequest]) {
+    let reqs = reqs.to_vec();
     let plan = gpu_fill::plan(&reqs);
     let Some((out, ms)) = run_gpu(t, &plan) else {
         eprintln!("no wgpu adapter (not even a software fallback): GPU twin test skipped");
@@ -301,6 +306,126 @@ fn gpu_fill_matches_the_cpu_tiles() {
     check("integer cells", &tiles(guide(400, 380, 20.0, [-4009.008, 3699.712])));
     // Spacing that isn't (the f32 affine fallback).
     check("f32 cells", &tiles(guide(300, 300, 7.3, [-1100.4, 1095.9])));
+}
+
+/// A stamp centred on engine (x, z): weight 1 inside, a C1 smootherstep to 0 across `band_m` at its edges,
+/// heights a tilted plateau `top_m` with a ripple (so the GPU's bilinear sees slopes).
+fn stamp_at(x: f64, z: f64, dims: [usize; 2], spacing_m: f64, band_m: f64, top_m: f32) -> Stamp {
+    let [w, h] = dims;
+    let origin_m = [x - (w - 1) as f64 * spacing_m * 0.5, -z + (h - 1) as f64 * spacing_m * 0.5];
+    let (mut heights, mut weights) = (Vec::with_capacity(w * h), Vec::with_capacity(w * h));
+    for r in 0..h {
+        for c in 0..w {
+            let d = (c.min(w - 1 - c).min(r).min(h - 1 - r)) as f64 * spacing_m;
+            let t = (d / band_m).clamp(0.0, 1.0);
+            weights.push((t * t * t * (t * (6.0 * t - 15.0) + 10.0)) as f32);
+            heights.push(top_m + 0.03 * c as f32 - 0.02 * r as f32 + 1.5 * ((c as f32) * 0.37).sin() * ((r as f32) * 0.23).cos());
+        }
+    }
+    Stamp { name: "twin".into(), origin_m, dims, spacing_m, heights, weights }
+}
+
+#[test]
+fn gpu_fill_matches_the_cpu_tiles_with_a_stamp() {
+    let base = tiles(guide(400, 380, 20.0, [-4009.008, 3699.712]));
+    let [x0, z0, x1, z1] = base.extent_m();
+    let (cx, cz) = (x0 + (x1 - x0) * 0.35, z0 + (z1 - z0) * 0.4);
+    let top = base.height(cx, cz, 0) + 25.0;
+    let set = StampSet { stamps: vec![stamp_at(cx, cz, [80, 60], 1.8288, 30.0, top)] };
+    let t = tiles(guide(400, 380, 20.0, [-4009.008, 3699.712])).with_stamps(set);
+    let idx = t.stamps().expect("stamped");
+    let at = |x: f64, z: f64, level: u8| -> [i64; 2] {
+        let g = |v: f64| ((v + 128.0) * 2.0).floor() as i64 >> level;
+        [g(x), g(z)]
+    };
+    // Level 0 over the stamp's west half and beyond (inside, band, outside), coarser levels over all of it.
+    let mut reqs = Vec::new();
+    for (level, size) in [(0u8, [260i64, 300i64]), (2, [100, 80]), (4, [24, 20])] {
+        let m = at(cx - 100.0, cz - 75.0, level);
+        reqs.push(FillRequest { kind: FillKind::Heights, level, rect: rect(m[0], m[1], size[0], size[1]), texel: [0, 0] });
+    }
+    // Every class of sample is in the pieces.
+    let (mut inside, mut band, mut outside) = (0, 0, 0);
+    for r in &reqs {
+        for j in 0..r.rect.size[1] {
+            for i in 0..r.rect.size[0] {
+                let gx = (r.rect.min[0] + i) << r.level;
+                let gz = (r.rect.min[1] + j) << r.level;
+                match idx.sample(sample_meters(gx), -sample_meters(gz)) {
+                    Some((_, w)) if w >= 1.0 => inside += 1,
+                    Some((_, w)) if w > 0.0 => band += 1,
+                    _ => outside += 1,
+                }
+            }
+        }
+    }
+    eprintln!("gpu twin stamp: {inside} samples inside, {band} in the band, {outside} outside; field data {:.2} MiB", t.gpu_data_bytes() as f64 / f64::from(1u32 << 20));
+    assert!(inside > 100 && band > 100 && outside > 100, "{inside} / {band} / {outside}");
+    assert_eq!(t.gpu_data_bytes(), t.gpu_field().unwrap().data.len() * 4);
+    check_with("stamp", &t, &reqs);
+}
+
+/// The layer macro look (WG-X3): a global 73 m grid and a 7.3 m stamp grid, their mean-albedo pyramids on the GPU
+/// against `GuideTiles::macro_albedo`, at fine and coarse macro levels inside, across and outside the stamp.
+#[test]
+fn gpu_macro_matches_the_cpu_with_layers() {
+    use sf_terrain::{LayerInfo, LayerTable, layer_id};
+    use sf_worldgen::layers::{GuideLayerGrid, GuideLayers, NO_LAYER};
+    let g = || guide(400, 380, 20.0, [-4009.008, 3699.712]);
+    let base = tiles(g());
+    let [x0, z0, x1, z1] = base.extent_m();
+    let (cx, cz) = (x0 + (x1 - x0) * 0.35, z0 + (z1 - z0) * 0.4);
+    let st = stamp_at(cx, cz, [160, 120], 1.8288, 40.0, base.height(cx, cz, 0) + 25.0);
+    let [sx0, _, _, sy1] = st.rect_m();
+    let names: Vec<String> = (0..6).map(|n| format!("twin_layer_{n}")).collect();
+    let global = GuideLayerGrid {
+        origin_m: [-4100.0, 3800.0],
+        dims: [120, 110],
+        spacing_m: 73.152,
+        blend_m: 54.864,
+        texels: (0..120 * 110).map(|k| if k % 97 == 5 { NO_LAYER } else { (((k % 120) / 2 + (k / 120) / 3) % 4) as u16 }).collect(),
+    };
+    let stamp_grid = GuideLayerGrid {
+        origin_m: [sx0 - 10.0, sy1 + 10.0],
+        dims: [45, 36],
+        spacing_m: 7.3152,
+        blend_m: 5.4864,
+        texels: (0..45 * 36).map(|k| 4 + ((k % 45) / 3 + (k / 45) / 2) as u16 % 2).collect(),
+    };
+    let layers = GuideLayers { palette: names.clone(), default_layer: "twin_default".into(), global, stamps: vec![(0, stamp_grid)] };
+    let info = |record: &str, n: usize| LayerInfo {
+        record: record.into(),
+        id: layer_id(record),
+        tiling_m: 4.0,
+        triplanar: false,
+        displacement_m: 0.0,
+        mean_albedo: [0.05 + 0.1 * n as f32, 0.4 - 0.05 * n as f32, 0.1 + 0.03 * n as f32],
+        mean_height: 0.5,
+        p90_height: 0.6,
+        source_edge: 64,
+    };
+    let mut table: Vec<LayerInfo> = names.iter().enumerate().map(|(n, r)| info(r, n)).collect();
+    table.push(info("twin_default", 6));
+    let table = LayerTable { layers: table, fill_layer: Some(layer_id("twin_default")), fill_height: 0.0 };
+    let (t, missing) = tiles(g())
+        .with_stamps(StampSet { stamps: vec![st] })
+        .with_layers(layers)
+        .unwrap()
+        .with_layer_arrays(&table, std::sync::Arc::new(|_, _| None))
+        .unwrap();
+    assert!(missing.is_empty());
+    let at = |x: f64, z: f64, shift: u8| -> [i64; 2] {
+        let g = |v: f64| ((v + 128.0) * 2.0).floor() as i64 >> shift;
+        [g(x), g(z)]
+    };
+    // Macro level l samples every 2^(l+1) level-0 indices.
+    let mut reqs = Vec::new();
+    for (level, size) in [(0u8, [300i64, 260i64]), (1, [160, 140]), (3, [60, 60]), (6, [40, 40]), (9, [8, 8])] {
+        let m = at(cx - 150.0, cz - 130.0, level + 1);
+        reqs.push(FillRequest { kind: FillKind::Macro, level, rect: rect(m[0], m[1], size[0], size[1]), texel: [0, 0] });
+    }
+    assert_eq!(t.gpu_data_bytes(), t.gpu_field().unwrap().data.len() * 4);
+    check_with("layers macro", &t, &reqs);
 }
 
 /// The real island when it exists (`target/worldgen/vo/V3`), with its large coordinates.

@@ -550,3 +550,35 @@ fn edits_compose_on_top_of_the_base() {
     assert_eq!(h.height(at(69, 131)), Some(base.get(69, 131)));
     assert!(h.edits().revision() > changed.revision);
 }
+
+/// A [`LayerGrid`] at level 0 is [`resample_layers`] on a mosaic of one tile with the same layers, bit for bit;
+/// coarser levels sum to 255 and agree on shared edges.
+#[test]
+fn layer_grid_matches_a_one_tile_mosaic() {
+    let (w, h) = (40usize, 30usize);
+    let origin = [-150.25, -90.5];
+    let ids: Vec<u16> = (0..w * h).map(|k| if k % 17 == 3 { u16::MAX } else { ((k % w) / 3 + (k / w) / 5) as u16 % 9 }).collect();
+    let palette: Vec<RecordId> = (0..9).map(|n| RecordId::new(&format!("layer{n}"))).collect();
+    let mut tiles = source_tiles((1, 1), 4, 2.0, (origin[0], origin[1]), Triangulation::Bilinear, |_, _| 0.0);
+    let o = WorldPos::from_f64(DVec3::new(origin[0], 0.0, origin[1]));
+    tiles[0].1.layers =
+        Some(SourceLayers { origin: o, spacing: 7.25, size: UVec2::new(w as u32, h as u32), palette, texels: ids.clone() });
+    let mut resolve = |id: &RecordId| LayerId(id.as_str()[5..].parse().unwrap());
+    let src = SourceMosaic::new(tiles, 0.0, &mut resolve).unwrap();
+    let texels = ids.iter().map(|&t| (t != u16::MAX).then_some(LayerId(u32::from(t)))).collect();
+    let od = o.to_f64();
+    let grid = LayerGrid::new([od.x, od.z], 7.25, [w, h], texels).unwrap();
+    let params = LayerParams { blend_radius: 5.0, default_layer: LayerId(999) };
+    for c in [TileCoord::new(0, -1, -1), TileCoord::new(0, 0, 0), TileCoord::new(0, -1, 0)] {
+        let a = resample_layers(c, &src, &params).unwrap().unwrap();
+        assert_eq!(resample_layer_grid(c, &grid, &params).unwrap(), a, "{c:?}");
+    }
+    let l2 = resample_layer_grid(TileCoord::new(2, -1, 0), &grid, &params).unwrap();
+    let r2 = resample_layer_grid(TileCoord::new(2, 0, 0), &grid, &params).unwrap();
+    for n in 0..LAYER_SAMPLES {
+        assert_eq!(l2.sample(LAYER_SAMPLES - 1, n), r2.sample(0, n));
+        assert_eq!(l2.sample(n, n).iter().map(|e| u32::from(e.1)).sum::<u32>(), 255);
+    }
+    let rebuilt: Vec<_> = (0..LAYER_SAMPLES * LAYER_SAMPLES).map(|k| l2.sample(k % LAYER_SAMPLES, k / LAYER_SAMPLES)).collect();
+    assert_eq!(LayerMap::from_samples(l2.coord, &rebuilt).unwrap(), l2);
+}

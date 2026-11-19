@@ -83,6 +83,7 @@ One line per open ID: `ID | status | file | title`. Entries live in [`visual-che
 
 ### Awaiting owner (56)
 WG-G | awaiting owner (G1 seen: hitches, no visible detail → G2) | [worldgen](visual-checks/worldgen.md) | generated island in the game renderer, GPU erosion detail, `view world:` (2026-11-19)
+WG-X | seen 2026-11-19: base OK; empty, 26 fps, sprayed flora, blobby relief | [worldgen](visual-checks/worldgen.md) | Vvardenfell 10x same map: additive volcano arms, then textures, settlements, flora (2026-11-19)
 WG-V | awaiting owner | [worldgen](visual-checks/worldgen.md) | 3D worldgen viewer `worldgen-view`, S2 arms A0-A3 (B0-B3 next) (2026-11-18)
 WG-S2 | partial (owner 2026-11-18: parallel "motherboard" channels in A1/A2; wants 3D) | [worldgen](visual-checks/worldgen.md) | 10x Vvardenfell erosion look test: hillshade sheets A0-A3 in `target/worldgen/s2/` (images, no game run) (2026-11-18)
 

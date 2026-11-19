@@ -63,6 +63,7 @@ fn state(gpu: bool) -> TerrainState {
             bounds: HashMap::new(),
             ready: Arc::new(AtomicBool::new(true)),
             counters: Arc::new(GpuFillCounters::default()),
+            layers: None,
         }),
         gate: SelectGate::default(),
     }
@@ -75,7 +76,7 @@ fn gpu_world_queues_pieces_instead_of_cpu_heights() {
     let moved = ClipWindow { min: [16, 0] };
     for (kind, level) in [(Kind::Height, 3usize), (Kind::Macro, 2), (Kind::Layer, 1)] {
         let (mut writes, mut queue) = (Vec::new(), Vec::new());
-        assert!(window_ready(&s, w, level, 512, 1), "no tile is needed");
+        assert!(window_ready(&s, kind, w, level, 512, 1), "no tile is needed");
         let bytes = upload_level(&s, None, kind, level, Some(w), moved, &mut writes, &mut queue);
         match kind {
             Kind::Height | Kind::Macro => {
@@ -124,4 +125,31 @@ fn twin_asks_only_for_near_and_coarse_tiles() {
     // The nearest first within a level.
     assert!(tile_distance2(home, cam) < tile_distance2(TileCoord::new(0, 20, -6), cam));
     assert!(TwinSettings::default().max_loads >= 1 && TerrainSettings::default().gpu_fill);
+}
+
+/// A GPU-filled world whose provider gives layer maps loads them for its near layer windows (levels 0..3) and
+/// waits for them before writing a layer window; height and macro windows still need no tile.
+#[test]
+fn gpu_world_streams_near_layer_maps() {
+    let cam = DVec2::new(10_000.0, -3_000.0);
+    let wanted = Wanted::new(cam, 16);
+    let tiles = gpu_layer_tiles(&wanted, 0);
+    assert!(tiles.iter().all(|c| usize::from(c.level) < LAYER_LEVELS), "near layer levels only");
+    assert!((0..LAYER_LEVELS).all(|l| tiles.iter().any(|c| usize::from(c.level) == l)));
+    assert!(gpu_layer_tiles(&wanted, 128).is_superset(&tiles), "the margin only adds");
+    let mut s = state(true);
+    s.gpu.as_mut().unwrap().layers = Some(HashMap::new());
+    let w = wanted.layers[1];
+    assert!(!window_ready(&s, Kind::Layer, w, 1, 256, 0), "maps not loaded yet");
+    assert!(window_ready(&s, Kind::Height, wanted.heights[1], 1, 512, 1));
+    assert!(window_ready(&s, Kind::Macro, wanted.macros[1], 1, 256, 0));
+    let mut needed = HashSet::new();
+    window_tiles(w, 1, 256, 0, &mut needed);
+    let maps = s.gpu.as_mut().unwrap().layers.as_mut().unwrap();
+    for c in needed {
+        maps.insert(c, LayerSlot::Absent);
+    }
+    assert!(window_ready(&s, Kind::Layer, w, 1, 256, 0), "absent maps fill the default slot");
+    // Without layer maps (the Morrowind path has no GPU field at all) layers never wait.
+    assert!(window_ready(&state(true), Kind::Layer, w, 1, 256, 0));
 }

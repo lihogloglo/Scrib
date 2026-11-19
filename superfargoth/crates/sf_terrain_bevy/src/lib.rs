@@ -461,6 +461,16 @@ struct GpuMode {
     bounds: HashMap<TileCoord, Arc<BlockBounds>>,
     ready: Arc<AtomicBool>,
     counters: Arc<GpuFillCounters>,
+    /// The near layer levels' layer maps (`TerrainTiles::layer_map`), when the provider has them
+    /// (`TerrainTiles::has_layer_maps`): heights stay on the GPU, layers still come from the CPU.
+    layers: Option<HashMap<TileCoord, LayerSlot>>,
+}
+
+/// A GPU-filled world's layer map: loading, resident, or none for that tile (the fill slot).
+enum LayerSlot {
+    Loading(Task<Option<LayerMap>>),
+    Ready(Arc<LayerMap>),
+    Absent,
 }
 
 /// A resident tile.
@@ -725,7 +735,7 @@ fn setup_terrain(
             ready: ready.clone(),
             counters: counters.clone(),
         });
-        GpuMode { bounds: HashMap::new(), ready, counters }
+        GpuMode { bounds: HashMap::new(), ready, counters, layers: tiles.has_layer_maps().then(HashMap::new) }
     });
     if gpu.is_none() {
         commands.remove_resource::<gpu_fill::GpuFillMain>();
@@ -850,11 +860,35 @@ fn load_tile(tiles: Arc<dyn TerrainTiles>, c: TileCoord, wants_layers: bool, wan
     };
     let macro_rgba = if wants_macro { tiles.macro_albedo(c).and_then(Result::ok).map(|m| m.rgba) } else { None };
     let tile = product.height_tile();
-    Some(Loaded {
-        resident: Arc::new(ResidentTile { tile, bounds: product.bounds }),
-        layers: if wants_layers { product.layers } else { None },
-        macro_rgba,
-    })
+    // A provider whose products carry no layers may give them alone (a generator, `TerrainTiles::layer_map`).
+    let layers = match product.layers {
+        Some(l) if wants_layers => Some(l),
+        None if wants_layers => load_layer_map(tiles.as_ref(), c),
+        _ => None,
+    };
+    Some(Loaded { resident: Arc::new(ResidentTile { tile, bounds: product.bounds }), layers, macro_rgba })
+}
+
+/// Tile `c`'s layer map alone (`TerrainTiles::layer_map`); errors are logged.
+fn load_layer_map(tiles: &dyn TerrainTiles, c: TileCoord) -> Option<LayerMap> {
+    match tiles.layer_map(c)? {
+        Ok(m) => Some(m),
+        Err(e) => {
+            log::error!("terrain layer map {c:?}: {e}");
+            None
+        }
+    }
+}
+
+/// The tiles a GPU-filled world loads layer maps for: every tile its near layer windows read, plus `margin`
+/// samples (hysteresis, as the tile path's).
+fn gpu_layer_tiles(wanted: &Wanted, margin: i64) -> HashSet<TileCoord> {
+    let mut out = HashSet::new();
+    let per_l = i64::try_from(sf_terrain::TILE_QUADS).expect("small") / 2;
+    for (l, w) in wanted.layers.iter().enumerate() {
+        window_tiles(*w, level_u8(l), per_l, margin, &mut out);
+    }
+    out
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -937,7 +971,15 @@ fn upload_level(
                 Kind::Layer => {
                     let held: HashMap<TileCoord, Arc<Loaded>> =
                         tiles_of(piece, lv, 256).filter_map(|c| ready(c).map(|t| (c, t))).collect();
-                    let tile = |c: TileCoord| held.get(&c).and_then(|t| t.layers.as_ref());
+                    // A GPU-filled world's layer maps live apart from its twin's height tiles.
+                    let gpu_layers = state.gpu.as_ref().and_then(|g| g.layers.as_ref());
+                    let tile = |c: TileCoord| match gpu_layers {
+                        Some(maps) => match maps.get(&c) {
+                            Some(LayerSlot::Ready(m)) => Some(m.as_ref()),
+                            _ => None,
+                        },
+                        None => held.get(&c).and_then(|t| t.layers.as_ref()),
+                    };
                     let slot_of = |id: LayerId| state.slots.get(&id).copied().unwrap_or(0);
                     let mut ids = vec![[0u8; 4]; n];
                     let mut weights = vec![[0u8; 4]; n];
@@ -993,15 +1035,21 @@ fn tiles_of(rect: SampleRect, level: u8, per: i64) -> impl Iterator<Item = TileC
     })
 }
 
-/// Whether every tile a window reads is loaded (or known absent).
-fn window_ready(state: &TerrainState, w: ClipWindow, level: usize, per: i64, margin: i64) -> bool {
-    // A GPU-filled world reads no tile (layers fill with the default slot).
-    if state.gpu.is_some() {
-        return true;
-    }
+/// Whether every tile a window of `kind` reads is loaded (or known absent).
+fn window_ready(state: &TerrainState, kind: Kind, w: ClipWindow, level: usize, per: i64, margin: i64) -> bool {
     let mut needed = HashSet::new();
     window_tiles(w, level_u8(level), per, margin, &mut needed);
-    needed.iter().all(|c| matches!(state.tiles.get(c), Some(Slot::Ready(_) | Slot::Absent)))
+    match &state.gpu {
+        // A GPU-filled world reads no height tile; its layers wait for their maps when the provider has them
+        // (else they fill with the default slot).
+        Some(g) => match (&g.layers, kind) {
+            (Some(maps), Kind::Layer) => {
+                needed.iter().all(|c| matches!(maps.get(c), Some(LayerSlot::Ready(_) | LayerSlot::Absent)))
+            }
+            _ => true,
+        },
+        None => needed.iter().all(|c| matches!(state.tiles.get(c), Some(Slot::Ready(_) | Slot::Absent))),
+    }
 }
 
 /// Conservative node bounds from the finest resident level (bounds are
@@ -1189,6 +1237,34 @@ fn update_terrain(
         }
     }
 
+    // 2c. A GPU-filled world's near layer maps (the provider's `layer_map`): finished loads, then requests for the
+    // layer windows' tiles (coarse levels first, the nearest first), eviction outside them.
+    if let Some(maps) = state.gpu.as_mut().and_then(|g| g.layers.as_mut()) {
+        let mut loading = 0;
+        for slot in maps.values_mut() {
+            if let LayerSlot::Loading(task) = slot {
+                match block_on(poll_once(task)) {
+                    Some(Some(m)) => *slot = LayerSlot::Ready(Arc::new(m)),
+                    Some(None) => *slot = LayerSlot::Absent,
+                    None => loading += 1,
+                }
+            }
+        }
+        let keep = gpu_layer_tiles(&wanted, 128);
+        maps.retain(|c, s| keep.contains(c) || matches!(s, LayerSlot::Loading(_)));
+        let mut requests: Vec<TileCoord> = keep.iter().copied().filter(|c| !maps.contains_key(c)).collect();
+        requests.sort_by_key(|c| (std::cmp::Reverse(c.level), tile_distance2(*c, cam_g)));
+        for c in requests {
+            if loading >= settings.max_loads {
+                break;
+            }
+            let src = state.src.clone();
+            maps.insert(c, LayerSlot::Loading(pool.spawn(async move { load_layer_map(src.as_ref(), c) })));
+            loading += 1;
+        }
+        in_flight += loading;
+    }
+
     // 3. Edits invalidate the clipmap levels they touch.
     for TerrainEdited(_) in edited.read() {
         state.height_windows = [None; HEIGHT_LEVELS];
@@ -1223,7 +1299,7 @@ fn update_terrain(
                 Kind::Layer if level < LAYER_LEVELS => (state.layer_windows[level], wanted.layers[level], per_h / 2),
                 Kind::Layer => continue,
             };
-            if old == Some(new) || !window_ready(state, new, level, per, i64::from(kind == Kind::Height)) {
+            if old == Some(new) || !window_ready(state, kind, new, level, per, i64::from(kind == Kind::Height)) {
                 continue;
             }
             used += upload_level(state, edits, kind, level, old, new, &mut writes.0, &mut gpu_queue.0);

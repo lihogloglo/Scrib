@@ -1,24 +1,39 @@
 //! A generated world as the exterior (worldgen slice G1, `view world:<guide dir>`): the terrain comes from a
 //! [`TerrainTiles`] provider that generates tiles on demand (the app builds it, `sf_worldgen::tiles`) instead of
-//! the bake store, and the exterior's streaming index is empty, so no cell, static or actor of the loaded content
-//! streams in. Sky, atmosphere, clouds, weather, water and the camera stay the exterior's. The cloud layer rises
-//! by [`CLOUD_BASE_LIFT_M`] so high summits can pierce it (`WeatherOverrides::cloud_base_lift_m`).
+//! the bake store, and the exterior's streaming index is built in memory from [`WorldgenSetup::content`]: empty
+//! when the app gives none (nothing of the loaded content streams in), else the content's placements already at
+//! their places in the generated world (WG-X4: anchor members through the anchor transform) plus any extra passes
+//! ([`WorldgenContent::extra`], WG-X5 flora scatter). Sky, atmosphere, clouds, weather, water and the camera stay
+//! the exterior's. The cloud layer rises by [`CLOUD_BASE_LIFT_M`] so high summits can pierce it
+//! (`WeatherOverrides::cloud_base_lift_m`).
+//!
+//! Scaffold `WorldgenPlacementStatics` (WG-X4): the static scene's cell tables and the near precombines are baked
+//! per **source** cell, so a generated world turns both off (`exterior.rs`) and its statics spawn one entity per
+//! placement (the `--off scene` path); the far field is off too. Removal path: bake the generated world as its own
+//! worldspace (index, scene, precombine, far field) in a one-time bake step.
 //!
 //! Slice G2: the provider's GPU field fills the clipmaps (`sf_terrain_bevy` gpu fill; `--off gputerrain` goes back
 //! to CPU tiles), and the erosion filter is live: the console's `worldgen.filter false` / `worldgen.octaves <n>`
 //! (or `--set`) rebuild the provider with the new filter and the terrain refills ([`WORLDGEN_FILTER`],
 //! [`WORLDGEN_OCTAVES`]).
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use bevy::math::IVec3;
+use bevy::math::{DVec3, IVec3};
 use bevy::prelude::*;
+use sf_bake::{Manifest, Store};
+use sf_coords::WorldPos;
+use sf_model::steps::ModelInfoStep;
 use sf_terrain_bevy::sf_terrain::TerrainTiles;
 use sf_terrain_bevy::{TerrainStats, TerrainWorld};
 use sf_tunables_bevy::TunablesAppExt;
 use sf_tunables_bevy::sf_tunables::{Def, Lifetime, Source, Unit, def};
-use sf_world::{IndexParams, IndexReader, MemoryIndex, WorldIndex, WorldspaceId, build_directory, build_pages};
+use sf_vfs::VfsPath;
+use sf_world::{
+    IndexParams, IndexReader, MemoryIndex, ModelInfo, Placement, WorldIndex, WorldspaceId, build_directory, build_pages,
+};
 use sf_world_bevy::WorldIndexSource;
 
 /// `worldgen.cloud_base_lift_m`: what a generated world adds to every cloud base (the weather's heights are
@@ -66,6 +81,65 @@ pub struct WorldgenSetup {
     pub octaves: u32,
     /// The same world with the filter at `n` octaves (0 = off): the live filter switch.
     pub rebuild: Arc<dyn Fn(u32) -> WorldgenTiles + Send + Sync>,
+    /// What streams in the exterior; `None`: nothing (the bare generated land).
+    pub content: Option<WorldgenContent>,
+}
+
+/// The exterior's placements in a generated world, already at their final places (engine frame).
+#[derive(Default)]
+pub struct WorldgenContent {
+    /// The content's own references, moved (WG-X4: anchor members and what lies inside stamped footprints).
+    pub placements: Vec<Placement>,
+    /// Extra placements from later passes, each with a name for the log (WG-X5: flora scatter). Indexed with
+    /// `placements`; their ids must not collide with them.
+    pub extra: Vec<(String, Vec<Placement>)>,
+}
+
+/// `p` moved to engine position `pos` (metres, absolute): rotation, scale, class and flags kept.
+pub fn placed_at(mut p: Placement, pos: DVec3) -> Placement {
+    p.transform.pos = WorldPos::from_f64(pos);
+    p
+}
+
+/// `model.info` of `models` from the bake, as `sf_world::bake` indexes them (bounds and radii); a model without one
+/// is indexed as a point.
+pub fn model_infos<'a>(
+    store: &Store,
+    manifest: &Manifest,
+    models: impl IntoIterator<Item = &'a VfsPath>,
+) -> HashMap<VfsPath, ModelInfo> {
+    let mut out = HashMap::new();
+    let mut seen = std::collections::HashSet::new();
+    for m in models {
+        if !seen.insert(m) {
+            continue;
+        }
+        let info = manifest
+            .get(ModelInfoStep::ID, m.as_str())
+            .and_then(|d| store.get(&d).ok())
+            .and_then(|bytes| ModelInfoStep::decode(&bytes).ok())
+            .and_then(|i| sf_world::bake::index_model_info(&i));
+        if let Some(info) = info {
+            out.insert(m.clone(), info);
+        }
+    }
+    out
+}
+
+/// The exterior's in-memory index of `content` (empty without).
+pub fn content_index(
+    ext: &WorldspaceId,
+    content: Option<&WorldgenContent>,
+    models: &dyn Fn(&VfsPath) -> Option<ModelInfo>,
+) -> WorldIndex {
+    let params = IndexParams::default();
+    let placements = content
+        .into_iter()
+        .flat_map(|c| c.placements.iter().chain(c.extra.iter().flat_map(|(_, e)| e)))
+        .cloned();
+    let (pages, stats) = build_pages(&params, placements, models);
+    let directory = build_directory(ext.clone(), &params, &pages);
+    WorldIndex { directory, pages, stats }
 }
 
 /// The exterior's directory is empty (nothing streams); every other worldspace reads the bake's.
@@ -113,16 +187,40 @@ struct Rebuild {
     shown: u32,
 }
 
-/// Replaces the exterior's index with an empty one and logs the world; call after `WorldIndexSource` is
-/// inserted.
-pub(crate) fn add(app: &mut App, ext: &WorldspaceId, setup: &WorldgenSetup) {
+/// Replaces the exterior's index with the in-memory one of [`WorldgenSetup::content`] and logs the world; call
+/// after `WorldIndexSource` is inserted.
+pub(crate) fn add(app: &mut App, ext: &WorldspaceId, setup: &WorldgenSetup, store: &Store, manifest: &Manifest) {
     info!("{}", setup.label);
     let base = app.world().resource::<WorldIndexSource>().0.clone();
-    let params = IndexParams::default();
-    let (pages, stats) = build_pages(&params, Vec::new(), &|_| None);
-    let directory = build_directory(ext.clone(), &params, &pages);
+    let started = Instant::now();
+    let content = setup.content.as_ref();
+    let models = content
+        .into_iter()
+        .flat_map(|c| c.placements.iter().chain(c.extra.iter().flat_map(|(_, e)| e)))
+        .filter_map(|p| p.model.as_ref());
+    let infos = model_infos(store, manifest, models);
+    let index = content_index(ext, content, &|m| infos.get(m).copied());
+    if let Some(c) = content {
+        let extra: Vec<String> = c.extra.iter().map(|(name, e)| format!(" + {name} {}", e.len())).collect();
+        let extra = extra.concat();
+        info!(
+            "worldgen content index: {} placements ({} content{extra}), {} cells, {} pages, {} models with model.info, \
+             {} without (points), in {:.2} s; static scene, precombine and far field off (source-cell products): \
+             statics spawn per placement",
+            index.stats.placements,
+            c.placements.len(),
+            index.stats.cells,
+            index.stats.pages,
+            infos.len(),
+            index.stats.missing_models.len(),
+            started.elapsed().as_secs_f32(),
+        );
+        if !index.stats.duplicate_ids.is_empty() {
+            warn!("worldgen content index: {} duplicate placement ids", index.stats.duplicate_ids.len());
+        }
+    }
     let mut own = MemoryIndex::new();
-    own.insert(&WorldIndex { directory, pages, stats });
+    own.insert(&index);
     app.insert_resource(WorldIndexSource(Arc::new(WorldgenIndex { own, base })))
         .insert_resource(Timings(setup.timings.clone()))
         .insert_resource(LiveFilter { on: setup.octaves > 0, octaves: setup.octaves.max(1) })

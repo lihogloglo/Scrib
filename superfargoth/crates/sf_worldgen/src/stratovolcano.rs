@@ -24,6 +24,19 @@
 //!   around it the base relief above that level is compressed by `apron_flatten` (soft knee, C1), so the old
 //!   landscape fades into a flat apron and the volcano rises alone ("the vast long views").
 //!
+//! **Additive mode** (`mode = "additive"`, WG-X): for a base that already has its own mountain (a game's own
+//! massif scaled up), the base is **kept** and the volcano is added on top, `h' = h + A(d_c, r) + f_c E(r)`:
+//! no reference level, no flattening (`apron_flatten` is ignored), no smooth max or clamp of the top, so the base's
+//! own crater, valleys and ridges ride on the new edifice. `E` is the same cone, measured from the rim of an
+//! optional **flat top** (`top_flat_m`, a uniform lift that keeps the summit area's relief exactly, joined to the
+//! flank by a C1 knee of half-width `top_round_m`); `H_e` is calibrated so the final maximum (base + apron +
+//! edifice) is `summit_m`; `f_c` is the coast fade. Where the coast is nearer than the footprint ellipse (a mountain
+//! close to the sea), the optional **coast-fitted footprint** (`coast_fit_norm` = n > 0) also measures the cone
+//! between the summit and the nearest water, `ρ_c = r_c / (r_c + d_c)` (0 on the flat top, 1 on the shore), and uses
+//! the smooth p-norm `ρ = (ρ_e^n + ρ_c^n)^(1/n)` (≥ both): the edifice reaches 0 at every shore with a
+//! concave, flattening foot instead of a fade ramp, and its contours follow the coastline. Everything added is ≥ 0 and land is never lowered, sea never
+//! touched, so the wet/dry classes cannot change.
+//!
 //! **Asymmetry.** The footprint `R(θ)` is an ellipse whose centre is offset from the summit (the summit is not over
 //! the base centre), times `1 + a n(θ)` with angular value noise; the exponent `p(θ)` varies by flank (steeper and
 //! gentler sectors); a low-frequency domain warp of the whole edifice breaks the circular contours (Ebert, Musgrave
@@ -126,6 +139,11 @@ const FIT_R0_STEPS: usize = 200;
 const STRUCTURE_THRESHOLD_M2: f64 = 1e5;
 const STRUCTURE_WINDOW_M: f64 = 1000.0;
 const STRUCTURE_DIR_STEPS: usize = 5;
+/// Flank-slope measurement rings around the final summit, metres (report layout: WG-X brief, 5 / 10 / 15 km).
+// tunables: const (report layout)
+const FLANK_RINGS_M: [f64; 3] = [5000.0, 10000.0, 15000.0];
+/// Guide side files copied from the base into every arm (format: guide v1 optional files; same grid, same frame).
+const GUIDE_SIDE_FILES: [&str; 3] = ["regions.png", "regions.json", "markers.json"];
 /// Hillshade preview light and sea gray (preview layout, as the other worldgen previews).
 const PREVIEW_LIGHT: crate::shade::Light = crate::shade::Light {
     azimuth_deg: 315.0,
@@ -270,6 +288,20 @@ pub const PARAM_NAMES: &[&str] = &[
     "fit_max_r_m",
 ];
 
+/// Optional parameters: required in [`Mode::Additive`], allowed (and read, absent = 0) in [`Mode::Replace`].
+pub const OPTIONAL_PARAM_NAMES: &[&str] = &["top_flat_m", "top_round_m", "coast_fit_norm"];
+
+/// How the volcano meets the base.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// The edifice replaces the base inside `blend_in`, the old relief is flattened under the apron (WG-VO).
+    #[default]
+    Replace,
+    /// The base is kept and the apron and edifice are added on top (WG-X: the base already has its mountain).
+    Additive,
+}
+
 /// Feature switches of one arm.
 #[allow(clippy::struct_excessive_bools)] // one switch per feature: the arms are defined by them
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -300,6 +332,9 @@ pub struct ArmSpec {
     pub features: Features,
     /// Runtime-detail preview of another arm's output ([`crate::filter`]) instead of a stamp.
     pub detail_from: Option<String>,
+    /// Per-arm values of declared parameters (each inside its declared range), e.g. `{ summit_m = 4500 }`.
+    #[serde(default)]
+    pub set: BTreeMap<String, f64>,
 }
 
 /// Where the summit goes: an explicit position, or the highest base sample inside a region of a region guide.
@@ -335,6 +370,9 @@ pub struct ReferenceSpec {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spec {
+    /// Replace (default) or additive.
+    #[serde(default)]
+    pub mode: Mode,
     #[serde(default)]
     pub centre: CentreSpec,
     #[serde(default)]
@@ -359,8 +397,15 @@ impl Spec {
                 return Err(Error::Invalid(format!("param {name} missing")));
             }
         }
+        if self.mode == Mode::Additive {
+            for name in OPTIONAL_PARAM_NAMES {
+                if !self.params.contains_key(*name) {
+                    return Err(Error::Invalid(format!("param {name} missing (required in additive mode)")));
+                }
+            }
+        }
         for (name, p) in &self.params {
-            if !PARAM_NAMES.contains(&name.as_str()) {
+            if !PARAM_NAMES.contains(&name.as_str()) && !OPTIONAL_PARAM_NAMES.contains(&name.as_str()) {
                 return Err(Error::Invalid(format!("unknown param {name}")));
             }
             crate::recipe::check_source(name, &p.source)?;
@@ -410,6 +455,14 @@ impl Spec {
             return Err(Error::Invalid("arm names must be unique and non-empty".into()));
         }
         for a in &self.arms {
+            for name in a.set.keys() {
+                if !self.params.contains_key(name) {
+                    return Err(Error::Invalid(format!("arm {}: set {name} is not a declared param", a.name)));
+                }
+            }
+            if !a.set.is_empty() {
+                self.for_arm(a)?;
+            }
             if let Some(src) = &a.detail_from
                 && !self.arms.iter().any(|b| &b.name == src && b.detail_from.is_none())
             {
@@ -425,6 +478,37 @@ impl Spec {
     /// Value of a declared parameter (NaN when missing; [`Spec::validate`] rules that out).
     pub fn v(&self, name: &str) -> f64 {
         self.params.get(name).map_or(f64::NAN, |p| p.v)
+    }
+
+    /// Value of an optional parameter (0 when not declared, its neutral value).
+    pub fn v_opt(&self, name: &str) -> f64 {
+        self.params.get(name).map_or(0.0, |p| p.v)
+    }
+
+    /// The spec with `arm.set` applied (each value range-checked; orderings re-validated).
+    pub fn for_arm(&self, arm: &ArmSpec) -> Result<Self> {
+        if arm.set.is_empty() {
+            return Ok(self.clone());
+        }
+        let mut s = self.clone();
+        for (name, &v) in &arm.set {
+            let p = s
+                .params
+                .get_mut(name)
+                .ok_or_else(|| Error::Invalid(format!("arm {}: set {name} is not a declared param", arm.name)))?;
+            crate::recipe::check_range(name, v, p.min, p.max)?;
+            p.v = v;
+        }
+        // The overrides are applied: validate the orderings without recursing into the arms.
+        s.arms.clear();
+        s.arms.push(ArmSpec {
+            set: BTreeMap::new(),
+            detail_from: None,
+            ..arm.clone()
+        });
+        s.validate()?;
+        s.arms.clone_from(&self.arms);
+        Ok(s)
     }
 
     /// Count of parameters whose source is `Guess`.
@@ -633,6 +717,12 @@ pub struct Shape {
     /// Largest footprint radius times `blend_out`, plus the warp: nothing of the edifice lies beyond.
     pub edifice_support_m: f64,
     pub support_m: f64,
+    pub mode: Mode,
+    /// Flat-top radius and its knee half-width, metres (the cone is measured from `top_flat + top_round`).
+    top_flat: f64,
+    top_round: f64,
+    /// p-norm exponent of the coast-fitted footprint (0 = off).
+    coast_fit: f64,
     seed: u64,
     foot_warp: f64,
     foot_warp_wl: f64,
@@ -740,6 +830,10 @@ impl Shape {
             r_mean_m: r_mean,
             edifice_support_m: 0.0,
             support_m: 0.0,
+            mode: spec.mode,
+            top_flat: spec.v_opt("top_flat_m"),
+            top_round: spec.v_opt("top_round_m"),
+            coast_fit: spec.v_opt("coast_fit_norm"),
             seed,
             foot_warp: v("foot_warp"),
             foot_warp_wl: v("foot_warp_wavelength_m"),
@@ -775,7 +869,7 @@ impl Shape {
         let foot_max = (0..FOOT_BEARINGS)
             .map(|k| s.foot_radius(TAU * k as f64 / FOOT_BEARINGS as f64))
             .fold(0.0, f64::max);
-        s.edifice_support_m = foot_max * s.blend[1] + 2.0 * s.warp_m;
+        s.edifice_support_m = foot_max * s.blend[1] + 2.0 * s.warp_m + s.top_flat + 2.0 * s.top_round;
         let rift_reach = s
             .rifts
             .iter()
@@ -895,12 +989,26 @@ impl Shape {
             .max(1.0)
     }
 
-    /// Main cone + caldera + secondary summit at warped position `q`; returns (E, ρ).
-    fn core(&self, q: [f64; 2]) -> (f64, f64) {
+    /// Cone distance: 0 on the flat top (`r <= top_flat`), a C1 quadratic knee over `2 top_round`, then
+    /// `r - top_flat - top_round` (with both 0 it is `r`).
+    #[inline]
+    fn cone_r(&self, r: f64) -> f64 {
+        soft_ramp(r - self.top_flat - self.top_round, self.top_round)
+    }
+
+    /// Main cone + caldera + secondary summit at warped position `q` with coast distance `d_coast` (infinite =
+    /// no coast fit); returns (E, ρ).
+    fn core(&self, q: [f64; 2], d_coast: f64) -> (f64, f64) {
         let d = sub(q, self.summit_m);
         let r = len(d);
         let th = bearing_of(d);
-        let rho = r / self.foot_radius(th);
+        let rc = self.cone_r(r);
+        let mut rho = rc / self.foot_radius(th);
+        if self.coast_fit > 0.0 && d_coast.is_finite() && rc > 0.0 {
+            let rho_c = rc / (rc + d_coast.max(0.0));
+            let n = self.coast_fit;
+            rho = (rho.powf(n) + rho_c.powf(n)).powf(n.recip());
+        }
         let mut e = if rho < 1.0 {
             self.edifice_m * (1.0 - rho).powf(self.exponent(th))
         } else {
@@ -1026,9 +1134,14 @@ impl Shape {
         (e - m * depth).max(0.0)
     }
 
-    /// Edifice height E above reference + apron at warped position `q`, and ρ there.
+    /// Edifice height E above reference + apron at warped position `q`, and ρ there (no coast fit).
     pub fn edifice(&self, q: [f64; 2]) -> (f64, f64) {
-        let (mut e, rho) = self.core(q);
+        self.edifice_at(q, f64::INFINITY)
+    }
+
+    /// [`Shape::edifice`] with the sample's coast distance (the coast-fitted footprint uses it).
+    pub fn edifice_at(&self, q: [f64; 2], d_coast: f64) -> (f64, f64) {
+        let (mut e, rho) = self.core(q, d_coast);
         let d = sub(q, self.summit_m);
         let r = len(d);
         if r < self.crater_r && self.crater_d > 0.0 {
@@ -1037,7 +1150,7 @@ impl Shape {
                 self.summit_m[0] + self.crater_r * u[0],
                 self.summit_m[1] + self.crater_r * u[1],
             ];
-            let level = self.core(rim).0;
+            let level = self.core(rim, d_coast).0;
             e = e.min(level) - self.crater_d * bowl(r / self.crater_r);
         }
         if self.features.subpeaks {
@@ -1076,22 +1189,26 @@ impl Shape {
             return (base, 0.0);
         }
         let (e, rho) = if r <= self.edifice_support_m || self.features.rifts {
-            self.edifice(q)
+            self.edifice_at(q, d_coast)
         } else {
             (0.0, f64::INFINITY)
         };
         let w_e = 1.0 - smootherstep((rho - self.blend[0]) / (self.blend[1] - self.blend[0]));
         let w_r = self.apron_weight(r);
+        let cf = if self.coast_fade > 0.0 {
+            smootherstep(d_coast / self.coast_fade)
+        } else {
+            1.0
+        };
+        if self.mode == Mode::Additive {
+            // The base is kept: everything added is >= 0, so land stays land (and stays at or above sea).
+            return (base + self.apron(d_coast, w_r) + cf * e, w_e);
+        }
         let base2 = if w_e <= 0.0 && w_r <= 0.0 {
             base
         } else {
             let x = base - self.ref_m;
             self.ref_m + (1.0 - w_e) * (x - self.flatten * w_r * soft_ramp(x - self.knee, self.knee))
-        };
-        let cf = if self.coast_fade > 0.0 {
-            smootherstep(d_coast / self.coast_fade)
-        } else {
-            1.0
         };
         let h = base2 + self.apron(d_coast, w_r) + cf * e;
         (h.max(self.sea_level_m), w_e)
@@ -1799,11 +1916,99 @@ pub fn apron_gradient(shape: &Shape, field: &Field) -> (f64, usize) {
 // ---------------------------------------------------------------------------------------------------------------
 // Runner
 
+/// Slopes on one ring around the final summit.
+#[derive(Debug, Clone, Serialize)]
+pub struct FlankRing {
+    pub r_m: f64,
+    /// Land samples on the ring (final field).
+    pub samples: usize,
+    /// Mean local slope (central differences) of the ring's land samples, degrees: base, final.
+    pub base_slope_deg: f64,
+    pub slope_deg: f64,
+    /// Secant slope from the field's maximum down to the mean ring height, degrees: base, final.
+    pub base_secant_deg: f64,
+    pub secant_deg: f64,
+}
+
+/// Mean local slope and mean height of the land samples of `h` within `half` of radius `r` around `c`.
+fn ring_slope(field: &Field, h: &[f64], c: [f64; 2], r: f64, half: f64) -> (f64, f64, usize) {
+    let (w, gh, sp) = (field.grid.w, field.grid.h, field.grid.spacing);
+    let sea = field.sea_level_m;
+    let reach = r + half;
+    let col = |x: f64| ((x - field.origin_m[0]) / sp).round().clamp(1.0, (w - 2) as f64) as usize;
+    let row = |y: f64| ((field.origin_m[1] - y) / sp).round().clamp(1.0, (gh - 2) as f64) as usize;
+    let (x0, x1) = (col(c[0] - reach), col(c[0] + reach));
+    let (y0, y1) = (row(c[1] + reach), row(c[1] - reach));
+    let (mut slope, mut height, mut n) = (0.0, 0.0, 0usize);
+    for j in y0..=y1 {
+        for i in x0..=x1 {
+            let k = j * w + i;
+            if h[k] < sea || (len(sub(field.world(i, j), c)) - r).abs() > half {
+                continue;
+            }
+            let gx = (h[k + 1] - h[k - 1]) / (2.0 * sp);
+            let gy = (h[k - w] - h[k + w]) / (2.0 * sp);
+            slope += gx.hypot(gy).atan().to_degrees();
+            height += h[k];
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return (f64::NAN, f64::NAN, 0);
+    }
+    (slope / n as f64, height / n as f64, n)
+}
+
+/// Flank slopes of the base and the final field on [`FLANK_RINGS_M`] around `c`; `max` = (base, final) maxima.
+fn flank_rings(base: &Field, h: &[f64], c: [f64; 2], max: [f64; 2], half: f64) -> Vec<FlankRing> {
+    FLANK_RINGS_M
+        .iter()
+        .map(|&r| {
+            let (bs, bh, _) = ring_slope(base, &base.grid.data, c, r, half);
+            let (s, hh, n) = ring_slope(base, h, c, r, half);
+            FlankRing {
+                r_m: r,
+                samples: n,
+                base_slope_deg: bs,
+                slope_deg: s,
+                base_secant_deg: ((max[0] - bh) / r).atan().to_degrees(),
+                secant_deg: ((max[1] - hh) / r).atan().to_degrees(),
+            }
+        })
+        .collect()
+}
+
+/// Uplift (final - base) on the land samples at coast distance `coast_fade_m` (half a sample either side) within
+/// `apron_inner_m` of the summit: (mean, max, samples).
+fn fade_uplift(shape: &Shape, base: &Field, h: &[f64], d_coast: &[f64]) -> (f64, f64, usize) {
+    let half = 0.5 * base.grid.spacing;
+    let (mut sum, mut max, mut n) = (0.0, 0.0_f64, 0usize);
+    for (k, (&b, &v)) in base.grid.data.iter().zip(h).enumerate() {
+        if b < base.sea_level_m || (d_coast[k] - shape.coast_fade).abs() > half {
+            continue;
+        }
+        let p = base.world(k % base.grid.w, k / base.grid.w);
+        if len(sub(p, shape.summit_m)) > shape.apron_r[0] {
+            continue;
+        }
+        sum += v - b;
+        max = max.max(v - b);
+        n += 1;
+    }
+    if n == 0 {
+        return (f64::NAN, f64::NAN, 0);
+    }
+    (sum / n as f64, max, n)
+}
+
 /// Numbers of one arm.
 #[derive(Debug, Clone, Serialize)]
 pub struct ArmReport {
     pub name: String,
     pub help: String,
+    pub mode: Mode,
+    /// Per-arm parameter values.
+    pub set: BTreeMap<String, f64>,
     pub features: Features,
     pub detail_from: Option<String>,
     pub seconds_shape: f64,
@@ -1817,6 +2022,16 @@ pub struct ArmReport {
     pub edifice_m: f64,
     pub apron_gradient: f64,
     pub apron_rays: usize,
+    /// Apron height at coast distance `coast_fade_m` (radial weight 1), metres.
+    pub apron_at_fade_m: f64,
+    /// Measured uplift (final - base) on the coast-fade contour within `apron_inner_m`: mean, max, samples.
+    pub fade_uplift_mean_m: f64,
+    pub fade_uplift_max_m: f64,
+    pub fade_samples: usize,
+    /// Largest uplift of any land sample, metres.
+    pub uplift_max_m: f64,
+    /// Flank slopes on rings around the final summit.
+    pub flank: Vec<FlankRing>,
     pub fit: Option<ProfileFit>,
     pub ravines: Option<RavineStats>,
     pub detail: Option<crate::filter::DetailReport>,
@@ -1854,18 +2069,31 @@ pub struct Prepared {
     pub under_summit_m: f64,
 }
 
-/// Reads nothing: prepares a base field (coast distance, centre, reference level).
+/// Reference level of the replace mode: quantile `ref_quantile` of the land base on the foot ring, at least sea.
+fn ref_level(spec: &Spec, base: &Field, centre: [f64; 2]) -> f64 {
+    let r_mean = f64::midpoint(spec.v("foot_major_m"), spec.v("foot_minor_m"));
+    ring_quantile(base, centre, r_mean * spec.v("blend_out"), spec.v("ref_quantile")).max(base.sea_level_m)
+}
+
+/// What the edifice stands on at the summit: the reference level (replace) or the base (additive), plus the apron
+/// there (its radial weight is 1 at the summit by the ordering `apron_inner_m` > 0).
+fn under_summit(spec: &Spec, base: &Field, d_coast: &[f64], centre: [f64; 2], ref_m: f64) -> f64 {
+    let probe = Shape::new(spec, Features::default(), centre, base.sea_level_m, ref_m, 0.0);
+    let dc = base.index_of(centre).map_or(0.0, |i| d_coast[i]);
+    let lift = probe.apron(dc, probe.apron_weight(0.0));
+    match spec.mode {
+        Mode::Replace => ref_m + lift,
+        Mode::Additive => base.bilinear(centre).max(base.sea_level_m) + lift,
+    }
+}
+
+/// Reads nothing: prepares a base field (coast distance from the base's own wet mask, centre, reference level).
 pub fn prepare(spec: &Spec, base: Field) -> Result<Prepared> {
     let wet: Vec<bool> = base.grid.data.iter().map(|&v| v < base.sea_level_m).collect();
     let d_coast = coast_distance(&wet, base.grid.w, base.grid.h, base.grid.spacing);
     let (centre_m, centre_rule) = region_peak(&base, &spec.centre)?;
-    let r_mean = f64::midpoint(spec.v("foot_major_m"), spec.v("foot_minor_m"));
-    let ref_m = ring_quantile(&base, centre_m, r_mean * spec.v("blend_out"), spec.v("ref_quantile"))
-        .max(base.sea_level_m);
-    // Reference + apron at the summit (the apron weight is 1 there by the ordering apron_inner > 0).
-    let probe = Shape::new(spec, Features::default(), centre_m, base.sea_level_m, ref_m, 0.0);
-    let dc = base.index_of(centre_m).map_or(0.0, |i| d_coast[i]);
-    let under_summit_m = ref_m + probe.apron(dc, probe.apron_weight(0.0));
+    let ref_m = ref_level(spec, &base, centre_m);
+    let under_summit_m = under_summit(spec, &base, &d_coast, centre_m, ref_m);
     Ok(Prepared {
         base,
         d_coast,
@@ -1881,15 +2109,15 @@ pub fn prepare(spec: &Spec, base: Field) -> Result<Prepared> {
 pub fn stamp_arm(spec: &Spec, prep: &Prepared, arm: &ArmSpec) -> Result<(Vec<f64>, ArmReport)> {
     let t0 = Instant::now();
     let base = &prep.base;
+    let spec = &spec.for_arm(arm)?;
+    let (ref_m, under) = if arm.set.is_empty() {
+        (prep.ref_m, prep.under_summit_m)
+    } else {
+        let r = ref_level(spec, base, prep.centre_m);
+        (r, under_summit(spec, base, &prep.d_coast, prep.centre_m, r))
+    };
     let target = spec.v("summit_m");
-    let mut shape = Shape::new(
-        spec,
-        arm.features,
-        prep.centre_m,
-        base.sea_level_m,
-        prep.ref_m,
-        prep.under_summit_m,
-    );
+    let mut shape = Shape::new(spec, arm.features, prep.centre_m, base.sea_level_m, ref_m, under);
     let summit_stamped = calibrate(&mut shape, base, &prep.d_coast, target);
     let (mut h, w_e) = stamp(&shape, base, &prep.d_coast);
     let t1 = Instant::now();
@@ -1918,9 +2146,22 @@ pub fn stamp_arm(spec: &Spec, prep: &Prepared, arm: &ArmSpec) -> Result<(Vec<f64
     let (ag, rays) = apron_gradient(&shape, &out);
     let fit = fit_profile(&radial_profile(&out, max_at, spec.v("fit_bin_m"), spec.v("fit_max_r_m")));
     let structure = Some(edifice_structure(&out, spec, prep.centre_m));
+    let base_max = base.grid.data.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let flank = flank_rings(base, &out.grid.data, max_at, [base_max, max], 0.5 * spec.v("fit_bin_m"));
+    let fade = fade_uplift(&shape, base, &out.grid.data, &prep.d_coast);
+    let uplift_max_m = base
+        .grid
+        .data
+        .iter()
+        .zip(&out.grid.data)
+        .filter(|(b, _)| **b >= base.sea_level_m)
+        .map(|(b, n)| n - b)
+        .fold(0.0, f64::max);
     let report = ArmReport {
         name: arm.name.clone(),
         help: arm.help.clone(),
+        mode: spec.mode,
+        set: arm.set.clone(),
         features: arm.features,
         detail_from: None,
         seconds_shape: (t1 - t0).as_secs_f64(),
@@ -1933,6 +2174,12 @@ pub fn stamp_arm(spec: &Spec, prep: &Prepared, arm: &ArmSpec) -> Result<(Vec<f64
         edifice_m: shape.edifice_m,
         apron_gradient: ag,
         apron_rays: rays,
+        apron_at_fade_m: shape.apron(shape.coast_fade, 1.0),
+        fade_uplift_mean_m: fade.0,
+        fade_uplift_max_m: fade.1,
+        fade_samples: fade.2,
+        uplift_max_m,
+        flank,
         fit,
         ravines: rav,
         detail: None,
@@ -1970,13 +2217,37 @@ pub fn edifice_structure(field: &Field, spec: &Spec, centre: [f64; 2]) -> crate:
     )
 }
 
-fn write_field(dir: &Path, base: &Field, h: &[f64], meta_extra: serde_json::Value) -> Result<()> {
+/// Writes a guide v1 folder: heights, `meta.json` (the base's own keys, e.g. `cell_size_m`, kept under ours) and the
+/// base's side files ([`GUIDE_SIDE_FILES`]: same grid and frame, so they stay valid).
+fn write_field(
+    dir: &Path,
+    base: &Field,
+    h: &[f64],
+    meta_extra: serde_json::Value,
+    base_dir: Option<&Path>,
+) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let mut bytes = Vec::with_capacity(h.len() * 4);
     for &v in h {
         bytes.extend_from_slice(&(v as f32).to_le_bytes());
     }
     std::fs::write(dir.join("heights.f32"), bytes)?;
+    let mut merged = serde_json::Map::new();
+    if let Some(bd) = base_dir {
+        if let Ok(text) = std::fs::read_to_string(bd.join("meta.json"))
+            && let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(&text)
+        {
+            for (k, v) in m {
+                let k = if k == "producer" { "base_producer".to_string() } else { k };
+                merged.insert(k, v);
+            }
+        }
+        for f in GUIDE_SIDE_FILES {
+            if bd.join(f).exists() {
+                std::fs::copy(bd.join(f), dir.join(f))?;
+            }
+        }
+    }
     let meta = serde_json::json!({
         "format": 1,
         "dims": [base.grid.w, base.grid.h],
@@ -1989,7 +2260,10 @@ fn write_field(dir: &Path, base: &Field, h: &[f64], meta_extra: serde_json::Valu
         "producer": "sf_worldgen scrib-worldgen stamp-volcano",
         "stratovolcano": meta_extra,
     });
-    std::fs::write(dir.join("meta.json"), serde_json::to_string_pretty(&meta)?)?;
+    if let serde_json::Value::Object(m) = meta {
+        merged.extend(m);
+    }
+    std::fs::write(dir.join("meta.json"), serde_json::to_string_pretty(&merged)?)?;
     Ok(())
 }
 
@@ -2021,6 +2295,49 @@ pub struct StampRequest {
     pub out: PathBuf,
     /// Only these arms (a detail arm also needs its source arm in the list or on disk).
     pub arms: Option<Vec<String>>,
+}
+
+/// One arm's summary lines on stdout.
+fn print_arm(rep: &ArmReport) {
+    println!(
+        "  {}: max {:.1} m at ({:.0}, {:.0}), apron {:.4} ({} rays), audit {}/{}/{}, shape {:.2} s, ravines {:.2} s",
+        rep.name,
+        rep.max_m,
+        rep.max_at_m[0],
+        rep.max_at_m[1],
+        rep.apron_gradient,
+        rep.apron_rays,
+        rep.audit.new_wet,
+        rep.audit.new_dry,
+        rep.audit.sea_moved,
+        rep.seconds_shape,
+        rep.seconds_ravines
+    );
+    let rings: Vec<String> = rep
+        .flank
+        .iter()
+        .map(|f| {
+            format!(
+                "{:.0} km {:.1} deg (base {:.1}), secant {:.1} (base {:.1})",
+                f.r_m * 1e-3,
+                f.slope_deg,
+                f.base_slope_deg,
+                f.secant_deg,
+                f.base_secant_deg
+            )
+        })
+        .collect();
+    println!(
+        "    {:?}, H_e {:.0} m, uplift max {:.0} m, apron at coast fade {:.1} m (measured uplift mean {:.1} / max {:.1} m, {} samples); flank {}",
+        rep.mode,
+        rep.edifice_m,
+        rep.uplift_max_m,
+        rep.apron_at_fade_m,
+        rep.fade_uplift_mean_m,
+        rep.fade_uplift_max_m,
+        rep.fade_samples,
+        rings.join("; ")
+    );
 }
 
 /// Runs every arm of a params file and writes `<out>/<arm>/` guides and `<out>/README.md`.
@@ -2069,31 +2386,20 @@ pub fn run_stamp(req: &StampRequest) -> Result<VolcanoRun> {
         }
         let (h, mut rep) = stamp_arm(&spec, &prep, arm)?;
         let t = Instant::now();
+        let aspec = spec.for_arm(arm)?;
         let extra = serde_json::json!({
             "base_guide": req.base.display().to_string(),
             "params_file": req.params.display().to_string(),
-            "params": spec.params,
-            "guess_count": spec.guess_count(),
+            "mode": aspec.mode,
+            "params": aspec.params,
+            "guess_count": aspec.guess_count(),
             "report": rep,
         });
-        write_field(&dir, &prep.base, &h, extra)?;
+        write_field(&dir, &prep.base, &h, extra, Some(&req.base))?;
         let half = spec.v("apron_inner_m");
         write_preview(&dir, &prep.base, &h, prep.centre_m, half)?;
         rep.seconds_write = t.elapsed().as_secs_f64();
-        println!(
-            "  {}: max {:.1} m at ({:.0}, {:.0}), apron {:.4} ({} rays), audit {}/{}/{}, shape {:.2} s, ravines {:.2} s",
-            rep.name,
-            rep.max_m,
-            rep.max_at_m[0],
-            rep.max_at_m[1],
-            rep.apron_gradient,
-            rep.apron_rays,
-            rep.audit.new_wet,
-            rep.audit.new_dry,
-            rep.audit.sea_moved,
-            rep.seconds_shape,
-            rep.seconds_ravines
-        );
+        print_arm(&rep);
         arms.push(rep);
     }
     let run = VolcanoRun {
@@ -2149,6 +2455,8 @@ fn detail_arm(spec: &Spec, prep: &Prepared, arm: &ArmSpec, src: &str, out: &Path
     Ok(ArmReport {
         name: arm.name.clone(),
         help: arm.help.clone(),
+        mode: spec.mode,
+        set: arm.set.clone(),
         features: arm.features,
         detail_from: Some(src.to_string()),
         seconds_shape: 0.0,
@@ -2161,6 +2469,12 @@ fn detail_arm(spec: &Spec, prep: &Prepared, arm: &ArmSpec, src: &str, out: &Path
         edifice_m: f64::NAN,
         apron_gradient: f64::NAN,
         apron_rays: 0,
+        apron_at_fade_m: f64::NAN,
+        fade_uplift_mean_m: f64::NAN,
+        fade_uplift_max_m: f64::NAN,
+        fade_samples: 0,
+        uplift_max_m: f64::NAN,
+        flank: Vec::new(),
         fit: None,
         ravines: None,
         audit: Audit {
@@ -2271,6 +2585,48 @@ fn readme(run: &VolcanoRun, spec: &Spec, req: &StampRequest) -> String {
             a.audit.new_dry,
             a.audit.sea_moved,
             &a.heights_blake3[..16]
+        );
+    }
+    let _ = writeln!(s, "\n## Flanks and apron\n");
+    let _ = writeln!(
+        s,
+        "Mode `{:?}`. Flank: mean local slope of the land samples on a ring (+- fit_bin_m / 2) around the final summit, \
+         and the secant from the maximum to the ring's mean height; base values on the same rings in brackets. Apron: \
+         analytic apron at coast distance coast_fade_m; uplift = final - base on that contour within apron_inner_m.\n",
+        spec.mode
+    );
+    let _ = writeln!(
+        s,
+        "| Arm | Set | Uplift max m | Apron at fade m | Fade uplift mean / max m (samples) | Rings: slope deg (base), secant deg (base) |"
+    );
+    let _ = writeln!(s, "|---|---|---|---|---|---|");
+    for a in run.arms.iter().filter(|a| a.detail.is_none()) {
+        let set: Vec<String> = a.set.iter().map(|(k, v)| format!("{k} = {v}")).collect();
+        let rings: Vec<String> = a
+            .flank
+            .iter()
+            .map(|f| {
+                format!(
+                    "{:.0} km: {:.1} ({:.1}), {:.1} ({:.1})",
+                    f.r_m * 1e-3,
+                    f.slope_deg,
+                    f.base_slope_deg,
+                    f.secant_deg,
+                    f.base_secant_deg
+                )
+            })
+            .collect();
+        let _ = writeln!(
+            s,
+            "| {} | {} | {:.0} | {:.1} | {:.1} / {:.1} ({}) | {} |",
+            a.name,
+            set.join(", "),
+            a.uplift_max_m,
+            a.apron_at_fade_m,
+            a.fade_uplift_mean_m,
+            a.fade_uplift_max_m,
+            a.fade_samples,
+            rings.join("; ")
         );
     }
     let _ = writeln!(s, "\n## Ravines\n");

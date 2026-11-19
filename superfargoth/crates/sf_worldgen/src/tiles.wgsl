@@ -1,8 +1,10 @@
 // The GPU twin of `tiles.rs` (worldgen.md "Pipeline" stage 7, slice G2): `field_height` is
 // `GuideTiles::height` (the guide's Catmull-Rom surface plus `filter::detail_offset_banded`, band-limited for
-// the height level), `field_albedo` the fallback macro look. The host (`sf_terrain_bevy` gpu fill, or the
-// twin test) declares `field_data: array<u32>`, filled with `GuideTiles::gpu_data`; `tiles.rs` prepends the
-// header slot constants (`FH_*`) and the guide's first word (`FH_HEIGHTS`).
+// the height level), `field_albedo` the macro look: the ground layers' mean albedos (`layers::LayerField`, slice
+// WG-X3) or, without them, the fallback look. The host (`sf_terrain_bevy` gpu fill, or the twin test) declares
+// `field_data: array<u32>`, filled with `GuideTiles::gpu_data`; `tiles.rs` prepends the header slot constants
+// (`FH_*`) and the guide's first word (`FH_HEIGHTS`); the stamps follow the heights (`FH_STAMPS` holds their
+// first word, 0 = none), then the layer pyramids (`FH_LAYERS`, 0 = none).
 //
 // Precision: the CPU reference splits positions in f64; here the level-0 global sample index stays an
 // integer and every split into (cell, fraction) is integer-exact where the cell is a whole number of eighth
@@ -295,22 +297,186 @@ fn wg_detail(g: vec2<i32>, b: WgBase, band: vec2<f32>) -> f32 {
     return dh;
 }
 
-/// The height at level-0 global sample `g` as height level `level` sees it (`GuideTiles::height`).
+/// Bilinear in one stamp grid at word `p` (`stamps::bilinear`): cell (i, j) + t, `a + (b − a)·t`.
+fn wg_stamp_lerp(p: u32, w: u32, h: u32, i: u32, j: u32, t: vec2<f32>) -> f32 {
+    let i1 = min(i + 1u, w - 1u);
+    let j1 = min(j + 1u, h - 1u);
+    let a = wg_f(p + j * w + i);
+    let b = wg_f(p + j * w + i1);
+    let c = wg_f(p + j1 * w + i);
+    let d = wg_f(p + j1 * w + i1);
+    let top = a + (b - a) * t.x;
+    let bot = c + (d - c) * t.x;
+    return top + (bot - top) * t.y;
+}
+
+/// `stamps::StampIndex::sample` at the level-0 global sample `g`: (height, weight) of the covering stamp of
+/// largest weight, (0, 0) outside every stamp. Layout: `StampIndex::gpu_words`.
+fn wg_stamp(g: vec2<i32>) -> vec2<f32> {
+    let s0 = wg_u(FH_STAMPS);
+    if s0 == 0u {
+        return vec2<f32>(0.0, 0.0);
+    }
+    let nx = i32(wg_u(s0 + 1u));
+    let ny = i32(wg_u(s0 + 2u));
+    let edge = i32(wg_u(s0 + 5u));
+    let bx = wg_floor_div(g.x - wg_i(s0 + 3u), edge).x;
+    let by = wg_floor_div(g.y - wg_i(s0 + 4u), edge).x;
+    if bx < 0 || by < 0 || bx >= nx || by >= ny {
+        return vec2<f32>(0.0, 0.0);
+    }
+    let table = wg_u(s0 + 6u);
+    let starts = wg_u(s0 + 7u);
+    let items = wg_u(s0 + 8u);
+    let bin = u32(by * nx + bx);
+    var best = vec2<f32>(0.0, 0.0);
+    var found = false;
+    for (var k = wg_u(starts + bin); k < wg_u(starts + bin + 1u); k++) {
+        let r = table + 8u * wg_u(items + k);
+        let a = wg_f(r + 4u);
+        let u = f32(g.x - wg_i(r)) * a + wg_f(r + 2u);
+        let v = f32(g.y - wg_i(r + 1u)) * a + wg_f(r + 3u);
+        let w = wg_u(r + 5u);
+        let h = wg_u(r + 6u);
+        if !(u >= 0.0 && v >= 0.0 && u <= f32(w - 1u) && v <= f32(h - 1u)) {
+            continue;
+        }
+        let i = min(u32(floor(u)), w - 1u);
+        let j = min(u32(floor(v)), h - 1u);
+        let t = vec2<f32>(u - f32(i), v - f32(j));
+        let p = wg_u(r + 7u);
+        let s = vec2<f32>(wg_stamp_lerp(p, w, h, i, j, t), wg_stamp_lerp(p + w * h, w, h, i, j, t));
+        if !found || s.y > best.y {
+            best = s;
+            found = true;
+        }
+    }
+    return best;
+}
+
+/// The height at level-0 global sample `g` as height level `level` sees it (`GuideTiles::height`): the stamp
+/// blend `mix(base + detail · (1 − w), stamp, w)`.
 fn field_height(g: vec2<i32>, level: u32) -> f32 {
+    let st = wg_stamp(g);
+    if st.y >= 1.0 {
+        return st.x;
+    }
     let b = wg_base(g);
     let band = wg_band(level);
-    if wg_u(FH_OCTAVES) == 0u || wg_f(FH_WAVELENGTH) <= band.x {
-        return b.h;
+    var h = b.h;
+    if !(wg_u(FH_OCTAVES) == 0u || wg_f(FH_WAVELENGTH) <= band.x) {
+        h = b.h + wg_detail(g, b, band) * (1.0 - st.y);
     }
-    return b.h + wg_detail(g, b, band);
+    if st.y > 0.0 {
+        h = h + (st.x - h) * st.y;
+    }
+    return h;
 }
 
 fn wg_mix3(a: vec3<f32>, b: vec3<f32>, t: f32) -> vec3<f32> {
     return a + (b - a) * t;
 }
 
-/// `tiles::fallback_look` (scaffold FALLBACK_LOOK): linear albedo by height above sea and slope.
+/// `layers::pick_stamp` at the level-0 global sample `g`: the index of the covering stamp of largest weight over
+/// one half (the first on a tie), -1 where there is none.
+fn wg_stamp_pick(g: vec2<i32>) -> i32 {
+    let s0 = wg_u(FH_STAMPS);
+    if s0 == 0u {
+        return -1;
+    }
+    let nx = i32(wg_u(s0 + 1u));
+    let ny = i32(wg_u(s0 + 2u));
+    let edge = i32(wg_u(s0 + 5u));
+    let bx = wg_floor_div(g.x - wg_i(s0 + 3u), edge).x;
+    let by = wg_floor_div(g.y - wg_i(s0 + 4u), edge).x;
+    if bx < 0 || by < 0 || bx >= nx || by >= ny {
+        return -1;
+    }
+    let table = wg_u(s0 + 6u);
+    let starts = wg_u(s0 + 7u);
+    let items = wg_u(s0 + 8u);
+    let bin = u32(by * nx + bx);
+    var best = -1;
+    var best_w = 0.5;
+    for (var k = wg_u(starts + bin); k < wg_u(starts + bin + 1u); k++) {
+        let index = wg_u(items + k);
+        let r = table + 8u * index;
+        let a = wg_f(r + 4u);
+        let u = f32(g.x - wg_i(r)) * a + wg_f(r + 2u);
+        let v = f32(g.y - wg_i(r + 1u)) * a + wg_f(r + 3u);
+        let w = wg_u(r + 5u);
+        let h = wg_u(r + 6u);
+        if !(u >= 0.0 && v >= 0.0 && u <= f32(w - 1u) && v <= f32(h - 1u)) {
+            continue;
+        }
+        let i = min(u32(floor(u)), w - 1u);
+        let j = min(u32(floor(v)), h - 1u);
+        let t = vec2<f32>(u - f32(i), v - f32(j));
+        let weight = wg_stamp_lerp(wg_u(r + 7u) + w * h, w, h, i, j, t);
+        if weight > best_w {
+            best = i32(index);
+            best_w = weight;
+        }
+    }
+    return best;
+}
+
+/// One 10-bit RGB word (`layers::unpack10`).
+fn wg_unpack10(c: u32) -> vec3<f32> {
+    return vec3<f32>(f32(c & 1023u), f32((c >> 10u) & 1023u), f32((c >> 20u) & 1023u)) / 1023.0;
+}
+
+/// `layers::Pyramid::albedo` of the record at word `r` (`Pyramid::gpu_words`): the coarsest level whose texels
+/// are not wider than a macro sample of `level` (2^level m), bilinear between texel centres.
+fn wg_layer_albedo(r: u32, g: vec2<i32>, level: u32) -> vec3<f32> {
+    let mips = wg_u(r);
+    let s = wg_f(r + 1u);
+    let sp = f32(1u << min(level, 30u));
+    var m = 0u;
+    loop {
+        if m + 1u >= mips || s * f32(1u << (m + 1u)) > sp {
+            break;
+        }
+        m += 1u;
+    }
+    let q = r + 2u + 6u * m;
+    let p = wg_u(q);
+    let w = wg_u(q + 1u);
+    let h = wg_u(q + 2u);
+    let a = wg_f(q + 3u);
+    let u = clamp(f32(g.x) * a + wg_f(q + 4u), 0.0, f32(w - 1u));
+    let v = clamp(f32(g.y) * a + wg_f(q + 5u), 0.0, f32(h - 1u));
+    let i = min(u32(floor(u)), w - 1u);
+    let j = min(u32(floor(v)), h - 1u);
+    let i1 = min(i + 1u, w - 1u);
+    let j1 = min(j + 1u, h - 1u);
+    let tx = u - f32(i);
+    let ty = v - f32(j);
+    let c00 = wg_unpack10(wg_u(p + j * w + i));
+    let c10 = wg_unpack10(wg_u(p + j * w + i1));
+    let c01 = wg_unpack10(wg_u(p + j1 * w + i));
+    let c11 = wg_unpack10(wg_u(p + j1 * w + i1));
+    let top = c00 + (c10 - c00) * tx;
+    let bot = c01 + (c11 - c01) * tx;
+    return top + (bot - top) * ty;
+}
+
+/// The macro albedo (linear) at the level-0 global sample `g` for macro level `level`: the ground layers'
+/// (`layers::LayerField::albedo`: a stamp's own grid where its weight is over one half, else the global grid),
+/// or without them `tiles::fallback_look` (scaffold FALLBACK_LOOK) by height above sea and slope.
 fn field_albedo(g: vec2<i32>, level: u32) -> vec3<f32> {
+    let l0 = wg_u(FH_LAYERS);
+    if l0 != 0u {
+        var rec = wg_u(l0 + 2u);
+        let k = wg_stamp_pick(g);
+        if k >= 0 && u32(k) < wg_u(l0) {
+            let sr = wg_u(wg_u(l0 + 1u) + u32(k));
+            if sr != 0u {
+                rec = sr;
+            }
+        }
+        return wg_layer_albedo(rec, g, level);
+    }
     let b = wg_base(g);
     let h = b.h - wg_f(FH_SEA);
     let slope = sqrt(b.grad.x * b.grad.x + b.grad.y * b.grad.y);

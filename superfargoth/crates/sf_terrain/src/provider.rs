@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use sf_world::WorldspaceId;
 
+use crate::layers::LayerMap;
 use crate::product::{LayerArrays, LayerCap, MacroProduct, TileProduct};
 use crate::pyramid::BlockBounds;
 use crate::tile::TileCoord;
@@ -76,5 +77,18 @@ pub trait TerrainTiles: Send + Sync + 'static {
     /// without generating the tile; also covering what [`Self::gpu_field`] draws there.
     fn block_bounds(&self, _c: TileCoord) -> Option<BlockBounds> {
         None
+    }
+
+    /// Tile `c`'s layer map alone, without its heights (`None`: the provider has none apart from
+    /// [`TileProduct::layers`]). A GPU-filled world draws its near layer levels from these, and the tile path
+    /// takes one when a tile product carries no layers.
+    fn layer_map(&self, _c: TileCoord) -> Option<Result<LayerMap, String>> {
+        None
+    }
+
+    /// Whether [`Self::layer_map`] gives layer maps: a GPU-filled world then still streams them for its near
+    /// layer levels (its heights stay on the GPU).
+    fn has_layer_maps(&self) -> bool {
+        false
     }
 }

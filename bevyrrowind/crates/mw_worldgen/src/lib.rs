@@ -13,12 +13,21 @@
 //! column 0 = the west edge. Sample `(col, row)` is at Morrowind `x = 8192·cells_min.x + 128·col`,
 //! `y = 8192·(cells_max.y + 1) − 128·row` units. Cells without `LAND` hold [`fill_height`] and mask 0.
 
+pub mod anchor;
+pub mod classify;
+pub mod flora;
+pub mod layers;
 pub mod markers;
 mod output;
 pub mod stats;
+pub mod x10;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_flora;
+#[cfg(test)]
+mod tests_x10;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -55,6 +64,8 @@ pub enum DumpError {
     Io(std::io::Error),
     Png(png::EncodingError),
     Json(serde_json::Error),
+    /// A bad input or a failed framework write (`worldgen-x10`).
+    Invalid(String),
 }
 
 impl fmt::Display for DumpError {
@@ -65,6 +76,7 @@ impl fmt::Display for DumpError {
             Self::Io(e) => write!(f, "{e}"),
             Self::Png(e) => write!(f, "png: {e}"),
             Self::Json(e) => write!(f, "json: {e}"),
+            Self::Invalid(e) => write!(f, "{e}"),
         }
     }
 }

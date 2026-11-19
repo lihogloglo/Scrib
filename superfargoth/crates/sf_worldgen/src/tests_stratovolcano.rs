@@ -1,6 +1,6 @@
 //! Tests of the composable stratovolcano (WG-VO): profile monotone and on target, apron gradient in range,
 //! determinism across runs and thread counts, coast mask kept, distance transform exact, profile fit recovers a
-//! known profile.
+//! known profile; additive mode keeps the base relief and the crater, hits the summit, keeps the coast.
 
 use std::collections::BTreeMap;
 
@@ -146,6 +146,7 @@ fn spec(features: Features, ravine_steps: f64) -> Spec {
     }
     params.get_mut("ravine_steps").expect("declared").v = ravine_steps;
     let s = Spec {
+        mode: Mode::Replace,
         centre: CentreSpec {
             explicit_m: Some([0.0, 0.0]),
             ..CentreSpec::default()
@@ -208,6 +209,7 @@ fn arm(features: Features) -> ArmSpec {
         help: String::new(),
         features,
         detail_from: None,
+        set: BTreeMap::new(),
     }
 }
 
@@ -416,4 +418,179 @@ fn spec_rejects_unknown_and_missing_params() {
     s.params.remove("nonsense");
     s.params.remove("summit_m");
     assert!(s.validate().is_err());
+}
+
+fn param(v: f64, unit: &str, min: f64, max: f64) -> Param {
+    Param {
+        v,
+        unit: unit.into(),
+        min,
+        max,
+        source: "Guess".into(),
+        help: String::new(),
+    }
+}
+
+/// Additive-mode spec: the fixture plus a flat top and the coast-fitted footprint, no edifice crater, a wider
+/// coast fade.
+fn additive_spec() -> Spec {
+    let mut s = spec(Features::default(), 0.0);
+    s.mode = Mode::Additive;
+    s.params.insert("top_flat_m".into(), param(2500.0, "m", 0.0, 20000.0));
+    s.params.insert("top_round_m".into(), param(1000.0, "m", 0.0, 20000.0));
+    s.params.insert("coast_fit_norm".into(), param(4.0, "ratio", 0.0, 16.0));
+    s.params.get_mut("crater_depth_m").expect("declared").v = 0.0;
+    s.params.get_mut("coast_fade_m").expect("declared").v = 3000.0;
+    s.validate().expect("additive fixture valid");
+    s
+}
+
+/// Crater centre of the massif fixture (off the edifice centre, inside the flat top), metres.
+const CRATER_C: [f64; 2] = [-500.0, 0.0];
+/// Crater radius and depth of the massif fixture, metres.
+const CRATER_R: f64 = 800.0;
+const CRATER_D: f64 = 300.0;
+
+/// The `island` coast with a massif of its own: a 2 km concave mountain, a summit crater, rough value-noise relief
+/// (the shape of a game's own mountain scaled up).
+fn massif() -> Field {
+    let mut f = island(false);
+    let n = f.grid.w;
+    for i in 0..f.grid.len() {
+        if f.grid.data[i] < 0.0 {
+            continue;
+        }
+        let p = f.world(i % n, i / n);
+        let m = 2000.0 * (1.0 - len(p) / 9000.0).max(0.0).powf(1.5);
+        let crater = CRATER_D * bowl(len(sub(p, CRATER_C)) / CRATER_R);
+        f.grid.data[i] = 10.0 + m - crater + 60.0 * (0.5 + 0.5 * value_noise(p, 700.0, 7));
+    }
+    f
+}
+
+/// Local detail: a sample minus the mean of its 3 x 3 neighbourhood (base minus a smooth fit).
+fn detail(h: &[f64], w: usize, k: usize) -> f64 {
+    let mut m = 0.0;
+    for dj in [-1isize, 0, 1] {
+        for di in [-1isize, 0, 1] {
+            m += h[(k as isize + dj * w as isize + di) as usize];
+        }
+    }
+    h[k] - m / 9.0
+}
+
+/// Crater depth: highest sample within 1.25 crater radii of the crater centre minus the lowest within it.
+fn crater_depth(f: &Field, h: &[f64]) -> f64 {
+    let (mut hi, mut lo) = (f64::NEG_INFINITY, f64::INFINITY);
+    for (k, &v) in h.iter().enumerate() {
+        let r = len(sub(f.world(k % f.grid.w, k / f.grid.w), CRATER_C));
+        if r <= 1.25 * CRATER_R {
+            hi = hi.max(v);
+            lo = lo.min(v);
+        }
+    }
+    hi - lo
+}
+
+#[test]
+fn additive_keeps_base_relief_and_crater_hits_summit_keeps_coast() {
+    let s = additive_spec();
+    let base = massif();
+    let prep = prepare(&s, base.clone()).expect("prepare");
+    let target = s.v("summit_m");
+    let (h, rep) = stamp_arm(&s, &prep, &arm(Features::default())).expect("stamp");
+    assert!((rep.max_m - target).abs() < 1.0, "max {} vs {target}", rep.max_m);
+    assert!(rep.audit.is_clean(), "wet/dry audit {:?}", rep.audit);
+    assert_eq!(rep.wet_dry.sea, WetDry::count(&base.grid.data, 0.0).sea);
+    // Land is never lowered.
+    assert!(base.grid.data.iter().zip(&h).all(|(b, n)| n >= b));
+    // The uplift does not depend on the base: the same calibrated shape on a flat base of the same coast adds the
+    // same heights everywhere (the base relief rides on top unchanged).
+    let mut shape = Shape::new(
+        &s,
+        Features::default(),
+        prep.centre_m,
+        0.0,
+        prep.ref_m,
+        prep.under_summit_m,
+    );
+    calibrate(&mut shape, &prep.base, &prep.d_coast, target);
+    let flat = island(false);
+    let (hm, _) = stamp(&shape, &base, &prep.d_coast);
+    let (hf, _) = stamp(&shape, &flat, &prep.d_coast);
+    assert_eq!(hash_f32(&hm), rep.heights_blake3, "stamp_arm and the calibrated shape agree");
+    for k in 0..h.len() {
+        if base.grid.data[k] >= 0.0 {
+            let (um, uf) = (hm[k] - base.grid.data[k], hf[k] - flat.grid.data[k]);
+            assert!((um - uf).abs() < 1e-6, "sample {k}: uplift {um} vs {uf}");
+        }
+    }
+    // Base minus a smooth fit is unchanged where the edifice is smooth (inside the foot, away from the coast fade).
+    let (w, n) = (base.grid.w, base.grid.h);
+    let mut worst = 0.0_f64;
+    for j in 1..n - 1 {
+        for i in 1..w - 1 {
+            let k = j * w + i;
+            let p = base.world(i, j);
+            let (_, rho) = shape.edifice_at(shape.warp(p), prep.d_coast[k]);
+            if base.grid.data[k] < 0.0 || prep.d_coast[k] < s.v("coast_fade_m") + 200.0 || rho > 0.9 {
+                continue;
+            }
+            worst = worst.max((detail(&h, w, k) - detail(&base.grid.data, w, k)).abs());
+        }
+    }
+    println!("additive: max |detail change| {worst:.3} m, H_e {:.0} m", shape.edifice_m);
+    assert!(worst < 2.0, "base detail changed by {worst} m");
+    // The base crater (on the flat top) survives with its depth: the edifice is flat there, only the apron's gentle
+    // rise toward the summit tilts it a little.
+    let (d0, d1) = (crater_depth(&base, &base.grid.data), crater_depth(&base, &h));
+    println!("additive: crater depth {d0:.1} -> {d1:.1} m");
+    assert!(d0 > 200.0, "fixture crater {d0}");
+    assert!((d1 - d0).abs() < 0.05 * d0, "crater depth {d0} -> {d1}");
+    // Nothing is added on the shore.
+    for (k, (&b, &v)) in base.grid.data.iter().zip(&h).enumerate() {
+        if b >= 0.0 && prep.d_coast[k] <= base.grid.spacing {
+            assert!(v - b < 3.0, "shore sample {k} raised {}", v - b);
+        }
+    }
+    assert_eq!(rep.flank.len(), 3);
+    assert!(rep.flank.iter().all(|f| f.samples > 0 && f.slope_deg.is_finite()));
+}
+
+#[test]
+fn additive_is_deterministic_across_runs_and_threads() {
+    let s = additive_spec();
+    let run = |threads: usize| {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .expect("pool");
+        pool.install(|| {
+            let prep = prepare(&s, massif()).expect("prepare");
+            stamp_arm(&s, &prep, &arm(Features::default())).expect("stamp").1
+        })
+    };
+    let (a, b, c) = (run(1), run(4), run(4));
+    assert_eq!(a.heights_blake3, b.heights_blake3, "1 vs 4 threads");
+    assert_eq!(b.heights_blake3, c.heights_blake3, "two runs");
+}
+
+#[test]
+fn arm_set_overrides_and_additive_params_are_checked() {
+    let s = additive_spec();
+    let prep = prepare(&s, massif()).expect("prepare");
+    let mut a = arm(Features::default());
+    a.set.insert("summit_m".into(), 4500.0);
+    let (_, rep) = stamp_arm(&s, &prep, &a).expect("stamp");
+    assert!((rep.max_m - 4500.0).abs() < 1.0, "max {}", rep.max_m);
+    a.set.insert("summit_m".into(), 99_999.0);
+    assert!(s.for_arm(&a).is_err(), "out-of-range override accepted");
+    let mut bad = s.clone();
+    bad.arms[0].set.insert("nonsense".into(), 1.0);
+    assert!(bad.validate().is_err(), "unknown override accepted");
+    let mut missing = s.clone();
+    missing.params.remove("top_flat_m");
+    assert!(missing.validate().is_err(), "additive without top_flat_m accepted");
+    missing.mode = Mode::Replace;
+    assert!(missing.validate().is_ok(), "optional param required in replace mode");
 }

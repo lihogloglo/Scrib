@@ -55,7 +55,8 @@ pub use provider::{GpuField, TerrainTiles};
 pub use constrain::{FOOTPRINT_FEATHER, Footprint, FootprintMask, constrain};
 pub use edits::{BRICK_SAMPLES, BrickCoord, EditBrick, HeightEdits, TerrainChanged};
 pub use layers::{
-    LayerId, LayerMap, LayerParams, TintMap, downsample_layers, downsample_tint, resample_layers, resample_tint,
+    LayerGrid, LayerId, LayerMap, LayerParams, TintMap, downsample_layers, downsample_tint, resample_layer_grid,
+    resample_layers, resample_tint,
 };
 pub use pyramid::{BlockBounds, EncodedHeights, MAX_QUANT_STEP, downsample, top_level};
 pub use query::{ResidentTile, TerrainHeights, TerrainHit, WorldRay, WorldRect};

@@ -23,9 +23,12 @@
 //! block's Catmull-Rom footprint, widened by the kernel's largest overshoot (`CR_OVERSHOOT` of the range) and by
 //! the largest detail amplitude there (`max_amplitude_m`, and `shore_ratio` × height above sea).
 //!
-//! **Look.** No ground layers yet: a macro albedo by height and slope (`FALLBACK_LOOK`, a named scaffold
-//! removed by the ground-textures slice), which `sf_terrain_bevy` also shows near the camera through its default
-//! layer.
+//! **Look** (slice WG-X3, `crate::layers`): a guide with `layers.json` gives every tile its layer map
+//! ([`TerrainTiles::layer_map`], any level; the runtime asks for its near layer levels) and, once the app hands
+//! in the layer arrays and their table ([`GuideTiles::with_layer_arrays`]), the macro albedo from the layers' mean
+//! albedos, on the CPU and in `tiles.wgsl` alike. Without layers: a macro albedo by height and slope
+//! (`FALLBACK_LOOK`, a named scaffold kept only for guides without layers), which `sf_terrain_bevy` also shows
+//! near the camera through its default layer.
 //!
 //! **GPU twin** (slice G2): [`GuideTiles::gpu_field`] hands the runtime `tiles.wgsl` ([`wgsl`]) and the guide
 //! with the parameters ([`GuideTiles::gpu_data`]), so it fills the clipmaps on the GPU; the CPU tiles above stay
@@ -33,6 +36,12 @@
 //! so they never compete with the game for every core. CDLOD bounds come from [`GuideTiles::bounds_only`]
 //! without evaluating the filter. At runtime the filter runs [`TileSettings::runtime_octaves`] octaves (down to
 //! ~1 m wavelength) instead of the preview's declared count.
+//!
+//! **Stamps** (slice WG-X2s, `crate::stamps`): when the guide folder has `stamps.json`, a stamp's height `h_s`
+//! and weight `w` replace the sample: `mix(h_base + detail · (1 − w), h_s, w)`, the detail offset scaled by
+//! `1 − w` (so it is zero where `w` = 1, where the stamp's height is returned bit for bit) and samples outside
+//! every stamp (or at `w` = 0) bitwise unchanged. The bounds widen by the stamps' heights; the GPU twin packs
+//! [`crate::stamps::StampIndex::gpu_words`] after the guide's heights ([`slot::STAMPS`]).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -41,13 +50,15 @@ use std::time::Instant;
 
 use rayon::prelude::*;
 use sf_terrain::{
-    BLOCK_QUADS, BLOCKS, BlockBounds, EncodedHeights, HeightTile, LAYER_SAMPLES, LayerArrays, LayerCap,
-    GpuField, MacroProduct, TILE_SAMPLES, TerrainTiles, TileCoord, TileProduct, sample_meters,
+    BLOCK_QUADS, BLOCKS, BlockBounds, EncodedHeights, GpuField, HeightTile, LAYER_SAMPLES, LayerArrays, LayerCap,
+    LayerMap, LayerTable, MacroProduct, TILE_SAMPLES, TerrainTiles, TileCoord, TileProduct, sample_meters,
 };
 use sf_world::WorldspaceId;
 
 use crate::filter::{self, BaseField, Declared, FilterParams};
 use crate::guide::Guide;
+use crate::layers::{GuideLayers, LayerField};
+use crate::stamps::{StampIndex, StampSet};
 use crate::{Error, Result};
 
 #[cfg(test)]
@@ -177,6 +188,11 @@ struct MinMax {
     max: Vec<f32>,
 }
 
+/// Where a generated world's layer arrays come from (`TerrainTiles::layers_capped`): the arrays of a bake that
+/// has the guide's layer records.
+pub type LayerArraysFn =
+    Arc<dyn Fn(Option<u32>, &LayerCap) -> Option<std::result::Result<LayerArrays, String>> + Send + Sync>;
+
 /// A guide as runtime terrain tiles ([`TerrainTiles`]).
 pub struct GuideTiles {
     ws: WorldspaceId,
@@ -189,6 +205,12 @@ pub struct GuideTiles {
     stats: [LevelCounters; STAT_LEVELS],
     /// Where tile heights are generated: this pool, or rayon's global one.
     pool: Option<Arc<rayon::ThreadPool>>,
+    /// The guide's height stamps, indexed.
+    stamps: Option<Arc<StampIndex>>,
+    /// The guide's ground layers (`crate::layers`).
+    layers: Option<Arc<LayerField>>,
+    /// The layer arrays the layers index.
+    arrays: Option<LayerArraysFn>,
 }
 
 impl GuideTiles {
@@ -198,7 +220,14 @@ impl GuideTiles {
         let guide = Guide::read(dir)?;
         let settings = TileSettings::default();
         let prm = FilterParams { octaves: settings.runtime_octaves, ..FilterParams::default() };
-        Ok(Self::new(guide, ws, prm, settings))
+        let mut tiles = Self::new(guide, ws, prm, settings);
+        if let Some(set) = StampSet::read(dir)? {
+            tiles = tiles.with_stamps(set);
+        }
+        match GuideLayers::read(dir)? {
+            Some(layers) => tiles.with_layers(layers),
+            None => Ok(tiles),
+        }
     }
 
     pub fn new(guide: Guide, ws: WorldspaceId, prm: FilterParams, settings: TileSettings) -> Self {
@@ -208,7 +237,58 @@ impl GuideTiles {
             .flat_map(|c| [guide.heights[c], guide.heights[(h - 1) * w + c]])
             .chain((0..h).flat_map(|r| [guide.heights[r * w], guide.heights[r * w + w - 1]]));
         let fill = edge.fold(f32::INFINITY, f32::min);
-        Self { ws, guide: Arc::new(guide), prm, settings, pyramid, fill, stats: Default::default(), pool: None }
+        Self {
+            ws,
+            guide: Arc::new(guide),
+            prm,
+            settings,
+            pyramid,
+            fill,
+            stats: Default::default(),
+            pool: None,
+            stamps: None,
+            layers: None,
+            arrays: None,
+        }
+    }
+
+    /// These tiles with height stamps (`crate::stamps`; an empty set means none).
+    #[must_use]
+    pub fn with_stamps(mut self, set: StampSet) -> Self {
+        self.stamps = (!set.stamps.is_empty()).then(|| Arc::new(StampIndex::new(set)));
+        self
+    }
+
+    /// The height stamps, when the guide has any.
+    pub fn stamps(&self) -> Option<&StampIndex> {
+        self.stamps.as_deref()
+    }
+
+    /// These tiles with ground layers (`crate::layers`; stamp grids index the stamps, so set those first).
+    pub fn with_layers(mut self, layers: GuideLayers) -> Result<Self> {
+        let n = self.stamps.as_ref().map_or(0, |st| st.set().stamps.len());
+        self.layers = Some(Arc::new(LayerField::new(layers, n)?));
+        Ok(self)
+    }
+
+    /// The ground layers, when the guide has any.
+    pub fn layers(&self) -> Option<&LayerField> {
+        self.layers.as_deref()
+    }
+
+    /// These tiles drawing the layer arrays `arrays` (whose table is `table`): the macro look then comes from the
+    /// layers' mean albedos. Returns the palette records `table` doesn't have (drawn neutral grey). Without
+    /// ground layers only the arrays are kept (tiles name no layer: the table's fill layer everywhere).
+    pub fn with_layer_arrays(mut self, table: &LayerTable, arrays: LayerArraysFn) -> Result<(Self, Vec<String>)> {
+        let mut missing = Vec::new();
+        if let Some(field) = &self.layers {
+            let n = self.stamps.as_ref().map_or(0, |st| st.set().stamps.len());
+            let mut f = LayerField::new(field.layers().clone(), n)?;
+            missing = f.with_means(table);
+            self.layers = Some(Arc::new(f));
+        }
+        self.arrays = Some(arrays);
+        Ok((self, missing))
     }
 
     /// The same guide (shared, nothing copied) with other filter parameters: a live filter change. The
@@ -224,6 +304,9 @@ impl GuideTiles {
             fill: self.fill,
             stats: Default::default(),
             pool: self.pool.clone(),
+            stamps: self.stamps.clone(),
+            layers: self.layers.clone(),
+            arrays: self.arrays.clone(),
         }
     }
 
@@ -296,11 +379,19 @@ impl GuideTiles {
         let g = &self.guide;
         let col = (x - g.origin_m[0]) / g.spacing_m;
         let row = (g.origin_m[1] + z) / g.spacing_m;
-        if off {
-            return base.height(col, row) as f32;
+        let (hs, w) = self.stamps.as_ref().and_then(|st| st.sample(x, -z)).unwrap_or((0.0, 0.0));
+        if w >= 1.0 {
+            return hs;
         }
-        let s = base.sample(col, row);
-        s.h as f32 + filter::detail_offset_banded([x, -z], &s, g.sea_level_m, &self.prm, Some(band))
+        let h = if off {
+            base.height(col, row) as f32
+        } else {
+            let s = base.sample(col, row);
+            let d = filter::detail_offset_banded([x, -z], &s, g.sea_level_m, &self.prm, Some(band));
+            // Outside every stamp the sum stays the unstamped one, bitwise.
+            if w > 0.0 { s.h as f32 + d * (1.0 - w) } else { s.h as f32 + d }
+        };
+        if w > 0.0 { h + (hs - h) * w } else { h }
     }
 
     /// Tile `c`'s heights (rows in parallel; each sample a pure function of its global indices).
@@ -395,17 +486,36 @@ impl GuideTiles {
                 let k = bz * BLOCKS + bx;
                 out.min[k] = lo - amp - eps;
                 out.max[k] = hi + amp + eps;
+                // A stamped sample lies between its generated height (within the above) and its stamp height.
+                if let Some((slo, shi)) = self.stamps.as_ref().and_then(|st| st.height_range([xa, -zb, xb, -za])) {
+                    let seps = 0.01 + 1e-6 * slo.abs().max(shi.abs());
+                    out.min[k] = out.min[k].min(slo - seps);
+                    out.max[k] = out.max[k].max(shi + seps);
+                }
             }
         }
         out
     }
 
-    /// Macro albedo of tile `c` (sRGB RGBA8 at the layer-map spacing): the fallback look by height and slope of
-    /// the guide's surface.
+    /// Macro albedo of tile `c` (sRGB RGBA8 at the layer-map spacing): from the layers' mean albedos when the
+    /// guide has layers and their table ([`Self::with_layer_arrays`]), else the fallback look by height and slope
+    /// of the guide's surface.
     pub fn macro_rgba(&self, c: TileCoord) -> Vec<[u8; 4]> {
+        let mut out = vec![[0u8; 4]; LAYER_SAMPLES * LAYER_SAMPLES];
+        if let Some(field) = self.layers.as_deref().filter(|f| f.has_macro()) {
+            let set = self.stamps.as_ref().map(|st| st.set());
+            let cands = LayerField::tile_candidates(c, set);
+            out.par_chunks_mut(LAYER_SAMPLES).enumerate().for_each(|(j, row)| {
+                for (i, px) in row.iter_mut().enumerate() {
+                    let (gx, gz) = c.global_sample(i * 2, j * 2);
+                    let rgb = field.albedo(gx, gz, c.level, set, &cands).expect("macro pyramids");
+                    *px = [srgb(rgb[0]), srgb(rgb[1]), srgb(rgb[2]), 255];
+                }
+            });
+            return out;
+        }
         let base = self.base();
         let g = &self.guide;
-        let mut out = vec![[0u8; 4]; LAYER_SAMPLES * LAYER_SAMPLES];
         out.par_chunks_mut(LAYER_SAMPLES).enumerate().for_each(|(j, row)| {
             for (i, px) in row.iter_mut().enumerate() {
                 let (gx, gz) = c.global_sample(i * 2, j * 2);
@@ -440,7 +550,8 @@ impl GuideTiles {
         &self.stats[usize::from(level).min(STAT_LEVELS - 1)]
     }
 
-    /// The tile product of `c`: heights (f32, no quantisation), bounds, no layers or tint.
+    /// The tile product of `c`: heights (f32, no quantisation), bounds, no layers or tint (layer maps come alone,
+    /// [`TerrainTiles::layer_map`], so the CPU twin's height tiles never pay for them).
     pub fn product(&self, c: TileCoord) -> TileProduct {
         let t = Instant::now();
         let tile = self.heights(c);
@@ -477,8 +588,22 @@ impl TerrainTiles for GuideTiles {
         Some(Ok(MacroProduct { coord: c, rgba }))
     }
 
-    fn layers_capped(&self, _: Option<u32>, _: &LayerCap) -> Option<std::result::Result<LayerArrays, String>> {
-        None
+    /// The app's layer arrays ([`GuideTiles::with_layer_arrays`]), their fill height this guide's.
+    fn layers_capped(&self, size: Option<u32>, cap: &LayerCap) -> Option<std::result::Result<LayerArrays, String>> {
+        let mut a = (self.arrays.as_ref()?)(size, cap)?;
+        if let Ok(a) = &mut a {
+            a.table.fill_height = self.fill;
+        }
+        Some(a)
+    }
+
+    fn layer_map(&self, c: TileCoord) -> Option<std::result::Result<LayerMap, String>> {
+        let field = self.layers.as_ref()?;
+        Some(field.layer_map(c, self.stamps.as_ref().map(|st| st.set())).map_err(|e| e.to_string()))
+    }
+
+    fn has_layer_maps(&self) -> bool {
+        self.layers.is_some()
     }
 
     fn fill_height(&self) -> f32 {
@@ -528,8 +653,13 @@ pub mod slot {
     pub const SEED: u32 = 28;
     pub const BAND_LO: u32 = 29;
     pub const BAND_HI: u32 = 30;
+    /// Word of the stamp section ([`crate::stamps::StampIndex::gpu_words`], after the heights); 0 = no stamps.
+    pub const STAMPS: u32 = 31;
     /// The fallback look: 6 albedos (18 floats), then 5 breaks (10 floats).
     pub const LOOK: u32 = 32;
+    /// Word of the layer macro section ([`crate::layers::LayerField::gpu_words`], after the stamps); 0 = none
+    /// (the fallback look).
+    pub const LAYERS: u32 = 60;
     /// The guide's heights, row-major.
     pub const HEIGHTS: u32 = 64;
 
@@ -565,7 +695,9 @@ pub mod slot {
         ("SEED", SEED),
         ("BAND_LO", BAND_LO),
         ("BAND_HI", BAND_HI),
+        ("STAMPS", STAMPS),
         ("LOOK", LOOK),
+        ("LAYERS", LAYERS),
         ("HEIGHTS", HEIGHTS),
     ];
 }
@@ -584,7 +716,8 @@ pub fn wgsl() -> String {
 }
 
 impl GuideTiles {
-    /// The words `tiles.wgsl` reads (`field_data`): the header ([`slot`]) and the guide's heights.
+    /// The words `tiles.wgsl` reads (`field_data`): the header ([`slot`]), the guide's heights, then the stamps
+    /// when there are any. One storage binding: 128 MiB at wgpu's default limits ([`Self::gpu_data_bytes`]).
     pub fn gpu_data(&self) -> Vec<u32> {
         let g = &self.guide;
         let p = &self.prm;
@@ -647,7 +780,25 @@ impl GuideTiles {
         for (k, h) in g.heights.iter().enumerate() {
             d[slot::HEIGHTS as usize + k] = h.to_bits();
         }
+        if let Some(st) = &self.stamps {
+            let at = d.len();
+            d[slot::STAMPS as usize] = u32::try_from(at).expect("field words fit u32");
+            d.extend(st.gpu_words(at));
+        }
+        if let Some(field) = self.layers.as_deref().filter(|f| f.has_macro()) {
+            let at = d.len();
+            d[slot::LAYERS as usize] = u32::try_from(at).expect("field words fit u32");
+            d.extend(field.gpu_words(at));
+        }
         d
+    }
+
+    /// Bytes of [`Self::gpu_data`] (what the GPU field's one storage binding must hold).
+    pub fn gpu_data_bytes(&self) -> usize {
+        4 * (slot::HEIGHTS as usize
+            + self.guide.heights.len()
+            + self.stamps.as_ref().map_or(0, |st| st.gpu_word_count())
+            + self.layers.as_ref().map_or(0, |f| f.gpu_word_count()))
     }
 }
 
@@ -693,8 +844,9 @@ fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 }
 
-/// Scaffold `FALLBACK_LOOK` (removal path: the ground-textures slice replaces it with real layers): linear
-/// albedos and their height (m above sea) and slope (rise over run) breaks.
+/// Scaffold `FALLBACK_LOOK` (removal path: every guide carries ground layers, `crate::layers`; until then it is
+/// the look of guides without them): linear albedos and their height (m above sea) and slope (rise over run)
+/// breaks.
 // tunables: const (scaffold FallbackLook: a placeholder palette until generated ground layers exist)
 const FALLBACK_LOOK: FallbackLook = FallbackLook {
     sea_floor: [0.20, 0.18, 0.14],

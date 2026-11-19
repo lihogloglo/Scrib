@@ -19,7 +19,7 @@ use mw_world::convert::{CELL_UNITS, UNIT_METERS_F64};
 use mw_world::terrain::{LAND_VERTS, VERTEX_UNITS, fill_height};
 use serde::{Deserialize, Serialize};
 
-use crate::{Dump, DumpError, RegionEntry, Stats, dump};
+use crate::{Dump, DumpError, RegionEntry, RegionMap, Stats, dump};
 
 /// Version of the file set; bumped on any layout change.
 pub const FORMAT_VERSION: u32 = 1;
@@ -79,6 +79,23 @@ fn png_file<'a>(path: &Path, width: usize, height: usize) -> Result<png::Encoder
     Ok(png::Encoder::new(BufWriter::new(File::create(path)?), w, h))
 }
 
+/// Writes `regions.png` (8-bit indexed, one pixel per cell, north up) and `regions.json` (the legend) into `dir`.
+pub(crate) fn write_regions(r: &RegionMap, dir: &Path) -> Result<(), DumpError> {
+    let palette: Vec<u8> = r.legend.iter().flat_map(|e| e.color).collect();
+    let mut enc = png_file(&dir.join("regions.png"), r.width, r.height)?;
+    enc.set_color(png::ColorType::Indexed);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.set_palette(palette);
+    enc.write_header()?.write_image_data(&r.index)?;
+
+    let legend = RegionsFile {
+        note: "regions.png pixel = index; index 0 = no region; one pixel per cell, north up".into(),
+        regions: r.legend.clone(),
+    };
+    std::fs::write(dir.join("regions.json"), serde_json::to_vec_pretty(&legend)?)?;
+    Ok(())
+}
+
 /// Writes the file set of `dump` into `dir` (created) and returns the `meta.json` contents.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn write(dump: &Dump, dir: &Path) -> Result<Meta, DumpError> {
@@ -111,19 +128,8 @@ pub fn write(dump: &Dump, dir: &Path) -> Result<Meta, DumpError> {
     enc.set_depth(png::BitDepth::Eight);
     enc.write_header()?.write_image_data(&mask)?;
 
+    write_regions(&dump.regions, dir)?;
     let r = &dump.regions;
-    let palette: Vec<u8> = r.legend.iter().flat_map(|e| e.color).collect();
-    let mut enc = png_file(&dir.join("regions.png"), r.width, r.height)?;
-    enc.set_color(png::ColorType::Indexed);
-    enc.set_depth(png::BitDepth::Eight);
-    enc.set_palette(palette);
-    enc.write_header()?.write_image_data(&r.index)?;
-
-    let legend = RegionsFile {
-        note: "regions.png pixel = index; index 0 = no region; one pixel per cell, north up".into(),
-        regions: r.legend.clone(),
-    };
-    std::fs::write(dir.join("regions.json"), serde_json::to_vec_pretty(&legend)?)?;
 
     let unit = UNIT_METERS_F64;
     let (ox, oy) = m.mw_units(0, 0);

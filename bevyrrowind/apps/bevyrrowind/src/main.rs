@@ -10,6 +10,7 @@ mod perf;
 mod scenes;
 mod sweep;
 mod world;
+mod world_content;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -85,6 +86,41 @@ enum Command {
         /// Height histogram bin width, meters.
         #[arg(long, default_value_t = 100.0)]
         bin_m: f32,
+    },
+    /// Worldgen WG-X2 (`docs/specs/worldgen-adapter.md` "Same map at 10x"): the same map at S x as a complete
+    /// guide folder: heights x S (or `--heights`, a reshaped guide of the same grid), regions, markers, the
+    /// human-made anchors (`anchors.json`), their height stamps (`stamps.json` + `stamps.f32`) and
+    /// `anchors-census.md`. Derived from your own data: keep the output out of git.
+    WorldgenX10 {
+        /// Output folder (created).
+        #[arg(long)]
+        out: PathBuf,
+        /// A guide of the same grid (dims, spacing, origin) whose heights replace the plain scale.
+        #[arg(long)]
+        heights: Option<PathBuf>,
+        /// Horizontal and vertical scale.
+        #[arg(long, default_value_t = 10.0)]
+        scale: f64,
+    },
+    /// Worldgen WG-X3 (`docs/specs/worldgen-adapter.md` "Same map at 10x" step 5): Morrowind's ground textures for
+    /// a `worldgen-x10` guide (`layers.json` + `layers.u16`): the source `VTEX` grid scaled outside settlements and
+    /// at 1:1 under each stamped anchor; prints palette, grid sizes, bytes and time.
+    WorldgenLayers {
+        /// The guide folder (e.g. `target/worldgen/x10s`).
+        #[arg(long)]
+        guide: PathBuf,
+    },
+    /// Worldgen WG-X5 (`docs/specs/worldgen-adapter.md` "Same map at 10x" step 6): the flora and rocks census of
+    /// a `worldgen-x10` guide: rules learned per region from the content's own nature references, scattered on the
+    /// guide; prints per region the top species, densities, full-density and budgeted counts, and run time, and
+    /// writes `<guide>/flora-census.md`.
+    WorldgenFlora {
+        /// The guide folder (the source mosaic's grid scaled, e.g. `target/worldgen/x10s`).
+        #[arg(long)]
+        guide: PathBuf,
+        /// Placement budget (default: the declared `scatter.budget`).
+        #[arg(long)]
+        budget: Option<f64>,
     },
     /// Worldgen WG-V: guide grids (format v1, `heights.f32` + `meta.json`) as 3D terrain in a live window.
     /// Each folder is an arm on keys 1-9 (a folder holding guide folders gives all of them, sorted); the
@@ -845,6 +881,56 @@ fn run(cli: Cli) -> Result {
             let (_, content) = load(&install, false)?;
             print!("{}", mw_worldgen::run(&content.db, &out, bin_m)?);
             println!("worldgen-dump: {:.1} s total", started.elapsed().as_secs_f64());
+            Ok(())
+        }
+        Command::WorldgenX10 { out, heights, scale } => {
+            let started = std::time::Instant::now();
+            let (vfs, content) = load(&install, false)?;
+            // Model bounds on demand (classification of rocks, member radii), cached per model.
+            let cache = std::cell::RefCell::new(std::collections::HashMap::<String, Option<([f32; 3], [f32; 3])>>::new());
+            let bounds = |model: &str| {
+                if let Some(b) = cache.borrow().get(model) {
+                    return *b;
+                }
+                let b = VfsPath::new(model)
+                    .ok()
+                    .and_then(|path| vfs.read(&path).ok())
+                    .and_then(|bytes| mw_nif::load(&bytes).ok())
+                    .and_then(|m| mw_nif::visible_bounds(&m));
+                cache.borrow_mut().insert(model.to_owned(), b);
+                b
+            };
+            let args = mw_worldgen::x10::X10Args { out, heights, scale, params: mw_worldgen::anchor::Params::default() };
+            print!("{}", mw_worldgen::x10::run(&content.db, &bounds, &args)?);
+            println!("worldgen-x10: {:.1} s total", started.elapsed().as_secs_f64());
+            Ok(())
+        }
+        Command::WorldgenLayers { guide } => {
+            let started = std::time::Instant::now();
+            let (_, content) = load(&install, false)?;
+            print!("{}", mw_worldgen::layers::run(&content.db, &guide)?);
+            println!("worldgen-layers: {:.1} s total", started.elapsed().as_secs_f64());
+            Ok(())
+        }
+        Command::WorldgenFlora { guide, budget } => {
+            let started = std::time::Instant::now();
+            let (vfs, content) = load(&install, false)?;
+            // Model bounds of the nature references (rock classification, the budget's size priority).
+            let cache = std::cell::RefCell::new(std::collections::HashMap::<String, Option<([f32; 3], [f32; 3])>>::new());
+            let bounds = |model: &str| {
+                if let Some(b) = cache.borrow().get(model) {
+                    return *b;
+                }
+                let b = VfsPath::new(model)
+                    .ok()
+                    .and_then(|path| vfs.read(&path).ok())
+                    .and_then(|bytes| mw_nif::load(&bytes).ok())
+                    .and_then(|m| mw_nif::visible_bounds(&m));
+                cache.borrow_mut().insert(model.to_owned(), b);
+                b
+            };
+            print!("{}", mw_worldgen::flora::run_census(&content.db, &bounds, &guide, budget)?);
+            println!("worldgen-flora: {:.1} s total (wrote {})", started.elapsed().as_secs_f64(), guide.join("flora-census.md").display());
             Ok(())
         }
         Command::Uses { id, limit } => {

@@ -205,10 +205,10 @@ impl<T: Copy> Window<T> {
     }
 }
 
-struct Placed<T> {
-    start: [i64; 2],
-    size: [usize; 2],
-    data: Vec<T>,
+pub(crate) struct Placed<T> {
+    pub start: [i64; 2],
+    pub size: [usize; 2],
+    pub data: Vec<T>,
 }
 
 /// Lattice cells per bucket edge in the spatial index.
@@ -224,7 +224,7 @@ pub(crate) struct GridMosaic<T> {
 }
 
 impl<T: Copy> GridMosaic<T> {
-    fn new(lattice: Lattice, mut tiles: Vec<Placed<T>>) -> Self {
+    pub(crate) fn new(lattice: Lattice, mut tiles: Vec<Placed<T>>) -> Self {
         // Stable: tiles arrive sorted by id.
         tiles.sort_by_key(|t| (t.start[1], t.start[0]));
         let mut buckets: HashMap<(i64, i64), Vec<u32>> = HashMap::new();
@@ -449,7 +449,7 @@ fn check_len(id: SourceTileId, what: &'static str, got: usize, size: [usize; 2])
 
 /// Puts a grid on the shared lattice of its kind (creating it from the
 /// first tile) and returns the grid's start index.
-fn place(
+pub(crate) fn place(
     id: SourceTileId,
     what: &'static str,
     lattice: &mut Option<Lattice>,

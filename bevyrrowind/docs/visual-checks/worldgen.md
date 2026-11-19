@@ -43,3 +43,19 @@ Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:D:/Gamedev/Bevyrrowi
 `worldgen.filter false/true` shows what the filter adds; hitches while flying vs the `--off gputerrain` arm; clouds
 (base ~3.1 km) with the 5.5 km summit through them. Placeholders: flat height/slope colours, no shore foam.
 - Owner 2026-11-19 (G1, CPU tiles): runs, fps good, a lot of hitches, erosion not visible. → G2 awaiting owner.
+
+### WG-X: Vvardenfell 10x, same map (2026-11-19, spec `worldgen-adapter.md` "Same map at 10x")
+
+Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/x10v/<arm>"` (arms s55,
+s45, s55c; bare base `target/worldgen/x10`). Look for: Red Mountain's height and prominence, the apron (gentle rise from
+the lowlands), Morrowind's crater and foyadas still recognisable on top; north side is steep by geometry (coast 10 km).
+- Owner 2026-11-19 (bare x10 base, no volcano, no content): "I think it works"; wants the volcano higher with a gentle slope → X1 arms.
+- Owner 2026-11-19 (s55): "very nice like that"; s55 is the same-map base. Later: the blobbiness inherited from Morrowind's coarse heightmap (not now).
+- Owner 2026-11-19 (x10s Balmora, all of WG-X1-X5, 200k flora): "alright"; textures super repeated, world extremely empty → more
+  flora/rocks (`--set scatter.budget=N`, full density 7.2 M), anti-tiling + VCLR tint later. Log: 66-108 fps over 10 s
+  windows once loaded, first ~25 s near 8 fps; 890 pending pipelines at the 14.7 s reveal cap (alpha-blend PBR pipelines
+  up to 5 s each in the driver), 23,028 shown entities, 707 StandardMaterials, 2.07 GB of textures.
+- Owner 2026-11-19 (x10s, flora 1M then full 7.2 M, end of session): 26 fps; still empty; no proper forest (trees not
+  snug together), rocks all one size, "sprayed some assets over the terrain like little bits on a donut"; relief still
+  smooth and blobby (next big thing); some settlements misplaced (Balmora must sit on both banks of its river).
+  Next: study the Chlorophyll engine for vegetation at scale.

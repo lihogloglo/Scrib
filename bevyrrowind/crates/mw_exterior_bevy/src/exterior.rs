@@ -150,8 +150,8 @@ pub struct ExteriorOptions {
     pub water: mw_environment_bevy::water::WaterInputs,
     /// A synthetic test level (`level.rs`, TS1): `worldspace` is its own.
     pub level: Option<crate::level::LevelSetup>,
-    /// A generated world (`worldgen.rs`, slice G1): its terrain instead of the bake's, nothing of the content
-    /// streams in the exterior, the cloud layer raised.
+    /// A generated world (`worldgen.rs`, slice G1): its terrain instead of the bake's, the exterior streams only
+    /// its `content` (WG-X4), the cloud layer raised.
     pub worldgen: Option<crate::worldgen::WorldgenSetup>,
     /// The release start (no subcommand): the front end, the main menu with no world, until New
     /// game builds it (`phase.rs`, `main_menu.rs`). Dev runs (`view`, `scene`) leave it off and
@@ -352,7 +352,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // A/B with `--env BEVYRROWIND_COMPILE_THREADS=0` (off, stock 4 async threads) or `=<n>`.
     streaming.pipeline_compile_threads = std::env::var("BEVYRROWIND_COMPILE_THREADS").ok().and_then(|v| v.parse().ok());
     // The static scene (default; `--off scene` for the A/B) or the precombine draws the near statics, never both.
-    let (scene, precombine) = static_paths(&perf.off, options.lod_tint);
+    // A generated world: neither (scaffold `WorldgenPlacementStatics`, `worldgen.rs`: both are baked per source cell,
+    // its statics are moved placements), so they spawn per placement.
+    let (scene, precombine) = if worldgen { (false, false) } else { static_paths(&perf.off, options.lod_tint) };
     streaming.precombine = precombine;
     let mut plugins = DefaultPlugins
         .build()
@@ -404,7 +406,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         crate::level::add(&mut app, level);
     }
     if let Some(w) = &options.worldgen {
-        crate::worldgen::add(&mut app, &ext, w);
+        crate::worldgen::add(&mut app, &ext, w, &options.store, &manifest);
     }
     let cloud_base_lift_m = options.worldgen.as_ref().map_or(0.0, |w| w.cloud_base_lift_m);
     // ROADMAP 2.4: the dialogue window on mw_rpg (`dialogue.rs`).
