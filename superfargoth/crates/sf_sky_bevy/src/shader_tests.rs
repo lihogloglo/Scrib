@@ -370,3 +370,31 @@ fn directional_light_layout_matches_between_rust_and_wgsl() {
     let rust = bevy_pbr::GpuDirectionalLight::min_size().get();
     assert_eq!(u64::from(layouter[handle].size), rust, "WGSL vs Rust size");
 }
+
+/// Horizon bands (2026-11-19, bevy #26208 transmittance part + own upward read): the
+/// transmittance LUT holds optical depth, every reader turns it back with `exp(-x)`, and the
+/// aerial perspective's segment subtracts optical depths, reading a descending segment backwards
+/// (rays climbing out of both ends). The passes that read it link and validate.
+#[test]
+fn transmittance_lut_holds_optical_depth_and_segments_read_upward() {
+    let read = |rel: &str| std::fs::read_to_string(vendor("bevy_pbr").join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+    let writer = read("atmosphere/transmittance_lut.wesl");
+    assert!(writer.contains("vec4(finite_depth, 1.0)") && !writer.contains("exp(-optical_depth)"), "the LUT stores optical depth");
+    let functions = read("atmosphere/functions.wesl");
+    assert!(functions.contains("return exp(-sample_optical_depth_lut(r, mu));"), "atmosphere sampler converts");
+    for rel in ["render/pbr_lighting.wesl", "volumetric_fog/volumetric_fog.wesl"] {
+        assert!(read(rel).contains("return exp(-textureSampleLevel("), "{rel}: own LUT sampler converts");
+    }
+    let segment = read("atmosphere/bruneton_functions.wesl");
+    assert!(segment.contains("ray_intersects_ground(r, mu) || mu_t <= 0.0"), "descending segments read upward");
+    assert!(!segment.contains("sample_transmittance_lut("), "no transmittance ratio left");
+    let high: Vec<&str> = BASE.iter().chain(HIGH).copied().collect();
+    let jobs: [(&str, &[&str]); 4] = [
+        ("bevy_pbr::atmosphere::transmittance_lut", &[]),
+        ("bevy_pbr::atmosphere::render_sky", &[]),
+        ("bevy_pbr::atmosphere::render_sky", &["DUAL_SOURCE_BLENDING"]),
+        ("bevy_pbr::render::pbr", &high),
+    ];
+    let failures: Vec<String> = jobs.into_iter().filter_map(|(m, d)| compile(m, d).err()).collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}

@@ -56,7 +56,7 @@
 import package::atmosphere::{
     types::Atmosphere,
     bindings::atmosphere,
-    functions::{get_local_r, sample_transmittance_lut},
+    functions::{get_local_r, sample_optical_depth_lut},
 };
 
 // Bruneton's paper calls the surface and exosphere "bottom radius" and "top radius".
@@ -147,14 +147,22 @@ fn sample_transmittance_lut_segment(r: f32, mu: f32, t: f32) -> vec3<f32> {
     let r_t = get_local_r(r, mu, t);
     let mu_t = clamp((r * mu + t) / r_t, -1.0, 1.0);
 
-    if ray_intersects_ground(r, mu) {
-        return min(
-            sample_transmittance_lut(r_t, -mu_t) / sample_transmittance_lut(r, -mu),
-            vec3(1.0)
-        );
+    // superfargoth patch (bevy #26208, transmittance part; horizon bands): the ratio of the two
+    // transmittances as the difference of their optical depths (the LUT stores optical depth).
+    // superfargoth patch (own, horizon bands): a segment that still descends at its far end
+    // (`mu_t <= 0`) is read backwards, from rays climbing out of both ends. Transmittance is
+    // symmetric, so the value is the same; the stock forward read took two rays grazing the
+    // planet's horizon, the largest depths in the LUT (2x a level ray's), where the bilinear
+    // lookups bend most and their difference cancels worst.
+    if ray_intersects_ground(r, mu) || mu_t <= 0.0 {
+        return exp(-max(
+            sample_optical_depth_lut(r_t, -mu_t) - sample_optical_depth_lut(r, -mu),
+            vec3(0.0)
+        ));
     } else {
-        return min(
-            sample_transmittance_lut(r, mu) / sample_transmittance_lut(r_t, mu_t), vec3(1.0)
-        );
+        return exp(-max(
+            sample_optical_depth_lut(r, mu) - sample_optical_depth_lut(r_t, mu_t),
+            vec3(0.0)
+        ));
     }
 }

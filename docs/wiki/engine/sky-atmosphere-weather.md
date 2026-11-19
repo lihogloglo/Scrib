@@ -22,6 +22,9 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
 - **Vendored `bevy_pbr` atmosphere patches** (`superfargoth/vendor/README.md`): `AtmosphereStaticLutCache` (`:23`),
   P1 live medium scales (`:24`, `vendor/bevy_pbr/src/medium.rs`), N2 airglow (`:29`: night sky glow in the sky-view LUT, so
   sky, env map, fog and clouds all see it), N1 ambient-specular toggle (`:27`), surface weather hook (`:26`).
+  The transmittance LUT holds optical depth (bevy #26208 part), and the aerial perspective's segment transmittance is
+  a depth difference read from upward rays (`bruneton_functions.wesl` `sample_transmittance_lut_segment`): stock f16
+  transmittance underflowed under weather haze and drew coloured bands on far terrain at eye level (SK-HB).
 - **Env map.** Bevy refilters the sky env map every frame (~0.7 ms a run); `EnvMapRefresh` keeps the result for N = 8
   frames (`sf_sky_bevy/src/env_refresh.rs:24`), so it costs ~0.09 ms a frame. Bevy timings appear only on frames a pass
   runs: the perf report shows `GPU ms/run` and `runs/frame` and sums the per-frame share (`sf_diag` `PassTiming`).

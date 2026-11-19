@@ -2418,3 +2418,10 @@ FG-1 | confirmed 2026-11-15 (no bands in Sadrith Mora fog at night) | [weather-s
 - Owner 2026-11-17: fixed for a while (not seen since well before 2026-11-15). Status: confirmed (closed).
 
 RO-12 | confirmed 2026-11-17 (owner: fixed for a while) | [rendering](../visual-checks/rendering.md) | Bright outline around characters (2026-10-30)
+
+### SK-HB: Coloured bands at the horizon (atmosphere transmittance, 2026-11-19)
+- Game location: `view "world:D:/Gamedev/Bevyrrowind/target/worldgen/x10"` (owner shot 2026-11-19 11:50, Cloudy, toward
+  the summit), then any Morrowind exterior with a far view (e.g. `view "Seyda Neen"` looking out to sea and the hills).
+- Look for: no thin purple, cyan or yellow lines across far mountains at eye level, in Cloudy, Clear, Overcast, Rain
+  and Blizzard (weather key); far terrain still fades into the haze as before (the fix changes no look on purpose,
+  only removes the broken band). Status: confirmed by the owner 2026-11-19 ("fixed").

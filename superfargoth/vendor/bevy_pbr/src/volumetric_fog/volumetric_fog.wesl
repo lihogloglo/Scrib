@@ -524,7 +524,8 @@ fn fetch_spot_shadow_without_normal(light_id: u32, frag_position: vec4<f32>, fra
 @if(ATMOSPHERE)
 fn sample_transmittance_lut(r: f32, mu: f32) -> vec3<f32> {
     let uv = transmittance_lut_r_mu_to_uv(atmosphere, r, mu);
-    return textureSampleLevel(
+    // superfargoth patch (bevy #26208, transmittance part): the LUT stores optical depth.
+    return exp(-textureSampleLevel(
         atmosphere_transmittance_texture,
-        atmosphere_transmittance_sampler, uv, 0.0).rgb;
+        atmosphere_transmittance_sampler, uv, 0.0).rgb);
 }

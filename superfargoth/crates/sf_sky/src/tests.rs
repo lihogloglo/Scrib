@@ -776,3 +776,23 @@ fn driven_moon_follows_its_driver() {
     // One driver equals itself, not another.
     assert_eq!(MoonPath::Driven(driver.clone()), MoonPath::Driven(driver));
 }
+
+/// Horizon bands (2026-11-19): the optical depth of the to-top rays the aerial perspective's
+/// segment transmittance reads near the horizon, against the f16 floor of the stock transmittance
+/// LUT (smallest f16 subnormal 2^-24 = e^-16.6). Camera 809 m up, terrain at sea level.
+#[test]
+#[ignore = "measurement: grazing optical depth per haze vs the f16 floor"]
+fn grazing_optical_depth_vs_f16_floor() {
+    let atm = AtmosphereModel::earth();
+    let h = 809.0;
+    let horizon = atm.horizon_elevation(h);
+    for haze in [1.0, 20.0, 24.0, 48.0, 80.0] {
+        let s = MediumScales::haze(haze);
+        let od = |alt: f32, elev: f32| -atm.transmittance(alt, elev, &s, 512).max(Vec3::splat(1e-37)).ln();
+        // Down-going ray just above the planet's horizon (the stock forward formula's numerator).
+        let down = od(h, horizon * 0.5);
+        // The same segment read upward from its far end (what the fix reads).
+        let up = od(0.0, -horizon * 0.5);
+        println!("haze {haze:>4}: horizon {:.3} deg, down-grazing od {down:.1}, up-from-sea-level od {up:.1} (f16 floor 16.6)", horizon.to_degrees());
+    }
+}

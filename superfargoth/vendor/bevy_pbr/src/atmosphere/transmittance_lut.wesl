@@ -20,10 +20,24 @@ fn main(@builtin(global_invocation_id) idx: vec3<u32>) {
 
     // compute the optical depth from view height r to the top atmosphere boundary
     let optical_depth = ray_optical_depth(r_mu.x, r_mu.y, settings.transmittance_lut_samples);
-    let transmittance = exp(-optical_depth);
 
-    textureStore(transmittance_lut_out, idx.xy, vec4(transmittance, 1.0));
+    // superfargoth patch (bevy #26208, transmittance part; horizon bands): store optical depth,
+    // not transmittance. Under weather haze (x20-x80 Mie) the transmittance of grazing rays
+    // underflows f16 (below e^-16.6), and the aerial perspective's segment ratio broke per
+    // channel into coloured bands at the horizon. Kept finite: bilinear filtering turns an
+    // infinite or NaN texel into NaN in every lookup next to it (NaN fails the comparison).
+    let finite_depth = select(
+        vec3(MAX_OPTICAL_DEPTH),
+        optical_depth,
+        optical_depth < vec3(MAX_OPTICAL_DEPTH),
+    );
+    textureStore(transmittance_lut_out, idx.xy, vec4(finite_depth, 1.0));
 }
+
+/// Largest optical depth the LUT stores (superfargoth: 256, #26208 has 64). Haze x80 puts the
+/// horizon-tangent rays near 95 (`sf_sky` `grazing_optical_depth_vs_f16_floor`); a texel capped
+/// below its true depth bends the bilinear lookups next to it. f16 keeps 0.25 steps up there.
+const MAX_OPTICAL_DEPTH: f32 = 256.0;
 
 /// Compute the optical depth of the atmosphere from the ground to the top atmosphere boundary
 /// at a given view height (r) and zenith cos angle (mu)

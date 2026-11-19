@@ -116,9 +116,16 @@ fn sky_view_lut_uv_to_zenith_azimuth(r: f32, uv: vec2<f32>) -> vec2<f32> {
 
 // LUT SAMPLING
 
-fn sample_transmittance_lut(r: f32, mu: f32) -> vec3<f32> {
+/// Optical depth from radius `r` along zenith cosine `mu` to the top of the atmosphere.
+/// superfargoth patch (bevy #26208, transmittance part): the transmittance LUT stores optical
+/// depth, because the transmittance of grazing rays under weather haze underflows f16.
+fn sample_optical_depth_lut(r: f32, mu: f32) -> vec3<f32> {
     let uv = transmittance_lut_r_mu_to_uv(atmosphere, r, mu);
     return textureSampleLevel(transmittance_lut, atmosphere_lut_sampler, uv, 0.0).rgb;
+}
+
+fn sample_transmittance_lut(r: f32, mu: f32) -> vec3<f32> {
+    return exp(-sample_optical_depth_lut(r, mu));
 }
 
 fn sample_multiscattering_lut(r: f32, mu: f32) -> vec3<f32> {
