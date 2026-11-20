@@ -356,3 +356,42 @@ fn every_face_view_has_its_list_through_live_switches_and_moves() {
     step(&mut room, 6, "switched on again");
     assert!(room.cached().is_some());
 }
+
+/// SH-33 (2026-11-20): an atlas rect is sampled only once a draw went into it since it was
+/// (re)allocated; before, Live tiles were sampled on the mover scheduler's skip frames and read
+/// another lamp's old depth (flashing stray shadows).
+#[test]
+fn atlas_rects_publish_only_after_their_first_draw() {
+    use crate::lamp_cache::AtlasWritten;
+    const A: [u16; 3] = [0, 0, 256];
+    const B: [u16; 3] = [256, 0, 256];
+    let none = [None; 6];
+    let one = |r: [u16; 3]| {
+        let mut rects = [None; 6];
+        rects[2] = Some(r);
+        rects
+    };
+    let mut w = AtlasWritten::default();
+
+    // Static rect captured the frame it is allocated: published at once.
+    let (s, _) = w.gate(one(A), none, 1 << 2, 0);
+    assert_eq!(s, one(A));
+    // Live rect allocated for a visible mover on a skip frame: not sampled yet.
+    let (s, l) = w.gate(one(A), one(B), 0, 0);
+    assert_eq!((s, l), (one(A), none));
+    // Movers drawn into it: published, and stays published on later skip frames.
+    let (_, l) = w.gate(one(A), one(B), 0, 1 << 2);
+    assert_eq!(l, one(B));
+    let (_, l) = w.gate(one(A), one(B), 0, 0);
+    assert_eq!(l, one(B));
+    // Tier resize: the new Static rect waits for its recapture.
+    let (s, _) = w.gate(one(B), none, 0, 0);
+    assert_eq!(s, none);
+    let (s, _) = w.gate(one(B), none, 1 << 2, 0);
+    assert_eq!(s, one(B));
+    // Freed and later reallocated at the same place: unwritten again.
+    let (s, _) = w.gate(none, none, 0, 0);
+    assert_eq!(s, none);
+    let (s, _) = w.gate(one(B), none, 0, 0);
+    assert_eq!(s, none);
+}

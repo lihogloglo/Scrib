@@ -399,6 +399,9 @@ fn maybe_resize_and_reconfigure() {
         Some((512, 0b00_0111))
     );
     assert_eq!(mgr.stats().resizes, 1);
+    // The old 256 rects stay allocated (retiring) until the new ones are drawn.
+    assert_eq!(mgr.stats().static_used_texels, 3 * 512 * 512 + 3 * 256 * 256);
+    assert_eq!(mgr.release_retiring(key(1), 0b00_0111), 0b00_0111);
     assert_eq!(mgr.stats().static_used_texels, 3 * 512 * 512);
 
     // Reconfigure without changing dimensions preserves lamps.
@@ -544,4 +547,44 @@ fn tunables_register_cleanly_and_config_clamping() {
     assert_eq!(weird.clamped_live_size(), 2048);
     weird.live_size_px = 8192;
     assert_eq!(weird.clamped_live_size(), 4096);
+}
+
+/// SH-33 (2026-11-20): a tier resize keeps each face's old rect (its last captured depth) until the
+/// host reports the new rect drawn, so the shader never samples an undrawn rect nor loses the face.
+#[test]
+fn resize_keeps_the_old_rect_until_the_new_one_is_drawn() {
+    let mut mgr = ShadowAtlasManager::new(ShadowAtlasConfig::default());
+    mgr.admit_static(key(1), 0b00_0011, 256, 0.0, false).expect("admit");
+    let first = mgr.lamp_static_rects(key(1)).unwrap();
+
+    // 256 -> 512: new rects assigned, the old ones retiring and never handed out meanwhile.
+    assert_eq!(mgr.maybe_resize(key(1), 5.0, 1.0, 3.0), Some((512, 0b00_0011)));
+    assert_eq!(mgr.lamp_retiring_static(key(1)).unwrap(), first);
+    let second = mgr.lamp_static_rects(key(1)).unwrap();
+    for (old, new) in first.iter().zip(second.iter()) {
+        if let (Some(old), Some(new)) = (old, new) {
+            assert!(!rects_overlap(*old, *new), "old and new rects are both live");
+        }
+    }
+    mgr.admit_static(key(2), 0b11_1111, 512, 0.0, false).expect("other lamp");
+    for r in mgr.lamp_static_rects(key(2)).unwrap().into_iter().flatten() {
+        for old in first.into_iter().flatten() {
+            assert!(!rects_overlap(r, old), "a retiring rect was reallocated");
+        }
+    }
+
+    // Resized again before its new rects were drawn: the never-drawn 512s are freed, the drawn
+    // 256s stay the ones to sample.
+    assert_eq!(mgr.maybe_resize(key(1), 20.0, 1.0, 6.0), Some((256, 0b00_0011)));
+    assert_eq!(mgr.lamp_retiring_static(key(1)).unwrap(), first);
+
+    // Face 0 drawn: only its retiring rect is released.
+    assert_eq!(mgr.release_retiring(key(1), 0b00_0001), 0b00_0001);
+    let retiring = mgr.lamp_retiring_static(key(1)).unwrap();
+    assert_eq!((retiring[0], retiring[1]), (None, first[1]));
+
+    // Removing the lamp frees its retiring rects too.
+    let used = mgr.stats().static_used_texels;
+    assert!(mgr.remove(key(1)));
+    assert_eq!(mgr.stats().static_used_texels, used - 2 * 256 * 256 - 256 * 256);
 }

@@ -306,4 +306,5 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
      `shadow_atlas/render/live_direct` (single pass).
 - Owner decides: confirm visuals + whether to flip `shadow.lamp.atlas.enabled` on by default (High/Ultra/Medium) and
   whether to tune `shadow.lamp.atlas.max_lamps` / tier distances (`10 / 22 / 45 m`).
+- Owner 2026-11-20 (first look): "a lot of shadows flashing when I move around: shadows appear, then disappear", outdoors and in the Census interior. Cause: atlas rects sampled before anything was drawn into them (ledger 2026-11-20 "SH-33 fix"); fixed the same day.
 - Status: **awaiting owner** (2026-11-20).

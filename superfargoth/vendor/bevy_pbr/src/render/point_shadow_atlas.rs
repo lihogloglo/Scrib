@@ -653,14 +653,28 @@ impl PointShadowAtlasPrepare<'_, '_> {
         let light_entity = inputs.light_entity;
         let main = inputs.light_main_entity;
         let Ok(extracted) = self.atlas_maps.get(light_entity) else {
-            if self.gpu.face_views.remove(&light_entity).is_some() {
+            if let Some(slots) = self.gpu.face_views.remove(&light_entity) {
                 despawn_atlas_views(commands, core::mem::take(view_entities));
+                purge_atlas_retained(
+                    shadow_render_phases,
+                    self.shadow_phase_buffers.as_deref_mut(),
+                    self.batched_instance_buffers.as_deref_mut(),
+                    main,
+                    slot_mask(&slots),
+                );
             }
             return false;
         };
         if !self.gpu.active {
-            if self.gpu.face_views.remove(&light_entity).is_some() {
+            if let Some(slots) = self.gpu.face_views.remove(&light_entity) {
                 despawn_atlas_views(commands, core::mem::take(view_entities));
+                purge_atlas_retained(
+                    shadow_render_phases,
+                    self.shadow_phase_buffers.as_deref_mut(),
+                    self.batched_instance_buffers.as_deref_mut(),
+                    main,
+                    slot_mask(&slots),
+                );
             }
             return true;
         }
@@ -676,14 +690,29 @@ impl PointShadowAtlasPrepare<'_, '_> {
         listed.sort_unstable();
         if known != listed {
             despawn_atlas_views(commands, core::mem::take(view_entities));
+            purge_atlas_retained(
+                shadow_render_phases,
+                self.shadow_phase_buffers.as_deref_mut(),
+                self.batched_instance_buffers.as_deref_mut(),
+                main,
+                slot_mask(slots),
+            );
             *slots = [None; 6];
         }
 
         stats.lamps += 1;
 
         let Some(light_index) = inputs.light_index else {
+            let faces = slot_mask(slots);
             let stale: Vec<Entity> = slots.iter_mut().filter_map(Option::take).collect();
             despawn_atlas_views(commands, stale);
+            purge_atlas_retained(
+                shadow_render_phases,
+                self.shadow_phase_buffers.as_deref_mut(),
+                self.batched_instance_buffers.as_deref_mut(),
+                main,
+                faces,
+            );
             view_entities.clear();
             return true;
         };
@@ -742,6 +771,13 @@ impl PointShadowAtlasPrepare<'_, '_> {
             if map.view_faces & bit == 0 {
                 if let Some(view) = slots[face_index].take() {
                     despawn_atlas_views(commands, vec![view]);
+                    purge_atlas_retained(
+                        shadow_render_phases,
+                        self.shadow_phase_buffers.as_deref_mut(),
+                        self.batched_instance_buffers.as_deref_mut(),
+                        main,
+                        bit,
+                    );
                 }
                 continue;
             }
@@ -762,6 +798,13 @@ impl PointShadowAtlasPrepare<'_, '_> {
             let Some(dst_rect) = dst_rect else {
                 if let Some(view) = slots[face_index].take() {
                     despawn_atlas_views(commands, vec![view]);
+                    purge_atlas_retained(
+                        shadow_render_phases,
+                        self.shadow_phase_buffers.as_deref_mut(),
+                        self.batched_instance_buffers.as_deref_mut(),
+                        main,
+                        bit,
+                    );
                 }
                 continue;
             };
@@ -987,6 +1030,48 @@ impl PointShadowAtlasPrepare<'_, '_> {
             }
         }
     }
+}
+
+/// Forgets the retained shadow phase and both double-buffered work-item buffers of `faces` of a
+/// light's atlas views being despawned. The stock / CW-4 path reuses the same
+/// `RetainedViewEntity` per face, and `get_or_create_work_item_buffer` keeps an occupied entry
+/// without checking `no_indirect_drawing`: a mover-only (direct) atlas face handed to the stock
+/// indirect path bound the direct preprocess bind group to the GPU-culling pipeline (wgpu
+/// validation error, "build mesh uniforms direct bind group layout ... not compatible", live
+/// `set shadow.lamp.atlas.enabled off`, SH-33 2026-11-20).
+fn purge_atlas_retained(
+    shadow_render_phases: &mut ViewBinnedRenderPhases<Shadow>,
+    shadow_phase_buffers: Option<&mut PhaseBatchedInstanceBuffers<Shadow, MeshUniform>>,
+    batched_instance_buffers: Option<&mut BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
+    main: MainEntity,
+    faces: u8,
+) {
+    let mut phase_bufs = shadow_phase_buffers;
+    let mut batched = batched_instance_buffers.and_then(|b| {
+        b.phase_instance_buffers
+            .get_mut(&core::any::TypeId::of::<Shadow>())
+    });
+    for face in 0..6u32 {
+        if faces & (1 << face) == 0 {
+            continue;
+        }
+        let retained = RetainedViewEntity::new(main, None, face);
+        shadow_render_phases.remove(&retained);
+        if let Some(bufs) = phase_bufs.as_deref_mut() {
+            bufs.buffers.work_item_buffers.remove(&retained);
+        }
+        if let Some(bufs) = batched.as_deref_mut() {
+            bufs.work_item_buffers.remove(&retained);
+        }
+    }
+}
+
+/// Bitmask of the faces that hold a view entity.
+fn slot_mask(slots: &[Option<Entity>; 6]) -> u8 {
+    slots
+        .iter()
+        .enumerate()
+        .fold(0u8, |m, (i, s)| if s.is_some() { m | (1 << i) } else { m })
 }
 
 fn despawn_atlas_views(commands: &mut Commands, views: Vec<Entity>) {

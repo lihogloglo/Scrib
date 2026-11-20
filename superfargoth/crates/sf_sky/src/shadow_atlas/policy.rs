@@ -162,6 +162,9 @@ struct LampEntry {
     last_resize_s: f32,
     static_rects: [Option<AtlasRect>; FACES],
     live_rects: [Option<AtlasRect>; FACES],
+    /// Pre-resize static rects still holding this lamp's last captured depth: sampled until the
+    /// new rect is drawn, then released ([`ShadowAtlasManager::release_retiring`], SH-33).
+    retiring_static: [Option<AtlasRect>; FACES],
     moving: bool,
     handover: bool,
 }
@@ -258,6 +261,7 @@ impl ShadowAtlasManager {
                         last_resize_s: now_s,
                         static_rects,
                         live_rects: [None; FACES],
+                        retiring_static: [None; FACES],
                         moving: false,
                         handover,
                     },
@@ -287,6 +291,7 @@ impl ShadowAtlasManager {
                         last_resize_s: now_s,
                         static_rects: [None; FACES],
                         live_rects,
+                        retiring_static: [None; FACES],
                         moving: true,
                         handover: false,
                     },
@@ -304,7 +309,7 @@ impl ShadowAtlasManager {
             return false;
         };
         let mut freed_static = false;
-        for rect in entry.static_rects.into_iter().flatten() {
+        for rect in entry.static_rects.into_iter().chain(entry.retiring_static).flatten() {
             self.static_atlas.free(rect);
             freed_static = true;
         }
@@ -331,12 +336,17 @@ impl ShadowAtlasManager {
 
         let mask = statics_mask & ALL_FACES_MASK;
         let mut freed_static = false;
-        for (face, slot) in entry.static_rects.iter_mut().enumerate() {
-            if (mask & (1 << face)) == 0
-                && let Some(rect) = slot.take()
-            {
-                self.static_atlas.free(rect);
-                freed_static = true;
+        for (face, (slot, retiring)) in entry
+            .static_rects
+            .iter_mut()
+            .zip(entry.retiring_static.iter_mut())
+            .enumerate()
+        {
+            if (mask & (1 << face)) == 0 {
+                for rect in [slot.take(), retiring.take()].into_iter().flatten() {
+                    self.static_atlas.free(rect);
+                    freed_static = true;
+                }
             }
         }
         if freed_static {
@@ -424,25 +434,25 @@ impl ShadowAtlasManager {
                 return None;
             };
             let entry = self.lamps.get_mut(&key)?;
+            // Keep each face's last drawn rect (retiring) until its replacement is drawn, so the
+            // shader never samples an undrawn rect nor loses the face meanwhile (SH-33 flashing on
+            // tier changes). A face resized again before that frees its never-drawn rect instead.
             let mut freed_static = false;
-            for old in entry.static_rects.into_iter().flatten() {
-                self.static_atlas.free(old);
-                freed_static = true;
+            for (old, retiring) in entry.static_rects.iter().zip(entry.retiring_static.iter_mut()) {
+                let Some(old) = *old else { continue };
+                if retiring.is_some() {
+                    self.static_atlas.free(old);
+                    freed_static = true;
+                } else {
+                    *retiring = Some(old);
+                }
             }
             if freed_static {
                 self.static_free_gen = self.static_free_gen.wrapping_add(1);
             }
             entry.static_rects = new_static;
-            // Re-allocate active live tiles at the new tier (or keep old if live atlas is tight).
-            let live_mask = rects_mask(&entry.live_rects);
-            if live_mask != 0
-                && let Some(new_live) = try_alloc_mask(&mut self.live_atlas, live_mask, new_tier, false)
-            {
-                for old in entry.live_rects.into_iter().flatten() {
-                    self.live_atlas.free(old);
-                }
-                entry.live_rects = new_live;
-            }
+            // Live (mover) tiles keep their size until the movers leave: re-allocating them here
+            // left the face without mover depth until its next mover draw (SH-33).
             entry.tile_size = new_tier;
             entry.last_resize_s = now_s;
             self.resizes = self.resizes.saturating_add(1);
@@ -530,6 +540,32 @@ impl ShadowAtlasManager {
     }
 
     /// Whether `key` is currently tracked by the manager.
+    /// Pre-resize static rects still holding the lamp's last captured depth (sample these for
+    /// faces whose new rect is not drawn yet).
+    pub fn lamp_retiring_static(&self, key: LampKey) -> Option<[Option<AtlasRect>; FACES]> {
+        self.lamps.get(&key).map(|e| e.retiring_static)
+    }
+
+    /// Frees the retiring rects of `faces` (their new rects were drawn). Returns the faces freed.
+    pub fn release_retiring(&mut self, key: LampKey, faces: u8) -> u8 {
+        let Some(entry) = self.lamps.get_mut(&key) else {
+            return 0;
+        };
+        let mut freed = 0u8;
+        for (face, retiring) in entry.retiring_static.iter_mut().enumerate() {
+            if faces & (1 << face) != 0
+                && let Some(rect) = retiring.take()
+            {
+                self.static_atlas.free(rect);
+                freed |= 1 << face;
+            }
+        }
+        if freed != 0 {
+            self.static_free_gen = self.static_free_gen.wrapping_add(1);
+        }
+        freed
+    }
+
     pub fn contains(&self, key: LampKey) -> bool {
         self.lamps.contains_key(&key)
     }

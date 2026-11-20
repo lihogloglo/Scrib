@@ -190,6 +190,53 @@ struct Lamp {
     priority: f32,
     /// Active visible mover faces this frame (keeps Live Atlas tiles resident across Half/Far skip frames).
     active_mover_faces: u8,
+    /// Which atlas rects hold this lamp's own depth (SH-33 flashing, 2026-11-20).
+    atlas_written: AtlasWritten,
+}
+
+/// Per-face atlas rects (`[x, y, size]`, `None` = no tile), as in `AtlasPointShadowMap`.
+type FaceRects = [Option<[u16; 3]>; 6];
+
+/// Tracks, per face, whether the lamp's current Static / Live atlas rect has been drawn since it
+/// was (re)allocated. A rect fresh from the buddy allocator still holds another lamp's old depth,
+/// so it is published for sampling only once a draw went into it (SH-33: flashing stray shadows
+/// when Live tiles were sampled on the mover scheduler's skip frames, or Static rects after a tier
+/// resize before their recapture).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AtlasWritten {
+    static_rects: FaceRects,
+    live_rects: FaceRects,
+    static_mask: u8,
+    live_mask: u8,
+}
+
+/// Masks out rects not yet drawn: `drawn` faces get a draw into `rects` this frame. A face whose
+/// rect changed since the last call loses its written bit until drawn again. Returns the rects to
+/// publish (drawn this frame or earlier since allocation).
+fn gate_written(rects: FaceRects, last: &mut FaceRects, written: &mut u8, drawn: u8) -> FaceRects {
+    let mut out = [None; 6];
+    for (face, (rect, prev)) in rects.iter().zip(last.iter()).enumerate() {
+        let bit = 1u8 << face;
+        if rect != prev || rect.is_none() {
+            *written &= !bit;
+        }
+        if rect.is_some() && drawn & bit != 0 {
+            *written |= bit;
+        }
+        if *written & bit != 0 {
+            out[face] = *rect;
+        }
+    }
+    *last = rects;
+    out
+}
+
+impl AtlasWritten {
+    pub(crate) fn gate(&mut self, static_rects: FaceRects, live_rects: FaceRects, capture: u8, movers: u8) -> (FaceRects, FaceRects) {
+        let s = gate_written(static_rects, &mut self.static_rects, &mut self.static_mask, capture);
+        let l = gate_written(live_rects, &mut self.live_rects, &mut self.live_mask, movers);
+        (s, l)
+    }
 }
 
 impl Lamp {
@@ -715,6 +762,7 @@ fn admit_lamps(
                 tile_size: desired_tile,
                 priority: prio.priority,
                 active_mover_faces: 0,
+                atlas_written: AtlasWritten::default(),
             };
             lamp.casters = casters.scan(&lamp, now, &settings.config);
             lamp.bake_statics();
@@ -891,6 +939,8 @@ fn track_lamps(
                 let _ = cache.admit(lamp.key, LampTier::Full, lamp.statics());
                 lamp.captures.clear();
                 lamp.bake_statics();
+                // New atlas textures hold nothing of it: every rect unwritten until drawn again.
+                lamp.atlas_written = AtlasWritten::default();
                 if let Some(mut slot) = slot {
                     slot.fade = 0.0;
                 }
@@ -1311,9 +1361,9 @@ fn write_atlas_plan(
         let live_valid = mgr.sync_live_faces(lamp.key, lamp.active_mover_faces);
         let static_rects_opt = mgr.lamp_static_rects(lamp.key).unwrap_or([None; 6]);
         let live_rects_opt = mgr.lamp_live_rects(lamp.key).unwrap_or([None; 6]);
-        let static_rects = static_rects_opt.map(|r| r.map(sf_sky::shadow_atlas::AtlasRect::to_array));
-        let live_rects = live_rects_opt.map(|r| r.map(sf_sky::shadow_atlas::AtlasRect::to_array));
-        let static_mask = static_rects.iter().enumerate().fold(0u8, |m, (i, r)| if r.is_some() { m | (1 << i) } else { m });
+        let raw_static_rects = static_rects_opt.map(|r| r.map(sf_sky::shadow_atlas::AtlasRect::to_array));
+        let raw_live_rects = live_rects_opt.map(|r| r.map(sf_sky::shadow_atlas::AtlasRect::to_array));
+        let static_mask = raw_static_rects.iter().enumerate().fold(0u8, |m, (i, r)| if r.is_some() { m | (1 << i) } else { m });
 
         let capture = lamp_plan.capture.0 & static_mask;
         let movers = lamp_plan.movers.0 & live_valid;
@@ -1358,11 +1408,30 @@ fn write_atlas_plan(
             }
         }
 
+        // Publish only rects that have been drawn since allocation (SH-33). On a tier resize, keep
+        // sampling the retiring static rect until the new one is drawn.
+        let (mut static_rects, live_rects) = lamp.atlas_written.gate(raw_static_rects, raw_live_rects, capture, movers);
+        if capture != 0 {
+            mgr.release_retiring(lamp.key, capture);
+        }
+        if let Some(retiring) = mgr.lamp_retiring_static(lamp.key) {
+            for (published, old) in static_rects.iter_mut().zip(retiring) {
+                if published.is_none() {
+                    *published = old.map(sf_sky::shadow_atlas::AtlasRect::to_array);
+                }
+            }
+        }
+        let mask_of = |rects: &[Option<[u16; 3]>; 6]| {
+            rects.iter().enumerate().fold(0u8, |m, (i, r)| if r.is_some() { m | (1 << i) } else { m })
+        };
+        let written_static = mask_of(&static_rects);
+        let written_live = mask_of(&live_rects);
+
         let draw_faces = capture | movers;
         let draw_to_live = movers;
-        let blit_from_static = movers & static_mask;
+        let blit_from_static = movers & written_static;
         let mover_only_faces = movers;
-        let view_faces = (lamp_plan.views.0 & (static_mask | live_valid)) | draw_faces;
+        let view_faces = (lamp_plan.views.0 & (written_static | written_live)) | draw_faces;
         views += view_faces.count_ones();
 
         if draw_faces != 0
