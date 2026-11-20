@@ -182,8 +182,8 @@ struct Lamp {
     casters: EntityHashMap<Caster>,
     /// Moved against its statics this frame: leaves the cache next frame.
     moved: bool,
-    /// `(plan, capture faces)` of recent plans.
-    captures: Vec<(u64, u8)>,
+    /// `(plan, capture faces, target static rects)` of recent plans.
+    captures: Vec<(u64, u8, FaceRects)>,
     /// Current atlas tile resolution (unused on CW-4 cube path).
     tile_size: u16,
     /// Priority from [`BudgetedShadow`] (for atlas tier selection).
@@ -232,6 +232,40 @@ fn gate_written(rects: FaceRects, last: &mut FaceRects, written: &mut u8, drawn:
 }
 
 impl AtlasWritten {
+    /// Invalidates static written bits for faces whose allocated rect changed or became `None`,
+    /// returning only static rects that have been confirmed drawn by the render world.
+    pub(crate) fn sync_static(&mut self, static_rects: FaceRects) -> FaceRects {
+        let mut out = [None; 6];
+        for (face, (rect, prev)) in static_rects.iter().zip(self.static_rects.iter()).enumerate() {
+            let bit = 1u8 << face;
+            if rect != prev || rect.is_none() {
+                self.static_mask &= !bit;
+            }
+            if self.static_mask & bit != 0 {
+                out[face] = *rect;
+            }
+        }
+        self.static_rects = static_rects;
+        out
+    }
+
+    /// Marks `face` as confirmed drawn into `rect` once the render world reports the static
+    /// capture finished with all pipelines ready and nothing pending.
+    pub(crate) fn confirm_static(&mut self, face: u8, rect: Option<[u16; 3]>) {
+        let idx = usize::from(face);
+        if idx < 6 && rect.is_some() && self.static_rects[idx] == rect {
+            self.static_mask |= 1 << face;
+        }
+    }
+
+    /// Gates a static atlas lamp's live rects: a live rect is published once `movers` draws into
+    /// it since allocation (on the same frame, before the main camera pass).
+    pub(crate) fn gate_live(&mut self, live_rects: FaceRects, movers: u8) -> FaceRects {
+        gate_written(live_rects, &mut self.live_rects, &mut self.live_mask, movers)
+    }
+
+    /// Gates a static atlas lamp's rects when captures are confirmed synchronously (unit tests).
+    #[cfg(test)]
     pub(crate) fn gate(&mut self, static_rects: FaceRects, live_rects: FaceRects, capture: u8, movers: u8) -> (FaceRects, FaceRects) {
         let s = gate_written(static_rects, &mut self.static_rects, &mut self.static_mask, capture);
         let l = gate_written(live_rects, &mut self.live_rects, &mut self.live_mask, movers);
@@ -431,10 +465,11 @@ fn cube_frusta_fov(transform: &GlobalTransform, near_z: f32, range: f32, fov_y: 
     for (CubeMapFace { target, up }, frustum) in CUBE_MAP_FACES.iter().zip(frusta.frusta.iter_mut()) {
         let world_from_view = view_translation * Transform::IDENTITY.looking_at(*target, *up);
         let clip_from_world = clip_from_view * world_from_view.compute_affine().inverse();
+        let face_backward = world_from_view.back();
         *frustum = Frustum(ViewFrustum::from_clip_from_world_custom_far(
             &clip_from_world,
             &transform.translation(),
-            &transform.back(),
+            &face_backward,
             range,
         ));
     }
@@ -740,6 +775,9 @@ fn admit_lamps(
                 && full_gen == mgr.static_free_gen()
                 && (!handover || was_handover)
             {
+                if light.shadow_maps_enabled {
+                    light.shadow_maps_enabled = false;
+                }
                 continue;
             }
             let reach = shadowed_reach(&light, reach);
@@ -771,6 +809,9 @@ fn admit_lamps(
             if let (Some(acfg), Some(mgr)) = (atlas_cfg, state.atlas.as_mut()) {
                 let Some(granted) = mgr.admit_static(lamp.key, lamp.statics().0, desired_tile, now, handover) else {
                     state.static_full_at_gen = Some((mgr.static_free_gen(), handover));
+                    if light.shadow_maps_enabled {
+                        light.shadow_maps_enabled = false;
+                    }
                     continue;
                 };
                 if granted != desired_tile {
@@ -949,9 +990,30 @@ fn track_lamps(
                 }
                 continue;
             }
-            let captured = lamp.captures.iter().find(|(plan, _)| *plan == report.plan).map_or(0, |(_, mask)| *mask);
-            for face in TileMask(report.confirmed & captured).iter() {
+            let (captured, captured_rects) = lamp
+                .captures
+                .iter()
+                .find(|(plan, _, _)| *plan == report.plan)
+                .map_or((0, [None; 6]), |(_, mask, rects)| (*mask, *rects));
+            let confirmed_mask = report.confirmed & captured;
+            let mut release_mask = 0u8;
+            for face in TileMask(confirmed_mask).iter() {
                 let _ = cache.confirm_capture(lamp.key, face);
+                let rect = captured_rects[usize::from(face)];
+                lamp.atlas_written.confirm_static(face, rect);
+                if state
+                    .atlas
+                    .as_ref()
+                    .and_then(|mgr| mgr.lamp_static_rects(lamp.key))
+                    .is_some_and(|cur| cur[usize::from(face)].map(sf_sky::shadow_atlas::AtlasRect::to_array) == rect)
+                {
+                    release_mask |= 1 << face;
+                }
+            }
+            if release_mask != 0
+                && let Some(mgr) = state.atlas.as_mut()
+            {
+                mgr.release_retiring(lamp.key, release_mask);
             }
         }
     } else {
@@ -973,7 +1035,7 @@ fn track_lamps(
                 }
                 continue;
             }
-            let captured = lamp.captures.iter().find(|(plan, _)| *plan == report.plan).map_or(0, |(_, mask)| *mask);
+            let captured = lamp.captures.iter().find(|(plan, _, _)| *plan == report.plan).map_or(0, |(_, mask, _)| *mask);
             for face in TileMask(report.confirmed & captured).iter() {
                 let _ = cache.confirm_capture(lamp.key, face);
             }
@@ -1095,6 +1157,7 @@ fn track_lamps(
         let statics = lamp.statics();
 
         // Under 2D atlas: sync empty/newly populated static faces and check dynamic tier resize.
+        let mut resized_mask = 0u8;
         if let (Some(acfg), Some(mgr)) = (atlas_cfg, state.atlas.as_mut()) {
             if statics != statics_before {
                 touched |= mgr.sync_static_faces(lamp.key, statics.0);
@@ -1106,15 +1169,18 @@ fn track_lamps(
                 lamp.tile_size = new_tile;
                 let new_fov = guard_band_fov_y(u32::from(new_tile), acfg.guard_texels);
                 lamp.frusta = cube_frusta_fov(at, light.shadow_map_near_z, reach, new_fov);
-                for c in lamp.casters.values_mut() {
-                    c.baked &= !alloc_mask;
-                }
-                touched |= alloc_mask;
+                // Keep `c.baked` intact: `retiring_static` still holds all baked statics while the
+                // resized Static tiles capture. Clearing `c.baked` turned every static (including
+                // GPU instance batches) into a `NoIndirectDrawing` mover (SH-33).
+                resized_mask = alloc_mask;
             }
         }
 
         if touched != 0 || statics != statics_before {
             let _ = cache.invalidate(lamp.key, Invalidation::StaticsChanged { touched: TileMask(touched), statics });
+        }
+        if resized_mask != 0 {
+            let _ = cache.invalidate(lamp.key, Invalidation::RecaptureNow(TileMask(resized_mask)));
         }
 
         // Movers, kept to what a camera can see.
@@ -1282,7 +1348,7 @@ fn write_plan(
         let capture = lamp_plan.capture.0;
         let movers = lamp_plan.movers.0;
         if capture != 0 {
-            lamp.captures.push((plan.frame, capture));
+            lamp.captures.push((plan.frame, capture, [None; 6]));
             if lamp.captures.len() > CAPTURE_HISTORY {
                 lamp.captures.remove(0);
             }
@@ -1368,12 +1434,13 @@ fn write_atlas_plan(
         let capture = lamp_plan.capture.0 & static_mask;
         let movers = lamp_plan.movers.0 & live_valid;
         if capture != 0 {
-            lamp.captures.push((plan.frame, capture));
+            lamp.captures.push((plan.frame, capture, raw_static_rects));
             if lamp.captures.len() > CAPTURE_HISTORY {
                 lamp.captures.remove(0);
             }
         }
 
+        let mut batch_mover_faces = 0u8;
         for face in 0..6u8 {
             let bit = 1 << face;
             let list: Vec<Entity> = if capture & bit != 0 {
@@ -1389,8 +1456,17 @@ fn write_atlas_plan(
                 list.sort_unstable();
                 list
             } else if movers & bit != 0 {
-                let mut list: Vec<Entity> =
-                    lamp.casters.iter().filter(|(_, c)| c.mover_faces() & bit != 0).map(|(e, _)| *e).collect();
+                let mut list: Vec<Entity> = lamp
+                    .casters
+                    .iter()
+                    .filter(|(_, c)| c.mover_faces() & bit != 0)
+                    .map(|(e, c)| {
+                        if c.batch {
+                            batch_mover_faces |= bit;
+                        }
+                        *e
+                    })
+                    .collect();
                 list.sort_unstable();
                 list
             } else {
@@ -1408,12 +1484,12 @@ fn write_atlas_plan(
             }
         }
 
-        // Publish only rects that have been drawn since allocation (SH-33). On a tier resize, keep
-        // sampling the retiring static rect until the new one is drawn.
-        let (mut static_rects, live_rects) = lamp.atlas_written.gate(raw_static_rects, raw_live_rects, capture, movers);
-        if capture != 0 {
-            mgr.release_retiring(lamp.key, capture);
-        }
+        // Publish only rects that hold confirmed depth for this lamp:
+        // - Static rects publish only after GPU capture confirmation (`confirm_capture`), so an
+        //   unconfirmed capture (pipelines still compiling, pending queues) keeps sampling the
+        //   retiring rect while drawing into `draw_static_rects` (SH-33).
+        // - Live rects publish once `movers` draws into them (drawn before the main camera pass).
+        let mut static_rects = lamp.atlas_written.sync_static(raw_static_rects);
         if let Some(retiring) = mgr.lamp_retiring_static(lamp.key) {
             for (published, old) in static_rects.iter_mut().zip(retiring) {
                 if published.is_none() {
@@ -1421,6 +1497,7 @@ fn write_atlas_plan(
                 }
             }
         }
+        let live_rects = lamp.atlas_written.gate_live(raw_live_rects, movers);
         let mask_of = |rects: &[Option<[u16; 3]>; 6]| {
             rects.iter().enumerate().fold(0u8, |m, (i, r)| if r.is_some() { m | (1 << i) } else { m })
         };
@@ -1430,25 +1507,25 @@ fn write_atlas_plan(
         let draw_faces = capture | movers;
         let draw_to_live = movers;
         let blit_from_static = movers & written_static;
-        let mover_only_faces = movers;
+        // Faces whose mover list includes a `GpuBatchedMesh3d` must stay on the indirect path so
+        // `dispatch_range_unpacking` expands their GPU instance batches.
+        let mover_only_faces = movers & !batch_mover_faces;
         let view_faces = (lamp_plan.views.0 & (written_static | written_live)) | draw_faces;
         views += view_faces.count_ones();
 
-        if draw_faces != 0
-            || atlas_comp.view_faces != view_faces
-            || atlas_comp.static_rects != static_rects
-            || atlas_comp.live_rects != live_rects
-        {
-            *atlas_comp = AtlasPointShadowMap {
-                static_rects,
-                live_rects,
-                view_faces,
-                draw_faces,
-                draw_to_live,
-                blit_from_static,
-                mover_only_faces,
-                plan: plan.frame,
-            };
+        let next = AtlasPointShadowMap {
+            static_rects,
+            draw_static_rects: raw_static_rects,
+            live_rects,
+            view_faces,
+            draw_faces,
+            draw_to_live,
+            blit_from_static,
+            mover_only_faces,
+            plan: plan.frame,
+        };
+        if draw_faces != 0 || !atlas_comp.same_state(&next) {
+            *atlas_comp = next;
         }
         marker.set_if_neq(ShadowMapCached { ready: lamp_plan.ready });
     }
@@ -1588,17 +1665,21 @@ fn update_moving_atlas_lamps(
         let draw_faces = seen & live_mask;
 
         if draw_faces == 0 {
-            if atlas_comp.draw_faces != 0 || atlas_comp.view_faces != 0 || atlas_comp.live_rects != live_rects {
-                *atlas_comp = AtlasPointShadowMap {
-                    static_rects: [None; 6],
-                    live_rects,
-                    view_faces: 0,
-                    draw_faces: 0,
-                    draw_to_live: 0,
-                    blit_from_static: 0,
-                    mover_only_faces: 0,
-                    plan: plan_id,
-                };
+            // Never publish unseen/undrawn live rects for a moving torch: they hold stale depth
+            // from an earlier position or another lamp in `live_atlas`.
+            let next = AtlasPointShadowMap {
+                static_rects: [None; 6],
+                draw_static_rects: [None; 6],
+                live_rects: [None; 6],
+                view_faces: 0,
+                draw_faces: 0,
+                draw_to_live: 0,
+                blit_from_static: 0,
+                mover_only_faces: 0,
+                plan: plan_id,
+            };
+            if !atlas_comp.same_state(&next) {
+                *atlas_comp = next;
             }
             marker.set_if_neq(ShadowMapCached { ready: true });
             continue;
@@ -1606,13 +1687,20 @@ fn update_moving_atlas_lamps(
 
         let fov_y = guard_band_fov_y(u32::from(moving.tile_size.max(128)), guard_texels);
         views += draw_faces.count_ones();
+        let published_live: FaceRects = core::array::from_fn(|i| {
+            if draw_faces & (1 << i) != 0 {
+                live_rects[i]
+            } else {
+                None
+            }
+        });
         active.push(MovingTorchWork {
             entity,
             pos,
             reach,
             layers: moving.layers.clone(),
             frusta: cube_frusta_fov(at, light.shadow_map_near_z, reach, fov_y),
-            live_rects,
+            live_rects: published_live,
             draw_faces,
             face_lists: core::array::from_fn(|_| Vec::new()),
         });
@@ -1636,6 +1724,7 @@ fn update_moving_atlas_lamps(
         }
         *atlas_comp = AtlasPointShadowMap {
             static_rects: [None; 6],
+            draw_static_rects: [None; 6],
             live_rects: torch.live_rects,
             view_faces: torch.draw_faces,
             draw_faces: torch.draw_faces,

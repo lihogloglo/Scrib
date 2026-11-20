@@ -719,3 +719,22 @@ fn tunables_register_and_fill_the_config() {
     assert!(STORE_FACES_PER_LAMP.bounds().unwrap().1 <= u32::from(MAX_TILES));
     assert!(LampCacheConfig::from_tunables(&Tunables::default()).is_err());
 }
+
+#[test]
+fn recapture_now_queues_immediately_without_dropping_ready() {
+    let mut c = cache_with(1, LampCacheConfig::default());
+    c.admit(A, LampTier::Full, mask(&[0, 3])).unwrap();
+    let t = settle(&mut c, 0.0);
+    assert_eq!(c.is_ready(A), Some(true));
+    // Immediately after capture (well inside `recapture_interval_s = 2.0`), RecaptureNow must
+    // queue at once without dropping `ready` (retiring static tile stays sampled meanwhile).
+    assert_eq!(
+        c.invalidate(A, Invalidation::RecaptureNow(mask(&[0, 3]))),
+        InvalidationEffect::Recapture(mask(&[0, 3]))
+    );
+    assert_eq!(c.is_ready(A), Some(true));
+    let p = c.plan(t + 0.05).clone();
+    let lp = p.lamp(A).unwrap();
+    assert!(lp.ready);
+    assert_eq!(lp.capture, mask(&[0, 3]));
+}

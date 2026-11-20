@@ -253,6 +253,10 @@ pub enum Invalidation {
         touched: TileMask,
         statics: TileMask,
     },
+    /// Tile allocation resized (2D shadow atlas tier upgrade/downgrade): queue an immediate
+    /// recapture of `tiles` without waiting out `recapture_interval_s` and without dropping
+    /// `ready` (the old retiring tile stays sampled until confirmed).
+    RecaptureNow(TileMask),
     /// Switched on or off, flicker, colour or range: depth only, nothing to do.
     LightChanged,
 }
@@ -623,6 +627,25 @@ impl LampCache {
                         Capture::Issued { .. } => tile.redo = true,
                         Capture::None if tile.captured => tile.dirty = true,
                         // A queued draw takes the new statics; a first capture is due anyway.
+                        Capture::Queued | Capture::None => {}
+                    }
+                    recapture.insert(t);
+                }
+                InvalidationEffect::Recapture(recapture)
+            }
+            Invalidation::RecaptureNow(tiles) => {
+                let Some(l) = self.lamps.get_mut(&lamp) else {
+                    return InvalidationEffect::Nothing;
+                };
+                let mut recapture = TileMask::NONE;
+                for (t, tile) in (0..).zip(l.tiles.iter_mut()) {
+                    if !tiles.contains(t) || !tile.statics {
+                        continue;
+                    }
+                    tile.last_capture_s = f32::NEG_INFINITY;
+                    match tile.capture {
+                        Capture::Issued { .. } => tile.redo = true,
+                        Capture::None if tile.captured => tile.dirty = true,
                         Capture::Queued | Capture::None => {}
                     }
                     recapture.insert(t);

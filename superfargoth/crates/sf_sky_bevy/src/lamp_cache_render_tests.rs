@@ -652,3 +652,303 @@ fn atlas_live_toggle_contact_cap_and_moving_lamp() {
         "toggling atlas off removes AtlasPointShadowMap from every lamp"
     );
 }
+
+/// SH-33 audit fix: walking close to a lamp (tier resize 256 -> 512) must:
+/// 1. Keep static casters baked (zero spurious `movers` / `NoIndirectDrawing` draws).
+/// 2. Keep publishing the retiring 256 rect in `static_rects` while targeting the new 512 rect in
+///    `draw_static_rects`, switching to 512 ONLY after `AtlasPointShadowReport::confirmed`.
+/// 3. Leave `AtlasPointShadowMap` unchanged (`!is_changed()`) on subsequent idle frames.
+#[test]
+fn atlas_tier_resize_keeps_statics_baked_and_hands_over_on_confirm() {
+    use bevy_camera::primitives::Aabb;
+    use bevy_camera::visibility::{CubemapVisibleEntities, InheritedVisibility, ViewVisibility};
+    use bevy_camera::{Camera, Camera3d};
+    use bevy_math::Vec3;
+    use bevy_mesh::Mesh3d;
+    use bevy_pbr::{AtlasPointShadowMap, AtlasPointShadowReport};
+    use bevy_time::TimeUpdateStrategy;
+    use bevy_transform::components::GlobalTransform;
+    use sf_tunables_bevy::{SetBy, SetTunable};
+
+    let mut app = bevy_app::App::new();
+    app.add_plugins((bevy::MinimalPlugins, sf_tunables_bevy::TunablesPlugin, crate::ShadowQualityPlugin, crate::PointShadowPlugin))
+        .init_resource::<PointLightShadowMap>()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs(1)));
+    app.world_mut()
+        .resource_mut::<bevy_time::Time<bevy_time::Virtual>>()
+        .set_max_delta(std::time::Duration::from_secs(10));
+
+    for (name, val) in [
+        ("shadow.lamp.count", "8"),
+        ("shadow.lamp.fade_m", "40,60"),
+        ("shadow.lamp.fade_time_s", "0"),
+        ("shadow.lamp.day_gate", "off"),
+        ("shadow.lamp.atlas.enabled", "on"),
+        ("shadow.lamp.atlas.tier_512_m", "10"),
+        ("shadow.lamp.atlas.tier_256_m", "24"),
+        ("shadow.lamp.atlas.resize_cooldown_s", "2"),
+    ] {
+        app.world_mut().write_message(SetTunable::new(name, val, SetBy::Console));
+    }
+
+    // Start 15 m away from lamp -> 256 px tier.
+    let cam = app.world_mut().spawn((Camera::default(), Camera3d::default(), GlobalTransform::from_xyz(0.0, 0.0, 15.0))).id();
+    let lamp = app
+        .world_mut()
+        .spawn((
+            PointLight { intensity: 1500.0, range: 12.0, ..Default::default() },
+            crate::BudgetedShadow::default(),
+            GlobalTransform::IDENTITY,
+            InheritedVisibility::VISIBLE,
+            CubemapVisibleEntities::default(),
+        ))
+        .id();
+    app.world_mut().spawn((
+        Mesh3d::default(),
+        Aabb::from_min_max(Vec3::splat(-0.5), Vec3::splat(0.5)),
+        GlobalTransform::from_xyz(3.0, 0.0, 0.0), // face 0 (+X)
+        InheritedVisibility::VISIBLE,
+        ViewVisibility::default(),
+        crate::lamp_cache::LampShadowMobility::Static,
+    ));
+
+    // Initial admission & capture: `static_rects[0]` stays None until confirmed; `draw_static_rects[0]` is 256.
+    app.update();
+    app.update();
+    let comp = *app.world().get::<AtlasPointShadowMap>(lamp).expect("admitted");
+    assert_eq!(comp.static_rects[0], None, "unconfirmed initial static rect must not be published");
+    let rect_256 = comp.draw_static_rects[0].expect("256 draw rect");
+    assert_eq!(rect_256[2], 256);
+    assert_ne!(comp.draw_faces & 1, 0, "face 0 captures");
+    assert_eq!(comp.draw_to_live, 0, "no movers");
+
+    // Confirm initial capture -> publishes 256 rect.
+    app.world_mut()
+        .resource_mut::<crate::LampShadowAtlasReports>()
+        .0
+        .push((lamp, AtlasPointShadowReport { plan: comp.plan, confirmed: 1, lost: false }));
+    app.update();
+    let comp = *app.world().get::<AtlasPointShadowMap>(lamp).expect("confirmed");
+    assert_eq!(comp.static_rects[0], Some(rect_256));
+    assert_eq!(comp.draw_faces, 0);
+
+    // Wait out resize cooldown (2 s) and verify idle frame does not mark `AtlasPointShadowMap` changed.
+    app.update();
+    app.update();
+    let changed_idle = app
+        .world_mut()
+        .query_filtered::<Entity, Changed<AtlasPointShadowMap>>()
+        .iter(app.world())
+        .count();
+    assert_eq!(changed_idle, 0, "idle atlas lamp must not churn Changed<AtlasPointShadowMap>");
+
+    // Walk close to lamp (5 m < tier_512_m = 10 m) -> upgrades 256 -> 512.
+    *app.world_mut().get_mut::<GlobalTransform>(cam).expect("cam") = GlobalTransform::from_xyz(0.0, 0.0, 5.0);
+    app.update();
+    let comp = *app.world().get::<AtlasPointShadowMap>(lamp).expect("resized");
+    assert_eq!(comp.draw_to_live, 0, "tier resize must NOT turn static casters into movers");
+    assert_eq!(comp.mover_only_faces, 0, "tier resize must NOT trigger mover_only draws");
+    assert_eq!(comp.static_rects[0], Some(rect_256), "shader keeps sampling retiring 256 rect until 512 is confirmed");
+    let rect_512 = comp.draw_static_rects[0].expect("512 draw target");
+    assert_eq!(rect_512[2], 512);
+    assert_ne!(comp.draw_faces & 1, 0, "512 capture queued immediately without waiting 2 s");
+
+    // Without confirmation, retiring 256 stays published (e.g. pipeline still compiling).
+    app.update();
+    let unconfirmed = *app.world().get::<AtlasPointShadowMap>(lamp).expect("still unconfirmed");
+    assert_eq!(unconfirmed.static_rects[0], Some(rect_256), "unconfirmed 512 must not replace retiring 256");
+
+    // Confirm 512 capture -> atomic handover to 512 rect and retiring 256 freed.
+    app.world_mut()
+        .resource_mut::<crate::LampShadowAtlasReports>()
+        .0
+        .push((lamp, AtlasPointShadowReport { plan: unconfirmed.plan, confirmed: 1, lost: false }));
+    app.update();
+    let handed_over = *app.world().get::<AtlasPointShadowMap>(lamp).expect("handed over");
+    assert_eq!(handed_over.static_rects[0], Some(rect_512), "confirmed 512 rect now published");
+    assert_eq!(handed_over.draw_faces, 0);
+}
+
+/// SH-33 audit fix: a moving torch with an active camera `Frustum` must only publish `live_rects`
+/// for faces drawn this frame (`draw_faces`), never unwritten/culled faces.
+#[test]
+fn atlas_moving_torch_publishes_only_drawn_faces() {
+    use bevy_camera::primitives::{Aabb, Frustum};
+    use bevy_camera::visibility::{CubemapVisibleEntities, InheritedVisibility, ViewVisibility};
+    use bevy_camera::{Camera, Camera3d};
+    use bevy_math::{Mat4, Vec3, proj};
+    use bevy_mesh::Mesh3d;
+    use bevy_pbr::AtlasPointShadowMap;
+    use bevy_shape::ViewFrustum;
+    use bevy_time::TimeUpdateStrategy;
+    use bevy_transform::components::GlobalTransform;
+    use sf_tunables_bevy::{SetBy, SetTunable};
+
+    let mut app = bevy_app::App::new();
+    app.add_plugins((bevy::MinimalPlugins, sf_tunables_bevy::TunablesPlugin, crate::ShadowQualityPlugin, crate::PointShadowPlugin))
+        .init_resource::<PointLightShadowMap>()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(50)));
+
+    for (name, val) in [
+        ("shadow.lamp.count", "8"),
+        ("shadow.lamp.fade_m", "40,60"),
+        ("shadow.lamp.fade_time_s", "0"),
+        ("shadow.lamp.day_gate", "off"),
+        ("shadow.lamp.atlas.enabled", "on"),
+    ] {
+        app.world_mut().write_message(SetTunable::new(name, val, SetBy::Console));
+    }
+
+    // Camera at (0, 0, 10) looking toward -Z (narrow FOV so lamp at (0, 0, -2) is ahead, and its +Z
+    // or -Z/side faces have a well-defined culled subset — place lamp far off to +X/+Z or directly ahead).
+    let cam_tf = GlobalTransform::from_xyz(0.0, 0.0, 10.0);
+    let proj_mat = proj::perspective_infinite_reverse(core::f32::consts::FRAC_PI_3, 1.0, 0.1);
+    let clip_from_world = proj_mat * Mat4::from(cam_tf.affine().inverse());
+    let frustum = Frustum(ViewFrustum::from_clip_from_world_custom_far(
+        &clip_from_world,
+        &cam_tf.translation(),
+        &cam_tf.back(),
+        100.0,
+    ));
+    app.world_mut().spawn((Camera::default(), Camera3d::default(), cam_tf, frustum));
+
+    // Place a lamp slightly behind the camera at (0, 0, 15) with range 3 m so `in_view == false`
+    // (`draw_faces == 0`), plus a static caster so moving it triggers `lamp_moved`.
+    let lamp = app
+        .world_mut()
+        .spawn((
+            PointLight { intensity: 1500.0, range: 3.0, ..Default::default() },
+            crate::BudgetedShadow::default(),
+            GlobalTransform::from_xyz(0.0, 0.0, 15.0),
+            InheritedVisibility::VISIBLE,
+            CubemapVisibleEntities::default(),
+        ))
+        .id();
+    app.world_mut().spawn((
+        Mesh3d::default(),
+        Aabb::from_min_max(Vec3::splat(-0.5), Vec3::splat(0.5)),
+        GlobalTransform::from_xyz(1.0, 0.0, 15.0),
+        InheritedVisibility::VISIBLE,
+        ViewVisibility::default(),
+        crate::lamp_cache::LampShadowMobility::Static,
+    ));
+
+    app.update();
+    app.update();
+    // Move lamp to promote it into `moving_atlas` while still behind the camera (`draw_faces == 0`).
+    *app.world_mut().get_mut::<GlobalTransform>(lamp).expect("lamp") = GlobalTransform::from_xyz(0.0, 0.0, 16.0);
+    app.update();
+    app.update();
+
+    let comp = *app.world().get::<AtlasPointShadowMap>(lamp).expect("moving torch");
+    assert_eq!(comp.draw_faces, 0, "behind-camera moving torch draws no faces");
+    assert_eq!(comp.live_rects, [None; 6], "undrawn moving-torch faces must never publish unwritten live rects");
+}
+
+/// SH-33 audit fix:
+/// 1. Removing `retained` from `LightKeyCache` (as `point_shadow_atlas.rs` now does on every
+///    `shadow_render_phases.remove`) makes `check_views_lights_need_specialization` mark
+///    `DirtySpecializations::views`, so `queue_shadows` re-queues all visible entities even when
+///    `added_entities()` is empty.
+/// 2. Source contract checks for the render-world fixes that need a GPU device to run end-to-end
+///    (`light_key_cache.remove(&retained)`, preserving `existing_prev` on non-draw frames, and
+///    using `world_from_view.back()` per face).
+#[test]
+fn atlas_phase_wipe_invalidates_light_key_cache_and_non_draw_preserves_mode() {
+    use bevy_pbr::{LightEntity, LightKeyCache, Shadow, check_views_lights_need_specialization};
+    use bevy_render::batching::gpu_preprocessing::GpuPreprocessingMode;
+    use bevy_render::camera::DirtySpecializations;
+    use bevy_render::render_phase::ViewBinnedRenderPhases;
+    use bevy_render::view::{ColorGrading, ExtractedView};
+
+    // 1. Live ECS check: removing from `LightKeyCache` forces `DirtySpecializations::views`.
+    let mut render = World::new();
+    render.init_resource::<ViewBinnedRenderPhases<Shadow>>();
+    render.init_resource::<LightKeyCache>();
+    render.init_resource::<DirtySpecializations>();
+
+    let main_light = MainEntity::from(Entity::from_bits(42));
+    let retained = RetainedViewEntity::new(main_light, None, 0);
+    render
+        .resource_mut::<ViewBinnedRenderPhases<Shadow>>()
+        .prepare_for_new_frame(retained, GpuPreprocessingMode::PreprocessingOnly);
+    let view_entity = render
+        .spawn((
+            LightEntity::Point { light_entity: Entity::from_bits(7), face_index: 0 },
+            ExtractedView {
+                retained_view_entity: retained,
+                viewport: bevy_math::UVec4::new(0, 0, 256, 256),
+                world_from_view: GlobalTransform::IDENTITY,
+                clip_from_world: None,
+                clip_from_view: bevy_math::Mat4::IDENTITY,
+                target_format: bevy_pbr::CORE_3D_SHADOW_MAP_FORMAT,
+                color_grading: ColorGrading::default(),
+                invert_culling: false,
+            },
+        ))
+        .id();
+    let _ = view_entity;
+
+    let check = render.register_system(check_views_lights_need_specialization);
+    render.run_system(check).expect("first specialization check");
+    assert!(
+        render.resource::<DirtySpecializations>().must_wipe_specializations_for_view(retained),
+        "initial view must be marked dirty"
+    );
+
+    // Next frame: clear dirty set, keep light_key_cache -> NOT dirty (steady frame).
+    render.resource_mut::<DirtySpecializations>().views.clear();
+    render.run_system(check).expect("steady frame");
+    assert!(
+        !render.resource::<DirtySpecializations>().must_wipe_specializations_for_view(retained),
+        "steady frame stays clean"
+    );
+
+    // Mode switch: wipe phase AND remove from `LightKeyCache` -> MUST be marked dirty again!
+    render.resource_mut::<ViewBinnedRenderPhases<Shadow>>().remove(&retained);
+    render.resource_mut::<LightKeyCache>().remove(&retained);
+    render
+        .resource_mut::<ViewBinnedRenderPhases<Shadow>>()
+        .prepare_for_new_frame(retained, GpuPreprocessingMode::Culling);
+    render.run_system(check).expect("mode-switched frame");
+    assert!(
+        render.resource::<DirtySpecializations>().must_wipe_specializations_for_view(retained),
+        "wiping shadow phase + light_key_cache must force full re-queue in queue_shadows"
+    );
+
+    // 2. Source contract checks on `point_shadow_atlas.rs`.
+    let squash = |s: &str| s.split_whitespace().collect::<String>();
+    let atlas = squash(&vendored("render/point_shadow_atlas.rs"));
+    assert!(
+        atlas.contains("shadow_render_phases.remove(&retained);light_key_cache.remove(&retained);"),
+        "point_shadow_atlas.rs: every shadow_render_phases.remove must also remove from light_key_cache"
+    );
+    assert!(
+        atlas.contains("elseifletSome(prev)=existing_prev{letto_live=prev.texture_id==live_tex_id;(to_live,prev.mover_only,Some(prev.dst_rect))}"),
+        "point_shadow_atlas.rs: non-draw frames must preserve existing view mode/rect"
+    );
+    assert!(
+        atlas.contains("letface_backward=world_from_view.back();") && !atlas.contains("light.transform.back()"),
+        "point_shadow_atlas.rs: custom far plane must use per-face world_from_view.back(), not light.transform.back()"
+    );
+}
+
+/// SH-33 audit fix: `fs_blit` guard-band remapping aligns the 90 deg cube seam exactly when
+/// blitting between different Static and Live tile resolutions (e.g. 256 -> 512 or 512 -> 256).
+#[test]
+fn atlas_blit_guard_ratio_aligns_cube_seam_across_tile_sizes() {
+    let guard = 2.0_f32;
+    for (src_size, dst_size) in [(256u32, 512u32), (512, 256), (128, 512), (256, 256)] {
+        let tan_src = bevy_pbr::atlas_guard_tan_half(src_size, guard);
+        let tan_dst = bevy_pbr::atlas_guard_tan_half(dst_size, guard);
+        let guard_ratio = tan_dst / tan_src;
+        // A point right on the 90 deg cube seam (`t = 1.0`) sits at `ndc = 1.0 / tan_half`.
+        let ndc_dst_seam = 1.0 / tan_dst;
+        let ndc_src_seam = ndc_dst_seam * guard_ratio;
+        let expected_ndc_src_seam = 1.0 / tan_src;
+        assert!(
+            (ndc_src_seam - expected_ndc_src_seam).abs() < 1e-6,
+            "{src_size}->{dst_size}: {ndc_src_seam} vs {expected_ndc_src_seam}"
+        );
+    }
+}

@@ -110,15 +110,20 @@ impl Default for PointShadowAtlasConfig {
 /// stock caster scan and hashing skip it; `extract_lights` shades it as shadowed automatically.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AtlasPointShadowMap {
-    /// Per-face `[x, y, size]` in the Static Atlas (`None` = empty face, zero texture fetch).
+    /// Per-face `[x, y, size]` in the Static Atlas safe to sample (and blit from).
+    /// During a tier resize this keeps the retiring rect until the new rect is confirmed drawn.
     pub static_rects: [Option<[u16; 3]>; 6],
+    /// Per-face `[x, y, size]` in the Static Atlas targeted by static captures (`None` = use
+    /// `static_rects[face]`). Separated from `static_rects` so static captures can draw into a
+    /// newly allocated tile while the shader keeps sampling the previous confirmed tile.
+    pub draw_static_rects: [Option<[u16; 3]>; 6],
     /// Per-face `[x, y, size]` in the Live Atlas (`None` = sample Static Atlas or Empty).
     pub live_rects: [Option<[u16; 3]>; 6],
     /// Faces that keep a render view entity and retained shadow phase.
     pub view_faces: u8,
-    /// Faces drawn this frame (into `static_rects` or `live_rects`).
+    /// Faces drawn this frame (into `draw_static_rects`/`static_rects` or `live_rects`).
     pub draw_faces: u8,
-    /// Subset of `draw_faces`: target is `live_rects[face]` (else `static_rects[face]`).
+    /// Subset of `draw_faces`: target is `live_rects[face]` (else `draw_static_rects`/`static_rects`).
     pub draw_to_live: u8,
     /// Subset of `draw_to_live`: blit `static_rects[face] -> live_rects[face]` before drawing
     /// movers (when bit is 0, clear `live_rects[face]` to 0.0 before drawing).
@@ -142,6 +147,7 @@ impl AtlasPointShadowMap {
         let mover_only_faces = self.mover_only_faces & draw_to_live;
         Self {
             static_rects: self.static_rects,
+            draw_static_rects: self.draw_static_rects,
             live_rects: self.live_rects,
             view_faces,
             draw_faces,
@@ -150,6 +156,19 @@ impl AtlasPointShadowMap {
             mover_only_faces,
             plan: self.plan,
         }
+    }
+
+    /// Compares all fields except `plan` so idle lamps avoid per-frame `Changed` churn.
+    #[must_use]
+    pub fn same_state(&self, other: &Self) -> bool {
+        self.static_rects == other.static_rects
+            && self.draw_static_rects == other.draw_static_rects
+            && self.live_rects == other.live_rects
+            && self.view_faces == other.view_faces
+            && self.draw_faces == other.draw_faces
+            && self.draw_to_live == other.draw_to_live
+            && self.blit_from_static == other.blit_from_static
+            && self.mover_only_faces == other.mover_only_faces
     }
 }
 
@@ -265,8 +284,9 @@ pub struct AtlasBlitUniform {
     pub dst_origin: IVec2,
     pub src_size: i32,
     pub dst_size: i32,
-    pub _pad0: u32,
-    pub _pad1: u32,
+    /// `tan_half(dst_size, guard) / tan_half(src_size, guard)` for exact guard-band UV remapping.
+    pub guard_ratio: f32,
+    pub _pad: f32,
 }
 
 /// Render-world marker on shadow views owned by the 2D Shadow Atlas (never routed through
@@ -647,6 +667,7 @@ impl PointShadowAtlasPrepare<'_, '_> {
         inputs: &AtlasLightInputs,
         view_entities: &mut Vec<Entity>,
         shadow_render_phases: &mut ViewBinnedRenderPhases<Shadow>,
+        light_key_cache: &mut crate::LightKeyCache,
         live_shadow_mapping_lights: &mut HashSet<RetainedViewEntity>,
         mut lod_origins: Option<&mut RenderViewLodOrigins>,
     ) -> bool {
@@ -657,6 +678,7 @@ impl PointShadowAtlasPrepare<'_, '_> {
                 despawn_atlas_views(commands, core::mem::take(view_entities));
                 purge_atlas_retained(
                     shadow_render_phases,
+                    light_key_cache,
                     self.shadow_phase_buffers.as_deref_mut(),
                     self.batched_instance_buffers.as_deref_mut(),
                     main,
@@ -670,6 +692,7 @@ impl PointShadowAtlasPrepare<'_, '_> {
                 despawn_atlas_views(commands, core::mem::take(view_entities));
                 purge_atlas_retained(
                     shadow_render_phases,
+                    light_key_cache,
                     self.shadow_phase_buffers.as_deref_mut(),
                     self.batched_instance_buffers.as_deref_mut(),
                     main,
@@ -692,6 +715,7 @@ impl PointShadowAtlasPrepare<'_, '_> {
             despawn_atlas_views(commands, core::mem::take(view_entities));
             purge_atlas_retained(
                 shadow_render_phases,
+                light_key_cache,
                 self.shadow_phase_buffers.as_deref_mut(),
                 self.batched_instance_buffers.as_deref_mut(),
                 main,
@@ -708,6 +732,7 @@ impl PointShadowAtlasPrepare<'_, '_> {
             despawn_atlas_views(commands, stale);
             purge_atlas_retained(
                 shadow_render_phases,
+                light_key_cache,
                 self.shadow_phase_buffers.as_deref_mut(),
                 self.batched_instance_buffers.as_deref_mut(),
                 main,
@@ -773,6 +798,7 @@ impl PointShadowAtlasPrepare<'_, '_> {
                     despawn_atlas_views(commands, vec![view]);
                     purge_atlas_retained(
                         shadow_render_phases,
+                        light_key_cache,
                         self.shadow_phase_buffers.as_deref_mut(),
                         self.batched_instance_buffers.as_deref_mut(),
                         main,
@@ -783,16 +809,31 @@ impl PointShadowAtlasPrepare<'_, '_> {
             }
 
             let draws_this_frame = extracted.fresh && (map.draw_faces & bit != 0);
-            let to_live = if draws_this_frame {
-                map.draw_to_live & bit != 0
+            let existing_prev = slots[face_index].and_then(|v| self.face_states.get(v).ok());
+            // On non-draw frames (Half/Far mover skips, deferred frames, Linger) keep the existing
+            // view's mode, target texture, and rect so we never flip `mover_only` (`NoIndirectDrawing`)
+            // and wipe its retained shadow phase / work-item buffers.
+            let (to_live, mover_only, dst_rect) = if draws_this_frame {
+                let to_live = map.draw_to_live & bit != 0;
+                let mover_only = to_live && (map.mover_only_faces & bit != 0);
+                let rect = if to_live {
+                    map.live_rects[face_index]
+                } else {
+                    map.draw_static_rects[face_index].or(map.static_rects[face_index])
+                };
+                (to_live, mover_only, rect)
+            } else if let Some(prev) = existing_prev {
+                let to_live = prev.texture_id == live_tex_id;
+                (to_live, prev.mover_only, Some(prev.dst_rect))
             } else {
-                map.live_rects[face_index].is_some()
-            };
-            let mover_only = draws_this_frame && to_live && (map.mover_only_faces & bit != 0);
-            let dst_rect = if to_live {
-                map.live_rects[face_index]
-            } else {
-                map.static_rects[face_index]
+                let to_live = map.live_rects[face_index].is_some();
+                let mover_only = to_live;
+                let rect = if to_live {
+                    map.live_rects[face_index]
+                } else {
+                    map.draw_static_rects[face_index].or(map.static_rects[face_index])
+                };
+                (to_live, mover_only, rect)
             };
 
             let Some(dst_rect) = dst_rect else {
@@ -800,6 +841,7 @@ impl PointShadowAtlasPrepare<'_, '_> {
                     despawn_atlas_views(commands, vec![view]);
                     purge_atlas_retained(
                         shadow_render_phases,
+                        light_key_cache,
                         self.shadow_phase_buffers.as_deref_mut(),
                         self.batched_instance_buffers.as_deref_mut(),
                         main,
@@ -859,10 +901,11 @@ impl PointShadowAtlasPrepare<'_, '_> {
                 let fov_y = 2.0 * tan_half.atan();
                 let projection = proj::perspective_infinite_reverse(fov_y, 1.0, light.shadow_map_near_z);
                 let clip_from_world = projection * Mat4::from(world_from_view.affine().inverse());
+                let face_backward = world_from_view.back();
                 let frustum = Frustum(ViewFrustum::from_clip_from_world_custom_far(
                     &clip_from_world,
                     &light.transform.translation(),
-                    &light.transform.back(),
+                    &face_backward,
                     light.range,
                 ));
 
@@ -914,13 +957,19 @@ impl PointShadowAtlasPrepare<'_, '_> {
                     && src_rect[2] > 0
                     && dst_rect[2] > 0
                 {
+                    let guard_ratio = if src_rect[2] == dst_rect[2] {
+                        1.0
+                    } else {
+                        atlas_guard_tan_half(u32::from(dst_rect[2]), guard_texels)
+                            / atlas_guard_tan_half(u32::from(src_rect[2]), guard_texels)
+                    };
                     let offset = gpu.blit_uniforms.push(&AtlasBlitUniform {
                         src_origin: IVec2::new(i32::from(src_rect[0]), i32::from(src_rect[1])),
                         dst_origin: IVec2::new(i32::from(dst_rect[0]), i32::from(dst_rect[1])),
                         src_size: i32::from(src_rect[2]),
                         dst_size: i32::from(dst_rect[2]),
-                        _pad0: 0,
-                        _pad1: 0,
+                        guard_ratio,
+                        _pad: 0.0,
                     });
                     stats.blits += 1;
                     Some(offset)
@@ -953,6 +1002,11 @@ impl PointShadowAtlasPrepare<'_, '_> {
             }
             if previous.is_none() || mode_changed {
                 shadow_render_phases.remove(&retained);
+                // Dropping the phase without forgetting `light_key_cache` leaves
+                // `dirty_specializations.views` unset, so `queue_shadows` only queues
+                // `added_entities()` and silently drops every already-visible caster
+                // (SH-33 disappearing shadows on mode_changed / resize / resume).
+                light_key_cache.remove(&retained);
                 // `get_or_create_work_item_buffer` reuses an occupied `RetainedViewEntity`
                 // entry without checking `no_indirect_drawing`, so clear both double-buffered
                 // maps whenever a face view starts fresh or switches between Direct and Indirect.
@@ -1041,6 +1095,7 @@ impl PointShadowAtlasPrepare<'_, '_> {
 /// `set shadow.lamp.atlas.enabled off`, SH-33 2026-11-20).
 fn purge_atlas_retained(
     shadow_render_phases: &mut ViewBinnedRenderPhases<Shadow>,
+    light_key_cache: &mut crate::LightKeyCache,
     shadow_phase_buffers: Option<&mut PhaseBatchedInstanceBuffers<Shadow, MeshUniform>>,
     batched_instance_buffers: Option<&mut BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
     main: MainEntity,
@@ -1057,6 +1112,7 @@ fn purge_atlas_retained(
         }
         let retained = RetainedViewEntity::new(main, None, face);
         shadow_render_phases.remove(&retained);
+        light_key_cache.remove(&retained);
         if let Some(bufs) = phase_bufs.as_deref_mut() {
             bufs.buffers.work_item_buffers.remove(&retained);
         }

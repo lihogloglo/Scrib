@@ -590,15 +590,11 @@ pub fn extract_lights(
         commands.insert_resource(directional_light_shadow_map.clone());
     }
 
-    // This is the point light shadow map texel size for one face of the cube as a distance of 1.0
-    // world unit from the light.
-    // superfargoth patch (own, CW-13b: 2D point shadow atlas): under 2D atlas mode, tiles have
-    // variable resolution so `shadows.wesl` divides by `tile_px` per face.
-    let point_light_texel_size = if atlas_config.as_deref().is_some_and(|c| c.enabled) {
-        2.0
-    } else {
-        2.0 / point_light_shadow_map.size as f32
-    };
+    // superfargoth patch (own, CW-13b: 2D point shadow atlas): keep `ExtractedPointLight::shadow_normal_bias`
+    // independent of atlas/map_size so live toggles of `shadow.lamp.atlas.enabled` or
+    // `PointLightShadowMap::size` take effect immediately for all lights in `prepare_lights`
+    // without requiring every unchanged light to re-extract.
+    let _ = &atlas_config;
 
     all_lights_found.clear();
     // superfargoth patch (own, CW-4: lamp shadow cache): a cached lamp keeps its lists on frames it
@@ -807,9 +803,10 @@ pub fn extract_lights(
                 shadow_maps_enabled: point_light.shadow_maps_enabled || cached_view_faces.is_some(),
                 contact_shadows_enabled: point_light.contact_shadows_enabled,
                 shadow_depth_bias: point_light.shadow_depth_bias,
-                shadow_normal_bias: point_light.shadow_normal_bias
-                    * point_light_texel_size
-                    * core::f32::consts::SQRT_2,
+                // The factor of SQRT_2 is for the worst-case diagonal offset; `prepare_lights`
+                // multiplies by `2.0` (2D atlas, divided per-tile by `tile_px` in `shadows.wesl`)
+                // or `2.0 / point_light_shadow_map.size` (cube array).
+                shadow_normal_bias: point_light.shadow_normal_bias * core::f32::consts::SQRT_2,
                 shadow_map_near_z: point_light.shadow_map_near_z,
                 spot_light_angles: None,
                 volumetric: volumetric_light.is_some(),
@@ -2332,6 +2329,15 @@ pub fn prepare_lights(
 
     global_clusterable_object_meta.gpu_clustered_lights.clear();
 
+    // superfargoth patch (own, CW-13b: 2D point shadow atlas): scale point-light normal bias here
+    // so live toggles of `shadow.lamp.atlas.enabled` or `PointLightShadowMap::size` apply
+    // immediately to every point light (including unchanged ones).
+    let point_light_texel_size = if atlas_enabled {
+        2.0
+    } else {
+        2.0 / point_light_shadow_map.size.max(1) as f32
+    };
+
     for (index, entity) in point_light_entities.iter().enumerate() {
         let light = point_lights.get(*entity).unwrap().2;
 
@@ -2414,7 +2420,11 @@ pub fn prepare_lights(
                 position_radius: light.transform.translation().extend(light.radius),
                 flags: flags.bits(),
                 shadow_depth_bias: light.shadow_depth_bias,
-                shadow_normal_bias: light.shadow_normal_bias,
+                shadow_normal_bias: if light.spot_light_angles.is_none() {
+                    light.shadow_normal_bias * point_light_texel_size
+                } else {
+                    light.shadow_normal_bias
+                },
                 shadow_map_near_z: light.shadow_map_near_z,
                 spot_light_tan_angle,
                 decal_index: decals
@@ -2668,6 +2678,7 @@ pub fn prepare_lights(
                 },
                 &mut point_and_spot_light_view_entities.0,
                 &mut shadow_render_phases,
+                &mut light_key_cache,
                 &mut live_shadow_mapping_lights,
                 lod_origins.as_deref_mut(),
             )

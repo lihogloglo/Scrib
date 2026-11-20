@@ -5,6 +5,7 @@ import package::render::{
         SPOT_SHADOW_TEXEL_SIZE, sample_shadow_cubemap, sample_shadow_cubemap_pcss,
         sample_shadow_map_hardware, // superfargoth patch (own: lamp shadow filter)
         sample_shadow_map, sample_shadow_map_pcss, sample_shadow_map_directional_pcss,
+        random_rotation_matrix, // superfargoth patch (own, CW-13b: 2D point shadow atlas soft PCF)
     }
 };
 
@@ -105,17 +106,18 @@ fn fetch_point_shadow(
     let distance_to_light = max(surface_to_light_abs.x, max(surface_to_light_abs.y, surface_to_light_abs.z));
 
     @if(POINT_SHADOW_ATLAS) {
-        // Look up this face's tile to get per-tile resolution for normal-bias scaling (and early-out empty faces).
+        // Look up this face's tile to get per-tile resolution for normal-bias scaling.
+        // Do not early-out on an empty raw face before biasing: a fragment near a 45 deg seam can
+        // cross into an adjacent non-empty face after `normal_offset + depth_offset`.
         let raw_proj = point_shadow_atlas_project(-surface_to_light);
         let raw_tile_index = light_id * 6u + u32(raw_proj.w);
-        if (raw_tile_index >= arrayLength(&view_bindings::point_shadow_atlas_tiles)) {
-            return 1.0;
+        var raw_tile_px = 256.0;
+        if (raw_tile_index < arrayLength(&view_bindings::point_shadow_atlas_tiles)) {
+            let raw_tile = view_bindings::point_shadow_atlas_tiles[raw_tile_index];
+            if ((raw_tile.flags_and_size & 3u) != 0u) {
+                raw_tile_px = max(f32((raw_tile.flags_and_size >> 2u) & 0x3FFFu), 1.0);
+            }
         }
-        let raw_tile = view_bindings::point_shadow_atlas_tiles[raw_tile_index];
-        if ((raw_tile.flags_and_size & 3u) == 0u) {
-            return 1.0;
-        }
-        let raw_tile_px = max(f32((raw_tile.flags_and_size >> 2u) & 0x3FFFu), 1.0);
         // `shadow_normal_bias` carries `raw_bias * 2.0` under POINT_SHADOW_ATLAS; divide by `tile_px`.
         let normal_offset = ((*light).shadow_normal_bias / raw_tile_px) * distance_to_light * surface_normal.xyz;
         let depth_offset = (*light).shadow_depth_bias * normalize(surface_to_light.xyz);
