@@ -25,6 +25,14 @@ fn gate_app(hour: f64, budget: PointShadowBudget, outdoors: bool) -> (App, Vec<E
         .add_plugins(SkyPlugin { settings, clock, render_path: RenderPath::RayTraced });
     app.finish();
     app.cleanup();
+    // These tests assert stock `PointLight::shadow_maps_enabled` cube-budget behaviour.
+    {
+        use sf_tunables::Type;
+        let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
+        if let Ok(id) = tunables.id_of(&sf_sky::shadow_atlas::ENABLED) {
+            tunables.set(id.untyped(), false.to_value()).expect("bool");
+        }
+    }
     app.insert_resource(budget);
     app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(100)));
     let camera = app.world_mut().spawn((Camera3d::default(), GlobalTransform::IDENTITY)).id();

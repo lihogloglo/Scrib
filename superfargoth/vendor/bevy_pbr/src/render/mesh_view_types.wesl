@@ -268,6 +268,6 @@ struct GiProbeVolume {
 struct ShadowAtlasTile {
     uv_offset: vec2<f32>,
     uv_scale: f32,
-    // bits 0..2: atlas kind (0=empty, 1=static, 2=live), bits 2..16: tile_px, bits 16..32: inv_guard_tan_q16.
+    // bits 0..2: atlas kind (0=empty, 1=static, 2=live), bits 2..13: tile_px, bits 13..16: pcf_radius_q3 (0.25 px steps), bits 16..32: inv_guard_tan_q16.
     flags_and_size: u32,
 }

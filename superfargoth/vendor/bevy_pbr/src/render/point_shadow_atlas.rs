@@ -90,6 +90,8 @@ pub struct PointShadowAtlasConfig {
     pub static_size: u32,
     pub live_size: u32,
     pub guard_texels: f32,
+    /// Rotated 4-tap PCF filter radius in tile texels (`0.0` = crisp 1-tap 2x2 HW PCF).
+    pub soft_pcf_radius: f32,
     pub max_lamps: u32,
 }
 
@@ -100,6 +102,7 @@ impl Default for PointShadowAtlasConfig {
             static_size: 4096,
             live_size: 2048,
             guard_texels: 2.0,
+            soft_pcf_radius: 1.0,
             max_lamps: 48,
         }
     }
@@ -229,7 +232,7 @@ pub struct PointShadowAtlasStats {
 pub struct GpuShadowAtlasTile {
     pub uv_offset: Vec2,
     pub uv_scale: f32,
-    /// Packed `{ atlas_kind: u2 (0=empty, 1=static, 2=live), tile_px: u14, inv_guard_tan_q16: u16 }`.
+    /// Packed `{ atlas_kind: u2 (0=empty, 1=static, 2=live), tile_px: u11 (0..2047), pcf_radius_q3: u3 (0.25 px steps), inv_guard_tan_q16: u16 }`.
     pub flags_and_size: u32,
 }
 
@@ -259,6 +262,7 @@ pub fn pack_shadow_atlas_tile(
     rect: [u16; 3],
     atlas_size: u32,
     guard_texels: f32,
+    soft_pcf_radius: f32,
 ) -> GpuShadowAtlasTile {
     if atlas_kind == ATLAS_KIND_EMPTY || rect[2] == 0 || atlas_size == 0 {
         return GpuShadowAtlasTile::default();
@@ -267,8 +271,10 @@ pub fn pack_shadow_atlas_tile(
     let tile_px = u32::from(rect[2]);
     let inv_guard_tan = atlas_guard_inv_tan(tile_px, guard_texels).clamp(0.0, 1.0);
     let inv_guard_q16 = (inv_guard_tan * 65535.0).round() as u32;
+    let pcf_q3 = ((soft_pcf_radius.clamp(0.0, 1.75) * 4.0).round() as u32).min(7);
     let flags_and_size = (atlas_kind & 3)
-        | ((tile_px & 0x3FFF) << 2)
+        | ((tile_px & 0x7FF) << 2)
+        | ((pcf_q3 & 7) << 13)
         | ((inv_guard_q16 & 0xFFFF) << 16);
     GpuShadowAtlasTile {
         uv_offset: Vec2::new(f32::from(rect[0]) * inv_atlas, f32::from(rect[1]) * inv_atlas),
@@ -434,6 +440,7 @@ pub struct PointShadowAtlasGpu {
     active: bool,
     atlas_reallocated: bool,
     guard_texels: f32,
+    soft_pcf_radius: f32,
 }
 
 impl PointShadowAtlasGpu {
@@ -629,6 +636,7 @@ impl PointShadowAtlasPrepare<'_, '_> {
         let static_size = cfg.static_size.clamp(512, max_dim);
         let live_size = cfg.live_size.clamp(512, max_dim);
         gpu.guard_texels = cfg.guard_texels.max(0.0);
+        gpu.soft_pcf_radius = cfg.soft_pcf_radius.clamp(0.0, 1.75);
 
         if gpu.static_atlas.as_ref().map(|(_, _, s)| *s) != Some(static_size) {
             gpu.static_atlas = Some(create_atlas_texture(
@@ -761,6 +769,7 @@ impl PointShadowAtlasPrepare<'_, '_> {
             (t.id(), v.clone(), *s)
         };
         let guard_texels = gpu.guard_texels;
+        let soft_pcf_radius = gpu.soft_pcf_radius;
 
         // Populate the 6 GPU tile records for this light (indexed by `light_index * 6 + face`).
         let base_tile = light_index * 6;
@@ -770,9 +779,21 @@ impl PointShadowAtlasPrepare<'_, '_> {
         }
         for face_index in 0..6usize {
             let tile = if let Some(live_rect) = map.live_rects[face_index] {
-                pack_shadow_atlas_tile(ATLAS_KIND_LIVE, live_rect, live_size, guard_texels)
+                pack_shadow_atlas_tile(
+                    ATLAS_KIND_LIVE,
+                    live_rect,
+                    live_size,
+                    guard_texels,
+                    soft_pcf_radius,
+                )
             } else if let Some(static_rect) = map.static_rects[face_index] {
-                pack_shadow_atlas_tile(ATLAS_KIND_STATIC, static_rect, static_size, guard_texels)
+                pack_shadow_atlas_tile(
+                    ATLAS_KIND_STATIC,
+                    static_rect,
+                    static_size,
+                    guard_texels,
+                    soft_pcf_radius,
+                )
             } else {
                 GpuShadowAtlasTile::default()
             };

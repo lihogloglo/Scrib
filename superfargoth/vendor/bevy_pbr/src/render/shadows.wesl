@@ -49,6 +49,24 @@ fn point_shadow_atlas_project(frag_ls: vec3<f32>) -> vec4<f32> {
 }
 
 @if(POINT_SHADOW_ATLAS)
+fn sample_point_shadow_atlas_tap(atlas_kind: u32, uv: vec2<f32>, depth: f32) -> f32 {
+    if (atlas_kind == 2u) {
+        return textureSampleCompareLevel(
+            view_bindings::point_shadow_atlas_live,
+            view_bindings::point_shadow_textures_comparison_sampler,
+            uv,
+            depth,
+        );
+    }
+    return textureSampleCompareLevel(
+        view_bindings::point_shadow_atlas_static,
+        view_bindings::point_shadow_textures_comparison_sampler,
+        uv,
+        depth,
+    );
+}
+
+@if(POINT_SHADOW_ATLAS)
 fn sample_point_shadow_atlas(light_id: u32, frag_ls: vec3<f32>, depth: f32) -> f32 {
     let proj = point_shadow_atlas_project(frag_ls);
     let face_index = u32(proj.w);
@@ -61,27 +79,68 @@ fn sample_point_shadow_atlas(light_id: u32, frag_ls: vec3<f32>, depth: f32) -> f
     if (atlas_kind == 0u) {
         return 1.0;
     }
-    let tile_px = max(f32((tile.flags_and_size >> 2u) & 0x3FFFu), 1.0);
+    let tile_px = max(f32((tile.flags_and_size >> 2u) & 0x7FFu), 1.0);
     let inv_guard_tan = f32(tile.flags_and_size >> 16u) * (1.0 / 65535.0);
     let tile_uv = proj.xy * inv_guard_tan * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
     let half_texel = 0.5 * tile.uv_scale / tile_px;
     let uv_min = tile.uv_offset + vec2<f32>(half_texel);
     let uv_max = tile.uv_offset + vec2<f32>(tile.uv_scale - half_texel);
-    let atlas_uv = clamp(tile.uv_offset + tile_uv * tile.uv_scale, uv_min, uv_max);
-    if (atlas_kind == 2u) {
-        return textureSampleCompareLevel(
-            view_bindings::point_shadow_atlas_live,
-            view_bindings::point_shadow_textures_comparison_sampler,
-            atlas_uv,
-            depth,
-        );
+    let base_uv = clamp(tile.uv_offset + tile_uv * tile.uv_scale, uv_min, uv_max);
+    return sample_point_shadow_atlas_tap(atlas_kind, base_uv, depth);
+}
+
+@if(POINT_SHADOW_ATLAS)
+fn sample_point_shadow_atlas_filtered(
+    light_id: u32,
+    frag_ls: vec3<f32>,
+    depth: f32,
+    frag_coord_xy: vec2<f32>,
+) -> f32 {
+    let proj = point_shadow_atlas_project(frag_ls);
+    let face_index = u32(proj.w);
+    let tile_index = light_id * 6u + face_index;
+    if (tile_index >= arrayLength(&view_bindings::point_shadow_atlas_tiles)) {
+        return 1.0;
     }
-    return textureSampleCompareLevel(
-        view_bindings::point_shadow_atlas_static,
-        view_bindings::point_shadow_textures_comparison_sampler,
-        atlas_uv,
-        depth,
-    );
+    let tile = view_bindings::point_shadow_atlas_tiles[tile_index];
+    let atlas_kind = tile.flags_and_size & 3u;
+    if (atlas_kind == 0u) {
+        return 1.0;
+    }
+    let tile_px = max(f32((tile.flags_and_size >> 2u) & 0x7FFu), 1.0);
+    let pcf_radius_px = f32((tile.flags_and_size >> 13u) & 7u) * 0.25;
+    let inv_guard_tan = f32(tile.flags_and_size >> 16u) * (1.0 / 65535.0);
+    let tile_uv = proj.xy * inv_guard_tan * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+    let texel_uv = tile.uv_scale / tile_px;
+    let half_texel = 0.5 * texel_uv;
+    let uv_min = tile.uv_offset + vec2<f32>(half_texel);
+    let uv_max = tile.uv_offset + vec2<f32>(tile.uv_scale - half_texel);
+    let base_uv = clamp(tile.uv_offset + tile_uv * tile.uv_scale, uv_min, uv_max);
+
+    if (pcf_radius_px <= 0.0) {
+        return sample_point_shadow_atlas_tap(atlas_kind, base_uv, depth);
+    }
+
+    // 4-tap IGN-rotated RGSS Poisson disk clamped strictly inside this tile's texel rect.
+    // Temporal rotation under TAA/DLSS resolves into a smooth 16+ tap penumbra; static IGN
+    // rotation under MSAA/Gaussian avoids shimmer while smoothing 256²/128² tile edges.
+    @if(SHADOW_FILTER_METHOD_TEMPORAL)
+    let rot = random_rotation_matrix(frag_coord_xy, true);
+    @else
+    let rot = random_rotation_matrix(frag_coord_xy, false);
+
+    let radius_uv = pcf_radius_px * texel_uv;
+    let o0 = (rot * vec2<f32>(-0.35, -0.85)) * radius_uv;
+    let o1 = (rot * vec2<f32>( 0.85, -0.35)) * radius_uv;
+    let o2 = (rot * vec2<f32>( 0.35,  0.85)) * radius_uv;
+    let o3 = (rot * vec2<f32>(-0.85,  0.35)) * radius_uv;
+
+    var sum = 0.0;
+    sum += sample_point_shadow_atlas_tap(atlas_kind, clamp(base_uv + o0, uv_min, uv_max), depth);
+    sum += sample_point_shadow_atlas_tap(atlas_kind, clamp(base_uv + o1, uv_min, uv_max), depth);
+    sum += sample_point_shadow_atlas_tap(atlas_kind, clamp(base_uv + o2, uv_min, uv_max), depth);
+    sum += sample_point_shadow_atlas_tap(atlas_kind, clamp(base_uv + o3, uv_min, uv_max), depth);
+    return sum * 0.25;
 }
 
 fn fetch_point_shadow(
@@ -115,7 +174,7 @@ fn fetch_point_shadow(
         if (raw_tile_index < arrayLength(&view_bindings::point_shadow_atlas_tiles)) {
             let raw_tile = view_bindings::point_shadow_atlas_tiles[raw_tile_index];
             if ((raw_tile.flags_and_size & 3u) != 0u) {
-                raw_tile_px = max(f32((raw_tile.flags_and_size >> 2u) & 0x3FFFu), 1.0);
+                raw_tile_px = max(f32((raw_tile.flags_and_size >> 2u) & 0x7FFu), 1.0);
             }
         }
         // `shadow_normal_bias` carries `raw_bias * 2.0` under POINT_SHADOW_ATLAS; divide by `tile_px`.
@@ -127,7 +186,7 @@ fn fetch_point_shadow(
         let major_axis_magnitude = max(abs_position_ls.x, max(abs_position_ls.y, abs_position_ls.z));
         let zw = -major_axis_magnitude * (*light).light_custom_data.xy + (*light).light_custom_data.zw;
         let depth = zw.x / zw.y;
-        let shadow = sample_point_shadow_atlas(light_id, frag_ls, depth);
+        let shadow = sample_point_shadow_atlas_filtered(light_id, frag_ls, depth, frag_coord_xy);
         return mix(1.0, shadow, shadow_fade);
     } @else {
         // The normal bias here is already scaled by the texel size at 1 world unit from the light.

@@ -46,7 +46,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   `--off contactshadows` (confirmed cause). Ours march 0.5 m with 0.1 m thickness (Bevy default 0.3 m), Medium 8 /
   High 16 steps (`exterior.rs` `Quality::contact_shadows`). Fix direction: shorter rays, or contact shadows for
   close contact only, as engines use them; then recheck SH-7's grounding.
-- Status: known bug: Phase 1 shadow pass (1.4).
+- Status: **fixed 2026-11-20 (awaiting owner re-check):** replaced stock Bevy's dual-fetch fixed-world-length contact shadow marcher (`pbr_functions.wesl`) with a single-fetch Bend-style screen-space-clamped marcher (`min(length, max(0.03, view_dist * 0.05))`, distance-aware thickness, normal start bias, sub-pixel + 28 m/60 m early-outs, and smooth ray-end / thickness / screen-edge feathering). Re-check Balmora daytime edge bands and close-up prop/boot grounding.
 
 ### SH-15: 8 cached lamp shadows (shadows v2 V1, shadows2)
 - Kind: game location. Run (release): `.\bevyrrowind view "Seyda Neen, Census and Excise Office"`, walk up to the
@@ -308,4 +308,5 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   whether to tune `shadow.lamp.atlas.max_lamps` / tier distances (`10 / 22 / 45 m`).
 - Owner 2026-11-20 (first look): "a lot of shadows flashing when I move around: shadows appear, then disappear", outdoors and in the Census interior. Cause: atlas rects sampled before anything was drawn into them (ledger 2026-11-20 "SH-33 fix"); fixed the same day.
 - Owner 2026-11-20 (second look): shadows still disappeared when getting close to lamps and flickered before disappearing while moving. Full audit found and fixed 5 P0 + 4 P1 root causes: `prepare_light` wiping `shadow_render_phases` without invalidating `LightKeyCache` (leaving `dirty_specializations` clean so `queue_shadows` dropped all visible casters and cleared tiles empty), non-draw frames (Half/Far skip, 12-face cap, Linger) flipping `mover_only` off/on and triggering phase wipes, tier resize clearing `c.baked` and racing `release_retiring` ahead of GPU confirmation, moving torches publishing culled/unwritten faces, wrong `view_backward` in face frusta, `fs_blit` missing `guard_ratio` across mismatched Static/Live tile sizes, live-toggle `shadow_normal_bias` mismatch, idle `AtlasPointShadowMap` change churn, full-atlas un-admitted lamps leaking stock scans, and pre-bias seam early-out (ledger 2026-11-20 "SH-33 full audit fixes").
-- Status: **awaiting owner** (2026-11-20).
+- Owner 2026-11-20 (third look, after full audit fixes): zero flickering in Balmora 22:00, shadows smoothly fade in at range. Follow-up built same day: flipped `shadow.lamp.atlas.enabled` ON by default, added live 4-tap IGN-rotated RGSS PCF (`shadow.lamp.atlas.soft_pcf_radius = 1.0`, `0` for crisp 1-tap A/B), upgraded contact shadows (`SH-14` fix, ~2.5× less depth bandwidth), and fixed `RO-20` far-terrain hill swimming (`far_shadow.wesl`).
+- Status: **awaiting owner** final sign-off on Balmora 22:00 + Census interior + daytime `SH-14` / `RO-20` (and live A/B `set shadow.lamp.atlas.soft_pcf_radius 0` vs `1.0`).

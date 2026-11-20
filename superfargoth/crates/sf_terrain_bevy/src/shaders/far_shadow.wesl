@@ -30,25 +30,28 @@ import bevy_pbr::render::{
     mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
 };
 
-/// Steps per march.
-const FAR_STEPS: u32 = 14u;
+/// Steps per march (18 camera-independent geometric steps: ~1.5x spacing, zero RO-20 hill swimming).
+const FAR_STEPS: u32 = 18u;
 /// Horizontal reach of the march, meters (shadows longer than this are
 /// cut; at 3° sun elevation a 250 m ridge casts ~4.8 km).
 const FAR_REACH: f32 = 5000.0;
+/// Camera-independent first step of the heightfield horizon march, meters.
+/// Previously `max(dist * 0.01, 2.0)` shifted all sample distances as the camera approached,
+/// causing hills to swim (RO-20).
+const FAR_FIRST_M: f32 = 4.0;
 /// Penumbra half-width per meter of occluder distance: the sun's angular
 /// radius (0.27°) plus softening for the coarse far heights.
 const FAR_PENUMBRA: f32 = 0.012;
 /// The cascades hand over to the far term from this fraction of their range.
 const FAR_FADE_START: f32 = 0.85;
-/// Receiver lift and first step, per meter of view distance: far terrain is
+/// Receiver lift per meter of view distance (clamped at FAR_MARCH_END): far terrain is
 /// drawn from coarse LODs whose surface sits off the bilinear heights.
-const FAR_BIAS_PER_M: f32 = 0.0015;
-const FAR_FIRST_PER_M: f32 = 0.01;
+const FAR_BIAS_PER_M: f32 = 0.001;
 /// Past this view distance the far shadow map (one fetch; sf_terrain_bevy
-/// `FarShadowMap`) replaces the march, dithered over the last 20 %.
+/// `FarShadowMap`) replaces the march, smoothly blended over the last 20 %.
 const FAR_MARCH_END: f32 = 700.0;
 /// Map receiver lift: its heights are resampled at its texel size.
-const FAR_MAP_BIAS: f32 = 6.0;
+const FAR_MAP_BIAS: f32 = 3.5;
 const FAR_MAP_PENUMBRA_MIN: f32 = 2.0;
 
 /// What the material hands Bevy: the shadow factor, and the position to
@@ -86,11 +89,10 @@ fn terrain_light_visibility(p: vec3<f32>, to_light: vec3<f32>, dist: f32) -> f32
     }
     let dir = to_light.xz / lxz;
     let slope = to_light.y / lxz;
-    let y0 = p.y + origin_y() + max(dist * FAR_BIAS_PER_M, 0.1);
+    let y0 = p.y + origin_y() + 0.35 + min(dist, FAR_MARCH_END) * FAR_BIAS_PER_M;
     let top = pf(P_DETAIL).w;
-    let first = max(dist * FAR_FIRST_PER_M, 2.0);
-    let ratio = pow(FAR_REACH / first, 1.0 / f32(FAR_STEPS - 1u));
-    var s = first;
+    let ratio = pow(FAR_REACH / FAR_FIRST_M, 1.0 / f32(FAR_STEPS - 1u));
+    var s = FAR_FIRST_M;
     var vis = 1.0;
     for (var i = 0u; i < FAR_STEPS; i += 1u) {
         let ray = y0 + s * slope;
@@ -154,8 +156,12 @@ fn far_shadow_term(p: vec4<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> FarShadow 
         if dot(n, l) > 0.0 {
             let dist = distance(view.world_position, p.xyz);
             let to_map = smoothstep(0.8 * FAR_MARCH_END, FAR_MARCH_END, dist);
-            if pf(P_FAR).z > 0.0 && to_map >= bayer4(frag_xy + vec2<f32>(2.0, 1.0)) {
+            if pf(P_FAR).z > 0.0 && to_map >= 1.0 {
                 out.factor = map_visibility(p.xyz, dist);
+            } else if pf(P_FAR).z > 0.0 && to_map > 0.0 {
+                let march_vis = terrain_light_visibility(p.xyz, l, dist);
+                let map_vis = map_visibility(p.xyz, dist);
+                out.factor = mix(march_vis, map_vis, to_map);
             } else {
                 out.factor = terrain_light_visibility(p.xyz, l, dist);
             }

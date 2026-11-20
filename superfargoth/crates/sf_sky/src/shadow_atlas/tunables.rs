@@ -10,11 +10,11 @@ const STATIC_MAX_PX: u16 = 8192; // tunables: const (layout: valid power-of-two 
 const LIVE_MIN_PX: u16 = 512; // tunables: const (layout: valid power-of-two live atlas minimum)
 const LIVE_MAX_PX: u16 = 4096; // tunables: const (layout: valid power-of-two live atlas maximum)
 
-/// `shadow.lamp.atlas.enabled`: opt-in switch for the 2D shadow atlas path.
-pub const ENABLED: Def<bool> = def!(bool "shadow.lamp.atlas.enabled" = false)
+/// `shadow.lamp.atlas.enabled`: unified cached 2D point shadow atlas (CW-13b).
+pub const ENABLED: Def<bool> = def!(bool "shadow.lamp.atlas.enabled" = true)
     .help("Pack lamp shadows into 2D static and live atlases instead of fixed cube-map arrays")
     .source(Source::Owner(
-        "2026-11-15: a change stays opt-in, off, until its interleaved A/B wins",
+        "2026-11-20: on by default after SH-33 visual check + shadow_a3_atlas interleaved A/B win across all 4 arms",
     ))
     .group(Group::Shadows);
 
@@ -81,6 +81,14 @@ pub const HANDOVER_SPARES: Def<u32> = def!(count "shadow.lamp.atlas.handover_spa
     .help("Spare 256 px lamp budgets reserved in the static atlas for simultaneous handover crossfades")
     .group(Group::Shadows);
 
+/// `shadow.lamp.atlas.soft_pcf_radius`: 4-tap rotated PCF filter radius in tile texels (`0` = 1-tap 2x2 HW PCF).
+pub const SOFT_PCF_RADIUS: Def<f32> = def!(float "shadow.lamp.atlas.soft_pcf_radius" = 1.0)
+    .range(0.0, 1.75)
+    .unit(Unit::Texels)
+    .help("Rotated 4-tap PCF filter radius in tile texels for 2D shadow atlas tiles (0 = crisp 1-tap 2x2 hardware PCF)")
+    .source(Source::Industry("UE/Frostbite/Doom 2016: 4-tap IGN-rotated PCF inside tile guard band, resolved by TAA/DLSS"))
+    .group(Group::Shadows);
+
 /// `shadow.lamp.contact_max`: maximum nearby lamps contributing screen-space contact shadows.
 pub const CONTACT_MAX: Def<u32> = def!(count "shadow.lamp.contact_max" = 8)
     .range(0, 32)
@@ -100,6 +108,7 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &RESIZE_COOLDOWN_S,
     &MAX_LAMPS,
     &HANDOVER_SPARES,
+    &SOFT_PCF_RADIUS,
     &CONTACT_MAX,
 ];
 
@@ -124,6 +133,8 @@ pub struct ShadowAtlasConfig {
     pub max_lamps: u32,
     /// Number of 6-face 256 px handover spare budgets reserved in the static atlas.
     pub handover_spares: u32,
+    /// Rotated 4-tap PCF filter radius in tile texels (`0.0` = 1-tap 2x2 HW PCF).
+    pub soft_pcf_radius: f32,
     /// Maximum local lamps casting screen-space contact shadows at once.
     pub contact_max: u32,
 }
@@ -141,6 +152,7 @@ impl Default for ShadowAtlasConfig {
             resize_cooldown_s: RESIZE_COOLDOWN_S.default_value(),
             max_lamps: MAX_LAMPS.default_value(),
             handover_spares: HANDOVER_SPARES.default_value(),
+            soft_pcf_radius: SOFT_PCF_RADIUS.default_value(),
             contact_max: CONTACT_MAX.default_value(),
         }
     }
@@ -159,6 +171,7 @@ impl ShadowAtlasConfig {
             resize_cooldown_s: t.read(t.id_of(&RESIZE_COOLDOWN_S)?),
             max_lamps: t.read(t.id_of(&MAX_LAMPS)?),
             handover_spares: t.read(t.id_of(&HANDOVER_SPARES)?),
+            soft_pcf_radius: t.read(t.id_of(&SOFT_PCF_RADIUS)?),
             contact_max: t.read(t.id_of(&CONTACT_MAX)?),
         })
     }

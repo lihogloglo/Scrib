@@ -87,6 +87,9 @@ fn room(on: bool) -> Room {
 
 fn set_switch(app: &mut App, on: bool) {
     let mut tunables = app.world_mut().resource_mut::<Tunables>();
+    // These tests exercise the CW-4 cube-cache path; keep the 2D atlas switch off here.
+    let atlas_id = tunables.id_of(&sf_sky::shadow_atlas::ENABLED).expect("registered");
+    tunables.set(atlas_id.untyped(), false.to_value()).expect("a bool");
     let id = tunables.id_of(&sf_sky::lamp_cache::ENABLED).expect("registered");
     tunables.set(id.untyped(), on.to_value()).expect("a bool");
 }

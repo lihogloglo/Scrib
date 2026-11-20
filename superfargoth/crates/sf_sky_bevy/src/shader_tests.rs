@@ -407,13 +407,22 @@ fn point_shadow_atlas_shaders_compile_and_validate() {
 
     let high: Vec<&str> = BASE.iter().chain(HIGH).copied().collect();
     let high_atlas: Vec<&str> = high.iter().copied().chain(["POINT_SHADOW_ATLAS", "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3"]).collect();
+    let high_atlas_samplers: Vec<&str> = high_atlas.iter().copied().chain(["USE_DEPTH_SAMPLERS"]).collect();
+    let high_atlas_gaussian: Vec<&str> = BASE
+        .iter()
+        .chain(HIGH.iter().filter(|&&d| d != "SHADOW_FILTER_METHOD_TEMPORAL"))
+        .copied()
+        .chain(["SHADOW_FILTER_METHOD_GAUSSIAN", "POINT_SHADOW_ATLAS", "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3", "USE_DEPTH_SAMPLERS"])
+        .collect();
     let deferred_atlas: Vec<&str> = high_atlas.iter().copied().chain(["DEFERRED_PREPASS"]).collect();
     let fog_off: &[&str] = &["SHADOW_FILTER_METHOD_HARDWARE_2X2", "ATMOSPHERE", "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3"];
     let fog_on: &[&str] = &["SHADOW_FILTER_METHOD_HARDWARE_2X2", "ATMOSPHERE", "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3", "POINT_SHADOW_ATLAS"];
 
-    let jobs: [(&str, &[&str]); 6] = [
+    let jobs: [(&str, &[&str]); 8] = [
         ("bevy_pbr::render::pbr", &high),
         ("bevy_pbr::render::pbr", &high_atlas),
+        ("bevy_pbr::render::pbr", &high_atlas_samplers),
+        ("bevy_pbr::render::pbr", &high_atlas_gaussian),
         ("bevy_pbr::deferred::deferred_lighting", &deferred_atlas),
         ("bevy_pbr::volumetric_fog::volumetric_fog", fog_off),
         ("bevy_pbr::volumetric_fog::volumetric_fog", fog_on),

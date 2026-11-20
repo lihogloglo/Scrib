@@ -519,20 +519,23 @@ fn atlas_projection_matches_bevy_cube_faces() {
     }
 }
 
-/// CW-13b: `pack_shadow_atlas_tile` packs kind, tile resolution, and `inv_guard_tan` accurately.
+/// CW-13b: `pack_shadow_atlas_tile` packs kind, tile resolution, `soft_pcf_radius`, and `inv_guard_tan` accurately.
 #[test]
 fn atlas_tile_packing_round_trip() {
-    let empty = bevy_pbr::pack_shadow_atlas_tile(bevy_pbr::ATLAS_KIND_EMPTY, [0, 0, 0], 4096, 2.0);
+    let empty = bevy_pbr::pack_shadow_atlas_tile(bevy_pbr::ATLAS_KIND_EMPTY, [0, 0, 0], 4096, 2.0, 1.0);
     assert_eq!(empty.flags_and_size & 3, 0);
 
-    for (kind, rect, atlas_size) in [
-        (bevy_pbr::ATLAS_KIND_STATIC, [512, 1024, 512], 4096u16),
-        (bevy_pbr::ATLAS_KIND_STATIC, [256, 768, 256], 4096u16),
-        (bevy_pbr::ATLAS_KIND_LIVE, [128, 384, 128], 2048u16),
+    for (kind, rect, atlas_size, pcf_radius, expected_pcf) in [
+        (bevy_pbr::ATLAS_KIND_STATIC, [512, 1024, 512], 4096u16, 0.0_f32, 0.0_f32),
+        (bevy_pbr::ATLAS_KIND_STATIC, [256, 768, 256], 4096u16, 1.0_f32, 1.0_f32),
+        (bevy_pbr::ATLAS_KIND_LIVE, [128, 384, 128], 2048u16, 1.75_f32, 1.75_f32),
+        (bevy_pbr::ATLAS_KIND_STATIC, [0, 0, 512], 4096u16, 5.0_f32, 1.75_f32),
     ] {
-        let packed = bevy_pbr::pack_shadow_atlas_tile(kind, rect, u32::from(atlas_size), 2.0);
+        let packed = bevy_pbr::pack_shadow_atlas_tile(kind, rect, u32::from(atlas_size), 2.0, pcf_radius);
         assert_eq!(packed.flags_and_size & 3, kind);
-        assert_eq!((packed.flags_and_size >> 2) & 0x3FFF, u32::from(rect[2]));
+        assert_eq!((packed.flags_and_size >> 2) & 0x7FF, u32::from(rect[2]));
+        let unpacked_pcf = f32::from(u8::try_from((packed.flags_and_size >> 13) & 7).expect("u3")) * 0.25;
+        assert!((unpacked_pcf - expected_pcf).abs() < 1e-6, "pcf_radius={pcf_radius}: got {unpacked_pcf}");
         let unpacked_inv = f32::from(u16::try_from(packed.flags_and_size >> 16).expect("u16")) / 65535.0;
         let expected_inv = bevy_pbr::atlas_guard_inv_tan(u32::from(rect[2]), 2.0);
         assert!((unpacked_inv - expected_inv).abs() < 2e-5);
@@ -951,4 +954,47 @@ fn atlas_blit_guard_ratio_aligns_cube_seam_across_tile_sizes() {
             "{src_size}->{dst_size}: {ndc_src_seam} vs {expected_ndc_src_seam}"
         );
     }
+}
+
+/// Industry-standard shadow stack contracts:
+/// 1. 2D Shadow Atlas defaults to ON and `shadow.lamp.atlas.soft_pcf_radius` binds live to `PointShadowAtlasConfig`.
+/// 2. `shadows.wesl` keeps the 1-tap fast path (`pcf_radius_px <= 0.0`) and clamps every 4-tap PCF tap inside `[uv_min, uv_max]`.
+/// 3. `pbr_functions.wesl` uses the single-fetch screen-space-clamped Bend-style contact shadow marcher (`SH-14`).
+/// 4. `far_shadow.wesl` uses camera-independent world-space march steps (`RO-20` hill swimming fix).
+#[test]
+fn shadow_stack_soft_pcf_contact_and_far_contracts() {
+    use bevy_pbr::PointShadowAtlasConfig;
+    use sf_tunables_bevy::{SetBy, SetTunable};
+
+    let mut app = bevy_app::App::new();
+    app.add_plugins((sf_tunables_bevy::TunablesPlugin, crate::ShadowQualityPlugin, crate::PointShadowPlugin))
+        .init_resource::<bevy_time::Time>()
+        .init_resource::<PointLightShadowMap>();
+    app.update();
+
+    let cfg = *app.world().resource::<PointShadowAtlasConfig>();
+    assert!(cfg.enabled, "2D point shadow atlas must default ON after SH-33 + shadow_a3_atlas win");
+    assert!((cfg.soft_pcf_radius - 1.0).abs() < 1e-6, "default soft_pcf_radius is 1.0 texel");
+
+    app.world_mut().write_message(SetTunable::new("shadow.lamp.atlas.soft_pcf_radius", "0", SetBy::Console));
+    app.update();
+    assert!(app.world().resource::<PointShadowAtlasConfig>().soft_pcf_radius.abs() < 1e-6, "live tunable reaches PointShadowAtlasConfig");
+
+    app.world_mut().write_message(SetTunable::new("shadow.lamp.atlas.soft_pcf_radius", "1.5", SetBy::Console));
+    app.update();
+    assert!((app.world().resource::<PointShadowAtlasConfig>().soft_pcf_radius - 1.5).abs() < 1e-6);
+
+    let shadows = vendored("render/shadows.wesl");
+    assert!(shadows.contains("if (pcf_radius_px <= 0.0)"), "shadows.wesl keeps 1-tap fast path when soft_pcf_radius == 0");
+    assert!(shadows.contains("clamp(base_uv + o3, uv_min, uv_max)"), "shadows.wesl clamps every 4-tap PCF tap inside tile rect");
+
+    let pbr = vendored("render/pbr_functions.wesl");
+    assert!(pbr.contains("raymarch::depth_sample_nearest(sample_uv)"), "pbr_functions.wesl uses single nearest depth fetch per step");
+    assert!(pbr.contains("ray_fade * thick_fade * edge_fade"), "pbr_functions.wesl applies smooth triple feathering (SH-14)");
+    assert!(pbr.contains("min(world_len, max(0.03, view_dist * 0.05))"), "pbr_functions.wesl clamps contact ray length in screen space");
+
+    let far_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../sf_terrain_bevy/src/shaders/far_shadow.wesl");
+    let far = std::fs::read_to_string(&far_path).expect("read far_shadow.wesl");
+    assert!(far.contains("const FAR_FIRST_M: f32 = 4.0;"), "far_shadow.wesl uses camera-independent first step (RO-20)");
+    assert!(!far.contains("FAR_FIRST_PER_M"), "far_shadow.wesl must not shift raymarch steps with camera distance");
 }

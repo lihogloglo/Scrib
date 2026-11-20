@@ -287,13 +287,69 @@ fn calculate_F0(base_color: vec3<f32>, metallic: f32, reflectance: vec3<f32>) ->
     return mix(calculate_F0_dielectric(reflectance), base_color, metallic);
 }
 
+// superfargoth patch (own, SH-14 / Bend SSS contact shadows): single-fetch screen-space-clamped
+// contact shadow marcher replacing stock Bevy's dual-fetch fixed-world-length raymarch.
+// - 1 nearest depth fetch per step (half bandwidth vs linear+nearest; DLSS viewport-aware via RO-11).
+// - Screen-space clamped ray length (`min(world_len, max(0.03, view_dist * 0.05))`) + distance-aware
+//   thickness eliminate SH-14 view-angle silhouette bands up close while catching thin props mid-range.
+// - Smooth ray-end, thickness, screen-edge, distance, and grazing-angle feathering prevent hard pops.
 @if(CONTACT_SHADOWS && DEPTH_PREPASS)
 fn calculate_contact_shadow(
     world_position: vec3<f32>,
+    world_normal: vec3<f32>,
     frag_coord: vec2<f32>,
     light_dir: vec3<f32>,
+    view_z: f32,
+    max_ray_length: f32,
+    max_view_dist: f32,
     contact_shadow_steps: u32,
 ) -> f32 {
+    let view_dist = abs(view_z);
+    if view_dist >= max_view_dist || contact_shadow_steps == 0u {
+        return 1.0;
+    }
+
+    let ndotl = dot(world_normal, light_dir);
+    if ndotl <= 0.02 {
+        return 1.0;
+    }
+    let grazing_fade = smoothstep(0.02, 0.15, ndotl);
+    let dist_fade = smoothstep(max_view_dist, max_view_dist * 0.75, view_dist);
+
+    // Clamp world-space ray length by a screen-proportional ceiling so close objects do not march
+    // hundreds of pixels and cast detached silhouette bands (SH-14).
+    let world_len = min(view_bindings::contact_shadows_settings.length, max_ray_length);
+    let scaled_len = min(world_len, max(0.03, view_dist * 0.05));
+    if scaled_len <= 1e-4 {
+        return 1.0;
+    }
+
+    let start_ws = world_position + world_normal * max(0.003, view_dist * 0.0025);
+    let end_ws = start_ws + light_dir * scaled_len;
+
+    let start_clip = view_bindings::view.clip_from_world * vec4<f32>(start_ws, 1.0);
+    if start_clip.w <= 1e-4 {
+        return 1.0;
+    }
+    var end_clip = view_bindings::view.clip_from_world * vec4<f32>(end_ws, 1.0);
+    if end_clip.w < 1e-3 {
+        let clip_t = clamp((start_clip.w - 1e-3) / max(start_clip.w - end_clip.w, 1e-6), 0.0, 1.0);
+        end_clip = mix(start_clip, end_clip, clip_t);
+    }
+
+    let start_ndc = start_clip.xyz / start_clip.w;
+    let end_ndc = end_clip.xyz / end_clip.w;
+    let start_uv = view_transformations::ndc_to_uv(start_ndc.xy);
+    let end_uv = view_transformations::ndc_to_uv(end_ndc.xy);
+
+    let depth_size = view_bindings::view.main_pass_viewport.zw;
+    let screen_len_px = length((end_uv - start_uv) * depth_size);
+    if screen_len_px < 1.25 {
+        return 1.0;
+    }
+
+    let steps = clamp(u32(ceil(screen_len_px)), 2u, contact_shadow_steps);
+
     @if(BLUE_NOISE_TEXTURE)
     let noise_size = textureDimensions(view_bindings::blue_noise_texture, 0);
     @if(BLUE_NOISE_TEXTURE)
@@ -308,22 +364,39 @@ fn calculate_contact_shadow(
     @else
     let noise = utils::interleaved_gradient_noise(frag_coord, view_bindings::globals.frame_count);
 
-    // superfargoth patch (own, RO-11): march in the main pass's pixel space (the internal DLSS
-    // size under `MainPassResolutionOverride`), not the target-sized depth texture's.
-    let depth_size = view_bindings::view.main_pass_viewport.zw;
-    var rm = raymarch::depth_ray_march_new_from_depth(depth_size);
-    raymarch::depth_ray_march_from_cs(&rm, position_world_to_ndc(world_position));
-    raymarch::depth_ray_march_to_ws(&rm, world_position + light_dir * view_bindings::contact_shadows_settings.length);
-    rm.linear_steps = contact_shadow_steps;
-    rm.depth_thickness_linear_z = view_bindings::contact_shadows_settings.thickness;
-    rm.march_behind_surfaces = true;
-    rm.jitter = noise;
+    let base_thickness = view_bindings::contact_shadows_settings.thickness;
+    let thickness = min(base_thickness, max(0.02, scaled_len * 0.45)) + view_dist * 0.008;
+    let min_diff = max(0.004, view_dist * 0.002);
+    let inv_steps = 1.0 / f32(steps);
 
-    let rm_result = raymarch::depth_ray_march_march(&rm);
-    if rm_result.hit {
-        return clamp((rm_result.hit_penetration_frac - 0.5) / (1.0 - 0.5), 0.0, 1.0);
+    var max_occlusion = 0.0;
+    for (var step = 0u; step < steps; step = step + 1u) {
+        let t = (f32(step) + 0.35 + 0.65 * noise) * inv_steps;
+        let sample_uv = mix(start_uv, end_uv, t);
+        if sample_uv.x <= 0.0 || sample_uv.x >= 1.0 || sample_uv.y <= 0.0 || sample_uv.y >= 1.0 {
+            break;
+        }
+        let scene_ndc_z = raymarch::depth_sample_nearest(sample_uv);
+        if scene_ndc_z <= 1e-6 {
+            continue;
+        }
+        let ray_ndc_z = mix(start_ndc.z, end_ndc.z, t);
+        let ray_z = -view_transformations::depth_ndc_to_view_z(ray_ndc_z);
+        let scene_z = -view_transformations::depth_ndc_to_view_z(scene_ndc_z);
+        let depth_diff = ray_z - scene_z;
+        if depth_diff > min_diff && depth_diff < thickness {
+            let ray_fade = smoothstep(1.0, 0.72, t);
+            let thick_fade = smoothstep(thickness, thickness * 0.45, depth_diff);
+            let edge_dist = min(min(sample_uv.x, 1.0 - sample_uv.x), min(sample_uv.y, 1.0 - sample_uv.y));
+            let edge_fade = smoothstep(0.0, 0.05, edge_dist);
+            max_occlusion = max(max_occlusion, ray_fade * thick_fade * edge_fade);
+            if max_occlusion >= 0.99 {
+                break;
+            }
+        }
     }
-    return 1.0;
+
+    return 1.0 - max_occlusion * dist_fade * grazing_fade;
 }
 
 @if(!PREPASS_FRAGMENT)
@@ -492,8 +565,19 @@ fn apply_pbr_lighting(
         if contact_shadow_enabled && lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && shadow > 0.0 && // superfargoth patch (own: shadow early-out): `lit`
                 (view_bindings::clustered_lights.data[light_id].flags &
                     mesh_view_types::POINT_LIGHT_FLAGS_CONTACT_SHADOWS_ENABLED_BIT) != 0u {
-            let L = normalize(view_bindings::clustered_lights.data[light_id].position_radius.xyz - in.world_position.xyz);
-            shadow *= calculate_contact_shadow(in.world_position.xyz, in.frag_coord.xy, L, contact_shadow_steps);
+            let to_light = view_bindings::clustered_lights.data[light_id].position_radius.xyz - in.world_position.xyz;
+            let light_dist = length(to_light);
+            let L = to_light / max(light_dist, 1e-5);
+            shadow *= calculate_contact_shadow(
+                in.world_position.xyz,
+                in.world_normal,
+                in.frag_coord.xy,
+                L,
+                view_z,
+                light_dist * 0.5,
+                28.0,
+                contact_shadow_steps,
+            );
         }
 
         direct_light += light_contrib * shadow;
@@ -555,8 +639,19 @@ fn apply_pbr_lighting(
         if contact_shadow_enabled && lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && shadow > 0.0 && // superfargoth patch (own: shadow early-out): `lit`
                 (view_bindings::clustered_lights.data[light_id].flags &
                     mesh_view_types::POINT_LIGHT_FLAGS_CONTACT_SHADOWS_ENABLED_BIT) != 0u {
-            let L = normalize(view_bindings::clustered_lights.data[light_id].position_radius.xyz - in.world_position.xyz);
-            shadow *= calculate_contact_shadow(in.world_position.xyz, in.frag_coord.xy, L, contact_shadow_steps);
+            let to_light = view_bindings::clustered_lights.data[light_id].position_radius.xyz - in.world_position.xyz;
+            let light_dist = length(to_light);
+            let L = to_light / max(light_dist, 1e-5);
+            shadow *= calculate_contact_shadow(
+                in.world_position.xyz,
+                in.world_normal,
+                in.frag_coord.xy,
+                L,
+                view_z,
+                light_dist * 0.5,
+                28.0,
+                contact_shadow_steps,
+            );
         }
 
         direct_light += light_contrib * shadow;
@@ -632,7 +727,20 @@ fn apply_pbr_lighting(
                     mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_CONTACT_SHADOWS_ENABLED_BIT) != 0u {
             let L = view_bindings::lights.directional_lights[i].direction_to_light;
             // superfargoth patch (own, CW-8: directional shadow fade)
-            shadow *= mix(1.0, calculate_contact_shadow(in.world_position.xyz, in.frag_coord.xy, L, contact_shadow_steps), view_bindings::lights.directional_lights[i].shadow_fade);
+            shadow *= mix(
+                1.0,
+                calculate_contact_shadow(
+                    in.world_position.xyz,
+                    in.world_normal,
+                    in.frag_coord.xy,
+                    L,
+                    view_z,
+                    view_bindings::contact_shadows_settings.length,
+                    60.0,
+                    contact_shadow_steps,
+                ),
+                view_bindings::lights.directional_lights[i].shadow_fade,
+            );
         }
 
         direct_light += light_contrib * shadow;

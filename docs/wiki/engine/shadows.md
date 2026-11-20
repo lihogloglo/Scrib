@@ -42,10 +42,15 @@ Everything else is unshadowed.
   (`exterior.rs:1602`; `sf_sky_bevy/src/upscale.rs` parks Temporal to Gaussian without `TemporalJitter`).
 - **Contact shadows.** Bevy `ContactShadows` on the camera (Medium 8 steps, High/Ultra 16, length 0.3 m; Low off,
   `exterior.rs:1532`) plus `contact_shadows_enabled` on the sun (`SunShadow`, `lib.rs:201`). Lamps get them only
-  on High/Ultra (`PointShadowBudget::contact_shadows`, `exterior.rs:1544`). The ray march runs in DLSS pixel space (vendor row "RO-11", `vendor/README.md:21`).
-- **Far shadows.** `sf_terrain_bevy` computes a far shadow map from the height clipmap
+  on High/Ultra, capped at `shadow.lamp.contact_max = 8` top-ranked lamps (`PointShadowBudget::contact_shadows`,
+  `exterior.rs:1544`). Vendored `pbr_functions.wesl` (`SH-14` / Bend SSS upgrade, 2026-11-20) runs a single-fetch
+  (`depth_sample_nearest` in DLSS `main_pass_viewport` pixel space, vendor row "RO-11") screen-space-clamped march
+  (`min(length, max(0.03, view_dist * 0.05))`) with distance-aware thickness, normal start bias, sub-pixel & far
+  distance early-outs (`28 m` local / `60 m` sun), and smooth ray-end / thickness / screen-edge feathering.
+- **Far shadows.** `sf_terrain_bevy` computes a texel-snapped far shadow map from the height clipmap
   (`superfargoth/crates/sf_terrain_bevy/src/far_map.rs:1`); proxies, impostors and the fog's froxels read it
-  (`exterior.rs:1240`, `:1254`).
+  (`exterior.rs:1240`, `:1254`). Terrain itself marches 18 camera-independent geometric heightfield steps (`FAR_FIRST_M = 4.0`,
+  `far_shadow.wesl`, RO-20 swimming fix 2026-11-20) and blends smoothly into the far shadow map over `560–700 m`.
 - **Extra depth views** (precipitation occlusion, surface-weather shelter) ride Bevy's shadow pass as subviews
   (`sf_sky_bevy/src/sun_view.rs:108`, `add_sun_view`); they invent no private state.
 - **Lamp shadow budget.** Lamps carry `BudgetedShadow`; `budget_shadows` (`sf_sky_bevy/src/shadow_budget.rs:432`)
@@ -88,19 +93,26 @@ Everything else is unshadowed.
   CW-13a (`record_batched_point_shadows`, vendored `bevy_pbr`) collapses all active point/spot shadow views into one
   command encoder instead of 5 encoders/face in `Core3dShadows` (reversing CW-4's render-thread regression: −0.70 ms on
   `balmora_walk_night`, −0.37 ms `faster` on `census`; SH-32 confirmed).
-- **2D Point Shadow Atlas (opt-in, off; ROADMAP 1.25 CW-13b, awaiting SH-33).** `shadow.lamp.atlas.enabled` (live; alias
-  `BEVYRROWIND_LAMP_ATLAS=1`). Replaces the fixed 8-lamp cube array (and Bevy's 42-cube `max_texture_array_layers / 6`
-  cap) with two persistent 2D `Depth32Float` atlases managed by a buddy quadtree (`sf_sky::shadow_atlas::{BuddyAtlas,
-  ShadowAtlasManager}`): Static Atlas (default 4096², persistent cached static depth) + Live Atlas (default 2048²,
-  dynamic mover overlays and carried torches), with variable 512 / 256 / 128 px distance/luminance tiers (1.5× hysteresis,
-  2 s cooldown), empty-face omission, 2-texel guard band (`guard_band_fov_y` + `inv_guard_tan` + inner half-texel clamp),
-  and handover spares for simultaneous crossfades. Contact shadows stay capped at `shadow.lamp.contact_max = 8` top-ranked
-  lamps so scaling to 48+ shadowed lamps never multiplies raymarch cost. Render side (`bevy_pbr/src/render/point_shadow_atlas.rs`
-  + `point_shadow_atlas_blit.wesl`, `@group(0)` bindings `54..=56`, `MeshPipelineKey::POINT_SHADOW_ATLAS`): `record_point_shadow_atlas`
-  runs in ONE command encoder with a single `RenderPass` over the Live Atlas for all `NoIndirectDrawing` mover-only faces
-  (using `fs_blit` via `textureLoad` from the Static Atlas before drawing movers). Interleaved A/B `shadow_a3_atlas`
+- **2D Point Shadow Atlas (on by default since 2026-11-20; ROADMAP 1.25 CW-13b, SH-33).** `shadow.lamp.atlas.enabled`
+  (live; alias `BEVYRROWIND_LAMP_ATLAS=1|0`; Low/Extremely Low keep point shadows off via `budget.max == 0`). Replaces the
+  fixed 8-lamp cube array (and Bevy's 42-cube `max_texture_array_layers / 6` cap) with two persistent 2D `Depth32Float`
+  atlases managed by a buddy quadtree (`sf_sky::shadow_atlas::{BuddyAtlas, ShadowAtlasManager}`): Static Atlas (default
+  4096², persistent cached static depth) + Live Atlas (default 2048², dynamic mover overlays and carried torches), with
+  variable 512 / 256 / 128 px distance/luminance tiers (1.5× hysteresis, 2 s cooldown), empty-face omission, 2-texel guard
+  band (`guard_band_fov_y` + `inv_guard_tan` + inner half-texel clamp), 4-tap IGN-rotated RGSS PCF (`shadow.lamp.atlas.soft_pcf_radius`,
+  default `1.0` texel, live with 0 pipeline recompiles, `0` = crisp 1-tap 2×2 HW PCF; volumetric fog stays 1-tap), and
+  handover spares for simultaneous crossfades. On tier resize, static casters stay baked while `retiring_static` keeps
+  serving the shader (`static_rects`) and `Invalidation::RecaptureNow` captures immediately into `draw_static_rects`,
+  releasing the retiring tile only on GPU confirmation (`AtlasPointShadowReport::confirmed`). Contact shadows stay capped
+  at `shadow.lamp.contact_max = 8` top-ranked lamps so scaling to 48+ shadowed lamps never multiplies raymarch cost.
+  Render side (`bevy_pbr/src/render/point_shadow_atlas.rs` + `point_shadow_atlas_blit.wesl`, `@group(0)` bindings `54..=56`,
+  `MeshPipelineKey::POINT_SHADOW_ATLAS`): `record_point_shadow_atlas` runs in ONE command encoder with a single `RenderPass`
+  over the Live Atlas for all `NoIndirectDrawing` mover-only faces (using `fs_blit` with exact `guard_ratio` remapping when
+  Static/Live tile sizes differ, or 1:1 `textureLoad` when equal, before drawing movers; faces with `GpuBatchedMesh3d`
+  movers stay on the indirect path). Phase wipes also invalidate `LightKeyCache` so `queue_shadows` re-queues all casters,
+  and non-draw frames preserve their view's previous direct/indirect mode. Interleaved A/B `shadow_a3_atlas`
   (2560x1440 DLSS Quality): `atlas8` −0.84 ms walk / −0.53 ms census; `atlas48` (19–24 shadowed lamps simultaneously)
-  −0.76 ms walk / −0.32 ms census (all 4 comparisons `faster`, U=0.0; p99 −1.9 to −3.5 ms). Stays opt-in pending SH-33.
+  −0.76 ms walk / −0.32 ms census (all 4 comparisons `faster`, U=0.0; p99 −1.9 to −3.5 ms).
 - **Legacy lamp cache: not in the game** (`POINT_SHADOW_CACHE = false`, `mw_environment_bevy/src/render.rs:37`, since
   2026-10-21; `--off shadowcache` is a no-op). As built: `sf_shadow_cache_bevy` (`lib.rs:1`-`:70`, `ShadowCachePlugin` `:209`): per shadowed light a persistent
   cube array holds the depth of its static casters; Bevy's views draw movers over a restored copy. Captures:

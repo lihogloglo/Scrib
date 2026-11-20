@@ -58,6 +58,7 @@ pub(crate) fn add(app: &mut App) {
     bind(app, &policy::RESIZE_COOLDOWN_S, |a, v| a.config.resize_cooldown_s = v);
     bind(app, &policy::MAX_LAMPS, |a, v| a.config.max_lamps = v);
     bind(app, &policy::HANDOVER_SPARES, |a, v| a.config.handover_spares = v);
+    bind(app, &policy::SOFT_PCF_RADIUS, |a, v| a.config.soft_pcf_radius = v);
     let _contact = app
         .add_tunable(&policy::CONTACT_MAX)
         .bind_resource(|b: &mut PointShadowBudget, v| b.contact_max = v as usize);
@@ -100,6 +101,7 @@ fn sync_atlas_render_config(
         static_size: u32::from(atlas.config.clamped_static_size()),
         live_size: u32::from(atlas.config.clamped_live_size()),
         guard_texels: atlas.config.guard_texels,
+        soft_pcf_radius: atlas.config.soft_pcf_radius,
         max_lamps: atlas.config.max_lamps + atlas.config.handover_spares,
     };
     render_cfg.set_if_neq(desired);
