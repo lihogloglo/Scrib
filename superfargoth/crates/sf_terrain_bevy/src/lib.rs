@@ -61,7 +61,7 @@ use sf_terrain::gpu_fill::{FillKind, FillRequest};
 use sf_terrain::{
     BLOCKS, BlockBounds, LayerId, LayerMap, LayerTable, ResidentTile, TerrainHeights, TileCoord, global_coords,
 };
-use sf_tunables::{AnyDef, Def, Group, Source, Unit, def};
+use sf_tunables::{AnyDef, Def, Group, Lifetime, Source, Unit, def};
 use sf_world::{GateQuanta, GateSource, SelectGate, WorldspaceId};
 
 pub use far_map::{FAR_MAP_SIZE, FAR_MAP_TEXEL, FarShadowMap};
@@ -142,6 +142,32 @@ pub struct TerrainSettings {
     pub gpu_fill: bool,
     /// Which CPU tiles a GPU-filled world generates for height queries.
     pub twin: TwinSettings,
+    /// Practical Real-Time Hex-Tiling anti-tiling (WG-X7a, Mikkelsen 2022, JCGT).
+    pub hex_tiling: HexTilingSettings,
+}
+
+/// Shader anti-tiling parameters (WG-X7a, Mikkelsen 2022, JCGT), written to `P_HEX` each frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HexTilingSettings {
+    /// Enable hex-tiling on terrain layers ([`TERRAIN_HEX_TILING`]); off falls back to raw periodic UVs.
+    pub enabled: bool,
+    /// Per-tile random rotation strength in `0..1` ([`TERRAIN_HEX_ROT_STRENGTH`]; 1 = full `±π`).
+    pub rot_strength: f32,
+    /// Power exponent sharpening hex barycentric blend weights ([`TERRAIN_HEX_CONTRAST`]).
+    pub contrast: f32,
+    /// Hex lattice cells per texture tile repeat ([`TERRAIN_HEX_SCALE`]).
+    pub scale: f32,
+}
+
+impl Default for HexTilingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: TERRAIN_HEX_TILING.default_value(),
+            rot_strength: TERRAIN_HEX_ROT_STRENGTH.default_value(),
+            contrast: TERRAIN_HEX_CONTRAST.default_value(),
+            scale: TERRAIN_HEX_SCALE.default_value(),
+        }
+    }
 }
 
 /// The CPU twin of a GPU-filled world (`gpu_fill`): tiles generated only for height queries (physics, camera,
@@ -228,6 +254,37 @@ pub const TERRAIN_RAISE_FILTER_MIN_M: Def<f32> = def!(float "terrain.raise.filte
     .help("The raised cover's tops are low-passed at least this wide (the repose angle may need wider)")
     .source(Source::Guess);
 
+/// `terrain.hex_tiling`: [`HexTilingSettings::enabled`] (WG-X7a). Mikkelsen 2022 Practical Real-Time
+/// Hex-Tiling in `surface.wesl`, live A/B toggle.
+pub const TERRAIN_HEX_TILING: Def<bool> = def!(bool "terrain.hex_tiling" = true)
+    .help("Terrain layer anti-tiling via Mikkelsen 2022 hex-tiling (off: raw periodic UVs)")
+    .source(Source::Industry("Mikkelsen 2022, Practical Real-Time Hex-Tiling, JCGT"))
+    .lifetime(Lifetime::Live);
+
+/// `terrain.hex_tiling.rot_strength`: [`HexTilingSettings::rot_strength`].
+pub const TERRAIN_HEX_ROT_STRENGTH: Def<f32> = def!(float "terrain.hex_tiling.rot_strength" = 1.0)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Hex-tiling per-cell random rotation strength (0 = offset only, 1 = full +-pi rotation)")
+    .source(Source::Industry("Mikkelsen 2022, Practical Real-Time Hex-Tiling, JCGT"))
+    .lifetime(Lifetime::Live);
+
+/// `terrain.hex_tiling.contrast`: [`HexTilingSettings::contrast`]. Mikkelsen 2022 uses `g_exp = 7.0`.
+pub const TERRAIN_HEX_CONTRAST: Def<f32> = def!(float "terrain.hex_tiling.contrast" = 7.0)
+    .range(1.0, 16.0)
+    .unit(Unit::Ratio)
+    .help("Hex-tiling weight contrast exponent (higher keeps sharper seams and prunes more secondary taps)")
+    .source(Source::Industry("Mikkelsen 2022, Practical Real-Time Hex-Tiling, JCGT: g_exp = 7"))
+    .lifetime(Lifetime::Live);
+
+/// `terrain.hex_tiling.scale`: [`HexTilingSettings::scale`].
+pub const TERRAIN_HEX_SCALE: Def<f32> = def!(float "terrain.hex_tiling.scale" = 1.0)
+    .range(0.25, 4.0)
+    .unit(Unit::Ratio)
+    .help("Hex-tiling cells per texture repeat (1 = one hex edge per layer tile)")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
 /// This crate's tunables (live binding: tunables slice T2).
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &TERRAIN_SELECT_MOVE_M,
@@ -237,7 +294,22 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &TERRAIN_TWIN_NEAR_RADIUS,
     &TERRAIN_TWIN_COARSE_LEVEL,
     &TERRAIN_TWIN_LOADS,
+    &TERRAIN_HEX_TILING,
+    &TERRAIN_HEX_ROT_STRENGTH,
+    &TERRAIN_HEX_CONTRAST,
+    &TERRAIN_HEX_SCALE,
 ];
+
+/// The `P_HEX` slot (WG-X7a): enabled (0/1), rotation strength (0..1), contrast exponent, scale.
+fn hex_params(settings: &TerrainSettings) -> [f32; 4] {
+    let h = settings.hex_tiling;
+    [
+        if h.enabled { 1.0 } else { 0.0 },
+        h.rot_strength.clamp(0.0, 1.0),
+        h.contrast.clamp(1.0, 16.0),
+        h.scale.clamp(0.25, 4.0),
+    ]
+}
 
 /// The `P_RAISE` slot (SW-6, SW-5e): tan of the repose angle, the filter's minimum width (m), the
 /// raise fade's start and end (m; `CdlodSettings::raise_fade_range` at the reach limit).
@@ -278,6 +350,7 @@ impl Default for TerrainSettings {
             select_gate: Self::select_gate_quanta(sf_world::SELECT_GATE.default_value()),
             gpu_fill: true,
             twin: TwinSettings::default(),
+            hex_tiling: HexTilingSettings::default(),
         }
     }
 }
@@ -1449,6 +1522,7 @@ fn update_terrain(
     }
     p.set_f(params::P_DETAIL, detail_params(&settings, state.max_height));
     p.set_f(params::P_RAISE, raise_params(&settings));
+    p.set_f(params::P_HEX, hex_params(&settings));
     for (n, l) in state.table.layers.iter().take(params::MAX_LAYERS).enumerate() {
         p.set_layer(n, l);
     }
@@ -1614,6 +1688,7 @@ mod tests {
         assert_eq!(slot("P_LAYERS"), params::P_LAYERS);
         assert_eq!(slot("P_FAR"), params::P_FAR);
         assert_eq!(slot("P_RAISE"), params::P_RAISE);
+        assert_eq!(slot("P_HEX"), params::P_HEX);
         assert_eq!(slot("HEIGHT_LEVELS"), HEIGHT_LEVELS);
         assert_eq!(slot("LAYER_LEVELS"), LAYER_LEVELS);
         assert_eq!(params::P_MORPH + params::MORPH_LODS, params::P_HEIGHT);
@@ -1629,6 +1704,116 @@ mod tests {
         ] {
             assert_eq!(slot(name), usize::try_from(bit).unwrap(), "{name}");
         }
+    }
+
+    /// WG-X7a: `P_HEX` slot encoding and Mikkelsen hex-tiling math invariants (floating-origin
+    /// 1024 m shift invariance, partition of unity across both simplex triangles, and inverse
+    /// normal rotation sign matching the chain rule).
+    #[test]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::float_cmp)]
+    fn hex_tiling_params_and_math_invariants() {
+        let mut s = TerrainSettings::default();
+        assert_eq!(
+            hex_params(&s),
+            [
+                1.0,
+                TERRAIN_HEX_ROT_STRENGTH.default_value(),
+                TERRAIN_HEX_CONTRAST.default_value(),
+                TERRAIN_HEX_SCALE.default_value(),
+            ]
+        );
+        s.hex_tiling.enabled = false;
+        assert_eq!(hex_params(&s)[0], 0.0);
+
+        // Mirror of `surface.wesl`'s `hex_grid` + `hex_wrap_vertex` + `hex_tap` local UV.
+        let eval_hex = |wpos_xz: [f32; 2], tiling_m: f32, contrast: f32, scale: f32| {
+            let repeats = (1024.0 / tiling_m.max(1e-3)).round().max(1.0);
+            let pq = (repeats * scale).round().max(1.0) as i32;
+            let pr = 2 * (0.5 * repeats * scale * 1.154_700_5_f32).round().max(1.0) as i32;
+            let sx = pq as f32 / repeats;
+            let sy = pr as f32 / repeats;
+            let uv = [wpos_xz[0] / tiling_m, wpos_xz[1] / tiling_m];
+            let skewed = [uv[0] * sx - 0.5 * uv[1] * sy, uv[1] * sy];
+            let base = [skewed[0].floor() as i32, skewed[1].floor() as i32];
+            let f = [skewed[0] - skewed[0].floor(), skewed[1] - skewed[1].floor()];
+            let (verts, mut w) = if f[0] + f[1] <= 1.0 {
+                ([base, [base[0] + 1, base[1]], [base[0], base[1] + 1]], [1.0 - f[0] - f[1], f[0], f[1]])
+            } else {
+                ([[base[0] + 1, base[1] + 1], [base[0] + 1, base[1]], [base[0], base[1] + 1]], [
+                    f[0] + f[1] - 1.0,
+                    1.0 - f[1],
+                    1.0 - f[0],
+                ])
+            };
+            let mut sum = 0.0f32;
+            for wi in &mut w {
+                *wi = wi.max(0.0).powf(contrast);
+                sum += *wi;
+            }
+            for wi in &mut w {
+                *wi /= sum.max(1e-6);
+            }
+            let mut sum2 = 0.0f32;
+            for wi in &mut w {
+                if *wi <= 0.002 {
+                    *wi = 0.0;
+                }
+                sum2 += *wi;
+            }
+            for wi in &mut w {
+                *wi /= sum2.max(1e-6);
+            }
+            let wrap = |v: [i32; 2]| -> [i32; 2] {
+                let k = v[1].div_euclid(pr);
+                let vy = v[1] - k * pr;
+                let vx_s = v[0] + k * (pr >> 1);
+                [vx_s.rem_euclid(pq), vy]
+            };
+            let taps: [([i32; 2], [f32; 2], f32); 3] = std::array::from_fn(|i| {
+                let v = verts[i];
+                let center = [(v[0] as f32 + 0.5 * v[1] as f32) / sx, v[1] as f32 / sy];
+                (wrap(v), [uv[0] - center[0], uv[1] - center[1]], w[i])
+            });
+            taps
+        };
+
+        // 1. Floating-origin wrap invariance across quantized tiling sizes and both simplex halves.
+        for raw_tiling in [3.0f32, 3.6576, 4.0, 7.3152] {
+            let tiling = sf_terrain::bake::quantize_tiling(raw_tiling);
+            for pt in [[12.34, 56.78], [101.9, 203.1], [0.1, 0.2], [511.7, 999.3]] {
+                let base = eval_hex(pt, tiling, 7.0, 1.0);
+                let w_sum: f32 = base.iter().map(|t| t.2).sum();
+                assert!((w_sum - 1.0).abs() < 1e-5, "partition of unity failed: {w_sum}");
+                for shift in [[1024.0, 0.0], [0.0, 1024.0], [-1024.0, 1024.0], [2048.0, -1024.0]] {
+                    let shifted = eval_hex([pt[0] + shift[0], pt[1] + shift[1]], tiling, 7.0, 1.0);
+                    for k in 0..3 {
+                        assert_eq!(base[k].0, shifted[k].0, "wrapped id drifted on shift {shift:?}");
+                        assert!((base[k].1[0] - shifted[k].1[0]).abs() < 1e-3, "duv.x drifted");
+                        assert!((base[k].1[1] - shifted[k].1[1]).abs() < 1e-3, "duv.y drifted");
+                        assert!((base[k].2 - shifted[k].2).abs() < 1e-4, "weight drifted");
+                    }
+                }
+            }
+        }
+
+        // 2. Inverse tangent-space normal rotation matches chain-rule gradient of H(R(theta) * duv).
+        let (gx, gy) = (0.37f32, -0.52f32); // linear slope H(u', v') = gx * u' + gy * v'
+        let n_tex = [-gx, -gy]; // upward normal XY proportional to -grad(H)
+        for deg in [0.0f32, 37.0, 90.0, 145.0, -112.0] {
+            let theta = deg.to_radians();
+            let (c, s) = (theta.cos(), theta.sin());
+            // u' = c*u - s*v, v' = s*u + c*v  =>  dH/du = gx*c + gy*s, dH/dv = -gx*s + gy*c.
+            let expected = [-(gx * c + gy * s), -(-gx * s + gy * c)];
+            let rotated = [c * n_tex[0] + s * n_tex[1], -s * n_tex[0] + c * n_tex[1]];
+            assert!((rotated[0] - expected[0]).abs() < 1e-6);
+            assert!((rotated[1] - expected[1]).abs() < 1e-6);
+        }
+
+        // Verify the shader references `P_HEX` and `hex_grid` in both `sample_projection` and `layer_height`.
+        let surface = include_str!("shaders/surface.wesl");
+        assert!(surface.contains("pf(P_HEX)"));
+        assert!(surface.contains("hex_grid("));
+        assert!(surface.contains("hex_wrap_vertex("));
     }
 
     /// Patches split quads along the canonical diagonal, counter-clockwise from +Y.

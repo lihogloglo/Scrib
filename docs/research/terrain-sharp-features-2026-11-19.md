@@ -183,6 +183,64 @@ solvers, CPU twin tests); baking a few minutes once; frame cost confined to step
 ## 6. Open items
 
 - Verify: ÍslandsDEM and PNOA licence texts; Megascans/Fab terms outside Unreal; contents of the CEIG 2024 and Grenier 2024
-  papers; Far Cry 5 and Decima cliff internals from recordings; Bevy 0.20 meshlet status.
-- Owner question (design-level): steps 2-3 add steep faces where Morrowind's source has none; accept losing some
-  recognisable gentle silhouettes?
+  papers; Bevy 0.20 meshlet status.
+- ~~Owner question (design-level): steps 2-3 add steep faces where Morrowind's source has none; accept losing some
+  recognisable gentle silhouettes?~~ **Answered (owner 2026-11-20):** yes, aggressive dramatic cliffs and escarpments
+  are welcome; keep iteration fast so we can test arms quickly.
+
+## 7. Addendum (2026-11-20): Confirmed talks, fast steerability, forests, GPU foliage & anti-tiling
+
+Verification and expansion of section 1-5 open items, plus the linked WG-X problems (sprayed flora, 26 fps at full
+density, tiled ground textures):
+
+1. **Far Cry 5 (V, GDC 2018, Etienne Carrier, "Procedural World Generation of Far Cry 5"):**
+   - Cliffs: Houdini cliff tool analyzes terrain slope and topology, generates cliff geometry and blends displacement
+     into terrain deterministically across world sectors (so collision and navmesh stay seamless).
+   - Forests / biomes: driven by ecological factors (slope, exposure, north/south sun orientation, hydrology/soil
+     humidity) and species competition rules, while artists override via POI/exclusion masks and iterate overnight.
+2. **Horizon Zero Dawn / Forbidden West (V, Decima, GDC 2017 J. van Muijden; Forbidden West GDC talks):**
+   - Runtime GPU placement in a camera-centred chunk grid via compute shaders: large canopy trees placed first with
+     Poisson/jitter spacing, then undergrowth/rocks/debris conditioned on canopy density and slope/moisture masks
+     (avoids storing millions of global static transforms).
+   - Forbidden West tackles dense foliage overdraw with deferred texturing + compute VRS and motion vectors.
+3. **Ghost of Tsushima (V, Sucker Punch, GDC 2021):**
+   - Compute-driven procedural grass/foliage placement into indexed instanced draws (1M+ blades) fed by biome masks and
+     global wind force fields; modular rock/cliff kits blended into terrain heightmaps by a dedicated world workflow.
+4. **Forest structure ("sprayed like bits on a donut"):**
+   - Current `sf_worldgen::scatter` runs independent per-species Bernoulli draws over one 48 m value-noise clump field,
+     so species ignore each other and form uniform drizzle.
+   - Industry + academic standard (**Makowski et al. SIGGRAPH 2019, "Synthetic Silviculture"** [V]; Far Cry 5;
+     Horizon): (a) macro stand vs. clearing masks driven by aspect/valley/moisture/noise; (b) multi-layer vertical
+     hierarchy where canopy trees place first with crown-spacing inhibition and maturity/size spread, then sub-canopy,
+     shrubs and groundcover condition on local canopy shade (shade-tolerant under canopy, sun-loving at edges/clearings);
+     (c) geology-coupled rock scatter with truncated power-law sizes (3-4 tiers, sub-1 m in heightfield, 10-40 m cliff
+     slabs) on convex outcrops and downslope talus fans below steep faces.
+5. **Dense trees & renderer path (WG-X6 + Chlorophyll/Horizon direction):**
+   - WG-X's 26 fps at 7.2 M flora happened because `WorldgenPlacementStatics` disables `sf_scene_bevy`, precombine and
+     `sf_lod_bevy` (23,028 ECS entities, 707 materials, 890-pipeline warm-up with alpha-blend PBR foliage).
+   - **Stage 1 (WG-X6):** bake the 10x world as its own worldspace so `sf_scene_bevy` + `sf_lod_bevy` (HLOD/impostors)
+     run normally.
+   - **Stage 2 (true dense forests):** the independent **Chlorophyll** foliage renderer project (V, YouTube devlogs)
+     and commercial open worlds (Horizon, Ghost of Tsushima, UE5 Nanite Foliage) show that millions of dense trees/plants
+     require a dedicated GPU-driven vegetation pipeline: compute chunk scatter near camera, `AlphaMode::Mask` + folded
+     materials (no alpha-blend PBR foliage stalls), octahedral impostors / canopy HLOD beyond ~150-300 m, and CPU trunk
+     queries near the player only.
+6. **Fast steerable sharp terrain for 10x Morrowind:**
+   - Keep `tiles.wgsl` + CPU twin as the zero-bake, live-steerable layer for 1-100 m sharpness (per-region strata,
+     Voronoi fracture blocks, ridged crests, stochastic-tiled 1 m USGS 3DEP exemplars).
+   - Keep the macro guide pass fast (~5-15 s) via escarpment/cliff strokes + fast hardness-aware thermal + lava lobes.
+   - **Morrowind-specific steering mask:** although `mw_worldgen` rightly drops `terrain_rock_*` meshes (scaling low-poly
+     cliff fakes 10x makes giant blobs), their **source positions, footprints and heights** should be harvested as an
+     automatic cliff/outcrop intent mask driving both terrain cliff strokes and modern rock/cliff scatter, alongside
+     aggressive wilderness escarpments approved by the owner (2026-11-20).
+7. **Ground texture anti-tiling (V, Mikkelsen 2022, "Practical Real-Time Hex-Tiling", JCGT; WG-X7a):**
+   - `sf_terrain_bevy/src/shaders/surface.wesl` already uses explicit `dpx`/`dpy` derivatives with `textureSampleGrad`,
+     2-pass Mishkinis height-blending and whiteout triplanar projection.
+   - Mikkelsen's 3-tap simplex/hex grid needs no precomputed histogram LUT: rotate local UV offsets around each hex
+     vertex center by a per-vertex random angle `theta`, rotate `ddx`/`ddy` by `R(theta)`, and **inverse-rotate the
+     decoded tangent-space normal XY by `R(-theta)`** (keeping normal Z invariant).
+   - Using `pow(w, contrast)` (Mikkelsen `g_exp = 7.0`) preserves contrast and concentrates weight onto 1 tap over ~65%
+     of pixels, allowing sub-LSB tap pruning (`w < 0.002`) in non-uniform control flow (legal with `textureSampleGrad`).
+   - Because `sf_terrain::bake::quantize_tiling` ensures `R = 1024 / tiling_m` is an exact integer, choosing integer
+     `period_q` and **even** integer `period_r` makes the hex lattice exact-periodic over 1024 m and 100% invariant
+     across floating-origin shifts.

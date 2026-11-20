@@ -40,6 +40,7 @@ const P_DETAIL: u32 = 39u;      // x: splat range (m), y: height-blend depth, z:
 const P_LAYERS: u32 = 40u;      // 2 slots per layer: (tiling, displacement, triplanar, -), (mean rgb, mean height)
 const P_FAR: u32 = 552u;       // far shadow map: (min x, min z, 1 / extent, base height), render space
 const P_RAISE: u32 = 553u;     // raised cover (SW-6, SW-5e): x tan(repose), y the filter's minimum width (m), z w the fade (m)
+const P_HEX: u32 = 554u;       // anti-tiling hex grid (WG-X7a, Mikkelsen 2022): x enabled (0/1), y rot_strength, z contrast, w scale
 
 const MIN_LOD: i32 = -2;
 const HEIGHT_LEVELS: u32 = 10u;

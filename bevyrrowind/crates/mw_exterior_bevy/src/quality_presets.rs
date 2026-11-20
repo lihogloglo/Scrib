@@ -311,6 +311,18 @@ pub fn add_gates(app: &mut App, select_gate_off: bool) -> bool {
         set(&mut tunables, SELECT_GATE.name(), Value::Bool(false), SetBy::CommandLine, "--off selectgate".to_owned());
     }
     let _terrain = app.add_tunable(&SELECT_GATE).bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, on| t.select_gate.enabled = on);
+    let _hex_on = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_HEX_TILING)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, on| t.hex_tiling.enabled = on);
+    let _hex_rot = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_HEX_ROT_STRENGTH)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.hex_tiling.rot_strength = v);
+    let _hex_contrast = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_HEX_CONTRAST)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.hex_tiling.contrast = v);
+    let _hex_scale = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_HEX_SCALE)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.hex_tiling.scale = v);
     let _far = app.add_tunable(&SELECT_GATE).bind_resource(|f: &mut sf_lod_bevy::FarFieldSettings, on| f.select_gate.enabled = on);
     let _streaming = app.add_tunable(&SELECT_GATE).bind_resource(|s: &mut sf_world_bevy::Streaming, on| {
         let quanta = sf_world::GateQuanta { enabled: on, ..s.config().scheduler.select_gate };

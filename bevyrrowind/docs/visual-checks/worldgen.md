@@ -59,3 +59,10 @@ the lowlands), Morrowind's crater and foyadas still recognisable on top; north s
   snug together), rocks all one size, "sprayed some assets over the terrain like little bits on a donut"; relief still
   smooth and blobby (next big thing); some settlements misplaced (Balmora must sit on both banks of its river).
   Next: study the Chlorophyll engine for vegetation at scale.
+
+### WG-X7a: Terrain ground texture anti-tiling (Mikkelsen 2022 hex-tiling, 2026-11-20)
+
+Status: **confirmed (owner 2026-11-20)**: "world of difference", all live toggles (`terrain.hex_tiling`, `.rot_strength`, `.contrast`, `.scale`) work. Kept on by default.
+Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/x10s" --hour 12` (also applies to classic Seyda Neen / Balmora).
+Live A/B in console (`~`): `set terrain.hex_tiling off` vs `set terrain.hex_tiling on`; also live: `set terrain.hex_tiling.rot_strength 0` (offset-only vs full rotation `1`), `set terrain.hex_tiling.contrast 7`, `set terrain.hex_tiling.scale 1`.
+Look for: repeating tile grid gone across large 10x single-layer expanses (hillsides around Balmora, Ashlands, Red Mountain apron); lighting on bumpy rock/dirt normals stays consistent (no inverted or wobbling highlights from rotated tiles); no seams at hex borders or when crossing 1024 m floating-origin shifts; height-blended layer transitions stay crisp. Check cobblestone/paved roads in Balmora under `rot_strength 1` vs `0`.

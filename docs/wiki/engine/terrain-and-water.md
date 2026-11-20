@@ -71,8 +71,8 @@ interiors at `WHGT`), optics by region (`optics::*`), `SEA_FETCH_M` 20 km, shore
 ## Switches and counters
 
 `--water on|scaffold|off` (`mw_environment_bevy/src/water.rs:46`; scaffold is a flat plane, `exterior.rs:881`), `--water-wind`;
-`--off waterssr` (environment map only), `--off shorenormals` (flat normal at the shore, the old look), `--off shorewaves` (no Gerstner shore waves or swash), `--off seawind` (the fixed 7 m/s sea breeze; `--water-wind` pins any speed), `--off shoredepth` (the shore waves over the uniform 1:20 slope proxy), `--off terrain` and `--off far` perf parts (`mw_game_core/src/perf.rs:127`). `TerrainSettings` `upload_budget`,
-`max_loads`, `splat_range`, `raise_m`.
+`--off waterssr` (environment map only), `--off shorenormals` (flat normal at the shore, the old look), `--off shorewaves` (no Gerstner shore waves or swash), `--off seawind` (the fixed 7 m/s sea breeze; `--water-wind` pins any speed), `--off shoredepth` (the shore waves over the uniform 1:20 slope proxy), `--off terrain` and `--off far` perf parts (`mw_game_core/src/perf.rs:127`). `TerrainSettings` `upload_budget`, `max_loads`, `splat_range`, `raise_m`, `hex_tiling`.
+- **Anti-tiling (WG-X7a, Mikkelsen 2022):** `surface.wesl` `hex_grid`/`hex_tap` breaks periodic layer tiling with a 1024 m-periodic simplex hex grid (floating-origin invariant via `sf_terrain::bake::quantize_tiling`), rotated derivatives (`textureSampleGrad`), inverse-rotated tangent normals `R(-theta)`, and contrast-pruned taps (`w > 0.002`) shared by Pass-1 `layer_height` and Pass-2 `sample_projection`. Live tunables: `terrain.hex_tiling` (default on), `terrain.hex_tiling.rot_strength` (1.0), `terrain.hex_tiling.contrast` (7.0), `terrain.hex_tiling.scale` (1.0), written to `P_HEX` (`params.rs:25`).
 
 **Selection gate (CW-2, on by default (owner 2026-11-17)):** `TerrainSettings::select_gate` skips CDLOD selection
 and the patch diff (`sf_terrain_bevy/src/lib.rs:975`) while the camera stays within `terrain.select.move_m` (0.5 m, 3D,

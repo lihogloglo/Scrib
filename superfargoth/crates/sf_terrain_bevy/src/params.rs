@@ -21,7 +21,9 @@ pub const MAX_LAYERS: usize = 256;
 pub const P_FAR: usize = P_LAYERS + 2 * MAX_LAYERS;
 /// The raised cover (SW-6): (tan of the repose angle, the filter's minimum width m, -, -).
 pub const P_RAISE: usize = P_FAR + 1;
-pub const SLOTS: usize = P_RAISE + 1;
+/// Anti-tiling hex grid (WG-X7a, Mikkelsen 2022): (enabled 0/1, `rot_strength` 0..1, contrast, scale).
+pub const P_HEX: usize = P_RAISE + 1;
+pub const SLOTS: usize = P_HEX + 1;
 
 pub const HEIGHT_LEVELS: usize = 10;
 pub const LAYER_LEVELS: usize = 3;

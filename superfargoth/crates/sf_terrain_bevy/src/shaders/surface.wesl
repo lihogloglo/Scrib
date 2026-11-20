@@ -6,7 +6,7 @@
 // derivatives): safe in non-uniform control flow.
 
 import super::common::{
-    P_DETAIL, P_VALID, P_MACRO, DEBUG_RAW_LAYERS, debug_flags,
+    P_DETAIL, P_VALID, P_MACRO, P_HEX, DEBUG_RAW_LAYERS, debug_flags,
     pf, pi, params, level_coord, in_window,
     splat_at, layer_tiling, layer_triplanar, layer_mean,
     macro_clipmap, macro_sampler, albedo_height_array, normal_array, ao_roughness_array, layer_sampler,
@@ -74,10 +74,126 @@ struct LayerSample {
     surface: vec2<f32>,
 }
 
-/// One projection of a layer: three fetches, one per array (T6: albedo + height BC7, normal
-/// X/Y BC5, AO + roughness BC5; BC5 keeps the two normal channels independent, the standard
-/// normal-map format, so the surface data sits in its own BC5).
-fn sample_projection(id: u32, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> LayerSample {
+/// Integer floor division `floor(n / d)` for `d > 0`.
+fn floor_div_i(n: i32, d: i32) -> i32 {
+    var q = n / d;
+    if (n % d != 0) && (n < 0) {
+        q -= 1;
+    }
+    return q;
+}
+
+/// Wrap a hex-lattice vertex `(q, r)` onto the 1024 m floating-origin torus (`pq` along q, even
+/// `pr` along r). Because `sf_terrain::bake::quantize_tiling` makes `R = 1024 / tiling_m` an
+/// integer, shifting UV by `(±R, 0)` or `(0, ±R)` maps to exact lattice shifts `(±pq, 0)` and
+/// `(∓pr/2, ±pr)`, leaving the wrapped vertex id and local UV offset invariant across origin moves.
+fn hex_wrap_vertex(v: vec2<i32>, pq: i32, pr: i32) -> vec2<i32> {
+    let k = floor_div_i(v.y, pr);
+    let vy = v.y - k * pr;
+    let vx_s = v.x + k * (pr >> 1u);
+    let vx = vx_s - floor_div_i(vx_s, pq) * pq;
+    return vec2<i32>(vx, vy);
+}
+
+/// Three independent uniform hashes in [0, 1] per (wrapped hex vertex, layer id): x = angle,
+/// yz = random UV offset.
+fn hex_hash3(v: vec2<i32>, layer_id: u32) -> vec3<f32> {
+    var h = (u32(v.x) * 0x8da6b343u) ^ (u32(v.y) * 0xd8163841u) ^ (layer_id * 0x9e3779b9u);
+    h = (h ^ (h >> 15u)) * 0x2c1b3c6du;
+    let h0 = h ^ (h >> 15u);
+    h = (h0 ^ (h0 >> 12u)) * 0x297a2d39u;
+    let h1 = h ^ (h >> 15u);
+    h = (h1 ^ (h1 >> 13u)) * 0x85ebca6bu;
+    let h2 = h ^ (h >> 16u);
+    return vec3<f32>(f32(h0 & 0xffffu), f32(h1 & 0xffffu), f32(h2 & 0xffffu)) * (1.0 / 65535.0);
+}
+
+struct HexGrid {
+    v0: vec2<i32>,
+    v1: vec2<i32>,
+    v2: vec2<i32>,
+    w: vec3<f32>,
+    sx: f32,
+    sy: f32,
+    pq: i32,
+    pr: i32,
+}
+
+/// Practical Real-Time Hex-Tiling simplex grid (Mikkelsen 2022, JCGT), made exact-periodic over
+/// 1024 m. Contrast-preserving power weights prune sub-LSB taps (< 0.002) so most pixels take
+/// 1-2 taps instead of 3.
+fn hex_grid(uv: vec2<f32>, tiling_m: f32, contrast: f32, scale: f32) -> HexGrid {
+    let repeats = max(round(1024.0 / max(tiling_m, 1e-3)), 1.0);
+    let pq = max(i32(round(repeats * scale)), 1);
+    let pr_half = max(i32(round(0.5 * repeats * scale * 1.15470054)), 1);
+    let pr = pr_half * 2;
+    let sx = f32(pq) / repeats;
+    let sy = f32(pr) / repeats;
+
+    let skewed = vec2<f32>(uv.x * sx - 0.5 * uv.y * sy, uv.y * sy);
+    let base = vec2<i32>(floor(skewed));
+    let f = skewed - floor(skewed);
+
+    var g: HexGrid;
+    g.sx = sx;
+    g.sy = sy;
+    g.pq = pq;
+    g.pr = pr;
+    if f.x + f.y <= 1.0 {
+        g.v0 = base;
+        g.v1 = base + vec2<i32>(1, 0);
+        g.v2 = base + vec2<i32>(0, 1);
+        g.w = vec3<f32>(1.0 - f.x - f.y, f.x, f.y);
+    } else {
+        g.v0 = base + vec2<i32>(1, 1);
+        g.v1 = base + vec2<i32>(1, 0);
+        g.v2 = base + vec2<i32>(0, 1);
+        g.w = vec3<f32>(f.x + f.y - 1.0, 1.0 - f.y, 1.0 - f.x);
+    }
+
+    var w = pow(max(g.w, vec3<f32>(1e-5)), vec3<f32>(contrast));
+    w /= max(w.x + w.y + w.z, 1e-6);
+    w = select(vec3<f32>(0.0), w, w > vec3<f32>(0.002));
+    w /= max(w.x + w.y + w.z, 1e-6);
+    g.w = w;
+    return g;
+}
+
+struct HexTap {
+    uv: vec2<f32>,
+    ddx: vec2<f32>,
+    ddy: vec2<f32>,
+    /// `(cos(theta), sin(theta))` of the UV rotation, used to inverse-rotate tangent normals.
+    cs: vec2<f32>,
+}
+
+/// Rotated and offset UV + screen derivatives for one hex vertex around its cell center.
+fn hex_tap(
+    uv: vec2<f32>,
+    ddx: vec2<f32>,
+    ddy: vec2<f32>,
+    v: vec2<i32>,
+    g: HexGrid,
+    layer_id: u32,
+    rot_strength: f32,
+) -> HexTap {
+    let center = vec2<f32>((f32(v.x) + 0.5 * f32(v.y)) / g.sx, f32(v.y) / g.sy);
+    let duv = uv - center;
+    let rnd = hex_hash3(hex_wrap_vertex(v, g.pq, g.pr), layer_id);
+    let theta = (rnd.x * 2.0 - 1.0) * 3.14159265 * rot_strength;
+    let c = cos(theta);
+    let s = sin(theta);
+    var t: HexTap;
+    t.uv = vec2<f32>(c * duv.x - s * duv.y, s * duv.x + c * duv.y) + rnd.yz;
+    t.ddx = vec2<f32>(c * ddx.x - s * ddx.y, s * ddx.x + c * ddx.y);
+    t.ddy = vec2<f32>(c * ddy.x - s * ddy.y, s * ddy.x + c * ddy.y);
+    t.cs = vec2<f32>(c, s);
+    return t;
+}
+
+/// Single un-tiled projection fetch: three fetches, one per array (T6: albedo + height BC7, normal
+/// X/Y BC5, AO + roughness BC5).
+fn sample_projection_raw(id: u32, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> LayerSample {
     var s: LayerSample;
     s.albedo_height = textureSampleGrad(albedo_height_array, layer_sampler, uv, i32(id), ddx, ddy);
     let nxy = textureSampleGrad(normal_array, layer_sampler, uv, i32(id), ddx, ddy).xy * 2.0 - 1.0;
@@ -86,10 +202,64 @@ fn sample_projection(id: u32, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> 
     return s;
 }
 
-/// The top-down height of a layer (the height blend's first pass).
+/// One projection of a layer, using Mikkelsen (2022) hex-tiling when `P_HEX.x > 0` (live A/B
+/// tunable `terrain.hex_tiling`). Tangent-space normal XY is rotated back by `R(-theta)` so bump
+/// lighting stays aligned with the rotated texture features.
+fn sample_projection(id: u32, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> LayerSample {
+    let hex = pf(P_HEX);
+    if hex.x <= 0.0 {
+        return sample_projection_raw(id, uv, ddx, ddy);
+    }
+    let g = hex_grid(uv, layer_tiling(id), hex.z, hex.w);
+    var verts = array<vec2<i32>, 3>(g.v0, g.v1, g.v2);
+    var ah = vec4<f32>(0.0);
+    var n_acc = vec3<f32>(0.0);
+    var surf = vec2<f32>(0.0);
+    for (var k = 0u; k < 3u; k += 1u) {
+        let wk = g.w[k];
+        if wk > 0.0 {
+            let t = hex_tap(uv, ddx, ddy, verts[k], g, id, hex.y);
+            let raw = sample_projection_raw(id, t.uv, t.ddx, t.ddy);
+            let rn = vec3<f32>(
+                t.cs.x * raw.normal.x + t.cs.y * raw.normal.y,
+                -t.cs.y * raw.normal.x + t.cs.x * raw.normal.y,
+                raw.normal.z,
+            );
+            ah += wk * raw.albedo_height;
+            n_acc += wk * rn;
+            surf += wk * raw.surface;
+        }
+    }
+    var out: LayerSample;
+    out.albedo_height = ah;
+    out.normal = normalize(n_acc);
+    out.surface = surf;
+    return out;
+}
+
+/// The top-down height of a layer (the height blend's first pass), using the same hex-tiling grid
+/// as [`sample_projection`] so height-blend transitions follow the rotated/offset texture features.
 fn layer_height(id: u32, wpos: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) -> f32 {
-    let inv = 1.0 / layer_tiling(id);
-    return textureSampleGrad(albedo_height_array, layer_sampler, wpos.xz * inv, i32(id), dpx.xz * inv, dpy.xz * inv).a;
+    let tiling = layer_tiling(id);
+    let inv = 1.0 / tiling;
+    let uv = wpos.xz * inv;
+    let ddx = dpx.xz * inv;
+    let ddy = dpy.xz * inv;
+    let hex = pf(P_HEX);
+    if hex.x <= 0.0 {
+        return textureSampleGrad(albedo_height_array, layer_sampler, uv, i32(id), ddx, ddy).a;
+    }
+    let g = hex_grid(uv, tiling, hex.z, hex.w);
+    var verts = array<vec2<i32>, 3>(g.v0, g.v1, g.v2);
+    var h = 0.0;
+    for (var k = 0u; k < 3u; k += 1u) {
+        let wk = g.w[k];
+        if wk > 0.0 {
+            let t = hex_tap(uv, ddx, ddy, verts[k], g, id, hex.y);
+            h += wk * textureSampleGrad(albedo_height_array, layer_sampler, t.uv, i32(id), t.ddx, t.ddy).a;
+        }
+    }
+    return h;
 }
 
 /// A layer at a point, with a world-space normal: top-down projection, plus

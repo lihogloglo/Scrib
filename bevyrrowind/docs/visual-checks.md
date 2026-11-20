@@ -81,7 +81,7 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (56)
+### Awaiting owner (58)
 WG-G | awaiting owner (G1 seen: hitches, no visible detail → G2) | [worldgen](visual-checks/worldgen.md) | generated island in the game renderer, GPU erosion detail, `view world:` (2026-11-19)
 WG-X | seen 2026-11-19: base OK; empty, 26 fps, sprayed flora, blobby relief | [worldgen](visual-checks/worldgen.md) | Vvardenfell 10x same map: additive volcano arms, then textures, settlements, flora (2026-11-19)
 WG-V | awaiting owner | [worldgen](visual-checks/worldgen.md) | 3D worldgen viewer `worldgen-view`, S2 arms A0-A3 (B0-B3 next) (2026-11-18)
@@ -108,6 +108,8 @@ SH-28 | confirmed 2026-11-16 (owner: "seems good", noon; dusk fade not separatel
 SH-29 | confirmed 2026-11-16 (owner: "seems all good"; opt-in CW-3b, perf not yet measured) | [shadows](visual-checks/shadows.md) | Point shadow face culling: no pop-in when spinning near a lamp, no seam gaps (`BEVYRROWIND_POINT_FACE_CULL=1`)
 SH-30 | confirmed 2026-11-16 (owner: "everything looks right": rain 16:30 -> dusk fade -> night moon; opt-in CW-8, perf not yet measured) | [shadows](visual-checks/shadows.md) | Sun/moon shadow gate: dusk-rain fade, ashstorm, overcast noon look, dim moon (`BEVYRROWIND_SUN_SHADOW_GATE=1`)
 SH-31 | confirmed with follow-up (owner 2026-11-17: Census + Balmora, no flicker, same on/off, face views drop; Balmora crash fixed same day); open: lamp shadows fade in too close | [shadows](visual-checks/shadows.md) | Lamp shadow cache: Census Office and Balmora 22:00, `set shadow.lamp.cache.enabled on`: same shadows as off when settled, crisp NPC shadows near lamps, no flicker or seam gaps, lamp face views near 0 when still
+SH-32 | confirmed 2026-11-19 (owner: "seems to be working (fps higher)"; opt-in, handoff `docs/briefs/shadow-atlas-handoff-2026-11-19.md`) | [shadows](visual-checks/shadows.md) | Single-encoder batched point shadow pass (`shadow.lamp.batched_pass` + `shadow.lamp.cache.enabled`, CW-13a Slice A1): Balmora 22:00 and Census Office, shadows identical on/off, no SH-21a character flicker, `encode/pass:shadow_point_light/count` <= 1 (2026-11-19)
+SH-33 | awaiting owner (opt-in CW-13b Slices A2-A3; `shadow_a3_atlas` all 4 arms `faster` U=0.0) | [shadows](visual-checks/shadows.md) | 2D Point Shadow Atlas (`shadow.lamp.atlas.enabled=on`, `max_lamps=48`): Balmora 22:00 and Census Office, 19-24 simultaneous shadowed lamps without SH-27/SH-31 close fade-in, seam-free 6-face projection, smooth mover/torch shadows, clean live toggle (2026-11-20)
 GI-1 | partial (2026-11-02: runs clean, but `flip gi` barely changes the room) | [gi](visual-checks/gi.md) | Dynamic probe GI in the Census office (`--off gi` A/B)
 GI-2 | partial (2026-11-02: no artifacts seen; effect too weak to judge leaks) | [gi](visual-checks/gi.md) | DDGI visibility-weighted probe sampling: no leaks through the office floor/walls, bounce in corners (`--off gi` A/B)
 GI-lampbody | awaiting owner | [gi](visual-checks/gi.md) | Lamp bodies don't light twice at GI hits (less hot bounce right around lamps, room fill kept) and interior ambient floor 0.1 (corners not pitch black) (`flip gi` A/B)
@@ -187,9 +189,9 @@ RO-23 | confirmed by owner 2026-11-16 (fix smoke-2: self_lit in exposed units) |
 
 SH-13 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [shadows](visual-checks/shadows.md) | Point-light (lamp) shadows
 SH-14 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [shadows](visual-checks/shadows.md) | Contact-shadow bands at object edges
-GF-1 | known bug (owner 2026-11-15, repeated: fence panels pop with distance; no far copy, B5) | [rendering](visual-checks/rendering.md) | Ghostfence appears complete, never late
+GF-1 | partial (2026-11-19 run 2: far fence visible, much darker than the rest from afar, tweak later; sky objects are RO-18) | [rendering](visual-checks/rendering.md) | Ghostfence appears complete, never late
 DL-4 | known bug | [rendering](visual-checks/rendering.md) | Rug-edge black bands under RT
-RO-18 | known bug (owner 2026-11-15: not reproduced; owner retries flying high) | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
+RO-18 | known bug (reproduced 2026-11-19 in ghostfence-far: not entities, not far field; tied to vertical origin shifts) | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
 RO-19 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [rendering](visual-checks/rendering.md) | Very short shadow flickers in Balmora (2026-11-11)
 RO-22 | awaiting owner | [rendering](visual-checks/rendering.md) | Near/far handoff band: no gaps or doubles with GPU-culled statics, A/B `--off cpuculltag` (perf-push P3, 2026-11-12)
 PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the Census Office floor (again 2026-10-30)

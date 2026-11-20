@@ -147,12 +147,12 @@ target/worldgen/x10v/s55 --out target/worldgen/x10s` and `worldgen-layers --guid
 - **X6 the 10× world as its own baked worldspace** (index, static scene, precombine, far field) instead of the load-time
   scaffold `WorldgenPlacementStatics` (one entity per placement, scene/precombine/far field off): fixes the 890-pipeline
   warm-up and the entity count, and lets flora counts rise (statics and flora far away need the far field).
-- **X7 textures, later (owner):** anti-tiling (hex/stochastic tiling, Heitz & Neyret 2018, Mikkelsen 2022) behind an
-  A/B switch, plus the VCLR tint as a guide product (the 10× macro is the layer mean only).
+- **X7 textures:** **X7a** anti-tiling (Mikkelsen 2022 Practical Real-Time Hex-Tiling, live A/B tunable `terrain.hex_tiling` in `sf_terrain_bevy`, built 2026-11-20); **X7b** slope-driven cliff rock + crevice darkening + VCLR tint as a guide product (the 10× macro is the layer mean only).
 - Wet species (kelp, lilypads, menhirs on wet ground: 38.6k source references never placed), creatures in the wilds
   (6,399 levelled spawns left out of anchors), a flora/rocks share tunable (rocks take ~45 % of the budget).
-- Sharp landforms (cliffs, scarps, block fields): `../../../docs/research/terrain-sharp-features-2026-11-19.md`;
-  owner question open: may steep faces appear where the source is gentle?
+- Sharp landforms (cliffs, scarps, block fields): `../../../docs/research/terrain-sharp-features-2026-11-19.md` (§7
+  addendum 2026-11-20); owner 2026-11-20: aggressive dramatic cliffs and escarpments are welcome, keep generation fast
+  for quick A/B iteration; also harvest dropped `terrain_rock_*` footprints as a cliff/outcrop steering mask.
 
 **Stamp format v1** (guide folder, optional): `stamps.json` = `{ "format": 1, "stamps": [{ "name", "origin_m": [x, y]
 (sample (0, 0), guide frame, row 0 = north), "dims": [w, h], "spacing_m", "offset": <f32 index into stamps.f32> }] }`;
