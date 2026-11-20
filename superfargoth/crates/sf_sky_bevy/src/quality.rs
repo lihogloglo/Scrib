@@ -34,7 +34,7 @@ use sf_tunables::{AnyDef, Def, Group, Id, Lifetime, Source, Type, Unit, def};
 use sf_tunables_bevy::{TunableSystems, Tunables, TunablesAppExt};
 
 use crate::shadow_budget::{
-    DAY_GATE, DAY_GATE_CONTRAST, DAY_GATE_RECEIVER, FACE_CULL, LAMP_CONTACT, LAMP_COUNT, LAMP_FADE,
+    BATCHED_PASS, DAY_GATE, DAY_GATE_CONTRAST, DAY_GATE_RECEIVER, FACE_CULL, LAMP_CONTACT, LAMP_COUNT, LAMP_FADE,
     LAMP_FADE_TIME, LAMP_HYSTERESIS, LAMP_MAP_SIZE,
 };
 use crate::{
@@ -189,6 +189,7 @@ impl Plugin for ShadowQualityPlugin {
             (b.contrast_gate.contrast_off, b.contrast_gate.contrast_full) = (off, full);
         });
         bind(app, &FACE_CULL, |c: &mut bevy_pbr::PointShadowFaceCull, v| c.enabled = v);
+        bind(app, &BATCHED_PASS, |b: &mut bevy_pbr::PointShadowBatchedPass, v| b.0 = v);
         // The sun/moon shadow gate.
         bind(app, &sun::GATE, |g: &mut SunShadowGating, v| g.0.enabled = v);
         bind(app, &sun::CONTRAST, |g: &mut SunShadowGating, [off, full]| (g.0.contrast_off, g.0.contrast_full) = (off, full));

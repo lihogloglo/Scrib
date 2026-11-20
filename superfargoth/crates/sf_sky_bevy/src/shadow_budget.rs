@@ -85,6 +85,10 @@ pub struct PointShadowBudget {
     /// the camera. One ray march per lit pixel per light, so only the
     /// budgeted few get it, never their twins.
     pub contact_shadows: bool,
+    /// Maximum number of top-ranked shadowed point lights that receive
+    /// screen-space contact shadows (`shadow.lamp.contact_max`, default 8).
+    /// Prevents scaling the atlas to 48+ lamps from multiplying contact raymarch cost.
+    pub contact_max: usize,
     /// Lights whose shadow would be imperceptible against the sky's light
     /// (noon sun) get no shadow map. Off by default.
     pub contrast_gate: ShadowContrastGate,
@@ -102,6 +106,7 @@ impl Default for PointShadowBudget {
             hysteresis: LAMP_HYSTERESIS.default_value(),
             map_size: LAMP_MAP_SIZE.default_value(),
             contact_shadows: LAMP_CONTACT.default_value(),
+            contact_max: sf_sky::shadow_atlas::CONTACT_MAX.default_value() as usize,
             contrast_gate: ShadowContrastGate::default(),
         }
     }
@@ -196,6 +201,12 @@ pub const FACE_CULL: Def<bool> = def!(bool "shadow.lamp.face_cull" = true)
     .source(Source::Owner("2026-11-17: on by default after the owner's play session with every gate on; A/B docs/ledger/perf.md 2026-11-17"))
     .group(Group::Shadows);
 
+/// `shadow.lamp.batched_pass`: `bevy_pbr::PointShadowBatchedPass` (ROADMAP 1.25 CW-13a).
+pub const BATCHED_PASS: Def<bool> = def!(bool "shadow.lamp.batched_pass" = false)
+    .help("Batch all active point/spot shadow face passes into one single command encoder instead of one Core3dShadows schedule per face")
+    .source(Source::Guess)
+    .group(Group::Shadows);
+
 /// This module's tunables (bound by [`crate::ShadowQualityPlugin`], tunables slice T4).
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &LAMP_COUNT,
@@ -209,6 +220,7 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &DAY_GATE_CONTRAST,
     &FACE_CULL,
     &FACE_CULL_MARGIN,
+    &BATCHED_PASS,
 ];
 
 /// Shadow maps only where a light's shadow would be seen: a point light's
@@ -440,6 +452,7 @@ impl Plugin for PointShadowPlugin {
 
     fn finish(&self, app: &mut App) {
         crate::lamp_cache::finish(app);
+        crate::shadow_atlas::finish(app);
     }
 }
 
@@ -447,7 +460,9 @@ fn add(app: &mut App) {
     crate::gpu_culled_casters::add(app);
     // CW-3b: per-face culling of lamp cube maps (vendored `bevy_pbr`, own patch); the game
     // turns it on (`enabled`), the margin is this crate's tunable.
-    app.init_resource::<bevy_pbr::PointShadowFaceCull>().register_tunables(TUNABLES);
+    app.init_resource::<bevy_pbr::PointShadowFaceCull>()
+        .init_resource::<bevy_pbr::PointShadowBatchedPass>()
+        .register_tunables(TUNABLES);
     let _bound = app
         .add_tunable(&FACE_CULL_MARGIN)
         .bind_resource(|cull: &mut bevy_pbr::PointShadowFaceCull, margin| cull.margin_deg = margin);
@@ -459,6 +474,7 @@ fn add(app: &mut App) {
                 .after(TransformSystems::Propagate)
                 .before(VisibilitySystems::VisibilityPropagate),
         );
+    crate::shadow_atlas::add(app);
     crate::lamp_cache::add(app);
     if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
         render_app.add_systems(Render, drop_stale_light_views.in_set(RenderSystems::CreateViews).after(prepare_lights));
@@ -537,8 +553,11 @@ fn gate_reference(
     Some(sky_reference_lux(sky, sky.ambient * ambient))
 }
 
+/// Initial interior fill stagger under 2D shadow atlas mode.
+const ATLAS_NEW_SLOTS_PER_FRAME: usize = 6; // tunables: const (capacity: initial interior fill stagger)
+
 /// Picks the shadowed lights and advances their native shader shadow fades.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 #[expect(
     clippy::too_many_lines,
     reason = "one pass: score, pick, then fade the picked lights; splitting it would thread the same query through helpers"
@@ -546,6 +565,7 @@ fn gate_reference(
 pub(crate) fn budget_shadows(
     mut commands: Commands,
     budget: Res<PointShadowBudget>,
+    atlas: Option<Res<crate::shadow_atlas::LampShadowAtlas>>,
     time: Res<Time>,
     cameras: ViewerCameras,
     sky: Option<Res<CurrentSky>>,
@@ -573,6 +593,17 @@ pub(crate) fn budget_shadows(
     let outdoors = viewer.as_ref().is_some_and(|v| v.2);
     let reference = gate_reference(&budget, outdoors, sky.as_deref(), sky_options.as_deref());
     let gate = budget.contrast_gate;
+    let atlas_cfg = atlas.as_deref().filter(|a| a.enabled).map(|a| a.config);
+    // Low preset (`budget.max == 0`) keeps point shadows off even if atlas is toggled on.
+    let effective_max = if budget.max == 0 {
+        0
+    } else if let Some(cfg) = atlas_cfg {
+        cfg.max_lamps as usize
+    } else {
+        budget.max
+    };
+    let handover_spares = atlas_cfg.map_or(0, |cfg| cfg.handover_spares as usize);
+    let slot_capacity = effective_max.saturating_add(handover_spares);
 
     // The candidates: shown lights of the viewer's `RenderLayers` (a light of
     // another resident worldspace lives in another `BigSpace` frame, where
@@ -589,7 +620,7 @@ pub(crate) fn budget_shadows(
     let mut candidates: Vec<(f32, bool)> = Vec::new();
     let mut candidate_lights: Vec<(Entity, f32)> = Vec::new();
     if let Some((eye, layers, _)) = &viewer
-        && budget.max > 0
+        && effective_max > 0
     {
         for (entity, light, slot, _, prio, reach, at, (shown, light_layers, _, _, steady, _)) in &lights {
             let d = at.translation().distance(*eye);
@@ -597,20 +628,29 @@ pub(crate) fn budget_shadows(
                 // The reach a slot would give, not the current blend.
                 let range = reach.map_or(light.range, |r| r.shadowed);
                 let held = slot.is_some_and(|s| s.held);
+                let steady_lm = steady.map_or(light.intensity, |s| s.0);
                 let weight = reference.map_or(1.0, |sky_lux| {
-                    let lux = gate.receiver_lux(steady.map_or(light.intensity, |s| s.0), range);
+                    let lux = gate.receiver_lux(steady_lm, range);
                     gate.weight(ShadowContrastGate::contrast(lux, sky_lux), held, budget.hysteresis)
                 });
-                candidates.push((importance(range, d, prio.priority) * weight, held));
+                let lum_weight = if atlas_cfg.is_some() {
+                    let c = light.color.to_linear();
+                    let color_lum = sf_sky::luminance(bevy_math::Vec3::new(c.red, c.green, c.blue));
+                    sf_sky::shadow_atlas::luminance_weight(steady_lm, color_lum)
+                } else {
+                    1.0
+                };
+                candidates.push((importance(range, d, prio.priority) * weight * lum_weight, held));
                 candidate_lights.push((entity, weight));
             }
         }
     }
     let ranked: Vec<(Entity, f32)> =
-        pick_shadowed(&candidates, budget.max, budget.hysteresis).into_iter().map(|i| candidate_lights[i]).collect();
+        pick_shadowed(&candidates, effective_max, budget.hysteresis).into_iter().map(|i| candidate_lights[i]).collect();
 
-    let target_of = |entity: Entity, at: &GlobalTransform| match (eye, ranked.iter().find(|(e, _)| *e == entity)) {
-        (Some(eye), Some((_, weight))) => budget.distance_fade(at.translation().distance(eye)) * weight,
+    let rank_of = |entity: Entity| ranked.iter().position(|(e, _)| *e == entity);
+    let target_of = |entity: Entity, at: &GlobalTransform| match (eye, rank_of(entity)) {
+        (Some(eye), Some(rank)) => budget.distance_fade(at.translation().distance(eye)) * ranked[rank].1,
         _ => 0.0,
     };
 
@@ -647,16 +687,28 @@ pub(crate) fn budget_shadows(
     }
 
     // Second pass: assign free slots to newly ranked lights and sync components.
-    // When `fade_time > 0.0`, stagger new slot acquisitions to at most 1 light per
-    // frame so multiple lamps never capture 12+ cubemap faces on the same frame.
-    let max_new_slots = if budget.fade_time > 0.0 { 1 } else { budget.max };
+    // When `fade_time > 0.0`, stagger new slot acquisitions so multiple lamps never
+    // capture 12+ cubemap faces on the same frame (higher under 2D atlas where tiles
+    // are smaller and captured asynchronously into the Static Atlas).
+    let max_new_slots = if budget.fade_time <= 0.0 {
+        effective_max
+    } else if atlas_cfg.is_some() {
+        ATLAS_NEW_SLOTS_PER_FRAME
+    } else {
+        1
+    };
     let mut new_slots = 0usize;
     for (entity, mut light, slot, shadow_fade, _, reach, at, (_, _, unculled, pinned, _, cached)) in &mut lights {
-        let target = target_of(entity, at);
+        let rank = rank_of(entity);
+        let target = match (eye, rank) {
+            (Some(eye), Some(r)) => budget.distance_fade(at.translation().distance(eye)) * ranked[r].1,
+            _ => 0.0,
+        };
+        let contact_allowed = rank.is_some_and(|r| r < budget.contact_max);
         let wait_capture = cached.is_some_and(|c| !c.ready);
         let Some(mut slot) = slot else {
             let mut fade = 0.0;
-            if target > 0.0 && held < budget.max && new_slots < max_new_slots {
+            if target > 0.0 && held < slot_capacity && new_slots < max_new_slots {
                 held += 1;
                 new_slots += 1;
                 fade = if wait_capture { 0.0 } else { step.min(target) };
@@ -665,7 +717,7 @@ pub(crate) fn budget_shadows(
                 if light.shadow_maps_enabled != map {
                     light.shadow_maps_enabled = map;
                 }
-                let contact = shadows && budget.contact_shadows;
+                let contact = shadows && budget.contact_shadows && contact_allowed;
                 if light.contact_shadows_enabled != contact {
                     light.contact_shadows_enabled = contact;
                 }
@@ -683,7 +735,7 @@ pub(crate) fn budget_shadows(
             continue;
         };
 
-        if !slot.held && target > 0.0 && held < budget.max && new_slots < max_new_slots {
+        if !slot.held && target > 0.0 && held < slot_capacity && new_slots < max_new_slots {
             slot.held = true;
             held += 1;
             new_slots += 1;
@@ -709,7 +761,7 @@ pub(crate) fn budget_shadows(
         if light.shadow_maps_enabled != map {
             light.shadow_maps_enabled = map;
         }
-        let contact = shadows && budget.contact_shadows;
+        let contact = shadows && budget.contact_shadows && contact_allowed;
         if light.contact_shadows_enabled != contact {
             light.contact_shadows_enabled = contact;
         }

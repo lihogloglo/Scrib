@@ -36,6 +36,8 @@ import package::render::shadow_sampling::{
     SPOT_SHADOW_TEXEL_SIZE
 };
 import package::render::shadows::{get_cascade_index, world_to_directional_light_local};
+@if(POINT_SHADOW_ATLAS)
+import package::render::shadows::sample_point_shadow_atlas;
 import package::render::utils::interleaved_gradient_noise;
 import package::render::view_transformations::{
     depth_ndc_to_view_z,
@@ -472,8 +474,12 @@ fn fetch_point_shadow_without_normal(light_id: u32, frag_position: vec4<f32>, fr
 
     // Do the lookup, using HW PCF and comparison. Cubemaps assume a left-handed coordinate space,
     // so we have to flip the z-axis when sampling.
-    let flip_z = vec3(1.0, 1.0, -1.0);
-    return sample_shadow_cubemap(frag_ls * flip_z, distance_to_light, depth, light_id, frag_coord_xy);
+    @if(POINT_SHADOW_ATLAS) {
+        return sample_point_shadow_atlas(light_id, frag_ls, depth);
+    } @else {
+        let flip_z = vec3(1.0, 1.0, -1.0);
+        return sample_shadow_cubemap(frag_ls * flip_z, distance_to_light, depth, light_id, frag_coord_xy);
+    }
 }
 
 fn fetch_spot_shadow_without_normal(light_id: u32, frag_position: vec4<f32>, frag_coord_xy: vec2<f32>) -> f32 {

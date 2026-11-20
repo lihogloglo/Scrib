@@ -352,3 +352,303 @@ fn a_lamp_changing_path_always_has_a_list_for_each_face_view() {
     main.get_mut::<PointLight>(lamp).expect("light").shadow_maps_enabled = false;
     assert_eq!(frame(&mut main, &mut extract), 0, "unshadowed: lists dropped");
 }
+
+/// CW-13a: `record_batched_point_shadows` is ordered after `record_cached_point_shadow_copies`
+/// and before `camera_driver` in `RenderGraphSystems::Render`.
+#[test]
+fn batched_point_shadows_run_after_copies_and_before_camera_driver() {
+    let squash = |s: &str| s.split_whitespace().collect::<String>();
+    let lib = squash(&vendored("lib.rs"));
+    assert!(
+        lib.contains(
+            "record_batched_point_shadows.in_set(bevy_render::renderer::RenderGraphSystems::Render).after(record_cached_point_shadow_copies).before(bevy_core_pipeline::schedule::camera_driver)"
+        ),
+        "lib.rs: record_batched_point_shadows is not ordered after copies and before camera_driver"
+    );
+}
+
+/// CW-13a: `PointShadowBatchedPass` is registered as `shadow.lamp.batched_pass` (default off) and
+/// binds live to the Bevy resource.
+#[test]
+fn batched_pass_tunable_binds_live() {
+    use sf_tunables_bevy::{SetBy, SetTunable};
+
+    let mut app = bevy_app::App::new();
+    app.add_plugins((sf_tunables_bevy::TunablesPlugin, crate::ShadowQualityPlugin))
+        .init_resource::<bevy_pbr::PointShadowBatchedPass>();
+    app.update();
+    assert!(!app.world().resource::<bevy_pbr::PointShadowBatchedPass>().0, "default off until A/B confirms win");
+
+    app.world_mut().write_message(SetTunable::new("shadow.lamp.batched_pass", "on", SetBy::Console));
+    app.update();
+    assert!(app.world().resource::<bevy_pbr::PointShadowBatchedPass>().0, "live toggle turns batched pass on");
+
+    app.world_mut().write_message(SetTunable::new("shadow.lamp.batched_pass", "off", SetBy::Console));
+    app.update();
+    assert!(!app.world().resource::<bevy_pbr::PointShadowBatchedPass>().0, "live toggle turns batched pass back off");
+}
+
+/// CW-13a (Slice A1b): `sync_batched_shadow_view_marker` swaps `RootNonCameraView(Core3dShadows)`
+/// <-> `BatchedShadowView` cleanly on live toggles (both stock and cached views), and
+/// `prepare_lights` / `point_shadow_cache` insert `BatchedShadowView` directly when enabled so
+/// moving lamps and load-state flips avoid per-frame archetype churn.
+#[test]
+fn batched_shadow_view_marker_swaps_live_and_avoids_churn() {
+    use bevy_core_pipeline::schedule::{Core3dShadows, RootNonCameraView};
+    use bevy_ecs::schedule::ScheduleLabel;
+    use bevy_pbr::{BatchedShadowView, sync_batched_shadow_view_marker};
+
+    let mut world = World::new();
+    let view = world.spawn(RootNonCameraView(Core3dShadows.intern())).id();
+
+    let run = |world: &mut World, use_batched: bool| {
+        let mut sched = Schedule::default();
+        sched.add_systems(move |mut commands: Commands, q: Query<(Entity, Has<RootNonCameraView>, Has<BatchedShadowView>)>| {
+            for (e, has_root, has_batched) in &q {
+                sync_batched_shadow_view_marker(&mut commands, e, use_batched, has_root, has_batched);
+            }
+        });
+        sched.run(world);
+    };
+
+    // Stock -> batched.
+    run(&mut world, true);
+    assert!(world.get::<RootNonCameraView>(view).is_none());
+    assert!(world.get::<BatchedShadowView>(view).is_some());
+
+    // Idempotent second frame on batched.
+    run(&mut world, true);
+    assert!(world.get::<RootNonCameraView>(view).is_none());
+    assert!(world.get::<BatchedShadowView>(view).is_some());
+
+    // Live toggle back to stock.
+    run(&mut world, false);
+    assert!(world.get::<BatchedShadowView>(view).is_none());
+    let root = world.get::<RootNonCameraView>(view).expect("restored RootNonCameraView");
+    assert_eq!(root.0, Core3dShadows.intern());
+
+    // Verify `prepare_lights` and `point_shadow_cache` insert `BatchedShadowView` directly when `use_batched`.
+    let squash = |s: &str| s.split_whitespace().collect::<String>();
+    let light = squash(&vendored("render/light.rs"));
+    let cache = squash(&vendored("render/point_shadow_cache.rs"));
+    assert!(
+        light.contains("ifuse_batched{commands.entity(view_light_entity).insert(BatchedShadowView);}"),
+        "light.rs: stock point/spot views should insert BatchedShadowView directly when batched"
+    );
+    assert!(
+        cache.contains("ifinputs.use_batched{commands.entity(view_entity).insert(BatchedShadowView);}"),
+        "point_shadow_cache.rs: cached views should insert BatchedShadowView directly when batched"
+    );
+}
+
+/// CW-13b: `record_point_shadow_atlas` is ordered after `record_batched_point_shadows` and before
+/// `camera_driver` in `RenderGraphSystems::Render`.
+#[test]
+fn point_shadow_atlas_runs_after_batched_and_before_camera_driver() {
+    let squash = |s: &str| s.split_whitespace().collect::<String>();
+    let lib = squash(&vendored("lib.rs"));
+    assert!(
+        lib.contains(
+            "record_point_shadow_atlas.in_set(bevy_render::renderer::RenderGraphSystems::Render).after(record_batched_point_shadows).before(bevy_core_pipeline::schedule::camera_driver)"
+        ),
+        "lib.rs: record_point_shadow_atlas is not ordered after batched point shadows and before camera_driver"
+    );
+}
+
+/// CW-13b: CPU mirror of `shadows.wesl::point_shadow_atlas_project` matches Bevy's exact
+/// `CUBE_MAP_FACES` `looking_at` + guard-band `perspective_infinite_reverse` projection across
+/// all 6 faces (`+X, -X, +Y, -Y, -Z, +Z`).
+#[test]
+fn atlas_projection_matches_bevy_cube_faces() {
+    use bevy_camera::primitives::{CUBE_MAP_FACES, CubeMapFace};
+    use bevy_math::{Mat4, Vec2, Vec3, Vec4, proj};
+    use bevy_transform::components::Transform;
+
+    let project_shader = |frag_ls: Vec3| -> (usize, Vec2, f32) {
+        let a = frag_ls.abs();
+        if a.x >= a.y && a.x >= a.z {
+            if frag_ls.x >= 0.0 {
+                (0, Vec2::new(frag_ls.z / a.x, frag_ls.y / a.x), a.x)
+            } else {
+                (1, Vec2::new(-frag_ls.z / a.x, frag_ls.y / a.x), a.x)
+            }
+        } else if a.y >= a.z {
+            if frag_ls.y >= 0.0 {
+                (2, Vec2::new(frag_ls.x / a.y, frag_ls.z / a.y), a.y)
+            } else {
+                (3, Vec2::new(frag_ls.x / a.y, -frag_ls.z / a.y), a.y)
+            }
+        } else if frag_ls.z < 0.0 {
+            (4, Vec2::new(frag_ls.x / a.z, frag_ls.y / a.z), a.z)
+        } else {
+            (5, Vec2::new(-frag_ls.x / a.z, frag_ls.y / a.z), a.z)
+        }
+    };
+
+    let near = 0.1_f32;
+    let guard_texels = 2.0_f32;
+    for tile_px in [128u32, 256, 512] {
+        let tan_half = bevy_pbr::atlas_guard_tan_half(tile_px, guard_texels);
+        let inv_guard_tan = bevy_pbr::atlas_guard_inv_tan(tile_px, guard_texels);
+        let projection = proj::perspective_infinite_reverse(2.0 * tan_half.atan(), 1.0, near);
+
+        let samples = [
+            Vec3::new(3.0, 0.7, -1.2),  // +X
+            Vec3::new(-4.0, -1.1, 0.9), // -X
+            Vec3::new(0.6, 5.0, 1.8),   // +Y
+            Vec3::new(-1.3, -3.5, 0.4), // -Y
+            Vec3::new(0.8, -0.5, -2.5), // -Z (CUBE_MAP_FACES[4])
+            Vec3::new(-0.9, 1.1, 3.2),  // +Z (CUBE_MAP_FACES[5])
+        ];
+        for (expected_face, p) in samples.into_iter().enumerate() {
+            let (face, face_ndc, major) = project_shader(p);
+            assert_eq!(face, expected_face, "tile_px={tile_px} sample={p:?}");
+            let CubeMapFace { target, up } = CUBE_MAP_FACES[face];
+            let view_from_world = Mat4::from(Transform::IDENTITY.looking_at(target, up).compute_affine().inverse());
+            let clip = projection * view_from_world * Vec4::from((p, 1.0));
+            let ndc = clip.truncate() / clip.w;
+            let expected_uv = Vec2::new(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+            let shader_uv = face_ndc * inv_guard_tan * Vec2::new(0.5, -0.5) + Vec2::splat(0.5);
+            assert!(
+                (shader_uv - expected_uv).length() < 1e-5,
+                "face {face} tile_px={tile_px}: shader_uv={shader_uv:?} vs expected={expected_uv:?}"
+            );
+            let shader_depth = near / major;
+            assert!((ndc.z - shader_depth).abs() < 1e-5, "face {face}: depth {shader_depth} vs {}", ndc.z);
+        }
+    }
+}
+
+/// CW-13b: `pack_shadow_atlas_tile` packs kind, tile resolution, and `inv_guard_tan` accurately.
+#[test]
+fn atlas_tile_packing_round_trip() {
+    let empty = bevy_pbr::pack_shadow_atlas_tile(bevy_pbr::ATLAS_KIND_EMPTY, [0, 0, 0], 4096, 2.0);
+    assert_eq!(empty.flags_and_size & 3, 0);
+
+    for (kind, rect, atlas_size) in [
+        (bevy_pbr::ATLAS_KIND_STATIC, [512, 1024, 512], 4096u16),
+        (bevy_pbr::ATLAS_KIND_STATIC, [256, 768, 256], 4096u16),
+        (bevy_pbr::ATLAS_KIND_LIVE, [128, 384, 128], 2048u16),
+    ] {
+        let packed = bevy_pbr::pack_shadow_atlas_tile(kind, rect, u32::from(atlas_size), 2.0);
+        assert_eq!(packed.flags_and_size & 3, kind);
+        assert_eq!((packed.flags_and_size >> 2) & 0x3FFF, u32::from(rect[2]));
+        let unpacked_inv = f32::from(u16::try_from(packed.flags_and_size >> 16).expect("u16")) / 65535.0;
+        let expected_inv = bevy_pbr::atlas_guard_inv_tan(u32::from(rect[2]), 2.0);
+        assert!((unpacked_inv - expected_inv).abs() < 2e-5);
+        assert!((packed.uv_offset.x - f32::from(rect[0]) / f32::from(atlas_size)).abs() < 1e-6);
+        assert!((packed.uv_offset.y - f32::from(rect[1]) / f32::from(atlas_size)).abs() < 1e-6);
+        assert!((packed.uv_scale - f32::from(rect[2]) / f32::from(atlas_size)).abs() < 1e-6);
+    }
+}
+
+/// CW-13b: live toggle of `shadow.lamp.atlas.enabled` admits > 8 lamps into `AtlasPointShadowMap`,
+/// caps `contact_shadows_enabled` to `shadow.lamp.contact_max`, confirms static captures to zero
+/// views, promotes a moving lamp (carried torch) into the Live Atlas, and tears down cleanly when
+/// toggled off.
+#[test]
+fn atlas_live_toggle_contact_cap_and_moving_lamp() {
+    use bevy_camera::primitives::Aabb;
+    use bevy_camera::visibility::{CubemapVisibleEntities, InheritedVisibility, ViewVisibility};
+    use bevy_camera::{Camera, Camera3d};
+    use bevy_math::Vec3;
+    use bevy_mesh::Mesh3d;
+    use bevy_pbr::{AtlasPointShadowMap, AtlasPointShadowReport, PointShadowAtlasConfig};
+    use bevy_time::Time;
+    use bevy_transform::components::GlobalTransform;
+    use sf_tunables_bevy::{SetBy, SetTunable};
+
+    let mut app = bevy_app::App::new();
+    app.add_plugins((sf_tunables_bevy::TunablesPlugin, crate::ShadowQualityPlugin, crate::PointShadowPlugin))
+        .init_resource::<Time>()
+        .init_resource::<PointLightShadowMap>();
+
+    // Configure High-like budget via live tunables (`ShadowQualityPlugin` binds `shadow.lamp.*`).
+    for (name, val) in [
+        ("shadow.lamp.count", "8"),
+        ("shadow.lamp.fade_m", "40,60"),
+        ("shadow.lamp.fade_time_s", "0"),
+        ("shadow.lamp.contact", "on"),
+        ("shadow.lamp.day_gate", "off"),
+        ("shadow.lamp.atlas.enabled", "on"),
+        ("shadow.lamp.contact_max", "4"),
+    ] {
+        app.world_mut().write_message(SetTunable::new(name, val, SetBy::Console));
+    }
+
+    // Camera at origin.
+    app.world_mut().spawn((Camera::default(), Camera3d::default(), GlobalTransform::IDENTITY));
+
+    // Spawn 12 budgeted lamps + 1 nearby static caster per lamp so each has non-empty faces.
+    let mut lamp_entities = Vec::new();
+    for i in 0..12u16 {
+        let pos = Vec3::new((f32::from(i) + 1.0) * 2.5, 2.0, 0.0);
+        let lamp = app
+            .world_mut()
+            .spawn((
+                PointLight { intensity: 1500.0, range: 12.0, ..Default::default() },
+                crate::BudgetedShadow::default(),
+                GlobalTransform::from_translation(pos),
+                InheritedVisibility::VISIBLE,
+                CubemapVisibleEntities::default(),
+            ))
+            .id();
+        lamp_entities.push(lamp);
+        app.world_mut().spawn((
+            Mesh3d::default(),
+            Aabb::from_min_max(Vec3::splat(-0.5), Vec3::splat(0.5)),
+            GlobalTransform::from_translation(pos + Vec3::new(0.0, 0.0, -2.0)),
+            InheritedVisibility::VISIBLE,
+            ViewVisibility::default(),
+            crate::lamp_cache::LampShadowMobility::Static,
+        ));
+    }
+
+    app.update();
+    app.update();
+
+    assert!(app.world().resource::<PointShadowAtlasConfig>().enabled, "render config tracks tunable");
+    let atlas_count = lamp_entities.iter().filter(|&&e| app.world().get::<AtlasPointShadowMap>(e).is_some()).count();
+    assert_eq!(atlas_count, 12, "all 12 lamps admitted into 2D atlas beyond stock 8-lamp cap");
+
+    // Confirm captures for all lamps via LampShadowAtlasReports until ready.
+    for _ in 0..8 {
+        let reports: Vec<(Entity, AtlasPointShadowReport)> = lamp_entities
+            .iter()
+            .filter_map(|&e| {
+                let comp = app.world().get::<AtlasPointShadowMap>(e)?;
+                let cap = comp.draw_faces & !comp.draw_to_live;
+                (cap != 0).then_some((e, AtlasPointShadowReport { plan: comp.plan, confirmed: cap, lost: false }))
+            })
+            .collect();
+        app.world_mut().resource_mut::<crate::LampShadowAtlasReports>().0.extend(reports);
+        app.update();
+    }
+
+    // Once settled and ready, contact shadows are capped at 4 (not all 12!).
+    let contact_count = lamp_entities
+        .iter()
+        .filter(|&&e| app.world().get::<PointLight>(e).is_some_and(|l| l.contact_shadows_enabled))
+        .count();
+    assert!(contact_count <= 4, "contact shadows must stay capped at contact_max=4, got {contact_count}");
+    assert!(contact_count > 0, "top-ranked hero lamps keep contact shadows");
+
+    // Move lamp 0 -> promotes to Live Atlas (carried torch) with zero static rects and active live rects.
+    *app.world_mut().get_mut::<GlobalTransform>(lamp_entities[0]).expect("lamp0") =
+        GlobalTransform::from_translation(Vec3::new(10.0, 2.0, 5.0));
+    app.update();
+    app.update();
+    let moved_comp = app.world().get::<AtlasPointShadowMap>(lamp_entities[0]).expect("moved lamp stays on atlas");
+    assert_eq!(moved_comp.static_rects, [None; 6], "moving lamp consumes zero static tiles");
+    assert!(moved_comp.live_rects.iter().all(Option::is_some), "moving lamp allocates 6 live tiles");
+    assert_ne!(moved_comp.draw_to_live, 0, "moving lamp draws into live atlas");
+
+    // Toggle atlas OFF live -> every lamp releases AtlasPointShadowMap cleanly.
+    app.world_mut().write_message(SetTunable::new("shadow.lamp.atlas.enabled", "off", SetBy::Console));
+    app.update();
+    assert!(!app.world().resource::<PointShadowAtlasConfig>().enabled);
+    assert!(
+        lamp_entities.iter().all(|&e| app.world().get::<AtlasPointShadowMap>(e).is_none()),
+        "toggling atlas off removes AtlasPointShadowMap from every lamp"
+    );
+}

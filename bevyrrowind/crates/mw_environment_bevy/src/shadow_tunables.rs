@@ -28,6 +28,12 @@ use sf_tunables_bevy::{Tunables, TunablesAppExt};
 pub const LAMP_DAY_GATE: Def<bool> = sf_sky_bevy::DAY_GATE.env_alias("BEVYRROWIND_LAMP_DAY_GATE");
 /// `shadow.lamp.face_cull` (CW-3b), alias `BEVYRROWIND_POINT_FACE_CULL=1`.
 pub const POINT_FACE_CULL: Def<bool> = sf_sky_bevy::FACE_CULL.env_alias("BEVYRROWIND_POINT_FACE_CULL");
+/// `shadow.lamp.batched_pass` (CW-13a: single-encoder batched point/spot shadow pass), alias
+/// `BEVYRROWIND_LAMP_BATCHED_PASS=1`.
+pub const LAMP_BATCHED_PASS: Def<bool> = sf_sky_bevy::BATCHED_PASS.env_alias("BEVYRROWIND_LAMP_BATCHED_PASS");
+/// `shadow.lamp.atlas.enabled` (CW-13b: unified cached 2D point shadow atlas), alias
+/// `BEVYRROWIND_LAMP_ATLAS=1`.
+pub const LAMP_ATLAS: Def<bool> = sf_sky_bevy::sf_sky::shadow_atlas::ENABLED.env_alias("BEVYRROWIND_LAMP_ATLAS");
 /// `shadow.lamp.cache.enabled` (CW-4 S3: still budgeted lamps keep their static shadow depth), alias
 /// `BEVYRROWIND_LAMP_CACHE=1`.
 pub const LAMP_CACHE: Def<bool> = sf_sky_bevy::sf_sky::lamp_cache::ENABLED.env_alias("BEVYRROWIND_LAMP_CACHE");
@@ -46,8 +52,19 @@ pub const SSAO: Def<&'static str> = q::SSAO.env_alias("BEVYRROWIND_SSAO");
 pub const UPSCALING: Def<&'static str> = q::UPSCALING.env_alias("BEVYRROWIND_DLSS");
 
 /// The alias copies, registered before the framework's defs.
-pub const ALIASES: &[&dyn AnyDef] =
-    &[&LAMP_DAY_GATE, &POINT_FACE_CULL, &LAMP_CACHE, &SUN_SHADOW_GATE, &POINT_SHADOWS, &LAMP_CONTACT, &SHADOW_FILTER, &SSAO, &UPSCALING];
+pub const ALIASES: &[&dyn AnyDef] = &[
+    &LAMP_DAY_GATE,
+    &POINT_FACE_CULL,
+    &LAMP_BATCHED_PASS,
+    &LAMP_ATLAS,
+    &LAMP_CACHE,
+    &SUN_SHADOW_GATE,
+    &POINT_SHADOWS,
+    &LAMP_CONTACT,
+    &SHADOW_FILTER,
+    &SSAO,
+    &UPSCALING,
+];
 
 /// The builtin mod's records (`mw_mods::BASE_RECORDS`), parsed once: apps without a loaded profile
 /// (viewers, tests) take Bevyrrowind's `Mod`-layer values and the graphics presets from them.

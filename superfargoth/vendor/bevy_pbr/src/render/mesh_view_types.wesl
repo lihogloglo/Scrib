@@ -263,3 +263,11 @@ struct GiProbeVolume {
     // w: ambient light scale inside the volume.
     bias_intensity: vec4<f32>,
 }
+
+// superfargoth patch (own, CW-13b: 2D point shadow atlas): GpuShadowAtlasTile (render/point_shadow_atlas.rs).
+struct ShadowAtlasTile {
+    uv_offset: vec2<f32>,
+    uv_scale: f32,
+    // bits 0..2: atlas kind (0=empty, 1=static, 2=live), bits 2..16: tile_px, bits 16..32: inv_guard_tan_q16.
+    flags_and_size: u32,
+}

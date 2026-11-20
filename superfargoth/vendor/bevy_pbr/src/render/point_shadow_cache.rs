@@ -68,7 +68,7 @@ use bevy_shape::ViewFrustum;
 use bevy_transform::components::{GlobalTransform, Transform};
 
 use crate::{
-    ExtractedPointLight, LightEntity, PendingShadowQueues, Shadow, ShadowView,
+    BatchedShadowView, ExtractedPointLight, LightEntity, PendingShadowQueues, Shadow, ShadowView,
     ALL_POINT_SHADOW_FACES, CORE_3D_SHADOW_MAP_FORMAT,
 };
 
@@ -353,7 +353,6 @@ pub struct PointShadowCachePrepare<'w, 's> {
     stats: ResMut<'w, PointShadowCacheStats>,
     store: Option<Res<'w, PointShadowCacheStore>>,
     feedback: Option<Res<'w, PointShadowCacheFeedback>>,
-    lod_origins: Option<ResMut<'w, RenderViewLodOrigins>>,
     /// Point and spot lights that still exist (their render entity is synced).
     lights: Query<'w, 's, (), With<crate::PointAndSpotLightViewEntities>>,
 }
@@ -369,6 +368,8 @@ pub(crate) struct CachedLightInputs<'a> {
     pub texture: &'a CachedTexture,
     pub map_size: u32,
     pub gpu_mode: GpuPreprocessingMode,
+    // superfargoth patch (own, CW-13a: batched point shadow pass)
+    pub use_batched: bool,
 }
 
 impl PointShadowCachePrepare<'_, '_> {
@@ -425,6 +426,7 @@ impl PointShadowCachePrepare<'_, '_> {
         view_entities: &mut Vec<Entity>,
         shadow_render_phases: &mut ViewBinnedRenderPhases<Shadow>,
         live_shadow_mapping_lights: &mut HashSet<RetainedViewEntity>,
+        mut lod_origins: Option<&mut RenderViewLodOrigins>,
     ) -> bool {
         let light_entity = inputs.light_entity;
         let Ok(cached) = self.cached.get(light_entity) else {
@@ -609,8 +611,15 @@ impl PointShadowCachePrepare<'_, '_> {
                     },
                     inputs.light_render_layers.clone(),
                     state,
-                    RootNonCameraView(Core3dShadows.intern()),
                 ));
+                // superfargoth patch (own, CW-13a: batched point shadow pass)
+                if inputs.use_batched {
+                    commands.entity(view_entity).insert(BatchedShadowView);
+                } else {
+                    commands
+                        .entity(view_entity)
+                        .insert(RootNonCameraView(Core3dShadows.intern()));
+                }
                 if !matches!(inputs.gpu_mode, GpuPreprocessingMode::Culling) {
                     commands.entity(view_entity).insert(NoIndirectDrawing);
                 }
@@ -618,7 +627,7 @@ impl PointShadowCachePrepare<'_, '_> {
 
             // Levels of detail resolve from the lamp, not the viewer: a cached face does not
             // depend on where the camera stood when it was drawn.
-            if let Some(origins) = self.lod_origins.as_deref_mut() {
+            if let Some(origins) = lod_origins.as_deref_mut() {
                 origins.0.insert(retained, light.transform.translation());
                 gpu.origin_views_now.insert(retained);
             }
@@ -634,12 +643,12 @@ impl PointShadowCachePrepare<'_, '_> {
     /// and the LOD origins of face views that no longer exist. A lamp that exists but was not
     /// prepared this frame (hidden, no shadow) keeps its entry, so the stock path never meets
     /// its cached views (the next `prepare_light` despawns them).
-    pub(crate) fn end_frame(&mut self) {
+    pub(crate) fn end_frame(&mut self, mut lod_origins: Option<&mut RenderViewLodOrigins>) {
         let gpu = &mut *self.gpu;
         let lights = &self.lights;
         gpu.face_views.retain(|light, _| lights.contains(*light));
         gpu.slots.retain(|light, _| lights.contains(*light));
-        if let Some(origins) = self.lod_origins.as_deref_mut() {
+        if let Some(origins) = lod_origins.as_deref_mut() {
             for retained in gpu.origin_views_last.difference(&gpu.origin_views_now) {
                 origins.0.remove(retained);
             }
@@ -785,12 +794,6 @@ pub fn record_cached_point_shadow_copies(
         }
     }
     pending.push_encoder(encoder, "point_shadow_cache_copies");
-}
-
-/// Whether `extract_lights` keeps a light's list for shadow subview `subview`: every face of a
-/// stock lamp, the view faces of a cached one.
-pub(crate) fn cached_face_listed(cached: Option<CachedPointShadowFaces>, subview: u32) -> bool {
-    cached.is_none_or(|faces| subview < 6 && u32::from(faces.view) & (1 << subview) != 0)
 }
 
 /// Whether `lists` holds a visible-entity list for every face in `faces` of the light `main`.

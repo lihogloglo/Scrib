@@ -102,6 +102,7 @@ bitflags::bitflags! {
         const VIEW_TRANSMISSION_TEXTURE        = 1 << 16;
         const GI_PROBES                        = 1 << 17; // superfargoth patch (own, GI)
         const SURFACE_WEATHER                  = 1 << 18; // superfargoth patch (own, SW)
+        const POINT_SHADOW_ATLAS               = 1 << 19; // superfargoth patch (own, CW-13b: 2D point shadow atlas)
     }
 }
 
@@ -192,6 +193,10 @@ impl From<MeshPipelineKey> for MeshPipelineViewLayoutKey {
         // superfargoth patch (own, SW)
         if value.contains(MeshPipelineKey::SURFACE_WEATHER) {
             result |= MeshPipelineViewLayoutKey::SURFACE_WEATHER;
+        }
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+        if value.contains(MeshPipelineKey::POINT_SHADOW_ATLAS) {
+            result |= MeshPipelineViewLayoutKey::POINT_SHADOW_ATLAS;
         }
 
         result
@@ -406,6 +411,10 @@ fn layout_entries(
     // superfargoth patch (own, SW): surface weather bindings 43-53 (render/surface_weather.rs).
     if layout_key.contains(MeshPipelineViewLayoutKey::SURFACE_WEATHER) {
         entries = super::surface_weather_layout_entries(entries);
+    }
+    // superfargoth patch (own, CW-13b: 2D point shadow atlas): bindings 54-56 (render/point_shadow_atlas.rs).
+    if layout_key.contains(MeshPipelineViewLayoutKey::POINT_SHADOW_ATLAS) {
+        entries = super::point_shadow_atlas_layout_entries(entries);
     }
     if layout_key.contains(MeshPipelineViewLayoutKey::SCREEN_SPACE_AMBIENT_OCCLUSION) {
         entries = entries.extend_with_indices((
@@ -720,13 +729,15 @@ pub fn prepare_mesh_view_bind_groups(
         Res<ContactShadowsBuffer>,
         Res<OitBuffers>,
     ),
-    (decals_buffer, render_decals, atmosphere_sampler, blue_noise, area_light_luts, dfg_lut): (
+    (decals_buffer, render_decals, atmosphere_sampler, blue_noise, area_light_luts, dfg_lut, point_shadow_atlas): (
         Res<DecalsBuffer>,
         Res<RenderClusteredDecals>,
         Option<Res<AtmosphereSampler>>,
         Res<Bluenoise>,
         Res<AreaLightLuts>,
         Res<DfgLut>,
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+        Option<Res<super::PointShadowAtlasGpu>>,
     ),
     // TODO: Figure out how to reuse the memory. `BindGroupEntry` is non-send on wasm with atomics.
     #[cfg(not(all(target_arch = "wasm32", target_feature = "atomics")))]
@@ -862,6 +873,12 @@ pub fn prepare_mesh_view_bind_groups(
             if let Some(super::SurfaceWeatherView(sw)) = surface_weather {
                 layout_key |= MeshPipelineViewLayoutKey::SURFACE_WEATHER;
                 entries = super::surface_weather_bind_entries(entries, sw);
+            }
+
+            // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+            if let Some(atlas) = point_shadow_atlas.as_deref().filter(|a| a.is_ready()) {
+                layout_key |= MeshPipelineViewLayoutKey::POINT_SHADOW_ATLAS;
+                entries = super::point_shadow_atlas_bind_entries(entries, atlas);
             }
 
             if let Some(view_oit_settings_offset) = view_oit_settings_offset {

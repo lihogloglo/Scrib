@@ -55,9 +55,9 @@ use bevy_mesh::skinning::SkinnedMesh;
 use bevy_mesh::Mesh3d;
 use bevy_pbr::gpu_instance_batch::{GpuBatchedLightVisibility, GpuBatchedMesh3d};
 use bevy_pbr::{
-    point_shadow_faces_seen, CachedPointShadowCopy, CachedPointShadowMap, CachedPointShadowReport,
-    PointLightShadowFade, PointShadowCacheFeedback, PointShadowCacheStats, PointShadowCacheStore,
-    PointShadowFaceCull,
+    point_shadow_faces_seen, AtlasPointShadowMap, AtlasPointShadowReport, CachedPointShadowCopy,
+    CachedPointShadowMap, CachedPointShadowReport, PointLightShadowFade, PointShadowAtlasFeedback,
+    PointShadowCacheFeedback, PointShadowCacheStats, PointShadowCacheStore, PointShadowFaceCull,
 };
 use bevy_render::{Render, RenderApp, RenderSystems};
 use bevy_shape::ViewFrustum;
@@ -68,8 +68,14 @@ use sf_sky::lamp_cache::{
     self as policy, CasterClass, CasterMobility, CopyOp, FramePlan, Invalidation, LampCache, LampCacheConfig,
     LampKey, LampTier, MoverInput, TileLayout, TileMask,
 };
+use sf_sky::shadow_atlas::{
+    guard_band_fov_y, pick_tile_size, ShadowAtlasManager,
+};
 use sf_tunables_bevy::TunablesAppExt;
 
+use crate::shadow_atlas::{
+    publish_atlas_gauges, LampShadowAtlas, LampShadowAtlasReports, LampShadowAtlasStats,
+};
 use crate::shadow_budget::{budget_shadows, BudgetedShadow, PointShadowBudget, ShadowMapCached, ShadowReach, ShadowSlot};
 
 /// All six cube faces.
@@ -81,6 +87,13 @@ const STILL_EPSILON: f32 = 1e-3; // tunables: const (fixture: the spec's 1 mm co
 const CAPTURE_HISTORY: usize = 8; // tunables: const (capacity: plans in flight)
 /// Ancestors searched for a [`LampShadowMobility`] mark.
 const MOBILITY_DEPTH: usize = 16; // tunables: const (capacity: hierarchy depth searched)
+/// Minimum static capture faces per frame under 2D atlas mode (smaller 256²/128² tiles capture
+/// inside one encoder so entering a 30+ lamp interior populates quickly).
+const ATLAS_MIN_CAPTURES_PER_FRAME: u32 = 6; // tunables: const (capacity: atlas initial capture floor)
+/// Default tile size requested for moving lights (carried torches) in the Live Atlas.
+const ATLAS_MOVING_TILE_PX: u16 = 512; // tunables: const (layout: hero torch live tile size)
+/// All six faces have a store slot in the policy's in-memory pool when the 2D atlas owns VRAM.
+const ATLAS_POLICY_STORE_FACES: u32 = 6; // tunables: const (layout: 6 faces per cube in policy pool)
 
 /// The cache's switch and policy values, bound to the `shadow.lamp.cache.*` tunables.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
@@ -171,6 +184,12 @@ struct Lamp {
     moved: bool,
     /// `(plan, capture faces)` of recent plans.
     captures: Vec<(u64, u8)>,
+    /// Current atlas tile resolution (unused on CW-4 cube path).
+    tile_size: u16,
+    /// Priority from [`BudgetedShadow`] (for atlas tier selection).
+    priority: f32,
+    /// Active visible mover faces this frame (keeps Live Atlas tiles resident across Half/Far skip frames).
+    active_mover_faces: u8,
 }
 
 impl Lamp {
@@ -201,16 +220,34 @@ struct MovingLamp {
     still_since: f32,
 }
 
+/// A moving lamp (e.g. carried torch) rendered directly into the 2D Live Atlas.
+struct MovingAtlasLamp {
+    key: LampKey,
+    tile_size: u16,
+    layers: RenderLayers,
+}
+
 #[derive(Resource, Default)]
 struct LampCacheState {
     cache: Option<LampCache>,
+    atlas: Option<ShadowAtlasManager>,
+    atlas_mode: bool,
     lamps: EntityHashMap<Lamp>,
     moving: EntityHashMap<MovingLamp>,
+    /// Moving lamps currently drawing directly into the 2D Live Atlas (carried torches).
+    moving_atlas: EntityHashMap<MovingAtlasLamp>,
     /// Lamps whose stock cube map was drawn last frame: their live layers hold valid depth.
     stock_drawn: EntityHashSet,
     map_size: usize,
     max_lamps: u32,
     scans: u64,
+    /// Last elapsed second a `debug` mover-breakdown line was logged (Slice A0 audit).
+    last_mover_log_s: f32,
+    /// Monotonic plan counter for moving atlas lamps.
+    moving_plan: u64,
+    /// Static atlas generation at which a non-handover (or handover) admission failed,
+    /// avoiding repeated full-world caster scans until static atlas space is freed.
+    static_full_at_gen: Option<(u64, bool)>,
 }
 
 type CasterData<'a> = (
@@ -338,12 +375,11 @@ fn relative(affine: &Affine3A, lamp: Vec3A) -> Affine3A {
     rel
 }
 
-/// A lamp's six face frusta, as `bevy_light::update_point_light_frusta` builds them (it leaves a
-/// cached lamp's stale: its stock shadow flag is off).
-fn cube_frusta(transform: &GlobalTransform, near_z: f32, range: f32) -> CubemapFrusta {
-    let clip_from_view = proj::perspective_infinite_reverse(core::f32::consts::FRAC_PI_2, 1.0, near_z);
+/// A lamp's six face frusta at vertical/horizontal `fov_y` (PI/2 for cube array, widened by
+/// guard band for the 2D shadow atlas).
+fn cube_frusta_fov(transform: &GlobalTransform, near_z: f32, range: f32, fov_y: f32) -> CubemapFrusta {
+    let clip_from_view = proj::perspective_infinite_reverse(fov_y, 1.0, near_z);
     let view_translation = Transform::from_translation(transform.translation());
-    let view_backward = transform.back();
     let mut frusta = CubemapFrusta::default();
     for (CubeMapFace { target, up }, frustum) in CUBE_MAP_FACES.iter().zip(frusta.frusta.iter_mut()) {
         let world_from_view = view_translation * Transform::IDENTITY.looking_at(*target, *up);
@@ -351,7 +387,7 @@ fn cube_frusta(transform: &GlobalTransform, near_z: f32, range: f32) -> CubemapF
         *frustum = Frustum(ViewFrustum::from_clip_from_world_custom_far(
             &clip_from_world,
             &transform.translation(),
-            &view_backward,
+            &transform.back(),
             range,
         ));
     }
@@ -443,6 +479,7 @@ type LampItem<'a> = (
     Entity,
     &'a mut PointLight,
     &'a GlobalTransform,
+    &'a BudgetedShadow,
     Option<&'a RenderLayers>,
     Option<&'a ShadowReach>,
     Option<&'a mut ShadowSlot>,
@@ -451,53 +488,97 @@ type LampItem<'a> = (
 
 /// Who is cached: admits still slot holders, releases lamps that lost their slot or moved, and
 /// tears everything down when the switch goes off. Runs after the budget, before Bevy's caster
-/// scan, so a lamp changes path within the frame.
-#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
-#[expect(clippy::too_many_lines, reason = "one pass over the budgeted lamps: switch off, policy sizes, moving lamps, admissions and releases")]
+/// scan, so a lamp changes path within the frame. Supports both CW-4 (`CachedPointShadowMap`) and
+/// CW-13b (`AtlasPointShadowMap`, taking precedence when `shadow.lamp.atlas.enabled` is on).
+#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value, clippy::type_complexity)]
+#[expect(clippy::too_many_lines, reason = "one pass over the budgeted lamps: mode switch, policy sizes, moving lamps, admissions and releases")]
 fn admit_lamps(
     mut commands: Commands,
-    settings: Res<LampShadowCache>,
-    budget: Res<PointShadowBudget>,
-    map: Option<Res<PointLightShadowMap>>,
+    (settings, atlas_settings, budget, map): (
+        Res<LampShadowCache>,
+        Option<Res<LampShadowAtlas>>,
+        Res<PointShadowBudget>,
+        Option<Res<PointLightShadowMap>>,
+    ),
     time: Res<Time>,
     (mut state, mut store): (ResMut<LampCacheState>, ResMut<PointShadowCacheStore>),
-    mut lamps: Query<LampItem, With<BudgetedShadow>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    mut lamps: Query<LampItem>,
     casters: Casters,
 ) {
     let state = &mut *state;
     let now = time.elapsed_secs();
-    if !settings.enabled {
-        if state.cache.is_some() || !state.lamps.is_empty() {
+    let atlas_cfg = atlas_settings.as_deref().filter(|a| a.enabled).map(|a| a.config);
+    let atlas_on = atlas_cfg.is_some();
+    let active = atlas_on || settings.enabled;
+
+    // Tear down if disabled or switching live between CW-4 cube cache and CW-13b 2D atlas.
+    if !active || state.atlas_mode != atlas_on {
+        if state.cache.is_some() || !state.lamps.is_empty() || !state.moving_atlas.is_empty() {
             for (entity, mut light, .., slot, _) in &mut lamps {
-                if state.lamps.remove(&entity).is_some() {
+                if state.lamps.remove(&entity).is_some() || state.moving_atlas.remove(&entity).is_some() {
                     release(&mut commands, entity, &mut light, slot.as_deref());
                 }
             }
-            *state = LampCacheState { scans: state.scans, ..LampCacheState::default() };
+            *state = LampCacheState { scans: state.scans, atlas_mode: atlas_on, ..LampCacheState::default() };
+        } else {
+            state.atlas_mode = atlas_on;
         }
-        store.set_if_neq(PointShadowCacheStore { layers: 0 });
-        return;
+        if !active {
+            store.set_if_neq(PointShadowCacheStore { layers: 0 });
+            return;
+        }
     }
 
-    // The policy follows the budget's slot count, the tunables and the cube size.
-    let max = u32::try_from(budget.max).unwrap_or(u32::MAX);
-    // The switch just went on: lamps with a stock cube map have it drawn, unless their slot is new
-    // this frame (no stock_drawn record exists while the cache is off).
+    let eyes: Vec<Vec3A> = cameras.iter().filter(|(c, _)| c.is_active).map(|(_, t)| t.translation_vec3a()).collect();
+    let dist_to_eye = |pos: Vec3A| {
+        eyes.iter().map(|eye| (*eye - pos).length()).fold(f32::INFINITY, f32::min).min(1e6)
+    };
+
+    // Configure policy & allocator for either Atlas or CW-4 mode.
+    let (max, policy_cfg) = if let Some(acfg) = atlas_cfg {
+        let m = acfg.max_lamps.saturating_add(acfg.handover_spares);
+        let pcfg = LampCacheConfig {
+            store_faces_per_lamp: ATLAS_POLICY_STORE_FACES,
+            capture_faces_per_frame: settings.config.capture_faces_per_frame.max(ATLAS_MIN_CAPTURES_PER_FRAME),
+            ..settings.config
+        };
+        (m, pcfg)
+    } else {
+        (u32::try_from(budget.max).unwrap_or(u32::MAX), settings.config)
+    };
+
     let switched_on = state.cache.is_none();
-    let cache = state.cache.get_or_insert_with(|| LampCache::new(TileLayout::CUBE, max, settings.config));
-    if cache.config() != &settings.config || state.max_lamps != max {
-        cache.reconfigure(max, settings.config);
+    let cache = state.cache.get_or_insert_with(|| LampCache::new(TileLayout::CUBE, max, policy_cfg));
+    if cache.config() != &policy_cfg || state.max_lamps != max {
+        cache.reconfigure(max, policy_cfg);
         state.max_lamps = max;
     }
-    let map_size = map.map_or(0, |m| m.size);
-    if state.map_size != map_size {
-        if state.map_size != 0 {
-            cache.recapture_all();
+
+    if let Some(acfg) = atlas_cfg {
+        let mgr = state.atlas.get_or_insert_with(|| ShadowAtlasManager::new(acfg));
+        if mgr.reconfigure(acfg) {
+            // Atlas dimensions changed: release all lamps so they re-admit cleanly into new textures.
+            for (entity, mut light, .., slot, _) in &mut lamps {
+                if state.lamps.remove(&entity).is_some() || state.moving_atlas.remove(&entity).is_some() {
+                    release(&mut commands, entity, &mut light, slot.as_deref());
+                }
+            }
+            *cache = LampCache::new(TileLayout::CUBE, max, policy_cfg);
+            state.static_full_at_gen = None;
         }
-        state.map_size = map_size;
+        store.set_if_neq(PointShadowCacheStore { layers: 0 });
+    } else {
+        let map_size = map.map_or(0, |m| m.size);
+        if state.map_size != map_size {
+            if state.map_size != 0 {
+                cache.recapture_all();
+            }
+            state.map_size = map_size;
+        }
+        let layers = u32::try_from(cache.pool().len()).unwrap_or(u32::MAX);
+        store.set_if_neq(PointShadowCacheStore { layers });
     }
-    let layers = u32::try_from(cache.pool().len()).unwrap_or(u32::MAX);
-    store.set_if_neq(PointShadowCacheStore { layers });
 
     // Moving lamps: still again once nothing moved against their reference for the settle time.
     let settle = settings.config.settle_time_s;
@@ -515,12 +596,20 @@ fn admit_lamps(
                 Err(_) => moving.reference = None,
             }
         }
-        now - moving.still_since < settle
+        let still_moving = now - moving.still_since < settle;
+        if !still_moving
+            && let Some(m) = state.moving_atlas.remove(entity)
+            && let Some(mgr) = state.atlas.as_mut()
+        {
+            mgr.remove(m.key);
+        }
+        still_moving
     });
 
     let mut seen = EntityHashSet::default();
+    let mut seen_moving = EntityHashSet::default();
     let mut stock_drawn = EntityHashSet::default();
-    for (entity, mut light, at, light_layers, reach, mut slot, fade) in &mut lamps {
+    for (entity, mut light, at, prio, light_layers, reach, mut slot, fade) in &mut lamps {
         let held = slot.as_ref().is_some_and(|s| s.held);
         if let Some(lamp) = state.lamps.get(&entity) {
             seen.insert(entity);
@@ -532,41 +621,131 @@ fn admit_lamps(
             }
             let lamp = state.lamps.remove(&entity).expect("checked");
             let cache = state.cache.as_mut().expect("enabled");
+            if let Some(mgr) = state.atlas.as_mut() {
+                mgr.remove(lamp.key);
+            }
             if lamp.moved {
                 let _ = cache.invalidate(lamp.key, Invalidation::Moved);
                 state.moving.insert(entity, MovingLamp { reference: lamp.reference(), still_since: now });
+                // Under 2D atlas, immediately promote a held moving lamp (carried torch) into the Live Atlas.
+                if held && let (Some(acfg), Some(mgr)) = (atlas_cfg, state.atlas.as_mut()) {
+                    let key = LampKey(entity.to_bits());
+                    let desired = pick_tile_size(dist_to_eye(at.translation_vec3a()), prio.priority, None, f32::INFINITY, &acfg)
+                        .max(ATLAS_MOVING_TILE_PX.min(512));
+                    if let Some(tile_size) = mgr.admit_moving(key, desired, now) {
+                        if light.shadow_maps_enabled {
+                            light.shadow_maps_enabled = false;
+                        }
+                        commands.entity(entity).try_insert((AtlasPointShadowMap::default(), ShadowMapCached { ready: true }));
+                        state.moving_atlas.insert(entity, MovingAtlasLamp {
+                            key,
+                            tile_size,
+                            layers: light_layers.cloned().unwrap_or_default(),
+                        });
+                        seen_moving.insert(entity);
+                        continue;
+                    }
+                }
             } else {
                 let _ = cache.invalidate(lamp.key, Invalidation::SlotLost);
             }
             release(&mut commands, entity, &mut light, slot.as_deref());
-        } else if held && !state.moving.contains_key(&entity) {
-            let cache = state.cache.as_mut().expect("enabled");
+        } else if let Some(moving_lamp) = state.moving_atlas.get(&entity) {
+            if held && state.moving.contains_key(&entity) {
+                seen_moving.insert(entity);
+                if light.shadow_maps_enabled {
+                    light.shadow_maps_enabled = false;
+                }
+                continue;
+            }
+            let key = moving_lamp.key;
+            state.moving_atlas.remove(&entity);
+            if let Some(mgr) = state.atlas.as_mut() {
+                mgr.remove(key);
+            }
+            release(&mut commands, entity, &mut light, slot.as_deref());
+        } else if held && state.moving.contains_key(&entity) {
+            // Still moving under 2D atlas: keep drawing in the Live Atlas.
+            if let (Some(acfg), Some(mgr)) = (atlas_cfg, state.atlas.as_mut()) {
+                let key = LampKey(entity.to_bits());
+                let desired = pick_tile_size(dist_to_eye(at.translation_vec3a()), prio.priority, None, f32::INFINITY, &acfg)
+                    .max(ATLAS_MOVING_TILE_PX.min(512));
+                if let Some(tile_size) = mgr.admit_moving(key, desired, now) {
+                    if light.shadow_maps_enabled {
+                        light.shadow_maps_enabled = false;
+                    }
+                    commands.entity(entity).try_insert((AtlasPointShadowMap::default(), ShadowMapCached { ready: true }));
+                    state.moving_atlas.insert(entity, MovingAtlasLamp {
+                        key,
+                        tile_size,
+                        layers: light_layers.cloned().unwrap_or_default(),
+                    });
+                    seen_moving.insert(entity);
+                    continue;
+                }
+            }
+        } else if held {
+            let handover = atlas_cfg.is_some_and(|acfg| {
+                state.lamps.len() + state.moving_atlas.len() >= acfg.max_lamps as usize
+            });
+            if let Some(mgr) = state.atlas.as_ref()
+                && let Some((full_gen, was_handover)) = state.static_full_at_gen
+                && full_gen == mgr.static_free_gen()
+                && (!handover || was_handover)
+            {
+                continue;
+            }
             let reach = shadowed_reach(&light, reach);
+            let pos = at.translation_vec3a();
+            let (desired_tile, fov_y) = if let Some(acfg) = atlas_cfg {
+                let t = pick_tile_size(dist_to_eye(pos), prio.priority, None, f32::INFINITY, &acfg);
+                (t, guard_band_fov_y(u32::from(t), acfg.guard_texels))
+            } else {
+                (0, core::f32::consts::FRAC_PI_2)
+            };
             let mut lamp = Lamp {
                 key: LampKey(entity.to_bits()),
-                pos: at.translation_vec3a(),
+                pos,
                 reach,
-                frusta: cube_frusta(at, light.shadow_map_near_z, reach),
+                frusta: cube_frusta_fov(at, light.shadow_map_near_z, reach, fov_y),
                 layers: light_layers.cloned().unwrap_or_default(),
                 casters: EntityHashMap::default(),
                 moved: false,
                 captures: Vec::new(),
+                tile_size: desired_tile,
+                priority: prio.priority,
+                active_mover_faces: 0,
             };
             lamp.casters = casters.scan(&lamp, now, &settings.config);
             lamp.bake_statics();
             state.scans += 1;
+
+            if let (Some(acfg), Some(mgr)) = (atlas_cfg, state.atlas.as_mut()) {
+                let Some(granted) = mgr.admit_static(lamp.key, lamp.statics().0, desired_tile, now, handover) else {
+                    state.static_full_at_gen = Some((mgr.static_free_gen(), handover));
+                    continue;
+                };
+                if granted != desired_tile {
+                    lamp.tile_size = granted;
+                    let new_fov = guard_band_fov_y(u32::from(granted), acfg.guard_texels);
+                    lamp.frusta = cube_frusta_fov(at, light.shadow_map_near_z, reach, new_fov);
+                }
+            }
+
+            let cache = state.cache.as_mut().expect("enabled");
             if cache.admit(lamp.key, LampTier::Full, lamp.statics()).is_err() {
-                // No slot in the cache (the budget shrank): the stock path.
-                if light.shadow_maps_enabled {
+                if let Some(mgr) = state.atlas.as_mut() {
+                    mgr.remove(lamp.key);
+                }
+                if !atlas_on && light.shadow_maps_enabled {
                     stock_drawn.insert(entity);
                 }
                 continue;
             }
             seen.insert(entity);
-            // A slot gained this frame has nothing valid in its live layers: no shadow until the
-            // captures are done. A lamp the stock path drew keeps its fade.
             let gained = slot.as_ref().is_none_or(DetectChanges::is_added);
-            let drawn = state.stock_drawn.contains(&entity) || (switched_on && light.shadow_maps_enabled && !gained);
+            let drawn = !atlas_on
+                && (state.stock_drawn.contains(&entity) || (switched_on && light.shadow_maps_enabled && !gained));
             if light.shadow_maps_enabled {
                 light.shadow_maps_enabled = false;
             }
@@ -578,29 +757,46 @@ fn admit_lamps(
                     fade.0 = 0.0;
                 }
             }
-            commands.entity(entity).try_insert((CachedPointShadowMap::default(), ShadowMapCached::default()));
+            if atlas_on {
+                commands.entity(entity).try_insert((AtlasPointShadowMap::default(), ShadowMapCached::default()));
+            } else {
+                commands.entity(entity).try_insert((CachedPointShadowMap::default(), ShadowMapCached::default()));
+            }
             state.lamps.insert(entity, lamp);
             continue;
         }
-        if light.shadow_maps_enabled {
+        if !atlas_on && light.shadow_maps_enabled {
             stock_drawn.insert(entity);
         }
     }
     // Despawned lamps.
     let cache = state.cache.as_mut().expect("enabled");
+    let mut atlas_mgr = state.atlas.as_mut();
     state.lamps.retain(|entity, lamp| {
         let keep = seen.contains(entity);
         if !keep {
             let _ = cache.invalidate(lamp.key, Invalidation::Despawned);
+            if let Some(mgr) = atlas_mgr.as_deref_mut() {
+                mgr.remove(lamp.key);
+            }
         }
         keep
     });
+    if let Some(mgr) = state.atlas.as_mut() {
+        state.moving_atlas.retain(|entity, moving| {
+            let keep = seen_moving.contains(entity);
+            if !keep {
+                mgr.remove(moving.key);
+            }
+            keep
+        });
+    }
     state.stock_drawn = stock_drawn;
 }
 
 /// Hands a lamp back to the stock path: its components go, its shadow flag is the budget's.
 fn release(commands: &mut Commands, entity: Entity, light: &mut Mut<PointLight>, slot: Option<&ShadowSlot>) {
-    commands.entity(entity).try_remove::<(CachedPointShadowMap, ShadowMapCached)>();
+    commands.entity(entity).try_remove::<(CachedPointShadowMap, AtlasPointShadowMap, ShadowMapCached)>();
     let stock = slot.is_some_and(|s| s.held && s.fade > 0.0);
     if light.shadow_maps_enabled != stock {
         light.shadow_maps_enabled = stock;
@@ -611,7 +807,8 @@ type CachedLampItem<'a> = (
     &'a GlobalTransform,
     &'a PointLight,
     Option<&'a ShadowReach>,
-    &'a mut CachedPointShadowMap,
+    Option<&'a mut CachedPointShadowMap>,
+    Option<&'a mut AtlasPointShadowMap>,
     &'a mut CubemapVisibleEntities,
     &'a mut ShadowMapCached,
     (Option<&'a mut ShadowSlot>, Option<&'a mut PointLightShadowFade>),
@@ -621,12 +818,18 @@ type CachedLampItem<'a> = (
 #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value, clippy::type_complexity)]
 #[expect(clippy::too_many_lines, reason = "one pass per cached lamp: feedback, lamp and caster changes, movers, then the plan")]
 fn track_lamps(
-    settings: Res<LampShadowCache>,
+    (settings, atlas_settings): (Res<LampShadowCache>, Option<Res<LampShadowAtlas>>),
     time: Res<Time>,
-    (mut state, mut gauges): (ResMut<LampCacheState>, ResMut<LampCacheStats>),
-    (feedback, mut reports, face_cull, counters): (
+    (mut state, mut gauges, mut atlas_gauges): (
+        ResMut<LampCacheState>,
+        ResMut<LampCacheStats>,
+        Option<ResMut<LampShadowAtlasStats>>,
+    ),
+    (feedback, mut reports, atlas_feedback, mut atlas_reports, face_cull, counters): (
         Res<PointShadowCacheFeedback>,
         ResMut<LampCacheReports>,
+        Option<Res<PointShadowAtlasFeedback>>,
+        Option<ResMut<LampShadowAtlasReports>>,
         Option<Res<PointShadowFaceCull>>,
         Option<Res<DiagCounters>>,
     ),
@@ -644,46 +847,90 @@ fn track_lamps(
     let state = &mut *state;
     let removed: EntityHashSet = removed.read().chain(removed_batches.read()).chain(shadowless.iter()).collect();
     let reports: Vec<(Entity, CachedPointShadowReport)> = feedback.drain().into_iter().chain(reports.0.drain(..)).collect();
-    let Some(cache) = state.cache.as_mut().filter(|_| settings.enabled) else {
+    let atlas_reports_vec: Vec<(Entity, AtlasPointShadowReport)> = atlas_feedback
+        .as_deref()
+        .map(PointShadowAtlasFeedback::drain)
+        .unwrap_or_default()
+        .into_iter()
+        .chain(atlas_reports.as_deref_mut().map(|r| std::mem::take(&mut r.0)).unwrap_or_default())
+        .collect();
+
+    let atlas_cfg = atlas_settings.as_deref().filter(|a| a.enabled).map(|a| a.config);
+    let atlas_on = atlas_cfg.is_some();
+    let active = atlas_on || settings.enabled;
+    let Some(cache) = state.cache.as_mut().filter(|_| active) else {
         let idle = LampCacheStats { scans: state.scans, ..LampCacheStats::default() };
         if *gauges != idle {
-            // Switched off: the gauges read zero once, then stay silent.
-            if let Some(counters) = counters {
-                publish(&counters, &idle);
+            if let Some(counters) = counters.as_deref() {
+                publish(counters, &idle);
             }
             *gauges = idle;
+        }
+        if let Some(ag) = atlas_gauges.as_deref_mut() {
+            let idle_atlas = LampShadowAtlasStats { scans: state.scans, ..LampShadowAtlasStats::default() };
+            if *ag != idle_atlas {
+                if let Some(counters) = counters.as_deref() {
+                    publish_atlas_gauges(counters, &idle_atlas);
+                }
+                *ag = idle_atlas;
+            }
         }
         return;
     };
     let now = time.elapsed_secs();
     let config = settings.config;
 
-    // Render-world feedback: confirmed captures, lost slots.
-    for (entity, report) in reports {
-        let (Some(lamp), Ok((.., (slot, fade)))) = (state.lamps.get_mut(&entity), lamps.get_mut(entity)) else {
-            continue;
-        };
-        if report.lost {
-            let _ = cache.invalidate(lamp.key, Invalidation::SlotLost);
-            let _ = cache.admit(lamp.key, LampTier::Full, lamp.statics());
-            lamp.captures.clear();
-            lamp.bake_statics();
-            // Its live layers hold nothing of it any more: no shadow until captured again.
-            if let Some(mut slot) = slot {
-                slot.fade = 0.0;
+    // Render-world feedback: confirmed captures, lost slots / atlas reallocations.
+    if atlas_on {
+        for (entity, report) in atlas_reports_vec {
+            let (Some(lamp), Ok((.., (slot, fade)))) = (state.lamps.get_mut(&entity), lamps.get_mut(entity)) else {
+                continue;
+            };
+            if report.lost {
+                let _ = cache.invalidate(lamp.key, Invalidation::SlotLost);
+                let _ = cache.admit(lamp.key, LampTier::Full, lamp.statics());
+                lamp.captures.clear();
+                lamp.bake_statics();
+                if let Some(mut slot) = slot {
+                    slot.fade = 0.0;
+                }
+                if let Some(mut fade) = fade {
+                    fade.0 = 0.0;
+                }
+                continue;
             }
-            if let Some(mut fade) = fade {
-                fade.0 = 0.0;
+            let captured = lamp.captures.iter().find(|(plan, _)| *plan == report.plan).map_or(0, |(_, mask)| *mask);
+            for face in TileMask(report.confirmed & captured).iter() {
+                let _ = cache.confirm_capture(lamp.key, face);
             }
-            continue;
         }
-        let captured = lamp.captures.iter().find(|(plan, _)| *plan == report.plan).map_or(0, |(_, mask)| *mask);
-        for face in TileMask(report.confirmed & captured).iter() {
-            let _ = cache.confirm_capture(lamp.key, face);
+    } else {
+        for (entity, report) in reports {
+            let (Some(lamp), Ok((.., (slot, fade)))) = (state.lamps.get_mut(&entity), lamps.get_mut(entity)) else {
+                continue;
+            };
+            if report.lost {
+                let _ = cache.invalidate(lamp.key, Invalidation::SlotLost);
+                let _ = cache.admit(lamp.key, LampTier::Full, lamp.statics());
+                lamp.captures.clear();
+                lamp.bake_statics();
+                // Its live layers hold nothing of it any more: no shadow until captured again.
+                if let Some(mut slot) = slot {
+                    slot.fade = 0.0;
+                }
+                if let Some(mut fade) = fade {
+                    fade.0 = 0.0;
+                }
+                continue;
+            }
+            let captured = lamp.captures.iter().find(|(plan, _)| *plan == report.plan).map_or(0, |(_, mask)| *mask);
+            for face in TileMask(report.confirmed & captured).iter() {
+                let _ = cache.confirm_capture(lamp.key, face);
+            }
         }
     }
 
-    // Camera frusta (SH-21b, CW-3b) and positions (mover distances).
+    // Camera frusta (SH-21b, CW-3b) and positions (mover distances & atlas tier selection).
     let mut frusta: Vec<Frustum> = Vec::new();
     let mut eyes: Vec<Vec3A> = Vec::new();
     for (camera, at, frustum) in &cameras {
@@ -694,8 +941,36 @@ fn track_lamps(
     }
     let view_frusta: Vec<ViewFrustum> = frusta.iter().map(|f| f.0).collect();
     let margin = face_cull.map_or(PointShadowFaceCull::default().margin_deg, |c| c.margin_deg);
-    let changed: Vec<Entity> = changed.iter().collect();
 
+    // Precompute bounding spheres for changed casters ONCE outside the lamp loop so scaling
+    // from 8 -> 48+ lamps avoids O(lamps x changed_casters) ECS lookups.
+    let changed_spheres: Vec<(Entity, Vec3A, f32, bool)> = changed
+        .iter()
+        .map(|e| {
+            if let Ok((_, transform, aabb, _, _, (unculled, ..), _)) = casters.meshes.get(e) {
+                if unculled {
+                    (e, Vec3A::ZERO, f32::INFINITY, true)
+                } else {
+                    let affine = transform.affine();
+                    let center = aabb.map_or(affine.translation, |a| affine.transform_point3a(a.center));
+                    let radius = aabb.map_or(f32::INFINITY, |a| {
+                        let s = affine.matrix3.x_axis.length_squared()
+                            .max(affine.matrix3.y_axis.length_squared())
+                            .max(affine.matrix3.z_axis.length_squared())
+                            .sqrt();
+                        a.half_extents.length() * s
+                    });
+                    (e, center, radius, false)
+                }
+            } else {
+                (e, Vec3A::ZERO, f32::INFINITY, true)
+            }
+        })
+        .collect();
+
+    let log_movers = log::log_enabled!(log::Level::Debug) && now - state.last_mover_log_s >= 1.0;
+    let mut unique_movers = EntityHashSet::default();
+    let (mut movable_pairs, mut rigid_pairs, mut animated_pairs, mut unbaked_pairs) = (0u32, 0u32, 0u32, 0u32);
     let mut movers_total = 0;
     for (&entity, lamp) in &mut state.lamps {
         let Ok((at, light, reach, ..)) = lamps.get(entity) else { continue };
@@ -705,6 +980,11 @@ fn track_lamps(
         // The lamp: position (origin shifts move everything alike), reach, frusta.
         let pos = at.translation_vec3a();
         let reach = shadowed_reach(light, reach);
+        let fov_y = if let Some(acfg) = atlas_cfg {
+            guard_band_fov_y(u32::from(lamp.tile_size.max(128)), acfg.guard_texels)
+        } else {
+            core::f32::consts::FRAC_PI_2
+        };
         let mut rescan = false;
         if (pos - lamp.pos).length() > STILL_EPSILON * 0.01 || (reach - lamp.reach).abs() > STILL_EPSILON {
             if lamp_moved(lamp, pos, &casters) {
@@ -715,7 +995,7 @@ fn track_lamps(
             rescan = lamp.casters.values().all(|c| c.class != CasterClass::Static) || (reach - lamp.reach).abs() > STILL_EPSILON;
             lamp.pos = pos;
             lamp.reach = reach;
-            lamp.frusta = cube_frusta(at, light.shadow_map_near_z, reach);
+            lamp.frusta = cube_frusta_fov(at, light.shadow_map_near_z, reach, fov_y);
         }
 
         let mut touched = 0u8;
@@ -735,7 +1015,13 @@ fn track_lamps(
                 touched |= c.baked;
             }
         }
-        for &e in &changed {
+        for &(e, center, radius, unculled) in &changed_spheres {
+            if !unculled && !lamp.casters.contains_key(&e) && radius.is_finite() {
+                let max_d = lamp.reach + radius;
+                if (center - lamp.pos).length_squared() > max_d * max_d {
+                    continue;
+                }
+            }
             touched |= update_caster(lamp, e, now, &config, &casters);
         }
         for (e, shown, _) in &casters.batches {
@@ -757,6 +1043,26 @@ fn track_lamps(
             }
         }
         let statics = lamp.statics();
+
+        // Under 2D atlas: sync empty/newly populated static faces and check dynamic tier resize.
+        if let (Some(acfg), Some(mgr)) = (atlas_cfg, state.atlas.as_mut()) {
+            if statics != statics_before {
+                touched |= mgr.sync_static_faces(lamp.key, statics.0);
+            }
+            let dist = eyes.iter().map(|eye| (*eye - lamp.pos).length()).fold(f32::INFINITY, f32::min);
+            if dist.is_finite()
+                && let Some((new_tile, alloc_mask)) = mgr.maybe_resize(lamp.key, dist, lamp.priority, now)
+            {
+                lamp.tile_size = new_tile;
+                let new_fov = guard_band_fov_y(u32::from(new_tile), acfg.guard_texels);
+                lamp.frusta = cube_frusta_fov(at, light.shadow_map_near_z, reach, new_fov);
+                for c in lamp.casters.values_mut() {
+                    c.baked &= !alloc_mask;
+                }
+                touched |= alloc_mask;
+            }
+        }
+
         if touched != 0 || statics != statics_before {
             let _ = cache.invalidate(lamp.key, Invalidation::StaticsChanged { touched: TileMask(touched), statics });
         }
@@ -764,11 +1070,20 @@ fn track_lamps(
         // Movers, kept to what a camera can see.
         let mut faces = 0u8;
         let mut distance = f32::INFINITY;
-        for c in lamp.casters.values() {
+        for (&caster_entity, c) in &lamp.casters {
             let f = c.mover_faces();
             if f != 0 {
                 faces |= f;
                 movers_total += 1;
+                if log_movers {
+                    unique_movers.insert(caster_entity);
+                    match (c.class, c.mobility) {
+                        (CasterClass::Mover, CasterMobility::Movable) => movable_pairs += 1,
+                        (CasterClass::Mover, CasterMobility::Rigid) => rigid_pairs += 1,
+                        (CasterClass::Mover, CasterMobility::AnimatedStatic) => animated_pairs += 1,
+                        (CasterClass::Static, _) | (CasterClass::Mover, CasterMobility::Static) => unbaked_pairs += 1,
+                    }
+                }
                 distance = distance.min(eyes.iter().map(|eye| (*eye - c.center).length()).fold(f32::INFINITY, f32::min));
             }
         }
@@ -777,26 +1092,70 @@ fn track_lamps(
         if faces != 0 && in_view {
             faces &= point_shadow_faces_seen(Vec3::from(lamp.pos), lamp.reach, margin, &view_frusta);
         }
+        lamp.active_mover_faces = if in_view { faces } else { 0 };
         if faces != 0 && in_view {
             let _ = cache.set_movers(lamp.key, MoverInput { tiles: TileMask(faces), distance_m: distance });
         }
     }
 
     let plan = cache.plan(now).clone();
-    let views = write_plan(&plan, state, &mut lamps, &mut visibility);
-    let cache = state.cache.as_ref().expect("enabled");
-    *gauges = LampCacheStats {
-        frame: plan.stats,
-        views,
-        stock_lamps: 0,
-        movers: movers_total,
-        scans: state.scans,
-        store_used: u32::try_from(cache.pool().in_use()).unwrap_or(u32::MAX),
-        store_layers: u32::try_from(cache.pool().len()).unwrap_or(u32::MAX),
-    };
-    gauges.stock_lamps = u32::try_from(state.stock_drawn.len()).unwrap_or(u32::MAX);
-    if let Some(counters) = counters {
-        publish(&counters, &gauges);
+    if log_movers {
+        state.last_mover_log_s = now;
+        log::debug!(
+            "lamp_cache movers: unique={} pairs={} (movable={} rigid={} animated={} unbaked={}) drawn_mover_faces={} clean_faces={} lamps={}",
+            unique_movers.len(),
+            movers_total,
+            movable_pairs,
+            rigid_pairs,
+            animated_pairs,
+            unbaked_pairs,
+            plan.stats.mover_draws,
+            plan.stats.clean_faces,
+            plan.stats.lamps,
+        );
+    }
+
+    if let Some(acfg) = atlas_cfg {
+        let mut views = write_atlas_plan(&plan, state, &mut lamps, &mut visibility);
+        views += update_moving_atlas_lamps(
+            state,
+            acfg.guard_texels,
+            margin,
+            &frusta,
+            &view_frusta,
+            &casters,
+            &mut lamps,
+            &mut visibility,
+        );
+        if let (Some(mgr), Some(ag)) = (state.atlas.as_ref(), atlas_gauges.as_deref_mut()) {
+            *ag = LampShadowAtlasStats {
+                atlas: mgr.stats(),
+                views,
+                moving_lamps: u32::try_from(state.moving_atlas.len()).unwrap_or(u32::MAX),
+                movers: movers_total,
+                captures: plan.stats.captures,
+                mover_draws: plan.stats.mover_draws,
+                scans: state.scans,
+            };
+            if let Some(counters) = counters.as_deref() {
+                publish_atlas_gauges(counters, ag);
+            }
+        }
+    } else {
+        let views = write_plan(&plan, state, &mut lamps, &mut visibility);
+        let cache = state.cache.as_ref().expect("enabled");
+        *gauges = LampCacheStats {
+            frame: plan.stats,
+            views,
+            stock_lamps: u32::try_from(state.stock_drawn.len()).unwrap_or(u32::MAX),
+            movers: movers_total,
+            scans: state.scans,
+            store_used: u32::try_from(cache.pool().in_use()).unwrap_or(u32::MAX),
+            store_layers: u32::try_from(cache.pool().len()).unwrap_or(u32::MAX),
+        };
+        if let Some(counters) = counters.as_deref() {
+            publish(counters, &gauges);
+        }
     }
 }
 
@@ -869,7 +1228,7 @@ fn write_plan(
     let mut views = 0;
     for (&entity, lamp) in &mut state.lamps {
         let Some(lamp_plan) = plan.lamp(lamp.key) else { continue };
-        let Ok((_, _, _, mut cached, mut lists, mut marker, _)) = lamps.get_mut(entity) else { continue };
+        let Ok((_, _, _, Some(mut cached), _, mut lists, mut marker, _)) = lamps.get_mut(entity) else { continue };
         let capture = lamp_plan.capture.0;
         let movers = lamp_plan.movers.0;
         if capture != 0 {
@@ -932,6 +1291,291 @@ fn write_plan(
             *cached = CachedPointShadowMap { view_faces, draw_faces, load_faces: movers, copies, plan: plan.frame };
         }
         marker.set_if_neq(ShadowMapCached { ready: lamp_plan.ready });
+    }
+    views
+}
+
+/// Writes each static atlas lamp's [`AtlasPointShadowMap`], face caster lists and readiness.
+fn write_atlas_plan(
+    plan: &FramePlan,
+    state: &mut LampCacheState,
+    lamps: &mut Query<CachedLampItem>,
+    visibility: &mut Query<&mut ViewVisibility>,
+) -> u32 {
+    let Some(mgr) = state.atlas.as_mut() else { return 0 };
+    let mut views = 0;
+    for (&entity, lamp) in &mut state.lamps {
+        let Some(lamp_plan) = plan.lamp(lamp.key) else { continue };
+        let Ok((_, _, _, _, Some(mut atlas_comp), mut lists, mut marker, _)) = lamps.get_mut(entity) else { continue };
+
+        let live_valid = mgr.sync_live_faces(lamp.key, lamp.active_mover_faces);
+        let static_rects_opt = mgr.lamp_static_rects(lamp.key).unwrap_or([None; 6]);
+        let live_rects_opt = mgr.lamp_live_rects(lamp.key).unwrap_or([None; 6]);
+        let static_rects = static_rects_opt.map(|r| r.map(sf_sky::shadow_atlas::AtlasRect::to_array));
+        let live_rects = live_rects_opt.map(|r| r.map(sf_sky::shadow_atlas::AtlasRect::to_array));
+        let static_mask = static_rects.iter().enumerate().fold(0u8, |m, (i, r)| if r.is_some() { m | (1 << i) } else { m });
+
+        let capture = lamp_plan.capture.0 & static_mask;
+        let movers = lamp_plan.movers.0 & live_valid;
+        if capture != 0 {
+            lamp.captures.push((plan.frame, capture));
+            if lamp.captures.len() > CAPTURE_HISTORY {
+                lamp.captures.remove(0);
+            }
+        }
+
+        for face in 0..6u8 {
+            let bit = 1 << face;
+            let list: Vec<Entity> = if capture & bit != 0 {
+                let mut list: Vec<Entity> = lamp
+                    .casters
+                    .iter_mut()
+                    .filter(|(_, c)| c.class == CasterClass::Static && c.faces & bit != 0)
+                    .map(|(e, c)| {
+                        c.baked |= bit;
+                        *e
+                    })
+                    .collect();
+                list.sort_unstable();
+                list
+            } else if movers & bit != 0 {
+                let mut list: Vec<Entity> =
+                    lamp.casters.iter().filter(|(_, c)| c.mover_faces() & bit != 0).map(|(e, _)| *e).collect();
+                list.sort_unstable();
+                list
+            } else {
+                continue;
+            };
+            for e in &list {
+                if lamp.casters.get(e).is_some_and(|c| !c.no_cpu_culling)
+                    && let Ok(mut v) = visibility.get_mut(*e)
+                {
+                    v.set_visible();
+                }
+            }
+            if lists.bypass_change_detection().get(usize::from(face)).entities != list {
+                lists.get_mut(usize::from(face)).entities = list;
+            }
+        }
+
+        let draw_faces = capture | movers;
+        let draw_to_live = movers;
+        let blit_from_static = movers & static_mask;
+        let mover_only_faces = movers;
+        let view_faces = (lamp_plan.views.0 & (static_mask | live_valid)) | draw_faces;
+        views += view_faces.count_ones();
+
+        if draw_faces != 0
+            || atlas_comp.view_faces != view_faces
+            || atlas_comp.static_rects != static_rects
+            || atlas_comp.live_rects != live_rects
+        {
+            *atlas_comp = AtlasPointShadowMap {
+                static_rects,
+                live_rects,
+                view_faces,
+                draw_faces,
+                draw_to_live,
+                blit_from_static,
+                mover_only_faces,
+                plan: plan.frame,
+            };
+        }
+        marker.set_if_neq(ShadowMapCached { ready: lamp_plan.ready });
+    }
+    views
+}
+
+struct MovingTorchWork {
+    entity: Entity,
+    pos: Vec3A,
+    reach: f32,
+    layers: RenderLayers,
+    frusta: CubemapFrusta,
+    live_rects: [Option<[u16; 3]>; 6],
+    draw_faces: u8,
+    face_lists: [Vec<Entity>; 6],
+}
+
+/// One pass over `casters.meshes` + `casters.batches` for all active moving torches together,
+/// using squared-distance sphere pre-rejection and no mobility walks or temporary hash maps.
+fn scan_moving_atlas_torches(
+    active: &mut [MovingTorchWork],
+    casters: &Casters,
+    visibility: &mut Query<&mut ViewVisibility>,
+) {
+    for (caster_entity, transform, aabb, shown, layers, (unculled, no_cpu, ..), range) in &casters.meshes {
+        if !shown.get() {
+            continue;
+        }
+        let affine = transform.affine();
+        let center = aabb.map_or(affine.translation, |a| affine.transform_point3a(a.center));
+        let radius = if unculled {
+            f32::INFINITY
+        } else {
+            aabb.map_or(f32::INFINITY, |a| {
+                let s = affine
+                    .matrix3
+                    .x_axis
+                    .length_squared()
+                    .max(affine.matrix3.y_axis.length_squared())
+                    .max(affine.matrix3.z_axis.length_squared())
+                    .sqrt();
+                a.half_extents.length() * s
+            })
+        };
+        let caster_layers = layers.unwrap_or_default();
+        let mut hit_any = false;
+        for torch in active.iter_mut() {
+            if !unculled && radius.is_finite() {
+                let max_d = torch.reach + radius;
+                if (center - torch.pos).length_squared() > max_d * max_d {
+                    continue;
+                }
+            }
+            if !torch.layers.intersects(caster_layers) {
+                continue;
+            }
+            if let Some(range) = range {
+                let at = if range.use_aabb { center } else { affine.translation };
+                if !range.is_visible_at_all((at - torch.pos).length()) {
+                    continue;
+                }
+            }
+            let sphere = Sphere { center: torch.pos, radius: torch.reach };
+            let faces = if unculled {
+                torch.draw_faces
+            } else {
+                crate::gpu_culled_casters::caster_faces(&sphere, &torch.frusta, aabb, transform) & torch.draw_faces
+            };
+            if faces == 0 {
+                continue;
+            }
+            hit_any = true;
+            for face in TileMask(faces).iter() {
+                torch.face_lists[usize::from(face)].push(caster_entity);
+            }
+        }
+        if hit_any && !no_cpu && let Ok(mut v) = visibility.get_mut(caster_entity) {
+            v.set_visible();
+        }
+    }
+    for (batch_entity, shown, layers) in &casters.batches {
+        if !shown.get() {
+            continue;
+        }
+        let batch_layers = layers.unwrap_or_default();
+        for torch in active.iter_mut() {
+            if !torch.layers.intersects(batch_layers) {
+                continue;
+            }
+            for face in TileMask(torch.draw_faces).iter() {
+                torch.face_lists[usize::from(face)].push(batch_entity);
+            }
+        }
+    }
+}
+
+/// Updates moving atlas lamps (carried torches) drawing directly into their Live Atlas tiles.
+#[allow(clippy::too_many_arguments)]
+fn update_moving_atlas_lamps(
+    state: &mut LampCacheState,
+    guard_texels: f32,
+    margin: f32,
+    frusta: &[Frustum],
+    view_frusta: &[ViewFrustum],
+    casters: &Casters,
+    lamps: &mut Query<CachedLampItem>,
+    visibility: &mut Query<&mut ViewVisibility>,
+) -> u32 {
+    let Some(mgr) = state.atlas.as_ref() else { return 0 };
+    if state.moving_atlas.is_empty() {
+        return 0;
+    }
+    state.moving_plan = state.moving_plan.wrapping_add(1);
+    let plan_id = state.moving_plan;
+    let mut views = 0u32;
+    let mut active: Vec<MovingTorchWork> = Vec::with_capacity(state.moving_atlas.len());
+
+    for (&entity, moving) in &state.moving_atlas {
+        let Ok((at, light, reach, _, Some(mut atlas_comp), _, mut marker, _)) = lamps.get_mut(entity) else {
+            continue;
+        };
+        let pos = at.translation_vec3a();
+        let reach = shadowed_reach(light, reach);
+        let sphere = Sphere { center: pos, radius: reach };
+        let in_view = frusta.is_empty() || frusta.iter().any(|f| f.intersects_sphere(&sphere, true));
+        let seen = if !in_view {
+            0
+        } else if view_frusta.is_empty() {
+            ALL_FACES
+        } else {
+            point_shadow_faces_seen(Vec3::from(pos), reach, margin, view_frusta)
+        };
+
+        let live_rects_opt = mgr.lamp_live_rects(moving.key).unwrap_or([None; 6]);
+        let live_rects = live_rects_opt.map(|r| r.map(sf_sky::shadow_atlas::AtlasRect::to_array));
+        let live_mask = live_rects.iter().enumerate().fold(0u8, |m, (i, r)| if r.is_some() { m | (1 << i) } else { m });
+        let draw_faces = seen & live_mask;
+
+        if draw_faces == 0 {
+            if atlas_comp.draw_faces != 0 || atlas_comp.view_faces != 0 || atlas_comp.live_rects != live_rects {
+                *atlas_comp = AtlasPointShadowMap {
+                    static_rects: [None; 6],
+                    live_rects,
+                    view_faces: 0,
+                    draw_faces: 0,
+                    draw_to_live: 0,
+                    blit_from_static: 0,
+                    mover_only_faces: 0,
+                    plan: plan_id,
+                };
+            }
+            marker.set_if_neq(ShadowMapCached { ready: true });
+            continue;
+        }
+
+        let fov_y = guard_band_fov_y(u32::from(moving.tile_size.max(128)), guard_texels);
+        views += draw_faces.count_ones();
+        active.push(MovingTorchWork {
+            entity,
+            pos,
+            reach,
+            layers: moving.layers.clone(),
+            frusta: cube_frusta_fov(at, light.shadow_map_near_z, reach, fov_y),
+            live_rects,
+            draw_faces,
+            face_lists: core::array::from_fn(|_| Vec::new()),
+        });
+    }
+
+    if !active.is_empty() {
+        state.scans += 1;
+        scan_moving_atlas_torches(&mut active, casters, visibility);
+    }
+
+    for mut torch in active {
+        let Ok((_, _, _, _, Some(mut atlas_comp), mut lists, mut marker, _)) = lamps.get_mut(torch.entity) else {
+            continue;
+        };
+        for face in TileMask(torch.draw_faces).iter() {
+            let list = &mut torch.face_lists[usize::from(face)];
+            list.sort_unstable();
+            if lists.bypass_change_detection().get(usize::from(face)).entities != *list {
+                lists.get_mut(usize::from(face)).entities = core::mem::take(list);
+            }
+        }
+        *atlas_comp = AtlasPointShadowMap {
+            static_rects: [None; 6],
+            live_rects: torch.live_rects,
+            view_faces: torch.draw_faces,
+            draw_faces: torch.draw_faces,
+            draw_to_live: torch.draw_faces,
+            blit_from_static: 0,
+            mover_only_faces: 0,
+            plan: plan_id,
+        };
+        marker.set_if_neq(ShadowMapCached { ready: true });
     }
     views
 }

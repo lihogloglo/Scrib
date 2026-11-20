@@ -19,6 +19,8 @@
 //! - [`sun_gate`]: sun/moon cascades by the direct light's visible contribution (CW-8).
 //! - [`lamp_cache`]: the static lamp shadow cache policy (face states, capture queue, store
 //!   pool, mover rate tiers; `docs/specs/lamp-shadow-cache.md`).
+//! - [`shadow_atlas`]: the 2D shadow atlas buddy allocator, resolution-tier policy, guard-band
+//!   math, and tunables.
 //!
 //! The Bevy glue lives in `sf_sky_bevy`.
 
@@ -29,6 +31,7 @@ mod clock;
 mod curve;
 pub mod lamp_cache;
 mod night;
+pub mod shadow_atlas;
 mod sky;
 pub mod sun_gate;
 mod weather;

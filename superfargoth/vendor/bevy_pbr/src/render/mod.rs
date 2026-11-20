@@ -8,6 +8,7 @@ mod mesh_bindings;
 mod mesh_view_bindings;
 mod morph;
 mod point_face_cull; // superfargoth patch (own: point shadow face culling)
+mod point_shadow_atlas; // superfargoth patch (own, CW-13b: 2D point shadow atlas)
 mod point_shadow_cache; // superfargoth patch (own, CW-4: lamp shadow cache)
 pub(crate) mod skin;
 
@@ -21,6 +22,7 @@ pub use mesh_bindings::MeshLayouts;
 pub use mesh_view_bindings::*;
 pub use morph::*;
 pub use point_face_cull::*; // superfargoth patch (own: point shadow face culling)
+pub use point_shadow_atlas::*; // superfargoth patch (own, CW-13b: 2D point shadow atlas)
 pub use point_shadow_cache::*; // superfargoth patch (own, CW-4: lamp shadow cache)
 pub use skin::{
     extract_skins, prepare_skins, skins_use_uniform_buffers, SkinJointBlocks, SkinUniforms, MAX_JOINTS,

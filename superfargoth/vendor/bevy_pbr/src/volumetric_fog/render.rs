@@ -507,6 +507,13 @@ impl SpecializedRenderPipeline for VolumetricFogPipeline {
         {
             shader_defs.push("ATMOSPHERE".into());
         }
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+        if key
+            .mesh_pipeline_view_key
+            .contains(MeshPipelineViewLayoutKey::POINT_SHADOW_ATLAS)
+        {
+            shader_defs.push("POINT_SHADOW_ATLAS".into());
+        }
 
         if key.has_density_texture {
             shader_defs.push("DENSITY_TEXTURE".into());

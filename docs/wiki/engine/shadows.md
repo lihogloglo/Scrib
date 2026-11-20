@@ -78,15 +78,29 @@ Everything else is unshadowed.
   schedule, encoder or draw. Faces without casters already draw once (a clear) and stay clean. Switch:
   `BEVYRROWIND_POINT_FACE_CULL=1` (`mw_environment_bevy/src/render.rs:29`). Gauges `views/lamp_face/culled|revealed|drawn`
   (`sf_diag_bevy/src/views.rs`), debug line `bevy_pbr::shadow_refresh`.
-- **Lamp shadow cache (opt-in, off; ROADMAP 1.25 CW-4, built not measured).** `shadow.lamp.cache.enabled` (live; alias
-  `BEVYRROWIND_LAMP_CACHE=1`). `sf_sky_bevy/src/lamp_cache.rs`: `admit_lamps` (`:457`, after the budget) gives a still
-  slot holder `bevy_pbr::CachedPointShadowMap` + `ShadowMapCached` and turns its stock flag off (no stock scan, no hash);
-  the budget holds its fade at 0 until every face is captured (`shadow_budget.rs:427`). One caster scan at admission,
-  then only changed casters, light-relative at 1 mm (origin shifts change nothing); skinned, morphed and
-  `LampShadowMobility::Movable` (game: on characters, `render.rs:306`) always move, rigid ones settle after 1 s.
-  `track_lamps` (`:623`) feeds S1 (`sf_sky::lamp_cache`) and writes each lamp's masks, copies and lists from its plan
-  (`write_plan` `:863`): a clean face has no view; a mover face is copied back and drawn with its movers only. A lamp
-  that moves leaves for the stock path until still. Off: the stock path exactly. Not yet run on a GPU (S4).
+- **Lamp shadow cache (opt-in, off; ROADMAP 1.25 CW-4, confirmed on GPU SH-31) + Single-encoder batched pass (CW-13a, SH-32).**
+  `shadow.lamp.cache.enabled` (live; alias `BEVYRROWIND_LAMP_CACHE=1`) + `shadow.lamp.batched_pass` (live; alias
+  `BEVYRROWIND_LAMP_BATCHED_PASS=1`). `sf_sky_bevy/src/lamp_cache.rs` gives each still slot holder
+  `bevy_pbr::CachedPointShadowMap` + `ShadowMapCached` and turns its stock flag off (no stock scan, no hash); the budget
+  holds its fade at 0 until every face is captured. One caster scan at admission, then only changed casters (spatial
+  pre-reject, light-relative 1 mm, origin shifts invisible); skinned, morphed and `LampShadowMobility::Movable` always
+  move, rigid ones settle after 1 s. Clean faces keep no view; mover faces restore static depth and draw movers only.
+  CW-13a (`record_batched_point_shadows`, vendored `bevy_pbr`) collapses all active point/spot shadow views into one
+  command encoder instead of 5 encoders/face in `Core3dShadows` (reversing CW-4's render-thread regression: −0.70 ms on
+  `balmora_walk_night`, −0.37 ms `faster` on `census`; SH-32 confirmed).
+- **2D Point Shadow Atlas (opt-in, off; ROADMAP 1.25 CW-13b, awaiting SH-33).** `shadow.lamp.atlas.enabled` (live; alias
+  `BEVYRROWIND_LAMP_ATLAS=1`). Replaces the fixed 8-lamp cube array (and Bevy's 42-cube `max_texture_array_layers / 6`
+  cap) with two persistent 2D `Depth32Float` atlases managed by a buddy quadtree (`sf_sky::shadow_atlas::{BuddyAtlas,
+  ShadowAtlasManager}`): Static Atlas (default 4096², persistent cached static depth) + Live Atlas (default 2048²,
+  dynamic mover overlays and carried torches), with variable 512 / 256 / 128 px distance/luminance tiers (1.5× hysteresis,
+  2 s cooldown), empty-face omission, 2-texel guard band (`guard_band_fov_y` + `inv_guard_tan` + inner half-texel clamp),
+  and handover spares for simultaneous crossfades. Contact shadows stay capped at `shadow.lamp.contact_max = 8` top-ranked
+  lamps so scaling to 48+ shadowed lamps never multiplies raymarch cost. Render side (`bevy_pbr/src/render/point_shadow_atlas.rs`
+  + `point_shadow_atlas_blit.wesl`, `@group(0)` bindings `54..=56`, `MeshPipelineKey::POINT_SHADOW_ATLAS`): `record_point_shadow_atlas`
+  runs in ONE command encoder with a single `RenderPass` over the Live Atlas for all `NoIndirectDrawing` mover-only faces
+  (using `fs_blit` via `textureLoad` from the Static Atlas before drawing movers). Interleaved A/B `shadow_a3_atlas`
+  (2560x1440 DLSS Quality): `atlas8` −0.84 ms walk / −0.53 ms census; `atlas48` (19–24 shadowed lamps simultaneously)
+  −0.76 ms walk / −0.32 ms census (all 4 comparisons `faster`, U=0.0; p99 −1.9 to −3.5 ms). Stays opt-in pending SH-33.
 - **Legacy lamp cache: not in the game** (`POINT_SHADOW_CACHE = false`, `mw_environment_bevy/src/render.rs:37`, since
   2026-10-21; `--off shadowcache` is a no-op). As built: `sf_shadow_cache_bevy` (`lib.rs:1`-`:70`, `ShadowCachePlugin` `:209`): per shadowed light a persistent
   cube array holds the depth of its static casters; Bevy's views draw movers over a restored copy. Captures:
@@ -109,19 +123,23 @@ Vendored: #26149/#26161 slim per-face schedule (`vendor/README.md:11`), plus the
 Live tunables (`set <name> <value>` in the console, BRP `sf.tunables/set`, `--set name=value`; bound by
 `sf_sky_bevy/src/quality.rs` `ShadowQualityPlugin`, quality levels at the `Preset` layer from
 `mw_exterior_bevy/src/quality_presets.rs`): lamps `shadow.lamp.count`, `.map_size_px`, `.fade_m` (Bevyrrowind 35,45 at
-`Mod`), `.fade_time_s`, `.hysteresis`, `.contact`, `.day_gate` (+ `.receiver_m`, `.contrast`), `.face_cull` (+
-`.margin_deg`), `.cache.enabled` (+ 11 `shadow.lamp.cache.*` policy values); sun `shadow.sun.cascades`, `.distance_m`, `.split_lambda`, `.overlap`, `.soft`, `.soft_size_texels`,
+`Mod`), `.fade_time_s`, `.hysteresis`, `.contact`, `.contact_max` (8), `.day_gate` (+ `.receiver_m`, `.contrast`),
+`.face_cull` (+ `.margin_deg`), `.batched_pass`, `.cache.enabled` (+ 11 `shadow.lamp.cache.*` policy values),
+`.atlas.enabled` (+ 10 `shadow.lamp.atlas.*` sizes/tiers/guard/max_lamps/handover values); sun `shadow.sun.cascades`,
+`.distance_m`, `.split_lambda`, `.overlap`, `.soft`, `.soft_size_texels`,
 `.gate` (+ `.contrast`, `.hysteresis`, `.fade_s`); views `shadow.contact` (+ `.steps`, `.thickness_m`, `.length_m`),
 `shadow.filter` (auto|hardware|gaussian|temporal), `render.ssao.quality`. Deprecated env aliases: `BEVYRROWIND_POINT_SHADOWS`,
-`_LAMP_CONTACT`, `_SHADOW_FILTER`, `_SSAO`, `_LAMP_DAY_GATE`, `_POINT_FACE_CULL`, `_LAMP_CACHE`, `_SUN_SHADOW_GATE`; `--point-shadows N`,
+`_LAMP_CONTACT`, `_SHADOW_FILTER`, `_SSAO`, `_LAMP_DAY_GATE`, `_POINT_FACE_CULL`, `_LAMP_CACHE`, `_LAMP_BATCHED_PASS`,
+`_LAMP_ATLAS`, `_SUN_SHADOW_GATE`; `--point-shadows N`,
 `--sun-cascades N:M` (and `BEVYRROWIND_SUN_CASCADES`) set the `CommandLine` layer. `--off` parts (`mw_game_core/src/perf.rs:135`):
 `shadows`, `shadowcache`, `lampfilter`, `movershadows`, `farshadows`, `softshadows`, `contactshadows`, `ssao`, `cpuculltag`,
 `cascadehold`, `cascadeencoders` (`softshadows`, `contactshadows`, `ssao` force their tunables at `CommandLine`).
 `BEVYRROWIND_GPU_CULL_STATICS=1` stays env (startup). Console `flip contactshadows` (devtools, older duplicate).
 Gauges: `ShadowCacheStats` (`sf_shadow_cache_bevy/src/lib.rs:147`), `RUST_LOG=bevy_pbr::shadow_refresh=debug`; lamp
-cache `lamp_cache/lamps|ready|views|captures|mover_faces|deferred_faces|store_starved|copies|queued|clean_faces|movers|
-stock_lamps|store_used` (main world, `lamp_cache.rs:939`) and `lamp_cache/render/lamps|views|drawn|loaded|copies|
-dropped_copies|lost` (render world, `PointShadowCacheStats`).
+cache `lamp_cache/*` + `lamp_cache/render/*` (`PointShadowCacheStats`); 2D shadow atlas `shadow_atlas/lamps|moving_lamps|
+views|captures|mover_draws|movers|static_tiles|live_tiles|empty_faces|static_occ_pct|live_occ_pct|alloc_failures|resizes`
+(main world, `sf_sky_bevy/src/shadow_atlas.rs`) and `shadow_atlas/render/lamps|views|static_draws|live_indirect|live_direct|
+blits|clears|reallocated` (render world, `PointShadowAtlasStats`).
 
 ## Known limits
 

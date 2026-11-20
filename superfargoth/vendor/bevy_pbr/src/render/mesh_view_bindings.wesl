@@ -120,6 +120,14 @@ const VISIBILITY_RANGE_UNIFORM_BUFFER_SIZE: u32 = 64u;
 @group(0) @binding(42) var<uniform> gi_probe_volume: types::GiProbeVolume;
 }
 
+// superfargoth patch (own, CW-13b: 2D point shadow atlas): Static + Live 2D depth atlases and per-face tile table
+// (bindings 43-53 are reserved for surface weather).
+@if(POINT_SHADOW_ATLAS) {
+@group(0) @binding(54) var point_shadow_atlas_static: texture_depth_2d;
+@group(0) @binding(55) var point_shadow_atlas_live: texture_depth_2d;
+@group(0) @binding(56) var<storage> point_shadow_atlas_tiles: array<types::ShadowAtlasTile>;
+}
+
 @if(ENVIRONMENT_MAP && MULTIPLE_LIGHT_PROBES_IN_ARRAY) {
 @group(1) @binding(0) var diffuse_environment_maps: binding_array<texture_cube<f32>, 8u>;
 @group(1) @binding(1) var specular_environment_maps: binding_array<texture_cube<f32>, 8u>;

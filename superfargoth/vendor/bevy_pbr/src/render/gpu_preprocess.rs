@@ -901,6 +901,34 @@ pub fn allocate_uniforms(
     uniform_allocation_bind_groups: Res<UniformAllocationBindGroups>,
     mut render_context: RenderContext,
 ) {
+    // Gather up all views.
+    let view_entity = current_view.entity();
+    let shadow_cascade_views = current_view.into_inner();
+    let all_views =
+        gather_shadow_cascades_for_view(view_entity, shadow_cascade_views, &light_query);
+
+    record_allocate_uniforms_for_views(
+        &all_views,
+        &view_query,
+        &batched_instance_buffers,
+        &pipeline_cache,
+        &preprocess_pipelines,
+        &uniform_allocation_bind_groups,
+        &mut render_context,
+    );
+}
+
+// superfargoth patch (own, CW-13a: batched point shadow pass)
+/// Shared body of [`allocate_uniforms`], callable over any slice of views inside one encoder.
+pub(crate) fn record_allocate_uniforms_for_views(
+    all_views: &[Entity],
+    view_query: &Query<&ExtractedView, Without<SkipGpuPreprocess>>,
+    batched_instance_buffers: &BatchedInstanceBuffers<MeshUniform, MeshInputUniform>,
+    pipeline_cache: &PipelineCache,
+    preprocess_pipelines: &PreprocessPipelines,
+    uniform_allocation_bind_groups: &UniformAllocationBindGroups,
+    render_context: &mut RenderContext,
+) {
     let diagnostics = render_context.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
 
@@ -946,14 +974,8 @@ pub fn allocate_uniforms(
 
     let pass_span = diagnostics.pass_span(&mut compute_pass, "uniform_allocation");
 
-    // Gather up all views.
-    let view_entity = current_view.entity();
-    let shadow_cascade_views = current_view.into_inner();
-    let all_views =
-        gather_shadow_cascades_for_view(view_entity, shadow_cascade_views, &light_query);
-
     // Loop over each view…
-    for view_entity in all_views {
+    for &view_entity in all_views {
         let Ok(view) = view_query.get(view_entity) else {
             continue;
         };
@@ -1032,6 +1054,34 @@ pub fn unpack_bins(
     bin_unpacking_bind_groups: Res<BinUnpackingBindGroups>,
     mut render_context: RenderContext,
 ) {
+    // Gather up all views.
+    let view_entity = current_view.entity();
+    let shadow_cascade_views = current_view.into_inner();
+    let all_views =
+        gather_shadow_cascades_for_view(view_entity, shadow_cascade_views, &light_query);
+
+    record_unpack_bins_for_views(
+        &all_views,
+        &view_query,
+        &batched_instance_buffers,
+        &pipeline_cache,
+        &preprocess_pipelines,
+        &bin_unpacking_bind_groups,
+        &mut render_context,
+    );
+}
+
+// superfargoth patch (own, CW-13a: batched point shadow pass)
+/// Shared body of [`unpack_bins`], callable over any slice of views inside one encoder.
+pub(crate) fn record_unpack_bins_for_views(
+    all_views: &[Entity],
+    view_query: &Query<&ExtractedView, Without<SkipGpuPreprocess>>,
+    batched_instance_buffers: &BatchedInstanceBuffers<MeshUniform, MeshInputUniform>,
+    pipeline_cache: &PipelineCache,
+    preprocess_pipelines: &PreprocessPipelines,
+    bin_unpacking_bind_groups: &BinUnpackingBindGroups,
+    render_context: &mut RenderContext,
+) {
     let diagnostics = render_context.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
 
@@ -1043,12 +1093,6 @@ pub fn unpack_bins(
 
     let pass_span = diagnostics.pass_span(&mut compute_pass, "bin_unpacking");
 
-    // Gather up all views.
-    let view_entity = current_view.entity();
-    let shadow_cascade_views = current_view.into_inner();
-    let all_views =
-        gather_shadow_cascades_for_view(view_entity, shadow_cascade_views, &light_query);
-
     // Don't run if the shaders haven't been compiled yet.
     if let Some(bin_unpacking_pipeline_id) = preprocess_pipelines.bin_unpacking.pipeline_id
         && let Some(bin_unpacking_pipeline) =
@@ -1057,7 +1101,7 @@ pub fn unpack_bins(
         compute_pass.set_pipeline(bin_unpacking_pipeline);
 
         // Loop over each view…
-        for view_entity in all_views {
+        for &view_entity in all_views {
             let Ok(view) = view_query.get(view_entity) else {
                 continue;
             };
@@ -1276,13 +1320,42 @@ pub fn early_gpu_preprocess(
     preprocess_pipelines: Res<PreprocessPipelines>,
     mut ctx: RenderContext,
 ) {
-    let diagnostics = ctx.diagnostic_recorder();
-    let diagnostics = diagnostics.as_deref();
-
     let view_entity = current_view.entity();
     let shadow_cascade_views = current_view.into_inner();
     let all_views =
         gather_shadow_cascades_for_view(view_entity, shadow_cascade_views, &light_query);
+
+    record_early_gpu_preprocess_for_views(
+        &all_views,
+        &view_query,
+        &batched_instance_buffers,
+        &pipeline_cache,
+        &preprocess_pipelines,
+        &mut ctx,
+    );
+}
+
+// superfargoth patch (own, CW-13a: batched point shadow pass)
+/// Shared body of [`early_gpu_preprocess`], callable over any slice of views inside one encoder.
+pub(crate) fn record_early_gpu_preprocess_for_views(
+    all_views: &[Entity],
+    view_query: &Query<
+        (
+            &ExtractedView,
+            Option<&PreprocessBindGroups>,
+            Option<&ViewUniformOffset>,
+            Has<NoIndirectDrawing>,
+            Has<OcclusionCulling>,
+        ),
+        Without<SkipGpuPreprocess>,
+    >,
+    batched_instance_buffers: &BatchedInstanceBuffers<MeshUniform, MeshInputUniform>,
+    pipeline_cache: &PipelineCache,
+    preprocess_pipelines: &PreprocessPipelines,
+    ctx: &mut RenderContext,
+) {
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
 
     // superfargoth patch (own, GS: range unpack in preprocess)
     // Expand the GPU-authored instance batches' ranges into work items before
@@ -1299,9 +1372,9 @@ pub fn early_gpu_preprocess(
             ctx.command_encoder(),
             diagnostics,
             range_unpacking_pipeline,
-            &batched_instance_buffers,
-            &all_views,
-            &view_query,
+            batched_instance_buffers,
+            all_views,
+            view_query,
         );
     }
 
@@ -1315,7 +1388,7 @@ pub fn early_gpu_preprocess(
     let pass_span = diagnostics.pass_span(&mut compute_pass, "early_mesh_preprocessing");
 
     // Run the compute passes.
-    for view_entity in all_views {
+    for &view_entity in all_views {
         let Ok((view, bind_groups, view_uniform_offset, no_indirect_drawing, occlusion_culling)) =
             view_query.get(view_entity)
         else {

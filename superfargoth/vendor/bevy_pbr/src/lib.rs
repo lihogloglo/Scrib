@@ -208,6 +208,8 @@ impl Plugin for PbrPlugin {
         load_shader_library!(app, "render/pbr_prepass.wesl");
         load_shader_library!(app, "render/parallax_mapping.wesl");
         load_shader_library!(app, "render/view_transformations.wesl");
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+        embed_point_shadow_atlas_shaders(app);
 
         app.register_asset_reflect::<StandardMaterial>()
             .init_resource::<DefaultOpaqueRendererMethod>()
@@ -215,6 +217,10 @@ impl Plugin for PbrPlugin {
             .init_resource::<AmbientLightSpecular>()
             // superfargoth patch (own, F1): one command encoder per sun cascade
             .init_resource::<ShadowCascadeEncoders>()
+            // superfargoth patch (own, CW-13a: batched point shadow pass)
+            .init_resource::<PointShadowBatchedPass>()
+            // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+            .init_resource::<PointShadowAtlasConfig>()
             .add_plugins((
                 MeshRenderPlugin {
                     use_gpu_instance_buffer_builder: self.use_gpu_instance_buffer_builder,
@@ -260,6 +266,10 @@ impl Plugin for PbrPlugin {
                 ExtractResourcePlugin::<AmbientLightSpecular>::default(),
                 // superfargoth patch (own, F1): one command encoder per sun cascade
                 ExtractResourcePlugin::<ShadowCascadeEncoders>::default(),
+                // superfargoth patch (own, CW-13a: batched point shadow pass)
+                ExtractResourcePlugin::<PointShadowBatchedPass>::default(),
+                // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+                ExtractResourcePlugin::<PointShadowAtlasConfig>::default(),
             ));
 
         #[cfg(feature = "bevy_gltf")]
@@ -373,6 +383,11 @@ impl Plugin for PbrPlugin {
             .world_mut()
             .get_resource_or_init::<PointShadowCacheFeedback>()
             .clone();
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas): render-world reports for the host.
+        let atlas_feedback = app
+            .world_mut()
+            .get_resource_or_init::<PointShadowAtlasFeedback>()
+            .clone();
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
@@ -382,7 +397,12 @@ impl Plugin for PbrPlugin {
         render_app
             .add_systems(
                 RenderStartup,
-                (init_shadow_samplers, init_global_clusterable_object_meta),
+                (
+                    init_shadow_samplers,
+                    init_global_clusterable_object_meta,
+                    // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+                    init_point_shadow_atlas_pipelines,
+                ),
             )
             .add_systems(
                 ExtractSchedule,
@@ -402,6 +422,8 @@ impl Plugin for PbrPlugin {
                     extract_lights.after(extract_shadow_caster_changes),
                     // superfargoth patch (own, CW-4: lamp shadow cache)
                     extract_cached_point_shadow_maps,
+                    // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+                    extract_atlas_point_shadow_maps,
                     extract_ambient_light_resource,
                     extract_ambient_light,
                     extract_shadow_filtering_method,
@@ -415,12 +437,16 @@ impl Plugin for PbrPlugin {
                     prepare_lights
                         .in_set(RenderSystems::CreateViews)
                         .after(sort_cameras),
-                    // superfargoth patch (#26161)
+                    // superfargoth patch (#26161, CW-13b: 2D point shadow atlas)
                     // Once the shadow phases are queued: what they hold is part of
                     // what a shadow map was rendered from. Flush immediately with
                     // ApplyDeferred before prepare_view_uniforms and PrepareResourcesBatchPhases
                     // so skipped shadow views skip uniform prep, batching, and bind group creation.
-                    (skip_unchanged_shadow_views, ApplyDeferred)
+                    (
+                        skip_unchanged_shadow_views,
+                        finalize_point_shadow_atlas_views,
+                        ApplyDeferred,
+                    )
                         .chain()
                         .in_set(RenderSystems::PrepareResources)
                         .before(bevy_render::view::prepare_view_uniforms),
@@ -442,13 +468,29 @@ impl Plugin for PbrPlugin {
             // superfargoth patch (own, CW-4: lamp shadow cache)
             .init_resource::<PointShadowCacheGpu>()
             .init_resource::<PointShadowCacheStats>()
+            // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+            .init_resource::<PointShadowAtlasGpu>()
+            .init_resource::<PointShadowAtlasStats>()
             .init_resource::<bevy_render::view::RenderViewLodOrigins>()
             .insert_resource(cache_feedback)
+            .insert_resource(atlas_feedback)
             .add_systems(
                 bevy_render::renderer::RenderGraph,
-                record_cached_point_shadow_copies
-                    .in_set(bevy_render::renderer::RenderGraphSystems::Render)
-                    .before(bevy_core_pipeline::schedule::camera_driver),
+                (
+                    record_cached_point_shadow_copies
+                        .in_set(bevy_render::renderer::RenderGraphSystems::Render)
+                        .before(bevy_core_pipeline::schedule::camera_driver),
+                    // superfargoth patch (own, CW-13a: batched point shadow pass)
+                    record_batched_point_shadows
+                        .in_set(bevy_render::renderer::RenderGraphSystems::Render)
+                        .after(record_cached_point_shadow_copies)
+                        .before(bevy_core_pipeline::schedule::camera_driver),
+                    // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+                    record_point_shadow_atlas
+                        .in_set(bevy_render::renderer::RenderGraphSystems::Render)
+                        .after(record_batched_point_shadows)
+                        .before(bevy_core_pipeline::schedule::camera_driver),
+                ),
             );
 
         render_app
@@ -576,6 +618,8 @@ impl SyncComponent<RenderApp, PbrPlugin> for PointLight {
         PointAndSpotLightViewEntities,
         // superfargoth patch (own, CW-4: lamp shadow cache)
         ExtractedCachedPointShadowMap,
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+        ExtractedAtlasPointShadowMap,
     );
 }
 impl SyncComponent<RenderApp, PbrPlugin> for SpotLight {

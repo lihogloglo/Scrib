@@ -411,8 +411,11 @@ pub fn check_views_need_specialization(
         ),
     )>,
     mut seen_views: Local<HashSet<RetainedViewEntity>>,
+    // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+    point_shadow_atlas_config: Option<Res<PointShadowAtlasConfig>>,
 ) {
     seen_views.clear();
+    let has_point_shadow_atlas = point_shadow_atlas_config.is_some_and(|c| c.enabled);
 
     for (
         view,
@@ -492,6 +495,11 @@ pub fn check_views_need_specialization(
         // superfargoth patch (own, SW)
         if has_surface_weather {
             view_key |= MeshPipelineKey::SURFACE_WEATHER;
+        }
+
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+        if has_point_shadow_atlas {
+            view_key |= MeshPipelineKey::POINT_SHADOW_ATLAS;
         }
 
         if view.invert_culling {
@@ -3432,7 +3440,8 @@ bitflags::bitflags! {
         const POINT_SPOT_SHADOWS_HARDWARE_2X2   = 1 << 25; // superfargoth patch (own: lamp shadow filter)
         const GI_PROBES                         = 1 << 26; // superfargoth patch (own, GI)
         const SURFACE_WEATHER                   = 1 << 27; // superfargoth patch (own, SW)
-        const LAST_FLAG                         = Self::SURFACE_WEATHER.bits(); // superfargoth patch (own, GI; own, SW)
+        const POINT_SHADOW_ATLAS                = 1 << 28; // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+        const LAST_FLAG                         = Self::POINT_SHADOW_ATLAS.bits(); // superfargoth patch (own, GI; own, SW; own, CW-13b)
 
         const ALL_PREPASS_BITS                  = Self::DEPTH_PREPASS.bits()
                                                 | Self::NORMAL_PREPASS.bits()
@@ -3829,6 +3838,11 @@ impl SpecializedMeshPipeline for MeshPipeline {
         // superfargoth patch (own, SW): main pass only (the prepass pipeline never sees it).
         if key.contains(MeshPipelineKey::SURFACE_WEATHER) {
             shader_defs.push("SURFACE_WEATHER".into());
+        }
+
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+        if key.contains(MeshPipelineKey::POINT_SHADOW_ATLAS) {
+            shader_defs.push("POINT_SHADOW_ATLAS".into());
         }
 
         if key.contains(MeshPipelineKey::OIT_ENABLED) {

@@ -262,3 +262,48 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Balmora 22:00 first crashed on the switch-on (`unwrap()` on `None`, vendored `texture_attachment.rs`; fixed same day, own
   patch "CW-4: load-only depth attachments"). Owner 2026-11-17 rerun: no crash, shadows stay crisp, look the same as off.
   Status: confirmed (Census + Balmora). Open: the close lamp-shadow fade-in above.
+
+### SH-32: Single-encoder batched point shadow pass + lamp shadow cache (CW-13a, Slice A1, built 2026-11-19, opt-in)
+- Why: CW-4's lamp shadow cache fixed SH-21a character flickering among many lamps but regressed render busy (+0.94 ms)
+  because Bevy's `Core3dShadows` schedule opened 5 command encoders per drawn face (up to 45/frame). Slice A1
+  (`shadow.lamp.batched_pass`, vendored `bevy_pbr` `record_batched_point_shadows`) batches all active point/spot shadow
+  faces into 1 command encoder (−0.70 ms vs base / −1.38 ms vs unbatched cache on `balmora_walk_night`; −0.37 ms `faster`
+  on `census`; `encode/queue/command_buffers` 70.6 → 39.0).
+- Kind: game location. Run (profiling/release build with DLSS):
+  `bash bevyrrowind/tools/owner_launch.sh --profiling view "Balmora" --hour 22 --weather clear --set shadow.lamp.cache.enabled=on --set shadow.lamp.batched_pass=on`
+  and `view "Seyda Neen, Census and Excise Office" --set shadow.lamp.cache.enabled=on --set shadow.lamp.batched_pass=on`.
+- Look for: walk past street lamps and torch-bearing NPCs in Balmora at 22:00 and through the Census Office; toggle
+  `set shadow.lamp.batched_pass off` / `on` live in the console (`` ` ``): shadows on walls, props, NPCs and the player
+  must look identical on/off with no missing casters, corrupted depth, seam cuts, or SH-21a character shadow flickering.
+  F3 full panel should show `batched_point_shadows` (~0.15–0.22 ms GPU) and `encode/pass:shadow_point_light/count` ≤ 1.
+- Owner decides: confirm visuals + whether to flip `shadow.lamp.cache.enabled` and `shadow.lamp.batched_pass` on by default
+  before starting Slices A2–A3 (2D Shadow Atlas to remove the 8-lamp ceiling / SH-27 close fade-in).
+- Status: **confirmed 2026-11-19 (owner):** "it seems to be working (fps higher)." Follow-up: flip defaults after review / 6-repeat confirmation if desired, then proceed to Slices A2–A3 (`docs/briefs/shadow-atlas-handoff-2026-11-19.md`).
+
+### SH-33: 2D Point Shadow Atlas (CW-13b, Slices A2–A3, built 2026-11-20, opt-in)
+- Why: replaces the 8-lamp cube array (and Bevy's 42-cube limit) with a buddy-allocated Static (4096²) + Live (2048²)
+  2D Shadow Atlas (`shadow.lamp.atlas.enabled`, default off; `shadow.lamp.atlas.max_lamps`, default 48; contact shadows
+  capped at `shadow.lamp.contact_max = 8`). Interleaved A/B `shadow_a3_atlas` (2560x1440 DLSS Quality, 18/18 quiet &
+  focus-clean): all 4 comparisons formally **`faster`** (U=0.0): `balmora_walk_night` 10.63 → 9.79 ms (`atlas8`, −0.84)
+  / 9.87 ms (`atlas48`, −0.76, 19 lamps + 2 torches); `census` 6.85 → 6.32 ms (`atlas8`, −0.53) / 6.52 ms (`atlas48`,
+  −0.32, all 24 interior lamps simultaneously, 1% low 85 → 121 fps).
+- Kind: game location. Run (profiling/release build with DLSS):
+  1. `bash bevyrrowind/tools/owner_launch.sh --profiling view "Balmora" --hour 22 --weather clear --set shadow.lamp.atlas.enabled=on --set shadow.lamp.atlas.max_lamps=48`
+  2. `bash bevyrrowind/tools/owner_launch.sh --profiling view "Seyda Neen, Census and Excise Office" --set shadow.lamp.atlas.enabled=on --set shadow.lamp.atlas.max_lamps=48`
+  (Also test live console toggle `` ` ``: `set shadow.lamp.atlas.enabled off` / `on`.)
+- Look for:
+  1. **No close fade-in (SH-27 / SH-31):** walking down Balmora streets at night and down the Census Office hallway,
+     distant street lanterns and hall lamps already cast shadows ahead of you without popping in 5–10 m away.
+  2. **Face projection & seams:** walk around and directly under street lamps, torches, and chandeliers; verify shadow
+     directions match light positions on all 6 faces (especially ±Z / 45° cube seams, straight down, and overhead), with
+     no tile-edge bleeding or missing faces.
+  3. **Dynamic movers & carried torches:** NPCs walking past lamps and torch-bearing guards cast smooth, current shadows
+     without SH-21a flickering, stale silhouettes, or static depth disappearing behind them.
+  4. **Tier transitions & live toggle:** walking toward/away from lamps across 10 m / 22 m shows no distracting shimmer
+     or pop on tier resizes; toggling `set shadow.lamp.atlas.enabled off` / `on` live switches cleanly between 2D atlas
+     and stock cube maps without crashes or visual glitches.
+  5. **F3 full panel:** `point_shadow_atlas` (~0.07–0.11 ms GPU), `shadow_atlas/lamps` (19–24), `shadow_atlas/static_occ_pct`,
+     `shadow_atlas/render/live_direct` (single pass).
+- Owner decides: confirm visuals + whether to flip `shadow.lamp.atlas.enabled` on by default (High/Ultra/Medium) and
+  whether to tune `shadow.lamp.atlas.max_lamps` / tier distances (`10 / 22 / 45 m`).
+- Status: **awaiting owner** (2026-11-20).

@@ -1,7 +1,7 @@
 use crate::*;
 // superfargoth patch (own, CW-4: lamp shadow cache)
 use super::point_shadow_cache::{
-    cached_face_listed, point_shadow_lists_cover, CachedLightInputs,
+    point_shadow_lists_cover, CachedLightInputs,
 };
 use alloc::sync::Arc;
 use bevy_asset::UntypedAssetId;
@@ -14,8 +14,8 @@ use bevy_camera::visibility::{
 };
 use bevy_camera::{Camera, Camera3d, RenderTarget, ShadowLodOrigin};
 use bevy_color::ColorToComponents;
-// superfargoth patch (#26161)
-use bevy_core_pipeline::schedule::{RootNonCameraView, SkipRootViewRendering};
+// superfargoth patch (#26161, CW-13a: batched point shadow pass)
+use bevy_core_pipeline::schedule::{Core3dShadows, RootNonCameraView, SkipRootViewRendering};
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::schedule::ScheduleLabel;
 use bevy_ecs::system::SystemChangeTick;
@@ -42,7 +42,7 @@ use bevy_mesh::{Mesh3d, MeshVertexBufferLayoutRef};
 use bevy_platform::collections::{HashMap, HashSet};
 use bevy_platform::hash::FixedHasher;
 use bevy_render::batching::gpu_preprocessing::{
-    BuildIndirectParametersMetadata, IndirectParametersBuffers,
+    BatchedInstanceBuffers, BuildIndirectParametersMetadata, IndirectParametersBuffers,
 };
 use bevy_render::camera::{DirtySpecializations, PendingQueues};
 use bevy_render::diagnostic::RecordDiagnostics;
@@ -54,7 +54,8 @@ use bevy_render::occlusion_culling::{
 use bevy_render::sync_world::{MainEntity, MainEntityHashMap, MainEntityHashSet, RenderEntity};
 use bevy_render::view::{
     RenderExtractedShadowMapVisibleEntities, RenderShadowLodOrigin, RenderShadowMapVisibleEntities,
-    RenderVisibleEntities, VisibilityExtractionSystemParam,
+    RenderViewLodOrigins, RenderVisibleEntities, ViewUniformOffset,
+    VisibilityExtractionSystemParam,
 };
 use bevy_render::{
     batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport},
@@ -425,7 +426,11 @@ pub fn extract_ambient_light(
 
 pub fn extract_lights(
     mut commands: Commands,
-    point_light_shadow_map: Extract<Res<PointLightShadowMap>>,
+    (point_light_shadow_map, atlas_config): (
+        Extract<Res<PointLightShadowMap>>,
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+        Extract<Option<Res<PointShadowAtlasConfig>>>,
+    ),
     directional_light_shadow_map: Extract<Res<DirectionalLightShadowMap>>,
     point_lights: Extract<
         Query<
@@ -441,12 +446,13 @@ pub fn extract_lights(
                 Option<Ref<RenderLayers>>,
                 Option<Ref<VolumetricLight>>,
                 Option<Ref<PointLightShadowFade>>,
-                // superfargoth patch (own, CW-4: lamp shadow cache)
-                Option<Ref<CachedPointShadowMap>>,
+                // superfargoth patch (own, CW-4: lamp shadow cache; own, CW-13b: 2D atlas)
+                (Option<Ref<CachedPointShadowMap>>, Option<Ref<AtlasPointShadowMap>>),
             ),
             Or<(
-                // superfargoth patch (own, CW-4: lamp shadow cache)
+                // superfargoth patch (own, CW-4: lamp shadow cache; own, CW-13b: 2D atlas)
                 Changed<CachedPointShadowMap>,
+                Changed<AtlasPointShadowMap>,
                 Changed<PointLight>,
                 Changed<CubemapVisibleEntities>,
                 Changed<GlobalTransform>,
@@ -555,10 +561,18 @@ pub fn extract_lights(
         Query<(), With<ExtractedPointLight>>,
         Local<EntityHashMap<u64>>,
     ),
-    // superfargoth patch (own, CW-4: lamp shadow cache): every visible cached lamp, and the
-    // view faces its lists were last extracted for.
+    // superfargoth patch (own, CW-4: lamp shadow cache; own, CW-13b: 2D atlas): every visible
+    // cached/atlas lamp, and the view faces its lists were last extracted for.
     (cached_lamps, mut cached_list_faces): (
-        Extract<Query<(RenderEntity, &ViewVisibility), (With<PointLight>, With<CachedPointShadowMap>)>>,
+        Extract<
+            Query<
+                (RenderEntity, &ViewVisibility),
+                (
+                    With<PointLight>,
+                    Or<(With<CachedPointShadowMap>, With<AtlasPointShadowMap>)>,
+                ),
+            >,
+        >,
         Local<EntityHashMap<u8>>,
     ),
     mut all_lights_found: Local<EntityHashSet>,
@@ -578,12 +592,13 @@ pub fn extract_lights(
 
     // This is the point light shadow map texel size for one face of the cube as a distance of 1.0
     // world unit from the light.
-    // point_light_texel_size = 2.0 * 1.0 * tan(PI / 4.0) / cube face width in texels
-    // PI / 4.0 is half the cube face fov, tan(PI / 4.0) = 1.0, so this simplifies to:
-    // point_light_texel_size = 2.0 / cube face width in texels
-    // NOTE: When using various PCF kernel sizes, this will need to be adjusted, according to:
-    // https://catlikecoding.com/unity/tutorials/custom-srp/point-and-spot-shadows/
-    let point_light_texel_size = 2.0 / point_light_shadow_map.size as f32;
+    // superfargoth patch (own, CW-13b: 2D point shadow atlas): under 2D atlas mode, tiles have
+    // variable resolution so `shadows.wesl` divides by `tile_px` per face.
+    let point_light_texel_size = if atlas_config.as_deref().is_some_and(|c| c.enabled) {
+        2.0
+    } else {
+        2.0 / point_light_shadow_map.size as f32
+    };
 
     all_lights_found.clear();
     // superfargoth patch (own, CW-4: lamp shadow cache): a cached lamp keeps its lists on frames it
@@ -606,8 +621,8 @@ pub fn extract_lights(
         maybe_render_layers,
         volumetric_light,
         shadow_fade,
-        // superfargoth patch (own, CW-4: lamp shadow cache)
-        cached,
+        // superfargoth patch (own, CW-4: lamp shadow cache; own, CW-13b: 2D atlas)
+        (cached, atlas),
     ) in point_lights.iter()
     {
         if !view_visibility.get() {
@@ -617,10 +632,13 @@ pub fn extract_lights(
             continue;
         }
 
-        // superfargoth patch (own, CW-4: lamp shadow cache): a cached lamp is shaded as shadowed;
-        // its lists are extracted for its view faces only.
-        let cached_faces = cached.as_ref().map(|cached| cached.faces());
-        if point_light.shadow_maps_enabled || cached_faces.is_some() {
+        // superfargoth patch (own, CW-4: lamp shadow cache; own, CW-13b: 2D atlas): a cached or
+        // atlas lamp is shaded as shadowed; its lists are extracted for its view faces only.
+        let cached_view_faces: Option<u8> = atlas
+            .as_ref()
+            .map(|a| a.sanitized().view_faces)
+            .or_else(|| cached.as_ref().map(|c| c.faces().view));
+        if point_light.shadow_maps_enabled || cached_view_faces.is_some() {
             all_lights_found.insert(render_entity);
 
             // superfargoth patch: only rebuild RenderExtractedShadowMapVisibleEntities when the
@@ -641,11 +659,11 @@ pub fn extract_lights(
                         point_shadow_lists_cover(lists, MainEntity::from(main_entity), faces)
                     })
             };
-            let entities_unchanged = match cached_faces {
-                Some(faces) => {
-                    lists_cover(faces.view)
+            let entities_unchanged = match cached_view_faces {
+                Some(view_mask) => {
+                    lists_cover(view_mask)
                         && !cubemap_visible_entities.is_changed()
-                        && cached_list_faces.get(&render_entity) == Some(&faces.view)
+                        && cached_list_faces.get(&render_entity) == Some(&view_mask)
                 }
                 None => {
                     lists_cover(ALL_POINT_SHADOW_FACES)
@@ -675,8 +693,8 @@ pub fn extract_lights(
                 };
 
                 for face_index in 0..6 {
-                    // superfargoth patch (own, CW-4: lamp shadow cache)
-                    if cached_faces.is_some_and(|faces| faces.view & (1 << face_index) == 0) {
+                    // superfargoth patch (own, CW-4 / CW-13b)
+                    if cached_view_faces.is_some_and(|mask| mask & (1 << face_index) == 0) {
                         continue;
                     }
                     let retained_view_entity = RetainedViewEntity {
@@ -719,8 +737,8 @@ pub fn extract_lights(
                         view_entity.main_entity.entity() == main_entity
                             && view_entity.auxiliary_entity.is_none()
                             && view_entity.subview_index < 6
-                            // superfargoth patch (own, CW-4: lamp shadow cache)
-                            && cached_face_listed(cached_faces, view_entity.subview_index)
+                            // superfargoth patch (own, CW-4 / CW-13b)
+                            && atlas_face_listed(cached_view_faces, view_entity.subview_index)
                     });
                 render_shadow_map_visible_entities
                     .subviews
@@ -728,8 +746,8 @@ pub fn extract_lights(
                         view_entity.main_entity.entity() == main_entity
                             && view_entity.auxiliary_entity.is_none()
                             && view_entity.subview_index < 6
-                            // superfargoth patch (own, CW-4: lamp shadow cache)
-                            && cached_face_listed(cached_faces, view_entity.subview_index)
+                            // superfargoth patch (own, CW-4 / CW-13b)
+                            && atlas_face_listed(cached_view_faces, view_entity.subview_index)
                     });
 
                 let mut entity_commands = commands.entity(render_entity);
@@ -737,15 +755,12 @@ pub fn extract_lights(
                     render_extracted_shadow_map_visible_entities,
                     render_shadow_map_visible_entities,
                 ));
-                // superfargoth patch (own, CW-4: lamp shadow cache): the lists are keyed by the path
-                // that extracted them: a cached extraction forgets the stock hash, a stock one the
-                // view mask. (A stock hash kept through a cached spell matched again on the lamp's
-                // return to the stock path, so its view-face lists stood in for six stock faces:
-                // "Failed to get point light visible entity for face", 2026-11-17.)
-                match (cached_faces, current_entities_hash) {
-                    (Some(faces), _) => {
+                // superfargoth patch (own, CW-4 / CW-13b): the lists are keyed by the path that
+                // extracted them.
+                match (cached_view_faces, current_entities_hash) {
+                    (Some(view_mask), _) => {
                         prev_light_entities.remove(&render_entity);
-                        cached_list_faces.insert(render_entity, faces.view);
+                        cached_list_faces.insert(render_entity, view_mask);
                     }
                     (None, Some(hash)) => {
                         cached_list_faces.remove(&render_entity);
@@ -773,9 +788,9 @@ pub fn extract_lights(
                 .as_ref()
                 .is_some_and(DetectChanges::is_changed)
             || shadow_fade.as_ref().is_some_and(DetectChanges::is_changed)
-            // superfargoth patch (own, CW-4: lamp shadow cache): its shadow flag comes from the cache.
+            // superfargoth patch (own, CW-4 / CW-13b): its shadow flag comes from cache/atlas.
             || cached.as_ref().is_some_and(DetectChanges::is_added)
-            || point_light_shadow_map.is_changed();
+            || atlas.as_ref().is_some_and(DetectChanges::is_added);
 
         if light_changed {
             let mut entity_commands = commands.entity(render_entity);
@@ -788,11 +803,10 @@ pub fn extract_lights(
                 range: point_light.range,
                 radius: point_light.radius,
                 transform: *transform,
-                // superfargoth patch (own, CW-4: lamp shadow cache): `|| cached`
-                shadow_maps_enabled: point_light.shadow_maps_enabled || cached.is_some(),
+                // superfargoth patch (own, CW-4 / CW-13b): `|| cached || atlas`
+                shadow_maps_enabled: point_light.shadow_maps_enabled || cached_view_faces.is_some(),
                 contact_shadows_enabled: point_light.contact_shadows_enabled,
                 shadow_depth_bias: point_light.shadow_depth_bias,
-                // The factor of SQRT_2 is for the worst-case diagonal offset
                 shadow_normal_bias: point_light.shadow_normal_bias
                     * point_light_texel_size
                     * core::f32::consts::SQRT_2,
@@ -1661,8 +1675,11 @@ pub fn skip_unchanged_shadow_views(
             &ShadowView,
             &LightEntity,
             Has<SkipRootViewRendering>,
+            // superfargoth patch (own, CW-13a: batched point shadow pass)
+            Has<RootNonCameraView>,
+            Has<BatchedShadowView>,
         ),
-        With<RootNonCameraView>,
+        Or<(With<RootNonCameraView>, With<BatchedShadowView>)>,
     >,
     main_entities: Query<&MainEntity>,
     bindings: Query<&ViewShadowBindings>,
@@ -1676,6 +1693,8 @@ pub fn skip_unchanged_shadow_views(
     mut face_stats: ResMut<PointShadowFaceStats>,
     // superfargoth patch (own, CW-4: lamp shadow cache)
     mut cache: PointShadowCacheSkip,
+    // superfargoth patch (own, CW-13a: batched point shadow pass)
+    batched_pass: Option<Res<PointShadowBatchedPass>>,
 ) {
     use core::hash::{BuildHasher, Hash, Hasher};
     use ShadowFaceState::{Clean, Mandatory, Motion, SetChange};
@@ -1684,6 +1703,8 @@ pub fn skip_unchanged_shadow_views(
     let current_frame = *frame_counter;
     // superfargoth patch (own: point shadow face culling)
     *face_stats = PointShadowFaceStats::default();
+    // superfargoth patch (own, CW-13a: batched point shadow pass)
+    let use_batched = batched_pass.is_some_and(|b| b.0);
 
     // The shadow map textures this frame (shared by all cameras); without them,
     // nothing can be known to be unchanged.
@@ -1698,12 +1719,22 @@ pub fn skip_unchanged_shadow_views(
     let mut light_slots: HashMap<Entity, usize> = HashMap::default();
     let mut lights: Vec<(Option<MainEntity>, Vec<ShadowFace>)> = Vec::new();
 
-    for (view_entity, view, shadow_view, light, skipped) in &views {
+    for (view_entity, view, shadow_view, light, skipped, has_root, has_batched) in &views {
         let (light_entity, texture) = match *light {
             LightEntity::Point { light_entity, .. } => (light_entity, textures.map(|t| t.0)),
             LightEntity::Spot { light_entity } => (light_entity, textures.map(|t| t.1)),
             LightEntity::Directional { .. } => continue,
         };
+        // superfargoth patch (own, CW-13a: batched point shadow pass): route point/spot shadow
+        // views either through `record_batched_point_shadows` (`BatchedShadowView`, 1 encoder for
+        // all active views) or through stock `camera_driver` (`RootNonCameraView(Core3dShadows)`).
+        sync_batched_shadow_view_marker(
+            &mut commands,
+            view_entity,
+            use_batched,
+            has_root,
+            has_batched,
+        );
         let retained = view.retained_view_entity;
         live.insert(retained);
         face_stats.faces += 1;
@@ -2035,20 +2066,30 @@ pub fn prepare_lights(
         Query<&mut DirectionalLightViewEntities>,
     ),
     sorted_cameras: Res<SortedCameras>,
-    (gpu_preprocessing_support, decals): (
+    (gpu_preprocessing_support, decals, batched_pass): (
         Res<GpuPreprocessingSupport>,
         Option<Res<RenderClusteredDecals>>,
+        // superfargoth patch (own, CW-13a: batched point shadow pass)
+        Option<Res<PointShadowBatchedPass>>,
     ),
     (existing_shadow_views, mut light_key_cache, mut specialized_shadow_material_pipeline_cache): (
         Query<(&ShadowView, Option<&CachedShadowViewState>)>,
         ResMut<LightKeyCache>,
         ResMut<SpecializedShadowMaterialPipelineCache>,
     ),
-    // superfargoth patch (own, CW-4: lamp shadow cache)
-    mut cache: PointShadowCachePrepare,
+    // superfargoth patch (own, CW-4: lamp shadow cache; own, CW-13b: 2D point shadow atlas)
+    (mut cache, mut atlas, mut lod_origins): (
+        PointShadowCachePrepare,
+        PointShadowAtlasPrepare,
+        Option<ResMut<RenderViewLodOrigins>>,
+    ),
 ) {
     let views_iter = views.iter();
     let views_count = views_iter.len();
+    // superfargoth patch (own, CW-13a: batched point shadow pass)
+    let use_batched = batched_pass.is_some_and(|b| b.0);
+    // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+    let atlas_enabled = atlas.is_enabled();
     let Some(mut view_gpu_lights_writer) =
         light_meta
             .view_gpu_lights
@@ -2148,11 +2189,19 @@ pub fn prepare_lights(
         .count()
         .min(max_texture_cubes);
 
+    // superfargoth patch (own, CW-13b: 2D point shadow atlas): lift the 42-cube array-layer cap
+    // when the 2D shadow atlas is active.
+    let max_point_shadow_lights = if atlas_enabled {
+        atlas.max_lamps()
+    } else {
+        max_texture_cubes
+    };
+
     let point_light_shadow_maps_count = point_lights
         .iter()
         .filter(|light| light.2.shadow_maps_enabled && light.2.spot_light_angles.is_none())
         .count()
-        .min(max_texture_cubes);
+        .min(max_point_shadow_lights);
 
     let directional_volumetric_enabled_count = directional_lights
         .iter()
@@ -2222,7 +2271,7 @@ pub fn prepare_lights(
         if !point_shadow_slots.contains(&Some(entity)) {
             if let Some(empty_slot) = point_shadow_slots.iter_mut().find(|s| s.is_none()) {
                 *empty_slot = Some(entity);
-            } else if point_shadow_slots.len() < max_texture_cubes {
+            } else if point_shadow_slots.len() < max_point_shadow_lights {
                 point_shadow_slots.push(Some(entity));
             }
         }
@@ -2254,11 +2303,13 @@ pub fn prepare_lights(
     }
     let point_light_shadow_bound = point_light_shadow_maps_count
         .max(slot_count)
-        .min(max_texture_cubes);
-    max_point_shadow_cubes.1 = max_point_shadow_cubes
-        .1
-        .max(point_light_shadow_bound)
-        .min(max_texture_cubes);
+        .min(max_point_shadow_lights);
+    if !atlas_enabled {
+        max_point_shadow_cubes.1 = max_point_shadow_cubes
+            .1
+            .max(point_light_shadow_bound)
+            .min(max_texture_cubes);
+    }
 
     // Sort lights by
     // - those with volumetric (and shadows) enabled first, so that the
@@ -2463,16 +2514,27 @@ pub fn prepare_lights(
     let mut directional_light_depth_attachments =
         HashMap::<u32, DepthStencilViewAttachment>::default();
 
+    // superfargoth patch (own, CW-13b: 2D point shadow atlas): shrink unused cube-array depth
+    // texture to 1x1x6 when the 2D atlas is active so it does not waste 48+ MiB VRAM alongside
+    // the Static + Live atlases.
+    let (cube_tex_size, cube_tex_layers) = if atlas_enabled {
+        (1u32, 6u32)
+    } else {
+        (
+            point_light_shadow_map.size as u32,
+            max_point_shadow_cubes.1.max(1) as u32 * 6,
+        )
+    };
     let point_light_depth_texture = texture_cache.get(
         &render_device,
         TextureDescriptor {
             size: Extent3d {
-                width: point_light_shadow_map.size as u32,
-                height: point_light_shadow_map.size as u32,
+                width: cube_tex_size,
+                height: cube_tex_size,
                 // superfargoth patch: use high-water-mark cube count so momentary slot
                 // handoffs (e.g. 12 -> 11 -> 12) do not reallocate the cubemap array texture
                 // and invalidate all cached shadow cubemaps.
-                depth_or_array_layers: max_point_shadow_cubes.1.max(1) as u32 * 6,
+                depth_or_array_layers: cube_tex_layers,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -2493,6 +2555,8 @@ pub fn prepare_lights(
         &point_light_depth_texture,
         point_light_shadow_map.size as u32,
     );
+    // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+    atlas.begin_frame(&render_device, &render_queue, point_light_shadow_bound);
 
     let point_light_depth_texture_view =
         point_light_depth_texture
@@ -2574,7 +2638,7 @@ pub fn prepare_lights(
     for light_entity in point_light_entities
         .iter()
         // Lights are sorted, shadow enabled lights are first
-        .take(point_light_count.min(max_texture_cubes))
+        .take(point_light_count.min(max_point_shadow_lights))
     {
         let (
             _,
@@ -2584,6 +2648,40 @@ pub fn prepare_lights(
             light_render_layers,
             (point_light_frusta, _),
         ) = point_lights.get_mut(*light_entity).unwrap();
+
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas): an atlas-managed lamp has views
+        // only for its active draw/linger faces; stock/CW-4 cube path skips it.
+        if light.shadow_maps_enabled
+            && atlas.prepare_light(
+                &mut commands,
+                &AtlasLightInputs {
+                    light_entity: *light_entity,
+                    light_main_entity: *light_main_entity,
+                    light,
+                    light_render_layers,
+                    light_index: global_clusterable_object_meta
+                        .entity_to_index
+                        .get(light_entity)
+                        .copied(),
+                    cube_face_rotations: &cube_face_rotations,
+                    gpu_mode: gpu_preprocessing_support.max_supported_mode,
+                },
+                &mut point_and_spot_light_view_entities.0,
+                &mut shadow_render_phases,
+                &mut live_shadow_mapping_lights,
+                lod_origins.as_deref_mut(),
+            )
+        {
+            continue;
+        }
+        // When the 2D atlas is active, never draw a stock point light into the 1x1x6 dummy cube.
+        if atlas_enabled {
+            despawn_entities(
+                &mut commands,
+                mem::take(&mut point_and_spot_light_view_entities.0),
+            );
+            continue;
+        }
 
         // superfargoth patch (own, CW-4: lamp shadow cache): a cached lamp has views for its view
         // faces only; a lamp no longer cached loses them before the stock path spawns six.
@@ -2603,10 +2701,12 @@ pub fn prepare_lights(
                     texture: &point_light_depth_texture,
                     map_size: point_light_shadow_map.size as u32,
                     gpu_mode: gpu_preprocessing_support.max_supported_mode,
+                    use_batched,
                 },
                 &mut point_and_spot_light_view_entities.0,
                 &mut shadow_render_phases,
                 &mut live_shadow_mapping_lights,
+                lod_origins.as_deref_mut(),
             )
         {
             continue;
@@ -2638,6 +2738,7 @@ pub fn prepare_lights(
                 (light_entity, light_main_entity, light, light_render_layers),
                 point_light_shadow_map.size as u32,
                 gpu_preprocessing_support.max_supported_mode,
+                use_batched,
             );
 
             point_and_spot_light_view_entities.0 = light_view_entities;
@@ -2657,6 +2758,7 @@ pub fn prepare_lights(
                 (light_entity, light_main_entity, light, light_render_layers),
                 point_light_shadow_map.size as u32,
                 gpu_preprocessing_support.max_supported_mode,
+                use_batched,
             );
         }
 
@@ -2672,8 +2774,9 @@ pub fn prepare_lights(
             live_shadow_mapping_lights.insert(retained_view_entity);
         }
     }
-    // superfargoth patch (own, CW-4: lamp shadow cache)
-    cache.end_frame();
+    // superfargoth patch (own, CW-4: lamp shadow cache; own, CW-13b: 2D point shadow atlas)
+    cache.end_frame(lod_origins.as_deref_mut());
+    atlas.end_frame(&render_device, &render_queue, lod_origins.as_deref_mut());
 
     // spot lights
     for (light_index, light_entity) in point_light_entities
@@ -2716,6 +2819,7 @@ pub fn prepare_lights(
                 spot_light_frustum,
                 directional_light_shadow_map.size as u32,
                 gpu_preprocessing_support.max_supported_mode,
+                use_batched,
             );
 
             point_and_spot_light_view_entities.0 = vec![view_light_entity];
@@ -2731,6 +2835,7 @@ pub fn prepare_lights(
                 spot_light_frustum,
                 directional_light_shadow_map.size as u32,
                 gpu_preprocessing_support.max_supported_mode,
+                use_batched,
             );
         }
 
@@ -3199,6 +3304,8 @@ fn create_point_shadow_maps(
     ),
     point_light_shadow_map_size: u32,
     gpu_preprocessing_support_max_supported_mode: GpuPreprocessingMode,
+    // superfargoth patch (own, CW-13a: batched point shadow pass)
+    use_batched: bool,
 ) {
     let light_index = *global_clusterable_object_meta
         .entity_to_index
@@ -3314,9 +3421,15 @@ fn create_point_shadow_maps(
             },
             (*light_render_layers).clone(),
             new_state,
-            // superfargoth patch (#26149)
-            RootNonCameraView(Core3dShadows.intern()),
         ));
+        // superfargoth patch (#26149, own CW-13a: batched point shadow pass)
+        if use_batched {
+            commands.entity(view_light_entity).insert(BatchedShadowView);
+        } else {
+            commands
+                .entity(view_light_entity)
+                .insert(RootNonCameraView(Core3dShadows.intern()));
+        }
 
         if !matches!(
             gpu_preprocessing_support_max_supported_mode,
@@ -3344,6 +3457,8 @@ fn create_spot_shadow_map(
     spot_light_frustum: Option<&Frustum>,
     directional_light_shadow_map_size: u32,
     gpu_preprocessing_support_max_supported_mode: GpuPreprocessingMode,
+    // superfargoth patch (own, CW-13a: batched point shadow pass)
+    use_batched: bool,
 ) {
     let spot_world_from_view = spot_light_world_from_view(&light.transform);
     let spot_world_from_view = spot_world_from_view.into();
@@ -3408,9 +3523,15 @@ fn create_spot_shadow_map(
             light_entity: *light_entity,
         },
         (*light_render_layers).clone(),
-        // superfargoth patch (#26149)
-        RootNonCameraView(Core3dShadows.intern()),
     ));
+    // superfargoth patch (#26149, own CW-13a: batched point shadow pass)
+    if use_batched {
+        commands.entity(view_light_entity).insert(BatchedShadowView);
+    } else {
+        commands
+            .entity(view_light_entity)
+            .insert(RootNonCameraView(Core3dShadows.intern()));
+    }
 
     if !matches!(
         gpu_preprocessing_support_max_supported_mode,
@@ -4009,6 +4130,216 @@ pub fn shared_shadow_pass<const IS_LATE: bool>(
         &shadow_render_phases,
         &mut ctx,
     );
+}
+
+// superfargoth patch (own, CW-13a: batched point shadow pass)
+/// Whether active point and spot shadow views are batched into one single command encoder
+/// ([`record_batched_point_shadows`]) instead of running one `Core3dShadows` schedule and 5
+/// separate command encoders per drawn face. Off by default until A/B confirms the win.
+#[derive(
+    Resource,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    bevy_render::extract_resource::ExtractResource,
+    bevy_reflect::Reflect,
+)]
+#[reflect(Resource, Debug, Clone)]
+#[extract_app(RenderApp)]
+pub struct PointShadowBatchedPass(pub bool);
+
+// superfargoth patch (own, CW-13a: batched point shadow pass)
+/// Render-world marker on point/spot shadow views routed through [`record_batched_point_shadows`]
+/// instead of `RootNonCameraView(Core3dShadows)`.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct BatchedShadowView;
+
+// superfargoth patch (own, CW-13a: batched point shadow pass)
+/// Swaps a point/spot shadow view entity between [`RootNonCameraView`] (`Core3dShadows`) and
+/// [`BatchedShadowView`] only when its current marker disagrees with `use_batched`.
+pub fn sync_batched_shadow_view_marker(
+    commands: &mut Commands,
+    view_entity: Entity,
+    use_batched: bool,
+    has_root: bool,
+    has_batched: bool,
+) {
+    if use_batched {
+        if has_root {
+            commands.entity(view_entity).remove::<RootNonCameraView>();
+        }
+        if !has_batched {
+            commands.entity(view_entity).insert(BatchedShadowView);
+        }
+    } else {
+        if has_batched {
+            commands.entity(view_entity).remove::<BatchedShadowView>();
+        }
+        if !has_root {
+            commands
+                .entity(view_entity)
+                .insert(RootNonCameraView(Core3dShadows.intern()));
+        }
+    }
+}
+
+// superfargoth patch (own, CW-13a: batched point shadow pass)
+#[derive(SystemParam)]
+pub struct BatchedPointShadowParams<'w, 's> {
+    world: &'w World,
+    batched_views: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static ShadowView,
+            &'static ExtractedView,
+            Has<PreprocessBindGroups>,
+            Has<SkipGpuPreprocess>,
+            Has<NoIndirectDrawing>,
+            Has<OcclusionCulling>,
+        ),
+        (With<BatchedShadowView>, Without<SkipRootViewRendering>),
+    >,
+    simple_view_query: Query<'w, 's, &'static ExtractedView, Without<SkipGpuPreprocess>>,
+    preprocess_view_query: Query<
+        'w,
+        's,
+        (
+            &'static ExtractedView,
+            Option<&'static PreprocessBindGroups>,
+            Option<&'static ViewUniformOffset>,
+            Has<NoIndirectDrawing>,
+            Has<OcclusionCulling>,
+        ),
+        Without<SkipGpuPreprocess>,
+    >,
+    shadow_render_phases: Res<'w, ViewBinnedRenderPhases<Shadow>>,
+    batched_instance_buffers: Option<Res<'w, BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>>,
+    pipeline_cache: Res<'w, PipelineCache>,
+    preprocess_pipelines: Option<Res<'w, PreprocessPipelines>>,
+    uniform_allocation_bind_groups: Option<Res<'w, UniformAllocationBindGroups>>,
+    bin_unpacking_bind_groups: Option<Res<'w, BinUnpackingBindGroups>>,
+    build_indirect_params_bind_groups: Option<Res<'w, BuildIndirectParametersBindGroups>>,
+    indirect_parameters_buffers: Option<Res<'w, IndirectParametersBuffers>>,
+    build_indirect_parameters_metadata: Option<Res<'w, BuildIndirectParametersMetadata>>,
+}
+
+// superfargoth patch (own, CW-13a: batched point shadow pass)
+/// Records GPU preprocessing and shadow passes for all active [`BatchedShadowView`] point/spot
+/// shadow views inside a single [`RenderContext`] command encoder.
+///
+/// Runs in [`bevy_render::renderer::RenderGraphSystems::Render`] after
+/// [`record_cached_point_shadow_copies`] and before `camera_driver`. Opens zero encoders when no
+/// batched shadow view is active.
+pub fn record_batched_point_shadows(params: BatchedPointShadowParams, mut ctx: RenderContext) {
+    let BatchedPointShadowParams {
+        world,
+        batched_views,
+        simple_view_query,
+        preprocess_view_query,
+        shadow_render_phases,
+        batched_instance_buffers,
+        pipeline_cache,
+        preprocess_pipelines,
+        uniform_allocation_bind_groups,
+        bin_unpacking_bind_groups,
+        build_indirect_params_bind_groups,
+        indirect_parameters_buffers,
+        build_indirect_parameters_metadata,
+    } = params;
+
+    let active_ids: Vec<Entity> = batched_views.iter().map(|(e, ..)| e).collect();
+    if active_ids.is_empty() {
+        return;
+    }
+
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
+    let time_span = diagnostics.time_span(ctx.command_encoder(), "batched_point_shadows");
+
+    if let (Some(batched_instance_buffers), Some(preprocess_pipelines)) = (
+        batched_instance_buffers.as_deref(),
+        preprocess_pipelines.as_deref(),
+    ) {
+        if let Some(uniform_allocation_bind_groups) = uniform_allocation_bind_groups.as_deref() {
+            record_allocate_uniforms_for_views(
+                &active_ids,
+                &simple_view_query,
+                batched_instance_buffers,
+                &pipeline_cache,
+                preprocess_pipelines,
+                uniform_allocation_bind_groups,
+                &mut ctx,
+            );
+        }
+        if let Some(bin_unpacking_bind_groups) = bin_unpacking_bind_groups.as_deref() {
+            record_unpack_bins_for_views(
+                &active_ids,
+                &simple_view_query,
+                batched_instance_buffers,
+                &pipeline_cache,
+                preprocess_pipelines,
+                bin_unpacking_bind_groups,
+                &mut ctx,
+            );
+        }
+        record_early_gpu_preprocess_for_views(
+            &active_ids,
+            &preprocess_view_query,
+            batched_instance_buffers,
+            &pipeline_cache,
+            preprocess_pipelines,
+            &mut ctx,
+        );
+    }
+
+    // Indirect draw parameters share one global buffer per phase, so each active view builds its
+    // indirect parameters immediately before its own shadow pass — all inside this single encoder.
+    for (
+        view_entity,
+        shadow_view,
+        extracted_view,
+        has_preprocess_bind_groups,
+        has_skip_gpu_preprocess,
+        has_no_indirect_drawing,
+        occlusion_culling,
+    ) in &batched_views
+    {
+        if has_preprocess_bind_groups
+            && !has_skip_gpu_preprocess
+            && !has_no_indirect_drawing
+            && let (Some(preprocess_pipelines), Some(build_indirect_parameters_metadata)) = (
+                preprocess_pipelines.as_deref(),
+                build_indirect_parameters_metadata.as_deref(),
+            )
+        {
+            run_build_indirect_parameters(
+                &mut ctx,
+                extracted_view.retained_view_entity,
+                build_indirect_params_bind_groups.as_deref(),
+                &pipeline_cache,
+                indirect_parameters_buffers.as_deref(),
+                build_indirect_parameters_metadata,
+                &preprocess_pipelines.early_phase,
+                "early_batched_shadow_indirect_parameters_building",
+            );
+        }
+        view_shadow_pass::<false>(
+            view_entity,
+            shadow_view,
+            extracted_view,
+            occlusion_culling,
+            world,
+            &shadow_render_phases,
+            &mut ctx,
+        );
+    }
+
+    time_span.end(ctx.command_encoder());
 }
 
 // superfargoth patch (own, F1): one command encoder per sun cascade.

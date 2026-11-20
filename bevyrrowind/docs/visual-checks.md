@@ -81,7 +81,8 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (58)
+### Awaiting owner (59)
+WG-SHARP | awaiting owner | [worldgen](visual-checks/worldgen.md) | sharp terrain stack: WG-X7b triplanar cliff rock + crevices, Phase 3a runtime strata/Voronoi/ridges (`worldgen.sharp`), Phase 3b macro cliff pass (`x10cs`) (2026-11-20)
 WG-G | awaiting owner (G1 seen: hitches, no visible detail → G2) | [worldgen](visual-checks/worldgen.md) | generated island in the game renderer, GPU erosion detail, `view world:` (2026-11-19)
 WG-X | seen 2026-11-19: base OK; empty, 26 fps, sprayed flora, blobby relief | [worldgen](visual-checks/worldgen.md) | Vvardenfell 10x same map: additive volcano arms, then textures, settlements, flora (2026-11-19)
 WG-V | awaiting owner | [worldgen](visual-checks/worldgen.md) | 3D worldgen viewer `worldgen-view`, S2 arms A0-A3 (B0-B3 next) (2026-11-18)

@@ -31,6 +31,7 @@ mod night;
 mod path;
 mod proxy;
 pub mod quality;
+pub mod shadow_atlas;
 mod shadow_budget;
 mod sun_gate;
 pub mod sun_view;
@@ -84,12 +85,13 @@ pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
 pub use shadow_budget::{
     importance as shadow_importance, pick_shadowed, BudgetedShadow, PointShadowBudget, PointShadowPlugin,
     ShadowContrastGate, ShadowMapCached, ShadowHeldOffscreen, ShadowReach, ShadowSlot, SteadyIntensity, sky_reference_lux,
-    TUNABLES as SHADOW_BUDGET_TUNABLES, DAY_GATE, DAY_GATE_CONTRAST, DAY_GATE_RECEIVER, FACE_CULL, LAMP_CONTACT, LAMP_COUNT, LAMP_FADE,
+    TUNABLES as SHADOW_BUDGET_TUNABLES, BATCHED_PASS, DAY_GATE, DAY_GATE_CONTRAST, DAY_GATE_RECEIVER, FACE_CULL, LAMP_CONTACT, LAMP_COUNT, LAMP_FADE,
     LAMP_FADE_TIME, LAMP_HYSTERESIS, LAMP_MAP_SIZE,
 };
 pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 pub use env_refresh::EnvMapRefresh;
 pub use quality::{ShadowQualityPlugin, SunShadowQuality, ViewPrepassBase, ViewQuality, ViewQualityCamera, ViewQualityParam};
+pub use shadow_atlas::{LampShadowAtlas, LampShadowAtlasReports, LampShadowAtlasStats};
 pub use sun_gate::{ShadowGateState, SunLightOcclusion, SunShadowGateStats, SunShadowGating};
 
 /// The sky's settings (orbit, atmosphere, curves). Change at will; the

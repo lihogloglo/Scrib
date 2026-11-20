@@ -398,3 +398,64 @@ fn transmittance_lut_holds_optical_depth_and_segments_read_upward() {
     let failures: Vec<String> = jobs.into_iter().filter_map(|(m, d)| compile(m, d).err()).collect();
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+/// CW-13b: 2D Point Shadow Atlas shaders link & validate under Naga with `POINT_SHADOW_ATLAS` both
+/// on and off, `point_shadow_atlas_blit.wesl` validates cleanly, and GPU struct layouts match Rust.
+#[test]
+fn point_shadow_atlas_shaders_compile_and_validate() {
+    use bevy_render::render_resource::ShaderType;
+
+    let high: Vec<&str> = BASE.iter().chain(HIGH).copied().collect();
+    let high_atlas: Vec<&str> = high.iter().copied().chain(["POINT_SHADOW_ATLAS", "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3"]).collect();
+    let deferred_atlas: Vec<&str> = high_atlas.iter().copied().chain(["DEFERRED_PREPASS"]).collect();
+    let fog_off: &[&str] = &["SHADOW_FILTER_METHOD_HARDWARE_2X2", "ATMOSPHERE", "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3"];
+    let fog_on: &[&str] = &["SHADOW_FILTER_METHOD_HARDWARE_2X2", "ATMOSPHERE", "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3", "POINT_SHADOW_ATLAS"];
+
+    let jobs: [(&str, &[&str]); 6] = [
+        ("bevy_pbr::render::pbr", &high),
+        ("bevy_pbr::render::pbr", &high_atlas),
+        ("bevy_pbr::deferred::deferred_lighting", &deferred_atlas),
+        ("bevy_pbr::volumetric_fog::volumetric_fog", fog_off),
+        ("bevy_pbr::volumetric_fog::volumetric_fog", fog_on),
+        ("bevy_pbr::render::point_shadow_atlas_blit", &[]),
+    ];
+
+    let mut failures = Vec::new();
+    let mut pbr_atlas_wgsl = String::new();
+    let mut blit_wgsl = String::new();
+    for (module, defs) in jobs {
+        match compile(module, defs) {
+            Ok(wgsl) => {
+                if module == "bevy_pbr::render::pbr" && defs.contains(&"POINT_SHADOW_ATLAS") {
+                    pbr_atlas_wgsl = wgsl;
+                } else if module == "bevy_pbr::render::point_shadow_atlas_blit" {
+                    blit_wgsl = wgsl;
+                }
+            }
+            Err(e) => failures.push(e),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+
+    // Verify `ShadowAtlasTile` WGSL layout matches Rust `GpuShadowAtlasTile` (16 bytes).
+    let module = naga::front::wgsl::parse_str(&pbr_atlas_wgsl).expect("pbr atlas wgsl");
+    let (handle, _) = module
+        .types
+        .iter()
+        .find(|(_, t)| t.name.as_deref().is_some_and(|n| n.ends_with("ShadowAtlasTile")))
+        .expect("ShadowAtlasTile struct in linked pbr wgsl");
+    let mut layouter = naga::proc::Layouter::default();
+    layouter.update(module.to_ctx()).expect("layout");
+    assert_eq!(u64::from(layouter[handle].size), bevy_pbr::GpuShadowAtlasTile::min_size().get(), "ShadowAtlasTile WGSL vs Rust size");
+
+    // Verify `AtlasBlitUniform` WGSL layout matches Rust `AtlasBlitUniform` (32 bytes).
+    let blit_mod = naga::front::wgsl::parse_str(&blit_wgsl).expect("blit wgsl");
+    let (blit_handle, _) = blit_mod
+        .types
+        .iter()
+        .find(|(_, t)| t.name.as_deref().is_some_and(|n| n.ends_with("AtlasBlitUniform")))
+        .expect("AtlasBlitUniform struct in blit wgsl");
+    let mut blit_layouter = naga::proc::Layouter::default();
+    blit_layouter.update(blit_mod.to_ctx()).expect("layout");
+    assert_eq!(u64::from(blit_layouter[blit_handle].size), bevy_pbr::AtlasBlitUniform::min_size().get(), "AtlasBlitUniform WGSL vs Rust size");
+}

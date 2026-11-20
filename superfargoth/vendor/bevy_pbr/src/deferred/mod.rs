@@ -286,6 +286,10 @@ impl SpecializedRenderPipeline for DeferredLightingLayout {
         if key.contains(MeshPipelineKey::GI_PROBES) {
             shader_defs.push("GI_PROBES".into());
         }
+        // superfargoth patch (own, CW-13b: 2D point shadow atlas)
+        if key.contains(MeshPipelineKey::POINT_SHADOW_ATLAS) {
+            shader_defs.push("POINT_SHADOW_ATLAS".into());
+        }
 
         if key.contains(MeshPipelineKey::HAS_PREVIOUS_SKIN) {
             shader_defs.push("HAS_PREVIOUS_SKIN".into());
