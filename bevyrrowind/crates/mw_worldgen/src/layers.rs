@@ -78,6 +78,8 @@ pub struct SourceTexels {
     pub palette: Vec<String>,
     /// Palette index per texel, [`NO_LAYER`] where no `LAND` is.
     pub texels: Vec<u16>,
+    /// Per-texel sRGB RGB8 `VCLR` vertex-color tint (WG-X7c; `[255, 255, 255]` where a cell has no `VCLR`).
+    pub tint: Vec<[u8; 3]>,
     /// `VTEX` values with no `LTEX` in their plugin (drawn with the default layer).
     pub unresolved: usize,
     pub cells: usize,
@@ -93,9 +95,52 @@ impl SourceTexels {
             self.texels[(row * w + col) as usize]
         }
     }
+
+    /// Tint at texel (col, row) of the lattice, or neutral white outside.
+    fn tint_at(&self, col: i64, row: i64) -> [u8; 3] {
+        let (w, h) = (self.dims[0] as i64, self.dims[1] as i64);
+        if col < 0 || row < 0 || col >= w || row >= h {
+            [255, 255, 255]
+        } else {
+            self.tint[(row * w + col) as usize]
+        }
+    }
 }
 
-/// Stitches every exterior `LAND`'s layer texels.
+/// Averages one cell's `VCLR` vertex grid (65×65) into 16×16 per-texel sRGB RGB8 tints.
+fn cell_texel_tints(size: u32, rgb: &[[u8; 3]]) -> Vec<[u8; 3]> {
+    let mut out = vec![[255u8; 3]; LAND_TEXELS * LAND_TEXELS];
+    let n = size as usize;
+    if n < 2 || rgb.len() != n * n {
+        return out;
+    }
+    let step = (n - 1) / LAND_TEXELS;
+    if step == 0 {
+        return out;
+    }
+    for r in 0..LAND_TEXELS {
+        for c in 0..LAND_TEXELS {
+            let mut acc = [0u32; 3];
+            let mut cnt = 0u32;
+            for dr in 0..=step {
+                let vr = (r * step + dr).min(n - 1);
+                for dc in 0..=step {
+                    let vc = (c * step + dc).min(n - 1);
+                    let px = rgb[vr * n + vc];
+                    for ch in 0..3 {
+                        acc[ch] += u32::from(px[ch]);
+                    }
+                    cnt += 1;
+                }
+            }
+            let d = cnt.max(1);
+            out[r * LAND_TEXELS + c] = [(acc[0] / d) as u8, (acc[1] / d) as u8, (acc[2] / d) as u8];
+        }
+    }
+    out
+}
+
+/// Stitches every exterior `LAND`'s layer texels and `VCLR` vertex tints.
 pub fn source_texels(db: &RecordDb) -> Result<SourceTexels, DumpError> {
     let spacing_m = f64::from(TEXEL_UNITS) * UNIT_METERS_F64;
     let mut unresolved = 0;
@@ -107,21 +152,26 @@ pub fn source_texels(db: &RecordDb) -> Result<SourceTexels, DumpError> {
         let Some(layers) = tile.layers else { continue };
         let o = layers.origin.to_f64();
         let ids: Vec<String> = layers.palette.iter().map(|r| r.as_str().to_owned()).collect();
-        cells.push(([o.x, o.z], ids, layers.texels));
+        let tints = match &tile.tint {
+            Some(t) => cell_texel_tints(t.size.x, &t.rgb),
+            None => vec![[255u8; 3]; LAND_TEXELS * LAND_TEXELS],
+        };
+        cells.push(([o.x, o.z], ids, layers.texels, tints));
     }
     let first = cells.first().ok_or(DumpError::NoLand)?.0;
     let (mut lo, mut hi) = (first, first);
-    for (o, _, _) in &cells {
+    for (o, _, _, _) in &cells {
         lo = [lo[0].min(o[0]), lo[1].min(o[1])];
         hi = [hi[0].max(o[0]), hi[1].max(o[1])];
     }
     let index = |v: f64| -> i64 { (v / spacing_m).round() as i64 };
     let dims = [(index(hi[0] - lo[0]) as usize) + LAND_TEXELS, (index(hi[1] - lo[1]) as usize) + LAND_TEXELS];
     let mut texels = vec![NO_LAYER; dims[0] * dims[1]];
+    let mut tint = vec![[255u8; 3]; dims[0] * dims[1]];
     let mut palette: Vec<String> = Vec::new();
     let mut by_id: HashMap<String, u16> = HashMap::new();
     let n = cells.len();
-    for (o, ids, cell) in cells {
+    for (o, ids, cell, cell_tint) in cells {
         let (c0, r0) = (index(o[0] - lo[0]) as usize, index(o[1] - lo[1]) as usize);
         let global: Vec<u16> = ids
             .into_iter()
@@ -134,12 +184,15 @@ pub fn source_texels(db: &RecordDb) -> Result<SourceTexels, DumpError> {
             .collect();
         for r in 0..LAND_TEXELS {
             for c in 0..LAND_TEXELS {
-                let t = cell[r * LAND_TEXELS + c];
-                texels[(r0 + r) * dims[0] + c0 + c] = global.get(usize::from(t)).copied().unwrap_or(NO_LAYER);
+                let src_i = r * LAND_TEXELS + c;
+                let dst_i = (r0 + r) * dims[0] + c0 + c;
+                let t = cell[src_i];
+                texels[dst_i] = global.get(usize::from(t)).copied().unwrap_or(NO_LAYER);
+                tint[dst_i] = cell_tint[src_i];
             }
         }
     }
-    Ok(SourceTexels { min_xz: lo, dims, spacing_m, palette, texels, unresolved, cells: n })
+    Ok(SourceTexels { min_xz: lo, dims, spacing_m, palette, texels, tint, unresolved, cells: n })
 }
 
 /// The guide layers of a same-map guide: the global grid scaled by `scale`, one 1:1 grid per stamped anchor.
@@ -158,6 +211,7 @@ pub fn guide_layers(
         spacing_m: t * scale,
         blend_m: blend_texels * t * scale,
         texels: src.texels.clone(),
+        tint: Some(src.tint.clone()),
     };
     let mut grids: Vec<(usize, GuideLayerGrid)> = Vec::new();
     let mut skipped = 0;
@@ -184,9 +238,11 @@ pub fn guide_layers(
             let r1 = ((sz1 - z0) / t).floor() as i64 + 1;
             let dims = [(c1 - c0 + 1) as usize, (r1 - r0 + 1) as usize];
             let mut texels = Vec::with_capacity(dims[0] * dims[1]);
+            let mut tint = Vec::with_capacity(dims[0] * dims[1]);
             for r in r0..=r1 {
                 for c in c0..=c1 {
                     texels.push(src.at(c, r));
+                    tint.push(src.tint_at(c, r));
                 }
             }
             grids.push((
@@ -197,6 +253,7 @@ pub fn guide_layers(
                     spacing_m: t,
                     blend_m: blend_texels * t,
                     texels,
+                    tint: Some(tint),
                 },
             ));
         }
@@ -269,6 +326,7 @@ mod tests {
             spacing_m: t,
             palette: vec!["a".into(), "b".into(), "c".into()],
             texels: (0..32 * 32).map(|k| ((k % 32) / 11) as u16).collect(),
+            tint: vec![[255, 255, 255]; 32 * 32],
             unresolved: 0,
             cells: 4,
         }

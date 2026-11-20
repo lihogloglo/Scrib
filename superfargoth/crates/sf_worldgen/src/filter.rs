@@ -148,6 +148,22 @@ pub fn declared_defaults() -> Vec<Declared> {
         decl("cascade", 1.0, "switch", 0.0, 1.0, "Reference(runevision 2025, octaves follow the accumulated gradient)",
             "1 = each octave follows the gradient of the base plus the octaves above it (branching); 0 = base gradient"),
         decl("seed", 1.0, "id", 0.0, 4_294_967_295.0, "Guess", "hash seed (u32)"),
+        // Sharp landform runtime operators (Phase 3a, default 0 so WG-F gully-only runs stay unchanged;
+        // `FilterParams::with_sharp_defaults` enables them for runtime terrain).
+        decl("strata_amp_m", 0.0, "m", 0.0, 80.0, "Guess",
+            "amplitude of stepped geological strata benches/risers on slopes (0 = off)"),
+        decl("strata_step_m", 14.0, "m", 1.0, 200.0, "Guess",
+            "vertical elevation period between rock strata benches"),
+        decl("strata_sharpness", 0.8, "ratio", 0.0, 1.0, "Guess",
+            "0 = soft terrace wave, 1 = crisp vertical riser cliff between flat benches"),
+        decl("rock_amp_m", 0.0, "m", 0.0, 60.0, "Guess",
+            "amplitude of 2-octave Voronoi fractured rock block outcrops on slopes (0 = off)"),
+        decl("rock_scale_m", 24.0, "m", 2.0, 256.0, "Guess",
+            "coarse cell width of Voronoi rock fracture blocks (second octave at 0.375x)"),
+        decl("ridge_amp_m", 0.0, "m", 0.0, 80.0, "Guess",
+            "amplitude of 2-octave ridged crest sharpening on slopes (0 = off)"),
+        decl("ridge_scale_m", 96.0, "m", 4.0, 512.0, "Guess",
+            "coarse wavelength of ridged crest sharpening (second octave at 0.375x)"),
     ]
 }
 
@@ -168,6 +184,20 @@ pub struct FilterParams {
     pub shore_ratio: f32,
     pub cascade: bool,
     pub seed: u32,
+    /// Stepped strata amplitude, metres (0 = off).
+    pub strata_amp_m: f32,
+    /// Vertical step height of strata benches, metres.
+    pub strata_step_m: f32,
+    /// Riser crispness in `[0, 1]`.
+    pub strata_sharpness: f32,
+    /// Voronoi rock fracture block amplitude, metres (0 = off).
+    pub rock_amp_m: f32,
+    /// Coarse Voronoi rock block width, metres.
+    pub rock_scale_m: f32,
+    /// Ridged crest sharpening amplitude, metres (0 = off).
+    pub ridge_amp_m: f32,
+    /// Coarse ridged crest wavelength, metres.
+    pub ridge_scale_m: f32,
 }
 
 impl Default for FilterParams {
@@ -217,6 +247,13 @@ impl FilterParams {
             shore_ratio: f("shore_ratio")?,
             cascade: integer("cascade")? != 0.0,
             seed: integer("seed")? as u32,
+            strata_amp_m: f("strata_amp_m")?,
+            strata_step_m: f("strata_step_m")?,
+            strata_sharpness: f("strata_sharpness")?,
+            rock_amp_m: f("rock_amp_m")?,
+            rock_scale_m: f("rock_scale_m")?,
+            ridge_amp_m: f("ridge_amp_m")?,
+            ridge_scale_m: f("ridge_scale_m")?,
         };
         if p.slope_fade[0] >= p.slope_fade[1] || p.curvature_fade[0] >= p.curvature_fade[1] {
             return Err(Error::Invalid(
@@ -224,6 +261,47 @@ impl FilterParams {
             ));
         }
         Ok(p)
+    }
+
+    /// Runtime sharp-landform defaults (Phase 3a: strata benches, Voronoi rock fracture blocks,
+    /// ridged crests, with gully amplitude toned down slightly so rocks read as cliffs rather than grooves).
+    #[must_use]
+    pub fn with_sharp_defaults(mut self) -> Self {
+        self.relief_fraction = 0.18;
+        self.strata_amp_m = 8.0;
+        self.strata_step_m = 14.0;
+        self.strata_sharpness = 0.8;
+        self.rock_amp_m = 6.5;
+        self.rock_scale_m = 24.0;
+        self.ridge_amp_m = 8.0;
+        self.ridge_scale_m = 96.0;
+        self
+    }
+
+    /// Scales the three sharp-operator amplitudes uniformly (live console `worldgen.sharp`: 0 = gully-only A/B).
+    #[must_use]
+    pub fn with_sharp_scale(mut self, scale: f32) -> Self {
+        let s = scale.max(0.0);
+        self.strata_amp_m *= s;
+        self.rock_amp_m *= s;
+        self.ridge_amp_m *= s;
+        self
+    }
+
+    /// Conservative worst-case vertical bound of `detail_offset_banded` (before the shore cap), metres.
+    #[must_use]
+    pub fn max_total_amplitude_m(&self) -> f32 {
+        let gully = if self.octaves == 0 { 0.0 } else { self.max_amplitude_m };
+        gully + 0.5 * self.strata_amp_m.max(0.0) + self.rock_amp_m.max(0.0) + self.ridge_amp_m.max(0.0)
+    }
+
+    /// Whether any runtime detail operator (gullies or sharp features) is active.
+    #[must_use]
+    pub fn has_any_detail(&self) -> bool {
+        (self.octaves > 0 && self.max_amplitude_m > 0.0)
+            || self.strata_amp_m > 0.0
+            || self.rock_amp_m > 0.0
+            || self.ridge_amp_m > 0.0
     }
 }
 
@@ -469,6 +547,132 @@ pub fn detail_offset(p: [f64; 2], base: &BaseSample, sea_level_m: f64, prm: &Fil
     detail_offset_banded(p, base, sea_level_m, prm, None)
 }
 
+/// Smoothstep-interpolated 2D integer-hashed value noise in `[0, 1]` at wavelength `lambda_m`.
+fn value_noise_2d(p: [f64; 2], lambda_m: f32, seed: u32) -> f32 {
+    let l = f64::from(lambda_m);
+    let (ux, uy) = (p[0] / l, p[1] / l);
+    let (fx0, fy0) = (ux.floor(), uy.floor());
+    let (ix, iy) = (fx0 as i64, fy0 as i64);
+    let (fx, fy) = ((ux - fx0) as f32, (uy - fy0) as f32);
+    let u = fx * fx * (3.0 - 2.0 * fx);
+    let v = fy * fy * (3.0 - 2.0 * fy);
+    let tap = |dx: i64, dy: i64| unit(pcg3d((ix + dx) as u32, (iy + dy) as u32, seed)[0]);
+    let a = tap(0, 0);
+    let b = tap(1, 0);
+    let c = tap(0, 1);
+    let d = tap(1, 1);
+    let top = a + (b - a) * u;
+    let bot = c + (d - c) * u;
+    top + (bot - top) * v
+}
+
+/// 3x3 Worley/Voronoi fractured rock block profile in `[-0.9, 0.65]` at cell size `lambda_m`:
+/// sharp V-cracks along F2-F1 boundaries separating angular elevated/sunken rock blocks.
+fn voronoi_block(p: [f64; 2], lambda_m: f32, seed: u32) -> f32 {
+    let l = f64::from(lambda_m);
+    let (ux, uy) = (p[0] / l, p[1] / l);
+    let (fx0, fy0) = (ux.floor(), uy.floor());
+    let (ix, iy) = (fx0 as i64, fy0 as i64);
+    let (fx, fy) = ((ux - fx0) as f32, (uy - fy0) as f32);
+    let mut d1 = 1e9f32;
+    let mut d2 = 1e9f32;
+    let mut h_cell = 0.0f32;
+    for dy in -1i32..=1 {
+        for dx in -1i32..=1 {
+            let cx = (ix + i64::from(dx)) as u32;
+            let cy = (iy + i64::from(dy)) as u32;
+            let [hx, hy, hp] = pcg3d(cx, cy, seed);
+            let ox = dx as f32 + unit(hx) - fx;
+            let oy = dy as f32 + unit(hy) - fy;
+            let d = (ox * ox + oy * oy).sqrt();
+            if d < d1 {
+                d2 = d1;
+                d1 = d;
+                h_cell = unit(hp) * 2.0 - 1.0;
+            } else if d < d2 {
+                d2 = d;
+            }
+        }
+    }
+    let edge = smoothstep(0.0, 0.24, d2 - d1);
+    edge * (0.45 + 0.55 * h_cell) - 0.35
+}
+
+/// Sharp runtime landform detail (Phase 3a): stepped strata, Voronoi rock blocks, ridged crests.
+/// Mirrored bit-for-bit in `tiles.wgsl` (`wg_sharp`).
+fn sharp_offset(
+    p: [f64; 2],
+    base: &BaseSample,
+    slope0: f32,
+    shore: f32,
+    prm: &FilterParams,
+    band_m: Option<[f32; 2]>,
+) -> f32 {
+    let mut dh = 0.0f32;
+    let band_f = |lambda: f32| band_m.map_or(1.0, |[lo, hi]| smoothstep(lo, hi, lambda));
+
+    // 1. Stepped geological strata / benches on sloped ground (band-limited by horizontal riser width).
+    if prm.strata_amp_m > 0.0 && prm.strata_step_m > 0.5 {
+        let s_mask = smoothstep(0.08, 0.30, slope0);
+        if s_mask > 0.0 {
+            let warp = (value_noise_2d(p, 120.0, prm.seed ^ 0x41a7_1301) - 0.5) * 0.65 * prm.strata_step_m;
+            let u = (base.h as f32 + warp) / prm.strata_step_m;
+            let f = u - u.floor();
+            let r = 0.45 - 0.39 * prm.strata_sharpness.clamp(0.0, 1.0);
+            let step_dev = smoothstep(0.5 - r, 0.5 + r, f) - f;
+            let w_horiz = (2.0 * r * prm.strata_step_m) / slope0.max(0.05);
+            let b_mask = band_f(w_horiz);
+            dh += prm.strata_amp_m.min(shore) * s_mask * b_mask * step_dev;
+        }
+    }
+
+    // 2. Two-octave Voronoi rock fracture blocks (patchy outcrops on hills, continuous on steep cliffs).
+    if prm.rock_amp_m > 0.0 && prm.rock_scale_m > 1.0 {
+        let s_mask = smoothstep(0.08, 0.32, slope0);
+        if s_mask > 0.0 {
+            let patch = smoothstep(0.28, 0.72, value_noise_2d(p, 160.0, prm.seed ^ 0x73c9_2b15));
+            let r_mask = s_mask * (0.35 + 0.65 * patch);
+            let l0 = prm.rock_scale_m;
+            let l1 = prm.rock_scale_m * 0.375;
+            let b0 = band_f(l0);
+            let b1 = band_f(l1);
+            let mut acc = 0.0f32;
+            if b0 > 0.0 {
+                acc += 0.68 * b0 * voronoi_block(p, l0, prm.seed ^ 0x517c_c1b7);
+            }
+            if b1 > 0.0 {
+                acc += 0.32 * b1 * voronoi_block(p, l1, prm.seed ^ 0x2f6e_2b11);
+            }
+            dh += prm.rock_amp_m.min(shore) * r_mask * acc;
+        }
+    }
+
+    // 3. Two-octave ridged rock crests.
+    if prm.ridge_amp_m > 0.0 && prm.ridge_scale_m > 1.0 {
+        let s_mask = smoothstep(0.06, 0.25, slope0);
+        if s_mask > 0.0 {
+            let l0 = prm.ridge_scale_m;
+            let l1 = prm.ridge_scale_m * 0.375;
+            let b0 = band_f(l0);
+            let b1 = band_f(l1);
+            let mut acc = 0.0f32;
+            if b0 > 0.0 {
+                let n = value_noise_2d(p, l0, prm.seed ^ 0x6b2f_91d3);
+                let r = 1.0 - (2.0 * n - 1.0).abs();
+                acc += 0.68 * b0 * (r * r * 2.0 - 1.0);
+            }
+            if b1 > 0.0 {
+                let n = value_noise_2d(p, l1, prm.seed ^ 0x1b87_3593);
+                let r = 1.0 - (2.0 * n - 1.0).abs();
+                acc += 0.32 * b1 * (r * r * 2.0 - 1.0);
+            }
+            dh += prm.ridge_amp_m.min(shore) * s_mask * acc;
+        }
+    }
+
+    dh
+}
+
 /// [`detail_offset`] band-limited for a lattice of coarser spacing: octave `k` is scaled by
 /// `smoothstep(band_m[0], band_m[1], λₖ)`, so octaves whose wavelength is at or below `band_m[0]` metres are off
 /// and those at or above `band_m[1]` untouched (a factor of exactly 1, so with every octave above the band the
@@ -484,45 +688,48 @@ pub fn detail_offset_banded(
     let g0 = base.grad;
     let slope0 = (g0[0] * g0[0] + g0[1] * g0[1]).sqrt();
     let shore = ((base.h - sea_level_m).max(0.0) as f32) * prm.shore_ratio;
+    if shore.is_nan() || shore <= 0.0 {
+        return 0.0;
+    }
+    let mut dh = 0.0f32;
     let amp = (prm.relief_fraction * slope0 * prm.wavelength_m)
         .min(prm.max_amplitude_m)
         .min(shore);
-    if prm.octaves == 0 || amp.is_nan() || amp <= 0.0 {
-        return 0.0;
-    }
-    let mut wsum = 0.0f32;
-    let mut wk = 1.0f32;
-    for _ in 0..prm.octaves {
-        wsum += wk;
-        wk *= prm.gain;
-    }
-    let curv = base.plan_curvature.abs();
-    let mut g = g0;
-    let mut dh = 0.0f32;
-    let mut lambda = prm.wavelength_m;
-    let mut w = 1.0 / wsum;
-    for k in 0..prm.octaves {
-        let s = (g[0] * g[0] + g[1] * g[1]).sqrt();
-        let band = band_m.map_or(1.0, |[lo, hi]| smoothstep(lo, hi, lambda));
-        let fade = smoothstep(prm.slope_fade[0], prm.slope_fade[1], s)
-            * (1.0 - smoothstep(prm.curvature_fade[0], prm.curvature_fade[1], curv * lambda))
-            * band;
-        if fade > 0.0 && s > 0.0 {
-            let dir = [-g[1] / s, g[0] / s];
-            let seed = prm.seed ^ k.wrapping_mul(0x9e37_79b9);
-            let (th, coherence) = phasor(p, lambda, dir, seed);
-            let a = amp * w * fade * smoothstep(0.0, prm.phase_fade, coherence);
-            let (v, dv) = profile(th, prm.crest_sharpness, prm.carve);
-            dh += a * v;
-            if prm.cascade {
-                let slope = a * dv * TAU / lambda;
-                g = [g[0] + slope * dir[0], g[1] + slope * dir[1]];
-            }
+    if prm.octaves > 0 && !amp.is_nan() && amp > 0.0 {
+        let mut wsum = 0.0f32;
+        let mut wk = 1.0f32;
+        for _ in 0..prm.octaves {
+            wsum += wk;
+            wk *= prm.gain;
         }
-        lambda /= prm.lacunarity;
-        w *= prm.gain;
+        let curv = base.plan_curvature.abs();
+        let mut g = g0;
+        let mut lambda = prm.wavelength_m;
+        let mut w = 1.0 / wsum;
+        for k in 0..prm.octaves {
+            let s = (g[0] * g[0] + g[1] * g[1]).sqrt();
+            let band = band_m.map_or(1.0, |[lo, hi]| smoothstep(lo, hi, lambda));
+            let fade = smoothstep(prm.slope_fade[0], prm.slope_fade[1], s)
+                * (1.0 - smoothstep(prm.curvature_fade[0], prm.curvature_fade[1], curv * lambda))
+                * band;
+            if fade > 0.0 && s > 0.0 {
+                let dir = [-g[1] / s, g[0] / s];
+                let seed = prm.seed ^ k.wrapping_mul(0x9e37_79b9);
+                let (th, coherence) = phasor(p, lambda, dir, seed);
+                let a = amp * w * fade * smoothstep(0.0, prm.phase_fade, coherence);
+                let (v, dv) = profile(th, prm.crest_sharpness, prm.carve);
+                dh += a * v;
+                if prm.cascade {
+                    let slope = a * dv * TAU / lambda;
+                    g = [g[0] + slope * dir[0], g[1] + slope * dir[1]];
+                }
+            }
+            lambda /= prm.lacunarity;
+            w *= prm.gain;
+        }
     }
-    dh
+    dh += sharp_offset(p, base, slope0, shore, prm, band_m);
+    dh.clamp(-shore, shore)
 }
 
 /// An output lattice: samples at `spacing_m`, anchored at the base's sample (0, 0), so a sample's world position

@@ -66,3 +66,17 @@ Status: **confirmed (owner 2026-11-20)**: "world of difference", all live toggle
 Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/x10s" --hour 12` (also applies to classic Seyda Neen / Balmora).
 Live A/B in console (`~`): `set terrain.hex_tiling off` vs `set terrain.hex_tiling on`; also live: `set terrain.hex_tiling.rot_strength 0` (offset-only vs full rotation `1`), `set terrain.hex_tiling.contrast 7`, `set terrain.hex_tiling.scale 1`.
 Look for: repeating tile grid gone across large 10x single-layer expanses (hillsides around Balmora, Ashlands, Red Mountain apron); lighting on bumpy rock/dirt normals stays consistent (no inverted or wobbling highlights from rotated tiles); no seams at hex borders or when crossing 1024 m floating-origin shifts; height-blended layer transitions stay crisp. Check cobblestone/paved roads in Balmora under `rot_strength 1` vs `0`.
+
+### WG-SHARP: Sharp landforms + cliff rock shading + Option A (WG-X7b/c + Phase 3a/3b, 2026-11-20)
+
+Launch on `target/worldgen/x10cs` (dramatic) or `target/worldgen/x10c-sharp` (sharp) and compare vs `target/worldgen/x10s` (smooth base).
+- Owner 2026-11-20 (v1 `x10cs` / `x10c-sharp`): "both look nice", spotted seams between terrain tiles / near range → fixed clipmap edge fades (`layer_edge_fade`, morph-blended `terrain_curvature`, `terrain_normal`/`macro_albedo` border cross-fades) and added Option A (per-region geology, routed volcanic lava lobes, `VCLR` macro tint `layers.tint`).
+Live console (`~`) A/B toggles:
+- Shader cliff rock & crevices (`WG-X7b`): `set terrain.cliff.enabled off` / `on`, `set terrain.cliff.slope_start_deg 28`, `set terrain.cliff.slope_full_deg 45`, `set terrain.cliff.crevice_strength 0.45`.
+- Runtime sharp strata/Voronoi/ridges (Phase 3a): `set worldgen.sharp 0` (old gully-only) vs `1` (default) vs `2` (aggressive); `set worldgen.filter false` / `true`.
+Look for:
+- **Clipmap / range seams gone:** fly 300–1200 m above terrain and sweep across the ~900–1000 m near-splat ring and clipmap level borders — no hard square lines in normals, shading, crevices, or near-to-far albedo transition.
+- **Per-region geology:** Bitter Coast stays low/marshy (quiet scarps), Ascadian Isles has gentle terraced rolling hills, Grazelands reads as flat-topped stepped mesas, West Gash has towering canyon escarpments, Azura's Coast / Sheogorad have sheer rocky sea-cliff headlands.
+- **Volcanic lava lobes:** Molag Amur / Ashlands / Red Mountain slopes show downhill-routed dark rocky lava ribbons with raised lateral levees and steep aa fronts.
+- **Morrowind `VCLR` macro tint (`WG-X7c`):** subtle regional soil/road/shadow colour variation carried onto both far macro and near ground splats.
+- Settlements still sit cleanly on their stamps without floating/burying; no CDLOD culling holes or wet/dry sea glitches.

@@ -409,6 +409,52 @@ fn read_heights(dir: &Path, dims: [usize; 2], spacing: f64, origin: [f64; 2]) ->
     Ok(g.heights)
 }
 
+/// Rasterises Morrowind's dropped `terrain_rock*` cliff-fake references into a `[0, 1]` steering mask on the
+/// scaled guide grid (`cliff_mask.f32`), so `scrib-worldgen cliffs --mask` can carve sharp outcrops and rock
+/// faces wherever original Morrowind authored rocky relief without scaling low-poly cliff meshes 10x.
+fn write_cliff_mask(
+    refs: &[RefInfo],
+    dims: [usize; 2],
+    spacing_m: f64,
+    origin_m: [f64; 2],
+    scale: f64,
+    out: &Path,
+) -> Result<usize, DumpError> {
+    let [w, h] = dims;
+    let mut mask = vec![0.0f32; w * h];
+    let mut count = 0usize;
+    for r in refs {
+        if !r.stem().is_some_and(|st| st.starts_with("terrain_rock")) {
+            continue;
+        }
+        count += 1;
+        let wx = r.pos[0] * scale;
+        let wy = r.pos[1] * scale;
+        let rad = (r.bounds_radius_m().unwrap_or(10.0) * scale).clamp(spacing_m * 1.5, 450.0);
+        let c0 = ((wx - rad - origin_m[0]) / spacing_m).floor().max(0.0) as usize;
+        let c1 = ((wx + rad - origin_m[0]) / spacing_m).ceil().min((w - 1) as f64) as usize;
+        let r0 = ((origin_m[1] - (wy + rad)) / spacing_m).floor().max(0.0) as usize;
+        let r1 = ((origin_m[1] - (wy - rad)) / spacing_m).ceil().min((h - 1) as f64) as usize;
+        for row in r0..=r1 {
+            let py = origin_m[1] - row as f64 * spacing_m;
+            for col in c0..=c1 {
+                let px = origin_m[0] + col as f64 * spacing_m;
+                let d = (px - wx).hypot(py - wy) / rad;
+                if d < 1.0 {
+                    let t = 1.0 - d;
+                    let v = (t * t * (3.0 - 2.0 * t)) as f32;
+                    let slot = &mut mask[row * w + col];
+                    if v > *slot {
+                        *slot = v;
+                    }
+                }
+            }
+        }
+    }
+    std::fs::write(out.join("cliff_mask.f32"), le_bytes(&mask))?;
+    Ok(count)
+}
+
 /// The `worldgen-x10` command body; returns the printed report (the census).
 pub fn run(db: &RecordDb, bounds: Bounds<'_>, args: &X10Args) -> Result<String, DumpError> {
     let started = Instant::now();
@@ -436,6 +482,7 @@ pub fn run(db: &RecordDb, bounds: Bounds<'_>, args: &X10Args) -> Result<String, 
     let sea = anchor::open_sea(&src, args.params.open_water_radius_m);
     let source = MwWorldSource::build(db, &SourceOptions::default());
     let refs = exterior_refs(&source, bounds);
+    let _rock_mask_count = write_cliff_mask(&refs, dims, sp * s, origin, s, &args.out)?;
     let (members, census) = members_of(&refs, &src, &sea, &args.params);
     let built = build_anchors(&members, &src, &fin, s, &args.params, &d.markers);
 

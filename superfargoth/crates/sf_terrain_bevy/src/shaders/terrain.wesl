@@ -143,7 +143,7 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
 @if(SURFACE_WEATHER)
     n_geo = raised_normal(n_geo, xz, in.raise);
     let dist = distance(view.world_position, in.world_position.xyz);
-    let s = terrain_surface(xz, wpos, dpx, dpy, n_geo, dist);
+    let s = terrain_surface(xz, wpos, dpx, dpy, n_geo, dist, in.lod);
     var albedo = s.albedo;
 
     if (debug & DEBUG_LOD) != 0u {

@@ -6,16 +6,24 @@
 // derivatives): safe in non-uniform control flow.
 
 import super::common::{
-    P_DETAIL, P_VALID, P_MACRO, P_HEX, DEBUG_RAW_LAYERS, debug_flags,
-    pf, pi, params, level_coord, in_window,
+    P_DETAIL, P_VALID, P_MACRO, P_HEX, P_CLIFF, P_HEIGHT, HEIGHT_LEVELS, DEBUG_RAW_LAYERS, debug_flags,
+    pf, pi, params, level_coord, in_window, window_edge_dist, layer_edge_fade, height_level, height_bilinear,
     splat_at, layer_tiling, layer_triplanar, layer_mean,
     macro_clipmap, macro_sampler, albedo_height_array, normal_array, ao_roughness_array, layer_sampler,
 };
 
 const MACRO_LEVELS: u32 = 10u;
 
-/// Linear macro albedo (bilinear, from the finest resident macro level),
-/// alpha = 0 where none is resident.
+fn macro_sample_level(xz: vec2<f32>, l: u32) -> vec3<f32> {
+    let c = level_coord(xz, l + 1u);
+    let level = pi(P_MACRO + l);
+    let t = vec2<f32>(level.xy) + c + 0.5;
+    return textureSampleLevel(macro_clipmap, macro_sampler, t / 512.0, i32(l), 0.0).rgb;
+}
+
+/// Linear macro albedo (bilinear, from the finest resident macro level, blended smoothly into the
+/// next coarser level across the outer 16 texels of its window so clipmap edges never seam).
+/// Alpha = 0 where none is resident.
 fn macro_albedo(xz: vec2<f32>) -> vec4<f32> {
     let valid = params[P_VALID].z;
     for (var l = 0u; l < MACRO_LEVELS; l += 1u) {
@@ -27,9 +35,21 @@ fn macro_albedo(xz: vec2<f32>) -> vec4<f32> {
         if !in_window(level, vec2<i32>(floor(c)), 0, 1) {
             continue;
         }
-        // Samples sit on texel centers; wrap addressing does the toroidal part.
-        let t = vec2<f32>(level.xy) + c + 0.5;
-        let rgb = textureSampleLevel(macro_clipmap, macro_sampler, t / 512.0, i32(l), 0.0).rgb;
+        var rgb = macro_sample_level(xz, l);
+        let edge = window_edge_dist(level, c);
+        if edge < 16.0 {
+            for (var l2 = l + 1u; l2 < MACRO_LEVELS; l2 += 1u) {
+                if ((valid >> l2) & 1u) == 0u {
+                    continue;
+                }
+                let c2 = level_coord(xz, l2 + 1u);
+                if in_window(pi(P_MACRO + l2), vec2<i32>(floor(c2)), 0, 1) {
+                    let w = smoothstep(1.0, 16.0, edge);
+                    rgb = mix(macro_sample_level(xz, l2), rgb, w);
+                    break;
+                }
+            }
+        }
         return vec4<f32>(rgb, 1.0);
     }
     return vec4<f32>(0.0);
@@ -297,6 +317,100 @@ fn sample_layer(
     return out;
 }
 
+/// Full X/Y/Z triplanar projection of a rock layer (with hex-tiling and whiteout normal blending),
+/// pruning axes with negligible weight (< 0.01) so steep faces facing one axis skip invisible sides.
+fn sample_layer_triplanar(
+    id: u32,
+    wpos: vec3<f32>,
+    dpx: vec3<f32>,
+    dpy: vec3<f32>,
+    n: vec3<f32>,
+) -> LayerSample {
+    let inv = 1.0 / layer_tiling(id);
+    var blend = pow(max(abs(n), vec3<f32>(1e-5)), vec3<f32>(6.0));
+    blend /= max(blend.x + blend.y + blend.z, 1e-6);
+    blend = select(vec3<f32>(0.0), blend, blend > vec3<f32>(0.01));
+    blend /= max(blend.x + blend.y + blend.z, 1e-6);
+
+    var ah = vec4<f32>(0.0);
+    var surf = vec2<f32>(0.0);
+    var nw = vec3<f32>(0.0);
+    if blend.x > 0.0 {
+        let sx = sample_projection(id, wpos.zy * inv, dpx.zy * inv, dpy.zy * inv);
+        let nx = vec3<f32>(sx.normal.xy + n.zy, abs(sx.normal.z) * n.x);
+        ah += sx.albedo_height * blend.x;
+        surf += sx.surface * blend.x;
+        nw += nx.zyx * blend.x;
+    }
+    if blend.y > 0.0 {
+        let sy = sample_projection(id, wpos.xz * inv, dpx.xz * inv, dpy.xz * inv);
+        let ny = vec3<f32>(sy.normal.xy + n.xz, abs(sy.normal.z) * n.y);
+        ah += sy.albedo_height * blend.y;
+        surf += sy.surface * blend.y;
+        nw += ny.xzy * blend.y;
+    }
+    if blend.z > 0.0 {
+        let sz = sample_projection(id, wpos.xy * inv, dpx.xy * inv, dpy.xy * inv);
+        let nz = vec3<f32>(sz.normal.xy + n.xy, abs(sz.normal.z) * n.z);
+        ah += sz.albedo_height * blend.z;
+        surf += sz.surface * blend.z;
+        nw += nz.xyz * blend.z;
+    }
+    var out: LayerSample;
+    out.albedo_height = ah;
+    out.surface = surf;
+    out.normal = normalize(nw);
+    return out;
+}
+
+/// Subtle geological horizontal rock-strata banding along warped world elevation (floating-origin
+/// safe: XZ warp uses 1024 m-periodic `value_noise`).
+fn cliff_strata_mod(wpos: vec3<f32>) -> f32 {
+    let warp = (value_noise(wpos.xz / 64.0, 16) - 0.5) * 14.0
+        + (value_noise(wpos.xz / 16.0, 64) - 0.5) * 3.5;
+    let y = wpos.y + warp;
+    let coarse = sin(y * (6.2831855 / 18.0));
+    let fine = sin(y * (6.2831855 / 4.2) + coarse * 1.3);
+    return 0.88 + 0.10 * coarse + 0.07 * fine;
+}
+
+/// Dimensionless curvature at one height clipmap level `l`.
+fn curvature_at_level(xz: vec2<f32>, l: u32) -> f32 {
+    let s = 0.5 * exp2(f32(l));
+    let hc = height_bilinear(xz, l);
+    let avg = 0.25 * (
+        height_bilinear(xz + vec2<f32>(s, 0.0), l)
+        + height_bilinear(xz - vec2<f32>(s, 0.0), l)
+        + height_bilinear(xz + vec2<f32>(0.0, s), l)
+        + height_bilinear(xz - vec2<f32>(0.0, s), l)
+    );
+    return clamp((avg - hc) / s, -1.0, 1.0);
+}
+
+/// Dimensionless local terrain curvature matched to the morphed CDLOD `lod` (blending into `l + 1`
+/// both across the morph zone and near the height clipmap window edge so clipmap borders never seam).
+/// Positive in concave crevices/valleys, negative on convex ridges and cliff lips.
+fn terrain_curvature(xz: vec2<f32>, lod: f32) -> f32 {
+    let lf = max(lod, 0.0);
+    let l0 = u32(floor(lf));
+    let l = height_level(xz, l0, 2, 3);
+    if l >= HEIGHT_LEVELS {
+        return 0.0;
+    }
+    var curv = curvature_at_level(xz, l);
+    let morph_t = select(0.0, lf - floor(lf), l == l0);
+    let edge = window_edge_dist(pi(P_HEIGHT + l), level_coord(xz, l));
+    let edge_t = 1.0 - smoothstep(3.0, 20.0, edge);
+    let t = max(morph_t, edge_t);
+    if t > 0.01 {
+        let l1 = height_level(xz, l + 1u, 2, 3);
+        if l1 < HEIGHT_LEVELS {
+            curv = mix(curv, curvature_at_level(xz, l1), t);
+        }
+    }
+    return curv;
+}
+
 /// What [`terrain_surface`] returns: the inputs of the terrain's `PbrInput`.
 struct TerrainSurface {
     /// Linear albedo, macro variation applied.
@@ -321,6 +435,7 @@ fn terrain_surface(
     dpy: vec3<f32>,
     n_geo: vec3<f32>,
     dist: f32,
+    lod: f32,
 ) -> TerrainSurface {
     let wxz = wpos.xz;
     let macro_c = macro_albedo(xz);
@@ -334,7 +449,22 @@ fn terrain_surface(
     var height = 0.5;
 
     let detail = pf(P_DETAIL);
-    let near = 1.0 - smoothstep(0.7 * detail.x, detail.x, dist);
+    let cliff_f = pf(P_CLIFF);
+    let cliff_layer = params[P_CLIFF].w;
+    let cliff_on = cliff_layer < params[P_VALID].w;
+    let cliff_w = select(0.0, 1.0 - smoothstep(cliff_f.y, cliff_f.x, n_geo.y), cliff_on);
+    let strata = select(1.0, cliff_strata_mod(wpos), cliff_w > 0.0);
+
+    // Distant cliff rock (past splat_range): blend macro albedo toward regionally-tinted rock mean
+    // with elevation strata so cliffs kilometers away read as exposed rock rather than grass/ash.
+    if cliff_w > 0.0 && !raw {
+        let rock_mean = layer_mean(cliff_layer).rgb;
+        let region_tint = clamp(albedo / max(rock_mean, vec3<f32>(0.05)), vec3<f32>(0.55), vec3<f32>(1.35));
+        let far_rock = rock_mean * mix(vec3<f32>(1.0), region_tint, 0.45) * strata;
+        albedo = mix(albedo, far_rock, cliff_w);
+    }
+
+    let near = (1.0 - smoothstep(0.7 * detail.x, detail.x, dist)) * layer_edge_fade(xz);
     if near > 0.0 {
         let s = splat_at(xz);
         if s.valid {
@@ -374,15 +504,51 @@ fn terrain_surface(
             if macro_c.a > 0.0 && !raw {
                 tint = clamp(macro_c.rgb / max(mean, vec3<f32>(0.01)), vec3<f32>(0.0), vec3<f32>(4.0));
             }
-            albedo = mix(albedo, a * tint, near);
-            roughness = mix(roughness, surface.y, near);
-            ao = mix(1.0, surface.x, near);
-            n = normalize(mix(n_geo, normalize(nb), near));
-            height = mix(height, h, near);
+            var near_albedo = a * tint;
+            var near_surface = surface;
+            var near_n = normalize(nb);
+            var near_h = h;
+
+            // WG-X7b: height-blended triplanar cliff rock on steep slopes.
+            if cliff_w > 0.0 {
+                let rock = sample_layer_triplanar(cliff_layer, wpos, dpx, dpy, n_geo);
+                var rock_albedo = rock.albedo_height.rgb * strata;
+                if macro_c.a > 0.0 && !raw {
+                    let rock_mean = layer_mean(cliff_layer).rgb;
+                    let region_tint = clamp(macro_c.rgb / max(rock_mean, vec3<f32>(0.05)), vec3<f32>(0.55), vec3<f32>(1.35));
+                    rock_albedo *= mix(vec3<f32>(1.0), region_tint, 0.45);
+                }
+                // Height-blend rock ribs through soil/grass along the slope transition.
+                let hg = near_h + (1.0 - cliff_w);
+                let hr = rock.albedo_height.a + cliff_w;
+                let htop = max(hg, hr) - detail.y;
+                let bg = max(hg - htop, 0.0);
+                let br = max(hr - htop, 0.0);
+                let rw = br / max(bg + br, 1e-5);
+                near_albedo = mix(near_albedo, rock_albedo, rw);
+                near_surface = mix(near_surface, rock.surface, rw);
+                near_n = normalize(mix(near_n, rock.normal, rw));
+                near_h = mix(near_h, rock.albedo_height.a, rw);
+            }
+
+            albedo = mix(albedo, near_albedo, near);
+            roughness = mix(roughness, near_surface.y, near);
+            ao = mix(1.0, near_surface.x, near);
+            n = normalize(mix(n_geo, near_n, near));
+            height = mix(height, near_h, near);
         }
     }
     if !raw {
         albedo *= variation;
+        // WG-X7b: curvature crevice darkening and subtle convex cliff-lip highlight.
+        let crev_k = cliff_f.z;
+        if crev_k > 0.0 {
+            let curv = terrain_curvature(xz, lod);
+            let dark = saturate(curv * 2.5);
+            let lip = saturate(-curv * 2.5);
+            albedo *= (1.0 - crev_k * dark) * (1.0 + 0.12 * crev_k * lip);
+            ao *= 1.0 - 0.5 * crev_k * dark;
+        }
     }
 
     var out: TerrainSurface;

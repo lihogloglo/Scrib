@@ -52,6 +52,7 @@
 )]
 
 pub mod anchors;
+pub mod cliffs;
 pub mod dem;
 pub mod filter;
 pub mod flood;

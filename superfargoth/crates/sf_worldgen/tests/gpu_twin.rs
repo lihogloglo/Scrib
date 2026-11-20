@@ -50,7 +50,7 @@ fn guide(w: usize, h: usize, spacing_m: f64, origin_m: [f64; 2]) -> Guide {
 
 fn tiles(g: Guide) -> GuideTiles {
     let settings = TileSettings::default();
-    let prm = FilterParams { octaves: settings.runtime_octaves, ..FilterParams::default() };
+    let prm = FilterParams { octaves: settings.runtime_octaves, ..FilterParams::default().with_sharp_defaults() };
     GuideTiles::new(g, WorldspaceId::new("twin"), prm, settings)
 }
 
@@ -384,6 +384,7 @@ fn gpu_macro_matches_the_cpu_with_layers() {
         spacing_m: 73.152,
         blend_m: 54.864,
         texels: (0..120 * 110).map(|k| if k % 97 == 5 { NO_LAYER } else { (((k % 120) / 2 + (k / 120) / 3) % 4) as u16 }).collect(),
+        tint: None,
     };
     let stamp_grid = GuideLayerGrid {
         origin_m: [sx0 - 10.0, sy1 + 10.0],
@@ -391,6 +392,7 @@ fn gpu_macro_matches_the_cpu_with_layers() {
         spacing_m: 7.3152,
         blend_m: 5.4864,
         texels: (0..45 * 36).map(|k| 4 + ((k % 45) / 3 + (k / 45) / 2) as u16 % 2).collect(),
+        tint: None,
     };
     let layers = GuideLayers { palette: names.clone(), default_layer: "twin_default".into(), global, stamps: vec![(0, stamp_grid)] };
     let info = |record: &str, n: usize| LayerInfo {

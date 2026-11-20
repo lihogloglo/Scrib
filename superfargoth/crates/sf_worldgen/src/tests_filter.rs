@@ -190,3 +190,34 @@ fn derivative_weights_match_finite_differences() {
         }
     }
 }
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn sharp_operators_are_bounded_zero_below_sea_and_nonzero_on_slopes() {
+    let prm = FilterParams::default().with_sharp_defaults();
+    let max_b = prm.max_total_amplitude_m();
+    assert!(max_b > prm.max_amplitude_m);
+
+    // Below sea: strictly 0.
+    let sea_pt = BaseSample { h: -5.0, grad: [0.4, 0.3], plan_curvature: 0.0 };
+    assert_eq!(detail_offset([123.4, 567.8], &sea_pt, 0.0, &prm), 0.0);
+
+    // Flat ground: strictly 0.
+    let flat_pt = BaseSample { h: 120.0, grad: [0.0, 0.0], plan_curvature: 0.0 };
+    assert_eq!(detail_offset([123.4, 567.8], &flat_pt, 0.0, &prm), 0.0);
+
+    // Steep slope: non-zero, differs from gully-only baseline, and stays inside conservative bound.
+    let gully_only = FilterParams { relief_fraction: prm.relief_fraction, ..FilterParams::default() };
+    let mut diffs = 0usize;
+    for i in 0..20 {
+        let p = [f64::from(i) * 17.5, f64::from(i) * 11.25];
+        let slope_pt = BaseSample { h: 180.0 + f64::from(i) * 4.7, grad: [0.45, 0.25], plan_curvature: 0.001 };
+        let d_sharp = detail_offset(p, &slope_pt, 0.0, &prm);
+        let d_base = detail_offset(p, &slope_pt, 0.0, &gully_only);
+        assert!(d_sharp.abs() <= max_b + 1e-4, "|{d_sharp}| > {max_b}");
+        if (d_sharp - d_base).abs() > 0.2 {
+            diffs += 1;
+        }
+    }
+    assert!(diffs >= 10, "expected sharp operators to move steep samples, got {diffs}/20");
+}

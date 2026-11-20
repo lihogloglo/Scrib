@@ -219,7 +219,7 @@ impl GuideTiles {
     pub fn open(dir: &Path, ws: WorldspaceId) -> Result<Self> {
         let guide = Guide::read(dir)?;
         let settings = TileSettings::default();
-        let prm = FilterParams { octaves: settings.runtime_octaves, ..FilterParams::default() };
+        let prm = FilterParams { octaves: settings.runtime_octaves, ..FilterParams::default().with_sharp_defaults() };
         let mut tiles = Self::new(guide, ws, prm, settings);
         if let Some(set) = StampSet::read(dir)? {
             tiles = tiles.with_stamps(set);
@@ -365,9 +365,14 @@ impl GuideTiles {
         [self.settings.band_samples[0] * s, self.settings.band_samples[1] * s]
     }
 
-    /// Whether every filter octave is off at `level` (the largest is under the band).
+    /// Whether every detail operator (gullies and sharp features) is off at `level`.
     fn all_octaves_off(&self, level: u8) -> bool {
-        self.prm.octaves == 0 || self.prm.wavelength_m <= self.band_m(level)[0]
+        let lo = self.band_m(level)[0];
+        let gullies_off = self.prm.octaves == 0 || self.prm.wavelength_m <= lo;
+        let sharp_off = self.prm.strata_amp_m <= 0.0
+            && (self.prm.rock_amp_m <= 0.0 || self.prm.rock_scale_m <= lo)
+            && (self.prm.ridge_amp_m <= 0.0 || self.prm.ridge_scale_m <= lo);
+        gullies_off && sharp_off
     }
 
     /// The height at engine position (x, z) metres, as level `level` sees it (its band limit).
@@ -476,10 +481,10 @@ impl GuideTiles {
                 let (lo, hi) = self.guide_range(cols, rows);
                 let over = (CR_OVERSHOOT * f64::from(hi - lo)) as f32;
                 let (lo, hi) = (lo - over, hi + over);
-                let amp = if self.prm.octaves == 0 {
-                    0.0
+                let amp = if self.prm.has_any_detail() {
+                    self.prm.max_total_amplitude_m().min(self.prm.shore_ratio * (hi - sea).max(0.0))
                 } else {
-                    self.prm.max_amplitude_m.min(self.prm.shore_ratio * (hi - sea).max(0.0))
+                    0.0
                 };
                 // f32 rounding of the sums: a centimetre plus a few ulps of the height.
                 let eps = 0.01 + 1e-6 * lo.abs().max(hi.abs());
@@ -659,9 +664,25 @@ pub mod slot {
     pub const LOOK: u32 = 32;
     /// Word of the layer macro section ([`crate::layers::LayerField::gpu_words`], after the stamps); 0 = none
     /// (the fallback look).
+    // tunables: const (layout: GPU header slot index)
     pub const LAYERS: u32 = 60;
+    // tunables: const (layout: GPU header slot indices for Phase 3a sharp runtime operators)
+    pub const STRATA_AMP: u32 = 61;
+    // tunables: const (layout: GPU header slot index)
+    pub const STRATA_STEP: u32 = 62;
+    // tunables: const (layout: GPU header slot index)
+    pub const STRATA_SHARP: u32 = 63;
+    // tunables: const (layout: GPU header slot index)
+    pub const ROCK_AMP: u32 = 64;
+    // tunables: const (layout: GPU header slot index)
+    pub const ROCK_SCALE: u32 = 65;
+    // tunables: const (layout: GPU header slot index)
+    pub const RIDGE_AMP: u32 = 66;
+    // tunables: const (layout: GPU header slot index)
+    pub const RIDGE_SCALE: u32 = 67;
     /// The guide's heights, row-major.
-    pub const HEIGHTS: u32 = 64;
+    // tunables: const (layout: GPU header slot index)
+    pub const HEIGHTS: u32 = 72;
 
     pub(super) const ALL: &[(&str, u32)] = &[
         ("W", W),
@@ -698,6 +719,13 @@ pub mod slot {
         ("STAMPS", STAMPS),
         ("LOOK", LOOK),
         ("LAYERS", LAYERS),
+        ("STRATA_AMP", STRATA_AMP),
+        ("STRATA_STEP", STRATA_STEP),
+        ("STRATA_SHARP", STRATA_SHARP),
+        ("ROCK_AMP", ROCK_AMP),
+        ("ROCK_SCALE", ROCK_SCALE),
+        ("RIDGE_AMP", RIDGE_AMP),
+        ("RIDGE_SCALE", RIDGE_SCALE),
         ("HEIGHTS", HEIGHTS),
     ];
 }
@@ -762,6 +790,13 @@ impl GuideTiles {
             (slot::SHORE_RATIO, p.shore_ratio),
             (slot::BAND_LO, self.settings.band_samples[0]),
             (slot::BAND_HI, self.settings.band_samples[1]),
+            (slot::STRATA_AMP, p.strata_amp_m),
+            (slot::STRATA_STEP, p.strata_step_m),
+            (slot::STRATA_SHARP, p.strata_sharpness),
+            (slot::ROCK_AMP, p.rock_amp_m),
+            (slot::ROCK_SCALE, p.rock_scale_m),
+            (slot::RIDGE_AMP, p.ridge_amp_m),
+            (slot::RIDGE_SCALE, p.ridge_scale_m),
         ];
         for (s, v) in floats {
             d[s as usize] = v.to_bits();

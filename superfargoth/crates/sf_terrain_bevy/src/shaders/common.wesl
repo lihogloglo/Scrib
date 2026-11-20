@@ -41,6 +41,7 @@ const P_LAYERS: u32 = 40u;      // 2 slots per layer: (tiling, displacement, tri
 const P_FAR: u32 = 552u;       // far shadow map: (min x, min z, 1 / extent, base height), render space
 const P_RAISE: u32 = 553u;     // raised cover (SW-6, SW-5e): x tan(repose), y the filter's minimum width (m), z w the fade (m)
 const P_HEX: u32 = 554u;       // anti-tiling hex grid (WG-X7a, Mikkelsen 2022): x enabled (0/1), y rot_strength, z contrast, w scale
+const P_CLIFF: u32 = 555u;     // slope cliff rock + crevices (WG-X7b): x cos(start), y cos(full), z crevice_strength, w rock layer id (0xffffffff = off)
 
 const MIN_LOD: i32 = -2;
 const HEIGHT_LEVELS: u32 = 10u;
@@ -223,6 +224,29 @@ fn merge(s: ptr<function, Splat>, id: u32, w: f32) {
         (*s).ids[m] = id;
         (*s).weights[m] = w;
     }
+}
+
+/// Distance in texels from continuous level coord `c` to the nearest edge of `level`'s valid window.
+fn window_edge_dist(level: vec4<i32>, c: vec2<f32>) -> f32 {
+    let d = c - vec2<f32>(level.zw);
+    let lo = min(d.x, d.y);
+    let hi = min(f32(SIZE - 1) - d.x, f32(SIZE - 1) - d.y);
+    return min(lo, hi);
+}
+
+/// Smooth fade (1 inside, 0 at the edge) over the outer 24 texels of the coarsest resident layer
+/// clipmap window, so splat detail always fades to macro before hitting the layer window boundary.
+fn layer_edge_fade(xz: vec2<f32>) -> f32 {
+    let valid = params[P_VALID].y;
+    for (var k = 1u; k <= LAYER_LEVELS; k += 1u) {
+        let l = LAYER_LEVELS - k;
+        if ((valid >> l) & 1u) == 0u {
+            continue;
+        }
+        let c = level_coord(xz, l + 1u);
+        return smoothstep(1.0, 24.0, window_edge_dist(pi(P_LAYER + l), c));
+    }
+    return 0.0;
 }
 
 fn layer_level(xz: vec2<f32>) -> u32 {
@@ -496,13 +520,16 @@ fn normal_at_level(xz: vec2<f32>, l: u32) -> vec3<f32> {
 /// toward the next level as the geometry morphs).
 fn terrain_normal(xz: vec2<f32>, lod: f32) -> vec3<f32> {
     let lf = max(lod, 0.0);
-    let l = height_level(xz, u32(floor(lf)), 1, 2);
+    let l0 = u32(floor(lf));
+    let l = height_level(xz, l0, 1, 2);
     if l >= HEIGHT_LEVELS {
         return vec3<f32>(0.0, 1.0, 0.0);
     }
     var n = normal_at_level(xz, l);
-    let t = lf - floor(lf);
-    if t > 0.01 && l == u32(floor(lf)) {
+    let morph_t = select(0.0, lf - floor(lf), l == l0);
+    let edge_t = 1.0 - smoothstep(2.0, 16.0, window_edge_dist(pi(P_HEIGHT + l), level_coord(xz, l)));
+    let t = max(morph_t, edge_t);
+    if t > 0.01 {
         let l1 = height_level(xz, l + 1u, 1, 2);
         if l1 < HEIGHT_LEVELS {
             n = normalize(mix(n, normal_at_level(xz, l1), t));

@@ -21,6 +21,7 @@ fn layers() -> GuideLayers {
         spacing_m: 30.0,
         blend_m: 22.5,
         texels: (0..400).map(|k| if k == 5 * 20 + 5 { NO_LAYER } else { (((k % 20) / 3 + (k / 20) / 4) % 3) as u16 }).collect(),
+        tint: None,
     };
     let stamp = GuideLayerGrid {
         origin_m: [-40.0, 40.0],
@@ -28,6 +29,7 @@ fn layers() -> GuideLayers {
         spacing_m: 5.0,
         blend_m: 3.75,
         texels: (0..256).map(|k| if k % 16 == 8 || k / 16 == 8 { 1 } else { 3 }).collect(),
+        tint: None,
     };
     GuideLayers {
         palette: PALETTE.iter().map(|s| (*s).to_owned()).collect(),

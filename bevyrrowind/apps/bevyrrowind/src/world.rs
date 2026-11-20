@@ -106,8 +106,9 @@ pub(crate) fn view(install: &MorrowindInstall, dir: &str, mut flags: crate::View
     options.actors = Some(Arc::new(content.db));
     let report = tiles.clone();
     let base = tiles.clone();
-    let rebuild = move |octaves: u32| -> WorldgenTiles {
-        let t = Arc::new(base.with_params(FilterParams { octaves, ..*base.params() }));
+    let rebuild = move |octaves: u32, sharp: f32| -> WorldgenTiles {
+        let prm = FilterParams { octaves, ..*base.params() }.with_sharp_scale(sharp);
+        let t = Arc::new(base.with_params(prm));
         let report = t.clone();
         (t, Arc::new(move || summary(&report.timings())))
     };

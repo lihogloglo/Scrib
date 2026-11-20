@@ -329,6 +329,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     let mut far_settings = sf_lod_bevy::FarFieldSettings::default();
     far_settings.levels.screen.bias = start_values.far_handoff_scale;
     far_settings.select_gate = sf_lod_bevy::FarFieldSettings::select_gate_quanta(select_gate);
+    // Match near NIF calibrated physical emissive (`mw_assets::set_emissive`, B5a).
+    far_settings.emissive_nits = mw_assets::emissive_nits();
+    far_settings.emissive_exposure_weight = 1.0;
     // The far field sets its own rings; `--near-ring`/`--far-ring` still override them.
     let base = if far_field {
         sf_lod_bevy::far_streaming_config(StreamingConfig::default(), &far_settings.levels)
@@ -643,7 +646,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     let select_gate = TerrainSettings::select_gate_quanta(select_gate);
     // `--off gputerrain`: a generated world goes through CPU tiles (the G1 path, worldgen G2 A/B).
     let gpu_fill = !perf.off.has(Part::GpuTerrain);
-    app.add_plugins(TerrainPlugin { settings: TerrainSettings { layer_cap, select_gate, gpu_fill, ..TerrainSettings::default() } })
+    let cliff = sf_terrain_bevy::CliffShadingSettings {
+        rock_layers: vec!["rm_rock_01".into(), "wg_rock".into(), "ac_darkstone01".into(), "tx_rock_wg_01.tga".into()],
+        ..sf_terrain_bevy::CliffShadingSettings::default()
+    };
+    app.add_plugins(TerrainPlugin { settings: TerrainSettings { layer_cap, select_gate, gpu_fill, cliff, ..TerrainSettings::default() } })
         .insert_resource(TerrainWorld::new(terrain))
         .insert_resource(TerrainDebug { lod_colors: options.terrain_lod, wireframe: options.wireframe, no_far_shadows: perf.off.has(Part::FarShadows), ..TerrainDebug::default() });
 

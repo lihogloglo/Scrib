@@ -249,6 +249,126 @@ fn wg_band(level: u32) -> vec2<f32> {
     return vec2<f32>(wg_f(FH_BAND_LO) * s, wg_f(FH_BAND_HI) * s);
 }
 
+/// `filter::value_noise_2d` at level-0 global sample `g`, wavelength `lambda`.
+fn wg_value_noise(g: vec2<i32>, lambda: f32, seed: u32) -> f32 {
+    let cx = wg_cell(4 * (g.x - 256), lambda);
+    let cy = wg_cell(4 * (256 - g.y), lambda);
+    let u = cx.t * cx.t * (3.0 - 2.0 * cx.t);
+    let v = cy.t * cy.t * (3.0 - 2.0 * cy.t);
+    let a = wg_unit(wg_pcg3d(vec3<u32>(bitcast<u32>(cx.i), bitcast<u32>(cy.i), seed)).x);
+    let b = wg_unit(wg_pcg3d(vec3<u32>(bitcast<u32>(cx.i + 1), bitcast<u32>(cy.i), seed)).x);
+    let c = wg_unit(wg_pcg3d(vec3<u32>(bitcast<u32>(cx.i), bitcast<u32>(cy.i + 1), seed)).x);
+    let d = wg_unit(wg_pcg3d(vec3<u32>(bitcast<u32>(cx.i + 1), bitcast<u32>(cy.i + 1), seed)).x);
+    let top = a + (b - a) * u;
+    let bot = c + (d - c) * u;
+    return top + (bot - top) * v;
+}
+
+/// `filter::voronoi_block` at level-0 global sample `g`, cell size `lambda`.
+fn wg_voronoi_block(g: vec2<i32>, lambda: f32, seed: u32) -> f32 {
+    let cx = wg_cell(4 * (g.x - 256), lambda);
+    let cy = wg_cell(4 * (256 - g.y), lambda);
+    var d1 = 1e9;
+    var d2 = 1e9;
+    var h_cell = 0.0;
+    for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+            let hsh = wg_pcg3d(vec3<u32>(bitcast<u32>(cx.i + dx), bitcast<u32>(cy.i + dy), seed));
+            let ox = f32(dx) + wg_unit(hsh.x) - cx.t;
+            let oy = f32(dy) + wg_unit(hsh.y) - cy.t;
+            let d = sqrt(ox * ox + oy * oy);
+            if d < d1 {
+                d2 = d1;
+                d1 = d;
+                h_cell = wg_unit(hsh.z) * 2.0 - 1.0;
+            } else if d < d2 {
+                d2 = d;
+            }
+        }
+    }
+    let edge = wg_smoothstep(0.0, 0.24, d2 - d1);
+    return edge * (0.45 + 0.55 * h_cell) - 0.35;
+}
+
+/// `filter::sharp_offset` (Phase 3a: strata benches, Voronoi rock blocks, ridged crests).
+fn wg_sharp(g: vec2<i32>, b: WgBase, slope0: f32, shore: f32, band: vec2<f32>) -> f32 {
+    var dh = 0.0;
+    let seed0 = wg_u(FH_SEED);
+
+    let strata_amp = wg_f(FH_STRATA_AMP);
+    let strata_step = wg_f(FH_STRATA_STEP);
+    if strata_amp > 0.0 && strata_step > 0.5 {
+        let s_mask = wg_smoothstep(0.08, 0.30, slope0);
+        if s_mask > 0.0 {
+            let warp = (wg_value_noise(g, 120.0, seed0 ^ 0x41a71301u) - 0.5) * 0.65 * strata_step;
+            let u = (b.h + warp) / strata_step;
+            let f = u - floor(u);
+            let r = 0.45 - 0.39 * clamp(wg_f(FH_STRATA_SHARP), 0.0, 1.0);
+            let step_dev = wg_smoothstep(0.5 - r, 0.5 + r, f) - f;
+            let w_horiz = (2.0 * r * strata_step) / max(slope0, 0.05);
+            let b_mask = wg_smoothstep(band.x, band.y, w_horiz);
+            dh += min(strata_amp, shore) * s_mask * b_mask * step_dev;
+        }
+    }
+
+    let rock_amp = wg_f(FH_ROCK_AMP);
+    let rock_scale = wg_f(FH_ROCK_SCALE);
+    if rock_amp > 0.0 && rock_scale > 1.0 {
+        let s_mask = wg_smoothstep(0.08, 0.32, slope0);
+        if s_mask > 0.0 {
+            let outcrop = wg_smoothstep(0.28, 0.72, wg_value_noise(g, 160.0, seed0 ^ 0x73c92b15u));
+            let r_mask = s_mask * (0.35 + 0.65 * outcrop);
+            let l0 = rock_scale;
+            let l1 = rock_scale * 0.375;
+            let b0 = wg_smoothstep(band.x, band.y, l0);
+            let b1 = wg_smoothstep(band.x, band.y, l1);
+            var acc = 0.0;
+            if b0 > 0.0 {
+                acc += 0.68 * b0 * wg_voronoi_block(g, l0, seed0 ^ 0x517cc1b7u);
+            }
+            if b1 > 0.0 {
+                acc += 0.32 * b1 * wg_voronoi_block(g, l1, seed0 ^ 0x2f6e2b11u);
+            }
+            dh += min(rock_amp, shore) * r_mask * acc;
+        }
+    }
+
+    let ridge_amp = wg_f(FH_RIDGE_AMP);
+    let ridge_scale = wg_f(FH_RIDGE_SCALE);
+    if ridge_amp > 0.0 && ridge_scale > 1.0 {
+        let s_mask = wg_smoothstep(0.06, 0.25, slope0);
+        if s_mask > 0.0 {
+            let l0 = ridge_scale;
+            let l1 = ridge_scale * 0.375;
+            let b0 = wg_smoothstep(band.x, band.y, l0);
+            let b1 = wg_smoothstep(band.x, band.y, l1);
+            var acc = 0.0;
+            if b0 > 0.0 {
+                let n = wg_value_noise(g, l0, seed0 ^ 0x6b2f91d3u);
+                let r = 1.0 - abs(2.0 * n - 1.0);
+                acc += 0.68 * b0 * (r * r * 2.0 - 1.0);
+            }
+            if b1 > 0.0 {
+                let n = wg_value_noise(g, l1, seed0 ^ 0x1b873593u);
+                let r = 1.0 - abs(2.0 * n - 1.0);
+                acc += 0.32 * b1 * (r * r * 2.0 - 1.0);
+            }
+            dh += min(ridge_amp, shore) * s_mask * acc;
+        }
+    }
+
+    return dh;
+}
+
+/// Whether any detail operator (gullies or sharp features) is active at `band`.
+fn wg_detail_active(band: vec2<f32>) -> bool {
+    let gullies = wg_u(FH_OCTAVES) > 0u && wg_f(FH_WAVELENGTH) > band.x;
+    let strata = wg_f(FH_STRATA_AMP) > 0.0;
+    let rock = wg_f(FH_ROCK_AMP) > 0.0 && wg_f(FH_ROCK_SCALE) > band.x;
+    let ridge = wg_f(FH_RIDGE_AMP) > 0.0 && wg_f(FH_RIDGE_SCALE) > band.x;
+    return gullies || strata || rock || ridge;
+}
+
 /// `filter::detail_offset_banded` at the level-0 global sample `g` over `b`.
 fn wg_detail(g: vec2<i32>, b: WgBase, band: vec2<f32>) -> f32 {
     let octaves = wg_u(FH_OCTAVES);
@@ -257,44 +377,47 @@ fn wg_detail(g: vec2<i32>, b: WgBase, band: vec2<f32>) -> f32 {
     let gain = wg_f(FH_GAIN);
     let slope0 = sqrt(b.grad.x * b.grad.x + b.grad.y * b.grad.y);
     let shore = max(b.h - wg_f(FH_SEA), 0.0) * wg_f(FH_SHORE_RATIO);
-    let amp = min(min(wg_f(FH_RELIEF) * slope0 * wavelength, wg_f(FH_MAX_AMP)), shore);
-    if octaves == 0u || !(amp > 0.0) {
+    if !(shore > 0.0) {
         return 0.0;
     }
-    var wsum = 0.0;
-    var wk = 1.0;
-    for (var k = 0u; k < octaves; k++) {
-        wsum += wk;
-        wk *= gain;
-    }
-    let curv = abs(b.curv);
-    let cascade = wg_u(FH_CASCADE) != 0u;
-    let seed0 = wg_u(FH_SEED);
-    var g2 = b.grad;
     var dh = 0.0;
-    var lambda = wavelength;
-    var w = 1.0 / wsum;
-    for (var k = 0u; k < octaves; k++) {
-        let s = sqrt(g2.x * g2.x + g2.y * g2.y);
-        let fade = wg_smoothstep(wg_f(FH_SLOPE_LO), wg_f(FH_SLOPE_HI), s)
-            * (1.0 - wg_smoothstep(wg_f(FH_CURV_LO), wg_f(FH_CURV_HI), curv * lambda))
-            * wg_smoothstep(band.x, band.y, lambda);
-        if fade > 0.0 && s > 0.0 {
-            let dir = vec2<f32>(-g2.y / s, g2.x / s);
-            let seed = seed0 ^ (k * 0x9e3779b9u);
-            let pc = wg_phasor(g, lambda, dir, seed);
-            let a = amp * w * fade * wg_smoothstep(0.0, wg_f(FH_PHASE_FADE), pc.y);
-            let p = wg_profile(pc.x, wg_f(FH_SHARP), wg_f(FH_CARVE));
-            dh += a * p.x;
-            if cascade {
-                let slope = a * p.y * 6.2831855 / lambda;
-                g2 = vec2<f32>(g2.x + slope * dir.x, g2.y + slope * dir.y);
-            }
+    let amp = min(min(wg_f(FH_RELIEF) * slope0 * wavelength, wg_f(FH_MAX_AMP)), shore);
+    if octaves > 0u && amp > 0.0 {
+        var wsum = 0.0;
+        var wk = 1.0;
+        for (var k = 0u; k < octaves; k++) {
+            wsum += wk;
+            wk *= gain;
         }
-        lambda /= lacunarity;
-        w *= gain;
+        let curv = abs(b.curv);
+        let cascade = wg_u(FH_CASCADE) != 0u;
+        let seed0 = wg_u(FH_SEED);
+        var g2 = b.grad;
+        var lambda = wavelength;
+        var w = 1.0 / wsum;
+        for (var k = 0u; k < octaves; k++) {
+            let s = sqrt(g2.x * g2.x + g2.y * g2.y);
+            let fade = wg_smoothstep(wg_f(FH_SLOPE_LO), wg_f(FH_SLOPE_HI), s)
+                * (1.0 - wg_smoothstep(wg_f(FH_CURV_LO), wg_f(FH_CURV_HI), curv * lambda))
+                * wg_smoothstep(band.x, band.y, lambda);
+            if fade > 0.0 && s > 0.0 {
+                let dir = vec2<f32>(-g2.y / s, g2.x / s);
+                let seed = seed0 ^ (k * 0x9e3779b9u);
+                let pc = wg_phasor(g, lambda, dir, seed);
+                let a = amp * w * fade * wg_smoothstep(0.0, wg_f(FH_PHASE_FADE), pc.y);
+                let p = wg_profile(pc.x, wg_f(FH_SHARP), wg_f(FH_CARVE));
+                dh += a * p.x;
+                if cascade {
+                    let slope = a * p.y * 6.2831855 / lambda;
+                    g2 = vec2<f32>(g2.x + slope * dir.x, g2.y + slope * dir.y);
+                }
+            }
+            lambda /= lacunarity;
+            w *= gain;
+        }
     }
-    return dh;
+    dh += wg_sharp(g, b, slope0, shore, band);
+    return clamp(dh, -shore, shore);
 }
 
 /// Bilinear in one stamp grid at word `p` (`stamps::bilinear`): cell (i, j) + t, `a + (b − a)·t`.
@@ -364,7 +487,7 @@ fn field_height(g: vec2<i32>, level: u32) -> f32 {
     let b = wg_base(g);
     let band = wg_band(level);
     var h = b.h;
-    if !(wg_u(FH_OCTAVES) == 0u || wg_f(FH_WAVELENGTH) <= band.x) {
+    if wg_detail_active(band) {
         h = b.h + wg_detail(g, b, band) * (1.0 - st.y);
     }
     if st.y > 0.0 {

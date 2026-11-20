@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use sf_worldgen::cliffs::{CliffRequest, run_cliffs};
 use sf_worldgen::dem::{ImportParams, ImportRequest, run_import};
 use sf_worldgen::filter::{DetailRequest, apply_overrides_toml, declared_defaults, run_detail, set};
 use sf_worldgen::run::{Overrides, run};
@@ -128,6 +129,25 @@ enum Cmd {
     /// Landform census (`sf_worldgen::landforms`): craters, basins, lakes, lagoons, trenches, gorges, valleys,
     /// peaks, plateaus, bays, headlands, islands; writes features.json, overlay.png and README.md.
     Landforms(LandformsArgs),
+    /// Fast steerable macro sharp-landform pass (`sf_worldgen::cliffs`): asymmetric fault scarps, stepped rock
+    /// shelves, slope oversteepening, coastal headlands, explicit strokes and hardness-aware thermal talus.
+    Cliffs {
+        /// Base guide folder (v1).
+        #[arg(long)]
+        base: PathBuf,
+        /// Recipe TOML (`[params]`, `[[stroke]]`, `[[arm]]`).
+        #[arg(long)]
+        params: PathBuf,
+        /// Output folder (one sub-folder per arm, or directly when only one default arm).
+        #[arg(long)]
+        out: PathBuf,
+        /// Optional external cliff-intent mask (`f32` LE grid matching the guide, values in 0..1).
+        #[arg(long)]
+        mask: Option<PathBuf>,
+        /// Only these arms (comma-separated names).
+        #[arg(long, value_delimiter = ',')]
+        arms: Option<Vec<String>>,
+    },
 }
 
 #[derive(clap::Args)]
@@ -384,6 +404,28 @@ fn main() -> ExitCode {
             out,
             arms,
         }),
+        Cmd::Cliffs {
+            base,
+            params,
+            out,
+            mask,
+            arms,
+        } => match run_cliffs(&CliffRequest {
+            base,
+            params_path: params,
+            out,
+            mask_path: mask,
+            arms,
+        }) {
+            Ok(summary) => {
+                print!("{summary}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("scrib-worldgen: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::Detail {
             input,
             out,

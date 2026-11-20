@@ -323,6 +323,18 @@ pub fn add_gates(app: &mut App, select_gate_off: bool) -> bool {
     let _hex_scale = app
         .add_tunable(&sf_terrain_bevy::TERRAIN_HEX_SCALE)
         .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.hex_tiling.scale = v);
+    let _cliff_on = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_CLIFF_ENABLED)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, on| t.cliff.enabled = on);
+    let _cliff_start = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_CLIFF_SLOPE_START_DEG)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.cliff.slope_start_deg = v);
+    let _cliff_full = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_CLIFF_SLOPE_FULL_DEG)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.cliff.slope_full_deg = v);
+    let _cliff_crev = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_CLIFF_CREVICE_STRENGTH)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.cliff.crevice_strength = v);
     let _far = app.add_tunable(&SELECT_GATE).bind_resource(|f: &mut sf_lod_bevy::FarFieldSettings, on| f.select_gate.enabled = on);
     let _streaming = app.add_tunable(&SELECT_GATE).bind_resource(|s: &mut sf_world_bevy::Streaming, on| {
         let quanta = sf_world::GateQuanta { enabled: on, ..s.config().scheduler.select_gate };

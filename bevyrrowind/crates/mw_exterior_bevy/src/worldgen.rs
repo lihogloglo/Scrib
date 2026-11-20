@@ -60,6 +60,16 @@ pub const WORLDGEN_OCTAVES: Def<u32> = def!(count "worldgen.octaves" = 8)
     .source(Source::Guess)
     .lifetime(Lifetime::Live);
 
+/// `worldgen.sharp`: multiplier on the Phase 3a runtime sharp-landform operators (strata benches, Voronoi
+/// rock fracture blocks, ridged crests). Live: 0 = gully-only A/B baseline, 1 = default sharp relief,
+/// > 1 = more aggressive cliffs and rocky outcrops.
+pub const WORLDGEN_SHARP: Def<f32> = def!(float "worldgen.sharp" = 1.0)
+    .range(0.0, 3.0)
+    .unit(Unit::Ratio)
+    .help("Generated world: runtime sharp-landform scale (strata, Voronoi rock blocks, ridged crests; 0 = off)")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
 /// Seconds between the tile timing lines while tiles are being generated.
 // tunables: const (log cadence: how often a diagnostic line prints, no look, feel or cost)
 const REPORT_EVERY_S: u64 = 5;
@@ -79,8 +89,8 @@ pub struct WorldgenSetup {
     pub timings: Arc<dyn Fn() -> String + Send + Sync>,
     /// The filter octaves `tiles` was built with.
     pub octaves: u32,
-    /// The same world with the filter at `n` octaves (0 = off): the live filter switch.
-    pub rebuild: Arc<dyn Fn(u32) -> WorldgenTiles + Send + Sync>,
+    /// The same world with the filter at `(octaves, sharp_scale)` (`(0, 0.0)` = bare guide): the live switches.
+    pub rebuild: Arc<dyn Fn(u32, f32) -> WorldgenTiles + Send + Sync>,
     /// What streams in the exterior; `None`: nothing (the bare generated land).
     pub content: Option<WorldgenContent>,
 }
@@ -167,24 +177,25 @@ impl IndexReader for WorldgenIndex {
 #[derive(Resource)]
 struct Timings(Arc<dyn Fn() -> String + Send + Sync>);
 
-/// The live filter values ([`WORLDGEN_FILTER`], [`WORLDGEN_OCTAVES`]).
-#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+/// The live filter values ([`WORLDGEN_FILTER`], [`WORLDGEN_OCTAVES`], [`WORLDGEN_SHARP`]).
+#[derive(Resource, Clone, Copy, PartialEq)]
 struct LiveFilter {
     on: bool,
     octaves: u32,
+    sharp: f32,
 }
 
 impl LiveFilter {
-    fn octaves(self) -> u32 {
-        if self.on { self.octaves } else { 0 }
+    fn effective(self) -> (u32, f32) {
+        if self.on { (self.octaves, self.sharp) } else { (0, 0.0) }
     }
 }
 
 #[derive(Resource)]
 struct Rebuild {
-    rebuild: Arc<dyn Fn(u32) -> WorldgenTiles + Send + Sync>,
-    /// The octaves the shown provider has.
-    shown: u32,
+    rebuild: Arc<dyn Fn(u32, f32) -> WorldgenTiles + Send + Sync>,
+    /// The `(octaves, sharp)` the shown provider has.
+    shown: (u32, f32),
 }
 
 /// Replaces the exterior's index with the in-memory one of [`WorldgenSetup::content`] and logs the world; call
@@ -221,25 +232,34 @@ pub(crate) fn add(app: &mut App, ext: &WorldspaceId, setup: &WorldgenSetup, stor
     }
     let mut own = MemoryIndex::new();
     own.insert(&index);
+    let sharp0 = WORLDGEN_SHARP.default_value();
     app.insert_resource(WorldIndexSource(Arc::new(WorldgenIndex { own, base })))
         .insert_resource(Timings(setup.timings.clone()))
-        .insert_resource(LiveFilter { on: setup.octaves > 0, octaves: setup.octaves.max(1) })
-        .insert_resource(Rebuild { rebuild: setup.rebuild.clone(), shown: setup.octaves })
+        .insert_resource(LiveFilter { on: setup.octaves > 0, octaves: setup.octaves.max(1), sharp: sharp0 })
+        .insert_resource(Rebuild { rebuild: setup.rebuild.clone(), shown: (setup.octaves, sharp0) })
         .add_systems(Update, apply_live_filter)
         .add_systems(Last, report_timings);
     let _on = app.add_tunable(&WORLDGEN_FILTER).bind_resource(|f: &mut LiveFilter, v| f.on = v);
     let _octaves = app.add_tunable(&WORLDGEN_OCTAVES).bind_resource(|f: &mut LiveFilter, v| f.octaves = v);
+    let _sharp = app.add_tunable(&WORLDGEN_SHARP).bind_resource(|f: &mut LiveFilter, v| f.sharp = v);
 }
 
 /// A live filter change rebuilds the provider (the guide is shared) and swaps the terrain world: the clipmaps
 /// and the CPU twin refill from it.
 fn apply_live_filter(mut commands: Commands, live: Res<LiveFilter>, mut rebuild: ResMut<Rebuild>) {
-    let want = live.octaves();
+    let want = live.effective();
     if !live.is_changed() || want == rebuild.shown {
         return;
     }
-    let (tiles, timings) = (rebuild.rebuild)(want);
-    info!("worldgen filter: {} (live), the terrain refills", if want == 0 { "off".to_owned() } else { format!("{want} octaves") });
+    let (tiles, timings) = (rebuild.rebuild)(want.0, want.1);
+    info!(
+        "worldgen filter: {} (live), the terrain refills",
+        if want.0 == 0 && want.1 <= 0.0 {
+            "off".to_owned()
+        } else {
+            format!("{} octaves, sharp {:.2}", want.0, want.1)
+        }
+    );
     commands.insert_resource(TerrainWorld::new(tiles));
     commands.insert_resource(Timings(timings));
     rebuild.shown = want;

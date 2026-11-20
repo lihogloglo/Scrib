@@ -144,6 +144,36 @@ pub struct TerrainSettings {
     pub twin: TwinSettings,
     /// Practical Real-Time Hex-Tiling anti-tiling (WG-X7a, Mikkelsen 2022, JCGT).
     pub hex_tiling: HexTilingSettings,
+    /// Slope-driven triplanar cliff rock and crevice darkening (WG-X7b).
+    pub cliff: CliffShadingSettings,
+}
+
+/// Slope-driven cliff rock and curvature crevice shading parameters (WG-X7b), written to `P_CLIFF`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CliffShadingSettings {
+    /// Enable automatic triplanar cliff rock on steep faces ([`TERRAIN_CLIFF_ENABLED`]).
+    pub enabled: bool,
+    /// Slope angle (degrees) where cliff rock starts breaking through ground layers ([`TERRAIN_CLIFF_SLOPE_START_DEG`]).
+    pub slope_start_deg: f32,
+    /// Slope angle (degrees) where cliff rock reaches full weight ([`TERRAIN_CLIFF_SLOPE_FULL_DEG`]).
+    pub slope_full_deg: f32,
+    /// Curvature-based crevice darkening strength (`0..1`, [`TERRAIN_CLIFF_CREVICE_STRENGTH`]).
+    pub crevice_strength: f32,
+    /// Host-supplied preference list of layer record names to use for cliff rock (first present in
+    /// the loaded [`LayerTable`] wins; if empty or unmatched, falls back to the first `triplanar` layer).
+    pub rock_layers: Vec<String>,
+}
+
+impl Default for CliffShadingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: TERRAIN_CLIFF_ENABLED.default_value(),
+            slope_start_deg: TERRAIN_CLIFF_SLOPE_START_DEG.default_value(),
+            slope_full_deg: TERRAIN_CLIFF_SLOPE_FULL_DEG.default_value(),
+            crevice_strength: TERRAIN_CLIFF_CREVICE_STRENGTH.default_value(),
+            rock_layers: Vec::new(),
+        }
+    }
 }
 
 /// Shader anti-tiling parameters (WG-X7a, Mikkelsen 2022, JCGT), written to `P_HEX` each frame.
@@ -285,6 +315,36 @@ pub const TERRAIN_HEX_SCALE: Def<f32> = def!(float "terrain.hex_tiling.scale" = 
     .source(Source::Guess)
     .lifetime(Lifetime::Live);
 
+/// `terrain.cliff.enabled`: [`CliffShadingSettings::enabled`] (WG-X7b).
+pub const TERRAIN_CLIFF_ENABLED: Def<bool> = def!(bool "terrain.cliff.enabled" = true)
+    .help("Slope-driven triplanar cliff rock on steep terrain faces (near height-blended + far macro)")
+    .source(Source::Industry("slope-driven triplanar cliff rock (Horizon / RDR2 / UE5 standard)"))
+    .lifetime(Lifetime::Live);
+
+/// `terrain.cliff.slope_start_deg`: [`CliffShadingSettings::slope_start_deg`].
+pub const TERRAIN_CLIFF_SLOPE_START_DEG: Def<f32> = def!(float "terrain.cliff.slope_start_deg" = 28.0)
+    .range(5.0, 80.0)
+    .unit(Unit::Degrees)
+    .help("Slope angle where triplanar cliff rock begins breaking through soil/grass")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
+/// `terrain.cliff.slope_full_deg`: [`CliffShadingSettings::slope_full_deg`].
+pub const TERRAIN_CLIFF_SLOPE_FULL_DEG: Def<f32> = def!(float "terrain.cliff.slope_full_deg" = 45.0)
+    .range(10.0, 88.0)
+    .unit(Unit::Degrees)
+    .help("Slope angle where triplanar cliff rock reaches full strength")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
+/// `terrain.cliff.crevice_strength`: [`CliffShadingSettings::crevice_strength`].
+pub const TERRAIN_CLIFF_CREVICE_STRENGTH: Def<f32> = def!(float "terrain.cliff.crevice_strength" = 0.45)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Curvature crevice darkening and convex cliff-lip contrast on terrain")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
 /// This crate's tunables (live binding: tunables slice T2).
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &TERRAIN_SELECT_MOVE_M,
@@ -298,7 +358,37 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &TERRAIN_HEX_ROT_STRENGTH,
     &TERRAIN_HEX_CONTRAST,
     &TERRAIN_HEX_SCALE,
+    &TERRAIN_CLIFF_ENABLED,
+    &TERRAIN_CLIFF_SLOPE_START_DEG,
+    &TERRAIN_CLIFF_SLOPE_FULL_DEG,
+    &TERRAIN_CLIFF_CREVICE_STRENGTH,
 ];
+
+/// Resolves the cliff rock layer index in `table` (preference list -> first `triplanar` layer -> none).
+fn resolve_cliff_layer(table: &LayerTable, cliff: &CliffShadingSettings) -> Option<u32> {
+    if !cliff.enabled {
+        return None;
+    }
+    let limit = table.layers.len().min(params::MAX_LAYERS);
+    for want in &cliff.rock_layers {
+        if let Some(i) = table.layers[..limit].iter().position(|l| l.record.eq_ignore_ascii_case(want)) {
+            return u32::try_from(i).ok();
+        }
+    }
+    table.layers[..limit].iter().position(|l| l.triplanar).and_then(|i| u32::try_from(i).ok())
+}
+
+/// The `P_CLIFF` slot (WG-X7b): `(cos_start, cos_full, crevice_strength, rock_layer_id)`.
+fn cliff_params(table: &LayerTable, settings: &TerrainSettings) -> [u32; 4] {
+    let c = &settings.cliff;
+    let start = c.slope_start_deg.clamp(1.0, 85.0);
+    let full = c.slope_full_deg.clamp(start + 1.0, 89.0);
+    let cos_start = start.to_radians().cos();
+    let cos_full = full.to_radians().cos();
+    let crev = c.crevice_strength.clamp(0.0, 1.0);
+    let layer = resolve_cliff_layer(table, c).unwrap_or(u32::MAX);
+    [cos_start.to_bits(), cos_full.to_bits(), crev.to_bits(), layer]
+}
 
 /// The `P_HEX` slot (WG-X7a): enabled (0/1), rotation strength (0..1), contrast exponent, scale.
 fn hex_params(settings: &TerrainSettings) -> [f32; 4] {
@@ -351,6 +441,7 @@ impl Default for TerrainSettings {
             gpu_fill: true,
             twin: TwinSettings::default(),
             hex_tiling: HexTilingSettings::default(),
+            cliff: CliffShadingSettings::default(),
         }
     }
 }
@@ -1523,6 +1614,7 @@ fn update_terrain(
     p.set_f(params::P_DETAIL, detail_params(&settings, state.max_height));
     p.set_f(params::P_RAISE, raise_params(&settings));
     p.set_f(params::P_HEX, hex_params(&settings));
+    p.0[params::P_CLIFF] = cliff_params(&state.table, &settings);
     for (n, l) in state.table.layers.iter().take(params::MAX_LAYERS).enumerate() {
         p.set_layer(n, l);
     }
@@ -1689,6 +1781,7 @@ mod tests {
         assert_eq!(slot("P_FAR"), params::P_FAR);
         assert_eq!(slot("P_RAISE"), params::P_RAISE);
         assert_eq!(slot("P_HEX"), params::P_HEX);
+        assert_eq!(slot("P_CLIFF"), params::P_CLIFF);
         assert_eq!(slot("HEIGHT_LEVELS"), HEIGHT_LEVELS);
         assert_eq!(slot("LAYER_LEVELS"), LAYER_LEVELS);
         assert_eq!(params::P_MORPH + params::MORPH_LODS, params::P_HEIGHT);
@@ -1814,6 +1907,47 @@ mod tests {
         assert!(surface.contains("pf(P_HEX)"));
         assert!(surface.contains("hex_grid("));
         assert!(surface.contains("hex_wrap_vertex("));
+    }
+
+    /// WG-X7b: `P_CLIFF` slot encoding, preference-list vs triplanar fallback, and monotonic cosine bounds.
+    #[test]
+    fn cliff_shading_params_and_layer_resolution() {
+        let mk = |name: &str, triplanar: bool| sf_terrain::LayerInfo {
+            record: name.into(),
+            id: sf_terrain::layer_id(name),
+            tiling_m: 4.0,
+            triplanar,
+            displacement_m: 0.0,
+            mean_albedo: [0.2; 3],
+            mean_height: 0.5,
+            p90_height: 0.8,
+            source_edge: 512,
+        };
+        let table = LayerTable {
+            layers: vec![mk("grass", false), mk("tri_slate", true), mk("rm_rock_01", false)],
+            fill_layer: None,
+            fill_height: 0.0,
+        };
+        let mut s = TerrainSettings::default();
+        // No preference list -> falls back to first triplanar layer (index 1).
+        let p = cliff_params(&table, &s);
+        assert_eq!(p[3], 1);
+        let cos_start = f32::from_bits(p[0]);
+        let cos_full = f32::from_bits(p[1]);
+        assert!(cos_full < cos_start, "smoothstep requires low < high: {cos_full} < {cos_start}");
+
+        // Preference list wins over triplanar fallback (case-insensitive).
+        s.cliff.rock_layers = vec!["missing".into(), "RM_ROCK_01".into()];
+        assert_eq!(cliff_params(&table, &s)[3], 2);
+
+        // Disabled -> u32::MAX sentinel.
+        s.cliff.enabled = false;
+        assert_eq!(cliff_params(&table, &s)[3], u32::MAX);
+
+        let surface = include_str!("shaders/surface.wesl");
+        assert!(surface.contains("pf(P_CLIFF)"));
+        assert!(surface.contains("sample_layer_triplanar("));
+        assert!(surface.contains("terrain_curvature("));
     }
 
     /// Patches split quads along the canonical diagonal, counter-clockwise from +Y.

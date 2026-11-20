@@ -67,6 +67,9 @@ pub struct GuideLayerGrid {
     pub blend_m: f64,
     /// Palette index per texel, row-major, north up; [`NO_LAYER`] = none.
     pub texels: Vec<u16>,
+    /// Optional per-texel sRGB RGB8 tint (WG-X7c, e.g. Morrowind `VCLR`), row-major, north up.
+    /// `None` = neutral white `[255, 255, 255]`. Stored in optional sidecar `layers.tint`.
+    pub tint: Option<Vec<[u8; 3]>>,
 }
 
 impl GuideLayerGrid {
@@ -87,6 +90,11 @@ impl GuideLayerGrid {
         }
         if self.texels.len() != w * h {
             return bad("texels length is not w·h".into());
+        }
+        if let Some(t) = &self.tint
+            && t.len() != w * h
+        {
+            return bad("tint length is not w·h".into());
         }
         if let Some(t) = self.texels.iter().find(|&&t| t != NO_LAYER && usize::from(t) >= palette) {
             return bad(format!("texel {t} past the palette ({palette})"));
@@ -155,6 +163,20 @@ impl GuideLayers {
             return Err(Error::Invalid("layers.u16 length is odd".into()));
         }
         let all: Vec<u16> = raw.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
+        let tint_path = dir.join("layers.tint");
+        let all_tint: Option<Vec<[u8; 3]>> = if tint_path.exists() {
+            let tb = std::fs::read(&tint_path)?;
+            if tb.len() != all.len() * 3 {
+                return Err(Error::Invalid(format!(
+                    "layers.tint has {} bytes, expected {}",
+                    tb.len(),
+                    all.len() * 3
+                )));
+            }
+            Some(tb.as_chunks::<3>().0.to_vec())
+        } else {
+            None
+        };
         let grid = |g: GridV1| -> Result<GuideLayerGrid> {
             let n = g.dims[0].saturating_mul(g.dims[1]);
             let off = usize::try_from(g.offset).map_err(|_| Error::Invalid("layers offset too large".into()))?;
@@ -166,6 +188,7 @@ impl GuideLayers {
                 spacing_m: g.spacing_m,
                 blend_m: g.blend_m,
                 texels: all[off..end].to_vec(),
+                tint: all_tint.as_ref().map(|t| t[off..end].to_vec()),
             })
         };
         let out = Self {
@@ -178,14 +201,25 @@ impl GuideLayers {
         Ok(Some(out))
     }
 
-    /// Writes `layers.json` + `layers.u16` into `dir` (the global grid, then the stamps' in order).
+    /// Writes `layers.json` + `layers.u16` (and optional `layers.tint` when any grid carries tint) into `dir`.
     pub fn write(&self, dir: &Path) -> Result<()> {
         self.validate()?;
+        let has_tint = self.global.tint.is_some() || self.stamps.iter().any(|(_, g)| g.tint.is_some());
         let mut bytes = Vec::new();
+        let mut tint_bytes = Vec::new();
         let mut put = |g: &GuideLayerGrid| {
             let offset = (bytes.len() / 2) as u64;
             for t in &g.texels {
                 bytes.extend_from_slice(&t.to_le_bytes());
+            }
+            if has_tint {
+                if let Some(ts) = &g.tint {
+                    for rgb in ts {
+                        tint_bytes.extend_from_slice(rgb);
+                    }
+                } else {
+                    tint_bytes.resize(tint_bytes.len() + g.texels.len() * 3, 255);
+                }
             }
             GridV1 { origin_m: g.origin_m, dims: g.dims, spacing_m: g.spacing_m, blend_m: g.blend_m, offset }
         };
@@ -200,6 +234,12 @@ impl GuideLayers {
         };
         std::fs::create_dir_all(dir)?;
         std::fs::write(dir.join("layers.u16"), bytes)?;
+        let tint_path = dir.join("layers.tint");
+        if has_tint {
+            std::fs::write(&tint_path, tint_bytes)?;
+        } else {
+            let _ = std::fs::remove_file(&tint_path);
+        }
         std::fs::write(dir.join("layers.json"), serde_json::to_string_pretty(&file)?)?;
         Ok(())
     }
@@ -260,10 +300,30 @@ fn unpack10(w: u32) -> [f32; 3] {
     [(w & 1023) as f32 / 1023.0, ((w >> 10) & 1023) as f32 / 1023.0, ((w >> 20) & 1023) as f32 / 1023.0]
 }
 
+fn srgb_u8_to_linear(v: u8) -> f32 {
+    let c = f32::from(v) / 255.0;
+    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+}
+
 impl Pyramid {
     fn new(g: &GuideLayerGrid, mean: &dyn Fn(u16) -> [f32; 3]) -> Self {
         let [mut w, mut h] = g.dims;
-        let mut cur: Vec<[f32; 3]> = g.texels.iter().map(|&t| mean(t)).collect();
+        let mut cur: Vec<[f32; 3]> = match &g.tint {
+            Some(tints) => g
+                .texels
+                .iter()
+                .zip(tints)
+                .map(|(&t, rgb)| {
+                    let m = mean(t);
+                    [
+                        m[0] * srgb_u8_to_linear(rgb[0]),
+                        m[1] * srgb_u8_to_linear(rgb[1]),
+                        m[2] * srgb_u8_to_linear(rgb[2]),
+                    ]
+                })
+                .collect(),
+            None => g.texels.iter().map(|&t| mean(t)).collect(),
+        };
         let mut levels = Vec::new();
         let mut s = g.spacing_m;
         loop {
