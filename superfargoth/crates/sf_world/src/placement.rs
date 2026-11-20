@@ -96,6 +96,9 @@ bitflags::bitflags! {
         /// (industry-audit.md J1): quest items, landmarks, anything an
         /// adapter wants seen from as far as it is loaded.
         const NO_SIZE_CULL = 1 << 5;
+        /// Custom placement class opts into far-field proxies (and ends its
+        /// near chain at the far-field handoff; weather/distant-shadows.md B5b).
+        const FAR_PROXY = 1 << 6;
     }
 }
 
@@ -134,6 +137,7 @@ impl Placement {
             PlacementFlags::NO_LOD | PlacementFlags::NEAR_ONLY | PlacementFlags::EDITOR_ONLY | PlacementFlags::DISABLED;
         self.model.is_some()
             && !self.flags.intersects(excluded)
-            && matches!(self.class, PlacementClass::Static | PlacementClass::Door | PlacementClass::Light)
+            && (matches!(self.class, PlacementClass::Static | PlacementClass::Door | PlacementClass::Light)
+                || self.flags.contains(PlacementFlags::FAR_PROXY))
     }
 }

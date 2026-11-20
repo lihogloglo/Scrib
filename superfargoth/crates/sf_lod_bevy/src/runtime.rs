@@ -39,12 +39,34 @@ use sf_model_bevy::baked_path;
 use sf_world::{GateSource, Level, SelectGate, WorldspaceId};
 use sf_world_bevy::{CellProxies, ProxySpawnCx, Streaming, WorldspaceRegistry, to_grid};
 
-use crate::assets::{FarDirectoryAsset, FarNodeAsset, ImpostorAtlasAsset};
-use crate::materials::{FarShadowExt, ImpostorMaterial, ImpostorParams, LightSpriteMaterial, ProxyMaterial, SpriteParams, impostor_mesh, light_mesh};
+use crate::assets::{FarDirectoryAsset, FarNodeAsset, ImpostorAtlasAsset, ProxySurface};
+use crate::materials::{
+    BlendProxyMaterial, FarShadowExt, ImpostorMaterial, ImpostorParams, LightSpriteMaterial, ProxyMaterial, SpriteParams, blend_proxy_material,
+    impostor_mesh, light_mesh,
+};
 use crate::{FarFieldDebug, FarFieldSettings, FarFieldStats};
 
 /// Level tint colors (debug): L1 green, L2 blue, L3 purple.
 pub const LEVEL_TINT: [[f32; 3]; 3] = [[0.25, 0.9, 0.3], [0.25, 0.45, 1.0], [0.7, 0.3, 0.95]];
+
+/// Cache key for a shared blended proxy material.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BlendProxyKey {
+    pub level: u8,
+    /// Quantised linear emissive RGB (`sf_lod::cluster::quantise_emissive`, bfloat16).
+    pub emissive: [u16; 3],
+    pub double_sided: bool,
+}
+
+impl BlendProxyKey {
+    fn of(level: u8, surface: ProxySurface) -> Self {
+        Self { level: level.clamp(1, 3), emissive: sf_lod::cluster::quantise_emissive(surface.emissive), double_sided: surface.double_sided }
+    }
+
+    fn emissive_linear(self) -> [f32; 3] {
+        sf_lod::cluster::unquantise_emissive(self.emissive)
+    }
+}
 
 /// Materials every node shares.
 #[derive(Resource, Clone)]
@@ -53,6 +75,40 @@ pub struct FarMaterials {
     /// colors carry albedo) plus the far shadow map.
     pub proxy: [Handle<ProxyMaterial>; 3],
     pub lights: Handle<LightSpriteMaterial>,
+    /// Shared blended proxy materials (B5a), created on demand per
+    /// `(level, emissive, double_sided)` and kept current by `update_materials`
+    /// and `update_far_shadow`.
+    pub blend: Arc<Mutex<HashMap<BlendProxyKey, Handle<BlendProxyMaterial>>>>,
+}
+
+impl FarMaterials {
+    fn blend_entries(&self) -> Vec<(BlendProxyKey, Handle<BlendProxyMaterial>)> {
+        self.blend
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(k, h)| (*k, h.clone()))
+            .collect()
+    }
+
+    fn blend_handle(&self, world: &mut World, level: u8, surface: ProxySurface, settings: &FarFieldSettings) -> Handle<BlendProxyMaterial> {
+        let key = BlendProxyKey::of(level, surface);
+        if let Some(h) = self.blend.lock().unwrap_or_else(PoisonError::into_inner).get(&key).cloned() {
+            return h;
+        }
+        let debug_tint = world.get_resource::<FarFieldDebug>().is_some_and(|d| d.level_tint);
+        let far_shadow = world.get_resource::<crate::FarShadowInput>().map_or_else(
+            || (Vec4::ZERO, Handle::default()),
+            |i| (if i.image.is_some() { i.params } else { Vec4::ZERO }, i.image.clone().unwrap_or_default()),
+        );
+        let fog = world
+            .get_resource::<sf_render_order_bevy::TranslucentFog>()
+            .cloned()
+            .unwrap_or_else(|| sf_render_order_bevy::TranslucentFog { volume: Handle::default(), params: Vec4::ZERO });
+        let mat = blend_proxy_material(key.level, key.emissive_linear(), key.double_sided, debug_tint, settings, far_shadow, &fog);
+        let handle = world.resource_mut::<Assets<BlendProxyMaterial>>().add(mat);
+        self.blend.lock().unwrap_or_else(PoisonError::into_inner).entry(key).or_insert(handle).clone()
+    }
 }
 
 pub(crate) fn create_materials(
@@ -84,7 +140,7 @@ pub(crate) fn create_materials(
         fog_params: fog.params,
         fog_volume: fog.volume.clone(),
     });
-    commands.insert_resource(FarMaterials { proxy, lights });
+    commands.insert_resource(FarMaterials { proxy, lights, blend: Arc::new(Mutex::new(HashMap::new())) });
 }
 
 /// An impostor model set ready to draw: one material per far-field level
@@ -280,6 +336,12 @@ impl CellProxies for FarHook {
         levels.min_radius(1, node.header.lead)
     }
 
+    fn unrepresented(&self, world: &World, ws: &WorldspaceId, cell: IVec3) -> Vec<String> {
+        let state = self.0.lock();
+        let Some(slot) = state.worlds.get(ws).and_then(|w| w.l1.get(&cell)) else { return Vec::new() };
+        world.resource::<Assets<FarNodeAsset>>().get(&slot.handle).map_or_else(Vec::new, |n| n.header.unrepresented.clone())
+    }
+
     fn release(&self, _world: &mut World, ws: &WorldspaceId, cell: IVec3) {
         let mut state = self.0.lock();
         if let Some(w) = state.worlds.get_mut(ws) {
@@ -304,13 +366,21 @@ impl CellProxies for FarHook {
 struct NodeCopy {
     header: sf_lod::NodeHeader,
     meshes: Vec<Handle<Mesh>>,
+    surfaces: Vec<ProxySurface>,
     impostors: Vec<sf_lod::ImpostorInstance>,
     lights: Vec<sf_lod::LightPoint>,
     bytes: u64,
 }
 
 fn clone_node(n: &FarNodeAsset) -> NodeCopy {
-    NodeCopy { header: n.header.clone(), meshes: n.meshes.clone(), impostors: n.impostors.clone(), lights: n.lights.clone(), bytes: n.bytes }
+    NodeCopy {
+        header: n.header.clone(),
+        meshes: n.meshes.clone(),
+        surfaces: n.surfaces.clone(),
+        impostors: n.impostors.clone(),
+        lights: n.lights.clone(),
+        bytes: n.bytes,
+    }
 }
 
 /// Spawns a node's parts (proxy mesh, impostors, lights) under `parent`.
@@ -332,12 +402,32 @@ fn spawn_parts(
     let cast_shadows = level == 1 && settings.l1_shadows;
     let mut parts = Vec::new();
     let mat = materials.proxy[usize::from(level.clamp(1, 3) - 1)].clone();
-    for mesh in &node.meshes {
-        let mut e = world.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), local, range.clone(), layers.clone(), bounds, NoAutoAabb, ChildOf(parent)));
-        if !cast_shadows {
-            e.insert(NotShadowCaster);
+    for (i, mesh) in node.meshes.iter().enumerate() {
+        let surface = node.surfaces.get(i).copied().unwrap_or_default();
+        if surface.blend {
+            let blend_mat = materials.blend_handle(world, level, surface, settings);
+            parts.push(
+                world
+                    .spawn((
+                        Mesh3d(mesh.clone()),
+                        MeshMaterial3d(blend_mat),
+                        local,
+                        range.clone(),
+                        layers.clone(),
+                        bounds,
+                        NoAutoAabb,
+                        NotShadowCaster,
+                        ChildOf(parent),
+                    ))
+                    .id(),
+            );
+        } else {
+            let mut e = world.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), local, range.clone(), layers.clone(), bounds, NoAutoAabb, ChildOf(parent)));
+            if !cast_shadows {
+                e.insert(NotShadowCaster);
+            }
+            parts.push(e.id());
         }
-        parts.push(e.id());
     }
     if let Some((material, layer_of)) = impostors
         && !node.impostors.is_empty()
@@ -716,14 +806,16 @@ fn emit_far_counters(c: &DiagCounters, out: &FarFieldStats, started: Instant) {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_materials(
     debug: Res<FarFieldDebug>,
+    settings: Res<FarFieldSettings>,
     far: Option<Res<FarMaterials>>,
     shared: Res<FarShared>,
     mut proxies: ResMut<Assets<ProxyMaterial>>,
+    mut blend_proxies: ResMut<Assets<BlendProxyMaterial>>,
     mut impostors: ResMut<Assets<ImpostorMaterial>>,
     mut sprites: ResMut<Assets<LightSpriteMaterial>>,
     night: Res<crate::FarLightsNight>,
     fog: Res<sf_render_order_bevy::TranslucentFog>,
-    mut applied: Local<Option<(bool, f32, usize)>>,
+    mut applied: Local<Option<(bool, f32, usize, usize)>>,
 ) {
     let Some(far) = far else { return };
     if sprites.get(&far.lights).is_some_and(|m| m.fog_params != fog.params || m.fog_volume != fog.volume)
@@ -732,11 +824,20 @@ pub(crate) fn update_materials(
         m.fog_params = fog.params;
         m.fog_volume.clone_from(&fog.volume);
     }
+    let blend_entries = far.blend_entries();
+    for (_, h) in &blend_entries {
+        if blend_proxies.get(h).is_some_and(|m| m.extension.fog_params != fog.params || m.extension.fog_volume != fog.volume)
+            && let Some(mut m) = blend_proxies.get_mut(h)
+        {
+            m.extension.fog_params = fog.params;
+            m.extension.fog_volume.clone_from(&fog.volume);
+        }
+    }
     let state = shared.lock();
     let imp_sets: Vec<[Handle<ImpostorMaterial>; 3]> =
         state.worlds.values().filter_map(|w| w.impostors.as_ref().map(|s| s.materials.clone())).collect();
     drop(state);
-    let wanted = (debug.level_tint, (night.0 * 100.0).round() / 100.0, imp_sets.len());
+    let wanted = (debug.level_tint, (night.0 * 100.0).round() / 100.0, imp_sets.len(), blend_entries.len());
     if *applied == Some(wanted) {
         return;
     }
@@ -748,6 +849,22 @@ pub(crate) fn update_materials(
             // Modest self-glow in debug tint mode so dark basalt/stone L2/L3 proxies read
             // unmistakably as green / blue / purple through aerial haze (FF-2).
             m.base.emissive = if debug.level_tint { LinearRgba::rgb(r * 0.22, g * 0.22, b * 0.22) } else { LinearRgba::BLACK };
+        }
+    }
+    for (key, h) in &blend_entries {
+        if let Some(mut m) = blend_proxies.get_mut(h) {
+            let [r, g, b] = LEVEL_TINT[usize::from(key.level.clamp(1, 3) - 1)];
+            if debug.level_tint {
+                m.base.base_color = Color::from(LinearRgba::rgb(r, g, b));
+                m.base.emissive = LinearRgba::rgb(r * 0.22, g * 0.22, b * 0.22);
+                m.base.emissive_exposure_weight = 0.0;
+            } else {
+                let [er, eg, eb] = key.emissive_linear();
+                let s = settings.emissive_nits;
+                m.base.base_color = Color::WHITE;
+                m.base.emissive = LinearRgba::rgb(er * s, eg * s, eb * s);
+                m.base.emissive_exposure_weight = settings.emissive_exposure_weight;
+            }
         }
     }
     for mats in &imp_sets {
@@ -774,28 +891,37 @@ pub fn node_center(dir: &FarDirectory, key: &NodeKey) -> Option<WorldPos> {
 /// appear. New contents alone ([`crate::FarShadowInput::generation`]) need
 /// nothing: the host writes the same texture in place, so the materials'
 /// bind groups stay valid, and touching them would rebuild every one.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_far_shadow(
     input: Res<crate::FarShadowInput>,
     far: Option<Res<FarMaterials>>,
     shared: Res<FarShared>,
     mut proxies: ResMut<Assets<ProxyMaterial>>,
+    mut blend_proxies: ResMut<Assets<BlendProxyMaterial>>,
     mut impostors: ResMut<Assets<ImpostorMaterial>>,
-    mut applied: Local<Option<(crate::FarShadowInput, usize)>>,
+    mut applied: Local<Option<(crate::FarShadowInput, usize, usize)>>,
 ) {
     let Some(far) = far else { return };
     let state = shared.lock();
     let sets: Vec<Handle<ImpostorMaterial>> =
         state.worlds.values().filter_map(|w| w.impostors.as_ref()).flat_map(|s| s.materials.iter().cloned()).collect();
     drop(state);
-    if applied.as_ref().is_some_and(|(i, n)| i.image == input.image && i.params == input.params && *n == sets.len()) {
+    let blend_entries = far.blend_entries();
+    if applied.as_ref().is_some_and(|(i, n, b)| i.image == input.image && i.params == input.params && *n == sets.len() && *b == blend_entries.len()) {
         return;
     }
-    *applied = Some((input.clone(), sets.len()));
+    *applied = Some((input.clone(), sets.len(), blend_entries.len()));
     let map = input.image.clone().unwrap_or_default();
     let params = if input.image.is_some() { input.params } else { Vec4::ZERO };
     for h in &far.proxy {
         if let Some(mut m) = proxies.get_mut(h) {
             m.extension = FarShadowExt { far: params, map: map.clone() };
+        }
+    }
+    for (_, h) in &blend_entries {
+        if let Some(mut m) = blend_proxies.get_mut(h) {
+            m.extension.far = params;
+            m.extension.map = map.clone();
         }
     }
     for h in &sets {
@@ -876,7 +1002,7 @@ mod gate_tests {
     /// (plus one settle frame) re-run it; while gated, the no-hole fallback trips `move_m` early.
     #[test]
     fn residency_gate_skips_still_frames_and_reacts_to_moves_and_data() {
-        assert!(!FarFieldSettings::default().select_gate.enabled, "off by default until the owner's A/B");
+        assert!(FarFieldSettings::default().select_gate.enabled, "on by default since owner 2026-11-17");
         let q = FarFieldSettings::select_gate_quanta(true).move_m;
         let mut r = rig(true);
         let far = r.threshold + 100.0;

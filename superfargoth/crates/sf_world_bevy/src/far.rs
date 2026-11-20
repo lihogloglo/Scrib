@@ -50,6 +50,15 @@ pub trait CellProxies: Send + Sync + 'static {
     fn kept_radius(&self, _world: &World, _worldspace: &WorldspaceId, _cell: IVec3) -> f32 {
         0.0
     }
+    /// Model paths (sorted) of far-eligible placements the cell's proxy draws
+    /// nothing for (dropped by the far policy): streaming keeps them to their
+    /// own ring instead of ending them at the handoff, where nothing would
+    /// take over (UE HLOD: only actors with a proxy representation hand off).
+    /// Called with [`Self::kept_radius`]. The default, empty, hands off
+    /// every far-eligible placement.
+    fn unrepresented(&self, _world: &World, _worldspace: &WorldspaceId, _cell: IVec3) -> Vec<String> {
+        Vec::new()
+    }
     /// Upload estimate of the cell's proxy, bytes.
     fn bytes(&self, _worldspace: &WorldspaceId, _cell: IVec3) -> u64 {
         0

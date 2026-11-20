@@ -20,21 +20,24 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\farfield\` (`balmora_a*`,
 ## Ghostfence (superfargoth `weather/distant-shadows.md`, bug B)
 
 ### GF-1: Ghostfence appears complete, never late
-- Kind: game location. Run: `.\bevyrrowind scene ghostfence-far` and fly
+- Kind: game location. Run: `.\bevyrrowind scene ghostfence-far` (day, plus `--hour 22` for night) and fly
   toward Ghostgate (the camera starts ~1.9 km south-west, 120 m up, facing it).
-- Look for: the fence segments appear at their ring (~520-650 m) already
-  loaded: no frames where the pylons stand without the field after a cell
-  group reveals (B3 preload). Not fixed yet: the field is still invisible
-  past the ring and appears there without a fade. Its segments are
-  activators made only of blended parts, so they have no far copy (weather/distant-shadows.md
-  B5: blended far proxies + scriptless activators).
-- A/B: F5 (pylons tint green at L1; fence segments stay untinted). Compare
-  `play\` before this session's exe if kept: there the field showed up a few
-  frames after its cell.
-- Also (owner 2026-10-19, round 6, from the summit at night): round light spots sit inside the fence "wall": they are the far-distance light sprites of the fence's blue lights, drawn while the field itself has no far copy. Not vanilla-looking.
-- Status: known bug, seen by owner 2026-10-19 (round 2): the fence field disappears entirely at a distance and pops back in close. Cause known: blended-only activators have no far copy (weather/distant-shadows.md B5); Phase 1 or later.
-- Source: weather-spec / farfield / nifpop.
-- Owner 2026-11-15 (repeated): Ghostgate fence panels still pop in or vanish suddenly with distance. Owner suspects the emissive material has no LOD; the entry above says why: the segments are blended-only activators with no far copy (B5), so they appear at the ring with no fade.
+- Look for: the glowing fence field is visible as a wall from the start (L2/L1 blended proxy, no ring pop),
+  stays visible while flying in, and the near NIF panel replaces it via stipple dissolve over one lead band
+  at ~400 m x handoff scale with no sudden pop. Check for double brightness in the handoff band, seams at
+  128 m node borders, matching brightness at night (`--hour 22`), and whether the blue light sprites now sit
+  inside the field instead of floating as isolated spots.
+- A/B: F5 tints L1 green / L2 blue — fence segments should now tint with L1/L2.
+- Status: awaiting owner. Owner run 1 (2026-11-19): no far fence, glow objects popping in the sky, low fps. Diagnosed
+  (ghostfence-diag): the far fence was erased by simplification (back-to-back panel faces) and had zero glow (emissive
+  key), and the Ghostgate glow particles lost their near copy at 400 m (`FAR_PROXY` with nothing to hand off to). Fixed
+  and rebaked the same day; also look for the floating glow particles staying put (no pops) while flying in and out.
+  Fps: not measured; check the F3 panel against another exterior on the same build.
+  Owner run 2 (2026-11-19, fixed build): the far fence shows, but much darker than the rest from afar (to tweak later
+  with GF-2; likely the far copy's averaged texture for albedo and glow loses the panel's bright streaks). The objects in the
+  sky are RO-18, not this check.
+- History: known bug 2026-10-19 (round 2) and 2026-11-15 (owner repeated): field disappeared at distance and popped in at the ring.
+- Source: weather-spec / farfield / nifpop / ghostfence-b5.
 
 ## DLSS (superfargoth `sky-lighting.md`; `.sessions/dlss.md`)
 
@@ -237,7 +240,15 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - 2026-11-11 later (scene-audit): not reproduced. A scripted climb to 700 m and the owner's own flight (to 595 m, coast and
   open water, BRP capture of every new mesh) showed nothing floating; vertical origin shifts move all statics correctly.
   Intermittent. Capture tool: `node bevyrrowind/tools/brp_capture_meshes.mjs <out.jsonl> [port]`; rerun when it shows again.
-- Status: known bug, not diagnosed. Next step: a diagnosis slice (which system spawns it: groundcover, statics, streaming).
+- 2026-11-19 (owner, `scene ghostfence-far`, static scene on, shot `Documents/ShareX/Screenshots/2026-11/bevyrrowind_FQdvI9BooR.jpg`):
+  clusters of rocks, trees and structures hanging in the sky toward Red Mountain, untinted by Shift+F6 (so not far-field
+  nodes or impostors). Camera at 404 m, origin in vertical cell 2; the shot came 6 s after an upward origin shift
+  (`origin shift ... rebase [0, 256, 0]`), and earlier vertical shifts matched the moments things appeared. BRP: none of the
+  14,787 `Mesh3d` entities floats (only terrain tiles sit above 280 m, by design), so it is GPU-placed geometry: static scene
+  slots or groundcover (2026-11-11 also seen with the static scene off). The `sf_scene_bevy` shift test only covers X shifts.
+  Next: owner flies down/up across 384 m and 128 m and says whether clusters jump at the crossings; then the same in
+  `sc-noscene`; then a vertical-shift test in `sf_scene_bevy` residency_tests (and groundcover if scene-off repeats).
+- Status: known bug, not diagnosed (narrowed 2026-11-19: GPU-placed, tied to vertical origin shifts). Next step: a diagnosis slice.
 
 ### RO-19: Very short shadow flickers here and there (owner report 2026-11-11)
 - Balmora 14:00, same in sc-scene and sc-noscene: brief, subtle flickers, the owner thinks shadows (maybe fog).

@@ -44,6 +44,15 @@ pub struct ClusterMesh {
     pub triangles: u32,
 }
 
+/// One simplified, encoded proxy submesh before packing into a [`CookedModel`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct BuiltSubmesh {
+    pub submesh: CookedSubmesh,
+    pub bounds: Aabb,
+    pub error: f32,
+    pub triangles: u32,
+}
+
 impl ClusterBuilder {
     pub fn new() -> Self {
         Self::default()
@@ -79,8 +88,9 @@ impl ClusterBuilder {
     }
 
     /// Welds, simplifies to `budget` (total error, source error included),
-    /// optimizes and encodes. `None` when nothing was added.
-    pub fn build(self, budget: f32, settings: &SimplifySettings) -> Result<Option<ClusterMesh>, FormatError> {
+    /// optimizes and encodes one submesh bound to `material`. `None` when
+    /// nothing was added or nothing survived simplification.
+    pub fn build_submesh(self, material: u32, budget: f32, settings: &SimplifySettings) -> Result<Option<BuiltSubmesh>, FormatError> {
         if self.indices.is_empty() {
             return Ok(None);
         }
@@ -101,15 +111,12 @@ impl ClusterBuilder {
                 .map_err(|e| FormatError::Mesh(e.to_string()))?;
             let attributes: Vec<f32> = vertices
                 .iter()
-                .flat_map(|v| {
-                    let [r, g, b, _] = v.color.map(|c| f32::from(c) / 255.0);
-                    [r, g, b]
-                })
+                .flat_map(|v| v.color.map(|c| f32::from(c) / 255.0))
                 .collect();
             // meshopt adds weighted attribute error to the geometric error
-            // (meters here): a full 0→1 color change costs `color_weight` ×
-            // the budget, so color seams shape the result without blocking it.
-            let w = [settings.color_weight * target; 3];
+            // (meters here): a full 0→1 color/alpha change costs `color_weight` ×
+            // the budget, so color and opacity seams shape the result without blocking it.
+            let w = [settings.color_weight * target; 4];
             let mut options = SimplifyOptions::ErrorAbsolute;
             if settings.prune {
                 options |= SimplifyOptions::Prune;
@@ -120,7 +127,7 @@ impl ClusterBuilder {
                 &adapter,
                 &attributes,
                 &w,
-                3 * size_of::<f32>(),
+                4 * size_of::<f32>(),
                 &locks,
                 3,
                 target,
@@ -147,16 +154,25 @@ impl ClusterBuilder {
             bounds.grow(v.position);
         }
         let triangles = u32::try_from(indices.len() / 3).map_err(|_| FormatError::TooLarge)?;
-        let submesh = encode_submesh(0, &vertices, &indices)?;
+        let submesh = encode_submesh(material, &vertices, &indices)?;
+        Ok(Some(BuiltSubmesh { submesh, bounds, error: self.source_error + simplify_error, triangles }))
+    }
+
+    /// Welds, simplifies to `budget` (total error, source error included),
+    /// optimizes and encodes as a single opaque proxy model. `None` when nothing was added.
+    pub fn build(self, budget: f32, settings: &SimplifySettings) -> Result<Option<ClusterMesh>, FormatError> {
+        let Some(built) = self.build_submesh(0, budget, settings)? else {
+            return Ok(None);
+        };
         let model = CookedModel {
-            bounds,
+            bounds: built.bounds,
             has_normals: true,
             has_uvs: false,
             has_colors: true,
             materials: vec![proxy_material()],
-            lods: vec![CookedLod { error: self.source_error + simplify_error, submeshes: vec![submesh] }],
+            lods: vec![CookedLod { error: built.error, submeshes: vec![built.submesh] }],
         };
-        Ok(Some(ClusterMesh { model, error: self.source_error + simplify_error, triangles }))
+        Ok(Some(ClusterMesh { model, error: built.error, triangles: built.triangles }))
     }
 }
 
@@ -220,9 +236,62 @@ pub fn crease_normals(vertices: &[Vertex], indices: &[u32], crease_cos: f32) -> 
     (out_vertices, out_indices)
 }
 
-/// The proxies' one material: white, opaque, vertex colors carry albedo.
+/// The proxies' opaque material: white, opaque, vertex colors carry albedo.
 pub fn proxy_material() -> Material {
     Material { name: "far.proxy".into(), alpha: AlphaMode::Opaque, ..Material::default() }
+}
+
+/// A blended proxy submesh material (B5a): vertex colors carry linear albedo
+/// and opacity, `emissive` carries the group's quantised linear glow.
+pub fn blend_proxy_material(emissive: [f32; 3], double_sided: bool) -> Material {
+    Material {
+        name: "far.proxy.blend".into(),
+        alpha: AlphaMode::Blend,
+        emissive,
+        double_sided,
+        unlit: false,
+        ..Material::default()
+    }
+}
+
+/// Drops the back face of every back-to-back triangle pair (same three
+/// positions, opposite winding), returning the kept indices and how many
+/// were dropped. Sources model thin two-sided sheets this way (the
+/// Ghostfence panels: 72 of 144 triangles); the proxy weld ignores normals,
+/// so such a pair becomes a zero-volume closed shell that the simplifier
+/// collapses to nothing at any error budget. Drawn double-sided instead.
+pub fn fold_back_faces(vertices: &[Vertex], indices: &[u32]) -> (Vec<u32>, usize) {
+    use std::collections::HashMap;
+    let pos = |i: u32| Vec3::from_array(vertices[i as usize].position);
+    let mut seen: HashMap<[[u32; 3]; 3], Vec3> = HashMap::new();
+    let mut kept = Vec::with_capacity(indices.len());
+    let mut dropped = 0;
+    for t in indices.as_chunks::<3>().0 {
+        let mut key = t.map(|i| vertices[i as usize].position.map(f32::to_bits));
+        key.sort_unstable();
+        let normal = (pos(t[1]) - pos(t[0])).cross(pos(t[2]) - pos(t[0]));
+        match seen.get(&key) {
+            Some(n) if n.dot(normal) < 0.0 => dropped += 1,
+            _ => {
+                seen.insert(key, normal);
+                kept.extend_from_slice(t);
+            }
+        }
+    }
+    (kept, dropped)
+}
+
+/// Emissive quantised to bfloat16 (8 significant bits, < 0.4 % error at any
+/// magnitude), so float noise doesn't split blended batches while dim glows
+/// (texture-tinted, ~0.003) keep their value. Bake key and runtime material key.
+pub fn quantise_emissive(emissive: [f32; 3]) -> [u16; 3] {
+    #[allow(clippy::cast_possible_truncation)]
+    emissive.map(|c| ((c.max(0.0).to_bits() + 0x8000) >> 16) as u16)
+}
+
+/// Inverse of [`quantise_emissive`].
+pub fn unquantise_emissive(q: [u16; 3]) -> [f32; 3] {
+    q.map(|c| f32::from_bits(u32::from(c) << 16))
 }
 
 /// meshopt-encodes one submesh (`sf_model`'s container fields are public).

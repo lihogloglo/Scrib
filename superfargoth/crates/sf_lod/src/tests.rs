@@ -471,3 +471,223 @@ fn near_precombine_buckets_keep_one_vertex_layout() {
         }
     }
 }
+
+/// Large vertical quad wall mesh (12 × 20 m) on `material`, white vertex colors.
+fn wall_mesh(material: u32) -> MeshData {
+    let mut mesh = MeshData { material, ..MeshData::default() };
+    mesh.positions = vec![[-6.0, 0.0, 0.0], [6.0, 0.0, 0.0], [6.0, 20.0, 0.0], [-6.0, 20.0, 0.0]];
+    mesh.normals = Some(vec![[0.0, 0.0, 1.0]; 4]);
+    mesh.uvs = Some(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+    mesh.colors = Some(vec![[1.0; 4]; 4]);
+    mesh.indices = vec![0, 1, 2, 0, 2, 3];
+    mesh
+}
+
+/// B5a test 3 & 4: `build_l1` keeps `AlphaMode::Blend` parts in a separate
+/// submesh with their emissive and vertex alpha, keeps both on mixed models,
+/// carries blended submeshes through L2 and drops them at L3.
+#[test]
+fn blended_proxies_build_at_l1_carry_to_l2_and_drop_at_l3() {
+    use sf_model::AlphaMode;
+
+    // Tall pure-blended panel (alpha 0.5, emissive 0.3, double-sided): default policy must still be Merge.
+    let blend_mat = Material {
+        name: "field".into(),
+        base_color: [0.8, 0.9, 1.0, 0.5],
+        emissive: [0.3, 0.3, 0.3],
+        alpha: AlphaMode::Blend,
+        double_sided: true,
+        ..Material::default()
+    };
+    let mut wall_node = Node::new("wall");
+    wall_node.mesh = Some(0);
+    let blend_only = Arc::new(cook_static(&Model {
+        nodes: vec![wall_node],
+        meshes: vec![wall_mesh(0)],
+        materials: vec![blend_mat.clone()],
+    }));
+    let blend_summary = ModelSummary::of(&blend_only);
+    assert!(blend_summary.masked_area.abs() < f32::EPSILON, "Blend is not counted as alpha-masked foliage");
+    assert_eq!(crate::default_policy(&blend_summary), FarPolicy::Merge, "tall blended wall merges, not impostor");
+
+    // Mixed model: one large opaque tower (survives L3's error budget) + one blended wall.
+    let mut tower = sphere_mesh(0);
+    for pos in &mut tower.positions {
+        for c in pos {
+            *c *= 12.0;
+        }
+    }
+    let mut n0 = Node::new("solid");
+    n0.mesh = Some(0);
+    let mut n1 = Node::new("field");
+    n1.mesh = Some(1);
+    let mixed = Arc::new(cook_static(&Model {
+        nodes: vec![n0, n1],
+        meshes: vec![tower, wall_mesh(1)],
+        materials: vec![Material::default(), blend_mat],
+    }));
+
+    let cell = IVec3::new(0, 0, 0);
+    let origin = Partition::STREAMING.cell_origin(cell).to_f64();
+    let mut p = placement(1, origin + DVec3::new(40.0, 0.0, 40.0), PlacementClass::Custom(2));
+    p.placement.flags = PlacementFlags::FAR_PROXY;
+    p.radius = 12.0;
+    let settings = FarBakeSettings::default();
+
+    // Pure blended placement -> L1 has 1 Blend submesh, 0 Opaque submeshes.
+    let l1_blend = build_l1(
+        Partition::STREAMING,
+        cell,
+        std::slice::from_ref(&p),
+        &|_| Some(FarModel { policy: FarPolicy::Merge, summary: blend_summary, cooked: Some(blend_only.clone()), albedo: Vec::new() }),
+        &DefaultFarSource,
+        &settings,
+    )
+    .expect("builds L1 blend");
+    let model = l1_blend.mesh.as_ref().expect("L1 blend has mesh");
+    let lod = &model.lods[0];
+    assert_eq!(lod.submeshes.len(), 1);
+    let mat = &model.materials[lod.submeshes[0].material as usize];
+    assert_eq!(mat.alpha, AlphaMode::Blend);
+    assert!(mat.emissive.iter().all(|c| (c - 0.3).abs() < 0.3 * 0.005), "emissive {:?} (bfloat16 key)", mat.emissive);
+    assert!(mat.double_sided);
+    let (verts, _) = lod.submeshes[0].decode().expect("decodes");
+    assert!(!verts.is_empty());
+    for v in &verts {
+        let a = f32::from(v.color[3]) / 255.0;
+        assert!((a - 0.5).abs() < 0.01, "expected vertex alpha ~0.5, got {a}");
+    }
+    // Round-trip through NodeBlob bytes.
+    assert_eq!(NodeBlob::from_bytes(&l1_blend.to_bytes()).expect("decodes"), l1_blend);
+
+    // Mixed model -> L1 keeps both opaque and blended submeshes separately.
+    let mixed_summary = ModelSummary::of(&mixed);
+    let l1_mixed = build_l1(
+        Partition::STREAMING,
+        cell,
+        std::slice::from_ref(&p),
+        &|_| Some(FarModel { policy: FarPolicy::Merge, summary: mixed_summary, cooked: Some(mixed.clone()), albedo: Vec::new() }),
+        &DefaultFarSource,
+        &settings,
+    )
+    .expect("builds L1 mixed");
+    let mm = l1_mixed.mesh.as_ref().expect("L1 mixed has mesh");
+    assert_eq!(mm.lods[0].submeshes.len(), 2);
+    assert!(mm.materials.iter().any(|m| m.alpha == AlphaMode::Opaque));
+    assert!(mm.materials.iter().any(|m| m.alpha == AlphaMode::Blend));
+
+    // L2 carries blended submeshes through; L3 drops them.
+    let l2_key = NodeKey::of_cell(cell).parent().expect("L2");
+    let l2_mixed = build_parent(l2_key, Partition::STREAMING, vec![l1_mixed], &settings).expect("builds L2");
+    let m2 = l2_mixed.mesh.as_ref().expect("L2 has mesh");
+    assert_eq!(m2.lods[0].submeshes.len(), 2, "L2 keeps both opaque and blended");
+    assert!(m2.materials.iter().any(|m| m.alpha == AlphaMode::Blend && (m.emissive[0] - 0.3).abs() < 0.3 * 0.005));
+
+    let l3_key = l2_key.parent().expect("L3");
+    let l3_mixed = build_parent(l3_key, Partition::STREAMING, vec![l2_mixed], &settings).expect("builds L3");
+    let m3 = l3_mixed.mesh.as_ref().expect("L3 keeps opaque");
+    assert_eq!(m3.lods[0].submeshes.len(), 1, "L3 drops blended submesh");
+    assert!(m3.materials.iter().all(|m| m.alpha == AlphaMode::Opaque));
+
+    // Pure blended L1 -> L2 keeps it, L3 drops it leaving no mesh.
+    let l2_blend = build_parent(l2_key, Partition::STREAMING, vec![l1_blend], &settings).expect("builds L2 blend");
+    assert!(l2_blend.mesh.as_ref().is_some_and(|m| m.materials.iter().all(|x| x.alpha == AlphaMode::Blend)));
+    let l3_blend = build_parent(l3_key, Partition::STREAMING, vec![l2_blend], &settings).expect("builds L3 blend");
+    assert!(l3_blend.mesh.is_none(), "L3 drops pure-blended geometry");
+}
+
+/// B5b test 5: near + far fade weights for a `FAR_PROXY` blended placement
+/// cover every point across the L0->L1 and L1->L2 lead bands without holes.
+#[test]
+fn blended_far_proxy_handoff_covers_lead_bands() {
+    let levels = FarLevels::default();
+    let cell = IVec3::new(0, 0, 0);
+    let origin = Partition::STREAMING.cell_origin(cell).to_f64();
+    let obj_pos = origin + DVec3::new(110.0, 10.0, 15.0);
+    let mut p = placement(7, obj_pos, PlacementClass::Custom(2));
+    p.placement.flags = PlacementFlags::FAR_PROXY;
+    assert!(p.placement.far_eligible());
+    let k1 = NodeKey::of_cell(cell);
+    let k2 = k1.parent().expect("L2");
+    let c1 = node_center(k1, Partition::STREAMING, std::iter::once(p.placement.transform.pos)).to_f64();
+    #[allow(clippy::cast_possible_truncation)]
+    let lead1 = c1.distance(obj_pos) as f32;
+    let c2 = node_center(k2, Partition::STREAMING, std::iter::once(WorldPos::from_f64(c1))).to_f64();
+    #[allow(clippy::cast_possible_truncation)]
+    let lead2 = c2.distance(c1) as f32;
+
+    let near_range = FadeRange { start: 0.0..0.0, end: levels.object_end()..levels.object_end() + levels.band_width(1) };
+    let l1_range = levels.node_range(1, lead1, false);
+    let l2_range = levels.node_range(2, lead2, false);
+    // Sweep camera radially from 50 m to 2500 m (past L1->L2 handoff; blended drops at L3).
+    for dist in (50..=2500).step_by(5) {
+        let cam = obj_pos + DVec3::new(f64::from(dist), 0.0, 0.0);
+        let chain = [
+            Drawn { origin: obj_pos, range: near_range.clone(), resident: true },
+            Drawn { origin: c1, range: l1_range.clone(), resident: true },
+            Drawn { origin: c2, range: l2_range.clone(), resident: true },
+        ];
+        assert!(coverage(cam, &chain), "hole at distance {dist} m across blended L0/L1/L2 handoff");
+    }
+}
+
+/// GF-1 regression (ghostfence-diag, 2026-11-19): a blended sheet modelled as
+/// back-to-back triangles (the Ghostfence panels) welds into a zero-volume
+/// shell that simplification erased at any budget. It must survive L1 as one
+/// double-sided sheet with its dim (texture-tinted) emissive, and placements
+/// the node can't draw are listed in `unrepresented` (no handoff for them).
+#[test]
+fn back_to_back_blended_sheet_survives_and_drops_are_unrepresented() {
+    use sf_model::AlphaMode;
+
+    let mut sheet = wall_mesh(0);
+    sheet.positions.extend(sheet.positions.clone());
+    sheet.normals = Some([[0.0, 0.0, 1.0]; 4].into_iter().chain([[0.0, 0.0, -1.0]; 4]).collect());
+    sheet.uvs = Some(sheet.uvs.clone().unwrap().repeat(2));
+    sheet.colors = Some(vec![[1.0; 4]; 8]);
+    sheet.indices.extend([4, 6, 5, 4, 7, 6]);
+    let mat = Material {
+        name: "field".into(),
+        base_color: [1.0, 1.0, 1.0, 0.5],
+        emissive: [0.003, 0.003, 0.004],
+        alpha: AlphaMode::Blend,
+        ..Material::default()
+    };
+    let mut node = Node::new("field");
+    node.mesh = Some(0);
+    let cooked = Arc::new(cook_static(&Model { nodes: vec![node], meshes: vec![sheet], materials: vec![mat] }));
+
+    let (v, i) = cooked.lods[0].submeshes[0].decode().unwrap();
+    let (kept, dropped) = crate::cluster::fold_back_faces(&v, &i);
+    assert_eq!((kept.len() / 3, dropped), (2, 2), "one face of each back-to-back pair is folded");
+
+    let cell = IVec3::new(0, 0, 0);
+    let origin = Partition::STREAMING.cell_origin(cell).to_f64();
+    let mut fence = placement(1, origin + DVec3::new(40.0, 0.0, 40.0), PlacementClass::Custom(2));
+    fence.placement.flags = PlacementFlags::FAR_PROXY;
+    fence.radius = 12.0;
+    let mut sparks = placement(2, origin + DVec3::new(60.0, 30.0, 60.0), PlacementClass::Custom(2));
+    sparks.placement.flags = PlacementFlags::FAR_PROXY;
+    sparks.placement.model = Some(VfsPath::new("meshes/sparks.nif").expect("path"));
+    sparks.radius = 0.0; // boundless (particle-only model): escapes size culling
+    let summary = ModelSummary::of(&cooked);
+    let models = |m: &VfsPath| {
+        Some(if m.as_str().contains("sparks") {
+            FarModel { policy: FarPolicy::Drop, summary: ModelSummary::default(), cooked: None, albedo: Vec::new() }
+        } else {
+            FarModel { policy: FarPolicy::Merge, summary, cooked: Some(cooked.clone()), albedo: Vec::new() }
+        })
+    };
+    let l1 = build_l1(Partition::STREAMING, cell, &[fence, sparks], &models, &DefaultFarSource, &FarBakeSettings::default()).unwrap();
+    let model = l1.mesh.as_ref().expect("the sheet survives simplification");
+    let sub = &model.lods[0].submeshes[0];
+    let m = &model.materials[sub.material as usize];
+    assert_eq!(m.alpha, AlphaMode::Blend);
+    assert!(m.double_sided, "folded sheet draws both sides");
+    assert!(sub.index_count >= 6);
+    for (got, want) in m.emissive.iter().zip([0.003, 0.003, 0.004]) {
+        assert!((got - want).abs() / want < 0.01, "dim emissive kept: {:?}", m.emissive);
+    }
+    assert_eq!(l1.header.unrepresented, vec!["meshes/sparks.nif".to_owned()]);
+    assert_eq!(NodeBlob::from_bytes(&l1.to_bytes()).unwrap(), l1);
+}

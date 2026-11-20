@@ -140,6 +140,15 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
         eprintln!("  failed: {key}: {error}");
     }
     println!("far field: {} products in {:.2?}", far.products.len(), far.elapsed);
+    let blend_far = mw_bake::far::blended_proxy_summary(&manifest, &store);
+    println!(
+        "blended far proxies (B5): {} FAR_PROXY activators; L1 {} nodes ({} tris), L2 {} nodes ({} tris)",
+        exterior.far_proxy_activators,
+        blend_far.l1_nodes,
+        blend_far.l1_triangles,
+        blend_far.l2_nodes,
+        blend_far.l2_triangles,
+    );
     print_rest_cooks(&manifest, &store, &models);
     let far_failures: Vec<_> = far.failures().collect();
     for (key, error) in far_failures.iter().take(10) {

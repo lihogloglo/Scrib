@@ -136,7 +136,7 @@
             camera: "-900,+120,970,293,+20,-527",
             hour: 14.0,
             description: "~1.9 km south-west of Ghostgate at 120 m: fly at the Ghostfence (W) and watch it appear",
-            look_for: "the fence appears at ~520-650 m (its ring), already loaded, never late; still no far copy (activator, blended only: B5)",
+            look_for: "the glowing fence is visible as a wall from the start (far copy, B5), stays while flying in, the near panel replaces it without a pop at ~400 m; the floating Ghostgate glow particles no longer pop in and out of the sky",
             checks: ["GF-1"],
         ),
         (

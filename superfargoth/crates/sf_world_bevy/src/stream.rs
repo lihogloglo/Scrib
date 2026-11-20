@@ -1390,9 +1390,9 @@ impl Runtime {
         let handoff = self.far.handoff.filter(|_| self.far.is_installed());
         // Size culling (industry-audit.md J1) keeps what the cell's proxy
         // represents drawn to the handoff.
-        let kept = match (&self.far.proxies, handoff) {
-            (Some(proxies), Some(_)) => proxies.kept_radius(world, worldspace, cell),
-            _ => 0.0,
+        let (kept, unrepresented) = match (&self.far.proxies, handoff) {
+            (Some(proxies), Some(_)) => (proxies.kept_radius(world, worldspace, cell), proxies.unrepresented(world, worldspace, cell)),
+            _ => (0.0, Vec::new()),
         };
         Ends {
             lod: self.config.lod,
@@ -1400,6 +1400,7 @@ impl Runtime {
             content: LevelContent { far_min_radius: info.rings.far_min_radius, proxies: self.far.is_installed() },
             handoff,
             kept,
+            unrepresented,
         }
     }
 
@@ -1842,6 +1843,9 @@ struct Ends {
     handoff: Option<(f32, f32)>,
     /// The smallest radius the cell's proxy represents (size culling clamp).
     kept: f32,
+    /// Sorted model paths of far-eligible placements the proxy doesn't draw
+    /// ([`CellProxies::unrepresented`]): no handoff for them.
+    unrepresented: Vec<String>,
 }
 
 /// One placement's end ([`Ends::of`]).
@@ -1859,11 +1863,15 @@ impl Ends {
     /// from eligible placements at its handoff; the rest keep their ring's range.
     fn inputs(&self, p: &IndexedPlacement) -> EndInputs {
         let (max_distance, end_band, kept_radius) = match self.handoff {
-            Some((d, band)) if p.placement.far_eligible() => (d, band, Some(self.kept)),
+            Some((d, band)) if p.placement.far_eligible() && !self.unrepresented(p) => (d, band, Some(self.kept)),
             _ if self.content.level_of(p) == Some(Level::Far) => (self.rings.far.unload, 0.0, None),
             _ => (self.rings.near.unload, 0.0, None),
         };
         EndInputs::of(p, max_distance, end_band, kept_radius)
+    }
+
+    fn unrepresented(&self, p: &IndexedPlacement) -> bool {
+        p.placement.model.as_ref().is_some_and(|m| self.unrepresented.binary_search_by(|u| u.as_str().cmp(m.as_str())).is_ok())
     }
 
     fn of(&self, p: &IndexedPlacement) -> End {
@@ -1946,4 +1954,46 @@ fn build_template(
         })
         .collect();
     ModelTemplate { lods, aabb: model_aabb(&asset.bounds), ray_tracing: asset.ray_tracing.clone() }
+}
+
+#[cfg(test)]
+mod ends_tests {
+    use sf_coords::{WorldPos, WorldTransform};
+    use sf_vfs::VfsPath;
+    use sf_world::{IndexedPlacement, LevelContent, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef, RingConfig};
+
+    use super::Ends;
+
+    fn far_proxy(model: &str) -> IndexedPlacement {
+        IndexedPlacement {
+            placement: Placement {
+                id: PlacementId::from_key("test", model.as_bytes()),
+                base: RecordRef::new("test.object", model),
+                model: Some(VfsPath::new(model).expect("path")),
+                transform: WorldTransform { pos: WorldPos::ORIGIN, rotation: glam::Quat::IDENTITY, scale: glam::Vec3::ONE },
+                class: PlacementClass::Custom(2),
+                flags: PlacementFlags::FAR_PROXY,
+            },
+            radius: 40.0,
+        }
+    }
+
+    /// GF-1 (ghostfence-diag, 2026-11-19): a far-eligible placement the proxy
+    /// draws nothing for keeps its ring's range; the rest end at the handoff.
+    #[test]
+    fn unrepresented_placements_keep_their_ring() {
+        let rings = RingConfig::default();
+        let ends = Ends {
+            lod: sf_model::LodScreen::default(),
+            rings,
+            content: LevelContent { far_min_radius: f32::INFINITY, proxies: true },
+            handoff: Some((400.0, 100.0)),
+            kept: 0.0,
+            unrepresented: vec!["meshes/sparks.nif".to_owned()],
+        };
+        let drawn = ends.inputs(&far_proxy("meshes/fence.nif"));
+        assert!((drawn.end - 400.0).abs() < 1e-3 && drawn.at_handoff, "{drawn:?}");
+        let dropped = ends.inputs(&far_proxy("meshes/sparks.nif"));
+        assert!((dropped.end - rings.near.unload).abs() < 1e-3 && !dropped.at_handoff, "{dropped:?}");
+    }
 }

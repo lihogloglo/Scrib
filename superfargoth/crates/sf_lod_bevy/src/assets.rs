@@ -23,12 +23,22 @@ pub enum FarLoadError {
     Mesh(String),
 }
 
+/// Material properties carried by one proxy submesh of a [`FarNodeAsset`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ProxySurface {
+    pub blend: bool,
+    pub emissive: [f32; 3],
+    pub double_sided: bool,
+}
+
 /// A loaded node: its proxy meshes (labeled `mesh<i>`) and batches.
 #[derive(Asset, TypePath, Debug)]
 pub struct FarNodeAsset {
     pub header: NodeHeader,
     #[dependency]
     pub meshes: Vec<Handle<Mesh>>,
+    /// Parallel to [`Self::meshes`]: opaque or blended proxy surface parameters.
+    pub surfaces: Vec<ProxySurface>,
     pub impostors: Vec<ImpostorInstance>,
     pub lights: Vec<LightPoint>,
     /// Blob size, for residency counters.
@@ -48,16 +58,24 @@ impl AssetLoader for FarNodeLoader {
         reader.read_to_end(&mut bytes).await?;
         let blob = NodeBlob::from_bytes(&bytes)?;
         let mut meshes = Vec::new();
+        let mut surfaces = Vec::new();
         if let Some(model) = &blob.mesh
             && let Some(lod) = model.lods.first()
         {
             for (i, sub) in lod.submeshes.iter().enumerate() {
                 let mesh = submesh_to_mesh(model, sub, RenderAssetUsages::RENDER_WORLD, true)
                     .map_err(|e| FarLoadError::Mesh(e.to_string()))?;
+                let mat = model.materials.get(sub.material as usize);
+                let surface = mat.map_or_else(ProxySurface::default, |m| ProxySurface {
+                    blend: matches!(m.alpha, sf_model::AlphaMode::Blend),
+                    emissive: m.emissive,
+                    double_sided: m.double_sided,
+                });
                 meshes.push(cx.add_labeled_asset(format!("mesh{i}"), mesh));
+                surfaces.push(surface);
             }
         }
-        Ok(FarNodeAsset { header: blob.header, meshes, impostors: blob.impostors, lights: blob.lights, bytes: bytes.len() as u64 })
+        Ok(FarNodeAsset { header: blob.header, meshes, surfaces, impostors: blob.impostors, lights: blob.lights, bytes: bytes.len() as u64 })
     }
 
     fn extensions(&self) -> &[&str] {

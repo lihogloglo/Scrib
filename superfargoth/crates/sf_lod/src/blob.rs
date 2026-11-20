@@ -11,8 +11,8 @@ use sf_world::{Partition, WorldspaceId};
 use crate::FormatError;
 use crate::node::NodeKey;
 
-const NODE_MAGIC: [u8; 8] = *b"SFNODE1\0";
-const DIR_MAGIC: [u8; 8] = *b"SFFARD1\0";
+const NODE_MAGIC: [u8; 8] = *b"SFNODE2\0";
+const DIR_MAGIC: [u8; 8] = *b"SFFARD2\0";
 
 /// Exact `WorldPos` in binary forms.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -56,6 +56,11 @@ pub struct NodeHeader {
     pub instances: u32,
     pub lights: u32,
     pub impostor_models: Vec<ImpostorModel>,
+    /// L1 only: model paths (sorted) of far-eligible placements this node
+    /// draws nothing for (far policy `Drop`, no cook, only alpha-tested
+    /// parts). Streaming keeps those to their own range instead of ending
+    /// them at the handoff, where nothing would take over.
+    pub unrepresented: Vec<String>,
 }
 
 impl NodeHeader {
@@ -64,7 +69,7 @@ impl NodeHeader {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.triangles == 0 && self.instances == 0 && self.lights == 0
+        self.triangles == 0 && self.instances == 0 && self.lights == 0 && self.unrepresented.is_empty()
     }
 }
 

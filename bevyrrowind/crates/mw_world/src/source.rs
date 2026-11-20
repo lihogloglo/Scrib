@@ -3,7 +3,7 @@
 //!
 //! Spec: `docs/specs/world-adapter.md` ("Placements").
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use glam::Vec3;
 use sf_records::{RecordDb, RecordId};
@@ -13,8 +13,8 @@ use sf_world::{
     WorldspaceId, placement_bounds,
 };
 use tes3::esp::{
-    Activator, Alchemy, Apparatus, Armor, Book, Cell, Clothing, Container, Creature, Door, Ingredient, LeveledCreature,
-    LeveledItem, Light, Lockpick, MiscItem, Npc, Probe, Reference, RepairItem, Static, Weapon,
+    Activator, Alchemy, Apparatus, Armor, Book, Cell, Clothing, Container, Creature, DialogueInfo, Door, Ingredient,
+    LeveledCreature, LeveledItem, Light, Lockpick, MiscItem, Npc, Probe, Reference, RepairItem, Script, Static, Weapon,
 };
 
 use crate::convert::{UNIT_METERS_F64, grid_of, world_transform};
@@ -106,6 +106,8 @@ pub struct SourceStats {
     pub by_class: BTreeMap<String, usize>,
     pub grounded: usize,
     pub editor_only: usize,
+    /// `ACTI` placements opted into far-field proxies (`PlacementFlags::FAR_PROXY`, B5b).
+    pub far_proxy_activators: usize,
     /// References whose base record doesn't exist: (cell id, base id).
     pub unknown_bases: Vec<(RecordId, String)>,
     /// Moved references (MVRF) delivered from their destination cell.
@@ -177,6 +179,7 @@ impl MwWorldSource {
         }
 
         let mut heights = HeightSampler::new(db);
+        let script_tokens = collect_script_tokens(db);
         let exterior = ids::exterior();
         let mut worldspaces: BTreeMap<WorldspaceId, Vec<Region>> = BTreeMap::new();
         let mut bytes = Vec::new();
@@ -185,7 +188,7 @@ impl MwWorldSource {
             let is_exterior = ws == exterior;
             let mut placements = Vec::with_capacity(pending.len());
             for p in &pending {
-                let Some(mut placement) = placement(db, p.file, p.refr_index, p.reference) else {
+                let Some(mut placement) = placement_with_scripts(db, p.file, p.refr_index, p.reference, &script_tokens) else {
                     stats.unknown_bases.push((cell.clone(), p.reference.id.clone()));
                     continue;
                 };
@@ -195,6 +198,8 @@ impl MwWorldSource {
                 *stats.by_class.entry(format!("{:?}", placement.class)).or_default() += 1;
                 stats.grounded += usize::from(placement.flags.contains(PlacementFlags::GROUNDED));
                 stats.editor_only += usize::from(placement.flags.contains(PlacementFlags::EDITOR_ONLY));
+                stats.far_proxy_activators +=
+                    usize::from(placement.class == ACTIVATOR && placement.flags.contains(PlacementFlags::FAR_PROXY));
                 placements.push(placement);
             }
             bytes.clear();
@@ -244,13 +249,79 @@ impl WorldSource for MwWorldSource {
     }
 }
 
+/// The ids a script text can name, lowercase: quoted strings whole (ids with
+/// spaces, `"chargen boat"->Disable`) and every identifier-like word.
+pub fn script_tokens(text: &str, out: &mut BTreeSet<String>) {
+    for quoted in text.split('"').skip(1).step_by(2) {
+        let t = quoted.trim();
+        if !t.is_empty() {
+            out.insert(t.to_ascii_lowercase());
+        }
+    }
+    let text = text.replace("->", " ");
+    for word in text.split(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '\''))) {
+        if !word.is_empty() {
+            out.insert(word.to_ascii_lowercase());
+        }
+    }
+}
+
+/// Every identifier-like token across every `SCPT` and dialogue `INFO` result
+/// text in `db`, lowercase (shared by `FAR_PROXY` eligibility and the
+/// precombine veto in `mw_bake`).
+pub fn collect_script_tokens(db: &RecordDb) -> BTreeSet<String> {
+    let mut tokens = BTreeSet::new();
+    for (_, script) in db.iter::<Script>() {
+        script_tokens(&script.text, &mut tokens);
+    }
+    for (_, info) in db.iter::<DialogueInfo>() {
+        script_tokens(&info.script_text, &mut tokens);
+    }
+    tokens
+}
+
+/// Whether an `ACTI` reference opts into far-field proxies (`FAR_PROXY`,
+/// weather/distant-shadows.md B5b):
+/// - must carry a real (non-`EditorMarker`) mesh;
+/// - its record id must not be targeted by any script/dialogue token;
+/// - its own attached script must be empty, or `GhostfenceScript` (all 41
+///   exterior `ex_gg_fence_s_01..04` segments carry `GhostfenceScript`, which
+///   loops the hum and disables the fence only after `C3_DestroyDagoth >= 20`;
+///   all other scripted activators such as `Strong1/2/3` stay near-only).
+fn activator_far_proxy(db: &RecordDb, id: &str, model: Option<&str>, script_tokens: &BTreeSet<String>) -> bool {
+    let Some(mesh) = model else { return false };
+    if mesh.to_ascii_lowercase().ends_with("editormarker.nif") {
+        return false;
+    }
+    if script_tokens.contains(&id.to_ascii_lowercase()) {
+        return false;
+    }
+    let Some(acti) = db.get::<Activator>(&RecordId::new(id)) else { return false };
+    acti.script.is_empty() || acti.script.eq_ignore_ascii_case("ghostfencescript")
+}
+
 /// One reference as a placement, `None` when its base doesn't exist.
 /// `file` is the content file that first placed it (its key).
 pub fn placement(db: &RecordDb, file: &str, refr_index: u32, reference: &Reference) -> Option<Placement> {
+    placement_with_scripts(db, file, refr_index, reference, &BTreeSet::new())
+}
+
+/// Like [`placement`], using pre-collected [`collect_script_tokens`] so
+/// script-targeted activators stay out of far proxies.
+pub fn placement_with_scripts(
+    db: &RecordDb,
+    file: &str,
+    refr_index: u32,
+    reference: &Reference,
+    script_tokens: &BTreeSet<String>,
+) -> Option<Placement> {
     let base = resolve_base(db, &reference.id)?;
     let marker = EDITOR_MARKERS.iter().any(|m| reference.id.eq_ignore_ascii_case(m));
-    let (class, flags) =
+    let (class, mut flags) =
         if marker { (PlacementClass::Marker, PlacementFlags::EDITOR_ONLY) } else { (base.class, PlacementFlags::empty()) };
+    if class == ACTIVATOR && activator_far_proxy(db, &reference.id, base.model.as_deref(), script_tokens) {
+        flags |= PlacementFlags::FAR_PROXY;
+    }
     Some(Placement {
         id: ids::placement_id(file, refr_index),
         base: RecordRef::new(base.tag, reference.id.as_str()),

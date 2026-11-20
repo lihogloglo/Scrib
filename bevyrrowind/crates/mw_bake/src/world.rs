@@ -204,6 +204,7 @@ pub struct ExteriorReport {
     pub terrain: Duration,
     pub placements: usize,
     pub grounded: usize,
+    pub far_proxy_activators: usize,
     pub terrain_products: usize,
     pub failures: Vec<(ProductKey, Arc<BakeError>)>,
 }
@@ -228,6 +229,7 @@ pub fn bake_exterior(
     let source = Arc::new(MwWorldSource::build(db, &SourceOptions { model_bounds: Some(&lookup), ..SourceOptions::default() }));
     report.placements = source.stats().placements;
     report.grounded = source.stats().grounded;
+    report.far_proxy_activators = source.stats().far_proxy_activators;
     report.source_build = t.elapsed();
 
     let t = Instant::now();

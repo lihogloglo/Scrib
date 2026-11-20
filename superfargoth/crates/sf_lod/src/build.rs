@@ -4,16 +4,19 @@
 //! light); L2 and L3 merge their children's blobs hierarchically, so each
 //! level reads a few blobs instead of every model again.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use glam::{Affine3A, DVec3, IVec3, Quat, Vec3};
-use sf_model::{AlphaMode, CookedModel};
+use sf_model::{Aabb, AlphaMode, CookedLod, CookedModel};
 use sf_vfs::VfsPath;
 use sf_world::{IndexedPlacement, Partition, PlacementClass, PlacementFlags};
 
 use crate::blob::{ImpostorInstance, ImpostorModel, LightPoint, NodeBlob, NodeHeader, PosRepr};
-use crate::cluster::{ClusterBuilder, SimplifySettings, decode_level};
+use crate::cluster::{
+    ClusterBuilder, ClusterMesh, SimplifySettings, blend_proxy_material, fold_back_faces, proxy_material, quantise_emissive,
+    unquantise_emissive,
+};
 use crate::impostor::ImpostorSettings;
 use crate::levels::FarLevels;
 use crate::node::{FIRST_LEVEL, NodeKey};
@@ -99,6 +102,71 @@ pub fn node_center(key: NodeKey, partition: Partition, children: impl Iterator<I
     if lo > hi { center } else { center.offset(Vec3::Y * f32::midpoint(lo, hi)) }
 }
 
+/// A blended proxy batch: quantised emissive ([`quantise_emissive`]) and double-sidedness.
+fn blend_key(emissive: [f32; 3], double_sided: bool) -> ([u16; 3], bool) {
+    (quantise_emissive(emissive), double_sided)
+}
+
+/// A blended part's emissive as the near shader shows it on average: the
+/// material emissive glows through the base texture (`albedo` = base colour ×
+/// texture average, so the texture average is `albedo / base`).
+fn blend_emissive(material: &sf_model::Material, albedo: Option<&[f32; 4]>) -> [f32; 3] {
+    match albedo {
+        Some(a) if material.base_color_texture.is_some() => [0, 1, 2].map(|c| {
+            let b = material.base_color[c];
+            let tex_rgb = if b > 1e-4 { (a[c] / b).clamp(0.0, 1.0) } else { 1.0 };
+            material.emissive[c] * tex_rgb
+        }),
+        _ => material.emissive,
+    }
+}
+
+/// Builds the opaque and blended proxy submeshes into one `CookedModel`.
+fn assemble_cluster_mesh(
+    opaque: ClusterBuilder,
+    blends: BTreeMap<([u16; 3], bool), ClusterBuilder>,
+    budget: f32,
+    simplify: &SimplifySettings,
+) -> Result<Option<ClusterMesh>, FormatError> {
+    let mut materials = Vec::new();
+    let mut submeshes = Vec::new();
+    let mut bounds = Aabb::EMPTY;
+    let mut error = 0.0f32;
+    let mut triangles = 0u32;
+
+    if let Some(built) = opaque.build_submesh(0, budget, simplify)? {
+        bounds.grow(built.bounds.min);
+        bounds.grow(built.bounds.max);
+        error = error.max(built.error);
+        triangles = triangles.checked_add(built.triangles).ok_or(FormatError::TooLarge)?;
+        materials.push(proxy_material());
+        submeshes.push(built.submesh);
+    }
+    for ((q_emissive, double_sided), builder) in blends {
+        let mat_idx = u32::try_from(materials.len()).map_err(|_| FormatError::TooLarge)?;
+        if let Some(built) = builder.build_submesh(mat_idx, budget, simplify)? {
+            bounds.grow(built.bounds.min);
+            bounds.grow(built.bounds.max);
+            error = error.max(built.error);
+            triangles = triangles.checked_add(built.triangles).ok_or(FormatError::TooLarge)?;
+            materials.push(blend_proxy_material(unquantise_emissive(q_emissive), double_sided));
+            submeshes.push(built.submesh);
+        }
+    }
+    if submeshes.is_empty() {
+        return Ok(None);
+    }
+    let model = CookedModel {
+        bounds,
+        has_normals: true,
+        has_uvs: false,
+        has_colors: true,
+        materials,
+        lods: vec![CookedLod { error, submeshes }],
+    };
+    Ok(Some(ClusterMesh { model, error, triangles }))
+}
+
 /// Builds the L1 node of one streaming cell from its index placements.
 pub fn build_l1(
     partition: Partition,
@@ -117,6 +185,7 @@ pub fn build_l1(
     let min_radius = levels.min_radius(FIRST_LEVEL, lead);
 
     let mut cluster = ClusterBuilder::new();
+    let mut blends: BTreeMap<([u16; 3], bool), ClusterBuilder> = BTreeMap::new();
     let mut impostor_models: Vec<ImpostorModel> = Vec::new();
     let mut impostors = Vec::new();
     let mut lights = Vec::new();
@@ -132,18 +201,30 @@ pub fn build_l1(
             }
         }
     }
+    // Models of eligible placements this node draws, and those it doesn't
+    // (`NodeHeader::unrepresented`: they keep their own range, no handoff).
+    let mut drawn: BTreeSet<&str> = BTreeSet::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
     for p in eligible {
         let t = &p.placement.transform;
         let pivot = rel(center, t.pos);
         let scale = t.scale.abs().max_element();
         let Some(path) = &p.placement.model else { continue };
-        let Some(model) = models(path) else { continue };
+        // Boundless placements (radius 0: particle-only models) escape size
+        // culling, so they would end at the handoff with nothing taking over;
+        // smaller-than-proxy ones stay out (size culling ends them first).
+        if p.radius <= 0.0 {
+            seen.insert(path.as_str());
+        }
         if p.radius < min_radius {
             continue;
         }
+        seen.insert(path.as_str());
+        let Some(model) = models(path) else { continue };
         match model.policy {
             FarPolicy::Drop => {}
             FarPolicy::Impostor => {
+                drawn.insert(path.as_str());
                 let (c, r) = impostor_sphere(&model.summary);
                 let index = impostor_models.iter().position(|m| m.model == path.as_str()).unwrap_or_else(|| {
                     impostor_models.push(ImpostorModel { model: path.as_str().to_owned(), radius: r });
@@ -166,21 +247,42 @@ pub fn build_l1(
                 let to_node = Affine3A::from_scale_rotation_translation(t.scale, t.rotation, pivot);
                 for sub in &lod.submeshes {
                     let material = cooked.materials.get(sub.material as usize).cloned().unwrap_or_default();
-                    // Phase 1: no far textures, so alpha-tested and blended
-                    // parts (leaf cards, glass, glows) would render as solid
-                    // polygons; they leave the proxy.
-                    if material.alpha != AlphaMode::Opaque {
-                        continue;
+                    match material.alpha {
+                        AlphaMode::Opaque => {
+                            let (v, i) = sub.decode().map_err(|e| FormatError::Mesh(e.to_string()))?;
+                            let albedo = model
+                                .albedo
+                                .get(sub.material as usize)
+                                .map_or(material.base_color, |a| [a[0], a[1], a[2], material.base_color[3]]);
+                            cluster.add(&v, &i, to_node, albedo, lod.error * scale);
+                            drawn.insert(path.as_str());
+                        }
+                        AlphaMode::Blend => {
+                            // B5a: keep alpha-blended parts in a separate proxy submesh
+                            // grouped by quantised emissive and double-sidedness.
+                            let (v, i) = sub.decode().map_err(|e| FormatError::Mesh(e.to_string()))?;
+                            let (i, folded) = fold_back_faces(&v, &i);
+                            let tex_albedo = model.albedo.get(sub.material as usize);
+                            let albedo = tex_albedo
+                                .map_or(material.base_color, |a| [a[0], a[1], a[2], material.base_color[3] * a[3]]);
+                            let emissive = blend_emissive(&material, tex_albedo);
+                            let group = blends.entry(blend_key(emissive, material.double_sided || folded > 0)).or_default();
+                            group.add(&v, &i, to_node, albedo, lod.error * scale);
+                            drawn.insert(path.as_str());
+                        }
+                        // Phase 1: no far textures, so alpha-tested parts (leaf cards) stay out of
+                        // the cluster mesh (tall foliage goes through impostors).
+                        AlphaMode::Mask(_) => {}
                     }
-                    let (v, i) = sub.decode().map_err(|e| FormatError::Mesh(e.to_string()))?;
-                    let albedo = model.albedo.get(sub.material as usize).map_or(material.base_color, |a| [a[0], a[1], a[2], material.base_color[3]]);
-                    cluster.add(&v, &i, to_node, albedo, lod.error * scale);
                 }
             }
         }
     }
-    let mesh = cluster.build(budget, &settings.simplify)?;
-    Ok(finish(key, center, lead, mesh, impostor_models, impostors, lights))
+    let mesh = assemble_cluster_mesh(cluster, blends, budget, &settings.simplify)?;
+    let unrepresented = seen.difference(&drawn).map(|m| (*m).to_owned()).collect();
+    let mut blob = finish(key, center, lead, mesh, impostor_models, impostors, lights);
+    blob.header.unrepresented = unrepresented;
+    Ok(blob)
 }
 
 fn light_point(pivot: Vec3, rotation: Quat, scale: Vec3, light: &FarLight) -> LightPoint {
@@ -196,7 +298,7 @@ fn finish(
     key: NodeKey,
     center: sf_coords::WorldPos,
     lead: f32,
-    mesh: Option<crate::cluster::ClusterMesh>,
+    mesh: Option<ClusterMesh>,
     impostor_models: Vec<ImpostorModel>,
     impostors: Vec<ImpostorInstance>,
     lights: Vec<LightPoint>,
@@ -228,6 +330,7 @@ fn finish(
         instances: u32::try_from(impostors.len()).unwrap_or(u32::MAX),
         lights: u32::try_from(lights.len()).unwrap_or(u32::MAX),
         impostor_models,
+        unrepresented: Vec::new(),
     };
     NodeBlob { header, mesh: mesh.map(|m| m.model), impostors, lights }
 }
@@ -249,15 +352,34 @@ pub fn build_parent(
     let simplify = settings.simplify;
 
     let mut cluster = ClusterBuilder::new();
+    let mut blends: BTreeMap<([u16; 3], bool), ClusterBuilder> = BTreeMap::new();
     let mut models: Vec<ImpostorModel> = Vec::new();
     let mut impostors = Vec::new();
     let mut lights: BTreeMap<[i64; 3], (DVec3, DVec3, f64, f32)> = BTreeMap::new();
     let merge = f64::from(settings.light_merge[usize::from(key.level.clamp(1, 3) - 1)]);
+    let keep_blended = key.level < 3;
     for child in &children {
         let offset = rel(center, child.header.center());
-        if let Some(mesh) = &child.mesh {
-            let (v, i) = decode_level(mesh, 0)?;
-            cluster.add(&v, &i, Affine3A::from_translation(offset), [1.0; 4], child.header.error);
+        if let Some(mesh) = &child.mesh
+            && let Some(lod) = mesh.lods.first()
+        {
+            for sub in &lod.submeshes {
+                let mat = mesh.materials.get(sub.material as usize);
+                let alpha = mat.map_or(AlphaMode::Opaque, |m| m.alpha);
+                match alpha {
+                    AlphaMode::Opaque => {
+                        let (v, i) = sub.decode().map_err(|e| FormatError::Mesh(e.to_string()))?;
+                        cluster.add(&v, &i, Affine3A::from_translation(offset), [1.0; 4], child.header.error);
+                    }
+                    AlphaMode::Blend if keep_blended => {
+                        let (v, i) = sub.decode().map_err(|e| FormatError::Mesh(e.to_string()))?;
+                        let (emissive, double_sided) = mat.map_or(([0.0; 3], false), |m| (m.emissive, m.double_sided));
+                        let group = blends.entry(blend_key(emissive, double_sided)).or_default();
+                        group.add(&v, &i, Affine3A::from_translation(offset), [1.0; 4], child.header.error);
+                    }
+                    AlphaMode::Blend | AlphaMode::Mask(_) => {}
+                }
+            }
         }
         for inst in &child.impostors {
             let m = &child.header.impostor_models[usize::from(inst.model)];
@@ -296,7 +418,7 @@ pub fn build_parent(
             radius: r,
         })
         .collect();
-    let mesh = cluster.build(budget, &simplify)?;
+    let mesh = assemble_cluster_mesh(cluster, blends, budget, &simplify)?;
     Ok(finish(key, center, lead, mesh, models, impostors, lights))
 }
 

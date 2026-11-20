@@ -362,3 +362,53 @@ fn texture_grid_lands_one_vertex_east_and_south() {
     let h = tile.heights[0];
     assert!((f64::from(h) - f64::from(land.heights[64 * 65]) * UNIT_METERS_F64).abs() < 1e-4);
 }
+
+/// B5b test 2: scriptless activators (and `GhostfenceScript` segments) opt
+/// into `PlacementFlags::FAR_PROXY`, while other scripted activators,
+/// script-referenced ids and editor markers stay near-only.
+#[test]
+fn activators_opt_into_far_proxies_only_when_safe() {
+    use tes3::esp::{Activator, Script};
+
+    let acti = |id: &str, mesh: &str, script: &str| -> TES3Object {
+        Activator { id: id.into(), mesh: mesh.into(), script: script.into(), ..Activator::default() }.into()
+    };
+    let disable_script = Script {
+        id: "DisableGate".into(),
+        text: "begin DisableGate\n\"targeted_acti\"->Disable\nend".into(),
+        ..Script::default()
+    };
+
+    let outside = cell("", Some((0, 0)), vec![
+        reference(0, 1, "plain_acti", [100.0, 100.0, 0.0]),
+        reference(0, 2, "ex_gg_fence_s_01", [200.0, 100.0, 0.0]),
+        reference(0, 3, "stronghold_wall", [300.0, 100.0, 0.0]),
+        reference(0, 4, "targeted_acti", [400.0, 100.0, 0.0]),
+        reference(0, 5, "sound_marker", [500.0, 100.0, 0.0]),
+    ]);
+    let objects = vec![
+        header(FileType::Esm, &[]),
+        acti("plain_acti", "f\\bar.nif", ""),
+        acti("ex_gg_fence_s_01", "x\\Ex_GG_fence_s_01.NIF", "GhostfenceScript"),
+        acti("stronghold_wall", "x\\wall.nif", "Strong2"),
+        acti("targeted_acti", "x\\gate.nif", ""),
+        acti("sound_marker", "EditorMarker.NIF", ""),
+        disable_script.into(),
+        outside.into(),
+    ];
+    let bytes = Plugin { objects }.save_bytes().unwrap();
+    let vfs = Vfs::builder().mount(MemSource::new("data").with("Test.esm", bytes)).build();
+    let loaded = mw_records::load(&vfs, &["Test.esm".into()]).unwrap();
+    let source = MwWorldSource::build(&loaded.db, &SourceOptions::default());
+    let outside = region_of(&source, "@0,0");
+    let flag_of = |id: &str| {
+        let p = outside.iter().find(|p| p.base.id.as_str() == id).unwrap_or_else(|| panic!("missing {id}"));
+        (p.flags.contains(PlacementFlags::FAR_PROXY), p.far_eligible())
+    };
+    assert_eq!(flag_of("plain_acti"), (true, true), "scriptless activator gets FAR_PROXY");
+    assert_eq!(flag_of("ex_gg_fence_s_01"), (true, true), "GhostfenceScript activator gets FAR_PROXY");
+    assert_eq!(flag_of("stronghold_wall"), (false, false), "other scripted activator stays near-only");
+    assert_eq!(flag_of("targeted_acti"), (false, false), "id in script_tokens stays near-only");
+    assert_eq!(flag_of("sound_marker"), (false, false), "EditorMarker stays near-only");
+    assert_eq!(source.stats().far_proxy_activators, 2);
+}

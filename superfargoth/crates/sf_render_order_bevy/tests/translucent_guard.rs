@@ -63,7 +63,7 @@ struct Site {
 
 /// The framework's translucent draws (render-order.md "Material inventory").
 const SITES: &[Site] = &[
-    Site { file: "sf_lod_bevy/src/materials.rs", what: "LightSpriteMaterial (additive distant light glows)", fog: Fog::Froxel, placement: Placement::World, violation: None },
+    Site { file: "sf_lod_bevy/src/materials.rs", what: "LightSpriteMaterial (additive distant light glows) and BlendProxyMaterial (blended far-field proxies, B5a)", fog: Fog::Froxel, placement: Placement::World, violation: None },
     Site { file: "sf_precip_bevy/src/lib.rs", what: "PrecipMaterial (camera-wrapped rain/snow boxes)", fog: Fog::Froxel, placement: Placement::ShaderPlaced, violation: None },
     Site { file: "sf_surface_bevy/src/kickup.rs", what: "KickupMaterial (shader-flown snow/ash puffs, one fixed mesh)", fog: Fog::Froxel, placement: Placement::ShaderPlaced, violation: None },
     Site { file: "sf_water_bevy/src/lib.rs", what: "WaterMaterial (clipmap, refractive)", fog: Fog::Composite, placement: Placement::ShaderPlaced, violation: None },

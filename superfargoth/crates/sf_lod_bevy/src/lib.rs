@@ -21,12 +21,13 @@ mod runtime;
 
 pub use assets::{
     FarDirectoryAsset, FarDirectoryLoader, FarLoadError, FarNodeAsset, FarNodeLoader, ImpostorAtlasAsset, ImpostorAtlasLoader, NearCombineLoader,
+    ProxySurface,
 };
 pub use materials::{
-    ATTRIBUTE_IMPOSTOR, ATTRIBUTE_SPRITE, FarShadowExt, ImpostorMaterial, ImpostorParams, LightSpriteMaterial, ProxyMaterial, SpriteParams,
-    impostor_mesh, light_mesh,
+    ATTRIBUTE_IMPOSTOR, ATTRIBUTE_SPRITE, BlendProxyExt, BlendProxyMaterial, FarShadowExt, ImpostorMaterial, ImpostorParams, LightSpriteMaterial,
+    ProxyMaterial, SpriteParams, blend_proxy_material, impostor_mesh, light_mesh,
 };
-pub use runtime::{FarMaterials, LEVEL_TINT, node_center};
+pub use runtime::{BlendProxyKey, FarMaterials, LEVEL_TINT, node_center};
 
 use std::sync::Arc;
 
@@ -61,6 +62,12 @@ pub struct FarFieldSettings {
     /// `runtime::residency_pass`); while on, nodes count as needing their children that much early.
     /// Off by default until the owner's A/B.
     pub select_gate: GateQuanta,
+    /// Scale from cooked linear emissive (`0..=1`) to `StandardMaterial::emissive`
+    /// on blended proxies (`1.0` display-referred; hosts using calibrated physical
+    /// exposure pass their nits scale with `emissive_exposure_weight = 1.0`).
+    pub emissive_nits: f32,
+    /// `StandardMaterial::emissive_exposure_weight` on blended proxies.
+    pub emissive_exposure_weight: f32,
 }
 
 /// `far.select.move_m`: [`FarFieldSettings::select_gate`] location quantum, also the guard band of the
@@ -113,6 +120,8 @@ impl Default for FarFieldSettings {
             light_min_pixels: 2.5,
             proxy_depth_offset_px: 2.0,
             select_gate: Self::select_gate_quanta(sf_world::SELECT_GATE.default_value()),
+            emissive_nits: 1.0,
+            emissive_exposure_weight: 0.0,
         }
     }
 }
@@ -206,6 +215,7 @@ impl Plugin for FarFieldPlugin {
         load_shader_library!(app, "shaders/impostor_common.wesl");
         load_shader_library!(app, "shaders/far_shadow_map.wesl");
         embedded_asset!(app, "shaders/proxy.wesl");
+        embedded_asset!(app, "shaders/proxy_blend.wesl");
         embedded_asset!(app, "shaders/impostor.wesl");
         embedded_asset!(app, "shaders/impostor_prepass.wesl");
         embedded_asset!(app, "shaders/light_sprite.wesl");
@@ -213,10 +223,15 @@ impl Plugin for FarFieldPlugin {
         let shared = runtime::FarShared::default();
         let levels = &self.settings.levels;
         if !app.is_plugin_added::<sf_render_order_bevy::RenderOrderPlugin>() {
-            // `TranslucentFog`, which the light sprites sample.
+            // `TranslucentFog`, which the light sprites and blended proxies sample.
             app.add_plugins(sf_render_order_bevy::RenderOrderPlugin);
         }
-        app.add_plugins((MaterialPlugin::<ImpostorMaterial>::default(), MaterialPlugin::<LightSpriteMaterial>::default(), MaterialPlugin::<ProxyMaterial>::default()))
+        app.add_plugins((
+            MaterialPlugin::<ImpostorMaterial>::default(),
+            MaterialPlugin::<LightSpriteMaterial>::default(),
+            MaterialPlugin::<ProxyMaterial>::default(),
+            MaterialPlugin::<BlendProxyMaterial>::default(),
+        ))
             .init_asset::<FarNodeAsset>()
             .init_asset::<FarDirectoryAsset>()
             .init_asset::<ImpostorAtlasAsset>()

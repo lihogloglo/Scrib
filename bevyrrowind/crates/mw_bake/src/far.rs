@@ -23,12 +23,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use mw_world::convert::UNIT_METERS_F64;
+use mw_world::source::collect_script_tokens;
+pub(crate) use mw_world::source::script_tokens;
 use sf_bake::{Baker, BakeReport, Digest};
 use sf_lod::bake::FarBake;
 use sf_lod::{FarBakeSettings, FarLight, FarPolicy, FarSource, ModelSummary, TextureDecoder, TextureImage};
 use sf_records::RecordDb;
 use sf_world::{Placement, WorldspaceId};
-use tes3::esp::{DialogueInfo, Light, LightFlags, Script};
+use tes3::esp::{Light, LightFlags};
 
 use crate::textures::decode_rgba;
 
@@ -47,36 +49,13 @@ pub struct MwFarSource {
     fingerprint: [u8; 32],
 }
 
-/// The ids a script text can name, lowercase: quoted strings whole (ids with
-/// spaces, `"chargen boat"->Disable`) and every identifier-like word.
-pub(crate) fn script_tokens(text: &str, out: &mut BTreeSet<String>) {
-    for quoted in text.split('"').skip(1).step_by(2) {
-        let t = quoted.trim();
-        if !t.is_empty() {
-            out.insert(t.to_ascii_lowercase());
-        }
-    }
-    let text = text.replace("->", " ");
-    for word in text.split(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '\''))) {
-        if !word.is_empty() {
-            out.insert(word.to_ascii_lowercase());
-        }
-    }
-}
-
 impl MwFarSource {
     pub fn build(db: &RecordDb) -> Self {
         let mut lights = BTreeMap::new();
         for (id, light) in db.iter::<Light>() {
             lights.insert(id.as_str().to_ascii_lowercase(), far_light(light));
         }
-        let mut script_tokens_set = BTreeSet::new();
-        for (_, script) in db.iter::<Script>() {
-            script_tokens(&script.text, &mut script_tokens_set);
-        }
-        for (_, info) in db.iter::<DialogueInfo>() {
-            script_tokens(&info.script_text, &mut script_tokens_set);
-        }
+        let script_tokens_set = collect_script_tokens(db);
         let mut bytes = RULES_VERSION.to_le_bytes().to_vec();
         for t in &script_tokens_set {
             bytes.extend(t.as_bytes());
@@ -164,6 +143,51 @@ impl TextureDecoder for MwTextures {
     }
 }
 
+/// Summary of blended far-field proxy submeshes baked into L1/L2 nodes (B5).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlendedProxySummary {
+    pub l1_nodes: usize,
+    pub l1_triangles: u64,
+    pub l2_nodes: usize,
+    pub l2_triangles: u64,
+}
+
+/// Counts L1 and L2 nodes carrying `AlphaMode::Blend` proxy submeshes and
+/// their triangles from `manifest` / `store`.
+pub fn blended_proxy_summary(manifest: &sf_bake::Manifest, store: &sf_bake::Store) -> BlendedProxySummary {
+    use sf_lod::products::{L1_STEP, L2_STEP};
+    use sf_model::AlphaMode;
+
+    let mut out = BlendedProxySummary::default();
+    for (key, digest) in &manifest.products {
+        let is_l1 = key.step == L1_STEP;
+        let is_l2 = key.step == L2_STEP;
+        if !is_l1 && !is_l2 {
+            continue;
+        }
+        let Ok(bytes) = store.get(digest) else { continue };
+        let Ok(blob) = sf_lod::NodeBlob::from_bytes(&bytes) else { continue };
+        let Some(model) = &blob.mesh else { continue };
+        let Some(lod) = model.lods.first() else { continue };
+        let mut tris = 0u64;
+        for sub in &lod.submeshes {
+            if model.materials.get(sub.material as usize).is_some_and(|m| m.alpha == AlphaMode::Blend) {
+                tris += u64::from(sub.index_count / 3);
+            }
+        }
+        if tris > 0 {
+            if is_l1 {
+                out.l1_nodes += 1;
+                out.l1_triangles += tris;
+            } else {
+                out.l2_nodes += 1;
+                out.l2_triangles += tris;
+            }
+        }
+    }
+    out
+}
+
 /// Registers the far-field steps on `baker` (which already has the model and
 /// world steps) and bakes the far field of `worldspaces`.
 pub fn bake_far(baker: &mut Baker, db: &RecordDb, worldspaces: &[WorldspaceId]) -> BakeReport {
@@ -204,7 +228,7 @@ mod precombine_tests {
     #[test]
     fn script_tokens_find_quoted_and_bare_ids() {
         let mut t = BTreeSet::new();
-        super::script_tokens("if ( GetJournalIndex A1 >= 10 )\n\"chargen boat\"->Disable\nex_rock_01->SetPos x 10\nendif", &mut t);
+        mw_world::source::script_tokens("if ( GetJournalIndex A1 >= 10 )\n\"chargen boat\"->Disable\nex_rock_01->SetPos x 10\nendif", &mut t);
         for id in ["chargen boat", "ex_rock_01", "getjournalindex", "a1"] {
             assert!(t.contains(id), "{id}");
         }

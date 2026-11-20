@@ -64,6 +64,37 @@ impl TextureImage {
         Vec4::new(avg(sum[0]), avg(sum[1]), avg(sum[2]), coverage)
     }
 
+    /// Alpha-weighted average linear RGB over visible texels (`a > 0`), and
+    /// mean alpha across all sampled texels in `w` (for `AlphaMode::Blend`
+    /// proxy submeshes).
+    #[allow(clippy::cast_precision_loss)]
+    pub fn average_blended(&self) -> Vec4 {
+        let mut sum = [0f64; 3];
+        let mut sum_a = 0f64;
+        let total = self.rgba.len() / 4;
+        let step = (total / 65_536).max(1);
+        let mut seen = 0u64;
+        for px in self.rgba.as_chunks::<4>().0.iter().step_by(step) {
+            seen += 1;
+            let a = f64::from(px[3]) / 255.0;
+            if a <= 0.0 {
+                continue;
+            }
+            for c in 0..3 {
+                sum[c] += f64::from(srgb_to_linear(px[c])) * a;
+            }
+            sum_a += a;
+        }
+        if sum_a <= 0.0 {
+            return Vec4::new(0.5, 0.5, 0.5, 0.0);
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        let avg = |s: f64| (s / sum_a) as f32;
+        #[allow(clippy::cast_possible_truncation)]
+        let mean_a = (sum_a / seen.max(1) as f64) as f32;
+        Vec4::new(avg(sum[0]), avg(sum[1]), avg(sum[2]), mean_a)
+    }
+
     /// Bilinear sample with wrapping, linear RGB and alpha.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss, clippy::many_single_char_names)]
     pub fn sample(&self, uv: Vec2) -> Vec4 {
@@ -100,6 +131,12 @@ mod tests {
         assert!((all.x - 0.5).abs() < 1e-3 && (all.w - 1.0).abs() < 1e-6);
         let masked = img.average(0.5);
         assert!((masked.x - 1.0).abs() < 1e-3 && (masked.w - 0.5).abs() < 1e-6);
+        let blended = img.average_blended();
+        assert!((blended.x - 1.0).abs() < 1e-3 && (blended.w - 0.5).abs() < 1e-6);
+        // Semi-transparent texels below 0.5 still contribute to `average_blended`.
+        let soft = TextureImage { width: 2, height: 1, rgba: vec![255, 255, 255, 64, 255, 255, 255, 64] };
+        let sb = soft.average_blended();
+        assert!((sb.x - 1.0).abs() < 1e-3 && (sb.w - 64.0 / 255.0).abs() < 1e-3);
         let s = img.sample(Vec2::new(0.25, 0.25));
         assert!((s.x - 1.0).abs() < 1e-3 && (s.w - 1.0).abs() < 1e-3);
     }

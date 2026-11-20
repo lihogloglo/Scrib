@@ -27,8 +27,12 @@ skip Bevy's CPU culling (`NoCpuCulling`). Streaming and the per-placement fallba
 handoffs 400 / 2000 / 8000 m times the preset bias, `sf_lod/src/levels.rs:72`) and runs after streaming `Drive`
 (`lib.rs:207-217`): `load_directories`, `build_impostor_arrays`, `spawn_upper_nodes`, `residency_pass`, `update_materials`.
 L1 nodes ride the streaming far ring through `CellProxies` (`runtime.rs:203`, `FarHook`); L2/L3 are resident per worldspace
-(`runtime.rs:129, 530`). Proxies are `Mesh3d` + `ProxyMaterial` with `VisibilityRange` crossfades from lead bands
-(`levels.rs`, `FadeRange`). `residency_pass` (`runtime.rs:570`) forces a parent visible while any child that should draw is
+(`runtime.rs:129, 530`). Eligible placements are `Static | Door | Light` plus custom classes carrying `PlacementFlags::FAR_PROXY`
+(`sf_world/src/placement.rs:135`; adapter sets it on scriptless and `GhostfenceScript` `ACTI`s, `mw_world/src/source.rs:278`).
+Opaque proxies are `Mesh3d` + `ProxyMaterial`; `AlphaMode::Blend` submeshes (grouped by quantised emissive and double-sidedness
+at L1/L2, dropped at L3, `sf_lod/src/build.rs:150`) draw with `BlendProxyMaterial` (forward `Blend`, `NotShadowCaster`,
+`FarShadowExt` + `TranslucentFog`, `sf_lod_bevy/src/materials.rs:117`). Both carry `VisibilityRange` crossfades from lead bands
+(`levels.rs`, `FadeRange`). A far-eligible placement hands off only if its L1 node draws it: `NodeHeader::unrepresented` (`sf_lod/src/build.rs`) lists models the node draws nothing for (policy `Drop`, no cook, boundless particle models), and `Ends::inputs` (`sf_world_bevy/src/stream.rs`) keeps those to their own ring. Blended sources made of back-to-back triangle pairs are folded first (`cluster::fold_back_faces`), else the weld collapses them. `residency_pass` (`runtime.rs:570`) forces a parent visible while any child that should draw is
 not resident (no holes).
 
 **Static scene (default since owner 2026-11-17; `--scene` is a no-op).** `static_paths` (`mw_exterior_bevy/src/exterior.rs:1405`): scene needs no

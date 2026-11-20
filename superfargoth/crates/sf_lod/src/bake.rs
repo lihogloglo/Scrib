@@ -213,7 +213,9 @@ impl Step for PolicyStep {
         POLICY_STEP
     }
     fn version(&self) -> u32 {
-        3
+        // 4 (B5a): `ModelSummary::masked_area` counts `Mask` only (not `Blend`),
+        // and `Blend` albedo uses alpha-weighted mean (`TextureImage::average_blended`).
+        4
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         cx.product(MeshCookStep::ID, subject);
@@ -232,7 +234,10 @@ impl Step for PolicyStep {
                     .zip(&textures)
                     .map(|(m, t)| {
                         let base = Vec4::from_array(m.base_color);
-                        let tex = t.as_ref().map_or(Vec4::ONE, |t| t.average(cutoff(m.alpha).max(0.01)));
+                        let tex = t.as_ref().map_or(Vec4::ONE, |t| match m.alpha {
+                            AlphaMode::Blend => t.average_blended(),
+                            _ => t.average(cutoff(m.alpha).max(0.01)),
+                        });
                         (base * Vec4::new(tex.x, tex.y, tex.z, 1.0)).truncate().extend(tex.w).to_array()
                     })
                     .collect();
@@ -351,7 +356,10 @@ impl Step for NodeStep {
         level_step(self.level)
     }
     fn version(&self) -> u32 {
-        4
+        // 5 (B5a): L1 and L2 carry `AlphaMode::Blend` proxy submeshes; L3 drops them.
+        // 6: back-to-back blended faces folded (double-sided), bfloat16 emissive key,
+        // `NodeHeader::unrepresented` (node format `SFNODE2`). 7: boundless placements count.
+        7
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (ws, key) = parse_node(self.level, subject).ok_or_else(|| step_err(self.id(), subject, "malformed subject"))?;
@@ -433,7 +441,8 @@ impl Step for DirStep {
         DIR_STEP_LOD
     }
     fn version(&self) -> u32 {
-        1
+        // 2: headers carry `unrepresented` (`SFFARD2`); nodes with only that count as non-empty.
+        2
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         cx.product(DIR_STEP, subject);

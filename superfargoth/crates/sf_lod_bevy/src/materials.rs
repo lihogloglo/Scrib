@@ -4,13 +4,14 @@
 //! nothing.
 
 use bevy_asset::{Asset, Handle, RenderAssetUsages};
+use bevy_color::{Color, LinearRgba};
 use bevy_image::Image;
 use bevy_material::{AlphaMode, OpaqueRendererMethod};
 use bevy_math::{UVec4, Vec3, Vec4};
 use bevy_mesh::{Indices, Mesh, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexFormat};
 use bevy_pbr::{ExtendedMaterial, Material, MaterialExtension, MaterialPipeline, MaterialPipelineKey, StandardMaterial};
 use bevy_reflect::TypePath;
-use bevy_render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
+use bevy_render::render_resource::{AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
 use bevy_shader::ShaderRef;
 use sf_lod::{ImpostorInstance, LightPoint};
 
@@ -18,6 +19,7 @@ pub const IMPOSTOR_SHADER: &str = "embedded://sf_lod_bevy/shaders/impostor.wesl"
 pub const IMPOSTOR_PREPASS_SHADER: &str = "embedded://sf_lod_bevy/shaders/impostor_prepass.wesl";
 pub const LIGHT_SPRITE_SHADER: &str = "embedded://sf_lod_bevy/shaders/light_sprite.wesl";
 pub const PROXY_SHADER: &str = "embedded://sf_lod_bevy/shaders/proxy.wesl";
+pub const BLEND_PROXY_SHADER: &str = "embedded://sf_lod_bevy/shaders/proxy_blend.wesl";
 
 /// Per impostor vertex: (radius × scale, yaw, atlas layer, 0).
 pub const ATTRIBUTE_IMPOSTOR: MeshVertexAttribute = MeshVertexAttribute::new("Impostor_Data", 988_540_917, VertexFormat::Float32x4);
@@ -110,6 +112,80 @@ pub struct FarShadowExt {
 impl MaterialExtension for FarShadowExt {
     fn fragment_shader() -> ShaderRef {
         PROXY_SHADER.into()
+    }
+}
+
+/// Blended far-field proxies (B5a): Bevy's `StandardMaterial` (`AlphaMode::Blend`,
+/// vertex colors carry linear albedo and opacity) plus the terrain's far shadow
+/// and froxel fog (`proxy_blend.wesl`).
+pub type BlendProxyMaterial = ExtendedMaterial<StandardMaterial, BlendProxyExt>;
+
+/// The far shadow map and translucent froxel fog binding of [`BlendProxyMaterial`].
+#[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+pub struct BlendProxyExt {
+    /// (min x, min z, 1 / extent, base height), render space; extent 0 = none.
+    #[uniform(100)]
+    pub far: Vec4,
+    #[texture(101)]
+    #[sampler(102)]
+    pub map: Handle<Image>,
+    /// [`sf_render_order_bevy::TranslucentFog::params`].
+    #[uniform(103)]
+    pub fog_params: Vec4,
+    /// [`sf_render_order_bevy::TranslucentFog::volume`].
+    #[texture(104, dimension = "3d")]
+    #[sampler(105)]
+    pub fog_volume: Handle<Image>,
+}
+
+impl MaterialExtension for BlendProxyExt {
+    /// Translucents cast no shadows (render-order.md rule 4, RO-1).
+    fn enable_shadows() -> bool {
+        false
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        BLEND_PROXY_SHADER.into()
+    }
+}
+
+/// Builds a [`BlendProxyMaterial`] for one `(level, emissive, double_sided)` batch.
+pub fn blend_proxy_material(
+    level: u8,
+    emissive: [f32; 3],
+    double_sided: bool,
+    debug_tint: bool,
+    settings: &crate::FarFieldSettings,
+    far_shadow: (Vec4, Handle<Image>),
+    fog: &sf_render_order_bevy::TranslucentFog,
+) -> BlendProxyMaterial {
+    let [r, g, b] = crate::LEVEL_TINT[usize::from(level.clamp(1, 3) - 1)];
+    let (base_color, mat_emissive, emissive_exposure_weight) = if debug_tint {
+        (Color::from(LinearRgba::rgb(r, g, b)), LinearRgba::rgb(r * 0.22, g * 0.22, b * 0.22), 0.0)
+    } else {
+        let s = settings.emissive_nits;
+        (Color::WHITE, LinearRgba::rgb(emissive[0] * s, emissive[1] * s, emissive[2] * s), settings.emissive_exposure_weight)
+    };
+    BlendProxyMaterial {
+        base: StandardMaterial {
+            base_color,
+            emissive: mat_emissive,
+            emissive_exposure_weight,
+            alpha_mode: AlphaMode::Blend,
+            double_sided,
+            cull_mode: if double_sided { None } else { Some(Face::Back) },
+            perceptual_roughness: 0.88,
+            reflectance: 0.3,
+            depth_bias: settings.proxy_depth_bias(level),
+            opaque_render_method: OpaqueRendererMethod::Forward,
+            ..StandardMaterial::default()
+        },
+        extension: BlendProxyExt {
+            far: far_shadow.0,
+            map: far_shadow.1,
+            fog_params: fog.params,
+            fog_volume: fog.volume.clone(),
+        },
     }
 }
 

@@ -48,10 +48,22 @@ fn far_eligibility_by_class_and_flags() {
         p.class = class;
         assert!(p.far_eligible());
     }
-    for class in [PlacementClass::Actor, PlacementClass::Dynamic, PlacementClass::Marker, PlacementClass::Custom(3)] {
+    for class in [PlacementClass::Actor, PlacementClass::Dynamic, PlacementClass::Marker, PlacementClass::Custom(2), PlacementClass::Custom(3)] {
         p.class = class;
         assert!(!p.far_eligible(), "{class:?}");
     }
+    // B5b: `FAR_PROXY` opts a custom class into far proxies; exclusion flags and missing model still win.
+    p.class = PlacementClass::Custom(2);
+    p.flags = PlacementFlags::FAR_PROXY;
+    assert!(p.far_eligible());
+    for flag in [PlacementFlags::NO_LOD, PlacementFlags::NEAR_ONLY, PlacementFlags::EDITOR_ONLY, PlacementFlags::DISABLED] {
+        p.flags = PlacementFlags::FAR_PROXY | flag;
+        assert!(!p.far_eligible(), "FAR_PROXY | {flag:?}");
+    }
+    p.flags = PlacementFlags::FAR_PROXY;
+    p.model = None;
+    assert!(!p.far_eligible());
+    p.model = Some(sf_vfs::VfsPath::new("big.mesh").unwrap());
     p.class = PlacementClass::Static;
     for flag in [PlacementFlags::NO_LOD, PlacementFlags::NEAR_ONLY, PlacementFlags::EDITOR_ONLY, PlacementFlags::DISABLED] {
         p.flags = flag;

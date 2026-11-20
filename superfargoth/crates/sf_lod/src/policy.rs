@@ -38,7 +38,7 @@ impl ModelSummary {
                 let is_masked = model
                     .materials
                     .get(sub.material as usize)
-                    .is_some_and(|m| matches!(m.alpha, AlphaMode::Mask(_) | AlphaMode::Blend));
+                    .is_some_and(|m| matches!(m.alpha, AlphaMode::Mask(_)));
                 for t in idx.as_chunks::<3>().0 {
                     let [a, b, c] = t.map(|i| glam::Vec3::from_array(v[i as usize].position));
                     let area = f64::from((b - a).cross(c - a).length() * 0.5);
