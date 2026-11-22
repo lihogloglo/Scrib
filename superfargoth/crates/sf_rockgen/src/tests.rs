@@ -23,7 +23,7 @@ fn classes() -> Vec<(&'static str, Family, BoulderParams)> {
 }
 
 /// Every class × seed, generated once for all the validity tests (in parallel: one thread per class).
-fn rocks() -> &'static [(&'static str, Family, u64, RockLods)] {
+pub(crate) fn rocks() -> &'static [(&'static str, Family, u64, RockLods)] {
     static ROCKS: std::sync::OnceLock<Vec<(&'static str, Family, u64, RockLods)>> = std::sync::OnceLock::new();
     ROCKS.get_or_init(|| {
         std::thread::scope(|scope| {
@@ -254,7 +254,12 @@ fn mean(v: impl Iterator<Item = usize>) -> usize {
 #[test]
 #[ignore = "measurement: ms per rock and triangles / vertices per LOD for each class, at 2 m and 12 m"]
 fn measure_boulders() {
-    for (name, _, params) in classes() {
+    let mut arms = classes();
+    // The edge-snap A/B arm (default off) on the class it costs most.
+    if let Some(&(_, family, params)) = arms.iter().find(|c| c.0 == "columnar") {
+        arms.push(("columnar+snap", family, BoulderParams { edge_snap: true, ..params }));
+    }
+    for (name, _, params) in arms {
         for size_m in [2.0, 12.0] {
             let p = BoulderParams { size_m, ..params };
             let start = std::time::Instant::now();

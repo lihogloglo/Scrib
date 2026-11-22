@@ -5,8 +5,9 @@
 //!
 //! Every column is two convex [`Piece`]s: the column above the fused level, its sides inset by half the joint
 //! width toward its neighbours (never on the cluster's outside), and its share of the base below. Neighbours'
-//! shared faces are the same bisector with exactly negated values and are never rounded ([`Piece::hard`]), so the
-//! union has no seam, no notch and no sliver.
+//! shared faces are the same bisector with exactly negated values and are never rounded ([`Piece::hard`]), and the
+//! planes all columns share (the floor; the boulder's chips) cut the union once ([`crate::sdf::Solid::with_cap`]),
+//! so the union has no seam, no notch and no sliver.
 
 use glam::{Vec2, Vec3};
 
@@ -31,9 +32,10 @@ pub(crate) struct ColumnSpec {
     pub fuse: f32,
 }
 
-/// The cluster's pieces and the half-extent of the box that holds them. `half` = footprint semi-axes (x, y) and
-/// half height (z).
-pub(crate) fn column_cluster(spec: &ColumnSpec, half: Vec3, voxel: f32, rng: &mut Stream) -> (Vec<Piece>, Vec3) {
+/// The cluster's pieces, the planes that cut the whole cluster (its floor: a [`crate::sdf::Solid`] cap, rounded
+/// once across the columns), and the half-extent of the box that holds them. `half` = footprint semi-axes (x, y)
+/// and half height (z).
+pub(crate) fn column_cluster(spec: &ColumnSpec, half: Vec3, voxel: f32, rng: &mut Stream) -> (Vec<Piece>, Vec<Plane>, Vec3) {
     let count = spec.count.max(1);
     // Spacing so ~count hex cells fill the footprint ellipse: area π·a·b = count·(√3/2)·s².
     #[allow(clippy::cast_precision_loss)]
@@ -127,15 +129,15 @@ pub(crate) fn column_cluster(spec: &ColumnSpec, half: Vec3, voxel: f32, rng: &mu
             }
         }
         column.planes.push(top_plane);
-        column.planes.push(bottom);
         pieces.push(column);
         if grooved {
-            base.planes.push(Plane { n: Vec3::Z, d: fuse_z.min(top) });
-            base.planes.push(bottom);
+            // The joints' floor is one plane shared by every base: hard (rounded per base, it would leave a slit
+            // at each joint's mouth).
+            base.hard.push(Plane { n: Vec3::Z, d: fuse_z.min(top) });
             pieces.push(base);
         }
     }
-    (pieces, reach)
+    (pieces, vec![bottom], reach)
 }
 
 /// Sutherland-Hodgman: the part of convex polygon `poly` with `n·q ≤ d`.

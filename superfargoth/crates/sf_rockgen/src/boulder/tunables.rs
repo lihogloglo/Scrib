@@ -123,9 +123,9 @@ pub const LOD_RATIO: Def<f32> = def!(float "rockgen.boulder.lod_ratio" = 0.5)
 
 // --- RG-4: sharp families, feature-preserving meshing, size-scaled budgets ---
 
-pub const EDGE_SNAP: Def<bool> = def!(bool "rockgen.boulder.edge_snap" = true)
-    .help("Snap surface-nets vertices onto the analytic joint / chip / column planes (QEF on the active planes, dual contouring's vertex rule): flat faces and crisp edges; only where the rounding is under one cell")
-    .source(Source::Industry("Ju et al. 2002 dual contouring QEF vertex placement; Schaefer 2007 manifold DC"))
+pub const EDGE_SNAP: Def<bool> = def!(bool "rockgen.boulder.edge_snap" = false)
+    .help("Snap surface-nets vertices onto the analytic joint / chip / column planes (QEF on the active planes, dual contouring's vertex rule; Ju et al. 2002, Schaefer 2007): flat faces and crisp edges; only where the rounding is under one cell")
+    .source(Source::Owner("2026-11-22 rock lab RG-4: the owner prefers the unsnapped (rounded-edge) look; snap stays as the Q / A/B arm"))
     .net(Net::Gameplay)
     .lifetime(Lifetime::Bake);
 
@@ -231,6 +231,40 @@ pub const LOD0_ERROR_MAX: Def<f32> = def!(float "rockgen.boulder.lod0_error_max_
     .source(Source::Guess)
     .lifetime(Lifetime::Bake);
 
+// --- RG-2: variant library and collision hulls (`rockgen.library.*`, `rockgen.collision.*`) ---
+
+pub const LIBRARY_VARIANTS: Def<u32> = def!(count "rockgen.library.variants" = 16)
+    .range(8, 32)
+    .unit(Unit::Count)
+    .help("Distinct rocks generated per class library; scatter placements pick one by seed and scale it (rockgen.md RG-2)")
+    .source(Source::Guess)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Bake);
+
+pub const HULL_TOLERANCE: Def<f32> = def!(float "rockgen.collision.hull_tolerance" = 0.01)
+    .range(0.0, 0.1)
+    .unit(Unit::Ratio)
+    .help("How far a LOD0 vertex may stick out of the rock's convex collision hull, as a fraction of its size (0 = the exact hull of LOD0)")
+    .source(Source::Guess)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Bake);
+
+pub const HULL_TOLERANCE_MAX: Def<f32> = def!(float "rockgen.collision.hull_tolerance_max_m" = 0.05)
+    .range(0.0, 0.5)
+    .unit(Unit::Meters)
+    .help("The hull tolerance never exceeds this in metres (a big rock's collider stays close to its surface)")
+    .source(Source::Guess)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Bake);
+
+pub const HULL_MAX_VERTICES: Def<u32> = def!(count "rockgen.collision.hull_max_vertices" = 255)
+    .range(8, 255)
+    .unit(Unit::Count)
+    .help("Most vertices in a rock's convex collision hull (support-map cost is linear in them); the tolerance stops first on boulders, the cap only bounds a pathological mesh")
+    .source(Source::Industry("PhysX convex mesh cooking: vertexLimit defaults to and is capped at 255 (unverified this session)"))
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Bake);
+
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &SIZE,
     &ASPECT,
@@ -261,4 +295,8 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &RESOLUTION_SIZE_EXP,
     &RESOLUTION_MAX,
     &LOD0_ERROR_MAX,
+    &LIBRARY_VARIANTS,
+    &HULL_TOLERANCE,
+    &HULL_TOLERANCE_MAX,
+    &HULL_MAX_VERTICES,
 ];

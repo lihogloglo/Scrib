@@ -221,7 +221,7 @@ pub fn add(app: &mut App, content: RockLabContent) {
         wireframe: false,
         info: true,
         crease: true,
-        snap: true,
+        snap: sf_rockgen::boulder::tunables::EDGE_SNAP.default_value(),
         spawned: 0,
         triangles: Vec::new(),
         started: None,
@@ -316,9 +316,7 @@ fn generate(commands: &mut Commands, lab: &mut RockLab, level: &Level, params: B
         if !lab.crease {
             p.crease_deg = 180.0;
         }
-        if !lab.snap {
-            p.edge_snap = false;
-        }
+        p.edge_snap = lab.snap;
         let task = pool.spawn(async move { generate_boulder(&p, seed) });
         commands.spawn((Name::new(format!("rock task {i}")), RockTask { placement, seed, task }));
     }

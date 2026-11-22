@@ -21,11 +21,12 @@ the plate; LOD switches (L, then `far`): dithered, no pops. Log: `rock-lab textu
 
 Status: owner 2026-11-22: "they look amazing, excited to see more types"; edge snap **off** (`Q`, RG-3 bevels, rounded
 edges) "much better" than snapped hard edges -> flip `rockgen.boulder.edge_snap` default to false (queued slice);
-crease normals (`N`, `rockgen.boulder.crease_deg` 35) no verdict. Columnar skipped (budget bug, queued).
+crease normals (`N`, `rockgen.boulder.crease_deg` 35) no verdict. Columnar skipped (budget bug) -> fixed 2026-11-22 (RG-4b): owner re-look 2026-11-22 "they're fine" (columnar (floor and chips now
+rounded once across the columns, LOD0 ~1.4 k triangles instead of the raw net)); snap default now off. Owner asks for parallax on rocks/terrain (queued question).
 Scene: 9 columns 22 m apart (eroded block/platy/cobble/chipped at -x; talus, jagged, columnar, scoria, slab at +x),
 cameras `sharp`, `sharp_near`, `eroded`. Keys N crease, Q edge snap, Z class, R seed, X texture, I info.
 Look for: flat fracture faces and crisp-reading edges on the sharp classes, scoria pits + darker tint, no holes or
-spikes, eroded family unchanged. Known: 1-9 % wrong-way LOD0 triangles on sharp classes (queued check).
+spikes, eroded family unchanged. Known: 1-9 % wrong-way LOD0 triangles on sharp classes with snap on only (0 with snap off).
 
 ### WG-S2: 10x Vvardenfell erosion look test (images; `target/release/scrib-worldgen.exe run bevyrrowind/worldgen/vvardenfell-s2.toml`)
 
@@ -108,7 +109,7 @@ Look for:
 
 ### LF-2b: eroded fault scarps, taller and fewer, no dents on faces (2026-11-22, lf-2b, spec `landforms.md` As built LF-2b)
 
-Status: owner 2026-11-22, spots 1-3: Ashlands 143 m reads as a natural rise ("alright"); Ashlands 135 m and Molag Amur 100 m "nice and very vertical" (not quite vertical) but very smooth, wants hard edges (cliff bands RG-5/6, lip restore LF-5, assets); Grazelands 33 m: smooth from a distance, close up the face gets a jagged sawtooth (grass teeth along the top and bottom of the rock face; owner screenshots ShareX bevyrrowind_9WHYE0MHrB.jpg far, bevyrrowind_qjvL1Kl8CS.jpg near): bug logged, to diagnose. Launch `owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/lf2b-scarps" --hour 12`
+Status: owner 2026-11-22, spots 1-3: Ashlands 143 m reads as a natural rise ("alright"); Ashlands 135 m and Molag Amur 100 m "nice and very vertical" (not quite vertical) but very smooth, wants hard edges (cliff bands RG-5/6, lip restore LF-5, assets); Grazelands 33 m: smooth from a distance, close up the face gets a jagged sawtooth (grass teeth along the top and bottom of the rock face; owner screenshots ShareX bevyrrowind_9WHYE0MHrB.jpg far, bevyrrowind_qjvL1Kl8CS.jpg near): bug diagnosed 2026-11-22 (ledger worldgen): full-strength runtime gullies on a face whose base slope (max 38 deg) never reaches the 40 deg steep fade, and the slope-driven cliff rock outlines the gully walls; fix slices queued (material mask from base slope, gully cap on low scarps). Launch `owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/lf2b-scarps" --hour 12`
 (A/B: `lf2-scarps` = the LF-2 blades; `x10s` = the base). 32 faults (LF-2: 80), throw 85-143 m in the Ashlands, 85-100 m
 West Gash / Molag Amur, 25-33 m Grazelands. Faces cut into triangular facets by ravines (chutes) every 50-300 m, a debris
 cone below each ravine mouth, face 60-75 deg by rock, height varying along the face, long tapered ends; this world's

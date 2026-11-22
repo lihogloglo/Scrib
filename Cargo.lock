@@ -8617,6 +8617,7 @@ dependencies = [
  "fast-surface-nets",
  "glam 0.33.12",
  "meshopt",
+ "parry3d",
  "sf_tunables",
 ]
 

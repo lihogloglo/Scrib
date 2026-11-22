@@ -20,6 +20,7 @@ use crate::sdf::{Piece, Plane, Solid, Weathering};
 use crate::{Aabb, RockLods, RockMesh, content_hash};
 
 /// Long axis of the unit frame the field is built in.
+// tunables: const (units: the unit frame)
 const UNIT_LONG_AXIS: f32 = 1.0;
 /// The sampled field's rounding never goes below this many cells: a sharper edge than the grid can resolve folds
 /// the net (with the edge snap, vertices still go onto the hard edge).
@@ -104,12 +105,12 @@ impl Default for BoulderParams {
     }
 }
 
-fn clamp_f(def: &Def<f32>, v: f32) -> f32 {
+pub(crate) fn clamp_f(def: &Def<f32>, v: f32) -> f32 {
     let (lo, hi) = def.bounds().unwrap_or((v, v));
     if v.is_nan() { def.default_value() } else { v.clamp(lo, hi) }
 }
 
-fn clamp_u(def: &Def<u32>, v: u32) -> u32 {
+pub(crate) fn clamp_u(def: &Def<u32>, v: u32) -> u32 {
     let (lo, hi) = def.bounds().unwrap_or((v, v));
     v.clamp(lo, hi)
 }
@@ -184,7 +185,7 @@ fn sign(x: f32) -> f32 {
 }
 
 /// The boulder's solid (unit frame): a joint-set block cut by chips, or a column cluster (`columns` > 0) whose
-/// pieces all take the chips; then pits and weathering.
+/// union is cut by the chips and its floor once ([`Solid::with_cap`]); then pits and weathering.
 pub fn boulder_solid(params: &BoulderParams, seed: u64) -> Solid {
     let p = params.clamped();
     let voxel = p.voxel();
@@ -194,7 +195,7 @@ pub fn boulder_solid(params: &BoulderParams, seed: u64) -> Solid {
     aspect.sort_by(|a, b| b.total_cmp(a));
     let half = Vec3::new(0.5, 0.5 * aspect[0], 0.5 * aspect[1]) * UNIT_LONG_AXIS;
 
-    let (mut pieces, reach, ellipsoid) = if p.columns > 0 {
+    let (mut pieces, mut cap, reach, ellipsoid) = if p.columns > 0 {
         let spec = ColumnSpec {
             count: p.columns,
             jitter: p.column_jitter,
@@ -203,13 +204,15 @@ pub fn boulder_solid(params: &BoulderParams, seed: u64) -> Solid {
             tilt_deg: p.column_tilt_deg,
             fuse: p.column_fuse,
         };
-        let (pieces, reach) = column_cluster(&spec, half, voxel, &mut rng);
-        (pieces, reach, reach)
+        let (pieces, cap, reach) = column_cluster(&spec, half, voxel, &mut rng);
+        (pieces, cap, reach, reach)
     } else {
         let (piece, reach) = joint_block(&p, half, &mut rng);
         let ellipsoid = piece.ellipsoid.unwrap_or(reach);
-        (vec![piece], reach, ellipsoid)
+        (vec![piece], Vec::new(), reach, ellipsoid)
     };
+    // A block's chips are its own planes; a cluster's cut the union once (rounded across the columns).
+    let shared_chips = p.columns > 0;
     for _ in 0..p.chips {
         // Toward a random corner, weighted so the cut is symmetric relative to the extents.
         let corner = Vec3::new(sign(rng.signed()), sign(rng.signed()), sign(rng.signed()));
@@ -220,8 +223,12 @@ pub fn boulder_solid(params: &BoulderParams, seed: u64) -> Solid {
         // √u: deep cuts as likely as shallow ones per unit of removed area.
         let depth = p.chip_depth * UNIT_LONG_AXIS * rng.unit().sqrt();
         let chip = Plane { n, d: (support - depth).max((1.0 - MAX_CHIP_FRACTION) * support) };
-        for piece in &mut pieces {
-            piece.planes.push(chip);
+        if shared_chips {
+            cap.push(chip);
+        } else {
+            for piece in &mut pieces {
+                piece.planes.push(chip);
+            }
         }
     }
 
@@ -234,7 +241,7 @@ pub fn boulder_solid(params: &BoulderParams, seed: u64) -> Solid {
         wavelength: p.weather_wavelength * UNIT_LONG_AXIS,
         octaves: p.weather_octaves,
     };
-    Solid::new(pieces, rounding, weathering, reach, voxel, snap_wanted, seed).with_pits(p.pit_density, p.pit_size * UNIT_LONG_AXIS, seed)
+    Solid::new(pieces, rounding, weathering, reach, voxel, snap_wanted, seed).with_cap(cap).with_pits(p.pit_density, p.pit_size * UNIT_LONG_AXIS, seed)
 }
 
 /// The joint-set block (RG-1): three near-orthogonal families of near-parallel faces (fewer: the ellipsoid

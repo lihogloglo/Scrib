@@ -245,7 +245,7 @@ late chunk shows the heightfield (which is always there) instead of a hole.
 `weather_wavelength` 0.3 (ratio), `weather_octaves` 3 (1-6), `resolution` 40 (8-128 cells), `lod0_error_voxels`
 0.2 (ratio of a cell), `lod_levels` 4 (1-8), `lod_ratio` 0.5 (UE auto-LOD default). Shape values are
 `Net::Gameplay` (they shape collision), mesh and LOD values `Net::Presentation`. Source `Guess` except where noted.
-RG-4 adds 14: `edge_snap` (bool; owner 2026-11-22 prefers off, default flip queued), `crease_deg` 35, `pit_density`,
+RG-4 adds 14: `edge_snap` (bool, default off since 2026-11-22: the owner prefers the rounded look; on = the lab's Q arm), `crease_deg` 35, `pit_density`,
 `pit_size`, `columns`, `column_jitter`, `column_groove`, `column_step`, `column_tilt_deg`, `column_fuse`,
 `resolution_ref_m` 2, `resolution_size_exp` 0.5, `resolution_max` 128, `lod0_error_max_m` 0.015; `chips` range 0-64.
 
@@ -259,15 +259,18 @@ rock placement: scree fans below faces instead of rocks in lines along them); cl
   weathering) → surface nets → meshopt LOD chain → `RockLods`. Tests: same seed same hash, closed meshes, no NaN,
   bounds within the declared size, LOD triangle counts strictly decrease; `#[ignore = "measurement: ..."]` ms per
   rock and triangles per LOD.
-- **RG-2: variant library + convex hulls.** `Library` per class from seeds, `collision` feature (`parry3d` hull),
-  bake product registration. Test: library deterministic; hull contains every LOD0 vertex within tolerance.
+- **RG-2 (built 2026-11-22): variant library + convex hulls.** `Library` per class from seeds, `collision` feature
+  (`parry3d` hull). Bake product registration split off as **RG-2b** (`sf_bake` product keyed by `library_key` + code
+  version, serialised `Variant`/`Hull`); scatter wiring (class + size law per species, `pick`/`scale_for`, hulls to
+  `sf_physics` statics) is the placement slice. Test: library deterministic; hull contains every LOD0 vertex within tolerance.
 - **RG-3 (built 2026-11-22, before RG-2 at the owner's request): viewer + material.** `sf_rockgen_bevy` mesh
   conversion, `VisibilityRange` LODs, triplanar `RockMaterial` (scaffold copy of the terrain functions), the game's
   `level:rock-lab` greybox. Owner look RG-3: one family, too smooth (river boulders) -> sharp families (RG-4).
 - **RG-4 (built 2026-11-22): sharp families.** Edge snap onto hard planes, crease normals, size-scaled resolution,
   five new classes (talus, jagged, columnar, scoria, slab). Tests: snapped cube fixture exact (12 triangles), every
-  raw net edge-manifold, closed LODs per class. Owner look RG-4: "amazing"; edge snap off preferred. Left: columnar
-  budget, 1-9 % wrong-way LOD0 triangles on talus/jagged/slab, `edge_snap` default off, census opt-out in `mesher.rs`.
+  raw net edge-manifold, closed LODs per class. Owner look RG-4: "amazing"; edge snap off preferred. Left: wrong-way
+  LOD0 triangles (snap arm only; 0 with snap off). **RG-4b (2026-11-22):** `edge_snap` default off (owner); columnar
+  closed + in budget (see As built RG-4b).
 - **RG-3b: shared triplanar module.** After the terrain LOD fix (`wg-lodfix`) lands: move the projection +
   hex-tiling functions out of `surface.wesl` into one WESL module parameterised by texture + sampler, import it in
   the terrain and `rock.wesl`, delete the scaffold copy. Test: both shaders link and validate; terrain pixels unchanged
@@ -340,3 +343,30 @@ classes, tunable readers; `material.rs`; `shaders/rock.wesl`; `tunables.rs`; `te
 - Tests: `rock_mesh_conversion_is_sane` (counts, indices unchanged, unit normals, no NaN, rotation, Y short),
   `lod_ranges_chain`, `tunable_defaults_are_boulder_defaults`, `rock_fragment_compiles_for_every_def_set` (wesl link +
   naga validate, 4 def sets incl. the dither and the game's view features), `uniform_and_flags_match_rust`.
+
+**RG-4b (2026-11-22, rockgen-col).** `edge_snap` default false (owner: rounded edges; snap = the lab's Q arm), which
+exposed columnar's LOD0 not closing. Cause (measured): every meshopt level pinched (2-54 doubly used directed edges) so
+LOD0 fell back to the raw net (24-160 k tris), from sealed interior bubbles along shared column faces, sub-cell slits
+where per-piece rounding of shared floor/chip planes disagreed, and coincident sheets at concave steps. Fix (all
+`sf_rockgen`): `Solid::with_cap` (shared planes smooth-maxed once over the union), `mesher::fill_cavities` (flood fill of
+the noise band, only for solids with shared faces), `mesher::unpinch` (non-manifold split: radial face pairing + one
+vertex copy per fan, as CGAL PMP `duplicate_non_manifold_vertices`; retry schedule + raw-net fallback kept behind),
+`separate_duplicates` on the unsnapped path, two exact speed-ups (ambiguity re-passes only near flips, union early-out).
+Columnar 2 m 388 -> 97 ms, LOD0/1/2/3 26803/20340/11123/762 -> 1360/679/338/168; 12 m 3013 -> 727 ms, 162 k -> 4267
+LOD0; snap arm closes now (805 at 2 m). 17 of 384 other rocks changed (pinched levels now at the nominal ratio, e.g.
+scoria LOD3 306 -> 224); same error bound. Left: columnar interior stays near zero along shared faces (block skip
+can't prune; a per-shared-face union term would make the cavity fill unnecessary).
+
+**RG-2 (2026-11-22, rockgen-rg2).** `sf_rockgen::library` (`build_library(params, &LibrarySettings, seed) -> Library {
+key, size_m, variants }`, `Library::pick(placement_seed)`, `scale_for(size_m)`, `content_hash`; `Variant { seed, lods,
+hull }`; `Hull { points, triangles, error_m }` plain arrays, `Hull::to_parry()` -> `ConvexPolyhedron` behind feature
+`collision` = optional `parry3d`). Variant seeds don't depend on the count (growing a library keeps earlier variants);
+variants built at the class size, instances scaled; `library_key` covers every clamped param + count + hull settings
+(a new `BoulderParams` field must join it to compile); parallel by index, equal to serial. **Hull from LOD0 points**
+(the spec's "lowest LOD" would miss LOD0 vertices, every LOD is a subset of LOD0), reduced by a greedy quickhull
+refinement (parry3d has no hull reducer) until every vertex is within `min(0.01 x size, 0.05 m)` or 255 vertices
+(PhysX `PxConvexMeshDesc` vertex limit). The hull is inside the mesh's convex hull by at most `error_m`; over
+concavities (pits, grooves) it is solid where the mesh is open, as any single-hull simple collision. Tunables
+`rockgen.library.variants` 16 (8-32), `rockgen.collision.hull_tolerance` 0.01, `hull_tolerance_max_m` 0.05,
+`hull_max_vertices` 255. Release, 16 variants at 2 m: library 19-185 ms per class (all 9: 0.67 s), hull 48-109
+vertices (exact hull 89-249), 0.9-4.9 ms per hull, max error 20 mm.

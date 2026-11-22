@@ -90,15 +90,22 @@ pub(crate) fn smax(a: f32, b: f32, k: f32) -> f32 {
 }
 
 impl Piece {
-    fn value(&self, p: Vec3, rounding: f32) -> f32 {
+    /// The piece's value, or a value ≥ `bound` as soon as it is sure to reach `bound` (the smooth max and the max
+    /// never decrease, so the rest can't bring it back under): exact for a `min` over pieces.
+    fn value_below(&self, p: Vec3, rounding: f32, bound: f32) -> f32 {
+        // The hard planes first: on a cluster they are what puts a point outside most pieces.
+        let hard = self.hard.iter().fold(f32::NEG_INFINITY, |h, plane| h.max(plane.value(p)));
+        if hard >= bound {
+            return hard;
+        }
         let mut d = self.ellipsoid.map_or(f32::NEG_INFINITY, |e| ellipsoid_value(e, p));
         for plane in &self.planes {
             d = smax(d, plane.value(p), rounding);
+            if d >= bound {
+                return d;
+            }
         }
-        for plane in &self.hard {
-            d = d.max(plane.value(p));
-        }
-        d
+        d.max(hard)
     }
 }
 
@@ -150,6 +157,10 @@ pub struct Weathering {
 #[derive(Clone, Debug)]
 pub struct Solid {
     pieces: Vec<Piece>,
+    /// Planes every piece shares (a cluster's floor, chips across it): smooth-maxed once with the union, so the
+    /// rounding is one continuous blend across the pieces' shared faces (per piece, two neighbours would round
+    /// against different side planes and leave a sub-cell slit along the face they share, which `meshopt` pinches).
+    cap: Vec<Plane>,
     /// Smooth-max radius of the sampled field (the mesh topology).
     rounding: f32,
     pits: Option<Pits>,
@@ -191,6 +202,7 @@ impl Solid {
         let lipschitz = 1.0 + amp / wavelength * noise_slope;
         Self {
             pieces,
+            cap: Vec::new(),
             rounding,
             pits: None,
             pit_rounding: rounding.max(PIT_ROUNDING_CELLS * voxel),
@@ -205,6 +217,14 @@ impl Solid {
             voxel,
             snap,
         }
+    }
+
+    /// Cuts the whole union by `planes`, rounded once across every piece (see the `cap` field). Call before
+    /// [`Solid::with_pits`] (pits are placed on the capped solid).
+    #[must_use]
+    pub fn with_cap(mut self, planes: Vec<Plane>) -> Self {
+        self.cap = planes;
+        self
     }
 
     /// Subtracts vesicle pits: each cell of a lattice (spacing twice `max_radius`) holds one with chance
@@ -275,6 +295,17 @@ impl Solid {
     }
 
 
+    /// True when the solid is a union of several pieces: their shared faces lie inside it, where the field is
+    /// near zero (so the weathering can open sealed cavities there, [`crate::mesher`]).
+    pub fn has_shared_faces(&self) -> bool {
+        self.pieces.len() > 1
+    }
+
+    /// Weathering amplitude: the field differs from the unweathered one by at most this much.
+    pub fn noise_amp(&self) -> f32 {
+        self.amp
+    }
+
     /// True when [`Solid::snap`] runs (vertices go onto the hard-edged solid).
     pub fn snaps(&self) -> bool {
         self.snap
@@ -282,7 +313,8 @@ impl Solid {
 
     /// The union of the pieces (no pits, no weathering), planes smooth-maxed with radius `k`.
     fn union(&self, p: Vec3, k: f32) -> f32 {
-        self.pieces.iter().map(|piece| piece.value(p, k)).fold(f32::INFINITY, f32::min)
+        let u = self.pieces.iter().fold(f32::INFINITY, |best, piece| best.min(piece.value_below(p, k, best)));
+        self.cap.iter().fold(u, |d, plane| smax(d, plane.value(p), k))
     }
 
     /// The field without weathering (pits carved), edges rounded by `k`.
@@ -352,6 +384,11 @@ impl Solid {
                     let value = ellipsoid_value(e, x) / g.length();
                     add(Plane { n, d: n.dot(x) - value });
                 }
+            }
+        }
+        for plane in &self.cap {
+            if plane.value(centre).abs() <= 0.5 * v * plane.n.abs().element_sum() + self.rounding {
+                terms.push((plane.value(x).abs(), *plane));
             }
         }
         if terms.is_empty() {

@@ -13,7 +13,14 @@ license.workspace = true
 fast-surface-nets = "0.2.1"
 glam.workspace = true
 meshopt.workspace = true
+# Convex-hull colliders for the variant library (RG-2; rockgen.md "Collision"): Apache-2.0, Bevy-free, glam 0.33
+# through glamx (our glam). Optional: meshes need no physics crate.
+parry3d = { workspace = true, optional = true }
 sf_tunables.workspace = true
+
+[features]
+# One convex hull per library variant (`library::Hull`, built with parry3d's quickhull).
+collision = ["dep:parry3d"]
 
 [lints]
 workspace = true

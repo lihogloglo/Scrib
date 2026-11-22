@@ -5,12 +5,16 @@
 //! Slice RG-1: [`boulder`] (a convex block from joint-set slabs and chip planes, smooth-max rounded, noise
 //! weathered) with a `meshopt` LOD chain. Slice RG-4: sharp families ([`classes`]: talus, jagged, columnar,
 //! scoria, slab beside the eroded ones), vertices snapped onto the analytic planes ([`sdf`], [`mesher`]) and
-//! crease-split normals ([`RockMesh::split_creases`]). Output is plain arrays, no Bevy types: `sf_rockgen_bevy`
-//! (RG-3) wraps them. Nothing here names a game.
+//! crease-split normals ([`RockMesh::split_creases`]). Slice RG-2: [`library`] (per-class variant libraries, one
+//! convex collision hull per variant with the `collision` feature). Output is plain arrays, no Bevy types:
+//! `sf_rockgen_bevy` (RG-3) wraps them. Nothing here names a game.
 
 pub mod boulder;
 pub mod classes;
+#[cfg(feature = "collision")]
+mod collision;
 mod columns;
+pub mod library;
 pub mod mesher;
 mod noise;
 pub mod sdf;
@@ -22,6 +26,7 @@ use std::collections::HashMap;
 
 pub use boulder::{BoulderParams, generate_boulder};
 pub use classes::{CLASSES, Family, RockClass};
+pub use library::{Hull, HullSettings, Library, LibrarySettings, Variant, build_library, library_key, variant_seed};
 
 /// One triangle mesh: counter-clockwise front faces seen from outside, unit normals (the SDF gradient on smooth
 /// vertices; on a crease, each side's own face-normal average, [`RockMesh::split_creases`]).
