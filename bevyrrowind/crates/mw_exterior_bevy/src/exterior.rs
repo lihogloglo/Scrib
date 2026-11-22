@@ -618,6 +618,20 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         app.insert_resource(sf_atmos_bevy::CloudEdgeStable(!perf.off.has(Part::CloudEdge)));
         // S3 (WE-15): `--off cbshape` keeps the old storm cloud profile (the extruded footprint).
         app.insert_resource(sf_atmos_bevy::CumulonimbusShape(!perf.off.has(Part::CbShape)));
+        // AS (FG-12, aerial-shadow.md): `--off aerialshadow` = stock Bevy aerial perspective, the
+        // tunable `sky.aerial.shadow` off at the command-line layer (registered by `CloudsPlugin`).
+        if perf.off.has(Part::AerialShadow) {
+            let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
+            let id = tunables.id_of(&sf_atmos_bevy::AERIAL_SHADOW).expect("registered by CloudsPlugin");
+            let _ = tunables.set_noted(id.untyped(), false.into(), sf_tunables_bevy::SetBy::CommandLine, Some("--off aerialshadow".to_owned()));
+        }
+        // LSO (FG-12 S3a, aerial-shadow.md "S3"): `--off shafts` = stock haze toward a hidden sun,
+        // the tunable `sky.shafts.enabled` off at the command-line layer (registered by `CloudsPlugin`).
+        if perf.off.has(Part::Shafts) {
+            let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
+            let id = tunables.id_of(&sf_atmos_bevy::SHAFTS_ENABLED).expect("registered by CloudsPlugin");
+            let _ = tunables.set_noted(id.untyped(), false.into(), sf_tunables_bevy::SetBy::CommandLine, Some("--off shafts".to_owned()));
+        }
         // CW-1 (WE-13): the far storm reads as a cell under its clouds, its region edge ~half a
         // 117 m cell wide with ±48 m noise (owner 2026-11-12: borders stay fairly abrupt in a small
         // world); `--off stormshape` keeps the WE4d region column.

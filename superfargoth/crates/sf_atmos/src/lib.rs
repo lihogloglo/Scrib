@@ -30,6 +30,7 @@ pub mod noise;
 pub mod scroll;
 pub mod settings;
 pub mod shadow;
+pub mod shafts;
 pub mod storm;
 pub mod temporal;
 

@@ -86,6 +86,15 @@ pub enum Part {
     /// in world altitude, tops that follow coverage, an anvil, a ragged base, cells shrinking by
     /// threshold at the region edge; off, the old storm profile (the extruded footprint, an A/B).
     CbShape,
+    /// The terrain shadows the sun's haze in the aerial perspective (AS, FG-12,
+    /// `sf_atmos_bevy::AERIAL_SHADOW`, vendored `bevy_pbr` patch "own, AS"): off, stock Bevy, the
+    /// haze in front of shaded terrain lit as if the terrain were not there (the A/B).
+    AerialShadow,
+    /// Screen-space light shaft occlusion (S3a, FG-12, `sf_atmos_bevy::SHAFTS_ENABLED`, vendored
+    /// `bevy_pbr` patch "own, LSO"): the sky seen past the depth buffer, blurred toward the sun,
+    /// masks the sun's forward lobe in the aerial perspective and the analytic fog; off, the haze
+    /// toward a sun hidden by terrain glows as stock (the A/B).
+    Shafts,
     /// Screen-space planar reflections on the water (W-SSPR, `sf_water_bevy::WaterReflections`): off,
     /// the environment map only (the old look, an A/B).
     WaterSsr,
@@ -234,7 +243,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 86] = [
+    const ALL: [(&'static str, Part); 88] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -280,6 +289,8 @@ impl Part {
         ("stormshape", Part::StormShape),
         ("cloudedge", Part::CloudEdge),
         ("cbshape", Part::CbShape),
+        ("aerialshadow", Part::AerialShadow),
+        ("shafts", Part::Shafts),
         ("waterssr", Part::WaterSsr),
         ("shorenormals", Part::ShoreNormals),
         ("shorewaves", Part::ShoreWaves),
@@ -416,6 +427,12 @@ mod tests {
         let cb = Off::from_flags(&["cbshape".into()]).expect("known");
         assert!(cb.has(Part::CbShape) && !cb.has(Part::StormShape) && !cb.has(Part::CloudEdge));
         assert_eq!(cb.label(), "cbshape");
+        let aerial = Off::from_flags(&["aerialshadow".into()]).expect("known");
+        assert!(aerial.has(Part::AerialShadow) && !aerial.has(Part::Fog) && !aerial.has(Part::Froxels) && !aerial.has(Part::Sky));
+        assert_eq!(aerial.label(), "aerialshadow");
+        let shafts = Off::from_flags(&["shafts".into()]).expect("known");
+        assert!(shafts.has(Part::Shafts) && !shafts.has(Part::AerialShadow) && !shafts.has(Part::Fog) && !shafts.has(Part::Froxels));
+        assert_eq!(shafts.label(), "shafts");
         let shift = Off::from_flags(&["shiftrebase".into()]).expect("known");
         assert!(shift.has(Part::ShiftRebase) && !shift.has(Part::Scene));
         assert_eq!(shift.label(), "shiftrebase");

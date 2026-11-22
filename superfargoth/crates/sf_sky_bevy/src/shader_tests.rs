@@ -468,3 +468,34 @@ fn point_shadow_atlas_shaders_compile_and_validate() {
     blit_layouter.update(blit_mod.to_ctx()).expect("layout");
     assert_eq!(u64::from(blit_layouter[blit_handle].size), bevy_pbr::AtlasBlitUniform::min_size().get(), "AtlasBlitUniform WGSL vs Rust size");
 }
+
+/// Patch AS (aerial shadow, `bevy_pbr::AtmosphereHeightShadow`, `docs/specs/aerial-shadow.md`):
+/// the aerial view LUT links and validates with and without `ATMOSPHERE_HEIGHT_SHADOW`. Without
+/// it the pass is stock (no height shadow linked, the stock in-scattering); with it, it reads the
+/// map through the shadowed in-scattering. The Rust uniform (`GpuAtmosphereHeightShadow`, encase
+/// layout) and the WGSL struct have the same fields in the same order and the same size.
+#[test]
+fn aerial_view_lut_compiles_with_and_without_the_height_shadow() {
+    use bevy_render::render_resource::ShaderType;
+    let stock = compile("bevy_pbr::atmosphere::aerial_view_lut", &[]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(!stock.contains("height_shadow") && !stock.contains("sample_local_inscattering_shadowed"), "absent = the stock pass");
+    assert!(stock.contains("sample_local_inscattering"), "the stock in-scattering");
+    let def = bevy_pbr::ATMOSPHERE_HEIGHT_SHADOW_DEF;
+    let shadowed = compile("bevy_pbr::atmosphere::aerial_view_lut", &[def]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        shadowed.contains("height_shadow_map") && shadowed.contains("sample_local_inscattering_shadowed") && shadowed.contains(".atmosphere_scatter"),
+        "the height shadow, the shadowed in-scattering and E1b's per-light scale are linked"
+    );
+    let module = naga::front::wgsl::parse_str(&shadowed).expect("parses");
+    let (handle, ty) = module
+        .types
+        .iter()
+        .find(|(_, t)| t.name.as_deref().is_some_and(|n| n.contains("AtmosphereHeightShadow")))
+        .unwrap_or_else(|| panic!("AtmosphereHeightShadow in the linked module: {:?}", module.types.iter().filter_map(|(_, t)| t.name.clone()).collect::<Vec<_>>()));
+    let naga::TypeInner::Struct { members, .. } = &ty.inner else { panic!("a struct") };
+    let names: Vec<&str> = members.iter().filter_map(|m| m.name.as_deref()).collect();
+    assert_eq!(names, ["params", "light_dir", "penumbra_per_m", "penumbra_min", "bias", "bias_per_m", "fade_start"], "field order = GpuAtmosphereHeightShadow");
+    let mut layouter = naga::proc::Layouter::default();
+    layouter.update(module.to_ctx()).expect("layout");
+    assert_eq!(u64::from(layouter[handle].size), bevy_pbr::GpuAtmosphereHeightShadow::min_size().get(), "WGSL vs Rust size");
+}

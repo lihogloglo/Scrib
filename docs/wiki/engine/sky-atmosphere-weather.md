@@ -25,6 +25,11 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   The transmittance LUT holds optical depth (bevy #26208 part), and the aerial perspective's segment transmittance is
   a depth difference read from upward rays (`bruneton_functions.wesl` `sample_transmittance_lut_segment`): stock f16
   transmittance underflowed under weather haze and drew coloured bands on far terrain at eye level (SK-HB).
+- **Aerial shadow (AS, vendored).** The aerial view LUT shadows the sun's single scattering with the terrain far shadow
+  map (`AtmosphereHeightShadow` on the camera, copied from `FogShadowHeights` by `sf_atmos_bevy/src/aerial_shadow.rs`;
+  same rule and `sky.far_shadow.*` tunables as the froxels); stock Bevy shadows it only by the planet (FG-12). Map reach
+  ~3.9 km; the raymarched mode and sky-view LUT stay unshadowed. Off by default (owner FG-12: blocky, swimming);
+  `--set sky.aerial.shadow=true`.
 - **Env map.** Bevy refilters the sky env map every frame (~0.7 ms a run); `EnvMapRefresh` keeps the result for N = 8
   frames (`sf_sky_bevy/src/env_refresh.rs:24`), so it costs ~0.09 ms a frame. Bevy timings appear only on frames a pass
   runs: the perf report shows `GPU ms/run` and `runs/frame` and sums the per-frame share (`sf_diag` `PassTiming`).
@@ -112,3 +117,4 @@ and `surface.shelter` (live, `SurfaceSettings`; `--off puddles|shelter` at `Comm
 
 [sky-lighting](../../../superfargoth/docs/specs/sky-lighting.md), [weather](../../../superfargoth/docs/specs/weather.md),
 [clouds](../../../superfargoth/docs/specs/weather/clouds.md), `superfargoth/docs/specs/surface-weather.md`.
+[aerial-shadow](../../../superfargoth/docs/specs/aerial-shadow.md).

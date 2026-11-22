@@ -33,6 +33,7 @@ fn app(fog_scale: f32) -> App {
         .init_resource::<CumulonimbusShape>()
         .init_resource::<FarStormShape>()
         .init_resource::<FogShadowHeights>()
+        .init_resource::<FarShadowShape>()
         .init_resource::<FroxelVolume>();
     app
 }

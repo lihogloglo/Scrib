@@ -27,14 +27,6 @@ import super::froxel_common::{Froxels, slice_distance, slice_coord, froxel_ray};
 @group(0) @binding(10) var history: texture_3d<f32>;
 @group(0) @binding(11) var volume: texture_storage_3d<rgba16float, write>;
 
-// sf_lod_bevy's far_shadow_map.wesl (keep in step): penumbra per meter of
-// occluder distance and its floor, bias and its growth per meter of view
-// distance, where the border fade starts.
-const FAR_PENUMBRA: f32 = 0.012;
-const FAR_PENUMBRA_MIN: f32 = 2.0;
-const FAR_BIAS: f32 = 6.0;
-const FAR_BIAS_PER_M: f32 = 0.0015;
-const FAR_FADE_START: f32 = 0.85;
 
 // The key light's CSM visibility at `p` (Bevy's cascades, hard compare: the
 // froxel is far coarser than a texel). `fwd`: distance along the view axis.
@@ -70,7 +62,9 @@ fn csm_visibility(p: vec3<f32>, dir: vec3<f32>, fwd: f32) -> f32 {
 
 // The terrain's shadow-height map (sf_lod_bevy `map_visibility`'s rule: a
 // penumbra widening with occluder distance, a bias growing with view
-// distance, a fade toward the map's border).
+// distance, a fade toward the map's border). The values are the
+// `sky.far_shadow.*` tunables (`fx.far_vis`, `fx.far_fade`), shared with the
+// aerial view LUT's height shadow (vendored bevy_pbr patch "own, AS").
 fn far_visibility(p: vec3<f32>) -> f32 {
     let far = fx.far_map;
     if far.z <= 0.0 {
@@ -83,9 +77,9 @@ fn far_visibility(p: vec3<f32>) -> f32 {
     }
     let t = textureSampleLevel(far_map, linear_sampler, uv, 0.0).rg;
     let hs = t.x + far.w;
-    let w = t.y * FAR_PENUMBRA + FAR_PENUMBRA_MIN;
-    let y = p.y + FAR_BIAS + distance(fx.camera, p) * FAR_BIAS_PER_M;
-    return mix(smoothstep(hs - w, hs + w, y), 1.0, smoothstep(FAR_FADE_START, 1.0, edge));
+    let w = t.y * fx.far_vis.x + fx.far_vis.y;
+    let y = p.y + fx.far_vis.z + distance(fx.camera, p) * fx.far_vis.w;
+    return mix(smoothstep(hs - w, hs + w, y), 1.0, smoothstep(fx.far_fade, 1.0, edge));
 }
 
 // The cloud shadow map (toroidal; cloud_shadow.wesl's basis).

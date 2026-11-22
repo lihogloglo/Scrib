@@ -159,6 +159,7 @@ OP-1 | confirmed with follow-up (2026-11-11: works; a plain list, needs real wid
 LK-1 | owner: issues (submenus overlap) | [player-ui](visual-checks/player-ui.md) | Look pass L1: OpenMW frames on windows, boxes, framed buttons
 LK-2 | owner: issues (Continue style) | [player-ui](visual-checks/player-ui.md) | Look pass L2: title menu as OpenMW image buttons, version text
 FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
+FG-12 | parked (2026-11-22): AS rejected, S3a shafts kept with a dark disc at the hidden sun, S3b bloom bad (blocky, shimmering), off | [weather-sky](visual-checks/weather-sky.md) | Sun glow shows through terrain (low sun behind a ridge, 2026-11-22)
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)
 NV-1 | confirmed by owner 2026-11-18 (Balmora: `nav.stats` good, `nav.draw tiles` streams and follows terrain after detail-mesh + terrain-origin fixes) | [ai](visual-checks/ai.md) | Baked navmesh tiles over Seyda Neen (`nav.draw tiles`, `nav.stats`), slice NV4c (2026-11-17)
 NV-2 | confirmed by owner 2026-11-18 (Balmora) | [ai](visual-checks/ai.md) | NPCs walk smoothly on the fixed tick at low and high fps; wake, knockdown, ball hits without pops, slice NV7a (2026-11-17)

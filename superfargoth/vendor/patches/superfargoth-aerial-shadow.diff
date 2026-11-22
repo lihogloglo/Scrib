@@ -1,0 +1,579 @@
+# superfargoth patch (own, AS: aerial shadow), superfargoth/docs/specs/aerial-shadow.md (ROADMAP 1.27, FG-12). Against the vendored tree as of 2026-11-22 (after E1b, SK-HB #26208, U3).
+diff --git a/superfargoth/vendor/bevy_pbr/src/atmosphere/aerial_view_lut.wesl b/superfargoth/vendor/bevy_pbr/src/atmosphere/aerial_view_lut.wesl
+index e5032b67..747a5eee 100644
+--- a/superfargoth/vendor/bevy_pbr/src/atmosphere/aerial_view_lut.wesl
++++ b/superfargoth/vendor/bevy_pbr/src/atmosphere/aerial_view_lut.wesl
+@@ -1,8 +1,9 @@
+ import package::{
+     atmosphere::{
+-        bindings::settings,
++        bindings::{settings, atmosphere, view},
+         functions::{
+             sample_density_lut, sample_local_inscattering, uv_to_ray_direction, get_view_position,
++            sample_local_inscattering_shadowed,
+             MIDPOINT_RATIO, MIN_EXTINCTION, ABSORPTION_DENSITY, SCATTERING_DENSITY,
+         },
+     }
+@@ -11,6 +12,51 @@ import package::{
+ 
+ @group(0) @binding(13) var aerial_view_lut_out: texture_storage_3d<rgba16float, write>;
+ 
++// superfargoth patch (own, AS: aerial shadow), `superfargoth/docs/specs/aerial-shadow.md`: a
++// top-down height-field shadow for one directional light (`bevy_pbr::AtmosphereHeightShadow`;
++// field order is the layout of `GpuAtmosphereHeightShadow`).
++@if(ATMOSPHERE_HEIGHT_SHADOW)
++struct AtmosphereHeightShadow {
++    // Render space: (min x, min z, 1 / extent, base height); extent 0 = none.
++    params: vec4<f32>,
++    // Toward the shadowed light (world space).
++    light_dir: vec3<f32>,
++    penumbra_per_m: f32,
++    penumbra_min: f32,
++    bias: f32,
++    bias_per_m: f32,
++    fade_start: f32,
++}
++
++@if(ATMOSPHERE_HEIGHT_SHADOW)
++@group(0) @binding(14) var<uniform> height_shadow: AtmosphereHeightShadow;
++// Texels: (shadow height - base height, occluder distance), meters.
++@if(ATMOSPHERE_HEIGHT_SHADOW)
++@group(0) @binding(15) var height_shadow_map: texture_2d<f32>;
++@if(ATMOSPHERE_HEIGHT_SHADOW)
++@group(0) @binding(16) var height_shadow_sampler: sampler;
++
++// The light's visibility at render-space `p`, `dist` meters from the camera: a penumbra widening
++// with occluder distance, a bias growing with distance, a fade to lit toward the map's border
++// (the rule of the froxels' `far_visibility`, sf_atmos_bevy `froxel_inject.wesl`).
++@if(ATMOSPHERE_HEIGHT_SHADOW)
++fn height_shadow_visibility(p: vec3<f32>, dist: f32) -> f32 {
++    let hs_params = height_shadow.params;
++    if hs_params.z <= 0.0 {
++        return 1.0;
++    }
++    let uv = (p.xz - hs_params.xy) * hs_params.z;
++    let edge = max(abs(uv.x - 0.5), abs(uv.y - 0.5)) * 2.0;
++    if edge >= 1.0 {
++        return 1.0;
++    }
++    let t = textureSampleLevel(height_shadow_map, height_shadow_sampler, uv, 0.0).rg;
++    let hs = t.x + hs_params.w;
++    let w = t.y * height_shadow.penumbra_per_m + height_shadow.penumbra_min;
++    let y = p.y + height_shadow.bias + dist * height_shadow.bias_per_m;
++    return mix(smoothstep(hs - w, hs + w, y), 1.0, smoothstep(height_shadow.fade_start, 1.0, edge));
++}
++
+ @compute
+ @workgroup_size(16, 16, 1)
+ fn main(@builtin(global_invocation_id) idx: vec3<u32>) {
+@@ -22,6 +68,13 @@ fn main(@builtin(global_invocation_id) idx: vec3<u32>) {
+ 
+     let r = length(world_pos);
+     let t_max = settings.aerial_view_lut_max_distance;
++    // superfargoth patch (own, AS: aerial shadow): `world_pos` is in atmosphere space (the
++    // atmosphere entity's frame: world translated and scaled, never rotated, `get_view_position`)
++    // and `ray_dir` in world space, so a sample at atmosphere distance `t` sits at render-space
++    // `view.world_position + ray_dir * t / atmo_per_world` (camera-relative: exact in f32, where
++    // undoing the planet-centred position would lose metres).
++    @if(ATMOSPHERE_HEIGHT_SHADOW)
++    let atmo_per_world = length(atmosphere.world_to_atmosphere[0].xyz);
+ 
+     var prev_t = 0.0;
+     var total_inscattering = vec3(0.0);
+@@ -45,7 +98,16 @@ fn main(@builtin(global_invocation_id) idx: vec3<u32>) {
+             let sample_transmittance = exp(-sample_optical_depth);
+ 
+             // evaluate one segment of the integral
++            @if(!ATMOSPHERE_HEIGHT_SHADOW)
+             var inscattering = sample_local_inscattering(scattering, ray_dir, sample_pos);
++            // superfargoth patch (own, AS: aerial shadow): the shadowed light's single scattering
++            // times the height field's visibility at the sample.
++            @if(ATMOSPHERE_HEIGHT_SHADOW)
++            let world_t = t_i / atmo_per_world;
++            @if(ATMOSPHERE_HEIGHT_SHADOW)
++            let visibility = height_shadow_visibility(view.world_position + ray_dir * world_t, world_t);
++            @if(ATMOSPHERE_HEIGHT_SHADOW)
++            var inscattering = sample_local_inscattering_shadowed(scattering, ray_dir, sample_pos, height_shadow.light_dir, visibility);
+ 
+             // Analytical integration of the single scattering term in the radiance transfer equation
+             let s_int = (inscattering - inscattering * sample_transmittance) / max(extinction, MIN_EXTINCTION);
+diff --git a/superfargoth/vendor/bevy_pbr/src/atmosphere/functions.wesl b/superfargoth/vendor/bevy_pbr/src/atmosphere/functions.wesl
+index 75425d34..fa2dff3d 100644
+--- a/superfargoth/vendor/bevy_pbr/src/atmosphere/functions.wesl
++++ b/superfargoth/vendor/bevy_pbr/src/atmosphere/functions.wesl
+@@ -254,6 +254,41 @@ fn sample_local_inscattering(local_scattering: vec3<f32>, ray_dir: vec3<f32>, wo
+     return inscattering;
+ }
+ 
++/// superfargoth patch (own, AS: aerial shadow): `sample_local_inscattering` with the single
++/// scattering of the light toward `shadow_dir` (the light whose `direction_to_light` is within
++/// `dot > 0.99` of it; a zero `shadow_dir` matches none) times `shadow_visibility` (0 = in the
++/// shadow, 1 = lit). The multiple-scattering term stays unshadowed (the sky's isotropic fill).
++fn sample_local_inscattering_shadowed(
++    local_scattering: vec3<f32>,
++    ray_dir: vec3<f32>,
++    world_pos: vec3<f32>,
++    shadow_dir: vec3<f32>,
++    shadow_visibility: f32,
++) -> vec3<f32> {
++    let local_r = length(world_pos);
++    let local_up = normalize(world_pos);
++    var inscattering = vec3(0.0);
++    for (var light_i: u32 = 0u; light_i < lights.n_directional_lights; light_i++) {
++        let light = &lights.directional_lights[light_i];
++
++        let mu_light = dot((*light).direction_to_light, local_up);
++        let neg_LdotV = dot((*light).direction_to_light, ray_dir);
++
++        let transmittance_to_light = sample_transmittance_lut(local_r, mu_light);
++        let shadow_factor = transmittance_to_light * f32(!ray_intersects_ground(local_r, mu_light));
++        let scattering_coeff = sample_scattering_lut(local_r, neg_LdotV);
++        let shadowed = select(1.0, shadow_visibility, dot((*light).direction_to_light, shadow_dir) > 0.99);
++        let scattering_factor = shadow_factor * scattering_coeff * shadowed;
++
++        let psi_ms = sample_multiscattering_lut(local_r, mu_light);
++        let multiscattering_factor = psi_ms * local_scattering;
++
++        // E1b: the light's share of the sky (single + multiple scattering), 1 = stock.
++        inscattering += (*light).color.rgb * (*light).atmosphere_scatter * (scattering_factor + multiscattering_factor);
++    }
++    return inscattering;
++}
++
+ fn sample_sun_radiance(ray_dir_ws: vec3<f32>) -> vec3<f32> {
+     let view_pos = get_view_position();
+     let r = length(view_pos);
+diff --git a/superfargoth/vendor/bevy_pbr/src/atmosphere/mod.rs b/superfargoth/vendor/bevy_pbr/src/atmosphere/mod.rs
+index 95d9e85c..ceacee11 100644
+--- a/superfargoth/vendor/bevy_pbr/src/atmosphere/mod.rs
++++ b/superfargoth/vendor/bevy_pbr/src/atmosphere/mod.rs
+@@ -41,7 +41,7 @@ mod node;
+ pub mod resources;
+ 
+ use bevy_app::{App, Plugin};
+-use bevy_asset::{embedded_asset, AssetId};
++use bevy_asset::{embedded_asset, AssetId, Handle};
+ use bevy_camera::{Camera3d, Hdr};
+ use bevy_core_pipeline::{
+     core_3d::{main_opaque_pass_3d, main_transparent_pass_3d},
+@@ -54,11 +54,12 @@ use bevy_ecs::{
+     schedule::IntoScheduleConfigs,
+     system::{Commands, Query},
+ };
++use bevy_image::Image;
+ use bevy_light::{atmosphere::ScatteringMedium, Atmosphere};
+-use bevy_math::{Mat4, Quat, UVec2, UVec3, Vec3};
++use bevy_math::{Mat4, Quat, UVec2, UVec3, Vec3, Vec4};
+ use bevy_reflect::{std_traits::ReflectDefault, Reflect};
+ use bevy_render::{
+-    extract_component::{ExtractComponentPlugin, UniformComponentPlugin},
++    extract_component::{DynamicUniformIndex, ExtractComponentPlugin, UniformComponentPlugin},
+     render_resource::{DownlevelFlags, ShaderType, SpecializedRenderPipelines},
+     renderer::RenderDevice,
+     sync_component::{SyncComponent, SyncComponentPlugin},
+@@ -117,6 +118,8 @@ impl Plugin for AtmospherePlugin {
+             SyncComponentPlugin::<AtmosphereSettings>::default(),
+             UniformComponentPlugin::<GpuAtmosphere>::default(),
+             UniformComponentPlugin::<GpuAtmosphereSettings>::default(),
++            // superfargoth patch (own, AS: aerial shadow)
++            UniformComponentPlugin::<GpuAtmosphereHeightShadow>::default(),
+         ))
+         .add_observer(on_insert_atmosphere_environment_map_light)
+         .add_observer(on_remove_atmosphere_environment_map_light);
+@@ -216,13 +219,91 @@ impl Plugin for AtmospherePlugin {
+ #[derive(Component, Clone, Copy, Debug, Default)]
+ pub struct SkyOccluded;
+ 
++/// superfargoth patch (own, AS: aerial shadow), `superfargoth/docs/specs/aerial-shadow.md`: a
++/// camera component giving the aerial view LUT a top-down height-field shadow for one directional
++/// light, so haze in front of terrain the light cannot reach stops glowing. Only that light's
++/// single scattering is shadowed (the multiple-scattering term is the sky's isotropic fill and stays
++/// unshadowed); the sky-view LUT and the raymarched sky are unchanged. Absent (or `params.z` 0) =
++/// the stock aerial view LUT pipeline.
++///
++/// Per LUT sample at render-space point `p` and camera `c`: `uv = (p.xz - params.xy) * params.z`,
++/// texel `t = (shadow height - params.w, occluder distance)`; lit = `smoothstep(h - w, h + w, p.y +
++/// bias + |p - c| * bias_per_m)` with `h = t.x + params.w`, `w = t.y * penumbra_per_m + penumbra_min`,
++/// faded to lit from `fade_start` (fraction of the half extent) to the map's border.
++#[derive(Clone, Component, Debug, PartialEq)]
++pub struct AtmosphereHeightShadow {
++    /// A filterable two-channel float texture (`Rg16Float`): (shadow height - base height,
++    /// occluder distance), meters; texel (0, 0) at the map's min corner.
++    pub image: Handle<Image>,
++    /// Render space: (min x, min z, 1 / extent (1/m; 0 = none), base height).
++    pub params: Vec4,
++    /// Toward the light the map was made for (world space, unit). The directional light whose
++    /// `direction_to_light` is within `dot > 0.99` of it is the one shadowed.
++    pub light_dir: Vec3,
++    /// Penumbra half width per meter of occluder distance.
++    pub penumbra_per_m: f32,
++    /// Penumbra half width floor, meters.
++    pub penumbra_min: f32,
++    /// Height bias, meters.
++    pub bias: f32,
++    /// Height bias growth per meter of distance from the camera.
++    pub bias_per_m: f32,
++    /// Where the fade to lit starts, as a fraction of the map's half extent (`0..1`).
++    pub fade_start: f32,
++}
++
++/// superfargoth patch (own, AS: aerial shadow): the render-world uniform of
++/// [`AtmosphereHeightShadow`] (`aerial_view_lut.wesl` `AtmosphereHeightShadow`; field order is
++/// the layout).
++#[derive(Clone, Component, ShaderType, Debug, PartialEq)]
++pub struct GpuAtmosphereHeightShadow {
++    pub params: Vec4,
++    pub light_dir: Vec3,
++    pub penumbra_per_m: f32,
++    pub penumbra_min: f32,
++    pub bias: f32,
++    pub bias_per_m: f32,
++    pub fade_start: f32,
++}
++
++impl From<&AtmosphereHeightShadow> for GpuAtmosphereHeightShadow {
++    fn from(s: &AtmosphereHeightShadow) -> Self {
++        Self {
++            params: s.params,
++            light_dir: s.light_dir,
++            penumbra_per_m: s.penumbra_per_m,
++            penumbra_min: s.penumbra_min,
++            bias: s.bias,
++            bias_per_m: s.bias_per_m,
++            fade_start: s.fade_start,
++        }
++    }
++}
++
++/// superfargoth patch (own, AS: aerial shadow): the render-world image of
++/// [`AtmosphereHeightShadow`] (bound with its own sampler; not yet uploaded = stock pass).
++#[derive(Clone, Copy, Component, Debug, PartialEq, Eq)]
++pub struct AtmosphereHeightShadowImage(pub AssetId<Image>);
++
++/// superfargoth patch (own, AS: aerial shadow): the shader def of the shadowed aerial view LUT.
++pub const ATMOSPHERE_HEIGHT_SHADOW_DEF: &str = "ATMOSPHERE_HEIGHT_SHADOW";
++
+ /// For each camera with [`AtmosphereSettings`], picks the nearest [`Atmosphere`] by world-space
+ /// distance to its origin, copies it as [`ExtractedAtmosphere`], and builds [`GpuAtmosphereSettings`].
+ pub fn extract_atmosphere(
+     mut commands: Commands,
+     atmosphere_entities: Extract<Query<(Entity, &Atmosphere, &GlobalTransform)>>,
+     cameras: Extract<
+-        Query<(RenderEntity, Option<&AtmosphereSettings>, &GlobalTransform), With<Camera3d>>,
++        Query<
++            (
++                RenderEntity,
++                Option<&AtmosphereSettings>,
++                &GlobalTransform,
++                // superfargoth patch (own, AS: aerial shadow)
++                Option<&AtmosphereHeightShadow>,
++            ),
++            With<Camera3d>,
++        >,
+     >,
+     // superfargoth patch (own, P1: live medium scales)
+     medium_scales: Extract<Query<&crate::ScatteringMediumScales>>,
+@@ -230,7 +311,24 @@ pub fn extract_atmosphere(
+     let candidates: Vec<(Entity, &Atmosphere, &GlobalTransform)> =
+         atmosphere_entities.iter().collect();
+ 
+-    for (render_entity, settings, cam_global) in &cameras {
++    for (render_entity, settings, cam_global, height_shadow) in &cameras {
++        // superfargoth patch (own, AS: aerial shadow): the view's height shadow, or none (a map
++        // with no extent is none); a stale one (and its uniform index) never outlives it.
++        match height_shadow.filter(|s| s.params.z > 0.0 && settings.is_some()) {
++            Some(s) => {
++                commands.entity(render_entity).insert((
++                    GpuAtmosphereHeightShadow::from(s),
++                    AtmosphereHeightShadowImage(s.image.id()),
++                ));
++            }
++            None => {
++                commands.entity(render_entity).try_remove::<(
++                    GpuAtmosphereHeightShadow,
++                    AtmosphereHeightShadowImage,
++                    DynamicUniformIndex<GpuAtmosphereHeightShadow>,
++                )>();
++            }
++        }
+         // Remove any stale render-world state when AtmosphereSettings is removed or candidates is empty
+         let (Some(settings), false) = (settings, candidates.is_empty()) else {
+             commands.entity(render_entity).try_remove::<(
+diff --git a/superfargoth/vendor/bevy_pbr/src/atmosphere/node.rs b/superfargoth/vendor/bevy_pbr/src/atmosphere/node.rs
+index 94f03f25..5a08793e 100644
+--- a/superfargoth/vendor/bevy_pbr/src/atmosphere/node.rs
++++ b/superfargoth/vendor/bevy_pbr/src/atmosphere/node.rs
+@@ -17,7 +17,7 @@ use super::{
+         AtmosphereBindGroups, AtmosphereLutPipelines, AtmosphereStaticLutCache,
+         AtmosphereTransformsOffset, RenderSkyPipelineId,
+     },
+-    GpuAtmosphereSettings,
++    GpuAtmosphereHeightShadow, GpuAtmosphereSettings,
+ };
+ 
+ pub fn atmosphere_luts(
+@@ -29,6 +29,8 @@ pub fn atmosphere_luts(
+         &AtmosphereTransformsOffset,
+         &ViewUniformOffset,
+         &ViewLightsUniformOffset,
++        // superfargoth patch (own, AS: aerial shadow)
++        Option<&DynamicUniformIndex<GpuAtmosphereHeightShadow>>,
+     )>,
+     pipelines: Res<AtmosphereLutPipelines>,
+     pipeline_cache: Res<PipelineCache>,
+@@ -43,6 +45,7 @@ pub fn atmosphere_luts(
+         atmosphere_transforms_offset,
+         view_uniforms_offset,
+         lights_uniforms_offset,
++        height_shadow_offset,
+     ) = view.into_inner();
+ 
+     let (
+@@ -142,17 +145,39 @@ pub fn atmosphere_luts(
+ 
+     // Aerial View LUT
+ 
+-    luts_pass.set_pipeline(aerial_view_lut_pipeline);
+-    luts_pass.set_bind_group(
+-        0,
+-        &bind_groups.aerial_view_lut,
+-        &[
+-            atmosphere_uniforms_offset.index(),
+-            settings_uniforms_offset.index(),
+-            view_uniforms_offset.offset,
+-            lights_uniforms_offset.offset,
+-        ],
+-    );
++    // superfargoth patch (own, AS: aerial shadow): the shadowed variant when the view has a height
++    // shadow on the GPU and its pipeline is ready; otherwise the stock pass.
++    let height_shadow = bind_groups
++        .aerial_view_lut_height_shadow
++        .as_ref()
++        .zip(height_shadow_offset)
++        .zip(pipeline_cache.get_compute_pipeline(pipelines.aerial_view_lut_height_shadow));
++    if let Some(((bind_group, offset), pipeline)) = height_shadow {
++        luts_pass.set_pipeline(pipeline);
++        luts_pass.set_bind_group(
++            0,
++            bind_group,
++            &[
++                atmosphere_uniforms_offset.index(),
++                settings_uniforms_offset.index(),
++                view_uniforms_offset.offset,
++                lights_uniforms_offset.offset,
++                offset.index(),
++            ],
++        );
++    } else {
++        luts_pass.set_pipeline(aerial_view_lut_pipeline);
++        luts_pass.set_bind_group(
++            0,
++            &bind_groups.aerial_view_lut,
++            &[
++                atmosphere_uniforms_offset.index(),
++                settings_uniforms_offset.index(),
++                view_uniforms_offset.offset,
++                lights_uniforms_offset.offset,
++            ],
++        );
++    }
+ 
+     dispatch_2d(&mut luts_pass, settings.aerial_view_lut_size.xy());
+     pass_span.end(&mut luts_pass);
+diff --git a/superfargoth/vendor/bevy_pbr/src/atmosphere/resources.rs b/superfargoth/vendor/bevy_pbr/src/atmosphere/resources.rs
+index 7be07f19..5399d7aa 100644
+--- a/superfargoth/vendor/bevy_pbr/src/atmosphere/resources.rs
++++ b/superfargoth/vendor/bevy_pbr/src/atmosphere/resources.rs
+@@ -23,13 +23,16 @@ use bevy_render::{
+     render_asset::RenderAssets,
+     render_resource::{binding_types::*, *},
+     renderer::{RenderDevice, RenderQueue},
+-    texture::{CachedTexture, TextureCache},
++    texture::{CachedTexture, GpuImage, TextureCache},
+     view::{ExtractedView, Msaa, ViewDepthStencilTexture, ViewUniform, ViewUniforms},
+ };
+ use bevy_shader::Shader;
+ use bevy_utils::default;
+ 
+-use super::GpuAtmosphereSettings;
++use super::{
++    AtmosphereHeightShadowImage, GpuAtmosphereHeightShadow, GpuAtmosphereSettings,
++    ATMOSPHERE_HEIGHT_SHADOW_DEF,
++};
+ 
+ #[derive(Resource)]
+ pub(crate) struct AtmosphereBindGroupLayouts {
+@@ -39,6 +42,9 @@ pub(crate) struct AtmosphereBindGroupLayouts {
+     pub aerial_view_lut: BindGroupLayoutDescriptor,
+     /// superfargoth patch (own, P1b): `medium_lut.wesl`, the combined medium LUTs.
+     pub medium_lut: BindGroupLayoutDescriptor,
++    /// superfargoth patch (own, AS: aerial shadow): the aerial view LUT's bindings plus the
++    /// height shadow's uniform (14), map (15) and its sampler (16).
++    pub aerial_view_lut_height_shadow: BindGroupLayoutDescriptor,
+ }
+ 
+ #[derive(Resource)]
+@@ -159,6 +165,36 @@ impl AtmosphereBindGroupLayouts {
+             ),
+         );
+ 
++        // superfargoth patch (own, AS: aerial shadow): the stock entries plus the height shadow.
++        let aerial_view_lut_height_shadow = BindGroupLayoutDescriptor::new(
++            "aerial_view_lut_height_shadow_bind_group_layout",
++            &BindGroupLayoutEntries::with_indices(
++                ShaderStages::COMPUTE,
++                (
++                    (0, uniform_buffer::<GpuAtmosphere>(true)),
++                    (1, uniform_buffer::<GpuAtmosphereSettings>(true)),
++                    (3, uniform_buffer::<ViewUniform>(true)),
++                    (4, uniform_buffer::<GpuLights>(true)),
++                    (5, texture_2d(TextureSampleType::default())),
++                    (6, texture_2d(TextureSampleType::default())),
++                    (7, sampler(SamplerBindingType::Filtering)),
++                    (8, texture_2d(TextureSampleType::default())),
++                    (9, texture_2d(TextureSampleType::default())),
++                    (12, sampler(SamplerBindingType::Filtering)),
++                    (
++                        13,
++                        texture_storage_3d(
++                            TextureFormat::Rgba16Float,
++                            StorageTextureAccess::WriteOnly,
++                        ),
++                    ),
++                    (14, uniform_buffer::<GpuAtmosphereHeightShadow>(true)),
++                    (15, texture_2d(TextureSampleType::Float { filterable: true })),
++                    (16, sampler(SamplerBindingType::Filtering)),
++                ),
++            ),
++        );
++
+         // superfargoth patch (own, P1b): unit falloff and phase LUTs in (read with
+         // `textureLoad`), the stock combined density and scattering LUTs out.
+         let medium_lut = BindGroupLayoutDescriptor::new(
+@@ -193,6 +229,7 @@ impl AtmosphereBindGroupLayouts {
+             sky_view_lut,
+             aerial_view_lut,
+             medium_lut,
++            aerial_view_lut_height_shadow,
+         }
+     }
+ }
+@@ -286,6 +323,9 @@ pub(crate) struct AtmosphereLutPipelines {
+     pub aerial_view_lut: CachedComputePipelineId,
+     /// superfargoth patch (own, P1b).
+     pub medium_lut: CachedComputePipelineId,
++    /// superfargoth patch (own, AS: aerial shadow): `aerial_view_lut.wesl` with
++    /// [`ATMOSPHERE_HEIGHT_SHADOW_DEF`], for views with an `AtmosphereHeightShadow`.
++    pub aerial_view_lut_height_shadow: CachedComputePipelineId,
+ }
+ 
+ impl FromWorld for AtmosphereLutPipelines {
+@@ -329,12 +369,23 @@ impl FromWorld for AtmosphereLutPipelines {
+             ..default()
+         });
+ 
++        // superfargoth patch (own, AS: aerial shadow)
++        let aerial_view_lut_height_shadow =
++            pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
++                label: Some("aerial_view_lut_height_shadow_pipeline".into()),
++                layout: vec![layouts.aerial_view_lut_height_shadow.clone()],
++                shader: load_embedded_asset!(world, "aerial_view_lut.wesl"),
++                shader_defs: vec![ATMOSPHERE_HEIGHT_SHADOW_DEF.into()],
++                ..default()
++            });
++
+         Self {
+             transmittance_lut,
+             multiscattering_lut,
+             sky_view_lut,
+             aerial_view_lut,
+             medium_lut,
++            aerial_view_lut_height_shadow,
+         }
+     }
+ }
+@@ -722,6 +773,9 @@ pub(crate) struct AtmosphereBindGroups {
+     pub multiscattering_lut: BindGroup,
+     pub sky_view_lut: BindGroup,
+     pub aerial_view_lut: BindGroup,
++    /// superfargoth patch (own, AS: aerial shadow): the shadowed aerial view LUT's group, when
++    /// the view has a height shadow whose map is on the GPU.
++    pub aerial_view_lut_height_shadow: Option<BindGroup>,
+     pub render_sky: BindGroup,
+     /// superfargoth patch (own, P1b): writes the combined medium LUTs (`medium_lut.wesl`).
+     pub medium_lut: BindGroup,
+@@ -758,6 +812,8 @@ pub(super) fn prepare_atmosphere_bind_groups(
+             &AtmosphereTextures,
+             &ViewDepthStencilTexture,
+             &Msaa,
++            // superfargoth patch (own, AS: aerial shadow)
++            Option<&AtmosphereHeightShadowImage>,
+         ),
+         (With<Camera3d>, With<ExtractedAtmosphere>),
+     >,
+@@ -774,6 +830,11 @@ pub(super) fn prepare_atmosphere_bind_groups(
+     medium_sampler: Res<ScatteringMediumSampler>,
+     pipeline_cache: Res<PipelineCache>,
+     mut commands: Commands,
++    // superfargoth patch (own, AS: aerial shadow)
++    (gpu_images, height_shadow_uniforms): (
++        Res<RenderAssets<GpuImage>>,
++        Res<ComponentUniforms<GpuAtmosphereHeightShadow>>,
++    ),
+ ) -> Result<(), BevyError> {
+     use core::hash::{BuildHasher, Hash, Hasher};
+ 
+@@ -804,7 +865,9 @@ pub(super) fn prepare_atmosphere_bind_groups(
+         .binding()
+         .ok_or(AtmosphereBindGroupError::LightUniforms)?;
+ 
+-    for (entity, atmosphere, lut_settings, textures, view_depth_texture, msaa) in &views {
++    for (entity, atmosphere, lut_settings, textures, view_depth_texture, msaa, height_shadow) in
++        &views
++    {
+         let Some(depth_view) = view_depth_texture
+             .attachment
+             .depth_stencil_views()
+@@ -940,6 +1003,34 @@ pub(super) fn prepare_atmosphere_bind_groups(
+             )),
+         );
+ 
++        // superfargoth patch (own, AS: aerial shadow): the stock entries plus the height shadow's
++        // uniform, map and the map's own sampler; none until the map is on the GPU.
++        let aerial_view_lut_height_shadow = height_shadow
++            .and_then(|image| gpu_images.get(image.0))
++            .zip(height_shadow_uniforms.binding())
++            .map(|(image, shadow_binding)| {
++                render_device.create_bind_group(
++                    "aerial_view_lut_height_shadow_bind_group",
++                    &pipeline_cache.get_bind_group_layout(&layouts.aerial_view_lut_height_shadow),
++                    &BindGroupEntries::with_indices((
++                        (0, atmosphere_binding.clone()),
++                        (1, settings_binding.clone()),
++                        (3, view_binding.clone()),
++                        (4, lights_binding.clone()),
++                        (5, &textures.medium_density_lut.default_view),
++                        (6, &textures.medium_scattering_lut.default_view),
++                        (7, medium_sampler.sampler()),
++                        (8, &textures.transmittance_lut.default_view),
++                        (9, &textures.multiscattering_lut.default_view),
++                        (12, &**atmosphere_sampler),
++                        (13, &textures.aerial_view_lut.default_view),
++                        (14, shadow_binding),
++                        (15, &image.texture_view),
++                        (16, &image.sampler),
++                    )),
++                )
++            });
++
+         let render_sky = render_device.create_bind_group(
+             "render_sky_bind_group",
+             &pipeline_cache.get_bind_group_layout(if *msaa == Msaa::Off {
+@@ -974,6 +1065,7 @@ pub(super) fn prepare_atmosphere_bind_groups(
+             multiscattering_lut,
+             sky_view_lut,
+             aerial_view_lut,
++            aerial_view_lut_height_shadow,
+             render_sky,
+             medium_lut,
+             medium_lut_size,

@@ -253,3 +253,131 @@ fn storm_cloud_shape_compiles() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+/// AS (aerial-shadow.md): the froxels' far-shadow rule reads the `sky.far_shadow.*` tunables
+/// from the `Froxels` uniform (`far_vis`, `far_fade`), no bare consts left; the inject links and
+/// validates (the layout is `froxel_clamp_compiles_and_keeps_the_layout`'s).
+#[test]
+fn froxel_far_shadow_reads_its_tunables() {
+    let wgsl = compile("sf_atmos_bevy::shaders::froxel_inject", &[]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(wgsl.contains(".far_vis") && wgsl.contains(".far_fade"), "far_visibility reads the uniform");
+    assert!(!wgsl.contains("FAR_PENUMBRA") && !wgsl.contains("FAR_BIAS"), "no bare far-shadow consts");
+}
+
+/// Finds the struct named `name` in a linked module: its member names and size.
+fn struct_layout(wgsl: &str, name: &str) -> (Vec<String>, u64) {
+    let module = naga::front::wgsl::parse_str(wgsl).expect("parses");
+    let (handle, ty) = module
+        .types
+        .iter()
+        .find(|(_, t)| t.name.as_deref().is_some_and(|n| n.contains(name)))
+        .unwrap_or_else(|| panic!("{name} in the linked module"));
+    let naga::TypeInner::Struct { members, .. } = &ty.inner else { panic!("{name}: a struct") };
+    let names = members.iter().filter_map(|m| m.name.clone()).collect();
+    let mut layouter = naga::proc::Layouter::default();
+    layouter.update(module.to_ctx()).expect("layout");
+    (names, u64::from(layouter[handle].size))
+}
+
+/// LSO (aerial-shadow.md "S3"): the mask (with and without MSAA) and the blur link and validate,
+/// their entry points exist, and the WGSL `ShaftsPass` matches `ShaftsPassUniform`.
+#[test]
+fn light_shaft_passes_compile_and_keep_the_layout() {
+    use bevy_render::render_resource::ShaderType;
+    let mut failures = Vec::new();
+    for (module, defs, entry) in [
+        ("sf_atmos_bevy::shaders::shafts_mask", &[][..], "fn mask"),
+        ("sf_atmos_bevy::shaders::shafts_mask", &["MULTISAMPLED"][..], "fn mask"),
+        ("sf_atmos_bevy::shaders::shafts_blur", &[][..], "fn blur"),
+        ("sf_atmos_bevy::shaders::shafts_bloom", &[][..], "fn source"),
+        ("sf_atmos_bevy::shaders::shafts_bloom", &["MULTISAMPLED"][..], "fn source"),
+    ] {
+        match compile(module, defs) {
+            Ok(wgsl) if !wgsl.contains(entry) => failures.push(format!("{module} {defs:?}: no {entry}")),
+            Ok(wgsl) => {
+                let (names, size) = struct_layout(&wgsl, "ShaftsPass");
+                if names != ["sun_uv", "step", "taps", "full_size", "depth_m"] {
+                    failures.push(format!("{module}: ShaftsPass fields {names:?}"));
+                }
+                if size != crate::shafts::ShaftsPassUniform::min_size().get() {
+                    failures.push(format!("{module}: ShaftsPass size {size} vs Rust"));
+                }
+            }
+            Err(e) => failures.push(e),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// Light shaft bloom (aerial-shadow.md "S3b"): the source (with and without MSAA depth) and the
+/// apply link and validate, and their WGSL `ShaftsBloom` matches `ShaftsBloomUniform`.
+#[test]
+fn light_shaft_bloom_compiles_and_keeps_the_layout() {
+    use bevy_render::render_resource::ShaderType;
+    let mut failures = Vec::new();
+    for (module, defs, entry) in [
+        ("sf_atmos_bevy::shaders::shafts_bloom", &[][..], "fn source"),
+        ("sf_atmos_bevy::shaders::shafts_bloom", &["MULTISAMPLED"][..], "fn source"),
+        ("sf_atmos_bevy::shaders::shafts_apply", &[][..], "fn apply"),
+    ] {
+        match compile(module, defs) {
+            Ok(wgsl) if !wgsl.contains(entry) => failures.push(format!("{module} {defs:?}: no {entry}")),
+            Ok(wgsl) => {
+                let (names, size) = struct_layout(&wgsl, "ShaftsBloom");
+                if names != ["tint", "threshold", "max_luminance", "radius", "aspect"] {
+                    failures.push(format!("{module}: ShaftsBloom fields {names:?}"));
+                }
+                if size != crate::shafts::ShaftsBloomUniform::min_size().get() {
+                    failures.push(format!("{module}: ShaftsBloom size {size} vs Rust"));
+                }
+            }
+            Err(e) => failures.push(e),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// LSO: the composite (with and without MSAA) masks the fog's sun term with the occlusion and
+/// its `LightShafts` matches `bevy_pbr::GpuAtmosphereLightShafts`.
+#[test]
+fn composite_reads_the_light_shaft_occlusion() {
+    use bevy_render::render_resource::ShaderType;
+    for defs in [&[][..], &["MULTISAMPLED"][..]] {
+        let wgsl = compile("sf_atmos_bevy::shaders::cloud_composite", defs).unwrap_or_else(|e| panic!("{e}"));
+        assert!(wgsl.contains("shaft_occlusion") && wgsl.contains("light_shafts_occlusion"), "{defs:?}: the sun term is masked");
+        let (names, size) = struct_layout(&wgsl, "LightShafts");
+        assert_eq!(names, ["light_dir", "darkness", "lobe_g"], "field order = GpuAtmosphereLightShafts");
+        assert_eq!(size, bevy_pbr::GpuAtmosphereLightShafts::min_size().get(), "WGSL vs Rust size");
+    }
+}
+
+/// LSO (vendored `render_sky`): without the def the pass is stock (no occlusion bindings); with
+/// it, every MSAA / dual-source variant links and validates, masks the geometry branch and keeps
+/// the `AtmosphereLightShafts` layout of `GpuAtmosphereLightShafts`.
+#[test]
+fn render_sky_compiles_with_and_without_the_light_shaft_occlusion() {
+    use bevy_render::render_resource::ShaderType;
+    let def = bevy_pbr::ATMOSPHERE_LIGHT_SHAFTS_DEF;
+    let mut failures = Vec::new();
+    for base in [&[][..], &["MULTISAMPLED"][..], &["DUAL_SOURCE_BLENDING"][..], &["DUAL_SOURCE_BLENDING", "MULTISAMPLED"][..]] {
+        match compile("bevy_pbr::atmosphere::render_sky", base) {
+            Ok(wgsl) if wgsl.contains("light_shaft") => failures.push(format!("{base:?}: stock pass has the occlusion")),
+            Ok(_) => {}
+            Err(e) => failures.push(e),
+        }
+        let defs: Vec<&str> = base.iter().copied().chain([def]).collect();
+        match compile("bevy_pbr::atmosphere::render_sky", &defs) {
+            Ok(wgsl) => {
+                if !wgsl.contains("light_shaft_occlusion(") || !wgsl.contains("light_shafts_occlusion") {
+                    failures.push(format!("{defs:?}: no occlusion"));
+                }
+                let (names, size) = struct_layout(&wgsl, "AtmosphereLightShafts");
+                if names != ["light_dir", "darkness", "lobe_g"] || size != bevy_pbr::GpuAtmosphereLightShafts::min_size().get() {
+                    failures.push(format!("{defs:?}: layout {names:?} {size}"));
+                }
+            }
+            Err(e) => failures.push(e),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}

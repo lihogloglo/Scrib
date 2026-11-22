@@ -7909,6 +7909,8 @@ dependencies = [
  "sf_atmos",
  "sf_render_order_bevy",
  "sf_sky_bevy",
+ "sf_tunables",
+ "sf_tunables_bevy",
  "sf_weather",
  "wesl",
  "workspace-hack",

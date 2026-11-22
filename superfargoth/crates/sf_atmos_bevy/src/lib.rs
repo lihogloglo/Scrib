@@ -28,7 +28,8 @@
 //!   [`Fog::view_ambient`]) to the sky's, so a host's night ambient floor
 //!   lights the fog as it lights the ground (WE-9).
 //! - GPU timers: each pass is a `RenderDiagnosticsPlugin` span
-//!   (`clouds_shadow`, `clouds_trace`, `clouds_resolve`, `clouds_composite`).
+//!   (`clouds_shadow`, `clouds_trace`, `clouds_resolve`, `clouds_composite`; `shafts` for the
+//!   light shaft occlusion's mask and blurs, [`LightShafts`]).
 //! - Floating origin: the app reports the absolute position of the
 //!   origin-relative frame in [`CloudsOrigin`]; texture offsets carry it as a
 //!   phase (tiles divide 16 384 m), so clouds never move on origin shifts.
@@ -38,16 +39,56 @@
 //! (MIT OR Apache-2.0, ARCHITECTURE §10, 2026-10-12); the architecture
 //! (shell, reduced resolution, temporal, LUT lighting, shadow map) is new.
 
+mod aerial_shadow;
 mod fog_translucents;
 mod render;
+mod shafts;
 mod transparent;
 mod weather_map;
 #[cfg(test)]
 mod shader_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod aerial_shadow_tests;
+#[cfg(test)]
+mod shafts_tests;
 
+pub use aerial_shadow::{
+    aerial_height_shadow, wanted_height_shadow, AerialShadow, FarShadowShape, AERIAL_SHADOW, FAR_SHADOW_BIAS, FAR_SHADOW_BIAS_PER_M,
+    FAR_SHADOW_FADE_START, FAR_SHADOW_PENUMBRA_MIN, FAR_SHADOW_PENUMBRA_PER_M,
+};
 pub use fog_translucents::FogTranslucentsPlugin;
+pub use shafts::{
+    track_sun, LightShafts, ShaftsBloomCamera, ShaftsCamera, ShaftsSun, ShaftsViewParams, SHAFTS_BLOOM, SHAFTS_BLOOM_MAX, SHAFTS_BLOOM_RADIUS,
+    SHAFTS_BLOOM_SCALE, SHAFTS_BLOOM_THRESHOLD, SHAFTS_BLOOM_TINT, SHAFTS_ENABLED, SHAFTS_LENGTH, SHAFTS_LOBE_G, SHAFTS_OCCLUSION,
+    SHAFTS_OCCLUSION_DEPTH, SHAFTS_OFFSCREEN_FADE, SHAFTS_PASSES, SHAFTS_TAPS,
+};
+
+/// This crate's tunables (`sky.aerial.*`, `sky.far_shadow.*`, `sky.shafts.*`), for the game's
+/// catalogue (`bevyrrowind tunables --md`).
+pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[
+    &AERIAL_SHADOW,
+    &FAR_SHADOW_PENUMBRA_PER_M,
+    &FAR_SHADOW_PENUMBRA_MIN,
+    &FAR_SHADOW_BIAS,
+    &FAR_SHADOW_BIAS_PER_M,
+    &FAR_SHADOW_FADE_START,
+    &SHAFTS_ENABLED,
+    &SHAFTS_OCCLUSION,
+    &SHAFTS_OCCLUSION_DEPTH,
+    &SHAFTS_PASSES,
+    &SHAFTS_TAPS,
+    &SHAFTS_LENGTH,
+    &SHAFTS_OFFSCREEN_FADE,
+    &SHAFTS_LOBE_G,
+    &SHAFTS_BLOOM,
+    &SHAFTS_BLOOM_SCALE,
+    &SHAFTS_BLOOM_THRESHOLD,
+    &SHAFTS_BLOOM_MAX,
+    &SHAFTS_BLOOM_TINT,
+    &SHAFTS_BLOOM_RADIUS,
+];
 pub use transparent::{FroxelFogExt, FroxelFogMaterial, FroxelVolume};
 pub use weather_map::CloudWeatherMap;
 
@@ -267,6 +308,8 @@ pub(crate) struct CloudFrame {
     pub cb_shape: bool,
     /// [`FarStormShape`].
     pub storm_shape: sf_atmos::StormShape,
+    /// [`FarShadowShape`] (the froxels' far-shadow rule).
+    pub far_shape: FarShadowShape,
     /// The camera's ambient radiance × [`Fog::view_ambient`] (linear RGB),
     /// added to the fog's sky fill.
     pub fog_ambient: Vec3,
@@ -309,6 +352,11 @@ impl Plugin for CloudsPlugin {
         load_shader_library!(app, "shaders/fog_bank.wesl");
         load_shader_library!(app, "shaders/bank_edges.wesl");
         load_shader_library!(app, "shaders/froxel_common.wesl");
+        load_shader_library!(app, "shaders/shafts_common.wesl");
+        embedded_asset!(app, "shaders/shafts_mask.wesl");
+        embedded_asset!(app, "shaders/shafts_blur.wesl");
+        embedded_asset!(app, "shaders/shafts_bloom.wesl");
+        embedded_asset!(app, "shaders/shafts_apply.wesl");
         embedded_asset!(app, "shaders/transparent_fog.wesl");
         embedded_asset!(app, "shaders/cloud_trace.wesl");
         embedded_asset!(app, "shaders/cloud_resolve.wesl");
@@ -358,6 +406,10 @@ impl Plugin for CloudsPlugin {
             .add_systems(Startup, create_shadow_image)
             .add_systems(Update, poll_noise)
             .add_systems(PostUpdate, drive.in_set(CloudSystems::Drive).after(TransformSystems::Propagate));
+        // AS (aerial-shadow.md): the far-shadow tunables and the aerial view LUT's height shadow.
+        aerial_shadow::build(app);
+        // LSO (aerial-shadow.md "S3"): the light shaft occlusion's tunables and passes.
+        shafts::build(app);
         render::build(app);
     }
 
@@ -429,7 +481,7 @@ type ShadowLightFilter = (With<CloudShadowLight>, With<DirectionalLight>, Withou
 /// Point lights the froxels may light (disjoint from the shadow light's mutable transform).
 type FogLightQuery<'w, 's> = Query<'w, 's, (&'static PointLight, &'static GlobalTransform, &'static ViewVisibility), Without<DirectionalLight>>;
 /// The fog and its A/B switches, as one [`drive`] parameter (Bevy's 16-parameter limit).
-type FogSwitches<'w> = (Res<'w, Fog>, Res<'w, FogBankEdges>, Res<'w, FogCloudSplit>, Res<'w, FarStormShape>, Res<'w, CloudEdgeStable>, Res<'w, CumulonimbusShape>);
+type FogSwitches<'w> = (Res<'w, Fog>, Res<'w, FogBankEdges>, Res<'w, FogCloudSplit>, Res<'w, FarStormShape>, Res<'w, CloudEdgeStable>, Res<'w, CumulonimbusShape>, Res<'w, FarShadowShape>);
 
 /// Advances the wind, computes the texture offsets, places the shadow
 /// light's texture around the camera, and fills [`CloudFrame`]. Runs after
@@ -439,7 +491,7 @@ fn drive(
     mut commands: Commands,
     time: Res<Time>,
     clouds: Res<Clouds>,
-    (fog, bank_edges, cloud_split, storm_shape, edge_stable, cb_shape): FogSwitches,
+    (fog, bank_edges, cloud_split, storm_shape, edge_stable, cb_shape, far_shape): FogSwitches,
     origin: Res<CloudsOrigin>,
     images: Res<CloudImages>,
     mut scroll: ResMut<Scroll>,
@@ -518,6 +570,7 @@ fn drive(
         cloud_edge_stable: edge_stable.0,
         cb_shape: cb_shape.0,
         storm_shape: storm_shape.0,
+        far_shape: *far_shape,
         fog_ambient: sf_atmos::fog_fill(Vec3::ZERO, ambient, fog.view_ambient),
         fog_offsets: drift.0.offsets([origin.0.x, origin.0.z], &fog.settings.banks),
         glows: clouds.glows,

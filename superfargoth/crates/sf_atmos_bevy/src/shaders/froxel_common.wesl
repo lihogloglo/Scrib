@@ -54,6 +54,12 @@ struct Froxels {
     // (`sf_atmos::FroxelJitter::PerFroxel`; clear: `jitter` as is). Bit 1: the
     // history is clipped to the neighbourhood (`FroxelSettings::clamp`).
     flags: u32,
+    // The terrain far shadow's rule (`sf_atmos_bevy::FarShadowShape`, the `sky.far_shadow.*`
+    // tunables): penumbra per meter of occluder distance, its floor (m), bias (m), bias per meter
+    // of view distance.
+    far_vis: vec4<f32>,
+    // Where the far shadow starts fading to lit (fraction of the map's half extent).
+    far_fade: f32,
     fog: Fog,
     lights: array<FogLight, MAX_FOG_LIGHTS>,
 };

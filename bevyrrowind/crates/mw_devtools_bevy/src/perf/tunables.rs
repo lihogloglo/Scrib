@@ -43,6 +43,7 @@ pub const CATALOG: &[(&str, &[&dyn AnyDef])] = &[
     ("sf_rockgen::boulder", sf_rockgen::boulder::tunables::TUNABLES),
     ("sf_rockgen_bevy", sf_rockgen_bevy::tunables::TUNABLES),
     ("sf_terrain_bevy", sf_terrain_bevy::TUNABLES),
+    ("sf_atmos_bevy", sf_atmos_bevy::TUNABLES),
     ("sf_sky::lamp_cache", sf_sky_bevy::sf_sky::lamp_cache::TUNABLES),
     ("sf_sky::shadow_atlas", sf_sky_bevy::sf_sky::shadow_atlas::TUNABLES),
     ("sf_sky::sun_gate", sf_sky_bevy::sf_sky::sun_gate::TUNABLES),

@@ -66,7 +66,13 @@ pub(crate) fn build(app: &mut App) {
 /// (render-order.md RO-8).
 pub(crate) fn finish(app: &mut App) {
     let mine = [trace_pass.into_system_set().intern(), shadow_pass.into_system_set().intern()];
-    sf_render_order_bevy::add_pass(app, PassStage::Clouds, composite_pass.into_system_set().intern(), &mine, composite_pass.after(trace_pass));
+    sf_render_order_bevy::add_pass(app, PassStage::Clouds, composite_pass.into_system_set().intern(), &mine, composite_pass.after(trace_pass).after(crate::shafts::shafts_pass));
+    // The light shaft bloom (aerial-shadow.md "S3b"): reads the composited scene colour (clouds
+    // block the rays, gaps make them) and adds the rays back, in the same stage after the
+    // composite: after `render_sky`, the night sky and everything else before the transparents,
+    // before the medium (underwater) pass and Bevy's post-processing.
+    let bloom = crate::shafts::bloom_pass;
+    sf_render_order_bevy::add_pass(app, PassStage::Clouds, bloom.into_system_set().intern(), &mine, bloom.after(composite_pass));
 }
 
 // -- uniform -------------------------------------------------------------------
@@ -275,6 +281,10 @@ pub(crate) struct FroxelUniform {
     /// Bit 0: `FroxelJitter::PerFroxel` (per-froxel rotation, history at the froxel centre);
     /// bit 1: `FroxelSettings::clamp` (history clipped to the neighbourhood, FOG-CLAMP).
     flags: u32,
+    /// The far-shadow rule (`FarShadowShape`): penumbra per m, penumbra floor, bias, bias per m.
+    far_vis: Vec4,
+    /// Where the far shadow fades to lit (fraction of the map's half extent).
+    far_fade: f32,
     fog: FogUniform,
     lights: [FogLightGpu; sf_atmos::MAX_FOG_LIGHTS],
 }
@@ -395,6 +405,9 @@ impl FromWorld for CloudPipelines {
                         uniform_buffer::<FroxelUniform>(false),
                         texture_3d(TextureSampleType::default()),
                         sampler(SamplerBindingType::Filtering),
+                        // The light shaft occlusion (`shafts.rs`): its uniform and blurred mask.
+                        uniform_buffer::<bevy_pbr::GpuAtmosphereLightShafts>(false),
+                        texture_2d(TextureSampleType::default()),
                     ),
                 ),
             ),
@@ -444,7 +457,7 @@ impl FromWorld for CloudPipelines {
     }
 }
 
-const HDR: TextureFormat = TextureFormat::Rgba16Float;
+pub(crate) const HDR: TextureFormat = TextureFormat::Rgba16Float;
 /// Froxel volumes (weather.md: RGBA16F scattering/extinction, and the integrated light/transmittance).
 const FROXEL: TextureFormat = TextureFormat::Rgba16Float;
 /// The fog light texture (`fog_light.wesl`): the sky fill, the key
@@ -587,7 +600,7 @@ struct FroxelPass {
     size: [u32; 3],
 }
 
-fn cached(cache: &mut TextureCache, device: &RenderDevice, label: &'static str, size: UVec2, format: TextureFormat) -> CachedTexture {
+pub(crate) fn cached(cache: &mut TextureCache, device: &RenderDevice, label: &'static str, size: UVec2, format: TextureFormat) -> CachedTexture {
     cache.get(
         device,
         TextureDescriptor {
@@ -671,6 +684,9 @@ fn froxel_uniform(frame: &CloudFrame, view: &ExtractedView, exposure: f32, setti
         // The sun the cloud and terrain shadow maps were made for (none: neither applies).
         shadow_light: frame.shadow.map_or(Vec3::ZERO, |b| b.light_dir),
         flags: u32::from(s.jitter == sf_atmos::FroxelJitter::PerFroxel) | (u32::from(s.clamp) << 1),
+        // `sky.far_shadow.*` (shared with the aerial view LUT's height shadow).
+        far_vis: frame.far_shape.froxel_vec(),
+        far_fade: frame.far_shape.fade_start,
         fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, frame.fog_ambient, FOG_STEPS, frame.fog_bank_edges),
         lights,
     }
@@ -700,6 +716,7 @@ type ViewItem = (
     &'static ExtractedCamera,
     Option<&'static ViewShadowBindings>,
     Option<&'static TemporalJitter>,
+    Option<&'static crate::shafts::ShaftsView>,
 );
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -750,7 +767,7 @@ fn prepare_views(
         shell = (shell.0.min(v.envelope[0]), shell.1.max(v.envelope[1]), shell.2.max(v.envelope[2]));
         far_weather = u32::from(map_on == 1 && s.quality.far_weather && v.envelope[3] > 0.5);
     }
-    for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps, jitter) in &views {
+    for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps, jitter, shafts) in &views {
         if media.get(atmosphere.medium).is_none() { continue }
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
         let full = resolution.map_or(UVec2::new(view.viewport.z, view.viewport.w), |r| r.0).max(UVec2::ONE);
@@ -965,6 +982,16 @@ fn prepare_views(
             }
             _ => None,
         };
+        // The light shaft occlusion's uniform and mask, or a stand-in that masks nothing.
+        let shafts_none = shafts.is_none().then(|| {
+            let mut buffer = UniformBuffer::from(bevy_pbr::GpuAtmosphereLightShafts::default());
+            buffer.write_buffer(&device, &queue);
+            (buffer, cached(&mut textures, &device, "shafts_none", UVec2::ONE, TextureFormat::R16Float))
+        });
+        let shafts_inputs = shafts
+            .map(|s| (s.occlusion.binding(), &s.result().default_view))
+            .or_else(|| shafts_none.as_ref().map(|(buffer, texture)| (buffer.binding(), &texture.default_view)));
+        let Some((Some(shafts_binding), shafts_view)) = shafts_inputs else { continue };
         let composite = device.create_bind_group(
             "clouds_composite",
             &cache.get_bind_group_layout(&pipelines.composite),
@@ -976,6 +1003,8 @@ fn prepare_views(
                 froxel_binding,
                 integrated_view,
                 &pipelines.linear_sampler,
+                shafts_binding,
+                shafts_view,
             )),
         );
         let fog_light = frame.fog.is_some().then(|| {

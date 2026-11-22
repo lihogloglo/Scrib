@@ -1,0 +1,458 @@
+# superfargoth patch (own, LSO: light shaft occlusion), superfargoth/docs/specs/aerial-shadow.md "S3" (ROADMAP 1.27 S3a, FG-12). Against the vendored tree as of 2026-11-22 (after AS: superfargoth-aerial-shadow.diff).
+diff --git a/superfargoth/vendor/bevy_pbr/src/atmosphere/mod.rs b/superfargoth/vendor/bevy_pbr/src/atmosphere/mod.rs
+index ceacee1..9f52460 100644
+--- a/superfargoth/vendor/bevy_pbr/src/atmosphere/mod.rs
++++ b/superfargoth/vendor/bevy_pbr/src/atmosphere/mod.rs
+@@ -52,6 +52,8 @@ use bevy_ecs::{
+     entity::Entity,
+     query::{Changed, With},
+     schedule::IntoScheduleConfigs,
++    // superfargoth patch (own, LSO: light shaft occlusion)
++    schedule::SystemSet,
+     system::{Commands, Query},
+ };
+ use bevy_image::Image;
+@@ -202,6 +204,8 @@ impl Plugin for AtmospherePlugin {
+                         .before(Core3dSystems::MainPass),
+                     render_sky
+                         .after(main_opaque_pass_3d)
++                        // superfargoth patch (own, LSO: light shaft occlusion)
++                        .after(RenderSkyInputs)
+                         // superfargoth patch (own: sky after water): the sky and the aerial
+                         // perspective read the depth of transmissive draws too (the water, W-ORDER).
+                         .after(crate::transmission::main_transmissive_pass_3d)
+@@ -288,6 +292,48 @@ pub struct AtmosphereHeightShadowImage(pub AssetId<Image>);
+ /// superfargoth patch (own, AS: aerial shadow): the shader def of the shadowed aerial view LUT.
+ pub const ATMOSPHERE_HEIGHT_SHADOW_DEF: &str = "ATMOSPHERE_HEIGHT_SHADOW";
+ 
++/// superfargoth patch (own, LSO: light shaft occlusion), `superfargoth/docs/specs/aerial-shadow.md`
++/// "S3": a render-world view component giving `render_sky` a screen-space light shaft occlusion
++/// (UE "Light Shaft Occlusion", Mitchell 2007): `occlusion` is a filterable float texture over the
++/// view's (internal-resolution) viewport whose red channel `o` in `[0, 1]` says how much of the
++/// way from the pixel to the light is open sky; `uniform` a buffer holding one
++/// [`GpuAtmosphereLightShafts`]. On geometry pixels the aerial perspective's in-scattering is
++/// multiplied by `1 - darkness * (1 - o) * lobe`, `lobe` = Henyey-Greenstein (`lobe_g`) toward
++/// `light_dir` normalised to 1 at the light. Sky pixels are unchanged. Inserted by the app's own
++/// render systems before [`RenderSkyInputs`] runs (`RenderSystems::PrepareResources`, so the bind
++/// group sees it); absent = the stock `render_sky` pipeline and bind group.
++#[derive(Clone, Component)]
++pub struct AtmosphereLightShafts {
++    /// The occlusion texture, sampled at the fullscreen UV with the atmosphere LUT sampler.
++    pub occlusion: bevy_render::render_resource::TextureView,
++    /// A uniform buffer of one [`GpuAtmosphereLightShafts`].
++    pub uniform: bevy_render::render_resource::Buffer,
++}
++
++/// superfargoth patch (own, LSO: light shaft occlusion): the uniform of
++/// [`AtmosphereLightShafts`] (`render_sky.wesl` `AtmosphereLightShafts`; field order is the
++/// layout).
++#[derive(Clone, Copy, ShaderType, Debug, Default, PartialEq)]
++pub struct GpuAtmosphereLightShafts {
++    /// Toward the light whose forward lobe is masked (world space, unit).
++    pub light_dir: Vec3,
++    /// Occlusion strength in `[0, 1]`: 0 = stock, 1 = a fully closed pixel looking at the light
++    /// gets no in-scattering.
++    pub darkness: f32,
++    /// The lobe's Henyey-Greenstein asymmetry (the haze's Mie asymmetry).
++    pub lobe_g: f32,
++}
++
++/// superfargoth patch (own, LSO: light shaft occlusion): the shader def of `render_sky` with the
++/// light shaft occlusion.
++pub const ATMOSPHERE_LIGHT_SHAFTS_DEF: &str = "ATMOSPHERE_LIGHT_SHAFTS";
++
++/// superfargoth patch (own, LSO: light shaft occlusion): `Core3d` systems that write what
++/// `render_sky` reads (an [`AtmosphereLightShafts`] texture) go in this set; `render_sky` runs
++/// after it. A public name for that order (`render_sky` itself is private).
++#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
++pub struct RenderSkyInputs;
++
+ /// For each camera with [`AtmosphereSettings`], picks the nearest [`Atmosphere`] by world-space
+ /// distance to its origin, copies it as [`ExtractedAtmosphere`], and builds [`GpuAtmosphereSettings`].
+ pub fn extract_atmosphere(
+diff --git a/superfargoth/vendor/bevy_pbr/src/atmosphere/node.rs b/superfargoth/vendor/bevy_pbr/src/atmosphere/node.rs
+index 5a08793..560dc2d 100644
+--- a/superfargoth/vendor/bevy_pbr/src/atmosphere/node.rs
++++ b/superfargoth/vendor/bevy_pbr/src/atmosphere/node.rs
+@@ -16,6 +16,8 @@ use super::{
+     resources::{
+         AtmosphereBindGroups, AtmosphereLutPipelines, AtmosphereStaticLutCache,
+         AtmosphereTransformsOffset, RenderSkyPipelineId,
++        // superfargoth patch (own, LSO: light shaft occlusion)
++        RenderSkyLightShaftsPipelineId,
+     },
+     GpuAtmosphereHeightShadow, GpuAtmosphereSettings,
+ };
+@@ -198,6 +200,8 @@ pub fn render_sky(
+             &ViewLightsUniformOffset,
+             &RenderSkyPipelineId,
+             Option<&MainPassResolutionOverride>,
++            // superfargoth patch (own, LSO: light shaft occlusion)
++            Option<&RenderSkyLightShaftsPipelineId>,
+         ),
+         bevy_ecs::query::Without<super::SkyOccluded>,
+     >,
+@@ -215,6 +219,7 @@ pub fn render_sky(
+         lights_uniforms_offset,
+         render_sky_pipeline_id,
+         resolution_override,
++        light_shafts_pipeline_id,
+     ) = view.into_inner();
+ 
+     let Some(render_sky_pipeline) = pipeline_cache.get_render_pipeline(render_sky_pipeline_id.0)
+@@ -222,6 +227,13 @@ pub fn render_sky(
+         return;
+     }; //TODO: warning
+ 
++    // superfargoth patch (own, LSO: light shaft occlusion): the occluded variant when the view
++    // has its bind group and the pipeline is compiled; otherwise the stock pass.
++    let (render_sky_pipeline, render_sky_bind_group) = light_shafts_pipeline_id
++        .and_then(|id| pipeline_cache.get_render_pipeline(id.0))
++        .zip(atmosphere_bind_groups.render_sky_light_shafts.as_ref())
++        .unwrap_or((render_sky_pipeline, &atmosphere_bind_groups.render_sky));
++
+     let diagnostics = ctx.diagnostic_recorder();
+     let diagnostics = diagnostics.as_deref();
+ 
+@@ -253,7 +265,7 @@ pub fn render_sky(
+     render_sky_pass.set_pipeline(render_sky_pipeline);
+     render_sky_pass.set_bind_group(
+         0,
+-        &atmosphere_bind_groups.render_sky,
++        render_sky_bind_group,
+         &[
+             atmosphere_uniforms_offset.index(),
+             settings_uniforms_offset.index(),
+diff --git a/superfargoth/vendor/bevy_pbr/src/atmosphere/render_sky.wesl b/superfargoth/vendor/bevy_pbr/src/atmosphere/render_sky.wesl
+index b703e9d..36f837c 100644
+--- a/superfargoth/vendor/bevy_pbr/src/atmosphere/render_sky.wesl
++++ b/superfargoth/vendor/bevy_pbr/src/atmosphere/render_sky.wesl
+@@ -1,5 +1,5 @@
+ import package::atmosphere::{
+-    bindings::{view, settings},
++    bindings::{view, settings, atmosphere_lut_sampler},
+     bruneton_functions::sample_transmittance_lut_segment,
+     functions::{
+         sample_transmittance_lut,
+@@ -20,6 +20,38 @@ enable dual_source_blending;
+ @else
+ @group(0) @binding(13) var depth_texture: texture_depth_2d;
+ 
++// superfargoth patch (own, LSO: light shaft occlusion), `superfargoth/docs/specs/aerial-shadow.md`
++// "S3": a screen-space light shaft occlusion (`bevy_pbr::AtmosphereLightShafts`; field order is the
++// layout of `GpuAtmosphereLightShafts`). `light_shafts_occlusion.r` = how much of the way from the
++// pixel to the light is open sky (Mitchell 2007, UE "Light Shaft Occlusion").
++@if(ATMOSPHERE_LIGHT_SHAFTS)
++struct AtmosphereLightShafts {
++    // Toward the light (world space).
++    light_dir: vec3<f32>,
++    darkness: f32,
++    lobe_g: f32,
++}
++
++@if(ATMOSPHERE_LIGHT_SHAFTS)
++@group(0) @binding(14) var<uniform> light_shafts: AtmosphereLightShafts;
++@if(ATMOSPHERE_LIGHT_SHAFTS)
++@group(0) @binding(15) var light_shafts_occlusion: texture_2d<f32>;
++
++// The aerial perspective's multiplier: `1 - darkness * (1 - o) * lobe`, `lobe` the haze's forward
++// lobe toward the light (Henyey-Greenstein normalised to 1 at the light), so side-lit haze is
++// untouched. CPU twin: `sf_atmos::shafts::{lobe, occlusion}`.
++@if(ATMOSPHERE_LIGHT_SHAFTS)
++fn light_shaft_occlusion(uv: vec2<f32>, ray_dir_ws: vec3<f32>) -> f32 {
++    if light_shafts.darkness <= 0.0 {
++        return 1.0;
++    }
++    let open = textureSampleLevel(light_shafts_occlusion, atmosphere_lut_sampler, uv, 0.0).r;
++    let g = clamp(light_shafts.lobe_g, -0.999, 0.999);
++    let cos_t = clamp(dot(ray_dir_ws, light_shafts.light_dir), -1.0, 1.0);
++    let lobe = min(pow((1.0 - g) * (1.0 - g) / max((1.0 - g) * (1.0 - g) + 2.0 * g * (1.0 - cos_t), 1e-6), 1.5), 1.0);
++    return clamp(1.0 - clamp(light_shafts.darkness, 0.0, 1.0) * (1.0 - clamp(open, 0.0, 1.0)) * lobe, 0.0, 1.0);
++}
++
+ struct RenderSkyOutput {
+     @if(DUAL_SOURCE_BLENDING)
+     @location(0) @blend_src(0) inscattering: vec4<f32>,
+@@ -67,6 +99,12 @@ fn main(in: FullscreenVertexOutput) -> RenderSkyOutput {
+             inscattering = result.inscattering;
+             transmittance = result.transmittance;
+         }
++        // superfargoth patch (own, LSO: light shaft occlusion): the in-scattering toward a light
++        // the scene hides is masked (geometry pixels only; the sky is unchanged).
++        @if(ATMOSPHERE_LIGHT_SHAFTS)
++        {
++            inscattering *= light_shaft_occlusion(in.uv, ray_dir_ws);
++        }
+     }
+ 
+     // exposure compensation
+diff --git a/superfargoth/vendor/bevy_pbr/src/atmosphere/resources.rs b/superfargoth/vendor/bevy_pbr/src/atmosphere/resources.rs
+index 5399d7a..6cf4920 100644
+--- a/superfargoth/vendor/bevy_pbr/src/atmosphere/resources.rs
++++ b/superfargoth/vendor/bevy_pbr/src/atmosphere/resources.rs
+@@ -33,6 +33,8 @@ use super::{
+     AtmosphereHeightShadowImage, GpuAtmosphereHeightShadow, GpuAtmosphereSettings,
+     ATMOSPHERE_HEIGHT_SHADOW_DEF,
+ };
++// superfargoth patch (own, LSO: light shaft occlusion)
++use super::{AtmosphereLightShafts, GpuAtmosphereLightShafts, ATMOSPHERE_LIGHT_SHAFTS_DEF};
+ 
+ #[derive(Resource)]
+ pub(crate) struct AtmosphereBindGroupLayouts {
+@@ -51,6 +53,10 @@ pub(crate) struct AtmosphereBindGroupLayouts {
+ pub(crate) struct RenderSkyBindGroupLayouts {
+     pub render_sky: BindGroupLayoutDescriptor,
+     pub render_sky_msaa: BindGroupLayoutDescriptor,
++    /// superfargoth patch (own, LSO: light shaft occlusion): the stock entries plus the light
++    /// shaft occlusion's uniform (14) and texture (15), without and with MSAA.
++    pub render_sky_light_shafts: BindGroupLayoutDescriptor,
++    pub render_sky_light_shafts_msaa: BindGroupLayoutDescriptor,
+     pub fullscreen_shader: FullscreenShader,
+     pub fragment_shader: Handle<Shader>,
+ }
+@@ -288,15 +294,59 @@ impl FromWorld for RenderSkyBindGroupLayouts {
+             ),
+         );
+ 
++        // superfargoth patch (own, LSO: light shaft occlusion)
++        let render_sky_light_shafts = render_sky_light_shafts_layout(
++            "render_sky_light_shafts_bind_group_layout",
++            texture_2d(TextureSampleType::Depth),
++        );
++        let render_sky_light_shafts_msaa = render_sky_light_shafts_layout(
++            "render_sky_light_shafts_msaa_bind_group_layout",
++            texture_2d_multisampled(TextureSampleType::Depth),
++        );
++
+         Self {
+             render_sky,
+             render_sky_msaa,
++            render_sky_light_shafts,
++            render_sky_light_shafts_msaa,
+             fullscreen_shader: world.resource::<FullscreenShader>().clone(),
+             fragment_shader: load_embedded_asset!(world, "render_sky.wesl"),
+         }
+     }
+ }
+ 
++/// superfargoth patch (own, LSO: light shaft occlusion): `render_sky`'s stock entries (`depth` at
++/// 13) plus the light shaft occlusion's uniform (14) and texture (15, sampled with 12).
++fn render_sky_light_shafts_layout(
++    label: &'static str,
++    depth: BindGroupLayoutEntryBuilder,
++) -> BindGroupLayoutDescriptor {
++    BindGroupLayoutDescriptor::new(
++        label,
++        &BindGroupLayoutEntries::with_indices(
++            ShaderStages::FRAGMENT,
++            (
++                (0, uniform_buffer::<GpuAtmosphere>(true)),
++                (1, uniform_buffer::<GpuAtmosphereSettings>(true)),
++                (2, uniform_buffer::<AtmosphereTransform>(true)),
++                (3, uniform_buffer::<ViewUniform>(true)),
++                (4, uniform_buffer::<GpuLights>(true)),
++                (5, texture_2d(TextureSampleType::default())),
++                (6, texture_2d(TextureSampleType::default())),
++                (7, sampler(SamplerBindingType::Filtering)),
++                (8, texture_2d(TextureSampleType::default())),
++                (9, texture_2d(TextureSampleType::default())),
++                (10, texture_2d(TextureSampleType::default())),
++                (11, texture_3d(TextureSampleType::default())),
++                (12, sampler(SamplerBindingType::Filtering)),
++                (13, depth),
++                (14, uniform_buffer::<GpuAtmosphereLightShafts>(false)),
++                (15, texture_2d(TextureSampleType::default())),
++            ),
++        ),
++    )
++}
++
+ #[derive(Resource, Deref)]
+ pub struct AtmosphereSampler(Sampler);
+ 
+@@ -393,10 +443,17 @@ impl FromWorld for AtmosphereLutPipelines {
+ #[derive(Component)]
+ pub(crate) struct RenderSkyPipelineId(pub CachedRenderPipelineId);
+ 
++/// superfargoth patch (own, LSO: light shaft occlusion): the view's `render_sky` pipeline with the
++/// light shaft occlusion, while it has an [`AtmosphereLightShafts`].
++#[derive(Component)]
++pub(crate) struct RenderSkyLightShaftsPipelineId(pub CachedRenderPipelineId);
++
+ #[derive(Copy, Clone, Hash, PartialEq, Eq)]
+ pub(crate) struct RenderSkyPipelineKey {
+     pub msaa_samples: u32,
+     pub dual_source_blending: bool,
++    /// superfargoth patch (own, LSO: light shaft occlusion)
++    pub light_shafts: bool,
+ }
+ 
+ impl SpecializedRenderPipeline for RenderSkyBindGroupLayouts {
+@@ -411,6 +468,10 @@ impl SpecializedRenderPipeline for RenderSkyBindGroupLayouts {
+         if key.dual_source_blending {
+             shader_defs.push("DUAL_SOURCE_BLENDING".into());
+         }
++        // superfargoth patch (own, LSO: light shaft occlusion)
++        if key.light_shafts {
++            shader_defs.push(ATMOSPHERE_LIGHT_SHAFTS_DEF.into());
++        }
+ 
+         let dst_factor = if key.dual_source_blending {
+             BlendFactor::Src1
+@@ -420,10 +481,12 @@ impl SpecializedRenderPipeline for RenderSkyBindGroupLayouts {
+ 
+         RenderPipelineDescriptor {
+             label: Some(format!("render_sky_pipeline_{}", key.msaa_samples).into()),
+-            layout: vec![if key.msaa_samples == 1 {
+-                self.render_sky.clone()
+-            } else {
+-                self.render_sky_msaa.clone()
++            // superfargoth patch (own, LSO: light shaft occlusion): the layout with its bindings.
++            layout: vec![match (key.msaa_samples == 1, key.light_shafts) {
++                (true, false) => self.render_sky.clone(),
++                (false, false) => self.render_sky_msaa.clone(),
++                (true, true) => self.render_sky_light_shafts.clone(),
++                (false, true) => self.render_sky_light_shafts_msaa.clone(),
+             }],
+             vertex: self.fullscreen_shader.to_vertex_state(),
+             fragment: Some(FragmentState {
+@@ -457,25 +520,43 @@ impl SpecializedRenderPipeline for RenderSkyBindGroupLayouts {
+ }
+ 
+ pub(super) fn queue_render_sky_pipelines(
+-    views: Query<(Entity, &Msaa), (With<Camera>, With<ExtractedAtmosphere>)>,
++    // superfargoth patch (own, LSO: light shaft occlusion): `Has<AtmosphereLightShafts>`.
++    views: Query<
++        (Entity, &Msaa, bevy_ecs::query::Has<AtmosphereLightShafts>),
++        (With<Camera>, With<ExtractedAtmosphere>),
++    >,
+     pipeline_cache: Res<PipelineCache>,
+     layouts: Res<RenderSkyBindGroupLayouts>,
+     mut specializer: ResMut<SpecializedRenderPipelines<RenderSkyBindGroupLayouts>>,
+     render_device: Res<RenderDevice>,
+     mut commands: Commands,
+ ) {
+-    for (entity, msaa) in &views {
+-        let id = specializer.specialize(
+-            &pipeline_cache,
+-            &layouts,
+-            RenderSkyPipelineKey {
+-                msaa_samples: msaa.samples(),
+-                dual_source_blending: render_device
+-                    .features()
+-                    .contains(WgpuFeatures::DUAL_SOURCE_BLENDING),
+-            },
+-        );
++    for (entity, msaa, light_shafts) in &views {
++        let key = RenderSkyPipelineKey {
++            msaa_samples: msaa.samples(),
++            dual_source_blending: render_device
++                .features()
++                .contains(WgpuFeatures::DUAL_SOURCE_BLENDING),
++            light_shafts: false,
++        };
++        let id = specializer.specialize(&pipeline_cache, &layouts, key);
+         commands.entity(entity).insert(RenderSkyPipelineId(id));
++        // superfargoth patch (own, LSO: light shaft occlusion): the occluded variant beside the
++        // stock one (the stock pass draws until it is compiled and bound).
++        if light_shafts {
++            let key = RenderSkyPipelineKey {
++                light_shafts: true,
++                ..key
++            };
++            let id = specializer.specialize(&pipeline_cache, &layouts, key);
++            commands
++                .entity(entity)
++                .insert(RenderSkyLightShaftsPipelineId(id));
++        } else {
++            commands
++                .entity(entity)
++                .try_remove::<RenderSkyLightShaftsPipelineId>();
++        }
+     }
+ }
+ 
+@@ -777,6 +858,9 @@ pub(crate) struct AtmosphereBindGroups {
+     /// the view has a height shadow whose map is on the GPU.
+     pub aerial_view_lut_height_shadow: Option<BindGroup>,
+     pub render_sky: BindGroup,
++    /// superfargoth patch (own, LSO: light shaft occlusion): `render_sky`'s group with the light
++    /// shaft occlusion, when the view has an [`AtmosphereLightShafts`].
++    pub render_sky_light_shafts: Option<BindGroup>,
+     /// superfargoth patch (own, P1b): writes the combined medium LUTs (`medium_lut.wesl`).
+     pub medium_lut: BindGroup,
+     /// Threads of the `medium_lut` dispatch: `falloff x max(phase, 2)`.
+@@ -814,6 +898,8 @@ pub(super) fn prepare_atmosphere_bind_groups(
+             &Msaa,
+             // superfargoth patch (own, AS: aerial shadow)
+             Option<&AtmosphereHeightShadowImage>,
++            // superfargoth patch (own, LSO: light shaft occlusion)
++            Option<&AtmosphereLightShafts>,
+         ),
+         (With<Camera3d>, With<ExtractedAtmosphere>),
+     >,
+@@ -865,8 +951,16 @@ pub(super) fn prepare_atmosphere_bind_groups(
+         .binding()
+         .ok_or(AtmosphereBindGroupError::LightUniforms)?;
+ 
+-    for (entity, atmosphere, lut_settings, textures, view_depth_texture, msaa, height_shadow) in
+-        &views
++    for (
++        entity,
++        atmosphere,
++        lut_settings,
++        textures,
++        view_depth_texture,
++        msaa,
++        height_shadow,
++        light_shafts,
++    ) in &views
+     {
+         let Some(depth_view) = view_depth_texture
+             .attachment
+@@ -1060,6 +1154,37 @@ pub(super) fn prepare_atmosphere_bind_groups(
+             )),
+         );
+ 
++        // superfargoth patch (own, LSO: light shaft occlusion): the stock entries plus the light
++        // shaft occlusion's uniform and texture.
++        let render_sky_light_shafts = light_shafts.map(|shafts| {
++            render_device.create_bind_group(
++                "render_sky_light_shafts_bind_group",
++                &pipeline_cache.get_bind_group_layout(if *msaa == Msaa::Off {
++                    &render_sky_layouts.render_sky_light_shafts
++                } else {
++                    &render_sky_layouts.render_sky_light_shafts_msaa
++                }),
++                &BindGroupEntries::with_indices((
++                    (0, atmosphere_binding.clone()),
++                    (1, settings_binding.clone()),
++                    (2, transforms_binding.clone()),
++                    (3, view_binding.clone()),
++                    (4, lights_binding.clone()),
++                    (5, &textures.medium_density_lut.default_view),
++                    (6, &textures.medium_scattering_lut.default_view),
++                    (7, medium_sampler.sampler()),
++                    (8, &textures.transmittance_lut.default_view),
++                    (9, &textures.multiscattering_lut.default_view),
++                    (10, &textures.sky_view_lut.default_view),
++                    (11, &textures.aerial_view_lut.default_view),
++                    (12, &**atmosphere_sampler),
++                    (13, depth_view),
++                    (14, shafts.uniform.as_entire_binding()),
++                    (15, &shafts.occlusion),
++                )),
++            )
++        });
++
+         commands.entity(entity).insert(AtmosphereBindGroups {
+             transmittance_lut,
+             multiscattering_lut,
+@@ -1067,6 +1192,7 @@ pub(super) fn prepare_atmosphere_bind_groups(
+             aerial_view_lut,
+             aerial_view_lut_height_shadow,
+             render_sky,
++            render_sky_light_shafts,
+             medium_lut,
+             medium_lut_size,
+             static_lut_textures,

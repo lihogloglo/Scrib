@@ -254,6 +254,41 @@ fn sample_local_inscattering(local_scattering: vec3<f32>, ray_dir: vec3<f32>, wo
     return inscattering;
 }
 
+/// superfargoth patch (own, AS: aerial shadow): `sample_local_inscattering` with the single
+/// scattering of the light toward `shadow_dir` (the light whose `direction_to_light` is within
+/// `dot > 0.99` of it; a zero `shadow_dir` matches none) times `shadow_visibility` (0 = in the
+/// shadow, 1 = lit). The multiple-scattering term stays unshadowed (the sky's isotropic fill).
+fn sample_local_inscattering_shadowed(
+    local_scattering: vec3<f32>,
+    ray_dir: vec3<f32>,
+    world_pos: vec3<f32>,
+    shadow_dir: vec3<f32>,
+    shadow_visibility: f32,
+) -> vec3<f32> {
+    let local_r = length(world_pos);
+    let local_up = normalize(world_pos);
+    var inscattering = vec3(0.0);
+    for (var light_i: u32 = 0u; light_i < lights.n_directional_lights; light_i++) {
+        let light = &lights.directional_lights[light_i];
+
+        let mu_light = dot((*light).direction_to_light, local_up);
+        let neg_LdotV = dot((*light).direction_to_light, ray_dir);
+
+        let transmittance_to_light = sample_transmittance_lut(local_r, mu_light);
+        let shadow_factor = transmittance_to_light * f32(!ray_intersects_ground(local_r, mu_light));
+        let scattering_coeff = sample_scattering_lut(local_r, neg_LdotV);
+        let shadowed = select(1.0, shadow_visibility, dot((*light).direction_to_light, shadow_dir) > 0.99);
+        let scattering_factor = shadow_factor * scattering_coeff * shadowed;
+
+        let psi_ms = sample_multiscattering_lut(local_r, mu_light);
+        let multiscattering_factor = psi_ms * local_scattering;
+
+        // E1b: the light's share of the sky (single + multiple scattering), 1 = stock.
+        inscattering += (*light).color.rgb * (*light).atmosphere_scatter * (scattering_factor + multiscattering_factor);
+    }
+    return inscattering;
+}
+
 fn sample_sun_radiance(ray_dir_ws: vec3<f32>) -> vec3<f32> {
     let view_pos = get_view_position();
     let r = length(view_pos);

@@ -1,5 +1,5 @@
 import package::atmosphere::{
-    bindings::{view, settings},
+    bindings::{view, settings, atmosphere_lut_sampler},
     bruneton_functions::sample_transmittance_lut_segment,
     functions::{
         sample_transmittance_lut,
@@ -19,6 +19,38 @@ enable dual_source_blending;
 @group(0) @binding(13) var depth_texture: texture_depth_multisampled_2d;
 @else
 @group(0) @binding(13) var depth_texture: texture_depth_2d;
+
+// superfargoth patch (own, LSO: light shaft occlusion), `superfargoth/docs/specs/aerial-shadow.md`
+// "S3": a screen-space light shaft occlusion (`bevy_pbr::AtmosphereLightShafts`; field order is the
+// layout of `GpuAtmosphereLightShafts`). `light_shafts_occlusion.r` = how much of the way from the
+// pixel to the light is open sky (Mitchell 2007, UE "Light Shaft Occlusion").
+@if(ATMOSPHERE_LIGHT_SHAFTS)
+struct AtmosphereLightShafts {
+    // Toward the light (world space).
+    light_dir: vec3<f32>,
+    darkness: f32,
+    lobe_g: f32,
+}
+
+@if(ATMOSPHERE_LIGHT_SHAFTS)
+@group(0) @binding(14) var<uniform> light_shafts: AtmosphereLightShafts;
+@if(ATMOSPHERE_LIGHT_SHAFTS)
+@group(0) @binding(15) var light_shafts_occlusion: texture_2d<f32>;
+
+// The aerial perspective's multiplier: `1 - darkness * (1 - o) * lobe`, `lobe` the haze's forward
+// lobe toward the light (Henyey-Greenstein normalised to 1 at the light), so side-lit haze is
+// untouched. CPU twin: `sf_atmos::shafts::{lobe, occlusion}`.
+@if(ATMOSPHERE_LIGHT_SHAFTS)
+fn light_shaft_occlusion(uv: vec2<f32>, ray_dir_ws: vec3<f32>) -> f32 {
+    if light_shafts.darkness <= 0.0 {
+        return 1.0;
+    }
+    let open = textureSampleLevel(light_shafts_occlusion, atmosphere_lut_sampler, uv, 0.0).r;
+    let g = clamp(light_shafts.lobe_g, -0.999, 0.999);
+    let cos_t = clamp(dot(ray_dir_ws, light_shafts.light_dir), -1.0, 1.0);
+    let lobe = min(pow((1.0 - g) * (1.0 - g) / max((1.0 - g) * (1.0 - g) + 2.0 * g * (1.0 - cos_t), 1e-6), 1.5), 1.0);
+    return clamp(1.0 - clamp(light_shafts.darkness, 0.0, 1.0) * (1.0 - clamp(open, 0.0, 1.0)) * lobe, 0.0, 1.0);
+}
 
 struct RenderSkyOutput {
     @if(DUAL_SOURCE_BLENDING)
@@ -66,6 +98,12 @@ fn main(in: FullscreenVertexOutput) -> RenderSkyOutput {
             let result = raymarch_atmosphere(world_pos, ray_dir_ws, t, max_samples, in.uv, false);
             inscattering = result.inscattering;
             transmittance = result.transmittance;
+        }
+        // superfargoth patch (own, LSO: light shaft occlusion): the in-scattering toward a light
+        // the scene hides is masked (geometry pixels only; the sky is unchanged).
+        @if(ATMOSPHERE_LIGHT_SHAFTS)
+        {
+            inscattering *= light_shaft_occlusion(in.uv, ray_dir_ws);
         }
     }
 

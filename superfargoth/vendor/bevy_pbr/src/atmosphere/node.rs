@@ -16,8 +16,10 @@ use super::{
     resources::{
         AtmosphereBindGroups, AtmosphereLutPipelines, AtmosphereStaticLutCache,
         AtmosphereTransformsOffset, RenderSkyPipelineId,
+        // superfargoth patch (own, LSO: light shaft occlusion)
+        RenderSkyLightShaftsPipelineId,
     },
-    GpuAtmosphereSettings,
+    GpuAtmosphereHeightShadow, GpuAtmosphereSettings,
 };
 
 pub fn atmosphere_luts(
@@ -29,6 +31,8 @@ pub fn atmosphere_luts(
         &AtmosphereTransformsOffset,
         &ViewUniformOffset,
         &ViewLightsUniformOffset,
+        // superfargoth patch (own, AS: aerial shadow)
+        Option<&DynamicUniformIndex<GpuAtmosphereHeightShadow>>,
     )>,
     pipelines: Res<AtmosphereLutPipelines>,
     pipeline_cache: Res<PipelineCache>,
@@ -43,6 +47,7 @@ pub fn atmosphere_luts(
         atmosphere_transforms_offset,
         view_uniforms_offset,
         lights_uniforms_offset,
+        height_shadow_offset,
     ) = view.into_inner();
 
     let (
@@ -142,17 +147,39 @@ pub fn atmosphere_luts(
 
     // Aerial View LUT
 
-    luts_pass.set_pipeline(aerial_view_lut_pipeline);
-    luts_pass.set_bind_group(
-        0,
-        &bind_groups.aerial_view_lut,
-        &[
-            atmosphere_uniforms_offset.index(),
-            settings_uniforms_offset.index(),
-            view_uniforms_offset.offset,
-            lights_uniforms_offset.offset,
-        ],
-    );
+    // superfargoth patch (own, AS: aerial shadow): the shadowed variant when the view has a height
+    // shadow on the GPU and its pipeline is ready; otherwise the stock pass.
+    let height_shadow = bind_groups
+        .aerial_view_lut_height_shadow
+        .as_ref()
+        .zip(height_shadow_offset)
+        .zip(pipeline_cache.get_compute_pipeline(pipelines.aerial_view_lut_height_shadow));
+    if let Some(((bind_group, offset), pipeline)) = height_shadow {
+        luts_pass.set_pipeline(pipeline);
+        luts_pass.set_bind_group(
+            0,
+            bind_group,
+            &[
+                atmosphere_uniforms_offset.index(),
+                settings_uniforms_offset.index(),
+                view_uniforms_offset.offset,
+                lights_uniforms_offset.offset,
+                offset.index(),
+            ],
+        );
+    } else {
+        luts_pass.set_pipeline(aerial_view_lut_pipeline);
+        luts_pass.set_bind_group(
+            0,
+            &bind_groups.aerial_view_lut,
+            &[
+                atmosphere_uniforms_offset.index(),
+                settings_uniforms_offset.index(),
+                view_uniforms_offset.offset,
+                lights_uniforms_offset.offset,
+            ],
+        );
+    }
 
     dispatch_2d(&mut luts_pass, settings.aerial_view_lut_size.xy());
     pass_span.end(&mut luts_pass);
@@ -173,6 +200,8 @@ pub fn render_sky(
             &ViewLightsUniformOffset,
             &RenderSkyPipelineId,
             Option<&MainPassResolutionOverride>,
+            // superfargoth patch (own, LSO: light shaft occlusion)
+            Option<&RenderSkyLightShaftsPipelineId>,
         ),
         bevy_ecs::query::Without<super::SkyOccluded>,
     >,
@@ -190,12 +219,20 @@ pub fn render_sky(
         lights_uniforms_offset,
         render_sky_pipeline_id,
         resolution_override,
+        light_shafts_pipeline_id,
     ) = view.into_inner();
 
     let Some(render_sky_pipeline) = pipeline_cache.get_render_pipeline(render_sky_pipeline_id.0)
     else {
         return;
     }; //TODO: warning
+
+    // superfargoth patch (own, LSO: light shaft occlusion): the occluded variant when the view
+    // has its bind group and the pipeline is compiled; otherwise the stock pass.
+    let (render_sky_pipeline, render_sky_bind_group) = light_shafts_pipeline_id
+        .and_then(|id| pipeline_cache.get_render_pipeline(id.0))
+        .zip(atmosphere_bind_groups.render_sky_light_shafts.as_ref())
+        .unwrap_or((render_sky_pipeline, &atmosphere_bind_groups.render_sky));
 
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
@@ -228,7 +265,7 @@ pub fn render_sky(
     render_sky_pass.set_pipeline(render_sky_pipeline);
     render_sky_pass.set_bind_group(
         0,
-        &atmosphere_bind_groups.render_sky,
+        render_sky_bind_group,
         &[
             atmosphere_uniforms_offset.index(),
             settings_uniforms_offset.index(),

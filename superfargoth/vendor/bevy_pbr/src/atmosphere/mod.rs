@@ -41,7 +41,7 @@ mod node;
 pub mod resources;
 
 use bevy_app::{App, Plugin};
-use bevy_asset::{embedded_asset, AssetId};
+use bevy_asset::{embedded_asset, AssetId, Handle};
 use bevy_camera::{Camera3d, Hdr};
 use bevy_core_pipeline::{
     core_3d::{main_opaque_pass_3d, main_transparent_pass_3d},
@@ -52,13 +52,16 @@ use bevy_ecs::{
     entity::Entity,
     query::{Changed, With},
     schedule::IntoScheduleConfigs,
+    // superfargoth patch (own, LSO: light shaft occlusion)
+    schedule::SystemSet,
     system::{Commands, Query},
 };
+use bevy_image::Image;
 use bevy_light::{atmosphere::ScatteringMedium, Atmosphere};
-use bevy_math::{Mat4, Quat, UVec2, UVec3, Vec3};
+use bevy_math::{Mat4, Quat, UVec2, UVec3, Vec3, Vec4};
 use bevy_reflect::{std_traits::ReflectDefault, Reflect};
 use bevy_render::{
-    extract_component::{ExtractComponentPlugin, UniformComponentPlugin},
+    extract_component::{DynamicUniformIndex, ExtractComponentPlugin, UniformComponentPlugin},
     render_resource::{DownlevelFlags, ShaderType, SpecializedRenderPipelines},
     renderer::RenderDevice,
     sync_component::{SyncComponent, SyncComponentPlugin},
@@ -117,6 +120,8 @@ impl Plugin for AtmospherePlugin {
             SyncComponentPlugin::<AtmosphereSettings>::default(),
             UniformComponentPlugin::<GpuAtmosphere>::default(),
             UniformComponentPlugin::<GpuAtmosphereSettings>::default(),
+            // superfargoth patch (own, AS: aerial shadow)
+            UniformComponentPlugin::<GpuAtmosphereHeightShadow>::default(),
         ))
         .add_observer(on_insert_atmosphere_environment_map_light)
         .add_observer(on_remove_atmosphere_environment_map_light);
@@ -199,6 +204,8 @@ impl Plugin for AtmospherePlugin {
                         .before(Core3dSystems::MainPass),
                     render_sky
                         .after(main_opaque_pass_3d)
+                        // superfargoth patch (own, LSO: light shaft occlusion)
+                        .after(RenderSkyInputs)
                         // superfargoth patch (own: sky after water): the sky and the aerial
                         // perspective read the depth of transmissive draws too (the water, W-ORDER).
                         .after(crate::transmission::main_transmissive_pass_3d)
@@ -216,13 +223,133 @@ impl Plugin for AtmospherePlugin {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct SkyOccluded;
 
+/// superfargoth patch (own, AS: aerial shadow), `superfargoth/docs/specs/aerial-shadow.md`: a
+/// camera component giving the aerial view LUT a top-down height-field shadow for one directional
+/// light, so haze in front of terrain the light cannot reach stops glowing. Only that light's
+/// single scattering is shadowed (the multiple-scattering term is the sky's isotropic fill and stays
+/// unshadowed); the sky-view LUT and the raymarched sky are unchanged. Absent (or `params.z` 0) =
+/// the stock aerial view LUT pipeline.
+///
+/// Per LUT sample at render-space point `p` and camera `c`: `uv = (p.xz - params.xy) * params.z`,
+/// texel `t = (shadow height - params.w, occluder distance)`; lit = `smoothstep(h - w, h + w, p.y +
+/// bias + |p - c| * bias_per_m)` with `h = t.x + params.w`, `w = t.y * penumbra_per_m + penumbra_min`,
+/// faded to lit from `fade_start` (fraction of the half extent) to the map's border.
+#[derive(Clone, Component, Debug, PartialEq)]
+pub struct AtmosphereHeightShadow {
+    /// A filterable two-channel float texture (`Rg16Float`): (shadow height - base height,
+    /// occluder distance), meters; texel (0, 0) at the map's min corner.
+    pub image: Handle<Image>,
+    /// Render space: (min x, min z, 1 / extent (1/m; 0 = none), base height).
+    pub params: Vec4,
+    /// Toward the light the map was made for (world space, unit). The directional light whose
+    /// `direction_to_light` is within `dot > 0.99` of it is the one shadowed.
+    pub light_dir: Vec3,
+    /// Penumbra half width per meter of occluder distance.
+    pub penumbra_per_m: f32,
+    /// Penumbra half width floor, meters.
+    pub penumbra_min: f32,
+    /// Height bias, meters.
+    pub bias: f32,
+    /// Height bias growth per meter of distance from the camera.
+    pub bias_per_m: f32,
+    /// Where the fade to lit starts, as a fraction of the map's half extent (`0..1`).
+    pub fade_start: f32,
+}
+
+/// superfargoth patch (own, AS: aerial shadow): the render-world uniform of
+/// [`AtmosphereHeightShadow`] (`aerial_view_lut.wesl` `AtmosphereHeightShadow`; field order is
+/// the layout).
+#[derive(Clone, Component, ShaderType, Debug, PartialEq)]
+pub struct GpuAtmosphereHeightShadow {
+    pub params: Vec4,
+    pub light_dir: Vec3,
+    pub penumbra_per_m: f32,
+    pub penumbra_min: f32,
+    pub bias: f32,
+    pub bias_per_m: f32,
+    pub fade_start: f32,
+}
+
+impl From<&AtmosphereHeightShadow> for GpuAtmosphereHeightShadow {
+    fn from(s: &AtmosphereHeightShadow) -> Self {
+        Self {
+            params: s.params,
+            light_dir: s.light_dir,
+            penumbra_per_m: s.penumbra_per_m,
+            penumbra_min: s.penumbra_min,
+            bias: s.bias,
+            bias_per_m: s.bias_per_m,
+            fade_start: s.fade_start,
+        }
+    }
+}
+
+/// superfargoth patch (own, AS: aerial shadow): the render-world image of
+/// [`AtmosphereHeightShadow`] (bound with its own sampler; not yet uploaded = stock pass).
+#[derive(Clone, Copy, Component, Debug, PartialEq, Eq)]
+pub struct AtmosphereHeightShadowImage(pub AssetId<Image>);
+
+/// superfargoth patch (own, AS: aerial shadow): the shader def of the shadowed aerial view LUT.
+pub const ATMOSPHERE_HEIGHT_SHADOW_DEF: &str = "ATMOSPHERE_HEIGHT_SHADOW";
+
+/// superfargoth patch (own, LSO: light shaft occlusion), `superfargoth/docs/specs/aerial-shadow.md`
+/// "S3": a render-world view component giving `render_sky` a screen-space light shaft occlusion
+/// (UE "Light Shaft Occlusion", Mitchell 2007): `occlusion` is a filterable float texture over the
+/// view's (internal-resolution) viewport whose red channel `o` in `[0, 1]` says how much of the
+/// way from the pixel to the light is open sky; `uniform` a buffer holding one
+/// [`GpuAtmosphereLightShafts`]. On geometry pixels the aerial perspective's in-scattering is
+/// multiplied by `1 - darkness * (1 - o) * lobe`, `lobe` = Henyey-Greenstein (`lobe_g`) toward
+/// `light_dir` normalised to 1 at the light. Sky pixels are unchanged. Inserted by the app's own
+/// render systems before [`RenderSkyInputs`] runs (`RenderSystems::PrepareResources`, so the bind
+/// group sees it); absent = the stock `render_sky` pipeline and bind group.
+#[derive(Clone, Component)]
+pub struct AtmosphereLightShafts {
+    /// The occlusion texture, sampled at the fullscreen UV with the atmosphere LUT sampler.
+    pub occlusion: bevy_render::render_resource::TextureView,
+    /// A uniform buffer of one [`GpuAtmosphereLightShafts`].
+    pub uniform: bevy_render::render_resource::Buffer,
+}
+
+/// superfargoth patch (own, LSO: light shaft occlusion): the uniform of
+/// [`AtmosphereLightShafts`] (`render_sky.wesl` `AtmosphereLightShafts`; field order is the
+/// layout).
+#[derive(Clone, Copy, ShaderType, Debug, Default, PartialEq)]
+pub struct GpuAtmosphereLightShafts {
+    /// Toward the light whose forward lobe is masked (world space, unit).
+    pub light_dir: Vec3,
+    /// Occlusion strength in `[0, 1]`: 0 = stock, 1 = a fully closed pixel looking at the light
+    /// gets no in-scattering.
+    pub darkness: f32,
+    /// The lobe's Henyey-Greenstein asymmetry (the haze's Mie asymmetry).
+    pub lobe_g: f32,
+}
+
+/// superfargoth patch (own, LSO: light shaft occlusion): the shader def of `render_sky` with the
+/// light shaft occlusion.
+pub const ATMOSPHERE_LIGHT_SHAFTS_DEF: &str = "ATMOSPHERE_LIGHT_SHAFTS";
+
+/// superfargoth patch (own, LSO: light shaft occlusion): `Core3d` systems that write what
+/// `render_sky` reads (an [`AtmosphereLightShafts`] texture) go in this set; `render_sky` runs
+/// after it. A public name for that order (`render_sky` itself is private).
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RenderSkyInputs;
+
 /// For each camera with [`AtmosphereSettings`], picks the nearest [`Atmosphere`] by world-space
 /// distance to its origin, copies it as [`ExtractedAtmosphere`], and builds [`GpuAtmosphereSettings`].
 pub fn extract_atmosphere(
     mut commands: Commands,
     atmosphere_entities: Extract<Query<(Entity, &Atmosphere, &GlobalTransform)>>,
     cameras: Extract<
-        Query<(RenderEntity, Option<&AtmosphereSettings>, &GlobalTransform), With<Camera3d>>,
+        Query<
+            (
+                RenderEntity,
+                Option<&AtmosphereSettings>,
+                &GlobalTransform,
+                // superfargoth patch (own, AS: aerial shadow)
+                Option<&AtmosphereHeightShadow>,
+            ),
+            With<Camera3d>,
+        >,
     >,
     // superfargoth patch (own, P1: live medium scales)
     medium_scales: Extract<Query<&crate::ScatteringMediumScales>>,
@@ -230,7 +357,24 @@ pub fn extract_atmosphere(
     let candidates: Vec<(Entity, &Atmosphere, &GlobalTransform)> =
         atmosphere_entities.iter().collect();
 
-    for (render_entity, settings, cam_global) in &cameras {
+    for (render_entity, settings, cam_global, height_shadow) in &cameras {
+        // superfargoth patch (own, AS: aerial shadow): the view's height shadow, or none (a map
+        // with no extent is none); a stale one (and its uniform index) never outlives it.
+        match height_shadow.filter(|s| s.params.z > 0.0 && settings.is_some()) {
+            Some(s) => {
+                commands.entity(render_entity).insert((
+                    GpuAtmosphereHeightShadow::from(s),
+                    AtmosphereHeightShadowImage(s.image.id()),
+                ));
+            }
+            None => {
+                commands.entity(render_entity).try_remove::<(
+                    GpuAtmosphereHeightShadow,
+                    AtmosphereHeightShadowImage,
+                    DynamicUniformIndex<GpuAtmosphereHeightShadow>,
+                )>();
+            }
+        }
         // Remove any stale render-world state when AtmosphereSettings is removed or candidates is empty
         let (Some(settings), false) = (settings, candidates.is_empty()) else {
             commands.entity(render_entity).try_remove::<(

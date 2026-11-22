@@ -190,6 +190,43 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   coarse at 160x90x64 / 384 m, in-scatter too weak against the fog's ambient, shadow term not reaching the froxels.
 - Status: known bug: not diagnosed (owner pass 2026-11-02).
 
+### FG-12: Sun glow shows through terrain (owner report)
+- Kind: game location (worldgen canyon, `view`, 18.09 h, High + DLSS). Look up a canyon at the low sun hidden behind the
+  ridge: a round warm glow sits on the shadowed rock face, centred on the hidden sun (ShareX `bevyrrowind_VAW8Nx8GCT.jpg`).
+- Not the sky glare: `night.wesl` draws it at the far plane, depth-tested. Candidates, all unshadowed forward-lobe
+  in-scatter toward the sun: (1) analytic fog past the froxel range adds `key_seen * fog_phase` with no visibility
+  (`cloud_composite.wesl:152`); (2) Bevy's aerial perspective (stock, no sun shadowing); (3) froxel shadow term ~1
+  (`froxel_inject.wesl:221-226`), which would also explain FG-10. To split: live `flip fog`, then `--off froxels`.
+- Owner 2026-11-22 (x10s, 18.09 h): glow stays with `flip fog` (our analytic + froxel fog off). Cause (2): Bevy's
+  aerial perspective shadows the sun only by atmosphere transmittance and the planet (`vendor/bevy_pbr/src/atmosphere/
+  functions.wesl:240`), never by terrain or shadow maps, so haze in front of shaded terrain glows with Mie forward scatter.
+  Fix direction: shadow the aerial view LUT's single scatter (Hillaire 2020; UE5 "Cast Shadows on Atmosphere"), e.g.
+  with the terrain far shadow map, as a vendored patch. FG-10 stays a separate question.
+- Fix built 2026-11-22 (ROADMAP 1.27 S1): the aerial view LUT shadows the sun with the terrain far shadow map. Same spot
+  and hour: the rock face in front of the hidden sun stays dark (no round glow); the sky above the ridge and sunlit
+  slopes keep their haze. A/B: restart with `--off aerialshadow` (old glow). Limit: rock past ~3.9 km from the map centre
+  still glows (map edge fade).
+- Owner 2026-11-22 (AS on): "not very convinced": shafts blocky, move with the camera like big animated blocks; a halo
+  is still there, also where it shouldn't be. Wants a classic god-ray shader. AS now off by default (`--set
+  sky.aerial.shadow=true` = on); next: screen-space light shafts + occlusion (ROADMAP 1.27 S3, spec aerial-shadow.md).
+- S3a built 2026-11-22 (light shaft occlusion): same spot; the halo in front of the hidden sun should be gone, with a
+  clean edge along the ridge line, and haze lit from the side unchanged. No visible rays yet (S3b). A/B: console
+  `set sky.shafts.enabled false`; knobs `sky.shafts.*` (e.g. `occlusion`, `length`).
+- Owner 2026-11-22 (S3a, 18.79 h, ShareX `bevyrrowind_2bohrMdsQH.jpg`): "godrays are nice now", but a very dark disc
+  surrounded by glow sits on the cliff where the sun hides. Cause (code): `render_sky` multiplies the whole aerial
+  in-scatter (Rayleigh, multiple scattering, all of it) by `1 - 0.95 (1 - o) lobe`; o = 0 at the sun's spot, so all haze
+  goes (dark hole), and the HG(0.8) lobe (~15 deg) is narrower than the real Mie halo, which stays outside it (ring).
+  Fix S3c: the aerial LUT stores the sun's single scattering apart; occlusion subtracts only that (no lobe); fog masks
+  only its HG lobe, not its isotropic part.
+- S3b built 2026-11-22 (light shaft bloom: bright sky and cloud gaps near the sun blurred toward it and added): rays
+  spilling over the ridge and through cloud gaps when the sun peeks out. A/B `set sky.shafts.bloom false` (owner
+  already approved S3a's dark shafts alone; bloom off by default if preferred). No rays? lower `sky.shafts.bloom_threshold`
+  to ~1-2. The S3a dark disc is still there (fix waits on the architecture review).
+- Owner 2026-11-22 (S3b): bad visually: super blocky, shimmers constantly even with the sun still, redundant with
+  S3a's shafts. Bloom off by default (`set sky.shafts.bloom true` = on). Parked.
+- Status: parked. S3a shafts kept (on); open: S3a dark disc (whole aerial in-scatter masked, not just the sun's single
+  scattering); architecture review proposed (one owned atmospherics apply pass).
+
 ### SW-7: Kick-up puffs in snow and ash (surface-weather.md W7)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`, console
   `surface set snow 1`; walk, then run, then sprint over open snow (third person), look at the feet. Ash: `view "Ghostgate"
