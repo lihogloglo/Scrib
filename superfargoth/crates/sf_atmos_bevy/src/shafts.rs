@@ -63,9 +63,11 @@ use sf_tunables_bevy::TunablesAppExt;
 
 use crate::CloudShadowLight;
 
-/// `sky.shafts.enabled`: the screen-space light shaft occlusion (S3a). `--off shafts` sets it
-/// false at the command-line layer.
-pub const SHAFTS_ENABLED: Def<bool> = def!(bool "sky.shafts.enabled" = true)
+/// `sky.shafts.enabled`: the screen-space light shaft occlusion (S3a). Off by default since A2
+/// (aerial-shadow.md "Architecture review": the sun-visibility pass, `sky.sun_vis.enabled`, replaces
+/// it); the opt-in A/B arm. With both on, the sun-visibility pass owns the aerial and fog hooks.
+/// `--off shafts` sets it false at the command-line layer.
+pub const SHAFTS_ENABLED: Def<bool> = def!(bool "sky.shafts.enabled" = false)
     .help("Screen-space light shaft occlusion: the haze toward a sun hidden by the scene stops glowing")
     .source(Source::Industry("UE directional light 'Light Shaft Occlusion'; Mitchell, GPU Gems 3 ch. 13"))
     .group(Group::Sky);
@@ -594,9 +596,11 @@ pub(crate) fn extract(
     mut commands: Commands,
     settings: Extract<Res<LightShafts>>,
     sun: Extract<Res<ShaftsSun>>,
+    sun_vis: Extract<Option<Res<crate::SunVisibility>>>,
     cameras: Extract<Query<CameraItem, With<bevy_camera::Camera3d>>>,
 ) {
     let on = settings.enabled && sun.0.is_some();
+    let sun_vis_on = sun_vis.as_ref().is_some_and(|s| s.enabled) && sun.0.is_some();
     commands.insert_resource(ShaftsFrame { settings: on.then_some(**settings), sun: sun.0 });
     for (entity, atmosphere) in &cameras {
         let mut e = commands.entity(entity);
@@ -608,8 +612,12 @@ pub(crate) fn extract(
                 e.remove::<ShaftsBloomCamera>();
             }
         } else {
-            // The vendored `render_sky` falls back to its stock pipeline the same frame.
-            e.remove::<(ShaftsCamera, ShaftsBloomCamera, ShaftsView, ShaftsBindGroups, AtmosphereLightShafts)>();
+            e.remove::<(ShaftsCamera, ShaftsBloomCamera, ShaftsView, ShaftsBindGroups)>();
+            // The sun-visibility pass owns the vendored hook while it is on; else the vendored
+            // `render_sky` falls back to its stock pipeline the same frame.
+            if !(sun_vis_on && atmosphere) {
+                e.remove::<AtmosphereLightShafts>();
+            }
         }
     }
 }
@@ -637,6 +645,7 @@ type ViewItem = (
     Option<&'static MainPassResolutionOverride>,
     Option<&'static ExtractedAtmosphere>,
     Has<ShaftsBloomCamera>,
+    Has<crate::SunVisCamera>,
 );
 
 #[allow(clippy::too_many_arguments)]
@@ -651,7 +660,7 @@ fn prepare_views(
 ) {
     let (Some(settings), Some(sun)) = (frame.settings, frame.sun) else { return };
     let ready = |pipes: &[ShaftsPipe]| pipes.iter().all(|p| ids.get(&cache, *p).is_some());
-    for (entity, view, msaa, resolution, atmosphere, bloom_camera) in &views {
+    for (entity, view, msaa, resolution, atmosphere, bloom_camera, sun_vis) in &views {
         let full = resolution.map_or(UVec2::new(view.viewport.z, view.viewport.w), |r| r.0).max(UVec2::ONE);
         let half = (full + 1) / 2;
         let toward_sun_view = view.world_from_view.rotation().inverse() * sun;
@@ -699,7 +708,12 @@ fn prepare_views(
         let shafts = ShaftsView { params, textures: (a, b), passes, offsets, samples: msaa.samples(), occlusion, bloom };
         let Some(uniform) = shafts.occlusion.buffer().cloned() else { continue };
         let vendored = AtmosphereLightShafts { occlusion: shafts.result().default_view.clone(), uniform };
-        commands.entity(entity).insert((shafts, vendored));
+        // With the sun-visibility pass on, it owns the aerial hook (`sun_visibility.rs`).
+        if sun_vis {
+            commands.entity(entity).insert(shafts);
+        } else {
+            commands.entity(entity).insert((shafts, vendored));
+        }
     }
 }
 

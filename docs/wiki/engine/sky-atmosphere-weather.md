@@ -25,11 +25,13 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   The transmittance LUT holds optical depth (bevy #26208 part), and the aerial perspective's segment transmittance is
   a depth difference read from upward rays (`bruneton_functions.wesl` `sample_transmittance_lut_segment`): stock f16
   transmittance underflowed under weather haze and drew coloured bands on far terrain at eye level (SK-HB).
-- **Aerial shadow (AS, vendored).** The aerial view LUT shadows the sun's single scattering with the terrain far shadow
-  map (`AtmosphereHeightShadow` on the camera, copied from `FogShadowHeights` by `sf_atmos_bevy/src/aerial_shadow.rs`;
-  same rule and `sky.far_shadow.*` tunables as the froxels); stock Bevy shadows it only by the planet (FG-12). Map reach
-  ~3.9 km; the raymarched mode and sky-view LUT stay unshadowed. Off by default (owner FG-12: blocky, swimming);
-  `--set sky.aerial.shadow=true`.
+- **Sun visibility in the haze (FG-12, A1-A3).** One rule, `sf_atmos_bevy/src/shaders/sun_visibility.wesl` (cascades,
+  terrain far map, cloud shadows; the froxels import it). `sun_visibility.rs`: a half-res march per pixel (16 samples,
+  5 km reach, lit beyond, 3x3-clipped history) gives `V_atmo` (weighted by Bevy's medium) and `V_fog` (our fog past the
+  froxels). The vendored aerial LUT writes the sun's single scattering apart (`aerial_view_key_lut`); `render_sky` takes
+  `total - (1 - V_atmo) key`, so the sky fill, multiple scattering and moon stay; the composite's fog sun term x `V_fog`.
+  `--off sunvis` = stock. The older AS (LUT x far map, blocky) and LSO (screen-space mask, dark disc) are off, A/B arms
+  (`sky.aerial.shadow`, `sky.shafts.enabled`). Spec: aerial-shadow.md "Architecture review".
 - **Env map.** Bevy refilters the sky env map every frame (~0.7 ms a run); `EnvMapRefresh` keeps the result for N = 8
   frames (`sf_sky_bevy/src/env_refresh.rs:24`), so it costs ~0.09 ms a frame. Bevy timings appear only on frames a pass
   runs: the perf report shows `GPU ms/run` and `runs/frame` and sums the per-frame share (`sf_diag` `PassTiming`).
@@ -96,7 +98,7 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
 
 ## Switches and counters
 
-`--off clouds|fog|froxels|godrays|fogdither|fogjitter|foghistory|fogbank|fogclamp|cloudfog|stormshape|cloudedge|cbshape|transfog|envslice|skymotion|surface`
+`--off sunvis|clouds|fog|froxels|godrays|fogdither|fogjitter|foghistory|fogbank|fogclamp|cloudfog|stormshape|cloudedge|cbshape|transfog|envslice|skymotion|surface`
 (`mw_game_core/src/perf.rs:135`); live `flip ambient_specular`, console `surface set|dump|clear`, weather overrides
 (`WeatherOverrides`). GPU spans `clouds_shadow|trace|resolve|composite`, Bevy `atmosphere_luts`; `MediumStats`
 (`rebuilds`, `scale_updates`), `WeatherStats`.

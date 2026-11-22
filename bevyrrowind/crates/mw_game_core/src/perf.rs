@@ -95,6 +95,10 @@ pub enum Part {
     /// masks the sun's forward lobe in the aerial perspective and the analytic fog; off, the haze
     /// toward a sun hidden by terrain glows as stock (the A/B).
     Shafts,
+    /// The per-pixel sun visibility (A2, FG-12, `sf_atmos_bevy::SUN_VIS_ENABLED`): terrain and
+    /// clouds shadow the sun's light in Bevy's aerial perspective and the analytic fog, on screen
+    /// or off; off, the light shaft occlusion if `sky.shafts.enabled`, else stock (the A/B).
+    SunVis,
     /// Screen-space planar reflections on the water (W-SSPR, `sf_water_bevy::WaterReflections`): off,
     /// the environment map only (the old look, an A/B).
     WaterSsr,
@@ -240,10 +244,13 @@ pub enum Part {
     /// heights, normals and macro albedo are evaluated on the GPU and CPU tiles only serve height queries near
     /// the camera; off, every tile is generated on the CPU and uploaded (the G1 path, an A/B for hitches).
     GpuTerrain,
+    /// Groundcover (`sf_groundcover_bevy`, GC-2b3): grass and ferns scattered on grass land textures around the
+    /// camera; off, none is planted (an A/B).
+    Groundcover,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 88] = [
+    const ALL: [(&'static str, Part); 90] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -291,6 +298,7 @@ impl Part {
         ("cbshape", Part::CbShape),
         ("aerialshadow", Part::AerialShadow),
         ("shafts", Part::Shafts),
+        ("sunvis", Part::SunVis),
         ("waterssr", Part::WaterSsr),
         ("shorenormals", Part::ShoreNormals),
         ("shorewaves", Part::ShoreWaves),
@@ -333,6 +341,7 @@ impl Part {
         ("shiftrebase", Part::ShiftRebase),
         ("selectgate", Part::SelectGate),
         ("gputerrain", Part::GpuTerrain),
+        ("groundcover", Part::Groundcover),
     ];
 
     pub fn name(self) -> &'static str {
@@ -433,6 +442,9 @@ mod tests {
         let shafts = Off::from_flags(&["shafts".into()]).expect("known");
         assert!(shafts.has(Part::Shafts) && !shafts.has(Part::AerialShadow) && !shafts.has(Part::Fog) && !shafts.has(Part::Froxels));
         assert_eq!(shafts.label(), "shafts");
+        let sunvis = Off::from_flags(&["sunvis".into()]).expect("known");
+        assert!(sunvis.has(Part::SunVis) && !sunvis.has(Part::Shafts) && !sunvis.has(Part::AerialShadow) && !sunvis.has(Part::Fog));
+        assert_eq!(sunvis.label(), "sunvis");
         let shift = Off::from_flags(&["shiftrebase".into()]).expect("known");
         assert!(shift.has(Part::ShiftRebase) && !shift.has(Part::Scene));
         assert_eq!(shift.label(), "shiftrebase");

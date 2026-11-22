@@ -66,7 +66,7 @@ pub(crate) fn build(app: &mut App) {
 /// (render-order.md RO-8).
 pub(crate) fn finish(app: &mut App) {
     let mine = [trace_pass.into_system_set().intern(), shadow_pass.into_system_set().intern()];
-    sf_render_order_bevy::add_pass(app, PassStage::Clouds, composite_pass.into_system_set().intern(), &mine, composite_pass.after(trace_pass).after(crate::shafts::shafts_pass));
+    sf_render_order_bevy::add_pass(app, PassStage::Clouds, composite_pass.into_system_set().intern(), &mine, composite_pass.after(trace_pass).after(crate::shafts::shafts_pass).after(crate::sun_visibility::sun_visibility_pass));
     // The light shaft bloom (aerial-shadow.md "S3b"): reads the composited scene colour (clouds
     // block the rays, gaps make them) and adds the rays back, in the same stage after the
     // composite: after `render_sky`, the night sky and everything else before the transparents,
@@ -213,7 +213,7 @@ pub(crate) struct FogUniform {
 }
 
 impl FogUniform {
-    fn new(fog: Option<&sf_atmos::FogSettings>, offsets: &sf_atmos::FogOffsets, view_ambient: Vec3, steps: u32, bank_edges: bool) -> Self {
+    pub(crate) fn new(fog: Option<&sf_atmos::FogSettings>, offsets: &sf_atmos::FogOffsets, view_ambient: Vec3, steps: u32, bank_edges: bool) -> Self {
         let Some(f) = fog else { return Self::default() };
         Self {
             albedo: f.albedo,
@@ -317,7 +317,7 @@ struct CloudPipelines {
     linear_sampler: Sampler,
 }
 
-fn atmosphere_layout(label: &'static str, msaa: bool) -> BindGroupLayoutDescriptor {
+pub(crate) fn atmosphere_layout(label: &'static str, msaa: bool) -> BindGroupLayoutDescriptor {
     let depth = if msaa { texture_2d_multisampled(TextureSampleType::Depth) } else { texture_2d(TextureSampleType::Depth) };
     BindGroupLayoutDescriptor::new(
         label,
@@ -408,6 +408,9 @@ impl FromWorld for CloudPipelines {
                         // The light shaft occlusion (`shafts.rs`): its uniform and blurred mask.
                         uniform_buffer::<bevy_pbr::GpuAtmosphereLightShafts>(false),
                         texture_2d(TextureSampleType::default()),
+                        // The sun-visibility pass (`sun_visibility.rs`): its switch and result.
+                        uniform_buffer::<crate::sun_visibility::SunVisUseUniform>(false),
+                        texture_2d(TextureSampleType::default()),
                     ),
                 ),
             ),
@@ -465,7 +468,7 @@ const FROXEL: TextureFormat = TextureFormat::Rgba16Float;
 const FOG_LIGHT_TEXELS: u32 = 3;
 const FOG_LIGHT: TextureFormat = TextureFormat::Rgba32Float;
 /// Bank-march samples per traced pixel (weather.md: the far fog, 16 steps).
-const FOG_STEPS: u32 = 16;
+pub(crate) const FOG_STEPS: u32 = 16;
 /// R: cloud distance; G: the bank modulation of the fog (`fog.wesl`); B: the
 /// cut depth, the scene distance that stopped the march, or `far` for an
 /// "open" texel that saw sky (weather.md "Clouds", Rendering 4-5;
@@ -692,9 +695,44 @@ fn froxel_uniform(frame: &CloudFrame, view: &ExtractedView, exposure: f32, setti
     }
 }
 
+/// Group 0 of a pass that reads Bevy's atmosphere as `render_sky` does ([`atmosphere_layout`]): the
+/// five dynamic uniforms (atmosphere, settings, transforms, view, lights), the view's LUTs and
+/// samplers, the depth.
+pub(crate) fn atmosphere_group(
+    device: &RenderDevice,
+    cache: &PipelineCache,
+    (label, layout): (&'static str, &BindGroupLayoutDescriptor),
+    uniforms: [bevy_render::render_resource::BindingResource<'_>; 5],
+    luts: &AtmosphereTextures,
+    (medium_sampler, atmosphere_sampler): (&ScatteringMediumSampler, &AtmosphereSampler),
+    depth_view: &bevy_render::render_resource::TextureView,
+) -> BindGroup {
+    let [a0, a1, a2, a3, a4] = uniforms;
+    device.create_bind_group(
+        label,
+        &cache.get_bind_group_layout(layout),
+        &BindGroupEntries::with_indices((
+            (0, a0),
+            (1, a1),
+            (2, a2),
+            (3, a3),
+            (4, a4),
+            (5, &luts.medium_density_lut.default_view),
+            (6, &luts.medium_scattering_lut.default_view),
+            (7, medium_sampler.sampler()),
+            (8, &luts.transmittance_lut.default_view),
+            (9, &luts.multiscattering_lut.default_view),
+            (10, &luts.sky_view_lut.default_view),
+            (11, &luts.aerial_view_lut.default_view),
+            (12, &**atmosphere_sampler),
+            (13, depth_view),
+        )),
+    )
+}
+
 /// The atmosphere resources the clouds' group 0 is built from (the same
 /// bindings as Bevy's `render_sky`).
-type AtmosphereResources<'w> = (
+pub(crate) type AtmosphereResources<'w> = (
     Res<'w, ComponentUniforms<GpuAtmosphere>>,
     Res<'w, ComponentUniforms<GpuAtmosphereSettings>>,
     Res<'w, AtmosphereTransforms>,
@@ -717,6 +755,7 @@ type ViewItem = (
     Option<&'static ViewShadowBindings>,
     Option<&'static TemporalJitter>,
     Option<&'static crate::shafts::ShaftsView>,
+    Option<&'static crate::sun_visibility::SunVisView>,
 );
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -767,7 +806,7 @@ fn prepare_views(
         shell = (shell.0.min(v.envelope[0]), shell.1.max(v.envelope[1]), shell.2.max(v.envelope[2]));
         far_weather = u32::from(map_on == 1 && s.quality.far_weather && v.envelope[3] > 0.5);
     }
-    for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps, jitter, shafts) in &views {
+    for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps, jitter, shafts, sun_vis) in &views {
         if media.get(atmosphere.medium).is_none() { continue }
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
         let full = resolution.map_or(UVec2::new(view.viewport.z, view.viewport.w), |r| r.0).max(UVec2::ONE);
@@ -892,25 +931,14 @@ fn prepare_views(
 
         let samples = msaa.samples();
         let atmosphere_layout = if samples > 1 { &pipelines.atmosphere_msaa } else { &pipelines.atmosphere };
-        let atmosphere_group = device.create_bind_group(
-            "clouds_atmosphere",
-            &cache.get_bind_group_layout(atmosphere_layout),
-            &BindGroupEntries::with_indices((
-                (0, a0.clone()),
-                (1, a1.clone()),
-                (2, a2.clone()),
-                (3, a3.clone()),
-                (4, a4.clone()),
-                (5, &luts.medium_density_lut.default_view),
-                (6, &luts.medium_scattering_lut.default_view),
-                (7, medium_sampler.sampler()),
-                (8, &luts.transmittance_lut.default_view),
-                (9, &luts.multiscattering_lut.default_view),
-                (10, &luts.sky_view_lut.default_view),
-                (11, &luts.aerial_view_lut.default_view),
-                (12, &**atmosphere_sampler),
-                (13, depth_view),
-            )),
+        let atmosphere_group = atmosphere_group(
+            &device,
+            &cache,
+            ("clouds_atmosphere", atmosphere_layout),
+            [a0.clone(), a1.clone(), a2.clone(), a3.clone(), a4.clone()],
+            luts,
+            (&medium_sampler, &atmosphere_sampler),
+            depth_view,
         );
         let density = device.create_bind_group(
             "clouds_density",
@@ -992,6 +1020,16 @@ fn prepare_views(
             .map(|s| (s.occlusion.binding(), &s.result().default_view))
             .or_else(|| shafts_none.as_ref().map(|(buffer, texture)| (buffer.binding(), &texture.default_view)));
         let Some((Some(shafts_binding), shafts_view)) = shafts_inputs else { continue };
+        // The sun-visibility pass's switch and result, or a stand-in that is off.
+        let sun_vis_none = sun_vis.is_none().then(|| {
+            let mut buffer = UniformBuffer::from(crate::sun_visibility::SunVisUseUniform::default());
+            buffer.write_buffer(&device, &queue);
+            (buffer, cached(&mut textures, &device, "sun_vis_none", UVec2::ONE, crate::sun_visibility::OUTPUT))
+        });
+        let sun_vis_inputs = sun_vis
+            .map(|s| (s.use_uniform.binding(), s.output_view()))
+            .or_else(|| sun_vis_none.as_ref().map(|(buffer, texture)| (buffer.binding(), &texture.default_view)));
+        let Some((Some(sun_vis_binding), sun_vis_view)) = sun_vis_inputs else { continue };
         let composite = device.create_bind_group(
             "clouds_composite",
             &cache.get_bind_group_layout(&pipelines.composite),
@@ -1005,6 +1043,8 @@ fn prepare_views(
                 &pipelines.linear_sampler,
                 shafts_binding,
                 shafts_view,
+                sun_vis_binding,
+                sun_vis_view,
             )),
         );
         let fog_light = frame.fog.is_some().then(|| {
@@ -1033,7 +1073,7 @@ fn prepare_views(
 
 // -- passes --------------------------------------------------------------------
 
-type AtmosphereOffsets = (
+pub(crate) type AtmosphereOffsets = (
     &'static DynamicUniformIndex<GpuAtmosphere>,
     &'static DynamicUniformIndex<GpuAtmosphereSettings>,
     &'static AtmosphereTransformsOffset,
@@ -1041,7 +1081,7 @@ type AtmosphereOffsets = (
     &'static ViewLightsUniformOffset,
 );
 
-fn offsets(o: (&DynamicUniformIndex<GpuAtmosphere>, &DynamicUniformIndex<GpuAtmosphereSettings>, &AtmosphereTransformsOffset, &ViewUniformOffset, &ViewLightsUniformOffset)) -> [u32; 5] {
+pub(crate) fn offsets(o: (&DynamicUniformIndex<GpuAtmosphere>, &DynamicUniformIndex<GpuAtmosphereSettings>, &AtmosphereTransformsOffset, &ViewUniformOffset, &ViewLightsUniformOffset)) -> [u32; 5] {
     [o.0.index(), o.1.index(), o.2.index(), o.3.offset, o.4.offset]
 }
 

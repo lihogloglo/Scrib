@@ -381,3 +381,70 @@ fn render_sky_compiles_with_and_without_the_light_shaft_occlusion() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+/// A1 (aerial-shadow.md "Architecture review"): the froxel inject imports the shared sun
+/// visibility (`sun_visibility.wesl`) instead of its own copies, links and validates (the
+/// `Froxels` layout is `froxel_clamp_compiles_and_keeps_the_layout`'s).
+#[test]
+fn froxel_inject_imports_the_shared_sun_visibility() {
+    let wgsl = compile("sf_atmos_bevy::shaders::froxel_inject", &[]).unwrap_or_else(|e| panic!("{e}"));
+    for name in ["SunShadowMaps", "csm_visibility", "far_visibility", "cloud_visibility", "sun_visibility"] {
+        assert!(wgsl.contains(name), "the inject uses {name}");
+    }
+    let src = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/froxel_inject.wesl")).expect("source");
+    assert!(src.contains("import super::sun_visibility::"), "imported");
+    for own in ["fn csm_visibility", "fn far_visibility", "fn cloud_visibility"] {
+        assert!(!src.contains(own), "no local copy of {own}");
+    }
+}
+
+/// A2: the sun-visibility march (with and without MSAA depth) and resolve link and validate,
+/// their entry points exist, the march reads the shared visibility and Bevy's density LUT, and the
+/// WGSL `SunVisPass` matches `SunVisUniform` (fields and size).
+#[test]
+fn sun_visibility_passes_compile_and_keep_the_layout() {
+    use bevy_render::render_resource::ShaderType;
+    let fields = [
+        "prev_clip_from_world", "camera", "max_distance", "forward", "samples", "sun_dir", "frame", "origin_shift", "history", "shadow_center",
+        "cloud_shadow", "shadow_x", "history_valid", "shadow_y", "fog_start", "planet_center", "inner_radius", "far_map", "far_vis", "half_size",
+        "full_size", "far_fade", "sky_end", "fog",
+    ];
+    let rust_size = crate::sun_visibility::SunVisUniform::min_size().get();
+    let mut failures = Vec::new();
+    for (module, defs, needs) in [
+        ("sf_atmos_bevy::shaders::sun_vis_march", &[][..], &["fn march", "sun_visibility(", "sample_density_lut", "fog_depths"][..]),
+        ("sf_atmos_bevy::shaders::sun_vis_march", &["MULTISAMPLED"][..], &["fn march", "texture_depth_multisampled_2d"][..]),
+        ("sf_atmos_bevy::shaders::sun_vis_resolve", &[][..], &["fn resolve", "clip_history2"][..]),
+    ] {
+        match compile(module, defs) {
+            Ok(wgsl) => {
+                failures.extend(needs.iter().filter(|n| !wgsl.contains(*n)).map(|n| format!("{module} {defs:?}: no {n}")));
+                let (names, size) = struct_layout(&wgsl, "SunVisPass");
+                if names != fields {
+                    failures.push(format!("{module}: SunVisPass fields {names:?}"));
+                }
+                if size != rust_size {
+                    failures.push(format!("{module}: SunVisPass size {size} vs Rust {rust_size}"));
+                }
+            }
+            Err(e) => failures.push(e),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// A2: the composite (with and without MSAA) still links and validates, reads `V_fog` (the
+/// pass's result) behind its switch, keeps the LSO arm, and its `SunVisUse` matches
+/// `SunVisUseUniform`.
+#[test]
+fn composite_reads_the_sun_visibility() {
+    use bevy_render::render_resource::ShaderType;
+    for defs in [&[][..], &["MULTISAMPLED"][..]] {
+        let wgsl = compile("sf_atmos_bevy::shaders::cloud_composite", defs).unwrap_or_else(|e| panic!("{e}"));
+        assert!(wgsl.contains("sun_vis_texture"), "{defs:?}: the fog's sun term reads the pass");
+        assert!(wgsl.contains("shaft_occlusion"), "{defs:?}: the LSO arm stays");
+        let (names, size) = struct_layout(&wgsl, "SunVisUse");
+        assert_eq!(names, ["light_dir", "enabled"], "field order = SunVisUseUniform");
+        assert_eq!(size, crate::sun_visibility::SunVisUseUniform::min_size().get(), "WGSL vs Rust size");
+    }
+}

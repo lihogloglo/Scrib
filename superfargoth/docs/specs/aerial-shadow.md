@@ -153,6 +153,120 @@ values as recalled; UE's docs state none, so `Guess`): scale 0.2, threshold 8, m
 scene colour after pre-exposure: 1 ≈ white before tonemapping, so 8 keeps the sun's disc and inner aureole), tint
 white, radius 0.5 screen heights.
 
+## Architecture review (2026-11-22)
+
+Owner: everything FG-12 built on the atmosphere except the god rays is "maybe"; audit it and settle the architecture.
+
+**What lights the haze on a terrain pixel today (low sun):**
+
+1. **Bevy aerial perspective** (`render_sky`, aerial view LUT 32×32×32, 1 km slices, 6 samples each): the medium
+   (Rayleigh, Mie × weather haze x20-x80, ozone). Weather haze lives here. Every directional light's single and
+   multiple scattering, shadowed only by the planet (`functions.wesl` `sample_local_inscattering`).
+2. **Our analytic height fog and banks** (`cloud_composite.wesl` `fog_to`), from the froxels' far (256-512 m) on:
+   sun = `key_seen × HG(fog.phase_g = 0.6)` plus the ambient fill. Unshadowed; now × the LSO mask.
+3. **Froxels** (to 256-512 m): our fog only; the sun shadowed per froxel by the cascades, the terrain far map and the
+   cloud shadow map (`froxel_inject.wesl` `csm_visibility`, `far_visibility`, `cloud_visibility`).
+
+Sky pixels: the sky-view LUT (unshadowed, which is right: a sky ray's light comes from 100+ km) plus our fog to
+`fog.sky_distance`.
+
+**Verdict on the three media:** keep them. The split is the industry one (UE: Sky Atmosphere + Exponential Height Fog +
+Volumetric Fog, composed in the same order). The fog can't move into Bevy's medium: its density LUT spreads 256
+texels over the whole atmosphere height (hundreds of metres a texel), and our fog's scale height is tens of metres.
+The fault is elsewhere: **the sun's visibility is computed in one medium (froxels) and missing or faked in the other
+two.**
+
+**FG-12's work, audited:**
+
+- **AS (off):** the right idea (shadow only the key light's single scattering, with the same far map), at the wrong
+  resolution: 32×32 screen texels × 1 km slices, re-fit to the view every frame, no jitter or history, so blocky and
+  swimming. Keep it off. Its shader variant becomes dead code once A3 lands. Its wiring (`aerial_shadow.rs`, far map →
+  render world) is reused.
+- **S3a LSO (on by default): a screen-space guess, wrong for structural reasons, not tuning ones.**
+  (a) `render_sky` multiplies the whole aerial in-scatter (Rayleigh, multiple scattering, moon, every light) by the
+  mask, so the haze vanishes where the sun hides: the **dark disc**. (b) The mask's lobe is `HG(0.8)^1.5` normalised to
+  1. That is narrower than the medium's real Mie halo and is not the fog's phase (g 0.6), so a **ring** of glow
+  survives in both the aerial perspective and the fog. (c) It fades as the sun's screen position leaves the screen
+  (`offscreen_fade` 0.3), so the **FG-12 glow comes back whenever the hidden sun is just off frame**, and it says
+  nothing about shadowed haze away from the sun. UE ships Light Shaft Occlusion as a look option on its height fog,
+  not as atmosphere shadowing; on the atmosphere, UE's answer is the light's "Cast Shadows on Atmosphere".
+  The rays the owner liked come from the composite masking the fog's sun term only (ambient kept), which is the
+  correct split. The disc comes from the `render_sky` mask.
+- **S3b bloom (off):** the look was rejected; leave it off.
+- **Tunables:** `sky.far_shadow.*` drive the froxels and AS, but the terrain's own far shadow
+  (`sf_lod_bevy/src/shaders/far_shadow_map.wesl:15-22`) keeps bare consts "kept in step". A live change makes the
+  surface and volume shadows disagree.
+- **Default game now:** a dark disc ringed by glow wherever the sun sits behind terrain on screen; the glow returns off
+  screen.
+
+**Target: one sun visibility for all haze.** The canonical technique is to shadow the key light's *single scattering*
+per pixel along the view ray, leaving multiple scattering and the other lights alone. Sources: Hillaire 2020 (a
+per-pixel march for mountain shadows, where the LUT is too coarse); UE "Cast Shadows on Atmosphere"; Yusov, GPU Pro 5
+(epipolar sampling, the full-resolution form).
+
+1. **Split the key light's single scattering out of the aerial LUT** (vendored; replaces AS's shader change). The
+   aerial view LUT pass also writes a second 32³ texture holding only the shadow light's single scattering
+   (unshadowed, same log encoding). `render_sky` then computes `L = L_total − (1 − V) · L_key_single`. That can't go
+   negative and can't leave a disc (Rayleigh fill, multiple scattering and the moon are untouched), and it needs no
+   phase guess (the real phase is in the LUT).
+2. **One sun-visibility pass** (framework, `sf_atmos_bevy`). Half the internal resolution, in `RenderSkyInputs`
+   (after depth, before `render_sky`, as the LSO mask runs now). Each pixel marches from the camera to the scene
+   depth, or to the far map's reach for sky pixels and far terrain: 16 samples (Guess), blue-noise jitter, history
+   reprojected and clipped (the froxels' rule). Every sample reads **one** `sun_visibility(p)`: cascades inside their
+   range, far map beyond, × cloud shadow. It moves out of `froxel_inject.wesl` into a shared `sun_visibility.wesl`
+   that the froxels import, together with `far_shadow_map.wesl`'s values (one rule, no "kept in step"). One march
+   yields two weighted means: `V_atmo`, weighted by the Bevy medium's scattering density × transmittance to the camera
+   (density LUT), and `V_fog`, weighted by our fog density from `froxels.far` on.
+3. **Consumers:** `render_sky` uses `V_atmo` through the vendored hook (the LSO binding slot, re-purposed); the
+   composite's fog sun term uses `V_fog` in place of `shaft_occlusion`. The froxels already use the same rule and
+   don't change.
+4. LSO S3a stays as an opt-in arm, off once the new pass is signed off (rule "a change that doesn't win stays").
+
+**What it fixes:** no disc and no ring; it works with the sun off screen and for haze away from the sun; it is
+world-space, so it doesn't swim; it is as sharp as the far map (24 m texels) and the cascades. Shafts become real
+crepuscular rays in the fog and haze wherever terrain or clouds shadow them, on screen or not (also FG-10).
+
+**Limits:** past the far map's reach (±4.6 km) the shadow fades to lit, so a ridge farther away still lets the glow
+through. The later fix is a coarser second far-map level (UE Far Shadow cascades). The sky-view LUT stays stock.
+
+**Cost (expected):** about 854×480 × 16 samples × (shadow + density + cloud fetch), roughly 20 M fetches, ~0.15-0.3 ms
+on the 4060 at 1440p + DLSS Q. It replaces the LSO mask and its 3 blurs (similar size). The LUT split costs ~0. It
+gets measured in A4.
+
+**Slices:**
+
+- **A0** (small, look): LSO's `render_sky` mask off by default (no dark disc), and the fog mask's lobe set to the
+  fog's own phase (no fog ring). The rays stay; Bevy's aerial glow (the original FG-12) returns until A3.
+- **A1** shared `sun_visibility.wesl` + `sky.far_shadow.*` read by `far_shadow_map.wesl` too. A refactor: froxel
+  output unchanged.
+- **A2** sun-visibility pass + `V_fog` in the composite.
+- **A3** vendored aerial LUT split + `V_atmo` in `render_sky`; AS's shader variant deleted.
+- **A4** owner check FG-12 (x10s canyon 18.09 h, sun on and just off screen) + cost A/B against LSO; then the default.
+
+**A3 as built (2026-11-22):** vendored patch "own, LSO" extended (`patches/superfargoth-light-shaft-occlusion.diff`). A
+view with `AtmosphereLightShafts` gets `AtmosphereTextures::aerial_view_key_lut` (32³ `Rgba16Float`, same log encoding)
+and the aerial view LUT pass runs with `ATMOSPHERE_KEY_SINGLE` (bindings 17 shafts uniform, 18 key LUT): per sample the
+single scattering of the light within `dot > 0.99` of `light_dir` (planet shadow, E1b scale, same analytic integration
+and throughput as the total). With AS on, the `ATMOSPHERE_HEIGHT_SHADOW` + key variant gives the key term the same
+height shadow, so `total − key` stays the unmasked rest (they combine; AS is still off). `render_sky` (LUT path, geometry
+pixels) computes `total − (1 − v) · min(key, total)`, `v` = the unchanged `light_shaft_occlusion` (exactly 1 at
+`lobe_g` 0 on an open texel, `1 − darkness` on a closed one); the raymarched path stays unmasked. The light-shafts
+variant runs only on frames whose aerial pass wrote the key LUT; absent component = stock. AS's variant stays (cleanup
+slice). Tests: `sf_sky_bevy` `shader_tests` (four aerial variants, `render_sky` bindings, CPU twins of the mask).
+
+**A1/A2 as built (2026-11-22):** A1: `sf_atmos_bevy/src/shaders/sun_visibility.wesl` holds the rule (`csm_visibility`,
+`far_visibility`, `cloud_visibility`, `sun_visibility = min(csm, far) · cloud`, textures passed in); `froxel_inject.wesl`
+imports it (output unchanged). `far_shadow_map.wesl` (sf_lod_bevy) still keeps its own consts (logged bug, not A1's).
+A2: `sf_atmos_bevy/src/sun_visibility.rs` + `shaders/sun_vis_{common,march,resolve}.wesl`, CPU twin
+`sf_atmos::sun_visibility`. Half internal resolution, `RenderSkyInputs`, span `sun_visibility`. March: nearest of the 2×2
+depths, `t = reach · x²` (denser near the camera), R2 pixel + R1 frame jitter; segment weights in closed form
+(`T · σs/σt · (1 − e^(−σt Δ))` from Bevy's density LUT, mean of RGB; fog `e^(−τ_before)(1 − e^(−τ_seg))` from the froxels'
+far, height layer only, banks left out). Beyond `max_distance_m`: one lit closed-form segment to the scene (sky:
+`fog.sky_distance`). Resolve: world-point reprojection (sky: direction), 3×3 Karis clip, `Rg16Float` R = V_atmo, G =
+V_fog. Hook: `AtmosphereLightShafts` (light_dir sun, darkness 1, lobe_g 0); composite fog sun term × V_fog.
+Tunables `sky.sun_vis.{enabled true, samples 16, max_distance_m 5000, history 0.9}` (Guess but `enabled`), `--off sunvis`;
+`sky.shafts.enabled` now false (LSO = A/B arm). With A3, V_atmo masks only the key light's single scattering.
+
 ## Open questions
 
 None for the owner: the look is judged in FG-12.

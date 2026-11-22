@@ -8,6 +8,14 @@ import package::{
         },
     }
 };
+// superfargoth patch (own, LSO: light shaft occlusion, A3 key split): only the key variant
+// imports these (the stock link stays byte-identical).
+@if(ATMOSPHERE_KEY_SINGLE)
+import package::atmosphere::{
+    bindings::lights,
+    bruneton_functions::ray_intersects_ground,
+    functions::{sample_transmittance_lut, sample_scattering_lut},
+};
 
 
 @group(0) @binding(13) var aerial_view_lut_out: texture_storage_3d<rgba16float, write>;
@@ -57,6 +65,55 @@ fn height_shadow_visibility(p: vec3<f32>, dist: f32) -> f32 {
     return mix(smoothstep(hs - w, hs + w, y), 1.0, smoothstep(height_shadow.fade_start, 1.0, edge));
 }
 
+// superfargoth patch (own, LSO: light shaft occlusion, A3 key split),
+// `superfargoth/docs/specs/aerial-shadow.md` "Architecture review": the view's light shafts
+// (`bevy_pbr::AtmosphereLightShafts`; field order is the layout of `GpuAtmosphereLightShafts`) and
+// a second LUT of the same size and log encoding holding only the single scattering of the light
+// toward `light_shafts.light_dir`, so `render_sky` can mask that light alone (the Rayleigh fill,
+// multiple scattering and the other lights stay in `total - key`).
+@if(ATMOSPHERE_KEY_SINGLE)
+struct AtmosphereLightShafts {
+    // Toward the light (world space).
+    light_dir: vec3<f32>,
+    darkness: f32,
+    lobe_g: f32,
+}
+
+@if(ATMOSPHERE_KEY_SINGLE)
+@group(0) @binding(17) var<uniform> light_shafts: AtmosphereLightShafts;
+@if(ATMOSPHERE_KEY_SINGLE)
+@group(0) @binding(18) var aerial_view_key_lut_out: texture_storage_3d<rgba16float, write>;
+
+// The single-scattering term of `sample_local_inscattering` for the light(s) whose
+// `direction_to_light` is within `dot > 0.99` of `light_shafts.light_dir` (planet shadow, E1b
+// scale), times `shadow_visibility` when that light is also the one toward `shadow_dir` (the AS
+// height shadow; a zero `shadow_dir` matches none), exactly as the total carries it.
+@if(ATMOSPHERE_KEY_SINGLE)
+fn sample_key_single_scattering(
+    ray_dir: vec3<f32>,
+    world_pos: vec3<f32>,
+    shadow_dir: vec3<f32>,
+    shadow_visibility: f32,
+) -> vec3<f32> {
+    let local_r = length(world_pos);
+    let local_up = normalize(world_pos);
+    var single = vec3(0.0);
+    for (var light_i: u32 = 0u; light_i < lights.n_directional_lights; light_i++) {
+        let light = &lights.directional_lights[light_i];
+        if dot((*light).direction_to_light, light_shafts.light_dir) <= 0.99 {
+            continue;
+        }
+        let mu_light = dot((*light).direction_to_light, local_up);
+        let neg_LdotV = dot((*light).direction_to_light, ray_dir);
+        let transmittance_to_light = sample_transmittance_lut(local_r, mu_light);
+        let shadow_factor = transmittance_to_light * f32(!ray_intersects_ground(local_r, mu_light));
+        let scattering_coeff = sample_scattering_lut(local_r, neg_LdotV);
+        let shadowed = select(1.0, shadow_visibility, dot((*light).direction_to_light, shadow_dir) > 0.99);
+        single += (*light).color.rgb * (*light).atmosphere_scatter * shadow_factor * scattering_coeff * shadowed;
+    }
+    return single;
+}
+
 @compute
 @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) idx: vec3<u32>) {
@@ -79,6 +136,9 @@ fn main(@builtin(global_invocation_id) idx: vec3<u32>) {
     var prev_t = 0.0;
     var total_inscattering = vec3(0.0);
     var throughput = vec3(1.0);
+    // superfargoth patch (own, LSO: light shaft occlusion, A3 key split)
+    @if(ATMOSPHERE_KEY_SINGLE)
+    var key_inscattering = vec3(0.0);
 
     for (var slice_i: u32 = 0; slice_i < settings.aerial_view_lut_size.z; slice_i++) {
         for (var step_i: u32 = 0; step_i < settings.aerial_view_lut_samples; step_i++) {
@@ -112,6 +172,14 @@ fn main(@builtin(global_invocation_id) idx: vec3<u32>) {
             // Analytical integration of the single scattering term in the radiance transfer equation
             let s_int = (inscattering - inscattering * sample_transmittance) / max(extinction, MIN_EXTINCTION);
             total_inscattering += throughput * s_int;
+            // superfargoth patch (own, LSO: light shaft occlusion, A3 key split): the key light's
+            // single scattering, integrated and attenuated exactly like the total.
+            @if(ATMOSPHERE_KEY_SINGLE && !ATMOSPHERE_HEIGHT_SHADOW)
+            let key_single = sample_key_single_scattering(ray_dir, sample_pos, vec3(0.0), 1.0);
+            @if(ATMOSPHERE_KEY_SINGLE && ATMOSPHERE_HEIGHT_SHADOW)
+            let key_single = sample_key_single_scattering(ray_dir, sample_pos, height_shadow.light_dir, visibility);
+            @if(ATMOSPHERE_KEY_SINGLE)
+            key_inscattering += throughput * (key_single - key_single * sample_transmittance) / max(extinction, MIN_EXTINCTION);
 
             throughput *= sample_transmittance;
             if all(throughput < vec3(0.001)) {
@@ -122,5 +190,8 @@ fn main(@builtin(global_invocation_id) idx: vec3<u32>) {
         // Store in log space to allow linear interpolation of exponential values between slices
         let log_inscattering = log(max(total_inscattering, vec3(1e-6)));
         textureStore(aerial_view_lut_out, vec3(vec2<u32>(idx.xy), slice_i), vec4(log_inscattering, 0.0));
+        // superfargoth patch (own, LSO: light shaft occlusion, A3 key split): same log encoding.
+        @if(ATMOSPHERE_KEY_SINGLE)
+        textureStore(aerial_view_key_lut_out, vec3(vec2<u32>(idx.xy), slice_i), vec4(log(max(key_inscattering, vec3(1e-6))), 0.0));
     }
 }

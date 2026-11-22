@@ -8,10 +8,11 @@
 // volume (Wronski 2014, Hillaire 2015), the history clipped to this frame's
 // 3×3 neighbourhood (FOG-CLAMP; Karis 2014).
 
-import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT};
+import bevy_pbr::render::mesh_view_types::Lights;
 import super::fog::{MAX_EXPONENT, fog_phase};
 import super::fog_bank::fog_bank_mask;
 import super::froxel_common::{Froxels, slice_distance, slice_coord, froxel_ray};
+import super::sun_visibility::{SunShadowMaps, csm_visibility, far_visibility, cloud_visibility, sun_visibility};
 
 @group(0) @binding(0) var<uniform> fx: Froxels;
 @group(0) @binding(1) var<uniform> lights: Lights;
@@ -28,9 +29,9 @@ import super::froxel_common::{Froxels, slice_distance, slice_coord, froxel_ray};
 @group(0) @binding(11) var volume: texture_storage_3d<rgba16float, write>;
 
 
-// The key light's CSM visibility at `p` (Bevy's cascades, hard compare: the
-// froxel is far coarser than a texel). `fwd`: distance along the view axis.
-fn csm_visibility(p: vec3<f32>, dir: vec3<f32>, fwd: f32) -> f32 {
+// The key light's CSM visibility at `p` (`sun_visibility.wesl`, the shared rule): the
+// directional light toward `dir`, none (lit) if no light matches. `fwd`: distance along the view axis.
+fn key_csm_visibility(p: vec3<f32>, dir: vec3<f32>, fwd: f32) -> f32 {
     var best = 0.999;
     var li = 0xffffffffu;
     for (var i = 0u; i < lights.n_directional_lights; i += 1u) {
@@ -40,57 +41,15 @@ fn csm_visibility(p: vec3<f32>, dir: vec3<f32>, fwd: f32) -> f32 {
             li = i;
         }
     }
-    if li == 0xffffffffu || (lights.directional_lights[li].flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) == 0u {
+    if li == 0xffffffffu {
         return 1.0;
     }
-    let n = lights.directional_lights[li].num_cascades;
-    for (var c = 0u; c < n; c += 1u) {
-        if fwd < lights.directional_lights[li].cascades[c].far_bound {
-            let bias = lights.directional_lights[li].shadow_depth_bias * dir;
-            let clip = lights.directional_lights[li].cascades[c].clip_from_world * vec4(p + bias, 1.0);
-            let ndc = clip.xyz / clip.w;
-            if any(abs(ndc.xy) > vec2(1.0)) || ndc.z < 0.0 || ndc.z > 1.0 {
-                return 1.0;
-            }
-            let uv = ndc.xy * vec2(0.5, -0.5) + 0.5;
-            let layer = i32(lights.directional_lights[li].depth_texture_base_index + c);
-            return textureSampleCompareLevel(shadow_maps, shadow_sampler, uv, layer, ndc.z);
-        }
-    }
-    return 1.0;
+    return csm_visibility(lights.directional_lights[li], shadow_maps, shadow_sampler, p, dir, fwd);
 }
 
-// The terrain's shadow-height map (sf_lod_bevy `map_visibility`'s rule: a
-// penumbra widening with occluder distance, a bias growing with view
-// distance, a fade toward the map's border). The values are the
-// `sky.far_shadow.*` tunables (`fx.far_vis`, `fx.far_fade`), shared with the
-// aerial view LUT's height shadow (vendored bevy_pbr patch "own, AS").
-fn far_visibility(p: vec3<f32>) -> f32 {
-    let far = fx.far_map;
-    if far.z <= 0.0 {
-        return 1.0;
-    }
-    let uv = (p.xz - far.xy) * far.z;
-    let edge = max(abs(uv.x - 0.5), abs(uv.y - 0.5)) * 2.0;
-    if edge >= 1.0 {
-        return 1.0;
-    }
-    let t = textureSampleLevel(far_map, linear_sampler, uv, 0.0).rg;
-    let hs = t.x + far.w;
-    let w = t.y * fx.far_vis.x + fx.far_vis.y;
-    let y = p.y + fx.far_vis.z + distance(fx.camera, p) * fx.far_vis.w;
-    return mix(smoothstep(hs - w, hs + w, y), 1.0, smoothstep(fx.far_fade, 1.0, edge));
-}
-
-// The cloud shadow map (toroidal; cloud_shadow.wesl's basis).
-fn cloud_visibility(p: vec3<f32>) -> f32 {
-    if fx.cloud_shadow == 0u {
-        return 1.0;
-    }
-    let o = p - fx.shadow_center;
-    let local = vec2(dot(o, fx.shadow_x) / dot(fx.shadow_x, fx.shadow_x), dot(o, fx.shadow_y) / dot(fx.shadow_y, fx.shadow_y));
-    let uv = local * vec2(-0.5, 0.5) + 0.5;
-    return textureSampleLevel(cloud_shadow, noise_sampler, uv, 0.0).r;
+// The far map's and the cloud shadow's placement and the far shadow's rule, from `fx`.
+fn froxel_shadow_maps() -> SunShadowMaps {
+    return SunShadowMaps(fx.far_map, fx.far_vis, fx.camera, fx.far_fade, fx.shadow_center, fx.cloud_shadow, fx.shadow_x, fx.shadow_y);
 }
 
 // A froxel's fixed offset, 0..1 per axis: pcg3d (Jarzynski and Olano 2020).
@@ -212,10 +171,11 @@ fn sample_froxel(id: vec3<u32>) -> vec4<f32> {
         let key_dir = textureLoad(fog_light, vec2(2, 0), 0).xyz;
         var key = vec3(0.0);
         if max(key_seen.r, max(key_seen.g, key_seen.b)) > 0.0 {
-            var vis = csm_visibility(p, key_dir, dot(p - fx.camera, fx.forward));
+            var vis = key_csm_visibility(p, key_dir, dot(p - fx.camera, fx.forward));
             // The cloud and terrain maps are made for the shadowed light (the sun).
             if dot(key_dir, fx.shadow_light) > 0.99 {
-                vis = min(vis, far_visibility(p)) * cloud_visibility(p);
+                let maps = froxel_shadow_maps();
+                vis = sun_visibility(vis, far_visibility(maps, far_map, linear_sampler, p), cloud_visibility(maps, cloud_shadow, noise_sampler, p));
             }
             key = key_seen * fog_phase(f.phase_g, dot(rd, key_dir)) * vis;
         }

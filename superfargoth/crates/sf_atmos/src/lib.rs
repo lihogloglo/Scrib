@@ -10,6 +10,8 @@
 //!   CPU twin of the WGSL in `sf_atmos_bevy` (tests, gameplay queries).
 //! - [`scroll`]: wind scroll and floating-origin phase, wrapped per texture.
 //! - [`shadow`]: time slicing of the toroidal cloud shadow map.
+//! - [`sun_visibility`]: the sun-visibility march's weights, sample distribution and history
+//!   clip (FG-12 A2), the CPU twin of `sf_atmos_bevy`'s pass.
 //! - [`fog`]: height fog and ground-fog banks (F2), the CPU twin of the
 //!   fog that the same render node draws.
 //!
@@ -32,6 +34,7 @@ pub mod settings;
 pub mod shadow;
 pub mod shafts;
 pub mod storm;
+pub mod sun_visibility;
 pub mod temporal;
 
 #[cfg(test)]

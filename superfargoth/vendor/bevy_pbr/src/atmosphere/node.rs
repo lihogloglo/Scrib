@@ -6,6 +6,8 @@ use bevy_render::{
     diagnostic::RecordDiagnostics,
     extract_component::DynamicUniformIndex,
     render_resource::{ComputePass, ComputePassDescriptor, PipelineCache, RenderPassDescriptor},
+    // superfargoth patch (own, LSO: light shaft occlusion, A3 key split)
+    render_resource::{BindGroup, ComputePipeline},
     renderer::{RenderContext, ViewQuery},
     view::{ViewTarget, ViewUniformOffset},
 };
@@ -21,6 +23,32 @@ use super::{
     },
     GpuAtmosphereHeightShadow, GpuAtmosphereSettings,
 };
+
+/// superfargoth patch (own, LSO: light shaft occlusion, A3 key split): the aerial view LUT pass
+/// that also writes the key LUT (`ATMOSPHERE_KEY_SINGLE`), when the view has its group and the
+/// pipeline is compiled: with the height shadow (and its dynamic offset) whenever the view's AS
+/// pass would run with one, so the key LUT carries the same shadow as the total. `render_sky` reads
+/// the key LUT (its light shafts variant) only when this is `Some`, so it never reads a key LUT
+/// this frame did not write.
+fn aerial_view_lut_key_single<'a>(
+    bind_groups: &'a AtmosphereBindGroups,
+    height_shadow_offset: Option<&DynamicUniformIndex<GpuAtmosphereHeightShadow>>,
+    pipelines: &AtmosphereLutPipelines,
+    pipeline_cache: &'a PipelineCache,
+) -> Option<(&'a ComputePipeline, &'a BindGroup, Option<u32>)> {
+    match height_shadow_offset.filter(|_| bind_groups.aerial_view_lut_height_shadow.is_some()) {
+        Some(offset) => Some((
+            pipeline_cache.get_compute_pipeline(pipelines.aerial_view_lut_height_shadow_key_single)?,
+            bind_groups.aerial_view_lut_height_shadow_key_single.as_ref()?,
+            Some(offset.index()),
+        )),
+        None => Some((
+            pipeline_cache.get_compute_pipeline(pipelines.aerial_view_lut_key_single)?,
+            bind_groups.aerial_view_lut_key_single.as_ref()?,
+            None,
+        )),
+    }
+}
 
 pub fn atmosphere_luts(
     view: ViewQuery<(
@@ -149,12 +177,30 @@ pub fn atmosphere_luts(
 
     // superfargoth patch (own, AS: aerial shadow): the shadowed variant when the view has a height
     // shadow on the GPU and its pipeline is ready; otherwise the stock pass.
+    // superfargoth patch (own, LSO: light shaft occlusion, A3 key split): first the variant that
+    // also writes the key LUT, when the view has light shafts.
     let height_shadow = bind_groups
         .aerial_view_lut_height_shadow
         .as_ref()
         .zip(height_shadow_offset)
         .zip(pipeline_cache.get_compute_pipeline(pipelines.aerial_view_lut_height_shadow));
-    if let Some(((bind_group, offset), pipeline)) = height_shadow {
+    if let Some((pipeline, bind_group, offset)) = aerial_view_lut_key_single(
+        bind_groups,
+        height_shadow_offset,
+        &pipelines,
+        &pipeline_cache,
+    ) {
+        let offsets = [
+            atmosphere_uniforms_offset.index(),
+            settings_uniforms_offset.index(),
+            view_uniforms_offset.offset,
+            lights_uniforms_offset.offset,
+            offset.unwrap_or_default(),
+        ];
+        let count = if offset.is_some() { 5 } else { 4 };
+        luts_pass.set_pipeline(pipeline);
+        luts_pass.set_bind_group(0, bind_group, &offsets[..count]);
+    } else if let Some(((bind_group, offset), pipeline)) = height_shadow {
         luts_pass.set_pipeline(pipeline);
         luts_pass.set_bind_group(
             0,
@@ -202,10 +248,14 @@ pub fn render_sky(
             Option<&MainPassResolutionOverride>,
             // superfargoth patch (own, LSO: light shaft occlusion)
             Option<&RenderSkyLightShaftsPipelineId>,
+            // superfargoth patch (own, LSO: light shaft occlusion, A3 key split)
+            Option<&DynamicUniformIndex<GpuAtmosphereHeightShadow>>,
         ),
         bevy_ecs::query::Without<super::SkyOccluded>,
     >,
     pipeline_cache: Res<PipelineCache>,
+    // superfargoth patch (own, LSO: light shaft occlusion, A3 key split)
+    lut_pipelines: Res<AtmosphereLutPipelines>,
     mut ctx: RenderContext,
 ) {
     let (
@@ -220,6 +270,7 @@ pub fn render_sky(
         render_sky_pipeline_id,
         resolution_override,
         light_shafts_pipeline_id,
+        height_shadow_offset,
     ) = view.into_inner();
 
     let Some(render_sky_pipeline) = pipeline_cache.get_render_pipeline(render_sky_pipeline_id.0)
@@ -228,8 +279,17 @@ pub fn render_sky(
     }; //TODO: warning
 
     // superfargoth patch (own, LSO: light shaft occlusion): the occluded variant when the view
-    // has its bind group and the pipeline is compiled; otherwise the stock pass.
+    // has its bind group and the pipeline is compiled (A3 key split: and this frame's aerial pass
+    // writes the key LUT); otherwise the stock pass.
+    let key_lut_written = aerial_view_lut_key_single(
+        atmosphere_bind_groups,
+        height_shadow_offset,
+        &lut_pipelines,
+        &pipeline_cache,
+    )
+    .is_some();
     let (render_sky_pipeline, render_sky_bind_group) = light_shafts_pipeline_id
+        .filter(|_| key_lut_written)
         .and_then(|id| pipeline_cache.get_render_pipeline(id.0))
         .zip(atmosphere_bind_groups.render_sky_light_shafts.as_ref())
         .unwrap_or((render_sky_pipeline, &atmosphere_bind_groups.render_sky));

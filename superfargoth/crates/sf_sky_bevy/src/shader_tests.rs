@@ -499,3 +499,168 @@ fn aerial_view_lut_compiles_with_and_without_the_height_shadow() {
     layouter.update(module.to_ctx()).expect("layout");
     assert_eq!(u64::from(layouter[handle].size), bevy_pbr::GpuAtmosphereHeightShadow::min_size().get(), "WGSL vs Rust size");
 }
+
+/// The binding indices of every resource the linked module declares (all in group 0), sorted.
+fn bindings(wgsl: &str) -> Vec<u32> {
+    let module = naga::front::wgsl::parse_str(wgsl).expect("parses");
+    let mut out: Vec<u32> = module.global_variables.iter().filter_map(|(_, v)| v.binding.as_ref().map(|b| b.binding)).collect();
+    out.sort_unstable();
+    out
+}
+
+/// The field names and WGSL size of struct `name` (substring, as the linker may mangle it).
+fn struct_layout(wgsl: &str, name: &str) -> (Vec<String>, u64) {
+    let module = naga::front::wgsl::parse_str(wgsl).expect("parses");
+    let (handle, ty) = module
+        .types
+        .iter()
+        .find(|(_, t)| t.name.as_deref().is_some_and(|n| n.contains(name)))
+        .unwrap_or_else(|| panic!("{name} in the linked module"));
+    let naga::TypeInner::Struct { members, .. } = &ty.inner else { panic!("{name}: a struct") };
+    let names = members.iter().filter_map(|m| m.name.clone()).collect();
+    let mut layouter = naga::proc::Layouter::default();
+    layouter.update(module.to_ctx()).expect("layout");
+    (names, u64::from(layouter[handle].size))
+}
+
+/// Patch LSO, A3 key split (`docs/specs/aerial-shadow.md` "Architecture review" item 1): the aerial
+/// view LUT links and validates in all four variants (stock, AS, key split, AS + key split). The
+/// stock and AS passes keep their bindings and link nothing of the split; the split variants add
+/// the light shafts' uniform (17, `GpuAtmosphereLightShafts` layout) and the key LUT (18), and with
+/// AS the key light's single scattering carries the same height shadow as the total.
+#[test]
+fn aerial_view_lut_compiles_with_and_without_the_key_split() {
+    use bevy_render::render_resource::ShaderType;
+    let hs = bevy_pbr::ATMOSPHERE_HEIGHT_SHADOW_DEF;
+    let key = bevy_pbr::ATMOSPHERE_KEY_SINGLE_DEF;
+    let mut failures = Vec::new();
+    for (defs, has_hs, has_key) in [(&[][..], false, false), (&[hs][..], true, false), (&[key][..], false, true), (&[hs, key][..], true, true)] {
+        let wgsl = match compile("bevy_pbr::atmosphere::aerial_view_lut", defs) {
+            Ok(wgsl) => wgsl,
+            Err(e) => {
+                failures.push(e);
+                continue;
+            }
+        };
+        let mut expected: Vec<u32> = vec![0, 1, 3, 4, 5, 6, 7, 8, 9, 12, 13];
+        if has_hs {
+            expected.extend([14, 15, 16]);
+        }
+        if has_key {
+            expected.extend([17, 18]);
+        }
+        expected.sort_unstable();
+        if bindings(&wgsl) != expected {
+            failures.push(format!("{defs:?}: bindings {:?}, expected {expected:?}", bindings(&wgsl)));
+        }
+        let split = wgsl.contains("aerial_view_key_lut_out") || wgsl.contains("sample_key_single_scattering") || wgsl.contains("light_shafts");
+        if split != has_key {
+            failures.push(format!("{defs:?}: key split linked = {split}"));
+        }
+        if has_key {
+            let (names, size) = struct_layout(&wgsl, "AtmosphereLightShafts");
+            if names != ["light_dir", "darkness", "lobe_g"] || size != bevy_pbr::GpuAtmosphereLightShafts::min_size().get() {
+                failures.push(format!("{defs:?}: AtmosphereLightShafts {names:?} {size}"));
+            }
+            // The key single scattering keeps E1b's per-light scale, like the total.
+            if !wgsl.contains(".atmosphere_scatter") {
+                failures.push(format!("{defs:?}: no per-light scale"));
+            }
+        }
+        // With AS the key light's term is shadowed like the total's: both calls read the light.
+        if has_hs && has_key && wgsl.matches("height_shadow.light_dir").count() < 2 {
+            failures.push(format!("{defs:?}: the key LUT does not carry the height shadow"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// Patch LSO, A3 key split: `render_sky` without the def is the stock pass (bindings 0-13, nothing
+/// of the shafts linked) in every MSAA / dual-source variant; with it, it adds the occlusion (14,
+/// 15) and the key LUT (16) and masks only the key light's single scattering (no whole-in-scatter
+/// multiply left in the source).
+#[test]
+fn render_sky_masks_only_the_key_single_scattering() {
+    let def = bevy_pbr::ATMOSPHERE_LIGHT_SHAFTS_DEF;
+    let mut failures = Vec::new();
+    for base in [&[][..], &["MULTISAMPLED"][..], &["DUAL_SOURCE_BLENDING"][..], &["DUAL_SOURCE_BLENDING", "MULTISAMPLED"][..]] {
+        match compile("bevy_pbr::atmosphere::render_sky", base) {
+            Ok(wgsl) => {
+                if wgsl.contains("light_shaft") || wgsl.contains("aerial_view_key_lut") || wgsl.contains("mask_key_single") {
+                    failures.push(format!("{base:?}: stock pass links the shafts"));
+                }
+                if bindings(&wgsl) != (0..=13).collect::<Vec<u32>>() {
+                    failures.push(format!("{base:?}: stock bindings {:?}", bindings(&wgsl)));
+                }
+            }
+            Err(e) => failures.push(e),
+        }
+        let defs: Vec<&str> = base.iter().copied().chain([def]).collect();
+        match compile("bevy_pbr::atmosphere::render_sky", &defs) {
+            Ok(wgsl) => {
+                if !(wgsl.contains("mask_key_single(") && wgsl.contains("sample_aerial_view_key_lut(") && wgsl.contains("light_shaft_occlusion(")) {
+                    failures.push(format!("{defs:?}: no key split mask"));
+                }
+                if bindings(&wgsl) != (0..=16).collect::<Vec<u32>>() {
+                    failures.push(format!("{defs:?}: bindings {:?}", bindings(&wgsl)));
+                }
+            }
+            Err(e) => failures.push(e),
+        }
+    }
+    let source = std::fs::read_to_string(vendor("bevy_pbr").join("atmosphere/render_sky.wesl")).expect("render_sky.wesl");
+    assert!(!source.contains("*= light_shaft_occlusion"), "the whole in-scatter is no longer multiplied");
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// CPU twin of `render_sky.wesl` `mask_key_single` (the WGSL line is checked verbatim below).
+fn mask_key_single(total: f32, key_single: f32, occlusion: f32) -> f32 {
+    total - (1.0 - occlusion.clamp(0.0, 1.0)) * key_single.min(total)
+}
+
+/// CPU twin of `render_sky.wesl` `light_shaft_occlusion` for a texel `open` (lines checked verbatim).
+fn light_shaft_occlusion(open: f32, cos_t: f32, darkness: f32, lobe_g: f32) -> f32 {
+    if darkness <= 0.0 {
+        return 1.0;
+    }
+    let g = lobe_g.clamp(-0.999, 0.999);
+    let cos_t = cos_t.clamp(-1.0, 1.0);
+    let lobe = ((1.0 - g) * (1.0 - g) / ((1.0 - g) * (1.0 - g) + 2.0 * g * (1.0 - cos_t)).max(1e-6)).powf(1.5).min(1.0);
+    (1.0 - darkness.clamp(0.0, 1.0) * (1.0 - open.clamp(0.0, 1.0)) * lobe).clamp(0.0, 1.0)
+}
+
+/// Patch LSO, A3 key split: the mask never takes the in-scattering below the unmasked rest
+/// `max(total - key, 0)` nor above `total`; it is `total` when open and the rest when closed. The
+/// occlusion is exactly 1 at `lobe_g` 0 on an open texel and `1 - darkness` on a closed one (so
+/// A2's per-pixel visibility passes through). The twins match the WGSL lines verbatim.
+#[test]
+fn key_split_mask_keeps_the_unmasked_rest() {
+    let source = std::fs::read_to_string(vendor("bevy_pbr").join("atmosphere/render_sky.wesl")).expect("render_sky.wesl");
+    for line in [
+        "return total - (1.0 - clamp(occlusion, 0.0, 1.0)) * min(key_single, total);",
+        "let g = clamp(light_shafts.lobe_g, -0.999, 0.999);",
+        "let lobe = min(pow((1.0 - g) * (1.0 - g) / max((1.0 - g) * (1.0 - g) + 2.0 * g * (1.0 - cos_t), 1e-6), 1.5), 1.0);",
+        "return clamp(1.0 - clamp(light_shafts.darkness, 0.0, 1.0) * (1.0 - clamp(open, 0.0, 1.0)) * lobe, 0.0, 1.0);",
+    ] {
+        assert!(source.contains(line), "render_sky.wesl no longer has the twin's line `{line}`");
+    }
+    let values = [0.0_f32, 1e-6, 0.01, 0.3, 1.0, 7.5, 1e4];
+    for total in values {
+        for key in values {
+            let eps = 1e-6 * total.max(1.0);
+            for occ in [-0.5_f32, 0.0, 0.25, 0.5, 0.99, 1.0, 1.5] {
+                let masked = mask_key_single(total, key, occ);
+                let rest = (total - key).max(0.0);
+                assert!(masked >= rest - eps && masked <= total + eps, "total {total} key {key} occ {occ}: {masked} outside [{rest}, {total}]");
+            }
+            assert!((mask_key_single(total, key, 1.0) - total).abs() <= eps, "open = total");
+            assert!((mask_key_single(total, key, 0.0) - (total - key.min(total))).abs() <= eps, "closed = the rest");
+        }
+    }
+    for cos_t in [-1.0_f32, -0.3, 0.0, 0.7, 1.0] {
+        for darkness in [0.0_f32, 0.4, 1.0] {
+            assert!((light_shaft_occlusion(1.0, cos_t, darkness, 0.0) - 1.0).abs() < 1e-6, "open texel at g 0 = 1");
+            assert!((light_shaft_occlusion(0.0, cos_t, darkness, 0.0) - (1.0 - darkness)).abs() < 1e-6, "closed texel at g 0 = 1 - darkness");
+        }
+    }
+}

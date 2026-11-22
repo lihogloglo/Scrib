@@ -224,8 +224,15 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   to ~1-2. The S3a dark disc is still there (fix waits on the architecture review).
 - Owner 2026-11-22 (S3b): bad visually: super blocky, shimmers constantly even with the sun still, redundant with
   S3a's shafts. Bloom off by default (`set sky.shafts.bloom true` = on). Parked.
-- Status: parked. S3a shafts kept (on); open: S3a dark disc (whole aerial in-scatter masked, not just the sun's single
-  scattering); architecture review proposed (one owned atmospherics apply pass).
+- A1-A3 built 2026-11-22 (architecture review: one per-pixel sun visibility from the cascades, far map and cloud shadows
+  masks only the sun's single scattering in Bevy's haze and our fog's sun term; LSO now off). Launch
+  `owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/x10s" --hour 18.09`, same canyon. Look for: no
+  glow and no dark disc or ring on the rock in front of the hidden sun; the haze there keeps its sky-blue fill (only the
+  sun's warm forward light goes); same with the sun just off the top or side of the screen; shafts in the haze/fog
+  where the ridge shadows the air; no blocks or crawl when turning. A/B: restart with `--off sunvis` (old glow) or
+  console `set sky.sun_vis.enabled false` + `set sky.shafts.enabled true` (the LSO rays). Limit: ridges past ~5 km.
+- Owner 2026-11-23 (A1-A3, x10s 18.09 h): "It works, well done"; asks whether it costs FPS (cost A/B running).
+- Status: confirmed (look); cost pending.
 
 ### SW-7: Kick-up puffs in snow and ash (surface-weather.md W7)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`, console

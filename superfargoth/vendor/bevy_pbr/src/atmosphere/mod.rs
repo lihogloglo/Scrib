@@ -297,11 +297,15 @@ pub const ATMOSPHERE_HEIGHT_SHADOW_DEF: &str = "ATMOSPHERE_HEIGHT_SHADOW";
 /// (UE "Light Shaft Occlusion", Mitchell 2007): `occlusion` is a filterable float texture over the
 /// view's (internal-resolution) viewport whose red channel `o` in `[0, 1]` says how much of the
 /// way from the pixel to the light is open sky; `uniform` a buffer holding one
-/// [`GpuAtmosphereLightShafts`]. On geometry pixels the aerial perspective's in-scattering is
-/// multiplied by `1 - darkness * (1 - o) * lobe`, `lobe` = Henyey-Greenstein (`lobe_g`) toward
-/// `light_dir` normalised to 1 at the light. Sky pixels are unchanged. Inserted by the app's own
+/// [`GpuAtmosphereLightShafts`]. A3 key split ("Architecture review"): the aerial view LUT pass
+/// also writes [`AtmosphereTextures::aerial_view_key_lut`](resources::AtmosphereTextures), the
+/// single scattering of the directional light within `dot > 0.99` of `light_dir` alone, and on
+/// geometry pixels `render_sky` computes `total - (1 - v) * min(key, total)` with
+/// `v = 1 - darkness * (1 - o) * lobe`, `lobe` = Henyey-Greenstein (`lobe_g`) toward `light_dir`
+/// normalised to 1 at the light (exactly 1 at `lobe_g` 0). Multiple scattering, the Rayleigh fill
+/// and the other lights are never masked; sky pixels are unchanged. Inserted by the app's own
 /// render systems before [`RenderSkyInputs`] runs (`RenderSystems::PrepareResources`, so the bind
-/// group sees it); absent = the stock `render_sky` pipeline and bind group.
+/// group sees it); absent = the stock aerial view LUT and `render_sky` pipelines and bind groups.
 #[derive(Clone, Component)]
 pub struct AtmosphereLightShafts {
     /// The occlusion texture, sampled at the fullscreen UV with the atmosphere LUT sampler.
@@ -327,6 +331,12 @@ pub struct GpuAtmosphereLightShafts {
 /// superfargoth patch (own, LSO: light shaft occlusion): the shader def of `render_sky` with the
 /// light shaft occlusion.
 pub const ATMOSPHERE_LIGHT_SHAFTS_DEF: &str = "ATMOSPHERE_LIGHT_SHAFTS";
+
+/// superfargoth patch (own, LSO: light shaft occlusion, A3 key split): the shader def of the
+/// aerial view LUT that also writes the key light's single scattering (views with an
+/// [`AtmosphereLightShafts`]; combines with [`ATMOSPHERE_HEIGHT_SHADOW_DEF`], whose height shadow
+/// the key LUT then carries too, so `total - key` stays the unmasked rest).
+pub const ATMOSPHERE_KEY_SINGLE_DEF: &str = "ATMOSPHERE_KEY_SINGLE";
 
 /// superfargoth patch (own, LSO: light shaft occlusion): `Core3d` systems that write what
 /// `render_sky` reads (an [`AtmosphereLightShafts`] texture) go in this set; `render_sky` runs

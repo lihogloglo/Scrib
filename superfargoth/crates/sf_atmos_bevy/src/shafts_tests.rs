@@ -28,13 +28,13 @@ fn app() -> App {
     app
 }
 
-/// Logic: the tunables' defaults (on), live sets, and the sun = the cloud shadow light's back.
+/// Logic: the tunables' defaults (off since A2), live sets, and the sun = the cloud shadow light's back.
 #[test]
 fn the_tunables_and_the_sun_reach_the_settings() {
     let mut app = app();
     app.update();
     assert_eq!(*app.world().resource::<LightShafts>(), LightShafts::default());
-    assert!(app.world().resource::<LightShafts>().enabled, "on by default");
+    assert!(!app.world().resource::<LightShafts>().enabled, "off by default since A2 (the sun-visibility pass replaces it)");
     assert_eq!(app.world().resource::<ShaftsSun>().0, None, "no sun yet");
 
     let rotation = Quat::from_rotation_x(-0.2);
@@ -151,7 +151,7 @@ fn every_registered_tunable_is_listed() {
 #[test]
 fn extraction_marks_the_camera_only_while_enabled() {
     let mut main = World::new();
-    main.insert_resource(LightShafts::default());
+    main.insert_resource(LightShafts { enabled: true, ..LightShafts::default() });
     main.insert_resource(ShaftsSun(Some(Vec3::Y)));
     let mut render = World::new();
     render.init_resource::<MainWorld>();
@@ -195,7 +195,7 @@ fn extraction_marks_the_camera_only_while_enabled() {
 #[test]
 fn the_bloom_pass_runs_only_while_shafts_and_bloom_are_on() {
     let mut main = World::new();
-    main.insert_resource(LightShafts::default());
+    main.insert_resource(LightShafts { enabled: true, ..LightShafts::default() });
     main.insert_resource(ShaftsSun(Some(Vec3::Y)));
     let mut render = World::new();
     render.init_resource::<MainWorld>();
@@ -210,7 +210,7 @@ fn the_bloom_pass_runs_only_while_shafts_and_bloom_are_on() {
         (render.get::<ShaftsCamera>(render_camera).is_some(), render.get::<ShaftsBloomCamera>(render_camera).is_some())
     };
 
-    assert_eq!(run(&mut main, &mut render), (true, false), "the defaults: occlusion on, bloom off (FG-12 verdict)");
+    assert_eq!(run(&mut main, &mut render), (true, false), "occlusion on, bloom off by default (FG-12 verdict)");
     main.resource_mut::<LightShafts>().bloom = true;
     assert_eq!(run(&mut main, &mut render), (true, true), "both on");
     main.resource_mut::<LightShafts>().bloom = false;

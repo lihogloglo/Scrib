@@ -29,7 +29,8 @@
 //!   lights the fog as it lights the ground (WE-9).
 //! - GPU timers: each pass is a `RenderDiagnosticsPlugin` span
 //!   (`clouds_shadow`, `clouds_trace`, `clouds_resolve`, `clouds_composite`; `shafts` for the
-//!   light shaft occlusion's mask and blurs, [`LightShafts`]).
+//!   light shaft occlusion's mask and blurs, [`LightShafts`]; `sun_visibility` for the per-pixel
+//!   sun visibility march and resolve, [`SunVisibility`]).
 //! - Floating origin: the app reports the absolute position of the
 //!   origin-relative frame in [`CloudsOrigin`]; texture offsets carry it as a
 //!   phase (tiles divide 16 384 m), so clouds never move on origin shifts.
@@ -43,6 +44,7 @@ mod aerial_shadow;
 mod fog_translucents;
 mod render;
 mod shafts;
+mod sun_visibility;
 mod transparent;
 mod weather_map;
 #[cfg(test)]
@@ -53,6 +55,8 @@ mod tests;
 mod aerial_shadow_tests;
 #[cfg(test)]
 mod shafts_tests;
+#[cfg(test)]
+mod sun_visibility_tests;
 
 pub use aerial_shadow::{
     aerial_height_shadow, wanted_height_shadow, AerialShadow, FarShadowShape, AERIAL_SHADOW, FAR_SHADOW_BIAS, FAR_SHADOW_BIAS_PER_M,
@@ -64,8 +68,9 @@ pub use shafts::{
     SHAFTS_BLOOM_SCALE, SHAFTS_BLOOM_THRESHOLD, SHAFTS_BLOOM_TINT, SHAFTS_ENABLED, SHAFTS_LENGTH, SHAFTS_LOBE_G, SHAFTS_OCCLUSION,
     SHAFTS_OCCLUSION_DEPTH, SHAFTS_OFFSCREEN_FADE, SHAFTS_PASSES, SHAFTS_TAPS,
 };
+pub use sun_visibility::{aerial_hook, SunVisCamera, SunVisViewParams, SunVisibility, SUN_VIS_ENABLED, SUN_VIS_HISTORY, SUN_VIS_MAX_DISTANCE, SUN_VIS_SAMPLES};
 
-/// This crate's tunables (`sky.aerial.*`, `sky.far_shadow.*`, `sky.shafts.*`), for the game's
+/// This crate's tunables (`sky.aerial.*`, `sky.far_shadow.*`, `sky.shafts.*`, `sky.sun_vis.*`), for the game's
 /// catalogue (`bevyrrowind tunables --md`).
 pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[
     &AERIAL_SHADOW,
@@ -88,6 +93,10 @@ pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[
     &SHAFTS_BLOOM_MAX,
     &SHAFTS_BLOOM_TINT,
     &SHAFTS_BLOOM_RADIUS,
+    &SUN_VIS_ENABLED,
+    &SUN_VIS_SAMPLES,
+    &SUN_VIS_MAX_DISTANCE,
+    &SUN_VIS_HISTORY,
 ];
 pub use transparent::{FroxelFogExt, FroxelFogMaterial, FroxelVolume};
 pub use weather_map::CloudWeatherMap;
@@ -353,6 +362,10 @@ impl Plugin for CloudsPlugin {
         load_shader_library!(app, "shaders/bank_edges.wesl");
         load_shader_library!(app, "shaders/froxel_common.wesl");
         load_shader_library!(app, "shaders/shafts_common.wesl");
+        load_shader_library!(app, "shaders/sun_visibility.wesl");
+        load_shader_library!(app, "shaders/sun_vis_common.wesl");
+        embedded_asset!(app, "shaders/sun_vis_march.wesl");
+        embedded_asset!(app, "shaders/sun_vis_resolve.wesl");
         embedded_asset!(app, "shaders/shafts_mask.wesl");
         embedded_asset!(app, "shaders/shafts_blur.wesl");
         embedded_asset!(app, "shaders/shafts_bloom.wesl");
@@ -410,6 +423,8 @@ impl Plugin for CloudsPlugin {
         aerial_shadow::build(app);
         // LSO (aerial-shadow.md "S3"): the light shaft occlusion's tunables and passes.
         shafts::build(app);
+        // A2 (aerial-shadow.md "Architecture review"): the sun-visibility pass and its tunables.
+        sun_visibility::build(app);
         render::build(app);
     }
 

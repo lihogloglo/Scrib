@@ -26,6 +26,7 @@ import super::fog::{fog_depths, fog_phase};
 import super::froxel_common::{Froxels, froxel_fog};
 import super::bank_edges::{bank_decode, bank_tap};
 import super::shafts_common::{LightShafts, shaft_occlusion};
+import super::sun_vis_common::SunVisUse;
 
 @if(MULTISAMPLED)
 @group(0) @binding(13) var depth_texture: texture_depth_multisampled_2d;
@@ -46,6 +47,11 @@ import super::shafts_common::{LightShafts, shaft_occlusion};
 // (a stand-in with `darkness` 0 while it is off).
 @group(1) @binding(7) var<uniform> light_shafts: LightShafts;
 @group(1) @binding(8) var light_shafts_occlusion: texture_2d<f32>;
+// The sun-visibility pass (aerial-shadow.md "Architecture review", A2, `sun_visibility.rs`): its
+// switch and its result (G = V_fog, the share of the fog's sun scattering that is lit); a stand-in
+// with `enabled` 0 while it is off.
+@group(1) @binding(9) var<uniform> sun_vis: SunVisUse;
+@group(1) @binding(10) var sun_vis_texture: texture_2d<f32>;
 
 // The fog from the camera to `dist` along this pixel's ray: (in-scatter,
 // pre-exposed; transmittance). Near: the froxels; the analytic layers from
@@ -154,10 +160,16 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let d = select(fog.sky_distance, scene_t, depth > 0.0);
         let key_seen = textureLoad(fog_light, vec2(1, 0), 0).rgb;
         let key_dir = textureLoad(fog_light, vec2(2, 0), 0).xyz;
-        // The sun's share is masked where the scene hides the sun (light shaft occlusion, FG-12),
-        // when the key light is the shafts' sun; the ambient fill and the froxels are not.
+        // The sun's share is shadowed where terrain or clouds hide the sun (FG-12), when the key
+        // light is that sun; the ambient fill and the froxels (shadowed per froxel) are not. With
+        // the sun-visibility pass: V_fog, the lit share of this ray's fog from the froxels' far on
+        // (bilinear, no lobe). Without it: the light shaft occlusion (LSO, the A/B arm).
         var sun = key_seen * fog_phase(fog.phase_g, dot(rd, key_dir));
-        if dot(key_dir, light_shafts.light_dir) > 0.99 {
+        if sun_vis.enabled != 0u {
+            if dot(key_dir, sun_vis.light_dir) > 0.99 {
+                sun *= textureSampleLevel(sun_vis_texture, froxel_sampler, in.uv, 0.0).g;
+            }
+        } else if dot(key_dir, light_shafts.light_dir) > 0.99 {
             sun *= shaft_occlusion(light_shafts, light_shafts_occlusion, froxel_sampler, in.uv, rd);
         }
         // The isotropic sky fill (the froxels' too: no seam at their range).

@@ -36,10 +36,36 @@ struct AtmosphereLightShafts {
 @group(0) @binding(14) var<uniform> light_shafts: AtmosphereLightShafts;
 @if(ATMOSPHERE_LIGHT_SHAFTS)
 @group(0) @binding(15) var light_shafts_occlusion: texture_2d<f32>;
+// A3 key split: the aerial view LUT's twin holding only the single scattering of the light toward
+// `light_shafts.light_dir` (`aerial_view_lut.wesl` `ATMOSPHERE_KEY_SINGLE`, same log encoding).
+@if(ATMOSPHERE_LIGHT_SHAFTS)
+@group(0) @binding(16) var aerial_view_key_lut: texture_3d<f32>;
 
-// The aerial perspective's multiplier: `1 - darkness * (1 - o) * lobe`, `lobe` the haze's forward
-// lobe toward the light (Henyey-Greenstein normalised to 1 at the light), so side-lit haze is
-// untouched. CPU twin: `sf_atmos::shafts::{lobe, occlusion}`.
+// `functions.wesl` `sample_aerial_view_lut` on the key LUT: same uvw, first-slice fade and `exp`.
+@if(ATMOSPHERE_LIGHT_SHAFTS)
+fn sample_aerial_view_key_lut(uv: vec2<f32>, t: f32) -> vec3<f32> {
+    let t_max = settings.aerial_view_lut_max_distance;
+    let num_slices = f32(settings.aerial_view_lut_size.z);
+    let uvw = vec3(uv, saturate(t / t_max - 0.5 / num_slices));
+    let sample = textureSampleLevel(aerial_view_key_lut, atmosphere_lut_sampler, uvw, 0.0);
+    let t_slice = t_max / num_slices;
+    let fade = saturate(t / t_slice);
+    return exp(sample.rgb) * fade;
+}
+
+// A3: the aerial in-scattering with the key light's single scattering masked by `occlusion`
+// (1 = open): `total - (1 - occlusion) * min(key_single, total)`. Never below the unmasked rest
+// `max(total - key_single, 0)` and never above `total` (Rayleigh fill, multiple scattering, the
+// moon and every other light are untouched, so no dark disc where the light hides).
+@if(ATMOSPHERE_LIGHT_SHAFTS)
+fn mask_key_single(total: vec3<f32>, key_single: vec3<f32>, occlusion: f32) -> vec3<f32> {
+    return total - (1.0 - clamp(occlusion, 0.0, 1.0)) * min(key_single, total);
+}
+
+// The key light's visibility on the pixel: `1 - darkness * (1 - o) * lobe`, `lobe` a forward lobe
+// toward the light (Henyey-Greenstein normalised to 1 at the light; exactly 1 everywhere at
+// `lobe_g` 0, so a per-pixel visibility texture passes through as `1 - darkness * (1 - o)`).
+// CPU twin: `sf_atmos::shafts::{lobe, occlusion}`.
 @if(ATMOSPHERE_LIGHT_SHAFTS)
 fn light_shaft_occlusion(uv: vec2<f32>, ray_dir_ws: vec3<f32>) -> f32 {
     if light_shafts.darkness <= 0.0 {
@@ -99,11 +125,16 @@ fn main(in: FullscreenVertexOutput) -> RenderSkyOutput {
             inscattering = result.inscattering;
             transmittance = result.transmittance;
         }
-        // superfargoth patch (own, LSO: light shaft occlusion): the in-scattering toward a light
-        // the scene hides is masked (geometry pixels only; the sky is unchanged).
+        // superfargoth patch (own, LSO: light shaft occlusion, A3 key split): only the key
+        // light's single scattering is masked where the scene hides that light (geometry pixels
+        // only; the sky is unchanged). The raymarched path (`rendering_method` 1, unused here)
+        // has no key split and stays unmasked.
         @if(ATMOSPHERE_LIGHT_SHAFTS)
         {
-            inscattering *= light_shaft_occlusion(in.uv, ray_dir_ws);
+            if !should_raymarch {
+                let key_single = sample_aerial_view_key_lut(in.uv, t);
+                inscattering = mask_key_single(inscattering, key_single, light_shaft_occlusion(in.uv, ray_dir_ws));
+            }
         }
     }
 
