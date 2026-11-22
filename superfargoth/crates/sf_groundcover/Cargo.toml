@@ -1,0 +1,21 @@
+[package]
+name = "sf_groundcover"
+description = "Bevy-free groundcover core for superfargoth: species, rule table, overrides, deterministic tile scatter and its density CPU twin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Bevy-free core (ARCHITECTURE §8b rule 1; spec `docs/specs/groundcover.md`): pure functions of (world tile,
+# species, rules, ground), so every peer scatters the same instances. Listed in `.config/hakari.toml` final-excludes.
+[dependencies]
+glam.workspace = true
+serde.workspace = true
+sf_tunables.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+ron.workspace = true
+
+[lints]
+workspace = true

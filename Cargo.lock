@@ -8272,6 +8272,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_groundcover"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "ron",
+ "serde",
+ "sf_tunables",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sf_ids"
 version = "0.1.0"
 dependencies = [

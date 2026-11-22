@@ -50,6 +50,7 @@ workspace-members = [
     "sf_effects",
     "sf_ids",
     "sf_gi",
+    "sf_groundcover",
     "sf_level",
     "sf_lod",
     "sf_model",

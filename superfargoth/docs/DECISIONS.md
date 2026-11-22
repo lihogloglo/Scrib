@@ -1918,3 +1918,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-22 (traversal, owner): climbing is in but optional and costlier than walking around; mounts, airships and
   powers carry big traversal in a world this size. Landforms keep walking around a face clearly cheaper than climbing
   it; no per-face climb markup (`superfargoth/docs/specs/landforms.md` decision 10).
+- 2026-11-22 (groundcover G0, owner go): groundcover = our species + rule-table layer (land texture/material field ->
+  species, like Skyrim LTEX->GRAS, UE grass types) with runtime deterministic scatter; blade species draw via `bevy_grass`,
+  mesh species (alpha-card models) via our instanced path; mods' placements feed the mesh path (`specs/groundcover.md`).
