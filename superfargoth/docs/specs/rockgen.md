@@ -77,6 +77,12 @@ no case tables, and over dual contouring: no Hermite data or QEF solve for an SD
 anyway (sharp edges are not wanted below the rounding radius). Surface nets can make a non-manifold edge where a
 cell face is a saddle; the boulder field keeps its noise wavelength ≥ 4 voxels and its rounding ≥ 1.5 voxels so this
 does not happen, and RG-1's test checks closedness on many seeds.
+**RG-4 (sharp families):** still surface nets, plus a dual-contouring vertex rule of our own: every hard face is a
+known plane, so each net vertex is snapped onto the planes crossing its cell (QEF, truncated pseudo-inverse), then
+Newton-stepped back onto the weathered surface. `fidget-mesh` (Manifold DC) stays rejected: it needs expression trees
+with interval evaluation, which our counter-hash noise, pits and Voronoi columns don't map onto, and brings
+nalgebra/JIT dependencies. Naive surface nets is non-manifold at alternating-sign cell faces; RG-4 resolves those
+faces (`mesher::resolve_ambiguous_faces`) instead of relying on the wavelength/rounding limits alone.
 
 **Whole projects.** No Bevy or Rust project generating geological rock meshes was found (research §4: the
 `bevy_generative`, `bevy_procedural_meshes`, `procedural_modelling` crates are generic mesh builders). OpenMW has no
@@ -239,10 +245,15 @@ late chunk shows the heightfield (which is always there) instead of a hole.
 `weather_wavelength` 0.3 (ratio), `weather_octaves` 3 (1-6), `resolution` 40 (8-128 cells), `lod0_error_voxels`
 0.2 (ratio of a cell), `lod_levels` 4 (1-8), `lod_ratio` 0.5 (UE auto-LOD default). Shape values are
 `Net::Gameplay` (they shape collision), mesh and LOD values `Net::Presentation`. Source `Guess` except where noted.
+RG-4 adds 14: `edge_snap` (bool; owner 2026-11-22 prefers off, default flip queued), `crease_deg` 35, `pit_density`,
+`pit_size`, `columns`, `column_jitter`, `column_groove`, `column_step`, `column_tilt_deg`, `column_fuse`,
+`resolution_ref_m` 2, `resolution_size_exp` 0.5, `resolution_max` 128, `lod0_error_max_m` 0.015; `chips` range 0-64.
 
 ## Build plan
 
 One deliverable + test per slice. IDs `RG-*`; visual checks in `bevyrrowind/docs/visual-checks/worldgen.md`.
+**Order (owner 2026-11-22):** finish the normal rocks and their placement first (RG-4 fixes, RG-2 library + collision,
+rock placement: scree fans below faces instead of rocks in lines along them); cliff bands (RG-5, RG-6) come later.
 
 - **RG-1 (built 2026-11-22): boulder generator.** `sf_rockgen::boulder`: SDF (joint-set block, chips, smooth max,
   weathering) → surface nets → meshopt LOD chain → `RockLods`. Tests: same seed same hash, closed meshes, no NaN,
@@ -252,7 +263,11 @@ One deliverable + test per slice. IDs `RG-*`; visual checks in `bevyrrowind/docs
   bake product registration. Test: library deterministic; hull contains every LOD0 vertex within tolerance.
 - **RG-3 (built 2026-11-22, before RG-2 at the owner's request): viewer + material.** `sf_rockgen_bevy` mesh
   conversion, `VisibilityRange` LODs, triplanar `RockMaterial` (scaffold copy of the terrain functions), the game's
-  `level:rock-lab` greybox. Owner look (visual check RG-3, awaiting owner). No game launch by sub-agents.
+  `level:rock-lab` greybox. Owner look RG-3: one family, too smooth (river boulders) -> sharp families (RG-4).
+- **RG-4 (built 2026-11-22): sharp families.** Edge snap onto hard planes, crease normals, size-scaled resolution,
+  five new classes (talus, jagged, columnar, scoria, slab). Tests: snapped cube fixture exact (12 triangles), every
+  raw net edge-manifold, closed LODs per class. Owner look RG-4: "amazing"; edge snap off preferred. Left: columnar
+  budget, 1-9 % wrong-way LOD0 triangles on talus/jagged/slab, `edge_snap` default off, census opt-out in `mesher.rs`.
 - **RG-3b: shared triplanar module.** After the terrain LOD fix (`wg-lodfix`) lands: move the projection +
   hex-tiling functions out of `surface.wesl` into one WESL module parameterised by texture + sampler, import it in
   the terrain and `rock.wesl`, delete the scaffold copy. Test: both shaders link and validate; terrain pixels unchanged
@@ -283,6 +298,18 @@ evaluated sample, noise in the band dominates), surface nets ~1 ms (12.5 k raw t
 + compaction the rest. A 6-class × 16-variant library ≈ 2 s on one thread. LOD0 is low (~430 triangles for any size:
 error is in cells) by design for triplanar-shaded rock; the owner judges at RG-3 (raise `resolution` or lower
 `lod0_error_voxels` if edges read faceted).
+
+**RG-4 (2026-11-22).** `sf_rockgen`: `sdf.rs` (`Solid`: hard planes per piece, `snap`, `surface`, pits), `classes.rs`
+(`CLASSES`: 9 presets with family, analogue, source, tint; the 4 RG-3 classes unchanged), `columns.rs` (Voronoi
+prisms, shared faces as `Piece::hard` planes), `mesher.rs` (ambiguous-face resolve, `separate_coincident` at 2^-17,
+`resplit_quads` along the crease). Sampling keeps rounding >= 2 cells for topology, the snap uses the hard field.
+LOD chain on snapped positions, falling back to the smooth net if no closed LOD0 (level valid only above 0.5x the
+net's volume). `RockMesh::split_creases` (angle-weighted smoothing groups) on every LOD. Resolution scales as
+res x max(1, size/2 m)^0.5, capped 128. Rock lab: 9 columns 22 m apart, keys N crease, Q edge snap, cameras
+`eroded`, `sharp`, `sharp_near`. Measured (release, 24 seeds; ms/rock, LOD0 tris, wrong-way LOD0 tris / total):
+block 2 m 25.9 ms 428 (0); talus 2 m 29.8 ms 117 (9 %); jagged 2 m 59.6 ms 92, 12 m 542 ms 705 (7 %); scoria 2 m
+64.6 ms 1687 (0); slab 2 m 15.6 ms 109 (1 %); columnar 2 m 364 ms 24 141 tris = broken budget (its snapped LOD0 never
+closes, falls back to the smooth chain; 3.1 s at 12 m).
 
 **RG-3 (2026-11-22).** `superfargoth/crates/sf_rockgen_bevy` (`lib.rs` plugin, mesh conversion, LOD ranges, viewer
 classes, tunable readers; `material.rs`; `shaders/rock.wesl`; `tunables.rs`; `tests.rs`, `shader_tests.rs`).

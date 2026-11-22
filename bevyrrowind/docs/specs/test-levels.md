@@ -154,8 +154,9 @@ the game's (`mw_exterior_bevy/src/level/texture_lab.rs`), so the level file stay
 
 The procedural rock viewer (`superfargoth/docs/specs/rockgen.md` RG-3; visual check RG-3): `levels/rock-lab.ron` (a 400 m
 plate, a 30 deg `slope` ramp onto a plateau, 09:00 clear), scene `level-rock-lab`; content is the game's
-(`mw_exterior_bevy/src/level/rock_lab.rs`). One column of `sf_rockgen` boulders per viewer class (block, platy, cobble,
-chipped), 10 power-law sizes 0.5-12 m, plus 2 on the slope face and 2 at its toe per class (the game reads the ramp from
+(`mw_exterior_bevy/src/level/rock_lab.rs`). One column of `sf_rockgen` boulders per class, 22 m apart (RG-4: eroded block, platy, cobble,
+chipped at -x; sharp talus, jagged, columnar, scoria, slab at +x; keys N crease normals, Q edge snap; cameras `eroded`,
+`sharp`, `sharp_near`), 10 power-law sizes 0.5-12 m, plus 2 on the slope face and 2 at its toe per class (the game reads the ramp from
 the level's `slope` object). Rocks generate on the async compute pool from the live `rockgen.boulder.*` tunables, LODs are
 `VisibilityRange` children, the material is `sf_rockgen_bevy::RockMaterial` (triplanar, the statics' texture companions,
 the terrain's land-texture tiling). No colliders yet (RG-2). Keys: X texture, Z class, R new seed, L LOD tint, M wireframe,
