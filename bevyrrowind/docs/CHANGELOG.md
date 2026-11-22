@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-22 (rockgen-rg2b, RG-2b): `bevyrrowind bake` bakes the 9 rock-class variant libraries (with collision hulls) as bake product `rockgen.library`: 0.59 s cold, reused warm; placement reads them next.
 - 2026-11-22 (rockgen-rg2, RG-2): rock variant libraries per class (16 by default, deterministic) with one convex-hull collider each (`sf_rockgen` feature `collision`, parry3d); all 9 classes build in 0.67 s. Bake product and placement wiring next.
 - 2026-11-22 (rockgen-col, RG-4b): rock edge snap off by default (owner: rounded edges; Q keeps the A/B); columnar rocks close and fit the budget (2 m: 26.8 k -> 1.4 k triangles, 388 -> 97 ms) via shared-plane capping, cavity fill and a meshopt pinch repair.
 - 2026-11-22 (rockgen-rg4, RG-4): sharp rock families in `sf_rockgen`: edge snap onto hard planes, crease normals, size-scaled resolution, new classes talus, jagged, columnar, scoria, slab (9 in the rock lab, keys N / Q); owner: "amazing", rounded edges (snap off) preferred; columnar budget and wrong-way triangles left.

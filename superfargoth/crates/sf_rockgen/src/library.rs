@@ -20,9 +20,11 @@ use crate::{BoulderParams, RockLods, generate_boulder};
 /// streams (`boulder.rs`, `sdf.rs`).
 const VARIANT_PURPOSE: u64 = 0x5a4e_0010;
 const PICK_PURPOSE: u64 = 0x5a4e_0011;
-/// Bumped whenever the same key would mean different rocks (generation or hull algorithm change).
+/// Bumped whenever the same key would mean different rocks: any change to the generator (`boulder.rs`, `sdf.rs`,
+/// `mesher.rs`, `columns.rs`, `noise.rs`), the LOD chain, the hull algorithm (`collision.rs`) or the serialized
+/// types. It is in [`library_key`] and is the `rockgen.library` bake step's version, so a bump re-bakes every library.
 // tunables: const (format version of the bake key)
-const LIBRARY_FORMAT: u32 = 1;
+pub(crate) const LIBRARY_FORMAT: u32 = 1;
 
 /// Convex hull settings (`rockgen.collision.*`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,6 +89,7 @@ impl LibrarySettings {
 /// are LOD0's too, so it bounds the whole chain within the same error). Plain arrays so a bake product can store it;
 /// `Hull::to_parry` (feature `collision`) builds the `parry3d` shape.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "bake", derive(serde::Serialize, serde::Deserialize))]
 pub struct Hull {
     pub points: Vec<[f32; 3]>,
     /// Outward counter-clockwise triangles over `points` (parry3d's quickhull output).
@@ -97,6 +100,7 @@ pub struct Hull {
 
 /// One library rock.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "bake", derive(serde::Serialize, serde::Deserialize))]
 pub struct Variant {
     /// Its boulder seed ([`variant_seed`]).
     pub seed: u64,
@@ -107,6 +111,7 @@ pub struct Variant {
 
 /// A class's variant library.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "bake", derive(serde::Serialize, serde::Deserialize))]
 pub struct Library {
     /// [`library_key`] of the inputs: the bake-product key.
     pub key: u64,

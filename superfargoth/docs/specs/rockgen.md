@@ -260,7 +260,7 @@ rock placement: scree fans below faces instead of rocks in lines along them); cl
   bounds within the declared size, LOD triangle counts strictly decrease; `#[ignore = "measurement: ..."]` ms per
   rock and triangles per LOD.
 - **RG-2 (built 2026-11-22): variant library + convex hulls.** `Library` per class from seeds, `collision` feature
-  (`parry3d` hull). Bake product registration split off as **RG-2b** (`sf_bake` product keyed by `library_key` + code
+  (`parry3d` hull). Bake product **RG-2b** (built 2026-11-22; `sf_bake` product keyed by `library_key` + code
   version, serialised `Variant`/`Hull`); scatter wiring (class + size law per species, `pick`/`scale_for`, hulls to
   `sf_physics` statics) is the placement slice. Test: library deterministic; hull contains every LOD0 vertex within tolerance.
 - **RG-3 (built 2026-11-22, before RG-2 at the owner's request): viewer + material.** `sf_rockgen_bevy` mesh
@@ -370,3 +370,14 @@ concavities (pits, grooves) it is solid where the mesh is open, as any single-hu
 `rockgen.library.variants` 16 (8-32), `rockgen.collision.hull_tolerance` 0.01, `hull_tolerance_max_m` 0.05,
 `hull_max_vertices` 255. Release, 16 variants at 2 m: library 19-185 ms per class (all 9: 0.67 s), hull 48-109
 vertices (exact hull 89-249), 0.9-4.9 ms per hull, max error 20 mm.
+
+**RG-2b (2026-11-22, rockgen-rg2b).** `sf_rockgen::bake` (feature `bake` = sf_bake + serde + postcard; crate stays
+Bevy-free): step `rockgen.library`, subject = class name, all 9 `CLASSES`; `version()` = `library::LIBRARY_FORMAT`
+(doc lists the generator files that must bump it; also inside `library_key`, so one bump re-keys everything). Planned
+parameters: `library_key(params, settings, seed)` + whether hulls are built; reads nothing, so one class's param change
+re-bakes only that class. Class seeds `class_seed(LIBRARY_SEED, name)`. Output = postcard `Library` (store-compressed,
+as `lod.policy` / `nav.*`); `decode(&[u8])`. Registered by the game in `mw_boot_bevy/src/bake.rs`
+(`bake_rock_libraries`, features `bake,collision`), after the pipeline catalog, before the manifest. Release: 9 x 16
+variants 0.59 s cold (4142 KiB), 8.6 ms warm. **Gap:** the bake passes the tunables' defaults (no tunable store in the
+bake yet), so a mod override of `rockgen.*` doesn't reach the baked library ("everything is a mod"): the placement
+slice or a bake-tunables slice passes adapter/mod values through `LibraryStep::new`.

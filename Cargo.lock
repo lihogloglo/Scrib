@@ -5164,6 +5164,7 @@ dependencies = [
  "sf_mods",
  "sf_ragdoll",
  "sf_records",
+ "sf_rockgen",
  "sf_script",
  "sf_script_bevy",
  "sf_ui",
@@ -8618,7 +8619,11 @@ dependencies = [
  "glam 0.33.12",
  "meshopt",
  "parry3d",
+ "postcard",
+ "serde",
+ "sf_bake",
  "sf_tunables",
+ "tempfile",
 ]
 
 [[package]]

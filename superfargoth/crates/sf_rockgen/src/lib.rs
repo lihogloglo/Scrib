@@ -9,6 +9,8 @@
 //! convex collision hull per variant with the `collision` feature). Output is plain arrays, no Bevy types:
 //! `sf_rockgen_bevy` (RG-3) wraps them. Nothing here names a game.
 
+#[cfg(feature = "bake")]
+pub mod bake;
 pub mod boulder;
 pub mod classes;
 #[cfg(feature = "collision")]
@@ -31,6 +33,7 @@ pub use library::{Hull, HullSettings, Library, LibrarySettings, Variant, build_l
 /// One triangle mesh: counter-clockwise front faces seen from outside, unit normals (the SDF gradient on smooth
 /// vertices; on a crease, each side's own face-normal average, [`RockMesh::split_creases`]).
 #[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "bake", derive(serde::Serialize, serde::Deserialize))]
 pub struct RockMesh {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
@@ -230,6 +233,7 @@ pub fn indices_closed(indices: &[u32]) -> bool {
 
 /// Axis-aligned bounds in the rock's local frame (metres).
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "bake", derive(serde::Serialize, serde::Deserialize))]
 pub struct Aabb {
     pub min: [f32; 3],
     pub max: [f32; 3],
@@ -252,6 +256,7 @@ impl Aabb {
 
 /// A rock's LOD chain, finest first. Triangle counts strictly decrease along the chain.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "bake", derive(serde::Serialize, serde::Deserialize))]
 pub struct RockLods {
     pub lods: Vec<RockMesh>,
     /// Bounds of LOD0 (every LOD's vertices are a subset of LOD0's).

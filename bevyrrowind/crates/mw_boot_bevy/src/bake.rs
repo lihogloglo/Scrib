@@ -96,6 +96,8 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     // models and rigs, after the texture bake (alpha classes, companions).
     let catalog_models = mw_bake::catalog::catalog_models(&db, &paths, &rig_keys);
     let catalog = mw_bake::catalog::bake_catalog(&mut baker, mw_bake::catalog::MwCatalogSource::new(catalog_models));
+    // Rock variant libraries (rockgen.md "When generation runs", RG-2b): every class at the tunables' defaults.
+    let rocks = bake_rock_libraries(&mut baker);
     let manifest = baker.manifest();
     let save = Instant::now();
     inputs.save()?;
@@ -201,6 +203,13 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
         ),
         Err(e) => eprintln!("pipeline.catalog: not baked: {e}"),
     }
+    println!(
+        "rock libraries: {} classes in {:.2?}, {} failed",
+        rocks.products.len(),
+        rocks.elapsed,
+        rocks.failures().count()
+    );
+    let rocks_failed = print_failures(&rocks);
     print!("{nav}");
     for (key, error) in nav.failures.iter().take(10) {
         eprintln!("  failed: {key}: {error}");
@@ -254,6 +263,9 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     if let Err(e) = &catalog {
         errors.push(format!("pipeline catalog not baked ({e})"));
     }
+    if rocks_failed > 0 {
+        errors.push(format!("{rocks_failed} rock library products failed"));
+    }
     if scripts.errors() > 0 {
         errors.push(format!("{} legacy script products failed to translate or compile", scripts.errors()));
     }
@@ -261,6 +273,21 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
 }
 
 /// Prints at most ten of `report`'s failures and returns how many there were.
+/// The `rockgen.library` products of every framework rock class (`sf_rockgen::CLASSES`) over the
+/// `rockgen.boulder.*` / `rockgen.library.*` defaults. No consumer yet (the placement slice reads them).
+fn bake_rock_libraries(baker: &mut sf_bake::Baker) -> sf_bake::BakeReport {
+    use sf_rockgen::bake::{LIBRARY_SEED, LibraryStep};
+    let step = LibraryStep::from_classes(
+        sf_rockgen::CLASSES,
+        sf_rockgen::BoulderParams::default(),
+        sf_rockgen::LibrarySettings::default(),
+        LIBRARY_SEED,
+    );
+    let keys = step.keys();
+    baker.register(step);
+    baker.bake(&keys)
+}
+
 fn print_failures(report: &sf_bake::BakeReport) -> usize {
     let failures: Vec<_> = report.failures().collect();
     for (key, error) in failures.iter().take(10) {

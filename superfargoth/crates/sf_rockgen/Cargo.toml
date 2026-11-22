@@ -16,11 +16,22 @@ meshopt.workspace = true
 # Convex-hull colliders for the variant library (RG-2; rockgen.md "Collision"): Apache-2.0, Bevy-free, glam 0.33
 # through glamx (our glam). Optional: meshes need no physics crate.
 parry3d = { workspace = true, optional = true }
+# The `rockgen.library` bake step (RG-2b, feature `bake`): sf_bake is engine-agnostic (blake3, postcard, lz4_flex,
+# rayon, serde), so the crate stays Bevy-free with it on.
+postcard = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+sf_bake = { workspace = true, optional = true }
 sf_tunables.workspace = true
 
 [features]
 # One convex hull per library variant (`library::Hull`, built with parry3d's quickhull).
 collision = ["dep:parry3d"]
+# Variant libraries as an `sf_bake` product (`bake::LibraryStep`, step `rockgen.library`): serde on the mesh and
+# library types, postcard bytes. Hulls are in the product only when `collision` is on too.
+bake = ["dep:sf_bake", "dep:serde", "dep:postcard"]
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

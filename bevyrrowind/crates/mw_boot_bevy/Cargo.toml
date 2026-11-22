@@ -29,6 +29,8 @@ sf_model.workspace = true
 sf_mods.workspace = true
 sf_ragdoll.workspace = true
 sf_records.workspace = true
+# Rock variant libraries (`rockgen.library`, rockgen.md RG-2b), with their collision hulls.
+sf_rockgen = { workspace = true, features = ["bake", "collision"] }
 sf_script.workspace = true
 sf_script_bevy.workspace = true
 sf_ui.workspace = true
