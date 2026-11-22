@@ -393,6 +393,7 @@ pub(crate) fn texture_is_cutout(vfs: &Vfs, texture: Option<&str>) -> bool {
     if let Some(known) = CACHE.lock().ok().and_then(|c| c.get(texture).copied()) {
         return known;
     }
+    let started = std::time::Instant::now();
     let cutout = VfsPath::new(texture)
         .ok()
         .and_then(|p| match mw_bake::delight::layer_index(vfs) {
@@ -406,7 +407,22 @@ pub(crate) fn texture_is_cutout(vfs: &Vfs, texture: Option<&str>) -> bool {
     if let Ok(mut cache) = CACHE.lock() {
         cache.insert(texture.to_owned(), cutout);
     }
+    CUTOUT_DECODES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    CUTOUT_DECODE_MICROS
+        .fetch_add(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX), std::sync::atomic::Ordering::Relaxed);
     cutout
+}
+
+static CUTOUT_DECODES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CUTOUT_DECODE_MICROS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Textures [`texture_is_cutout`] read and decoded on the calling thread since the process began,
+/// and the microseconds that took (totals; a gauge reports the difference per frame).
+pub fn cutout_decode_totals() -> (u64, u64) {
+    (
+        CUTOUT_DECODES.load(std::sync::atomic::Ordering::Relaxed),
+        CUTOUT_DECODE_MICROS.load(std::sync::atomic::Ordering::Relaxed),
+    )
 }
 
 /// A NIF surface, whichever path it came from (a NIF parsed at runtime or a

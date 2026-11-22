@@ -35,6 +35,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 use bevy_asset::{AssetId, AssetServer, Assets, Handle, LoadState, UntypedHandle};
 use bevy_asset::{AssetLoadError, io::AssetReaderError};
@@ -372,6 +373,18 @@ pub(crate) fn count(counters: Option<&Counters>, name: &str, value: f64) {
     }
 }
 
+/// Runs `f`, adding its time to the `name` gauge (ms a frame). The phases of a cell load each
+/// have one: `scene/load/chains/ms` (products into chain assets, materials made on the way),
+/// `scene/load/plan/ms` (`plan_in`), `scene/load/wanted/ms` (the wanted-set rebuild).
+fn timed<T>(counters: Option<&Counters>, name: &str, f: impl FnOnce() -> T) -> T {
+    let started = Instant::now();
+    let out = f();
+    if let Some(c) = counters {
+        c.add_duration_named(name, started.elapsed());
+    }
+    out
+}
+
 /// What every cell's step reads.
 struct Cx<'a> {
     asset_server: &'a AssetServer,
@@ -425,6 +438,7 @@ pub fn poll_cell_loads(
         frame: frame.0,
         counters: counters.as_deref().map(|c| &*c.0),
     };
+    let cx_counters = cx.counters;
     let slabs = &mut *slabs;
     for (worldspace, state) in &mut spaces.0 {
         let undecided: Vec<IVec3> =
@@ -434,6 +448,7 @@ pub fn poll_cell_loads(
         }
     }
     if slabs.dirty {
+        let started = Instant::now();
         let mut wanted: HashSet<AssetId<Mesh>> = HashSet::new();
         let mut wanted_materials: HashSet<AssetId<StandardMaterial>> = HashSet::new();
         let mut want = |a: &ChainAssets| {
@@ -454,6 +469,9 @@ pub fn poll_cell_loads(
         chain_materials.0.retain(|_, h| wanted_materials.contains(&h.id()));
         // Drops the answers no longer wanted and marks new ids pending (`slabs` module docs).
         slabs.set_wanted(wanted, wanted_materials);
+        if let Some(c) = cx_counters {
+            c.add_duration_named("scene/load/wanted/ms", started.elapsed());
+        }
     }
 }
 
@@ -473,7 +491,9 @@ fn step(
                 Some(next) => next,
                 None => return,
             },
-            LoadPhase::Chains { products } => match chains_step(cx, worldspace, cell, products, maker.as_deref_mut()) {
+            LoadPhase::Chains { products } => match timed(cx.counters, "scene/load/chains/ms", || {
+                chains_step(cx, worldspace, cell, products, maker.as_deref_mut())
+            }) {
                 Some(next) => {
                     slabs.dirty = true;
                     next
@@ -495,7 +515,7 @@ fn step(
                     unreachable!("matched above")
                 };
                 let table = load.table.clone();
-                let phase = plan(cx, worldspace, cell, &table, &chains, state, slabs);
+                let phase = timed(cx.counters, "scene/load/plan/ms", || plan(cx, worldspace, cell, &table, &chains, state, slabs));
                 if let Some(load) = state.loading.get_mut(&cell) {
                     load.phase = phase;
                 }

@@ -64,7 +64,7 @@ use sf_terrain::{
 use sf_tunables::{AnyDef, Def, Group, Lifetime, Source, Unit, def};
 use sf_world::{GateQuanta, GateSource, SelectGate, WorldspaceId};
 
-pub use far_map::{FAR_MAP_SIZE, FAR_MAP_TEXEL, FarShadowMap};
+pub use far_map::{FAR_MAP_SIZE, FAR_MAP_TEXEL, FAR_SHADOW_RECENTER_M, FarShadowMap};
 pub use gpu_fill::GpuFillCounters;
 pub use material::TerrainMaterial;
 use params::Params;
@@ -348,6 +348,7 @@ pub const TERRAIN_CLIFF_CREVICE_STRENGTH: Def<f32> = def!(float "terrain.cliff.c
 /// This crate's tunables (live binding: tunables slice T2).
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &TERRAIN_SELECT_MOVE_M,
+    &FAR_SHADOW_RECENTER_M,
     &TERRAIN_RAISE_REPOSE_DEG,
     &TERRAIN_RAISE_FILTER_MIN_M,
     &TERRAIN_TWIN_NEAR_LEVELS,

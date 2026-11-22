@@ -786,10 +786,13 @@ fn finish_builds(
     variety: Res<AnimVarietySettings>,
     bindings: Query<&SkeletonBinding>,
     ragdolls: Query<(), With<sf_anim_bevy::PhysicsPose>>,
+    counters: Option<Res<sf_diag_bevy::DiagCounters>>,
 ) {
     frame.0 = frame.0.wrapping_add(1);
     let Some(characters) = characters else { return };
     let shared = &characters.shared;
+    let started = std::time::Instant::now();
+    let misses_before = stats.cache_misses;
     let mut ready: Vec<(Entity, Built, Arc<OutfitAssets>)> = Vec::new();
     for (entity, spec, mut build) in &mut building {
         let Some(result) = future::block_on(future::poll_once(&mut build.0)) else { continue };
@@ -849,6 +852,7 @@ fn finish_builds(
         ready.push((entity, swap.0.clone_for_swap(), Arc::clone(&swap.1)));
         commands.entity(entity).try_remove::<PendingSwap>();
     }
+    let finished = ready.len();
     for (entity, built, assets) in ready {
         let Ok((body, layers, seed, at)) = roots.get_mut(entity) else { continue };
         let has_body = body.is_some();
@@ -959,6 +963,16 @@ fn finish_builds(
         }
     }
     evict(&mut cache, shared);
+    // Gauges: this system's own time (its spawns are applied later, in the command flush), the
+    // outfits uploaded and the characters finished this frame.
+    if let Some(c) = &counters {
+        c.0.add_duration_named("character/finish/ms", started.elapsed());
+        #[allow(clippy::cast_precision_loss)] // counts
+        {
+            c.0.add_named("character/finish/uploads", sf_diag_bevy::sf_diag::unit::COUNT, (stats.cache_misses - misses_before) as f64);
+            c.0.add_named("character/finish/count", sf_diag_bevy::sf_diag::unit::COUNT, finished as f64);
+        }
+    }
 }
 
 #[allow(clippy::needless_pass_by_value)]

@@ -17,6 +17,7 @@ use bevy_tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use bevy_transform::components::GlobalTransform;
 use sf_coords::WorldPos;
 use sf_terrain::shadow::{ShadowHeights, ShadowMarch, far_shadow_map};
+use sf_tunables::{Def, Group, Source, Unit, def};
 
 use crate::{TerrainCamera, TerrainHeightsMap, TerrainOrigin, TerrainState};
 
@@ -27,11 +28,27 @@ pub const FAR_MAP_TEXEL: f64 = 24.0;
 /// The march: first step two texels out (closer occluders are the
 /// cascades' and the receiver's own shading), 4 km reach.
 const MARCH: ShadowMarch = ShadowMarch { steps: 40, first: 2.0 * FAR_MAP_TEXEL, reach: 4000.0 };
-/// Refresh when the light turns this much (cos of 0.25°), the camera moves
-/// this far from the map's center, or this long passes (tiles stream in).
+/// Refresh when the light turns this much (cos of 0.25°) or this long passes
+/// (tiles stream in): new contents around the same center, so the params,
+/// and every material that holds them, stay as they are.
 const REFRESH_COS: f32 = 0.999_990_5;
-const REFRESH_MOVE: f64 = 1000.0;
 const REFRESH_AGE: Duration = Duration::from_secs(8);
+
+/// `terrain.far_shadow.recenter_m`: the map moves to the camera only once the
+/// camera is this far from its center (horizontally, or in height: the texels
+/// are halves relative to the center's height). A new center changes
+/// [`FarShadowMap::params`], which every far-field material carries, so each
+/// move costs their bind groups and a re-specialization of their meshes in
+/// every view (3-5 ms on the render thread over two frames, Balmora night walk
+/// 2026-11-22). Until 2026-11-22 every refresh re-centered: one such bump per
+/// [`REFRESH_AGE`] while walking. 512 m keeps the map's fade (from 85 % of its
+/// 4.6 km half extent) at least 3.4 km out on the short side.
+pub const FAR_SHADOW_RECENTER_M: Def<f32> = def!(float "terrain.far_shadow.recenter_m" = 512.0)
+    .range(24.0, 2000.0)
+    .unit(Unit::Meters)
+    .help("The far shadow map re-centers on the camera once it is this far from the map's center")
+    .source(Source::Guess)
+    .group(Group::ViewDistance);
 
 /// The far shadow map, for other plugins' materials.
 #[derive(Resource, Clone, Debug, PartialEq)]
@@ -148,21 +165,16 @@ pub(crate) fn update_far_map(
         return;
     };
     let cam_world = origin.0.offset(cam.translation());
-    let due = match (local.center, local.light, local.at) {
-        (Some(c), Some(l), Some(at)) => {
-            let moved = c.delta(cam_world);
-            l.dot(to_light) < REFRESH_COS || moved.x.hypot(moved.z) > REFRESH_MOVE || at.elapsed() > REFRESH_AGE
-        }
+    let kept = kept_center(local.center, cam_world, f64::from(FAR_SHADOW_RECENTER_M.default_value()));
+    let due = match (kept, local.light, local.at) {
+        (Some(_), Some(l), Some(at)) => l.dot(to_light) < REFRESH_COS || at.elapsed() > REFRESH_AGE,
         _ => true,
     };
     if !due {
         return;
     }
     let Some(heights) = heights_map.0.get(&state.ws).cloned() else { return };
-    // Snap the center to the texel grid so texels don't swim between maps.
-    let p = cam_world.to_f64();
-    let snap = |v: f64| (v / FAR_MAP_TEXEL).round() * FAR_MAP_TEXEL;
-    let center = WorldPos::from_f64(bevy_math::DVec3::new(snap(p.x), p.y.round(), snap(p.z)));
+    let center = kept.unwrap_or_else(|| snapped_center(cam_world));
     let l = to_light.as_dvec3().to_array();
     local.center = Some(center);
     local.light = Some(to_light);
@@ -172,6 +184,23 @@ pub(crate) fn update_far_map(
         let map = far_shadow_map(&heights, center, FAR_MAP_SIZE, FAR_MAP_TEXEL, l, MARCH);
         Computed { map, center, ms: started.elapsed().as_secs_f32() * 1e3 }
     }));
+}
+
+/// The center a refresh keeps: the one in use, while the camera is within
+/// `recenter_m` of it, horizontally and in height ([`FAR_SHADOW_RECENTER_M`]).
+fn kept_center(center: Option<WorldPos>, camera: WorldPos, recenter_m: f64) -> Option<WorldPos> {
+    center.filter(|c| {
+        let moved = c.delta(camera);
+        moved.x.hypot(moved.z).max(moved.y.abs()) <= recenter_m
+    })
+}
+
+/// A new center at the camera, snapped to the texel grid so texels don't
+/// swim between maps.
+fn snapped_center(camera: WorldPos) -> WorldPos {
+    let p = camera.to_f64();
+    let snap = |v: f64| (v / FAR_MAP_TEXEL).round() * FAR_MAP_TEXEL;
+    WorldPos::from_f64(bevy_math::DVec3::new(snap(p.x), p.y.round(), snap(p.z)))
 }
 
 /// IEEE half bits of `v`, rounded to nearest; out-of-range values clamp to
@@ -266,6 +295,25 @@ mod tests {
             !material_events.iter_current_update_messages().any(|e| e.is_modified(&material)),
             "the upload modified a terrain material"
         );
+    }
+
+    /// 2026-11-22 (stutter-fix): a refresh keeps its center while the camera is
+    /// within the re-center distance, so walking does not change the params
+    /// (and with them every far-field material) at each refresh.
+    #[test]
+    fn a_refresh_keeps_its_center_until_the_camera_is_far() {
+        let at = |x: f64, y: f64, z: f64| WorldPos::from_f64(bevy_math::DVec3::new(x, y, z));
+        let center = snapped_center(at(1000.0, 50.4, -2000.0));
+        assert_eq!(center.to_f64(), bevy_math::DVec3::new(1008.0, 50.0, -1992.0), "on the 24 m texel grid");
+        // No map yet: nothing to keep.
+        assert_eq!(kept_center(None, center, 512.0), None);
+        // An 8 s walk (32 m), then up to the distance: the same center.
+        assert_eq!(kept_center(Some(center), at(1040.0, 52.0, -1992.0), 512.0), Some(center));
+        assert_eq!(kept_center(Some(center), at(1008.0 + 512.0, 50.0, -1992.0), 512.0), Some(center));
+        // Past it, horizontally (diagonal) or in height: a new one.
+        assert_eq!(kept_center(Some(center), at(1008.0 + 400.0, 50.0, -1992.0 + 400.0), 512.0), None);
+        assert_eq!(kept_center(Some(center), at(1008.0, 50.0 + 513.0, -1992.0), 512.0), None);
+        assert_eq!(kept_center(Some(center), at(1008.0, 50.0 - 513.0, -1992.0), 512.0), None);
     }
 
     #[test]

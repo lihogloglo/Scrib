@@ -99,3 +99,15 @@ Open visual checks: streaming spikes, size-based draw distance, door links (ST, 
 - Look for: terrain cracks or visible LOD steps while walking slowly; far-field holes or late parent/child swaps on the
   horizon when turning or flying fast; cells popping in later than without the gate; anything after a door/load.
 - Status: confirmed 2026-11-16 (owner: "no popping whatsoever, even when flying fast"; going in and out of doors: no issue).
+
+### ST-5: Far shadow map keeps its centre while walking (stutter-fix, built 2026-11-22)
+
+- Scene: `scene ridge-shadows-morning` (Balmora 7:00, long ridge shadows past the cascades; F3 toggles far shadows), then
+  walk or fly 600 m or more in one direction.
+- What changed: the far shadow map (9.2 km square, one texture) used to move its centre to the camera at every refresh
+  (every 8 s); it now stays put and moves only once the camera is 512 m from its centre (`terrain.far_shadow.recenter_m`,
+  `sf_terrain_bevy/src/far_map.rs`). Each move rewrote every far-field material: a 3-5 ms bump every 8 s on the walk.
+- Look for: far ridge shadows that pop, shift or lose reach while moving; a visible jump of the far shadows at the
+  re-centre (about every 512 m); on the side you came from the far shadows may end about 0.5 km closer (3.4 km instead of
+  3.9 km) until the next re-centre: say if that is visible at all.
+- Status: awaiting owner.

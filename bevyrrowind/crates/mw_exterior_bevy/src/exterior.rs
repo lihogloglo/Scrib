@@ -216,6 +216,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     let worldgen = options.worldgen.is_some();
 
     let mut app = App::new();
+    // The log plugin first: it installs the tracing subscriber, and a system's trace spans are made when the
+    // system is added (`bevy_ecs` `SystemMeta::new`). Every system added before it (characters, animation,
+    // walkers: all above `DefaultPlugins` here) had dead spans and was missing from every trace (2026-11-22).
+    app.add_plugins(bevy::log::LogPlugin::default());
     let render = options.render;
     mw_environment_bevy::render::RenderSettings::init(&mut app);
     mw_game_core::shipped_errors(&mut app);
@@ -361,6 +365,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     streaming.precombine = precombine;
     let mut plugins = DefaultPlugins
         .build()
+        // Added first, above.
+        .disable::<bevy::log::LogPlugin>()
         // big_space propagates transforms.
         .disable::<TransformPlugin>()
         .set(WindowPlugin { primary_window: Some(perf.window(options.title.clone(), Some((1280, 720)))), ..WindowPlugin::default() });
@@ -1365,9 +1371,15 @@ fn counters(
     counters: Res<DiagCounters>,
     meshes: Query<(), With<Mesh3d>>,
     lights: Query<(), With<PointLight>>,
+    mut cutout_seen: Local<(u64, u64)>,
 ) {
     #[allow(clippy::cast_precision_loss)]
     {
+        // Cutout-candidate textures decoded on a game thread this frame (`mw_assets::texture_is_cutout`).
+        let (decodes, micros) = mw_assets::cutout_decode_totals();
+        counters.add_named("assets/cutout_decode/count", "count", (decodes - cutout_seen.0) as f64);
+        counters.add_named("assets/cutout_decode/ms", "ms", (micros - cutout_seen.1) as f64 / 1000.0);
+        *cutout_seen = (decodes, micros);
         counters.add_named("terrain/select/ms", "ms", f64::from(terrain.select_ms));
         counters.add_named("terrain/update/ms", "ms", f64::from(terrain.update_ms));
         counters.add_named("terrain/upload/bytes", "bytes", terrain.upload_bytes as f64);

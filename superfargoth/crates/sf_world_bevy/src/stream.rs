@@ -684,9 +684,17 @@ impl Streaming {
             }
         }
 
+        // The unbudgeted parts of a drive, each with its own gauge (the five stages have theirs).
+        let t = Instant::now();
         self.poll_fetches(world, now, spawners, counters);
+        let fetches = t.elapsed();
+        let t = Instant::now();
         self.rt.poll_models(world, self.scheduler.in_burst());
+        let models = t.elapsed();
+        let t = Instant::now();
         self.rt.promote(world, spawners, self.scheduler.in_burst());
+        let promote = t.elapsed();
+        let t = Instant::now();
         let world_ref: &World = world;
         let running: Vec<RequestId> =
             self.scheduler.requests().filter(|r| r.stage == Stage::Assets && r.running).map(|r| r.id).collect();
@@ -713,6 +721,12 @@ impl Streaming {
         }
         for id in loaded {
             self.scheduler.assets_loaded(id, now);
+        }
+        if let Some(c) = counters {
+            c.add_duration_named("stream/poll_fetches/ms", fetches);
+            c.add_duration_named("stream/poll_models/ms", models);
+            c.add_duration_named("stream/promote/ms", promote);
+            c.add_duration_named("stream/assets_ready/ms", t.elapsed());
         }
 
         // Origin-shift guard: the main-thread stages sit out the frames around

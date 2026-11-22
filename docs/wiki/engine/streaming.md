@@ -87,6 +87,10 @@ stale instance offsets in 0.20).
 - Counters: `stream/drive/ms`, `stream/tick/ms`, `stream/<stage>/{items,ms,queue}` (+`bytes` for upload; `stream.rs:972-1010`),
   `stream/{requests,resident_cells,models,model_queue,page_cache/bytes,oldest_request/s,latency/s,shift_guard/frames}`,
   `bigspace/*/ms` (`lib.rs:188`), `world/meshes`, `world/point_lights` (`exterior.rs:1185`). `StreamStats` (`stream.rs:245`).
+- Unbudgeted work gauges (2026-11-22, ms a frame): `stream/{poll_fetches,poll_models,promote,assets_ready}/ms` (`Streaming::drive` outside
+  the five stages, `stream.rs` `drive`), `scene/load/{chains,plan,wanted}/ms` (`sf_scene_bevy` `poll_cell_loads`),
+  `character/finish/{ms,uploads,count}` (`sf_character_bevy` `finish_builds`), `assets/cutout_decode/{count,ms}`
+  (`mw_assets::texture_is_cutout`). None of these has a per-frame budget yet.
 - Live view distance (T5c, `sf_world_bevy/src/lod_live.rs`): a `LodScreen` change (`lod.bias`, `lod.size_cull.*`, `Live`)
   re-ranges resident LOD chains in place, `lod.live.chains_per_frame` a frame, after `drive`; no restream, no cell, actor or
   item touched. Details: `statics-and-lod.md` "Switches and counters".
@@ -94,6 +98,8 @@ stale instance offsets in 0.20).
 ## Known limits
 
 - Spawn and origin-shift frames spike the render thread, range-slot pressure: [ledger/streaming.md](../../ledger/streaming.md).
+- Walk stutters (29/min on the Balmora night walk, 2026-11-22): attributed, not fixed; causes and the fix list are the
+  2026-11-22 lines of the same ledger.
 - Entity count of near statics without precombine: [ledger/statics.md](../../ledger/statics.md).
 - Frame cost: [ledger/perf.md](../../ledger/perf.md).
 - Parking (CW-9): a looping voice under a parked root keeps playing at its last gain (`bevy_audio` sinks are not paused
