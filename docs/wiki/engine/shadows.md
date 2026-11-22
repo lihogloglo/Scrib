@@ -166,8 +166,11 @@ blits|clears|reallocated` (render world, `PointShadowAtlasStats`).
 - Lamp-shadow quality: SH-13 and SH-21 predate the atlas and need an owner re-check (SH-34); hard problem H2.
 - Atlas off (stock cubes): shadows on a moving character flicker among many lamps, only 2 (+1) lamps redraw per
   frame. The atlas draws near movers every frame over cached static depth (UE, HDRP mixed cached shadows).
-- Atlas admission is in entity order, not budget rank: with the Static Atlas full (Census reached 95 %) a slot
-  holder gets no tile, yet fades to its full shadowed reach without a shadow (review 2026-11-22, F4; open).
+- A full Static Atlas admits new holders by budget score (`ShadowSlot::importance`) and a holder without tiles stays
+  unshadowed at its short reach (2026-11-22); but nothing is evicted for a more important lamp, and a faded-in holder
+  that loses its tiles keeps its long reach (open).
+- Held lights carry `sf_sky_bevy::CarriedLight` (set at `mw_actors_bevy/src/held.rs`, the `HeldTorch` spawn): always
+  the moving path. Other lamps are "still" below 1 mm per frame, which depends on the frame rate (open).
 - A face being recaptured (tier resize, a static changed) draws no movers until the capture is confirmed, 2-3
   frames (one view per face serves both atlases; open).
 - Four structures track one fact per face (policy `Tile`, `ShadowAtlasManager` rects, `AtlasWritten`, render

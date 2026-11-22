@@ -191,13 +191,18 @@ fn the_game_clock_advances_on_the_fixed_tick() {
 }
 
 fn budget_app(budget: PointShadowBudget) -> (App, Vec<Entity>) {
-    let mut app = app(0.0);
     // These tests assert stock `PointLight::shadow_maps_enabled` cube-budget behaviour.
+    budget_app_with_atlas(budget, false)
+}
+
+/// [`budget_app`] with the 2D point shadow atlas (`shadow.lamp.atlas.enabled`) on or off.
+fn budget_app_with_atlas(budget: PointShadowBudget, atlas: bool) -> (App, Vec<Entity>) {
+    let mut app = app(0.0);
     {
         use sf_tunables::Type;
         let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
         if let Ok(id) = tunables.id_of(&sf_sky::shadow_atlas::ENABLED) {
-            tunables.set(id.untyped(), false.to_value()).expect("bool");
+            tunables.set(id.untyped(), atlas.to_value()).expect("bool");
         }
     }
     app.insert_resource(budget);
@@ -466,6 +471,76 @@ fn reach_follows_the_shadow_fade() {
     assert!(!app.world().get::<ShadowSlot>(lights[0]).expect("slot").held);
     assert!((range(&app, lights[0]) - 3.0).abs() < 1e-4);
     assert!((range(&app, lights[3]) - untouched).abs() < 1e-6);
+}
+
+/// A watched light and how many frames its `PointLight` was written in.
+#[derive(Resource)]
+struct PointLightWrites(Entity, usize);
+
+fn count_point_light_writes(lights: Query<Ref<bevy_light::PointLight>>, mut writes: ResMut<PointLightWrites>) {
+    if lights.get(writes.0).is_ok_and(|light| light.is_changed()) {
+        writes.1 += 1;
+    }
+}
+
+/// F4 (review 2026-11-22): under the 2D atlas a slot holder the lamp cache has not admitted (no
+/// [`ShadowMapCached`]: a full Static Atlas) waits like an unready one. Its fade stays 0, so it
+/// keeps its unshadowed reach, and the budget never turns Bevy's cube map on for it (no
+/// `PointLight` write per frame); once it is admitted and ready it fades in. With the atlas off
+/// the same light fades in on the stock cube map.
+#[test]
+fn an_atlas_slot_holder_without_tiles_waits_unshadowed() {
+    let reach = ShadowReach { unshadowed: 3.0, shadowed: 8.0 };
+    let budget = PointShadowBudget { max: 1, fade_time: 1.0, ..PointShadowBudget::default() };
+    let light = |app: &App, e: Entity| *app.world().get::<bevy_light::PointLight>(e).expect("light");
+    let slot = |app: &App, e: Entity| *app.world().get::<ShadowSlot>(e).expect("slot");
+
+    let (mut app, lights) = budget_app_with_atlas(budget, true);
+    let lamp = lights[0];
+    app.world_mut().entity_mut(lamp).insert(reach);
+    app.insert_resource(PointLightWrites(lamp, 0)).add_systems(Last, count_point_light_writes);
+    // Never admitted: whatever the lamp cache hands the lamp is gone before the budget next runs.
+    let unadmitted = |app: &mut App, frames: usize| {
+        for _ in 0..frames {
+            app.update();
+            app.world_mut().entity_mut(lamp).remove::<ShadowMapCached>();
+        }
+    };
+    // The first frames write the light once (spawned, then its short reach).
+    unadmitted(&mut app, 3);
+    assert!(app.world().resource::<LampShadowAtlas>().enabled, "the atlas is on");
+    app.world_mut().resource_mut::<PointLightWrites>().1 = 0;
+    unadmitted(&mut app, 60);
+    let (l, s) = (light(&app, lamp), slot(&app, lamp));
+    assert!(s.held, "the lamp holds a slot");
+    assert!(s.fade.abs() < 1e-6, "no shadow fade without tiles: {}", s.fade);
+    assert!(app.world().get::<bevy_pbr::PointLightShadowFade>(lamp).is_some_and(|f| f.0.abs() < 1e-6));
+    assert!(!l.shadow_maps_enabled, "the stock cube map stays off under the atlas");
+    assert!((l.range - reach.unshadowed).abs() < 1e-4, "unshadowed reach: {}", l.range);
+    assert_eq!(app.world().resource::<PointLightWrites>().1, 0, "the light is not rewritten every frame");
+
+    // Admitted and captured: the shadow fades in to its target and the reach follows.
+    for _ in 0..15 {
+        app.world_mut().entity_mut(lamp).insert(ShadowMapCached { ready: true });
+        app.update();
+    }
+    let (l, s) = (light(&app, lamp), slot(&app, lamp));
+    assert!((s.fade - 1.0).abs() < 1e-6, "{}", s.fade);
+    assert!((l.range - reach.shadowed).abs() < 1e-4, "{}", l.range);
+    assert!(!l.shadow_maps_enabled, "its map is the atlas's, not a stock cube");
+
+    // Atlas off: as before, the light fades in on the stock cube map without any marker.
+    let (mut app, lights) = budget_app_with_atlas(budget, false);
+    let lamp = lights[0];
+    app.world_mut().entity_mut(lamp).insert(reach);
+    for _ in 0..60 {
+        app.update();
+    }
+    let (l, s) = (light(&app, lamp), slot(&app, lamp));
+    assert!(app.world().get::<ShadowMapCached>(lamp).is_none());
+    assert!(s.held && (s.fade - 1.0).abs() < 1e-6, "{}", s.fade);
+    assert!(l.shadow_maps_enabled, "the stock cube map is on");
+    assert!((l.range - reach.shadowed).abs() < 1e-4, "{}", l.range);
 }
 
 /// `AssetEvent::Modified` count of the sky's `ScatteringMedium`.

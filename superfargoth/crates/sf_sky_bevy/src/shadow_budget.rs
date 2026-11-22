@@ -46,6 +46,7 @@
 use bevy_app::{App, Plugin, PostUpdate};
 use bevy_camera::visibility::{InheritedVisibility, NoFrustumCulling, RenderLayers, VisibilitySystems};
 use bevy_camera::{Camera, Camera3d, RenderTarget};
+use bevy_ecs::entity::EntityHashMap;
 use bevy_ecs::prelude::*;
 use bevy_light::{NotShadowCaster, PointLight, PointLightShadowMap};
 use bevy_mesh::Mesh3d;
@@ -423,6 +424,10 @@ pub struct ShadowSlot {
     pub fade: f32,
     /// Holds one of the budget's shadow maps (fading in, shown or fading out).
     pub held: bool,
+    /// The score [`budget_shadows`] ranked the light with this frame (importance by reach,
+    /// distance and priority, times its contrast and luminance weights); 0 when it was not
+    /// ranked. The lamp cache admits new holders into the Static Atlas in this order.
+    pub importance: f32,
 }
 
 /// On a slot holder the budget gave Bevy's `NoFrustumCulling` to (so its
@@ -604,6 +609,13 @@ pub(crate) fn budget_shadows(
     };
     let handover_spares = atlas_cfg.map_or(0, |cfg| cfg.handover_spares as usize);
     let slot_capacity = effective_max.saturating_add(handover_spares);
+    // A cached lamp's shadow does not rise until its faces are captured (CW-4). Under the atlas
+    // every slot holder is the lamp cache's: one it has not admitted yet, or cannot admit (Static
+    // Atlas full), has no `ShadowMapCached` and waits the same way, unshadowed at its short reach
+    // (F4), and the budget never turns Bevy's cube map on for it.
+    let atlas_on = atlas_cfg.is_some();
+    let awaits_map = |cached: Option<&ShadowMapCached>| cached.map_or(atlas_on, |c| !c.ready);
+    let stock_map = |cached: Option<&ShadowMapCached>| !atlas_on && cached.is_none();
 
     // The candidates: shown lights of the viewer's `RenderLayers` (a light of
     // another resident worldspace lives in another `BigSpace` frame, where
@@ -619,6 +631,7 @@ pub(crate) fn budget_shadows(
     // fades as the sun rises); weight 0 holds no map.
     let mut candidates: Vec<(f32, bool)> = Vec::new();
     let mut candidate_lights: Vec<(Entity, f32)> = Vec::new();
+    let mut scores: EntityHashMap<f32> = EntityHashMap::default();
     if let Some((eye, layers, _)) = &viewer
         && effective_max > 0
     {
@@ -640,8 +653,10 @@ pub(crate) fn budget_shadows(
                 } else {
                     1.0
                 };
-                candidates.push((importance(range, d, prio.priority) * weight * lum_weight, held));
+                let score = importance(range, d, prio.priority) * weight * lum_weight;
+                candidates.push((score, held));
                 candidate_lights.push((entity, weight));
+                scores.insert(entity, score);
             }
         }
     }
@@ -671,8 +686,7 @@ pub(crate) fn budget_shadows(
             continue;
         }
         let target = target_of(entity, at);
-        // A cached lamp's shadow does not rise until its faces are captured (CW-4).
-        let wait_capture = cached.is_some_and(|c| !c.ready);
+        let wait_capture = awaits_map(cached);
         let fade = if slot.fade < target {
             if wait_capture { slot.fade } else { (slot.fade + step).min(target) }
         } else {
@@ -705,7 +719,9 @@ pub(crate) fn budget_shadows(
             _ => 0.0,
         };
         let contact_allowed = rank.is_some_and(|r| r < budget.contact_max);
-        let wait_capture = cached.is_some_and(|c| !c.ready);
+        let wait_capture = awaits_map(cached);
+        // The ranked score, for the lamp cache's admission order (0 when not a candidate).
+        let score = scores.get(&entity).copied().unwrap_or(0.0);
         let Some(mut slot) = slot else {
             let mut fade = 0.0;
             if target > 0.0 && held < slot_capacity && new_slots < max_new_slots {
@@ -713,7 +729,7 @@ pub(crate) fn budget_shadows(
                 new_slots += 1;
                 fade = if wait_capture { 0.0 } else { step.min(target) };
                 let shadows = fade > 0.0;
-                let map = shadows && cached.is_none();
+                let map = shadows && stock_map(cached);
                 if light.shadow_maps_enabled != map {
                     light.shadow_maps_enabled = map;
                 }
@@ -722,7 +738,7 @@ pub(crate) fn budget_shadows(
                     light.contact_shadows_enabled = contact;
                 }
                 commands.entity(entity).try_insert((
-                    ShadowSlot { fade, held: true },
+                    ShadowSlot { fade, held: true, importance: score },
                     PointLightShadowFade(fade),
                 ));
                 if !unculled {
@@ -734,6 +750,9 @@ pub(crate) fn budget_shadows(
             }
             continue;
         };
+        if slot.importance.to_bits() != score.to_bits() {
+            slot.importance = score;
+        }
 
         if !slot.held && target > 0.0 && held < slot_capacity && new_slots < max_new_slots {
             slot.held = true;
@@ -757,7 +776,7 @@ pub(crate) fn budget_shadows(
             set_range(&mut light, reach.range(if slot.held { fade } else { 0.0 }));
         }
         // A cached lamp's cube map is the cache's (its component shades it as shadowed).
-        let map = shadows && cached.is_none();
+        let map = shadows && stock_map(cached);
         if light.shadow_maps_enabled != map {
             light.shadow_maps_enabled = map;
         }

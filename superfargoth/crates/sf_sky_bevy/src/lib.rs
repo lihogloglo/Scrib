@@ -81,6 +81,7 @@ use sf_tunables_bevy::TunablesAppExt;
 pub use cascade_hold::{CascadeHoldStats, HeldSunCascades, SunCascadeHold};
 pub use cascades::{cascade_texel_sizes, CascadeSplits};
 pub use path::{GiActive, GiEnabled, GiSkipEmissive, NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
+pub use lamp_cache::CarriedLight;
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
 pub use shadow_budget::{
     importance as shadow_importance, pick_shadowed, BudgetedShadow, PointShadowBudget, PointShadowPlugin,

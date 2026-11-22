@@ -33,7 +33,7 @@ use mw_actors::held::{DayCycle, HeldContext, exterior_dark};
 use mw_assets::LightCalibration;
 use mw_assets::lights::AnimatedLight;
 use bevy_light::NotShadowCaster;
-use sf_sky_bevy::BudgetedShadow;
+use sf_sky_bevy::{BudgetedShadow, CarriedLight};
 use mw_graphs::Stance;
 use mw_world::LightAnimation;
 use sf_character::{Hand, Readiness};
@@ -271,7 +271,10 @@ fn light_held_slots(
         light.radius = tuning.source_radius_m;
         // The budget writes the range from the reach (short until it holds a shadow map).
         let reach = calibration.reach(info.radius);
-        let mut e = commands.spawn((light, HeldTorch, BudgetedShadow { priority: TORCH_SHADOW_PRIORITY }, reach, Transform::IDENTITY, Visibility::Inherited, ChildOf(entity)));
+        // `CarriedLight`: a held light is never "still" for the lamp shadow cache (an idle sway under
+        // 1 mm per frame settled it, and each settling faded its shadow out and in: SH-34). A torch
+        // standing in the world is a plain lamp (`mw_assets::lights`) and stays cached.
+        let mut e = commands.spawn((light, HeldTorch, CarriedLight, BudgetedShadow { priority: TORCH_SHADOW_PRIORITY }, reach, Transform::IDENTITY, Visibility::Inherited, ChildOf(entity)));
         // The slot's light layers from the first frame (the worldspace's content and shadow-only
         // layers: Bevy pairs a light only with the casters and views sharing its `RenderLayers`,
         // so the carrier's first-person head casts too); `sf_character_bevy`'s layer propagation

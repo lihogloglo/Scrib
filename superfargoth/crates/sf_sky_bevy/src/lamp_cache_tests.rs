@@ -398,3 +398,142 @@ fn atlas_rects_publish_only_after_their_first_draw() {
     let (s, _) = w.gate(one(B), none, 0, 0);
     assert_eq!(s, none);
 }
+
+/// SH-34 (2026-11-22): a carried torch's idle sway is slower than the 1 mm per frame "still" test,
+/// so it used to settle, be admitted as a static lamp (fade back to zero, six captures, fade in)
+/// and be thrown back to the moving path by its next faster movement, every second or two. With
+/// [`CarriedLight`] it stays in the Live Atlas; without it, it is a static lamp again.
+#[test]
+fn a_carried_light_stays_on_the_moving_path_until_put_down() {
+    use bevy_pbr::AtlasPointShadowMap;
+
+    use crate::CarriedLight;
+
+    /// 120 fps.
+    const FRAME: std::time::Duration = std::time::Duration::from_micros(8_333);
+    /// Three seconds of frames.
+    const FRAMES: usize = 360;
+    /// Idle sway: 0.2 mm per frame (0.024 m/s), turning every quarter second.
+    const STEP_M: f32 = 2e-4;
+    const TURN_FRAMES: usize = 30;
+
+    let mut room = room(true);
+    {
+        let mut tunables = room.app.world_mut().resource_mut::<Tunables>();
+        let id = tunables.id_of(&sf_sky::shadow_atlas::ENABLED).expect("registered");
+        tunables.set(id.untyped(), true.to_value()).expect("a bool");
+    }
+    room.app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(FRAME));
+    let lamp = room.lamp;
+    let atlas = |room: &Room| room.app.world().get::<AtlasPointShadowMap>(lamp).copied();
+    let on_static_path = |room: &Room| atlas(room).is_some_and(|a| a.draw_static_rects.iter().any(Option::is_some));
+    let on_moving_path = |room: &Room| {
+        atlas(room).is_some_and(|a| a.static_rects == [None; 6] && a.draw_static_rects == [None; 6]) && room.ready()
+    };
+
+    // Held and swaying: on the moving path from the first frames, and it never leaves it.
+    room.app.world_mut().entity_mut(lamp).insert(CarriedLight);
+    let mut fade = 0.0_f32;
+    for frame in 0..FRAMES {
+        let dir = if (frame / TURN_FRAMES).is_multiple_of(2) { 1.0 } else { -1.0 };
+        room.translate(lamp, Vec3::new(STEP_M * dir, 0.0, 0.0));
+        room.run(1);
+        if frame >= 2 {
+            assert!(on_moving_path(&room), "frame {frame}: a carried light left the moving path: {:?}", atlas(&room));
+            assert!(atlas(&room).is_some_and(|a| a.draw_faces != 0), "frame {frame}: redrawn every frame");
+        }
+        assert!(room.fade() >= fade, "frame {frame}: the shadow faded back from {fade} to {}", room.fade());
+        fade = room.fade();
+    }
+    assert!((fade - 1.0).abs() < 1e-6, "the carried light's shadow faded in: {fade}");
+
+    // Put down (mark removed, no more movement): a static lamp again after the settle time.
+    room.app.world_mut().entity_mut(lamp).remove::<CarriedLight>();
+    let admitted = (0..FRAMES).find(|_| {
+        room.run(1);
+        on_static_path(&room)
+    });
+    assert!(admitted.is_some(), "a put-down light is admitted as a static lamp: {:?}", atlas(&room));
+    assert!(admitted.is_some_and(|f| f >= 60), "not before the settle time: frame {admitted:?}");
+
+    // Grabbed again without moving: out of the static path at once.
+    room.app.world_mut().entity_mut(lamp).insert(CarriedLight);
+    room.run(2);
+    assert!(on_moving_path(&room), "a grabbed light is back on the moving path: {:?}", atlas(&room));
+}
+
+/// F4b (2026-11-22): new holders used to enter the Static Atlas in query order, so when it was
+/// nearly full a far lamp listed first took the tiles of the lamp next to the viewer. They now
+/// enter by [`ShadowSlot::importance`]: a Static Atlas with room for four tiles (no handover
+/// reserve), eight lamps with one static face each, the far ones first and last in spawn order.
+#[test]
+fn a_full_static_atlas_goes_to_the_most_important_lamps() {
+    use bevy_pbr::AtlasPointShadowMap;
+
+    /// Each lamp's place along Z from the viewer, in spawn order; the four nearest are in the middle.
+    const OFFSETS_M: [f32; 8] = [-6.0, 7.0, 1.0, -2.0, 3.0, -4.0, 5.0, -8.0];
+    /// Static Atlas side: four tiles of the 512 tier every lamp here asks for.
+    const STATIC_PX: u32 = 1024;
+    const TILES: usize = 4;
+
+    let mut room = room(true);
+    {
+        let mut tunables = room.app.world_mut().resource_mut::<Tunables>();
+        let id = tunables.id_of(&sf_sky::shadow_atlas::ENABLED).expect("registered");
+        tunables.set(id.untyped(), true.to_value()).expect("a bool");
+        let id = tunables.id_of(&sf_sky::shadow_atlas::STATIC_SIZE_PX).expect("registered");
+        tunables.set(id.untyped(), STATIC_PX.to_value()).expect("a count");
+        // No texels held back for handovers: the whole atlas is for admissions.
+        let id = tunables.id_of(&sf_sky::shadow_atlas::HANDOVER_SPARES).expect("registered");
+        tunables.set(id.untyped(), 0_u32.to_value()).expect("a count");
+    }
+    // Only this test's lamps and statics.
+    for entity in [room.lamp, room.statics[0], room.statics[1]] {
+        room.app.world_mut().despawn(entity);
+    }
+    let eye = room.app.world().get::<GlobalTransform>(room.camera).expect("camera").translation();
+    // A lamp of 1 m reach with one small static on its +X face, out of every other lamp's reach.
+    let lamps: Vec<(Entity, f32)> = OFFSETS_M
+        .iter()
+        .map(|&offset| {
+            let at = eye + Vec3::new(0.0, 0.0, offset);
+            let world = room.app.world_mut();
+            world.spawn((
+                Mesh3d::default(),
+                Aabb::from_min_max(Vec3::splat(-0.1), Vec3::splat(0.1)),
+                GlobalTransform::from_translation(at + Vec3::new(0.5, 0.0, 0.0)),
+                InheritedVisibility::VISIBLE,
+            ));
+            let lamp = world
+                .spawn((
+                    PointLight { range: 1.0, ..Default::default() },
+                    BudgetedShadow::default(),
+                    GlobalTransform::from_translation(at),
+                    InheritedVisibility::VISIBLE,
+                    ViewVisibility::VISIBLE,
+                ))
+                .id();
+            (lamp, offset.abs())
+        })
+        .collect();
+
+    room.run(5);
+
+    let world = room.app.world();
+    let mut by_distance = lamps.clone();
+    by_distance.sort_by(|a, b| a.1.total_cmp(&b.1));
+    for (lamp, distance) in &lamps {
+        let slot = world.get::<ShadowSlot>(*lamp).expect("every lamp is ranked and holds a slot");
+        assert!(slot.held && slot.importance > 0.0, "the lamp at {distance} m holds a ranked slot: {slot:?}");
+    }
+    for pair in by_distance.windows(2) {
+        let score = |lamp: Entity| world.get::<ShadowSlot>(lamp).expect("slot").importance;
+        assert!(score(pair[0].0) > score(pair[1].0), "the nearer lamp scores higher: {pair:?}");
+    }
+    let with_tiles = |lamp: Entity| world.get::<AtlasPointShadowMap>(lamp).is_some();
+    let holders: Vec<f32> = by_distance.iter().filter(|(lamp, _)| with_tiles(*lamp)).map(|(_, d)| *d).collect();
+    let nearest: Vec<f32> = by_distance.iter().take(TILES).map(|(_, d)| *d).collect();
+    assert_eq!(holders, nearest, "the Static Atlas holds the nearest lamps (distances in metres)");
+    let (farthest, distance) = by_distance[by_distance.len() - 1];
+    assert!(!with_tiles(farthest), "the lamp at {distance} m has no tiles");
+}
