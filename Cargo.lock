@@ -5467,6 +5467,8 @@ dependencies = [
  "sf_coords",
  "sf_diag_bevy",
  "sf_gi_bevy",
+ "sf_groundcover",
+ "sf_groundcover_bevy",
  "sf_level",
  "sf_lod",
  "sf_lod_bevy",
@@ -5989,12 +5991,16 @@ dependencies = [
  "mw_records",
  "mw_vfs",
  "rayon",
+ "ron",
+ "serde",
  "sf_coords",
+ "sf_groundcover",
  "sf_records",
  "sf_terrain",
  "sf_vfs",
  "sf_world",
  "tes3",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -8283,6 +8289,41 @@ dependencies = [
  "serde",
  "sf_tunables",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_groundcover_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_ecs",
+ "bevy_light",
+ "bevy_material",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_pbr",
+ "bevy_platform",
+ "bevy_reflect",
+ "bevy_render",
+ "bevy_shader",
+ "bevy_tasks",
+ "bevy_transform",
+ "log",
+ "naga",
+ "sf_coords",
+ "sf_diag_bevy",
+ "sf_groundcover",
+ "sf_terrain_bevy",
+ "sf_tunables",
+ "sf_tunables_bevy",
+ "sf_wind_bevy",
+ "sf_world",
+ "sf_world_bevy",
+ "wesl",
+ "workspace-hack",
 ]
 
 [[package]]

@@ -8,6 +8,7 @@ mod catalog_warm;
 pub mod exterior;
 pub mod graphics_page;
 mod gi_volume;
+pub mod groundcover;
 mod intro;
 mod teardown;
 pub mod level;

@@ -13,6 +13,7 @@
 //! - [`ids`] and [`convert`]: stable identities and unit/axis conversion.
 
 pub mod convert;
+pub mod groundcover;
 pub mod ids;
 pub mod portal;
 pub mod source;

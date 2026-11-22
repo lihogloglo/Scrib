@@ -695,6 +695,9 @@ pub(super) fn write_summary(
         GaugeColumn::median("scene batches", "scene/batches/count"),
         GaugeColumn::median("scene live slots", "scene/slots/batch_live"),
         GaugeColumn::median("scene slot bytes", "scene/slots/batch_capacity_bytes"),
+        // Groundcover (sf_groundcover_bevy::publish_gauges): "—" with `--off groundcover`.
+        GaugeColumn::median("groundcover tiles", "groundcover/tiles/resident"),
+        GaugeColumn::median("groundcover live slots", "groundcover/slots/live"),
     ]);
     let mut summary = suite::suite_markdown(&format!("Perf suite `{}`", args.tag), runs, &gauges);
     let mut header = String::new();

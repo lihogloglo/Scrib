@@ -139,46 +139,42 @@ Found while reviewing; the migration slice of each system greps its own files fo
 Written by `node tools/tunables-census.mjs` (do not edit by hand; edit the rules table at the top of the script).
 Per system, then per crate: the T and ? rows in full, the C rows as one line. Paths are relative to the crate.
 
-Sources: 1188 consts, 789 `Default` fields, 203 shader consts (104 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 0.
+Sources: 1526 consts, 852 `Default` fields, 216 shader consts (98 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 238.
 
 | System | Candidates | T | C | ? |
 |---|---:|---:|---:|---:|
-| ai-nav | 52 | 23 | 14 | 15 |
-| animation-characters | 196 | 127 | 54 | 15 |
-| app-diag | 54 | 35 | 7 | 12 |
+| ai-nav | 77 | 22 | 41 | 14 |
+| animation-characters | 197 | 127 | 55 | 15 |
+| app-diag | 65 | 35 | 18 | 12 |
 | audio | 43 | 36 | 1 | 6 |
 | effects | 56 | 11 | 44 | 1 |
 | feel-camera-combat | 207 | 153 | 13 | 41 |
-| other | 243 | 73 | 99 | 71 |
+| other | 339 | 72 | 196 | 71 |
 | physics | 147 | 126 | 8 | 13 |
 | shadows-lights-gi | 50 | 35 | 12 | 3 |
-| sky-weather-surface | 601 | 325 | 102 | 174 |
-| statics-lod-farfield | 102 | 55 | 34 | 13 |
-| streaming-exterior | 103 | 71 | 24 | 8 |
-| terrain-water | 221 | 117 | 62 | 42 |
+| sky-weather-surface | 646 | 306 | 165 | 175 |
+| statics-lod-farfield | 114 | 66 | 35 | 13 |
+| streaming-exterior | 259 | 93 | 144 | 22 |
+| terrain-water | 289 | 131 | 89 | 69 |
 | textures | 21 | 10 | 6 | 5 |
 | ui | 84 | 50 | 7 | 27 |
-| **total** | **2180** | **1247** | **487** | **446** |
+| **total** | **2594** | **1273** | **834** | **487** |
 
 ## ai-nav
 
-### mw_ai (11: T 5, C 2, ? 4)
+### mw_ai (16: T 4, C 11, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/scaffold.rs:17 | WALK_SLACK | `5.0` | T |  |
-| src/scaffold.rs:21 | STUCK_SECONDS | `3.0` | ? |  |
-| src/scaffold.rs:23 | PROGRESS | `0.25` | ? |  |
-| src/scaffold.rs:25 | SAME_GOAL | `0.5` | ? |  |
-| src/wander.rs:22 | IDLE_CHANCE_MULTIPLIER | `0.75` | T |  |
-| src/wander.rs:24 | MIN_WALK_SPEED | `100.0` | T |  |
-| src/wander.rs:25 | MAX_WALK_SPEED | `200.0` | T |  |
-| src/wander.rs:27 | DEFAULT_IDLE_SECONDS | `5.0` | ? |  |
-| src/wander.rs:34 | START_RADIUS | `1.0` | T |  |
+| src/wander.rs:29 | IDLE_CHANCE_MULTIPLIER | `0.75` | T |  |
+| src/wander.rs:31 | MIN_WALK_SPEED | `100.0` | T |  |
+| src/wander.rs:32 | MAX_WALK_SPEED | `200.0` | T |  |
+| src/wander.rs:34 | DEFAULT_IDLE_SECONDS | `5.0` | ? |  |
+| src/wander.rs:41 | START_RADIUS | `1.0` | T |  |
 
-Stays const: GOAL_TRIES (small index), BLOCKED_EDGES (small index).
+Stays const: PRIORITY_WANDER_FACE (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_IDLE (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_WALK (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_STAND (opt-out: HTN method priority ordering: face > idle > walk > stand), WanderTuning.walk_backstop_mult (opt-out: bound from mw.ai.wander.walk_backstop_mult in mw_walkers_bevy), WanderTuning.walk_slack_s (opt-out: bound from mw.ai.wander.walk_slack_s in mw_walkers_bevy), WanderTuning.same_goal_m (opt-out: bound from mw.ai.wander.same_goal_m in mw_walkers_bevy), WanderTuning.give_up_pause_min_s (opt-out: bound from mw.ai.wander.give_up_pause_min_s in mw_walkers_bevy), WanderTuning.give_up_pause_jitter_s (opt-out: bound from mw.ai.wander.give_up_pause_jitter_s in mw_walkers_bevy), GOAL_TRIES (small index), BLOCKED_EDGES (small index).
 
-### sf_ai (6: T 3, C 2, ? 1)
+### sf_ai (12: T 3, C 8, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -187,7 +183,7 @@ Stays const: GOAL_TRIES (small index), BLOCKED_EDGES (small index).
 | src/htn.rs:66 | SEARCH_TRIES | `4096` | ? |  |
 | src/trace.rs:37 | DEFAULT_TRACE_CAP | `256` | T |  |
 
-Stays const: AI_VERSION (layout/math/id), TRACE_LEN (layout/math/id).
+Stays const: PLANAR_EPS_SQ (opt-out: degenerate zero-length planar vector epsilon), TIMER_EPS_S (opt-out: sub-microsecond timer epsilon for fixed-tick countdown), ExecConfig.stuck_timeout_s (opt-out: bound from ai.exec.stuck_timeout_s in sf_ai_bevy), ExecConfig.progress_min_m (opt-out: bound from ai.exec.progress_min_m in sf_ai_bevy), ExecConfig.face_tolerance_rad (opt-out: bound from ai.exec.face_tolerance_rad in sf_ai_bevy), ExecConfig.arrive_dist_m (opt-out: bound from ai.exec.arrive_dist_m in sf_ai_bevy), AI_VERSION (layout/math/id), TRACE_LEN (layout/math/id).
 
 ### sf_ai_bevy (6: T 3, C 1, ? 2)
 
@@ -197,11 +193,11 @@ Stays const: AI_VERSION (layout/math/id), TRACE_LEN (layout/math/id).
 | src/gizmos.rs:34 | LINE_STEP | `0.17` | T |  |
 | src/gizmos.rs:36 | TEXT_LIFT | `2.1` | ? |  |
 | src/gizmos.rs:37 | RING_RADIUS | `0.55` | T |  |
-| src/lib.rs:67 | AiPlugin.timings | `true` | ? | bool |
+| src/lib.rs:75 | AiPlugin.timings | `true` | ? | bool |
 
 Stays const: DEFAULT_TRACE_LINES (small index).
 
-### sf_nav (8: T 3, C 4, ? 1)
+### sf_nav (19: T 3, C 15, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -210,21 +206,23 @@ Stays const: DEFAULT_TRACE_LINES (small index).
 | src/types.rs:13 | MAX_CLASSES | `8` | T |  |
 | src/types.rs:16 | MAX_AREAS | `64` | T |  |
 
-Stays const: BLOB_VERSION (layout/math/id), EPS (layout/math/id), FIELD_BITS (layout/math/id), FIELD_MASK (layout/math/id).
+Stays const: CORNER_PRUNE_DIST_M (opt-out: Detour dtPathCorridor findCorners 1 cm pruning epsilon), MAX_CORRIDOR_POLYS (opt-out: corridor polygon cap matching RecastConfig::max_path), VISIBILITY_OVERSHOOT_M (opt-out: Detour optimizePathVisibility 1 cm ray overshoot past the next corner), VISIBILITY_CLEAR_T (opt-out: Detour optimizePathVisibility `t > 0.99` clear-ray acceptance), CorridorConfig.max_corners (opt-out: bound from ai.nav.corridor.max_corners in sf_nav_bevy), CorridorConfig.lookahead_polys (opt-out: bound from ai.nav.corridor.lookahead_polys in sf_nav_bevy), CorridorConfig.optimize_range_m (opt-out: bound from ai.nav.corridor.optimize_range_m in sf_nav_bevy), CorridorConfig.topology_period_s (opt-out: bound from ai.nav.corridor.topology_period_s in sf_nav_bevy), CorridorConfig.repair_drift_m (opt-out: bound from ai.nav.corridor.repair_drift_m in sf_nav_bevy), CorridorConfig.repair_nodes (opt-out: bound from ai.nav.corridor.repair_nodes in sf_nav_bevy), BLOB_VERSION (layout/math/id), EPS (layout/math/id), FIELD_BITS (layout/math/id), FIELD_MASK (layout/math/id), EDGE_BISECT_STEPS (opt-out: maths: bisection precision, far below any tile or snap size).
 
 ### sf_nav_bake (1: T 0, C 1, ? 0)
 
 Stays const: JOIN_EPS (layout/math/id).
 
-### sf_nav_bevy (3: T 0, C 0, ? 3)
+### sf_nav_bevy (5: T 0, C 0, ? 5)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/gizmos.rs:21 | LIFT | `0.05` | ? |  |
-| src/gizmos.rs:23 | PATH_LIFT | `0.12` | ? |  |
-| src/gizmos.rs:25 | TICK | `0.3` | ? |  |
+| src/gizmos.rs:22 | LIFT | `0.05` | ? |  |
+| src/gizmos.rs:24 | WALL_ALPHA | `1.0` | ? |  |
+| src/gizmos.rs:25 | INNER_ALPHA | `0.35` | ? |  |
+| src/gizmos.rs:27 | PATH_LIFT | `0.12` | ? |  |
+| src/gizmos.rs:29 | TICK | `0.3` | ? |  |
 
-### sf_nav_recast (17: T 9, C 4, ? 4)
+### sf_nav_recast (18: T 9, C 5, ? 4)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -235,14 +233,14 @@ Stays const: JOIN_EPS (layout/math/id).
 | src/build.rs:28 | VERTS_PER_POLY | `6` | ? |  |
 | src/build.rs:29 | DETAIL_SAMPLE_CELLS | `6.0` | ? |  |
 | src/build.rs:30 | DETAIL_SAMPLE_MAX_ERROR_CELLS | `1.0` | T |  |
-| src/lib.rs:62 | MAX_TILES_PER_MESH | `1 << 13` | T |  |
-| src/lib.rs:65 | MAX_MESHES | `1 << refs::SLOT_BITS` | T |  |
-| src/lib.rs:68 | MAX_POLYS_PER_TILE | `1 << 20` | T |  |
+| src/lib.rs:64 | MAX_TILES_PER_MESH | `1 << 13` | T |  |
+| src/lib.rs:67 | MAX_MESHES | `1 << refs::SLOT_BITS` | T |  |
+| src/lib.rs:70 | MAX_POLYS_PER_TILE | `1 << 20` | T |  |
 | src/refs.rs:11 | SLOT_SHIFT | `33` | ? |  |
 | src/refs.rs:16 | OURS | `((1 << (SLOT_BITS + GEN_BITS)) - 1) <...` | ? |  |
 | src/search.rs:35 | AWAY_RADIUS | `32_000.0` | T |  |
 
-Stays const: QUERY_POOL (small index), SLOT_BITS (layout/math/id), GEN_SHIFT (derived), GEN_BITS (layout/math/id).
+Stays const: SURFACE_VISITED_CAP (opt-out: Detour dtPathCorridor movePosition visited polygon buffer size), QUERY_POOL (small index), SLOT_BITS (layout/math/id), GEN_SHIFT (derived), GEN_BITS (layout/math/id).
 
 ## animation-characters
 
@@ -279,7 +277,7 @@ Stays const: HEAD (small index), HAIR (small index), NECK (small index), CUIRASS
 
 Stays const: EPSILON (layout/math/id), BIPED (sentinel/derived), SWIMS (sentinel/derived), FLIES (sentinel/derived), WALKS (sentinel/derived).
 
-### mw_walkers_bevy (18: T 15, C 1, ? 2)
+### mw_walkers_bevy (19: T 15, C 2, ? 2)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -294,14 +292,14 @@ Stays const: EPSILON (layout/math/id), BIPED (sentinel/derived), SWIMS (sentinel
 | src/physics.rs:775 | STEP_BUDGET_MS | `0.3` | T |  |
 | src/physics.rs:776 | INSERT_BUDGET_MS | `0.5` | T |  |
 | src/physics.rs:858 | AUTO_FRAME_DELAY | `0.5` | T |  |
-| src/walkers.rs:62 | TIMESCALE | `30.0` | T |  |
-| src/walkers.rs:64 | FLY_HOVER | `1.5` | ? |  |
-| src/walkers.rs:68 | PROCESS_MARGIN | `4.0` | T |  |
-| src/walkers.rs:70 | DORMANT_SIGNIFICANCE | `0.25` | T |  |
-| src/walkers.rs:75 | AI_WAKE_RADIUS_M | `110.0` | T |  |
-| src/walkers.rs:77 | AI_SLEEP_RADIUS_M | `122.0` | T |  |
+| src/walkers.rs:83 | TIMESCALE | `30.0` | T |  |
+| src/walkers.rs:85 | FLY_HOVER | `1.5` | ? |  |
+| src/walkers.rs:89 | PROCESS_MARGIN | `4.0` | T |  |
+| src/walkers.rs:91 | DORMANT_SIGNIFICANCE | `0.25` | T |  |
+| src/walkers.rs:96 | AI_WAKE_RADIUS_M | `110.0` | T |  |
+| src/walkers.rs:98 | AI_SLEEP_RADIUS_M | `122.0` | T |  |
 
-Stays const: BALLS_KEPT (small index).
+Stays const: BALLS_KEPT (small index), REPORT_INTERVAL_S (opt-out: log cadence only: how often the report lines re-check; gates no behaviour).
 
 ### sf_anim (67: T 53, C 6, ? 8)
 
@@ -442,8 +440,8 @@ Stays const: BEVY_MORPH_BYTES (layout/math/id), BEVY_JOINT_BYTES (layout/math/id
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
 | src/cloth.rs:111 | ClothSettings.simulate | `true` | T | settings default |
-| src/lib.rs:227 | AnimVarietySettings.enabled | `true` | T | settings default |
-| src/lib.rs:395 | SETTLE_FRAMES | `2` | T |  |
+| src/lib.rs:264 | AnimVarietySettings.enabled | `true` | T | settings default |
+| src/lib.rs:432 | SETTLE_FRAMES | `2` | T |  |
 | src/view_model.rs:53 | ViewModelSettings.fov_scale | `1.0` | T |  |
 | src/view_model.rs:54 | ViewModelSettings.depth | `0.0` | T |  |
 
@@ -451,25 +449,29 @@ Stays const: OutfitCache.capacity (layout/math/id).
 
 ## app-diag
 
-### bevyrrowind (3: T 2, C 0, ? 1)
+### bevyrrowind (7: T 2, C 4, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/perf/cli.rs:91 | GPU_BUSY_PCT | `15.0` | T |  |
-| src/perf/cli.rs:369 | OTHER_CPU_LIMIT | `25.0` | T |  |
-| src/perf/cli.rs:794 | IDLE_GPU_CLOCK_MHZ | `600.0` | ? |  |
+| src/perf/cli.rs:103 | GPU_BUSY_PCT | `15.0` | T |  |
+| src/perf/cli.rs:381 | OTHER_CPU_LIMIT | `25.0` | T |  |
+| src/perf/cli.rs:810 | IDLE_GPU_CLOCK_MHZ | `600.0` | ? |  |
 
-### mw_devtools_bevy (7: T 4, C 0, ? 3)
+Stays const: EYE_OFFSET_M (opt-out: a framing default: where a debug view starts; `--camera` overrides it), EYE_HEIGHT_M (opt-out: a framing default: where a debug view starts; `--camera` overrides it), BUCKET_M (opt-out: a lookup structure's bucket size: no look, feel or cost beyond the load-time search), SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane is at z = 0).
+
+### mw_devtools_bevy (14: T 4, C 7, ? 3)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/live_ab.rs:85 | LiveAb.help | `true` | ? | bool |
-| src/live_ab.rs:85 | LiveAb.sun_shadows | `true` | T |  |
-| src/live_ab.rs:85 | LiveAb.mesh_wire | `false` | ? | bool |
-| src/live_ab.rs:520 | TIME_SCALES | `[30.0, 120.0, 600.0]` | T |  |
-| src/perf.rs:32 | DEFAULT_RESOLUTION | `(1280, 720)` | T |  |
+| src/live_ab.rs:88 | LiveAb.help | `true` | ? | bool |
+| src/live_ab.rs:88 | LiveAb.sun_shadows | `true` | T |  |
+| src/live_ab.rs:88 | LiveAb.mesh_wire | `false` | ? | bool |
+| src/live_ab.rs:544 | TIME_SCALES | `[30.0, 120.0, 600.0, 1200.0]` | T |  |
+| src/perf.rs:35 | DEFAULT_RESOLUTION | `(1280, 720)` | T |  |
 | src/pipeline_watch.rs:26 | FLUSH_SECS | `0.5` | T |  |
-| src/remote.rs:40 | DEFAULT_PORT | `15712` | ? |  |
+| src/remote.rs:43 | DEFAULT_PORT | `15712` | ? |  |
+
+Stays const: WARMUP_FRAMES (opt-out: a pipeline depth, not a trade-off), COLUMN_DIM (opt-out: a drawing style: the column is the frame, the lines stay readable over it), CLIP_ROWS (opt-out: a drawing style), DASH (opt-out: a drawing style), AUTHORED_HEIGHT_PX (opt-out: a layout reference: sizes are authored at 1080p, `diag.panel.scale` tunes them), STAGES (opt-out: a layout: the three stages the text panel listed), CONSOLE_TAIL (opt-out: a reply size, not a trade-off).
 
 ### mw_game_core (8: T 5, C 0, ? 3)
 
@@ -512,10 +514,10 @@ Stays const: UNSET (sentinel/derived), STUTTER_WINDOW (small index), STUTTER_MIN
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:138 | DiagSettings.update_baseline | `false` | T | settings default |
-| src/lib.rs:139 | DiagSettings.exit_on_finish | `false` | T | settings default |
-| src/lib.rs:140 | DiagSettings.apply_transform | `true` | T | settings default |
-| src/lib.rs:144 | DiagSettings.markdown | `true` | T | settings default |
+| src/lib.rs:141 | DiagSettings.update_baseline | `false` | T | settings default |
+| src/lib.rs:142 | DiagSettings.exit_on_finish | `false` | T | settings default |
+| src/lib.rs:143 | DiagSettings.apply_transform | `true` | T | settings default |
+| src/lib.rs:147 | DiagSettings.markdown | `true` | T | settings default |
 | src/pipeline_watch.rs:57 | BURST_SECS | `2.0` | T |  |
 | src/stages.rs:131 | CLEANUP | `SETS.len() - 1` | ? |  |
 | src/textures.rs:47 | SCAN_SECS | `4.0` | T |  |
@@ -725,8 +727,8 @@ Stays const: BRACE_FINGERS_UP (layout/math/id), CLASSES (small index), LEFT (sma
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:297 | OBSTACLE_RANGE_M | `1.5` | T |  |
-| src/lib.rs:338 | SAME_FACE_COS | `0.985` | T |  |
+| src/lib.rs:279 | OBSTACLE_RANGE_M | `1.5` | T |  |
+| src/lib.rs:320 | SAME_FACE_COS | `0.985` | T |  |
 
 ### sf_camera (39: T 34, C 1, ? 4)
 
@@ -863,52 +865,50 @@ Stays const: EPS (layout/math/id), COLUMN (small index), MoverParams.step_up (la
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:151 | MEASURE_HALFLIFE | `0.05` | T |  |
-| src/lib.rs:204 | Avoider.priority | `0.0` | T |  |
-| src/lib.rs:206 | Avoider.max_speed | `0.0` | T |  |
-| src/lib.rs:296 | ControllerSettings.enabled | `true` | T | settings default |
-| src/lib.rs:297 | ControllerSettings.avoidance | `true` | T | settings default |
-| src/lib.rs:299 | ControllerSettings.max_dt | `0.1` | T |  |
-| src/lib.rs:300 | ControllerSettings.moving_speed | `0.3` | T |  |
-| src/lib.rs:301 | ControllerSettings.idle_speed | `0.15` | T |  |
-| src/lib.rs:302 | ControllerSettings.stop_speed | `0.25` | T |  |
-| src/lib.rs:306 | ControllerSettings.foot_probe_down | `0.75` | T |  |
-| src/lib.rs:307 | ControllerSettings.foot_probes | `true` | T |  |
+| src/lib.rs:188 | MEASURE_HALFLIFE | `0.05` | T |  |
+| src/lib.rs:279 | Avoider.priority | `0.0` | T |  |
+| src/lib.rs:281 | Avoider.max_speed | `0.0` | T |  |
+| src/lib.rs:372 | ControllerSettings.enabled | `true` | T | settings default |
+| src/lib.rs:373 | ControllerSettings.avoidance | `true` | T | settings default |
+| src/lib.rs:375 | ControllerSettings.max_dt | `0.1` | T |  |
+| src/lib.rs:376 | ControllerSettings.moving_speed | `0.3` | T |  |
+| src/lib.rs:377 | ControllerSettings.idle_speed | `0.15` | T |  |
+| src/lib.rs:378 | ControllerSettings.stop_speed | `0.25` | T |  |
+| src/lib.rs:382 | ControllerSettings.foot_probe_down | `0.75` | T |  |
+| src/lib.rs:383 | ControllerSettings.foot_probes | `true` | T |  |
 
 Stays const: ControllerSettings.foot_probe_up (layout/math/id).
 
 ## other
 
-### mw_assets (23: T 12, C 1, ? 10)
+### mw_assets (21: T 11, C 1, ? 9)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/animation.rs:41 | MATERIAL_ANIM_HZ | `30.0` | ? |  |
+| src/animation.rs:44 | MATERIAL_ANIM_HZ | `30.0` | ? |  |
 | src/cooked.rs:30 | RAY_TRACING_LOD | `0` | T |  |
 | src/cooked.rs:75 | CookedLodSettings.max_distance | `2000.0` | T |  |
 | src/cooked.rs:75 | CookedLodSettings.tint_levels | `false` | T | settings default |
-| src/lib.rs:51 | SCENE_EV100 | `7.0` | ? |  |
-| src/lib.rs:466 | LEAF_DIFFUSE_TRANSMISSION | `0.5` | ? |  |
-| src/lib.rs:472 | LEAF_THICKNESS | `0.05` | ? |  |
-| src/lights.rs:77 | FULL_MOONLIGHT_FLOOR_RATIO | `2.5` | T |  |
-| src/lights.rs:81 | LightCalibration.lumens_per_radius_sq | `8_000.0` | T |  |
-| src/lights.rs:81 | LightCalibration.range_scale | `4.0` | T |  |
-| src/lights.rs:81 | LightCalibration.unshadowed_range_scale | `4.0` | T |  |
-| src/lights.rs:81 | LightCalibration.ambient_nits | `300.0` | ? |  |
-| src/lights.rs:81 | LightCalibration.exposure_floor_ev100 | `3.5` | T |  |
-| src/lights.rs:81 | LightCalibration.night_ambient_nits | `4.0` | ? |  |
-| src/lights.rs:144 | SHADOW_NEAR_Z | `0.25` | T |  |
-| src/map_ab.rs:29 | PLAIN_METALLIC | `0.0` | ? |  |
-| src/map_ab.rs:31 | PLAIN_ROUGHNESS | `0.85` | ? |  |
-| src/map_ab.rs:33 | PLAIN_REFLECTANCE | `0.3` | ? |  |
-| src/map_ab.rs:40 | PARALLAX_DEPTH_SCALE | `0.04` | T |  |
+| src/lib.rs:53 | SCENE_EV100 | `7.0` | ? |  |
+| src/lib.rs:509 | LEAF_DIFFUSE_TRANSMISSION | `0.5` | ? |  |
+| src/lib.rs:515 | LEAF_THICKNESS | `0.05` | ? |  |
+| src/lights.rs:120 | FULL_MOONLIGHT_FLOOR_RATIO | `MOON_FLOOR_RATIO.default_value()` | T |  |
+| src/lights.rs:128 | LightCalibration.lumens_per_radius_sq | `8_000.0` | T |  |
+| src/lights.rs:129 | LightCalibration.range_scale | `4.0` | T |  |
+| src/lights.rs:130 | LightCalibration.unshadowed_range_scale | `4.0` | T |  |
+| src/lights.rs:131 | LightCalibration.ambient_nits | `300.0` | ? |  |
+| src/lights.rs:277 | SHADOW_NEAR_Z | `0.25` | T |  |
+| src/map_ab.rs:35 | PLAIN_METALLIC | `0.0` | ? |  |
+| src/map_ab.rs:37 | PLAIN_ROUGHNESS | `0.85` | ? |  |
+| src/map_ab.rs:39 | PLAIN_REFLECTANCE | `0.3` | ? |  |
+| src/map_ab.rs:46 | PARALLAX_DEPTH_SCALE | `0.04` | T |  |
 | src/particles.rs:108 | BUFFER_CHUNK | `1024` | ? |  |
 | src/particles.rs:432 | CARRY_MAX_STEP_M | `4.0` | T |  |
 | src/particles.rs:573 | PARTICLE_REACH_M | `12.0` | T |  |
 
 Stays const: UP (layout/math/id).
 
-### mw_bake (53: T 21, C 21, ? 11)
+### mw_bake (54: T 21, C 22, ? 11)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -925,7 +925,7 @@ Stays const: UP (layout/math/id).
 | src/cook.rs:83 | DEPTH_MAX_SIZE | `1024` | T |  |
 | src/delight.rs:62 | DEFAULT_STRENGTH | `delight::DEFAULT_STRENGTH` | T |  |
 | src/delight.rs:64 | MIN_SIDE | `64` | T |  |
-| src/far.rs:36 | IMPOSTOR_MIN_HEIGHT | `3.0` | T |  |
+| src/far.rs:38 | IMPOSTOR_MIN_HEIGHT | `3.0` | T |  |
 | src/importer.rs:43 | DROP_FRACTION | `0.02` | T |  |
 | src/nav.rs:63 | NAV_CELL | `64.0` | ? |  |
 | src/nav.rs:65 | INTERIOR_PAD | `2.0` | ? |  |
@@ -934,18 +934,18 @@ Stays const: UP (layout/math/id).
 | src/nav.rs:71 | APPROACH_RADIUS | `6.0` | T |  |
 | src/nav.rs:73 | DEFAULT_SWIM_HEIGHT_SCALE | `0.9` | T |  |
 | src/nav.rs:75 | TERRAIN_SPACING | `sf_terrain::BASE_SPACING` | T |  |
-| src/nav.rs:432 | HEIGHT_BUDGET | `128 << 20` | T |  |
-| src/nav.rs:433 | MESH_BUDGET | `128 << 20` | T |  |
-| src/nav.rs:434 | CELL_BUDGET | `32 << 20` | T |  |
-| src/nav.rs:550 | GeometryCache.cells | `Decoded::new(CELL_BUDGET)` | ? |  |
-| src/nav.rs:551 | GeometryCache.meshes | `Decoded::new(MESH_BUDGET)` | ? |  |
-| src/nav.rs:552 | GeometryCache.heights | `Decoded::new(HEIGHT_BUDGET)` | T |  |
+| src/nav.rs:436 | HEIGHT_BUDGET | `128 << 20` | T |  |
+| src/nav.rs:437 | MESH_BUDGET | `128 << 20` | T |  |
+| src/nav.rs:438 | CELL_BUDGET | `32 << 20` | T |  |
+| src/nav.rs:554 | GeometryCache.cells | `Decoded::new(CELL_BUDGET)` | ? |  |
+| src/nav.rs:555 | GeometryCache.meshes | `Decoded::new(MESH_BUDGET)` | ? |  |
+| src/nav.rs:556 | GeometryCache.heights | `Decoded::new(HEIGHT_BUDGET)` | T |  |
 | src/textures.rs:54 | DDS_DATA | `128` | ? |  |
 | src/textures.rs:56 | DX10_DATA | `148` | ? |  |
 | src/textures.rs:149 | D3DFMT_A16B16G16R16 | `36` | ? |  |
 | src/world.rs:45 | LAYER_ARRAY_SIZE | `2048` | T |  |
 
-Stays const: GRAPH_RULES_VERSION (layout/math/id), VERSION (layout/math/id), VERSION (layout/math/id), RULES_VERSION (layout/math/id), VERSION (layout/math/id), DEPTH_VERSION (layout/math/id), VERSION (layout/math/id), ALGORITHM_VERSION (layout/math/id), ALPHA_CLASSIFIER_VERSION (layout/math/id), RULE_VERSION (layout/math/id), RULES_VERSION (layout/math/id), VERSION (layout/math/id), RULES_VERSION (layout/math/id), RULES_VERSION (layout/math/id), PALETTE_LEN (layout/math/id), DDPF_ALPHAPIXELS (sentinel/derived), DDPF_ALPHA (sentinel/derived), DDPF_FOURCC (sentinel/derived), DDPF_PALETTEINDEXED8 (sentinel/derived), DDPF_RGB (sentinel/derived), DDPF_LUMINANCE (sentinel/derived).
+Stays const: GRAPH_RULES_VERSION (layout/math/id), VERSION (layout/math/id), VERSION (layout/math/id), RULES_VERSION (layout/math/id), VERSION (layout/math/id), DEPTH_VERSION (layout/math/id), VERSION (layout/math/id), ALGORITHM_VERSION (layout/math/id), ALPHA_CLASSIFIER_VERSION (layout/math/id), RULE_VERSION (layout/math/id), RULES_VERSION (layout/math/id), VERSION (layout/math/id), RULES_VERSION (layout/math/id), REGION (opt-out: an id the bake keys its products by), RULES_VERSION (layout/math/id), PALETTE_LEN (layout/math/id), DDPF_ALPHAPIXELS (sentinel/derived), DDPF_ALPHA (sentinel/derived), DDPF_FOURCC (sentinel/derived), DDPF_PALETTEINDEXED8 (sentinel/derived), DDPF_RGB (sentinel/derived), DDPF_LUMINANCE (sentinel/derived).
 
 ### mw_graphs (9: T 8, C 0, ? 1)
 
@@ -1036,9 +1036,9 @@ Stays const: EMITTER_VERSION (layout/math/id).
 
 Stays const: RANKS (small index), SECURITY (small index), SNEAK (small index), INTELLIGENCE (small index), WILLPOWER (small index), AGILITY (small index), ENDURANCE (small index), LUCK (small index).
 
-### mw_viewers_bevy (12: T 0, C 12, ? 0)
+### mw_viewers_bevy (33: T 0, C 33, ? 0)
 
-Stays const: ORBIT_PERIOD (test-scene fixture), SETTLE_FRAMES (test-scene fixture), LOAD_LIMIT_FRAMES (test-scene fixture), SAVE_LIMIT_FRAMES (test-scene fixture), FLOOR_PERIOD (test-scene fixture), BROWSE_BLEND_IN (test-scene fixture), BROWSE_REPLAY_LEAD (test-scene fixture), OrbitCam.yaw (test-scene fixture), OrbitCam.pitch (test-scene fixture), OrbitCam.distance (test-scene fixture), ORBIT_SPEED (test-scene fixture), ZOOM_STEP (test-scene fixture).
+Stays const: ORBIT_PERIOD (test-scene fixture), SETTLE_FRAMES (test-scene fixture), LOAD_LIMIT_FRAMES (test-scene fixture), SAVE_LIMIT_FRAMES (test-scene fixture), FLOOR_PERIOD (test-scene fixture), BROWSE_BLEND_IN (test-scene fixture), BROWSE_REPLAY_LEAD (test-scene fixture), OrbitCam.yaw (test-scene fixture), OrbitCam.pitch (test-scene fixture), OrbitCam.distance (test-scene fixture), ORBIT_SPEED (test-scene fixture), ZOOM_STEP (test-scene fixture), MARKER (test-scene fixture), SUMMIT_POLE (test-scene fixture), CONTOUR_INK (test-scene fixture), SEA_MARGIN_M (opt-out: past the fog: the sea's edge is never seen), FAR_M (opt-out: past the fog), LOD_HYSTERESIS (opt-out: switch hysteresis of the look-test viewer), MAX_FIGURES (opt-out: a pool size of the look-test viewer), FIGURE_RADIUS_RATIO (opt-out: human proportion of a scale cue), MIE_SCATTERING (test-scene fixture), MIE_ABSORPTION (test-scene fixture), MAX_ARMS (test-scene fixture), LOD_STRIDES (opt-out: mesh layout of the viewer's LOD pyramid; switch distances are the tunables), LOWLAND (test-scene fixture), SUMMIT (test-scene fixture), ROCK (test-scene fixture), SEABED (test-scene fixture), DRY (test-scene fixture), TREE_SIDES (opt-out: mesh layout of a scale-cue cone), TREE_SHORE_M (opt-out: keeps cones out of the sea plane; not a look setting), TREE_GREEN (test-scene fixture), BLOCK_SINK_M (opt-out: geometry fudge against a visible gap; not a look setting).
 
 ### sf_app_bevy (1: T 0, C 0, ? 1)
 
@@ -1063,6 +1063,14 @@ Stays const: RECORD_HEADER (layout/math/id), RECORD_CHECK (small index), TRACE_F
 | src/lib.rs:25 | HALF_CELL | `GRID_CELL / 2.0` | ? |  |
 | src/lib.rs:26 | CELL_F64 | `GRID_CELL as f64` | ? |  |
 
+### sf_groundcover (10: T 0, C 10, ? 0)
+
+Stays const: FNV_OFFSET (opt-out: FNV-1a 64 offset basis, a hash format constant), FNV_PRIME (opt-out: FNV-1a 64 prime, a hash format constant), GOLDEN_GAMMA (opt-out: SplitMix64 golden-ratio increment, a hash format constant), MIX_A (opt-out: SplitMix64 / Mix13 multiplier, a hash format constant), MIX_B (opt-out: SplitMix64 / Mix13 multiplier, a hash format constant), DOMAIN (opt-out: domain separator so tile (0, 0), MASK_INSIDE_MIN (opt-out: R8 format: a mask texel at or above half-scale counts as inside), MAX_CELLS_PER_AXIS (opt-out: format: cells per axis capped so `n²` cell indices fit a u32), ACCEPT_SCALE (opt-out: maths: 2³², the integer scale of the acceptance threshold), BYTES (layout/math/id).
+
+### sf_groundcover_bevy (6: T 0, C 6, ? 0)
+
+Stays const: PARAMS_BINDING (layout/math/id), WIND_BINDING (layout/math/id), SLOT_BYTES (layout/math/id), MAX_SPECIES_PER_BATCH (opt-out: layout: the material uniform's species array length), TILE_SAMPLES_F64 (opt-out: the terrain format's tile edge), HEIGHTS_PER_LAYER (opt-out: the terrain format's sample spacings).
+
 ### sf_ids (5: T 1, C 0, ? 4)
 
 | Where | Name | Value | Cls | Note |
@@ -1078,6 +1086,18 @@ Stays const: RECORD_HEADER (layout/math/id), RECORD_CHECK (small index), TRACE_F
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
 | src/mesh.rs:131 | SEGMENTS | `24` | ? |  |
+
+### sf_rockgen (42: T 0, C 41, ? 1)
+
+| Where | Name | Value | Cls | Note |
+|---|---|---|---|---|
+| src/bake.rs:32 | HULLS | `cfg!(feature = "collision")` | ? |  |
+
+Stays const: LIBRARY_SEED (opt-out: seed: names the library set, not a quality/cost trade-off), UNIT_LONG_AXIS (opt-out: units: the unit frame), MIN_ROUNDING_CELLS (opt-out: sampling limit of the mesher, not a look value), MAX_CHIP_FRACTION (opt-out: definition of a chip; the look value is chip_depth), SHAPE_STREAM (sentinel/derived), DEGENERATE (opt-out: numerical epsilon), NEIGHBOUR_SPACINGS (opt-out: geometry: neighbour search radius of a jittered lattice), MIN_GROOVE_CELLS (opt-out: sampling limit of the mesher), SLIVER_SIN (opt-out: numerical: degenerate-triangle test), OFFSET (sentinel/derived), PRIME (sentinel/derived), VARIANT_PURPOSE (sentinel/derived), PICK_PURPOSE (sentinel/derived), LIBRARY_FORMAT (opt-out: format version of the bake key), MIN_CLOSED_TRIANGLES (opt-out: maths: a tetrahedron is the smallest closed mesh), PAD_CELLS (opt-out: algorithm: the outer layer must be outside for the net to close), SKIP_BLOCK (opt-out: loop layout of the sampler), RETRY_SCHEDULE (opt-out: algorithm schedule of the mesher), QUANTUM (opt-out: numerical: float lattice), SEPARATE_QUANTA (opt-out: numerical: separation of coincident vertices), UNPINCH_ATTEMPTS (opt-out: algorithm schedule of the mesher), MIN_VOLUME_FRACTION (opt-out: validity check of a LOD, not a look value), AMBIGUITY_PASSES (opt-out: algorithm schedule of the mesher), FLIP_CELLS (opt-out: numerical: flipped sample value), UNBOUNDED_ERROR (opt-out: algorithm: LOD1+ are target-driven, the error bound is off), GOLDEN (sentinel/derived), MIN_NOISE_WAVELENGTH_CELLS (opt-out: sampling limit: shorter wavelengths alias on the grid), PIT_ROUNDING_CELLS (opt-out: sampling limit of the mesher), MIN_PIT_CELLS (opt-out: sampling limit: a smaller pit is noise on the grid), MIN_PIT_WALL_CELLS (opt-out: sampling limit of the mesher), PIT_OPEN_FRACTION (opt-out: definition of an open pit, not a look value: the look is pit_density / pit_size), PIT_MIN_FRACTION (opt-out: definition of the pit size law; the look value is pit_size), QEF_EIGEN_MIN (opt-out: numerical method: QEF truncation), SNAP_REACH_CELLS (opt-out: numerical method: dual contouring keeps the vertex near its cell), SNAP_EPS_CELLS (opt-out: numerical method: acceptance tolerance of the projection), NEWTON_STEPS (opt-out: numerical method: iteration count), GRADIENT_STEP_CELLS (opt-out: numerical method: central-difference step), HARD_NORMAL_STEP_CELLS (opt-out: numerical method: central-difference step), NOISE_STREAM (sentinel/derived), PIT_STREAM (sentinel/derived), SWEEPS (opt-out: numerical method: Jacobi sweeps; 3×3 converges in a handful).
+
+### sf_rockgen_bevy (15: T 0, C 15, ? 0)
+
+Stays const: OPEN_END_M (opt-out: maths: an open range end, not a distance anyone tunes), FLAG_ALBEDO (layout/math/id), FLAG_NORMAL (layout/math/id), FLAG_ORM (layout/math/id), FLAG_OCCLUSION (layout/math/id), FLAG_FLIP_Y (layout/math/id), FLAG_HEX (layout/math/id), FLAG_LOD_TINT (layout/math/id), FLAG_ALBEDO (layout/math/id), FLAG_NORMAL (layout/math/id), FLAG_ORM (layout/math/id), FLAG_OCCLUSION (layout/math/id), FLAG_FLIP_Y (layout/math/id), FLAG_HEX (layout/math/id), FLAG_LOD_TINT (layout/math/id).
 
 ### sf_rpg (2: T 0, C 2, ? 0)
 
@@ -1136,7 +1156,7 @@ Stays const: CLOCK_VERSION (layout/math/id), WEATHER_VERSION (layout/math/id), R
 |---|---|---|---|---|
 | src/ops.rs:153 | MAX_DEPTH | `4` | T |  |
 
-### sf_tunables (6: T 0, C 0, ? 6)
+### sf_tunables (7: T 0, C 1, ? 6)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1146,6 +1166,12 @@ Stays const: CLOCK_VERSION (layout/math/id), WEATHER_VERSION (layout/math/id), R
 | src/def.rs:94 | NUMBER | `true` | ? | bool |
 | src/def.rs:114 | NUMBER | `true` | ? | bool |
 | src/def.rs:143 | NUMBER | `false` | ? | bool |
+
+Stays const: MAX_DEPTH (opt-out: a recursion guard against driver cycles, not a trade-off).
+
+### sf_tunables_bevy (2: T 0, C 2, ? 0)
+
+Stays const: INVALID_PARAMS (opt-out: JSON-RPC protocol error code), INTERNAL_ERROR (opt-out: JSON-RPC protocol error code).
 
 ### sf_vfs (1: T 0, C 0, ? 1)
 
@@ -1216,7 +1242,7 @@ Stays const: RIGHT (layout/math/id).
 | src/lib.rs:172 | HitRules.takeover | `10.0` | T | settings default |
 | src/lib.rs:172 | HitRules.certain_fall | `100.0` | T | settings default |
 | src/lib.rs:172 | HitRules.gain | `1.0` | T |  |
-| src/lib.rs:930 | SIZE | `4.0` | T |  |
+| src/lib.rs:939 | SIZE | `4.0` | T |  |
 
 ### mw_physics (5: T 5, C 0, ? 0)
 
@@ -1283,8 +1309,8 @@ Stays const: BODY_FORMAT (layout/math/id), ITEMS_FORMAT (layout/math/id).
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/character.rs:40 | CharacterPhysics.impact_threshold | `1.0` | T |  |
-| src/character.rs:111 | TERRAIN_KILL_DEPTH | `2.0` | T |  |
+| src/character.rs:39 | CharacterPhysics.impact_threshold | `1.0` | T |  |
+| src/character.rs:108 | TERRAIN_KILL_DEPTH | `2.0` | T |  |
 | src/debug.rs:27 | PhysicsDebug.enabled | `false` | ? | bool |
 | src/debug.rs:27 | PhysicsDebug.radius | `40.0` | T |  |
 | src/debug.rs:27 | PhysicsDebug.max_lines | `400_000` | T |  |
@@ -1407,22 +1433,20 @@ Stays const: PI (layout/math/id), FLAG_SUN (layout/math/id), FLAG_BOUNCE (layout
 
 ## sky-weather-surface
 
-### mw_environment_bevy (9: T 6, C 1, ? 2)
+### mw_environment_bevy (7: T 5, C 1, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/night_sky.rs:18 | DEG_PER_SIZE | `0.1` | T |  |
-| src/night_sky.rs:20 | DAYS_PER_PHASE | `3.0` | ? |  |
-| src/render.rs:28 | POINT_SHADOWS_DEFAULT | `(8, 512)` | T |  |
-| src/render.rs:32 | LAMP_SHADOW_FADE | `(35.0, 45.0)` | T |  |
-| src/render.rs:37 | POINT_SHADOW_CACHE | `false` | T |  |
-| src/water.rs:78 | DEFAULT_WIND | `7.0` | ? |  |
+| src/night_sky.rs:33 | DEG_PER_SIZE | `0.1` | T |  |
+| src/render.rs:26 | POINT_SHADOWS_DEFAULT | `(8, 512)` | T |  |
+| src/render.rs:31 | POINT_SHADOW_CACHE | `false` | T |  |
+| src/water.rs:82 | DEFAULT_WIND | `7.0` | ? |  |
 | src/weather.rs:206 | RASTER_MARGIN | `4` | T |  |
 | src/weather.rs:218 | LIVE_HOLD_HOURS | `1.0e6` | T |  |
 
 Stays const: SEED (sentinel/derived).
 
-### mw_weather (23: T 17, C 1, ? 5)
+### mw_weather (29: T 17, C 7, ? 5)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1431,9 +1455,9 @@ Stays const: SEED (sentinel/derived).
 | src/cover.rs:38 | TILING_M | `512.0 * UNIT_METERS` | T |  |
 | src/cover.rs:42 | SNOW_DEPTH_M | `0.45` | T |  |
 | src/cover.rs:44 | ASH_DEPTH_M | `0.03` | T |  |
-| src/lib.rs:46 | DEFAULT_TIMESCALE | `30.0` | T |  |
-| src/lib.rs:358 | REFERENCE_RAINDROPS | `650.0` | ? |  |
-| src/lib.rs:361 | REFERENCE_SNOWFLAKES | `1500.0` | ? |  |
+| src/lib.rs:47 | DEFAULT_TIMESCALE | `30.0` | T |  |
+| src/lib.rs:359 | REFERENCE_RAINDROPS | `650.0` | ? |  |
+| src/lib.rs:362 | REFERENCE_SNOWFLAKES | `1500.0` | ? |  |
 | src/visual.rs:26 | CLOUD_WORLD_SCALE | `0.5` | T |  |
 | src/visual.rs:31 | MAX_CLOUD_THICKNESS_M | `1_600.0` | T |  |
 | src/visual.rs:43 | CLOUD_SPEED_MPS | `10.0` | T |  |
@@ -1449,9 +1473,9 @@ Stays const: SEED (sentinel/derived).
 | src/visual.rs:81 | STORM_RADIUS_M | `3_000.0` | T |  |
 | src/visual.rs:124 | ASH_ALBEDO | `Vec3::new(0.55, 0.47, 0.38)` | ? |  |
 
-Stays const: UNIT_METERS (unit/format).
+Stays const: UNIT_METERS (unit/format), ONE_MINUTE_H (opt-out: OpenMW data: Morrowind parity), RISE_HOUR_EPSILON (layout/math/id), DAYS_PER_PHASE (opt-out: Morrowind calendar data), PHASES_PER_CYCLE (opt-out: Morrowind calendar data), DAYS_PER_CYCLE (derived), START_INCREMENTS (opt-out: OpenMW data: the start date).
 
-### sf_atmos (76: T 34, C 2, ? 40)
+### sf_atmos (86: T 34, C 12, ? 40)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1530,16 +1554,16 @@ Stays const: UNIT_METERS (unit/format).
 | src/storm.rs:45 | StormShape.edge_noise_m | `48.0` | T |  |
 | src/storm.rs:45 | StormShape.ground_fraction | `0.35` | T |  |
 
-Stays const: INJECT_GROUP (layout/math/id), INJECT_TILE (derived).
+Stays const: INJECT_GROUP (layout/math/id), INJECT_TILE (derived), MIN_CLIP_W (opt-out: degenerate-projection guard: a direction at 90° to the view), MAX_G (opt-out: maths: keeps the phase function finite, g = ±1 is a delta), LUMINANCE (opt-out: maths: the colour space's luminance weights), MIN_LUMINANCE (opt-out: numerical guard: f16 scene colour's smallest normal is 6.1e-5), TERMINATOR_HALF_WIDTH (opt-out: twin of key_light.wesl planet_lit_at's smoothing: change both together), R2_A (opt-out: maths: 1/φ₂ and 1/φ₂² of the plastic number), R1_A (opt-out: maths: 1/φ, golden ratio), FRAME_PERIOD (opt-out: maths: f32 precision guard of the frame recurrence), MIN_WEIGHT (opt-out: maths: division guard), MIN_EXTINCTION (opt-out: maths: 0/0 guard of the closed form).
 
-### sf_atmos_bevy (40: T 22, C 6, ? 12)
+### sf_atmos_bevy (41: T 17, C 12, ? 12)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:75 | SHADOW_HALF_EXTENT | `8_192.0` | T |  |
-| src/lib.rs:79 | SHADOW_ANCHOR_CELL | `2_048.0` | T |  |
-| src/render.rs:452 | FOG_LIGHT_TEXELS | `3` | T |  |
-| src/render.rs:455 | FOG_STEPS | `16` | T |  |
+| src/lib.rs:125 | SHADOW_HALF_EXTENT | `8_192.0` | T |  |
+| src/lib.rs:129 | SHADOW_ANCHOR_CELL | `2_048.0` | T |  |
+| src/render.rs:468 | FOG_LIGHT_TEXELS | `3` | T |  |
+| src/render.rs:471 | FOG_STEPS | `16` | T |  |
 | src/shaders/bank_edges.wesl:6 | LOG_STEPS | `32.0` | T | shader const: needs a uniform |
 | src/shaders/bank_edges.wesl:7 | OCTAVES | `24.0` | ? |  |
 | src/shaders/bank_edges.wesl:8 | DEPTH_SIGMA | `0.25` | T | shader const: needs a uniform |
@@ -1564,43 +1588,38 @@ Stays const: INJECT_GROUP (layout/math/id), INJECT_TILE (derived).
 | src/shaders/fog_light.wesl:27 | SKY_FILL_SAMPLES | `64u` | T | shader const: needs a uniform |
 | src/shaders/fog_light.wesl:28 | GOLDEN_ANGLE | `2.3999632` | T | shader const: needs a uniform |
 | src/shaders/froxel_common.wesl:19 | MAX_FOG_LIGHTS | `32u` | T | shader const: needs a uniform |
-| src/shaders/froxel_inject.wesl:33 | FAR_PENUMBRA | `0.012` | T | shader const: needs a uniform |
-| src/shaders/froxel_inject.wesl:34 | FAR_PENUMBRA_MIN | `2.0` | T | shader const: needs a uniform |
-| src/shaders/froxel_inject.wesl:35 | FAR_BIAS | `6.0` | T | shader const: needs a uniform |
-| src/shaders/froxel_inject.wesl:36 | FAR_BIAS_PER_M | `0.0015` | T | shader const: needs a uniform |
-| src/shaders/froxel_inject.wesl:37 | FAR_FADE_START | `0.85` | T | shader const: needs a uniform |
-| src/shaders/froxel_inject.wesl:126 | TILE | `GROUP - 2u` | ? |  |
+| src/shaders/froxel_inject.wesl:79 | TILE | `GROUP - 2u` | ? |  |
 
-Stays const: GLOWS (small index), PI (layout/math/id), STORM_SEGMENTS (shader enum), FLAG_PER_FROXEL (layout/math/id), FLAG_CLAMP (layout/math/id), GROUP (layout/math/id).
+Stays const: GLOWS (small index), PI (layout/math/id), STORM_SEGMENTS (shader enum), FLAG_PER_FROXEL (layout/math/id), FLAG_CLAMP (layout/math/id), GROUP (layout/math/id), MIN_WEIGHT (opt-out: maths: division guard), MIN_EXTINCTION (opt-out: maths: 0/0 guard of the closed form), MAX_STORED_DISTANCE (opt-out: format: below f16's 65504 maximum), MAX_PASSES (opt-out: capacity: the top of sky.shafts.passes' range), MAX_TAPS (opt-out: capacity: the top of sky.shafts.taps' range), MAX_SAMPLES (opt-out: capacity: the top of sky.sun_vis.samples' range).
 
-### sf_precip_bevy (22: T 16, C 2, ? 4)
+### sf_precip_bevy (23: T 16, C 3, ? 4)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:56 | STREAK_S | `0.035` | T |  |
-| src/lib.rs:90 | PrecipSlot.intensity | `0.0` | T |  |
-| src/lib.rs:91 | PrecipSlot.fall_speed | `7.0` | T |  |
-| src/lib.rs:92 | PrecipSlot.size | `[0.002, 0.004]` | T |  |
-| src/lib.rs:93 | PrecipSlot.color | `Vec4::new(0.55, 0.6, 0.65, 0.3)` | ? |  |
-| src/lib.rs:94 | PrecipSlot.flutter | `0.0` | ? |  |
-| src/lib.rs:95 | PrecipSlot.wind_follow | `1.0` | T |  |
-| src/lib.rs:115 | Precip.enabled | `true` | ? | bool |
-| src/lib.rs:118 | Precip.brightness | `1.0` | ? |  |
-| src/occlusion.rs:55 | MAP_SIZE | `512` | T |  |
-| src/occlusion.rs:58 | HALF_M | `48.0` | T |  |
-| src/occlusion.rs:61 | TEXEL_M | `2.0 * HALF_M / MAP_SIZE as f32` | T |  |
-| src/occlusion.rs:64 | UPWIND_M | `100.0` | T |  |
-| src/occlusion.rs:65 | DOWNWIND_M | `60.0` | T |  |
-| src/occlusion.rs:67 | MIN_ELEVATION | `0.261_799_4` | T |  |
-| src/occlusion.rs:69 | RECENTER_M | `6.0` | T |  |
-| src/occlusion.rs:70 | RECENTER_Y_M | `8.0` | T |  |
-| src/occlusion.rs:72 | REDIRECT_DEG | `3.0` | T |  |
-| src/occlusion.rs:74 | REFRESH_FRAMES | `30` | T |  |
-| src/occlusion.rs:76 | REDIRECT_FRAMES | `8` | T |  |
+| src/lib.rs:58 | STREAK_S | `0.035` | T |  |
+| src/lib.rs:92 | PrecipSlot.intensity | `0.0` | T |  |
+| src/lib.rs:93 | PrecipSlot.fall_speed | `7.0` | T |  |
+| src/lib.rs:94 | PrecipSlot.size | `[0.002, 0.004]` | T |  |
+| src/lib.rs:95 | PrecipSlot.color | `Vec4::new(0.55, 0.6, 0.65, 0.3)` | ? |  |
+| src/lib.rs:96 | PrecipSlot.flutter | `0.0` | ? |  |
+| src/lib.rs:97 | PrecipSlot.wind_follow | `1.0` | T |  |
+| src/lib.rs:121 | Precip.enabled | `true` | ? | bool |
+| src/lib.rs:124 | Precip.brightness | `1.0` | ? |  |
+| src/occlusion.rs:57 | MAP_SIZE | `512` | T |  |
+| src/occlusion.rs:60 | HALF_M | `48.0` | T |  |
+| src/occlusion.rs:63 | TEXEL_M | `2.0 * HALF_M / MAP_SIZE as f32` | T |  |
+| src/occlusion.rs:66 | UPWIND_M | `100.0` | T |  |
+| src/occlusion.rs:67 | DOWNWIND_M | `60.0` | T |  |
+| src/occlusion.rs:69 | MIN_ELEVATION | `0.261_799_4` | T |  |
+| src/occlusion.rs:71 | RECENTER_M | `6.0` | T |  |
+| src/occlusion.rs:72 | RECENTER_Y_M | `8.0` | T |  |
+| src/occlusion.rs:74 | REDIRECT_DEG | `3.0` | T |  |
+| src/occlusion.rs:76 | REFRESH_FRAMES | `30` | T |  |
+| src/occlusion.rs:78 | REDIRECT_FRAMES | `8` | T |  |
 
-Stays const: SLOTS (layout/math/id), SUBVIEW (sentinel/derived).
+Stays const: SLOTS (layout/math/id), SUBVIEW (sentinel/derived), LOD_DISTANCE_M (opt-out: a definition, not a trade-off: the finest level is the one visible at 0 m).
 
-### sf_sky (54: T 31, C 1, ? 22)
+### sf_sky (68: T 31, C 13, ? 24)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1621,24 +1640,24 @@ Stays const: SLOTS (layout/math/id), SUBVIEW (sentinel/derived).
 | src/clock.rs:21 | Calendar.hours_per_day | `24.0` | T |  |
 | src/clock.rs:22 | Calendar.days_per_year | `365.2422` | ? |  |
 | src/clock.rs:49 | SkyClock.days | `0.5` | ? |  |
-| src/night.rs:21 | MAX_MOONS | `4` | T |  |
-| src/night.rs:82 | Moon.angular_size | `0.009_04` | T |  |
-| src/night.rs:83 | Moon.phase_period_days | `29.530_59` | ? |  |
-| src/night.rs:84 | Moon.phase_at_epoch | `0.0` | ? |  |
-| src/night.rs:85 | Moon.phase_steps | `0` | T |  |
-| src/night.rs:87 | Moon.illuminance | `1.0` | ? |  |
-| src/night.rs:88 | Moon.tint | `[0.9, 0.93, 1.0]` | ? |  |
-| src/night.rs:90 | Moon.occluder | `1.0` | ? |  |
-| src/night.rs:116 | Moonlight.full_lux | `1.0` | T |  |
-| src/night.rs:116 | Moonlight.artistic | `false` | ? | bool |
-| src/night.rs:237 | StarField.enabled | `true` | ? | bool |
-| src/night.rs:238 | StarField.brightest_lux | `2.0e-5` | T |  |
-| src/night.rs:239 | StarField.density | `1.0` | T |  |
-| src/night.rs:241 | StarField.twinkle | `0.3` | ? |  |
-| src/night.rs:270 | SunDiskLook.intensity | `1.0` | T |  |
-| src/night.rs:271 | SunDiskLook.glare | `1.2e-3` | ? |  |
-| src/night.rs:299 | NIGHT_SKY_GLOW_RATIO | `0.1` | T |  |
-| src/night.rs:304 | NIGHT_SKY_HORIZON_RATIO | `3.0` | T |  |
+| src/night.rs:23 | MAX_MOONS | `4` | T |  |
+| src/night.rs:172 | Moon.angular_size | `0.009_04` | T |  |
+| src/night.rs:173 | Moon.phase_period_days | `29.530_59` | ? |  |
+| src/night.rs:174 | Moon.phase_at_epoch | `0.0` | ? |  |
+| src/night.rs:175 | Moon.phase_steps | `0` | T |  |
+| src/night.rs:177 | Moon.illuminance | `1.0` | ? |  |
+| src/night.rs:178 | Moon.tint | `[0.9, 0.93, 1.0]` | ? |  |
+| src/night.rs:180 | Moon.occluder | `1.0` | ? |  |
+| src/night.rs:208 | Moonlight.full_lux | `1.0` | T |  |
+| src/night.rs:208 | Moonlight.artistic | `false` | ? | bool |
+| src/night.rs:363 | StarField.enabled | `true` | ? | bool |
+| src/night.rs:364 | StarField.brightest_lux | `2.0e-5` | T |  |
+| src/night.rs:365 | StarField.density | `1.0` | T |  |
+| src/night.rs:367 | StarField.twinkle | `0.3` | ? |  |
+| src/night.rs:396 | SunDiskLook.intensity | `1.0` | T |  |
+| src/night.rs:397 | SunDiskLook.glare | `1.2e-3` | ? |  |
+| src/night.rs:426 | NIGHT_SKY_GLOW_RATIO | `NIGHT_GLOW_RATIO.default_value()` | T |  |
+| src/night.rs:442 | NIGHT_SKY_HORIZON_RATIO | `3.0` | T |  |
 | src/sky.rs:68 | SkySettings.observer_altitude | `0.0` | T | settings default |
 | src/sky.rs:69 | SkySettings.sun_illuminance | `130_000.0` | T | settings default |
 | src/sky.rs:70 | SkySettings.sun_angular_size | `0.009_308_42` | T |  |
@@ -1648,55 +1667,52 @@ Stays const: SLOTS (layout/math/id), SUBVIEW (sentinel/derived).
 | src/sky.rs:91 | SkySettings.moon_shadow_min_elevation_deg | `3.0` | T |  |
 | src/sky.rs:109 | ExposureRange.min_ev100 | `-10.0` | T |  |
 | src/sky.rs:109 | ExposureRange.max_ev100 | `20.0` | T |  |
-| src/sky.rs:155 | SkyLight.elevation | `0.0` | ? |  |
-| src/sky.rs:156 | SkyLight.illuminance | `0.0` | ? |  |
-| src/sky.rs:158 | SkyLight.casts_shadows | `false` | T |  |
-| src/sky.rs:216 | TRANSMITTANCE_SAMPLES | `48` | T |  |
+| src/sky.rs:159 | SkyLight.elevation | `0.0` | ? |  |
+| src/sky.rs:160 | SkyLight.illuminance | `0.0` | ? |  |
+| src/sky.rs:162 | SkyLight.casts_shadows | `false` | T |  |
+| src/sky.rs:164 | SkyLight.sky_fill | `0.0` | ? |  |
+| src/sky.rs:221 | TRANSMITTANCE_SAMPLES | `48` | T |  |
+| src/sky.rs:227 | SKY_FILL_DOWNWARD | `0.5` | ? |  |
 | src/weather.rs:53 | Weather.cloud_cover | `0.0` | ? |  |
 | src/weather.rs:54 | Weather.overcast_dimming | `0.8` | ? |  |
 | src/weather.rs:55 | Weather.haze | `1.0` | ? |  |
 | src/weather.rs:56 | Weather.dust | `0.0` | ? |  |
 | src/weather.rs:58 | Weather.sun_glare | `1.0` | ? |  |
 
-Stays const: EPS (layout/math/id).
+Stays const: EPS (layout/math/id), MAX_TILES (opt-out: capacity: the bits of TileMask), MAX_TREE_DEPTH (opt-out: capacity: quadtree array bound), FACES (opt-out: layout: cube map faces), ALL_FACES_MASK (opt-out: layout: 6 cube-map face bits), TILE_TIER_128 (opt-out: layout: lowest atlas tile tier), TILE_TIER_256 (opt-out: layout: medium atlas tile tier), TILE_TIER_512 (opt-out: layout: highest atlas tile tier), HANDOVER_TILE_PX (opt-out: layout: handover reserve tile size), STATIC_MIN_PX (opt-out: layout: valid power-of-two static atlas minimum), STATIC_MAX_PX (opt-out: layout: valid power-of-two static atlas maximum), LIVE_MIN_PX (opt-out: layout: valid power-of-two live atlas minimum), LIVE_MAX_PX (opt-out: layout: valid power-of-two live atlas maximum).
 
-### sf_sky_bevy (31: T 26, C 2, ? 3)
+### sf_sky_bevy (36: T 21, C 12, ? 3)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
 | src/gpu_culled_casters.rs:40 | ALL_FACES | `0b11_1111` | ? |  |
-| src/lib.rs:175 | SkyRenderOptions.sea_level | `0.0` | T | settings default |
-| src/lib.rs:177 | SkyRenderOptions.num_cascades | `4` | T |  |
-| src/lib.rs:178 | SkyRenderOptions.minimum_distance | `0.1` | T |  |
-| src/lib.rs:179 | SkyRenderOptions.split_near | `1.0` | T |  |
-| src/lib.rs:180 | SkyRenderOptions.maximum_distance | `250.0` | T |  |
-| src/lib.rs:181 | SkyRenderOptions.lambda | `0.9` | T | settings default |
-| src/lib.rs:182 | SkyRenderOptions.overlap_proportion | `0.2` | T | settings default |
-| src/lib.rs:188 | SkyRenderOptions.weather_ambient_tint | `true` | T | settings default |
-| src/lib.rs:189 | SkyRenderOptions.night_sky_glow | `true` | T | settings default |
-| src/lib.rs:190 | SkyRenderOptions.medium_resolution | `256` | T |  |
-| src/lib.rs:191 | SkyRenderOptions.medium_min_interval | `0.25` | T |  |
-| src/lib.rs:192 | SkyRenderOptions.auto_light_proxies | `true` | T | settings default |
-| src/lib.rs:193 | SkyRenderOptions.default_proxy_radius | `0.08` | T |  |
-| src/lib.rs:194 | SkyRenderOptions.auto_ray_tracing_meshes | `true` | T | settings default |
-| src/lib.rs:196 | SkyRenderOptions.ray_tracing_denoiser | `true` | T |  |
-| src/lib.rs:224 | SunShadow.contact_shadows | `false` | T |  |
-| src/lib.rs:250 | SkyCamera.exposure | `true` | T |  |
-| src/lib.rs:251 | SkyCamera.ambient | `true` | ? | bool |
-| src/lib.rs:252 | SkyCamera.environment_light | `true` | ? | bool |
-| src/lib.rs:384 | MEDIUM_UPDATE_STEPS | `Vec3::new(0.05, 0.02, 0.02)` | T |  |
-| src/shadow_budget.rs:84 | PointShadowBudget.max | `0` | T | settings default |
-| src/shadow_budget.rs:84 | PointShadowBudget.fade_start | `15.0` | T |  |
-| src/shadow_budget.rs:84 | PointShadowBudget.fade_end | `25.0` | T |  |
-| src/shadow_budget.rs:84 | PointShadowBudget.fade_time | `0.3` | T |  |
-| src/shadow_budget.rs:84 | PointShadowBudget.hysteresis | `0.8` | T |  |
-| src/shadow_budget.rs:84 | PointShadowBudget.map_size | `1024` | T |  |
-| src/shadow_budget.rs:84 | PointShadowBudget.contact_shadows | `false` | T |  |
-| src/shadow_budget.rs:130 | BudgetedShadow.priority | `1.0` | T |  |
+| src/lib.rs:203 | SkyRenderOptions.sea_level | `0.0` | T | settings default |
+| src/lib.rs:205 | SkyRenderOptions.num_cascades | `4` | T |  |
+| src/lib.rs:206 | SkyRenderOptions.minimum_distance | `0.1` | T |  |
+| src/lib.rs:207 | SkyRenderOptions.split_near | `1.0` | T |  |
+| src/lib.rs:208 | SkyRenderOptions.maximum_distance | `250.0` | T |  |
+| src/lib.rs:209 | SkyRenderOptions.lambda | `0.9` | T | settings default |
+| src/lib.rs:210 | SkyRenderOptions.overlap_proportion | `0.2` | T | settings default |
+| src/lib.rs:216 | SkyRenderOptions.weather_ambient_tint | `true` | T | settings default |
+| src/lib.rs:217 | SkyRenderOptions.night_sky_glow | `true` | T | settings default |
+| src/lib.rs:218 | SkyRenderOptions.medium_resolution | `256` | T |  |
+| src/lib.rs:219 | SkyRenderOptions.medium_min_interval | `0.25` | T |  |
+| src/lib.rs:220 | SkyRenderOptions.auto_light_proxies | `true` | T | settings default |
+| src/lib.rs:221 | SkyRenderOptions.default_proxy_radius | `0.08` | T |  |
+| src/lib.rs:222 | SkyRenderOptions.auto_ray_tracing_meshes | `true` | T | settings default |
+| src/lib.rs:224 | SkyRenderOptions.ray_tracing_denoiser | `true` | T |  |
+| src/lib.rs:252 | SunShadow.contact_shadows | `false` | T |  |
+| src/lib.rs:278 | SkyCamera.exposure | `true` | T |  |
+| src/lib.rs:279 | SkyCamera.ambient | `true` | ? | bool |
+| src/lib.rs:280 | SkyCamera.environment_light | `true` | ? | bool |
+| src/lib.rs:430 | MEDIUM_UPDATE_STEPS | `Vec3::new(0.05, 0.02, 0.02)` | T |  |
+| src/quality.rs:244 | SunShadowQuality.minimum_distance | `0.1` | T |  |
+| src/quality.rs:245 | SunShadowQuality.split_near | `1.0` | T |  |
+| src/shadow_budget.rs:363 | BudgetedShadow.priority | `1.0` | T |  |
 
-Stays const: T_ROWS (small index), PI (layout/math/id).
+Stays const: ALL_FACES (opt-out: layout: the six cube faces), STILL_EPSILON (opt-out: fixture: the spec's 1 mm comparison), CAPTURE_HISTORY (opt-out: capacity: plans in flight), MOBILITY_DEPTH (opt-out: capacity: hierarchy depth searched), ATLAS_MIN_CAPTURES_PER_FRAME (opt-out: capacity: atlas initial capture floor), ATLAS_MOVING_TILE_PX (opt-out: layout: hero torch live tile size), ATLAS_POLICY_STORE_FACES (opt-out: layout: 6 faces per cube in policy pool), T_ROWS (small index), PI (layout/math/id), HUE_GRID (opt-out: layout: covers the 8x8 level exactly), GLOW_NEGLIGIBLE (opt-out: maths: 1/4096, below one 12-bit output step), ATLAS_NEW_SLOTS_PER_FRAME (opt-out: capacity: initial interior fill stagger).
 
-### sf_surface (90: T 58, C 3, ? 29)
+### sf_surface (100: T 58, C 13, ? 29)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1711,58 +1727,58 @@ Stays const: T_ROWS (small index), PI (layout/math/id).
 | src/kickup.rs:234 | STEP_M | `[0.2, 2.6]` | T |  |
 | src/kickup.rs:236 | STEP_S | `[0.12, 1.2]` | T |  |
 | src/kickup.rs:289 | SEED_STEP | `Vec3::new(0.618_034, 0.754_877_7, 0.5...` | T |  |
-| src/layer.rs:34 | POROSITY_ROUGH_LOW | `0.3` | ? |  |
-| src/layer.rs:35 | POROSITY_ROUGH_SPAN | `0.5` | ? |  |
-| src/layer.rs:36 | WET_DARK_POROUS | `0.2` | ? |  |
-| src/layer.rs:37 | WET_SATURATION | `0.3` | T |  |
-| src/layer.rs:38 | WALL_WET | `0.6` | ? |  |
-| src/layer.rs:39 | FILM_START | `0.35` | ? |  |
-| src/layer.rs:40 | FILM_POROUS_HOLD | `0.6` | T |  |
-| src/layer.rs:41 | FILM_ROUGHNESS | `0.25` | ? |  |
-| src/layer.rs:43 | WATER_REFLECTANCE | `0.354` | ? |  |
-| src/layer.rs:50 | PUDDLE_REACH | `0.3` | T |  |
-| src/layer.rs:51 | PUDDLE_DEPTH | `0.1` | T |  |
-| src/layer.rs:52 | PUDDLE_EDGE | `0.1` | ? |  |
-| src/layer.rs:53 | PUDDLE_FLAT_LOW | `0.994_522` | ? |  |
-| src/layer.rs:54 | PUDDLE_FLAT_HIGH | `0.998_630` | ? |  |
-| src/layer.rs:55 | BASIN_FULL_M | `0.1` | T |  |
-| src/layer.rs:56 | BASIN_POOL | `0.35` | ? |  |
-| src/layer.rs:57 | PUDDLE_ROUGHNESS | `0.06` | ? |  |
-| src/layer.rs:58 | POOL_TILE_M | `64.0` | T |  |
-| src/layer.rs:60 | HEIGHT_FROM_LUMA | `2.0` | T |  |
-| src/layer.rs:65 | RIPPLE_CELL_M | `1.6` | T |  |
-| src/layer.rs:66 | RIPPLE_RADIUS | `0.2` | T |  |
-| src/layer.rs:67 | RIPPLE_RING | `0.166_666_67` | T |  |
-| src/layer.rs:68 | RIPPLE_RATE | `1.2` | T |  |
-| src/layer.rs:69 | RIPPLE_TILT | `0.5` | ? |  |
-| src/layer.rs:70 | RIPPLE_FADE_NEAR_M | `0.02` | T |  |
-| src/layer.rs:71 | RIPPLE_FADE_FAR_M | `0.06` | T |  |
-| src/layer.rs:72 | RIPPLE_TIME_WRAP_S | `1000.0` | T |  |
-| src/layer.rs:82 | COVER_UP_LOW | `0.45` | ? |  |
-| src/layer.rs:83 | COVER_UP_HIGH | `0.8` | ? |  |
-| src/layer.rs:86 | COVER_SHADING_SHARE | `0.25` | ? |  |
-| src/layer.rs:87 | COVER_EDGE | `0.08` | ? |  |
-| src/layer.rs:88 | COVER_HEIGHT_MIX | `0.5` | T |  |
-| src/layer.rs:89 | COVER_DRIFT | `0.5` | ? |  |
-| src/layer.rs:90 | COVER_DRIFT_TILE_M | `64.0` | T |  |
-| src/layer.rs:91 | COVER_NORMAL | `1.0` | ? |  |
-| src/layer.rs:93 | COVER_TOP_MAX | `0.999` | T |  |
-| src/layer.rs:95 | ASH_REFLECTANCE | `0.5` | ? |  |
-| src/layer.rs:98 | SPARKLE_CELL_M | `0.02` | T |  |
-| src/layer.rs:99 | SPARKLE_DENSITY | `0.03` | T |  |
-| src/layer.rs:100 | SPARKLE_TILT | `0.35` | ? |  |
-| src/layer.rs:101 | SPARKLE_ROUGHNESS | `0.1` | ? |  |
-| src/layer.rs:102 | SPARKLE_FADE_NEAR_M | `0.006` | T |  |
-| src/layer.rs:103 | SPARKLE_FADE_FAR_M | `0.02` | T |  |
-| src/layer.rs:107 | ORIGIN_GRID_M | `256.0` | T |  |
-| src/layer.rs:161 | LUMA | `[0.2126, 0.7152, 0.0722]` | ? |  |
-| src/lib.rs:86 | SurfaceTuning.catch_up_h | `72.0` | T | settings default |
-| src/lib.rs:87 | SurfaceTuning.dry_h | `2.0` | T | settings default |
-| src/lib.rs:88 | SurfaceTuning.puddle_dry_mult | `0.5` | T |  |
-| src/lib.rs:90 | SurfaceTuning.ash_clear_mult | `0.25` | T |  |
-| src/lib.rs:91 | SurfaceTuning.puddle_from_wet | `0.7` | T | settings default |
-| src/lib.rs:93 | SurfaceTuning.ash_wash | `2.0` | T | settings default |
-| src/lib.rs:94 | SurfaceTuning.storm_wet_rate | `2.0` | T |  |
+| src/layer.rs:36 | POROSITY_ROUGH_LOW | `0.3` | ? |  |
+| src/layer.rs:37 | POROSITY_ROUGH_SPAN | `0.5` | ? |  |
+| src/layer.rs:38 | WET_DARK_POROUS | `0.2` | ? |  |
+| src/layer.rs:39 | WET_SATURATION | `0.3` | T |  |
+| src/layer.rs:40 | WALL_WET | `0.6` | ? |  |
+| src/layer.rs:41 | FILM_START | `0.35` | ? |  |
+| src/layer.rs:42 | FILM_POROUS_HOLD | `0.6` | T |  |
+| src/layer.rs:43 | FILM_ROUGHNESS | `0.25` | ? |  |
+| src/layer.rs:45 | WATER_REFLECTANCE | `0.354` | ? |  |
+| src/layer.rs:52 | PUDDLE_REACH | `0.3` | T |  |
+| src/layer.rs:53 | PUDDLE_DEPTH | `0.1` | T |  |
+| src/layer.rs:54 | PUDDLE_EDGE | `0.1` | ? |  |
+| src/layer.rs:55 | PUDDLE_FLAT_LOW | `0.994_522` | ? |  |
+| src/layer.rs:56 | PUDDLE_FLAT_HIGH | `0.998_630` | ? |  |
+| src/layer.rs:57 | BASIN_FULL_M | `0.1` | T |  |
+| src/layer.rs:58 | BASIN_POOL | `0.35` | ? |  |
+| src/layer.rs:59 | PUDDLE_ROUGHNESS | `0.06` | ? |  |
+| src/layer.rs:60 | POOL_TILE_M | `64.0` | T |  |
+| src/layer.rs:62 | HEIGHT_FROM_LUMA | `2.0` | T |  |
+| src/layer.rs:67 | RIPPLE_CELL_M | `1.6` | T |  |
+| src/layer.rs:68 | RIPPLE_RADIUS | `0.2` | T |  |
+| src/layer.rs:69 | RIPPLE_RING | `0.166_666_67` | T |  |
+| src/layer.rs:70 | RIPPLE_RATE | `1.2` | T |  |
+| src/layer.rs:71 | RIPPLE_TILT | `0.5` | ? |  |
+| src/layer.rs:72 | RIPPLE_FADE_NEAR_M | `0.02` | T |  |
+| src/layer.rs:73 | RIPPLE_FADE_FAR_M | `0.06` | T |  |
+| src/layer.rs:74 | RIPPLE_TIME_WRAP_S | `1000.0` | T |  |
+| src/layer.rs:84 | COVER_UP_LOW | `0.45` | ? |  |
+| src/layer.rs:85 | COVER_UP_HIGH | `0.8` | ? |  |
+| src/layer.rs:88 | COVER_SHADING_SHARE | `0.25` | ? |  |
+| src/layer.rs:89 | COVER_EDGE | `0.08` | ? |  |
+| src/layer.rs:90 | COVER_HEIGHT_MIX | `0.5` | T |  |
+| src/layer.rs:91 | COVER_DRIFT | `0.5` | ? |  |
+| src/layer.rs:92 | COVER_DRIFT_TILE_M | `64.0` | T |  |
+| src/layer.rs:93 | COVER_NORMAL | `1.0` | ? |  |
+| src/layer.rs:100 | COVER_TOP_MAX | `0.6` | T |  |
+| src/layer.rs:102 | ASH_REFLECTANCE | `0.5` | ? |  |
+| src/layer.rs:105 | SPARKLE_CELL_M | `0.02` | T |  |
+| src/layer.rs:106 | SPARKLE_DENSITY | `0.03` | T |  |
+| src/layer.rs:107 | SPARKLE_TILT | `0.35` | ? |  |
+| src/layer.rs:108 | SPARKLE_ROUGHNESS | `0.1` | ? |  |
+| src/layer.rs:109 | SPARKLE_FADE_NEAR_M | `0.006` | T |  |
+| src/layer.rs:110 | SPARKLE_FADE_FAR_M | `0.02` | T |  |
+| src/layer.rs:114 | ORIGIN_GRID_M | `256.0` | T |  |
+| src/layer.rs:169 | LUMA | `[0.2126, 0.7152, 0.0722]` | ? |  |
+| src/lib.rs:88 | SurfaceTuning.catch_up_h | `72.0` | T | settings default |
+| src/lib.rs:89 | SurfaceTuning.dry_h | `2.0` | T | settings default |
+| src/lib.rs:90 | SurfaceTuning.puddle_dry_mult | `0.5` | T |  |
+| src/lib.rs:92 | SurfaceTuning.ash_clear_mult | `0.25` | T |  |
+| src/lib.rs:93 | SurfaceTuning.puddle_from_wet | `0.7` | T | settings default |
+| src/lib.rs:95 | SurfaceTuning.ash_wash | `2.0` | T | settings default |
+| src/lib.rs:96 | SurfaceTuning.storm_wet_rate | `2.0` | T |  |
 | src/save.rs:20 | QUANTUM | `1.0 / 65535.0` | ? |  |
 | src/trail.rs:30 | RING_SIZE | `1024` | T |  |
 | src/trail.rs:32 | RING_TEXEL_M | `0.0625` | T |  |
@@ -1784,13 +1800,13 @@ Stays const: T_ROWS (small index), PI (layout/math/id).
 | src/view.rs:223 | SHELTER_RECENTER_Y_M | `8.0` | T |  |
 | src/view.rs:225 | SHELTER_REFRESH_FRAMES | `30` | T |  |
 | src/view.rs:230 | SHELTER_LEAF_PASS | `0.4` | ? |  |
-| src/view.rs:357 | EXPOSURE_TAU_S | `0.8` | T |  |
-| src/view.rs:360 | EXPOSURE_RUN_S | `5.0 * EXPOSURE_TAU_S` | T |  |
-| src/view.rs:494 | NOISE_SIZE | `256` | T |  |
+| src/view.rs:501 | EXPOSURE_TAU_S | `0.8` | T |  |
+| src/view.rs:504 | EXPOSURE_RUN_S | `5.0 * EXPOSURE_TAU_S` | T |  |
+| src/view.rs:656 | NOISE_SIZE | `256` | T |  |
 
-Stays const: KEEP (small index), RIPPLE_GRIDS (small index), PARAM_SLOTS (layout/math/id).
+Stays const: MAX_CAPTURE_SIZE (opt-out: a capacity: the target's allocation, the tunables pick what part is used), MAX_GROUND_EDGE (opt-out: a capacity: the window and step tunables pick what part is used), KEEP (small index), RIPPLE_GRIDS (small index), PROBE_NEAR_CELL_M (opt-out: a print format: the instrument's resolution, no cost or look), PROBE_FAR_CELL_M (opt-out: a print format: the instrument's resolution, no cost or look), PROBE_BUCKET_M (opt-out: a print format: one character's height bucket), PROBE_FLOOR_M (opt-out: a print format: where the digits start), PROBE_DEFAULT_HALF_M (opt-out: a print format: the default window of a dev command), PROBE_MAX_HALF_M (opt-out: a print format: the largest grid a dev command prints), HEADER_SLOTS (layout/math/id), PARAM_SLOTS (layout/math/id), SHELTER_FADE_START (opt-out: twin of the shader's SHELTER_FADE_START, counted there).
 
-### sf_surface_bevy (123: T 56, C 41, ? 26)
+### sf_surface_bevy (122: T 47, C 49, ? 26)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1798,9 +1814,9 @@ Stays const: KEEP (small index), RIPPLE_GRIDS (small index), PARAM_SLOTS (layout
 | src/cover.rs:38 | SLICES_PER_CHANNEL | `2` | ? |  |
 | src/cover.rs:76 | DERIVED_NORMAL_STRENGTH | `3.0` | T |  |
 | src/cover.rs:78 | DERIVED_HEIGHT_PERCENTILES | `(0.02, 0.98)` | T |  |
-| src/exposure.wgsl:30 | SHELTER_NEAR_M | `0.12` | T | shader const: needs a uniform |
-| src/exposure.wgsl:31 | SHELTER_FULL_M | `0.35` | T | shader const: needs a uniform |
-| src/exposure.wgsl:32 | SHELTER_FADE_START | `0.875` | T | shader const: needs a uniform |
+| src/exposure.wgsl:37 | SHELTER_NEAR_M | `0.12` | T | shader const: needs a uniform |
+| src/exposure.wgsl:38 | SHELTER_FULL_M | `0.35` | T | shader const: needs a uniform |
+| src/exposure.wgsl:39 | SHELTER_FADE_START | `0.875` | T | shader const: needs a uniform |
 | src/kickup.rs:53 | GROUND_WIND | `0.5` | ? |  |
 | src/kickup.rs:63 | KickupSettings.on | `true` | T | settings default |
 | src/kickup.wesl:28 | PUFF_REFLECTANCE | `0.2` | ? |  |
@@ -1808,78 +1824,69 @@ Stays const: KEEP (small index), RIPPLE_GRIDS (small index), PARAM_SLOTS (layout
 | src/kickup.wesl:32 | FLOOR_BELOW_M | `0.05` | T | shader const: needs a uniform |
 | src/kickup.wesl:34 | RANGE_M | `30.0` | T | shader const: needs a uniform |
 | src/kickup.wesl:36 | SOFT_M | `0.12` | T | shader const: needs a uniform |
-| src/layer.wesl:88 | CLASS_FAR | `3u` | T | shader const: needs a uniform |
-| src/layer.wesl:92 | SHELTER_NORMAL_OFFSET_M | `0.35` | T | shader const: needs a uniform |
-| src/layer.wesl:95 | SHELTER_NEAR_M | `0.12` | T | shader const: needs a uniform |
-| src/layer.wesl:96 | SHELTER_FULL_M | `0.35` | T | shader const: needs a uniform |
-| src/layer.wesl:98 | SHELTER_FADE_START | `0.875` | T | shader const: needs a uniform |
-| src/layer.wesl:101 | SHELTER_LAG_TOP_M | `1.0` | T | shader const: needs a uniform |
-| src/layer.wesl:104 | POROSITY_ROUGH_LOW | `0.3` | ? |  |
-| src/layer.wesl:105 | POROSITY_ROUGH_SPAN | `0.5` | ? |  |
-| src/layer.wesl:107 | WET_DARK_POROUS | `0.2` | ? |  |
-| src/layer.wesl:109 | WET_SATURATION | `0.3` | T | shader const: needs a uniform |
-| src/layer.wesl:111 | WALL_WET | `0.6` | ? |  |
-| src/layer.wesl:114 | FILM_START | `0.35` | ? |  |
-| src/layer.wesl:115 | FILM_POROUS_HOLD | `0.6` | T | shader const: needs a uniform |
-| src/layer.wesl:116 | FILM_ROUGHNESS | `0.25` | ? |  |
-| src/layer.wesl:117 | WATER_REFLECTANCE | `0.354` | ? |  |
-| src/layer.wesl:120 | PATCH_TILE_M | `32.0` | T | shader const: needs a uniform |
-| src/layer.wesl:121 | STREAK_TILE_U_M | `21.333334` | T | shader const: needs a uniform |
-| src/layer.wesl:122 | STREAK_TILE_V_M | `18.285715` | T | shader const: needs a uniform |
-| src/layer.wesl:127 | PUDDLE_REACH | `0.3` | T | shader const: needs a uniform |
-| src/layer.wesl:128 | PUDDLE_DEPTH | `0.1` | T | shader const: needs a uniform |
-| src/layer.wesl:129 | PUDDLE_EDGE | `0.1` | ? |  |
-| src/layer.wesl:130 | PUDDLE_FLAT_LOW | `0.994522` | ? |  |
-| src/layer.wesl:131 | PUDDLE_FLAT_HIGH | `0.998630` | ? |  |
-| src/layer.wesl:132 | BASIN_FULL_M | `0.1` | T | shader const: needs a uniform |
-| src/layer.wesl:133 | BASIN_POOL | `0.35` | ? |  |
-| src/layer.wesl:134 | PUDDLE_ROUGHNESS | `0.06` | ? |  |
-| src/layer.wesl:135 | POOL_TILE_M | `64.0` | T | shader const: needs a uniform |
-| src/layer.wesl:136 | HEIGHT_FROM_LUMA | `2.0` | T | shader const: needs a uniform |
-| src/layer.wesl:139 | RIPPLE_CELL_M | `1.6` | T | shader const: needs a uniform |
-| src/layer.wesl:140 | RIPPLE_RADIUS | `0.2` | T | shader const: needs a uniform |
-| src/layer.wesl:141 | RIPPLE_RING | `0.16666667` | T | shader const: needs a uniform |
-| src/layer.wesl:142 | RIPPLE_RATE | `1.2` | T | shader const: needs a uniform |
-| src/layer.wesl:143 | RIPPLE_TILT | `0.5` | ? |  |
-| src/layer.wesl:144 | RIPPLE_FADE_NEAR_M | `0.02` | T | shader const: needs a uniform |
-| src/layer.wesl:145 | RIPPLE_FADE_FAR_M | `0.06` | T | shader const: needs a uniform |
-| src/layer.wesl:146 | RIPPLE_TIME_WRAP_S | `1000.0` | T | shader const: needs a uniform |
-| src/layer.wesl:147 | RIPPLE_SCALE_0 | `1.0` | T | shader const: needs a uniform |
-| src/layer.wesl:148 | RIPPLE_SCALE_1 | `1.25` | T | shader const: needs a uniform |
-| src/layer.wesl:149 | RIPPLE_SCALE_2 | `0.8` | T | shader const: needs a uniform |
-| src/layer.wesl:150 | RIPPLE_SCALE_3 | `0.625` | T | shader const: needs a uniform |
-| src/layer.wesl:154 | COVER_UP_LOW | `0.45` | ? |  |
-| src/layer.wesl:155 | COVER_UP_HIGH | `0.8` | ? |  |
-| src/layer.wesl:156 | COVER_SHADING_SHARE | `0.25` | ? |  |
-| src/layer.wesl:157 | COVER_EDGE | `0.08` | ? |  |
-| src/layer.wesl:158 | COVER_HEIGHT_MIX | `0.5` | T | shader const: needs a uniform |
-| src/layer.wesl:159 | COVER_DRIFT | `0.5` | ? |  |
-| src/layer.wesl:160 | COVER_DRIFT_TILE_M | `64.0` | T | shader const: needs a uniform |
-| src/layer.wesl:161 | COVER_NORMAL | `1.0` | ? |  |
-| src/layer.wesl:162 | COVER_TOP_MAX | `0.999` | T | shader const: needs a uniform |
-| src/layer.wesl:163 | ASH_REFLECTANCE | `0.5` | ? |  |
-| src/layer.wesl:166 | SPARKLE_CELL_M | `0.02` | T | shader const: needs a uniform |
-| src/layer.wesl:169 | ORIGIN_GRID_M | `256.0` | T | shader const: needs a uniform |
-| src/layer.wesl:170 | SPARKLE_DENSITY | `0.03` | T | shader const: needs a uniform |
-| src/layer.wesl:171 | SPARKLE_TILT | `0.35` | ? |  |
-| src/layer.wesl:172 | SPARKLE_ROUGHNESS | `0.1` | ? |  |
-| src/layer.wesl:173 | SPARKLE_FADE_NEAR_M | `0.006` | T | shader const: needs a uniform |
-| src/layer.wesl:174 | SPARKLE_FADE_FAR_M | `0.02` | T | shader const: needs a uniform |
-| src/layer.wesl:181 | TRAIL_EDGE_FADE_M | `2.0` | T | shader const: needs a uniform |
-| src/layer.wesl:182 | TRAIL_LIP_HEIGHT | `0.25` | T | shader const: needs a uniform |
-| src/layer.wesl:184 | LUMA | `vec3(0.2126, 0.7152, 0.0722)` | ? |  |
-| src/lib.rs:108 | SurfaceSettings.layer | `true` | T | settings default |
-| src/lib.rs:109 | SurfaceSettings.wet | `true` | T | settings default |
-| src/lib.rs:110 | SurfaceSettings.puddles | `true` | T | settings default |
-| src/lib.rs:111 | SurfaceSettings.shelter | `true` | T | settings default |
-| src/lib.rs:112 | SurfaceSettings.cover | `true` | T | settings default |
-| src/lib.rs:113 | SurfaceSettings.trails | `true` | T | settings default |
-| src/lib.rs:114 | SurfaceSettings.raise | `true` | T | settings default |
-| src/uniform.rs:22 | U_TRAIL_PREV | `15` | T |  |
+| src/layer.wesl:97 | CLASS_FAR | `3u` | T | shader const: needs a uniform |
+| src/layer.wesl:101 | SHELTER_NORMAL_OFFSET_M | `0.35` | T | shader const: needs a uniform |
+| src/layer.wesl:104 | SHELTER_NEAR_M | `0.12` | T | shader const: needs a uniform |
+| src/layer.wesl:105 | SHELTER_FULL_M | `0.35` | T | shader const: needs a uniform |
+| src/layer.wesl:108 | SHELTER_FADE_START | `0.875` | T | shader const: needs a uniform |
+| src/layer.wesl:111 | SHELTER_LAG_TOP_M | `1.0` | T | shader const: needs a uniform |
+| src/layer.wesl:114 | POROSITY_ROUGH_LOW | `0.3` | ? |  |
+| src/layer.wesl:115 | POROSITY_ROUGH_SPAN | `0.5` | ? |  |
+| src/layer.wesl:117 | WET_DARK_POROUS | `0.2` | ? |  |
+| src/layer.wesl:119 | WET_SATURATION | `0.3` | T | shader const: needs a uniform |
+| src/layer.wesl:121 | WALL_WET | `0.6` | ? |  |
+| src/layer.wesl:124 | FILM_START | `0.35` | ? |  |
+| src/layer.wesl:125 | FILM_POROUS_HOLD | `0.6` | T | shader const: needs a uniform |
+| src/layer.wesl:126 | FILM_ROUGHNESS | `0.25` | ? |  |
+| src/layer.wesl:127 | WATER_REFLECTANCE | `0.354` | ? |  |
+| src/layer.wesl:130 | PATCH_TILE_M | `32.0` | T | shader const: needs a uniform |
+| src/layer.wesl:131 | STREAK_TILE_U_M | `21.333334` | T | shader const: needs a uniform |
+| src/layer.wesl:132 | STREAK_TILE_V_M | `18.285715` | T | shader const: needs a uniform |
+| src/layer.wesl:137 | PUDDLE_REACH | `0.3` | T | shader const: needs a uniform |
+| src/layer.wesl:138 | PUDDLE_DEPTH | `0.1` | T | shader const: needs a uniform |
+| src/layer.wesl:139 | PUDDLE_EDGE | `0.1` | ? |  |
+| src/layer.wesl:140 | PUDDLE_FLAT_LOW | `0.994522` | ? |  |
+| src/layer.wesl:141 | PUDDLE_FLAT_HIGH | `0.998630` | ? |  |
+| src/layer.wesl:142 | BASIN_FULL_M | `0.1` | T | shader const: needs a uniform |
+| src/layer.wesl:143 | BASIN_POOL | `0.35` | ? |  |
+| src/layer.wesl:144 | PUDDLE_ROUGHNESS | `0.06` | ? |  |
+| src/layer.wesl:145 | POOL_TILE_M | `64.0` | T | shader const: needs a uniform |
+| src/layer.wesl:146 | HEIGHT_FROM_LUMA | `2.0` | T | shader const: needs a uniform |
+| src/layer.wesl:150 | RIPPLE_TILT | `0.5` | ? |  |
+| src/layer.wesl:151 | RIPPLE_FADE_NEAR_M | `0.02` | T | shader const: needs a uniform |
+| src/layer.wesl:152 | RIPPLE_FADE_FAR_M | `0.06` | T | shader const: needs a uniform |
+| src/layer.wesl:153 | RIPPLE_TIME_WRAP_S | `1000.0` | T | shader const: needs a uniform |
+| src/layer.wesl:157 | COVER_UP_LOW | `0.45` | ? |  |
+| src/layer.wesl:158 | COVER_UP_HIGH | `0.8` | ? |  |
+| src/layer.wesl:159 | COVER_SHADING_SHARE | `0.25` | ? |  |
+| src/layer.wesl:160 | COVER_EDGE | `0.08` | ? |  |
+| src/layer.wesl:161 | COVER_HEIGHT_MIX | `0.5` | T | shader const: needs a uniform |
+| src/layer.wesl:162 | COVER_DRIFT | `0.5` | ? |  |
+| src/layer.wesl:163 | COVER_DRIFT_TILE_M | `64.0` | T | shader const: needs a uniform |
+| src/layer.wesl:164 | COVER_NORMAL | `1.0` | ? |  |
+| src/layer.wesl:165 | COVER_TOP_MAX | `0.6` | T | shader const: needs a uniform |
+| src/layer.wesl:166 | ASH_REFLECTANCE | `0.5` | ? |  |
+| src/layer.wesl:169 | SPARKLE_CELL_M | `0.02` | T | shader const: needs a uniform |
+| src/layer.wesl:172 | SPARKLE_DENSITY | `0.03` | T | shader const: needs a uniform |
+| src/layer.wesl:173 | SPARKLE_TILT | `0.35` | ? |  |
+| src/layer.wesl:174 | SPARKLE_ROUGHNESS | `0.1` | ? |  |
+| src/layer.wesl:175 | SPARKLE_FADE_NEAR_M | `0.006` | T | shader const: needs a uniform |
+| src/layer.wesl:176 | SPARKLE_FADE_FAR_M | `0.02` | T | shader const: needs a uniform |
+| src/layer.wesl:183 | TRAIL_EDGE_FADE_M | `2.0` | T | shader const: needs a uniform |
+| src/layer.wesl:184 | TRAIL_LIP_HEIGHT | `0.25` | T | shader const: needs a uniform |
+| src/layer.wesl:186 | LUMA | `vec3(0.2126, 0.7152, 0.0722)` | ? |  |
+| src/lib.rs:219 | SurfaceSettings.layer | `true` | T | settings default |
+| src/lib.rs:220 | SurfaceSettings.wet | `true` | T | settings default |
+| src/lib.rs:221 | SurfaceSettings.puddles | `true` | T | settings default |
+| src/lib.rs:222 | SurfaceSettings.shelter | `true` | T | settings default |
+| src/lib.rs:223 | SurfaceSettings.cover | `true` | T | settings default |
+| src/lib.rs:224 | SurfaceSettings.trails | `true` | T | settings default |
+| src/lib.rs:225 | SurfaceSettings.raise | `true` | T | settings default |
+| src/uniform.rs:23 | U_TRAIL_PREV | `15` | T |  |
 
-Stays const: PARAM_BYTES (layout/math/id), MODE_FRESH (layout/math/id), MODE_CARRY (layout/math/id), MODE_EASE (layout/math/id), TAU (layout/math/id), FLAG_WET (layout/math/id), FLAG_PUDDLE (layout/math/id), FLAG_SNOW (layout/math/id), FLAG_ASH (layout/math/id), FLAG_RAISE (layout/math/id), DEBUG_OFF (layout/math/id), DEBUG_EXPOSURE (layout/math/id), DEBUG_CELLS (layout/math/id), DEBUG_POROSITY (layout/math/id), DEBUG_TRAILS (layout/math/id), CLASS_STATIC (shader enum), CLASS_TERRAIN (shader enum), CLASS_DYNAMIC (shader enum), COVER_SNOW (shader enum), COVER_ASH (shader enum), SHELTER_SUBVIEW (sentinel/derived), CANOPY_SUBVIEW (sentinel/derived), U_SHELTER_CLIP (small index), U_WINDOW (small index), U_CELLS (small index), U_SHELTER (small index), U_MISC (small index), U_TIME (small index), U_CANOPY (small index), U_COVER (small index), U_COVER_UV (small index), U_TRAIL (small index), U_TRAIL_CELLS (small index), U_TRAIL_PREV_CELLS (small index), U_SLOTS (layout/math/id), FLAG_WET (layout/math/id), FLAG_PUDDLE (layout/math/id), FLAG_SNOW (layout/math/id), FLAG_ASH (layout/math/id), FLAG_RAISE (layout/math/id), SurfaceUniform.flags (layout/math/id).
+Stays const: DEFORM_SUBVIEW (sentinel/derived), PARAM_BYTES (layout/math/id), MODE_FRESH (layout/math/id), MODE_CARRY (layout/math/id), MODE_EASE (layout/math/id), TAU (layout/math/id), FLAG_WET (layout/math/id), FLAG_PUDDLE (layout/math/id), FLAG_SNOW (layout/math/id), FLAG_ASH (layout/math/id), FLAG_RAISE (layout/math/id), DEBUG_OFF (layout/math/id), DEBUG_EXPOSURE (layout/math/id), DEBUG_CELLS (layout/math/id), DEBUG_POROSITY (layout/math/id), DEBUG_TRAILS (layout/math/id), CLASS_STATIC (shader enum), CLASS_TERRAIN (shader enum), CLASS_DYNAMIC (shader enum), COVER_SNOW (shader enum), COVER_ASH (shader enum), PROBE_TIMEOUT_FRAMES (opt-out: a dev command's give-up bound, about a second: no cost or look), SHELTER_SUBVIEW (sentinel/derived), CANOPY_SUBVIEW (sentinel/derived), FAR_SHELTER_SUBVIEW (sentinel/derived), FAR_CANOPY_SUBVIEW (sentinel/derived), SHELTER_LOD_DISTANCE_M (opt-out: a definition, not a trade-off: the finest level is the one visible at 0 m), U_SHELTER_CLIP (small index), U_WINDOW (small index), U_CELLS (small index), U_SHELTER (small index), U_MISC (small index), U_TIME (small index), U_CANOPY (small index), U_COVER (small index), U_COVER_UV (small index), U_TRAIL (small index), U_TRAIL_CELLS (small index), U_TRAIL_PREV_CELLS (small index), U_FAR_CLIP (opt-out: layout: uniform slot index), U_FAR_SHELTER (opt-out: layout: uniform slot index), U_FAR_CANOPY (opt-out: layout: uniform slot index), U_SLOTS (layout/math/id), FLAG_WET (layout/math/id), FLAG_PUDDLE (layout/math/id), FLAG_SNOW (layout/math/id), FLAG_ASH (layout/math/id), FLAG_RAISE (layout/math/id), SurfaceUniform.flags (layout/math/id).
 
-### sf_weather (99: T 42, C 36, ? 21)
+### sf_weather (100: T 43, C 36, ? 21)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1889,9 +1896,10 @@ Stays const: PARAM_BYTES (layout/math/id), MODE_FRESH (layout/math/id), MODE_CAR
 | src/frame.rs:28 | BORDER_BAND_M | `256.0` | T |  |
 | src/frame.rs:30 | MAX_VISIBILITY_M | `100_000.0` | T |  |
 | src/frame.rs:92 | SPEED_OF_SOUND | `343.0` | T |  |
-| src/frame.rs:171 | WeatherFrame.lightning_per_hour | `0.0` | ? |  |
-| src/frame.rs:564 | WORLD_STRIKE_CELL_M | `2000.0` | T |  |
-| src/frame.rs:566 | WORLD_STRIKE_RADIUS_M | `16_000.0` | T |  |
+| src/frame.rs:175 | WeatherFrame.lightning_per_hour | `0.0` | ? |  |
+| src/frame.rs:182 | WeatherFrame.wind_mid_speed | `0.0` | T |  |
+| src/frame.rs:573 | WORLD_STRIKE_CELL_M | `2000.0` | T |  |
+| src/frame.rs:575 | WORLD_STRIKE_RADIUS_M | `16_000.0` | T |  |
 | src/hash.rs:55 | PHASE | `1` | ? |  |
 | src/hash.rs:56 | JITTER | `2` | T |  |
 | src/hash.rs:57 | PICK | `3` | ? |  |
@@ -1962,7 +1970,7 @@ Stays const: CLOUD_TYPE (small index), WETNESS (small index), STORM (small index
 | src/fx.rs:56 | CUE_STEP | `0.02` | T |  |
 | src/fx.rs:124 | PrecipWind.slant_cap | `true` | T |  |
 | src/lib.rs:70 | MAX_STEP_HOURS | `0.25` | T |  |
-| src/lib.rs:124 | MAP_TEXEL_M | `64.0` | T |  |
+| src/lib.rs:127 | MAP_TEXEL_M | `64.0` | T |  |
 
 ### sf_wind (19: T 9, C 2, ? 8)
 
@@ -1998,7 +2006,7 @@ Stays const: PARAMS_VEC4S (layout/math/id), SOURCE_VEC4S (layout/math/id), DATA_
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/build.rs:39 | FarBakeSettings.light_merge | `[0.0, 12.0, 48.0]` | T | settings default |
+| src/build.rs:42 | FarBakeSettings.light_merge | `[0.0, 12.0, 48.0]` | T | settings default |
 | src/cluster.rs:34 | SimplifySettings.crease_cos | `0.77` | T |  |
 | src/cluster.rs:34 | SimplifySettings.color_weight | `0.5` | T |  |
 | src/cluster.rs:34 | SimplifySettings.prune | `true` | T | settings default |
@@ -2015,18 +2023,22 @@ Stays const: PARAMS_VEC4S (layout/math/id), SOURCE_VEC4S (layout/math/id), DATA_
 
 Stays const: FOREVER (layout/math/id), FIRST_LEVEL (layout/math/id), LAST_LEVEL (layout/math/id).
 
-### sf_lod_bevy (8: T 8, C 0, ? 0)
+### sf_lod_bevy (11: T 10, C 1, ? 0)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:75 | FarFieldSettings.l1_shadows | `true` | T |  |
-| src/lib.rs:75 | FarFieldSettings.light_min_pixels | `2.5` | T |  |
-| src/lib.rs:75 | FarFieldSettings.proxy_depth_offset_px | `2.0` | T |  |
+| src/lib.rs:119 | FarFieldSettings.l1_shadows | `true` | T |  |
+| src/lib.rs:120 | FarFieldSettings.light_min_pixels | `2.5` | T |  |
+| src/lib.rs:121 | FarFieldSettings.proxy_depth_offset_px | `2.0` | T |  |
+| src/lib.rs:123 | FarFieldSettings.emissive_nits | `1.0` | T | settings default |
+| src/lib.rs:124 | FarFieldSettings.emissive_exposure_weight | `0.0` | T |  |
 | src/shaders/far_shadow_map.wesl:15 | FAR_FADE_START | `0.85` | T | shader const: needs a uniform |
 | src/shaders/far_shadow_map.wesl:18 | FAR_PENUMBRA | `0.012` | T | shader const: needs a uniform |
 | src/shaders/far_shadow_map.wesl:19 | FAR_PENUMBRA_MIN | `2.0` | T | shader const: needs a uniform |
 | src/shaders/far_shadow_map.wesl:22 | FAR_BIAS | `6.0` | T | shader const: needs a uniform |
 | src/shaders/far_shadow_map.wesl:23 | FAR_BIAS_PER_M | `0.0015` | T | shader const: needs a uniform |
+
+Stays const: ResidencyGate.settings_rev (opt-out: a change counter starts at 0; the settle frame is the one-frame transform lag).
 
 ### sf_model (31: T 20, C 7, ? 4)
 
@@ -2069,11 +2081,20 @@ Stays const: CATALOG_FORMAT (layout/math/id), ATTRS (small index), FORMAT_VERSIO
 
 Stays const: MAX_MORPH_TEXELS (sentinel/derived).
 
-### sf_render_order_bevy (6: T 3, C 2, ? 1)
+### sf_render_order_bevy (15: T 12, C 2, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:58 | OVERLAY_BASE | `1.0e6` | ? |  |
+| src/lib.rs:60 | OVERLAY_BASE | `1.0e6` | ? |  |
+| src/rain_rings.wesl:17 | RIPPLE_CELL_M | `1.6` | T | shader const: needs a uniform |
+| src/rain_rings.wesl:18 | RIPPLE_RADIUS | `0.2` | T | shader const: needs a uniform |
+| src/rain_rings.wesl:19 | RIPPLE_RING | `0.16666667` | T | shader const: needs a uniform |
+| src/rain_rings.wesl:20 | RIPPLE_RATE | `1.2` | T | shader const: needs a uniform |
+| src/rain_rings.wesl:21 | RIPPLE_SCALE_0 | `1.0` | T | shader const: needs a uniform |
+| src/rain_rings.wesl:22 | RIPPLE_SCALE_1 | `1.25` | T | shader const: needs a uniform |
+| src/rain_rings.wesl:23 | RIPPLE_SCALE_2 | `0.8` | T | shader const: needs a uniform |
+| src/rain_rings.wesl:24 | RIPPLE_SCALE_3 | `0.625` | T | shader const: needs a uniform |
+| src/rain_rings.wesl:27 | ORIGIN_GRID_M | `256.0` | T | shader const: needs a uniform |
 | src/translucent_fog.wesl:40 | FOG_BLEND | `0u` | T | shader const: needs a uniform |
 | src/translucent_fog.wesl:41 | FOG_PREMULTIPLIED | `1u` | T | shader const: needs a uniform |
 | src/translucent_fog.wesl:43 | FOG_MULTIPLY | `3u` | T | shader const: needs a uniform |
@@ -2104,7 +2125,7 @@ Stays const: CLASSES (small index), MATERIAL_KEY_VERSION (layout/math/id), LAYOU
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/residency.rs:70 | SLAB_WAIT_FRAMES | `120` | T |  |
+| src/residency.rs:71 | SLAB_WAIT_FRAMES | `120` | T |  |
 | src/slabs.rs:77 | MATERIAL_RECHECK_EXTRACTS | `120` | ? |  |
 
 Stays const: NON_INDEXED (sentinel/derived), SLOT_BYTES (layout/math/id), SLOT_LEN (sentinel/derived).
@@ -2119,23 +2140,20 @@ Stays const: NON_INDEXED (sentinel/derived), SLOT_BYTES (layout/math/id), SLOT_L
 | src/lib.rs:44 | NEAR_M | `1.5` | T |  |
 | src/lib.rs:46 | MIN_FACING | `0.5` | T |  |
 
-### mw_exterior_bevy (23: T 9, C 12, ? 2)
+### mw_exterior_bevy (31: T 7, C 23, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/exterior.rs:1412 | SOFT_SHADOW_SIZE | `10.0` | T |  |
-| src/exterior.rs:1415 | CONTACT_LENGTH | `0.3` | ? |  |
-| src/exterior.rs:1425 | BLOOM_INTENSITY | `0.1` | T |  |
-| src/exterior.rs:1436 | SUN_DEPTH_BIAS | `0.02` | T |  |
-| src/exterior.rs:1438 | SUN_NORMAL_BIAS | `0.8` | T |  |
+| src/exterior.rs:1534 | SUN_DEPTH_BIAS | `0.02` | T |  |
+| src/exterior.rs:1536 | SUN_NORMAL_BIAS | `0.8` | T |  |
 | src/gi_volume.rs:49 | INTERIOR_AMBIENT_SCALE | `0.1` | T |  |
-| src/level.rs:366 | SIZE | `128` | T |  |
-| src/trails.rs:28 | PLANTED | `0.5` | ? |  |
-| src/trails.rs:31 | DOWN_M | `0.12` | T |  |
-| src/trails.rs:33 | ON_TERRAIN_M | `0.4` | T |  |
-| src/trails.rs:35 | TOE_SHIFT_M | `0.05` | T |  |
+| src/level.rs:373 | SIZE | `128` | T |  |
+| src/trails.rs:40 | PLANTED | `0.5` | ? |  |
+| src/trails.rs:43 | DOWN_M | `0.12` | T |  |
+| src/trails.rs:45 | ON_TERRAIN_M | `0.4` | T |  |
+| src/trails.rs:47 | TOE_SHIFT_M | `0.05` | T |  |
 
-Stays const: MARKER_SPACING (test-scene fixture), SWATCH_SPACING (test-scene fixture), PANEL (test-scene fixture), SPHERE (test-scene fixture), CUBE (test-scene fixture), MODEL_SPACING (test-scene fixture), MODEL_Z (test-scene fixture), TURNTABLE (test-scene fixture), LAMP_ORBIT (test-scene fixture), LAMP_HEIGHT (test-scene fixture), LAMP_RATE (test-scene fixture), LAMP_RADIUS (test-scene fixture).
+Stays const: MAX_DEPTH (opt-out: a recursion guard against driver cycles, not a trade-off), MARKER_SPACING (test-scene fixture), COLUMN_SPACING_M (opt-out: fixture: rock-lab layout, x between class columns, centred on x = 0), FIELD_START_Z (opt-out: fixture: rock-lab layout, z of the nearest rock's near edge), GAP_M (opt-out: fixture: rock-lab layout, gap between neighbours), FIELD_COUNT (opt-out: fixture: rock-lab layout, rocks per class column), SIZE_MIN_M (opt-out: fixture: rock-lab size range shown), SIZE_MAX_M (opt-out: fixture: rock-lab size range shown), SIZE_POWER (opt-out: fixture: rock-lab size spread), SINK (opt-out: fixture: rock-lab placement), MIX_SEED (test-scene fixture), SWATCH_SPACING (test-scene fixture), PANEL (test-scene fixture), SPHERE (test-scene fixture), CUBE (test-scene fixture), MODEL_SPACING (test-scene fixture), MODEL_Z (test-scene fixture), TURNTABLE (test-scene fixture), LAMP_ORBIT (test-scene fixture), LAMP_HEIGHT (test-scene fixture), LAMP_RATE (test-scene fixture), LAMP_RADIUS (test-scene fixture), REPORT_EVERY_S (opt-out: log cadence: how often a diagnostic line prints, no look, feel or cost).
 
 ### mw_world (20: T 14, C 4, ? 2)
 
@@ -2160,6 +2178,16 @@ Stays const: MARKER_SPACING (test-scene fixture), SWATCH_SPACING (test-scene fix
 
 Stays const: UNIT_METERS_F64 (unit/format), CELL_UNITS (unit/format), VERTEX_UNITS (unit/format), TEXEL_UNITS (unit/format).
 
+### mw_worldgen (9: T 1, C 6, ? 2)
+
+| Where | Name | Value | Cls | Note |
+|---|---|---|---|---|
+| src/anchor.rs:461 | FAR | `1e20` | T |  |
+| src/flora.rs:51 | GROUP_FLORA | `0` | ? |  |
+| src/flora.rs:52 | GROUP_ROCKS | `1` | ? |  |
+
+Stays const: SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane is at z = 0; the scaled guide keeps it), UNKNOWN_SIZE_M (opt-out: fallback: only the budget's priority reads it, and every Morrowind flora mesh has bounds), CELL_QUADS (derived), SEA_SURFACE_UNITS (opt-out: format fact: the exterior water plane is at z = 0 in Morrowind's data and OpenMW), MARKERS_FORMAT (layout/math/id), FORMAT_VERSION (layout/math/id).
+
 ### sf_world (25: T 21, C 3, ? 1)
 
 | Where | Name | Value | Cls | Note |
@@ -2171,25 +2199,25 @@ Stays const: UNIT_METERS_F64 (unit/format), CELL_UNITS (unit/format), VERTEX_UNI
 | src/rings.rs:86 | RingConfig.far | `RingRadii::new(3000.0, 3250.0)` | T |  |
 | src/rings.rs:87 | RingConfig.horizon | `8192.0` | T | settings default |
 | src/rings.rs:88 | RingConfig.far_min_radius | `4.0` | T |  |
-| src/scheduler.rs:159 | Budgets.spawn_ms | `1.0` | T |  |
-| src/scheduler.rs:160 | Budgets.activate_ms | `0.5` | T |  |
-| src/scheduler.rs:161 | Budgets.deactivate_ms | `0.5` | T |  |
-| src/scheduler.rs:162 | Budgets.despawn_ms | `0.5` | T |  |
-| src/scheduler.rs:164 | Budgets.fetches_in_flight | `8` | T | settings default |
-| src/scheduler.rs:165 | Budgets.assets_in_flight | `64` | T | settings default |
-| src/scheduler.rs:166 | Budgets.burst_factor | `20.0` | T |  |
-| src/scheduler.rs:233 | SchedulerConfig.door_prefetch | `RingRadii::new(24.0, 32.0)` | T | settings default |
-| src/scheduler.rs:234 | SchedulerConfig.lookahead_min | `0.5` | T |  |
-| src/scheduler.rs:235 | SchedulerConfig.lookahead_max | `4.0` | T |  |
-| src/scheduler.rs:236 | SchedulerConfig.view_weight | `0.5` | T |  |
-| src/scheduler.rs:237 | SchedulerConfig.initial_latency | `0.25` | T | settings default |
-| src/scheduler.rs:238 | SchedulerConfig.far_by_page | `false` | T |  |
-| src/scheduler.rs:239 | SchedulerConfig.linger_secs | `5.0` | T |  |
-| src/scheduler.rs:939 | LINGER_CLASS | `3` | ? |  |
+| src/scheduler.rs:161 | Budgets.spawn_ms | `1.0` | T |  |
+| src/scheduler.rs:162 | Budgets.activate_ms | `0.5` | T |  |
+| src/scheduler.rs:163 | Budgets.deactivate_ms | `0.5` | T |  |
+| src/scheduler.rs:164 | Budgets.despawn_ms | `0.5` | T |  |
+| src/scheduler.rs:166 | Budgets.fetches_in_flight | `8` | T | settings default |
+| src/scheduler.rs:167 | Budgets.assets_in_flight | `64` | T | settings default |
+| src/scheduler.rs:168 | Budgets.burst_factor | `20.0` | T |  |
+| src/scheduler.rs:277 | SchedulerConfig.door_prefetch | `RingRadii::new(24.0, 32.0)` | T | settings default |
+| src/scheduler.rs:278 | SchedulerConfig.lookahead_min | `0.5` | T |  |
+| src/scheduler.rs:279 | SchedulerConfig.lookahead_max | `4.0` | T |  |
+| src/scheduler.rs:280 | SchedulerConfig.view_weight | `0.5` | T |  |
+| src/scheduler.rs:281 | SchedulerConfig.initial_latency | `0.25` | T | settings default |
+| src/scheduler.rs:282 | SchedulerConfig.far_by_page | `false` | T |  |
+| src/scheduler.rs:283 | SchedulerConfig.linger_secs | `5.0` | T |  |
+| src/scheduler.rs:1049 | LINGER_CLASS | `3` | ? |  |
 
 Stays const: VERSION (layout/math/id), PLACEMENT_BYTES (layout/math/id), PAGE_SHIFT (layout/math/id).
 
-### sf_world_bevy (32: T 24, C 5, ? 3)
+### sf_world_bevy (35: T 23, C 9, ? 3)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -2202,53 +2230,95 @@ Stays const: VERSION (layout/math/id), PLACEMENT_BYTES (layout/math/id), PAGE_SH
 | src/fade.rs:146 | FadeTransition.max_hold_secs | `10.0` | T |  |
 | src/fade.rs:147 | FadeTransition.ready_margin_m | `16.0` | T |  |
 | src/fade.rs:154 | FadeTransition.gated | `false` | T | settings default |
-| src/matclass.rs:116 | FoldRules.flat_normal_map | `true` | T | settings default |
 | src/mesh_slabs.rs:55 | MeshSlabsPlugin.raise_cap | `true` | T |  |
 | src/reveal.rs:58 | SETTLE_FRAMES | `3` | T |  |
 | src/reveal.rs:81 | RevealGate.max_secs | `10.0` | T |  |
 | src/reveal.rs:81 | RevealGate.gates_max_secs | `1.5` | T |  |
 | src/reveal.rs:81 | RevealGate.radius_m | `48.0` | T |  |
 | src/reveal.rs:81 | RevealGate.stepped | `false` | T |  |
-| src/spawn.rs:213 | MAX_SUBTREE_DEPTH | `48` | T |  |
-| src/spawn.rs:448 | RANGE_STEPS_PER_OCTAVE | `32.0` | T |  |
+| src/spawn.rs:219 | MAX_SUBTREE_DEPTH | `48` | T |  |
+| src/spawn.rs:387 | RANGE_STEPS_PER_OCTAVE | `32.0` | T |  |
 | src/stream.rs:54 | MAX_GUARDED_FRAMES | `6` | T |  |
 | src/stream.rs:58 | SHIFT_COOLDOWN_FRAMES | `2` | T |  |
-| src/stream.rs:129 | StreamingConfig.placements_per_item | `16` | T | settings default |
-| src/stream.rs:133 | StreamingConfig.origin_shift_guard_s | `0.05` | T |  |
-| src/stream.rs:134 | StreamingConfig.max_loading_meshes | `64` | T |  |
-| src/stream.rs:135 | StreamingConfig.precombine | `true` | T | settings default |
-| src/stream.rs:136 | StreamingConfig.material_classes | `true` | T | settings default |
-| src/stream.rs:137 | StreamingConfig.flat_normal_map | `true` | T | settings default |
-| src/stream.rs:138 | StreamingConfig.gpu_cull_statics | `false` | T | settings default |
+| src/stream.rs:140 | StreamingConfig.placements_per_item | `16` | T | settings default |
+| src/stream.rs:144 | StreamingConfig.origin_shift_guard_s | `0.05` | T |  |
+| src/stream.rs:145 | StreamingConfig.max_loading_meshes | `64` | T |  |
+| src/stream.rs:146 | StreamingConfig.precombine | `true` | T | settings default |
+| src/stream.rs:147 | StreamingConfig.material_classes | `true` | T | settings default |
+| src/stream.rs:148 | StreamingConfig.flat_normal_map | `true` | T | settings default |
+| src/stream.rs:150 | StreamingConfig.gpu_cull_statics | `false` | T | settings default |
 
-Stays const: FadeTransition.elapsed (runtime state), FadeTransition.queued_blackout (runtime state), TARGET_MAX_SLAB_BYTES (layout/math/id), MIB (layout/math/id), INLINE_PAIRS (small index).
+Stays const: FadeTransition.elapsed (runtime state), FadeTransition.queued_blackout (runtime state), FoldRules.flat_normal_map (opt-out: bench-only A/B arm switch, not a quality or feel value), FoldRules.one_texture_set (opt-out: bench-only A/B arm switch, not a quality or feel value), TARGET_MAX_SLAB_BYTES (layout/math/id), MIB (layout/math/id), WorldspaceParking.now (opt-out: state: the streaming clock, set every frame), StreamingConfig.one_texture_set (opt-out: bench-only A/B arm switch, `--off texvariety`; not a quality or feel value), INLINE_PAIRS (small index).
 
-## terrain-water
-
-### mw_water (17: T 9, C 1, ? 7)
+### sf_worldgen (136: T 24, C 99, ? 13)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:20 | SEA_FETCH_M | `20_000.0` | T |  |
-| src/lib.rs:204 | WaterIni.underwater_color | `[12, 30, 37]` | ? |  |
-| src/lib.rs:205 | WaterIni.underwater_color_weight | `0.85` | T |  |
-| src/lib.rs:206 | WaterIni.sunrise_fog | `3.0` | ? |  |
-| src/lib.rs:207 | WaterIni.day_fog | `2.5` | ? |  |
-| src/lib.rs:208 | WaterIni.sunset_fog | `3.0` | ? |  |
-| src/lib.rs:209 | WaterIni.night_fog | `4.0` | ? |  |
-| src/lib.rs:210 | WaterIni.indoor_fog | `3.0` | ? |  |
-| src/lib.rs:211 | WaterIni.ripple_lifetime | `3.0` | T |  |
-| src/lib.rs:212 | WaterIni.max_ripples | `75` | T |  |
-| src/lib.rs:213 | WaterIni.near_water_radius | `1000.0` | T |  |
-| src/lib.rs:214 | WaterIni.near_water_points | `8` | T |  |
-| src/lib.rs:215 | WaterIni.near_water_underwater_freq | `0.3` | T |  |
-| src/lib.rs:216 | WaterIni.near_water_underwater_volume | `0.9` | T |  |
-| src/lib.rs:283 | UNIT_M | `0.9144 / 64.0` | T |  |
-| src/lib.rs:286 | LAND_VERTS | `65` | ? |  |
+| src/dem.rs:34 | WGS84_A | `6_378_137.0` | ? |  |
+| src/dem.rs:36 | WGS84_E2 | `0.006_694_379_990_14` | ? |  |
+| src/dem.rs:38 | KEY_MODEL_TYPE | `1024` | ? |  |
+| src/dem.rs:39 | KEY_RASTER_TYPE | `1025` | ? |  |
+| src/dem.rs:40 | KEY_GEOGRAPHIC_TYPE | `2048` | ? |  |
+| src/dem.rs:42 | MODEL_GEOGRAPHIC | `2` | ? |  |
+| src/dem.rs:44 | RASTER_PIXEL_IS_POINT | `2` | ? |  |
+| src/dem.rs:46 | EPSG_WGS84 | `4326` | ? |  |
+| src/dem.rs:48 | WINDOW_MARGIN_PX | `3.0` | T |  |
+| src/dem.rs:50 | MAX_EXTENT_M | `200_000.0` | T |  |
+| src/dem.rs:52 | ALIGN_TOL_PX | `1e-3` | T |  |
+| src/lem/mod.rs:98 | NEWTON_OMEGA | `0.875` | ? |  |
+| src/lem/mod.rs:99 | NEWTON_MAX_ITER | `100` | T |  |
+| src/lem/route.rs:32 | BOUNDARY | `-2` | ? |  |
+| src/lem/route.rs:34 | PIT | `-1` | ? |  |
+| src/scatter.rs:124 | Params.sea_level_m | `0.0` | T |  |
+| src/stratovolcano.rs:121 | EDT_FAR | `1e20` | T |  |
+| src/stratovolcano.rs:123 | CALIB_STEPS | `16` | T |  |
+| src/stratovolcano.rs:124 | CALIB_TOL_M | `1e-3` | T |  |
+| src/stratovolcano.rs:126 | CALIB_WINDOW | `0.5` | ? |  |
+| src/stratovolcano.rs:130 | APRON_RAYS | `64` | T |  |
+| src/stratovolcano.rs:131 | APRON_MIN_LEN_M | `2000.0` | T |  |
+| src/stratovolcano.rs:133 | FOOT_BEARINGS | `720` | T |  |
+| src/stratovolcano.rs:135 | FIT_P | `[0.3, 5.0, 0.01]` | ? |  |
+| src/stratovolcano.rs:136 | FIT_R0_STEPS | `200` | T |  |
+| src/stratovolcano.rs:139 | STRUCTURE_THRESHOLD_M2 | `1e5` | T |  |
+| src/stratovolcano.rs:140 | STRUCTURE_WINDOW_M | `1000.0` | T |  |
+| src/stratovolcano.rs:141 | STRUCTURE_DIR_STEPS | `5` | T |  |
+| src/tiles.rs:664 | CELL_S | `2` | T |  |
+| src/tiles.rs:673 | SPACING | `11` | T |  |
+| src/tiles.rs:678 | GAIN | `16` | T |  |
+| src/tiles.rs:680 | MAX_AMP | `18` | T |  |
+| src/tiles.rs:685 | SHARP | `23` | T |  |
+| src/tiles.rs:687 | PHASE_FADE | `25` | T |  |
+| src/tiles.rs:688 | SHORE_RATIO | `26` | T |  |
+| src/tiles.rs:689 | CASCADE | `27` | T |  |
+| src/tiles.rs:694 | STAMPS | `31` | T |  |
 
-Stays const: CELL_UNITS (unit/format).
+Stays const: ANCHORS_FORMAT (layout/math/id), LAND_FLOOR_M (opt-out: invariant: keeps modified dry samples strictly above sea level so Audit stays clean), RegionProfile.scarp_scale (opt-out: identity multipliers when a region has no TOML override), RegionProfile.shelf_scale (opt-out: identity multiplier), RegionProfile.steepen_scale (opt-out: identity multiplier), RegionProfile.sea_cliff_scale (opt-out: identity multiplier), RegionProfile.lava_scale (opt-out: identity: lava flows only run in regions that opt in via TOML), KERNEL_RADIUS_CELLS (opt-out: layout: coverage needs ≥ √2 cells, the 5 × 5 search allows ≤ 1.5), WARN_SAMPLES (opt-out: report layout: a warning threshold, ~800 MB of f32 heights), TAU (layout/math/id), FORMAT (opt-out: format version), NEIGHBOUR_DIST (opt-out: grid geometry: 1 and sqrt 2), NONE (opt-out: sentinel: no parent, no col), LAYERS_FORMAT (layout/math/id), NO_LAYER (sentinel/derived), STAMP_LAYER_WEIGHT (opt-out: format fact: the spec's stamp/global switch, the band's midpoint), UNKNOWN_ALBEDO (opt-out: fallback: neutral grey for a palette id missing from the layer table, logged by the caller), TRUNCATE_SIGMAS (opt-out: maths: 3σ holds 99.7 % of a Gaussian), NEWTON_TOL_M (opt-out: numerics of the local Newton solve: Veloren / fastscapelib-fortran tolerance and relaxation), BAND_EDGES_M (opt-out: metric definition: band edges fixed by the WG-M brief, 40 m to 10 km plus 10-40 m for 5 m fields), BINS_PER_DECADE (opt-out: metric definition: 10 log bins per decade), HEIGHT_QUANTILES (opt-out: metric definition: reported percentiles), WALK_BAND_EDGES_DEG (opt-out: metric definition: report bands 0-15 / 15-25 / 25-35 / 35-46 / 46-60 / > 60 deg), FLAT_DEG (opt-out: metric definition: landforms.md "Measurement", land share under 10 deg, Etna 52 %), STEEP_DEG (opt-out: metric definition: landforms.md "Measurement", land share >= 35 deg, Etna 1.8 %), UNTOUCHED_M (opt-out: metric definition: landforms.md "Measurement", untouched = |dh| < 0.5 m vs the base), EXACT_BELOW (opt-out: filter construction: exact kernel below 4 samples, Kovesi boxes above), IDENTITY_BELOW (opt-out: filter construction: a Gaussian under half a sample is the identity), BIG (opt-out: maths: "infinite" squared distance seed of the transform), SINUOSITY_CHANNELS (opt-out: metric definition: "the 20 largest channels", fixed by the WG-S2b brief), TRACE_STEP_SAMPLES (opt-out: geometry resolution: a vertex every 2 samples, the guide footprint of the prefilter), NEVER_TAN (opt-out: sentinel: an unreachable talus slope), SOFT_BELOW (opt-out: definition shared with geology.rs: soft = hardness below 0.5), LAND_FLOOR_M (opt-out: invariant: keeps written dry samples strictly dry so the wet/dry audit stays clean), NONE (opt-out: sentinel: "not a boundary pixel"), SHEET_GAP_PX (opt-out: sheet layout, fixed by the look-test design), SHEET_GAP_GRAY (opt-out: sheet layout: white gaps), SLOPE_BINS (opt-out: layout: one bin per degree of slope, the census resolution of the slope cut), EDGE_EPS (opt-out: maths: rounding tolerance, far below any sample spacing), MM_CELL (opt-out: layout: block size of the per-stamp min/max grid, no quality trade), MAX_BINS_AXIS (opt-out: capacity: caps the bin grid at 256² for far-apart small stamps), S_WARP_X (opt-out: hash stream ids), S_WARP_Y (id table), S_FOOT (id table), S_EXPONENT (id table), S_RIFT_CURVE (id table), S_CALDERA (id table), S_COLLAPSE (id table), S_SUBPEAK (id table), S_CONE (id table), S_FRACTURE (id table), S_FRACTURE_WANDER (id table), S_SEED_COARSE (id table), S_SEED_FINE (id table), S_BAND (id table), S_BAND_WARP (id table), S_CELL (id table), S_FLANK_K (id table), NONE (layout/math/id), FRACTURE_SEGMENTS (small index), FLANK_RINGS_M (opt-out: report layout), RESIDUAL_TRACE_EVERY (opt-out: report layout), CR_OVERSHOOT (opt-out: maths: bound of the Catmull-Rom kernel, max Σ|w| = 1.25 per axis at t = 0.5), STAT_LEVELS (opt-out: layout: counter slots, one per tile level), W (id table), H (id table), COL_CI (id table), COL_CF (id table), ROW_CI (id table), ROW_CF (id table), COL_A (id table), COL_C (id table), ROW_A (id table), ROW_C (id table), SEA (id table), OCTAVES (id table), WAVELENGTH (id table), LACUNARITY (id table), RELIEF (id table), SLOPE_LO (id table), SLOPE_HI (id table), CURV_LO (id table), CURV_HI (id table), CARVE (id table), SEED (layout/math/id), BAND_LO (id table), BAND_HI (id table), LOOK (id table), LAYERS (opt-out: layout: GPU header slot index), STRATA_AMP (opt-out: layout: GPU header slot indices for Phase 3a sharp runtime operators), STRATA_STEP (opt-out: layout: GPU header slot index), STRATA_SHARP (opt-out: layout: GPU header slot index), ROCK_AMP (opt-out: layout: GPU header slot index), ROCK_SCALE (opt-out: layout: GPU header slot index), RIDGE_AMP (opt-out: layout: GPU header slot index), RIDGE_SCALE (opt-out: layout: GPU header slot index), STEEP_LO (opt-out: layout: GPU header slot index), STEEP_HI (opt-out: layout: GPU header slot index), HEIGHTS (opt-out: layout: GPU header slot index).
 
-### sf_terrain (43: T 19, C 14, ? 10)
+## terrain-water
+
+### mw_water (18: T 8, C 3, ? 7)
+
+| Where | Name | Value | Cls | Note |
+|---|---|---|---|---|
+| src/lib.rs:241 | WaterIni.underwater_color | `[12, 30, 37]` | ? |  |
+| src/lib.rs:242 | WaterIni.underwater_color_weight | `0.85` | T |  |
+| src/lib.rs:243 | WaterIni.sunrise_fog | `3.0` | ? |  |
+| src/lib.rs:244 | WaterIni.day_fog | `2.5` | ? |  |
+| src/lib.rs:245 | WaterIni.sunset_fog | `3.0` | ? |  |
+| src/lib.rs:246 | WaterIni.night_fog | `4.0` | ? |  |
+| src/lib.rs:247 | WaterIni.indoor_fog | `3.0` | ? |  |
+| src/lib.rs:248 | WaterIni.ripple_lifetime | `3.0` | T |  |
+| src/lib.rs:249 | WaterIni.max_ripples | `75` | T |  |
+| src/lib.rs:250 | WaterIni.near_water_radius | `1000.0` | T |  |
+| src/lib.rs:251 | WaterIni.near_water_points | `8` | T |  |
+| src/lib.rs:252 | WaterIni.near_water_underwater_freq | `0.3` | T |  |
+| src/lib.rs:253 | WaterIni.near_water_underwater_volume | `0.9` | T |  |
+| src/lib.rs:320 | UNIT_M | `0.9144 / 64.0` | T |  |
+| src/lib.rs:323 | LAND_VERTS | `65` | ? |  |
+
+Stays const: CELL_UNITS (unit/format), CLASSIC_FETCH_M (opt-out: the `--off seastate` A/B arm: the W2 fetch), CURVE_POINTS (small index).
+
+### sf_terrain (48: T 19, C 19, ? 10)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -2261,13 +2331,13 @@ Stays const: CELL_UNITS (unit/format).
 | src/cdlod.rs:76 | RAISE_FADE_START | `8.0` | T |  |
 | src/cdlod.rs:79 | RAISE_FADE_END | `12.0` | T |  |
 | src/cdlod.rs:82 | RAISE_MAX_LOD | `4` | T |  |
-| src/cdlod.rs:86 | RAISE_TEXEL_M | `0.5` | T |  |
-| src/cdlod.rs:102 | CdlodSettings.lod0_range | `48.0` | T |  |
-| src/cdlod.rs:102 | CdlodSettings.morph_fraction | `0.3` | T |  |
+| src/cdlod.rs:99 | CdlodSettings.lod0_range | `48.0` | T |  |
+| src/cdlod.rs:99 | CdlodSettings.morph_fraction | `0.3` | T |  |
 | src/clipmap.rs:19 | CLIPMAP_SIZE | `512` | T |  |
 | src/constrain.rs:15 | FOOTPRINT_FEATHER | `1.5` | ? |  |
 | src/edits.rs:19 | BRICK_SAMPLES | `64` | T |  |
 | src/edits.rs:20 | BRICK_I64 | `64` | ? |  |
+| src/gpu_fill.wgsl:19 | FILL_KIND_HEIGHTS | `0u` | T | shader const: needs a uniform |
 | src/product.rs:349 | MIN_EDGE | `4` | T |  |
 | src/pyramid.rs:91 | MAX_QUANT_STEP | `0.02` | T |  |
 | src/shadow.rs:17 | UNOCCLUDED | `-1.0e6` | ? |  |
@@ -2282,56 +2352,56 @@ Stays const: CELL_UNITS (unit/format).
 | src/tile.rs:15 | QUADS_F64 | `512.0` | ? |  |
 | src/tile.rs:18 | BASE_SPACING | `0.5` | T |  |
 
-Stays const: TerrainBakeConfig.rt_stride (layout/math/id), NO_LAYER_ALBEDO (layout/math/id), STRIP_BLOCK_ROWS (small index), FORMAT (layout/math/id), FORMAT (layout/math/id), FORMAT (layout/math/id), FORMAT (layout/math/id), BLOCK_BYTES (layout/math/id), FORMAT (layout/math/id), TILE_SAMPLES (derived), BLOCK_QUADS (small index), BLOCKS (derived), LAYER_SAMPLES (derived), TINT_SAMPLES (derived).
+Stays const: TerrainBakeConfig.rt_stride (layout/math/id), NO_LAYER_ALBEDO (layout/math/id), STRIP_BLOCK_ROWS (small index), FILL_WORKGROUP (opt-out: layout: the shader's @workgroup_size), FILL_GROUPS_X (opt-out: layout: under the 65535 per-dimension dispatch limit), JOB_WORDS (opt-out: layout: the shader's struct), ROW_ALIGN (opt-out: format: the API's copy alignment), FILL_GROUPS_X (shader enum), FORMAT (layout/math/id), FORMAT (layout/math/id), FORMAT (layout/math/id), FORMAT (layout/math/id), BLOCK_BYTES (layout/math/id), FORMAT (layout/math/id), TILE_SAMPLES (derived), BLOCK_QUADS (small index), BLOCKS (derived), LAYER_SAMPLES (derived), TINT_SAMPLES (derived).
 
-### sf_terrain_bevy (74: T 34, C 38, ? 2)
+### sf_terrain_bevy (79: T 32, C 46, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/far_map.rs:24 | FAR_MAP_SIZE | `384` | T |  |
-| src/far_map.rs:26 | FAR_MAP_TEXEL | `24.0` | T |  |
-| src/far_map.rs:32 | REFRESH_COS | `0.999_990_5` | T |  |
-| src/far_map.rs:33 | REFRESH_MOVE | `1000.0` | ? |  |
-| src/far_map.rs:34 | REFRESH_AGE | `Duration::from_secs(8)` | T |  |
-| src/lib.rs:70 | DEFAULT_REFLECTANCE | `0.3` | ? |  |
-| src/lib.rs:75 | DEFAULT_LAYER_BUDGET | `1 << 30` | T |  |
-| src/lib.rs:116 | TerrainSettings.max_loads | `16` | T |  |
-| src/lib.rs:117 | TerrainSettings.snap | `16` | T | settings default |
-| src/lib.rs:118 | TerrainSettings.splat_range | `1000.0` | T |  |
-| src/lib.rs:119 | TerrainSettings.blend_depth | `0.2` | T |  |
-| src/lib.rs:123 | TerrainSettings.raise_m | `0.0` | T |  |
-| src/lib.rs:771 | SHIFT_SETTLE_FRAMES | `2` | T |  |
-| src/lib.rs:779 | SLACK_M | `0.05` | T |  |
+| src/far_map.rs:25 | FAR_MAP_SIZE | `384` | T |  |
+| src/far_map.rs:27 | FAR_MAP_TEXEL | `24.0` | T |  |
+| src/far_map.rs:34 | REFRESH_COS | `0.999_990_5` | T |  |
+| src/far_map.rs:35 | REFRESH_AGE | `Duration::from_secs(8)` | T |  |
+| src/lib.rs:83 | DEFAULT_REFLECTANCE | `0.3` | ? |  |
+| src/lib.rs:88 | DEFAULT_LAYER_BUDGET | `1 << 30` | T |  |
+| src/lib.rs:509 | TerrainSettings.max_loads | `16` | T |  |
+| src/lib.rs:510 | TerrainSettings.snap | `16` | T | settings default |
+| src/lib.rs:511 | TerrainSettings.splat_range | `1000.0` | T |  |
+| src/lib.rs:512 | TerrainSettings.blend_depth | `0.2` | T |  |
+| src/lib.rs:516 | TerrainSettings.raise_m | `0.0` | T |  |
+| src/lib.rs:521 | TerrainSettings.gpu_fill | `true` | T | settings default |
+| src/lib.rs:1426 | SHIFT_SETTLE_FRAMES | `2` | T |  |
+| src/lib.rs:1434 | SLACK_M | `0.05` | T |  |
 | src/params.rs:12 | P_HEIGHT | `16` | T |  |
 | src/params.rs:18 | MAX_LAYERS | `256` | T |  |
-| src/params.rs:24 | HEIGHT_LEVELS | `10` | T |  |
-| src/params.rs:27 | MORPH_LODS | `12` | T |  |
+| src/params.rs:33 | HEIGHT_LEVELS | `10` | T |  |
+| src/params.rs:36 | MORPH_LODS | `12` | T |  |
 | src/shaders/common.wesl:36 | P_HEIGHT | `16u` | T | shader const: needs a uniform |
 | src/shaders/common.wesl:41 | P_FAR | `552u` | T | shader const: needs a uniform |
-| src/shaders/common.wesl:43 | MIN_LOD | `-2` | T | shader const: needs a uniform |
-| src/shaders/common.wesl:44 | HEIGHT_LEVELS | `10u` | T | shader const: needs a uniform |
-| src/shaders/common.wesl:46 | SIZE | `512` | T | shader const: needs a uniform |
-| src/shaders/common.wesl:364 | RAISE_FADE_START | `8.0` | T | shader const: needs a uniform |
-| src/shaders/common.wesl:365 | RAISE_FADE_END | `12.0` | T | shader const: needs a uniform |
-| src/shaders/common.wesl:367 | RAISE_MAX_LOD | `4` | T | shader const: needs a uniform |
-| src/shaders/common.wesl:370 | RAISE_TEXEL_M | `0.5` | T | shader const: needs a uniform |
-| src/shaders/far_shadow.wesl:34 | FAR_STEPS | `14u` | T | shader const: needs a uniform |
+| src/shaders/common.wesl:47 | MIN_LOD | `-2` | T | shader const: needs a uniform |
+| src/shaders/common.wesl:48 | HEIGHT_LEVELS | `10u` | T | shader const: needs a uniform |
+| src/shaders/common.wesl:50 | SIZE | `512` | T | shader const: needs a uniform |
+| src/shaders/common.wesl:402 | RAISE_MAX_LOD | `4` | T | shader const: needs a uniform |
+| src/shaders/far_shadow.wesl:34 | FAR_STEPS | `18u` | T | shader const: needs a uniform |
 | src/shaders/far_shadow.wesl:37 | FAR_REACH | `5000.0` | T | shader const: needs a uniform |
-| src/shaders/far_shadow.wesl:40 | FAR_PENUMBRA | `0.012` | T | shader const: needs a uniform |
-| src/shaders/far_shadow.wesl:42 | FAR_FADE_START | `0.85` | T | shader const: needs a uniform |
-| src/shaders/far_shadow.wesl:45 | FAR_BIAS_PER_M | `0.0015` | T | shader const: needs a uniform |
-| src/shaders/far_shadow.wesl:46 | FAR_FIRST_PER_M | `0.01` | T | shader const: needs a uniform |
-| src/shaders/far_shadow.wesl:49 | FAR_MARCH_END | `700.0` | T | shader const: needs a uniform |
-| src/shaders/far_shadow.wesl:51 | FAR_MAP_BIAS | `6.0` | T | shader const: needs a uniform |
-| src/shaders/far_shadow.wesl:52 | FAR_MAP_PENUMBRA_MIN | `2.0` | T | shader const: needs a uniform |
+| src/shaders/far_shadow.wesl:41 | FAR_FIRST_M | `4.0` | T | shader const: needs a uniform |
+| src/shaders/far_shadow.wesl:44 | FAR_PENUMBRA | `0.012` | T | shader const: needs a uniform |
+| src/shaders/far_shadow.wesl:46 | FAR_FADE_START | `0.85` | T | shader const: needs a uniform |
+| src/shaders/far_shadow.wesl:49 | FAR_BIAS_PER_M | `0.001` | T | shader const: needs a uniform |
+| src/shaders/far_shadow.wesl:52 | FAR_MARCH_END | `700.0` | T | shader const: needs a uniform |
+| src/shaders/far_shadow.wesl:54 | FAR_MAP_BIAS | `3.5` | T | shader const: needs a uniform |
+| src/shaders/far_shadow.wesl:55 | FAR_MAP_PENUMBRA_MIN | `2.0` | T | shader const: needs a uniform |
 
-Stays const: P_CAMERA (small index), P_ORIGIN (small index), P_MISC (small index), P_VALID (small index), P_MORPH (small index), P_LAYER (small index), P_MACRO (small index), P_DETAIL (small index), P_LAYERS (small index), P_FAR (derived), SLOTS (layout/math/id), LAYER_LEVELS (small index), MACRO_LEVELS (small index), DEBUG_LOD (layout/math/id), DEBUG_WIREFRAME (layout/math/id), DEBUG_NO_FAR_SHADOWS (layout/math/id), DEBUG_NO_SPECULAR (layout/math/id), DEBUG_NO_INDIRECT (layout/math/id), DEBUG_RAW_LAYERS (layout/math/id), DEBUG_NO_ENV_SPECULAR (layout/math/id), P_CAMERA (shader enum), P_ORIGIN (shader enum), P_MISC (shader enum), P_VALID (shader enum), P_MORPH (shader enum), P_LAYER (shader enum), P_MACRO (shader enum), P_DETAIL (shader enum), P_LAYERS (shader enum), LAYER_LEVELS (shader enum), DEBUG_LOD (layout/math/id), DEBUG_WIREFRAME (layout/math/id), DEBUG_NO_FAR_SHADOWS (layout/math/id), DEBUG_NO_SPECULAR (layout/math/id), DEBUG_NO_INDIRECT (layout/math/id), DEBUG_RAW_LAYERS (layout/math/id), DEBUG_NO_ENV_SPECULAR (layout/math/id), MACRO_LEVELS (shader enum).
+Stays const: P_CAMERA (small index), P_ORIGIN (small index), P_MISC (small index), P_VALID (small index), P_MORPH (small index), P_LAYER (small index), P_MACRO (small index), P_DETAIL (small index), P_LAYERS (small index), P_FAR (derived), P_RAISE (derived), P_HEX (derived), P_CLIFF (derived), P_SHADE (derived), SLOTS (layout/math/id), LAYER_LEVELS (small index), MACRO_LEVELS (small index), DEBUG_LOD (layout/math/id), DEBUG_WIREFRAME (layout/math/id), DEBUG_NO_FAR_SHADOWS (layout/math/id), DEBUG_NO_SPECULAR (layout/math/id), DEBUG_NO_INDIRECT (layout/math/id), DEBUG_RAW_LAYERS (layout/math/id), DEBUG_NO_ENV_SPECULAR (layout/math/id), P_CAMERA (shader enum), P_ORIGIN (shader enum), P_MISC (shader enum), P_VALID (shader enum), P_MORPH (shader enum), P_LAYER (shader enum), P_MACRO (shader enum), P_DETAIL (shader enum), P_LAYERS (shader enum), P_RAISE (shader enum), P_HEX (shader enum), P_CLIFF (shader enum), P_SHADE (shader enum), LAYER_LEVELS (shader enum), DEBUG_LOD (layout/math/id), DEBUG_WIREFRAME (layout/math/id), DEBUG_NO_FAR_SHADOWS (layout/math/id), DEBUG_NO_SPECULAR (layout/math/id), DEBUG_NO_INDIRECT (layout/math/id), DEBUG_RAW_LAYERS (layout/math/id), DEBUG_NO_ENV_SPECULAR (layout/math/id), MACRO_LEVELS (shader enum).
 
-### sf_water (55: T 37, C 3, ? 15)
+### sf_water (99: T 52, C 8, ? 39)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:39 | TWIN_RESOLUTION | `64` | T |  |
+| src/lib.rs:51 | TWIN_RESOLUTION | `64` | T |  |
+| src/medium.rs:121 | CameraMedium.column | `0.0` | ? |  |
+| src/medium.rs:122 | CameraMedium.submerged | `false` | ? | bool |
+| src/medium.rs:123 | CameraMedium.changed | `false` | ? | bool |
 | src/records.rs:157 | WaterOptics.absorption | `[0.45, 0.065, 0.02]` | ? |  |
 | src/records.rs:158 | WaterOptics.scattering | `[0.003, 0.004, 0.005]` | T |  |
 | src/records.rs:159 | WaterOptics.phase_g | `0.8` | ? |  |
@@ -2347,32 +2417,68 @@ Stays const: P_CAMERA (small index), P_ORIGIN (small index), P_MISC (small index
 | src/sea_wind.rs:48 | SeaWindSettings.min_speed_step | `0.15` | T |  |
 | src/sea_wind.rs:49 | SeaWindSettings.angle_step_deg | `3.0` | T |  |
 | src/sea_wind.rs:50 | SeaWindSettings.calm | `0.5` | T | settings default |
-| src/shore.rs:47 | ShoreSettings.range | `256.0` | T |  |
-| src/shore.rs:48 | ShoreSettings.open_core | `200.0` | T | settings default |
-| src/shore.rs:49 | ShoreSettings.open_falloff | `800.0` | T |  |
-| src/shore.rs:50 | ShoreSettings.enclosed_fetch | `2000.0` | T | settings default |
-| src/shore.rs:51 | ShoreSettings.enclosed_max | `0.35` | T |  |
-| src/shore.rs:52 | ShoreSettings.swell_ramp | `40.0` | T | settings default |
-| src/shore.rs:53 | ShoreSettings.chop_ramp | `3.0` | T | settings default |
-| src/shore.rs:54 | ShoreSettings.chop_floor | `0.25` | T | settings default |
-| src/shore.rs:55 | ShoreSettings.normal_floor | `0.5` | T | settings default |
-| src/shore.rs:56 | ShoreSettings.beach_slope | `0.05` | T | settings default |
-| src/shore.rs:57 | ShoreSettings.shore_waves | `1.0` | T | settings default |
-| src/shore.rs:127 | BIG | `1e20` | ? |  |
-| src/shore.rs:132 | BED_SLOPE_MIN | `0.02` | T |  |
-| src/shore.rs:133 | BED_SLOPE_MAX | `0.3` | T |  |
-| src/shore_waves.rs:62 | MICHE | `0.142 * PI` | ? |  |
-| src/shore_waves.rs:64 | STEEPNESS_LIMIT | `0.75` | T |  |
-| src/shore_waves.rs:68 | ORBIT_LIMIT | `0.4` | T |  |
-| src/shore_waves.rs:70 | MIN_DEPTH | `0.1` | T |  |
-| src/shore_waves.rs:72 | NOISE_PERIOD | `1024.0` | T |  |
-| src/shore_waves.rs:73 | PHASE_CELLS | `16` | ? |  |
-| src/shore_waves.rs:74 | SET_CELLS | `32` | ? |  |
-| src/shore_waves.rs:75 | PHASE_NOISE | `0.8` | T |  |
-| src/shore_waves.rs:76 | SET_FLOOR | `0.6` | ? |  |
-| src/shore_waves.rs:77 | SWASH_SKEW | `0.5` | ? |  |
-| src/shore_waves.rs:79 | SWASH_ZONE | `0.3` | ? |  |
-| src/shore_waves.rs:81 | ECKART_LINEAR | `4.0` | T |  |
+| src/shore.rs:123 | SurfShape.enabled | `true` | ? | bool |
+| src/shore.rs:124 | SurfShape.height_gain | `1.5` | T |  |
+| src/shore.rs:125 | SurfShape.breaker_gamma | `0.78` | ? |  |
+| src/shore.rs:126 | SurfShape.steepen_start | `0.6` | ? |  |
+| src/shore.rs:127 | SurfShape.bore_start | `1.0` | ? |  |
+| src/shore.rs:128 | SurfShape.bore_full | `1.5` | ? |  |
+| src/shore.rs:129 | SurfShape.skew_steepen | `0.35` | ? |  |
+| src/shore.rs:130 | SurfShape.skew_bore | `0.6` | ? |  |
+| src/shore.rs:131 | SurfShape.bore_loop | `1.0` | ? |  |
+| src/shore.rs:132 | SurfShape.break_crest_min_m | `1.0` | T |  |
+| src/shore.rs:133 | SurfShape.break_sharpness | `8.0` | T |  |
+| src/shore.rs:134 | SurfShape.gap_cell_m | `24.0` | T |  |
+| src/shore.rs:135 | SurfShape.gap_share | `0.3` | ? |  |
+| src/shore.rs:136 | SurfShape.gap_feather | `0.08` | ? |  |
+| src/shore.rs:236 | SurfFoam.enabled | `true` | ? | bool |
+| src/shore.rs:237 | SurfFoam.birth_start | `0.5` | ? |  |
+| src/shore.rs:238 | SurfFoam.birth_full | `0.85` | ? |  |
+| src/shore.rs:239 | SurfFoam.bore_decay_rad | `1.8` | T |  |
+| src/shore.rs:240 | SurfFoam.front_rad | `0.3` | T |  |
+| src/shore.rs:241 | SurfFoam.lace_cell_m | `1.4` | T |  |
+| src/shore.rs:242 | SurfFoam.lace_fresh | `0.8` | ? |  |
+| src/shore.rs:243 | SurfFoam.lace_aged | `0.06` | T |  |
+| src/shore.rs:244 | SurfFoam.feather | `0.05` | ? |  |
+| src/shore.rs:245 | SurfFoam.lace_variation | `0.5` | ? |  |
+| src/shore.rs:246 | SurfFoam.albedo_fresh | `0.85` | ? |  |
+| src/shore.rs:247 | SurfFoam.albedo_aged | `0.55` | T |  |
+| src/shore.rs:248 | SurfFoam.aged_tint | `0.6` | T |  |
+| src/shore.rs:249 | SurfFoam.aged_opacity | `0.6` | T |  |
+| src/shore.rs:250 | SurfFoam.glow | `0.8` | ? |  |
+| src/shore.rs:251 | SurfFoam.bump_m | `0.03` | T |  |
+| src/shore.rs:252 | SurfFoam.swash_residue_rad | `1.2` | T |  |
+| src/shore.rs:253 | SurfFoam.contact_calm | `0.2` | ? |  |
+| src/shore.rs:254 | SurfFoam.contact_line | `0.15` | ? |  |
+| src/shore.rs:255 | SurfFoam.swash_spread | `2.0` | T |  |
+| src/shore.rs:263 | ShoreSettings.range | `256.0` | T |  |
+| src/shore.rs:264 | ShoreSettings.open_core | `200.0` | T | settings default |
+| src/shore.rs:265 | ShoreSettings.open_falloff | `800.0` | T |  |
+| src/shore.rs:266 | ShoreSettings.enclosed_fetch | `2000.0` | T | settings default |
+| src/shore.rs:267 | ShoreSettings.enclosed_max | `0.35` | T |  |
+| src/shore.rs:268 | ShoreSettings.swell_ramp | `40.0` | T | settings default |
+| src/shore.rs:269 | ShoreSettings.chop_ramp | `3.0` | T | settings default |
+| src/shore.rs:270 | ShoreSettings.chop_floor | `0.25` | T | settings default |
+| src/shore.rs:271 | ShoreSettings.normal_floor | `0.5` | T | settings default |
+| src/shore.rs:272 | ShoreSettings.beach_slope | `0.05` | T | settings default |
+| src/shore.rs:273 | ShoreSettings.shore_waves | `1.0` | T | settings default |
+| src/shore.rs:274 | ShoreSettings.foam_full_breaking | `0.6` | T | settings default |
+| src/shore.rs:346 | BIG | `1e20` | ? |  |
+| src/shore.rs:351 | BED_SLOPE_MIN | `0.02` | T |  |
+| src/shore.rs:352 | BED_SLOPE_MAX | `0.3` | T |  |
+| src/shore_waves.rs:80 | MICHE | `0.142 * PI` | ? |  |
+| src/shore_waves.rs:82 | STEEPNESS_LIMIT | `0.75` | T |  |
+| src/shore_waves.rs:86 | ORBIT_LIMIT | `0.4` | T |  |
+| src/shore_waves.rs:88 | MIN_DEPTH | `0.1` | T |  |
+| src/shore_waves.rs:90 | NOISE_PERIOD | `1024.0` | T |  |
+| src/shore_waves.rs:91 | PHASE_CELLS | `16` | ? |  |
+| src/shore_waves.rs:92 | SET_CELLS | `32` | ? |  |
+| src/shore_waves.rs:93 | PHASE_NOISE | `0.8` | T |  |
+| src/shore_waves.rs:94 | SET_FLOOR | `0.6` | ? |  |
+| src/shore_waves.rs:95 | SWASH_SKEW | `0.5` | ? |  |
+| src/shore_waves.rs:97 | SWASH_ZONE | `0.3` | ? |  |
+| src/shore_waves.rs:99 | ECKART_LINEAR | `4.0` | T |  |
+| src/shore_waves.rs:101 | GAP_SEEDS | `[4, 5]` | ? |  |
 | src/spectrum.rs:29 | GRAVITY | `9.81` | T |  |
 | src/spectrum.rs:36 | REPEAT_PERIOD | `256.0` | ? |  |
 | src/spectrum.rs:67 | SpectrumParams.speed | `8.0` | T |  |
@@ -2384,40 +2490,46 @@ Stays const: P_CAMERA (small index), P_ORIGIN (small index), P_MISC (small index
 | src/sspr.rs:28 | MIN_HEIGHT | `0.01` | T |  |
 | src/twin.rs:31 | INVERSION_ITERATIONS | `3` | T |  |
 
-Stays const: LEAF (small index), TRAINS (small index), BREAKER_INDEX (layout/math/id).
+Stays const: CENTRE (small index), CameraMedium.started (runtime state), LEAF (small index), TRAINS (small index), BREAKER_INDEX (layout/math/id), SKEW_RATE_LIMIT (opt-out: a no-fold bound derived from the Jacobian, as ORBIT_LIMIT), MIN_EXTINCTION (opt-out: maths: a division guard, the shaders' floor), LEAF_TEXELS (opt-out: layout: the tree's leaf; exactness never depends on it).
 
-### sf_water_bevy (32: T 18, C 6, ? 8)
+### sf_water_bevy (45: T 20, C 13, ? 12)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:49 | RESOLUTION | `256` | T |  |
-| src/lib.rs:51 | MAX_CASCADES | `4` | T |  |
-| src/lib.rs:53 | MAX_LOOKS | `8` | T |  |
-| src/lib.rs:161 | WaterReflections.sspr | `true` | ? | bool |
-| src/lib.rs:161 | WaterReflections.wave_distortion | `0.6` | T |  |
-| src/lib.rs:254 | ClipmapSettings.base_spacing | `0.25` | T |  |
-| src/lib.rs:254 | ClipmapSettings.quads | `128` | T | settings default |
-| src/lib.rs:254 | ClipmapSettings.rings | `7` | T |  |
-| src/lib.rs:254 | ClipmapSettings.skirt | `32_000.0` | T | settings default |
-| src/lib.rs:254 | ClipmapSettings.displacement_range | `900.0` | T |  |
-| src/shaders/water_common.wesl:71 | SW_SHARES | `vec3(0.5, 0.3, 0.2)` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:72 | SW_PHASE_SPREAD | `vec3(1.0, -0.7, 1.3)` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:73 | SW_BREAKER | `0.78` | ? |  |
-| src/shaders/water_common.wesl:74 | SW_MICHE | `0.44610616` | ? |  |
-| src/shaders/water_common.wesl:75 | SW_STEEPNESS | `0.75` | ? |  |
-| src/shaders/water_common.wesl:76 | SW_ORBIT | `0.4` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:77 | SW_MIN_DEPTH | `0.1` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:78 | SW_PHASE_NOISE | `0.8` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:79 | SW_SET_FLOOR | `0.6` | ? |  |
-| src/shaders/water_common.wesl:80 | SW_SKEW | `0.5` | ? |  |
-| src/shaders/water_common.wesl:81 | SW_ZONE | `0.3` | ? |  |
-| src/shaders/water_common.wesl:82 | SW_ECKART_LINEAR | `4.0` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:83 | SW_GRAVITY | `9.81` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:84 | SW_REPEAT | `256.0` | ? |  |
+| src/lib.rs:65 | RESOLUTION | `256` | T |  |
+| src/lib.rs:67 | MAX_CASCADES | `4` | T |  |
+| src/lib.rs:69 | MAX_LOOKS | `8` | T |  |
+| src/lib.rs:177 | WaterReflections.sspr | `true` | ? | bool |
+| src/lib.rs:177 | WaterReflections.wave_distortion | `0.6` | T |  |
+| src/lib.rs:276 | ClipmapSettings.base_spacing | `0.25` | T |  |
+| src/lib.rs:276 | ClipmapSettings.quads | `128` | T | settings default |
+| src/lib.rs:276 | ClipmapSettings.rings | `7` | T |  |
+| src/lib.rs:276 | ClipmapSettings.skirt | `32_000.0` | T | settings default |
+| src/lib.rs:276 | ClipmapSettings.displacement_range | `900.0` | T |  |
+| src/medium.rs:90 | WaterMediumSettings.post | `true` | T | settings default |
+| src/render.rs:173 | GATE_ARGS_SNAPSHOT | `0` | ? |  |
+| src/render.rs:174 | GATE_ARGS_VELOCITY | `16` | ? |  |
+| src/render.rs:175 | GATE_ARGS_SSPR | `32` | ? |  |
+| src/render.rs:180 | GATE_STRIP | `14` | ? |  |
+| src/shaders/water_common.wesl:95 | SW_SHARES | `vec3(0.5, 0.3, 0.2)` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:96 | SW_PHASE_SPREAD | `vec3(1.0, -0.7, 1.3)` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:97 | SW_BREAKER | `0.78` | ? |  |
+| src/shaders/water_common.wesl:98 | SW_MICHE | `0.44610616` | ? |  |
+| src/shaders/water_common.wesl:99 | SW_STEEPNESS | `0.75` | ? |  |
+| src/shaders/water_common.wesl:100 | SW_ORBIT | `0.4` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:101 | SW_MIN_DEPTH | `0.1` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:102 | SW_PHASE_NOISE | `0.8` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:103 | SW_SET_FLOOR | `0.6` | ? |  |
+| src/shaders/water_common.wesl:104 | SW_SKEW | `0.5` | ? |  |
+| src/shaders/water_common.wesl:105 | SW_ZONE | `0.3` | ? |  |
+| src/shaders/water_common.wesl:108 | SW_ECKART_LINEAR | `4.0` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:109 | SW_GRAVITY | `9.81` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:110 | SW_REPEAT | `256.0` | ? |  |
 | src/shaders/water_fft.wesl:42 | MAX_N | `256u` | T | shader const: needs a uniform |
 | src/shaders/water_sspr.wesl:27 | MIN_HEIGHT | `0.01` | T | shader const: needs a uniform |
+| src/shaders/water_underwater.wesl:36 | MIN_EXTINCTION | `1e-4` | T | shader const: needs a uniform |
 
-Stays const: OceanSpectrum.seed (runtime state), KEEP (small index), SSPR_GROUP (layout/math/id), SW_TAU (layout/math/id), LANES (shader enum), TAU (layout/math/id).
+Stays const: MAX_GATE_BOXES (opt-out: capacity: past it the gate runs every pass), OceanSpectrum.seed (runtime state), KEEP (small index), NO_WATER_DEPTH_M (opt-out: format: a finite ∞ for the GPU), RAIN_CLOCK_WRAP_S (opt-out: maths: whole ring cycles per wrap), GATE_ARGS_BYTES (layout/math/id), GATE_BOX_BYTES (layout/math/id), SSPR_GROUP (layout/math/id), SW_SKEW_RATE_LIMIT (opt-out: the twin of sf_water SKEW_RATE_LIMIT, a no-fold bound), SW_TAU (layout/math/id), SW_PI (layout/math/id), LANES (shader enum), TAU (layout/math/id).
 
 ## textures
 
@@ -2570,8 +2682,8 @@ Stays const: EPSILON (layout/math/id).
 | src/keybinds.rs:89 | CELL_GAP | `8.0` | ? |  |
 | src/loading.rs:33 | SWEEP_SECONDS | `1.5` | ? |  |
 | src/loading.rs:35 | SWEEP_WIDTH | `25.0` | T |  |
-| src/options.rs:64 | DEFAULT_FLOAT_STEPS | `20.0` | T |  |
-| src/options.rs:67 | THUMB_WIDTH | `10.0` | T |  |
-| src/options.rs:70 | PANE_WIDTH | `280.0` | T |  |
+| src/options.rs:65 | DEFAULT_FLOAT_STEPS | `20.0` | T |  |
+| src/options.rs:68 | THUMB_WIDTH | `10.0` | T |  |
+| src/options.rs:71 | PANE_WIDTH | `280.0` | T |  |
 | src/saveload.rs:244 | THUMB | `(128.0, 72.0)` | ? |  |
 | src/widgets.rs:98 | ScreenColors.font_size | `18.0` | T |  |

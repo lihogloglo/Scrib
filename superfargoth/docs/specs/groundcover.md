@@ -1,6 +1,6 @@
 # Groundcover: species, rules, runtime scatter
 
-Status: **GC-1 core built (2026-11-22)**, renderers spec (GC-2 next). Crates (planned): `sf_groundcover` (Bevy-free core),
+Status: **GC-1 core + GC-2a mesh renderer built (2026-11-22)**, not yet run on a GPU or in the game; GC-2b (game wiring) next. Crates (planned): `sf_groundcover` (Bevy-free core),
 `sf_groundcover_bevy` (thin plugin: both renderers, wind and trample bridges). Adapter:
 `../../../bevyrrowind/docs/specs/groundcover-adapter.md`. Research: `../research/groundcover-2026-11-22.md` (industry
 read + source read of `bevy_grass`, `bevy_feronia`, `bevy_meadow`, `bevy_foliage_tool`). ROADMAP: Phase 4
@@ -183,6 +183,35 @@ One deliverable plus its test per slice.
     regions suppress their range class only. Exclusion under statics is left to the adapter/GC-2 as regions or masks.
   - Tunables: `groundcover.tile_size_m` 16, `groundcover.max_instances_per_tile` 16384, `groundcover.density_scale` 1.0 (Guess).
   - Cost: one ground sample per candidate per species; GC-2 should share samples across species with equal grids.
+- **GC-2a** done 2026-11-22 (`sf_groundcover_bevy`, 17 tests, headless; not run on a GPU). As built:
+  - Game API: insert `GroundcoverSource { cover, overrides, ground: Arc<dyn GroundSource> }` (`GroundSource` = `GroundSampler`
+    + `ready(rect)`: a tile scatters only once its terrain is loaded; `FnGround` closure helper; absolute world metres),
+    `GroundcoverModels` (model key -> mesh + `StandardMaterial` + `bend_height_m`, may arrive late), `GroundcoverViewer` on
+    the camera, `GroundcoverPlugin` after `DefaultPlugins` and the wind plugin.
+  - Batches: one plain + one casting batch per model, capacity sized from the ring's worst case, capped by
+    `groundcover.render.max_blocks_per_batch` (256; overflow shows as `groundcover/tiles/unplaced`). Writer mirrors
+    `sf_scene_bevy/src/upload.rs`; origin shifts follow `sf_world_bevy::WorldOrigin`, live slots rewritten from per-tile CPU copies.
+  - Material: `ExtendedMaterial<StandardMaterial, GroundcoverWind>`, forced forward (the tint needs a fragment override);
+    sway comes from the moving gust field only (no time binding in the prepass), motion vectors from wind at t and t-dt.
+  - Optional per-tile ground cache shared across species (pays only when the real terrain query is expensive: 42 us direct
+    vs 124 us cached on flat synthetic ground). Measured (synthetic, 4 species): ~303 instances, 19 KB GPU, 11 KB CPU, ~42 us per tile.
+  - Gauges `groundcover/*`; shadow split (near species inside the shadow range cast, the rest `NotShadowCaster`).
+- **GC-2b1** done 2026-11-22: `TerrainGround` (`sf_groundcover_bevy/src/terrain_ground.rs`), a `GroundSource` over
+  level-0 terrain: heights/normals from `TerrainHeightsMap`, channels from the new `sf_terrain_bevy::TerrainLayersMap`
+  (resident level-0 `Arc<LayerMap>` per tile, synced at the end of `TerrainSystems::Update`, written only on change) through a
+  caller-supplied `LayerChannels` remap (`LayerId.0` -> rule channel), nearest 1 m sample, weight/255. Snapshot of `Arc`s
+  refreshed by `TerrainGroundPlugin` (PostUpdate); `water_distance` = height - the worldspace sea level given at construction
+  (lakes and rivers not read yet). Gaps: no rescatter under terrain edits; a GPU world without layer maps gets no groundcover.
+- **GC-2b2** done 2026-11-22: Morrowind data `bevyrrowind/data/groundcover.ron` (13 species from the vanilla flora meshes,
+  7 rules, 7 named channels keyed by LTEX ids, every number `Guess`) + resolver `mw_world::groundcover` (`GroundcoverData::builtin`,
+  `build`, `resolve(&LayerTable) -> ChannelMap { pairs, unmatched }`, `model_keys`, keys like `meshes/f/flora_grass_01.nif`).
+  `LayerId` is a 32-bit name hash, so `LayerChannels` is sparse (`from_pairs`, binary search; fixed by the orchestrator).
+- **GC-2b3** done 2026-11-22: `mw_exterior_bevy::groundcover::GroundcoverGamePlugin` (registered after the wind plugin):
+  layer table from `BakedTerrain::layer_table()`, sea level from the exterior record, NIF models through the runtime loader
+  (first visible mesh, node transform baked), `GroundcoverViewer` on the `TerrainCamera`, exterior render layer only; adds
+  `GpuInstanceBatchPlugin` itself under `--off scene`. Off switch `--off groundcover` (`Part::Groundcover`). Log line
+  `groundcover: species S, channels matched M/N, unmatched [..], models loaded L/13`. Gaps: first mesh only; no normal/ORM
+  companions; `ImageRebindPlugin` doesn't re-bind the cloned materials. Scenes `gc-ascadian`, `gc-grazelands`, `gc-bittercoast` (GC-2).
 - **GC-2** mesh renderer (`sf_groundcover_bevy`, ~600-900 lines, guess):
   - Tile ring manager around the camera, with hysteresis.
   - Task scatter from the GC-1 rules plus terrain `height_at`, written into a fixed tile-block slot pool, one

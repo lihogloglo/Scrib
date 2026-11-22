@@ -1,0 +1,59 @@
+[package]
+name = "sf_groundcover_bevy"
+description = "Bevy plugin for sf_groundcover: tile rings around the viewer, task scatter into retained GPU instance batches, the wind-bent alpha-mask groundcover material"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Thin plugin over the Bevy-free core `sf_groundcover` (spec `docs/specs/groundcover.md` "Renderers", slice GC-2).
+# Minimal Bevy (ARCHITECTURE §8b rule 6): every Bevy crate and feature below is already in the unified set.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+# Visibility of the batch entities.
+bevy_camera.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+# NotShadowCaster on the batches outside the near shadow range.
+bevy_light.workspace = true
+# OpaqueRendererMethod: the material's fragment stage is forward only.
+bevy_material.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+# Mesh: the model's AABB for the bend height.
+bevy_mesh.workspace = true
+# GpuBatchedMesh3d (vendored bevy#25978), ExtendedMaterial.
+bevy_pbr.workspace = true
+# Instant: the scatter's own timing.
+bevy_platform = { workspace = true, features = ["std"] }
+bevy_reflect = { workspace = true, features = ["std"] }
+# MainWorld, ExtractSchedule, RenderQueue, ShaderBuffer: the batch-slot writer and the wind binding.
+bevy_render.workspace = true
+bevy_shader.workspace = true
+# The scatter runs on AsyncComputeTaskPool.
+bevy_tasks = { workspace = true, features = ["futures-lite"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+log.workspace = true
+# WorldPos: the floating origin's frame (as `sf_scene::cell_offset`).
+sf_coords.workspace = true
+sf_diag_bevy.workspace = true
+sf_groundcover.workspace = true
+# TerrainGround: the resident terrain heights and level-0 layer maps (TerrainHeightsMap, TerrainLayersMap).
+sf_terrain_bevy.workspace = true
+sf_tunables.workspace = true
+sf_tunables_bevy.workspace = true
+# WindBuffer and the `sf_wind_bevy::wind` WESL module (the bend).
+sf_wind_bevy.workspace = true
+# WorldspaceId: the worldspace a TerrainGround reads.
+sf_world.workspace = true
+# WorldOrigin, WorldOriginSystems: the floating origin the batch slots are placed in.
+sf_world_bevy.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+# Shader compile checks (no GPU, no picture), as sf_character_bevy's.
+naga = { workspace = true, features = ["wgsl-in"] }
+wesl = { workspace = true, features = ["naga-ext"] }
+
+[lints]
+workspace = true

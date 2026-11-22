@@ -1096,5 +1096,33 @@
             look_for: "grass and rock ground shows relief lit from the right (east), rock darker in its cracks (AO), grass matte, rock not glossy; no inverted bumps, no shimmer at 10-50 m, no seams at layer borders",
             checks: ["TX-2"],
         ),
+        // ---- groundcover (GC-2, .sessions/groundcover-research.md) ----
+        (
+            name: "gc-ascadian",
+            cell: "2,-7",
+            camera: "292,+1.7,760,330,+0.6,730",
+            hour: 8.0,
+            description: "Ascadian Isles east of Pelagiad (cell 2,-7, 71 % AI_Grass) at eye height, 08:00 low sun: groundcover GC-2 (vanilla flora_grass_01-07 with MVR PBR textures, scattered from the land textures)",
+            look_for: "grass and ferns standing on the grass ground only (not on roads, rock, mud or under water), not floating or sunk, no hard ring edge where they end (dithered fade), sway in the wind without popping; walk/fly (WASD, Shift) and look for tiles appearing; `--off groundcover` = without",
+            checks: ["GC-2"],
+        ),
+        (
+            name: "gc-grazelands",
+            cell: "11,8",
+            camera: "1345,+1.7,-995,1380,+0.6,-1030",
+            hour: 14.0,
+            description: "Grazelands (cell 11,8, 68 % GL_Grass) at eye height, 14:00: groundcover GC-2 on the grazelands grass rules",
+            look_for: "grass and ferns standing on the grass ground only (not on roads, rock, mud or under water), not floating or sunk, no hard ring edge where they end (dithered fade), sway in the wind without popping; walk/fly (WASD, Shift) and look for tiles appearing; `--off groundcover` = without",
+            checks: ["GC-2"],
+        ),
+        (
+            name: "gc-bittercoast",
+            cell: "-3,-8",
+            camera: "-292,+1.7,877,-320,+0.6,850",
+            hour: 10.0,
+            description: "Bitter Coast west of Seyda Neen (cell -3,-8, 48 % BC moss) at eye height, 10:00: groundcover GC-2 (flora_bc_grass + flora_bc_fern)",
+            look_for: "grass and ferns standing on the grass ground only (not on roads, rock, mud or under water), not floating or sunk, no hard ring edge where they end (dithered fade), sway in the wind without popping; walk/fly (WASD, Shift) and look for tiles appearing; `--off groundcover` = without",
+            checks: ["GC-2"],
+        ),
     ],
 )

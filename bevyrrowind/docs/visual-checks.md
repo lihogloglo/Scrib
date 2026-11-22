@@ -82,6 +82,7 @@ shows a bug that's already understood; confirm the bug or skip).
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
 ### Awaiting owner (64)
+GC-2 | awaiting owner | [groundcover](visual-checks/groundcover.md) | vanilla grass and ferns scattered from land textures, scenes `gc-ascadian`, `gc-grazelands`, `gc-bittercoast`, A/B `--off groundcover` (2026-11-22)
 LF-2b | owner 2026-11-22: reads natural, faces too smooth (wants hard edges); near faces get a jagged sawtooth (bug) | [worldgen](visual-checks/worldgen.md) | eroded fault scarps on `x10s` (`lf2b-scarps`): facets, chutes, debris cones, 25-143 m throws by region, no gully dents on faces (2026-11-22)
 LF-2 | owner 2026-11-22: blades, not cliffs; rework LF-2b | [worldgen](visual-checks/worldgen.md) | placed fault scarps on `x10s` (`lf2-scarps`): tilted-block scarps with talus fans, relay ramps, repair ramps (2026-11-22)
 ST-5 | awaiting owner | [streaming](visual-checks/streaming.md) | Far shadow map keeps its centre while walking (re-centres every 512 m), `scene ridge-shadows-morning` (2026-11-22)
@@ -159,7 +160,7 @@ OP-1 | confirmed with follow-up (2026-11-11: works; a plain list, needs real wid
 LK-1 | owner: issues (submenus overlap) | [player-ui](visual-checks/player-ui.md) | Look pass L1: OpenMW frames on windows, boxes, framed buttons
 LK-2 | owner: issues (Continue style) | [player-ui](visual-checks/player-ui.md) | Look pass L2: title menu as OpenMW image buttons, version text
 FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
-FG-12 | parked (2026-11-22): AS rejected, S3a shafts kept with a dark disc at the hidden sun, S3b bloom bad (blocky, shimmering), off | [weather-sky](visual-checks/weather-sky.md) | Sun glow shows through terrain (low sun behind a ridge, 2026-11-22)
+FG-12 | confirmed 2026-11-23 (cost pending): A1-A3 per-pixel sun visibility (LSO, AS, bloom now off; earlier: AS blocky, LSO dark disc, bloom shimmering) | [weather-sky](visual-checks/weather-sky.md) | Sun glow shows through terrain (low sun behind a ridge, 2026-11-22)
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)
 NV-1 | confirmed by owner 2026-11-18 (Balmora: `nav.stats` good, `nav.draw tiles` streams and follows terrain after detail-mesh + terrain-origin fixes) | [ai](visual-checks/ai.md) | Baked navmesh tiles over Seyda Neen (`nav.draw tiles`, `nav.stats`), slice NV4c (2026-11-17)
 NV-2 | confirmed by owner 2026-11-18 (Balmora) | [ai](visual-checks/ai.md) | NPCs walk smoothly on the fixed tick at low and high fps; wake, knockdown, ball hits without pops, slice NV7a (2026-11-17)

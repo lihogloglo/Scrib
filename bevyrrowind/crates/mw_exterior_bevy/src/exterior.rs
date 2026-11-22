@@ -566,6 +566,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // weather.md "Wind" (WD1): one wind field; fog and cloud drift read it.
     app.add_plugins(sf_wind_bevy::WindPlugin::default())
         .add_systems(PostUpdate, wind_origin.after(sync_origin).before(sf_wind_bevy::WindSystems::Advance));
+    // Groundcover (GC-2b3): after the wind and the scene's GPU instance batches; `--off groundcover`.
+    app.add_plugins(crate::groundcover::GroundcoverGamePlugin { store: options.store.clone(), manifest: manifest.clone(), off: perf.off.has(Part::Groundcover) });
     // FLICKER-1 (ST-2): origin shifts rebase motion vectors; `--off shiftrebase` resets history.
     app.insert_resource(crate::origin_rebase::ShiftRebase(!perf.off.has(Part::ShiftRebase)));
     // The cascades keep Bevy's 2048² maps: 4096² measured +1.4 ms at 1440p
@@ -631,6 +633,13 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
             let id = tunables.id_of(&sf_atmos_bevy::SHAFTS_ENABLED).expect("registered by CloudsPlugin");
             let _ = tunables.set_noted(id.untyped(), false.into(), sf_tunables_bevy::SetBy::CommandLine, Some("--off shafts".to_owned()));
+        }
+        // A2 (FG-12, aerial-shadow.md "Architecture review"): `--off sunvis` = no per-pixel sun
+        // visibility, the tunable `sky.sun_vis.enabled` off at the command-line layer.
+        if perf.off.has(Part::SunVis) {
+            let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
+            let id = tunables.id_of(&sf_atmos_bevy::SUN_VIS_ENABLED).expect("registered by CloudsPlugin");
+            let _ = tunables.set_noted(id.untyped(), false.into(), sf_tunables_bevy::SetBy::CommandLine, Some("--off sunvis".to_owned()));
         }
         // CW-1 (WE-13): the far storm reads as a cell under its clouds, its region edge ~half a
         // 117 m cell wide with ±48 m noise (owner 2026-11-12: borders stay fairly abrupt in a small

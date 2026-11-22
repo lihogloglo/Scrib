@@ -1,0 +1,300 @@
+// Morrowind groundcover: species, rule table and the land textures that feed each rule channel (slice GC-2b2;
+// spec `bevyrrowind/docs/specs/groundcover-adapter.md` "First species set"; core types `sf_groundcover`).
+// Read by `mw_world::groundcover`. Units: metres, degrees, instances per m². Every density, footprint, range,
+// slope and weight is a `Guess`, to be set by the owner's look loop on the test scenes, not copied from a mod.
+//
+// Model keys are VFS paths in the form `mw_world::model_path` gives a STAT's model ("meshes/f/....nif").
+// Rule weights: a species' weight at a point is Σ (rule weight × channel weight); its expected instances per m²
+// are that weight × `density`. Within one channel the weights are shares, summing to about 1 for a full meadow.
+(
+    species: [
+        // Ascadian Isles / grazelands grass clump (Morrowind.bsa)
+        (
+            id: "flora_grass_01",
+            render: Mesh(model: "meshes/f/flora_grass_01.nif"),
+            footprint_m: 0.6, // Guess
+            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.8, max: 1.2), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.92, 0.88), (1.08, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.3, max: 0.6), // Guess
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        // Ascadian Isles / grazelands grass clump (Morrowind.bsa)
+        (
+            id: "flora_grass_02",
+            render: Mesh(model: "meshes/f/flora_grass_02.nif"),
+            footprint_m: 0.6, // Guess
+            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.8, max: 1.2), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.92, 0.88), (1.08, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.3, max: 0.6), // Guess
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        // Ascadian Isles / grazelands grass clump (Morrowind.bsa)
+        (
+            id: "flora_grass_03",
+            render: Mesh(model: "meshes/f/flora_grass_03.nif"),
+            footprint_m: 0.6, // Guess
+            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.8, max: 1.2), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.92, 0.88), (1.08, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.3, max: 0.6), // Guess
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        // Ascadian Isles / grazelands grass clump (Morrowind.bsa)
+        (
+            id: "flora_grass_04",
+            render: Mesh(model: "meshes/f/flora_grass_04.nif"),
+            footprint_m: 0.6, // Guess
+            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.8, max: 1.2), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.92, 0.88), (1.08, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.3, max: 0.6), // Guess
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        // tall grass clump (Tribunal.bsa), sparse
+        (
+            id: "flora_grass_05",
+            render: Mesh(model: "meshes/f/flora_grass_05.nif"),
+            footprint_m: 1.2, // Guess
+            density: 0.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 30.0)), // Guess
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.85, max: 1.15), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.92, 0.88), (1.08, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.2, max: 0.4), // Guess
+            wind: 1.2, // Guess
+            trample: 0.8, // Guess
+            shadow: Near,
+            range: Near,
+        ),
+        // tall grass clump (Tribunal.bsa), sparse
+        (
+            id: "flora_grass_06",
+            render: Mesh(model: "meshes/f/flora_grass_06.nif"),
+            footprint_m: 1.2, // Guess
+            density: 0.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 30.0)), // Guess
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.85, max: 1.15), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.92, 0.88), (1.08, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.2, max: 0.4), // Guess
+            wind: 1.2, // Guess
+            trample: 0.8, // Guess
+            shadow: Near,
+            range: Near,
+        ),
+        // tall grass clump (Tribunal.bsa), sparse
+        (
+            id: "flora_grass_07",
+            render: Mesh(model: "meshes/f/flora_grass_07.nif"),
+            footprint_m: 1.2, // Guess
+            density: 0.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 30.0)), // Guess
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.85, max: 1.15), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.92, 0.88), (1.08, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.2, max: 0.4), // Guess
+            wind: 1.2, // Guess
+            trample: 0.8, // Guess
+            shadow: Near,
+            range: Near,
+        ),
+        // Bitter Coast swamp grass (Morrowind.bsa)
+        (
+            id: "flora_bc_grass_01",
+            render: Mesh(model: "meshes/f/flora_bc_grass_01.nif"),
+            footprint_m: 0.7, // Guess
+            density: 1.4, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 30.0)), // Guess
+            water_m: Some((min: 0.0, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.8, max: 1.2), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.88, 0.9, 0.85), (1.05, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.3, max: 0.6), // Guess
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        // Bitter Coast swamp grass (Morrowind.bsa)
+        (
+            id: "flora_bc_grass_02",
+            render: Mesh(model: "meshes/f/flora_bc_grass_02.nif"),
+            footprint_m: 0.7, // Guess
+            density: 1.4, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 30.0)), // Guess
+            water_m: Some((min: 0.0, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.8, max: 1.2), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.88, 0.9, 0.85), (1.05, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.3, max: 0.6), // Guess
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        // Bitter Coast fern, tall (Morrowind.bsa)
+        (
+            id: "flora_bc_fern_03",
+            render: Mesh(model: "meshes/f/flora_bc_fern_03.nif"),
+            footprint_m: 1.5, // Guess
+            density: 0.3, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 25.0)), // Guess
+            water_m: Some((min: 0.0, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.8, max: 1.1), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.92, 0.9), (1.05, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.2, max: 0.4), // Guess
+            wind: 0.5, // Guess
+            trample: 0.6, // Guess
+            shadow: Near,
+            range: Mid,
+        ),
+        // Bitter Coast fern, tall (Morrowind.bsa)
+        (
+            id: "flora_bc_fern_04",
+            render: Mesh(model: "meshes/f/flora_bc_fern_04.nif"),
+            footprint_m: 1.5, // Guess
+            density: 0.3, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 25.0)), // Guess
+            water_m: Some((min: 0.0, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.8, max: 1.1), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.92, 0.9), (1.05, 1.05, 1.0)), // Guess
+            align_to_surface: (min: 0.2, max: 0.4), // Guess
+            wind: 0.5, // Guess
+            trample: 0.6, // Guess
+            shadow: Near,
+            range: Mid,
+        ),
+        // Solstheim grass (Bloodmoon.bsa)
+        (
+            id: "flora_bm_grass_03",
+            render: Mesh(model: "meshes/f/flora_bm_grass_03.nif"),
+            footprint_m: 0.6, // Guess
+            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.8, max: 1.2), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.9, 0.9), (1.05, 1.05, 1.02)), // Guess
+            align_to_surface: (min: 0.3, max: 0.6), // Guess
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        // Solstheim grass (Bloodmoon.bsa)
+        (
+            id: "flora_bm_grass_06",
+            render: Mesh(model: "meshes/f/flora_bm_grass_06.nif"),
+            footprint_m: 0.6, // Guess
+            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
+            scale: (min: 0.8, max: 1.2), // Guess
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((0.9, 0.9, 0.9), (1.05, 1.05, 1.02)), // Guess
+            align_to_surface: (min: 0.3, max: 0.6), // Guess
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+    ],
+    rules: (rules: [
+        // 0 ascadian_grass: the Ascadian Isles meadow; tall grass sparse.
+        (channel: 0, species: [
+            (species: "flora_grass_01", weight: 0.25), // Guess
+            (species: "flora_grass_02", weight: 0.25), // Guess
+            (species: "flora_grass_03", weight: 0.25), // Guess
+            (species: "flora_grass_04", weight: 0.25), // Guess
+            (species: "flora_grass_05", weight: 0.04), // Guess
+            (species: "flora_grass_06", weight: 0.04), // Guess
+            (species: "flora_grass_07", weight: 0.04), // Guess
+        ]),
+        // 1 grazelands_grass: same clumps, more of the tall ones.
+        (channel: 1, species: [
+            (species: "flora_grass_01", weight: 0.2), // Guess
+            (species: "flora_grass_02", weight: 0.2), // Guess
+            (species: "flora_grass_03", weight: 0.2), // Guess
+            (species: "flora_grass_04", weight: 0.2), // Guess
+            (species: "flora_grass_05", weight: 0.12), // Guess
+            (species: "flora_grass_06", weight: 0.12), // Guess
+            (species: "flora_grass_07", weight: 0.12), // Guess
+        ]),
+        // 2 dirt_grass: dirt, rocky and darkstone mixes, thin short grass.
+        (channel: 2, species: [
+            (species: "flora_grass_01", weight: 0.1), // Guess
+            (species: "flora_grass_02", weight: 0.1), // Guess
+            (species: "flora_grass_03", weight: 0.1), // Guess
+            (species: "flora_grass_04", weight: 0.1), // Guess
+        ]),
+        // 3 bc_grass: Bitter Coast swamp grass with some ferns.
+        (channel: 3, species: [
+            (species: "flora_bc_grass_01", weight: 0.4), // Guess
+            (species: "flora_bc_grass_02", weight: 0.4), // Guess
+            (species: "flora_bc_fern_03", weight: 0.15), // Guess
+            (species: "flora_bc_fern_04", weight: 0.15), // Guess
+        ]),
+        // 4 bc_moss: Bitter Coast moss, mostly ferns.
+        (channel: 4, species: [
+            (species: "flora_bc_grass_01", weight: 0.1), // Guess
+            (species: "flora_bc_grass_02", weight: 0.1), // Guess
+            (species: "flora_bc_fern_03", weight: 0.25), // Guess
+            (species: "flora_bc_fern_04", weight: 0.25), // Guess
+        ]),
+        // 5 bm_grass: Solstheim grass.
+        (channel: 5, species: [
+            (species: "flora_bm_grass_03", weight: 0.5), // Guess
+            (species: "flora_bm_grass_06", weight: 0.3), // Guess
+        ]),
+        // 6 bm_grass_dirt: Solstheim grass on dirt, thin.
+        (channel: 6, species: [
+            (species: "flora_bm_grass_03", weight: 0.2), // Guess
+            (species: "flora_bm_grass_06", weight: 0.1), // Guess
+        ]),
+    ]),
+    // Rule channel ← LTEX record ids (matched case-insensitively against the terrain layer records). Land textures
+    // listed nowhere grow nothing: `AI_Grass_Cobbles` (cobblestone), the Bloodmoon snow grasses (for now).
+    channels: [
+        (channel: 0, name: "ascadian_grass", ltex: ["AI_Grass", "AI_Grass_02"]),
+        (channel: 1, name: "grazelands_grass", ltex: ["GL_Grass_01", "GL_Grass_02", "GL_Grass_03", "GL_Grass_04", "GL_Grass_05"]),
+        (channel: 2, name: "dirt_grass", ltex: [
+            "AI_Grass_Dirt", "AI_Grass_Rocky", "AC_darkstone_grass", "AC_dirt_grass_01", "AC_dirt_grass_02",
+            "GL_Dirt_Grass_01", "GL_Dirt_Grass_02",
+        ]),
+        (channel: 3, name: "bc_grass", ltex: ["Tx_BC_grass.tga"]),
+        (channel: 4, name: "bc_moss", ltex: ["Tx_BC_moss.tga"]),
+        (channel: 5, name: "bm_grass", ltex: ["Tx_BM_grass_01.dds", "Tx_BM_grass_02.dds", "Tx_BM_grass_03.dds"]),
+        (channel: 6, name: "bm_grass_dirt", ltex: ["Tx_BM_grass_dirt_01.dds"]),
+    ],
+)

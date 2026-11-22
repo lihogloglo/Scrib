@@ -2,7 +2,8 @@
 //!
 //! - **Residency**: canonical tiles stream from the bake store
 //!   ([`TerrainWorld`]) on the async compute pool, around the
-//!   [`TerrainCamera`], and also feed the CPU [`TerrainHeightsMap`].
+//!   [`TerrainCamera`], and also feed the CPU [`TerrainHeightsMap`] (and the level-0 layer maps,
+//!   [`TerrainLayersMap`]).
 //! - **Clipmaps**: 10 × 512² `R32Float` heights (0.5 m … 256 m), 3 levels of
 //!   splat layers (1–4 m) and 10 levels of macro albedo, updated
 //!   toroidally in strips under a per-frame upload budget
@@ -611,6 +612,22 @@ fn sync_origin<O: RenderOrigin>(source: Option<Res<O>>, mut origin: ResMut<Terra
 #[derive(Resource, Default)]
 pub struct TerrainHeightsMap(pub HashMap<WorldspaceId, TerrainHeights>);
 
+/// CPU reads of the active worldspace's resident level-0 layer maps ([`LayerMap`], 257² samples 1 m apart), per
+/// tile: `Some` a resident map, `None` a tile known to have none (no terrain there, or the provider gives no map
+/// for it); a tile not listed is not resident (yet). It mirrors what the renderer streams (the tile path's
+/// level-0 tiles, a GPU-filled world's near layer maps) and is rewritten only when that set changes, so its
+/// change detection is meaningful. A GPU-filled world whose provider has no layer maps lists nothing.
+/// Groundcover (`sf_groundcover_bevy::TerrainGround`) reads it for its layer-weight channels.
+#[derive(Resource, Default)]
+pub struct TerrainLayersMap(pub HashMap<WorldspaceId, HashMap<TileCoord, Option<Arc<LayerMap>>>>);
+
+impl TerrainLayersMap {
+    /// Level-0 tile `c` of `ws`: `None` not resident, `Some(None)` resident without a map, `Some(Some(m))` its map.
+    pub fn get(&self, ws: &WorldspaceId, c: TileCoord) -> Option<Option<&Arc<LayerMap>>> {
+        self.0.get(ws)?.get(&c).map(Option::as_ref)
+    }
+}
+
 /// Counters for `sf_diag` (the app forwards them).
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct TerrainStats {
@@ -665,6 +682,7 @@ impl Plugin for TerrainPlugin {
             .init_resource::<TerrainDebug>()
             .init_resource::<TerrainOrigin>()
             .init_resource::<TerrainHeightsMap>()
+            .init_resource::<TerrainLayersMap>()
             .init_resource::<TerrainStats>()
             .init_resource::<ClipmapWrites>()
             .init_resource::<gpu_fill::GpuFillQueue>()
@@ -681,7 +699,9 @@ impl Plugin for TerrainPlugin {
                 PostUpdate,
                 // `update_far_map` runs before `update_terrain` so `FarShadowMap::params`
                 // tracks any `TerrainOrigin` shift before `update_terrain` writes `P_FAR` (SH-11).
-                (setup_terrain, far_map::update_far_map, update_terrain).chain().in_set(TerrainSystems::Update),
+                (setup_terrain, far_map::update_far_map, update_terrain, sync_layers_map)
+                    .chain()
+                    .in_set(TerrainSystems::Update),
             );
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
@@ -720,7 +740,8 @@ enum LayerSlot {
 /// A resident tile.
 struct Loaded {
     resident: Arc<ResidentTile>,
-    layers: Option<LayerMap>,
+    /// Shared with [`TerrainLayersMap`] (level 0).
+    layers: Option<Arc<LayerMap>>,
     macro_rgba: Option<Vec<[u8; 4]>>,
 }
 
@@ -769,6 +790,58 @@ struct TerrainState {
     gpu: Option<GpuMode>,
     /// The selection gate (CW-2), keyed on (`select_rev`, origin).
     gate: SelectGate<(u64, WorldPos)>,
+}
+
+/// The active state's level-0 layer entries ([`TerrainLayersMap`]): a GPU-filled world's near layer maps, else
+/// the tile path's level-0 tiles; loading ones are skipped.
+fn level0_layers(state: &TerrainState) -> impl Iterator<Item = (TileCoord, Option<&Arc<LayerMap>>)> {
+    let gpu = state.gpu.as_ref().map(|g| {
+        g.layers.iter().flatten().filter(|(c, _)| c.level == 0).filter_map(|(c, s)| match s {
+            LayerSlot::Loading(_) => None,
+            LayerSlot::Ready(m) => Some((*c, Some(m))),
+            LayerSlot::Absent => Some((*c, None)),
+        })
+    });
+    let tiles = state.gpu.is_none().then(|| {
+        state.tiles.iter().filter(|(c, _)| c.level == 0).filter_map(|(c, s)| match s {
+            Slot::Loading(_) => None,
+            Slot::Ready(t) => Some((*c, t.layers.as_ref())),
+            Slot::Absent => Some((*c, None)),
+        })
+    });
+    gpu.into_iter().flatten().chain(tiles.into_iter().flatten())
+}
+
+/// Whether [`TerrainLayersMap`] holds exactly the active state's level-0 layer entries (the same maps).
+fn layers_in_sync(state: &TerrainState, map: &TerrainLayersMap) -> bool {
+    let Some(have) = map.0.get(&state.ws) else { return false };
+    let mut n = 0;
+    let same = level0_layers(state).all(|(c, m)| {
+        n += 1;
+        match (have.get(&c), m) {
+            (Some(Some(a)), Some(b)) => Arc::ptr_eq(a, b),
+            (Some(None), None) => true,
+            _ => false,
+        }
+    });
+    same && n == have.len() && map.0.len() == 1
+}
+
+/// After `update_terrain`: mirror the resident level-0 layer maps into [`TerrainLayersMap`], writing it only when
+/// they changed (a cheap pointer comparison otherwise). Only the active worldspace is listed.
+fn sync_layers_map(state: Option<Res<TerrainState>>, mut map: ResMut<TerrainLayersMap>) {
+    let Some(state) = state else {
+        if !map.0.is_empty() {
+            map.0.clear();
+        }
+        return;
+    };
+    if layers_in_sync(&state, &map) {
+        return;
+    }
+    let tiles = level0_layers(&state).map(|(c, m)| (c, m.cloned())).collect();
+    map.0.clear();
+    map.0.insert(state.ws.clone(), tiles);
 }
 
 /// The 33² (or 17²) grid patch: integer grid coordinates in POSITION,
@@ -1110,7 +1183,11 @@ fn load_tile(tiles: Arc<dyn TerrainTiles>, c: TileCoord, wants_layers: bool, wan
         None if wants_layers => load_layer_map(tiles.as_ref(), c),
         _ => None,
     };
-    Some(Loaded { resident: Arc::new(ResidentTile { tile, bounds: product.bounds }), layers, macro_rgba })
+    Some(Loaded {
+        resident: Arc::new(ResidentTile { tile, bounds: product.bounds }),
+        layers: layers.map(Arc::new),
+        macro_rgba,
+    })
 }
 
 /// Tile `c`'s layer map alone (`TerrainTiles::layer_map`); errors are logged.
@@ -1222,7 +1299,7 @@ fn upload_level(
                             Some(LayerSlot::Ready(m)) => Some(m.as_ref()),
                             _ => None,
                         },
-                        None => held.get(&c).and_then(|t| t.layers.as_ref()),
+                        None => held.get(&c).and_then(|t| t.layers.as_deref()),
                     };
                     let slot_of = |id: LayerId| state.slots.get(&id).copied().unwrap_or(0);
                     let mut ids = vec![[0u8; 4]; n];
@@ -2347,5 +2424,139 @@ mod tests {
         assert!(gate.check(&q, &cam(f64::from(q.move_m) * 1.01), (1, shifted)), "origin shift");
         assert!(!gate.check(&q, &cam(f64::from(q.move_m) * 1.01), (1, shifted)));
         assert!(gate.check(&off, &cam(0.0), (1, shifted)) && gate.check(&off, &cam(0.0), (1, shifted)));
+    }
+
+    /// A provider with nothing: the layer-map mirror only reads the state's slots.
+    struct NoTiles;
+
+    impl TerrainTiles for NoTiles {
+        fn worldspace(&self) -> &WorldspaceId {
+            static WS: std::sync::OnceLock<WorldspaceId> = std::sync::OnceLock::new();
+            WS.get_or_init(|| WorldspaceId::new("layers"))
+        }
+        fn has_tile(&self, _: TileCoord) -> bool {
+            false
+        }
+        fn tile(&self, _: TileCoord) -> Option<Result<sf_terrain::TileProduct, String>> {
+            None
+        }
+        fn macro_albedo(&self, _: TileCoord) -> Option<Result<sf_terrain::MacroProduct, String>> {
+            None
+        }
+        fn layers_capped(&self, _: Option<u32>, _: &LayerCap) -> Option<Result<sf_terrain::LayerArrays, String>> {
+            None
+        }
+    }
+
+    fn bare_state(gpu: bool) -> TerrainState {
+        TerrainState {
+            ws: WorldspaceId::new("layers"),
+            src: Arc::new(NoTiles),
+            material: Handle::default(),
+            params: Handle::default(),
+            heights: Handle::default(),
+            normals: Handle::default(),
+            layer_ids: Handle::default(),
+            layer_weights: Handle::default(),
+            macro_image: Handle::default(),
+            patch: Handle::default(),
+            quadrant: Handle::default(),
+            table: default_layer_table([70, 70, 70, 255], 0.0),
+            slots: HashMap::new(),
+            tiles: HashMap::new(),
+            height_windows: [None; HEIGHT_LEVELS],
+            layer_windows: [None; LAYER_LEVELS],
+            macro_windows: [None; MACRO_LEVELS],
+            nodes: HashMap::new(),
+            origin: None,
+            shift_settle: 0,
+            fill: 0.0,
+            fill_slot: 0,
+            fill_rgba: [70, 70, 70, 255],
+            max_height: 0.0,
+            select_rev: 0,
+            gpu: gpu.then(|| GpuMode {
+                bounds: HashMap::new(),
+                ready: Arc::new(AtomicBool::new(true)),
+                counters: Arc::new(GpuFillCounters::default()),
+                layers: Some(HashMap::new()),
+            }),
+            gate: SelectGate::default(),
+        }
+    }
+
+    fn one_layer_map(c: TileCoord, id: u32) -> Arc<LayerMap> {
+        let n = sf_terrain::LAYER_SAMPLES * sf_terrain::LAYER_SAMPLES;
+        Arc::new(LayerMap::from_samples(c, &vec![[(LayerId(id), 255), (LayerId(id), 0), (LayerId(id), 0), (LayerId(id), 0)]; n]).unwrap())
+    }
+
+    fn loaded(c: TileCoord, layers: Option<Arc<LayerMap>>) -> Slot {
+        let resident = Arc::new(ResidentTile::new(sf_terrain::HeightTile::flat(c, 0.0)));
+        Slot::Ready(Arc::new(Loaded { resident, layers, macro_rgba: None }))
+    }
+
+    /// Runs the mirror once and says whether it wrote `TerrainLayersMap`.
+    fn sync(world: &mut World) -> bool {
+        use bevy_ecs::system::RunSystemOnce;
+        world.clear_trackers();
+        world.run_system_once(sync_layers_map).unwrap();
+        world.resource_ref::<TerrainLayersMap>().is_changed()
+    }
+
+    /// GC-2b1: `TerrainLayersMap` mirrors the tile path's resident level-0 layer maps (shared, not copied), lists
+    /// known-absent tiles as `None`, skips coarser levels, writes only on a change, follows removals, and empties
+    /// when the terrain goes.
+    #[test]
+    fn layers_map_tracks_level0_inserts_and_removals() {
+        let ws = WorldspaceId::new("layers");
+        let (a, b, coarse) = (TileCoord::new(0, 3, -2), TileCoord::new(0, 4, -2), TileCoord::new(1, 1, -1));
+        let mut world = World::new();
+        world.init_resource::<TerrainLayersMap>();
+        let mut state = bare_state(false);
+        let map_a = one_layer_map(a, 7);
+        state.tiles.insert(a, loaded(a, Some(map_a.clone())));
+        state.tiles.insert(b, Slot::Absent);
+        state.tiles.insert(coarse, loaded(coarse, Some(one_layer_map(coarse, 1))));
+        world.insert_resource(state);
+        assert!(sync(&mut world), "first sync writes");
+        {
+            let m = world.resource::<TerrainLayersMap>();
+            assert!(Arc::ptr_eq(m.get(&ws, a).unwrap().unwrap(), &map_a), "the renderer's own map");
+            assert_eq!(m.get(&ws, b), Some(None), "known to have none");
+            assert_eq!(m.get(&ws, coarse), None, "level 0 only");
+            assert_eq!(m.0[&ws].len(), 2);
+        }
+        assert!(!sync(&mut world), "nothing changed: no write");
+        world.resource_mut::<TerrainState>().tiles.remove(&a);
+        assert!(sync(&mut world), "an eviction writes");
+        assert_eq!(world.resource::<TerrainLayersMap>().get(&ws, a), None);
+        let map_a2 = one_layer_map(a, 8);
+        world.resource_mut::<TerrainState>().tiles.insert(a, loaded(a, Some(map_a2.clone())));
+        assert!(sync(&mut world), "a reload writes");
+        assert!(Arc::ptr_eq(world.resource::<TerrainLayersMap>().get(&ws, a).unwrap().unwrap(), &map_a2));
+        world.remove_resource::<TerrainState>();
+        assert!(sync(&mut world), "no terrain: emptied");
+        assert!(world.resource::<TerrainLayersMap>().0.is_empty());
+        assert!(!sync(&mut world));
+    }
+
+    /// GC-2b1: a GPU-filled world's near layer maps (not its twin's height tiles) feed `TerrainLayersMap`.
+    #[test]
+    fn layers_map_reads_gpu_worlds_layer_slots() {
+        let ws = WorldspaceId::new("layers");
+        let (a, b) = (TileCoord::new(0, 0, 0), TileCoord::new(0, 1, 0));
+        let mut world = World::new();
+        world.init_resource::<TerrainLayersMap>();
+        let mut state = bare_state(true);
+        // A twin height tile without layers: not a layer entry in a GPU-filled world.
+        state.tiles.insert(b, loaded(b, None));
+        let maps = state.gpu.as_mut().unwrap().layers.as_mut().unwrap();
+        maps.insert(a, LayerSlot::Ready(one_layer_map(a, 2)));
+        maps.insert(TileCoord::new(2, 0, 0), LayerSlot::Absent);
+        world.insert_resource(state);
+        assert!(sync(&mut world));
+        let m = world.resource::<TerrainLayersMap>();
+        assert_eq!(m.get(&ws, a).unwrap().unwrap().palette, vec![LayerId(2)]);
+        assert_eq!((m.get(&ws, b), m.0[&ws].len()), (None, 1));
     }
 }
