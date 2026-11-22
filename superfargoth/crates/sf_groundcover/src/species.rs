@@ -103,6 +103,11 @@ pub struct Species {
     pub wind: f32,
     /// Trample response factor (renderer scales it).
     pub trample: f32,
+    /// Height of the model's origin above the ground, metres at scale 1 (scaled with the instance): models whose
+    /// geometry hangs below their origin (roots, a sunk base) stand on the ground instead of half buried. UE
+    /// foliage types' Z offset. Default 0.
+    #[serde(default)]
+    pub z_offset_m: f32,
     #[serde(default)]
     pub shadow: ShadowClass,
     #[serde(default)]

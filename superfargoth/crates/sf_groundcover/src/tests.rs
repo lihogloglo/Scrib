@@ -59,6 +59,7 @@ pub(crate) fn species(id: &str, footprint_m: f32, density: f32) -> Species {
         align_to_surface: Span::new(0.0, 1.0),
         wind: 1.0,
         trample: 0.5,
+        z_offset_m: 0.0,
         shadow: ShadowClass::None,
         range: RangeClass::Near,
     }
@@ -425,5 +426,27 @@ fn measure_tile_scatter() {
             us / n,
             sc.grid(s)
         );
+    }
+}
+
+#[test]
+fn z_offset_lifts_each_instance_by_offset_times_scale() {
+    let g = flat(&[1.0]);
+    let mut raised = species("raised", 1.0, 0.5);
+    raised.z_offset_m = 0.3;
+    let base = on_channel0(vec![species("raised", 1.0, 0.5)]);
+    let lifted = on_channel0(vec![raised]);
+    let none = Overrides::none();
+    let (a, b) = (Scatterer::new(&base, &none, ScatterSettings::default()), Scatterer::new(&lifted, &none, ScatterSettings::default()));
+    let s = base.indices().next().expect("one species");
+    let (mut ia, mut ib) = (Vec::new(), Vec::new());
+    a.scatter_tile(&g, TileKey { x: 2, z: -3 }, s, 0, &mut ia);
+    b.scatter_tile(&g, TileKey { x: 2, z: -3 }, s, 0, &mut ib);
+    assert!(!ia.is_empty());
+    assert_eq!(ia.len(), ib.len(), "the offset never changes which candidates are accepted");
+    for (x, y) in ia.iter().zip(&ib) {
+        assert_eq!((x.local[0], x.local[2], x.scale, x.tag), (y.local[0], y.local[2], y.scale, y.tag));
+        assert_eq!(x.local[1], 0.0);
+        assert!((y.local[1] - 0.3 * y.scale).abs() < 1e-6);
     }
 }

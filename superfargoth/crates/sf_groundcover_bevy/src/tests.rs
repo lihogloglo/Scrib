@@ -31,6 +31,7 @@ fn species(id: &str, model: &str, footprint: f32, density: f32, shadow: ShadowCl
         align_to_surface: Span::new(0.0, 0.5),
         wind: 1.0,
         trample: 1.0,
+        z_offset_m: 0.0,
         shadow,
         range: RangeClass::Near,
     }

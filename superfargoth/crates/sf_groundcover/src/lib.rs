@@ -30,6 +30,7 @@
 //!     align_to_surface: Span::new(0.5, 1.0),
 //!     wind: 1.0,
 //!     trample: 1.0,
+//!     z_offset_m: 0.0,
 //!     shadow: ShadowClass::None,
 //!     range: RangeClass::Near,
 //! };

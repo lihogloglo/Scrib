@@ -298,7 +298,7 @@ impl<'a> Scatterer<'a> {
                 let align = sp.align_to_surface.lerp(rng.next_unit());
                 let up = Vec3::Y.lerp(g.normal, align).normalize_or(Vec3::Y);
                 let tag = Tag { wind_phase: rng.next_u8(), tint: rng.next_u8(), fade_seed: rng.next_u8(), batch_slot };
-                out.push(Instance { local: [lx, g.height, lz], yaw, scale, up: up.to_array(), tag: tag.pack() });
+                out.push(Instance { local: [lx, g.height + sp.z_offset_m * scale, lz], yaw, scale, up: up.to_array(), tag: tag.pack() });
             }
         }
         // `out.len() <= cap <= u32::MAX`.

@@ -3,6 +3,7 @@
 Format: `date | what was tried | measured result (scene, ms, counters) | verdict | commit or doc`. Newest first. Same setup as
 [perf](perf.md) for frame numbers. Spec: `superfargoth/docs/specs/groundcover.md`.
 
+2026-11-23 | Owner look GC-2 + fixes: `z_offset_m` per species from vanilla placements (median above terrain: flora_grass_01 +0.32 m, 02-04 +0.12-0.19, bc_grass_01 +0.45, bc ferns +0.36/0.45, bm_grass +0.39/0.52; 3722 + 809 refs), grass density 1.6 -> 4.0 (bc 1.4 -> 3.5), bend 0.05 -> 0.15 | first run 10 fps (likely a concurrent build), rerun 53-55 fps (BRP, 18.8 ms) vs ~60 off; no A/B yet | kept, awaiting owner on the rebuild | this commit
 2026-11-22 | GC-2b3 game wiring (`GroundcoverGamePlugin`, `--off groundcover`) + scenes gc-ascadian/grazelands/bittercoast | tests 71 + 22 + 2; dev build OK; not yet seen in the game | awaiting owner GC-2 | uncommitted
 2026-11-22 | GC-2b2 Morrowind species data + resolver (`mw_world::groundcover`); `LayerChannels` made sparse (layer ids are hashes) | 4 + 1 tests; no runtime numbers yet | kept | uncommitted
 2026-11-22 | GC-2b1 `TerrainGround` + `TerrainLayersMap` (terrain heights + land-texture weights for groundcover) | 21 + 21 headless tests; no runtime numbers yet | kept | uncommitted

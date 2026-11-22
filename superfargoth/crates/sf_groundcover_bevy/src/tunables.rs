@@ -76,7 +76,7 @@ pub const WIND_SCALE: Def<f32> = def!(float "groundcover.render.wind_scale" = 1.
     .source(Source::Guess)
     .lifetime(Lifetime::Live);
 
-pub const BEND_PER_MPS: Def<f32> = def!(float "groundcover.render.bend_per_mps" = 0.05)
+pub const BEND_PER_MPS: Def<f32> = def!(float "groundcover.render.bend_per_mps" = 0.15)
     .range(0.0, 0.5)
     .unit(Unit::Ratio)
     .help("Tip displacement per m/s of wind, as a fraction of the plant's height (capped at most of the height)")

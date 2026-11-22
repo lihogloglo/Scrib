@@ -190,12 +190,11 @@ fn load_models(
         );
         match worlds.get(&handle).filter(|_| settled) {
             Some(asset) => {
-                match model_of(&asset.world, &standard, &mut meshes) {
-                    Some(model) => {
-                        models.0.insert(key, model);
-                        loading.loaded += 1;
-                    }
-                    None => warn!("groundcover: {key}: no visible mesh"),
+                if let Some(model) = model_of(&asset.world, &standard, &mut meshes) {
+                    models.0.insert(key, model);
+                    loading.loaded += 1;
+                } else {
+                    warn!("groundcover: {key}: no visible mesh");
                 }
                 loading.held.push(handle);
             }

@@ -76,6 +76,7 @@ Sources and per-claim confidence: `../research/groundcover-2026-11-22.md` §1.
 | `slope_deg`, `altitude`, `water` | allowed ranges; `water` = min/max distance to the water surface (negative = submerged, for later reeds/lilies) |
 | `scale`, `rotation`, `tint`, `align_to_surface` | per-instance random ranges (Skyrim GRAS, UE varieties) |
 | `wind`, `trample` | response factors |
+| `z_offset_m` | origin height above the ground at scale 1 (models whose geometry hangs below the origin; UE foliage Z offset) |
 | `shadow` | `None` / `Near` (cast inside the shadow range) |
 | `range` | max draw distance class: `Near`, `Mid` (tunable distances per preset) |
 

@@ -13,7 +13,7 @@
             id: "flora_grass_01",
             render: Mesh(model: "meshes/f/flora_grass_01.nif"),
             footprint_m: 0.6, // Guess
-            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            density: 4.0, // Guess (owner 2026-11-23: too sparse at 1.6), instances per m² at rule weight 1 (saturates at 1 / footprint²)
             slope_deg: Some((min: 0.0, max: 35.0)), // Guess
             water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
             scale: (min: 0.8, max: 1.2), // Guess
@@ -22,6 +22,7 @@
             align_to_surface: (min: 0.3, max: 0.6), // Guess
             wind: 1.0, // Guess
             trample: 1.0, // Guess
+            z_offset_m: 0.32, // measured: median height of vanilla placements above the terrain (Morrowind.esm, 782 refs)
             shadow: None,
             range: Near,
         ),
@@ -30,7 +31,7 @@
             id: "flora_grass_02",
             render: Mesh(model: "meshes/f/flora_grass_02.nif"),
             footprint_m: 0.6, // Guess
-            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            density: 4.0, // Guess (owner 2026-11-23: too sparse at 1.6), instances per m² at rule weight 1 (saturates at 1 / footprint²)
             slope_deg: Some((min: 0.0, max: 35.0)), // Guess
             water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
             scale: (min: 0.8, max: 1.2), // Guess
@@ -39,6 +40,7 @@
             align_to_surface: (min: 0.3, max: 0.6), // Guess
             wind: 1.0, // Guess
             trample: 1.0, // Guess
+            z_offset_m: 0.18, // measured: median height of vanilla placements above the terrain (Morrowind.esm, 212 refs)
             shadow: None,
             range: Near,
         ),
@@ -47,7 +49,7 @@
             id: "flora_grass_03",
             render: Mesh(model: "meshes/f/flora_grass_03.nif"),
             footprint_m: 0.6, // Guess
-            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            density: 4.0, // Guess (owner 2026-11-23: too sparse at 1.6), instances per m² at rule weight 1 (saturates at 1 / footprint²)
             slope_deg: Some((min: 0.0, max: 35.0)), // Guess
             water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
             scale: (min: 0.8, max: 1.2), // Guess
@@ -56,6 +58,7 @@
             align_to_surface: (min: 0.3, max: 0.6), // Guess
             wind: 1.0, // Guess
             trample: 1.0, // Guess
+            z_offset_m: 0.19, // measured: median height of vanilla placements above the terrain (Morrowind.esm, 108 refs)
             shadow: None,
             range: Near,
         ),
@@ -64,7 +67,7 @@
             id: "flora_grass_04",
             render: Mesh(model: "meshes/f/flora_grass_04.nif"),
             footprint_m: 0.6, // Guess
-            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            density: 4.0, // Guess (owner 2026-11-23: too sparse at 1.6), instances per m² at rule weight 1 (saturates at 1 / footprint²)
             slope_deg: Some((min: 0.0, max: 35.0)), // Guess
             water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
             scale: (min: 0.8, max: 1.2), // Guess
@@ -73,6 +76,7 @@
             align_to_surface: (min: 0.3, max: 0.6), // Guess
             wind: 1.0, // Guess
             trample: 1.0, // Guess
+            z_offset_m: 0.12, // measured: median height of vanilla placements above the terrain (Morrowind.esm, 92 refs)
             shadow: None,
             range: Near,
         ),
@@ -90,6 +94,7 @@
             align_to_surface: (min: 0.2, max: 0.4), // Guess
             wind: 1.2, // Guess
             trample: 0.8, // Guess
+            z_offset_m: 0.2, // Guess: Tribunal model, no exterior placements to measure (between flora_grass_02-04)
             shadow: Near,
             range: Near,
         ),
@@ -107,6 +112,7 @@
             align_to_surface: (min: 0.2, max: 0.4), // Guess
             wind: 1.2, // Guess
             trample: 0.8, // Guess
+            z_offset_m: 0.2, // Guess: Tribunal model, no exterior placements to measure (between flora_grass_02-04)
             shadow: Near,
             range: Near,
         ),
@@ -124,6 +130,7 @@
             align_to_surface: (min: 0.2, max: 0.4), // Guess
             wind: 1.2, // Guess
             trample: 0.8, // Guess
+            z_offset_m: 0.2, // Guess: Tribunal model, no exterior placements to measure (between flora_grass_02-04)
             shadow: Near,
             range: Near,
         ),
@@ -132,7 +139,7 @@
             id: "flora_bc_grass_01",
             render: Mesh(model: "meshes/f/flora_bc_grass_01.nif"),
             footprint_m: 0.7, // Guess
-            density: 1.4, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            density: 3.5, // Guess (owner 2026-11-23: too sparse at 1.4), instances per m² at rule weight 1 (saturates at 1 / footprint²)
             slope_deg: Some((min: 0.0, max: 30.0)), // Guess
             water_m: Some((min: 0.0, max: 100000.0)), // Guess, metres above the sea surface
             scale: (min: 0.8, max: 1.2), // Guess
@@ -141,6 +148,7 @@
             align_to_surface: (min: 0.3, max: 0.6), // Guess
             wind: 1.0, // Guess
             trample: 1.0, // Guess
+            z_offset_m: 0.45, // measured: median height of vanilla placements above the terrain (Morrowind.esm, 1386 refs)
             shadow: None,
             range: Near,
         ),
@@ -149,7 +157,7 @@
             id: "flora_bc_grass_02",
             render: Mesh(model: "meshes/f/flora_bc_grass_02.nif"),
             footprint_m: 0.7, // Guess
-            density: 1.4, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            density: 3.5, // Guess (owner 2026-11-23: too sparse at 1.4), instances per m² at rule weight 1 (saturates at 1 / footprint²)
             slope_deg: Some((min: 0.0, max: 30.0)), // Guess
             water_m: Some((min: 0.0, max: 100000.0)), // Guess, metres above the sea surface
             scale: (min: 0.8, max: 1.2), // Guess
@@ -158,6 +166,7 @@
             align_to_surface: (min: 0.3, max: 0.6), // Guess
             wind: 1.0, // Guess
             trample: 1.0, // Guess
+            z_offset_m: 0.45, // Guess: as flora_bc_grass_01 (vanilla places _02 in water)
             shadow: None,
             range: Near,
         ),
@@ -175,6 +184,7 @@
             align_to_surface: (min: 0.2, max: 0.4), // Guess
             wind: 0.5, // Guess
             trample: 0.6, // Guess
+            z_offset_m: 0.36, // measured: median height of vanilla placements above the terrain (Morrowind.esm, 419 refs)
             shadow: Near,
             range: Mid,
         ),
@@ -192,6 +202,7 @@
             align_to_surface: (min: 0.2, max: 0.4), // Guess
             wind: 0.5, // Guess
             trample: 0.6, // Guess
+            z_offset_m: 0.45, // measured: median height of vanilla placements above the terrain (Morrowind.esm, 144 refs)
             shadow: Near,
             range: Mid,
         ),
@@ -200,7 +211,7 @@
             id: "flora_bm_grass_03",
             render: Mesh(model: "meshes/f/flora_bm_grass_03.nif"),
             footprint_m: 0.6, // Guess
-            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            density: 4.0, // Guess (owner 2026-11-23: too sparse at 1.6), instances per m² at rule weight 1 (saturates at 1 / footprint²)
             slope_deg: Some((min: 0.0, max: 35.0)), // Guess
             water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
             scale: (min: 0.8, max: 1.2), // Guess
@@ -209,6 +220,7 @@
             align_to_surface: (min: 0.3, max: 0.6), // Guess
             wind: 1.0, // Guess
             trample: 1.0, // Guess
+            z_offset_m: 0.39, // measured: median height of vanilla placements above the terrain (Bloodmoon.esm, 71 refs)
             shadow: None,
             range: Near,
         ),
@@ -217,7 +229,7 @@
             id: "flora_bm_grass_06",
             render: Mesh(model: "meshes/f/flora_bm_grass_06.nif"),
             footprint_m: 0.6, // Guess
-            density: 1.6, // Guess, instances per m² at rule weight 1 (saturates at 1 / footprint²)
+            density: 4.0, // Guess (owner 2026-11-23: too sparse at 1.6), instances per m² at rule weight 1 (saturates at 1 / footprint²)
             slope_deg: Some((min: 0.0, max: 35.0)), // Guess
             water_m: Some((min: 0.2, max: 100000.0)), // Guess, metres above the sea surface
             scale: (min: 0.8, max: 1.2), // Guess
@@ -226,6 +238,7 @@
             align_to_surface: (min: 0.3, max: 0.6), // Guess
             wind: 1.0, // Guess
             trample: 1.0, // Guess
+            z_offset_m: 0.52, // measured: median height of vanilla placements above the terrain (Bloodmoon.esm, 326 refs)
             shadow: None,
             range: Near,
         ),
