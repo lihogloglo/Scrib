@@ -52,6 +52,16 @@ pub struct RockSample {
     pub k: f64,
 }
 
+/// One rock unit near a sample (see [`RockMap::unit_weights`]): lattice cell of its feature point, rock type
+/// index and blend weight.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct UnitWeight {
+    pub ix: i64,
+    pub iy: i64,
+    pub kind: usize,
+    pub w: f64,
+}
+
 #[inline]
 fn smoothstep(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
@@ -74,8 +84,8 @@ impl RockMap {
         cum.iter().position(|&c| u < c).unwrap_or(cum.len() - 1)
     }
 
-    /// Samples the map at world position `p` (metres). `types` must not be empty.
-    pub fn sample(&self, p: [f64; 2], types: &[RockType], cum: &[f64]) -> RockSample {
+    /// Domain-warped lookup position of world position `p`, in lattice units.
+    fn warped(&self, p: [f64; 2]) -> [f64; 2] {
         let q = if self.warp_m > 0.0 {
             [
                 p[0] + self.warp_m * value_noise(p, self.warp_wavelength_m, self.seed.wrapping_add(11)),
@@ -84,7 +94,54 @@ impl RockMap {
         } else {
             p
         };
-        let (u, v) = (q[0] / self.cell_m, q[1] / self.cell_m);
+        [q[0] / self.cell_m, q[1] / self.cell_m]
+    }
+
+    /// Rock units around world position `p` with weights that blend continuously across unit borders: unit `n`
+    /// weighs `1 - smoothstep((d_n - d_min) / blend)`, `d` the warped distance to each feature point, normalised to
+    /// sum 1 (smooth-Voronoi weighting; `d_n - d_min` is continuous, so the blend has no seam, also at vertices).
+    /// Across a border the transition is ~`blend_m` wide. `blend_m` is capped at half a cell so every unit with a
+    /// weight lies in the 5 x 5 neighbourhood searched; `blend_m <= 0` gives the nearest unit alone (weight 1).
+    /// Writes into `out` and returns the count; `out[0]` is the nearest unit.
+    pub fn unit_weights(&self, p: [f64; 2], cum: &[f64], blend_m: f64, out: &mut [UnitWeight; 25]) -> usize {
+        let [u, v] = self.warped(p);
+        let (cx, cy) = (u.floor() as i64, v.floor() as i64);
+        let mut d = [(0.0f64, 0i64, 0i64); 25];
+        let mut best = 0usize;
+        for (n, (dy, dx)) in (-2..=2).flat_map(|dy| (-2..=2).map(move |dx| (dy, dx))).enumerate() {
+            let (ix, iy) = (cx + dx, cy + dy);
+            let f = self.point(ix, iy);
+            d[n] = ((f[0] - u).hypot(f[1] - v), ix, iy);
+            if d[n].0 < d[best].0 {
+                best = n;
+            }
+        }
+        let blend = (blend_m / self.cell_m).min(0.5);
+        let d_min = d[best].0;
+        let mut count = 0usize;
+        let mut push = |(_, ix, iy): (f64, i64, i64), w: f64| {
+            out[count] = UnitWeight { ix, iy, kind: Self::kind_of(ix, iy, self.seed, cum), w };
+            count += 1;
+        };
+        push(d[best], 1.0);
+        if blend > 0.0 {
+            for (n, &e) in d.iter().enumerate() {
+                let w = 1.0 - smoothstep((e.0 - d_min) / blend);
+                if n != best && w > 0.0 {
+                    push(e, w);
+                }
+            }
+        }
+        let total: f64 = out[..count].iter().map(|u| u.w).sum();
+        for u in &mut out[..count] {
+            u.w /= total;
+        }
+        count
+    }
+
+    /// Samples the map at world position `p` (metres). `types` must not be empty.
+    pub fn sample(&self, p: [f64; 2], types: &[RockType], cum: &[f64]) -> RockSample {
+        let [u, v] = self.warped(p);
         let (cx, cy) = (u.floor() as i64, v.floor() as i64);
         let mut pts = [([0.0f64; 2], 0i64, 0i64); 9];
         let mut best = (f64::INFINITY, 0usize);

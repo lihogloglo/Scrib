@@ -1,0 +1,34 @@
+// Synthetic test level (docs/specs/test-levels.md, "Rock lab"; rockgen.md slices RG-3, RG-4): the
+// procedural rock viewer. A big grey plate, a 30 deg ramp (`slope`, the game reads it) onto a
+// plateau, under a morning sun. The game adds one column of `sf_rockgen` boulders per class,
+// 22 m apart centred on x = 0: eroded block, platy, cobble, chipped at x = -88..-22, sharp
+// talus, jagged, columnar, scoria, slab at x = 0..88; sizes 0.5 to 12 m on a power law
+// from z = 24 toward -z, plus two rocks on the slope face and two at its toe per class
+// (mw_exterior_bevy level/rock_lab.rs). Meters, y up, x east, z south; `at` = footprint center
+// at the bottom.
+(
+    name: "rock-lab",
+    description: "procedural boulders (sf_rockgen) of 9 classes (4 eroded, 5 sharp) at 0.5-12 m on flat ground and against a 30 deg slope, triplanar PBR rock material (rockgen RG-3/RG-4 viewer)",
+    cameras: [
+        (name: "wide", eye: (0.0, 22.0, 70.0), target: (0.0, 2.0, -10.0)),
+        (name: "eroded", eye: (-55.0, 10.0, 40.0), target: (-55.0, 2.0, -4.0)),
+        (name: "sharp", eye: (44.0, 10.0, 40.0), target: (44.0, 2.0, -4.0)),
+        (name: "sharp_near", eye: (40.0, 3.0, 22.0), target: (44.0, 1.0, 10.0)),
+        (name: "small", eye: (-24.0, 2.5, 30.0), target: (-24.0, 0.3, 17.0)),
+        (name: "big", eye: (0.0, 7.0, 16.0), target: (0.0, 4.0, -12.0)),
+        (name: "slope", eye: (0.0, 9.0, -20.0), target: (0.0, 6.0, -52.0)),
+        (name: "far", eye: (0.0, 40.0, 220.0), target: (0.0, 0.0, -20.0)),
+        (name: "top", eye: (0.0, 120.0, 30.0), target: (0.0, 0.0, -25.0)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 40.0)),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (400.0, 400.0)), at: (0.0, 0.0, -40.0), material: Floor),
+        // Toe at z = -40 (run 12 / tan 30 = 20.78 m, so its center is 10.39 m further -z).
+        (name: "slope", shape: Ramp(width: 220.0, rise: 12.0, angle: 30.0), at: (0.0, 0.0, -50.392), material: Grey),
+        (name: "plateau", shape: Box(size: (220.0, 12.0, 30.0)), at: (0.0, 0.0, -75.785), material: Grey),
+    ],
+    hour: Some(9.0),
+    weather: Some("clear"),
+)

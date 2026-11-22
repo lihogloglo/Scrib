@@ -79,6 +79,9 @@ sf_gi_bevy.workspace = true
 sf_lod_bevy.workspace = true
 sf_physics_bevy = { workspace = true, features = ["debug"] }
 sf_records.workspace = true
+# perf/tunables.rs CATALOG: the rockgen boulder, material and LOD lists.
+sf_rockgen.workspace = true
+sf_rockgen_bevy.workspace = true
 sf_sky_bevy.workspace = true
 # live_ab.rs `surface` switch: it writes `SurfaceSettings`.
 sf_surface_bevy.workspace = true

@@ -6,7 +6,9 @@
 //!     [--fill -30] [--sea-max 0] [--name N] [--source S] [--licence L]
 //! scrib-worldgen detail --in GUIDE --out DIR --spacing 5 [--crop X0,Y0,X1,Y1] [--params FILE.toml] [--set NAME=V]...
 //! scrib-worldgen stamp-volcano --base GUIDE --params FILE.toml --out DIR [--arms V1,V2]
-//! scrib-worldgen measure GUIDE... [--ref GUIDE]... [--mask-sea] [--region X0,Y0,X1,Y1] [--summit auto|X,Y] --out FILE.md|json
+//! scrib-worldgen measure GUIDE... [--ref GUIDE]... [--base GUIDE] [--mask-sea] [--region X0,Y0,X1,Y1] [--summit auto|X,Y] --out FILE.md|json
+//! scrib-worldgen geology --base GUIDE --table GEOLOGY.toml [--set NAME=V]... --out DIR
+//! scrib-worldgen place --base GUIDE --geology GEOLOGY.toml [--recipe LANDFORMS.toml] [--set NAME=V]... --out DIR [--world-filter FILTER.toml]
 //! scrib-worldgen landforms GUIDE [--names NAMES.json] [--scale S] [--origin X,Y] [--set NAME=V]... --out DIR
 //! ```
 
@@ -129,6 +131,45 @@ enum Cmd {
     /// Landform census (`sf_worldgen::landforms`): craters, basins, lakes, lagoons, trenches, gorges, valleys,
     /// peaks, plateaus, bays, headlands, islands; writes features.json, overlay.png and README.md.
     Landforms(LandformsArgs),
+    /// Geology map (`sf_worldgen::geology`, LF-1): rock unit, hardness and strata datum per guide sample, written to
+    /// `<out>/geology/`.
+    Geology {
+        /// Base guide folder (v1).
+        #[arg(long)]
+        base: PathBuf,
+        /// Geology table TOML (`[[unit]]`, `[shares]`, `[region."<name>"] shares`, `[values]`).
+        #[arg(long)]
+        table: PathBuf,
+        /// One declared value `name=value`; repeatable.
+        #[arg(long = "set")]
+        sets: Vec<String>,
+        /// Output folder.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Placed landforms (`sf_worldgen::placed`, LF-2): fault scarps with talus fans on unit boundaries, thermal
+    /// settle, walkability repair ramps; writes a full guide folder (base files copied) + `geology/` +
+    /// `features.json` + README.md.
+    Place {
+        /// Base guide folder (v1).
+        #[arg(long)]
+        base: PathBuf,
+        /// Geology table TOML.
+        #[arg(long)]
+        geology: PathBuf,
+        /// Landforms recipe TOML (`[values]`, `[region."<name>"] weight / face_budget`).
+        #[arg(long)]
+        recipe: Option<PathBuf>,
+        /// One declared value `name=value`; repeatable.
+        #[arg(long = "set")]
+        sets: Vec<String>,
+        /// Output guide folder.
+        #[arg(long)]
+        out: PathBuf,
+        /// Per-world filter file (`steep_fade*` values) copied into the output as `filter.toml`.
+        #[arg(long)]
+        world_filter: Option<PathBuf>,
+    },
     /// Fast steerable macro sharp-landform pass (`sf_worldgen::cliffs`): asymmetric fault scarps, stepped rock
     /// shelves, slope oversteepening, coastal headlands, explicit strokes and hardness-aware thermal talus.
     Cliffs {
@@ -248,9 +289,104 @@ struct MeasureArgs {
     /// Spectral patch edge, samples, a power of two (WG-M report: 512).
     #[arg(long, default_value_t = 512)]
     patch: usize,
+    /// Walkable slope limit, degrees (declared `max_walk_deg`, default 46, range 20-80).
+    #[arg(long)]
+    max_walk_deg: Option<f64>,
+    /// Base guide folder (LF-0): untouched share (|dh| < 0.5 m) and |dh| percentiles of fields on its samples.
+    #[arg(long)]
+    base: Option<PathBuf>,
     /// Report file: `.md` (and `.json` beside it) or `.json`.
     #[arg(long)]
     out: PathBuf,
+}
+
+fn parse_sets(sets: &[String]) -> sf_worldgen::Result<Vec<(String, f64)>> {
+    sets.iter()
+        .map(|kv| {
+            let (k, v) = kv
+                .split_once('=')
+                .ok_or_else(|| sf_worldgen::Error::Invalid(format!("--set {kv}: expected name=value")))?;
+            let v: f64 = v
+                .trim()
+                .parse()
+                .map_err(|_| sf_worldgen::Error::Invalid(format!("--set {kv}: not a number")))?;
+            Ok((k.trim().to_string(), v))
+        })
+        .collect()
+}
+
+fn place(
+    base: PathBuf,
+    geology: PathBuf,
+    recipe: Option<PathBuf>,
+    sets: &[String],
+    out: PathBuf,
+    world_filter: Option<PathBuf>,
+) -> sf_worldgen::Result<()> {
+    use sf_worldgen::placed::{PlaceRequest, run_place};
+    let req = PlaceRequest {
+        base,
+        geology,
+        recipe,
+        sets: parse_sets(sets)?,
+        out,
+        world_filter,
+    };
+    let (rep, bake_s) = run_place(&req)?;
+    let steps: Vec<String> = rep.steps_s.iter().map(|(k, v)| format!("{k} {v:.2}")).collect();
+    println!(
+        "place: bake {bake_s:.2} s ({}); traces {}, candidates {}, faults {} ({} segments), rejected budget {} \
+         spacing {}, water gap {}; throw p50/p90/max {:.0}/{:.0}/{:.0} m; ramps {}; wet/dry {}/{}/{}, frozen moved {}; \
+         blake3 {}",
+        steps.join(", "),
+        rep.traces,
+        rep.candidates,
+        rep.placed,
+        rep.segments,
+        rep.rejected_budget,
+        rep.rejected_spacing,
+        rep.rejected_gap,
+        rep.throw_m[0],
+        rep.throw_m[1],
+        rep.throw_m[2],
+        rep.ramps,
+        rep.new_wet,
+        rep.new_dry,
+        rep.sea_moved,
+        rep.frozen_moved,
+        &rep.hash[..12]
+    );
+    for r in &rep.regions {
+        println!(
+            "  {}: faults {} (throw p50/p90/max {:.0}/{:.0}/{:.0} m), face {:.2}/{:.2} km2, cliff {:.2} km2, largest walkable {:.1} -> {:.1} %, ramps {} \
+             (failed {})",
+            r.region,
+            r.faults,
+            r.throw_m[0],
+            r.throw_m[1],
+            r.throw_m[2],
+            r.face_km2,
+            r.budget_km2,
+            r.cliff_km2,
+            100.0 * r.route.largest_before,
+            100.0 * r.route.largest_after,
+            r.route.ramps,
+            r.route.failed
+        );
+    }
+    Ok(())
+}
+
+fn geology(base: PathBuf, table: PathBuf, sets: &[String], out: PathBuf) -> sf_worldgen::Result<()> {
+    use sf_worldgen::geology::{GeologyRequest, run_geology};
+    let sets = parse_sets(sets)?;
+    run_geology(&GeologyRequest {
+        base,
+        table,
+        sets,
+        out,
+    })
+    .map(|_| ())
 }
 
 fn measure(a: MeasureArgs) -> sf_worldgen::Result<()> {
@@ -263,6 +399,13 @@ fn measure(a: MeasureArgs) -> sf_worldgen::Result<()> {
     p.cone_m = a.cone_km * 1000.0;
     p.lowland_m = a.lowland_km * 1000.0;
     p.patch = a.patch;
+    if let Some(v) = a.max_walk_deg {
+        let d = &sf_worldgen::measure::declared_walk()[0];
+        if !(d.min..=d.max).contains(&v) {
+            return Err(bad(&format!("--max-walk-deg {v} outside [{}, {}]", d.min, d.max)));
+        }
+        p.max_walk_deg = v;
+    }
     p.region_m = match a.region.as_deref() {
         None => None,
         Some(&[x0, y0, x1, y1]) => Some([x0, y0, x1, y1]),
@@ -288,6 +431,7 @@ fn measure(a: MeasureArgs) -> sf_worldgen::Result<()> {
         refs: a.refs,
         dirs: a.dirs,
         params: p,
+        base: a.base,
         out: a.out,
     })
     .map(|_| ())
@@ -383,6 +527,32 @@ fn main() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("scrib-worldgen: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::Geology {
+            base,
+            table,
+            sets,
+            out,
+        } => match geology(base, table, &sets, out) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("scrib-worldgen: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::Place {
+            base,
+            geology,
+            recipe,
+            sets,
+            out,
+            world_filter,
+        } => match place(base, geology, recipe, &sets, out, world_filter) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("scrib-worldgen place: {e}");
                 ExitCode::FAILURE
             }
         },

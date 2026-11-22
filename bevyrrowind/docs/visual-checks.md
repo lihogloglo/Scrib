@@ -81,9 +81,13 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (60)
+### Awaiting owner (64)
+LF-2b | awaiting owner | [worldgen](visual-checks/worldgen.md) | eroded fault scarps on `x10s` (`lf2b-scarps`): facets, chutes, debris cones, 25-143 m throws by region, no gully dents on faces (2026-11-22)
+LF-2 | owner 2026-11-22: blades, not cliffs; rework LF-2b | [worldgen](visual-checks/worldgen.md) | placed fault scarps on `x10s` (`lf2-scarps`): tilted-block scarps with talus fans, relay ramps, repair ramps (2026-11-22)
 ST-5 | awaiting owner | [streaming](visual-checks/streaming.md) | Far shadow map keeps its centre while walking (re-centres every 512 m), `scene ridge-shadows-morning` (2026-11-22)
-WG-SHARP | awaiting owner | [worldgen](visual-checks/worldgen.md) | sharp terrain stack: WG-X7b triplanar cliff rock + crevices, Phase 3a runtime strata/Voronoi/ridges (`worldgen.sharp`), Phase 3b macro cliff pass (`x10cs`) (2026-11-20)
+WG-LOD | confirmed (owner 2026-11-22) | [worldgen](visual-checks/worldgen.md) | terrain shading decoupled from mesh LOD (normals, crevices, cliff rock from the finest resident level), `terrain.shade.*` A/B (2026-11-22)
+RG-3 | owner 2026-11-22: one family, too smooth (river boulders); sharp families next | [worldgen](visual-checks/worldgen.md) | rock lab `scene level-rock-lab`: sf_rockgen boulders, 4 classes x 0.5-12 m, flat + slope, triplanar pack rock textures, LOD tint (2026-11-22)
+WG-SHARP | owner 2026-11-22: rework (prefers x10s base; LOD-change bug) | [worldgen](visual-checks/worldgen.md) | sharp terrain stack: WG-X7b triplanar cliff rock + crevices, Phase 3a runtime strata/Voronoi/ridges (`worldgen.sharp`), Phase 3b macro cliff pass (`x10cs`) (2026-11-20)
 WG-G | awaiting owner (G1 seen: hitches, no visible detail → G2) | [worldgen](visual-checks/worldgen.md) | generated island in the game renderer, GPU erosion detail, `view world:` (2026-11-19)
 WG-X | seen 2026-11-19: base OK; empty, 26 fps, sprayed flora, blobby relief | [worldgen](visual-checks/worldgen.md) | Vvardenfell 10x same map: additive volcano arms, then textures, settlements, flora (2026-11-19)
 WG-V | awaiting owner | [worldgen](visual-checks/worldgen.md) | 3D worldgen viewer `worldgen-view`, S2 arms A0-A3 (B0-B3 next) (2026-11-18)

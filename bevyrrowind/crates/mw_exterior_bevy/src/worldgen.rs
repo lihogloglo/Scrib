@@ -61,12 +61,12 @@ pub const WORLDGEN_OCTAVES: Def<u32> = def!(count "worldgen.octaves" = 8)
     .lifetime(Lifetime::Live);
 
 /// `worldgen.sharp`: multiplier on the Phase 3a runtime sharp-landform operators (strata benches, Voronoi
-/// rock fracture blocks, ridged crests). Live: 0 = gully-only A/B baseline, 1 = default sharp relief,
-/// > 1 = more aggressive cliffs and rocky outcrops.
-pub const WORLDGEN_SHARP: Def<f32> = def!(float "worldgen.sharp" = 1.0)
+/// rock fracture blocks, ridged crests). Live: 0 = off (default, owner 2026-11-22 prefers the look without them),
+/// 1 = the full sharp profile, > 1 = more aggressive cliffs and rocky outcrops.
+pub const WORLDGEN_SHARP: Def<f32> = def!(float "worldgen.sharp" = 0.0)
     .range(0.0, 3.0)
     .unit(Unit::Ratio)
-    .help("Generated world: runtime sharp-landform scale (strata, Voronoi rock blocks, ridged crests; 0 = off)")
+    .help("Generated world: runtime sharp-landform scale (strata, Voronoi rock blocks, ridged crests; 0 = off, the default; 1 = full sharp profile)")
     .source(Source::Guess)
     .lifetime(Lifetime::Live);
 

@@ -3424,6 +3424,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fast-surface-nets"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2aef9e8d9e33f51d8120a2e997a819f18239ad7c2735e353ade79208a9a1c442"
+dependencies = [
+ "glam 0.29.3",
+ "ndshape",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3763,6 +3773,12 @@ dependencies = [
  "log",
  "xml-rs",
 ]
+
+[[package]]
+name = "glam"
+version = "0.29.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8babf46d4c1c9d92deac9f7be466f76dfc4482b6452fc5024b5e8daf6ffeb3ee"
 
 [[package]]
 name = "glam"
@@ -5302,6 +5318,8 @@ dependencies = [
  "sf_lod_bevy",
  "sf_physics_bevy",
  "sf_records",
+ "sf_rockgen",
+ "sf_rockgen_bevy",
  "sf_sky_bevy",
  "sf_surface_bevy",
  "sf_terrain_bevy",
@@ -5458,6 +5476,8 @@ dependencies = [
  "sf_physics_bevy",
  "sf_records",
  "sf_render_order_bevy",
+ "sf_rockgen",
+ "sf_rockgen_bevy",
  "sf_save_bevy",
  "sf_scene_bevy",
  "sf_shadow_cache_bevy",
@@ -5994,6 +6014,7 @@ dependencies = [
  "sf_worldgen",
  "tempfile",
  "tes3",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -6102,6 +6123,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "ndshape"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "975bce586ad637e27f6dc26ee907c07050686a588695bfd64b7873a9d48a700c"
+dependencies = [
+ "static_assertions",
 ]
 
 [[package]]
@@ -8564,6 +8594,42 @@ dependencies = [
  "bevy_pbr",
  "bevy_render",
  "bevy_shader",
+ "workspace-hack",
+]
+
+[[package]]
+name = "sf_rockgen"
+version = "0.1.0"
+dependencies = [
+ "fast-surface-nets",
+ "glam 0.33.12",
+ "meshopt",
+ "sf_tunables",
+]
+
+[[package]]
+name = "sf_rockgen_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_image",
+ "bevy_material",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_pbr",
+ "bevy_reflect",
+ "bevy_render",
+ "bevy_shader",
+ "bevy_transform",
+ "naga",
+ "sf_rockgen",
+ "sf_tunables",
+ "sf_tunables_bevy",
+ "wesl",
  "workspace-hack",
 ]
 

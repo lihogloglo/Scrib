@@ -56,6 +56,7 @@ pub mod cliffs;
 pub mod dem;
 pub mod filter;
 pub mod flood;
+pub mod geology;
 pub mod grid;
 pub mod guide;
 pub mod landform;
@@ -69,6 +70,7 @@ pub mod measure;
 pub mod metrics;
 pub mod mfd;
 pub mod perturb;
+pub mod placed;
 pub mod recipe;
 pub mod resample;
 pub mod run;
@@ -184,3 +186,7 @@ mod tests_s4;
 mod tests_s5;
 #[cfg(test)]
 mod tests_measure;
+#[cfg(test)]
+mod tests_geology;
+#[cfg(test)]
+mod tests_placed;

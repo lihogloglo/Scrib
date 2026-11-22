@@ -381,7 +381,11 @@ fn wg_detail(g: vec2<i32>, b: WgBase, band: vec2<f32>) -> f32 {
         return 0.0;
     }
     var dh = 0.0;
-    let amp = min(min(wg_f(FH_RELIEF) * slope0 * wavelength, wg_f(FH_MAX_AMP)), shore);
+    var amp = min(min(wg_f(FH_RELIEF) * slope0 * wavelength, wg_f(FH_MAX_AMP)), shore);
+    // Steep-face gully fade (LF-2b, per world): off when STEEP_HI is 0.
+    if wg_f(FH_STEEP_HI) > 0.0 {
+        amp *= 1.0 - wg_smoothstep(wg_f(FH_STEEP_LO), wg_f(FH_STEEP_HI), slope0);
+    }
     if octaves > 0u && amp > 0.0 {
         var wsum = 0.0;
         var wk = 1.0;

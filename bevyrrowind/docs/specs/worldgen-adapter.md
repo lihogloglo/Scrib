@@ -166,6 +166,68 @@ a CPU/GPU twin. Industry standard: authored-content-first with procedural land b
 Cry 5; framework spec "Industry comparison"); height stamps with falloff are UE5's Landmass / Landscape Patch brushes,
 Houdini HeightField Copy/blend and World Machine layouts: match (stamp + smootherstep band, detail suppressed inside).
 
+## Landforms (LF-A, 2026-11-22)
+
+Framework: `../../../superfargoth/docs/specs/landforms.md` (operators, geology map, runtime detail). This section is
+the Morrowind data: the base, rock units, region → operator table and sources. Base = `target/worldgen/x10s` (owner
+2026-11-22: the reference; every arm is a delta on it). Data files: `bevyrrowind/worldgen/geology.toml` (LF-A1, built) and
+`x10-landforms.toml` (with LF-2's recipe format); `x10-cliffs.toml` stays reproducible until LF-4 deletes its periodic passes.
+
+**Rock units** (stand-ins for Vvardenfell's volcanic geology, S: game lore + Etna/Iceland analogues; hardness and bed
+values `Guess` until an owner arm settles them; layer ids picked from the LTEX/PBR census at LF-A1, known names
+`tx_ac_rock_01`, `tx_ashland_rock_03`, `tx_bc_rock_01`):
+
+| Unit | Hardness | Beds | Dip | Outcrop | Regions |
+|---|---|---|---|---|---|
+| `basalt_flow` | 0.85 | 2-8 m flow units | `Surface` (radial from the summit) | yes | Red Mountain, Molag Amur, Ashlands highs |
+| `tuff` | 0.55 | 1-4 m | `Surface` | yes | Ashlands, West Gash |
+| `tephra` | 0.15 | none | n/a | no | Ashlands plains, Red Mountain apron, Molag Amur ash fields |
+| `capped_sediment` | 0.75 cap / 0.3 beds | 3-12 m | `Fixed` 2-5° | yes | West Gash highlands, Grazelands plateau |
+| `coastal_basalt` | 0.9 | 5-15 m (columnar) | `Fixed` ~0° | yes | Azura's Coast, Sheogorad |
+| `alluvium` | 0.05 | none | n/a | no | Bitter Coast, Ascadian Isles lowlands |
+
+**Region → operators** (weight and face budget per region; low budgets keep most land untouched):
+
+| Region | Operators | Face budget |
+|---|---|---|
+| Red Mountain | `caldera` at the existing crater (several breaches, owner 2026-11-22: where foyadas and the existing paths meet the rim), `lava_lobe` from flank vents, `fan`; foyadas stay channels | 0.06 |
+| Ashlands | low `fault_scarp` on unit boundaries, `lava_lobe`, `fan`; tephra plains calm | 0.04 |
+| Molag Amur | `lava_lobe` fronts, fissure `fault_scarp`, `fan` | 0.05 |
+| West Gash | `mesa`/`butte`, `canyon` on the larger rivers, `fault_scarp`, `terraces` (the rockiest region) | 0.08 |
+| Grazelands | plateau-edge `fault_scarp` toward the coast, few `mesa`, `fan` | 0.04 |
+| Azura's Coast, Sheogorad | `sea_cliff` on headlands, `butte` islets; bays stay beaches | 0.05 |
+| Ascadian Isles | river `terraces` only | 0.01 |
+| Bitter Coast | none (swamp), small `sea_cliff` on rocky headlands | 0.005 |
+
+Calm-base weights (framework step 1, strength 0 until the owner A/Bs): 1 everywhere except Red Mountain (0: the
+s55 apron is the accepted shape). Solstheim: out of scope (later recipe).
+
+**Sources:**
+
+- **Intent mask:** `terrain_rock_*` footprints → `cliff_mask.f32` (exists, `mw_worldgen::x10` `write_cliff_mask`):
+  raises the score of every operator inside it, so landforms land where Bethesda faked rock. LF-A2 adds direction:
+  clusters of those references (single linkage, as anchors) → principal axis + top height of the bounds → an
+  oriented `fault_scarp` / `mesa` intent stroke per cluster. The stem's region code (`terrain_rock_ac_01`, ...) picks
+  the unit where the RockMap disagrees; the full code list comes from the LF-A1 census.
+- **Hero strokes:** the three `x10-cliffs.toml` strokes (`red_mountain_sw_scarp`, `west_gash_escarpment`,
+  `molag_amur_rim`) become manual `fault_scarp`s with tapered tips and relay ramps.
+- **Census names** (WG-L2a names list): the Red Mountain crater and named craters feed `caldera`; named valleys and
+  foyadas are kept as channels (no landform crosses them).
+- **Anchors:** stamp weights fold into the human mask; no landform enters an anchor band; the Ghostfence path ("Anchors")
+  is kept clear of landforms too, so the ring stays a continuous walkable path.
+
+Slices: **LF-A1** units + region table + layer ids (test: every REGN on the island has a row, every layer id
+resolves). **LF-A2** oriented intent strokes from `terrain_rock_*` clusters (test: a fixture cluster yields a lip
+along its principal axis, deterministic).
+
+**As built LF-A1** (2026-11-22): `bevyrrowind/worldgen/geology.toml` = the framework `GeologyTable` (6 units as the
+table above; `k`, soft-bed shares, repose and the share mixes `Guess`, sourced per value in comments) + one adapter
+section `[layer_names.<unit>]` (LTEX ids, the framework ignores it). One row per legend region, Solstheim's 6 as
+stand-ins (basalt under till). `capped_sediment` dips 3.5° toward 255° (Guess); `coastal_basalt` flat. Glue
+`mw_worldgen::geology` (`AdapterGeology`: parse + checks, `resolve_layers` against a guide's `layers.json` palette,
+`resolved_toml` for `scrib-worldgen geology --table`, `region_coverage`). On `x10s` every land sample lies in one of
+the 15 rows (none outside a region); resolved table `target/worldgen/lf-a1/geology.resolved.toml`.
+
 ## Build plan
 
 Framework slices and the order across both specs: framework spec "Build plan".

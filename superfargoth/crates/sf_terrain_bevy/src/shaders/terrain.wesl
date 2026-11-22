@@ -3,7 +3,7 @@
 // clustered lights, fog and atmosphere match every other object.
 
 import super::common;
-import super::common::{DEBUG_LOD, DEBUG_WIREFRAME, DEBUG_NO_SPECULAR, DEBUG_NO_INDIRECT, DEBUG_NO_ENV_SPECULAR, world_xz, origin_y, debug_flags, base_reflectance, terrain_normal, height_at};
+import super::common::{DEBUG_LOD, DEBUG_WIREFRAME, DEBUG_NO_SPECULAR, DEBUG_NO_INDIRECT, DEBUG_NO_ENV_SPECULAR, world_xz, origin_y, debug_flags, base_reflectance, shade_levels, shade_normal, height_at};
 import super::surface::terrain_surface;
 import super::far_shadow::far_shadow_term;
 // Surface weather (surface-weather.md "Shader integration"): the shared layer on the view's
@@ -138,12 +138,14 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
 
     // The undisplaced ground normal: surface weather accumulates on it (SW-5b); the raise only
     // tilts the lighting normal, so the amounts never follow the camera-faded displacement.
-    let n_ground = terrain_normal(xz, in.lod);
+    // WG-LOD: from the finest resident height level for the camera, not the mesh LOD (`shade_levels`).
+    let shade = shade_levels(xz, in.lod);
+    let n_ground = shade_normal(xz, shade);
     var n_geo = n_ground;
 @if(SURFACE_WEATHER)
     n_geo = raised_normal(n_geo, xz, in.raise);
     let dist = distance(view.world_position, in.world_position.xyz);
-    let s = terrain_surface(xz, wpos, dpx, dpy, n_geo, dist, in.lod);
+    let s = terrain_surface(xz, wpos, dpx, dpy, n_geo, dist, in.lod, shade);
     var albedo = s.albedo;
 
     if (debug & DEBUG_LOD) != 0u {

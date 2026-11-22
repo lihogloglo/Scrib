@@ -16,6 +16,7 @@
 pub mod anchor;
 pub mod classify;
 pub mod flora;
+pub mod geology;
 pub mod layers;
 pub mod markers;
 mod output;
@@ -26,6 +27,8 @@ pub mod x10;
 mod tests;
 #[cfg(test)]
 mod tests_flora;
+#[cfg(test)]
+mod tests_geology;
 #[cfg(test)]
 mod tests_x10;
 

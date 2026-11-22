@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::filter::Declared;
 use crate::guide::{Guide, RegionMap};
-use crate::lithology::{RockMap, RockType};
+use crate::lithology::{RockMap, RockType, UnitWeight};
 use crate::perturb::{lattice, value_noise};
 use crate::thermal::{ThermalParams, relax};
 use crate::{Audit, Error, Grid, Result, hash_f32};
@@ -43,6 +43,7 @@ pub fn declared_defaults() -> Vec<Declared> {
         d("coast_fade_m", 4.0, "m", 0.1, 200.0, "Guess", "elevation above sea over which inland cliff ops fade in"),
         d("unit_cell_m", 1400.0, "m", 100.0, 20_000.0, "Guess", "geological fault-block / lithology unit spacing"),
         d("unit_warp_m", 320.0, "m", 0.0, 5000.0, "Guess", "domain warp amplitude of rock-unit boundaries"),
+        d("unit_blend_m", 260.0, "m", 0.0, 10_000.0, "Guess", "width over which scarp bearing and rock strength blend across rock-unit borders (capped at half a unit cell)"),
         d("scarp_amp_m", 55.0, "m", 0.0, 400.0, "Guess", "asymmetric fault-block / cuesta scarp height"),
         d("scarp_wavelength_m", 620.0, "m", 40.0, 10_000.0, "Guess", "spacing between successive cuesta/fault scarps"),
         d("scarp_steepness", 0.84, "ratio", 0.55, 0.96, "Guess", "share of wavelength that is gentle dip slope (rest is steep cliff face)"),
@@ -244,6 +245,7 @@ pub struct CliffParams {
     pub coast_fade_m: f64,
     pub unit_cell_m: f64,
     pub unit_warp_m: f64,
+    pub unit_blend_m: f64,
     pub scarp_amp_m: f64,
     pub scarp_wavelength_m: f64,
     pub scarp_steepness: f64,
@@ -298,6 +300,7 @@ impl CliffParams {
             coast_fade_m: get("coast_fade_m")?,
             unit_cell_m: get("unit_cell_m")?,
             unit_warp_m: get("unit_warp_m")?,
+            unit_blend_m: get("unit_blend_m")?,
             scarp_amp_m: get("scarp_amp_m")?,
             scarp_wavelength_m: get("scarp_wavelength_m")?,
             scarp_steepness: get("scarp_steepness")?,
@@ -385,6 +388,26 @@ impl SlopeStats {
 fn smoothstep(lo: f64, hi: f64, x: f64) -> f64 {
     let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// Scarp / shelf strength of a rock-unit type (0 hard cliff-former, 1 medium, 2 soft).
+#[inline]
+fn unit_strength_of(kind: usize) -> f64 {
+    match kind {
+        0 => 1.25,
+        1 => 0.85,
+        _ => 0.45,
+    }
+}
+
+/// Talus hardness of a rock-unit type (0 hard cliff-former, 1 medium, 2 soft).
+#[inline]
+fn unit_hard_of(kind: usize) -> f64 {
+    match kind {
+        0 => 0.85,
+        1 => 0.55,
+        _ => 0.25,
+    }
 }
 
 /// Asymmetric cuesta / fault-scarp wave in `[-0.5, 0.5]`: gentle ramp over `[0, split]`, steep drop over `[split, 1]`.
@@ -675,7 +698,7 @@ pub fn apply_cliffs(
         RockType { k: 1.0, share: 0.42 },  // medium bedded rock
         RockType { k: 1.7, share: 0.30 },  // softer fractured/tuff unit
     ];
-    let rock_cum = [0.28, 0.70, 1.0];
+    let rock_cum = crate::lithology::cumulative(&rock_types);
     let rock_map = RockMap {
         cell_m: params.unit_cell_m,
         jitter: 0.85,
@@ -719,17 +742,12 @@ pub fn apply_cliffs(
                 let sl = base_slope[i];
                 let reg = region_field.as_ref().map_or_else(RegionProfile::default, |rf| rf.sample(wx, wy));
 
-                // Geological unit + per-unit dip bearing for asymmetric scarps.
-                let unit = rock_map.sample([wx, wy], &rock_types, &rock_cum);
-                let ux = (wx / params.unit_cell_m).floor() as i64;
-                let uy = (wy / params.unit_cell_m).floor() as i64;
-                let unit_ang = std::f64::consts::PI * lattice(ux, uy, params.seed ^ 0x91e1_0da5);
-                let dip = [unit_ang.cos(), unit_ang.sin()];
-                let unit_strength = match unit.kind {
-                    0 => 1.25,
-                    1 => 0.85,
-                    _ => 0.45,
-                };
+                // Geological units (the RockMap's domain-warped Voronoi cells) with weights blending
+                // continuously across unit borders; each unit has its own dip bearing for asymmetric scarps.
+                let mut units_buf = [UnitWeight::default(); 25];
+                let n_units = rock_map.unit_weights([wx, wy], &rock_cum, params.unit_blend_m, &mut units_buf);
+                let units = &units_buf[..n_units];
+                let unit_strength: f64 = units.iter().map(|u| u.w * unit_strength_of(u.kind)).sum();
 
                 let mut dh = 0.0;
 
@@ -738,11 +756,18 @@ pub fn apply_cliffs(
                     let warp_wl = params.scarp_wavelength_m * 0.75;
                     let warped_x = wx + params.scarp_warp_m * value_noise([wx, wy], warp_wl, params.seed ^ 0x1111);
                     let warped_y = wy + params.scarp_warp_m * value_noise([wx, wy], warp_wl, params.seed ^ 0x2222);
-                    let proj = (warped_x * dip[0] + warped_y * dip[1]) / params.scarp_wavelength_m;
-                    let wave = cuesta_wave(proj, params.scarp_steepness);
+                    // Blend each unit's strength x wave (never the bearings: angles wrap).
+                    let wave: f64 = units
+                        .iter()
+                        .map(|u| {
+                            let unit_ang = std::f64::consts::PI * lattice(u.ix, u.iy, params.seed ^ 0x91e1_0da5);
+                            let proj = (warped_x * unit_ang.cos() + warped_y * unit_ang.sin()) / params.scarp_wavelength_m;
+                            u.w * unit_strength_of(u.kind) * cuesta_wave(proj, params.scarp_steepness)
+                        })
+                        .sum();
                     // Active on hills & slopes, gentler in low flats.
                     let mask = shore * smoothstep(2.0, 28.0, above) * (0.25 + 0.75 * smoothstep(0.04, 0.25, sl));
-                    dh += params.scarp_amp_m * reg.scarp_scale * unit_strength * mask * wave;
+                    dh += params.scarp_amp_m * reg.scarp_scale * mask * wave;
                 }
 
                 // 2. Macro stepped rock shelves on mountain flanks.
@@ -802,11 +827,7 @@ pub fn apply_cliffs(
                 // softer bands slump into 34 deg talus aprons at cliff feet.
                 let band_p = ((h_new / params.shelf_step_m.max(10.0)) + 0.35 * value_noise([wx, wy], 380.0, params.seed ^ 0x5555)).rem_euclid(1.0);
                 let cap_rock = smoothstep(0.35, 0.65, band_p);
-                let unit_hard = match unit.kind {
-                    0 => 0.85,
-                    1 => 0.55,
-                    _ => 0.25,
-                };
+                let unit_hard: f64 = units.iter().map(|u| u.w * unit_hard_of(u.kind)).sum();
                 let hard = (0.55 * cap_rock + 0.45 * unit_hard).clamp(0.0, 1.0);
                 tr[x] = soft_tan + (hard_tan - soft_tan) * hard;
             }
@@ -1072,6 +1093,63 @@ mod tests {
             r1.after.pct_over_35_deg
         );
         assert!(r1.after.p99_deg > r1.before.p99_deg + 5.0);
+    }
+
+    /// Tilted plane (8.5 deg) on a 4 km x 4 km grid at 20 m, scarps only (other ops off, no thermal).
+    fn tilted_plane_guide() -> Guide {
+        let (w, h, s) = (200, 200, 20.0);
+        let origin = [-1990.0, 1990.0];
+        let mut heights = vec![0.0f32; w * h];
+        for r in 0..h {
+            for c in 0..w {
+                let wx = origin[0] + c as f64 * s;
+                heights[r * w + c] = (400.0 + 0.15 * wx) as f32;
+            }
+        }
+        Guide { w, h, spacing_m: s, sea_level_m: 0.0, fill_m: None, origin_m: origin, heights, regions: None }
+    }
+
+    /// Max neighbour |dh| on pairs straddling the square `cell_m` lattice lines vs on all other pairs.
+    fn seam_vs_rest(g: &Guide, out: &[f32], cell_m: f64) -> (f64, f64) {
+        let (mut on, mut off) = (0.0f64, 0.0f64);
+        let cell = |v: f64| (v / cell_m).floor() as i64;
+        for r in 0..g.h {
+            let wy = g.origin_m[1] - r as f64 * g.spacing_m;
+            for c in 0..g.w {
+                let wx = g.origin_m[0] + c as f64 * g.spacing_m;
+                let i = r * g.w + c;
+                if c + 1 < g.w {
+                    let d = (f64::from(out[i + 1]) - f64::from(out[i])).abs();
+                    if cell(wx) == cell(wx + g.spacing_m) { off = off.max(d) } else { on = on.max(d) }
+                }
+                if r + 1 < g.h {
+                    let d = (f64::from(out[i + g.w]) - f64::from(out[i])).abs();
+                    if cell(wy) == cell(wy - g.spacing_m) { off = off.max(d) } else { on = on.max(d) }
+                }
+            }
+        }
+        (on, off)
+    }
+
+    #[test]
+    fn scarps_have_no_square_grid_seams() {
+        let g = tilted_plane_guide();
+        let p = CliffParams {
+            unit_cell_m: 400.0,
+            scarp_wavelength_m: 2000.0,
+            scarp_steepness: 0.55,
+            shelf_amp_m: 0.0,
+            steepen_gain: 0.0,
+            sea_cliff_amp_m: 0.0,
+            lava_flow_count: 0,
+            thermal_steps: 0,
+            ..CliffParams::default()
+        };
+        let (h1, r1) = apply_cliffs(&g, &p, None).unwrap();
+        let (_, r2) = apply_cliffs(&g, &p, None).unwrap();
+        assert_eq!(r1.blake3, r2.blake3, "must be deterministic across runs");
+        let (on, off) = seam_vs_rest(&g, &h1, p.unit_cell_m);
+        assert!(on <= off * 1.5, "square-grid seam: max |dh| on lattice lines {on:.2} m vs elsewhere {off:.2} m");
     }
 
     #[test]

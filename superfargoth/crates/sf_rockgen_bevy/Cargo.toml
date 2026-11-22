@@ -1,0 +1,45 @@
+[package]
+name = "sf_rockgen_bevy"
+description = "Bevy plugin for sf_rockgen: rock meshes as Bevy meshes with VisibilityRange LODs, a world-axis triplanar PBR rock material"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Thin Bevy crate over the Bevy-free `sf_rockgen` (ARCHITECTURE §8b rules 1 and 6, minimal Bevy features;
+# spec `docs/specs/rockgen.md` RG-3).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+# Embedded shader, Handle.
+bevy_asset.workspace = true
+# VisibilityRange (LOD crossfade).
+bevy_camera.workspace = true
+bevy_color = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+# The material's pack maps.
+bevy_image.workspace = true
+# OpaqueRendererMethod (the extension is forward only).
+bevy_material.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+# Mesh, Mesh3d, MeshTag.
+bevy_mesh.workspace = true
+# ExtendedMaterial, MaterialPlugin, StandardMaterial, PBR shader library.
+bevy_pbr.workspace = true
+bevy_reflect = { workspace = true, features = ["std"] }
+# AsBindGroup, ShaderType.
+bevy_render.workspace = true
+bevy_shader.workspace = true
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+sf_rockgen.workspace = true
+sf_tunables.workspace = true
+sf_tunables_bevy.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# Shader compile checks (no GPU, no picture): wesl links the rock stage against the vendored bevy_pbr
+# modules per def set, as Bevy's shader cache does; naga validates (as sf_character_bevy's).
+naga = { workspace = true, features = ["wgsl-in"] }
+wesl = { workspace = true, features = ["naga-ext"] }
+
+[lints]
+workspace = true

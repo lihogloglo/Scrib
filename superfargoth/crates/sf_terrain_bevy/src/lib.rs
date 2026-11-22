@@ -146,6 +146,31 @@ pub struct TerrainSettings {
     pub hex_tiling: HexTilingSettings,
     /// Slope-driven triplanar cliff rock and crevice darkening (WG-X7b).
     pub cliff: CliffShadingSettings,
+    /// Which height levels shade the terrain (WG-LOD).
+    pub shade: ShadeSettings,
+}
+
+/// Which height clipmap levels shade the terrain (WG-LOD), written to `P_SHADE` each frame: normals,
+/// curvature and the cliff rock weight come from the finest level resident around the camera, not the
+/// mesh LOD (`common.wesl` `shade_levels`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShadeSettings {
+    /// Decoupled from the mesh LOD ([`TERRAIN_SHADE_DECOUPLED`]); off, the old coupling (an A/B).
+    pub decoupled: bool,
+    /// Cross-fade into the next coarser level, texels ([`TERRAIN_SHADE_BLEND_TEXELS`]).
+    pub blend_texels: f32,
+    /// Curvature scale, meters ([`TERRAIN_CLIFF_CURVATURE_SCALE_M`]).
+    pub curvature_scale_m: f32,
+}
+
+impl Default for ShadeSettings {
+    fn default() -> Self {
+        Self {
+            decoupled: TERRAIN_SHADE_DECOUPLED.default_value(),
+            blend_texels: TERRAIN_SHADE_BLEND_TEXELS.default_value(),
+            curvature_scale_m: TERRAIN_CLIFF_CURVATURE_SCALE_M.default_value(),
+        }
+    }
 }
 
 /// Slope-driven cliff rock and curvature crevice shading parameters (WG-X7b), written to `P_CLIFF`.
@@ -345,8 +370,48 @@ pub const TERRAIN_CLIFF_CREVICE_STRENGTH: Def<f32> = def!(float "terrain.cliff.c
     .source(Source::Guess)
     .lifetime(Lifetime::Live);
 
+/// `terrain.shade.decoupled`: [`ShadeSettings::decoupled`] (WG-LOD).
+pub const TERRAIN_SHADE_DECOUPLED: Def<bool> = def!(bool "terrain.shade.decoupled" = true)
+    .help("Terrain normals, curvature and cliff rock from the finest resident height level (off: from the mesh LOD, the old coupling)")
+    .source(Source::Industry("UE Landscape / Far Cry 5 (Moore, GDC 2018): shading from full-resolution height data, independent of mesh LOD"))
+    .lifetime(Lifetime::Live);
+
+/// `terrain.shade.blend_texels`: [`ShadeSettings::blend_texels`] (WG-LOD).
+pub const TERRAIN_SHADE_BLEND_TEXELS: Def<f32> = def!(float "terrain.shade.blend_texels" = 48.0)
+    .range(4.0, 96.0)
+    .unit(Unit::Texels)
+    .help("Width of the shading cross-fade into the next coarser height level, at the outer edge of each level's cover")
+    .source(Source::Industry("Losasso & Hoppe 2004, Geometry Clipmaps: transition width n/10 (51 texels of a 512 window)"))
+    .lifetime(Lifetime::Live);
+
+/// `terrain.cliff.curvature_scale_m`: [`ShadeSettings::curvature_scale_m`] (WG-LOD).
+pub const TERRAIN_CLIFF_CURVATURE_SCALE_M: Def<f32> = def!(float "terrain.cliff.curvature_scale_m" = 2.0)
+    .range(0.5, 16.0)
+    .unit(Unit::Meters)
+    .help("World scale of the crevice / cliff-lip curvature (the same on every height level)")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
+/// `terrain.cdlod.morph_start`: where each CDLOD LOD starts morphing into the next, as a fraction of its
+/// range ([`CdlodSettings::with_morph_start`]); the morph ends at the range. Strugar's crack-free condition
+/// bounds it from below ([`CdlodSettings::crack_free_morph_start`], measured by `measure_morph_start_floor`,
+/// ledger worldgen 2026-11-22): 0.777 on level ground with 32-quad patches, `lod0_range` 48 m and the gate's
+/// 0.5 m slack (the range's floor, 0.78); 0.82 on 30 deg slopes; 0.875 on 45 deg. The default stays 0.85
+/// (Strugar's demo: 0.66 of the band = 0.83 of the range): lower trades a longer morph for T-junction
+/// cracks on slopes; a longer crack-free morph needs a larger `lod0_range` or smaller patches.
+pub const TERRAIN_MORPH_START: Def<f32> = def!(float "terrain.cdlod.morph_start" = 0.85)
+    .range(0.78, 0.95)
+    .unit(Unit::Ratio)
+    .help("Where terrain geometry starts morphing to the next LOD, as a fraction of the LOD's range (lower = longer morph, cracks on slopes below ~0.85)")
+    .source(Source::Industry("Strugar 2009, CDLOD: morph over the end of each range; crack-free floor measured 2026-11-22"))
+    .lifetime(Lifetime::Live);
+
 /// This crate's tunables (live binding: tunables slice T2).
 pub const TUNABLES: &[&dyn AnyDef] = &[
+    &TERRAIN_SHADE_DECOUPLED,
+    &TERRAIN_SHADE_BLEND_TEXELS,
+    &TERRAIN_CLIFF_CURVATURE_SCALE_M,
+    &TERRAIN_MORPH_START,
     &TERRAIN_SELECT_MOVE_M,
     &FAR_SHADOW_RECENTER_M,
     &TERRAIN_RAISE_REPOSE_DEG,
@@ -391,6 +456,19 @@ fn cliff_params(table: &LayerTable, settings: &TerrainSettings) -> [u32; 4] {
     [cos_start.to_bits(), cos_full.to_bits(), crev.to_bits(), layer]
 }
 
+/// The `P_SHADE` slot (WG-LOD): decoupled (0/1), the cover (level texels every camera position keeps
+/// resident around it: the half window less the snap, the curvature taps' reach at level 0 and the
+/// central-difference margin), the blend width (texels, at most half the cover so it stays inside the
+/// level's own octave) and the curvature scale (m).
+#[allow(clippy::cast_precision_loss)]
+fn shade_params(settings: &TerrainSettings) -> [f32; 4] {
+    let s = settings.shade;
+    let scale = s.curvature_scale_m.clamp(0.25, 16.0);
+    let cover = ((CLIPMAP_SIZE / 2 - settings.snap) as f32 - (scale / 0.5).ceil() - 2.0).max(8.0);
+    let blend = s.blend_texels.clamp(1.0, 0.5 * cover - 1.0);
+    [f32::from(u8::from(s.decoupled)), cover, blend, scale]
+}
+
 /// The `P_HEX` slot (WG-X7a): enabled (0/1), rotation strength (0..1), contrast exponent, scale.
 fn hex_params(settings: &TerrainSettings) -> [f32; 4] {
     let h = settings.hex_tiling;
@@ -424,7 +502,7 @@ impl TerrainSettings {
 impl Default for TerrainSettings {
     fn default() -> Self {
         Self {
-            cdlod: CdlodSettings::default(),
+            cdlod: CdlodSettings::default().with_morph_start(TERRAIN_MORPH_START.default_value()),
             upload_budget: 2 << 20,
             burst_budget: 64 << 20,
             max_loads: 16,
@@ -443,6 +521,7 @@ impl Default for TerrainSettings {
             twin: TwinSettings::default(),
             hex_tiling: HexTilingSettings::default(),
             cliff: CliffShadingSettings::default(),
+            shade: ShadeSettings::default(),
         }
     }
 }
@@ -1616,6 +1695,7 @@ fn update_terrain(
     p.set_f(params::P_RAISE, raise_params(&settings));
     p.set_f(params::P_HEX, hex_params(&settings));
     p.0[params::P_CLIFF] = cliff_params(&state.table, &settings);
+    p.set_f(params::P_SHADE, shade_params(&settings));
     for (n, l) in state.table.layers.iter().take(params::MAX_LAYERS).enumerate() {
         p.set_layer(n, l);
     }
@@ -1783,6 +1863,7 @@ mod tests {
         assert_eq!(slot("P_RAISE"), params::P_RAISE);
         assert_eq!(slot("P_HEX"), params::P_HEX);
         assert_eq!(slot("P_CLIFF"), params::P_CLIFF);
+        assert_eq!(slot("P_SHADE"), params::P_SHADE);
         assert_eq!(slot("HEIGHT_LEVELS"), HEIGHT_LEVELS);
         assert_eq!(slot("LAYER_LEVELS"), LAYER_LEVELS);
         assert_eq!(params::P_MORPH + params::MORPH_LODS, params::P_HEIGHT);
@@ -2063,19 +2144,40 @@ mod tests {
         }
     }
 
-    /// CW-2: a CDLOD selection kept while the camera moves less than the gate's quantum stays crack-free
-    /// with the morph slack: wherever a patch borders a coarser one, its edge vertices have finished
-    /// morphing (k = 1) and the coarser patch's haven't started (k = 0). Without the slack, the same
-    /// staleness cracks; a fresh selection without it doesn't (the ungated baseline).
-    #[test]
-    fn stale_selection_stays_crack_free_with_the_morph_slack() {
-        use bevy_math::DVec3;
-        let cdlod = CdlodSettings::default();
-        let q = TERRAIN_SELECT_MOVE_M.default_value();
-        let c0 = DVec3::new(1000.3, 2.0, 2000.7); // meters
+    /// The CDLOD selection for a camera at `cam` (meters) over ground `h(x, z)` (meters), with node bounds
+    /// from a 9 x 9 grid of `h` over each node (exact for planes).
+    #[allow(clippy::cast_precision_loss)]
+    fn select_over(cdlod: &CdlodSettings, cam: bevy_math::DVec3, h: &dyn Fn(f64, f64) -> f64) -> Vec<SelectedNode> {
+        let bounds = |lod: i8, x: i64, z: i64| {
+            let size = NodeKey::node_samples(lod) * 0.5;
+            let (x0, z0) = (x as f64 * size, z as f64 * size);
+            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+            for j in 0..=8 {
+                for i in 0..=8 {
+                    let v = h(x0 + size * f64::from(i) / 8.0, z0 + size * f64::from(j) / 8.0);
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                }
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            (lo as f32, hi as f32)
+        };
         let mut nodes = Vec::new();
-        cdlod::select(DVec3::new(c0.x * 2.0, c0.y, c0.z * 2.0), &cdlod, &|_, _, _| (0.0, 0.0), &mut nodes);
-        assert!(nodes.len() > 100);
+        cdlod::select(bevy_math::DVec3::new(cam.x * 2.0, cam.y, cam.z * 2.0), cdlod, &bounds, &mut nodes);
+        nodes
+    }
+
+    /// The worst crack of `nodes` seen from `cam` (meters) with the shader's morph (`common.wesl`
+    /// `terrain_vertex`, morph zones moved `slack` closer) over ground `h`: wherever a patch borders a
+    /// coarser one, max of (1 - its edge vertices' k, the coarser patch's k). 0 = crack-free (Strugar).
+    fn worst_crack(
+        cdlod: &CdlodSettings,
+        nodes: &[SelectedNode],
+        cam: bevy_math::DVec3,
+        slack: f32,
+        h: &dyn Fn(f64, f64) -> f64,
+    ) -> f32 {
+        use bevy_math::DVec3;
         let drawn: HashSet<NodeKey> = nodes.iter().map(|n| n.key).collect();
         // The LOD of the drawn patch over level-0 sample point `g`.
         #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
@@ -2087,40 +2189,52 @@ mod tests {
                 drawn.contains(&NodeKey { lod, x, z, quadrant: None }) || drawn.contains(&NodeKey { lod, x, z, quadrant: Some(quad) })
             })
         };
-        // The shader's morph (`common.wesl` `terrain_vertex`) on flat ground at height 0.
         #[allow(clippy::cast_possible_truncation)]
-        let morph = |lod: i8, g: DVec2, cam: DVec3, slack: f32| -> f32 {
-            let (start, end) = params::morph_zone(&cdlod, lod, slack);
-            let d = (DVec3::new(g.x * 0.5, 0.0, g.y * 0.5) - cam).length() as f32;
+        let morph = |lod: i8, g: DVec2| -> f32 {
+            let (start, end) = params::morph_zone(cdlod, lod, slack);
+            let (x, z) = (g.x * 0.5, g.y * 0.5);
+            let d = (DVec3::new(x, h(x, z), z) - cam).length() as f32;
             ((d - start) / (end - start)).clamp(0.0, 1.0)
         };
-        // Worst crack over every border with a coarser patch: max of (1 - fine k, coarse k).
-        let worst = |cam: DVec3, slack: f32| -> f32 {
-            let mut worst = 0.0f32;
-            for n in &nodes {
-                let k = n.key;
-                let o = k.first_sample();
-                let step = NodeKey::node_samples(k.lod) / f64::from(cdlod::PATCH_QUADS);
-                let edge = f64::from(k.quads()) * step;
-                for i in 0..=k.quads() {
-                    let t = f64::from(i) * step;
-                    for (g, out) in [
-                        (DVec2::new(o.x + t, o.y), DVec2::new(0.0, -1.0)),
-                        (DVec2::new(o.x + t, o.y + edge), DVec2::new(0.0, 1.0)),
-                        (DVec2::new(o.x, o.y + t), DVec2::new(-1.0, 0.0)),
-                        (DVec2::new(o.x + edge, o.y + t), DVec2::new(1.0, 0.0)),
-                    ] {
-                        let Some(other) = lod_at(g + out * 0.01) else { continue };
-                        if other > k.lod {
-                            assert_eq!(other, k.lod + 1, "neighbors differ by one LOD");
-                            worst = worst.max(1.0 - morph(k.lod, g, cam, slack)).max(morph(other, g, cam, slack));
-                        }
+        let mut worst = 0.0f32;
+        for n in nodes {
+            let k = n.key;
+            let o = k.first_sample();
+            let step = NodeKey::node_samples(k.lod) / f64::from(cdlod::PATCH_QUADS);
+            let edge = f64::from(k.quads()) * step;
+            for i in 0..=k.quads() {
+                let t = f64::from(i) * step;
+                for (g, out) in [
+                    (DVec2::new(o.x + t, o.y), DVec2::new(0.0, -1.0)),
+                    (DVec2::new(o.x + t, o.y + edge), DVec2::new(0.0, 1.0)),
+                    (DVec2::new(o.x, o.y + t), DVec2::new(-1.0, 0.0)),
+                    (DVec2::new(o.x + edge, o.y + t), DVec2::new(1.0, 0.0)),
+                ] {
+                    let Some(other) = lod_at(g + out * 0.01) else { continue };
+                    if other > k.lod {
+                        assert_eq!(other, k.lod + 1, "neighbors differ by one LOD");
+                        worst = worst.max(1.0 - morph(k.lod, g)).max(morph(other, g));
                     }
                 }
             }
-            worst
-        };
-        assert!(worst(c0, 0.0) < 1e-3, "fresh selection, no slack");
+        }
+        worst
+    }
+
+    /// CW-2: a CDLOD selection kept while the camera moves less than the gate's quantum stays crack-free
+    /// with the morph slack: wherever a patch borders a coarser one, its edge vertices have finished
+    /// morphing (k = 1) and the coarser patch's haven't started (k = 0). Without the slack, the same
+    /// staleness cracks; a fresh selection without it doesn't (the ungated baseline).
+    #[test]
+    fn stale_selection_stays_crack_free_with_the_morph_slack() {
+        use bevy_math::DVec3;
+        let cdlod = TerrainSettings::default().cdlod;
+        let q = TERRAIN_SELECT_MOVE_M.default_value();
+        let c0 = DVec3::new(1000.3, 2.0, 2000.7); // meters
+        let flat = |_: f64, _: f64| 0.0;
+        let nodes = select_over(&cdlod, c0, &flat);
+        assert!(nodes.len() > 100);
+        assert!(worst_crack(&cdlod, &nodes, c0, 0.0, &flat) < 1e-3, "fresh selection, no slack");
         let stale: Vec<DVec3> = (0..16)
             .map(|i| {
                 let a = f64::from(i) * std::f64::consts::TAU / 16.0;
@@ -2130,11 +2244,85 @@ mod tests {
             .map(|dir| c0 + dir * f64::from(q) * 0.99)
             .collect();
         for cam in &stale {
-            let w = worst(*cam, q);
+            let w = worst_crack(&cdlod, &nodes, *cam, q, &flat);
             assert!(w < 1e-3, "camera {cam}: a crack of {w} with the slack");
         }
-        let unslacked = stale.iter().map(|c| worst(*c, 0.0)).fold(0.0f32, f32::max);
+        let unslacked = stale.iter().map(|c| worst_crack(&cdlod, &nodes, *c, 0.0, &flat)).fold(0.0f32, f32::max);
         assert!(unslacked > 1e-2, "without the slack a stale selection cracks ({unslacked})");
+    }
+
+    /// Cameras for the morph-start checks: positions spread over a few LOD 3 nodes, 2 m and 40 m above
+    /// the ground.
+    #[allow(clippy::many_single_char_names)]
+    fn morph_cameras(h: &dyn Fn(f64, f64) -> f64, n: u32) -> Vec<bevy_math::DVec3> {
+        (0..n)
+            .map(|i| {
+                let (u, v) = ((f64::from(i) * 0.618_034).fract(), (f64::from(i) * 0.754_878 + 0.31).fract());
+                let (x, z) = (1000.0 + u * 384.0, 2000.0 + v * 384.0);
+                bevy_math::DVec3::new(x, h(x, z) + if i % 3 == 0 { 40.0 } else { 2.0 }, z)
+            })
+            .collect()
+    }
+
+    /// The worst crack over `cams` for ground `h`, each camera's selection also seen from 8 stale
+    /// positions a gate quantum `q` away (the CW-2 slack).
+    fn worst_over(cdlod: &CdlodSettings, cams: &[bevy_math::DVec3], q: f32, h: &dyn Fn(f64, f64) -> f64) -> f32 {
+        use bevy_math::DVec3;
+        let mut worst = 0.0f32;
+        for c in cams {
+            let nodes = select_over(cdlod, *c, h);
+            worst = worst.max(worst_crack(cdlod, &nodes, *c, q, h));
+            for i in 0..8 {
+                let a = f64::from(i) * std::f64::consts::TAU / 8.0;
+                let dir = DVec3::new(a.cos(), if i % 2 == 0 { 0.5 } else { -0.5 }, a.sin()).normalize();
+                worst = worst.max(worst_crack(cdlod, &nodes, *c + dir * f64::from(q) * 0.99, q, h));
+            }
+        }
+        worst
+    }
+
+    /// WG-LOD: the default morph start (`terrain.cdlod.morph_start`) is crack-free on level ground and on
+    /// 30 degree slopes, fresh and with the selection gate's stale slack; the declared floor is crack-free
+    /// on level ground (Strugar's bound, `crack_free_morph_start`).
+    #[allow(clippy::many_single_char_names)]
+    #[test]
+    fn default_morph_start_stays_crack_free_on_slopes() {
+        let s = TerrainSettings::default();
+        assert!((s.cdlod.morph_start() - TERRAIN_MORPH_START.default_value()).abs() < 1e-6);
+        let q = TERRAIN_SELECT_MOVE_M.default_value();
+        let (floor, _) = TERRAIN_MORPH_START.bounds().expect("declared range");
+        assert!(floor >= s.cdlod.crack_free_morph_start(0.0, q), "floor {floor}");
+        let flat = |_: f64, _: f64| 0.0;
+        let at_floor = s.cdlod.with_morph_start(floor);
+        assert!(worst_over(&at_floor, &morph_cameras(&flat, 9), q, &flat) < 1e-3, "the floor cracks on level ground");
+        for slope_deg in [0.0f64, 30.0] {
+            let a = slope_deg.to_radians().tan();
+            let h = move |x: f64, z: f64| a * (0.8 * x + 0.6 * z);
+            let w = worst_over(&s.cdlod, &morph_cameras(&h, 9), q, &h);
+            assert!(w < 1e-3, "slope {slope_deg} deg: a crack of {w}");
+        }
+    }
+
+    /// WG-LOD: the worst crack per morph start (morph start / range) and ground slope, for the default
+    /// ranges (`lod0_range`) and the gate's slack: where `terrain.cdlod.morph_start`'s floor lies.
+    #[allow(clippy::many_single_char_names)]
+    #[test]
+    #[ignore = "measurement: crack-free morph start floor per slope (WG-LOD)"]
+    fn measure_morph_start_floor() {
+        let q = TERRAIN_SELECT_MOVE_M.default_value();
+        let cdlod = TerrainSettings::default().cdlod;
+        println!("bound: flat {:.3}, 1 m/m relief {:.3}", cdlod.crack_free_morph_start(0.0, q), cdlod.crack_free_morph_start(1.0, q));
+        for slope_deg in [0.0f64, 30.0, 45.0, 60.0] {
+            let a = slope_deg.to_radians().tan();
+            let h = move |x: f64, z: f64| a * (0.8 * x + 0.6 * z);
+            let cams = morph_cameras(&h, 24);
+            let mut row = Vec::new();
+            for start in [0.62f32, 0.66, 0.70, 0.72, 0.74, 0.76, 0.78, 0.80, 0.82, 0.85] {
+                let cdlod = cdlod.with_morph_start(start);
+                row.push(format!("{start:.2}: {:.3}", worst_over(&cdlod, &cams, q, &h)));
+            }
+            println!("slope {slope_deg:2.0} deg | worst crack k per morph start | {}", row.join(" | "));
+        }
     }
 
     /// CW-2: the terrain gate's key. A still camera skips, a quantum of travel, a tile change (`select_rev`)
@@ -2142,9 +2330,11 @@ mod tests {
     #[test]
     fn terrain_gate_keys_on_camera_tiles_and_origin() {
         let q = TerrainSettings::select_gate_quanta(true);
-        let off = TerrainSettings::default().select_gate;
-        assert!(!off.enabled, "off by default until the owner's A/B");
-        assert!(TerrainSettings::default().morph_slack() == 0.0, "no slack while off");
+        let on_by_default = sf_world::SELECT_GATE.default_value();
+        assert_eq!(TerrainSettings::default().select_gate.enabled, on_by_default, "the default follows the tunable");
+        let off = TerrainSettings::select_gate_quanta(false);
+        let off_settings = TerrainSettings { select_gate: off, ..TerrainSettings::default() };
+        assert!(off_settings.morph_slack() == 0.0, "no slack while off");
         let mut gate = SelectGate::<(u64, WorldPos)>::default();
         let cam = |x: f64| [GateSource { pos: bevy_math::DVec3::new(x, 10.0, 0.0), dir: None }];
         let o = WorldPos::from_f64(bevy_math::DVec3::ZERO);

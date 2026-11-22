@@ -1,0 +1,6 @@
+# Per-world runtime filter values (`sf_worldgen::tiles::world_filter`; copied into a world folder as `filter.toml`
+# by `scrib-worldgen place --world-filter`). LF-2b: no gully dents on rock faces: the gully amplitude fades from 40
+# to 50 deg of base slope (declared Guess / Reference(rockgen cliff.slope_deg)). Worlds without the file keep it off.
+steep_fade = 1
+steep_fade_lo_deg = 40
+steep_fade_hi_deg = 50

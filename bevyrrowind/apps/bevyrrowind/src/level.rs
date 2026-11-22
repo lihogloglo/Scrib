@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use mw_exterior_bevy::level::{LevelSetup, STARTED, actors, find, pick_camera, texture_lab::{self, LabContent}, worldspace};
+use mw_exterior_bevy::level::{LevelSetup, STARTED, actors, find, pick_camera, rock_lab, texture_lab::{self, LabContent}, worldspace};
 use mw_install::MorrowindInstall;
 use sf_level::Level;
 
@@ -16,6 +16,7 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
     let (source, mut level) = find(name)?;
     lab_overrides(&mut level, &flags)?;
     let texture_lab = lab_content(&mut level, &flags);
+    let rock_lab = (level.name == rock_lab::LEVEL).then(|| rock_lab::RockLabContent::new(flags.lab.rock_textures.as_deref()));
     let camera = pick_camera(&level, &mut flags.camera);
     println!(
         "level {} ({source}): {} objects, cameras {}",
@@ -38,7 +39,7 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
     let mut options = flags.exterior_options(install, &content.db, format!("Bevyrrowind - level {}", level.name), start)?;
     let actors = actors::resolve(&level, &content.db);
     options.actors = Some(Arc::new(content.db));
-    options.level = Some(LevelSetup { level: Arc::new(level), worldspace: ws, actors: actors.into(), texture_lab });
+    options.level = Some(LevelSetup { level: Arc::new(level), worldspace: ws, actors: actors.into(), texture_lab, rock_lab });
     mw_exterior_bevy::exterior::run(Arc::new(vfs), options)
 }
 

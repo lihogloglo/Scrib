@@ -58,6 +58,9 @@ sf_physics.workspace = true
 sf_physics_bevy.workspace = true
 sf_records.workspace = true
 sf_render_order_bevy.workspace = true
+# The rock lab (`level:rock-lab`, rockgen RG-3).
+sf_rockgen.workspace = true
+sf_rockgen_bevy.workspace = true
 sf_save_bevy.workspace = true
 sf_scene_bevy.workspace = true
 sf_shadow_cache_bevy.workspace = true

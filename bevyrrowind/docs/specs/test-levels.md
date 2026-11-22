@@ -149,3 +149,14 @@ the game's (`mw_exterior_bevy/src/level/texture_lab.rs`), so the level file stay
   `texture-lab: N swatches, M models; normals K/N, orm L/N`, then `texture-lab swatch i: ...` / `texture-lab model i: ...`
   once the images load; the gauge's `materials.live:` line counts this scene alone.
 - Any level takes `--lab-textures` / `--lab-models` (e.g. `level:light-lab` for interior lamp light only).
+
+## Rock lab (built, rockgen RG-3, 2026-11-22)
+
+The procedural rock viewer (`superfargoth/docs/specs/rockgen.md` RG-3; visual check RG-3): `levels/rock-lab.ron` (a 400 m
+plate, a 30 deg `slope` ramp onto a plateau, 09:00 clear), scene `level-rock-lab`; content is the game's
+(`mw_exterior_bevy/src/level/rock_lab.rs`). One column of `sf_rockgen` boulders per viewer class (block, platy, cobble,
+chipped), 10 power-law sizes 0.5-12 m, plus 2 on the slope face and 2 at its toe per class (the game reads the ramp from
+the level's `slope` object). Rocks generate on the async compute pool from the live `rockgen.boulder.*` tunables, LODs are
+`VisibilityRange` children, the material is `sf_rockgen_bevy::RockMaterial` (triplanar, the statics' texture companions,
+the terrain's land-texture tiling). No colliders yet (RG-2). Keys: X texture, Z class, R new seed, L LOD tint, M wireframe,
+I info; `--rock-textures a,b,...` replaces the four defaults.

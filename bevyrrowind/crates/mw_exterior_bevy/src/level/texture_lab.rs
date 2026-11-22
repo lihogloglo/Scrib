@@ -109,7 +109,8 @@ impl LabContent {
     }
 }
 
-fn texture_path(name: &str) -> Option<String> {
+/// A texture flag value as a VFS path (bare names get `textures/` + `.dds`); also the rock lab's.
+pub(crate) fn texture_path(name: &str) -> Option<String> {
     let name = name.trim().replace('\\', "/").to_ascii_lowercase();
     if name.is_empty() {
         return None;

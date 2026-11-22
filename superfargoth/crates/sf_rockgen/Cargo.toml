@@ -1,0 +1,19 @@
+[package]
+name = "sf_rockgen"
+description = "Bevy-free procedural rock meshes for superfargoth: SDF boulders (joint sets, chips, rounding, weathering), surface-nets meshing, meshopt LOD chains"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Bevy-free core (ARCHITECTURE §8b rule 1; spec `docs/specs/rockgen.md`): pure functions of (seed, parameters),
+# so every peer regenerates the same rock. Listed in `.config/hakari.toml` final-excludes.
+[dependencies]
+# Naive surface nets on a padded grid (MIT/Apache, Bevy-free; rockgen.md "Reuse check"). Brings glam 0.29 + ndshape 0.3.
+fast-surface-nets = "0.2.1"
+glam.workspace = true
+meshopt.workspace = true
+sf_tunables.workspace = true
+
+[lints]
+workspace = true

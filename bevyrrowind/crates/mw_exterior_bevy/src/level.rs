@@ -34,6 +34,7 @@ use sf_app_bevy::bevy_state::prelude::OnEnter;
 use sf_world_bevy::{Streaming, WorldIndexSource, WorldspaceRegistry, to_grid};
 
 pub mod actors;
+pub mod rock_lab;
 pub mod texture_lab;
 
 /// `view level:<name>`.
@@ -50,6 +51,7 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("sparring", include_str!("../../../levels/sparring.ron")),
     ("shapes-bench", include_str!("../../../levels/shapes-bench.ron")),
     ("texture-lab", include_str!("../../../levels/texture-lab.ron")),
+    ("rock-lab", include_str!("../../../levels/rock-lab.ron")),
 ];
 
 /// When `view level:` started: the load time is measured from here.
@@ -63,6 +65,8 @@ pub struct LevelSetup {
     pub actors: Arc<[actors::ActorSetup]>,
     /// The texture lab's swatches and models (`level:texture-lab`, or any level with `--lab-textures` / `--lab-models`).
     pub texture_lab: Option<texture_lab::LabContent>,
+    /// The rock lab's textures (`level:rock-lab`, rockgen RG-3).
+    pub rock_lab: Option<rock_lab::RockLabContent>,
 }
 
 /// The level's worldspace id.
@@ -149,6 +153,9 @@ pub fn add(app: &mut App, setup: LevelSetup) {
     actors::add(app, Arc::clone(&setup.actors));
     if let Some(content) = setup.texture_lab.clone() {
         texture_lab::add(app, content);
+    }
+    if let Some(content) = setup.rock_lab.clone() {
+        rock_lab::add(app, content);
     }
     app.insert_resource(WorldIndexSource(Arc::new(LevelIndex::new(&setup.worldspace, base, placements))))
         .insert_resource(ActiveLevel(setup))

@@ -25,7 +25,10 @@ pub const P_RAISE: usize = P_FAR + 1;
 pub const P_HEX: usize = P_RAISE + 1;
 /// Slope-driven triplanar cliff rock and crevice shading (WG-X7b): (`cos_start`, `cos_full`, `crevice_strength`, `rock_layer_id` u32 or `u32::MAX`).
 pub const P_CLIFF: usize = P_HEX + 1;
-pub const SLOTS: usize = P_CLIFF + 1;
+/// Shading level selection (WG-LOD, `common.wesl` `shade_levels`): (decoupled 0/1, cover texels, blend
+/// texels, curvature scale m).
+pub const P_SHADE: usize = P_CLIFF + 1;
+pub const SLOTS: usize = P_SHADE + 1;
 
 pub const HEIGHT_LEVELS: usize = 10;
 pub const LAYER_LEVELS: usize = 3;

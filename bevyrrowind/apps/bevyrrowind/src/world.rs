@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use mw_environment_bevy::water::WaterInputs;
 use mw_devtools_bevy::perf::{Off, Part};
-use mw_exterior_bevy::worldgen::{CLOUD_BASE_LIFT_M, WorldgenSetup, WorldgenTiles};
+use mw_exterior_bevy::worldgen::{CLOUD_BASE_LIFT_M, WORLDGEN_SHARP, WorldgenSetup, WorldgenTiles};
 use mw_install::MorrowindInstall;
 use mw_world::convert::UNIT_METERS_F64;
 use mw_worldgen::classify::Class;
@@ -100,12 +100,14 @@ pub(crate) fn view(install: &MorrowindInstall, dir: &str, mut flags: crate::View
     if let Some(w) = &mut options.weather {
         w.load_sounds(&content.db, &vfs);
     }
-    let tiles = with_exterior_layers(tiles, &options.store, &options.manifest, &mw_world::ids::exterior(), dir)?;
+    let base = with_exterior_layers(tiles, &options.store, &options.manifest, &mw_world::ids::exterior(), dir)?;
+    // The shown world starts at the console's `worldgen.sharp` default (0 = sharp operators off, owner 2026-11-22);
+    // `base` keeps the full sharp profile, so the live rebuild reaches `worldgen.sharp 1` / `2` as before.
+    let tiles = Arc::new(base.with_params(base.params().with_sharp_scale(WORLDGEN_SHARP.default_value())));
     let anchors = AnchorTransform::read(path).map_err(|e| format!("world:{dir}: {e}"))?;
     let world_content = anchors.map(|a| moved_content(&content.db, &a, &tiles, &options.store, &options.manifest, flora_budget));
     options.actors = Some(Arc::new(content.db));
     let report = tiles.clone();
-    let base = tiles.clone();
     let rebuild = move |octaves: u32, sharp: f32| -> WorldgenTiles {
         let prm = FilterParams { octaves, ..*base.params() }.with_sharp_scale(sharp);
         let t = Arc::new(base.with_params(prm));

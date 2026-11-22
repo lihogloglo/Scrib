@@ -221,3 +221,20 @@ fn sharp_operators_are_bounded_zero_below_sea_and_nonzero_on_slopes() {
     }
     assert!(diffs >= 10, "expected sharp operators to move steep samples, got {diffs}/20");
 }
+
+/// `worldgen.sharp 0` is exactly the gully-only filter of before the sharp profile (owner 2026-11-22 prefers it).
+#[test]
+#[allow(clippy::float_cmp)]
+fn sharp_scale_zero_is_the_plain_gully_filter() {
+    let plain = FilterParams::default();
+    let off = FilterParams::default().with_sharp_defaults().with_sharp_scale(0.0);
+    assert_eq!(off.relief_fraction, plain.relief_fraction);
+    assert_eq!((off.strata_amp_m, off.rock_amp_m, off.ridge_amp_m), (0.0, 0.0, 0.0));
+    for i in 0..20 {
+        let p = [f64::from(i) * 17.5, f64::from(i) * 11.25];
+        let b = BaseSample { h: 180.0 + f64::from(i) * 4.7, grad: [0.45, 0.25], plan_curvature: 0.001 };
+        assert_eq!(detail_offset(p, &b, 0.0, &off), detail_offset(p, &b, 0.0, &plain));
+    }
+    let full = FilterParams::default().with_sharp_defaults().with_sharp_scale(1.0);
+    assert_eq!(full, FilterParams::default().with_sharp_defaults());
+}

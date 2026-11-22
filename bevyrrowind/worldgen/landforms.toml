@@ -1,0 +1,54 @@
+# Landforms recipe for Vvardenfell + Solstheim (adapter data, `superfargoth/docs/specs/landforms.md` "Pipeline" step 4,
+# read by `scrib-worldgen place --recipe`). `[values]` override declared placement values; `[region."<regions.json
+# name>"]` rows set per-region knobs: weight (score multiplier, 0 = no faults), face_budget, throw_ratio, size_min_m,
+# size_max_m. Throw = throw_ratio x fault length (Cowie & Scholz 1992: D/L ~ 0.01-0.03), +-segment_throw_var,
+# +-throw_noise along strike.
+#
+# LF-2b (owner 2026-11-22: "fewer, taller faults where the region allows, dramatic"): the ash wastes and the western
+# highlands get long, tall fault blocks (~60-200 m), the Grazelands and the farmland low ones, Red Mountain none (its
+# relief is the volcano's). All values Guess (owner direction), tuned in look loops (decision 9).
+
+[region."West Gash Region"]
+throw_ratio = 0.025
+size_min_m = 2500.0
+size_max_m = 8000.0
+
+[region."Ashlands Region"]
+throw_ratio = 0.025
+size_min_m = 2500.0
+size_max_m = 8000.0
+
+[region."Molag Amur Region"]
+throw_ratio = 0.022
+size_min_m = 2000.0
+size_max_m = 6000.0
+
+[region."Azura's Coast Region"]
+throw_ratio = 0.02
+size_min_m = 1500.0
+size_max_m = 5000.0
+
+[region."Sheogorad Region"]
+throw_ratio = 0.02
+size_min_m = 1500.0
+size_max_m = 4000.0
+
+[region."Grazelands Region"]
+throw_ratio = 0.012
+size_min_m = 1500.0
+size_max_m = 4000.0
+
+[region."Ascadian Isles Region"]
+weight = 0.5
+throw_ratio = 0.012
+size_min_m = 1200.0
+size_max_m = 3000.0
+
+[region."Bitter Coast Region"]
+weight = 0.3
+throw_ratio = 0.01
+size_min_m = 1000.0
+size_max_m = 2500.0
+
+[region."Red Mountain Region"]
+weight = 0.0

@@ -212,11 +212,31 @@ level (small). Requests go through the streaming scheduler's budgets.
 **Rendering (`sf_terrain_bevy`):**
 - **Height clipmap**: 10 levels × 512², R32Float (10 MiB), from 0.5 m to
   256 m spacing. Strips are updated toroidally when the camera moves, under
-  the upload budget. Normals come from central differences in the shader.
+  the upload budget. Normals are a matching `Rg8Snorm` clipmap (central differences one sample apart,
+  filtered by the sampler).
+- **Shading level (WG-LOD, 2026-11-22)**: normals, the crevice curvature and the cliff rock weight read the
+  finest height level resident around the main camera, never the mesh LOD (UE Landscape and Far Cry 5 shade
+  from the full height data whatever the mesh). `common.wesl` `shade_levels`: level k covers `cover`
+  level-k texels of Chebyshev distance from the camera (the 256-texel half window less the 16-sample snap,
+  the curvature taps' reach and 2 texels: 234, so ±117·2^k m), and cross-fades into k+1 over its outer
+  `terrain.shade.blend_texels` (48, Losasso & Hoppe 2004's n/10 transition region), a function of the point
+  and the camera only; the window-edge fade stays as a guard for a lagging window. Texels are 4.5-9 output
+  px at 1440p/70° (the coupled path: 10.7-21 px), so no level finer than the window is wanted. Curvature is
+  `s/4`·∇²h at the fixed `terrain.cliff.curvature_scale_m` (2 m), from four filtered normal taps (the
+  gradient's divergence), so one feature reads alike on every level. `terrain.shade.decoupled off` = the
+  old coupling (level floor(lod), morph-blended), an A/B. Cost: the curvature's 20 height loads become 4
+  filtered taps (8 in the blend band); the normal stays 1 tap (2 in the band).
   A matching **layer clipmap** covers the splat range (~2 km). Beyond it,
   the macro-albedo pyramid takes over.
 - **CDLOD**: a 32×32-quad patch (16 m at LOD 0), ranges double per LOD, and
-  morphing covers the last 30% of each range. Selection runs on the CPU over
+  morphing covers the last 30% of each LOD's band (15% of its range; `terrain.cdlod.morph_start` 0.85, live).
+  Strugar's crack-free floor: a LOD-l node reaches into range(l), so its far edge lies up to its 3D diagonal
+  beyond, where l+1 must not morph yet: start(l+1) ≥ range(l) + size·√2·√(1+slope²) + 2·gate slack
+  (`CdlodSettings::crack_free_morph_start`). Measured (`measure_morph_start_floor`, 2026-11-22): 0.78 on
+  level ground, 0.82 at 30°, 0.875 at 45° (0.85 leaves k 0.04 there; at 60° the 3D selection itself
+  leaves k ≈ 0.98 whatever the start). So 0.85 stays the default (Strugar's demo: 0.83); a morph over
+  half the range needs lod0_range ≥ ~110 m or 16-quad patches (≈ 4-5× the vertices or nodes), not a
+  smaller start. Selection runs on the CPU over
   the min/max pyramid (a few hundred nodes, ≤ 0.2 ms) into an instance
   buffer, with one draw for the main view. Shadow views select separately.
   GPU-driven selection comes later, if profiles ask for it.
@@ -321,7 +341,7 @@ J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`).
 |---|---|---|---|
 | Geometry LOD | UE4/5 Landscape: per-component quadtree LOD with screen-size ranges, morphing between LODs (unverified detail); UE 5.2+ optional **Nanite landscape** (baked Nanite mesh, mainly for virtual shadow maps; must be rebuilt after sculpting). Unity: quadtree patches by "pixel error". Far Cry 5: GPU compute LOD selection, culling and stitching. OpenMW: quadtree chunks with LOD factor. Bethesda: near cells full-res, distant terrain as pre-generated LOD meshes per 4/8/16/32-cell block (unverified) | CDLOD over a geometry-clipmap height stack, CPU selection | **match** (CDLOD/clipmap is the standard family). Differ: CPU selection instead of FC5-style GPU; deferred until selection > budget (now 0.24 ms vs 0.2 target). Nanite landscape is n/a (Bevy meshlets rejected, far-field.md) |
 | Displacement below the base spacing | UE4 hardware tessellation, removed in UE5 and replaced by Nanite tessellation/displacement (5.3+, experimental-to-beta, unverified status); FC5 "displacement geometry"; Witcher 3 tessellated terrain (unverified) | denser CDLOD patches within 64 m + layer height maps (wgpu has no tessellation) | **match** in effect. Parallax occlusion past 64 m: not used (normal maps only); acceptable at that distance |
-| Distant texturing | Unity terrain "basemap" (precomposited low-res albedo past a distance); OpenMW "composite map" (distant chunks' layers pre-rendered); Far Cry 4 adaptive virtual texture (Chen 2015); UE runtime virtual texture (RVT) caching the layer blend | splat to ~2 km, baked macro-albedo pyramid beyond | **match** basemap/composite map; RVT caching is audit row 25 (P2, M7). Note: distant normals come from central differences of the coarse height level; UE stores landscape normals with the heightmap (unverified), so lighting detail drops with level. Watch in vistas, not a gap yet |
+| Distant texturing | Unity terrain "basemap" (precomposited low-res albedo past a distance); OpenMW "composite map" (distant chunks' layers pre-rendered); Far Cry 4 adaptive virtual texture (Chen 2015); UE runtime virtual texture (RVT) caching the layer blend | splat to ~2 km, baked macro-albedo pyramid beyond | **match** basemap/composite map; RVT caching is audit row 25 (P2, M7). Note: distant normals come from the normal clipmap of the finest height level resident around the camera (WG-LOD, 2026-11-22; was the mesh LOD's level), so lighting detail drops with clipmap level, never with mesh LOD. Open: the cliff rock weight is a function of the filtered normal, so coarse levels show less rock (slopes smooth out); a prefiltered slope moment per level (Toksvig / LEAN-style) is the standard fix, not built |
 | Splat blending | height-based blending (Mishkinis 2013) in UE (`Height Blend` layers), Unity HDRP/URP terrain (height-based blend option), most AAA; triplanar on steep slopes | height blend, top-4 layers per texel, triplanar per layer | **match** |
 | Anti-tiling | macro variation and distance UV scale (universal); **stochastic / hex tiling** (Heitz & Neyret 2018 by-example noise; Mikkelsen 2022 "Practical Real-Time Hex-Tiling", Unity Labs; UE material-node ports) | macro variation + distance UV scale + tint | **GAP (P2)**: hex tiling is cheap (3 taps per layer, or only on the nearest layers) and kills the grid pattern on large uniform layers. Open question 1 |
 | **Object-terrain blending** | UE RVT "blend with meshes", CryEngine 5 terrain layer blending, Skyrim SE terrain-blending mods | none | **removed** 2026-10-20 (first attempt rejected by the owner, +10-13 ms render thread on the walk); redo is WISHLIST §13 |

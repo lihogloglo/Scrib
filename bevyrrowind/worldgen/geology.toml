@@ -1,0 +1,214 @@
+# LF-A1: Vvardenfell's rock units for the geology map (`sf_worldgen::geology`, read by `scrib-worldgen geology`).
+# Specs: superfargoth/docs/specs/landforms.md "Data model" (fields), bevyrrowind/docs/specs/worldgen-adapter.md
+# "Landforms (LF-A)" (units, regions, sources). Glue and checks: `mw_worldgen::geology`.
+#
+# Units are stand-ins for Vvardenfell's volcanic geology. Sources per value, in the comment after it:
+#   Lore     = game regions and their land textures (Red Mountain lava fields, Ashlands ash, West Gash crags,
+#              Azura's Coast and Sheogorad dark rocky isles, Bitter Coast swamp, Ascadian farmland);
+#   Analogue = real volcanic islands named in the adapter spec (Etna, Teide, Iceland, Hawaii) and textbook values;
+#   Guess    = no measurement yet, settled by an owner arm (counted like any `Guess` tunable).
+# `k` is the erodibility multiplier (1 = the recipe's base K; as `lithology::RockType`).
+#
+# Layer ids: `[layer_names.<unit>]` names LTEX record ids of the guide's `layers.json` palette (resolved
+# case-insensitively by `mw_worldgen::geology::AdapterGeology::resolve_layers`, which writes the numeric
+# `layers = { top, face, scree }` the framework reads). The framework ignores `[layer_names]`; read raw, units
+# carry layers 0 (`@default`).
+#
+# Regions: one `[region."<regions.json name>"]` row per region of the island (Vvardenfell + Solstheim, the
+# REGN `name`s of the guide legend). Solstheim rows are stand-ins until its own recipe (adapter spec: out of scope).
+
+# ---------------------------------------------------------------- units
+
+[[unit]]
+# Stacked aa / pahoehoe flow units with scoria (clinker) partings: Red Mountain, Molag Amur, the Ashlands highs.
+name = "basalt_flow"
+hardness = 0.85          # Lore + Analogue (adapter spec table; fresh basalt is the hardest unit here)
+k = 0.5                  # Guess (half the base erodibility)
+layered = true
+bed_m = [2.0, 8.0]       # Analogue (Hawaii / Etna flow units 1-10 m; adapter spec 2-8 m)
+soft_bed_share = 0.25    # Guess (clinker / scoria partings between flows)
+dip_mode = "surface"     # adapter spec: beds parallel to the low-passed cone (radial from the summit)
+repose_hard_deg = 72.0   # Analogue (lava cliff faces; landforms.md hard 68-72)
+repose_soft_deg = 34.0   # Analogue (scoria repose 33-35)
+outcrop = true
+
+[[unit]]
+# Welded and bedded ash (ignimbrite / tuff): the Ashlands and West Gash slopes.
+name = "tuff"
+hardness = 0.55          # Lore + Analogue (adapter spec table)
+k = 1.2                  # Guess
+layered = true
+bed_m = [1.0, 4.0]       # Analogue (Teide / Iceland ignimbrite and fall beds; adapter spec 1-4 m)
+soft_bed_share = 0.4     # Guess (unwelded ash beds between welded ones)
+dip_mode = "surface"     # adapter spec
+repose_hard_deg = 68.0   # Guess (landforms.md hard 68-72, low end for a weaker rock)
+repose_soft_deg = 34.0   # Analogue (loose ash repose 33-35)
+outcrop = true
+
+[[unit]]
+# Loose ash and lapilli fields: Ashlands plains, the Red Mountain apron, Molag Amur ash fields.
+name = "tephra"
+hardness = 0.15          # Lore + Analogue (adapter spec table)
+k = 3.0                  # Guess (unconsolidated: erodes fastest of the volcanic units)
+layered = false          # adapter spec: no beds
+dip_mode = "surface"     # unused without beds
+repose_hard_deg = 35.0   # Analogue (loose tephra stands no steeper than its repose)
+repose_soft_deg = 33.0   # Analogue (tephra cone repose 33-34)
+outcrop = false
+
+[[unit]]
+# Hard cap over soft beds (mesas, cuestas): the West Gash highlands and the Grazelands plateau.
+name = "capped_sediment"
+hardness = 0.75          # Lore + Analogue (adapter spec: 0.75 cap; soft beds 0.75 x soft_bed_ratio 0.5 = 0.375,
+                         # spec 0.3, close enough for a Guess)
+k = 0.8                  # Guess
+layered = true
+bed_m = [3.0, 12.0]      # Analogue (adapter spec 3-12 m)
+soft_bed_share = 0.5     # Guess (alternating cap and soft beds)
+dip_deg = 3.5            # Analogue (adapter spec Fixed 2-5 deg)
+dip_mode = { fixed = { azimuth_deg = 255.0 } }  # Guess (dipping west-southwest, away from Red Mountain to the sea)
+repose_hard_deg = 70.0   # Analogue (cap-rock faces 60-75)
+repose_soft_deg = 33.0   # Analogue (talus repose 32-36)
+outcrop = true
+
+[[unit]]
+# Columnar coastal basalt (Giant's Causeway, Reynisfjara analogues): Azura's Coast, Sheogorad.
+name = "coastal_basalt"
+hardness = 0.9           # Lore + Analogue (adapter spec table)
+k = 0.4                  # Guess
+layered = true
+bed_m = [5.0, 15.0]      # Analogue (colonnade / entablature tiers 5-15 m; adapter spec)
+soft_bed_share = 0.15    # Guess (thin flow tops between tiers)
+dip_deg = 0.0            # Analogue (adapter spec Fixed ~0 deg: flat-lying sheets)
+dip_mode = { fixed = { azimuth_deg = 0.0 } }
+repose_hard_deg = 72.0   # Analogue (landforms.md hard 68-72)
+repose_soft_deg = 35.0   # Analogue (block talus)
+outcrop = true
+
+[[unit]]
+# River and swamp deposits: the Bitter Coast and the Ascadian Isles lowlands.
+name = "alluvium"
+hardness = 0.05          # Lore + Analogue (adapter spec table)
+k = 4.0                  # Guess (unconsolidated silt and sand)
+layered = false          # adapter spec: no beds
+dip_mode = "surface"     # unused without beds
+repose_hard_deg = 34.0   # Analogue (no rock faces: repose of sand)
+repose_soft_deg = 30.0   # Analogue (wet sediment)
+outcrop = false
+
+# ---------------------------------------------------------------- default (legend index 0: land outside any region)
+
+[shares]
+tuff = 0.5               # Guess
+alluvium = 0.5           # Guess
+
+# ---------------------------------------------------------------- Vvardenfell regions (adapter spec "Rock units")
+# Shares are of Voronoi unit cells (1.4 km at 10x), so a few cells of the minor units show in every region. Guess.
+
+[region."Red Mountain Region".shares]
+basalt_flow = 0.55
+tephra = 0.35
+tuff = 0.10
+
+[region."Ashlands Region".shares]
+tuff = 0.40
+tephra = 0.40
+basalt_flow = 0.20
+
+[region."Molag Amur Region".shares]
+basalt_flow = 0.50
+tephra = 0.30
+tuff = 0.20
+
+[region."West Gash Region".shares]
+capped_sediment = 0.55
+tuff = 0.30
+basalt_flow = 0.15
+
+[region."Grazelands Region".shares]
+capped_sediment = 0.60
+alluvium = 0.25
+tuff = 0.15
+
+[region."Azura's Coast Region".shares]
+coastal_basalt = 0.60
+alluvium = 0.25
+tuff = 0.15
+
+[region."Sheogorad Region".shares]
+coastal_basalt = 0.65
+basalt_flow = 0.20
+tuff = 0.15
+
+[region."Ascadian Isles Region".shares]
+alluvium = 0.70
+tuff = 0.20
+capped_sediment = 0.10
+
+[region."Bitter Coast Region".shares]
+alluvium = 0.85
+coastal_basalt = 0.15
+
+# ---------------------------------------------------------------- Solstheim (stand-ins; its own recipe comes later)
+# Basalt island under glacial till (Analogue: Iceland / Jan Mayen); till stands in as `alluvium`. Guess.
+
+[region."Solstheim, Moesring Mountains".shares]
+basalt_flow = 0.50
+coastal_basalt = 0.30
+alluvium = 0.20
+
+[region."Solstheim, Felsaad Coast Region".shares]
+coastal_basalt = 0.60
+alluvium = 0.40
+
+[region."Solstheim, Brodir Grove Region".shares]
+alluvium = 0.60
+coastal_basalt = 0.30
+tuff = 0.10
+
+[region."Solstheim, Hirstaang Forest".shares]
+alluvium = 0.60
+coastal_basalt = 0.30
+tuff = 0.10
+
+[region."Solstheim, Isinfier Plains".shares]
+alluvium = 0.60
+coastal_basalt = 0.30
+tuff = 0.10
+
+[region."Thirsk Region".shares]
+alluvium = 0.70
+coastal_basalt = 0.30
+
+# ---------------------------------------------------------------- material layers (LTEX record ids, Lore: the
+# textures Morrowind paints in each unit's regions; Solstheim shares the Vvardenfell layers until its recipe)
+
+[layer_names.basalt_flow]
+top = "ma_lavarock"
+face = "rm_rock_01"
+scree = "rm_grayrock"
+
+[layer_names.tuff]
+top = "al_ash_02"
+face = "ma_rock04"
+scree = "al_ash_03"
+
+[layer_names.tephra]
+top = "al_ash_01"
+face = "al_ash_04"
+scree = "al_ash_03"
+
+[layer_names.capped_sediment]
+top = "wg_rockyscrub"
+face = "wg_rock"
+scree = "wg_rockydirt"
+
+[layer_names.coastal_basalt]
+top = "ac_darkstone01"
+face = "rock_coastal"
+scree = "ac_darkgravel"
+
+[layer_names.alluvium]
+top = "tx_bc_mud.tga"
+face = "tx_bc_rock_01.tga"
+scree = "tx_bc_dirt.tga"

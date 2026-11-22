@@ -306,6 +306,10 @@ fn gpu_fill_matches_the_cpu_tiles() {
     check("integer cells", &tiles(guide(400, 380, 20.0, [-4009.008, 3699.712])));
     // Spacing that isn't (the f32 affine fallback).
     check("f32 cells", &tiles(guide(300, 300, 7.3, [-1100.4, 1095.9])));
+    // The steep-face gully fade (LF-2b): the cone's flanks run 0-60 deg, so the fade's whole ramp is crossed.
+    let t = tiles(guide(400, 380, 20.0, [-4009.008, 3699.712]));
+    let fade = [30f32.to_radians().tan(), 45f32.to_radians().tan()];
+    check("steep fade", &t.with_params(FilterParams { steep_fade: Some(fade), ..*t.params() }));
 }
 
 /// A stamp centred on engine (x, z): weight 1 inside, a C1 smootherstep to 0 across `band_m` at its edges,

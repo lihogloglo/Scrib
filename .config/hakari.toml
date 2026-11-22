@@ -60,6 +60,7 @@ workspace-members = [
     "sf_physics",
     "sf_ragdoll",
     "sf_records",
+    "sf_rockgen",
     "sf_rpg",
     "sf_rpg_ui",
     "sf_save",

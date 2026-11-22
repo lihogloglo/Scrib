@@ -34,7 +34,9 @@
 //! 2. **Amplitude.** Local relief over one base wavelength is `|∇h₀| λ₀`; the detail amplitude is
 //!    `A = min(relief_fraction · |∇h₀| · λ₀, max_amplitude_m, shore_ratio · max(h₀ − sea, 0))`. The shore term
 //!    keeps every land point above sea level and every sea point unchanged, so the filter can never create or drain
-//!    water (worldgen.md "Stage rules").
+//!    water (worldgen.md "Stage rules"). With `steep_fade` (a per-world value, [`crate::tiles::GuideTiles::open`]
+//!    reads it from the world's `filter.toml`) `A` is multiplied by `1 − smoothstep(tan lo, tan hi, |∇h₀|)`: no
+//!    gullies dented into rock faces (LF-2b).
 //! 3. **Octaves** `k = 0..octaves`: wavelength `λₖ = λ₀ / lacunarityᵏ`, weight `wₖ = gainᵏ / Σ gainʲ` (Σ wₖ = 1).
 //!    Direction: `g` = gradient of the base plus the octaves so far (the cascade); the stripes vary across the
 //!    slope, along `d = perp(g / |g|)`, so the crests and channels run downhill.
@@ -145,6 +147,12 @@ pub fn declared_defaults() -> Vec<Declared> {
             "phasor coherence below which an octave fades (continuity at phase singularities)"),
         decl("shore_ratio", 0.5, "ratio", 0.0, 0.99, "Guess",
             "amplitude cap as a fraction of the height above sea level: keeps the wet/dry class"),
+        decl("steep_fade", 0.0, "switch", 0.0, 1.0, "Owner(2026-11-22: no dents on rock faces; per world, off when absent)",
+            "1 = the gully amplitude fades out on steep base slopes (steep_fade_lo_deg to steep_fade_hi_deg); 0 = off"),
+        decl("steep_fade_lo_deg", 40.0, "deg", 5.0, 89.0, "Guess(faces past ~40-45 deg shed soil: rock, no gullies)",
+            "base slope where the gully amplitude starts fading (steep_fade 1)"),
+        decl("steep_fade_hi_deg", 50.0, "deg", 5.0, 89.0, "Reference(rockgen cliff.slope_deg 45 + 5)",
+            "base slope from which the gully amplitude is 0 (steep_fade 1)"),
         decl("cascade", 1.0, "switch", 0.0, 1.0, "Reference(runevision 2025, octaves follow the accumulated gradient)",
             "1 = each octave follows the gradient of the base plus the octaves above it (branching); 0 = base gradient"),
         decl("seed", 1.0, "id", 0.0, 4_294_967_295.0, "Guess", "hash seed (u32)"),
@@ -182,6 +190,9 @@ pub struct FilterParams {
     pub carve: f32,
     pub phase_fade: f32,
     pub shore_ratio: f32,
+    /// Steep-face fade of the gully amplitude, `[lo, hi]` as base slope `tan`; `None` = off (the amplitude is
+    /// untouched, bit for bit).
+    pub steep_fade: Option<[f32; 2]>,
     pub cascade: bool,
     pub seed: u32,
     /// Stepped strata amplitude, metres (0 = off).
@@ -245,6 +256,15 @@ impl FilterParams {
             carve: f("carve")?,
             phase_fade: f("phase_fade")?,
             shore_ratio: f("shore_ratio")?,
+            steep_fade: if integer("steep_fade")? == 0.0 {
+                None
+            } else {
+                let (lo, hi) = (get("steep_fade_lo_deg")?, get("steep_fade_hi_deg")?);
+                if lo >= hi {
+                    return Err(Error::Invalid("steep_fade_lo_deg < steep_fade_hi_deg required".into()));
+                }
+                Some([lo.to_radians().tan() as f32, hi.to_radians().tan() as f32])
+            },
             cascade: integer("cascade")? != 0.0,
             seed: integer("seed")? as u32,
             strata_amp_m: f("strata_amp_m")?,
@@ -278,10 +298,14 @@ impl FilterParams {
         self
     }
 
-    /// Scales the three sharp-operator amplitudes uniformly (live console `worldgen.sharp`: 0 = gully-only A/B).
+    /// Scales the three sharp-operator amplitudes uniformly (live console `worldgen.sharp`: 0 = off, the game's
+    /// default since 2026-11-22; 1 = this full profile). The gully `relief_fraction` the sharp profile tones down
+    /// returns to the declared default as the scale goes to 0, so `0` is exactly the gully-only look of before.
     #[must_use]
     pub fn with_sharp_scale(mut self, scale: f32) -> Self {
         let s = scale.max(0.0);
+        let plain = Self::default().relief_fraction;
+        self.relief_fraction = plain + (self.relief_fraction - plain) * s.min(1.0);
         self.strata_amp_m *= s;
         self.rock_amp_m *= s;
         self.ridge_amp_m *= s;
@@ -470,7 +494,7 @@ fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
 
 /// `pcg3d` (Jarzynski & Olano 2020): three well-mixed u32 from three u32.
 #[inline]
-fn pcg3d(mut x: u32, mut y: u32, mut z: u32) -> [u32; 3] {
+pub(crate) fn pcg3d(mut x: u32, mut y: u32, mut z: u32) -> [u32; 3] {
     x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
     y = y.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
     z = z.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -692,9 +716,12 @@ pub fn detail_offset_banded(
         return 0.0;
     }
     let mut dh = 0.0f32;
-    let amp = (prm.relief_fraction * slope0 * prm.wavelength_m)
+    let mut amp = (prm.relief_fraction * slope0 * prm.wavelength_m)
         .min(prm.max_amplitude_m)
         .min(shore);
+    if let Some([lo, hi]) = prm.steep_fade {
+        amp *= 1.0 - smoothstep(lo, hi, slope0);
+    }
     if prm.octaves > 0 && !amp.is_nan() && amp > 0.0 {
         let mut wsum = 0.0f32;
         let mut wk = 1.0f32;

@@ -961,6 +961,13 @@
             look_for: "relief on the swatches that moves with the lamp; N flips normal maps, M ORM maps (also console flip normalmaps / orm): the info panel says per swatch whether a normal / ORM map exists and is bound, its format and mips, and whether the mesh has tangents",
         ),
         (
+            name: "level-rock-lab",
+            level: "rock-lab",
+            hour: 9.0,
+            description: "Rock lab (rockgen RG-3): sf_rockgen boulders of 4 classes (block, platy, cobble, chipped; one column each) at power-law sizes 0.5-12 m on flat ground, 2 on and 2 at the toe of a 30 deg slope per class, triplanar PBR rock material from the mounted packs (cameras wide, small, big, slope, far, top; --rock-textures a,b)",
+            look_for: "rock shapes read as natural boulders per class, no holes or spikes, sitting on the ground; X texture, Z class, R new seed, L LOD tint (LOD0 green, 1 yellow, 2 orange, 3 red: dithered switches), M wireframe, I info; console `set rockgen.boulder.<name> <v>` then R regenerates",
+        ),
+        (
             name: "level-shapes-bench",
             level: "shapes-bench",
             hour: 12.0,

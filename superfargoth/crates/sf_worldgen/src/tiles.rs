@@ -188,6 +188,32 @@ struct MinMax {
     max: Vec<f32>,
 }
 
+/// The per-world filter file of a guide folder (LF-2b): `name = number` lines of declared filter values
+/// ([`filter::apply_overrides_toml`]), restricted to [`WORLD_FILTER_KEYS`].
+// tunables: const (format: file name)
+pub const WORLD_FILTER_FILE: &str = "filter.toml";
+
+/// The filter values a world may set for itself; any other name in [`WORLD_FILTER_FILE`] is an error (the rest come
+/// from the game's live settings).
+// tunables: const (format: key list)
+pub const WORLD_FILTER_KEYS: &[&str] = &["steep_fade", "steep_fade_lo_deg", "steep_fade_hi_deg"];
+
+/// The filter of a guide folder's [`WORLD_FILTER_FILE`] over the declared defaults (no file: the defaults, so every
+/// per-world value is off).
+pub fn world_filter(dir: &Path) -> Result<FilterParams> {
+    let path = dir.join(WORLD_FILTER_FILE);
+    let mut d = filter::declared_defaults();
+    if path.is_file() {
+        let text = std::fs::read_to_string(&path)?;
+        let table: toml::Table = toml::from_str(&text)?;
+        if let Some(k) = table.keys().find(|k| !WORLD_FILTER_KEYS.contains(&k.as_str())) {
+            return Err(Error::Invalid(format!("{}: {k} is not a per-world filter value", path.display())));
+        }
+        filter::apply_overrides_toml(&mut d, &text)?;
+    }
+    FilterParams::from_declared(&d)
+}
+
 /// Where a generated world's layer arrays come from (`TerrainTiles::layers_capped`): the arrays of a bake that
 /// has the guide's layer records.
 pub type LayerArraysFn =
@@ -215,11 +241,17 @@ pub struct GuideTiles {
 
 impl GuideTiles {
     /// Reads a guide directory (v1) with the declared filter and tile defaults, the filter at
-    /// [`TileSettings::runtime_octaves`].
+    /// [`TileSettings::runtime_octaves`] and the per-world filter values of [`WORLD_FILTER_FILE`] when the guide has
+    /// one ([`world_filter`]; none: every per-world value off).
     pub fn open(dir: &Path, ws: WorldspaceId) -> Result<Self> {
         let guide = Guide::read(dir)?;
         let settings = TileSettings::default();
-        let prm = FilterParams { octaves: settings.runtime_octaves, ..FilterParams::default().with_sharp_defaults() };
+        let world = world_filter(dir)?;
+        let prm = FilterParams {
+            octaves: settings.runtime_octaves,
+            steep_fade: world.steep_fade,
+            ..FilterParams::default().with_sharp_defaults()
+        };
         let mut tiles = Self::new(guide, ws, prm, settings);
         if let Some(set) = StampSet::read(dir)? {
             tiles = tiles.with_stamps(set);
@@ -680,6 +712,11 @@ pub mod slot {
     pub const RIDGE_AMP: u32 = 66;
     // tunables: const (layout: GPU header slot index)
     pub const RIDGE_SCALE: u32 = 67;
+    /// Steep-face gully fade `[lo, hi]` as slope `tan` (LF-2b); hi = 0: off.
+    // tunables: const (layout: GPU header slot index)
+    pub const STEEP_LO: u32 = 68;
+    // tunables: const (layout: GPU header slot index)
+    pub const STEEP_HI: u32 = 69;
     /// The guide's heights, row-major.
     // tunables: const (layout: GPU header slot index)
     pub const HEIGHTS: u32 = 72;
@@ -726,6 +763,8 @@ pub mod slot {
         ("ROCK_SCALE", ROCK_SCALE),
         ("RIDGE_AMP", RIDGE_AMP),
         ("RIDGE_SCALE", RIDGE_SCALE),
+        ("STEEP_LO", STEEP_LO),
+        ("STEEP_HI", STEEP_HI),
         ("HEIGHTS", HEIGHTS),
     ];
 }
@@ -797,6 +836,8 @@ impl GuideTiles {
             (slot::ROCK_SCALE, p.rock_scale_m),
             (slot::RIDGE_AMP, p.ridge_amp_m),
             (slot::RIDGE_SCALE, p.ridge_scale_m),
+            (slot::STEEP_LO, p.steep_fade.map_or(0.0, |f| f[0])),
+            (slot::STEEP_HI, p.steep_fade.map_or(0.0, |f| f[1])),
         ];
         for (s, v) in floats {
             d[s as usize] = v.to_bits();

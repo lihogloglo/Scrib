@@ -22,6 +22,8 @@ sf_vfs.workspace = true
 sf_world.workspace = true
 sf_worldgen.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
+# LF-A1 `geology`: the adapter half of `geology.toml` (`[layer_names]`); already in sf_worldgen's graph.
+toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

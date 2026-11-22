@@ -42,6 +42,7 @@ const P_FAR: u32 = 552u;       // far shadow map: (min x, min z, 1 / extent, bas
 const P_RAISE: u32 = 553u;     // raised cover (SW-6, SW-5e): x tan(repose), y the filter's minimum width (m), z w the fade (m)
 const P_HEX: u32 = 554u;       // anti-tiling hex grid (WG-X7a, Mikkelsen 2022): x enabled (0/1), y rot_strength, z contrast, w scale
 const P_CLIFF: u32 = 555u;     // slope cliff rock + crevices (WG-X7b): x cos(start), y cos(full), z crevice_strength, w rock layer id (0xffffffff = off)
+const P_SHADE: u32 = 556u;     // shading level selection (WG-LOD): x decoupled (0/1), y cover texels, z blend texels, w curvature scale (m)
 
 const MIN_LOD: i32 = -2;
 const HEIGHT_LEVELS: u32 = 10u;
@@ -516,24 +517,69 @@ fn normal_at_level(xz: vec2<f32>, l: u32) -> vec3<f32> {
     return vec3<f32>(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y);
 }
 
-/// The terrain normal at xz for a surface at LOD `lod` (fractional: blends
-/// toward the next level as the geometry morphs).
-fn terrain_normal(xz: vec2<f32>, lod: f32) -> vec3<f32> {
-    let lf = max(lod, 0.0);
-    let l0 = u32(floor(lf));
-    let l = height_level(xz, l0, 1, 2);
-    if l >= HEIGHT_LEVELS {
+/// Which height clipmap levels shade a point (WG-LOD): level `l0` blended toward `l1` by `t`
+/// (`l0` = `HEIGHT_LEVELS`: none resident, flat; `l1` = `HEIGHT_LEVELS`: no coarser one).
+struct ShadeLevels {
+    l0: u32,
+    l1: u32,
+    t: f32,
+}
+
+/// The shading levels at render XZ `xz` for a surface at LOD `lod`. Decoupled (`P_SHADE.x`, default):
+/// the finest level whose window holds the point for the main camera, picked by the camera's
+/// Chebyshev distance and blended into the next coarser one over the outer `P_SHADE.z` texels of
+/// its guaranteed cover `P_SHADE.y` (the window half minus the snap and the taps' margin): Losasso &
+/// Hoppe 2004's clipmap transition regions, a function of the point and the camera only, so the mesh
+/// LOD and its switches never change the shading (UE Landscape / Far Cry 5 shade from the full
+/// height data whatever the mesh). Its texels are 4.5-9 output pixels at 1440p and 70 degrees (never
+/// below 1, so no level finer than the window is wanted). Off: the old coupling, level floor(lod)
+/// blended across the morph zone. Both keep the window-edge cross-fade, so a window that lags the
+/// camera (streaming) never seams.
+fn shade_levels(xz: vec2<f32>, lod: f32) -> ShadeLevels {
+    let shade = pf(P_SHADE);
+    var k: u32;
+    var dist_t = 0.0;
+    if shade.x > 0.5 {
+        let a = abs(xz - camera_position().xz);
+        // Level-0 texels (0.5 m) from the camera, Chebyshev (the windows are squares).
+        let r = max(2.0 * max(a.x, a.y), 1e-3);
+        let kf = clamp(ceil(log2(r / shade.y)), 0.0, f32(HEIGHT_LEVELS - 1u));
+        k = u32(kf);
+        dist_t = select(smoothstep(shade.y - shade.z, shade.y, r * exp2(-kf)), 0.0, k + 1u >= HEIGHT_LEVELS);
+    } else {
+        let lf = max(lod, 0.0);
+        k = u32(floor(lf));
+        dist_t = lf - floor(lf);
+    }
+    var s: ShadeLevels;
+    s.l0 = height_level(xz, k, 1, 2);
+    s.l1 = HEIGHT_LEVELS;
+    s.t = 0.0;
+    if s.l0 >= HEIGHT_LEVELS {
+        return s;
+    }
+    let edge_t = 1.0 - smoothstep(2.0, 16.0, window_edge_dist(pi(P_HEIGHT + s.l0), level_coord(xz, s.l0)));
+    s.t = max(select(0.0, dist_t, s.l0 == k), edge_t);
+    if s.t > 0.01 {
+        s.l1 = height_level(xz, s.l0 + 1u, 1, 2);
+    }
+    return s;
+}
+
+/// The shading normal at xz from the levels `s` (`shade_levels`).
+fn shade_normal(xz: vec2<f32>, s: ShadeLevels) -> vec3<f32> {
+    if s.l0 >= HEIGHT_LEVELS {
         return vec3<f32>(0.0, 1.0, 0.0);
     }
-    var n = normal_at_level(xz, l);
-    let morph_t = select(0.0, lf - floor(lf), l == l0);
-    let edge_t = 1.0 - smoothstep(2.0, 16.0, window_edge_dist(pi(P_HEIGHT + l), level_coord(xz, l)));
-    let t = max(morph_t, edge_t);
-    if t > 0.01 {
-        let l1 = height_level(xz, l + 1u, 1, 2);
-        if l1 < HEIGHT_LEVELS {
-            n = normalize(mix(n, normal_at_level(xz, l1), t));
-        }
+    var n = normal_at_level(xz, s.l0);
+    if s.t > 0.01 && s.l1 < HEIGHT_LEVELS {
+        n = normalize(mix(n, normal_at_level(xz, s.l1), s.t));
     }
     return n;
+}
+
+/// The terrain normal at xz for a surface at LOD `lod` (`shade_levels`: decoupled from it by default;
+/// off, fractional `lod` blends toward the next level as the geometry morphs).
+fn terrain_normal(xz: vec2<f32>, lod: f32) -> vec3<f32> {
+    return shade_normal(xz, shade_levels(xz, lod));
 }

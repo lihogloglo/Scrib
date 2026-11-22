@@ -45,6 +45,14 @@
 //!    and [`crate::metrics`] (main-stem sinuosity), called on a copy of the field whose non-valid samples are set
 //!    below sea level (so a zone's channels drain to its edge; a lowland zone loses area from outside it). Local
 //!    relief: max − min of land heights in square windows (edges [`crate::measure::MeasureParams::relief_windows_m`]).
+//! 5. **Walkability** ([`Walkability`]): slope by central differences at the grid spacing on dry interior samples
+//!    (sea = below the guide's sea level, excluded whatever `mask_sea` says), the share of the zone's dry land per
+//!    slope band ([`WALK_BAND_EDGES_DEG`]), the walkable share (slope ≤ `max_walk_deg`, [`declared_walk`]), and the
+//!    4-connected walkable components inside the zone (count, largest as a share of the zone's dry land).
+//! 6. **Landforms table** (LF-0, `landforms.md` "Measurement", [`land_rows`]): the walkability of zone `all` and of
+//!    each region of it (the guide's `regions.png`, [`region_labels`]; components are cut at region borders), its
+//!    land shares under [`FLAT_DEG`] and at or above [`STEEP_DEG`], and with a base field on the same samples the
+//!    untouched share (`|dh|` < [`UNTOUCHED_M`]) and the `|dh|` p50 / p95.
 //!
 //! Deterministic: `rayon` maps only pure per-row and per-patch functions, collected in order.
 
@@ -53,10 +61,11 @@ use std::path::Path;
 
 use rayon::prelude::*;
 
-use crate::guide::Guide;
+use crate::guide::{Guide, RegionMap};
 use crate::metrics::channel_metrics;
 use crate::resample::resample;
 use crate::stream::route;
+use crate::filter::Declared;
 use crate::structure::{Structure, structure};
 use crate::{Error, Grid, Result};
 
@@ -76,6 +85,35 @@ pub const BINS_PER_DECADE: f64 = 10.0;
 /// Height percentiles of the hypsometry, fractions.
 // tunables: const (metric definition: reported percentiles)
 pub const HEIGHT_QUANTILES: [f64; 7] = [0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99];
+
+/// Upper edges of the walkability slope bands, degrees (bands `[0, e0)`, `[e0, e1)`, ..., `[e_last, 90]`).
+// tunables: const (metric definition: report bands 0-15 / 15-25 / 25-35 / 35-46 / 46-60 / > 60 deg)
+pub const WALK_BAND_EDGES_DEG: [f64; 5] = [15.0, 25.0, 35.0, 46.0, 60.0];
+
+/// Land under this slope counts as flat ([`Walkability::flat`]), degrees.
+// tunables: const (metric definition: landforms.md "Measurement", land share under 10 deg, Etna 52 %)
+pub const FLAT_DEG: f64 = 10.0;
+
+/// Land at or above this slope counts as steep ([`Walkability::steep`]), degrees.
+// tunables: const (metric definition: landforms.md "Measurement", land share >= 35 deg, Etna 1.8 %)
+pub const STEEP_DEG: f64 = 35.0;
+
+/// A sample whose height moved less than this from the base field counts as untouched, metres.
+// tunables: const (metric definition: landforms.md "Measurement", untouched = |dh| < 0.5 m vs the base)
+pub const UNTOUCHED_M: f64 = 0.5;
+
+/// Declared walkability values (`scrib-worldgen measure --max-walk-deg`).
+pub fn declared_walk() -> Vec<Declared> {
+    vec![Declared {
+        name: "max_walk_deg",
+        v: 46.0,
+        unit: "deg",
+        min: 20.0,
+        max: 80.0,
+        source: "Reference(sf_controller MoverParams::max_slope_deg default 46)".into(),
+        help: "steepest slope a character walks up; steeper land counts as unwalkable",
+    }]
+}
 
 /// Gaussians narrower than this many samples are exact kernels, wider ones three boxes.
 // tunables: const (filter construction: exact kernel below 4 samples, Kovesi boxes above)
@@ -127,6 +165,8 @@ pub struct MeasureParams {
     pub relief_windows_m: Vec<f64>,
     /// Spectral patch edge, samples (a power of two).
     pub patch: usize,
+    /// Walkable slope limit, degrees ([`declared_walk`]).
+    pub max_walk_deg: f64,
 }
 
 impl MeasureParams {
@@ -150,6 +190,7 @@ impl MeasureParams {
             dd_thresholds_m2: vec![0.1e6, 1e6, 10e6],
             relief_windows_m: vec![1000.0, 5000.0],
             patch: 512,
+            max_walk_deg: declared_walk()[0].v,
         }
     }
 }
@@ -165,6 +206,10 @@ pub struct Field {
     pub src_spacing_m: f64,
     /// How it was brought to the measuring spacing.
     pub resample: String,
+    /// Region legend index per sample and the legend names (from the guide's `regions.png`, [`region_labels`]).
+    pub regions: Option<(Vec<u8>, Vec<String>)>,
+    /// Heights of the base field at the same samples (untouched share, `|dh|`), metres.
+    pub base: Option<Vec<f64>>,
 }
 
 /// Height distribution of a zone.
@@ -241,6 +286,40 @@ pub struct ZoneReport {
     pub sinuosity: f64,
     pub stems: usize,
     pub relief: Vec<Relief>,
+    pub walk: Walkability,
+}
+
+/// Walkability of a zone (printed numbers, never limits).
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct Walkability {
+    pub max_walk_deg: f64,
+    /// Dry interior samples of the zone the shares are of.
+    pub land: usize,
+    /// `(lo_deg, hi_deg, share of land)` per [`WALK_BAND_EDGES_DEG`] band.
+    pub bands: Vec<(f64, f64, f64)>,
+    /// Share of land with slope ≤ `max_walk_deg`.
+    pub walkable: f64,
+    /// Largest 4-connected walkable component, share of land.
+    pub largest: f64,
+    /// Number of 4-connected walkable components.
+    pub components: usize,
+    /// Share of land with slope < [`FLAT_DEG`].
+    pub flat: f64,
+    /// Share of land with slope >= [`STEEP_DEG`].
+    pub steep: f64,
+}
+
+/// One row of the landforms table (LF-0): the whole valid land (`all`) or one region of it.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct LandRow {
+    /// `all`, a region's legend name, or `#<index>` for an unnamed legend index.
+    pub region: String,
+    pub walk: Walkability,
+    /// Share of the row's land whose height moved less than [`UNTOUCHED_M`] from the base field (with a base).
+    pub untouched: Option<f64>,
+    /// `|dh|` vs the base at the 50th / 95th percentile of the row's land, metres (with a base).
+    pub dh_p50_m: Option<f64>,
+    pub dh_p95_m: Option<f64>,
 }
 
 /// One measured field.
@@ -259,6 +338,8 @@ pub struct FieldReport {
     pub summit_height_m: Option<f64>,
     pub seconds: f64,
     pub zones: Vec<ZoneReport>,
+    /// Landforms table (LF-0): the valid land of zone `all`, then each region present in it.
+    pub land: Vec<LandRow>,
 }
 
 /// Per log bin (sum of density, count), and the variance per band, of one patch.
@@ -306,13 +387,34 @@ pub fn load_field(dir: &Path, params: &MeasureParams) -> Result<Field> {
         spacing: gd.spacing_m,
         data: gd.heights.iter().map(|&v| f64::from(v)).collect(),
     };
-    prepare_field(
+    let mut f = prepare_field(
         field_name(dir),
         grid,
         gd.origin_m,
         gd.sea_level_m,
         params,
-    )
+    )?;
+    if let Some(rm) = &gd.regions {
+        f.regions = Some((region_labels(rm, gd.origin_m, gd.spacing_m, &f), rm.names.clone()));
+    }
+    Ok(f)
+}
+
+/// Region legend index of every sample of `f`, from a guide's region grid: region pixel `(px, py)` covers guide
+/// frame `x` from `origin.x - spacing/2 + px * cell` (pixel (0, 0) covers sample (0, 0), as
+/// [`RegionMap::at_sample`]), so crops and resamples keep each point in its region.
+pub fn region_labels(rm: &RegionMap, guide_origin_m: [f64; 2], guide_spacing_m: f64, f: &Field) -> Vec<u8> {
+    let (w, dx) = (f.grid.w, f.grid.spacing);
+    let half = 0.5 * guide_spacing_m;
+    (0..f.grid.len())
+        .map(|i| {
+            let x = f.origin_m[0] + (i % w) as f64 * dx;
+            let y = f.origin_m[1] - (i / w) as f64 * dx;
+            let px = ((x - guide_origin_m[0] + half) / rm.cell_m).floor() as isize;
+            let py = ((guide_origin_m[1] - y + half) / rm.cell_m).floor() as isize;
+            rm.at_clamped(px, py)
+        })
+        .collect()
 }
 
 /// Crops and resamples an in-memory field (see [`load_field`]).
@@ -366,6 +468,8 @@ pub fn prepare_field(
         sea_level_m,
         src_spacing_m: s,
         resample: how,
+        regions: None,
+        base: None,
     })
 }
 
@@ -670,6 +774,153 @@ fn slope_deg(g: &Grid) -> Vec<f64> {
     out
 }
 
+/// Central-difference slope at the grid spacing, degrees, on dry interior samples (`NaN` on sea and the border).
+pub fn walk_slope_deg(g: &Grid, sea_level: f64) -> Vec<f64> {
+    let (w, h) = (g.w, g.h);
+    let inv2 = 0.5 / g.spacing;
+    let mut out = vec![f64::NAN; g.len()];
+    out.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        if y == 0 || y + 1 >= h {
+            return;
+        }
+        for (x, o) in row.iter_mut().enumerate().take(w - 1).skip(1) {
+            let i = y * w + x;
+            if g.data[i] < sea_level {
+                continue;
+            }
+            let gx = (g.data[i + 1] - g.data[i - 1]) * inv2;
+            let gy = (g.data[i + w] - g.data[i - w]) * inv2;
+            *o = gx.hypot(gy).atan().to_degrees();
+        }
+    });
+    out
+}
+
+/// Walkability of the samples in `mask` from [`walk_slope_deg`] (`slope`) on a `w`-wide grid.
+pub fn walkability(slope: &[f64], w: usize, mask: &[bool], max_walk_deg: f64) -> Walkability {
+    let n = slope.len();
+    let land = |i: usize| mask[i] && slope[i].is_finite();
+    let walkable = |i: usize| land(i) && slope[i] <= max_walk_deg;
+    let mut lo = 0.0;
+    let mut bands: Vec<(f64, f64, f64)> = WALK_BAND_EDGES_DEG
+        .iter()
+        .chain(std::iter::once(&90.0))
+        .map(|&hi| {
+            let b = (lo, hi, 0.0);
+            lo = hi;
+            b
+        })
+        .collect();
+    let (mut count, mut flat, mut steep) = (0usize, 0usize, 0usize);
+    for i in (0..n).filter(|&i| land(i)) {
+        count += 1;
+        flat += usize::from(slope[i] < FLAT_DEG);
+        steep += usize::from(slope[i] >= STEEP_DEG);
+        let k = WALK_BAND_EDGES_DEG.iter().take_while(|&&e| slope[i] >= e).count();
+        bands[k].2 += 1.0;
+    }
+    let mut seen = vec![false; n];
+    let mut stack = Vec::new();
+    let (mut total, mut largest, mut components) = (0usize, 0usize, 0usize);
+    for start in 0..n {
+        if seen[start] || !walkable(start) {
+            continue;
+        }
+        components += 1;
+        seen[start] = true;
+        stack.push(start);
+        let mut size = 0usize;
+        while let Some(c) = stack.pop() {
+            size += 1;
+            let (cx, cy) = (c % w, c / w);
+            let mut visit = |j: usize| {
+                if !seen[j] && walkable(j) {
+                    seen[j] = true;
+                    stack.push(j);
+                }
+            };
+            if cx + 1 < w {
+                visit(c + 1);
+            }
+            if cx > 0 {
+                visit(c - 1);
+            }
+            if c + w < n {
+                visit(c + w);
+            }
+            if cy > 0 {
+                visit(c - w);
+            }
+        }
+        total += size;
+        largest = largest.max(size);
+    }
+    let share = |v: usize| if count > 0 { v as f64 / count as f64 } else { 0.0 };
+    for b in &mut bands {
+        b.2 = if count > 0 { b.2 / count as f64 } else { 0.0 };
+    }
+    Walkability {
+        max_walk_deg,
+        land: count,
+        bands,
+        walkable: share(total),
+        largest: share(largest),
+        components,
+        flat: share(flat),
+        steep: share(steep),
+    }
+}
+
+/// The landforms table (LF-0): [`walkability`] of the whole `mask` (row `all`), then of `mask` and each region of
+/// `regions` (labels per sample, legend names) that holds land, in legend order; with `dh` (field - base per
+/// sample) also the untouched share and the `|dh|` percentiles over each row's land (dry interior samples).
+pub fn land_rows(
+    slope: &[f64],
+    w: usize,
+    mask: &[bool],
+    regions: Option<(&[u8], &[String])>,
+    dh: Option<&[f64]>,
+    max_walk_deg: f64,
+) -> Vec<LandRow> {
+    let row = |name: String, m: &[bool]| {
+        let walk = walkability(slope, w, m, max_walk_deg);
+        let (mut untouched, mut dh_p50_m, mut dh_p95_m) = (None, None, None);
+        if let Some(d) = dh {
+            let ad = sorted(
+                (0..m.len())
+                    .filter(|&i| m[i] && slope[i].is_finite())
+                    .map(|i| d[i].abs())
+                    .collect(),
+            );
+            if !ad.is_empty() {
+                untouched = Some(ad.partition_point(|&v| v < UNTOUCHED_M) as f64 / ad.len() as f64);
+                dh_p50_m = Some(quantile(&ad, 0.5));
+                dh_p95_m = Some(quantile(&ad, 0.95));
+            }
+        }
+        LandRow {
+            region: name,
+            walk,
+            untouched,
+            dh_p50_m,
+            dh_p95_m,
+        }
+    };
+    let mut rows = vec![row("all".into(), mask)];
+    if let Some((labels, names)) = regions {
+        let mut present = [false; 256];
+        for i in (0..mask.len()).filter(|&i| mask[i] && slope[i].is_finite()) {
+            present[usize::from(labels[i])] = true;
+        }
+        for v in (0..=255u8).filter(|&v| present[usize::from(v)]) {
+            let m: Vec<bool> = mask.iter().zip(labels).map(|(&k, &l)| k && l == v).collect();
+            let name = names.get(usize::from(v)).filter(|n| !n.is_empty()).cloned();
+            rows.push(row(name.unwrap_or_else(|| format!("#{v}")), &m));
+        }
+    }
+    rows
+}
+
 // ------------------------------------------------------------------------------------------------ spectrum
 
 /// In-place radix-2 complex FFT (`re.len()` a power of two), forward sign `e^{−2πi kn/N}`.
@@ -949,6 +1200,7 @@ pub fn measure_field(f: &Field, params: &MeasureParams, reference: bool) -> Fiel
     }
     // Field-wide layers.
     let slope = slope_deg(g);
+    let walk_slope = walk_slope_deg(g, f.sea_level_m);
     let side_m = (w.min(h) as f64) * dx;
     let bands = bands_for(dx, side_m);
     let mean_land = {
@@ -1133,8 +1385,21 @@ pub fn measure_field(f: &Field, params: &MeasureParams, reference: bool) -> Fiel
                 p90_m: quantile(&rs, 0.9),
             });
         }
+        zr.walk = walkability(&walk_slope, w, mask, params.max_walk_deg);
         rep.zones.push(zr);
     }
+    let dh: Option<Vec<f64>> = f
+        .base
+        .as_ref()
+        .map(|b| g.data.iter().zip(b).map(|(v, b)| v - b).collect());
+    rep.land = land_rows(
+        &walk_slope,
+        w,
+        &zones[0].mask,
+        f.regions.as_ref().map(|(l, n)| (l.as_slice(), n.as_slice())),
+        dh.as_deref(),
+        params.max_walk_deg,
+    );
     rep.seconds = t.elapsed().as_secs_f64();
     rep
 }
@@ -1387,6 +1652,73 @@ pub fn markdown(reports: &[FieldReport], params: &MeasureParams) -> String {
             .collect::<Vec<_>>()
             .join(" | ")
     });
+    let _ = writeln!(
+        s,
+        "
+## Walkability (central-difference slope, dry land; walkable <= {} deg, 4-connected)
+",
+        params.max_walk_deg
+    );
+    let mut walk_head: Vec<String> = std::iter::once(&0.0)
+        .chain(&WALK_BAND_EDGES_DEG)
+        .zip(&WALK_BAND_EDGES_DEG)
+        .map(|(lo, hi)| format!("{lo}-{hi} deg %"))
+        .collect();
+    walk_head.push(format!("> {} deg %", WALK_BAND_EDGES_DEG[WALK_BAND_EDGES_DEG.len() - 1]));
+    let _ = writeln!(
+        s,
+        "| Field | Zone | Land km2 | {} | Walkable % | Largest walkable % | Components |
+|---|---|---{}|---|---|---|",
+        walk_head.join(" | "),
+        "|---".repeat(walk_head.len())
+    );
+    rows(&mut s, &|r, z| {
+        let wk = &z.walk;
+        let bands: Vec<String> = wk.bands.iter().map(|b| format!("{:.1}", 100.0 * b.2)).collect();
+        format!(
+            "{:.0} | {} | {:.1} | {:.1} | {}",
+            wk.land as f64 * r.spacing_m * r.spacing_m * 1e-6,
+            bands.join(" | "),
+            100.0 * wk.walkable,
+            100.0 * wk.largest,
+            wk.components
+        )
+    });
+    let _ = writeln!(
+        s,
+        "
+## Landforms baseline per region (LF-0; zone `all` valid land, then each region of it)
+
+Steep = slope >= {STEEP_DEG} deg, flat = < {FLAT_DEG} deg; untouched = |dh| < {UNTOUCHED_M} m vs the base field (`--base`).
+Components are counted inside the row (a region's border cuts them).
+
+| Field | Region | Land km2 | {} | >= {STEEP_DEG} deg % | < {FLAT_DEG} deg % | Walkable % | Largest walkable % | Components | Untouched % | dh p50 m | dh p95 m |
+|---|---|---{}|---|---|---|---|---|---|---|---|",
+        walk_head.join(" | "),
+        "|---".repeat(walk_head.len())
+    );
+    for r in reports {
+        for row in &r.land {
+            let wk = &row.walk;
+            let bands: Vec<String> = wk.bands.iter().map(|b| format!("{:.1}", 100.0 * b.2)).collect();
+            let _ = writeln!(
+                s,
+                "| {} | {} | {:.0} | {} | {:.1} | {:.1} | {:.1} | {:.1} | {} | {} | {} | {} |",
+                r.name,
+                row.region,
+                wk.land as f64 * r.spacing_m * r.spacing_m * 1e-6,
+                bands.join(" | "),
+                100.0 * wk.steep,
+                100.0 * wk.flat,
+                100.0 * wk.walkable,
+                100.0 * wk.largest,
+                wk.components,
+                opt(row.untouched.map(|v| 100.0 * v), 1),
+                opt(row.dh_p50_m, 2),
+                opt(row.dh_p95_m, 2),
+            );
+        }
+    }
     // Gap section.
     let refs: Vec<&FieldReport> = reports.iter().filter(|r| r.reference).collect();
     let ours: Vec<&FieldReport> = reports.iter().filter(|r| !r.reference).collect();
@@ -1455,6 +1787,8 @@ pub struct MeasureRequest {
     /// Other guide folders.
     pub dirs: Vec<std::path::PathBuf>,
     pub params: MeasureParams,
+    /// Base guide folder: every measured field whose samples match it gets the untouched share and `|dh|` (LF-0).
+    pub base: Option<std::path::PathBuf>,
     /// `.md` (also writes the `.json` beside it) or `.json`.
     pub out: std::path::PathBuf,
 }
@@ -1462,9 +1796,22 @@ pub struct MeasureRequest {
 /// Measures every folder and writes the report; prints one line per field.
 pub fn run_measure(req: &MeasureRequest) -> Result<Vec<FieldReport>> {
     let mut reports = Vec::new();
+    let base = req.base.as_deref().map(|d| load_field(d, &req.params)).transpose()?;
     let all = req.refs.iter().map(|d| (d, true)).chain(req.dirs.iter().map(|d| (d, false)));
     for (dir, reference) in all {
-        let f = load_field(dir, &req.params)?;
+        let mut f = load_field(dir, &req.params)?;
+        if let Some(b) = &base {
+            let same_grid = b.grid.w == f.grid.w
+                && b.grid.h == f.grid.h
+                && same(b.grid.spacing, f.grid.spacing)
+                && same(b.origin_m[0], f.origin_m[0])
+                && same(b.origin_m[1], f.origin_m[1]);
+            if same_grid {
+                f.base = Some(b.grid.data.clone());
+            } else {
+                println!("{}: samples differ from the base {}, no untouched share", f.name, b.name);
+            }
+        }
         let r = measure_field(&f, &req.params, reference);
         let zones: Vec<String> = r
             .zones

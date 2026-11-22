@@ -1912,3 +1912,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-22 (Solari, owner): no own Solari fork and no skinning pass for the ray-traced tier: too much work, and upstream may
   move a lot this year. Solari stays an opt-in Ultra tier on upstream; re-check at the next Bevy upgrade (0.21 has point/spot/rect
   lights #25913, alpha mask #25996, non-opaque BLAS #25951). Research: `.sessions/solari-research.md` (2026-11-22).
+- 2026-11-22 (landforms, owner): canyons may be barriers (bridges later in the human pass; cut-off spans exported as
+  bridge candidates); summit calderas get several ways in, not one breach; small-cliff density is a tunable iterated in
+  look loops, not an owner number. Spec `superfargoth/docs/specs/landforms.md` "Owner decisions" 7-9.
+- 2026-11-22 (traversal, owner): climbing is in but optional and costlier than walking around; mounts, airships and
+  powers carry big traversal in a world this size. Landforms keep walking around a face clearly cheaper than climbing
+  it; no per-face climb markup (`superfargoth/docs/specs/landforms.md` decision 10).

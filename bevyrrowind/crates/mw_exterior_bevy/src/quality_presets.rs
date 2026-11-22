@@ -335,6 +335,20 @@ pub fn add_gates(app: &mut App, select_gate_off: bool) -> bool {
     let _cliff_crev = app
         .add_tunable(&sf_terrain_bevy::TERRAIN_CLIFF_CREVICE_STRENGTH)
         .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.cliff.crevice_strength = v);
+    // WG-LOD: shading from the finest resident height level (an A/B against the mesh-LOD coupling), its
+    // cross-fade and curvature scale, and the CDLOD morph start; all live.
+    let _shade_on = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_SHADE_DECOUPLED)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, on| t.shade.decoupled = on);
+    let _shade_blend = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_SHADE_BLEND_TEXELS)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.shade.blend_texels = v);
+    let _curv_scale = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_CLIFF_CURVATURE_SCALE_M)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.shade.curvature_scale_m = v);
+    let _morph_start = app
+        .add_tunable(&sf_terrain_bevy::TERRAIN_MORPH_START)
+        .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.cdlod = t.cdlod.with_morph_start(v));
     let _far = app.add_tunable(&SELECT_GATE).bind_resource(|f: &mut sf_lod_bevy::FarFieldSettings, on| f.select_gate.enabled = on);
     let _streaming = app.add_tunable(&SELECT_GATE).bind_resource(|s: &mut sf_world_bevy::Streaming, on| {
         let quanta = sf_world::GateQuanta { enabled: on, ..s.config().scheduler.select_gate };

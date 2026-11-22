@@ -6,7 +6,8 @@
 // derivatives): safe in non-uniform control flow.
 
 import super::common::{
-    P_DETAIL, P_VALID, P_MACRO, P_HEX, P_CLIFF, P_HEIGHT, HEIGHT_LEVELS, DEBUG_RAW_LAYERS, debug_flags,
+    P_DETAIL, P_VALID, P_MACRO, P_HEX, P_CLIFF, P_HEIGHT, P_SHADE, HEIGHT_LEVELS, DEBUG_RAW_LAYERS, debug_flags,
+    ShadeLevels, normal_at_level,
     pf, pi, params, level_coord, in_window, window_edge_dist, layer_edge_fade, height_level, height_bilinear,
     splat_at, layer_tiling, layer_triplanar, layer_mean,
     macro_clipmap, macro_sampler, albedo_height_array, normal_array, ao_roughness_array, layer_sampler,
@@ -387,10 +388,9 @@ fn curvature_at_level(xz: vec2<f32>, l: u32) -> f32 {
     return clamp((avg - hc) / s, -1.0, 1.0);
 }
 
-/// Dimensionless local terrain curvature matched to the morphed CDLOD `lod` (blending into `l + 1`
-/// both across the morph zone and near the height clipmap window edge so clipmap borders never seam).
-/// Positive in concave crevices/valleys, negative on convex ridges and cliff lips.
-fn terrain_curvature(xz: vec2<f32>, lod: f32) -> f32 {
+/// The old coupled curvature (`terrain.shade.decoupled` off): at the morphed CDLOD `lod`'s level and that
+/// level's own spacing (blending into `l + 1` across the morph zone and near the window edge).
+fn terrain_curvature_lod(xz: vec2<f32>, lod: f32) -> f32 {
     let lf = max(lod, 0.0);
     let l0 = u32(floor(lf));
     let l = height_level(xz, l0, 2, 3);
@@ -411,6 +411,42 @@ fn terrain_curvature(xz: vec2<f32>, lod: f32) -> f32 {
     return curv;
 }
 
+/// The height gradient (dh/dx, dh/dz) at xz from level `l`'s filtered normals.
+fn gradient_at_level(xz: vec2<f32>, l: u32) -> vec2<f32> {
+    let n = normal_at_level(xz, l);
+    return -n.xz / max(n.y, 0.05);
+}
+
+/// Dimensionless curvature at a fixed world scale `s_m` from level `l` (WG-LOD): `s_m / 4` times the
+/// Laplacian, the divergence of the gradient across +-`s_m` (four filtered normal taps), so the same
+/// world feature reads alike on every level (the old `curvature_at_level` scaled with the level's
+/// spacing); a level coarser than `s_m` gives its own smoothed curvature, never a bilinear grid.
+fn curvature_fixed(xz: vec2<f32>, l: u32, s_m: f32) -> f32 {
+    let ex = vec2<f32>(s_m, 0.0);
+    let ez = vec2<f32>(0.0, s_m);
+    let dgx = gradient_at_level(xz + ex, l).x - gradient_at_level(xz - ex, l).x;
+    let dgz = gradient_at_level(xz + ez, l).y - gradient_at_level(xz - ez, l).y;
+    return clamp((dgx + dgz) * 0.125, -1.0, 1.0);
+}
+
+/// Dimensionless local terrain curvature at xz for a surface at LOD `lod`, from the shading levels
+/// `s` (`shade_levels`, decoupled from the mesh LOD by default) at the fixed scale `P_SHADE.w`.
+/// Positive in concave crevices/valleys, negative on convex ridges and cliff lips.
+fn terrain_curvature(xz: vec2<f32>, lod: f32, s: ShadeLevels) -> f32 {
+    let shade = pf(P_SHADE);
+    if shade.x <= 0.5 {
+        return terrain_curvature_lod(xz, lod);
+    }
+    if s.l0 >= HEIGHT_LEVELS {
+        return 0.0;
+    }
+    var curv = curvature_fixed(xz, s.l0, shade.w);
+    if s.t > 0.01 && s.l1 < HEIGHT_LEVELS {
+        curv = mix(curv, curvature_fixed(xz, s.l1, shade.w), s.t);
+    }
+    return curv;
+}
+
 /// What [`terrain_surface`] returns: the inputs of the terrain's `PbrInput`.
 struct TerrainSurface {
     /// Linear albedo, macro variation applied.
@@ -426,8 +462,8 @@ struct TerrainSurface {
 
 /// The terrain's surface at render XZ `xz` (world position `wpos`, its
 /// screen derivatives `dpx`/`dpy`), geometric normal `n_geo`, `dist` meters
-/// from the camera. Height-based splat blending near the camera, the macro
-/// albedo past the splat range.
+/// from the camera, its shading levels `shade` (`shade_levels`: `n_geo` and the curvature read them).
+/// Height-based splat blending near the camera, the macro albedo past the splat range.
 fn terrain_surface(
     xz: vec2<f32>,
     wpos: vec3<f32>,
@@ -436,6 +472,7 @@ fn terrain_surface(
     n_geo: vec3<f32>,
     dist: f32,
     lod: f32,
+    shade: ShadeLevels,
 ) -> TerrainSurface {
     let wxz = wpos.xz;
     let macro_c = macro_albedo(xz);
@@ -543,7 +580,7 @@ fn terrain_surface(
         // WG-X7b: curvature crevice darkening and subtle convex cliff-lip highlight.
         let crev_k = cliff_f.z;
         if crev_k > 0.0 {
-            let curv = terrain_curvature(xz, lod);
+            let curv = terrain_curvature(xz, lod, shade);
             let dark = saturate(curv * 2.5);
             let lip = saturate(-curv * 2.5);
             albedo *= (1.0 - crev_k * dark) * (1.0 + 0.12 * crev_k * lip);

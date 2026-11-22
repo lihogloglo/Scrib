@@ -87,7 +87,8 @@ pub struct CdlodSettings {
     /// Range of LOD 0 in meters; LOD ℓ reaches `lod0_range · 2^ℓ`.
     pub lod0_range: f32,
     /// Fraction of each LOD's band `[range(ℓ−1), range(ℓ)]` over which it
-    /// morphs into LOD ℓ+1.
+    /// morphs into LOD ℓ+1 (the host's `morph_start` tunable sets it through
+    /// [`Self::with_morph_start`]; the floor is [`Self::crack_free_morph_start`]).
     pub morph_fraction: f32,
     pub min_lod: i8,
     pub max_lod: i8,
@@ -103,6 +104,38 @@ impl CdlodSettings {
     /// Range of `lod` in meters.
     pub fn range(&self, lod: i8) -> f32 {
         self.lod0_range * 2f32.powi(i32::from(lod))
+    }
+
+    /// Where each LOD starts morphing, as a fraction of its range (`1 - morph_fraction / 2`: the
+    /// band is the range's outer half).
+    pub fn morph_start(&self) -> f32 {
+        1.0 - 0.5 * self.morph_fraction
+    }
+
+    /// These settings morphing from `start` x each LOD's range (clamped to the band's inner edge).
+    #[must_use]
+    pub fn with_morph_start(self, start: f32) -> Self {
+        Self { morph_fraction: (2.0 * (1.0 - start)).clamp(0.0, 1.0), ..self }
+    }
+
+    /// The smallest morph start (fraction of the range) that stays crack-free by construction over
+    /// ground no steeper than `relief` (m/m) with a selection kept while the camera moves up to
+    /// `slack_m` (the selection gate's quantum). Strugar's condition: where a LOD `l` patch meets an
+    /// `l + 1` one, `l + 1` must not have started morphing. The `l` node's box reaches into `range(l)`,
+    /// so the shared edge lies at most its 3D diagonal (`size·√2·√(1 + relief²)`) beyond, and the
+    /// stale camera adds `slack_m` both to that distance and to the shader's zones (`morph_zone`
+    /// moved closer): `start(l + 1) ≥ range(l) + diagonal + 2·slack`. The worst LOD is the finest
+    /// (the slack weighs most against its range). A bound over worst-case camera placements: the
+    /// measured floor (`sf_terrain_bevy` `measure_morph_start_floor`) sits below it.
+    pub fn crack_free_morph_start(&self, relief: f32, slack_m: f32) -> f32 {
+        (self.min_lod..self.max_lod)
+            .map(|lod| {
+                #[allow(clippy::cast_possible_truncation)]
+                let size = (NodeKey::node_samples(lod) * 0.5) as f32;
+                let diagonal = size * std::f32::consts::SQRT_2 * (1.0 + relief * relief).sqrt();
+                (self.range(lod) + diagonal + 2.0 * slack_m) / self.range(lod + 1)
+            })
+            .fold(0.5, f32::max)
     }
 
     /// (morph start, morph end) distances of `lod`, in meters.

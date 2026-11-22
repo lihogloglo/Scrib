@@ -3,6 +3,20 @@
 Open visual checks for world generation (WG-*). Index and how-to: [`../visual-checks.md`](../visual-checks.md).
 Specs: `superfargoth/docs/specs/worldgen.md`, `../specs/worldgen-adapter.md`.
 
+### RG-3: rock lab, procedural boulders + triplanar rock material (`bash bevyrrowind/tools/owner_launch.sh scene level-rock-lab`; built 2026-11-22)
+
+Status: owner 2026-11-22: "correct rocks in the same family", but they read like river rocks, "smooth and eroded, big granite boulders": next = sharp/angular families (crease normals, feature-preserving meshing, volcanic classes). Was: awaiting owner. Scene `level-rock-lab` (`levels/rock-lab.ron`, 09:00 clear; cameras `wide` (start), `small`, `big`,
+`slope`, `far`, `top`; `--rock-textures a,b` swaps the set). Four columns, one per class (x = -36 block, -12 platy, 12
+cobble, 36 chipped), 10 sizes 0.5-12 m on a power law from near (z = 24) to far, plus 2 rocks on the 30 deg slope face
+and 2 at its toe per class. Keys: **X** texture (`tx_rock_wg_01` Tamrielic, `tx_ashland_rock_03` and `tx_ac_rock_01`
+SaintJ, `tx_bm_rock_01` MVR), **Z** class (all, then one), **R** new seed, **L** LOD tint (green 0, yellow 1, orange 2,
+red 3), **M** wireframe, **I** info; console `set rockgen.boulder.<name> <v>` then R (e.g. `resolution 64`,
+`lod0_error_voxels 0.1`, `chips 12`). Look for: do the four classes read as natural boulders (no blobs, holes, spikes,
+pinched edges), resting on the ground, not floating; is LOD0 (~430 tris) faceted up close (`big`); does the triplanar
+texture sit on the rock without visible seams or stretching on vertical faces, and is the texel density right next to
+the plate; LOD switches (L, then `far`): dithered, no pops. Log: `rock-lab texture ...: albedo/normal/orm` per texture
+(a texture with no cooked companion shows albedo only) and `rock-lab: N rocks generated in S s`. No colliders yet (RG-2).
+
 ### WG-S2: 10x Vvardenfell erosion look test (images; `target/release/scrib-worldgen.exe run bevyrrowind/worldgen/vvardenfell-s2.toml`)
 
 Status: partial (owner 2026-11-18): A1 and A2 show many parallel straight lines ("feels like a motherboard": D8 single-flow channels on smooth upscaled slopes); hillshades are hard to judge, owner asked for a 3D scene → WG-S2b routing fix + WG-V viewer. Open `target/worldgen/s2/sheet-*.png` (overview, red-mountain, ashlands,
@@ -71,12 +85,55 @@ Look for: repeating tile grid gone across large 10x single-layer expanses (hills
 
 Launch on `target/worldgen/x10cs` (dramatic) or `target/worldgen/x10c-sharp` (sharp) and compare vs `target/worldgen/x10s` (smooth base).
 - Owner 2026-11-20 (v1 `x10cs` / `x10c-sharp`): "both look nice", spotted seams between terrain tiles / near range → fixed clipmap edge fades (`layer_edge_fade`, morph-blended `terrain_curvature`, `terrain_normal`/`macro_albedo` border cross-fades) and added Option A (per-region geology, routed volcanic lava lobes, `VCLR` macro tint `layers.tint`).
+- Owner 2026-11-22: prefers the vibe of the 10x + apron base (`x10s`) from before the cliff change; sharp passes read spiky, not varied; cliffs not real cliffs; terrain not walkable. New bug: **terrain visibly changes shape as the camera gets close** (also in earlier tests). Audit 2026-11-22: `x10c-sharp`/`x10cs` have 49/56 % of land ≥ 35° (Etna 1.8 %, Teide 6.2 %), largest walkable (≤ 46°) region 14/5 % of land vs 60 % on `x10s`; square-grid seam bug in `cliffs.rs` scarp dip. Next: rework (placed landforms, geology-driven runtime detail), LOD-change diagnosis.
 Live console (`~`) A/B toggles:
 - Shader cliff rock & crevices (`WG-X7b`): `set terrain.cliff.enabled off` / `on`, `set terrain.cliff.slope_start_deg 28`, `set terrain.cliff.slope_full_deg 45`, `set terrain.cliff.crevice_strength 0.45`.
-- Runtime sharp strata/Voronoi/ridges (Phase 3a): `set worldgen.sharp 0` (old gully-only) vs `1` (default) vs `2` (aggressive); `set worldgen.filter false` / `true`.
+- Runtime sharp strata/Voronoi/ridges (Phase 3a): default now `worldgen.sharp 0` (off, owner 2026-11-22); `set worldgen.sharp 1` (full profile) / `2` (aggressive) to compare; `set worldgen.filter false` / `true`.
 Look for:
 - **Clipmap / range seams gone:** fly 300–1200 m above terrain and sweep across the ~900–1000 m near-splat ring and clipmap level borders — no hard square lines in normals, shading, crevices, or near-to-far albedo transition.
 - **Per-region geology:** Bitter Coast stays low/marshy (quiet scarps), Ascadian Isles has gentle terraced rolling hills, Grazelands reads as flat-topped stepped mesas, West Gash has towering canyon escarpments, Azura's Coast / Sheogorad have sheer rocky sea-cliff headlands.
 - **Volcanic lava lobes:** Molag Amur / Ashlands / Red Mountain slopes show downhill-routed dark rocky lava ribbons with raised lateral levees and steep aa fronts.
 - **Morrowind `VCLR` macro tint (`WG-X7c`):** subtle regional soil/road/shadow colour variation carried onto both far macro and near ground splats.
 - Settlements still sit cleanly on their stamps without floating/burying; no CDLOD culling holes or wet/dry sea glitches.
+
+### LF-2b: eroded fault scarps, taller and fewer, no dents on faces (2026-11-22, lf-2b, spec `landforms.md` As built LF-2b)
+
+Status: awaiting owner. Launch `owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/lf2b-scarps" --hour 12`
+(A/B: `lf2-scarps` = the LF-2 blades; `x10s` = the base). 32 faults (LF-2: 80), throw 85-143 m in the Ashlands, 85-100 m
+West Gash / Molag Amur, 25-33 m Grazelands. Faces cut into triangular facets by ravines (chutes) every 50-300 m, a debris
+cone below each ravine mouth, face 60-75 deg by rock, height varying along the face, long tapered ends; this world's
+`filter.toml` turns the gully dents off on slopes over 40-50 deg. Places (`--camera` eye, target; engine X, Z):
+- Ashlands, 143 m block (capped sediment over tuff): `--camera "179,+40,-1003,-209,+86,-687"`.
+- Ashlands, 135 m (tuff over tephra): `--camera "-34,+40,-8980,-105,+81,-8485"`.
+- Molag Amur, 100 m basalt face: `--camera "5867,+40,4102,5580,+60,3692"`; West Gash 91 m: `--camera "-6393,+40,-6884,-6893,+55,-6898"`.
+- Grazelands, low 33 m scarp (should read gentle): `--camera "9957,+40,-17485,10417,+20,-17681"`.
+Look for: does a scarp read as an eroded range front (facets and ravines, fans spreading on the plain) rather than a
+wall or a blade; does the height vary along it; are the rock faces smooth of gully dents (gentler ground beside them
+still gullied); can you walk up a ravine/fan. Known: rocks still follow fault footprints in lines (diagnosed, not
+fixed: flora slope classes); guide spacing 18 m softens the facet edges (runtime lip restore is LF-5).
+
+### LF-2: placed fault scarps on the x10s base (2026-11-22, lf-2, spec `landforms.md` As built LF-2)
+
+Status: owner 2026-11-22: "thin blades of very vertical (and dented) terrain, long and not very high"; rocks "placed badly" along lines elsewhere. Read as walls, not cliff landforms → LF-2b. Was: awaiting owner. Launch `owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/lf2-scarps" --hour 12`
+(A/B: same with `target/worldgen/x10s`). 80 scarps on harder-rock outlines, the rest of the land as `x10s` (97.7 % untouched).
+Each: flat top tilting gently back (6 deg) from a lip, steep face, a 33 deg scree apron, then the untouched plain; throw 20-47 m.
+Places (`--camera` eye, target; engine X, Z = guide x, -y):
+- Grazelands, 47 m scarp in two en-echelon segments: `--camera "11382,+60,-11025,11077,+5,-10853"`; relay ramp at (11341, -10416).
+- Azura's Coast, relay ramp between two offset 47 m faces: `--camera "16627,+60,-10859,16452,+5,-11160"` (walk up it from the low side).
+- Ashlands, 43 m single face (tuff over tephra), tapered tips: `--camera "-1209,+60,-6684,-968,+5,-6430"`; Molag Amur 39 m: `--camera "13325,+60,6298,13672,+5,6252"`.
+- Ashlands, a repair ramp (279 m graded corridor N-S, 28 deg, cut/fill <= 25 m): `--camera "-998,+60,-10580,-1298,+5,-10580"`.
+Look for: does a scarp read as a cliff band on calm ground (step, lip, apron) or as a bump; are tips and relays walkable;
+no new spikes or seams, settlements and coast unchanged. Known: at guide spacing faces show at 40-50 deg (sharp lips need
+the runtime lip restore, LF-5); the base's own steepness (33 % of land >= 35 deg) is untouched by design (LF-calm).
+
+### WG-LOD: terrain shading no longer changes at mesh LOD switches (2026-11-22, wg-lodfix)
+
+Status: **confirmed (owner 2026-11-22)**: detailed pass on x10s with the 6-point checklist: "everything looks great". Kept on by default. Launch `owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/x10s" --hour 12`
+(Balmora ring, noon sun). Normals, crevice darkening and cliff rock now come from the finest height level resident
+around the camera (`shade_levels`), not the mesh LOD. Look for: fly, then walk, toward hillsides and cliffs from ~2 km
+down to 20 m: rock patches, crevice darkening and slope lighting should no longer "grow in" or snap at fixed distances
+(48, 96, 192, 384, 768 m); detail still sharpens gradually with approach (mip-like), and the silhouette still morphs.
+No seams at clipmap borders, no shimmer far away. A/B live: `set terrain.shade.decoupled off` (the old coupling) / `on`;
+`set terrain.shade.blend_texels 16|96` (cross-fade width); `set terrain.cliff.curvature_scale_m 1|4` (crevice scale);
+`set terrain.cdlod.morph_start 0.78` (longer morph; cracks possible on slopes, watch for sparkle seams). Known: rock
+cover still thins with distance (coarse levels smooth slopes); classic Morrowind terrain uses the same shaders.

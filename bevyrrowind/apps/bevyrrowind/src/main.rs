@@ -1437,6 +1437,10 @@ struct LabFlags {
     /// Texture lab: these models (comma list, VFS paths under `meshes/`) on the turntable instead of the defaults.
     #[arg(long = "lab-models", value_delimiter = ',')]
     models: Option<Vec<String>>,
+    /// Rock lab (`level:rock-lab`): these textures for the rocks (comma list; bare names get `textures/`
+    /// and `.dds`; X cycles them) instead of the lab's defaults.
+    #[arg(long = "rock-textures", value_delimiter = ',')]
+    rock_textures: Option<Vec<String>>,
 }
 
 impl Lighting {
