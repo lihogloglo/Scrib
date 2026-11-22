@@ -1094,3 +1094,25 @@ fn crowd_gauges_count_characters_meshes_and_joints_per_band() {
         assert_eq!(gauges.get(name).copied().flatten(), Some(value), "{name}");
     }
 }
+
+/// `character.finish.per_frame`: finished builds become bodies at most that many a frame, and
+/// every one gets there.
+#[test]
+fn finished_builds_become_bodies_at_most_the_budget_a_frame() {
+    let mut app = app();
+    app.insert_resource(crate::CharacterFinishBudget { per_frame: 1 });
+    let npcs: Vec<Entity> = (0..3).map(|_| app.world_mut().spawn(npc(CharacterState::default())).id()).collect();
+    let bodies = |w: &World| npcs.iter().filter(|&&e| w.get::<CharacterBody>(e).is_some()).count();
+    let mut before = 0;
+    for _ in 0..500 {
+        app.update();
+        let now = bodies(app.world());
+        assert!(now <= before + 1, "{now} bodies after a frame that started with {before}");
+        before = now;
+        if now == npcs.len() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    panic!("characters never finished building");
+}

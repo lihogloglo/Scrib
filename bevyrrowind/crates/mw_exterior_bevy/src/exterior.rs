@@ -423,7 +423,24 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // Character stats (stats.md S4): the player's sheet, NPC and creature sheets at spawn.
     mw_rpg_bevy::stats::add(&mut app, options.actors.clone());
 
-    // Cooked materials map exactly like the NIF path's.
+    // Cooked materials map exactly like the NIF path's. Cutout candidates take the texture bake's
+    // alpha class, so no texture is decoded on the main thread while cells load.
+    if let Some(index) = mw_bake::delight::load_alpha_classes(&options.store, &manifest) {
+        info!("assets: {} texture alpha classes from the bake", mw_assets::seed_cutout_classes(&index));
+    } else {
+        warn!("assets: no texture alpha classes baked; cutout candidates decode their texture at load");
+    }
+    // Per-frame budgets of the main-thread work streaming starts but does not schedule itself
+    // (2026-11-22 walk): static-scene cell loads and finished character builds. Live tunables.
+    {
+        use sf_tunables_bevy::TunablesAppExt as _;
+        let _scene = app
+            .add_tunable(&sf_world::STREAM_SCENE_LOAD_MS)
+            .bind_resource(|b: &mut sf_scene_bevy::SceneLoadBudget, ms| b.ms = ms);
+        let _characters = app
+            .add_tunable(&sf_character_bevy::FINISH_PER_FRAME)
+            .bind_resource(|b: &mut sf_character_bevy::CharacterFinishBudget, n| b.per_frame = n);
+    }
     let mapper_vfs = vfs.clone();
     app.insert_resource(ModelMaterials(Arc::new(mw_assets::cooked::material_mapper(mapper_vfs))));
     // Pipeline warm-up W4b1: the baked catalog precached on `Loading` (the reveal waits on it).

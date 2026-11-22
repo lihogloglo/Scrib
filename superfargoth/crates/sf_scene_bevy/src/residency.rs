@@ -75,6 +75,20 @@ pub const SLAB_WAIT_FRAMES: u64 = 120;
 #[derive(Resource, Default, Debug)]
 pub struct SceneFrame(pub u64);
 
+/// Main-thread milliseconds a frame may spend stepping cell loads ([`poll_cell_loads`]; tunable
+/// `stream.scene.load_ms`, [`sf_world::STREAM_SCENE_LOAD_MS`], the host binds it). At least one
+/// cell steps every frame; in burst mode the budget is scaled by the scheduler's burst factor.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct SceneLoadBudget {
+    pub ms: f32,
+}
+
+impl Default for SceneLoadBudget {
+    fn default() -> Self {
+        Self { ms: sf_world::STREAM_SCENE_LOAD_MS.default_value() }
+    }
+}
+
 /// Every worldspace's retained scene.
 #[derive(Resource, Default)]
 pub struct SceneSpaces(pub BTreeMap<WorldspaceId, SpaceState>);
@@ -397,7 +411,7 @@ struct Cx<'a> {
 /// `Update`, after `StreamingSystems::Drive`: picks up acquired cells and moves
 /// every undecided one through the gate, planning it when it clears (§4.3
 /// steps 1-4). Several phases may pass in one frame.
-#[allow(clippy::too_many_arguments)] // one system, thirteen resources
+#[allow(clippy::too_many_arguments)] // one system, fourteen resources
 pub fn poll_cell_loads(
     asset_server: Res<AssetServer>,
     tables: Res<Assets<SceneTableAsset>>,
@@ -412,6 +426,7 @@ pub fn poll_cell_loads(
     mut chain_materials: ResMut<ChainMaterials>,
     mapper: Option<Res<ModelMaterials>>,
     streaming: Option<Res<Streaming>>,
+    budget: Res<SceneLoadBudget>,
 ) {
     let mapper = mapper.as_deref().cloned().unwrap_or_default();
     // `build_template`'s switch: the app's `--off matclass` reaches both paths.
@@ -440,13 +455,27 @@ pub fn poll_cell_loads(
     };
     let cx_counters = cx.counters;
     let slabs = &mut *slabs;
+    // Time-sliced: cells step until the frame's budget is spent (at least one steps), the rest
+    // wait for the next frame. Before, every pending cell stepped at once (2026-11-22 walk).
+    let burst = streaming.as_deref().filter(|s| s.in_burst()).map_or(1.0, |s| s.scheduler().config().budgets.burst_factor);
+    let limit = std::time::Duration::from_secs_f64(f64::from(budget.ms.max(0.0)) * burst / 1000.0);
+    let started = Instant::now();
+    let (mut stepped, mut deferred) = (0_u32, 0_u32);
     for (worldspace, state) in &mut spaces.0 {
-        let undecided: Vec<IVec3> =
+        let mut undecided: Vec<IVec3> =
             state.loading.iter().filter(|(_, l)| !l.phase.decided()).map(|(&c, _)| c).collect();
+        // A stable order (the map's is not), so the same cells go first when the budget cuts.
+        undecided.sort_unstable_by_key(|c| (c.x, c.y, c.z));
         for cell in undecided {
+            if stepped > 0 && started.elapsed() >= limit {
+                deferred += 1;
+                continue;
+            }
+            stepped += 1;
             step(&cx, worldspace, cell, state, slabs, maker.as_mut());
         }
     }
+    count(cx_counters, "scene/load/deferred", f64::from(deferred));
     if slabs.dirty {
         let started = Instant::now();
         let mut wanted: HashSet<AssetId<Mesh>> = HashSet::new();

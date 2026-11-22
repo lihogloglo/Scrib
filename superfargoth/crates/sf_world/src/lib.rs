@@ -43,7 +43,7 @@ pub use records::{DoorLink, LinkEnd, Partition, RayTracedWorldspaces, RecordRef,
 pub use rings::{Level, RingConfig, RingRadii};
 pub use scheduler::{
     Anchor, AnchorId, AnchorRole, Budgets, Cancelled, CellChange, Request, RequestId, RequestKind, Scheduler,
-    SchedulerConfig, Stage, StageReport, StageStep, TickInput, TickReport, WorldspaceState, STREAM_SELECT_MOVE_M,
+    SchedulerConfig, Stage, StageReport, StageStep, TickInput, TickReport, WorldspaceState, STREAM_SCENE_LOAD_MS, STREAM_SELECT_MOVE_M,
     STREAM_SELECT_TURN_DEG,
 };
 pub use select_gate::{GateQuanta, GateSource, SELECT_GATE, SelectGate, TUNABLES};

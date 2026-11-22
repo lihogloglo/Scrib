@@ -1391,3 +1391,26 @@ fn an_untouched_cell_is_drawn_as_planned() {
     let want: Vec<_> = plan.writes.iter().map(|w| (w.batch, w.slot, w.active)).collect();
     assert_eq!(got, want);
 }
+
+/// `stream.scene.load_ms`: once a frame's budget is spent the remaining cells wait for the next
+/// frame, and at least one cell steps even with no budget at all, so loads always progress.
+#[test]
+fn cell_loads_are_time_sliced_but_always_progress() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a), true, 4096);
+    let cell = f.cell;
+    stream_cell_in(&mut f, cell);
+    f.app.update();
+    let _ = f.counters();
+
+    f.app.insert_resource(SceneLoadBudget { ms: 0.0 });
+    let (a, b) = (cell + IVec3::Z, cell + IVec3::X);
+    post_twin(&mut f, cell, a);
+    post_twin(&mut f, cell, b);
+    f.app.update();
+    assert_eq!(f.counters().get("scene/load/deferred"), Some(&1.0), "one of the two new cells waited");
+
+    // Still one cell a frame with no budget: both get planned.
+    planned(&mut f, a);
+    planned(&mut f, b);
+}

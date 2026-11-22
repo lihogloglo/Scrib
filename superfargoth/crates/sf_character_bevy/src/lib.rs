@@ -89,8 +89,33 @@ pub const SKIN_SKIP_UNCHANGED: sf_tunables::Def<bool> = sf_tunables::def!(bool "
     .source(sf_tunables::Source::Owner("2026-11-17: on by default after the owner's play session with every gate on; A/B docs/ledger/perf.md 2026-11-17"))
     .group(sf_tunables::Group::Characters);
 
+/// `character.finish.per_frame`: characters whose build finished that become bodies in one frame
+/// ([`CharacterFinishBudget`]). Each costs its outfit upload, a few dozen entity spawns and their
+/// observers, about 1 ms of main thread; the 2026-11-22 walk finished 5-9 in one frame (+6 to +8 ms).
+/// The rest stay built and finish on the next frames. Swaps of already-uploaded outfits are not counted.
+/// Off by default (256: all finish at once, as before): 2 a frame was inconclusive in its 2026-11-22 A/B on
+/// the night walk (`docs/ledger/streaming.md`); 2 is the candidate value.
+pub const FINISH_PER_FRAME: sf_tunables::Def<u32> = sf_tunables::def!(count "character.finish.per_frame" = 256)
+    .range(1, 256)
+    .unit(sf_tunables::Unit::Count)
+    .help("Characters that finish building and spawn their body per frame (the rest wait a frame; 256 = no limit)")
+    .source(sf_tunables::Source::Measured("2026-11-22 night walk A/B: 2 a frame inconclusive vs off, kept off (docs/ledger/streaming.md)"))
+    .group(sf_tunables::Group::Characters);
+
 /// This crate's tunables (the host binds them).
-pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[&SKIN_SKIP_UNCHANGED];
+pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[&SKIN_SKIP_UNCHANGED, &FINISH_PER_FRAME];
+
+/// How many finished builds become bodies per frame ([`FINISH_PER_FRAME`]; at least one).
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CharacterFinishBudget {
+    pub per_frame: u32,
+}
+
+impl Default for CharacterFinishBudget {
+    fn default() -> Self {
+        Self { per_frame: FINISH_PER_FRAME.default_value() }
+    }
+}
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -470,6 +495,7 @@ impl Plugin for SfCharacterPlugin {
             .init_resource::<CharacterStats>()
             .init_resource::<Frame>()
             .init_resource::<CharacterSettings>()
+            .init_resource::<CharacterFinishBudget>()
             .init_resource::<AnimVarietySettings>()
             .init_resource::<HeldModelCache>()
             .init_resource::<ClothSettings>()
@@ -786,7 +812,8 @@ fn finish_builds(
     variety: Res<AnimVarietySettings>,
     bindings: Query<&SkeletonBinding>,
     ragdolls: Query<(), With<sf_anim_bevy::PhysicsPose>>,
-    counters: Option<Res<sf_diag_bevy::DiagCounters>>,
+    // One parameter: a system takes at most 16.
+    (budget, counters): (Res<CharacterFinishBudget>, Option<Res<sf_diag_bevy::DiagCounters>>),
 ) {
     frame.0 = frame.0.wrapping_add(1);
     let Some(characters) = characters else { return };
@@ -794,8 +821,15 @@ fn finish_builds(
     let started = std::time::Instant::now();
     let misses_before = stats.cache_misses;
     let mut ready: Vec<(Entity, Built, Arc<OutfitAssets>)> = Vec::new();
+    // Time-sliced: at most `budget.per_frame` builds finish; a finished task left unpolled is
+    // answered the same next frame.
+    let mut taken = 0_u32;
     for (entity, spec, mut build) in &mut building {
+        if taken >= budget.per_frame.max(1) {
+            break;
+        }
         let Some(result) = future::block_on(future::poll_once(&mut build.0)) else { continue };
+        taken += 1;
         commands.entity(entity).try_remove::<CharacterBuild>();
         let built = match result {
             Ok(built) => built,

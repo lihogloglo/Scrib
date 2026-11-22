@@ -380,17 +380,33 @@ pub fn cutout_foliage() -> bool {
     CUTOUT_FOLIAGE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// [`texture_is_cutout`]'s answers by texture reference: seeded from the texture bake
+/// ([`seed_cutout_classes`]), filled by decoding for references the bake never saw.
+static CUTOUT_CLASSES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Seeds [`texture_is_cutout`] with the texture bake's classes (`texture.alpha_class.index`,
+/// [`mw_bake::delight::load_alpha_classes`]), so a cutout candidate's material is made without
+/// reading and decoding its texture on the calling thread (the main thread, for cooked models:
+/// 2026-11-22 stutter trace). The keys are the references as materials name them, the same
+/// strings both sides get from `mw_nif::texture_path` (`mw_bake::scene::AlphaClasses`).
+/// Returns how many references were seeded.
+pub fn seed_cutout_classes(index: &mw_bake::delight::AlphaClassIndex) -> usize {
+    let Ok(mut cache) = CUTOUT_CLASSES.lock() else { return 0 };
+    for (reference, class) in &index.classes {
+        cache.insert(reference.clone(), *class == mw_bake::delight::AlphaClass::Cutout);
+    }
+    index.classes.len()
+}
+
 /// Whether a [`mw_nif::Cutout::Candidate`] surface draws as a cutout: its
 /// texture's alpha has holes, not translucency ([`mw_bake::textures::alpha_is_cutout`]).
-/// Decodes the top mip once per texture (cached). Scaffold: the bake step it
-/// belongs in now exists (`texture.alpha_class`, baked for every cutout candidate
-/// by `mw_bake::delight::bake_delight` and read by the static-scene bake). Removal
-/// path: read that index here instead of decoding, so no load-time decode is left.
+/// The texture bake's answer when the app seeded it ([`seed_cutout_classes`]); otherwise
+/// (no texture bake, or a reference it never saw) the top mip is decoded here, once per
+/// texture (cached), and the `assets/cutout_decode/*` gauges count it.
 pub(crate) fn texture_is_cutout(vfs: &Vfs, texture: Option<&str>) -> bool {
-    static CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> =
-        std::sync::LazyLock::new(Default::default);
     let Some(texture) = texture.filter(|_| cutout_foliage()) else { return false };
-    if let Some(known) = CACHE.lock().ok().and_then(|c| c.get(texture).copied()) {
+    if let Some(known) = CUTOUT_CLASSES.lock().ok().and_then(|c| c.get(texture).copied()) {
         return known;
     }
     let started = std::time::Instant::now();
@@ -404,7 +420,7 @@ pub(crate) fn texture_is_cutout(vfs: &Vfs, texture: Option<&str>) -> bool {
         .and_then(|(resolved, _)| Some((vfs.read(&resolved).ok()?, resolved)))
         .and_then(|(bytes, resolved)| mw_bake::textures::decode_rgba(resolved.as_str(), &bytes).ok())
         .is_some_and(|image| mw_bake::textures::alpha_is_cutout(&image));
-    if let Ok(mut cache) = CACHE.lock() {
+    if let Ok(mut cache) = CUTOUT_CLASSES.lock() {
         cache.insert(texture.to_owned(), cutout);
     }
     CUTOUT_DECODES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -592,6 +608,10 @@ pub(crate) fn image_settings_clamped(settings: &mut ImageLoaderSettings, clamp: 
         }
     };
     settings.is_srgb = srgb;
+    // Model textures live on the GPU only: nothing reads their pixels in the main world, and a
+    // main-world copy makes extraction clone every arriving image (`extract_render_asset`,
+    // 5.6 + 11.6 ms at the 2026-11-22 walk's 59 s hitch) and keeps a second copy in RAM.
+    settings.asset_usage = RenderAssetUsages::RENDER_WORLD;
     settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: mode(clamp[0]),
         address_mode_v: mode(clamp[1]),
@@ -634,5 +654,31 @@ mod tests {
         assert!(wall.diffuse_transmission.abs() < f32::EPSILON && wall.thickness.abs() < f32::EPSILON);
         let unlit = surface(true, AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF), true).to_material(|_, _, _| None);
         assert!(unlit.diffuse_transmission.abs() < f32::EPSILON);
+    }
+
+    /// A seeded reference is answered from the bake's class: no file, no decode (the VFS is
+    /// empty, so a decode could only answer `false`).
+    #[test]
+    fn seeded_cutout_classes_answer_without_decoding() {
+        use mw_bake::delight::{AlphaClass, AlphaClassIndex};
+        let index = AlphaClassIndex {
+            classes: [
+                ("textures/seed_test_leaf.dds".to_owned(), AlphaClass::Cutout),
+                ("textures/seed_test_glass.dds".to_owned(), AlphaClass::Soft),
+                ("textures/seed_test_broken.dds".to_owned(), AlphaClass::Undecodable),
+            ]
+            .into(),
+        };
+        assert_eq!(seed_cutout_classes(&index), 3);
+        let vfs = Vfs::builder().build();
+        let (decodes, _) = cutout_decode_totals();
+        assert!(texture_is_cutout(&vfs, Some("textures/seed_test_leaf.dds")));
+        assert!(!texture_is_cutout(&vfs, Some("textures/seed_test_glass.dds")));
+        assert!(!texture_is_cutout(&vfs, Some("textures/seed_test_broken.dds")));
+        assert!(!texture_is_cutout(&vfs, None));
+        // The leaf's `true` can only come from the seed. An unseeded reference still falls back
+        // to a decode (an empty VFS: not a cutout), which the gauge counts.
+        assert!(!texture_is_cutout(&vfs, Some("textures/seed_test_unseeded.dds")));
+        assert!(cutout_decode_totals().0 > decodes);
     }
 }

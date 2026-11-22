@@ -46,7 +46,7 @@ pub use assets::{SceneLoadError, SceneTableAsset, SceneTableLoader};
 pub use chains::{ChainAssets, ChainMaterials};
 pub use gauges::publish_scene_gauges;
 pub use residency::{
-    BatchEntity, BatchZeroFill, CellLoad, CellUpload, LoadPhase, PromotePlacement, SLAB_WAIT_FRAMES, SceneBatch, SceneFrame, SceneHook,
+    BatchEntity, BatchZeroFill, CellLoad, CellUpload, LoadPhase, PromotePlacement, SLAB_WAIT_FRAMES, SceneBatch, SceneFrame, SceneHook, SceneLoadBudget,
     SceneInbox, SceneSpaces, SceneUploads, SpaceState, apply_promotions, despawn_empty_batches, poll_cell_loads, tick_frame,
 };
 pub use shadows::{ReportedCells, report_shadow_casters};
@@ -166,6 +166,7 @@ impl Plugin for ScenePlugin {
             .init_asset::<SceneTableAsset>()
             .register_asset_loader(SceneTableLoader)
             .init_resource::<SceneFrame>()
+            .init_resource::<SceneLoadBudget>()
             .init_resource::<SceneSpaces>()
             .init_resource::<SceneInbox>()
             .init_resource::<ChainSlabTable>()

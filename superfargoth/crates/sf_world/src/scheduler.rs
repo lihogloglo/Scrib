@@ -249,6 +249,19 @@ pub const STREAM_SELECT_TURN_DEG: Def<f32> = def!(float "stream.select.turn_deg"
     .source(Source::Industry("UE5 wp.Runtime.UpdateStreaming.RotationQuantization (10 deg)"))
     .group(Group::ViewDistance);
 
+/// `stream.scene.load_ms`: main-thread time a frame may spend moving static-scene cells through their
+/// load (chain assets, materials, planning; `sf_scene_bevy::residency::poll_cell_loads`). At least one
+/// cell steps every frame; the rest wait for the next. Scaled by [`Budgets::burst_factor`] in burst mode.
+/// Off by default (50 ms: every pending cell steps, as before): its 2026-11-22 A/B on the night walk was
+/// inconclusive, and it never cut in there once cutout classes came from the bake (`docs/ledger/streaming.md`).
+/// The candidate value is 1 ms (UE `s.LevelStreamingActorsUpdateTimeLimit`, scaled to 120 fps like stream spawn).
+pub const STREAM_SCENE_LOAD_MS: Def<f32> = def!(float "stream.scene.load_ms" = 50.0)
+    .range(0.1, 50.0)
+    .unit(Unit::Millis)
+    .help("Main-thread time per frame for static-scene cell loads (at least one cell a frame; 50 = no limit in practice)")
+    .source(Source::Measured("2026-11-22 night walk A/B: 1 ms inconclusive vs off, kept off (docs/ledger/streaming.md)"))
+    .group(Group::ViewDistance);
+
 impl SchedulerConfig {
     /// The streaming gate with its declared quanta, on or off.
     pub fn select_gate_quanta(enabled: bool) -> GateQuanta {
