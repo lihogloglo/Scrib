@@ -100,7 +100,7 @@ impl Default for PointShadowAtlasConfig {
         Self {
             enabled: false,
             static_size: 4096,
-            live_size: 2048,
+            live_size: 4096,
             guard_texels: 2.0,
             soft_pcf_radius: 1.0,
             max_lamps: 48,

@@ -26,10 +26,18 @@ pub const STATIC_SIZE_PX: Def<u32> = def!(count "shadow.lamp.atlas.static_size_p
     .group(Group::Shadows);
 
 /// `shadow.lamp.atlas.live_size_px`: square side length of the live shadow atlas.
-pub const LIVE_SIZE_PX: Def<u32> = def!(count "shadow.lamp.atlas.live_size_px" = 2048)
+///
+/// As large as the static atlas: a face with a mover needs a live tile of its static tile's size,
+/// and on a town street at night about half the cached faces have one (`shadow_a3_atlas`,
+/// `balmora_walk_night`: live tiles 17 median / 58 max against 42 / 112 static). At 2048 the live
+/// atlas ran full (100 % occupancy, 893 failed allocations in one walk, also at 8 lamps): a face
+/// without a live tile draws no mover, so character shadows came and went with the viewer's
+/// position, and tight faces stepped down a tier, changing their static shadows too.
+pub const LIVE_SIZE_PX: Def<u32> = def!(count "shadow.lamp.atlas.live_size_px" = 4096)
     .range(512, 4096)
     .unit(Unit::Pixels)
-    .help("Side length of the square 2D shadow atlas holding mover and moving-lamp faces")
+    .help("Side length of the square 2D shadow atlas holding mover and moving-lamp faces (a mover face needs a tile of its static tile's size)")
+    .source(Source::Measured("shadow_a3_atlas 2026-11-20: 2048 px ran 100 % full with 893 allocation failures on balmora_walk_night"))
     .group(Group::Shadows);
 
 /// `shadow.lamp.atlas.guard_texels`: border guard band on every tile edge to prevent PCF bleed.

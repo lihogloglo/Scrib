@@ -865,33 +865,36 @@ impl LampCache {
         }
     }
 
-    /// Due lamps, longest waiting first, draw all their mover tiles or none.
+    /// Due lamps draw all their mover tiles or none. A [`RateTier::Full`] lamp (a mover within
+    /// `mover_full_rate_m` of a camera) draws every frame, whatever the cap: a shadow that lags its
+    /// caster next to the viewer reads as flicker, each lamp holding the pose of a different frame
+    /// (SH-21a; engines with cached local shadows draw dynamic casters every frame). The cap
+    /// bounds the half- and far-rate lamps only, longest waiting first.
     fn draw_movers(&mut self, copies: &mut Vec<CopyOrder>, stats: &mut FrameStats) {
         let frame = self.frame;
-        let mut due: Vec<(Option<u64>, LampKey)> = Vec::new();
+        let mut due: Vec<(bool, Option<u64>, LampKey)> = Vec::new();
         for (&key, l) in &self.lamps {
             if l.tier != LampTier::Full || !l.ready() || mover_tiles(l).is_empty() {
                 continue;
             }
-            let interval = u64::from(
-                self.config
-                    .interval_frames(self.config.rate_tier(l.mover_distance_m)),
-            );
+            let tier = self.config.rate_tier(l.mover_distance_m);
+            let interval = u64::from(self.config.interval_frames(tier));
             let scheduled = (frame + l.phase).is_multiple_of(interval);
             let overdue = l.last_mover_frame.is_none_or(|f| frame - f >= interval);
             if scheduled || overdue {
-                due.push((l.last_mover_frame, key));
+                due.push((tier != RateTier::Full, l.last_mover_frame, key));
             }
         }
+        // Full-rate lamps first (`false < true`), then by wait.
         due.sort_unstable();
 
         let cap = self.config.max_mover_faces_per_frame;
         let mut drawn = 0u32;
-        for (_, key) in due {
+        for (capped, _, key) in due {
             let l = &self.lamps[&key];
             let tiles = mover_tiles(l);
             let k = tiles.count();
-            if drawn > 0 && drawn + k > cap {
+            if capped && drawn > 0 && drawn + k > cap {
                 stats.deferred_faces += k;
                 continue;
             }
@@ -937,7 +940,11 @@ impl LampCache {
             }
             l.movers_now = tiles;
             l.last_mover_frame = Some(frame);
-            drawn += k;
+            // Only capped (half- and far-rate) faces count against the cap, so full-rate lamps
+            // never starve the far ones.
+            if capped {
+                drawn += k;
+            }
             stats.mover_draws += k;
             for (lamp, t) in victims {
                 if let Some(v) = self.lamps.get_mut(&lamp) {

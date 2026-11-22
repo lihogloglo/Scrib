@@ -6,6 +6,7 @@ use sf_tunables::Tunables;
 const A: LampKey = LampKey(1);
 const B: LampKey = LampKey(2);
 const C: LampKey = LampKey(3);
+const D: LampKey = LampKey(4);
 const ALL: TileMask = TileMask::first(6);
 
 fn mask(tiles: &[u8]) -> TileMask {
@@ -332,9 +333,16 @@ fn pool_hands_out_free_first_then_least_recently_used() {
 
 #[test]
 fn per_frame_cap_takes_longest_waiting_lamps_whole() {
+    // Every lamp in the far tier, due each frame: the cap applies (full-rate lamps ignore it).
+    let far_each_frame = LampCacheConfig {
+        mover_full_rate_m: 0.0,
+        mover_half_rate_m: 0.0,
+        mover_far_interval_frames: 1,
+        ..LampCacheConfig::default()
+    };
     let config = LampCacheConfig {
         max_mover_faces_per_frame: 3,
-        ..LampCacheConfig::default()
+        ..far_each_frame
     };
     let mut c = cache_with(3, config);
     for k in [A, B, C] {
@@ -362,13 +370,44 @@ fn per_frame_cap_takes_longest_waiting_lamps_whole() {
     // A lamp bigger than the cap still draws when it is first.
     let config = LampCacheConfig {
         max_mover_faces_per_frame: 1,
-        ..LampCacheConfig::default()
+        ..far_each_frame
     };
     let mut c = cache_with(1, config);
     c.admit(A, LampTier::Full, ALL).unwrap();
     let t = settle(&mut c, 0.0);
     movers(&mut c, A, &[0, 1, 2], 5.0);
     assert_eq!(c.plan(t).stats.mover_draws, 3);
+}
+
+/// SH-21a: a lamp with a mover next to the viewer draws every frame whatever the cap, and its
+/// faces do not use up the cap of the half- and far-rate lamps.
+#[test]
+fn full_rate_lamps_draw_every_frame_outside_the_cap() {
+    let config = LampCacheConfig {
+        max_mover_faces_per_frame: 2,
+        mover_far_interval_frames: 1,
+        ..LampCacheConfig::default()
+    };
+    let far_m = config.mover_half_rate_m + 10.0;
+    let mut c = cache_with(4, config);
+    for k in [A, B, C, D] {
+        c.admit(k, LampTier::Full, ALL).unwrap();
+    }
+    let t = settle(&mut c, 0.0);
+    for i in 0..4u8 {
+        // A and B near (3 faces each, 6 > the cap of 2), C and D far (2 faces each).
+        movers(&mut c, A, &[0, 1, 2], 5.0);
+        movers(&mut c, B, &[3, 4, 5], 5.0);
+        movers(&mut c, C, &[0, 1], far_m);
+        movers(&mut c, D, &[2, 3], far_m);
+        let p = c.plan(t + 0.1 * f32::from(i)).clone();
+        assert_eq!(p.lamp(A).unwrap().movers.count(), 3, "frame {i}");
+        assert_eq!(p.lamp(B).unwrap().movers.count(), 3, "frame {i}");
+        // The far lamps share the cap: one of them (2 faces) per frame, alternating.
+        let far = [C, D].map(|k| p.lamp(k).unwrap().movers.count());
+        assert_eq!(far, if i % 2 == 0 { [2, 0] } else { [0, 2] }, "frame {i}");
+        assert_eq!((p.stats.mover_draws, p.stats.deferred_faces), (8, 2), "frame {i}");
+    }
 }
 
 #[test]

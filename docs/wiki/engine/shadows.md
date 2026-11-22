@@ -97,7 +97,9 @@ Everything else is unshadowed.
   (live; alias `BEVYRROWIND_LAMP_ATLAS=1|0`; Low/Extremely Low keep point shadows off via `budget.max == 0`). Replaces the
   fixed 8-lamp cube array (and Bevy's 42-cube `max_texture_array_layers / 6` cap) with two persistent 2D `Depth32Float`
   atlases managed by a buddy quadtree (`sf_sky::shadow_atlas::{BuddyAtlas, ShadowAtlasManager}`): Static Atlas (default
-  4096², persistent cached static depth) + Live Atlas (default 2048², dynamic mover overlays and carried torches), with
+  4096², persistent cached static depth) + Live Atlas (default 4096² since 2026-11-22, was 2048²: a face with a mover
+  needs a live tile of its static tile's size and about half the faces have one on a town street, so 2048² ran full and
+  dropped mover shadows; dynamic mover overlays and carried torches), with
   variable 512 / 256 / 128 px distance/luminance tiers (1.5× hysteresis, 2 s cooldown), empty-face omission, 2-texel guard
   band (`guard_band_fov_y` + `inv_guard_tan` + inner half-texel clamp), 4-tap IGN-rotated RGSS PCF (`shadow.lamp.atlas.soft_pcf_radius`,
   default `1.0` texel, live with 0 pipeline recompiles, `0` = crisp 1-tap 2×2 HW PCF; volumetric fog stays 1-tap), and
@@ -113,6 +115,12 @@ Everything else is unshadowed.
   and non-draw frames preserve their view's previous direct/indirect mode. Interleaved A/B `shadow_a3_atlas`
   (2560x1440 DLSS Quality): `atlas8` −0.84 ms walk / −0.53 ms census; `atlas48` (19–24 shadowed lamps simultaneously)
   −0.76 ms walk / −0.32 ms census (all 4 comparisons `faster`, U=0.0; p99 −1.9 to −3.5 ms).
+  **Mover draws** (`sf_sky::lamp_cache::draw_movers`, `lamp_cache.rs`): a lamp with a mover within
+  `shadow.lamp.cache.mover_full_rate_m` (16 m) of a camera draws its mover faces every frame; only half-rate (to 30 m,
+  every 2nd frame) and far-rate (every 4th) lamps share `max_mover_faces_per_frame` (12), longest wait first
+  (2026-11-22; before, every lamp shared the cap and near character shadows lagged). Re-check `shadow_review`
+  (2026-11-22): walk 9.79 ms, live occupancy 26 % max, 0 allocation failures, filter radius 0 vs 1 and 16 vs 48
+  lamps no measurable difference, stock cubes +0.59 ms.
 - **Legacy lamp cache: not in the game** (`POINT_SHADOW_CACHE = false`, `mw_environment_bevy/src/render.rs:37`, since
   2026-10-21; `--off shadowcache` is a no-op). As built: `sf_shadow_cache_bevy` (`lib.rs:1`-`:70`, `ShadowCachePlugin` `:209`): per shadowed light a persistent
   cube array holds the depth of its static casters; Bevy's views draw movers over a restored copy. Captures:
@@ -155,11 +163,16 @@ blits|clears|reallocated` (render world, `PointShadowAtlasStats`).
 
 ## Known limits
 
-- Lamp-shadow quality is open: player shadow flickers near some torches, which lamps cast looks arbitrary
-  ([ledger](../../ledger/shadows.md), SH-13, SH-21); hard problem H2.
-- Shadows on a moving character flicker among many lamps: only 2 (+1) lamps redraw per frame, so each lamp's cube
-  holds an older pose on a different frame. Standard fix (cached static depth + movers drawn every frame, UE, HDRP
-  mixed cached shadows) built opt-in as the CW-4 lamp cache, not yet checked on a GPU; ledger 2026-11-15, SH-25.
+- Lamp-shadow quality: SH-13 and SH-21 predate the atlas and need an owner re-check (SH-34); hard problem H2.
+- Atlas off (stock cubes): shadows on a moving character flicker among many lamps, only 2 (+1) lamps redraw per
+  frame. The atlas draws near movers every frame over cached static depth (UE, HDRP mixed cached shadows).
+- Atlas admission is in entity order, not budget rank: with the Static Atlas full (Census reached 95 %) a slot
+  holder gets no tile, yet fades to its full shadowed reach without a shadow (review 2026-11-22, F4; open).
+- A face being recaptured (tier resize, a static changed) draws no movers until the capture is confirmed, 2-3
+  frames (one view per face serves both atlases; open).
+- Four structures track one fact per face (policy `Tile`, `ShadowAtlasManager` rects, `AtlasWritten`, render
+  `AtlasShadowFaceState`), and the CW-4 cube cache and `sf_shadow_cache_bevy` still exist beside the atlas:
+  cleanup slices proposed in the ledger (2026-11-22).
 - The lamp pick uses the camera position: a third-person orbit can still hand a slot over when more lamps than slots
   are near; with all slots held, a far lamp ahead may have no shadow (SH-25).
 - Objects past the last cascade get no object shadows; terrain does (ledger 2026-10-19).

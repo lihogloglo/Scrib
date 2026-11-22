@@ -74,7 +74,7 @@ pub const MOVER_FAR_INTERVAL: Def<u32> =
 pub const MAX_MOVER_FACES_PER_FRAME: Def<u32> = def!(count "shadow.lamp.cache.max_mover_faces_per_frame" = 12)
     .range(1, 512)
     .unit(Unit::Count)
-    .help("Cached lamp faces with movers drawn per frame at most, lamps that waited longest first")
+    .help("Half- and far-rate lamp faces with movers drawn per frame at most, lamps that waited longest first (full-rate faces always draw)")
     .group(Group::Shadows);
 
 /// `shadow.lamp.cache.mover_linger_s`: [`LampCacheConfig::mover_linger_s`].
@@ -134,7 +134,8 @@ pub struct LampCacheConfig {
     pub mover_half_rate_m: f32,
     /// Movers farther away: every this many frames, lamps alternating.
     pub mover_far_interval_frames: u32,
-    /// Mover faces drawn per frame at most (captures are counted separately).
+    /// Half- and far-rate mover faces drawn per frame at most; full-rate faces always draw
+    /// (captures are counted separately).
     pub max_mover_faces_per_frame: u32,
     /// Seconds a face keeps its view after its last mover left.
     pub mover_linger_s: f32,

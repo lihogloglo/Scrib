@@ -526,7 +526,7 @@ fn tunables_register_cleanly_and_config_clamping() {
     let cfg = ShadowAtlasConfig::from_tunables(&reg).expect("read config from tunables");
     assert_eq!(cfg, ShadowAtlasConfig::default());
     assert_eq!(cfg.clamped_static_size(), 4096);
-    assert_eq!(cfg.clamped_live_size(), 2048);
+    assert_eq!(cfg.clamped_live_size(), 4096);
 
     // Power-of-two clamping checks.
     let mut weird = cfg;

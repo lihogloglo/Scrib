@@ -1909,3 +1909,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-19 (worldgen, owner): three world options for players: classic Morrowind, the same map at 10x (WG-X, built first),
   and later the generated realistic island (the WG-S/VO/TD pipeline, also the owner's base for future worlds). Same-map
   settlements stay 1:1 for now; settlement growth comes later.
+- 2026-11-22 (Solari, owner): no own Solari fork and no skinning pass for the ray-traced tier: too much work, and upstream may
+  move a lot this year. Solari stays an opt-in Ultra tier on upstream; re-check at the next Bevy upgrade (0.21 has point/spot/rect
+  lights #25913, alpha mask #25996, non-opaque BLAS #25951). Research: `.sessions/solari-research.md` (2026-11-22).

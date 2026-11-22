@@ -310,3 +310,17 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Owner 2026-11-20 (second look): shadows still disappeared when getting close to lamps and flickered before disappearing while moving. Full audit found and fixed 5 P0 + 4 P1 root causes: `prepare_light` wiping `shadow_render_phases` without invalidating `LightKeyCache` (leaving `dirty_specializations` clean so `queue_shadows` dropped all visible casters and cleared tiles empty), non-draw frames (Half/Far skip, 12-face cap, Linger) flipping `mover_only` off/on and triggering phase wipes, tier resize clearing `c.baked` and racing `release_retiring` ahead of GPU confirmation, moving torches publishing culled/unwritten faces, wrong `view_backward` in face frusta, `fs_blit` missing `guard_ratio` across mismatched Static/Live tile sizes, live-toggle `shadow_normal_bias` mismatch, idle `AtlasPointShadowMap` change churn, full-atlas un-admitted lamps leaking stock scans, and pre-bias seam early-out (ledger 2026-11-20 "SH-33 full audit fixes").
 - Owner 2026-11-20 (third look, after full audit fixes): zero flickering in Balmora 22:00, shadows smoothly fade in at range. Follow-up built same day: flipped `shadow.lamp.atlas.enabled` ON by default, added live 4-tap IGN-rotated RGSS PCF (`shadow.lamp.atlas.soft_pcf_radius = 1.0`, `0` for crisp 1-tap A/B), upgraded contact shadows (`SH-14` fix, ~2.5× less depth bandwidth), and fixed `RO-20` far-terrain hill swimming (`far_shadow.wesl`).
 - Status: **awaiting owner** final sign-off on Balmora 22:00 + Census interior + daytime `SH-14` / `RO-20` (and live A/B `set shadow.lamp.atlas.soft_pcf_radius 0` vs `1.0`).
+
+### SH-34: Lamp shadows on characters after the atlas review (shadow-review, 2026-11-22)
+- Why: review of CW-13b found two causes of shadows that come and go with the viewer's position: the Live Atlas ran
+  full (2048², 893 failed allocations per walk: no mover drawn on that face) and a 12-face cap delayed near mover
+  draws. Fixed: Live Atlas 4096², lamps with a mover within 16 m of the camera draw every frame.
+- Kind: game location. Run: `bash bevyrrowind/tools/owner_launch.sh --profiling view "Balmora" --hour 22 --weather clear`
+- Look for: (1) walk the lamp-lit streets among NPCs: your own and the NPCs' lamp shadows stay attached and never
+  vanish or reappear as you move or turn; (2) NPC shadows 10-20 m ahead move smoothly, no strobing between lamps;
+  (3) wall and prop shadows do not change sharpness when an NPC walks into a lamp's light; (4) F3: `shadow_atlas/
+  alloc_failures` stays 0, `live_occ_pct` well under 100.
+- Owner decides: flicker gone or not (say where and what flickers if not); are SH-13 / SH-21 still there.
+- Owner 2026-11-22 (first look): position-dependent vanishing gone; a torch-carrying NPC's shadows flicker slowly; many stutters (recorded: 29/min in every arm, streaming, not lamp shadows: `.sessions/stutter-diagnosis.md`). Torch cause: a slow sway settled the torch into the static path, each settling faded its shadow out and in. Fix: `sf_sky_bevy::CarriedLight` on held lights (always the moving path), set at the `HeldTorch` spawn.
+- Owner 2026-11-22 (second look, build of 17:01): "Torch is fixed yes".
+- Status: **confirmed 2026-11-22** (vanishing and torch flicker); SH-13 / SH-21 not re-judged.
