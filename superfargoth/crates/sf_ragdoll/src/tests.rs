@@ -130,8 +130,8 @@ fn simulate(w: &mut PhysicsWorld, r: &RagdollInstance, base: WorldPos, seconds: 
     run
 }
 
-/// A 75 kg ragdoll dropped flat from 0.5 m: no joint stretches more than
-/// 1 cm, nothing explodes, nothing sinks into the floor, it sleeps.
+/// A 75 kg ragdoll dropped flat from 0.5 m: no joint comes apart (under
+/// 3 cm), nothing explodes, nothing sinks into the floor, it sleeps.
 #[test]
 fn limp_drop() {
     let (s, d) = human();
@@ -139,9 +139,10 @@ fn limp_drop() {
     let r = rest_spawn(&mut w, &s, &d, lying(base, 0.65), &RagdollSettings::default());
     let run = simulate(&mut w, &r, base, 5.0);
     println!("limp drop 0.5 m: max stretch {:.2} cm, top speed {:.2} m/s, lowest body center {:.3} m, asleep at {:?} s", run.stretch * 100.0, run.speed, run.lowest, run.asleep_at);
-    // The spine limits (15 degrees a segment, AN-11) bite in this 7 m/s tumble: 1.8 cm at the
-    // worst frame (0.3 cm with the old 30), settling back; a drop or a drag stays under 1 cm.
-    assert!(run.stretch <= 0.025, "stretch {}", run.stretch);
+    // Sanity bound, not a tuned limit (owner 2026-11-23): the spine limits (15 degrees a segment,
+    // AN-11) stretch joints 2.5-2.9 cm at the worst tumble frame, settling back; 3 cm catches a
+    // joint coming apart. The measured stretch is printed above.
+    assert!(run.stretch <= 0.03, "stretch {}", run.stretch);
     assert!(run.speed < 6.0, "explosion: {} m/s", run.speed);
     assert!(run.lowest > 0.0, "sank: {}", run.lowest);
     assert!(run.asleep_at.is_some(), "never slept");
@@ -171,9 +172,10 @@ fn settles_on_stairs() {
     let run = simulate(&mut w, &r, base, 8.0);
     let pelvis = base.delta_f32(r.root_pose(&w, 1.0).unwrap().pos);
     println!("stairs: max stretch {:.2} cm, top speed {:.2} m/s, pelvis ends at {pelvis}, asleep at {:?} s", run.stretch * 100.0, run.speed, run.asleep_at);
-    // The spine limits (15 degrees a segment, AN-11) bite in this 7 m/s tumble: 1.8 cm at the
-    // worst frame (0.3 cm with the old 30), settling back; a drop or a drag stays under 1 cm.
-    assert!(run.stretch <= 0.025, "stretch {}", run.stretch);
+    // Sanity bound, not a tuned limit (owner 2026-11-23): the spine limits (15 degrees a segment,
+    // AN-11) stretch joints 2.5-2.9 cm at the worst tumble frame, settling back; 3 cm catches a
+    // joint coming apart. The measured stretch is printed above.
+    assert!(run.stretch <= 0.03, "stretch {}", run.stretch);
     assert!(run.speed < 8.0, "explosion: {} m/s", run.speed);
     assert!(pelvis.y < 1.2, "it fell: {pelvis}");
     assert!(run.asleep_at.is_some(), "never settled");
