@@ -83,6 +83,8 @@ One line per open ID: `ID | status | file | title`. Entries live in [`visual-che
 
 ### Awaiting owner (64)
 GC-2 | owner 2026-11-23: sparse, half buried, little sway; fixed (z offset, density, bend), awaiting owner | [groundcover](visual-checks/groundcover.md) | vanilla grass and ferns scattered from land textures, scenes `gc-ascadian`, `gc-grazelands`, `gc-bittercoast`, A/B `--off groundcover` (2026-11-22)
+GC-M2 | awaiting owner (owner look 2) | [groundcover](visual-checks/groundcover.md) | mesh plants: per-clump sway, tip flutter, visible gust fronts, scenes `gc-ascadian`, `gc-grazelands` (2026-11-23)
+GC-3 | awaiting owner (owner look 1) | [groundcover](visual-checks/groundcover.md) | grass blades carpet (`bevy_grass`), scene `gc-blades` (2026-11-23)
 LF-2b | owner 2026-11-22: reads natural, faces too smooth (wants hard edges); near faces get a jagged sawtooth (bug) | [worldgen](visual-checks/worldgen.md) | eroded fault scarps on `x10s` (`lf2b-scarps`): facets, chutes, debris cones, 25-143 m throws by region, no gully dents on faces (2026-11-22)
 LF-2 | owner 2026-11-22: blades, not cliffs; rework LF-2b | [worldgen](visual-checks/worldgen.md) | placed fault scarps on `x10s` (`lf2-scarps`): tilted-block scarps with talus fans, relay ramps, repair ramps (2026-11-22)
 ST-5 | awaiting owner | [streaming](visual-checks/streaming.md) | Far shadow map keeps its centre while walking (re-centres every 512 m), `scene ridge-shadows-morning` (2026-11-22)
