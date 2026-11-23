@@ -171,6 +171,7 @@ pub fn library_key(params: &BoulderParams, settings: &LibrarySettings, seed: u64
     let BoulderParams {
         size_m,
         aspect,
+        aspect_spread,
         joint_sets,
         joint_jitter_deg,
         chips,
@@ -213,7 +214,7 @@ pub fn library_key(params: &BoulderParams, settings: &LibrarySettings, seed: u64
     for x in [column_groove, column_step, column_tilt_deg, column_fuse, resolution_ref_m, resolution_size_exp] {
         h.f32(x);
     }
-    for x in [lod0_error_max_m, tolerance, tolerance_max_m] {
+    for x in [lod0_error_max_m, tolerance, tolerance_max_m, aspect_spread] {
         h.f32(x);
     }
     for x in [joint_sets, chips, weather_octaves, resolution, lod_levels, columns, resolution_max, u32::from(edge_snap)]

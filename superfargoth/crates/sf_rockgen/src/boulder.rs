@@ -32,6 +32,8 @@ const MIN_ROUNDING_CELLS: f32 = 2.0;
 const MAX_CHIP_FRACTION: f32 = 0.5;
 /// Stream purpose (any distinct word): shape draws and noise lattice never share numbers.
 const SHAPE_STREAM: u64 = 0x5a4e_0001;
+/// Stream purpose of the per-rock proportions (its own stream: a spread change never reshuffles the shape draws).
+const ASPECT_STREAM: u64 = 0x5a4e_0002;
 
 /// One rock class's parameters. Defaults are the `rockgen.boulder.*` tunables; an adapter fills per-type values
 /// as data ([`crate::classes`] holds the viewer presets). Ratios are fractions of the rock's size.
@@ -39,6 +41,7 @@ const SHAPE_STREAM: u64 = 0x5a4e_0001;
 pub struct BoulderParams {
     pub size_m: f32,
     pub aspect: [f32; 2],
+    pub aspect_spread: f32,
     pub joint_sets: u32,
     pub joint_jitter_deg: f32,
     pub chips: u32,
@@ -74,6 +77,7 @@ impl Default for BoulderParams {
         Self {
             size_m: t::SIZE.default_value(),
             aspect: t::ASPECT.default_value(),
+            aspect_spread: t::ASPECT_SPREAD.default_value(),
             joint_sets: t::JOINT_SETS.default_value(),
             joint_jitter_deg: t::JOINT_JITTER.default_value(),
             chips: t::CHIPS.default_value(),
@@ -128,6 +132,7 @@ impl BoulderParams {
         Self {
             size_m: clamp_f(&t::SIZE, self.size_m),
             aspect,
+            aspect_spread: clamp_f(&t::ASPECT_SPREAD, self.aspect_spread),
             joint_sets: clamp_u(&t::JOINT_SETS, self.joint_sets),
             joint_jitter_deg: clamp_f(&t::JOINT_JITTER, self.joint_jitter_deg),
             chips: clamp_u(&t::CHIPS, self.chips),
@@ -168,16 +173,27 @@ impl BoulderParams {
     }
 
     /// Mesh cell edge in the unit frame.
-    fn voxel(&self) -> f32 {
+    pub(crate) fn voxel(&self) -> f32 {
         #[allow(clippy::cast_precision_loss)] // resolution ≤ 192
         let cells = self.effective_resolution() as f32;
         UNIT_LONG_AXIS / cells
     }
 
     /// LOD0 error in the unit frame: `lod0_error_voxels` cells, at most `lod0_error_max_m` metres.
-    fn lod0_error(&self) -> f32 {
+    pub(crate) fn lod0_error(&self) -> f32 {
         (self.lod0_error_voxels * self.voxel()).min(self.lod0_error_max_m / self.size_m * UNIT_LONG_AXIS)
     }
+}
+
+/// This rock's aspect ratios: the class's, each multiplied by its own `2^(spread·u)`, `u` uniform in [-1, 1)
+/// (log-uniform: as many half-as-thick as twice-as-thick rocks), kept in the aspect tunable's range.
+pub fn spread_aspect(aspect: [f32; 2], spread: f32, seed: u64) -> [f32; 2] {
+    let (lo, hi) = tunables::ASPECT.bounds().unwrap_or(([0.05; 2], [1.0; 2]));
+    if spread <= 0.0 {
+        return aspect;
+    }
+    let mut rng = Stream::new(seed, ASPECT_STREAM);
+    [0, 1].map(|k| (aspect[k] * (spread * rng.signed()).exp2()).clamp(lo[k], hi[k]))
 }
 
 fn sign(x: f32) -> f32 {
@@ -191,7 +207,7 @@ pub fn boulder_solid(params: &BoulderParams, seed: u64) -> Solid {
     let voxel = p.voxel();
     let mut rng = Stream::new(seed, SHAPE_STREAM);
     // Half extents, long to short: x long, z short.
-    let mut aspect = p.aspect;
+    let mut aspect = spread_aspect(p.aspect, p.aspect_spread, seed);
     aspect.sort_by(|a, b| b.total_cmp(a));
     let half = Vec3::new(0.5, 0.5 * aspect[0], 0.5 * aspect[1]) * UNIT_LONG_AXIS;
 

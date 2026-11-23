@@ -95,6 +95,7 @@ pub fn params_from_tunables(store: &sf_tunables::Tunables) -> BoulderParams {
     BoulderParams {
         size_m: read(store, &boulder::SIZE),
         aspect: read(store, &boulder::ASPECT),
+        aspect_spread: read(store, &boulder::ASPECT_SPREAD),
         joint_sets: read(store, &boulder::JOINT_SETS),
         joint_jitter_deg: read(store, &boulder::JOINT_JITTER),
         chips: read(store, &boulder::CHIPS),

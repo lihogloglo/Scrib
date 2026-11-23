@@ -26,7 +26,7 @@ use mw_assets::SharedVfs;
 use mw_assets::cooked::{TextureCompanions, cooked_material_with};
 use sf_coords::WorldPos;
 use sf_level::{Level, Shape};
-use sf_rockgen::{BoulderParams, RockLods, generate_boulder};
+use sf_rockgen::{BoulderParams, FORMATIONS, RockLods, generate_boulder, generate_formation};
 use sf_rockgen_bevy::{
     CLASSES, RockDebug, RockLodSettings, RockMaterial, RockMaterialSettings, RockTextures, RockgenPlugin, class_params, lod_bundles,
     lod_ranges, params_from_tunables, rock_material, rock_mesh,
@@ -69,6 +69,14 @@ const ON_SLOPE: [(f32, f32); 2] = [(1.5, 0.3), (4.0, 0.65)];
 /// Rocks at the slope's toe: (size m, m out from the toe), the big one half against the face.
 // tunables: const (fixture: rock-lab layout)
 const AT_TOE: [(f32, f32); 2] = [(8.0, 1.0), (3.0, 7.0)];
+/// The hero formations' row (`sf_rockgen::formations`, RG-8 first try): z of the row, beyond the plateau.
+// tunables: const (fixture: rock-lab layout)
+const FORMATION_ROW_Z: f32 = -135.0;
+// tunables: const (fixture: rock-lab layout, x between formations)
+const FORMATION_SPACING_M: f32 = 42.0;
+/// Fraction of a formation's height sunk below the ground (a tower stands on its foot, a rock rests sunk).
+// tunables: const (fixture: rock-lab placement)
+const FORMATION_SINK: f32 = 0.02;
 /// Mixes the lab seed with a rock's index.
 const MIX_SEED: u64 = 0x9e37_79b9_7f4a_7c15;
 
@@ -122,7 +130,17 @@ fn slope(level: &Level) -> Option<(f32, f32, f32, f32, f32, f32)> {
     })
 }
 
-/// Every rock of the lab, or only `class`'s: the flat field, then the slope rocks.
+/// Boulder classes then formations: what a [`Placement::class`] indexes.
+fn kinds() -> usize {
+    CLASSES.len() + FORMATIONS.len()
+}
+
+/// A kind's name (a boulder class or a formation).
+fn kind_name(kind: usize) -> &'static str {
+    CLASSES.get(kind).map_or_else(|| FORMATIONS.get(kind - CLASSES.len()).map_or("?", |f| f.name), |c| c.name)
+}
+
+/// Every rock of the lab, or only `class`'s: the flat field, then the slope rocks, then the formations' row.
 #[allow(clippy::cast_precision_loss)]
 pub fn placements(level: &Level, class: Option<usize>) -> Vec<Placement> {
     let mut out = Vec::new();
@@ -149,6 +167,15 @@ pub fn placements(level: &Level, class: Option<usize>) -> Vec<Placement> {
                 out.push(Placement { class: c, size_m, ground: Vec3::new(x, 0.0, toe + out_m), up: Vec3::Y, yaw: yaw(out.len()) });
             }
         }
+    }
+    for (k, f) in FORMATIONS.iter().enumerate() {
+        let c = CLASSES.len() + k;
+        if class.is_some_and(|only| only != c) {
+            continue;
+        }
+        let x = (k as f32 - 0.5 * (FORMATIONS.len() - 1) as f32) * FORMATION_SPACING_M;
+        // Formations face the cameras (yaw 0: the arch's span runs along x).
+        out.push(Placement { class: c, size_m: f.size_m, ground: Vec3::new(x, 0.0, FORMATION_ROW_Z), up: Vec3::Y, yaw: 0.0 });
     }
     out
 }
@@ -274,11 +301,13 @@ fn spawn(
         info!("rock-lab texture {texture}: {maps} ({})", super::texture_lab::provenance(&vfs.0, texture));
         let materials = CLASSES
             .iter()
-            .map(|class| {
+            .map(|class| class.tint)
+            .chain(FORMATIONS.iter().map(|f| f.tint))
+            .map(|tint| {
                 // The class tint darkens the texture (scoria); adapter data at RG-A1.
                 let mut tinted = textures.clone();
                 let c = tinted.base_color.to_linear();
-                tinted.base_color = LinearRgba::new(c.red * class.tint, c.green * class.tint, c.blue * class.tint, c.alpha).into();
+                tinted.base_color = LinearRgba::new(c.red * tint, c.green * tint, c.blue * tint, c.alpha).into();
                 (0..lods).map(|k| materials.add(rock_material(&tinted, &settings, k, debug.lod_tint))).collect()
             })
             .collect();
@@ -296,9 +325,10 @@ fn spawn(
     let level = level.0.level.clone();
     generate(&mut commands, &mut lab, &level, params);
     info!(
-        "rock-lab: {} textures, {} classes, {} rocks (X texture, Z class, R regenerate, L LOD tint, M wireframe, N crease normals, Q edge snap, I info)",
+        "rock-lab: {} textures, {} classes + {} formations, {} rocks (X texture, Z class, R regenerate, L LOD tint, M wireframe, N crease normals, Q edge snap, I info)",
         lab.textures.len(),
         CLASSES.len(),
+        FORMATIONS.len(),
         placements(&level, None).len()
     );
 }
@@ -317,7 +347,10 @@ fn generate(commands: &mut Commands, lab: &mut RockLab, level: &Level, params: B
             p.crease_deg = 180.0;
         }
         p.edge_snap = lab.snap;
-        let task = pool.spawn(async move { generate_boulder(&p, seed) });
+        let task = match placement.class.checked_sub(CLASSES.len()).and_then(|k| FORMATIONS.get(k)) {
+            Some(f) => pool.spawn(async move { generate_formation(f, &p, p.size_m, seed) }),
+            None => pool.spawn(async move { generate_boulder(&p, seed) }),
+        };
         commands.spawn((Name::new(format!("rock task {i}")), RockTask { placement, seed, task }));
     }
     lab.spawned = 0;
@@ -348,7 +381,8 @@ fn finish_rocks(
         // sf_rockgen's +Z (short axis) is the mesh's +Y (`rock_mesh`): rest the rock on its flat side.
         let height = lods.bounds.extent()[2];
         let rotation = Quat::from_rotation_arc(Vec3::Y, p.up) * Quat::from_rotation_y(p.yaw);
-        let centre = p.ground + p.up * (0.5 - SINK) * height;
+        let sink = if p.class < CLASSES.len() { SINK } else { FORMATION_SINK };
+        let centre = p.ground + p.up * (0.5 - sink) * height;
         let (cell, transform) = to_grid(WorldPos::from_f64(centre.as_dvec3()));
         let handles: Vec<Handle<Mesh>> = lods.lods.iter().map(|m| meshes.add(rock_mesh(m))).collect();
         for (k, m) in lods.lods.iter().enumerate() {
@@ -363,7 +397,7 @@ fn finish_rocks(
         let tag = job.seed as u32;
         let rock = commands
             .spawn((
-                Name::new(format!("rock {} {:.1} m seed {}", CLASSES[p.class].name, p.size_m, job.seed)),
+                Name::new(format!("rock {} {:.1} m seed {}", kind_name(p.class), p.size_m, job.seed)),
                 LabRock,
                 cell,
                 transform.with_rotation(rotation),
@@ -450,10 +484,10 @@ fn keys(
     if next_class {
         lab.class = match lab.class {
             None => Some(0),
-            Some(c) if c + 1 < CLASSES.len() => Some(c + 1),
+            Some(c) if c + 1 < kinds() => Some(c + 1),
             Some(_) => None,
         };
-        say("class", lab.class.map_or("all", |c| CLASSES[c].name));
+        say("class", lab.class.map_or("all", kind_name));
     }
     if reseed {
         lab.seed = lab.seed.wrapping_add(1);
@@ -479,12 +513,12 @@ fn info(lab: Res<RockLab>, tunables: Option<Res<Tunables>>, debug: Res<RockDebug
         "rock lab  seed {}  class {}  rocks {}{}\n\
          texture {} ({})  [X next]\n\
          triangles per LOD {:?}  LOD1 at {:.0} x size, x{:.1} per level  LOD tint {} [L]  wireframe {} [M]\n\
-         crease normals {} [N] ({:.0} deg)  edge snap {} [Q]  (eroded: block platy cobble chipped | sharp: talus jagged columnar scoria slab)\n\
+         crease normals {} [N] ({:.0} deg)  edge snap {} [Q]  (eroded: block platy cobble chipped | sharp: talus jagged columnar scoria slab | formations: hoodoo pinnacle sea_stack volcanic_neck arch, camera `forms`)\n\
          boulder: resolution {} cells (up to {} by size), joints {}, chips {}, rounding {:.2}, weather {:.2}, LOD0 error {:.2} cell\n\
          material: blend {:.0}, hex tiling {} (rotation {:.2}, contrast {:.0})\n\
          Z class, R new seed (console `set rockgen.boulder.* ...` then R), I hide",
         lab.seed,
-        lab.class.map_or("all", |c| CLASSES[c].name),
+        lab.class.map_or("all", kind_name),
         lab.spawned,
         lab.took_s.map_or_else(|| "  generating...".to_owned(), |s| format!("  ({s:.2} s)")),
         set.map_or("none", |s| s.path.as_str()),

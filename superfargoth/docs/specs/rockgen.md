@@ -381,3 +381,15 @@ as `lod.policy` / `nav.*`); `decode(&[u8])`. Registered by the game in `mw_boot_
 variants 0.59 s cold (4142 KiB), 8.6 ms warm. **Gap:** the bake passes the tunables' defaults (no tunable store in the
 bake yet), so a mod override of `rockgen.*` doesn't reach the baked library ("everything is a mod"): the placement
 slice or a bake-tunables slice passes adapter/mod values through `LibraryStep::new`.
+
+**RG-8a (2026-11-23, first try, owner ask "spires, volcanic towers, arches").** `sf_rockgen::formations`: presets
+`FORMATIONS` (Guess numbers, as `CLASSES`) over three recipes, all unions of convex pieces in the boulder `Solid`, so
+the mesher, LODs, crease normals and snap are shared: `Stack` (polygonal frustum bands between jittered boundaries,
+hardness-recessed, optional caprock and wave notch, lean, twist, drift, foot flare; hoodoo, pinnacle, sea_stack),
+`Neck` (the columnar cluster standing tall, tapered by shared cap planes; volcanic_neck) and `Arch` (half ring of
+convex segments, radial cuts + outer tangent + inner chord, thinning to the crown, on flared legs; the spec's capsule
+subtraction needs an SDF difference the `Solid` doesn't have). Pieces overlap 15 % (≥ 3 cells) so the union has no
+seam. `generate_formation(f, mesh, size_m, seed)` takes the boulder params for meshing only. Also
+`rockgen.boulder.aspect_spread` (octaves, default 1, in the library key): each seed scales both aspect ratios by its
+own `2^(±spread)` on a separate stream. Shown in the rock lab's formation row. Open: recipes as adapter data (RG-A1),
+placement rules, V-HACD or per-piece hulls for collision, an SDF difference for carved arches and caves (RG-7).

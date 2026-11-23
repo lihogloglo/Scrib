@@ -4,7 +4,7 @@
 // 22 m apart centred on x = 0: eroded block, platy, cobble, chipped at x = -88..-22, sharp
 // talus, jagged, columnar, scoria, slab at x = 0..88; sizes 0.5 to 12 m on a power law
 // from z = 24 toward -z, plus two rocks on the slope face and two at its toe per class
-// (mw_exterior_bevy level/rock_lab.rs). Meters, y up, x east, z south; `at` = footprint center
+// (mw_exterior_bevy level/rock_lab.rs), then a row of hero formations beyond the plateau (cameras forms*, arch). Meters, y up, x east, z south; `at` = footprint center
 // at the bottom.
 (
     name: "rock-lab",
@@ -19,6 +19,11 @@
         (name: "slope", eye: (0.0, 9.0, -20.0), target: (0.0, 6.0, -52.0)),
         (name: "far", eye: (0.0, 40.0, 220.0), target: (0.0, 0.0, -20.0)),
         (name: "top", eye: (0.0, 120.0, 30.0), target: (0.0, 0.0, -25.0)),
+        // Hero formations (sf_rockgen::formations): hoodoo, pinnacle, sea_stack, volcanic_neck, arch at
+        // x = -84..84 (42 m apart), z = -135, beyond the plateau.
+        (name: "forms", eye: (0.0, 26.0, -62.0), target: (0.0, 12.0, -135.0)),
+        (name: "forms_low", eye: (30.0, 2.0, -98.0), target: (0.0, 14.0, -135.0)),
+        (name: "arch", eye: (84.0, 6.0, -100.0), target: (84.0, 9.0, -135.0)),
     ],
     spawns: [
         (name: "start", at: (0.0, 0.0, 40.0)),

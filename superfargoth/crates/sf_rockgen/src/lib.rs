@@ -16,6 +16,7 @@ pub mod classes;
 #[cfg(feature = "collision")]
 mod collision;
 mod columns;
+pub mod formations;
 pub mod library;
 pub mod mesher;
 mod noise;
@@ -28,6 +29,7 @@ use std::collections::HashMap;
 
 pub use boulder::{BoulderParams, generate_boulder};
 pub use classes::{CLASSES, Family, RockClass};
+pub use formations::{FORMATIONS, Formation, generate_formation};
 pub use library::{Hull, HullSettings, Library, LibrarySettings, Variant, build_library, library_key, variant_seed};
 
 /// One triangle mesh: counter-clockwise front faces seen from outside, unit normals (the SDF gradient on smooth

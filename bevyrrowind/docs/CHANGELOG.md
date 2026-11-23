@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-23 (rockgen-forms, RG-8a): first hero formations in `sf_rockgen::formations` (hoodoo, pinnacle, sea stack, volcanic neck, arch; recipes over the boulder SDF, tested closed) shown in a row of the rock lab (cameras `forms`, `forms_low`, `arch`), and per-rock proportion spread `rockgen.boulder.aspect_spread` (long, stubby and flat members per class).
 - 2026-11-22 (atmos-arch, 1.27 A1-A3): FG-12 architecture review; one per-pixel sun visibility (`sf_atmos_bevy` `sun_visibility.wesl` shared with the froxels, half-res march over cascades + far map + cloud shadows, history) masks only the sun's single scattering: Bevy's aerial LUT gets a key-light split (vendored LSO patch), our fog's sun term × V_fog; LSO off by default (A/B arm); awaiting owner FG-12.
 - 2026-11-22 (rockgen-rg2b, RG-2b): `bevyrrowind bake` bakes the 9 rock-class variant libraries (with collision hulls) as bake product `rockgen.library`: 0.59 s cold, reused warm; placement reads them next.
 - 2026-11-22 (rockgen-rg2, RG-2): rock variant libraries per class (16 by default, deterministic) with one convex-hull collider each (`sf_rockgen` feature `collision`, parry3d); all 9 classes build in 0.67 s. Bake product and placement wiring next.

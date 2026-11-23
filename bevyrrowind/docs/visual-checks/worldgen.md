@@ -17,6 +17,15 @@ texture sit on the rock without visible seams or stretching on vertical faces, a
 the plate; LOD switches (L, then `far`): dithered, no pops. Log: `rock-lab texture ...: albedo/normal/orm` per texture
 (a texture with no cooked companion shows albedo only) and `rock-lab: N rocks generated in S s`. No colliders yet (RG-2).
 
+### RG-8a: hero formations + proportion spread in the rock lab (`bash bevyrrowind/tools/owner_launch.sh scene level-rock-lab --camera forms`; built 2026-11-23)
+
+Status: owner 2026-11-23 "good" (first look; tuning per formation open).
+Scene: row at z = -135 beyond the plateau, x = -84..84: hoodoo 14 m, pinnacle 30 m, sea_stack 24 m, volcanic_neck 36 m,
+arch 30 m span; cameras `forms`, `forms_low`, `arch`; R new seeds, Z steps through classes then formations.
+Look for: each reads as its analogue (Bryce hoodoo, aiguille, Old Harry, Devils Tower, Delicate Arch), standing on its
+foot, no holes or spikes; boulder columns now mix long, stubby and flat rocks (`set rockgen.boulder.aspect_spread 0` = old).
+Known: arch rib faceted; pinnacle tip and neck joints soft at `resolution_max` 128 (192 sharpens).
+
 ### RG-4: sharp rock families in the rock lab (`bash bevyrrowind/tools/owner_launch.sh scene level-rock-lab --camera sharp`; built 2026-11-22)
 
 Status: owner 2026-11-22: "they look amazing, excited to see more types"; edge snap **off** (`Q`, RG-3 bevels, rounded

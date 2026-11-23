@@ -20,6 +20,14 @@ pub const ASPECT: Def<[f32; 2]> = def!(float2 "rockgen.boulder.aspect" = [0.75, 
     .net(Net::Gameplay)
     .lifetime(Lifetime::Bake);
 
+pub const ASPECT_SPREAD: Def<f32> = def!(float "rockgen.boulder.aspect_spread" = 1.0)
+    .range(0.0, 2.0)
+    .unit(Unit::Ratio)
+    .help("Per-rock proportion spread in octaves: each seed multiplies both aspect ratios by its own 2^(±spread) (1 = from half to twice the class aspect: long, stubby and flat members of one class; 0 = every rock the class aspect)")
+    .source(Source::Guess)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Bake);
+
 pub const JOINT_SETS: Def<u32> = def!(count "rockgen.boulder.joint_sets" = 3)
     .range(0, 3)
     .unit(Unit::Count)
@@ -268,6 +276,7 @@ pub const HULL_MAX_VERTICES: Def<u32> = def!(count "rockgen.collision.hull_max_v
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &SIZE,
     &ASPECT,
+    &ASPECT_SPREAD,
     &JOINT_SETS,
     &JOINT_JITTER,
     &CHIPS,
