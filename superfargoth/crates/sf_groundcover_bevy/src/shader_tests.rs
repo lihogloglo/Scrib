@@ -70,7 +70,7 @@ impl wesl::Resolver for Files {
             return Ok(Cow::Owned(read(crates().join("sf_wind/src/shaders/sf_wind.wesl"))));
         }
         let mut file = match package {
-            "bevy_pbr" | "bevy_render" | "bevy_core_pipeline" => vendor(package),
+            "bevy_pbr" | "bevy_render" | "bevy_core_pipeline" | "bevy_grass" => vendor(package),
             "sf_groundcover_bevy" => PathBuf::from(CRATE).join("src"),
             "sf_wind_bevy" => crates().join("sf_wind_bevy/src"),
             _ => return Err(missing("unknown package")),
@@ -219,6 +219,29 @@ fn groundcover_stages_compile_for_every_def_set() {
     println!("groundcover: {count} stage/def-set combinations link and validate");
 }
 
+/// The vendored `bevy_grass` passes our patches touch (GC-3b1c: the world offset in the gust and patch lookups)
+/// link and validate: blade generation, the main pass, the prepass (motion vectors, deferred) and the far grass,
+/// with every look feature on and off.
+#[test]
+fn vendored_grass_stages_compile() {
+    use naga::ShaderStage::{Compute, Fragment, Vertex};
+    const LOOK: &[&str] = &["GRASS_GROUND_TINT", "GRASS_SHEEN", "GRASS_SHAPE", "GRASS_VARIATION"];
+    let main = [set(&[&["MESH_PIPELINE"]]), set(&[&["MESH_PIPELINE", "GRASS_TOON"], LOOK, HIGH])];
+    let prepass = [
+        set(&[&["PREPASS_PIPELINE", "DEPTH_PREPASS"]]),
+        set(&[&["PREPASS_PIPELINE", "DEPTH_PREPASS", "MOTION_VECTOR_PREPASS", "PREPASS_FRAGMENT"], LOOK]),
+        set(&[&["PREPASS_PIPELINE", "DEPTH_PREPASS", "DEFERRED_PREPASS", "PREPASS_FRAGMENT"], LOOK]),
+    ];
+    let mut failures = check("bevy_grass::shaders::generate", &[Vec::new()], &[("cull", Compute), ("generate", Compute)]);
+    failures.extend(check("bevy_grass::shaders::grass", &main, &[("vertex", Vertex), ("fragment", Fragment)]));
+    failures.extend(check("bevy_grass::shaders::grass_prepass", &prepass, &[("vertex", Vertex)]));
+    failures.extend(check("bevy_grass::shaders::far_ground", &[set(&[BASE])], &[("fragment", Fragment)]));
+    assert!(failures.is_empty(), "{} failed:
+{}", failures.len(), failures.join("
+
+"));
+}
+
 /// The WGSL `GroundcoverParams` / `GroundcoverSpecies` have the Rust structs' fields in their order, the species
 /// array its length, and the bindings are the Rust ones.
 #[test]
@@ -234,13 +257,41 @@ fn uniform_matches_rust() {
             .filter_map(|l| l.split(':').next().map(str::to_string))
             .collect()
     };
-    assert_eq!(fields("GroundcoverParams"), ["fade", "wind", "species"]);
+    assert_eq!(fields("GroundcoverParams"), ["fade", "wind", "sway", "sway_cross", "species"]);
     assert_eq!(fields("GroundcoverSpecies"), ["tint_a", "tint_b"]);
     assert!(src.contains(&format!("species: array<GroundcoverSpecies, {MAX_SPECIES_PER_BATCH}>")));
     assert!(src.contains(&format!("min(t >> 24u, {}u)", MAX_SPECIES_PER_BATCH - 1)));
     assert!(src.contains(&format!("@binding({PARAMS_BINDING}) var<uniform> groundcover")));
-    // The Rust layout: 2 vec4 + 16 × 2 vec4.
-    assert_eq!(<crate::GroundcoverParams as bevy::render::render_resource::ShaderType>::min_size().get(), 16 * (2 + 2 * MAX_SPECIES_PER_BATCH as u64));
+    // The Rust layout: 4 vec4 + 16 × 2 vec4.
+    assert_eq!(<crate::GroundcoverParams as bevy::render::render_resource::ShaderType>::min_size().get(), 16 * (4 + 2 * MAX_SPECIES_PER_BATCH as u64));
+}
+
+/// Every sway frequency the uniform carries is a whole number of cycles per `globals.time` wrap (3600 s), within
+/// 1/7200 Hz of the request: for 0, the defaults, the range ends and the derived cross-sway frequency.
+#[test]
+fn sway_frequencies_are_whole_cycles_per_hour() {
+    use crate::material::{CROSS_SWAY_RATIO, TIME_WRAP_S, quantise_hz};
+    use crate::tunables as t;
+    let mut requests = vec![0.0_f32];
+    for def in [&t::SWAY_HZ, &t::FLUTTER_HZ] {
+        let (lo, hi) = def.bounds().expect("Hz tunables have a range");
+        requests.extend([lo, hi, def.default_value(), CROSS_SWAY_RATIO * def.default_value(), CROSS_SWAY_RATIO * hi]);
+    }
+    for hz in requests {
+        let q = quantise_hz(hz);
+        // In f32, as the shader multiplies (an f32 frequency is whole cycles to its own precision only).
+        let cycles = q * TIME_WRAP_S;
+        assert!((cycles - cycles.round()).abs() <= cycles * f32::EPSILON, "{hz} Hz -> {q} Hz: {cycles} cycles per wrap");
+        assert!((f64::from(q) - f64::from(hz)).abs() <= 1.0 / 7200.0 + 1e-6, "{hz} Hz -> {q} Hz");
+    }
+    // `apply` puts the quantised values in the uniform.
+    let wind = crate::WindSettings::default();
+    let mut params = crate::GroundcoverParams::default();
+    wind.apply(&mut params);
+    let v4 = bevy_math::Vec4::new;
+    assert_eq!(params.wind, v4(wind.scale, wind.bend_per_mps, wind.phase_offset_m, wind.gust_contrast));
+    assert_eq!(params.sway, v4(wind.sway_amount, quantise_hz(wind.sway_hz), wind.flutter_amount, quantise_hz(wind.flutter_hz)));
+    assert_eq!(params.sway_cross, v4(quantise_hz(CROSS_SWAY_RATIO * wind.sway_hz), 0.0, 0.0, 0.0));
 }
 
 /// `unpack_tag` reads the bytes `sf_groundcover::Tag::pack` writes.

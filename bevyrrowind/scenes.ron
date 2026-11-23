@@ -1107,6 +1107,16 @@
             checks: ["GC-2"],
         ),
         (
+            name: "gc-blades",
+            cell: "2,-7",
+            camera: "292,+1.7,760,330,+0.6,730",
+            hour: 8.0,
+            description: "gc-ascadian with grass blades on (`groundcover.blades.enabled`): groundcover GC-3, bevy_grass MEADOW blades on the Ascadian Isles grass among the vanilla clumps",
+            look_for: "a dense carpet of blades on the grass ground only, standing on the ground (not floating or sunk), none on roads, rock or under water, the vanilla grass clumps and ferns still among them; `--set groundcover.blades.enabled=false` = without blades",
+            flags: ["--set", "groundcover.blades.enabled=true"],
+            checks: ["GC-3"],
+        ),
+        (
             name: "gc-grazelands",
             cell: "11,8",
             camera: "1345,+1.7,-995,1380,+0.6,-1030",

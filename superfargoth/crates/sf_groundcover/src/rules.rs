@@ -142,6 +142,18 @@ impl Groundcover {
             .map(|&(ch, w)| w * channels.get(usize::from(ch)).copied().unwrap_or(0.0))
             .sum()
     }
+
+    /// The largest rule weight a species can reach at a point whose channel weights are each at most 1: the
+    /// largest per-channel sum of its rule weights (one channel at full weight). With channels that sum to 1
+    /// (terrain layer weights) it is an upper bound of [`rule_weight`](Self::rule_weight). "Only" regions are not
+    /// included (their weights live in the overrides).
+    pub fn max_rule_weight(&self, i: SpeciesIndex) -> f32 {
+        let rules = &self.species[i.get()].rules;
+        rules
+            .iter()
+            .map(|&(ch, _)| rules.iter().filter(|&&(c, _)| c == ch).map(|&(_, w)| w).sum::<f32>())
+            .fold(0.0, f32::max)
+    }
 }
 
 fn validate(s: &Species) -> Result<(), BuildError> {

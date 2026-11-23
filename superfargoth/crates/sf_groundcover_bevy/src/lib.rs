@@ -13,8 +13,9 @@
 //!   floating origin is `sf_world_bevy::WorldOrigin` (absent = origin at zero), as for the static scene.
 //!
 //! Per frame ([`GroundcoverSystems::Drive`], `PostUpdate` after `WorldOriginSystems`): move the rings, poll finished
-//! jobs, start new ones (nearest first, budgeted), open the batches whose model resolved, reconcile placements
-//! ([`residency`]) and queue the slot runs ([`render`]). Gauges `groundcover/*` in `Last` ([`publish_gauges`]).
+//! jobs, start new ones (nearest first, budgeted), mark the batches whose model resolved ready, reconcile placements
+//! ([`residency`]: pools open when a tile first needs them, double when full, close when empty), make the batch
+//! entities follow the pools (spawn, new `max_capacity`, despawn) and queue the slot runs ([`render`]). Gauges `groundcover/*` in `Last` ([`publish_gauges`]).
 //!
 //! Live off (`groundcover.enabled`, [`tunables::GROUNDCOVER`]): [`drive`] and the ground refresh stop
 //! ([`groundcover_enabled`]); [`suspend`] despawns every batch, drops the jobs, the residency and the queued runs, and
@@ -37,6 +38,7 @@
 //! # #[derive(Resource)] struct MyCover(Groundcover);
 //! ```
 
+pub mod blades;
 mod ground;
 pub mod material;
 mod pool;
@@ -216,6 +218,9 @@ impl RenderSettings {
             fade_width_m: read(store, &r::FADE_WIDTH),
             fade_shrink_m: read(store, &r::FADE_SHRINK),
             max_blocks_per_batch: read(store, &r::MAX_BLOCKS_PER_BATCH),
+            initial_blocks: read(store, &r::INITIAL_BLOCKS),
+            block_sigma: read(store, &r::BLOCK_SIGMA),
+            reserve_worst_case: read(store, &r::RESERVE_WORST_CASE),
             jobs_per_frame: read(store, &r::JOBS_PER_FRAME),
             max_jobs_in_flight: read(store, &r::MAX_JOBS_IN_FLIGHT),
             ground_cache_m: read(store, &r::GROUND_CACHE_SPACING),
@@ -229,6 +234,11 @@ impl WindSettings {
             scale: read(store, &tunables::WIND_SCALE),
             bend_per_mps: read(store, &tunables::BEND_PER_MPS),
             phase_offset_m: read(store, &tunables::PHASE_OFFSET),
+            gust_contrast: read(store, &tunables::GUST_CONTRAST),
+            sway_amount: read(store, &tunables::SWAY_AMOUNT),
+            sway_hz: read(store, &tunables::SWAY_HZ),
+            flutter_amount: read(store, &tunables::FLUTTER_AMOUNT),
+            flutter_hz: read(store, &tunables::FLUTTER_HZ),
         }
     }
 }
@@ -266,18 +276,30 @@ struct Runtime {
     residency: Option<Residency>,
     inputs: Option<JobInputs>,
     jobs: BTreeMap<TileKey, Task<JobOutput>>,
-    /// By batch index.
-    batches: Vec<Option<(Entity, Handle<GroundcoverMaterial>)>>,
+    /// By batch index: the batch entity while its pool is open.
+    batches: Vec<Option<BatchEntity>>,
+    /// By batch index: the bend height once the batch is ready (its model and mesh bounds resolved).
+    heights: Vec<Option<f32>>,
     /// Zeroed stand-in wind buffer when no `WindBuffer` exists.
     still_air: Option<Handle<ShaderBuffer>>,
     scatter_us: f32,
 }
 
+/// A spawned batch and the capacity its `GpuBatchedMesh3d` was given.
+#[derive(Clone, Debug)]
+struct BatchEntity {
+    entity: Entity,
+    material: Handle<GroundcoverMaterial>,
+    mesh: Handle<Mesh>,
+    capacity: u32,
+}
+
 impl Runtime {
     fn clear(&mut self, commands: &mut Commands) {
-        for (entity, _) in self.batches.drain(..).flatten() {
-            commands.entity(entity).despawn();
+        for b in self.batches.drain(..).flatten() {
+            commands.entity(b.entity).despawn();
         }
+        self.heights.clear();
         self.jobs.clear();
         self.residency = None;
         self.inputs = None;
@@ -324,14 +346,15 @@ fn drive(
             species: residency.job_species(),
         });
         rt.batches = vec![None; residency.plan.batch_count()];
+        rt.heights = vec![None; residency.plan.batch_count()];
         rt.residency = Some(residency);
     }
     // Live wind values: every batch material.
     if rt.wind != wind {
         rt.wind = wind;
-        for (_, handle) in rt.batches.iter().flatten() {
-            if let Some(mut m) = materials.get_mut(handle) {
-                m.extension.params.wind = wind.to_gpu();
+        for b in rt.batches.iter().flatten() {
+            if let Some(mut m) = materials.get_mut(&b.material) {
+                wind.apply(&mut m.extension.params);
             }
         }
     }
@@ -380,7 +403,31 @@ fn drive(
         }
     }
 
-    // Batches whose model resolved.
+    // Batches whose model resolved become ready: their species are placed from this reconcile on.
+    for gi in 0..residency.plan.groups.len() {
+        let Some(model) = models.0.get(&residency.plan.groups[gi].model) else { continue };
+        for casting in [false, true] {
+            let b = batch_index(gi, casting);
+            if residency.is_ready(b) || residency.plan.batch_layout(b).0 == 0 {
+                continue;
+            }
+            let height = model.bend_height_m.or_else(|| {
+                let aabb = meshes.as_ref()?.get(&model.mesh)?.get_aabb()?;
+                Some(aabb.max().y)
+            });
+            let Some(height) = height else { continue };
+            if residency.set_ready(b) {
+                rt.heights[b] = Some(height);
+            }
+        }
+    }
+
+    // Placements → slot runs (opening, growing and closing pools on demand).
+    let writes = residency.reconcile(origin);
+
+    // Batch entities follow the pools: spawned when one opens (whole output zeroed), given the new capacity when
+    // one grows (new tail zeroed; the reservation keeps the old slots, `gpu_instance_batch` `resize` copies them),
+    // despawned when one closes (its GPU buffers go with it). The zero-fills are queued before this frame's runs.
     let wind_handle = match (&wind_buffer, shader_buffers.as_mut()) {
         (Some(w), _) => w.0.clone(),
         (None, Some(buffers)) => rt
@@ -393,41 +440,53 @@ fn drive(
             .clone(),
         (None, None) => Handle::default(),
     };
-    for (gi, group) in residency.plan.groups.clone().iter().enumerate() {
-        let Some(model) = models.0.get(&group.model) else { continue };
-        for casting in [false, true] {
-            let b = batch_index(gi, casting);
-            if residency.is_open(b) || residency.plan.batch_layout(b).0 == 0 {
-                continue;
+    for b in 0..residency.plan.batch_count() {
+        let want = residency.pool(b).map(SlotPool::capacity);
+        match (&mut rt.batches[b], want) {
+            (slot @ Some(_), None) => {
+                if let Some(old) = slot.take() {
+                    commands.entity(old.entity).despawn();
+                }
             }
-            let height = model.bend_height_m.or_else(|| {
-                let aabb = meshes.as_ref()?.get(&model.mesh)?.get_aabb()?;
-                Some(aabb.max().y)
-            });
-            let Some(height) = height else { continue };
-            let Some((blocks, slots)) = residency.open_batch(b) else { continue };
-            let capacity = blocks * slots;
-            let material = batch_material(model, group, &inputs.cover, &settings, wind, height, casting, wind_handle.clone());
-            let handle = materials.add(material);
-            let mut entity = commands.spawn((
-                GpuBatchedMesh3d { mesh: model.mesh.clone(), max_capacity: capacity, ranges: Vec::new() },
-                MeshMaterial3d(handle.clone()),
-                GroundcoverBatch { model: group.model.clone(), casting },
-            ));
-            if !casting {
-                entity.insert(NotShadowCaster);
+            (slot @ None, Some(capacity)) => {
+                let group = &residency.plan.groups[b / 2];
+                let casting = b % 2 == 1;
+                let (Some(model), Some(height)) = (models.0.get(&group.model), rt.heights[b]) else { continue };
+                let material = batch_material(model, group, &inputs.cover, &settings, wind, height, casting, wind_handle.clone());
+                let handle = materials.add(material);
+                let mut entity = commands.spawn((
+                    GpuBatchedMesh3d { mesh: model.mesh.clone(), max_capacity: capacity, ranges: Vec::new() },
+                    MeshMaterial3d(handle.clone()),
+                    GroundcoverBatch { model: group.model.clone(), casting },
+                ));
+                if !casting {
+                    entity.insert(NotShadowCaster);
+                }
+                let entity = entity.id();
+                // A new batch's whole output zeroed before anything draws (as the static scene's batches).
+                uploads.writes.push(GroundcoverWrite { entity, first_slot: 0, bytes: zeros(0..capacity) });
+                *slot = Some(BatchEntity { entity, material: handle, mesh: model.mesh.clone(), capacity });
             }
-            let entity = entity.id();
-            // A new batch's whole output zeroed before anything draws (as the static scene's batches).
-            uploads.writes.push(GroundcoverWrite { entity, first_slot: 0, bytes: vec![0; capacity as usize * 64] });
-            rt.batches[b] = Some((entity, handle));
+            (Some(batch), Some(capacity)) if batch.capacity != capacity => {
+                commands.entity(batch.entity).insert(GpuBatchedMesh3d {
+                    mesh: batch.mesh.clone(),
+                    max_capacity: capacity,
+                    ranges: Vec::new(),
+                });
+                uploads.writes.push(GroundcoverWrite {
+                    entity: batch.entity,
+                    first_slot: batch.capacity,
+                    bytes: zeros(batch.capacity..capacity),
+                });
+                batch.capacity = capacity;
+            }
+            (None, None) | (Some(_), Some(_)) => {}
         }
     }
 
-    // Placements → slot runs.
     let mut upload_bytes = 0u64;
-    for w in residency.reconcile(origin) {
-        let Some(entity) = rt.batches.get(w.batch).and_then(|b| b.as_ref().map(|(e, _)| *e)) else { continue };
+    for w in writes {
+        let Some(entity) = rt.batches.get(w.batch).and_then(|b| b.as_ref().map(|b| b.entity)) else { continue };
         let bytes = slot_bytes(&w.slots);
         upload_bytes += bytes.len() as u64;
         uploads.writes.push(GroundcoverWrite { entity, first_slot: w.first_slot, bytes });
@@ -452,6 +511,14 @@ fn drive(
         scatter_us: rt.scatter_us,
         upload_bytes,
     };
+}
+
+/// Zero bytes for the slots `range` (inactive `GpuMeshInstance`s).
+fn zeros(range: std::ops::Range<u32>) -> Vec<u8> {
+    // `SLOT_BYTES` is 64: a slot count times it fits a usize on every target we build.
+    #[allow(clippy::cast_possible_truncation)]
+    let n = range.len() * render::SLOT_BYTES as usize;
+    vec![0; n]
 }
 
 /// The material of batch (group, casting): the model's base forced forward (and masked, not blended), the species
@@ -479,9 +546,9 @@ fn batch_material(
         } else {
             Vec4::new(settings.mesh_range_m, settings.fade_width_m, settings.fade_shrink_m, 1.0)
         },
-        wind: wind.to_gpu(),
         ..Default::default()
     };
+    wind.apply(&mut params);
     for (row, &s) in params.species.iter_mut().zip(&group.species) {
         let sp = cover.species(s);
         let [a, b] = sp.tint;

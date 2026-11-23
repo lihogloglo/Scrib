@@ -48,5 +48,5 @@ pub const PERIOD: f64 = 1024.0;
 
 /// The WGSL (WESL, no imports) module: `WindParams`, `WindSource`,
 /// `WindGust`, `wind_gust`, `wind_profile`, `wind_global`,
-/// `wind_source_count`, `wind_source`. Pure functions, no bindings.
+/// `wind_global_gusty` (a minimum gustiness on top), `wind_source_count`, `wind_source`. Pure functions, no bindings.
 pub const WESL: &str = include_str!("shaders/sf_wind.wesl");

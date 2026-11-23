@@ -242,6 +242,24 @@
             shadow: None,
             range: Near,
         ),
+        // Procedural meadow blades under the vanilla clumps (slice GC-3a2c): `bevy_grass`'s MEADOW style, drawn by
+        // `sf_groundcover_bevy::blades` only while `groundcover.blades.enabled` is on (off by default).
+        (
+            id: "ascadian_meadow_blades",
+            render: Blade(style: "meadow"),
+            footprint_m: 0.12, // Guess, under the blade spacing at full density (1 / sqrt(60) = 0.13 m) so it never caps the density
+            density: 60.0, // Guess: bevy_grass 0.20.6 MEADOW preset density, blades per m² at rule weight 1
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess, as flora_grass_01
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, as flora_grass_01, metres above the sea surface
+            scale: (min: 1.0, max: 1.0),
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((1.0, 1.0, 1.0), (1.0, 1.0, 1.0)),
+            align_to_surface: (min: 0.0, max: 0.0),
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
     ],
     rules: (rules: [
         // 0 ascadian_grass: the Ascadian Isles meadow; tall grass sparse.
@@ -253,6 +271,7 @@
             (species: "flora_grass_05", weight: 0.04), // Guess
             (species: "flora_grass_06", weight: 0.04), // Guess
             (species: "flora_grass_07", weight: 0.04), // Guess
+            (species: "ascadian_meadow_blades", weight: 1.0), // Guess
         ]),
         // 1 grazelands_grass: same clumps, more of the tall ones.
         (channel: 1, species: [
@@ -263,6 +282,7 @@
             (species: "flora_grass_05", weight: 0.12), // Guess
             (species: "flora_grass_06", weight: 0.12), // Guess
             (species: "flora_grass_07", weight: 0.12), // Guess
+            (species: "ascadian_meadow_blades", weight: 1.0), // Guess
         ]),
         // 2 dirt_grass: dirt, rocky and darkstone mixes, thin short grass.
         (channel: 2, species: [
@@ -270,6 +290,7 @@
             (species: "flora_grass_02", weight: 0.1), // Guess
             (species: "flora_grass_03", weight: 0.1), // Guess
             (species: "flora_grass_04", weight: 0.1), // Guess
+            (species: "ascadian_meadow_blades", weight: 0.4), // Guess
         ]),
         // 3 bc_grass: Bitter Coast swamp grass with some ferns.
         (channel: 3, species: [

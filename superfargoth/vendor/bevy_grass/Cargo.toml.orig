@@ -1,0 +1,186 @@
+[package]
+name = "bevy_grass"
+description = "Grass and foliage for Bevy 3D games: lush fields that sway in the wind and bend where players walk."
+version = "0.20.6"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+repository = "https://github.com/GEMI/bevy-grass"
+readme = "README.md"
+keywords = ["bevy", "grass", "foliage", "gamedev", "rendering"]
+categories = ["game-development", "rendering"]
+# What a crates.io package leaves out: the golden images (the machine-specific
+# ones are no use to anyone else), the README's pictures (about 8 MB, over the
+# 10 MB limit with the rest), and the project's own bookkeeping. The preset
+# files in assets/ stay: the crate embeds them.
+exclude = [
+  "/.claude/",
+  "/.github/",
+  "/.pi/",
+  "/docs/",
+  "/notes/",
+  "/shots/",
+  "/tests/golden/",
+  "/tools/",
+  "/web/",
+]
+
+# The hosted web demo (`web/`) is the only other package. A plain `cargo`
+# command here still builds and tests this crate alone; `-p bevy_grass_web`
+# picks the demo. Sharing the workspace shares Cargo.lock, so the demo is
+# built against the same Bevy and wasm-bindgen as the examples.
+[workspace]
+members = ["web"]
+
+# Any Bevy 0.20.x (patch releases do not break the render internals this crate
+# touches; a game that wants exactly 0.20.0 pins it in its own Cargo.toml and
+# Cargo picks that for both). The feature list is a strict
+# subset of DEMO ARPG GAME's, so adding this crate never changes how Bevy is compiled
+# for the game (a Bevy feature change costs DEMO ARPG GAME a full Bevy rebuild).
+[dependencies]
+bevy = { version = "0.20", default-features = false, features = [
+  "std",
+  "bevy_asset",
+  "bevy_log",
+  "bevy_render",
+  "bevy_core_pipeline",
+  "bevy_pbr",
+] }
+# Already in Bevy's dependency tree; used only through its safe API
+# (`cast_slice`), so the crate stays `forbid(unsafe_code)`.
+bytemuck = "1"
+# The `.grass.ron` style files. Both are already in Bevy's tree (its asset
+# meta files are RON), at these versions.
+ron = "0.12"
+serde = { version = "1", features = ["derive"] }
+# Optional physics bridges. `default-features = false` is deliberate: the
+# engines' defaults turn on `bevy_gizmos`, `bevy_picking` and other Bevy
+# features, and adding this crate must never change how Bevy is compiled for
+# the game. Each must be the version the game uses: with another, Cargo
+# builds two copies and the bridge cannot see the game's colliders, so a
+# bump here is a breaking change for bevy_grass.
+bevy_rapier3d = { version = "0.37", optional = true, default-features = false, features = [
+  "dim3",
+] }
+# `parry-f32` is Avian's collider type; `3d` is its 3D build.
+avian3d = { version = "0.8", optional = true, default-features = false, features = [
+  "3d",
+  "parry-f32",
+] }
+
+[features]
+# `GrassDebugPlugin`: gizmos for fields, chunks, interactors and trample
+# windows. It needs `bevy_gizmos`, which a game using `DefaultPlugins` has
+# already, so it is off by default: adding this crate must never change how
+# Bevy is compiled.
+debug = ["bevy/bevy_gizmos"]
+# `GrassInteractorFromCollider` for `bevy_rapier3d` colliders. 3D only;
+# grass is 3D.
+rapier = ["dep:bevy_rapier3d"]
+# `GrassInteractorFromCollider` for `avian3d` colliders. Both can be on.
+avian = ["dep:avian3d"]
+
+[dev-dependencies]
+# The crate's own tests cover the debug plugin too.
+bevy_grass = { path = ".", features = ["debug"] }
+bevy = { version = "0.20", default-features = false, features = [
+  "3d",
+  "tonemapping_luts",
+  "free_camera",
+  # The showcase example writes each preset's name on the screen.
+  "ui",
+  "default_font",
+] }
+# The golden-image check reads and writes PNGs; the version Bevy uses.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# The examples reload `.grass.ron` files when they are saved. Bevy's file
+# watcher is a `compile_error!` on wasm, so it is native only.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+bevy = { version = "0.20", default-features = false, features = ["file_watcher"] }
+
+# In the browser the examples render through WebGPU; `webgpu` overrides the
+# `webgl2` that `3d` turns on, and the crate does not support WebGL2.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+bevy = { version = "0.20", default-features = false, features = ["webgpu"] }
+# The examples read their flags from the page's query string. Already in
+# Bevy's tree on wasm (winit and bevy_app use it).
+web-sys = { version = "0.3", features = ["Window", "Location"] }
+
+[[example]]
+name = "rapier"
+path = "examples/rapier.rs"
+required-features = ["rapier"]
+
+[[example]]
+name = "rapier_minimal"
+path = "examples/rapier_minimal.rs"
+required-features = ["rapier"]
+
+[[example]]
+name = "avian"
+path = "examples/avian.rs"
+required-features = ["avian"]
+
+[[example]]
+name = "avian_minimal"
+path = "examples/avian_minimal.rs"
+required-features = ["avian"]
+
+# docs.rs documents the optional debug and physics integrations too.
+[package.metadata.docs.rs]
+features = ["debug", "rapier", "avian"]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+missing_docs = "warn"
+
+# DEMO ARPG GAME's workspace lint table, so the crate can be read and reviewed with
+# the same rules as the game that uses it.
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Graphics math: bounded f32/integer conversions and exact float comparisons
+# are intentional, and the CPU mirror must match the shaders bit for bit.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+float_cmp = "allow"
+
+# Bevy systems receive resources, commands and queries by value.
+needless_pass_by_value = "allow"
+# Settings and style assets are naturally boolean-heavy.
+struct_excessive_bools = "allow"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+# Whole-program optimization, for measuring the frame a shipped game gets: on
+# a CPU-bound machine it makes the whole frame faster, not only grass (see
+# "The frame-time floor" in docs/performance.md). A full build takes about
+# 17 minutes on 4 cores. Cargo ignores a dependency's profiles, so a game
+# sets this in its own Cargo.toml.
+[profile.release-lto]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+# The hosted web demo (`tools/web_demo.py`): a smaller download. Whole-program
+# optimisation drops the parts of Bevy the demo never calls, and "s" trades
+# some CPU speed for size (its frame time against opt-level 3 is not
+# measured yet). With wasm-opt, 18.2 MiB of wasm.
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1

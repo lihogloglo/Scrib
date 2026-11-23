@@ -13,7 +13,7 @@
 import bevy_pbr::render::{
     mesh_functions,
     forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex},
-    mesh_view_bindings::view,
+    mesh_view_bindings::{view, globals},
     view_transformations::position_world_to_clip,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     pbr_fragment::pbr_input_from_standard_material,
@@ -33,7 +33,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let root = world_from_local[3].xyz;
     let s = fade_scale(root, view.world_position, tag.fade);
     let unbent = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position * s, 1.0));
-    out.world_position = vec4<f32>(bent(unbent.xyz, root, instance_scale(world_from_local), tag), 1.0);
+    out.world_position = vec4<f32>(bent(unbent.xyz, root, instance_scale(world_from_local), tag, globals.time), 1.0);
     out.position = position_world_to_clip(out.world_position.xyz);
 
 @if(VERTEX_NORMALS)

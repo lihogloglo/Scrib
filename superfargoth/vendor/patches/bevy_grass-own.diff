@@ -1,0 +1,501 @@
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/far.rs superfargoth/vendor/bevy_grass/src/far.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/far.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/far.rs	2026-11-23 18:06:09.541657300 +0700
+@@ -6,7 +6,7 @@
+ use bevy::color::{Color, ColorToComponents, LinearRgba};
+ use bevy::ecs::prelude::*;
+ use bevy::image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+-use bevy::math::{Rect, Vec2, Vec4};
++use bevy::math::{DVec2, Rect, Vec2, Vec4}; // superfargoth patch (own: world offset): `DVec2`
+ use bevy::pbr::{ExtendedMaterial, MaterialExtension, StandardMaterial};
+ use bevy::reflect::Reflect;
+ use bevy::render::render_asset::RenderAssets;
+@@ -83,6 +83,11 @@
+     /// [`GrassSettings::radius`], kept equal to the resource by the plugin.
+     #[reflect(ignore)]
+     radius: f32,
++    // superfargoth patch (own: world offset)
++    /// [`GrassWorldOffset`](crate::GrassWorldOffset), kept equal to the
++    /// resource by the plugin, so the far gusts sit where the blades' do.
++    #[reflect(ignore)]
++    world_offset: DVec2,
+     #[texture(101)]
+     #[sampler(102)]
+     gusts: Handle<Image>,
+@@ -109,6 +114,7 @@
+             area: None,
+             wind: GrassWindFrame::default(),
+             radius: GrassQuality::default().radius(),
++            world_offset: DVec2::ZERO, // superfargoth patch (own: world offset)
+             gusts: GUST_TEXTURE,
+         }
+     }
+@@ -196,6 +202,9 @@
+     ///
+     /// Put the system after `GrassWindSystems::Sample`, so the far grass and
+     /// the blades read the same wind.
++    ///
++    /// superfargoth patch (own: world offset): the gusts use the world offset
++    /// this far grass holds, zero unless `FarGrassMaterial` keeps it synced.
+     #[must_use]
+     pub fn uniform(&self, wind: &GrassWindFrame, settings: &GrassSettings) -> FarGrassUniform {
+         Self {
+@@ -222,7 +231,7 @@
+                 if self.area.is_some() { 1.0 } else { 0.0 },
+             ),
+             area: Vec4::new(area.min.x, area.min.y, area.max.x, area.max.y),
+-            wind: self.wind.into(),
++            wind: WindUniform::with_world_offset(self.wind, self.world_offset), // superfargoth patch (own: world offset)
+         }
+     }
+ }
+@@ -299,13 +308,16 @@
+     wind: Res<GrassWindFrame>,
+     settings: Res<GrassSettings>,
+     mut materials: ResMut<Assets<FarGrassMaterial>>,
++    world_offset: Option<Res<crate::GrassWorldOffset>>, // superfargoth patch (own: world offset)
+ ) {
+     let radius = settings.sanitized().radius;
++    // superfargoth patch (own: world offset)
++    let world_offset = world_offset.map_or(DVec2::ZERO, |offset| offset.0);
+     let stale: Vec<_> = materials
+         .iter()
+         .filter(|(_, material)| {
+             let far = &material.extension;
+-            far.wind != *wind || far.radius != radius
++            far.wind != *wind || far.radius != radius || far.world_offset != world_offset
+         })
+         .map(|(id, _)| id)
+         .collect();
+@@ -313,6 +325,7 @@
+         if let Some(mut material) = materials.get_mut(id) {
+             material.extension.wind = *wind;
+             material.extension.radius = radius;
++            material.extension.world_offset = world_offset; // superfargoth patch (own: world offset)
+         }
+     }
+ }
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/fields.rs superfargoth/vendor/bevy_grass/src/fields.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/fields.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/fields.rs	2026-11-23 17:44:29.670184200 +0700
+@@ -16,7 +16,7 @@
+ use bevy::ecs::prelude::*;
+ use bevy::image::Image;
+ use bevy::log::warn;
+-use bevy::math::{EulerRot, Quat, UVec2, UVec4, Vec2, Vec3, Vec4};
++use bevy::math::{DVec2, EulerRot, Quat, UVec2, UVec4, Vec2, Vec3, Vec4}; // superfargoth patch (own: world offset): DVec2
+ use bevy::platform::time::Instant;
+ use bevy::transform::TransformSystems;
+ use bevy::transform::components::GlobalTransform;
+@@ -173,6 +173,9 @@
+     height: Option<(AssetId<Image>, u32, f32)>,
+     species: usize,
+     overrides: GrassFieldOverrides,
++    // superfargoth patch (own: world offset): the seed hangs on the world
++    // offset too, so a change of the offset alone rewrites the entries.
++    seed: u32,
+ }
+ 
+ /// Everything a field's chunks depend on besides the contents of its
+@@ -269,6 +272,8 @@
+         .init_resource::<MeshGrounds>()
+         .init_resource::<GrassStats>()
+         .init_resource::<PackedImages>()
++        // superfargoth patch (own: world offset)
++        .init_resource::<GrassWorldOffset>()
+         .configure_sets(
+             PostUpdate,
+             (
+@@ -298,6 +303,33 @@
+     edit::plugin(app);
+ }
+ 
++// superfargoth patch (own: world offset): `GrassWorldOffset` and `field_seed`.
++/// The world XZ position of the render-space origin, in metres.
++///
++/// An app with a floating origin writes it whenever its origin moves, so a
++/// field's blades follow its world position rather than its render-space
++/// one; other apps never touch it (it stays zero).
++#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
++pub struct GrassWorldOffset(pub DVec2);
++
++/// The layout seed of a field whose minimum corner is at `corner` (render
++/// space XZ, in metres), with the render-space origin at `world_offset`.
++///
++/// The world corner is rounded to whole centimetres, so an origin shift that
++/// moves the corner by a whole number of centimetres keeps the seed.
++#[must_use]
++#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
++pub fn field_seed(corner: Vec2, world_offset: DVec2) -> u32 {
++    let world = corner.as_dvec2() + world_offset;
++    let cm = |metres: f64| (metres * 100.0).round() as i64;
++    let (x, z) = (cm(world.x), cm(world.y));
++    // Both halves of each axis go in, so far-apart fields don't collide.
++    shader_model::hash2(
++        shader_model::hash2(x as u32, (x >> 32) as u32),
++        shader_model::hash2(z as u32, (z >> 32) as u32),
++    )
++}
++
+ /// What the tables need.
+ #[derive(Resource, Debug, Default)]
+ pub(crate) struct TablesDirty {
+@@ -576,6 +608,9 @@
+     /// The field's X axis in world XZ.
+     axis: Vec2,
+     access: u32,
++    // superfargoth patch (own: world offset): the layout seed, from the
++    // corner's world position (`field_seed`).
++    seed: u32,
+ }
+ 
+ impl Placement {
+@@ -584,6 +619,7 @@
+         transform: &GlobalTransform,
+         visibility: InheritedVisibility,
+         layers: Option<&RenderLayers>,
++        world_offset: DVec2, // superfargoth patch (own: world offset)
+     ) -> Self {
+         let frame = FieldFrame::of(field, transform);
+         Self {
+@@ -591,6 +627,7 @@
+             corner: Vec3::new(frame.corner.x, transform.translation().y, frame.corner.y),
+             axis: frame.axis,
+             access: access(visibility.get(), layers),
++            seed: field_seed(frame.corner, world_offset), // superfargoth patch (own: world offset)
+         }
+     }
+ }
+@@ -682,6 +719,7 @@
+                 .map(|(id, _, scale)| (id, self.height_offset, scale)),
+             species: self.species.len(),
+             overrides: input.overrides,
++            seed: input.placement.seed, // superfargoth patch (own: world offset)
+         }
+     }
+ 
+@@ -722,6 +760,7 @@
+     images: &'a Assets<Image>,
+     grounds: &MeshGrounds,
+     edits: &'a EditLayers,
++    world_offset: DVec2, // superfargoth patch (own: world offset)
+ ) -> Option<Vec<Input<'a>>> {
+     let mut inputs = Vec::with_capacity(sorted.len());
+     for (entity, field, transform, visibility, layers, overrides) in sorted {
+@@ -760,7 +799,8 @@
+         };
+         inputs.push(Input {
+             entity: *entity,
+-            placement: Placement::of(field, transform, **visibility, *layers),
++            // superfargoth patch (own: world offset)
++            placement: Placement::of(field, transform, **visibility, *layers, world_offset),
+             overrides: overrides.copied().unwrap_or_default(),
+             style_id: field.style.id(),
+             style: styles.get(&field.style)?,
+@@ -1009,7 +1049,13 @@
+     ),
+     (mut cache, mut edits): (ResMut<PackedImages>, ResMut<EditLayers>),
+     mut stats: ResMut<GrassStats>,
++    world_offset: Res<GrassWorldOffset>, // superfargoth patch (own: world offset)
+ ) {
++    // superfargoth patch (own: world offset): a new offset alone re-derives
++    // every field's seed (`EntryKey::seed` rewrites the entries it changed).
++    if world_offset.is_changed() {
++        dirty.fields = true;
++    }
+     if !dirty.rebuild() {
+         if dirty.access {
+             dirty.access = false;
+@@ -1020,7 +1066,8 @@
+     let mut sorted: Vec<_> = fields.iter().collect();
+     sorted.sort_by_key(|(entity, ..)| *entity);
+     let edits_ahead = edits.ahead;
+-    let Some(inputs) = gather(&sorted, &styles, &images, &grounds, &edits) else {
++    // superfargoth patch (own: world offset): `world_offset.0`
++    let Some(inputs) = gather(&sorted, &styles, &images, &grounds, &edits, world_offset.0) else {
+         return;
+     };
+     // This pass reads every field's visibility too, and takes care of
+@@ -1159,6 +1206,7 @@
+         corner,
+         axis,
+         access,
++        seed, // superfargoth patch (own: world offset)
+     } = *placement;
+     let overrides = &plan.input.overrides;
+     let layout =
+@@ -1178,8 +1226,10 @@
+         extent: Vec4::new(size.x, size.y, height_scale, layout.tile_size),
+         // The seed comes from where the field is, not from its entity, so
+         // the same field looks the same however the scene was spawned.
++        // superfargoth patch (own: world offset): from the corner's world
++        // position (`field_seed`), not its render-space f32 bits.
+         placement: UVec4::new(
+-            shader_model::hash2(corner.x.to_bits(), corner.z.to_bits()),
++            seed,
+             layout.tiles_per_side,
+             mask_offset,
+             height_offset,
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/lib.rs superfargoth/vendor/bevy_grass/src/lib.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/lib.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/lib.rs	2026-11-23 17:44:40.432540700 +0700
+@@ -81,6 +81,8 @@
+     GrassRegrowth, GrassSample, GrassSampler,
+ };
+ pub use far::{FarGrass, FarGrassMaterial, FarGrassPlugin, FarGrassUniform};
++// superfargoth patch (own: world offset)
++pub use fields::{GrassWorldOffset, field_seed};
+ pub use physics::{GrassColliderBounds, GrassColliderSystems, GrassInteractorFromCollider};
+ pub use render::platform::GrassSupport;
+ pub use settings::{GrassQuality, GrassSettings, GrassShadows};
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/bevy_glue.rs superfargoth/vendor/bevy_grass/src/render/bevy_glue.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/bevy_glue.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/render/bevy_glue.rs	2026-11-23 17:55:25.053026400 +0700
+@@ -164,6 +164,11 @@
+ pub(crate) struct GrassPrepassPipeline {
+     view_layout_motion_vectors: BindGroupLayoutDescriptor,
+     view_layout_no_motion_vectors: BindGroupLayoutDescriptor,
++    // superfargoth patch (own: surface-weather prepass layout): our vendored
++    // `bevy_pbr` binds a wider prepass view group (bindings 43-53) on views
++    // with surface weather; the grass pipeline must name the same layout.
++    view_layout_motion_vectors_sw: BindGroupLayoutDescriptor,
++    view_layout_no_motion_vectors_sw: BindGroupLayoutDescriptor,
+     empty_layout: BindGroupLayoutDescriptor,
+     grass_layout: BindGroupLayoutDescriptor,
+     shader: Handle<Shader>,
+@@ -206,10 +211,13 @@
+                 .into(),
+             ),
+             layout: vec![
+-                if motion {
+-                    self.view_layout_motion_vectors.clone()
+-                } else {
+-                    self.view_layout_no_motion_vectors.clone()
++                // superfargoth patch (own: surface-weather prepass layout):
++                // the same choice as `PrepassPipeline::specialize`.
++                match (motion, key.contains(MeshPipelineKey::SURFACE_WEATHER)) {
++                    (true, false) => self.view_layout_motion_vectors.clone(),
++                    (false, false) => self.view_layout_no_motion_vectors.clone(),
++                    (true, true) => self.view_layout_motion_vectors_sw.clone(),
++                    (false, true) => self.view_layout_no_motion_vectors_sw.clone(),
+                 },
+                 self.empty_layout.clone(),
+                 self.grass_layout.clone(),
+@@ -369,6 +377,9 @@
+     commands.insert_resource(GrassPrepassPipeline {
+         view_layout_motion_vectors: prepass_pipeline.view_layout_motion_vectors.clone(),
+         view_layout_no_motion_vectors: prepass_pipeline.view_layout_no_motion_vectors.clone(),
++        // superfargoth patch (own: surface-weather prepass layout)
++        view_layout_motion_vectors_sw: prepass_pipeline.view_layout_motion_vectors_sw.clone(),
++        view_layout_no_motion_vectors_sw: prepass_pipeline.view_layout_no_motion_vectors_sw.clone(),
+         empty_layout: prepass_pipeline.empty_layout.clone(),
+         grass_layout: layouts.draw.clone(),
+         shader: shaders.prepass.clone(),
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/extract.rs superfargoth/vendor/bevy_grass/src/render/extract.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/extract.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/render/extract.rs	2026-11-23 18:06:01.785415200 +0700
+@@ -18,7 +18,7 @@
+ };
+ use crate::clock::GrassClock;
+ use crate::edit::{MaskPatches, PatchList};
+-use crate::fields::{CHUNK_SIZE, FieldTables};
++use crate::fields::{CHUNK_SIZE, FieldTables, GrassWorldOffset}; // superfargoth patch (own: world offset): `GrassWorldOffset`
+ use crate::sun::GrassLightFrame;
+ use crate::trample::{self, Stamp, Tracked};
+ use crate::wind::GrassWindFrame;
+@@ -65,6 +65,7 @@
+     light: Extract<Res<GrassLightFrame>>,
+     interactors: Extract<Query<Interactor>>,
+     (settings, patches): (Extract<Res<GrassSettings>>, Extract<Res<MaskPatches>>),
++    world_offset: Extract<Option<Res<GrassWorldOffset>>>, // superfargoth patch (own: world offset)
+ ) {
+     extracted.settings = settings.sanitized();
+     let rows = extracted.settings.blade_rows;
+@@ -81,14 +82,18 @@
+     };
+     // The renderer clamps the wind to non-negative values, as it does the
+     // settings, so a custom source cannot make the blades misbehave.
+-    extracted.wind = GrassWindFrame {
+-        sway: wind.sway.max(0.0),
+-        sway_speed: wind.sway_speed.max(0.0),
+-        flutter: wind.flutter.max(0.0),
+-        gust_contrast: wind.gust_contrast.max(0.0),
+-        ..**wind
+-    }
+-    .into();
++    // superfargoth patch (own: world offset): the uniform also carries the
++    // world XZ of the render-space origin, for the gust and patch lookups.
++    extracted.wind = WindUniform::with_world_offset(
++        GrassWindFrame {
++            sway: wind.sway.max(0.0),
++            sway_speed: wind.sway_speed.max(0.0),
++            flutter: wind.flutter.max(0.0),
++            gust_contrast: wind.gust_contrast.max(0.0),
++            ..**wind
++        },
++        world_offset.as_ref().map_or(bevy::math::DVec2::ZERO, |offset| offset.0),
++    );
+     // The light grass follows, from the built-in adapter or the game. A
+     // direction of no length means no light.
+     extracted.shadow_light = light.shadow_direction.and_then(Vec3::try_normalize);
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/resources.rs superfargoth/vendor/bevy_grass/src/render/resources.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/resources.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/render/resources.rs	2026-11-23 18:04:50.030659500 +0700
+@@ -70,11 +70,30 @@
+     pub sway_speed: f32,
+     pub flutter: f32,
+     pub gust_contrast: f32,
++    // superfargoth patch (own: world offset): the world XZ of the render-space
++    // origin (`GrassWorldOffset`), added to the blade root only where the gust
++    // and patch textures are looked up, so they stay put when a floating
++    // origin moves. The offset is a whole multiple of the origin step (256 m),
++    // exact in f32; within +-64 km the sum keeps millimetre precision, enough
++    // for these lookups. Zero from `From<GrassWindFrame>`.
++    pub world_offset: Vec2,
++}
++
++impl WindUniform {
++    // superfargoth patch (own: world offset)
++    /// This frame of wind with the render-space origin at world XZ `world_offset`.
++    pub(crate) fn with_world_offset(wind: GrassWindFrame, world_offset: bevy::math::DVec2) -> Self {
++        Self {
++            world_offset: world_offset.as_vec2(),
++            ..wind.into()
++        }
++    }
+ }
+ 
+ impl From<GrassWindFrame> for WindUniform {
+     fn from(wind: GrassWindFrame) -> Self {
+         Self {
++            world_offset: Vec2::ZERO, // superfargoth patch (own: world offset)
+             direction: wind.direction,
+             strength: wind.strength,
+             gust_scale: wind.gust_scale,
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/bevy_bridge.wesl superfargoth/vendor/bevy_grass/src/shaders/bevy_bridge.wesl
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/bevy_bridge.wesl	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/shaders/bevy_bridge.wesl	2026-11-23 18:11:46.367566400 +0700
+@@ -58,6 +58,14 @@
+     return view.viewport.z;
+ }
+ 
++// superfargoth patch (own: origin rebase): our vendored `bevy_render` view carries the
++// floating origin's shift since last frame (`View::origin_rebase`). Adding it to a
++// "previous = current" render-space position gives last frame's render-space position; it
++// is zero on every other frame. Not for upstream (the field is our own Bevy patch).
++fn view_origin_rebase() -> vec3<f32> {
++    return view.origin_rebase;
++}
++
+ fn view_is_orthographic() -> bool {
+     return view.clip_from_view[3].w == 1.0;
+ }
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/generate.wesl superfargoth/vendor/bevy_grass/src/shaders/generate.wesl
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/generate.wesl	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/shaders/generate.wesl	2026-11-23 18:05:27.385847700 +0700
+@@ -19,7 +19,7 @@
+     LOD_VERTEX_STRIDE, hash, hash2, unit, density_falloff, height_thinning, select_lod, coverage_width, pack,
+     trample_unpack, trample_slot, in_trample_window,
+ };
+-import package::shaders::wind::{Wind, wind_bend};
++import package::shaders::wind::{Wind, wind_bend, wind_world_xz}; // superfargoth patch (own: world offset): `wind_world_xz`
+ 
+ /// The height a ground baked from a mesh has where the mesh does not reach:
+ /// no blade grows there. Twin of `ground::HOLE`.
+@@ -225,6 +225,7 @@
+ }
+ 
+ /// The noise bare patches are cut from. Twin of `mirror::bare_noise`.
++/// superfargoth patch (own: world offset): `at` is world XZ (`wind_world_xz`).
+ fn bare_noise(at: vec2<f32>, size: f32) -> f32 {
+     let uv = at / (size * 8.0);
+     let turned = vec2<f32>(uv.x * 0.8 - uv.y * 0.6, uv.x * 0.6 + uv.y * 0.8) * 1.37 + 0.5;
+@@ -353,7 +354,7 @@
+     var bare = 1.0;
+     if field.tufts.z >= 0.0 {
+         let threshold = field.tufts.z;
+-        bare = smoothstep(threshold - 0.05, threshold + 0.05, bare_noise(root.xz, field.tufts.w));
++        bare = smoothstep(threshold - 0.05, threshold + 0.05, bare_noise(wind_world_xz(wind, root.xz), field.tufts.w));
+     }
+     let tile_size = field.extent.w;
+     let candidate_density = f32(TILE_POINTS) / (tile_size * tile_size);
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/grass_prepass.wesl superfargoth/vendor/bevy_grass/src/shaders/grass_prepass.wesl
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/grass_prepass.wesl	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/shaders/grass_prepass.wesl	2026-11-23 18:11:46.367566400 +0700
+@@ -9,7 +9,7 @@
+ 
+ import package::shaders::bevy_bridge::{
+     view_world_from_view, view_clip_from_view, view_clip_from_world, view_viewport_width,
+-    view_is_orthographic, prepass_normal,
++    view_is_orthographic, prepass_normal, view_origin_rebase,
+ };
+ import package::shaders::blade::{blade_ref, blade_vertex, current_eye, previous_eye, fields, grass_view};
+ 
+@@ -78,7 +78,8 @@
+             view_viewport_width(),
+         ),
+     );
+-    out.previous_world_position = vec4<f32>(previous.world_position, 1.0);
++    // superfargoth patch (own: origin rebase): no false motion on a floating-origin shift.
++    out.previous_world_position = vec4<f32>(previous.world_position + view_origin_rebase(), 1.0);
+ }
+ 
+ @if(DEFERRED_PREPASS) {
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/look.wesl superfargoth/vendor/bevy_grass/src/shaders/look.wesl
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/look.wesl	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/shaders/look.wesl	2026-11-23 18:10:12.980694500 +0700
+@@ -21,7 +21,9 @@
+ 
+ import package::shaders::bevy_bridge::GrassSurface;
+ import package::shaders::common::{Field, Instance, instance_random, straw_of};
+-import package::shaders::blade::{noise_texture, noise_sampler};
++import package::shaders::blade::{noise_texture, noise_sampler, wind};
++// superfargoth patch (own: world offset)
++import package::shaders::wind::wind_world_xz;
+ 
+ /// Base colour and translucency of a blade at height `t` (0 root, 1 tip).
+ fn blade_color(instance: Instance, field: Field, t: f32) -> vec4<f32> {
+@@ -37,7 +39,9 @@
+     // Patches several metres across, where the blades' colour drifts toward
+     // the patch colour: the noise, turned so its repeat is not along the
+     // world's axes.
+-    let at = instance.root.xz / (field.variation.x * 8.0);
++    // superfargoth patch (own: world offset): at the root's world XZ, so
++    // the patches stay put when a floating origin moves.
++    let at = wind_world_xz(wind, instance.root.xz) / (field.variation.x * 8.0);
+     let uv = vec2<f32>(at.x * 0.83 - at.y * 0.56, at.x * 0.56 + at.y * 0.83);
+     let noise = textureSampleLevel(noise_texture, noise_sampler, uv, 0.0).r;
+     let in_patch = field.patches.w * smoothstep(0.3, 0.7, noise);
+diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/wind.wesl superfargoth/vendor/bevy_grass/src/shaders/wind.wesl
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/wind.wesl	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/shaders/wind.wesl	2026-11-23 18:05:00.154043500 +0700
+@@ -27,6 +27,17 @@
+     flutter: f32,
+     /// How much stronger gusts are than the wind between them.
+     gust_contrast: f32,
++    // superfargoth patch (own: world offset): the world XZ of the render-space
++    // origin. Add it to a render-space root only for texture lookups that must
++    // not jump when a floating origin moves (whole 256 m steps, exact in f32;
++    // millimetre precision within +-64 km), never for a blade's position.
++    world_offset: vec2<f32>,
++}
++
++// superfargoth patch (own: world offset)
++/// The world XZ of render-space XZ `at`, for the gust and patch lookups.
++fn wind_world_xz(wind: Wind, at: vec2<f32>) -> vec2<f32> {
++    return at + wind.world_offset;
+ }
+ 
+ /// The direction the wind blows toward, normalized; +X for a zero direction.
+@@ -51,7 +62,10 @@
+ /// The gusts at world XZ `at`: two layers of the scrolling gust texture,
+ /// 0 to 1.
+ fn wind_gust(wind: Wind, gusts: texture_2d<f32>, gust_sampler: sampler, at: vec2<f32>) -> f32 {
+-    let uv = at / max(wind.gust_scale, 0.01) - wind.gust_offset;
++    // superfargoth patch (own: world offset): `at` is render space; the
++    // gusts are looked up at its world XZ (the blades, their previous frame
++    // and the far grass alike).
++    let uv = wind_world_xz(wind, at) / max(wind.gust_scale, 0.01) - wind.gust_offset;
+     let along = textureSampleLevel(gusts, gust_sampler, uv, 0.0).r;
+     let turned = textureSampleLevel(gusts, gust_sampler, GUST_TURN * uv, 0.0).r;
+     // The mean of two independent samples varies 1/sqrt(2) as much as one;

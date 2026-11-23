@@ -6,6 +6,11 @@
 //!   casts shadows (its near-shadow species in shadow-ring tiles) and one that doesn't (everything else). A
 //!   species' **batch slot** (the tag's bits 24-31) is its index in its group, the same in both batches, so the
 //!   scatter can bake it in before any batch exists.
+//! - **Sizing (GC-M1).** A tile block holds a species' expected instances per tile plus `block_sigma` standard
+//!   deviations (`species_block_slots`), not its grid ceiling. A batch's pool opens (`initial_blocks`) when a
+//!   resident tile first needs its model, doubles when full up to the plan's worst-case blocks (blocks never
+//!   move), and closes when its last block is freed. `reserve_worst_case` restores the old sizing (grid-ceiling
+//!   blocks, every ready batch open at its worst case, never closed) as an A/B arm.
 //! - **Tiles.** A scattered tile keeps its instances (36 B each) on the CPU: moving between the shadow and plain
 //!   batch, a model that resolves late, and a floating-origin shift all rewrite from the copy, never re-scatter.
 //! - **Reconcile.** Every frame each (tile, species) is placed in the batch it should be in; a move frees the old
@@ -45,6 +50,12 @@ pub struct RenderSettings {
     pub fade_width_m: f32,
     pub fade_shrink_m: f32,
     pub max_blocks_per_batch: u32,
+    /// Blocks a batch opens with (demand sizing); it doubles when full, up to its plan's blocks.
+    pub initial_blocks: u32,
+    /// Block headroom over the expected count, in standard deviations.
+    pub block_sigma: f32,
+    /// The A/B arm: worst-case sizing (every ready batch open at its plan's blocks of grid-ceiling slots).
+    pub reserve_worst_case: bool,
     pub jobs_per_frame: u32,
     pub max_jobs_in_flight: u32,
     pub ground_cache_m: f32,
@@ -60,6 +71,9 @@ impl Default for RenderSettings {
             fade_width_m: t::FADE_WIDTH.default_value(),
             fade_shrink_m: t::FADE_SHRINK.default_value(),
             max_blocks_per_batch: t::MAX_BLOCKS_PER_BATCH.default_value(),
+            initial_blocks: t::INITIAL_BLOCKS.default_value(),
+            block_sigma: t::BLOCK_SIGMA.default_value(),
+            reserve_worst_case: t::RESERVE_WORST_CASE.default_value(),
             jobs_per_frame: t::JOBS_PER_FRAME.default_value(),
             max_jobs_in_flight: t::MAX_JOBS_IN_FLIGHT.default_value(),
             ground_cache_m: t::GROUND_CACHE_SPACING.default_value(),
@@ -147,9 +161,7 @@ impl Plan {
             #[allow(clippy::cast_possible_truncation)]
             let slot = g.species.len() as u8;
             g.species.push(s);
-            let n = scatter.grid(s).n;
-            let ceiling = n.saturating_mul(n).min(settings.scatter.max_instances_per_tile).max(1);
-            g.block_slots = g.block_slots.max(ceiling);
+            g.block_slots = g.block_slots.max(species_block_slots(cover, &scatter, s, settings));
             plan.species[s.get()] = Some(SpeciesPlan { group, slot, casts: casts_at_all && sp.shadow == ShadowClass::Near });
         }
         let s = settings.scatter.tile_size_m;
@@ -173,11 +185,36 @@ impl Plan {
         self.groups.len() * 2
     }
 
-    /// (blocks, block slots) of batch `b`; 0 blocks = the batch is never used.
+    /// (blocks, block slots) of batch `b` at its largest (the ring's worst case, capped); 0 blocks = the batch is
+    /// never used.
     pub fn batch_layout(&self, b: usize) -> (u32, u32) {
         let g = &self.groups[b / 2];
         (g.blocks[b % 2], g.block_slots)
     }
+}
+
+/// Slots of one species' tile block. Worst case (`reserve_worst_case`): the hard ceiling `min(cap, n²)` (one
+/// instance per footprint cell at most). Demand: the expected count `μ = n² · p_max` plus `block_sigma` standard
+/// deviations (`√μ`, the Poisson bound of a sum of independent cell draws), with `p_max` the acceptance
+/// probability at the species' largest rule weight (`Scatterer::density_from` × cell area, clamped to 1), under
+/// the same ceiling. "Only" region weights are not seen here (the overrides keep them private); a tile denser than
+/// its block drops the extra instances and counts as capped.
+fn species_block_slots(cover: &Groundcover, scatter: &Scatterer<'_>, s: SpeciesIndex, settings: &RenderSettings) -> u32 {
+    let grid = scatter.grid(s);
+    let cells = grid.n.saturating_mul(grid.n);
+    let ceiling = cells.min(settings.scatter.max_instances_per_tile).max(1);
+    if settings.reserve_worst_case {
+        return ceiling;
+    }
+    let sp = cover.species(s);
+    let density = sp.density * settings.scatter.density_scale * cover.max_rule_weight(s);
+    let p_max = f64::from(density * grid.cell_m * grid.cell_m).clamp(0.0, 1.0);
+    let mean = f64::from(cells) * p_max;
+    let want = (mean + f64::from(settings.block_sigma.max(0.0)) * mean.sqrt()).ceil();
+    // Clamped into [1, ceiling] (a u32) first.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let slots = want.clamp(1.0, f64::from(ceiling)) as u32;
+    slots
 }
 
 static EMPTY: std::sync::LazyLock<Overrides> = std::sync::LazyLock::new(Overrides::none);
@@ -299,6 +336,8 @@ pub struct Residency {
     ring: TileRing,
     shadow: TileRing,
     tiles: BTreeMap<TileKey, TileData>,
+    /// By batch: its model resolved, so its species are placed (the pool opens on demand).
+    ready: Vec<bool>,
     pools: Vec<Option<SlotPool>>,
     /// Origin of the last reconcile.
     origin: Option<DVec3>,
@@ -309,12 +348,14 @@ pub struct Residency {
 impl Residency {
     pub fn new(plan: Plan, settings: RenderSettings) -> Self {
         let pools = vec![None; plan.batch_count()];
+        let ready = vec![false; plan.batch_count()];
         Self {
             plan,
             settings,
             ring: TileRing::default(),
             shadow: TileRing::default(),
             tiles: BTreeMap::new(),
+            ready,
             pools,
             origin: None,
             writes: Vec::new(),
@@ -398,19 +439,30 @@ impl Residency {
         true
     }
 
-    /// Batch `b`'s model resolved: its pool exists from now on (sized by the plan). Returns its (blocks, slots).
-    pub fn open_batch(&mut self, b: usize) -> Option<(u32, u32)> {
+    /// Batch `b`'s model resolved: its species are placed from the next reconcile on. Demand sizing opens its pool
+    /// when a tile first needs it ([`RenderSettings::initial_blocks`]); `reserve_worst_case` opens it now at the
+    /// plan's blocks. Returns whether `b` became ready (false: already ready, or a batch the plan never uses).
+    pub fn set_ready(&mut self, b: usize) -> bool {
         let (blocks, slots) = self.plan.batch_layout(b);
-        if blocks == 0 || self.pools[b].is_some() {
-            return None;
+        if blocks == 0 || self.ready[b] {
+            return false;
         }
-        self.pools[b] = Some(SlotPool::new(blocks, slots));
-        Some((blocks, slots))
+        self.ready[b] = true;
+        if self.settings.reserve_worst_case {
+            self.pools[b] = Some(SlotPool::new(blocks, slots));
+        }
+        true
     }
 
+    pub fn is_ready(&self, b: usize) -> bool {
+        self.ready.get(b).copied().unwrap_or(false)
+    }
+
+    /// Batch `b` has a pool (its GPU batch exists).
     pub fn is_open(&self, b: usize) -> bool {
         self.pools.get(b).is_some_and(Option::is_some)
     }
+
 
     fn release(&mut self, p: Placement) {
         let Some(pool) = self.pools[p.batch].as_mut() else { return };
@@ -431,9 +483,13 @@ impl Residency {
             for (sp, placed) in data.scatter.species.iter().zip(&mut data.placed) {
                 stats.capped += u32::from(sp.stats.capped);
                 let Some(plan) = self.plan.species.get(sp.species.get()).copied().flatten() else { continue };
+                if sp.instances.len() > self.plan.groups[plan.group].block_slots as usize {
+                    // Denser than its block: the extra instances are dropped (counted once, as the scatter's cap).
+                    stats.capped += u32::from(!sp.stats.capped);
+                }
                 let want = (!sp.instances.is_empty())
                     .then(|| batch_index(plan.group, casting_tile && plan.casts))
-                    .filter(|&b| self.pools[b].is_some());
+                    .filter(|&b| self.ready[b]);
                 let current = placed.map(|p| p.batch);
                 if current == want {
                     if shift && let Some(p) = *placed {
@@ -447,13 +503,23 @@ impl Residency {
                     push_zeros(&mut self.writes, p.batch, range);
                 }
                 let Some(b) = want else { continue };
-                let Some(block) = self.pools[b].as_mut().and_then(SlotPool::allocate) else {
+                let Some(block) = allocate(&mut self.pools, &self.plan, &self.settings, b) else {
                     stats.unplaced += 1;
                     continue;
                 };
                 let p = Placement { batch: b, block };
                 write_block(&mut self.writes, &mut self.pools, p, &sp.instances, tile, size, origin);
                 *placed = Some(p);
+            }
+        }
+        // Demand sizing gives an empty batch's memory back: its pool closes (the GPU batch is despawned), and the
+        // frees queued for it are moot.
+        if !self.settings.reserve_worst_case {
+            for b in 0..self.pools.len() {
+                if self.pools[b].as_ref().is_some_and(|p| p.allocated() == 0) {
+                    self.pools[b] = None;
+                    self.writes.retain(|w| w.batch != b);
+                }
             }
         }
         let writes = std::mem::take(&mut self.writes);
@@ -489,4 +555,21 @@ fn write_block(
     let mut slots: Vec<SlotWords> = instances.iter().take(range.len()).map(|i| slot_words(i, tile, size, origin)).collect();
     slots.resize(range.len(), [0; 16]);
     writes.push(SlotWrite { batch: p.batch, first_slot: range.start, slots });
+}
+
+/// A free block of batch `b`, opening its pool (demand sizing) or doubling it when it is full, up to the plan's
+/// blocks. Growth appends blocks, so placed blocks keep their slots; the GPU side zero-fills the new tail.
+fn allocate(pools: &mut [Option<SlotPool>], plan: &Plan, settings: &RenderSettings, b: usize) -> Option<u32> {
+    let (max_blocks, slots) = plan.batch_layout(b);
+    let pool = pools[b].get_or_insert_with(|| SlotPool::new(settings.initial_blocks.clamp(1, max_blocks), slots));
+    if let Some(block) = pool.allocate() {
+        return Some(block);
+    }
+    // Doubling growth (amortised O(1) per block, as `Vec`).
+    let grown = pool.blocks().saturating_mul(2).min(max_blocks);
+    if grown <= pool.blocks() {
+        return None;
+    }
+    pool.grow(grown);
+    pool.allocate()
 }

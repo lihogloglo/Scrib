@@ -10,13 +10,16 @@
 //     let v = wind_sample(rel, above_ground);           // m/s, this frame
 //     let v_prev = wind_sample_prev(rel, above_ground); // last frame (motion vectors)
 //
+// `wind_sample_gusty` / `wind_sample_prev_gusty` take a minimum gustiness on
+// top (a consumer that wants more lull-to-gust contrast than the weather).
+//
 // `rel` is the origin-relative world position (the mesh's world position
 // in Bevy's frame). Both frames are expressed around the *current* floating
 // origin, so a consumer passes the same kind of position to both: last
 // frame's rendering, re-expressed after an origin shift. The pure field
 // functions are `sf_wind::field` (`sf_wind::WESL`, CPU twin `WindFrame`).
 
-import sf_wind::field::{WindParams, WindSource, wind_global, wind_source, wind_source_count};
+import sf_wind::field::{WindParams, WindSource, wind_global_gusty, wind_source, wind_source_count};
 
 const WIND_MAX_SOURCES: u32 = 32u;
 
@@ -33,7 +36,13 @@ var<storage, read> wind: WindData;
 // Velocity (m/s) at an origin-relative position `above_ground` meters over
 // the ground: the weather's wind plus every local source.
 fn wind_sample(rel: vec3<f32>, above_ground: f32) -> vec3<f32> {
-    var v = wind_global(wind.params, rel, above_ground);
+    return wind_sample_gusty(rel, above_ground, 0.0);
+}
+
+// `wind_sample` with the weather's gustiness raised to at least
+// `min_gustiness` (`sf_wind::field::wind_global_gusty`); 0 = `wind_sample`.
+fn wind_sample_gusty(rel: vec3<f32>, above_ground: f32, min_gustiness: f32) -> vec3<f32> {
+    var v = wind_global_gusty(wind.params, rel, above_ground, min_gustiness);
     let n = min(wind_source_count(wind.params), WIND_MAX_SOURCES);
     for (var i = 0u; i < n; i++) {
         v += wind_source(wind.sources[i], rel);
@@ -43,7 +52,12 @@ fn wind_sample(rel: vec3<f32>, above_ground: f32) -> vec3<f32> {
 
 // The same field as last frame (prepass motion vectors, `time_prev` style).
 fn wind_sample_prev(rel: vec3<f32>, above_ground: f32) -> vec3<f32> {
-    var v = wind_global(wind.prev_params, rel, above_ground);
+    return wind_sample_prev_gusty(rel, above_ground, 0.0);
+}
+
+// `wind_sample_gusty` for last frame's field.
+fn wind_sample_prev_gusty(rel: vec3<f32>, above_ground: f32, min_gustiness: f32) -> vec3<f32> {
+    var v = wind_global_gusty(wind.prev_params, rel, above_ground, min_gustiness);
     let n = min(wind_source_count(wind.prev_params), WIND_MAX_SOURCES);
     for (var i = 0u; i < n; i++) {
         v += wind_source(wind.prev_sources[i], rel);

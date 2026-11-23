@@ -2,9 +2,10 @@
 //! (spec "Facts that shape the build": no fragmentation, one write run per tile, freeing = one zero-fill).
 //!
 //! A block holds one (tile, species) scatter: its instances first, then inactive (zeroed) slots. The block size is
-//! the species' hard ceiling, `min(max_instances_per_tile, grid cells)` (the scatter places at most one instance
-//! per footprint cell), so a tile can never overflow its block. Allocation takes the lowest free block, so the
-//! layout is a pure function of the allocate/free sequence.
+//! chosen by the plan (`residency::Plan`: the expected count plus headroom, or the hard ceiling with
+//! `reserve_worst_case`); a tile with more instances than its block writes only the block's worth. A pool grows by
+//! appending blocks ([`SlotPool::grow`]); blocks never move. Allocation takes the lowest free block, so the layout
+//! is a pure function of the allocate/free/grow sequence.
 
 use std::ops::Range;
 
@@ -49,6 +50,17 @@ impl SlotPool {
     /// Live (active) slots over every allocated block.
     pub fn live_slots(&self) -> u64 {
         self.live.iter().flatten().map(|&n| u64::from(n)).sum()
+    }
+
+    /// Grows the pool to `blocks` blocks (never shrinks): every existing block keeps its slots, the new ones are
+    /// free and come after them (the batch's new tail). Returns the new tail's slot range (to zero-fill).
+    pub fn grow(&mut self, blocks: u32) -> Range<u32> {
+        let old = self.capacity();
+        if blocks > self.blocks() {
+            assert!(blocks.checked_mul(self.block_slots).is_some(), "batch capacity {blocks} x {} overflows u32", self.block_slots);
+            self.live.resize(blocks as usize, None);
+        }
+        old..self.capacity()
     }
 
     /// The lowest free block, now allocated with no live slot; `None` when the pool is full.

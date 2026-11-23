@@ -172,8 +172,28 @@ fn pool_allocates_lowest_frees_and_reuses() {
 struct Mirror(BTreeMap<usize, Vec<SlotWords>>);
 
 impl Mirror {
-    fn open(&mut self, batch: usize, capacity: u32) {
-        self.0.insert(batch, vec![[0; 16]; capacity as usize]);
+    /// What `drive` does after a reconcile, before the runs: a batch whose pool opened is zero-filled, one that grew
+    /// keeps its slots and gets a zeroed tail (the reservation's `resize` copy), one that closed is gone.
+    fn sync(&mut self, r: &Residency) {
+        for b in 0..r.plan.batch_count() {
+            match r.pool(b) {
+                None => {
+                    self.0.remove(&b);
+                }
+                Some(pool) => {
+                    let buf = self.0.entry(b).or_default();
+                    assert!(buf.len() <= pool.capacity() as usize, "batch {b} shrank");
+                    buf.resize(pool.capacity() as usize, [0; 16]);
+                }
+            }
+        }
+    }
+
+    /// A reconcile's writes, after [`Mirror::sync`].
+    fn reconcile(&mut self, r: &mut Residency, origin: DVec3) {
+        let writes = r.reconcile(origin);
+        self.sync(r);
+        self.apply(&writes);
     }
 
     fn apply(&mut self, writes: &[SlotWrite]) {
@@ -189,21 +209,29 @@ impl Mirror {
     }
 }
 
-/// Scatters every resident tile synchronously, opens every batch, reconciles; returns the residency and mirror.
+/// Scatters every resident tile synchronously, readies every batch, reconciles; returns the residency and mirror.
 fn build(cover: &Arc<Groundcover>, settings: RenderSettings, viewer: [f64; 2], origin: DVec3) -> (Residency, Mirror) {
+    build_with(cover, settings, viewer, origin, FnGround(plane))
+}
+
+fn build_with(
+    cover: &Arc<Groundcover>,
+    settings: RenderSettings,
+    viewer: [f64; 2],
+    origin: DVec3,
+    ground: impl GroundSource + 'static,
+) -> (Residency, Mirror) {
     let mut r = Residency::new(Plan::new(cover, &settings), settings);
     let mut mirror = Mirror::default();
     for b in 0..r.plan.batch_count() {
-        if let Some((blocks, slots)) = r.open_batch(b) {
-            mirror.open(b, blocks * slots);
-        }
+        r.set_ready(b);
     }
     r.update_rings(viewer);
-    let job = inputs(cover, settings, r.job_species());
+    let job = JobInputs { ground: Arc::new(ground), ..inputs(cover, settings, r.job_species()) };
     for k in r.next_jobs(viewer, &BTreeSet::new(), |_| true, usize::MAX) {
         assert!(r.insert(scatter_tile(&job, k)));
     }
-    mirror.apply(&r.reconcile(origin));
+    mirror.reconcile(&mut r, origin);
     (r, mirror)
 }
 
@@ -216,7 +244,7 @@ fn assert_layout(r: &Residency, mirror: &Mirror, origin: DVec3) {
         for (sp, placed) in data.scatter.species.iter().zip(&data.placed) {
             let Some(p) = placed else {
                 let waits = r.plan.species[sp.species.get()]
-                    .is_none_or(|p| !r.is_open(batch_index(p.group, p.casts && r.is_casting(tile))));
+                    .is_none_or(|p| !r.is_ready(batch_index(p.group, p.casts && r.is_casting(tile))));
                 assert!(sp.instances.is_empty() || waits, "{tile:?} unplaced");
                 continue;
             };
@@ -245,8 +273,11 @@ fn plan_groups_species_by_model_and_sizes_blocks_from_the_grid() {
     assert_eq!(plan.groups.len(), 2);
     assert_eq!(plan.groups[0].model, "fern");
     assert_eq!(plan.groups[0].species.len(), 2);
-    // fern_a: footprint 1 m on a 16 m tile = 256 cells; fern_b 64 cells.
-    assert_eq!(plan.groups[0].block_slots, 256);
+    // fern_a: footprint 1 m on a 16 m tile = 256 cells at p = 0.4: μ = 102.4, + 5√μ = 153; fern_b 64 cells of
+    // 4 m² at p = 0.4: μ = 25.6, + 5√μ = 51. The group's block is the larger.
+    assert_eq!(plan.groups[0].block_slots, 153);
+    // flower: 256 cells at p = 0.3: μ = 76.8, + 5√μ = 121.
+    assert_eq!(plan.groups[1].block_slots, 121);
     assert!(plan.species[3].is_none(), "blade species are not drawn here");
     let fern_b = plan.species[1].expect("planned");
     assert_eq!((fern_b.group, fern_b.slot, fern_b.casts), (0, 1, false));
@@ -279,6 +310,7 @@ fn origin_shift_rewrite_matches_a_fresh_build() {
     let shifted = DVec3::new(1024.0, 256.0, 2048.0);
     let writes = r.reconcile(shifted);
     assert!(!writes.is_empty());
+    mirror.sync(&r);
     mirror.apply(&writes);
     let (_, fresh) = build(&cover, settings(), viewer, shifted);
     assert_eq!(mirror, fresh);
@@ -301,7 +333,7 @@ fn walking_frees_and_moves_blocks() {
         for k in r.next_jobs(p, &BTreeSet::new(), |_| true, usize::MAX) {
             r.insert(scatter_tile(&job, k));
         }
-        mirror.apply(&r.reconcile(origin));
+        mirror.reconcile(&mut r, origin);
         assert_layout(&r, &mirror, origin);
         assert_eq!(r.stats.unplaced, 0, "step {step}: a batch ran out of blocks");
     }
@@ -330,13 +362,14 @@ fn late_batch_gets_every_resident_tile() {
     for k in r.next_jobs([0.0, 0.0], &BTreeSet::new(), |_| true, usize::MAX) {
         r.insert(scatter_tile(&job, k));
     }
-    assert!(r.reconcile(DVec3::ZERO).is_empty(), "no batch open yet");
+    assert!(r.reconcile(DVec3::ZERO).is_empty(), "no batch ready yet");
+    assert!((0..r.plan.batch_count()).all(|b| !r.is_open(b)), "no batch opens before its model resolves");
     let mut mirror = Mirror::default();
     let b = batch_index(1, false);
-    let (blocks, slots) = r.open_batch(b).expect("flower batch");
-    mirror.open(b, blocks * slots);
-    mirror.apply(&r.reconcile(DVec3::ZERO));
+    assert!(r.set_ready(b), "flower batch");
+    mirror.reconcile(&mut r, DVec3::ZERO);
     assert!(mirror.active(b) > 0);
+    assert!((0..r.plan.batch_count()).all(|o| r.is_open(o) == (o == b)), "only the ready batch opened");
     assert_layout(&r, &mirror, DVec3::ZERO);
 }
 
@@ -421,7 +454,7 @@ fn app_follows_the_viewer_across_tiles() {
     app.world_mut().entity_mut(viewer).insert(GlobalTransform::from_translation(Vec3::new(405.0, 1.7, 5.0)));
     let second = settle(&mut app);
     assert_eq!(second.residency.resident, expect, "same ring size elsewhere (same sub-tile position)");
-    assert_eq!(second.batches, 3, "batches are kept");
+    assert_eq!(second.batches, 3, "the old batches closed, the new ring reopened them");
     let uploads = app.world().resource::<GroundcoverUploads>();
     assert!(!uploads.writes.is_empty(), "runs queued (no render world drains them here)");
 }
@@ -593,4 +626,233 @@ fn feature_switch_registered() {
     assert!(!running(&app));
     set_enabled(&mut app, true);
     assert!(running(&app));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Demand sizing (GC-M1)
+
+/// Two regions' species: channel 0 grows `cover()`'s fern and flower models, channel 1 a bush and a reed.
+fn two_region_cover() -> Groundcover {
+    let a = vec![
+        species("fern_a", "fern", 1.0, 0.4, ShadowClass::Near),
+        species("fern_b", "fern", 2.0, 0.1, ShadowClass::None),
+        species("flower", "flower", 1.0, 0.3, ShadowClass::None),
+    ];
+    let b = vec![species("bush", "bush", 2.0, 0.08, ShadowClass::Near), species("reed", "reed", 0.75, 0.6, ShadowClass::None)];
+    let list = |v: &[Species]| v.iter().map(|s| WeightedSpecies { species: s.id.clone(), weight: 1.0 }).collect();
+    let rules = RuleTable { rules: vec![ChannelRule { channel: 0, species: list(&a) }, ChannelRule { channel: 1, species: list(&b) }] };
+    Groundcover::new(a.into_iter().chain(b).collect(), &rules).expect("valid cover")
+}
+
+/// The plane, channel 0 west of x = 200 m and channel 1 east of it.
+fn regions(x: f64, z: f64, out: &mut GroundSample) {
+    plane(x, z, out);
+    out.channels.clear();
+    out.channels.extend(if x < 200.0 { [1.0, 0.0] } else { [0.0, 1.0] });
+}
+
+fn open_models(r: &Residency) -> BTreeSet<&str> {
+    (0..r.plan.batch_count()).filter(|&b| r.is_open(b)).map(|b| r.plan.groups[b / 2].model.as_str()).collect()
+}
+
+/// (live, capacity) slots over every open batch.
+fn slot_totals(r: &Residency) -> (u64, u64) {
+    (0..r.plan.batch_count())
+        .filter_map(|b| r.pool(b))
+        .fold((0, 0), |(l, c), p| (l + p.live_slots(), c + u64::from(p.capacity())))
+}
+
+/// Moves the viewer, scatters every new resident tile, reconciles into the mirror and checks the layout.
+fn walk_to(r: &mut Residency, mirror: &mut Mirror, job: &JobInputs, p: [f64; 2]) {
+    r.update_rings(p);
+    for k in r.next_jobs(p, &BTreeSet::new(), |_| true, usize::MAX) {
+        r.insert(scatter_tile(job, k));
+    }
+    mirror.reconcile(r, DVec3::ZERO);
+    assert_layout(r, mirror, DVec3::ZERO);
+    assert_eq!(r.stats.unplaced, 0);
+}
+
+/// Only the region's own models get a batch, and a full ring reserves at most 4 slots per live instance.
+#[test]
+fn batches_open_only_for_models_that_grow_in_the_ring() {
+    let cover = Arc::new(two_region_cover());
+    let (r, mirror) = build_with(&cover, settings(), [8.0, 8.0], DVec3::ZERO, FnGround(regions));
+    assert_layout(&r, &mirror, DVec3::ZERO);
+    assert_eq!(r.stats.unplaced, 0);
+    assert!((0..r.plan.batch_count()).all(|b| r.is_ready(b) == (r.plan.batch_layout(b).0 > 0)), "every model ready");
+    assert_eq!(open_models(&r), BTreeSet::from(["fern", "flower"]));
+    assert_eq!(mirror.0.keys().copied().collect::<Vec<_>>(), [0, 1, 2], "fern plain + casting, flower plain");
+    let (live, capacity) = slot_totals(&r);
+    assert!(live > 0 && capacity <= 4 * live, "capacity {capacity} > 4 x live {live}");
+}
+
+/// A batch grows by doubling when it has no free block: every slot written before keeps its value, the new tail
+/// is inactive until a block is written into it, and the capacity is the old one times a power of two (or the
+/// plan's cap).
+#[test]
+fn growth_doubles_and_keeps_every_written_slot() {
+    let cover = Arc::new(cover());
+    let s = RenderSettings { initial_blocks: 1, ..settings() };
+    let mut r = Residency::new(Plan::new(&cover, &s), s);
+    for b in 0..r.plan.batch_count() {
+        r.set_ready(b);
+    }
+    let viewer = [0.0, 0.0];
+    r.update_rings(viewer);
+    let job = inputs(&cover, s, r.job_species());
+    let mut mirror = Mirror::default();
+    let mut grew = 0;
+    for k in r.next_jobs(viewer, &BTreeSet::new(), |_| true, usize::MAX) {
+        assert!(r.insert(scatter_tile(&job, k)));
+        let before = mirror.0.clone();
+        let caps: Vec<Option<u32>> = (0..r.plan.batch_count()).map(|b| r.pool(b).map(SlotPool::capacity)).collect();
+        let writes = r.reconcile(DVec3::ZERO);
+        mirror.sync(&r);
+        let mut grown = Vec::new();
+        for (b, old) in caps.iter().enumerate() {
+            let (Some(old), Some(new)) = (*old, r.pool(b).map(SlotPool::capacity)) else { continue };
+            if new == old {
+                continue;
+            }
+            let (blocks, slots) = r.plan.batch_layout(b);
+            assert!(new == blocks * slots || (new % old == 0 && (new / old).is_power_of_two()), "batch {b}: {old} -> {new}");
+            assert!(mirror.0[&b][old as usize..].iter().all(|w| *w == [0; 16]), "batch {b}: the new tail starts inactive");
+            grown.push((b, old as usize));
+        }
+        mirror.apply(&writes);
+        for &(b, old) in &grown {
+            // The batch was full (no tile left): every old block was live, and none of its slots moved.
+            assert_eq!(mirror.0[&b][..old], before[&b][..old], "batch {b}: growth changed a written slot");
+        }
+        grew += grown.len();
+        assert_layout(&r, &mirror, DVec3::ZERO);
+        assert_eq!(r.stats.unplaced, 0);
+    }
+    assert!(grew >= 3, "the batches grew {grew} times");
+}
+
+/// When every tile using a model leaves, its batch closes (pool and GPU batch gone); a return reopens it.
+#[test]
+fn a_model_that_leaves_closes_its_batch_and_a_return_reopens_it() {
+    let cover = Arc::new(two_region_cover());
+    let s = settings();
+    let (mut r, mut mirror) = build_with(&cover, s, [0.0, 0.0], DVec3::ZERO, FnGround(regions));
+    let job = JobInputs { ground: Arc::new(FnGround(regions)), ..inputs(&cover, s, r.job_species()) };
+    assert_eq!(open_models(&r), BTreeSet::from(["fern", "flower"]));
+    // Far east: the whole ring leaves before any new tile is scattered.
+    r.update_rings([500.0, 0.0]);
+    mirror.reconcile(&mut r, DVec3::ZERO);
+    assert!(open_models(&r).is_empty() && mirror.0.is_empty(), "every batch closed with its last block");
+    walk_to(&mut r, &mut mirror, &job, [500.0, 0.0]);
+    assert_eq!(open_models(&r), BTreeSet::from(["bush", "reed"]));
+    walk_to(&mut r, &mut mirror, &job, [0.0, 0.0]);
+    assert_eq!(open_models(&r), BTreeSet::from(["fern", "flower"]), "the return reopened them");
+}
+
+/// `reserve_worst_case`: the pre-GC-M1 sizing exactly. Blocks of the grid ceiling (`fern_a` 256 cells, flower 256),
+/// every ready batch open at once at the ring's worst case, before any tile and wherever the viewer goes.
+#[test]
+fn reserve_worst_case_reproduces_the_old_capacities() {
+    let cover = Arc::new(cover());
+    let s = RenderSettings { reserve_worst_case: true, ..settings() };
+    let mut r = Residency::new(Plan::new(&cover, &s), s);
+    let all = max_ring_tiles(16.0, 40.0, 6.0);
+    let near = max_ring_tiles(16.0, s.effective_shadow_range(), 6.0);
+    assert_eq!((r.plan.groups[0].block_slots, r.plan.groups[1].block_slots), (256, 256));
+    assert_eq!(r.plan.groups[0].blocks, [(all * 2).min(256), near.min(256)]);
+    assert_eq!(r.plan.groups[1].blocks, [all.min(256), 0]);
+    for b in 0..r.plan.batch_count() {
+        r.set_ready(b);
+    }
+    let caps: Vec<u32> = (0..r.plan.batch_count()).map(|b| r.pool(b).map_or(0, SlotPool::capacity)).collect();
+    assert_eq!(caps, [(all * 2).min(256) * 256, near.min(256) * 256, all.min(256) * 256, 0], "open before any tile");
+    let job = inputs(&cover, s, r.job_species());
+    let mut mirror = Mirror::default();
+    mirror.sync(&r);
+    walk_to(&mut r, &mut mirror, &job, [0.0, 0.0]);
+    r.update_rings([500.0, 0.0]);
+    mirror.reconcile(&mut r, DVec3::ZERO);
+    let after: Vec<u32> = (0..r.plan.batch_count()).map(|b| r.pool(b).map_or(0, SlotPool::capacity)).collect();
+    assert_eq!(after, caps, "never grows, never closes");
+}
+
+/// The App: each batch entity's `max_capacity` follows its pool, the first run of a batch zeroes its whole
+/// output, and every growth queues a zeroed tail before any run into it.
+#[test]
+fn app_batches_grow_with_a_zeroed_tail_first() {
+    let mut app = app();
+    {
+        let mut store = app.world_mut().resource_mut::<Tunables>();
+        let id = store.0.id_of(&tunables::INITIAL_BLOCKS).expect("registered");
+        store.0.set_by(id.untyped(), sf_tunables::Value::Int(1), sf_tunables::SetBy::Console).expect("count");
+    }
+    app.world_mut().spawn((GroundcoverViewer, GlobalTransform::from_translation(Vec3::new(5.0, 1.7, 5.0))));
+    let mut history: BTreeMap<Entity, Vec<u32>> = BTreeMap::new();
+    let start = Instant::now();
+    loop {
+        app.update();
+        for (e, batch) in app.world_mut().query::<(Entity, &GpuBatchedMesh3d)>().iter(app.world()) {
+            let h = history.entry(e).or_default();
+            if h.last() != Some(&batch.max_capacity) {
+                h.push(batch.max_capacity);
+            }
+        }
+        let s = *app.world().resource::<GroundcoverStats>();
+        if s.pending_jobs == 0 && s.residency.scattered == s.residency.resident && s.residency.resident > 0 {
+            assert_eq!(s.residency.unplaced, 0);
+            assert_eq!(s.capacity_slots, history.values().map(|h| u64::from(*h.last().expect("seen"))).sum::<u64>());
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(60), "jobs never finished: {s:?}");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(history.len(), 3);
+    assert!(history.values().any(|h| h.len() > 2), "some batch grew more than once: {history:?}");
+    let writes = &app.world().resource::<GroundcoverUploads>().writes;
+    for (&e, caps) in &history {
+        let runs: Vec<&GroundcoverWrite> = writes.iter().filter(|w| w.entity == e).collect();
+        let zeroed = |w: &GroundcoverWrite, from: u32, to: u32| {
+            w.first_slot == from && w.bytes.len() as u64 == u64::from(to - from) * render::SLOT_BYTES && w.bytes.iter().all(|&b| b == 0)
+        };
+        assert!(zeroed(runs[0], 0, caps[0]), "{e}: the first run zeroes the whole output");
+        for pair in caps.windows(2) {
+            let (old, new) = (pair[0], pair[1]);
+            let tail = runs.iter().position(|w| zeroed(w, old, new)).unwrap_or_else(|| panic!("{e}: no zeroed tail {old}..{new}"));
+            let first_into = runs.iter().position(|w| w.first_slot >= old && !zeroed(w, old, new));
+            assert!(first_into.is_none_or(|i| i > tail), "{e}: a run into {old}.. before its zero-fill");
+        }
+    }
+}
+
+/// Capacity over live slots of a full ring on the defaults (60 m range), demand vs worst-case sizing, for the
+/// meadow-like set of `measure_tile_cost` and the two-region set (one region's ground only).
+#[test]
+#[ignore = "measurement: reserved slots per live instance, demand vs worst case"]
+#[allow(clippy::cast_precision_loss)] // printed ratios
+fn measure_capacity_over_live() {
+    let meadow = {
+        let all = vec![
+            species("fern", "fern", 0.75, 0.6, ShadowClass::Near),
+            species("flower_a", "flower", 1.0, 0.25, ShadowClass::None),
+            species("flower_b", "flower", 1.0, 0.25, ShadowClass::None),
+            species("bush", "bush", 2.0, 0.08, ShadowClass::Near),
+        ];
+        let list = all.iter().map(|s| WeightedSpecies { species: s.id.clone(), weight: 1.0 }).collect();
+        Groundcover::new(all, &RuleTable { rules: vec![ChannelRule { channel: 0, species: list }] }).expect("valid")
+    };
+    for (name, cover) in [("meadow", Arc::new(meadow)), ("two-region", Arc::new(two_region_cover()))] {
+        for worst in [false, true] {
+            let s = RenderSettings { reserve_worst_case: worst, ..RenderSettings::default() };
+            let (r, _) = build_with(&cover, s, [5.0, 5.0], DVec3::ZERO, FnGround(regions));
+            let (live, capacity) = slot_totals(&r);
+            let open = (0..r.plan.batch_count()).filter(|&b| r.is_open(b)).count();
+            println!(
+                "{name} worst_case {worst}: {open} batches, live {live}, capacity {capacity} = {:.2} x live, {:.1} MB, capped {}",
+                capacity as f64 / live as f64,
+                capacity as f64 * 64.0 / 1.0e6,
+                r.stats.capped
+            );
+        }
+    }
 }

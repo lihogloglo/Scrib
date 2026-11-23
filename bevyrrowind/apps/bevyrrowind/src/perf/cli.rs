@@ -42,6 +42,22 @@ pub const SCENARIOS: &[SuiteScenario] = &[
         args: &["view", "Balmora", "--camera", "-120,+70,80,293,250,-878", "--bench", "benchmarks/exterior_red_mountain.json"],
     },
     SuiteScenario {
+        name: "gc_ascadian",
+        about: "groundcover standing: Ascadian Isles meadow east of Pelagiad (cell 2,-7, the `gc-ascadian` scene), eye height, 08:00",
+        args: &[
+            "view",
+            "2,-7",
+            "--camera",
+            "292,+1.7,760,330,+0.6,730",
+            "--hour",
+            "8",
+            "--weather",
+            "clear",
+            "--bench",
+            "benchmarks/exterior_gc_ascadian.json",
+        ],
+    },
+    SuiteScenario {
         name: "run",
         about: "run at 7 m/s, 1.7 m above the ground, through Seyda Neen",
         args: &["view", "Seyda Neen", "--bench", "benchmarks/exterior_run.json", "--bench-ground"],

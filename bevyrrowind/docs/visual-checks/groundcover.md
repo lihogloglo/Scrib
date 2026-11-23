@@ -18,3 +18,21 @@ unmatched [..], models loaded L/13`.
 Look for: plants only on grass land textures (none on roads, rock, mud, cobbles, under water), standing on the ground
 (not floating or sunk), no hard edge where the ring ends, sway without popping, no tiles visibly appearing as you walk.
 Known: Bitter Coast ground is mostly `Tx_BC_mud` (no species yet, so sparse there); no shadows past the near range.
+
+### GC-M2: mesh plants sway, flutter and show gust fronts (2026-11-23, groundcover)
+
+Status: awaiting owner (with owner look 2). Scenes `gc-ascadian`, `gc-grazelands`; try `--weather` clear and a storm.
+Look for: each clump swaying gently out of step with its neighbours, a faster shiver at the tips, gust fronts pushing
+visibly harder than the lulls between them, no motion in still air, no smearing or ghosting on moving plants (motion
+vectors), no jump once an hour (time wrap). Live tunables `groundcover.render.gust_contrast`, `sway_amount`, `sway_hz`,
+`flutter_amount`, `flutter_hz` (all `Guess`); A/B by setting the amounts to 0.
+
+### GC-3: grass blades carpet (`bevy_grass`), first look (2026-11-23, groundcover)
+
+Status: awaiting owner (owner look 1, after the origin patch GC-3b and the wind bridge GC-3c). Scene `gc-blades`
+(= `gc-ascadian` with `--set groundcover.blades.enabled=true`); blades are off by default until this look.
+Look for: a dense carpet of blades on the grass ground only (none on roads, rock or under water), standing on the ground,
+the vanilla clumps among them as accents, blades staying in place as you walk (no reshuffle when the world origin
+shifts), wind fronts crossing the carpet in the weather's direction, no hard edge where the blades end.
+Known: one style ("meadow") everywhere, fixed tint (not yet the terrain's colour), no blade shadows, no trampling yet.
+Log line: `groundcover: blade species B, styles registered R`.

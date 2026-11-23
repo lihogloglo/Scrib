@@ -139,26 +139,26 @@ Found while reviewing; the migration slice of each system greps its own files fo
 Written by `node tools/tunables-census.mjs` (do not edit by hand; edit the rules table at the top of the script).
 Per system, then per crate: the T and ? rows in full, the C rows as one line. Paths are relative to the crate.
 
-Sources: 1526 consts, 852 `Default` fields, 216 shader consts (98 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 238.
+Sources: 1551 consts, 852 `Default` fields, 220 shader consts (98 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 265.
 
 | System | Candidates | T | C | ? |
 |---|---:|---:|---:|---:|
 | ai-nav | 77 | 22 | 41 | 14 |
 | animation-characters | 197 | 127 | 55 | 15 |
-| app-diag | 65 | 35 | 18 | 12 |
+| app-diag | 79 | 35 | 32 | 12 |
 | audio | 43 | 36 | 1 | 6 |
 | effects | 56 | 11 | 44 | 1 |
 | feel-camera-combat | 207 | 153 | 13 | 41 |
-| other | 339 | 72 | 196 | 71 |
+| other | 349 | 72 | 209 | 68 |
 | physics | 147 | 126 | 8 | 13 |
 | shadows-lights-gi | 50 | 35 | 12 | 3 |
 | sky-weather-surface | 646 | 306 | 165 | 175 |
 | statics-lod-farfield | 114 | 66 | 35 | 13 |
-| streaming-exterior | 259 | 93 | 144 | 22 |
+| streaming-exterior | 262 | 93 | 147 | 22 |
 | terrain-water | 289 | 131 | 89 | 69 |
 | textures | 21 | 10 | 6 | 5 |
-| ui | 84 | 50 | 7 | 27 |
-| **total** | **2594** | **1273** | **834** | **487** |
+| ui | 86 | 52 | 7 | 27 |
+| **total** | **2623** | **1275** | **864** | **484** |
 
 ## ai-nav
 
@@ -453,25 +453,25 @@ Stays const: OutfitCache.capacity (layout/math/id).
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/perf/cli.rs:103 | GPU_BUSY_PCT | `15.0` | T |  |
-| src/perf/cli.rs:381 | OTHER_CPU_LIMIT | `25.0` | T |  |
-| src/perf/cli.rs:810 | IDLE_GPU_CLOCK_MHZ | `600.0` | ? |  |
+| src/perf/cli.rs:119 | GPU_BUSY_PCT | `15.0` | T |  |
+| src/perf/cli.rs:397 | OTHER_CPU_LIMIT | `25.0` | T |  |
+| src/perf/cli.rs:826 | IDLE_GPU_CLOCK_MHZ | `600.0` | ? |  |
 
 Stays const: EYE_OFFSET_M (opt-out: a framing default: where a debug view starts; `--camera` overrides it), EYE_HEIGHT_M (opt-out: a framing default: where a debug view starts; `--camera` overrides it), BUCKET_M (opt-out: a lookup structure's bucket size: no look, feel or cost beyond the load-time search), SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane is at z = 0).
 
-### mw_devtools_bevy (14: T 4, C 7, ? 3)
+### mw_devtools_bevy (28: T 4, C 21, ? 3)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
 | src/live_ab.rs:88 | LiveAb.help | `true` | ? | bool |
 | src/live_ab.rs:88 | LiveAb.sun_shadows | `true` | T |  |
 | src/live_ab.rs:88 | LiveAb.mesh_wire | `false` | ? | bool |
-| src/live_ab.rs:544 | TIME_SCALES | `[30.0, 120.0, 600.0, 1200.0]` | T |  |
+| src/live_ab.rs:557 | TIME_SCALES | `[30.0, 120.0, 600.0, 1200.0]` | T |  |
 | src/perf.rs:35 | DEFAULT_RESOLUTION | `(1280, 720)` | T |  |
 | src/pipeline_watch.rs:26 | FLUSH_SECS | `0.5` | T |  |
-| src/remote.rs:43 | DEFAULT_PORT | `15712` | ? |  |
+| src/remote.rs:45 | DEFAULT_PORT | `15712` | ? |  |
 
-Stays const: WARMUP_FRAMES (opt-out: a pipeline depth, not a trade-off), COLUMN_DIM (opt-out: a drawing style: the column is the frame, the lines stay readable over it), CLIP_ROWS (opt-out: a drawing style), DASH (opt-out: a drawing style), AUTHORED_HEIGHT_PX (opt-out: a layout reference: sizes are authored at 1080p, `diag.panel.scale` tunes them), STAGES (opt-out: a layout: the three stages the text panel listed), CONSOLE_TAIL (opt-out: a reply size, not a trade-off).
+Stays const: PANEL_W (opt-out: layout), PANEL_TOP (opt-out: layout), ROWS_MAX_H (opt-out: layout), TOGGLE_W (opt-out: layout), LABEL_W (opt-out: layout), NAME_W (opt-out: layout), DELTA_W (opt-out: layout), GAP (opt-out: layout), PAD (opt-out: layout), TITLE_PX (opt-out: layout), ROW_PX (opt-out: layout), SMALL_PX (opt-out: layout), Z (opt-out: layout), WARMUP_FRAMES (opt-out: a pipeline depth, not a trade-off), COLUMN_DIM (opt-out: a drawing style: the column is the frame, the lines stay readable over it), CLIP_ROWS (opt-out: a drawing style), DASH (opt-out: a drawing style), AUTHORED_HEIGHT_PX (opt-out: a layout reference: sizes are authored at 1080p, `diag.panel.scale` tunes them), STAGES (opt-out: a layout: the three stages the text panel listed), CONSOLE_TAIL (opt-out: a reply size, not a trade-off), FLIP_POLLS (opt-out: schedule latency, not a trade-off).
 
 ### mw_game_core (8: T 5, C 0, ? 3)
 
@@ -1006,12 +1006,7 @@ Stays const: MERCANTILE (small index), PERSONALITY (small index), ActorFacts.id 
 
 Stays const: EFFECTS_BLOB_VERSION (layout/math/id), STATS_BLOB_VERSION (layout/math/id).
 
-### mw_saves_bevy (4: T 0, C 2, ? 2)
-
-| Where | Name | Value | Cls | Note |
-|---|---|---|---|---|
-| src/menu.rs:210 | MONTH_DAYS | `[31, 28, 31, 30, 31, 30, 31, 31, 30, ...` | ? |  |
-| src/menu.rs:212 | START | `(16, 7)` | ? |  |
+### mw_saves_bevy (2: T 0, C 2, ? 0)
 
 Stays const: RPG_VERSION (layout/math/id), PLAYER_EXT_VERSION (layout/math/id).
 
@@ -1067,9 +1062,9 @@ Stays const: RECORD_HEADER (layout/math/id), RECORD_CHECK (small index), TRACE_F
 
 Stays const: FNV_OFFSET (opt-out: FNV-1a 64 offset basis, a hash format constant), FNV_PRIME (opt-out: FNV-1a 64 prime, a hash format constant), GOLDEN_GAMMA (opt-out: SplitMix64 golden-ratio increment, a hash format constant), MIX_A (opt-out: SplitMix64 / Mix13 multiplier, a hash format constant), MIX_B (opt-out: SplitMix64 / Mix13 multiplier, a hash format constant), DOMAIN (opt-out: domain separator so tile (0, 0), MASK_INSIDE_MIN (opt-out: R8 format: a mask texel at or above half-scale counts as inside), MAX_CELLS_PER_AXIS (opt-out: format: cells per axis capped so `n²` cell indices fit a u32), ACCEPT_SCALE (opt-out: maths: 2³², the integer scale of the acceptance threshold), BYTES (layout/math/id).
 
-### sf_groundcover_bevy (6: T 0, C 6, ? 0)
+### sf_groundcover_bevy (13: T 0, C 13, ? 0)
 
-Stays const: PARAMS_BINDING (layout/math/id), WIND_BINDING (layout/math/id), SLOT_BYTES (layout/math/id), MAX_SPECIES_PER_BATCH (opt-out: layout: the material uniform's species array length), TILE_SAMPLES_F64 (opt-out: the terrain format's tile edge), HEIGHTS_PER_LAYER (opt-out: the terrain format's sample spacings).
+Stays const: MAX_CELLS_PER_SIDE (opt-out: capacity: the vendored crate's own cap on a field's baked maps), PARAMS_BINDING (layout/math/id), WIND_BINDING (layout/math/id), TIME_WRAP_S (opt-out: Bevy's fixed wrap period of `globals.time`, a fact of the engine), CROSS_SWAY_RATIO (opt-out: decorrelation ratio; the cross sway's speed is tuned through `groundcover.render.sway_hz`), SLOT_BYTES (layout/math/id), MAX_SPECIES_PER_BATCH (opt-out: layout: the material uniform's species array length), TAU (layout/math/id), CROSS_PHASE (opt-out: phase decorrelation factor, maths), FLUTTER_PHASE (opt-out: phase decorrelation factor, maths), FLUTTER_SPREAD (opt-out: per-vertex phase decorrelation; the flutter's look is tuned by its amount and Hz), TILE_SAMPLES_F64 (opt-out: the terrain format's tile edge), HEIGHTS_PER_LAYER (opt-out: the terrain format's sample spacings).
 
 ### sf_ids (5: T 1, C 0, ? 4)
 
@@ -1087,13 +1082,9 @@ Stays const: PARAMS_BINDING (layout/math/id), WIND_BINDING (layout/math/id), SLO
 |---|---|---|---|---|
 | src/mesh.rs:131 | SEGMENTS | `24` | ? |  |
 
-### sf_rockgen (42: T 0, C 41, ? 1)
+### sf_rockgen (47: T 0, C 47, ? 0)
 
-| Where | Name | Value | Cls | Note |
-|---|---|---|---|---|
-| src/bake.rs:32 | HULLS | `cfg!(feature = "collision")` | ? |  |
-
-Stays const: LIBRARY_SEED (opt-out: seed: names the library set, not a quality/cost trade-off), UNIT_LONG_AXIS (opt-out: units: the unit frame), MIN_ROUNDING_CELLS (opt-out: sampling limit of the mesher, not a look value), MAX_CHIP_FRACTION (opt-out: definition of a chip; the look value is chip_depth), SHAPE_STREAM (sentinel/derived), DEGENERATE (opt-out: numerical epsilon), NEIGHBOUR_SPACINGS (opt-out: geometry: neighbour search radius of a jittered lattice), MIN_GROOVE_CELLS (opt-out: sampling limit of the mesher), SLIVER_SIN (opt-out: numerical: degenerate-triangle test), OFFSET (sentinel/derived), PRIME (sentinel/derived), VARIANT_PURPOSE (sentinel/derived), PICK_PURPOSE (sentinel/derived), LIBRARY_FORMAT (opt-out: format version of the bake key), MIN_CLOSED_TRIANGLES (opt-out: maths: a tetrahedron is the smallest closed mesh), PAD_CELLS (opt-out: algorithm: the outer layer must be outside for the net to close), SKIP_BLOCK (opt-out: loop layout of the sampler), RETRY_SCHEDULE (opt-out: algorithm schedule of the mesher), QUANTUM (opt-out: numerical: float lattice), SEPARATE_QUANTA (opt-out: numerical: separation of coincident vertices), UNPINCH_ATTEMPTS (opt-out: algorithm schedule of the mesher), MIN_VOLUME_FRACTION (opt-out: validity check of a LOD, not a look value), AMBIGUITY_PASSES (opt-out: algorithm schedule of the mesher), FLIP_CELLS (opt-out: numerical: flipped sample value), UNBOUNDED_ERROR (opt-out: algorithm: LOD1+ are target-driven, the error bound is off), GOLDEN (sentinel/derived), MIN_NOISE_WAVELENGTH_CELLS (opt-out: sampling limit: shorter wavelengths alias on the grid), PIT_ROUNDING_CELLS (opt-out: sampling limit of the mesher), MIN_PIT_CELLS (opt-out: sampling limit: a smaller pit is noise on the grid), MIN_PIT_WALL_CELLS (opt-out: sampling limit of the mesher), PIT_OPEN_FRACTION (opt-out: definition of an open pit, not a look value: the look is pit_density / pit_size), PIT_MIN_FRACTION (opt-out: definition of the pit size law; the look value is pit_size), QEF_EIGEN_MIN (opt-out: numerical method: QEF truncation), SNAP_REACH_CELLS (opt-out: numerical method: dual contouring keeps the vertex near its cell), SNAP_EPS_CELLS (opt-out: numerical method: acceptance tolerance of the projection), NEWTON_STEPS (opt-out: numerical method: iteration count), GRADIENT_STEP_CELLS (opt-out: numerical method: central-difference step), HARD_NORMAL_STEP_CELLS (opt-out: numerical method: central-difference step), NOISE_STREAM (sentinel/derived), PIT_STREAM (sentinel/derived), SWEEPS (opt-out: numerical method: Jacobi sweeps; 3×3 converges in a handful).
+Stays const: LIBRARY_SEED (opt-out: seed: names the library set, not a quality/cost trade-off), HULLS (opt-out: build configuration: mirrors the `collision` feature), UNIT_LONG_AXIS (opt-out: units: the unit frame), MIN_ROUNDING_CELLS (opt-out: sampling limit of the mesher, not a look value), MAX_CHIP_FRACTION (opt-out: definition of a chip; the look value is chip_depth), SHAPE_STREAM (sentinel/derived), ASPECT_STREAM (sentinel/derived), DEGENERATE (opt-out: numerical epsilon), NEIGHBOUR_SPACINGS (opt-out: geometry: neighbour search radius of a jittered lattice), MIN_GROOVE_CELLS (opt-out: sampling limit of the mesher), SHAPE_STREAM (sentinel/derived), OVERLAP (opt-out: definition: the union's seam closure, not a look value), MIN_OVERLAP_CELLS (opt-out: sampling limit of the mesher), MIN_ROUNDING_CELLS (opt-out: sampling limit of the mesher, not a look value), SLIVER_SIN (opt-out: numerical: degenerate-triangle test), OFFSET (sentinel/derived), PRIME (sentinel/derived), VARIANT_PURPOSE (sentinel/derived), PICK_PURPOSE (sentinel/derived), LIBRARY_FORMAT (opt-out: format version of the bake key), MIN_CLOSED_TRIANGLES (opt-out: maths: a tetrahedron is the smallest closed mesh), PAD_CELLS (opt-out: algorithm: the outer layer must be outside for the net to close), SKIP_BLOCK (opt-out: loop layout of the sampler), RETRY_SCHEDULE (opt-out: algorithm schedule of the mesher), QUANTUM (opt-out: numerical: float lattice), SEPARATE_QUANTA (opt-out: numerical: separation of coincident vertices), UNPINCH_ATTEMPTS (opt-out: algorithm schedule of the mesher), MIN_VOLUME_FRACTION (opt-out: validity check of a LOD, not a look value), AMBIGUITY_PASSES (opt-out: algorithm schedule of the mesher), FLIP_CELLS (opt-out: numerical: flipped sample value), UNBOUNDED_ERROR (opt-out: algorithm: LOD1+ are target-driven, the error bound is off), GOLDEN (sentinel/derived), MIN_NOISE_WAVELENGTH_CELLS (opt-out: sampling limit: shorter wavelengths alias on the grid), PIT_ROUNDING_CELLS (opt-out: sampling limit of the mesher), MIN_PIT_CELLS (opt-out: sampling limit: a smaller pit is noise on the grid), MIN_PIT_WALL_CELLS (opt-out: sampling limit of the mesher), PIT_OPEN_FRACTION (opt-out: definition of an open pit, not a look value: the look is pit_density / pit_size), PIT_MIN_FRACTION (opt-out: definition of the pit size law; the look value is pit_size), QEF_EIGEN_MIN (opt-out: numerical method: QEF truncation), SNAP_REACH_CELLS (opt-out: numerical method: dual contouring keeps the vertex near its cell), SNAP_EPS_CELLS (opt-out: numerical method: acceptance tolerance of the projection), NEWTON_STEPS (opt-out: numerical method: iteration count), GRADIENT_STEP_CELLS (opt-out: numerical method: central-difference step), HARD_NORMAL_STEP_CELLS (opt-out: numerical method: central-difference step), NOISE_STREAM (sentinel/derived), PIT_STREAM (sentinel/derived), SWEEPS (opt-out: numerical method: Jacobi sweeps; 3×3 converges in a handful).
 
 ### sf_rockgen_bevy (15: T 0, C 15, ? 0)
 
@@ -1560,8 +1551,8 @@ Stays const: INJECT_GROUP (layout/math/id), INJECT_TILE (derived), MIN_CLIP_W (o
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:125 | SHADOW_HALF_EXTENT | `8_192.0` | T |  |
-| src/lib.rs:129 | SHADOW_ANCHOR_CELL | `2_048.0` | T |  |
+| src/lib.rs:126 | SHADOW_HALF_EXTENT | `8_192.0` | T |  |
+| src/lib.rs:130 | SHADOW_ANCHOR_CELL | `2_048.0` | T |  |
 | src/render.rs:468 | FOG_LIGHT_TEXELS | `3` | T |  |
 | src/render.rs:471 | FOG_STEPS | `16` | T |  |
 | src/shaders/bank_edges.wesl:6 | LOG_STEPS | `32.0` | T | shader const: needs a uniform |
@@ -1637,9 +1628,9 @@ Stays const: SLOTS (layout/math/id), SUBVIEW (sentinel/derived), LOD_DISTANCE_M 
 | src/celestial.rs:46 | Orbit.north_heading_deg | `0.0` | T |  |
 | src/celestial.rs:47 | Orbit.lunar_month_days | `29.530_59` | ? |  |
 | src/celestial.rs:48 | Orbit.moon_phase_at_epoch | `0.0` | ? |  |
-| src/clock.rs:21 | Calendar.hours_per_day | `24.0` | T |  |
-| src/clock.rs:22 | Calendar.days_per_year | `365.2422` | ? |  |
-| src/clock.rs:49 | SkyClock.days | `0.5` | ? |  |
+| src/clock.rs:22 | Calendar.hours_per_day | `24.0` | T |  |
+| src/clock.rs:23 | Calendar.days_per_year | `365.2422` | ? |  |
+| src/clock.rs:62 | SkyClock.days | `0.5` | ? |  |
 | src/night.rs:23 | MAX_MOONS | `4` | T |  |
 | src/night.rs:172 | Moon.angular_size | `0.009_04` | T |  |
 | src/night.rs:173 | Moon.phase_period_days | `29.530_59` | ? |  |
@@ -1686,28 +1677,28 @@ Stays const: EPS (layout/math/id), MAX_TILES (opt-out: capacity: the bits of Til
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
 | src/gpu_culled_casters.rs:40 | ALL_FACES | `0b11_1111` | ? |  |
-| src/lib.rs:203 | SkyRenderOptions.sea_level | `0.0` | T | settings default |
-| src/lib.rs:205 | SkyRenderOptions.num_cascades | `4` | T |  |
-| src/lib.rs:206 | SkyRenderOptions.minimum_distance | `0.1` | T |  |
-| src/lib.rs:207 | SkyRenderOptions.split_near | `1.0` | T |  |
-| src/lib.rs:208 | SkyRenderOptions.maximum_distance | `250.0` | T |  |
-| src/lib.rs:209 | SkyRenderOptions.lambda | `0.9` | T | settings default |
-| src/lib.rs:210 | SkyRenderOptions.overlap_proportion | `0.2` | T | settings default |
-| src/lib.rs:216 | SkyRenderOptions.weather_ambient_tint | `true` | T | settings default |
-| src/lib.rs:217 | SkyRenderOptions.night_sky_glow | `true` | T | settings default |
-| src/lib.rs:218 | SkyRenderOptions.medium_resolution | `256` | T |  |
-| src/lib.rs:219 | SkyRenderOptions.medium_min_interval | `0.25` | T |  |
-| src/lib.rs:220 | SkyRenderOptions.auto_light_proxies | `true` | T | settings default |
-| src/lib.rs:221 | SkyRenderOptions.default_proxy_radius | `0.08` | T |  |
-| src/lib.rs:222 | SkyRenderOptions.auto_ray_tracing_meshes | `true` | T | settings default |
-| src/lib.rs:224 | SkyRenderOptions.ray_tracing_denoiser | `true` | T |  |
-| src/lib.rs:252 | SunShadow.contact_shadows | `false` | T |  |
-| src/lib.rs:278 | SkyCamera.exposure | `true` | T |  |
-| src/lib.rs:279 | SkyCamera.ambient | `true` | ? | bool |
-| src/lib.rs:280 | SkyCamera.environment_light | `true` | ? | bool |
-| src/lib.rs:430 | MEDIUM_UPDATE_STEPS | `Vec3::new(0.05, 0.02, 0.02)` | T |  |
-| src/quality.rs:244 | SunShadowQuality.minimum_distance | `0.1` | T |  |
-| src/quality.rs:245 | SunShadowQuality.split_near | `1.0` | T |  |
+| src/lib.rs:204 | SkyRenderOptions.sea_level | `0.0` | T | settings default |
+| src/lib.rs:206 | SkyRenderOptions.num_cascades | `4` | T |  |
+| src/lib.rs:207 | SkyRenderOptions.minimum_distance | `0.1` | T |  |
+| src/lib.rs:208 | SkyRenderOptions.split_near | `1.0` | T |  |
+| src/lib.rs:209 | SkyRenderOptions.maximum_distance | `250.0` | T |  |
+| src/lib.rs:210 | SkyRenderOptions.lambda | `0.9` | T | settings default |
+| src/lib.rs:211 | SkyRenderOptions.overlap_proportion | `0.2` | T | settings default |
+| src/lib.rs:217 | SkyRenderOptions.weather_ambient_tint | `true` | T | settings default |
+| src/lib.rs:218 | SkyRenderOptions.night_sky_glow | `true` | T | settings default |
+| src/lib.rs:219 | SkyRenderOptions.medium_resolution | `256` | T |  |
+| src/lib.rs:220 | SkyRenderOptions.medium_min_interval | `0.25` | T |  |
+| src/lib.rs:221 | SkyRenderOptions.auto_light_proxies | `true` | T | settings default |
+| src/lib.rs:222 | SkyRenderOptions.default_proxy_radius | `0.08` | T |  |
+| src/lib.rs:223 | SkyRenderOptions.auto_ray_tracing_meshes | `true` | T | settings default |
+| src/lib.rs:225 | SkyRenderOptions.ray_tracing_denoiser | `true` | T |  |
+| src/lib.rs:253 | SunShadow.contact_shadows | `false` | T |  |
+| src/lib.rs:279 | SkyCamera.exposure | `true` | T |  |
+| src/lib.rs:280 | SkyCamera.ambient | `true` | ? | bool |
+| src/lib.rs:281 | SkyCamera.environment_light | `true` | ? | bool |
+| src/lib.rs:440 | MEDIUM_UPDATE_STEPS | `Vec3::new(0.05, 0.02, 0.02)` | T |  |
+| src/quality.rs:278 | SunShadowQuality.minimum_distance | `0.1` | T |  |
+| src/quality.rs:279 | SunShadowQuality.split_near | `1.0` | T |  |
 | src/shadow_budget.rs:363 | BudgetedShadow.priority | `1.0` | T |  |
 
 Stays const: ALL_FACES (opt-out: layout: the six cube faces), STILL_EPSILON (opt-out: fixture: the spec's 1 mm comparison), CAPTURE_HISTORY (opt-out: capacity: plans in flight), MOBILITY_DEPTH (opt-out: capacity: hierarchy depth searched), ATLAS_MIN_CAPTURES_PER_FRAME (opt-out: capacity: atlas initial capture floor), ATLAS_MOVING_TILE_PX (opt-out: layout: hero torch live tile size), ATLAS_POLICY_STORE_FACES (opt-out: layout: 6 faces per cube in policy pool), T_ROWS (small index), PI (layout/math/id), HUE_GRID (opt-out: layout: covers the 8x8 level exactly), GLOW_NEGLIGIBLE (opt-out: maths: 1/4096, below one 12-bit output step), ATLAS_NEW_SLOTS_PER_FRAME (opt-out: capacity: initial interior fill stagger).
@@ -2140,12 +2131,12 @@ Stays const: NON_INDEXED (sentinel/derived), SLOT_BYTES (layout/math/id), SLOT_L
 | src/lib.rs:44 | NEAR_M | `1.5` | T |  |
 | src/lib.rs:46 | MIN_FACING | `0.5` | T |  |
 
-### mw_exterior_bevy (31: T 7, C 23, ? 1)
+### mw_exterior_bevy (34: T 7, C 26, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/exterior.rs:1534 | SUN_DEPTH_BIAS | `0.02` | T |  |
-| src/exterior.rs:1536 | SUN_NORMAL_BIAS | `0.8` | T |  |
+| src/exterior.rs:1551 | SUN_DEPTH_BIAS | `0.02` | T |  |
+| src/exterior.rs:1553 | SUN_NORMAL_BIAS | `0.8` | T |  |
 | src/gi_volume.rs:49 | INTERIOR_AMBIENT_SCALE | `0.1` | T |  |
 | src/level.rs:373 | SIZE | `128` | T |  |
 | src/trails.rs:40 | PLANTED | `0.5` | ? |  |
@@ -2153,7 +2144,7 @@ Stays const: NON_INDEXED (sentinel/derived), SLOT_BYTES (layout/math/id), SLOT_L
 | src/trails.rs:45 | ON_TERRAIN_M | `0.4` | T |  |
 | src/trails.rs:47 | TOE_SHIFT_M | `0.05` | T |  |
 
-Stays const: MAX_DEPTH (opt-out: a recursion guard against driver cycles, not a trade-off), MARKER_SPACING (test-scene fixture), COLUMN_SPACING_M (opt-out: fixture: rock-lab layout, x between class columns, centred on x = 0), FIELD_START_Z (opt-out: fixture: rock-lab layout, z of the nearest rock's near edge), GAP_M (opt-out: fixture: rock-lab layout, gap between neighbours), FIELD_COUNT (opt-out: fixture: rock-lab layout, rocks per class column), SIZE_MIN_M (opt-out: fixture: rock-lab size range shown), SIZE_MAX_M (opt-out: fixture: rock-lab size range shown), SIZE_POWER (opt-out: fixture: rock-lab size spread), SINK (opt-out: fixture: rock-lab placement), MIX_SEED (test-scene fixture), SWATCH_SPACING (test-scene fixture), PANEL (test-scene fixture), SPHERE (test-scene fixture), CUBE (test-scene fixture), MODEL_SPACING (test-scene fixture), MODEL_Z (test-scene fixture), TURNTABLE (test-scene fixture), LAMP_ORBIT (test-scene fixture), LAMP_HEIGHT (test-scene fixture), LAMP_RATE (test-scene fixture), LAMP_RADIUS (test-scene fixture), REPORT_EVERY_S (opt-out: log cadence: how often a diagnostic line prints, no look, feel or cost).
+Stays const: MAX_DEPTH (opt-out: a recursion guard against driver cycles, not a trade-off), MARKER_SPACING (test-scene fixture), COLUMN_SPACING_M (opt-out: fixture: rock-lab layout, x between class columns, centred on x = 0), FIELD_START_Z (opt-out: fixture: rock-lab layout, z of the nearest rock's near edge), GAP_M (opt-out: fixture: rock-lab layout, gap between neighbours), FIELD_COUNT (opt-out: fixture: rock-lab layout, rocks per class column), SIZE_MIN_M (opt-out: fixture: rock-lab size range shown), SIZE_MAX_M (opt-out: fixture: rock-lab size range shown), SIZE_POWER (opt-out: fixture: rock-lab size spread), SINK (opt-out: fixture: rock-lab placement), FORMATION_ROW_Z (opt-out: fixture: rock-lab layout), FORMATION_SPACING_M (opt-out: fixture: rock-lab layout, x between formations), FORMATION_SINK (opt-out: fixture: rock-lab placement), MIX_SEED (test-scene fixture), SWATCH_SPACING (test-scene fixture), PANEL (test-scene fixture), SPHERE (test-scene fixture), CUBE (test-scene fixture), MODEL_SPACING (test-scene fixture), MODEL_Z (test-scene fixture), TURNTABLE (test-scene fixture), LAMP_ORBIT (test-scene fixture), LAMP_HEIGHT (test-scene fixture), LAMP_RATE (test-scene fixture), LAMP_RADIUS (test-scene fixture), REPORT_EVERY_S (opt-out: log cadence: how often a diagnostic line prints, no look, feel or cost).
 
 ### mw_world (20: T 14, C 4, ? 2)
 
@@ -2358,20 +2349,20 @@ Stays const: TerrainBakeConfig.rt_stride (layout/math/id), NO_LAYER_ALBEDO (layo
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/far_map.rs:25 | FAR_MAP_SIZE | `384` | T |  |
-| src/far_map.rs:27 | FAR_MAP_TEXEL | `24.0` | T |  |
-| src/far_map.rs:34 | REFRESH_COS | `0.999_990_5` | T |  |
-| src/far_map.rs:35 | REFRESH_AGE | `Duration::from_secs(8)` | T |  |
-| src/lib.rs:83 | DEFAULT_REFLECTANCE | `0.3` | ? |  |
-| src/lib.rs:88 | DEFAULT_LAYER_BUDGET | `1 << 30` | T |  |
-| src/lib.rs:509 | TerrainSettings.max_loads | `16` | T |  |
-| src/lib.rs:510 | TerrainSettings.snap | `16` | T | settings default |
-| src/lib.rs:511 | TerrainSettings.splat_range | `1000.0` | T |  |
-| src/lib.rs:512 | TerrainSettings.blend_depth | `0.2` | T |  |
-| src/lib.rs:516 | TerrainSettings.raise_m | `0.0` | T |  |
-| src/lib.rs:521 | TerrainSettings.gpu_fill | `true` | T | settings default |
-| src/lib.rs:1426 | SHIFT_SETTLE_FRAMES | `2` | T |  |
-| src/lib.rs:1434 | SLACK_M | `0.05` | T |  |
+| src/far_map.rs:26 | FAR_MAP_SIZE | `384` | T |  |
+| src/far_map.rs:28 | FAR_MAP_TEXEL | `24.0` | T |  |
+| src/far_map.rs:35 | REFRESH_COS | `0.999_990_5` | T |  |
+| src/far_map.rs:36 | REFRESH_AGE | `Duration::from_secs(8)` | T |  |
+| src/lib.rs:84 | DEFAULT_REFLECTANCE | `0.3` | ? |  |
+| src/lib.rs:89 | DEFAULT_LAYER_BUDGET | `1 << 30` | T |  |
+| src/lib.rs:511 | TerrainSettings.max_loads | `16` | T |  |
+| src/lib.rs:512 | TerrainSettings.snap | `16` | T | settings default |
+| src/lib.rs:513 | TerrainSettings.splat_range | `1000.0` | T |  |
+| src/lib.rs:514 | TerrainSettings.blend_depth | `0.2` | T |  |
+| src/lib.rs:518 | TerrainSettings.raise_m | `0.0` | T |  |
+| src/lib.rs:523 | TerrainSettings.gpu_fill | `true` | T | settings default |
+| src/lib.rs:1431 | SHIFT_SETTLE_FRAMES | `2` | T |  |
+| src/lib.rs:1439 | SLACK_M | `0.05` | T |  |
 | src/params.rs:12 | P_HEIGHT | `16` | T |  |
 | src/params.rs:18 | MAX_LAYERS | `256` | T |  |
 | src/params.rs:33 | HEIGHT_LEVELS | `10` | T |  |
@@ -2506,7 +2497,7 @@ Stays const: CENTRE (small index), CameraMedium.started (runtime state), LEAF (s
 | src/lib.rs:276 | ClipmapSettings.rings | `7` | T |  |
 | src/lib.rs:276 | ClipmapSettings.skirt | `32_000.0` | T | settings default |
 | src/lib.rs:276 | ClipmapSettings.displacement_range | `900.0` | T |  |
-| src/medium.rs:90 | WaterMediumSettings.post | `true` | T | settings default |
+| src/medium.rs:98 | WaterMediumSettings.post | `true` | T | settings default |
 | src/render.rs:173 | GATE_ARGS_SNAPSHOT | `0` | ? |  |
 | src/render.rs:174 | GATE_ARGS_VELOCITY | `16` | ? |  |
 | src/render.rs:175 | GATE_ARGS_SSPR | `32` | ? |  |
@@ -2655,8 +2646,8 @@ Stays const: FIT_EPSILON (layout/math/id), DEFAULT_OVERSCAN (small index).
 | src/notify.rs:105 | MESSAGE_BOX_Z | `1 << 20` | T |  |
 | src/notify.rs:106 | TOAST_Z | `(1 << 20) + 1` | ? |  |
 | src/reader.rs:148 | WHEEL_LINE | `40.0` | ? |  |
-| src/router.rs:24 | UI_CONTEXT_PRIORITY | `1 << 16` | T |  |
-| src/router.rs:149 | SCREEN_Z_STEP | `1 << 12` | T |  |
+| src/router.rs:25 | UI_CONTEXT_PRIORITY | `1 << 16` | T |  |
+| src/router.rs:150 | SCREEN_Z_STEP | `1 << 12` | T |  |
 | src/text_measure.rs:69 | RichTextTheme.font_size | `18.0` | T |  |
 | src/text_measure.rs:70 | RichTextTheme.line_height | `1.25` | T |  |
 | src/text_measure.rs:72 | RichTextTheme.block_gap | `0.5` | ? |  |
@@ -2671,19 +2662,21 @@ Stays const: NavRepeat.elapsed (runtime state).
 
 Stays const: EPSILON (layout/math/id).
 
-### sf_ui_screens (12: T 7, C 0, ? 5)
+### sf_ui_screens (14: T 9, C 0, ? 5)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
 | src/inventory.rs:60 | InventoryGridStyle.cell | `Vec2::new(64.0, 64.0)` | ? |  |
 | src/inventory.rs:61 | InventoryGridStyle.gap | `4.0` | ? |  |
-| src/keybinds.rs:87 | LABEL_WIDTH | `200.0` | T |  |
-| src/keybinds.rs:88 | CELL_WIDTH | `140.0` | T |  |
-| src/keybinds.rs:89 | CELL_GAP | `8.0` | ? |  |
+| src/keybinds.rs:89 | LABEL_WIDTH | `200.0` | T |  |
+| src/keybinds.rs:90 | CELL_WIDTH | `140.0` | T |  |
+| src/keybinds.rs:91 | CELL_GAP | `8.0` | ? |  |
 | src/loading.rs:33 | SWEEP_SECONDS | `1.5` | ? |  |
 | src/loading.rs:35 | SWEEP_WIDTH | `25.0` | T |  |
-| src/options.rs:65 | DEFAULT_FLOAT_STEPS | `20.0` | T |  |
-| src/options.rs:68 | THUMB_WIDTH | `10.0` | T |  |
-| src/options.rs:71 | PANE_WIDTH | `280.0` | T |  |
-| src/saveload.rs:244 | THUMB | `(128.0, 72.0)` | ? |  |
+| src/options.rs:83 | DEFAULT_FLOAT_STEPS | `20.0` | T |  |
+| src/options.rs:86 | THUMB_WIDTH | `10.0` | T |  |
+| src/options.rs:89 | PANE_WIDTH | `280.0` | T |  |
+| src/options.rs:98 | VALUE_WIDTH | `160.0` | T |  |
+| src/pause_menu.rs:38 | PAUSE_WIDTH | `280.0` | T |  |
+| src/saveload.rs:256 | THUMB | `(128.0, 72.0)` | ? |  |
 | src/widgets.rs:98 | ScreenColors.font_size | `18.0` | T |  |

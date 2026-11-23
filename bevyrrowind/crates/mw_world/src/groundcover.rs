@@ -196,9 +196,34 @@ mod tests {
     fn builtin_data_parses_and_builds() {
         let data = GroundcoverData::builtin().unwrap();
         let cover = data.build().unwrap();
-        assert_eq!(cover.len(), 13);
+        assert_eq!(cover.len(), 14);
         assert_eq!(data.rules.rules.len(), 7);
         assert_eq!(data.channels.len(), 7);
+    }
+
+    #[test]
+    fn one_meadow_blade_species_on_the_grass_channels() {
+        let data = GroundcoverData::builtin().unwrap();
+        data.build().unwrap();
+        let blades: Vec<&Species> = data.species.iter().filter(|s| matches!(s.render, RenderKind::Blade { .. })).collect();
+        assert_eq!(blades.len(), 1);
+        let blade = blades[0];
+        assert_eq!(blade.render, RenderKind::Blade { style: "meadow".into() });
+        let weight = |channel: u16| -> f32 {
+            data.rules
+                .rules
+                .iter()
+                .filter(|r| r.channel == channel)
+                .flat_map(|r| r.species.iter())
+                .filter(|w| w.species == blade.id)
+                .map(|w| w.weight)
+                .sum()
+        };
+        let name = |n: &str| data.channels.iter().find(|c| c.name == n).unwrap().channel;
+        assert!(weight(name("ascadian_grass")) > 0.0, "blades on the ascadian grass");
+        assert!(weight(name("grazelands_grass")) > 0.0, "blades on the grazelands grass");
+        let keys = data.model_keys();
+        assert!(!keys.iter().any(|k| k.contains(&blade.id) || k.contains("meadow")), "blades load no model: {keys:?}");
     }
 
     #[test]

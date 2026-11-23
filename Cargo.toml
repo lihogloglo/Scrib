@@ -72,7 +72,11 @@ bevy_enhanced_input = { version = "0.27", default-features = false }
 # UI styling (sf_ui_css only, ui.md R2b): CSS with cascade layers. Pulls Servo's MPL-2.0 `cssparser`/`selectors`,
 # allowed unmodified (owner 2026-10-11); no other crate may depend on it.
 bevy_flair = { version = "0.9", default-features = false }
-# Full engine. Framework: examples and tools only (dev-dependency), never a library dependency.
+# Grass blades (sf_groundcover_bevy only, groundcover.md "Blades: integration facts (GC-3R)"). Exact pin: struct
+# literals break between 0.20.x releases (its CHANGELOG). Features avian, rapier, debug stay off.
+bevy_grass = { version = "=0.20.6", default-features = false }
+# Full engine. Framework: examples and tools only (dev-dependency), never a direct library dependency; bevy_grass
+# pulls it into sf_groundcover_bevy as a normal (transitive) dependency.
 # Game: no features here; each crate asks for exactly what it uses, the app picks the full set.
 # Unused Bevy features are crates we never compile.
 bevy = { version = "0.20", default-features = false }
@@ -335,6 +339,8 @@ big_space = { path = "superfargoth/vendor/big_space" }
 bevy_core_pipeline = { path = "superfargoth/vendor/bevy_core_pipeline" }
 bevy_pbr = { path = "superfargoth/vendor/bevy_pbr" }
 bevy_render = { path = "superfargoth/vendor/bevy_render" }
+# bevy_grass 0.20.6, own patches for the floating origin (superfargoth/vendor/README.md); unchanged so far.
+bevy_grass = { path = "superfargoth/vendor/bevy_grass" }
 # bevy_shader 0.20.0, own patch W2a (superfargoth/vendor/README.md): `ShaderCache::{prepare, finish}` + `ShaderJob`, so
 # shader composition runs outside the pipeline cache's shader lock (bevyengine/bevy#26152). Drop when upstream does.
 bevy_shader = { path = "superfargoth/vendor/bevy_shader" }

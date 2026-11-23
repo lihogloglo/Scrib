@@ -1,6 +1,7 @@
 //! The batch-slot writer, the pattern of `sf_scene_bevy::upload` (`upload.rs:92-176`, `lib.rs:197-213`) for
 //! groundcover's own batches: the main world queues byte runs in [`GroundcoverUploads`] (a new batch's whole-capacity
-//! zero-fill first, then block runs), [`extract_groundcover_uploads`] moves them into the render world, and
+//! zero-fill, or a grown batch's new-tail zero-fill, first, then block runs; a grown batch's reservation is resized
+//! with a copy of its old slots in `PrepareMeshes`, before this publish, in the same frame as its runs), [`extract_groundcover_uploads`] moves them into the render world, and
 //! [`publish_groundcover`] (`GpuInstanceBatchSystems::Publish`, `RenderGraph` schedule) writes them into each
 //! batch's output buffer with `RenderQueue::write_buffer`, in queue order, so for any slot the run queued last wins
 //! (frees, moves and an origin-shift rewrite need no sort). A batch with no reservation yet (the frame it spawns)

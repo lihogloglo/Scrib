@@ -11,6 +11,10 @@ license.workspace = true
 [dependencies]
 bevy_app = { workspace = true, features = ["std"] }
 bevy_asset.workspace = true
+# Grass blades (`blades::BladesPlugin`, spec "Blades: integration facts (GC-3R)"); MIT.
+bevy_grass.workspace = true
+# Image: the blade fields' ground and density maps (`blades`).
+bevy_image.workspace = true
 # Visibility of the batch entities.
 bevy_camera.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
@@ -31,6 +35,8 @@ bevy_render.workspace = true
 bevy_shader.workspace = true
 # The scatter runs on AsyncComputeTaskPool.
 bevy_tasks = { workspace = true, features = ["futures-lite"] }
+# Time: the blade wind's gust scroll (blades.rs).
+bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 log.workspace = true
 # WorldPos: the floating origin's frame (as `sf_scene::cell_offset`).

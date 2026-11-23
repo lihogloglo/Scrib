@@ -11,10 +11,14 @@
 //!   AABB top).
 //! - **Viewer**: follows `TerrainCamera` (added and removed with it), so no ring moves in an interior; the batches
 //!   draw on the exterior's render layer only, like the terrain patches (`mw_doors_bevy::terrain_layers`).
+//! - **Blades** (slice GC-3a2c): `sf_groundcover_bevy::blades::BladesPlugin` with the blade style `"meadow"`
+//!   (`bevy_grass`'s MEADOW preset) for the data's blade species; drawn only while `groundcover.blades.enabled` is
+//!   on (off by default). Blade fields get the exterior's render layer, as the batches.
 //! - **Off**: `--off groundcover` adds none of the renderer.
 //!
-//! Log line once every model resolved: `groundcover: species S, channels matched M/N, unmatched [..], models
-//! loaded L/T`. Gauges `groundcover/*` (`sf_groundcover_bevy::publish_gauges`).
+//! Log lines once every model resolved: `groundcover: species S, channels matched M/N, unmatched [..], models
+//! loaded L/T` and `groundcover: blade species B, styles registered R`. Gauges `groundcover/*`
+//! (`sf_groundcover_bevy::publish_gauges`).
 
 use std::sync::Arc;
 
@@ -25,7 +29,8 @@ use bevy::world_serialization::WorldAsset;
 use mw_world::groundcover::GroundcoverData;
 use mw_world::ids;
 use sf_bake::{Manifest, Store};
-use sf_groundcover::Overrides;
+use sf_groundcover::{Overrides, RenderKind};
+use sf_groundcover_bevy::blades::{BladeBlock, BladeStyles, BladesPlugin, GrassStyle};
 use sf_groundcover_bevy::{
     GroundcoverBatch, GroundcoverModel, GroundcoverModels, GroundcoverPlugin, GroundcoverSource, GroundcoverViewer,
     LayerChannels, TerrainGround, TerrainGroundPlugin, TerrainGroundRef,
@@ -64,6 +69,8 @@ pub struct SetupReport {
     pub unmatched: Vec<String>,
     /// Model keys the species draw.
     pub models: usize,
+    /// Species drawn as blades (`RenderKind::Blade`).
+    pub blade_species: usize,
 }
 
 /// The models still loading, and the counts for the log line.
@@ -103,13 +110,21 @@ impl Plugin for GroundcoverGamePlugin {
         if !app.is_plugin_added::<bevy::pbr::gpu_instance_batch::GpuInstanceBatchPlugin>() {
             app.add_plugins(bevy::pbr::gpu_instance_batch::GpuInstanceBatchPlugin);
         }
-        app.add_plugins((GroundcoverPlugin, TerrainGroundPlugin))
+        app.add_plugins((GroundcoverPlugin, TerrainGroundPlugin, BladesPlugin))
+            .insert_resource(blade_styles())
             .insert_resource(GroundcoverInputs { off: false, table })
             .add_systems(Startup, setup)
             .add_systems(Update, (load_models, batch_layers))
             .add_observer(viewer_on)
             .add_observer(viewer_off);
     }
+}
+
+/// The blade styles the data's `Blade(style: ..)` species name: `"meadow"` is `bevy_grass`'s MEADOW preset.
+pub fn blade_styles() -> BladeStyles {
+    let mut styles = BladeStyles::default();
+    styles.0.insert("meadow".to_owned(), GrassStyle::MEADOW);
+    styles
 }
 
 /// The source and the terrain ground for `table`, and what matched.
@@ -130,6 +145,7 @@ pub fn build_source(
         channels: data.channels.len(),
         unmatched: map.unmatched.clone(),
         models: data.model_keys().len(),
+        blade_species: data.species.iter().filter(|s| matches!(s.render, RenderKind::Blade { .. })).count(),
     };
     let ground = Arc::new(TerrainGround::new(ws, sea_level, LayerChannels::from_pairs(map.pairs)));
     let source = GroundcoverSource { cover: Arc::new(cover), overrides: Arc::new(Overrides::none()), ground: ground.clone() };
@@ -175,6 +191,7 @@ fn load_models(
     standard: Res<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut models: ResMut<GroundcoverModels>,
+    styles: Option<Res<BladeStyles>>,
 ) {
     let Some(mut loading) = loading else { return };
     let loading = &mut *loading;
@@ -218,6 +235,7 @@ fn load_models(
             loading.loaded,
             r.models
         );
+        info!("groundcover: blade species {}, styles registered {}", r.blade_species, styles.map_or(0, |s| s.0.len()));
     }
 }
 
@@ -265,11 +283,14 @@ fn model_frame(world: &World, mut e: Entity) -> Transform {
     }
 }
 
-/// Groundcover draws in the exterior's view only (as the terrain patches).
+/// New mesh batches and blade fields without a render layer yet.
+type NewUnlayered = (Or<(Added<GroundcoverBatch>, Added<BladeBlock>)>, Without<RenderLayers>);
+
+/// Groundcover (mesh batches and blade fields) draws in the exterior's view only (as the terrain patches).
 fn batch_layers(
     mut commands: Commands,
     registry: Option<Res<WorldspaceRegistry>>,
-    batches: Query<Entity, (Added<GroundcoverBatch>, Without<RenderLayers>)>,
+    batches: Query<Entity, NewUnlayered>,
 ) {
     let Some(entry) = registry.and_then(|r| r.get(&ids::exterior())) else { return };
     for e in &batches {
@@ -325,6 +346,8 @@ mod tests {
         let loading = world.get_resource::<GroundcoverLoading>().unwrap();
         assert_eq!(loading.report.channels_matched, 2);
         assert_eq!(loading.keys.len(), loading.report.models);
+        assert_eq!(loading.report.blade_species, 1);
+        assert!(blade_styles().0.contains_key("meadow"), "the data's blade style is registered");
     }
 
     #[test]

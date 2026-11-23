@@ -7,7 +7,7 @@
 // main pass's fade and bend (`groundcover.wesl`; same functions, so depth matches the main pass exactly) and
 // a motion vector that includes the plant's own motion: `previous_world_position` is the same vertex bent by
 // last frame's wind field (`bent_prev`; batch instances never move, so the previous model matrix is the
-// current one, `mesh_preprocess.wesl`). RE-SYNC on every Bevy update.
+// current one, `mesh_preprocess.wesl`), at last frame's time. RE-SYNC on every Bevy update.
 
 import bevy_pbr::{
     prepass::io::{Vertex, VertexOutput, decompress_vertex},
@@ -17,7 +17,13 @@ import bevy_pbr::{
         view_transformations::position_world_to_clip,
     },
 };
+import bevy_render::globals::Globals;
 import super::groundcover_common::{unpack_tag, fade_scale, instance_scale, bent, bent_prev};
+
+// Every prepass view layout (with and without motion vectors, shadow views included) binds Bevy's globals at
+// group 0 binding 1 (`superfargoth/vendor/bevy_pbr/src/prepass/mod.rs` `PrepassPipeline` layouts); no Bevy
+// WESL module declares it for the prepass (`mesh_view_bindings` has the main pass's binding 11).
+@group(0) @binding(1) var<uniform> globals: Globals;
 
 @vertex
 fn vertex(vertex_in: Vertex) -> VertexOutput {
@@ -28,7 +34,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let root = world_from_local[3].xyz;
     let s = fade_scale(root, view.world_position, tag.fade);
     let unbent = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position * s, 1.0));
-    out.world_position = vec4<f32>(bent(unbent.xyz, root, instance_scale(world_from_local), tag), 1.0);
+    out.world_position = vec4<f32>(bent(unbent.xyz, root, instance_scale(world_from_local), tag, globals.time), 1.0);
     out.position = position_world_to_clip(out.world_position.xyz);
 @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
     out.unclipped_depth = out.position.z;
@@ -60,7 +66,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let prev_model = mesh_functions::get_previous_world_from_local(vertex_in.instance_index);
     let prev_root = prev_model[3].xyz;
     let prev_unbent = mesh_functions::mesh_position_local_to_world(prev_model, vec4<f32>(vertex.position * s, 1.0));
-    out.previous_world_position = vec4<f32>(bent_prev(prev_unbent.xyz, prev_root, instance_scale(prev_model), tag), 1.0);
+    out.previous_world_position = vec4<f32>(bent_prev(prev_unbent.xyz, prev_root, instance_scale(prev_model), tag, globals.time - globals.delta_time), 1.0);
 }
 
 @if(VERTEX_OUTPUT_INSTANCE_INDEX)

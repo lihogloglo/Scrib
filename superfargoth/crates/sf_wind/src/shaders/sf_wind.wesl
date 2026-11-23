@@ -143,12 +143,20 @@ fn wind_profile(w: WindParams, above_ground: f32) -> f32 {
 // The weather's wind at an origin-relative point, `above_ground` meters over
 // the ground (pass `w.profile.w`, the reference height, when unknown).
 fn wind_global(w: WindParams, rel: vec3<f32>, above_ground: f32) -> vec3<f32> {
+    return wind_global_gusty(w, rel, above_ground, 0.0);
+}
+
+// `wind_global` with the gustiness raised to at least `min_gustiness`, for a
+// consumer that wants a stronger lull-to-gust-front contrast than the weather
+// gives (groundcover). With 0 it is `wind_global` exactly (the CPU twin).
+fn wind_global_gusty(w: WindParams, rel: vec3<f32>, above_ground: f32, min_gustiness: f32) -> vec3<f32> {
     let speed = w.axis_speed.z;
     if speed <= 0.0 {
         return vec3<f32>(0.0);
     }
     let g = wind_gust(w, rel.xz);
-    let s = speed * (1.0 + w.axis_speed.w * (2.0 * g.gust - 1.0)) * wind_profile(w, above_ground);
+    let gustiness = max(w.axis_speed.w, min_gustiness);
+    let s = speed * (1.0 + gustiness * (2.0 * g.gust - 1.0)) * wind_profile(w, above_ground);
     return vec3<f32>(g.dir.x * s, 0.0, g.dir.y * s);
 }
 
