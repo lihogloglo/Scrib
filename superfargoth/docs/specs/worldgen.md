@@ -24,7 +24,7 @@ anchor rules, coordinate remap, its slices): `../../../bevyrrowind/docs/specs/wo
 Owner (2026-11-18):
 
 - **A world generator for the framework**, generic, not tuned to Morrowind. It is a separate tool in the Scrib
-  tools suite and may ship on its own later (like `motiongen`).
+  tools suite and may ship on its own later (like [scrib-motiongen](https://github.com/scrib-tools/scrib-motiongen), split out 2026-11-23).
 - **Keep the human-made parts.** Settlements, shipwrecks, ancestral tombs, mines, shrines, camps: everything
   hand-made stays. Generated space goes *between* them. Procedural generation tends towards bland worlds nobody
   wants to play in (Starfield, No Man's Sky); the authored bits carry the interest, and generated land serves them.

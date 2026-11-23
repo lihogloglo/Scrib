@@ -66,7 +66,7 @@ impl Kind {
         Self::Shelf,
     ];
 
-    /// The key in `bands.json` (`tools/motiongen/default_bands.json`).
+    /// The key in `bands.json` (scrib-motiongen `motiongen/default_bands.json`).
     pub fn key(self) -> &'static str {
         match self {
             Self::Seat => "seat",
@@ -603,7 +603,7 @@ pub fn bands(pieces: &[Piece], kind: Kind) -> Vec<Band> {
 }
 
 impl Census {
-    /// `bands.json` for the planner (`tools/motiongen/recipe.py`,
+    /// `bands.json` for the planner (scrib-motiongen `motiongen/recipe.py`,
     /// `load_bands`): the keys of `default_bands.json`, a `ground` band at
     /// 0, race heights in the note.
     pub fn bands_json(&self) -> String {

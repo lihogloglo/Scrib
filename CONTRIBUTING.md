@@ -12,7 +12,11 @@ their own. "The owner" is the project maintainer; owner decisions live in the RO
 
 - Both parts are GPL-3.0-or-later (+ GPU vendor runtime permission, `LICENSE-EXCEPTION.md`); the split is
   architectural (no Morrowind code in `superfargoth/`), not a licence wall. They keep their names, paths and
-  crate prefixes. Git: one repo at the root (works from either subfolder), `origin` = github.com/lihogloglo/Scrib.
+  crate prefixes. Git: one repo at the root (works from either subfolder), `origin` = github.com/scrib-tools/Scrib.
+- **Sibling tools (owner 2026-11-23):** offline tools live in their own repos in the `scrib-tools` org and talk to
+  Scrib through files only: `scrib-motiongen` (Kimodo clip factory, `D:\Gamedev\scrib-motiongen`); `scrib-worldgen`
+  (planned; AGPL-3.0-or-later so Magna Urbis can be ported). These rules apply there too, except that licence;
+  Scrib keeps the readers of their formats (our own GPL code), never their generators, and links no AGPL code.
 - Cargo: **one workspace** at the root (`Cargo.toml`, `Cargo.lock`, `.cargo/config.toml`, `rust-toolchain.toml`,
   `deny.toml`, `.config/hakari.toml`); cargo works from any subfolder and `--workspace` means both parts.
   `superfargoth/plugins/sf_dlss` is its own workspace (links NVIDIA; built separately).

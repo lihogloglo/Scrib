@@ -9,7 +9,7 @@ Status: spec 2026-10-28 (owner: "make a proper doc, then implement straight away
 > into many clips: NVIDIA Kimodo (text + constraints) for activities, MotionBricks (in-betweening) for links, SOMA BVH
 > out, our existing BVH import + `sf_character` retarget onto `base_anim`, and a review renderer that plays each clip on
 > a real Morrowind NPC with the real furniture and props, frame-stepped into MP4s. Slices MG1-MG8 below.
-> Read: "Pipeline", then your slice. Tools: `bevyrrowind/tools/motiongen/` (Python), Rust in `mw_bake`, app `clip-preview`.
+> Read: "Pipeline", then your slice. Tools: [scrib-motiongen](https://github.com/scrib-tools/scrib-motiongen) (Python, its own repo since 2026-11-23), Rust in `mw_bake`, app `clip-preview`.
 <!-- /agent-summary -->
 
 ## Goal
@@ -63,7 +63,7 @@ race heights                                │   prompt embedding cache, batche
 
 ### Recipes (MG1)
 
-TOML, one file per setting (`tools/motiongen/recipes/tavern.toml`), rows from the catalog:
+TOML, one file per setting (scrib-motiongen `motiongen/recipes/tavern.toml`), rows from the catalog:
 
 ```toml
 [[activity]]
@@ -128,7 +128,7 @@ is the path there). `python -m motiongen stats <bvh|dir>` prints skate/flight/ro
   `--batch <list>` mode renders many clips in one process (one load, one window).
 - MG6 **furniture**: place a real `STAT` mesh by record id at the band's reference position (the seat under the
   clip's seated pelvis, from the provenance constraints), with its collision drawn on F-key debug only.
-- MG7 **props**: a prop table (`tools/motiongen/props.toml` → `mw` record ids: tankard `misc_com_tankard_01`,
+- MG7 **props**: a prop table (scrib-motiongen `motiongen/props.toml` → `mw` record ids: tankard `misc_com_tankard_01`,
   broom `misc_com_broom_01`, book, quill, pick, basket, cloth...) with a grip socket per class (bone, offset,
   rotation, two-handed second-hand point). Attach = a child entity on the hand bone; the second hand is a
   `FullBodyIk` effector (only in preview until the runtime activity system lands). Spawn/despawn at phase events.
@@ -158,7 +158,7 @@ Order: MG1, MG3, MG5 in parallel (Python / bake / app), then MG4, MG2, MG6, MG7,
 
 ## As built (MG1, 2026-10-28)
 
-- `bevyrrowind/tools/motiongen/` (README has setup/env): from `bevyrrowind/tools`, `C:/mbtest/kimodo/.venv/Scripts/python.exe -m motiongen selftest | plan | run | bench | joints`. Selftest all ok; `run` resumable, writes BVH + `.prov.json` + `jobs.jsonl`.
+- `bevyrrowind/tools/motiongen/` (now [scrib-motiongen](https://github.com/scrib-tools/scrib-motiongen), run from its root; README has setup/env): from `bevyrrowind/tools`, `C:/mbtest/kimodo/.venv/Scripts/python.exe -m motiongen selftest | plan | run | bench | joints`. Selftest all ok; `run` resumable, writes BVH + `.prov.json` + `jobs.jsonl`.
 - Speed: model load 1.6 s; prompt embeddings cached on disk, encoder (CPU) loaded only on a miss (31 s load + ~7 s/prompt), then freed. 6 s clips, fp32: steps 100 = 3.7 s/clip, 50 = 2.1, 25 = 1.1; batch 1/2/4/8 at 50 steps = 2.3/2.0/2.1/2.1 s/clip (VRAM 1.2-1.5 GB); fp16 1.76 (jerk 41 -> 53 m/s^3), bf16 2.3 (jerk 284: avoid); post-process costs ~0.01 s/clip (skate 0.045 -> 0.038 m/s with it). Target (<= 10 s) met ~4x.
 - Defaults: steps 50, batch 8, fp32, post-process on. Steps 25 loses the pelvis constraint (err 0.12 m vs 0.006 m at 50).
 - Constraints: `pelvis_height` = Kimodo `root_y_pos` only (err ~6 mm), `root fixed|fixed_xz|path`, hand wrist position (custom class; err ~0.3 m, i.e. weakly followed: next lever is Kimodo's own end-effector set with a full reference pose).
