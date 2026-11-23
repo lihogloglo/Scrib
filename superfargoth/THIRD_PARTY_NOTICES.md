@@ -202,6 +202,9 @@ SOFTWARE.
   (`advanceTime`, `setHour`, `setDay`, `getDaysPerMonth`), `files/data/scripts/omw/skillhandlers.lua`
   (`skillLevelUp` sources); ported into `bevyrrowind/crates/mw_rpg/src/training.rs` and
   `bevyrrowind/crates/mw_rpg_bevy/src/dialogue/services.rs`.
+- Calendar globals (2026-11-23, clock C3b/C3c): `apps/openmw/mwworld/datetimemanager.cpp` (66-143 `setHour`, `setDay`,
+  `setMonth`, `advanceTime`; 196-222 `setGlobalFloat`/`setGlobalInt`); ported into `bevyrrowind/crates/mw_rpg/src/calendar.rs`
+  (`globals`, `apply_written`) and `mw_rpg_bevy/src/dialogue/services.rs` (`sync_clock`).
 
 ## OpenMW (MessageBox formatting)
 

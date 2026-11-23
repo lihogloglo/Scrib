@@ -5,6 +5,8 @@
 //! ([`MwEquipRules`]). The PC stat filter functions read the host's sheets ([`MwSheets`]).
 
 mod barter;
+/// Morrowind's calendar globals from the game clock ([`calendar::globals`], clock.md C3).
+pub mod calendar;
 mod db;
 mod disposition;
 mod equip;
@@ -63,6 +65,8 @@ mod runner_tests;
 mod tests;
 #[cfg(test)]
 mod tests_barter;
+#[cfg(test)]
+mod tests_calendar;
 #[cfg(test)]
 mod tests_disposition;
 #[cfg(test)]

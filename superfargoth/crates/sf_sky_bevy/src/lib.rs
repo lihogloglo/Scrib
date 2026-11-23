@@ -74,6 +74,7 @@ use bevy_transform::components::{GlobalTransform, Transform};
 use bevy_transform::TransformSystems;
 
 pub use sf_sky;
+use sf_calendar::CalendarView;
 use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
 use sf_tunables::{Def, Group, Net, Scope, Source, Unit, def};
 use sf_tunables_bevy::TunablesAppExt;
@@ -344,7 +345,10 @@ impl Plugin for SkyPlugin {
         if !app.world().contains_resource::<RenderPathSetting>() {
             app.insert_resource(RenderPathSetting(self.render_path));
         }
-        app.init_resource::<WeatherState>()
+        // The game's calendar (clock.md "Sky in C3"): the one source of the sky's day and year
+        // length. A game inserts its own (`sf_calendar::main_calendar`); the default otherwise.
+        app.init_resource::<CalendarView>()
+            .init_resource::<WeatherState>()
             .init_resource::<SkyRenderOptions>()
             .init_resource::<CurrentSky>()
             .init_resource::<ActiveRenderPath>()
@@ -363,6 +367,12 @@ impl Plugin for SkyPlugin {
             app.add_plugins(PointShadowPlugin);
         }
         app.add_systems(FixedUpdate, advance_clock.in_set(SkySystems::Clock))
+            .add_systems(
+                Update,
+                sync_calendar
+                    .run_if(resource_changed::<CalendarView>.or_eager(resource_changed::<SkyConfig>))
+                    .in_set(SkySystems::Clock),
+            )
             .add_systems(
                 Update,
                 (
@@ -569,6 +579,16 @@ fn atmosphere_transform(inner_radius: f32, sea_level: f32) -> GlobalTransform {
 /// pause virtual time stop it and two machines given the same ticks reach the same instant.
 fn advance_clock(time: Res<Time<Fixed>>, mut clock: ResMut<GameClock>) {
     clock.advance(time.delta());
+}
+
+/// Writes the sky's calendar from the [`CalendarView`] when either changed (a replaced
+/// [`SkyConfig`] gets the view's calendar back); writes only on a difference, so [`SkyConfig`]
+/// change detection stays quiet.
+fn sync_calendar(view: Res<CalendarView>, mut config: ResMut<SkyConfig>) {
+    let calendar = sf_sky::Calendar::from(&*view);
+    if config.0.calendar != calendar {
+        config.0.calendar = calendar;
+    }
 }
 
 fn evaluate_sky(

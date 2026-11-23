@@ -1,0 +1,32 @@
+// Bevyrrowind's calendar (builtin mod `mw`; clock.md "Calendar (C3)", "Morrowind"): the one
+// `sf.calendar` record `main`, read by the framework's `CalendarView`. A mod changes it with its
+// own `main` (the later record wins; a 4E mod adds an era).
+// Month lengths: OpenMW (GPL-3.0) `apps/openmw/mwworld/datetimemanager.cpp` `getDaysPerMonth`
+// at commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (no leap year, 365 days).
+// Epoch: Morrowind.esm's start globals (`Day` 16, `Month` 7 = Last Seed, `Year` 427, `GameHour` 9;
+// `DaysPassed` 1 is added by `mw_rpg::calendar`). The epoch's weekday is unverified (OpenMW keeps
+// none): `None` until a lore source gives it.
+[
+  define(kind: "sf.calendar", id: "main", value: (
+    hours_per_day: 24.0,
+    months: [
+      (name: "Morning Star", days: 31),
+      (name: "Sun's Dawn", days: 28),
+      (name: "First Seed", days: 31),
+      (name: "Rain's Hand", days: 30),
+      (name: "Second Seed", days: 31),
+      (name: "Midyear", days: 30),
+      (name: "Sun's Height", days: 31),
+      (name: "Last Seed", days: 31),
+      (name: "Heartfire", days: 30),
+      (name: "Frostfall", days: 31),
+      (name: "Sun's Dusk", days: 30),
+      (name: "Evening Star", days: 31),
+    ],
+    leap: None,
+    weekdays: ["Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas"],
+    eras: [(name: "3E", start_year: 1)],
+    seasons: [],
+    epoch: (year: 427, month: 7, day: 16, weekday: None, start_hour: 9.0),
+  )),
+]

@@ -1,6 +1,7 @@
 //! Calendar and the sky's view of the game clock.
 
 use serde::{Deserialize, Serialize};
+use sf_calendar::CalendarView;
 use sf_ids::GameInstant;
 use sf_ids::clock::day_ms;
 
@@ -20,6 +21,18 @@ impl Default for Calendar {
         Self {
             hours_per_day: 24.0,
             days_per_year: 365.2422,
+        }
+    }
+}
+
+/// The sky's day and year length from the game's calendar view: the view is the one source
+/// (clock.md "Sky in C3"); the year is the view's mean year over its leap cycle.
+impl From<&CalendarView> for Calendar {
+    #[expect(clippy::cast_possible_truncation, reason = "a year length in days fits f32")]
+    fn from(view: &CalendarView) -> Self {
+        Self {
+            hours_per_day: view.hours_per_day(),
+            days_per_year: view.mean_year_days() as f32,
         }
     }
 }

@@ -238,6 +238,9 @@ pub struct Rpg {
     /// stamps, purses and [`Rpg::game_time`] read. `None` without a clock (headless): the
     /// `MWScript` calendar globals until C3 derives them from the clock.
     clock: Option<sf_sky_bevy::GameInstant>,
+    /// The clock and a calendar were present at the last [`services::sync_clock`]: the `MWScript`
+    /// date globals follow the clock, and services passing time only skip it (C3b-2).
+    clock_calendar: bool,
 }
 
 impl Content {
@@ -497,6 +500,7 @@ impl Rpg {
             lists: Vec::new(),
             sky_hours: 0.0,
             clock: None,
+            clock_calendar: false,
         })
     }
 

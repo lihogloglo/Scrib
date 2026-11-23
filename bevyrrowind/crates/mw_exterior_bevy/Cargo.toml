@@ -40,6 +40,8 @@ sf_app_bevy.workspace = true
 sf_atmos_bevy.workspace = true
 sf_audio_bevy = { workspace = true, features = ["weather"] }
 sf_bake.workspace = true
+# The content's calendar as the `CalendarView` resource (clock.md "Calendar (C3)").
+sf_calendar = { workspace = true, features = ["bevy"] }
 sf_character.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
 sf_console_bevy.workspace = true

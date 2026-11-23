@@ -63,6 +63,8 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 sf_action_bevy.workspace = true
 sf_atmos_bevy.workspace = true
+# console.rs `day` and `bevyrrowind/status` `date`: the content's calendar (`CalendarView`).
+sf_calendar = { workspace = true, features = ["bevy"] }
 # `flip viewmodel`: the player camera's first-person view model setting.
 sf_camera_bevy.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }

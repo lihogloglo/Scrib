@@ -46,6 +46,8 @@ sf_model_bevy.workspace = true
 sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
 # Gauges of the lamp shadow cache (`lamp_cache/*`, CW-4 S3).
 sf_diag_bevy.workspace = true
+# The calendar view resource (`CalendarView`, clock.md "Sky in C3").
+sf_calendar = { workspace = true, features = ["bevy"] }
 # The game clock resource (`GameClock`, clock.md).
 sf_ids = { workspace = true, features = ["bevy"] }
 sf_sky.workspace = true

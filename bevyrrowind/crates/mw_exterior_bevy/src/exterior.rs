@@ -484,6 +484,16 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // Ray-tracing mesh variants for streamed interiors (gi.md "Scene and lights", slice 1b),
     // once the GPU's support is known (plugin `finish`), before streaming's first load.
     app.add_systems(Startup, ray_tracing_variants);
+    // The content's calendar (clock.md "Calendar (C3)"): the sky and the MWScript date globals
+    // read it; `SkyPlugin` keeps the framework default when there's none or it doesn't validate.
+    if let Some(db) = options.actors.as_deref() {
+        match sf_calendar::CalendarView::new(&sf_calendar::main_calendar(db)) {
+            Ok(view) => {
+                app.insert_resource(view);
+            }
+            Err(e) => warn!("calendar: the content's calendar is invalid ({e}); the default one"),
+        }
+    }
     app.add_plugins(SkyPlugin { settings, clock, render_path: render.path }).insert_resource(SkyRenderOptions {
         ray_tracing_denoiser: render.denoiser,
         cascades: sun_quality.splits.build(),

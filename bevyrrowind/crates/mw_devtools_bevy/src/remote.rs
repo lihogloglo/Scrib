@@ -10,10 +10,10 @@
 //! (screenshot, keys, mouse, frame-time diagnostics), the game publishes
 //! these agent tools (`brp_list_agent_tools`, then `brp_execute`):
 //!
-//! - `bevyrrowind/status`: scene, hour and clock, A/B switches, camera as a
+//! - `bevyrrowind/status`: scene, hour, calendar date and clock, A/B switches, camera as a
 //!   `--camera` string, and whether loading has settled (poll it before a
 //!   screenshot).
-//! - `bevyrrowind/set`: any of switches, hour, clock, cloud preset, camera;
+//! - `bevyrrowind/set`: any of switches, hour, whole days, clock, cloud preset, camera;
 //!   answers with the new status.
 //! - `bevyrrowind/console`: runs a dev-console line (as a script would: not echoed, not in
 //!   the history) and answers with the console log's tail; a command's output shows on the
@@ -33,7 +33,9 @@ use bevy_brp_extras::{AgentTool, AppAgentToolExt, BrpExtrasPlugin, PortDisplay};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sf_calendar::CalendarView;
 use sf_coords::WorldPos;
+use sf_sky_bevy::{GameClock, SkyConfig};
 use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::to_grid;
 
@@ -55,7 +57,7 @@ pub fn add(app: &mut App) {
             AgentTool::new(
                 "bevyrrowind_status",
                 STATUS,
-                "Scene, hour and clock, A/B switches (null: not in this run), camera as a `--camera` \
+                "Scene, hour, calendar date and clock, A/B switches (null: not in this run), camera as a `--camera` \
                  string (world meters, eye then target), and `ready` (streaming and assets settled; \
                  null when unknown). Poll `ready` before a screenshot.",
             )
@@ -65,7 +67,7 @@ pub fn add(app: &mut App) {
             AgentTool::new(
                 "bevyrrowind_set",
                 SET,
-                "Set any of: A/B switches by name, hour (0-24), clock paused, time-lapse, cloud preset \
+                "Set any of: A/B switches by name, hour (0-24), days (whole days to move the clock, keeping                  the hour; negative goes back, stopping at day 0), clock paused, time-lapse, cloud preset \
                  (exterior genus name, e.g. clear, fair, overcast, storm), camera (`--camera` string). \
                  Returns the new status.",
             )
@@ -129,6 +131,8 @@ struct Status {
     /// The scene's "what to look for".
     look_for: Option<String>,
     hour: Option<f32>,
+    /// The calendar date and time (`day` in the console), e.g. `16 Last Seed 427 3E, 09:00`.
+    date: Option<String>,
     /// `paused`, `running` or `time-lapse`.
     clock: Option<&'static str>,
     /// Switch name to on/off; null when the switch has nothing to act on here.
@@ -150,6 +154,9 @@ struct Set {
     #[serde(default)]
     switches: std::collections::BTreeMap<String, bool>,
     hour: Option<f64>,
+    /// Whole days to move the clock, keeping the hour (negative goes back; before the epoch it
+    /// stops at day 0). Applied before `hour`.
+    days: Option<i64>,
     paused: Option<bool>,
     time_lapse: Option<bool>,
     /// Pin a cloud genus (clear, fair, cumulus, stratocumulus, altocumulus, altostratus,
@@ -181,11 +188,13 @@ fn status(
     camera: CameraQuery,
     ready: crate::ready::Readiness,
     interior: Option<Res<crate::ready::Loading>>,
+    calendar: Option<Res<CalendarView>>,
 ) -> BrpResult {
-    to_value(&report(&state, &s, &camera, &ready, interior.as_deref()))
+    to_value(&report(&state, &s, &camera, &ready, interior.as_deref(), calendar.as_deref()))
 }
 
 #[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::too_many_arguments, reason = "a Bevy system's parameters")]
 fn set(
     In(params): In<Option<Value>>,
     real: Res<Time<Real>>,
@@ -194,6 +203,7 @@ fn set(
     mut camera: CameraQuery,
     ready: crate::ready::Readiness,
     interior: Option<Res<crate::ready::Loading>>,
+    calendar: Option<Res<CalendarView>>,
 ) -> BrpResult {
     let now = real.elapsed_secs();
     let params: Set = serde_json::from_value(params.unwrap_or(Value::Null)).map_err(invalid)?;
@@ -237,10 +247,7 @@ fn set(
         state.note(note, now);
     }
     if let (Some(time), Some(config)) = (s.time.as_mut(), s.config.as_ref()) {
-        let day_ms = config.day_ms();
-        if let Some(hour) = params.hour {
-            time.set_hour(hour.rem_euclid(f64::from(config.0.calendar.hours_per_day)), day_ms);
-        }
+        set_day_hour(&params, time, config, calendar.as_deref())?;
         if let Some(lapse) = params.time_lapse {
             time.time_scale = if lapse { 600.0 } else { 30.0 };
             if lapse {
@@ -254,7 +261,7 @@ fn set(
         if let Some(paused) = params.paused {
             time.paused = paused;
         }
-    } else if params.hour.is_some() || params.paused.is_some() || params.time_lapse.is_some() || params.time_scale.is_some() {
+    } else if params.hour.is_some() || params.days.is_some() || params.paused.is_some() || params.time_lapse.is_some() || params.time_scale.is_some() {
         return Err(invalid("no sky clock in this run"));
     }
     if let Some((eye, target)) = eye_target {
@@ -277,12 +284,24 @@ fn set(
         free.pitch = pitch;
     }
     // The camera's GlobalTransform updates next frame: report the requested pose.
-    let mut out = report(&state, &s, &camera, &ready, interior.as_deref());
+    let mut out = report(&state, &s, &camera, &ready, interior.as_deref(), calendar.as_deref());
     if let Some(c) = params.camera {
         out.camera = Some(c);
     }
     out.ready = out.ready.map(|r| r && eye_target.is_none());
     to_value(&out)
+}
+
+/// `set`'s `days` then `hour`, on the calendar's day (the sky's without one).
+fn set_day_hour(params: &Set, time: &mut GameClock, config: &SkyConfig, calendar: Option<&CalendarView>) -> Result<(), BrpError> {
+    let day_ms = calendar.map_or_else(|| config.day_ms(), CalendarView::day_ms);
+    if let Some(days) = params.days {
+        crate::console::shift_days(time, days, day_ms).map_err(invalid)?;
+    }
+    if let Some(hour) = params.hour {
+        time.set_hour(hour.rem_euclid(f64::from(config.0.calendar.hours_per_day)), day_ms);
+    }
+    Ok(())
 }
 
 fn report(
@@ -291,6 +310,7 @@ fn report(
     camera: &CameraQuery,
     ready: &crate::ready::Readiness,
     interior: Option<&crate::ready::Loading>,
+    calendar: Option<&CalendarView>,
 ) -> Status {
     let scene = mw_game_core::scenes::active();
     let (hour, clock) = match (s.time.as_ref(), s.config.as_ref()) {
@@ -303,6 +323,7 @@ fn report(
         scene: scene.map(|s| s.name.clone()),
         look_for: scene.map(|s| s.look_for.clone()).filter(|l| !l.is_empty()),
         hour,
+        date: s.time.as_ref().zip(calendar).map(|(t, view)| crate::console::date_label(view, t.now)),
         clock,
         switches,
         camera,
@@ -322,4 +343,28 @@ fn to_value(v: &impl Serialize) -> BrpResult {
 
 fn invalid(e: impl ToString) -> BrpError {
     BrpError { code: error_codes::INVALID_PARAMS, message: e.to_string(), data: None }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// C3c-2: `days` moves the clock by whole days keeping the hour (before `hour`), and stops at
+    /// day 0 going back past the epoch.
+    #[test]
+    fn set_days_moves_the_clock_by_whole_days() {
+        let view = crate::console::tests::tamrielic();
+        let config = SkyConfig(sf_sky_bevy::sf_sky::SkySettings::default());
+        let start = view.start_instant();
+        let mut clock = GameClock::new(start, 30.0);
+        let params = |v: Value| serde_json::from_value::<Set>(v).unwrap();
+        set_day_hour(&params(serde_json::json!({ "days": 2 })), &mut clock, &config, Some(&view)).unwrap();
+        assert_eq!(clock.now.0, start.0 + 2 * view.day_ms());
+        assert_eq!(crate::console::date_label(&view, clock.now), "18 Last Seed 427 3E, 09:00");
+        set_day_hour(&params(serde_json::json!({ "days": -1, "hour": 21.5 })), &mut clock, &config, Some(&view)).unwrap();
+        assert_eq!(crate::console::date_label(&view, clock.now), "17 Last Seed 427 3E, 21:30");
+        set_day_hour(&params(serde_json::json!({ "days": -5 })), &mut clock, &config, Some(&view)).unwrap();
+        assert_eq!(crate::console::date_label(&view, clock.now), "16 Last Seed 427 3E, 21:30", "stops at day 0");
+        assert!(serde_json::from_value::<Set>(serde_json::json!({ "days": 1.5 })).is_err(), "whole days only");
+    }
 }

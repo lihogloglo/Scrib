@@ -23,6 +23,8 @@ mw_rpg_bevy.workspace = true
 mw_world.workspace = true
 serde.workspace = true
 sf_action_bevy.workspace = true
+# The content calendar (`CalendarView`) for the save menu's in-game date (clock.md "Calendar (C3)").
+sf_calendar = { workspace = true, features = ["bevy"] }
 sf_camera.workspace = true
 sf_camera_bevy.workspace = true
 sf_coords.workspace = true

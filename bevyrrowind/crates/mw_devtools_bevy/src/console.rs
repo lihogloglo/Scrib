@@ -136,6 +136,110 @@ fn register_cheats(app: &mut App) {
             Ok(())
         },
     );
+    // Calendar C3c-2 (clock.md "Calendar (C3)"): the date, and whole-day moves of the game clock.
+    app.add_console_command(
+        CommandSpec::new("day")
+            .help(
+                "The calendar date and the day count since the epoch; `day +n` / `day -n` moves n whole days \
+                 keeping the hour (stops at day 0), `day N` goes to day N since the epoch at the current hour",
+            )
+            .param(Param::new("days", ArgKind::Str).optional()),
+        |inv| {
+            let arg = inv.args.str("days").unwrap_or_default().trim().to_owned();
+            let text = day_command(inv.ctx, &arg)?;
+            inv.log.info(&text);
+            Ok(())
+        },
+    );
+}
+
+/// `day`'s forms.
+const DAY_USAGE: &str = "usage: day | day +n | day -n | day N";
+
+/// What a `day` line asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DayMove {
+    /// `day`: the date.
+    Show,
+    /// `day +n` / `day -n`: whole days from now.
+    By(i64),
+    /// `day N`: day N since the epoch.
+    To(u64),
+}
+
+fn parse_day(arg: &str) -> Result<DayMove, String> {
+    let bad = || format!("{arg:?}: want a whole number of days; {DAY_USAGE}");
+    if arg.is_empty() {
+        Ok(DayMove::Show)
+    } else if arg.starts_with(['+', '-']) {
+        arg.parse().map(DayMove::By).map_err(|_| bad())
+    } else {
+        arg.parse().map(DayMove::To).map_err(|_| bad())
+    }
+}
+
+/// Moves `clock` by `days` whole days of `day_ms`, keeping the time of day. Before the epoch it
+/// stops at day 0 at the same time of day and answers `true`; past the clock's range it errs.
+pub(crate) fn shift_days(clock: &mut sf_sky_bevy::GameClock, days: i64, day_ms: u64) -> Result<bool, String> {
+    let day_ms = day_ms.max(1);
+    let now = clock.now.0;
+    let target = i128::from(now) + i128::from(days) * i128::from(day_ms);
+    if target < 0 {
+        clock.now = sf_sky_bevy::GameInstant(now % day_ms);
+        return Ok(true);
+    }
+    clock.now = sf_sky_bevy::GameInstant(u64::try_from(target).map_err(|_| format!("{days:+} days: past the clock's range"))?);
+    Ok(false)
+}
+
+/// Puts `clock` on day `day` since the epoch, keeping the time of day.
+fn go_to_day(clock: &mut sf_sky_bevy::GameClock, day: u64, day_ms: u64) -> Result<(), String> {
+    let day_ms = day_ms.max(1);
+    let to = day.checked_mul(day_ms).and_then(|start| start.checked_add(clock.now.0 % day_ms));
+    clock.now = sf_sky_bevy::GameInstant(to.ok_or_else(|| format!("day {day}: past the clock's range"))?);
+    Ok(())
+}
+
+/// `instant` as a calendar date and time: `{weekday}, {d} {month} {yoe} {era}, {hh}:{mm}`, the
+/// weekday only when the calendar knows it, the absolute year when no era covers it.
+pub(crate) fn date_label(view: &sf_calendar::CalendarView, instant: sf_sky_bevy::GameInstant) -> String {
+    let date = view.date(instant);
+    let weekday = if date.weekday.is_some() { "{weekday}, " } else { "" };
+    let year = if date.era.is_some() { "{yoe} {era}" } else { "{year}" };
+    view.format(&date, &format!("{weekday}{{d}} {{month}} {year}, {{hh}}:{{mm}}"))
+}
+
+/// `day`: shows or moves the game clock's date (the `CalendarView`'s day, else the sky's).
+fn day_command(world: &mut World, arg: &str) -> Result<String, String> {
+    use sf_sky_bevy::sf_ids::clock::{MS_PER_HOUR, MS_PER_MINUTE};
+    let wanted = parse_day(arg)?;
+    let day_ms = world
+        .get_resource::<sf_calendar::CalendarView>()
+        .map(sf_calendar::CalendarView::day_ms)
+        .or_else(|| world.get_resource::<sf_sky_bevy::SkyConfig>().map(sf_sky_bevy::SkyConfig::day_ms))
+        .ok_or("no calendar or sky in this run")?
+        .max(1);
+    let (now, clamped) = {
+        let mut clock = world.get_resource_mut::<sf_sky_bevy::GameClock>().ok_or("no game clock in this run")?;
+        let clamped = match wanted {
+            DayMove::Show => false,
+            DayMove::By(n) => shift_days(&mut clock, n, day_ms)?,
+            DayMove::To(n) => go_to_day(&mut clock, n, day_ms).map(|()| false)?,
+        };
+        (clock.now, clamped)
+    };
+    let day = now.0 / day_ms;
+    let label = if let Some(view) = world.get_resource::<sf_calendar::CalendarView>() {
+        format!("{} (day {day})", date_label(view, now))
+    } else {
+        let in_day = now.0 % day_ms;
+        format!("day {day}, {:02}:{:02}", in_day / MS_PER_HOUR, in_day % MS_PER_HOUR / MS_PER_MINUTE)
+    };
+    Ok(match wanted {
+        DayMove::Show => label,
+        _ if clamped => format!("day {arg}: before the epoch, stopped at day 0: {label}"),
+        _ => format!("day {arg}: {label}"),
+    })
 }
 
 /// Flips [`sf_action_bevy::NoClip`] on the player body; off puts the body back on its feet.
@@ -657,7 +761,7 @@ fn set_switch(world: &mut World, vars: &mut Vars, gi: VarId, name: &str, on: Opt
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use sf_console_bevy::ConsoleSubmit;
 
@@ -1118,5 +1222,58 @@ mod tests {
         assert_eq!(log(&app).last().map(String::as_str), Some("off: part.terrain: startup only: relaunch with --off terrain; unchanged"), "{:?}", log(&app));
         let t = app.world().resource::<Tunables>();
         assert!(t.flag(t.id("part.terrain").expect("row")), "unchanged");
+    }
+
+    /// The Tamrielic calendar of the builtin mod (`mw_mods` `records/calendar.ron`).
+    pub(crate) fn tamrielic() -> sf_calendar::CalendarView {
+        use sf_records::{RecordDb, RecordFormat, apply_record_file};
+        let mut db = RecordDb::new();
+        sf_calendar::register_kinds(&mut db).unwrap();
+        let src = db.add_source("mw", &[]);
+        let ron = include_str!("../../mw_mods/data/records/calendar.ron");
+        let outcome = apply_record_file(&mut db, src, ron, RecordFormat::Ron).unwrap();
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        sf_calendar::CalendarView::new(&sf_calendar::main_calendar(&db)).unwrap()
+    }
+
+    /// C3c-2: `day` shows the date; `day +n` / `day -n` move whole days keeping the hour (stopping at
+    /// day 0); `day N` goes to day N since the epoch; bad input errs with the usage.
+    #[test]
+    fn day_shows_and_moves_the_calendar_date() {
+        use sf_sky_bevy::GameClock;
+        let view = tamrielic();
+        let start = view.start_instant();
+        let mut app = app();
+        run(&mut app, "day");
+        assert!(log(&app).last().is_some_and(|l| l.contains("no calendar or sky in this run")), "{:?}", log(&app));
+        app.insert_resource(view.clone()).insert_resource(GameClock::new(start, 30.0));
+        let date = |app: &App| {
+            let d = view.date(app.world().resource::<GameClock>().now);
+            (d.day, view.month_name(d.month).unwrap().to_owned(), d.year, d.hour, d.minute)
+        };
+        let last = |app: &App| log(app).last().cloned().unwrap_or_default();
+
+        run(&mut app, "day");
+        assert_eq!(last(&app), "16 Last Seed 427 3E, 09:00 (day 0)");
+        run(&mut app, "day +1");
+        assert_eq!(date(&app), (17, "Last Seed".to_owned(), 427, 9, 0));
+        assert_eq!(last(&app), "day +1: 17 Last Seed 427 3E, 09:00 (day 1)");
+        run(&mut app, "day -20");
+        assert_eq!(app.world().resource::<GameClock>().now, start, "day 0 at the same hour");
+        assert_eq!(last(&app), "day -20: before the epoch, stopped at day 0: 16 Last Seed 427 3E, 09:00 (day 0)");
+        run(&mut app, "day 365");
+        assert_eq!(date(&app), (16, "Last Seed".to_owned(), 428, 9, 0));
+        assert_eq!(last(&app), "day 365: 16 Last Seed 428 3E, 09:00 (day 365)");
+        run(&mut app, "day -1");
+        assert_eq!(date(&app), (15, "Last Seed".to_owned(), 428, 9, 0));
+
+        let before = app.world().resource::<GameClock>().now;
+        for bad in ["day soon", "day +1.5", "day 3 4"] {
+            run(&mut app, bad);
+            assert_eq!(app.world().resource::<GameClock>().now, before, "{bad}: unchanged");
+        }
+        let errors: Vec<_> = log(&app).into_iter().rev().take(3).collect();
+        assert!(errors.iter().all(|l| l.contains("day")), "{errors:?}");
+        assert!(errors[1..].iter().all(|l| l.contains(DAY_USAGE)), "{errors:?}");
     }
 }

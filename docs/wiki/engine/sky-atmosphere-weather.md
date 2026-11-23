@@ -13,6 +13,10 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   `apply_lights` writes sun and moon (`:689`), `apply_cameras` writes `Exposure`, `AmbientLight` and the airglow
   (`:712`). Cameras with `SkyCamera` get Bevy `AtmosphereSettings` and `AtmosphereEnvironmentMapLight` (`:602`); removed
   indoors. `place_atmosphere` keeps the planet under sea level after floating-origin shifts (`:588`).
+- **Calendar (C3).** The date is a view of the clock's instant through `sf_calendar::CalendarView` (a resource; the
+  content's `sf.calendar` `main` record, Morrowind's in `mw_mods/data/records/calendar.ron`, inserted in
+  `mw_exterior_bevy` `exterior.rs:490`). `sync_calendar` (`sf_sky_bevy`) gives the sky its day and year length;
+  `mw_rpg_bevy` `services::sync_clock` writes the `MWScript` date globals from it. Spec: clock.md "Calendar (C3)".
 - **Medium and weather scales.** `build_medium` (`:399`) bakes the density and phase LUTs (256^2,
   `SkyRenderOptions::medium_resolution` `:132`) only when the atmosphere model changes. Haze and dust are live
   `ScatteringMediumScales` (`update_medium` `:534`, steps 0.05/0.02/0.02, at most every 0.25 s,

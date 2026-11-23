@@ -1924,3 +1924,4 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-23 (feature switches, owner ask): every costly feature gets one switch = metadata on its tunable (one
   namespace for console, `--off`, BRP, dev panel, options); "off" must skip the work (`Hides` marked until fixed); cost
   and a flip delta shown beside each switch; menus: covered screens hidden, fixed window frame (`specs/feature-switches.md`, `menus.md` §7).
+- 2026-11-23 (calendar, C3): the game date is a view of the clock instant through one generic `sf.calendar` record (`sf_calendar`; owner: "generic, not aligned on Morrowind"); Morrowind's is builtin-mod data, the MWScript date globals mirror it two-way (OpenMW semantics). The sun's season phase stays epoch-relative until a slice places the equinox by date (owner check).

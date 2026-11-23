@@ -26,6 +26,30 @@ fn orbit_at(latitude: f32) -> Orbit {
 
 // ---- clock ----
 
+/// A 30-hour day and a 400-day year (10 months of 40 days), as a game's calendar record.
+fn long_calendar() -> sf_calendar::Calendar {
+    let month = |i: u32| sf_calendar::Month { name: format!("M{i}"), days: 40, leap_days: 0, in_week: true };
+    sf_calendar::Calendar { hours_per_day: 30.0, months: (0..10).map(month).collect(), ..Default::default() }
+}
+
+#[test]
+#[expect(clippy::float_cmp, reason = "the sky's values are exact copies of the view's")]
+fn the_sky_calendar_comes_from_the_calendar_view() {
+    for record in [sf_calendar::Calendar::default(), long_calendar()] {
+        let view = sf_calendar::CalendarView::new(&record).unwrap();
+        let cal = Calendar::from(&view);
+        assert_eq!(cal.hours_per_day, view.hours_per_day());
+        #[expect(clippy::cast_possible_truncation, reason = "the sky keeps the year as f32")]
+        let year = view.mean_year_days() as f32;
+        assert_eq!(cal.days_per_year, year);
+        assert_eq!(cal.day_ms(), view.day_ms());
+    }
+    let cal = Calendar::from(&sf_calendar::CalendarView::new(&long_calendar()).unwrap());
+    assert_eq!((cal.hours_per_day, cal.days_per_year), (30.0, 400.0));
+    let default = Calendar::from(&sf_calendar::CalendarView::default());
+    assert_eq!((default.hours_per_day, default.days_per_year), (24.0, 365.0));
+}
+
 #[test]
 fn the_sky_view_reads_the_game_clock_instant() {
     // The game clock owns time (sf_ids); the sky only views its instant for its calendar.

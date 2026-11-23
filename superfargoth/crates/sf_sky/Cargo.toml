@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 glam = { workspace = true, features = ["serde"] }
 serde.workspace = true
+# The calendar view the sky's `Calendar` is built from (`From<&CalendarView>`; clock.md "Sky in C3").
+sf_calendar.workspace = true
 # The game clock's instant (`SkyClock::from_instant`; clock.md).
 sf_ids.workspace = true
 sf_wind.workspace = true

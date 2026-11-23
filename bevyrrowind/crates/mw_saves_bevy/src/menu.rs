@@ -25,8 +25,9 @@
 //! Ported from `OpenMW` (GPL-3.0-or-later), `apps/openmw/mwgui/savegamedialog.cpp` at
 //! 4e718b500ffee6657db90297d7b8a08a57d439bc: the default save name (`SaveGameDialog::onOpen`), the
 //! info fields and their order (`onSlotSelected`: level, in-game date and hour with a.m./p.m.,
-//! time played, file date `%Y.%m.%d`) and `formatTimeplayed`. Month lengths and the start date
-//! (16 Last Seed) are Morrowind's calendar (`OpenMW` `mwworld/datetimemanager.cpp`).
+//! time played, file date `%Y.%m.%d`) and `formatTimeplayed`. The date is the content's calendar
+//! (`sf_calendar::CalendarView`, from the `sf.calendar` record `main`: Morrowind's is `mw_mods`
+//! `records/calendar.ron`, day 0 = 16 Last Seed); without one, the framework's default view.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -35,10 +36,11 @@ use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 use bevy_log::prelude::*;
+use sf_calendar::CalendarView;
 use sf_records::RecordDb;
 use sf_save_bevy::sf_save::{SaveMeta, SaveReason, SlotDir, SlotEntry, list_worlds, with_suffix};
 use sf_save_bevy::{LoadRequest, SaveConfig, SaveDisplay, SaveDone, SaveGate, SaveRequest, SaveSession, SaveStorage};
-use sf_sky_bevy::{GameClock, SkyConfig};
+use sf_sky_bevy::{GameClock, GameInstant, SkyConfig};
 use sf_ui::{FluentArgs, FluentValue, Localizer, UiRegistry};
 use sf_ui_bevy::{ScreenStackRes, UiLocalizer, UiRegistryRes, UiScreenRoot};
 use sf_ui_screens::{SaveEntryView, SaveLoadChoice, SaveLoadEvent, SaveLoadMode, SaveLoadModel, SaveLoadScreen, ScreenSystems};
@@ -104,6 +106,7 @@ struct Folder<'w> {
     session: Res<'w, SaveSession>,
     display: Res<'w, SaveDisplay>,
     localizer: Option<Res<'w, UiLocalizer>>,
+    calendar: Option<Res<'w, CalendarView>>,
 }
 
 impl Folder<'_> {
@@ -111,16 +114,21 @@ impl Folder<'_> {
         self.localizer.as_deref().map(|l| &l.0)
     }
 
+    fn calendar(&self) -> &CalendarView {
+        self.calendar.as_deref().unwrap_or_else(|| default_calendar())
+    }
+
     /// The screen's model and its ids' files.
     fn list(&self, mode: SaveLoadMode) -> (SaveLoadModel, SaveList) {
         let fs = &*self.storage.0;
         let l = self.strings();
+        let cal = self.calendar();
         let mut files = BTreeMap::new();
         let mut entries = Vec::new();
         if self.session.world_id != 0 {
             for e in SlotDir::world(&self.config.root, self.config.mode, self.session.world_id).list(fs) {
                 let id = file_name(&e.path);
-                entries.push(entry_view(l, id.clone(), e.sequence, &e));
+                entries.push(entry_view(l, cal, id.clone(), e.sequence, &e));
                 files.insert(id, e.path);
             }
         } else if mode == SaveLoadMode::Load {
@@ -129,12 +137,12 @@ impl Folder<'_> {
                 for e in dir.list(fs) {
                     let id = format!("{folder}/{}", file_name(&e.path));
                     let order = e.meta.as_ref().map_or(0, |m| u64::try_from(m.wall_clock).unwrap_or(0));
-                    entries.push(entry_view(l, id.clone(), order, &e));
+                    entries.push(entry_view(l, cal, id.clone(), order, &e));
                     files.insert(id, e.path);
                 }
             }
         }
-        let model = SaveLoadModel { mode, entries, can_delete: true, new_name: default_name(l, self.display.game_days) };
+        let model = SaveLoadModel { mode, entries, can_delete: true, new_name: default_name(l, cal, self.display.game_days) };
         (model, SaveList(files))
     }
 }
@@ -144,7 +152,7 @@ fn file_name(path: &Path) -> String {
 }
 
 /// One listed save.
-fn entry_view(l: Option<&Localizer>, id: String, order: u64, e: &SlotEntry) -> SaveEntryView {
+fn entry_view(l: Option<&Localizer>, cal: &CalendarView, id: String, order: u64, e: &SlotEntry) -> SaveEntryView {
     let mut view = SaveEntryView::new(id, order, "");
     view.reason_label = match e.reason {
         SaveReason::Manual => String::new(),
@@ -157,7 +165,7 @@ fn entry_view(l: Option<&Localizer>, id: String, order: u64, e: &SlotEntry) -> S
             } else {
                 meta.location_label.clone()
             };
-            view.subtitle = subtitle(l, meta);
+            view.subtitle = subtitle(l, cal, meta);
         }
         Err(why) => {
             view.title = tr(l, "saves-damaged", &[]);
@@ -170,8 +178,8 @@ fn entry_view(l: Option<&Localizer>, id: String, order: u64, e: &SlotEntry) -> S
 }
 
 /// `OpenMW`'s info fields: in-game date, level, time played, the date saved.
-fn subtitle(l: Option<&Localizer>, meta: &SaveMeta) -> String {
-    let mut parts = vec![default_name(l, meta.game_days)];
+fn subtitle(l: Option<&Localizer>, cal: &CalendarView, meta: &SaveMeta) -> String {
+    let mut parts = vec![default_name(l, cal, meta.game_days)];
     if let Some(level) = meta.character_level {
         parts.push(tr(l, "saves-level", &[("level", FluentValue::from(level))]));
     }
@@ -206,41 +214,45 @@ fn time_played(l: Option<&Localizer>, seconds: u64) -> String {
         .join(" ")
 }
 
-/// Morrowind's month lengths (Morning Star first).
-const MONTH_DAYS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-/// Day 0 of the clock: 16 Last Seed (month 7), the game's start.
-const START: (u32, usize) = (16, 7);
-
-/// The in-game date of `days` (clock days since the start): (days passed from 1, day of month,
-/// month index, hour 0-23).
-fn calendar(days: f64) -> (u64, u32, usize, u32) {
-    let days = days.max(0.0);
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped, game days
-    let (whole, hour) = (days.floor() as u64, ((days.fract() * 24.0).floor() as u32).min(23));
-    let (mut day, mut month) = START;
-    let mut left = whole;
-    while left > 0 {
-        let step = u64::from(MONTH_DAYS[month] - day + 1).min(left);
-        left -= step;
-        #[allow(clippy::cast_possible_truncation)] // at most a month's days
-        let step = step as u32;
-        day += step;
-        if day > MONTH_DAYS[month] {
-            day = 1;
-            month = (month + 1) % 12;
-        }
-    }
-    (whole + 1, day, month, hour)
+/// The framework's default calendar view, for a menu with no content calendar (tests, the front
+/// end before a world).
+fn default_calendar() -> &'static CalendarView {
+    static VIEW: std::sync::OnceLock<CalendarView> = std::sync::OnceLock::new();
+    VIEW.get_or_init(CalendarView::default)
 }
 
-/// `OpenMW`'s default save name: "Day 24 - 16 Last Seed 7 p.m.".
-fn default_name(l: Option<&Localizer>, days: f64) -> String {
-    let (passed, date, month, hour) = calendar(days);
-    let half = if hour >= 12 { "saves-pm" } else { "saves-am" };
-    let hour12 = match hour {
-        0 => 12,
-        13.. => hour - 12,
+/// The clock instant of `days` (game days since the epoch, as saves and [`SaveDisplay`] keep them):
+/// clamped at 0, to the nearest millisecond (the f64 days came from a whole-ms instant, so this
+/// gives it back exactly; rounding down could lose the last millisecond of an hour).
+fn instant(cal: &CalendarView, days: f64) -> GameInstant {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)] // clamped, game days
+    let ms = (days.max(0.0) * cal.day_ms() as f64).round() as u64;
+    GameInstant(ms)
+}
+
+/// The in-game date of `days` on `cal`: (days passed from 1, day of month, month index, hour).
+fn date_of(cal: &CalendarView, days: f64) -> (u64, u32, u32, u32) {
+    let at = instant(cal, days);
+    let date = cal.date(at);
+    (cal.days_since_epoch(at) + 1, date.day, date.month, date.hour)
+}
+
+/// `OpenMW`'s default save name: "Day 24 - 16 Last Seed 7 p.m.". The month is the localized
+/// `mw-month-{index}` string when there is one, else the calendar record's month name; a.m./p.m.
+/// split the calendar's day in two halves (12 hours on a 24-hour day).
+fn default_name(l: Option<&Localizer>, cal: &CalendarView, days: f64) -> String {
+    let (passed, date, month, hour) = date_of(cal, days);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a validated, positive day length
+    let half_day = ((cal.hours_per_day() / 2.0).ceil() as u32).max(1);
+    let half = if hour >= half_day { "saves-pm" } else { "saves-am" };
+    let hour12 = match hour % half_day {
+        0 => half_day,
         h => h,
+    };
+    let key = format!("mw-month-{month}");
+    let month_name = match l {
+        Some(l) if l.has(&key) => l.format(&key, None).into_owned(),
+        _ => cal.month_name(month).unwrap_or_default().to_owned(),
     };
     tr(
         l,
@@ -248,7 +260,7 @@ fn default_name(l: Option<&Localizer>, days: f64) -> String {
         &[
             ("day", FluentValue::from(passed)),
             ("date", FluentValue::from(date)),
-            ("month", FluentValue::from(tr(l, &format!("mw-month-{month}"), &[]))),
+            ("month", FluentValue::from(month_name)),
             ("hour", FluentValue::from(hour12)),
             ("half", FluentValue::from(tr(l, half, &[]))),
         ],
@@ -277,7 +289,7 @@ fn display(
     active: Option<Res<ActiveWorldspace>>,
     records: Option<Res<ItemRecords>>,
     clock: Option<Res<GameClock>>,
-    sky: Option<Res<SkyConfig>>,
+    (calendar, sky): (Option<Res<CalendarView>>, Option<Res<SkyConfig>>),
     localizer: Option<Res<UiLocalizer>>,
     mut display: ResMut<SaveDisplay>,
     mut labelled: Local<Option<WorldspaceId>>,
@@ -289,7 +301,12 @@ fn display(
         *labelled = here;
     }
     if let Some(clock) = clock {
-        let day_ms = sky.map_or_else(|| sf_sky_bevy::sf_sky::Calendar::default().day_ms(), |s| s.day_ms());
+        // The content's calendar; the sky's (synced from it when both are there); the default.
+        let day_ms = match (calendar, sky) {
+            (Some(cal), _) => cal.day_ms(),
+            (None, Some(sky)) => sky.day_ms(),
+            (None, None) => default_calendar().day_ms(),
+        };
         let days = clock.now.days(day_ms);
         if display.game_days.to_bits() != days.to_bits() {
             display.game_days = days;
@@ -418,20 +435,88 @@ fn relist(mut saved: MessageReader<SaveDone>, folder: Folder, mut list: ResMut<S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sf_calendar::{Calendar, Epoch, Month};
+    use sf_records::{RecordFormat, apply_record_file};
+    use sf_ui::{L10nSource, LanguageIdentifier};
+
+    /// The builtin mod's calendar record (`mw_mods` `records/calendar.ron`; no dependency on it).
+    const CALENDAR_RON: &str = include_str!("../../mw_mods/data/records/calendar.ron");
+
+    fn tamrielic() -> CalendarView {
+        let mut db = RecordDb::new();
+        sf_calendar::register_kinds(&mut db).unwrap();
+        let src = db.add_source("mw", &[]);
+        let outcome = apply_record_file(&mut db, src, CALENDAR_RON, RecordFormat::Ron).unwrap();
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        CalendarView::new(&sf_calendar::main_calendar(&db)).unwrap()
+    }
+
+    /// The game's English strings (`mw_controls_bevy` `l10n/en/bevyrrowind.ftl`).
+    fn strings() -> Localizer {
+        let en: LanguageIdentifier = "en".parse().unwrap();
+        let source = L10nSource {
+            mod_id: "bevyrrowind".into(),
+            locale: en.clone(),
+            path: "l10n/en/bevyrrowind.ftl".into(),
+            text: include_str!("../../mw_controls_bevy/l10n/en/bevyrrowind.ftl").into(),
+        };
+        let (l, issues) = Localizer::build(&[en], &[source], false);
+        assert!(issues.is_empty(), "{issues:?}");
+        l
+    }
 
     #[test]
     fn calendar_counts_from_16_last_seed() {
-        assert_eq!(calendar(0.375), (1, 16, 7, 9), "the start: 9 a.m.");
-        assert_eq!(calendar(15.0), (16, 31, 7, 0));
-        assert_eq!(calendar(16.5), (17, 1, 8, 12), "into Hearthfire");
+        let cal = tamrielic();
+        assert_eq!(date_of(&cal, 0.375), (1, 16, 7, 9), "the start: 9 a.m.");
+        assert_eq!(date_of(&cal, 15.0), (16, 31, 7, 0));
+        assert_eq!(date_of(&cal, 16.5), (17, 1, 8, 12), "into Hearthfire");
         // 16 Last Seed + 365 days = 16 Last Seed again.
-        assert_eq!(calendar(365.0), (366, 16, 7, 0));
+        assert_eq!(date_of(&cal, 365.0), (366, 16, 7, 0));
+        assert_eq!(date_of(&cal, -3.0), (1, 16, 7, 0), "clamped at the epoch");
+    }
+
+    #[test]
+    fn default_name_from_the_content_calendar() {
+        let (cal, l) = (tamrielic(), strings());
+        assert_eq!(default_name(Some(&l), &cal, 19.0 / 24.0), "Day 1 - 16 Last Seed 7 p.m.");
+        assert_eq!(default_name(Some(&l), &cal, 0.0), "Day 1 - 16 Last Seed 12 a.m.");
+        assert_eq!(default_name(Some(&l), &cal, 0.5), "Day 1 - 16 Last Seed 12 p.m.");
+        // Evening Star 31 -> Morning Star 1: 16 Last Seed + 15 + 30 + 31 + 30 + 31 days.
+        let evening_star_31 = f64::from(15 + 30 + 31 + 30 + 31);
+        assert_eq!(default_name(Some(&l), &cal, evening_star_31 + 23.0 / 24.0), "Day 138 - 31 Evening Star 11 p.m.");
+        assert_eq!(default_name(Some(&l), &cal, evening_star_31 + 1.0 + 1.0 / 24.0), "Day 139 - 1 Morning Star 1 a.m.");
+        // An exact hour as f64 days (an instant's `days`) stays on its hour.
+        let at = GameInstant(2 * 86_400_000 + 64_800_000);
+        assert_eq!(default_name(Some(&l), &cal, at.days(cal.day_ms())), "Day 3 - 18 Last Seed 6 p.m.");
+    }
+
+    #[test]
+    fn default_name_on_a_30_hour_13_month_calendar() {
+        let months = (0..13).map(|i| Month { name: format!("Moon {i}"), days: 20, leap_days: 0, in_week: true }).collect();
+        let cal = CalendarView::new(&Calendar {
+            hours_per_day: 30.0,
+            months,
+            leap: None,
+            weekdays: Vec::new(),
+            eras: Vec::new(),
+            seasons: Vec::new(),
+            epoch: Epoch { year: 1, month: 12, day: 19, weekday: None, start_hour: 0.0 },
+        })
+        .unwrap();
+        let l = strings();
+        // Hour 29 of day 2: the 13th month (no `mw-month-12` string: the record's name), 14 p.m.
+        assert_eq!(default_name(Some(&l), &cal, 1.0 + 29.0 / 30.0), "Day 2 - 20 Moon 12 14 p.m.");
+        // Into the next year's first month (localized key `mw-month-0` wins).
+        assert_eq!(default_name(Some(&l), &cal, 2.0 + 15.0 / 30.0), "Day 3 - 1 Morning Star 15 p.m.");
+        assert_eq!(default_name(Some(&l), &cal, 2.0), "Day 3 - 1 Morning Star 15 a.m.");
+        assert_eq!(default_name(None, &cal, 1.0e9), "saves-default-name", "far days, no panic");
     }
 
     #[test]
     fn default_name_and_fields_without_strings() {
         // Keys stand in for text without a localizer.
-        assert_eq!(default_name(None, 0.8), "saves-default-name");
+        assert_eq!(default_name(None, default_calendar(), 0.8), "saves-default-name");
         assert_eq!(time_played(None, 3725), "saves-duration-hour saves-duration-minute saves-duration-second");
         assert_eq!(utc_stamp(0), "1970.01.01 00:00");
         assert_eq!(utc_stamp(1_793_017_500), "2026.10.26 12:25");

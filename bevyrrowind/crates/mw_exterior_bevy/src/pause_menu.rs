@@ -664,8 +664,16 @@ pub(crate) mod tests {
         let root = std::env::temp_dir().join(format!("bw-saveload-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let config = SaveConfig { root: root.clone(), background: false, ..default() };
+        // The game's calendar, as `exterior.rs` inserts it (the save menu's in-game date).
+        let mut db = RecordDb::new();
+        sf_calendar::register_kinds(&mut db).unwrap();
+        let src = db.add_source("mw", &[]);
+        let ron = include_str!("../../mw_mods/data/records/calendar.ron");
+        sf_records::apply_record_file(&mut db, src, ron, sf_records::RecordFormat::Ron).unwrap();
+        let calendar = sf_calendar::CalendarView::new(&sf_calendar::main_calendar(&db)).unwrap();
         let mut app = app_with(|app| {
             app.add_plugins(SfSavePlugin { config })
+                .insert_resource(calendar)
                 .insert_resource(sf_world_bevy::WorldOverlay::default())
                 .insert_resource(sf_sky_bevy::GameClock::default())
                 .insert_resource(sf_world_bevy::ActiveWorldspace(Some(sf_world::WorldspaceId::new("Seyda Neen, Census and Excise Office"))));

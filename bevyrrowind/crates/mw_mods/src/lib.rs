@@ -72,8 +72,10 @@ pub const RUNTIME_FUNCTIONS_PATH: &str = "scripts/mw/functions.luau";
 
 /// The builtin mod's native record files (`.ron`, applied by `NativeRecords` in load order, so any
 /// later mod patches them): the graphics presets (`sf.tunable_preset`: `sf.graphics_preset` and its
-/// `sg.*` groups, tunables slice T5b) and Bevyrrowind's values over framework defaults (`sf.tunable`).
-pub const BASE_RECORDS: [(&str, &str); 2] = [
+/// `sg.*` groups, tunables slice T5b), Bevyrrowind's values over framework defaults (`sf.tunable`)
+/// and the Tamrielic calendar (`sf.calendar` `main`, clock.md "Calendar (C3)").
+pub const BASE_RECORDS: [(&str, &str); 3] = [
+    ("records/calendar.ron", include_str!("../data/records/calendar.ron")),
     ("records/graphics_presets.ron", include_str!("../data/records/graphics_presets.ron")),
     ("records/tunables.ron", include_str!("../data/records/tunables.ron")),
 ];
@@ -95,6 +97,7 @@ fn base_records_source() -> Arc<dyn VfsSource> {
 pub fn base_record_db() -> RecordDb {
     let mut db = RecordDb::new();
     register_tunable_kinds(&mut db).expect("tunables kinds register once");
+    sf_calendar::register_kinds(&mut db).expect("calendar kind registers once");
     let source = db.add_source(BUILTIN, &[]);
     for (path, text) in BASE_RECORDS {
         let outcome = sf_records::apply_record_file(&mut db, source, text, sf_records::RecordFormat::Ron)
@@ -456,6 +459,8 @@ impl ContentAdapter for MwAdapter {
         mw_weather::register_kinds(db).expect("weather kinds register once");
         // The builtin mod's graphics presets and any mod's tunable values (`NativeRecords` applies them).
         register_tunable_kinds(db).expect("tunables kinds register once");
+        // The builtin mod's Tamrielic calendar (`sf.calendar` `main`).
+        sf_calendar::register_kinds(db).expect("calendar kind registers once");
     }
 
     fn apply_records(&self, cx: &mut RecordCx<'_>, file: &VfsPath) -> Result<(), RecordFileError> {

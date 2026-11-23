@@ -30,6 +30,8 @@ mw_world.workspace = true
 # Overlay `stats` blobs (`stats`).
 postcard.workspace = true
 serde.workspace = true
+# The content's calendar the `MWScript` date globals follow (`services::sync_clock`).
+sf_calendar = { workspace = true, features = ["bevy"] }
 sf_character_bevy = { workspace = true, features = ["world"] }
 # Magic effects on the characters (`effects`).
 sf_effects_bevy.workspace = true

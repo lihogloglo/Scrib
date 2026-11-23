@@ -1,6 +1,6 @@
 # One authoritative game clock
 
-Status: **C1 built 2026-11-11** (the Bevy-free core); **C2 built 2026-11-11** (the resource, its readers, `sf/clock` v2); C3 (calendar) specified below, not built. ROADMAP 1.17 (owner 2026-11-09: "an
+Status: **C1 built 2026-11-11** (the Bevy-free core); **C2 built 2026-11-11** (the resource, its readers, `sf/clock` v2); C3 (calendar) **built 2026-11-23** (C3a-C3c, headless). ROADMAP 1.17 (owner 2026-11-09: "an
 obvious fix, needed for multiplayer"). The earlier long draft (5 slices, owner questions) is on
 `origin/backup/mechanics-wip-2026-11-09`; this page supersedes it and answers its questions.
 
@@ -78,55 +78,110 @@ was unreachable), unverified.
 | Skyrim | `GameHour`, `GameDaysPassed`, `GameDay/Month/Year` globals; 4E, same 12 months | names in UI (unverified) | none | 17 Last Seed 4E 201 (unverified) |
 | Daggerfall Unity | `DaggerfallDateTime`: 12 x 30-day months, 7-day week, seasons (unverified) | yes | none | fixed start |
 | Fantasy-Calendar (web tool) | months, intercalary days, leap rules (every N except M), weekdays, eras, moons with cycles (unverified) | yes, any length | rule-based | any date |
-| Ours | one record: hours/day, months, optional leap rule, weekdays, epoch, era; the instant stays the only state | yes | optional | the record |
+| Ours | one record: hours/day, months (out-of-week festival days), optional leap rule, weekdays, eras, seasons, epoch; the instant stays the only state | yes, any length, optional | optional | the record |
 
 **Design.**
 - **Record** `sf.calendar` (`register_serde`, the `sf_ai::htn::register_kinds` pattern; RON in a mod via `sf_mods`;
   id `main`, a later definition replaces it, so a mod can change the calendar):
   ```
-  Calendar { hours_per_day: f32 (24), months: [Month { name, days: u32, leap_days: u32 (0) }],
+  Calendar { hours_per_day: f32 (24),
+    months: [Month { name, days: u32, leap_days: u32 (0), in_week: bool (true) }],
     leap: Option<Leap { every, skip_every, restore_every, offset }>,   // Gregorian generalised
-    weekdays: [String] (empty = none), era: Option<String>,
-    epoch: Epoch { year: i64, month, day (1-based), weekday: u32, start_hour: f32 } }
+    weekdays: [String] (empty = none),
+    eras: [Era { name, start_year: i64 }] (empty = plain years; sorted by start_year),
+    seasons: [Season { name, month, day }] (empty = none; start dates, the last wraps into the first),
+    epoch: Epoch { year: i64, month, day (1-based), weekday: Option<u32>, start_hour: f32 } }
   ```
   `epoch` is the date of instant 0 at 00:00; `start_hour` is where a new game's clock starts (content, not calendar
   state). A leap year (`(year-offset) % every == 0 && ((year-offset) % skip_every != 0 || % restore_every == 0)`)
-  adds `leap_days` to each month that has them. An intercalary day is a 1-day month and counts in the week
-  (non-goal: weekday-less festival days).
+  adds `leap_days` to each month that has them. An intercalary day or festival is a short month: `in_week: false`
+  keeps its days out of the week (no weekday, the week resumes after it; Harptos/Shire-style), `true` counts them.
+  The year is absolute; `eras` name spans of it (the era holding a year is the last with `start_year <= year`,
+  `year_of_era = year - start_year + 1`), so an era change is data, not a reset of the count. `epoch.weekday` is
+  `None` when the content doesn't know it (then no date has a weekday). **Generic by construction:** nothing in
+  `sf_calendar` names a game; every game's calendar is a record (the framework default is a plain 12-month,
+  365-day, 7-day-week calendar, epoch year 1, used only when no content defines `main`).
+  Non-goals: hours of other than 60 minutes of 60 s (the instant is ms; a game renames units in its UI), several
+  calendars at once (a culture's second calendar is a second record a UI may read, never the clock's), instants
+  before the epoch (`GameInstant` is unsigned: pick an epoch at or before the earliest date play needs).
 - **Where:** new Bevy-free crate `sf_calendar` (serde, `sf_ids`, `sf_records` for the kind; cold in seconds, in
   hakari `final-excludes`), not `sf_ids`: it holds strings and records, `sf_ids` stays ids + the integer clock. The
   sky and the game depend on it (wide, shallow). `CalendarView` is a `Resource` behind a `bevy` feature like
   `GameClock`, inserted by `sf_sky_bevy`'s plugin; no `_bevy` crate.
-- **Functions** (`CalendarView::new(&Calendar)` validates: >= 1 month, days >= 1, hours > 0): `date(instant) ->
-  Date { year, month, day, weekday, hour, minute }`, `instant_at(Date)`, `days_since_epoch(instant)` (OpenMW's count,
-  for moons), `days_in_year(year)`, `mean_year_days()` and `hours_per_day()` (the sky's `Calendar` is built from
-  them: its two fields go, one source), `month_name`, `weekday_name`. Year lookup: estimate by the mean year, correct
-  by +-1 with the closed-form leap count. `format(&Date, pattern)` with `{d} {month} {year} {era} {weekday} {hh}:{mm}`;
-  the game picks the pattern (UI, save menu), names come from the record (l10n keys later).
+- **Functions** (`CalendarView::new(&Calendar) -> Result` validates: >= 1 month, days >= 1, hours > 0, epoch date
+  exists, weekday < weekdays, eras sorted, season dates exist): `date(instant) -> Date { year, era: Option<usize>,
+  year_of_era, month (0-based), day (1-based), day_of_year (0-based), weekday: Option<u32>, season: Option<usize>,
+  hour, minute }`, `instant_at(&DateTime)` (round trip with `date`), `days_since_epoch(instant)` (OpenMW's count, for
+  moons), `days_in_year(year)`, `mean_year_days()` and `hours_per_day()` (the sky's `Calendar` is built from them:
+  one source), `month_name`, `weekday_name`, `era_name`, `season_name`, `start_instant()` (new game: epoch day at
+  `start_hour`). Year lookup: estimate by the mean year, correct by +-1 with the closed-form leap count; weekday from
+  the closed-form count of `in_week` days (per year and leap, same as the day count), O(1) in the instant.
+  `format(&Date, pattern)` with `{d} {dd} {month} {m} {year} {yoe} {era} {weekday} {season} {hh}:{mm}` (a missing
+  name renders empty); the game picks the pattern (UI, save menu), names come from the record (l10n keys later).
+  **C3a-1 as built (2026-11-23, `superfargoth/crates/sf_calendar`, 10 tests):** `Date`/`DateTime` also carry `ms`
+  (exact round trip); `instant_at` returns `Option` (dates before the epoch or that don't exist); a month may have
+  `days: 0` with `leap_days > 0` (a leap-only day); `skip_every`/`restore_every` 0 = none; seasons must be listed in
+  year order; extra errors `LeapEvery`, `YearTooLong`, `EpochOutOfWeek`, `StartHour`, `SeasonsUnsorted`; the year
+  estimate corrects by a short loop. `main_calendar(&RecordDb)` returns `main` or the default; plus `days_in_month`,
+  `is_leap`, `day_ms`.
+- **Sky in C3:** only the year length and day length come from the view: `sf_sky::Calendar` stays the sky's small
+  `Copy` value, built from the `CalendarView` resource whenever it changes (the view is the one source; adapters stop
+  setting it by hand; **C3a-2 as built 2026-11-23:** `sf_calendar` `bevy` feature = `Resource`, `SkyPlugin` inits
+  the default view, `sync_calendar` in `SkySystems::Clock` writes `SkyConfig` only on a difference). The sun's season phase stays
+  `days since epoch - Orbit::spring_equinox_day` (no look change at today's dev starts, `--day 172`). Seasons that
+  follow the calendar's months (equinox placed by date) move the sun of every dev start: its own later slice with an
+  owner check, not C3.
 - **Morrowind** (`mw_rpg::calendar` + content record `main`): Morning Star 31, Sun's Dawn 28, First Seed 31, Rain's
   Hand 30, Second Seed 31, Midyear 30, Sun's Height 31, Last Seed 31, Heartfire 30, Frostfall 31, Sun's Dusk 30,
-  Evening Star 31 (OpenMW's lengths); weekdays Sundas, Morndas, Tirdas, Middas, Turdas, Fredas, Loredas; era `3E`;
+  Evening Star 31 (OpenMW's lengths); weekdays Sundas, Morndas, Tirdas, Middas, Turdas, Fredas, Loredas; eras
+  `[3E from year 1]` (year = the `Year` global, 427; a 4E mod adds an era); no leap, no seasons for now;
   epoch 16 Last Seed 427 (Month 7, Year 427 as the vanilla start globals), `start_hour` 9. **The epoch's weekday is
-  unverified** (OpenMW has none): cosmetic, to be filled from a lore source, not guessed in code. The adapter keeps
+  unverified** (OpenMW has none): `None`, to be filled from a lore source, not guessed in code. The adapter keeps
   OpenMW's semantics: `GameHour` = hour of day, `Day/Month/Year` = the view's date (equal to `advance_calendar`'s roll),
   `DaysPassed` = start global + `days_since_epoch`. The month table and `advance_calendar` leave `training.rs`; the
   save menu's copy goes.
+- **C3b-1 as built (2026-11-23):** the record is builtin-mod data, `bevyrrowind/crates/mw_mods/data/records/calendar.ron`
+  (first in `BASE_RECORDS`; `sf_calendar::register_kinds` in `MwAdapter::register_kinds` and `base_record_db`), so any
+  mod replaces it. `mw_rpg::calendar::globals(view, instant, start_days_passed)` returns the five globals
+  (`training::Calendar`); `DaysPassed` starts at Morrowind.esm's 1. Tests: 60 month edges over 428-432 round trip,
+  1000 SplitMix64 advances (whole quarter hours) equal `advance_calendar` exactly.
+- **C3b-2 as built (2026-11-23):** `mw_exterior_bevy` `exterior.rs` inserts `CalendarView::new(&main_calendar(db))`
+  before `SkyPlugin` (a validation error logs and keeps the default). `services::sync_clock` writes the declared
+  globals from `calendar::globals` only on a difference (an hour-only change bypasses `Rpg` change detection; a new
+  day/month/year marks it); `start` = the content's `DaysPassed`, read once. Services with clock + calendar only
+  skip the clock (one source); without either, `advance_calendar` as before (`Rpg::clock_calendar` flag). Left for
+  C3c: a script `set GameHour` is overwritten the next frame; dev starts (`--day 172`) date 172 days after the epoch.
+- **C3c-1 as built (2026-11-23):** a write to a date global (script or console) moves the clock (`mw_rpg::calendar::
+  apply_written`, OpenMW `datetimemanager.cpp` @ `ca5e2576` 66-143, 196-222): `GameHour` < 0 -> 0, sets the hour of the
+  current day (may go back), whole days past the day length roll forward; `Month` < 0 -> 0, carries into the year, the
+  day clamps to the month; `Day` < 1 -> 1, past the month end rolls on (OpenMW: 31 in a 28-day month = 3 of the next);
+  `Year` as written; `DaysPassed` keeps the clock and shifts the start offset; date writes leave `DaysPassed` (not time
+  passing). A date before the epoch clamps to the epoch day. `sync_clock` detects writes against the last values it wrote.
+- **C3c-2/3 as built (2026-11-23):** console `day` (date + day count), `day +n`/`-n` (whole days, keeps the hour, clamps
+  at the epoch), `day N`; BRP `bevyrrowind/set` `days`, `status` `date` (`mw_devtools_bevy` `console.rs`, `remote.rs`).
+  The save menu's "Day 24 - 16 Last Seed 7 p.m." reads the view (`mw_saves_bevy` `menu.rs`; its month table is gone;
+  localized `mw-month-{n}` names win, else the record's; game days round to the nearest ms). C3 is complete.
 - **Saves:** only the instant (`sf/clock`), unchanged, no migration. The calendar is content, identical on host and
   clients through the load order; changing it between saves re-dates the same instant (documented, no check).
 
 **Tests (exact).** Tamrielic: instant <-> date round trip at every month edge over 5 years, incl. Evening Star 31 ->
 Morning Star 1 next year. Agreement with `mw_rpg::advance_calendar` over 1000 seeded random hour advances while both
 exist (day, month, year, days_passed equal; hour within 1e-3). Weird calendar (13 months, 30-hour days, a leap rule
-with skip/restore, a 1-day intercalary month): round trip over 400 years, `days_in_year` sums match. Epoch weekday:
-day 0 = `epoch.weekday`, +1 day increments and wraps. Sky `hours_per_day`/`days_per_year` equal the view's.
+with skip/restore, a 1-day intercalary month): round trip over 400 years, `days_in_year` sums match. Festival
+calendar (12 x 30 days + five 1-day `in_week: false` festivals, 10-day week, two eras): festival dates have no
+weekday, the weekday after a festival follows the one before it, era and `year_of_era` switch at `start_year`; seasons
+wrap at year end. Epoch weekday: day 0 = `epoch.weekday`, +1 day increments and wraps; `None` gives no weekday.
+Validation rejects each malformed record. Sky `hours_per_day`/`days_per_year` equal the view's.
 
 **Slices** (one deliverable each).
-- **C3a** framework: `sf_calendar` (record, view, framework tests), `sf_sky::Calendar` built from the view
-  (Morrowind's year becomes 365, seasons shift 0.07%: ledger line), `sf_sky_bevy` resource + `register_kinds`.
-  Files: `superfargoth/crates/sf_calendar/*`, `sf_sky/src/clock.rs`, `sf_sky_bevy` plugin, root `Cargo.toml`, hakari.
-- **C3b** Morrowind: `bevyrrowind/crates/mw_rpg/src/calendar.rs` + the `main` record; globals written from the view in
-  `mw_rpg_bevy/src/dialogue/services.rs` (`sync_clock`); the table leaves `training.rs` once the agreement test
-  passes; NS-3 moons read `days_since_epoch`.
+- **C3a-1** framework crate: `sf_calendar` (record, view, format, framework tests). Files:
+  `superfargoth/crates/sf_calendar/*`, root `Cargo.toml`, hakari.
+- **C3a-2** sky: `sf_sky::Calendar` built from the view (Morrowind's year becomes 365, seasons shift 0.07%: ledger
+  line), `sf_sky_bevy` resource + `register_kinds`. Files: `sf_sky/src/clock.rs`, `sf_sky_bevy` plugin.
+- **C3b-1** Morrowind record: `bevyrrowind/crates/mw_rpg/src/calendar.rs` (the `main` record + OpenMW globals from a
+  date) + the agreement test against `advance_calendar`.
+- **C3b-2** globals written from the view in `mw_rpg_bevy/src/dialogue/services.rs` (`sync_clock`); the table leaves
+  `training.rs`; NS-3 moons read `days_since_epoch`.
 - **C3c** two-way: `set GameHour` = clock jump (OpenMW `setHour`: clamp < 0, may roll days), script writes to
   `Day/Month/Year` shift the date, dev `day +n` console/BRP command (`bevyrrowind/set`, keeps the hour), save-menu
   date from `CalendarView::format`. Files: `mw_rpg_bevy`, `mw_devtools_bevy/src/remote.rs`, `mw_exterior_bevy/src/pause_menu.rs`.

@@ -235,3 +235,17 @@ fn an_unreadable_textures_toml_is_a_warning() {
     let warnings = mods.adapter.take_mount_warnings();
     assert!(warnings.len() == 1 && warnings[0].contains("textures.toml"), "{warnings:?}");
 }
+
+#[test]
+fn the_builtin_calendar_is_tamrielic() {
+    let cal = sf_calendar::main_calendar(&base_record_db());
+    assert_ne!(cal, sf_calendar::Calendar::default(), "the builtin mod defines `main`");
+    let view = sf_calendar::CalendarView::new(&cal).unwrap();
+    assert_eq!(cal.months.len(), 12);
+    assert_eq!(view.days_in_year(427), 365);
+    assert_eq!(view.month_name(7), Some("Last Seed"));
+    assert_eq!(view.weekday_name(0), Some("Sundas"));
+    // A new game starts on 16 Last Seed 3E 427 at 9:00 (the vanilla start globals).
+    let start = view.date(view.start_instant());
+    assert_eq!((start.year, start.era, start.year_of_era, start.month, start.day, start.hour), (427, Some(0), 427, 7, 16, 9));
+}

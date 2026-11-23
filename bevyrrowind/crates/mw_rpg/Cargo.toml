@@ -12,6 +12,9 @@ serde = { version = "1", features = ["derive"] }
 thiserror.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 sf_records.workspace = true
+# The Tamrielic calendar view and the game clock (`calendar`, clock.md C3).
+sf_calendar.workspace = true
+sf_ids.workspace = true
 sf_rpg.workspace = true
 # `ServiceRules` returns `SmallVec` (barter).
 smallvec.workspace = true

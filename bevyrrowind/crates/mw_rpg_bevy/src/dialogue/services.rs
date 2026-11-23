@@ -63,6 +63,7 @@ use sf_rpg::{
     RpgCommand, RpgEvent, SessionState, StackId,
 };
 use sf_rpg_ui::{DialogueAction, DialogueRequest, DialogueView};
+use sf_calendar::CalendarView;
 use sf_sky_bevy::GameClock;
 use sf_stats_bevy::sf_stats::{CauseKind, IncreaseSource, StatOp, StatOwner};
 use sf_stats_bevy::{StatCommand, StatTick};
@@ -792,9 +793,11 @@ impl Rpg {
         self.relist(sheets, ctx.tick);
     }
 
-    /// `advanceTime(hours)` on the `MWScript` calendar globals the game declares (`GameHour`,
-    /// `DaysPassed`, `Day`, `Month`, `Year`; [`Rpg::game_time`] reads the first two), and the
-    /// hours queued for the game clock ([`advance_sky`]). Single player: time passes.
+    /// `advanceTime(hours)`: the hours queued for the game clock ([`advance_sky`]). With a clock
+    /// and a calendar, the `MWScript` calendar globals follow the clock ([`sync_clock`], one
+    /// source); without (headless, interiors before the exterior plugin), they advance here, the
+    /// ones the game declares (`GameHour`, `DaysPassed`, `Day`, `Month`, `Year`;
+    /// [`Rpg::game_time`] reads the first two). Single player: time passes.
     /// TODO(co-op, services.md "Co-op"): a party rest request, the time skipped when the vote
     /// fails or is pending.
     #[allow(
@@ -803,17 +806,13 @@ impl Rpg {
         reason = "calendar globals are small whole numbers stored as f32"
     )]
     fn pass_time(&mut self, hours: f32) {
+        if self.clock_calendar {
+            self.sky_hours += hours;
+            info!("services: {hours} h passed (the clock skips; the calendar globals follow)");
+            return;
+        }
         let names = CALENDAR_GLOBALS.map(id);
-        let read = |rpg: &Rpg, name: &RecordId| {
-            View {
-                c: &rpg.content,
-                s: &rpg.state,
-                sheets: &NoSheets,
-            }
-            .global_value(name)
-            .map(mw_rpg::GlobalNumber::as_f32)
-        };
-        let [hour, days, day, month, year] = names.each_ref().map(|n| read(self, n));
+        let [hour, days, day, month, year] = names.each_ref().map(|n| self.global_f32(n));
         let before = Calendar {
             hour: hour.unwrap_or(0.0),
             days_passed: days.unwrap_or(0.0) as i32,
@@ -842,6 +841,27 @@ impl Rpg {
         }
         self.sky_hours += hours;
         info!("services: {hours} h passed ({before:?} -> {after:?})");
+    }
+
+    /// A declared global's value (the state's, else the record's), `None` when undeclared.
+    fn global_f32(&self, name: &RecordId) -> Option<f32> {
+        View {
+            c: &self.content,
+            s: &self.state,
+            sheets: &NoSheets,
+        }
+        .global_value(name)
+        .map(mw_rpg::GlobalNumber::as_f32)
+    }
+
+    /// The content's `DaysPassed` start global (its record value; 0 when undeclared): the value
+    /// on the calendar's epoch day ([`mw_rpg::calendar::globals`]).
+    #[allow(clippy::cast_possible_truncation, reason = "a whole-number global stored as f32")]
+    fn start_days_passed(&self) -> i32 {
+        self.content
+            .global_types
+            .get(&id("dayspassed"))
+            .map_or(0, |g| g.as_f32() as i32)
     }
 
     /// An item command on the host's inventories (`MoveStack` between two of them).
@@ -1025,13 +1045,96 @@ pub(super) fn relist_services(
     }
 }
 
+/// [`sync_clock`]'s state: the content's `DaysPassed` start global (read once, then shifted by
+/// written globals; [`mw_rpg::calendar::apply_written`]) and the five calendar globals as the
+/// last sync left them (`None`: no sync yet, or no clock or calendar last frame).
+#[derive(Debug, Default)]
+pub(super) struct ClockSync {
+    start: Option<i32>,
+    synced: Option<[Option<f32>; 5]>,
+}
+
 /// [`Rpg::game_time`] follows the game clock (clock.md "Views"): the instant copied in before the
-/// dialogue host runs, without marking `Rpg` changed.
-#[allow(clippy::needless_pass_by_value)] // system parameters
-pub(super) fn sync_clock(clock: Option<Res<GameClock>>, mut rpg: ResMut<Rpg>) {
+/// dialogue host runs, without marking `Rpg` changed. With the content's calendar too, the
+/// `MWScript` calendar globals the game declares follow the clock ([`mw_rpg::calendar::globals`];
+/// start: the content's `DaysPassed` start global), each written only when it differs.
+/// `GameHour` moves every frame the clock runs, so it doesn't mark `Rpg` changed (like the
+/// instant); a new day, month or year does (the screens re-lay out on changes).
+///
+/// One clock (clock.md "Calendar (C3)", C3c): a global that differs from what the last sync
+/// wrote was written by a script or the console since, and moves the clock as `OpenMW`'s
+/// `DateTimeManager` does (`GameHour` sets the hour of the day, `Day` / `Month` / `Year` the
+/// date, `DaysPassed` only the count; [`mw_rpg::calendar::apply_written`]); the globals are then
+/// written from the new instant as usual, so the written values hold.
+#[allow(
+    clippy::needless_pass_by_value, // system parameters
+    clippy::cast_precision_loss,
+    clippy::float_cmp,
+    reason = "calendar globals are small whole numbers stored as f32"
+)]
+pub(super) fn sync_clock(
+    mut clock: Option<ResMut<GameClock>>,
+    calendar: Option<Res<CalendarView>>,
+    mut sync: Local<ClockSync>,
+    mut rpg: ResMut<Rpg>,
+) {
+    if let (Some(clock), Some(calendar), Some(synced)) = (clock.as_mut(), calendar.as_deref(), sync.synced) {
+        let start = *sync.start.get_or_insert_with(|| rpg.start_days_passed());
+        let current = CALENDAR_GLOBALS.map(|g| rpg.global_f32(&id(g)));
+        if current != synced {
+            let now = clock.now;
+            let at_now = mw_rpg::calendar::globals(calendar, now, start);
+            let (synced, written) = (globals_or(synced, at_now), globals_or(current, at_now));
+            let (new, start) = mw_rpg::calendar::apply_written(calendar, now, start, &synced, &written);
+            info!("services: calendar globals written {synced:?} -> {written:?}: the clock moves {now:?} -> {new:?}");
+            if new != now {
+                clock.now = new;
+            }
+            sync.start = Some(start);
+        }
+    }
     let now = clock.map(|c| c.now);
     if rpg.clock != now {
         rpg.bypass_change_detection().clock = now;
+    }
+    let follow = now.is_some() && calendar.is_some();
+    if rpg.clock_calendar != follow {
+        rpg.bypass_change_detection().clock_calendar = follow;
+    }
+    let (Some(now), Some(calendar)) = (now, calendar) else {
+        sync.synced = None;
+        return;
+    };
+    let start = *sync.start.get_or_insert_with(|| rpg.start_days_passed());
+    let g = mw_rpg::calendar::globals(&calendar, now, start);
+    let values = [g.hour, g.days_passed as f32, g.day as f32, g.month as f32, g.year as f32];
+    for (i, (name, value)) in CALENDAR_GLOBALS.into_iter().zip(values).enumerate() {
+        let name = id(name);
+        // Undeclared globals stay undeclared; exact: the value differs or not.
+        if rpg.global_f32(&name).is_some_and(|old| old != value) {
+            let globals = if i == 0 {
+                &mut rpg.bypass_change_detection().state.globals
+            } else {
+                &mut rpg.state.globals
+            };
+            globals.insert(name, value);
+        }
+    }
+    sync.synced = Some(CALENDAR_GLOBALS.map(|g| rpg.global_f32(&id(g))));
+}
+
+/// The calendar globals in `values` ([`CALENDAR_GLOBALS`] order), undeclared ones (`None`) as
+/// `fallback`'s (so they never read as written).
+#[allow(clippy::cast_possible_truncation, reason = "whole-number globals stored as f32")]
+fn globals_or(values: [Option<f32>; 5], fallback: Calendar) -> Calendar {
+    let [hour, days, day, month, year] = values;
+    let whole = |v: Option<f32>, or: i32| v.map_or(or, |v| v as i32);
+    Calendar {
+        hour: hour.unwrap_or(fallback.hour),
+        days_passed: whole(days, fallback.days_passed),
+        day: whole(day, fallback.day),
+        month: whole(month, fallback.month),
+        year: whole(year, fallback.year),
     }
 }
 
@@ -1707,5 +1810,186 @@ pub(super) mod tests {
         );
         let end = sheet.view(&t.table).base(progress);
         assert!(end > start, "Mercantile progress {start} -> {end}");
+    }
+}
+
+#[cfg(test)]
+mod calendar_tests {
+    //! C3b-2 (clock.md "Calendar (C3)", "Morrowind"), headless and exact: the `MWScript` date
+    //! globals follow the game clock through the builtin mod's Tamrielic calendar.
+    use std::sync::Arc;
+
+    use bevy_app::{App, Update};
+    use sf_records::{RecordFormat, apply_record_file};
+    use sf_sky_bevy::sf_ids::clock::MS_PER_HOUR;
+    use tes3::esp::{GlobalValue, GlobalVariable};
+
+    use super::*;
+
+    /// The builtin mod's record file (`mw_mods` `BASE_RECORDS`; no dev-dependency on `mw_mods`).
+    const CALENDAR_RON: &str = include_str!("../../../mw_mods/data/records/calendar.ron");
+
+    fn tamrielic() -> CalendarView {
+        let mut db = RecordDb::new();
+        sf_calendar::register_kinds(&mut db).unwrap();
+        let src = db.add_source("mw", &[]);
+        let outcome = apply_record_file(&mut db, src, CALENDAR_RON, RecordFormat::Ron).unwrap();
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        CalendarView::new(&sf_calendar::main_calendar(&db)).unwrap()
+    }
+
+    /// [`tests::records`] + Morrowind.esm's start globals (9:00, 16 Last Seed 427, day 1).
+    fn rpg() -> Rpg {
+        let mut db = tests::records(None);
+        let src = db.add_source("globals", &[]);
+        for (name, value) in [
+            ("GameHour", GlobalValue::Float(9.0)),
+            ("DaysPassed", GlobalValue::Short(1)),
+            ("Day", GlobalValue::Short(16)),
+            ("Month", GlobalValue::Short(7)),
+            ("Year", GlobalValue::Short(427)),
+        ] {
+            let g = GlobalVariable {
+                id: name.into(),
+                value,
+                ..Default::default()
+            };
+            db.define(src, id(&name.to_lowercase()), g).unwrap();
+        }
+        Rpg::new(Arc::new(db)).unwrap()
+    }
+
+    /// `Rpg` was marked changed in the last frame's [`sync_clock`].
+    #[derive(Resource, Default)]
+    struct Marked(bool);
+
+    #[allow(clippy::needless_pass_by_value)] // system parameters
+    fn note_changed(rpg: Res<Rpg>, mut marked: ResMut<Marked>) {
+        marked.0 = rpg.is_changed();
+    }
+
+    /// The services' clock systems (as `dialogue::add` chains them), with the game clock at the
+    /// calendar's start instant when `clock`.
+    fn app(clock: bool) -> App {
+        let mut app = App::new();
+        let view = tamrielic();
+        if clock {
+            app.insert_resource(GameClock::new(view.start_instant(), 30.0));
+        }
+        app.insert_resource(view)
+            .insert_resource(rpg())
+            .init_resource::<Marked>()
+            .add_systems(Update, (sync_clock, note_changed, advance_sky).chain());
+        app
+    }
+
+    /// The five globals as scripts read them (`GameHour`, `DaysPassed`, `Day`, `Month`, `Year`).
+    fn globals(app: &App) -> [Option<f32>; 5] {
+        let rpg = app.world().resource::<Rpg>();
+        CALENDAR_GLOBALS.map(|g| rpg.global_f32(&id(g)))
+    }
+
+    fn skip(app: &mut App, hours: u64) {
+        app.world_mut().resource_mut::<GameClock>().skip(hours * MS_PER_HOUR);
+    }
+
+    #[test]
+    fn the_date_globals_follow_the_game_clock() {
+        let mut app = app(true);
+        app.update();
+        let start = [Some(9.0), Some(1.0), Some(16.0), Some(7.0), Some(427.0)];
+        assert_eq!(globals(&app), start, "the start instant is the content's start date");
+        assert!(
+            app.world().resource::<Rpg>().state.globals.is_empty(),
+            "nothing written while the values equal the records'"
+        );
+        // 30 h later: 15:00 on 17 Last Seed 427, the second day.
+        skip(&mut app, 30);
+        app.update();
+        assert_eq!(globals(&app), [Some(15.0), Some(2.0), Some(17.0), Some(7.0), Some(427.0)]);
+        assert!(app.world().resource::<Marked>().0, "a new day marks Rpg changed");
+        // An hour on the same day moves GameHour without marking Rpg changed.
+        app.update();
+        assert!(!app.world().resource::<Marked>().0, "no change, no mark");
+        skip(&mut app, 1);
+        app.update();
+        assert_eq!(globals(&app)[0], Some(16.0));
+        assert!(!app.world().resource::<Marked>().0, "GameHour alone doesn't mark Rpg");
+        // Across the year: 16 Last Seed 427 + 365 days.
+        skip(&mut app, 365 * 24 - 31);
+        app.update();
+        assert_eq!(globals(&app), [Some(9.0), Some(366.0), Some(16.0), Some(7.0), Some(428.0)]);
+    }
+
+    /// A script's `set <global> to <value>` (the runner's `ResultEffect::SetGlobal`).
+    fn set_global(app: &mut App, name: &str, value: f32) {
+        app.world_mut().resource_mut::<Rpg>().state.globals.insert(id(name), value);
+    }
+
+    #[test]
+    fn a_script_writing_the_date_globals_moves_the_game_clock() {
+        let mut app = app(true);
+        app.update();
+        // `set GameHour to 20` at 9:00: the clock jumps to 20:00 the same day, and stays.
+        set_global(&mut app, "gamehour", 20.0);
+        app.update();
+        assert_eq!(app.world().resource::<GameClock>().now.0, 20 * MS_PER_HOUR);
+        for _ in 0..3 {
+            app.update();
+            assert_eq!(globals(&app), [Some(20.0), Some(1.0), Some(16.0), Some(7.0), Some(427.0)]);
+        }
+        // Back within the day, then the clock runs on from there.
+        set_global(&mut app, "gamehour", 7.0);
+        app.update();
+        skip(&mut app, 1);
+        app.update();
+        assert_eq!(globals(&app)[0], Some(8.0), "the clock runs on from the written hour");
+        // `set Day to 20`: 20 Last Seed at the current hour; DaysPassed doesn't count it.
+        set_global(&mut app, "day", 20.0);
+        app.update();
+        assert_eq!(globals(&app), [Some(8.0), Some(1.0), Some(20.0), Some(7.0), Some(427.0)]);
+        assert_eq!(app.world().resource::<GameClock>().now.0, (4 * 24 + 8) * MS_PER_HOUR);
+        // A day later DaysPassed counts on from there.
+        skip(&mut app, 24);
+        app.update();
+        assert_eq!(globals(&app), [Some(8.0), Some(2.0), Some(21.0), Some(7.0), Some(427.0)]);
+    }
+
+    #[test]
+    fn a_service_passing_time_moves_the_globals_through_the_clock() {
+        let mut app = app(true);
+        app.update();
+        let before = app.world().resource::<GameClock>().now;
+        app.world_mut().resource_mut::<Rpg>().pass_time(8.0);
+        assert_eq!(
+            globals(&app),
+            [Some(9.0), Some(1.0), Some(16.0), Some(7.0), Some(427.0)],
+            "the globals don't move on their own"
+        );
+        // This frame's `advance_sky` skips the clock; the next sync writes the globals.
+        app.update();
+        let now = app.world().resource::<GameClock>().now;
+        assert_eq!(now.0 - before.0, 8 * MS_PER_HOUR, "the game clock skipped exactly 8 h");
+        app.update();
+        assert_eq!(globals(&app), [Some(17.0), Some(1.0), Some(16.0), Some(7.0), Some(427.0)]);
+        // 8 h more crosses midnight: one source, so the day rolls with the clock.
+        app.world_mut().resource_mut::<Rpg>().pass_time(8.0);
+        app.update();
+        app.update();
+        assert_eq!(globals(&app), [Some(1.0), Some(2.0), Some(17.0), Some(7.0), Some(427.0)]);
+    }
+
+    #[test]
+    fn without_a_clock_services_advance_the_globals_themselves() {
+        let mut app = app(false);
+        app.update();
+        app.world_mut().resource_mut::<Rpg>().pass_time(8.0);
+        assert_eq!(globals(&app), [Some(17.0), Some(1.0), Some(16.0), Some(7.0), Some(427.0)]);
+        app.update();
+        assert_eq!(
+            globals(&app),
+            [Some(17.0), Some(1.0), Some(16.0), Some(7.0), Some(427.0)],
+            "no clock, no sync"
+        );
     }
 }

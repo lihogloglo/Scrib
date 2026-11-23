@@ -5309,6 +5309,7 @@ dependencies = [
  "serde_json",
  "sf_action_bevy",
  "sf_atmos_bevy",
+ "sf_calendar",
  "sf_camera_bevy",
  "sf_character_bevy",
  "sf_console_bevy",
@@ -5460,6 +5461,7 @@ dependencies = [
  "sf_atmos_bevy",
  "sf_audio_bevy",
  "sf_bake",
+ "sf_calendar",
  "sf_character",
  "sf_character_bevy",
  "sf_console_bevy",
@@ -5563,6 +5565,7 @@ dependencies = [
  "mw_vfs",
  "mw_weather",
  "semver",
+ "sf_calendar",
  "sf_mods",
  "sf_records",
  "sf_tunables",
@@ -5680,6 +5683,8 @@ dependencies = [
  "mw_vfs",
  "postcard",
  "serde",
+ "sf_calendar",
+ "sf_ids",
  "sf_records",
  "sf_rpg",
  "sf_stats",
@@ -5715,6 +5720,7 @@ dependencies = [
  "mw_world",
  "postcard",
  "serde",
+ "sf_calendar",
  "sf_character_bevy",
  "sf_effects_bevy",
  "sf_physics_bevy",
@@ -5759,6 +5765,7 @@ dependencies = [
  "mw_world",
  "serde",
  "sf_action_bevy",
+ "sf_calendar",
  "sf_camera",
  "sf_camera_bevy",
  "sf_character_bevy",
@@ -7969,6 +7976,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_calendar"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "serde",
+ "sf_ids",
+ "sf_records",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sf_camera"
 version = "0.1.0"
 dependencies = [
@@ -8870,6 +8888,7 @@ dependencies = [
  "glam 0.33.12",
  "serde",
  "serde_json",
+ "sf_calendar",
  "sf_ids",
  "sf_tunables",
  "sf_wind",
@@ -8902,6 +8921,7 @@ dependencies = [
  "dlss_wgpu",
  "log",
  "naga",
+ "sf_calendar",
  "sf_diag_bevy",
  "sf_ids",
  "sf_model_bevy",

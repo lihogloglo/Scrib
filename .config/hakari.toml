@@ -40,6 +40,7 @@ workspace-members = [
     "sf_atmos",
     "sf_audio",
     "sf_bake",
+    "sf_calendar",
     "sf_camera",
     "sf_character",
     "sf_combat",

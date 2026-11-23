@@ -13,6 +13,8 @@ mw_records.workspace = true
 mw_vfs.workspace = true
 mw_weather.workspace = true
 semver.workspace = true
+# The `sf.calendar` record kind (the builtin mod's Tamrielic calendar).
+sf_calendar.workspace = true
 sf_mods.workspace = true
 sf_records.workspace = true
 # The `sf.tunable` / `sf.tunable_preset` record kinds (the builtin mod's graphics presets).

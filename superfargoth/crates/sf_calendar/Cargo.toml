@@ -1,0 +1,24 @@
+[package]
+name = "sf_calendar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy-free generic game calendar for superfargoth: a data-driven `sf.calendar` record (months, leap rule, weekdays, eras, seasons, epoch) and an O(1) date view over the game clock"
+
+# clock.md "Calendar (C3)": strings and records, so not in `sf_ids` (ids + the integer clock).
+# Bevy-free and in hakari `final-excludes`: builds cold in seconds.
+[features]
+default = []
+# `CalendarView` as a Bevy `Resource` (clock.md "Where"; the `sf_ids` pattern: Bevy only behind a feature).
+bevy = ["dep:bevy_ecs"]
+
+[dependencies]
+bevy_ecs = { workspace = true, features = ["std"], optional = true }
+serde.workspace = true
+sf_ids.workspace = true
+sf_records.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

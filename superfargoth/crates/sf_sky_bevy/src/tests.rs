@@ -792,3 +792,29 @@ fn moon_light_follows_the_moonlight_setting() {
     assert!((bright / dim - 100.0).abs() < 0.5, "{dim} -> {bright}");
     assert!(color.to_linear().red.is_finite());
 }
+
+/// clock.md "Sky in C3": the sky's day and year length come from the `CalendarView` resource.
+#[test]
+#[expect(clippy::float_cmp, reason = "an exact copy of the view's hours")]
+fn the_sky_calendar_follows_the_calendar_view() {
+    let mut app = app(12.0);
+    app.update();
+    let default = CalendarView::default();
+    assert_eq!(app.world().resource::<SkyConfig>().day_ms(), default.day_ms());
+
+    let record = sf_calendar::Calendar { hours_per_day: 30.0, ..Default::default() };
+    let view = CalendarView::new(&record).unwrap();
+    let day_ms = view.day_ms();
+    app.insert_resource(view);
+    app.update();
+    let config = app.world().resource::<SkyConfig>();
+    assert_eq!(config.0.calendar.hours_per_day, 30.0);
+    assert_eq!(config.day_ms(), day_ms);
+
+    // Unchanged view: the sync leaves SkyConfig's change detection alone.
+    app.update();
+    let tick = app.world().read_change_tick();
+    app.update();
+    let changed = app.world().resource_ref::<SkyConfig>().last_changed();
+    assert!(changed.get() <= tick.get(), "SkyConfig rewritten on a frame the view did not change");
+}
