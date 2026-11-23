@@ -83,7 +83,7 @@ pub fn add(app: &mut App) {
     }
     app.add_systems(
         Update,
-        (display, open, host, relist, close_screen).chain().after(ScreenSystems::Input).run_if(resource_exists::<UiRegistryRes>),
+        (display, open, host, relist).chain().after(ScreenSystems::Input).run_if(resource_exists::<UiRegistryRes>),
     );
 }
 
@@ -412,16 +412,6 @@ fn refill(folder: &Folder, list: &mut SaveList, screens: &mut Query<&mut SaveLoa
 fn relist(mut saved: MessageReader<SaveDone>, folder: Folder, mut list: ResMut<SaveList>, mut screens: Query<&mut SaveLoadScreen>) {
     if saved.read().count() > 0 {
         refill(&folder, &mut list, &mut screens);
-    }
-}
-
-/// The screen's root despawns once off the stack.
-#[allow(clippy::needless_pass_by_value)] // system parameters
-fn close_screen(mut commands: Commands, stack: Res<ScreenStackRes>, roots: Query<(Entity, &UiScreenRoot)>) {
-    for (e, root) in &roots {
-        if root.0.as_str() == SAVELOAD && !stack.0.is_open(SAVELOAD) {
-            commands.entity(e).despawn();
-        }
     }
 }
 

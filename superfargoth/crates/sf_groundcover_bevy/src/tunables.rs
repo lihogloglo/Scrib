@@ -1,10 +1,31 @@
 //! Mesh renderer tunables (`groundcover.render.*`, spec `docs/specs/tunables.md`; groundcover.md "Tunables", all
 //! `Guess` until GC-2b measures them). Presentation only (`Net::Presentation`). The ranges, the slot budget and
 //! the job budget rebuild every tile when they change (`Lifetime::Respawn`); the wind values apply live to every
-//! groundcover material. The scatter's own tunables (`groundcover.tile_size_m`, ...) are the core's
+//! groundcover material, and [`ENABLED`] switches the whole renderer off and on live ([`GROUNDCOVER`]). The
+//! scatter's own tunables (`groundcover.tile_size_m`, ...) are the core's
 //! (`sf_groundcover::tunables`), registered by the plugin beside these.
 
-use sf_tunables::{AnyDef, Def, Lifetime, Source, Unit, def};
+use sf_tunables::{AnyDef, Category, Cost, Def, Effect, FeatureSwitch, Group, Lifetime, Scope, Source, Unit, def};
+
+/// `groundcover.enabled`: the renderer runs (feature-switches.md "Live in Bevy", slice FS-L1). Off despawns every
+/// batch (GPU buffers freed, out of every view, shadow and GPU preprocessing), drops the scatter jobs and stops the
+/// per-frame systems; on rebuilds the rings around the viewer as after a teleport.
+pub const ENABLED: Def<bool> = def!(bool "groundcover.enabled" = true)
+    .help("Groundcover (grass, ferns, flowers) is drawn; off skips its scatter, uploads and draws")
+    .source(Source::Owner("2026-11-23"))
+    .group(Group::Foliage)
+    .scope(Scope::Player)
+    .lifetime(Lifetime::Live);
+
+/// The feature switch on [`ENABLED`] (registered by [`GroundcoverPlugin`](crate::GroundcoverPlugin) beside its
+/// tunables, slice FS-2b). Its batches draw in the main passes (no pass of their own), so the CPU spans are its cost
+/// tags.
+pub const GROUNDCOVER: FeatureSwitch = FeatureSwitch::new(&ENABLED)
+    .label("Groundcover")
+    .category(Category::Foliage)
+    .effect(Effect::Skips)
+    .cost(&[Cost::Cpu("sf_groundcover_bevy::drive"), Cost::Cpu("sf_groundcover_bevy::terrain_ground::refresh_terrain_ground")])
+    .at(file!(), line!());
 
 pub const MESH_RANGE: Def<f32> = def!(float "groundcover.render.mesh_range_m" = 60.0)
     .range(4.0, 400.0)
@@ -91,6 +112,7 @@ pub const PHASE_OFFSET: Def<f32> = def!(float "groundcover.render.phase_offset_m
     .lifetime(Lifetime::Live);
 
 pub const TUNABLES: &[&dyn AnyDef] = &[
+    &ENABLED,
     &MESH_RANGE,
     &HYSTERESIS,
     &SHADOW_RANGE,

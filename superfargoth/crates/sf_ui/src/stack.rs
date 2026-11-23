@@ -8,7 +8,7 @@
 //! priority, so its actions shadow everything below.
 
 use crate::ids::{InputContextId, ScreenId};
-use crate::records::{Layer, PausePolicy};
+use crate::records::{Covers, Layer, PausePolicy};
 use crate::registry::UiRegistry;
 
 /// An open screen, with what the router needs from its record.
@@ -18,6 +18,8 @@ pub struct OpenScreen {
     pub layer: Layer,
     pub input: InputContextId,
     pub pause: PausePolicy,
+    /// What it hides beneath it on its layer (record value or layer default).
+    pub covers: Covers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -56,6 +58,7 @@ impl ScreenStack {
                 .clone()
                 .unwrap_or_else(|| InputContextId::new(def.id.as_str())),
             pause: def.def.pause,
+            covers: def.def.covers(),
         };
         let stack = &mut self.layers[open.layer.index()];
         stack.retain(|s| s.id.as_str() != id);
@@ -141,6 +144,30 @@ impl ScreenStack {
 
     pub fn is_open(&self, id: &str) -> bool {
         self.layers.iter().flatten().any(|s| s.id.as_str() == id)
+    }
+
+    /// Whether an open screen is covered: a screen above it on its own layer
+    /// covers [`Covers::Below`]. Covered screens are hidden and not pickable;
+    /// screens on other layers (modals over a menu) never cover it. `false`
+    /// for a screen that isn't open.
+    pub fn is_covered(&self, id: &str) -> bool {
+        self.layers.iter().any(|stack| {
+            stack
+                .iter()
+                .position(|s| s.id.as_str() == id)
+                .is_some_and(|i| stack[i + 1..].iter().any(|s| s.covers == Covers::Below))
+        })
+    }
+
+    /// Open screens that are not covered, bottom layer first, bottom to top.
+    pub fn visible(&self) -> impl Iterator<Item = &OpenScreen> + '_ {
+        self.layers.iter().flat_map(|stack| {
+            let first = stack
+                .iter()
+                .rposition(|s| s.covers == Covers::Below)
+                .unwrap_or(0);
+            &stack[first..]
+        })
     }
 
     /// The screen that receives input actions: the top screen of the highest

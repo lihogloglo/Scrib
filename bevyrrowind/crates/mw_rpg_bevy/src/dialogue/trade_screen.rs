@@ -238,19 +238,11 @@ fn trade_events(
 }
 
 /// Trade screens follow their dialogue: a closed dialogue (goodbye) closes the trade screen,
-/// a closed view (Cancel, a veto) closes it, and a root off the stack despawns.
-#[allow(clippy::needless_pass_by_value)] // system parameters
-fn close_trade(
-    mut commands: Commands,
-    mut stack: ResMut<ScreenStackRes>,
-    roots: Query<(Entity, &TradeScreen), With<OpenTrade>>,
-) {
-    for (e, screen) in &roots {
+/// a closed view (Cancel, a veto) closes it (the router despawns a closed root).
+fn close_trade(mut stack: ResMut<ScreenStackRes>, roots: Query<&TradeScreen, With<OpenTrade>>) {
+    for screen in &roots {
         if !stack.0.is_open("dialogue") || screen.view.is_closed() {
             stack.0.close(TRADE_SCREEN);
-        }
-        if !stack.0.is_open(TRADE_SCREEN) {
-            commands.entity(e).despawn();
         }
     }
 }
@@ -272,7 +264,7 @@ mod tests {
     use super::super::services::tests::{
         MERCHANT, PLAYER, SELLER, barter, count, records, stack_of,
     };
-    use super::super::{close_screens, registry};
+    use super::super::{add_ui_router, end_closed_talk, registry};
     use super::*;
     use crate::inventory::GOLD;
 
@@ -291,6 +283,7 @@ mod tests {
         }
         let (talk, view) = rpg.open(MERCHANT, &NoSheets).unwrap();
         let mut app = App::new();
+        add_ui_router(&mut app);
         app.add_message::<ServiceEventMessage>()
             .add_message::<ServiceScreenEvent>()
             .add_message::<DialogueRequestEvent>()
@@ -301,7 +294,7 @@ mod tests {
             .init_resource::<PcSlots>()
             .add_systems(
                 Update,
-                (host_dialogue, close_screens, send_service_events).chain(),
+                (host_dialogue, end_closed_talk, send_service_events).chain(),
             );
         add(&mut app);
         let screen = app
@@ -314,6 +307,7 @@ mod tests {
             .0
             .push(&registry(), "dialogue")
             .unwrap();
+        app.finish();
         (app, screen)
     }
 
@@ -522,6 +516,26 @@ mod tests {
             rows(view(&mut app, screen), TradePane::Player),
             [("misc_bottle".into(), 1, Some(10))]
         );
+    }
+
+    /// However the dialogue closes under an open trade screen (Back, goodbye, a stack close late
+    /// in the frame), the talk settles once (it drops the trade session), on the closing frame
+    /// for a close before the host's systems and on the next one for a later close; the trade
+    /// screen follows, and the router despawns both roots.
+    #[test]
+    fn every_dialogue_close_settles_the_talk_once_and_drops_both_roots() {
+        use super::super::{DialogueClose, close_dialogue};
+        for how in [DialogueClose::Back, DialogueClose::Goodbye, DialogueClose::PostUpdate, DialogueClose::Last] {
+            let (mut app, dialogue) = app();
+            let (_, open) = open_trade(&mut app, dialogue);
+            let late = matches!(how, DialogueClose::PostUpdate | DialogueClose::Last);
+            assert_eq!(close_dialogue(&mut app, dialogue, how), late, "{how:?}: settled on the frame expected");
+            assert!(!is_open(&app, TRADE_SCREEN) && !is_open(&app, "dialogue"), "{how:?}");
+            assert!(app.world().get_resource::<ActiveTalk>().is_none(), "{how:?}: the talk ended");
+            assert!(app.world().resource::<Rpg>().trade_session(open.session).is_none(), "{how:?}: settled");
+            assert!(trade(&mut app).is_none(), "{how:?}: the trade root despawned");
+            assert!(app.world().get_entity(dialogue).is_err(), "{how:?}: the dialogue root despawned");
+        }
     }
 
     #[test]

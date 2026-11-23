@@ -170,6 +170,7 @@ fn bind_medium(app: &mut App) {
     use sf_tunables_bevy::TunablesAppExt;
     use sf_water_bevy::{WaterMediumSettings, WATER_MEDIUM_HYSTERESIS_M, WATER_UNDERWATER, WATER_UNDERWATER_KD_SCALE, WATER_UNDERWATER_SKY_FILL};
     let _on = app.add_tunable(&WATER_UNDERWATER).bind_resource(|m: &mut WaterMediumSettings, v| m.enabled = v);
+    app.add_feature_switch(&sf_water_bevy::UNDERWATER);
     let _band = app.add_tunable(&WATER_MEDIUM_HYSTERESIS_M).bind_resource(|m: &mut WaterMediumSettings, v| m.hysteresis_m = v);
     let _kd = app.add_tunable(&WATER_UNDERWATER_KD_SCALE).bind_resource(|m: &mut WaterMediumSettings, v| m.kd_scale = v);
     let _fill = app.add_tunable(&WATER_UNDERWATER_SKY_FILL).bind_resource(|m: &mut WaterMediumSettings, v| m.sky_fill = v);
@@ -566,3 +567,29 @@ pub fn add_rain(app: &mut App) {
     let _near = app.add_tunable(&WATER_RAIN_RIPPLE_FADE_NEAR_M).bind_resource(|r: &mut WaterRainSettings, v| r.fade_near_m = v);
     let _far = app.add_tunable(&WATER_RAIN_RIPPLE_FADE_FAR_M).bind_resource(|r: &mut WaterRainSettings, v| r.fade_far_m = v);
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy_app::App;
+    use sf_tunables_bevy::{FeatureSwitches, SetBy, SetTunable, Tunables, TunablesPlugin};
+
+    /// FS-2b: the medium's bindings register the `water.underwater` switch; it follows a Console-layer set.
+    #[test]
+    fn underwater_switch_registered() {
+        let mut app = App::new();
+        app.add_plugins(TunablesPlugin).init_resource::<sf_water_bevy::WaterMediumSettings>();
+        super::bind_medium(&mut app);
+        app.update();
+        let running = |app: &App| {
+            let switches = app.world().resource::<FeatureSwitches>();
+            assert_eq!(switches.get("water.underwater"), Some(&sf_water_bevy::UNDERWATER), "registered");
+            switches.running(&app.world().resource::<Tunables>().0, "water.underwater")
+        };
+        assert!(running(&app), "on by default");
+        app.world_mut().write_message(SetTunable::new("water.underwater", "off", SetBy::Console));
+        app.update();
+        assert!(!running(&app));
+        assert!(!app.world().resource::<sf_water_bevy::WaterMediumSettings>().enabled);
+    }
+}
+

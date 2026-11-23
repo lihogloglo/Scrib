@@ -16,6 +16,11 @@
 //! jobs, start new ones (nearest first, budgeted), open the batches whose model resolved, reconcile placements
 //! ([`residency`]) and queue the slot runs ([`render`]). Gauges `groundcover/*` in `Last` ([`publish_gauges`]).
 //!
+//! Live off (`groundcover.enabled`, [`tunables::GROUNDCOVER`]): [`drive`] and the ground refresh stop
+//! ([`groundcover_enabled`]); [`suspend`] despawns every batch, drops the jobs, the residency and the queued runs, and
+//! zeroes the stats, so the render world's extract and publish find nothing to do. Back on, [`drive`] rebuilds the
+//! rings around the viewer from scratch (as after a teleport).
+//!
 //! ```no_run
 //! use std::sync::Arc;
 //! use bevy::prelude::*;
@@ -158,11 +163,17 @@ impl Plugin for GroundcoverPlugin {
         }
         app.register_tunables(sf_groundcover::tunables::TUNABLES)
             .register_tunables(tunables::TUNABLES)
+            .add_feature_switch(&tunables::GROUNDCOVER)
             .init_resource::<GroundcoverModels>()
             .init_resource::<GroundcoverUploads>()
             .init_resource::<GroundcoverStats>()
             .init_resource::<Runtime>()
-            .add_systems(PostUpdate, drive.in_set(GroundcoverSystems::Drive).after(WorldOriginSystems))
+            .add_systems(
+                PostUpdate,
+                (drive.run_if(groundcover_enabled), suspend.run_if(not(groundcover_enabled)))
+                    .in_set(GroundcoverSystems::Drive)
+                    .after(WorldOriginSystems),
+            )
             .add_systems(Last, publish_gauges.run_if(resource_exists::<DiagCounters>));
     }
 
@@ -220,6 +231,28 @@ impl WindSettings {
             phase_offset_m: read(store, &tunables::PHASE_OFFSET),
         }
     }
+}
+
+/// Run condition: `groundcover.enabled` (on when no store or the tunable is unregistered).
+pub fn groundcover_enabled(tunables: Option<Res<Tunables>>) -> bool {
+    tunables.is_none_or(|t| read(&t.0, &tunables::ENABLED))
+}
+
+/// `PostUpdate` while `groundcover.enabled` is off: despawns the batches (their GPU buffers go with them), drops
+/// the jobs (cancelled), the residency and the queued runs, and zeroes the stats. A no-op once all is gone.
+fn suspend(
+    mut runtime: ResMut<Runtime>,
+    mut uploads: ResMut<GroundcoverUploads>,
+    mut stats: ResMut<GroundcoverStats>,
+    mut commands: Commands,
+) {
+    if runtime.residency.is_some() || !runtime.batches.is_empty() || !runtime.jobs.is_empty() {
+        runtime.clear(&mut commands);
+    }
+    if !uploads.writes.is_empty() {
+        uploads.writes.clear();
+    }
+    stats.set_if_neq(GroundcoverStats::default());
 }
 
 /// A scatter task's result and its time.

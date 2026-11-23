@@ -18,6 +18,8 @@
 //!   [`ConsoleAppExt::set_console_var`] speak for a source. `reset <name>` takes back the
 //!   console's value, `reset <name> all` every layer's.
 //! - Game input systems gate on [`console_closed`] while the overlay is open.
+//! - Feature switches ([`features`]): `toggle <name>` flips one at the console layer (an on/off
+//!   variable that is no switch flips as before), `features [filter]` lists them.
 //!
 //! The in-game front end (input line, scrollback, completion popup, click-select,
 //! inspector) is the `overlay` feature: [`overlay::ConsoleOverlayPlugin`].
@@ -34,6 +36,7 @@ pub use sf_tunables_bevy;
 pub use sf_tunables_bevy::Tunables;
 use sf_tunables_bevy::{TunableChanged, TunableSystems, TunablesPlugin, tunable_changed};
 
+pub mod features;
 #[cfg(feature = "overlay")]
 pub mod overlay;
 
@@ -61,6 +64,7 @@ impl Plugin for ConsolePlugin {
                     forward_changes.in_set(TunableSystems::Bind),
                 ),
             );
+        features::add_commands(app);
     }
 }
 

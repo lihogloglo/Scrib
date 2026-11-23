@@ -102,6 +102,7 @@ fn volume_image(size: [u32; 3]) -> Image {
 #[allow(clippy::too_many_arguments)] // a system's parameters
 pub(crate) fn update_volume(
     fog: Res<Fog>,
+    switch: Res<crate::FroxelsEnabled>,
     cameras: Query<&Camera, With<CloudCamera>>,
     noise: Res<CloudImages>,
     mut volume: ResMut<FroxelVolume>,
@@ -110,7 +111,8 @@ pub(crate) fn update_volume(
     mut materials: ResMut<Assets<FroxelFogMaterial>>,
     mut applied: Local<Option<FroxelVolume>>,
 ) {
-    let settings = fog.froxels.filter(|_| fog.enabled);
+    // Off (`sky.froxels.enabled`, FS-L2): the 1×1×1 stand-in, unwritten, like no froxels at all.
+    let settings = fog.froxels.filter(|_| fog.enabled && switch.0);
     // The fog pass writes the volume only for an active cloud camera once the
     // noise exists (`drive`'s `active`); the grid (image size) stays as set so
     // leaving and re-entering an interior doesn't reallocate it.

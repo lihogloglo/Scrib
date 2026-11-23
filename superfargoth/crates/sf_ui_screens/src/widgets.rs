@@ -244,6 +244,51 @@ pub fn centred_window(node: Node) -> (Node, UiTransform) {
     (node, UiTransform::from_translation(Val2::percent(-50.0, -50.0)))
 }
 
+/// A menu window's frame (menus.md §7 "Fixed window frame"): its size comes from the layout, a
+/// share of the viewport clamped in px, never from its content, so hovering a row, changing a
+/// value or switching a page never resizes or moves it. Layout constants.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowFrame {
+    pub width: Val,
+    pub height: Val,
+    pub min_width: Val,
+    pub min_height: Val,
+    pub max_width: Val,
+    pub max_height: Val,
+}
+
+impl WindowFrame {
+    /// `width` x `height` percent of the viewport, clamped to `min` and `max` px.
+    pub const fn share(width: f32, height: f32, min: [f32; 2], max: [f32; 2]) -> Self {
+        Self {
+            width: Val::Percent(width),
+            height: Val::Percent(height),
+            min_width: Val::Px(min[0]),
+            min_height: Val::Px(min[1]),
+            max_width: Val::Px(max[0]),
+            max_height: Val::Px(max[1]),
+        }
+    }
+}
+
+/// A window screen root in a [`WindowFrame`], centred by anchoring: absolute with auto
+/// margins, which share the viewport's free space (Taffy places an absolute child without
+/// insets by its alignment in the viewport's grid, auto margins included; with insets it would
+/// ignore them), instead of a translation by its own size. A theme may still size or move it.
+pub fn framed_window(frame: WindowFrame, node: Node) -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        margin: UiRect::all(Val::Auto),
+        width: frame.width,
+        height: frame.height,
+        min_width: frame.min_width,
+        min_height: frame.min_height,
+        max_width: frame.max_width,
+        max_height: frame.max_height,
+        ..node
+    }
+}
+
 /// A yes/no question modal inside a window: a hidden overlay with the question's text and two
 /// answer buttons (yes, then the cancelling one). The screen sets the text every frame; an
 /// empty text hides it. Used by the save/load screen and the pause menu.

@@ -590,11 +590,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         let mut fog = app.world_mut().resource_mut::<sf_atmos_bevy::Fog>();
         fog.enabled = fog_on;
         // F3: the froxel volume (High) near the camera; `--off froxels` keeps the
-        // analytic layers only (the Low preset). Shafts past the cascades come from
-        // the terrain's shadow-height map.
-        if perf.off.has(Part::Froxels) {
-            fog.froxels = None;
-        }
+        // analytic layers only (`sky.froxels.enabled` off at the command-line layer, below).
+        // Shafts past the cascades come from the terrain's shadow-height map.
         // weather.md "Temporal sampling": `--off fogdither` is the old shared jitter, `--off fogjitter` none.
         if let Some(f) = fog.froxels.as_mut() {
             use sf_atmos_bevy::sf_atmos::FroxelJitter;
@@ -640,6 +637,13 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
             let id = tunables.id_of(&sf_atmos_bevy::SUN_VIS_ENABLED).expect("registered by CloudsPlugin");
             let _ = tunables.set_noted(id.untyped(), false.into(), sf_tunables_bevy::SetBy::CommandLine, Some("--off sunvis".to_owned()));
+        }
+        // FS-L2: `--off froxels` = the froxel switch `sky.froxels.enabled` off at the command-line
+        // layer (live: `set sky.froxels.enabled true` brings the volume back).
+        if perf.off.has(Part::Froxels) {
+            let mut tunables = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
+            let id = tunables.id_of(&sf_atmos_bevy::FROXELS_ENABLED).expect("registered by CloudsPlugin");
+            let _ = tunables.set_noted(id.untyped(), false.into(), sf_tunables_bevy::SetBy::CommandLine, Some("--off froxels".to_owned()));
         }
         // CW-1 (WE-13): the far storm reads as a cell under its clouds, its region edge ~half a
         // 117 m cell wide with ±48 m noise (owner 2026-11-12: borders stay fairly abrupt in a small
@@ -751,6 +755,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     mw_rpg_bevy::inventory_ui::add(&mut app, options.open_ui.as_deref() == Some(mw_rpg_bevy::inventory_ui::SCREEN));
     // The pause (escape) menu and the options screen (`pause_menu.rs`; after the UI plugins).
     crate::pause_menu::add(&mut app);
+    // Its Advanced page (`advanced_page.rs`, MF-6): the player's feature switches, generated once every
+    // plugin registered them; the saved picks apply at start on interactive runs, as the graphics levels.
+    app.add_plugins(crate::advanced_page::AdvancedPagePlugin { apply_saved: options.menu_graphics && !bench });
     // Video players (video.md): the intro videos and the main menu's backdrop video.
     app.add_plugins(sf_video_bevy::VideoPlugin);
     // The release start's main menu (`main_menu.rs`; after the pause menu, whose clock it shares),

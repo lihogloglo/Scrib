@@ -40,6 +40,8 @@ bevy_text.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 bevy_ui.workspace = true
+# features_panel.rs: its buttons (`Button` / `Activate`) and the scrolling row list (`ScrollArea`).
+bevy_ui_widgets.workspace = true
 bevy_window = { workspace = true, features = ["std"] }
 bevy_winit.workspace = true
 bevy_world_serialization.workspace = true

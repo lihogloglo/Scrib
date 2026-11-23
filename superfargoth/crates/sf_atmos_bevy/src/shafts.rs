@@ -58,7 +58,7 @@ use bevy_shader::Shader;
 use bevy_transform::components::GlobalTransform;
 use bevy_transform::TransformSystems;
 use sf_atmos::shafts as core;
-use sf_tunables::{Def, Group, Source, Unit, def};
+use sf_tunables::{Cost, Def, Effect, FeatureSwitch, Group, Source, Unit, def};
 use sf_tunables_bevy::TunablesAppExt;
 
 use crate::CloudShadowLight;
@@ -71,6 +71,14 @@ pub const SHAFTS_ENABLED: Def<bool> = def!(bool "sky.shafts.enabled" = false)
     .help("Screen-space light shaft occlusion: the haze toward a sun hidden by the scene stops glowing")
     .source(Source::Industry("UE directional light 'Light Shaft Occlusion'; Mitchell, GPU Gems 3 ch. 13"))
     .group(Group::Sky);
+
+/// The feature switch on [`SHAFTS_ENABLED`] (slice FS-2b). Off skips the occlusion pass (and the
+/// shaft bloom, `sky.shafts.bloom`, which needs it).
+pub const SHAFTS: FeatureSwitch = FeatureSwitch::new(&SHAFTS_ENABLED)
+    .label("Light shaft occlusion")
+    .effect(Effect::Skips)
+    .cost(&[Cost::Gpu("shafts")])
+    .at(file!(), line!());
 
 /// `sky.shafts.occlusion`: how dark the haze's forward lobe gets where the way to the sun is
 /// closed (0 = stock, 1 = none of the sun's in-scattering left at the sun).
@@ -244,6 +252,7 @@ pub struct ShaftsSun(pub Option<Vec3>);
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<LightShafts>().init_resource::<ShaftsSun>();
     let _bound = app.add_tunable(&SHAFTS_ENABLED).bind_resource(|s: &mut LightShafts, v| s.enabled = v);
+    app.add_feature_switch(&SHAFTS);
     let _bound = app.add_tunable(&SHAFTS_OCCLUSION).bind_resource(|s: &mut LightShafts, v| s.occlusion = v);
     let _bound = app.add_tunable(&SHAFTS_OCCLUSION_DEPTH).bind_resource(|s: &mut LightShafts, v| s.occlusion_depth_m = v);
     let _bound = app.add_tunable(&SHAFTS_PASSES).bind_resource(|s: &mut LightShafts, v| s.passes = v);

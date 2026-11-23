@@ -42,14 +42,22 @@ use sf_character_bevy::CharacterPlacement;
 use sf_console_bevy::overlay::{ConsoleInputSystems, ConsoleKeys, ConsoleOverlayPlugin, ConsoleSelection};
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param, VarId, VarSpec, Vars};
 use sf_console_bevy::{ConsoleAppExt, ConsolePlugin, DevConsole, SetBy};
-use sf_tunables_bevy::Tunables;
+use sf_tunables_bevy::sf_tunables::{Category, Effect, FeatureSwitch, OffValue};
+use sf_tunables_bevy::{Availability, FeatureSwitches, Tunables, TunablesAppExt};
 
 use mw_game_core::exterior::ExteriorCamera;
 use mw_game_core::player::LocoAb;
 use crate::live_ab::{LiveAb, Switch, Switches};
 
 /// Name of the dynamic GI variable.
-const GI_VAR: &str = "render.gi";
+pub const GI_VAR: &str = "render.gi";
+/// FS-2d: `render.gi` as a feature switch (the console variable is in the tunables store). Off drops
+/// the volumes' textures: nothing traced or shown. Marked not built in a run without the GI.
+pub static GI_SWITCH: FeatureSwitch = FeatureSwitch::named(GI_VAR, OffValue::Bool(false))
+    .label("Dynamic probe GI")
+    .category(Category::Lighting)
+    .effect(Effect::Skips)
+    .at(file!(), line!());
 /// Name of the GI irradiance gain variable (`GiVolume::intensity`).
 const GI_INTENSITY_VAR: &str = "render.gi_intensity";
 /// Name of the GI inside-volume ambient scale variable (`GiVolume::ambient_scale`).
@@ -295,6 +303,7 @@ fn register(app: &mut App) {
     let gi =app.add_console_var(VarSpec::bool(GI_VAR, false).help(
         "Dynamic probe GI (sf_gi_bevy), live; starts on where the GI runs (High/Ultra raster, interior start), off and fixed without it (--off gi)",
     ));
+    app.add_feature_switch(&GI_SWITCH);
     let gain = sf_gi_bevy::GiVolume::default();
     let gi_intensity = app.add_console_var(
         VarSpec::float(GI_INTENSITY_VAR, f64::from(gain.intensity))
@@ -366,11 +375,17 @@ struct GiVar {
 /// the volumes' textures (nothing traced or shown) and re-traces them when it comes back.
 /// A value typed before the seed wins, as for the camera variables.
 #[allow(clippy::needless_pass_by_value)]
-fn apply_gi(mut tunables: ResMut<Tunables>, mut state: ResMut<GiVar>, enabled: Option<ResMut<sf_sky_bevy::GiEnabled>>) {
+fn apply_gi(mut tunables: ResMut<Tunables>, mut state: ResMut<GiVar>, enabled: Option<ResMut<sf_sky_bevy::GiEnabled>>, switches: Option<ResMut<FeatureSwitches>>) {
     let Some(mut enabled) = enabled else {
         if state.applied.is_none() {
             let _ = tunables.set_by(state.var, false.into(), SetBy::CommandLine);
             state.applied = Some(tunables.var(state.var).generation());
+            // `sf_gi_bevy` decides at build: no `GiEnabled` now is none this run (FS-2d).
+            if let Some(mut switches) = switches
+                && switches.state(&tunables, GI_VAR).is_some_and(|s| matches!(s.availability, Availability::Available))
+            {
+                let _ = switches.mark_not_built(GI_VAR, "no GI in this run");
+            }
         }
         return;
     };
@@ -621,9 +636,23 @@ fn set_switch(world: &mut World, vars: &mut Vars, gi: VarId, name: &str, on: Opt
         state.apply(world);
         return Ok(text);
     }
+    // Not a live `Switch` name: a feature switch (FS-2a), same answer as `toggle`.
+    if let Some(answer) = sf_console_bevy::features::set_feature(world, vars, name, on) {
+        return answer;
+    }
+    // FS-2c: a part name reaches the switch it reports on: its live feature switch, or its
+    // startup-only `part.*` row (which refuses and says how to relaunch).
+    let part_switch = world.get_resource::<FeatureSwitches>().and_then(|s| crate::part_switches::switch_for(s, name));
+    if let Some(answer) = part_switch.and_then(|switch| sf_console_bevy::features::set_feature(world, vars, switch, on)) {
+        return answer;
+    }
     match mw_game_core::perf::Off::from_flags(&[name.to_owned()]) {
         Ok(_) => Err(format!("{name}: startup only, relaunch with --off {name}")),
-        Err(unknown) => Err(format!("{unknown}; live: ssao, contactshadows, gi, ambient, viewmodel, {}, {}", LOCO_AB.join(", "), Switch::names())),
+        Err(unknown) => {
+            let close = sf_console_bevy::features::feature_suggestions(world, name);
+            let hint = if close.is_empty() { String::new() } else { format!("; feature switch {}?", close.join(", ")) };
+            Err(format!("{unknown}; live: ssao, contactshadows, gi, ambient, viewmodel, {}, {}{hint}", LOCO_AB.join(", "), Switch::names()))
+        }
     }
 }
 
@@ -747,10 +776,10 @@ mod tests {
         assert_eq!(app.world().resource::<mw_rpg_bevy::dialogue::Rpg>().state.pc.loadout.count(&gold), 7, "{:?}", log(&app));
         run(&mut app, "FooBar 1");
         // `off` is a console command: it wins over MWScript.
-        run(&mut app, "off froxels");
+        run(&mut app, "off terrain");
         let log = log(&app);
         assert!(log.iter().any(|l| l.starts_with("mwscript:") && l.to_ascii_lowercase().contains("foobar")), "{log:?}");
-        assert!(log.iter().any(|l| l.contains("froxels: startup only")), "{log:?}");
+        assert!(log.iter().any(|l| l.contains("terrain: startup only")), "{log:?}");
         let console = app.world().resource::<DevConsole>();
         assert_eq!(console.complete("player->addi").candidates, ["player->additem"]);
         assert!(console.complete("modd").candidates.contains(&"moddisposition".to_owned()));
@@ -792,8 +821,8 @@ mod tests {
         run(&mut app, "flip contactshadows");
         assert!(app.world().get::<ContactShadows>(camera).is_none());
         assert!(log(&app).iter().any(|l| l.starts_with("contactshadows off")), "{:?}", log(&app));
-        run(&mut app, "off froxels");
-        assert!(log(&app).iter().any(|l| l.contains("froxels: startup only, relaunch with --off froxels")), "{:?}", log(&app));
+        run(&mut app, "off terrain");
+        assert!(log(&app).iter().any(|l| l.contains("terrain: startup only, relaunch with --off terrain")), "{:?}", log(&app));
     }
 
     #[test]
@@ -803,6 +832,8 @@ mod tests {
         assert!(log(&none).iter().any(|l| l.contains("gi: not in this run")), "{:?}", log(&none));
         let var = none.world().resource::<GiVar>().var;
         assert!(!none.world().resource::<Tunables>().flag(var), "no GI: seeded off");
+        let state = none.world().resource::<FeatureSwitches>().state(none.world().resource::<Tunables>(), GI_VAR).map(|s| format!("{:?}", s.availability));
+        assert_eq!(state.as_deref(), Some("NotBuilt { reason: \"no GI in this run\" }"), "FS-2d: the GI switch says so");
 
         let mut app = app();
         app.insert_resource(sf_sky_bevy::GiEnabled(true));
@@ -1040,5 +1071,52 @@ mod tests {
         assert!(log(&app).iter().any(|l| l == "raised snow (displacement) off"), "{:?}", log(&app));
         run(&mut app, "flip raise");
         assert!(app.world().resource::<sf_surface_bevy::SurfaceSettings>().raise);
+    }
+
+    /// FS-2a: `on`/`off`/`flip <name>` reach a feature switch when `<name>` is no live `Switch`
+    /// name (same answer as `toggle`); an unknown name suggests a close switch.
+    #[test]
+    fn on_off_flip_fall_back_to_feature_switches() {
+        use sf_tunables_bevy::sf_tunables::def;
+        use sf_tunables_bevy::{Def, FeatureSwitch, TunablesAppExt};
+        const FROXELS: Def<bool> = def!(bool "test.froxels.enabled" = true);
+        static FROXELS_SW: FeatureSwitch = FeatureSwitch::new(&FROXELS);
+        let mut app = app();
+        app.register_tunables(&[&FROXELS]).add_feature_switch(&FROXELS_SW);
+        let froxels = |app: &App| {
+            let t = app.world().resource::<Tunables>();
+            let v = t.var(t.id("test.froxels.enabled").expect("registered"));
+            (t.flag(t.id("test.froxels.enabled").expect("registered")), v.set_by())
+        };
+        run(&mut app, "flip test.froxels.enabled");
+        assert_eq!(froxels(&app), (false, SetBy::Console));
+        assert_eq!(log(&app).last().map(String::as_str), Some("test.froxels.enabled: off (console; skips)"), "{:?}", log(&app));
+        run(&mut app, "on test.froxels.enabled");
+        assert_eq!(froxels(&app), (true, SetBy::Console));
+        run(&mut app, "off test.froxels.enabled");
+        assert_eq!(froxels(&app), (false, SetBy::Console));
+        run(&mut app, "flip froxel");
+        assert!(log(&app).last().is_some_and(|l| l.ends_with("; feature switch test.froxels.enabled?")), "{:?}", log(&app));
+    }
+
+    /// FS-2c: `off <part>` reaches the switch the part reports on: `froxels` the live
+    /// `sky.froxels.enabled`, a part with no switch its `part.*` row, which refuses.
+    #[test]
+    fn off_parts_reach_their_switch_or_row() {
+        use sf_tunables_bevy::TunablesAppExt;
+        let mut app = app();
+        app.register_tunables(&[&sf_atmos_bevy::FROXELS_ENABLED]).add_feature_switch(&sf_atmos_bevy::FROXELS);
+        crate::part_switches::apply(&mut app, &mw_game_core::perf::Off::default());
+        run(&mut app, "off froxels");
+        let t = app.world().resource::<Tunables>();
+        let id = t.id("sky.froxels.enabled").expect("registered");
+        assert_eq!((t.flag(id), t.var(id).set_by()), (false, SetBy::Console), "{:?}", log(&app));
+        assert!(log(&app).last().is_some_and(|l| l.starts_with("sky.froxels.enabled: off (console")), "{:?}", log(&app));
+        run(&mut app, "on godrays");
+        assert!(app.world().resource::<Tunables>().flag(id), "the alias too");
+        run(&mut app, "off terrain");
+        assert_eq!(log(&app).last().map(String::as_str), Some("off: part.terrain: startup only: relaunch with --off terrain; unchanged"), "{:?}", log(&app));
+        let t = app.world().resource::<Tunables>();
+        assert!(t.flag(t.id("part.terrain").expect("row")), "unchanged");
     }
 }

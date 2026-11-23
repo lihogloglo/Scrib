@@ -259,3 +259,14 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Seen by owner 2026-11-15: "the animation of running is kinda sideways, character runs in diagonal". Not diagnosed. Leads to
   check: run clip root/facing yaw after retarget, `side_lanes` / lean in the walk ladder (WALK-0 A/B), speed-match picking a
   strafe-diagonal clip, body yaw lagging the travel direction. Status: known bug.
+
+### MF-1: Menu flow v3, one window at a time, nothing moves on hover (ROADMAP 2.2b, 2026-11-23)
+- Kind: game location, dev build. `view "Balmora" --hour 22`. Esc > Options > Key bindings > Back > Back; then Options from
+  the main menu (release start) the same way.
+- Look for: only the top window is drawn (pause is gone while Options is open, Options gone while Key bindings is open);
+  Back shows the one below at once; hovering rows, changing a value or switching page (Q/E or the tabs) moves nothing;
+  long pages and the key list scroll (wheel, arrows); Key bindings sits exactly where Options sat; footer [Key bindings]
+  [Reset page] [Back]: Reset page asks Yes/No (No first) and puts only that page back; new page **Advanced** after
+  Graphics lists the player feature switches (fog volume, groundcover, bloom...), each live behind the menu, kept after a
+  restart. Also judge: the options window is now 60% x 70% of the screen (1152x756 at 1080p, a bit larger than before).
+- Status: confirmed 2026-11-23 (owner: "seems to be working fine"). Source: feature-toggles (MF-1a..MF-6). Unblocks PP-4.

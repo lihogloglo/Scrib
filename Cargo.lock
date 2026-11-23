@@ -5290,6 +5290,7 @@ dependencies = [
  "bevy_time",
  "bevy_transform",
  "bevy_ui",
+ "bevy_ui_widgets",
  "bevy_window",
  "bevy_winit",
  "bevy_world_serialization",
@@ -9032,6 +9033,7 @@ dependencies = [
  "sf_sky_bevy",
  "sf_terrain",
  "sf_tunables",
+ "sf_tunables_bevy",
  "sf_world",
  "workspace-hack",
 ]
@@ -9134,6 +9136,7 @@ dependencies = [
  "bevy",
  "bevy_app",
  "bevy_asset",
+ "bevy_camera",
  "bevy_color",
  "bevy_ecs",
  "bevy_enhanced_input",

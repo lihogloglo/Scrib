@@ -17,7 +17,8 @@ use bevy_tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use bevy_transform::components::GlobalTransform;
 use sf_coords::WorldPos;
 use sf_terrain::shadow::{ShadowHeights, ShadowMarch, far_shadow_map};
-use sf_tunables::{Def, Group, Source, Unit, def};
+use sf_tunables::{Cost, Def, Effect, FeatureSwitch, Group, Lifetime, Scope, Source, Unit, def};
+use sf_tunables_bevy::{FeatureSwitches, Tunables};
 
 use crate::{TerrainCamera, TerrainHeightsMap, TerrainOrigin, TerrainState};
 
@@ -50,6 +51,27 @@ pub const FAR_SHADOW_RECENTER_M: Def<f32> = def!(float "terrain.far_shadow.recen
     .source(Source::Guess)
     .group(Group::ViewDistance);
 
+/// `shadow.terrain_far.enabled`: terrain far shadows past the sun's cascades (the far shadow map and
+/// the terrain's far march). Registered by [`crate::TerrainPlugin`]; a game's live A/B switch
+/// (F-key) writes it too.
+pub const FAR_SHADOWS_ENABLED: Def<bool> = def!(bool "shadow.terrain_far.enabled" = true)
+    .help("Terrain far shadows past the sun's cascades: the far shadow map (bake on the async pool, upload) and the terrain's far march")
+    .source(Source::Owner("2026-11-23"))
+    .scope(Scope::Player)
+    .lifetime(Lifetime::Live)
+    .group(Group::Shadows);
+
+/// The feature switch on [`FAR_SHADOWS_ENABLED`] (slice FS-L3). Off skips `update_far_map`'s work
+/// (no bake task, an in-flight one dropped, no upload) and sets [`FarShadowMap::params`] to "no
+/// map" (extent 0), so far-field materials, the froxels and the sun visibility pass see the far
+/// field unshadowed; the terrain skips its far march ([`FarShadowMap::enabled`]). On re-bakes
+/// around the camera before any map is shown again.
+pub const FAR_SHADOWS: FeatureSwitch = FeatureSwitch::new(&FAR_SHADOWS_ENABLED)
+    .label("Terrain far shadows past the cascades")
+    .effect(Effect::Skips)
+    .cost(&[Cost::Cpu("sf_terrain_bevy::far_map::update_far_map")])
+    .at(file!(), line!());
+
 /// The far shadow map, for other plugins' materials.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct FarShadowMap {
@@ -62,6 +84,9 @@ pub struct FarShadowMap {
     /// Bumps with every upload. Consumers need not re-bind: the upload
     /// writes the same GPU texture in place (see `update_far_map`).
     pub generation: u32,
+    /// [`FAR_SHADOWS`] runs. Off: `params` are zero (no map) and the image
+    /// (kept, so bind groups stay valid) is not read.
+    pub enabled: bool,
 }
 
 /// A finished map and where it was computed.
@@ -94,12 +119,13 @@ pub(crate) fn setup_far_map(mut commands: Commands, mut images: ResMut<Assets<Im
         RenderAssetUsages::default(),
     );
     image.sampler = ImageSampler::linear();
-    commands.insert_resource(FarShadowMap { image: images.add(image), params: Vec4::ZERO, generation: 0 });
+    commands.insert_resource(FarShadowMap { image: images.add(image), params: Vec4::ZERO, generation: 0, enabled: true });
     commands.insert_resource(FarMapState::default());
 }
 
 /// Uploads finished maps, keeps the params on the floating origin, and
-/// starts a refresh when the light or camera has moved.
+/// starts a refresh when the light or camera has moved. With [`FAR_SHADOWS`]
+/// not running it does none of that: see [`switched_off`].
 ///
 /// The upload only rewrites `image.data`: the descriptor (size, format,
 /// `COPY_DST` usage from `Image::new_fill`) never changes, so Bevy's
@@ -117,8 +143,18 @@ pub(crate) fn update_far_map(
     origin: Res<TerrainOrigin>,
     camera: Query<&GlobalTransform, With<TerrainCamera>>,
     lights: Query<(&DirectionalLight, &GlobalTransform)>,
+    switches: Option<Res<FeatureSwitches>>,
+    tunables: Option<Res<Tunables>>,
 ) {
     let (Some(mut local), Some(mut map)) = (local, map) else { return };
+    let on = far_shadows_on(switches.as_deref(), tunables.as_deref());
+    if map.enabled != on {
+        map.enabled = on;
+    }
+    if !on {
+        switched_off(&mut local, &mut map);
+        return;
+    }
     let local = &mut *local;
 
     // 1. A finished map: upload it.
@@ -184,6 +220,28 @@ pub(crate) fn update_far_map(
         let map = far_shadow_map(&heights, center, FAR_MAP_SIZE, FAR_MAP_TEXEL, l, MARCH);
         Computed { map, center, ms: started.elapsed().as_secs_f32() * 1e3 }
     }));
+}
+
+/// Whether [`FAR_SHADOWS`] runs; on in an app without the tunables (or
+/// without the switch registered).
+fn far_shadows_on(switches: Option<&FeatureSwitches>, tunables: Option<&Tunables>) -> bool {
+    match (switches, tunables) {
+        (Some(switches), Some(tunables)) => switches.state(tunables, FAR_SHADOWS.name()).is_none_or(|s| s.running()),
+        _ => true,
+    }
+}
+
+/// [`FAR_SHADOWS`] off: drops the in-flight bake (a dropped task is
+/// cancelled), forgets the uploaded map so turning it back on re-bakes
+/// around the camera before any params come back, and sets the params to
+/// "no map". Writes only on the frame something changes.
+fn switched_off(local: &mut ResMut<FarMapState>, map: &mut ResMut<FarShadowMap>) {
+    if local.task.is_some() || local.center.is_some() || local.uploaded.is_some() {
+        **local = FarMapState::default();
+    }
+    if map.params != Vec4::ZERO {
+        map.params = Vec4::ZERO;
+    }
 }
 
 /// The center a refresh keeps: the one in use, while the camera is within
@@ -314,6 +372,87 @@ mod tests {
         assert_eq!(kept_center(Some(center), at(1008.0 + 400.0, 50.0, -1992.0 + 400.0), 512.0), None);
         assert_eq!(kept_center(Some(center), at(1008.0, 50.0 + 513.0, -1992.0), 512.0), None);
         assert_eq!(kept_center(Some(center), at(1008.0, 50.0 - 513.0, -1992.0), 512.0), None);
+    }
+
+    /// Waits (frames) until the far map's generation reaches `generation`.
+    fn wait_for_upload(app: &mut App, generation: u32) {
+        let started = Instant::now();
+        while app.world().resource::<FarShadowMap>().generation < generation {
+            assert!(started.elapsed() < Duration::from_secs(60), "the upload never happened");
+            app.update();
+        }
+    }
+
+    /// FS-L3: switched off live, the far map does no work (no bake task, an in-flight one
+    /// dropped, no upload) and its params say "no map" while the camera moves; switched back on,
+    /// it re-bakes around the camera's new position before any params come back.
+    #[test]
+    fn switched_off_the_far_map_skips_its_work_and_rebakes_at_the_camera_when_back_on() {
+        use bevy_transform::components::Transform;
+        use sf_terrain::TerrainHeights;
+        use sf_tunables_bevy::TunablesAppExt;
+
+        use crate::TerrainCamera;
+
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>()
+            .init_resource::<TerrainHeightsMap>()
+            .init_resource::<TerrainOrigin>()
+            .add_systems(Startup, setup_far_map)
+            .add_systems(Update, update_far_map);
+        let _ = app.add_tunable(&FAR_SHADOWS_ENABLED);
+        app.add_feature_switch(&FAR_SHADOWS);
+        let id = app.world().resource::<Tunables>().id(FAR_SHADOWS.name()).unwrap();
+        let state = crate::tests::bare_state(false);
+        app.world_mut().resource_mut::<TerrainHeightsMap>().0.insert(state.ws.clone(), TerrainHeights::new());
+        app.insert_resource(state);
+        let camera = app.world_mut().spawn((TerrainCamera, GlobalTransform::default())).id();
+        let sun = Transform::from_xyz(0.0, 10.0, 0.0).looking_at(Vec3::new(1.0, 0.0, 1.0), Vec3::Y);
+        app.world_mut().spawn((DirectionalLight { shadow_maps_enabled: true, ..Default::default() }, GlobalTransform::from(sun)));
+        let move_camera = |app: &mut App, x: f32| {
+            *app.world_mut().get_mut::<GlobalTransform>(camera).unwrap() = GlobalTransform::from_xyz(x, 0.0, 0.0);
+        };
+        let at = |x: f64| WorldPos::from_f64(bevy_math::DVec3::new(x, 0.0, 0.0));
+
+        // On: a bake starts at once and uploads.
+        app.update();
+        assert!(app.world().resource::<FarMapState>().task.is_some(), "on: a bake task");
+        wait_for_upload(&mut app, 1);
+        assert_eq!(app.world().resource::<FarMapState>().uploaded, Some(snapped_center(at(0.0))));
+        let map = app.world().resource::<FarShadowMap>();
+        assert!(map.enabled && map.params.z > 0.0, "on: a map ({:?})", map.params);
+
+        // Past the re-center distance: a new bake is in flight when the switch goes off.
+        move_camera(&mut app, 1000.0);
+        app.update();
+        assert!(app.world().resource::<FarMapState>().task.is_some(), "moved: a bake task");
+        app.world_mut().resource_mut::<Tunables>().set(id, false.into()).unwrap();
+        for frame in 0..30 {
+            #[allow(clippy::cast_precision_loss)]
+            move_camera(&mut app, 2000.0 + 600.0 * frame as f32);
+            app.update();
+            let local = app.world().resource::<FarMapState>();
+            assert!(local.task.is_none() && local.uploaded.is_none() && local.center.is_none(), "off, frame {frame}: no bake, no map kept");
+            let map = app.world().resource::<FarShadowMap>();
+            assert_eq!((map.enabled, map.params, map.generation), (false, Vec4::ZERO, 1), "off, frame {frame}: no map, no upload");
+        }
+
+        // Back on: a bake at the camera's new position, then its map.
+        move_camera(&mut app, 50_000.0);
+        app.world_mut().resource_mut::<Tunables>().set(id, true.into()).unwrap();
+        app.update();
+        let local = app.world().resource::<FarMapState>();
+        assert!(local.task.is_some(), "on again: a bake task");
+        assert_eq!(local.center, Some(snapped_center(at(50_000.0))), "centred on the camera");
+        let map = app.world().resource::<FarShadowMap>();
+        assert_eq!((map.enabled, map.params), (true, Vec4::ZERO), "no stale map before the new one uploads");
+        wait_for_upload(&mut app, 2);
+        assert_eq!(app.world().resource::<FarMapState>().uploaded, Some(snapped_center(at(50_000.0))));
+        let params = app.world().resource::<FarShadowMap>().params;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+        let min_x = (snapped_center(at(50_000.0)).to_f64().x - FAR_MAP_SIZE as f64 * FAR_MAP_TEXEL * 0.5) as f32;
+        assert!(params.z > 0.0 && (params.x - min_x).abs() < 1.0, "the new map's params ({params:?})");
     }
 
     #[test]

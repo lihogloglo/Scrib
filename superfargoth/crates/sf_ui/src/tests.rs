@@ -351,6 +351,99 @@ fn stack_routes_input_to_top_of_highest_input_layer() {
     );
 }
 
+const FLOW: &str = r#"
+[[define]]
+kind = "ui.screen"
+id = "pause"
+value = { layer = "Menu", implementation = { Template = "pause" } }
+
+[[define]]
+kind = "ui.screen"
+id = "options"
+value = { layer = "Menu", implementation = { Template = "options" } }
+
+[[define]]
+kind = "ui.screen"
+id = "overlay"
+value = { layer = "Menu", covers = "Nothing", implementation = { Template = "overlay" } }
+
+[[define]]
+kind = "ui.screen"
+id = "hud"
+value = { layer = "Hud", implementation = { Template = "hud" } }
+
+[[define]]
+kind = "ui.screen"
+id = "confirm"
+value = { layer = "Modal", implementation = { Template = "confirm" } }
+
+[[define]]
+kind = "ui.screen"
+id = "toast"
+value = { layer = "Notification", covers = "Below", implementation = { Template = "toast" } }
+"#;
+
+fn visible_ids(stack: &ScreenStack) -> Vec<&str> {
+    stack.visible().map(|s| s.id.as_str()).collect()
+}
+
+#[test]
+fn covers_defaults_by_layer() {
+    let mut db = RecordDb::new();
+    register_kinds(&mut db).unwrap();
+    let base = db.add_source("base", &[]);
+    let outcome = apply_record_file(&mut db, base, FLOW, RecordFormat::Toml).unwrap();
+    assert_eq!(outcome.errors, []);
+    let (reg, _) = UiRegistry::build(&db);
+    let covers = |id: &str| reg.screen(id).unwrap().def.covers();
+    assert_eq!(covers("pause"), Covers::Below);
+    assert_eq!(covers("overlay"), Covers::Nothing);
+    assert_eq!(covers("hud"), Covers::Nothing);
+    assert_eq!(covers("confirm"), Covers::Nothing);
+    assert_eq!(covers("toast"), Covers::Below);
+    assert_eq!(Covers::default_for(Layer::Notification), Covers::Nothing);
+    assert_eq!(Covers::default_for(Layer::Tooltip), Covers::Nothing);
+}
+
+#[test]
+fn covering_screens_hide_only_their_own_layer() {
+    let mut db = RecordDb::new();
+    register_kinds(&mut db).unwrap();
+    let base = db.add_source("base", &[]);
+    apply_record_file(&mut db, base, FLOW, RecordFormat::Toml).unwrap();
+    let (reg, _) = UiRegistry::build(&db);
+    let mut stack = ScreenStack::new();
+    stack.push(&reg, "hud").unwrap();
+    stack.push(&reg, "pause").unwrap();
+    assert_eq!(visible_ids(&stack), ["hud", "pause"]);
+    assert!(!stack.is_covered("hud"), "menus never cover the HUD layer");
+
+    stack.push(&reg, "options").unwrap();
+    assert!(stack.is_covered("pause"));
+    assert!(!stack.is_covered("options"));
+    assert_eq!(visible_ids(&stack), ["hud", "options"]);
+
+    // A non-covering menu screen and a modal keep options drawn.
+    stack.push(&reg, "overlay").unwrap();
+    stack.push(&reg, "confirm").unwrap();
+    assert_eq!(
+        visible_ids(&stack),
+        ["hud", "options", "overlay", "confirm"]
+    );
+    assert!(!stack.is_covered("options"));
+    assert!(stack.is_covered("pause"));
+
+    assert!(stack.close("overlay"));
+    assert!(stack.close("options"));
+    assert!(!stack.is_covered("pause"));
+    assert_eq!(visible_ids(&stack), ["hud", "pause", "confirm"]);
+
+    stack.clear(Layer::Menu);
+    stack.clear(Layer::Modal);
+    assert!(!stack.is_covered("pause"), "a closed screen is not covered");
+    assert_eq!(visible_ids(&stack), ["hud"]);
+}
+
 #[test]
 fn stack_reopen_moves_to_top_and_replace_swaps() {
     let (reg, _) = registry();

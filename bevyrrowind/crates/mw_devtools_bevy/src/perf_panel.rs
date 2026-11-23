@@ -216,6 +216,17 @@ pub struct PerfPanel {
     pub mode: PanelMode,
 }
 
+/// Another tool wants the panel's per-frame samples while it is hidden (the flip delta probe,
+/// [`crate::switch_probe`]): the gauges run and [`PerfFrameFeed`] fills, with no tree and no
+/// windows or graph kept. Off: a hidden panel costs nothing, as before.
+#[derive(Resource, Default, Debug, PartialEq, Eq)]
+pub struct PerfGaugeDemand(pub bool);
+
+/// The last frame's sample, written each frame the panel samples (shown, or [`PerfGaugeDemand`]);
+/// `None` on warm-up frames. A reader `take`s it, so a stale sample is never read twice.
+#[derive(Resource, Default, Debug)]
+pub struct PerfFrameFeed(pub Option<FrameSample>);
+
 /// Counter-name prefixes the panel keeps windows for (the rest is drained and dropped).
 const KEPT: [&str; 6] = ["main/busy/", "render/busy/", "render/thread/", "stage/main/", "encode/", "views/"];
 
@@ -316,6 +327,8 @@ impl Plugin for PerfPanelPlugin {
             app.add_plugins(RenderDiagnosticsPlugin);
         }
         app.init_resource::<PerfPanel>()
+            .init_resource::<PerfGaugeDemand>()
+            .init_resource::<PerfFrameFeed>()
             .insert_resource(PanelState {
                 ids,
                 owned: None,
@@ -331,7 +344,7 @@ impl Plugin for PerfPanelPlugin {
                 gpu_timers: false,
                 ui: None,
             })
-            .add_systems(First, sample.after(TimeSystems).run_if(shown))
+            .add_systems(First, sample.after(TimeSystems).run_if(sampling))
             .add_systems(
                 Update,
                 (apply_mode.run_if(mode_or_gauges_changed), refresh.run_if(shown)).chain(),
@@ -366,20 +379,31 @@ fn shown(panel: Res<PerfPanel>) -> bool {
     panel.mode != PanelMode::Off
 }
 
+/// Run condition of [`sample`]: shown, or the gauges run for [`PerfGaugeDemand`].
+fn sampling(panel: Res<PerfPanel>, state: Res<PanelState>) -> bool {
+    panel.mode != PanelMode::Off || state.live
+}
+
 /// Run condition of [`apply_mode`]: the mode or `diag.panel.gauges` changed (true on its first run).
-fn mode_or_gauges_changed(panel: Res<PerfPanel>, tunables: Res<Tunables>, state: Res<PanelState>, mut seen: Local<Option<u64>>) -> bool {
+fn mode_or_gauges_changed(
+    panel: Res<PerfPanel>,
+    demand: Res<PerfGaugeDemand>,
+    tunables: Res<Tunables>,
+    state: Res<PanelState>,
+    mut seen: Local<Option<u64>>,
+) -> bool {
     let generation = tunables.var(state.ids.gauges.untyped()).generation();
     let gauges = *seen != Some(generation);
     *seen = Some(generation);
-    panel.is_changed() || gauges
+    panel.is_changed() || demand.is_changed() || gauges
 }
 
 /// Turns the gauges and the counters on or off with the panel; hiding despawns the tree and drops
 /// every sample (the next show builds it, [`refresh`]).
-fn apply_mode(mut commands: Commands, panel: Res<PerfPanel>, mut state: ResMut<PanelState>, tunables: Res<Tunables>) {
+fn apply_mode(mut commands: Commands, panel: Res<PerfPanel>, demand: Res<PerfGaugeDemand>, mut state: ResMut<PanelState>, tunables: Res<Tunables>) {
     let on = panel.mode != PanelMode::Off;
     state.last_refresh = None;
-    let live = on && tunables.read(state.ids.gauges) && state.owned.is_some();
+    let live = (on || demand.0) && tunables.read(state.ids.gauges) && state.owned.is_some();
     if live != state.live {
         state.live = live;
         state.windows.clear();
@@ -411,9 +435,19 @@ fn apply_mode(mut commands: Commands, panel: Res<PerfPanel>, mut state: ResMut<P
 }
 
 /// Each frame while shown: the last frame's time, the counters it reported, new GPU timings; one
-/// [`FrameSample`] for the graph.
+/// [`FrameSample`] for the graph and [`PerfFrameFeed`]. Hidden with [`PerfGaugeDemand`]: only the
+/// sample (no windows, no graph).
 #[allow(clippy::cast_possible_truncation, reason = "ms values to f32 for the graph")]
-fn sample(real: Res<Time<Real>>, mut state: ResMut<PanelState>, tunables: Res<Tunables>, store: Option<Res<DiagnosticsStore>>) {
+fn sample(
+    real: Res<Time<Real>>,
+    panel: Res<PerfPanel>,
+    mut state: ResMut<PanelState>,
+    mut feed: ResMut<PerfFrameFeed>,
+    tunables: Res<Tunables>,
+    store: Option<Res<DiagnosticsStore>>,
+) {
+    let shown = panel.mode != PanelMode::Off;
+    feed.0 = None;
     let state = &mut *state;
     let window = f64::from(tunables.read(state.ids.window));
     let capacity = usize::try_from(tunables.read(state.ids.graph_frames)).unwrap_or(usize::MAX);
@@ -446,7 +480,9 @@ fn sample(real: Res<Time<Real>>, mut state: ResMut<PanelState>, tunables: Res<Tu
                     _ if VIEW_COUNTS.contains(&name) => frame.views = Some(frame.views.unwrap_or(0.0) + value as f32),
                     _ => {}
                 }
-                windows.push(name, now, value, window);
+                if shown {
+                    windows.push(name, now, value, window);
+                }
             });
         }
     }
@@ -455,7 +491,7 @@ fn sample(real: Res<Time<Real>>, mut state: ResMut<PanelState>, tunables: Res<Tu
         return;
     }
     let frame_ms = real.delta_secs_f64() * 1000.0;
-    if frame_ms > 0.0 {
+    if frame_ms > 0.0 && shown {
         state.frame.push(now, frame_ms, window);
     }
     if let Some(store) = store {
@@ -472,7 +508,9 @@ fn sample(real: Res<Time<Real>>, mut state: ResMut<PanelState>, tunables: Res<Tu
                     state.gpu_seen.insert(path.to_owned(), (m.time, m.value, now));
                 }
             }
-            state.windows.push(path, now, m.value, window);
+            if shown {
+                state.windows.push(path, now, m.value, window);
+            }
         }
         // The GPU frame of the latest timings (spans not timed for a window are gone).
         let recent = state.gpu_seen.iter().filter(|(_, (_, _, at))| now - at <= window);
@@ -480,7 +518,10 @@ fn sample(real: Res<Time<Real>>, mut state: ResMut<PanelState>, tunables: Res<Tu
     }
     if frame_ms > 0.0 {
         frame.frame_ms = frame_ms as f32;
-        state.history.push(frame);
+        feed.0 = Some(frame);
+        if shown {
+            state.history.push(frame);
+        }
     }
 }
 

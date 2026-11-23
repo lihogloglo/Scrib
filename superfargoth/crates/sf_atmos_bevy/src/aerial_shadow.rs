@@ -15,7 +15,7 @@ use bevy_math::{Vec3, Vec4};
 use bevy_pbr::{AtmosphereHeightShadow, AtmosphereSettings};
 use bevy_transform::components::GlobalTransform;
 use bevy_transform::TransformSystems;
-use sf_tunables::{Def, Group, Source, Unit, def};
+use sf_tunables::{Cost, Def, Effect, FeatureSwitch, Group, Source, Unit, def};
 use sf_tunables_bevy::TunablesAppExt;
 
 use crate::{CloudShadowLight, FogShadowHeights};
@@ -27,6 +27,14 @@ pub const AERIAL_SHADOW: Def<bool> = def!(bool "sky.aerial.shadow" = false)
     .help("The terrain shadows the sun's light in the distant haze (aerial perspective): no glow in front of shaded terrain")
     .source(Source::Industry("UE5 SkyAtmosphere 'Cast Shadows on Atmosphere'; Hillaire 2020 volumetric shadows in the aerial LUT"))
     .group(Group::Sky);
+
+/// The feature switch on [`AERIAL_SHADOW`] (slice FS-2b). Off removes `AtmosphereHeightShadow` from
+/// the cameras: the aerial view LUT (Bevy's `atmosphere_luts` pass) skips the height-map lookups.
+pub const AERIAL_SHADOW_SWITCH: FeatureSwitch = FeatureSwitch::new(&AERIAL_SHADOW)
+    .label("Terrain shadows in the distant haze")
+    .effect(Effect::Skips)
+    .cost(&[Cost::Gpu("atmosphere_luts")])
+    .at(file!(), line!());
 
 /// `sky.far_shadow.penumbra_per_m`: the far shadow's penumbra half width per meter of occluder
 /// distance (a soft edge widening with the occluder's distance, as a real penumbra).
@@ -120,6 +128,7 @@ impl Default for AerialShadow {
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<FarShadowShape>().init_resource::<AerialShadow>();
     let _bound = app.add_tunable(&AERIAL_SHADOW).bind_resource(|a: &mut AerialShadow, on| a.0 = on);
+    app.add_feature_switch(&AERIAL_SHADOW_SWITCH);
     let _bound = app.add_tunable(&FAR_SHADOW_PENUMBRA_PER_M).bind_resource(|s: &mut FarShadowShape, v| s.penumbra_per_m = v);
     let _bound = app.add_tunable(&FAR_SHADOW_PENUMBRA_MIN).bind_resource(|s: &mut FarShadowShape, v| s.penumbra_min = v);
     let _bound = app.add_tunable(&FAR_SHADOW_BIAS).bind_resource(|s: &mut FarShadowShape, v| s.bias = v);

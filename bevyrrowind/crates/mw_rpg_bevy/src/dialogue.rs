@@ -993,7 +993,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
             (
                 services::sync_clock,
                 host_dialogue,
-                close_screens,
+                end_closed_talk,
                 keep_journal_seen,
                 show_events,
                 send_stat_commands,
@@ -1304,29 +1304,75 @@ fn host_dialogue(
     }
 }
 
-/// Menu screens taken off the stack (goodbye, Back, `J`) despawn; the conversation ends with
-/// its window, settled as goodbye settles it ([`Rpg::end_talk`]; Back and `J` close it without
-/// one).
-fn close_screens(
+/// The conversation ends with its window, settled as goodbye settles it ([`Rpg::end_talk`];
+/// Back closes it without one): once `dialogue` is off the stack, whenever in the frame it was
+/// closed (a close after this system is settled on the next frame's pass). Keyed on the stack,
+/// not on the window's root, which the router despawns in `PostUpdate` (`sf_ui_bevy`
+/// `despawn_closed_roots`); `ActiveTalk` goes, so it settles once.
+fn end_closed_talk(
     mut commands: Commands,
     stack: Res<ScreenStackRes>,
-    roots: Query<(Entity, &UiScreenRoot)>,
-    mut active: Option<ResMut<ActiveTalk>>,
+    active: Option<ResMut<ActiveTalk>>,
     mut rpg: ResMut<Rpg>,
     sheets: DialogueSheets,
 ) {
-    for (e, root) in &roots {
-        let id = root.0.as_str();
-        if matches!(id, "dialogue" | "journal") && !stack.0.is_open(id) {
-            commands.entity(e).despawn();
-            if let Some(a) = active.as_deref_mut()
-                && a.screen == e
-            {
-                rpg.end_talk(&mut a.talk, &sheets);
-                commands.remove_resource::<ActiveTalk>();
-            }
+    let Some(mut active) = active else { return };
+    if stack.0.is_open("dialogue") {
+        return;
+    }
+    rpg.end_talk(&mut active.talk, &sheets);
+    commands.remove_resource::<ActiveTalk>();
+}
+
+/// Test apps: the framework's router (`SfUiPlugin`, as [`add`] adds it), which despawns closed
+/// screens' roots.
+#[cfg(test)]
+pub(crate) fn add_ui_router(app: &mut App) {
+    app.add_plugins((bevy_time::TimePlugin, bevy_input::InputPlugin, EnhancedInputPlugin, SfUiPlugin));
+}
+
+/// Test apps: the ways the dialogue window closes.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum DialogueClose {
+    /// A stack close before `Update`, as the router's Back.
+    Back,
+    /// The window's goodbye (the session ends, the host closes the window).
+    Goodbye,
+    /// A stack close in `PostUpdate`, after every host system, beside the router's despawn.
+    PostUpdate,
+    /// A stack close in `Last`, after the router's despawn.
+    Last,
+}
+
+/// Test apps: closes the dialogue window on `dialogue` that way, then runs two frames (a late
+/// close settles on the frame after). Returns whether the talk was still open after the
+/// closing frame.
+#[cfg(test)]
+pub(crate) fn close_dialogue(app: &mut App, dialogue: Entity, how: DialogueClose) -> bool {
+    fn close_once(mut stack: ResMut<ScreenStackRes>, mut done: Local<bool>) {
+        if !*done {
+            *done = stack.0.close("dialogue");
         }
     }
+    match how {
+        DialogueClose::Back => {
+            app.world_mut().resource_mut::<ScreenStackRes>().0.close("dialogue");
+        }
+        DialogueClose::Goodbye => {
+            app.world_mut().write_message(DialogueRequestEvent { screen: dialogue, request: DialogueRequest::Goodbye });
+        }
+        DialogueClose::PostUpdate => {
+            app.add_systems(PostUpdate, close_once);
+        }
+        DialogueClose::Last => {
+            app.add_systems(Last, close_once);
+        }
+    }
+    app.update();
+    let open = app.world().contains_resource::<ActiveTalk>();
+    app.update();
+    open
 }
 
 /// Result scripts' sheet changes go to `sf_stats_bevy` as commands, applied on its next fixed

@@ -1921,3 +1921,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-22 (groundcover G0, owner go): groundcover = our species + rule-table layer (land texture/material field ->
   species, like Skyrim LTEX->GRAS, UE grass types) with runtime deterministic scatter; blade species draw via `bevy_grass`,
   mesh species (alpha-card models) via our instanced path; mods' placements feed the mesh path (`specs/groundcover.md`).
+- 2026-11-23 (feature switches, owner ask): every costly feature gets one switch = metadata on its tunable (one
+  namespace for console, `--off`, BRP, dev panel, options); "off" must skip the work (`Hides` marked until fixed); cost
+  and a flip delta shown beside each switch; menus: covered screens hidden, fixed window frame (`specs/feature-switches.md`, `menus.md` §7).

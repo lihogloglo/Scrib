@@ -442,6 +442,68 @@ fn replacing_the_source_rebuilds() {
     assert_eq!(app.world_mut().query::<&GroundcoverBatch>().iter(app.world()).count(), 3);
 }
 
+/// Sets `groundcover.enabled` at the Console layer.
+pub(crate) fn set_enabled(app: &mut App, on: bool) {
+    let mut store = app.world_mut().resource_mut::<Tunables>();
+    let id = store.0.id_of(&tunables::ENABLED).expect("registered");
+    store.0.set_by(id.untyped(), sf_tunables::Value::Bool(on), sf_tunables::SetBy::Console).expect("bool");
+}
+
+fn batch_count(app: &mut App) -> usize {
+    app.world_mut().query::<&GroundcoverBatch>().iter(app.world()).count()
+}
+
+/// `groundcover.enabled` off live: every batch despawned, no job, no residency, no queued run, zero gauges, and
+/// nothing rebuilds while off (drive does not run); back on, the rings rebuild around where the viewer is now.
+#[test]
+fn live_off_skips_the_work_and_on_rebuilds_around_the_viewer() {
+    let mut app = app();
+    app.init_resource::<DiagCounters>();
+    let viewer = app.world_mut().spawn((GroundcoverViewer, GlobalTransform::from_translation(Vec3::new(5.0, 1.7, 5.0)))).id();
+    let first = settle(&mut app);
+    assert!(first.residency.resident > 0);
+    let old: Vec<Entity> = app.world_mut().query_filtered::<Entity, With<GroundcoverBatch>>().iter(app.world()).collect();
+    assert_eq!(old.len(), 3);
+    // Leave jobs in flight: a step that brings new tiles into the ring, one frame.
+    app.world_mut().entity_mut(viewer).insert(GlobalTransform::from_translation(Vec3::new(37.0, 1.7, 5.0)));
+    app.update();
+    assert!(app.world().resource::<GroundcoverStats>().pending_jobs > 0, "jobs in flight when switched off");
+
+    set_enabled(&mut app, false);
+    // Moving while off must not matter (and must not wake the renderer).
+    app.world_mut().entity_mut(viewer).insert(GlobalTransform::from_translation(Vec3::new(405.0, 1.7, 5.0)));
+    for _ in 0..3 {
+        app.update();
+        assert_eq!(batch_count(&mut app), 0, "batches despawned while off");
+        let rt = app.world().resource::<Runtime>();
+        assert!(rt.residency.is_none() && rt.jobs.is_empty() && rt.batches.is_empty(), "drive did not run");
+        assert!(app.world().resource::<GroundcoverUploads>().writes.is_empty(), "no runs queued");
+        assert_eq!(*app.world().resource::<GroundcoverStats>(), GroundcoverStats::default());
+    }
+    let counters = app.world().resource::<DiagCounters>().0.clone();
+    let mut seen = BTreeMap::new();
+    counters.drain(|_, def, v| {
+        if let Some(v) = v {
+            seen.insert(def.name.clone(), v);
+        }
+    });
+    for gauge in ["groundcover/tiles/resident", "groundcover/jobs/pending", "groundcover/batches/count", "groundcover/slots/live"] {
+        assert_eq!(seen.get(gauge).copied(), Some(0.0), "{gauge} reads zero while off");
+    }
+
+    set_enabled(&mut app, true);
+    let back = settle(&mut app);
+    let range = RenderSettings::default().mesh_range_m;
+    let expect = u32::try_from(tiles_within([405.0, 5.0], 16.0, f64::from(range)).len()).expect("small");
+    assert_eq!(back.residency.resident, expect, "the ring around the viewer's current position");
+    assert_eq!(back.residency.unplaced, 0);
+    assert_eq!(back.batches, 3);
+    assert_eq!(batch_count(&mut app), 3);
+    for e in old {
+        assert!(app.world().get_entity(e).is_err(), "old batch {e} still alive");
+    }
+}
+
 /// The `groundcover/*` gauges carry the stats (set in `Last` when `DiagCounters` exists).
 #[test]
 fn gauges_publish_the_stats() {
@@ -514,4 +576,21 @@ fn measure_tile_cost() {
             );
         }
     }
+}
+
+/// FS-2b: `GroundcoverPlugin` registers the `groundcover.enabled` switch; its running state follows a
+/// Console-layer set.
+#[test]
+fn feature_switch_registered() {
+    let mut app = app();
+    let running = |app: &App| {
+        let switches = app.world().resource::<sf_tunables_bevy::FeatureSwitches>();
+        assert_eq!(switches.get("groundcover.enabled"), Some(&tunables::GROUNDCOVER), "registered");
+        switches.running(&app.world().resource::<Tunables>().0, "groundcover.enabled")
+    };
+    assert!(running(&app), "on by default");
+    set_enabled(&mut app, false);
+    assert!(!running(&app));
+    set_enabled(&mut app, true);
+    assert!(running(&app));
 }

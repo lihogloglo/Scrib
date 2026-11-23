@@ -105,7 +105,7 @@ pub use paginate::{
 };
 pub use presets::{CUSTOM_LEVEL, PresetError, apply_level, derived_level, sync_driver};
 pub use rebind::{CAPTURE_TIMEOUT, CaptureFrame, RebindEvent, Rebinder};
-pub use records::{Layer, register_kinds};
+pub use records::{Covers, Layer, register_kinds};
 pub use registry::{Def, Severity, UiConflict, UiRegistry};
 pub use rich_text::{
     Align, Block, ImageRef, Inline, OBJECT_REPLACEMENT, Paragraph, Rgba8, RichDoc, RunStyle,

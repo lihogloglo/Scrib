@@ -93,7 +93,18 @@ impl Store {
     }
 
     fn objects(&self) -> &RwLock<HashSet<Digest>> {
-        self.shared.objects.get_or_init(|| RwLock::new(list_objects(&self.root.join("objects"))))
+        // Listed outside the cell, never inside `get_or_init`: `list_objects` runs on rayon, and a
+        // worker waiting in it may run another bake task that reads this cell. Inside an initializer
+        // that is a re-entrant `get_or_init` on the same thread, which deadlocks (an idle hung bake,
+        // seen 2026-11-23 in `sf_nav_bake`'s tests). Two first callers may both list; the first `set`
+        // wins and every caller then uses that set (a missing entry only costs a rewrite of the same
+        // bytes).
+        if let Some(set) = self.shared.objects.get() {
+            return set;
+        }
+        let listed = list_objects(&self.root.join("objects"));
+        let _ = self.shared.objects.set(RwLock::new(listed));
+        self.shared.objects.get().expect("set just above")
     }
 
     /// Stores `bytes` and returns their digest (of the uncompressed bytes).

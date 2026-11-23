@@ -114,7 +114,7 @@ pub fn add(app: &mut App, open_at_start: bool) {
         (
             (open_at_start_once, toggle_inventory, open_containers).chain().before(ScreenSystems::Spawn),
             (host_containers, sync_open).chain(),
-            (centre_inventory.after(ScreenSystems::Spawn), close_inventory),
+            centre_inventory.after(ScreenSystems::Spawn),
         ),
     );
     crate::dialogue::trade_screen::add(app);
@@ -322,18 +322,6 @@ fn centre_inventory(mut roots: Query<&mut Node, (CentredWindow, Changed<Node>)>)
         node.position_type = PositionType::Absolute;
         node.left = percent(50);
         node.top = percent(50);
-    }
-}
-
-/// The inventory's or the container window's root despawns once it is off the stack (the
-/// action, Esc / Back, the Close button, Take all).
-#[allow(clippy::needless_pass_by_value)] // system parameters
-pub(crate) fn close_inventory(mut commands: Commands, stack: Res<ScreenStackRes>, roots: Query<(Entity, &UiScreenRoot)>) {
-    for (e, root) in &roots {
-        let id = root.0.as_str();
-        if (id == SCREEN || id == CONTAINER_SCREEN) && !stack.0.is_open(id) {
-            commands.entity(e).despawn();
-        }
     }
 }
 

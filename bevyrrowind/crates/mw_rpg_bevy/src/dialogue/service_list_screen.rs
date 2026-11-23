@@ -237,19 +237,11 @@ fn list_events(
 }
 
 /// List screens follow their dialogue: a closed dialogue (goodbye) or a closed view (Back)
-/// closes the screen, and a root off the stack despawns.
-#[allow(clippy::needless_pass_by_value)] // system parameters
-fn close_list(
-    mut commands: Commands,
-    mut stack: ResMut<ScreenStackRes>,
-    roots: Query<(Entity, &ServiceListScreen), With<OpenServiceList>>,
-) {
-    for (e, screen) in &roots {
+/// closes the screen (the router despawns a closed root).
+fn close_list(mut stack: ResMut<ScreenStackRes>, roots: Query<&ServiceListScreen, With<OpenServiceList>>) {
+    for screen in &roots {
         if !stack.0.is_open("dialogue") || screen.view.is_closed() {
             stack.0.close(SERVICE_SCREEN);
-        }
-        if !stack.0.is_open(SERVICE_SCREEN) {
-            commands.entity(e).despawn();
         }
     }
 }
@@ -279,7 +271,7 @@ mod tests {
     };
 
     use super::super::services::{OpenList, advance_sky, sync_clock};
-    use super::super::{PERSUASION_ACTION, View, close_screens, registry, send_stat_commands};
+    use super::super::{PERSUASION_ACTION, View, add_ui_router, end_closed_talk, registry, send_stat_commands};
     use super::*;
     use crate::stats::MwStats;
 
@@ -404,6 +396,7 @@ mod tests {
         let (player, trainer) = sheets(&t);
         let rules = openmw_rules(&t, &MwGmst::vanilla());
         let mut app = App::new();
+        add_ui_router(&mut app);
         app.add_plugins(SfStatsPlugin)
             .add_message::<ServiceEventMessage>()
             .add_message::<ServiceScreenEvent>()
@@ -426,7 +419,7 @@ mod tests {
                 (
                     sync_clock,
                     host_dialogue,
-                    close_screens,
+                    end_closed_talk,
                     send_stat_commands,
                     relist_services,
                     send_service_events,
@@ -458,6 +451,7 @@ mod tests {
             .0
             .push(&registry(), "dialogue")
             .unwrap();
+        app.finish();
         (app, screen)
     }
 
@@ -864,6 +858,29 @@ mod tests {
         // Training again opens a fresh list.
         let again = open_list(&mut app, dialogue);
         assert_eq!(view(&mut app, again).order().len(), 3);
+    }
+
+    /// However the dialogue closes under an open list (Back, goodbye, a stack close late in the
+    /// frame), the talk settles once (it closes the host's list) and the list screen follows;
+    /// the router despawns both roots.
+    #[test]
+    fn every_dialogue_close_closes_the_list_and_drops_both_roots() {
+        use super::super::{DialogueClose, close_dialogue};
+        for how in [DialogueClose::Back, DialogueClose::Goodbye, DialogueClose::PostUpdate, DialogueClose::Last] {
+            let (mut app, dialogue) = app(1000);
+            open_list(&mut app, dialogue);
+            let late = matches!(how, DialogueClose::PostUpdate | DialogueClose::Last);
+            assert_eq!(close_dialogue(&mut app, dialogue, how), late, "{how:?}: settled on the frame expected");
+            assert!(!is_open(&app, SERVICE_SCREEN) && !is_open(&app, "dialogue"), "{how:?}");
+            assert!(app.world().get_resource::<ActiveTalk>().is_none(), "{how:?}: the talk ended");
+            assert_eq!(
+                app.world().resource::<Rpg>().service_list(PlayerId::HOST, TRAINER),
+                None::<&OpenList>,
+                "{how:?}: the host's list closed"
+            );
+            assert!(list(&mut app).is_none(), "{how:?}: the list root despawned");
+            assert!(app.world().get_entity(dialogue).is_err(), "{how:?}: the dialogue root despawned");
+        }
     }
 
     #[test]

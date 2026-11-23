@@ -347,6 +347,16 @@ impl Part {
     pub fn name(self) -> &'static str {
         Self::ALL.iter().find(|(_, p)| *p == self).map_or("?", |(n, _)| n)
     }
+
+    /// The part `name` (or an alias) names, case-insensitive.
+    pub fn from_name(name: &str) -> Option<Part> {
+        Self::ALL.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, p)| *p)
+    }
+
+    /// Every part once, under its [`name`](Self::name) (aliases left out), in declaration order.
+    pub fn all() -> impl Iterator<Item = Part> {
+        Self::ALL.iter().filter(|(n, p)| p.name() == *n).map(|(_, p)| *p)
+    }
 }
 
 /// The parts left out of this run.

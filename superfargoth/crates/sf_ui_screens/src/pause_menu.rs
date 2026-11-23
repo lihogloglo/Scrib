@@ -32,7 +32,10 @@ use crate::widgets::{
     Question, ScreenColors, button, centred_window, classes, label, part, part_as, relabel, role,
     set_disabled,
 };
-use crate::{is_target, screen_of};
+use crate::{is_target, on_target, screen_of};
+
+/// The pause window's width (px); a layout constant.
+const PAUSE_WIDTH: f32 = 280.0;
 
 /// An entry of the pause menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -326,7 +329,9 @@ pub(crate) fn spawn_pause_menu(
                 align_items: AlignItems::Stretch,
                 padding: UiRect::all(Val::Px(16.0)),
                 row_gap: Val::Px(8.0),
-                min_width: Val::Px(280.0),
+                // A fixed width (menus.md §7 "Fixed window frame"); the height is the entry
+                // list's, which hover and focus never change.
+                width: Val::Px(PAUSE_WIDTH),
                 max_width: Val::Percent(100.0),
                 max_height: Val::Percent(100.0),
                 ..Node::default()
@@ -498,6 +503,7 @@ pub(crate) fn on_pause_menu_part(
     activate: On<Activate>,
     kinds: Query<&PauseMenuPart>,
     parents: Query<&ChildOf>,
+    roots: Query<&UiScreenRoot>,
     mut screens: Query<(&UiScreenRoot, &mut PauseMenuScreen)>,
     mut stack: ResMut<ScreenStackRes>,
     mut out: MessageWriter<PauseMenuEvent>,
@@ -505,6 +511,9 @@ pub(crate) fn on_pause_menu_part(
     let Ok(kind) = kinds.get(activate.entity) else {
         return;
     };
+    if !on_target(activate.entity, &parents, &roots, &stack) {
+        return;
+    }
     let Some(entity) = screen_of(activate.entity, &parents, |e| screens.contains(e)) else {
         return;
     };

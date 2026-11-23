@@ -223,6 +223,8 @@ impl Perf {
         if self.off.has(Part::Particles) {
             app.add_observer(no_particles);
         }
+        // FS-2c: every --off part in the feature-switch list (rows + not-built marks in `finish`).
+        app.add_plugins(crate::part_switches::PartSwitchesPlugin(self.off.clone()));
         app.insert_resource(self.off);
         Ok(())
     }

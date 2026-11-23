@@ -36,6 +36,8 @@ log.workspace = true
 sf_coords.workspace = true
 sf_terrain = { workspace = true, features = ["bake"] }
 sf_tunables.workspace = true
+# The far shadow switch (`shadow.terrain_far.enabled`): registration and its running state.
+sf_tunables_bevy.workspace = true
 sf_world.workspace = true
 workspace-hack.workspace = true
 

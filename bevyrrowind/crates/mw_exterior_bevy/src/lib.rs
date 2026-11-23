@@ -6,6 +6,7 @@
 
 mod catalog_warm;
 pub mod exterior;
+pub mod advanced_page;
 pub mod graphics_page;
 mod gi_volume;
 pub mod groundcover;

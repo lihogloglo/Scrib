@@ -53,7 +53,7 @@ pub use material::{WaterExt, WaterMaterial, WaterParams};
 pub use rain::{WaterRain, WaterRainSettings, RAIN_CLOCK_WRAP_S, WATER_RAIN_RIPPLE_FADE_FAR_M, WATER_RAIN_RIPPLE_FADE_NEAR_M, WATER_RAIN_RIPPLE_STRENGTH};
 pub use gate::{gate_stats, GateStats, WaterGate, WaterGateSettings, MAX_GATE_BOXES, WATER_GATE_IDLE_FFT_S, WATER_GATE_MARGIN_M, WATER_GATE_VISIBLE};
 pub use medium::{
-    post_on, MediumCue, UnderwaterUniform, WaterMedium, WaterMediumCue, WaterMediumSettings, WaterMediumUniform, WaterMediums, NO_WATER_DEPTH_M, WATER_MEDIUM_HYSTERESIS_M, WATER_UNDERWATER,
+    post_on, MediumCue, UnderwaterUniform, WaterMedium, WaterMediumCue, WaterMediumSettings, WaterMediumUniform, WaterMediums, NO_WATER_DEPTH_M, UNDERWATER, WATER_MEDIUM_HYSTERESIS_M, WATER_UNDERWATER,
     WATER_UNDERWATER_KD_SCALE, WATER_UNDERWATER_SKY_FILL,
 };
 

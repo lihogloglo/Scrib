@@ -16,7 +16,7 @@ use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
 use bevy_post_process::bloom::Bloom;
 use sf_sky_bevy::ViewQualityCamera;
-use sf_tunables_bevy::sf_tunables::{AnyDef, Def, Group, Id, Lifetime, Source, Unit, def};
+use sf_tunables_bevy::sf_tunables::{AnyDef, Cost, Def, Effect, FeatureSwitch, Group, Id, Lifetime, Source, Unit, def};
 use sf_tunables_bevy::{Tunables, TunablesAppExt};
 
 /// `render.bloom`: Bevy's `Bloom` (`Bloom::NATURAL`: COD-AW dual filter, energy-conserving, no
@@ -25,6 +25,14 @@ pub const BLOOM: Def<bool> = def!(bool "render.bloom" = false)
     .help("Bloom on the camera (Bevy Bloom::NATURAL, energy-conserving)")
     .source(Source::BevyDefault("bevy_post_process::bloom::Bloom (opt-in per camera)"))
     .group(Group::Post);
+
+/// The feature switch on [`BLOOM`] (slice FS-2b, registered by [`BloomPlugin`]): off removes `Bloom`
+/// from the views, so Bevy's bloom node skips them.
+pub const BLOOM_SWITCH: FeatureSwitch = FeatureSwitch::new(&BLOOM)
+    .label("Bloom")
+    .effect(Effect::Skips)
+    .cost(&[Cost::Gpu("bloom")])
+    .at(file!(), line!());
 
 /// `render.bloom.intensity`: `Bloom::intensity`, the scatter fraction.
 pub const BLOOM_INTENSITY: Def<f32> = def!(float "render.bloom.intensity" = 0.15)
@@ -56,11 +64,27 @@ pub const PUDDLES: Def<bool> = def!(bool "surface.puddles" = true)
     .source(Source::BevyDefault("sf_surface_bevy::SurfaceSettings::default (on)"))
     .group(Group::Effects);
 
+/// The feature switch on [`PUDDLES`] (slice FS-2b, registered where the exterior binds the tunable).
+/// Off clears the puddle bit of the surface layer's flags (`SurfaceSettings::flag_mask`): the shader
+/// skips that branch, but the layer's passes run as before, so it only hides.
+pub const PUDDLES_SWITCH: FeatureSwitch = FeatureSwitch::new(&PUDDLES)
+    .label("Puddles")
+    .effect(Effect::Hides)
+    .at(file!(), line!());
+
 /// `surface.shelter`: the shelter map (roofs and canopies keep the ground under them dry), live.
 pub const SHELTER: Def<bool> = def!(bool "surface.shelter" = true)
     .help("Shelter map: roofs, arches and canopies keep the ground under them dry")
     .source(Source::BevyDefault("sf_surface_bevy::SurfaceSettings::default (on)"))
     .group(Group::Effects);
+
+/// The feature switch on [`SHELTER`] (slice FS-2b, registered where the exterior binds the tunable).
+/// Off stops the shelter map's redraws (`sf_surface_bevy::shelter::update_shelter`) and its exposure pass.
+pub const SHELTER_SWITCH: FeatureSwitch = FeatureSwitch::new(&SHELTER)
+    .label("Shelter (dry ground under roofs)")
+    .effect(Effect::Skips)
+    .cost(&[Cost::Cpu("sf_surface_bevy::shelter::update_shelter"), Cost::Gpu("surface_exposure")])
+    .at(file!(), line!());
 
 /// `render.gi.probes`: the dynamic probe GI plugin in this run (interiors, raster path). The plugin is
 /// added at start (`Restart`); the console's `render.gi` turns it off and on live where it runs.
@@ -137,6 +161,7 @@ pub struct BloomPlugin;
 impl Plugin for BloomPlugin {
     fn build(&self, app: &mut App) {
         let ids = BloomIds { on: app.add_tunable(&BLOOM).id(), intensity: app.add_tunable(&BLOOM_INTENSITY).id() };
+        app.add_feature_switch(&BLOOM_SWITCH);
         app.insert_resource(ids).add_systems(Update, sync_bloom);
     }
 }
@@ -211,5 +236,21 @@ mod tests {
         assert!((b.intensity - 0.3).abs() < 1e-6);
         set(&mut app, "render.bloom", "off");
         assert!(app.world().get::<Bloom>(camera).is_none(), "live off");
+    }
+
+    /// FS-2b: `BloomPlugin` registers the `render.bloom` switch; it follows a Console-layer set.
+    #[test]
+    fn bloom_switch_registered() {
+        let mut app = App::new();
+        app.add_plugins((TunablesPlugin, BloomPlugin));
+        app.update();
+        let running = |app: &App| {
+            let switches = app.world().resource::<sf_tunables_bevy::FeatureSwitches>();
+            assert_eq!(switches.get("render.bloom"), Some(&BLOOM_SWITCH), "registered");
+            switches.running(&app.world().resource::<Tunables>().0, "render.bloom")
+        };
+        assert!(!running(&app), "off by default");
+        set(&mut app, "render.bloom", "on");
+        assert!(running(&app));
     }
 }

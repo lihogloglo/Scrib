@@ -10,13 +10,31 @@
 //! keybinds screen ([`OptionsChange::OpenKeybinds`]); Back (or the back button) sends
 //! [`OptionsChange::Back`] and closes the screen.
 //!
-//! Input: up and down move between the page's enabled rows, then "Key bindings" and Back (no
-//! wrap); left and right change the focused row (a toggle flips, a choice cycles, a slider
+//! Footer action bar (menus.md §5): Key bindings, Reset page, then Back at the right edge, under
+//! the rows at a fixed height. Reset page asks first (the screen's own yes/no question over the
+//! window, No focused; No or Back answers no), then puts the current page's enabled rows whose
+//! record has `reset` (not language, bindings) back to their defaults and sends their keys as
+//! [`OptionsChange::Reset`] (the app resets each in the store). It is disabled (greyed, skipped
+//! by navigation) while no such row differs from its default.
+//!
+//! Input: up and down move between the page's enabled rows, then "Key bindings", Reset page
+//! (while enabled) and Back (no wrap); left and right change the focused row (a toggle flips, a choice cycles, a slider
 //! steps, clamped to its range; a preset driver's `custom` option, [`sf_ui::CUSTOM_LEVEL`], is
 //! derived, so it is shown but stepped over); confirm or a click flips a toggle and cycles a
 //! choice forward; the arrow buttons step; tab prev / next (Q / E, the triggers) switch pages, wrapping. A
-//! disabled row (the app sets `enabled = false`; `ui.setting` has no condition yet) is shown
+//! disabled row (its record's `enabled_if` fails, or the app sets `enabled = false`) is shown
 //! greyed and skipped.
+//!
+//! Record fields (menus.md §4 "Settings v2"): a row whose `visible_if` fails is left out (a page
+//! left empty goes with it); one whose `enabled_if` fails is disabled, its `disabled_reason` in
+//! the pane. Conditions read the rows' current values (re-applied the frame the model changes:
+//! [`OptionsModel::refresh`], run by the screen's sync), other settings as the store held them
+//! when the model was built, and the phase and platform traits of
+//! [`OptionsModel::set_condition_context`]; nothing reports those yet, so until the app sets
+//! them a `phase` or `trait` condition holds. Rows sort within their page by group (in order of
+//! first appearance), then `order` (none counts as 0), then load order. `format`: `percent`
+//! (0..1 as 0..100 %), `ms` (" ms"), `x` ("1.5x"); `raw` (the default) keeps the plain number,
+//! a 0..1 float slider still reading as a percentage.
 //!
 //! Widgets (`bevy_ui_widgets`): a slider row's bar is a [`Slider`] (drag the thumb or the
 //! track, click the track to jump; the value snaps to the row's step grid and goes out as a
@@ -40,15 +58,15 @@ use bevy_ecs::prelude::*;
 use bevy_input_focus::{FocusCause, InputFocus};
 use bevy_math::CompassOctant;
 use bevy_picking::events::{PointerEnter, PointerLeave};
-use bevy_text::TextColor;
+use bevy_text::{TextColor, TextLayout};
 use bevy_ui::prelude::*;
 use bevy_ui::Checked;
 use bevy_ui_widgets::{
-    Activate, Checkbox, Slider, SliderOrientation, SliderRange, SliderStep, SliderThumb,
-    SliderValue, TrackClick, ValueChange,
+    Activate, Checkbox, ScrollArea, Slider, SliderOrientation, SliderRange, SliderStep,
+    SliderThumb, SliderValue, TrackClick, ValueChange,
 };
-use sf_ui::records::{SettingApply, SettingKind};
-use sf_ui::{Localizer, SettingValue, SettingsStore, UiRegistry};
+use sf_ui::records::{SettingApply, SettingDef, SettingKind, ValueFormat};
+use sf_ui::{Condition, Localizer, SettingValue, SettingsStore, UiRegistry};
 use sf_ui_bevy::{
     ScreenStackRes, UiAction, UiActionEvent, UiHandlesBack, UiNavEvent, UiOwnsFocus, UiScreenRoot,
 };
@@ -56,10 +74,10 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, StatBar, button, centred_window, classes, framed_button, label, part, part_as,
-    relabel, role, set_disabled, spawn_bar, spawn_button,
+    Question, ScreenColors, StatBar, WindowFrame, button, classes, framed_button, framed_window,
+    label, part, part_as, relabel, role, set_disabled, spawn_bar, spawn_button,
 };
-use crate::{is_target, screen_of};
+use crate::{is_target, on_target, screen_of};
 
 /// Steps of a float slider whose record gives no step.
 pub const DEFAULT_FLOAT_STEPS: f64 = 20.0;
@@ -67,8 +85,17 @@ pub const DEFAULT_FLOAT_STEPS: f64 = 20.0;
 /// The slider thumb's width (px); it travels the track less its width, so it never overhangs.
 const THUMB_WIDTH: f32 = 10.0;
 
-/// The description pane's width (px).
+/// The description pane's width (px); its height is the body's (the window's frame).
 const PANE_WIDTH: f32 = 280.0;
+
+/// The options window's frame (menus.md §7 "Fixed window frame"): 60% x 70% of the viewport
+/// (1152 x 756 at 1080p, a little larger than the content-sized window it replaces), clamped.
+pub const OPTIONS_FRAME: WindowFrame =
+    WindowFrame::share(60.0, 70.0, [640.0, 420.0], [1280.0, 900.0]);
+
+/// The value column's width (px): the longest choice label at 1080p fits; longer ones clip, on
+/// one line, so a value change never resizes its row.
+const VALUE_WIDTH: f32 = 160.0;
 
 /// How a row edits its value.
 #[derive(Clone, Debug, PartialEq)]
@@ -106,6 +133,11 @@ pub struct OptionRow {
     pub restart: bool,
     /// The record's default value.
     pub default: SettingValue,
+    /// How the value reads (the record's `format`).
+    pub format: ValueFormat,
+    /// The record's `reset`: Reset page puts it back to its default (`false`: language,
+    /// bindings).
+    pub reset: bool,
 }
 
 impl OptionRow {
@@ -230,22 +262,25 @@ impl OptionRow {
                 .find(|(o, _)| o == id)
                 .map_or_else(|| id.clone(), |(_, l)| l.clone()),
             (OptionKind::Float { min, max, step }, SettingValue::Float(v)) => {
-                if min.abs() < f64::EPSILON && (max - 1.0).abs() < f64::EPSILON {
-                    format!("{}%", (v * 100.0).round())
-                } else {
-                    // As many decimals as the step has (0.25: two), at most three.
-                    let decimals = [1.0, 10.0, 100.0]
-                        .iter()
-                        .position(|scale| {
-                            let scaled = step * scale;
-                            (scaled - scaled.round()).abs() < 1e-6
-                        })
-                        .unwrap_or(3);
-                    format!("{v:.decimals$}")
+                let unit_range = min.abs() < f64::EPSILON && (max - 1.0).abs() < f64::EPSILON;
+                match self.format {
+                    ValueFormat::Percent => format!("{}%", (v * 100.0).round()),
+                    ValueFormat::Raw if unit_range => format!("{}%", (v * 100.0).round()),
+                    format => {
+                        // As many decimals as the step has (0.25: two), at most three.
+                        let decimals = [1.0, 10.0, 100.0]
+                            .iter()
+                            .position(|scale| {
+                                let scaled = step * scale;
+                                (scaled - scaled.round()).abs() < 1e-6
+                            })
+                            .unwrap_or(3);
+                        suffixed(format!("{v:.decimals$}"), format)
+                    }
                 }
             }
-            (_, SettingValue::Int(v)) => v.to_string(),
-            (_, SettingValue::Float(v)) => v.to_string(),
+            (_, SettingValue::Int(v)) => suffixed(v.to_string(), self.format),
+            (_, SettingValue::Float(v)) => suffixed(v.to_string(), self.format),
             (_, SettingValue::Bool(v)) => v.to_string(),
             (_, SettingValue::Text(v)) => v.clone(),
         }
@@ -275,6 +310,44 @@ impl OptionRow {
     }
 }
 
+/// A number with its `format`'s unit: `50%`, `16 ms`, `1.5x`; raw as is.
+fn suffixed(number: String, format: ValueFormat) -> String {
+    match format {
+        ValueFormat::Raw => number,
+        ValueFormat::Percent => format!("{number}%"),
+        ValueFormat::Ms => format!("{number} ms"),
+        ValueFormat::Times => format!("{number}x"),
+    }
+}
+
+/// What a row's record says about whether and where it shows (menus.md §4).
+#[derive(Clone, Debug, PartialEq)]
+struct RowRule {
+    /// The page the row belongs on.
+    page: String,
+    /// Group rank within the page (first appearance), `order` (none: 0), load index.
+    rank: (usize, i32, usize),
+    enabled_if: Vec<Condition>,
+    visible_if: Vec<Condition>,
+}
+
+impl RowRule {
+    /// The rule of the `load`th record, on `page` whose groups so far are `groups`.
+    fn new(page: &str, groups: &mut Vec<Option<String>>, def: &SettingDef, load: usize) -> Self {
+        let group = groups.iter().position(|g| *g == def.group);
+        let group = group.unwrap_or_else(|| {
+            groups.push(def.group.clone());
+            groups.len() - 1
+        });
+        Self {
+            page: page.to_owned(),
+            rank: (group, def.order.unwrap_or(0), load),
+            enabled_if: def.enabled_if.clone(),
+            visible_if: def.visible_if.clone(),
+        }
+    }
+}
+
 /// A page (tab) of settings.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OptionsPage {
@@ -284,10 +357,23 @@ pub struct OptionsPage {
     pub rows: Vec<OptionRow>,
 }
 
-/// The screen's view-model: pages in order, each with its rows.
+/// The screen's view-model: pages in order, each with its shown rows. Rows built from records
+/// keep their record's conditions; [`OptionsModel::refresh`] re-applies them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OptionsModel {
     pub pages: Vec<OptionsPage>,
+    /// Record rows by key: their page, sort rank and conditions.
+    rules: HashMap<String, RowRule>,
+    /// Rows whose `visible_if` fails, in load order.
+    hidden: Vec<OptionRow>,
+    /// Every record page, `(id, label)`, in first-definition order.
+    page_order: Vec<(String, String)>,
+    /// Store values of settings a condition reads that have no row (as at build).
+    outside: Vec<(String, SettingValue)>,
+    /// The menu phase conditions see; `None`: unknown, a `phase` condition holds.
+    phase: Option<String>,
+    /// The platform traits present; `None`: unknown, a `trait` condition holds.
+    traits: Option<Vec<String>>,
 }
 
 impl OptionsModel {
@@ -306,7 +392,10 @@ impl OptionsModel {
         // Descriptions and reasons have no readable-id fallback: a missing string reads as none.
         let optional = |key: Option<&str>| key.and_then(string);
         let mut pages: Vec<OptionsPage> = Vec::new();
-        for def in registry.settings() {
+        let mut rules: HashMap<String, RowRule> = HashMap::new();
+        // Per page, its groups in order of first appearance.
+        let mut groups: HashMap<String, Vec<Option<String>>> = HashMap::new();
+        for (load, def) in registry.settings().enumerate() {
             let key = def.id.as_str();
             let (kind, default) = match &def.def.kind {
                 SettingKind::Bool { default } => (OptionKind::Toggle, SettingValue::Bool(*default)),
@@ -372,12 +461,16 @@ impl OptionsModel {
                 disabled_reason: optional(def.def.disabled_reason.as_deref()),
                 restart: def.def.apply == SettingApply::Restart,
                 default,
+                format: def.def.format,
+                reset: def.def.reset,
             };
             let page_id = def
                 .def
                 .page
                 .clone()
                 .unwrap_or_else(|| def.owner.to_string());
+            let page_groups = groups.entry(page_id.clone()).or_default();
+            rules.insert(key.to_owned(), RowRule::new(&page_id, page_groups, &def.def, load));
             match pages.iter_mut().find(|p| p.id == page_id) {
                 Some(page) => page.rows.push(row),
                 None => pages.push(OptionsPage {
@@ -387,7 +480,187 @@ impl OptionsModel {
                 }),
             }
         }
-        Self { pages }
+        Self::with_rules(pages, rules, store)
+    }
+
+    /// The built pages with their records' rules: rows sorted, conditions applied.
+    fn with_rules(
+        mut pages: Vec<OptionsPage>,
+        rules: HashMap<String, RowRule>,
+        store: Option<&SettingsStore>,
+    ) -> Self {
+        for page in &mut pages {
+            page.rows.sort_by_key(|r| rules.get(&r.key).map(|rule| rule.rank));
+        }
+        // Settings a condition reads that have no row (text settings, actions): their stored
+        // value, as at build.
+        let mut outside: Vec<(String, SettingValue)> = Vec::new();
+        for rule in rules.values() {
+            for cond in rule.enabled_if.iter().chain(&rule.visible_if) {
+                if let Condition::Setting { setting, .. } = cond
+                    && !rules.contains_key(setting)
+                    && !outside.iter().any(|(k, _)| k == setting)
+                    && let Some(value) = store.and_then(|s| s.get(setting))
+                {
+                    outside.push((setting.clone(), value.clone()));
+                }
+            }
+        }
+        let mut model = Self {
+            page_order: pages.iter().map(|p| (p.id.clone(), p.label.clone())).collect(),
+            pages,
+            rules,
+            outside,
+            ..Self::default()
+        };
+        model.refresh();
+        model
+    }
+
+    /// Sets the menu phase ([`sf_ui::PHASE_FRONTEND`], [`sf_ui::PHASE_IN_GAME`]) and the
+    /// platform traits (`dlss`, `rt`, ...) the conditions read, and re-applies them. `None`
+    /// leaves that input unknown: its conditions hold.
+    pub fn set_condition_context(&mut self, phase: Option<&str>, traits: Option<&[&str]>) {
+        self.phase = phase.map(str::to_owned);
+        self.traits = traits.map(|t| t.iter().map(|s| (*s).to_owned()).collect());
+        self.refresh();
+    }
+
+    /// Re-applies the record rows' `visible_if` (a failing row leaves its page, a passing one
+    /// comes back in its sorted place) and `enabled_if` (rows without one keep their
+    /// `enabled`) against the rows' current values; whether anything changed. Cheap, and a
+    /// no-op once applied: the screen runs it whenever its model changed.
+    pub fn refresh(&mut self) -> bool {
+        if self
+            .rules
+            .values()
+            .all(|r| r.enabled_if.is_empty() && r.visible_if.is_empty())
+        {
+            return false;
+        }
+        let verdicts = self.verdicts();
+        let shown = |key: &str| verdicts.get(key).is_none_or(|(visible, _)| *visible);
+        let mut changed = false;
+        let apply = |row: &mut OptionRow, changed: &mut bool| {
+            if let Some((_, Some(enabled))) = verdicts.get(&row.key)
+                && row.enabled != *enabled
+            {
+                row.enabled = *enabled;
+                *changed = true;
+            }
+        };
+        for page in &mut self.pages {
+            let mut kept = Vec::with_capacity(page.rows.len());
+            for mut row in page.rows.drain(..) {
+                if shown(&row.key) {
+                    apply(&mut row, &mut changed);
+                    kept.push(row);
+                } else {
+                    self.hidden.push(row);
+                    changed = true;
+                }
+            }
+            page.rows = kept;
+        }
+        let mut back = Vec::new();
+        for mut row in std::mem::take(&mut self.hidden) {
+            apply(&mut row, &mut changed);
+            if shown(&row.key) {
+                back.push(row);
+            } else {
+                self.hidden.push(row);
+            }
+        }
+        let rules = &self.rules;
+        self.hidden
+            .sort_by_key(|r| rules.get(&r.key).map(|rule| rule.rank));
+        for row in back {
+            changed = true;
+            self.reveal(row);
+        }
+        // A record page left with no row goes (it comes back with its first row).
+        let before = self.pages.len();
+        let order = &self.page_order;
+        self.pages
+            .retain(|p| !p.rows.is_empty() || !order.iter().any(|(id, _)| *id == p.id));
+        changed || self.pages.len() != before
+    }
+
+    /// Per record row with conditions: (visible, enabled when it has an `enabled_if`). Values
+    /// are the rows' (the screen's own changes land there before the store), then the settings
+    /// with no row; an unknown phase or trait holds.
+    fn verdicts(&self) -> HashMap<String, (bool, Option<bool>)> {
+        let mut values: HashMap<&str, &SettingValue> =
+            self.outside.iter().map(|(k, v)| (k.as_str(), v)).collect();
+        for row in self.pages.iter().flat_map(|p| &p.rows).chain(&self.hidden) {
+            values.insert(&row.key, &row.value);
+        }
+        let value = |key: &str| values.get(key).map(|v| (*v).clone());
+        let traits = |t: &str| {
+            self.traits
+                .as_ref()
+                .is_none_or(|have| have.iter().any(|h| h == t))
+        };
+        let phase = self.phase.as_deref();
+        let holds = |conds: &[Condition]| {
+            conds.iter().all(|c| match c {
+                Condition::Phase { .. } if phase.is_none() => true,
+                c => c.holds(&value, &traits, phase.unwrap_or_default()),
+            })
+        };
+        self.rules
+            .iter()
+            .filter(|(_, r)| !(r.enabled_if.is_empty() && r.visible_if.is_empty()))
+            .map(|(key, rule)| {
+                let enabled = (!rule.enabled_if.is_empty()).then(|| holds(&rule.enabled_if));
+                (key.clone(), (holds(&rule.visible_if), enabled))
+            })
+            .collect()
+    }
+
+    /// Puts a hidden row back on its page in its sorted place (the page too, if it went).
+    fn reveal(&mut self, row: OptionRow) {
+        let Some(rule) = self.rules.get(&row.key) else {
+            return;
+        };
+        let page_rank = |id: &str| {
+            self.page_order
+                .iter()
+                .position(|(p, _)| p == id)
+                .unwrap_or(usize::MAX)
+        };
+        let at = if let Some(at) = self.pages.iter().position(|p| p.id == rule.page) {
+            at
+        } else {
+            let want = page_rank(&rule.page);
+            let at = self
+                .pages
+                .iter()
+                .position(|p| page_rank(&p.id) > want)
+                .unwrap_or(self.pages.len());
+            let label = self
+                .page_order
+                .iter()
+                .find(|(p, _)| *p == rule.page)
+                .map_or_else(|| rule.page.clone(), |(_, l)| l.clone());
+            self.pages.insert(
+                at,
+                OptionsPage {
+                    id: rule.page.clone(),
+                    label,
+                    rows: Vec::new(),
+                },
+            );
+            at
+        };
+        let rank = rule.rank;
+        let rules = &self.rules;
+        let rows = &mut self.pages[at].rows;
+        let slot = rows
+            .iter()
+            .position(|r| rules.get(&r.key).is_some_and(|other| other.rank > rank))
+            .unwrap_or(rows.len());
+        rows.insert(slot, row);
     }
 
     /// The row of a setting, on any page.
@@ -429,6 +702,9 @@ fn readable(id: &str) -> String {
 pub enum OptionsChange {
     /// A setting's new value (the screen already shows it).
     Set(String, SettingValue),
+    /// Reset page: these settings of the current page go back to their defaults (the screen
+    /// already shows them); the app resets each in the store.
+    Reset(Vec<String>),
     /// Open the keybinds screen.
     OpenKeybinds,
     /// The screen has closed.
@@ -450,7 +726,11 @@ pub enum OptionsFocus {
     /// A row of the current page, by setting key.
     Row(String),
     Keybinds,
+    /// The footer's Reset page button.
+    ResetPage,
     Back,
+    /// An answer of the Reset page question: yes, no.
+    Confirm(usize),
 }
 
 /// On a screen root: the options screen. The app may replace `model` at any time (rows are
@@ -463,6 +743,8 @@ pub struct OptionsScreen {
     focus: OptionsFocus,
     /// The row under the pointer, by setting key.
     hovered: Option<String>,
+    /// The Reset page question is up.
+    asking: bool,
 }
 
 impl OptionsScreen {
@@ -520,13 +802,69 @@ impl OptionsScreen {
             .map_or(&[], |p| p.rows.as_slice())
     }
 
-    /// The focus stops in order: enabled rows, then Key bindings and Back.
+    /// The Reset page question is up.
+    pub fn asking_reset(&self) -> bool {
+        self.asking
+    }
+
+    /// The rows Reset page would put back: the current page's enabled rows with `reset` whose
+    /// value is not their default.
+    fn resettable(&self) -> impl Iterator<Item = &OptionRow> {
+        self.rows()
+            .iter()
+            .filter(|r| r.reset && r.enabled && r.value != r.default)
+    }
+
+    /// Reset page has something to do (its button is enabled).
+    pub fn can_reset(&self) -> bool {
+        self.resettable().next().is_some()
+    }
+
+    /// Reset page asks first, No focused (a stray confirm never resets).
+    fn ask_reset(&mut self) {
+        if self.can_reset() {
+            self.asking = true;
+            self.focus = OptionsFocus::Confirm(1);
+        }
+    }
+
+    /// Closes the question: focus back on Reset page, or on Back once there is nothing left.
+    fn answer(&mut self) {
+        self.asking = false;
+        self.focus = if self.can_reset() {
+            OptionsFocus::ResetPage
+        } else {
+            OptionsFocus::Back
+        };
+    }
+
+    /// Puts the resettable rows back to their defaults; the change, when any row changed.
+    fn reset_page(&mut self) -> Option<OptionsChange> {
+        let keys: Vec<String> = self.resettable().map(|r| r.key.clone()).collect();
+        if keys.is_empty() {
+            return None;
+        }
+        let page = self.model.pages.get_mut(self.page)?;
+        for row in page.rows.iter_mut().filter(|r| keys.contains(&r.key)) {
+            row.value = row.default.clone();
+        }
+        Some(OptionsChange::Reset(keys))
+    }
+
+    /// The focus stops in order: enabled rows, then Key bindings, Reset page (while it has
+    /// something to reset) and Back; while the question is up, its answers.
     fn stops(&self) -> Vec<OptionsFocus> {
+        if self.asking {
+            return vec![OptionsFocus::Confirm(0), OptionsFocus::Confirm(1)];
+        }
+        let reset = self.can_reset().then_some(OptionsFocus::ResetPage);
         self.rows()
             .iter()
             .filter(|r| r.enabled)
             .map(|r| OptionsFocus::Row(r.key.clone()))
-            .chain([OptionsFocus::Keybinds, OptionsFocus::Back])
+            .chain([OptionsFocus::Keybinds])
+            .chain(reset)
+            .chain([OptionsFocus::Back])
             .collect()
     }
 
@@ -585,7 +923,11 @@ pub enum OptionsPart {
     Less(String),
     More(String),
     Keybinds,
+    ResetPage,
     Back,
+    /// The Reset page question's answers.
+    Yes,
+    No,
 }
 
 /// The parts of a row whose content changes.
@@ -600,8 +942,8 @@ struct RowParts {
     checkbox: Option<Entity>,
 }
 
-/// The description pane's text parts (right of the rows). An empty one is hidden
-/// (`Display::None`).
+/// The description pane's text parts (right of the rows). An empty one draws nothing and keeps
+/// its place (never `Display::None`, so the lines never shift).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OptionsPane {
     /// The pane itself.
@@ -663,7 +1005,12 @@ pub struct OptionsParts {
     /// The tab shown active.
     active_tab: Option<usize>,
     keybinds: Entity,
+    reset: Entity,
     back: Entity,
+    /// Reset page's enabled state on screen.
+    reset_shown: Option<bool>,
+    /// The Reset page question.
+    question: Question,
     pane: OptionsPane,
     /// The pane's text on screen.
     pane_shown: Option<PaneText>,
@@ -720,8 +1067,23 @@ impl OptionsParts {
         self.keybinds
     }
 
+    /// The footer's Reset page button.
+    pub fn reset_page(&self) -> Entity {
+        self.reset
+    }
+
     pub fn back(&self) -> Entity {
         self.back
+    }
+
+    /// The Reset page question's overlay.
+    pub fn overlay(&self) -> Entity {
+        self.question.overlay
+    }
+
+    /// The question's Yes, No.
+    pub fn confirm_buttons(&self) -> [Entity; 2] {
+        self.question.buttons
     }
 
     fn target(&self, focus: &OptionsFocus) -> Option<Entity> {
@@ -729,7 +1091,9 @@ impl OptionsParts {
             OptionsFocus::Start => None,
             OptionsFocus::Row(key) => self.rows.get(key),
             OptionsFocus::Keybinds => Some(self.keybinds),
+            OptionsFocus::ResetPage => Some(self.reset),
             OptionsFocus::Back => Some(self.back),
+            OptionsFocus::Confirm(i) => self.question.buttons.get(*i).copied(),
         }
     }
 }
@@ -743,16 +1107,16 @@ pub(crate) fn spawn_options(
     for root in &roots {
         commands.entity(root).insert((
             part_as("sf-options", role::WINDOW),
-            centred_window(Node {
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Stretch,
-                padding: UiRect::all(Val::Px(16.0)),
-                row_gap: Val::Px(8.0),
-                min_width: Val::Px(480.0),
-                max_width: Val::Percent(100.0),
-                max_height: Val::Percent(100.0),
-                ..Node::default()
-            }),
+            framed_window(
+                OPTIONS_FRAME,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Stretch,
+                    padding: UiRect::all(Val::Px(16.0)),
+                    row_gap: Val::Px(8.0),
+                    ..Node::default()
+                },
+            ),
             BackgroundColor(colors.panel),
         ));
         commands.spawn((
@@ -776,35 +1140,39 @@ pub(crate) fn spawn_options(
         let tabs = row_of(&mut commands, "sf-options-tabs", 4.0);
         // The body: the rows, then the description pane to their right (a bottom pane by
         // layout preset comes with the presets).
+        // It takes the window's height left by the title, tabs and footer; the rows scroll in it.
         let body = row_of(&mut commands, "sf-options-body", 16.0);
+        commands.entity(body).insert(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(16.0),
+            flex_grow: 1.0,
+            flex_basis: Val::Px(0.0),
+            min_height: Val::Px(0.0),
+            ..Node::default()
+        });
         let rows = commands
             .spawn((
                 part_as("sf-options-rows", role::BOX),
                 Node {
                     flex_direction: FlexDirection::Column,
                     flex_grow: 1.0,
+                    min_width: Val::Px(0.0),
+                    min_height: Val::Px(0.0),
                     row_gap: Val::Px(4.0),
+                    overflow: Overflow::scroll_y(),
                     ..Node::default()
                 },
+                // Wheel scrolling; `scroll_to_focus` keeps the focused row in view.
+                ScrollArea,
                 ChildOf(body),
             ))
             .id();
         let pane = spawn_pane(&mut commands, body, &colors);
+        // The footer action bar (menus.md §5): Key bindings and Reset page, Back at the right
+        // edge. Content-sized buttons that never change size, never shrunk by the body.
         let footer = row_of(&mut commands, "sf-options-footer", 8.0);
-        let keybinds = commands
-            .spawn((
-                framed_button("sf-options-keybinds", labels.keybinds.clone(), &colors),
-                OptionsPart::Keybinds,
-                ChildOf(footer),
-            ))
-            .id();
-        let back = commands
-            .spawn((
-                framed_button("sf-options-back", labels.back.clone(), &colors),
-                OptionsPart::Back,
-                ChildOf(footer),
-            ))
-            .id();
+        let ([keybinds, reset, back], question) =
+            spawn_footer(&mut commands, root, footer, &labels, &colors);
         commands.entity(root).insert(OptionsParts {
             tabs: KeyedChildren::new(tabs),
             rows: KeyedChildren::new(rows),
@@ -812,7 +1180,10 @@ pub(crate) fn spawn_options(
             shown: HashMap::new(),
             active_tab: None,
             keybinds,
+            reset,
             back,
+            reset_shown: None,
+            question,
             pane,
             pane_shown: None,
             seen: None,
@@ -820,8 +1191,68 @@ pub(crate) fn spawn_options(
     }
 }
 
+/// The footer's buttons under `footer` (Key bindings, Reset page, Back at the right edge) and
+/// the Reset page question over the window `root`.
+fn spawn_footer(
+    commands: &mut Commands,
+    root: Entity,
+    footer: Entity,
+    labels: &ScreenLabels,
+    colors: &ScreenColors,
+) -> ([Entity; 3], Question) {
+    commands.entity(footer).insert(Node {
+        flex_direction: FlexDirection::Row,
+        column_gap: Val::Px(8.0),
+        flex_shrink: 0.0,
+        ..Node::default()
+    });
+    let keybinds = commands
+        .spawn((
+            framed_button("sf-options-keybinds", labels.keybinds.clone(), colors),
+            OptionsPart::Keybinds,
+            ChildOf(footer),
+        ))
+        .id();
+    let reset = commands
+        .spawn((
+            framed_button("sf-options-reset", labels.reset_page.clone(), colors),
+            OptionsPart::ResetPage,
+            ChildOf(footer),
+        ))
+        .id();
+    let back = commands
+        .spawn((
+            framed_button("sf-options-back", labels.back.clone(), colors),
+            OptionsPart::Back,
+            ChildOf(footer),
+        ))
+        .id();
+    commands.queue(move |world: &mut World| {
+        if let Some(mut node) = world.get_mut::<Node>(back) {
+            node.margin.left = Val::Auto;
+        }
+    });
+    // Over the window (absolute, so it never moves the rows), hidden until asked.
+    let question = Question::spawn(
+        commands,
+        root,
+        [
+            "sf-options-confirm",
+            "sf-options-confirm-text",
+            "sf-options-confirm-choices",
+        ],
+        [
+            ("sf-options-yes", labels.yes.clone(), OptionsPart::Yes),
+            ("sf-options-no", labels.no.clone(), OptionsPart::No),
+        ],
+        colors,
+    );
+    ([keybinds, reset, back], question)
+}
+
 /// The description pane under `body`: label, description, disabled reason, restart badge,
-/// default value, each hidden until it has text.
+/// default value, each empty until it has text. Fixed width, the body's height, its overflow
+/// clipped: what it shows never resizes it.
 fn spawn_pane(commands: &mut Commands, body: Entity, colors: &ScreenColors) -> OptionsPane {
     let root = commands
         .spawn((
@@ -830,8 +1261,10 @@ fn spawn_pane(commands: &mut Commands, body: Entity, colors: &ScreenColors) -> O
                 flex_direction: FlexDirection::Column,
                 width: Val::Px(PANE_WIDTH),
                 flex_shrink: 0.0,
+                min_height: Val::Px(0.0),
                 row_gap: Val::Px(6.0),
                 padding: UiRect::all(Val::Px(8.0)),
+                overflow: Overflow::clip(),
                 ..Node::default()
             },
             BackgroundColor(colors.cell),
@@ -845,10 +1278,6 @@ fn spawn_pane(commands: &mut Commands, body: Entity, colors: &ScreenColors) -> O
                 Text::new(String::new()),
                 colors.font(1.0),
                 TextColor(color),
-                Node {
-                    display: Display::None,
-                    ..Node::default()
-                },
                 ChildOf(root),
             ))
             .id()
@@ -931,8 +1360,11 @@ fn spawn_row(
     let value = commands
         .spawn((
             label("sf-options-value", String::new(), colors),
+            TextLayout::no_wrap(),
             Node {
-                min_width: Val::Px(80.0),
+                width: Val::Px(VALUE_WIDTH),
+                flex_shrink: 0.0,
+                overflow: Overflow::clip(),
                 ..Node::default()
             },
             ChildOf(controls),
@@ -1039,7 +1471,8 @@ fn thumb_left(range: SliderRange, value: SliderValue) -> Val {
 type RowWidgets<'w, 's> = (
     Query<'w, 's, &'static mut StatBar>,
     Query<'w, 's, &'static SliderValue>,
-    Query<'w, 's, &'static mut Node, With<SliderThumb>>,
+    // Slider thumbs and the question's overlay.
+    Query<'w, 's, &'static mut Node>,
     Query<'w, 's, Has<Checked>, With<Checkbox>>,
 );
 
@@ -1052,7 +1485,7 @@ pub(crate) fn sync_options(
     colors: Res<ScreenColors>,
     labels: Res<ScreenLabels>,
     mut screens: Query<(&UiScreenRoot, &mut OptionsScreen, &mut OptionsParts)>,
-    (mut bars, sliders, mut thumbs, checks): RowWidgets,
+    (mut bars, sliders, mut nodes, checks): RowWidgets,
     mut focus: ResMut<InputFocus>,
 ) {
     for (root, mut screen, mut parts) in &mut screens {
@@ -1064,6 +1497,17 @@ pub(crate) fn sync_options(
             .as_ref()
             .is_none_or(|(page, model)| *page != screen.page || *model != screen.model);
         if stale {
+            // A changed value may flip a row's conditions: re-apply them, keeping the page shown
+            // (by id: a page before it may come or go). Change detection only when they did.
+            let shown = screen.model.pages.get(screen.page).map(|p| p.id.clone());
+            if screen.bypass_change_detection().model.refresh() {
+                if let Some(at) =
+                    shown.and_then(|id| screen.model.pages.iter().position(|p| p.id == id))
+                {
+                    screen.bypass_change_detection().page = at;
+                }
+                screen.set_changed();
+            }
             if screen.page >= screen.model.pages.len() && !screen.model.pages.is_empty() {
                 screen.page = screen.model.pages.len() - 1;
             }
@@ -1148,7 +1592,7 @@ pub(crate) fn sync_options(
                         commands.entity(slider).insert(value);
                     }
                     let left = thumb_left(range, value);
-                    if let Ok(mut node) = thumbs.get_mut(thumb)
+                    if let Ok(mut node) = nodes.get_mut(thumb)
                         && node.left != left
                     {
                         node.left = left;
@@ -1189,10 +1633,32 @@ pub(crate) fn sync_options(
             parts.seen = Some((screen.page, screen.model.clone()));
         }
 
+        // The question goes when there is nothing left to reset (the app's new model).
+        if screen.asking && !screen.can_reset() {
+            screen.answer();
+        }
         // Focus: a stop of the current page, else its home.
         if !screen.stops().contains(&screen.focus) {
             screen.focus = screen.home();
         }
+        let can_reset = screen.can_reset();
+        if parts.reset_shown != Some(can_reset) {
+            set_disabled(&mut commands, parts.reset, !can_reset);
+            commands
+                .entity(parts.reset)
+                .insert(classes("sf-options-reset", &[("disabled", !can_reset)]));
+            let color = if can_reset { colors.text } else { colors.muted };
+            relabel(&mut commands, parts.reset, labels.reset_page.clone(), color);
+            parts.reset_shown = Some(can_reset);
+        }
+        let question = if screen.asking {
+            labels.confirm_reset_page.clone()
+        } else {
+            String::new()
+        };
+        parts
+            .question
+            .set(&mut commands, &mut nodes, question, colors);
         // The pane: the hovered row, else the focused one.
         let pane = pane_text(screen.described(), labels);
         if parts.pane_shown.as_ref() != Some(&pane) {
@@ -1202,18 +1668,8 @@ pub(crate) fn sync_options(
                 if text == old {
                     continue;
                 }
-                let display = if text.is_empty() {
-                    Display::None
-                } else {
-                    Display::Flex
-                };
-                commands.entity(entity).insert((
-                    Text::new(text.clone()),
-                    Node {
-                        display,
-                        ..Node::default()
-                    },
-                ));
+                // Never `Display::None`: an empty line draws nothing and keeps its place.
+                commands.entity(entity).insert(Text::new(text.clone()));
             }
             parts.pane_shown = Some(pane);
         }
@@ -1240,6 +1696,18 @@ pub(crate) fn options_input(
     let actions: Vec<UiActionEvent> = actions.read().cloned().collect();
     for (entity, root, mut screen) in &mut screens {
         for nav in navs.iter().filter(|n| n.screen == root.0) {
+            // The question is modal: left and right pick an answer.
+            if screen.asking {
+                let answer = match nav.direction {
+                    CompassOctant::West => OptionsFocus::Confirm(0),
+                    CompassOctant::East => OptionsFocus::Confirm(1),
+                    _ => continue,
+                };
+                if screen.focus != answer {
+                    screen.focus = answer;
+                }
+                continue;
+            }
             match nav.direction {
                 CompassOctant::North | CompassOctant::South => {
                     let next = screen.step(nav.direction == CompassOctant::South);
@@ -1267,6 +1735,13 @@ pub(crate) fn options_input(
             }
         }
         for action in actions.iter().filter(|a| a.screen == root.0) {
+            // Back answers no; nothing else reaches the screen under the question.
+            if screen.asking {
+                if action.action == UiAction::Back {
+                    screen.answer();
+                }
+                continue;
+            }
             let pages = screen.model.pages.len();
             match action.action {
                 UiAction::TabNext | UiAction::TabPrev if pages > 1 => {
@@ -1305,6 +1780,7 @@ pub(crate) fn on_options_part(
     activate: On<Activate>,
     kinds: Query<&OptionsPart>,
     parents: Query<&ChildOf>,
+    roots: Query<&UiScreenRoot>,
     mut screens: Query<(&UiScreenRoot, &mut OptionsScreen)>,
     mut stack: ResMut<ScreenStackRes>,
     mut out: MessageWriter<OptionsEvent>,
@@ -1312,6 +1788,9 @@ pub(crate) fn on_options_part(
     let Ok(kind) = kinds.get(activate.entity) else {
         return;
     };
+    if !on_target(activate.entity, &parents, &roots, &stack) {
+        return;
+    }
     let Some(entity) = screen_of(activate.entity, &parents, |e| screens.contains(e)) else {
         return;
     };
@@ -1319,6 +1798,22 @@ pub(crate) fn on_options_part(
         return;
     };
     let change = match kind {
+        OptionsPart::Yes if screen.asking => {
+            let change = screen.reset_page();
+            screen.answer();
+            change
+        }
+        OptionsPart::No if screen.asking => {
+            screen.answer();
+            None
+        }
+        // The question is modal.
+        _ if screen.asking => None,
+        OptionsPart::Yes | OptionsPart::No => None,
+        OptionsPart::ResetPage => {
+            screen.ask_reset();
+            None
+        }
         OptionsPart::Tab(page) => {
             if *page != screen.page {
                 screen.set_page(*page);
@@ -1365,11 +1860,16 @@ pub(crate) fn on_options_enter(
     enter: On<PointerEnter>,
     kinds: Query<&OptionsPart>,
     parents: Query<&ChildOf>,
+    roots: Query<&UiScreenRoot>,
+    stack: Res<ScreenStackRes>,
     mut screens: Query<&mut OptionsScreen>,
 ) {
     let Ok(OptionsPart::Row(key)) = kinds.get(enter.entity) else {
         return;
     };
+    if !on_target(enter.entity, &parents, &roots, &stack) {
+        return;
+    }
     let Some(root) = screen_of(enter.entity, &parents, |e| screens.contains(e)) else {
         return;
     };
@@ -1402,10 +1902,13 @@ pub(crate) fn on_options_leave(
 
 /// A slider dragged or its track clicked: snap to the row's step grid, show it and send it
 /// (a disabled row ignores it; `InteractionDisabled` already stops the widget's own input).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn on_options_slider(
     change: On<ValueChange<f32>>,
     sliders: Query<&OptionsSlider>,
     parents: Query<&ChildOf>,
+    roots: Query<&UiScreenRoot>,
+    stack: Res<ScreenStackRes>,
     mut screens: Query<&mut OptionsScreen>,
     mut commands: Commands,
     mut out: MessageWriter<OptionsEvent>,
@@ -1413,6 +1916,9 @@ pub(crate) fn on_options_slider(
     let Ok(OptionsSlider(key)) = sliders.get(change.source) else {
         return;
     };
+    if !on_target(change.source, &parents, &roots, &stack) {
+        return;
+    }
     let Some(entity) = screen_of(change.source, &parents, |e| screens.contains(e)) else {
         return;
     };
@@ -1444,12 +1950,17 @@ pub(crate) fn on_options_checkbox(
     change: On<ValueChange<bool>>,
     checkboxes: Query<&OptionsCheckbox>,
     parents: Query<&ChildOf>,
+    roots: Query<&UiScreenRoot>,
+    stack: Res<ScreenStackRes>,
     mut screens: Query<&mut OptionsScreen>,
     mut out: MessageWriter<OptionsEvent>,
 ) {
     let Ok(OptionsCheckbox(key)) = checkboxes.get(change.source) else {
         return;
     };
+    if !on_target(change.source, &parents, &roots, &stack) {
+        return;
+    }
     let Some(entity) = screen_of(change.source, &parents, |e| screens.contains(e)) else {
         return;
     };

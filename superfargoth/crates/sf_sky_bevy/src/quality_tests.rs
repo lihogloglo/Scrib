@@ -131,3 +131,29 @@ fn a_views_base_prepasses_stay() {
     let w = app.world();
     assert!(w.get::<DepthPrepass>(camera).is_some() && w.get::<MotionVectorPrepass>(camera).is_some());
 }
+
+/// FS-2b: the switches `ShadowQualityPlugin` (soft sun shadows, contact shadows, GTAO, the temporal
+/// resolve) and `PointShadowPlugin` (the lamp shadow atlas) register are in `FeatureSwitches`, and
+/// a choice switch follows a console-layer set.
+#[test]
+fn feature_switches_registered() {
+    let mut app = App::new();
+    app.add_plugins((bevy::MinimalPlugins, TunablesPlugin, ShadowQualityPlugin, crate::PointShadowPlugin))
+        .init_resource::<bevy_light::PointLightShadowMap>()
+        .init_resource::<SkyRenderOptions>()
+        .insert_resource(SunShadowQuality::default())
+        .insert_resource(UpscalingSetting(Upscaling::Off));
+    app.update();
+    let running = |app: &App, name: &str| {
+        let switches = app.world().resource::<sf_tunables_bevy::FeatureSwitches>();
+        assert!(switches.get(name).is_some(), "{name} registered");
+        switches.running(&app.world().resource::<sf_tunables_bevy::Tunables>().0, name)
+    };
+    let names = ["shadow.sun.soft", "shadow.contact", "render.ssao.quality", "render.upscaling", "shadow.lamp.atlas.enabled"];
+    let defaults: Vec<bool> = names.iter().map(|n| running(&app, n)).collect();
+    assert_eq!(defaults, [false, false, false, false, true], "as their tunables' defaults");
+    set(&mut app, "render.ssao.quality", "high");
+    assert!(running(&app, "render.ssao.quality"), "a level other than off runs");
+    set(&mut app, "render.ssao.quality", "off");
+    assert!(!running(&app, "render.ssao.quality"));
+}

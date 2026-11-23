@@ -53,6 +53,7 @@ main/render/GPU ms beside the frame. Below that size the verdict is "inconclusiv
 [Navmesh and AI](engine/nav-and-ai.md): Recast bake, nav and AI cores, what the game wires (PGRD wander only)
 [Audio](engine/audio.md): buses, mixer, cues, music, footsteps, Morrowind sound adapter
 [App and dev tools](engine/app-and-dev-tools.md): subcommands, scenes, `--off`, perf suite, BRP, cargo_turn and owner_launch
+[Feature switches](engine/feature-switches.md): one live switch per costly feature, `toggle`/`features`, Features panel (Ctrl+F3), flip delta and A/B cost, part rows
 
 ### Bevy 0.20 (`bevy/`)
 [Render and visibility](bevy/render-and-visibility.md): extraction, visibility and culling (CPU/GPU, `NoCpuCulling`, ranges), retained bins, GPU preprocessing, views, shadow views; path:line in Bevy 0.20

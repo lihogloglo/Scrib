@@ -6,8 +6,9 @@ use sf_tunables::{AnyDef, Def, Unit, def};
 
 use crate::overrides::{Override, apply_overrides, parse_file, parse_set};
 use crate::{
-    OverrideRefusals, PeelTunable, SetBy, SetTunable, TunableChanged, TunableEnv, TunableRefused,
-    Tunables, TunablesAppExt, TunablesPlugin, brp, tunable_changed,
+    FeatureSwitch, FeatureSwitches, FeatureToggled, OverrideRefusals, PeelTunable, SetBy,
+    SetTunable, TunableChanged, TunableEnv, TunableRefused, Tunables, TunablesAppExt,
+    TunablesPlugin, brp, feature_on, tunable_changed,
 };
 
 const FADE: Def<f32> = def!(float "test.lamp.fade_start_m" = 15.0)
@@ -464,4 +465,115 @@ fn record_kinds_apply_at_the_mod_layer_in_load_order() {
     assert_eq!((presets[0].0.driver.as_str(), presets[0].1.as_str()), ("sg.shadows", "base"));
     app.update();
     assert!((app.world().resource::<Budget>().fade_start - 35.0).abs() < f32::EPSILON, "bound from the mod layer");
+}
+
+const FOG_ON: Def<bool> = def!(bool "test.fog.enabled" = true);
+const FROXELS_ON: Def<bool> = def!(bool "test.froxels.enabled" = true);
+static FOG_SW: FeatureSwitch = FeatureSwitch::new(&FOG_ON);
+static FROXELS_SW: FeatureSwitch = FeatureSwitch::new(&FROXELS_ON).requires(&["test.fog.enabled"]);
+
+/// How many frames the froxel system ran.
+#[derive(Resource, Default)]
+struct FroxelRuns(u32);
+
+fn feature_app(not_built: Option<&str>) -> App {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, TunablesPlugin))
+        .register_tunables(&[&FOG_ON, &FROXELS_ON])
+        .add_feature_switch(&FROXELS_SW) // requires resolve lazily: any order
+        .add_feature_switch(&FOG_SW)
+        .add_feature_switch(&FOG_SW) // the same switch twice is one switch
+        .init_resource::<FroxelRuns>()
+        .add_systems(
+            Update,
+            (|mut r: ResMut<FroxelRuns>| r.0 += 1).run_if(feature_on("test.froxels.enabled")),
+        );
+    if let Some(name) = not_built {
+        app.mark_feature_not_built(name, "test");
+    }
+    app
+}
+
+fn runs(app: &App) -> u32 {
+    app.world().resource::<FroxelRuns>().0
+}
+
+fn toggles(app: &mut App) -> Vec<(&'static str, bool)> {
+    app.world_mut()
+        .resource_mut::<Messages<FeatureToggled>>()
+        .drain()
+        .map(|m| (m.name, m.running))
+        .collect()
+}
+
+#[test]
+fn feature_on_follows_the_console_layer_and_toggles_go_out_once() {
+    let mut app = feature_app(None);
+    assert_eq!(app.world().resource::<FeatureSwitches>().len(), 2);
+    app.update();
+    app.update();
+    assert_eq!(runs(&app), 2);
+    assert!(toggles(&mut app).is_empty(), "starting states are not toggles");
+
+    set(&mut app, "test.froxels.enabled", "off", SetBy::Console);
+    assert_eq!(runs(&app), 2, "stops the frame it is set");
+    assert_eq!(toggles(&mut app), [("test.froxels.enabled", false)]);
+
+    // Same value again, and an outranked set: the effective value doesn't change.
+    set(&mut app, "test.froxels.enabled", "off", SetBy::Console);
+    set(&mut app, "test.froxels.enabled", "on", SetBy::Mod);
+    assert_eq!(runs(&app), 2);
+    assert!(toggles(&mut app).is_empty());
+
+    set(&mut app, "test.froxels.enabled", "on", SetBy::Console);
+    assert_eq!(runs(&app), 3);
+    assert_eq!(toggles(&mut app), [("test.froxels.enabled", true)]);
+
+    // The required switch goes off: the dependent one stops and reports too.
+    set(&mut app, "test.fog.enabled", "off", SetBy::Console);
+    assert_eq!(runs(&app), 3);
+    assert_eq!(
+        toggles(&mut app),
+        [("test.froxels.enabled", false), ("test.fog.enabled", false)]
+    );
+    app.world_mut()
+        .write_message(PeelTunable { name: "test.fog.enabled".into(), layer: None });
+    app.update();
+    assert_eq!(runs(&app), 4);
+    assert_eq!(
+        toggles(&mut app),
+        [("test.froxels.enabled", true), ("test.fog.enabled", true)]
+    );
+    app.update();
+    assert!(toggles(&mut app).is_empty(), "idle frames send nothing");
+}
+
+#[test]
+fn a_feature_not_built_never_runs_and_a_run_time_mark_reports() {
+    let mut app = feature_app(Some("test.fog.enabled"));
+    app.update();
+    assert_eq!(runs(&app), 0, "blocked by the required switch from the first frame");
+    set(&mut app, "test.froxels.enabled", "off", SetBy::Console);
+    set(&mut app, "test.froxels.enabled", "on", SetBy::Console);
+    set(&mut app, "test.fog.enabled", "off", SetBy::Console);
+    assert_eq!(runs(&app), 0);
+    assert!(toggles(&mut app).is_empty(), "not built: no tunable set changes the running state");
+
+    let mut app = feature_app(None);
+    app.update();
+    app.world_mut()
+        .resource_mut::<FeatureSwitches>()
+        .mark_not_built("test.froxels.enabled", "device lost")
+        .unwrap();
+    app.update();
+    assert_eq!(runs(&app), 1);
+    assert_eq!(toggles(&mut app), [("test.froxels.enabled", false)]);
+}
+
+#[test]
+#[should_panic(expected = "no tunable of that name")]
+fn a_switch_without_its_tunable_panics() {
+    static ORPHAN: FeatureSwitch = FeatureSwitch::new(&CONTACT);
+    let mut app = App::new();
+    app.add_plugins(TunablesPlugin).add_feature_switch(&ORPHAN);
 }

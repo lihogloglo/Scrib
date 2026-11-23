@@ -204,3 +204,58 @@ fn a_corrupt_machine_file_gives_defaults_and_an_error() {
     );
     assert_eq!(store.get("m.res"), Some(&text("1080p")));
 }
+
+/// A registry holding only `m.late` (Machine choice) and `m.res` again, as rows generated
+/// after the store was built.
+fn late_registry() -> UiRegistry {
+    let mut db = RecordDb::new();
+    register_kinds(&mut db).unwrap();
+    let src = db.add_source("m", &[]);
+    let text = r#"
+[[define]]
+kind = "ui.setting"
+id = "m.late"
+value = { label = "late", kind = { Choice = { default = "a", options = ["a", "b"] } }, scope = "Machine" }
+
+[[define]]
+kind = "ui.setting"
+id = "m.res"
+value = { label = "res", kind = { Choice = { default = "1080p", options = ["1080p", "1440p"] } }, scope = "Machine" }
+"#;
+    let outcome = apply_record_file(&mut db, src, text, RecordFormat::Toml).unwrap();
+    assert_eq!(outcome.errors, []);
+    UiRegistry::build(&db).0
+}
+
+#[test]
+fn settings_added_later_take_their_kept_machine_values() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("machine.toml");
+    std::fs::write(&path, "[m]\nres = \"1440p\"\nlate = \"b\"\n").unwrap();
+    let mut store = SettingsStore::new(&registry());
+    assert_eq!(store.load_machine(&path).unwrap(), []);
+    assert_eq!(store.get("m.late"), None, "no setting yet: kept for saving");
+    store.take_changes();
+
+    assert_eq!(store.add_settings(&late_registry()), []);
+    assert_eq!(store.get("m.late"), Some(&text("b")), "the kept value");
+    assert_eq!(store.get("m.res"), Some(&text("1440p")), "an existing slot is left alone");
+    let changes = store.take_changes();
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0].key.as_str(), "m.late");
+    // Saved once, not twice (no longer a pass-through entry).
+    let saved = store.to_machine().to_string();
+    assert_eq!(saved.matches("late").count(), 1, "{saved}");
+    assert!(store.save_machine(&path).unwrap());
+    let mut fresh = SettingsStore::new(&registry());
+    fresh.load_machine(&path).unwrap();
+    fresh.add_settings(&late_registry());
+    assert_eq!(fresh.get("m.late"), Some(&text("b")), "round trip");
+
+    // A refused kept value keeps the default and is reported.
+    std::fs::write(&path, "[m]\nlate = \"z\"\n").unwrap();
+    let mut bad = SettingsStore::new(&registry());
+    bad.load_machine(&path).unwrap();
+    assert_eq!(bad.add_settings(&late_registry()).len(), 1);
+    assert_eq!(bad.get("m.late"), Some(&text("a")));
+}

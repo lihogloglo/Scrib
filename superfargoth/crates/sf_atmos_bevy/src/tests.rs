@@ -34,7 +34,8 @@ fn app(fog_scale: f32) -> App {
         .init_resource::<FarStormShape>()
         .init_resource::<FogShadowHeights>()
         .init_resource::<FarShadowShape>()
-        .init_resource::<FroxelVolume>();
+        .init_resource::<FroxelVolume>()
+        .init_resource::<FroxelsEnabled>();
     app
 }
 
@@ -139,4 +140,109 @@ fn cb_shape_reaches_the_frame() {
     app.insert_resource(CumulonimbusShape(false));
     app.world_mut().run_system_once(drive).unwrap();
     assert!(!app.world().resource::<CloudFrame>().cb_shape);
+}
+
+/// [`app`] with the tunables, the froxel switch ([`add_froxel_switch`], as `CloudsPlugin` adds it), a
+/// camera, the noise in place and what [`transparent::update_volume`] needs (no renderer).
+fn switch_app() -> App {
+    let mut app = app(VIEW_AMBIENT_IN_FOG);
+    app.add_plugins((bevy::MinimalPlugins, sf_tunables_bevy::TunablesPlugin));
+    add_froxel_switch(&mut app);
+    app.init_resource::<Assets<Image>>()
+        .init_resource::<Assets<FroxelFogMaterial>>()
+        .insert_resource(sf_render_order_bevy::TranslucentFog { volume: Handle::default(), params: sf_render_order_bevy::NO_FOG });
+    app.world_mut().resource_mut::<CloudImages>().noise =
+        Some(NoiseImages { shape: Handle::default(), detail: Handle::default(), weather: Handle::default(), blue_noise: Handle::default() });
+    app.world_mut().spawn((CloudCamera, Camera::default(), GlobalTransform::default()));
+    app
+}
+
+/// Sets `sky.froxels.enabled` at the console layer, then runs the frame's main-world side.
+fn set_froxels(app: &mut App, on: bool) {
+    app.world_mut().write_message(sf_tunables_bevy::SetTunable::new("sky.froxels.enabled", if on { "true" } else { "false" }, sf_tunables_bevy::SetBy::Console));
+    app.update();
+    app.world_mut().run_system_once(transparent::update_volume).unwrap();
+    app.world_mut().run_system_once(drive).unwrap();
+}
+
+/// FS-L2: `sky.froxels.enabled` off at the console layer takes the froxels out of the render world's
+/// frame (no grid, no lamps lit into it) and shrinks the shared volume to its unwritten stand-in, while
+/// the analytic fog stays on; on brings the grid and the volume back. The render world's skip (no
+/// inject/integrate dispatch when the frame has no grid) needs a GPU: its history rule is
+/// [`froxels_history_restarts_after_the_switch`].
+#[test]
+#[allow(clippy::float_cmp)] // `params.w` is a 0/1 flag
+fn froxels_switch_off_keeps_the_fog() {
+    let mut app = switch_app();
+    let high = FroxelSettings::high();
+    app.world_mut().spawn((PointLight { range: 20.0, ..PointLight::default() }, GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -5.0)), ViewVisibility::VISIBLE));
+    app.world_mut().resource_mut::<Fog>().settings.height.density = 0.01;
+    assert!(app.world().resource::<Fog>().settings.any(), "the test fog draws");
+    set_froxels(&mut app, true);
+    let store = app.world().resource::<sf_tunables_bevy::Tunables>();
+    assert!(store.0.id("sky.froxels.enabled").is_some(), "registered");
+    assert!(TUNABLES.iter().any(|d| d.name() == "sky.froxels.enabled"), "in the catalogue");
+    assert_eq!(FROXELS.name(), "sky.froxels.enabled");
+    let frame = app.world().resource::<CloudFrame>();
+    assert_eq!(frame.froxels, Some(high));
+    assert_eq!(frame.fog_lights.len(), 1, "the lamp lit into the volume");
+    assert!(frame.fog.is_some());
+    assert_eq!(app.world().resource::<FroxelVolume>().size, high.size);
+    assert_eq!(app.world().resource::<FroxelVolume>().params.w, 1.0, "written");
+
+    set_froxels(&mut app, false);
+    assert!(!app.world().resource::<FroxelsEnabled>().0);
+    let frame = app.world().resource::<CloudFrame>();
+    assert_eq!(frame.froxels, None, "no froxel passes");
+    assert!(frame.fog_lights.is_empty(), "no lamps lit into the volume");
+    assert!(frame.fog.is_some(), "the analytic fog keeps drawing");
+    let volume = app.world().resource::<FroxelVolume>();
+    assert_eq!((volume.size, volume.params.w), ([1, 1, 1], 0.0), "transparents read the unwritten stand-in");
+    assert_eq!(app.world().resource::<Fog>().froxels, Some(high), "the settings survive the switch");
+
+    set_froxels(&mut app, true);
+    assert_eq!(app.world().resource::<CloudFrame>().froxels, Some(high));
+    let volume = app.world().resource::<FroxelVolume>();
+    assert_eq!((volume.size, volume.params.w), (high.size, 1.0));
+}
+
+/// FS-L2: the render world records the grid each frame (`History::froxels`, `None` while the switch
+/// is off), so the first frame back blends no stale history; the next one does.
+#[test]
+fn froxels_history_restarts_after_the_switch() {
+    let high = Some(FroxelSettings::high());
+    let mut recorded = None;
+    let mut valid = Vec::new();
+    for (frame, settings) in [(0, high), (1, high), (2, None), (3, high), (4, high)] {
+        valid.push(render::froxel_history_valid(settings, recorded, frame));
+        recorded = settings.map(|f| f.size);
+    }
+    assert_eq!(valid, [false, true, false, false, true]);
+}
+
+/// FS-2b: the switches `CloudsPlugin` registers (froxels, sun visibility, light shafts, aerial shadow)
+/// are in `FeatureSwitches` after its build functions ran, and one follows a console-layer set.
+#[test]
+fn feature_switches_registered() {
+    let mut app = App::new();
+    app.add_plugins((bevy::MinimalPlugins, sf_tunables_bevy::TunablesPlugin)).init_resource::<FogShadowHeights>();
+    add_froxel_switch(&mut app);
+    aerial_shadow::build(&mut app);
+    shafts::build(&mut app);
+    sun_visibility::build(&mut app);
+    app.finish();
+    app.cleanup();
+    app.update();
+    let names = ["sky.froxels.enabled", "sky.sun_vis.enabled", "sky.shafts.enabled", "sky.aerial.shadow"];
+    let running = |app: &App, name: &str| {
+        let switches = app.world().resource::<sf_tunables_bevy::FeatureSwitches>();
+        assert!(switches.get(name).is_some(), "{name} registered");
+        switches.running(&app.world().resource::<sf_tunables_bevy::Tunables>().0, name)
+    };
+    let defaults: Vec<bool> = names.iter().map(|n| running(&app, n)).collect();
+    assert_eq!(defaults, [true, true, false, false], "on as their tunables' defaults");
+    app.world_mut().write_message(sf_tunables_bevy::SetTunable::new("sky.sun_vis.enabled", "false", sf_tunables_bevy::SetBy::Console));
+    app.update();
+    assert!(!running(&app, "sky.sun_vis.enabled"), "off at the console layer");
+    assert!(running(&app, "sky.froxels.enabled"), "the others untouched");
 }

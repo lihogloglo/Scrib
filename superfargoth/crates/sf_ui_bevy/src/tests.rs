@@ -29,6 +29,21 @@ value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "me
 kind = "ui.screen"
 id = "confirm"
 value = { layer = "Modal", input = "modal", implementation = { Template = "confirm" } }
+
+[[define]]
+kind = "ui.screen"
+id = "pause"
+value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "pause" } }
+
+[[define]]
+kind = "ui.screen"
+id = "options"
+value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "options" } }
+
+[[define]]
+kind = "ui.screen"
+id = "keybinds"
+value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "keybinds" } }
 "#;
 
 fn registry() -> UiRegistry {
@@ -302,6 +317,179 @@ fn screen_roots_draw_in_stack_order() {
         "{hud_z:?} {menu_z:?} {modal_z:?}"
     );
     assert!(modal_z.unwrap() < MESSAGE_BOX_Z);
+}
+
+#[test]
+fn covered_menu_screens_are_hidden() {
+    let mut h = Harness::new();
+    let world = h.app.world_mut();
+    let hud = world.spawn(UiScreenRoot("hud".into())).id();
+    let pause = world.spawn(UiScreenRoot("pause".into())).id();
+    let options = world.spawn(UiScreenRoot("options".into())).id();
+    let keybinds = world.spawn(UiScreenRoot("keybinds".into())).id();
+    let modal = world.spawn(UiScreenRoot("confirm".into())).id();
+    let roots = [hud, pause, options, keybinds, modal];
+    let hidden = |h: &Harness| -> Vec<Entity> {
+        roots
+            .into_iter()
+            .filter(|e| h.app.world().get::<Visibility>(*e) == Some(&Visibility::Hidden))
+            .collect()
+    };
+    let menus_shown = |h: &Harness| -> Vec<Entity> {
+        [pause, options, keybinds]
+            .into_iter()
+            .filter(|e| {
+                h.app
+                    .world()
+                    .get::<Visibility>(*e)
+                    .is_some_and(|v| *v != Visibility::Hidden)
+            })
+            .collect()
+    };
+    // The games spawn their roots as UI nodes, which require `Visibility`.
+    for e in roots {
+        h.app
+            .world_mut()
+            .entity_mut(e)
+            .insert(Visibility::Inherited);
+    }
+
+    for id in ["hud", "pause", "options", "keybinds"] {
+        h.push(id);
+    }
+    h.app.update();
+    assert_eq!(menus_shown(&h), [keybinds], "exactly one menu screen drawn");
+    assert_eq!(hidden(&h), [pause, options], "menus never hide the HUD");
+    assert!(h.app.world().get::<UiCovered>(pause).is_some());
+
+    // Pop keybinds; the game despawns its root.
+    h.app
+        .world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .pop(Layer::Menu);
+    h.app.world_mut().despawn(keybinds);
+    h.app.update();
+    assert_eq!(menus_shown(&h), [options]);
+    assert_eq!(hidden(&h), [pause]);
+    assert_eq!(
+        h.app.world().get::<Visibility>(options),
+        Some(&Visibility::Inherited)
+    );
+
+    // A modal dialog over options leaves it drawn.
+    h.push("confirm");
+    h.app.update();
+    assert_eq!(hidden(&h), [pause]);
+
+    let stack = &mut h.app.world_mut().resource_mut::<ScreenStackRes>().0;
+    stack.clear(Layer::Menu);
+    stack.clear(Layer::Modal);
+    stack.clear(Layer::Hud);
+    h.app.update();
+    assert_eq!(hidden(&h), [] as [Entity; 0]);
+    let marked = roots
+        .iter()
+        .filter(|e| {
+            h.app
+                .world()
+                .get_entity(**e)
+                .is_ok_and(|e| e.contains::<UiCovered>())
+        })
+        .count();
+    assert_eq!(marked, 0);
+}
+
+/// A Back the router handles closes the top menu, and the screen it uncovers is drawn again in
+/// that same update (the covered-screen pass runs after every Update system).
+#[test]
+fn back_shows_the_uncovered_screen_the_same_frame() {
+    let mut h = Harness::new();
+    let world = h.app.world_mut();
+    let pause = world.spawn((UiScreenRoot("pause".into()), Visibility::Inherited)).id();
+    let options = world.spawn((UiScreenRoot("options".into()), Visibility::Inherited)).id();
+    for id in ["hud", "pause", "options"] {
+        h.push(id);
+    }
+    h.app.update();
+    let visibility = |h: &Harness| h.app.world().get::<Visibility>(pause).copied();
+    assert_eq!(visibility(&h), Some(Visibility::Hidden));
+
+    h.set_button(GamepadButton::East, true);
+    h.app.update();
+    assert_eq!(h.top().as_deref(), Some("pause"), "Back closed options");
+    assert_eq!(visibility(&h), Some(Visibility::Inherited), "pause shows in the same update");
+    assert!(h.app.world().get::<UiCovered>(pause).is_none());
+    assert!(h.app.world().get::<UiCovered>(options).is_none());
+}
+
+/// Closing a screen despawns its root (tree included) in the same update that shows the root it
+/// uncovers; the HUD and roots not yet pushed stay.
+#[test]
+fn a_closed_screen_root_despawns_the_same_frame() {
+    let mut h = Harness::new();
+    let world = h.app.world_mut();
+    let hud = world.spawn((UiScreenRoot("hud".into()), Visibility::Inherited)).id();
+    let pause = world.spawn((UiScreenRoot("pause".into()), Visibility::Inherited)).id();
+    let options = world.spawn((UiScreenRoot("options".into()), Visibility::Inherited)).id();
+    let row = world.spawn(ChildOf(options)).id();
+    // Spawned ahead of its push (a later frame): not killed while it waits.
+    let early = world.spawn(UiScreenRoot("menu".into())).id();
+    for id in ["hud", "pause", "options"] {
+        h.push(id);
+    }
+    h.app.update();
+    assert_eq!(h.app.world().get::<Visibility>(pause), Some(&Visibility::Hidden));
+    assert!(h.app.world().get_entity(early).is_ok(), "not open yet: kept");
+
+    h.set_button(GamepadButton::East, true);
+    h.app.update();
+    let world = h.app.world();
+    assert_eq!(h.top().as_deref(), Some("pause"), "Back closed options");
+    assert!(world.get_entity(options).is_err(), "the options root despawned");
+    assert!(world.get_entity(row).is_err(), "with its tree");
+    assert_eq!(world.get::<Visibility>(pause), Some(&Visibility::Inherited), "pause shows in the same update");
+    assert!(world.get_entity(hud).is_ok(), "the HUD stays");
+    assert!(world.get_entity(early).is_ok());
+}
+
+/// A root spawned and pushed in the same frame (one system: spawn, then push) survives that
+/// frame; a root marked [`UiKeepWhenClosed`] survives its close.
+#[test]
+fn spawned_and_pushed_roots_live_and_kept_roots_survive_a_close() {
+    #[derive(Resource)]
+    struct Open(Option<Entity>);
+    let mut h = Harness::new();
+    h.app.insert_resource(Open(None)).add_systems(
+        Update,
+        (|mut commands: Commands,
+          mut stack: ResMut<ScreenStackRes>,
+          registry: Res<UiRegistryRes>,
+          mut open: ResMut<Open>| {
+            if open.0.is_none() {
+                open.0 = Some(commands.spawn(UiScreenRoot("pause".into())).id());
+                stack.0.push(&registry.0, "pause").unwrap();
+            }
+        })
+        .after(UiSystems::Dispatch),
+    );
+    let kept = h
+        .app
+        .world_mut()
+        .spawn((UiScreenRoot("menu".into()), UiKeepWhenClosed))
+        .id();
+    h.push("menu");
+    h.app.update();
+    let pause = h.app.world().resource::<Open>().0.unwrap();
+    assert!(h.app.world().get_entity(pause).is_ok(), "spawned and pushed this frame: alive");
+    assert_eq!(h.top().as_deref(), Some("pause"));
+
+    h.app.world_mut().resource_mut::<ScreenStackRes>().0.close("menu");
+    h.app.update();
+    assert!(h.app.world().get_entity(kept).is_ok(), "kept when closed");
+    h.app.world_mut().resource_mut::<ScreenStackRes>().0.close("pause");
+    h.app.update();
+    assert!(h.app.world().get_entity(pause).is_err(), "unmarked: despawned on close");
 }
 
 #[derive(Resource, Default)]

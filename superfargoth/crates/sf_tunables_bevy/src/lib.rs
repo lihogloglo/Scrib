@@ -15,6 +15,9 @@
 //!   set at the `CommandLine` layer ([`TunableEnv`]); a value that doesn't parse goes to
 //!   [`OverrideRefusals`], which the app checks before the first frame.
 //! - [`tunable_changed`]: run condition, true once per change (and on its first run).
+//! - Feature switches (slice FS-1b): [`FeatureSwitches`] resource,
+//!   [`TunablesAppExt::add_feature_switch`], the [`feature_on`] run condition and
+//!   [`FeatureToggled`] (`docs/specs/feature-switches.md`).
 //! - [`overrides`]: `--set name=value` and `--tunables <file.toml>` parsing (pure; app wiring is T3).
 //! - [`brp`]: the `sf.tunables/list|get|set|reset` handlers as pure JSON functions; the `remote`
 //!   feature registers them with Bevy Remote.
@@ -23,7 +26,7 @@
 
 use std::ops::{Deref, DerefMut};
 
-use bevy_app::{App, Plugin, PreUpdate};
+use bevy_app::{App, Plugin, PostStartup, PreStartup, PreUpdate};
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryFilter;
@@ -33,10 +36,15 @@ pub use sf_tunables;
 pub use sf_tunables::{AnyDef, Def, Id, SetBy, SetOutcome, TunableId, Type, Value};
 
 pub mod brp;
+mod feature;
 pub mod overrides;
 pub mod presets;
 
+pub use feature::{FeatureSwitches, FeatureToggled, feature_on};
 pub use presets::{PresetApplied, Presets, PresetsPlugin};
+pub use sf_tunables::{
+    Availability, Category, Cost, Effect, FeatureSwitch, OffValue, SwitchError, SwitchState,
+};
 
 #[cfg(test)]
 mod tests;
@@ -47,20 +55,24 @@ pub struct TunablesPlugin;
 impl Plugin for TunablesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tunables>()
+            .init_resource::<FeatureSwitches>()
             .add_message::<SetTunable>()
             .add_message::<PeelTunable>()
             .add_message::<TunableChanged>()
             .add_message::<TunableRefused>()
+            .add_message::<FeatureToggled>()
             .configure_sets(
                 PreUpdate,
                 (TunableSystems::Apply, TunableSystems::Bind).chain(),
             )
             .add_systems(
                 PreUpdate,
-                (apply_requests, report_changes)
+                (apply_requests, report_changes, feature::report_toggles)
                     .chain()
                     .in_set(TunableSystems::Apply),
-            );
+            )
+            .add_systems(PreStartup, feature::seed_feature_states)
+            .add_systems(PostStartup, feature::warn_unresolved_requires);
     }
 
     #[cfg(feature = "remote")]
@@ -229,6 +241,15 @@ pub trait TunablesAppExt {
 
     /// Registers one def; the builder binds it and gives its typed [`Id`].
     fn add_tunable<T: Type + Sync>(&mut self, def: &Def<T>) -> TunableBuilder<'_, T>;
+
+    /// Registers a feature switch on a tunable registered before it. The same switch twice is
+    /// one switch; another switch under a taken name, or a missing or wrong-kind tunable, panics.
+    fn add_feature_switch(&mut self, switch: &'static FeatureSwitch) -> &mut Self;
+
+    /// The app did not build feature `name` this run (startup `--off`, missing hardware): it
+    /// reads as not running until a restart, and so do the switches that require it. One info
+    /// line; an unregistered name panics.
+    fn mark_feature_not_built(&mut self, name: &str, reason: &str) -> &mut Self;
 }
 
 impl TunablesAppExt for App {
@@ -252,6 +273,30 @@ impl TunablesAppExt for App {
             .unwrap_or_else(|e| panic!("tunable {}: {e}", AnyDef::name(def)));
         apply_env_aliases(world, fresh.as_slice());
         TunableBuilder { app: self, id }
+    }
+
+    fn add_feature_switch(&mut self, switch: &'static FeatureSwitch) -> &mut Self {
+        let world = self.world_mut();
+        world.init_resource::<Tunables>();
+        world.init_resource::<FeatureSwitches>();
+        world.resource_scope(|world, mut switches: Mut<FeatureSwitches>| {
+            let tunables = world.resource::<Tunables>();
+            match switches.register(switch, tunables) {
+                Ok(()) => {}
+                Err(SwitchError::Duplicate(_)) if switches.get(switch.name()) == Some(switch) => {}
+                Err(e) => panic!("feature switch {}: {e}", switch.name()),
+            }
+        });
+        self
+    }
+
+    fn mark_feature_not_built(&mut self, name: &str, reason: &str) -> &mut Self {
+        let mut switches = self.world_mut().get_resource_or_init::<FeatureSwitches>();
+        switches
+            .mark_not_built(name, reason)
+            .unwrap_or_else(|e| panic!("feature switch {name}: {e}"));
+        info!("feature {name} not built this run: {reason}");
+        self
     }
 }
 

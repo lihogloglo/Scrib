@@ -474,6 +474,44 @@ impl<C> Console<C> {
         self.insert(spec, Action::User(Box::new(handler)))
     }
 
+    /// Replaces the command named `spec.name()` (a built-in included) with `handler`, keeping
+    /// its place in the list; its old aliases go, the new spec's come. Adds the command if no
+    /// command has that name. A refused spec leaves the old command as it was.
+    pub fn replace_command(
+        &mut self,
+        spec: CommandSpec,
+        handler: impl FnMut(Invocation<'_, C>) -> Result<(), String> + Send + Sync + 'static,
+    ) -> Result<(), RegisterError> {
+        let Some(Target::Command(i)) = self.names.get(&spec.name.to_ascii_lowercase()).copied()
+        else {
+            return self.add_command(spec, handler);
+        };
+        let old: Vec<String> = self
+            .names
+            .iter()
+            .filter(|(_, t)| **t == Target::Command(i))
+            .map(|(n, _)| n.clone())
+            .collect();
+        for n in &old {
+            self.names.remove(n);
+        }
+        if let Err(e) = self.insert(spec, Action::User(Box::new(handler))) {
+            for n in old {
+                self.names.insert(n, Target::Command(i));
+            }
+            return Err(e);
+        }
+        let last = self.commands.len() - 1;
+        let new = self.commands.pop().expect("just inserted");
+        self.commands[i] = new;
+        for t in self.names.values_mut() {
+            if *t == Target::Command(last) {
+                *t = Target::Command(i);
+            }
+        }
+        Ok(())
+    }
+
     fn insert(&mut self, mut spec: CommandSpec, action: Action<C>) -> Result<(), RegisterError> {
         let bad = |message: &str| RegisterError::BadParams {
             name: spec.name.clone(),
@@ -741,19 +779,12 @@ impl<C> Console<C> {
     }
 
     fn suggest(&self, name: &str, filter: NameFilter) -> Vec<String> {
-        let limit = if name.chars().count() <= 4 { 1 } else { 2 };
-        let mut scored: Vec<(usize, &str)> = self
-            .all_names()
-            .filter(|&(n, t)| n != "?" && self.passes(t, filter))
-            .filter_map(|(n, _)| {
-                let last = n.rsplit('.').next().unwrap_or(n);
-                let d = edit_distance(name, n).min(edit_distance(name, last));
-                let contains = name.len() >= 3 && n.contains(name);
-                (d <= limit || contains).then_some((if contains { d.min(limit) } else { d }, n))
-            })
-            .collect();
-        scored.sort_unstable();
-        scored.into_iter().take(3).map(|(_, n)| n.to_owned()).collect()
+        closest_names(
+            name,
+            self.all_names()
+                .filter(|&(n, t)| n != "?" && self.passes(t, filter))
+                .map(|(n, _)| n),
+        )
     }
 
     fn set_var(&mut self, name: &str, id: VarId, text: &str) -> Result<(), ExecError> {
@@ -1074,6 +1105,26 @@ impl<C> Console<C> {
         let candidates = all.into_iter().filter(|c| c.starts_with(&prefix)).collect();
         Completion { start, candidates }
     }
+}
+
+/// Up to three of `names` close to `name` (lowercase): small edit distance (to the whole name
+/// or its last dotted part), or containing it; the console's "did you mean" rule, for commands
+/// that look names up in their own lists.
+pub fn closest_names<'a>(name: &str, names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let name = name.to_ascii_lowercase();
+    let limit = if name.chars().count() <= 4 { 1 } else { 2 };
+    let mut scored: Vec<(usize, &str)> = names
+        .into_iter()
+        .filter_map(|n| {
+            let last = n.rsplit('.').next().unwrap_or(n);
+            let d = edit_distance(&name, n).min(edit_distance(&name, last));
+            let contains = name.len() >= 3 && n.contains(name.as_str());
+            (d <= limit || contains).then_some((if contains { d.min(limit) } else { d }, n))
+        })
+        .collect();
+    scored.sort_unstable();
+    scored.dedup();
+    scored.into_iter().take(3).map(|(_, n)| n.to_owned()).collect()
 }
 
 /// Levenshtein distance over chars.

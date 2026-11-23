@@ -93,8 +93,8 @@ pub use reader::{
     spawn_page, spawn_paragraph,
 };
 pub use router::{
-    SCREEN_Z_STEP, UI_CONTEXT_PRIORITY, UiActionEvent, UiHandlesBack, UiInputContexts,
-    UiScreenInput, UiScreenRoot, screen_z,
+    SCREEN_Z_STEP, UI_CONTEXT_PRIORITY, UiActionEvent, UiCovered, UiHandlesBack,
+    UiInputContexts, UiKeepWhenClosed, UiScreenInput, UiScreenRoot, UiSeenOpen, screen_z,
 };
 pub use text_measure::{
     DOC_LINE_BREAK, ImageResolver, MeasureCache, MeasureScale, ParleyMeasure, RichImages,
@@ -267,12 +267,26 @@ impl Plugin for SfUiPlugin {
                 Update,
                 (
                     router::sync_navigable,
-                    router::order_screen_roots,
                     router::dispatch_actions.run_if(ui_input_open),
                     nav::navigate.run_if(ui_input_open),
                 )
                     .chain()
                     .in_set(UiSystems::Dispatch),
+            )
+            // Closed roots, draw order and covered screens follow the stack as it stands after
+            // every Update system (the router's Back, a screen's own Back or button, the game's
+            // events), so a closed screen's root goes and the screen it uncovers shows the same
+            // frame; before UI layout and visibility propagation read them.
+            .add_systems(
+                PostUpdate,
+                (
+                    router::despawn_closed_roots,
+                    router::order_screen_roots,
+                    router::hide_covered_roots,
+                )
+                    .chain()
+                    .before(bevy_ui::UiSystems::Prepare)
+                    .before(bevy_camera::visibility::VisibilitySystems::VisibilityPropagate),
             );
     }
 }

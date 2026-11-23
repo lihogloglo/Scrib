@@ -8,6 +8,7 @@
 //! for exactly the inputs the UI binds. Games attach extra per-screen actions
 //! to that entity ([`UiInputContexts::get`]).
 
+use bevy_camera::visibility::Visibility;
 use bevy_ecs::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use bevy_input_focus::{FocusCause, InputFocus};
@@ -180,7 +181,80 @@ pub(crate) fn order_screen_roots(
     }
 }
 
-/// Focus remembered per screen, restored when the screen is the input target
+/// On a screen root: the router leaves it alive when its screen closes (the app re-pushes the
+/// same root later, or despawns it itself). Without it, a closed screen's root despawns.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct UiKeepWhenClosed;
+
+/// On a screen root the router has seen open on the stack: only such roots despawn when their
+/// screen closes, so a root spawned ahead of its push (the HUD at startup, a screen pushed a
+/// frame later) is never killed before it opens.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct UiSeenOpen;
+
+/// Closing a screen despawns its root (and, Bevy's despawn being recursive, its tree): every
+/// [`UiScreenRoot`] once seen open whose screen is no longer on the stack, except roots
+/// marked [`UiKeepWhenClosed`]. Runs before [`hide_covered_roots`] in the same pass, so the
+/// closed root goes and the root it uncovers shows in one frame.
+pub(crate) fn despawn_closed_roots(
+    mut commands: Commands,
+    stack: Res<ScreenStackRes>,
+    roots: Query<(Entity, &UiScreenRoot, Has<UiSeenOpen>), Without<UiKeepWhenClosed>>,
+    added: Query<(), Added<UiScreenRoot>>,
+    mut seen: Local<Option<u64>>,
+) {
+    if *seen == Some(stack.0.version()) && added.is_empty() {
+        return;
+    }
+    *seen = Some(stack.0.version());
+    for (entity, root, was_open) in &roots {
+        let open = stack.0.is_open(root.0.as_str());
+        if open && !was_open {
+            commands.entity(entity).insert(UiSeenOpen);
+        } else if !open && was_open {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// On a screen root the router hid because a screen above it covers it
+/// (`sf_ui::Covers::Below`); its visibility is restored when it is uncovered.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct UiCovered;
+
+/// Hides covered screens (menus.md §7): a root whose screen is covered on its
+/// layer gets `Visibility::Hidden` and [`UiCovered`], and `Visibility::Inherited`
+/// back once uncovered or closed. Hidden UI nodes are neither drawn nor picked
+/// (`bevy_ui`'s picking backend skips nodes whose `InheritedVisibility` is
+/// false), so no `Pickable` is needed. Writes only on change; a root the game
+/// already hid is left alone (never marked, never shown by the router).
+pub(crate) fn hide_covered_roots(
+    mut commands: Commands,
+    stack: Res<ScreenStackRes>,
+    roots: Query<(Entity, &UiScreenRoot, Option<&Visibility>, Has<UiCovered>)>,
+    added: Query<(), Added<UiScreenRoot>>,
+    mut seen: Local<Option<u64>>,
+) {
+    if *seen == Some(stack.0.version()) && added.is_empty() {
+        return;
+    }
+    *seen = Some(stack.0.version());
+    for (entity, root, visibility, hidden) in &roots {
+        let covered = stack.0.is_covered(root.0.as_str());
+        if covered && !hidden && visibility != Some(&Visibility::Hidden) {
+            commands
+                .entity(entity)
+                .insert((UiCovered, Visibility::Hidden));
+        } else if !covered && hidden {
+            commands
+                .entity(entity)
+                .remove::<UiCovered>()
+                .insert(Visibility::Inherited);
+        }
+    }
+}
+
+/// Focus remembered per screen,/// Focus remembered per screen, restored when the screen is the input target
 /// again (a closed modal returns focus to the menu button that opened it).
 #[derive(Resource, Debug, Default)]
 pub(crate) struct FocusMemory(Vec<(ScreenId, Entity)>);

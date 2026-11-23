@@ -59,18 +59,18 @@ mod shafts_tests;
 mod sun_visibility_tests;
 
 pub use aerial_shadow::{
-    aerial_height_shadow, wanted_height_shadow, AerialShadow, FarShadowShape, AERIAL_SHADOW, FAR_SHADOW_BIAS, FAR_SHADOW_BIAS_PER_M,
+    aerial_height_shadow, wanted_height_shadow, AerialShadow, FarShadowShape, AERIAL_SHADOW, AERIAL_SHADOW_SWITCH, FAR_SHADOW_BIAS, FAR_SHADOW_BIAS_PER_M,
     FAR_SHADOW_FADE_START, FAR_SHADOW_PENUMBRA_MIN, FAR_SHADOW_PENUMBRA_PER_M,
 };
 pub use fog_translucents::FogTranslucentsPlugin;
 pub use shafts::{
     track_sun, LightShafts, ShaftsBloomCamera, ShaftsCamera, ShaftsSun, ShaftsViewParams, SHAFTS_BLOOM, SHAFTS_BLOOM_MAX, SHAFTS_BLOOM_RADIUS,
     SHAFTS_BLOOM_SCALE, SHAFTS_BLOOM_THRESHOLD, SHAFTS_BLOOM_TINT, SHAFTS_ENABLED, SHAFTS_LENGTH, SHAFTS_LOBE_G, SHAFTS_OCCLUSION,
-    SHAFTS_OCCLUSION_DEPTH, SHAFTS_OFFSCREEN_FADE, SHAFTS_PASSES, SHAFTS_TAPS,
+    SHAFTS_OCCLUSION_DEPTH, SHAFTS_OFFSCREEN_FADE, SHAFTS_PASSES, SHAFTS_TAPS, SHAFTS,
 };
-pub use sun_visibility::{aerial_hook, SunVisCamera, SunVisViewParams, SunVisibility, SUN_VIS_ENABLED, SUN_VIS_HISTORY, SUN_VIS_MAX_DISTANCE, SUN_VIS_SAMPLES};
+pub use sun_visibility::{aerial_hook, SunVisCamera, SunVisViewParams, SunVisibility, SUN_VIS, SUN_VIS_ENABLED, SUN_VIS_HISTORY, SUN_VIS_MAX_DISTANCE, SUN_VIS_SAMPLES};
 
-/// This crate's tunables (`sky.aerial.*`, `sky.far_shadow.*`, `sky.shafts.*`, `sky.sun_vis.*`), for the game's
+/// This crate's tunables (`sky.aerial.*`, `sky.far_shadow.*`, `sky.froxels.*`, `sky.shafts.*`, `sky.sun_vis.*`), for the game's
 /// catalogue (`bevyrrowind tunables --md`).
 pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[
     &AERIAL_SHADOW,
@@ -97,6 +97,7 @@ pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[
     &SUN_VIS_SAMPLES,
     &SUN_VIS_MAX_DISTANCE,
     &SUN_VIS_HISTORY,
+    &FROXELS_ENABLED,
 ];
 pub use transparent::{FroxelFogExt, FroxelFogMaterial, FroxelVolume};
 pub use weather_map::CloudWeatherMap;
@@ -169,6 +170,48 @@ pub struct Fog {
     /// in-scatters on top of the sky fill: [`sf_atmos::VIEW_AMBIENT_IN_FOG`]
     /// (1, the same light as the surfaces) by default, 0 the sky alone.
     pub view_ambient: f32,
+}
+
+/// `sky.froxels.enabled`: the froxel volume runs (feature-switches.md "Live in Bevy", slice FS-L2). Off,
+/// [`CloudFrame::froxels`] is `None` whatever [`Fog::froxels`] holds: the inject and integrate passes
+/// (with the inject's cascade, far-map and cloud-shadow taps) are not dispatched, their ping-pong
+/// volumes are not requested (the texture cache frees them), [`FroxelVolume`] shrinks to its 1×1×1
+/// stand-in marked unwritten (transparent materials fall back to the analytic fog); the analytic
+/// height fog, the banks and Bevy's aerial perspective keep drawing. On, the volume comes back with
+/// its temporal history invalid for the first frame (no stale smear).
+pub const FROXELS_ENABLED: sf_tunables::Def<bool> = sf_tunables::def!(bool "sky.froxels.enabled" = true)
+    .help("Volumetric fog near the camera (god rays, shadowed and lamp-lit fog); off keeps the analytic height fog and the sky's haze, and skips the froxel passes")
+    .source(sf_tunables::Source::Owner("2026-11-23"))
+    .group(sf_tunables::Group::Sky)
+    .scope(sf_tunables::Scope::Player)
+    .lifetime(sf_tunables::Lifetime::Live);
+
+/// The feature switch on [`FROXELS_ENABLED`] (declared here; registered with it by
+/// `add_froxel_switch`, slice FS-2b). Its cost is the two compute passes' GPU spans. Fog itself has no tunable yet
+/// ([`Fog::enabled`] is the game's), so it requires nothing.
+pub const FROXELS: sf_tunables::FeatureSwitch = sf_tunables::FeatureSwitch::new(&FROXELS_ENABLED)
+    .label("Volumetric fog (froxels)")
+    .category(sf_tunables::Category::Sky)
+    .effect(sf_tunables::Effect::Skips)
+    .cost(&[sf_tunables::Cost::Gpu("atmos_froxel_inject"), sf_tunables::Cost::Gpu("atmos_froxel_integrate")])
+    .at(file!(), line!());
+
+/// [`FROXELS_ENABLED`]'s live value (on by default).
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FroxelsEnabled(pub bool);
+
+impl Default for FroxelsEnabled {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+impl Fog {
+    /// The froxel grid that runs this frame: the settings, while the fog draws and the switch is on.
+    #[must_use]
+    pub fn running_froxels(&self, switch: FroxelsEnabled) -> Option<FroxelSettings> {
+        self.froxels.filter(|_| self.enabled && self.settings.any() && switch.0)
+    }
 }
 
 /// The fog bank modulation is depth-aware at depth edges (FOG-BANK, FG-7; on by default): the
@@ -419,6 +462,7 @@ impl Plugin for CloudsPlugin {
             .add_systems(Startup, create_shadow_image)
             .add_systems(Update, poll_noise)
             .add_systems(PostUpdate, drive.in_set(CloudSystems::Drive).after(TransformSystems::Propagate));
+        add_froxel_switch(app);
         // AS (aerial-shadow.md): the far-shadow tunables and the aerial view LUT's height shadow.
         aerial_shadow::build(app);
         // LSO (aerial-shadow.md "S3"): the light shaft occlusion's tunables and passes.
@@ -431,6 +475,13 @@ impl Plugin for CloudsPlugin {
     fn finish(&self, app: &mut App) {
         render::finish(app);
     }
+}
+
+/// FS-L2 (feature-switches.md "Live in Bevy"): [`FroxelsEnabled`] and its tunable [`FROXELS_ENABLED`].
+fn add_froxel_switch(app: &mut App) {
+    app.init_resource::<FroxelsEnabled>();
+    let _bound = sf_tunables_bevy::TunablesAppExt::add_tunable(app, &FROXELS_ENABLED).bind_resource(|f: &mut FroxelsEnabled, on| f.0 = on);
+    sf_tunables_bevy::TunablesAppExt::add_feature_switch(app, &FROXELS);
 }
 
 fn create_shadow_image(mut images: ResMut<Assets<Image>>, mut cloud_images: ResMut<CloudImages>, clouds: Res<Clouds>) {
@@ -496,7 +547,7 @@ type ShadowLightFilter = (With<CloudShadowLight>, With<DirectionalLight>, Withou
 /// Point lights the froxels may light (disjoint from the shadow light's mutable transform).
 type FogLightQuery<'w, 's> = Query<'w, 's, (&'static PointLight, &'static GlobalTransform, &'static ViewVisibility), Without<DirectionalLight>>;
 /// The fog and its A/B switches, as one [`drive`] parameter (Bevy's 16-parameter limit).
-type FogSwitches<'w> = (Res<'w, Fog>, Res<'w, FogBankEdges>, Res<'w, FogCloudSplit>, Res<'w, FarStormShape>, Res<'w, CloudEdgeStable>, Res<'w, CumulonimbusShape>, Res<'w, FarShadowShape>);
+type FogSwitches<'w> = (Res<'w, Fog>, Res<'w, FogBankEdges>, Res<'w, FogCloudSplit>, Res<'w, FarStormShape>, Res<'w, CloudEdgeStable>, Res<'w, CumulonimbusShape>, Res<'w, FarShadowShape>, Res<'w, FroxelsEnabled>);
 
 /// Advances the wind, computes the texture offsets, places the shadow
 /// light's texture around the camera, and fills [`CloudFrame`]. Runs after
@@ -506,7 +557,7 @@ fn drive(
     mut commands: Commands,
     time: Res<Time>,
     clouds: Res<Clouds>,
-    (fog, bank_edges, cloud_split, storm_shape, edge_stable, cb_shape, far_shape): FogSwitches,
+    (fog, bank_edges, cloud_split, storm_shape, edge_stable, cb_shape, far_shape, froxels_on): FogSwitches,
     origin: Res<CloudsOrigin>,
     images: Res<CloudImages>,
     mut scroll: ResMut<Scroll>,
@@ -596,8 +647,8 @@ fn drive(
         wind_step: s.weather.wind * dt as f32,
         origin: origin.0,
         mean_cover: s.weather.mean_cover(),
-        froxels: fog.froxels.filter(|_| fog_on),
-        fog_lights: camera.zip(fog.froxels.filter(|_| fog_on)).map(|(cam, f)| fog_lights(cam, &f, &point_lights)).unwrap_or_default(),
+        froxels: fog.running_froxels(*froxels_on),
+        fog_lights: camera.zip(fog.running_froxels(*froxels_on)).map(|(cam, f)| fog_lights(cam, &f, &point_lights)).unwrap_or_default(),
         far_map: heights.image.clone().map(|i| (i, heights.params)),
         volume: Some((volume.image.clone(), volume.size)),
         images: images.clone(),

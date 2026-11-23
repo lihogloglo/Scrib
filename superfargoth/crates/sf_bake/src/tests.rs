@@ -853,3 +853,55 @@ mod hit_cost {
         }
     }
 }
+
+/// A store's first object lookups from inside rayon tasks must not deadlock: the object listing
+/// runs on rayon, and it used to run inside the cell's `get_or_init`, so a worker waiting in it
+/// could pick up another task reading the same cell and wait on itself. Seen 2026-11-23 as an
+/// idle hang of `sf_nav_bake`'s tests (11 of 300 runs; 0 of 300 with the fix): several bakes on
+/// one pool at once, each with a fresh store. This mirrors that: concurrent scopes over fresh
+/// stores, repeated; a round must end well within the timeout.
+#[test]
+fn first_lookups_inside_rayon_tasks_do_not_deadlock() {
+    use std::time::Duration;
+    let dirs: Vec<tempfile::TempDir> = (0..12).map(|_| tempfile::tempdir().unwrap()).collect();
+    let digests: Vec<Digest> = {
+        let mut all = Vec::new();
+        for dir in &dirs {
+            let store = Store::open(dir.path()).unwrap();
+            all = (0u32..300).map(|i| store.put(&i.to_le_bytes(), false).unwrap()).collect();
+        }
+        all
+    };
+    let digests = Arc::new(digests);
+    let roots: Vec<std::path::PathBuf> = dirs.iter().map(|d| d.path().to_path_buf()).collect();
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let pool = Arc::new(rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap());
+        for _ in 0..20 {
+            let workers: Vec<_> = roots
+                .iter()
+                .cloned()
+                .map(|root| {
+                    let (pool, digests) = (pool.clone(), digests.clone());
+                    std::thread::spawn(move || {
+                        // A fresh handle: its object cell is empty, so the first lookups list the store.
+                        let store = Store::open(&root).unwrap();
+                        pool.in_place_scope(|s| {
+                            for d in digests.iter() {
+                                let store = &store;
+                                s.spawn(move |_| assert!(store.contains(d)));
+                            }
+                        });
+                    })
+                })
+                .collect();
+            for w in workers {
+                w.join().unwrap();
+            }
+        }
+        done.send(()).unwrap();
+    });
+    finished
+        .recv_timeout(Duration::from_secs(60))
+        .expect("object lookups from rayon tasks deadlocked (re-entrant first listing)");
+}

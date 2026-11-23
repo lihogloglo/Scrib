@@ -80,9 +80,13 @@ pub struct GroundcoverLoading {
 
 impl Plugin for GroundcoverGamePlugin {
     fn build(&self, app: &mut App) {
+        use sf_tunables_bevy::TunablesAppExt;
         if self.off {
             info!("groundcover: off (--off groundcover)");
             app.insert_resource(GroundcoverInputs { off: true, table: None });
+            // FS-2c: the switch stays in the list, marked not built (mw_devtools_bevy part_switches).
+            app.register_tunables(&[&sf_groundcover_bevy::tunables::ENABLED])
+                .add_feature_switch(&sf_groundcover_bevy::tunables::GROUNDCOVER);
             return;
         }
         let table = match BakedTerrain::new(self.store.clone(), &self.manifest, ids::exterior()).layer_table() {

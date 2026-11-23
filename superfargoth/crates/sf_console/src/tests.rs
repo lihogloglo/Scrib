@@ -773,3 +773,48 @@ fn vars_help_and_tunables_diff_show_layers_units_and_sources() {
         ]
     );
 }
+
+#[test]
+fn a_replaced_command_keeps_its_place_and_drops_its_old_aliases() {
+    let (mut c, ..) = console();
+    let ctx = &mut Ctx::default();
+    let before: Vec<String> = c.commands().map(|s| s.name().to_owned()).collect();
+    c.replace_command(
+        CommandSpec::new("toggle")
+            .alias("flipit")
+            .param(Param::new("what", ArgKind::Str)),
+        |inv| {
+            let what = inv.args.str("what").unwrap().to_owned();
+            inv.log.info(&format!("replaced {what}"));
+            Ok(())
+        },
+    )
+    .unwrap();
+    let after: Vec<String> = c.commands().map(|s| s.name().to_owned()).collect();
+    assert_eq!(before, after, "same place in the list");
+    c.exec(ctx, "flipit x").unwrap();
+    assert_eq!(last_line(&c), "replaced x");
+    c.exec(ctx, "toggle render.shadows").unwrap();
+    assert_eq!(last_line(&c), "replaced render.shadows");
+    // The other commands still resolve to themselves.
+    c.exec(ctx, "sp crate").unwrap();
+    assert_eq!(ctx.spawned, [("crate".to_owned(), 1)]);
+    // Replacing with an alias that collides is refused and keeps the old command.
+    let e = c
+        .replace_command(CommandSpec::new("spawn").alias("toggle"), |_| Ok(()))
+        .unwrap_err();
+    assert_eq!(e, RegisterError::Duplicate("toggle".into()));
+    c.exec(ctx, "sp barrel").unwrap();
+    assert_eq!(ctx.spawned.len(), 2);
+    // A new name is added.
+    c.replace_command(CommandSpec::new("fresh"), |_| Ok(())).unwrap();
+    assert!(c.commands().any(|s| s.name() == "fresh"));
+}
+
+#[test]
+fn closest_names_reuses_the_suggestion_rule() {
+    let names = ["sky.froxels.enabled", "sky.fog.enabled", "render.bloom"];
+    assert_eq!(closest_names("froxels", names), ["sky.froxels.enabled"]);
+    assert_eq!(closest_names("render.blom", names), ["render.bloom"]);
+    assert!(closest_names("zzzzzz", names).is_empty());
+}

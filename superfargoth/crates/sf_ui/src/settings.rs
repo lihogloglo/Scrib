@@ -209,6 +209,22 @@ struct Slot {
 }
 
 impl Slot {
+    /// A registered setting's slot, at its default.
+    fn of(d: &crate::registry::Def<SettingKey, SettingDef>) -> Self {
+        let local =
+            d.id.as_str()
+                .strip_prefix(&format!("{}.", d.owner))
+                .unwrap_or(d.id.as_str())
+                .to_owned();
+        Self {
+            owner: d.owner.clone(),
+            local,
+            kind: d.def.kind.clone(),
+            scope: d.def.scope,
+            value: default_of(&d.def.kind),
+        }
+    }
+
     /// In the machine file rather than the profile.
     fn machine(&self) -> bool {
         self.scope == SettingScope::Machine
@@ -233,21 +249,7 @@ impl SettingsStore {
         let slots = registry
             .settings()
             .filter(|d| d.def.kind != SettingKind::Action)
-            .map(|d| {
-                let local =
-                    d.id.as_str()
-                        .strip_prefix(&format!("{}.", d.owner))
-                        .unwrap_or(d.id.as_str())
-                        .to_owned();
-                let slot = Slot {
-                    owner: d.owner.clone(),
-                    local,
-                    kind: d.def.kind.clone(),
-                    scope: d.def.scope,
-                    value: default_of(&d.def.kind),
-                };
-                (d.id.clone(), slot)
-            })
+            .map(|d| (d.id.clone(), Slot::of(d)))
             .collect();
         Self {
             slots,
@@ -255,6 +257,52 @@ impl SettingsStore {
             machine_unknown: BTreeMap::new(),
             changed: IndexMap::new(),
         }
+    }
+
+    /// Adds the settings of `registry` this store has no slot for yet (registered after the
+    /// store was built, e.g. rows generated once every plugin registered its features), at
+    /// their defaults, then takes their values from the profile and machine entries kept for
+    /// saving (read while they had no setting). Returns the values refused, as the loads do
+    /// (those keep the default). Settings the store already has are left alone.
+    pub fn add_settings(&mut self, registry: &UiRegistry) -> Vec<SettingError> {
+        let mut errors = Vec::new();
+        let new: Vec<_> = registry
+            .settings()
+            .filter(|d| d.def.kind != SettingKind::Action && !self.slots.contains_key(&d.id))
+            .collect();
+        for d in new {
+            let mut slot = Slot::of(d);
+            let kept = if slot.machine() {
+                &mut self.machine_unknown
+            } else {
+                &mut self.unknown
+            };
+            let raw = kept
+                .get_mut(slot.owner.as_str())
+                .and_then(|t| t.remove(&slot.local));
+            if let Some(raw) = raw {
+                let result = match from_toml(&raw) {
+                    Some(v) => coerce(d.id.as_str(), &slot.kind, v),
+                    None => Err(SettingError::WrongType {
+                        key: d.id.0.clone(),
+                        expected: expected(&slot.kind),
+                    }),
+                };
+                match result {
+                    Ok(value) => {
+                        let old = std::mem::replace(&mut slot.value, value);
+                        if old != slot.value {
+                            self.changed.insert(d.id.clone(), old);
+                        }
+                    }
+                    Err(e) => errors.push(e),
+                }
+            }
+            self.slots.insert(d.id.clone(), slot);
+        }
+        self.unknown.retain(|_, t| !t.is_empty());
+        self.machine_unknown.retain(|_, t| !t.is_empty());
+        errors
     }
 
     /// Whether a value changed since the last [`Self::take_changes`] (it may

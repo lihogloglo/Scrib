@@ -99,7 +99,6 @@ pub fn add(app: &mut App, open: bool) {
             Update,
             (
                 (host_main_menu, load_chosen, refresh_saves).chain().run_if(in_state(AppPhase::Frontend)),
-                close_main_menu,
                 leave_without_menu.run_if(in_state(AppPhase::Frontend)),
             )
                 .chain()
@@ -509,19 +508,6 @@ fn load_chosen(
     }
     info!("main menu: load {}", path.display());
     load_save(&mut commands, &mut stack, &mut phase, path);
-}
-
-/// The menu's root despawns once off the stack.
-#[allow(clippy::needless_pass_by_value)] // system parameters
-fn close_main_menu(mut commands: Commands, stack: Res<ScreenStackRes>, roots: Query<(Entity, &UiScreenRoot), With<MainMenuScreen>>) {
-    if stack.0.is_open(MAIN_MENU) {
-        return;
-    }
-    for (e, root) in &roots {
-        if root.0.as_str() == MAIN_MENU {
-            commands.entity(e).despawn();
-        }
-    }
 }
 
 #[cfg(test)]

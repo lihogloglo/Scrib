@@ -30,7 +30,7 @@ use bevy_render::camera::TemporalJitter;
 use bevy_render::view::Msaa;
 use sf_sky::sun_gate as sun;
 use sf_sky::{RenderPath, Upscaling};
-use sf_tunables::{AnyDef, Def, Group, Id, Lifetime, Source, Type, Unit, def};
+use sf_tunables::{AnyDef, Cost, Def, Effect, FeatureSwitch, Group, Id, Lifetime, Source, Type, Unit, def};
 use sf_tunables_bevy::{TunableSystems, Tunables, TunablesAppExt};
 
 use crate::shadow_budget::{
@@ -82,6 +82,13 @@ pub const SUN_SOFT: Def<bool> = def!(bool "shadow.sun.soft" = false)
     .source(Source::BevyDefault("bevy_light::DirectionalLight::soft_shadow_size (None)"))
     .group(Group::Shadows);
 
+/// The feature switch on [`SUN_SOFT`] (slice FS-2b). Off skips the PCSS blocker search in the
+/// shadow sampling (no pass of its own: its cost is inside the main pass).
+pub const SUN_SOFT_SWITCH: FeatureSwitch = FeatureSwitch::new(&SUN_SOFT)
+    .label("Soft sun shadows (PCSS)")
+    .effect(Effect::Skips)
+    .at(file!(), line!());
+
 /// `shadow.sun.soft_size_texels`: the PCSS light size in cascade texels (penumbra = blocker gap x
 /// size: crisp at contact, wider with distance). Tuned by eye (shadows F5).
 pub const SUN_SOFT_SIZE: Def<f32> = def!(float "shadow.sun.soft_size_texels" = 10.0)
@@ -98,6 +105,14 @@ pub const CONTACT: Def<bool> = def!(bool "shadow.contact" = false)
     .source(Source::BevyDefault("bevy_pbr::ContactShadows (opt-in per camera)"))
     .group(Group::Shadows)
     .lifetime(Lifetime::Recompile);
+
+/// The feature switch on [`CONTACT`] (slice FS-2b). Off removes `ContactShadows` from the views (and
+/// the prepasses only it needed, [`prepasses_follow_consumers`]); the ray march runs in the mesh
+/// shader, so no pass timer of its own.
+pub const CONTACT_SWITCH: FeatureSwitch = FeatureSwitch::new(&CONTACT)
+    .label("Contact shadows")
+    .effect(Effect::Skips)
+    .at(file!(), line!());
 
 /// `shadow.contact.steps`: `ContactShadows::linear_steps` (uniform data).
 pub const CONTACT_STEPS: Def<u32> = def!(count "shadow.contact.steps" = 16)
@@ -132,6 +147,13 @@ pub const SSAO: Def<&'static str> = def!(choice "render.ssao.quality" = "off")
     .group(Group::Lighting)
     .lifetime(Lifetime::Recompile);
 
+/// The feature switch on [`SSAO`] (slice FS-2b): `off` removes GTAO from the views (Bevy's `ssao` node).
+pub const SSAO_SWITCH: FeatureSwitch = FeatureSwitch::choice(&SSAO, "off")
+    .label("Ambient occlusion (GTAO)")
+    .effect(Effect::Skips)
+    .cost(&[Cost::Gpu("ssao")])
+    .at(file!(), line!());
+
 /// `shadow.filter`: `ShadowFilteringMethod` of the managed views. `auto`: temporal when a temporal
 /// resolve (TAA, DLSS) runs, else Gaussian (the temporal kernel is fixed-pattern grain without one,
 /// Bevy's note in `shadow_sampling.wesl`; shadow audit 2026-11-01). A mesh pipeline key.
@@ -151,6 +173,14 @@ pub const UPSCALING: Def<&'static str> = def!(choice "render.upscaling" = "off")
     .source(Source::BevyDefault("bevy_anti_alias: no temporal resolve unless the camera opts in"))
     .group(Group::Post)
     .lifetime(Lifetime::Recompile);
+
+/// The feature switch on [`UPSCALING`] (slice FS-2b): `off` drops the temporal resolve (TAA or DLSS)
+/// and its jitter and prepasses; the views go back to MSAA.
+pub const UPSCALING_SWITCH: FeatureSwitch = FeatureSwitch::choice(&UPSCALING, "off")
+    .label("Temporal upscaling (TAA / DLSS)")
+    .effect(Effect::Skips)
+    .cost(&[Cost::Gpu("taa"), Cost::Gpu("dlss_super_resolution")])
+    .at(file!(), line!());
 
 /// This module's tunables.
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -209,6 +239,10 @@ impl Plugin for ShadowQualityPlugin {
             }
         });
         let ids = ViewQualityIds::register(app);
+        app.add_feature_switch(&SUN_SOFT_SWITCH)
+            .add_feature_switch(&CONTACT_SWITCH)
+            .add_feature_switch(&SSAO_SWITCH)
+            .add_feature_switch(&UPSCALING_SWITCH);
         app.insert_resource(ids)
             .add_systems(PreUpdate, (apply_sun_quality, sync_sky_lights).chain().after(TunableSystems::Bind))
             .add_systems(Update, sync_view_quality.before(SkySystems::RenderPath))

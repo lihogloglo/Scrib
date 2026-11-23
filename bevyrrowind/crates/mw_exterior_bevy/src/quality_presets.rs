@@ -234,6 +234,8 @@ pub fn bind_live(app: &mut App) {
         .bind_resource(|c: &mut sf_atmos_bevy::Clouds, v| c.settings.quality.map_per_sample = v);
     let _puddles = app.add_tunable(&PUDDLES).bind_resource(|s: &mut sf_surface_bevy::SurfaceSettings, v| s.puddles = v);
     let _shelter = app.add_tunable(&SHELTER).bind_resource(|s: &mut sf_surface_bevy::SurfaceSettings, v| s.shelter = v);
+    app.add_feature_switch(&mw_environment_bevy::quality_tunables::PUDDLES_SWITCH)
+        .add_feature_switch(&mw_environment_bevy::quality_tunables::SHELTER_SWITCH);
     mw_assets::add_parallax_tunables(app);
     if !app.is_plugin_added::<mw_environment_bevy::quality_tunables::BloomPlugin>() {
         app.add_plugins(mw_environment_bevy::quality_tunables::BloomPlugin);
@@ -823,5 +825,24 @@ mod tests {
         }];
         let start = start_values(&mut app.world_mut().resource_mut::<Tunables>(), &book, &sets);
         assert_eq!(start, StartValues { texture_cap: None, far_handoff_scale: 1.0, gi: true });
+    }
+
+    /// FS-2b: the live bindings register the puddles, shelter and bloom switches; one follows a
+    /// Console-layer set.
+    #[test]
+    fn feature_switches_registered() {
+        let mut app = app(Quality::High, &Off::default(), &[]);
+        let running = |app: &App, name: &str| {
+            let switches = app.world().resource::<sf_tunables_bevy::FeatureSwitches>();
+            assert!(switches.get(name).is_some(), "{name} registered");
+            switches.running(&app.world().resource::<Tunables>().0, name)
+        };
+        for name in ["surface.puddles", "surface.shelter", "render.bloom"] {
+            let _ = running(&app, name);
+        }
+        console(&mut app, "surface.puddles", "on");
+        assert!(running(&app, "surface.puddles"));
+        console(&mut app, "surface.puddles", "off");
+        assert!(!running(&app, "surface.puddles"), "off at the console layer");
     }
 }

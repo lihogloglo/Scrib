@@ -43,7 +43,6 @@ use bevy_ecs::system::EntityCommands;
 use bevy_enhanced_input::prelude::*;
 use bevy_input::{ButtonInput, keyboard::KeyCode};
 use bevy_log::warn;
-use bevy_ui::{Node, PositionType, percent};
 pub use mw_game_core::player::UsePressed;
 use sf_ui::{ActionDef, ActionRef, Keymap, L10nSource, LanguageIdentifier, Layer, Localizer, PressMode, UiRegistry};
 use sf_ui_bevy::{
@@ -295,7 +294,7 @@ pub fn add(app: &mut App) {
         }
     }
     add_use(app);
-    app.add_systems(Update, (free_camera_keys, toggle_keybinds, close_keybinds));
+    app.add_systems(Update, (free_camera_keys, toggle_keybinds));
 }
 
 /// The use context (spawned at startup, respawned on a rebind) and [`UsePressed`] from it.
@@ -433,26 +432,11 @@ pub fn open_keybinds(commands: &mut Commands, stack: &mut ScreenStackRes, regist
     if stack.0.is_open(KEYBINDS_SCREEN) {
         return;
     }
-    let centred = Node {
-        position_type: PositionType::Absolute,
-        left: percent(15),
-        top: percent(8),
-        ..Node::default()
-    };
-    commands.spawn((UiScreenRoot(KEYBINDS_SCREEN.into()), centred, KeybindsScreen::new(None)));
+    // A bare root, as the options root: the screen sizes and places its own window (the
+    // options window's frame).
+    commands.spawn((UiScreenRoot(KEYBINDS_SCREEN.into()), KeybindsScreen::new(None)));
     if let Err(e) = stack.0.push(&registry.0, KEYBINDS_SCREEN) {
         warn!("keybinds: {e:?}");
-    }
-}
-
-/// The keybinds screen's root despawns once it is off the stack (F10, Back).
-#[allow(clippy::needless_pass_by_value)] // system parameters
-fn close_keybinds(mut commands: Commands, stack: Option<Res<ScreenStackRes>>, roots: Query<(Entity, &UiScreenRoot)>) {
-    let Some(stack) = stack else { return };
-    for (e, root) in &roots {
-        if root.0.as_str() == KEYBINDS_SCREEN && !stack.0.is_open(KEYBINDS_SCREEN) {
-            commands.entity(e).despawn();
-        }
     }
 }
 

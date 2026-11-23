@@ -76,6 +76,27 @@ pub enum PausePolicy {
     WhileOpen,
 }
 
+/// What an open screen hides beneath it (menus.md §7 "Screen flow v3", Unreal Common UI's
+/// activatable stack: only the top page of a menu stack is drawn).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Covers {
+    /// Hides every screen under it on its own layer (not drawn, not pickable).
+    Below,
+    /// Hides nothing: the screens under it stay drawn (HUD, modal dialogs, toasts).
+    Nothing,
+}
+
+impl Covers {
+    /// The default of a layer: `Below` for menus, `Nothing` for every other layer.
+    pub fn default_for(layer: Layer) -> Self {
+        if layer == Layer::Menu {
+            Covers::Below
+        } else {
+            Covers::Nothing
+        }
+    }
+}
+
 /// How a screen or slot contribution is built.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScreenImpl {
@@ -97,6 +118,10 @@ pub struct ScreenDef {
     pub input: Option<InputContextId>,
     #[serde(default)]
     pub pause: PausePolicy,
+    /// What it hides beneath it; `None` takes the layer's default
+    /// ([`Covers::default_for`]). Read it through [`ScreenDef::covers`].
+    #[serde(default)]
+    pub covers: Option<Covers>,
     /// Presets this screen supports; empty means all.
     #[serde(default)]
     pub presets: Vec<PresetId>,
@@ -110,6 +135,14 @@ pub struct ScreenDef {
     /// View-model kinds it binds (`ViewModel::KIND`), for diagnostics.
     #[serde(default)]
     pub view_models: Vec<String>,
+}
+
+impl ScreenDef {
+    /// What this screen hides beneath it, the layer default when the record doesn't say.
+    pub fn covers(&self) -> Covers {
+        self.covers
+            .unwrap_or_else(|| Covers::default_for(self.layer))
+    }
 }
 
 /// `ui.slot`: one mod's contribution to a named slot.

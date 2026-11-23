@@ -3,7 +3,7 @@
 ## What it does
 Game UI is data-driven: screens, slots, themes and settings are mod records, styled by CSS, input-routed through a
 screen stack. The framework ships stock screens (dialogue, journal, inventory, trade, options, pause, main menu);
-the game supplies models, a Morrowind theme and the front-end flow. A Quake-style dev console exists beside it.
+the game supplies models, a Morrowind theme and the front-end flow. A Quake-style dev console and a Features panel (Ctrl+F3) exist beside it.
 
 ## How it works
 - **Core (Bevy-free)**: `superfargoth/crates/sf_ui/src/lib.rs:1` : record kinds `ui.screen/slot/column/theme/preset/
@@ -34,6 +34,13 @@ the game supplies models, a Morrowind theme and the front-end flow. A Quake-styl
   skips `sf_ui::CUSTOM_LEVEL`). A pick sets the driver at `User` (applied live next frame by `drive_presets`);
   `sync_rows` shows the drivers' effective levels and a restart badge on rows touching `Restart` tunables. The picks
   (not command-line or console values) are `Machine` settings, read at start as `User` requests (interactive runs).
+- **Screen flow** (menus.md §7): a Menu screen `covers` the ones below it on its layer: they are hidden and not
+  pickable (`sf_ui_bevy` PostUpdate: `despawn_closed_roots`, `order_screen_roots`, `hide_covered_roots`, before UI
+  layout); closed roots despawn there (`UiSeenOpen`, opt-out `UiKeepWhenClosed`); handlers act only on the input target
+  (`sf_ui_screens::on_target`). Windows have a fixed frame (`widgets::framed_window`, `OPTIONS_FRAME` 60% x 70%), the
+  rows scroll; keybinds uses the same frame. Options footer: Key bindings, Reset page (asks first), Back. Rows honour
+  `enabled_if`/`visible_if`/`order`/`format`. Graphics > **Advanced** lists player-scope feature switches
+  (`mw_exterior_bevy/src/advanced_page.rs`, [feature-switches](feature-switches.md)).
 - **Console**: `sf_console` (Bevy-free: commands, typed variables with `SetBy` priority, completion) and
   `sf_console_bevy` (`ConsolePlugin` `lib.rs:34`, `ConsoleSubmit`, `ConsoleVarChanged`). Game front end:
   `mw_devtools_bevy/src/console.rs`: backquote opens it in `view`/`scene` only; `render.*` variables, `on/off/flip`

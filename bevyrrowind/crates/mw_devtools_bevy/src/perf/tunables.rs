@@ -50,6 +50,7 @@ pub const CATALOG: &[(&str, &[&dyn AnyDef])] = &[
     ("sf_sky_bevy::shadow_budget", sf_sky_bevy::SHADOW_BUDGET_TUNABLES),
     ("sf_sky_bevy::quality", sf_sky_bevy::quality::TUNABLES),
     ("mw_devtools_bevy::perf_panel", crate::perf_panel::TUNABLES),
+    ("mw_devtools_bevy::switch_probe", crate::switch_probe::TUNABLES),
     ("mw_environment_bevy::quality_tunables", mw_environment_bevy::quality_tunables::TUNABLES),
     ("sf_tunables::presets", sf_tunables::presets::TUNABLES),
 ];
@@ -58,11 +59,9 @@ pub const CATALOG: &[(&str, &[&dyn AnyDef])] = &[
 /// `bevyrrowind tunables --md` / `--json`. A def listed twice is registered once.
 pub fn catalog_store() -> Result<sf_tunables::Tunables, String> {
     let mut store = sf_tunables::Tunables::default();
-    for (krate, defs) in CATALOG {
-        for def in *defs {
-            if store.id(def.name()).is_none() {
-                store.register_any(*def).map_err(|e| format!("{krate}: {}: {e}", def.name()))?;
-            }
+    for (krate, def) in catalog_defs() {
+        if store.id(def.name()).is_none() {
+            store.register_any(def).map_err(|e| format!("{krate}: {}: {e}", def.name()))?;
         }
     }
     Ok(store)
@@ -199,13 +198,21 @@ impl Plugin for FailOnRefusals {
     }
 }
 
-/// Registered tunables declared with `def!` (they carry a source location) that no [`CATALOG`] list
-/// holds. Console variables (no location) are not defs.
+/// Every catalogued def: the [`CATALOG`] slices, then the live A/B switches' tunables
+/// (`live_switches::LIVE`, built per row, so not a `TUNABLES` slice of their own).
+fn catalog_defs() -> impl Iterator<Item = (&'static str, &'static dyn AnyDef)> {
+    let listed = CATALOG.iter().flat_map(|(krate, defs)| defs.iter().map(move |d| (*krate, *d)));
+    let live = crate::live_switches::LIVE.iter().map(|row| ("mw_devtools_bevy::live_switches", row.def as &'static dyn AnyDef));
+    listed.chain(live)
+}
+
+/// Registered tunables declared with `def!` (they carry a source location) that no catalogued list
+/// holds ([`catalog_defs`]). Console variables (no location) are not defs.
 fn uncatalogued(tunables: &sf_tunables::Tunables) -> Vec<String> {
     tunables
         .iter()
         .filter(|(_, t)| t.meta().location.is_some())
-        .filter(|(_, t)| !CATALOG.iter().any(|(_, defs)| defs.iter().any(|d| d.name() == t.name())))
+        .filter(|(_, t)| !catalog_defs().any(|(_, d)| d.name() == t.name()))
         .map(|(_, t)| t.name().to_owned())
         .collect()
 }

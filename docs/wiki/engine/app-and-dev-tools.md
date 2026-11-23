@@ -103,6 +103,7 @@ F3 cycles off / compact / full (top right); console/BRP `flip perfpanel`. Number
 (`pipeline_watch.rs`).
 
 ## Switches and counters
+Feature switches (every feature's live on/off, `toggle`, `features`, Ctrl+F3 panel): [feature-switches](feature-switches.md).
 `--off <parts>`, `--bench`, `--resolution`, `--hitch-ms`/`BEVYRROWIND_HITCH_MS`, `BEVYRROWIND_BRP_PORT`.
 Live A/B and console variables as above.
 

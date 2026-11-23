@@ -646,6 +646,14 @@ struct FroxelFrame {
     far_map: bool,
 }
 
+/// Whether the froxels may blend last frame's volume: they run, ran last frame (`prev_grid`, the
+/// grid recorded in `History::froxels`, `None` on a frame they were off) at the same grid, and
+/// this is not the view's first frame. A frame with the froxels off (`sky.froxels.enabled`, FS-L2)
+/// records `None`, so the first frame back starts from a fresh sample, never a stale history.
+pub(crate) fn froxel_history_valid(settings: Option<sf_atmos::FroxelSettings>, prev_grid: Option<[u32; 3]>, frame: u32) -> bool {
+    settings.is_some_and(|s| prev_grid == Some(s.size)) && frame > 0
+}
+
 /// The froxel uniform for one view; `settings` None: the froxels are off
 /// (`enabled` 0, the composite fogs everything analytically). `prev`: last
 /// frame's clip-from-world, camera and froxel grid.
@@ -676,7 +684,7 @@ fn froxel_uniform(frame: &CloudFrame, view: &ExtractedView, exposure: f32, setti
         shadow_center: shadow.map_or(Vec3::ZERO, |b| b.center),
         cloud_shadow: u32::from(shadow.is_some()),
         shadow_x: shadow.map_or(Vec3::X, |b| b.x),
-        history_valid: u32::from(settings.is_some() && prev.2 == Some(s.size) && f.frame > 0),
+        history_valid: u32::from(froxel_history_valid(settings, prev.2, f.frame)),
         shadow_y: shadow.map_or(Vec3::Y, |b| b.y),
         #[allow(clippy::cast_possible_truncation)]
         n_lights: n_lights as u32,

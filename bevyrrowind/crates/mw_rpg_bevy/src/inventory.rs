@@ -498,7 +498,7 @@ mod tests {
     /// Returns the RPG host after and the barrel's store key.
     fn ring_through_the_window(db: &Arc<RecordDb>) -> (Rpg, ActorKey) {
         use crate::inventory_ui::{
-            CONTAINER_SCREEN, OpenContainer, PcSlots, close_inventory, host_containers, open_containers, screens, sync_open,
+            CONTAINER_SCREEN, OpenContainer, PcSlots, host_containers, open_containers, screens, sync_open,
         };
         use sf_ui_bevy::{ScreenStackRes, UiRegistryRes};
         use sf_ui_screens::{ContainerEvent, ContainerIntent, ContainerScreen};
@@ -506,6 +506,7 @@ mod tests {
         let target = barrel_placement(db);
         let (barrel, ring) = (RecordId::new("chargen barrel fatigue"), RecordId::new("ring_keley"));
         let mut app = App::new();
+        crate::dialogue::add_ui_router(&mut app);
         app.add_message::<TakeRequest>()
             .add_message::<ContainerOpened>()
             .add_message::<ContainerEvent>()
@@ -515,7 +516,8 @@ mod tests {
             .insert_resource(UiRegistryRes(screens()))
             .init_resource::<ScreenStackRes>()
             .init_resource::<PcSlots>()
-            .add_systems(Update, (apply_takes, open_containers, host_containers, sync_open, close_inventory).chain());
+            .add_systems(Update, (apply_takes, open_containers, host_containers, sync_open).chain());
+        app.finish();
         app.world_mut().write_message(TakeRequest { player: PlayerId::HOST, target, record: barrel.clone(), kind: TakeKind::Container });
         app.update();
 

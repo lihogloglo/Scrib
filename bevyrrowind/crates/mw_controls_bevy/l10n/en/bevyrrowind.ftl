@@ -171,6 +171,13 @@ set-graphics-sky-ultra = { -graphics-ultra }
 set-graphics-sky-custom = { -graphics-custom }
 set-graphics-sky-desc = Cloud detail.
 
+## Graphics > Advanced (mw_exterior_bevy advanced_page.rs, MF-6): one row per player feature switch,
+## generated. A row's label is `set-feature-<switch name, dots and underscores as dashes>` (and
+## `-desc`) when given here, else the switch's own label and its tunable's help.
+set-page-graphics_advanced = Advanced
+set-feature-preset = Preset
+set-feature-needs = Needs
+
 ## Save/load screen (mw_saves_bevy menu.rs; fields after OpenMW's savegame dialog). The default
 ## name is OpenMW's "Day 24 - 16 Last Seed 7 p.m."; reasons `saves-reason-<SaveReason token>`.
 saves-reason-quick = Quicksave

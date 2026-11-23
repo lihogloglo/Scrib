@@ -54,7 +54,7 @@ use bevy_render::texture::{CachedTexture, GpuImage, TextureCache};
 use bevy_render::view::{ExtractedView, Msaa, ViewDepthStencilTexture};
 use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
-use sf_tunables::{Def, Group, Source, Unit, def};
+use sf_tunables::{Cost, Def, Effect, FeatureSwitch, Group, Source, Unit, def};
 use sf_tunables_bevy::TunablesAppExt;
 
 use crate::render::{AtmosphereOffsets, AtmosphereResources, FogUniform};
@@ -67,6 +67,14 @@ pub const SUN_VIS_ENABLED: Def<bool> = def!(bool "sky.sun_vis.enabled" = true)
     .help("Per-pixel sun visibility along the view ray: terrain and clouds shadow the sun's light in the haze and the fog, on screen or off")
     .source(Source::Industry("UE SkyAtmosphere 'Cast Shadows on Atmosphere'; Hillaire 2020 per-pixel shadowed aerial perspective"))
     .group(Group::Sky);
+
+/// The feature switch on [`SUN_VIS_ENABLED`] (slice FS-2b). Off skips the pass; the aerial and fog
+/// hooks fall back to the light shafts when those run, else to the unshadowed haze.
+pub const SUN_VIS: FeatureSwitch = FeatureSwitch::new(&SUN_VIS_ENABLED)
+    .label("Sun shadows in the haze and fog")
+    .effect(Effect::Skips)
+    .cost(&[Cost::Gpu("sun_visibility")])
+    .at(file!(), line!());
 
 /// `sky.sun_vis.samples`: samples per pixel along the view ray.
 pub const SUN_VIS_SAMPLES: Def<u32> = def!(count "sky.sun_vis.samples" = 16)
@@ -127,6 +135,7 @@ pub(crate) const OUTPUT: TextureFormat = TextureFormat::Rg16Float;
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<SunVisibility>();
     let _bound = app.add_tunable(&SUN_VIS_ENABLED).bind_resource(|s: &mut SunVisibility, v| s.enabled = v);
+    app.add_feature_switch(&SUN_VIS);
     let _bound = app.add_tunable(&SUN_VIS_SAMPLES).bind_resource(|s: &mut SunVisibility, v| s.samples = v);
     let _bound = app.add_tunable(&SUN_VIS_MAX_DISTANCE).bind_resource(|s: &mut SunVisibility, v| s.max_distance_m = v);
     let _bound = app.add_tunable(&SUN_VIS_HISTORY).bind_resource(|s: &mut SunVisibility, v| s.history = v);

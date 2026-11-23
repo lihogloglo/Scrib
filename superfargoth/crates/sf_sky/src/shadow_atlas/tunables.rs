@@ -1,6 +1,8 @@
 //! Tunables (`shadow.lamp.atlas.*` and `shadow.lamp.contact_max`) and [`ShadowAtlasConfig`].
 
-use sf_tunables::{AnyDef, Def, Group, RegisterError, Source, Tunables, Unit, def};
+use sf_tunables::{
+    AnyDef, Cost, Def, Effect, FeatureSwitch, Group, RegisterError, Source, Tunables, Unit, def,
+};
 
 /// Valid power-of-two bounds for the static shadow atlas texture.
 const STATIC_MIN_PX: u16 = 1024; // tunables: const (layout: valid power-of-two static atlas minimum)
@@ -17,6 +19,15 @@ pub const ENABLED: Def<bool> = def!(bool "shadow.lamp.atlas.enabled" = true)
         "2026-11-20: on by default after SH-33 visual check + shadow_a3_atlas interleaved A/B win across all 4 arms",
     ))
     .group(Group::Shadows);
+
+/// The feature switch on [`ENABLED`] (slice FS-2b; registered by `sf_sky_bevy`'s shadow atlas,
+/// which binds the tunable). Off skips the atlas packing and its pass: lamp shadows fall back to
+/// the fixed cube-map arrays (they keep drawing).
+pub const ATLAS: FeatureSwitch = FeatureSwitch::new(&ENABLED)
+    .label("Lamp shadow atlas")
+    .effect(Effect::Skips)
+    .cost(&[Cost::Gpu("point_shadow_atlas")])
+    .at(file!(), line!());
 
 /// `shadow.lamp.atlas.static_size_px`: square side length of the static shadow atlas.
 pub const STATIC_SIZE_PX: Def<u32> = def!(count "shadow.lamp.atlas.static_size_px" = 4096)

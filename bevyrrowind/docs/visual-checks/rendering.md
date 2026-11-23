@@ -350,3 +350,13 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   `shadow.lamp.face_cull` (night walk -0.46): a "keep" turns these on by default. Inconclusive: skin skip, matctrl gate,
   day gate, sun gate (night), disable_exterior (bench starts indoors). Lamp cache: render +0.94 ms on the night walk.
 - Status: confirmed 2026-11-17 (owner played `--scene` + every gate on, `tunables/perf-play-2026-11-17.toml`, profiling exe, DLSS auto = Performance: "very smoothly and very fast", 110 fps in Balmora many times): all on by default, lamp cache stays off. Source: orch-presets, perf-tests.
+
+### FS-1: Features panel, every costly feature off live with its frame change (ROADMAP 1.28, 2026-11-23)
+- Kind: game location, dev build, F3 compact open. `view "Balmora" --hour 22`, stand still.
+- Ctrl+F3 opens the panel (game keeps running, cursor free, controls paused); tabs per category; click a row to switch the
+  feature off/on; the row shows the frame change ("frame change when flipped", greyed under 0.5 ms); A/B runs 3 off/on
+  pairs (~15 s, keep still) and shows "cost x ms"; Reset all puts everything back. Console: `features`, `toggle <name>`.
+- Look for: each switch visibly turns its feature off and back on with no crash, stuck state or long hitch (groundcover,
+  volumetric fog `sky.froxels.enabled`, sun visibility, far shadows, clouds, fog); badges honest (`startup only`, `hides`);
+  and the numbers: which features cost the most (the FPS drop).
+- Status: confirmed 2026-11-23 (owner: "seems to be working fine"; which feature costs most not yet reported). Source: feature-toggles (FS-1a..FS-L3).

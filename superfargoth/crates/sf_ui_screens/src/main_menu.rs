@@ -41,7 +41,7 @@ use sf_ui_css::UiClass;
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{Question, ScreenColors, button, label, part, relabel, set_disabled, show};
-use crate::{is_target, screen_of};
+use crate::{is_target, on_target, screen_of};
 
 /// An entry's art, one image per state, drawn stretched to the entry's image part (sized by
 /// the theme; unsized, the image's own size).
@@ -551,16 +551,24 @@ type EntryArtState = (
 /// Entry art: the image for the entry's state (pressed, else hovered or visibly focused: over,
 /// else normal) on its image part, the label hidden while art shows; an entry without art shows
 /// its label. Writes only when the state or the art changes.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn main_menu_entry_art(
     mut commands: Commands,
     focus: Res<InputFocus>,
     visible: Option<Res<InputFocusVisible>>,
+    stack: Res<ScreenStackRes>,
+    parents: Query<&ChildOf>,
+    roots: Query<&UiScreenRoot>,
     mut entries: Query<EntryArtState>,
     mut nodes: Query<&mut Node>,
 ) {
     let visible = visible.is_some_and(|v| v.0);
     for (entity, mut art, hovered, pressed, children) in &mut entries {
-        let over = hovered.is_some_and(Hovered::get) || (visible && focus.get() == Some(entity));
+        // A screen that is not the input target shows no hover or press (a modal over it).
+        let target = on_target(entity, &parents, &roots, &stack);
+        let pressed = pressed && target;
+        let over = target
+            && (hovered.is_some_and(Hovered::get) || (visible && focus.get() == Some(entity)));
         let state = (over, pressed);
         if art.drawn == Some(state) {
             continue;
@@ -780,12 +788,17 @@ pub(crate) fn on_main_menu_part(
     activate: On<Activate>,
     kinds: Query<&MainMenuPart>,
     parents: Query<&ChildOf>,
+    roots: Query<&UiScreenRoot>,
+    stack: Res<ScreenStackRes>,
     mut screens: Query<&mut MainMenuScreen>,
     mut out: MessageWriter<MainMenuEvent>,
 ) {
     let Ok(kind) = kinds.get(activate.entity) else {
         return;
     };
+    if !on_target(activate.entity, &parents, &roots, &stack) {
+        return;
+    }
     let Some(entity) = screen_of(activate.entity, &parents, |e| screens.contains(e)) else {
         return;
     };

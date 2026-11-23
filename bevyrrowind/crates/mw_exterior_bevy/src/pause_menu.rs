@@ -35,13 +35,16 @@
 //!   follow the drivers (`graphics_page::sync_rows`), and the picks are `Machine` settings, saved
 //!   to `<user data>/machine.toml` (`sf_ui_bevy::load_machine_settings` here, written when the
 //!   menus close).
+//! - **Advanced page** (`advanced_page.rs`, MF-6): one row per player feature switch, generated at
+//!   `Plugin::cleanup`; a pick sets the switch at `User` (`advanced_page::pick`), the rows follow
+//!   the switches (`advanced_page::sync_rows`), saved with the graphics levels.
 
 use bevy::prelude::*;
 use sf_app_bevy::AppPhase;
 use sf_app_bevy::bevy_state::prelude::NextState;
 use sf_console_bevy::ConsoleOpen;
 use sf_records::RecordDb;
-use sf_tunables_bevy::{Presets, Tunables};
+use sf_tunables_bevy::{FeatureSwitches, Presets, Tunables};
 use sf_ui::{Layer, SettingValue, SettingsStore, UiRegistry};
 use sf_ui_bevy::{ScreenStackRes, UiAction, UiActionEvent, UiLocalizer, UiRegistryRes, UiScreenRoot, UiSettingsStore, UiSystems};
 use sf_ui_screens::{
@@ -99,7 +102,7 @@ pub fn add(app: &mut App) {
         Update,
         (
             (localize_labels, keep_hud, open_pause_menu).chain().after(UiSystems::Dispatch).before(ScreenSystems::Spawn),
-            (host_pause_menu, host_options, crate::graphics_page::sync_rows, close_screens, pause_time).chain().after(ScreenSystems::Input),
+            (host_pause_menu, host_options, crate::graphics_page::sync_rows, crate::advanced_page::sync_rows, pause_time).chain().after(ScreenSystems::Input),
         ),
     );
     // The save/load screen's request (`mw_saves_bevy::menu` hosts it and registers it too).
@@ -254,6 +257,9 @@ fn applies_live(key: &str) -> bool {
 
 /// Option changes go to the store (saved into the profile when the menus close, consumers
 /// apply them); a Graphics page pick also requests its preset level (`graphics_page::pick`, live).
+/// An Advanced page pick sets its feature switch at `User` (`advanced_page::pick`, live).
+/// Reset page resets its keys in the store (a graphics row also requests its default level, an
+/// Advanced row clears its `User` value).
 /// Key bindings opens the keybinds screen on top. Back has closed the screen.
 #[allow(clippy::needless_pass_by_value)] // system parameters
 fn host_options(
@@ -262,9 +268,12 @@ fn host_options(
     mut store: Option<ResMut<UiSettingsStore>>,
     mut stack: ResMut<ScreenStackRes>,
     registry: Res<UiRegistryRes>,
-    presets: Option<Res<Presets>>,
     mut tunables: Option<ResMut<Tunables>>,
+    (presets, switches): (Option<Res<Presets>>, Option<Res<FeatureSwitches>>),
 ) {
+    let advanced = |key: &str, tunables: Option<&Tunables>| {
+        switches.as_deref().zip(tunables).is_some_and(|(s, t)| crate::advanced_page::is_player_switch(s, t, key))
+    };
     for event in events.read() {
         match &event.change {
             OptionsChange::Back => {}
@@ -282,24 +291,51 @@ fn host_options(
                     }
                     continue;
                 }
+                if let SettingValue::Text(option) = value
+                    && advanced(key, tunables.as_deref())
+                {
+                    let live = switches.as_deref().map(|s| &**s).zip(tunables.as_deref_mut());
+                    if let Err(e) = crate::advanced_page::pick(&mut store.0, live, key, option) {
+                        warn!("options: {key}: {e}");
+                    }
+                    continue;
+                }
                 match store.0.set(key, value.clone()) {
                     Ok(value) if applies_live(key) => info!("options: {key} = {value:?}"),
                     Ok(value) => info!("options: {key} = {value:?} (stored; nothing applies it live yet)"),
                     Err(e) => warn!("options: {key}: {e:?}"),
                 }
             }
+            OptionsChange::Reset(keys) => {
+                let Some(store) = store.as_mut() else {
+                    warn!("options: no settings store, reset not kept");
+                    continue;
+                };
+                for key in keys {
+                    if !store.0.reset(key) {
+                        warn!("options: reset of unknown setting {key}");
+                        continue;
+                    }
+                    // A graphics row's default is a level: request it as a pick does.
+                    if let Some(SettingValue::Text(level)) = store.0.get(key).cloned()
+                        && crate::graphics_page::is_row(key)
+                    {
+                        let live = presets.as_deref().map(|p| &p.0).zip(tunables.as_deref_mut());
+                        if let Err(e) = crate::graphics_page::pick(&mut store.0, live, key, &level) {
+                            warn!("options: {key}: {e}");
+                        }
+                    }
+                    // An Advanced row's default is `custom`: the preset decides again.
+                    if advanced(key, tunables.as_deref()) {
+                        let live = switches.as_deref().map(|s| &**s).zip(tunables.as_deref_mut());
+                        if let Err(e) = crate::advanced_page::pick(&mut store.0, live, key, sf_ui::CUSTOM_LEVEL) {
+                            warn!("options: {key}: {e}");
+                        }
+                    }
+                }
+                info!("options: reset {}", keys.join(", "));
+            }
             OptionsChange::OpenKeybinds => mw_controls_bevy::open_keybinds(&mut commands, &mut stack, &registry),
-        }
-    }
-}
-
-/// Roots of the pause menu and the options screen despawn once off the stack.
-#[allow(clippy::needless_pass_by_value)] // system parameters
-fn close_screens(mut commands: Commands, stack: Res<ScreenStackRes>, roots: Query<(Entity, &UiScreenRoot)>) {
-    for (e, root) in &roots {
-        let id = root.0.as_str();
-        if matches!(id, PAUSE | OPTIONS) && !stack.0.is_open(id) {
-            commands.entity(e).despawn();
         }
     }
 }

@@ -277,3 +277,17 @@ pub(crate) fn screen_of(
 pub(crate) fn is_target(stack: &ScreenStackRes, root: &UiScreenRoot) -> bool {
     stack.0.input_target().is_some_and(|t| t.id == root.0)
 }
+
+/// `entity` (a part, or a screen root) belongs to the input target: its nearest
+/// [`UiScreenRoot`] ancestor is the target. A click or hover on a screen that is not
+/// (under a modal, or the HUD under a menu) is ignored (menus.md §7).
+pub(crate) fn on_target(
+    entity: Entity,
+    parents: &Query<&ChildOf>,
+    roots: &Query<&UiScreenRoot>,
+    stack: &ScreenStackRes,
+) -> bool {
+    screen_of(entity, parents, |e| roots.contains(e))
+        .and_then(|screen| roots.get(screen).ok())
+        .is_some_and(|root| is_target(stack, root))
+}

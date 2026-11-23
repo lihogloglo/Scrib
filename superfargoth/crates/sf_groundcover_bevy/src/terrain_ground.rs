@@ -247,14 +247,18 @@ impl GroundSource for TerrainGround {
 #[derive(Resource, Clone)]
 pub struct TerrainGroundRef(pub Arc<TerrainGround>);
 
-/// Refreshes [`TerrainGroundRef`] every frame in `PostUpdate` after `TerrainSystems::Update`.
+/// Refreshes [`TerrainGroundRef`] every frame in `PostUpdate` after `TerrainSystems::Update` (not while
+/// `groundcover.enabled` is off).
 pub struct TerrainGroundPlugin;
 
 impl Plugin for TerrainGroundPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PostUpdate,
-            refresh_terrain_ground.after(TerrainSystems::Update).run_if(resource_exists::<TerrainGroundRef>),
+            refresh_terrain_ground
+                .after(TerrainSystems::Update)
+                .run_if(resource_exists::<TerrainGroundRef>)
+                .run_if(crate::groundcover_enabled),
         );
     }
 }
@@ -443,5 +447,23 @@ mod tests {
         assert!(!shared.ready(rect(-1.0, 1.0)));
         world.run_system_once(refresh_terrain_ground).unwrap();
         assert!(shared.ready(rect(-1.0, 1.0)));
+    }
+
+    /// The plugin's refresh does not run while `groundcover.enabled` is off, and runs again once it is back on.
+    #[test]
+    fn plugin_refresh_stops_while_groundcover_is_off() {
+        use sf_tunables_bevy::TunablesAppExt;
+        let shared = Arc::new(ground());
+        let mut app = App::new();
+        app.register_tunables(crate::tunables::TUNABLES).add_plugins(TerrainGroundPlugin);
+        let (h, l) = resident(&[(TileCoord::new(0, 0, 0), true, true)]);
+        app.insert_resource(h).insert_resource(l).insert_resource(TerrainGroundRef(shared.clone()));
+        crate::tests::set_enabled(&mut app, false);
+        app.update();
+        app.update();
+        assert!(!shared.ready(rect(-1.0, 1.0)), "no refresh while off");
+        crate::tests::set_enabled(&mut app, true);
+        app.update();
+        assert!(shared.ready(rect(-1.0, 1.0)), "refreshed once back on");
     }
 }

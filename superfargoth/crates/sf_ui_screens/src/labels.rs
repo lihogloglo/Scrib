@@ -95,6 +95,10 @@ pub struct ScreenLabels {
     pub restart: String,
     /// `options-default`: the pane's default-value heading ("Default: 80%").
     pub default: String,
+    /// `options-reset-page`, `options-confirm-reset-page`: the footer's Reset page button and
+    /// its question (answers `saveload-yes`, `pause-no`).
+    pub reset_page: String,
+    pub confirm_reset_page: String,
 }
 
 impl Default for ScreenLabels {
@@ -159,6 +163,8 @@ impl Default for ScreenLabels {
             off: s("Off"),
             restart: s("Applies after restart"),
             default: s("Default"),
+            reset_page: s("Reset page"),
+            confirm_reset_page: s("Reset the settings on this page to their defaults?"),
         }
     }
 }

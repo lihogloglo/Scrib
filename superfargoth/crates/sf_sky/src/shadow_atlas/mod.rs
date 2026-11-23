@@ -23,7 +23,7 @@ pub use policy::{
     guard_band_tan_half, luminance_weight, pick_tile_size,
 };
 pub use tunables::{
-    CONTACT_MAX, ENABLED, GUARD_TEXELS, HANDOVER_SPARES, LIVE_SIZE_PX, MAX_LAMPS,
+    ATLAS, CONTACT_MAX, ENABLED, GUARD_TEXELS, HANDOVER_SPARES, LIVE_SIZE_PX, MAX_LAMPS,
     RESIZE_COOLDOWN_S, SOFT_PCF_RADIUS, STATIC_SIZE_PX, ShadowAtlasConfig, TIER_256_M, TIER_512_M,
     TIER_HYSTERESIS, TUNABLES,
 };

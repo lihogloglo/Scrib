@@ -1481,6 +1481,83 @@ fn pause_menu_sends_choices_and_back_resumes() {
     assert!(!pause_open(&ui));
 }
 
+/// The demo screens plus a modal dialog.
+fn registry_with_modal() -> sf_ui::UiRegistry {
+    const MODAL: &str = r#"
+[[define]]
+kind = "ui.screen"
+id = "confirm"
+value = { layer = "Modal", input = "modal", implementation = { Template = "confirm" } }
+"#;
+    let mut db = sf_records::RecordDb::new();
+    sf_ui::register_kinds(&mut db).unwrap();
+    let base = db.add_source("demo", &[]);
+    for text in [demo::SCREENS, demo::SETTINGS, MODAL] {
+        let outcome =
+            sf_records::apply_record_file(&mut db, base, text, sf_records::RecordFormat::Toml)
+                .unwrap();
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+    }
+    sf_ui::UiRegistry::build(&db).0
+}
+
+/// Only the input target takes clicks (menus.md §7): with pause under options and a modal over
+/// options, activating a pause entry or an options tab does nothing; with the modal closed the
+/// options tab works; options' own Back pops it and pause shows in that same frame, then takes
+/// clicks.
+#[test]
+fn only_the_input_target_takes_clicks() {
+    let mut ui = Ui::with(|app| {
+        app.insert_resource(UiRegistryRes(registry_with_modal()))
+            .init_resource::<PauseChoices>()
+            .init_resource::<OptionChanges>()
+            .add_systems(
+                Update,
+                (collect_pause, collect_options).after(ScreenSystems::Sync),
+            );
+    });
+    let pause = ui.open("pause", PauseMenuScreen::new(PauseMenuModel::default()));
+    let model = OptionsModel::from_settings(&demo::registry(), None, None);
+    let options = ui.open("options", OptionsScreen::new(model));
+    let dialog = ui.open("confirm", Node::default());
+    let save = pause_parts(&ui, pause).entry(PauseChoice::Save).unwrap();
+    let tab = options_parts(&ui, options).tab(1).unwrap();
+    let page = |ui: &Ui| ui.world().get::<OptionsScreen>(options).unwrap().page();
+    let shown = |ui: &Ui, e: Entity| ui.world().get::<Visibility>(e) != Some(&Visibility::Hidden);
+    assert!(!shown(&ui, pause), "options covers pause");
+    assert!(shown(&ui, options), "a modal leaves options drawn");
+
+    ui.world_mut().trigger(Activate { entity: save });
+    ui.world_mut().trigger(Activate { entity: tab });
+    ui.frames(2);
+    assert!(take_pause(&mut ui).is_empty(), "pause is not the target");
+    assert_eq!(page(&ui), 0, "options is under the modal");
+
+    ui.world_mut().despawn(dialog);
+    ui.world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .close("confirm");
+    ui.frames(2);
+    ui.world_mut().trigger(Activate { entity: tab });
+    ui.frames(1);
+    assert_eq!(page(&ui), 1, "options is the target again");
+    ui.world_mut().trigger(Activate { entity: save });
+    ui.frames(1);
+    assert!(take_pause(&mut ui).is_empty(), "pause is still covered");
+
+    // Back (pad East), handled by the options screen itself: pause shows in the same update.
+    ui.set_button(GamepadButton::East, true);
+    ui.app.update();
+    assert!(!ui.world().resource::<ScreenStackRes>().0.is_open("options"));
+    assert!(shown(&ui, pause), "the uncovered screen shows the frame Back closes options");
+    ui.set_button(GamepadButton::East, false);
+    ui.frames(2);
+    ui.world_mut().trigger(Activate { entity: save });
+    ui.frames(1);
+    assert_eq!(take_pause(&mut ui), vec![PauseChoice::Save]);
+}
+
 #[test]
 fn pause_menu_quit_asks_first() {
     let (mut ui, root) = open_pause(PauseMenuModel::default());
@@ -1794,6 +1871,14 @@ fn collect_options(mut events: MessageReader<OptionsEvent>, mut out: ResMut<Opti
 #[path = "tests_options_pane.rs"]
 mod options_pane;
 
+/// Options rows' record conditions, order and format.
+#[path = "tests_options_conditions.rs"]
+mod options_conditions;
+
+/// The options footer: Reset page (asks first) and Back.
+#[path = "tests_options_footer.rs"]
+mod options_footer;
+
 /// A preset driver's choice (levels plus `custom`): steps cycle the levels and skip `custom`,
 /// wrapping; from `custom` right goes to the first level, left to the last; a choice of only
 /// `custom` doesn't step.
@@ -1811,6 +1896,8 @@ fn choice_steps_skip_the_derived_custom_level() {
         disabled_reason: None,
         restart: false,
         default: Text("high".into()),
+        format: sf_ui::records::ValueFormat::Raw,
+        reset: true,
     };
     assert_eq!(row("low").stepped(1), Some(Text("high".into())));
     assert_eq!(row("high").stepped(1), Some(Text("low".into())), "wraps over custom");

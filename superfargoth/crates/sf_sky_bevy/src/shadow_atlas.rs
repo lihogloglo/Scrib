@@ -49,6 +49,7 @@ pub struct LampShadowAtlasStats {
 pub(crate) fn add(app: &mut App) {
     app.register_tunables(policy::TUNABLES);
     bind(app, &policy::ENABLED, |a, v| a.enabled = v);
+    app.add_feature_switch(&policy::ATLAS);
     bind(app, &policy::STATIC_SIZE_PX, |a, v| a.config.static_size_px = v);
     bind(app, &policy::LIVE_SIZE_PX, |a, v| a.config.live_size_px = v);
     bind(app, &policy::GUARD_TEXELS, |a, v| a.config.guard_texels = v);

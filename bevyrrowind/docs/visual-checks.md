@@ -218,7 +218,7 @@ FP-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | First-person v
 PP-1 | confirmed, follow-up | [rendering](visual-checks/rendering.md) | F3 perf panel (CW-17, release build): numbers refresh, bound-by matches the feel, flipping a CW switch moves them (2026-11-16)
 PP-2 | confirmed, follow-up | [rendering](visual-checks/rendering.md) | Graphics presets live: Shift+F4 cycles extremely_low..ultra in Balmora night and day, F3 follows, custom after a hand change (T5b, 2026-11-16)
 PP-3 | confirmed | [rendering](visual-checks/rendering.md) | F3 perf panel graphs (CW-17b, release, Balmora 22:00): frame-time graph coloured by bound with 8.3/11 ms lines, thread bars, full: pass/stage bars + sparklines (2026-11-16)
-PP-4 | blocked (menu bugs, 2.2b) | [rendering](visual-checks/rendering.md) | Graphics page: Esc > Options > Graphics in Balmora 22:00, overall + group rows live behind the menu, Custom, restart badges, saved across a restart (T5d, 2026-11-16)
+PP-4 | unblocked 2026-11-23 (menu flow v3 built, check with MF-1) | [rendering](visual-checks/rendering.md) | Graphics page: Esc > Options > Graphics in Balmora 22:00, overall + group rows live behind the menu, Custom, restart badges, saved across a restart (T5d, 2026-11-16)
 PP-5 | confirmed 2026-11-17 (owner play: "very smoothly and very fast", 110 fps; every gate on by default, lamp cache off) | [rendering](visual-checks/rendering.md) | CW gates on by default: play with `--tunables tunables/cw-gates-on.toml`, F3 open, flip each gate in the console; verdict per gate (2026-11-17)
 RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn away from the model (2026-10-30)
 WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
@@ -266,3 +266,5 @@ NS-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Stars fade in at
 NS-4 | deferred | [weather-sky](visual-checks/weather-sky.md) | No red streaks at night
 WE-10 | fix 1 (history) failed 2026-11-06: shimmer stays, storm not over water; owner 2026-11-12: still a lot of shimmer on everything behind fog and clouds | [weather-sky](visual-checks/weather-sky.md) | Local storm seen from outside: cloud curtain and noisy border (`scene we3-ridge` + BRP region force)
 WE-9 | fog fix confirmed 2026-11-06; causes 1 (hour keys, re-seen) and 3 open | [weather-sky](visual-checks/weather-sky.md) | Forced fog and rain seem to go away at night: hour keys wrap to the same day (live force undone), fog unlit by the night ambient floor, rain drops unlit at night
+MF-1 | confirmed 2026-11-23 (owner: works fine) | [player-ui](visual-checks/player-ui.md) | Menu flow v3: one window at a time, fixed frame, footer, Advanced page
+FS-1 | confirmed 2026-11-23 (owner: works fine; per-feature costs not reported yet) | [rendering](visual-checks/rendering.md) | Features panel (Ctrl+F3): live feature switches, flip delta, quick A/B

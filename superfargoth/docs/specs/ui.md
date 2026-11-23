@@ -350,7 +350,7 @@ a "Key bindings" row and Back. The screen applies nothing: `OptionsEvent` `Set(k
 HUD in the game (2026-10-26): Bevyrrowind spawns the `HudScreen` root on its "hud" record and writes `HudView` from
 the player (`mw_player_bevy/src/hud.rs`: static bars from the player record, camera heading, crosshair, the use
 prompt from its own focus ray) and hides the root while a Menu/Modal screen or the console is open (the framework
-doesn't hide lower layers). `UsePrompt::action` is optional: `None` is a name-only prompt, no glyph.
+hides only covered screens on the same layer: `covers`, menus.md §7, MF-1a). `UsePrompt::action` is optional: `None` is a name-only prompt, no glyph.
 
 Main menu (2026-10-26, framework only): `MainMenuScreen` over `MainMenuModel` (app-ordered `MainMenuEntry { id,
 label (localized), enabled }`, optional `quit` id that asks Yes/No first, optional `back` id Back chooses (else Back

@@ -203,3 +203,9 @@ recall, Escape and Enter close it), `Prompt::selected` the highlight: Up/Down (`
 accepts it as Tab does a single match, `Edit::Cancel` (Escape) closes the popup before clearing. `Edit::Paste`: line breaks
 become `; ` (a pasted block runs line by line after one Enter; nothing runs on paste). Overlay: Ctrl+V, Shift+Insert from
 Bevy's `bevy_clipboard::Clipboard` (feature `system_clipboard`, arboard: the OS clipboard); no resource, no paste.
+
+**Feature switches (2026-11-23, FS-2a).** `sf_console_bevy/src/features.rs`, registered by `ConsolePlugin`: `toggle <name>`
+replaces the built-in bool `toggle` (`Console::replace_command`; a plain bool variable still flips) and flips a feature
+switch at `SetBy::Console` through a `SetTunable` ("froxels: off (console; skips)", "; applies on restart", "; blocked by x";
+a not-built or startup-only switch is refused and unchanged). `features [filter]` lists switches by category. The game's
+`on/off/flip <name>` fall back to switches and `--off` part names. Spec `feature-switches.md`.

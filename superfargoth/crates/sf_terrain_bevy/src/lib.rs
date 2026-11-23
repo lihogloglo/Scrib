@@ -63,9 +63,10 @@ use sf_terrain::{
     BLOCKS, BlockBounds, LayerId, LayerMap, LayerTable, ResidentTile, TerrainHeights, TileCoord, global_coords,
 };
 use sf_tunables::{AnyDef, Def, Group, Lifetime, Source, Unit, def};
+use sf_tunables_bevy::TunablesAppExt;
 use sf_world::{GateQuanta, GateSource, SelectGate, WorldspaceId};
 
-pub use far_map::{FAR_MAP_SIZE, FAR_MAP_TEXEL, FAR_SHADOW_RECENTER_M, FarShadowMap};
+pub use far_map::{FAR_MAP_SIZE, FAR_MAP_TEXEL, FAR_SHADOW_RECENTER_M, FAR_SHADOWS, FAR_SHADOWS_ENABLED, FarShadowMap};
 pub use gpu_fill::GpuFillCounters;
 pub use material::TerrainMaterial;
 use params::Params;
@@ -415,6 +416,7 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &TERRAIN_MORPH_START,
     &TERRAIN_SELECT_MOVE_M,
     &FAR_SHADOW_RECENTER_M,
+    &FAR_SHADOWS_ENABLED,
     &TERRAIN_RAISE_REPOSE_DEG,
     &TERRAIN_RAISE_FILTER_MIN_M,
     &TERRAIN_TWIN_NEAR_LEVELS,
@@ -677,6 +679,9 @@ impl Plugin for TerrainPlugin {
         embedded_asset!(app, "shaders/terrain.wesl");
         embedded_asset!(app, "shaders/terrain_prepass.wesl");
 
+        // FS-L3: off skips the far shadow map's bake and upload (`far_map::update_far_map`).
+        let _ = app.add_tunable(&FAR_SHADOWS_ENABLED);
+        app.add_feature_switch(&FAR_SHADOWS);
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .insert_resource(self.settings.clone())
             .init_resource::<TerrainDebug>()
@@ -1733,7 +1738,7 @@ fn update_terrain(
         ];
         let debug_bits =
             (u32::from(debug.lod_colors) * params::DEBUG_LOD) | (u32::from(debug.wireframe) * params::DEBUG_WIREFRAME)
-                | (u32::from(debug.no_far_shadows) * params::DEBUG_NO_FAR_SHADOWS)
+                | (u32::from(debug.no_far_shadows || far_map.as_ref().is_some_and(|m| !m.enabled)) * params::DEBUG_NO_FAR_SHADOWS)
                 | (u32::from(debug.no_specular) * params::DEBUG_NO_SPECULAR)
                 | (u32::from(debug.no_indirect) * params::DEBUG_NO_INDIRECT)
                 | (u32::from(debug.raw_layers) * params::DEBUG_RAW_LAYERS)
@@ -2448,7 +2453,7 @@ mod tests {
         }
     }
 
-    fn bare_state(gpu: bool) -> TerrainState {
+    pub(crate) fn bare_state(gpu: bool) -> TerrainState {
         TerrainState {
             ws: WorldspaceId::new("layers"),
             src: Arc::new(NoTiles),

@@ -25,8 +25,10 @@ use sf_ui_bevy::{
 
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
+use crate::options::OPTIONS_FRAME;
 use crate::widgets::{
-    ScreenColors, button, classes, framed_button, label, panel_as, part, part_as, role, show,
+    ScreenColors, button, classes, framed_button, framed_window, label, panel_as, part, part_as,
+    role, show,
 };
 use crate::{is_target, screen_of};
 
@@ -212,16 +214,20 @@ pub(crate) fn spawn_keybinds(
     roots: Query<Entity, Added<KeybindsScreen>>,
 ) {
     for root in &roots {
+        // The screen owns its root's `Node` (the app spawns a bare root, as for options): the
+        // options window's frame, so Options -> Key bindings reads as a page change.
         commands.entity(root).insert((panel_as(
             "sf-keybinds",
             role::WINDOW,
-            Node {
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(16.0)),
-                row_gap: Val::Px(6.0),
-                min_width: Val::Px(640.0),
-                ..Node::default()
-            },
+            framed_window(
+                OPTIONS_FRAME,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(16.0)),
+                    row_gap: Val::Px(6.0),
+                    ..Node::default()
+                },
+            ),
             &colors,
         ),));
         let header = commands
@@ -254,10 +260,13 @@ pub(crate) fn spawn_keybinds(
         let rows = commands
             .spawn((
                 part_as("sf-keybinds-rows", role::BOX),
+                // Takes the window's height left by the header and footer; the rows scroll in it.
                 Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(2.0),
-                    max_height: Val::Vh(70.0),
+                    flex_grow: 1.0,
+                    flex_basis: Val::Px(0.0),
+                    min_height: Val::Px(0.0),
                     overflow: Overflow::scroll_y(),
                     ..Node::default()
                 },

@@ -28,7 +28,7 @@ use bevy_render::{Extract, ExtractSchedule, RenderApp};
 use bevy_transform::components::GlobalTransform;
 use bevy_transform::TransformSystems;
 use sf_coords::WorldPos;
-use sf_tunables::{def, Def, Group, Source, Unit};
+use sf_tunables::{def, Cost, Def, Effect, FeatureSwitch, Group, Source, Unit};
 use sf_water::{optics_index_at, sun_term, CameraMedium, MediumState, NearPlane, WaterKind, WaterSample};
 
 use crate::{WaterCamera, WaterLook, WaterRegionsInput, WaterSurface, WaterSystems};
@@ -38,6 +38,14 @@ pub const WATER_UNDERWATER: Def<bool> = def!(bool "water.underwater" = true)
     .help("Track whether each water camera is above, split by or under the water; off = always above")
     .source(Source::Owner("2026-11-17: underwater pass, water.md \"Underwater\" Plan"))
     .group(Group::Water);
+
+/// The feature switch on [`WATER_UNDERWATER`] (slice FS-2b; the host registers it beside the
+/// tunable). Off: every camera is above, so the underwater post never runs.
+pub const UNDERWATER: FeatureSwitch = FeatureSwitch::new(&WATER_UNDERWATER)
+    .label("Underwater view")
+    .effect(Effect::Skips)
+    .cost(&[Cost::Gpu("water_underwater")])
+    .at(file!(), line!());
 
 /// `water.medium.hysteresis_m`: a near-plane point flips above or under only this far past the surface.
 pub const WATER_MEDIUM_HYSTERESIS_M: Def<f32> = def!(float "water.medium.hysteresis_m" = 0.01)

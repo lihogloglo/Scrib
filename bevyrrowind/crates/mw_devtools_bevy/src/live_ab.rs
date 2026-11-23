@@ -8,7 +8,7 @@
 //! startup: use the `--off`/`--lod-tint` flags and compare two runs.
 //!
 //! Keys: F1 help, F2 sun shadows, F3 perf panel (off / compact / full, [`crate::perf_panel`]),
-//! Shift+F3 terrain far shadows, F4 DLSS mode (graphics presets are in the options menu's Graphics
+//! Shift+F3 terrain far shadows, Ctrl+F3 the Features panel ([`crate::features_panel`]), F4 DLSS mode (graphics presets are in the options menu's Graphics
 //! page, tunables T5d; the help shows the level),
 //! Shift+F6 far-field tint (F5 / F9 are quicksave / quickload, `saves.rs`), F6 terrain LOD colors, F7 wireframe (terrain and skinned meshes; G shows the physics colliders, ragdoll capsules and joints, `physics.rs`),
 //! F8 streaming rings, `[` / `]` hour -/+ 0.5 (Shift: 0.1), P pause clock,
@@ -46,7 +46,7 @@ use sf_world_bevy::big_space::prelude::CellCoord;
 /// Adds the keys and overlay (and BRP, with the `remote` feature) when the run is interactive.
 pub fn add(app: &mut App, interactive: bool) {
     if interactive {
-        app.add_plugins((LiveAbPlugin, crate::perf_panel::PerfPanelPlugin, crate::console::ConsoleWiring));
+        app.add_plugins((LiveAbPlugin, crate::perf_panel::PerfPanelPlugin, crate::features_panel::FeaturesPanelPlugin, crate::switch_probe::SwitchProbePlugin, crate::console::ConsoleWiring, crate::live_switches::LiveSwitchesPlugin));
         #[cfg(feature = "remote")]
         crate::remote::add(app);
     }
@@ -167,6 +167,8 @@ pub struct Switches<'w> {
     material_maps: Option<ResMut<'w, mw_assets::MaterialMaps>>,
     /// CW-17: the perf panel (F3 cycles its modes; `perfpanel` here is off vs shown).
     panel: Option<ResMut<'w, crate::perf_panel::PerfPanel>>,
+    /// FS-UI1: the Features panel (Ctrl+F3, `featurespanel`).
+    features: Option<ResMut<'w, crate::features_panel::FeaturesPanel>>,
 }
 
 /// An on/off switch: its key toggles it, BRP sets it by name.
@@ -226,11 +228,13 @@ pub enum Switch {
     Parallax,
     /// CW-17: the live perf panel (F3; on = compact, or the mode it is in).
     PerfPanel,
+    /// FS-UI1: the dev Features panel (Ctrl+F3; every feature switch by category).
+    FeaturesPanel,
 }
 
 /// Names for BRP ([`crate::remote`]) and the console's `on`/`off` ([`crate::console`]).
 impl Switch {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::SunShadows,
         Self::TerrainFarShadows,
         Self::Clouds,
@@ -257,6 +261,7 @@ impl Switch {
         Self::Orm,
         Self::Parallax,
         Self::PerfPanel,
+        Self::FeaturesPanel,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -287,6 +292,7 @@ impl Switch {
             Self::Orm => "orm",
             Self::Parallax => "parallax",
             Self::PerfPanel => "perfpanel",
+            Self::FeaturesPanel => "featurespanel",
         }
     }
 
@@ -326,6 +332,7 @@ impl Switch {
             Self::Orm => "ORM maps",
             Self::Parallax => "parallax (depth maps)",
             Self::PerfPanel => "perf panel",
+            Self::FeaturesPanel => "features panel",
         }
     }
 
@@ -353,6 +360,7 @@ impl Switch {
             Self::Orm => s.material_maps.as_ref().map(|m| m.orm),
             Self::Parallax => s.material_maps.as_ref().map(|m| m.parallax),
             Self::PerfPanel => s.panel.as_ref().map(|p| p.mode != crate::perf_panel::PanelMode::Off),
+            Self::FeaturesPanel => s.features.as_ref().map(|p| p.open),
             Self::Fog => s.fog.as_ref().map(|f| f.enabled),
             Self::FogNightLight => s.fog.as_ref().map(|f| f.view_ambient > 0.0),
             Self::WeatherAmbient => s.sky_options.as_ref().map(|o| o.weather_ambient_tint),
@@ -376,7 +384,7 @@ impl Switch {
                 Self::WeatherAmbient | Self::NightSkyGlow | Self::Moonlight => "not in this run (--off sky)",
                 Self::AmbientSpecular => "not in this run (no PBR renderer)",
                 Self::NormalMaps | Self::Orm | Self::Parallax => "not in this run (no model assets)",
-                Self::PerfPanel => "not in this run (not interactive)",
+                Self::PerfPanel | Self::FeaturesPanel => "not in this run (not interactive)",
                 _ => "no terrain here",
             };
             return format!("{}: {why}", self.label());
@@ -463,6 +471,11 @@ impl Switch {
                     } else if p.mode == PanelMode::Off {
                         p.mode = PanelMode::Compact;
                     }
+                }
+            }
+            Self::FeaturesPanel => {
+                if let Some(p) = s.features.as_mut() {
+                    p.open = v;
                 }
             }
             Self::CloudHistory => {
@@ -578,7 +591,7 @@ const SWITCH_KEYS: [(KeyCode, Switch); 4] = [
 ];
 
 #[allow(clippy::too_many_arguments)]
-fn keys(
+pub(crate) fn keys(
     mut commands: Commands,
     input: Res<ButtonInput<KeyCode>>,
     real: Res<Time<Real>>,
@@ -600,7 +613,11 @@ fn keys(
         let text = Switch::FarTint.set(&mut state, &mut s, None);
         state.note(text, now);
     }
-    if shifted && input.just_pressed(KeyCode::F3) {
+    let ctrl = input.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    if ctrl && input.just_pressed(KeyCode::F3) {
+        let text = Switch::FeaturesPanel.set(&mut state, &mut s, None);
+        state.note(text, now);
+    } else if shifted && input.just_pressed(KeyCode::F3) {
         let text = Switch::TerrainFarShadows.set(&mut state, &mut s, None);
         state.note(text, now);
     } else if input.just_pressed(KeyCode::F3)
@@ -767,7 +784,7 @@ fn overlay(
             .unwrap_or_else(|| "n/a".to_owned());
         let _ = write!(
             out,
-            "\nF2 sun shadows {}  F3 perf panel {panel} (off/compact/full)  Shift+F3 terrain far shadows {}  F4 DLSS {dlss}  graphics preset {preset} (Esc > Options > Graphics, console `preset`)\n\
+            "\nF2 sun shadows {}  F3 perf panel {panel} (off/compact/full)  Ctrl+F3 features panel  Shift+F3 terrain far shadows {}  F4 DLSS {dlss}  graphics preset {preset} (Esc > Options > Graphics, console `preset`)\n\
              Shift+F6 far tint {}  F6 terrain LOD colors {}  F7 wireframe (terrain, skinned meshes) {}  F8 rings {}\n\
              G physics colliders (ragdoll capsules, joints) {colliders}  O combat gizmos (hurt capsules, blade)\n\
              F11 player / free camera (player: WASD, Space jump, E use, Shift tap roll / hold sprint, Ctrl sneak, F ready weapon, LMB attack, Tab 1st/3rd person, wheel zoom)\n\

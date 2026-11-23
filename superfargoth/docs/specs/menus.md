@@ -204,6 +204,54 @@ Display (`Machine`): window mode (windowed / borderless / exclusive; `Confirm`, 
 Interface: theme, layout preset, text scale, reduce motion, high contrast (from ui.md). The game adds the
 Graphics page (adapter) because what a feature is and costs is game-specific.
 
+### 7. Screen flow v3 (2026-11-23, owner PP-4: "the whole flow of windows in the menu is wrong")
+
+Diagnosis `../research/menu-flow-diagnosis-2026-11-23.md` (path:line there). The causes are structural:
+
+- **Lower screens are never covered.** The stack sets only z-order and the input context (`sf_ui_bevy/src/router.rs`);
+  every sub-menu is pushed on the same Menu layer and stays drawn, and it is translucent (`theme.css` rgba 0.78), so
+  pause shows through options. Their click handlers don't check that they are on top
+  (`options.rs:1304`, `pause_menu.rs:497`, `main_menu.rs:779`), so they light up and click behind options.
+- **Windows size to their content** and re-centre (`widgets.rs:237-245`): hovering a row changes the description
+  pane's text, the window grows or shrinks, and the rows slide under the pointer; value changes and tab switches
+  do the same. Hover CSS only changes colour.
+- Keybinds replaces the game's `Node` and lands top-left (`keybinds.rs:215`); long pages clip (no scroll); four
+  copies of close-and-despawn in the game; option rows ignore `enabled_if`/`visible_if`.
+
+The standard (UE CommonUI activatable stacks, Lyra's settings screen, Xbox XAG 112/113 for focus) and our fix:
+
+- **The framework owns the lifecycle.** A screen record gains `covers: Below | Nothing` (default `Below` on the
+  Menu layer, `Nothing` for HUD, toasts, modal dialogs). A covered screen is hidden (`Visibility::Hidden`) and not
+  pickable; only the top non-modal screen and the modals above it are drawn and take pointer input. Handlers act
+  only for the stack's input target. Pop despawns through one framework system (`DespawnOnPop`), replacing the four
+  game copies. Modal confirm and keep-or-revert use `bevy_ui_widgets` `ModalDialog` + barrier.
+- **Fixed window frame.** Menu window size comes from the layout preset (CSS `width`/`height`, a share of the
+  viewport), never from content; the panel keeps today's translucent look (once covered screens are hidden it no longer shows
+  another window through it; opacity is a look call for the owner); the description pane and value column reserve their space; the row list
+  scrolls (bevy_ui `Overflow::scroll_y`). Hover and focus never change size, padding or border width; focus has its
+  own indicator, always visible (XAG 112).
+- **Options is one panel with page tabs** (Lyra): Gameplay, Display, Graphics, Audio, Controls (key bindings are
+  this page, not a separate window), Interface, Accessibility, mod pages; footer bar Back, Reset page,
+  Apply/Revert. Pause and main menu open it; it covers them.
+- **Rows read the record fields that exist**: `enabled_if`/`visible_if` with `disabled_reason`, `order`, `format`.
+- Screens never replace a `Node` the game spawned; they style it.
+
+Test rule (headless): after any push/pop sequence exactly one non-modal Menu screen is visible and pickable; a
+window's layout rect is the same before and after hover, value change and tab switch.
+
+*As built (2026-11-23, MF-1a..MF-6, owner check MF-1 confirmed):* `sf_ui` `Covers` (Menu `Below`, others `Nothing`),
+`ScreenStack::is_covered/visible`; `sf_ui_bevy` PostUpdate chain `despawn_closed_roots` (`UiSeenOpen`, opt-out
+`UiKeepWhenClosed`) -> `order_screen_roots` -> `hide_covered_roots` (`UiCovered`; Bevy picking already skips hidden nodes),
+before bevy_ui layout; handlers gated by `sf_ui_screens::on_target`. Frame: `widgets::WindowFrame`/`framed_window`,
+`OPTIONS_FRAME` 60% x 70% clamped 640x420..1280x900 (keybinds uses it too; game spawns bare roots, the screen owns the
+`Node`), pane 280 px, value column 160 px, rows `Overflow::scroll_y` + `ScrollArea`. Options already had tabs (Q/E).
+Footer [Key bindings][Reset page]..[Back], Reset asks with `widgets::Question`, `OptionsChange::Reset` -> store reset.
+Rows honour `enabled_if`/`visible_if`/`order`/`format` (`OptionsModel::refresh`; phase and traits wait for
+`set_condition_context`). Advanced page (`mw_exterior_bevy/src/advanced_page.rs`): rows generated from player-scope
+switches at `cleanup`, choices incl. `custom` = preset decides; `SettingsStore::add_settings`. RPG screens settle on a
+stack check (`end_closed_talk`). Open: MF-5, phase/traits source, `log_scale`, preset pick clearing Advanced picks, two
+strings not localized, `mw_controls_bevy` unused `bevy_ui` dependency.
+
 ## Industry comparison
 
 | Engine/game | Has | Us |
@@ -238,6 +286,19 @@ Each is one slice with its test; F and V lines can run in parallel (different cr
   8 `sg.*` groups, owner: groups only), all live (the tunables' presets, not `ui.setting_preset` values), `Machine`
   scope, "Applies after restart" on rows writing `Restart` tunables; choices step over `custom`. Per-feature rows: later.
 - **S5** Interface and accessibility pages wired to `UiSettings`.
+
+Screen flow v3 (§7; 2026-11-23, before S2b-S5 continue):
+
+- **MF-1** (built) `covers` on screen records; covered screens hidden and not pickable; handlers gated on the input target;
+  one framework despawn on pop (game copies removed). Test: push/pop sequences leave one visible non-modal screen.
+- **MF-2** (built) fixed window frame from the layout preset, reserved pane and value column,
+  scrolling row list. Test: window rect unchanged across hover, value change, tab switch (headless layout).
+- **MF-3** (built: tabs existed, keybinds framed MF-3b, footer MF-3c) options as one tabbed panel (`TabList`), keybinds as the Controls page (no `Node` replacement), footer
+  bar (Back, Reset page). Test: tab switch keeps focus and rect; Back from a page returns to the opener.
+- **MF-4** (built) rows read `enabled_if`/`visible_if`/`disabled_reason`/`order`/`format`. Test: conditions, exact.
+- **MF-5** Apply/Revert + keep-or-revert dialog (`ModalDialog`), then S3 display settings on it.
+- **MF-6** (built) Graphics > Advanced: player-scope feature switches with cost class ([feature-switches.md](feature-switches.md);
+  only if the owner wants per-feature rows for players).
 
 ## Owner answers (2026-11-11)
 

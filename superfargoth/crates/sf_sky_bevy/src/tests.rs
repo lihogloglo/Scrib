@@ -490,7 +490,9 @@ fn count_point_light_writes(lights: Query<Ref<bevy_light::PointLight>>, mut writ
 /// the same light fades in on the stock cube map.
 #[test]
 fn an_atlas_slot_holder_without_tiles_waits_unshadowed() {
-    let reach = ShadowReach { unshadowed: 3.0, shadowed: 8.0 };
+    // Shadowed reach 9 m: importance (9 / 2)^2 beats the 5 m lamp's (20 / 5)^2 = 16. At 8 m the two
+    // tied exactly, and the tie went by query order, which an extra resource entity flipped (FS-2b).
+    let reach = ShadowReach { unshadowed: 3.0, shadowed: 9.0 };
     let budget = PointShadowBudget { max: 1, fade_time: 1.0, ..PointShadowBudget::default() };
     let light = |app: &App, e: Entity| *app.world().get::<bevy_light::PointLight>(e).expect("light");
     let slot = |app: &App, e: Entity| *app.world().get::<ShadowSlot>(e).expect("slot");
