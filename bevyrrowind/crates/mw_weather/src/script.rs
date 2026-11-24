@@ -47,8 +47,9 @@ pub fn mod_region(state: &mut WeatherState, region: &str, chances: &[f32], now: 
 
 /// `GetCurrentWeather`: the weather type the region is in, or turning into
 /// (so a script sees its own `ChangeWeather` at once; the original reports
-/// the old weather until the transition ends). `None` for a region without
-/// a climate or a preset that isn't one of the ten types (a mod's).
+/// the old weather until the transition ends). An extra preset reports its
+/// base type (Windy: Cloudy, `crate::EXTRA_PRESETS`). `None` for a region
+/// without a climate or a preset that is neither (a mod's).
 pub fn current_weather(
     state: &WeatherState,
     book: &WeatherBook,
@@ -60,6 +61,12 @@ pub fn current_weather(
     WeatherType::ALL
         .into_iter()
         .find(|ty| ty.preset_id() == *preset)
+        .or_else(|| {
+            crate::EXTRA_PRESETS
+                .iter()
+                .find(|(name, _)| crate::preset_id_of(name) == *preset)
+                .map(|(_, base)| *base)
+        })
 }
 
 /// `GetWindSpeed`: the ini's `Wind Speed` scale (0..1 for vanilla weathers)

@@ -438,3 +438,8 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   Check: same view, clock paused; land keeps its moonlit blue, sky deep and under the land, Secunda readable. Say the
   values you keep. Status: awaiting owner.
 
+### WE-17: World very dark under a cloud shadow and in rain (owner report 2026-11-24)
+- Game location: any exterior at midday, `--weather cloudy` (stand in a moving cloud shadow) and `--weather rain`.
+- Seen: the whole view drops very dark when a cloud shadow passes over the camera, and in rain. Not diagnosed: suspects
+  are the exposure (eye adaptation reacting to the shadowed foreground) and the sky/ambient fill under overcast being
+  too low next to the shadowed sun. Lit look beats physical darkening (owner 2026-11-05). Status: known bug.

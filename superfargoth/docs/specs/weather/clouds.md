@@ -122,7 +122,7 @@ part (+0.6 ms with almost no cloud) is the next target: amortize the shadow map,
 samples by weather coverage before the shape fetch, and a cheaper composite. No `sf_diag` GPU
 counter yet (`atmos/clouds/gpu_ms`).
 
-**Not built yet.** High cirrus layer, far fog in the same node, lightning emission, quality presets
+**Not built yet.** Far fog in the same node, lightning emission, quality presets
 (Low 1/16 res), Solari path (open question 5), MSAA run, `atmos.noise` bake step, GPU timer.
 
 ### Cloud genera, scale, motion, shadows, sun occlusion (S1, clouds2 session, 2026-10-13)

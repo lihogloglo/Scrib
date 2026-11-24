@@ -59,6 +59,8 @@ pub const DATA: &str = "morrowind-data";
 pub const WEATHER: &str = "morrowind-weather";
 /// Its one generated record file (applied by [`MwAdapter`], not parsed).
 pub const WEATHER_RECORDS: &str = "weather/morrowind-weather.mwweather";
+/// The weather mod's patches for `mw_weather`'s extra presets (`mw_weather::EXTRA_PRESET_RECORDS`).
+const EXTRA_PRESETS_RON: &str = include_str!("../data/weather/extra-presets.ron");
 /// The profile used when none is named.
 pub const DEFAULT_PROFILE: &str = "default";
 /// Environment variable overriding the user data folder.
@@ -422,6 +424,10 @@ impl ContentAdapter for MwAdapter {
         weather.description = "weather presets, region climates and precipitation from REGN and Morrowind.ini (mw_weather)".into();
         weather.load_after = plugins.iter().map(|m| m.id.clone()).chain(std::iter::once(data_id())).collect();
         weather.content.records = vec![WEATHER_RECORDS.into()];
+        if self.apply {
+            // The extra presets' patches (`mw_weather::EXTRA_PRESETS`) need the generated records.
+            weather.content.records.push(mw_weather::EXTRA_PRESET_RECORDS.into());
+        }
         let mut mods: Vec<ModManifest> = std::iter::once(builtin).chain(plugins).chain([data, weather]).collect();
         for manifest in &mut mods {
             if let Some(texture) = self.textures.get(&manifest.id) {
@@ -435,7 +441,9 @@ impl ContentAdapter for MwAdapter {
         match manifest.id.as_str() {
             BUILTIN => Ok(self.builtin.iter().cloned().chain(std::iter::once(base_records_source())).collect()),
             // The generated record file: a marker the pipeline hands back to `apply_records`.
-            WEATHER => Ok(vec![Arc::new(MemSource::new("weather").with(WEATHER_RECORDS, ""))]),
+            WEATHER => Ok(vec![Arc::new(
+                MemSource::new("weather").with(WEATHER_RECORDS, "").with(mw_weather::EXTRA_PRESET_RECORDS, EXTRA_PRESETS_RON),
+            )]),
             DATA => {
                 let mut layers = self.open_archives(manifest);
                 let loose = DirSource::scan("Data Files", &self.install.data_files)

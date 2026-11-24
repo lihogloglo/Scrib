@@ -21,7 +21,7 @@ use mw_boot_bevy::{load, mount};
 use mw_devtools_bevy::perf::{Off, Part, Perf, PerfFlags};
 use mw_environment_bevy::render::{RenderSettings, parse_sun_cascades};
 use mw_environment_bevy::water::{WaterInputs, WaterMode};
-use mw_environment_bevy::weather::{WeatherCommand, WeatherSetup, parse_weather_type};
+use mw_environment_bevy::weather::{WeatherCommand, WeatherSetup, parse_weather};
 use mw_exterior_bevy::exterior::{ExteriorOptions, Quality};
 use mw_install::{MorrowindInstall, Origin};
 use mw_records::KindVisitor;
@@ -383,11 +383,11 @@ struct ViewFlags {
     /// weather's). Default: the weather's. `--off clouds` drops them.
     #[arg(long, value_parser = parse_clouds)]
     clouds: Option<sf_atmos_bevy::sf_atmos::CloudPreset>,
-    /// Exteriors: force a Morrowind weather everywhere (clear, cloudy, foggy, overcast, rain,
-    /// thunderstorm, ashstorm, blight, snow, blizzard) instead of the regions' forecast
-    /// (M6 WE3, `sf_weather_bevy`).
-    #[arg(long, value_parser = parse_weather_type)]
-    weather: Option<mw_weather::WeatherType>,
+    /// Exteriors: force a weather everywhere (clear, cloudy, foggy, overcast, rain, thunderstorm,
+    /// ashstorm, blight, snow, blizzard, windy, or a mod's preset record id) instead of the
+    /// regions' forecast (M6 WE3, `sf_weather_bevy`).
+    #[arg(long, value_parser = parse_weather)]
+    weather: Option<RecordId>,
     /// Exteriors: fixed aerosol haze (`sf_sky::Weather::haze`; 1 is a pristine Earth sky)
     /// instead of the weather's, without the morning curve (weather.md N1).
     #[arg(long)]
@@ -660,9 +660,9 @@ impl ViewFlags {
             settings.apply_transform = false;
         }
         println!("camera {eye:.1} -> {target:.1}");
-        let weather = WeatherSetup::build(db, eye, self.day * 24.0 + hour, self.weather, 0);
-        if let Some(t) = weather.start {
-            println!("weather {}{}", t.name(), if self.weather.is_some() { " (forced)" } else { "" });
+        let weather = WeatherSetup::build(db, eye, self.day * 24.0 + hour, self.weather.as_ref(), 0);
+        if let Some(t) = &weather.start {
+            println!("weather {t}{}", if self.weather.is_some() { " (forced)" } else { "" });
         }
         Ok(ExteriorOptions {
             title,

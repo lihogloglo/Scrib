@@ -1148,6 +1148,16 @@
             checks: ["GC-3e2", "GC-T"],
         ),
         (
+            name: "we-windy",
+            cell: "11,8",
+            camera: "1345,+1.7,-995,1380,+0.6,-1030",
+            hour: 14.0,
+            description: "gc-blades-grazelands under the Windy preset (WE-16): a dry gale, 16-20 m/s at 10 m with gusts to 1.4x, Cloudy's sky and light, no rain. A/B on the same sky: BRP set {\"weather\": \"cloudy\"} (calm, ~4 m/s) and back {\"weather\": \"windy\"}; the C key cycles every weather",
+            look_for: "the blades and clumps pressed hard downwind and streaming, gust fronts sweeping across the plain as bright/dark waves (cells ~120 m), lulls where they half stand up, trees thrashing, clouds racing; nothing upwind, no popping, no blades through the ground",
+            flags: ["--set", "groundcover.enabled=true", "--set", "groundcover.blades.enabled=true", "--weather", "windy"],
+            checks: ["WE-16"],
+        ),
+        (
             name: "gc-blades-bittercoast",
             cell: "-3,-8",
             camera: "-292,+1.7,877,-320,+0.6,850",

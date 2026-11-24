@@ -1,0 +1,21 @@
+// The weather mod's extra presets (weather-adapter.md "Extra presets"). `mw_weather` defines each one
+// as a copy of its base Morrowind type (`mw_weather::EXTRA_PRESETS`); these patches, applied right
+// after in the same source, set what makes it different. A user mod patches them like any record.
+[
+  // Windy: a dry gale (base Cloudy: fair cumulus, Cloudy's light and fog). Showcases wind on grass,
+  // trees and water with no rain.
+  patch(kind: "weather.preset", id: "mw_weather/windy", set: {
+    // Mean speed at 10 m, m/s: Beaufort force 8 "gale" is 17.2-20.7 m/s (WMO), wandering across
+    // 16-20 over the spell. Morrowind's ini tops out near 15 m/s (Ashstorm 0.8 -> 12.2 m/s).
+    "wind.speed": (16.0, 20.0),
+    // Gusts up to 1.4x the mean, lulls to 0.6x: open-terrain gust factor ~1.4 (WMO wind averaging
+    // guidelines). Default 0.3.
+    "wind.gustiness": 0.4,
+    // Gust cells, m (Guess): twice the default 60 m, so gust fronts sweep visibly across a meadow.
+    "wind.gust_length": 120.0,
+    // Cloud-altitude wind, m/s: Morrowind `Cloud Speed` 6 x 10 m/s (Thunderstorm 3, Ashstorm 7).
+    "clouds.speed": 60.0,
+    // Wind dries surfaces faster than still air (Guess; dry weathers 0.25 per game hour).
+    "surface.drying": 0.75,
+  }),
+]

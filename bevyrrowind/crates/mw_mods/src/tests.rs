@@ -92,6 +92,14 @@ fn default_profile_loads_like_the_install() {
     assert_eq!(loaded.vfs.read(&p("textures/b.dds")).unwrap(), b"tribunal");
     assert_eq!(loaded.vfs.read(&p(RUNTIME_PATH)).unwrap(), b"return {}");
 
+    // The weather mod's extra presets: Windy is Cloudy (sky, fog) with the gale patched on.
+    let preset = |id: &str| loaded.records.get::<mw_weather::sf_weather::WeatherPreset>(&RecordId::new(id)).expect(id);
+    let (windy, cloudy) = (preset("mw_weather/windy"), preset("mw_weather/cloudy"));
+    assert!(windy.wind.speed[0] > 15.0 && windy.wind.speed[1] > windy.wind.speed[0], "gale: {:?}", windy.wind.speed);
+    assert!(windy.wind.gustiness > cloudy.wind.gustiness && windy.clouds.speed > cloudy.clouds.speed);
+    assert!(windy.precipitation.is_empty());
+    assert_eq!((&windy.sky, &windy.fog, windy.clouds.coverage), (&cloudy.sky, &cloudy.fog, cloudy.clouds.coverage));
+
     // Records: Tribunal's rock wins; content files are reported in load order.
     let rock = loaded.records.get::<Static>(&RecordId::new("rock")).unwrap();
     assert_eq!(rock.mesh, "r2.nif");

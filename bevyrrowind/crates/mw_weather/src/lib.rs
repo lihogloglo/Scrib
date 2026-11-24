@@ -39,6 +39,8 @@ use crate::ini::WeatherIni;
 
 /// The surface weather core, for hosts that read the cover layer records ([`cover`]).
 pub use sf_surface;
+/// The weather records core, for hosts that read the presets (e.g. `mw_mods`' tests).
+pub use sf_weather;
 
 /// Name of the synthetic record source the generated records live in.
 pub const SOURCE_NAME: &str = "Morrowind.ini weather";
@@ -109,7 +111,7 @@ impl WeatherType {
 
     /// The preset record id, `mw_weather/<name>` (lowercase).
     pub fn preset_id(self) -> RecordId {
-        RecordId::new(&format!("mw_weather/{}", self.name()))
+        preset_id_of(self.name())
     }
 
     fn section(self) -> String {
@@ -131,6 +133,39 @@ impl WeatherType {
             Self::Blizzard => c.blizzard,
         }
     }
+}
+
+/// Presets beyond Morrowind's ten (weather-adapter.md "Extra presets"): `(name, base)`. Each starts
+/// as a copy of its base type's preset (the base's sky, ambient and fog curves, read from the ini)
+/// and the weather mod's [`EXTRA_PRESET_RECORDS`] file patches what sets it apart, so its values
+/// are data a mod patches like any record. No `REGN` weights name them: they come only when forced
+/// (`--weather`, the C key, BRP `set weather`) or when a climate mod weights them.
+pub const EXTRA_PRESETS: [(&str, WeatherType); 1] = [
+    // A dry gale: Cloudy's fair cumulus and light, with gale wind and fast clouds.
+    ("Windy", WeatherType::Cloudy),
+];
+
+/// VFS path of the weather mod's patches for the [`EXTRA_PRESETS`] (applied after the generated
+/// records, in the same source; `mw_mods` mounts it).
+pub const EXTRA_PRESET_RECORDS: &str = "weather/extra-presets.ron";
+
+/// The preset record id of a preset name, `mw_weather/<name>` (lowercase), Morrowind's or an extra.
+pub fn preset_id_of(name: &str) -> RecordId {
+    RecordId::new(&format!("mw_weather/{name}"))
+}
+
+/// Every preset this adapter defines as `(name, id)`: Morrowind's ten in index order, then the
+/// [`EXTRA_PRESETS`].
+pub fn preset_names() -> impl Iterator<Item = (&'static str, RecordId)> {
+    WeatherType::ALL
+        .into_iter()
+        .map(|t| (t.name(), t.preset_id()))
+        .chain(EXTRA_PRESETS.iter().map(|(name, _)| (*name, preset_id_of(name))))
+}
+
+/// The name of one of this adapter's presets (`Thunderstorm`, `Windy`), from its record id.
+pub fn preset_name_of(id: &RecordId) -> Option<&'static str> {
+    preset_names().find(|(_, p)| p == id).map(|(name, _)| name)
 }
 
 /// The precipitation kinds.
@@ -177,7 +212,7 @@ pub fn transition_game_hours(delta_per_real_second: f32, timescale: f32) -> Opti
 /// The weather records generated from the content and the ini.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MwWeather {
-    /// One per [`WeatherType`], in index order.
+    /// One per [`WeatherType`], in index order, then one per [`EXTRA_PRESETS`] entry (a copy of its base).
     pub presets: Vec<(RecordId, WeatherPreset)>,
     /// One per `REGN` record, sorted by id.
     pub climates: Vec<(RecordId, Climate)>,
@@ -203,7 +238,7 @@ impl MwWeather {
 
         let precip_kinds = precip_kinds(&mut w);
         let mut transitions = [None; WeatherType::ALL.len()];
-        let presets = WeatherType::ALL
+        let mut presets: Vec<(RecordId, WeatherPreset)> = WeatherType::ALL
             .iter()
             .map(|&ty| {
                 transitions[ty.index()] = w
@@ -212,6 +247,10 @@ impl MwWeather {
                 (ty.preset_id(), preset(ty, &mut w, timescale))
             })
             .collect();
+        for (name, base) in EXTRA_PRESETS {
+            let copy = presets[base.index()].1.clone();
+            presets.push((preset_id_of(name), copy));
+        }
 
         let hours = w
             .f32("Weather", "Hours Between Weather Changes")

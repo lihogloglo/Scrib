@@ -2425,3 +2425,14 @@ RO-12 | confirmed 2026-11-17 (owner: fixed for a while) | [rendering](../visual-
 - Look for: no thin purple, cyan or yellow lines across far mountains at eye level, in Cloudy, Clear, Overcast, Rain
   and Blizzard (weather key); far terrain still fades into the haze as before (the fix changes no look on purpose,
   only removes the broken band). Status: confirmed by the owner 2026-11-19 ("fixed").
+
+### WE-16: Windy, a dry gale on grass (weather-adapter.md "Extra presets")
+- Game location: `scene we-windy` (Grazelands 11,8 at 14:00, blades on, `--weather windy`): Cloudy's sky and light,
+  16-20 m/s wind at 10 m, gusts to 1.4x in ~120 m cells, clouds at 60 m/s, no rain. A/B on the same sky: BRP `set
+  {"weather": "cloudy"}` (~4 m/s) and back `{"weather": "windy"}`.
+- Look for: blades and clumps pressed hard downwind and streaming; gust fronts sweeping the plain as waves, lulls where
+  they half stand up; trees thrashing; clouds racing; nothing leaning upwind, no popping, no blades through the ground.
+  Values live in `mw_mods/data/weather/extra-presets.ron` (say what to change: speed, gustiness, gust size).
+  Owner 2026-11-24: "it's very good". Status: confirmed (closed).
+
+WE-16 | confirmed 2026-11-24 (owner: "very good") | [weather-sky](../visual-checks/weather-sky.md) | Windy preset, a dry gale on grass: `scene we-windy` (Grazelands blades, 14:00); blades pressed downwind, gust waves across the plain, trees thrashing, fast clouds; A/B BRP set weather cloudy/windy (2026-11-24)

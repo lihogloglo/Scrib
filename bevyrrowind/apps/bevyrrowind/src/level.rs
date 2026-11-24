@@ -34,7 +34,7 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
     if flags.weather.is_none()
         && let Some(w) = &level.weather
     {
-        flags.weather = Some(mw_environment_bevy::weather::parse_weather_type(w)?);
+        flags.weather = Some(mw_environment_bevy::weather::parse_weather(w)?);
     }
     let mut options = flags.exterior_options(install, &content.db, format!("Bevyrrowind - level {}", level.name), start)?;
     let actors = actors::resolve(&level, &content.db);

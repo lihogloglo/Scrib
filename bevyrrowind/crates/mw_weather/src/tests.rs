@@ -135,6 +135,23 @@ fn regn_weights_map_to_presets_in_index_order() {
 }
 
 #[test]
+fn extra_presets_follow_the_ten_as_copies_of_their_base() {
+    let w = MwWeather::build(&content_db(None), None);
+    assert_eq!(w.presets.len(), WeatherType::ALL.len() + EXTRA_PRESETS.len());
+    let ids: Vec<RecordId> = w.presets.iter().map(|(id, _)| id.clone()).collect();
+    let names: Vec<RecordId> = preset_names().map(|(_, id)| id).collect();
+    assert_eq!(ids, names);
+    for (i, (name, base)) in EXTRA_PRESETS.iter().enumerate() {
+        let (id, preset) = &w.presets[WeatherType::ALL.len() + i];
+        assert_eq!(*id, RecordId::new(&format!("mw_weather/{}", name.to_ascii_lowercase())));
+        assert_eq!(preset, preset_of(&w, *base), "{name}: unpatched copy of {}", base.name());
+        assert_eq!(preset_name_of(id), Some(*name));
+    }
+    assert_eq!(preset_name_of(&WeatherType::Blight.preset_id()), Some("Blight"));
+    assert_eq!(preset_name_of(&RecordId::new("my_mod/heatwave")), None);
+}
+
+#[test]
 fn vanilla_values_without_an_ini() {
     let w = MwWeather::build(&content_db(None), None);
     assert!((w.timescale - 30.0).abs() < 1e-6);
@@ -550,6 +567,10 @@ fn mwscript_weather_functions_map_to_the_state() {
         );
     }
     assert_eq!(script::current_weather(&state, &book, "Nowhere", now), None);
+    // A forced extra preset reports its base type to scripts (Windy: Cloudy).
+    let mut windy = WeatherState::new(3);
+    windy.force(&climate_id(isles), &preset_id_of("Windy"), now, Some(0.0), None);
+    assert_eq!(script::current_weather(&windy, &book, isles, now + 0.5), Some(WeatherType::Cloudy));
 
     // GetWindSpeed → the frame's wind, back on the ini's 0..1 scale.
     let climates = [(book.climate(&climate_id(isles)).unwrap(), 1.0)];

@@ -163,8 +163,8 @@ struct Set {
     /// cirrus, overcast, storm) over the weather's clouds; "weather" unpins.
     clouds: Option<String>,
     /// Force a weather everywhere from now (clear, cloudy, foggy, overcast, rain,
-    /// thunderstorm, ashstorm, blight, snow, blizzard) over the climate's transition;
-    /// "auto" glides back to the forecast.
+    /// thunderstorm, ashstorm, blight, snow, blizzard, windy, or a mod's preset record id)
+    /// over the climate's transition; "auto" glides back to the forecast.
     weather: Option<String>,
     /// With `weather`: only this region's climate (a `REGN` id, e.g. "Ashlands Region";
     /// to see a neighbour's weather from afar); "auto" returns just that region.
@@ -224,7 +224,7 @@ fn set(
     let weather = params
         .weather
         .as_deref()
-        .map(|name| if name.eq_ignore_ascii_case("auto") { Ok(None) } else { mw_environment_bevy::weather::parse_weather_type(name).map(Some).map_err(invalid) })
+        .map(|name| if name.eq_ignore_ascii_case("auto") { Ok(None) } else { mw_environment_bevy::weather::parse_weather(name).map(Some).map_err(invalid) })
         .transpose()?;
     if params.transition_hours.is_some_and(|h| h.is_nan() || h < 0.0) {
         return Err(invalid("transition_hours: want >= 0"));
@@ -240,7 +240,7 @@ fn set(
         state.note(note, now);
     }
     if let Some(ty) = weather {
-        let note = crate::live_ab::set_weather(&mut s, ty, params.transition_hours, params.region.as_deref());
+        let note = crate::live_ab::set_weather(&mut s, ty.as_ref(), params.transition_hours, params.region.as_deref());
         if !note.starts_with("weather ->") {
             return Err(invalid(note));
         }

@@ -84,6 +84,9 @@ cover, fog, precipitation and wind, so changes glide. Volumetric clouds, fog and
   precipitation, lightning flash and sound cues (`fx.rs`). Distant weather: a world weather map mirrored to
   `CloudWeatherMap` (`:291`, `sf_atmos_bevy/src/weather_map.rs`). Surface weather (wet, puddles, snow, ash) steps in
   `surface.rs` and shades through the vendored SW patch.
+  Presets: Morrowind's ten from the ini plus extras copied from a base and patched by data (Windy = Cloudy + a dry gale;
+  `mw_weather::EXTRA_PRESETS`, `mw_mods/data/weather/extra-presets.ron`); `--weather`, the C key and BRP `set weather` take
+  any preset name or record id (`mw_environment_bevy::weather::parse_weather`).
   Shelter (`sf_surface_bevy` shelter.rs, exposure.rs) and precip occlusion (`sf_precip_bevy` occlusion.rs) are top-down caster maps
   around a world-texel-snapped centre; every caster draws its level at a fixed LOD distance (vendored `bevy_render`
   `RenderViewLodDistances`: 0 m near, 150 m far level), whatever the camera, and cover exposure eases toward each redraw (~2 s,

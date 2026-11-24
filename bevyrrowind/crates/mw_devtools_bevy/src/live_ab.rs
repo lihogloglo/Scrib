@@ -524,13 +524,16 @@ fn weather_now(s: &Switches) -> Option<f64> {
 /// Forces a weather from now over `transition_hours` (`None`: the climate's;
 /// 0 skips), or with `None` glides back to the forecast: every climate, or
 /// only `region`'s (a `REGN` id or name, e.g. "Ashlands Region"), for distant weather.
-pub fn set_weather(s: &mut Switches, ty: Option<mw_weather::WeatherType>, transition_hours: Option<f32>, region: Option<&str>) -> String {
+pub fn set_weather(s: &mut Switches, ty: Option<&sf_records::RecordId>, transition_hours: Option<f32>, region: Option<&str>) -> String {
     let Some(now) = weather_now(s) else {
         return "weather: no clock in this run".to_owned();
     };
     let (Some(world), Some(records), Some(map)) = (s.weather.as_mut(), s.weather_records.as_ref(), s.climates.as_ref()) else {
         return "weather: not in this run (interior or no weather records)".to_owned();
     };
+    if let Some(id) = ty.filter(|id| records.0.preset(id).is_none()) {
+        return format!("weather: no preset {id} in this run");
+    }
     let climates = match region {
         None => map.climates().to_vec(),
         Some(r) => match records.0.climate(&mw_weather::climate_id(r)) {
@@ -539,7 +542,7 @@ pub fn set_weather(s: &mut Switches, ty: Option<mw_weather::WeatherType>, transi
         },
     };
     mw_environment_bevy::weather::force_live(&records.0, &mut world.0, &climates, ty, now, transition_hours);
-    let name = ty.map_or("auto (forecast)", mw_weather::WeatherType::name);
+    let name = ty.map_or_else(|| "auto (forecast)".to_owned(), |id| mw_weather::preset_name_of(id).map_or_else(|| id.as_str().to_owned(), str::to_owned));
     region.map_or_else(|| format!("weather -> {name}"), |r| format!("weather -> {name} in {r}"))
 }
 
@@ -646,9 +649,11 @@ pub(crate) fn keys(
         let text = Switch::Clouds.set(&mut state, &mut s, None);
         state.note(text, now);
     } else if input.just_pressed(KeyCode::KeyC) && s.weather.is_some() {
-        // The Morrowind weathers in `REGN` order, each over the climate's transition.
-        *cloud_preset = (*cloud_preset + 1) % mw_weather::WeatherType::ALL.len();
-        let text = set_weather(&mut s, Some(mw_weather::WeatherType::ALL[*cloud_preset]), None, None);
+        // The Morrowind weathers in `REGN` order, then the extra presets (Windy), each over the
+        // climate's transition.
+        let presets: Vec<_> = mw_weather::preset_names().map(|(_, id)| id).collect();
+        *cloud_preset = (*cloud_preset + 1) % presets.len();
+        let text = set_weather(&mut s, Some(&presets[*cloud_preset]), None, None);
         state.note(text, now);
     }
     if let (Some(time), Some(config)) = (s.time.as_mut(), s.config.as_ref()) {

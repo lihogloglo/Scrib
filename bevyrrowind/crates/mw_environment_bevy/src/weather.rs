@@ -3,7 +3,7 @@
 
 use clap::Subcommand;
 use mw_install::MorrowindInstall;
-use mw_weather::{climate_id, weather_type_of};
+use mw_weather::{climate_id, preset_name_of};
 use sf_records::RecordId;
 use sf_weather::{WeatherBook, WeatherState};
 
@@ -99,9 +99,9 @@ fn forecast(install: &MorrowindInstall, region: &str, days: f64, seed: u64, from
     Ok(())
 }
 
-/// The weather type's name (`Thunderstorm`), else the preset id (mod-added presets).
+/// The preset's name (`Thunderstorm`, `Windy`), else its id (mod-added presets).
 fn preset_name(id: &RecordId) -> String {
-    weather_type_of(id).map_or_else(|| id.as_str().to_owned(), |t| t.name().to_owned())
+    preset_name_of(id).map_or_else(|| id.as_str().to_owned(), str::to_owned)
 }
 
 /// `day N hh:mm` from game hours.
@@ -118,11 +118,17 @@ fn clock(hours: f64) -> String {
 /// without a region): Seyda Neen's.
 const FALLBACK_REGION: &str = "Bitter Coast Region";
 
-/// `--weather` values: the Morrowind weather types, any case.
-pub fn parse_weather_type(s: &str) -> std::result::Result<mw_weather::WeatherType, String> {
-    mw_weather::WeatherType::ALL.into_iter().find(|t| t.name().eq_ignore_ascii_case(s.trim())).ok_or_else(|| {
-        let names: Vec<_> = mw_weather::WeatherType::ALL.iter().map(|t| t.name().to_ascii_lowercase()).collect();
-        format!("unknown weather {s:?}: {}", names.join(", "))
+/// `--weather` values (and the level file's, BRP `set weather`'s) as a preset record id: a
+/// Morrowind weather type or an extra preset (`mw_weather::preset_names`), any case, or any
+/// preset record id with a `/` (a mod's own preset; [`WeatherSetup::build`] checks it exists).
+pub fn parse_weather(s: &str) -> std::result::Result<RecordId, String> {
+    let s = s.trim();
+    if s.contains('/') {
+        return Ok(RecordId::new(s));
+    }
+    mw_weather::preset_names().find(|(name, _)| name.eq_ignore_ascii_case(s)).map(|(_, id)| id).ok_or_else(|| {
+        let names: Vec<_> = mw_weather::preset_names().map(|(name, _)| name.to_ascii_lowercase()).collect();
+        format!("unknown weather {s:?}: {} (or a preset record id, e.g. mw_weather/windy)", names.join(", "))
     })
 }
 
@@ -134,8 +140,8 @@ pub struct WeatherSetup {
     pub state: WeatherState,
     pub cells: std::collections::HashMap<(i32, i32), sf_weather::ClimateIx>,
     pub fallback: Option<sf_weather::ClimateIx>,
-    /// The weather at the start (forced, or the start cell's forecast), printed.
-    pub start: Option<mw_weather::WeatherType>,
+    /// The weather at the start (forced, or the start cell's forecast), printed: its name.
+    pub start: Option<String>,
     /// `SOUN` id -> VFS sound file for `sf_audio_bevy` (filled by `load_sounds`).
     pub sounds: sf_audio::SoundBank,
     /// The exterior's snow and ash cover looks (surface weather W5a: `mw_weather::cover`'s
@@ -145,7 +151,7 @@ pub struct WeatherSetup {
 
 impl WeatherSetup {
     /// `eye`: start camera (engine meters); `hours`: the clock in game hours.
-    pub fn build(db: &sf_records::RecordDb, eye: glam::DVec3, hours: f64, force: Option<mw_weather::WeatherType>, seed: u64) -> Self {
+    pub fn build(db: &sf_records::RecordDb, eye: glam::DVec3, hours: f64, force: Option<&RecordId>, seed: u64) -> Self {
         let book = WeatherBook::from_db(db);
         let cells: std::collections::HashMap<(i32, i32), sf_weather::ClimateIx> = db
             .iter::<tes3::esp::Cell>()
@@ -154,6 +160,14 @@ impl WeatherSetup {
             .collect();
         let fallback = book.climate(&climate_id(FALLBACK_REGION));
         let mut state = WeatherState::new(seed);
+        let force = force.filter(|id| {
+            let known = book.preset(id).is_some();
+            if !known {
+                let ids: Vec<_> = db.iter::<sf_weather::WeatherPreset>().map(|(id, _)| id.as_str().to_owned()).collect();
+                eprintln!("warning: --weather {id}: no such preset (known: {}); using the forecast", ids.join(", "));
+            }
+            known
+        });
         if let Some(t) = force {
             // Every climate, from long before the start, held for good: a
             // debug flag, not a scripted change (no transition).
@@ -161,11 +175,11 @@ impl WeatherSetup {
             climates.sort_unstable();
             climates.dedup();
             for c in climates {
-                state.force(book.climate_id(c), &t.preset_id(), hours - 1.0e4, Some(0.0), Some(1.0e7));
+                state.force(book.climate_id(c), t, hours - 1.0e4, Some(0.0), Some(1.0e7));
             }
         }
         let start_climate = cells.get(&grid_at(eye)).copied().or(fallback);
-        let start = force.or_else(|| start_climate.and_then(|c| state.current(&book, c, hours)).and_then(|p| weather_type_of(book.preset_id(p))));
+        let start = force.cloned().or_else(|| start_climate.and_then(|c| state.current(&book, c, hours)).map(|p| book.preset_id(p).clone())).map(|id| preset_name(&id));
         let cover = mw_weather::cover::active_layers().resolve(db, &mw_world::ids::exterior().0).map(Option::<&mw_weather::sf_surface::cover::SurfaceLayer>::cloned);
         Self { book: std::sync::Arc::new(book), state, cells, fallback, start, sounds: sf_audio::SoundBank::default(), cover }
     }
@@ -217,7 +231,7 @@ pub fn grid_at(p: glam::DVec3) -> (i32, i32) {
 /// How long a live forced weather holds, game hours (until `auto`).
 const LIVE_HOLD_HOURS: f32 = 1.0e6;
 
-/// Forces `ty` on every climate from `now` over `transition_hours` (`None`:
+/// Forces the preset `ty` on every climate from `now` over `transition_hours` (`None`:
 /// the climate's own; 0 skips), held until the next call; `None` returns to
 /// the forecast: each climate glides to the weather its forecast has at
 /// `now` (a force of that weather, released at the climate's next natural
@@ -226,7 +240,7 @@ pub fn force_live(
     book: &WeatherBook,
     state: &mut WeatherState,
     climates: &[sf_weather::ClimateIx],
-    ty: Option<mw_weather::WeatherType>,
+    ty: Option<&RecordId>,
     now: f64,
     transition_hours: Option<f32>,
 ) {
@@ -237,7 +251,7 @@ pub fn force_live(
     for &c in climates {
         let climate = book.climate_id(c).clone();
         match ty {
-            Some(t) => state.force(&climate, &t.preset_id(), now, transition_hours, Some(LIVE_HOLD_HOURS)),
+            Some(t) => state.force(&climate, t, now, transition_hours, Some(LIVE_HOLD_HOURS)),
             None => {
                 if let Some(p) = natural.current(book, c, now) {
                     state.force(&climate, &book.preset_id(p).clone(), now, transition_hours, None);
@@ -268,7 +282,7 @@ pub struct LiveWeather {
 pub fn live_weather(book: &WeatherBook, state: &WeatherState, climate: sf_weather::ClimateIx, now: f64) -> Option<LiveWeather> {
     let name = |p: sf_weather::PresetIx| {
         let id = book.preset_id(p);
-        weather_type_of(id).map_or_else(|| id.as_str().to_owned(), |t| t.name().to_ascii_lowercase())
+        preset_name_of(id).map_or_else(|| id.as_str().to_owned(), str::to_ascii_lowercase)
     };
     let current = state.current(book, climate, now)?;
     let blend = state.blend(book, climate, now);
@@ -287,5 +301,20 @@ impl WeatherSetup {
             let path = sf_vfs::VfsPath::new(raw).ok()?;
             vfs.resolve_preferring(&path, &["mp3", "wav"]).map(|(p, _)| p.as_str().to_owned())
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_weather;
+    use sf_records::RecordId;
+
+    #[test]
+    fn weather_names_and_preset_ids_parse() {
+        assert_eq!(parse_weather("Thunderstorm"), Ok(RecordId::new("mw_weather/thunderstorm")));
+        assert_eq!(parse_weather(" windy "), Ok(RecordId::new("mw_weather/windy")));
+        assert_eq!(parse_weather("My_Mod/Heatwave"), Ok(RecordId::new("my_mod/heatwave")));
+        let err = parse_weather("gale").unwrap_err();
+        assert!(err.contains("windy") && err.contains("blizzard"), "{err}");
     }
 }

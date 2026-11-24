@@ -80,6 +80,26 @@ fall back to vanilla values compiled into `mw_weather` (from the vanilla ini; nu
 code). The ini is hashed into the climate/preset fingerprint, so editing it re-runs only the cheap
 `weather.climate` bake step.
 
+### Extra presets
+
+Presets beyond Morrowind's ten (owner 2026-11-24: a dry windy weather to show wind on grass, more for tests and
+looks later). `mw_weather::EXTRA_PRESETS` lists `(name, base)`: `MwWeather::build` appends each as a copy of its
+base's preset (so it keeps the base's ini-derived sky, ambient and fog curves), id `mw_weather/<name>`, and the
+weather mod's second file `weather/extra-presets.ron` (`mw_mods/data/weather/`, applied right after the generated
+records, same source) patches what sets it apart. The values are data: a user mod patches them like any preset.
+No `REGN` weights name them (only forced, or weighted by a climate mod); `GetCurrentWeather` reports the base type.
+`--weather`, level files, the C key (after the ten) and BRP `set weather` take any preset name or record id
+(`mw_environment_bevy::weather::parse_weather`; a mod preset by its id, e.g. `my_mod/heatwave`).
+
+| Preset | Base | Patched | Source |
+|---|---|---|---|
+| Windy (dry gale) | Cloudy | wind 16-20 m/s at 10 m, gustiness 0.4, gust cells 120 m, clouds 60 m/s, drying 0.75/h | Beaufort 8 "gale" 17.2-20.7 m/s (WMO); open-terrain gust factor ~1.4; gust cell size and drying are `Guess` |
+
+Reuse and industry (rule 0): Bevy has no weather layer and no crate fits our records; shipped games carry more types
+than Morrowind's ten (Skyrim's WTHR forms: light and heavy rain and snow, regional fogs, the aurora; GTA V's
+`CLEARING`, `SMOG`, `SNOWLIGHT`; each with its own wind), and engines also drive wind apart from the weather type
+(UE's wind source, GTA's `SET_WIND_SPEED`); a separate wind override is a possible later slice.
+
 ### Precipitation kinds
 
 `mw_precip/rain`, `mw_precip/snow` (Bloodmoon) and `mw_precip/ash` (dark grey-brown dust, low fall
