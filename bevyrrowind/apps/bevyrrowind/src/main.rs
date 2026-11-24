@@ -98,6 +98,10 @@ enum Command {
         /// A guide of the same grid (dims, spacing, origin) whose heights replace the plain scale.
         #[arg(long)]
         heights: Option<PathBuf>,
+        /// A height transfer curve params file (e.g. `bevyrrowind/worldgen/x10-heights.toml`) applied after the
+        /// scale: low land by the water, high ground and the deep sea unchanged. Not with `--heights`.
+        #[arg(long, conflicts_with = "heights")]
+        height_curve: Option<PathBuf>,
         /// Horizontal and vertical scale.
         #[arg(long, default_value_t = 10.0)]
         scale: f64,
@@ -124,6 +128,83 @@ enum Command {
         /// Output folder (created).
         #[arg(long)]
         out: PathBuf,
+    },
+    /// Settlements S1 (scrib-worldgen `docs/research/settlements-m2-placement-2026-11-24.md` 5a): the kit catalogue
+    /// (`kit.json` format 1) of one or more named settlement anchors merged into one kit in one art style: per
+    /// exterior model its ground hull, rectangle, height, base offset, reference count and its buildings' doors in
+    /// the model's frame; kinds and style from `data/worldgen-kit.toml`. Prints kept/dropped counts per anchor, front
+    /// and depth histograms per kind and the door counts. Derived from your own data: keep the output out of git.
+    WorldgenKit {
+        /// Anchor name (e.g. `Balmora`), as `worldgen-site` finds it; repeat for one merged kit
+        /// (`--anchor Balmora --anchor Suran`).
+        #[arg(long, required = true)]
+        anchor: Vec<String>,
+        /// Scale the anchors are clustered at (default: the declared `site.anchor_scale`).
+        #[arg(long)]
+        anchor_scale: Option<f64>,
+        /// Output folder (created).
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Settlements S3a (`mw_worldgen::town`): the settlement tool's `placements.json` as a native mod folder, one
+    /// `sf.placement_group` record of the town in the exterior worldspace (bases from the kit's `base:` tags,
+    /// resolved against your content; the flora frame conversion). Derived from your own data: keep it out of git.
+    WorldgenTown {
+        /// The tool's `placements.json`.
+        #[arg(long)]
+        placements: PathBuf,
+        /// The folder of the `kit.json` the placements name (e.g. `target/worldgen/kit/balmora`).
+        #[arg(long)]
+        kit: PathBuf,
+        /// The mod folder (created; e.g. `target/worldgen/mods/balmora2-medina`).
+        #[arg(long)]
+        out: PathBuf,
+        /// Mod id (default: the folder's name).
+        #[arg(long)]
+        id: Option<String>,
+        /// The tool's `streets.json` (road network v1, guide frame): copied into the mod as
+        /// `data/worldgen/roads/<mod id>.json`, drawn with the guide's roads.
+        #[arg(long)]
+        streets: Option<PathBuf>,
+        /// Temporary scaffold (owner 2026-11-24): trees and shrubs on the placements' garden features, species and
+        /// spacing from this table (e.g. `bevyrrowind/worldgen/town-gardens.toml`; `mw_worldgen::garden`). Needs
+        /// `--guide`.
+        #[arg(long)]
+        gardens: Option<PathBuf>,
+        /// Scaffold switch: no garden plants, whatever `--gardens` says.
+        #[arg(long)]
+        no_gardens: bool,
+        /// The guide folder whose ground the garden plants stand on (e.g. `target/worldgen/x10s-b2w`).
+        #[arg(long)]
+        guide: Option<PathBuf>,
+    },
+    /// Settlements S2: a guide folder derived from another (`mw_worldgen::derive`): copies `--guide` to `--out`,
+    /// drops the named anchors (and their " 2", " 3", ... duplicates) with their stamps' weights set to 0 (stamp
+    /// indices kept), appends the stamps of each `--add-stamp` folder (refused where they overlap one at weight >
+    /// 0), and writes `derive.json`. No game data is read.
+    WorldgenDerive {
+        /// The source guide folder (e.g. `target/worldgen/x10s`).
+        #[arg(long)]
+        guide: PathBuf,
+        /// Output folder (absent or empty; never the guide).
+        #[arg(long)]
+        out: PathBuf,
+        /// Anchor name to drop (repeatable), as in `anchors-census.md`.
+        #[arg(long = "drop-anchor")]
+        drop_anchor: Vec<String>,
+        /// A folder with `stamps.json` + `stamps.f32` (format v1) to append (repeatable).
+        #[arg(long = "add-stamp")]
+        add_stamp: Vec<PathBuf>,
+        /// SP-1b: a `worldgen-site` folder; runs the valley-terrace operator around its centre on the derived guide,
+        /// clips it off the existing stamps and appends it, writing `valley.json` (spec `site-prep.md`).
+        #[arg(long)]
+        valley: Option<PathBuf>,
+        /// `--valley` extent radius, metres (default: tunable `derive.valley_reach_m`, 600 m).
+        #[arg(long, requires = "valley")]
+        valley_reach_m: Option<f64>,
+        /// `--valley` town core radius, metres (default: the `derive.valley_core_m` tunable).
+        #[arg(long, requires = "valley")]
+        valley_core_m: Option<f64>,
     },
     /// Worldgen WG-X3 (`docs/specs/worldgen-adapter.md` "Same map at 10x" step 5): Morrowind's ground textures for
     /// a `worldgen-x10` guide (`layers.json` + `layers.u16`): the source `VTEX` grid scaled outside settlements and
@@ -866,6 +947,27 @@ fn run(cli: Cli) -> Result {
             let arms = mw_viewers_bevy::worldgen_view::arms::parse(&dirs)?;
             return if mw_viewers_bevy::worldgen_view::run(arms, settings) { Ok(()) } else { Err("worldgen-view failed".into()) };
         }
+        Command::WorldgenDerive { guide, out, drop_anchor, add_stamp, valley, valley_reach_m, valley_core_m } => {
+            let started = std::time::Instant::now();
+            let stamp_samples_max = mw_worldgen::anchor::Params::default().stamp_samples_max;
+            let valley = valley.map(|site| mw_worldgen::derive::ValleyArgs {
+                site,
+                reach_m: valley_reach_m,
+                core_m: valley_core_m,
+            });
+            let args = mw_worldgen::derive::DeriveArgs {
+                guide,
+                out,
+                drop_anchors: drop_anchor,
+                add_stamps: add_stamp,
+                stamp_samples_max,
+                valley,
+                sharp_scale: mw_exterior_bevy::worldgen::WORLDGEN_SHARP.default_value(),
+            };
+            print!("{}", mw_worldgen::derive::run(&args)?);
+            println!("worldgen-derive: {:.1} s total", started.elapsed().as_secs_f64());
+            return Ok(());
+        }
         other => other,
     };
     let (install, origin) = MorrowindInstall::detect(cli.morrowind.as_deref())?;
@@ -875,7 +977,8 @@ fn run(cli: Cli) -> Result {
         | Command::Perf { .. }
         | Command::Scene { .. }
         | Command::Tunables { .. }
-        | Command::WorldgenView { .. } => {
+        | Command::WorldgenView { .. }
+        | Command::WorldgenDerive { .. } => {
             unreachable!()
         }
         Command::Info { conflicts } => info(&install, &origin, conflicts),
@@ -906,7 +1009,7 @@ fn run(cli: Cli) -> Result {
             println!("worldgen-dump: {:.1} s total", started.elapsed().as_secs_f64());
             Ok(())
         }
-        Command::WorldgenX10 { out, heights, scale } => {
+        Command::WorldgenX10 { out, heights, height_curve, scale } => {
             let started = std::time::Instant::now();
             let (vfs, content) = load(&install, false)?;
             // Model bounds on demand (classification of rocks, member radii), cached per model.
@@ -923,7 +1026,8 @@ fn run(cli: Cli) -> Result {
                 cache.borrow_mut().insert(model.to_owned(), b);
                 b
             };
-            let args = mw_worldgen::x10::X10Args { out, heights, scale, params: mw_worldgen::anchor::Params::default() };
+            let params = mw_worldgen::anchor::Params::default();
+            let args = mw_worldgen::x10::X10Args { out, heights, height_curve, scale, params };
             print!("{}", mw_worldgen::x10::run(&content.db, &bounds, &args)?);
             println!("worldgen-x10: {:.1} s total", started.elapsed().as_secs_f64());
             Ok(())
@@ -982,6 +1086,55 @@ fn run(cli: Cli) -> Result {
             let args = mw_worldgen::site::SiteArgs { anchor, out, params, table, sharp_scale: 0.0 };
             print!("{}", mw_worldgen::site::run(&content.db, &bounds, &points, &args)?);
             println!("worldgen-site: {:.1} s total", started.elapsed().as_secs_f64());
+            Ok(())
+        }
+        Command::WorldgenKit { anchor, anchor_scale, out } => {
+            let started = std::time::Instant::now();
+            let (vfs, content) = load(&install, false)?;
+            // Bounds for every exterior reference (the anchor lookup, as worldgen-site); the members' meshes.
+            let cache = std::cell::RefCell::new(std::collections::HashMap::<String, Option<([f32; 3], [f32; 3])>>::new());
+            let bounds = |name: &str| {
+                if let Some(b) = cache.borrow().get(name) {
+                    return *b;
+                }
+                let b = VfsPath::new(name)
+                    .ok()
+                    .and_then(|path| vfs.read(&path).ok())
+                    .and_then(|bytes| mw_nif::load(&bytes).ok())
+                    .and_then(|m| mw_nif::visible_bounds(&m));
+                cache.borrow_mut().insert(name.to_owned(), b);
+                b
+            };
+            let meshes = |name: &str| {
+                let bytes = VfsPath::new(name).ok().and_then(|path| vfs.read(&path).ok())?;
+                let m = mw_nif::load(&bytes).ok()?;
+                let world = mw_nif::world_transforms(&m);
+                let mut points = Vec::new();
+                for (node, transform) in m.nodes.iter().zip(&world) {
+                    if let (true, Some(mesh)) = (node.visible, node.mesh) {
+                        points.extend(m.meshes[mesh].positions.iter().map(|p| transform.transform_point3((*p).into()).to_array()));
+                    }
+                }
+                Some(mw_worldgen::kit::KitMesh { points, blake3: mw_worldgen::kit::hash(&bytes) })
+            };
+            let mut site = mw_worldgen::site::SiteParams::default();
+            if let Some(s) = anchor_scale {
+                site.anchor_scale = s;
+            }
+            let table = mw_worldgen::kit::KitTable::builtin()?;
+            let params = mw_worldgen::kit::KitParams::default();
+            let args = mw_worldgen::kit::KitArgs { anchors: anchor, out, site, params, table };
+            print!("{}", mw_worldgen::kit::run(&content.db, &bounds, &meshes, &args)?);
+            println!("worldgen-kit: {:.1} s total", started.elapsed().as_secs_f64());
+            Ok(())
+        }
+        Command::WorldgenTown { placements, kit, out, id, streets, gardens, no_gardens, guide } => {
+            let started = std::time::Instant::now();
+            let (_, content) = load(&install, false)?;
+            let gardens = if no_gardens { None } else { gardens };
+            let args = mw_worldgen::town::TownArgs { placements, kit, out, id, streets, gardens, guide };
+            print!("{}", mw_worldgen::town::run(&args, |id| mw_world::source::resolve_base(&content.db, id))?);
+            println!("worldgen-town: {:.1} s total", started.elapsed().as_secs_f64());
             Ok(())
         }
         Command::WorldgenLayers { guide } => {

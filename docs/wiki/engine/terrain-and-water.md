@@ -37,7 +37,7 @@ GPU (`sf_terrain_bevy/src/gpu_fill.rs`, `sf_worldgen/src/tiles.wgsl`), CDLOD bou
 evaluating heights, and a CPU twin (2 threads, `terrain.twin.*`) feeds `TerrainHeightsMap` near the camera. `--off
 gputerrain` = CPU tiles for every level. A world folder may carry `filter.toml` (`tiles::world_filter`, only the
 `steep_fade*` values, LF-2b): the gully amplitude fades out on base slopes 40-50 deg (no dents in rock faces); without
-the file it is off, so `x10s` fills bit for bit as before.
+the file it is off, so `x10s` fills bit for bit as before. A guide folder may also carry `water.json` (lakes + rivers from scrib-worldgen `worldgen-water`, Magna Urbis water chain; reader `sf_worldgen::water`), spawned by `mw_environment_bevy::worldgen_water` as `WaterMeshSurface`s (switch `water.guide.bodies`), and `roads.json` (`worldgen-roads`; reader + draped ribbon chunks `sf_worldgen::roads`), spawned by `mw_exterior_bevy::worldgen_roads` with a road LTEX texture, plus any road network a loaded mod carries under `worldgen/roads/*.json` (a town's streets, `worldgen-town --streets`) (`--off roads`, `worldgen.road_depth_bias`, `worldgen.road_opacity`).
 
 **Far shadow map** (`far_map.rs`): `far_shadow_map` (`sf_terrain/src/shadow.rs`, march 40 steps, reach 6000 m) over
 `FAR_MAP_SIZE` 384 texels, computed on the async pool and uploaded as a texture; far proxies and impostors read it (one
@@ -54,7 +54,7 @@ sky, aerial perspective, clouds and fog run after it by its depth, W-ORDER), the
 keyed by source height above the plane); the water draw swaps the environment-map specular for it where it hits
 (`water_material.wesl` `sspr_sample`, `environment_specular`). `WaterReflections` (on, `wave_distortion` 0.6);
 `WaterQuality::sspr_scale` Low off, Medium ½, High/Ultra full. Reflections are unfogged (fog is applied over the water after). `WaterQuery::sample`
-(`query.rs:294`). Shore: `ShoreField::bake` (`shore.rs`) runs on a thread at startup, not in the bake store
+(`query.rs:294`). **Mesh bodies** (`WaterMeshSurface { mesh, chop, look }`, `WATER_MESH` shader def): a host-supplied mesh (lake polygon at its level, sloped river ribbon; builders `sf_water::body_mesh`, spade CDT) drawn with the same material, flat (chop ripples only), Aabb-culled, counted by the visibility gate and SSPR plane (box mid height); `ATTRIBUTE_WATER_FLOW` carried, not yet shaded; no motion-vector redraw, underwater medium or shore foam for them yet. Shore: `ShoreField::bake` (`shore.rs`) runs on a thread at startup, not in the bake store
 (`mw_environment_bevy/src/water.rs:172-182`), then attenuates swell and foam. At the shore the displacement settles but the
 shading normal keeps the chop's wind wavelets at `ShoreSettings::normal_floor` (0.5; `shore_normal_scales`, W-SHORE). Where the
 FFT swell fades, `sf_water::ShoreWaves` (`shore_waves.rs`; GPU `water_common.wesl` `shore_waves`, in the draw, the velocity redraw

@@ -105,7 +105,7 @@ fn compile(module: &str, defs: &[&str]) -> Result<String, String> {
 #[test]
 fn water_shaders_compile() {
     let mut failures = Vec::new();
-    let jobs: [(&str, &[&str]); 14] = [
+    let jobs: [(&str, &[&str]); 16] = [
         ("sf_water_bevy::shaders::water_gate", &[]),
         ("sf_water_bevy::shaders::water_fft", &[]),
         ("sf_water_bevy::shaders::water_mips", &[]),
@@ -116,6 +116,8 @@ fn water_shaders_compile() {
         ("sf_water_bevy::shaders::water_sspr", &[]),
         ("sf_water_bevy::shaders::water_material", &[]),
         ("sf_water_bevy::shaders::water_material", &["ENVIRONMENT_MAP"]),
+        ("sf_water_bevy::shaders::water_material", &["WATER_MESH"]),
+        ("sf_water_bevy::shaders::water_material", &["WATER_MESH", "WATER_FLOW", "ENVIRONMENT_MAP"]),
         ("sf_water_bevy::shaders::water_underwater", &[]),
         ("sf_water_bevy::shaders::water_underwater", &["MULTISAMPLED"]),
         ("sf_water_bevy::shaders::water_underwater", &["DUAL_SOURCE_BLENDING"]),
@@ -166,6 +168,89 @@ fn water_params_layout() {
         _ => None,
     });
     assert_eq!(span, Some(crate::WaterParams::min_size().get()), "WaterParams layout");
+}
+
+/// Mesh bodies (`WaterMeshSurface`): the water draw links on the `WATER_MESH` path (the def the
+/// pipeline key pushes) with and without an environment map; that vertex stage places the host's
+/// vertices through the mesh transform (`get_world_from_local` of the instance) and never the
+/// clipmap, while the default path keeps the clipmap and no mesh transform; both share the uniform.
+#[test]
+fn mesh_body_path_links_and_skips_the_clipmap() {
+    use bevy_render::render_resource::ShaderType;
+    let def = crate::material::WATER_MESH_DEF;
+    for defs in [&[def][..], &[def, "ENVIRONMENT_MAP"][..]] {
+        compile("sf_water_bevy::shaders::water_material", defs).unwrap_or_else(|e| panic!("{e}"));
+    }
+    let mesh = compile("sf_water_bevy::shaders::water_material", &[def]).expect("compiles");
+    let clipmap = compile("sf_water_bevy::shaders::water_material", &[]).expect("compiles");
+    assert!(mesh.contains("get_world_from_local") && mesh.contains("instance_index"), "the mesh path ignores the entity's transform");
+    assert!(!mesh.contains("clipmap_xz") && !mesh.contains("fn displaced"), "the mesh path still places or displaces the clipmap");
+    assert!(clipmap.contains("clipmap_xz") && !clipmap.contains("get_world_from_local"), "the default path changed");
+    let module = naga::front::wgsl::parse_str(&mesh).expect("parses");
+    assert!(module.entry_points.iter().any(|e| e.name == "vertex") && module.entry_points.iter().any(|e| e.name == "fragment"));
+    let span = module.types.iter().find_map(|(_, ty)| match &ty.inner {
+        naga::TypeInner::Struct { members, span } if members.iter().any(|m| m.name.as_deref() == Some("reflection")) => Some(u64::from(*span)),
+        _ => None,
+    });
+    assert_eq!(span, Some(crate::WaterParams::min_size().get()), "WaterParams layout on the mesh path");
+    let src = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/water_material.wesl")).expect("source");
+    assert!(src.contains(&format!("@if({def})")) && src.contains(&format!("@if(!{def})")), "the shader's def is not the key's");
+}
+
+/// River flow (`flow.rs`): the water draw links on the flowing mesh path (`WATER_MESH` +
+/// `WATER_FLOW`, as `material::specialize_water` pushes them) with and without an environment map;
+/// its vertex stage reads the flow at the Rust side's `FLOW_LOCATION` and passes it on; the
+/// fragment samples the slopes at two advected phases (`flow_phases`, the twin's formula) and adds
+/// speed foam. Without `WATER_FLOW` (lakes, the clipmap) none of it is linked; the uniform layout holds.
+#[test]
+fn flow_path_links_reads_the_attribute_and_leaves_still_water_alone() {
+    use bevy_render::render_resource::ShaderType;
+    let (mesh_def, flow_def) = (crate::material::WATER_MESH_DEF, crate::material::WATER_FLOW_DEF);
+    for defs in [&[mesh_def, flow_def][..], &[mesh_def, flow_def, "ENVIRONMENT_MAP"][..]] {
+        compile("sf_water_bevy::shaders::water_material", defs).unwrap_or_else(|e| panic!("{e}"));
+    }
+    let river = compile("sf_water_bevy::shaders::water_material", &[mesh_def, flow_def]).expect("compiles");
+    let lake = compile("sf_water_bevy::shaders::water_material", &[mesh_def]).expect("compiles");
+    let ocean = compile("sf_water_bevy::shaders::water_material", &[]).expect("compiles");
+    for name in ["flow_phases", "water.flow.", "water.flow2.", "water.flow3.", "sw_noise"] {
+        assert!(river.contains(name), "no {name} on the river path");
+    }
+    for (path, wgsl) in [("lake", &lake), ("ocean", &ocean)] {
+        assert!(!wgsl.contains("flow_phases") && !wgsl.contains("water.flow"), "the {path} path reads the flow");
+    }
+    let module = naga::front::wgsl::parse_str(&river).expect("parses");
+    let location = |stage: naga::ShaderStage, member: &str, output: bool| -> Option<u32> {
+        let entry = module.entry_points.iter().find(|e| e.stage == stage)?;
+        let ty = if output { entry.function.result.as_ref()?.ty } else { entry.function.arguments.first()?.ty };
+        match &module.types[ty].inner {
+            naga::TypeInner::Struct { members, .. } => members.iter().find(|m| m.name.as_deref() == Some(member)).and_then(|m| match m.binding {
+                Some(naga::Binding::Location { location, .. }) => Some(location),
+                _ => None,
+            }),
+            _ => None,
+        }
+    };
+    assert_eq!(location(naga::ShaderStage::Vertex, "flow", false), Some(crate::material::FLOW_LOCATION), "the flow attribute's location");
+    assert!(location(naga::ShaderStage::Vertex, "flow", true).is_some(), "the vertex stage does not pass the flow on");
+    assert!(location(naga::ShaderStage::Fragment, "flow", false).is_some(), "the fragment does not receive the flow");
+    let lake_module = naga::front::wgsl::parse_str(&lake).expect("parses");
+    let vertex = lake_module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Vertex).expect("vertex");
+    let ty = vertex.function.arguments.first().expect("vertex input").ty;
+    let naga::TypeInner::Struct { members, .. } = &lake_module.types[ty].inner else { panic!("vertex input is a struct") };
+    assert_eq!(members.len(), 1, "a still mesh's vertex reads more than its position");
+    let span = module.types.iter().find_map(|(_, ty)| match &ty.inner {
+        naga::TypeInner::Struct { members, span } if members.iter().any(|m| m.name.as_deref() == Some("reflection")) => Some(u64::from(*span)),
+        _ => None,
+    });
+    assert_eq!(span, Some(crate::WaterParams::min_size().get()), "WaterParams layout on the river path");
+    let src = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/water_material.wesl")).expect("source");
+    // The twin's formula (`flow::phases`), and the still path's single tap at the point.
+    assert!(src.contains("let b = fract(t + 0.5);") && src.contains("return vec4(a, b, 1.0 - abs(1.0 - 2.0 * a), 1.0 - abs(1.0 - 2.0 * b));"), "flow_phases is not the twin's");
+    assert!(src.contains("var taps = 1u;") && src.contains("var weights = vec2(1.0, 0.0);"), "still water no longer reads once at the point");
+    assert!(src.contains(&format!("@location({}) flow: vec2<f32>", crate::material::FLOW_LOCATION)), "the attribute's location is not FLOW_LOCATION");
+    let advect = src.find("for (var k = 0u; k < taps; k++)").expect("the advected taps");
+    let normal = src.find("var N = normalize(").expect("normal");
+    assert!(advect < normal, "the advected slopes must build the normal");
 }
 
 /// W-GERSTNER: the shore waves displace the water draw and its motion vectors alike (or DLSS/TAA

@@ -8,3 +8,4 @@ pub mod render;
 pub mod shadow_tunables;
 pub mod water;
 pub mod weather;
+pub mod worldgen_water;

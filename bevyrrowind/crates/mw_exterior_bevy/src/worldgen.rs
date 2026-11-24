@@ -93,6 +93,8 @@ pub struct WorldgenSetup {
     pub rebuild: Arc<dyn Fn(u32, f32) -> WorldgenTiles + Send + Sync>,
     /// What streams in the exterior; `None`: nothing (the bare generated land).
     pub content: Option<WorldgenContent>,
+    /// The guide's road ribbons (GR-1b, [`crate::worldgen_roads`]); `None`: no roads (`--off roads`).
+    pub roads: Option<crate::worldgen_roads::WorldgenRoads>,
 }
 
 /// The exterior's placements in a generated world, already at their final places (engine frame).
@@ -242,6 +244,7 @@ pub(crate) fn add(app: &mut App, ext: &WorldspaceId, setup: &WorldgenSetup, stor
     let _on = app.add_tunable(&WORLDGEN_FILTER).bind_resource(|f: &mut LiveFilter, v| f.on = v);
     let _octaves = app.add_tunable(&WORLDGEN_OCTAVES).bind_resource(|f: &mut LiveFilter, v| f.octaves = v);
     let _sharp = app.add_tunable(&WORLDGEN_SHARP).bind_resource(|f: &mut LiveFilter, v| f.sharp = v);
+    crate::worldgen_roads::add(app, ext, setup.roads.as_ref());
 }
 
 /// A live filter change rebuilds the provider (the guide is shared) and swaps the terrain world: the clipmaps

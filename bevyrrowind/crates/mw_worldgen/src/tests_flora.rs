@@ -170,6 +170,7 @@ fn scatter_on_the_ten_times_guide_and_its_placements() {
         region_names: vec![String::new(), "Test Region".into()],
         scale: 10.0,
         stamped: false,
+        towns: flora::towns::TownCensus::default(),
         seconds: [0.0; 4],
     };
     let placements = flora::placements(&run);
@@ -187,4 +188,85 @@ fn scatter_on_the_ten_times_guide_and_its_placements() {
     }
     let md = flora::census_md(&run, std::path::Path::new("fixture"), 4);
     assert!(md.contains("## Test Region") && md.contains("flora_a") && md.contains("terrain_rock_b"), "{md}");
+}
+
+/// A walled square of 100 m on the fixture's flat (four 100 m walls) and one placement without bounds: the scatter
+/// keeps out of the walls, their apron and the enclosed yard, and is the same everywhere else.
+#[test]
+fn scatter_keeps_out_of_a_guide_town() {
+    use flora::towns::{TownMask, TownParams, WithTowns, footprint};
+    use glam::{DVec3, Quat};
+    use sf_coords::{WorldPos, WorldTransform};
+    use sf_world::{Placement, PlacementId};
+
+    let m = mosaic();
+    let regions = regions();
+    let prm = Params { tile_m: 128.0, census_step_m: 8.0, ..Params::default() };
+    let learned = flora::learn(&m, &regions, &fixture_refs(&m), &prm, 0.0);
+    let t = tiles(&m);
+    let g = t.guide();
+    let world = World {
+        guide: Grid { w: g.w, h: g.h, origin: g.origin_m, spacing: g.spacing_m, data: &g.heights },
+        source: &m,
+        regions: &regions,
+        tiles: &t,
+    };
+    let rect = [g.origin_m[0], g.origin_m[1] - 64.0 * g.spacing_m, g.origin_m[0] + 64.0 * g.spacing_m, g.origin_m[1]];
+    let area = sf_worldgen::scatter::area_census(&world, &prm, rect, regions.legend.len());
+    let expected = sf_worldgen::scatter::expected(&learned.table, &prm, &area);
+    let keep = sf_worldgen::scatter::budget_keep(&learned.table, &prm, &expected);
+    let scatter = Scatter::new(&learned.table, keep, prm);
+    let before = scatter.run(&world, rect);
+
+    // The square's centre on the flat (cols 5..=31), guide frame; walls 100 x 2 m, engine axes (x long, y up, z thin).
+    let (cx, cy) = (g.origin_m[0] + 18.0 * g.spacing_m, g.origin_m[1] - 32.0 * g.spacing_m);
+    let wall = |key: &str, x: f64, y: f64, yaw: f32| Placement {
+        id: PlacementId::from_key("test.town", key.as_bytes()),
+        base: RecordRef::new("STAT", "wall"),
+        model: sf_vfs::VfsPath::new(if key == "lamp" { "meshes/x/lamp.nif" } else { "meshes/x/wall.nif" }).ok(),
+        transform: WorldTransform {
+            pos: WorldPos::from_f64(DVec3::new(x, 5.0, -y)),
+            rotation: Quat::from_rotation_y(yaw),
+            scale: Vec3::ONE,
+        },
+        class: PlacementClass::Static,
+        flags: PlacementFlags::empty(),
+    };
+    let q = std::f32::consts::FRAC_PI_2;
+    let town = vec![
+        wall("n", cx, cy + 50.0, 0.0),
+        wall("s", cx, cy - 50.0, 0.0),
+        wall("e", cx + 50.0, cy, q),
+        wall("w", cx - 50.0, cy, -q),
+        wall("lamp", cx + 120.0, cy, 0.0),
+    ];
+    let bounds = |model: &str| (model == "meshes/x/wall.nif").then_some(([-50.0, 0.0, -1.0], [50.0, 5.0, 1.0]));
+    let tp = TownParams::default();
+    let mask = TownMask::new(&[town.as_slice()], &bounds, &tp);
+    assert_eq!((mask.census.towns, mask.census.footprints, mask.census.unbounded), (1, 5, 1));
+    // The walls' rectangles: east and west turned to run north-south.
+    let fps: Vec<_> = town.iter().map(|p| footprint(p, &bounds).0).collect();
+    assert!((fps[2].distance(cx + 50.0, cy + 49.0)).abs() < 1e-6 && fps[2].distance(cx + 52.0, cy) > 0.9);
+    // The yard (50 m from every wall, past the closing radius) is town; open ground beyond the apron isn't.
+    assert!(mask.contains(cx, cy), "the enclosed yard is town");
+    assert!(mask.contains(cx + 120.0 + tp.margin_m * 0.9, cy), "the lamp's apron is town");
+    assert!(!mask.contains(cx - 50.0 - 2.0 * tp.margin_m - 3.0, cy), "open ground west of the wall");
+
+    let with = WithTowns::new(&world, &mask);
+    let after = scatter.run(&with, rect);
+    let excluded = with.take_hits();
+    for i in &after {
+        let d = fps.iter().map(|f| f.distance(i.pos[0], i.pos[1])).fold(f64::INFINITY, f64::min);
+        assert!(d > tp.margin_m, "{i:?} {d:.2} m from the town");
+        let inside = (i.pos[0] - cx).abs() < 50.0 && (i.pos[1] - cy).abs() < 50.0;
+        assert!(!inside, "{i:?} in the yard");
+    }
+    // Elsewhere the same instances, in the same order: only the town's are gone, and the count says how many.
+    let kept: Vec<_> = before.iter().filter(|i| !mask.contains(i.pos[0], i.pos[1])).copied().collect();
+    assert_eq!(after, kept);
+    assert_eq!(excluded, before.len() - after.len());
+    assert!(excluded >= 5, "the town held {excluded} of {} instances", before.len());
+    // No town: the same instances as the plain terrain.
+    let none = TownMask::default();
+    assert_eq!(scatter.run(&WithTowns::new(&world, &none), rect), before);
 }

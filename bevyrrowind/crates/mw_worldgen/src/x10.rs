@@ -1,8 +1,9 @@
 //! `worldgen-x10`: the same map at 10× as a complete guide folder (spec `worldgen-adapter.md` "Same map at 10×
 //! (WG-X)", steps 1, 3, 4; WG-X2).
 //!
-//! Writes `heights.f32` + `meta.json` (guide v1; the dump's heights × S, spacing × S, origin × S, or a reshaped
-//! guide of the same grid given by `--heights`), `regions.png`/`regions.json`, `markers.json` (source metres, as
+//! Writes `heights.f32` + `meta.json` (guide v1; the dump's heights × S, spacing × S, origin × S, the heights then
+//! optionally through a sea-level-anchored transfer curve (`--height-curve`, [`sf_worldgen::height_curve`]), or a
+//! reshaped guide of the same grid given by `--heights`), `regions.png`/`regions.json`, `markers.json` (source metres, as
 //! the dump writes it), `stamps.json`/`stamps.f32` (`sf_worldgen::stamps`), `anchors.json`
 //! (`sf_worldgen::anchors`) and `anchors-census.md`.
 
@@ -26,6 +27,7 @@ use mw_world::{MwWorldSource, SourceOptions};
 use serde::Serialize;
 use sf_records::RecordDb;
 use sf_worldgen::anchors::AnchorTransform;
+use sf_worldgen::height_curve::HeightCurve;
 use sf_worldgen::stamps::StampSet;
 
 use crate::anchor::{self, Built, Field, Member, Params};
@@ -41,8 +43,17 @@ pub struct X10Args {
     pub out: PathBuf,
     /// A guide of the same grid (dims, spacing, origin) whose heights replace the plain scale.
     pub heights: Option<PathBuf>,
+    /// A height transfer curve params file applied after the scale (not with `heights`).
+    pub height_curve: Option<PathBuf>,
     pub scale: f64,
     pub params: Params,
+}
+
+/// The height curve a guide went through (`meta.json`).
+#[derive(Clone, Debug, Serialize)]
+pub struct CurveMeta {
+    pub file: String,
+    pub curve: HeightCurve,
 }
 
 /// `meta.json` of the scaled guide (guide v1 keys + provenance).
@@ -62,12 +73,26 @@ pub struct X10Meta {
     pub heights_blake3: String,
     /// The guide whose heights were taken (`--heights`), if any.
     pub heights_from: Option<String>,
+    /// The height transfer curve applied after the scale (`--height-curve`), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height_curve: Option<CurveMeta>,
     pub anchors: usize,
 }
 
 /// The source mosaic's heights × S (f32, rounded once; equals an f32 multiply since the f64 product is exact).
 pub fn scale_heights(heights: &[f32], scale: f64) -> Vec<f32> {
     heights.iter().map(|&h| (f64::from(h) * scale) as f32).collect()
+}
+
+/// One scaled height through the curve, about the guide's sea level ([`anchor::SEA_LEVEL_M`]).
+pub fn curve_height(h: f32, scale: f64, curve: &HeightCurve) -> f32 {
+    let sea = anchor::SEA_LEVEL_M as f32;
+    curve.apply_f32((f64::from(h) * scale) as f32 - sea) + sea
+}
+
+/// [`scale_heights`], then each height through the curve ([`curve_height`]).
+pub fn curve_heights(heights: &[f32], scale: f64, curve: &HeightCurve) -> Vec<f32> {
+    heights.iter().map(|&h| curve_height(h, scale, curve)).collect()
 }
 
 fn le_bytes(h: &[f32]) -> Vec<u8> {
@@ -256,7 +281,11 @@ fn references_md(s: &mut String, args: &X10Args, refs: usize, census: &ClassCens
         "scale {}, heights from {}; link gap {} m, margin {} m, band {} x R in [{}, {}] m, point anchors <= {} \
          members or R < {} m, default radius {} m, max radius {} m, rock min {} m\n",
         args.scale,
-        args.heights.as_ref().map_or_else(|| "the plain scale".to_owned(), |h| h.display().to_string()),
+        match (&args.heights, &args.height_curve) {
+            (Some(h), _) => h.display().to_string(),
+            (None, Some(c)) => format!("the plain scale through the height curve {}", c.display()),
+            (None, None) => "the plain scale".to_owned(),
+        },
         p.link_gap_m,
         p.margin_m,
         p.band_k,
@@ -465,9 +494,24 @@ pub fn run(db: &RecordDb, bounds: Bounds<'_>, args: &X10Args) -> Result<String, 
     let sp = f64::from(mw_world::terrain::VERTEX_UNITS) * UNIT_METERS_F64;
     let dims = [m.width, m.height];
     let origin = [src_origin[0] * s, src_origin[1] * s];
-    let final_heights = match &args.heights {
-        Some(dir) => read_heights(dir, dims, sp * s, origin)?,
-        None => scale_heights(&m.heights, s),
+    let curve = match (&args.heights, &args.height_curve) {
+        (Some(_), Some(_)) => {
+            return Err(DumpError::Invalid(
+                "worldgen-x10: --heights and --height-curve exclude each other (--heights are final)".into(),
+            ));
+        }
+        (None, Some(path)) => {
+            let text = std::fs::read_to_string(path)?;
+            let c = HeightCurve::parse_toml(&text)
+                .map_err(|e| DumpError::Invalid(format!("{}: {e}", path.display())))?;
+            Some(CurveMeta { file: path.display().to_string(), curve: c })
+        }
+        _ => None,
+    };
+    let final_heights = match (&args.heights, &curve) {
+        (Some(dir), _) => read_heights(dir, dims, sp * s, origin)?,
+        (None, Some(c)) => curve_heights(&m.heights, s, &c.curve),
+        (None, None) => scale_heights(&m.heights, s),
     };
     std::fs::create_dir_all(&args.out)?;
     let raw = le_bytes(&final_heights);
@@ -506,7 +550,10 @@ pub fn run(db: &RecordDb, bounds: Bounds<'_>, args: &X10Args) -> Result<String, 
         dims,
         sample_spacing_m: sp * s,
         sea_level_m: anchor::SEA_LEVEL_M,
-        fill_m: f64::from((f64::from(fill_height()) * s) as f32),
+        fill_m: f64::from(curve.as_ref().map_or_else(
+            || (f64::from(fill_height()) * s) as f32,
+            |c| curve_height(fill_height(), s, &c.curve),
+        )),
         origin_m: origin,
         cell_size_m: crate::markers::cell_size_m() * s,
         producer: "bevyrrowind worldgen-x10 (mw_worldgen::x10, WG-X2)".into(),
@@ -514,6 +561,7 @@ pub fn run(db: &RecordDb, bounds: Bounds<'_>, args: &X10Args) -> Result<String, 
         source_heights_blake3: blake3::hash(&le_bytes(&m.heights)).to_hex().to_string(),
         heights_blake3,
         heights_from: args.heights.as_ref().map(|h| h.display().to_string()),
+        height_curve: curve,
         anchors: built.len(),
     };
     std::fs::write(args.out.join("meta.json"), serde_json::to_vec_pretty(&meta)?)?;

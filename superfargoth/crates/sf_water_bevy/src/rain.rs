@@ -98,7 +98,14 @@ mod tests {
         assert!((rain.y - 12.5).abs() < 1e-3, "the clock wraps: {}", rain.y);
         assert_eq!(rain.z, s.strength);
         assert!(fade.x < fade.y);
-        // The defaults are the puddles' (sf_surface::layer RIPPLE_TILT, RIPPLE_FADE_*).
-        assert_eq!((s.strength, s.fade_near_m, s.fade_far_m), (0.5, 0.02, 0.06));
+        // The defaults are the tunables' (tuned apart from the puddles' for storm water, WA-10 2026-11-17).
+        assert_eq!(
+            (s.strength, s.fade_near_m, s.fade_far_m),
+            (
+                WATER_RAIN_RIPPLE_STRENGTH.default_value(),
+                WATER_RAIN_RIPPLE_FADE_NEAR_M.default_value(),
+                WATER_RAIN_RIPPLE_FADE_FAR_M.default_value()
+            )
+        );
     }
 }

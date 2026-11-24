@@ -193,6 +193,7 @@ rows! {
     SelectGate "selectgate" Debug "Selection gates";
     GpuTerrain "gputerrain" World "GPU clipmap fill of a generated world";
     Groundcover "groundcover" Foliage "Groundcover";
+    Roads "roads" World "Road ribbons of a generated world";
 }
 
 /// The registered switch part `name` (or an alias) reports on: its mapped switch, else its

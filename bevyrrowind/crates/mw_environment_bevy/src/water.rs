@@ -99,9 +99,18 @@ pub struct WaterInputs {
     regions: Option<OpticsMap>,
     /// The cell bounds and `REGN` names, for the shore bake's openness-aware optics map (WA-10).
     cells: Option<CellRegions>,
+    /// A generated world's lakes and rivers (`worldgen_water`, GW-3).
+    guide: Option<sf_worldgen::water::GuideWater>,
 }
 
 impl WaterInputs {
+    /// A generated world's lakes and rivers (a guide's `water.json`), spawned as mesh bodies (`worldgen_water`).
+    #[must_use]
+    pub fn with_guide_water(mut self, guide: Option<sf_worldgen::water::GuideWater>) -> Self {
+        self.guide = guide;
+        self
+    }
+
     /// The wet mask from every `LAND` and the region map from the exterior cells (~0.1 s; nothing
     /// unless the FFT ocean is on).
     pub fn build(db: &RecordDb) -> Self {
@@ -119,7 +128,7 @@ impl WaterInputs {
         // No openness until the shore bake: swamp regions start with their open-water record.
         let map = mw_water::optics_map(bounds, |x, y| regions.get(&(x, y)).cloned(), |_, _| None, 0.0);
         info!("water: wet mask {}x{} ({} LAND cells), regions {}x{} in {:.2} s", mask.width, mask.height, lands.len(), map.width, map.height, t.elapsed().as_secs_f32());
-        Self { mask: Some(mask), regions: Some(map), cells: Some((bounds, regions)) }
+        Self { mask: Some(mask), regions: Some(map), cells: Some((bounds, regions)), guide: None }
     }
 }
 
@@ -174,6 +183,24 @@ fn bind_medium(app: &mut App) {
     let _band = app.add_tunable(&WATER_MEDIUM_HYSTERESIS_M).bind_resource(|m: &mut WaterMediumSettings, v| m.hysteresis_m = v);
     let _kd = app.add_tunable(&WATER_UNDERWATER_KD_SCALE).bind_resource(|m: &mut WaterMediumSettings, v| m.kd_scale = v);
     let _fill = app.add_tunable(&WATER_UNDERWATER_SKY_FILL).bind_resource(|m: &mut WaterMediumSettings, v| m.sky_fill = v);
+}
+
+/// River flow shading (`sf_water_bevy::flow`): `water.flow.*` live both ways into `WaterFlowSettings` (the
+/// advected normals and speed foam of meshes with a flow attribute, the generated world's rivers).
+pub(crate) fn bind_flow(app: &mut App) {
+    use sf_tunables_bevy::TunablesAppExt;
+    use sf_water_bevy::{
+        WaterFlowSettings as F, WATER_FLOW_ADVECT_SCALE, WATER_FLOW_CYCLE_S, WATER_FLOW_FOAM, WATER_FLOW_FOAM_FULL_MPS, WATER_FLOW_FOAM_START_MPS,
+        WATER_FLOW_NOISE_CELL_M, WATER_FLOW_NORMAL_GAIN, WATER_FLOW_PHASE_NOISE,
+    };
+    let _cycle = app.add_tunable(&WATER_FLOW_CYCLE_S).bind_resource(|f: &mut F, v| f.cycle_s = v);
+    let _advect = app.add_tunable(&WATER_FLOW_ADVECT_SCALE).bind_resource(|f: &mut F, v| f.advect_scale = v);
+    let _noise = app.add_tunable(&WATER_FLOW_PHASE_NOISE).bind_resource(|f: &mut F, v| f.phase_noise = v);
+    let _cell = app.add_tunable(&WATER_FLOW_NOISE_CELL_M).bind_resource(|f: &mut F, v| f.noise_cell_m = v);
+    let _gain = app.add_tunable(&WATER_FLOW_NORMAL_GAIN).bind_resource(|f: &mut F, v| f.normal_gain = v);
+    let _start = app.add_tunable(&WATER_FLOW_FOAM_START_MPS).bind_resource(|f: &mut F, v| f.foam_start_mps = v);
+    let _full = app.add_tunable(&WATER_FLOW_FOAM_FULL_MPS).bind_resource(|f: &mut F, v| f.foam_full_mps = v);
+    let _foam = app.add_tunable(&WATER_FLOW_FOAM).bind_resource(|f: &mut F, v| f.foam = v);
 }
 
 /// `--off underwater` (U3): the camera's medium is still tracked, but the frame is drawn as above
@@ -285,9 +312,11 @@ pub fn add(
             .expect("spawn the shore bake thread");
         (handle, Instant::now())
     });
+    crate::worldgen_water::add(app, inputs.guide, look_of(crate::worldgen_water::LOOK));
     let tier = bind_quality(app);
     bind_gate(app);
     bind_medium(app);
+    bind_flow(app);
     app.add_plugins(WaterPlugin)
         .insert_resource(spectrum)
         .insert_resource(WaterWind { weather: None, sea })
@@ -420,7 +449,7 @@ fn spawn_ocean(mut commands: Commands, registry: Res<WorldspaceRegistry>, oceans
 /// free-standing, on the old registry's layers); the next world spawns its own.
 pub fn despawn_world(world: &mut World) {
     let surfaces: Vec<Entity> =
-        world.query_filtered::<Entity, Or<(With<OceanSurface>, With<WaterSurface>)>>().iter(world).collect();
+        world.query_filtered::<Entity, Or<(With<OceanSurface>, With<WaterSurface>, With<crate::worldgen_water::GuideWaterBody>)>>().iter(world).collect();
     for e in surfaces {
         world.despawn(e);
     }

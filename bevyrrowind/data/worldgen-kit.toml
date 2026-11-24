@@ -1,0 +1,78 @@
+# Kit kinds and art style for `bevyrrowind worldgen-kit` (S1, scrib-worldgen
+# `docs/research/settlements-m2-placement-2026-11-24.md` section 5a): each model of the anchors gets the `kind` of the
+# first rule below one of whose `patterns` is a substring of its lower-case model path (e.g.
+# `meshes/x/ex_hlaalu_b_01.nif`). A model matching no rule is `prop`. Doors (DOOR references) are not kit entries:
+# they become the doors of the buildings and towers.
+#
+# Style (K1, owner 2026-11-24 after Balmora 2.0: "just use the Balmora / Suran assets", one art style): a model is
+# kept only when a `keep` pattern matches it and no `drop` pattern does (drop wins). Hlaalu = the Hlaalu exterior
+# pieces (`ex_hlaalu_`), the common Dunmer ones (`ex_de_`: railings, docks), and the style-free dressing every Hlaalu
+# town carries (`furn_`, `light_`, `contain_`, `active_sign`, the strider port's `siltstrider`). Dropped: the Imperial
+# fort (`ex_imp_`: Fort Moonmoth's keep, guard tower, round tower segments and wall runs, which ended up in the town's
+# walls), the Velothi temple shells, Vivec's pieces, Gnisis' road marker and the rope bridge. The filter acts on kit
+# entries only: every reference still takes part in the door assignment, so a door of a dropped building is never
+# handed to a kept one; that is why the dropped styles' buildings keep their `building` rules below. No `[style]`
+# section keeps every model.
+#
+# Kinds (2026-11-24, vanilla Morrowind + Tribunal + Bloodmoon, the Hlaalu models of the anchors Balmora and Suran as
+# `worldgen-kit --anchor Balmora --anchor Suran` lists them by kind):
+# - prop, first (S1b): `ex_hlaalu_fb_01`, `ex_hlaalu_striderport_01` and `ex_velothi_temple_02` are doorless
+#   landmarks (no load door of their own in Balmora), not lot houses, so the settlement tool must not place them as
+#   houses.
+# - Order matters: "bridge", "canal", "steps"/"stair" and the gates ("gate", "arch") come before "wall", so
+#   `ex_hlaalu_wall_gate_01` is an arch.
+# - tower (K1, owner 2026-11-24): `ex_hlaalu_bal_01/02` are the Hlaalu towers (no `ex_hlaalu_tower*` mesh exists in
+#   the three games); before "building", which they used to be. They take doors like buildings.
+# - building: the whole-building Hlaalu prefabs `ex_hlaalu_b_NN`; of the dropped styles, Fort Moonmoth's keep and
+#   guard tower and the Velothi temple shells (only so their doors stay theirs: the style drops them from the kit).
+# - wall: Hlaalu wall runs, curves, ends and corners, railings, fences.
+# - lamp: lamp posts and every `light_*` mesh (street lights, lanterns, torches).
+# - Left as prop on purpose: buttresses, poles, window pieces (attached to a building's wall), signs, banners,
+#   containers, furniture, docks, the silt strider.
+[style]
+name = "hlaalu"
+keep = ["ex_hlaalu_", "ex_de_", "furn_", "/light_", "contain_", "active_sign", "siltstrider"]
+drop = ["ex_imp_", "ex_velothi_", "ex_vivec", "ex_gnisis", "ex_ropebridge"]
+
+[[kinds]]
+kind = "prop"
+patterns = ["ex_hlaalu_fb_01", "ex_hlaalu_striderport_01", "ex_velothi_temple_02"]
+
+[[kinds]]
+kind = "bridge"
+patterns = ["bridge"]
+
+[[kinds]]
+kind = "canal"
+patterns = ["canal"]
+
+[[kinds]]
+kind = "stairs"
+patterns = ["steps", "stair"]
+
+[[kinds]]
+kind = "arch"
+patterns = ["arch", "gate"]
+
+[[kinds]]
+kind = "tower"
+patterns = ["ex_hlaalu_bal_"]
+
+[[kinds]]
+kind = "building"
+patterns = [
+    "ex_hlaalu_b_",
+    "ex_hlaalu_fb_",
+    "striderport",
+    "ex_imp_keep",
+    "ex_imp_guardtower",
+    "ex_velothi_temple",
+]
+
+[[kinds]]
+kind = "wall"
+patterns = ["wall", "railing", "fence"]
+
+[[kinds]]
+kind = "lamp"
+patterns = ["lightpost", "/light_"]

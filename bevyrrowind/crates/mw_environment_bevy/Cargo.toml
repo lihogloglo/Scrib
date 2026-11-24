@@ -12,18 +12,20 @@ remote = ["dep:serde", "dep:schemars"]
 # `render.rs` warns when `--rt` runs without it; the app's `solari` turns it on.
 solari = []
 # DLSS: the project id before `DefaultPlugins` (`RenderSettings::init`); the app's `dlss` turns it on.
-dlss = ["dep:bevy_anti_alias", "bevy_anti_alias/dlss", "dep:bevy_asset"]
+dlss = ["dep:bevy_anti_alias", "bevy_anti_alias/dlss"]
 
 [dependencies]
 # Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
 bevy_anti_alias = { workspace = true, optional = true }
 bevy_app = { workspace = true, features = ["std"] }
-bevy_asset = { workspace = true, optional = true }
+# The generated world's lake and river meshes (`worldgen_water`); the `dlss` feature's project id too.
+bevy_asset.workspace = true
 bevy_camera.workspace = true
 bevy_color = { workspace = true, features = ["std"] }
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_light.workspace = true
 bevy_log.workspace = true
+bevy_mesh.workspace = true
 bevy_math = { workspace = true, features = ["std"] }
 bevy_pbr.workspace = true
 bevy_post_process.workspace = true
@@ -59,6 +61,8 @@ sf_water_bevy.workspace = true
 sf_weather.workspace = true
 sf_world.workspace = true
 sf_world_bevy.workspace = true
+# A guide's `water.json` (`worldgen_water`); Bevy-free, already in the app's graph.
+sf_worldgen.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
 

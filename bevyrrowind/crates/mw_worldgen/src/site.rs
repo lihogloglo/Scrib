@@ -28,6 +28,9 @@
 //! - `centre_m` ([`find_river`]): the river reach nearest the anchor's mapped centre (`anchors.json`
 //!   `world_centre_m`): the nearest wet sample of a water body of at least [`SiteParams::river_min_area_m2`] within
 //!   [`SiteParams::river_search_m`] (guide spacing), moved up the in-water distance to the channel's middle.
+//! - ST-2b, a derived guide (`worldgen-derive`, [`crate::derive`]): an anchor it dropped is found in `derive.json`
+//!   (its stamp is at weight 0 already); when that run built a valley stamp for the anchor's site, `centre_m` is the
+//!   valley's centre and no river is searched (the plan and the terraces share one centre).
 //! - `roads.u8`: 1 where the ground layer the game draws there ([`sf_worldgen::layers`]: the grid of the stamp of
 //!   weight over one half, else the global grid; the covering texel, no blend) is a road in `worldgen-site.toml`;
 //!   no file when the guide has no layers.
@@ -53,6 +56,7 @@ use sf_worldgen::tiles::GuideTiles;
 use mw_world::convert::UNIT_METERS_F64;
 use mw_world::{MwWorldSource, SourceOptions};
 use serde::{Deserialize, Serialize};
+use sf_coords::WorldTransform;
 use sf_records::{RecordDb, RecordId};
 use sf_worldgen::filter::Declared;
 use sf_worldgen::layers::NO_LAYER;
@@ -382,13 +386,48 @@ pub struct SiteArgs {
 }
 
 /// The named anchor as `worldgen-x10` builds it: its name, source-frame centre and member keys.
-struct Found {
-    name: String,
-    centre: [f64; 2],
-    keys: Vec<String>,
+pub(crate) struct Found {
+    pub(crate) name: String,
+    pub(crate) centre: [f64; 2],
+    pub(crate) keys: Vec<String>,
 }
 
-fn find_anchor(dumped: &Dump, src: &Field<'_>, members: &[Member], params: &SiteParams, query: &str) -> Result<Found, DumpError> {
+/// The exterior, its references and the named anchor (shared by `worldgen-site` and `worldgen-kit`).
+pub(crate) struct Anchored {
+    pub(crate) dumped: Dump,
+    pub(crate) source: MwWorldSource,
+    pub(crate) members: Vec<Member>,
+    pub(crate) found: Found,
+}
+
+/// The source `LAND` mosaic as a field (source metres, x east, y north).
+pub(crate) fn source_field(dumped: &Dump) -> Field<'_> {
+    let mosaic = &dumped.mosaic;
+    let sp = f64::from(mw_world::terrain::VERTEX_UNITS) * UNIT_METERS_F64;
+    Field { w: mosaic.width, h: mosaic.height, origin_m: x10::source_origin_m(mosaic), spacing_m: sp, data: &mosaic.heights }
+}
+
+/// Classifies the exterior's references and finds the anchor named `query` as `worldgen-x10` builds it.
+pub(crate) fn anchored(db: &RecordDb, bounds: Bounds<'_>, params: &SiteParams, query: &str) -> Result<Anchored, DumpError> {
+    let dumped = dump(db, 100.0)?;
+    let src = source_field(&dumped);
+    let sea = anchor::open_sea(&src, params.anchor.open_water_radius_m);
+    let source = MwWorldSource::build(db, &SourceOptions::default());
+    let refs = x10::exterior_refs(&source, bounds);
+    let (members, _) = x10::members_of(&refs, &src, &sea, &params.anchor);
+    let found = find_anchor(&dumped, &src, &members, params, query)?;
+    Ok(Anchored { dumped, source, members, found })
+}
+
+/// A model-space point (engine axes, metres) of a placement with transform `tf`, on the ground (source metres, x
+/// east, y north).
+pub(crate) fn to_ground(tf: &WorldTransform, v: Vec3) -> [f64; 2] {
+    let pos = tf.pos.to_f64();
+    let world = tf.rotation * (tf.scale * v);
+    [pos.x + f64::from(world.x), -(pos.z + f64::from(world.z))]
+}
+
+pub(crate) fn find_anchor(dumped: &Dump, src: &Field<'_>, members: &[Member], params: &SiteParams, query: &str) -> Result<Found, DumpError> {
     let s = params.anchor_scale;
     let scaled = x10::scale_heights(src.data, s);
     let fin = Field { origin_m: [src.origin_m[0] * s, src.origin_m[1] * s], spacing_m: src.spacing_m * s, data: &scaled, ..*src };
@@ -425,10 +464,7 @@ fn footprints_of(
             .and_then(|model| points(model.as_str()))
             .unwrap_or_default()
             .into_iter()
-            .map(|v| {
-                let world = tf.rotation * (tf.scale * Vec3::from_array(v));
-                [pos.x + f64::from(world.x), -(pos.z + f64::from(world.z))]
-            })
+            .map(|v| to_ground(tf, Vec3::from_array(v)))
             .collect();
         let polygon = convex_hull(&ground).unwrap_or_else(|| {
             fallback += 1;
@@ -527,15 +563,9 @@ fn ones(v: &[u8]) -> usize {
 pub fn run(db: &RecordDb, bounds: Bounds<'_>, points: Points<'_>, args: &SiteArgs) -> Result<String, DumpError> {
     let started = Instant::now();
     let params = &args.params;
-    let dumped = dump(db, 100.0)?;
-    let mosaic = &dumped.mosaic;
-    let sp = f64::from(mw_world::terrain::VERTEX_UNITS) * UNIT_METERS_F64;
-    let src = Field { w: mosaic.width, h: mosaic.height, origin_m: x10::source_origin_m(mosaic), spacing_m: sp, data: &mosaic.heights };
-    let sea = anchor::open_sea(&src, params.anchor.open_water_radius_m);
-    let source = MwWorldSource::build(db, &SourceOptions::default());
-    let refs = x10::exterior_refs(&source, bounds);
-    let (members, _) = x10::members_of(&refs, &src, &sea, &params.anchor);
-    let found = find_anchor(&dumped, &src, &members, params, &args.anchor)?;
+    let Anchored { dumped, source, members, found } = anchored(db, bounds, params, &args.anchor)?;
+    let src = source_field(&dumped);
+    let sp = src.spacing_m;
     let (footprints, fallback) = footprints_of(&source, &found.keys, &members, points, &params.anchor);
     let town = bounds_of(&footprints);
     let crop = crop_around(&src, found.centre, params.radius_m).ok_or_else(|| DumpError::Invalid("empty crop".into()))?;
@@ -975,66 +1005,192 @@ fn roads_report(out: &mut String, site: &Site, textures: &BTreeMap<u16, usize>, 
     }
 }
 
-/// The `worldgen-site --guide` command body (ST-2); returns the printed report.
+/// The anchor `worldgen-site --guide` plans a town for (ST-2b): in `anchors.json`, or dropped by `worldgen-derive`.
+struct GuideAnchor {
+    name: String,
+    /// Its stamp to drop here (an anchor still in `anchors.json`).
+    stamp: Option<usize>,
+    /// `anchors.json` `world_centre_m` (`None`: dropped in a `derive.json` written before it was recorded).
+    mapped: Option<[f64; 2]>,
+    lift_m: Option<f64>,
+    /// Whether `worldgen-derive` dropped it.
+    derived: bool,
+    /// Its stamp when `worldgen-derive` dropped it (weights 0 already).
+    zeroed: Option<usize>,
+}
+
+/// `args.anchor` in `guide`'s `anchors.json`, else in its `derive.json` `dropped` list (ASCII case ignored both ways).
+fn guide_anchor(guide: &Path, name: &str, derived: Option<&crate::derive::DeriveFile>) -> Result<GuideAnchor, DumpError> {
+    let err = |e: sf_worldgen::Error| DumpError::Invalid(format!("{}: {e}", guide.display()));
+    let anchors = AnchorTransform::read(guide).map_err(err)?;
+    if let Some(a) = anchors.as_ref().and_then(|t| t.anchors.iter().find(|a| a.name.eq_ignore_ascii_case(name))) {
+        return Ok(GuideAnchor {
+            name: a.name.clone(),
+            stamp: a.stamp,
+            mapped: Some(a.world_centre_m),
+            lift_m: Some(a.lift_m),
+            derived: false,
+            zeroed: None,
+        });
+    }
+    if let Some(d) = derived.and_then(|f| f.dropped.iter().find(|d| d.name.eq_ignore_ascii_case(name))) {
+        return Ok(GuideAnchor {
+            name: d.name.clone(),
+            stamp: None,
+            mapped: d.world_centre_m,
+            lift_m: d.lift_m,
+            derived: true,
+            zeroed: d.stamp,
+        });
+    }
+    let what = if anchors.is_none() { "no anchors.json and " } else { "" };
+    let dropped = if derived.is_some() { ", nor one dropped in its derive.json" } else { "" };
+    Err(DumpError::Invalid(format!("{}: {what}no anchor named {name:?}{dropped}", guide.display())))
+}
+
+/// The valley stamp a `worldgen-derive --valley` run built for `anchor`'s site, if any: the `derive.json` `valley`
+/// entry named `"<anchor> valley"` (derive names it after the site's `name`, which `worldgen-site` sets to the
+/// anchor's), with its centre from `valley.json` (the operator's report, written by the same run).
+fn guide_valley(
+    guide: &Path,
+    anchor: &str,
+    derived: Option<&crate::derive::DeriveFile>,
+) -> Result<Option<(crate::derive::ValleyRecord, [f64; 2])>, DumpError> {
+    let Some(rec) = derived.and_then(|f| f.valley.as_ref()).filter(|v| v.name == format!("{anchor} valley")) else {
+        return Ok(None);
+    };
+    let file = guide.join(crate::derive::VALLEY_FILE);
+    let raw = std::fs::read(&file).map_err(|e| DumpError::Invalid(format!("{}: {e}", file.display())))?;
+    let report: sf_worldgen::valley_terrace::ValleyReport = serde_json::from_slice(&raw)?;
+    if report.name != rec.name {
+        return Err(DumpError::Invalid(format!(
+            "{}: names {:?}, derive.json's valley {:?}",
+            file.display(),
+            report.name,
+            rec.name
+        )));
+    }
+    Ok(Some((rec.clone(), report.centre_m)))
+}
+
+/// [`run_guide`]'s first report lines: the anchor, then how the centre was found.
+fn centre_report(
+    out: &mut String,
+    guide: &Path,
+    anchor: &GuideAnchor,
+    dropped_name: &str,
+    valley: Option<&(crate::derive::ValleyRecord, [f64; 2])>,
+    river: Option<&River>,
+    prm: &SiteParams,
+) {
+    let dist = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+    let lift = anchor.lift_m.map_or_else(|| "?".to_owned(), |l| format!("{l:.1}"));
+    let mapped_s = anchor.mapped.map_or_else(|| "unknown".to_owned(), |m| format!("[{:.1}, {:.1}] m", m[0], m[1]));
+    let _ = writeln!(
+        out,
+        "worldgen-site --guide {}: {} (stamp {dropped_name} dropped, lift {lift} m), mapped centre {mapped_s}",
+        guide.display(),
+        anchor.name,
+    );
+    if let Some((rec, c)) = valley {
+        let off = anchor.mapped.map_or_else(String::new, |m| format!(" ({:.0} m from the mapped centre)", dist(*c, m)));
+        let _ = writeln!(
+            out,
+            "  centre_m [{:.1}, {:.1}]: the valley stamp {:?}'s centre{off} (stamp {}, reach {:.0} m, core {:.0} m); \
+             dry ground under {} within {} m of the water {:.3} -> {:.3} (after the clip)",
+            c[0],
+            c[1],
+            rec.name,
+            rec.stamp,
+            rec.reach_m,
+            rec.core_m,
+            crate::derive::REPORT_GRADE,
+            crate::derive::REPORT_WITHIN_M,
+            rec.grade_share_before,
+            rec.grade_share_after
+        );
+    }
+    if let (Some(river), Some(mapped)) = (river, anchor.mapped) {
+        let _ = writeln!(
+            out,
+            "  river: nearest water {:.0} m from the mapped centre at [{:.1}, {:.1}]; centre_m [{:.1}, {:.1}] ({:.0} m from \
+             the mapped centre), half width ~{:.0} m; its body {:.2} km2 in the {:.0} m window, {}",
+            dist(river.nearest_m, mapped),
+            river.nearest_m[0],
+            river.nearest_m[1],
+            river.centre_m[0],
+            river.centre_m[1],
+            dist(river.centre_m, mapped),
+            river.half_width_m,
+            river.area_m2 / 1e6,
+            prm.river_search_m,
+            if river.open { "open (reaches the window edge)" } else { "closed in the window" }
+        );
+    }
+}
+
+/// The `worldgen-site --guide` command body (ST-2, ST-2b); returns the printed report.
+///
+/// The anchor is the one of that name in `anchors.json` (its stamp is dropped here), else one `worldgen-derive`
+/// dropped (`derive.json` `dropped`: its stamp is at weight 0 already, nothing more is dropped). For a dropped anchor
+/// whose site got a valley stamp ([`guide_valley`]), the site centre is the valley's centre (no river search), so the
+/// plan and the terraces share one centre; otherwise the river is searched from the anchor's mapped centre.
 pub fn run_guide(db: &RecordDb, guide: &Path, args: &SiteArgs) -> Result<String, DumpError> {
     let started = Instant::now();
     let prm = &args.params;
-    let err = |e: sf_worldgen::Error| DumpError::Invalid(format!("{}: {e}", guide.display()));
-    let anchors = AnchorTransform::read(guide)
-        .map_err(err)?
-        .ok_or_else(|| DumpError::Invalid(format!("{}: no anchors.json", guide.display())))?;
-    let Some(anchor) = anchors.anchors.iter().find(|a| a.name.eq_ignore_ascii_case(&args.anchor)) else {
-        return Err(DumpError::Invalid(format!("{}: no anchor named {:?}", guide.display(), args.anchor)));
-    };
+    let derive_file = guide.join(crate::derive::DERIVE_FILE);
+    let derived: Option<crate::derive::DeriveFile> =
+        if derive_file.exists() { Some(serde_json::from_slice(&std::fs::read(&derive_file)?)?) } else { None };
+    let anchor = guide_anchor(guide, &args.anchor, derived.as_ref())?;
+    let valley = if anchor.derived { guide_valley(guide, &anchor.name, derived.as_ref())? } else { None };
     let (tiles, dropped) = guide_tiles(guide, anchor.stamp, args.sharp_scale)?;
     let open_s = started.elapsed().as_secs_f64();
-    let mapped = anchor.world_centre_m;
-    let river = find_river(&tiles, mapped, prm.river_search_m, prm.river_min_area_m2).ok_or_else(|| {
-        DumpError::Invalid(format!(
-            "no water body of {} m2 within {} m of [{:.1}, {:.1}]",
-            prm.river_min_area_m2, prm.river_search_m, mapped[0], mapped[1]
-        ))
-    })?;
+    let (river, centre) = match (&valley, anchor.mapped) {
+        (Some((_, c)), _) => (None, *c),
+        (None, Some(mapped)) => {
+            let r = find_river(&tiles, mapped, prm.river_search_m, prm.river_min_area_m2).ok_or_else(|| {
+                DumpError::Invalid(format!(
+                    "no water body of {} m2 within {} m of [{:.1}, {:.1}]",
+                    prm.river_min_area_m2, prm.river_search_m, mapped[0], mapped[1]
+                ))
+            })?;
+            (Some(r), r.centre_m)
+        }
+        (None, None) => {
+            return Err(DumpError::Invalid(format!(
+                "{}: derive.json records no world_centre_m for dropped {:?} (re-run worldgen-derive)",
+                guide.display(),
+                anchor.name
+            )));
+        }
+    };
     let ltex_file = |id: &str| db.get::<LandscapeTexture>(&RecordId::new(id)).map_or_else(String::new, |l| l.file_name.clone());
     let palette: Vec<String> = tiles.layers().map(|f| f.layers().palette.clone()).unwrap_or_default();
     let road_of: Vec<bool> = palette.iter().map(|id| args.table.roads.is_road(id, &ltex_file(id))).collect();
-    let GuideSite { mut site, textures } = guide_site(&tiles, &anchor.name, river.centre_m, prm.guide_radius_m, prm.cell_m, &road_of)?;
-    let dropped_name = dropped.as_ref().map_or_else(|| "none (a point anchor)".to_owned(), |s| format!("{:?}", s.name));
+    let GuideSite { mut site, textures } = guide_site(&tiles, &anchor.name, centre, prm.guide_radius_m, prm.cell_m, &road_of)?;
+    let dropped_name = match (anchor.derived, anchor.zeroed) {
+        (true, Some(k)) => format!("{k} (zeroed by worldgen-derive)"),
+        (true, None) => "none (a point anchor, dropped by worldgen-derive)".to_owned(),
+        (false, _) => dropped.as_ref().map_or_else(|| "none (a point anchor)".to_owned(), |s| format!("{:?}", s.name)),
+    };
+    let around = match &valley {
+        Some((rec, _)) => format!("centred on the valley stamp {:?}'s centre (derive.json, valley.json; no river search)", rec.name),
+        None => format!("around the river reach nearest {}'s mapped centre", anchor.name),
+    };
+    let from = match (anchor.derived, &derived) {
+        (true, Some(f)) => format!(" (derived from {}; {} dropped by worldgen-derive)", f.source_guide, anchor.name),
+        _ => String::new(),
+    };
     site.json.source = format!(
-        "{} guide, around the river reach nearest {}'s mapped centre, without its stamp {dropped_name} (worldgen.sharp {})",
+        "{} guide{from}, {around}, without its stamp {dropped_name} (worldgen.sharp {})",
         guide.display(),
-        anchor.name,
         args.sharp_scale
     );
     let json = write(&site, &args.out)?;
 
-    let dist = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
     let [w, h] = json.dims;
     let mut out = String::new();
-    let _ = writeln!(
-        out,
-        "worldgen-site --guide {}: {} (stamp {dropped_name} dropped, lift {:.1} m), mapped centre [{:.1}, {:.1}] m",
-        guide.display(),
-        anchor.name,
-        anchor.lift_m,
-        mapped[0],
-        mapped[1]
-    );
-    let _ = writeln!(
-        out,
-        "  river: nearest water {:.0} m from the mapped centre at [{:.1}, {:.1}]; centre_m [{:.1}, {:.1}] ({:.0} m from the \
-         mapped centre), half width ~{:.0} m; its body {:.2} km2 in the {:.0} m window, {}",
-        dist(river.nearest_m, mapped),
-        river.nearest_m[0],
-        river.nearest_m[1],
-        river.centre_m[0],
-        river.centre_m[1],
-        dist(river.centre_m, mapped),
-        river.half_width_m,
-        river.area_m2 / 1e6,
-        prm.river_search_m,
-        if river.open { "open (reaches the window edge)" } else { "closed in the window" }
-    );
+    centre_report(&mut out, guide, &anchor, &dropped_name, valley.as_ref(), river.as_ref(), prm);
     let _ = writeln!(out, "  crop: {w} x {h} cells at {:.4} m, origin [{:.1}, {:.1}] m", json.cell_m, json.origin_m[0], json.origin_m[1]);
     let (cc, cr) = (w / 2, h / 2);
     let mut sides = [0usize; 4];
@@ -1059,7 +1215,7 @@ pub fn run_guide(db: &RecordDb, guide: &Path, args: &SiteArgs) -> Result<String,
         r1 as f64 * km2
     );
     if let Some(stamp) = &dropped {
-        let (cells, wet_without, wet_with) = water_under(guide, args, &site, stamp, river.centre_m)?;
+        let (cells, wet_without, wet_with) = water_under(guide, args, &site, stamp, centre)?;
         let _ = writeln!(
             out,
             "  under the dropped stamp's rectangle ({cells} cells in the crop): water cells {wet_without} without it, {wet_with} with it"

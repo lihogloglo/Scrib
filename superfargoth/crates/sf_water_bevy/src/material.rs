@@ -5,7 +5,7 @@
 //! follow cover it by its depth like land, and later translucents sort against it. It keeps
 //! Bevy's view bindings (directional and clustered lights, shadows, the environment map) with
 //! the least code (water.md open question 1, decided at W2). Its own vertex shader displaces the
-//! clipmap; its fragment shader reads the colour + depth snapshot of the opaque scene
+//! clipmap, or (pipeline key [`WaterKey`]) places a host mesh body flat; its fragment shader reads the colour + depth snapshot of the opaque scene
 //! (`render.rs`) for refraction and depth colour, and its SSPR image for local reflections. It does not fog itself (render-order.md
 //! "Frame graph").
 
@@ -15,9 +15,10 @@ use bevy_math::Vec4;
 use bevy_mesh::MeshVertexBufferLayoutRef;
 use bevy_pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline, StandardMaterial};
 use bevy_reflect::TypePath;
-use bevy_render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
+use bevy_render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, VertexAttribute};
 use bevy_shader::ShaderRef;
 
+use crate::mesh::ATTRIBUTE_WATER_FLOW;
 use crate::WaterImages;
 
 const SHADER: &str = "embedded://sf_water_bevy/shaders/water_material.wesl";
@@ -89,6 +90,13 @@ pub struct WaterParams {
     pub rain: Vec4,
     /// (fade near m, fade far m of pixel footprint; 0, 0).
     pub rain2: Vec4,
+    /// River flow (`crate::WaterFlowSettings`, `flow::slots`; read only with `WATER_FLOW`): (cycle
+    /// clock s, cycle s, advection scale, phase noise share).
+    pub flow: Vec4,
+    /// (phase noise cells per noise period, normal gain, foam start m/s, foam full m/s).
+    pub flow2: Vec4,
+    /// (foam cover at full speed, 0, 0, 0).
+    pub flow3: Vec4,
     /// Surf shape (SF-2, `sf_water::SurfShape`; its height gain is already in `swash2.x`): (break
     /// sharpness exponent when on, 0 = off (`--off surfskew`); breaker γ; steepen start; bore start;
     /// breaking ratios).
@@ -102,9 +110,29 @@ pub struct WaterParams {
     pub looks: [Vec4; 24],
 }
 
+/// The water draw's pipeline key: which vertex path (`WATER_MESH`: a host mesh body,
+/// [`crate::WaterMeshSurface`]; otherwise the clipmap).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct WaterKey {
+    pub mesh: bool,
+}
+
+impl From<&WaterExt> for WaterKey {
+    fn from(e: &WaterExt) -> Self {
+        Self { mesh: e.mesh }
+    }
+}
+
 /// The water half of [`WaterMaterial`] (bindings 100-107 and 110-113 of the material group).
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+#[bind_group_data(WaterKey)]
 pub struct WaterExt {
+    /// The vertex path: `false` places the clipmap around the camera and displaces it by the
+    /// cascades ([`crate::OceanSurface`], [`crate::WaterSurface`]); `true` draws the entity's own
+    /// mesh through its transform, flat (a [`crate::WaterMeshSurface`]). Not a binding: the
+    /// pipeline key ([`WaterKey`], shader def `WATER_MESH`).
+    pub mesh: bool,
     #[uniform(100)]
     pub params: WaterParams,
     /// Per cascade (array layer): (Dx, h, Dz, foam).
@@ -141,6 +169,7 @@ impl WaterExt {
     #[must_use]
     pub fn new(images: &WaterImages, params: WaterParams) -> Self {
         Self {
+            mesh: false,
             params,
             displacement: images.displacement.clone(),
             slopes: images.slopes.clone(),
@@ -151,6 +180,60 @@ impl WaterExt {
             shore_bed: images.shore_bed.clone(),
             regions: images.regions.clone(),
         }
+    }
+
+    /// The same on the given vertex path ([`Self::mesh`]).
+    #[must_use]
+    pub fn with_mesh(self, mesh: bool) -> Self {
+        Self { mesh, ..self }
+    }
+}
+
+/// The shader def of the mesh-body vertex path ([`WaterKey::mesh`]).
+pub(crate) const WATER_MESH_DEF: &str = "WATER_MESH";
+/// The shader def of a mesh body whose mesh carries [`ATTRIBUTE_WATER_FLOW`] (flow-advected
+/// normals, `flow.rs`).
+pub(crate) const WATER_FLOW_DEF: &str = "WATER_FLOW";
+/// The flow attribute's shader location (`water_material.wesl` `WaterMeshVertex`): past every
+/// location Bevy's mesh and prepass pipelines give the standard attributes (0-7).
+pub(crate) const FLOW_LOCATION: u32 = 10;
+
+/// The flow attribute of a mesh with `layout` at [`FLOW_LOCATION`], on the mesh-body path only and
+/// only when the mesh carries it (lakes and other meshes without it keep today's layout).
+pub(crate) fn flow_attribute(mesh: bool, layout: &MeshVertexBufferLayoutRef) -> Option<VertexAttribute> {
+    if !mesh || !layout.0.contains(ATTRIBUTE_WATER_FLOW) {
+        return None;
+    }
+    layout.0.get_layout(&[ATTRIBUTE_WATER_FLOW.at_shader_location(FLOW_LOCATION)]).ok()?.attributes.first().copied()
+}
+
+/// The water's part of the pipeline (`WaterExt::specialize` without the unused pipeline): the
+/// mesh-body defs, and the flow attribute appended to the mesh's vertex buffer (the same
+/// interleaved buffer Bevy laid out from the mesh) with `WATER_FLOW`.
+pub(crate) fn specialize_water(descriptor: &mut RenderPipelineDescriptor, layout: &MeshVertexBufferLayoutRef, mesh: bool) {
+    let mut defs = Vec::new();
+    if mesh {
+        defs.push(WATER_MESH_DEF);
+        if let Some(flow) = flow_attribute(mesh, layout)
+            && let Some(buffer) = descriptor.vertex.buffers.first_mut()
+        {
+            buffer.attributes.push(flow);
+            defs.push(WATER_FLOW_DEF);
+        }
+    }
+    for def in defs {
+        descriptor.vertex.shader_defs.push(def.into());
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.push(def.into());
+        }
+    }
+    // Waves show their back faces at grazing angles (and from below, W5).
+    descriptor.primitive.cull_mode = None;
+    // Depth-writing in the transmissive phase: the sky, clouds and fog after it read the
+    // water's depth (W-ORDER), later blended surfaces sort against it,
+    // and DLSS/TAA read the water's depth.
+    if let Some(depth) = descriptor.depth_stencil.as_mut() {
+        depth.depth_write_enabled = Some(true);
     }
 }
 
@@ -166,17 +249,11 @@ impl MaterialExtension for WaterExt {
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
-        _key: MaterialExtensionKey<Self>,
+        layout: &MeshVertexBufferLayoutRef,
+        key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        // Waves show their back faces at grazing angles (and from below, W5).
-        descriptor.primitive.cull_mode = None;
-        // Depth-writing in the transmissive phase: the sky, clouds and fog after it read the
-        // water's depth (W-ORDER), later blended surfaces sort against it,
-        // and DLSS/TAA read the water's depth.
-        if let Some(depth) = descriptor.depth_stencil.as_mut() {
-            depth.depth_write_enabled = Some(true);
-        }
+        // A host mesh body: its own vertices through its transform, and its flow (`water_material.wesl`).
+        specialize_water(descriptor, layout, key.bind_group_data.mesh);
         Ok(())
     }
 }

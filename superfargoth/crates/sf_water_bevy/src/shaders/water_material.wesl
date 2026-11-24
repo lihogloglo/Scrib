@@ -1,6 +1,9 @@
 // sf_water_bevy: the water draw (water.md "Water pass" step 3; UE Single Layer Water structure).
 // Vertex: the camera-centred clipmap displaced by the FFT cascades, attenuated toward the shore
-// by the `water.shore` field (swell by openness and shore distance, chop down to a floor).
+// by the `water.shore` field (swell by openness and shore distance, chop down to a floor); with
+// `WATER_MESH`, a host mesh body (lake polygon, river ribbon) placed flat by its transform; with
+// `WATER_FLOW` (its mesh carries the flow attribute) the ripples ride the river's flow (two-phase
+// flow-advected normals, Vlachos 2010) and fast water foams.
 // Fragment: wave normals from the mip-filtered slopes (the variance the mips lose widens the
 // highlight), refraction from the scene snapshot (rejected where the refracted sample is in front
 // of the water), Beer-Lambert absorption + single scattering over the view path with optics
@@ -20,6 +23,7 @@ import bevy_pbr::render::pbr_functions::{apply_pbr_lighting, calculate_F0_dielec
 import bevy_pbr::render::pbr_lighting::{F_AB, LAYER_BASE, LightingInput, perceptualRoughnessToRoughness};
 import bevy_pbr::render::clustered_forward::{view_fragment_cluster_index, unpack_clusterable_object_index_ranges};
 @if(ENVIRONMENT_MAP) import bevy_pbr::light_probe::environment_map;
+@if(WATER_MESH) import bevy_pbr::render::mesh_functions::get_world_from_local;
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> water: WaterParams;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var displacement: texture_2d_array<f32>;
@@ -39,14 +43,25 @@ struct WaterVertex {
     @location(0) position: vec3<f32>,
 }
 
+// A host mesh body's vertex: its position and, on a river, its flow (`sf_water_bevy::mesh::
+// ATTRIBUTE_WATER_FLOW`, local XZ m/s; location `material.rs` `FLOW_LOCATION`).
+@if(WATER_MESH)
+struct WaterMeshVertex {
+    @location(0) position: vec3<f32>,
+    @if(WATER_FLOW) @location(10) flow: vec2<f32>,
+}
+
 struct WaterVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) world_position: vec4<f32>,
     @location(1) lagrangian: vec2<f32>,
     @location(2) @interpolate(flat) ring: u32,
     @location(3) height: f32,
+    // The flow velocity, render-space XZ m/s.
+    @if(WATER_FLOW) @location(4) flow: vec2<f32>,
 }
 
+@if(!WATER_MESH)
 @vertex
 fn vertex(v: WaterVertex) -> WaterVarying {
     let camera = view.world_position.xz;
@@ -62,6 +77,29 @@ fn vertex(v: WaterVertex) -> WaterVarying {
     out.lagrangian = x0;
     out.ring = u32(v.position.y + 0.5);
     out.height = p.w;
+    return out;
+}
+
+// A host mesh body (`sf_water_bevy::WaterMeshSurface`, water.md "Water bodies at any height": a
+// lake's polygon at its level, a river's sloped ribbon): its own vertices through the entity's
+// transform, the rest surface per vertex. Flat: no vertex displacement (a host mesh is far coarser
+// than the clipmap, its chop would alias, and the banks would crack); the chop shows in the normal
+// (the fragment's slopes, `waves.y`), as UE's water body meshes do. One ring, no finer one covers it.
+@if(WATER_MESH)
+@vertex
+fn vertex(v: WaterMeshVertex, @builtin(instance_index) instance: u32) -> WaterVarying {
+    let world_from_local = get_world_from_local(instance);
+    let world = world_from_local * vec4(v.position, 1.0);
+    var out: WaterVarying;
+    // The flow is a vector in the mesh's local XZ: it turns (and scales) with the body.
+    @if(WATER_FLOW) {
+        out.flow = (world_from_local * vec4(v.flow.x, 0.0, v.flow.y, 0.0)).xz;
+    }
+    out.world_position = vec4(world.xyz / world.w, 1.0);
+    out.position = view.clip_from_world * out.world_position;
+    out.lagrangian = out.world_position.xz;
+    out.ring = 0u;
+    out.height = 0.0;
     return out;
 }
 
@@ -175,6 +213,17 @@ fn sspr_sample(N: vec3<f32>, V: vec3<f32>, roughness: f32) -> vec4<f32> {
     return sum * 0.25 * (1.0 - smoothstep(0.45, 0.65, roughness));
 }
 
+// Two-phase flow advection (Vlachos 2010; CPU twin `sf_water_bevy::flow_phases`): at cycle
+// position `t`, the phases (x, y) in [0, 1) half a cycle apart and their triangle weights (z, w),
+// 0 where a phase wraps, summing to 1.
+fn flow_phases(t: f32) -> vec4<f32> {
+    let a = fract(t);
+    let b = fract(t + 0.5);
+    return vec4(a, b, 1.0 - abs(1.0 - 2.0 * a), 1.0 - abs(1.0 - 2.0 * b));
+}
+
+// The phase noise's seed (`sw_noise`; the surf lace uses 7, 11 and 13).
+const FLOW_NOISE_SEED = 17u;
 
 @fragment
 fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
@@ -205,6 +254,26 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     // aliasing (Bruneton 2010, simplified).
     let pixel = 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w);
     let footprint = d * pixel / max(abs(V.y), 0.06);
+    // River flow (`WATER_FLOW`): the slopes are read twice, upstream of the point by the distance the
+    // water carried each phase's ripples, and cross-faded (Vlachos 2010); the phase is shifted per
+    // point by a smooth noise fixed to the water's points so the cross-fade never pulses in step.
+    // Still water (no attribute, or zero flow) reads once at the point, as before.
+    var taps = 1u;
+    var offsets = array<vec2<f32>, 2>(vec2(0.0), vec2(0.0));
+    var weights = vec2(1.0, 0.0);
+    var speed = 0.0;
+    @if(WATER_FLOW) {
+        speed = length(in.flow);
+        if speed > 0.0 {
+            let noise = sw_noise(fract((water.shore3.zw + in.lagrangian) / 1024.0), u32(max(water.flow2.x, 1.0)), FLOW_NOISE_SEED);
+            let ph = flow_phases(water.flow.x / max(water.flow.y, 1e-3) + water.flow.w * noise);
+            // Metres the ripples travel in one cycle.
+            let travel = in.flow * water.flow.y * water.flow.z;
+            offsets = array<vec2<f32>, 2>(-travel * ph.x, -travel * ph.y);
+            weights = ph.zw;
+            taps = 2u;
+        }
+    }
     var s = vec4(0.0);
     var whitecap = 0.0;
     var lost = 0.0;
@@ -215,11 +284,17 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
         let texel = water.sizes[c] / res;
         let lod = clamp(log2(max(footprint / texel, 1e-3)), 0.0, top);
         lost += smoothstep(0.0, 4.0, lod) * cascade_scale(c, nscales);
-        let uv = cascade_uv(water, c, in.lagrangian);
-        s += cascade_scale(c, nscales) * textureSampleLevel(slopes, wave_sampler, uv, i32(c), lod);
-        // Whitecaps from the long cascades only (the short ones fold constantly at chop scale).
-        // (The displacement has no mips: foam fades out once it would alias.)
-        whitecap += f32(c < 2u) * textureSampleLevel(displacement, wave_sampler, uv, i32(c), 0.0).w * scales.x * (1.0 - smoothstep(2.0, 5.0, lod));
+        for (var k = 0u; k < taps; k++) {
+            let uv = cascade_uv(water, c, in.lagrangian + offsets[k]);
+            s += weights[k] * cascade_scale(c, nscales) * textureSampleLevel(slopes, wave_sampler, uv, i32(c), lod);
+            // Whitecaps from the long cascades only (the short ones fold constantly at chop scale).
+            // (The displacement has no mips: foam fades out once it would alias.)
+            whitecap += weights[k] * f32(c < 2u) * textureSampleLevel(displacement, wave_sampler, uv, i32(c), 0.0).w * scales.x * (1.0 - smoothstep(2.0, 5.0, lod));
+        }
+    }
+    // Fast water is rougher: the ripples' slopes strengthen with speed up to the full foam speed.
+    @if(WATER_FLOW) {
+        s = vec4(s.xy * (1.0 + water.flow2.y * saturate(speed / max(water.flow2.w, 1e-3))), s.zw);
     }
     // Shore waves (W-GERSTNER): their analytic slopes, trains filtered out once a pixel's footprint
     // can't carry them (λ < 4 footprints).
@@ -294,6 +369,10 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     let trains = water.swash2.x > 0.0;
     var foam = saturate(whitecap * look.whitecaps);
     var foam_rgb = vec3(0.8);
+    // White water on a fast river (`WATER_FLOW`): foam cover rising with the flow speed.
+    @if(WATER_FLOW) {
+        foam = max(foam, water.flow3.x * smoothstep(water.flow2.z, water.flow2.w, speed));
+    }
     let band = water.misc2.y;
     if !(surf_on && trains) && sh.x < band && look.shore_foam > 0.0 {
         let fade = 1.0 - smoothstep(0.0, band, max(sh.x, 0.0));

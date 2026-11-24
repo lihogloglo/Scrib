@@ -206,6 +206,37 @@ impl StampSet {
         Ok(())
     }
 
+    /// Sets every weight of stamp `index` to 0, so it no longer changes the ground; its heights, rectangle and
+    /// every stamp index stay (other files key stamps by index).
+    pub fn zero_weights(&mut self, index: usize) -> Result<()> {
+        let n = self.stamps.len();
+        let s = self.stamps.get_mut(index).ok_or_else(|| Error::Invalid(format!("stamp {index} of {n}: no such stamp")))?;
+        s.weights.fill(0.0);
+        Ok(())
+    }
+
+    /// Appends `other`'s stamps after these (existing stamps keep their index and, once written, their offset).
+    /// Refuses, changing nothing, when an appended stamp is invalid or a sample of weight > 0 of one stamp lies
+    /// where another (existing or appended earlier) has weight > 0: the format's no-overlap rule.
+    pub fn append(&mut self, other: StampSet) -> Result<()> {
+        let n = self.stamps.len();
+        for (k, b) in other.stamps.iter().enumerate() {
+            b.validate()?;
+            for a in self.stamps.iter().chain(&other.stamps[..k]) {
+                if let Some([x, y]) = overlap(a, b).or_else(|| overlap(b, a)) {
+                    return Err(Error::Invalid(format!(
+                        "appended stamp {:?} (index {}) overlaps stamp {:?} at weight > 0 near ({x:.2}, {y:.2}) m",
+                        b.name,
+                        n + k,
+                        a.name
+                    )));
+                }
+            }
+        }
+        self.stamps.extend(other.stamps);
+        Ok(())
+    }
+
     /// Guide frame (x east, y north) metres → (height m, weight 0..1) of the stamp covering the point, bilinear;
     /// `None` outside every stamp. Tests every stamp: hot paths use [`StampIndex::sample`] (same result).
     pub fn sample(&self, x_east: f64, y_north: f64) -> Option<(f32, f32)> {
@@ -215,6 +246,20 @@ impl StampSet {
         }
         best
     }
+}
+
+/// The first sample of weight > 0 of `a` (guide frame metres) where `b` samples a weight > 0.
+fn overlap(a: &Stamp, b: &Stamp) -> Option<[f64; 2]> {
+    let (ra, rb) = (a.rect_m(), b.rect_m());
+    let e = EDGE_EPS * a.spacing_m.max(b.spacing_m);
+    if ra[2] < rb[0] - e || rb[2] < ra[0] - e || ra[3] < rb[1] - e || rb[3] < ra[1] - e {
+        return None;
+    }
+    let w = a.dims[0];
+    a.weights.iter().enumerate().find_map(|(k, &wa)| {
+        let p = [a.origin_m[0] + (k % w) as f64 * a.spacing_m, a.origin_m[1] - (k / w) as f64 * a.spacing_m];
+        (wa > 0.0 && b.sample(p[0], p[1]).is_some_and(|(_, wb)| wb > 0.0)).then_some(p)
+    })
 }
 
 /// Grid units a point may sit past a stamp's edge and still sample it (f64 rounding of metres → grid).
@@ -516,6 +561,96 @@ mod tests {
                 assert_eq!(idx.sample(x, y), set.sample(x, y));
             }
         }
+    }
+
+    fn bits(s: &Stamp) -> (Vec<u32>, Vec<u32>) {
+        (s.heights.iter().map(|v| v.to_bits()).collect(), s.weights.iter().map(|v| v.to_bits()).collect())
+    }
+
+    fn offsets(dir: &Path) -> Vec<u64> {
+        let f: FileV1 = serde_json::from_slice(&std::fs::read(dir.join("stamps.json")).unwrap()).unwrap();
+        f.stamps.iter().map(|e| e.offset).collect()
+    }
+
+    #[test]
+    fn zero_weights_touches_only_that_stamp() {
+        let set = StampSet {
+            stamps: vec![
+                stamp("a", [0.0, 0.0], [5, 4], 2.0, 1),
+                stamp("b", [100.0, 0.0], [3, 7], 1.5, 2),
+                stamp("c", [200.0, 0.0], [4, 4], 1.0, 3),
+            ],
+        };
+        let mut z = set.clone();
+        z.zero_weights(1).unwrap();
+        assert_eq!(z.stamps.len(), 3);
+        for k in [0, 2] {
+            assert_eq!(z.stamps[k], set.stamps[k]);
+            assert_eq!(bits(&z.stamps[k]), bits(&set.stamps[k]));
+        }
+        let (b, b0) = (&z.stamps[1], &set.stamps[1]);
+        assert_eq!((&b.name, b.origin_m, b.dims, b.spacing_m.to_bits()), (&b0.name, b0.origin_m, b0.dims, b0.spacing_m.to_bits()));
+        assert_eq!(bits(b).0, bits(b0).0);
+        assert!(b.weights.iter().all(|w| w.to_bits() == 0));
+        // Every sample of the zeroed stamp reads weight 0.
+        for r in 0..7 {
+            for c in 0..3 {
+                assert_eq!(b.sample_grid(f64::from(c), f64::from(r)).unwrap().1.to_bits(), 0);
+            }
+        }
+        assert!(z.zero_weights(3).is_err());
+    }
+
+    #[test]
+    fn append_keeps_offsets_and_reads_back_exact() {
+        let set = StampSet { stamps: vec![stamp("a", [0.0, 0.0], [5, 4], 2.0, 1), stamp("b", [100.0, 0.0], [3, 7], 1.5, 2)] };
+        let base = std::env::temp_dir().join(format!("sf_worldgen_stamps_app_{}", std::process::id()));
+        let (d0, d1) = (base.join("before"), base.join("after"));
+        set.write(&d0).unwrap();
+        let add = stamp("new", [-300.25, 40.0], [6, 3], 0.75, 9);
+        let mut more = set.clone();
+        more.append(StampSet { stamps: vec![add.clone()] }).unwrap();
+        more.write(&d1).unwrap();
+        let (o0, o1) = (offsets(&d0), offsets(&d1));
+        assert_eq!(o1.len(), 3);
+        assert_eq!(o1[..2], o0[..]);
+        let (f0, f1) = (std::fs::read(d0.join("stamps.f32")).unwrap(), std::fs::read(d1.join("stamps.f32")).unwrap());
+        assert_eq!(f1[..f0.len()], f0[..]);
+        let back = StampSet::read(&d1).unwrap().unwrap();
+        assert_eq!(back.stamps[..2], set.stamps[..]);
+        assert_eq!((&back.stamps[2].name, back.stamps[2].origin_m, back.stamps[2].dims), (&add.name, add.origin_m, add.dims));
+        assert_eq!(back.stamps[2].spacing_m.to_bits(), add.spacing_m.to_bits());
+        assert_eq!(bits(&back.stamps[2]), bits(&add));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn append_refuses_overlap_accepts_zero_weight_touch() {
+        let ones = |name: &str, origin: [f64; 2], dims: [usize; 2]| {
+            let n = dims[0] * dims[1];
+            Stamp { name: name.into(), origin_m: origin, dims, spacing_m: 1.0, heights: vec![5.0; n], weights: vec![1.0; n] }
+        };
+        let set = StampSet { stamps: vec![ones("old", [0.0, 0.0], [5, 5])] };
+        // Overlaps old's interior.
+        let mut s = set.clone();
+        let e = s.append(StampSet { stamps: vec![ones("new", [3.0, -1.0], [4, 4])] }).unwrap_err().to_string();
+        assert!(e.contains("\"new\"") && e.contains("\"old\""), "{e}");
+        assert_eq!(s, set, "a refused append changes nothing");
+        // Two appended stamps overlapping each other are refused too.
+        let far = |name: &str| ones(name, [50.0, 0.0], [3, 3]);
+        let e = s.append(StampSet { stamps: vec![far("p"), far("q")] }).unwrap_err().to_string();
+        assert!(e.contains("\"q\"") && e.contains("\"p\""), "{e}");
+        // Shares old's east column (x = 4) where the new stamp's weight is 0: accepted.
+        let mut touch = ones("touch", [4.0, 0.0], [4, 5]);
+        for r in 0..5 {
+            touch.weights[r * 4] = 0.0;
+        }
+        s.append(StampSet { stamps: vec![touch.clone()] }).unwrap();
+        assert_eq!(s.stamps.len(), 2);
+        assert_eq!(s.stamps[1], touch);
+        // The same with weight > 0 on the shared column: refused.
+        let mut s = set.clone();
+        assert!(s.append(StampSet { stamps: vec![ones("touch", [4.0, 0.0], [4, 5])] }).is_err());
     }
 
     #[test]

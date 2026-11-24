@@ -14,7 +14,8 @@
 use sf_worldgen::anchors::AnchorTransform;
 use crate::anchor::{self, Field, Member, Params};
 use crate::classify::{Class, RefInfo, classify};
-use crate::x10::{build_anchors, overlap_samples, scale_heights, stamp_set};
+use crate::x10::{build_anchors, curve_heights, overlap_samples, scale_heights, stamp_set};
+use sf_worldgen::height_curve::HeightCurve;
 use crate::{MarkersFile, markers::MARKERS_FORMAT};
 
 fn reference(kind: &str, model: Option<&str>, extent_m: f32) -> RefInfo {
@@ -232,6 +233,36 @@ fn scale_is_an_f32_multiply() {
     for (a, b) in h.iter().zip(&s) {
         assert_eq!((a * 10.0).to_bits(), b.to_bits());
     }
+}
+
+#[test]
+#[allow(clippy::float_cmp)] // exact: the guide heights are the curve images, -0.0 == 0.0
+fn height_curve_changes_heights_only_through_the_curve() {
+    let curve = HeightCurve::default();
+    let h: Vec<f32> = (-4000..=4000).map(|i| i as f32 * 0.137).chain([0.0, -0.0, 2.4, -1.5, 3.3e-3, -1e-30, 270.8]).collect();
+    let scaled = scale_heights(&h, 10.0);
+    let mapped = curve_heights(&h, 10.0, &curve);
+    for ((src, s), m) in h.iter().zip(&scaled).zip(&mapped) {
+        assert_eq!(*m, curve.apply_f32(*s), "h = {src}");
+        if *src < 0.0 {
+            assert!(*m < 0.0, "sea sample {src} -> {m}");
+        } else {
+            assert!(*m >= 0.0, "land sample {src} -> {m}");
+        }
+        assert!(m.abs() <= s.abs(), "moved away from sea level: {src} -> {m}");
+        if s.abs() >= 300.0 {
+            assert_eq!(m, s, "beyond the knee: {src}");
+        }
+    }
+    // Balmora's flat ground at 2.4 m: 24 m plainly scaled, about 5.7 m through the default curve.
+    let balmora = curve_heights(&[2.4], 10.0, &curve)[0];
+    assert!((balmora - 5.7).abs() < 0.05, "{balmora}");
+}
+
+#[test]
+fn shipped_height_curve_file_parses_to_the_defaults() {
+    let c = HeightCurve::parse_toml(include_str!("../../../worldgen/x10-heights.toml")).unwrap();
+    assert_eq!(c, HeightCurve::default());
 }
 
 #[test]

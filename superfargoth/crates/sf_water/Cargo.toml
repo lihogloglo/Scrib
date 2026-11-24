@@ -13,6 +13,8 @@ sf_coords.workspace = true
 sf_records.workspace = true
 sf_terrain.workspace = true
 sf_world.workspace = true
+# Lake triangulation (body_mesh: constrained Delaunay + refinement), MIT/Apache.
+spade.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

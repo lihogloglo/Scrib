@@ -17,6 +17,11 @@ their own. "The owner" is the project maintainer; owner decisions live in the RO
   Scrib through files only: `scrib-motiongen` (Kimodo clip factory, `D:\Gamedev\scrib-motiongen`); `scrib-worldgen`
   (planned; AGPL-3.0-or-later so Magna Urbis can be ported). These rules apply there too, except that licence;
   Scrib keeps the readers of their formats (our own GPL code), never their generators, and links no AGPL code.
+- **Settlements and roads = Magna Urbis, vendored (owner 2026-11-24).** Town, city, hamlet and road generation is a
+  solved problem: we adapt Magna Urbis (vendored in `scrib-worldgen`) to each universe through its own data
+  (cultures, catalogue, presets, kits), never bespoke generation logic (no Morrowind-only packer, filler or layout).
+  A missing behaviour is added inside our vendored copy, generic and data-driven. Our copy is ours: we never
+  contribute upstream (owner 2026-11-24); we take upstream updates only when they help us.
 - Cargo: **one workspace** at the root (`Cargo.toml`, `Cargo.lock`, `.cargo/config.toml`, `rust-toolchain.toml`,
   `deny.toml`, `.config/hakari.toml`); cargo works from any subfolder and `--workspace` means both parts.
   `superfargoth/plugins/sf_dlss` is its own workspace (links NVIDIA; built separately).

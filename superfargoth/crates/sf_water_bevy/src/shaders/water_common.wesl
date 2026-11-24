@@ -51,6 +51,12 @@ struct WaterParams {
     // ring clock s; strength; 0); (fade near m, fade far m of pixel footprint; 0, 0).
     rain: vec4<f32>,
     rain2: vec4<f32>,
+    // River flow (`sf_water_bevy::WaterFlowSettings`, read only with `WATER_FLOW`): (cycle clock s,
+    // cycle s, advection scale, phase noise share); (phase noise cells per noise period, normal
+    // gain, foam start m/s, foam full m/s); (foam cover at full speed, 0, 0, 0).
+    flow: vec4<f32>,
+    flow2: vec4<f32>,
+    flow3: vec4<f32>,
     // Surf shape (SF-2, `sf_water::SurfShape`; its height gain is already in `swash2.x`): (break
     // sharpness p when on, 0 = off (`--off surfskew`); breaker γ; steepen start; bore start); (bore full; skew at the end of the
     // steepening; skew of the full bore; bore loop cap); (minimum crest height at the break line m;

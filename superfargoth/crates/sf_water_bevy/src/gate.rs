@@ -3,7 +3,7 @@
 //!
 //! - **Frustum (CPU, this frame):** per [`WaterCamera`], the boxes where water can be drawn (the
 //!   shore field's wet leaves, [`sf_water::WetTiles`], plus the open sea around it, bounded and
-//!   unbounded [`WaterSurface`]s), grown by [`WaterGateSettings::margin_m`], culled against the
+//!   unbounded [`WaterSurface`]s, mesh bodies' boxes, [`crate::WaterMeshSurface`]), grown by [`WaterGateSettings::margin_m`], culled against the
 //!   camera's frustum. None left: the camera's snapshot, SSPR, velocity and the probe are not
 //!   queued at all, and the FFT runs at [`WaterGateSettings::idle_fft_s`] only while no camera
 //!   sees water (foam and the amortised cascades stay current for the re-entry frame).
@@ -24,7 +24,7 @@ use bevy_transform::components::GlobalTransform;
 use sf_tunables::{def, Def, Group, Source, Unit};
 use sf_water::WetTiles;
 
-use crate::{render_xz, ClipmapSettings, OceanSurface, WaterCamera, WaterFrame, WaterShoreInput, WaterSurface};
+use crate::{render_xz, BodyMesh, ClipmapSettings, OceanSurface, WaterBody, WaterCamera, WaterFrame, WaterMeshSurface, WaterShoreInput, WaterSurface};
 
 /// `water.gate.visible`: gate the water chain by the water each camera can see (CW-10a).
 pub const WATER_GATE_VISIBLE: Def<bool> = def!(bool "water.gate.visible" = false)
@@ -150,10 +150,12 @@ impl FftClock {
 pub(crate) enum Body {
     Ocean,
     Surface(WaterSurface),
+    /// A mesh body ([`crate::WaterMeshSurface`]): its render-space box.
+    Mesh([Vec3; 2]),
 }
 
 /// The water surfaces (the ocean and the bodies at their own level), with their shown state.
-type Surfaces<'w, 's> = Query<'w, 's, (Option<&'static WaterSurface>, Has<OceanSurface>, &'static bevy_camera::visibility::InheritedVisibility), Or<(With<OceanSurface>, With<WaterSurface>)>>;
+type Surfaces<'w, 's> = Query<'w, 's, (Option<&'static WaterSurface>, Has<OceanSurface>, BodyMesh, &'static bevy_camera::visibility::InheritedVisibility), Or<(With<OceanSurface>, With<WaterSurface>, With<WaterMeshSurface>)>>;
 
 /// Gate counters (diagnostics): frames a camera's frustum term closed, and probes queued.
 pub(crate) static FRUSTUM_CLOSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -174,9 +176,10 @@ pub(crate) fn gate_views(
     // The shown bodies: the ocean while the frame shows it, the others while visible.
     let bodies: Vec<Body> = surfaces
         .iter()
-        .filter_map(|(surface, ocean, inherited)| match surface {
-            None if ocean && frame.enabled => Some(Body::Ocean),
-            Some(w) if inherited.get() => Some(Body::Surface(*w)),
+        .filter_map(|(surface, ocean, mesh, inherited)| match WaterBody::of(surface, ocean, mesh) {
+            WaterBody::Ocean if frame.enabled => Some(Body::Ocean),
+            WaterBody::Surface(w) if inherited.get() => Some(Body::Surface(w)),
+            WaterBody::Mesh(_, world) if inherited.get() => Some(Body::Mesh(world)),
             _ => None,
         })
         .collect();
@@ -259,6 +262,7 @@ pub(crate) fn camera_gate(
                 };
                 add(lo, hi, &mut boxes);
             }
+            Body::Mesh([lo, hi]) => add(*lo - Vec3::splat(m), *hi + Vec3::splat(m), &mut boxes),
         }
     }
     boxes.retain(|[lo, hi]| seen(*lo, *hi));

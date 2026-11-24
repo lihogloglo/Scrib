@@ -216,12 +216,12 @@ fn the_street_parks_while_inside_and_comes_back_whole() {
     assert_eq!(app.world().get::<Visibility>(root), Some(&Visibility::Visible), "the root's visibility restored");
 }
 
-/// Switch off (the default): today's behaviour, nothing parks, plain queries keep seeing the street.
+/// Switch off (on by default since 2026-11-17): nothing parks, plain queries keep seeing the street.
 #[test]
 fn switch_off_parks_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = door_app(dir.path());
-    assert!(!app.world().resource::<WorldspaceParking>().enabled, "off by default");
+    app.world_mut().resource_mut::<WorldspaceParking>().enabled = false;
     let (player, _) = outdoors(&mut app);
     let outside = plain_street(&mut app);
     travel(&mut app, player, &room());
@@ -236,6 +236,7 @@ fn switch_off_parks_nothing() {
 fn flipping_live_indoors_and_a_late_spawn_unpark() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = door_app(dir.path());
+    app.world_mut().resource_mut::<WorldspaceParking>().enabled = false;
     let (player, npc) = outdoors(&mut app);
     let outside = plain_street(&mut app);
     let before = street_entities(&mut app);

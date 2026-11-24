@@ -5404,6 +5404,7 @@ dependencies = [
  "bevy_light",
  "bevy_log",
  "bevy_math",
+ "bevy_mesh",
  "bevy_pbr",
  "bevy_post_process",
  "bevy_render",
@@ -5436,6 +5437,7 @@ dependencies = [
  "sf_weather",
  "sf_world",
  "sf_world_bevy",
+ "sf_worldgen",
  "tes3",
  "workspace-hack",
 ]
@@ -5515,6 +5517,7 @@ dependencies = [
  "sf_wind_bevy",
  "sf_world",
  "sf_world_bevy",
+ "sf_worldgen",
  "tes3",
  "workspace-hack",
 ]
@@ -9312,6 +9315,7 @@ dependencies = [
  "sf_records",
  "sf_terrain",
  "sf_world",
+ "spade",
 ]
 
 [[package]]

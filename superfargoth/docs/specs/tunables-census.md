@@ -139,7 +139,7 @@ Found while reviewing; the migration slice of each system greps its own files fo
 Written by `node tools/tunables-census.mjs` (do not edit by hand; edit the rules table at the top of the script).
 Per system, then per crate: the T and ? rows in full, the C rows as one line. Paths are relative to the crate.
 
-Sources: 1552 consts, 852 `Default` fields, 220 shader consts (98 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 266.
+Sources: 1600 consts, 858 `Default` fields, 225 shader consts (98 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 313.
 
 | System | Candidates | T | C | ? |
 |---|---:|---:|---:|---:|
@@ -149,16 +149,16 @@ Sources: 1552 consts, 852 `Default` fields, 220 shader consts (98 of them T: eac
 | audio | 43 | 36 | 1 | 6 |
 | effects | 56 | 11 | 44 | 1 |
 | feel-camera-combat | 207 | 153 | 13 | 41 |
-| other | 349 | 72 | 209 | 68 |
+| other | 350 | 72 | 210 | 68 |
 | physics | 147 | 126 | 8 | 13 |
 | shadows-lights-gi | 50 | 35 | 12 | 3 |
-| sky-weather-surface | 646 | 306 | 165 | 175 |
+| sky-weather-surface | 658 | 306 | 177 | 175 |
 | statics-lod-farfield | 114 | 66 | 35 | 13 |
-| streaming-exterior | 263 | 93 | 148 | 22 |
-| terrain-water | 289 | 131 | 89 | 69 |
+| streaming-exterior | 293 | 93 | 178 | 22 |
+| terrain-water | 305 | 137 | 98 | 70 |
 | textures | 21 | 10 | 6 | 5 |
 | ui | 86 | 52 | 7 | 27 |
-| **total** | **2624** | **1275** | **865** | **484** |
+| **total** | **2683** | **1281** | **917** | **485** |
 
 ## ai-nav
 
@@ -466,7 +466,7 @@ Stays const: EYE_OFFSET_M (opt-out: a framing default: where a debug view starts
 | src/live_ab.rs:88 | LiveAb.help | `true` | ? | bool |
 | src/live_ab.rs:88 | LiveAb.sun_shadows | `true` | T |  |
 | src/live_ab.rs:88 | LiveAb.mesh_wire | `false` | ? | bool |
-| src/live_ab.rs:557 | TIME_SCALES | `[30.0, 120.0, 600.0, 1200.0]` | T |  |
+| src/live_ab.rs:560 | TIME_SCALES | `[30.0, 120.0, 600.0, 1200.0]` | T |  |
 | src/perf.rs:36 | DEFAULT_RESOLUTION | `(1280, 720)` | T |  |
 | src/pipeline_watch.rs:26 | FLUSH_SECS | `0.5` | T |  |
 | src/remote.rs:45 | DEFAULT_PORT | `15712` | ? |  |
@@ -1062,9 +1062,9 @@ Stays const: RECORD_HEADER (layout/math/id), RECORD_CHECK (small index), TRACE_F
 
 Stays const: FNV_OFFSET (opt-out: FNV-1a 64 offset basis, a hash format constant), FNV_PRIME (opt-out: FNV-1a 64 prime, a hash format constant), GOLDEN_GAMMA (opt-out: SplitMix64 golden-ratio increment, a hash format constant), MIX_A (opt-out: SplitMix64 / Mix13 multiplier, a hash format constant), MIX_B (opt-out: SplitMix64 / Mix13 multiplier, a hash format constant), DOMAIN (opt-out: domain separator so tile (0, 0), MASK_INSIDE_MIN (opt-out: R8 format: a mask texel at or above half-scale counts as inside), MAX_CELLS_PER_AXIS (opt-out: format: cells per axis capped so `n²` cell indices fit a u32), ACCEPT_SCALE (opt-out: maths: 2³², the integer scale of the acceptance threshold), BYTES (layout/math/id).
 
-### sf_groundcover_bevy (13: T 0, C 13, ? 0)
+### sf_groundcover_bevy (14: T 0, C 14, ? 0)
 
-Stays const: MAX_CELLS_PER_SIDE (opt-out: capacity: the vendored crate's own cap on a field's baked maps), PARAMS_BINDING (layout/math/id), WIND_BINDING (layout/math/id), TIME_WRAP_S (opt-out: Bevy's fixed wrap period of `globals.time`, a fact of the engine), CROSS_SWAY_RATIO (opt-out: decorrelation ratio; the cross sway's speed is tuned through `groundcover.render.sway_hz`), SLOT_BYTES (layout/math/id), MAX_SPECIES_PER_BATCH (opt-out: layout: the material uniform's species array length), TAU (layout/math/id), CROSS_PHASE (opt-out: phase decorrelation factor, maths), FLUTTER_PHASE (opt-out: phase decorrelation factor, maths), FLUTTER_SPREAD (opt-out: per-vertex phase decorrelation; the flutter's look is tuned by its amount and Hz), TILE_SAMPLES_F64 (opt-out: the terrain format's tile edge), HEIGHTS_PER_LAYER (opt-out: the terrain format's sample spacings).
+Stays const: PRESS_CHANNEL (opt-out: format: the ring's channel layout, `sf_surface_bevy::trail`), MAX_CELLS_PER_SIDE (opt-out: capacity: the vendored crate's own cap on a field's baked maps), PARAMS_BINDING (layout/math/id), WIND_BINDING (layout/math/id), TIME_WRAP_S (opt-out: Bevy's fixed wrap period of `globals.time`, a fact of the engine), CROSS_SWAY_RATIO (opt-out: decorrelation ratio; the cross sway's speed is tuned through `groundcover.render.sway_hz`), SLOT_BYTES (layout/math/id), MAX_SPECIES_PER_BATCH (opt-out: layout: the material uniform's species array length), TAU (layout/math/id), CROSS_PHASE (opt-out: phase decorrelation factor, maths), FLUTTER_PHASE (opt-out: phase decorrelation factor, maths), FLUTTER_SPREAD (opt-out: per-vertex phase decorrelation; the flutter's look is tuned by its amount and Hz), TILE_SAMPLES_F64 (opt-out: the terrain format's tile edge), HEIGHTS_PER_LAYER (opt-out: the terrain format's sample spacings).
 
 ### sf_ids (5: T 1, C 0, ? 4)
 
@@ -1432,8 +1432,8 @@ Stays const: PI (layout/math/id), FLAG_SUN (layout/math/id), FLAG_BOUNCE (layout
 | src/render.rs:26 | POINT_SHADOWS_DEFAULT | `(8, 512)` | T |  |
 | src/render.rs:31 | POINT_SHADOW_CACHE | `false` | T |  |
 | src/water.rs:82 | DEFAULT_WIND | `7.0` | ? |  |
-| src/weather.rs:206 | RASTER_MARGIN | `4` | T |  |
-| src/weather.rs:218 | LIVE_HOLD_HOURS | `1.0e6` | T |  |
+| src/weather.rs:220 | RASTER_MARGIN | `4` | T |  |
+| src/weather.rs:232 | LIVE_HOLD_HOURS | `1.0e6` | T |  |
 
 Stays const: SEED (sentinel/derived).
 
@@ -1446,9 +1446,9 @@ Stays const: SEED (sentinel/derived).
 | src/cover.rs:38 | TILING_M | `512.0 * UNIT_METERS` | T |  |
 | src/cover.rs:42 | SNOW_DEPTH_M | `0.45` | T |  |
 | src/cover.rs:44 | ASH_DEPTH_M | `0.03` | T |  |
-| src/lib.rs:47 | DEFAULT_TIMESCALE | `30.0` | T |  |
-| src/lib.rs:359 | REFERENCE_RAINDROPS | `650.0` | ? |  |
-| src/lib.rs:362 | REFERENCE_SNOWFLAKES | `1500.0` | ? |  |
+| src/lib.rs:49 | DEFAULT_TIMESCALE | `30.0` | T |  |
+| src/lib.rs:398 | REFERENCE_RAINDROPS | `650.0` | ? |  |
+| src/lib.rs:401 | REFERENCE_SNOWFLAKES | `1500.0` | ? |  |
 | src/visual.rs:26 | CLOUD_WORLD_SCALE | `0.5` | T |  |
 | src/visual.rs:31 | MAX_CLOUD_THICKNESS_M | `1_600.0` | T |  |
 | src/visual.rs:43 | CLOUD_SPEED_MPS | `10.0` | T |  |
@@ -1703,7 +1703,7 @@ Stays const: EPS (layout/math/id), MAX_TILES (opt-out: capacity: the bits of Til
 
 Stays const: ALL_FACES (opt-out: layout: the six cube faces), STILL_EPSILON (opt-out: fixture: the spec's 1 mm comparison), CAPTURE_HISTORY (opt-out: capacity: plans in flight), MOBILITY_DEPTH (opt-out: capacity: hierarchy depth searched), ATLAS_MIN_CAPTURES_PER_FRAME (opt-out: capacity: atlas initial capture floor), ATLAS_MOVING_TILE_PX (opt-out: layout: hero torch live tile size), ATLAS_POLICY_STORE_FACES (opt-out: layout: 6 faces per cube in policy pool), T_ROWS (small index), PI (layout/math/id), HUE_GRID (opt-out: layout: covers the 8x8 level exactly), GLOW_NEGLIGIBLE (opt-out: maths: 1/4096, below one 12-bit output step), ATLAS_NEW_SLOTS_PER_FRAME (opt-out: capacity: initial interior fill stagger).
 
-### sf_surface (100: T 58, C 13, ? 29)
+### sf_surface (106: T 58, C 19, ? 29)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1771,16 +1771,16 @@ Stays const: ALL_FACES (opt-out: layout: the six cube faces), STILL_EPSILON (opt
 | src/lib.rs:95 | SurfaceTuning.ash_wash | `2.0` | T | settings default |
 | src/lib.rs:96 | SurfaceTuning.storm_wet_rate | `2.0` | T |  |
 | src/save.rs:20 | QUANTUM | `1.0 / 65535.0` | ? |  |
-| src/trail.rs:30 | RING_SIZE | `1024` | T |  |
-| src/trail.rs:32 | RING_TEXEL_M | `0.0625` | T |  |
-| src/trail.rs:34 | STAMP_RANGE_M | `40.0` | T |  |
-| src/trail.rs:36 | MAX_STAMPS | `64` | T |  |
-| src/trail.rs:38 | LIP_HEIGHT | `0.25` | T |  |
-| src/trail.rs:40 | LIP_WIDTH | `0.6` | T |  |
-| src/trail.rs:42 | WALL | `0.3` | ? |  |
-| src/trail.rs:45 | REFILL | `6.0` | ? |  |
-| src/trail.rs:47 | REFILL_QUANTUM_M | `0.002` | T |  |
-| src/trail.rs:50 | FOOT_HALF_M | `Vec2::new(0.16, 0.09)` | T |  |
+| src/trail.rs:39 | RING_SIZE | `1024` | T |  |
+| src/trail.rs:41 | RING_TEXEL_M | `0.0625` | T |  |
+| src/trail.rs:43 | STAMP_RANGE_M | `40.0` | T |  |
+| src/trail.rs:45 | MAX_STAMPS | `64` | T |  |
+| src/trail.rs:47 | LIP_HEIGHT | `0.25` | T |  |
+| src/trail.rs:49 | LIP_WIDTH | `0.6` | T |  |
+| src/trail.rs:51 | WALL | `0.3` | ? |  |
+| src/trail.rs:54 | REFILL | `6.0` | ? |  |
+| src/trail.rs:56 | REFILL_QUANTUM_M | `0.002` | T |  |
+| src/trail.rs:59 | FOOT_HALF_M | `Vec2::new(0.16, 0.09)` | T |  |
 | src/view.rs:13 | WINDOW_CELLS | `128` | ? |  |
 | src/view.rs:213 | SHELTER_SIZE | `1024` | T |  |
 | src/view.rs:215 | SHELTER_HALF_M | `64.0` | T |  |
@@ -1795,9 +1795,9 @@ Stays const: ALL_FACES (opt-out: layout: the six cube faces), STILL_EPSILON (opt
 | src/view.rs:504 | EXPOSURE_RUN_S | `5.0 * EXPOSURE_TAU_S` | T |  |
 | src/view.rs:656 | NOISE_SIZE | `256` | T |  |
 
-Stays const: MAX_CAPTURE_SIZE (opt-out: a capacity: the target's allocation, the tunables pick what part is used), MAX_GROUND_EDGE (opt-out: a capacity: the window and step tunables pick what part is used), KEEP (small index), RIPPLE_GRIDS (small index), PROBE_NEAR_CELL_M (opt-out: a print format: the instrument's resolution, no cost or look), PROBE_FAR_CELL_M (opt-out: a print format: the instrument's resolution, no cost or look), PROBE_BUCKET_M (opt-out: a print format: one character's height bucket), PROBE_FLOOR_M (opt-out: a print format: where the digits start), PROBE_DEFAULT_HALF_M (opt-out: a print format: the default window of a dev command), PROBE_MAX_HALF_M (opt-out: a print format: the largest grid a dev command prints), HEADER_SLOTS (layout/math/id), PARAM_SLOTS (layout/math/id), SHELTER_FADE_START (opt-out: twin of the shader's SHELTER_FADE_START, counted there).
+Stays const: MAX_CAPTURE_SIZE (opt-out: a capacity: the target's allocation, the tunables pick what part is used), MAX_GROUND_EDGE (opt-out: a capacity: the window and step tunables pick what part is used), SPREAD_TAPS (opt-out: a sampling layout: the GC-T3 budget of 24 capture fetches per ring texel; the spread tunable sets its reach), SPREAD_REACH (opt-out: a sampling layout: where the smoothstep weight drops under 0.1), GOLDEN_ANGLE (opt-out: maths), KEEP (small index), RIPPLE_GRIDS (small index), PROBE_NEAR_CELL_M (opt-out: a print format: the instrument's resolution, no cost or look), PROBE_FAR_CELL_M (opt-out: a print format: the instrument's resolution, no cost or look), PROBE_BUCKET_M (opt-out: a print format: one character's height bucket), PROBE_FLOOR_M (opt-out: a print format: where the digits start), PROBE_DEFAULT_HALF_M (opt-out: a print format: the default window of a dev command), PROBE_MAX_HALF_M (opt-out: a print format: the largest grid a dev command prints), PRESS_FLOOR (opt-out: a format: one 8-bit step, inside the half float's normal range), PRESS_STEP (opt-out: a format margin: 16 × the half float's rounding; the decay is exp(-dt / recovery), HALF_ROUNDING (opt-out: a format: the half float's 11-bit significand), HEADER_SLOTS (layout/math/id), PARAM_SLOTS (layout/math/id), SHELTER_FADE_START (opt-out: twin of the shader's SHELTER_FADE_START, counted there).
 
-### sf_surface_bevy (122: T 47, C 49, ? 26)
+### sf_surface_bevy (128: T 47, C 55, ? 26)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1865,17 +1865,17 @@ Stays const: MAX_CAPTURE_SIZE (opt-out: a capacity: the target's allocation, the
 | src/layer.wesl:176 | SPARKLE_FADE_FAR_M | `0.02` | T | shader const: needs a uniform |
 | src/layer.wesl:183 | TRAIL_EDGE_FADE_M | `2.0` | T | shader const: needs a uniform |
 | src/layer.wesl:184 | TRAIL_LIP_HEIGHT | `0.25` | T | shader const: needs a uniform |
-| src/layer.wesl:186 | LUMA | `vec3(0.2126, 0.7152, 0.0722)` | ? |  |
-| src/lib.rs:219 | SurfaceSettings.layer | `true` | T | settings default |
-| src/lib.rs:220 | SurfaceSettings.wet | `true` | T | settings default |
-| src/lib.rs:221 | SurfaceSettings.puddles | `true` | T | settings default |
-| src/lib.rs:222 | SurfaceSettings.shelter | `true` | T | settings default |
-| src/lib.rs:223 | SurfaceSettings.cover | `true` | T | settings default |
-| src/lib.rs:224 | SurfaceSettings.trails | `true` | T | settings default |
-| src/lib.rs:225 | SurfaceSettings.raise | `true` | T | settings default |
+| src/layer.wesl:190 | LUMA | `vec3(0.2126, 0.7152, 0.0722)` | ? |  |
+| src/lib.rs:223 | SurfaceSettings.layer | `true` | T | settings default |
+| src/lib.rs:224 | SurfaceSettings.wet | `true` | T | settings default |
+| src/lib.rs:225 | SurfaceSettings.puddles | `true` | T | settings default |
+| src/lib.rs:226 | SurfaceSettings.shelter | `true` | T | settings default |
+| src/lib.rs:227 | SurfaceSettings.cover | `true` | T | settings default |
+| src/lib.rs:228 | SurfaceSettings.trails | `true` | T | settings default |
+| src/lib.rs:229 | SurfaceSettings.raise | `true` | T | settings default |
 | src/uniform.rs:23 | U_TRAIL_PREV | `15` | T |  |
 
-Stays const: DEFORM_SUBVIEW (sentinel/derived), PARAM_BYTES (layout/math/id), MODE_FRESH (layout/math/id), MODE_CARRY (layout/math/id), MODE_EASE (layout/math/id), TAU (layout/math/id), FLAG_WET (layout/math/id), FLAG_PUDDLE (layout/math/id), FLAG_SNOW (layout/math/id), FLAG_ASH (layout/math/id), FLAG_RAISE (layout/math/id), DEBUG_OFF (layout/math/id), DEBUG_EXPOSURE (layout/math/id), DEBUG_CELLS (layout/math/id), DEBUG_POROSITY (layout/math/id), DEBUG_TRAILS (layout/math/id), CLASS_STATIC (shader enum), CLASS_TERRAIN (shader enum), CLASS_DYNAMIC (shader enum), COVER_SNOW (shader enum), COVER_ASH (shader enum), PROBE_TIMEOUT_FRAMES (opt-out: a dev command's give-up bound, about a second: no cost or look), SHELTER_SUBVIEW (sentinel/derived), CANOPY_SUBVIEW (sentinel/derived), FAR_SHELTER_SUBVIEW (sentinel/derived), FAR_CANOPY_SUBVIEW (sentinel/derived), SHELTER_LOD_DISTANCE_M (opt-out: a definition, not a trade-off: the finest level is the one visible at 0 m), U_SHELTER_CLIP (small index), U_WINDOW (small index), U_CELLS (small index), U_SHELTER (small index), U_MISC (small index), U_TIME (small index), U_CANOPY (small index), U_COVER (small index), U_COVER_UV (small index), U_TRAIL (small index), U_TRAIL_CELLS (small index), U_TRAIL_PREV_CELLS (small index), U_FAR_CLIP (opt-out: layout: uniform slot index), U_FAR_SHELTER (opt-out: layout: uniform slot index), U_FAR_CANOPY (opt-out: layout: uniform slot index), U_SLOTS (layout/math/id), FLAG_WET (layout/math/id), FLAG_PUDDLE (layout/math/id), FLAG_SNOW (layout/math/id), FLAG_ASH (layout/math/id), FLAG_RAISE (layout/math/id), SurfaceUniform.flags (layout/math/id).
+Stays const: DEFORM_SUBVIEW (sentinel/derived), PARAM_BYTES (layout/math/id), MODE_FRESH (layout/math/id), MODE_CARRY (layout/math/id), MODE_EASE (layout/math/id), TAU (layout/math/id), FLAG_WET (layout/math/id), FLAG_PUDDLE (layout/math/id), FLAG_SNOW (layout/math/id), FLAG_ASH (layout/math/id), FLAG_RAISE (layout/math/id), DEBUG_OFF (layout/math/id), DEBUG_EXPOSURE (layout/math/id), DEBUG_CELLS (layout/math/id), DEBUG_POROSITY (layout/math/id), DEBUG_TRAILS (layout/math/id), CLASS_STATIC (shader enum), CLASS_TERRAIN (shader enum), CLASS_DYNAMIC (shader enum), COVER_SNOW (shader enum), COVER_ASH (shader enum), TRAIL_PRESS_FLOOR (opt-out: the ring's press resolution, sf_surface::trail::PRESS_FLOOR; a format fact), PROBE_TIMEOUT_FRAMES (opt-out: a dev command's give-up bound, about a second: no cost or look), SHELTER_SUBVIEW (sentinel/derived), CANOPY_SUBVIEW (sentinel/derived), FAR_SHELTER_SUBVIEW (sentinel/derived), FAR_CANOPY_SUBVIEW (sentinel/derived), SHELTER_LOD_DISTANCE_M (opt-out: a definition, not a trade-off: the finest level is the one visible at 0 m), RING_EDGE_MARGIN_M (opt-out: format: mirrors `layer.wesl` `surface_ring_lookup`, checked by `shader_tests`), RING_EDGE_FADE_M (opt-out: format: mirrors `layer.wesl` `TRAIL_EDGE_FADE_M`, checked by `shader_tests`), SPREAD_TAPS (opt-out: a sampling layout: the GC-T3 budget of 24 capture fetches per ring texel; the spread tunable sets its reach), SPREAD_REACH (opt-out: a sampling layout: where the smoothstep weight drops under 0.1), GOLDEN_ANGLE (opt-out: maths), U_SHELTER_CLIP (small index), U_WINDOW (small index), U_CELLS (small index), U_SHELTER (small index), U_MISC (small index), U_TIME (small index), U_CANOPY (small index), U_COVER (small index), U_COVER_UV (small index), U_TRAIL (small index), U_TRAIL_CELLS (small index), U_TRAIL_PREV_CELLS (small index), U_FAR_CLIP (opt-out: layout: uniform slot index), U_FAR_SHELTER (opt-out: layout: uniform slot index), U_FAR_CANOPY (opt-out: layout: uniform slot index), U_SLOTS (layout/math/id), FLAG_WET (layout/math/id), FLAG_PUDDLE (layout/math/id), FLAG_SNOW (layout/math/id), FLAG_ASH (layout/math/id), FLAG_RAISE (layout/math/id), SurfaceUniform.flags (layout/math/id).
 
 ### sf_weather (100: T 43, C 36, ? 21)
 
@@ -2131,7 +2131,7 @@ Stays const: NON_INDEXED (sentinel/derived), SLOT_BYTES (layout/math/id), SLOT_L
 | src/lib.rs:44 | NEAR_M | `1.5` | T |  |
 | src/lib.rs:46 | MIN_FACING | `0.5` | T |  |
 
-### mw_exterior_bevy (34: T 7, C 26, ? 1)
+### mw_exterior_bevy (35: T 7, C 27, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -2144,7 +2144,7 @@ Stays const: NON_INDEXED (sentinel/derived), SLOT_BYTES (layout/math/id), SLOT_L
 | src/trails.rs:45 | ON_TERRAIN_M | `0.4` | T |  |
 | src/trails.rs:47 | TOE_SHIFT_M | `0.05` | T |  |
 
-Stays const: MAX_DEPTH (opt-out: a recursion guard against driver cycles, not a trade-off), MARKER_SPACING (test-scene fixture), COLUMN_SPACING_M (opt-out: fixture: rock-lab layout, x between class columns, centred on x = 0), FIELD_START_Z (opt-out: fixture: rock-lab layout, z of the nearest rock's near edge), GAP_M (opt-out: fixture: rock-lab layout, gap between neighbours), FIELD_COUNT (opt-out: fixture: rock-lab layout, rocks per class column), SIZE_MIN_M (opt-out: fixture: rock-lab size range shown), SIZE_MAX_M (opt-out: fixture: rock-lab size range shown), SIZE_POWER (opt-out: fixture: rock-lab size spread), SINK (opt-out: fixture: rock-lab placement), FORMATION_ROW_Z (opt-out: fixture: rock-lab layout), FORMATION_SPACING_M (opt-out: fixture: rock-lab layout, x between formations), FORMATION_SINK (opt-out: fixture: rock-lab placement), MIX_SEED (test-scene fixture), SWATCH_SPACING (test-scene fixture), PANEL (test-scene fixture), SPHERE (test-scene fixture), CUBE (test-scene fixture), MODEL_SPACING (test-scene fixture), MODEL_Z (test-scene fixture), TURNTABLE (test-scene fixture), LAMP_ORBIT (test-scene fixture), LAMP_HEIGHT (test-scene fixture), LAMP_RATE (test-scene fixture), LAMP_RADIUS (test-scene fixture), REPORT_EVERY_S (opt-out: log cadence: how often a diagnostic line prints, no look, feel or cost).
+Stays const: MAX_DEPTH (opt-out: a recursion guard against driver cycles, not a trade-off), MAX_SUB_SPECIES (opt-out: a capacity: bevy_grass mixes at most 16 species per field), MARKER_SPACING (test-scene fixture), COLUMN_SPACING_M (opt-out: fixture: rock-lab layout, x between class columns, centred on x = 0), FIELD_START_Z (opt-out: fixture: rock-lab layout, z of the nearest rock's near edge), GAP_M (opt-out: fixture: rock-lab layout, gap between neighbours), FIELD_COUNT (opt-out: fixture: rock-lab layout, rocks per class column), SIZE_MIN_M (opt-out: fixture: rock-lab size range shown), SIZE_MAX_M (opt-out: fixture: rock-lab size range shown), SIZE_POWER (opt-out: fixture: rock-lab size spread), SINK (opt-out: fixture: rock-lab placement), FORMATION_ROW_Z (opt-out: fixture: rock-lab layout), FORMATION_SPACING_M (opt-out: fixture: rock-lab layout, x between formations), FORMATION_SINK (opt-out: fixture: rock-lab placement), MIX_SEED (test-scene fixture), SWATCH_SPACING (test-scene fixture), PANEL (test-scene fixture), SPHERE (test-scene fixture), CUBE (test-scene fixture), MODEL_SPACING (test-scene fixture), MODEL_Z (test-scene fixture), TURNTABLE (test-scene fixture), LAMP_ORBIT (test-scene fixture), LAMP_HEIGHT (test-scene fixture), LAMP_RATE (test-scene fixture), LAMP_RADIUS (test-scene fixture), REPORT_EVERY_S (opt-out: log cadence: how often a diagnostic line prints, no look, feel or cost).
 
 ### mw_world (20: T 14, C 4, ? 2)
 
@@ -2169,15 +2169,15 @@ Stays const: MAX_DEPTH (opt-out: a recursion guard against driver cycles, not a 
 
 Stays const: UNIT_METERS_F64 (unit/format), CELL_UNITS (unit/format), VERTEX_UNITS (unit/format), TEXEL_UNITS (unit/format).
 
-### mw_worldgen (10: T 1, C 7, ? 2)
+### mw_worldgen (20: T 1, C 17, ? 2)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
 | src/anchor.rs:461 | FAR | `1e20` | T |  |
-| src/flora.rs:51 | GROUP_FLORA | `0` | ? |  |
-| src/flora.rs:52 | GROUP_ROCKS | `1` | ? |  |
+| src/flora.rs:56 | GROUP_FLORA | `0` | ? |  |
+| src/flora.rs:57 | GROUP_ROCKS | `1` | ? |  |
 
-Stays const: SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane is at z = 0; the scaled guide keeps it), UNKNOWN_SIZE_M (opt-out: fallback: only the budget's priority reads it, and every Morrowind flora mesh has bounds), CELL_QUADS (derived), SEA_SURFACE_UNITS (opt-out: format fact: the exterior water plane is at z = 0 in Morrowind's data and OpenMW), MARKERS_FORMAT (layout/math/id), FORMAT_VERSION (layout/math/id), FORMAT (opt-out: format version of the contract).
+Stays const: SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane is at z = 0; the scaled guide keeps it), SEA_MATCH_M (opt-out: maths: f64 round-trip tolerance of one shared level, not a quality trade), REPORT_GRADE (opt-out: report: the spec's measurement, so the numbers compare), REPORT_WITHIN_M (opt-out: report: the spec's measurement, so the numbers compare), DERIVE_FORMAT (layout/math/id), UNKNOWN_SIZE_M (opt-out: fallback: only the budget's priority reads it, and every Morrowind flora mesh has bounds), FAR (opt-out: maths: a finite infinity far above any squared cell distance), FORMAT (opt-out: format version of the contract), PER_M (opt-out: format: written precision), PER_DEG (opt-out: format: written precision), CELL_QUADS (derived), SEA_SURFACE_UNITS (opt-out: format fact: the exterior water plane is at z = 0 in Morrowind's data and OpenMW), MARKERS_FORMAT (layout/math/id), FORMAT_VERSION (layout/math/id), FORMAT (opt-out: format version of the contract), SLOPE_REPORT_RADIUS_M (opt-out: report: the ST-3d measurement's radius, so the numbers compare), FORMAT (opt-out: format version of the contract).
 
 ### sf_world (25: T 21, C 3, ? 1)
 
@@ -2241,7 +2241,7 @@ Stays const: VERSION (layout/math/id), PLACEMENT_BYTES (layout/math/id), PAGE_SH
 
 Stays const: FadeTransition.elapsed (runtime state), FadeTransition.queued_blackout (runtime state), FoldRules.flat_normal_map (opt-out: bench-only A/B arm switch, not a quality or feel value), FoldRules.one_texture_set (opt-out: bench-only A/B arm switch, not a quality or feel value), TARGET_MAX_SLAB_BYTES (layout/math/id), MIB (layout/math/id), WorldspaceParking.now (opt-out: state: the streaming clock, set every frame), StreamingConfig.one_texture_set (opt-out: bench-only A/B arm switch, `--off texvariety`; not a quality or feel value), INLINE_PAIRS (small index).
 
-### sf_worldgen (136: T 24, C 99, ? 13)
+### sf_worldgen (155: T 24, C 118, ? 13)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -2283,7 +2283,7 @@ Stays const: FadeTransition.elapsed (runtime state), FadeTransition.queued_black
 | src/tiles.rs:689 | CASCADE | `27` | T |  |
 | src/tiles.rs:694 | STAMPS | `31` | T |  |
 
-Stays const: ANCHORS_FORMAT (layout/math/id), LAND_FLOOR_M (opt-out: invariant: keeps modified dry samples strictly above sea level so Audit stays clean), RegionProfile.scarp_scale (opt-out: identity multipliers when a region has no TOML override), RegionProfile.shelf_scale (opt-out: identity multiplier), RegionProfile.steepen_scale (opt-out: identity multiplier), RegionProfile.sea_cliff_scale (opt-out: identity multiplier), RegionProfile.lava_scale (opt-out: identity: lava flows only run in regions that opt in via TOML), KERNEL_RADIUS_CELLS (opt-out: layout: coverage needs ≥ √2 cells, the 5 × 5 search allows ≤ 1.5), WARN_SAMPLES (opt-out: report layout: a warning threshold, ~800 MB of f32 heights), TAU (layout/math/id), FORMAT (opt-out: format version), NEIGHBOUR_DIST (opt-out: grid geometry: 1 and sqrt 2), NONE (opt-out: sentinel: no parent, no col), LAYERS_FORMAT (layout/math/id), NO_LAYER (sentinel/derived), STAMP_LAYER_WEIGHT (opt-out: format fact: the spec's stamp/global switch, the band's midpoint), UNKNOWN_ALBEDO (opt-out: fallback: neutral grey for a palette id missing from the layer table, logged by the caller), TRUNCATE_SIGMAS (opt-out: maths: 3σ holds 99.7 % of a Gaussian), NEWTON_TOL_M (opt-out: numerics of the local Newton solve: Veloren / fastscapelib-fortran tolerance and relaxation), BAND_EDGES_M (opt-out: metric definition: band edges fixed by the WG-M brief, 40 m to 10 km plus 10-40 m for 5 m fields), BINS_PER_DECADE (opt-out: metric definition: 10 log bins per decade), HEIGHT_QUANTILES (opt-out: metric definition: reported percentiles), WALK_BAND_EDGES_DEG (opt-out: metric definition: report bands 0-15 / 15-25 / 25-35 / 35-46 / 46-60 / > 60 deg), FLAT_DEG (opt-out: metric definition: landforms.md "Measurement", land share under 10 deg, Etna 52 %), STEEP_DEG (opt-out: metric definition: landforms.md "Measurement", land share >= 35 deg, Etna 1.8 %), UNTOUCHED_M (opt-out: metric definition: landforms.md "Measurement", untouched = |dh| < 0.5 m vs the base), EXACT_BELOW (opt-out: filter construction: exact kernel below 4 samples, Kovesi boxes above), IDENTITY_BELOW (opt-out: filter construction: a Gaussian under half a sample is the identity), BIG (opt-out: maths: "infinite" squared distance seed of the transform), SINUOSITY_CHANNELS (opt-out: metric definition: "the 20 largest channels", fixed by the WG-S2b brief), TRACE_STEP_SAMPLES (opt-out: geometry resolution: a vertex every 2 samples, the guide footprint of the prefilter), NEVER_TAN (opt-out: sentinel: an unreachable talus slope), SOFT_BELOW (opt-out: definition shared with geology.rs: soft = hardness below 0.5), LAND_FLOOR_M (opt-out: invariant: keeps written dry samples strictly dry so the wet/dry audit stays clean), NONE (opt-out: sentinel: "not a boundary pixel"), SHEET_GAP_PX (opt-out: sheet layout, fixed by the look-test design), SHEET_GAP_GRAY (opt-out: sheet layout: white gaps), SLOPE_BINS (opt-out: layout: one bin per degree of slope, the census resolution of the slope cut), EDGE_EPS (opt-out: maths: rounding tolerance, far below any sample spacing), MM_CELL (opt-out: layout: block size of the per-stamp min/max grid, no quality trade), MAX_BINS_AXIS (opt-out: capacity: caps the bin grid at 256² for far-apart small stamps), S_WARP_X (opt-out: hash stream ids), S_WARP_Y (id table), S_FOOT (id table), S_EXPONENT (id table), S_RIFT_CURVE (id table), S_CALDERA (id table), S_COLLAPSE (id table), S_SUBPEAK (id table), S_CONE (id table), S_FRACTURE (id table), S_FRACTURE_WANDER (id table), S_SEED_COARSE (id table), S_SEED_FINE (id table), S_BAND (id table), S_BAND_WARP (id table), S_CELL (id table), S_FLANK_K (id table), NONE (layout/math/id), FRACTURE_SEGMENTS (small index), FLANK_RINGS_M (opt-out: report layout), RESIDUAL_TRACE_EVERY (opt-out: report layout), CR_OVERSHOOT (opt-out: maths: bound of the Catmull-Rom kernel, max Σ|w| = 1.25 per axis at t = 0.5), STAT_LEVELS (opt-out: layout: counter slots, one per tile level), W (id table), H (id table), COL_CI (id table), COL_CF (id table), ROW_CI (id table), ROW_CF (id table), COL_A (id table), COL_C (id table), ROW_A (id table), ROW_C (id table), SEA (id table), OCTAVES (id table), WAVELENGTH (id table), LACUNARITY (id table), RELIEF (id table), SLOPE_LO (id table), SLOPE_HI (id table), CURV_LO (id table), CURV_HI (id table), CARVE (id table), SEED (layout/math/id), BAND_LO (id table), BAND_HI (id table), LOOK (id table), LAYERS (opt-out: layout: GPU header slot index), STRATA_AMP (opt-out: layout: GPU header slot indices for Phase 3a sharp runtime operators), STRATA_STEP (opt-out: layout: GPU header slot index), STRATA_SHARP (opt-out: layout: GPU header slot index), ROCK_AMP (opt-out: layout: GPU header slot index), ROCK_SCALE (opt-out: layout: GPU header slot index), RIDGE_AMP (opt-out: layout: GPU header slot index), RIDGE_SCALE (opt-out: layout: GPU header slot index), STEEP_LO (opt-out: layout: GPU header slot index), STEEP_HI (opt-out: layout: GPU header slot index), HEIGHTS (opt-out: layout: GPU header slot index).
+Stays const: ANCHORS_FORMAT (layout/math/id), LAND_FLOOR_M (opt-out: invariant: keeps modified dry samples strictly above sea level so Audit stays clean), RegionProfile.scarp_scale (opt-out: identity multipliers when a region has no TOML override), RegionProfile.shelf_scale (opt-out: identity multiplier), RegionProfile.steepen_scale (opt-out: identity multiplier), RegionProfile.sea_cliff_scale (opt-out: identity multiplier), RegionProfile.lava_scale (opt-out: identity: lava flows only run in regions that opt in via TOML), KERNEL_RADIUS_CELLS (opt-out: layout: coverage needs ≥ √2 cells, the 5 × 5 search allows ≤ 1.5), WARN_SAMPLES (opt-out: report layout: a warning threshold, ~800 MB of f32 heights), TAU (layout/math/id), FORMAT (opt-out: format version), NEIGHBOUR_DIST (opt-out: grid geometry: 1 and sqrt 2), NONE (opt-out: sentinel: no parent, no col), LAYERS_FORMAT (layout/math/id), NO_LAYER (sentinel/derived), STAMP_LAYER_WEIGHT (opt-out: format fact: the spec's stamp/global switch, the band's midpoint), UNKNOWN_ALBEDO (opt-out: fallback: neutral grey for a palette id missing from the layer table, logged by the caller), TRUNCATE_SIGMAS (opt-out: maths: 3σ holds 99.7 % of a Gaussian), NEWTON_TOL_M (opt-out: numerics of the local Newton solve: Veloren / fastscapelib-fortran tolerance and relaxation), BAND_EDGES_M (opt-out: metric definition: band edges fixed by the WG-M brief, 40 m to 10 km plus 10-40 m for 5 m fields), BINS_PER_DECADE (opt-out: metric definition: 10 log bins per decade), HEIGHT_QUANTILES (opt-out: metric definition: reported percentiles), WALK_BAND_EDGES_DEG (opt-out: metric definition: report bands 0-15 / 15-25 / 25-35 / 35-46 / 46-60 / > 60 deg), FLAT_DEG (opt-out: metric definition: landforms.md "Measurement", land share under 10 deg, Etna 52 %), STEEP_DEG (opt-out: metric definition: landforms.md "Measurement", land share >= 35 deg, Etna 1.8 %), UNTOUCHED_M (opt-out: metric definition: landforms.md "Measurement", untouched = |dh| < 0.5 m vs the base), EXACT_BELOW (opt-out: filter construction: exact kernel below 4 samples, Kovesi boxes above), IDENTITY_BELOW (opt-out: filter construction: a Gaussian under half a sample is the identity), BIG (opt-out: maths: "infinite" squared distance seed of the transform), SINUOSITY_CHANNELS (opt-out: metric definition: "the 20 largest channels", fixed by the WG-S2b brief), TRACE_STEP_SAMPLES (opt-out: geometry resolution: a vertex every 2 samples, the guide footprint of the prefilter), NEVER_TAN (opt-out: sentinel: an unreachable talus slope), SOFT_BELOW (opt-out: definition shared with geology.rs: soft = hardness below 0.5), LAND_FLOOR_M (opt-out: invariant: keeps written dry samples strictly dry so the wet/dry audit stays clean), NONE (opt-out: sentinel: "not a boundary pixel"), FORMAT (layout/math/id), ARC_SUBSTEPS_PER_SPACING (opt-out: maths: quadrature density of the arc-length table, accuracy only; trades no look or cost), DUP_EPS_M (opt-out: maths: duplicate-point epsilon, metres), SHEET_GAP_PX (opt-out: sheet layout, fixed by the look-test design), SHEET_GAP_GRAY (opt-out: sheet layout: white gaps), SLOPE_BINS (opt-out: layout: one bin per degree of slope, the census resolution of the slope cut), EDGE_EPS (opt-out: maths: rounding tolerance, far below any sample spacing), MM_CELL (opt-out: layout: block size of the per-stamp min/max grid, no quality trade), MAX_BINS_AXIS (opt-out: capacity: caps the bin grid at 256² for far-apart small stamps), S_WARP_X (opt-out: hash stream ids), S_WARP_Y (id table), S_FOOT (id table), S_EXPONENT (id table), S_RIFT_CURVE (id table), S_CALDERA (id table), S_COLLAPSE (id table), S_SUBPEAK (id table), S_CONE (id table), S_FRACTURE (id table), S_FRACTURE_WANDER (id table), S_SEED_COARSE (id table), S_SEED_FINE (id table), S_BAND (id table), S_BAND_WARP (id table), S_CELL (id table), S_FLANK_K (id table), NONE (layout/math/id), FRACTURE_SEGMENTS (small index), FLANK_RINGS_M (opt-out: report layout), RESIDUAL_TRACE_EVERY (opt-out: report layout), CR_OVERSHOOT (opt-out: maths: bound of the Catmull-Rom kernel, max Σ|w| = 1.25 per axis at t = 0.5), STAT_LEVELS (opt-out: layout: counter slots, one per tile level), W (id table), H (id table), COL_CI (id table), COL_CF (id table), ROW_CI (id table), ROW_CF (id table), COL_A (id table), COL_C (id table), ROW_A (id table), ROW_C (id table), SEA (id table), OCTAVES (id table), WAVELENGTH (id table), LACUNARITY (id table), RELIEF (id table), SLOPE_LO (id table), SLOPE_HI (id table), CURV_LO (id table), CURV_HI (id table), CARVE (id table), SEED (layout/math/id), BAND_LO (id table), BAND_HI (id table), LOOK (id table), LAYERS (opt-out: layout: GPU header slot index), STRATA_AMP (opt-out: layout: GPU header slot indices for Phase 3a sharp runtime operators), STRATA_STEP (opt-out: layout: GPU header slot index), STRATA_SHARP (opt-out: layout: GPU header slot index), ROCK_AMP (opt-out: layout: GPU header slot index), ROCK_SCALE (opt-out: layout: GPU header slot index), RIDGE_AMP (opt-out: layout: GPU header slot index), RIDGE_SCALE (opt-out: layout: GPU header slot index), STEEP_LO (opt-out: layout: GPU header slot index), STEEP_HI (opt-out: layout: GPU header slot index), HEIGHTS (opt-out: layout: GPU header slot index), MAXN (opt-out: capacity: upper bound of the declared `treads_max` range), FADE_SHARE (opt-out: spec definition: "cross-faded over a quarter cell"), NORMAL_STENCIL (opt-out: geometry: gradient stencil of the signed distance field), LINE_STEP_M (opt-out: geometry resolution of the report polylines), SAME_EPS_M (opt-out: numerics: f64 rounding of equal profiles), STREAM_TREAD (opt-out: format: noise stream ids), STREAM_RISER (opt-out: format: noise stream ids), STREAM_MEANDER (opt-out: format: noise stream ids), FD_M (opt-out: numerics: central-difference step, far under the shortest noise wavelength), RAY_ITERS (opt-out: numerics: iterations of a contraction, converged far under a sample), RAMP_FIT_ITERS (opt-out: numerics: a fixed point reached in two or three steps), RAMP_BUCKET_M (opt-out: indexing: a lookup grid's cell, any size gives the same cut), SMOOTH_FEET (opt-out: numerics: averages the digitised edge's jitter, far under the bend radii and ramp lengths), REPORT_FORMAT (opt-out: format version), BIG (opt-out: maths: "infinite" squared distance seed of the transform), FORMAT (layout/math/id).
 
 ## terrain-water
 
@@ -2385,11 +2385,17 @@ Stays const: TerrainBakeConfig.rt_stride (layout/math/id), NO_LAYER_ALBEDO (layo
 
 Stays const: P_CAMERA (small index), P_ORIGIN (small index), P_MISC (small index), P_VALID (small index), P_MORPH (small index), P_LAYER (small index), P_MACRO (small index), P_DETAIL (small index), P_LAYERS (small index), P_FAR (derived), P_RAISE (derived), P_HEX (derived), P_CLIFF (derived), P_SHADE (derived), SLOTS (layout/math/id), LAYER_LEVELS (small index), MACRO_LEVELS (small index), DEBUG_LOD (layout/math/id), DEBUG_WIREFRAME (layout/math/id), DEBUG_NO_FAR_SHADOWS (layout/math/id), DEBUG_NO_SPECULAR (layout/math/id), DEBUG_NO_INDIRECT (layout/math/id), DEBUG_RAW_LAYERS (layout/math/id), DEBUG_NO_ENV_SPECULAR (layout/math/id), P_CAMERA (shader enum), P_ORIGIN (shader enum), P_MISC (shader enum), P_VALID (shader enum), P_MORPH (shader enum), P_LAYER (shader enum), P_MACRO (shader enum), P_DETAIL (shader enum), P_LAYERS (shader enum), P_RAISE (shader enum), P_HEX (shader enum), P_CLIFF (shader enum), P_SHADE (shader enum), LAYER_LEVELS (shader enum), DEBUG_LOD (layout/math/id), DEBUG_WIREFRAME (layout/math/id), DEBUG_NO_FAR_SHADOWS (layout/math/id), DEBUG_NO_SPECULAR (layout/math/id), DEBUG_NO_INDIRECT (layout/math/id), DEBUG_RAW_LAYERS (layout/math/id), DEBUG_NO_ENV_SPECULAR (layout/math/id), MACRO_LEVELS (shader enum).
 
-### sf_water (99: T 52, C 8, ? 39)
+### sf_water (111: T 58, C 14, ? 39)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:51 | TWIN_RESOLUTION | `64` | T |  |
+| src/body_mesh.rs:124 | LakeMeshParams.max_triangle_area_m2 | `1024.0` | T |  |
+| src/body_mesh.rs:125 | LakeMeshParams.min_angle_deg | `20.0` | T |  |
+| src/body_mesh.rs:126 | LakeMeshParams.max_steiner_vertices | `65_536` | T |  |
+| src/body_mesh.rs:150 | RiverMeshParams.spacing_m | `4.0` | T |  |
+| src/body_mesh.rs:151 | RiverMeshParams.cross_samples | `5` | T |  |
+| src/body_mesh.rs:152 | RiverMeshParams.bank_extend_m | `2.0` | T |  |
+| src/lib.rs:55 | TWIN_RESOLUTION | `64` | T |  |
 | src/medium.rs:121 | CameraMedium.column | `0.0` | ? |  |
 | src/medium.rs:122 | CameraMedium.submerged | `false` | ? | bool |
 | src/medium.rs:123 | CameraMedium.changed | `false` | ? | bool |
@@ -2481,46 +2487,47 @@ Stays const: P_CAMERA (small index), P_ORIGIN (small index), P_MISC (small index
 | src/sspr.rs:28 | MIN_HEIGHT | `0.01` | T |  |
 | src/twin.rs:31 | INVERSION_ITERATIONS | `3` | T |  |
 
-Stays const: CENTRE (small index), CameraMedium.started (runtime state), LEAF (small index), TRAINS (small index), BREAKER_INDEX (layout/math/id), SKEW_RATE_LIMIT (opt-out: a no-fold bound derived from the Jacobian, as ORBIT_LIMIT), MIN_EXTINCTION (opt-out: maths: a division guard, the shaders' floor), LEAF_TEXELS (opt-out: layout: the tree's leaf; exactness never depends on it).
+Stays const: POINT_EPS_M (opt-out: maths: a duplicate-vertex guard), AREA_EPS_M2 (opt-out: maths: a zero-area guard), FOLD_MARGIN (opt-out: a no-fold bound, as `SKEW_RATE_LIMIT`), LENGTH_PROBES (opt-out: maths: the arc-length table per segment), MIN_SPACING_M (opt-out: maths: an allocation guard below the range), CENTRIPETAL (opt-out: maths: the parameterisation itself), CENTRE (small index), CameraMedium.started (runtime state), LEAF (small index), TRAINS (small index), BREAKER_INDEX (layout/math/id), SKEW_RATE_LIMIT (opt-out: a no-fold bound derived from the Jacobian, as ORBIT_LIMIT), MIN_EXTINCTION (opt-out: maths: a division guard, the shaders' floor), LEAF_TEXELS (opt-out: layout: the tree's leaf; exactness never depends on it).
 
-### sf_water_bevy (45: T 20, C 13, ? 12)
+### sf_water_bevy (49: T 20, C 16, ? 13)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:65 | RESOLUTION | `256` | T |  |
-| src/lib.rs:67 | MAX_CASCADES | `4` | T |  |
-| src/lib.rs:69 | MAX_LOOKS | `8` | T |  |
-| src/lib.rs:177 | WaterReflections.sspr | `true` | ? | bool |
-| src/lib.rs:177 | WaterReflections.wave_distortion | `0.6` | T |  |
-| src/lib.rs:276 | ClipmapSettings.base_spacing | `0.25` | T |  |
-| src/lib.rs:276 | ClipmapSettings.quads | `128` | T | settings default |
-| src/lib.rs:276 | ClipmapSettings.rings | `7` | T |  |
-| src/lib.rs:276 | ClipmapSettings.skirt | `32_000.0` | T | settings default |
-| src/lib.rs:276 | ClipmapSettings.displacement_range | `900.0` | T |  |
+| src/lib.rs:95 | RESOLUTION | `256` | T |  |
+| src/lib.rs:97 | MAX_CASCADES | `4` | T |  |
+| src/lib.rs:99 | MAX_LOOKS | `8` | T |  |
+| src/lib.rs:207 | WaterReflections.sspr | `true` | ? | bool |
+| src/lib.rs:207 | WaterReflections.wave_distortion | `0.6` | T |  |
+| src/lib.rs:306 | ClipmapSettings.base_spacing | `0.25` | T |  |
+| src/lib.rs:306 | ClipmapSettings.quads | `128` | T | settings default |
+| src/lib.rs:306 | ClipmapSettings.rings | `7` | T |  |
+| src/lib.rs:306 | ClipmapSettings.skirt | `32_000.0` | T | settings default |
+| src/lib.rs:306 | ClipmapSettings.displacement_range | `900.0` | T |  |
+| src/lib.rs:405 | MESH_RANK | `2` | ? |  |
 | src/medium.rs:98 | WaterMediumSettings.post | `true` | T | settings default |
-| src/render.rs:173 | GATE_ARGS_SNAPSHOT | `0` | ? |  |
-| src/render.rs:174 | GATE_ARGS_VELOCITY | `16` | ? |  |
-| src/render.rs:175 | GATE_ARGS_SSPR | `32` | ? |  |
-| src/render.rs:180 | GATE_STRIP | `14` | ? |  |
-| src/shaders/water_common.wesl:95 | SW_SHARES | `vec3(0.5, 0.3, 0.2)` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:96 | SW_PHASE_SPREAD | `vec3(1.0, -0.7, 1.3)` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:97 | SW_BREAKER | `0.78` | ? |  |
-| src/shaders/water_common.wesl:98 | SW_MICHE | `0.44610616` | ? |  |
-| src/shaders/water_common.wesl:99 | SW_STEEPNESS | `0.75` | ? |  |
-| src/shaders/water_common.wesl:100 | SW_ORBIT | `0.4` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:101 | SW_MIN_DEPTH | `0.1` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:102 | SW_PHASE_NOISE | `0.8` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:103 | SW_SET_FLOOR | `0.6` | ? |  |
-| src/shaders/water_common.wesl:104 | SW_SKEW | `0.5` | ? |  |
-| src/shaders/water_common.wesl:105 | SW_ZONE | `0.3` | ? |  |
-| src/shaders/water_common.wesl:108 | SW_ECKART_LINEAR | `4.0` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:109 | SW_GRAVITY | `9.81` | T | shader const: needs a uniform |
-| src/shaders/water_common.wesl:110 | SW_REPEAT | `256.0` | ? |  |
+| src/render.rs:178 | GATE_ARGS_SNAPSHOT | `0` | ? |  |
+| src/render.rs:179 | GATE_ARGS_VELOCITY | `16` | ? |  |
+| src/render.rs:180 | GATE_ARGS_SSPR | `32` | ? |  |
+| src/render.rs:185 | GATE_STRIP | `14` | ? |  |
+| src/shaders/water_common.wesl:101 | SW_SHARES | `vec3(0.5, 0.3, 0.2)` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:102 | SW_PHASE_SPREAD | `vec3(1.0, -0.7, 1.3)` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:103 | SW_BREAKER | `0.78` | ? |  |
+| src/shaders/water_common.wesl:104 | SW_MICHE | `0.44610616` | ? |  |
+| src/shaders/water_common.wesl:105 | SW_STEEPNESS | `0.75` | ? |  |
+| src/shaders/water_common.wesl:106 | SW_ORBIT | `0.4` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:107 | SW_MIN_DEPTH | `0.1` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:108 | SW_PHASE_NOISE | `0.8` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:109 | SW_SET_FLOOR | `0.6` | ? |  |
+| src/shaders/water_common.wesl:110 | SW_SKEW | `0.5` | ? |  |
+| src/shaders/water_common.wesl:111 | SW_ZONE | `0.3` | ? |  |
+| src/shaders/water_common.wesl:114 | SW_ECKART_LINEAR | `4.0` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:115 | SW_GRAVITY | `9.81` | T | shader const: needs a uniform |
+| src/shaders/water_common.wesl:116 | SW_REPEAT | `256.0` | ? |  |
 | src/shaders/water_fft.wesl:42 | MAX_N | `256u` | T | shader const: needs a uniform |
 | src/shaders/water_sspr.wesl:27 | MIN_HEIGHT | `0.01` | T | shader const: needs a uniform |
 | src/shaders/water_underwater.wesl:36 | MIN_EXTINCTION | `1e-4` | T | shader const: needs a uniform |
 
-Stays const: MAX_GATE_BOXES (opt-out: capacity: past it the gate runs every pass), OceanSpectrum.seed (runtime state), KEEP (small index), NO_WATER_DEPTH_M (opt-out: format: a finite ∞ for the GPU), RAIN_CLOCK_WRAP_S (opt-out: maths: whole ring cycles per wrap), GATE_ARGS_BYTES (layout/math/id), GATE_BOX_BYTES (layout/math/id), SSPR_GROUP (layout/math/id), SW_SKEW_RATE_LIMIT (opt-out: the twin of sf_water SKEW_RATE_LIMIT, a no-fold bound), SW_TAU (layout/math/id), SW_PI (layout/math/id), LANES (shader enum), TAU (layout/math/id).
+Stays const: MIN_CYCLE_S (opt-out: maths: the range floor of `water.flow.cycle_s`), MAX_GATE_BOXES (opt-out: capacity: past it the gate runs every pass), OceanSpectrum.seed (runtime state), KEEP (small index), FLOW_LOCATION (layout/math/id), NO_WATER_DEPTH_M (opt-out: format: a finite ∞ for the GPU), RAIN_CLOCK_WRAP_S (opt-out: maths: whole ring cycles per wrap), GATE_ARGS_BYTES (layout/math/id), GATE_BOX_BYTES (layout/math/id), SSPR_GROUP (layout/math/id), SW_SKEW_RATE_LIMIT (opt-out: the twin of sf_water SKEW_RATE_LIMIT, a no-fold bound), SW_TAU (layout/math/id), SW_PI (layout/math/id), LANES (shader enum), TAU (layout/math/id), FLOW_NOISE_SEED (layout/math/id).
 
 ## textures
 

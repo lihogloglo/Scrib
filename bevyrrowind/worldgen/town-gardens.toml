@@ -1,0 +1,60 @@
+# Temporary scaffold (owner 2026-11-24): trees and shrubs on a town's garden features (`placements.json`
+# `features` of kind "garden": lots no kit house fits, Magna Urbis' garden lots, slivers), "just to have something".
+# Read by `bevyrrowind worldgen-town --gardens bevyrrowind/worldgen/town-gardens.toml --guide <guide dir>`
+# (`mw_worldgen::garden`). Removal path: Magna Urbis' own land-use planting (gardens, yards, orchards) or flora garden
+# zones, plus small kit structures on slivers; then delete this file and the `--gardens` flag.
+# Every value: { v, unit, min, max, source }. `Guess` = not measured yet; the owner's look settles them.
+
+[params]
+seed = { v = 2026, unit = "id", min = 0, max = 4294967295, source = "Guess" }
+# Poisson-disk (Bridson 2007) minimum distance between two plants of the class (metres, pivot to pivot).
+tree_spacing_m = { v = 8.0, unit = "m", min = 1.0, max = 60.0, source = "Guess" }
+shrub_spacing_m = { v = 2.5, unit = "m", min = 0.5, max = 20.0, source = "Guess" }
+# Pivot distance from the inset boundary a plant of the class needs (about half its crown): a lot narrower than
+# 2 x (edge inset + tree clearance) gets no tree.
+tree_clearance_m = { v = 3.0, unit = "m", min = 0.0, max = 30.0, source = "Guess" }
+shrub_clearance_m = { v = 0.5, unit = "m", min = 0.0, max = 10.0, source = "Guess" }
+# Margin kept free along the lot boundary (walls, street edge), for every plant.
+edge_inset_m = { v = 0.5, unit = "m", min = 0.0, max = 10.0, source = "Guess" }
+# Share of the Poisson disks left unplanted: their area stays open (a tree disk left open is a clearing no shrub fills).
+open_share = { v = 0.35, unit = "ratio", min = 0.0, max = 1.0, source = "Guess" }
+# Bridson's candidates per active sample before it retires.
+candidates = { v = 30, unit = "count", min = 1, max = 200, source = "Industry(Bridson 2007, Fast Poisson Disk Sampling: k = 30)" }
+
+# Balmora-region flora that exist as records (Morrowind.esm), from the flora census of the x10s-b2w guide
+# (`flora-census.md`, Ascadian Isles and West Gash sections: flora group only, no grass, no rocks) plus the Ascadian
+# Isles trees of the same family. Weight = relative pick share within the class.
+[[species]]
+id = "flora_tree_wg_02"
+class = "tree"
+weight = { v = 3.0, unit = "weight", min = 0.0, max = 100.0, source = "Census(x10s-b2w West Gash: 377 source refs)" }
+
+[[species]]
+id = "flora_tree_wg_07"
+class = "tree"
+weight = { v = 3.0, unit = "weight", min = 0.0, max = 100.0, source = "Census(x10s-b2w West Gash: 337 source refs)" }
+
+[[species]]
+id = "flora_tree_ai_01"
+class = "tree"
+weight = { v = 1.0, unit = "weight", min = 0.0, max = 100.0, source = "Guess" }
+
+[[species]]
+id = "flora_tree_ai_02"
+class = "tree"
+weight = { v = 1.0, unit = "weight", min = 0.0, max = 100.0, source = "Guess" }
+
+[[species]]
+id = "flora_tree_ai_04"
+class = "tree"
+weight = { v = 1.0, unit = "weight", min = 0.0, max = 100.0, source = "Guess" }
+
+[[species]]
+id = "flora_bush_01"
+class = "shrub"
+weight = { v = 3.0, unit = "weight", min = 0.0, max = 100.0, source = "Census(x10s-b2w Ascadian Isles: 216 source refs)" }
+
+[[species]]
+id = "flora_chokeweed_02"
+class = "shrub"
+weight = { v = 2.0, unit = "weight", min = 0.0, max = 100.0, source = "Census(x10s-b2w West Gash: 848 source refs)" }

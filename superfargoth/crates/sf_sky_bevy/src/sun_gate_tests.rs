@@ -39,6 +39,12 @@ fn on(fade_seconds: f32) -> Option<SunShadowGate> {
     Some(SunShadowGate { enabled: true, fade_seconds, ..SunShadowGate::default() })
 }
 
+/// The gate switched off (it is on by default since 2026-11-17).
+#[expect(clippy::unnecessary_wraps, reason = "reads as the `gate` argument of `gate_app`")]
+fn off() -> Option<SunShadowGate> {
+    Some(SunShadowGate { enabled: false, ..SunShadowGate::default() })
+}
+
 /// `(shadow maps on, fade component)` of the light with marker `M`.
 fn light<M: Component>(app: &mut App) -> (bool, Option<f32>) {
     let mut q = app.world_mut().query_filtered::<(&DirectionalLight, Option<&DirectionalLightShadowFade>), With<M>>();
@@ -56,7 +62,7 @@ fn has_gate_state<M: Component>(app: &mut App) -> bool {
 #[test]
 fn gate_off_is_todays_behaviour() {
     for weather in [Weather::default(), Weather { haze: 80.0, cloud_cover: 1.0, ..Weather::default() }] {
-        let mut app = gate_app(172.0, 12.0, SkySettings::default(), None);
+        let mut app = gate_app(172.0, 12.0, SkySettings::default(), off());
         app.world_mut().resource_mut::<WeatherState>().0 = weather;
         app.world_mut().resource_mut::<SunLightOcclusion>().0 = 0.0;
         for _ in 0..5 {
@@ -141,9 +147,9 @@ fn drowned_sun_fades_out_drops_its_maps_and_fades_back() {
 fn dim_moon_at_night_gets_no_cascades() {
     let settings = SkySettings { ambient: KeyCurve::new(vec![(-12.0, 10.0), (-4.0, 0.0)]), ..SkySettings::default() };
     // Day 162 is a full moon; at 0:30 the sun is well below the horizon (`tests.rs`).
-    let mut off = gate_app(162.0, 0.5, settings.clone(), None);
-    off.update();
-    assert!(light::<MoonLight>(&mut off).0, "the elevation rule casts");
+    let mut plain = gate_app(162.0, 0.5, settings.clone(), off());
+    plain.update();
+    assert!(light::<MoonLight>(&mut plain).0, "the elevation rule casts");
     let mut gated = gate_app(162.0, 0.5, settings, on(3.0));
     for _ in 0..3 {
         gated.update();

@@ -88,6 +88,8 @@ sf_weather_bevy.workspace = true
 sf_wind_bevy.workspace = true
 sf_world = { workspace = true, features = ["bake"] }
 sf_world_bevy.workspace = true
+# Road ribbons of a generated world (`worldgen_roads.rs`, GR-1b): `roads.json` and the draped ribbon builder.
+sf_worldgen.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
 

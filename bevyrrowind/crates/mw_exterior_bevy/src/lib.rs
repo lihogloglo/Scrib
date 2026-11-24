@@ -24,3 +24,4 @@ pub mod phase;
 mod shelter_casters;
 mod trails;
 pub mod worldgen;
+pub mod worldgen_roads;

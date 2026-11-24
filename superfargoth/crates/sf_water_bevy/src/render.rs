@@ -112,8 +112,13 @@ impl ImageIds {
 
 /// Main world → render world, once per frame.
 #[derive(Resource, Clone, Debug, Default)]
+#[allow(clippy::struct_excessive_bools)] // independent per-frame switches of the passes
 pub(crate) struct WaterRender {
     pub active: bool,
+    /// `params` place a clipmap (the ocean's or a clipmap body's): the velocity redraw draws it.
+    /// `false` while only mesh bodies show (`crate::WaterMeshSurface`: their motion vectors stay
+    /// the bed's until a mesh redraw exists).
+    pub clipmap: bool,
     /// The FFT and mips run this frame (the visibility gate idles them, CW-10a; always without it).
     pub fft_run: bool,
     /// Copy the displacement to `prev_displacement` before the FFT (`gate::FftPlan::copy_before`).
@@ -885,6 +890,9 @@ fn velocity_pass(
     mut ctx: RenderContext,
 ) {
     let (bindings, camera, resolution, prepass) = view.into_inner();
+    if !state.clipmap {
+        return;
+    }
     let Some(motion) = prepass.and_then(|p| p.motion_vectors.as_ref()) else { return };
     let Some(pipeline) = ids.velocity.get(&bindings.samples).and_then(|id| cache.get_render_pipeline(*id)) else { return };
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

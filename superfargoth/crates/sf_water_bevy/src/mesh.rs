@@ -3,11 +3,21 @@
 //! carry grid coordinates only (`x`, ring, `z`); the vertex shader (`water_common.wesl`
 //! `clipmap_xz`) snaps each ring to twice its spacing around the camera and morphs its outer
 //! edge onto the next ring's grid (CDLOD), so one static mesh serves every camera position.
+//!
+//! Mesh bodies ([`crate::WaterMeshSurface`]) bring their own mesh instead; [`ATTRIBUTE_WATER_FLOW`]
+//! is the vertex attribute a river ribbon carries its flow in.
 
 use bevy_asset::RenderAssetUsages;
-use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
+use bevy_mesh::{Indices, Mesh, MeshVertexAttribute, PrimitiveTopology, VertexFormat};
 
 use crate::ClipmapSettings;
+
+/// A river's flow velocity per vertex (water.md "Rivers: baked flow to the sea"): XZ in the mesh's
+/// local space, m/s (the direction is the flow's, the length its speed; zero = still water). Mesh
+/// builders put it on a [`crate::WaterMeshSurface`]'s ribbon; the water draw advects the ripples
+/// along it and adds speed foam (Vlachos 2010, [`crate::WaterFlowSettings`]). Meshes without it stay
+/// valid and render as still water.
+pub const ATTRIBUTE_WATER_FLOW: MeshVertexAttribute = MeshVertexAttribute::new("Water_Flow", 0x5F57_A7E2_F10F_0001, VertexFormat::Float32x2);
 
 /// Half-size, in its own grid cells, of the hole a ring leaves for the finer ring inside it.
 /// The finer ring covers `quads/4` of this ring's cells around its own centre, which is at most

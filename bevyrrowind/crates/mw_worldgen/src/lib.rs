@@ -15,23 +15,33 @@
 
 pub mod anchor;
 pub mod classify;
+pub mod derive;
 pub mod flora;
+pub mod garden;
 pub mod geology;
+pub mod kit;
 pub mod layers;
 pub mod markers;
 mod output;
 pub mod site;
 pub mod stats;
+pub mod town;
 pub mod x10;
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_derive;
+#[cfg(test)]
 mod tests_flora;
 #[cfg(test)]
 mod tests_geology;
 #[cfg(test)]
+mod tests_kit;
+#[cfg(test)]
 mod tests_site;
+#[cfg(test)]
+mod tests_town;
 #[cfg(test)]
 mod tests_x10;
 

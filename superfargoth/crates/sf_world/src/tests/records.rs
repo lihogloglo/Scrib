@@ -117,6 +117,30 @@ fn records_register_define_and_patch() {
 }
 
 #[test]
+fn placement_groups_load_from_a_record_file() {
+    let mut db = RecordDb::new();
+    register_kinds(&mut db).unwrap();
+    let source = db.add_source("town", &[]);
+    let text = r#"[
+        define(kind: "sf.placement_group", id: "town.a", value: (
+            worldspace: "World",
+            placements: [
+                (key: "i0", base: (kind: "thing", id: "house"), model: Some("meshes/house.mesh"), transform: (pos: [10.5, 2.0, -3.0])),
+            ],
+        )),
+    ]"#;
+    let outcome = sf_records::apply_record_file(&mut db, source, text, sf_records::RecordFormat::Ron).unwrap();
+    assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+    assert_eq!(outcome.defined, 1);
+    let g = db.get::<PlacementGroup>(&"town.a".into()).unwrap();
+    assert_eq!(g.worldspace, ws("world"));
+    assert_eq!(g.placements.len(), 1);
+    assert_eq!(g.placements[0].base.id.as_str(), "house");
+    assert_eq!(g.placements[0].transform.pos.to_f64(), DVec3::new(10.5, 2.0, -3.0));
+    assert!(db.is_serde_kind(PlacementGroup::KIND));
+}
+
+#[test]
 fn records_read_from_text() {
     let json = r#"{
         "worldspace": "World",

@@ -247,10 +247,13 @@ pub enum Part {
     /// Groundcover (`sf_groundcover_bevy`, GC-2b3): grass and ferns scattered on grass land textures around the
     /// camera; off, none is planted (an A/B).
     Groundcover,
+    /// Road ribbons of a generated world (`mw_exterior_bevy::worldgen_roads`, GR-1b): the guide's `roads.json` draped on
+    /// the terrain; off, none is built (an A/B).
+    Roads,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 90] = [
+    const ALL: [(&'static str, Part); 91] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -342,6 +345,7 @@ impl Part {
         ("selectgate", Part::SelectGate),
         ("gputerrain", Part::GpuTerrain),
         ("groundcover", Part::Groundcover),
+        ("roads", Part::Roads),
     ];
 
     pub fn name(self) -> &'static str {

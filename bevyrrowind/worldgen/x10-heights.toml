@@ -1,0 +1,17 @@
+# HC-1: the "same map at 10x" height transfer curve. Morrowind's heights x10 turn every shore into a 20-40 m bluff
+# (a 2-3 m rise within one vertex); this sea-level-anchored curve flattens the band near the water so towns reach the
+# shore, and leaves high ground and the deep sea unchanged (owner 2026-11-24). Spec: bevyrrowind/docs/specs/worldgen-adapter.md
+# "Same map at 10x (WG-X)".
+# Run from the repo root:
+#   bevyrrowind worldgen-x10 --height-curve bevyrrowind/worldgen/x10-heights.toml --out target/worldgen/x10h
+# Code: superfargoth/crates/sf_worldgen/src/height_curve.rs (the curve, its module docs) and
+# bevyrrowind/crates/mw_worldgen/src/x10.rs (applied after the x S scale; not with --heights).
+# Every value: { v, unit, min, max, source }. `Guess` = not measured yet; the owner's look settles them.
+# Per branch, with t = |h| / knee: |f| = knee (a t + 2 (1 - a) t^2 - (1 - a) t^3) below the knee, identity above it;
+# the sign is kept, so the coastline never moves. Land 24 m -> ~5.7 m with these values.
+
+[params]
+land_slope = { v = 0.1, unit = "ratio", min = 0.001, max = 1, source = "Guess", help = "slope of the land branch at the shore (1 = unchanged)" }
+land_knee_m = { v = 300, unit = "m", min = 1, max = 10000, source = "Guess", help = "land heights at or above this are unchanged" }
+water_slope = { v = 0.3, unit = "ratio", min = 0.001, max = 1, source = "Guess", help = "slope of the water branch at the shore (1 = unchanged)" }
+water_knee_m = { v = 300, unit = "m", min = 1, max = 10000, source = "Guess", help = "depths at or below this are unchanged" }

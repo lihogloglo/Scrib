@@ -157,3 +157,44 @@ No seams at clipmap borders, no shimmer far away. A/B live: `set terrain.shade.d
 `set terrain.shade.blend_texels 16|96` (cross-fade width); `set terrain.cliff.curvature_scale_m 1|4` (crevice scale);
 `set terrain.cdlod.morph_start 0.78` (longer morph; cracks possible on slopes, watch for sparkle seams). Known: rock
 cover still thins with distance (coarse levels smooth slopes); classic Morrowind terrain uses the same shaders.
+
+### TN-1: Balmora 2.0, medina street wall of Hlaalu buildings on the 10x terrain (2026-11-24, st-m2, scrib-worldgen `settlements.md` Milestone 2)
+
+Status: **awaiting owner** (exploratory first look: no grading, no paving, no bridge yet).
+Launch: `owner_launch.sh view "world:D:/Gamedev/Bevyrrowind/target/worldgen/x10s-b2" --hour 12 --camera -2450,+90,1850,-2690,+5,1650`
+(`x10s` minus old Balmora; town mod `x10s-b2/mods/balmora2-medina`: 267 Hlaalu buildings, 1403 Hlaalu wall pieces,
+13 gate arches, planned by Magna Urbis `medina` on relief scaled 0.25, each piece seated on the real ground at its
+vanilla height). Log line: `worldgen town: worldgen.town.medina: 1683 placements, 0 unresolved bases`.
+Look for: do houses + walls read as a medina street wall in Balmora's style; houses standing on the ground (not
+floating, not buried); doors facing streets; walls closing frontages; arches at lane mouths. Known and expected:
+streets are bare generated ground (no paving or grading), the trench walls have no lots (too steep), no bridge
+over the Odai, no doors open, streets were planned on flattened relief so some climb steeply.
+
+### TN-3: Balmora 2.0 on the low-shore terrain, Hlaalu-sized plan, streets and garden trees (2026-11-24, world10x)
+
+Status: **works** (owner 2026-11-24 evening: "works"; many tweaks to come).
+Launch: `owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10hs-b2w" --hour 12 --camera -2480,+70,2120,-2866,+8,2040`
+(`x10hs`: world-wide height curve HC-1, plain 6-8 m over the Odai; town = Magna Urbis medina streets + `hlaalu` culture pack
+(kit house sizes, minFrontage 8.4 m), fit `match` (one kit house per MU building, set back up to 6 m, back sunk up to 2 m,
+towers last): 734 of 813 plot lots, 801 buildings; MU streets as ribbons (flagstone main, cobble streets, dirt lanes);
+temporary garden scaffold: 182 trees, 1117 shrubs on empty plots and slivers (MU garden lots left open as fields).
+Log lines: `worldgen roads: guide ...`, `worldgen roads: worldgen/roads/balmora2-medina.json 496 segments`, `worldgen town:`.
+Look for: buildings reaching the river front on both banks; houses packed along streets, doors to the street; backs sunk on
+slopes (no floating foundations); street ribbons on the ground, not through houses; trees only in empty lots.
+Known: regional roads don't join the town (S-2d diagnosis), bridges are gaps (no decks), no corner-lot side doors, squares unpaved.
+
+### TN-2: Balmora 2.0 with rivers, lakes and regional roads (2026-11-24, world10x, Magna Urbis water + roads)
+
+Status: **rivers parked for a refactor** (round 3, 2026-11-24, owner: speed good after G-W7, but the river is a ribbon
+hovering over the ground, very flat (no visible normals, no particles); later: carve a bed for the mesh, flow reacting to
+objects and walking characters). Town: owner reviews Magna Urbis's own plan first (no fit work until then). Round 2: flowmaps
+pure white (speed foam), town half empty. Round 1: town bad/unfinished, rivers hover, lakes short of the shore.
+Launch: `owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10s-b2w" --hour 12 --camera -2450,+90,1850,-2690,+5,1650`
+(`x10s-b2` + Magna Urbis water chain, mode none: 186 lakes, 95 rivers 9-17 m wide; 142 regional road segments; town
+`mods/balmora2-medina`: Balmora + Suran Hlaalu kit only, 235 houses fitted to whole lots, 33 `ex_hlaalu_bal_01/02` towers at
+wall corners, 2478 Hlaalu wall pieces, 15 gates). Log lines: `worldgen water: 186 lakes, 95 rivers` (+ river speeds),
+`worldgen roads: 142 segments`, `worldgen town:`, flora summary `towns (... excluded)`.
+Look for: rivers in their beds (round 1: 27 m median hover, now 0.6 m), lake edges under the shore (41 % -> 2.8 % of
+outline points short), rivers moving with the flow (flow-advected normals, speed from slope, foam above 1.5 m/s), no rocks
+or logs in the town, no Imperial towers, Balmora towers at corners. Known: roads stop at the town edge, bridges are gaps,
+no deck on the Odai crossing, lake/river optics borrow the coastal look, terrain detail may poke through narrow beds.

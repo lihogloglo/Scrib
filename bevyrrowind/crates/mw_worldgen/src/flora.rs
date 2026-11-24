@@ -16,7 +16,8 @@
 //! source point is the same `(col, row)`. Slope and normal come from the guide's own heights (the scaled source plus
 //! the volcano uplift, the macro surface the occupancy was measured at), the height band from the source height at
 //! that point (source-equivalent metres, so bands keep their meaning under the uplift), the region from the source
-//! cell, the exclusion from the stamps (weight > 0: settlement footprints and bands), the placement height from the
+//! cell, the exclusion from the stamps (weight > 0: settlement footprints and bands) and the guide's own towns (no
+//! stamp: their placements' built-up area, [`towns`]), the placement height from the
 //! runtime tiles (`GuideTiles::height` at level 0, stamps and filter included: the ground the game draws). The
 //! macro slope rather than the filtered one: the filter's detail is below the scale the source was measured at.
 
@@ -42,6 +43,10 @@ use sf_worldgen::scatter::{self, Item, Learner, Observed, Params, Scatter, Site,
 use sf_worldgen::tiles::GuideTiles;
 
 use crate::classify::{Class, RefInfo, classify};
+
+#[path = "flora_towns.rs"]
+pub mod towns;
+use towns::{TownCensus, TownMask, TownParams, WithTowns};
 use crate::{DumpError, Mosaic, RegionMap, assemble, region_map};
 
 /// Model bounds lookup: model VFS path → model-space `(min, max)` at unit scale (engine axes, metres).
@@ -348,6 +353,8 @@ pub struct FloraRun {
     pub region_names: Vec<String>,
     pub scale: f64,
     pub stamped: bool,
+    /// The guide towns' exclusion.
+    pub towns: TownCensus,
     /// Seconds: source (mosaic, regions, references), learning, area census, scatter.
     pub seconds: [f64; 4],
 }
@@ -369,12 +376,13 @@ pub fn guide_scale(guide: &Guide, m: &Mosaic) -> Result<f64, DumpError> {
     Ok(s)
 }
 
-/// Learns from `db`'s exterior and scatters on `tiles`' guide.
+/// Learns from `db`'s exterior and scatters on `tiles`' guide, outside the stamps and `towns`.
 pub fn scatter_world(
     db: &RecordDb,
     source: &MwWorldSource,
     bounds: Bounds<'_>,
     tiles: &GuideTiles,
+    towns: &TownMask,
     prm: Params,
 ) -> Result<FloraRun, DumpError> {
     let t0 = Instant::now();
@@ -399,10 +407,12 @@ pub fn scatter_world(
         g.origin_m[0] + (g.w - 1) as f64 * g.spacing_m,
         g.origin_m[1],
     ];
+    let world = WithTowns::new(&world, towns);
     let area = scatter::area_census(&world, &prm, rect, regions.legend.len());
     let expected = scatter::expected(&learned.table, &prm, &area);
     let keep = scatter::budget_keep(&learned.table, &prm, &expected);
     let t3 = Instant::now();
+    world.take_hits(); // the census's land samples, not candidates
     let items = Scatter::new(&learned.table, keep.clone(), prm).run(&world, rect);
     let t4 = Instant::now();
     let region_names = regions
@@ -420,6 +430,7 @@ pub fn scatter_world(
         region_names,
         scale,
         stamped: tiles.stamps().is_some(),
+        towns: TownCensus { excluded: world.take_hits(), ..towns.census },
         seconds: [s(t0, t1), s(t1, t2), s(t2, t3), s(t3, t4)],
     })
 }
@@ -459,19 +470,22 @@ pub fn placements(run: &FloraRun) -> Vec<Placement> {
 }
 
 /// The hook of `view world:<dir>` (`mw_exterior_bevy::worldgen::WorldgenContent::extra`): the flora pass at the
-/// declared defaults (`budget` overrides `scatter.budget`, from `--set`), logged; an error is logged and gives nothing.
+/// declared defaults (`budget` overrides `scatter.budget`, from `--set`), outside the guide's `towns` (one placement
+/// list per town, `bounds` covering their models), logged; an error is logged and gives nothing.
 pub fn extra(
     db: &RecordDb,
     source: &MwWorldSource,
     bounds: Bounds<'_>,
     tiles: &GuideTiles,
+    towns: &[&[Placement]],
     budget: Option<f64>,
 ) -> Vec<(String, Vec<Placement>)> {
     let mut prm = Params::default();
     if let Some(b) = budget {
         prm.budget = b;
     }
-    match scatter_world(db, source, bounds, tiles, prm) {
+    let towns = TownMask::new(towns, bounds, &TownParams::default());
+    match scatter_world(db, source, bounds, tiles, &towns, prm) {
         Ok(run) => {
             println!("worldgen flora: {}", summary_line(&run));
             vec![("flora".into(), placements(&run))]
@@ -503,12 +517,22 @@ fn full_per_group(run: &FloraRun) -> [f64; 2] {
     n
 }
 
-/// `212345 placements (flora 180000 of 3.1 M full, rocks ...), 312 species, budget 200000, 4.2 s`.
+/// `212345 placements (flora 180000 of 3.1 M full, rocks ...), 312 species, budget 200000, stamps, 1 towns (...),
+/// 4.2 s`.
 pub fn summary_line(run: &FloraRun) -> String {
     let (n, full) = (items_per_group(run), full_per_group(run));
+    let t = &run.towns;
+    let towns = if t.towns == 0 {
+        "no towns".to_owned()
+    } else {
+        format!(
+            "{} towns ({} footprints, {} without bounds, {:.0} m² excluded, {} candidates excluded)",
+            t.towns, t.footprints, t.unbounded, t.area_m2, t.excluded
+        )
+    };
     format!(
         "{} placements (flora {} of {:.0} at full density, rocks {} of {:.0}), {} species, budget {:.0}, {}stamps, \
-         {:.1} s (source {:.1}, learn {:.1}, census {:.1}, scatter {:.1})",
+         {towns}, {:.1} s (source {:.1}, learn {:.1}, census {:.1}, scatter {:.1})",
         run.items.len(),
         n[0],
         full[0],
@@ -624,7 +648,7 @@ pub fn run_census(db: &RecordDb, bounds: Bounds<'_>, guide: &Path, budget: Optio
     if let Some(b) = budget {
         prm.budget = b;
     }
-    let run = scatter_world(db, &source, bounds, &tiles, prm)?;
+    let run = scatter_world(db, &source, bounds, &tiles, &TownMask::default(), prm)?;
     let md = census_md(&run, guide, 8);
     std::fs::write(guide.join("flora-census.md"), &md)?;
     Ok(md)

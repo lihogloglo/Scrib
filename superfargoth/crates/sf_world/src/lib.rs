@@ -118,7 +118,7 @@ impl Location {
 pub fn register_kinds(db: &mut RecordDb) -> Result<(), RecordError> {
     db.register::<Worldspace>(Worldspace::KIND)?;
     db.register::<DoorLink>(DoorLink::KIND)?;
-    db.register::<PlacementGroup>(PlacementGroup::KIND)?;
+    db.register_serde::<PlacementGroup>(PlacementGroup::KIND)?;
     Ok(())
 }
 

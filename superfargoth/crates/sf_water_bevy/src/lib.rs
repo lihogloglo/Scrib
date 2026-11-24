@@ -12,12 +12,16 @@
 //! [`WaterRegionsInput`] (bake products), [`WaterQuality`], [`WaterReflections`], [`WaterRain`] (rain
 //! rings, R1); it marks the camera ([`WaterCamera`])
 //! and surface entities ([`OceanSurface`] for the ocean, [`WaterSurface`] for lakes, pools and
-//! interior water at their own level), with the camera's render layers. Systems in
+//! interior water at their own level, [`WaterMeshSurface`] for a body on its own mesh: a lake
+//! polygon, a river ribbon), with the camera's render layers. Systems in
 //! [`WaterSystems::Drive`] (`PostUpdate`) turn them into GPU state; order the host's systems
 //! before it.
 //!
 //! Wave and optics code follows bevy-aqua (MIT OR Apache-2.0; `THIRD_PARTY_NOTICES.md`).
 
+mod flow;
+#[cfg(test)]
+mod flow_tests;
 mod gate;
 #[cfg(test)]
 mod gate_tests;
@@ -25,6 +29,8 @@ mod material;
 mod medium;
 mod rain;
 pub mod mesh;
+#[cfg(test)]
+mod mesh_body_tests;
 mod render;
 #[cfg(test)]
 mod shader_tests;
@@ -33,6 +39,7 @@ use std::sync::Arc;
 
 use bevy_app::{App, Plugin, PostUpdate, PreStartup};
 use bevy_asset::{embedded_asset, Assets, Handle, RenderAssetUsages};
+use bevy_camera::primitives::Aabb;
 use bevy_camera::visibility::{NoFrustumCulling, Visibility};
 use bevy_camera::{Camera, MainPassResolutionOverride, Viewport};
 use bevy_ecs::prelude::*;
@@ -49,7 +56,11 @@ use bevy_transform::TransformSystems;
 use bevy_transform::components::GlobalTransform;
 use sf_water::{origin_phase, reflection_plane, Cascades, OpticsMap, PlaneCandidate, SeaTransition, SeaWind, ShoreField, ShoreSettings, ShoreWaves, SpectrumParams, WaterOptics, H0, REPEAT_PERIOD};
 
-pub use material::{WaterExt, WaterMaterial, WaterParams};
+pub use material::{WaterExt, WaterKey, WaterMaterial, WaterParams};
+pub use flow::{
+    phases as flow_phases, WaterFlowSettings, WATER_FLOW_ADVECT_SCALE, WATER_FLOW_CYCLE_S, WATER_FLOW_FOAM, WATER_FLOW_FOAM_FULL_MPS, WATER_FLOW_FOAM_START_MPS, WATER_FLOW_NOISE_CELL_M, WATER_FLOW_NORMAL_GAIN,
+    WATER_FLOW_PHASE_NOISE,
+};
 pub use rain::{WaterRain, WaterRainSettings, RAIN_CLOCK_WRAP_S, WATER_RAIN_RIPPLE_FADE_FAR_M, WATER_RAIN_RIPPLE_FADE_NEAR_M, WATER_RAIN_RIPPLE_STRENGTH};
 pub use gate::{gate_stats, GateStats, WaterGate, WaterGateSettings, MAX_GATE_BOXES, WATER_GATE_IDLE_FFT_S, WATER_GATE_MARGIN_M, WATER_GATE_VISIBLE};
 pub use medium::{
@@ -58,8 +69,27 @@ pub use medium::{
 };
 
 /// This crate's tunables (the host binds them: [`WaterGateSettings`], [`WaterMediumSettings`],
-/// [`WaterRainSettings`]).
-pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[&WATER_GATE_VISIBLE, &WATER_GATE_MARGIN_M, &WATER_GATE_IDLE_FFT_S, &WATER_UNDERWATER, &WATER_MEDIUM_HYSTERESIS_M, &WATER_UNDERWATER_KD_SCALE, &WATER_UNDERWATER_SKY_FILL, &WATER_RAIN_RIPPLE_STRENGTH, &WATER_RAIN_RIPPLE_FADE_NEAR_M, &WATER_RAIN_RIPPLE_FADE_FAR_M];
+/// [`WaterRainSettings`], [`WaterFlowSettings`]).
+pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[
+    &WATER_GATE_VISIBLE,
+    &WATER_GATE_MARGIN_M,
+    &WATER_GATE_IDLE_FFT_S,
+    &WATER_UNDERWATER,
+    &WATER_MEDIUM_HYSTERESIS_M,
+    &WATER_UNDERWATER_KD_SCALE,
+    &WATER_UNDERWATER_SKY_FILL,
+    &WATER_RAIN_RIPPLE_STRENGTH,
+    &WATER_RAIN_RIPPLE_FADE_NEAR_M,
+    &WATER_RAIN_RIPPLE_FADE_FAR_M,
+    &WATER_FLOW_CYCLE_S,
+    &WATER_FLOW_ADVECT_SCALE,
+    &WATER_FLOW_PHASE_NOISE,
+    &WATER_FLOW_NOISE_CELL_M,
+    &WATER_FLOW_NORMAL_GAIN,
+    &WATER_FLOW_FOAM_START_MPS,
+    &WATER_FLOW_FOAM_FULL_MPS,
+    &WATER_FLOW_FOAM,
+];
 
 /// FFT grid per cascade at High/Ultra (water.md: 256²); Low and Medium use 128².
 pub const RESOLUTION: usize = 256;
@@ -318,6 +348,95 @@ impl WaterSurface {
     }
 }
 
+/// A water body on a host mesh (water.md "Water bodies at any height": a lake's polygon at its
+/// level, a river's ribbon sloping downstream; UE's water body meshes). The plugin gives the entity
+/// `mesh` as its [`Mesh3d`] and the water material on the mesh-body vertex path ([`WaterKey`]):
+/// vertex positions go through the entity's transform (the host owns its `Transform`, render space
+/// as every other mesh under the floating origin; identity: positions are render-space XZ and
+/// rest-surface Y). The surface is flat (no swell, no vertex displacement) with the chop's
+/// ripples in its normal, and Bevy frustum-culls it by its `Aabb` like any mesh. It is a shown body
+/// for the visibility gate (its world box) and the SSPR plane choice (its box's mid level, exact
+/// for a lake; a sloped river mirrors exactly only near that level) while its entity is visible.
+///
+/// A river ribbon may carry [`mesh::ATTRIBUTE_WATER_FLOW`]: its ripples then ride the flow
+/// (flow-advected normals and speed foam, [`WaterFlowSettings`]). Meshes need `ATTRIBUTE_POSITION` and triangles;
+/// both faces draw (the surface is seen from below when diving).
+#[derive(Component, Clone, Debug, PartialEq)]
+#[require(bevy_transform::components::Transform, Visibility)]
+pub struct WaterMeshSurface {
+    /// The body's surface mesh; changing it swaps the entity's [`Mesh3d`].
+    pub mesh: Handle<Mesh>,
+    /// Amplitude scale of the chop cascades (2-3) in the normal.
+    pub chop: f32,
+    pub look: WaterLook,
+}
+
+impl WaterMeshSurface {
+    /// Still water on `mesh`: a pool's wind ripples ([`WaterSurface::pool`]'s chop).
+    #[must_use]
+    pub fn still(mesh: Handle<Mesh>, look: WaterLook) -> Self {
+        Self { mesh, chop: WaterSurface::pool(0.0, look).chop, look }
+    }
+
+    /// The body as the material and the SSPR see it, from its render-space box `[lo, hi]`.
+    fn surface(&self, world: [Vec3; 2]) -> WaterSurface {
+        WaterSurface { level: f32::midpoint(world[0].y, world[1].y), bounds: None, swell: 0.0, chop: self.chop, look: self.look }
+    }
+}
+
+/// A water entity's mesh-body part: the component, and its `Aabb` and transform once Bevy (or
+/// `attach_mesh_surface`) has them.
+pub(crate) type BodyMesh = (Option<&'static WaterMeshSurface>, Option<(&'static Aabb, &'static GlobalTransform)>);
+
+/// What a water entity is this frame.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum WaterBody {
+    Ocean,
+    /// A clipmap body at its own level.
+    Surface(WaterSurface),
+    /// A mesh body as the material sees it ([`WaterMeshSurface::surface`]), and its render-space box.
+    Mesh(WaterSurface, [Vec3; 2]),
+    /// A mesh body whose mesh has no bounds yet (not loaded): neither drawn by the gate nor the SSPR.
+    Pending,
+}
+
+impl WaterBody {
+    /// [`Self::rank`] of mesh bodies.
+    pub(crate) const MESH_RANK: u8 = 2;
+
+    pub(crate) fn of(surface: Option<&WaterSurface>, ocean: bool, (mesh, placed): (Option<&WaterMeshSurface>, Option<(&Aabb, &GlobalTransform)>)) -> Self {
+        match (surface, mesh, placed) {
+            (Some(w), _, _) => Self::Surface(*w),
+            (None, Some(m), Some((aabb, t))) => {
+                let world = world_box(aabb, t);
+                Self::Mesh(m.surface(world), world)
+            }
+            (None, None, _) if ocean => Self::Ocean,
+            // A mesh body before its `Aabb`.
+            _ => Self::Pending,
+        }
+    }
+
+    /// Which body's parameters the passes take: the ocean first, then clipmap bodies, then mesh bodies.
+    fn rank(&self) -> u8 {
+        match self {
+            Self::Ocean => 0,
+            Self::Surface(_) => 1,
+            Self::Mesh(..) | Self::Pending => Self::MESH_RANK,
+        }
+    }
+}
+
+/// The render-space box of a mesh body: its `Aabb` through its transform.
+pub(crate) fn world_box(aabb: &Aabb, transform: &GlobalTransform) -> [Vec3; 2] {
+    let a = transform.affine();
+    let m = a.matrix3;
+    let abs = bevy_math::Mat3A::from_cols(m.x_axis.abs(), m.y_axis.abs(), m.z_axis.abs());
+    let c = Vec3::from(a.transform_point3a(aabb.center));
+    let h = Vec3::from(abs * aabb.half_extents);
+    [c - h, c + h]
+}
+
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WaterSystems {
     /// `PostUpdate`, after transform propagation: spectrum upload, targets, material, render state.
@@ -385,6 +504,7 @@ impl Plugin for WaterPlugin {
             .init_resource::<WaterSurfFoam>()
             .init_resource::<WaterRain>()
             .init_resource::<WaterRainSettings>()
+            .init_resource::<WaterFlowSettings>()
             .init_resource::<ClipmapSettings>()
             .init_resource::<WaterGateSettings>()
             .init_resource::<gate::WetTilesCache>()
@@ -394,7 +514,7 @@ impl Plugin for WaterPlugin {
             .add_systems(PreStartup, create_images)
             .add_systems(
                 PostUpdate,
-                (depth_usages, size_waves, follow_wind, upload_spectrum, upload_bakes, size_targets, attach_surface, gate::update_tiles, gate::gate_views, drive).chain().in_set(WaterSystems::Drive),
+                (depth_usages, size_waves, follow_wind, upload_spectrum, upload_bakes, size_targets, attach_surface, attach_mesh_surface, gate::update_tiles, gate::gate_views, drive).chain().in_set(WaterSystems::Drive),
             );
         medium::build(app);
         render::build(app);
@@ -790,15 +910,49 @@ fn attach_surface(
 ) {
     let Some(images) = images else { return };
     for e in &surfaces {
-        let material = WaterMaterial {
-            // `specular_transmission` > 0 puts the water in Bevy's transmissive phase on a
-            // `WaterCamera` (W-ORDER: after the opaque pass, before the sky, clouds and fog); the
-            // water shader never reads it. `DrawBand::Refractive` keeps it first among the
-            // translucents on a camera without `ScreenSpaceTransmission` (the fallback phase).
-            base: StandardMaterial { alpha_mode: AlphaMode::Blend, specular_transmission: 1.0, ..StandardMaterial::default() },
-            extension: WaterExt::new(&images, WaterParams::default()),
-        };
+        let material = water_material(&images, false);
         commands.entity(e).try_insert((Mesh3d(meshes.add(mesh::clipmap(&clip))), MeshMaterial3d(materials.add(material)), NotShadowCaster, NoFrustumCulling, DrawBand::Refractive));
+    }
+}
+
+/// The water material on the clipmap (`mesh` false) or the mesh-body vertex path.
+fn water_material(images: &WaterImages, mesh: bool) -> WaterMaterial {
+    WaterMaterial {
+        // `specular_transmission` > 0 puts the water in Bevy's transmissive phase on a
+        // `WaterCamera` (W-ORDER: after the opaque pass, before the sky, clouds and fog); the
+        // water shader never reads it. `DrawBand::Refractive` keeps it first among the
+        // translucents on a camera without `ScreenSpaceTransmission` (the fallback phase).
+        base: StandardMaterial { alpha_mode: AlphaMode::Blend, specular_transmission: 1.0, ..StandardMaterial::default() },
+        extension: WaterExt::new(images, WaterParams::default()).with_mesh(mesh),
+    }
+}
+
+/// Gives [`WaterMeshSurface`] entities their mesh and the water material on the mesh-body path,
+/// frustum-culled (Bevy keeps the `Aabb` on the mesh; it is set here at once when the mesh is
+/// loaded, so the gate and the SSPR see the body on its first frame); a changed `mesh` swaps the
+/// entity's [`Mesh3d`].
+#[allow(clippy::type_complexity)]
+fn attach_mesh_surface(
+    mut commands: Commands,
+    new: Query<(Entity, &WaterMeshSurface), Without<MeshMaterial3d<WaterMaterial>>>,
+    mut changed: Query<(&WaterMeshSurface, &mut Mesh3d), (Changed<WaterMeshSurface>, With<MeshMaterial3d<WaterMaterial>>)>,
+    meshes: Res<Assets<Mesh>>,
+    mut materials: ResMut<Assets<WaterMaterial>>,
+    images: Option<Res<WaterImages>>,
+) {
+    use bevy_camera::primitives::MeshAabb;
+    let Some(images) = images else { return };
+    for (e, body) in &new {
+        let mut entity = commands.entity(e);
+        entity.try_insert((Mesh3d(body.mesh.clone()), MeshMaterial3d(materials.add(water_material(&images, true))), NotShadowCaster, DrawBand::Refractive));
+        if let Some(aabb) = meshes.get(&body.mesh).and_then(MeshAabb::get_aabb) {
+            entity.try_insert(aabb);
+        }
+    }
+    for (body, mut mesh) in &mut changed {
+        if mesh.0 != body.mesh {
+            mesh.0 = body.mesh.clone();
+        }
     }
 }
 
@@ -818,6 +972,8 @@ struct Shared<'a> {
     prev_time: f64,
     /// The rain rings' uniform slots this frame (R1, `rain::slots`; zero: no rings).
     rain: [Vec4; 2],
+    /// The river flow's uniform slots this frame (`flow::slots`; read only on flowing mesh bodies).
+    flow: [Vec4; 3],
 }
 
 /// Render-space XZ of world XZ `p` under the floating origin.
@@ -900,6 +1056,9 @@ fn params(s: &Shared, look: &WaterLook, surface: Option<&WaterSurface>) -> Water
         surf5: Vec4::new(s.surf.contact_calm, s.surf.contact_line, s.surf.swash_spread, 0.0),
         rain: s.rain[0],
         rain2: s.rain[1],
+        flow: s.flow[0],
+        flow2: s.flow[1],
+        flow3: s.flow[2],
         shape: shape[0],
         shape2: shape[1],
         shape3: shape[2],
@@ -951,9 +1110,9 @@ fn drive(
     (frame, spectrum, look, clip, quality): (Res<WaterFrame>, Res<OceanSpectrum>, Res<WaterLook>, Res<ClipmapSettings>, Res<WaterQuality>),
     (shore, regions, reflections, surf): (Res<WaterShoreInput>, Res<WaterRegionsInput>, Res<WaterReflections>, Res<WaterSurfFoam>),
     (cameras, gate_settings): (Query<(&GlobalTransform, Option<&WaterGate>), With<WaterCamera>>, Res<WaterGateSettings>),
-    (rain_input, rain_settings): (Res<WaterRain>, Res<WaterRainSettings>),
+    (rain_input, rain_settings, flow_settings): (Res<WaterRain>, Res<WaterRainSettings>, Res<WaterFlowSettings>),
     images: Option<Res<WaterImages>>,
-    mut surfaces: Query<(&MeshMaterial3d<WaterMaterial>, Option<&WaterSurface>, Has<OceanSurface>, &mut Visibility, &bevy_camera::visibility::InheritedVisibility)>,
+    mut surfaces: Query<(&MeshMaterial3d<WaterMaterial>, Option<&WaterSurface>, Has<OceanSurface>, BodyMesh, &mut Visibility, &bevy_camera::visibility::InheritedVisibility)>,
     mut materials: ResMut<Assets<WaterMaterial>>,
     mut state: ResMut<render::WaterRender>,
     mut clock: Local<(u64, [Option<f64>; MAX_CASCADES])>,
@@ -964,8 +1123,12 @@ fn drive(
     // SSPR plane: the nearest shown body below the camera (sf_water::reflection_plane).
     let candidates: Vec<PlaneCandidate> = surfaces
         .iter()
-        .filter(|(_, surface, ocean, _, inherited)| if *ocean && surface.is_none() { frame.enabled } else { inherited.get() })
-        .map(|(_, surface, _, _, _)| surface.map_or(PlaneCandidate { level: frame.level, bounds: None }, |w| PlaneCandidate { level: w.level, bounds: w.bounds }))
+        .filter_map(|(_, surface, ocean, mesh, _, inherited)| match WaterBody::of(surface, ocean, mesh) {
+            WaterBody::Ocean => frame.enabled.then_some(PlaneCandidate { level: frame.level, bounds: None }),
+            WaterBody::Surface(w) => inherited.get().then_some(PlaneCandidate { level: w.level, bounds: w.bounds }),
+            WaterBody::Mesh(w, world) => inherited.get().then_some(PlaneCandidate { level: w.level, bounds: Some([Vec2::new(world[0].x, world[0].z), Vec2::new(world[1].x, world[1].z)]) }),
+            WaterBody::Pending => None,
+        })
         .collect();
     let plane = cameras.iter().next().and_then(|(c, _)| reflection_plane(c.translation(), &candidates));
     // The shore waves follow the sea state, blended through a transition as the FFT is (W-WIND).
@@ -985,27 +1148,34 @@ fn drive(
         surf: &surf.0,
         cascades,
         rain: rain::slots(frame.time, *rain_input, *rain_settings),
+        flow: flow::slots(frame.time, &flow_settings),
     };
-    let mut primary: Option<WaterParams> = None;
+    let mut primary: Option<(u8, WaterParams)> = None;
     let mut any = false;
-    for (handle, surface, ocean, mut visibility, inherited) in &mut surfaces {
-        let p = match surface {
-            Some(w) => params(&shared, &w.look, Some(w)),
-            None => params(&shared, &look, None),
+    for (handle, surface, ocean, mesh, mut visibility, inherited) in &mut surfaces {
+        let body = WaterBody::of(surface, ocean, mesh);
+        let p = match &body {
+            WaterBody::Surface(w) | WaterBody::Mesh(w, _) => params(&shared, &w.look, Some(w)),
+            WaterBody::Ocean => params(&shared, &look, None),
+            WaterBody::Pending => continue,
         };
-        if ocean && surface.is_none() {
+        let is_ocean = matches!(body, WaterBody::Ocean);
+        if is_ocean {
             let want = if frame.enabled { Visibility::Inherited } else { Visibility::Hidden };
             if *visibility != want {
                 *visibility = want;
             }
         }
-        let shown = if ocean && surface.is_none() { frame.enabled } else { inherited.get() };
+        let shown = if is_ocean { frame.enabled } else { inherited.get() };
         if !shown {
             continue;
         }
         any = true;
-        if primary.is_none() || (ocean && surface.is_none()) {
-            primary = Some(p);
+        // The passes' uniform: the ocean's, else the first clipmap body's, else a mesh body's (whose
+        // flat params never place the velocity redraw's clipmap: `WaterRender::clipmap`).
+        let rank = body.rank();
+        if primary.is_none_or(|(r, _)| rank < r) {
+            primary = Some((rank, p));
         }
         let stale = materials.get(&handle.0).is_some_and(|m| {
             let e = &m.extension;
@@ -1018,7 +1188,7 @@ fn drive(
                 || e.regions != images.regions
         });
         if stale && let Some(mut m) = materials.get_mut(&handle.0) {
-            m.extension = WaterExt::new(&images, p);
+            m.extension = WaterExt::new(&images, p).with_mesh(m.extension.mesh);
         }
     }
     // FFT tier: the cascades this frame. On High the two swell cascades (256 m, 64 m) alternate,
@@ -1038,10 +1208,12 @@ fn drive(
     #[allow(clippy::cast_possible_truncation)]
     let cycles_t = (frame.time.rem_euclid(REPEAT_PERIOD) / REPEAT_PERIOD) as f32;
     let n = images.resolution;
-    let p = primary.unwrap_or_else(|| params(&shared, &look, None));
+    let clipmap = primary.is_none_or(|(rank, _)| rank < WaterBody::MESH_RANK);
+    let p = primary.map_or_else(|| params(&shared, &look, None), |(_, p)| p);
     #[allow(clippy::cast_possible_truncation)]
     let next = render::WaterRender {
         active: any,
+        clipmap,
         fft_run: plan.run,
         fft_copy_before: plan.copy_before,
         fft: render::FftUniform {

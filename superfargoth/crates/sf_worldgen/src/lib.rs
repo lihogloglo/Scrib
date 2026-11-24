@@ -59,6 +59,7 @@ pub mod flood;
 pub mod geology;
 pub mod grid;
 pub mod guide;
+pub mod height_curve;
 pub mod landform;
 pub mod landforms;
 pub mod landscape;
@@ -73,6 +74,7 @@ pub mod perturb;
 pub mod placed;
 pub mod recipe;
 pub mod resample;
+pub mod roads;
 pub mod run;
 pub mod scatter;
 pub mod shade;
@@ -82,7 +84,9 @@ pub mod stream;
 pub mod structure;
 pub mod thermal;
 pub mod tiles;
+pub mod valley_terrace;
 pub mod volcano;
+pub mod water;
 
 pub use grid::Grid;
 
@@ -190,3 +194,5 @@ mod tests_measure;
 mod tests_geology;
 #[cfg(test)]
 mod tests_placed;
+#[cfg(test)]
+mod tests_valley_terrace;
