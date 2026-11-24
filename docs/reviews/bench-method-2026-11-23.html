@@ -1,0 +1,51 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bench Method Rethink</title><style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--muted:#6b6a65;--line:#e2dfd6;--code:#f0ede4;--add:#1f7a3a;--del:#a33a2a;--accent:#7a5c12}
+@media (prefers-color-scheme:dark){:root{--bg:#18181a;--fg:#e9e7e1;--muted:#a3a19a;--line:#33322f;--code:#232326;--add:#6fcf8c;--del:#f08a78;--accent:#e0b856}}
+body{background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif;margin:0;padding:24px 16px}
+main{max-width:860px;margin:0 auto}h1{font-size:1.6rem;margin:.2em 0 .6em}h2{font-size:1.2rem;margin-top:1.8em;border-bottom:1px solid var(--line);padding-bottom:.25em;color:var(--accent)}
+code{background:var(--code);padding:.05em .3em;border-radius:3px;font-size:.88em}
+table{border-collapse:collapse;width:100%;margin:.8em 0;font-size:.92em;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:.35em .55em;text-align:left;vertical-align:top}th{background:var(--code)}
+pre.diff{background:var(--code);padding:12px;border-radius:6px;overflow-x:auto;font-size:.85em;line-height:1.45}.add{color:var(--add)}.del{color:var(--del)}
+li{margin:.3em 0}</style></head><body><main><h1>Bench method, 2026-11-23 (design note, nothing run)</h1>
+<p><code>gc_b4</code> = 18 launches, 1243 s wall (run dir timestamps); a standing run is 35 s wall for 18 s of scenario, a walk ~80 s for 59 s. The headless test (5.5 -&gt; 0.4 ms) and one run's gauge <code>grass/rebuild_time</code> (max 0.94 ms) had already answered; <code>groundcover.blades.enabled</code> is a live run condition (<code>sf_groundcover_bevy/src/blades.rs:326</code>).</p>
+<p>Industry: UE (Gauntlet + CSV profiler / PerfReportTool), Unity Performance Testing (in-process <code>WarmupCount</code> / <code>MeasurementCount</code>, many frames, one process) and studio CI (one flythrough per build, budgets per counter, alert on threshold, bisect) measure one run per build and trend across builds; attribution comes from counters and captures (Insights), not from relaunching per arm.</p>
+<h2>1. Cheapest source per question</h2>
+<table><thead><tr><th>question</th><th>source</th><th>runs x time</th></tr></thead><tbody><tr><td>still spikes / hitches?</td><td>headless <code>#[ignore = "measurement"]</code> test, then the gauges of one normal run (gauge max, hitches/min) or the owner's F3 in play</td><td>0-1 x ~1.5 min</td></tr><tr><td>what does live feature X cost?</td><td>in-process ABAB, one launch (§3)</td><td>1 x ~1.5 min</td></tr><tr><td>what does a restart-only part cost?</td><td><code>perf suite</code>, 1 run per arm, same exe</td><td>2 x 35-80 s</td></tr><tr><td>should X be on by default?</td><td>the cost answer + owner look if visual; repeat only near the line (§2)</td><td>as above</td></tr><tr><td>regression since last commit?</td><td>one fixed standing view + one walk vs stored baseline (<code>--bench-baseline</code>, <code>mw_devtools_bevy/src/perf.rs:126</code>)</td><td>2 x ~1 min</td></tr><tr><td>does it break rendering?</td><td>log lines (wgpu validation, shader errors) in a GPU test, then owner look; no bench</td><td>0-1</td></tr></tbody></table>
+<h2>2. Are repeats needed? Measured</h2>
+<p>Script over every <code>summary.md</code> in <code>bevyrrowind/target/perf/*</code> and <code>bevyrrowind/benchmarks/runs/*</code> ("Runs" table; spread = max - min of run medians within one arm and scene; 405 groups of 2-5 runs, all 2026-11-17+):</p>
+<table><thead><tr><th>set</th><th>groups</th><th>median</th><th>p90</th><th>p95</th><th>&gt; 1 ms</th></tr></thead><tbody><tr><td>quiet + focus clean</td><td>91</td><td>0.20 ms (1.9 %)</td><td>0.67</td><td>0.73</td><td>3</td></tr><tr><td>all</td><td>405</td><td>0.20 ms (2.2 %)</td><td>0.77</td><td>1.43</td><td>28</td></tr></tbody></table>
+<p>Runs in an arm do read the same value (<code>gc_b4</code>: 0.06-0.23 ms per arm). Every large spread is a discrete fault, not noise: GC-P0 bistable GPU state (11.5 vs 36.7 ms), <code>lampsel_new</code> 10.3 vs 106.7, contaminated suites. A 3x jump shows in one run: a bug to log, not a reason to average. One paired run in <code>gc_b4</code> gave +0.08 to +0.53 ms for a true ~+0.27: one launch per arm settles &gt;= 0.5 ms, not a 0.25 ms cost.</p>
+<p><strong>Rule:</strong> one run per arm. Run a second launch only if the harness flags the run (§4) or the delta is within 0.5 ms of a decision (default on/off, budget). Costs under 0.5 ms are measured in-process (§3) or from GPU pass timers, never with more launches. The dirt the 11-16 audit found (blocked arms, unfocused window ~65 vs ~85 fps, other sessions) is caught by interleaving and hygiene, not repeats.</p>
+<h2>3. In-process A/B (the default A/B tool)</h2>
+<p>Shape: one launch, scenario warm-up, then the switch flips every N s (A B A B ... &gt;= 4 phases each, 5 s), first cycle discarded (pipeline compiles on the first flip), per-phase median, p99, hitches, main / render / GPU and GPU passes; Δ = median of paired (B - A) phases. ABAB cancels thermal drift. ~20 s load + 3 s warm-up + 45 s = ~70 s.</p>
+<p>What exists: the switch probe (<code>mw_devtools_bevy/src/switch_probe.rs</code>) measures every flip, mean frame / main / render / GPU over 2 s before vs 2 s after a 0.5 s settle (<code>WINDOW_S</code> :39, <code>SETTLE_S</code> :46, <code>NOISE_MS</code> 0.5 :53), flags a camera move (<code>STILL_M</code> :60); quick A/B = 3 off/on rounds, median cost (<code>AB_ROUNDS</code> :74, <code>start_quick_ab</code> :319). Missing: (a) needs the Features panel open and a click (:275), no CLI or scenario entry; (b) feature switches only, not any <code>Lifetime::Live</code> tunable; (c) 2 s means, no p99 / hitches / GPU passes; (d) result only in an <code>info!</code> line, no report file; (e) standing camera only (a walk needs one path lap per phase).</p>
+<p>Not live (refused at <code>switch_probe.rs:337</code>: <code>startup_hint</code>, <code>Lifetime::Restart | Bake</code>): <code>Kind::Removed</code> parts (<code>part_switches.rs:41-81</code>: groundcover, underwater, farshadows, shadows, gi) and every <code>part.*</code> startup row. For these: <code>perf suite</code> 1 run per arm, interleaved, same exe; and make the costly ones live (built, systems skipped by a run condition, as froxels or blades already are) one slice each.</p>
+<h2>4. Hygiene instead of repeats</h2>
+<p>Already checked per run (<code>perf/cli.rs:558</code>, retry on dirty <code>:371</code>): no build / game process, other CPU &lt;= 25 %, GPU idle before, window focused, power plan and mode recorded (<code>perf/power.rs</code>). Add, each refuse (R) or flag (F):</p>
+<ul>
+<li>R: on battery or power mode not best performance.</li>
+<li>F -&gt; one rerun: GPU clock or W drops &gt; 10 % from the run's first 2 s; pipeline compiles in the measure window (a warm-up gate, so one warm-up launch per new exe, not per arm); frame &gt; 1.5x the scene's stored baseline (catches the bistable fault without peers; today's outlier check needs repeats, <code>cli.rs:599,669</code>).</li>
+</ul>
+<h2>5. CONTRIBUTING, proposed (not applied)</h2>
+<pre class="diff"><span class="del">-- **Design a bench session before running it (owner 2026-11-17).** ... (7 lines)</span>
+<span class="del">-- **Perf work starts from a measured ceiling and an expected ms**, ... (3+ runs each) ... (11 lines)</span>
+<span class="add">+- **Measure the cheapest way (owner 2026-11-23, `docs/reviews/bench-method-2026-11-23.md`).** Perf work starts</span>
+<span class="add">+  from a measured ceiling and an expected ms. Hitches: a headless test or one run&#x27;s gauges. A live switch:</span>
+<span class="add">+  `perf ab` (ABAB in one launch). Restart-only parts and regressions: `perf suite`, one run per arm, same exe;</span>
+<span class="add">+  switches that touch the same work also as one combined arm. Runs agree within ~0.2 ms, so no repeats: a second</span>
+<span class="add">+  run only when the harness flags one or the delta is within 0.5 ms of a decision. Report median, p99,</span>
+<span class="add">+  hitches/min and main, render and GPU ms (a cut off the bound thread is &quot;banked&quot;); under ~0.5 ms is noise.</span>
+<span class="add">+  Over ~10 min of bench needs the owner&#x27;s go. Log the result in `docs/ledger/perf.md`.</span>
+<span class="add">+- **Verdicts (owner 2026-11-15/16/17).** No win is &quot;inconclusive&quot;: it never deletes, freezes or disables code;</span>
+<span class="add">+  the change stays behind an opt-in switch, its ledger line says what is left. A win with no look awaiting the</span>
+<span class="add">+  owner becomes the default, its off value the A/B arm. Dead code something else replaced is deleted, tagged.</span></pre>
+<h2>6. Tooling slices (one each)</h2>
+<ol>
+<li><strong><code>perf ab</code></strong>: scenario field <code>ab: {tunable, phase_s, phases}</code> (<code>sf_diag</code> <code>scenario.rs:32</code>) drives the probe for any live tunable, no panel; fixes (a)-(d); writes <code>ab.md</code>. Live cost: 21 min -&gt; ~1.5 min.</li>
+<li><strong><code>perf suite</code> defaults</strong>: <code>--repeat 1</code>, one warm-up launch per exe, not per arm; <code>--repeat</code> stays opt-in. Restart-only cost: 21 min -&gt; ~2-3 min.</li>
+<li><strong>Fault and thermal flags without peers</strong> (§4): baseline ratio, clock / W drop, pending compiles, AC refuse.</li>
+<li><strong><code>perf check</code></strong>: standing + walk vs stored baselines, exit non-zero on &gt; 0.5 ms or hitches/min up; ~2.5 min, per commit that touches rendering or streaming.</li>
+<li><strong>Gauge summary first in every report</strong> (gauges over their budget): "still hitches?" ~36 min -&gt; ~1.5 min or 0.</li>
+<li><strong>Live switches for the removed parts</strong> (§3), one slice per part.</li>
+</ol><p style="color:var(--muted);font-size:.85em">Source: docs/reviews/bench-method-2026-11-23.md</p></main></body></html>

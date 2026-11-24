@@ -56,6 +56,66 @@ mod ground;
 #[cfg(test)]
 mod mirror;
 mod packed;
+/// superfargoth patch (own: raw image reads): the mask and height reads, so the
+/// workspace can test them (cargo cannot test a vendored, non-member crate).
+#[doc(hidden)]
+pub mod superfargoth_test {
+    pub use crate::packed::{
+        mask_words, pack_mask, pack_mask_per_texel, read_heights, read_heights_per_texel,
+    };
+    // superfargoth patch (own: stable tables): the tables' offsets and writes.
+    pub use crate::fields::{FieldView, TablesView, WrittenView, tables_view};
+    // superfargoth patch (own: partial upload): what the render world uploads.
+    pub use crate::render::resources::{
+        BufferPlan, CHUNK_BYTES, FIELD_BYTES, UploadPlan, UploadedState,
+    };
+
+    /// What the render world's buffers hold once it uploaded `world`'s tables.
+    pub fn uploaded_state(world: &bevy::ecs::world::World) -> UploadedState {
+        UploadedState::of(world.resource::<crate::fields::FieldTables>())
+    }
+
+    /// How the render world uploads `world`'s tables over buffers holding
+    /// `uploaded`.
+    pub fn upload_plan(
+        world: &bevy::ecs::world::World,
+        uploaded: Option<&UploadedState>,
+    ) -> UploadPlan {
+        crate::render::resources::upload_plan(
+            world.resource::<crate::fields::FieldTables>(),
+            uploaded,
+        )
+    }
+
+    // superfargoth patch (own: near tier): the Rust twins of the cull's
+    // candidate count and the near ring's keep.
+    /// Tiles per side and candidate density of a 16 m chunk of a style
+    /// `density` (blades per m²).
+    pub fn chunk_layout(chunk_size: f32, density: f32) -> (u32, f32) {
+        let layout = crate::shader_model::ChunkLayout::for_density(chunk_size, density);
+        (layout.tiles_per_side, layout.candidate_density)
+    }
+
+    /// Candidates the cull asks of a chunk of that layout where upstream
+    /// keeps `keep` of one layer and the ring multiplies it by `boost`.
+    pub fn candidates_needed(chunk_size: f32, density: f32, keep: f32, boost: f32) -> u32 {
+        crate::shader_model::ChunkLayout::for_density(chunk_size, density)
+            .candidates_needed_near(keep, boost)
+    }
+
+    /// The near ring's multiplier at `distance` for `settings` (sanitized).
+    pub fn near_boost(settings: &crate::GrassSettings, distance: f32) -> f32 {
+        crate::shader_model::NearTier::from_settings(&settings.sanitized()).boost(distance)
+    }
+
+    /// The share of layer `layer`'s candidates `evaluate` keeps.
+    pub fn layer_keep(keep: f32, boost: f32, layer: u32) -> f32 {
+        crate::shader_model::NearTier::layer_keep(keep, boost, layer)
+    }
+
+    /// Candidates per tile copy, per layer.
+    pub const TILE_POINTS: u32 = crate::shader_model::TILE_POINTS;
+}
 mod physics;
 mod presets;
 mod reach;
@@ -86,7 +146,7 @@ pub use fields::{GrassWorldOffset, field_seed};
 pub use physics::{GrassColliderBounds, GrassColliderSystems, GrassInteractorFromCollider};
 pub use render::platform::GrassSupport;
 pub use settings::{GrassQuality, GrassSettings, GrassShadows};
-pub use stats::{GpuStats, GrassDiagnostics, GrassStats, TableStats};
+pub use stats::{GpuStats, GrassDiagnostics, GrassStats, RebuildPhases, TableStats}; // superfargoth patch (own: rebuild phases): `RebuildPhases`
 pub use style_file::{GrassStyleFileError, GrassStyleFilePlugin, GrassStyleLoader};
 pub use sun::{GrassLightFrame, GrassLightPlugin, GrassLightSystems};
 pub use wind::{GrassWind, GrassWindFrame, GrassWindPlugin, GrassWindSystems};

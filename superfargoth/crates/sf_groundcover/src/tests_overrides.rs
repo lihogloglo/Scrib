@@ -78,6 +78,30 @@ fn exclusion_zeroes_density() {
 }
 
 #[test]
+fn oriented_box_excludes_its_turned_rectangle_only() {
+    let cover = on_channel0(vec![species("a", 0.5, 2.0)]);
+    let a = SpeciesIndex(0);
+    // 4 × 1 m half size turned 45°: its X axis runs along world (1, -1) / √2.
+    let set = OverrideSet {
+        exclusions: vec![Region::oriented_box([8.0, 8.0], [4.0, 1.0], std::f64::consts::FRAC_PI_4)],
+        ..OverrideSet::default()
+    };
+    let d = |x, z| density(&cover, &set, x, z, a);
+    let along = |t: f64| (8.0 + t * std::f64::consts::FRAC_1_SQRT_2, 8.0 - t * std::f64::consts::FRAC_1_SQRT_2);
+    // On the long axis, inside and just past its end.
+    assert_eq!((d(along(0.0).0, along(0.0).1), d(along(3.9).0, along(3.9).1)), (0.0, 0.0));
+    assert_eq!(d(along(4.1).0, along(4.1).1), 2.0);
+    // Inside the turned box's AABB but outside the box: untouched (not the AABB of the turned box).
+    assert_eq!(d(10.5, 10.5), 2.0);
+    // Many regions far away change nothing here (the R-tree view finds only what touches the point).
+    let mut many = set.clone();
+    many.exclusions.extend((0..1000).map(|i| Region::rect([100.0 + f64::from(i), 100.0], [100.5 + f64::from(i), 100.5])));
+    assert_eq!(density(&cover, &many, 15.0, 15.0, a), 2.0);
+    assert_eq!(density(&cover, &many, 100.25, 100.25, a), 0.0);
+    assert_eq!(density(&cover, &many, 8.0, 8.0, a), 0.0);
+}
+
+#[test]
 fn paint_multiplies_its_species_group_only() {
     let cover = on_channel0(vec![species("a", 0.5, 2.0), species("b", 0.5, 2.0)]);
     let (a, b) = (SpeciesIndex(0), SpeciesIndex(1));

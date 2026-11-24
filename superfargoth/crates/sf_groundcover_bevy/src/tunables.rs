@@ -263,6 +263,31 @@ pub const BLADES_FLUTTER: Def<f32> = def!(float "groundcover.blades.flutter" = 1
     .source(Source::Guess)
     .lifetime(Lifetime::Live);
 
+/// `groundcover.blades.near_density`: the near tier (slice GC-3n, vendored patch "near tier"): blades are this many
+/// times as dense at the viewer's feet, so the first metres do not look sparse. 1 turns it off.
+pub const BLADES_NEAR_DENSITY: Def<f32> = def!(float "groundcover.blades.near_density" = 2.5)
+    .range(1.0, 4.0)
+    .unit(Unit::Ratio)
+    .help("Blade density multiplier at the viewer's feet (1 = off), full to near_start_m, back to 1 at near_end_m; costs blades only there")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
+/// `groundcover.blades.near_start_m`: where the near tier starts to taper back to the normal density.
+pub const BLADES_NEAR_START: Def<f32> = def!(float "groundcover.blades.near_start_m" = 4.0)
+    .range(0.0, 16.0)
+    .unit(Unit::Meters)
+    .help("Distance from the viewer where the near tier's extra density starts to taper")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
+/// `groundcover.blades.near_end_m`: where the near tier is back to the normal density (at least `near_start_m`).
+pub const BLADES_NEAR_END: Def<f32> = def!(float "groundcover.blades.near_end_m" = 7.0)
+    .range(0.0, 24.0)
+    .unit(Unit::Meters)
+    .help("Distance from the viewer where the near tier ends; the blade count grows with its square")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &ENABLED,
     &MESH_RANGE,
@@ -297,4 +322,7 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &BLADES_SWAY,
     &BLADES_SWAY_SPEED,
     &BLADES_FLUTTER,
+    &BLADES_NEAR_DENSITY,
+    &BLADES_NEAR_START,
+    &BLADES_NEAR_END,
 ];

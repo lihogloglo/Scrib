@@ -10,6 +10,7 @@ license.workspace = true
 # species, rules, ground), so every peer scatters the same instances. Listed in `.config/hakari.toml` final-excludes.
 [dependencies]
 glam.workspace = true
+rstar.workspace = true
 serde.workspace = true
 sf_tunables.workspace = true
 thiserror.workspace = true

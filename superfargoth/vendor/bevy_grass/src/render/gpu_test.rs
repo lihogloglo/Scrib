@@ -32,6 +32,7 @@ use crate::GrassPlugin;
 use crate::GrassWind;
 use crate::api::{GrassField, GrassGround, GrassInteractor, GrassInteractorFootprint, GrassStyle};
 use crate::fields::{CHUNK_SIZE, FieldTables};
+use crate::gpu_layout::NO_MAP; // superfargoth patch (own: stable tables)
 use crate::mirror;
 use crate::shader_model::{self, ChunkLayout, DistanceLod, TILE_POINTS};
 
@@ -171,7 +172,8 @@ fn cpu_instances(tables: &FieldTables, view: &ViewUniformData) -> Vec<[u32; 3]> 
     let camera = view.camera_position.truncate();
     let origin = view.instance_origin;
     let mut out = Vec::new();
-    for chunk in tables.chunks.iter() {
+    // superfargoth patch (own: stable tables): holes belong to no field.
+    for chunk in tables.chunks.iter().filter(|chunk| chunk.ids.x != NO_MAP) {
         let field = tables.fields[chunk.ids.x as usize];
         let tallest = field.shape.y;
         // The box around the chunk's square, turned with its field.

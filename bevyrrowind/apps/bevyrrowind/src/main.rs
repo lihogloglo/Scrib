@@ -102,6 +102,29 @@ enum Command {
         #[arg(long, default_value_t = 10.0)]
         scale: f64,
     },
+    /// Settlements ST-1 (scrib-worldgen `docs/specs/settlements.md` "Contract: files only"): a site folder
+    /// (`site.json`, `heights.f32`, `water.u8`, `roads.u8`) of the vanilla exterior around one named settlement
+    /// anchor (names as in `anchors-census.md`), with its members' ground footprints as the claim; prints the
+    /// footprint count, crop, water and road cells. Derived from your own data: keep the output out of git.
+    WorldgenSite {
+        /// Anchor name (e.g. `Balmora`).
+        #[arg(long)]
+        anchor: String,
+        /// Half edge of the square crop, metres (default: the declared `site.radius_m`, or `site.guide_radius_m`
+        /// with `--guide`).
+        #[arg(long)]
+        radius_m: Option<f64>,
+        /// ST-2: a 10x guide folder (e.g. `target/worldgen/x10s`): the site is a crop of the generated world as the
+        /// game shows it, without the anchor's stamp, centred on the river reach nearest its mapped centre; no claim.
+        #[arg(long)]
+        guide: Option<PathBuf>,
+        /// Raster spacing with `--guide`, metres (default: the declared `site.cell_m`).
+        #[arg(long)]
+        cell_m: Option<f64>,
+        /// Output folder (created).
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Worldgen WG-X3 (`docs/specs/worldgen-adapter.md` "Same map at 10x" step 5): Morrowind's ground textures for
     /// a `worldgen-x10` guide (`layers.json` + `layers.u16`): the source `VTEX` grid scaled outside settlements and
     /// at 1:1 under each stamped anchor; prints palette, grid sizes, bytes and time.
@@ -903,6 +926,62 @@ fn run(cli: Cli) -> Result {
             let args = mw_worldgen::x10::X10Args { out, heights, scale, params: mw_worldgen::anchor::Params::default() };
             print!("{}", mw_worldgen::x10::run(&content.db, &bounds, &args)?);
             println!("worldgen-x10: {:.1} s total", started.elapsed().as_secs_f64());
+            Ok(())
+        }
+        Command::WorldgenSite { anchor, radius_m, guide: Some(guide), cell_m, out } => {
+            let started = std::time::Instant::now();
+            // The road table names LTEX records: the content gives their texture files.
+            let (_, content) = load(&install, false)?;
+            let mut params = mw_worldgen::site::SiteParams::default();
+            if let Some(r) = radius_m {
+                params.guide_radius_m = r;
+            }
+            if let Some(c) = cell_m {
+                params.cell_m = c;
+            }
+            let sharp_scale = mw_exterior_bevy::worldgen::WORLDGEN_SHARP.default_value();
+            let table = mw_worldgen::site::SiteTable::builtin()?;
+            let args = mw_worldgen::site::SiteArgs { anchor, out, params, table, sharp_scale };
+            print!("{}", mw_worldgen::site::run_guide(&content.db, &guide, &args)?);
+            println!("worldgen-site: {:.1} s total", started.elapsed().as_secs_f64());
+            Ok(())
+        }
+        Command::WorldgenSite { anchor, radius_m, guide: None, cell_m: _, out } => {
+            let started = std::time::Instant::now();
+            let (vfs, content) = load(&install, false)?;
+            // Models on demand: bounds for every exterior reference (classification, member radii, as worldgen-x10),
+            // visible vertices for the anchor's members only (their footprints).
+            let model = |model: &str| {
+                VfsPath::new(model).ok().and_then(|path| vfs.read(&path).ok()).and_then(|bytes| mw_nif::load(&bytes).ok())
+            };
+            let cache = std::cell::RefCell::new(std::collections::HashMap::<String, Option<([f32; 3], [f32; 3])>>::new());
+            let bounds = |name: &str| {
+                if let Some(b) = cache.borrow().get(name) {
+                    return *b;
+                }
+                let b = model(name).and_then(|m| mw_nif::visible_bounds(&m));
+                cache.borrow_mut().insert(name.to_owned(), b);
+                b
+            };
+            let points = |name: &str| {
+                let m = model(name)?;
+                let world = mw_nif::world_transforms(&m);
+                let mut out = Vec::new();
+                for (node, transform) in m.nodes.iter().zip(&world) {
+                    if let (true, Some(mesh)) = (node.visible, node.mesh) {
+                        out.extend(m.meshes[mesh].positions.iter().map(|p| transform.transform_point3((*p).into()).to_array()));
+                    }
+                }
+                Some(out)
+            };
+            let mut params = mw_worldgen::site::SiteParams::default();
+            if let Some(r) = radius_m {
+                params.radius_m = r;
+            }
+            let table = mw_worldgen::site::SiteTable::builtin()?;
+            let args = mw_worldgen::site::SiteArgs { anchor, out, params, table, sharp_scale: 0.0 };
+            print!("{}", mw_worldgen::site::run(&content.db, &bounds, &points, &args)?);
+            println!("worldgen-site: {:.1} s total", started.elapsed().as_secs_f64());
             Ok(())
         }
         Command::WorldgenLayers { guide } => {

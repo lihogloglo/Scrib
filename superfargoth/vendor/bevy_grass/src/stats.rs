@@ -81,6 +81,30 @@ pub struct TableStats {
     pub entries_rewritten: u64,
     /// How long the latest rebuild took on the CPU.
     pub last_rebuild: Duration,
+    /// superfargoth patch (own: rebuild phases): where `last_rebuild` went.
+    pub last_rebuild_phases: RebuildPhases,
+}
+
+/// superfargoth patch (own: rebuild phases): the CPU time of each phase of the
+/// latest table rebuild. `gather` (sorting and reading the fields) comes before
+/// the span `last_rebuild` measures; the others add up to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Reflect)]
+#[reflect(Default, Debug, PartialEq)]
+pub struct RebuildPhases {
+    /// Sorting the fields and reading each one's style, mask and heightmap.
+    pub gather: Duration,
+    /// Forgetting changed images and cloning the old tables.
+    pub clone: Duration,
+    /// Placing each field's entries and images in the tables.
+    pub plan: Duration,
+    /// The chunks (kept or built again).
+    pub chunks: Duration,
+    /// The masks and heightmaps (kept or joined again).
+    pub images: Duration,
+    /// The field entries (kept or worked out again).
+    pub entries: Duration,
+    /// Comparing with the old tables and storing the new ones.
+    pub finish: Duration,
 }
 
 /// Counters read back from the GPU. Summed over cameras.
@@ -167,6 +191,7 @@ impl Plugin for GrassDiagnosticsPlugin {
             .init_resource::<GpuReadings>()
             .register_type::<GrassStats>()
             .register_type::<TableStats>()
+            .register_type::<RebuildPhases>() // superfargoth patch (own: rebuild phases)
             .register_type::<GpuStats>()
             .register_diagnostic(count(GrassDiagnostics::BLADES_NEAR))
             .register_diagnostic(count(GrassDiagnostics::BLADES_MID))

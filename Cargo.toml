@@ -139,6 +139,8 @@ postcard = { version = "1", default-features = false, features = ["use-std"] }
 rayon = "1.12"
 # Same version Bevy 0.20 uses (bevy_asset, bevy_reflect): one copy in the tree. Graph assets (sf_anim_graph).
 ron = "0.12"
+# Groundcover override index (sf_groundcover; the version parry3d already pulls in).
+rstar = { version = "0.13", default-features = false }
 # CPU twin of the longest wave cascade (sf_water; water.md "The water query").
 rustfft = "6.4"
 semver = { version = "1", features = ["serde"] }

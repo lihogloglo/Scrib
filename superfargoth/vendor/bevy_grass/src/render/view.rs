@@ -21,7 +21,8 @@ use super::resources::{ExtractedGrass, GrassLayouts, GrassShared};
 use crate::GrassSettings;
 use crate::api::{GrassCamera, NoGrass};
 use crate::fields::{has_unsupported_layer, layer_mask};
-use crate::shader_model::DistanceLod;
+// superfargoth patch (own: near tier): `NearTier`.
+use crate::shader_model::{DistanceLod, NearTier};
 use crate::stats::GpuReadings;
 use crate::{reach, trample};
 
@@ -84,6 +85,10 @@ pub(crate) struct ViewUniformData {
     /// far an edge-on blade turns toward the camera, and the vertical range
     /// of stored positions.
     pub limits: Vec4,
+    // superfargoth patch (own: near tier)
+    /// The near ring: its density multiplier, where it starts to taper and
+    /// where it ends, in metres; w unused.
+    pub near: Vec4,
 }
 
 /// Where the overflow check is in its cycle.
@@ -452,6 +457,11 @@ fn view_uniform(
             settings.turn_to_camera,
             height_range,
         ),
+        // superfargoth patch (own: near tier)
+        near: {
+            let near = NearTier::from_settings(settings);
+            Vec4::new(near.density, near.start, near.end, 0.0)
+        },
     }
 }
 

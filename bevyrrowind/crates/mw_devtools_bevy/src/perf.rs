@@ -29,6 +29,7 @@ use sf_world::{IndexedPlacement, Level, PlacementClass};
 // Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
 pub use mw_game_core::perf::{Off, Part};
 
+pub mod flip_ab;
 pub mod tunables;
 
 /// Default benchmark window, physical pixels (the stored baselines).
@@ -77,6 +78,21 @@ pub struct PerfFlags {
     /// benchmarks only the files passed here.
     #[arg(long = "tunables", value_name = "FILE")]
     pub tunables: Vec<PathBuf>,
+    /// In-process A/B: flip tunable NAME between A and B every phase of the measurement, A first
+    /// (`NAME=A|B` when a value holds commas); replaces the scenario's `ab`. Live tunables of
+    /// standing scenarios only. Writes `ab.md` and `ab.csv` beside the report ([`flip_ab`]).
+    #[arg(long, requires = "bench", value_name = "NAME=A,B")]
+    pub ab: Option<String>,
+    /// A/B seconds per phase (default `bench.ab.phase_s`).
+    #[arg(long, requires = "bench")]
+    pub ab_phase_s: Option<f64>,
+    /// A/B measured phases per value; one more A+B cycle runs first and is discarded (default
+    /// `bench.ab.phases`).
+    #[arg(long, requires = "bench")]
+    pub ab_phases: Option<u32>,
+    /// A/B seconds left out at the start of each phase (default `bench.ab.settle_s`).
+    #[arg(long, requires = "bench")]
+    pub ab_settle_s: Option<f64>,
 }
 
 fn parse_resolution(raw: &str) -> Result<(u32, u32), String> {
@@ -115,6 +131,16 @@ impl Perf {
             Some(path) => {
                 let mut scenario = Scenario::from_json(&std::fs::read_to_string(path)?)?;
                 adjust(&mut scenario);
+                let ab = flip_ab::spec(scenario.ab.as_ref(), flags.ab.as_deref(), flags.ab_phase_s, flags.ab_phases, flags.ab_settle_s)?;
+                let ab = match ab {
+                    Some(spec) => {
+                        let schedule = flip_ab::schedule(&spec, &flags.set)?;
+                        flip_ab::fit_scenario(&mut scenario, spec, &schedule, flags.bench_seconds.is_some())?;
+                        meta.insert("ab".to_owned(), schedule.describe());
+                        Some(schedule)
+                    }
+                    None => None,
+                };
                 if let Some(seconds) = flags.bench_seconds {
                     match &mut scenario.measure {
                         sf_diag_bevy::sf_diag::Measure::Duration { seconds: s } => *s = seconds,
@@ -143,6 +169,7 @@ impl Perf {
                     exit_on_finish: true,
                     hitch_ms,
                     meta,
+                    ab,
                     ..DiagSettings::default()
                 };
                 Some((scenario, settings))
@@ -187,6 +214,7 @@ impl Perf {
         let poll = env_flag(std::env::var(ENV_POLL_BEFORE_SUBMIT).ok().as_deref());
         sf_diag_bevy::set_poll_before_submit(poll);
         tunables::add(app, self.tunables, self.bench.is_some());
+        let ab = self.bench.as_ref().and_then(|(_, settings)| settings.ab.clone());
         if let Some((scenario, mut settings)) = self.bench {
             let gpu_timers = !env_flag(std::env::var(ENV_NO_GPU_TIMERS).ok().as_deref());
             if gpu_timers {
@@ -225,6 +253,10 @@ impl Perf {
         }
         // FS-2c: every --off part in the feature-switch list (rows + not-built marks in `finish`).
         app.add_plugins(crate::part_switches::PartSwitchesPlugin(self.off.clone()));
+        // After the overrides and the part switches: its `finish` checks the tunable is live and built.
+        if let Some(schedule) = ab {
+            app.add_plugins(flip_ab::FlipAbPlugin(schedule));
+        }
         app.insert_resource(self.off);
         Ok(())
     }

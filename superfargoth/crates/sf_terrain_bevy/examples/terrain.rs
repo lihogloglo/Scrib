@@ -186,6 +186,7 @@ fn main() {
             gates: Vec::new(),
             spike_factor: 1.5,
             tolerance: sf_diag_bevy::sf_diag::Tolerance::default(),
+            ab: None,
         };
         let plugin = sf_diag_bevy::SfDiagPlugin::new(sf_diag_bevy::DiagSettings {
             output_dir: PathBuf::from("diag"),

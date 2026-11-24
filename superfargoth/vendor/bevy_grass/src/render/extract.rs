@@ -26,6 +26,10 @@ use crate::wind::GrassWindFrame;
 /// What the main world handed over this frame.
 #[derive(Resource, Debug, Default)]
 pub(crate) struct ExtractedGrass {
+    // superfargoth patch (own: partial upload): masks and heightmaps dropped
+    // once uploaded.
+    /// The latest tables; once uploaded, without their masks and heightmaps
+    /// (`prepare_shared`), which nothing here reads after that.
     pub tables: FieldTables,
     /// This frame's edits to the masks, written after `tables`.
     pub mask_patches: Arc<PatchList>,

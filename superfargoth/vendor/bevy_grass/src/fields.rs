@@ -6,7 +6,9 @@
 //! GPU decides which blades exist (`shaders/generate.wesl`).
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Range; // superfargoth patch (own: stable tables)
 use std::sync::Arc;
+use std::time::Duration; // superfargoth patch (own: rebuild phases)
 
 use bevy::app::{App, PostUpdate};
 use bevy::asset::{Asset, AssetEvent, AssetEventSystems, AssetId, Assets};
@@ -29,7 +31,7 @@ use crate::gpu_layout::{ChunkGpu, FieldGpu, NO_MAP};
 use crate::ground::{HOLE, MeshGrounds, bake_mesh_grounds};
 use crate::packed::{self, PackedImages};
 use crate::shader_model::{self, ChunkLayout};
-use crate::stats::TableStats;
+use crate::stats::{RebuildPhases, TableStats}; // superfargoth patch (own: rebuild phases): `RebuildPhases`
 use crate::style::MAX_SPECIES;
 use crate::{GrassStats, GrassSystems};
 
@@ -100,6 +102,193 @@ pub(crate) struct FieldTables {
     pub heights: Arc<Vec<f32>>,
     /// The optional shading terms some field uses (`LookFeatures`).
     pub features: LookFeatures,
+    // superfargoth patch (own: stable tables): where each table has room, so
+    // a field keeps its place in every table while it is unchanged, and what
+    // the latest rebuild wrote.
+    /// The free ranges of each table. A field's ranges are in its slot.
+    pub layout: TableLayout,
+    /// What changed since version `writes.since`, per table.
+    pub writes: TableWrites,
+}
+
+// superfargoth patch (own: stable tables)
+/// The free ranges of one table, so a field keeps its place while it is
+/// unchanged and a removed field's place goes to the next field that fits.
+///
+/// A sorted free list with best fit, not `offset-allocator` (in the lock file
+/// for Bevy's mesh allocator): a table holds tens of ranges, mostly of one size
+/// (streamed fields are alike, so a new field takes a removed one's place
+/// exactly), and this list grows in place at its end, where an
+/// `offset_allocator::Allocator` has a fixed size and growing it would move
+/// every field. It also needs no new dependency of the vendored crate.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct FreeList {
+    /// Sorted, disjoint and never touching.
+    free: Vec<Range<u32>>,
+    /// The table's length.
+    end: u32,
+}
+
+impl FreeList {
+    pub(crate) fn end(&self) -> u32 {
+        self.end
+    }
+
+    /// The start of a free range of `len`: the smallest free range that fits
+    /// (the lowest of equals), or else the end, the table growing to at least
+    /// `grow_to`; `None` past `cap`.
+    fn take(&mut self, len: u32, grow_to: u32, cap: u32) -> Option<u32> {
+        if len == 0 {
+            return Some(0);
+        }
+        let best = self
+            .free
+            .iter()
+            .enumerate()
+            .filter(|(_, range)| range.end - range.start >= len)
+            .min_by_key(|(_, range)| range.end - range.start)
+            .map(|(index, _)| index);
+        if let Some(index) = best {
+            let at = self.free[index].start;
+            self.free[index].start += len;
+            if self.free[index].is_empty() {
+                self.free.remove(index);
+            }
+            return Some(at);
+        }
+        let start = match self.free.last() {
+            Some(tail) if tail.end == self.end => tail.start,
+            _ => self.end,
+        };
+        let need = start.checked_add(len).filter(|&need| need <= cap)?;
+        let grown = need.max(grow_to.min(cap));
+        self.release(self.end..grown);
+        self.end = grown;
+        self.take(len, grow_to, cap)
+    }
+
+    /// Gives `range` back.
+    fn release(&mut self, range: Range<u32>) {
+        if range.is_empty() {
+            return;
+        }
+        let at = self.free.partition_point(|free| free.start < range.start);
+        self.free.insert(at, range);
+        if at + 1 < self.free.len() && self.free[at].end == self.free[at + 1].start {
+            self.free[at].end = self.free.remove(at + 1).end;
+        }
+        if at > 0 && self.free[at - 1].end == self.free[at].start {
+            self.free[at - 1].end = self.free.remove(at).end;
+        }
+    }
+}
+
+// superfargoth patch (own: stable tables)
+/// The free ranges of the four tables, in their own units: entries, chunks,
+/// mask words and height texels.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct TableLayout {
+    pub entries: FreeList,
+    pub chunks: FreeList,
+    pub masks: FreeList,
+    pub heights: FreeList,
+}
+
+// superfargoth patch (own: stable tables)
+/// What one table's latest change wrote, in its units.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct Written {
+    /// The table was laid out afresh or grew: all of it is new.
+    pub full: bool,
+    /// The ranges written, sorted and merged (meaningful when not `full`).
+    pub ranges: Vec<Range<u32>>,
+}
+
+impl Written {
+    fn add(&mut self, range: Range<u32>) {
+        if !range.is_empty() {
+            self.ranges.push(range);
+        }
+    }
+
+    /// Nothing was written.
+    pub(crate) fn is_empty(&self) -> bool {
+        !self.full && self.ranges.is_empty()
+    }
+
+    fn merged(mut self) -> Self {
+        self.ranges.sort_by_key(|range| range.start);
+        let mut merged: Vec<Range<u32>> = Vec::with_capacity(self.ranges.len());
+        for range in self.ranges {
+            match merged.last_mut() {
+                Some(last) if last.end >= range.start => last.end = last.end.max(range.end),
+                _ => merged.push(range),
+            }
+        }
+        self.ranges = merged;
+        self
+    }
+}
+
+// superfargoth patch (own: stable tables)
+/// What changed in each table from version `since` to this one, for an upload
+/// of only those ranges. A gap of versions means: upload everything.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct TableWrites {
+    pub since: u64,
+    pub fields: Written,
+    pub chunks: Written,
+    pub masks: Written,
+    pub heights: Written,
+}
+
+// superfargoth patch (own: stable tables)
+/// A chunk no field owns: a hole in the chunk table, skipped by `cull`.
+const UNUSED_CHUNK: ChunkGpu = ChunkGpu {
+    bounds: Vec4::ZERO,
+    ids: UVec4::new(NO_MAP, 0, 0, 0),
+};
+
+// superfargoth patch (own: stable tables)
+/// One table being rebuilt: the old one, copied on its first write.
+struct Table<T> {
+    data: Arc<Vec<T>>,
+    written: Written,
+}
+
+impl<T: Clone + PartialEq> Table<T> {
+    /// `old` at `len` (new texels are `fill`), or a new table of `len` if
+    /// `fresh`. Taken, not shared, so a table nothing else holds is written in
+    /// place.
+    fn new(old: Arc<Vec<T>>, len: u32, fill: T, fresh: bool) -> Self {
+        let mut data = if fresh { Arc::new(Vec::new()) } else { old };
+        let full = fresh || data.len() != len as usize;
+        if data.len() != len as usize {
+            Arc::make_mut(&mut data).resize(len as usize, fill);
+        }
+        Self {
+            data,
+            written: Written {
+                full,
+                ranges: Vec::new(),
+            },
+        }
+    }
+
+    /// Writes `values` at `at`; with `unless_same`, only if they differ.
+    fn write(&mut self, at: u32, values: &[T], unless_same: bool) {
+        let range = at as usize..at as usize + values.len();
+        if unless_same && self.data[range.clone()] == *values {
+            return;
+        }
+        Arc::make_mut(&mut self.data)[range].clone_from_slice(values);
+        self.written.add(at..at + values.len() as u32);
+    }
+
+    fn fill(&mut self, range: Range<u32>, value: &T) {
+        let values = vec![value.clone(); (range.end - range.start) as usize];
+        self.write(range.start, &values, true);
+    }
 }
 
 impl FieldTables {
@@ -107,7 +296,6 @@ impl FieldTables {
     /// field that holds it, or `None` outside every field. A flat field is
     /// exact; on a heightmap it is the top of the 16 m chunk.
     pub(crate) fn highest_ground_at(&self, point: Vec2) -> Option<f32> {
-        let mut first_chunk = 0usize;
         for slot in self.slots.iter() {
             let field = self.fields.get(slot.first)?;
             let size = Vec2::new(field.extent.x, field.extent.y);
@@ -115,10 +303,16 @@ impl FieldTables {
             let local = field.local_of(point);
             if local.cmpge(Vec2::ZERO).all() && local.cmplt(size).all() {
                 let cell = (local / CHUNK_SIZE).as_uvec2().min(counts - UVec2::ONE);
-                let index = first_chunk + (cell.y * counts.x + cell.x) as usize;
-                return self.chunks.get(index).map(|chunk| chunk.bounds.w);
+                // superfargoth patch (own: stable tables): the field's chunks
+                // start where its slot says, not after the previous field's.
+                let index = slot.chunks.start + cell.y * counts.x + cell.x;
+                return slot
+                    .chunks
+                    .contains(&index)
+                    .then(|| self.chunks.get(index as usize))
+                    .flatten()
+                    .map(|chunk| chunk.bounds.w);
             }
-            first_chunk += (counts.x * counts.y) as usize;
         }
         None
     }
@@ -130,8 +324,13 @@ impl FieldTables {
     ///
     /// [`highest_ground_at`]: FieldTables::highest_ground_at
     pub(crate) fn ground_below(&self, point: Vec2) -> f32 {
+        // superfargoth patch (own: stable tables): the first field's entry,
+        // which a hole may have pushed off index 0.
         self.highest_ground_at(point)
-            .or_else(|| self.fields.first().map(|field| field.min_corner.y))
+            .or_else(|| {
+                let first = self.slots.first()?;
+                self.fields.get(first.first).map(|field| field.min_corner.y)
+            })
             .unwrap_or(0.0)
     }
 }
@@ -154,6 +353,11 @@ pub(crate) struct FieldSlot {
     pub entity: Entity,
     pub first: usize,
     pub entries: usize,
+    // superfargoth patch (own: stable tables): the field's ranges in the
+    // chunk, mask (words) and height (texels) tables.
+    pub chunks: Range<u32>,
+    pub mask: Option<Range<u32>>,
+    pub height: Option<Range<u32>>,
     entry: EntryKey,
     chunk: ChunkKey,
 }
@@ -185,8 +389,9 @@ struct ChunkKey {
     size: Vec2,
     base: f32,
     height: Option<(AssetId<Image>, f32)>,
-    /// The index of the field's first entry, which its chunks point at.
-    first: usize,
+    // superfargoth patch (own: stable tables): no `first` (the index of the
+    // field's first entry): a moved entry only repoints the chunks, which
+    // `rebuild` does without scanning the heightmap again.
 }
 
 /// Optional shading terms, compiled into the grass shaders only when some
@@ -536,14 +741,18 @@ pub(crate) fn warn_missing_style(
     }
 }
 
-/// The asset an event is about.
-fn event_id<A: Asset>(event: &AssetEvent<A>) -> AssetId<A> {
+/// superfargoth patch (own: no echo rebuild): the asset whose content changed,
+/// `None` for an asset that only appeared or went unused. `gather` already
+/// waits until every image and style a field uses has loaded (the tables stay
+/// dirty until then), so `Added` and `LoadedWithDependencies` carry nothing new;
+/// marking them re-read and re-joined every new field's images one frame after
+/// the rebuild that first read them (GC-3b4a: 5.5 ms twice per block move).
+fn changed_id<A: Asset>(event: &AssetEvent<A>) -> Option<AssetId<A>> {
     match event {
-        AssetEvent::Added { id }
-        | AssetEvent::Modified { id }
-        | AssetEvent::LoadedWithDependencies { id }
-        | AssetEvent::Removed { id }
-        | AssetEvent::Unused { id } => *id,
+        AssetEvent::Modified { id } | AssetEvent::Removed { id } => Some(*id),
+        AssetEvent::Added { .. }
+        | AssetEvent::LoadedWithDependencies { .. }
+        | AssetEvent::Unused { .. } => None,
     }
 }
 
@@ -561,14 +770,15 @@ pub(crate) fn detect_changes(
     fields: Query<&GrassField>,
 ) {
     // Only styles and images some field uses matter.
+    // superfargoth patch (own: no echo rebuild): `changed_id`, was `event_id`.
     for event in styles.read() {
-        let id = event_id(event);
+        let Some(id) = changed_id(event) else { continue };
         if fields.iter().any(|field| field.style.id() == id) {
             dirty.styles.insert(id);
         }
     }
     for event in images.read() {
-        let id = event_id(event);
+        let Some(id) = changed_id(event) else { continue };
         let used = fields.iter().any(|field| {
             field
                 .density_map
@@ -637,18 +847,30 @@ impl Placement {
 fn patch_access(tables: &mut FieldTables, fields: &Query<FieldInputs>) {
     let mut entries = tables.fields.as_ref().clone();
     let mut slots = tables.slots.as_ref().clone();
+    let mut written = Written::default(); // superfargoth patch (own: stable tables)
     for slot in &mut slots {
         let Ok((_, _, _, visibility, layers, _)) = fields.get(slot.entity) else {
             continue;
         };
         let bits = access(visibility.get(), layers);
         slot.entry.access = bits;
-        for entry in &mut entries[slot.first..slot.first + slot.entries] {
+        // superfargoth patch (own: stable tables): the entries that changed.
+        let range = slot.first..slot.first + slot.entries;
+        if entries[range.clone()].iter().any(|entry| entry.access.x != bits) {
+            written.add(range.start as u32..range.end as u32);
+        }
+        for entry in &mut entries[range] {
             entry.access.x = bits;
         }
     }
     tables.fields = Arc::new(entries);
     tables.slots = Arc::new(slots);
+    // superfargoth patch (own: stable tables)
+    tables.writes = TableWrites {
+        since: tables.version,
+        fields: written.merged(),
+        ..TableWrites::default()
+    };
     tables.version += 1;
 }
 
@@ -702,7 +924,22 @@ struct Plan<'a> {
     /// Offsets of its mask and heightmap, in texels.
     mask_offset: u32,
     height_offset: u32,
+    // superfargoth patch (own: stable tables)
+    /// Its slot in the old tables, if it was in them (and they are kept).
+    old: Option<usize>,
+    /// Its ranges in the chunk, mask (words) and height (texels) tables.
+    chunks: Range<u32>,
+    mask: Option<Range<u32>>,
+    height: Option<Range<u32>>,
+    /// Which of its ranges were placed anew, and so must be written.
+    placed: [bool; 4],
 }
+
+// superfargoth patch (own: stable tables): indices into `Plan::placed`.
+const ENTRIES: usize = 0;
+const CHUNKS: usize = 1;
+const MASK: usize = 2;
+const HEIGHT: usize = 3;
 
 impl Plan<'_> {
     fn entry_key(&self) -> EntryKey {
@@ -728,8 +965,23 @@ impl Plan<'_> {
             size: self.input.placement.size,
             base: self.input.placement.corner.y,
             height: self.input.height.map(|(id, _, scale)| (id, scale)),
-            first: self.first,
         }
+    }
+
+    // superfargoth patch (own: stable tables): what each table needs.
+    /// Its entries, chunks, mask words and height texels.
+    fn needs(&self) -> [u32; 4] {
+        let counts = (self.input.placement.size / CHUNK_SIZE).ceil().as_uvec2();
+        let mask = self
+            .input
+            .mask
+            .as_ref()
+            .map_or(0, |mask| packed::mask_words(mask.size.x * mask.size.y));
+        let height = self.input.height.map_or(0, |(_, image, _)| {
+            let size = image.size();
+            size.x * size.y
+        });
+        [1 + self.species.len() as u32, counts.x * counts.y, mask, height]
     }
 
     /// Whether the field's heightmap is one of `changed`.
@@ -823,7 +1075,7 @@ struct Dropped {
 fn plan<'a>(inputs: &'a [Input<'a>]) -> (Vec<Plan<'a>>, Dropped) {
     let mut plans = Vec::with_capacity(inputs.len());
     let mut dropped = Dropped::default();
-    let (mut entry_cursor, mut mask_words, mut height_texels) = (0usize, 0u32, 0u32);
+    let mut entry_cursor = 0usize; // superfargoth patch (own: stable tables): no image offsets
     for (index, input) in inputs.iter().enumerate() {
         let species = &input.style.species[..input.style.species.len().min(MAX_SPECIES - 1)];
         dropped.species += input.style.species.len() - species.len();
@@ -843,135 +1095,292 @@ fn plan<'a>(inputs: &'a [Input<'a>]) -> (Vec<Plan<'a>>, Dropped) {
             dropped.fields = inputs.len() - index;
             break;
         }
+        // superfargoth patch (own: stable tables): `place` sets the offsets;
+        // this only counts the entries against the limit.
         plans.push(Plan {
             input,
             species,
-            first: entry_cursor,
-            mask_offset: mask_words * 2,
-            height_offset: height_texels,
+            first: 0,
+            mask_offset: 0,
+            height_offset: 0,
+            old: None,
+            chunks: 0..0,
+            mask: None,
+            height: None,
+            placed: [false; 4],
         });
         entry_cursor += 1 + species.len();
-        if let Some(mask) = &input.mask {
-            mask_words += packed::mask_words(mask.size.x * mask.size.y);
-        }
-        if let Some((_, image, _)) = input.height {
-            let size = image.size();
-            height_texels += size.x * size.y;
-        }
     }
     (plans, dropped)
 }
 
-/// The masks and heightmaps of the tables, kept while the same images are used
-/// in the same order and none changed, and otherwise joined from the packed
-/// images, each read at most once (see `PackedImages`), and the edit layers.
-struct Images {
-    masks: Arc<Vec<u32>>,
-    heights: Arc<Vec<f32>>,
-    mask_ids: Arc<Vec<MaskKey>>,
-    height_ids: Arc<Vec<AssetId<Image>>>,
-    masks_same: bool,
-    heights_same: bool,
+// superfargoth patch (own: stable tables)
+/// Where `place` put the fields.
+struct Placed {
+    layout: TableLayout,
+    /// The tables were laid out afresh (the entries no longer fit around the
+    /// holes): every field is placed anew.
+    fresh: bool,
+    /// Entry and chunk ranges no field holds any more, to be marked unused.
+    /// Mask and height ranges are left as they are: no entry addresses them.
+    freed_entries: Vec<Range<u32>>,
+    freed_chunks: Vec<Range<u32>>,
 }
 
-/// `edits_ahead` says the edit layers changed since the masks were last
-/// joined. Edits reach the GPU as patches, so stale masks are kept while
-/// nothing else is uploaded; but if the chunks or heightmaps are uploaded
-/// (`chunks_same` false), the masks go with them and are joined afresh.
-fn images_for(
-    plans: &[Plan],
-    old: &FieldTables,
-    changed: &HashSet<AssetId<Image>>,
-    cache: &mut PackedImages,
-    (chunks_same, edits_ahead): (bool, bool),
-) -> Images {
-    let mask_ids: Vec<_> = plans
-        .iter()
-        .filter_map(|plan| plan.input.mask.as_ref().map(|mask| mask.key))
-        .collect();
-    let height_ids: Vec<_> = plans
-        .iter()
-        .filter_map(|plan| plan.input.height.map(|(id, ..)| id))
-        .collect();
-    let untouched = |ids: &[AssetId<Image>]| !ids.iter().any(|id| changed.contains(id));
-    let mask_images: Vec<_> = plans
-        .iter()
-        .filter_map(|plan| plan.input.mask.as_ref().and_then(MaskInput::image_id))
-        .collect();
-    let heights_same = *old.height_ids == height_ids && untouched(&height_ids);
-    let refresh = edits_ahead && !(chunks_same && heights_same);
-    let masks_same = *old.mask_ids == mask_ids && untouched(&mask_images) && !refresh;
-
-    let masks = if masks_same {
-        old.masks.clone()
-    } else {
-        let parts: Vec<_> = plans
-            .iter()
-            .filter_map(|plan| plan.input.mask.as_ref())
-            .map(|mask| mask.words(cache))
-            .collect();
-        packed::join(&parts)
-    };
-    let heights = if heights_same {
-        old.heights.clone()
-    } else {
-        let parts: Vec<_> = plans
-            .iter()
-            .filter_map(|plan| plan.input.height)
-            .map(|(id, image, _)| cache.heights(id, image))
-            .collect();
-        packed::join(&parts)
-    };
-    cache.retain(&mask_images, &height_ids);
-    Images {
-        masks,
-        heights,
-        mask_ids: if masks_same {
-            old.mask_ids.clone()
-        } else {
-            Arc::new(mask_ids)
-        },
-        height_ids: if heights_same {
-            old.height_ids.clone()
-        } else {
-            Arc::new(height_ids)
-        },
-        masks_same,
-        heights_same,
-    }
+// superfargoth patch (own: stable tables)
+/// Gives each field its ranges in the four tables: the ones it had while their
+/// sizes are the same, otherwise the best free range, the tables growing (by
+/// half at least) when none fits. Removed and resized fields give theirs back
+/// first, so a new field of the same size takes a removed one's place. When the
+/// entries no longer fit in `MAX_ENTRIES` around the holes, the tables are laid
+/// out afresh.
+fn place(plans: &mut [Plan], old: &FieldTables) -> Placed {
+    place_in(plans, old, false).unwrap_or_else(|| {
+        place_in(plans, old, true).unwrap_or_else(|| {
+            unreachable!("`plan` keeps the fields' entries within MAX_ENTRIES")
+        })
+    })
 }
 
-/// The chunks, kept (and the second value true) while no field resized, moved
-/// up or down, changed heightmap or shifted in the tables.
-fn chunks_for(
+fn place_in(plans: &mut [Plan], old: &FieldTables, fresh: bool) -> Option<Placed> {
+    let mut placed = Placed {
+        layout: if fresh {
+            TableLayout::default()
+        } else {
+            old.layout.clone()
+        },
+        fresh,
+        freed_entries: Vec::new(),
+        freed_chunks: Vec::new(),
+    };
+    // Laid out afresh, the tables take exactly what they need.
+    let ends = if fresh {
+        [0; 4]
+    } else {
+        [
+            old.layout.entries.end(),
+            old.layout.chunks.end(),
+            old.layout.masks.end(),
+            old.layout.heights.end(),
+        ]
+    };
+    let previous: HashMap<Entity, usize> = if fresh {
+        HashMap::new()
+    } else {
+        old.slots
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| (slot.entity, index))
+            .collect()
+    };
+    let mut live = vec![false; old.slots.len()];
+    let Placed {
+        layout,
+        freed_entries,
+        freed_chunks,
+        ..
+    } = &mut placed;
+    // Keep what still fits; give back what does not, and every removed field's.
+    for plan in plans.iter_mut() {
+        let needs = plan.needs();
+        plan.old = previous.get(&plan.input.entity).copied();
+        plan.placed = [true; 4];
+        let Some(index) = plan.old else { continue };
+        live[index] = true;
+        let slot = &old.slots[index];
+        if slot.entries as u32 == needs[ENTRIES] {
+            plan.first = slot.first;
+            plan.placed[ENTRIES] = false;
+        } else {
+            let range = slot.first as u32..(slot.first + slot.entries) as u32;
+            layout.entries.release(range.clone());
+            freed_entries.push(range);
+        }
+        if slot.chunks.end - slot.chunks.start == needs[CHUNKS] {
+            plan.chunks = slot.chunks.clone();
+            plan.placed[CHUNKS] = false;
+        } else {
+            layout.chunks.release(slot.chunks.clone());
+            freed_chunks.push(slot.chunks.clone());
+        }
+        let wanted = [plan.input.mask.is_some(), plan.input.height.is_some()];
+        for (kind, had, list, keep) in [
+            (MASK, &slot.mask, &mut layout.masks, wanted[0]),
+            (HEIGHT, &slot.height, &mut layout.heights, wanted[1]),
+        ] {
+            let Some(range) = had else { continue };
+            if keep && range.end - range.start == needs[kind] {
+                plan.placed[kind] = false;
+                if kind == MASK {
+                    plan.mask = Some(range.clone());
+                } else {
+                    plan.height = Some(range.clone());
+                }
+            } else {
+                list.release(range.clone());
+            }
+        }
+    }
+    // Laid out afresh, the old slots hold nothing in the new layout.
+    let removed = old.slots.iter().zip(&live).filter(|(_, live)| !fresh && !**live);
+    for (slot, _) in removed {
+        let entries = slot.first as u32..(slot.first + slot.entries) as u32;
+        layout.entries.release(entries.clone());
+        freed_entries.push(entries);
+        layout.chunks.release(slot.chunks.clone());
+        freed_chunks.push(slot.chunks.clone());
+        for (had, list) in [
+            (&slot.mask, &mut layout.masks),
+            (&slot.height, &mut layout.heights),
+        ] {
+            if let Some(range) = had {
+                list.release(range.clone());
+            }
+        }
+    }
+    // Place the rest.
+    let grow = |end: u32| end.saturating_add(end / 2);
+    let cap = MAX_ENTRIES as u32;
+    for plan in plans.iter_mut() {
+        let needs = plan.needs();
+        if plan.placed[ENTRIES] {
+            plan.first = layout.entries.take(needs[ENTRIES], grow(ends[ENTRIES]), cap)? as usize;
+        }
+        if plan.placed[CHUNKS] {
+            let at = layout.chunks.take(needs[CHUNKS], grow(ends[CHUNKS]), u32::MAX)?;
+            plan.chunks = at..at + needs[CHUNKS];
+        }
+        if plan.placed[MASK] && plan.input.mask.is_some() {
+            let at = layout.masks.take(needs[MASK], grow(ends[MASK]), u32::MAX)?;
+            plan.mask = Some(at..at + needs[MASK]);
+        }
+        if plan.placed[HEIGHT] && plan.input.height.is_some() {
+            let at = layout.heights.take(needs[HEIGHT], grow(ends[HEIGHT]), u32::MAX)?;
+            plan.height = Some(at..at + needs[HEIGHT]);
+        }
+        plan.mask_offset = plan.mask.as_ref().map_or(0, |mask| mask.start * 2);
+        plan.height_offset = plan.height.as_ref().map_or(0, |height| height.start);
+    }
+    Some(placed)
+}
+
+// superfargoth patch (own: stable tables): the tables are written in place,
+// field by field, instead of joined afresh: a field that did not change keeps
+// its bytes at the same offsets, and only what changed is written (and
+// recorded in `Written`).
+
+/// The chunks: a field's are worked out again when it is new, was placed
+/// anew, resized, moved up or down or its heightmap changed, and only
+/// repointed when its entries moved. A removed field's are marked unused.
+fn write_chunks(
     plans: &[Plan],
-    old: &FieldTables,
+    old: &mut FieldTables,
+    placed: &Placed,
     changed: &HashSet<AssetId<Image>>,
     cache: &mut PackedImages,
-) -> (Arc<Vec<ChunkGpu>>, bool) {
-    let same =
-        old.slots.len() == plans.len()
-            && old.slots.iter().zip(plans).all(|(slot, plan)| {
-                slot.entity == plan.input.entity && slot.chunk == plan.chunk_key()
-            })
-            && !plans.iter().any(|plan| plan.uses_height(changed));
-    if same {
-        return (old.chunks.clone(), true);
+) -> Table<ChunkGpu> {
+    let end = placed.layout.chunks.end();
+    let mut chunks = Table::new(std::mem::take(&mut old.chunks), end, UNUSED_CHUNK, placed.fresh);
+    for range in &placed.freed_chunks {
+        chunks.fill(range.clone(), &UNUSED_CHUNK);
     }
-    let mut chunks = Vec::new();
+    let mut scratch = Vec::new();
     for plan in plans {
-        let heights = plan
-            .input
-            .height
-            .map(|(id, image, _)| cache.heights(id, image));
-        field_chunks(plan, heights.as_ref().map(|h| h.as_slice()), &mut chunks);
+        let slot = plan.old.map(|index| &old.slots[index]);
+        let rescan = plan.placed[CHUNKS]
+            || slot.is_none_or(|slot| slot.chunk != plan.chunk_key())
+            || plan.uses_height(changed);
+        scratch.clear();
+        if rescan {
+            let heights = plan
+                .input
+                .height
+                .map(|(id, image, _)| cache.heights(id, image));
+            field_chunks(plan, heights.as_ref().map(|h| h.as_slice()), &mut scratch);
+        } else if slot.is_some_and(|slot| slot.first != plan.first) {
+            let range = plan.chunks.start as usize..plan.chunks.end as usize;
+            scratch.extend_from_slice(&chunks.data[range]);
+            for chunk in &mut scratch {
+                chunk.ids.x = plan.first as u32;
+            }
+        } else {
+            continue;
+        }
+        chunks.write(plan.chunks.start, &scratch, true);
     }
-    (Arc::new(chunks), false)
+    chunks
+}
+
+/// The heightmaps of the fields that are new, were placed anew, or whose
+/// heightmap is another or changed.
+fn write_heights(
+    plans: &[Plan],
+    old: &mut FieldTables,
+    placed: &Placed,
+    changed: &HashSet<AssetId<Image>>,
+    cache: &mut PackedImages,
+) -> Table<f32> {
+    let end = placed.layout.heights.end();
+    let mut heights = Table::new(std::mem::take(&mut old.heights), end, 0.0, placed.fresh);
+    for plan in plans {
+        let (Some((id, image, _)), Some(range)) = (plan.input.height, &plan.height) else {
+            continue;
+        };
+        let slot = plan.old.map(|index| &old.slots[index]);
+        let same = !plan.placed[HEIGHT]
+            && slot.is_some_and(|slot| slot.entry.height.is_some_and(|(was, ..)| was == id))
+            && !changed.contains(&id);
+        if !same {
+            let texels = cache.heights(id, image);
+            let count = texels.len().min((range.end - range.start) as usize);
+            heights.write(range.start, &texels[..count], true);
+        }
+    }
+    heights
+}
+
+/// Whether a field's mask must be written: it is new, was placed anew, is
+/// another mask, or its image changed.
+fn mask_stale(plan: &Plan, old: &FieldTables, changed: &HashSet<AssetId<Image>>) -> bool {
+    let Some(mask) = &plan.input.mask else {
+        return false;
+    };
+    let slot = plan.old.map(|index| &old.slots[index]);
+    plan.placed[MASK]
+        || slot.is_none_or(|slot| slot.entry.mask.is_none_or(|(key, _)| key != mask.key))
+        || mask.image_id().is_some_and(|id| changed.contains(&id))
+}
+
+/// The stale masks (`mask_stale`), and with `refresh` every edited one too:
+/// edits reach the GPU as patches, so the masks here lag behind them, which is
+/// fine until the masks are uploaded with something else.
+fn write_masks(
+    plans: &[Plan],
+    old: &mut FieldTables,
+    placed: &Placed,
+    changed: &HashSet<AssetId<Image>>,
+    (cache, refresh): (&mut PackedImages, bool),
+) -> Table<u32> {
+    let end = placed.layout.masks.end();
+    let mut masks = Table::new(std::mem::take(&mut old.masks), end, 0, placed.fresh);
+    for plan in plans {
+        let (Some(mask), Some(range)) = (&plan.input.mask, &plan.mask) else {
+            continue;
+        };
+        if mask_stale(plan, old, changed) || (refresh && mask.edited.is_some()) {
+            let words = mask.words(cache);
+            let count = words.len().min((range.end - range.start) as usize);
+            // Always written: the GPU's copy may hold a removed field's
+            // edits that this copy never saw.
+            masks.write(range.start, &words[..count], false);
+        }
+    }
+    masks
 }
 
 /// The field table, with the slots that say what each entry was built from.
 struct Built {
-    fields: Vec<FieldGpu>,
+    entries: Table<FieldGpu>,
     slots: Vec<FieldSlot>,
     features: LookFeatures,
     /// Entries worked out again, not kept.
@@ -979,42 +1388,47 @@ struct Built {
 }
 
 /// Each field's entries: kept when its style, place and images are the same
-/// as when they were built, worked out again otherwise.
-fn entries_for(
+/// as when they were built, worked out again otherwise. A removed field's are
+/// cleared (hidden everywhere).
+fn write_entries(
     plans: &[Plan],
-    old: &FieldTables,
+    old: &mut FieldTables,
+    placed: &Placed,
     changed_styles: &HashSet<AssetId<GrassStyle>>,
     changed_images: &HashSet<AssetId<Image>>,
 ) -> Built {
-    let previous: HashMap<Entity, &FieldSlot> =
-        old.slots.iter().map(|slot| (slot.entity, slot)).collect();
+    let end = placed.layout.entries.end();
     let mut built = Built {
-        fields: Vec::with_capacity(old.fields.len()),
+        entries: Table::new(std::mem::take(&mut old.fields), end, FieldGpu::default(), placed.fresh),
         slots: Vec::with_capacity(plans.len()),
         features: LookFeatures::default(),
         rewritten: 0,
     };
+    for range in &placed.freed_entries {
+        built.entries.fill(range.clone(), &FieldGpu::default());
+    }
     for plan in plans {
         let (entry, chunk) = (plan.entry_key(), plan.chunk_key());
         let count = 1 + plan.species.len();
-        let kept = previous.get(&plan.input.entity).filter(|slot| {
-            slot.entry == entry
-                && slot.entries == count
-                && !changed_styles.contains(&plan.input.style_id)
-                && !plan.uses(changed_images)
-        });
-        if let Some(slot) = kept {
-            built
-                .fields
-                .extend_from_slice(&old.fields[slot.first..slot.first + slot.entries]);
-        } else {
-            built.fields.extend(field_entries(plan));
+        let kept = !plan.placed[ENTRIES]
+            && plan.old.is_some_and(|index| {
+                let slot = &old.slots[index];
+                slot.entry == entry
+                    && slot.entries == count
+                    && !changed_styles.contains(&plan.input.style_id)
+                    && !plan.uses(changed_images)
+            });
+        if !kept {
+            built.entries.write(plan.first as u32, &field_entries(plan), true);
             built.rewritten += count as u64;
         }
         built.slots.push(FieldSlot {
             entity: plan.input.entity,
             first: plan.first,
             entries: count,
+            chunks: plan.chunks.clone(),
+            mask: plan.mask.clone(),
+            height: plan.height.clone(),
             entry,
             chunk,
         });
@@ -1038,6 +1452,9 @@ fn entries_for(
 ///   alone, a colour changing every frame for a season or the time of day,
 ///   rewrites the entries of the fields using it and nothing else.
 /// - A pass that finds the tables unchanged changes nothing.
+/// - superfargoth patch (own: stable tables): every field keeps its ranges in
+///   the four tables while their sizes hold (`place`), so adding or removing
+///   a field writes that field's ranges only (`FieldTables::writes`).
 pub(crate) fn rebuild(
     mut dirty: ResMut<TablesDirty>,
     mut tables: ResMut<FieldTables>,
@@ -1063,12 +1480,24 @@ pub(crate) fn rebuild(
         }
         return;
     }
+    let gathering = Instant::now(); // superfargoth patch (own: rebuild phases)
     let mut sorted: Vec<_> = fields.iter().collect();
     sorted.sort_by_key(|(entity, ..)| *entity);
     let edits_ahead = edits.ahead;
     // superfargoth patch (own: world offset): `world_offset.0`
     let Some(inputs) = gather(&sorted, &styles, &images, &grounds, &edits, world_offset.0) else {
         return;
+    };
+    // superfargoth patch (own: rebuild phases): each phase's time.
+    let mut phases = RebuildPhases {
+        gather: gathering.elapsed(),
+        ..RebuildPhases::default()
+    };
+    let mut lap = Instant::now();
+    let mut split = |phase: &mut Duration| {
+        let now = Instant::now();
+        *phase = now - lap;
+        lap = now;
     };
     // This pass reads every field's visibility too, and takes care of
     // everything that changed.
@@ -1079,49 +1508,115 @@ pub(crate) fn rebuild(
 
     let started = Instant::now();
     cache.forget(&changed_images);
-    let old = (*tables).clone();
-    let (plans, dropped) = plan(&inputs);
-    let (chunks, chunks_same) = chunks_for(&plans, &old, &changed_images, &mut cache);
-    let images = images_for(
+    // superfargoth patch (own: stable tables): taken, not cloned, so the
+    // tables are written in place when nothing else (the render world) still
+    // holds them; put back unchanged when nothing changed.
+    let mut old = std::mem::take(tables.bypass_change_detection());
+    split(&mut phases.clone); // superfargoth patch (own: rebuild phases)
+    // superfargoth patch (own: stable tables): each field placed (`place`),
+    // then only what changed written in place.
+    let (mut plans, dropped) = plan(&inputs);
+    let placed = place(&mut plans, &old);
+    split(&mut phases.plan); // superfargoth patch (own: rebuild phases)
+    let chunks = write_chunks(&plans, &mut old, &placed, &changed_images, &mut cache);
+    split(&mut phases.chunks); // superfargoth patch (own: rebuild phases)
+    let heights = write_heights(&plans, &mut old, &placed, &changed_images, &mut cache);
+    // The masks go to the GPU with the chunks and heightmaps, so the edits
+    // that reached it as patches are written here first.
+    let structure = !chunks.written.is_empty()
+        || !heights.written.is_empty()
+        || plans.iter().any(|plan| mask_stale(plan, &old, &changed_images));
+    let refresh = edits_ahead && structure;
+    let masks = write_masks(
         &plans,
-        &old,
+        &mut old,
+        &placed,
         &changed_images,
-        &mut cache,
-        (chunks_same, edits_ahead),
+        (&mut cache, refresh),
     );
-    let built = entries_for(&plans, &old, &changed_styles, &changed_images);
+    let mask_ids: Vec<_> = plans
+        .iter()
+        .filter_map(|plan| plan.input.mask.as_ref().map(|mask| mask.key))
+        .collect();
+    let height_ids: Vec<_> = plans
+        .iter()
+        .filter_map(|plan| plan.input.height.map(|(id, ..)| id))
+        .collect();
+    let mask_images: Vec<_> = plans
+        .iter()
+        .filter_map(|plan| plan.input.mask.as_ref().and_then(MaskInput::image_id))
+        .collect();
+    cache.retain(&mask_images, &height_ids);
+    split(&mut phases.images); // superfargoth patch (own: rebuild phases)
+    let built = write_entries(&plans, &mut old, &placed, &changed_styles, &changed_images);
+    split(&mut phases.entries); // superfargoth patch (own: rebuild phases)
     drop(plans);
     drop(inputs);
-    if !images.masks_same {
-        // The masks were joined from the layers as they are now.
+    if refresh {
+        // The edited masks were written from the layers as they are now.
         edits.ahead = false;
     }
 
-    let layout_changed = !(images.masks_same && images.heights_same && chunks_same);
+    let layout_changed =
+        !(chunks.written.is_empty() && masks.written.is_empty() && heights.written.is_empty());
     let mut counted = stats.tables;
     counted.entries_rewritten += built.rewritten;
     counted.images_read = cache.reads;
-    if !layout_changed && built.fields == *old.fields && built.slots == *old.slots {
+    if !layout_changed
+        && built.entries.written.is_empty()
+        && built.slots == *old.slots
+        && built.features == old.features
+    {
         // Something changed that no field shows: another style, say. There is
         // nothing to upload.
         if counted != stats.tables {
             stats.tables = counted;
         }
+        // superfargoth patch (own: stable tables): the same tables back.
+        *tables.bypass_change_detection() = FieldTables {
+            fields: built.entries.data,
+            chunks: chunks.data,
+            masks: masks.data,
+            heights: heights.data,
+            ..old
+        };
         return;
     }
-    let (fields_len, chunks_len) = (built.slots.len(), chunks.len());
+    let fields_len = built.slots.len();
+    let chunks_len = built
+        .slots
+        .iter()
+        .map(|slot| (slot.chunks.end - slot.chunks.start) as usize)
+        .sum();
     *tables = FieldTables {
         version: old.version + 1,
         structure_version: old.structure_version + u64::from(layout_changed),
-        fields: Arc::new(built.fields),
+        fields: built.entries.data,
         slots: Arc::new(built.slots),
-        chunks,
-        masks: images.masks,
-        heights: images.heights,
-        mask_ids: images.mask_ids,
-        height_ids: images.height_ids,
+        chunks: chunks.data,
+        masks: masks.data,
+        heights: heights.data,
+        mask_ids: if *old.mask_ids == mask_ids {
+            old.mask_ids.clone()
+        } else {
+            Arc::new(mask_ids)
+        },
+        height_ids: if *old.height_ids == height_ids {
+            old.height_ids.clone()
+        } else {
+            Arc::new(height_ids)
+        },
         features: built.features,
+        layout: placed.layout,
+        writes: TableWrites {
+            since: old.version,
+            fields: built.entries.written.merged(),
+            chunks: chunks.written.merged(),
+            masks: masks.written.merged(),
+            heights: heights.written.merged(),
+        },
     };
+    split(&mut phases.finish); // superfargoth patch (own: rebuild phases)
     stats.tables = TableStats {
         fields: fields_len,
         chunks: chunks_len,
@@ -1130,6 +1625,7 @@ pub(crate) fn rebuild(
         rebuilds: counted.rebuilds + 1,
         layout_rebuilds: counted.layout_rebuilds + u64::from(layout_changed),
         last_rebuild: started.elapsed(),
+        last_rebuild_phases: phases, // superfargoth patch (own: rebuild phases)
         ..counted
     };
 }
@@ -1363,6 +1859,147 @@ fn height_range(heights: &[f32], size: UVec2, uv_min: Vec2, uv_size: Vec2) -> (f
         }
     }
     if range.0 > range.1 { (0.0, 0.0) } else { range }
+}
+
+// superfargoth patch (own: stable tables): what the tests of the crate that
+// vendors this one read of the tables (`superfargoth_test`); cargo cannot run
+// this crate's own tests there.
+/// One field in the tables: its ranges, in each table's units (entries,
+/// chunks, mask words, height texels), and the words the GPU reads for it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldView {
+    /// The field.
+    pub entity: Entity,
+    /// Its entries.
+    pub entries: Range<u32>,
+    /// Its chunks.
+    pub chunks: Range<u32>,
+    /// Its mask, in words.
+    pub mask: Option<Range<u32>>,
+    /// Its heightmap, in texels.
+    pub height: Option<Range<u32>>,
+    /// Its entries, chunks, mask words and height texels, as 32-bit words.
+    pub words: Vec<u32>,
+}
+
+/// One table's latest writes (`Written`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WrittenView {
+    /// All of the table is new.
+    pub full: bool,
+    /// The ranges written, sorted and merged.
+    pub ranges: Vec<Range<u32>>,
+}
+
+/// The tables as the tests see them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TablesView {
+    /// `FieldTables::version`.
+    pub version: u64,
+    /// `FieldTables::structure_version`.
+    pub structure_version: u64,
+    /// The version the writes lead from.
+    pub since: u64,
+    /// In entity order.
+    pub fields: Vec<FieldView>,
+    /// Entries, chunks, masks and heights.
+    pub writes: [WrittenView; 4],
+    /// The length of each table, in the same order.
+    pub lens: [u32; 4],
+}
+
+fn vec_words(v: Vec4) -> [u32; 4] {
+    v.to_array().map(f32::to_bits)
+}
+
+fn entry_words(entry: &FieldGpu, out: &mut Vec<u32>) {
+    let FieldGpu {
+        min_corner,
+        extent,
+        shape,
+        motion,
+        root_color,
+        tip_color,
+        placement,
+        map_sizes,
+        ground,
+        look,
+        mix,
+        form,
+        head,
+        patches,
+        variation,
+        tufts,
+        access,
+        axis,
+    } = *entry;
+    for v in [min_corner, extent, shape, motion, root_color, tip_color] {
+        out.extend(vec_words(v));
+    }
+    out.extend(placement.to_array());
+    out.extend(map_sizes.to_array());
+    for v in [ground, look, mix, form, head, patches, variation, tufts] {
+        out.extend(vec_words(v));
+    }
+    out.extend(access.to_array());
+    out.extend(vec_words(axis));
+}
+
+/// The tables in `world`, as the tests see them.
+pub fn tables_view(world: &World) -> TablesView {
+    let tables = world.resource::<FieldTables>();
+    let view = |written: &Written| WrittenView {
+        full: written.full,
+        ranges: written.ranges.clone(),
+    };
+    let fields = tables
+        .slots
+        .iter()
+        .map(|slot| {
+            let mut words = Vec::new();
+            for entry in &tables.fields[slot.first..slot.first + slot.entries] {
+                entry_words(entry, &mut words);
+            }
+            for chunk in &tables.chunks[slot.chunks.start as usize..slot.chunks.end as usize] {
+                words.extend(vec_words(chunk.bounds));
+                words.extend(chunk.ids.to_array());
+            }
+            if let Some(mask) = &slot.mask {
+                words.extend_from_slice(&tables.masks[mask.start as usize..mask.end as usize]);
+            }
+            if let Some(height) = &slot.height {
+                let texels = &tables.heights[height.start as usize..height.end as usize];
+                words.extend(texels.iter().map(|h| h.to_bits()));
+            }
+            FieldView {
+                entity: slot.entity,
+                entries: slot.first as u32..(slot.first + slot.entries) as u32,
+                chunks: slot.chunks.clone(),
+                mask: slot.mask.clone(),
+                height: slot.height.clone(),
+                words,
+            }
+        })
+        .collect();
+    let writes = &tables.writes;
+    TablesView {
+        version: tables.version,
+        structure_version: tables.structure_version,
+        since: writes.since,
+        fields,
+        writes: [
+            view(&writes.fields),
+            view(&writes.chunks),
+            view(&writes.masks),
+            view(&writes.heights),
+        ],
+        lens: [
+            tables.fields.len() as u32,
+            tables.chunks.len() as u32,
+            tables.masks.len() as u32,
+            tables.heights.len() as u32,
+        ],
+    }
 }
 
 #[cfg(test)]

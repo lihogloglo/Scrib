@@ -139,7 +139,7 @@ Found while reviewing; the migration slice of each system greps its own files fo
 Written by `node tools/tunables-census.mjs` (do not edit by hand; edit the rules table at the top of the script).
 Per system, then per crate: the T and ? rows in full, the C rows as one line. Paths are relative to the crate.
 
-Sources: 1551 consts, 852 `Default` fields, 220 shader consts (98 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 265.
+Sources: 1552 consts, 852 `Default` fields, 220 shader consts (98 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 266.
 
 | System | Candidates | T | C | ? |
 |---|---:|---:|---:|---:|
@@ -154,11 +154,11 @@ Sources: 1551 consts, 852 `Default` fields, 220 shader consts (98 of them T: eac
 | shadows-lights-gi | 50 | 35 | 12 | 3 |
 | sky-weather-surface | 646 | 306 | 165 | 175 |
 | statics-lod-farfield | 114 | 66 | 35 | 13 |
-| streaming-exterior | 262 | 93 | 147 | 22 |
+| streaming-exterior | 263 | 93 | 148 | 22 |
 | terrain-water | 289 | 131 | 89 | 69 |
 | textures | 21 | 10 | 6 | 5 |
 | ui | 86 | 52 | 7 | 27 |
-| **total** | **2623** | **1275** | **864** | **484** |
+| **total** | **2624** | **1275** | **865** | **484** |
 
 ## ai-nav
 
@@ -453,9 +453,9 @@ Stays const: OutfitCache.capacity (layout/math/id).
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/perf/cli.rs:119 | GPU_BUSY_PCT | `15.0` | T |  |
-| src/perf/cli.rs:397 | OTHER_CPU_LIMIT | `25.0` | T |  |
-| src/perf/cli.rs:826 | IDLE_GPU_CLOCK_MHZ | `600.0` | ? |  |
+| src/perf/cli.rs:134 | GPU_BUSY_PCT | `15.0` | T |  |
+| src/perf/cli.rs:418 | OTHER_CPU_LIMIT | `25.0` | T |  |
+| src/perf/cli.rs:847 | IDLE_GPU_CLOCK_MHZ | `600.0` | ? |  |
 
 Stays const: EYE_OFFSET_M (opt-out: a framing default: where a debug view starts; `--camera` overrides it), EYE_HEIGHT_M (opt-out: a framing default: where a debug view starts; `--camera` overrides it), BUCKET_M (opt-out: a lookup structure's bucket size: no look, feel or cost beyond the load-time search), SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane is at z = 0).
 
@@ -467,7 +467,7 @@ Stays const: EYE_OFFSET_M (opt-out: a framing default: where a debug view starts
 | src/live_ab.rs:88 | LiveAb.sun_shadows | `true` | T |  |
 | src/live_ab.rs:88 | LiveAb.mesh_wire | `false` | ? | bool |
 | src/live_ab.rs:557 | TIME_SCALES | `[30.0, 120.0, 600.0, 1200.0]` | T |  |
-| src/perf.rs:35 | DEFAULT_RESOLUTION | `(1280, 720)` | T |  |
+| src/perf.rs:36 | DEFAULT_RESOLUTION | `(1280, 720)` | T |  |
 | src/pipeline_watch.rs:26 | FLUSH_SECS | `0.5` | T |  |
 | src/remote.rs:45 | DEFAULT_PORT | `15712` | ? |  |
 
@@ -514,10 +514,10 @@ Stays const: UNSET (sentinel/derived), STUTTER_WINDOW (small index), STUTTER_MIN
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:141 | DiagSettings.update_baseline | `false` | T | settings default |
-| src/lib.rs:142 | DiagSettings.exit_on_finish | `false` | T | settings default |
-| src/lib.rs:143 | DiagSettings.apply_transform | `true` | T | settings default |
-| src/lib.rs:147 | DiagSettings.markdown | `true` | T | settings default |
+| src/lib.rs:144 | DiagSettings.update_baseline | `false` | T | settings default |
+| src/lib.rs:145 | DiagSettings.exit_on_finish | `false` | T | settings default |
+| src/lib.rs:146 | DiagSettings.apply_transform | `true` | T | settings default |
+| src/lib.rs:150 | DiagSettings.markdown | `true` | T | settings default |
 | src/pipeline_watch.rs:57 | BURST_SECS | `2.0` | T |  |
 | src/stages.rs:131 | CLEANUP | `SETS.len() - 1` | ? |  |
 | src/textures.rs:47 | SCAN_SECS | `4.0` | T |  |
@@ -2169,7 +2169,7 @@ Stays const: MAX_DEPTH (opt-out: a recursion guard against driver cycles, not a 
 
 Stays const: UNIT_METERS_F64 (unit/format), CELL_UNITS (unit/format), VERTEX_UNITS (unit/format), TEXEL_UNITS (unit/format).
 
-### mw_worldgen (9: T 1, C 6, ? 2)
+### mw_worldgen (10: T 1, C 7, ? 2)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -2177,7 +2177,7 @@ Stays const: UNIT_METERS_F64 (unit/format), CELL_UNITS (unit/format), VERTEX_UNI
 | src/flora.rs:51 | GROUP_FLORA | `0` | ? |  |
 | src/flora.rs:52 | GROUP_ROCKS | `1` | ? |  |
 
-Stays const: SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane is at z = 0; the scaled guide keeps it), UNKNOWN_SIZE_M (opt-out: fallback: only the budget's priority reads it, and every Morrowind flora mesh has bounds), CELL_QUADS (derived), SEA_SURFACE_UNITS (opt-out: format fact: the exterior water plane is at z = 0 in Morrowind's data and OpenMW), MARKERS_FORMAT (layout/math/id), FORMAT_VERSION (layout/math/id).
+Stays const: SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane is at z = 0; the scaled guide keeps it), UNKNOWN_SIZE_M (opt-out: fallback: only the budget's priority reads it, and every Morrowind flora mesh has bounds), CELL_QUADS (derived), SEA_SURFACE_UNITS (opt-out: format fact: the exterior water plane is at z = 0 in Morrowind's data and OpenMW), MARKERS_FORMAT (layout/math/id), FORMAT_VERSION (layout/math/id), FORMAT (opt-out: format version of the contract).
 
 ### sf_world (25: T 21, C 3, ? 1)
 

@@ -580,6 +580,12 @@ pub fn publish_gauges(stats: Res<GroundcoverStats>, counters: Res<DiagCounters>)
 }
 
 #[cfg(test)]
+mod grass_near_tests;
+#[cfg(test)]
+mod grass_reads_tests;
+#[cfg(test)]
+mod grass_stable_tests;
+#[cfg(test)]
 mod shader_tests;
 #[cfg(test)]
 mod tests;

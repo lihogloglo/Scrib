@@ -10,6 +10,8 @@
 //!   warm-up, measured at constant speed along a centripetal Catmull-Rom
 //!   spline.
 //! - [`ab`]: interleaved A/B plans, outlier guard, Mann-Whitney U and the decision rule.
+//! - [`flip_ab`]: in-process A/B (one launch, a setting flipped every phase): schedule, per-phase
+//!   stats, paired deltas, `ab.md`.
 //! - [`suite`]: driving runs from another process (quiet-machine wait,
 //!   `nvidia-smi` sampling, summaries across repeats); [`nsys`]: Nsight
 //!   Systems per-pass GPU tables; [`trace`]: Chrome trace summaries.
@@ -20,6 +22,7 @@
 
 pub mod ab;
 mod counters;
+pub mod flip_ab;
 mod gate;
 pub mod lock;
 mod markdown;

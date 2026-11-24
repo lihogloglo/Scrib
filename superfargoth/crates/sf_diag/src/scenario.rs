@@ -56,6 +56,11 @@ pub struct Scenario {
     pub spike_factor: f64,
     #[serde(default)]
     pub tolerance: Tolerance,
+    /// In-process A/B: flip one setting A B A B ... during the measurement ([`crate::flip_ab`]).
+    /// The app resolves it ([`crate::flip_ab::AbSchedule`]) and sets the measured duration to the
+    /// whole schedule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ab: Option<crate::flip_ab::AbSpec>,
 }
 
 fn positive(value: f64) -> bool {
@@ -147,6 +152,11 @@ impl ScenarioRun {
 
     pub fn phase(&self) -> Phase {
         self.phase
+    }
+
+    /// Real seconds measured so far: the start time of the frame that runs now.
+    pub fn measured_s(&self) -> f64 {
+        self.measured_s
     }
 
     /// The camera path, if this is a path scenario.

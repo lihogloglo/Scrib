@@ -70,6 +70,7 @@ fn path_scenario(gates: Vec<sf_diag::Gate>) -> Scenario {
         gates,
         spike_factor: 1.5,
         tolerance: Tolerance::default(),
+        ab: None,
     }
 }
 
@@ -322,4 +323,24 @@ fn render_view_counts_reach_the_report() {
     assert!(parsed["views"]["main"]["metrics"]["opaque3d/items"]["mean"].is_number());
     let csv = std::fs::read_to_string(dir.path().join("fly_test.csv")).unwrap();
     assert!(csv.lines().next().unwrap().contains("views/main/items"));
+}
+
+/// An in-process A/B schedule on the settings: the end writes `ab.md` and `ab.csv` with one row per
+/// kept phase (1/64 s frames, 0.25 s phases, 2 pairs after the discarded cycle).
+#[test]
+fn ab_schedule_writes_ab_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let spec = sf_diag::flip_ab::AbSpec { tunable: "t.x".into(), a: "off".into(), b: "on".into(), phase_s: Some(0.25), phases: Some(2), settle_s: Some(0.05) };
+    let defaults = sf_diag::flip_ab::AbDefaults { phase_s: 5.0, phases: 4, settle_s: 0.5, noise_ms: 0.5 };
+    let ab = sf_diag::flip_ab::AbSchedule::new(&spec, defaults).unwrap();
+    let mut scenario = path_scenario(Vec::new());
+    scenario.measure = Measure::Duration { seconds: ab.total_s() };
+    let settings = DiagSettings { output_dir: dir.path().to_path_buf(), exit_on_finish: true, ab: Some(ab), ..DiagSettings::default() };
+    let mut app = app(settings, Some(scenario));
+    assert_eq!(run(&mut app, 400), Some(AppExit::Success));
+    let md = std::fs::read_to_string(dir.path().join("ab.md")).unwrap();
+    assert!(md.contains("| frame median ms | +0.00 |"), "{md}");
+    let csv = std::fs::read_to_string(dir.path().join("ab.csv")).unwrap();
+    let phases: Vec<&str> = csv.lines().skip(1).map(|l| l.split(',').next().unwrap()).collect();
+    assert_eq!(phases, ["2", "3", "4", "5"], "{csv}");
 }

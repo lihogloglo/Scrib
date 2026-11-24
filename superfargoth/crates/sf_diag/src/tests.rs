@@ -528,6 +528,7 @@ fn scenario(measure: Measure) -> Scenario {
         gates: Gate::wishlist_streaming(),
         spike_factor: 1.5,
         tolerance: Tolerance::default(),
+        ab: None,
     }
 }
 

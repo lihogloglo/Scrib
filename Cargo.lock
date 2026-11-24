@@ -8317,6 +8317,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "ron",
+ "rstar",
  "serde",
  "sf_tunables",
  "thiserror 2.0.21",
@@ -11483,6 +11484,7 @@ dependencies = [
  "regex-syntax",
  "rodio",
  "ron",
+ "rstar",
  "rustix 0.38.44",
  "rustix 1.1.5",
  "serde",

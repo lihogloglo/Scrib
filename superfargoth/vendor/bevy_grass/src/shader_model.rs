@@ -110,6 +110,59 @@ impl ChunkLayout {
     }
 }
 
+// superfargoth patch (own: near tier): a denser ring around a perspective
+// camera. A chunk the ring reaches evaluates extra layers of candidates: copies
+// of its tile layout with their own per-cell offsets, after the first layer in
+// the candidate order. Every layer keeps a rank prefix, so the blades only
+// grow in number as the ring comes closer and the first layer is upstream's
+// exactly: no blade moves when a chunk enters or leaves the ring.
+/// The near ring of [`GrassSettings::near_density`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct NearTier {
+    /// Density multiplier inside `start`, at least 1.
+    pub density: f32,
+    /// Where the taper starts, in metres.
+    pub start: f32,
+    /// Where the multiplier is back to 1, in metres.
+    pub end: f32,
+}
+
+impl NearTier {
+    /// The ring `settings` ask for.
+    pub(crate) fn from_settings(settings: &GrassSettings) -> Self {
+        Self {
+            density: settings.near_density,
+            start: settings.near_start_m,
+            end: settings.near_end_m,
+        }
+    }
+
+    /// The density multiplier at `distance`: `density` to `start`, linear to
+    /// 1 at `end`, 1 beyond. The WESL twin is `near_boost`.
+    pub(crate) fn boost(&self, distance: f32) -> f32 {
+        let t = ((distance - self.start) / (self.end - self.start).max(1e-4)).clamp(0.0, 1.0);
+        self.density + (1.0 - self.density) * t
+    }
+
+    /// The share of layer `layer`'s candidates kept where upstream keeps
+    /// `keep` and the ring multiplies it by `boost`. Layer 0 at a boost of 1
+    /// is upstream's `keep`. The WESL twin is in `evaluate`.
+    pub(crate) fn layer_keep(keep: f32, boost: f32, layer: u32) -> f32 {
+        (keep.clamp(0.0, 1.0) * boost - layer as f32).clamp(0.0, 1.0)
+    }
+}
+
+impl ChunkLayout {
+    /// Candidates a chunk evaluates, layers included, where upstream keeps
+    /// `keep` of one layer and the ring multiplies it by `boost`. Twin of
+    /// `needed` in `cull`.
+    pub(crate) fn candidates_needed_near(&self, keep: f32, boost: f32) -> u32 {
+        let layers = keep.clamp(0.0, 1.0) * boost.clamp(1.0, GrassSettings::MAX_NEAR_DENSITY);
+        let points = (layers * TILE_POINTS as f32).ceil() as u32;
+        points * self.tiles_per_side * self.tiles_per_side
+    }
+}
+
 /// Distance-based thinning and level of detail for perspective views, from a
 /// [`GrassSettings`]. The tier's own table is the architecture's: 100% to
 /// the start of LOD 1, 50% where LOD 2 starts, 15% where the fade starts.

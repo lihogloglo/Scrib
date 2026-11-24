@@ -18,6 +18,8 @@ import package::shaders::common::{
     Frame, View, Field, Chunk, LodTable, BladeData, TILE_POINTS, NO_MAP, WIDTH_RANGE, TAU,
     LOD_VERTEX_STRIDE, hash, hash2, unit, density_falloff, height_thinning, select_lod, coverage_width, pack,
     trample_unpack, trample_slot, in_trample_window,
+    // superfargoth patch (own: near tier)
+    near_boost,
 };
 import package::shaders::wind::{Wind, wind_bend, wind_world_xz}; // superfargoth patch (own: world offset): `wind_world_xz`
 
@@ -86,6 +88,9 @@ struct DrawArgs {
 const WORKGROUP: u32 = 64u;
 /// Candidates per slice: one workgroup's share of a chunk.
 const SLICE: u32 = 512u;
+/// superfargoth patch (own: near tier): most candidate layers a chunk has.
+/// Twin of `GrassSettings::MAX_NEAR_DENSITY`.
+const MAX_NEAR_LAYERS: f32 = 4.0;
 const FIXED_LOD_NONE: u32 = 3u;
 
 fn is_orthographic() -> bool {
@@ -133,6 +138,11 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let chunk = chunks[index];
+    // superfargoth patch (own: stable tables): a hole in the chunk table,
+    // left by a removed field, belongs to no field.
+    if chunk.ids.x == NO_MAP {
+        return;
+    }
     let field = fields[chunk.ids.x];
     // Hidden fields, and fields on layers this view does not draw.
     if (field.access.x & view.layers) == 0u {
@@ -164,6 +174,9 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     var falloff = 1.0;
+    // superfargoth patch (own: near tier): the ring's multiplier at the
+    // chunk's nearest point, the largest anywhere in it.
+    var boost = 1.0;
     if !is_orthographic() {
         let nearest = clamp(view.camera_position.xyz, lo, hi);
         let d = max(distance(nearest, view.camera_position.xyz) - view.distance_offset, 0.0);
@@ -171,13 +184,16 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
             return;
         }
         falloff = density_falloff(view, d) * height_thinning(view);
+        boost = near_boost(view, d);
     }
     let tile_size = field.extent.w;
     let candidate_density = f32(TILE_POINTS) / (tile_size * tile_size);
     let keep = clamp(field.shape.w * view.density_scale * falloff / candidate_density, 0.0, 1.0);
     let cells = field.placement.y * field.placement.y;
-    // Twin of `ChunkLayout::candidates_needed`.
-    let needed = u32(ceil(keep * f32(TILE_POINTS))) * cells;
+    // Twin of `ChunkLayout::candidates_needed_near` (superfargoth patch, own:
+    // near tier): `keep * boost` layers of candidates, one layer when the
+    // boost is 1, as upstream.
+    let needed = u32(ceil(keep * clamp(boost, 1.0, MAX_NEAR_LAYERS) * f32(TILE_POINTS))) * cells;
     if needed == 0u {
         return;
     }
@@ -312,9 +328,17 @@ fn evaluate(chunk: Chunk, field: Field, index: u32) -> Generated {
 
     let tiles = field.placement.y;
     let cells = tiles * tiles;
-    let point = index / cells;
+    // superfargoth patch (own: near tier): candidates past the first
+    // TILE_POINTS per cell are the near ring's extra layers, each with its own
+    // per-cell offsets. Layer 0 is upstream's.
+    let layered = index / cells;
+    let layer = layered / TILE_POINTS;
+    let point = layered % TILE_POINTS;
     let cell = index % cells;
-    let cell_hash = hash2(hash2(chunk.ids.y, chunk.ids.z), hash2(cell, field.placement.x));
+    var cell_hash = hash2(hash2(chunk.ids.y, chunk.ids.z), hash2(cell, field.placement.x));
+    if layer > 0u {
+        cell_hash = hash2(cell_hash, layer ^ 0x2c1b3c6du);
+    }
     let offset = vec2<f32>(unit(cell_hash), unit(hash(cell_hash)));
     let p = fract(tile[point] + offset);
     var local = chunk.bounds.xy + (vec2<f32>(f32(cell % tiles), f32(cell / tiles)) + p) * field.extent.w;
@@ -331,6 +355,15 @@ fn evaluate(chunk: Chunk, field: Field, index: u32) -> Generated {
     if any(local >= field.extent.xy) || any(local < vec2<f32>(0.0)) {
         return out;
     }
+    // superfargoth patch (own: near tier): an extra layer's candidate beyond
+    // the ring, measured flat (never more than the true distance), is never
+    // kept; skip the ground and mask reads.
+    if layer > 0u {
+        let flat = distance(field_to_world(field, local), view.camera_position.xz);
+        if is_orthographic() || flat - view.distance_offset >= view.near.z {
+            return out;
+        }
+    }
     let rank = (f32(point) + 0.5) / f32(TILE_POINTS);
     let seed = hash2(cell_hash, point);
 
@@ -344,12 +377,15 @@ fn evaluate(chunk: Chunk, field: Field, index: u32) -> Generated {
 
     var falloff = 1.0;
     var distance_to_eye = 0.0;
+    // superfargoth patch (own: near tier)
+    var boost = 1.0;
     if !is_orthographic() {
         distance_to_eye = distance(root, view.camera_position.xyz);
         // A raised view thins as if it stood on the ground below it, and
         // for its height; its blades' detail still follows their distance.
         let from_ground = max(distance_to_eye - view.distance_offset, 0.0);
         falloff = density_falloff(view, from_ground) * height_thinning(view);
+        boost = near_boost(view, from_ground);
     }
     var bare = 1.0;
     if field.tufts.z >= 0.0 {
@@ -358,7 +394,10 @@ fn evaluate(chunk: Chunk, field: Field, index: u32) -> Generated {
     }
     let tile_size = field.extent.w;
     let candidate_density = f32(TILE_POINTS) / (tile_size * tile_size);
-    let keep = clamp(field.shape.w * mask.x * bare * view.density_scale * falloff / candidate_density, 0.0, 1.0);
+    let base_keep = clamp(field.shape.w * mask.x * bare * view.density_scale * falloff / candidate_density, 0.0, 1.0);
+    // superfargoth patch (own: near tier): twin of `NearTier::layer_keep`;
+    // `base_keep` at layer 0 and a boost of 1, as upstream.
+    let keep = clamp(base_keep * boost - f32(layer), 0.0, 1.0);
     if rank >= keep {
         return out;
     }

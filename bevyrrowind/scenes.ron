@@ -1104,6 +1104,7 @@
             hour: 8.0,
             description: "Ascadian Isles east of Pelagiad (cell 2,-7, 71 % AI_Grass) at eye height, 08:00 low sun: groundcover GC-2 (vanilla flora_grass_01-07 with MVR PBR textures, scattered from the land textures)",
             look_for: "grass and ferns standing on the grass ground only (not on roads, rock, mud or under water), not floating or sunk, no hard ring edge where they end (dithered fade), sway in the wind without popping; walk/fly (WASD, Shift) and look for tiles appearing; `--off groundcover` = without",
+            flags: ["--set", "groundcover.enabled=true"],
             checks: ["GC-2"],
         ),
         (
@@ -1113,7 +1114,7 @@
             hour: 8.0,
             description: "gc-ascadian with grass blades on (`groundcover.blades.enabled`): groundcover GC-3, bevy_grass MEADOW blades on the Ascadian Isles grass among the vanilla clumps",
             look_for: "a dense carpet of blades on the grass ground only, standing on the ground (not floating or sunk), none on roads, rock or under water, the vanilla grass clumps and ferns still among them; `--set groundcover.blades.enabled=false` = without blades",
-            flags: ["--set", "groundcover.blades.enabled=true"],
+            flags: ["--set", "groundcover.enabled=true", "--set", "groundcover.blades.enabled=true"],
             checks: ["GC-3"],
         ),
         (
@@ -1123,6 +1124,7 @@
             hour: 14.0,
             description: "Grazelands (cell 11,8, 68 % GL_Grass) at eye height, 14:00: groundcover GC-2 on the grazelands grass rules",
             look_for: "grass and ferns standing on the grass ground only (not on roads, rock, mud or under water), not floating or sunk, no hard ring edge where they end (dithered fade), sway in the wind without popping; walk/fly (WASD, Shift) and look for tiles appearing; `--off groundcover` = without",
+            flags: ["--set", "groundcover.enabled=true"],
             checks: ["GC-2"],
         ),
         (
@@ -1132,6 +1134,7 @@
             hour: 10.0,
             description: "Bitter Coast west of Seyda Neen (cell -3,-8, 48 % BC moss) at eye height, 10:00: groundcover GC-2 (flora_bc_grass + flora_bc_fern)",
             look_for: "grass and ferns standing on the grass ground only (not on roads, rock, mud or under water), not floating or sunk, no hard ring edge where they end (dithered fade), sway in the wind without popping; walk/fly (WASD, Shift) and look for tiles appearing; `--off groundcover` = without",
+            flags: ["--set", "groundcover.enabled=true"],
             checks: ["GC-2"],
         ),
     ],

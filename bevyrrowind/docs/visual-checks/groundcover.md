@@ -29,10 +29,24 @@ vectors), no jump once an hour (time wrap). Live tunables `groundcover.render.gu
 
 ### GC-3: grass blades carpet (`bevy_grass`), first look (2026-11-23, groundcover)
 
-Status: awaiting owner (owner look 1, after the origin patch GC-3b and the wind bridge GC-3c). Scene `gc-blades`
+Status: owner 2026-11-23 (look 1): "carpet is good but could be denser"; density to be taken from the industry standard. Was: awaiting owner (owner look 1, after GC-3b and GC-3c). Scene `gc-blades`
 (= `gc-ascadian` with `--set groundcover.blades.enabled=true`); blades are off by default until this look.
 Look for: a dense carpet of blades on the grass ground only (none on roads, rock or under water), standing on the ground,
 the vanilla clumps among them as accents, blades staying in place as you walk (no reshuffle when the world origin
 shifts), wind fronts crossing the carpet in the weather's direction, no hard edge where the blades end.
 Known: one style ("meadow") everywhere, fixed tint (not yet the terrain's colour), no blade shadows, no trampling yet.
 Log line: `groundcover: blade species B, styles registered R`.
+
+### GC-M4: no groundcover under statics, blades at 150/m² (2026-11-23, groundcover)
+
+Status: awaiting owner (launched 2026-11-23 22:58). Scene `gc-blades`. Look for: blades denser than look 1 (150/m², was
+60), no blades or clumps poking through rocks, house walls, docks or stairs, grass still under trees and bushes, no hard
+rectangle of bare ground around objects (margin 0.25 m). Log: `groundcover: statics read P placements, S boxes,
+excluded E, floating F, no ground G, terrain tiles T in X ms` (1174 ms on the first run: synchronous at start, to move).
+
+### GC-3n: denser blades near the camera (2026-11-23, groundcover)
+
+Status: awaiting owner. Scene `gc-blades`. Look for: the ground at your feet covered (no "last few hairs"), no visible
+ring where the extra density ends (4 m full, fading out by 7 m), no blades popping or reshuffling as you walk. Live:
+`groundcover.blades.near_density` (1 = off, 2.5 default, max 4), `near_start_m` 4, `near_end_m` 7. perf ab: GPU +0.06 ms.
+Known: colour is still the bright MEADOW green (GC-3e2 next).

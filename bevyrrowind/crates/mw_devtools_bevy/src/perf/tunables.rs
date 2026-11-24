@@ -53,6 +53,7 @@ pub const CATALOG: &[(&str, &[&dyn AnyDef])] = &[
     ("sf_sky_bevy::quality", sf_sky_bevy::quality::TUNABLES),
     ("mw_devtools_bevy::perf_panel", crate::perf_panel::TUNABLES),
     ("mw_devtools_bevy::switch_probe", crate::switch_probe::TUNABLES),
+    ("mw_devtools_bevy::perf::flip_ab", crate::perf::flip_ab::TUNABLES),
     ("mw_environment_bevy::quality_tunables", mw_environment_bevy::quality_tunables::TUNABLES),
     ("sf_tunables::presets", sf_tunables::presets::TUNABLES),
 ];

@@ -156,6 +156,20 @@ pub struct GrassSettings {
     /// 0 (never; blades thin out to lines when seen side-on) to 1 (it
     /// always faces the camera, which flattens the grass).
     pub turn_to_camera: f32,
+    // superfargoth patch (own: near tier): a denser ring of blades around a
+    // perspective camera.
+    /// Density multiplier at the camera's feet, 1 (off) to
+    /// [`GrassSettings::MAX_NEAR_DENSITY`]: blades are this many times as
+    /// dense within [`near_start_m`](Self::near_start_m), tapering linearly
+    /// to the normal density at [`near_end_m`](Self::near_end_m). Chunks in
+    /// the ring evaluate extra layers of candidates, so it costs blades only
+    /// there; the blades keep their width. Orthographic views ignore it.
+    pub near_density: f32,
+    /// Where the near ring starts to taper, in metres from the camera
+    /// (less `radius_from_ground`), at least 0.
+    pub near_start_m: f32,
+    /// Where the near ring ends, in metres, at least `near_start_m`.
+    pub near_end_m: f32,
 
     // Limits of the view.
     /// Half the side of the square around an orthographic camera in which
@@ -213,6 +227,10 @@ impl GrassSettings {
     /// Largest `max_widening`: a blade's width is stored up to four times
     /// its style's, and varies by up to 25% on its own.
     pub const MAX_WIDENING: f32 = 3.2;
+    // superfargoth patch (own: near tier)
+    /// Largest `near_density`: a chunk evaluates at most this many layers of
+    /// candidates.
+    pub const MAX_NEAR_DENSITY: f32 = 4.0;
 
     /// Steam Deck and integrated GPUs.
     pub const LOW: Self = Self {
@@ -257,6 +275,10 @@ impl GrassSettings {
         mid_range_density: 0.5,
         max_widening: 2.5,
         turn_to_camera: 0.4,
+        // superfargoth patch (own: near tier): off, upstream's behaviour.
+        near_density: 1.0,
+        near_start_m: 4.0,
+        near_end_m: 7.0,
         orthographic_extent: 256.0,
         max_chunk_slices: 8192,
         readback_interval: 120,
@@ -300,7 +322,14 @@ impl GrassSettings {
         let lod1_start = finite(self.lod1_start, high.lod1_start).clamp(0.0, 1.0);
         let lod2_start = finite(self.lod2_start, high.lod2_start).clamp(lod1_start, 1.0);
         let fade_start = finite(self.fade_start, high.fade_start).clamp(lod2_start, 1.0);
+        // superfargoth patch (own: near tier): the ring keeps its order too.
+        let near_start_m = finite(self.near_start_m, high.near_start_m).max(0.0);
+        let near_end_m = finite(self.near_end_m, high.near_end_m).max(near_start_m);
         Self {
+            near_density: finite(self.near_density, high.near_density)
+                .clamp(1.0, Self::MAX_NEAR_DENSITY),
+            near_start_m,
+            near_end_m,
             radius: finite(self.radius, high.radius).max(1.0),
             density_scale: finite(self.density_scale, high.density_scale).max(0.0),
             min_width_px: finite(self.min_width_px, high.min_width_px).max(0.0),
@@ -387,6 +416,10 @@ impl GrassSettings {
             mid_range_density,
             max_widening,
             turn_to_camera,
+            // superfargoth patch (own: near tier)
+            near_density,
+            near_start_m,
+            near_end_m,
             orthographic_extent,
             max_chunk_slices,
             trample_recovery,

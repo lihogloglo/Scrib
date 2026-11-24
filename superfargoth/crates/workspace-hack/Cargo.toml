@@ -109,6 +109,7 @@ regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 rodio = { version = "0.22", default-features = false, features = ["hound", "lewton", "mp3", "playback", "tracing"] }
 ron = { version = "0.12" }
+rstar = { version = "0.13" }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 serde_json = { version = "1", features = ["alloc", "raw_value"] }

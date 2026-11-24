@@ -242,13 +242,13 @@
             shadow: None,
             range: Near,
         ),
-        // Procedural meadow blades under the vanilla clumps (slice GC-3a2c): `bevy_grass`'s MEADOW style, drawn by
+        // Procedural meadow blades under the vanilla clumps (slice GC-3a2c): the `meadow` blade style below, drawn by
         // `sf_groundcover_bevy::blades` only while `groundcover.blades.enabled` is on (off by default).
         (
             id: "ascadian_meadow_blades",
             render: Blade(style: "meadow"),
-            footprint_m: 0.12, // Guess, under the blade spacing at full density (1 / sqrt(60) = 0.13 m) so it never caps the density
-            density: 60.0, // Guess: bevy_grass 0.20.6 MEADOW preset density, blades per m² at rule weight 1
+            footprint_m: 0.08, // Guess, under the blade spacing at full density (1 / sqrt(150) = 0.082 m) so it never caps the density
+            density: 150.0, // Guess (owner 2026-11-23 look GC-3: "could be denser" at 60, the MEADOW preset): coverage 3 (150 x 0.02 m wide blades), within bevy_grass's lush presets (130-250); no shipped game publishes a figure (docs/research/grass-blade-density-2026-11-23.md). Blades per m² at rule weight 1; past 10 m the crate halves the count and widens the rest
             slope_deg: Some((min: 0.0, max: 35.0)), // Guess, as flora_grass_01
             water_m: Some((min: 0.2, max: 100000.0)), // Guess, as flora_grass_01, metres above the sea surface
             scale: (min: 1.0, max: 1.0),
@@ -260,6 +260,20 @@
             shadow: None,
             range: Near,
         ),
+    ],
+    // Blade looks the `Blade(style: ..)` species name (slice GC-3e1; `mw_world::groundcover::BladeStyleDef`): a
+    // `bevy_grass` preset by its lower-case name (`base`) and overrides of its look, each `None` (left out) keeping
+    // the preset's. Groups and fields (units in the names, colours sRGB 0-1):
+    //   blade: height_m (shortest, tallest), width_m, lean, stiffness, root_color, tip_color, root_occlusion,
+    //          translucency, specular, twist, droop, fold, head_length, head_width_m, head_color
+    //   variation: patch_color, patch_amount, patch_size_m, dry_tips, dead_share, tufts, tuft_spacing_m, bare_share,
+    //              bare_patch_size_m
+    //   ground_tint: color, amount;  toon_bands (0 = physical shading)
+    // The preset's density is never used: the species `density` sets the blades per m². Every override is a `Guess`
+    // until the owner's look loop sets it, e.g. `blade: (tip_color: Some((0.62, 0.58, 0.30))), // Guess`.
+    blade_styles: [
+        // `bevy_grass`'s MEADOW preset as it ships, no overrides.
+        (name: "meadow", base: "meadow"),
     ],
     rules: (rules: [
         // 0 ascadian_grass: the Ascadian Isles meadow; tall grass sparse.

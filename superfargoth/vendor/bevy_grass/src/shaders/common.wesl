@@ -87,6 +87,10 @@ struct View {
     /// range instance positions are stored over, in metres either side of
     /// the origin.
     limits: vec4<f32>,
+    /// superfargoth patch (own: near tier): x: the density multiplier at the
+    /// camera; y: where it starts to taper and z: where it is back to 1, in
+    /// metres.
+    near: vec4<f32>,
 }
 
 /// One field. Mirrors `FieldGpu` in `gpu_layout.rs`.
@@ -162,6 +166,16 @@ fn unit(h: u32) -> f32 {
 fn density_falloff(view: View, distance: f32) -> f32 {
     let into_mid = clamp((distance - (view.mid_range_start - view.lod_band * 0.5)) / view.lod_band, 0.0, 1.0);
     return distance_thinning(view, distance) * mix(1.0, view.lod_density.z, into_mid);
+}
+
+/// superfargoth patch (own: near tier): the near ring's density multiplier at
+/// `distance`: `near.x` to `near.y` metres, linear to 1 at `near.z`. 1 when
+/// the ring is off. It is not part of `density_falloff`, which also sets how
+/// far thinned blades widen: denser near blades keep their width. Twin of
+/// `NearTier::boost`.
+fn near_boost(view: View, distance: f32) -> f32 {
+    let t = clamp((distance - view.near.y) / max(view.near.z - view.near.y, 1e-4), 0.0, 1.0);
+    return mix(view.near.x, 1.0, t);
 }
 
 /// The distance table, before the mid-range thinning: 1 to the start of LOD 1,

@@ -131,6 +131,9 @@ pub struct DiagSettings {
     pub hitch_ms: Option<f64>,
     /// Also write `<scenario>.md`, the human-readable report.
     pub markdown: bool,
+    /// In-process A/B ([`sf_diag::flip_ab`]): the app flips the setting along this schedule (the
+    /// measured duration spans it); the end writes `ab.md` and `ab.csv` beside the report.
+    pub ab: Option<sf_diag::flip_ab::AbSchedule>,
 }
 
 impl Default for DiagSettings {
@@ -145,6 +148,7 @@ impl Default for DiagSettings {
             meta: BTreeMap::new(),
             hitch_ms: None,
             markdown: true,
+            ab: None,
         }
     }
 }
@@ -228,6 +232,11 @@ impl DiagScenario {
     /// The warm-up frames recorded so far.
     pub fn warmup_recorder(&self) -> &Recorder {
         &self.warmup
+    }
+
+    /// Real seconds measured so far (0 during warm-up): the start time of the frame now running.
+    pub fn measured_s(&self) -> f64 {
+        self.run.measured_s()
     }
 }
 
@@ -522,6 +531,9 @@ fn finish(
             errors.push(format!("writing {}: {e}", path.display()));
         }
     }
+    if let Some(ab) = &settings.ab {
+        write_ab(ab, &scenario.name, recorder, &report, settings, &mut errors);
+    }
     let markdown = if settings.markdown {
         let path = settings.output_dir.join(format!("{stem}.md"));
         match std::fs::write(&path, report.to_markdown()) {
@@ -551,6 +563,35 @@ fn finish(
         csv,
         markdown,
         errors,
+    }
+}
+
+/// `ab.md` and `ab.csv` of an in-process A/B: per kept phase, from the recorder's frame, main busy,
+/// render busy and GPU timed columns, hitches over the report's threshold.
+fn write_ab(ab: &sf_diag::flip_ab::AbSchedule, scenario: &str, recorder: &Recorder, report: &Report, settings: &DiagSettings, errors: &mut Vec<String>) {
+    use sf_diag::flip_ab;
+    use sf_diag::pacing::{GPU_TIMED, MAIN_BUSY, RENDER_BUSY};
+    let column = |name: &str| recorder.get(name).map(sf_diag::Series::values);
+    let cols = flip_ab::Columns {
+        frame_ms: recorder.frame_ms(),
+        main_ms: column(MAIN_BUSY),
+        render_ms: column(RENDER_BUSY),
+        gpu_ms: column(GPU_TIMED),
+    };
+    let median = report.frames.as_ref().map_or(0.0, |f| f.stats.median);
+    let hitch_ms = settings.hitch_ms.unwrap_or_else(|| sf_diag::default_hitch_ms(median));
+    let phases = flip_ab::phase_stats(ab, cols, hitch_ms);
+    let deltas = flip_ab::deltas(&phases);
+    log::info!("sf_diag: {}", flip_ab::headline(ab, &deltas));
+    let files = [
+        ("ab.md", flip_ab::markdown(scenario, ab, &phases, &deltas, hitch_ms)),
+        ("ab.csv", flip_ab::csv(ab, &phases)),
+    ];
+    for (name, text) in files {
+        let path = settings.output_dir.join(name);
+        if let Err(e) = std::fs::create_dir_all(&settings.output_dir).and_then(|()| std::fs::write(&path, text)) {
+            errors.push(format!("writing {}: {e}", path.display()));
+        }
     }
 }
 

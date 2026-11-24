@@ -58,7 +58,8 @@ use sf_world_bevy::{WorldOrigin, WorldOriginSystems};
 use crate::ground::GroundSource;
 use crate::tunables::{
     BLADES_BLOCK, BLADES_CELL, BLADES_ENABLED, BLADES_FLUTTER, BLADES_GUST_CONTRAST, BLADES_GUST_SCALE,
-    BLADES_HYSTERESIS, BLADES_RING, BLADES_SWAY, BLADES_SWAY_SPEED, BLADES_WIND_FULL, BLADES_WIND_MAX,
+    BLADES_HYSTERESIS, BLADES_NEAR_DENSITY, BLADES_NEAR_END, BLADES_NEAR_START, BLADES_RING, BLADES_SWAY,
+    BLADES_SWAY_SPEED, BLADES_WIND_FULL, BLADES_WIND_MAX,
 };
 use crate::{GroundcoverSource, GroundcoverViewer, RenderSettings, read};
 
@@ -75,7 +76,10 @@ impl Plugin for BladesPlugin {
             GrassPlugins
                 .build()
                 .set(GrassPlugin {
-                    settings: GrassSettings { shadows: GrassShadows::Off, ..GrassSettings::default() },
+                    settings: with_near_tier(
+                        GrassSettings { shadows: GrassShadows::Off, ..GrassSettings::default() },
+                        NearTier::default(),
+                    ),
                     // The weather's wind drives the blades (`sample_blade_wind`), not the crate's own model.
                     wind: false,
                     ..GrassPlugin::default()
@@ -84,7 +88,7 @@ impl Plugin for BladesPlugin {
                 .disable::<GrassStyleFilePlugin>(),
         )
         .init_resource::<BladeRuntime>()
-        .add_systems(PostUpdate, mark_grass_cameras.before(GrassSystems::DetectChanges))
+        .add_systems(PostUpdate, (mark_grass_cameras, apply_near_tier).before(GrassSystems::DetectChanges))
         .add_systems(Update, sample_blade_wind.in_set(GrassWindSystems::Sample).run_if(blades_enabled))
         .add_systems(
             PostUpdate,
@@ -446,6 +450,53 @@ fn mark_grass_cameras(
             commands.entity(entity).try_insert(NoGrass);
         }
     }
+}
+
+/// The near tier of `bevy_grass` (slice GC-3n, vendored patch "near tier"): blades denser by `density` at the
+/// viewer's feet, full to `start_m`, back to normal at `end_m`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NearTier {
+    pub density: f32,
+    pub start_m: f32,
+    pub end_m: f32,
+}
+
+impl NearTier {
+    #[must_use]
+    pub fn from_tunables(store: &sf_tunables::Tunables) -> Self {
+        Self {
+            density: read(store, &BLADES_NEAR_DENSITY),
+            start_m: read(store, &BLADES_NEAR_START),
+            end_m: read(store, &BLADES_NEAR_END),
+        }
+    }
+}
+
+impl Default for NearTier {
+    fn default() -> Self {
+        Self {
+            density: BLADES_NEAR_DENSITY.default_value(),
+            start_m: BLADES_NEAR_START.default_value(),
+            end_m: BLADES_NEAR_END.default_value(),
+        }
+    }
+}
+
+/// `settings` with `near`'s ring.
+#[must_use]
+pub fn with_near_tier(settings: GrassSettings, near: NearTier) -> GrassSettings {
+    GrassSettings { near_density: near.density, near_start_m: near.start_m, near_end_m: near.end_m, ..settings }
+}
+
+/// `PostUpdate`: copies the near tier's live tunables into `GrassSettings`, writing (and so marking it changed)
+/// only when they differ; the crate draws the next frame with them.
+#[allow(clippy::needless_pass_by_value)]
+fn apply_near_tier(tunables: Option<Res<Tunables>>, settings: Option<ResMut<GrassSettings>>) {
+    let (Some(tunables), Some(mut settings)) = (tunables, settings) else {
+        return;
+    };
+    let next = with_near_tier(*settings, NearTier::from_tunables(&tunables.0));
+    settings.set_if_neq(next);
 }
 
 /// The tunables the planner and the sampling jobs read, fixed when the blocks are planned.
@@ -1270,21 +1321,91 @@ mod tests {
             }
         }
 
+        /// Every table rebuild `bevy_grass` made, in order (slice GC-3b4a).
+        #[derive(Resource, Default)]
+        struct Rebuilds {
+            /// Frames run so far.
+            frame: u64,
+            /// The frame and stats of each rebuild.
+            list: Vec<(u64, bevy_grass::TableStats)>,
+        }
+
+        /// `Last`: counts the frame and records a rebuild made in it.
+        fn record_rebuilds(stats: Res<bevy_grass::GrassStats>, mut seen: ResMut<Rebuilds>) {
+            seen.frame += 1;
+            if seen.list.last().map_or(0, |(_, last)| last.rebuilds) != stats.tables.rebuilds {
+                let frame = seen.frame;
+                seen.list.push((frame, stats.tables));
+            }
+        }
+
+        /// One rebuild as a line: sizes, what it redid (against `before`), and each phase in ms (the vendored
+        /// crate's `superfargoth patch (own: rebuild phases)`).
+        fn rebuild_line(label: &str, t: &bevy_grass::TableStats, before: &bevy_grass::TableStats) -> String {
+            let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+            let p = t.last_rebuild_phases;
+            format!(
+                "{label}: {} fields / {} chunks, layout {}, {} entries rewritten, {} images read; \
+                 gather {:.3} + [clone {:.3} plan {:.3} chunks {:.3} images {:.3} entries {:.3} finish {:.3}] = total {:.3} ms",
+                t.fields,
+                t.chunks,
+                t.layout_rebuilds > before.layout_rebuilds,
+                t.entries_rewritten - before.entries_rewritten,
+                t.images_read - before.images_read,
+                ms(p.gather),
+                ms(p.clone),
+                ms(p.plan),
+                ms(p.chunks),
+                ms(p.images),
+                ms(p.entries),
+                ms(p.finish),
+                ms(t.last_rebuild),
+            )
+        }
+
         #[test]
         #[ignore = "measurement: rebuild time of the grass tables after a one-block move"]
         fn rebuild_time_after_a_one_block_move() {
             let mut app = app_with(true, "meadow", all_grass, 64.0, 5, 1);
             app.add_systems(PostUpdate, show.in_set(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
+            app.init_resource::<Rebuilds>().add_systems(Last, record_rebuilds);
             settle(&mut app);
-            let first = app.world().resource::<bevy_grass::GrassStats>().tables;
+            // Frames after `settle` let a rebuild that trails the batch show up before the next move.
+            let idle = |app: &mut App| (0..4).for_each(|_| app.update());
+            idle(&mut app);
+            let mut moved_at = Vec::new();
+            for (x, z) in [(72.0, 8.0), (136.0, 8.0), (136.0, 72.0), (72.0, 72.0)] {
+                moved_at.push(app.world().resource::<Rebuilds>().frame);
+                walk_to(&mut app, x, z);
+                settle(&mut app);
+                idle(&mut app);
+            }
+            let all = &app.world().resource::<Rebuilds>().list;
+            println!("grass tables, 5 x 5 ring of 64 m blocks, hysteresis 1 (moves start after frames {moved_at:?}):");
+            let mut before = bevy_grass::TableStats::default();
+            for (i, (frame, t)) in all.iter().enumerate() {
+                let stage = moved_at.iter().filter(|&&f| f < *frame).count();
+                let stage = if stage == 0 { "first plan".to_owned() } else { format!("move {stage}") };
+                println!("  {}", rebuild_line(&format!("rebuild {} frame {frame} ({stage})", i + 1), t, &before));
+                before = *t;
+            }
+        }
+
+        /// GC-3b4b: the first plan and each one-block move rebuild the grass tables exactly once (the vendored crate
+        /// used to rebuild again a frame later on the `AssetEvent::Added` of the new fields' images and styles).
+        #[test]
+        fn each_move_rebuilds_the_grass_tables_once() {
+            let mut app = app_with(true, "meadow", all_grass, 64.0, 5, 1);
+            app.add_systems(PostUpdate, show.in_set(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
+            let rebuilds = |app: &App| app.world().resource::<bevy_grass::GrassStats>().tables.rebuilds;
+            let idle = |app: &mut App| (0..4).for_each(|_| app.update());
+            settle(&mut app);
+            idle(&mut app);
+            assert_eq!(rebuilds(&app), 1, "first plan");
             walk_to(&mut app, 72.0, 8.0);
             settle(&mut app);
-            let moved = app.world().resource::<bevy_grass::GrassStats>().tables;
-            println!(
-                "grass tables, 5 x 5 ring of 64 m blocks: first plan {} fields / {} chunks in {:?}; after a one-block \
-                 move {} fields / {} chunks in {:?} ({} rebuilds in all)",
-                first.fields, first.chunks, first.last_rebuild, moved.fields, moved.chunks, moved.last_rebuild, moved.rebuilds
-            );
+            idle(&mut app);
+            assert_eq!(rebuilds(&app), 2, "one-block move");
         }
 
         /// Slice GC-3b1b: `bevy_grass` learns the origin's world XZ on the update after `WorldOrigin` changes.

@@ -10,6 +10,7 @@ pub mod advanced_page;
 pub mod graphics_page;
 mod gi_volume;
 pub mod groundcover;
+pub mod groundcover_statics;
 mod intro;
 mod teardown;
 pub mod level;

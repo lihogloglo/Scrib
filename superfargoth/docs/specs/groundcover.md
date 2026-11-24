@@ -255,6 +255,17 @@ Rules for every slice below: one deliverable plus its test; one build agent at a
   prints the rebuild time (`GrassStats::tables.last_rebuild`) in a measurement test; over ~1 ms it gets a spread-over-
   frames fix before the lane goes on. Entry cap: 256 = blocks × (1 + species), so ≤ 9 species per style at High.
   **Done 2026-11-23:** ring follows the viewer, one batch per move, `groundcover.blades.hysteresis_blocks` 1. Measured headless: table rebuild 5.2 ms per one-block move, 17.6 ms first plan: **GC-3b4** (incremental or spread rebuild in the vendored crate) is next.
+- **GC-3b4** the table rebuild made incremental in the vendored crate. **Done 2026-11-23** (GC-3b4a diagnosis, b-d2,
+  own patches listed in `superfargoth/vendor/README.md`): no echo rebuild on `AssetEvent::Added` (`changed_id`), raw byte
+  image reads, slot-stable tables (best-fit free list, unchanged fields untouched, freed chunks skipped in `cull`, writes
+  recorded per table), partial upload (`upload_plan` + `write_buffer`, Arcs released after upload). Headless: a move
+  5.5 ms twice -> 0.08-0.43 ms once; in game `grass/rebuild_time` max 0.94 ms; `gc_walk` hitches equal with and
+  without blades (`docs/ledger/perf.md` `gc_b4`). Tests: `grass_reads_tests.rs`, `grass_stable_tests.rs` (the vendored
+  crate's own tests cannot run in the workspace; `bevy_grass::superfargoth_test` exposes the hooks).
+- **GC-3g** blade density from the owner's look 1 ("could be denser"): `ascadian_meadow_blades` 60 -> 150 per m²
+  (coverage 3 at 2 cm blades; no shipped game publishes a figure, `docs/research/grass-blade-density-2026-11-23.md`).
+  The species density already sets the field style's density (`blades.rs` `style.density = grids.peak`). A blade-only
+  live knob is a later slice if the owner wants to tune by eye.
 - **GC-3c** wind bridge: `GrassPlugin { wind: false }`, our system writes `GrassWindFrame` in `GrassWindSystems::Sample`
   from the weather's `Wind` (direction, strength 0-1 from m/s, gust scroll at the wind speed); gust size, contrast, sway
   and flutter as live tunables. Test: the mapping, exactly. **Owner look 1** after this slice.
@@ -296,7 +307,8 @@ Rules for every slice below: one deliverable plus its test; one build agent at a
     Test: the gate.
 - **GC-M3** mesh plants pushed down and aside by the press channel (vertex stage of the groundcover material). Test:
   push direction and amount from a known press, headless.
-- **GC-M4** exclusion under statics: placements' footprints as exclusion regions (the game passes `Overrides::none()`
+- **GC-M4** (order 2026-11-23: next after GC-3g, before the trample chain; covers blades too, since they read the
+  same `density_at` with the overrides) exclusion under statics: placements' footprints as exclusion regions (the game passes `Overrides::none()`
   today, `mw_exterior_bevy/src/groundcover.rs:135`). Test: no instance inside a footprint.
 - **GC-M5** `RangeClass::Mid` in the renderer (a second ring for small bushes) and whole models (every mesh of the NIF,
   normal maps). Test: ring membership per class.

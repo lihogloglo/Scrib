@@ -2,6 +2,7 @@
 //! buffer (masks, then heightmaps), the blue-noise tile, the gust texture, the shared index
 //! buffer and the per-frame uniform. Uploaded only when the fields change.
 
+use std::ops::Range; // superfargoth patch (own: partial upload)
 use std::sync::Arc;
 
 use bevy::asset::Handle;
@@ -21,6 +22,8 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::view::{ViewUniform, ViewUniforms};
 use bevy::shader::Shader;
+// superfargoth patch (own: partial upload)
+use bevy::render::render_resource::encase::{self, ShaderSize, internal::WriteInto};
 
 use super::compute::ComputePass;
 pub(crate) use super::extract::{ExtractedGrass, extract_cameras, extract_grass};
@@ -28,7 +31,7 @@ use super::platform;
 use super::view::ViewUniformData;
 use crate::GrassSettings;
 use crate::edit::PatchList;
-use crate::fields::FieldTables;
+use crate::fields::{FieldTables, Written}; // superfargoth patch (own: partial upload): `Written`
 use crate::gpu_layout::{ChunkGpu, FieldGpu, NO_MAP};
 use crate::shader_model::{self, GUST_SIZE, gust_noise};
 use crate::wind::GrassWindFrame;
@@ -276,7 +279,11 @@ pub(crate) struct GrassShared {
     pub gust_view: TextureView,
     pub gust_sampler: Sampler,
     uploaded_version: u64,
-    uploaded_structure: u64,
+    // superfargoth patch (own: partial upload): what the buffers hold, so the
+    // next version writes only the ranges it changed.
+    /// The tables the buffers hold; `None` before the first upload and after
+    /// a scene too large to draw.
+    uploaded: Option<UploadedState>,
     /// Words in the mask buffer, which edits may write into.
     mask_words: usize,
     /// Chunks in the table; zero means no grass anywhere.
@@ -376,7 +383,7 @@ pub(crate) fn init_shared(
         gust_view,
         gust_sampler,
         uploaded_version: u64::MAX,
-        uploaded_structure: u64::MAX,
+        uploaded: None, // superfargoth patch (own: partial upload)
         mask_words: 0,
         chunk_count: 0,
     };
@@ -398,6 +405,170 @@ fn non_empty<T: Clone + Default>(items: &Arc<Vec<T>>) -> Vec<T> {
     }
 }
 
+// superfargoth patch (own: partial upload)
+/// Bytes of one entry in the fields buffer: its stride as a storage array
+/// (every member is 16 bytes, so the size is the stride; so for a chunk).
+pub const FIELD_BYTES: u64 = <FieldGpu as ShaderSize>::SHADER_SIZE.get();
+/// Bytes of one chunk in the chunks buffer.
+pub const CHUNK_BYTES: u64 = <ChunkGpu as ShaderSize>::SHADER_SIZE.get();
+const _: () = assert!(FIELD_BYTES % 16 == 0 && CHUNK_BYTES % 16 == 0);
+
+// superfargoth patch (own: partial upload)
+/// What the buffers hold: the tables' version and structure version and each
+/// table's length (entries, chunks, mask words, height texels).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UploadedState {
+    version: u64,
+    structure_version: u64,
+    lens: [u32; 4],
+}
+
+impl UploadedState {
+    /// The state once `tables` are uploaded.
+    pub(crate) fn of(tables: &FieldTables) -> Self {
+        Self {
+            version: tables.version,
+            structure_version: tables.structure_version,
+            lens: [
+                tables.fields.len() as u32,
+                tables.chunks.len() as u32,
+                tables.masks.len() as u32,
+                tables.heights.len() as u32,
+            ],
+        }
+    }
+}
+
+// superfargoth patch (own: partial upload)
+/// How one buffer is brought up to date.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BufferPlan {
+    /// Written whole, at the tables' size.
+    Full,
+    /// These byte ranges written into the buffer as it is, sorted and merged;
+    /// none leaves it untouched.
+    Ranges(Vec<Range<u64>>),
+}
+
+// superfargoth patch (own: partial upload)
+/// How each buffer is brought up to date with a new version of the tables.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadPlan {
+    /// The entries (`FIELD_BYTES` each).
+    pub fields: BufferPlan,
+    /// The chunks (`CHUNK_BYTES` each).
+    pub chunks: BufferPlan,
+    /// The masks, then the heightmaps, 4 bytes a word or texel.
+    pub scene: BufferPlan,
+}
+
+/// `ranges`, sorted, merged where they touch.
+fn merged_bytes(ranges: impl IntoIterator<Item = Range<u64>>) -> Vec<Range<u64>> {
+    let mut ranges: Vec<Range<u64>> = ranges.into_iter().filter(|r| !r.is_empty()).collect();
+    ranges.sort_by_key(|range| range.start);
+    let mut merged: Vec<Range<u64>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        match merged.last_mut() {
+            Some(last) if last.end >= range.start => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged
+}
+
+// superfargoth patch (own: partial upload)
+/// How to upload `tables` over buffers holding `uploaded`.
+///
+/// A buffer takes only the ranges the latest rebuild wrote when the writes
+/// lead from the version it holds and its tables kept their length; it is
+/// written whole when nothing was uploaded yet, a table was laid out afresh or
+/// changed length (the entries too when the mask words, which shift every
+/// heightmap offset, change), or a version came in between that this world
+/// never uploaded (two rebuilds in one frame, a skipped extraction), whose
+/// writes are unknown.
+pub(crate) fn upload_plan(tables: &FieldTables, uploaded: Option<&UploadedState>) -> UploadPlan {
+    use BufferPlan::{Full, Ranges};
+    let Some(uploaded) = uploaded else {
+        return UploadPlan {
+            fields: Full,
+            chunks: Full,
+            scene: Full,
+        };
+    };
+    let lens = UploadedState::of(tables).lens;
+    let same = |table: usize| lens[table] == uploaded.lens[table];
+    let writes = &tables.writes;
+    if writes.since != uploaded.version {
+        // The chunks and images change only with the structure version.
+        let structure = if tables.structure_version == uploaded.structure_version
+            && (1..4).all(same)
+        {
+            Ranges(Vec::new())
+        } else {
+            Full
+        };
+        return UploadPlan {
+            fields: Full,
+            chunks: structure.clone(),
+            scene: structure,
+        };
+    }
+    let bytes = |written: &Written, unit: u64, base: u64| {
+        written
+            .ranges
+            .iter()
+            .map(move |r| (base + u64::from(r.start)) * unit..(base + u64::from(r.end)) * unit)
+            .collect::<Vec<_>>()
+    };
+    let fields = if writes.fields.full || !same(0) || !same(2) {
+        Full
+    } else {
+        Ranges(bytes(&writes.fields, FIELD_BYTES, 0))
+    };
+    let chunks = if writes.chunks.full || !same(1) {
+        Full
+    } else {
+        Ranges(bytes(&writes.chunks, CHUNK_BYTES, 0))
+    };
+    let scene = if writes.masks.full || writes.heights.full || !same(2) || !same(3) {
+        Full
+    } else {
+        // The heightmaps follow the masks.
+        let mask_words = u64::from(lens[2]);
+        Ranges(merged_bytes(
+            bytes(&writes.masks, 4, 0)
+                .into_iter()
+                .chain(bytes(&writes.heights, 4, mask_words)),
+        ))
+    };
+    UploadPlan {
+        fields,
+        chunks,
+        scene,
+    }
+}
+
+/// `field` as the GPU reads it: the heightmaps follow the masks in the scene
+/// buffer, so a heightmap's offset counts the mask words before it too.
+fn on_gpu(mut field: FieldGpu, mask_words: u32) -> FieldGpu {
+    if field.placement.w != NO_MAP {
+        field.placement.w += mask_words;
+    }
+    field
+}
+
+/// `values` as their storage array bytes.
+fn encoded<T>(values: &[T]) -> Vec<u8>
+where
+    [T]: ShaderType + WriteInto,
+{
+    let mut bytes = encase::StorageBuffer::new(Vec::new());
+    bytes
+        .write(values)
+        .expect("a vector of fixed-size GPU structs encodes");
+    bytes.into_inner()
+}
+
 fn upload_tables(
     shared: &mut GrassShared,
     tables: &FieldTables,
@@ -405,52 +576,95 @@ fn upload_tables(
     queue: &RenderQueue,
 ) {
     shared.uploaded_version = tables.version;
-    // The heightmaps follow the masks in the scene buffer, so on the GPU a
-    // heightmap's offset counts the mask words before it too.
+    // superfargoth patch (own: partial upload): each buffer whole or only the
+    // ranges the latest rebuild wrote (`upload_plan`).
+    let plan = upload_plan(tables, shared.uploaded.as_ref());
+    shared.uploaded = None;
     let mask_words = tables.masks.len() as u32;
-    let mut fields = non_empty(&tables.fields);
-    for field in &mut fields {
-        if field.placement.w != NO_MAP {
-            field.placement.w += mask_words;
+    match (&plan.fields, shared.fields.buffer()) {
+        (BufferPlan::Ranges(ranges), Some(buffer)) => {
+            for range in ranges {
+                let at = (range.start / FIELD_BYTES) as usize..(range.end / FIELD_BYTES) as usize;
+                let entries: Vec<FieldGpu> = tables.fields[at]
+                    .iter()
+                    .map(|field| on_gpu(*field, mask_words))
+                    .collect();
+                queue.write_buffer(buffer, range.start, &encoded(&entries));
+            }
+        }
+        _ => {
+            let fields = non_empty(&tables.fields)
+                .into_iter()
+                .map(|field| on_gpu(field, mask_words))
+                .collect();
+            shared.fields.set(fields);
+            shared.fields.write_buffer(device, queue);
         }
     }
-    shared.fields.set(fields);
-    shared.fields.write_buffer(device, queue);
     // Showing or hiding a field changes its entries only; the chunks and the
     // images, most of the bytes, stay where they are.
-    if shared.uploaded_structure == tables.structure_version {
-        return;
+    if plan.chunks == BufferPlan::Full || plan.scene == BufferPlan::Full {
+        // A binding larger than the device allows is a validation error that
+        // stops Bevy's renderer, so a scene that does not fit draws no grass.
+        let limit = device.limits().max_storage_buffer_binding_size;
+        if let Some(bytes) =
+            platform::scene_too_large(tables.masks.len(), tables.heights.len(), limit)
+        {
+            warn!(
+                "bevy_grass: the density masks and heightmaps of every GrassField take {bytes} \
+                 bytes together, and a storage binding on this GPU holds {limit}; no grass is \
+                 drawn. Use fewer or smaller masks and heightmaps."
+            );
+            shared.chunk_count = 0;
+            shared.mask_words = 0;
+            shared.scene.set(vec![0]);
+            shared.scene.write_buffer(device, queue);
+            return;
+        }
     }
-    shared.uploaded_structure = tables.structure_version;
-    // A binding larger than the device allows is a validation error that
-    // stops Bevy's renderer, so a scene that does not fit draws no grass.
-    let limit = device.limits().max_storage_buffer_binding_size;
-    if let Some(bytes) = platform::scene_too_large(tables.masks.len(), tables.heights.len(), limit)
-    {
-        warn!(
-            "bevy_grass: the density masks and heightmaps of every GrassField take {bytes} \
-             bytes together, and a storage binding on this GPU holds {limit}; no grass is \
-             drawn. Use fewer or smaller masks and heightmaps."
-        );
-        shared.chunk_count = 0;
-        shared.mask_words = 0;
-        shared.scene.set(vec![0]);
-        shared.scene.write_buffer(device, queue);
-        return;
+    match (&plan.chunks, shared.chunks.buffer()) {
+        (BufferPlan::Ranges(ranges), Some(buffer)) => {
+            for range in ranges {
+                let at = (range.start / CHUNK_BYTES) as usize..(range.end / CHUNK_BYTES) as usize;
+                queue.write_buffer(buffer, range.start, &encoded(&tables.chunks[at]));
+            }
+        }
+        _ => {
+            shared.chunk_count = tables.chunks.len() as u32;
+            shared.chunks.set(non_empty(&tables.chunks));
+            shared.chunks.write_buffer(device, queue);
+        }
     }
-    shared.chunk_count = tables.chunks.len() as u32;
-    shared.chunks.set(non_empty(&tables.chunks));
-    shared.chunks.write_buffer(device, queue);
-    shared.mask_words = tables.masks.len();
-    let mut scene = Vec::with_capacity(tables.masks.len() + tables.heights.len());
-    scene.extend_from_slice(&tables.masks);
-    scene.extend(tables.heights.iter().map(|height| height.to_bits()));
-    if scene.is_empty() {
-        // Storage bindings may not be empty; nothing indexes this word.
-        scene.push(0);
+    match (&plan.scene, shared.scene.buffer()) {
+        (BufferPlan::Ranges(ranges), Some(buffer)) => {
+            let masks = tables.masks.len();
+            for range in ranges {
+                let words = (range.start / 4) as usize..(range.end / 4) as usize;
+                if words.start < masks {
+                    let run = &tables.masks[words.start..words.end.min(masks)];
+                    queue.write_buffer(buffer, range.start, bytemuck::cast_slice(run));
+                }
+                if words.end > masks {
+                    let from = words.start.max(masks);
+                    let run = &tables.heights[from - masks..words.end - masks];
+                    queue.write_buffer(buffer, from as u64 * 4, bytemuck::cast_slice(run));
+                }
+            }
+        }
+        _ => {
+            shared.mask_words = tables.masks.len();
+            let mut scene = Vec::with_capacity(tables.masks.len() + tables.heights.len());
+            scene.extend_from_slice(&tables.masks);
+            scene.extend(tables.heights.iter().map(|height| height.to_bits()));
+            if scene.is_empty() {
+                // Storage bindings may not be empty; nothing indexes this word.
+                scene.push(0);
+            }
+            shared.scene.set(scene);
+            shared.scene.write_buffer(device, queue);
+        }
     }
-    shared.scene.set(scene);
-    shared.scene.write_buffer(device, queue);
+    shared.uploaded = Some(UploadedState::of(tables));
 }
 
 /// Writes the rows edits changed into the masks at the start of the scene
@@ -501,12 +715,19 @@ fn blade_indices(device: &RenderDevice, rows: [u32; 3]) -> (Buffer, LodTable) {
 /// Uploads rebuilt tables and this frame's uniform.
 pub(crate) fn prepare_shared(
     mut shared: ResMut<GrassShared>,
-    extracted: Res<ExtractedGrass>,
+    mut extracted: ResMut<ExtractedGrass>, // superfargoth patch (own: partial upload): `mut`
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
 ) {
     if extracted.tables.version != shared.uploaded_version {
         upload_tables(&mut shared, &extracted.tables, &device, &queue);
+        // superfargoth patch (own: partial upload): nothing in the render
+        // world reads the masks or heightmaps after the upload (the ground
+        // lookups read the entries and chunks), so let go of them: the main
+        // world is then their only owner and its next rebuild writes them in
+        // place instead of copying them whole.
+        extracted.tables.masks = Arc::default();
+        extracted.tables.heights = Arc::default();
     }
     write_mask_patches(&shared, &extracted.mask_patches, &queue);
     // A game that changes the blades' rows gets new meshes, once.

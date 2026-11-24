@@ -680,6 +680,7 @@ fn scenario(name: &str, towns: &[DVec3]) -> Scenario {
         gates: Gate::wishlist_streaming(),
         spike_factor: 1.5,
         tolerance: default(),
+        ab: None,
     }
 }
 

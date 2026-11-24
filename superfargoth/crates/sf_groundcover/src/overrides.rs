@@ -10,8 +10,12 @@
 //! - **Explicit placement**: content places its own instances inside; procedural species of the same
 //!   [`RangeClass`] are suppressed there, other classes are untouched.
 //!
-//! A region is a box or a circle, optionally cut by a mask grid (inside where the mask texel is ≥ 128).
+//! A region is a box (axis-aligned or turned about +Y) or a circle, optionally cut by a mask grid (inside where the
+//! mask texel is ≥ 128). The compiled set keeps an R-tree of every override's bounds, so [`Overrides::view`] costs
+//! the overrides near the rectangle, not all of them (a worldspace's thousands of footprint exclusions).
 
+use rstar::primitives::{GeomWithData, Rectangle};
+use rstar::{AABB, RTree};
 use serde::{Deserialize, Serialize};
 
 use crate::rules::{BuildError, Groundcover, SpeciesIndex, WeightedSpecies};
@@ -28,8 +32,9 @@ pub struct Rect {
 }
 
 impl Rect {
-    fn overlaps(self, o: Rect) -> bool {
-        self.min[0] <= o.max[0] && o.min[0] <= self.max[0] && self.min[1] <= o.max[1] && o.min[1] <= self.max[1]
+    /// Not empty (min <= max on both axes; an empty intersection overlaps nothing).
+    fn is_valid(self) -> bool {
+        self.min[0] <= self.max[0] && self.min[1] <= self.max[1]
     }
 
     fn intersect(self, o: Rect) -> Rect {
@@ -47,6 +52,9 @@ pub enum Shape {
     Box { min: [f64; 2], max: [f64; 2] },
     /// Disc, inclusive.
     Circle { center: [f64; 2], radius_m: f64 },
+    /// Box of half size `half_m` along its own X and Z, turned by `yaw` radians about +Y (right-handed, as
+    /// `Quat::from_rotation_y`: its X axis is world (cos, -sin), its Z axis (sin, cos)), inclusive.
+    OrientedBox { center: [f64; 2], half_m: [f64; 2], yaw: f64 },
 }
 
 /// An R8 mask grid: row-major, `width` texels along x, `height` rows along z, from `origin` (min corner).
@@ -106,12 +114,21 @@ impl Region {
         Self { shape: Shape::Circle { center, radius_m }, mask: None }
     }
 
+    pub fn oriented_box(center: [f64; 2], half_m: [f64; 2], yaw: f64) -> Self {
+        Self { shape: Shape::OrientedBox { center, half_m, yaw }, mask: None }
+    }
+
     pub fn contains(&self, x: f64, z: f64) -> bool {
         let in_shape = match self.shape {
             Shape::Box { min, max } => x >= min[0] && x <= max[0] && z >= min[1] && z <= max[1],
             Shape::Circle { center, radius_m } => {
                 let (dx, dz) = (x - center[0], z - center[1]);
                 dx * dx + dz * dz <= radius_m * radius_m
+            }
+            Shape::OrientedBox { center, half_m, yaw } => {
+                let (s, c) = yaw.sin_cos();
+                let (dx, dz) = (x - center[0], z - center[1]);
+                (dx * c - dz * s).abs() <= half_m[0] && (dx * s + dz * c).abs() <= half_m[1]
             }
         };
         in_shape && self.mask.as_ref().is_none_or(|m| m.inside(x, z))
@@ -124,6 +141,11 @@ impl Region {
                 min: [center[0] - radius_m, center[1] - radius_m],
                 max: [center[0] + radius_m, center[1] + radius_m],
             },
+            Shape::OrientedBox { center, half_m, yaw } => {
+                let (s, c) = (yaw.sin().abs(), yaw.cos().abs());
+                let (ex, ez) = (half_m[0] * c + half_m[1] * s, half_m[0] * s + half_m[1] * c);
+                Rect { min: [center[0] - ex, center[1] - ez], max: [center[0] + ex, center[1] + ez] }
+            }
         };
         self.mask.as_ref().map_or(r, |m| r.intersect(m.rect()))
     }
@@ -132,6 +154,9 @@ impl Region {
         let ok_shape = match self.shape {
             Shape::Box { min, max } => min.iter().chain(&max).all(|v| v.is_finite()) && min[0] <= max[0] && min[1] <= max[1],
             Shape::Circle { center, radius_m } => center.iter().all(|v| v.is_finite()) && radius_m.is_finite() && radius_m >= 0.0,
+            Shape::OrientedBox { center, half_m, yaw } => {
+                center.iter().chain(&half_m).all(|v| v.is_finite()) && yaw.is_finite() && half_m[0] >= 0.0 && half_m[1] >= 0.0
+            }
         };
         if !ok_shape {
             return Err(BuildError::InvalidOverride("region shape is not finite or has min > max / radius < 0"));
@@ -201,6 +226,18 @@ struct Only {
     weights: Vec<f32>,
 }
 
+/// Which list an indexed override is in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Paint,
+    Exclusion,
+    Only,
+    Explicit,
+}
+
+/// An override's bounds in the R-tree, with its list and index there.
+type Indexed = GeomWithData<Rectangle<[f64; 2]>, (Kind, u32)>;
+
 /// Compiled overrides. "Only" regions are kept sorted strongest first, so the first containing one wins.
 #[derive(Clone, Debug, Default)]
 pub struct Overrides {
@@ -208,6 +245,8 @@ pub struct Overrides {
     exclusions: Vec<Region>,
     only: Vec<Only>,
     explicit: Vec<ExplicitRegion>,
+    /// Every override's bounds (rstar bulk load): a view finds the overrides it touches in O(log n).
+    index: RTree<Indexed>,
 }
 
 /// The overrides that can touch one rectangle (a tile): index lists into [`Overrides`].
@@ -284,26 +323,58 @@ impl Overrides {
         // Strongest first: higher priority, then later in the list.
         only.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
 
-        Ok(Self {
+        let mut out = Self {
             paints,
             exclusions: set.exclusions.clone(),
             only: only.into_iter().map(|(_, _, o)| o).collect(),
             explicit: set.explicit.clone(),
-        })
+            index: RTree::default(),
+        };
+        out.index = RTree::bulk_load(out.indexed().collect());
+        Ok(out)
+    }
+
+    /// Every override's bounds, tagged with its list and index.
+    fn indexed(&self) -> impl Iterator<Item = Indexed> + '_ {
+        let tag = |kind: Kind| {
+            move |(i, r): (usize, Rect)| {
+                let i = u32::try_from(i).expect("fewer than 2^32 overrides of one kind");
+                r.is_valid().then(|| GeomWithData::new(Rectangle::from_corners(r.min, r.max), (kind, i)))
+            }
+        };
+        let paints = self.paints.iter().map(|p| Rect {
+            min: p.paint.origin,
+            max: [p.paint.origin[0] + p.paint.size_m, p.paint.origin[1] + p.paint.size_m],
+        });
+        paints
+            .enumerate()
+            .filter_map(tag(Kind::Paint))
+            .chain(self.exclusions.iter().map(Region::bounds).enumerate().filter_map(tag(Kind::Exclusion)))
+            .chain(self.only.iter().map(|o| o.region.bounds()).enumerate().filter_map(tag(Kind::Only)))
+            .chain(self.explicit.iter().map(|e| e.region.bounds()).enumerate().filter_map(tag(Kind::Explicit)))
     }
 
     /// The overrides whose bounds overlap `rect` (in their stored order, so "only" stays strongest first).
     pub fn view(&self, rect: Rect) -> OverrideView {
-        let pick = |rs: &mut dyn Iterator<Item = Rect>| rs.enumerate().filter(|(_, r)| r.overlaps(rect)).map(|(i, _)| i).collect();
-        OverrideView {
-            paints: pick(&mut self.paints.iter().map(|p| Rect {
-                min: p.paint.origin,
-                max: [p.paint.origin[0] + p.paint.size_m, p.paint.origin[1] + p.paint.size_m],
-            })),
-            exclusions: pick(&mut self.exclusions.iter().map(Region::bounds)),
-            only: pick(&mut self.only.iter().map(|o| o.region.bounds())),
-            explicit: pick(&mut self.explicit.iter().map(|e| e.region.bounds())),
+        let mut view = OverrideView::default();
+        if self.index.size() == 0 {
+            return view;
         }
+        for hit in self.index.locate_in_envelope_intersecting(AABB::from_corners(rect.min, rect.max)) {
+            let (kind, i) = hit.data;
+            let list = match kind {
+                Kind::Paint => &mut view.paints,
+                Kind::Exclusion => &mut view.exclusions,
+                Kind::Only => &mut view.only,
+                Kind::Explicit => &mut view.explicit,
+            };
+            list.push(i as usize);
+        }
+        view.paints.sort_unstable();
+        view.exclusions.sort_unstable();
+        view.only.sort_unstable();
+        view.explicit.sort_unstable();
+        view
     }
 
     /// What the overrides in `view` do to species `s` (of class `range`) at (x, z).

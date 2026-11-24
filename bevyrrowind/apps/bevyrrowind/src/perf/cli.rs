@@ -58,6 +58,21 @@ pub const SCENARIOS: &[SuiteScenario] = &[
         ],
     },
     SuiteScenario {
+        name: "gc_walk",
+        about: "groundcover streaming: run at 7 m/s, 1.7 m above the ground, 390 m east through the Ascadian Isles meadow (cell 2,-7, from the `gc-ascadian` spot), crossing 64 m blade blocks, 08:00",
+        args: &[
+            "view",
+            "2,-7",
+            "--hour",
+            "8",
+            "--weather",
+            "clear",
+            "--bench",
+            "benchmarks/exterior_gc_walk.json",
+            "--bench-ground",
+        ],
+    },
+    SuiteScenario {
         name: "run",
         about: "run at 7 m/s, 1.7 m above the ground, through Seyda Neen",
         args: &["view", "Seyda Neen", "--bench", "benchmarks/exterior_run.json", "--bench-ground"],
@@ -151,6 +166,11 @@ pub enum PerfCommand {
     /// `perf sweep <tag> light_lab --var point-shadows --values 0,1,2,4,8 --repeat 3`; writes
     /// `sweep.md` and `sweep.csv` (medians over repeats) beside the suite summary.
     Sweep(Box<SweepArgs>),
+    /// In-process A/B in one launch: flip one live tunable A B A B ... every phase of a standing
+    /// scenario (docs/reviews/bench-method-2026-11-23.md §3):
+    /// `perf ab <tag> gc_ascadian --ab groundcover.blades.enabled=false,true`; writes `ab.md` and
+    /// `ab.csv` (per-phase stats, Δ = median of paired B - A, |Δ| < 0.5 ms = noise).
+    Ab(Box<super::flip_ab::AbArgs>),
     /// Run named scenarios (all by default) and summarize them. Run from
     /// the repo root with the profiling build:
     /// `target/profiling/bevyrrowind.exe perf suite <tag> balmora --repeat 3`.
@@ -275,6 +295,7 @@ pub fn run(command: PerfCommand) -> Result<(), Box<dyn std::error::Error>> {
         }
         PerfCommand::Suite(args) => run_suite(&args),
         PerfCommand::Sweep(args) => super::sweep::run(&args),
+        PerfCommand::Ab(args) => super::flip_ab::run(&args),
         PerfCommand::Trace { file, from, to, top } => {
             let (from, to) = window(&file, from, to)?;
             let summary = trace::summarize(BufReader::new(File::open(&file)?), from, to)?;
@@ -774,7 +795,7 @@ pub(super) fn write_summary(
     Ok(())
 }
 
-fn run_name(scenario: &str, variant: &str, repeat: usize) -> String {
+pub(super) fn run_name(scenario: &str, variant: &str, repeat: usize) -> String {
     format!("{scenario}@{}-{repeat}", variant.replace([' ', ',', ':'], "_"))
 }
 
@@ -939,7 +960,7 @@ fn working_gpu_load(samples: &[suite::GpuSample]) -> f64 {
 }
 
 /// A run's variant label: resolution, then `off=`, extra game flags and the sweep step when present.
-fn variant_name(resolution: &str, off: &[String], game_args: &[String], step: Option<&str>) -> String {
+pub(super) fn variant_name(resolution: &str, off: &[String], game_args: &[String], step: Option<&str>) -> String {
     let mut variant = if off.is_empty() { resolution.to_owned() } else { format!("{resolution} off={}", off.join(",")) };
     for extra in game_args.iter().map(String::as_str).chain(step) {
         variant = format!("{variant} {extra}");

@@ -155,10 +155,12 @@ anywhere in Bevy's dependency closure (`superfargoth/docs/build-perf.md` "Featur
 
 Several sessions may work **in the same working tree** at once.
 
-1. **Register.** At start, create `.sessions/<short-name>.md` (untracked) with your scope (the crates and files
-   you own) and status, and keep your handoff there as you go. Read the other files in `.sessions/` and stay
-   out of their scope. When you finish, delete your file or move it to `.sessions/_archive/` (old handoffs, not
-   live sessions).
+1. **Register.** At start, create `.sessions/<short-name>.md` (untracked) whose first lines are `Scope:` (the
+   crates and files you own) and `Status:`, and keep your handoff below them (aim for ~2 KB; long logs go in
+   your scratchpad). Read only the other sessions' heads (`head -4 .sessions/*.md`), open a file only when its
+   scope touches yours, and stay out of their scope. When you finish, move your file to `.sessions/_archive/`
+   the same turn (old handoffs, not live sessions). A file untouched for 24 h may be archived by anyone; a
+   handoff stays readable there by path.
 2. **One build at a time,** through `cargo_turn.sh` ("Building"). Keep the build/test cycle short.
 3. **Shared files.** ROADMAP: edit only your task's lines. `DECISIONS.md`: append only. Root `Cargo.toml` /
    `Cargo.lock`: change only when your scope needs a new crate or dependency, and note it in your session file.
@@ -201,7 +203,8 @@ Several sessions may work **in the same working tree** at once.
   whatever the result (formats in `docs/wiki/index.md`).
 - Size guidelines (agents load these files, so size is context), not hard limits: ROADMAP ~250 lines, a spec
   ~25 KB (a complex system may run longer; when "As built" history piles up, move it to an archive file next to
-  the spec), a visual-check entry ~10 lines, a wiki page ~6 KB.
+  the spec), a visual-check entry ~10 lines, a wiki page ~6 KB (a complex system such as shadows may run
+  longer: never cut current-truth facts to fit; split the page instead).
 - Superseded docs move to history (an `archive/` folder), never get deleted. Doc cleanup slices run
   `tools/doccheck.sh snapshot` before and `verify` + `links` after (no lost line or ID) and put its final
   `doccheck: ...` line in the commit message.
@@ -231,24 +234,16 @@ notes, only `docs/specs/`. Don't mix the two in one session.
 - **Every brief pastes its system's ledger lines** (`docs/ledger/<system>.md`) and links the wiki page, not
   research docs (they anchor agents on old hypotheses). Before building on a component, check it actually runs
   in the game (2026-11-12: three agents built on a lamp shadow cache that had been off since 2026-10-21).
-- **Design a bench session before running it (owner 2026-11-17).** Bench hours cost the owner's machine and time.
-  Write the design in the session file first: the question each arm answers, the **interactions that matter**
-  (switches that touch the same work: lamp face cull × lamp cache × day gate, `--scene` × lamp shadows, all gates on
-  together = what the player gets) tested as combined arms, not only one-switch-vs-base, and the fewest runs that
-  answer it (more arms beat more repeats; stop a suite once its answer is clear). **Hitches count as much as the
-  frame time:** every verdict and ledger line gives hitches per minute and p99 next to the median, and an arm that
-  cuts hitches is a result, not a footnote. A session of more than ~1 h of bench needs the owner's go on the design.
-- **Perf work starts from a measured ceiling and an expected ms**, and ends with an untraced A/B logged in
-  `docs/ledger/perf.md`: one exe, arms interleaved in one `perf suite --arm` invocation (3+ runs each), judged on
-  the main, render and GPU times as well as the frame (a cut on a thread the frame isn't bound by is "banked", not
-  "parity"). Differences under ~0.5 ms are noise. **A null result never deletes, freezes or disables code (owner
-  2026-11-16):** "no visible win" is "inconclusive", not "no win" (`docs/reviews/perf-verdict-audit-2026-11-16.md`).
-  **A change that doesn't win stays (owner
-  2026-11-15):** keep it behind an opt-in switch, off by default, with its ledger line saying what is left to fix; it
-  may be a good first step. Revert only what can't be isolated or breaks something. (Dead or duplicate code that
-  something else replaced is different: delete it, tagged, git keeps it.) **A change that wins becomes the default
-  (owner 2026-11-17):** once its interleaved A/B says "faster" and nothing about the look is awaiting the owner, turn
-  it on by default without asking; its off value stays as the A/B arm.
+- **Measure the cheapest way (owner 2026-11-23, `docs/reviews/bench-method-2026-11-23.md`).** Perf work starts
+  from a measured ceiling and an expected ms. Hitches: a headless test or one run's gauges. A live switch:
+  `perf ab` (ABAB in one launch). Restart-only parts and regressions: `perf suite`, one run per arm, same exe;
+  switches that touch the same work also as one combined arm. Runs agree within ~0.2 ms, so no repeats: a second
+  run only when the harness flags one or the delta is within 0.5 ms of a decision. Report median, p99,
+  hitches/min and main, render and GPU ms (a cut off the bound thread is "banked"); under ~0.5 ms is noise.
+  Over ~10 min of bench needs the owner's go. Log the result in `docs/ledger/perf.md`.
+- **Verdicts (owner 2026-11-15/16/17).** No win is "inconclusive": it never deletes, freezes or disables code;
+  the change stays behind an opt-in switch, its ledger line says what is left. A win with no look awaiting the
+  owner becomes the default, its off value the A/B arm. Dead code something else replaced is deleted, tagged.
 - Read lean: grep first, read only the lines needed; never a whole large file; cargo output filtered to errors
   and warnings, tests to summary lines, logs with `tail`/`grep`. Tokens grow with what an agent pulls into its
   context (every call re-sends it), not with its number of tool calls.
