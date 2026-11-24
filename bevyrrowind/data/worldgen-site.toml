@@ -1,0 +1,16 @@
+# Road and path ground textures for `bevyrrowind worldgen-site` (ST-1, scrib-worldgen `docs/specs/settlements.md`
+# "Contract: files only"): `roads.u8` is 1 where a sample's VTEX texel resolves to one of these LTEX records.
+#
+# A texel counts when its LTEX editor id equals one of `ltex_ids` (ASCII case ignored) or its LTEX texture file name
+# contains one of `texture_patterns` (lower case substring). The command prints the crop's textures with their cell
+# counts and whether they count, so the list can be checked against a site.
+#
+# How these were chosen (2026-11-23, vanilla Morrowind + Tribunal + Bloodmoon, the 2.4 km crop around Balmora):
+# every vanilla road or street texture names itself in its file name: Tx_AI_dirtroad_01, Tx_AI_mainroad_01,
+# Tx_WG_dirtroad_01, Tx_WG_mainroad_01, Tx_WG_road_01, Tx_ashlands_road_01, Tx_BC_mainroad_01 ("road"), and the
+# paved streets Tx_WG_cobblestones_01, Tx_cobblestone_01 ("cobble"). "road" also takes Tx_Daed_road(_02), the paving
+# of Daedric ruins: paved human-made ground, kept. "path" matches nothing in vanilla; it is there for mods' path
+# textures. No ground texture outside these names is a street in vanilla (dirt, grass, scrub, rock, lava, mud).
+[roads]
+ltex_ids = []
+texture_patterns = ["road", "cobble", "path"]
